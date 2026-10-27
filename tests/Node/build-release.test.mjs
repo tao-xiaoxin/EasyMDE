@@ -227,7 +227,7 @@ function createFrontendAssetSources(root) {
     writeText(
       root,
       `node_modules/${packageName}/LICENSE`,
-      `MIT License\n\nCopyright fixture for ${packageName}\n`
+      `MIT License\n\nCopyright fixture for ${packageName}\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the "Software"), to deal\nin the Software without restriction.\n`
     );
   }
   writeText(
@@ -295,6 +295,9 @@ function createCompleteFixture(root) {
   const mediaPickerEntry = 'frontend/src/entrypoints/media-picker-bridge.ts';
   const mediaPickerScript = 'assets/media-picker-bridge-fixture.js';
   const mediaPickerMetadata = 'assets/media-picker-bridge-fixture.asset.php';
+  const editorBlockIndexWorkerEntry = 'frontend/src/entrypoints/editor-block-index-worker.ts';
+  const editorBlockIndexWorkerScript = 'assets/editor-block-index-worker-fixture.js';
+  const editorBlockIndexWorkerMetadata = 'assets/editor-block-index-worker-fixture.asset.php';
 
   writeText(
     root,
@@ -442,6 +445,14 @@ function createCompleteFixture(root) {
       handle: 'easymde-media-picker-bridge',
       dependencies: ['media-editor'],
       source: 'window.EasyMDEMediaPickerBridge = {}; easymde-media-picker-connect;\n'
+    },
+    {
+      root: 'assets/build/editor-block-index-worker',
+      entry: editorBlockIndexWorkerEntry,
+      script: editorBlockIndexWorkerScript,
+      metadata: editorBlockIndexWorkerMetadata,
+      handle: 'easymde-editor-block-index-worker',
+      source: 'editor-block-index; createEditorMarkdownBlockIndex;\n'
     }
   ]) {
     writeText(
@@ -518,6 +529,16 @@ function zipEntries(root) {
   assert.equal(result.status, 0, result.stderr);
 
   return result.stdout.trim().split(/\r?\n/).filter(Boolean);
+}
+
+function zipFileContent(root, entry) {
+  const result = spawnSync('unzip', ['-p', releaseZipPath(root), entry], {
+    encoding: 'utf8'
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+
+  return result.stdout;
 }
 
 function updatePackageLock(root, update) {
@@ -723,6 +744,9 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.includes('easymde/assets/build/media-picker/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/media-picker\/assets\/media-picker-bridge-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/media-picker\/assets\/media-picker-bridge-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
+    assert.ok(entries.includes('easymde/assets/build/editor-block-index-worker/wordpress-manifest.json'));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/editor-block-index-worker\/assets\/editor-block-index-worker-[A-Za-z0-9_-]+\.js$/.test(entry)));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/editor-block-index-worker\/assets\/editor-block-index-worker-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
     assert.ok(entries.includes('easymde/assets/build/settings-center/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/settings-center\/assets\/settings-center-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/settings-center\/assets\/settings-center-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
@@ -745,6 +769,78 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.equal(existsSync(join(packageRoot, 'assets/vendor/lora')), false);
     assert.equal(existsSync(join(packageRoot, 'assets/vendor/lucide')), false);
     assert.deepEqual(findMissingReleaseRequirements(root), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release ZIP ships third-party notices with every compiled parser license', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+
+    buildRelease({ root });
+
+    const entries = zipEntries(root);
+    assert.ok(entries.includes('easymde/THIRD-PARTY-NOTICES.md'));
+
+    // Read the notice artifact out of the actual release archive and compare it
+    // with the generator so the packaged file cannot drift from its source data.
+    const packaged = zipFileContent(root, 'easymde/THIRD-PARTY-NOTICES.md');
+    assert.equal(packaged, renderNotices(root));
+    assert.equal(packaged, readFileSync(join(root, 'THIRD-PARTY-NOTICES.md'), 'utf8'));
+
+    const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
+    // Derive the required parser set from the real entrypoint imports and their
+    // locked dependency edges rather than trusting the registry itself.
+    const indentationSource = readFileSync(
+      join(repoRoot, 'frontend/src/features/editor-context-menu/editor-code-indentation.ts'),
+      'utf8'
+    );
+    const repoLock = JSON.parse(readFileSync(join(repoRoot, 'package-lock.json'), 'utf8'));
+    const parsers = new Set();
+
+    for (const [, languagePackage] of indentationSource.matchAll(
+      /['"](@codemirror\/lang-[a-z]+)['"]/g
+    )) {
+      const metadata = repoLock.packages[`node_modules/${languagePackage}`];
+      assert.ok(metadata, `missing ${languagePackage} in package-lock.json`);
+      for (const dependency of Object.keys(metadata.dependencies || {})) {
+        if (dependency.startsWith('@lezer/') || '@codemirror/autocomplete' === dependency) {
+          parsers.add(dependency);
+        }
+      }
+    }
+
+    assert.ok(parsers.size >= 8, 'expected the compiled parser set to be registered');
+    for (const name of parsers) {
+      assert.ok(
+        Object.hasOwn(bundledFrontendPackages, name),
+        `${name} is compiled but has no notice ownership`
+      );
+      assert.ok(lock.packages[`node_modules/${name}`], `${name} should stay a locked dependency`);
+      const license = readFileSync(join(root, 'node_modules', name, 'LICENSE'), 'utf8');
+      assert.ok(packaged.includes(`### ${name}\n`), `ZIP notices miss section for ${name}`);
+      assert.ok(
+        packaged.includes(license.trim()),
+        `ZIP notices miss upstream permission text for ${name}`
+      );
+      assert.match(
+        license,
+        /Permission is hereby granted, free of charge/,
+        `${name} should ship the upstream permission grant`
+      );
+      // The real shipped artifact must carry the real installed upstream text.
+      const installedLicense = readFileSync(
+        join(repoRoot, 'node_modules', name, 'LICENSE'),
+        'utf8'
+      );
+      assert.ok(
+        renderNotices(repoRoot).includes(installedLicense.trim()),
+        `repository notices miss the installed upstream license for ${name}`
+      );
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

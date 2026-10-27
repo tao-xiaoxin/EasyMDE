@@ -256,7 +256,7 @@ function mathText(element: HTMLElement): string {
 
 export function syncCodeFrameBackgrounds(
   root: ParentNode,
-  windowRef: FrontendEnhancementWindow
+  windowRef: Pick<Window, 'getComputedStyle'>
 ): void {
   root.querySelectorAll('pre > code.hljs').forEach((element) => {
     syncCodeFrameBackground(element, windowRef);
@@ -265,7 +265,7 @@ export function syncCodeFrameBackgrounds(
 
 function syncCodeFrameBackground(
   element: Element,
-  windowRef: FrontendEnhancementWindow
+  windowRef: Pick<Window, 'getComputedStyle'>
 ): void {
   if (!(element instanceof HTMLElement) || !element.parentElement) {
     throw new Error('easymde-code-frame-parent-missing');

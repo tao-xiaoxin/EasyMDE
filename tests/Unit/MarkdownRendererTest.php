@@ -1,6 +1,10 @@
 <?php
 
 use EasyMDE\Content\MarkdownRenderer;
+use EasyMDE\Content\VisualPreviewBlockAnnotator;
+use League\CommonMark\Extension\CommonMark\Node\Block\FencedCode;
+use League\CommonMark\Node\Block\Document;
+use League\CommonMark\Parser\MarkdownParser;
 
 final class MarkdownRendererTest extends WP_UnitTestCase
 {
@@ -104,6 +108,507 @@ final class MarkdownRendererTest extends WP_UnitTestCase
         $this->assertTrue( $blocks[1]['editable'] );
         $this->assertTrue( $blocks[2]['editable'] );
     }
+
+	public function test_preview_preserves_toolbar_placeholder_link_structure_and_source_map()
+	{
+		$cases = array(
+			'placeholder' => array(
+				'markdown' => '[First heading](https://)',
+				'href'     => 'https://',
+			),
+			'normal'      => array(
+				'markdown' => '[First heading](https://example.test)',
+				'href'     => 'https://example.test',
+			),
+		);
+
+		foreach ( $cases as $case_id => $case ) {
+			$preview              = MarkdownRenderer::render_preview( $case['markdown'], 'default' );
+			$document             = new DOMDocument( '1.0', 'UTF-8' );
+			$previous_libxml_state = libxml_use_internal_errors( true );
+			try {
+				$loaded = $document->loadHTML(
+					'<?xml encoding="UTF-8"><div id="preview-root">' . $preview['html'] . '</div>',
+					LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+				);
+			} finally {
+				libxml_clear_errors();
+				libxml_use_internal_errors( $previous_libxml_state );
+			}
+
+			$this->assertTrue( $loaded, $case_id );
+			$anchors = $document->getElementsByTagName( 'a' );
+			$this->assertCount( 1, $anchors, $case_id );
+			$anchor = $anchors->item( 0 );
+			$this->assertInstanceOf( DOMElement::class, $anchor, $case_id );
+			$this->assertSame( 'First heading', $anchor->textContent, $case_id );
+			$this->assertSame( $case['href'], $anchor->getAttribute( 'href' ), $case_id );
+
+			$this->assertSame( 1, $preview['editMap']['version'], $case_id );
+			$this->assertSame( 'line', $preview['editMap']['coordinate'], $case_id );
+			$this->assertCount( 1, $preview['editMap']['blocks'], $case_id );
+			$this->assertSame(
+				array(
+					'id'        => 'b0',
+					'startLine' => 0,
+					'endLine'   => 1,
+					'editable'  => true,
+				),
+				$preview['editMap']['blocks'][0],
+				$case_id
+			);
+		}
+	}
+
+	public function test_preview_returns_code_body_map_from_the_same_ast_with_original_line_endings()
+	{
+		$markdown = "```php\r\none\r\ntwo\r\n```\r\n\r\n    indented\r\n    body\r\n";
+		$preview  = MarkdownRenderer::render_preview( $markdown, 'default' );
+
+		$this->assertSame(
+			array(
+				'version'    => 1,
+				'coordinate' => 'line',
+				'status'     => 'available',
+				'entries'    => array(
+					array(
+						'kind'      => 'fenced',
+						'startLine' => 0,
+						'endLine'   => 4,
+						'status'    => 'available',
+						'content'   => "one\r\ntwo\r\n",
+					),
+					array(
+						'kind'      => 'indented',
+						'startLine' => 5,
+						'endLine'   => 7,
+						'status'    => 'available',
+						'content'   => "indented\r\nbody\r\n",
+					),
+				),
+			),
+			$preview['codeMap']
+		);
+	}
+
+	public function test_preview_code_body_map_preserves_empty_eof_and_mixed_line_endings()
+	{
+		$cases = array(
+			'empty' => array(
+				'markdown' => "```php\r\n```\r\n",
+				'entry'   => array(
+					'kind'      => 'fenced',
+					'startLine' => 0,
+					'endLine'   => 2,
+					'status'    => 'available',
+					'content'   => '',
+				),
+			),
+			'eof' => array(
+				'markdown' => "```php\r\none",
+				'entry'   => array(
+					'kind'      => 'fenced',
+					'startLine' => 0,
+					'endLine'   => 2,
+					'status'    => 'available',
+					'content'   => 'one',
+				),
+			),
+			'mixed' => array(
+				'markdown' => "```php\rone\rtwo\r\nthree",
+				'entry'   => array(
+					'kind'      => 'fenced',
+					'startLine' => 0,
+					'endLine'   => 4,
+					'status'    => 'available',
+					'content'   => "one\rtwo\r\nthree",
+				),
+			),
+		);
+
+		foreach ( $cases as $case_id => $case ) {
+			$preview = MarkdownRenderer::render_preview( $case['markdown'], 'default' );
+			$this->assertSame( array( $case['entry'] ), $preview['codeMap']['entries'], $case_id );
+		}
+	}
+
+	public function test_preview_code_body_map_preserves_partial_tab_indentation_from_the_real_parser()
+	{
+		$preview = MarkdownRenderer::render_preview( "- ```\n\tone\n  ```", 'default' );
+
+		$this->assertSame(
+			array(
+				array(
+					'kind'      => 'fenced',
+					'startLine' => 0,
+					'endLine'   => 3,
+					'status'    => 'available',
+					'content'   => "  one\n",
+				),
+			),
+			$preview['codeMap']['entries']
+		);
+	}
+
+	public function test_preview_returns_code_projection_with_partial_tab_row_offsets()
+	{
+		$preview = MarkdownRenderer::render_preview( "- ```ts\n\tone\n  ```", 'default' );
+
+		$this->assertSame(
+			array(
+				'version'    => 1,
+				'coordinate' => 'line',
+				'offsetUnit' => 'utf16',
+				'status'     => 'available',
+				'entries'    => array(
+					array(
+						'kind'        => 'fenced',
+						'startLine'   => 0,
+						'endLine'     => 3,
+						'status'      => 'available',
+						'info'        => 'ts',
+						'fenceOffset' => 0,
+						'rows'        => array(
+							array(
+								'sourceLine'         => 1,
+								'contentLine'        => 0,
+								'prefixEnd'          => 0,
+								'prefixTabColumns'   => 2,
+								'literalFrom'        => 1,
+								'literalLeadingSpaces' => 2,
+							),
+						),
+					),
+				),
+			),
+			$preview['codeProjection']
+		);
+	}
+
+	public function test_preview_code_projection_counts_a_shared_tab_after_a_blockquote_prefix()
+	{
+		$preview = MarkdownRenderer::render_preview( "> ```js\n>\tone\n> ```\n", 'default' );
+
+		$this->assertSame(
+			array(
+				array(
+					'kind'        => 'fenced',
+					'startLine'   => 0,
+					'endLine'     => 3,
+					'status'      => 'available',
+					'info'        => 'js',
+					'fenceOffset' => 0,
+					'rows'        => array(
+						array(
+							'sourceLine'           => 1,
+							'contentLine'          => 0,
+							'prefixEnd'            => 1,
+							'prefixTabColumns'     => 1,
+							'literalFrom'          => 2,
+							'literalLeadingSpaces' => 2,
+						),
+					),
+				),
+			),
+			$preview['codeProjection']['entries']
+		);
+	}
+
+	public function test_preview_code_projection_rejects_a_non_whitespace_delegate_consumption()
+	{
+		$normalized = "```\nbody\n```";
+		$method     = new ReflectionMethod( MarkdownRenderer::class, 'create_converter' );
+		$method->setAccessible( true );
+		$converter = $method->invoke( null, true );
+		$document  = ( new MarkdownParser( $converter->getEnvironment() ) )->parse( $normalized );
+		$node      = $document->firstChild();
+		$this->assertInstanceOf( FencedCode::class, $node );
+		$metadata = $node->data->get( 'easymde_code_projection' );
+		$metadata['rows'][0]['after'] = array(
+			'position'               => 1,
+			'column'                 => 1,
+			'remainderLength'        => 3,
+			'remainderLeadingSpaces' => 0,
+		);
+		$node->data->set( 'easymde_code_projection', $metadata );
+		$projection = VisualPreviewBlockAnnotator::describe_source_code_projections(
+			$document,
+			$normalized,
+			array(
+				1 => array( 'start' => 1, 'end' => 1 ),
+				2 => array( 'start' => 2, 'end' => 2 ),
+				3 => array( 'start' => 3, 'end' => 3 ),
+			),
+			$normalized
+		);
+
+		$this->assertSame(
+			array(
+				'version'    => 1,
+				'coordinate' => 'line',
+				'offsetUnit' => 'utf16',
+				'status'     => 'available',
+				'entries'    => array(
+					array(
+						'kind'      => 'fenced',
+						'startLine' => 0,
+						'endLine'   => 3,
+						'status'    => 'unavailable',
+						'code'      => 'preview-code-projection-source-unavailable',
+					),
+				),
+			),
+			$projection
+		);
+	}
+
+	public function test_preview_returns_indented_code_projection_without_inventing_blank_tail_rows()
+	{
+		$preview = MarkdownRenderer::render_preview( "    one\n        \n    two\n    \n", 'default' );
+
+		$this->assertSame(
+			array(
+				'version'    => 1,
+				'coordinate' => 'line',
+				'offsetUnit' => 'utf16',
+				'status'     => 'available',
+				'entries'    => array(
+					array(
+						'kind'      => 'indented',
+						'startLine' => 0,
+						'endLine'   => 3,
+						'status'    => 'available',
+						'rows'      => array(
+							array(
+								'sourceLine'          => 0,
+								'contentLine'         => 0,
+								'prefixEnd'           => 0,
+								'prefixTabColumns'    => 0,
+								'literalFrom'         => 4,
+								'literalLeadingSpaces' => 0,
+							),
+							array(
+								'sourceLine'          => 2,
+								'contentLine'         => 2,
+								'prefixEnd'           => 0,
+								'prefixTabColumns'    => 0,
+								'literalFrom'         => 4,
+								'literalLeadingSpaces' => 0,
+							),
+						),
+					),
+				),
+			),
+			$preview['codeProjection']
+		);
+	}
+
+	public function test_preview_code_projection_preserves_empty_eof_and_mixed_source_rows()
+	{
+		$cases = array(
+			'empty' => array(
+				'markdown' => "```php\r\n```\r\n",
+				'rows'     => array(),
+			),
+			'eof' => array(
+				'markdown' => "```php\r\none",
+				'rows'     => array(
+					array(
+						'sourceLine'          => 1,
+						'contentLine'         => 0,
+						'prefixEnd'           => 0,
+						'prefixTabColumns'    => 0,
+						'literalFrom'         => 0,
+						'literalLeadingSpaces' => 0,
+					),
+				),
+			),
+			'mixed' => array(
+				'markdown' => "```php\rone\rtwo\r\nthree",
+				'rows'     => array(
+					array(
+						'sourceLine'          => 1,
+						'contentLine'         => 0,
+						'prefixEnd'           => 0,
+						'prefixTabColumns'    => 0,
+						'literalFrom'         => 0,
+						'literalLeadingSpaces' => 0,
+					),
+					array(
+						'sourceLine'          => 2,
+						'contentLine'         => 1,
+						'prefixEnd'           => 0,
+						'prefixTabColumns'    => 0,
+						'literalFrom'         => 0,
+						'literalLeadingSpaces' => 0,
+					),
+					array(
+						'sourceLine'          => 3,
+						'contentLine'         => 2,
+						'prefixEnd'           => 0,
+						'prefixTabColumns'    => 0,
+						'literalFrom'         => 0,
+						'literalLeadingSpaces' => 0,
+					),
+				),
+			),
+		);
+
+		foreach ( $cases as $case_id => $case ) {
+			$preview = MarkdownRenderer::render_preview( $case['markdown'], 'default' );
+			$this->assertSame( $case['rows'], $preview['codeProjection']['entries'][0]['rows'], $case_id );
+		}
+	}
+
+	public function test_preview_code_projection_rejects_theme_mutation_inside_a_code_body()
+	{
+		$preview = MarkdownRenderer::render_preview( "```\n![alt](https://example.test/image.png =50%x)\n```", 'cupid-busy' );
+
+		$this->assertStringContainsString( '<pre', $preview['html'] );
+		$this->assertSame( 'available', $preview['codeMap']['status'] );
+		$this->assertSame( 'unavailable', $preview['codeProjection']['entries'][0]['status'] );
+		$this->assertSame( 'preview-code-projection-source-unavailable', $preview['codeProjection']['entries'][0]['code'] );
+	}
+
+	public function test_preview_code_projection_marks_an_oversized_fence_info_unavailable()
+	{
+		$preview = MarkdownRenderer::render_preview( "```" . str_repeat( 'x', 1025 ) . "\none\n```", 'default' );
+
+		$this->assertSame(
+			array(
+				'kind'      => 'fenced',
+				'startLine' => 0,
+				'endLine'   => 3,
+				'status'    => 'unavailable',
+				'code'      => 'preview-code-projection-info-limit',
+			),
+			$preview['codeProjection']['entries'][0]
+		);
+	}
+
+	public function test_preview_code_projection_serializer_keeps_unicode_line_terminators_unescaped()
+	{
+		$method  = new ReflectionMethod( VisualPreviewBlockAnnotator::class, 'encode_code_projection' );
+		$method->setAccessible( true );
+		$encoded = $method->invoke( null, array( 'info' => "before\u{2028}after\u{2029}" ) );
+
+		$this->assertIsString( $encoded );
+		$this->assertStringContainsString( "before\u{2028}after\u{2029}", $encoded );
+		$this->assertStringNotContainsString( '\\u2028', $encoded );
+		$this->assertStringNotContainsString( '\\u2029', $encoded );
+	}
+
+	public function test_preview_code_body_map_reports_the_global_entry_limit_without_dropping_html()
+	{
+		$markdown = str_repeat( "```\n```\n", 50001 );
+		$preview  = MarkdownRenderer::render_preview( $markdown, 'default' );
+
+		$this->assertStringContainsString( '<pre', $preview['html'] );
+		$this->assertSame(
+			array(
+				'version'    => 1,
+				'coordinate' => 'line',
+				'status'     => 'unavailable',
+				'code'       => 'preview-code-body-limit',
+			),
+			$preview['codeMap']
+		);
+		$this->assertSame(
+			array(
+				'version'    => 1,
+				'coordinate' => 'line',
+				'offsetUnit' => 'utf16',
+				'status'     => 'unavailable',
+				'code'       => 'preview-code-projection-limit',
+			),
+			$preview['codeProjection']
+		);
+	}
+
+	public function test_preview_code_projection_stops_observing_before_the_json_budget_and_keeps_html()
+	{
+		$markdown = "```\n" . str_repeat( "x\n", 40000 ) . "```";
+		$preview  = MarkdownRenderer::render_preview( $markdown, 'default' );
+
+		$this->assertStringContainsString( '<pre', $preview['html'] );
+		$this->assertSame( 'available', $preview['codeMap']['status'] );
+		$this->assertSame(
+			array(
+				'version'    => 1,
+				'coordinate' => 'line',
+				'offsetUnit' => 'utf16',
+				'status'     => 'unavailable',
+				'code'       => 'preview-code-projection-limit',
+			),
+			$preview['codeProjection']
+		);
+	}
+
+	public function test_preview_code_body_map_marks_a_changed_source_row_unavailable()
+	{
+		$normalized = "```php\none\n```";
+		$method     = new ReflectionMethod( MarkdownRenderer::class, 'create_converter' );
+		$method->setAccessible( true );
+		$converter = $method->invoke( null );
+		$document  = ( new MarkdownParser( $converter->getEnvironment() ) )->parse( $normalized );
+		$line_map  = array(
+			1 => array( 'start' => 1, 'end' => 1 ),
+			2 => array( 'start' => 1, 'end' => 1 ),
+			3 => array( 'start' => 3, 'end' => 3 ),
+		);
+
+		$code_map = VisualPreviewBlockAnnotator::describe_source_code_bodies(
+			$document,
+			$normalized,
+			$line_map,
+			"```php\nchanged\n```"
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'kind'      => 'fenced',
+					'startLine' => 0,
+					'endLine'   => 3,
+					'status'    => 'unavailable',
+					'code'      => 'preview-code-body-source-unavailable',
+				),
+			),
+			$code_map['entries']
+		);
+	}
+
+	public function test_preview_code_body_map_reports_the_global_byte_limit()
+	{
+		$body     = str_repeat( 'x', 4194305 );
+		$document = new Document();
+		$node     = new FencedCode( 3, '`', 0 );
+		$node->setStartLine( 1 );
+		$node->setEndLine( 2 );
+		$node->setLiteral( $body . "\n" );
+		$document->appendChild( $node );
+		$source = "```\n" . $body . "\n";
+
+		$code_map = VisualPreviewBlockAnnotator::describe_source_code_bodies(
+			$document,
+			$source,
+			array(
+				1 => array( 'start' => 1, 'end' => 1 ),
+				2 => array( 'start' => 2, 'end' => 2 ),
+			),
+			$source
+		);
+
+		$this->assertSame(
+			array(
+				'version'    => 1,
+				'coordinate' => 'line',
+				'status'     => 'unavailable',
+				'code'       => 'preview-code-body-limit',
+			),
+			$code_map
+		);
+	}
 
     public function test_red_crimson_generated_footnotes_follow_source_boundaries()
     {
@@ -265,6 +770,93 @@ final class MarkdownRendererTest extends WP_UnitTestCase
         $this->assertStringContainsString('<a href="https://example.test">Example</a>', $html);
         $this->assertStringContainsString('<table>', $html);
         $this->assertStringContainsString('<code', $html);
+    }
+
+    public function test_renders_explicit_image_scale_markers_without_losing_image_fields()
+    {
+        foreach ( array( 25, 33, 50, 67, 100, 150, 200 ) as $width ) {
+            $html = MarkdownRenderer::render(
+                '![Alt text](https://example.test/image.png "Image title {width=' . $width . '%}")'
+            );
+
+            $document = new DOMDocument( '1.0', 'UTF-8' );
+            $previous_libxml_state = libxml_use_internal_errors( true );
+            try {
+                $loaded = $document->loadHTML(
+                    '<?xml encoding="UTF-8"><div id="preview-root">' . $html . '</div>',
+                    LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+                );
+            } finally {
+                libxml_clear_errors();
+                libxml_use_internal_errors( $previous_libxml_state );
+            }
+
+            $this->assertTrue( $loaded );
+            $image = $document->getElementsByTagName( 'img' )->item( 0 );
+            $this->assertInstanceOf( DOMElement::class, $image );
+            $this->assertSame( 'Alt text', $image->getAttribute( 'alt' ) );
+            $this->assertSame( 'Image title', $image->getAttribute( 'title' ) );
+            $this->assertSame( 'https://example.test/image.png', $image->getAttribute( 'src' ) );
+            $this->assertSame( $width . '%', $image->getAttribute( 'width' ) );
+            $this->assertSame( (string) $width, $image->getAttribute( 'data-easymde-image-scale' ) );
+        }
+    }
+
+    public function test_standard_image_without_scale_remains_unscaled()
+    {
+        $html = MarkdownRenderer::render(
+            '![Alt text](https://example.test/image.png "Image title")'
+        );
+
+        $this->assertStringContainsString( 'alt="Alt text"', $html );
+        $this->assertStringContainsString( 'title="Image title"', $html );
+        $this->assertStringNotContainsString( 'width="', $html );
+        $this->assertStringNotContainsString( 'data-easymde-image-scale', $html );
+    }
+
+    public function test_angle_image_destination_does_not_gain_a_backslash_escape()
+    {
+        $html = MarkdownRenderer::render(
+            '![Alt text](<https://example.test/a b.png>)'
+        );
+
+        $this->assertStringNotContainsString( '%5C%20', $html );
+        $this->assertStringNotContainsString( '\\%20', $html );
+        $this->assertStringContainsString( 'a%20b.png', $html );
+    }
+
+    public function test_angle_image_destination_preserves_a_right_parenthesis()
+    {
+        $html = MarkdownRenderer::render(
+            '![Alt text](<https://example.test/a)b.png>)'
+        );
+
+        $this->assertStringContainsString( 'https://example.test/a)b.png', $html );
+        $this->assertStringNotContainsString( 'src="https://example.test/a"', $html );
+    }
+
+    public function test_image_scale_markers_in_code_are_literal_and_invalid_markers_fail_fast()
+    {
+        $html = MarkdownRenderer::render(
+            "```markdown\n![Alt](https://example.test/image.png \"{width=50%}\")\n```"
+        );
+        $this->assertStringContainsString( '{width=50%}', $html );
+        $this->assertStringNotContainsString( 'width="50%"', $html );
+
+        $this->expectException( RuntimeException::class );
+        $this->expectExceptionMessage( 'easymde_image_scale_syntax_invalid' );
+        MarkdownRenderer::render( '![Alt](https://example.test/image.png "{width=51%}")' );
+    }
+
+    public function test_preview_preserves_image_scale_contract()
+    {
+        $preview = MarkdownRenderer::render_preview(
+            '![Alt text](https://example.test/image.png "Image title {width=150%}")'
+        );
+
+        $this->assertStringContainsString( 'alt="Alt text"', $preview['html'] );
+        $this->assertStringContainsString( 'title="Image title"', $preview['html'] );
+        $this->assertStringContainsString( 'width="150%"', $preview['html'] );
     }
 
     public function test_default_renderer_supports_built_in_markdown_features_without_settings()

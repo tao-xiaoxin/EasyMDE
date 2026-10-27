@@ -1322,6 +1322,281 @@ body:has(.easymde-editor.is-immersive) .wrap {
     .easymde-immersive-custom-css-actions { width: 100%; gap: 8px; }
     .easymde-immersive-custom-css-actions button { min-width: 0; flex: 1; padding: 0 8px; font-size: 14px; }
 }
+
+/* Editor Context Menu: the one ordinary/immersive menu owner. */
+.easymde-editor-context-menu__viewport {
+    --easymde-context-menu-background: #fff;
+    --easymde-context-menu-border: #dfe4ea;
+    --easymde-context-menu-focus: #2271b1;
+    --easymde-context-menu-foreground: #1d2327;
+    --easymde-context-menu-muted: #646970;
+    --easymde-context-menu-pointer-size: 14px;
+    position: fixed;
+    z-index: 100250;
+    inset: 0;
+    overflow: visible;
+    pointer-events: none;
+}
+
+.easymde-editor-context-menu {
+    box-sizing: border-box;
+    background: transparent;
+    border: 1px solid #dfe4ea;
+    border-radius: 8px;
+    color: var(--easymde-context-menu-foreground);
+    -webkit-backdrop-filter: blur(18px) saturate(150%);
+    backdrop-filter: blur(18px) saturate(150%);
+    font-family: "EasyMDE Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    isolation: isolate;
+    max-block-size: calc(100vh - 16px);
+    max-inline-size: min(324px, calc(100vw - 16px));
+    min-inline-size: min(198px, calc(100vw - 16px));
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 5px;
+    position: fixed;
+    z-index: 1;
+    pointer-events: auto;
+}
+
+.easymde-editor-context-menu::before {
+    position: absolute;
+    z-index: -1;
+    border: 0;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, .92);
+    box-shadow: 0 14px 32px rgba(15, 23, 42, .18), inset 0 1px 0 rgba(255, 255, 255, .85);
+    content: "";
+    inset: 0;
+    pointer-events: none;
+}
+
+.easymde-editor-context-menu__layer {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-inline-size: 0;
+    overflow: visible;
+    position: relative;
+}
+
+.easymde-editor-context-menu__item { position: relative; }
+
+.easymde-editor-context-menu__button {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    box-sizing: border-box;
+    color: inherit;
+    cursor: pointer;
+    display: flex;
+    font: inherit;
+    gap: 14.4px;
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.35;
+    letter-spacing: 0;
+    justify-content: space-between;
+    min-block-size: 32px;
+    padding: 6px 10px;
+    text-align: start;
+    white-space: normal;
+    width: 100%;
+}
+
+.easymde-editor-context-menu__button:hover:not(:disabled),
+.easymde-editor-context-menu__button:focus-visible:not(:disabled),
+.easymde-editor-context-menu__item.is-expanded > .easymde-editor-context-menu__button:not(:disabled) {
+    background: #f0f6fc;
+    outline: none;
+}
+
+.easymde-editor-context-menu__button:focus-visible:not(:disabled) {
+    box-shadow: inset 0 0 0 2px var(--easymde-context-menu-focus);
+}
+
+/* Pointer selection is independent from keyboard focus. The frame follows
+ * the item under the pointer while a focused-but-not-hovered item does not
+ * leave a stale blue outline behind it. */
+.easymde-editor-context-menu__button.is-hovered:not(:disabled) {
+    box-shadow: inset 0 0 0 2px var(--easymde-context-menu-focus);
+}
+
+.easymde-editor-context-menu__layer.is-pointer-hovering
+    .easymde-editor-context-menu__button:focus-visible:not(.is-hovered):not(:disabled) {
+    box-shadow: none;
+}
+
+.easymde-editor-context-menu__button:disabled {
+    color: #8c8f94;
+    cursor: default;
+    opacity: 1;
+}
+
+.easymde-editor-context-menu__icon {
+    flex: 0 0 16px;
+    inline-size: 16px;
+    block-size: 16px;
+    color: currentColor;
+}
+
+.easymde-editor-context-menu__label {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+    /* Keep the icon-to-label distance at 10px; the button padding continues
+     * to own the unchanged icon-to-frame spacing. */
+    margin-inline-start: -4.4px;
+    overflow-wrap: anywhere;
+}
+
+.easymde-editor-context-menu__shortcut {
+    color: var(--easymde-context-menu-muted);
+    flex: 0 0 auto;
+    direction: ltr;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 20px;
+    unicode-bidi: isolate;
+    white-space: nowrap;
+}
+
+.easymde-editor-context-menu__chevron {
+    color: var(--easymde-context-menu-muted);
+    flex: 0 0 auto;
+    font-size: 16px;
+    inline-size: 16px;
+    line-height: 1;
+}
+
+.easymde-editor-context-menu__submenu-frame {
+    --easymde-context-menu-join-side: 0%;
+    position: fixed;
+    z-index: 2;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, .92);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .85);
+    -webkit-backdrop-filter: blur(18px) saturate(150%);
+    backdrop-filter: blur(18px) saturate(150%);
+    filter: drop-shadow(0 14px 32px rgba(15, 23, 42, .18));
+}
+
+.easymde-editor-context-menu__submenu-frame[data-easymde-context-menu-placement="left"] {
+    --easymde-context-menu-join-side: 100%;
+}
+
+/* Only the outline is cut at the rotated square's diagonal-length base.
+ * The glass and shadow remain intact, and the outline cannot scroll away. */
+.easymde-editor-context-menu__submenu-frame::after {
+    position: absolute;
+    z-index: 3;
+    box-sizing: border-box;
+    inset: 0;
+    border: 1px solid #dfe4ea;
+    border-radius: inherit;
+    content: "";
+    mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
+    mask-size: 100% 100%, 1px calc(var(--easymde-context-menu-pointer-size) * sqrt(2));
+    mask-position: 0 0, var(--easymde-context-menu-join-side) calc(var(--easymde-context-menu-pointer-top) - var(--easymde-context-menu-pointer-size) / sqrt(2));
+    mask-repeat: no-repeat;
+    mask-composite: exclude;
+    pointer-events: none;
+}
+
+.easymde-editor-context-menu__submenu {
+    --easymde-context-menu-background: #fff;
+    --easymde-context-menu-border: #dfe4ea;
+    --easymde-context-menu-focus: #2271b1;
+    --easymde-context-menu-foreground: #1d2327;
+    --easymde-context-menu-muted: #646970;
+    box-sizing: border-box;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: var(--easymde-context-menu-foreground);
+    font-family: "EasyMDE Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    isolation: isolate;
+    max-block-size: calc(100vh - 16px);
+    max-inline-size: min(324px, calc(100vw - 16px));
+    min-inline-size: min(198px, calc(100vw - 16px));
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 5px;
+    /* Inline coordinates still describe the measured menu to its observer;
+     * the non-scrolling frame paints at those same coordinates. */
+    position: static;
+    z-index: 2;
+    pointer-events: auto;
+}
+
+.easymde-editor-context-menu__submenu .easymde-editor-context-menu__button:focus-visible:not(:disabled) {
+    box-shadow: inset 0 0 0 2px var(--easymde-context-menu-focus);
+}
+
+.easymde-editor-context-menu__pointer {
+    position: fixed;
+    z-index: 3;
+    width: var(--easymde-context-menu-pointer-size);
+    height: var(--easymde-context-menu-pointer-size);
+    box-sizing: border-box;
+    transform: translate(-50%, -50%) rotate(45deg);
+    background: rgba(255, 255, 255, .92);
+    filter: drop-shadow(0 3px 5px rgba(15, 23, 42, .2));
+    pointer-events: none;
+}
+
+.easymde-editor-context-menu__pointer[data-easymde-context-menu-pointer-placement="right"] {
+    clip-path: polygon(0 0, 0 100%, 100% 100%);
+    border-left: 1px solid #dfe4ea;
+    border-bottom: 1px solid #dfe4ea;
+    border-radius: 0 0 0 2px;
+}
+
+.easymde-editor-context-menu__pointer[data-easymde-context-menu-pointer-placement="left"] {
+    clip-path: polygon(0 0, 100% 0, 100% 100%);
+    border-top: 1px solid #dfe4ea;
+    border-right: 1px solid #dfe4ea;
+    border-radius: 0 2px 0 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .easymde-editor-context-menu,
+    .easymde-editor-context-menu__submenu { scroll-behavior: auto; }
+}
+
+@media (forced-colors: active) {
+    .easymde-editor-context-menu,
+    .easymde-editor-context-menu__submenu-frame {
+        background: Canvas;
+        box-shadow: none;
+        filter: none;
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+    }
+
+    .easymde-editor-context-menu,
+    .easymde-editor-context-menu__submenu-frame::after { border-color: CanvasText; }
+
+    .easymde-editor-context-menu::before { display: none; }
+
+    .easymde-editor-context-menu__button:focus-visible:not(:disabled) {
+        outline: 2px solid Highlight;
+    }
+}
+@media (prefers-reduced-transparency: reduce) {
+    .easymde-editor-context-menu,
+    .easymde-editor-context-menu__submenu-frame {
+        background: #fff;
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+    }
+
+    .easymde-editor-context-menu::before {
+        background: #fff;
+    }
+}
 .easymde-immersive-font-field { display: flex; align-items: center; gap: 12px; margin-bottom: 11.25px; }
 .easymde-immersive-font-field > span { width: 80px; flex: 0 0 auto; color: #334155; font-size: 13px; font-weight: 600; line-height: 19.5px; }
 .easymde-immersive-font-select { position: relative; min-width: 0; flex: 1; }
@@ -1553,8 +1828,8 @@ body:has(.easymde-editor.is-immersive) .wrap {
     animation: easymde-markdown-inline-applied 120ms ease-out;
 }
 @keyframes easymde-markdown-block-applied {
-    from { opacity: .72; transform: translateY(-1px); }
-    to { opacity: 1; transform: translateY(0); }
+    from { opacity: .72; }
+    to { opacity: 1; }
 }
 @keyframes easymde-markdown-inline-applied {
     from { background-color: rgba(76, 110, 245, .12); }
@@ -2315,6 +2590,13 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-preview img {
     max-width: 100%;
     height: auto;
+}
+.easymde-visual-image-selection-feedback {
+    position: fixed;
+    z-index: 100200;
+    pointer-events: none;
+    border-radius: 3px;
+    box-shadow: 0 0 0 3px rgba(34, 113, 177, .28);
 }
 
 .easymde-preview-empty,

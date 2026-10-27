@@ -54,7 +54,7 @@ A next-generation WordPress Markdown editor built for content creators, with liv
 - ✅ **Split-pane live preview:** the source document and preview pane scroll in sync.
 - ✅ **Professional quick toolbar:** insert images through the toolbar media picker and format bold and other Markdown with one click.
 - ✅ **Typora-inspired keyboard shortcuts:** site-wide Windows/Linux and macOS override settings.
-- ✅ **Immersive editing:** the immersive editor accepts `~~~` or backtick fence shortcuts for quick code-block input.
+- ✅ **Immersive editing:** the immersive editor accepts `~~~` or backtick fence shortcuts for quick code-block input; deletions and Undo/Redo inside a code body resolve that block's own source interval — independent of block order, language, or duplicate bodies — so a terminal Delete never consumes the next block; Source/Preview switches and IME input preserve a proved caret position through Undo/Redo.
 - ✅ **Auto-save:** drafts are saved at the configured interval to reduce the risk of losing work.
 - ✅ **Local draft recovery:** explicitly restore editing drafts from different points in time.
 - ✅ **Common Markdown syntax:** code highlighting, Mermaid diagrams, and KaTeX formulas.

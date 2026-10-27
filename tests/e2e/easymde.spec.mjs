@@ -1136,6 +1136,7 @@ async function readCodeFrameGeometry(surface) {
         ),
         height: preBox.height,
         paddingTop: preStyle.paddingTop,
+        transform: preStyle.transform,
         width: preBox.width
       },
       pseudo: {
@@ -1151,6 +1152,7 @@ function expectCodeFrameContract(geometry, message) {
   expect(geometry.frameCss.ready, `${message}: code frame CSS is ready`).toBe(true);
   expect(geometry.pre.display, `${message}: PRE display`).toBe('block');
   expect(geometry.pre.paddingTop, `${message}: PRE padding top`).toBe('34px');
+  expect(geometry.pre.transform, `${message}: feedback preserves measurable normal-flow geometry`).toBe('none');
   expect(
     Math.abs(geometry.pre.height - 89.796875),
     `${message}: framed PRE height`
@@ -1229,6 +1231,7 @@ async function installCodeFrameEvidence(surface, key) {
           ),
           height: preBox.height,
           paddingTop: preStyle.paddingTop,
+          transform: preStyle.transform,
           width: preBox.width
         },
         pseudo: {
@@ -1302,6 +1305,53 @@ function syntheticWindowedMarkdown() {
     { length: 220 },
     (_, index) => `Windowed paragraph ${index + 1}.`
   ).join('\n\n')}\n\n`;
+}
+
+async function scrollWindowedBlockIntoView(canvas, targetIndex) {
+  const attempts = [];
+  await expect.poll(async () => {
+    const state = await canvas.evaluate((element, index) => {
+      const target = element.querySelector(`[data-easymde-visual-block-id="b${index}"]`);
+      if (target) return { mounted: true, scrollTop: element.scrollTop };
+      const spacer = Array.from(element.querySelectorAll(
+        '[data-easymde-preview-window-spacer]'
+      )).find((candidate) => {
+        const start = Number(candidate.getAttribute('data-easymde-preview-window-start'));
+        const end = Number(candidate.getAttribute('data-easymde-preview-window-end'));
+        return start <= index && index < end;
+      });
+      if (!spacer) throw new Error('windowed-target-block-not-represented');
+      const start = Number(spacer.getAttribute('data-easymde-preview-window-start'));
+      const end = Number(spacer.getAttribute('data-easymde-preview-window-end'));
+      const rect = spacer.getBoundingClientRect();
+      if (!(end > start) || !(rect.height > 0)) {
+        throw new Error('windowed-target-spacer-geometry-unavailable');
+      }
+      // The spacer is measured normal-flow geometry for [start, end), not
+      // one block. Seek inside it at the target's relative position; a later
+      // window may narrow the omitted range and refine this estimate.
+      const fraction = (index - start + 0.5) / (end - start);
+      const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+      const targetScrollTop = Math.max(0, Math.min(
+        maxScrollTop,
+        element.scrollTop + rect.top - element.getBoundingClientRect().top
+          + rect.height * fraction - element.clientHeight / 2
+      ));
+      element.scrollTop = targetScrollTop;
+      element.dispatchEvent(new Event('scroll'));
+      return {
+        mounted: false,
+        range: { end, height: rect.height, start },
+        scrollTop: element.scrollTop,
+        targetFraction: fraction,
+        targetScrollTop
+      };
+    }, targetIndex);
+    attempts.push(state);
+    return state.mounted;
+  }, { message: `Windowed block b${targetIndex} should mount at its measured range position`, timeout: 30_000 }).toBe(true);
+  await canvas.locator(`[data-easymde-visual-block-id="b${targetIndex}"]`).scrollIntoViewIfNeeded();
+  return { attempts, targetIndex };
 }
 
 function syntheticLargeMarkdown({
@@ -7966,6 +8016,7 @@ test.describe('EasyMDE editor workflows', () => {
         const markdownTheme = await page.evaluate(
           () => window.EasyMDEEditorRootBootstrap.appearance.state.markdownTheme
         );
+        const previousSignature = await readyPreviewSignature(visualEditor);
 
         await selectVisualText(visualEditor, 'Alpha');
         const commandButton = page.locator(
@@ -7973,6 +8024,14 @@ test.describe('EasyMDE editor workflows', () => {
         );
         await expect(commandButton).toBeVisible();
         await commandButton.click();
+        await waitForPreviewRefresh(
+          visualEditor,
+          previousSignature,
+          `${commandId}/${operation} should accept its formal toolbar Preview`
+        );
+        await expect(visualEditor).toHaveAttribute('data-easymde-preview-accepted', '1');
+        const commandSignature = await readyPreviewSignature(visualEditor);
+        expect(commandSignature).not.toBe(previousSignature);
         await expectUnlockedVisualArticle(visualEditor);
         const commandValue = 'inlinecode' === commandId
           ? '`Alpha`'
@@ -7984,6 +8043,10 @@ test.describe('EasyMDE editor workflows', () => {
         } else {
           await expect(visualEditor.locator('pre > code.hljs')).toHaveText('Alpha');
         }
+        expect(await visualEditor.evaluate((surface) => {
+          const selection = surface.ownerDocument.defaultView?.getSelection();
+          return { collapsed: selection?.isCollapsed, text: selection?.toString() };
+        })).toEqual({ collapsed: false, text: 'Alpha' });
 
         const expectedValue = 'inlinecode' === commandId
           ? ('type' === operation ? '`X`' : '')
@@ -7998,13 +8061,70 @@ test.describe('EasyMDE editor workflows', () => {
           { message: `${commandId}/${operation} should update the canonical bridge` }
         ).toBe(expectedValue);
         await expectUnlockedVisualArticle(visualEditor);
+        await expect(visualEditor).toHaveAttribute('aria-busy', 'false');
+        await expect(visualEditor).toHaveAttribute('data-easymde-preview-accepted', '1');
+        expect(await readyPreviewSignature(visualEditor)).toBe(commandSignature);
 
         const requestEvidence = await previewRequests.evidence(
           previewRequestBaseline,
           markdownTheme
         );
-        expect(requestEvidence.observed).toHaveLength(0);
+        expect(requestEvidence.invalid).toEqual([]);
+        expect(requestEvidence.failed).toEqual([]);
+        expect(requestEvidence.nonTarget).toEqual([]);
+        expect(requestEvidence.successful).toHaveLength(1);
+        expect(requestEvidence.successful[0].markdownDigest).toBe(
+          createHash('sha256').update(commandValue).digest('hex')
+        );
       }
+    });
+
+    test(`replaces fresh Alpha immediately after the ${commandId} command before formal Preview`, async ({ page }, testInfo) => {
+      const previewRequests = collectPreviewRequestOutcomes(page);
+      await login(page, testInfo.easymdeUser);
+      await openEasyMdeNewPost(page);
+      await fillMarkdownAndWaitForPreview(page, 'Alpha', 'Alpha');
+      await previewRequests.checkpoint();
+      const { source, visualEditor } = await enterImmersivePreviewAndUnlock(page);
+      const previewRequestBaseline = previewRequests.length;
+      const markdownTheme = await page.evaluate(
+        () => window.EasyMDEEditorRootBootstrap.appearance.state.markdownTheme
+      );
+      const commandValue = 'inlinecode' === commandId ? '`Alpha`' : '```\nAlpha\n```';
+      let releaseToolbarPreview;
+      const toolbarPreviewGate = new Promise((resolve) => { releaseToolbarPreview = resolve; });
+      const holdToolbarPreview = async (route) => {
+        if (route.request().postDataJSON()?.markdown === commandValue) await toolbarPreviewGate;
+        await route.continue();
+      };
+      await page.route('**/wp-json/easymde/v1/preview', holdToolbarPreview);
+      try {
+        await selectVisualText(visualEditor, 'Alpha');
+        await page.locator(
+          `.easymde-immersive-formatting [data-easymde-command="${commandId}"]`
+        ).click();
+        // No readiness, source, DOM, or selection probe between command and input.
+        await page.keyboard.type('X');
+      } finally {
+        releaseToolbarPreview();
+        await page.unroute('**/wp-json/easymde/v1/preview', holdToolbarPreview);
+      }
+      const expectedValue = 'inlinecode' === commandId ? '`X`' : '```\nX\n```';
+      await expect(source).toHaveValue(expectedValue);
+      await expect(visualEditor).toHaveAttribute('aria-busy', 'false');
+      await expect(visualEditor).toHaveAttribute('data-easymde-preview-accepted', '1');
+      await expectUnlockedVisualArticle(visualEditor);
+      await expect(visualEditor.locator('inlinecode' === commandId ? 'p > code' : 'pre > code'))
+        .toHaveText('X');
+      const requestEvidence = await previewRequests.evidence(previewRequestBaseline, markdownTheme);
+      expect(requestEvidence.invalid).toEqual([]);
+      expect(requestEvidence.failed).toEqual([]);
+      expect(requestEvidence.nonTarget).toEqual([]);
+      const currentDigest = createHash('sha256').update(expectedValue).digest('hex');
+      expect(requestEvidence.successful.filter(({ markdownDigest }) => markdownDigest === currentDigest))
+        .toHaveLength(1);
+      const payloads = requestEvidence.successful.map(({ payloadDigest }) => payloadDigest);
+      expect(new Set(payloads).size).toBe(payloads.length);
     });
   }
 
@@ -8139,6 +8259,21 @@ test.describe('EasyMDE editor workflows', () => {
           { message: `${fixture.id} should accept immediate code input` }
         ).toBe(true);
         inputAccepted = true;
+        const bodyState = await readCodeBodyState(visualEditor);
+        expect(bodyState.active).toBe(true);
+        expect(bodyState.selection).toMatchObject({
+          anchorInsideCode: true,
+          codeOffset: 'Alpha'.length,
+          collapsed: true
+        });
+        if (fixture.windowed) {
+          const mountedCount = await visualEditor.locator('[data-easymde-visual-block-id]').count();
+          expect(mountedCount).toBeGreaterThan(0);
+          expect(mountedCount).toBeLessThanOrEqual(160);
+          await expect(visualEditor.locator('[data-easymde-preview-window-spacer]').first()).toBeAttached();
+        }
+        expect(failureCodes).toEqual([]);
+        expect(pageErrors).toEqual([]);
         const requestEvidence = await previewRequests.evidence(
           previewRequestBaseline,
           markdownTheme
@@ -9031,45 +9166,7 @@ test.describe('EasyMDE editor workflows', () => {
         false
       );
 
-      const targetScrollEvidence = await canvas.evaluate((element, targetIndex) => {
-        if (!(element instanceof HTMLElement)) {
-          throw new Error('windowed-eof-canvas-unavailable');
-        }
-        const alreadyMounted = element.querySelector(
-          `[data-easymde-visual-block-id="b${targetIndex}"]`
-        );
-        const omittedRange = Array.from(element.querySelectorAll(
-          '[data-easymde-preview-window-spacer]'
-        )).find((candidate) => {
-          const start = Number(candidate.getAttribute('data-easymde-preview-window-start'));
-          const end = Number(candidate.getAttribute('data-easymde-preview-window-end'));
-          return start <= targetIndex && targetIndex < end;
-        });
-        if (!alreadyMounted && !omittedRange) {
-          throw new Error('windowed-eof-code-block-not-represented');
-        }
-        const canvasRect = element.getBoundingClientRect();
-        const rangeRect = omittedRange?.getBoundingClientRect() ?? null;
-        const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
-        const targetScrollTop = alreadyMounted
-          ? element.scrollTop
-          : Math.min(
-              maxScrollTop,
-              element.scrollTop + (rangeRect?.top ?? canvasRect.top) - canvasRect.top + 1
-            );
-        element.scrollTop = targetScrollTop;
-        element.dispatchEvent(new Event('scroll'));
-        return {
-          alreadyMounted: Boolean(alreadyMounted),
-          maxScrollTop,
-          range: omittedRange ? {
-            end: Number(omittedRange.getAttribute('data-easymde-preview-window-end')),
-            start: Number(omittedRange.getAttribute('data-easymde-preview-window-start'))
-          } : null,
-          scrollTop: element.scrollTop,
-          targetScrollTop
-        };
-      }, 220);
+      const targetScrollEvidence = await scrollWindowedBlockIntoView(canvas, 220);
       await testInfo.attach(`windowed-eof-${label}-scroll-target`, {
         body: JSON.stringify(targetScrollEvidence),
         contentType: 'application/json'
@@ -13644,26 +13741,7 @@ test.describe('EasyMDE editor workflows', () => {
     const block = editor.visualEditor.locator(
       '[data-easymde-visual-block-id="b160"]'
     );
-    await canvas.evaluate((element, index) => {
-      const spacer = Array.from(element.querySelectorAll(
-        '[data-easymde-preview-window-spacer]'
-      )).find((candidate) => {
-        const start = Number(candidate.getAttribute('data-easymde-preview-window-start'));
-        const end = Number(candidate.getAttribute('data-easymde-preview-window-end'));
-        return start <= index && index < end;
-      });
-      const target = element.querySelector(`[data-easymde-visual-block-id="b${index}"]`);
-      if (!spacer && !target) throw new Error('windowed-repeated-delete-target-unavailable');
-      if (!spacer) return;
-      const canvasTop = element.getBoundingClientRect().top;
-      const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
-      const targetScrollTop = Math.min(
-        maxScrollTop,
-        element.scrollTop + spacer.getBoundingClientRect().top - canvasTop + 1
-      );
-      element.scrollTop = targetScrollTop;
-      element.dispatchEvent(new Event('scroll'));
-    }, 160);
+    await scrollWindowedBlockIntoView(canvas, 160);
     await expect(block).toBeAttached({ timeout: 30_000 });
     await expect(block).toBeVisible({ timeout: 30_000 });
 
@@ -13950,50 +14028,7 @@ test.describe('EasyMDE editor workflows', () => {
     );
     let currentPreviewSignature = acceptedPreviewSignature;
     await expect(spacer.first()).toBeAttached({ timeout: 30_000 });
-    const scrollEvidence = await canvas.evaluate((element, targetIndex) => {
-      if (!(element instanceof HTMLElement)) {
-        throw new Error('windowed-code-canvas-unavailable');
-      }
-      const alreadyMounted = element.querySelector(
-        `[data-easymde-visual-block-id="b${targetIndex}"]`
-      );
-      const omittedRange = Array.from(element.querySelectorAll(
-        '[data-easymde-preview-window-spacer]'
-      )).find((candidate) => {
-        const start = Number(candidate.getAttribute('data-easymde-preview-window-start'));
-        const end = Number(candidate.getAttribute('data-easymde-preview-window-end'));
-        return start <= targetIndex && targetIndex < end;
-      });
-      if (!alreadyMounted && !omittedRange) {
-        throw new Error('windowed-target-block-not-represented');
-      }
-      const canvasRect = element.getBoundingClientRect();
-      const rangeRect = omittedRange?.getBoundingClientRect() ?? null;
-      const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
-      const targetScrollTop = alreadyMounted
-        ? element.scrollTop
-        : Math.min(
-            maxScrollTop,
-            element.scrollTop + (rangeRect?.top ?? canvasRect.top) - canvasRect.top + 1
-          );
-      element.scrollTop = targetScrollTop;
-      element.dispatchEvent(new Event('scroll'));
-      return {
-        alreadyMounted: Boolean(alreadyMounted),
-        maxScrollTop,
-        mountedIds: Array.from(element.querySelectorAll('[data-easymde-visual-block-id]'))
-          .map((node) => node.getAttribute('data-easymde-visual-block-id')),
-        range: omittedRange ? {
-          end: omittedRange.getAttribute('data-easymde-preview-window-end'),
-          height: omittedRange.getBoundingClientRect().height,
-          start: omittedRange.getAttribute('data-easymde-preview-window-start'),
-          top: rangeRect?.top ?? null
-        } : null,
-        scrollTop: element.scrollTop,
-        targetFraction: 0 === maxScrollTop ? 0 : targetScrollTop / maxScrollTop,
-        targetScrollTop
-      };
-    }, 160);
+    const scrollEvidence = await scrollWindowedBlockIntoView(canvas, 160);
     await testInfo.attach('windowed-b160-scroll-state', {
       body: JSON.stringify(scrollEvidence),
       contentType: 'application/json'
@@ -15383,45 +15418,7 @@ test.describe('EasyMDE editor workflows', () => {
     const canvas = page.locator('.easymde-immersive-preview-canvas');
     const block = surface.locator('[data-easymde-visual-block-id="b159"]');
     const paragraph = surface.locator('[data-easymde-visual-block-id="b159"]');
-    const spacerRangeEvidence = await canvas.evaluate((element, targetIndex) => {
-      if (!(element instanceof HTMLElement)) {
-        throw new Error('windowed-paragraph-canvas-unavailable');
-      }
-      const alreadyMounted = element.querySelector(
-        `[data-easymde-visual-block-id="b${targetIndex}"]`
-      );
-      const omittedRange = Array.from(element.querySelectorAll(
-        '[data-easymde-preview-window-spacer]'
-      )).find((candidate) => {
-        const start = Number(candidate.getAttribute('data-easymde-preview-window-start'));
-        const end = Number(candidate.getAttribute('data-easymde-preview-window-end'));
-        return start <= targetIndex && targetIndex < end;
-      });
-      if (!alreadyMounted && !omittedRange) {
-        throw new Error('windowed-paragraph-block-not-represented');
-      }
-      const canvasRect = element.getBoundingClientRect();
-      const rangeRect = omittedRange?.getBoundingClientRect() ?? null;
-      const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
-      const targetScrollTop = alreadyMounted
-        ? element.scrollTop
-        : Math.min(
-            maxScrollTop,
-            element.scrollTop + (rangeRect?.top ?? canvasRect.top) - canvasRect.top + 1
-          );
-      element.scrollTop = targetScrollTop;
-      element.dispatchEvent(new Event('scroll'));
-      return {
-        alreadyMounted: Boolean(alreadyMounted),
-        maxScrollTop,
-        range: omittedRange ? {
-          end: Number(omittedRange.getAttribute('data-easymde-preview-window-end')),
-          start: Number(omittedRange.getAttribute('data-easymde-preview-window-start'))
-        } : null,
-        scrollTop: element.scrollTop,
-        targetScrollTop
-      };
-    }, 159);
+    const spacerRangeEvidence = await scrollWindowedBlockIntoView(canvas, 159);
     await testInfo.attach('windowed-b159-scroll-target', {
       body: JSON.stringify(spacerRangeEvidence),
       contentType: 'application/json'

@@ -22,11 +22,13 @@ import {
   compareFrontendBootstrapProductionBuilds,
   compareFrontendEnhancementsProductionBuilds,
   compareFrontendMermaidProductionBuilds,
+  compareEditorBlockIndexWorkerProductionBuilds,
   compareMediaPickerProductionBuilds,
   compareSettingsProductionBuilds,
   validateFrontendBootstrapProductionBuild,
   validateFrontendEnhancementsProductionBuild,
   validateFrontendMermaidProductionBuild,
+  validateEditorBlockIndexWorkerProductionBuild,
   validateMediaPickerProductionBuild,
   validateSettingsProductionBuild,
   validateCodeCopyProductionBuild,
@@ -56,6 +58,9 @@ const committedMermaidOutputRoot = join(repoRoot, 'assets/build/frontend-mermaid
 const mediaPickerOutputRoot = join(repoRoot, '.cache/easymde-media-picker-production-check');
 const committedMediaPickerOutputRoot = join(repoRoot, 'assets/build/media-picker');
 const mediaPickerSourceEntry = 'frontend/src/entrypoints/media-picker-bridge.ts';
+const editorBlockIndexWorkerOutputRoot = join(repoRoot, '.cache/easymde-editor-block-index-worker-production-check');
+const committedEditorBlockIndexWorkerOutputRoot = join(repoRoot, 'assets/build/editor-block-index-worker');
+const editorBlockIndexWorkerSourceEntry = 'frontend/src/entrypoints/editor-block-index-worker.ts';
 let buildResult;
 
 function readJson(path) {
@@ -75,11 +80,11 @@ test('root package exposes the production frontend build and includes it in the 
 
   assert.equal(
     packageJson.scripts['build:frontend'],
-    'vite build --config frontend/vite.production.config.ts && vite build --config frontend/vite.admin-editor-loader.config.ts && vite build --config frontend/vite.code-copy.config.ts && vite build --config frontend/vite.enhancements.config.ts && vite build --config frontend/vite.bootstrap.config.ts && vite build --config frontend/vite.mermaid.config.ts && vite build --config frontend/vite.settings.config.ts && vite build --config frontend/vite.media-picker.config.ts && node scripts/verify-frontend-build.mjs --production'
+    'vite build --config frontend/vite.production.config.ts && vite build --config frontend/vite.admin-editor-loader.config.ts && vite build --config frontend/vite.code-copy.config.ts && vite build --config frontend/vite.enhancements.config.ts && vite build --config frontend/vite.bootstrap.config.ts && vite build --config frontend/vite.mermaid.config.ts && vite build --config frontend/vite.settings.config.ts && vite build --config frontend/vite.media-picker.config.ts && vite build --config frontend/vite.editor-block-index-worker.config.ts && node scripts/verify-frontend-build.mjs --production'
   );
   assert.equal(
     packageJson.scripts['check:frontend-production'],
-    'vite build --mode easymde-check --config frontend/vite.production.config.ts && vite build --mode easymde-check --config frontend/vite.admin-editor-loader.config.ts && vite build --mode easymde-check --config frontend/vite.code-copy.config.ts && vite build --mode easymde-check --config frontend/vite.enhancements.config.ts && vite build --mode easymde-check --config frontend/vite.bootstrap.config.ts && vite build --mode easymde-check --config frontend/vite.mermaid.config.ts && vite build --mode easymde-check --config frontend/vite.settings.config.ts && vite build --mode easymde-check --config frontend/vite.media-picker.config.ts && node scripts/verify-frontend-build.mjs --production-check'
+    'vite build --mode easymde-check --config frontend/vite.production.config.ts && vite build --mode easymde-check --config frontend/vite.admin-editor-loader.config.ts && vite build --mode easymde-check --config frontend/vite.code-copy.config.ts && vite build --mode easymde-check --config frontend/vite.enhancements.config.ts && vite build --mode easymde-check --config frontend/vite.bootstrap.config.ts && vite build --mode easymde-check --config frontend/vite.mermaid.config.ts && vite build --mode easymde-check --config frontend/vite.settings.config.ts && vite build --mode easymde-check --config frontend/vite.media-picker.config.ts && vite build --mode easymde-check --config frontend/vite.editor-block-index-worker.config.ts && node scripts/verify-frontend-build.mjs --production-check'
   );
   assert.equal(
     packageJson.scripts['frontend:check'],
@@ -167,6 +172,31 @@ test('production build emits an independent WordPress media picker bridge entry'
   validateMediaPickerProductionBuild(mediaPickerOutputRoot);
 });
 
+test('production build emits one local non-React editor block-index worker entry', () => {
+  assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+  assert.equal(existsSync(editorBlockIndexWorkerOutputRoot), true);
+
+  const viteManifest = readJson(join(editorBlockIndexWorkerOutputRoot, 'manifest.json'));
+  const wordpressManifest = readJson(join(editorBlockIndexWorkerOutputRoot, 'wordpress-manifest.json'));
+  const viteEntry = viteManifest[editorBlockIndexWorkerSourceEntry];
+  const wordpressEntry = wordpressManifest.entries[editorBlockIndexWorkerSourceEntry];
+
+  assert.equal(wordpressManifest.schemaVersion, 1);
+  assert.equal(viteEntry.isEntry, true);
+  assert.match(viteEntry.file, /^assets\/editor-block-index-worker-[a-zA-Z0-9_-]+\.js$/);
+  assert.equal(wordpressEntry.handle, 'easymde-editor-block-index-worker');
+  assert.equal(wordpressEntry.file, viteEntry.file);
+  assert.equal(wordpressEntry.asset, viteEntry.file.replace(/\.js$/, '.asset.php'));
+  assert.deepEqual(wordpressEntry.dependencies, []);
+  assert.deepEqual(wordpressEntry.resources, []);
+
+  const script = readFileSync(join(editorBlockIndexWorkerOutputRoot, viteEntry.file), 'utf8');
+  assert.match(script, /createEditorMarkdownBlockIndex|editor-block-index/);
+  assert.doesNotMatch(script, /wp\.element|react(?:-dom)?/i);
+  assert.doesNotMatch(script, /frontend\/src|sourceMappingURL=/);
+  validateEditorBlockIndexWorkerProductionBuild(editorBlockIndexWorkerOutputRoot);
+});
+
 test('production build emits one self-contained WordPress editor React entry', () => {
   assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
   assert.equal(existsSync(outputRoot), true);
@@ -202,6 +232,7 @@ test('production build emits one self-contained WordPress editor React entry', (
   assert.doesNotMatch(script, /EasyMDEReactToolbar|EasyMDEReactDocumentSource/);
   assert.match(script, /cm-editor/);
   assert.doesNotMatch(script, /__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED/);
+  assert.doesNotMatch(script, /\bresolveEditorBlockIndexWorkerUrl\b/);
   assert.doesNotMatch(
     script.replaceAll('http://www.w3.org/2000/svg', ''),
     /localhost|127\.0\.0\.1|https?:\/\/[A-Za-z0-9]/i
@@ -362,6 +393,7 @@ test('enhancement and bootstrap comparisons reject stale committed artifacts', (
   compareFrontendBootstrapProductionBuilds(bootstrapOutputRoot, committedBootstrapOutputRoot);
   compareFrontendMermaidProductionBuilds(mermaidOutputRoot, committedMermaidOutputRoot);
   compareMediaPickerProductionBuilds(mediaPickerOutputRoot, committedMediaPickerOutputRoot);
+  compareEditorBlockIndexWorkerProductionBuilds(editorBlockIndexWorkerOutputRoot, committedEditorBlockIndexWorkerOutputRoot);
   compareSettingsProductionBuilds(settingsOutputRoot, committedSettingsOutputRoot);
 });
 

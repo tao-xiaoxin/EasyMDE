@@ -1,7 +1,7 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 
 import { wordpressClassicMetadata } from "./wordpress-classic-metadata";
 
@@ -20,6 +20,18 @@ const wordpressExternals = {
 	"react-dom/client": "wp.element",
 } as const;
 
+function encodeLiteralTabOnlyLines(): Plugin {
+	return {
+		name: "easymde-encode-literal-tab-only-lines",
+		generateBundle(_options, bundle) {
+			for (const output of Object.values(bundle)) {
+				if ("chunk" !== output.type) continue;
+				output.code = output.code.replace(/\n\t\n/gu, "\n\\t\n");
+			}
+		},
+	};
+}
+
 export default defineConfig(({ mode }) => {
 	const outputRoot =
 		"easymde-check" === mode ? checkOutputRoot : committedOutputRoot;
@@ -27,6 +39,7 @@ export default defineConfig(({ mode }) => {
 	return {
 		base: "./",
 		plugins: [
+			encodeLiteralTabOnlyLines(),
 			wordpressClassicMetadata({
 				repositoryRoot,
 				sourceEntry,

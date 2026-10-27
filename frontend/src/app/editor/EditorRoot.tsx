@@ -16,7 +16,8 @@ import type { DocumentSourceBootstrap } from '../../contracts/bootstrap/document
 import type {
   EditorRootLocalDraftsBootstrap,
   EditorRootPreviewBootstrap,
-  EditorRootSettingsBootstrap
+  EditorRootSettingsBootstrap,
+  EditorContextMenuBootstrapStrings
 } from '../../contracts/bootstrap/editor-root-bootstrap';
 import type {
   AppearanceBootstrap,
@@ -55,10 +56,12 @@ import type {
 } from '../../contracts/ports/native-publish-port';
 import type {
   MediaPickerDocumentPort,
+  MediaPickerDocumentSnapshot,
   MediaPickerFramePort
 } from '../../contracts/ports/media-picker-port';
 import type {
   PreviewEditMap,
+  PreviewCodeProjectionEntry,
   PreviewRequest,
   PreviewRequestPort,
   SafePreviewHtml
@@ -66,6 +69,16 @@ import type {
 import type { RevisionPort } from '../../contracts/ports/revision-port';
 import type { ScrollSyncPort } from '../../contracts/ports/scroll-sync-port';
 import type { ToolbarShortcutsPort } from '../../contracts/ports/toolbar-shortcuts-port';
+import type { EditorClipboardPort } from '../../contracts/ports/editor-clipboard-port';
+import type {
+  EditorImagePixelsLease,
+  EditorImagePixelsPort
+} from '../../contracts/ports/editor-image-pixels-port';
+import type {
+  EditorMarkdownBlockIndexData,
+  EditorMarkdownImageIndexData,
+  EditorMarkdownBlockIndexPort
+} from '../../contracts/ports/editor-block-index-port';
 import type {
   WechatClipboardCopyOptions,
   WechatClipboardPort
@@ -73,7 +86,10 @@ import type {
 import type { WechatVisualRasterizationPort } from '../../contracts/ports/wechat-visual-rasterization-port';
 import { buildFontStack } from '../../domain/font-stack';
 import { formatKeyboardShortcut } from '../../shared/keyboard/keyboard-shortcut';
-import { isMarkdownTerminalWhitespaceSuffix } from '../../shared/markdown/markdown-line-model';
+import {
+  isMarkdownTerminalWhitespaceSuffix,
+  markdownLineStarts
+} from '../../shared/markdown/markdown-line-model';
 import {
   AppearanceControls,
   type AppearanceNotification,
@@ -106,10 +122,14 @@ import {
 import type { PreviewScrollPort } from '../../features/live-preview/ports/preview-scroll-port';
 import {
   PreviewSurfaceOwner,
+  type PreviewAcceptedWindowSnapshot,
+  type PreviewImageTargetLease,
+  type PreviewImageTargetPinLease,
   type PreviewSurfaceRuntime,
   type PreviewSourceSelection,
   type PreviewSurfaceStatus
 } from '../../features/live-preview/ui/PreviewSurfaceOwner';
+import { PreviewWindowDomError } from '../../features/live-preview/ui/preview-window-dom';
 import { openMediaPickerSession } from '../../features/media-picker/media-picker-session';
 import { WordPressMediaPickerDialog } from '../../features/media-picker/ui/WordPressMediaPickerDialog';
 import {
@@ -117,7 +137,36 @@ import {
   type LocalDraftSession,
   type LocalDraftSessionStatus
 } from '../../features/local-drafts/local-draft-session';
-import { createToolbarCommandSession } from '../../features/toolbar/toolbar-command-session';
+import {
+  createToolbarCommandSession,
+  type ToolbarCommandPlan
+} from '../../features/toolbar/toolbar-command-session';
+import {
+  EditorContextMenuFeature,
+  type EditorContextMenuActionContext,
+  type EditorContextMenuGeneratedContext,
+  type EditorContextMenuSurface,
+  type EditorContextMenuSurfaceSnapshot
+} from '../../features/editor-context-menu/EditorContextMenuFeature';
+import { EditorTableDialog } from '../../features/editor-context-menu/ui/EditorTableDialog';
+import {
+  isEditorContextCurrent,
+  findMarkdownBlock,
+  insertMarkdownBlockRelative,
+  type EditorContextSnapshot
+} from '../../features/editor-context-menu/editor-context-menu-rules';
+import {
+  blockRangeWithTrailingTerminator,
+  editorContextSelectionFitsRange,
+  type EditorTextEdit
+} from '../../features/editor-context-menu/editor-context-menu-text-edit';
+import {
+  createEditorContextMenuActionCoordinator,
+  type EditorContextMenuActionCapabilities,
+  type EditorContextMenuActionCoordinator
+} from '../../features/editor-context-menu/editor-context-menu-action-coordinator';
+import type { MarkdownImageScaleMatch } from '../../features/image-scale/image-scale-contract';
+import { tableMarkdown } from '../../features/immersive-editor/immersive-editor';
 import {
   EditorToolbar,
   type EditorToolbarSession,
@@ -136,9 +185,13 @@ import { DEFAULT_PREVIEW_WINDOW_MAX_MOUNTED } from '../../features/live-preview/
 import {
   ImmersiveVisualEditor,
   type ImmersiveVisualEditorRuntime,
+  type VisualCanonicalChangeRequest,
+  type VisualToolbarCommandResult,
   type VisualPreviewSnapshot
 } from '../../features/immersive-editor/ui/ImmersiveVisualEditor';
-import { WindowedImmersiveVisualEditor } from '../../features/immersive-editor/ui/WindowedImmersiveVisualEditor';
+import {
+  WindowedImmersiveVisualEditor
+} from '../../features/immersive-editor/ui/WindowedImmersiveVisualEditor';
 import type { ImmersiveViewMode } from '../../features/immersive-editor/immersive-editor';
 import { openFeaturedImagePicker } from '../../features/immersive-editor/open-featured-image-picker';
 import {
@@ -146,6 +199,34 @@ import {
   EditorMessageAlert
 } from '../../shared/ui/EditorMessageAlert';
 import type { EditorMessageAlertType } from '../../shared/ui/EditorMessageAlert';
+import {
+  createEditorContextMenuBlockIndexCache,
+  type EditorContextMenuBlockIndexCache
+} from '../../features/editor-context-menu/editor-context-menu-block-index-cache';
+import type {
+  EditorMarkdownBlockIndex
+} from '../../features/editor-context-menu/editor-markdown-block-index';
+import {
+  createEditorCodeContentQuery,
+  editorCodeContentReadinessBlocksMenu,
+  type EditorCodeContentQueryBinding,
+  type EditorCodeContentQuerySession,
+  type EditorCodeContentQueryState
+} from '../../features/editor-context-menu/editor-code-content-query';
+import { canIndentEditorCode } from '../../features/editor-context-menu/editor-code-indentation';
+import {
+  createEditorSourceLinkQuery,
+  type EditorSourceLinkQueryBinding,
+  type EditorSourceLinkQuerySession,
+  type EditorSourceLinkQueryState
+} from '../../features/editor-context-menu/editor-source-link-query';
+import type { SimplifiedFormattingDomParser } from '../../features/editor-context-menu/editor-simplified-formatting';
+import type { GeneratedContentExportSession } from '../../features/generated-content-export/generated-content-export-session';
+import {
+  hydrateGeneratedImageTargetIndex,
+  type GeneratedImageTargetIndex
+} from '../../features/generated-content-export/generated-image-target';
+import { createBrowserEditorImageHydrationScheduler } from '../../integrations/browser/editor-context-menu/create-browser-editor-image-hydration-scheduler';
 
 type EditorStatus = Readonly<{
   id: string;
@@ -153,6 +234,249 @@ type EditorStatus = Readonly<{
   owner: 'editor' | 'local-draft';
   type: EditorMessageAlertType;
 }>;
+
+function isCancelledVisualTransferFailure(code: string): boolean {
+  return [
+    'visual-editor-canonical-document-changed',
+    'visual-editor-markdown-paste-document-stale',
+    'visual-editor-markdown-paste-selection-stale',
+    'visual-editor-markdown-paste-superseded',
+    'visual-editor-native-preview-document-stale',
+    'visual-editor-native-preview-stale'
+  ].includes(code);
+}
+
+/**
+ * Transfer failures a newer accepted Preview already supersedes. The runtime
+ * drops the pending transfer and keeps serving its canvas, and the next
+ * transfer re-synchronizes it, so the host keeps the Visual session instead of
+ * announcing an editor-action failure. An external canonical document change
+ * is deliberately absent: the Visual session has no accepted source for it and
+ * must end.
+ */
+function isSupersededVisualTransferFailure(code: string): boolean {
+  return [
+    'visual-editor-markdown-paste-document-stale',
+    'visual-editor-markdown-paste-superseded',
+    'visual-editor-native-preview-document-stale',
+    'visual-editor-native-preview-stale'
+  ].includes(code);
+}
+
+type VisualCanonicalChangeContext = Readonly<{
+  revision?: number;
+  selection: EditorContextSnapshot['selection'];
+  surface: EditorContextSnapshot['surface'];
+  value: string;
+}>;
+
+type ContextMenuTableRequest = EditorContextSnapshot & Readonly<{
+  insertionDirection: 'above' | 'below';
+}>;
+
+type ApplyVisualCanonicalChange = (
+  captured: VisualCanonicalChangeContext,
+  change: VisualCanonicalChangeRequest['change']
+) => boolean;
+
+
+
+type NativeVisualSelectionRoute =
+  | 'boundary'
+  | 'collapsed'
+  | 'foreign'
+  | 'inside'
+  | 'invalid'
+  | 'none';
+
+function nativeVisualSelectionRoute(
+  surface: HTMLElement,
+  selection: Selection | null | undefined
+): NativeVisualSelectionRoute {
+  if (!selection || 0 === selection.rangeCount) return 'none';
+  if (
+    1 !== selection.rangeCount
+    || !selection.anchorNode
+    || !selection.focusNode
+    || !selection.anchorNode.isConnected
+    || !selection.focusNode.isConnected
+  ) return 'invalid';
+  let range: Range;
+  try {
+    range = selection.getRangeAt(0);
+  } catch {
+    return 'invalid';
+  }
+  if (selection.isCollapsed) return 'collapsed';
+  const anchorInside = surface.contains(selection.anchorNode);
+  const focusInside = surface.contains(selection.focusNode);
+  if (anchorInside && focusInside) return 'inside';
+  if (anchorInside !== focusInside) return 'boundary';
+  try {
+    return range.intersectsNode(surface) ? 'boundary' : 'foreign';
+  } catch {
+    return 'invalid';
+  }
+}
+
+function editorCodeContentActionContext(
+  state: EditorCodeContentQueryState,
+  source?: string,
+  selection?: EditorContextSnapshot['selection']
+): EditorContextMenuActionContext['code'] | null {
+  if ('ready' !== state.status) return null;
+  if (
+    source
+    && selection
+    && !editorContextSelectionFitsRange(
+      selection,
+      blockRangeWithTrailingTerminator(source, {
+        from: state.target.from,
+        to: state.target.to
+      })
+    )
+  ) return null;
+  const projectionEntry =
+    'available' === state.codeProjection?.status
+      ? state.codeProjection.entries.find(
+          (entry): entry is Extract<PreviewCodeProjectionEntry, { status: 'available' }> =>
+            entry.kind === state.target.kind
+            && entry.startLine === state.target.lineStart
+            && entry.endLine === state.target.lineEnd
+            && 'available' === entry.status
+        )
+      : undefined;
+  const canIndentBlock = Boolean(
+    projectionEntry
+      && 'fenced' === projectionEntry.kind
+      && canIndentEditorCode('', projectionEntry.info)
+  );
+  let canIndentSelection = false;
+  if (
+    canIndentBlock
+    && source
+    && selection
+    && selection.start < selection.end
+    && projectionEntry
+  ) {
+    const starts = markdownLineStarts(source);
+    const selectedRows = projectionEntry.rows.filter((row) => {
+      const lineStart = starts[row.sourceLine] ?? -1;
+      const lineEnd = starts[row.sourceLine + 1] ?? source.length;
+      return (
+        lineStart >= 0
+        && selection.start < lineEnd
+        && selection.end > lineStart
+      );
+    });
+    canIndentSelection = selectedRows.length > 0;
+  }
+  return {
+    canCopyContent: state.content.length > 0,
+    canIndentBlock,
+    canIndentSelection,
+    codeMap: state.codeMap,
+    content: state.content,
+    ...(state.codeProjection ? { codeProjection: state.codeProjection } : {}),
+    ...(projectionEntry?.kind === 'fenced' ? { info: projectionEntry.info } : {}),
+    requestSignature: state.requestSignature,
+    target: state.target
+  };
+}
+
+function editorSourceLinkActionContext(
+  state: EditorSourceLinkQueryState
+): EditorContextMenuActionContext['link'] | null {
+  if ('ready' !== state.status) return null;
+  return { href: state.href };
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+type PendingGeneratedContentPin = {
+  pin: NonNullable<
+    ReturnType<
+      PreviewSurfaceRuntime['prepareGeneratedContentTargetForSelection']
+    >
+  >;
+  mode: 'immersive' | 'ordinary';
+  revision: number;
+  runtime: PreviewSurfaceRuntime;
+  selection: Readonly<{ end: number; start: number }>;
+  source: string;
+  context: EditorContextMenuGeneratedContext | null;
+  readinessCancel: (() => void) | null;
+};
+
+type GeneratedContentReadinessKey = Readonly<{
+  mode: PendingGeneratedContentPin['mode'];
+  revision: number;
+  runtime: PreviewSurfaceRuntime;
+  selection: Readonly<{ end: number; start: number }>;
+  source: string;
+}>;
+
+type GeneratedContentReadinessFailure = Readonly<{
+  code: 'editor-context-menu-generated-content-unavailable';
+  key: GeneratedContentReadinessKey;
+}>;
+
+const GENERATED_CONTENT_READINESS_TIMEOUT_MS = 10_000;
+
+function generatedContentReadinessKey(
+  pending: Pick<
+    PendingGeneratedContentPin,
+    'mode' | 'revision' | 'runtime' | 'selection' | 'source'
+  >
+): GeneratedContentReadinessKey {
+  return {
+    mode: pending.mode,
+    revision: pending.revision,
+    runtime: pending.runtime,
+    selection: pending.selection,
+    source: pending.source
+  };
+}
+
+function sameGeneratedContentReadinessKey(
+  left: GeneratedContentReadinessKey,
+  right: GeneratedContentReadinessKey
+): boolean {
+  return (
+    left.mode === right.mode
+    && left.revision === right.revision
+    && left.runtime === right.runtime
+    && left.source === right.source
+    && left.selection.start === right.selection.start
+    && left.selection.end === right.selection.end
+  );
+}
+
+type PendingImageTargetPin = {
+  context: EditorContextMenuActionContext['image'] | null;
+  match: MarkdownImageScaleMatch;
+  pin: PreviewImageTargetPinLease;
+  revision: number;
+  runtime: ImageLeaseRuntime;
+  selection: Readonly<{ end: number; start: number }>;
+  source: string;
+};
 
 type VisualPreviewWindowRequest = Readonly<{
   revision: number;
@@ -167,11 +491,11 @@ export function isVisualPreviewWindowRequestCurrent(
 ): boolean {
   return Boolean(
     active
-    && request
-    && snapshot
-    && 'ready' === status
-    && snapshot.revision === request.revision
-    && snapshot.signature === request.signature
+      && request
+      && snapshot
+      && 'ready' === status
+      && snapshot.revision === request.revision
+      && snapshot.signature === request.signature
   );
 }
 
@@ -181,10 +505,8 @@ export function visualPreviewSourceHasEditableMap(
 ): boolean {
   return Boolean(
     snapshot?.editMap
-    || (
-      null !== sourceMarkdown
-      && isMarkdownTerminalWhitespaceSuffix(sourceMarkdown)
-    )
+      || (null !== sourceMarkdown
+        && isMarkdownTerminalWhitespaceSuffix(sourceMarkdown))
   );
 }
 
@@ -217,7 +539,15 @@ export type EditorRootProps = Readonly<{
   fonts: FontControlsBootstrap;
   imageUpload: Pick<
     ImageUploadBootstrap,
-    'allowedExtensions' | 'allowedMimeTypes' | 'autoUploadPastedImages' | 'enabled' | 'insertion' | 'maxBytes' | 'postId' | 'remoteImageUploadMode' | 'strings'
+    | 'allowedExtensions'
+    | 'allowedMimeTypes'
+    | 'autoUploadPastedImages'
+    | 'enabled'
+    | 'insertion'
+    | 'maxBytes'
+    | 'postId'
+    | 'remoteImageUploadMode'
+    | 'strings'
   >;
   imageUploadPort: ImageUploadPort;
   remoteImageImportPort: RemoteImageImportPort;
@@ -246,6 +576,7 @@ export type EditorRootProps = Readonly<{
   prepareToolbarShortcuts: (
     surfaces: Readonly<{
       editorRoot: HTMLElement;
+      isOwnedTarget?: (target: Element) => boolean;
       source: HTMLElement;
     }>
   ) => ToolbarShortcutsPort;
@@ -263,15 +594,28 @@ export type EditorRootProps = Readonly<{
   wechatClipboard: WechatClipboardPort;
   wechatExport: WechatExportBootstrap;
   wechatVisualRasterizationPort?: WechatVisualRasterizationPort | null;
+  contextMenuStrings?: EditorContextMenuBootstrapStrings;
+  editorClipboardPort?: EditorClipboardPort;
+  editorImagePixelsPort?: EditorImagePixelsPort;
+  editorBlockIndexPort?: EditorMarkdownBlockIndexPort;
+  generatedContentExportSession?: GeneratedContentExportSession;
+  simplifiedFormattingParser?: SimplifiedFormattingDomParser;
 }>;
 
 type ActiveToolbarProps = Readonly<{
   editorRoot: HTMLElement;
-  executeVisualCommand?: (command: ToolbarCommand) => boolean;
+  executeVisualCommand?: (
+    command: ToolbarCommand,
+    plan?: () => ToolbarCommandPlan | null
+  ) => VisualToolbarCommandResult;
   executeExternalCommand: EditorRootProps['executeExternalCommand'];
+  isOwnedShortcutTarget?: (target: Element) => boolean;
   platform: ToolbarPlatform;
   prepareToolbarShortcuts: EditorRootProps['prepareToolbarShortcuts'];
   onPopoverOpen: (focusTarget?: HTMLElement) => void;
+  onExecuteCommandReady?: (
+    execute: ((commandId: string) => void) | null
+  ) => void;
   onReady: (session: EditorToolbarSession) => void;
   session: EditorDocumentSession;
   toolbar: ToolbarBootstrap;
@@ -302,6 +646,15 @@ function immersiveModeFromEditingMode(editingMode: string): ImmersiveViewMode {
     default:
       throw new Error('editor-root-immersive-editing-mode-invalid');
   }
+}
+
+function immersiveLayoutClassName(
+  immersive: boolean,
+  mode: ImmersiveViewMode
+): string {
+  return `easymde-editor${immersive ? ' is-immersive' : ''}${
+    immersive ? ` is-immersive-${mode}` : ''
+  }`;
 }
 
 function WechatIcon() {
@@ -368,9 +721,11 @@ function ActiveToolbar({
   editorRoot,
   executeVisualCommand,
   executeExternalCommand,
+  isOwnedShortcutTarget,
   platform,
   prepareToolbarShortcuts,
   onPopoverOpen,
+  onExecuteCommandReady,
   onReady,
   session,
   toolbar,
@@ -402,7 +757,13 @@ function ActiveToolbar({
       if (executeVisualCommand) {
         const command = toolbar.commands.find(({ id }) => id === commandId);
         if (!command) throw new Error('visual-toolbar-command-missing');
-        if (executeVisualCommand(command)) return;
+        if (
+          'unsupported'
+          !== executeVisualCommand(command, () =>
+            commandSession.plan(commandId)
+          )
+        )
+          return;
       }
       if (commandSession.owns(commandId)) {
         commandSession.execute(commandId);
@@ -422,12 +783,25 @@ function ActiveToolbar({
   useEffect(() => {
     const binding = prepareToolbarShortcuts({
       editorRoot,
+      ...(isOwnedShortcutTarget
+        ? { isOwnedTarget: isOwnedShortcutTarget }
+        : {}),
       source: session.document.getInputElement()
     }).prepareBinding(executeCommand);
     binding.activate();
 
     return () => binding.dispose();
-  }, [executeCommand, editorRoot, prepareToolbarShortcuts]);
+  }, [
+    executeCommand,
+    editorRoot,
+    isOwnedShortcutTarget,
+    prepareToolbarShortcuts
+  ]);
+
+  useEffect(() => {
+    onExecuteCommandReady?.(executeCommand);
+    return () => onExecuteCommandReady?.(null);
+  }, [executeCommand, onExecuteCommandReady]);
 
   useEffect(() => () => commandSession.dispose(), [commandSession]);
   useEffect(
@@ -468,7 +842,10 @@ function previewRequest(
 }
 
 export function schedulePreviewWithDocumentEndPin(
-  runtime: Pick<PreviewSurfaceRuntime, 'prepareDocumentEndWindowPin' | 'session'>,
+  runtime: Pick<
+    PreviewSurfaceRuntime,
+    'prepareDocumentEndWindowPin' | 'session'
+  >,
   request: PreviewRequest,
   onHistoryPendingChange?: (pending: boolean) => void,
   onHistorySelectionRestored?: () => void,
@@ -479,9 +856,14 @@ export function schedulePreviewWithDocumentEndPin(
   signature: string;
 }> {
   onHistoryPendingChange?.(true);
-  let lease: ReturnType<PreviewSurfaceRuntime['prepareDocumentEndWindowPin']> | null = null;
+  let lease: ReturnType<
+    PreviewSurfaceRuntime['prepareDocumentEndWindowPin']
+  > | null = null;
   try {
-    lease = runtime.prepareDocumentEndWindowPin(request.signature, sourceSelection);
+    lease = runtime.prepareDocumentEndWindowPin(
+      request.signature,
+      sourceSelection
+    );
     runtime.session.schedule(request, true);
   } catch (error) {
     try {
@@ -529,8 +911,18 @@ export function visualPreviewSurfaceUsesWindowedOwner(
   editing: boolean,
   requested: boolean
 ): boolean {
-  return (needsWindow || historyOwnerPending || previewPending)
-    && (editing || requested);
+  return (
+    (needsWindow || historyOwnerPending || previewPending)
+    && (editing || requested)
+  );
+}
+
+export function visualPreviewSurfaceWindowedForVisibility(
+  currentWindowed: boolean,
+  previewVisible: boolean,
+  needsWindow: boolean
+): boolean {
+  return currentWindowed || (!previewVisible && needsWindow);
 }
 
 export function scheduleVisualWindowedHistoryBranchRelease(
@@ -554,14 +946,47 @@ function previewScrollCanvas(surface: HTMLElement): HTMLElement {
 
 function documentPort(
   session: EditorDocumentSession,
-  isActive: () => boolean
+  isActive: () => boolean,
+  insertionSelection?: MediaPickerDocumentSnapshot['selection'],
+  formatInsertion?: (
+    value: string,
+    inserted: string
+  ) => EditorTextEdit
 ): MediaPickerDocumentPort {
   return {
     applyTextChange: (change) => {
       if (!isActive()) {
         throw new Error('editor-root-document-session-inactive');
       }
-      session.document.applyTextChange(change);
+      // The media picker is a user gesture that can stay open across an
+      // arbitrary delay, so the authoritative Source field may become read-only
+      // or disabled before the user confirms. Re-check here, at the mutation,
+      // rather than only when the picker opened: a read-only surface must not
+      // gain a canonical write or a history entry it never permitted. The code
+      // follows this port's own `media-picker-*` namespace so the rejection
+      // reaches the user as a specific media failure instead of the generic
+      // `media-picker-operation-failed` fallback.
+      if (!session.document.isEditable()) {
+        throw new Error('media-picker-document-read-only');
+      }
+      if (!insertionSelection || !formatInsertion) {
+        session.document.applyTextChange(change);
+        return;
+      }
+      const currentValue = session.document.getValue();
+      const { end, start } = insertionSelection;
+      const suffixLength = currentValue.length - end;
+      const suffixStart = change.value.length - suffixLength;
+      if (
+        suffixStart < start
+        || change.value.slice(0, start) !== currentValue.slice(0, start)
+        || change.value.slice(suffixStart) !== currentValue.slice(end)
+      ) {
+        throw new Error('media-picker-document-stale');
+      }
+      session.document.applyTextChange(
+        formatInsertion(currentValue, change.value.slice(start, suffixStart))
+      );
     },
     focus: () => {
       if (isActive()) {
@@ -573,18 +998,377 @@ function documentPort(
         throw new Error('editor-root-document-session-inactive');
       }
       return {
-        selection: session.document.getSelection(),
+        selection: insertionSelection ?? session.document.getSelection(),
         value: session.document.getValue()
       };
     }
   };
 }
 
+function visualMediaPickerDocument(
+  session: EditorDocumentSession,
+  expected: VisualCanonicalChangeContext,
+  isActive: () => boolean,
+  focus: () => void,
+  apply: ApplyVisualCanonicalChange,
+  insertionSelection?: MediaPickerDocumentSnapshot['selection'],
+  formatInsertion?: (
+    value: string,
+    inserted: string
+  ) => EditorTextEdit
+): MediaPickerDocumentPort {
+  const currentSnapshot = (): MediaPickerDocumentSnapshot => {
+    if (!isActive()) {
+      throw new Error('editor-root-document-session-inactive');
+    }
+    return {
+      selection: insertionSelection ?? session.document.getSelection(),
+      value: session.document.getValue()
+    };
+  };
+
+  return {
+    applyTextChange: (change) => {
+      if (!isActive()) {
+        throw new Error('editor-root-document-session-inactive');
+      }
+      const { end, start } = insertionSelection ?? expected.selection;
+      const suffixLength = expected.value.length - end;
+      const suffixStart = change.value.length - suffixLength;
+      if (
+        suffixStart < start
+        || change.value.slice(0, start) !== expected.value.slice(0, start)
+        || change.value.slice(suffixStart) !== expected.value.slice(end)
+      ) {
+        throw new Error('media-picker-document-stale');
+      }
+      const formatted = formatInsertion
+        ? formatInsertion(expected.value, change.value.slice(start, suffixStart))
+        : {
+            changes: {
+              from: start,
+              insert: change.value.slice(start, suffixStart),
+              to: end
+            },
+            selection: change.selection,
+            value: change.value
+          };
+      if (!formatted.changes) {
+        throw new Error('media-picker-insertion-change-missing');
+      }
+      if (
+        !apply(expected, {
+          changes: formatted.changes,
+          selection: formatted.selection,
+          value: formatted.value
+        })
+      ) {
+        throw new Error('media-picker-visual-canonical-change-failed');
+      }
+    },
+    focus: () => {
+      if (isActive()) focus();
+    },
+    getSnapshot: currentSnapshot
+  };
+}
+
 function mediaPickerFailureCode(error: unknown): string {
-  return error instanceof Error &&
-    /^media-picker-[a-z0-9-]+$/.test(error.message)
+  return error instanceof Error
+    && /^media-picker-[a-z0-9-]+$/.test(error.message)
     ? error.message
     : 'media-picker-operation-failed';
+}
+
+function editorBlockIndexFailureCode(error: unknown): string {
+  return error instanceof Error
+    && /^editor-block-index-[a-z0-9-]+$/u.test(error.message)
+    ? error.message
+    : 'editor-context-menu-block-index-failed';
+}
+
+async function editorBlockIndexFromData(
+  source: string,
+  data: EditorMarkdownBlockIndexData,
+  revision: number,
+  signal: AbortSignal,
+  deadline: number,
+  scheduler: Readonly<{
+    now: () => number;
+    yield: () => Promise<void>;
+  }>
+): Promise<EditorMarkdownBlockIndex> {
+  if (data.length !== source.length) {
+    throw new Error('editor-block-index-result-invalid');
+  }
+  const index = { ...data, source };
+  if (!isPreparedImageIndex(index)) {
+    throw new Error('editor-block-index-image-data-required');
+  }
+  const preparedImageIndex = await hydrateGeneratedImageTargetIndex({
+    blocks: index.blocks,
+    deadline,
+    imageIndex: index,
+    now: scheduler.now,
+    revision,
+    signal,
+    source,
+    yield: scheduler.yield
+  });
+  return {
+    ...index,
+    preparedImageTargetIndex: preparedImageIndex
+  } as EditorMarkdownBlockIndex;
+}
+
+function generatedRootAtTarget(
+  target: Element | null,
+  kind: 'math' | 'mermaid'
+): Readonly<{ ordinal: number; root: HTMLElement }> | null {
+  if (!target) return null;
+  const selector = 'math' === kind ? '.easymde-math' : '.easymde-mermaid';
+  const root = target.closest(selector);
+  const block = root?.closest<HTMLElement>('[data-easymde-visual-block-id]');
+  if (!(root instanceof HTMLElement) || !block) return null;
+  const roots = (
+    block.matches(selector)
+      ? [block, ...Array.from(block.querySelectorAll<HTMLElement>(selector))]
+      : Array.from(block.querySelectorAll<HTMLElement>(selector))
+  )
+    .filter(
+      (candidate) =>
+        candidate.closest('[data-easymde-visual-block-id]') === block
+    )
+    .filter(
+      (candidate) =>
+        candidate === block
+        || candidate.parentElement?.closest(selector) === null
+    );
+  const ordinal = roots.indexOf(root);
+  return ordinal < 0 ? null : { ordinal, root };
+}
+
+/**
+ * The pointer image's rendered identity: the visual block it belongs to and
+ * its image slot inside that block. The windowed owner keeps both stable
+ * across an accepted Preview re-render, so two elements with the same
+ * identity describe the same source image while any other pair does not.
+ */
+function visualImageSlotIdentity(
+  image: HTMLImageElement
+): Readonly<{ blockId: string; ordinal: number }> | null {
+  const block = image.closest<HTMLElement>('[data-easymde-visual-block-id]');
+  const blockId = block?.getAttribute('data-easymde-visual-block-id');
+  if (!block || !blockId) return null;
+  const images = Array.from(block.querySelectorAll('img')).filter(
+    (candidate) => candidate.closest('[data-easymde-visual-block-id]') === block
+  );
+  const ordinal = images.indexOf(image);
+  return ordinal < 0 ? null : { blockId, ordinal };
+}
+
+function generatedMathMlAvailable(root: Element): boolean {
+  const katex = root.matches('.katex')
+    ? root
+    : root.querySelector(':scope > .katex, :scope > .katex-display > .katex');
+  return Boolean(katex?.querySelector(':scope > .katex-mathml > math'));
+}
+
+function sameGeneratedContentSelection(
+  left: Readonly<{ end: number; start: number }>,
+  right: Readonly<{ end: number; start: number }>
+): boolean {
+  return left.start === right.start && left.end === right.end;
+}
+
+type EditorMarkdownBlockIndexWithImages = EditorMarkdownBlockIndex &
+  EditorMarkdownImageIndexData;
+
+type EditorMarkdownBlockIndexWithPreparedImages =
+  EditorMarkdownBlockIndexWithImages &
+    Readonly<{
+      preparedImageTargetIndex: GeneratedImageTargetIndex;
+    }>;
+
+function isPreparedImageIndex(
+  blockIndex: EditorMarkdownBlockIndex | null | undefined
+): blockIndex is EditorMarkdownBlockIndexWithImages {
+  return Boolean(
+    blockIndex
+      && Array.isArray(
+        (blockIndex as Partial<EditorMarkdownBlockIndexWithImages>).imageBlocks
+      )
+      && Array.isArray(
+        (blockIndex as Partial<EditorMarkdownBlockIndexWithImages>).imageRanges
+      )
+  );
+}
+
+function preparedImageMatch(
+  index: GeneratedImageTargetIndex,
+  selection: Readonly<{ end: number; start: number }>
+): MarkdownImageScaleMatch | null {
+  let low = 0;
+  let high = index.blocks.length - 1;
+  let blockPosition = -1;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const block = index.blocks[middle];
+    if (!block) break;
+    if (selection.start < block.from) {
+      high = middle - 1;
+    } else if (selection.start >= block.to) {
+      low = middle + 1;
+    } else {
+      blockPosition = middle;
+      break;
+    }
+  }
+  if (blockPosition < 0) return null;
+  const blockImages = index.blockImages[blockPosition];
+  if (!blockImages || 'unavailable' === blockImages.status) return null;
+  const images = blockImages.images;
+  low = 0;
+  high = images.length - 1;
+  let candidate = -1;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const image = images[middle];
+    if (!image) break;
+    if (image.start <= selection.start) {
+      candidate = middle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  const image = candidate < 0 ? undefined : images[candidate];
+  if (!image) return null;
+  const collapsed =
+    selection.start === selection.end
+    && selection.start > image.start
+    && selection.start < image.end;
+  const ranged =
+    selection.start !== selection.end
+    && image.start <= selection.start
+    && image.end >= selection.end;
+  return collapsed || ranged ? image : null;
+}
+
+function preparedImageTargetIndex(
+  source: string,
+  revision: number | undefined,
+  blockIndex: EditorMarkdownBlockIndex | null | undefined,
+  selection: Readonly<{ end: number; start: number }>
+): Readonly<{
+  image: MarkdownImageScaleMatch;
+  index: GeneratedImageTargetIndex;
+}> | null {
+  if (
+    undefined === revision
+    || !blockIndex
+    || blockIndex.source !== source
+    || blockIndex.length !== source.length
+    || !isPreparedImageIndex(blockIndex)
+    || !('preparedImageTargetIndex' in blockIndex)
+  )
+    return null;
+  const index = (blockIndex as EditorMarkdownBlockIndexWithPreparedImages)
+    .preparedImageTargetIndex;
+  if (index.revision !== revision || index.source !== source) return null;
+  const image = preparedImageMatch(index, selection);
+  return image ? { image, index } : null;
+}
+
+type ImageLeaseRuntime = Pick<
+  PreviewSurfaceRuntime,
+  'prepareImageTarget' | 'prepareImageTargetBySelection' | 'surface'
+>;
+
+function leaseForVisualImage(
+  runtime: ImageLeaseRuntime | null,
+  index: GeneratedImageTargetIndex,
+  selected: MarkdownImageScaleMatch,
+  element: HTMLImageElement | null
+): PreviewImageTargetLease | null {
+  if (!runtime?.surface.isConnected || !element) return null;
+  const lease = runtime.prepareImageTarget({
+    element,
+    index,
+    selection: { end: selected.end, start: selected.start }
+  });
+  if (
+    !lease
+    || lease.target.original.start !== selected.start
+    || lease.target.original.end !== selected.end
+  ) {
+    lease?.release();
+    return null;
+  }
+  return lease;
+}
+
+function imageActionContext(
+  port: EditorImagePixelsPort | undefined,
+  lease: PreviewImageTargetLease | null,
+  match: MarkdownImageScaleMatch
+): EditorContextMenuActionContext['image'] | null {
+  if (!lease) return { canCopyImage: false, match };
+  const pixelLease: EditorImagePixelsLease = {
+    image: lease.root,
+    isCurrent: lease.isCurrent
+  };
+  let canCopyImage = false;
+  try {
+    canCopyImage = Boolean(port?.supports() && port.canExtract(pixelLease));
+  } catch {
+    canCopyImage = false;
+  }
+  return { canCopyImage, lease, match };
+}
+
+/**
+ * Image actions keep the whole updated image selected. A caret placed inside
+ * image syntax, for example between a `{width=…%}` marker and the closing
+ * title quote, has no representable boundary in a Visual surface, so the
+ * visual owner would fail after the canonical write. Parsing the serialized
+ * result also proves the replacement stayed one valid image before any write.
+ */
+
+
+function isPreviewSelectionUnavailable(error: unknown): boolean {
+  return (
+    error instanceof PreviewWindowDomError
+    && (error.message === 'preview-window-selection-block-unavailable'
+      || error.message === 'preview-window-selection-map-invalid'
+      || error.message === 'preview-window-selection-range-invalid')
+  );
+}
+
+function supportsEditorPngClipboard(
+  port: EditorClipboardPort | undefined
+): boolean {
+  try {
+    return (
+      Boolean(port?.writeImageDeferred) && port?.supportsPngWrite?.() === true
+    );
+  } catch {
+    return false;
+  }
+}
+
+function supportsEditorRichClipboard(
+  port: EditorClipboardPort | undefined
+): boolean {
+  try {
+    return (
+      Boolean(port?.writeRichDeferred)
+      && (undefined === port?.supportsRichWrite
+        || port.supportsRichWrite() === true)
+    );
+  } catch {
+    return false;
+  }
 }
 
 function articleMarkupProfile(
@@ -602,7 +1386,21 @@ function articleMarkupProfile(
 }
 
 export function EditorRoot(props: EditorRootProps) {
+  const failureHandlerRef = useRef(props.onFailure);
+  failureHandlerRef.current = props.onFailure;
+  const reportFailure = useCallback((code: string) => failureHandlerRef.current(code), []);
   const rootRef = useRef<HTMLDivElement>(null);
+  const contextMenuPortalOwnerRef = useRef<HTMLElement | null>(null);
+  const registerContextMenuPortalOwner = useCallback(
+    (element: HTMLElement | null): void => {
+      contextMenuPortalOwnerRef.current = element;
+    },
+    []
+  );
+  const isOwnedShortcutTarget = useCallback((target: Element): boolean => {
+    const owner = contextMenuPortalOwnerRef.current;
+    return Boolean(owner?.isConnected && owner.contains(target));
+  }, []);
   const immersiveToggleRef = useRef<HTMLButtonElement>(null);
   const restoreImmersiveFocusRef = useRef(false);
   const appearanceSessionRef = useRef<AppearanceControlsSession | null>(null);
@@ -610,9 +1408,93 @@ export function EditorRoot(props: EditorRootProps) {
   const ordinarySettingsSessionRef =
     useRef<OrdinaryEditorSettingsSession | null>(null);
   const toolbarSessionRef = useRef<EditorToolbarSession | null>(null);
+  const contextMenuExecutorRef = useRef<((commandId: string) => void) | null>(
+    null
+  );
+  const contextMenuActionCapabilitiesRef =
+    useRef<EditorContextMenuActionCapabilities | null>(null);
+  const contextMenuActionCoordinatorRef =
+    useRef<EditorContextMenuActionCoordinator | null>(null);
+  const editorCodeContentQueryRef =
+    useRef<EditorCodeContentQuerySession | null>(null);
+  const editorCodeContentQuerySequenceRef = useRef(0);
+  const editorCodeContentFailureRef = useRef<string | null>(null);
+  const editorCodeIndentationCandidateSequenceRef = useRef(0);
+  const editorSourceLinkQueryRef =
+    useRef<EditorSourceLinkQuerySession | null>(null);
+  const editorSourceLinkQuerySequenceRef = useRef(0);
+  const pendingGeneratedContentPinRef =
+    useRef<PendingGeneratedContentPin | null>(null);
+  const pendingImageTargetPinRef = useRef<PendingImageTargetPin | null>(null);
+  const generatedContentReadinessFailureRef =
+    useRef<GeneratedContentReadinessFailure | null>(null);
+  const contextMenuReadinessListenersRef = useRef(new Set<() => void>());
+  const contextMenuBlockIndexCacheRef =
+    useRef<EditorContextMenuBlockIndexCache | null>(null);
+  const contextMenuBlockIndexFailureRef = useRef<Readonly<{
+    code: string;
+    generation: number;
+    owner: object;
+    revision: number;
+    source: string;
+  }> | null>(null);
+  if (!contextMenuBlockIndexCacheRef.current) {
+    const cacheClock = createBrowserEditorImageHydrationScheduler(
+      props.submissionField.ownerDocument,
+      new AbortController().signal
+    );
+    contextMenuBlockIndexCacheRef.current =
+      createEditorContextMenuBlockIndexCache({
+        now: cacheClock.now
+      });
+  }
+  const releasePendingGeneratedContentPin = useCallback(
+    (preserveFailure = false) => {
+      const pending = pendingGeneratedContentPinRef.current;
+      pendingGeneratedContentPinRef.current = null;
+      if (!preserveFailure) generatedContentReadinessFailureRef.current = null;
+      pending?.readinessCancel?.();
+      if (pending) {
+        pending.readinessCancel = null;
+      }
+      pending?.pin.release();
+    },
+    []
+  );
+  const releasePendingImageTargetPin = useCallback(() => {
+    const pending = pendingImageTargetPinRef.current;
+    pendingImageTargetPinRef.current = null;
+    pending?.pin.release();
+  }, []);
+  const releasePendingContextResources = useCallback(
+    (reason?: 'cancelled' | 'unavailable') => {
+      editorCodeContentQueryRef.current?.cancel();
+      editorSourceLinkQueryRef.current?.cancel();
+      releasePendingGeneratedContentPin(
+        'cancelled' === reason || 'unavailable' === reason
+      );
+      releasePendingImageTargetPin();
+    },
+    [releasePendingGeneratedContentPin, releasePendingImageTargetPin]
+  );
+  const subscribeContextMenuReadiness = useCallback(
+    (listener: () => void): (() => void) => {
+      contextMenuReadinessListenersRef.current.add(listener);
+      return () => contextMenuReadinessListenersRef.current.delete(listener);
+    },
+    []
+  );
+  const notifyContextMenuReadiness = useCallback(() => {
+    for (const listener of contextMenuReadinessListenersRef.current) listener();
+  }, []);
   const previewRuntimeRef = useRef<PreviewSurfaceRuntime | null>(null);
-  const visualEditorRuntimeRef =
-    useRef<ImmersiveVisualEditorRuntime | null>(null);
+  const visualEditorRuntimeRef = useRef<ImmersiveVisualEditorRuntime | null>(
+    null
+  );
+  const lastVisualFailureRef = useRef<string | null>(null);
+  const applyVisualCanonicalChangeRef =
+    useRef<ApplyVisualCanonicalChange | null>(null);
+  const acceptedWindowSnapshotKeyRef = useRef<number | null>(null);
   const scheduledPreviewRuntimeRef = useRef<PreviewSurfaceRuntime | null>(null);
   const scheduledWechatPreparationRef = useRef<(() => void) | null>(null);
   const wechatBackgroundPreparationRef = useRef<{
@@ -630,15 +1512,49 @@ export function EditorRoot(props: EditorRootProps) {
   } | null>(null);
   const codeThemePreparationGenerationRef = useRef(0);
   const codeThemeFrameSyncPendingRef = useRef<string | null>(null);
-  const syncedVisualCodeFramesRef = useRef<WeakSet<HTMLElement>>(
-    new WeakSet()
-  );
+  const syncedVisualCodeFramesRef = useRef<WeakSet<HTMLElement>>(new WeakSet());
   const codeThemeExplicitRef = useRef(props.appearance.codeThemeExplicit);
   const localDraftSessionRef = useRef<LocalDraftSession | null>(null);
   const mediaOperationRef = useRef<Promise<unknown> | null>(null);
-  const featuredImageOperationRef = useRef<Promise<NativeFeaturedImage | null> | null>(null);
+  const featuredImageOperationRef =
+    useRef<Promise<NativeFeaturedImage | null> | null>(null);
   const imageUploadOperationSequenceRef = useRef(0);
   const rootActiveRef = useRef(true);
+  const scheduleGeneratedContentReadiness = useCallback(
+    (pending: PendingGeneratedContentPin): void => {
+      const key = generatedContentReadinessKey(pending);
+      const deadline =
+        props.immersiveEnvironment.now()
+        + GENERATED_CONTENT_READINESS_TIMEOUT_MS;
+      const arm = (delay: number): void => {
+        pending.readinessCancel = props.immersiveEnvironment.schedule(
+          () => {
+            if (
+              !rootActiveRef.current
+              || pendingGeneratedContentPinRef.current !== pending
+            )
+              return;
+            const remaining = deadline - props.immersiveEnvironment.now();
+            if (remaining > 0) {
+              arm(remaining);
+              return;
+            }
+            pendingGeneratedContentPinRef.current = null;
+            pending.readinessCancel = null;
+            pending.pin.release();
+            generatedContentReadinessFailureRef.current = {
+              code: 'editor-context-menu-generated-content-unavailable',
+              key
+            };
+            notifyContextMenuReadiness();
+          },
+          Math.max(0, delay)
+        );
+      };
+      arm(GENERATED_CONTENT_READINESS_TIMEOUT_MS);
+    },
+    [notifyContextMenuReadiness, props.immersiveEnvironment]
+  );
   const initialSubmissionStateRef = useRef({
     ...props.appearance.state,
     codeThemeExplicit: props.appearance.codeThemeExplicit,
@@ -669,16 +1585,21 @@ export function EditorRoot(props: EditorRootProps) {
     status: null
   });
   const [previewRuntimeGeneration, setPreviewRuntimeGeneration] = useState(0);
+  const [
+    acceptedWindowSnapshotGeneration,
+    setAcceptedWindowSnapshotGeneration
+  ] = useState(0);
   const [previewRefreshRevision, setPreviewRefreshRevision] = useState(0);
   const [previewSurfaceStatus, setPreviewSurfaceStatus] =
     useState<PreviewSurfaceStatus>('loading');
   const previewSurfaceStatusRef = useRef(previewSurfaceStatus);
   previewSurfaceStatusRef.current = previewSurfaceStatus;
   const [visualPreviewSnapshot, setVisualPreviewSnapshot] = useState<
-    (VisualPreviewSnapshot & {
-      editMap: PreviewEditMap | null;
-      html: SafePreviewHtml;
-    }) | null
+    | (VisualPreviewSnapshot & {
+        editMap: PreviewEditMap | null;
+        html: SafePreviewHtml;
+      })
+    | null
   >(null);
   const visualPreviewSnapshotRef = useRef(visualPreviewSnapshot);
   visualPreviewSnapshotRef.current = visualPreviewSnapshot;
@@ -686,13 +1607,49 @@ export function EditorRoot(props: EditorRootProps) {
   const [visualPreviewWindowRequested, setVisualPreviewWindowRequested] =
     useState(false);
   const visualPreviewWindowRequestedRef = useRef(false);
+  const visualPreviewSurfaceWindowedRef = useRef(false);
   const visualPreviewWindowUnlockRef =
     useRef<VisualPreviewWindowRequest | null>(null);
   const visualPreviewLockingRef = useRef(false);
+  /**
+   * The request that owns the current window hold. A superseded preparation
+   * may release only its own hold; a newer request's hold is never cleared by
+   * an older one resuming from an await.
+   */
+  const visualPreviewHoldOwnerRef = useRef<object | null>(null);
   const [visualPreviewUnlocking, setVisualPreviewUnlocking] = useState(false);
   const visualPreviewUnlockingRef = useRef(visualPreviewUnlocking);
   visualPreviewUnlockingRef.current = visualPreviewUnlocking;
   const [visualPreviewPending, setVisualPreviewPending] = useState(false);
+  /**
+   * One-shot unlock signal: incremented when the unlock owner enables visual
+   * editing so the activation effect places the canonical caret exactly once.
+   */
+  const [visualResumeCanonicalToken, setVisualResumeCanonicalToken] = useState(0);
+  /**
+   * A resume applies only when the unlock returns from a previous editing
+   * session (the lock/mode exit). A first entry into visual editing never
+   * re-selects anything.
+   */
+  const visualPreviewLeftEditingRef = useRef(false);
+  const visualPreviewPendingRef = useRef(visualPreviewPending);
+  visualPreviewPendingRef.current = visualPreviewPending;
+  /**
+   * Every explicit view choice is one request with its own identity. A
+   * preparation started for an older request must never commit after the user
+   * chooses again, so the applied transition is gated on this generation, not
+   * merely on the deferred slot being empty.
+   */
+  const immersiveModeRequestRef = useRef(0);
+  /**
+   * One view-mode or exit request may wait for the formal transfer that owned
+   * the surface when the user asked for it. The same safe preparation runs
+   * once that transfer settles; any later explicit request replaces it.
+   */
+  const deferredImmersiveModeRef = useRef<Readonly<{
+    generation: number;
+    mode: ImmersiveViewMode | null;
+  }> | null>(null);
   const [visualDocumentEndHistoryPending, setVisualDocumentEndHistoryPending] =
     useState(false);
   const visualDocumentEndHistoryPendingRef = useRef(false);
@@ -701,6 +1658,28 @@ export function EditorRoot(props: EditorRootProps) {
     useState(false);
   const [visualEditorSurface, setVisualEditorSurface] =
     useState<HTMLElement | null>(null);
+  const [visualEditorGeneration, setVisualEditorGeneration] = useState(0);
+  const readContextMenuCurrentContext = useCallback(
+    (surface: EditorContextSnapshot['surface']) => {
+      if (!documentSession) return null;
+      const revision = documentSession.document.getRevision?.();
+      return {
+        ...(undefined === revision ? {} : { revision }),
+        selection: documentSession.document.getSelection(),
+        ...('source' === surface
+          ? { surfaceIdentity: documentSession }
+          : visualEditorRuntimeRef.current
+            ? {
+                surfaceGeneration: visualEditorGeneration,
+                surfaceIdentity: visualEditorRuntimeRef.current
+              }
+            : {}),
+        surface,
+        value: documentSession.document.getValue()
+      };
+    },
+    [documentSession, visualEditorGeneration]
+  );
   const visualPreviewEditingRef = useRef(visualPreviewEditing);
   visualPreviewEditingRef.current = visualPreviewEditing;
   const [visualPreviewChanged, setVisualPreviewChanged] = useState(false);
@@ -733,15 +1712,48 @@ export function EditorRoot(props: EditorRootProps) {
   const [mediaPickerDialog, setMediaPickerDialog] = useState<
     'media' | 'featured' | null
   >(null);
+  const [contextMenuTableRequest, setContextMenuTableRequest] =
+    useState<ContextMenuTableRequest | null>(null);
   const immersiveRef = useRef(immersive);
   immersiveRef.current = immersive;
-  const [immersiveMode, setImmersiveMode] =
-    useState<ImmersiveViewMode>(() =>
-      immersiveModeFromEditingMode(props.settings.general.editingMode)
-    );
+  const [immersiveMode, setImmersiveMode] = useState<ImmersiveViewMode>(() =>
+    immersiveModeFromEditingMode(props.settings.general.editingMode)
+  );
   const immersiveModeRef = useRef(immersiveMode);
   immersiveModeRef.current = immersiveMode;
   const previousWechatLayoutRef = useRef({ immersive, mode: immersiveMode });
+  const layoutScrollRestoreRef = useRef<
+    Readonly<{ layout: string; restore: () => void }> | null
+  >(null);
+  const immersiveLayoutClass = immersiveLayoutClassName(
+    immersive,
+    immersiveMode
+  );
+  // Entering immersive, switching view mode, and leaving each commit a new
+  // layout class. CodeMirror's own scroll snapshot is captured immediately
+  // before that state update and restored here, after the class has committed,
+  // so its measure loop settles on the same scroll position instead of a
+  // transient viewport. The session owns every guard (teardown, detachment,
+  // visual-editing parking, stale document revision).
+  useLayoutEffect(() => {
+    const pending = layoutScrollRestoreRef.current;
+    layoutScrollRestoreRef.current = null;
+    if (!pending || pending.layout === immersiveLayoutClass) return;
+    pending.restore();
+  });
+  const captureLayoutScrollRestore = useCallback(() => {
+    const restore =
+      documentSession?.document.captureLayoutScrollRestore() ?? null;
+    layoutScrollRestoreRef.current = restore
+      ? {
+          layout: immersiveLayoutClassName(
+            immersiveRef.current,
+            immersiveModeRef.current
+          ),
+          restore
+        }
+      : null;
+  }, [documentSession]);
   const localDraftsEnabled =
     props.settings.general.autoSave && props.localDrafts.enabled;
   const scrollSyncEnabled = props.settings.general.syncScroll;
@@ -751,34 +1763,53 @@ export function EditorRoot(props: EditorRootProps) {
   );
   const visualPreviewNeedsWindow =
     (visualPreviewSnapshot?.editMap?.blocks.length ?? 0)
-      > DEFAULT_PREVIEW_WINDOW_MAX_MOUNTED;
+    > DEFAULT_PREVIEW_WINDOW_MAX_MOUNTED;
+  const previewVisible = immersive
+    ? 'source' !== immersiveMode
+    : 'source' !== props.settings.general.editingMode;
   const visualPreviewWindowed = visualPreviewUsesWindowedOwner(
     visualPreviewNeedsWindow,
     visualDocumentEndHistoryPending || visualWindowedHistoryBranchHeld,
     visualPreviewEditing,
     visualPreviewWindowRequested
+  ) || (
+    visualPreviewWindowRequestedRef.current
+    && visualPreviewEditing
   );
-  const visualPreviewSurfaceWindowed = visualPreviewSurfaceUsesWindowedOwner(
-    visualPreviewNeedsWindow,
-    visualDocumentEndHistoryPending || visualWindowedHistoryBranchHeld,
-    visualPreviewPending,
-    visualPreviewEditing,
-    visualPreviewWindowRequested
-  );
+  const currentVisualPreviewSurfaceWindowed =
+    visualPreviewSurfaceUsesWindowedOwner(
+      visualPreviewNeedsWindow,
+      visualDocumentEndHistoryPending || visualWindowedHistoryBranchHeld,
+      visualPreviewPending,
+      visualPreviewEditing,
+      visualPreviewWindowRequested
+    );
+  const visualPreviewSurfaceWindowed =
+    visualPreviewSurfaceWindowedForVisibility(
+      currentVisualPreviewSurfaceWindowed
+        || (
+          visualPreviewWindowRequestedRef.current
+          && visualPreviewEditing
+        )
+        || (!previewVisible && visualPreviewSurfaceWindowedRef.current),
+      previewVisible,
+      visualPreviewNeedsWindow
+    );
+  visualPreviewSurfaceWindowedRef.current = visualPreviewSurfaceWindowed;
   useEffect(() => {
     if ('failed' === immersivePreferences.status) {
-      props.onFailure(immersivePreferences.code);
+      reportFailure(immersivePreferences.code);
     }
-  }, [immersivePreferences, props.onFailure]);
+  }, [immersivePreferences, reportFailure]);
   const [cursorPosition, setCursorPosition] = useState({ column: 1, line: 1 });
   const sessionSnapshot = useEditorSession(props.sessionPort);
   const publishEditorStatus = useCallback(
     (nextStatus: EditorStatus) =>
       setEditorStatusState((currentState) => {
         const next =
-          'error' === currentState.status?.type &&
-          currentState.status.id !== nextStatus.id &&
-          'error' !== nextStatus.type
+          'error' === currentState.status?.type
+          && currentState.status.id !== nextStatus.id
+          && 'error' !== nextStatus.type
             ? currentState.status
             : nextStatus;
         return next === currentState.status
@@ -852,8 +1883,8 @@ export function EditorRoot(props: EditorRootProps) {
     return () => {
       cancel();
       if (
-        timerState.status === scheduledStatus &&
-        null !== timerState.deadline
+        timerState.status === scheduledStatus
+        && null !== timerState.deadline
       ) {
         timerState.remaining = Math.max(
           0,
@@ -884,10 +1915,10 @@ export function EditorRoot(props: EditorRootProps) {
         props.sessionPort.getSnapshot(),
         operation
       );
-      if (error) props.onFailure(error.message);
+      if (error) reportFailure(error.message);
       return error;
     },
-    [props.onFailure, props.sessionPort]
+    [reportFailure, props.sessionPort]
   );
   const handleDocumentReady = useCallback((session: EditorDocumentSession) => {
     session.registerSubmissionState(initialSubmissionStateRef.current);
@@ -904,19 +1935,42 @@ export function EditorRoot(props: EditorRootProps) {
     [props.enhancementPort]
   );
   useEffect(
-    () => () => props.appearancePort.dispose(),
-    [props.appearancePort]
+    () => () => props.generatedContentExportSession?.dispose(),
+    [props.generatedContentExportSession]
   );
-  const handlePreviewReady = useCallback((runtime: PreviewSurfaceRuntime) => {
-    previewRuntimeRef.current = runtime;
-    setPreviewRuntimeGeneration((generation) => generation + 1);
-  }, []);
+  useEffect(() => () => props.appearancePort.dispose(), [props.appearancePort]);
+  const handlePreviewReady = useCallback(
+    (runtime: PreviewSurfaceRuntime) => {
+      previewRuntimeRef.current = runtime;
+      acceptedWindowSnapshotKeyRef.current = null;
+      setAcceptedWindowSnapshotGeneration((generation) => generation + 1);
+      setPreviewRuntimeGeneration((generation) => generation + 1);
+      notifyContextMenuReadiness();
+    },
+    [notifyContextMenuReadiness]
+  );
+  const handlePreviewImageReadinessChange = useCallback(() => {
+    notifyContextMenuReadiness();
+  }, [notifyContextMenuReadiness]);
   const prepareVisualWindowBlockAdoption = useCallback(
     (node: HTMLElement): (() => boolean) | null => {
       const runtime = previewRuntimeRef.current;
       if (!runtime) return null;
       return runtime.prepareWindowBlockAdoption(node);
     },
+    []
+  );
+  const retainCompositionSurface = useCallback(
+    (): Readonly<{ release: () => void }> => {
+      const runtime = previewRuntimeRef.current;
+      if (!runtime) throw new Error('preview-runtime-unavailable');
+      return runtime.retainCompositionSurface();
+    },
+    []
+  );
+  const getAcceptedWindowSnapshot = useCallback(
+    (): PreviewAcceptedWindowSnapshot | null =>
+      previewRuntimeRef.current?.getAcceptedWindowSnapshot() ?? null,
     []
   );
   const clearScheduledWechatPreparation = useCallback(() => {
@@ -942,7 +1996,8 @@ export function EditorRoot(props: EditorRootProps) {
         || !props.wechatExport.enabled
         || !surface
         || !prepare
-      ) return;
+      )
+        return;
       let preparation = wechatBackgroundPreparationRef.current;
       if (!preparation) {
         preparation = { controller: new AbortController() };
@@ -1033,6 +2088,9 @@ export function EditorRoot(props: EditorRootProps) {
     previousWechatLayoutRef.current = { immersive, mode: immersiveMode };
     scheduleCurrentWechatPreviewPreparation();
   }, [immersive, immersiveMode, scheduleCurrentWechatPreviewPreparation]);
+  useEffect(() => {
+    notifyContextMenuReadiness();
+  }, [immersive, notifyContextMenuReadiness]);
   const cancelVisualPreviewWindowUnlock = useCallback(() => {
     if (!visualPreviewWindowUnlockRef.current) return;
     visualPreviewWindowUnlockRef.current = null;
@@ -1042,22 +2100,34 @@ export function EditorRoot(props: EditorRootProps) {
       setVisualPreviewUnlocking(false);
     }
   }, []);
-  const handlePreviewDispose = useCallback((runtime: PreviewSurfaceRuntime) => {
-    cancelWechatBackgroundPreparation();
-    cancelVisualPreviewWindowUnlock();
-    if (rootActiveRef.current) {
-      visualDocumentEndHistoryPendingRef.current = false;
-      setVisualDocumentEndHistoryPending(false);
-      setVisualWindowedHistoryBranchHeld(false);
-    }
-    if (previewRuntimeRef.current === runtime) {
-      previewRuntimeRef.current = null;
-      setPreviewRuntimeGeneration((generation) => generation + 1);
-    }
-    if (scheduledPreviewRuntimeRef.current === runtime) {
-      scheduledPreviewRuntimeRef.current = null;
-    }
-  }, [cancelWechatBackgroundPreparation, cancelVisualPreviewWindowUnlock]);
+  const handlePreviewDispose = useCallback(
+    (runtime: PreviewSurfaceRuntime) => {
+      cancelWechatBackgroundPreparation();
+      cancelVisualPreviewWindowUnlock();
+      releasePendingContextResources();
+      notifyContextMenuReadiness();
+      if (rootActiveRef.current) {
+        visualDocumentEndHistoryPendingRef.current = false;
+        setVisualDocumentEndHistoryPending(false);
+        setVisualWindowedHistoryBranchHeld(false);
+      }
+      if (previewRuntimeRef.current === runtime) {
+        previewRuntimeRef.current = null;
+        acceptedWindowSnapshotKeyRef.current = null;
+        setAcceptedWindowSnapshotGeneration((generation) => generation + 1);
+        setPreviewRuntimeGeneration((generation) => generation + 1);
+      }
+      if (scheduledPreviewRuntimeRef.current === runtime) {
+        scheduledPreviewRuntimeRef.current = null;
+      }
+    },
+    [
+      cancelWechatBackgroundPreparation,
+      cancelVisualPreviewWindowUnlock,
+      notifyContextMenuReadiness,
+      releasePendingContextResources
+    ]
+  );
   const cancelVisualUnlockPreparation = useCallback(() => {
     const preparation = codeThemePreparationRef.current;
     if ('visual-unlock' !== preparation?.owner) return;
@@ -1080,6 +2150,7 @@ export function EditorRoot(props: EditorRootProps) {
         revision: (current?.revision ?? 0) + 1,
         signature
       }));
+      notifyContextMenuReadiness();
       // A source edit can produce several Preview snapshots in one typing
       // burst. Defer the expensive export walk until the surface is stable so
       // ordinary editing does not serialize the whole article on every render.
@@ -1088,6 +2159,7 @@ export function EditorRoot(props: EditorRootProps) {
     [
       cancelVisualPreviewWindowUnlock,
       cancelVisualUnlockPreparation,
+      notifyContextMenuReadiness,
       scheduleCurrentWechatPreviewPreparation
     ]
   );
@@ -1098,20 +2170,28 @@ export function EditorRoot(props: EditorRootProps) {
         cancelVisualPreviewWindowUnlock();
         cancelVisualUnlockPreparation();
       }
+      // The ref is the live value context-menu readiness reads, so it has to
+      // change with the callback rather than on the next render. A demand kept
+      // pending by the published status would otherwise never be woken when
+      // the status settles.
+      previewSurfaceStatusRef.current = status;
       setPreviewSurfaceStatus(status);
       if ('ready' === status) previewRefreshPendingRef.current = false;
       if ('empty' === status) setVisualPreviewSnapshot(null);
+      notifyContextMenuReadiness();
     },
     [
       cancelWechatBackgroundPreparation,
       cancelVisualPreviewWindowUnlock,
-      cancelVisualUnlockPreparation
+      cancelVisualUnlockPreparation,
+      notifyContextMenuReadiness
     ]
   );
   const handleVisualEditorReady = useCallback(
     (runtime: ImmersiveVisualEditorRuntime) => {
       visualEditorRuntimeRef.current = runtime;
       setVisualEditorSurface(runtime.surface);
+      setVisualEditorGeneration((generation) => generation + 1);
       cancelWechatBackgroundPreparation();
     },
     [cancelWechatBackgroundPreparation]
@@ -1121,18 +2201,29 @@ export function EditorRoot(props: EditorRootProps) {
       cancelWechatBackgroundPreparation();
       if (visualEditorRuntimeRef.current === runtime) {
         visualEditorRuntimeRef.current = null;
-        if (rootActiveRef.current) setVisualEditorSurface(null);
+        if (rootActiveRef.current) {
+          setVisualEditorSurface(null);
+          setVisualEditorGeneration((generation) => generation + 1);
+        }
       }
     },
     [cancelWechatBackgroundPreparation]
   );
+  useEffect(() => {
+    const coordinator = contextMenuActionCoordinatorRef.current;
+    if (!coordinator || !documentSession) return;
+    coordinator.recheckOwner((captured) => {
+      const current = readContextMenuCurrentContext(captured.surface);
+      return Boolean(current && isEditorContextCurrent(captured, current));
+    });
+  }, [documentSession, readContextMenuCurrentContext, visualEditorGeneration, visualEditorSurface]);
   const focusVisualPreview = useCallback(() => {
     return focusVisualPreviewRuntime(
       visualEditorRuntimeRef.current,
       props.immersiveEnvironment.activeElement,
-      props.onFailure
+      reportFailure
     );
-  }, [props.immersiveEnvironment, props.onFailure]);
+  }, [props.immersiveEnvironment, reportFailure]);
   const closeForToolbar = useCallback((focusTarget?: HTMLElement) => {
     appearanceSessionRef.current?.close();
     fontControlsSessionRef.current?.close();
@@ -1165,60 +2256,88 @@ export function EditorRoot(props: EditorRootProps) {
     },
     [documentSession, props.submissionField, schedulePreviewMarkdown]
   );
+  /**
+   * Failures that invalidate the accepted visual DOM itself: the owner has
+   * already restored its accepted snapshot, so it reports through `onFailure`
+   * only and never reaches `onTransferFailure`. A surface whose accepted
+   * provenance is gone cannot stay in visual editing, so Root leaves the mode
+   * here - the same terminal outcome the transfer-failure path produces.
+   */
+  const isAcceptedDomInvalidatingFailure = (code: string): boolean =>
+    'visual-editor-code-body-map-stale' === code
+    || 'visual-editor-canonical-change-map-stale' === code;
+  const leaveVisualPreviewRef = useRef<
+    (options?: Readonly<{ suppressRefresh?: boolean }>) => boolean
+  >(() => false);
   const handleVisualFailure = useCallback(
     (code: string) => {
-      props.onFailure(code);
-    },
-    [props.onFailure]
-  );
-  const handleVisualMarkdownChange = useCallback(
-    () => {
-      if (
-        rootActiveRef.current
-        && !visualDocumentEndHistoryPendingRef.current
-        && documentSession?.document.getHistoryState().redoDepth === 0
-      ) {
-        scheduleVisualWindowedHistoryBranchRelease(
-          () => visualDocumentEndHistoryPendingRef.current,
-          () => (documentSession?.document.getHistoryState().redoDepth ?? 0) > 0,
-          () => {
-            if (rootActiveRef.current) setVisualWindowedHistoryBranchHeld(false);
-          }
-        );
+      lastVisualFailureRef.current = code;
+      rootRef.current?.setAttribute('data-easymde-visual-failure', code);
+      reportFailure(code);
+      if (isAcceptedDomInvalidatingFailure(code)) {
+        // Leaving because the accepted DOM is gone must not schedule a refresh
+        // of the source the user was editing. The leave owner is declared below
+        // this callback, so it is reached through the stable ref.
+        leaveVisualPreviewRef.current({ suppressRefresh: true });
       }
-      const surface = previewRuntimeRef.current?.surface;
-      if (surface) {
-        const codeFrames = Array.from(
-          surface.querySelectorAll<HTMLElement>('pre > code.hljs')
-        );
-        if (codeFrames.some((code) =>
-          !syncedVisualCodeFramesRef.current.has(code)
-        )) {
-          try {
-            props.enhancementPort.syncCodeFrameBackgrounds(surface);
-            for (const code of codeFrames) {
-              syncedVisualCodeFramesRef.current.add(code);
-            }
-          } catch (error) {
-            props.onFailure(previewEnhancementFailureCode(error));
-          }
-        }
-      }
-      setVisualPreviewChanged(true);
     },
-    [documentSession, props.enhancementPort, props.onFailure]
+    [reportFailure]
   );
-  const handleVisualPendingChange = useCallback((pending: boolean) => {
-    if (!rootActiveRef.current) return;
-    setVisualPreviewPending(pending);
+  const handleVisualMarkdownChange = useCallback(() => {
+    lastVisualFailureRef.current = null;
+    rootRef.current?.removeAttribute('data-easymde-visual-failure');
     if (
-      !pending
+      rootActiveRef.current
       && !visualDocumentEndHistoryPendingRef.current
       && documentSession?.document.getHistoryState().redoDepth === 0
     ) {
-      setVisualWindowedHistoryBranchHeld(false);
+      scheduleVisualWindowedHistoryBranchRelease(
+        () => visualDocumentEndHistoryPendingRef.current,
+        () => (documentSession?.document.getHistoryState().redoDepth ?? 0) > 0,
+        () => {
+          if (rootActiveRef.current) setVisualWindowedHistoryBranchHeld(false);
+        }
+      );
     }
-  }, [documentSession]);
+    const surface = previewRuntimeRef.current?.surface;
+    if (surface) {
+      const codeFrames = Array.from(
+        surface.querySelectorAll<HTMLElement>('pre > code.hljs')
+      );
+      if (
+        codeFrames.some((code) => !syncedVisualCodeFramesRef.current.has(code))
+      ) {
+        try {
+          props.enhancementPort.syncCodeFrameBackgrounds(surface);
+          for (const code of codeFrames) {
+            syncedVisualCodeFramesRef.current.add(code);
+          }
+        } catch (error) {
+          reportFailure(previewEnhancementFailureCode(error));
+        }
+      }
+    }
+    setVisualPreviewChanged(true);
+  }, [documentSession, props.enhancementPort, reportFailure]);
+  const handleVisualPendingChange = useCallback(
+    (pending: boolean) => {
+      if (!rootActiveRef.current) return;
+      setVisualPreviewPending(pending);
+      if (
+        !pending
+        && !visualDocumentEndHistoryPendingRef.current
+        && documentSession?.document.getHistoryState().redoDepth === 0
+      ) {
+        setVisualWindowedHistoryBranchHeld(false);
+      }
+      // A demand that arrived during the transfer is parked on readiness. The
+      // accept effect clears the transfer without a Preview status or snapshot
+      // change, so this settle notification is the only wake-up that rebuilds
+      // the parked demand against the newly accepted edit map.
+      if (!pending) notifyContextMenuReadiness();
+    },
+    [documentSession, notifyContextMenuReadiness]
+  );
   const handleVisualPreviewRequest = useCallback(
     (markdown: string) => schedulePreviewMarkdown(markdown, true),
     [schedulePreviewMarkdown]
@@ -1260,11 +2379,28 @@ export function EditorRoot(props: EditorRootProps) {
     },
     [documentSession, props.preview]
   );
-  const leaveVisualPreview = useCallback(() => {
+  const leaveVisualPreview = useCallback(
+    (
+      options: Readonly<{
+        /**
+         * The transfer failed terminally, so the accepted Preview for this
+         * source is already known to be unavailable. Scheduling the usual
+         * leave refresh would immediately re-request the exact markdown whose
+         * refresh just failed - an automatic retry of a protected mutation,
+         * which the contract forbids. Every other exit reason keeps the normal
+         * refresh.
+         */
+        suppressRefresh?: boolean;
+      }> = {}
+    ) => {
     if (
       !visualPreviewEditingRef.current
       && !visualPreviewWindowRequestedRef.current
-    ) return false;
+    )
+      return false;
+    lastVisualFailureRef.current = null;
+    visualPreviewLeftEditingRef.current = visualPreviewEditingRef.current
+      || visualPreviewWindowRequestedRef.current;
     visualPreviewWindowRequestedRef.current = false;
     setVisualPreviewWindowRequested(false);
     visualPreviewEditingRef.current = false;
@@ -1275,11 +2411,22 @@ export function EditorRoot(props: EditorRootProps) {
     setVisualDocumentEndHistoryPending(false);
     setVisualWindowedHistoryBranchHeld(false);
     setVisualPreviewChanged(false);
-    previewRefreshPendingRef.current = true;
-    setPreviewRefreshRevision((revision) => revision + 1);
+    if (!options.suppressRefresh) {
+      previewRefreshPendingRef.current = true;
+      setPreviewRefreshRevision((revision) => revision + 1);
+    }
     return true;
-  }, []);
+    },
+    []
+  );
+  leaveVisualPreviewRef.current = leaveVisualPreview;
   const handlePreviewWindowReady = useCallback(() => {
+    const accepted = getAcceptedWindowSnapshot();
+    if (accepted && accepted.key !== acceptedWindowSnapshotKeyRef.current) {
+      acceptedWindowSnapshotKeyRef.current = accepted.key;
+      setAcceptedWindowSnapshotGeneration((generation) => generation + 1);
+    }
+    notifyContextMenuReadiness();
     const request = visualPreviewWindowUnlockRef.current;
     const snapshot = visualPreviewSnapshotRef.current;
     if (
@@ -1287,13 +2434,16 @@ export function EditorRoot(props: EditorRootProps) {
       || visualPreviewLockingRef.current
       || !visualPreviewWindowRequestedRef.current
       || !request
-    ) return;
-    if (!isVisualPreviewWindowRequestCurrent(
-      request,
-      snapshot,
-      previewSurfaceStatusRef.current,
-      rootActiveRef.current
-    )) {
+    )
+      return;
+    if (
+      !isVisualPreviewWindowRequestCurrent(
+        request,
+        snapshot,
+        previewSurfaceStatusRef.current,
+        rootActiveRef.current
+      )
+    ) {
       cancelVisualPreviewWindowUnlock();
       return;
     }
@@ -1301,14 +2451,17 @@ export function EditorRoot(props: EditorRootProps) {
     cancelWechatBackgroundPreparation();
     visualPreviewEditingRef.current = true;
     setVisualPreviewEditing(true);
-  }, [cancelWechatBackgroundPreparation, cancelVisualPreviewWindowUnlock]);
-  const handleVisualTransferFailure = useCallback(() => {
-    leaveVisualPreview();
-  }, [leaveVisualPreview]);
+  }, [
+    cancelWechatBackgroundPreparation,
+    cancelVisualPreviewWindowUnlock,
+    getAcceptedWindowSnapshot,
+    notifyContextMenuReadiness
+  ]);
   const handleVisualCanonicalDocumentChange = useCallback(() => {
-    props.onFailure('visual-editor-canonical-document-changed');
+    lastVisualFailureRef.current = null;
     leaveVisualPreview();
-  }, [leaveVisualPreview, props.onFailure]);
+    reportFailure('visual-editor-canonical-document-changed');
+  }, [leaveVisualPreview, reportFailure]);
   const requestVisualPreviewUnlock = useCallback(() => {
     const snapshot = visualPreviewSnapshotRef.current;
     if (
@@ -1321,7 +2474,8 @@ export function EditorRoot(props: EditorRootProps) {
       || codeThemePreparationRef.current
       || !snapshot
       || !documentSession
-    ) return;
+    )
+      return;
     const hasEditableMap = visualPreviewSourceHasEditableMap(
       snapshot,
       documentSession.document.getValue()
@@ -1335,6 +2489,10 @@ export function EditorRoot(props: EditorRootProps) {
       (snapshot.editMap?.blocks.length ?? 0)
       > DEFAULT_PREVIEW_WINDOW_MAX_MOUNTED;
     const enableVisualPreview = () => {
+      if (visualPreviewLeftEditingRef.current) {
+        visualPreviewLeftEditingRef.current = false;
+        setVisualResumeCanonicalToken((token) => token + 1);
+      }
       setPreviewSurfaceStatus('ready');
       setVisualPreviewChanged(false);
       setVisualPreviewPending(false);
@@ -1395,7 +2553,7 @@ export function EditorRoot(props: EditorRootProps) {
         clearPreparation();
         if (current) {
           setVisualPreviewUnlocking(false);
-          props.onFailure(previewEnhancementFailureCode(error));
+          reportFailure(previewEnhancementFailureCode(error));
         }
         return;
       }
@@ -1413,7 +2571,7 @@ export function EditorRoot(props: EditorRootProps) {
         clearPreparation();
         if (current) {
           setVisualPreviewUnlocking(false);
-          props.onFailure(previewEnhancementFailureCode(error));
+          reportFailure(previewEnhancementFailureCode(error));
         }
         return;
       }
@@ -1428,7 +2586,7 @@ export function EditorRoot(props: EditorRootProps) {
     cancelWechatBackgroundPreparation,
     documentSession,
     props.enhancementPort,
-    props.onFailure
+    reportFailure
   ]);
   const prepareVisualSource = useCallback(() => {
     if (
@@ -1448,17 +2606,79 @@ export function EditorRoot(props: EditorRootProps) {
     leaveVisualPreview();
     return true;
   }, [leaveVisualPreview, prepareVisualSource]);
-  const prepareSourceMutationWithPreview = useCallback(async () => {
+  const prepareGeneratedSourceNavigation = useCallback(
+    (
+      expected: Readonly<{ revision: number; value: string }>,
+      validateSource: () => boolean
+    ) => {
+      let prepared = false;
+      flushSync(() => {
+        const runtime = visualEditorRuntimeRef.current;
+        if (!runtime) throw new Error('visual-editor-runtime-unavailable');
+        prepared = runtime.prepareSourceNavigation(expected);
+        if (!prepared || !validateSource()) {
+          prepared = false;
+          return;
+        }
+        leaveVisualPreview();
+        if (immersiveRef.current && 'preview' === immersiveModeRef.current) {
+          // Navigation owns its target viewport: a snapshot captured for the
+          // layout being left must never be replayed over the newly revealed
+          // source position.
+          layoutScrollRestoreRef.current = null;
+          setImmersiveMode('source');
+        }
+      });
+      return prepared;
+    },
+    [leaveVisualPreview]
+  );
+  /**
+   * Leave visual preview, materializing the full Preview surface first when the
+   * caller genuinely needs the accepted window as its result (appearance apply,
+   * custom CSS, WeChat export). A TEARDOWN caller - exiting immersive mode or
+   * switching view - only needs the canonical source and a safe exit: a
+   * not-ready surface is acceptable there, so it must not report a
+   * materialization diagnostic nor abort its transition on a `false`.
+   */
+  const prepareSourceMutationWithPreview = useCallback(async (
+    options: Readonly<{
+      materialize?: boolean;
+      suppressRefresh?: boolean;
+      isCurrent?: () => boolean;
+    }> = {}
+  ) => {
     if (
       !visualPreviewEditingRef.current
       && !visualPreviewWindowRequestedRef.current
-    ) return true;
+    )
+      return true;
     if (!prepareVisualSource()) return false;
     const previewRuntime = previewRuntimeRef.current;
     if (!previewRuntime) throw new Error('preview-runtime-unavailable');
-    const holdWindow = visualPreviewEditingRef.current
-      && visualPreviewNeedsWindow;
+    const isCurrent = options.isCurrent;
+    const requestOwner = {};
+    // Undo only the state this exact request set. If a newer request already
+    // owns the hold, this is a no-op: its preparation owns the release.
+    const releaseOwnedHold = (): void => {
+      if (visualPreviewHoldOwnerRef.current !== requestOwner) return;
+      visualPreviewHoldOwnerRef.current = null;
+      // A torn-down Root never restores editing or schedules state; it only
+      // drops the ownership token it still held.
+      if (!rootActiveRef.current) return;
+      visualPreviewLockingRef.current = false;
+      visualPreviewWindowUnlockRef.current = null;
+      visualPreviewWindowRequestedRef.current = false;
+      setVisualPreviewWindowRequested(false);
+      // The held request itself made the surface non-editable while it waited;
+      // a cancelled request restores the editing the user still had.
+      visualPreviewEditingRef.current = true;
+      setVisualPreviewEditing(true);
+    };
+    const holdWindow =
+      visualPreviewEditingRef.current && visualPreviewNeedsWindow;
     if (holdWindow) {
+      visualPreviewHoldOwnerRef.current = requestOwner;
       flushSync(() => {
         visualPreviewLockingRef.current = true;
         visualPreviewWindowUnlockRef.current = null;
@@ -1477,14 +2697,33 @@ export function EditorRoot(props: EditorRootProps) {
           previewWindow.requestAnimationFrame(() => resolve());
         });
       });
+      if (isCurrent && !isCurrent()) {
+        releaseOwnedHold();
+        return false;
+      }
     }
-    if (!await previewRuntime.materialize()) {
-      visualPreviewLockingRef.current = false;
-      leaveVisualPreview();
+    const leaveOptions: Readonly<{ suppressRefresh?: boolean }> =
+      true === options.suppressRefresh ? { suppressRefresh: true } : {};
+    if (false !== options.materialize) {
+      const materialized = await previewRuntime.materialize();
+      if (isCurrent && !isCurrent()) {
+        releaseOwnedHold();
+        return false;
+      }
+      if (!materialized) {
+        visualPreviewHoldOwnerRef.current = null;
+        visualPreviewLockingRef.current = false;
+        leaveVisualPreview(leaveOptions);
+        return false;
+      }
+    }
+    if (isCurrent && !isCurrent()) {
+      releaseOwnedHold();
       return false;
     }
+    visualPreviewHoldOwnerRef.current = null;
     visualPreviewLockingRef.current = false;
-    leaveVisualPreview();
+    leaveVisualPreview(leaveOptions);
     return true;
   }, [leaveVisualPreview, prepareVisualSource, visualPreviewNeedsWindow]);
   const appearancePort = useMemo<AppearancePort>(
@@ -1498,7 +2737,7 @@ export function EditorRoot(props: EditorRootProps) {
         const visualPreviewWasEditing = visualPreviewEditingRef.current;
         if (
           visualPreviewWasEditing
-          && !await prepareSourceMutationWithPreview()
+          && !(await prepareSourceMutationWithPreview())
         ) {
           throw new Error('visual-editor-source-sync-failed');
         }
@@ -1520,17 +2759,19 @@ export function EditorRoot(props: EditorRootProps) {
         codeThemePreparationRef.current = preparation;
         if (codeThemeChanged) {
           try {
-            preparation.prepared = await props.enhancementPort.prepareCodeTheme({
-              codeTheme: state.codeTheme,
-              signal: controller.signal
-            });
+            preparation.prepared = await props.enhancementPort.prepareCodeTheme(
+              {
+                codeTheme: state.codeTheme,
+                signal: controller.signal
+              }
+            );
           } catch (error: unknown) {
             if (
               !controller.signal.aborted
               && codeThemePreparationRef.current?.generation === generation
               && rootActiveRef.current
             ) {
-              props.onFailure(previewEnhancementFailureCode(error));
+              reportFailure(previewEnhancementFailureCode(error));
             }
             if (codeThemePreparationRef.current?.generation === generation) {
               codeThemePreparationRef.current = null;
@@ -1558,7 +2799,7 @@ export function EditorRoot(props: EditorRootProps) {
             codeThemePreparationRef.current = null;
           }
           if (rootActiveRef.current) {
-            props.onFailure('react-editor-appearance-failed');
+            reportFailure('react-editor-appearance-failed');
           }
           return false;
         }
@@ -1633,7 +2874,7 @@ export function EditorRoot(props: EditorRootProps) {
         const visualPreviewWasEditing = visualPreviewEditingRef.current;
         if (
           visualPreviewWasEditing
-          && !await prepareSourceMutationWithPreview()
+          && !(await prepareSourceMutationWithPreview())
         ) {
           throw new Error('visual-editor-source-sync-failed');
         }
@@ -1684,8 +2925,8 @@ export function EditorRoot(props: EditorRootProps) {
         documentSession?.replaceSubmissionState(submissionStateRef.current);
         scheduleWechatPreviewPreparation(
           visualEditorRuntimeRef.current?.surface
-          ?? previewRuntimeRef.current?.surface
-          ?? null
+            ?? previewRuntimeRef.current?.surface
+            ?? null
         );
       },
       closeOtherPopovers: () => {
@@ -1695,11 +2936,7 @@ export function EditorRoot(props: EditorRootProps) {
         props.fontControlsPort.closeOtherPopovers();
       }
     }),
-    [
-      documentSession,
-      props.fontControlsPort,
-      scheduleWechatPreviewPreparation
-    ]
+    [documentSession, props.fontControlsPort, scheduleWechatPreviewPreparation]
   );
   const handleAppearanceReady = useCallback(
     (session: AppearanceControlsSession) => {
@@ -1722,6 +2959,12 @@ export function EditorRoot(props: EditorRootProps) {
   const handleToolbarReady = useCallback((session: EditorToolbarSession) => {
     toolbarSessionRef.current = session;
   }, []);
+  const handleToolbarExecutorReady = useCallback(
+    (execute: ((commandId: string) => void) | null) => {
+      contextMenuExecutorRef.current = execute;
+    },
+    []
+  );
   const closeMediaPickerDialog = useCallback(() => {
     props.mediaPickerFrame?.cancel?.();
     setMediaPickerDialog(null);
@@ -1731,7 +2974,7 @@ export function EditorRoot(props: EditorRootProps) {
       props.mediaPickerFrame?.cancel?.();
       setMediaPickerDialog(null);
       if (!rootActiveRef.current) return;
-      props.onFailure(mediaPickerFailureCode(error));
+      reportFailure(mediaPickerFailureCode(error));
       publishEditorStatus({
         id: 'media-picker',
         message: props.mediaPickerFailureMessage,
@@ -1742,12 +2985,15 @@ export function EditorRoot(props: EditorRootProps) {
     [
       props.mediaPickerFailureMessage,
       props.mediaPickerFrame,
-      props.onFailure,
+      reportFailure,
       publishEditorStatus
     ]
   );
   const openMediaPicker = useCallback(
-    (session: EditorDocumentSession) => {
+    (
+      session: EditorDocumentSession,
+      pickerDocument?: MediaPickerDocumentPort
+    ) => {
       if (mediaOperationRef.current) {
         return mediaOperationRef.current;
       }
@@ -1758,11 +3004,13 @@ export function EditorRoot(props: EditorRootProps) {
         ? Promise.reject(sessionError)
         : !frameAvailable
           ? Promise.reject(new Error('media-picker-unavailable'))
-        : openMediaPickerSession({
-            document: documentPort(session, () => rootActiveRef.current),
-            frame,
-            strings: props.mediaPicker
-          });
+          : openMediaPickerSession({
+              document:
+                pickerDocument
+                ?? documentPort(session, () => rootActiveRef.current),
+              frame,
+              strings: props.mediaPicker
+            });
       mediaOperationRef.current = operation;
       if (!sessionError && frameAvailable) {
         setMediaPickerDialog('media');
@@ -1772,7 +3020,7 @@ export function EditorRoot(props: EditorRootProps) {
           if (!rootActiveRef.current) {
             return;
           }
-          props.onFailure(mediaPickerFailureCode(error));
+          reportFailure(mediaPickerFailureCode(error));
           publishEditorStatus({
             id: 'media-picker',
             message: props.mediaPickerFailureMessage,
@@ -1781,18 +3029,18 @@ export function EditorRoot(props: EditorRootProps) {
           });
         })
         .finally(() => {
-        if (mediaOperationRef.current === operation) {
-          mediaOperationRef.current = null;
-        }
-        setMediaPickerDialog(null);
-      });
+          if (mediaOperationRef.current === operation) {
+            mediaOperationRef.current = null;
+          }
+          setMediaPickerDialog(null);
+        });
       return operation;
     },
     [
       props.mediaPicker,
       props.mediaPickerFailureMessage,
       props.mediaPickerFrame,
-      props.onFailure,
+      reportFailure,
       protectedOperationError,
       publishEditorStatus
     ]
@@ -1808,60 +3056,57 @@ export function EditorRoot(props: EditorRootProps) {
     }),
     [props.imageUploadPort, protectedOperationError]
   );
-  const wechatSession = useMemo(
-    () => {
-      const copyOptions: WechatClipboardCopyOptions = {
-        ...(props.wechatVisualRasterizationPort
-          ? { visualRasterizationPort: props.wechatVisualRasterizationPort }
-          : {}),
-        imageUploadPort,
-        maxBytes: props.imageUpload.maxBytes,
-        pngConversionEnabled: props.wechatExport.pngConversionEnabled,
-        postId: props.imageUpload.postId,
-        resolvePreview: async () => {
-          if (
-            visualPreviewEditingRef.current
-            || visualPreviewWindowRequestedRef.current
-          ) {
-            if (!prepareVisualSource()) return null;
-            const previewRuntime = previewRuntimeRef.current;
-            if (!previewRuntime || !await previewRuntime.materialize()) {
-              return null;
-            }
-            leaveVisualPreview();
-          }
-          const surface = previewRuntimeRef.current?.surface ?? null;
-          return surface?.querySelector(
-            '[data-easymde-preview-window-spacer]'
-          ) ? null : surface;
-        }
-      };
-      return createWechatExportSession({
-        clipboard: props.wechatClipboard,
-        copyOptions,
-        enabled: props.wechatExport.enabled,
-        getPreview: () =>
-          visualEditorRuntimeRef.current?.surface
-          ?? previewRuntimeRef.current?.surface
-          ?? null,
-        onDiagnostic: props.onFailure,
-        onStatus: setWechatStatus,
-        strings: props.wechatExport.strings
-      });
-    },
-    [
+  const wechatSession = useMemo(() => {
+    const copyOptions: WechatClipboardCopyOptions = {
+      ...(props.wechatVisualRasterizationPort
+        ? { visualRasterizationPort: props.wechatVisualRasterizationPort }
+        : {}),
       imageUploadPort,
-      leaveVisualPreview,
-      prepareVisualSource,
-      props.imageUpload.maxBytes,
-      props.imageUpload.postId,
-      props.onFailure,
-      props.wechatClipboard,
-      props.wechatExport,
-      props.wechatVisualRasterizationPort,
-      setWechatStatus
-    ]
-  );
+      maxBytes: props.imageUpload.maxBytes,
+      pngConversionEnabled: props.wechatExport.pngConversionEnabled,
+      postId: props.imageUpload.postId,
+      resolvePreview: async () => {
+        if (
+          visualPreviewEditingRef.current
+          || visualPreviewWindowRequestedRef.current
+        ) {
+          if (!prepareVisualSource()) return null;
+          const previewRuntime = previewRuntimeRef.current;
+          if (!previewRuntime || !(await previewRuntime.materialize())) {
+            return null;
+          }
+          leaveVisualPreview();
+        }
+        const surface = previewRuntimeRef.current?.surface ?? null;
+        return surface?.querySelector('[data-easymde-preview-window-spacer]')
+          ? null
+          : surface;
+      }
+    };
+    return createWechatExportSession({
+      clipboard: props.wechatClipboard,
+      copyOptions,
+      enabled: props.wechatExport.enabled,
+      getPreview: () =>
+        visualEditorRuntimeRef.current?.surface
+        ?? previewRuntimeRef.current?.surface
+        ?? null,
+      onDiagnostic: reportFailure,
+      onStatus: setWechatStatus,
+      strings: props.wechatExport.strings
+    });
+  }, [
+    imageUploadPort,
+    leaveVisualPreview,
+    prepareVisualSource,
+    props.imageUpload.maxBytes,
+    props.imageUpload.postId,
+    reportFailure,
+    props.wechatClipboard,
+    props.wechatExport,
+    props.wechatVisualRasterizationPort,
+    setWechatStatus
+  ]);
   const remoteImageImportPort = useMemo<RemoteImageImportPort>(
     () => ({
       import: (request) => {
@@ -1878,7 +3123,7 @@ export function EditorRoot(props: EditorRootProps) {
     return createRemoteImageImportCoordinator({
       document: documentPort(documentSession, () => rootActiveRef.current),
       insertion: props.imageUpload.insertion,
-      onDiagnostic: props.onFailure,
+      onDiagnostic: reportFailure,
       postId: props.imageUpload.postId,
       remoteImageImport: remoteImageImportPort
     });
@@ -1886,7 +3131,7 @@ export function EditorRoot(props: EditorRootProps) {
     documentSession,
     props.imageUpload.insertion,
     props.imageUpload.postId,
-    props.onFailure,
+    reportFailure,
     remoteImageImportPort
   ]);
   useEffect(
@@ -1904,6 +3149,169 @@ export function EditorRoot(props: EditorRootProps) {
     }),
     [props.previewPort, protectedOperationError]
   );
+  const editorCodeContentQuery = useMemo(
+    () =>
+      createEditorCodeContentQuery({
+        isCurrent: (binding: EditorCodeContentQueryBinding): boolean => {
+          if (!documentSession) return false;
+          if (binding.source !== documentSession.document.getValue()) return false;
+          if (
+            !Object.is(
+              binding.revision,
+              documentSession.document.getRevision?.()
+            )
+          ) {
+            return false;
+          }
+          const selection = documentSession.document.getSelection();
+          if (
+            selection.start !== binding.selection.start
+            || selection.end !== binding.selection.end
+            || selection.direction !== binding.selection.direction
+          ) {
+            return false;
+          }
+          if ('source' === binding.surface) {
+            return binding.generation === 0
+              && binding.menuIdentity === documentSession;
+          }
+          const runtime = visualEditorRuntimeRef.current;
+          return binding.generation === visualEditorGeneration
+            && binding.menuIdentity === runtime;
+        },
+        notify: notifyContextMenuReadiness,
+        onUnavailable: (binding, code) => {
+          if ('editor-code-content-map-unavailable' === code) return;
+          const key = [
+            binding.surface,
+            binding.generation,
+            binding.revision ?? '',
+            binding.selection.start,
+            binding.selection.end,
+            binding.source.length,
+            code
+          ].join(':');
+          if (editorCodeContentFailureRef.current === key) return;
+          editorCodeContentFailureRef.current = key;
+          reportFailure(code);
+        },
+        previewPort,
+        requestFactory: ({ binding, markdown, target }) => {
+          const defaultArticleTheme = props.appearance.articleThemes.find(
+            ({ id }) => 'default' === id
+          );
+          if (
+            !defaultArticleTheme
+            || !props.appearance.codeThemes.some(
+              ({ id }) => id === defaultArticleTheme.defaultCodeTheme
+            )
+          ) {
+            throw new Error('editor-code-content-default-profile-unavailable');
+          }
+          return {
+            codeTheme: defaultArticleTheme.defaultCodeTheme,
+            customCssId: '',
+            markdown,
+            markdownTheme: defaultArticleTheme.id,
+            postId: props.preview.postId,
+            signature:
+              `editor-code-content:${++editorCodeContentQuerySequenceRef.current}`
+                + `:${binding.surface}:${target.kind}:${target.ownerLineStart}`
+                + `:${target.ownerLineEnd}:${markdown.length}`
+          };
+        }
+      }),
+    [
+      documentSession,
+      reportFailure,
+      notifyContextMenuReadiness,
+      previewPort,
+      props.appearance.articleThemes,
+      props.appearance.codeThemes,
+      props.preview.postId,
+      visualEditorGeneration
+    ]
+  );
+  useEffect(() => {
+    editorCodeContentQueryRef.current = editorCodeContentQuery;
+    return () => {
+      if (editorCodeContentQueryRef.current === editorCodeContentQuery) {
+        editorCodeContentQueryRef.current = null;
+      }
+      editorCodeContentQuery.dispose();
+    };
+  }, [editorCodeContentQuery]);
+  const editorSourceLinkQuery = useMemo<EditorSourceLinkQuerySession | null>(
+    () => {
+      if (!props.simplifiedFormattingParser) return null;
+      return createEditorSourceLinkQuery({
+        isCurrent: (binding: EditorSourceLinkQueryBinding): boolean => {
+          if (!documentSession) return false;
+          if (binding.menuIdentity !== documentSession) return false;
+          if (binding.source !== documentSession.document.getValue()) {
+            return false;
+          }
+          if (
+            !Object.is(
+              binding.revision,
+              documentSession.document.getRevision?.()
+            )
+          ) {
+            return false;
+          }
+          const selection = documentSession.document.getSelection();
+          return selection.start === binding.selection.start
+            && selection.end === binding.selection.end
+            && selection.direction === binding.selection.direction;
+        },
+        notify: notifyContextMenuReadiness,
+        parser: props.simplifiedFormattingParser,
+        previewPort,
+        requestFactory: ({ binding, candidate, markdown }) => {
+          const defaultArticleTheme = props.appearance.articleThemes.find(
+            ({ id }) => 'default' === id
+          );
+          if (
+            !defaultArticleTheme
+            || !props.appearance.codeThemes.some(
+              ({ id }) => id === defaultArticleTheme.defaultCodeTheme
+            )
+          ) {
+            throw new Error('editor-source-link-default-profile-unavailable');
+          }
+          return {
+            codeTheme: defaultArticleTheme.defaultCodeTheme,
+            customCssId: '',
+            markdown,
+            markdownTheme: defaultArticleTheme.id,
+            postId: props.preview.postId,
+            signature:
+              `editor-source-link:${++editorSourceLinkQuerySequenceRef.current}`
+                + `:${binding.revision ?? 'none'}:${candidate.kind}`
+                + `:${candidate.from}:${candidate.to}:${markdown.length}`
+          };
+        }
+      });
+    },
+    [
+      documentSession,
+      notifyContextMenuReadiness,
+      previewPort,
+      props.appearance.articleThemes,
+      props.appearance.codeThemes,
+      props.preview.postId,
+      props.simplifiedFormattingParser
+    ]
+  );
+  useEffect(() => {
+    editorSourceLinkQueryRef.current = editorSourceLinkQuery;
+    return () => {
+      if (editorSourceLinkQueryRef.current === editorSourceLinkQuery) {
+        editorSourceLinkQueryRef.current = null;
+      }
+      editorSourceLinkQuery?.dispose();
+    };
+  }, [editorSourceLinkQuery]);
   const revisionPort = useMemo<RevisionPort | null>(() => {
     const port = props.revisionPort;
     return port
@@ -1934,16 +3342,39 @@ export function EditorRoot(props: EditorRootProps) {
   const executeRootExternalCommand = useCallback(
     (commandId: string, session: EditorDocumentSession) => {
       if (
-        'image' ===
-        props.toolbar.commands.find((command) => command.id === commandId)
+        'image'
+        === props.toolbar.commands.find((command) => command.id === commandId)
           ?.action
       ) {
-        void openMediaPicker(session);
+        const runtime = visualPreviewEditingRef.current
+          ? visualEditorRuntimeRef.current
+          : null;
+        const revision = session.document.getRevision?.();
+        const visualContext: VisualCanonicalChangeContext | null =
+          runtime && documentSession === session
+            ? {
+                ...(undefined === revision ? {} : { revision }),
+                selection: session.document.getSelection(),
+                surface: 'visual',
+                value: session.document.getValue()
+              }
+            : null;
+        const pickerDocument =
+          visualContext && applyVisualCanonicalChangeRef.current
+            ? visualMediaPickerDocument(
+                session,
+                visualContext,
+                () => rootActiveRef.current,
+                () => runtime?.surface.focus(),
+                applyVisualCanonicalChangeRef.current
+              )
+            : undefined;
+        void openMediaPicker(session, pickerDocument);
         return true;
       }
       if (
-        'copyWechat' ===
-        props.toolbar.commands.find((command) => command.id === commandId)
+        'copyWechat'
+        === props.toolbar.commands.find((command) => command.id === commandId)
           ?.action
       ) {
         void wechatSession.copy();
@@ -1958,39 +3389,468 @@ export function EditorRoot(props: EditorRootProps) {
       wechatSession
     ]
   );
-  const publish = useCallback((
-    draft: NativePublishDraft,
-    original: NativePublishSnapshot
-  ): boolean => {
-    if (!documentSession)
-      throw new Error('immersive-publish-session-unavailable');
-    const sessionError = protectedOperationError('post-write');
-    if (sessionError) return false;
-    try {
-      props.nativePublishPort.apply(draft);
-    } catch {
-      props.onFailure('immersive-publish-native-owner-unavailable');
-      return false;
+  const reportContextMenuFailure = useCallback(
+    (code: string, message?: string) => {
+      reportFailure(code);
+      if (message) {
+        publishEditorStatus({
+          id: `context-menu-${code}`,
+          message,
+          owner: 'editor',
+          type: 'error'
+        });
+      }
+    },
+    [reportFailure, publishEditorStatus]
+  );
+  const reportVisualToolbarFailure = useCallback(() => {
+    const message = props.contextMenuStrings?.statusActionFailed;
+    if (!message) return;
+    publishEditorStatus({
+      id: 'visual-toolbar-command-failed',
+      message,
+      owner: 'editor',
+      type: 'error'
+    });
+  }, [props.contextMenuStrings?.statusActionFailed, publishEditorStatus]);
+  const reportVisualCanonicalChangeFailure = useCallback(() => {
+    const message = props.contextMenuStrings?.statusActionFailed;
+    if (!message) return;
+    publishEditorStatus({
+      id: 'context-menu-visual-canonical-change-failed',
+      message,
+      owner: 'editor',
+      type: 'error'
+    });
+  }, [props.contextMenuStrings?.statusActionFailed, publishEditorStatus]);
+  const reportVisualTransferFailure = useCallback(
+    (code: string | null) => {
+      if (!code || isCancelledVisualTransferFailure(code)) return;
+      const message = props.contextMenuStrings?.statusActionFailed;
+      if (!message) return;
+      publishEditorStatus({
+        id: 'visual-transfer-failed',
+        message,
+        owner: 'editor',
+        type: 'error'
+      });
+    },
+    [props.contextMenuStrings?.statusActionFailed, publishEditorStatus]
+  );
+  const handleVisualTransferFailure = useCallback(() => {
+    const code = lastVisualFailureRef.current;
+    lastVisualFailureRef.current = null;
+    // The canonical write and the visual transaction that turns it into a
+    // stable accepted Preview are different completion owners. A transferred
+    // value that already equals the document says nothing about the transfer
+    // that failed afterwards, so only a transfer a newer accepted Preview
+    // already superseded is the contract's normal re-synchronization path.
+    // Every other failure - a rejected Preview, a stale map, a failed commit -
+    // stays an explicit failure even when the canonical write of the same
+    // request already landed.
+    if (null !== code && isSupersededVisualTransferFailure(code)) {
+      const runtime = visualEditorRuntimeRef.current;
+      if (runtime?.surface.isConnected) {
+        runtime.surface.focus({ preventScroll: true });
+      }
+      return;
     }
-    if (true !== props.publishPost(documentSession)) {
-      try {
-        props.nativePublishPort.apply(original);
-      } catch {
-        props.onFailure('immersive-publish-native-restore-unavailable');
+    reportVisualTransferFailure(code);
+    // A terminal transfer failure normally must not schedule a refresh of the
+    // same source: that would be an automatic retry of a protected mutation.
+    // One class is different - a paste whose Preview render failed. Its
+    // canonical write ALREADY landed, so the locked Preview is still showing
+    // the pre-paste document and must be allowed to catch up with exactly one
+    // leave-time render. Nothing here retries the failed request itself.
+    const needsCatchUpRender =
+      'visual-editor-markdown-paste-render-failed' === code;
+    leaveVisualPreview(
+      needsCatchUpRender ? {} : { suppressRefresh: true }
+    );
+  }, [
+    leaveVisualPreview,
+    reportVisualTransferFailure
+  ]);
+  const applyVisualCanonicalChange = useCallback(
+    (
+      captured: VisualCanonicalChangeContext,
+      change: VisualCanonicalChangeRequest['change']
+    ): boolean => {
+      if ('visual' !== captured.surface) return false;
+      const runtime = visualEditorRuntimeRef.current;
+      if (!runtime || undefined === captured.revision) {
+        reportVisualCanonicalChangeFailure();
         return false;
       }
-      props.onFailure('immersive-publish-command-unavailable');
-      return false;
+      const result = runtime.applyCanonicalChange({
+        change,
+        expected: {
+          revision: captured.revision,
+          selection: captured.selection,
+          value: captured.value
+        }
+      });
+      if ('handled' !== result) {
+        // A blocked, failed, or unsupported transaction is an explicit
+        // failure. Compare the canonical value only to decide nothing here:
+        // the runtime may have written the request before its Preview
+        // transfer or selection map failed, and that half-completed
+        // transaction must not be announced as a completed command.
+        reportVisualCanonicalChangeFailure();
+        return false;
+      }
+      return true;
+    },
+    [reportVisualCanonicalChangeFailure]
+  );
+  applyVisualCanonicalChangeRef.current = applyVisualCanonicalChange;
+
+  const contextMenuActionCapabilities: EditorContextMenuActionCapabilities = {
+    ...(props.editorClipboardPort
+      ? { clipboard: props.editorClipboardPort }
+      : {}),
+    ...(props.contextMenuStrings
+      ? { contextMenuStrings: props.contextMenuStrings }
+      : {}),
+    document: documentSession
+      ? {
+          applyTextChange: (change) =>
+            documentSession.document.applyTextChange(change),
+          getBlockIndex: (surface) => {
+            if (!props.editorBlockIndexPort) return undefined;
+            const revision = documentSession.document.getRevision?.();
+            const owner =
+              'source' === surface
+                ? documentSession
+                : visualEditorRuntimeRef.current;
+            if (undefined === revision || !owner) return null;
+            const index = contextMenuBlockIndexCacheRef.current?.peek({
+              generation: 'source' === surface ? 0 : visualEditorGeneration,
+              owner,
+              revision
+            });
+            return index && index.source === documentSession.document.getValue()
+              ? index
+              : null;
+          },
+          getCurrentContext: (surface) => {
+            const current = readContextMenuCurrentContext(surface);
+            if (!current) {
+              throw new Error('editor-context-menu-owner-unavailable');
+            }
+            return current;
+          },
+          getSelection: () => documentSession.document.getSelection(),
+          getValue: () => documentSession.document.getValue(),
+          isEditable: () => documentSession.document.isEditable(),
+          revealPosition: (position) =>
+            documentSession.document.revealPosition(position),
+          subscribe: (listener) => documentSession.document.subscribe(listener),
+          subscribeSelection: (listener) =>
+            documentSession.document.subscribeSelection(listener)
+        }
+      : null,
+    generated: {
+      ...(props.generatedContentExportSession
+        ? { exportSession: props.generatedContentExportSession }
+        : {}),
+      prepareSourceNavigation: (expected, validateSource) =>
+        prepareGeneratedSourceNavigation(expected, validateSource)
+    },
+    isActive: () => rootActiveRef.current,
+    media: {
+      ...(props.editorImagePixelsPort
+        ? { imagePixels: props.editorImagePixelsPort }
+        : {}),
+      imageUpload: {
+        postId: props.imageUpload.postId,
+        remoteImageUploadMode: props.imageUpload.remoteImageUploadMode
+      },
+      openInsertion: (captured, block, direction) => {
+        if (!documentSession) return;
+        const position = 'above' === direction ? block.start : block.end;
+        const insertionSelection = {
+          direction: 'none' as const,
+          end: position,
+          start: position
+        };
+        const formatInsertion = (currentValue: string, inserted: string) =>
+          insertMarkdownBlockRelative(currentValue, block, direction, inserted);
+        const runtime =
+          'visual' === captured.surface ? visualEditorRuntimeRef.current : null;
+        const apply =
+          'visual' === captured.surface
+            ? applyVisualCanonicalChangeRef.current
+            : null;
+        if ('visual' === captured.surface && (!runtime || !apply)) {
+          reportContextMenuFailure(
+            'editor-context-menu-visual-selection-unavailable',
+            props.contextMenuStrings?.statusActionFailed
+          );
+          return;
+        }
+        const visualCaptured = 'visual' === captured.surface ? captured : null;
+        const pickerDocument =
+          runtime && apply && visualCaptured
+            ? visualMediaPickerDocument(
+                documentSession,
+                visualCaptured,
+                () => rootActiveRef.current,
+                () => runtime.surface.focus(),
+                apply,
+                insertionSelection,
+                formatInsertion
+              )
+            : documentPort(
+                documentSession,
+                () => rootActiveRef.current,
+                insertionSelection,
+                formatInsertion
+              );
+        void openMediaPicker(documentSession, pickerDocument);
+      },
+      remoteImageImport: remoteImageImportPort,
+      requestTableInsertion: (captured, direction) =>
+        setContextMenuTableRequest({
+          ...captured,
+          insertionDirection: direction
+        })
+    },
+    preview: {
+      render: (markdown, signal) =>
+        previewPort.render(
+          previewRequest(
+            markdown,
+            props.preview,
+            previewAppearanceRef.current,
+            ++previewRevisionRef.current
+          ),
+          signal
+        ),
+      renderCodeIndentationCandidate: async (markdown, signal) => {
+        const defaultArticleTheme = props.appearance.articleThemes.find(
+          ({ id }) => 'default' === id
+        );
+        if (
+          !defaultArticleTheme
+          || !props.appearance.codeThemes.some(
+            ({ id }) => id === defaultArticleTheme.defaultCodeTheme
+          )
+        ) {
+          return {
+            code: 'editor-code-projection-candidate-unavailable',
+            status: 'unavailable' as const
+          };
+        }
+        const signature =
+          `editor-code-indent-candidate:${++editorCodeIndentationCandidateSequenceRef.current}`;
+        const response = await previewPort.render(
+          {
+            codeTheme: defaultArticleTheme.defaultCodeTheme,
+            customCssId: '',
+            markdown,
+            markdownTheme: defaultArticleTheme.id,
+            postId: props.preview.postId,
+            signature
+          },
+          signal
+        );
+        return { response, signature, status: 'available' as const };
+      }
+    },
+    report: reportContextMenuFailure,
+    ...(props.simplifiedFormattingParser
+      ? { simplifiedFormattingParser: props.simplifiedFormattingParser }
+      : {}),
+    toolbar: {
+      commands: props.toolbar.commands,
+      execute: (commandId) => {
+        const execute = contextMenuExecutorRef.current;
+        if (!execute) return false;
+        execute(commandId);
+        return true;
+      }
+    },
+    visual: {
+      applyCanonicalChange: (captured, change) =>
+        applyVisualCanonicalChangeRef.current?.(captured, change) ?? false,
+      executeCommand: (command, options) => {
+        const runtime = visualEditorRuntimeRef.current;
+        if (!runtime) return 'unavailable';
+        const result = runtime.executeCommand(command, options);
+        return 'handled' === result ? 'handled' : 'failed';
+      },
+      isEditable: () =>
+        Boolean(visualEditorRuntimeRef.current?.isEditable())
     }
-    return true;
-  }, [
-    documentSession,
-    props.nativePublishPort,
-    props.immersiveStrings.publishFailed,
-    props.onFailure,
-    props.publishPost,
-    protectedOperationError
-  ]);
+  };
+  contextMenuActionCapabilitiesRef.current = contextMenuActionCapabilities;
+  const contextMenuActionCoordinator = useMemo(
+    () =>
+      createEditorContextMenuActionCoordinator({
+        getCapabilities: () => {
+          const capabilities = contextMenuActionCapabilitiesRef.current;
+          if (!capabilities) {
+            throw new Error('editor-context-menu-capabilities-unavailable');
+          }
+          return capabilities;
+        }
+      }),
+    []
+  );
+  contextMenuActionCoordinatorRef.current = contextMenuActionCoordinator;
+  const insertContextMenuTable = useCallback(
+    (rows: number, columns: number): void => {
+      const request = contextMenuTableRequest;
+      if (!request || !documentSession) {
+        setContextMenuTableRequest(null);
+        reportContextMenuFailure(
+          'editor-context-menu-table-dialog-stale',
+          props.contextMenuStrings?.statusActionFailed
+        );
+        return;
+      }
+      const revision = documentSession.document.getRevision?.();
+      const current = {
+        ...(undefined === revision ? {} : { revision }),
+        selection: documentSession.document.getSelection(),
+        ...('source' === request.surface
+          ? { surfaceIdentity: documentSession }
+          : visualEditorRuntimeRef.current
+            ? {
+                surfaceGeneration: visualEditorGeneration,
+                surfaceIdentity: visualEditorRuntimeRef.current
+              }
+            : {}),
+        surface: request.surface,
+        value: documentSession.document.getValue()
+      };
+      if (!isEditorContextCurrent(request, current)) {
+        setContextMenuTableRequest(null);
+        reportContextMenuFailure(
+          'editor-context-menu-context-stale',
+          props.contextMenuStrings?.statusActionFailed
+        );
+        return;
+      }
+      const indexRevision = documentSession.document.getRevision?.();
+      const indexOwner =
+        'source' === request.surface
+          ? documentSession
+          : visualEditorRuntimeRef.current;
+      const blockIndex =
+        props.editorBlockIndexPort
+        && undefined !== indexRevision
+        && indexOwner
+          ? contextMenuBlockIndexCacheRef.current?.peek({
+              generation: 'source' === request.surface ? 0 : visualEditorGeneration,
+              owner: indexOwner,
+              revision: indexRevision
+            }) ?? undefined
+          : undefined;
+      const insertion = tableMarkdown(rows, columns);
+      const value = documentSession.document.getValue();
+      const usableBlockIndex = blockIndex && blockIndex.source === value
+        ? blockIndex
+        : undefined;
+      const block = findMarkdownBlock(
+        value,
+        request.selection.start,
+        usableBlockIndex
+      );
+      if (!block) {
+        setContextMenuTableRequest(null);
+        reportContextMenuFailure(
+          'editor-context-menu-insertion-target-unavailable',
+          props.contextMenuStrings?.unsupported
+        );
+        return;
+      }
+      const change = insertMarkdownBlockRelative(
+        value,
+        block,
+        request.insertionDirection,
+        insertion
+      );
+      if (!change.changes) {
+        setContextMenuTableRequest(null);
+        reportContextMenuFailure(
+          'editor-context-menu-insertion-change-missing',
+          props.contextMenuStrings?.statusActionFailed
+        );
+        return;
+      }
+      const canonicalChange = {
+        changes: change.changes,
+        selection: change.selection,
+        value: change.value
+      };
+      let applied: boolean;
+      if ('visual' === request.surface) {
+        applied = applyVisualCanonicalChange(request, canonicalChange);
+      } else if (!documentSession.document.isEditable()) {
+        // The dialog can stay open while the authoritative field becomes
+        // read-only or disabled. Confirming it must then fail explicitly and
+        // write neither the canonical document nor history.
+        setContextMenuTableRequest(null);
+        reportContextMenuFailure(
+          'editor-context-menu-surface-read-only',
+          props.contextMenuStrings?.statusActionFailed
+        );
+        return;
+      } else {
+        documentSession.document.applyTextChange(canonicalChange);
+        applied = true;
+      }
+      if (!applied) {
+        setContextMenuTableRequest(null);
+        return;
+      }
+      setContextMenuTableRequest(null);
+      if ('source' === request.surface) documentSession.document.focus();
+    },
+    [
+      contextMenuTableRequest,
+      documentSession,
+      applyVisualCanonicalChange,
+      props.contextMenuStrings,
+      reportContextMenuFailure,
+      visualEditorGeneration
+    ]
+  );
+  const publish = useCallback(
+    (draft: NativePublishDraft, original: NativePublishSnapshot): boolean => {
+      if (!documentSession)
+        throw new Error('immersive-publish-session-unavailable');
+      const sessionError = protectedOperationError('post-write');
+      if (sessionError) return false;
+      try {
+        props.nativePublishPort.apply(draft);
+      } catch {
+        reportFailure('immersive-publish-native-owner-unavailable');
+        return false;
+      }
+      if (true !== props.publishPost(documentSession)) {
+        try {
+          props.nativePublishPort.apply(original);
+        } catch {
+          reportFailure('immersive-publish-native-restore-unavailable');
+          return false;
+        }
+        reportFailure('immersive-publish-command-unavailable');
+        return false;
+      }
+      return true;
+    },
+    [
+      documentSession,
+      props.nativePublishPort,
+      props.immersiveStrings.publishFailed,
+      reportFailure,
+      props.publishPost,
+      protectedOperationError
+    ]
+  );
   const selectFeaturedImage = useCallback(() => {
     if (featuredImageOperationRef.current) {
       return featuredImageOperationRef.current;
@@ -2002,16 +3862,17 @@ export function EditorRoot(props: EditorRootProps) {
       ? Promise.reject(sessionError)
       : !frameAvailable
         ? Promise.reject(new Error('featured-image-picker-unavailable'))
-      : openFeaturedImagePicker(
-          frame,
-          props.immersiveStrings.selectFeaturedImage
-        );
+        : openFeaturedImagePicker(
+            frame,
+            props.immersiveStrings.selectFeaturedImage
+          );
     if (!sessionError && frameAvailable) {
       setMediaPickerDialog('featured');
     }
     const reported = operation.catch((error: unknown) => {
-      props.onFailure(
-        error instanceof Error && /^featured-image-[a-z0-9-]+$/.test(error.message)
+      reportFailure(
+        error instanceof Error
+          && /^featured-image-[a-z0-9-]+$/.test(error.message)
           ? error.message
           : 'featured-image-picker-failed'
       );
@@ -2028,7 +3889,7 @@ export function EditorRoot(props: EditorRootProps) {
   }, [
     props.immersiveStrings.selectFeaturedImage,
     props.mediaPickerFrame,
-    props.onFailure,
+    reportFailure,
     protectedOperationError
   ]);
   const enterImmersive = useCallback(() => {
@@ -2040,45 +3901,167 @@ export function EditorRoot(props: EditorRootProps) {
     setEditorStatusState((currentState) => ({
       focused: false,
       status:
-        'local-draft' === currentState.status?.owner &&
-        'error' !== currentState.status.type
+        'local-draft' === currentState.status?.owner
+        && 'error' !== currentState.status.type
           ? null
           : currentState.status
     }));
+    captureLayoutScrollRestore();
     immersiveRef.current = true;
     setImmersive(true);
-  }, [closeForToolbar, props.immersivePreferencesPort]);
+  }, [
+    captureLayoutScrollRestore,
+    closeForToolbar,
+    props.immersivePreferencesPort
+  ]);
   const exitImmersive = useCallback(() => {
+    const generation = ++immersiveModeRequestRef.current;
+    deferredImmersiveModeRef.current = null;
     cancelVisualUnlockPreparation();
     if (
       !visualPreviewEditingRef.current
       && !visualPreviewWindowRequestedRef.current
     ) {
+      captureLayoutScrollRestore();
       immersiveRef.current = false;
       setImmersive(false);
       return;
     }
-    void prepareSourceMutationWithPreview().then((prepared) => {
-      if (!prepared || !rootActiveRef.current) return;
+    if (visualPreviewPendingRef.current) {
+      deferredImmersiveModeRef.current = { generation, mode: null };
+      return;
+    }
+    // Exiting immersive mode is a user CANCELLATION of visual preview: the
+    // accepted source is already what the canonical document holds, so
+    // re-rendering it here would issue a session render for a demand the user
+    // just abandoned. Teardown therefore suppresses the leave-time refresh; a
+    // not-ready surface is also acceptable, so materialize is skipped.
+    void prepareSourceMutationWithPreview({
+      isCurrent: () => generation === immersiveModeRequestRef.current
+        && rootActiveRef.current && immersiveRef.current,
+      materialize: false,
+      suppressRefresh: true
+    }).then((prepared) => {
+      const current = generation === immersiveModeRequestRef.current
+        && rootActiveRef.current && immersiveRef.current;
+      if (!prepared || !current) {
+        if (!prepared && current && visualPreviewPendingRef.current
+          && !deferredImmersiveModeRef.current) {
+          deferredImmersiveModeRef.current = { generation, mode: null };
+        }
+        return;
+      }
+      captureLayoutScrollRestore();
       immersiveRef.current = false;
       setImmersive(false);
     });
-  }, [cancelVisualUnlockPreparation, prepareSourceMutationWithPreview]);
-  const changeImmersiveMode = useCallback((mode: ImmersiveViewMode) => {
-    if (mode === immersiveModeRef.current) return;
+  }, [
+    cancelVisualUnlockPreparation,
+    captureLayoutScrollRestore,
+    prepareSourceMutationWithPreview
+  ]);
+  const changeImmersiveMode = useCallback(
+    (mode: ImmersiveViewMode) => {
+      // Every explicit view choice is a new request identity and supersedes any
+      // preparation or deferred request that started before it, including
+      // choosing the current mode again (a deliberate cancel).
+      const generation = ++immersiveModeRequestRef.current;
+      deferredImmersiveModeRef.current = null;
+      if (mode === immersiveModeRef.current) return;
+      cancelVisualUnlockPreparation();
+      if (
+        !visualPreviewEditingRef.current
+        && !visualPreviewWindowRequestedRef.current
+      ) {
+        captureLayoutScrollRestore();
+        setImmersiveMode(mode);
+        return;
+      }
+      // The surface's toolbar fallback refuses by design while a formal
+      // transfer is outstanding. That refusal is kept; the request waits for
+      // the transfer instead of being dropped, and nothing is bypassed.
+      if (visualPreviewPendingRef.current) {
+        deferredImmersiveModeRef.current = { generation, mode };
+        return;
+      }
+      void prepareSourceMutationWithPreview({
+        isCurrent: () => generation === immersiveModeRequestRef.current
+          && rootActiveRef.current && immersiveRef.current
+      }).then((prepared) => {
+        if (!prepared || !rootActiveRef.current || !immersiveRef.current) return;
+        // An older request must not commit after a newer explicit choice, even
+        // when its preparation has already passed every internal await.
+        if (generation !== immersiveModeRequestRef.current) return;
+        captureLayoutScrollRestore();
+        setImmersiveMode(mode);
+      });
+    },
+    [
+      cancelVisualUnlockPreparation,
+      captureLayoutScrollRestore,
+      prepareSourceMutationWithPreview
+    ]
+  );
+  // Run a deferred view request through the same safe preparation once its
+  // formal transfer has settled. The guards below are the same ones the direct
+  // path relies on; this adds no retry loop, timeout or second coordinator.
+  useEffect(() => {
+    if (visualPreviewPending) return;
+    const request = deferredImmersiveModeRef.current;
+    if (!request) return;
+    deferredImmersiveModeRef.current = null;
+    if (!rootActiveRef.current || !immersiveRef.current) return;
+    if (request.generation !== immersiveModeRequestRef.current) return;
+    if (null !== request.mode && request.mode === immersiveModeRef.current) return;
     cancelVisualUnlockPreparation();
     if (
       !visualPreviewEditingRef.current
       && !visualPreviewWindowRequestedRef.current
     ) {
-      setImmersiveMode(mode);
+      captureLayoutScrollRestore();
+      if (null === request.mode) {
+        immersiveRef.current = false;
+        setImmersive(false);
+      } else {
+        setImmersiveMode(request.mode);
+      }
       return;
     }
-    void prepareSourceMutationWithPreview().then((prepared) => {
-      if (!prepared || !rootActiveRef.current) return;
-      setImmersiveMode(mode);
+    void prepareSourceMutationWithPreview({
+      ...(null === request.mode
+        ? { materialize: false, suppressRefresh: true }
+        : {}),
+      isCurrent: () => request.generation === immersiveModeRequestRef.current
+        && rootActiveRef.current && immersiveRef.current
+    }).then((prepared) => {
+      const current = rootActiveRef.current && immersiveRef.current
+        && request.generation === immersiveModeRequestRef.current
+        && (null === request.mode || request.mode !== immersiveModeRef.current);
+      if (!prepared || !current) {
+        // A newer transfer started before the preparation could run: wait for
+        // that one as the same request, then try the same safe path again. A
+        // superseded request is dropped by the generation check.
+        if (!prepared && current && visualPreviewPendingRef.current
+          && !deferredImmersiveModeRef.current) {
+          deferredImmersiveModeRef.current = request;
+        }
+        return;
+      }
+      if (deferredImmersiveModeRef.current) return;
+      captureLayoutScrollRestore();
+      if (null === request.mode) {
+        immersiveRef.current = false;
+        setImmersive(false);
+      } else {
+        setImmersiveMode(request.mode);
+      }
     });
-  }, [cancelVisualUnlockPreparation, prepareSourceMutationWithPreview]);
+  }, [
+    cancelVisualUnlockPreparation,
+    captureLayoutScrollRestore,
+    prepareSourceMutationWithPreview,
+    visualPreviewPending
+  ]);
   const copyWechatFromImmersive = useCallback(async () => {
     return 'copied' === (await wechatSession.copy()).status;
   }, [wechatSession]);
@@ -2094,18 +4077,18 @@ export function EditorRoot(props: EditorRootProps) {
     codeThemeFrameSyncPendingRef.current = null;
     const surface = previewRuntimeRef.current?.surface;
     if (!surface) {
-      props.onFailure('preview-enhancement-runtime-unavailable');
+      reportFailure('preview-enhancement-runtime-unavailable');
       return;
     }
     try {
       props.enhancementPort.syncCodeFrameBackgrounds(surface);
       scheduleCurrentWechatPreviewPreparation();
     } catch (error) {
-      props.onFailure(previewEnhancementFailureCode(error));
+      reportFailure(previewEnhancementFailureCode(error));
     }
   }, [
     props.enhancementPort,
-    props.onFailure,
+    reportFailure,
     renderedCodeTheme,
     scheduleCurrentWechatPreviewPreparation
   ]);
@@ -2128,9 +4111,9 @@ export function EditorRoot(props: EditorRootProps) {
       : ''
   );
   const usesCrimsonThemeDefaults =
-    'crimson-focus' === appearanceState.markdownTheme &&
-    'theme-default' === fontState.serifFont &&
-    Boolean(previewFontStack);
+    'crimson-focus' === appearanceState.markdownTheme
+    && 'theme-default' === fontState.serifFont
+    && Boolean(previewFontStack);
   const previewClassName = [
     'easymde-preview',
     'easymde-rendered-content',
@@ -2157,13 +4140,16 @@ export function EditorRoot(props: EditorRootProps) {
     rootActiveRef.current = true;
     return () => {
       rootActiveRef.current = false;
+      visualPreviewHoldOwnerRef.current = null;
+      contextMenuActionCoordinatorRef.current?.dispose();
       visualPreviewWindowUnlockRef.current = null;
       codeThemePreparationRef.current?.controller.abort();
       codeThemePreparationRef.current?.prepared?.cancel();
       codeThemePreparationRef.current = null;
+      releasePendingContextResources();
       props.appearancePort.cancelPendingApply();
     };
-  }, [props.appearancePort]);
+  }, [props.appearancePort, releasePendingContextResources]);
 
   useEffect(
     () => () => {
@@ -2206,13 +4192,10 @@ export function EditorRoot(props: EditorRootProps) {
       const sessionError = protectedOperationError('post-write');
       if (sessionError) return 'blocked';
       if (codeThemePreparationRef.current) {
-        props.onFailure('editor-appearance-pending');
+        reportFailure('editor-appearance-pending');
         return 'blocked';
       }
-      if (
-        visualPreviewEditingRef.current
-        && !prepareSourceMutation()
-      ) {
+      if (visualPreviewEditingRef.current && !prepareSourceMutation()) {
         return 'blocked';
       }
       documentSession.document.flush();
@@ -2222,7 +4205,7 @@ export function EditorRoot(props: EditorRootProps) {
     documentSession,
     prepareSourceMutation,
     props.nativeSubmissionPort,
-    props.onFailure,
+    reportFailure,
     protectedOperationError
   ]);
 
@@ -2231,13 +4214,10 @@ export function EditorRoot(props: EditorRootProps) {
       !documentSession
       || !props.isNewPost
       || 'preview' === props.settings.general.editingMode
-    ) return;
+    )
+      return;
     documentSession.document.focus();
-  }, [
-    documentSession,
-    props.settings.general.editingMode,
-    props.isNewPost
-  ]);
+  }, [documentSession, props.settings.general.editingMode, props.isNewPost]);
 
   useEffect(() => {
     if (!documentSession || !remoteImageImportCoordinator) {
@@ -2276,24 +4256,24 @@ export function EditorRoot(props: EditorRootProps) {
       insertion: props.imageUpload.insertion,
       maxBytes: props.imageUpload.maxBytes,
       nextOperationId: nextImageUploadOperationId,
-      onDiagnostic: props.onFailure,
+      onDiagnostic: reportFailure,
       onStatus: setImageUploadStatus,
       postId: props.imageUpload.postId,
       remoteImageImportCoordinator,
       remoteImageUploadMode: props.imageUpload.remoteImageUploadMode,
       surface: visualRuntime ? 'visual' : 'source',
       strings: props.imageUpload.strings,
-      target: visualEditorSurface
-        ?? documentSession.document.getInputElement(),
+      target: visualEditorSurface ?? documentSession.document.getInputElement(),
       upload: imageUploadPort
     });
   }, [
     documentSession,
+    previewRuntimeGeneration,
     props.imageUpload,
     imageUploadPort,
     leaveVisualPreview,
     nextImageUploadOperationId,
-    props.onFailure,
+    reportFailure,
     setImageUploadStatus,
     remoteImageImportCoordinator,
     visualEditorSurface,
@@ -2313,7 +4293,7 @@ export function EditorRoot(props: EditorRootProps) {
       },
       enabled: localDraftsEnabled,
       onCandidate: setDraftCandidate,
-      onDiagnostic: props.onFailure,
+      onDiagnostic: reportFailure,
       onUnreadable: setDraftUnreadable,
       onStatus: setLocalDraftStatus,
       savedFingerprint: props.localDrafts.savedFingerprint,
@@ -2338,7 +4318,7 @@ export function EditorRoot(props: EditorRootProps) {
     props.localDrafts,
     props.settings.general.autoSaveInterval,
     localDraftsEnabled,
-    props.onFailure,
+    reportFailure,
     setLocalDraftStatus
   ]);
   useEffect(() => {
@@ -2424,10 +4404,1292 @@ export function EditorRoot(props: EditorRootProps) {
     visualPreviewEditing
   ]);
 
+  const contextMenuBlockIndexCache = contextMenuBlockIndexCacheRef.current;
+  if (!contextMenuBlockIndexCache) {
+    throw new Error('editor-context-menu-block-index-cache-unavailable');
+  }
+  const requestContextMenuBlockIndex = useCallback(
+    (
+      owner: object,
+      generation: number,
+      revision: number,
+      source: string
+    ): EditorMarkdownBlockIndex | null => {
+      const cached = contextMenuBlockIndexCache.peek({
+        generation,
+        owner,
+        revision
+      });
+      if (cached?.source === source) {
+        contextMenuBlockIndexFailureRef.current = null;
+        return cached;
+      }
+      if (cached && cached.source !== source)
+        contextMenuBlockIndexCache.invalidate(owner);
+      const port = props.editorBlockIndexPort;
+      const session = documentSession;
+      if (!port || !session) return null;
+      const scheduled = contextMenuBlockIndexCache.schedule({
+        build: async (signal, { deadline }) => {
+          const scheduler = createBrowserEditorImageHydrationScheduler(
+            session.document.getInputElement().ownerDocument,
+            signal
+          );
+          return editorBlockIndexFromData(
+            source,
+            await port.build({ generation, revision, source }, signal),
+            revision,
+            signal,
+            deadline,
+            scheduler
+          );
+        },
+        generation,
+        onFailure: (error) => {
+          const code = editorBlockIndexFailureCode(error);
+          contextMenuBlockIndexFailureRef.current = {
+            code,
+            generation,
+            owner,
+            revision,
+            source
+          };
+          reportFailure(code);
+          notifyContextMenuReadiness();
+        },
+        owner,
+        revision,
+        timeoutMs: 10_000
+      });
+      if (scheduled) contextMenuBlockIndexFailureRef.current = null;
+      return null;
+    },
+    [
+      contextMenuBlockIndexCache,
+      documentSession,
+      notifyContextMenuReadiness,
+      props.editorBlockIndexPort,
+      reportFailure
+    ]
+  );
+  const subscribeContextMenuBlockIndex = useCallback(
+    (listener: () => void): (() => void) =>
+      contextMenuBlockIndexCache.subscribe(listener),
+    [contextMenuBlockIndexCache]
+  );
+  useEffect(
+    () => () => {
+      contextMenuBlockIndexCache.dispose();
+      releasePendingContextResources();
+    },
+    [contextMenuBlockIndexCache, releasePendingContextResources]
+  );
+  useEffect(() => {
+    if (!documentSession) return undefined;
+    return documentSession.document.subscribe(() => {
+      contextMenuBlockIndexFailureRef.current = null;
+      contextMenuBlockIndexCache.invalidate(documentSession);
+      editorCodeContentQueryRef.current?.cancel();
+      editorSourceLinkQueryRef.current?.cancel();
+      const runtime = visualEditorRuntimeRef.current;
+      if (runtime) contextMenuBlockIndexCache.invalidate(runtime);
+    });
+  }, [contextMenuBlockIndexCache, documentSession]);
+
+  const contextMenuWorkspace =
+    rootRef.current?.querySelector<HTMLElement>('.easymde-workspace') ?? null;
+  const contextMenuHeading = useMemo(
+    () => ({
+      commands: props.toolbar.commands,
+      label: props.toolbar.headingLevelLabel
+    }),
+    [props.toolbar.commands, props.toolbar.headingLevelLabel]
+  );
+  const contextMenuSource = useMemo<EditorContextMenuSurface | null>(() => {
+    if (!documentSession) return null;
+    const element = documentSession.document.getInputElement();
+    const boundaryElement = documentSession.document.getScrollElement();
+    return {
+      canUploadImage: (image) =>
+        props.imageUpload.enabled
+        && 'off' !== props.imageUpload.remoteImageUploadMode
+        && /^https?:\/\//iu.test(image.destination),
+      boundaryElement: contextMenuWorkspace ?? boundaryElement,
+      element,
+      getActionContext: (_target, snapshot, blockIndex) => {
+        const linkBinding: EditorSourceLinkQueryBinding = {
+          menuIdentity: documentSession,
+          ...(undefined === snapshot.revision
+            ? {}
+            : { revision: snapshot.revision }),
+          selection: snapshot.selection,
+          source: snapshot.value
+        };
+        const linkState = editorSourceLinkQuery && undefined !== blockIndex
+          ? editorSourceLinkQuery.ensure({ binding: linkBinding, blockIndex })
+          : { status: 'none' as const };
+        const linkContext = editorSourceLinkActionContext(linkState);
+        const codeBinding: EditorCodeContentQueryBinding = {
+          generation: 0,
+          menuIdentity: documentSession,
+          ...(undefined === snapshot.revision
+            ? {}
+            : { revision: snapshot.revision }),
+          selection: snapshot.selection,
+          source: snapshot.value,
+          surface: 'source'
+        };
+        const codeContext = editorCodeContentActionContext(
+          editorCodeContentQuery.ensure({
+            binding: codeBinding,
+            ...(undefined === blockIndex ? {} : { blockIndex })
+          }),
+          snapshot.value,
+          snapshot.selection
+        );
+        let imageContext: EditorContextMenuActionContext['image'] | null = null;
+        const prepared = preparedImageTargetIndex(
+          snapshot.value,
+          snapshot.revision,
+          blockIndex,
+          snapshot.selection
+        );
+        const imageRuntime = previewRuntimeRef.current;
+        if (prepared) releasePendingGeneratedContentPin();
+        const pendingImage = pendingImageTargetPinRef.current;
+        const reusablePendingImage =
+          pendingImage
+          && imageRuntime
+          && pendingImage.runtime === imageRuntime
+          && pendingImage.revision === snapshot.revision
+          && pendingImage.source === snapshot.value
+          && sameGeneratedContentSelection(
+            pendingImage.selection,
+            snapshot.selection
+          )
+          && prepared
+          && pendingImage.match.start === prepared.image.start
+          && pendingImage.match.end === prepared.image.end
+          && pendingImage.pin.isCurrent()
+            ? pendingImage
+            : null;
+        if (pendingImage && !reusablePendingImage)
+          releasePendingImageTargetPin();
+        if (prepared) {
+          imageContext = imageActionContext(
+            props.editorImagePixelsPort,
+            null,
+            prepared.image
+          );
+          if (imageRuntime?.surface.isConnected) {
+            let resource = reusablePendingImage;
+            let pin = resource?.pin ?? null;
+            try {
+              const existingLease = resource?.context?.lease;
+              if (
+                resource
+                && existingLease
+                && typeof existingLease.release === 'function'
+                && pin?.isCurrent()
+                && existingLease.isCurrent()
+              ) {
+                const currentLease = existingLease as PreviewImageTargetLease;
+                imageContext = imageActionContext(
+                  props.editorImagePixelsPort,
+                  currentLease,
+                  prepared.image
+                );
+                resource.context = imageContext;
+              } else {
+                if (resource?.context) resource.context = null;
+                if (!pin) {
+                  pin = imageRuntime.prepareImageTargetBySelection({
+                    index: prepared.index,
+                    selection: {
+                      end: prepared.image.end,
+                      start: prepared.image.start
+                    }
+                  });
+                  if (pin) {
+                    resource = {
+                      context: null,
+                      match: prepared.image,
+                      pin,
+                      revision: prepared.index.revision,
+                      runtime: imageRuntime,
+                      selection: {
+                        end: snapshot.selection.end,
+                        start: snapshot.selection.start
+                      },
+                      source: snapshot.value
+                    };
+                    pendingImageTargetPinRef.current = resource;
+                  }
+                }
+                const mounted = pin?.getLease() ?? null;
+                if (pin && resource && mounted) {
+                  if (
+                    mounted.target.original.start !== prepared.image.start
+                    || mounted.target.original.end !== prepared.image.end
+                  ) {
+                    pin.release();
+                    pendingImageTargetPinRef.current = null;
+                  } else {
+                    const lease: PreviewImageTargetLease = {
+                      ...mounted,
+                      release: () => {
+                        mounted.release();
+                        pin?.release();
+                        if (pendingImageTargetPinRef.current?.pin === pin) {
+                          pendingImageTargetPinRef.current = null;
+                        }
+                      }
+                    };
+                    imageContext = imageActionContext(
+                      props.editorImagePixelsPort,
+                      lease,
+                      prepared.image
+                    );
+                    resource.context = imageContext;
+                  }
+                } else if (pin?.isCurrent()) {
+                  imageContext = imageActionContext(
+                    props.editorImagePixelsPort,
+                    null,
+                    prepared.image
+                  );
+                }
+              }
+            } catch (error) {
+              if (!isPreviewSelectionUnavailable(error)) throw error;
+            }
+          }
+        }
+        let generatedContext: EditorContextMenuGeneratedContext | null = null;
+        const runtime = previewRuntimeRef.current;
+        const mode = immersiveRef.current
+          ? ('immersive' as const)
+          : ('ordinary' as const);
+        const generatedReadinessKey =
+          runtime && undefined !== snapshot.revision
+            ? {
+                mode,
+                revision: snapshot.revision,
+                runtime,
+                selection: snapshot.selection,
+                source: snapshot.value
+              }
+            : null;
+        const generatedReadinessFailure =
+          generatedContentReadinessFailureRef.current;
+        const generatedReadinessUnavailable = Boolean(
+          generatedReadinessKey
+            && generatedReadinessFailure
+            && sameGeneratedContentReadinessKey(
+              generatedReadinessFailure.key,
+              generatedReadinessKey
+            )
+        );
+        if (generatedReadinessFailure && !generatedReadinessUnavailable) {
+          generatedContentReadinessFailureRef.current = null;
+        }
+        const pending = pendingGeneratedContentPinRef.current;
+        const reusablePending =
+          pending
+          && runtime
+          && pending.runtime === runtime
+          && pending.revision === snapshot.revision
+          && pending.source === snapshot.value
+          && pending.mode === mode
+          && sameGeneratedContentSelection(
+            pending.selection,
+            snapshot.selection
+          )
+          && pending.pin.isCurrent()
+            ? pending
+            : null;
+        if (pending && !reusablePending) releasePendingGeneratedContentPin();
+        if (
+          !imageContext
+          && runtime
+          && props.generatedContentExportSession
+          && blockIndex
+          && undefined !== snapshot.revision
+          && !generatedReadinessUnavailable
+        ) {
+          let resource = reusablePending;
+          let pin = resource?.pin ?? null;
+          if (resource?.context && pin?.isCurrent()) {
+            generatedContext = resource.context;
+          } else {
+            if (pin && !pin.isCurrent()) {
+              releasePendingGeneratedContentPin();
+              resource = null;
+              pin = null;
+            }
+            if (!pin) {
+              try {
+                pin = runtime.prepareGeneratedContentTargetForSelection({
+                  index: {
+                    blocks: blockIndex.blocks,
+                    length: blockIndex.length,
+                    mathSpans: blockIndex.mathSpans,
+                    revision: snapshot.revision,
+                    source: blockIndex.source
+                  },
+                  selection: snapshot.selection
+                });
+              } catch (error) {
+                // A caret can legitimately land on a source line that has no
+                // editable Preview block (for example after the final
+                // rendered block). Generated-content actions are optional
+                // context; keep the generic menu available and let the model
+                // omit only the unsafe generated actions.
+                if (!isPreviewSelectionUnavailable(error)) throw error;
+                pin = null;
+              }
+              if (pin) {
+                resource = {
+                  context: null,
+                  pin,
+                  mode,
+                  revision: snapshot.revision,
+                  runtime,
+                  selection: {
+                    end: snapshot.selection.end,
+                    start: snapshot.selection.start
+                  },
+                  source: snapshot.value,
+                  readinessCancel: null
+                };
+                pendingGeneratedContentPinRef.current = resource;
+                scheduleGeneratedContentReadiness(resource);
+              }
+            }
+            const generatedLease = pin?.getLease() ?? null;
+            if (pin && generatedLease && resource) {
+              if (!editorContextSelectionFitsRange(
+                snapshot.selection,
+                generatedLease.target.original.fullRange
+              )) {
+                generatedLease.release();
+                resource.readinessCancel?.();
+                resource.readinessCancel = null;
+                pin.release();
+                if (pendingGeneratedContentPinRef.current?.pin === pin) {
+                  pendingGeneratedContentPinRef.current = null;
+                }
+              } else {
+                resource.readinessCancel?.();
+                resource.readinessCancel = null;
+              if (
+                generatedContentReadinessFailureRef.current
+                && generatedReadinessKey
+                && sameGeneratedContentReadinessKey(
+                  generatedContentReadinessFailureRef.current.key,
+                  generatedReadinessKey
+                )
+              ) {
+                generatedContentReadinessFailureRef.current = null;
+              }
+              const lease = {
+                ...generatedLease,
+                release: () => {
+                  generatedLease.release();
+                  resource?.readinessCancel?.();
+                  if (resource) {
+                    resource.readinessCancel = null;
+                  }
+                  pin?.release();
+                  if (pendingGeneratedContentPinRef.current?.pin === pin) {
+                    pendingGeneratedContentPinRef.current = null;
+                  }
+                }
+              };
+              const kind = generatedLease.target.kind;
+              const identity = () => {
+                const current = runtime.getGeneratedPreviewIdentity();
+                return current
+                  ? {
+                      acceptedPreview: {
+                        revision: current.revision,
+                        signature: current.signature
+                      },
+                      mode: immersiveRef.current
+                        ? ('immersive' as const)
+                        : ('ordinary' as const),
+                      sourceRevision: current.sourceRevision
+                    }
+                  : null;
+              };
+              generatedContext = {
+                canCopyImage: supportsEditorPngClipboard(
+                  props.editorClipboardPort
+                ),
+                canCopyMathMl:
+                  'math' === kind
+                  && generatedMathMlAvailable(generatedLease.root),
+                canUseSource: Boolean(lease.isCurrent?.()),
+                code: {
+                  canCopyBlock: Boolean(lease.isCurrent?.()),
+                  canIndentBlock: codeContext?.canIndentBlock === true,
+                  canIndentSelection: codeContext?.canIndentSelection === true
+                },
+                identity,
+                kind,
+                lease,
+                mode,
+                validateLease: (candidate, current) =>
+                  candidate === lease
+                  && lease.isCurrent?.() === true
+                  && current.mode === mode
+              };
+              resource.context = generatedContext;
+              }
+            } else if (pin && !pin.isCurrent()) {
+              releasePendingGeneratedContentPin();
+            }
+          }
+        }
+        if (!linkContext && !imageContext && !generatedContext && !codeContext) {
+          return null;
+        }
+        return {
+          ...(codeContext ? { code: codeContext } : {}),
+          ...(generatedContext ? { generated: generatedContext } : {}),
+          ...(linkContext ? { link: linkContext } : {}),
+          ...(imageContext ? { image: imageContext } : {})
+        };
+      },
+      getContextReadiness: (_target, snapshot, blockIndex, actionContext) => {
+        if (props.editorBlockIndexPort) {
+          if (undefined === snapshot.revision) {
+            return {
+              code: 'editor-context-menu-revision-unavailable',
+              status: 'unavailable'
+            };
+          }
+          const failure = contextMenuBlockIndexFailureRef.current;
+          if (
+            failure
+            && failure.owner === documentSession
+            && failure.generation === 0
+            && failure.revision === snapshot.revision
+            && failure.source === snapshot.value
+          ) {
+            return { code: failure.code, status: 'unavailable' };
+          }
+          if (!blockIndex) return { status: 'pending' };
+        }
+        const codeReadiness = editorCodeContentQuery.readiness({
+          generation: 0,
+          menuIdentity: documentSession,
+          ...(undefined === snapshot.revision
+            ? {}
+            : { revision: snapshot.revision }),
+          selection: snapshot.selection,
+          source: snapshot.value,
+          surface: 'source'
+        });
+        const contextBlock = findMarkdownBlock(
+          snapshot.value,
+          snapshot.selection.start,
+          blockIndex ?? undefined
+        );
+        const selectionFitsCodeBlock = Boolean(
+          contextBlock
+          && 'code' === contextBlock.kind
+          && editorContextSelectionFitsRange(snapshot.selection, {
+            from: contextBlock.start,
+            to: contextBlock.end
+          })
+        );
+        if (
+          editorCodeContentReadinessBlocksMenu(codeReadiness)
+          && !selectionFitsCodeBlock
+        ) return codeReadiness;
+        if (editorSourceLinkQuery && undefined !== blockIndex) {
+          const linkReadiness = editorSourceLinkQuery.readiness({
+            menuIdentity: documentSession,
+            ...(undefined === snapshot.revision
+              ? {}
+              : { revision: snapshot.revision }),
+            selection: snapshot.selection,
+            source: snapshot.value
+          });
+          if ('pending' === linkReadiness.status) return linkReadiness;
+          if ('unavailable' === linkReadiness.status) return linkReadiness;
+        }
+        const runtime = previewRuntimeRef.current;
+        const mode = immersiveRef.current
+          ? ('immersive' as const)
+          : ('ordinary' as const);
+        const generatedReadinessFailure =
+          generatedContentReadinessFailureRef.current;
+        if (
+          props.generatedContentExportSession
+          && runtime
+          && undefined !== snapshot.revision
+          && generatedReadinessFailure
+          && sameGeneratedContentReadinessKey(generatedReadinessFailure.key, {
+            mode,
+            revision: snapshot.revision,
+            runtime,
+            selection: snapshot.selection,
+            source: snapshot.value
+          })
+        ) {
+          return {
+            code: generatedReadinessFailure.code,
+            status: 'unavailable'
+          };
+        }
+        const pendingGenerated = pendingGeneratedContentPinRef.current;
+        if (
+          props.generatedContentExportSession
+          && runtime
+          && pendingGenerated
+          // The demand's own generated context already owns this pending
+          // resource, so it is not an inventory gap. The rule needs the
+          // evaluated context to know that, and the structural pre-check
+          // states no context at all (`undefined`).
+          && undefined !== actionContext
+          && !actionContext?.generated
+          && pendingGenerated.runtime === runtime
+          && pendingGenerated.revision === snapshot.revision
+          && pendingGenerated.source === snapshot.value
+          && pendingGenerated.mode === mode
+          && sameGeneratedContentSelection(
+            pendingGenerated.selection,
+            snapshot.selection
+          )
+          && pendingGenerated.pin.isCurrent()
+        ) {
+          return { status: 'pending' };
+        }
+        return { status: 'ready' };
+      },
+      ...(props.editorBlockIndexPort
+        ? {
+            getBlockIndex: ({ value }: EditorContextMenuSurfaceSnapshot) => {
+              const revision = documentSession.document.getRevision?.();
+              return undefined === revision
+                ? null
+                : requestContextMenuBlockIndex(
+                    documentSession,
+                    0,
+                    revision,
+                    value
+                  );
+            },
+            subscribeBlockIndex: subscribeContextMenuBlockIndex
+          }
+        : {}),
+      getSnapshot: () => {
+        const revision = documentSession.document.getRevision?.();
+        return {
+          ...(undefined === revision ? {} : { revision }),
+          selection: documentSession.document.getSelection(),
+          value: documentSession.document.getValue()
+        };
+      },
+      identity: documentSession,
+      isEditable: documentSession.document.isEditable,
+      kind: 'source',
+      // The source surface's snapshot *is* CodeMirror's canonical selection,
+      // and CodeMirror moves that selection for the primary button only. A
+      // pointer gesture therefore has to establish the pointed selection
+      // before the demand snapshot is captured; a keyboard activation keeps
+      // the user's current selection instead.
+      preparePointerSelection: (position) =>
+        documentSession.document.prepareContextMenuPointer(position),
+      releasePending: releasePendingContextResources,
+      restoreFocus: documentSession.document.focus,
+      subscribeReadiness: subscribeContextMenuReadiness,
+      subscribeSnapshot: documentSession.document.subscribe,
+      subscribeSelection: documentSession.document.subscribeSelection
+    };
+  }, [
+    contextMenuBlockIndexCache,
+    contextMenuWorkspace,
+    documentSession,
+    editorCodeContentQuery,
+    editorSourceLinkQuery,
+    previewRuntimeGeneration,
+    props.editorClipboardPort,
+    props.editorBlockIndexPort,
+    props.editorImagePixelsPort,
+    props.generatedContentExportSession,
+    props.imageUpload,
+    requestContextMenuBlockIndex,
+    scheduleGeneratedContentReadiness,
+    subscribeContextMenuBlockIndex,
+    subscribeContextMenuReadiness,
+    releasePendingContextResources
+  ]);
+  const contextMenuVisual = useMemo<EditorContextMenuSurface | null>(() => {
+    if (!documentSession || !visualPreviewEditing || !visualEditorSurface)
+      return null;
+    const runtime = visualEditorRuntimeRef.current;
+    if (!runtime) return null;
+    const previewSurface = previewRuntimeRef.current?.surface;
+    const boundaryElement =
+      contextMenuWorkspace
+      ?? previewSurface?.parentElement
+      ?? visualEditorSurface;
+    return {
+      canUploadImage: (image) =>
+        props.imageUpload.enabled
+        && 'off' !== props.imageUpload.remoteImageUploadMode
+        && /^https?:\/\//iu.test(image.destination),
+      boundaryElement,
+      element: visualEditorSurface,
+      // The visual owner settles the native input it has already accepted from
+      // the user before this demand reads a document. A gesture that arrives
+      // inside the owner's input debounce would otherwise capture the
+      // pre-input source. The runtime performs only that existing flush plus
+      // its own eligibility checks; it maps no target, requests no render, and
+      // inserts nothing.
+      prepareDemand: () => runtime.prepareContextMenuDemand(),
+      // A demand outlives the element it was anchored to: an accepted Preview
+      // render replaces the block DOM while the demand still waits for
+      // readiness. The runtime issues a lease bound to its own current
+      // accepted source and ledger, so a replayed demand rebinds to the same
+      // authenticated block - not to a reused ordinal, a coordinate, or the
+      // retired element.
+      captureTarget: (target) => runtime.captureContextMenuTarget(target),
+      getActionContext: (target, snapshot, blockIndex) => {
+        const revision = documentSession.document.getRevision?.();
+        const codeBinding: EditorCodeContentQueryBinding = {
+          generation: visualEditorGeneration,
+          menuIdentity: runtime,
+          ...(undefined === revision ? {} : { revision }),
+          selection: snapshot.selection,
+          source: snapshot.value,
+          surface: 'visual'
+        };
+        // A demand authenticated without the asynchronous inventory (the
+        // certified structural HR gap) has no block to read code content from.
+        // Starting a query with a null index would leave it permanently
+        // pending and gate the generic menu, so it simply carries no code
+        // context until the index arrives.
+        const codeContext = null === blockIndex
+          ? null
+          : editorCodeContentActionContext(
+              editorCodeContentQuery.ensure({
+                binding: codeBinding,
+                ...(undefined === blockIndex ? {} : { blockIndex })
+              }),
+              snapshot.value,
+              snapshot.selection
+            );
+        const generatedTarget =
+          generatedRootAtTarget(target, 'math')
+          ?? generatedRootAtTarget(target, 'mermaid');
+        const link = target?.closest('a');
+        const linkContext =
+          link instanceof HTMLAnchorElement
+          && visualEditorSurface.contains(link)
+          && link.href
+            ? { href: link.href }
+            : null;
+        let imageContext: EditorContextMenuActionContext['image'] | null = null;
+        const imageElement =
+          target instanceof HTMLImageElement ? target : target?.closest('img');
+        let imageTargetProvenDifferent = false;
+        // Image actions belong to the pointer target alone. A selection left
+        // behind by an earlier image interaction must never turn another block,
+        // or another image, into the image target this menu would act on, so
+        // the hit image has to map onto the same source image range first.
+        if (
+          runtime
+          && blockIndex
+          && imageElement instanceof HTMLImageElement
+          && runtime.surface.contains(imageElement)
+        ) {
+          const prepared = preparedImageTargetIndex(
+            snapshot.value,
+            revision,
+            blockIndex,
+            snapshot.selection
+          );
+          const lease = prepared
+            ? leaseForVisualImage(
+                runtime,
+                prepared.index,
+                prepared.image,
+                imageElement
+              )
+            : null;
+          if (prepared && lease) {
+            imageContext = imageActionContext(
+              props.editorImagePixelsPort,
+              lease,
+              prepared.image
+            );
+          } else if (prepared) {
+            // An accepted Preview re-render can leave the hit image element
+            // unmappable while its source range is unchanged. The pinned
+            // selection-derived target is a recovery for that same source
+            // image only: the hit element must occupy the same visual block
+            // and image slot as the mounted lease. A different slot means the
+            // pointer image and the prepared selection image are different
+            // source images, so the menu must not borrow the selection's
+            // lease and must not offer commands that would act on it.
+            const pendingImage = pendingImageTargetPinRef.current;
+            const reusablePendingImage =
+              pendingImage
+              && pendingImage.runtime === runtime
+              && pendingImage.revision === revision
+              && pendingImage.source === snapshot.value
+              && sameGeneratedContentSelection(
+                pendingImage.selection,
+                snapshot.selection
+              )
+              && pendingImage.match.start === prepared.image.start
+              && pendingImage.match.end === prepared.image.end
+              && pendingImage.pin.isCurrent()
+                ? pendingImage
+                : null;
+            if (pendingImage && !reusablePendingImage)
+              releasePendingImageTargetPin();
+            const mounted = reusablePendingImage?.pin.getLease() ?? null;
+            const hitSlot = visualImageSlotIdentity(imageElement);
+            if (
+              reusablePendingImage
+              && mounted
+              && hitSlot
+            ) {
+              const mountedSlot = visualImageSlotIdentity(mounted.root);
+              imageTargetProvenDifferent = Boolean(
+                !mountedSlot
+                || mountedSlot.blockId !== hitSlot.blockId
+                || mountedSlot.ordinal !== hitSlot.ordinal
+                || mounted.target.original.start !== prepared.image.start
+                || mounted.target.original.end !== prepared.image.end
+              );
+            }
+            if (
+              reusablePendingImage
+              && mounted
+              && hitSlot
+              && mounted.target.blockId === hitSlot.blockId
+              && mounted.target.ordinal === hitSlot.ordinal
+              && mounted.target.original.start === prepared.image.start
+              && mounted.target.original.end === prepared.image.end
+            ) {
+              const pin = reusablePendingImage.pin;
+              const pinnedLease: PreviewImageTargetLease = {
+                ...mounted,
+                release: () => {
+                  mounted.release();
+                  pin.release();
+                  if (pendingImageTargetPinRef.current?.pin === pin) {
+                    pendingImageTargetPinRef.current = null;
+                  }
+                }
+              };
+              imageContext = imageActionContext(
+                props.editorImagePixelsPort,
+                pinnedLease,
+                prepared.image
+              );
+              reusablePendingImage.context = imageContext;
+            }
+          }
+          if (!imageContext && prepared) {
+            // A Windowed Preview may have accepted the canonical image range
+            // while retiring the lease that belonged to the previous DOM
+            // image. Rebuild a selection pin against the current runtime and
+            // accept it only when its mounted slot is the pointer slot. This
+            // keeps repeated scale actions and a second image after a window
+            // rebuild actionable without borrowing a sibling image lease.
+            let pin: PreviewImageTargetPinLease | null = null;
+            try {
+              pin = runtime.prepareImageTargetBySelection({
+                index: prepared.index,
+                selection: {
+                  end: prepared.image.end,
+                  start: prepared.image.start
+                }
+              });
+              const mounted = pin?.getLease() ?? null;
+              const hitSlot = visualImageSlotIdentity(imageElement);
+              const mountedSlot = mounted
+                ? visualImageSlotIdentity(mounted.root)
+                : null;
+              if (
+                mounted
+                && hitSlot
+                && mountedSlot
+                && (
+                  mountedSlot.blockId !== hitSlot.blockId
+                  || mountedSlot.ordinal !== hitSlot.ordinal
+                  || mounted.target.original.start !== prepared.image.start
+                  || mounted.target.original.end !== prepared.image.end
+                )
+              ) {
+                imageTargetProvenDifferent = true;
+              }
+              if (
+                pin
+                && mounted
+                && hitSlot
+                && mountedSlot
+                && hitSlot.blockId === mountedSlot.blockId
+                && hitSlot.ordinal === mountedSlot.ordinal
+                && mounted.target.original.start === prepared.image.start
+                && mounted.target.original.end === prepared.image.end
+              ) {
+                const ownedPin = pin;
+                const pinnedLease: PreviewImageTargetLease = {
+                  ...mounted,
+                  release: () => {
+                    mounted.release();
+                    ownedPin.release();
+                  }
+                };
+                imageContext = imageActionContext(
+                  props.editorImagePixelsPort,
+                  pinnedLease,
+                  prepared.image
+                );
+                pin = null;
+              }
+            } catch (error) {
+              if (!isPreviewSelectionUnavailable(error)) throw error;
+            } finally {
+              pin?.release();
+            }
+          }
+          if (
+            !imageContext
+            && !imageTargetProvenDifferent
+          ) {
+            // The pointer target is a rendered Markdown image, so image
+            // commands are expected to resolve for it when the source range
+            // itself cannot be recovered. A deliberate non-empty selection
+            // naming a different image is a valid text-selection gesture; in
+            // that case `prepared` is present but the pointer lease is
+            // intentionally rejected, and the generic menu remains correct.
+            // Only the no-source-match case is a stale Preview target and
+            // must fail explicitly instead of silently degrading.
+            //
+            // A genuine mixed range (text + image + text) is the other valid
+            // case without a source match: no single image contains the whole
+            // selection, so `prepared` is null by definition. That gesture is
+            // still deliberate user intent, not a stale pointer target, and it
+            // is proved from the live native selection itself: one non-collapsed
+            // range whose endpoints are connected inside this runtime's surface
+            // and which actually intersects the hit image. Anything else - a
+            // collapsed caret, a foreign or detached range, or a range that does
+            // not cover the pointed image - stays an explicit stale-image
+            // failure.
+            const nativeSelection =
+              runtime.surface.ownerDocument.defaultView?.getSelection();
+            // An image-node selection (`selectNode(img)`) selects no text at
+            // all. A mixed range always contains text besides the image, so
+            // requiring non-blank selected text keeps the pointer-image stale
+            // case - where the retired `<img>` node range survives - failing
+            // exactly as before, while a real text+image range is admitted.
+            const deliberateSelectionCoversHitImage = Boolean(
+              nativeSelection
+              && 1 === nativeSelection.rangeCount
+              && !nativeSelection.isCollapsed
+              && nativeSelection.anchorNode?.isConnected
+              && nativeSelection.focusNode?.isConnected
+              && runtime.surface.contains(nativeSelection.anchorNode)
+              && runtime.surface.contains(nativeSelection.focusNode)
+              && '' !== nativeSelection.getRangeAt(0).toString().trim()
+              && nativeSelection.getRangeAt(0).intersectsNode(imageElement)
+            );
+            if (!deliberateSelectionCoversHitImage) {
+              throw new Error('editor-context-menu-image-stale');
+            }
+          }
+        }
+        const baseContext = (
+          extra: Partial<EditorContextMenuActionContext> = {}
+        ) => {
+          if (!linkContext && !imageContext && !codeContext && !extra.generated) return null;
+          return {
+            ...extra,
+            ...(codeContext ? { code: codeContext } : {}),
+            ...(imageContext ? { image: imageContext } : {}),
+            ...(linkContext ? { link: linkContext } : {})
+          };
+        };
+        if (
+          !runtime
+          || !props.generatedContentExportSession
+          || !generatedTarget
+          || !blockIndex
+          || undefined === revision
+        ) {
+          return baseContext();
+        }
+        const kind = generatedTarget.root.matches('.easymde-math')
+          ? 'math'
+          : generatedTarget.root.matches('.easymde-mermaid')
+            ? 'mermaid'
+            : null;
+        if (!kind) return baseContext();
+        const index = { ...blockIndex, revision };
+        const lease = runtime.prepareGeneratedContentTarget({
+          element: generatedTarget.root,
+          index,
+          kind,
+          ordinal: generatedTarget.ordinal
+        });
+        if (!lease) return baseContext();
+        if (!editorContextSelectionFitsRange(
+          snapshot.selection,
+          lease.target.original.fullRange
+        )) {
+          lease.release();
+          return baseContext();
+        }
+        const identity = () => {
+          const current = runtime.getGeneratedPreviewIdentity();
+          return current
+            ? {
+                acceptedPreview: {
+                  revision: current.revision,
+                  signature: current.signature
+                },
+                mode: 'immersive' as const,
+                sourceRevision: current.sourceRevision
+              }
+            : null;
+        };
+        const generated: EditorContextMenuGeneratedContext = {
+          canCopyImage: supportsEditorPngClipboard(props.editorClipboardPort),
+          canCopyMathMl:
+            'math' === kind && generatedMathMlAvailable(generatedTarget.root),
+          canUseSource: Boolean(lease.isCurrent?.()),
+          code: {
+            canCopyBlock: Boolean(lease.isCurrent?.()),
+            canIndentBlock: codeContext?.canIndentBlock === true,
+            canIndentSelection: codeContext?.canIndentSelection === true
+          },
+          identity,
+          kind,
+          lease,
+          mode: 'immersive',
+          validateLease: (candidate, current) =>
+            candidate === lease
+            && lease.isCurrent?.() === true
+            && current.mode === 'immersive'
+        };
+        return baseContext({ generated });
+      },
+      getContextReadiness: (_target, snapshot, blockIndex) => {
+        // A visual Preview transfer invalidates the edit map the owner needs to
+        // prepare a thematic-break or block selection, so a demand that arrives
+        // mid-transfer is not ready yet. Two states describe that window: the
+        // owner's own transfer flag, and the published surface phase, which is
+        // `loading` until the accepted Preview for the pending source is
+        // installed. Both must keep the demand pending, because a demand can
+        // arrive while the surface is still `loading` and before the owner's
+        // transfer state is observable through this surface. This reads live
+        // owner state, not a render value: the demand is kept alive by the
+        // readiness subscription and rebuilt from the same target once the
+        // matching Preview is accepted, instead of throwing out of preparation
+        // and surfacing as a generic menu-open failure.
+        // A trusted local edit advanced the canonical document without a
+        // render. The accepted edit map belongs to the previous document, so
+        // this demand cannot use it - but refusing would make the pointer
+        // gesture unavailable until the user manually left and re-entered the
+        // mode. Request the formal Preview for the canonical source here and
+        // keep the demand parked; readiness notifies again when that render is
+        // accepted and the same gesture is rebuilt against the new map.
+        if (runtime.needsAcceptedPreviewRefresh?.()) {
+          runtime.refreshAcceptedPreview?.();
+          return { status: 'pending' };
+        }
+        if (
+          runtime.isTransferPending()
+          || 'loading' === previewSurfaceStatusRef.current
+        ) {
+          return { status: 'pending' };
+        }
+        if (props.editorBlockIndexPort) {
+          if (undefined === snapshot.revision) {
+            return {
+              code: 'editor-context-menu-revision-unavailable',
+              status: 'unavailable'
+            };
+          }
+          const failure = contextMenuBlockIndexFailureRef.current;
+          if (
+            failure
+            && failure.owner === runtime
+            && failure.generation === visualEditorGeneration
+            && failure.revision === snapshot.revision
+            && failure.source === snapshot.value
+          ) {
+            return { code: failure.code, status: 'unavailable' };
+          }
+          if (!blockIndex) {
+            const nativeSelection = runtime.surface.ownerDocument.defaultView?.getSelection();
+            const nativeRange = nativeSelection?.rangeCount === 1
+              ? nativeSelection.getRangeAt(0)
+              : null;
+            const nativeOffset = nativeSelection?.anchorOffset ?? -1;
+            const rootGapBesideHr = Boolean(
+              nativeSelection?.isCollapsed
+              && nativeRange?.collapsed
+              && nativeSelection.anchorNode === runtime.surface
+              && nativeSelection.focusNode === runtime.surface
+              && nativeSelection.anchorOffset === nativeSelection.focusOffset
+              && Number.isInteger(nativeOffset)
+              && nativeOffset >= 0
+              && nativeOffset <= runtime.surface.childNodes.length
+              && (
+                runtime.surface.childNodes[nativeOffset] instanceof HTMLHRElement
+                || runtime.surface.childNodes[nativeOffset - 1] instanceof HTMLHRElement
+              )
+            );
+            // The shared structural resolver authenticates an accepted HR from
+            // the Preview edit map/Windowed ledger. It does not need the
+            // asynchronous context-menu block index, so an HR demand must
+            // reach that resolver on its first activation rather than waiting
+            // for an unrelated inventory build.
+            if (!rootGapBesideHr) return { status: 'pending' };
+          }
+        }
+        const revision = documentSession.document.getRevision?.();
+        const codeReadiness = editorCodeContentQuery.readiness({
+          generation: visualEditorGeneration,
+          menuIdentity: runtime,
+          ...(undefined === revision ? {} : { revision }),
+          selection: snapshot.selection,
+          source: snapshot.value,
+          surface: 'visual'
+        });
+        const contextBlock = findMarkdownBlock(
+          snapshot.value,
+          snapshot.selection.start,
+          blockIndex ?? undefined
+        );
+        const selectionFitsCodeBlock = Boolean(
+          contextBlock
+          && 'code' === contextBlock.kind
+          && editorContextSelectionFitsRange(snapshot.selection, {
+            from: contextBlock.start,
+            to: contextBlock.end
+          })
+        );
+        if (
+          editorCodeContentReadinessBlocksMenu(codeReadiness)
+          && !selectionFitsCodeBlock
+        ) return codeReadiness;
+        return { status: 'ready' };
+      },
+      ...(props.editorBlockIndexPort
+        ? {
+            getBlockIndex: ({ value }: EditorContextMenuSurfaceSnapshot) => {
+              const revision = documentSession.document.getRevision?.();
+              return undefined === revision
+                ? null
+                : requestContextMenuBlockIndex(
+                    runtime,
+                    visualEditorGeneration,
+                    revision,
+                    value
+                  );
+            },
+            subscribeBlockIndex: subscribeContextMenuBlockIndex
+          }
+        : {}),
+      getSnapshot: () => {
+        const revision = documentSession.document.getRevision?.();
+        return {
+          ...(undefined === revision ? {} : { revision }),
+          selection: documentSession.document.getSelection(),
+          value: documentSession.document.getValue()
+        };
+      },
+      identity: runtime,
+      isEditable: runtime.isEditable,
+      kind: 'visual',
+      generation: visualEditorGeneration,
+      prepare: (
+        target,
+        blockIndex,
+        point,
+        activation = 'keyboard'
+      ) => {
+        const generated =
+          generatedRootAtTarget(target ?? null, 'math')
+          ?? generatedRootAtTarget(target ?? null, 'mermaid');
+        if (generated) {
+          const revision = documentSession.document.getRevision?.();
+          const identity = runtime.getGeneratedPreviewIdentity();
+          if (undefined === revision) return false;
+          if (identity?.sourceRevision !== revision) return false;
+          if (!runtime.surface.contains(generated.root)) return false;
+          const nativeSelection =
+            runtime.surface.ownerDocument.defaultView?.getSelection();
+          const route = nativeVisualSelectionRoute(
+            runtime.surface,
+            nativeSelection
+          );
+          if ('boundary' === route || 'invalid' === route) return false;
+          if ('inside' === route) {
+            const selectionInsideRoot = Boolean(
+              nativeSelection?.anchorNode
+              && nativeSelection.focusNode
+              && generated.root.contains(nativeSelection.anchorNode)
+              && generated.root.contains(nativeSelection.focusNode)
+            );
+            if (!selectionInsideRoot) {
+              // A deliberate selection inside the surface but outside the hit
+              // root carries user intent the editable surface cannot
+              // represent, so it is preserved instead of being rebound to the
+              // generated root.
+              return runtime.prepareContextMenuSelection?.(target, point, activation)
+                ?? runtime.prepareMediaSelection();
+            }
+          }
+          // A collapsed caret, a foreign range, or no range at all is not a
+          // deliberate in-surface selection: the pointer target is then the
+          // only generated-content source this surface has. A rendered formula
+          // or diagram cannot own a caret at all, so map the hit root onto its
+          // own source range and let the menu own that context.
+          const kind = generated.root.matches('.easymde-math')
+            ? 'math'
+            : 'mermaid';
+          const lease = blockIndex
+            ? runtime.prepareGeneratedContentTarget?.({
+                element: generated.root,
+                index: {
+                  blocks: blockIndex.blocks,
+                  length: blockIndex.length,
+                  mathSpans: blockIndex.mathSpans,
+                  revision,
+                  source: blockIndex.source
+                },
+                kind,
+                ordinal: generated.ordinal
+              })
+            : null;
+          const range = lease?.target.original.fullRange;
+          if (lease && range) {
+            documentSession.document.applyTextChange({
+              selection: {
+                direction: 'none',
+                end: range.to,
+                start: range.from
+              },
+              value: documentSession.document.getValue()
+            });
+            lease.release();
+            return true;
+          }
+          lease?.release();
+        }
+        if (target?.closest('pre')) {
+          if (
+            !(runtime.prepareContextMenuSelection?.(target, point, activation)
+              ?? runtime.prepareMediaSelection())
+          ) return false;
+          // The Visual owner maps a whole code fence onto its complete source
+          // line range, trailing line terminator included, while every other
+          // owner reads the parser-owned block range that stops before that
+          // terminator. Narrowing the canonical selection here keeps one
+          // identical code range for the menu context, the code content read,
+          // and the code block commands.
+          const value = documentSession.document.getValue();
+          const selection = documentSession.document.getSelection();
+          const block = findMarkdownBlock(
+            value,
+            selection.start,
+            blockIndex ?? undefined
+          );
+          if (
+            block
+            && 'code' === block.kind
+            && selection.start >= block.start
+            && selection.start < block.end
+            && selection.end > block.end
+            && selection.end <=
+              blockRangeWithTrailingTerminator(value, {
+                from: block.start,
+                to: block.end
+              }).to
+          ) {
+            documentSession.document.applyTextChange({
+              selection: {
+                direction: selection.direction,
+                end: block.end,
+                start: selection.start
+              },
+              value
+            });
+          }
+          return true;
+        }
+        return runtime.prepareContextMenuSelection?.(target, point, activation)
+          ?? runtime.prepareMediaSelection();
+      },
+      restoreFocus: () => {
+        if (runtime.surface.isConnected)
+          runtime.surface.focus({ preventScroll: true });
+      },
+      subscribeReadiness: subscribeContextMenuReadiness,
+      subscribeSnapshot: documentSession.document.subscribe,
+      subscribeSelection: documentSession.document.subscribeSelection
+    };
+  }, [
+    documentSession,
+    contextMenuWorkspace,
+    editorCodeContentQuery,
+    previewRuntimeGeneration,
+    props.editorClipboardPort,
+    props.imageUpload,
+    props.editorBlockIndexPort,
+    props.editorImagePixelsPort,
+    props.generatedContentExportSession,
+    requestContextMenuBlockIndex,
+    subscribeContextMenuBlockIndex,
+    releasePendingGeneratedContentPin,
+    releasePendingImageTargetPin,
+    visualEditorGeneration,
+    visualEditorSurface,
+    visualPreviewEditing,
+    visualPreviewWindowed
+  ]);
+
+  const getVisualGeneratedPreviewIdentity = useCallback(
+    () => previewRuntimeRef.current?.getGeneratedPreviewIdentity() ?? null,
+    []
+  );
+  const prepareVisualGeneratedContentTarget = useCallback<
+    PreviewSurfaceRuntime['prepareGeneratedContentTarget']
+  >(
+    (request) =>
+      previewRuntimeRef.current?.prepareGeneratedContentTarget(request) ?? null,
+    []
+  );
+  const prepareVisualImageTarget = useCallback<
+    PreviewSurfaceRuntime['prepareImageTarget']
+  >(
+    (request) => previewRuntimeRef.current?.prepareImageTarget(request) ?? null,
+    []
+  );
+  const prepareVisualImageTargetBySelection = useCallback<
+    PreviewSurfaceRuntime['prepareImageTargetBySelection']
+  >(
+    (request) =>
+      previewRuntimeRef.current?.prepareImageTargetBySelection(request) ?? null,
+    []
+  );
+
   return (
     <div
       ref={rootRef}
-      className={`easymde-editor${immersive ? ' is-immersive' : ''}${immersive ? ` is-immersive-${immersiveMode}` : ''}`}
+      className={immersiveLayoutClass}
       data-easymde-editor-owner="react"
       data-easymde-session-status={sessionSnapshot.status}
     >
@@ -2452,7 +5714,7 @@ export function EditorRoot(props: EditorRootProps) {
           direction={props.layout.direction}
           onCopyWechat={copyWechatFromImmersive}
           onExit={exitImmersive}
-          onFailure={props.onFailure}
+          onFailure={reportFailure}
           onBeforeSourceMutation={prepareSourceMutation}
           onConfirmPublish={publish}
           onSelectFeaturedImage={selectFeaturedImage}
@@ -2461,28 +5723,28 @@ export function EditorRoot(props: EditorRootProps) {
           revisionPort={revisionPort}
           restoreRevision={restoreRevision}
           styleControls={
-              <Fragment>
-                <AppearanceControls
-                  bootstrap={currentAppearance}
-                  messageAlertTimer={props.immersiveEnvironment}
-                  onFailure={() =>
-                    props.onFailure('react-editor-appearance-failed')
-                  }
-                  onNotification={setAppearanceNotification}
-                  onNotificationDismiss={dismissAppearanceNotification}
-                  onReady={handleAppearanceReady}
-                  port={appearancePort}
-                  immersiveLabel={props.immersiveStrings.theme}
-                  immersiveTitle={props.immersiveStrings.themeSettings}
-                  variant="immersive"
-                />
-                <FontControls
-                  bootstrap={currentFonts}
-                  onFailure={() => props.onFailure('react-editor-fonts-failed')}
-                  onReady={handleFontControlsReady}
-                  port={fontControlsPort}
-                  variant="immersive"
-                />
+            <Fragment>
+              <AppearanceControls
+                bootstrap={currentAppearance}
+                messageAlertTimer={props.immersiveEnvironment}
+                onFailure={() =>
+                  reportFailure('react-editor-appearance-failed')
+                }
+                onNotification={setAppearanceNotification}
+                onNotificationDismiss={dismissAppearanceNotification}
+                onReady={handleAppearanceReady}
+                port={appearancePort}
+                immersiveLabel={props.immersiveStrings.theme}
+                immersiveTitle={props.immersiveStrings.themeSettings}
+                variant="immersive"
+              />
+              <FontControls
+                bootstrap={currentFonts}
+                onFailure={() => reportFailure('react-editor-fonts-failed')}
+                onReady={handleFontControlsReady}
+                port={fontControlsPort}
+                variant="immersive"
+              />
             </Fragment>
           }
           toolbar={
@@ -2496,24 +5758,64 @@ export function EditorRoot(props: EditorRootProps) {
                   editorRoot={rootRef.current as HTMLElement}
                   {...(visualPreviewEditing
                     ? {
-                        executeVisualCommand: (command: ToolbarCommand) => {
+                        executeVisualCommand: (
+                          command: ToolbarCommand,
+                          plan?: () => ToolbarCommandPlan | null
+                        ) => {
                           const runtime = visualEditorRuntimeRef.current;
                           if (!runtime) {
                             throw new Error(
                               'visual-editor-runtime-unavailable'
                             );
                           }
-                          if (runtime.executeCommand(command)) return true;
-                          const prepared = 'image' === command.action
-                            ? runtime.prepareMediaSelection()
-                            : runtime.prepareToolbarFallback();
-                          if (!prepared) return true;
+                          const result = runtime.executeCommand(command);
+                          if ('handled' === result) return result;
+                          if ('unsupported' !== result) {
+                            reportVisualToolbarFailure();
+                            return result;
+                          }
+                          if ('image' !== command.action) {
+                            if (!runtime.prepareMediaSelection()) {
+                              reportVisualToolbarFailure();
+                              return 'blocked';
+                            }
+                            const planned = plan?.();
+                            const revision =
+                              documentSession.document.getRevision?.();
+                            if (planned && undefined !== revision) {
+                              const canonicalResult =
+                                runtime.applyCanonicalChange({
+                                  change: planned.change,
+                                  expected: {
+                                    revision,
+                                    selection: planned.expected.selection,
+                                    value: planned.expected.value
+                                  }
+                                });
+                              if ('handled' === canonicalResult) {
+                                return canonicalResult;
+                              }
+                              reportVisualToolbarFailure();
+                              return canonicalResult;
+                            }
+                          }
+                          const prepared =
+                            'image' === command.action
+                              ? runtime.prepareMediaSelection()
+                              : runtime.prepareToolbarFallback();
+                          if (!prepared) {
+                            reportVisualToolbarFailure();
+                            return 'blocked';
+                          }
+                          if ('image' === command.action) return 'unsupported';
                           leaveVisualPreview();
-                          return false;
+                          return 'unsupported';
                         }
                       }
                     : {})}
                   executeExternalCommand={executeRootExternalCommand}
+                  isOwnedShortcutTarget={isOwnedShortcutTarget}
+                  onExecuteCommandReady={handleToolbarExecutorReady}
                   platform={props.platform}
                   prepareToolbarShortcuts={props.prepareToolbarShortcuts}
                   onPopoverOpen={closeForToolbar}
@@ -2540,6 +5842,8 @@ export function EditorRoot(props: EditorRootProps) {
                 <ActiveToolbar
                   editorRoot={rootRef.current}
                   executeExternalCommand={executeRootExternalCommand}
+                  isOwnedShortcutTarget={isOwnedShortcutTarget}
+                  onExecuteCommandReady={handleToolbarExecutorReady}
                   platform={props.platform}
                   prepareToolbarShortcuts={props.prepareToolbarShortcuts}
                   onPopoverOpen={closeForToolbar}
@@ -2580,7 +5884,7 @@ export function EditorRoot(props: EditorRootProps) {
               label={props.immersiveStrings.editorSettings}
               messageAlertTimer={props.immersiveEnvironment}
               onAppearanceReady={handleAppearanceReady}
-              onFailure={props.onFailure}
+              onFailure={reportFailure}
               onNotification={setAppearanceNotification}
               onNotificationDismiss={dismissAppearanceNotification}
               onFontControlsReady={handleFontControlsReady}
@@ -2683,15 +5987,15 @@ export function EditorRoot(props: EditorRootProps) {
                 </span>
               </header>
             ) : null}
-			<div className="easymde-source easymde-source-react">
-				<EditorDocumentSource
-					editorLabel={props.document.editorLabel}
-					settings={props.settings}
-					onReady={handleDocumentReady}
-					submissionField={props.submissionField}
-					titleField={props.titleField}
-				/>
-			</div>
+            <div className="easymde-source easymde-source-react">
+              <EditorDocumentSource
+                editorLabel={props.document.editorLabel}
+                settings={props.settings}
+                onReady={handleDocumentReady}
+                submissionField={props.submissionField}
+                titleField={props.titleField}
+              />
+            </div>
             {immersive ? (
               <footer className="easymde-immersive-statusbar">
                 <span>
@@ -2742,9 +6046,7 @@ export function EditorRoot(props: EditorRootProps) {
             <PreviewSurfaceOwner
               className={previewClassName}
               emptyMode={
-                immersive && 'preview' === immersiveMode
-                  ? 'paper'
-                  : 'message'
+                immersive && 'preview' === immersiveMode ? 'paper' : 'message'
               }
               enhancementPort={props.enhancementPort}
               initial={{
@@ -2755,14 +6057,26 @@ export function EditorRoot(props: EditorRootProps) {
               }}
               initialRevision={0}
               messages={props.preview.messages}
-              onDiagnostic={props.onFailure}
+              onDiagnostic={reportFailure}
               onDispose={handlePreviewDispose}
+              onImageReadinessChange={handlePreviewImageReadinessChange}
               onReady={handlePreviewReady}
               onSnapshotReady={handlePreviewSnapshotReady}
               onStatusChange={handlePreviewStatusChange}
               onWindowReady={handlePreviewWindowReady}
               port={previewPort}
+              currentSourceSnapshot={() => {
+                if (!documentSession) return null;
+                const revision = documentSession.document.getRevision?.();
+                return undefined === revision
+                  ? null
+                  : {
+                      revision,
+                      value: documentSession.document.getValue()
+                    };
+              }}
               scrollPort={props.scrollPort}
+              sourceRevision={documentSession?.document.getRevision?.() ?? 0}
               style={previewStyle}
               {...(visualPreviewEditing
                 ? {
@@ -2779,55 +6093,122 @@ export function EditorRoot(props: EditorRootProps) {
             && documentSession
             && previewRuntimeRef.current ? (
               visualPreviewWindowed && visualPreviewSnapshot.editMap ? (
-              <WindowedImmersiveVisualEditor
-                documentSession={documentSession}
-                editMap={visualPreviewSnapshot.editMap}
-                imageUploadEnabled={props.imageUpload.enabled}
-                imagePasteUploadEnabled={props.imageUpload.autoUploadPastedImages}
-                onCanonicalDocumentChange={
-                  handleVisualCanonicalDocumentChange
-                }
-                onDiagnostic={props.onFailure}
-                onDispose={handleVisualEditorDispose}
-                onFailure={handleVisualFailure}
-                onMarkdownChange={handleVisualMarkdownChange}
-                onPendingChange={handleVisualPendingChange}
-                onReady={handleVisualEditorReady}
-                onTransferFailure={handleVisualTransferFailure}
-                pending={visualPreviewPending}
-                previewSnapshot={visualPreviewSnapshot}
-                previewStatus={previewSurfaceStatus}
-                prepareWindowBlockAdoption={prepareVisualWindowBlockAdoption}
-                requestPreview={handleVisualPreviewRequest}
-                requestPreviewAtDocumentEnd={handleVisualPreviewAtDocumentEnd}
-                surface={previewRuntimeRef.current.surface}
-              />
+                <WindowedImmersiveVisualEditor
+                  documentSession={documentSession}
+                  resumeCanonicalSelectionToken={visualResumeCanonicalToken}
+                  editMap={visualPreviewSnapshot.editMap}
+                  imageUploadEnabled={props.imageUpload.enabled}
+                  imagePasteUploadEnabled={
+                    props.imageUpload.autoUploadPastedImages
+                  }
+                  onCanonicalDocumentChange={
+                    handleVisualCanonicalDocumentChange
+                  }
+                  onDiagnostic={reportFailure}
+                  onDispose={handleVisualEditorDispose}
+                  onFailure={handleVisualFailure}
+                  onMarkdownChange={handleVisualMarkdownChange}
+                  onPendingChange={handleVisualPendingChange}
+                  onReady={handleVisualEditorReady}
+                  onTransferFailure={handleVisualTransferFailure}
+                  pending={visualPreviewPending}
+                  previewSnapshot={visualPreviewSnapshot}
+                  previewStatus={previewSurfaceStatus}
+                  acceptedWindowSnapshotGeneration={
+                    acceptedWindowSnapshotGeneration
+                  }
+                  getAcceptedWindowSnapshot={getAcceptedWindowSnapshot}
+                  getGeneratedPreviewIdentity={
+                    getVisualGeneratedPreviewIdentity
+                  }
+                  prepareGeneratedContentTarget={
+                    prepareVisualGeneratedContentTarget
+                  }
+                  prepareImageTarget={prepareVisualImageTarget}
+                  prepareImageTargetBySelection={
+                    prepareVisualImageTargetBySelection
+                  }
+                  prepareWindowBlockAdoption={prepareVisualWindowBlockAdoption}
+                  retainCompositionSurface={retainCompositionSurface}
+                  requestPreview={handleVisualPreviewRequest}
+                  requestPreviewAtDocumentEnd={handleVisualPreviewAtDocumentEnd}
+                  surface={previewRuntimeRef.current.surface}
+                />
               ) : (
-              <ImmersiveVisualEditor
-                documentSession={documentSession}
-                imageUploadEnabled={props.imageUpload.enabled}
-                imagePasteUploadEnabled={props.imageUpload.autoUploadPastedImages}
-                onCanonicalDocumentChange={
-                  handleVisualCanonicalDocumentChange
-                }
-                onDiagnostic={props.onFailure}
-                onDispose={handleVisualEditorDispose}
-                onFailure={handleVisualFailure}
-                onMarkdownChange={handleVisualMarkdownChange}
-                onPendingChange={handleVisualPendingChange}
-                onReady={handleVisualEditorReady}
-                onTransferFailure={handleVisualTransferFailure}
-                pending={visualPreviewPending}
-                previewSnapshot={visualPreviewSnapshot}
-                previewStatus={previewSurfaceStatus}
-                requestPreview={handleVisualPreviewRequest}
-                surface={previewRuntimeRef.current.surface}
-              />
+                <ImmersiveVisualEditor
+                  documentSession={documentSession}
+                  resumeCanonicalSelectionToken={visualResumeCanonicalToken}
+                  imageUploadEnabled={props.imageUpload.enabled}
+                  imagePasteUploadEnabled={
+                    props.imageUpload.autoUploadPastedImages
+                  }
+                  onCanonicalDocumentChange={
+                    handleVisualCanonicalDocumentChange
+                  }
+                  onDiagnostic={reportFailure}
+                  onDispose={handleVisualEditorDispose}
+                  onFailure={handleVisualFailure}
+                  onMarkdownChange={handleVisualMarkdownChange}
+                  onPendingChange={handleVisualPendingChange}
+                  onReady={handleVisualEditorReady}
+                  onTransferFailure={handleVisualTransferFailure}
+                  pending={visualPreviewPending}
+                  previewSnapshot={visualPreviewSnapshot}
+                  previewStatus={previewSurfaceStatus}
+                  getGeneratedPreviewIdentity={
+                    getVisualGeneratedPreviewIdentity
+                  }
+                  prepareGeneratedContentTarget={
+                    prepareVisualGeneratedContentTarget
+                  }
+                  prepareImageTarget={prepareVisualImageTarget}
+                  prepareImageTargetBySelection={
+                    prepareVisualImageTargetBySelection
+                  }
+                  requestPreview={handleVisualPreviewRequest}
+                  surface={previewRuntimeRef.current.surface}
+                />
               )
             ) : null}
           </ImmersivePreviewSurface>
         }
       />
+      {props.contextMenuStrings && props.editorClipboardPort ? (
+        <EditorContextMenuFeature
+          clipboard={props.editorClipboardPort}
+          canCopySimplified={Boolean(
+            props.simplifiedFormattingParser
+              && supportsEditorRichClipboard(props.editorClipboardPort)
+          )}
+          direction={props.layout.direction}
+          imageShortcut={formatKeyboardShortcut(
+            props.toolbar.shortcuts.image?.[props.platform] ?? ''
+          )}
+          labels={props.contextMenuStrings}
+          heading={contextMenuHeading}
+          onAction={contextMenuActionCoordinator.onAction}
+          onFailure={(code) =>
+            reportContextMenuFailure(
+              code,
+              props.contextMenuStrings?.statusActionFailed
+            )
+          }
+          onPortalOwnerChange={registerContextMenuPortalOwner}
+          shortcut={formatKeyboardShortcut(
+            props.toolbar.shortcuts.bold?.[props.platform] ?? ''
+          )}
+          source={contextMenuSource}
+          visual={contextMenuVisual}
+        />
+      ) : null}
+      {contextMenuTableRequest ? (
+        <EditorTableDialog
+          environment={props.immersiveEnvironment}
+          strings={props.immersiveStrings}
+          onClose={() => setContextMenuTableRequest(null)}
+          onInsert={insertContextMenuTable}
+        />
+      ) : null}
       {mediaPickerDialog && props.mediaPickerFrame ? (
         <WordPressMediaPickerDialog
           closeLabel={props.immersiveStrings.close}

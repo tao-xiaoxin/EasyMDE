@@ -15,23 +15,1543 @@ import {
   isMarkdownTerminalWhitespaceSuffix,
   markdownLineStarts
 } from '../../shared/markdown/markdown-line-model';
+import {
+  imageScaleFromAttribute,
+  serializeLegacyMarkdownImageWidth,
+  serializeMarkdownImage
+} from '../image-scale/image-scale-contract';
 
 export { VISUAL_MARKDOWN_READ_ONLY_SELECTOR };
 
 const PREVIEW_WINDOW_SPACER_SELECTOR =
   '[data-easymde-preview-window-spacer]';
 const VISUAL_FENCE_ATTRIBUTE = 'data-easymde-visual-fence';
+/** Block identity the visual owners stamp on each rendered Markdown block. */
+const VISUAL_BLOCK_ATTRIBUTE = 'data-easymde-visual-block-id';
 const VISUAL_FENCE_INFO_ATTRIBUTE = 'data-easymde-visual-fence-info';
 const VISUAL_FENCE_OPEN_EOF_ATTRIBUTE =
   'data-easymde-visual-fence-open-eof';
 const VISUAL_CODE_PLACEHOLDER_ATTRIBUTE =
   'data-easymde-visual-code-placeholder';
+
+export type VisualThematicBreakSelection = Readonly<{
+  block: HTMLHRElement;
+  direction: 'backward' | 'forward';
+}>;
+
+type VisualNativeSelectionSnapshot = Readonly<{
+  anchorNode: Node | null;
+  anchorOffset: number;
+  focusNode: Node | null;
+  focusOffset: number;
+  ranges: ReadonlyArray<Range>;
+}>;
+
+export type VisualThematicBreakPointerPreparation = Readonly<{
+  block: HTMLHRElement;
+  direction: VisualThematicBreakSelection['direction'];
+  normalized: boolean;
+  restore: () => void;
+}>;
+
+export function visualThematicBreakTarget(
+  surface: HTMLElement,
+  target: Element | null | undefined
+): HTMLHRElement | null {
+  const block = target?.closest('hr');
+  if (
+    !(block instanceof HTMLHRElement)
+    || block.parentNode !== surface
+    || !block.isConnected
+    || !surface.contains(block)
+    || !block.getAttribute(VISUAL_BLOCK_ATTRIBUTE)
+  ) return null;
+  let ancestor: HTMLElement | null = block;
+  while (ancestor) {
+    if (
+      ancestor.matches(VISUAL_MARKDOWN_READ_ONLY_SELECTOR)
+      || ancestor.hasAttribute('data-easymde-preview-window-spacer')
+      || 'false' === ancestor.getAttribute('contenteditable')?.toLowerCase()
+    ) return null;
+    if (ancestor === surface) break;
+    ancestor = ancestor.parentElement;
+  }
+  return ancestor === surface ? block : null;
+}
+
+function captureVisualNativeSelection(
+  selection: Selection
+): VisualNativeSelectionSnapshot {
+  const ranges: Range[] = [];
+  for (let index = 0; index < selection.rangeCount; index += 1) {
+    ranges.push(selection.getRangeAt(index).cloneRange());
+  }
+  return {
+    anchorNode: selection.anchorNode,
+    anchorOffset: selection.anchorOffset,
+    focusNode: selection.focusNode,
+    focusOffset: selection.focusOffset,
+    ranges
+  };
+}
+
+function restoreVisualNativeSelection(
+  selection: Selection,
+  snapshot: VisualNativeSelectionSnapshot
+): void {
+  selection.removeAllRanges();
+  if (
+    snapshot.anchorNode?.isConnected
+    && snapshot.focusNode?.isConnected
+  ) {
+    try {
+      selection.setBaseAndExtent(
+        snapshot.anchorNode,
+        snapshot.anchorOffset,
+        snapshot.focusNode,
+        snapshot.focusOffset
+      );
+      return;
+    } catch {
+      // The owner may have replaced a detached target while rejecting it.
+    }
+  }
+  for (const range of snapshot.ranges) {
+    if (
+      range.startContainer.isConnected
+      && range.endContainer.isConnected
+    ) selection.addRange(range.cloneRange());
+  }
+}
+
+/**
+ * Normalize only a pointer-hit direct-child thematic break. A deliberate
+ * non-collapsed owned selection is not replaced; callers continue through its
+ * ordinary selection owner. A rejected normalization restores the exact
+ * native selection that preceded the pointer demand.
+ */
+export function prepareVisualThematicBreakPointerSelection(
+  surface: HTMLElement,
+  target: Element | null | undefined
+): VisualThematicBreakPointerPreparation | null {
+  const block = visualThematicBreakTarget(surface, target);
+  if (!block) return null;
+  const selection = surface.ownerDocument.defaultView?.getSelection();
+  if (!selection) throw new Error('visual-editor-selection-unavailable');
+  const current = captureVisualThematicBreakSelection(surface);
+  if (current) {
+    return current.block === block
+      ? { block, direction: current.direction, normalized: false, restore: () => undefined }
+      : null;
+  }
+  const provenance = classifyVisualSelectionProvenance(surface, selection);
+  if (
+    'straddling' === provenance
+    || ('owned' === provenance && !selection.isCollapsed)
+  ) return null;
+  const snapshot = captureVisualNativeSelection(selection);
+  try {
+    const range = surface.ownerDocument.createRange();
+    range.selectNode(block);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return {
+      block,
+      direction: 'forward',
+      normalized: true,
+      restore: () => restoreVisualNativeSelection(selection, snapshot)
+    };
+  } catch {
+    restoreVisualNativeSelection(selection, snapshot);
+    throw new Error('visual-editor-selection-map-failed');
+  }
+}
+
+/**
+ * A native selectNode(<hr>) range has no descendant caret boundary. Keep this
+ * narrow so mixed or foreign selections continue through their normal owner.
+ */
+export function captureVisualThematicBreakSelection(
+  surface: HTMLElement
+): VisualThematicBreakSelection | null {
+  const selection = surface.ownerDocument.defaultView?.getSelection();
+  if (
+    1 !== selection?.rangeCount
+    || selection.isCollapsed
+    || selection.anchorNode !== surface
+    || selection.focusNode !== surface
+  ) {
+    return null;
+  }
+
+  const start = Math.min(selection.anchorOffset, selection.focusOffset);
+  const end = Math.max(selection.anchorOffset, selection.focusOffset);
+  if (
+    !Number.isInteger(start)
+    || !Number.isInteger(end)
+    || end - start !== 1
+    || start < 0
+    || end > surface.childNodes.length
+  ) {
+    return null;
+  }
+
+  const range = selection.getRangeAt(0);
+  if (
+    range.startContainer !== surface
+    || range.endContainer !== surface
+    || range.startOffset !== start
+    || range.endOffset !== end
+  ) {
+    return null;
+  }
+
+  const selected = surface.childNodes[start];
+  if (
+    !(selected instanceof HTMLHRElement)
+    || selected.parentNode !== surface
+    || !selected.isConnected
+    || !selected.getAttribute('data-easymde-visual-block-id')
+  ) {
+    return null;
+  }
+
+  let ancestor: HTMLElement | null = selected;
+  while (ancestor) {
+    if (
+      ancestor.matches(VISUAL_MARKDOWN_READ_ONLY_SELECTOR)
+      || ancestor.hasAttribute('data-easymde-preview-window-spacer')
+      || 'false' === ancestor.getAttribute('contenteditable')?.toLowerCase()
+    ) {
+      return null;
+    }
+    if (ancestor === surface) break;
+    ancestor = ancestor.parentElement;
+  }
+
+  return {
+    block: selected,
+    direction: selection.anchorOffset > selection.focusOffset
+      ? 'backward'
+      : 'forward'
+  };
+}
+
+/**
+ * Browsers can place a context-menu caret inside an image void element. Make
+ * that target an explicit node selection before the normal Markdown mapper
+ * reads it, so the source owner can identify the complete image syntax.
+ */
+export function shouldNormalizeVisualImageContextMenuSelection(
+  selection: Pick<Selection, 'isCollapsed' | 'rangeCount'> | null | undefined
+): boolean {
+  return !selection
+    || 0 === selection.rangeCount
+    || (1 === selection.rangeCount && selection.isCollapsed);
+}
+
+export type VisualSelectionProvenance =
+  | 'absent'
+  | 'owned'
+  | 'straddling'
+  | 'wholly-foreign';
+
+export type VisualSelectionLike = Readonly<{
+  anchorNode: Node | null;
+  focusNode: Node | null;
+  getRangeAt: (index: number) => Range;
+  rangeCount: number;
+}>;
+
+/**
+ * Classify the browser selection against the editable visual surface before
+ * any image or caret normalization runs.
+ *
+ * Only an `absent` or `wholly-foreign` selection may be recovered onto the
+ * hit target. A selection that owns the surface, or that straddles or encloses
+ * it, still carries user intent that the editable surface cannot represent, so
+ * it must be preserved instead of being silently overwritten.
+ */
+export function classifyVisualSelectionProvenance(
+  surface: HTMLElement,
+  selection: VisualSelectionLike | null | undefined
+): VisualSelectionProvenance {
+  if (
+    !selection?.rangeCount
+    || !selection.anchorNode
+    || !selection.focusNode
+  ) return 'absent';
+  const anchorInside = selection.anchorNode.isConnected
+    && surface.contains(selection.anchorNode);
+  const focusInside = selection.focusNode.isConnected
+    && surface.contains(selection.focusNode);
+  if (1 === selection.rangeCount && anchorInside && focusInside) {
+    return 'owned';
+  }
+  if (anchorInside || focusInside) return 'straddling';
+  // Both endpoints sit outside the editable surface. A range that still
+  // intersects it, including a range enclosing the whole surface, cannot be
+  // mapped onto a target without destroying one of its ends.
+  for (let index = 0; index < selection.rangeCount; index += 1) {
+    if (selection.getRangeAt(index).intersectsNode(surface)) {
+      return 'straddling';
+    }
+  }
+  return 'wholly-foreign';
+}
+
+type VisualImageSelectionRecord = Readonly<{
+  anchorNode: Node;
+  anchorOffset: number;
+  focusNode: Node;
+  focusOffset: number;
+  image: HTMLImageElement;
+}>;
+
+/**
+ * Which gesture asked for the image to become the selection.
+ *
+ * - `pointer`: a real pointer gesture demanded the context menu. The image
+ *   under the pointer is authoritative, so it may replace exactly the
+ *   image-node selection this helper placed for an earlier image. A
+ *   deliberate text, object, or mixed selection keeps its extent, and the
+ *   caller reports that mismatch instead of discarding the user's intent.
+ * - `keyboard`: the Context Menu key or Shift+F10 activated the menu, which
+ *   always follows the current selection.
+ * - `activation`: the primary button was pressed on the image, so the image is
+ *   the target the user chose.
+ *
+ * A range that straddles or encloses the surface is never replaced by any
+ * gesture: the editable surface cannot represent it, so the caller rejects
+ * that gesture instead of losing one of its ends.
+ */
+export type VisualImageSelectionGesture =
+  | 'activation'
+  | 'keyboard'
+  | 'pointer';
+
+export type VisualImageInteractionHooks = Readonly<{
+  /** The surface may start an editing interaction right now. */
+  canActivate: () => boolean;
+  /** Focus the surface before an activation selects the image on it. */
+  focus: () => void;
+  /** Report a failed activation after this owner cleared its own state. */
+  report: (error: unknown) => void;
+  /** Publish the current native selection as the resolved canonical selection. */
+  synchronizeSelection: () => boolean;
+  /**
+   * Whether the current native selection is exactly one this owner placed
+   * itself (a Preview adoption or an in-place history restore) and has not
+   * drifted since. A pointer demand may replace such a selection; a selection
+   * the user made is never reported here.
+   */
+  ownsSelection?: () => boolean;
+}>;
+
+export type VisualImageInteraction = Readonly<{
+  dispose: () => void;
+  /**
+   * Make the image under a gesture the selection of this surface. `gesture`
+   * states which existing selection that gesture may discard; see
+   * {@link VisualImageSelectionGesture}.
+   */
+  select: (
+    target: Element | null | undefined,
+    gesture: VisualImageSelectionGesture
+  ) => boolean;
+}>;
+
+/**
+ * Own the image interaction of one editable visual surface: the gesture
+ * policy, the exact image-node range this owner placed itself, the
+ * primary-button activation (focus, selection, same-value canonical publish),
+ * selection drift, and the transient selected-state outline.
+ *
+ * A runtime supplies only what differs between the two visual owners: its
+ * readiness rule, its focus operation, its canonical selection publication,
+ * and its failure reporting. The outline is owned outside the editable DOM, and
+ * it is clamped to the preview's visible band, so it changes no Markdown, image
+ * attribute, geometry, or export payload and never paints over page chrome.
+ */
+export function createVisualImageInteraction(
+  surface: HTMLElement,
+  hooks: VisualImageInteractionHooks
+): VisualImageInteraction {
+  const documentRef = surface.ownerDocument;
+  const view = documentRef.defaultView;
+  let record: VisualImageSelectionRecord | null = null;
+  let overlay: HTMLDivElement | null = null;
+  let disposed = false;
+  // The image's own layout box is the only geometry the outline describes, and
+  // that box changes without a scroll, a window resize, or a child-list change:
+  // a late resource load, a size the renderer rewrites, or a canvas that only
+  // the surrounding layout resized. The image and the surface are observed
+  // directly so the outline stays bound to the box it describes.
+  const geometryObserver = typeof ResizeObserver === 'function'
+    ? new ResizeObserver(() => sync())
+    : null;
+  const structureObserver = typeof MutationObserver === 'function'
+    ? new MutationObserver(() => sync())
+    : null;
+
+  function dropRecord(): void {
+    record = null;
+    geometryObserver?.disconnect();
+  }
+
+  function dropOverlay(): void {
+    overlay?.remove();
+    overlay = null;
+  }
+
+  function clearSelection(): void {
+    dropRecord();
+    dropOverlay();
+  }
+
+  function selectionMatchesRecord(): boolean {
+    const selection = view?.getSelection();
+    if (!record || !selection) return false;
+    if (
+      1 !== selection.rangeCount
+      || !selection.anchorNode
+      || !selection.focusNode
+    ) return false;
+    return selection.anchorNode === record.anchorNode
+      && selection.anchorOffset === record.anchorOffset
+      && selection.focusNode === record.focusNode
+      && selection.focusOffset === record.focusOffset;
+  }
+
+  /**
+   * The visible band the outline may be drawn in: the viewport narrowed by every
+   * clipping ancestor of the surface (the Preview pane and its scroll
+   * container). A scrolled-out image can therefore never paint over the
+   * toolbar, the header, another pane, or outside the viewport.
+   */
+  function visibleBand(): Readonly<{
+    bottom: number;
+    left: number;
+    right: number;
+    top: number;
+  }> {
+    let band = view
+      ? { bottom: view.innerHeight, left: 0, right: view.innerWidth, top: 0 }
+      : { bottom: 0, left: 0, right: 0, top: 0 };
+    let ancestor = surface.parentElement;
+    while (
+      ancestor
+      && ancestor !== documentRef.body
+      && ancestor !== documentRef.documentElement
+    ) {
+      const style = view?.getComputedStyle(ancestor);
+      if (
+        style
+        && ('visible' !== style.overflowY || 'visible' !== style.overflowX)
+      ) {
+        const rect = ancestor.getBoundingClientRect();
+        band = {
+          bottom: Math.min(band.bottom, rect.bottom),
+          left: Math.max(band.left, rect.left),
+          right: Math.min(band.right, rect.right),
+          top: Math.max(band.top, rect.top)
+        };
+      }
+      ancestor = ancestor.parentElement;
+    }
+    return {
+      bottom: Math.max(band.top, band.bottom),
+      left: band.left,
+      right: Math.max(band.left, band.right),
+      top: band.top
+    };
+  }
+
+  function sync(): void {
+    const image = record?.image ?? null;
+    if (
+      disposed
+      || !image
+      || !image.isConnected
+      || !surface.isConnected
+      || !surface.contains(image)
+      || 'false' === surface.getAttribute('contenteditable')
+    ) {
+      if (record || overlay) clearSelection();
+      return;
+    }
+    if (!overlay) {
+      overlay = documentRef.createElement('div');
+      overlay.className = 'easymde-visual-image-selection-feedback';
+      overlay.setAttribute('aria-hidden', 'true');
+      (documentRef.body ?? documentRef.documentElement).append(overlay);
+    }
+    // The outline keeps its own appearance and is clamped to the band: while
+    // the image is inside the band the two rectangles are identical, and the
+    // part that scrolled out is not drawn at all (a fully scrolled-out image
+    // leaves a zero-sized outline).
+    const band = visibleBand();
+    const rect = image.getBoundingClientRect();
+    const left = Math.max(rect.left, band.left);
+    const top = Math.max(rect.top, band.top);
+    const right = Math.min(rect.right, band.right);
+    const bottom = Math.min(rect.bottom, band.bottom);
+    const width = Math.max(0, right - left);
+    const height = Math.max(0, bottom - top);
+    // A border box can never be smaller than its own border, so an empty
+    // intersection is hidden explicitly instead of relying on a zero-sized box
+    // (which still paints 2 + 2 px of border).
+    overlay.style.visibility = width > 0 && height > 0 ? 'visible' : 'hidden';
+    overlay.style.left = `${left}px`;
+    overlay.style.top = `${top}px`;
+    overlay.style.width = `${width}px`;
+    overlay.style.height = `${height}px`;
+  }
+
+  function select(
+    target: Element | null | undefined,
+    gesture: VisualImageSelectionGesture
+  ): boolean {
+    const image = target?.closest('img');
+    if (!(image instanceof HTMLImageElement) || !surface.contains(image)) {
+      return false;
+    }
+    const selection = view?.getSelection();
+    if (!selection) throw new Error('visual-editor-selection-unavailable');
+    const provenance = classifyVisualSelectionProvenance(surface, selection);
+    if ('straddling' === provenance) return false;
+    if (
+      'owned' === provenance
+      && !shouldNormalizeVisualImageContextMenuSelection(selection)
+      && 'activation' !== gesture
+      && !('pointer' === gesture && selectionMatchesRecord())
+      // A pointer demand is the user pointing at this image. A selection this
+      // owner placed itself (an accepted Preview adoption or a history restore)
+      // is not a deliberate user selection, so it may be replaced; a
+      // selection the user made stays, and the menu describes it.
+      && !('pointer' === gesture && hooks.ownsSelection?.() === true)
+    ) return false;
+    const range = documentRef.createRange();
+    try {
+      range.selectNode(image);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      if (!selection.anchorNode || !selection.focusNode) {
+
+        throw new Error('visual-editor-selection-map-failed');
+      }
+      record = {
+        anchorNode: selection.anchorNode,
+        anchorOffset: selection.anchorOffset,
+        focusNode: selection.focusNode,
+        focusOffset: selection.focusOffset,
+        image
+      };
+      geometryObserver?.disconnect();
+      geometryObserver?.observe(image);
+      geometryObserver?.observe(surface);
+      sync();
+    } catch {
+
+      throw new Error('visual-editor-selection-map-failed');
+    }
+    return true;
+  }
+
+  function handleActivationPointerDown(event: PointerEvent): void {
+    // Only the primary button activates an image or cancels the marked target;
+    // a secondary press is the context-menu gesture and keeps the exact range
+    // a pointer demand is allowed to rebind.
+    if (0 !== event.button) return;
+    const image = event.target instanceof Element
+      ? event.target.closest('img')
+      : null;
+    if (
+      !(image instanceof HTMLImageElement)
+      || !surface.contains(image)
+      || event.altKey
+      || event.ctrlKey
+      || event.metaKey
+      || event.shiftKey
+      || !hooks.canActivate()
+    ) {
+      clearSelection();
+      return;
+    }
+    try {
+      hooks.focus();
+      if (!select(image, 'activation')) {
+        clearSelection();
+        return;
+      }
+      // The image owns this gesture: the browser must not follow it with its
+      // own caret placement inside the void element.
+      event.preventDefault();
+      if (!hooks.synchronizeSelection()) clearSelection();
+    } catch (error) {
+      clearSelection();
+      hooks.report(error);
+    }
+  }
+
+  function handleSelectionChange(): void {
+    // While the menu owns focus the marked image is still the demand the user
+    // is choosing from, so the outline survives the focus move that opening the
+    // menu performs. Every other drift drops the record, the outline, and the
+    // observed geometry without touching the document.
+    const activeElement = documentRef.activeElement;
+    const menuHasFocus = activeElement instanceof Element
+      && Boolean(activeElement.closest('[data-easymde-context-menu-layer]'));
+    if (record && (selectionMatchesRecord() || menuHasFocus)) {
+      sync();
+      return;
+    }
+    clearSelection();
+  }
+
+  surface.addEventListener('pointerdown', handleActivationPointerDown, true);
+  documentRef.addEventListener('selectionchange', handleSelectionChange, true);
+  structureObserver?.observe(surface, { childList: true, subtree: true });
+  view?.addEventListener('resize', sync);
+  view?.addEventListener('scroll', sync, true);
+  return {
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      surface.removeEventListener(
+        'pointerdown',
+        handleActivationPointerDown,
+        true
+      );
+      documentRef.removeEventListener(
+        'selectionchange',
+        handleSelectionChange,
+        true
+      );
+      structureObserver?.disconnect();
+      geometryObserver?.disconnect();
+      view?.removeEventListener('resize', sync);
+      view?.removeEventListener('scroll', sync, true);
+      clearSelection();
+    },
+    select
+  };
+}
+
+function isVisualThematicBreakSourceToken(source: string): boolean {
+  return /^[\t ]{0,3}([-*_])(?:[\t ]*\1){2,}[\t ]*$/u.test(source);
+}
+
+export function isVisualThematicBreakSource(
+  sourceMarkdown: string,
+  sourceRange: Readonly<{ end: number; start: number }>
+): boolean {
+  if (
+    !Number.isInteger(sourceRange.start)
+    || !Number.isInteger(sourceRange.end)
+    || sourceRange.start < 0
+    || sourceRange.end <= sourceRange.start
+    || sourceRange.end > sourceMarkdown.length
+  ) return false;
+  const sourceSlice = sourceMarkdown.slice(sourceRange.start, sourceRange.end);
+  if (
+    sourceSlice.endsWith('\r')
+    && sourceRange.end < sourceMarkdown.length
+    && sourceMarkdown[sourceRange.end] === '\n'
+  ) return false;
+  const selectedSource = sourceSlice.endsWith('\r\n')
+    ? sourceSlice.slice(0, -2)
+    : /[\r\n]$/u.test(sourceSlice)
+      ? sourceSlice.slice(0, -1)
+      : sourceSlice;
+  return isVisualThematicBreakSourceToken(selectedSource);
+}
+
+export function visualThematicBreakSourceSelection(
+  sourceMarkdown: string,
+  sourceRange: Readonly<{ end: number; start: number }>,
+  direction: VisualThematicBreakSelection['direction']
+): Readonly<{
+  direction: VisualThematicBreakSelection['direction'];
+  end: number;
+  start: number;
+}> {
+  if (!isVisualThematicBreakSource(sourceMarkdown, sourceRange)) {
+    throw new Error('visual-editor-selection-map-failed');
+  }
+  const sourceSlice = sourceMarkdown.slice(sourceRange.start, sourceRange.end);
+  const selectedSource = sourceSlice.endsWith('\r\n')
+    ? sourceSlice.slice(0, -2)
+    : /[\r\n]$/u.test(sourceSlice)
+      ? sourceSlice.slice(0, -1)
+      : sourceSlice;
+
+  return {
+    direction,
+    end: sourceRange.start + selectedSource.length,
+    start: sourceRange.start
+  };
+}
+
+
+/**
+ * One accepted row of the visual surface, in the coordinates the structural
+ * boundary owner needs: the ledger slice plus the row's own identity. Rows the
+ * surface mounts without an editable ledger slice are `null`, and a row the
+ * owner may not touch keeps `editable: false`.
+ */
+export type VisualStructuralBoundaryBlock = Readonly<{
+  editable: boolean;
+  end: number;
+  id: string;
+  start: number;
+}> | null;
+
+export type VisualStructuralBoundaryToken = Readonly<{
+  end: number;
+  start: number;
+}>;
+
+function certifiedVisualStructuralBreak(
+  surface: HTMLElement,
+  node: Node | null,
+  block: VisualStructuralBoundaryBlock | undefined
+): HTMLHRElement | null {
+  if (
+    !(node instanceof HTMLHRElement)
+    || !block?.editable
+    || node.parentNode !== surface
+    || !node.isConnected
+    || node.getAttribute(VISUAL_BLOCK_ATTRIBUTE) !== block.id
+  ) {
+    return null;
+  }
+  let ancestor: HTMLElement | null = node;
+  while (ancestor) {
+    if (
+      ancestor.matches(VISUAL_MARKDOWN_READ_ONLY_SELECTOR)
+      || ancestor.hasAttribute('data-easymde-preview-window-spacer')
+      || 'false' === ancestor.getAttribute('contenteditable')?.toLowerCase()
+    ) {
+      return null;
+    }
+    if (ancestor === surface) break;
+    ancestor = ancestor.parentElement;
+  }
+  return ancestor === surface ? node : null;
+}
+
+/**
+ * The exact thematic-break token of one accepted row: the row's own source
+ * slice must be the Markdown break (optionally with its single line ending),
+ * so an interior offset, a setext heading, or a same-id replacement row can
+ * never produce a boundary.
+ */
+export function visualStructuralBoundaryToken(
+  sourceMarkdown: string,
+  block: VisualStructuralBoundaryBlock | undefined
+): VisualStructuralBoundaryToken | null {
+  if (!block?.editable) return null;
+  if (!isVisualThematicBreakSource(sourceMarkdown, block)) return null;
+  const token = visualThematicBreakSourceSelection(
+    sourceMarkdown,
+    block,
+    'forward'
+  );
+  if (token.start !== block.start) return null;
+  const trailing = sourceMarkdown.slice(token.end, block.end);
+  if ('' !== trailing && !/^(?:\r\n|\r|\n)$/u.test(trailing)) return null;
+  return { end: token.end, start: token.start };
+}
+
+/**
+ * The thematic-break token a canonical caret itself sits on. This is the
+ * source-only half of the certificate: a pending Preview has no edit map for
+ * the newer source, but the recorded caret still has to be exactly the token
+ * edge the certified native gap names.
+ */
+export function visualStructuralBoundaryTokenAt(
+  sourceMarkdown: string,
+  sourceOffset: number,
+  edge: 'end' | 'start'
+): VisualStructuralBoundaryToken | null {
+  if (
+    !Number.isInteger(sourceOffset)
+    || sourceOffset < 0
+    || sourceOffset > sourceMarkdown.length
+  ) {
+    return null;
+  }
+  const lineStart = 'start' === edge
+    ? sourceOffset
+    : sourceMarkdown.lastIndexOf('\n', sourceOffset - 1) + 1;
+  const lineBreak = sourceMarkdown.indexOf('\n', lineStart);
+  const lineEnd = lineBreak < 0 ? sourceMarkdown.length : lineBreak;
+  const token = { end: lineEnd, start: lineStart };
+  if (!isVisualThematicBreakSourceToken(sourceMarkdown.slice(lineStart, lineEnd))) {
+    return null;
+  }
+  const boundary = 'start' === edge ? lineStart : lineEnd;
+  return boundary === sourceOffset ? token : null;
+}
+
+/**
+ * The break token a canonical caret still stands beside once the paragraph this
+ * owner opened occupies the separator run. The caret keeps its exact canonical
+ * offset; everything between it and the token must be line endings only, so an
+ * ordinary caret inside other text is never mistaken for the boundary.
+ */
+export function visualStructuralBoundaryTokenNear(
+  sourceMarkdown: string,
+  sourceOffset: number,
+  edge: 'end' | 'start'
+): VisualStructuralBoundaryToken | null {
+  if (
+    !Number.isInteger(sourceOffset)
+    || sourceOffset < 0
+    || sourceOffset > sourceMarkdown.length
+  ) {
+    return null;
+  }
+  if ('start' === edge) {
+    let lineStart = sourceOffset;
+    while (
+      lineStart < sourceMarkdown.length
+      && ('\n' === sourceMarkdown[lineStart] || '\r' === sourceMarkdown[lineStart])
+    ) {
+      lineStart += 1;
+    }
+    const lineBreak = sourceMarkdown.indexOf('\n', lineStart);
+    const lineEnd = lineBreak < 0 ? sourceMarkdown.length : lineBreak;
+    const content = sourceMarkdown.slice(lineStart, lineEnd).replace(/\r$/u, '');
+    if (!isVisualThematicBreakSourceToken(content)) return null;
+    return { end: lineStart + content.length, start: lineStart };
+  }
+  let lineEnd = sourceOffset;
+  while (
+    lineEnd > 0
+    && ('\n' === sourceMarkdown[lineEnd - 1] || '\r' === sourceMarkdown[lineEnd - 1])
+  ) {
+    lineEnd -= 1;
+  }
+  const lineStart = sourceMarkdown.lastIndexOf('\n', lineEnd - 1) + 1;
+  const content = sourceMarkdown.slice(lineStart, lineEnd).replace(/\r$/u, '');
+  if (!isVisualThematicBreakSourceToken(content)) return null;
+  return { end: lineStart + content.length, start: lineStart };
+}
+
+/**
+ * Accepted rows in the surface's own child order, from the accepted Preview
+ * edit map. A map whose coordinate space does not describe this source yields
+ * no rows, so the structural owner simply stays unavailable.
+ */
+export function visualStructuralBoundaryRows(
+  sourceMarkdown: string,
+  editMap: PreviewEditMap
+): ReadonlyArray<Readonly<{
+  editable: boolean;
+  end: number;
+  id: string;
+  start: number;
+}>> {
+  if (1 !== editMap.version || 'line' !== editMap.coordinate) return [];
+  const lineStarts = markdownLineStarts(sourceMarkdown);
+  const rows: Array<Readonly<{
+    editable: boolean;
+    end: number;
+    id: string;
+    start: number;
+  }>> = [];
+  let previousEndLine = 0;
+  for (const block of editMap.blocks) {
+    if (
+      !Number.isInteger(block.startLine)
+      || !Number.isInteger(block.endLine)
+      || block.startLine < previousEndLine
+      || block.startLine < 0
+      || block.endLine < block.startLine
+      || block.endLine > lineStarts.length
+    ) {
+      return [];
+    }
+    // A generated, noneditable block may be anchored at end of file: the
+    // formal renderer places it after the final block, which has no terminal
+    // newline, so its exclusive line coordinate is the line-starts length.
+    // Only the zero-width noneditable form is that anchor; an editable or
+    // positive-width row there would claim source the document does not have.
+    if (
+      block.startLine === lineStarts.length
+      && block.endLine === lineStarts.length
+    ) {
+      if (block.editable === true) return [];
+      previousEndLine = block.endLine;
+      rows.push({
+        editable: false,
+        end: sourceMarkdown.length,
+        id: block.id,
+        start: sourceMarkdown.length
+      });
+      continue;
+    }
+    if (block.startLine === lineStarts.length) return [];
+    const start = lineStarts[block.startLine];
+    const end = block.endLine === lineStarts.length
+      ? sourceMarkdown.length
+      : lineStarts[block.endLine];
+    if (start === undefined || end === undefined || end < start) return [];
+    previousEndLine = block.endLine;
+    rows.push({ editable: block.editable === true, end, id: block.id, start });
+  }
+  return rows;
+}
+
+/**
+ * Align accepted rows to the surface's own child nodes. A row only applies to
+ * the direct child that still carries its block identity, so a spacer, a text
+ * node, or a reordered child simply has no row and can never certify a gap.
+ */
+export function visualStructuralBoundaryBlocks(
+  surface: HTMLElement,
+  rows: ReadonlyArray<Readonly<{
+    editable: boolean;
+    end: number;
+    id: string;
+    start: number;
+  }>>
+): ReadonlyArray<VisualStructuralBoundaryBlock> {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return Array.from(surface.childNodes, (node) => {
+    if (!(node instanceof HTMLElement)) return null;
+    const id = node.getAttribute(VISUAL_BLOCK_ATTRIBUTE);
+    return (id ? byId.get(id) : undefined) ?? null;
+  });
+}
+
+/**
+ * Accepted rows already aligned to the surface's own child nodes. Callers that
+ * only hold the source and its accepted edit map use this instead of aligning
+ * a row list themselves.
+ */
+export function visualStructuralBoundarySurfaceBlocks(
+  surface: HTMLElement,
+  sourceMarkdown: string | null,
+  editMap: PreviewEditMap | null | undefined
+): ReadonlyArray<VisualStructuralBoundaryBlock> {
+  if (null === sourceMarkdown || !editMap) return [];
+  return visualStructuralBoundaryBlocks(
+    surface,
+    visualStructuralBoundaryRows(sourceMarkdown, editMap)
+  );
+}
+
+/**
+ * A collapsed native selection anchored on the surface itself sits in the
+ * parent gap between two rows. It is owned only when an adjacent direct child
+ * is a certified editable thematic break: the point immediately before or
+ * after that row's token. Every other surface endpoint stays unowned.
+ */
+export function captureVisualStructuralBoundaryGap(
+  surface: HTMLElement,
+  blocks: ReadonlyArray<VisualStructuralBoundaryBlock>
+): Readonly<{
+  blockIndex: number;
+  edge: 'end' | 'start';
+  offset: number;
+}> | null {
+  const selection = surface.ownerDocument.defaultView?.getSelection();
+  if (
+    !selection?.isCollapsed
+    || 1 !== selection.rangeCount
+    || selection.anchorNode !== surface
+    || selection.focusNode !== surface
+    || selection.anchorOffset !== selection.focusOffset
+  ) {
+    return null;
+  }
+  const offset = selection.anchorOffset;
+  if (
+    !Number.isInteger(offset)
+    || offset < 0
+    || offset > surface.childNodes.length
+  ) {
+    return null;
+  }
+  const after = offset < surface.childNodes.length
+    ? (surface.childNodes[offset] ?? null)
+    : null;
+  if (certifiedVisualStructuralBreak(surface, after, blocks[offset])) {
+    return { blockIndex: offset, edge: 'start', offset };
+  }
+  const before = offset > 0 ? (surface.childNodes[offset - 1] ?? null) : null;
+  if (certifiedVisualStructuralBreak(surface, before, blocks[offset - 1])) {
+    return { blockIndex: offset - 1, edge: 'end', offset };
+  }
+  return null;
+}
+
+/**
+ * The certified gap resolved against the canonical caret. Two adjacent breaks
+ * can both be certified at one parent offset, so the canonical data decides:
+ * an exact token-edge match wins over a blank-run continuation, a blank-run
+ * continuation is admitted only when no other editable row covers that
+ * offset, and anything ambiguous or doubly exact fails closed. This is the
+ * same precedence the restore path uses, so capture and restore agree.
+ */
+function resolveVisualStructuralBoundaryGap(
+  surface: HTMLElement,
+  blocks: ReadonlyArray<VisualStructuralBoundaryBlock>,
+  sourceMarkdown: string,
+  recordedCaret: number
+): Readonly<{
+  blockIndex: number;
+  edge: 'end' | 'start';
+  offset: number;
+}> | null {
+  const selection = surface.ownerDocument.defaultView?.getSelection();
+  if (
+    !selection?.isCollapsed
+    || 1 !== selection.rangeCount
+    || selection.anchorNode !== surface
+    || selection.focusNode !== surface
+    || selection.anchorOffset !== selection.focusOffset
+  ) {
+    return null;
+  }
+  const offset = selection.anchorOffset;
+  if (
+    !Number.isInteger(offset)
+    || offset < 0
+    || offset > surface.childNodes.length
+  ) {
+    return null;
+  }
+  const candidates: Array<Readonly<{
+    blockIndex: number;
+    edge: 'end' | 'start';
+    exact: boolean;
+  }>> = [];
+  for (const [blockIndex, edge, node] of [
+    [offset, 'start' as const, surface.childNodes[offset] ?? null] as const,
+    [offset - 1, 'end' as const, offset > 0 ? surface.childNodes[offset - 1] ?? null : null] as const
+  ]) {
+    const block = blocks[blockIndex];
+    if (!certifiedVisualStructuralBreak(surface, node, block)) continue;
+    const token = visualStructuralBoundaryToken(sourceMarkdown, block);
+    if (!token) continue;
+    if (recordedCaret === ('start' === edge ? token.start : token.end)) {
+      candidates.push({ blockIndex, edge, exact: true });
+      continue;
+    }
+    const coveredElsewhere = blocks.some(
+      (other, otherIndex) =>
+        otherIndex !== blockIndex
+        && other?.editable
+        && recordedCaret >= other.start
+        && recordedCaret <= other.end
+    );
+    if (
+      !coveredElsewhere
+      && visualStructuralBoundaryCaret(
+        sourceMarkdown,
+        token,
+        edge,
+        recordedCaret
+      )
+    ) {
+      candidates.push({ blockIndex, edge, exact: false });
+    }
+  }
+  const exact = candidates.filter((candidate) => candidate.exact);
+  const chosen = 1 === exact.length
+    ? exact[0]
+    : 0 === exact.length && 1 === candidates.length
+      ? candidates[0]
+      : null;
+  return chosen ? { ...chosen, offset } : null;
+}
+
+/**
+ * Whether one canonical offset is a caret this owner already recorded inside
+ * the blank run between a certified token and its neighbour. Such a point is
+ * only reachable when the accepted render omits an empty paragraph, and it
+ * keeps its exact canonical position: the recorded data is the authority, not
+ * the nearest row. A caret on the token edge itself is not this case.
+ */
+export function visualStructuralBoundaryCaret(
+  sourceMarkdown: string,
+  token: VisualStructuralBoundaryToken,
+  edge: 'end' | 'start',
+  sourceOffset: number
+): boolean {
+  if (!Number.isInteger(sourceOffset)) return false;
+  if ('start' === edge) {
+    return sourceOffset < token.start
+      && /^(?:\r\n|\r|\n)+$/u.test(sourceMarkdown.slice(sourceOffset, token.start));
+  }
+  return sourceOffset > token.end
+    && /^(?:\r\n|\r|\n)+$/u.test(sourceMarkdown.slice(token.end, sourceOffset));
+}
+
+/**
+ * Restore one exact token edge onto the parent gap before/after the same
+ * certified direct-child break. Interior offsets, missing rows, and ambiguous
+ * matches leave the native selection untouched.
+ */
+export function placeVisualStructuralBoundarySelection(
+  surface: HTMLElement,
+  sourceMarkdown: string,
+  blocks: ReadonlyArray<VisualStructuralBoundaryBlock>,
+  sourceOffset: number
+): boolean {
+  const starts: number[] = [];
+  const ends: number[] = [];
+  for (const [index, block] of blocks.entries()) {
+    const token = visualStructuralBoundaryToken(sourceMarkdown, block);
+    if (!token) continue;
+    if (
+      !certifiedVisualStructuralBreak(
+        surface,
+        surface.childNodes[index] ?? null,
+        block
+      )
+    ) {
+      continue;
+    }
+    // A blank run beside the token is only the gap when no other editable row
+    // already covers the offset: otherwise the caret belongs to that row's own
+    // paragraph, and claiming the gap would move it out of the typed text.
+    const coveredElsewhere = blocks.some(
+      (other, otherIndex) =>
+        otherIndex !== index
+        && other?.editable
+        && sourceOffset >= other.start
+        && sourceOffset <= other.end
+    );
+    if (
+      token.start === sourceOffset
+      || (!coveredElsewhere
+        && visualStructuralBoundaryCaret(
+          sourceMarkdown,
+          token,
+          'start',
+          sourceOffset
+        ))
+    ) {
+      starts.push(index);
+    }
+    if (
+      token.end === sourceOffset
+      || (!coveredElsewhere
+        && visualStructuralBoundaryCaret(
+          sourceMarkdown,
+          token,
+          'end',
+          sourceOffset
+        ))
+    ) {
+      ends.push(index + 1);
+    }
+  }
+  const offset = 1 === starts.length ? starts[0] : 1 === ends.length ? ends[0] : null;
+  if (null === offset) return false;
+  const selection = surface.ownerDocument.defaultView?.getSelection();
+  if (!selection) return false;
+  selection.removeAllRanges();
+  selection.collapse(surface, offset);
+  return true;
+}
+
+/**
+ * Resolve one certified structural gap to the canonical selection it stands
+ * for, reusing the row the gap's own direct child still carries.
+ */
+export function visualStructuralBoundarySourceSelection(
+  surface: HTMLElement,
+  sourceMarkdown: string,
+  blocks: ReadonlyArray<VisualStructuralBoundaryBlock>,
+  gap: Readonly<{
+    blockIndex: number;
+    edge: 'end' | 'start';
+    offset: number;
+  }>
+): Readonly<{
+  blockIndex: number;
+  edge: 'end' | 'start';
+  token: VisualStructuralBoundaryToken;
+}> | null {
+  const block = blocks[gap.blockIndex];
+  const token = visualStructuralBoundaryToken(sourceMarkdown, block);
+  if (
+    !token
+    || !certifiedVisualStructuralBreak(
+      surface,
+      surface.childNodes[gap.blockIndex] ?? null,
+      block
+    )
+  ) {
+    return null;
+  }
+  return { blockIndex: gap.blockIndex, edge: gap.edge, token };
+}
+
+/**
+ * One canonical selection for a certified gap. A caret already recorded in the
+ * blank run beside the token keeps its exact offset; otherwise the gap means
+ * the token edge itself.
+ */
+export function visualStructuralBoundaryCanonicalSelection(
+  sourceMarkdown: string,
+  structural: Readonly<{
+    edge: 'end' | 'start';
+    token: VisualStructuralBoundaryToken;
+  }>,
+  recordedCaret: number
+): Readonly<{ direction: 'none'; end: number; start: number }> {
+  const offset = visualStructuralBoundaryCaret(
+    sourceMarkdown,
+    structural.token,
+    structural.edge,
+    recordedCaret
+  )
+    ? recordedCaret
+    : 'start' === structural.edge
+      ? structural.token.start
+      : structural.token.end;
+  return { direction: 'none', end: offset, start: offset };
+}
+
+/**
+ * Capture one certified structural gap as both its native parent-gap offset
+ * and the canonical selection it stands for. `recordedCaret` is the canonical
+ * caret the surface currently records; it is only kept when it already sits in
+ * the blank run beside the token, so the caller can require the two to agree
+ * before it mutates anything.
+ */
+export function visualStructuralBoundaryCapture(
+  surface: HTMLElement,
+  sourceMarkdown: string,
+  blocks: ReadonlyArray<VisualStructuralBoundaryBlock>,
+  recordedCaret: number
+): Readonly<{
+  edge: 'end' | 'start';
+  nativeOffset: number;
+  selection: Readonly<{ direction: 'none'; end: number; start: number }>;
+  token: VisualStructuralBoundaryToken;
+}> | null {
+  const gap = resolveVisualStructuralBoundaryGap(
+    surface,
+    blocks,
+    sourceMarkdown,
+    recordedCaret
+  );
+  if (!gap) return null;
+  const structural = visualStructuralBoundarySourceSelection(
+    surface,
+    sourceMarkdown,
+    blocks,
+    gap
+  );
+  // A pending Preview still mounts the older accepted rows, so their offsets
+  // cannot describe the newer source. The recorded caret is then the token
+  // edge itself; the live gap's own direct child is already certified by
+  // captureVisualStructuralBoundaryGap. Both halves must name the same edge.
+  const token = structural?.token
+    ?? visualStructuralBoundaryTokenNear(
+      sourceMarkdown,
+      recordedCaret,
+      gap.edge
+    );
+  if (!token) return null;
+  return {
+    edge: gap.edge,
+    nativeOffset: gap.offset,
+    selection: visualStructuralBoundaryCanonicalSelection(
+      sourceMarkdown,
+      { edge: gap.edge, token },
+      recordedCaret
+    ),
+    token
+  };
+}
+
+/**
+ * Block-safe ordinary text at one certified token edge. Prefixing text to the
+ * break would turn it into paragraph text, so an input that is not continuing
+ * an already owned blank paragraph opens its own paragraph separated by the
+ * same blank line the structural policy already uses, and the caret lands
+ * after the typed text. Continuation keeps the recorded canonical point.
+ */
+export function visualStructuralParagraphInsertion(
+  sourceMarkdown: string,
+  token: VisualStructuralBoundaryToken,
+  edge: 'end' | 'start',
+  canonicalCaret: number,
+  text: string
+): Readonly<{
+  changes: Readonly<{ from: number; insert: string; to: number }>;
+  selection: Readonly<{ end: number; start: number }>;
+  value: string;
+}> {
+  let insertionPoint: number;
+  let insertion: string;
+  let caret: number;
+  if (visualStructuralBoundaryCaret(sourceMarkdown, token, edge, canonicalCaret)) {
+    insertionPoint = canonicalCaret;
+    insertion = text;
+    caret = canonicalCaret + text.length;
+  } else if ('start' === edge) {
+    // The break must keep its own line, so the new paragraph opens before it
+    // and the caret stays after the typed text, inside that paragraph.
+    insertionPoint = token.start;
+    insertion = `${text}\n\n`;
+    caret = token.start + text.length;
+  } else {
+    insertionPoint = token.end;
+    insertion = `\n\n${text}`;
+    caret = token.end + 2 + text.length;
+  }
+  const value =
+    sourceMarkdown.slice(0, insertionPoint)
+    + insertion
+    + sourceMarkdown.slice(insertionPoint);
+  return {
+    changes: { from: insertionPoint, insert: insertion, to: insertionPoint },
+    selection: { end: caret, start: caret },
+    value
+  };
+}
+
+/**
+ * The same certified structural gap in the shape the visual history and lease
+ * capture use: the surface itself plus its child offset. No path is needed
+ * because the surface is the root of that path space.
+ *
+ * A pending Preview has no edit map for the newer source, so when the accepted
+ * rows cannot certify the gap the source alone must: the recorded canonical
+ * caret is the token edge and the gap's own direct child is a protected-free
+ * thematic break. Both halves describe the same position or this is `null`.
+ */
+export function visualStructuralBoundarySelection(
+  surface: HTMLElement,
+  blocks: ReadonlyArray<VisualStructuralBoundaryBlock>,
+  sourceMarkdown?: string | null,
+  recordedCaret?: number
+): Readonly<{
+  anchor: Readonly<{ offset: number; path: ReadonlyArray<number> }>;
+  backward: boolean;
+  focus: Readonly<{ offset: number; path: ReadonlyArray<number> }>;
+}> | null {
+  let offset: number | null = null;
+  const resolved = null == sourceMarkdown || undefined === recordedCaret
+    ? captureVisualStructuralBoundaryGap(surface, blocks)
+    : resolveVisualStructuralBoundaryGap(
+        surface,
+        blocks,
+        sourceMarkdown,
+        recordedCaret
+      );
+  if (resolved) {
+    offset = resolved.offset;
+  } else if (
+    null != sourceMarkdown
+    && undefined !== recordedCaret
+  ) {
+    const selection = surface.ownerDocument.defaultView?.getSelection();
+    if (
+      selection?.isCollapsed
+      && selection.anchorNode === surface
+      && selection.focusNode === surface
+      && selection.anchorOffset === selection.focusOffset
+    ) {
+      const candidate = selection.anchorOffset;
+      const after = candidate < surface.childNodes.length
+        ? (surface.childNodes[candidate] ?? null)
+        : null;
+      const before = candidate > 0
+        ? (surface.childNodes[candidate - 1] ?? null)
+        : null;
+      const certified = (node: Node | null, edge: 'end' | 'start'): boolean => {
+        if (
+          !(node instanceof HTMLHRElement)
+          || node.parentNode !== surface
+          || !node.isConnected
+          || !node.getAttribute(VISUAL_BLOCK_ATTRIBUTE)
+          || node.hasAttribute('data-easymde-preview-window-spacer')
+          || node.matches(VISUAL_MARKDOWN_READ_ONLY_SELECTOR)
+          || 'false' === node.getAttribute('contenteditable')?.toLowerCase()
+        ) {
+          return false;
+        }
+        const token = visualStructuralBoundaryTokenNear(
+          sourceMarkdown,
+          recordedCaret,
+          edge
+        );
+        return null !== token;
+      };
+      const matches = Number(certified(after, 'start'))
+        + Number(certified(before, 'end'));
+      if (1 === matches) offset = candidate;
+    }
+  }
+  if (null === offset) return null;
+  return {
+    anchor: { offset, path: [] },
+    backward: false,
+    focus: { offset, path: [] }
+  };
+}
+
+/**
+ * The certified structural gap in the node-based shape the visual input
+ * snapshot uses. It is the same certificate as the history capture: the live
+ * gap must still name one adjacent direct-child break, and the recorded
+ * canonical caret must be that break's token edge (or the blank run beside it
+ * that the accepted render omits).
+ */
+export function visualStructuralBoundarySnapshot(
+  surface: HTMLElement,
+  blocks: ReadonlyArray<VisualStructuralBoundaryBlock>,
+  sourceMarkdown: string,
+  recordedCaret: number
+): VisualSelectionSnapshot | null {
+  const selection = visualStructuralBoundarySelection(
+    surface,
+    blocks,
+    sourceMarkdown,
+    recordedCaret
+  );
+  if (!selection) return null;
+  return {
+    anchorNode: surface,
+    anchorOffset: selection.anchor.offset,
+    backward: false,
+    focusNode: surface,
+    focusOffset: selection.focus.offset
+  };
+}
+
+/**
+ * Resolve a keyboard context menu activation at an eligible root gap.
+ *
+ * 1. Checks strict canonical-first capture first using `visualStructuralBoundaryCapture`:
+ *    if the recorded canonical caret already matches an adjacent break (exact token edge
+ *    or valid blank-run continuation), preserves that exact match (disambiguating adjacent pairs).
+ * 2. If no canonical match (e.g. natural click on HR leaving canonical caret at EOF or elsewhere),
+ *    enumerates both adjacent direct children of surface:
+ *    - offset: candidate after gap -> edge 'start', canonical point token.start
+ *    - offset - 1: candidate before gap -> edge 'end', canonical point token.end
+ *    Requires exactly one certified editable direct-child break.
+ *    Two adjacent breaks without canonical tie-breaker fail closed (returns null).
+ * 3. Returns unique edge, nativeOffset, token, and collapsed canonical selection
+ *    ({ direction: 'none', start: offset, end: offset }).
+ */
+export function resolveVisualStructuralKeyboardContextGap(
+  surface: HTMLElement,
+  sourceMarkdown: string,
+  blocks: ReadonlyArray<VisualStructuralBoundaryBlock>,
+  recordedCaret: number
+): Readonly<{
+  edge: 'end' | 'start';
+  nativeOffset: number;
+  selection: Readonly<{ direction: 'none'; end: number; start: number }>;
+  token: VisualStructuralBoundaryToken;
+}> | null {
+  // 1. Strict canonical-first: if canonical caret already matches an adjacent break, keep it.
+  const canonicalMatch = visualStructuralBoundaryCapture(
+    surface,
+    sourceMarkdown,
+    blocks,
+    recordedCaret
+  );
+  if (canonicalMatch) {
+    return canonicalMatch;
+  }
+
+  // 2. Unmatched canonical caret: inspect native selection for eligible root gap beside an HR
+  const native = surface.ownerDocument.defaultView?.getSelection();
+  const nativeRange = native?.rangeCount === 1 ? native.getRangeAt(0) : null;
+  if (
+    !native?.isCollapsed
+    || !nativeRange?.collapsed
+    || native.anchorNode !== surface
+    || native.focusNode !== surface
+    || native.anchorOffset !== native.focusOffset
+  ) {
+    return null;
+  }
+  const offset = native.anchorOffset;
+  if (
+    !Number.isInteger(offset)
+    || offset < 0
+    || offset > surface.childNodes.length
+  ) {
+    return null;
+  }
+
+  // Enumerate both adjacent direct children
+  const candidates: Array<{
+    edge: 'end' | 'start';
+    token: VisualStructuralBoundaryToken;
+  }> = [];
+
+  // Child after gap (index offset): edge is 'start'
+  if (offset < surface.childNodes.length) {
+    const afterNode = surface.childNodes[offset] ?? null;
+    const afterBlock = blocks[offset];
+    if (certifiedVisualStructuralBreak(surface, afterNode, afterBlock)) {
+      const token = visualStructuralBoundaryToken(sourceMarkdown, afterBlock);
+      if (token) {
+        candidates.push({ edge: 'start', token });
+      }
+    }
+  }
+
+  // Child before gap (index offset - 1): edge is 'end'
+  if (offset > 0) {
+    const beforeNode = surface.childNodes[offset - 1] ?? null;
+    const beforeBlock = blocks[offset - 1];
+    if (certifiedVisualStructuralBreak(surface, beforeNode, beforeBlock)) {
+      const token = visualStructuralBoundaryToken(sourceMarkdown, beforeBlock);
+      if (token) {
+        candidates.push({ edge: 'end', token });
+      }
+    }
+  }
+
+  if (1 !== candidates.length) {
+    // 0 candidates or 2 ambiguous candidates: fail closed
+    return null;
+  }
+
+  const unique = candidates[0];
+  if (!unique) return null;
+
+  // Collapsed point: token.start when HR is after gap ('start'), token.end when HR is before gap ('end')
+  const caretPoint = 'start' === unique.edge ? unique.token.start : unique.token.end;
+  return {
+    edge: unique.edge,
+    nativeOffset: offset,
+    selection: { direction: 'none', start: caretPoint, end: caretPoint },
+    token: unique.token
+  };
+}
+
 function placeCaretAtEnd(node: Node): void {
   const selection = window.getSelection();
   if (!selection) return;
   const range = document.createRange();
   range.selectNodeContents(node);
-  range.collapse(false);
+  // A lone BR is the renderer's placeholder for an empty paragraph, not content.
+  // Collapsing to the end would place the caret after that placeholder (P offset
+  // 1) and treat it as trailing content. The contract for a sole-BR paragraph is
+  // that its logical content end lies before the placeholder, so the caret goes
+  // to the block start (P offset 0).
+  const placeholderOnly =
+    node instanceof HTMLParagraphElement &&
+    node.childNodes.length === 1 &&
+    node.firstChild instanceof HTMLBRElement;
+  range.collapse(placeholderOnly);
   selection.removeAllRanges();
   selection.addRange(range);
 }
@@ -143,6 +1663,20 @@ function selectVisualContents(
   element: HTMLElement,
   backward: boolean
 ): void {
+  // Keep a plain wrapped run text-anchored FORWARD. Chromium reports
+  // beforeinput's target as Text endpoints even when selectNodeContents would
+  // leave native selection on the wrapper, and both owners must describe the
+  // same replacement. A BACKWARD selection keeps the wrapper's own two
+  // endpoints: its authored direction is what the user sees, and a Text pair
+  // can only spell it as offsets inside one run.
+  if (
+    !backward
+    && element.childNodes.length === 1
+    && element.firstChild instanceof Text
+  ) {
+    selectVisualText(documentRef, element.firstChild, 0, element.firstChild.length, false);
+    return;
+  }
   const selection = documentRef.defaultView?.getSelection();
   if (!selection) throw new Error('visual-editor-selection-unavailable');
   const range = documentRef.createRange();
@@ -224,6 +1758,7 @@ function applyVisualCodeFenceToolbarCommand(
   ) return false;
   const textOffset = (node: Node, offset: number): number => {
     if (node !== block && !block.contains(node)) {
+
       throw new Error('visual-editor-selection-map-failed');
     }
     const range = documentRef.createRange();
@@ -340,17 +1875,59 @@ export function captureVisualSelection(
   ) {
     return null;
   }
+  const normalizeBoundary = (
+    node: Node,
+    offset: number,
+    atEnd: boolean
+  ): Readonly<{ node: Node; offset: number }> => {
+    const validOffset = node instanceof Text
+      ? offset >= 0 && offset <= node.data.length
+      : offset >= 0 && offset <= node.childNodes.length;
+    if (validOffset && (node instanceof Text ? node.data.length > 0 : true)) {
+      return { node, offset };
+    }
+    const block = visualBlockForNode(editor, node);
+    if (!block) return { node, offset: 0 };
+    const textNodes: Text[] = [];
+    const walker = editor.ownerDocument.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const text = walker.currentNode;
+      if (text instanceof Text && text.data.length > 0) textNodes.push(text);
+    }
+    const text = atEnd ? textNodes[textNodes.length - 1] : textNodes[0];
+    return text
+      ? { node: text, offset: atEnd ? text.data.length : 0 }
+      : { node: block, offset: atEnd ? block.childNodes.length : 0 };
+  };
+  const anchor = normalizeBoundary(
+    selection.anchorNode,
+    selection.anchorOffset,
+    selection.anchorOffset > (
+      selection.anchorNode instanceof Text
+        ? selection.anchorNode.data.length
+        : selection.anchorNode.childNodes.length
+    )
+  );
+  const focus = normalizeBoundary(
+    selection.focusNode,
+    selection.focusOffset,
+    selection.focusOffset > (
+      selection.focusNode instanceof Text
+        ? selection.focusNode.data.length
+        : selection.focusNode.childNodes.length
+    )
+  );
   const range = editor.ownerDocument.createRange();
-  range.setStart(selection.anchorNode, selection.anchorOffset);
-  range.setEnd(selection.focusNode, selection.focusOffset);
-  const forward = range.startContainer === selection.anchorNode
-    && range.startOffset === selection.anchorOffset;
+  range.setStart(anchor.node, anchor.offset);
+  range.setEnd(focus.node, focus.offset);
+  const forward = range.startContainer === anchor.node
+    && range.startOffset === anchor.offset;
   return {
-    anchorNode: selection.anchorNode,
-    anchorOffset: selection.anchorOffset,
+    anchorNode: anchor.node,
+    anchorOffset: anchor.offset,
     backward: !selection.isCollapsed && !forward,
-    focusNode: selection.focusNode,
-    focusOffset: selection.focusOffset
+    focusNode: focus.node,
+    focusOffset: focus.offset
   };
 }
 
@@ -445,6 +2022,78 @@ function markdownFenceOpening(line: string): MarkdownFenceOpening | null {
     family,
     info: suffix,
     language: info.split(/[ \t]+/, 1)[0] ?? ''
+  };
+}
+
+/** Plain paragraph fence text stays literal until the block Enter command. */
+/**
+ * The one operation-issued certificate rule for a source-neutral gap between
+ * two accepted rows. The Windowed producer, the formal Preview acceptance and
+ * the caret restore all read this rule instead of each deciding again: the gap
+ * slice between the preceding row's content end and the following row's start
+ * is either a blank line (two or more line endings) or the tight adjacency
+ * produced by a heading or paragraph's own single line ending, where the
+ * following row starts at that row's end.
+ */
+export function certifiedTextTailGapSlice(
+  gapSlice: string,
+  tightAdjacent: boolean
+): boolean {
+  if (/^[\r\n]{2,}$/u.test(gapSlice)) return true;
+  return tightAdjacent && /^[\r\n]?$/u.test(gapSlice);
+}
+
+/** Whether this line already starts a fence opening. */
+export function isMarkdownFenceOpeningLine(line: string): boolean {
+  return null !== markdownFenceOpening(line);
+}
+
+/**
+ * A paragraph line that begins with a fence opening is literal text until the
+ * explicit Enter command turns it into a code block. Unlike the fence-prefix
+ * command projection, this rule applies as soon as the line starts with a
+ * complete run, whatever info string follows, because a paragraph is never a
+ * real fence. Escaping the run keeps the canonical Markdown a paragraph instead
+ * of letting the Preview parser open a fence that would absorb the following
+ * blocks. The returned offset is the caret in the projected spelling.
+ */
+export function projectVisualLiteralParagraphLine(
+  line: string,
+  offset: number
+): Readonly<{ markdown: string; offset: number }> | null {
+  const opening = markdownFenceOpening(line);
+  if (!opening) return null;
+  // Native paragraph owners call this only for the edit creating an opener.
+  // An unclosed fence is still a code block at EOF: even without following
+  // blocks it consumes this paragraph's text as an info string, not prose.
+  const start = line.indexOf(opening.family);
+  if (start < 0) return null;
+  const escaped = opening.family.replace(/[`~]/gu, '\\$&');
+  const shift = Math.max(0, Math.min(opening.family.length, offset - start));
+  return {
+    markdown:
+      line.slice(0, start)
+      + escaped
+      + line.slice(start + opening.family.length),
+    offset: offset + shift
+  };
+}
+
+export function projectVisualLiteralFencePrefix(
+  text: string,
+  offset = text.length
+): Readonly<{ markdown: string; offset: number }> | null {
+  const opening = markdownFenceOpening(text);
+  if (!opening) return null;
+  // Only a bare run that is still growing stays literal until the block Enter
+  // command. Once an info string follows the run, the opening is complete and
+  // the canonical source must keep the active fence spelling.
+  if ('' !== opening.info.trim()) return null;
+  const start = text.indexOf(opening.family);
+  const escaped = opening.family.replace(/[`~]/gu, '\\$&');
+  return {
+    markdown: text.slice(0, start) + escaped + text.slice(start + opening.family.length),
+    offset: offset + Math.max(0, Math.min(opening.family.length, offset - start))
   };
 }
 
@@ -670,23 +2319,18 @@ export type VisualCodeBodyInterval = Readonly<{
   sourceBlockStart: number;
 }>;
 
-export function visualCodeBodyIntervalAtOrdinal(
+function visualCodeBodyIntervalFromBlock(
   markdown: string,
-  codeOrdinal: number
+  codeBlock: MarkdownCodeBlock,
+  lineStarts: ReadonlyArray<number>
 ): VisualCodeBodyInterval {
-  const codeBlock = markdownCodeBlocks(markdown)[codeOrdinal];
-  const openAtDocumentEnd = Boolean(
-    codeBlock
-    && 'fenced' === codeBlock.kind
+  const openAtDocumentEnd =
+    'fenced' === codeBlock.kind
     && false === codeBlock.closed
     && null === codeBlock.closingLine
-    && codeBlock.bodyEnd === markdown.length
-  );
+    && codeBlock.bodyEnd === markdown.length;
   if (
-    !Number.isInteger(codeOrdinal)
-    || codeOrdinal < 0
-    || !codeBlock
-    || 'fenced' !== codeBlock.kind
+    'fenced' !== codeBlock.kind
     || (true !== codeBlock.closed && !openAtDocumentEnd)
     || null === codeBlock.openingLine
     || (true === codeBlock.closed && null === codeBlock.closingLine)
@@ -698,7 +2342,6 @@ export function visualCodeBodyIntervalAtOrdinal(
   ) {
     throw new Error('visual-editor-code-body-map-invalid');
   }
-  const lineStarts = markdownLineStarts(markdown);
   const sourceBlockStart = lineStarts[codeBlock.openingLine];
   const sourceBlockEnd = true === codeBlock.closed && null !== codeBlock.closingLine
     ? lineStarts[codeBlock.closingLine + 1] ?? markdown.length
@@ -720,10 +2363,70 @@ export function visualCodeBodyIntervalAtOrdinal(
   };
 }
 
+export function visualCodeBodyIntervals(
+  markdown: string
+): ReadonlyArray<VisualCodeBodyInterval> {
+  const lineStarts = markdownLineStarts(markdown);
+  return markdownCodeBlocks(markdown).flatMap((codeBlock) =>
+    'fenced' === codeBlock.kind
+      ? [visualCodeBodyIntervalFromBlock(markdown, codeBlock, lineStarts)]
+      : []
+  );
+}
+
+/**
+ * The interval list is intentionally limited to fenced blocks for callers
+ * that enumerate rendered PREs. Their `codeOrdinal` still belongs to the full
+ * Markdown code-block list, which may also contain indented blocks. Keep the
+ * ordinal relationship explicit for cached projections instead of treating
+ * the filtered list position as an ordinal.
+ */
+export function visualCodeBodyIntervalMap(
+  markdown: string
+): ReadonlyMap<number, VisualCodeBodyInterval> {
+  return new Map(
+    visualCodeBodyIntervals(markdown).map((interval) => [
+      interval.codeOrdinal,
+      interval
+    ])
+  );
+}
+
+export function visualCodeBodyIntervalAtOrdinal(
+  markdown: string,
+  codeOrdinal: number
+): VisualCodeBodyInterval {
+  const codeBlock = markdownCodeBlocks(markdown)[codeOrdinal];
+  if (
+    !Number.isInteger(codeOrdinal)
+    || codeOrdinal < 0
+    || !codeBlock
+  ) {
+    throw new Error('visual-editor-code-body-map-invalid');
+  }
+  return visualCodeBodyIntervalFromBlock(
+    markdown,
+    codeBlock,
+    markdownLineStarts(markdown)
+  );
+}
+
 export type VisualCodeBodySelectionBoundary = Readonly<{
   node: Node;
   offset: number;
 }>;
+
+type VisualCodeBodyIntervalInventory = ReadonlyMap<
+  number,
+  VisualCodeBodyInterval
+>;
+
+function visualCodeBodyIntervalFromInventory(
+  inventory: VisualCodeBodyIntervalInventory,
+  codeOrdinal: number
+): VisualCodeBodyInterval | undefined {
+  return inventory.get(codeOrdinal);
+}
 
 export type VisualCodeBodySelectionProjection = Readonly<{
   codeOrdinal: number;
@@ -848,7 +2551,7 @@ function removeInsertedVisualCodePlaceholder(code: HTMLElement): void {
   marker.replaceWith(marker.firstChild);
 }
 
-function visualCodeBodyBoundaryAtOffset(
+export function visualCodeBodyBoundaryAtOffset(
   code: HTMLElement,
   targetOffset: number
 ): Readonly<{ node: Text; offset: number }> {
@@ -930,16 +2633,20 @@ export function projectVisualCodeBodySelection(
   selection: Readonly<{
     end: VisualCodeBodySelectionBoundary;
     start: VisualCodeBodySelectionBoundary;
+  }>,
+  intervalInventory?: Readonly<{
+    source: VisualCodeBodyIntervalInventory;
+    visual: VisualCodeBodyIntervalInventory;
   }>
 ): VisualCodeBodySelectionProjection {
-  const sourceInterval = visualCodeBodyIntervalAtOrdinal(
-    sourceMarkdown,
-    codeOrdinal
-  );
-  const visualInterval = visualCodeBodyIntervalAtOrdinal(
-    visualMarkdown,
-    codeOrdinal
-  );
+  const sourceInterval = (intervalInventory
+    ? visualCodeBodyIntervalFromInventory(intervalInventory.source, codeOrdinal)
+    : undefined)
+    ?? visualCodeBodyIntervalAtOrdinal(sourceMarkdown, codeOrdinal);
+  const visualInterval = (intervalInventory
+    ? visualCodeBodyIntervalFromInventory(intervalInventory.visual, codeOrdinal)
+    : undefined)
+    ?? visualCodeBodyIntervalAtOrdinal(visualMarkdown, codeOrdinal);
   const sourceText = sourceMarkdown.slice(
     sourceInterval.bodyStart,
     sourceInterval.bodyEnd
@@ -1189,6 +2896,59 @@ export function createVisualCodeBodyOrdinalsForPreviewBlocks(
     if (candidate) ordinals.set(previewBlock.id, candidate.ordinal);
   }
   return ordinals;
+}
+
+/**
+ * Resolve all editable Preview code blocks from one parsed source inventory.
+ * The single-block helper remains the public strict resolver, while accepted
+ * render capture uses this batched form so each PRE does not reparse the full
+ * document and rebuild the same Preview ordinal map.
+ */
+export function createVisualCodeBodyIntervalsForPreviewBlocks(
+  markdown: string,
+  editMap: PreviewEditMap
+): ReadonlyMap<string, VisualCodeBodyInterval> {
+  const ordinals = createVisualCodeBodyOrdinalsForPreviewBlocks(
+    markdown,
+    editMap
+  );
+  const lineStarts = markdownLineStarts(markdown);
+  const intervalsByOrdinal = visualCodeBodyIntervalMap(markdown);
+  const intervals = new Map<string, VisualCodeBodyInterval>();
+  const blockIndices = new Map<string, number>();
+  editMap.blocks.forEach((block, index) => {
+    if (blockIndices.has(block.id)) {
+      throw new Error('visual-editor-code-block-map-invalid');
+    }
+    blockIndices.set(block.id, index);
+  });
+  for (const block of editMap.blocks) {
+    if (!block.editable) continue;
+    const codeOrdinal = ordinals.get(block.id);
+    if (undefined === codeOrdinal) continue;
+    const blockIndex = blockIndices.get(block.id);
+    if (undefined === blockIndex) {
+      throw new Error('visual-editor-code-block-map-unavailable');
+    }
+    const mappedRange = createVisualMarkdownSourceRangeFromPreviewEditMap(
+      markdown,
+      editMap,
+      { end: blockIndex + 1, start: blockIndex },
+      lineStarts
+    );
+    const interval = intervalsByOrdinal.get(codeOrdinal);
+    if (!interval) {
+      throw new Error('visual-editor-code-body-map-invalid');
+    }
+    if (
+      interval.sourceBlockStart < mappedRange.start
+      || interval.sourceBlockEnd > mappedRange.end
+    ) {
+      throw new Error('visual-editor-code-body-map-invalid');
+    }
+    intervals.set(block.id, interval);
+  }
+  return intervals;
 }
 
 export function createVisualCodeBodyIntervalForPreviewBlock(
@@ -1627,7 +3387,24 @@ export function normalizeVisualCodePlaceholders(
     const marked = Array.from(code.querySelectorAll<HTMLElement>(
       `[${VISUAL_CODE_PLACEHOLDER_ATTRIBUTE}]`
     ));
-    if (deletion && '' === (code.textContent ?? '')) {
+    const normalizedCodeText = normalizeCodeBodyLineEndings(
+      code.textContent ?? ''
+    );
+    const localCodeBody = !blockElement.hasAttribute(
+      'data-easymde-visual-block-id'
+    );
+    if (
+      deletion
+      && (
+        '' === normalizedCodeText
+        || (localCodeBody
+          && (
+            'deleteContentBackward' === inputType
+            || 'deleteContentForward' === inputType
+          )
+          && '\n' === normalizedCodeText)
+      )
+    ) {
       const existingPlaceholder = code.firstChild;
       if (
         code.childNodes.length === 1
@@ -2481,7 +4258,8 @@ export function serializeVisualMarkdown(editor: HTMLElement): string {
 export function createVisualMarkdownSourceRangeFromPreviewEditMap(
   sourceMarkdown: string,
   editMap: PreviewEditMap,
-  blockRange: Readonly<{ end: number; start: number }>
+  blockRange: Readonly<{ end: number; start: number }>,
+  lineStartsOverride?: ReadonlyArray<number>
 ): Readonly<{ end: number; start: number }> {
   const invalid = (): never => {
     throw new Error('visual-editor-window-source-range-invalid');
@@ -2496,7 +4274,7 @@ export function createVisualMarkdownSourceRangeFromPreviewEditMap(
     || blockRange.end > editMap.blocks.length
   ) invalid();
 
-  const lineStarts = markdownLineStarts(sourceMarkdown);
+  const lineStarts = lineStartsOverride ?? markdownLineStarts(sourceMarkdown);
   const selected = editMap.blocks.slice(blockRange.start, blockRange.end);
   let previousEndLine: number | null = null;
   for (const block of selected) {
@@ -2714,6 +4492,36 @@ function visualMarkdownSerializer(): TurndownService {
     strongDelimiter: '**'
   });
   service.use(gfm);
+  service.addRule('easymde-image-scale', {
+    filter: (node) => 'IMG' === node.nodeName,
+    replacement: (_content, node) => {
+      const image = node as HTMLImageElement;
+      const destination = image.getAttribute('src');
+      if (null === destination || '' === destination) {
+        throw new Error('image-scale-image-source-missing');
+      }
+      const width = image.getAttribute('width');
+      let scale: ReturnType<typeof imageScaleFromAttribute>;
+      try {
+        scale = imageScaleFromAttribute(width);
+      } catch (error) {
+        if (null !== width && /^\d+%$/u.test(width)) {
+          return serializeLegacyMarkdownImageWidth({
+            alt: image.getAttribute('alt') ?? '',
+            destination,
+            title: image.getAttribute('title')
+          }, width);
+        }
+        throw error;
+      }
+      return serializeMarkdownImage({
+        alt: image.getAttribute('alt') ?? '',
+        destination,
+        scale,
+        title: image.getAttribute('title')
+      });
+    }
+  });
   service.addRule('easymde-strikethrough', {
     filter: (node) => ['DEL', 'S', 'STRIKE'].includes(node.nodeName),
     replacement: (content) => `~~${content}~~`
@@ -2758,7 +4566,32 @@ function visualMarkdownSerializer(): TurndownService {
       ['P', 'DIV'].includes(node.nodeName)
       && 0 === node.children.length
       && Boolean(markdownFenceOpening(node.textContent ?? '')),
-    replacement: (_content, node) => node.textContent ?? ''
+    replacement: (_content, node) => {
+      const text = node.textContent ?? '';
+      const opening = markdownFenceOpening(text);
+      const next = node.nextElementSibling;
+      const closing =
+        next && ['P', 'DIV'].includes(next.nodeName)
+          ? markdownFenceOpening(next.textContent ?? '')
+          : null;
+      // A raw run only stays a paragraph when the very next marker closes it.
+      // Otherwise the raw spelling would open a fence and swallow the blocks
+      // that follow, so this paragraph keeps the escaped literal spelling.
+      const selfClosing = Boolean(
+        opening
+        && (
+          null === next
+          || (
+            closing
+            && closing.family[0] === opening.family[0]
+            && closing.family.length >= opening.family.length
+            && '' === closing.info.trim()
+          )
+        )
+      );
+      if (selfClosing) return text;
+      return projectVisualLiteralFencePrefix(text)?.markdown ?? text;
+    }
   });
   service.addRule('easymde-visual-code-fence', {
     filter: (node) =>
@@ -2808,37 +4641,70 @@ function removeVisualCaretMarkersFromSerializationRoot(
   }
 }
 
-function visualBoundarySourceOffset(
+export function visualBoundarySourceOffset(
   editor: HTMLElement,
   sourceMarkdown: string,
   baselineVisualMarkdown: string,
   node: Node,
   offset: number,
-  projectedIntervalMap?: VisualMarkdownSourceIntervalMap
+  projectedIntervalMap?: VisualMarkdownSourceIntervalMap,
+  options: Readonly<{ structuralEmptyParagraphRemoval?: boolean }> = {}
 ): number {
   const marker = '\uE000easymde-caret\uE001';
   if (sourceMarkdown.includes(marker) || baselineVisualMarkdown.includes(marker)) {
     throw new Error('visual-editor-selection-marker-conflict');
   }
+  const sourcePre = node instanceof HTMLElement && 'PRE' === node.tagName
+    ? node
+    : null;
+  if (sourcePre) {
+    directCodeChild(sourcePre);
+  }
   const path: number[] = [];
   let current: Node | null = node;
   while (current && current !== editor) {
     const parent: ParentNode | null = current.parentNode;
-    if (!parent) throw new Error('visual-editor-selection-map-failed');
+    if (!parent) {
+
+      throw new Error('visual-editor-selection-map-failed');
+    }
     const index = Array.prototype.indexOf.call(parent.childNodes, current);
-    if (index < 0) throw new Error('visual-editor-selection-map-failed');
+    if (index < 0) {
+
+      throw new Error('visual-editor-selection-map-failed');
+    }
     path.unshift(index);
     current = parent as Node;
   }
   if (current !== editor) {
+
     throw new Error('visual-editor-selection-map-failed');
   }
   const clone = editor.cloneNode(true) as HTMLElement;
   let cloneNode: Node = clone;
   for (const index of path) {
     const child = cloneNode.childNodes[index];
-    if (!child) throw new Error('visual-editor-selection-map-failed');
+    if (!child) {
+
+      throw new Error('visual-editor-selection-map-failed');
+    }
     cloneNode = child;
+  }
+  if (cloneNode instanceof HTMLElement && 'PRE' === cloneNode.tagName) {
+    const code = directCodeChild(cloneNode);
+    if (!code) throw new Error('visual-editor-code-child-missing');
+    const codeIndex = Array.prototype.indexOf.call(
+      cloneNode.childNodes,
+      code
+    );
+    if (
+      Number.isInteger(offset)
+      && offset >= 0
+      && offset <= cloneNode.childNodes.length
+    ) {
+      cloneNode = code;
+      offset = offset <= codeIndex ? 0 : code.childNodes.length;
+    }
   }
   const range = editor.ownerDocument.createRange();
   range.setStart(cloneNode, offset);
@@ -2850,10 +4716,12 @@ function visualBoundarySourceOffset(
     sourceMarkdown,
     baselineVisualMarkdown,
     markedVisualMarkdown,
-    projectedIntervalMap
+    projectedIntervalMap,
+    options
   );
   const sourceOffset = markedSource.indexOf(marker);
   if (sourceOffset < 0 || sourceOffset !== markedSource.lastIndexOf(marker)) {
+
     throw new Error('visual-editor-selection-map-failed');
   }
   return sourceOffset;
@@ -2916,10 +4784,27 @@ function emptyStructuralSeparatorEnd(
 }
 
 export type VisualMarkdownSourceIntervalMap = Readonly<{
+  baselineVisualMarkdown: string;
+  /**
+   * The original canonical source this map was built from, before line-ending
+   * normalization. A caller that hands a map back to the merge owner must
+   * supply this exact snapshot: equal normalized text does not prove that the
+   * recorded hidden ranges, original offsets, or escape gaps still describe
+   * the same canonical bytes.
+   */
+  canonicalSource: string;
   hiddenSourceRanges: ReadonlyArray<Readonly<{ end: number; start: number }>>;
   originalOffsetAt: (sourceOffset: number) => number | undefined;
   rawSourceOffsetAt: (visualOffset: number) => number | undefined;
   resolve: (visualOffset: number) => number | null;
+  /**
+   * The single backslashes the serializer inserted before source-owned
+   * escapable punctuation, keyed by their baseline offset with the source
+   * offset of the punctuation they escape. The alignment records these once;
+   * only a recorded gap may be treated as serializer noise, and only while
+   * both endpoints still map to the recorded source offset.
+   */
+  serializerEscapeGaps: ReadonlyMap<number, number>;
   source: string;
   structuralSourceSeparatorStart: number | null;
   structuralSourceBoundary: number | null;
@@ -2950,11 +4835,30 @@ export function createVisualMarkdownSourceIntervalMap(
     sourceStart: 0
   }];
   const hiddenSourceRanges: Array<Readonly<{ end: number; start: number }>> = [];
+  const serializerEscapeGaps = new Map<number, number>();
   let sourcePosition = 0;
   let baselinePosition = 0;
   const mapParts = (parts: ReadonlyArray<Change>): void => {
     for (const part of parts) {
       if (part.added) {
+        // A single backslash the serializer emitted directly before the
+        // punctuation the source already owns is a serializer artifact, not a
+        // source character. Record the candidate once; the merge owner still
+        // proves both mapped endpoints and the Markdown unit/parity around it
+        // before treating it as noise, so a doubled slash or an added run that
+        // merely happens to precede punctuation never becomes a gap.
+        for (let index = 0; index < part.value.length; index += 1) {
+          if ('\\' !== part.value[index]) continue;
+          const punctuation = source[sourcePosition];
+          const baselineOffset = baselinePosition + index;
+          if (
+            undefined === punctuation
+            || !MARKDOWN_ESCAPABLE_PUNCTUATION.test(punctuation)
+            || !isMarkdownUnitBoundary(source, sourcePosition)
+            || baselineVisualMarkdown[baselineOffset + 1] !== punctuation
+          ) continue;
+          serializerEscapeGaps.set(baselineOffset, sourcePosition);
+        }
         baselinePosition += part.value.length;
         continue;
       }
@@ -2976,7 +4880,27 @@ export function createVisualMarkdownSourceIntervalMap(
     }
   };
 
-  if (source === baselineVisualMarkdown) {
+  // A soft break is a serializer transformation, not a hidden Markdown unit:
+  // inside a paragraph the renderer spells the source's line break as one
+  // space, so the two texts have the SAME length and differ only where the
+  // source has a newline and the visual text has that space. The alignment is
+  // then exactly one-to-one, which is what makes an ordinary character inside
+  // such a paragraph addressable. This is deliberately narrow: any other
+  // difference (including any length difference) keeps the line/char diff
+  // below, so an offset the serializer really did hide still stays unmapped
+  // and the merge guard still refuses it.
+  const softBreakAligned = source.length === baselineVisualMarkdown.length
+    && (() => {
+      for (let index = 0; index < source.length; index += 1) {
+        const sourceCharacter = source[index];
+        const visualCharacter = baselineVisualMarkdown[index];
+        if (sourceCharacter === visualCharacter) continue;
+        if ('\n' === sourceCharacter && ' ' === visualCharacter) continue;
+        return false;
+      }
+      return true;
+    })();
+  if (source === baselineVisualMarkdown || softBreakAligned) {
     mapParts([{
       added: false,
       count: baselineVisualMarkdown.length,
@@ -3055,6 +4979,8 @@ export function createVisualMarkdownSourceIntervalMap(
     sourceOffsets ? sourceOffsets[sourceOffset] : sourceOffset;
 
   return {
+    baselineVisualMarkdown,
+    canonicalSource: sourceMarkdown,
     hiddenSourceRanges,
     originalOffsetAt,
     rawSourceOffsetAt,
@@ -3070,6 +4996,7 @@ export function createVisualMarkdownSourceIntervalMap(
       if (undefined === sourceOffset) return null;
       return originalOffsetAt(sourceOffset) ?? null;
     },
+    serializerEscapeGaps,
     source,
     structuralSourceSeparatorStart,
     structuralSourceBoundary,
@@ -3113,6 +5040,8 @@ export function createVisualMarkdownDirectSourceIntervalMap(
     sourceOffsets ? sourceOffsets[sourceOffset] : sourceOffset;
 
   return {
+    baselineVisualMarkdown: source,
+    canonicalSource: sourceMarkdown,
     hiddenSourceRanges: [],
     originalOffsetAt,
     rawSourceOffsetAt: sourceOffsetAt,
@@ -3122,6 +5051,9 @@ export function createVisualMarkdownDirectSourceIntervalMap(
         ? null
         : originalOffsetAt(sourceOffset) ?? null;
     },
+    // The direct map aligns the source with itself, so it has no serializer
+    // gap to authorize.
+    serializerEscapeGaps: new Map(),
     source,
     structuralSourceSeparatorStart: null,
     structuralSourceBoundary: null,
@@ -3340,6 +5272,73 @@ function visualEditableBoundaryAtEdge(
   };
 }
 
+function visualPlainHeadingBoundaryFromSourceOffset(
+  editor: HTMLElement,
+  sourceMarkdown: string,
+  sourceOffset: number
+): VisualBoundary | null {
+  if (!/^H[1-6]$/u.test(editor.tagName)) return null;
+  const sourceLine = sourceMarkdown.replace(/(?:\r\n|\r|\n)+$/u, '');
+  if (sourceLine.includes('\n') || sourceLine.includes('\r')) return null;
+  const heading = sourceLine.match(/^( {0,3})(#{1,6})(?:[ \t]+(.*))?$/u);
+  if (!heading) return null;
+  const body = heading[3] ?? '';
+  if (editor.textContent !== body) return null;
+  const bodyStart = sourceLine.length - body.length;
+  if (sourceOffset < 0 || sourceOffset > bodyStart + body.length) return null;
+  const editableTextNodes: Text[] = [];
+  const walker = editor.ownerDocument.createTreeWalker(
+    editor,
+    NodeFilter.SHOW_TEXT
+  );
+  let current = walker.nextNode();
+  while (current) {
+    if (
+      current instanceof Text
+      && !current.parentElement?.closest(VISUAL_MARKDOWN_READ_ONLY_SELECTOR)
+      && !(
+        current.parentElement
+        && isVisualCaretExcludedElement(current.parentElement)
+      )
+    ) {
+      editableTextNodes.push(current);
+    }
+    current = walker.nextNode();
+  }
+  const bodyOffset = Math.max(0, sourceOffset - bodyStart);
+  let remaining = bodyOffset;
+  for (const text of editableTextNodes) {
+    if (remaining <= text.length) return { node: text, offset: remaining };
+    remaining -= text.length;
+  }
+  if (0 === bodyOffset && editableTextNodes.length === 0) {
+    return visualEditableBoundaryAtEdge(editor, 'start');
+  }
+  if (remaining === 0 && editableTextNodes.length > 0) {
+    return visualEditableBoundaryAtEdge(editor, 'end');
+  }
+  return null;
+}
+/**
+ * A mounted heading root owns one Markdown heading line plus its trailing
+ * source gap. Once a non-trailing line break remains in that fragment, the
+ * plain-heading helper has deliberately declined the source; the generic
+ * merge walk must not reinterpret that rejected heading as its visible tail.
+ */
+function visualPlainHeadingHasInteriorSourceNewline(
+  editor: HTMLElement,
+  sourceMarkdown: string
+): boolean {
+  if (!/^H[1-6]$/u.test(editor.tagName)
+    || !/^ {0,3}#{1,6}(?:[ \t]+|$)/u.test(sourceMarkdown)) {
+    return false;
+  }
+  const withoutTrailingGaps = sourceMarkdown.replace(/(?:\r\n|\r|\n)+$/u, '');
+  return withoutTrailingGaps.includes('\n')
+    || withoutTrailingGaps.includes('\r');
+
+
+}
 function visualSourceBoundaryCandidates(
   editor: HTMLElement,
   sourceOffset: number
@@ -3395,6 +5394,60 @@ function lastEditableVisualBoundary(
 
 export type AcceptedPasteDocumentBoundary = 'end' | 'start';
 
+export function visualContextMenuCaretRangeAtPoint(
+  surface: HTMLElement,
+  target: Element | null,
+  point?: Readonly<{ x: number; y: number }>
+): Range | null {
+  const documentWithCaret = surface.ownerDocument as Document & {
+    caretPositionFromPoint?: (
+      x: number,
+      y: number
+    ) => Readonly<{ offset: number; offsetNode: Node }> | null;
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+  };
+  let range: Range | null = null;
+  if (
+    point
+    && Number.isFinite(point.x)
+    && Number.isFinite(point.y)
+  ) {
+    const caretPosition = documentWithCaret.caretPositionFromPoint?.(
+      point.x,
+      point.y
+    );
+    if (
+      caretPosition
+      && caretPosition.offsetNode !== surface
+      && surface.contains(caretPosition.offsetNode)
+    ) {
+      range = surface.ownerDocument.createRange();
+      range.setStart(caretPosition.offsetNode, caretPosition.offset);
+      range.collapse(true);
+    } else {
+      const caretRange = documentWithCaret.caretRangeFromPoint?.(
+        point.x,
+        point.y
+      );
+      if (
+        caretRange
+        && caretRange.startContainer !== surface
+        && surface.contains(caretRange.startContainer)
+        && surface.contains(caretRange.endContainer)
+      ) {
+        range = caretRange.cloneRange();
+        range.collapse(true);
+      }
+    }
+  }
+  if (!range && target && surface.contains(target) && target !== surface) {
+    range = surface.ownerDocument.createRange();
+    range.selectNodeContents(target);
+    range.collapse(true);
+  }
+  return range;
+}
+
 function visualCaretAtDocumentBoundary(
   editor: HTMLElement
 ): AcceptedPasteDocumentBoundary | null {
@@ -3440,7 +5493,10 @@ export function placeVisualCaretAtAcceptedPasteDocumentBoundary(
   boundary: AcceptedPasteDocumentBoundary
 ): void {
   const caretBoundary = acceptedPasteDocumentBoundary(editor, boundary);
-  if (!caretBoundary) throw new Error('visual-editor-selection-map-failed');
+  if (!caretBoundary) {
+
+    throw new Error('visual-editor-selection-map-failed');
+  }
   placeVisualCaretAtBoundary(editor, caretBoundary);
 }
 
@@ -3453,6 +5509,7 @@ export function normalizeVisualCaretAtDocumentBoundary(
     ? editor.firstElementChild
     : editor.lastElementChild;
   if (edge?.hasAttribute('data-easymde-preview-window-spacer')) {
+
     throw new Error('visual-editor-selection-map-failed');
   }
   placeVisualCaretAtAcceptedPasteDocumentBoundary(editor, boundary);
@@ -3566,15 +5623,341 @@ function findVisualCaretAtSourceBoundary(
   return null;
 }
 
+type VisualMappedWalkNeighbour = Readonly<{
+  boundary: VisualBoundary;
+  sourceOffset: number;
+}>;
+
+/**
+ * The nearest boundary the walk itself managed to map below and above the
+ * requested offset. Those are the only representable neighbours the source and
+ * the visible DOM agree on, so they bracket every source-only run the walk had
+ * to give up on.
+ */
+function visualNearestMappedWalkNeighbours(
+  boundaryIndex: VisualBoundaryIndex,
+  mappedOffsets: ReadonlyMap<number, number | null>,
+  sourceOffset: number
+): Readonly<{
+  lower: VisualMappedWalkNeighbour | null;
+  upper: VisualMappedWalkNeighbour | null;
+}> {
+  let lower: VisualMappedWalkNeighbour | null = null;
+  let upper: VisualMappedWalkNeighbour | null = null;
+  for (const [index, mapped] of mappedOffsets) {
+    if (null === mapped || mapped === sourceOffset) continue;
+    const indexed = visualBoundaryAt(boundaryIndex, index);
+    if (!indexed) continue;
+    if (mapped < sourceOffset) {
+      if (!lower || mapped > lower.sourceOffset) {
+        lower = { boundary: indexed.boundary, sourceOffset: mapped };
+      }
+    } else if (!upper || mapped < upper.sourceOffset) {
+      upper = { boundary: indexed.boundary, sourceOffset: mapped };
+    }
+  }
+  return { lower, upper };
+}
+
+/**
+ * The visual block a mapped boundary belongs to inside the mapped root: the
+ * nearest ancestor the owners mark with block identity, the root's own
+ * top-level child, or the root itself when the root already is one block.
+ */
+function visualBoundaryBlock(
+  editor: HTMLElement,
+  boundary: VisualBoundary
+): HTMLElement | null {
+  const start = boundary.node instanceof Element
+    ? boundary.node
+    : boundary.node.parentElement;
+  if (!(start instanceof HTMLElement) || !editor.contains(start)) return null;
+  let element: HTMLElement | null = start;
+  while (element && editor.contains(element)) {
+    if (
+      element === editor
+      || element.parentElement === editor
+      || element.hasAttribute(VISUAL_BLOCK_ATTRIBUTE)
+    ) {
+      return element;
+    }
+    element = element.parentElement;
+  }
+  return null;
+}
+
+/**
+ * The last representable position inside a block: its deepest trailing text
+ * offset, or the element's own end when the block holds no text.
+ */
+function visualBlockEndBoundary(block: HTMLElement): VisualBoundary {
+  let node: Node = block;
+  while (node.lastChild) node = node.lastChild;
+  return node instanceof Text
+    ? { node, offset: node.data.length }
+    : { node: block, offset: block.childNodes.length };
+}
+
+/**
+ * Whether a source offset sits on the opening or closing delimiter line of a
+ * *closed* fenced block. Those lines live as fence metadata in the visual
+ * surface, so only the delimiter recovery may claim them: without that
+ * metadata the offset has to keep failing, and the ownership proof must not
+ * rescue it from a neighbouring visible position.
+ */
+function onClosedMarkdownFenceDelimiterLine(
+  sourceMarkdown: string,
+  sourceOffset: number
+): boolean {
+  const lineStarts = markdownLineStarts(sourceMarkdown);
+  for (const block of markdownCodeBlocks(sourceMarkdown)) {
+    if (
+      'fenced' !== block.kind
+      || null === block.openingLine
+      || null === block.bodyStart
+      || null === block.bodyEnd
+      || null === block.closingLine
+    ) {
+      continue;
+    }
+    for (const lineIndex of [block.openingLine, block.closingLine]) {
+      const start = lineStarts[lineIndex];
+      const end = lineStarts[lineIndex + 1] ?? sourceMarkdown.length;
+      if (
+        undefined !== start
+        && sourceOffset >= start
+        && sourceOffset < end
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Recover a boundary inside a visible text run only when the mapped lower
+ * neighbour and the source spell the same contiguous text. This is the
+ * bounded proof for a source range whose surrounding Markdown syntax made the
+ * ordinary walk ambiguous; formatting markers or a detached block never pass
+ * this equality check.
+ */
+function visualExactTextRunBoundary(
+  boundary: VisualBoundary,
+  sourceMarkdown: string,
+  sourceStart: number,
+  sourceEnd: number
+): VisualBoundary | null {
+  if (
+    !(boundary.node instanceof Text)
+    || !Number.isInteger(sourceStart)
+    || !Number.isInteger(sourceEnd)
+    || sourceStart < 0
+    || sourceEnd < sourceStart
+    || sourceEnd > sourceMarkdown.length
+    || boundary.offset < 0
+    || boundary.offset > boundary.node.data.length
+  ) return null;
+  const sourceText = sourceMarkdown
+    .slice(sourceStart, sourceEnd)
+    .replace(/\r\n|\r/gu, '\n');
+  const textEnd = boundary.offset + sourceText.length;
+  if (
+    textEnd > boundary.node.data.length
+    || boundary.node.data.slice(boundary.offset, textEnd) !== sourceText
+  ) return null;
+  return { node: boundary.node, offset: textEnd };
+}
+
+/**
+ * The boundary a budget-exhausted candidate walk can still prove from source
+ * alone. The walk spends its budget guessing before it reaches a boundary the
+ * DOM cannot produce: a fence delimiter line whose visual form is metadata, a
+ * source-only run the visible serialization cannot represent at all, or a
+ * pasted fence-looking run whose own edges are unmappable too. When the source
+ * proves one of those, the block's own representable offset for that region is
+ * returned; every other offset stays unresolved so the caller can rethrow the
+ * original failure unchanged.
+ */
+function visualProvedBoundaryForExhaustedWalk(
+  editor: HTMLElement,
+  sourceMarkdown: string,
+  baselineVisualMarkdown: string,
+  sourceOffset: number,
+  allowCodeFenceDelimiter: boolean,
+  mappedNeighbours: Readonly<{
+    lower: VisualMappedWalkNeighbour | null;
+    upper: VisualMappedWalkNeighbour | null;
+  }> = { lower: null, upper: null }
+): VisualBoundary | null {
+  if (allowCodeFenceDelimiter) {
+    const delimiterBodyOffset = visualCodeFenceDelimiterBodyOffset(
+      editor,
+      sourceMarkdown,
+      sourceOffset
+    );
+    if (null !== delimiterBodyOffset) {
+      try {
+        return visualCaretBoundaryFromSourceOffset(
+          editor,
+          sourceMarkdown,
+          baselineVisualMarkdown,
+          delimiterBodyOffset,
+          false
+        );
+      } catch {
+        return null;
+      }
+    }
+  }
+  const intervalMap = createVisualMarkdownSourceIntervalMap(
+    sourceMarkdown,
+    baselineVisualMarkdown
+  );
+  const hiddenRegion = intervalMap.hiddenSourceRanges.find((range) => {
+    const start = intervalMap.originalOffsetAt(range.start);
+    const end = intervalMap.originalOffsetAt(range.end);
+    return (
+      undefined !== start
+      && undefined !== end
+      && sourceOffset >= start
+      && sourceOffset < end
+    );
+  });
+  if (!hiddenRegion) return null;
+  // The region's own edges are the next candidates, but they can themselves be
+  // unrepresentable: a pasted fence-looking run swallows the rest of its
+  // paragraph, so neither the region's start nor its end has a DOM boundary of
+  // its own, and their mapping only clamps onto the last visible character. The
+  // walk's own mapped probes prove the owner instead: the visible text below
+  // the region belongs to exactly one block, and the region continues that
+  // block's own source text. When nothing the walk could map follows the
+  // region, that block's end is the representable position the gesture belongs
+  // to; a boundary mapped above the region inside the same block is nearer and
+  // stays the answer then. No proved neighbour below the region means no proof
+  // at all, and the offset keeps its original failure.
+  const { lower, upper } = mappedNeighbours;
+  // The region must continue the owner's own text run. The interval map indexes
+  // its ranges in normalized source space, so the check reads that same source:
+  // a region separated from the visible text by a blank line is a block-level
+  // construct of its own (a hidden reference definition, for example) and
+  // proves nothing about any neighbouring block.
+  const regionLineStart = hiddenRegion.start > 0
+    ? intervalMap.source.lastIndexOf('\n', hiddenRegion.start - 1) + 1
+    : 0;
+  const previousLineStart = regionLineStart > 0
+    ? intervalMap.source.lastIndexOf('\n', regionLineStart - 2) + 1
+    : 0;
+  const continuesOwnerRun = /[^\s]/u.test(
+    intervalMap.source.slice(previousLineStart, regionLineStart)
+  );
+  const owner =
+    lower && !onClosedMarkdownFenceDelimiterLine(sourceMarkdown, sourceOffset)
+      ? visualBoundaryBlock(editor, lower.boundary)
+      : null;
+  if (owner && lower) {
+    const exactTextBoundary = visualExactTextRunBoundary(
+      lower.boundary,
+      sourceMarkdown,
+      lower.sourceOffset,
+      sourceOffset
+    );
+    if (exactTextBoundary) return exactTextBoundary;
+  }
+  if (continuesOwnerRun) {
+    if (owner) {
+      if (upper && visualBoundaryBlock(editor, upper.boundary) === owner) {
+        return upper.boundary;
+      }
+      return visualBlockEndBoundary(owner);
+    }
+    for (const normalizedCandidate of [
+      Math.max(0, hiddenRegion.start - 1),
+      hiddenRegion.end,
+      hiddenRegion.start
+    ]) {
+      const candidate = intervalMap.originalOffsetAt(normalizedCandidate);
+      if (undefined === candidate || candidate === sourceOffset) continue;
+      try {
+        return visualCaretBoundaryFromSourceOffset(
+          editor,
+          sourceMarkdown,
+          baselineVisualMarkdown,
+          candidate,
+          false
+        );
+      } catch {
+        // The candidate is not representable either; try the next one.
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Whether the source text owns a boundary the baseline cannot represent, which
+ * is what makes the block-local structural projection a proof rather than a
+ * guess. These are the conditions the exhausted-walk recovery reads: the offset
+ * lies inside a hidden source range that continues visible text, or it sits on
+ * the delimiter line of a fence the root keeps as metadata. An initial hidden
+ * run before all visible content continues nothing and owns nothing.
+ */
+function visualSourceOwnedBoundaryRecovery(
+  editor: HTMLElement,
+  sourceMarkdown: string,
+  sourceOffset: number,
+  allowCodeFenceDelimiter: boolean,
+  intervalMap: VisualMarkdownSourceIntervalMap
+): boolean {
+  if (
+    allowCodeFenceDelimiter
+    && null !== visualCodeFenceDelimiterBodyOffset(editor, sourceMarkdown, sourceOffset)
+  ) {
+    return true;
+  }
+  // The interval map indexes its ranges in normalized source space, so the
+  // requested original offset compares against bounds read in that same space.
+  const hiddenRegion = intervalMap.hiddenSourceRanges.find((range) => {
+    const start = intervalMap.originalOffsetAt(range.start);
+    const end = intervalMap.originalOffsetAt(range.end);
+    return (
+      undefined !== start
+      && undefined !== end
+      && sourceOffset >= start
+      && sourceOffset < end
+    );
+  });
+  if (!hiddenRegion) return false;
+  const regionLineStart = hiddenRegion.start > 0
+    ? intervalMap.source.lastIndexOf('\n', hiddenRegion.start - 1) + 1
+    : 0;
+  const previousLineStart = regionLineStart > 0
+    ? intervalMap.source.lastIndexOf('\n', regionLineStart - 2) + 1
+    : 0;
+  return /[^\s]/u.test(
+    intervalMap.source.slice(previousLineStart, regionLineStart)
+  );
+}
+
 export function visualCaretBoundaryFromSourceOffset(
   editor: HTMLElement,
   sourceMarkdown: string,
   baselineVisualMarkdown: string,
-  sourceOffset: number
+  sourceOffset: number,
+  allowCodeFenceDelimiter = true
 ): Readonly<{ node: Node; offset: number }> {
   if (sourceOffset < 0 || sourceOffset > sourceMarkdown.length) {
     throw new Error('visual-editor-selection-map-failed');
   }
+  if (visualPlainHeadingHasInteriorSourceNewline(editor, sourceMarkdown)) {
+    throw new Error('visual-editor-selection-map-failed');
+  }
+  const plainHeadingBoundary = visualPlainHeadingBoundaryFromSourceOffset(
+    editor,
+    sourceMarkdown,
+    sourceOffset
+  );
+  if (plainHeadingBoundary) return plainHeadingBoundary;
   const documentBoundary = findVisualCaretAtSourceBoundary(
     editor,
     sourceMarkdown,
@@ -3583,8 +5966,38 @@ export function visualCaretBoundaryFromSourceOffset(
   );
   if (documentBoundary) return documentBoundary;
 
+  // One map for this call's exact source/baseline pair: the block-local
+  // structural projection and its eligibility read the same alignment.
+  const boundaryIntervalMap = createVisualMarkdownSourceIntervalMap(
+    sourceMarkdown,
+    baselineVisualMarkdown
+  );
+  const sourceOwnedRecovery = visualSourceOwnedBoundaryRecovery(
+    editor,
+    sourceMarkdown,
+    sourceOffset,
+    allowCodeFenceDelimiter,
+    boundaryIntervalMap
+  );
   const boundaryIndex = visualBoundaryIndex(editor);
   const mappedOffsets = new Map<number, number | null>();
+  // The attempt constant guards against a walk that cannot settle; it is not a
+  // statement about how large a mounted block may be. A legitimate row can own
+  // more boundary segments than the constant, and then the walk used to stop
+  // guessing before it had covered the row at all. The walk therefore runs its
+  // FIRST pass under the constant, exactly as before, so every offset that
+  // resolves today still resolves identically. Only when that pass is
+  // exhausted AND its source proof owns nothing does the same walk resume with
+  // the row's own segment count as the budget; a walk that still cannot settle
+  // exhausts that too and keeps its explicit failure.
+  const walkBudgets = [
+    VISUAL_CARET_MAPPING_ATTEMPT_LIMIT,
+    Math.max(
+      VISUAL_CARET_MAPPING_ATTEMPT_LIMIT,
+      boundaryIndex.segments.length
+    )
+  ];
+  let mappingAttemptLimit = walkBudgets[0] as number;
   let mappingAttempts = 0;
   const mappedBoundary = (
     index: number
@@ -3598,32 +6011,52 @@ export function visualCaretBoundaryFromSourceOffset(
     if (!indexedBoundary) return null;
     if (!mappedOffsets.has(index)) {
       mappingAttempts += 1;
-      if (mappingAttempts > VISUAL_CARET_MAPPING_ATTEMPT_LIMIT) {
+      if (mappingAttempts > mappingAttemptLimit) {
         throw new Error('visual-editor-selection-map-budget-exceeded');
       }
-      try {
-        mappedOffsets.set(
-          index,
-          visualBoundarySourceOffset(
-            editor,
-            sourceMarkdown,
-            baselineVisualMarkdown,
-            indexedBoundary.boundary.node,
-            indexedBoundary.boundary.offset
-          )
-        );
-      } catch (error) {
-        if (
-          error instanceof Error
-          && [
-            'visual-editor-markdown-merge-ambiguous',
-            'visual-editor-markdown-merge-failed',
-            'visual-editor-selection-map-failed'
-          ].includes(error.message)
-        ) {
-          mappedOffsets.set(index, null);
-        } else {
-          throw error;
+      // A boundary the source owns structurally resolves through the same
+      // projection the native-input path uses: it proves the owning block's
+      // literal serialization, so a collapsed or re-escaped run still places
+      // its own caret. Only a boundary that proof does not resolve falls back
+      // to the generic marker merge, and only both together cache a null.
+      const projected =
+        sourceOwnedRecovery
+        && indexedBoundary.boundary.node instanceof Text
+          ? mapTextBoundaryFromInterval(
+              editor,
+              indexedBoundary.boundary.node,
+              indexedBoundary.boundary.offset,
+              baselineVisualMarkdown,
+              boundaryIntervalMap
+            )
+          : null;
+      if (projected) {
+        mappedOffsets.set(index, projected.sourceOffset);
+      } else {
+        try {
+          mappedOffsets.set(
+            index,
+            visualBoundarySourceOffset(
+              editor,
+              sourceMarkdown,
+              baselineVisualMarkdown,
+              indexedBoundary.boundary.node,
+              indexedBoundary.boundary.offset
+            )
+          );
+        } catch (error) {
+          if (
+            error instanceof Error
+            && [
+              'visual-editor-markdown-merge-ambiguous',
+              'visual-editor-markdown-merge-failed',
+              'visual-editor-selection-map-failed'
+            ].includes(error.message)
+          ) {
+            mappedOffsets.set(index, null);
+          } else {
+            throw error;
+          }
         }
       }
     }
@@ -3674,29 +6107,219 @@ export function visualCaretBoundaryFromSourceOffset(
     }
     return null;
   };
-  let lower = 0;
-  let upper = boundaryIndex.length - 1;
   let match: VisualBoundary | null = null;
+  // The error a budget-exhausted pass raised, kept so a wider re-run that also
+  // finds no boundary keeps reporting the SAME failure the caller already
+  // handles. Only a newly resolved boundary ever replaces it.
+  let exhaustedError: unknown = null;
 
-  while (lower <= upper) {
-    const middle = Math.floor((lower + upper) / 2);
-    const candidate = nearestMappableBoundary(middle, lower, upper);
-    if (!candidate) break;
-    if (candidate.sourceOffset === sourceOffset) {
-      match = candidate.boundary;
-      break;
+  for (const [budgetIndex, budget] of walkBudgets.entries()) {
+    mappingAttemptLimit = budget;
+    mappingAttempts = 0;
+    let lower = 0;
+    let upper = boundaryIndex.length - 1;
+    try {
+      while (lower <= upper) {
+        const middle = Math.floor((lower + upper) / 2);
+        const candidate = nearestMappableBoundary(middle, lower, upper);
+        if (!candidate) break;
+        if (candidate.sourceOffset === sourceOffset) {
+          match = candidate.boundary;
+          break;
+        }
+        if (candidate.sourceOffset < sourceOffset) {
+          lower = candidate.index + 1;
+        } else {
+          upper = candidate.index - 1;
+        }
+      }
+    } catch (error) {
+      // The walk spends its budget guessing before it can reach a boundary no
+      // DOM offset can produce. Only that exhausted walk reaches the
+      // source-proved recovery; every other failure and every exhausted walk
+      // without a proof keeps its own original error.
+      if (
+        !(error instanceof Error)
+        || 'visual-editor-selection-map-budget-exceeded' !== error.message
+      ) {
+        throw error;
+      }
+      const provedBoundary = visualProvedBoundaryForExhaustedWalk(
+        editor,
+        sourceMarkdown,
+        baselineVisualMarkdown,
+        sourceOffset,
+        allowCodeFenceDelimiter,
+        visualNearestMappedWalkNeighbours(
+          boundaryIndex,
+          mappedOffsets,
+          sourceOffset
+        )
+      );
+      if (provedBoundary) return provedBoundary;
+      if (null === exhaustedError) exhaustedError = error;
+      // The constant's proof owns nothing here. When this row is larger than
+      // that constant, the walk it interrupted never covered the row: run it
+      // again with the row's own segment count. Anything else keeps its
+      // original failure immediately.
+      if (budgetIndex + 1 < walkBudgets.length) continue;
+      throw exhaustedError;
     }
-    if (candidate.sourceOffset < sourceOffset) {
-      lower = candidate.index + 1;
-    } else {
-      upper = candidate.index - 1;
-    }
+    break;
   }
 
+  // A wider re-run that settled on no boundary reports the exhaustion it
+  // started from, not the generic failure of an unexhausted walk.
+  if (!match && null !== exhaustedError) throw exhaustedError;
+
   if (!match) {
+    // A non-collapsed code-fence selection can start or end on a delimiter
+    // line. The visual surface keeps those delimiters as
+    // `data-easymde-visual-fence` metadata instead of DOM text, so no visual
+    // boundary maps the delimiter offset. When the source text proves the
+    // offset sits on the delimiter line of a fenced block whose live markup
+    // carries that fence metadata, the code body's own start (opening
+    // delimiter) or end (closing delimiter) is the nearest representable
+    // boundary. Every other unmappable offset keeps its explicit failure.
+    const delimiterBodyOffset = allowCodeFenceDelimiter
+      ? visualCodeFenceDelimiterBodyOffset(editor, sourceMarkdown, sourceOffset)
+      : null;
+    if (null !== delimiterBodyOffset) {
+      // The body offset is code text, never another delimiter line, so one
+      // bounded recovery step is enough to reach a representable boundary.
+      return visualCaretBoundaryFromSourceOffset(
+        editor,
+        sourceMarkdown,
+        baselineVisualMarkdown,
+        delimiterBodyOffset,
+        false
+      );
+    }
+    // The walk completed without a match, exactly as a budget-exhausted walk
+    // does: the same source proof may still own this offset.
+    const provedBoundary = visualProvedBoundaryForExhaustedWalk(
+      editor,
+      sourceMarkdown,
+      baselineVisualMarkdown,
+      sourceOffset,
+      false,
+      visualNearestMappedWalkNeighbours(
+        boundaryIndex,
+        mappedOffsets,
+        sourceOffset
+      )
+    );
+    if (provedBoundary) return provedBoundary;
+    throw new Error('visual-editor-selection-map-failed');
+  }
+  // A closed fence's closing delimiter line begins where its body ends, so the
+  // generic walk can reach that offset from a neighbouring visible position
+  // without any fence metadata. The fence's own DOM owner is the proof that
+  // owns the offset: without it the offset keeps its explicit failure.
+  if (
+    onClosedMarkdownFenceDelimiterLine(sourceMarkdown, sourceOffset)
+    // Ownership is the DOM owner's metadata, not the caller's recovery
+    // permission: the bounded recovery recurses with recovery disabled and
+    // still has to accept the owner's own delimiter.
+    && null ===
+      visualCodeFenceDelimiterBodyOffset(editor, sourceMarkdown, sourceOffset)
+  ) {
     throw new Error('visual-editor-selection-map-failed');
   }
   return match;
+}
+
+/**
+ * The code body offset that represents a code-fence delimiter line, or `null`
+ * when `sourceOffset` is not provably on one. The source text owns the proof:
+ * the offset must sit on the opening or closing delimiter line of a fenced
+ * block whose body is non-empty. The mapped root must also keep that block's
+ * delimiters as `data-easymde-visual-fence` metadata, on the root itself or on
+ * a descendant: the Windowed owner maps each endpoint on a clone of that
+ * endpoint block, so the root here is the fence `<pre>` itself, and
+ * `querySelector` only ever reaches descendants.
+ */
+function visualCodeFenceDelimiterBodyOffset(
+  editor: HTMLElement,
+  sourceMarkdown: string,
+  sourceOffset: number
+): number | null {
+  const rootIsFenceOwner = editor.matches(`pre[${VISUAL_FENCE_ATTRIBUTE}]`);
+  const owners = rootIsFenceOwner
+    ? [
+        editor,
+        ...Array.from(
+          editor.querySelectorAll<HTMLElement>(`pre[${VISUAL_FENCE_ATTRIBUTE}]`)
+        )
+      ]
+    : Array.from(
+        editor.querySelectorAll<HTMLElement>(`pre[${VISUAL_FENCE_ATTRIBUTE}]`)
+      );
+  if (!owners.length) return null;
+  const lineStarts = markdownLineStarts(sourceMarkdown);
+  const fences = markdownCodeBlocks(sourceMarkdown).filter(
+    (block) =>
+      'fenced' === block.kind
+      && null !== block.openingLine
+      && null !== block.bodyStart
+      && null !== block.bodyEnd
+  );
+  // The root has to own the slice's fences one to one: a fence whose own DOM
+  // owner lost its metadata must not be authorized by another fence's.
+  if (fences.length !== owners.length) return null;
+  for (const [fenceIndex, block] of fences.entries()) {
+    const openingLine = block.openingLine;
+    const bodyStart = block.bodyStart;
+    const bodyEnd = block.bodyEnd;
+    if (null === openingLine || null === bodyStart || null === bodyEnd) continue;
+    const openingStart = lineStarts[openingLine];
+    const openingEnd = lineStarts[openingLine + 1] ?? sourceMarkdown.length;
+    const owner = owners[fenceIndex];
+    const opening = undefined === openingStart
+      ? null
+      : markdownFenceOpening(
+          sourceMarkdown.slice(
+            openingStart,
+            Math.max(openingStart, openingEnd - 1)
+          )
+        );
+    if (!owner || !opening) continue;
+    if (
+      owner.getAttribute(VISUAL_FENCE_ATTRIBUTE) !== opening.family
+      || (owner.getAttribute(VISUAL_FENCE_INFO_ATTRIBUTE) ?? '') !== opening.info
+    ) {
+      return null;
+    }
+    if (
+      undefined !== openingStart
+      && sourceOffset >= openingStart
+      && sourceOffset < openingEnd
+    ) {
+      return bodyStart;
+    }
+    if (null === block.closingLine) continue;
+    const closingStart = lineStarts[block.closingLine];
+    const closingEnd = lineStarts[block.closingLine + 1] ?? sourceMarkdown.length;
+    if (
+      undefined !== closingStart
+      && sourceOffset >= closingStart
+      && sourceOffset < closingEnd
+    ) {
+      // The visual surface maps the code text, not the delimiter line that
+      // follows it. A root that is the fence block itself is the Windowed
+      // owner's per-block mapping, which reads source offsets in code-surface
+      // space, so the code text's own end is the representable target there; a
+      // container root keeps source space, where only the body's trailing line
+      // terminator stays outside the code text.
+      const code = rootIsFenceOwner ? directCodeChild(editor) : null;
+      if (code) return code.textContent?.length ?? 0;
+      const bodyEnding = /(?:\r\n|\r|\n)$/u.exec(
+        sourceMarkdown.slice(bodyStart, bodyEnd)
+      )?.[0] ?? '';
+      return bodyEnd - bodyEnding.length;
+    }
+  }
+  return null;
 }
 
 export function placeVisualCaretFromSourceOffset(
@@ -3943,16 +6566,19 @@ function unchangedVisualSourceAnchors(
   return anchors;
 }
 
-function markedVisualSelectionBoundary(
+function markedVisualSelectionBoundaryMarkdown(
   editor: HTMLElement,
   node: Node,
   offset: number,
-  baselineVisualMarkdown: string
-): number | null {
+  allowDetachedRoot = false
+): string | null {
   const marker = '\uE000easymde-caret\uE001';
+  // A detached root is not provenance on its own: an attached document root
+  // keeps the general guard, and the negative provenance regressions pin that
+  // a plain match must not restore a selection. Only a caller that has already
+  // proved the root is this node's own endpoint block may mark a detached one.
   if (
-    !editor.isConnected
-    || baselineVisualMarkdown.includes(marker)
+    (!editor.isConnected && !allowDetachedRoot)
     || node === editor
     || !editor.contains(node)
   ) return null;
@@ -3982,19 +6608,43 @@ function markedVisualSelectionBoundary(
   } catch {
     return null;
   }
-  const markedVisualMarkdown = serializeVisualMarkdown(clone);
-  let baselinePosition = 0;
-  let insertion: number | null = null;
-  for (const part of diffChars(baselineVisualMarkdown, markedVisualMarkdown)) {
-    if (!part.added && !part.removed) {
-      baselinePosition += part.value.length;
-      continue;
-    }
-    if (part.removed) return null;
-    if (part.value !== marker || null !== insertion) return null;
-    insertion = baselinePosition;
+  return serializeVisualMarkdown(clone);
+}
+
+/**
+ * The baseline offset a marked serialization inserts its caret marker at, or
+ * `null` when that serialization does not prove exactly one insertion. The
+ * proof is literal: removing the single marker occurrence must reproduce the
+ * unmarked baseline byte for byte, so a marker that also moves nearby escaping
+ * or whitespace can never be read as a boundary.
+ */
+function markedVisualSelectionBoundary(
+  editor: HTMLElement,
+  node: Node,
+  offset: number,
+  baselineVisualMarkdown: string,
+  allowDetachedRoot = false
+): number | null {
+  const marker = '\uE000easymde-caret\uE001';
+  if (baselineVisualMarkdown.includes(marker)) return null;
+  const markedVisualMarkdown = markedVisualSelectionBoundaryMarkdown(
+    editor,
+    node,
+    offset,
+    allowDetachedRoot
+  );
+  if (null === markedVisualMarkdown) return null;
+  const insertion = markedVisualMarkdown.indexOf(marker);
+  if (
+    insertion < 0
+    || insertion !== markedVisualMarkdown.lastIndexOf(marker)
+  ) {
+    return null;
   }
-  return insertion;
+  const withoutMarker =
+    markedVisualMarkdown.slice(0, insertion)
+    + markedVisualMarkdown.slice(insertion + marker.length);
+  return withoutMarker === baselineVisualMarkdown ? insertion : null;
 }
 
 export function visualSelectionVisualOffset(
@@ -4003,6 +6653,7 @@ export function visualSelectionVisualOffset(
 ): number {
   const selection = editor.ownerDocument.defaultView?.getSelection();
   if (!selection?.isCollapsed || !selection.anchorNode) {
+
     throw new Error('visual-editor-selection-map-failed');
   }
   const visualOffset = markedVisualSelectionBoundary(
@@ -4012,9 +6663,478 @@ export function visualSelectionVisualOffset(
     baselineVisualMarkdown
   );
   if (null === visualOffset) {
+
     throw new Error('visual-editor-selection-map-failed');
   }
   return visualOffset;
+}
+export function visualSelectionVisualOffsetInBlock(
+  block: HTMLElement,
+  node: Node,
+  offset: number,
+  baselineBlockMarkdown: string,
+  allowDetachedRoot = false
+): number {
+  const visualOffset = markedVisualSelectionBoundary(
+    block,
+    node,
+    offset,
+    baselineBlockMarkdown,
+    allowDetachedRoot
+  );
+  if (null === visualOffset) {
+    throw new Error('visual-editor-selection-map-failed');
+  }
+  return visualOffset;
+}
+/**
+ * The line-level blocks a fold must never cross. A newline inside one of these
+ * lines separates structure the source renders as structure: list items still
+ * line up, quotes still quote and code bodies keep their own line breaks.
+ */
+function markdownStructuralLineRanges(
+  markdown: string
+): ReadonlyArray<Readonly<{ end: number; start: number }>> {
+  const ranges: Array<Readonly<{ end: number; start: number }>> = [];
+  markdownLanguage.parser.parse(markdown).cursor().iterate((node) => {
+    if (
+      [
+        'ATXHeading1',
+        'ATXHeading2',
+        'ATXHeading3',
+        'ATXHeading4',
+        'ATXHeading5',
+        'ATXHeading6',
+        'Blockquote',
+        'BulletList',
+        'CodeBlock',
+        'FencedCode',
+        'HorizontalRule',
+        'HTMLBlock',
+        'ListItem',
+        'OrderedList',
+        'SetextHeading1',
+        'SetextHeading2'
+      ].includes(node.name)
+    ) {
+      ranges.push({ end: node.to, start: node.from });
+    }
+  });
+  return ranges;
+}
+
+/**
+ * The source a serializer's whitespace collapsing renders for it: every soft
+ * line break inside rendered text becomes the single space Turndown emits in
+ * its place. Folding is length-preserving, so a folded offset is still the
+ * offset of the line break it replaced, and only the alignment gains the
+ * characters a collapse otherwise hides from it. Only the line that *ends* at
+ * the fold is inspected: the line that follows a rendered text run may itself
+ * open block structure the renderer joined into that run, and the caller still
+ * has to prove the folded boundary against the block's own serialization.
+ */
+export function foldVisualMarkdownSoftBreaks(markdown: string): string {
+  if (!markdown.includes('\n')) return markdown;
+  const lines = markdownLineRanges(markdown);
+  const structural = markdownStructuralLineRanges(markdown);
+  let folded = markdown;
+  for (let index = 0; index + 1 < lines.length; index += 1) {
+    const line = lines[index];
+    const next = lines[index + 1];
+    if (!line || !next) continue;
+    if (
+      '\n' !== markdown[line.contentEnd]
+      || 1 !== line.end - line.contentEnd
+    ) continue;
+    const content = markdown.slice(line.start, line.contentEnd);
+    const nextContent = markdown.slice(next.start, next.contentEnd);
+    if (!content.trim() || !nextContent.trim()) continue;
+    if (/[ \t]$/u.test(content) || content.endsWith('\\')) continue;
+    if (
+      structural.some(
+        (range) => line.start >= range.start && line.start < range.end
+      )
+    ) continue;
+    folded = `${folded.slice(0, line.contentEnd)} ${folded.slice(line.end)}`;
+  }
+  return folded;
+}
+
+const foldedBoundaryIntervalMaps = new WeakMap<
+  VisualMarkdownSourceIntervalMap,
+  VisualMarkdownSourceIntervalMap | null
+>();
+
+/**
+ * The interval map for the same baseline over the source with its rendered
+ * soft breaks folded, or `null` when folding proves nothing new.
+ */
+function foldedBoundaryIntervalMap(
+  sourceIntervalMap: VisualMarkdownSourceIntervalMap
+): VisualMarkdownSourceIntervalMap | null {
+  const cached = foldedBoundaryIntervalMaps.get(sourceIntervalMap);
+  if (undefined !== cached) return cached;
+  let foldedMap: VisualMarkdownSourceIntervalMap | null = null;
+  try {
+    const foldedSource = foldVisualMarkdownSoftBreaks(
+      sourceIntervalMap.source
+    );
+    foldedMap =
+      foldedSource === sourceIntervalMap.source
+        ? null
+        : createVisualMarkdownSourceIntervalMap(
+            foldedSource,
+            sourceIntervalMap.baselineVisualMarkdown
+          );
+  } catch {
+    foldedMap = null;
+  }
+  foldedBoundaryIntervalMaps.set(sourceIntervalMap, foldedMap);
+  return foldedMap;
+}
+
+export function visualTextBoundarySourceProjection(
+  surface: HTMLElement,
+  node: Text,
+  offset: number,
+  baselineVisualMarkdown: string,
+  sourceIntervalMap: VisualMarkdownSourceIntervalMap,
+  acceptedPrefixOnly = false
+): Readonly<{ sourceOffset: number; visualOffset: number }> | null {
+  if (!surface.contains(node) || offset < 0 || offset > node.data.length) {
+    return null;
+  }
+  const owned = ownedProjectionBlock(surface, node);
+  if (!owned) return null;
+  const { block, blockMarkdown, prefixAndBlock } = owned;
+  let blockStart = -1;
+  if (baselineVisualMarkdown.startsWith(prefixAndBlock)) {
+    blockStart = prefixAndBlock.length - blockMarkdown.length;
+  } else {
+    // A canonical baseline can carry this block's serialization inside another
+    // block: only the DOM's own prefix proves the block's position there.
+    if (acceptedPrefixOnly) return null;
+    const first = baselineVisualMarkdown.indexOf(blockMarkdown);
+    if (
+      first < 0
+      || first !== baselineVisualMarkdown.lastIndexOf(blockMarkdown)
+    ) return null;
+    blockStart = first;
+  }
+  if (blockStart < 0) return null;
+  const localVisualOffset = visualSelectionVisualOffsetInBlock(
+    block,
+    node,
+    offset,
+    blockMarkdown,
+    // The owned block *is* this root, and only a detached root can be its own
+    // block: the accepted-adoption clone is exactly that proved endpoint
+    // scope, so its literal marker may be serialized.
+    block === surface && !surface.isConnected
+  );
+  const visualOffset = blockStart + localVisualOffset;
+  const direct = sourceIntervalMap.resolve(visualOffset);
+  if (null !== direct) return { sourceOffset: direct, visualOffset };
+  // A boundary the direct alignment cannot place is a collapsed character of
+  // this block: its escaping and its soft breaks were re-emitted around it.
+  // The folded source holds exactly those collapsed characters, so the same
+  // boundary resolves against the source range the folded map proves for this
+  // block, and folding keeps the offsets of the unfolded source.
+  const foldedMap = foldedBoundaryIntervalMap(sourceIntervalMap);
+  if (null === foldedMap) return null;
+  const foldedOffset = foldedMap.resolve(visualOffset);
+  if (null === foldedOffset) return null;
+  const foldedBlockStart = foldedMap.resolve(blockStart);
+  const foldedBlockEnd = foldedMap.resolve(
+    blockStart + blockMarkdown.length
+  );
+  if (null === foldedBlockStart && null === foldedBlockEnd) return null;
+  if (null !== foldedBlockStart && foldedOffset < foldedBlockStart) return null;
+  if (null !== foldedBlockEnd && foldedOffset > foldedBlockEnd) return null;
+  const sourceOffset = sourceIntervalMap.originalOffsetAt(foldedOffset);
+  if (undefined === sourceOffset) return null;
+  return { sourceOffset, visualOffset };
+}
+
+/**
+ * The baseline range the node's owning block serializes to, or `null` when the
+ * baseline does not carry that block's own serialization exactly once. A unique
+ * occurrence of the node's text is not DOM provenance on its own: the same run
+ * can also live in another block whose serialization escapes it differently, so
+ * only the owning block's serialization proves ownership.
+ */
+/**
+ * The block a mapping root owns for one node, with the serialization that
+ * proves where that block sits: the root's own serialization when the root is
+ * itself the block (a block-scoped or detached endpoint clone), and the
+ * serialization of the blocks up to and including the owner for a
+ * whole-surface root.
+ */
+function ownedProjectionBlock(
+  surface: HTMLElement,
+  node: Node
+): Readonly<{
+  block: HTMLElement;
+  blockMarkdown: string;
+  prefixAndBlock: string;
+}> | null {
+  if (!surface.contains(node)) return null;
+  let block: HTMLElement | null = node.parentElement;
+  while (block && block !== surface && block.parentElement !== surface) {
+    block = block.parentElement;
+  }
+  if (!block) return null;
+  let blockMarkdown: string;
+  try {
+    blockMarkdown = serializeVisualMarkdownBlockFragment([block]);
+  } catch {
+    return null;
+  }
+  if (!blockMarkdown) return null;
+  // A root may be its own block only as a detached endpoint clone: the native
+  // windowed owners map per-block crops, and an attached crop is the whole
+  // document's own root, whose position only its prefix can prove.
+  if (block === surface) {
+    if (surface.isConnected) return null;
+    return { block, blockMarkdown, prefixAndBlock: blockMarkdown };
+  }
+  const children = Array.from(surface.children).filter(
+    (child): child is HTMLElement => child instanceof HTMLElement
+  );
+  const blockIndex = children.indexOf(block);
+  if (blockIndex < 0) return null;
+  try {
+    return {
+      block,
+      blockMarkdown,
+      prefixAndBlock: serializeVisualMarkdownBlockFragment(
+        children.slice(0, blockIndex + 1)
+      )
+    };
+  } catch {
+    return null;
+  }
+}
+
+function owningBlockBaselineRange(
+  surface: HTMLElement,
+  node: Node,
+  baselineVisualMarkdown: string,
+  acceptedPrefixOnly: boolean
+): Readonly<{ end: number; start: number }> | null {
+  const owned = ownedProjectionBlock(surface, node);
+  if (!owned) return null;
+  const { blockMarkdown, prefixAndBlock } = owned;
+  if (!acceptedPrefixOnly) {
+    const first = baselineVisualMarkdown.indexOf(blockMarkdown);
+    if (
+      first < 0
+      || first !== baselineVisualMarkdown.lastIndexOf(blockMarkdown)
+    ) {
+      return null;
+    }
+    return { end: first + blockMarkdown.length, start: first };
+  }
+  // The accepted-paste baseline is canonical Markdown until the surface is
+  // serialized against it, so a unique occurrence of this block's own
+  // serialization can still sit inside another block whose rendering happens
+  // to spell the same text. Only the DOM's own prefix proves this block's
+  // position there.
+  if (!baselineVisualMarkdown.startsWith(prefixAndBlock)) return null;
+  return {
+    end: prefixAndBlock.length,
+    start: prefixAndBlock.length - blockMarkdown.length
+  };
+}
+
+/**
+ * The ASCII punctuation a backslash escapes. Only these characters form an
+ * escape unit: before anything else an odd backslash is a literal character
+ * with a rendered boundary on either side of it.
+ */
+const MARKDOWN_ESCAPABLE_PUNCTUATION = /^[!-/:-@[-`{-~]$/u;
+
+/**
+ * Whether an offset is a boundary between rendered Markdown units rather than
+ * a position inside a backslash escape. Backslashes pair greedily left to
+ * right with the punctuation after them, so the offset is inside the escape a
+ * backslash run opens exactly when the run before it is odd and the character
+ * at the offset is escapable. A literal backslash keeps both its own boundary
+ * and the boundary after it.
+ */
+function isMarkdownUnitBoundary(source: string, offset: number): boolean {
+  if (offset < 0 || offset > source.length) return false;
+  if (offset === 0 || offset >= source.length) return true;
+  if (source[offset - 1] !== '\\') return true;
+  let run = 0;
+  while (offset - run > 0 && source[offset - run - 1] === '\\') {
+    run += 1;
+  }
+  if (run % 2 === 0) return true;
+  return !MARKDOWN_ESCAPABLE_PUNCTUATION.test(source[offset] ?? '');
+}
+
+/**
+ * Whether any backslash inside the span actually opens an escape. The escape
+ * introducer of a span is exactly a position whose following boundary is not a
+ * unit boundary, so a literal backslash before a non-escapable character keeps
+ * the span linear while an escapable one does not.
+ */
+function spanContainsActiveEscape(
+  source: string,
+  start: number,
+  end: number
+): boolean {
+  for (let index = Math.max(0, start); index < end; index += 1) {
+    if (
+      source[index] === '\\'
+      && !isMarkdownUnitBoundary(source, index + 1)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Whether the source range an alignment resolved starts and ends on rendered
+ * Markdown unit boundaries. A range whose end sits inside a backslash escape
+ * covers only part of the character the source renders there, so neither its
+ * distance nor its text is the raw distance or the raw text.
+ */
+export function coversMarkdownUnits(
+  source: string,
+  start: number,
+  end: number
+): boolean {
+  if (start < 0 || end < start || end > source.length) return false;
+  return (
+    isMarkdownUnitBoundary(source, start)
+    && isMarkdownUnitBoundary(source, end)
+  );
+}
+
+function uniqueTextProjection(
+  surface: HTMLElement,
+  node: Text,
+  baselineVisualMarkdown: string,
+  sourceIntervalMap: VisualMarkdownSourceIntervalMap,
+  acceptedPrefixOnly: boolean,
+  textData?: string
+): Readonly<{ sourceOffset: number; visualOffset: number }> | null {
+  const data = textData ?? node.data;
+  if (!data) return null;
+  const visualOffset = baselineVisualMarkdown.indexOf(data);
+  if (
+    visualOffset < 0
+    || visualOffset !== baselineVisualMarkdown.lastIndexOf(data)
+  ) {
+    return null;
+  }
+  const sourceStart = sourceIntervalMap.resolve(visualOffset);
+  const sourceEnd = sourceIntervalMap.resolve(visualOffset + data.length);
+  if (
+    null === sourceStart
+    || null === sourceEnd
+    || sourceEnd - sourceStart !== data.length
+  ) {
+    return null;
+  }
+  // Equal endpoint distance does not authenticate the run's own boundaries: a
+  // raw run that begins or ends inside a backslash escape covers only part of
+  // the character the source renders, so its arithmetic is not linear. The
+  // block-local literal-marker projector owns those boundaries instead.
+  const normalizedStart = sourceIntervalMap.sourceOffsetAt(visualOffset);
+  const normalizedEnd = sourceIntervalMap.sourceOffsetAt(
+    visualOffset + data.length
+  );
+  if (
+    undefined === normalizedStart
+    || undefined === normalizedEnd
+    || !coversMarkdownUnits(
+      sourceIntervalMap.source,
+      normalizedStart,
+      normalizedEnd
+    )
+    // Whole-unit outer boundaries are not enough for `+ offset` arithmetic: a
+    // run that carries an *active* escape unit still spells one source unit as
+    // one rendered character, so an inner raw offset would land inside that
+    // escape and the arithmetic would split it. The literal-marker projector
+    // owns those boundaries instead. A literal backslash before a
+    // non-escapable character is not active and keeps the fast path.
+    || spanContainsActiveEscape(
+      sourceIntervalMap.source,
+      normalizedStart,
+      normalizedEnd
+    )
+  ) {
+    return null;
+  }
+  const blockRange = owningBlockBaselineRange(
+    surface,
+    node,
+    baselineVisualMarkdown,
+    acceptedPrefixOnly
+  );
+  if (!blockRange || visualOffset < blockRange.start) return null;
+  // A block's own baseline range stops before the terminal space that closes
+  // it, while the canonical source and the accepted baseline both keep that
+  // space. The witnessed terminal-NBSP override may therefore reach exactly
+  // one such space past the range it belongs to; no other run extends a block.
+  const terminalSpace =
+    textData && data.endsWith(' ')
+    && visualOffset + data.length === blockRange.end + 1
+      ? 1
+      : 0;
+  if (visualOffset + data.length > blockRange.end + terminalSpace) {
+    return null;
+  }
+  return { sourceOffset: sourceStart, visualOffset };
+}
+
+/**
+ * The canonical source and baseline offset a raw text boundary maps to, proved
+ * from the owning block's own serialization. A raw run the baseline carries
+ * literally resolves by interval arithmetic; every other boundary is projected
+ * by the owning block's literal marker, and a boundary no proof owns fails
+ * closed. The native input path and the accepted-adoption caret restore both
+ * read their boundaries through this one projection.
+ */
+export function mapTextBoundaryFromInterval(
+  surface: HTMLElement,
+  node: Text,
+  offset: number,
+  baselineVisualMarkdown: string,
+  sourceIntervalMap: VisualMarkdownSourceIntervalMap,
+  acceptedPrefixOnly = false,
+  textData?: string
+): Readonly<{ sourceOffset: number; visualOffset: number }> | null {
+  const direct = uniqueTextProjection(
+    surface,
+    node,
+    baselineVisualMarkdown,
+    sourceIntervalMap,
+    acceptedPrefixOnly,
+    textData
+  );
+  if (direct) {
+    return {
+      sourceOffset: direct.sourceOffset + offset,
+      visualOffset: direct.visualOffset + offset
+    };
+  }
+  try {
+    return visualTextBoundarySourceProjection(
+      surface,
+      node,
+      offset,
+      baselineVisualMarkdown,
+      sourceIntervalMap,
+      acceptedPrefixOnly
+    );
+  } catch {
+    return null;
+  }
 }
 
 function projectVisualSelectionInterval(
@@ -4263,6 +7383,7 @@ export function visualEmptyStructuralBodySelection(
 
 type VisualSelectionSourceRangeOptions = Readonly<{
   acceptedPasteDocumentBoundary?: AcceptedPasteDocumentBoundary;
+  structuralEmptyParagraphRemoval?: boolean;
 }>;
 
 export function visualSelectionSourceRange(
@@ -4284,8 +7405,26 @@ export function visualSelectionSourceRange(
     !editor.contains(selection.anchorNode)
     || !editor.contains(selection.focusNode)
   ) {
+
     throw new Error('visual-editor-selection-map-failed');
   }
+  const boundarySourceOffset = (
+    node: Node,
+    offset: number,
+    projectedIntervalMap?: VisualMarkdownSourceIntervalMap
+  ): number =>
+    visualBoundarySourceOffset(
+      editor,
+      sourceMarkdown,
+      baselineVisualMarkdown,
+      node,
+      offset,
+      projectedIntervalMap,
+      {
+        structuralEmptyParagraphRemoval:
+          options.structuralEmptyParagraphRemoval === true
+      }
+    );
   if (
     options.acceptedPasteDocumentBoundary
     && currentVisualMarkdown === baselineVisualMarkdown
@@ -4337,10 +7476,7 @@ export function visualSelectionSourceRange(
       neutralSelection.visualOffset,
       neutralSelection.sourceOffset
     );
-    const offset = visualBoundarySourceOffset(
-      editor,
-      sourceMarkdown,
-      baselineVisualMarkdown,
+    const offset = boundarySourceOffset(
       selection.anchorNode,
       selection.anchorOffset,
       projectedIntervalMap
@@ -4349,31 +7485,19 @@ export function visualSelectionSourceRange(
   }
   if (selectedVisualCodePlaceholder(selection)) {
     const range = selection.getRangeAt(0);
-    const offset = visualBoundarySourceOffset(
-      editor,
-      sourceMarkdown,
-      baselineVisualMarkdown,
+    const offset = boundarySourceOffset(
       range.startContainer,
       range.startOffset
     );
     return { direction: 'none', end: offset, start: offset };
   }
-  const anchor = visualBoundarySourceOffset(
-    editor,
-    sourceMarkdown,
-    baselineVisualMarkdown,
+  const anchor = boundarySourceOffset(
     selection.anchorNode,
     selection.anchorOffset
   );
   const focus = selection.isCollapsed
     ? anchor
-    : visualBoundarySourceOffset(
-        editor,
-        sourceMarkdown,
-        baselineVisualMarkdown,
-        selection.focusNode,
-        selection.focusOffset
-      );
+    : boundarySourceOffset(selection.focusNode, selection.focusOffset);
   return {
     direction: anchor === focus ? 'none' : anchor > focus ? 'backward' : 'forward',
     end: Math.max(anchor, focus),
@@ -4487,12 +7611,144 @@ export type VisualMarkdownMergeResult = Readonly<{
   value: string;
 }>;
 
+/**
+ * Whether the baseline slice a change replaces spells the source slice it maps
+ * to once every *recorded* serializer escape gap is skipped. A gap is a single
+ * backslash the serializer emitted directly before source-owned punctuation;
+ * the alignment recorded it, and both of its endpoints must still map to the
+ * recorded source offset. No other surplus slash is ever ignored, and the
+ * source slice must itself cover whole Markdown units.
+ */
+function serializerGapEquivalent(
+  intervalMap: VisualMarkdownSourceIntervalMap,
+  baselineStart: number,
+  sourceStart: number,
+  sourceEnd: number,
+  visualText: string
+): boolean {
+  if (!coversMarkdownUnits(intervalMap.source, sourceStart, sourceEnd)) {
+    return false;
+  }
+  const sourceText = intervalMap.source.slice(sourceStart, sourceEnd);
+  let sourceIndex = 0;
+  let visualIndex = 0;
+  while (sourceIndex < sourceText.length && visualIndex < visualText.length) {
+    if (sourceText[sourceIndex] === visualText[visualIndex]) {
+      sourceIndex += 1;
+      visualIndex += 1;
+      continue;
+    }
+    const baselineOffset = baselineStart + visualIndex;
+    const gapSourceOffset = intervalMap.serializerEscapeGaps.get(baselineOffset);
+    if (
+      '\\' !== visualText[visualIndex]
+      || gapSourceOffset !== sourceStart + sourceIndex
+      || intervalMap.sourceOffsetAt(baselineOffset) !== gapSourceOffset
+      || intervalMap.sourceOffsetAt(baselineOffset + 1) !== gapSourceOffset
+      || sourceText[sourceIndex] !== visualText[visualIndex + 1]
+    ) {
+      return false;
+    }
+    visualIndex += 1;
+  }
+  return sourceIndex === sourceText.length && visualIndex === visualText.length;
+}
+
+function sourceEscapeEditRange(
+  map: VisualMarkdownSourceIntervalMap,
+  start: number,
+  end: number,
+  sourceStart: number,
+  sourceEnd: number
+): Readonly<{ start: number; end: number }> | null {
+  const hiddenEscape = (offset: number): boolean =>
+    !isMarkdownUnitBoundary(map.source, offset + 1)
+    && map.hiddenSourceRanges.some((range) =>
+      (range.start === offset && range.end === offset + 1)
+      || (map.source[offset] === map.source[offset + 1]
+        && range.start === offset + 1 && range.end === offset + 2));
+  const boundary = (visualOffset: number, sourceOffset: number): number | null => {
+    if (isMarkdownUnitBoundary(map.source, sourceOffset)) return sourceOffset;
+    if (sourceOffset > 0 && hiddenEscape(sourceOffset - 1)) {
+      if (map.sourceOffsetAt(visualOffset - 1) === sourceOffset - 1
+        && map.baselineVisualMarkdown[visualOffset - 1] === map.source[sourceOffset]) {
+        return sourceOffset + 1;
+      }
+      if (map.baselineVisualMarkdown[visualOffset] === map.source[sourceOffset]) {
+        return sourceOffset - 1;
+      }
+    }
+    return null;
+  };
+  const from = boundary(start, sourceStart);
+  const to = boundary(end, sourceEnd);
+  if (from === null || to === null || from > to) return null;
+  let sourceOffset = from;
+  let visualOffset = start;
+  let sawEscape = from !== sourceStart || to !== sourceEnd;
+  while (sourceOffset < to && visualOffset < end) {
+    const escaped = hiddenEscape(sourceOffset);
+    const characterOffset = sourceOffset + (escaped ? 1 : 0);
+    const mapped = map.sourceOffsetAt(visualOffset);
+    if ((mapped !== characterOffset && !(escaped && mapped === sourceOffset))
+      || map.source[characterOffset] !== map.baselineVisualMarkdown[visualOffset]) return null;
+    sawEscape ||= escaped;
+    sourceOffset = characterOffset + 1;
+    visualOffset += 1;
+  }
+  return sawEscape && sourceOffset === to && visualOffset === end ? { start: from, end: to } : null;
+}
+
+export function visualSourceEscapeDeletionRange(
+  source: string,
+  baseline: string,
+  start: number,
+  end: number
+): Readonly<{ start: number; end: number }> | null {
+  if (start < 0 || end <= start || end > baseline.length) return null;
+  const map = createVisualMarkdownSourceIntervalMap(source, baseline);
+  const from = map.sourceOffsetAt(start);
+  const to = map.sourceOffsetAt(end);
+  if (from === undefined || to === undefined) return null;
+  const range = sourceEscapeEditRange(map, start, end, from, to);
+  if (!range || map.hiddenSourceRanges.some(({ start: hiddenStart, end: hiddenEnd }) =>
+    range.start < hiddenEnd && range.end > hiddenStart
+    && !(hiddenEnd === hiddenStart + 1
+      && (!isMarkdownUnitBoundary(map.source, hiddenStart)
+        || !isMarkdownUnitBoundary(map.source, hiddenEnd))))) return null;
+  const originalStart = map.originalOffsetAt(range.start);
+  const originalEnd = map.originalOffsetAt(range.end);
+  return originalStart === undefined || originalEnd === undefined
+    ? null : { start: originalStart, end: originalEnd };
+}
+
 export function mergeVisualMarkdownChangeDetails(
   sourceMarkdown: string,
   baselineVisualMarkdown: string,
   editedVisualMarkdown: string,
-  projectedIntervalMap?: VisualMarkdownSourceIntervalMap
+  projectedIntervalMap?: VisualMarkdownSourceIntervalMap,
+  options: Readonly<{
+    /**
+     * A verified native EOF join removes an empty paragraph's renderer-only
+     * bytes while the canonical blank line is preserved. Only the owner that
+     * proved that exact node delta may set this.
+     */
+    structuralEmptyParagraphRemoval?: boolean;
+  }> = {}
 ): VisualMarkdownMergeResult {
+  // A supplied map is only evidence for the exact snapshot it was built from.
+  // Validate it before the unchanged fast path, because equal normalized text
+  // does not prove the recorded hidden ranges, original offsets, or escape
+  // gaps still describe these canonical bytes.
+  if (
+    projectedIntervalMap
+    && (
+      projectedIntervalMap.canonicalSource !== sourceMarkdown
+      || projectedIntervalMap.baselineVisualMarkdown !== baselineVisualMarkdown
+    )
+  ) {
+    throw new Error('visual-editor-markdown-merge-failed');
+  }
   if (baselineVisualMarkdown === editedVisualMarkdown) {
     return { edits: [], value: sourceMarkdown };
   }
@@ -4537,36 +7793,80 @@ export function mergeVisualMarkdownChangeDetails(
 
     const replacedVisualText = baselineVisualMarkdown.slice(start, end);
     const mappedSourceStart = sourceIntervalMap.sourceOffsetAt(start);
-    const sourceStart = start === end
+    let sourceStart = start === end
       && sourceIntervalMap.isStructuralSourceBoundary(mappedSourceStart ?? -1)
       ? sourceIntervalMap.rawSourceOffsetAt(start)
       : mappedSourceStart;
     const mappedSourceEnd = sourceIntervalMap.sourceOffsetAt(end);
-    const sourceEnd = start !== end
+    let sourceEnd = start !== end
       && sourceIntervalMap.isStructuralSourceBoundary(mappedSourceEnd ?? -1)
       ? sourceIntervalMap.rawSourceOffsetAt(end)
       : mappedSourceEnd;
+    const escapedRange = sourceStart !== undefined && sourceEnd !== undefined
+      ? sourceEscapeEditRange(sourceIntervalMap, start, end, sourceStart, sourceEnd)
+      : null;
+    if (escapedRange) {
+      sourceStart = escapedRange.start;
+      sourceEnd = escapedRange.end;
+    }
     const consumesStructuralSeparator = sourceIntervalMap.structuralSourceSeparatorStart !== null
       && sourceStart === sourceIntervalMap.structuralSourceSeparatorStart
       && sourceEnd === sourceIntervalMap.structuralSourceBoundary;
-    const sourceSliceMatchesVisual = sourceStart !== undefined
+    // Removing exactly the one backslash the alignment recorded as a
+    // serializer escape is the only zero-width escape change that can be a
+    // no-op. An inserted slash has no recorded gap for this baseline, so it
+    // stays a real edit and must pass the hidden-boundary checks below.
+    const serializerOnlyEscapeChange = sourceStart !== undefined
       && sourceEnd !== undefined
-      && source.slice(sourceStart, sourceEnd)
-        === baselineVisualMarkdown.slice(start, end);
-    if (
-      undefined === sourceStart
-      || undefined === sourceEnd
-      || (!sourceSliceMatchesVisual && !consumesStructuralSeparator)
-    ) {
+      && sourceStart === sourceEnd
+      && '\\' === replacedVisualText
+      && '' === replacement
+      && sourceIntervalMap.serializerEscapeGaps.get(start) === sourceStart
+      && sourceIntervalMap.sourceOffsetAt(start) === sourceStart
+      && sourceIntervalMap.sourceOffsetAt(end) === sourceStart;
+    if (undefined === sourceStart || undefined === sourceEnd) {
       throw new Error('visual-editor-markdown-merge-failed');
+    }
+    const sourceSliceMatchesVisual = serializerOnlyEscapeChange
+      || escapedRange !== null
+      || coversMarkdownUnits(source, sourceStart, sourceEnd) && source.slice(sourceStart, sourceEnd)
+        === baselineVisualMarkdown.slice(start, end)
+      || serializerGapEquivalent(
+        sourceIntervalMap,
+        start,
+        sourceStart,
+        sourceEnd,
+        baselineVisualMarkdown.slice(start, end)
+      );
+    if (!sourceSliceMatchesVisual && !consumesStructuralSeparator) {
+      // A verified native join removed an empty paragraph: its renderer-only
+      // whitespace line is not canonical bytes, and the source's blank line
+      // stays. Only the owner that proved that exact node delta sets this.
+      const structuralEmptyParagraphRemoval =
+        options.structuralEmptyParagraphRemoval === true &&
+        true === part.removed &&
+        /^[ \t]*\n\n$/u.test(replacedVisualText) &&
+        /^[\r\n]+$/u.test(source.slice(sourceStart, sourceEnd));
+      if (!structuralEmptyParagraphRemoval) {
+        throw new Error('visual-editor-markdown-merge-failed');
+      }
+      // The removed empty paragraph and its renderer-only line are not
+      // canonical bytes; the source blank line stays, so this chunk maps to
+      // no edit at all.
+      continue;
     }
     // Only reject edits whose mapped source range actually overlaps hidden
     // Markdown. Identical text in an unrelated hidden range is not evidence
-    // that the visible selection is ambiguous.
+    // that the visible selection is ambiguous. These checks run before any
+    // no-op: a serializer artifact still has to be a boundary the owned
+    // interval authorizes.
     const editOverlapsHiddenSource = hiddenSourceRanges.some(
       ({ end: hiddenEnd, start: hiddenStart }) =>
         sourceStart < hiddenEnd && sourceEnd > hiddenStart
         && !(
+          escapedRange && hiddenEnd === hiddenStart + 1
+          && (!isMarkdownUnitBoundary(source, hiddenEnd) || !isMarkdownUnitBoundary(source, hiddenStart))
+          ||
           consumesStructuralSeparator
           && hiddenStart === sourceIntervalMap.structuralSourceSeparatorStart
         )
@@ -4588,6 +7888,7 @@ export function mergeVisualMarkdownChangeDetails(
     if (editOverlapsHiddenSource || insertionTouchesHiddenBoundary) {
       throw new Error('visual-editor-markdown-merge-ambiguous');
     }
+    if (serializerOnlyEscapeChange) continue;
     const originalStart = sourceIntervalMap.originalOffsetAt(sourceStart);
     const originalEnd = sourceIntervalMap.originalOffsetAt(sourceEnd);
     if (undefined === originalStart || undefined === originalEnd) {
@@ -4621,16 +7922,497 @@ export function mergeVisualMarkdownChangeDetails(
   return { edits, value: merged };
 }
 
+/**
+ * The opening fence line a block's source slice proves, or `null` when the
+ * slice's first line is not a fence opening.
+ */
+function sourceSliceFenceOpening(markdown: string): MarkdownFenceOpening | null {
+  const openingLineEnd = markdown.indexOf('\n') + 1;
+  if (openingLineEnd <= 0) return null;
+  return markdownFenceOpening(markdown.slice(0, openingLineEnd - 1));
+}
+
+/**
+ * Applies the fence metadata the endpoint Markdown proves to a per-block
+ * mapping root, so the root serializes back to that Markdown. The formal
+ * renderer publishes fence markup without fence metadata, and this owner
+ * restores it from the source during capture — after the accepted mapping has
+ * already run. The source text owns the proof, so an unproved root keeps its
+ * markup untouched.
+ */
+export function applyVisualCodeFenceMetadataFromSource(
+  root: HTMLElement,
+  markdown: string
+): void {
+  const opening = sourceSliceFenceOpening(markdown);
+  if (!opening) return;
+  const pre = 'PRE' === root.tagName ? root : root.querySelector('pre');
+  if (!pre) return;
+  pre.setAttribute(VISUAL_FENCE_ATTRIBUTE, opening.family);
+  pre.setAttribute(VISUAL_FENCE_INFO_ATTRIBUTE, opening.info);
+}
+
+/**
+ * Absolute source range a mounted root owns, proven by the accepted ledger.
+ * A root without a binding cannot claim any fence metadata.
+ */
+export type VisualCodeFenceSourceBinding = Readonly<{
+  end: number;
+  start: number;
+}>;
+
+/**
+ * One proven fence match of a projection: the mounted PRE, the canonical leaf
+ * interval the structural parser proved, and the bound interval of its owning
+ * root. A caller that owns a cropped region uses `leafEnd > bindingEnd` on an
+ * open leaf to prove that the region cannot claim the complete canonical
+ * interval.
+ */
+export type VisualCodeFenceProjectionMatch = Readonly<{
+  bindingEnd: number;
+  leafEnd: number;
+  leafOpen: boolean;
+  pre: HTMLElement;
+}>;
+
+type VisualCodeFenceContainerKind = 'blockquote' | 'list' | 'listitem';
+
+type VisualCodeFenceAncestryStep = Readonly<{
+  index: number;
+  kind: VisualCodeFenceContainerKind;
+}>;
+
+type VisualCodeFenceLeaf = Readonly<{
+  ancestry: ReadonlyArray<VisualCodeFenceAncestryStep>;
+  closed: boolean;
+  family: string;
+  from: number;
+  info: string;
+  openingLineStart: number;
+  to: number;
+}>;
+
+function visualCodeFenceContainerKind(
+  name: string
+): VisualCodeFenceContainerKind | null {
+  if ('Blockquote' === name) return 'blockquote';
+  if ('BulletList' === name || 'OrderedList' === name) return 'list';
+  if ('ListItem' === name) return 'listitem';
+  return null;
+}
+
+function visualCodeFenceDomContainerKind(
+  element: Element
+): VisualCodeFenceContainerKind | null {
+  if ('BLOCKQUOTE' === element.tagName) return 'blockquote';
+  if ('UL' === element.tagName || 'OL' === element.tagName) return 'list';
+  if ('LI' === element.tagName) return 'listitem';
+  return null;
+}
+
+function visualCodeFencePathKey(
+  steps: ReadonlyArray<VisualCodeFenceAncestryStep>
+): string {
+  return steps.map((step) => `${step.kind}:${step.index}`).join('/');
+}
+
+/**
+ * Every canonical fenced leaf of one source snapshot with the absolute
+ * interval, exact family/info and container ancestry the structural parser
+ * proves. One parse serves the whole projection.
+ */
+function visualCodeFenceLeaves(
+  source: string
+): ReadonlyArray<VisualCodeFenceLeaf> {
+  const leaves: VisualCodeFenceLeaf[] = [];
+  const frames: Array<{
+    ancestry: VisualCodeFenceAncestryStep[] | null;
+    counts: Map<VisualCodeFenceContainerKind, number>;
+    kind: VisualCodeFenceContainerKind | null;
+    marks: Array<Readonly<{ from: number; to: number }>>;
+  }> = [];
+  const ancestry: VisualCodeFenceAncestryStep[] = [];
+  markdownLanguage.parser.parse(source).iterate({
+    enter: (node) => {
+      const parent = frames[frames.length - 1];
+      const kind = visualCodeFenceContainerKind(node.name);
+      const step = parent && kind
+        ? { index: parent.counts.get(kind) ?? 0, kind }
+        : null;
+      if (parent && step) {
+        parent.counts.set(step.kind, step.index + 1);
+        ancestry.push(step);
+      }
+      frames.push({
+        // Snapshot at entry: a leaf's ancestry is fixed before its own
+        // delimiter children are visited.
+        ancestry: 'FencedCode' === node.name ? [...ancestry] : null,
+        counts: new Map(),
+        kind: step ? step.kind : null,
+        marks: []
+      });
+      if ('CodeMark' === node.name) {
+        // The direct parent frame of this mark is the leaf being opened or
+        // closed by it.
+        frames[frames.length - 2]?.marks.push({ from: node.from, to: node.to });
+      }
+    },
+    leave: (node) => {
+      const frame = frames.pop();
+      if (frame?.kind) ancestry.pop();
+      if (!frame?.ancestry) return;
+      const openingMark = frame.marks[0];
+      if (!openingMark) return;
+      const family = source.slice(openingMark.from, openingMark.to);
+      if (!/^(?:`{3,}|~{3,})$/u.test(family)) return;
+      const lineEnd = source.indexOf('\n', openingMark.to);
+      leaves.push({
+        ancestry: frame.ancestry,
+        closed: frame.marks.length > 1,
+        family,
+        from: node.from,
+        info: source
+          .slice(openingMark.to, lineEnd < 0 ? source.length : lineEnd)
+          .replace(/\r$/u, ''),
+        openingLineStart: source.lastIndexOf('\n', openingMark.from - 1) + 1,
+        to: node.to
+      });
+    }
+  });
+  return leaves;
+}
+
+/**
+ * The container path from a bound root down to one mounted PRE, expressed as
+ * the same kind/index steps the parser proves for a fenced leaf. Unknown
+ * wrappers are transparent; non-container ancestors are not part of the path.
+ */
+function visualCodeFenceDomAncestry(
+  root: HTMLElement,
+  pre: HTMLElement
+): ReadonlyArray<VisualCodeFenceAncestryStep> | null {
+  const steps: VisualCodeFenceAncestryStep[] = [];
+  let node: Element | null = pre;
+  for (let depth = 0; node && node !== root; depth += 1) {
+    if (depth > 64) return null;
+    const kind = visualCodeFenceDomContainerKind(node);
+    const parent: Element | null = node.parentElement;
+    if (kind) {
+      if (!parent) return null;
+      let index = 0;
+      for (const sibling of Array.from(parent.children)) {
+        if (sibling === node) break;
+        if (visualCodeFenceDomContainerKind(sibling) === kind) index += 1;
+      }
+      steps.unshift({ index, kind });
+    }
+    node = parent;
+  }
+  return node === root ? steps : null;
+}
+
+/**
+ * Project canonical code-fence metadata onto the mounted PRE roots of one
+ * accepted Windowed surface.
+ *
+ * The full source is parsed once by the structural Markdown parser, which
+ * proves every fenced leaf's absolute interval and container ancestry. Each
+ * mounted PRE is then matched through the accepted binding of its owning root
+ * *plus* its own DOM container path: one bound root, one fenced leaf inside the
+ * bound interval, and one identical kind/index path per leaf. There is no
+ * mounted-ordinal, body-text, language, or URL fallback, and a path group whose
+ * leaf and PRE counts disagree is left untouched rather than guessed; only a
+ * proven match may write family/info.
+ *
+ * An open-at-EOF claim requires the complete canonical interval: the matched
+ * leaf must be genuinely open at `source.length` and the owned binding must
+ * reach `source.length`. An opening-only row therefore restores opener metadata
+ * only and never inherits an EOF claim. A proven closed leaf clears a stale
+ * derived EOF attribute, and an unbound or unmatched root keeps its current
+ * attributes.
+ */
+export function projectVisualCodeFenceMetadata(
+  source: string,
+  surface: DocumentFragment | HTMLElement,
+  bindingFor: (root: HTMLElement) => VisualCodeFenceSourceBinding | null
+): ReadonlyArray<VisualCodeFenceProjectionMatch> {
+  const pres = Array.from(surface.querySelectorAll<HTMLElement>('pre')).filter(
+    (pre) => Boolean(directCodeChild(pre))
+  );
+  if (!pres.length) return [];
+
+  const leaves = visualCodeFenceLeaves(source);
+  if (!leaves.length) return [];
+
+  const matches: VisualCodeFenceProjectionMatch[] = [];
+
+  const blockAttribute = VISUAL_BLOCK_ATTRIBUTE;
+  const presByRoot = new Map<HTMLElement, HTMLElement[]>();
+  for (const pre of pres) {
+    const root =
+      pre.closest<HTMLElement>(`[${blockAttribute}]`)
+      ?? ('PRE' === pre.tagName ? pre : null);
+    if (!root || !surface.contains(root)) continue;
+    const group = presByRoot.get(root);
+    if (group) {
+      group.push(pre);
+    } else {
+      presByRoot.set(root, [pre]);
+    }
+  }
+
+  for (const [root, group] of presByRoot) {
+    const binding = bindingFor(root);
+    if (!binding) continue;
+    if (
+      !Number.isInteger(binding.start)
+      || !Number.isInteger(binding.end)
+      || binding.start < 0
+      || binding.end < binding.start
+      || binding.end > source.length
+    ) {
+      continue;
+    }
+    // A row owns the fence whose opening line it contains: the opener is the
+    // only canonical anchor a mounted PRE can be bound by, and an unclosed
+    // fence legitimately extends past its own row.
+    const owned = leaves.filter(
+      (leaf) =>
+        leaf.openingLineStart >= binding.start
+        && leaf.openingLineStart < binding.end
+    );
+    if (!owned.length) continue;
+
+    const presByPath = new Map<string, HTMLElement[]>();
+    const pathLengths = new Map<string, number>();
+    for (const pre of group) {
+      const steps = visualCodeFenceDomAncestry(root, pre);
+      if (!steps) continue;
+      const key = visualCodeFencePathKey(steps);
+      const path = presByPath.get(key);
+      if (path) {
+        path.push(pre);
+      } else {
+        presByPath.set(key, [pre]);
+        pathLengths.set(key, steps.length);
+      }
+    }
+
+    for (const [key, pathPres] of presByPath) {
+      const length = pathLengths.get(key) ?? 0;
+      const candidates = owned.filter(
+        (leaf) =>
+          0 === length
+          || (
+            leaf.ancestry.length >= length
+            && visualCodeFencePathKey(
+              leaf.ancestry.slice(leaf.ancestry.length - length)
+            ) === key
+          )
+      );
+      if (candidates.length !== pathPres.length) continue;
+      // One path group is only proof when every candidate shares the same
+      // container ancestry above the bound root; more than one such prefix
+      // means the structure does not identify these fences, so nothing is
+      // written.
+      const prefixes = new Set(
+        candidates.map((leaf) =>
+          visualCodeFencePathKey(
+            0 === length
+              ? leaf.ancestry
+              : leaf.ancestry.slice(0, leaf.ancestry.length - length)
+          )
+        )
+      );
+      if (1 !== prefixes.size) continue;
+      candidates.sort((left, right) => left.from - right.from);
+      candidates.forEach((leaf, index) => {
+        const pre = pathPres[index];
+        if (!pre) return;
+        pre.setAttribute(VISUAL_FENCE_ATTRIBUTE, leaf.family);
+        pre.setAttribute(VISUAL_FENCE_INFO_ATTRIBUTE, leaf.info);
+        matches.push({
+          bindingEnd: binding.end,
+          leafEnd: leaf.to,
+          leafOpen: false === leaf.closed,
+          pre
+        });
+        if (
+          false === leaf.closed
+          && leaf.to === source.length
+          && binding.end === source.length
+        ) {
+          pre.setAttribute(
+            VISUAL_FENCE_OPEN_EOF_ATTRIBUTE,
+            String(
+              trailingLineEndingCount(source, leaf.openingLineStart, source.length)
+            )
+          );
+        } else {
+          pre.removeAttribute(VISUAL_FENCE_OPEN_EOF_ATTRIBUTE);
+        }
+      });
+    }
+  }
+  return matches;
+}
+
+/**
+ * The boundary-offset space a per-block accepted mapping uses for this root.
+ * A fence block maps against the block itself, and that root keeps its opening
+ * delimiter line as `data-easymde-visual-fence` metadata instead of DOM text,
+ * so its boundary offsets start at the code body and omit that line. Every
+ * other root maps source offsets directly. Returns `-1` when the offset is not
+ * inside the root's own text.
+ */
+export function visualCodeFenceRootSourceOffset(
+  editor: HTMLElement,
+  markdown: string,
+  sourceOffset: number
+): number {
+  const sourceProvesFence = null !== sourceSliceFenceOpening(markdown);
+  if (
+    !sourceProvesFence
+    && !editor.matches(`pre[${VISUAL_FENCE_ATTRIBUTE}]`)
+  ) {
+    return sourceOffset;
+  }
+  // The interval owner is the single authority on where a fence's body starts
+  // and ends, and it already distinguishes a closed fence from one still open
+  // at the end of the document. A root-space offset is a body offset, so the
+  // opening delimiter line and anything past the body both clamp to the body's
+  // own edges.
+  let interval: VisualCodeBodyInterval;
+  try {
+    interval = visualCodeBodyIntervalAtOrdinal(markdown, 0);
+  } catch {
+    return -1;
+  }
+  const { bodyEnd, bodyStart } = interval;
+  if (sourceOffset < bodyStart) return 0;
+  return sourceOffset >= bodyEnd ? bodyEnd - bodyStart : sourceOffset - bodyStart;
+}
+
 export function mergeVisualMarkdownChange(
   sourceMarkdown: string,
   baselineVisualMarkdown: string,
   editedVisualMarkdown: string,
-  projectedIntervalMap?: VisualMarkdownSourceIntervalMap
+  projectedIntervalMap?: VisualMarkdownSourceIntervalMap,
+  options: Readonly<{ structuralEmptyParagraphRemoval?: boolean }> = {}
 ): string {
   return mergeVisualMarkdownChangeDetails(
     sourceMarkdown,
     baselineVisualMarkdown,
     editedVisualMarkdown,
-    projectedIntervalMap
+    projectedIntervalMap,
+    options
   ).value;
+}
+
+export type VisualMarkdownBlockSourceRange = Readonly<{
+  editable: boolean;
+  end: number;
+  start: number;
+}>;
+
+export type VisualMarkdownCaretSelection = Readonly<{
+  direction: 'backward' | 'forward' | 'none';
+  end: number;
+  start: number;
+}>;
+
+/**
+ * A canonical change that removes whole blocks legitimately reports the caret
+ * where the removed block started. A removed fenced block leaves its
+ * surrounding blank-line terminators behind, and a removed thematic break
+ * leaves the blank line that separated it behind, so that offset can be
+ * whitespace no editable block owns. The accepted Preview surface can neither
+ * mount nor natively restore such a caret, and a canonical edit anchored there
+ * merges ambiguously, so the nearest surviving editable block boundary owns
+ * the committed selection instead: the following block while the document
+ * still has one, otherwise the preceding block. Pinning, the canonical history
+ * selection, and the native restoration then all describe one representable
+ * position. Only the collapsed caret of a pure removal is projected; every
+ * other selection is committed exactly as requested.
+ *
+ * A block range ends at the next block's first line, so it includes the
+ * removed block's own trailing line terminator. A removal therefore counts as
+ * consuming a block when nothing but whitespace survives inside that range,
+ * not only when it covers the range end. Ranges are aligned with the accepted
+ * edit map's blocks, and a missing range is skipped.
+ */
+export function projectVisualMarkdownRemovalSelection(
+  blocks: ReadonlyArray<VisualMarkdownBlockSourceRange | null | undefined>,
+  markdown: string,
+  change: Readonly<{ from: number; insert: string; to: number }>,
+  selection: VisualMarkdownCaretSelection,
+  value: string
+): VisualMarkdownCaretSelection {
+  if (
+    selection.start !== selection.end ||
+    'none' !== selection.direction ||
+    change.to <= change.from ||
+    0 !== change.insert.length
+  ) {
+    return selection;
+  }
+  const offset = selection.start;
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > value.length) {
+    return selection;
+  }
+  const delta = change.insert.length - (change.to - change.from);
+  let next: number | null = null;
+  let previous: number | null = null;
+  for (const range of blocks) {
+    if (!range?.editable) continue;
+    const consumed =
+      change.from <= range.start &&
+      (change.to >= range.end ||
+        (change.to >= range.start &&
+          isMarkdownTerminalWhitespaceSuffix(
+            markdown.slice(change.to, range.end)
+          )));
+    if (consumed) continue;
+    const start = range.start >= change.to ? range.start + delta : range.start;
+    const end = range.end >= change.to ? range.end + delta : range.end;
+    if (start <= offset && offset < end) return selection;
+    if (range.end <= change.from) {
+      if (null === previous || range.end > previous) previous = range.end;
+    } else if (range.start >= change.to && (null === next || start < next)) {
+      next = start;
+    }
+  }
+  // Only a boundary the removal actually left behind as blank source may own
+  // the caret: everything else keeps the requested position and its own
+  // explicit failure.
+  if (
+    null !== next &&
+    !isMarkdownTerminalWhitespaceSuffix(value.slice(offset, next))
+  ) {
+    next = null;
+  }
+  let preceding = previous;
+  while (
+    null !== preceding &&
+    preceding > 0 &&
+    /[\r\n]/u.test(markdown[preceding - 1] ?? '')
+  ) {
+    preceding -= 1;
+  }
+  if (
+    null !== preceding &&
+    !isMarkdownTerminalWhitespaceSuffix(value.slice(preceding, offset))
+  ) {
+    preceding = null;
+  }
+  const boundary = null !== next ? next : preceding;
+  if (
+    null === boundary ||
+    boundary === offset ||
+    boundary < 0 ||
+    boundary > value.length
+  ) {
+    return selection;
+  }
+  return { direction: 'none', end: boundary, start: boundary };
 }

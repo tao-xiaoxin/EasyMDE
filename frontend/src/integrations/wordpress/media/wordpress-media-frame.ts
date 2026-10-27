@@ -268,6 +268,7 @@ export function createWordPressMediaFramePort(
 					}
 					try {
 						operation.options.onSelect(attachment);
+						finish(operation);
 					} catch (error) {
 						finish(operation, error);
 					}

@@ -3,6 +3,7 @@ import {
   history,
   historyKeymap,
   isolateHistory,
+  invertedEffects,
   redo as redoCommand,
   redoDepth,
   undo as undoCommand,
@@ -17,6 +18,8 @@ import {
   Compartment,
   EditorSelection,
   EditorState,
+  StateEffect,
+  StateField,
   Transaction
 } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
@@ -30,6 +33,38 @@ export type DocumentSelection = Readonly<{
   start: number;
 }>;
 
+type CanonicalHistorySelectionEffectValue = Readonly<{
+  inverse: DocumentSelection | null;
+  selection: DocumentSelection | null;
+}>;
+
+const canonicalHistorySelectionEffect = StateEffect.define<CanonicalHistorySelectionEffectValue>();
+const canonicalHistorySelectionField = StateField.define<DocumentSelection | null>({
+  create: () => null,
+  update(value, transaction) {
+    let next = value;
+    let hasCanonicalHistoryEffect = false;
+    for (const effect of transaction.effects) {
+      if (effect.is(canonicalHistorySelectionEffect)) {
+        hasCanonicalHistoryEffect = true;
+        next = effect.value.selection;
+      }
+    }
+    if (transaction.docChanged && !hasCanonicalHistoryEffect) {
+      return null;
+    }
+    return next;
+  }
+});
+const invertCanonicalHistorySelection = (transaction: Transaction) =>
+  transaction.effects.flatMap((effect) => {
+    if (!effect.is(canonicalHistorySelectionEffect)) return [];
+    return [canonicalHistorySelectionEffect.of({
+      inverse: effect.value.selection,
+      selection: effect.value.inverse
+    })];
+  });
+
 export type DocumentTextChangeRange = Readonly<{
   from: number;
   insert: string;
@@ -40,8 +75,26 @@ export type DocumentTextChange = Readonly<{
   deferNativeBridge?: boolean;
   holdNativeBridge?: boolean;
   isolateHistoryBefore?: boolean;
+  /**
+   * Joins this change to the previous canonical history event when
+   * CodeMirror's own adjacency and time rules allow it. Only an owner that
+   * knows both changes belong to ONE user operation may ask for that; every
+   * other caller keeps a separate undo step.
+   */
+  joinPreviousHistory?: boolean;
   /** Records the accepted post-edit selection in CodeMirror's history event. */
   recordHistorySelection?: boolean;
+  /**
+   * Carries the post-edit selection into the canonical selection field
+   * WITHOUT appending the separate history selection event. An owner that
+   * commits one typed run keystroke by keystroke needs this: the selection
+   * event would hang off the run's first character and block CodeMirror from
+   * joining the next keystroke onto it, splitting the run into one undo step
+   * per character.
+   */
+  carryHistorySelectionWithoutEvent?: boolean;
+  /** Authenticated native pre-edit selection, committed with the same edit. */
+  historySelectionBefore?: DocumentSelection;
   selection: DocumentSelection;
   value: string;
   changes?: DocumentTextChangeRange;
@@ -69,13 +122,37 @@ export type CodeMirrorDocumentSession = Readonly<{
   destroy: () => void;
   flush: () => void;
   focus: () => void;
+  isEditable: () => boolean;
+  /**
+   * Commits the selection a context-menu pointer gesture must be described
+   * by, mapping the real pointer through CodeMirror's own coordinates. The
+   * committed transaction changes the selection only: no document write, no
+   * history entry, and no scrolling. A deliberate non-empty selection is
+   * preserved as the user's own pointer extent. Returns `false` when the
+   * pointer cannot be established against this source - a destroyed session,
+   * a detached view, or an unmappable pointer coordinate - instead of
+   * falling back to a fabricated position.
+   */
+  prepareContextMenuPointer: (
+    position: Readonly<{ x: number; y: number }>
+  ) => boolean;
   getCursorPosition: () => DocumentCursorPosition;
   getInputElement: () => HTMLElement;
   getHistoryState: () => DocumentHistoryState;
   getScrollElement: () => HTMLElement;
+  /**
+   * Captures CodeMirror's own public scroll snapshot for a layout change that
+   * commits before the next layout effect. The returned restore dispatches the
+   * snapshot only while this session is alive, the same document revision is
+   * current, the view is attached, and visual editing has not parked it;
+   * otherwise it is a no-op. Neither the capture nor the restore changes the
+   * document or the selection.
+   */
+  captureLayoutScrollRestore: () => (() => void) | null;
   getSelection: () => DocumentSelection;
   getSnapshot: () => CodeMirrorDocumentSnapshot;
   getValue: () => string;
+  getRevision: () => number;
   replaceSavedValue: (value: string) => void;
   redo: () => boolean;
   revealPosition: (position: number) => void;
@@ -178,6 +255,24 @@ function editorSelection(selection: DocumentSelection, documentLength: number) {
   return EditorSelection.single(start, end);
 }
 
+function normalizedSelection(
+  selection: DocumentSelection,
+  documentLength: number
+): DocumentSelection {
+  const normalized = editorSelection(selection, documentLength).main;
+  const direction = normalized.empty
+    ? 'none'
+    : normalized.anchor > normalized.head
+      ? 'backward'
+      : 'forward';
+
+  return {
+    direction,
+    end: Math.max(normalized.anchor, normalized.head),
+    start: Math.min(normalized.anchor, normalized.head)
+  };
+}
+
 function nativeSelection(field: HTMLTextAreaElement): DocumentSelection {
   return {
     direction: field.selectionDirection,
@@ -236,6 +331,7 @@ export function createCodeMirrorDocumentSession({
 }: CreateCodeMirrorDocumentSessionOptions): CodeMirrorDocumentSession {
   let syncingFromNative = false;
   let destroyed = false;
+  let documentRevision = 0;
   const initialValue = submissionField.value;
   let savedValue = submissionField.defaultValue;
   const initialSelection = nativeSelection(submissionField);
@@ -249,6 +345,7 @@ export function createCodeMirrorDocumentSession({
     if (destroyed || value === snapshot.value) {
       return;
     }
+    documentRevision += 1;
     snapshot = { savedValue, value };
     for (const listener of listeners) {
       listener();
@@ -274,6 +371,8 @@ export function createCodeMirrorDocumentSession({
   ];
   const extensions = [
     history(),
+    canonicalHistorySelectionField,
+    invertedEffects.of(invertCanonicalHistorySelection),
     markdownSyntax.of(markdownSyntaxExtensions),
     EditorView.domEventHandlers({
       drop(event) {
@@ -497,6 +596,31 @@ export function createCodeMirrorDocumentSession({
       view.dispatch(transaction);
     }
   };
+  const restoreHistorySelection = (): void => {
+    const state = authoritativeState();
+    const expected = state.field(canonicalHistorySelectionField, false) ?? null;
+    if (!expected) return;
+    const current = stateSelection(state);
+    if (
+      current.direction === expected.direction
+      && current.start === expected.start
+      && current.end === expected.end
+    ) return;
+    const transaction = state.update({
+      annotations: [
+        Transaction.addToHistory.of(false),
+        Transaction.userEvent.of('select.canonicalHistory')
+      ],
+      selection: editorSelection(expected, state.doc.length)
+    });
+    if (activeVisualState) {
+      activeVisualState = transaction.state;
+      scheduleVisualNativeBridge(expected, null, false, false);
+      for (const listener of selectionListeners) listener();
+    } else {
+      view.dispatch(transaction);
+    }
+  };
 
   const mutationObserver = new MutationObserver(() => {
     if (destroyed) {
@@ -545,6 +669,14 @@ export function createCodeMirrorDocumentSession({
           Transaction.addToHistory.of(valueChanged),
           Transaction.userEvent.of('input')
         ],
+        ...(valueChanged
+          ? {
+            effects: [canonicalHistorySelectionEffect.of({
+              inverse: null,
+              selection: null
+            })]
+          }
+          : {}),
         selection: editorSelection(selection, value.length),
         ...(valueChanged
           ? { changes: { from: 0, to: currentValue.length, insert: value } }
@@ -567,11 +699,14 @@ export function createCodeMirrorDocumentSession({
 
   return {
     applyTextChange({
+      carryHistorySelectionWithoutEvent = false,
       changes,
       deferNativeBridge = false,
       holdNativeBridge = false,
       isolateHistoryBefore = false,
+      joinPreviousHistory = false,
       recordHistorySelection = false,
+      historySelectionBefore,
       selection,
       value
     }: DocumentTextChange) {
@@ -579,6 +714,7 @@ export function createCodeMirrorDocumentSession({
         return;
       }
       const state = authoritativeState();
+      const selectionBefore = stateSelection(state);
       let valueChanged = false;
       let resolvedChanges: DocumentTextChangeRange | null = null;
       if (changes) {
@@ -611,12 +747,24 @@ export function createCodeMirrorDocumentSession({
       const transactionSpec = {
         annotations: [
           Transaction.addToHistory.of(valueChanged),
-          Transaction.userEvent.of('input'),
+          Transaction.userEvent.of(joinPreviousHistory ? 'input.type' : 'input'),
           ...(valueChanged && isolateHistoryBefore
             ? [isolateHistory.of('before')]
             : [])
         ],
         ...(resolvedChanges ? { changes: resolvedChanges } : {}),
+        ...(valueChanged
+          ? {
+            effects: [canonicalHistorySelectionEffect.of({
+              inverse: recordHistorySelection || carryHistorySelectionWithoutEvent
+                ? normalizedSelection(historySelectionBefore ?? selectionBefore, state.doc.length)
+                : null,
+              selection: recordHistorySelection || carryHistorySelectionWithoutEvent
+                ? normalizedSelection(selection, value.length)
+                : null
+            })]
+          }
+          : {}),
         selection: editorSelection(selection, value.length)
       };
       if (activeVisualState) {
@@ -630,7 +778,12 @@ export function createCodeMirrorDocumentSession({
       } else {
         view.dispatch(transactionSpec);
       }
-      if (recordHistorySelection && valueChanged) {
+      if (recordHistorySelection && valueChanged && !joinPreviousHistory) {
+        // A joined typing run must not append a separate selection event to
+        // the history branch: CodeMirror refuses to join a later change onto
+        // an event that carries selectionsAfter, so the run would split into
+        // one undo step per character. The change's own selection effect has
+        // already recorded this edit's canonical caret.
         recordCanonicalHistorySelection();
       }
     },
@@ -675,6 +828,43 @@ export function createCodeMirrorDocumentSession({
         view.focus();
       }
     },
+    isEditable: () => !destroyed && !submissionField.disabled && !submissionField.readOnly,
+    prepareContextMenuPointer({ x, y }) {
+      // CodeMirror starts its own mouse selection for the primary button
+      // only, so the pointer gesture that requests a context menu cannot be
+      // assumed to have moved the canonical selection. A detached view has no
+      // pointer coordinates to map: immersive visual editing owns the
+      // canonical state and has moved this view's DOM out of the document.
+      if (destroyed || !view.dom.isConnected) return false;
+      // A context-menu gesture has no context to establish on a source the
+      // user cannot edit, and a read-only source must not have its selection
+      // moved either: the surface's own read-only failure owns that gesture.
+      if (submissionField.disabled || submissionField.readOnly) return false;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+      const state = view.state;
+      const current = stateSelection(state);
+      // A deliberate non-empty selection is the user's own pointer extent;
+      // collapsing it onto the hit position would discard that intent.
+      if (current.start !== current.end) return true;
+      const mapped = view.posAtCoords({ x, y }, false);
+      if (null === mapped) return false;
+      const cursor = clampPosition(mapped, state.doc.length);
+      if (cursor === current.start) return true;
+      view.dispatch({
+        annotations: [
+          // Opening a menu is not an edit and must not become a history step:
+          // without this, CodeMirror records the selection change and
+          // `undoSelection` (Mod-u / Alt-u) could pop it as a selection entry.
+          // The canonical selection-only path (`syncFromNative`) gates the same
+          // annotation, and the pointer selection still reaches the submission
+          // field through the update listener.
+          Transaction.addToHistory.of(false),
+          Transaction.userEvent.of('select.pointer')
+        ],
+        selection: EditorSelection.cursor(cursor)
+      });
+      return true;
+    },
     getCursorPosition() {
       const state = authoritativeState();
       const selection = stateSelection(state);
@@ -695,9 +885,37 @@ export function createCodeMirrorDocumentSession({
       };
     },
     getScrollElement: () => view.scrollDOM,
+    captureLayoutScrollRestore() {
+      // An attached-but-hidden Source (for example the locked Preview's
+      // parked CodeMirror) has no real viewport to preserve: capturing it
+      // would freeze a zero/invisible scroll position and replay it when the
+      // Source is revealed. Only a rendered, non-zero scroll owner may
+      // capture or restore; a hidden owner keeps CodeMirror's own reset.
+      const hasVisibleScrollOwner = () =>
+        view.dom.isConnected
+        && view.scrollDOM.getClientRects().length > 0
+        && view.scrollDOM.clientHeight > 0;
+      if (destroyed || visualEditingActive || !hasVisibleScrollOwner()) {
+        return null;
+      }
+      const revision = documentRevision;
+      const snapshot = view.scrollSnapshot();
+      return () => {
+        if (
+          destroyed
+          || visualEditingActive
+          || documentRevision !== revision
+          || !hasVisibleScrollOwner()
+        ) {
+          return;
+        }
+        view.dispatch({ effects: snapshot });
+      };
+    },
     getSelection: () => stateSelection(authoritativeState()),
     getSnapshot: () => snapshot,
     getValue: () => authoritativeState().doc.toString(),
+    getRevision: () => documentRevision,
     replaceSavedValue(value: string) {
       if (destroyed || value === savedValue) return;
       savedValue = value;
@@ -781,6 +999,7 @@ export function createCodeMirrorDocumentSession({
           dispatchAuthoritative(transaction),
         state
       });
+      if (changed) restoreHistorySelection();
       if (changed && !visualEditingActive) view.focus();
       return changed;
     },
@@ -792,6 +1011,7 @@ export function createCodeMirrorDocumentSession({
           dispatchAuthoritative(transaction),
         state
       });
+      if (changed) restoreHistorySelection();
       if (changed && !visualEditingActive) view.focus();
       return changed;
     }

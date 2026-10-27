@@ -1,4 +1,4 @@
-import { act, fireEvent, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import {
   createElement,
   startTransition,
@@ -8,6 +8,7 @@ import type { ImmersiveEnvironmentPort } from '../../../contracts/ports/immersiv
 import type { ImmersiveI18nPort } from '../../../contracts/ports/immersive-i18n-port';
 import type { ImmersivePreferencesPort } from '../../../contracts/ports/immersive-preferences-port';
 import type { GeneralSettings } from '../../../contracts/settings-center-settings';
+import { createBrowserImmersiveEnvironment } from '../../../integrations/browser/immersive/create-browser-immersive-environment';
 import type { EditorDocumentSession } from '../../document-source/editor-document-session';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -69,6 +70,11 @@ function createImmersiveEditorFixture(initial: string, viewportWidth = 1280) {
     resizeListeners.add(listener);
     return () => resizeListeners.delete(listener);
   });
+  const keydownListeners = new Set<(event: KeyboardEvent) => void>();
+  const subscribeKeydown = vi.fn((listener: (event: KeyboardEvent) => void) => {
+    keydownListeners.add(listener);
+    return () => keydownListeners.delete(listener);
+  });
   const documentSession = {
     document: {
       applyTextChange: vi.fn(),
@@ -116,7 +122,7 @@ function createImmersiveEditorFixture(initial: string, viewportWidth = 1280) {
     now: () => 0,
     observePreviewLayout: () => cleanup,
     schedule: scheduleDerivation,
-    subscribeKeydown: () => cleanup,
+    subscribeKeydown,
     subscribeResize,
     viewportWidth: readViewportWidth
   } as unknown as ImmersiveEnvironmentPort;
@@ -201,6 +207,9 @@ function createImmersiveEditorFixture(initial: string, viewportWidth = 1280) {
     },
     setActiveElement(element: HTMLElement | null) {
       currentActiveElement = element;
+    },
+    emitKeydown(event: KeyboardEvent) {
+      for (const listener of keydownListeners) listener(event);
     },
     suspendStringReads(promise: Promise<void>) {
       stringReadSuspension = promise;
@@ -599,6 +608,105 @@ describe('ImmersiveEditor document derivations', () => {
     expect(view.container.querySelector('.easymde-immersive-outline'))
       .not.toBeNull();
     expect(fixture.readViewportWidth).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a composed native 229 Escape from exiting the mode through the real document listener', () => {
+    // The real environment subscribes on `document`, so this exercises the
+    // actual composition boundary: the dialog's React handler and the host's
+    // native listener both see the same escaping event.
+    const environment = createBrowserImmersiveEnvironment(document, '/favicon.png');
+    const fixture = createImmersiveEditorFixture('# Heading\n\nbody');
+    const onExit = vi.fn();
+    render(
+      <ImmersiveEditor
+        {...fixture.props}
+        environment={environment}
+        onExit={onExit}
+      />
+    );
+
+    const trigger = document.querySelector<HTMLButtonElement>(
+      '.easymde-immersive-table-trigger'
+    );
+    if (!trigger) throw new Error('test-table-trigger-unavailable');
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole('dialog');
+
+    const imeEscape = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      isComposing: false,
+      key: 'Escape'
+    });
+    Object.defineProperty(imeEscape, 'keyCode', { value: 229 });
+    fireEvent(dialog, imeEscape);
+    expect(onExit).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).not.toBeNull();
+
+    const composingEscape = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      isComposing: true,
+      key: 'Escape'
+    });
+    fireEvent(dialog, composingEscape);
+    expect(onExit).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).not.toBeNull();
+
+    // A real, non-IME Escape is consumed by the open dialog: the mode stays.
+    const plain = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Escape'
+    });
+    fireEvent(dialog, plain);
+    expect(onExit).not.toHaveBeenCalled();
+    expect(plain.defaultPrevented).toBe(true);
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    // With no dialog open the same native Escape still exits once.
+    const exitNow = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Escape'
+    });
+    document.dispatchEvent(exitNow);
+    expect(onExit).toHaveBeenCalledTimes(1);
+    expect(exitNow.defaultPrevented).toBe(true);
+  });
+
+  it('leaves an Escape already consumed by an open dialog to that dialog', () => {
+    const fixture = createImmersiveEditorFixture('# Heading\n\nbody');
+    const onExit = vi.fn();
+    render(<ImmersiveEditor {...fixture.props} onExit={onExit} />);
+
+    const consumed = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Escape'
+    });
+    consumed.preventDefault();
+    fixture.emitKeydown(consumed);
+    expect(onExit).not.toHaveBeenCalled();
+
+    // An IME composition keystroke is likewise not an exit demand.
+    fixture.emitKeydown(new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      isComposing: true,
+      key: 'Escape'
+    }));
+    expect(onExit).not.toHaveBeenCalled();
+
+    // A plain Escape still exits the mode exactly once.
+    const plain = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Escape'
+    });
+    fixture.emitKeydown(plain);
+    expect(onExit).toHaveBeenCalledTimes(1);
+    expect(plain.defaultPrevented).toBe(true);
   });
 
   it('closes the mobile outline once on the editable Preview transition and preserves manual reopen', () => {

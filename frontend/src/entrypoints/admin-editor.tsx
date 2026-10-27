@@ -8,6 +8,12 @@ import {
 } from '../contracts/bootstrap/editor-root-bootstrap';
 import type { WordPressApiFetch } from '../integrations/wordpress/preview/create-wordpress-preview-port';
 import { createBrowserScrollSync } from '../integrations/browser/editor-layout/create-browser-scroll-sync';
+import { createBrowserEditorClipboard } from '../integrations/browser/clipboard/create-browser-editor-clipboard';
+import { createBrowserEditorImagePixels } from '../integrations/browser/image-copy/create-browser-editor-image-pixels';
+import {
+  createBrowserEditorBlockIndexWorker,
+  type CreateBrowserEditorBlockIndexWorkerOptions
+} from '../integrations/browser/editor-context-menu/create-browser-editor-block-index-worker';
 import { createBrowserToolbarShortcuts } from '../integrations/browser/keyboard/create-browser-toolbar-shortcuts';
 import { createBrowserLocalDraftStorage } from '../integrations/browser/local-drafts/browser-local-draft-storage';
 import { createBrowserImmersivePreferencesPort } from '../integrations/browser/immersive-preferences/browser-immersive-preferences';
@@ -18,6 +24,7 @@ import {
   type ClipboardItemConstructor
 } from '../integrations/browser/wechat/create-browser-wechat-clipboard';
 import { createBrowserWechatVisualRasterizer } from '../integrations/browser/wechat/create-browser-wechat-visual-rasterizer';
+import { createGeneratedContentExportSession } from '../features/generated-content-export/generated-content-export-session';
 import {
   createBrowserPreviewEnhancementPort,
   createWindowPreviewEnhancementRuntime
@@ -59,6 +66,14 @@ type AdminEditorBrowserRuntime = Readonly<{
   window: Window;
   wordpress: WordPressEditorRuntime;
 }>;
+
+type DeferredClipboardItemConstructor = new (
+  payload: Record<string, Blob | PromiseLike<Blob>>
+) => unknown;
+
+type ClipboardItemConstructorWithSupport = DeferredClipboardItemConstructor & {
+  supports?: (type: string) => boolean;
+};
 
 export type AdminEditorStartRuntime = Readonly<{
   bootstrap: unknown;
@@ -269,6 +284,115 @@ export function mountAdminEditor(
         window: windowRef
       })
     : null;
+  const browserClipboard = windowRef.navigator.clipboard;
+  const deferredClipboardItem = (windowRef as Window & { ClipboardItem?: unknown }).ClipboardItem;
+  const supportsPngWrite = (): boolean => {
+    if (
+      !browserClipboard
+      || 'function' !== typeof browserClipboard.write
+      || 'function' !== typeof deferredClipboardItem
+    ) return false;
+    const ClipboardItem = deferredClipboardItem as ClipboardItemConstructorWithSupport;
+    if ('function' !== typeof ClipboardItem.supports) return false;
+    try {
+      return true === ClipboardItem.supports('image/png');
+    } catch {
+      return false;
+    }
+  };
+  const supportsRichWrite = (): boolean => {
+    if (
+      !browserClipboard
+      || 'function' !== typeof browserClipboard.write
+      || 'function' !== typeof deferredClipboardItem
+    ) return false;
+    const ClipboardItem = deferredClipboardItem as ClipboardItemConstructorWithSupport;
+    if ('function' !== typeof ClipboardItem.supports) return false;
+    try {
+      return true === ClipboardItem.supports('text/html')
+        && true === ClipboardItem.supports('text/plain');
+    } catch {
+      return false;
+    }
+  };
+  const editorClipboardPort = createBrowserEditorClipboard(
+    browserClipboard
+      ? {
+          readText: () => browserClipboard.readText(),
+          supportsPngWrite,
+          supportsRichWrite,
+          ...('function' === typeof deferredClipboardItem
+            ? {
+                writeDeferred: (text: Promise<string>) => {
+                  const ClipboardItem = deferredClipboardItem as DeferredClipboardItemConstructor;
+                  const plain = text.then(
+                    (value) => new Blob([value], { type: 'text/plain' })
+                  );
+                  void plain.catch(() => undefined);
+                  const item = new ClipboardItem({
+                    'text/plain': plain
+                  });
+                  return browserClipboard.write([item] as ClipboardItems);
+                },
+                writeImageDeferred: (image: Promise<Blob>) => {
+                  const ClipboardItem = deferredClipboardItem as DeferredClipboardItemConstructor;
+                  const item = new ClipboardItem({ 'image/png': image });
+                  return browserClipboard.write([item] as ClipboardItems);
+                },
+                writeRichDeferred: (payload) => {
+                  const ClipboardItem = deferredClipboardItem as DeferredClipboardItemConstructor;
+                  const html = payload.then(
+                    (value) => new Blob([value.html], { type: 'text/html' })
+                  );
+                  const text = payload.then(
+                    (value) => new Blob([value.text], { type: 'text/plain' })
+                  );
+                  void html.catch(() => undefined);
+                  void text.catch(() => undefined);
+                  const item = new ClipboardItem({
+                    'text/html': html,
+                    'text/plain': text
+                  });
+                  return browserClipboard.write([item] as ClipboardItems);
+                }
+              }
+            : {}),
+          writeText: (text) => browserClipboard.writeText(text)
+        }
+      : null
+  );
+  const editorImagePixelsPort = createBrowserEditorImagePixels({
+    clearTimeout: (handle) => windowRef.clearTimeout(handle as number),
+    document: documentRef,
+    setTimeout: (callback, delayMs) => windowRef.setTimeout(callback, delayMs)
+  });
+  const browserWorker = (windowRef as Window & { Worker?: unknown }).Worker;
+  const editorBlockIndexPort = createBrowserEditorBlockIndexWorker({
+    assetBaseUrl: bootstrap.previewEnhancement.assetBaseUrl,
+    location: {
+      href: windowRef.location.href,
+      origin: windowRef.location.origin
+    },
+    ...(typeof browserWorker === 'function'
+      ? {
+          Worker: browserWorker as NonNullable<
+            CreateBrowserEditorBlockIndexWorkerOptions['Worker']
+          >
+        }
+      : {}),
+    workerUrl: bootstrap.editorBlockIndexWorkerUrl
+  });
+  const wechatVisualRasterizer = createBrowserWechatVisualRasterizer({
+    blob: Blob,
+    document: documentRef,
+    file: File,
+    image: Image,
+    xmlSerializer: XMLSerializer
+  });
+  const generatedContentExportSession = createGeneratedContentExportSession({
+    clipboard: editorClipboardPort,
+    rasterizer: wechatVisualRasterizer
+  });
   const props: EditorRootProps = {
     appearance: bootstrap.appearance,
     appearancePort: createWordPressAppearancePort({
@@ -282,6 +406,10 @@ export function mountAdminEditor(
       siteUrl: windowRef.location.href
     }),
     document: bootstrap.document,
+    contextMenuStrings: bootstrap.contextMenuStrings,
+    editorBlockIndexPort,
+    editorClipboardPort,
+    editorImagePixelsPort,
     enhancementPort,
     executeExternalCommand: createExternalCommandExecutor(
       bootstrap,
@@ -289,6 +417,7 @@ export function mountAdminEditor(
     ),
     fontControlsPort: createWordPressFontControlsPort(fontFields),
     fonts: bootstrap.fonts,
+    generatedContentExportSession,
     imageUpload: { ...bootstrap.imageUpload, postId },
     imageUploadPort: createWordPressImageUploadPort({
       actionNonce: bootstrap.imageUpload.actionNonce,
@@ -348,11 +477,12 @@ export function mountAdminEditor(
     onFailure,
     platform: platform(windowRef),
     publishPost: createNativePublisher(documentRef),
-    prepareToolbarShortcuts: ({ editorRoot, source }) =>
+    prepareToolbarShortcuts: ({ editorRoot, isOwnedTarget, source }) =>
       createBrowserToolbarShortcuts({
         commands: bootstrap.toolbar.commands,
         editorRoot,
         eventTarget: documentRef,
+        ...(isOwnedTarget ? { isOwnedTarget } : {}),
         platform: platform(windowRef),
         shortcuts: bootstrap.toolbar.shortcuts,
         source
@@ -419,13 +549,18 @@ export function mountAdminEditor(
         : null
     }),
     wechatExport: bootstrap.wechatExport,
-    wechatVisualRasterizationPort: createBrowserWechatVisualRasterizer({
-      blob: Blob,
-      document: documentRef,
-      file: File,
-      image: Image,
-      xmlSerializer: XMLSerializer
-    })
+    wechatVisualRasterizationPort: wechatVisualRasterizer,
+    simplifiedFormattingParser: {
+      parseFromString: (source, mimeType) => {
+        const Parser = (windowRef as Window & {
+          DOMParser?: new () => DOMParser;
+        }).DOMParser;
+        if ('function' !== typeof Parser) {
+          throw new Error('editor-simplified-formatting-parser-unavailable');
+        }
+        return new Parser().parseFromString(source, mimeType);
+      }
+    }
   };
 
   root.render(
@@ -442,6 +577,9 @@ export function mountAdminEditor(
     active = false;
     mediaPickerFrame?.dispose?.();
     root.unmount();
+    editorBlockIndexPort.dispose();
+    editorClipboardPort.dispose();
+    editorImagePixelsPort.dispose();
     nativeEditor?.classList.remove('easymde-native-editor-hidden');
   };
 }

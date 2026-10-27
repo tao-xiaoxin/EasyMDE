@@ -6,6 +6,7 @@ use EasyMDE\Admin\PostModeController;
 use EasyMDE\Content\PostDocument;
 use EasyMDE\Frontend\FrontendAssets;
 use EasyMDE\Support\Asset;
+use EasyMDE\Support\FrontendAssetContract;
 use EasyMDE\Support\Options;
 use EasyMDE\Support\SettingsCenterRepository;
 use EasyMDE\Support\ToolbarRegistry;
@@ -68,7 +69,53 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 
 		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id );
 
-		$this->assertSame( 2, $bootstrap['schemaVersion'] );
+		$this->assertSame( 3, $bootstrap['schemaVersion'] );
+		$this->assertSame(
+			array(
+				'Copy code',
+				'Copy code block',
+				'Copy Code Block Content',
+				'Copy as image',
+				'Copy MathML',
+				'Copy image',
+				'Copy link address',
+				'Copy TeX',
+				'Copy with simplified formatting',
+				'Delete',
+				'Delete horizontal rule',
+				'Delete image',
+				'Diagram',
+				'Edit',
+				'Format Table Source',
+				'Formula',
+				'Insert paragraph above',
+				'Insert paragraph below',
+			),
+			array(
+				$bootstrap['strings']['contextMenu']['copyDiagramSource'],
+				$bootstrap['strings']['contextMenu']['copyCodeBlock'],
+				$bootstrap['strings']['contextMenu']['copyCodeContent'],
+				$bootstrap['strings']['contextMenu']['copyGeneratedImage'],
+				$bootstrap['strings']['contextMenu']['copyGeneratedMathMl'],
+				$bootstrap['strings']['contextMenu']['copyImage'],
+				$bootstrap['strings']['contextMenu']['copyLinkAddress'],
+				$bootstrap['strings']['contextMenu']['copyMathSource'],
+				$bootstrap['strings']['contextMenu']['copySimplifiedFormatting'],
+				$bootstrap['strings']['contextMenu']['deleteGeneratedContent'],
+				$bootstrap['strings']['contextMenu']['deleteThematicBreak'],
+				$bootstrap['strings']['contextMenu']['deleteImage'],
+				$bootstrap['strings']['contextMenu']['diagramBlock'],
+				$bootstrap['strings']['contextMenu']['editGeneratedContent'],
+				$bootstrap['strings']['contextMenu']['formatTableSource'],
+				$bootstrap['strings']['contextMenu']['mathBlock'],
+				$bootstrap['strings']['contextMenu']['insertParagraphAboveGenerated'],
+				$bootstrap['strings']['contextMenu']['insertParagraphBelowGenerated'],
+			)
+		);
+		$this->assertMatchesRegularExpression(
+			'#^' . preg_quote( Asset::url( 'assets/build/editor-block-index-worker/assets/editor-block-index-worker-' ), '#' ) . '[A-Za-z0-9_-]+\.js\?ver=[a-f0-9]{16}$#',
+			$bootstrap['editorBlockIndexWorkerUrl']
+		);
 		$this->assertArrayHasKey( 'shortcodeHelpers', $bootstrap );
 		$this->assertSame( $post_id, $bootstrap['preview']['postId'] );
 		$this->assertIsObject( $bootstrap['preview']['features'] );
@@ -538,6 +585,16 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( 'A different local draft was saved in another tab.', $strings['draftConflict'] );
 	}
 
+	public function test_context_menu_code_indentation_labels_are_gettext_backed_and_nested() {
+		$strings  = $this->get_strings->invoke( $this->admin_assets );
+		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, 0 );
+
+		$this->assertSame( 'Adjust Code Block Indentation', $strings['contextMenuIndentCodeBlock'] );
+		$this->assertSame( 'Adjust Selected Code Indentation', $strings['contextMenuIndentSelectedCode'] );
+		$this->assertSame( 'Adjust Code Block Indentation', $bootstrap['strings']['contextMenu']['indentCodeBlock'] );
+		$this->assertSame( 'Adjust Selected Code Indentation', $bootstrap['strings']['contextMenu']['indentSelectedCode'] );
+	}
+
 	public function test_custom_css_variable_categories_match_the_reference_tab_panels() {
 		$variables = $this->get_custom_css_variables->invoke( $this->admin_assets );
 		$groups    = array();
@@ -998,6 +1055,275 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 
 		$this->assertNotFalse(
 			has_action( 'admin_notices', array( $this->admin_assets, 'render_react_editor_asset_notice' ) )
+		);
+	}
+
+	public function test_absent_editor_block_index_worker_keeps_the_editor_loader_stopped_and_writes_nothing() {
+		$worker_build_dir = trailingslashit( get_temp_dir() ) . 'easymde-worker-absent-' . wp_generate_uuid4() . '/';
+		$this->assertFalse( file_exists( $worker_build_dir ), 'The absent-build case must not read committed assets.' );
+
+		$observed = $this->enqueue_admin_assets_against_worker_build_dir( $worker_build_dir );
+
+		$this->assert_worker_failure_is_nonfatal( $observed, 'editor-block-index-worker-manifest-invalid' );
+	}
+
+	public function test_tampered_editor_block_index_worker_keeps_the_editor_loader_stopped_and_writes_nothing() {
+		$worker_build_dir = trailingslashit( get_temp_dir() ) . 'easymde-worker-tampered-' . wp_generate_uuid4();
+		$file             = 'assets/editor-block-index-worker-synthetic.js';
+		$asset            = 'assets/editor-block-index-worker-synthetic.asset.php';
+		wp_mkdir_p( $worker_build_dir . '/assets' );
+		file_put_contents( $worker_build_dir . '/' . $file, 'console.log("tampered");' );
+		file_put_contents(
+			$worker_build_dir . '/' . $asset,
+			"<?php\nreturn array(\n\t'dependencies' => array(),\n\t'version' => '0000000000000000',\n);\n"
+		);
+		file_put_contents(
+			$worker_build_dir . '/wordpress-manifest.json',
+			wp_json_encode(
+				array(
+					'schemaVersion' => 1,
+					'entries'       => array(
+						'frontend/src/entrypoints/editor-block-index-worker.ts' => array(
+							'handle'       => 'easymde-editor-block-index-worker',
+							'file'         => $file,
+							'asset'        => $asset,
+							'dependencies' => array(),
+							'resources'    => array(),
+						),
+					),
+				)
+			)
+		);
+
+		try {
+			$observed = $this->enqueue_admin_assets_against_worker_build_dir( $worker_build_dir );
+		} finally {
+			wp_delete_file( $worker_build_dir . '/' . $file );
+			wp_delete_file( $worker_build_dir . '/' . $asset );
+			wp_delete_file( $worker_build_dir . '/wordpress-manifest.json' );
+			rmdir( $worker_build_dir . '/assets' );
+			rmdir( $worker_build_dir );
+		}
+
+		$this->assert_worker_failure_is_nonfatal( $observed, 'editor-block-index-worker-build-integrity-invalid' );
+	}
+
+	private function assert_worker_failure_is_nonfatal( array $observed, $expected_code ) {
+		$this->assertSame( $expected_code, $observed['contract_code'] );
+		$this->assertFalse( $observed['loader_enqueued'] );
+		$this->assertFalse( $observed['loader_hook_registered'] );
+		$this->assertFalse( $observed['preload_hook_registered'] );
+		$this->assertFalse( $observed['bootstrap_inline'] );
+		$this->assertStringContainsString( 'notice notice-error', $observed['notice'] );
+		$this->assertStringContainsString( 'EasyMDE could not load the editor application.', $observed['notice'] );
+		$this->assertSame( array(), $observed['article_writes'] );
+		$this->assertSame( $observed['post_before'], $observed['post_after'] );
+		$this->assertSame( $observed['published_count_before'], $observed['published_count_after'] );
+
+		if ( '' !== $observed['contract_warning'] ) {
+			$this->assertStringContainsString( '(' . $expected_code . ')', $observed['contract_warning'] );
+		}
+	}
+
+	public function test_editor_block_index_worker_codes_are_classified_without_broad_throwable_handling() {
+		$manifest_error  = new RuntimeException( 'editor-block-index-worker-manifest-invalid' );
+		$integrity_error = new RuntimeException( 'editor-block-index-worker-build-integrity-invalid' );
+		$unrelated_error = new RuntimeException( 'editor-block-index-worker' );
+
+		$this->assertTrue( FrontendAssetContract::is_error( $manifest_error ) );
+		$this->assertSame( 'editor-block-index-worker-manifest-invalid', FrontendAssetContract::error_code( $manifest_error ) );
+		$this->assertFalse( FrontendAssetContract::is_code_copy_error( $manifest_error ) );
+		$this->assertTrue( FrontendAssetContract::is_error( $integrity_error ) );
+		$this->assertSame( 'editor-block-index-worker-build-integrity-invalid', FrontendAssetContract::error_code( $integrity_error ) );
+		$this->assertFalse( FrontendAssetContract::is_error( $unrelated_error ) );
+		$this->assertSame( 'frontend-asset-contract-invalid', FrontendAssetContract::error_code( $unrelated_error ) );
+	}
+
+	private function enqueue_admin_assets_against_worker_build_dir( $worker_build_dir ) {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$post_id = self::factory()->post->create(
+			array(
+				'post_author'    => $user_id,
+				'post_content'   => '<!-- wp:paragraph --><p>Native content</p><!-- /wp:paragraph -->',
+				'post_title'     => 'Native title',
+				'post_status'    => 'draft',
+			)
+		);
+		update_post_meta( $post_id, PostDocument::META_MARKDOWN, 'Native markdown stays untouched.' );
+
+		$admin_assets  = $this->admin_assets_using_worker_build_dir( $worker_build_dir );
+		$contract_code = $this->worker_contract_code( $worker_build_dir );
+		$post_before   = $this->article_snapshot( $post_id );
+		$count_before  = $this->article_count();
+
+		$article_writes = array();
+		$record_write   = static function ( $meta_id, $object_id, $meta_key ) use ( &$article_writes, $post_id ) {
+			unset( $meta_id, $meta_key );
+			if ( (int) $object_id === $post_id ) {
+				$article_writes[] = current_filter();
+			}
+		};
+		$record_post_write = static function ( $saved_post_id ) use ( &$article_writes, $post_id ) {
+			if ( (int) $saved_post_id === $post_id ) {
+				$article_writes[] = current_filter();
+			}
+		};
+
+		$warnings         = array();
+		$previous_get     = $_GET;
+		$previous_pagenow = array_key_exists( 'pagenow', $GLOBALS ) ? $GLOBALS['pagenow'] : null;
+		$had_pagenow      = array_key_exists( 'pagenow', $GLOBALS );
+		$previous_screen  = array_key_exists( 'current_screen', $GLOBALS ) ? $GLOBALS['current_screen'] : null;
+		$had_screen       = array_key_exists( 'current_screen', $GLOBALS );
+		$emoji_priority   = has_action( 'admin_print_scripts', 'print_emoji_detection_script' );
+
+		add_action( 'added_post_meta', $record_write, 10, 3 );
+		add_action( 'updated_post_meta', $record_write, 10, 3 );
+		add_action( 'deleted_post_meta', $record_write, 10, 3 );
+		add_action( 'save_post', $record_post_write, 10, 1 );
+		add_action( 'edit_post', $record_post_write, 10, 1 );
+		// Isolate the queue from earlier editor cases without touching committed assets.
+		wp_dequeue_script( 'easymde-admin-editor-toolbar' );
+		$loader_handle = 'easymde-admin-editor-toolbar';
+		$inline_before = wp_scripts()->get_data( $loader_handle, 'before' );
+		set_error_handler(
+			static function ( $level, $message ) use ( &$warnings ) {
+				unset( $level );
+				$warnings[] = (string) $message;
+
+				return true;
+			},
+			E_USER_WARNING
+		);
+
+		try {
+			wp_set_current_user( $user_id );
+			$_GET               = array( 'post' => (string) $post_id );
+			$GLOBALS['pagenow'] = 'post.php';
+			set_current_screen( 'post' );
+
+			$admin_assets->enqueue_admin_assets( 'post.php' );
+
+			$inline_after = wp_scripts()->get_data( $loader_handle, 'before' );
+			$observed     = array(
+				'contract_code'           => $contract_code,
+				'loader_enqueued'         => wp_script_is( $loader_handle, 'enqueued' ),
+				'loader_hook_registered'  => false !== has_action( 'admin_print_scripts-post.php', array( $admin_assets, 'render_react_editor_loader' ) ),
+				'preload_hook_registered' => false !== has_action( 'admin_print_styles-post.php', array( $admin_assets, 'render_react_editor_preload' ) ),
+				'bootstrap_inline'        => $inline_before !== $inline_after,
+			);
+			ob_start();
+			$admin_assets->render_react_editor_asset_notice();
+			$observed['notice'] = ob_get_clean();
+		} finally {
+			restore_error_handler();
+			remove_action( 'added_post_meta', $record_write, 10 );
+			remove_action( 'updated_post_meta', $record_write, 10 );
+			remove_action( 'deleted_post_meta', $record_write, 10 );
+			remove_action( 'save_post', $record_post_write, 10 );
+			remove_action( 'edit_post', $record_post_write, 10 );
+			if ( false !== $emoji_priority && false === has_action( 'admin_print_scripts', 'print_emoji_detection_script' ) ) {
+				add_action( 'admin_print_scripts', 'print_emoji_detection_script', $emoji_priority );
+			}
+			$_GET = $previous_get;
+			if ( $had_pagenow ) {
+				$GLOBALS['pagenow'] = $previous_pagenow;
+			} else {
+				unset( $GLOBALS['pagenow'] );
+			}
+			if ( $had_screen ) {
+				$GLOBALS['current_screen'] = $previous_screen;
+			} else {
+				unset( $GLOBALS['current_screen'] );
+			}
+		}
+
+		// wp_trigger_error() is a no-op unless the WordPress test config enables WP_DEBUG.
+		if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+			$contract_warnings = array_values(
+				array_filter(
+					$warnings,
+					static function ( $warning ) use ( $contract_code ) {
+						return false !== strpos( $warning, '(' . $contract_code . ')' );
+					}
+				)
+			);
+
+			$this->assertCount( 1, $contract_warnings );
+			$observed['contract_warning'] = $contract_warnings[0];
+		} else {
+			$observed['contract_warning'] = '';
+		}
+
+		$observed['article_writes']         = $article_writes;
+		$observed['post_before']            = $post_before;
+		$observed['post_after']             = $this->article_snapshot( $post_id );
+		$observed['published_count_before'] = $count_before;
+		$observed['published_count_after']  = $this->article_count();
+
+		return $observed;
+	}
+
+	private function worker_contract_code( $worker_build_dir ) {
+		$post_document          = new PostDocument();
+		$theme_state_repository = new ThemeStateRepository( new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy() );
+		$frontend_assets        = new FrontendAssets(
+			$post_document,
+			$theme_state_repository,
+			null,
+			null,
+			$worker_build_dir
+		);
+
+		try {
+			$frontend_assets->get_editor_block_index_worker_url();
+		} catch ( RuntimeException $error ) {
+			$this->assertTrue( FrontendAssetContract::is_error( $error ) );
+
+			return FrontendAssetContract::error_code( $error );
+		}
+
+		$this->fail( 'The worker build must not resolve for this negative case.' );
+	}
+
+	private function admin_assets_using_worker_build_dir( $worker_build_dir ) {
+		$post_document          = new PostDocument();
+		$theme_state_repository = new ThemeStateRepository( new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy() );
+		$toolbar_registry       = new ToolbarRegistry();
+		$settings_repository    = new SettingsCenterRepository( new Options(), $toolbar_registry );
+
+		return new AdminAssets(
+			new PostModeController( $post_document ),
+			new FrontendAssets(
+				$post_document,
+				$theme_state_repository,
+				null,
+				$settings_repository,
+				$worker_build_dir
+			),
+			$theme_state_repository,
+			$toolbar_registry,
+			$settings_repository
+		);
+	}
+
+	private function article_snapshot( $post_id ) {
+		$post = get_post( $post_id );
+
+		return array(
+			'post_content'  => $post->post_content,
+			'post_title'    => $post->post_title,
+			'post_status'   => $post->post_status,
+			'post_modified' => $post->post_modified_gmt,
+			'meta'          => get_post_meta( $post_id ),
+		);
+	}
+
+	private function article_count() {
+		global $wpdb;
+
+		return (int) $wpdb->get_var(
+			$wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = %s", 'post' )
 		);
 	}
 

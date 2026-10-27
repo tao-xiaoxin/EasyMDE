@@ -10,6 +10,7 @@ import {
 	measurePreviewWindowBlockGeometry,
 	type PreviewWindowNodeRepository,
 	reconcilePreviewWindowSpacerFlow,
+	fullMaterializedNodes,
 	windowNodes,
 } from "./preview-window-dom";
 
@@ -53,6 +54,45 @@ function block(id: string, index: number, measuredHeight = 24) {
 }
 
 describe("preview-window-dom", () => {
+	it("materializes an owned EOF gap after the final mapped block", () => {
+		const first = root("b0");
+		const second = root("b1");
+		const gap = document.createElement("p");
+		gap.append(document.createElement("br"));
+		const model = createPreviewWindowModel(
+			[block("b0", 0), block("b1", 1)],
+			context,
+		);
+		const repository = {
+			blocks: [
+				{ index: 0, map: block("b0", 0), node: first },
+				{ index: 1, map: block("b1", 1), node: second },
+			],
+			context,
+			indexById: new Map([
+				["b0", 0],
+				["b1", 1],
+			]),
+			model,
+			nodes: [first, second],
+			ownedGap: { after: null, before: 1, node: gap },
+			flowGeometry: [...model.flowGeometries],
+			flowGeometryEpoch: [null, null],
+			flowGapEpoch: [null, null],
+			flowBoundary: null,
+			spacerContentHeights: new Map(),
+			spacers: new Map(),
+		} satisfies PreviewWindowNodeRepository;
+
+		const result = model.getWindow({
+			context,
+			pinnedIndices: [1],
+			viewport: { height: 240, scrollTop: 0 },
+		});
+		expect(windowNodes(repository, result)).toEqual([first, second, gap]);
+		expect(fullMaterializedNodes(repository)).toEqual([first, second, gap]);
+	});
+
 	it("measures the signed physical gap and preserves fractional margins", () => {
 		const canvas = document.createElement("div");
 		const first = root("b0");

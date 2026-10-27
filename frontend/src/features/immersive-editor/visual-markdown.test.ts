@@ -4,6 +4,7 @@ import type {
   PreviewEditMap,
   PreviewEditMapBlock
 } from '../../contracts/ports/preview-request';
+import * as markdownLineModel from '../../shared/markdown/markdown-line-model';
 import {
   isMarkdownTerminalWhitespaceSuffix,
   markdownLineStarts
@@ -26,6 +27,8 @@ import {
   createVisualMarkdownDirectSourceIntervalMap,
   createVisualMarkdownSourceRangeFromPreviewEditMap,
   createVisualCodeBodyIntervalForPreviewBlock,
+  createVisualCodeBodyIntervalsForPreviewBlocks,
+  visualCodeBodyIntervalMap,
   createVisualMarkdownWindowChange,
   assertVisualMarkdownReadOnlySnapshot,
   captureVisualMarkdownReadOnlySnapshot,
@@ -57,6 +60,23 @@ import {
   visualCodeBlockStructureSignature,
   visualStructuralBoundaryRows
 } from './visual-markdown';
+
+describe('canonical escape-unit deletion', () => {
+  it.each(['~', '`', '*', '[', '\\'])('removes the whole single escaped %s unit', (marker) => {
+    expect(mergeVisualMarkdownChangeDetails(`\\${marker}`, marker, '').value).toBe('');
+  });
+
+  it.each(['~', '`', '*', '[', '\\'])('preserves untouched escapes around a %s deletion', (marker) => {
+    const source = `A\\${marker}B\\${marker}C\\${marker}D`;
+    const baseline = `A${marker}B${marker}C${marker}D`;
+    for (const index of [1, 3, 5]) {
+      const expected = source.slice(0, index + Math.floor(index / 2))
+        + source.slice(index + Math.floor(index / 2) + 2);
+      const edited = baseline.slice(0, index) + baseline.slice(index + 1);
+      expect(mergeVisualMarkdownChangeDetails(source, baseline, edited).value).toBe(expected);
+    }
+  });
+});
 
 function editor(html: string): HTMLElement {
   const element = document.createElement('article');
@@ -358,6 +378,135 @@ describe('visual Markdown editing', () => {
       .toBe('\r\n\r\n');
     expect(projection.lineEnding).toBe('\r\n');
     expect(projection.emptyBodyLineCount).toBe(2);
+  });
+
+  it('keeps cached code intervals keyed by sparse Markdown code ordinals', () => {
+    const markdown = [
+      '    same',
+      '',
+      '~~~js',
+      'same',
+      '~~~',
+      '',
+      '~~~js',
+      'same',
+      '~~~'
+    ].join('\n');
+    const editMap = previewEditMap([
+      previewBlock('b0', 0, 1, false),
+      previewBlock('b1', 2, 5),
+      previewBlock('b2', 6, 9)
+    ]);
+    const intervals = visualCodeBodyIntervalMap(markdown);
+    const intervalsByBlock = createVisualCodeBodyIntervalsForPreviewBlocks(
+      markdown,
+      editMap
+    );
+
+    expect(intervals.get(0)).toBeUndefined();
+    expect(intervals.get(1)?.codeOrdinal).toBe(1);
+    expect(intervals.get(2)?.codeOrdinal).toBe(2);
+    expect(intervalsByBlock.get('b1')?.codeOrdinal).toBe(1);
+    expect(intervalsByBlock.get('b2')?.codeOrdinal).toBe(2);
+
+    const project = (
+      codeOrdinal: number,
+      localSelection: Readonly<{ end: number; start: number }>,
+      cached: boolean
+    ) => {
+      const surface = editor('<pre><code>same\n</code></pre>');
+      const code = surface.querySelector('code');
+      const text = code?.firstChild;
+      if (!(code instanceof HTMLElement) || !(text instanceof Text)) {
+        throw new Error('sparse-code-ordinal-fixture-missing');
+      }
+      const projection = projectVisualCodeBodySelection(
+        code,
+        markdown,
+        markdown,
+        codeOrdinal,
+        {
+          end: { node: text, offset: localSelection.end },
+          start: { node: text, offset: localSelection.start }
+        },
+        cached ? { source: intervals, visual: intervals } : undefined
+      );
+      surface.remove();
+      return projection;
+    };
+
+    for (const codeOrdinal of [1, 2]) {
+      for (const localSelection of [
+        { end: 2, label: 'typing', start: 2 },
+        { end: 2, label: 'backward deletion', start: 1 },
+        { end: 3, label: 'forward deletion', start: 2 }
+      ]) {
+        const uncached = project(codeOrdinal, localSelection, false);
+        const cached = project(codeOrdinal, localSelection, true);
+
+        expect(cached, localSelection.label).toEqual(uncached);
+        expect(cached.sourceSelection).toEqual({
+          end: cached.sourceInterval.bodyStart + localSelection.end,
+          start: cached.sourceInterval.bodyStart + localSelection.start
+        });
+      }
+    }
+  });
+
+  it('keeps accepted Preview code interval work independent of PRE count', () => {
+    const createBatch = (codeBlockCount: number) => {
+      const sourceLines = ['    same', ''];
+      const editBlocks = [previewBlock('indented', 0, 1, false)];
+      const codeBlockIds: string[] = [];
+      for (let index = 0; index < codeBlockCount; index += 1) {
+        const startLine = sourceLines.length;
+        const id = `code-${index}`;
+        codeBlockIds.push(id);
+        sourceLines.push('~~~js', 'same', '~~~', '');
+        editBlocks.push(previewBlock(id, startLine, startLine + 3));
+      }
+      return {
+        codeBlockIds,
+        editMap: previewEditMap(editBlocks),
+        markdown: sourceLines.join('\n').replace(/\n$/u, '')
+      };
+    };
+
+    const lineStartsSpy = vi.spyOn(markdownLineModel, 'markdownLineStarts');
+    try {
+      const runBatch = (codeBlockCount: number) => {
+        const batch = createBatch(codeBlockCount);
+        const callsBefore = lineStartsSpy.mock.calls.length;
+        const intervals = createVisualCodeBodyIntervalsForPreviewBlocks(
+          batch.markdown,
+          batch.editMap
+        );
+        return {
+          ...batch,
+          intervals,
+          lineStartsCalls: lineStartsSpy.mock.calls.length - callsBefore
+        };
+      };
+      const small = runBatch(8);
+      const large = runBatch(16);
+
+      expect(small.lineStartsCalls).toBeGreaterThan(0);
+      expect(large.lineStartsCalls).toBe(small.lineStartsCalls);
+      for (const batch of [small, large]) {
+        expect(batch.intervals.size).toBe(batch.codeBlockIds.length);
+        for (const id of batch.codeBlockIds) {
+          expect(batch.intervals.get(id)).toEqual(
+            createVisualCodeBodyIntervalForPreviewBlock(
+              batch.markdown,
+              batch.editMap,
+              id
+            )
+          );
+        }
+      }
+    } finally {
+      lineStartsSpy.mockRestore();
+    }
   });
 
   it.each(['~~~', '```'])(
@@ -1837,6 +1986,20 @@ A--&gt;B</code></pre>
     );
     expect(attributedBoundary.offset).toBe(0);
     attributed.remove();
+  });
+
+  it('maps a certified plain heading tail through trailing source gaps without admitting interior newlines or gap offsets', () => {
+    const surface = editor('<h1>Synthetic heading</h1>');
+    const heading = surface.firstElementChild as HTMLElement;
+    const source = '# Synthetic heading\n\n\n\n';
+    const baseline = serializeVisualMarkdownBlockFragment([heading]);
+    const tail = source.indexOf('\n');
+    const boundary = visualCaretBoundaryFromSourceOffset(heading, source, baseline, tail);
+    expect(boundary.node).toBe(heading.firstChild);
+    expect(boundary.offset).toBe('Synthetic heading'.length);
+    expect(() => visualCaretBoundaryFromSourceOffset(heading, source, baseline, tail + 1)).toThrow();
+    expect(() => visualCaretBoundaryFromSourceOffset(heading, '# Synthetic\nheading\n\n', baseline, tail)).toThrow();
+    surface.remove();
   });
 
   it('keeps formatted heading prefix boundaries source-aware', () => {

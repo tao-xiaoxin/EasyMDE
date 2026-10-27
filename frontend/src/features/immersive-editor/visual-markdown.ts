@@ -2026,6 +2026,59 @@ function markdownFenceOpening(line: string): MarkdownFenceOpening | null {
 }
 
 /** Plain paragraph fence text stays literal until the block Enter command. */
+/**
+ * The one operation-issued certificate rule for a source-neutral gap between
+ * two accepted rows. The Windowed producer, the formal Preview acceptance and
+ * the caret restore all read this rule instead of each deciding again: the gap
+ * slice between the preceding row's content end and the following row's start
+ * is either a blank line (two or more line endings) or the tight adjacency
+ * produced by a heading or paragraph's own single line ending, where the
+ * following row starts at that row's end.
+ */
+export function certifiedTextTailGapSlice(
+  gapSlice: string,
+  tightAdjacent: boolean
+): boolean {
+  if (/^[\r\n]{2,}$/u.test(gapSlice)) return true;
+  return tightAdjacent && /^[\r\n]?$/u.test(gapSlice);
+}
+
+/** Whether this line already starts a fence opening. */
+export function isMarkdownFenceOpeningLine(line: string): boolean {
+  return null !== markdownFenceOpening(line);
+}
+
+/**
+ * A paragraph line that begins with a fence opening is literal text until the
+ * explicit Enter command turns it into a code block. Unlike the fence-prefix
+ * command projection, this rule applies as soon as the line starts with a
+ * complete run, whatever info string follows, because a paragraph is never a
+ * real fence. Escaping the run keeps the canonical Markdown a paragraph instead
+ * of letting the Preview parser open a fence that would absorb the following
+ * blocks. The returned offset is the caret in the projected spelling.
+ */
+export function projectVisualLiteralParagraphLine(
+  line: string,
+  offset: number
+): Readonly<{ markdown: string; offset: number }> | null {
+  const opening = markdownFenceOpening(line);
+  if (!opening) return null;
+  // Native paragraph owners call this only for the edit creating an opener.
+  // An unclosed fence is still a code block at EOF: even without following
+  // blocks it consumes this paragraph's text as an info string, not prose.
+  const start = line.indexOf(opening.family);
+  if (start < 0) return null;
+  const escaped = opening.family.replace(/[`~]/gu, '\\$&');
+  const shift = Math.max(0, Math.min(opening.family.length, offset - start));
+  return {
+    markdown:
+      line.slice(0, start)
+      + escaped
+      + line.slice(start + opening.family.length),
+    offset: offset + shift
+  };
+}
+
 export function projectVisualLiteralFencePrefix(
   text: string,
   offset = text.length
@@ -2266,23 +2319,18 @@ export type VisualCodeBodyInterval = Readonly<{
   sourceBlockStart: number;
 }>;
 
-export function visualCodeBodyIntervalAtOrdinal(
+function visualCodeBodyIntervalFromBlock(
   markdown: string,
-  codeOrdinal: number
+  codeBlock: MarkdownCodeBlock,
+  lineStarts: ReadonlyArray<number>
 ): VisualCodeBodyInterval {
-  const codeBlock = markdownCodeBlocks(markdown)[codeOrdinal];
-  const openAtDocumentEnd = Boolean(
-    codeBlock
-    && 'fenced' === codeBlock.kind
+  const openAtDocumentEnd =
+    'fenced' === codeBlock.kind
     && false === codeBlock.closed
     && null === codeBlock.closingLine
-    && codeBlock.bodyEnd === markdown.length
-  );
+    && codeBlock.bodyEnd === markdown.length;
   if (
-    !Number.isInteger(codeOrdinal)
-    || codeOrdinal < 0
-    || !codeBlock
-    || 'fenced' !== codeBlock.kind
+    'fenced' !== codeBlock.kind
     || (true !== codeBlock.closed && !openAtDocumentEnd)
     || null === codeBlock.openingLine
     || (true === codeBlock.closed && null === codeBlock.closingLine)
@@ -2294,7 +2342,6 @@ export function visualCodeBodyIntervalAtOrdinal(
   ) {
     throw new Error('visual-editor-code-body-map-invalid');
   }
-  const lineStarts = markdownLineStarts(markdown);
   const sourceBlockStart = lineStarts[codeBlock.openingLine];
   const sourceBlockEnd = true === codeBlock.closed && null !== codeBlock.closingLine
     ? lineStarts[codeBlock.closingLine + 1] ?? markdown.length
@@ -2316,10 +2363,70 @@ export function visualCodeBodyIntervalAtOrdinal(
   };
 }
 
+export function visualCodeBodyIntervals(
+  markdown: string
+): ReadonlyArray<VisualCodeBodyInterval> {
+  const lineStarts = markdownLineStarts(markdown);
+  return markdownCodeBlocks(markdown).flatMap((codeBlock) =>
+    'fenced' === codeBlock.kind
+      ? [visualCodeBodyIntervalFromBlock(markdown, codeBlock, lineStarts)]
+      : []
+  );
+}
+
+/**
+ * The interval list is intentionally limited to fenced blocks for callers
+ * that enumerate rendered PREs. Their `codeOrdinal` still belongs to the full
+ * Markdown code-block list, which may also contain indented blocks. Keep the
+ * ordinal relationship explicit for cached projections instead of treating
+ * the filtered list position as an ordinal.
+ */
+export function visualCodeBodyIntervalMap(
+  markdown: string
+): ReadonlyMap<number, VisualCodeBodyInterval> {
+  return new Map(
+    visualCodeBodyIntervals(markdown).map((interval) => [
+      interval.codeOrdinal,
+      interval
+    ])
+  );
+}
+
+export function visualCodeBodyIntervalAtOrdinal(
+  markdown: string,
+  codeOrdinal: number
+): VisualCodeBodyInterval {
+  const codeBlock = markdownCodeBlocks(markdown)[codeOrdinal];
+  if (
+    !Number.isInteger(codeOrdinal)
+    || codeOrdinal < 0
+    || !codeBlock
+  ) {
+    throw new Error('visual-editor-code-body-map-invalid');
+  }
+  return visualCodeBodyIntervalFromBlock(
+    markdown,
+    codeBlock,
+    markdownLineStarts(markdown)
+  );
+}
+
 export type VisualCodeBodySelectionBoundary = Readonly<{
   node: Node;
   offset: number;
 }>;
+
+type VisualCodeBodyIntervalInventory = ReadonlyMap<
+  number,
+  VisualCodeBodyInterval
+>;
+
+function visualCodeBodyIntervalFromInventory(
+  inventory: VisualCodeBodyIntervalInventory,
+  codeOrdinal: number
+): VisualCodeBodyInterval | undefined {
+  return inventory.get(codeOrdinal);
+}
 
 export type VisualCodeBodySelectionProjection = Readonly<{
   codeOrdinal: number;
@@ -2526,16 +2633,20 @@ export function projectVisualCodeBodySelection(
   selection: Readonly<{
     end: VisualCodeBodySelectionBoundary;
     start: VisualCodeBodySelectionBoundary;
+  }>,
+  intervalInventory?: Readonly<{
+    source: VisualCodeBodyIntervalInventory;
+    visual: VisualCodeBodyIntervalInventory;
   }>
 ): VisualCodeBodySelectionProjection {
-  const sourceInterval = visualCodeBodyIntervalAtOrdinal(
-    sourceMarkdown,
-    codeOrdinal
-  );
-  const visualInterval = visualCodeBodyIntervalAtOrdinal(
-    visualMarkdown,
-    codeOrdinal
-  );
+  const sourceInterval = (intervalInventory
+    ? visualCodeBodyIntervalFromInventory(intervalInventory.source, codeOrdinal)
+    : undefined)
+    ?? visualCodeBodyIntervalAtOrdinal(sourceMarkdown, codeOrdinal);
+  const visualInterval = (intervalInventory
+    ? visualCodeBodyIntervalFromInventory(intervalInventory.visual, codeOrdinal)
+    : undefined)
+    ?? visualCodeBodyIntervalAtOrdinal(visualMarkdown, codeOrdinal);
   const sourceText = sourceMarkdown.slice(
     sourceInterval.bodyStart,
     sourceInterval.bodyEnd
@@ -2785,6 +2896,59 @@ export function createVisualCodeBodyOrdinalsForPreviewBlocks(
     if (candidate) ordinals.set(previewBlock.id, candidate.ordinal);
   }
   return ordinals;
+}
+
+/**
+ * Resolve all editable Preview code blocks from one parsed source inventory.
+ * The single-block helper remains the public strict resolver, while accepted
+ * render capture uses this batched form so each PRE does not reparse the full
+ * document and rebuild the same Preview ordinal map.
+ */
+export function createVisualCodeBodyIntervalsForPreviewBlocks(
+  markdown: string,
+  editMap: PreviewEditMap
+): ReadonlyMap<string, VisualCodeBodyInterval> {
+  const ordinals = createVisualCodeBodyOrdinalsForPreviewBlocks(
+    markdown,
+    editMap
+  );
+  const lineStarts = markdownLineStarts(markdown);
+  const intervalsByOrdinal = visualCodeBodyIntervalMap(markdown);
+  const intervals = new Map<string, VisualCodeBodyInterval>();
+  const blockIndices = new Map<string, number>();
+  editMap.blocks.forEach((block, index) => {
+    if (blockIndices.has(block.id)) {
+      throw new Error('visual-editor-code-block-map-invalid');
+    }
+    blockIndices.set(block.id, index);
+  });
+  for (const block of editMap.blocks) {
+    if (!block.editable) continue;
+    const codeOrdinal = ordinals.get(block.id);
+    if (undefined === codeOrdinal) continue;
+    const blockIndex = blockIndices.get(block.id);
+    if (undefined === blockIndex) {
+      throw new Error('visual-editor-code-block-map-unavailable');
+    }
+    const mappedRange = createVisualMarkdownSourceRangeFromPreviewEditMap(
+      markdown,
+      editMap,
+      { end: blockIndex + 1, start: blockIndex },
+      lineStarts
+    );
+    const interval = intervalsByOrdinal.get(codeOrdinal);
+    if (!interval) {
+      throw new Error('visual-editor-code-body-map-invalid');
+    }
+    if (
+      interval.sourceBlockStart < mappedRange.start
+      || interval.sourceBlockEnd > mappedRange.end
+    ) {
+      throw new Error('visual-editor-code-body-map-invalid');
+    }
+    intervals.set(block.id, interval);
+  }
+  return intervals;
 }
 
 export function createVisualCodeBodyIntervalForPreviewBlock(
@@ -3223,7 +3387,24 @@ export function normalizeVisualCodePlaceholders(
     const marked = Array.from(code.querySelectorAll<HTMLElement>(
       `[${VISUAL_CODE_PLACEHOLDER_ATTRIBUTE}]`
     ));
-    if (deletion && '' === (code.textContent ?? '')) {
+    const normalizedCodeText = normalizeCodeBodyLineEndings(
+      code.textContent ?? ''
+    );
+    const localCodeBody = !blockElement.hasAttribute(
+      'data-easymde-visual-block-id'
+    );
+    if (
+      deletion
+      && (
+        '' === normalizedCodeText
+        || (localCodeBody
+          && (
+            'deleteContentBackward' === inputType
+            || 'deleteContentForward' === inputType
+          )
+          && '\n' === normalizedCodeText)
+      )
+    ) {
       const existingPlaceholder = code.firstChild;
       if (
         code.childNodes.length === 1
@@ -4077,7 +4258,8 @@ export function serializeVisualMarkdown(editor: HTMLElement): string {
 export function createVisualMarkdownSourceRangeFromPreviewEditMap(
   sourceMarkdown: string,
   editMap: PreviewEditMap,
-  blockRange: Readonly<{ end: number; start: number }>
+  blockRange: Readonly<{ end: number; start: number }>,
+  lineStartsOverride?: ReadonlyArray<number>
 ): Readonly<{ end: number; start: number }> {
   const invalid = (): never => {
     throw new Error('visual-editor-window-source-range-invalid');
@@ -4092,7 +4274,7 @@ export function createVisualMarkdownSourceRangeFromPreviewEditMap(
     || blockRange.end > editMap.blocks.length
   ) invalid();
 
-  const lineStarts = markdownLineStarts(sourceMarkdown);
+  const lineStarts = lineStartsOverride ?? markdownLineStarts(sourceMarkdown);
   const selected = editMap.blocks.slice(blockRange.start, blockRange.end);
   let previousEndLine: number | null = null;
   for (const block of selected) {
@@ -4465,7 +4647,8 @@ export function visualBoundarySourceOffset(
   baselineVisualMarkdown: string,
   node: Node,
   offset: number,
-  projectedIntervalMap?: VisualMarkdownSourceIntervalMap
+  projectedIntervalMap?: VisualMarkdownSourceIntervalMap,
+  options: Readonly<{ structuralEmptyParagraphRemoval?: boolean }> = {}
 ): number {
   const marker = '\uE000easymde-caret\uE001';
   if (sourceMarkdown.includes(marker) || baselineVisualMarkdown.includes(marker)) {
@@ -4533,7 +4716,8 @@ export function visualBoundarySourceOffset(
     sourceMarkdown,
     baselineVisualMarkdown,
     markedVisualMarkdown,
-    projectedIntervalMap
+    projectedIntervalMap,
+    options
   );
   const sourceOffset = markedSource.indexOf(marker);
   if (sourceOffset < 0 || sourceOffset !== markedSource.lastIndexOf(marker)) {
@@ -5094,7 +5278,7 @@ function visualPlainHeadingBoundaryFromSourceOffset(
   sourceOffset: number
 ): VisualBoundary | null {
   if (!/^H[1-6]$/u.test(editor.tagName)) return null;
-  const sourceLine = sourceMarkdown.replace(/(?:\r\n|\r|\n)$/u, '');
+  const sourceLine = sourceMarkdown.replace(/(?:\r\n|\r|\n)+$/u, '');
   if (sourceLine.includes('\n') || sourceLine.includes('\r')) return null;
   const heading = sourceLine.match(/^( {0,3})(#{1,6})(?:[ \t]+(.*))?$/u);
   if (!heading) return null;
@@ -5135,7 +5319,26 @@ function visualPlainHeadingBoundaryFromSourceOffset(
   }
   return null;
 }
+/**
+ * A mounted heading root owns one Markdown heading line plus its trailing
+ * source gap. Once a non-trailing line break remains in that fragment, the
+ * plain-heading helper has deliberately declined the source; the generic
+ * merge walk must not reinterpret that rejected heading as its visible tail.
+ */
+function visualPlainHeadingHasInteriorSourceNewline(
+  editor: HTMLElement,
+  sourceMarkdown: string
+): boolean {
+  if (!/^H[1-6]$/u.test(editor.tagName)
+    || !/^ {0,3}#{1,6}(?:[ \t]+|$)/u.test(sourceMarkdown)) {
+    return false;
+  }
+  const withoutTrailingGaps = sourceMarkdown.replace(/(?:\r\n|\r|\n)+$/u, '');
+  return withoutTrailingGaps.includes('\n')
+    || withoutTrailingGaps.includes('\r');
 
+
+}
 function visualSourceBoundaryCandidates(
   editor: HTMLElement,
   sourceOffset: number
@@ -5744,6 +5947,9 @@ export function visualCaretBoundaryFromSourceOffset(
   allowCodeFenceDelimiter = true
 ): Readonly<{ node: Node; offset: number }> {
   if (sourceOffset < 0 || sourceOffset > sourceMarkdown.length) {
+    throw new Error('visual-editor-selection-map-failed');
+  }
+  if (visualPlainHeadingHasInteriorSourceNewline(editor, sourceMarkdown)) {
     throw new Error('visual-editor-selection-map-failed');
   }
   const plainHeadingBoundary = visualPlainHeadingBoundaryFromSourceOffset(
@@ -6813,22 +7019,24 @@ function uniqueTextProjection(
   node: Text,
   baselineVisualMarkdown: string,
   sourceIntervalMap: VisualMarkdownSourceIntervalMap,
-  acceptedPrefixOnly: boolean
+  acceptedPrefixOnly: boolean,
+  textData?: string
 ): Readonly<{ sourceOffset: number; visualOffset: number }> | null {
-  if (!node.data) return null;
-  const visualOffset = baselineVisualMarkdown.indexOf(node.data);
+  const data = textData ?? node.data;
+  if (!data) return null;
+  const visualOffset = baselineVisualMarkdown.indexOf(data);
   if (
     visualOffset < 0
-    || visualOffset !== baselineVisualMarkdown.lastIndexOf(node.data)
+    || visualOffset !== baselineVisualMarkdown.lastIndexOf(data)
   ) {
     return null;
   }
   const sourceStart = sourceIntervalMap.resolve(visualOffset);
-  const sourceEnd = sourceIntervalMap.resolve(visualOffset + node.data.length);
+  const sourceEnd = sourceIntervalMap.resolve(visualOffset + data.length);
   if (
     null === sourceStart
     || null === sourceEnd
-    || sourceEnd - sourceStart !== node.data.length
+    || sourceEnd - sourceStart !== data.length
   ) {
     return null;
   }
@@ -6838,7 +7046,7 @@ function uniqueTextProjection(
   // block-local literal-marker projector owns those boundaries instead.
   const normalizedStart = sourceIntervalMap.sourceOffsetAt(visualOffset);
   const normalizedEnd = sourceIntervalMap.sourceOffsetAt(
-    visualOffset + node.data.length
+    visualOffset + data.length
   );
   if (
     undefined === normalizedStart
@@ -6868,11 +7076,17 @@ function uniqueTextProjection(
     baselineVisualMarkdown,
     acceptedPrefixOnly
   );
-  if (
-    !blockRange
-    || visualOffset < blockRange.start
-    || visualOffset + node.data.length > blockRange.end
-  ) {
+  if (!blockRange || visualOffset < blockRange.start) return null;
+  // A block's own baseline range stops before the terminal space that closes
+  // it, while the canonical source and the accepted baseline both keep that
+  // space. The witnessed terminal-NBSP override may therefore reach exactly
+  // one such space past the range it belongs to; no other run extends a block.
+  const terminalSpace =
+    textData && data.endsWith(' ')
+    && visualOffset + data.length === blockRange.end + 1
+      ? 1
+      : 0;
+  if (visualOffset + data.length > blockRange.end + terminalSpace) {
     return null;
   }
   return { sourceOffset: sourceStart, visualOffset };
@@ -6892,14 +7106,16 @@ export function mapTextBoundaryFromInterval(
   offset: number,
   baselineVisualMarkdown: string,
   sourceIntervalMap: VisualMarkdownSourceIntervalMap,
-  acceptedPrefixOnly = false
+  acceptedPrefixOnly = false,
+  textData?: string
 ): Readonly<{ sourceOffset: number; visualOffset: number }> | null {
   const direct = uniqueTextProjection(
     surface,
     node,
     baselineVisualMarkdown,
     sourceIntervalMap,
-    acceptedPrefixOnly
+    acceptedPrefixOnly,
+    textData
   );
   if (direct) {
     return {
@@ -7167,6 +7383,7 @@ export function visualEmptyStructuralBodySelection(
 
 type VisualSelectionSourceRangeOptions = Readonly<{
   acceptedPasteDocumentBoundary?: AcceptedPasteDocumentBoundary;
+  structuralEmptyParagraphRemoval?: boolean;
 }>;
 
 export function visualSelectionSourceRange(
@@ -7191,6 +7408,23 @@ export function visualSelectionSourceRange(
 
     throw new Error('visual-editor-selection-map-failed');
   }
+  const boundarySourceOffset = (
+    node: Node,
+    offset: number,
+    projectedIntervalMap?: VisualMarkdownSourceIntervalMap
+  ): number =>
+    visualBoundarySourceOffset(
+      editor,
+      sourceMarkdown,
+      baselineVisualMarkdown,
+      node,
+      offset,
+      projectedIntervalMap,
+      {
+        structuralEmptyParagraphRemoval:
+          options.structuralEmptyParagraphRemoval === true
+      }
+    );
   if (
     options.acceptedPasteDocumentBoundary
     && currentVisualMarkdown === baselineVisualMarkdown
@@ -7242,10 +7476,7 @@ export function visualSelectionSourceRange(
       neutralSelection.visualOffset,
       neutralSelection.sourceOffset
     );
-    const offset = visualBoundarySourceOffset(
-      editor,
-      sourceMarkdown,
-      baselineVisualMarkdown,
+    const offset = boundarySourceOffset(
       selection.anchorNode,
       selection.anchorOffset,
       projectedIntervalMap
@@ -7254,31 +7485,19 @@ export function visualSelectionSourceRange(
   }
   if (selectedVisualCodePlaceholder(selection)) {
     const range = selection.getRangeAt(0);
-    const offset = visualBoundarySourceOffset(
-      editor,
-      sourceMarkdown,
-      baselineVisualMarkdown,
+    const offset = boundarySourceOffset(
       range.startContainer,
       range.startOffset
     );
     return { direction: 'none', end: offset, start: offset };
   }
-  const anchor = visualBoundarySourceOffset(
-    editor,
-    sourceMarkdown,
-    baselineVisualMarkdown,
+  const anchor = boundarySourceOffset(
     selection.anchorNode,
     selection.anchorOffset
   );
   const focus = selection.isCollapsed
     ? anchor
-    : visualBoundarySourceOffset(
-        editor,
-        sourceMarkdown,
-        baselineVisualMarkdown,
-        selection.focusNode,
-        selection.focusOffset
-      );
+    : boundarySourceOffset(selection.focusNode, selection.focusOffset);
   return {
     direction: anchor === focus ? 'none' : anchor > focus ? 'backward' : 'forward',
     end: Math.max(anchor, focus),
@@ -7435,11 +7654,87 @@ function serializerGapEquivalent(
   return sourceIndex === sourceText.length && visualIndex === visualText.length;
 }
 
+function sourceEscapeEditRange(
+  map: VisualMarkdownSourceIntervalMap,
+  start: number,
+  end: number,
+  sourceStart: number,
+  sourceEnd: number
+): Readonly<{ start: number; end: number }> | null {
+  const hiddenEscape = (offset: number): boolean =>
+    !isMarkdownUnitBoundary(map.source, offset + 1)
+    && map.hiddenSourceRanges.some((range) =>
+      (range.start === offset && range.end === offset + 1)
+      || (map.source[offset] === map.source[offset + 1]
+        && range.start === offset + 1 && range.end === offset + 2));
+  const boundary = (visualOffset: number, sourceOffset: number): number | null => {
+    if (isMarkdownUnitBoundary(map.source, sourceOffset)) return sourceOffset;
+    if (sourceOffset > 0 && hiddenEscape(sourceOffset - 1)) {
+      if (map.sourceOffsetAt(visualOffset - 1) === sourceOffset - 1
+        && map.baselineVisualMarkdown[visualOffset - 1] === map.source[sourceOffset]) {
+        return sourceOffset + 1;
+      }
+      if (map.baselineVisualMarkdown[visualOffset] === map.source[sourceOffset]) {
+        return sourceOffset - 1;
+      }
+    }
+    return null;
+  };
+  const from = boundary(start, sourceStart);
+  const to = boundary(end, sourceEnd);
+  if (from === null || to === null || from > to) return null;
+  let sourceOffset = from;
+  let visualOffset = start;
+  let sawEscape = from !== sourceStart || to !== sourceEnd;
+  while (sourceOffset < to && visualOffset < end) {
+    const escaped = hiddenEscape(sourceOffset);
+    const characterOffset = sourceOffset + (escaped ? 1 : 0);
+    const mapped = map.sourceOffsetAt(visualOffset);
+    if ((mapped !== characterOffset && !(escaped && mapped === sourceOffset))
+      || map.source[characterOffset] !== map.baselineVisualMarkdown[visualOffset]) return null;
+    sawEscape ||= escaped;
+    sourceOffset = characterOffset + 1;
+    visualOffset += 1;
+  }
+  return sawEscape && sourceOffset === to && visualOffset === end ? { start: from, end: to } : null;
+}
+
+export function visualSourceEscapeDeletionRange(
+  source: string,
+  baseline: string,
+  start: number,
+  end: number
+): Readonly<{ start: number; end: number }> | null {
+  if (start < 0 || end <= start || end > baseline.length) return null;
+  const map = createVisualMarkdownSourceIntervalMap(source, baseline);
+  const from = map.sourceOffsetAt(start);
+  const to = map.sourceOffsetAt(end);
+  if (from === undefined || to === undefined) return null;
+  const range = sourceEscapeEditRange(map, start, end, from, to);
+  if (!range || map.hiddenSourceRanges.some(({ start: hiddenStart, end: hiddenEnd }) =>
+    range.start < hiddenEnd && range.end > hiddenStart
+    && !(hiddenEnd === hiddenStart + 1
+      && (!isMarkdownUnitBoundary(map.source, hiddenStart)
+        || !isMarkdownUnitBoundary(map.source, hiddenEnd))))) return null;
+  const originalStart = map.originalOffsetAt(range.start);
+  const originalEnd = map.originalOffsetAt(range.end);
+  return originalStart === undefined || originalEnd === undefined
+    ? null : { start: originalStart, end: originalEnd };
+}
+
 export function mergeVisualMarkdownChangeDetails(
   sourceMarkdown: string,
   baselineVisualMarkdown: string,
   editedVisualMarkdown: string,
-  projectedIntervalMap?: VisualMarkdownSourceIntervalMap
+  projectedIntervalMap?: VisualMarkdownSourceIntervalMap,
+  options: Readonly<{
+    /**
+     * A verified native EOF join removes an empty paragraph's renderer-only
+     * bytes while the canonical blank line is preserved. Only the owner that
+     * proved that exact node delta may set this.
+     */
+    structuralEmptyParagraphRemoval?: boolean;
+  }> = {}
 ): VisualMarkdownMergeResult {
   // A supplied map is only evidence for the exact snapshot it was built from.
   // Validate it before the unchanged fast path, because equal normalized text
@@ -7498,15 +7793,22 @@ export function mergeVisualMarkdownChangeDetails(
 
     const replacedVisualText = baselineVisualMarkdown.slice(start, end);
     const mappedSourceStart = sourceIntervalMap.sourceOffsetAt(start);
-    const sourceStart = start === end
+    let sourceStart = start === end
       && sourceIntervalMap.isStructuralSourceBoundary(mappedSourceStart ?? -1)
       ? sourceIntervalMap.rawSourceOffsetAt(start)
       : mappedSourceStart;
     const mappedSourceEnd = sourceIntervalMap.sourceOffsetAt(end);
-    const sourceEnd = start !== end
+    let sourceEnd = start !== end
       && sourceIntervalMap.isStructuralSourceBoundary(mappedSourceEnd ?? -1)
       ? sourceIntervalMap.rawSourceOffsetAt(end)
       : mappedSourceEnd;
+    const escapedRange = sourceStart !== undefined && sourceEnd !== undefined
+      ? sourceEscapeEditRange(sourceIntervalMap, start, end, sourceStart, sourceEnd)
+      : null;
+    if (escapedRange) {
+      sourceStart = escapedRange.start;
+      sourceEnd = escapedRange.end;
+    }
     const consumesStructuralSeparator = sourceIntervalMap.structuralSourceSeparatorStart !== null
       && sourceStart === sourceIntervalMap.structuralSourceSeparatorStart
       && sourceEnd === sourceIntervalMap.structuralSourceBoundary;
@@ -7526,7 +7828,8 @@ export function mergeVisualMarkdownChangeDetails(
       throw new Error('visual-editor-markdown-merge-failed');
     }
     const sourceSliceMatchesVisual = serializerOnlyEscapeChange
-      || source.slice(sourceStart, sourceEnd)
+      || escapedRange !== null
+      || coversMarkdownUnits(source, sourceStart, sourceEnd) && source.slice(sourceStart, sourceEnd)
         === baselineVisualMarkdown.slice(start, end)
       || serializerGapEquivalent(
         sourceIntervalMap,
@@ -7536,7 +7839,21 @@ export function mergeVisualMarkdownChangeDetails(
         baselineVisualMarkdown.slice(start, end)
       );
     if (!sourceSliceMatchesVisual && !consumesStructuralSeparator) {
-      throw new Error('visual-editor-markdown-merge-failed');
+      // A verified native join removed an empty paragraph: its renderer-only
+      // whitespace line is not canonical bytes, and the source's blank line
+      // stays. Only the owner that proved that exact node delta sets this.
+      const structuralEmptyParagraphRemoval =
+        options.structuralEmptyParagraphRemoval === true &&
+        true === part.removed &&
+        /^[ \t]*\n\n$/u.test(replacedVisualText) &&
+        /^[\r\n]+$/u.test(source.slice(sourceStart, sourceEnd));
+      if (!structuralEmptyParagraphRemoval) {
+        throw new Error('visual-editor-markdown-merge-failed');
+      }
+      // The removed empty paragraph and its renderer-only line are not
+      // canonical bytes; the source blank line stays, so this chunk maps to
+      // no edit at all.
+      continue;
     }
     // Only reject edits whose mapped source range actually overlaps hidden
     // Markdown. Identical text in an unrelated hidden range is not evidence
@@ -7547,6 +7864,9 @@ export function mergeVisualMarkdownChangeDetails(
       ({ end: hiddenEnd, start: hiddenStart }) =>
         sourceStart < hiddenEnd && sourceEnd > hiddenStart
         && !(
+          escapedRange && hiddenEnd === hiddenStart + 1
+          && (!isMarkdownUnitBoundary(source, hiddenEnd) || !isMarkdownUnitBoundary(source, hiddenStart))
+          ||
           consumesStructuralSeparator
           && hiddenStart === sourceIntervalMap.structuralSourceSeparatorStart
         )
@@ -7977,13 +8297,15 @@ export function mergeVisualMarkdownChange(
   sourceMarkdown: string,
   baselineVisualMarkdown: string,
   editedVisualMarkdown: string,
-  projectedIntervalMap?: VisualMarkdownSourceIntervalMap
+  projectedIntervalMap?: VisualMarkdownSourceIntervalMap,
+  options: Readonly<{ structuralEmptyParagraphRemoval?: boolean }> = {}
 ): string {
   return mergeVisualMarkdownChangeDetails(
     sourceMarkdown,
     baselineVisualMarkdown,
     editedVisualMarkdown,
-    projectedIntervalMap
+    projectedIntervalMap,
+    options
   ).value;
 }
 

@@ -140,6 +140,15 @@ export type CodeMirrorDocumentSession = Readonly<{
   getInputElement: () => HTMLElement;
   getHistoryState: () => DocumentHistoryState;
   getScrollElement: () => HTMLElement;
+  /**
+   * Captures CodeMirror's own public scroll snapshot for a layout change that
+   * commits before the next layout effect. The returned restore dispatches the
+   * snapshot only while this session is alive, the same document revision is
+   * current, the view is attached, and visual editing has not parked it;
+   * otherwise it is a no-op. Neither the capture nor the restore changes the
+   * document or the selection.
+   */
+  captureLayoutScrollRestore: () => (() => void) | null;
   getSelection: () => DocumentSelection;
   getSnapshot: () => CodeMirrorDocumentSnapshot;
   getValue: () => string;
@@ -876,6 +885,33 @@ export function createCodeMirrorDocumentSession({
       };
     },
     getScrollElement: () => view.scrollDOM,
+    captureLayoutScrollRestore() {
+      // An attached-but-hidden Source (for example the locked Preview's
+      // parked CodeMirror) has no real viewport to preserve: capturing it
+      // would freeze a zero/invisible scroll position and replay it when the
+      // Source is revealed. Only a rendered, non-zero scroll owner may
+      // capture or restore; a hidden owner keeps CodeMirror's own reset.
+      const hasVisibleScrollOwner = () =>
+        view.dom.isConnected
+        && view.scrollDOM.getClientRects().length > 0
+        && view.scrollDOM.clientHeight > 0;
+      if (destroyed || visualEditingActive || !hasVisibleScrollOwner()) {
+        return null;
+      }
+      const revision = documentRevision;
+      const snapshot = view.scrollSnapshot();
+      return () => {
+        if (
+          destroyed
+          || visualEditingActive
+          || documentRevision !== revision
+          || !hasVisibleScrollOwner()
+        ) {
+          return;
+        }
+        view.dispatch({ effects: snapshot });
+      };
+    },
     getSelection: () => stateSelection(authoritativeState()),
     getSnapshot: () => snapshot,
     getValue: () => authoritativeState().doc.toString(),

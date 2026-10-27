@@ -18,17 +18,21 @@ import {
 	applyVisualToolbarCommand,
 	assertVisualMarkdownReadOnlySnapshot,
 	captureVisualSelection,
+	certifiedTextTailGapSlice,
 	captureVisualCodeInputSnapshot,
 	captureVisualMarkdownReadOnlySnapshot,
 	captureVisualThematicBreakSelection,
 	prepareVisualThematicBreakPointerSelection,
 	classifyVisualSelectionProvenance,
 	createVisualImageInteraction,
+	expandVisualCodeFenceForBody,
 	mergeVisualMarkdownChangeDetails,
 	normalizeVisualCaretAtDocumentBoundary,
 	normalizeVisualCodePlaceholders,
 	projectVisualCodeBodySelection,
 	projectVisualLiteralFencePrefix,
+	projectVisualLiteralParagraphLine,
+	isMarkdownFenceOpeningLine,
 	projectVisualCodeFenceMetadata,
 	projectVisualMarkdownRemovalSelection,
 	protectVisualMarkdownReadOnlyRegions,
@@ -37,6 +41,8 @@ import {
 	serializeVisualMarkdownBlockFragment,
 	VISUAL_MARKDOWN_READ_ONLY_SELECTOR,
   type VisualCodeInputSnapshot,
+  type VisualCodeBodySelectionProjection,
+  type VisualCodeFenceBodyExpansion,
   type VisualMarkdownReadOnlySnapshot,
   type VisualSelectionSnapshot,
   type VisualStructuralBoundaryBlock,
@@ -51,6 +57,7 @@ import {
 	visualCodeBodyOrdinalForSourceRange,
 	visualContextMenuCaretRangeAtPoint,
 	visualSelectionSourceRangeForBlocks,
+	visualSourceEscapeDeletionRange,
 	resolveVisualStructuralKeyboardContextGap,
 	visualStructuralBoundaryBlocks,
 	visualStructuralBoundaryCapture,
@@ -178,6 +185,23 @@ class SourceRangeLedger {
 		);
 	}
 
+	/** The next accepted editable source row after this index, mounted or not. */
+	nextEditableAfter(index: number): EffectiveBlockRange | null {
+		let next: MutableBlockRange | null = null;
+		for (const range of this.byId.values()) {
+			if (range.index <= index || !range.editable) continue;
+			if (!next || range.index < next.index) next = range;
+		}
+		return next ? this.get(next.id) : null;
+	}
+
+	all(): ReadonlyArray<EffectiveBlockRange> {
+		return Array.from(this.byId.values()).flatMap((range) => {
+			const effective = this.get(range.id);
+			return effective ? [effective] : [];
+		});
+	}
+
 	private prefix(end: number): number {
 		let total = 0;
 		for (let cursor = end; cursor > 0; cursor -= cursor & -cursor) {
@@ -218,12 +242,12 @@ type DeletionDirection = "backward" | "forward";
 type CommitOptions = Readonly<{
 	allowSingleBlockStructural?: boolean;
 	/**
-	 * Re-witness a transaction-scoped replacement after the canonical write.
-	 * The gap exit is the one replacement that also removes canonical bytes:
-	 * its pre-write baseline witness is stale the moment the write lands, so
-	 * the commit itself re-binds the adopted root to the published source.
+	 * A trusted IME replacement commit whose pre-edit origin is still the live
+	 * canonical source. The commit may settle both carets on the insertion end
+	 * only when the whole resulting value proves that exact insertion; a
+	 * drifted native caret is not authoritative for it.
 	 */
-	rewitnessReplacement?: boolean;
+	compositionCommit?: Readonly<{ insertionEnd: number; value: string }>;
 }>;
 
 type FormalPreviewOptions = Readonly<{
@@ -248,6 +272,7 @@ type WindowedThematicBreakGap = Readonly<{
 type WindowedEmptyCodeGap = Readonly<{
 	before: Readonly<{ start: number; end: number; source: string }>;
 	after: Readonly<{ start: number; end: number; source: string }>;
+	codeBodySourceRange?: Readonly<{ end: number; start: number }>;
 	markdown: string;
 	selection: DocumentSelection;
 	revision: number;
@@ -257,6 +282,18 @@ type WindowedEmptyCodeGap = Readonly<{
 	accepted: boolean;
 	draftSourceStart?: number;
 }>;
+
+function rememberEmptyCodeGap(
+	history: Map<number, WindowedEmptyCodeGap>,
+	gap: WindowedEmptyCodeGap,
+): void {
+	history.set(gap.historyState.undoDepth, gap);
+	while (history.size > 32) {
+		const oldest = history.keys().next().value;
+		if (oldest === undefined) break;
+		history.delete(oldest);
+	}
+}
 
 function emptyCodeGapMatchesDocument(
 	gap: WindowedEmptyCodeGap,
@@ -278,11 +315,41 @@ function emptyCodeGapPresentationMatchesDocument(
 		&& gap.presentation.isConnected && gap.presentation.innerHTML === gap.presentationHtml;
 }
 
+/**
+ * A paragraph whose own text is a block-shortcut trigger belongs to the shared
+ * block-shortcut owner, which rewrites the block: it is never a source-neutral
+ * text-tail split.
+ */
+function blockShortcutTail(block: HTMLElement): boolean {
+	if ('P' !== block.tagName) return false;
+	const text = block.textContent ?? '';
+	return /^(?:#{1,6}|>|---|\*\*\*|___|[-*+]|\d+\.|[-*+] \[[ xX]\])$/u.test(text)
+		|| /^ {0,3}(?:`{3,}|~{3,})/u.test(text);
+}
+
+function windowedGapLineParagraphShape(paragraph: HTMLElement): boolean {
+	const children = Array.from(paragraph.childNodes);
+	if (0 === children.length) return false;
+	if (1 === children.length && children[0] instanceof Text) return true;
+	return children.every((child) => child instanceof HTMLBRElement);
+}
+
 function emptyCodeGapBoundary(gap: WindowedEmptyCodeGap, node: Node | null, offset: number): boolean {
 	const paragraph = gap.presentation;
 	if (!paragraph.isConnected) return false;
-	if (paragraph instanceof HTMLParagraphElement && paragraph.childNodes.length === 1 && paragraph.firstChild instanceof HTMLBRElement) {
-		return (node === paragraph && (offset === 0 || offset === 1)) || (node === paragraph.firstChild && offset === 0);
+	if ("PRE" === paragraph.tagName) {
+		const code = paragraph.querySelector<HTMLElement>(":scope > code");
+		return Boolean(
+			node &&
+			code &&
+			visualCodeBodyDomOffset(code, { node, offset }) !== null,
+		);
+	}
+	if (paragraph instanceof HTMLParagraphElement && windowedGapLineParagraphShape(paragraph)
+		&& !(1 === paragraph.childNodes.length && paragraph.firstChild instanceof Text)) {
+		if (node === paragraph && Number.isInteger(offset) && offset >= 0 && offset <= paragraph.childNodes.length) return true;
+		if (node instanceof HTMLBRElement && paragraph.contains(node)) return offset === 0 || offset === 1;
+		return false;
 	}
 	// Once the certified gap has taken its first character, the paragraph holds
 	// this owner's own uncommitted editing draft. The draft is the same
@@ -332,7 +399,10 @@ function restoreEmptyCodeGapSelection(
 	const point = gap.selection.start;
 	if (gap.selection.direction !== "none" || point !== gap.selection.end
 		|| gap.before.end > point || point > gap.after.start
-		|| !/^(?:\r\n|\r|\n)+$/u.test(gap.markdown.slice(gap.before.end, gap.after.start))) return invalid();
+		|| !certifiedTextTailGapSlice(
+			gap.markdown.slice(gap.before.end, gap.after.start),
+			gap.after.start <= gap.before.end + 2,
+		)) return invalid();
 	const find = (extent: WindowedEmptyCodeGap["before"]): HTMLElement => {
 		const matches = Array.from(surface.children).filter((child): child is HTMLElement => {
 			if (!(child instanceof HTMLElement) || child.hasAttribute(WINDOW_SPACER_ATTRIBUTE)) return false;
@@ -343,7 +413,13 @@ function restoreEmptyCodeGapSelection(
 		return matches.length === 1 && matches[0] ? matches[0] : invalid();
 	};
 	const before = find(gap.before);
-	const after = find(gap.after);
+	const eofBoundary = gap.after.start === gap.after.end
+		&& gap.after.start === gap.markdown.length
+		&& "" === gap.after.source;
+	const after = eofBoundary
+		? gap.presentation
+		: find(gap.after);
+	if (eofBoundary && (after.parentNode !== surface || after !== gap.presentation)) return invalid();
 	const nodes = Array.from(surface.childNodes);
 	const start = nodes.indexOf(before);
 	const end = nodes.indexOf(after);
@@ -510,6 +586,10 @@ const WINDOWED_PENDING_TEXT_INPUT_TYPES: Readonly<Record<string, true>> = {
 	insertText: true,
 	insertReplacementText: true,
 	insertLineBreak: true,
+	// A certified gap keeps accepting newlines while its own formal Preview is
+	// outstanding: repeated Enter is the same owner continuing the same source
+	// gap, not an unavailable input.
+	insertParagraph: true,
 };
 
 const WINDOWED_PENDING_NAVIGATION_KEYS: Readonly<Record<string, true>> = {
@@ -760,12 +840,30 @@ function reconcileWindowedCodeBodyDom(
 	const code =
 		codeChildren.find((child) => child === input.code) ?? codeChildren[0];
 	if (!code) throw new Error("visual-editor-code-child-missing");
+	// The authenticated split proof must be read BEFORE any mutation: the
+	// sibling removal below changes the child list it verifies.
+	const authenticatedSplit = isWindowedParagraphCodeSplit(input);
 	if (codeChildren.length > 1) {
 		if ("insertParagraph" !== input.inputType || 2 !== codeChildren.length) {
 			throw new Error("visual-editor-code-shape-invalid");
 		}
 		for (const sibling of codeChildren) {
 			if (sibling !== code) sibling.remove();
+		}
+	}
+	if (authenticatedSplit) {
+		// Chromium's own paragraph split inside PRE leaves the kept CODE with
+		// one synthetic <br> as its last child - the marker of the split, not
+		// content. Only that exact marker is removed, and only after the
+		// authenticated two-CODE split proved it. Any other BR, DIV or
+		// unknown element still reaches the markup guard and rejects
+		// unchanged.
+		const last = code.lastChild;
+		if (
+			last instanceof HTMLBRElement &&
+			0 === last.attributes.length
+		) {
+			last.remove();
 		}
 	}
 	reconcileVisualCodeBodyDom(code, expectedBody, caretOffset);
@@ -1264,10 +1362,52 @@ function codeBodyDeletionOwnership(
  * final newline), the body's very end, and, only when the renderer added its
  * extra newline, the stop after it. Any other offset is mid-body.
  */
+/**
+ * The authenticated fenced-body interval of one mounted PRE, resolved from
+ * the accepted ledger's own source row: the row IS the block's owned slice,
+ * and the fence it mounts is ordinal 0 within that slice, so the validated
+ * interval helper runs once on the slice instead of rescanning the whole
+ * document. The fence must open at the slice start; the ledger row may carry
+ * its legal separator run past the closing fence, which is not part of the
+ * block. A block without an authenticated editable row, or a slice whose
+ * first fence does not open exactly at its start, leaves the terminal guard
+ * off and the existing explicit rejection in charge. Duplicate bodies stay
+ * correct because the slice is the ledger's own source position, never
+ * language or text matching.
+ */
+function windowedOwnedCodeBodyInterval(
+	pre: HTMLElement,
+	ranges: SourceRangeLedger,
+	accepted: AcceptedWindowedBlocks,
+	sourceMarkdown: string,
+): Readonly<{ bodyEnd: number; bodyStart: number }> | null {
+	const row = acceptedWindowedBlockRange(pre, ranges, accepted);
+	if (!row?.editable) return null;
+	if (
+		row.start < 0 ||
+		row.end < row.start ||
+		row.end > sourceMarkdown.length
+	) {
+		return null;
+	}
+	const ownedSlice = sourceMarkdown.slice(row.start, row.end);
+	try {
+		const interval = visualCodeBodyIntervalAtOrdinal(ownedSlice, 0);
+		if (0 !== interval.sourceBlockStart) return null;
+		return {
+			bodyEnd: row.start + interval.bodyEnd,
+			bodyStart: row.start + interval.bodyStart,
+		};
+	} catch {
+		return null;
+	}
+}
+
 function windowedCodeBodyTerminalCaret(
 	inputBlock: VisualCodeInputSnapshot,
 	surface: HTMLElement,
 	sourceMarkdown: string,
+	bodyInterval: Readonly<{ bodyEnd: number; bodyStart: number }> | null,
 ): boolean {
 	const selection = surface.ownerDocument.defaultView?.getSelection();
 	if (!selection?.isCollapsed || !selection.anchorNode) return false;
@@ -1276,12 +1416,11 @@ function windowedCodeBodyTerminalCaret(
 		selection.anchorNode !== code
 		&& !code.contains(selection.anchorNode)
 	) return false;
+	if (!bodyInterval) return false;
 	const markdown = sourceMarkdown;
-	let ordinal = 0;
 	try {
-		const interval = visualCodeBodyIntervalAtOrdinal(markdown, ordinal);
 		const bodyText = normalizeCodeBodyDomTextForWindow(
-			markdown.slice(interval.bodyStart, interval.bodyEnd),
+			markdown.slice(bodyInterval.bodyStart, bodyInterval.bodyEnd),
 		);
 		const domText = normalizeCodeBodyDomTextForWindow(inputBlock.codeText);
 		const caretOffset = visualCodeBodyDomOffset(code, {
@@ -2330,7 +2469,14 @@ function restoreMountedSourceSelection(
 				rootOffset,
 			);
 		} catch (error) {
-			if (sourceOffset !== endpoint.range.end) throw error;
+			// The block's text tail is the same canonical point whether or not the
+			// renderer kept the source's escapes: a renderer decodes `\~`/`\``
+			// while the canonical source keeps them, so the generic mapping cannot
+			// align the two byte strings even though both end at the same caret.
+			// Only a tail whose remaining bytes are line endings takes this path;
+			// every interior offset keeps the explicit mapping failure.
+			const tail = markdown.slice(sourceOffset, endpoint.range.end);
+			if (sourceOffset !== endpoint.range.end && !/^[\r\n]+$/u.test(tail)) throw error;
 			boundary = editableBlockEndBoundary(clone);
 		}
 		const blockIndex = region.blocks.indexOf(endpoint.block);
@@ -2902,6 +3048,12 @@ type AcceptedWindowedBlockRecord = Readonly<{
 
 type AcceptedWindowedBlocks = WeakMap<HTMLElement, AcceptedWindowedBlockRecord>;
 
+class WindowedDomStaleError extends Error {
+	constructor(readonly reason: string) {
+		super("visual-editor-window-source-navigation-dom-stale");
+	}
+}
+
 /**
  * The current authoritative ledger row of an accepted mounted root, or `null`.
  *
@@ -2952,13 +3104,13 @@ function captureAcceptedWindowedBlockSerializations(
 		const id = block.getAttribute(VISUAL_BLOCK_ATTRIBUTE) ?? "";
 		const range = ranges.get(id);
 		if (!range) {
-			throw new Error("visual-editor-window-source-navigation-dom-stale");
+			throw new WindowedDomStaleError("capture-missing-row");
 		}
 		// One accepted row belongs to exactly one mounted root. A second node
 		// claiming it - forged or duplicated - cannot be recorded as the owner's
 		// render of that block.
 		if (claimedIds.has(id)) {
-			throw new Error("visual-editor-window-source-navigation-dom-stale");
+			throw new WindowedDomStaleError("capture-duplicate-row");
 		}
 		claimedIds.add(id);
 		if (previous) {
@@ -2978,7 +3130,7 @@ function captureAcceptedWindowedBlockSerializations(
 					prior.editable !== range.editable
 				)
 			) {
-				throw new Error("visual-editor-window-source-navigation-dom-stale");
+				throw new WindowedDomStaleError("capture-prior-binding");
 			}
 		}
 		accepted.set(block, {
@@ -3129,7 +3281,7 @@ function assertMountedEditableBlocksMatchAccepted(
 		currentNodes.length !== acceptedNodes.length ||
 		currentNodes.some((node, index) => node !== acceptedNodes[index])
 	) {
-		throw new Error("visual-editor-window-source-navigation-dom-stale");
+		throw new WindowedDomStaleError("mount-child-identity");
 	}
 
 	for (const block of Array.from(surface.children).filter(
@@ -3145,14 +3297,14 @@ function assertMountedEditableBlocksMatchAccepted(
 		const range = acceptedWindowedBlockRange(block, ranges, accepted);
 		const record = accepted.get(block);
 		if (!range || !record) {
-			throw new Error("visual-editor-window-source-navigation-dom-stale");
+			throw new WindowedDomStaleError("mount-block-binding");
 		}
 		if (!range.editable) continue;
 		if (
 			null !== record.serialization &&
 			normalizedWindowedBlockSerialization(block) !== record.serialization
 		) {
-			throw new Error("visual-editor-window-source-navigation-dom-stale");
+			throw new WindowedDomStaleError("mount-serialization");
 		}
 	}
 }
@@ -3390,6 +3542,46 @@ export function WindowedImmersiveVisualEditor({
 		revision: number;
 		signature: string;
 	}> | null>(null);
+	const activeRef = useRef(false);
+	const retainGapPresentation = (gap: WindowedEmptyCodeGap): void => {
+		ownedGapPresentationRef.current = gap;
+		const lease = retainCompositionSurfaceRef.current();
+		try {
+			lease.retainGap?.({ node: gap.presentation, markdown: gap.markdown,
+				sourceRevision: gap.revision, html: gap.presentationHtml,
+				surface, historyState: gap.historyState,
+				before: gap.before, after: gap.after,
+				isLive: () => activeRef.current && surface.isConnected && gap.presentation.parentNode === surface
+					&& ownedGapPresentationRef.current === gap && emptyCodeGapPresentationMatchesDocument(gap, documentSession.document) });
+		} finally { lease.release(); }
+	};
+	const promoteGapPresentation = (gap: WindowedEmptyCodeGap): void => {
+		const acceptedGap = { ...gap, accepted: true };
+		emptyCodeGapRef.current = acceptedGap;
+		const lease = pendingHistorySelectionRef.current;
+		if (lease?.emptyCodeGap === gap) {
+			pendingHistorySelectionRef.current = { ...lease, emptyCodeGap: acceptedGap };
+		}
+		retainGapPresentation(acceptedGap);
+		rememberEmptyCodeGap(emptyCodeGapHistoryRef.current, acceptedGap);
+	};
+	const promoteAcceptedWindowGap = (snapshot: ImmersiveWindowAcceptedSnapshot): void => {
+		const transfer = pendingRef.current;
+		const lease = pendingHistorySelectionRef.current;
+		const gap = emptyCodeGapRef.current;
+		if (!transfer || !lease || !gap || gap.accepted || lease.emptyCodeGap !== gap
+			|| ownedGapPresentationRef.current !== gap || snapshot.ownedGap !== gap.presentation
+			|| gap.presentation.parentNode !== surface || snapshot.signature !== transfer.signature
+			|| snapshot.editMap?.signature !== transfer.signature || lease.signature !== transfer.signature
+			|| lease.markdown !== transfer.markdown || gap.markdown !== transfer.markdown
+			|| mountedSourceRef.current !== transfer.markdown || sourceRef.current !== transfer.markdown
+			|| snapshot.sourceRevision !== gap.revision
+			|| !sameDocumentSelection(lease.selection, gap.selection)
+			|| !sameDocumentHistoryState(lease.historyState, gap.historyState)
+			|| !emptyCodeGapMatchesDocument(gap, documentSession.document)
+			|| !emptyCodeGapPresentationMatchesDocument(gap, documentSession.document)) return;
+		promoteGapPresentation(gap);
+	};
 
 	useLayoutEffect(() => {
 		if (externalChangeReportedRef.current) return;
@@ -3477,6 +3669,7 @@ export function WindowedImmersiveVisualEditor({
 		}
 		acceptedBlockSerializationsRef.current = accepted;
 		acceptedWindowChildNodesRef.current = [...snapshot.nodes];
+		promoteAcceptedWindowGap(snapshot);
 		protectVisualMarkdownReadOnlyRegions(surface);
 		readOnlySnapshotRef.current =
 			captureVisualMarkdownReadOnlySnapshot(surface);
@@ -3592,9 +3785,12 @@ export function WindowedImmersiveVisualEditor({
 					const retainedGap = emptyPresentation && emptyCodeGapRef.current === emptyPresentation
 						&& emptyCodeGapMatchesDocument(emptyPresentation, documentSession.document)
 						&& emptyPresentation.presentation.parentNode === surface
-						&& emptyPresentation.presentation.childNodes.length === 1
-						&& emptyPresentation.presentation.firstChild instanceof HTMLBRElement;
-					if (retainedGap) surface.ownerDocument.defaultView?.getSelection()?.collapse(emptyPresentation.presentation, 0);
+						&& emptyPresentation.presentation instanceof HTMLParagraphElement
+						&& windowedGapLineParagraphShape(emptyPresentation.presentation);
+					if (retainedGap) surface.ownerDocument.defaultView?.getSelection()?.collapse(
+						emptyPresentation.presentation,
+						emptyPresentation.presentation.childNodes.length,
+					);
 					const mountedSelectionRestored = Boolean(retainedGap) || restoreMountedSourceSelection(
 						surface, rangesRef.current, activePending.markdown, pendingHistorySelection.selection,
 						{ blockSerializations: acceptedBlockSerializationsRef.current, childNodes: acceptedWindowChildNodesRef.current });
@@ -3609,7 +3805,7 @@ export function WindowedImmersiveVisualEditor({
 							acceptedBlockSerializationsRef.current, acceptedWindowChildNodesRef.current,
 							emptyCodeGap.presentation);
 						const after = restoreEmptyCodeGapSelection(surface, rangesRef.current, emptyCodeGap);
-						emptyCodeGapRef.current = { ...emptyCodeGap, presentation: after, presentationHtml: after.innerHTML, accepted: true };
+						promoteGapPresentation({ ...emptyCodeGap, presentation: after, presentationHtml: after.innerHTML });
 						emptyCodeGapRestored = true;
 					}
 					const restored =
@@ -3695,7 +3891,10 @@ export function WindowedImmersiveVisualEditor({
 					ownerPlacedSelectionRef.current = placed;
 				}
 			} catch (error) {
-onFailure(
+				if (error instanceof WindowedDomStaleError) {
+					onDiagnostic(`visual-editor-window-source-navigation-dom-stale:${error.reason}`);
+				}
+				onFailure(
 					error instanceof Error
 							? error.message
 						: "visual-editor-window-history-selection-restore-failed",
@@ -3724,6 +3923,7 @@ onFailure(
 		documentSession.document.setVisualEditingActive(true);
 		focusSurface(surface);
 		let active = true;
+		activeRef.current = true;
 		let composing = false;
 		/**
 		 * Held while an accepted empty-code-gap composition owns the Preview
@@ -3742,6 +3942,14 @@ onFailure(
 		let cancelPendingPaste: (() => void) | null = null;
 		let visualInputBlock: VisualCodeInputSnapshot | null = null;
 		let codeBodyInput: WindowedCodeBodyInputIntent | null = null;
+		let textDeletion: Readonly<{
+			inputType: string;
+			node: Text;
+			source: string;
+			sourceSelection: Readonly<{ start: number; end: number }>;
+			text: string;
+			visualSelection: Readonly<{ start: number; end: number }>;
+		}> | null = null;
 		// The canonical undo group the browser itself would have produced for
 		// one typed run inside a code body: consecutive plain insertText
 		// keystrokes into the SAME body continue the previous history event,
@@ -3764,8 +3972,19 @@ onFailure(
 		}> | null = null;
 		let cancelledPendingComposition = false;
 		let completedPendingComposition: Readonly<{ data: string; markdown: string }> | null = null;
+		let ordinaryCompositionOrigin: Readonly<{
+		  insertionStart: number;
+		  revision: number | undefined;
+		  source: string;
+		  textNode: Text;
+		  textOffset: number;
+		  textBefore: string;
+		}> | null = null;
 
 		const report = (error: unknown): false => {
+			if (error instanceof WindowedDomStaleError) {
+				onDiagnostic(`visual-editor-window-source-navigation-dom-stale:${error.reason}`);
+			}
 			onFailure(
 				error instanceof Error
 					? error.message
@@ -4007,6 +4226,8 @@ onFailure(
 			regionRef.current = null;
 			const bodyInput = codeBodyInput;
 			codeBodyInput = null;
+			const deletion = textDeletion;
+			textDeletion = null;
 			if (!region)
 				return report(new Error("visual-editor-window-region-missing"));
 			const source = sourceRef.current;
@@ -4039,7 +4260,7 @@ onFailure(
 							acceptedBlockSerializationsRef.current,
 						)
 					) {
-						throw new Error("visual-editor-window-source-navigation-dom-stale");
+						throw new WindowedDomStaleError("commit-block-binding");
 					}
 				}
 				if (
@@ -4177,6 +4398,36 @@ onFailure(
 						end: region.sourceStart + result.selection.end,
 						start: region.sourceStart + result.selection.start,
 					};
+				} else if (deletion) {
+					const block = blocks[0];
+					const snapshot = region.blockSnapshots[0];
+					const native = surface.ownerDocument.defaultView?.getSelection();
+					const expectedText = deletion.text.slice(0, deletion.visualSelection.start)
+						+ deletion.text.slice(deletion.visualSelection.end);
+					const retainedText = block?.childNodes.length === 1 && block.firstChild === deletion.node
+						&& deletion.node.data === expectedText && native?.isCollapsed
+						&& native.anchorNode === deletion.node && native.anchorOffset === deletion.visualSelection.start;
+					const emptyParagraph = expectedText === "" && deletion.visualSelection.start === 0
+						&& deletion.visualSelection.end === deletion.text.length && !deletion.node.isConnected
+						&& !deletion.node.parentNode && block instanceof HTMLParagraphElement
+						&& block.childNodes.length === 1 && block.firstChild instanceof HTMLBRElement
+						&& block.firstChild.attributes.length === 0 && native?.isCollapsed
+						&& native.anchorNode === block && native.anchorOffset === 0;
+					if (source !== deletion.source || documentSession.document.getValue() !== source
+						|| blocks.length !== 1 || !block || block !== region.blocks[0] || !snapshot
+						|| block.attributes.length !== snapshot.attributes.length
+						|| snapshot.attributes.some(({ name, value }) => block.getAttribute(name) !== value)
+						|| (!retainedText && !emptyParagraph)) {
+						throw new WindowedDomStaleError("native-deletion-identity");
+					}
+					const result = applyVisualMarkdownEditIntent(sourceSlice, region.baseline,
+						deletion.sourceSelection, deletion.visualSelection, deletion.inputType, null);
+					if (!result) throw new Error("visual-editor-markdown-merge-failed");
+					replacementMarkdown = result.sourceMarkdown;
+					const mappedSelection = emptyParagraph ? result.selection : visualSelectionSourceRangeForBlocks(
+						blocks, replacementMarkdown, serializeVisualMarkdownBlockFragment(blocks));
+					selection = { ...mappedSelection, start: region.sourceStart + mappedSelection.start,
+						end: region.sourceStart + mappedSelection.end };
 				} else {
 					const edited = serializeVisualMarkdownBlockFragment(blocks);
 					const merged = mergeVisualMarkdownChangeDetails(
@@ -4189,17 +4440,62 @@ onFailure(
 						merged.value,
 						edited,
 					);
-					replacementMarkdown = merged.value;
+					let mapped = merged.value;
+					let mappedSelection = relativeSelection;
+					// A paragraph line beginning with a fence opening stays literal
+					// until the explicit Enter command. This mapped edit is one of the
+					// source-write entries and uses the same shared projection as the
+					// pending text owner. A real fence is a PRE, never this branch.
+					if (1 === blocks.length && "P" === blocks[0]?.tagName
+						&& "" !== mapped) {
+						const caretLineStart = 0 === mappedSelection.start
+							? 0 : mapped.lastIndexOf("\n", mappedSelection.start - 1) + 1;
+						const caretLineEndIndex = mapped.indexOf("\n", mappedSelection.start);
+						const caretLineEnd = caretLineEndIndex < 0 ? mapped.length : caretLineEndIndex;
+						const caretLine = mapped.slice(caretLineStart, caretLineEnd);
+						const lineBefore = sourceSlice.slice(
+							caretLineStart,
+							sourceSlice.indexOf("\n", caretLineStart) < 0
+								? sourceSlice.length : sourceSlice.indexOf("\n", caretLineStart)
+						);
+						const literal = isMarkdownFenceOpeningLine(lineBefore)
+							? null
+							: projectVisualLiteralParagraphLine(
+							caretLine,
+							mappedSelection.start - caretLineStart
+						);
+						if (literal) {
+							mapped = mapped.slice(0, caretLineStart)
+								+ literal.markdown
+								+ mapped.slice(caretLineEnd);
+							mappedSelection = {
+								direction: mappedSelection.direction,
+								start: caretLineStart + literal.offset,
+								end: caretLineStart + literal.offset
+							};
+						}
+					}
+					replacementMarkdown = mapped;
 					selection = {
-						direction: relativeSelection.direction,
-						end: region.sourceStart + relativeSelection.end,
-						start: region.sourceStart + relativeSelection.start,
+						direction: mappedSelection.direction,
+						end: region.sourceStart + mappedSelection.end,
+						start: region.sourceStart + mappedSelection.start,
 					};
 				}
 				const value =
 					source.slice(0, region.sourceStart) +
 					replacementMarkdown +
 					source.slice(region.sourceEnd);
+				if (
+				  options.compositionCommit
+				  && value === options.compositionCommit.value
+				  && options.compositionCommit.insertionEnd >= region.sourceStart
+				  && options.compositionCommit.insertionEnd
+				    <= region.sourceStart + replacementMarkdown.length
+				) {
+				  const end = options.compositionCommit.insertionEnd;
+				  selection = { direction: "none", start: end, end };
+				}
 				const restoreFocus = surface.ownerDocument.activeElement === surface;
 				const adoptionFinalizers: Array<() => boolean> = [];
 				adoptionTransaction = structuralChange && !structural;
@@ -4324,21 +4620,16 @@ onFailure(
 							throw new Error("visual-editor-window-block-adoption-failed");
 						}
 					}
-				} else if (options.rewitnessReplacement) {
+				} else if (adoptionTransaction && value !== source) {
 					// A transaction-scoped replacement finalized BEFORE this
-					// write, so its accepted baseline still names the pre-write
-					// source. The gap exit is the one replacement that also
-					// removes canonical bytes, so re-witness its adopted root
-					// against the committed source now: the repository already
-					// binds the replacement node, the root-preserving extension
-					// moves the baseline to exactly what this commit published,
-					// and the certificate keeps describing the live nodes.
-					// Command-driven replacements keep their single adoption
-					// call: their writers own the row's source interval
-					// unchanged, so the pre-write witness stays true for them.
+					// write still has an accepted baseline for the pre-write
+					// source. Renew every adopted root against the canonical
+					// source just published; a stale witness fails here.
 					for (const block of blocks) {
-						const rewitness = prepareWindowBlockAdoption?.(block);
-						if (!rewitness || !rewitness()) continue;
+						const rewitness = prepareWindowBlockAdoption(block);
+						if (!rewitness || !rewitness()) {
+							throw new Error("visual-editor-window-block-adoption-failed");
+						}
 					}
 				}
 				if (value !== source) onMarkdownChange();
@@ -4517,6 +4808,38 @@ onFailure(
 			const previous = acceptedWindowSnapshotIdentityRef.current;
 			if (previous?.key === snapshot.key && previous.revision === snapshot.revision && previous.signature === snapshot.signature) return;
 			const ranges = createBlockRanges(transfer.markdown, snapshot.editMap);
+			const pendingGap = lease.emptyCodeGap;
+			if (pendingGap
+				&& pendingGap.after.start === transfer.markdown.length
+				&& pendingGap.after.end === transfer.markdown.length
+				&& "" === pendingGap.after.source) {
+				const rebound = ranges.all().filter((range) => {
+					const formalSource = transfer.markdown.slice(range.start, range.end);
+					const suffix = transfer.markdown.slice(pendingGap.before.end, range.end);
+					return range.editable
+						&& range.start === pendingGap.before.start
+						&& range.end > pendingGap.before.end
+						&& range.end <= pendingGap.after.start
+						&& formalSource.startsWith(pendingGap.before.source)
+						&& /^(?:\r\n|\r|\n)$/u.test(suffix);
+				});
+				if (rebound.length > 1) throw new Error("visual-editor-window-history-selection-map-ambiguous");
+				const nextRange = rebound[0];
+				if (nextRange) {
+					const nextGap: WindowedEmptyCodeGap = {
+						...pendingGap,
+						before: {
+							end: nextRange.end,
+							source: transfer.markdown.slice(nextRange.start, nextRange.end),
+							start: nextRange.start,
+						},
+					};
+					emptyCodeGapRef.current = nextGap;
+					pendingHistorySelectionRef.current = { ...lease, emptyCodeGap: nextGap };
+					retainGapPresentation(nextGap);
+					rememberEmptyCodeGap(emptyCodeGapHistoryRef.current, nextGap);
+				}
+			}
 			const accepted = registerAcceptedWindowSnapshot(surface, ranges, snapshot, transfer.markdown, documentSession.document.getRevision?.());
 			if (!accepted) return;
 			// This certificate comes from the actual installed formal commit,
@@ -4525,6 +4848,7 @@ onFailure(
 			mountedSourceRef.current = transfer.markdown;
 			acceptedBlockSerializationsRef.current = accepted;
 			acceptedWindowChildNodesRef.current = [...snapshot.nodes];
+			promoteAcceptedWindowGap(snapshot);
 			protectVisualMarkdownReadOnlyRegions(surface);
 			readOnlySnapshotRef.current = captureVisualMarkdownReadOnlySnapshot(surface);
 			acceptedWindowSnapshotIdentityRef.current = { key: snapshot.key, revision: snapshot.revision, signature: snapshot.signature };
@@ -4539,17 +4863,49 @@ onFailure(
 				ownedGapDraft());
 			return readOnly;
 		};
-		const retainGapPresentation = (gap: WindowedEmptyCodeGap): void => {
-			ownedGapPresentationRef.current = gap;
-			const lease = retainCompositionSurfaceRef.current();
-			try {
-				lease.retainGap?.({ node: gap.presentation, markdown: gap.markdown,
-					sourceRevision: gap.revision, html: gap.presentationHtml,
-					surface, historyState: gap.historyState,
-					before: gap.before, after: gap.after,
-					isLive: () => active && surface.isConnected && gap.presentation.parentNode === surface
-						&& ownedGapPresentationRef.current === gap && emptyCodeGapPresentationMatchesDocument(gap, documentSession.document) });
-			} finally { lease.release(); }
+		const prepareHistoryGapPresentation = (
+			gap: WindowedEmptyCodeGap,
+			markdown: string,
+			revision: number,
+			historyState: DocumentHistoryState,
+		): WindowedEmptyCodeGap => {
+			const previous = ownedGapPresentationRef.current;
+			if (previous?.presentation.isConnected && previous.presentation.parentNode === surface) {
+				previous.presentation.remove();
+			}
+			ownedGapPresentationRef.current = null;
+			const mountedMarkdown = mountedSourceRef.current;
+			const find = (extent: WindowedEmptyCodeGap["before"]): HTMLElement => {
+				const matches = Array.from(surface.children).filter((child): child is HTMLElement => {
+					if (!(child instanceof HTMLElement) || child.hasAttribute(WINDOW_SPACER_ATTRIBUTE)) return false;
+					const range = acceptedWindowedBlockRange(child, rangesRef.current, acceptedBlockSerializationsRef.current);
+					if (!range?.editable || range.start !== extent.start) return false;
+					if (range.end === extent.end && mountedMarkdown.slice(range.start, range.end) === extent.source) return true;
+					return range.end > extent.end
+						&& mountedMarkdown.slice(range.start, range.end).startsWith(extent.source)
+						&& /^(?:\r\n|\r|\n)$/u.test(mountedMarkdown.slice(extent.end, range.end));
+				});
+				if (matches.length !== 1 || !matches[0]) throw new Error("visual-editor-window-history-selection-map-failed");
+				return matches[0];
+			};
+			const before = find(gap.before);
+			const after = gap.after.start === markdown.length && gap.after.end === markdown.length && gap.after.source === ""
+				? null
+				: find(gap.after);
+			const paragraph = surface.ownerDocument.createElement("p");
+			paragraph.append(surface.ownerDocument.createElement("br"));
+			if (after) after.before(paragraph);
+			else before.after(paragraph);
+			surface.ownerDocument.defaultView?.getSelection()?.collapse(paragraph, paragraph.childNodes.length);
+			return {
+				...gap,
+				accepted: false,
+				historyState,
+				markdown,
+				presentation: paragraph,
+				presentationHtml: paragraph.innerHTML,
+				revision,
+			};
 		};
 		const pendingInputLease = (event?: InputEvent): PendingHistorySelection => {
 			const transfer = pendingRef.current;
@@ -4600,6 +4956,36 @@ onFailure(
 					const nativeOffset = visualCodeBodyDomOffset(inputBlock.code, { node: range.startContainer, offset: range.startOffset });
 					const targetOffset = visualCodeBodyDomOffset(inputBlock.code, { node: target.startContainer, offset: target.startOffset });
 					targetMatches = nativeOffset !== null && targetOffset !== null && nativeOffset === targetOffset;
+				}
+			}
+			if (!targetMatches && target && range.collapsed && target.collapsed
+				&& target.startContainer.isConnected && surface.contains(target.startContainer)
+				&& visualSelection) {
+				// A browser target range can name the same canonical source point
+				// through a different DOM node than the live caret (for example the
+				// row the pending render just re-created). The operation is owned by
+				// the certified lease either way, so prove the equivalence on the
+				// canonical source selection instead of on node identity.
+				const live = surface.ownerDocument.defaultView?.getSelection();
+				if (live) {
+					const saved = range.cloneRange();
+					const probe = target.startContainer.ownerDocument?.createRange();
+					if (!probe) throw new Error("visual-editor-window-pending-input-unavailable");
+					probe.setStart(target.startContainer, target.startOffset);
+					probe.collapse(true);
+					live.removeAllRanges();
+					live.addRange(probe);
+					let targetCanonical: VisualSelectionSnapshot | null = null;
+					try {
+						targetCanonical = captureVisualSelection(surface);
+					} catch {
+						targetCanonical = null;
+					} finally {
+						live.removeAllRanges();
+						live.addRange(saved);
+					}
+					targetMatches = Boolean(targetCanonical
+						&& visualSelectionEqual(targetCanonical, visualSelection));
 				}
 			}
 			if (targets.length > 1 || !targetMatches || (event?.inputType === "insertReplacementText" &&
@@ -4685,6 +5071,98 @@ onFailure(
 				&& emptyCodeGapBoundary(gap, native.anchorNode, native.anchorOffset)
 				&& emptyCodeGapBoundary(gap, native.focusNode, native.focusOffset) ? gap : null;
 		};
+		const applyPendingCodeBodyText = (
+			gap: WindowedEmptyCodeGap,
+			pre: HTMLElement,
+			nativeText: string,
+		): void => {
+			const source = gap.markdown;
+			const sourceRange = gap.codeBodySourceRange;
+			if (!sourceRange || sourceRange.start < 0 || sourceRange.end < sourceRange.start
+				|| sourceRange.end > source.length) {
+				throw new Error("visual-editor-window-pending-selection-stale");
+			}
+			const code = pre.querySelector<HTMLElement>(":scope > code");
+			if (!code || pre.parentNode !== surface) {
+				throw new Error("visual-editor-code-body-map-stale");
+			}
+			const baseline = serializeVisualMarkdownBlockFragment([pre]);
+			const native = surface.ownerDocument.defaultView?.getSelection();
+			if (!native?.isCollapsed || !native.rangeCount) {
+				throw new Error("visual-editor-window-pending-selection-stale");
+			}
+			const range = native.getRangeAt(0);
+			if (!code.contains(range.startContainer) && range.startContainer !== code) {
+				throw new Error("visual-editor-code-body-selection-invalid");
+			}
+			if (range.startContainer instanceof Text) {
+				range.startContainer.insertData(range.startOffset, nativeText);
+				native.collapse(range.startContainer, range.startOffset + nativeText.length);
+			} else {
+				const inserted = surface.ownerDocument.createTextNode(nativeText);
+				range.insertNode(inserted);
+				native.collapse(inserted, inserted.length);
+			}
+			normalizeVisualCodePlaceholders(surface, "insertText", pre);
+			const sourceSlice = source.slice(sourceRange.start, sourceRange.end);
+		const edited = serializeVisualMarkdownBlockFragment([pre]);
+		const merged = mergeVisualMarkdownChangeDetails(sourceSlice, baseline, edited);
+		const relativeSelection = visualSelectionSourceRangeForBlocks(
+			[pre],
+			merged.value,
+			edited,
+		);
+		const value = source.slice(0, sourceRange.start)
+			+ merged.value
+			+ source.slice(sourceRange.end);
+		const selection: DocumentSelection = {
+			direction: relativeSelection.direction,
+			end: sourceRange.start + relativeSelection.end,
+			start: sourceRange.start + relativeSelection.start,
+		};
+		applyDocumentChange({
+			changes: { from: sourceRange.start, insert: merged.value, to: sourceRange.end },
+			recordHistorySelection: true,
+			selection,
+			value,
+		});
+		sourceRef.current = value;
+		const revision = documentSession.document.getRevision?.();
+		if (!Number.isSafeInteger(revision)) {
+			throw new Error("visual-editor-window-pending-selection-stale");
+		}
+		const historyState = documentSession.document.getHistoryState();
+		const spliceDelta = merged.value.length - (sourceRange.end - sourceRange.start);
+		const transport = (extent: Readonly<{ end: number; start: number; source: string }>) =>
+			extent.start >= sourceRange.end
+				? { ...extent, start: extent.start + spliceDelta, end: extent.end + spliceDelta }
+				: extent;
+		const nextGap: WindowedEmptyCodeGap = {
+			...gap,
+			after: transport(gap.after),
+			accepted: false,
+			codeBodySourceRange: {
+				end: sourceRange.end + spliceDelta,
+				start: sourceRange.start,
+			},
+			historyState,
+			markdown: value,
+			presentationHtml: pre.innerHTML,
+			revision: revision as number,
+			selection,
+		};
+		emptyCodeGapRef.current = nextGap;
+		acceptedWindowChildNodesRef.current = Array.from(surface.childNodes);
+		readOnlySnapshotRef.current = captureVisualMarkdownReadOnlySnapshot(surface);
+		retainGapPresentation(nextGap);
+		rememberEmptyCodeGap(emptyCodeGapHistoryRef.current, nextGap);
+		onMarkdownChange();
+		requestFormalPreview(value, {
+			historyState,
+			restoreFocus: surface.ownerDocument.activeElement === surface,
+			selection,
+		}, { pinWindowSelection: true });
+	};
 		const applyEmptyCodeGapText = (gap: WindowedEmptyCodeGap, text: string, pendingLease?: PendingHistorySelection, settleWithoutFocus = false): void => {
 			if (emptyCodeGapRef.current !== gap || !emptyCodeGapMatchesDocument(gap, documentSession.document)) {
 				throw new Error("visual-editor-window-pending-selection-stale");
@@ -4702,8 +5180,47 @@ onFailure(
 			} else assertReadySourceAndDom();
 			let start = gap.selection.start;
 			const end = start;
-			const nativeText = text.replace(/\r\n|\r|\n/g, sourceLineEndingBefore(gap.markdown, start));
-			let replacement = nativeText;
+			const lineEnding = sourceLineEndingBefore(gap.markdown, start);
+			const nativeText = text.replace(/\r\n|\r|\n/g, lineEnding);
+			// The certified gap is the blank source interval BETWEEN two accepted
+			// rows: `start` is the first byte of the following row, not a position
+			// inside it. Ordinary text typed here is its own Markdown block, so it
+			// needs the same blank-line separation the source already used on each
+			// side. Splicing the raw character would glue it to the following
+			// row's first line and silently rewrite that row (a heading's next
+			// paragraph, a fence delimiter, a table header).
+			const gapSeparator = gap.markdown.slice(gap.before.end, start);
+			// Typing into a source-neutral gap is its own Markdown block only when
+			// the caret is exactly at the following accepted row's first byte and
+			// that row does not already own a leading blank line. A row whose own
+			// source begins with a line ending keeps its blank line as the
+			// insertion point (the existing middle-gap contract), and a caret
+			// earlier in a longer gap is already inside blank source.
+			// A gap at the document end has no following row to collide with, so
+			// its text simply continues the terminal blank line.
+			const hasFollowingRow = gap.after.start < gap.markdown.length
+				|| '' !== gap.after.source;
+			const followingRowOwnsLeadingBlank = /^(?:\r\n|\r|\n)/u.test(gap.after.source);
+			const separatesAsOwnBlock = !/[\r\n]/u.test(nativeText)
+				&& '' !== nativeText
+				&& hasFollowingRow
+				&& start === gap.after.start
+				&& /^(?:\r\n|\r|\n)*$/u.test(gapSeparator)
+				&& !followingRowOwnsLeadingBlank;
+			// When the captured gap already holds the blank line it is separated on
+			// the left. A tight gap has no separator bytes at all: an ordinary
+			// paragraph then needs one blank line before the new block, while an
+			// ATX heading terminates itself and needs none. The trailing blank line
+			// is always required, because `start` is the following row's first byte.
+			const leftSeparator = separatesAsOwnBlock
+				&& '' === gapSeparator
+				&& !/^#{1,6}[ \t]/u.test(gap.before.source)
+					? lineEnding
+					: '';
+			let replacement = separatesAsOwnBlock
+				? `${leftSeparator}${nativeText}${lineEnding}${lineEnding}`
+				: nativeText;
+			let replacementStart = start;
 			const presentation = gap.presentation;
 			const echoesText = nativeText.length > 0 && !/[\r\n]/u.test(nativeText);
 			const mountedPresentation = echoesText && presentation.isConnected && presentation.parentNode === surface ? presentation : null;
@@ -4725,6 +5242,34 @@ onFailure(
 			const ownedParagraph = null !== echoParagraph;
 			const paragraph = echoParagraph ?? presentation;
 			const draftStart = gap.draftSourceStart ?? start;
+			const codeBody = paragraph.matches("pre")
+				? paragraph.querySelector<HTMLElement>(":scope > code")
+				: null;
+			if (codeBody) {
+				if (!pendingLease) {
+					throw new Error("visual-editor-window-pending-selection-stale");
+				}
+				applyPendingCodeBodyText(gap, paragraph, nativeText);
+				return;
+			}
+			// A line break inside the certified gap is a real input line: echo it
+			// in the owned paragraph and move the native caret to that new line.
+			// The canonical splice below still advances the source by one LF, so
+			// the visible line and the source position stay the same operation.
+			const lineBreakOnly = nativeText.length > 0 && !/[^\r\n]/u.test(nativeText);
+			if (lineBreakOnly && paragraph instanceof HTMLParagraphElement
+				&& paragraph.parentNode === surface
+				&& Array.from(paragraph.childNodes).every((child) => child instanceof HTMLBRElement)) {
+				const count = nativeText.split(/\r\n|\r|\n/u).length - 1;
+				for (let line = 0; line < count; line += 1) {
+					paragraph.append(surface.ownerDocument.createElement("br"));
+				}
+				const native = surface.ownerDocument.defaultView?.getSelection();
+				if (native) {
+					native.removeAllRanges();
+					native.collapse(paragraph, paragraph.childNodes.length);
+				}
+			}
 			if (ownedParagraph) {
 				const previousText = paragraph.textContent ?? "";
 				const projected = projectVisualLiteralFencePrefix(previousText + nativeText);
@@ -4733,12 +5278,17 @@ onFailure(
 					if (draftStart < 0 || draftStart > end || gap.markdown.slice(draftStart, end) !== previousSource) {
 						throw new Error("visual-editor-window-pending-selection-stale");
 					}
-					start = draftStart;
+					replacementStart = draftStart;
 					replacement = projected.markdown;
 				}
 			}
-			const value = gap.markdown.slice(0, start) + replacement + gap.markdown.slice(end);
-			const caret = start + replacement.length;
+			const value = gap.markdown.slice(0, replacementStart) + replacement + gap.markdown.slice(end);
+			// The caret is the owner's own inserted text, which sits inside the
+			// separation it just established: after the opening blank line for a
+			// new block, or at the end of the draft text otherwise.
+			const caret = separatesAsOwnBlock && replacementStart === start
+				? start + leftSeparator.length + nativeText.length
+				: replacementStart + replacement.length;
 			const selection: DocumentSelection = { direction: "none", start: caret, end: caret };
 			// The owned draft echoes the character in the gap presentation before
 			// any renderer responds, so typing is visible while the formal Preview
@@ -4764,7 +5314,7 @@ onFailure(
 				}
 			}
 			emptyCodeGapRef.current = null;
-			applyDocumentChange({ changes: { from: start, to: end, insert: replacement }, recordHistorySelection: true, selection, value });
+			applyDocumentChange({ changes: { from: replacementStart, to: end, insert: replacement }, recordHistorySelection: true, selection, value });
 			sourceRef.current = value;
 			const revision = documentSession.document.getRevision?.();
 			if (!Number.isSafeInteger(revision)) throw new Error("visual-editor-window-pending-selection-stale");
@@ -4775,7 +5325,7 @@ onFailure(
 			// the accepted empty-gap contract requires; ordinary text continues the
 			// same owned draft instead, so the next character is the same operation
 			// rather than a second, unrelated pending input.
-			const spliceDelta = replacement.length - (end - start);
+			const spliceDelta = replacement.length - (end - replacementStart);
 			const transport = (extent: Readonly<{ end: number; start: number; source: string }>) =>
 				extent.start >= start
 					? { ...extent, start: extent.start + spliceDelta, end: extent.end + spliceDelta }
@@ -4789,20 +5339,523 @@ onFailure(
 				after: transport(gap.after),
 				presentationHtml: paragraph.innerHTML,
 				accepted: !echoesText,
-				...(echoesText ? { draftSourceStart: draftStart } : {}),
+				// A freshly separated block records where its own draft text starts -
+				// after the leading separator but before the typed characters - so
+				// the next character continues this same block instead of re-opening
+				// the following row's line or re-proving a caret-relative slice.
+				...(echoesText
+					? { draftSourceStart: separatesAsOwnBlock ? caret - nativeText.length : draftStart }
+					: {}),
 			};
 			emptyCodeGapRef.current = nextGap;
 			retainGapPresentation(nextGap);
-			emptyCodeGapHistoryRef.current.set(historyState.undoDepth, nextGap);
-			while (emptyCodeGapHistoryRef.current.size > 32) {
-				const oldest = emptyCodeGapHistoryRef.current.keys().next().value;
-				if (oldest === undefined) break;
-				emptyCodeGapHistoryRef.current.delete(oldest);
-			}
+			rememberEmptyCodeGap(emptyCodeGapHistoryRef.current, nextGap);
 			onMarkdownChange();
 			requestFormalPreview(value, { historyState: documentSession.document.getHistoryState(), restoreFocus: surface.ownerDocument.activeElement === surface, selection }, { pinWindowSelection: true });
 		};
-		const applyPendingCanonicalText = (lease: PendingHistorySelection, text: string, compositionSettlement = false): void => {
+		/**
+		 * A certified text draft holding a complete fence opening at its caret
+		 * keeps the block Enter command while its formal Preview is outstanding.
+		 * The command is the same shared shortcut owner the accepted path uses,
+		 * so a typed tilde or backtick opener becomes the equally wide backtick
+		 * fence, and the canonical block text is that owner's own block
+		 * serialization. The draft stops being a gap, and the shortcut's Preview
+		 * supersedes the outstanding one.
+		 */
+		const applyPendingFenceShortcut = (
+			lease: PendingHistorySelection,
+			draft: WindowedEmptyCodeGap,
+			event: KeyboardEvent,
+		): boolean => {
+			const text = draft.presentation.textContent ?? "";
+			// Only a complete fence opening owns the command. Every other Enter
+			// keeps the ordinary pending text owner.
+			if (!/^ {0,3}(?:`{3,}|~{3,})[^`]*$/u.test(text)) return false;
+			if (!Number.isSafeInteger(draft.draftSourceStart)) return false;
+			const start = draft.draftSourceStart as number;
+			const end = draft.after.start;
+			if (start < 0 || end < start || end < lease.selection.start || end > lease.markdown.length) return false;
+			// The pending draft owns the source extent through the next accepted row.
+			// At canonical EOF that row is empty and contributes no trailer; prove
+			// that exact case before the shortcut can mutate the mounted paragraph.
+			const trailer = lease.markdown.slice(lease.selection.start, end);
+			const authenticatedEofWithoutTrailer = trailer === ""
+				&& end === lease.markdown.length
+				&& draft.after.start === draft.after.end
+				&& draft.after.source === ""
+				&& draft.after.start === lease.selection.start;
+			if (!/^[\r\n]+$/u.test(trailer) && !authenticatedEofWithoutTrailer) return false;
+			assertPendingCanonicalLease(lease);
+			assertPendingInputDom();
+			if (!applyVisualBlockShortcut(surface, event)) return false;
+			const native = surface.ownerDocument.defaultView?.getSelection();
+			const anchor = native?.anchorNode;
+			const element = anchor instanceof Element ? anchor : anchor?.parentElement;
+			const pre = element?.closest("pre");
+			if (!(pre instanceof HTMLElement) || pre.parentNode !== surface)
+				throw new Error("visual-editor-window-pending-input-unavailable");
+			// The fragment serializer omits the article's trailing block separator,
+			// so the draft's own separator (between its text end and the following
+			// row) is preserved verbatim as the block's trailing separation.
+			const serialized = serializeVisualMarkdownBlockFragment([pre]).replace(/^[\r\n]+/u, "") + trailer;
+			if ("" === serialized)
+				throw new Error("visual-editor-window-pending-input-unavailable");
+			const firstBreak = serialized.search(/[\r\n]/u);
+			const breakLength = firstBreak < 0
+				? 0
+				: serialized.startsWith("\r\n", firstBreak) ? 2 : 1;
+			// The caret opens the fence's empty body line, i.e. just after the
+			// opening line's own line ending.
+			const caret = start + (firstBreak < 0 ? serialized.length : firstBreak + breakLength);
+			const selection: DocumentSelection = { direction: "none", start: caret, end: caret };
+			const value = lease.markdown.slice(0, start) + serialized + lease.markdown.slice(end);
+			applyDocumentChange({ changes: { from: start, insert: serialized, to: end },
+				recordHistorySelection: true, selection, value });
+			sourceRef.current = value;
+			const spliceDelta = serialized.length - (end - start);
+			const transport = (extent: Readonly<{ end: number; start: number; source: string }>) =>
+				extent.start >= start
+					? { ...extent, start: extent.start + spliceDelta, end: extent.end + spliceDelta }
+					: extent;
+			const revision = documentSession.document.getRevision?.();
+			if (!Number.isSafeInteger(revision)) {
+				throw new Error("visual-editor-window-pending-selection-stale");
+			}
+			const historyState = documentSession.document.getHistoryState();
+			const nextGap: WindowedEmptyCodeGap = {
+				...draft,
+				after: transport(draft.after),
+				accepted: false,
+				codeBodySourceRange: {
+					end: transport(draft.after).start,
+					start: draft.before.end,
+				},
+				historyState,
+				markdown: value,
+				presentation: pre,
+				presentationHtml: pre.innerHTML,
+				revision: revision as number,
+				selection,
+			};
+			emptyCodeGapRef.current = nextGap;
+			acceptedWindowChildNodesRef.current = Array.from(surface.childNodes);
+			readOnlySnapshotRef.current = captureVisualMarkdownReadOnlySnapshot(surface);
+			retainGapPresentation(nextGap);
+			rememberEmptyCodeGap(emptyCodeGapHistoryRef.current, nextGap);
+			onMarkdownChange();
+			requestFormalPreview(value, {
+				historyState: documentSession.document.getHistoryState(),
+				restoreFocus: surface.ownerDocument.activeElement === surface,
+				selection,
+			}, { pinWindowSelection: true });
+			return true;
+		};
+		const applyPendingCanonicalCodeBodyDeletion = (
+			lease: PendingHistorySelection,
+			event: InputEvent,
+		): boolean => {
+			// A deletion during the pending window is owned by the pending
+			// source lease itself. It passes the SAME lease gate the insert
+			// path uses - call pendingInputLease() without the event so the
+			// noncollapsed native target is not compared against the collapsed
+			// lease caret - retaining the focus, lease-liveness, visual
+			// selection and read-only DOM proofs. On top of that gate, the
+			// deletion adds its own target proof: exactly one target range,
+			// nonempty, both endpoints inside the one authenticated mounted
+			// CODE, and the projected interval touching the lease selection
+			// (a backward deletion removes the character before the caret, a
+			// forward one the character after; anything else retargets and
+			// rejects). The deleted interval comes from the lease's
+			// authoritative markdown, never from re-serializing the surface.
+			let leaseGate: PendingHistorySelection;
+			try {
+				leaseGate = pendingInputLease();
+			} catch {
+				return false;
+			}
+			if (
+				leaseGate !== lease ||
+				(event.getTargetRanges?.() ?? []).length !== 1
+			) {
+				return false;
+			}
+			const inputBlock = captureVisualCodeInputSnapshot(
+				selectedVisualCodeBlock(surface),
+			);
+			if (!inputBlock || !inputBlock.pre.isConnected) return false;
+			const operationGap = lease.emptyCodeGap?.presentation === inputBlock.pre
+				? lease.emptyCodeGap
+				: null;
+			const row = acceptedWindowedBlockRange(
+				inputBlock.pre,
+				rangesRef.current,
+				acceptedBlockSerializationsRef.current,
+			);
+			const operationRange = operationGap?.codeBodySourceRange ?? null;
+		if (!row?.editable && !operationRange) return false;
+			if (!operationGap && !row) return false;
+			const source = lease.markdown;
+		const blockStart = row?.start ?? operationRange?.start;
+		const blockEnd = row?.end ?? operationRange?.end;
+			if (
+			blockStart === undefined ||
+			blockEnd === undefined ||
+			blockStart < 0 ||
+			blockEnd <= blockStart ||
+			blockEnd > source.length
+			) {
+				return false;
+			}
+		const blockSlice = source.slice(blockStart, blockEnd);
+			const target = event.getTargetRanges?.()[0];
+		if (operationGap && inputBlock.placeholder && "deleteContentBackward" === event.inputType) {
+			assertPendingCanonicalLease(lease);
+			const shortcut = new KeyboardEvent("keydown", {
+				bubbles: true,
+				cancelable: true,
+				key: "Backspace",
+			});
+			if (!applyVisualBlockShortcut(surface, shortcut)) return false;
+			// The shared shortcut replaces the PRE, so the lease's old
+			// presentation is detached. Resolve the live replacement from the
+			// connected native caret before publishing the authenticated source
+			// deletion; never serialize a retired node as a pending fallback.
+			const native = surface.ownerDocument.defaultView?.getSelection();
+			const anchor = native?.anchorNode;
+			const element = anchor instanceof Element ? anchor : anchor?.parentElement;
+			const paragraph = element?.closest("p");
+			if (!(paragraph instanceof HTMLParagraphElement) || paragraph.parentNode !== surface) return false;
+			// The code-body range begins at the authenticated before-row extent,
+			// while the draft source start marks the actual fence opener. Preserve
+			// that exact separator when the fence is removed, so the owned paragraph
+			// returns to the source gap that preceded this operation.
+			const draftSourceStart = operationGap.draftSourceStart;
+			if (
+				typeof draftSourceStart !== "number"
+				|| !Number.isSafeInteger(draftSourceStart)
+				|| draftSourceStart < blockStart
+				|| draftSourceStart > blockEnd
+			) return false;
+			const draftStart = draftSourceStart as number;
+			const sourceGap = source.slice(blockStart, draftStart);
+			if (!/^[\r\n]*$/u.test(sourceGap)) return false;
+			const value = source.slice(0, blockStart) + sourceGap + source.slice(blockEnd);
+			const selection: DocumentSelection = { direction: "none", end: blockStart, start: blockStart };
+			applyDocumentChange({
+				changes: { from: blockStart, insert: sourceGap, to: blockEnd },
+				recordHistorySelection: true,
+				selection,
+				value,
+			});
+			sourceRef.current = value;
+			const revision = documentSession.document.getRevision?.();
+			if (!Number.isSafeInteger(revision)) throw new Error("visual-editor-window-pending-selection-stale");
+			const historyState = documentSession.document.getHistoryState();
+			const delta = value.length - source.length;
+			const transport = (extent: Readonly<{ end: number; start: number; source: string }>) =>
+				extent.start >= blockEnd
+					? { ...extent, start: extent.start + delta, end: extent.end + delta }
+					: extent;
+			const nextGap: WindowedEmptyCodeGap = {
+				before: operationGap.before,
+				after: transport(operationGap.after),
+				accepted: false,
+				historyState,
+				markdown: value,
+				...(operationGap.draftSourceStart !== undefined
+					? { draftSourceStart: operationGap.draftSourceStart }
+					: {}),
+				presentation: paragraph,
+				presentationHtml: paragraph.innerHTML,
+				revision: revision as number,
+				selection,
+			};
+			emptyCodeGapRef.current = nextGap;
+			acceptedWindowChildNodesRef.current = Array.from(surface.childNodes);
+			readOnlySnapshotRef.current = captureVisualMarkdownReadOnlySnapshot(surface);
+			retainGapPresentation(nextGap);
+			rememberEmptyCodeGap(emptyCodeGapHistoryRef.current, nextGap);
+			onMarkdownChange();
+			requestFormalPreview(value, {
+				historyState,
+				restoreFocus: surface.ownerDocument.activeElement === surface,
+				selection,
+			}, { pinWindowSelection: true });
+			return true;
+		}
+			if (
+				!target ||
+				target.collapsed ||
+				!(
+					(target.startContainer === inputBlock.code ||
+						inputBlock.code.contains(target.startContainer)) &&
+					(target.endContainer === inputBlock.code ||
+						inputBlock.code.contains(target.endContainer))
+				)
+			) {
+				return false;
+			}
+			// Correspondence: a collapsed lease must be touched on the side its
+			// inputType consumes. A real selection is its own interval - both
+			// Backspace and forward Delete must name exactly that interval and
+			// nothing beside it. Any other target is a retarget and rejects.
+			const leaseSelection = lease.selection;
+			const collapsedLease = leaseSelection.start === leaseSelection.end;
+			const leaseCaret = leaseSelection.start;
+			let projection: ReturnType<typeof projectVisualCodeBodySelection>;
+			try {
+				projection = projectVisualCodeBodySelection(
+					inputBlock.code,
+					blockSlice,
+					blockSlice,
+					0,
+					{
+						end: {
+							node: target.endContainer,
+							offset: target.endOffset,
+						},
+						start: {
+							node: target.startContainer,
+							offset: target.startOffset,
+						},
+					},
+				);
+			} catch {
+				return false;
+			}
+			const body = projection.sourceInterval;
+			const localFrom = projection.sourceSelection.start;
+			const localTo = projection.sourceSelection.end;
+			// The projection states block-relative offsets: prove the deleted
+			// interval sits strictly inside the body before lifting it to the
+			// document coordinates the canonical write needs.
+			if (
+				localFrom >= localTo ||
+				body.bodyStart > localFrom ||
+				localTo > body.bodyEnd
+			) {
+				return false;
+			}
+			const from = blockStart + localFrom;
+			const to = blockStart + localTo;
+			let matchesLease: boolean;
+			if (operationGap) {
+				const native = surface.ownerDocument.defaultView?.getSelection();
+				if (!native?.isCollapsed || !native.anchorNode || !native.focusNode) return false;
+				let nativeProjection: ReturnType<typeof projectVisualCodeBodySelection>;
+				try {
+					nativeProjection = projectVisualCodeBodySelection(
+						inputBlock.code,
+						blockSlice,
+						blockSlice,
+						0,
+						{
+							end: { node: native.focusNode, offset: native.focusOffset },
+							start: { node: native.anchorNode, offset: native.anchorOffset },
+						},
+					);
+				} catch {
+					return false;
+				}
+				const nativeCaret = blockStart + nativeProjection.sourceSelection.start;
+				matchesLease = "deleteContentBackward" === event.inputType
+					? to === nativeCaret
+					: "deleteContentForward" === event.inputType
+						? from === nativeCaret
+						: false;
+			} else {
+				matchesLease = collapsedLease
+					? "deleteContentBackward" === event.inputType
+						? to === leaseCaret
+						: "deleteContentForward" === event.inputType
+							? from === leaseCaret
+							: from === leaseCaret || to === leaseCaret
+					: from === leaseSelection.start && to === leaseSelection.end;
+			}
+			if (!matchesLease) return false;
+			assertPendingCanonicalLease(lease);
+			// The next body comes from the projection's own block-relative
+			// interval, never from re-slicing the shrunken document: the
+			// ledger row and body offsets still describe the pre-deletion
+			// block, so absolute slicing would read past the body's new end.
+			// The raw source slice passes through unchanged: the reconciler
+			// normalizes expectedBody itself, and re-encoding here would
+			// rewrite mixed existing line endings.
+			const nextBody =
+				blockSlice.slice(body.bodyStart, localFrom) +
+				blockSlice.slice(localTo, body.bodyEnd);
+			// Deleting a marker can leave a literal closing run in the body
+			// (for example "~~x~" minus "x" is "~~~"). The maintained
+			// code-fence owner widens the OUTER fence for exactly that body;
+			// the raw byte splice must not close the block early and
+			// reinterpret the following block. Its interval is this row's own
+			// authenticated slice, never the whole document.
+			let fenceExpansion: VisualCodeFenceBodyExpansion | null;
+			try {
+				fenceExpansion = expandVisualCodeFenceForBody(
+					blockSlice,
+					0,
+					nextBody,
+				);
+			} catch {
+				// The maintained expansion owner refuses a block whose fence
+				// shape it cannot prove; this deletion must then stay a no-op
+				// instead of publishing a raw splice it could not reframe.
+				return false;
+			}
+			let changes: { from: number; insert: string; to: number } = {
+				from,
+				insert: "",
+				to,
+			};
+			let caretOffset = from;
+			let replacementMarkdown: string | null = null;
+			let value: string;
+			if (fenceExpansion) {
+				// The expansion must serialize exactly the raw-spliced block:
+				// anything else would rewrite bytes this gesture never edited.
+				const unexpandedBlock =
+					blockSlice.slice(0, localFrom) + blockSlice.slice(localTo);
+				if (fenceExpansion.unexpandedMarkdown !== unexpandedBlock) {
+					throw new Error("visual-editor-code-body-map-stale");
+				}
+				replacementMarkdown = fenceExpansion.markdown;
+				changes = {
+						from: blockStart,
+					insert: replacementMarkdown,
+						to: blockEnd,
+				};
+				caretOffset = from + fenceExpansion.openingFenceDelta;
+				value =
+						source.slice(0, blockStart) +
+					replacementMarkdown +
+						source.slice(blockEnd);
+			} else {
+				value = source.slice(0, from) + source.slice(to);
+			}
+			const selection: DocumentSelection = {
+				direction: "none",
+				start: caretOffset,
+				end: caretOffset,
+			};
+			applyDocumentChange({
+				changes,
+				recordHistorySelection: true,
+				selection,
+				value,
+			});
+			sourceRef.current = value;
+			// The native event was prevented, so this owner performs the very
+			// deletion the target described in the live CODE, then reconciles
+			// the body to the published canonical text: the target's endpoints
+			// were already proven inside this CODE, so deleting its contents
+			// applies exactly the projected interval.
+			const liveTarget = surface.ownerDocument.createRange();
+			liveTarget.setStart(target.startContainer, target.startOffset);
+			liveTarget.setEnd(target.endContainer, target.endOffset);
+			liveTarget.deleteContents();
+			reconcileVisualCodeBodyDom(
+				inputBlock.code,
+				nextBody,
+				// The caret after any deletion sits at the removed interval's
+				// start; the projection's local selection already states it
+				// in DOM-relative offsets, which is what the reconciler
+				// expects - a source-byte offset would overcount after CRLF.
+				projection.localSelection.start,
+			);
+			if (null !== replacementMarkdown) {
+				if (operationGap) {
+					applyVisualCodeFenceMetadataFromSource(inputBlock.pre, replacementMarkdown);
+				} else {
+					if (!row) throw new Error("visual-editor-code-body-map-stale");
+				// The widened opening family is the accepted DOM's own fence
+				// metadata now: later projections and block serializations
+				// must read the widened family, not the pre-deletion one.
+				restoreRegionCodeFenceMetadata(
+					surface,
+					[inputBlock.pre],
+					value,
+					new Map([
+						[
+							inputBlock.pre,
+							{
+								end: row.start + replacementMarkdown.length,
+								start: row.start,
+							},
+						],
+					]),
+					{
+						documentLength: value.length,
+						end: row.start + replacementMarkdown.length,
+					},
+				);
+				}
+			}
+			if (operationGap) {
+				const revision = documentSession.document.getRevision?.();
+				if (!Number.isSafeInteger(revision)) {
+					throw new Error("visual-editor-window-pending-selection-stale");
+				}
+				const historyState = documentSession.document.getHistoryState();
+				const delta = value.length - source.length;
+				const transport = (extent: Readonly<{ end: number; start: number; source: string }>) =>
+					extent.start >= blockEnd
+						? { ...extent, start: extent.start + delta, end: extent.end + delta }
+						: extent;
+				const nextGap: WindowedEmptyCodeGap = {
+					...operationGap,
+					after: transport(operationGap.after),
+					accepted: false,
+					codeBodySourceRange: {
+						end: blockEnd + delta,
+						start: blockStart,
+					},
+					historyState,
+					markdown: value,
+					presentationHtml: inputBlock.pre.innerHTML,
+					revision: revision as number,
+					selection,
+				};
+				emptyCodeGapRef.current = nextGap;
+				acceptedWindowChildNodesRef.current = Array.from(surface.childNodes);
+				readOnlySnapshotRef.current = captureVisualMarkdownReadOnlySnapshot(surface);
+				retainGapPresentation(nextGap);
+				rememberEmptyCodeGap(emptyCodeGapHistoryRef.current, nextGap);
+				onMarkdownChange();
+				requestFormalPreview(value, {
+					historyState,
+					restoreFocus: surface.ownerDocument.activeElement === surface,
+					selection,
+				}, { pinWindowSelection: true });
+				return true;
+			}
+			mountedSourceRef.current = value;
+			rangesRef.current.applyDelta(row?.index ?? 0, value.length - source.length);
+			// The owner just made this edit: refresh its own accepted
+			// serialization and mirror through the existing capture owners, so
+			// an immediately following keystroke under the still-pending
+			// Preview re-proves the same block instead of meeting a stale
+			// certificate.
+			acceptedBlockSerializationsRef.current =
+				captureAcceptedWindowedBlockSerializations(
+					surface,
+					rangesRef.current,
+					acceptedBlockSerializationsRef.current,
+					ownedGapDraft(),
+				);
+			acceptedWindowChildNodesRef.current = Array.from(surface.childNodes);
+			readOnlySnapshotRef.current =
+				captureVisualMarkdownReadOnlySnapshot(surface);
+			onMarkdownChange();
+			const caret: DocumentSelection = { direction: "none", start: caretOffset, end: caretOffset };
+			requestFormalPreview(value, {
+				historyState: documentSession.document.getHistoryState(),
+				restoreFocus: surface.ownerDocument.activeElement === surface,
+				selection: caret,
+			}, { pinWindowSelection: true });
+			return true;
+		};
+		const applyPendingCanonicalText = (lease: PendingHistorySelection, text: string, compositionSettlement = false, nativeTyping = false): void => {
 			assertPendingCanonicalLease(lease);
 			if (lease.emptyCodeGap) {
 				applyEmptyCodeGapText(lease.emptyCodeGap, text, pendingRef.current || pendingPropRef.current ? lease : undefined, compositionSettlement);
@@ -4813,12 +5866,45 @@ onFailure(
 			if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start || end > source.length) {
 				throw new Error("visual-editor-window-pending-selection-stale");
 			}
-			const replacement = text.replace(/\r\n|\r|\n/g, sourceLineEndingBefore(source, start));
-			const value = source.slice(0, start) + replacement + source.slice(end);
+			let replacement = text.replace(/\r\n|\r|\n/g, sourceLineEndingBefore(source, start));
+			let changes = { from: start, insert: replacement, to: end };
+			let caret = start + replacement.length;
+			// A paragraph line that starts with a fence opening stays literal until
+			// the explicit Enter command, even while a formal Preview is pending.
+			// Only this owner's own paragraph line is projected; code bodies never
+			// reach this branch.
+			const nativeParagraph = (() => {
+				const node = surface.ownerDocument.defaultView?.getSelection()?.anchorNode;
+				const element = node instanceof Element ? node : node?.parentElement;
+				const paragraph = element?.closest("p");
+				return paragraph && paragraph.parentElement === surface
+					&& !paragraph.closest("pre, code, [contenteditable=\"false\"]") ? paragraph : null;
+			})();
+			if (nativeTyping && nativeParagraph) {
+				const lineStart = 0 === start ? 0 : source.lastIndexOf("\n", start - 1) + 1;
+				const nextBreak = source.indexOf("\n", end);
+				const lineEnd = nextBreak < 0 ? source.length : nextBreak;
+				const line = source.slice(lineStart, start)
+					+ replacement
+					+ source.slice(end, lineEnd);
+				const literal = isMarkdownFenceOpeningLine(source.slice(lineStart, lineEnd))
+					? null
+					: projectVisualLiteralParagraphLine(
+						line,
+						start - lineStart + replacement.length
+					);
+				if (literal) {
+					changes = { from: lineStart, insert: literal.markdown, to: lineEnd };
+					replacement = literal.markdown;
+					caret = lineStart + literal.offset;
+				}
+			}
+			const value = changes.from === start && changes.to === end
+				? source.slice(0, start) + replacement + source.slice(end)
+				: source.slice(0, changes.from) + replacement + source.slice(changes.to);
 			if (value === source) return;
-			const caret = start + replacement.length;
 			const selection: DocumentSelection = { direction: "none", start: caret, end: caret };
-			applyDocumentChange({ changes: { from: start, insert: replacement, to: end },
+			applyDocumentChange({ changes,
 				recordHistorySelection: true, selection, value });
 			sourceRef.current = value;
 			onMarkdownChange();
@@ -4841,7 +5927,7 @@ onFailure(
 					currentBlocks.some((block, index) => block !== composition.region.blocks[index]) ||
 					composition.region.blockSnapshots.some(({ node, attributes }) =>
 						node.attributes.length !== attributes.length || attributes.some(({ name, value }) => node.getAttribute(name) !== value))) {
-					throw new Error("visual-editor-window-source-navigation-dom-stale");
+					throw new WindowedDomStaleError("composition-block-identity");
 				}
 				assertVisualMarkdownReadOnlySnapshot(surface, composition.region.readOnlySnapshot);
 				// Discard only this owned IME draft. Canonical insertion uses the
@@ -4873,6 +5959,158 @@ onFailure(
 			emptyCodeGapRef.current = null;
 			invalidatePendingInputSelection();
 		};
+		/**
+		 * A real navigation gesture moves the native caret without a
+		 * cancelable beforeinput, and the keydown invalidates the pending
+		 * lease so an unproved move cannot be attributed. The producer event
+		 * that follows is the move itself: when that caret still sits inside
+		 * one accepted editable CODE body or this owner's authenticated operation
+		 * PRE, project it through that exact source slice and republish the lease's
+		 * canonical caret and the transfer's visual witness. Every precondition
+		 * fails closed - a foreign, unfocused, stale, structural or unprovable caret
+		 * leaves the invalidated lease exactly as it was.
+		 */
+		const reauthenticatePendingNavigationSelection = (): void => {
+			const transfer = pendingRef.current;
+			const lease = pendingHistorySelectionRef.current;
+			if (!transfer || !lease || !active || externalChangeReportedRef.current) return;
+			if (composing || pendingComposition) return;
+			if (transfer.signature !== lease.signature || transfer.markdown !== lease.markdown) return;
+			// An owner-placed selection is not a user gesture; only a drifted
+			// one has already been reclassified by the caller.
+			if (ownerPlacedSelectionRef.current) return;
+			if (
+				!surface.isConnected ||
+				surface.ownerDocument.activeElement !== surface ||
+				"true" !== surface.getAttribute("contenteditable")
+			) return;
+			const source = lease.markdown;
+			if (
+				documentSession.document.getValue() !== source ||
+				sourceRef.current !== source ||
+				!sameDocumentSelection(documentSession.document.getSelection(), lease.selection) ||
+				!sameDocumentHistoryState(documentSession.document.getHistoryState(), lease.historyState)
+			) return;
+			const nativeSelection = surface.ownerDocument.defaultView?.getSelection();
+			if (
+				!nativeSelection?.rangeCount ||
+				!nativeSelection.anchorNode ||
+				!nativeSelection.focusNode
+			) return;
+			// The normalised Range endpoints are the ones the browser reports
+			// and the ones the deletion target will repeat; the raw
+			// anchor/focus order only states the selection's direction.
+			const visualSelection = captureVisualSelection(surface);
+			if (!visualSelection) return;
+			const inputBlock = captureVisualCodeInputSnapshot(
+				selectedVisualCodeBlock(surface),
+			);
+			if (!inputBlock?.pre.isConnected) return;
+			if (inputBlock.placeholder) return;
+			if (
+				!(inputBlock.code === visualSelection.anchorNode ||
+					inputBlock.code.contains(visualSelection.anchorNode)) ||
+				!(inputBlock.code === visualSelection.focusNode ||
+					inputBlock.code.contains(visualSelection.focusNode))
+			) return;
+			const operationGap = lease.emptyCodeGap?.presentation === inputBlock.pre
+				? lease.emptyCodeGap
+				: null;
+			const operationRange = operationGap?.codeBodySourceRange ?? null;
+			if (
+				operationGap && (
+					emptyCodeGapRef.current !== operationGap ||
+					!emptyCodeGapPresentationMatchesDocument(operationGap, documentSession.document) ||
+					!operationRange ||
+					!Number.isSafeInteger(operationRange.start) ||
+					!Number.isSafeInteger(operationRange.end)
+				)
+			) return;
+			const row = operationGap
+				? null
+				: acceptedWindowedBlockRange(
+					inputBlock.pre,
+					rangesRef.current,
+					acceptedBlockSerializationsRef.current,
+				);
+			const blockStart = operationRange?.start ?? row?.start;
+			const blockEnd = operationRange?.end ?? row?.end;
+			if (
+				(!operationGap && !row?.editable) ||
+				blockStart === undefined ||
+				blockEnd === undefined ||
+				blockStart < 0 ||
+				blockEnd <= blockStart ||
+				blockEnd > source.length
+			) return;
+			const blockSlice = source.slice(blockStart, blockEnd);
+			let projection: VisualCodeBodySelectionProjection;
+			try {
+				projection = projectVisualCodeBodySelection(
+					inputBlock.code,
+					blockSlice,
+					blockSlice,
+					0,
+					{
+						end: {
+							node: visualSelection.focusNode,
+							offset: visualSelection.focusOffset,
+						},
+						start: {
+							node: visualSelection.anchorNode,
+							offset: visualSelection.anchorOffset,
+						},
+					},
+				);
+			} catch {
+				return;
+			}
+			const interval = projection.sourceInterval;
+			const start = projection.sourceSelection.start;
+			const end = projection.sourceSelection.end;
+			if (start < interval.bodyStart || end > interval.bodyEnd) return;
+			const collapsedSelection =
+				visualSelection.anchorNode === visualSelection.focusNode &&
+				visualSelection.anchorOffset === visualSelection.focusOffset;
+			if (collapsedSelection !== (start === end)) return;
+			const direction: DocumentSelection["direction"] = collapsedSelection
+				? "none"
+				: visualSelection.backward
+					? "backward"
+					: "forward";
+			const selection: DocumentSelection = {
+				direction,
+				end: blockStart + end,
+				start: blockStart + start,
+			};
+			if (
+				selection.start === lease.selection.start &&
+				selection.end === lease.selection.end &&
+				selection.direction === lease.selection.direction &&
+				transfer.visualSelection &&
+				visualSelectionEqual(transfer.visualSelection, visualSelection)
+			) {
+				return;
+			}
+			const renewedOperationGap = operationGap
+				? { ...operationGap, selection }
+				: null;
+			if (renewedOperationGap) {
+				emptyCodeGapRef.current = renewedOperationGap;
+				retainGapPresentation(renewedOperationGap);
+				rememberEmptyCodeGap(emptyCodeGapHistoryRef.current, renewedOperationGap);
+			}
+			pendingHistorySelectionRef.current = {
+				...lease,
+				...(renewedOperationGap ? { emptyCodeGap: renewedOperationGap } : {}),
+				restoreFocus: true,
+				selection,
+			};
+			pendingRef.current = { ...transfer, visualSelection };
+			// Selection-only sync: the published source is unchanged, so this
+			// writes no history entry and cannot move the native caret.
+			applyDocumentChange({ selection, value: source });
+		};
 		const reissueGapInputSelection = (): void => {
 			if (emptyCodeGapRef.current || !active || externalChangeReportedRef.current) return;
 			const physical = ownedGapPresentationRef.current;
@@ -4888,6 +6126,7 @@ onFailure(
 			const gap = { ...physical, selection: { ...physical.selection }, historyState: documentSession.document.getHistoryState() };
 			emptyCodeGapRef.current = gap;
 			retainGapPresentation(gap);
+			rememberEmptyCodeGap(emptyCodeGapHistoryRef.current, gap);
 			const transfer = pendingRef.current; const previous = pendingHistorySelectionRef.current;
 			if (transfer && previous && transfer.markdown === gap.markdown && previous.markdown === gap.markdown && transfer.signature === previous.signature) {
 				pendingHistorySelectionRef.current = { ...previous, emptyCodeGap: gap, selection: gap.selection, historyState: gap.historyState, restoreFocus: true };
@@ -4974,6 +6213,9 @@ onFailure(
 		const runHistory = (redo: boolean): void => {
 			if (!active || externalChangeReportedRef.current) return;
 			const restoreFocus = surface.ownerDocument.activeElement === surface;
+			const priorPhysical = ownedGapPresentationRef.current;
+			const priorPhysicalValid = Boolean(priorPhysical && priorPhysical.presentation.parentNode === surface
+				&& emptyCodeGapPresentationMatchesDocument(priorPhysical, documentSession.document));
 			selfWriteRef.current = true;
 			let changed: boolean;
 			try {
@@ -4988,10 +6230,29 @@ onFailure(
 			const historySelection = documentSession.document.getSelection();
 			const knownGap = emptyCodeGapHistoryRef.current.get(documentSession.document.getHistoryState().undoDepth);
 			const gapRevision = documentSession.document.getRevision?.();
-			emptyCodeGapRef.current = knownGap && knownGap.markdown === markdown && Number.isSafeInteger(gapRevision)
+			const historyState = documentSession.document.getHistoryState();
+			const historyGap = knownGap && knownGap.markdown === markdown && Number.isSafeInteger(gapRevision)
 				&& sameDocumentSelection(knownGap.selection, historySelection)
-				? { ...knownGap, revision: gapRevision as number,
-					historyState: documentSession.document.getHistoryState(), accepted: false } : null;
+				? { ...knownGap, revision: gapRevision as number, historyState, accepted: false }
+				: null;
+			const restoredGap = historyGap
+				&& historyGap.after.start === markdown.length
+				&& historyGap.after.end === markdown.length
+				&& historyGap.after.source === ""
+				? prepareHistoryGapPresentation(historyGap, markdown, gapRevision as number, historyState)
+				: historyGap;
+			if (restoredGap && priorPhysical && priorPhysicalValid
+				&& restoredGap.presentation === priorPhysical.presentation
+				&& restoredGap.presentation.parentNode === surface
+				&& restoredGap.presentation.innerHTML === priorPhysical.presentationHtml
+				&& restoredGap.presentationHtml !== priorPhysical.presentationHtml) {
+				restoredGap.presentation.innerHTML = restoredGap.presentationHtml;
+			}
+			emptyCodeGapRef.current = restoredGap;
+			if (restoredGap && !pendingComposition && restoredGap.presentation.isConnected && restoredGap.presentation.parentNode === surface) {
+				retainGapPresentation(restoredGap);
+				rememberEmptyCodeGap(emptyCodeGapHistoryRef.current, restoredGap);
+			}
 			const historyThematicBreakSelection =
 				!redo &&
 				historySelection.start < historySelection.end &&
@@ -5029,7 +6290,7 @@ onFailure(
 			requestFormalPreview(
 				markdown,
 				{
-					historyState: documentSession.document.getHistoryState(),
+				historyState,
 					restoreFocus,
 					selection,
 						...(restoresThematicBreak && thematicBreakGap
@@ -5154,6 +6415,7 @@ onFailure(
 		};
 		const handleBeforeInput = (event: InputEvent) => {
 			visualInputBlock = null;
+			textDeletion = null;
 			if (!event.cancelable &&
 				(event.inputType === "historyUndo" || event.inputType === "historyRedo")) {
 				report(new Error("visual-editor-window-beforeinput-not-cancelable"));
@@ -5218,14 +6480,32 @@ onFailure(
 				const sourceBefore = documentSession.document.getValue();
 				try {
 					if (!event.cancelable) throw new Error("visual-editor-window-beforeinput-not-cancelable");
-					if (WINDOWED_PENDING_TEXT_INPUT_TYPES[event.inputType] !== true ||
-						(event.inputType !== "insertLineBreak" && event.data === null)) {
-						throw new Error("visual-editor-window-pending-input-unavailable");
-					}
-					const lease = pendingInputLease(event);
-					const text = event.inputType === "insertLineBreak" ? "\n" : event.data ?? "";
-					if (!applyStructuralPendingCanonicalText(lease, text)) {
-						applyPendingCanonicalText(lease, text);
+					if (WINDOWED_CODE_BODY_DELETION_TYPES.has(event.inputType)) {
+						// The pending lease owns proved in-body deletions itself;
+						// anything it cannot prove keeps the explicit rejection.
+						// A proved deletion completes the event here: the insert
+						// pipeline below would re-derive a lease against a
+						// caret this event just replaced.
+						const historyLease = pendingHistorySelectionRef.current;
+						if (
+							!historyLease ||
+							historyLease.markdown !== sourceBefore ||
+							!applyPendingCanonicalCodeBodyDeletion(historyLease, event)
+						) {
+							throw new Error("visual-editor-window-pending-input-unavailable");
+						}
+					} else {
+						const lineBreakInput = event.inputType === "insertLineBreak"
+							|| event.inputType === "insertParagraph";
+						if (WINDOWED_PENDING_TEXT_INPUT_TYPES[event.inputType] !== true ||
+							(!lineBreakInput && event.data === null)) {
+							throw new Error("visual-editor-window-pending-input-unavailable");
+						}
+						const lease = pendingInputLease(event);
+						const text = lineBreakInput ? "\n" : event.data ?? "";
+						if (!applyStructuralPendingCanonicalText(lease, text)) {
+							applyPendingCanonicalText(lease, text, false, true);
+						}
 					}
 				} catch (error) {
 					report(error);
@@ -5638,6 +6918,7 @@ onFailure(
 					visualInputBlock,
 					surface,
 					sourceRef.current,
+					windowedOwnedCodeBodyInterval(visualInputBlock.pre, rangesRef.current, acceptedBlockSerializationsRef.current, sourceRef.current),
 				)
 			) {
 				const forwardTarget = event.getTargetRanges?.()[0];
@@ -5665,6 +6946,25 @@ onFailure(
 						onDiagnostic,
 					);
 				}
+				const native = surface.ownerDocument.defaultView?.getSelection();
+				const targets = event.getTargetRanges?.() ?? [];
+				const target = targets[0];
+				const block = region.blocks[0];
+				const text = block?.firstChild;
+				if (!visualInputBlock && deletionDirectionForInput && region.blocks.length === 1
+					&& block instanceof HTMLParagraphElement && block.childNodes.length === 1 && text instanceof Text
+					&& region.baseline === text.data && native?.isCollapsed && native.anchorNode === text
+					&& targets.length === 1 && target?.startContainer === text && target.endContainer === text
+					&& target.startOffset < target.endOffset
+					&& (deletionDirectionForInput === "backward"
+						? target.endOffset === native.anchorOffset : target.startOffset === native.anchorOffset)) {
+					const visualSelection = { start: target.startOffset, end: target.endOffset };
+					const sourceSelection = visualSourceEscapeDeletionRange(
+						sourceRef.current.slice(region.sourceStart, region.sourceEnd), region.baseline,
+						visualSelection.start, visualSelection.end);
+					if (sourceSelection) textDeletion = { inputType: event.inputType, node: text,
+						source: sourceRef.current, sourceSelection, text: text.data, visualSelection };
+				}
 				syncVisibleSelection(region);
 			} catch (error) {
 				if (event.cancelable) {
@@ -5685,6 +6985,7 @@ onFailure(
 		const handleInput = (event: InputEvent) => {
 			const inputBlock = visualInputBlock;
 			visualInputBlock = null;
+			if (textDeletion && textDeletion.inputType !== event.inputType) textDeletion = null;
 			if (rejectedBeforeInput) {
 				restoreRejectedBeforeInput(rejectedBeforeInput);
 				return;
@@ -5771,6 +7072,7 @@ onFailure(
 		const handleCompositionStart = () => {
 			completedPendingComposition = null;
 			cancelledPendingComposition = false;
+			ordinaryCompositionOrigin = null;
 			try { reissueGapInputSelection(); } catch (error) { cancelledPendingComposition = true; report(error); return; }
 			// A transfer that is still outstanding owns the caret even when the
 			// caret is a certified empty-code gap: its canonical lease is the only
@@ -5853,9 +7155,44 @@ onFailure(
 						onDiagnostic,
 					);
 				}
+
+				// Ordinary composition has no pending lease: capture its single
+				// certified origin now, while the canonical caret and the native caret
+				// still agree, so the final replacement can settle on the insertion end
+				// instead of trusting the browser's drifted caret.
+				ordinaryCompositionOrigin = null;
+				try {
+					const source = sourceRef.current;
+					const sourceSlice = source.slice(region.sourceStart, region.sourceEnd);
+					const mapped = visualSelectionSourceRangeForBlocks(
+						region.blocks,
+						sourceSlice,
+						region.baseline,
+					);
+					const native = surface.ownerDocument.defaultView?.getSelection();
+					if (
+						mapped.start === mapped.end
+						&& native?.isCollapsed
+						&& native.anchorNode instanceof Text
+						&& native.anchorNode.isConnected
+						&& region.blocks.some((block) => block.contains(native.anchorNode))
+					) {
+						ordinaryCompositionOrigin = {
+							insertionStart: region.sourceStart + mapped.start,
+							revision: documentSession.document.getRevision?.(),
+							source,
+							textNode: native.anchorNode,
+							textOffset: native.anchorOffset,
+							textBefore: native.anchorNode.data,
+						};
+					}
+				} catch {
+					ordinaryCompositionOrigin = null;
+				}
 				syncVisibleSelection(region);
 				composing = true;
 			} catch (error) {
+				ordinaryCompositionOrigin = null;
 				report(error);
 				const rejectedRegion = region ?? regionRef.current;
 				if (rejectedRegion) {
@@ -5882,7 +7219,7 @@ onFailure(
 					assertPendingCanonicalLease(composition.lease);
 					finishPendingCompositionDom(surface.ownerDocument.activeElement === surface);
 					if (event.data !== "") {
-						applyPendingCanonicalText(composition.lease, event.data, true);
+						applyPendingCanonicalText(composition.lease, event.data, true, true);
 						completedPendingComposition = { data: event.data, markdown: sourceRef.current };
 					}
 				} catch (error) {
@@ -5930,7 +7267,93 @@ onFailure(
 			if (codeBodyInput) {
 				codeBodyInput = { ...codeBodyInput, data: event.data };
 			}
-			queueMicrotask(() => commit());
+			const origin = ordinaryCompositionOrigin;
+			ordinaryCompositionOrigin = null;
+			const nativeWitness = (() => {
+				const native = surface.ownerDocument.defaultView?.getSelection();
+				return native?.anchorNode && native.focusNode
+					? {
+							anchorNode: native.anchorNode,
+							anchorOffset: native.anchorOffset,
+							focusNode: native.focusNode,
+							focusOffset: native.focusOffset,
+						}
+					: null;
+			})();
+			const source = sourceRef.current;
+			const expectedCommittedText = origin
+				? origin.textBefore.slice(0, origin.textOffset)
+					+ event.data
+					+ origin.textBefore.slice(origin.textOffset)
+				: "";
+			const nativeOwnsOrigin = Boolean(
+				origin
+				&& nativeWitness
+				&& nativeWitness.anchorNode === origin.textNode
+				&& nativeWitness.focusNode === origin.textNode
+				&& nativeWitness.anchorOffset === nativeWitness.focusOffset
+				&& origin.textNode.isConnected
+				&& surface.contains(origin.textNode)
+				&& origin.textNode.data === expectedCommittedText
+				&& nativeWitness.anchorOffset >= origin.textOffset
+				&& nativeWitness.anchorOffset <= origin.textOffset + event.data.length
+			);
+			const compositionCommit = origin
+				&& nativeOwnsOrigin
+				&& "" !== event.data
+				&& origin.source === source
+				&& origin.revision === documentSession.document.getRevision?.()
+				? {
+						insertionEnd: origin.insertionStart + event.data.length,
+						value:
+							origin.source.slice(0, origin.insertionStart)
+							+ event.data
+							+ origin.source.slice(origin.insertionStart),
+					}
+				: undefined;
+			queueMicrotask(() => {
+				const nativeAtSettlement = surface.ownerDocument.defaultView?.getSelection();
+				const nativeUnmovedAtSettlement = Boolean(
+					nativeAtSettlement
+					&& nativeWitness
+					&& nativeAtSettlement.anchorNode === nativeWitness.anchorNode
+					&& nativeAtSettlement.anchorOffset === nativeWitness.anchorOffset
+					&& nativeAtSettlement.focusNode === nativeWitness.focusNode
+					&& nativeAtSettlement.focusOffset === nativeWitness.focusOffset
+				);
+				const committed = commit(
+					compositionCommit && nativeUnmovedAtSettlement
+						? { compositionCommit }
+						: undefined,
+				);
+				if (!committed || !compositionCommit || !origin || !nativeUnmovedAtSettlement) return;
+				const native = surface.ownerDocument.defaultView?.getSelection();
+				const expectedText =
+					origin.textBefore.slice(0, origin.textOffset)
+					+ event.data
+					+ origin.textBefore.slice(origin.textOffset);
+				const insertionEnd = origin.textOffset + event.data.length;
+				const nativeUnmoved = Boolean(
+					native
+					&& nativeWitness
+					&& native.anchorNode === nativeWitness.anchorNode
+					&& native.anchorOffset === nativeWitness.anchorOffset
+					&& native.focusNode === nativeWitness.focusNode
+					&& native.focusOffset === nativeWitness.focusOffset
+				);
+				if (
+					nativeUnmoved
+					&& origin.textNode.isConnected
+					&& surface.contains(origin.textNode)
+					&& origin.textNode.data === expectedText
+					&& native?.isCollapsed
+					&& native.anchorNode === origin.textNode
+					&& native.anchorOffset >= origin.textOffset
+					&& native.anchorOffset < insertionEnd
+				) {
+					native.collapse(origin.textNode, insertionEnd);
+				}
+			});
 		};
 		const handleKeyDown = (event: KeyboardEvent) => {
 			if (
@@ -5942,6 +7365,11 @@ onFailure(
 				return;
 			}
 			const key = event.key.toLowerCase();
+			const selectAllShortcut =
+				(event.ctrlKey || event.metaKey) &&
+				!event.altKey &&
+				!event.shiftKey &&
+				"a" === key;
 			const historyShortcut =
 				(event.ctrlKey || event.metaKey) &&
 				!event.altKey &&
@@ -5965,7 +7393,7 @@ onFailure(
 					const before = gap ? emptyCodeGapNeighbor(gap.presentation.previousSibling, "before") : null;
 					const row = before && acceptedWindowedBlockRange(before, rangesRef.current, acceptedBlockSerializationsRef.current);
 					if (gap && native?.isCollapsed && emptyCodeGapBoundary(gap, native.anchorNode, native.anchorOffset)
-						&& gap.presentation.childNodes.length === 1 && gap.presentation.firstChild instanceof HTMLBRElement
+						&& gap.presentation instanceof HTMLParagraphElement && windowedGapLineParagraphShape(gap.presentation)
 						&& row?.editable && row.start === gap.before.start && row.end === gap.before.end && before) {
 						assertPendingInputDom();
 						event.preventDefault();
@@ -5982,25 +7410,54 @@ onFailure(
 					}
 				} catch (error) { event.preventDefault(); report(error); return; }
 			}
-			if (event.key === "Enter") {
+			if (event.key === "Enter" && !composing && !event.isComposing) {
 				try {
 					const native = surface.ownerDocument.defaultView?.getSelection();
-					const heading = native?.anchorNode instanceof Element ? native.anchorNode.closest("h1,h2,h3,h4,h5,h6") : native?.anchorNode?.parentElement?.closest("h1,h2,h3,h4,h5,h6");
-					if (heading instanceof HTMLElement && heading.parentNode === surface && native?.isCollapsed) {
-						const before = acceptedWindowedBlockRange(heading, rangesRef.current, acceptedBlockSerializationsRef.current);
+					// A text tail is a direct surface block, heading or paragraph.
+					// Its source-neutral trailing line is owned by the same certified
+					// gap regardless of which block kind introduced it.
+					let block: HTMLElement | null = native?.anchorNode instanceof HTMLElement
+						? native.anchorNode
+						: native?.anchorNode?.parentElement ?? null;
+					while (block && block.parentNode !== surface) block = block.parentElement;
+					if (block && !/^(?:H[1-6]|P)$/u.test(block.tagName)) block = null;
+					// An empty block already has its own native split contract (the
+					// exited-fence middle gap); only a real text tail owns this line.
+					if (block && '' === (block.textContent ?? '')) block = null;
+					if (block instanceof HTMLElement && block.parentNode === surface && native?.isCollapsed) {
+						const before = acceptedWindowedBlockRange(block, rangesRef.current, acceptedBlockSerializationsRef.current);
 						const physical = ownedGapPresentationRef.current;
 						const existingGap = physical && emptyCodeGapPresentationMatchesDocument(physical, documentSession.document)
-							&& heading.nextSibling === physical.presentation && physical.presentation.childNodes.length === 1
-							&& physical.presentation.firstChild instanceof HTMLBRElement ? physical.presentation : null;
-						const afterNode = emptyCodeGapNeighbor(existingGap ? existingGap.nextSibling : heading.nextSibling, "after");
-						const after = afterNode && acceptedWindowedBlockRange(afterNode, rangesRef.current, acceptedBlockSerializationsRef.current);
+							&& block.nextSibling === physical.presentation && windowedGapLineParagraphShape(physical.presentation) ? physical.presentation : null;
+						const afterNode = emptyCodeGapNeighbor(existingGap ? existingGap.nextSibling : block.nextSibling, "after");
+						const mountedAfter = afterNode ? acceptedWindowedBlockRange(afterNode, rangesRef.current, acceptedBlockSerializationsRef.current) : null;
+						// An unmounted source row has no DOM node: its accepted source
+						// extent is the certificate, never a fabricated spacer slot.
+						const sourceAfter = before ? rangesRef.current.nextEditableAfter(before.index) : null;
+						const after = mountedAfter?.editable ? mountedAfter : sourceAfter;
 						const markdown = documentSession.document.getValue();
 						const tail = before ? before.end - (markdown.slice(before.start, before.end).match(/[\r\n]+$/u)?.[0].length ?? 0) : -1;
+						const noSourceRowAfter = !rangesRef.current.hasEditableAfter(before?.index ?? Number.MAX_SAFE_INTEGER);
 						const gapEnd = after?.editable ? after.start
-							: !(existingGap ? existingGap.nextSibling : heading.nextSibling) && before?.editable && /^[\r\n]*$/u.test(markdown.slice(before.end)) ? markdown.length : null;
-						const prefix = surface.ownerDocument.createRange(); prefix.selectNodeContents(heading); prefix.setEnd(native.anchorNode!, native.anchorOffset);
-						if (before?.editable && gapEnd !== null && prefix.toString() === heading.textContent
-							&& /^[\r\n]{2,}$/u.test(markdown.slice(tail, gapEnd))) {
+							: noSourceRowAfter && before?.editable && /^[\r\n]*$/u.test(markdown.slice(before.end)) ? markdown.length : null;
+						const prefix = surface.ownerDocument.createRange(); prefix.selectNodeContents(block); prefix.setEnd(native.anchorNode!, native.anchorOffset);
+						const gapSlice = gapEnd === null ? null : markdown.slice(tail, gapEnd);
+						const eofSeparators = gapSlice?.match(/\r\n|\r|\n/g) ?? [];
+						const emptyEofGap = null === after
+							&& noSourceRowAfter
+							&& gapEnd === markdown.length
+							&& gapSlice !== null
+							&& /^[\r\n]*$/u.test(gapSlice)
+							&& before?.editable
+							&& !blockShortcutTail(block);
+						const tightAdjacent = emptyEofGap || (
+							null !== after && null !== before
+							&& after.start === before.end
+							&& !blockShortcutTail(block)
+						);
+						if (before?.editable && gapEnd !== null && prefix.toString() === block.textContent
+							&& null !== gapSlice
+							&& certifiedTextTailGapSlice(gapSlice, tightAdjacent)) {
 							if (pendingHistorySelectionRef.current) assertPendingCanonicalLease(pendingHistorySelectionRef.current);
 							assertPendingInputDom();
 							const revision = documentSession.document.getRevision?.();
@@ -6008,22 +7465,83 @@ onFailure(
 							event.preventDefault();
 							const paragraph = existingGap ?? surface.ownerDocument.createElement("p");
 							if (!existingGap) paragraph.append(surface.ownerDocument.createElement("br"));
-							heading.after(paragraph); native.collapse(paragraph, 0);
-							const point = tail + sourceLineEndingBefore(markdown, tail).length * 2;
+							block.after(paragraph); native.collapse(paragraph, existingGap ? paragraph.childNodes.length : 0);
+							// The caret sits after the certified separator: the blank line
+							// when there is one, otherwise the following row's own start.
+								const eofSeparator = emptyEofGap
+									? eofSeparators.length >= 2
+										? ""
+										: sourceLineEndingBefore(markdown, markdown.length).repeat(2 - eofSeparators.length)
+									: "";
+							const gapMarkdown = eofSeparator
+								? markdown + eofSeparator
+								: markdown;
+							const gapLineEndings = gapSlice.match(/\r\n|\r|\n/g) ?? [];
+							const point = emptyEofGap
+								? gapMarkdown.length
+								: gapLineEndings.length >= 2
+									? tail + (gapLineEndings[0]?.length ?? 0) + (gapLineEndings[1]?.length ?? 0)
+									: gapEnd;
 							const selection: DocumentSelection = { direction: "none", start: point, end: point };
-							applyDocumentChange({ value: markdown, selection });
-							emptyCodeGapRef.current = { markdown, selection, revision: revision as number,
-								historyState: documentSession.document.getHistoryState(), presentation: paragraph, presentationHtml: paragraph.innerHTML, accepted: true,
+							applyDocumentChange({
+								...(eofSeparator
+									? { changes: { from: markdown.length, insert: eofSeparator, to: markdown.length } }
+									: {}),
+								recordHistorySelection: true,
+								selection,
+								value: gapMarkdown,
+							});
+							sourceRef.current = gapMarkdown;
+							onMarkdownChange();
+							const nextRevision = documentSession.document.getRevision?.();
+							if (!Number.isSafeInteger(nextRevision)) throw new Error("visual-editor-window-pending-selection-stale");
+							const nextHistoryState = documentSession.document.getHistoryState();
+							emptyCodeGapRef.current = {
+								markdown: gapMarkdown,
+								selection,
+								revision: nextRevision as number,
+								historyState: nextHistoryState,
+								presentation: paragraph,
+								presentationHtml: paragraph.innerHTML,
+								accepted: true,
 								before: { start: before.start, end: before.end, source: markdown.slice(before.start, before.end) },
 								after: after?.editable ? { start: after.start, end: after.end, source: markdown.slice(after.start, after.end) }
-									: { start: markdown.length, end: markdown.length, source: "" } };
+									: { start: gapMarkdown.length, end: gapMarkdown.length, source: "" },
+							};
 							acceptedWindowChildNodesRef.current = Array.from(surface.childNodes);
 							retainGapPresentation(emptyCodeGapRef.current);
-							requestFormalPreview(markdown, { historyState: documentSession.document.getHistoryState(), restoreFocus: true, selection }, { pinWindowSelection: true });
+							rememberEmptyCodeGap(emptyCodeGapHistoryRef.current, emptyCodeGapRef.current);
+							requestFormalPreview(gapMarkdown, { historyState: nextHistoryState, restoreFocus: true, selection }, { pinWindowSelection: true });
 							return;
 						}
 					}
 				} catch (error) { event.preventDefault(); report(error); return; }
+			}
+			// A certified text draft whose caret sits at the end of a complete fence
+			// opening owns the block Enter command even while its formal Preview is
+			// outstanding. Without this the pending beforeinput path would insert a
+			// plain line break instead of building the fence.
+			if ("Enter" === event.key && (pendingRef.current || pendingPropRef.current)) {
+				const draft = emptyCodeGapRef.current;
+				const lease = pendingHistorySelectionRef.current;
+				const native = surface.ownerDocument.defaultView?.getSelection();
+				if (draft && !draft.accepted && lease && draft.markdown === lease.markdown
+					&& native?.isCollapsed && draft.presentation.isConnected
+					&& native.anchorNode && draft.presentation.contains(native.anchorNode)) {
+					const head = surface.ownerDocument.createRange();
+					head.selectNodeContents(draft.presentation);
+					head.setEnd(native.anchorNode, native.anchorOffset);
+					const text = draft.presentation.textContent ?? "";
+					if ("" !== text && head.toString() === text) {
+						try {
+							if (applyPendingFenceShortcut(lease, draft, event)) return;
+						} catch (error) {
+							event.preventDefault();
+							report(error);
+							return;
+						}
+					}
+				}
 			}
 			// A pending formal Preview must not make Undo invisible. The shortcut is
 			// claimed by the history owner below even while a transfer is in flight,
@@ -6034,7 +7552,7 @@ onFailure(
 				!historyShortcut &&
 				(pendingRef.current || pendingPropRef.current)
 			) {
-				if (WINDOWED_PENDING_NAVIGATION_KEYS[event.key] === true) invalidatePendingInputSelection();
+				if (WINDOWED_PENDING_NAVIGATION_KEYS[event.key] === true || selectAllShortcut) invalidatePendingInputSelection();
 				return;
 			}
 			if (historyShortcut) {
@@ -6042,11 +7560,6 @@ onFailure(
 				runHistory("y" === key || event.shiftKey);
 				return;
 			}
-			const selectAllShortcut =
-				(event.ctrlKey || event.metaKey) &&
-				!event.altKey &&
-				!event.shiftKey &&
-				"a" === key;
 			if (selectAllShortcut) {
 				if (!(event.target instanceof Node) || !surface.contains(event.target))
 					return;
@@ -6127,7 +7640,6 @@ onFailure(
 				regionRef.current = region;
 				const committed = commit({
 					allowSingleBlockStructural: true,
-					rewitnessReplacement: emptyCodeExit,
 				});
 				if (committed && emptyCodeExit && rangesRef.current) {
 					const beforeNode = emptyCodeGapNeighbor(region.before, "before");
@@ -6155,12 +7667,7 @@ onFailure(
 						};
 						emptyCodeGapRef.current = gap;
 						retainGapPresentation(gap);
-						emptyCodeGapHistoryRef.current.set(gap.historyState.undoDepth, gap);
-						while (emptyCodeGapHistoryRef.current.size > 32) {
-							const oldest = emptyCodeGapHistoryRef.current.keys().next().value;
-							if (oldest === undefined) break;
-							emptyCodeGapHistoryRef.current.delete(oldest);
-						}
+						rememberEmptyCodeGap(emptyCodeGapHistoryRef.current, gap);
 					}
 				}
 			} catch (error) {
@@ -6260,11 +7767,16 @@ onFailure(
 				}
 			}
 			const lease = contextMenuSelectionRef.current;
-			if (!lease) return;
-			const current = captureVisualSelection(surface);
-			if (!current || !visualSelectionEqual(lease, current)) {
-				invalidateContextMenuSelection();
+			if (lease) {
+				const current = captureVisualSelection(surface);
+				if (!current || !visualSelectionEqual(lease, current)) {
+					invalidateContextMenuSelection();
+				}
 			}
+			// The pending lease's own producer: a real caret move that can be
+			// authenticated against its accepted code body is handed back to
+			// the lease; every other move stays invalidated.
+			reauthenticatePendingNavigationSelection();
 		};
 		const handleContextMenuSurfaceFocus = (): void => {
 			invalidateContextMenuSelection();
@@ -7202,6 +8714,7 @@ onFailure(
 			composition?.compositionLease?.release();
 			releaseCompositionSurface();
 			active = false;
+			activeRef.current = false;
 			imageInteraction.dispose();
 			thematicBreakDeletionHistoryRef.current = [];
 			emptyCodeGapRef.current = null;

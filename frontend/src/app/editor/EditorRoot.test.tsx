@@ -7225,6 +7225,7 @@ describe('EditorRoot', () => {
               !unlock.hasAttribute('disabled')
               && 'true' !== unlock.getAttribute('aria-disabled')
           );
+          layoutPreviewSurface(view.container);
         } else {
           await waitFor(() =>
             expect(unlock.hasAttribute('disabled')).toBe(false)
@@ -7480,6 +7481,7 @@ describe('EditorRoot', () => {
       );
       fireEvent.click(view.getByRole('button', { name: '预览' }));
       await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      if (windowed) layoutPreviewSurface(view.container);
       fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
       const visual = await view.findByRole('textbox', {
         name: '可视化文章编辑器'
@@ -9903,6 +9905,685 @@ describe('EditorRoot', () => {
   });
 
   it.each([
+    [false, 'source', false], [true, 'source', false],
+    [true, 'preview', false], [true, 'split', false],
+    [true, 'preview', true], [true, 'split', true]
+  ] as const)(
+    'completes one Source mode request after the active formal Preview settles (windowed %s, latest mode %s, cancel during preparation %s)',
+    { timeout: 15_000 },
+    async (windowed, latestMode, cancelDuringPreparation) => {
+      const props = fixture();
+      const realCreateSession = observedSourceAdapter.createCodeMirrorDocumentSession;
+      const session: { current: CodeMirrorDocumentSession | null } = { current: null };
+      vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession').mockImplementation((options) => {
+        const owner = realCreateSession(options);
+        session.current = owner;
+        return owner;
+      });
+      const paragraphs = Array.from(
+        { length: windowed ? 200 : 2 },
+        (_, index) => `Paragraph ${index}`
+      );
+      const markdown = paragraphs.join('\n\n');
+      props.submissionField.value = markdown;
+      props.submissionField.defaultValue = markdown;
+      props.submissionField.setSelectionRange(0, 0);
+      const responseFor = (request: PreviewRequest): PreviewResponse => {
+        const response = createPreviewResponse(
+          request,
+          request.markdown.split('\n\n').map((text) => `<p>${text}</p>`).join('') as SafePreviewHtml,
+          {}
+        );
+        if (!response.editMap) throw new Error('pending-source-edit-map-required');
+        return {
+          ...response,
+          editMap: {
+            ...response.editMap,
+            blocks: response.editMap.blocks.map((block, index) => ({
+              ...block, startLine: index * 2, endLine: index * 2 + 1
+            }))
+          }
+        };
+      };
+      const held = deferred<PreviewResponse>();
+      const pending: { request: PreviewRequest | null; hold: boolean } = {
+        request: null, hold: false
+      };
+      vi.mocked(props.previewPort.render).mockImplementation((request) => {
+        if (pending.hold) {
+          pending.request = request;
+          return held.promise;
+        }
+        return Promise.resolve(responseFor(request));
+      });
+      const realPreviewOwner = observedPreviewOwner.PreviewSurfaceOwner;
+      const stagingScheduler = { now: () => 0, yield: () => Promise.resolve() };
+      const preparationGate = deferred<void>();
+      const preparation: { paused: boolean; started: boolean; task: Promise<boolean> | null } = {
+        paused: false, started: false, task: null
+      };
+      const materializeScheduler = { yield: () => {
+        if (!preparation.paused) return Promise.resolve();
+        preparation.started = true;
+        return preparationGate.promise;
+      } };
+      let observedRuntime: observedPreviewOwner.PreviewSurfaceRuntime | null = null;
+      vi.spyOn(observedPreviewOwner, 'PreviewSurfaceOwner').mockImplementation(
+        (componentProps) => {
+          const onReady = observedCallback((runtime: observedPreviewOwner.PreviewSurfaceRuntime) => {
+            if (runtime !== observedRuntime) {
+              observedRuntime = runtime;
+              const materialize = runtime.materialize;
+              vi.spyOn(runtime, 'materialize').mockImplementation(() => {
+                const task = materialize();
+                preparation.task = task;
+                return task;
+              });
+            }
+            componentProps.onReady?.(runtime);
+          }, [componentProps.onReady]);
+          return realPreviewOwner({ ...componentProps, onReady, stagingScheduler, materializeScheduler });
+        }
+      );
+      const view = render(<EditorRoot {...props} />);
+      try {
+        fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+        fireEvent.click(view.getByRole('button', { name: '预览模式' }));
+        const unlock = await view.findByRole('button', { name: '解除锁定并编辑' });
+        await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+        layoutPreviewSurface(view.container);
+        fireEvent.click(unlock);
+        const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+        await waitFor(() => expect(visual.getAttribute('contenteditable')).toBe('true'));
+        expect(!!visual.querySelector('[data-easymde-preview-window-spacer]')).toBe(windowed);
+        const text = visual.querySelector('p')?.firstChild;
+        if (!(text instanceof Text)) throw new Error('pending-source-paragraph-required');
+        visual.focus();
+        window.getSelection()?.collapse(text, text.length);
+        pending.hold = true;
+        fireEvent.paste(visual, {
+          clipboardData: {
+            getData: (type: string) => type === 'text/plain' ? 'More' : '',
+            types: ['text/plain']
+          }
+        });
+        let expected = `Paragraph 0More${markdown.slice('Paragraph 0'.length)}`;
+        await waitFor(() => expect(pending.request?.markdown).toBe(expected));
+        expect(visual.getAttribute('data-easymde-preview-refreshing')).toBe('1');
+        // Windowed paste intentionally holds the native bridge during transfer.
+        expect(session.current?.getValue()).toBe(expected);
+        // One user intent; a second click must not be needed after acceptance.
+        fireEvent.click(view.getByRole('button', { name: '编辑模式' }));
+        expect(view.container.querySelector('.easymde-editor')?.classList.contains('is-immersive-preview')).toBe(true);
+        if ('source' !== latestMode && !cancelDuringPreparation) {
+          fireEvent.click(view.getByRole('button', {
+            name: 'preview' === latestMode ? '预览模式' : '分屏模式'
+          }));
+        }
+        const request = pending.request;
+        if (!request) throw new Error('pending-source-formal-request-required');
+        preparation.paused = cancelDuringPreparation;
+        pending.hold = false;
+        await act(async () => {
+          held.resolve(responseFor(request));
+          await held.promise;
+        });
+        if (cancelDuringPreparation) {
+          await waitFor(() => expect(preparation.started).toBe(true));
+          fireEvent.click(view.getByRole('button', {
+            name: 'preview' === latestMode ? '预览模式' : '分屏模式'
+          }));
+          const task = preparation.task;
+          if (!task) throw new Error('source-preparation-materialization-task-missing');
+          preparation.paused = false;
+          await act(async () => {
+            preparationGate.resolve();
+            await task;
+          });
+        }
+        // Let accepted-Preview effects and already queued layout work settle
+        // before checking that a newer view choice cancelled the Source intent.
+        await act(async () => {
+          await new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          });
+        });
+        await waitFor(() => expect(view.container.querySelector('.easymde-editor')?.classList.contains(`is-immersive-${latestMode}`)).toBe(true));
+        if ('preview' !== latestMode) {
+          expect(view.container.querySelector('.easymde-source-react .cm-content')).not.toBeNull();
+          await waitFor(() => expect(props.submissionField.value).toBe(expected));
+        }
+        expect(session.current?.getValue()).toBe(expected);
+        if (cancelDuringPreparation && 'preview' === latestMode) {
+          expect(visual.getAttribute('contenteditable'), 'cancelling Source preparation must not leave the current Preview locked').toBe('true');
+          const text = visual.querySelector('p')?.firstChild;
+          if (!(text instanceof Text)) throw new Error('cancelled-source-preview-paragraph-missing');
+          visual.focus();
+          window.getSelection()?.collapse(text, text.length);
+          fireEvent.paste(visual, {
+            clipboardData: {
+              getData: (type: string) => type === 'text/plain' ? 'Again' : '',
+              types: ['text/plain']
+            }
+          });
+          expected = `Paragraph 0MoreAgain${markdown.slice('Paragraph 0'.length)}`;
+          await waitFor(() => expect(session.current?.getValue()).toBe(expected));
+          expect(view.container.querySelector('.easymde-editor')?.classList.contains('is-immersive-preview')).toBe(true);
+        }
+        expect(props.onFailure).not.toHaveBeenCalled();
+        expect(view.container.querySelector('[role="alert"]')).toBeNull();
+      } finally {
+        preparation.paused = false;
+        preparationGate.resolve();
+        pending.hold = false;
+        if (pending.request) held.resolve(responseFor(pending.request));
+        view.unmount();
+      }
+    }
+  );
+
+  it.each([
+    ['accepted-exit', 'response-pending'],
+    ['accepted-exit', 'enhancing'],
+    ['newer-preview-cancels-exit', 'response-pending'],
+    ['exit-supersedes-source', 'response-pending'],
+    ['teardown-rejects-ABA-completion', 'response-pending']
+  ] as const)(
+    'pending immersive exit consumer: %s (%s)',
+    { timeout: 20_000 },
+    async (intent, pendingStage) => {
+      const props = fixture();
+      // The existing image-scale consumer's native image selection and menu
+      // gesture, with parser-valid paragraphs and matching formal line spans.
+      const paragraphs = Array.from({ length: 161 }, (_, index) => `Paragraph ${index}`);
+      const initial = [
+        'Before ![alt](https://example.test/original.png "{width=100%}") after',
+        ...paragraphs
+      ].join('\n\n');
+      const scaled = initial.replace('{width=100%}', '{width=50%}');
+      props.submissionField.value = initial;
+      props.submissionField.defaultValue = initial;
+      props.submissionField.setSelectionRange(0, 0);
+      const responseFor = (request: PreviewRequest): PreviewResponse => {
+        if (request.markdown !== initial && request.markdown !== scaled) {
+          throw new Error('pending-exit-unexpected-source');
+        }
+        const title = request.markdown === scaled ? '{width=50%}' : '{width=100%}';
+        const response = createPreviewResponse(
+          request,
+          (`<p>Before <img alt="alt" src="https://example.test/original.png" title="${title}"> after</p>`
+            + paragraphs.map((text) => `<p>${text}</p>`).join('')) as SafePreviewHtml,
+          {}
+        );
+        if (!response.editMap) throw new Error('pending-exit-edit-map-required');
+        return {
+          ...response,
+          editMap: {
+            ...response.editMap,
+            blocks: response.editMap.blocks.map((block, index) => ({
+              ...block, startLine: 2 * index, endLine: 2 * index + 1
+            }))
+          }
+        };
+      };
+      // Default spies observe the real session; no runtime or history method
+      // is replaced and no test double implements the transition under test.
+      const sessions = vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession');
+      const heldResponse = deferred<PreviewResponse>();
+      const heldEnhancement = deferred<void>();
+      const pending: {
+        hold: boolean;
+        request: PreviewRequest | null;
+        signal: AbortSignal | null;
+        enhancement: { isCurrent: () => boolean; signal: AbortSignal } | null;
+      } = { hold: false, request: null, signal: null, enhancement: null };
+      vi.mocked(props.previewPort.render).mockImplementation((request, signal) => {
+        if (pending.hold) {
+          pending.request = request;
+          pending.signal = signal;
+          if ('response-pending' === pendingStage) return heldResponse.promise;
+        }
+        return Promise.resolve(responseFor(request));
+      });
+      vi.mocked(props.enhancementPort.enhance).mockImplementation(async (_surface, _features, isCurrent, context) => {
+        if (pending.hold && 'enhancing' === pendingStage) {
+          pending.enhancement = { isCurrent, signal: context.signal };
+          await heldEnhancement.promise;
+        }
+      });
+      const releaseFocusBoundary = vi.fn();
+      vi.mocked(props.immersiveEnvironment.activateFocusBoundary).mockReturnValue(releaseFocusBoundary);
+      const canonicalInput = vi.fn();
+      props.submissionField.addEventListener('input', canonicalInput);
+      const view = render(<EditorRoot {...props} editorBlockIndexPort={sourceLinkBlockIndexPort()} />);
+      let replacement: typeof view | null = null;
+      const settleLayout = async (): Promise<void> => {
+        await act(async () => {
+          const frame = deferred<void>();
+          requestAnimationFrame(() => requestAnimationFrame(() => frame.resolve()));
+          await frame.promise;
+        });
+      };
+      const nativeSnapshot = () => ({
+        value: props.submissionField.value,
+        start: props.submissionField.selectionStart,
+        end: props.submissionField.selectionEnd,
+        direction: props.submissionField.selectionDirection
+      });
+      try {
+        fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+        fireEvent.click(view.getByRole('button', { name: '预览模式' }));
+        const unlock = await view.findByRole('button', { name: '解除锁定并编辑' });
+        await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+        layoutPreviewSurface(view.container);
+        fireEvent.click(unlock);
+        const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+        const creation = sessions.mock.results[0];
+        if (!creation || 'return' !== creation.type) throw new Error('pending-exit-document-owner-required');
+        const owner = creation.value;
+        const currentImage = (): HTMLImageElement => {
+          const image = visual.querySelector('img');
+          if (!(image instanceof HTMLImageElement)) throw new Error('pending-exit-image-required');
+          return image;
+        };
+        const awaitAccepted = async (value: string, title: string): Promise<void> => {
+          await waitFor(() => {
+            expect(owner.getValue()).toBe(value);
+            expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready');
+            expect(visual.getAttribute('contenteditable')).toBe('true');
+            expect(currentImage().getAttribute('title')).toBe(title);
+          });
+        };
+        await awaitAccepted(initial, '{width=100%}');
+        expect(visual.querySelector('[data-easymde-preview-window-spacer]')).not.toBeNull();
+        expect(owner.getHistoryState()).toEqual({ undoDepth: 0, redoDepth: 0 });
+        const openingRevision = owner.getRevision();
+        visual.focus();
+        const retained = document.createRange();
+        retained.selectNode(currentImage());
+        const selection = window.getSelection();
+        if (!selection) throw new Error('pending-exit-native-selection-required');
+        selection.removeAllRanges();
+        selection.addRange(retained);
+        document.dispatchEvent(new Event('selectionchange'));
+        layoutContextMenuSurface(visual);
+        fireEvent.contextMenu(currentImage(), { clientX: 24, clientY: 30 });
+        const menu = await within(document.body).findByRole('menu');
+        const scaleTrigger = within(menu).getByRole('menuitem', { name: 'Image scale' });
+        fireEvent.pointerDown(scaleTrigger, { button: 0 });
+        fireEvent.click(scaleTrigger);
+        const scaleMenu = await within(document.body).findByRole('menu', { name: 'Image scale' });
+        const scaleItem = within(scaleMenu).getByRole('menuitem', { name: '50%' });
+        fireEvent.pointerDown(scaleItem, { button: 0 });
+        fireEvent.click(scaleItem);
+        await awaitAccepted(scaled, '{width=50%}');
+        expect(owner.getHistoryState()).toEqual({ undoDepth: 1, redoDepth: 0 });
+        const pressHistory = (shiftKey = false): void => {
+          fireEvent.keyDown(visual, { cancelable: true, ctrlKey: true, key: 'z', shiftKey });
+        };
+        pressHistory();
+        await awaitAccepted(initial, '{width=100%}');
+        expect(owner.getHistoryState()).toEqual({ undoDepth: 0, redoDepth: 1 });
+        pressHistory(true);
+        await awaitAccepted(scaled, '{width=50%}');
+        expect(owner.getHistoryState()).toEqual({ undoDepth: 1, redoDepth: 0 });
+
+        // Only the cleanup Undo is held. One exit arrives before this formal
+        // transfer settles, never after an await-ready that hides the defect.
+        pending.hold = true;
+        pressHistory();
+        await waitFor(() => expect(pending.request?.markdown).toBe(initial));
+        await waitFor(() => expect(visual.getAttribute('data-easymde-preview-phase')).toBe(
+          'enhancing' === pendingStage ? 'enhancing' : 'loading'
+        ));
+        expect(visual.getAttribute('data-easymde-preview-refreshing')).toBe('1');
+        const request = pending.request;
+        if (!request) throw new Error('pending-exit-formal-request-required');
+        expect(request.signature).not.toBe('0:' + initial.length);
+        expect(pending.signal?.aborted).toBe(false);
+        if ('enhancing' === pendingStage) {
+          expect(pending.enhancement?.isCurrent()).toBe(true);
+          expect(pending.enhancement?.signal.aborted).toBe(false);
+        } else {
+          expect(pending.enhancement).toBeNull();
+        }
+        const beforeExit = {
+          value: owner.getValue(), selection: owner.getSelection(),
+          revision: owner.getRevision(), history: owner.getHistoryState()
+        };
+        const nativeBeforeExit = nativeSnapshot();
+        const inputsBeforeExit = canonicalInput.mock.calls.length;
+        expect(beforeExit.value).toBe(initial);
+        expect(beforeExit.revision).toBe(openingRevision + 4);
+        expect(beforeExit.history).toEqual({ undoDepth: 0, redoDepth: 1 });
+        expect(initial.slice(beforeExit.selection.start, beforeExit.selection.end)).toBe(
+          '![alt](https://example.test/original.png "{width=100%}")'
+        );
+        expect(props.onFailure).not.toHaveBeenCalled();
+        if ('exit-supersedes-source' === intent) {
+          fireEvent.click(view.getByRole('button', { name: '编辑模式' }));
+        }
+        fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
+        await settleLayout();
+        expect(view.queryByRole('region', { name: '沉浸写作' })).not.toBeNull();
+        expect(releaseFocusBoundary).not.toHaveBeenCalled();
+        const expectNoMutation = (): void => {
+          expect({
+            value: owner.getValue(), selection: owner.getSelection(),
+            revision: owner.getRevision(), history: owner.getHistoryState()
+          }).toEqual(beforeExit);
+          expect(nativeSnapshot()).toEqual(nativeBeforeExit);
+          expect(canonicalInput).toHaveBeenCalledTimes(inputsBeforeExit);
+        };
+        expectNoMutation();
+        if ('newer-preview-cancels-exit' === intent) {
+          fireEvent.click(view.getByRole('button', { name: '预览模式' }));
+        }
+        if ('teardown-rejects-ABA-completion' === intent) {
+          view.unmount();
+          expect(pending.signal?.aborted).toBe(true);
+          expect(releaseFocusBoundary).toHaveBeenCalledOnce();
+          const replacementProps = fixture();
+          replacementProps.submissionField.value = initial;
+          replacementProps.submissionField.defaultValue = initial;
+          replacementProps.submissionField.setSelectionRange(0, 0);
+          vi.mocked(replacementProps.previewPort.render).mockImplementation((next) => Promise.resolve(responseFor(next)));
+          replacement = render(<EditorRoot {...replacementProps} editorBlockIndexPort={sourceLinkBlockIndexPort()} />);
+          fireEvent.click(await replacement.findByRole('button', { name: '进入沉浸写作' }));
+          fireEvent.click(replacement.getByRole('button', { name: '预览模式' }));
+          const replacementUnlock = await replacement.findByRole('button', { name: '解除锁定并编辑' });
+          await waitFor(() => expect(replacementUnlock.hasAttribute('disabled')).toBe(false));
+          layoutPreviewSurface(replacement.container);
+          fireEvent.click(replacementUnlock);
+          const replacementVisual = await replacement.findByRole('textbox', { name: '可视化文章编辑器' });
+          await waitFor(() => expect(replacementVisual.getAttribute('contenteditable')).toBe('true'));
+          const replacementCreation = sessions.mock.results.at(-1);
+          if (!replacementCreation || 'return' !== replacementCreation.type) throw new Error('pending-exit-replacement-owner-required');
+          const replacementOwner = replacementCreation.value;
+          const replacementBefore = {
+            value: replacementOwner.getValue(), selection: replacementOwner.getSelection(),
+            revision: replacementOwner.getRevision(), history: replacementOwner.getHistoryState(),
+            signature: replacementVisual.easymdePreviewSignature
+          };
+          expect(replacementBefore.value).toBe(beforeExit.value);
+          expect(replacementBefore.revision).toBe(0);
+          expect(replacementBefore.signature).not.toBe(request.signature);
+          pending.hold = false;
+          await act(async () => {
+            heldResponse.resolve(responseFor(request));
+            await heldResponse.promise;
+          });
+          await settleLayout();
+          expect(replacement.queryByRole('region', { name: '沉浸写作' })).not.toBeNull();
+          expect({
+            value: replacementOwner.getValue(), selection: replacementOwner.getSelection(),
+            revision: replacementOwner.getRevision(), history: replacementOwner.getHistoryState(),
+            signature: replacementVisual.easymdePreviewSignature
+          }).toEqual(replacementBefore);
+          expect(replacementVisual.getAttribute('contenteditable')).toBe('true');
+          expect(nativeSnapshot()).toEqual(nativeBeforeExit);
+          expect(canonicalInput).toHaveBeenCalledTimes(inputsBeforeExit);
+          expect(replacementProps.onFailure).not.toHaveBeenCalled();
+          return;
+        }
+        pending.hold = false;
+        await act(async () => {
+          heldResponse.resolve(responseFor(request));
+          heldEnhancement.resolve();
+          await heldResponse.promise;
+          await heldEnhancement.promise;
+        });
+        if ('newer-preview-cancels-exit' === intent) {
+          await awaitAccepted(initial, '{width=100%}');
+          await settleLayout();
+          expect(view.queryByRole('region', { name: '沉浸写作' })).not.toBeNull();
+          expect(view.container.querySelector('.easymde-editor')?.classList.contains('is-immersive-preview')).toBe(true);
+          expect(releaseFocusBoundary).not.toHaveBeenCalled();
+        } else {
+          await waitFor(() => {
+            const immersiveRegion = view.queryByRole('region', { name: '沉浸写作' });
+            if (immersiveRegion) {
+              // A RED exit assertion requires accepted cleanup-Undo content,
+              // not just a resolved promise or an old ready phase. A prior
+              // Source request may legitimately refresh the same source again.
+              expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready');
+              if ('exit-supersedes-source' !== intent) {
+                expect(visual.easymdePreviewSignature).toBe(request.signature);
+              }
+              expect(currentImage().getAttribute('title')).toBe('{width=100%}');
+              expectNoMutation();
+              expect(props.onFailure).not.toHaveBeenCalled();
+            }
+            expect(
+              immersiveRegion,
+              'one pending exit must complete after the accepted image-history transfer without another click'
+            ).toBeNull();
+          });
+          await settleLayout();
+          expect(view.container.querySelector('.easymde-editor')?.classList.contains('is-immersive')).toBe(false);
+          expect(view.container.querySelector('.easymde-source-react .cm-content')).not.toBeNull();
+          expect(releaseFocusBoundary).toHaveBeenCalledOnce();
+        }
+        expectNoMutation();
+        expect(props.onFailure).not.toHaveBeenCalled();
+        expect(view.container.querySelector('[role="alert"]')).toBeNull();
+      } finally {
+        pending.hold = false;
+        heldEnhancement.resolve();
+        if (pending.request) heldResponse.resolve(responseFor(pending.request));
+        props.submissionField.removeEventListener('input', canonicalInput);
+        replacement?.unmount();
+        view.unmount();
+      }
+    }
+  );
+
+  it('safely exits one pending visual transfer when full materialization is unavailable without another render', { timeout: 20_000 }, async () => {
+    const props = fixture();
+    const paragraphs = Array.from({ length: 161 }, (_, index) => `Paragraph ${index}`);
+    const initial = [
+      'Before ![alt](https://example.test/original.png "{width=100%}") after',
+      ...paragraphs
+    ].join('\n\n');
+    const scaled = initial.replace('{width=100%}', '{width=50%}');
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(0, 0);
+    const responseFor = (request: PreviewRequest): PreviewResponse => {
+      if (request.markdown !== initial && request.markdown !== scaled) {
+        throw new Error('pending-exit-materialization-unexpected-source');
+      }
+      const title = request.markdown === scaled ? '{width=50%}' : '{width=100%}';
+      const response = createPreviewResponse(
+        request,
+        (`<p>Before <img alt="alt" src="https://example.test/original.png" title="${title}"> after</p>`
+          + paragraphs.map((text) => `<p>${text}</p>`).join('')) as SafePreviewHtml,
+        {}
+      );
+      if (!response.editMap) throw new Error('pending-exit-materialization-edit-map-required');
+      return {
+        ...response,
+        editMap: {
+          ...response.editMap,
+          blocks: response.editMap.blocks.map((block, index) => ({
+            ...block, startLine: 2 * index, endLine: 2 * index + 1
+          }))
+        }
+      };
+    };
+    const sessions = vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession');
+    const held = deferred<PreviewResponse>();
+    const pending: { request: PreviewRequest | null; signal: AbortSignal | null; hold: boolean } = {
+      request: null, signal: null, hold: false
+    };
+    vi.mocked(props.previewPort.render).mockImplementation((request, signal) => {
+      if (pending.hold) {
+        pending.request = request;
+        pending.signal = signal;
+        return held.promise;
+      }
+      return Promise.resolve(responseFor(request));
+    });
+    const observed: {
+      runtime: observedPreviewOwner.PreviewSurfaceRuntime | null;
+      materialization: { results: ReadonlyArray<{ type: string; value?: unknown }> } | null;
+      armed: boolean;
+      schedulerRejections: number;
+      rejectedAcceptedSignature: string | null;
+      rejectedPhase: string | null;
+    } = {
+      runtime: null, materialization: null, armed: false,
+      schedulerRejections: 0, rejectedAcceptedSignature: null, rejectedPhase: null
+    };
+    // Reuse the real staged-materialization rejection boundary exercised by
+    // the existing second-windowed-unlock consumer; never replace materialize.
+    const materializeScheduler = { yield: async () => {
+      if (!observed.armed) return;
+      observed.schedulerRejections += 1;
+      if (1 === observed.schedulerRejections) {
+        observed.rejectedAcceptedSignature = observed.runtime?.surface.easymdePreviewSignature ?? null;
+        observed.rejectedPhase = observed.runtime?.surface.getAttribute('data-easymde-preview-phase') ?? null;
+      }
+      throw new Error('synthetic-materialization-failure');
+    } };
+    const stagingScheduler = { now: () => 0, yield: () => Promise.resolve() };
+    const realPreviewOwner = observedPreviewOwner.PreviewSurfaceOwner;
+    vi.spyOn(observedPreviewOwner, 'PreviewSurfaceOwner').mockImplementation((componentProps) => {
+      const onReady = observedCallback((runtime: observedPreviewOwner.PreviewSurfaceRuntime) => {
+        if (observed.runtime !== runtime) {
+          observed.runtime = runtime;
+          observed.materialization = vi.spyOn(runtime, 'materialize').mock;
+        }
+        componentProps.onReady(runtime);
+      }, [componentProps.onReady]);
+      return realPreviewOwner({ ...componentProps, onReady, materializeScheduler, stagingScheduler });
+    });
+    const releaseFocusBoundary = vi.fn();
+    vi.mocked(props.immersiveEnvironment.activateFocusBoundary).mockReturnValue(releaseFocusBoundary);
+    const canonicalInput = vi.fn();
+    props.submissionField.addEventListener('input', canonicalInput);
+    const view = render(<EditorRoot {...props} editorBlockIndexPort={sourceLinkBlockIndexPort()} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览模式' }));
+      const unlock = await view.findByRole('button', { name: '解除锁定并编辑' });
+      await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+      layoutPreviewSurface(view.container);
+      fireEvent.click(unlock);
+      const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() => {
+        expect(visual.getAttribute('contenteditable')).toBe('true');
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready');
+      });
+      expect(visual.querySelector('[data-easymde-preview-window-spacer]')).not.toBeNull();
+      const creation = sessions.mock.results[0];
+      if (!creation || 'return' !== creation.type) throw new Error('pending-exit-materialization-document-required');
+      const owner = creation.value;
+      const image = visual.querySelector('img');
+      if (!(image instanceof HTMLImageElement)) throw new Error('pending-exit-materialization-image-required');
+      visual.focus();
+      const retained = document.createRange();
+      retained.selectNode(image);
+      const selection = window.getSelection();
+      if (!selection) throw new Error('pending-exit-materialization-native-selection-required');
+      selection.removeAllRanges();
+      selection.addRange(retained);
+      document.dispatchEvent(new Event('selectionchange'));
+      layoutContextMenuSurface(visual);
+      fireEvent.contextMenu(image, { clientX: 24, clientY: 30 });
+      const menu = await within(document.body).findByRole('menu');
+      const scaleTrigger = within(menu).getByRole('menuitem', { name: 'Image scale' });
+      fireEvent.pointerDown(scaleTrigger, { button: 0 });
+      fireEvent.click(scaleTrigger);
+      const scaleMenu = await within(document.body).findByRole('menu', { name: 'Image scale' });
+      const scaleItem = within(scaleMenu).getByRole('menuitem', { name: '50%' });
+      pending.hold = true;
+      fireEvent.pointerDown(scaleItem, { button: 0 });
+      fireEvent.click(scaleItem);
+      await waitFor(() => expect(pending.request?.markdown).toBe(scaled));
+      expect(pending.signal?.aborted).toBe(false);
+      expect(visual.getAttribute('data-easymde-preview-refreshing')).toBe('1');
+      const request = pending.request;
+      if (!request) throw new Error('pending-exit-materialization-formal-request-required');
+      const beforeExit = {
+        value: owner.getValue(), selection: owner.getSelection(),
+        revision: owner.getRevision(), history: owner.getHistoryState(),
+        nativeValue: props.submissionField.value,
+        nativeSelection: [props.submissionField.selectionStart, props.submissionField.selectionEnd, props.submissionField.selectionDirection]
+      };
+      expect(beforeExit.value).toBe(scaled);
+      expect(beforeExit.history).toEqual({ undoDepth: 1, redoDepth: 0 });
+      expect(scaled.slice(beforeExit.selection.start, beforeExit.selection.end)).toBe(
+        '![alt](https://example.test/original.png "{width=50%}")'
+      );
+      const inputsBeforeExit = canonicalInput.mock.calls.length;
+      const rendersBeforeAcceptance = vi.mocked(props.previewPort.render).mock.calls.length;
+      const expectNoMutation = (): void => {
+        expect({
+          value: owner.getValue(), selection: owner.getSelection(),
+          revision: owner.getRevision(), history: owner.getHistoryState(),
+          nativeValue: props.submissionField.value,
+          nativeSelection: [props.submissionField.selectionStart, props.submissionField.selectionEnd, props.submissionField.selectionDirection]
+        }).toEqual(beforeExit);
+        expect(canonicalInput).toHaveBeenCalledTimes(inputsBeforeExit);
+      };
+      fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
+      expect(view.queryByRole('region', { name: '沉浸写作' })).not.toBeNull();
+      expect(releaseFocusBoundary).not.toHaveBeenCalled();
+      expectNoMutation();
+      expect(props.onFailure).not.toHaveBeenCalled();
+      observed.armed = true;
+      pending.hold = false;
+      await act(async () => {
+        held.resolve(responseFor(request));
+        await held.promise;
+      });
+      await waitFor(async () => {
+        const immersiveRegion = view.queryByRole('region', { name: '沉浸写作' });
+        let materializeOutcome: unknown = 'not-requested';
+        if (immersiveRegion) {
+          // A pre-fix RED must reach the actual scheduler rejection and real
+          // materialize(false) result, not fail on a fixture/phase prerequisite.
+          const result = observed.materialization?.results[0];
+          expect(result?.type).toBe('return');
+          materializeOutcome = await result?.value;
+          expect(materializeOutcome).toBe(false);
+          expect(observed.schedulerRejections).toBeGreaterThan(0);
+          expect(observed.rejectedAcceptedSignature).toBe(request.signature);
+          expect(observed.rejectedPhase).toBe('ready');
+          expectNoMutation();
+        }
+        expect(immersiveRegion,
+          'one deferred exit must return to the ordinary editor even when real full materialization fails: '
+            + JSON.stringify({
+              materializeOutcome, schedulerRejections: observed.schedulerRejections,
+              rejectedPhase: observed.rejectedPhase,
+              rejectedAcceptedSignature: observed.rejectedAcceptedSignature,
+              phase: visual.getAttribute('data-easymde-preview-phase'),
+              failures: vi.mocked(props.onFailure).mock.calls
+            })
+        ).toBeNull();
+      });
+      await act(async () => {
+        const frame = deferred<void>();
+        requestAnimationFrame(() => requestAnimationFrame(() => frame.resolve()));
+        await frame.promise;
+      });
+      expect(view.container.querySelector('.easymde-editor')?.classList.contains('is-immersive')).toBe(false);
+      expect(view.container.querySelector('.easymde-source-react .cm-content')).not.toBeNull();
+      expectNoMutation();
+      expect(props.previewPort.render).toHaveBeenCalledTimes(rendersBeforeAcceptance);
+      expect(releaseFocusBoundary).toHaveBeenCalledOnce();
+    } finally {
+      observed.armed = false;
+      pending.hold = false;
+      if (pending.request) held.resolve(responseFor(pending.request));
+      props.submissionField.removeEventListener('input', canonicalInput);
+      view.unmount();
+    }
+  });
+
+  it.each([
     ['编辑', '预览', 'source', 'ready'],
     ['编辑模式', '预览模式', 'source', 'ready'],
     ['分屏', '预览', 'split', 'ready'],
@@ -10904,7 +11585,7 @@ describe('EditorRoot', () => {
         inputType: 'insertText'
       })
     );
-    await waitFor(() => expect(props.submissionField.value).toBe('~~~'));
+    await waitFor(() => expect(props.submissionField.value).toBe('\\~\\~\\~'));
     range.setStart(paragraphText, paragraphText.length);
     range.collapse(true);
     selection?.removeAllRanges();
@@ -11260,6 +11941,7 @@ describe('EditorRoot', () => {
       name: '解除锁定并编辑'
     });
     await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+    layoutPreviewSurface(view.container);
     fireEvent.click(unlock);
 
     expect(
@@ -13797,9 +14479,29 @@ describe('EditorRoot', () => {
       name: '可视化文章编辑器'
     });
 
-    fireEvent.compositionStart(visualEditor);
-    visualEditor.innerHTML = `<p>${edited}</p>`;
-    fireEvent.input(visualEditor, { isComposing: true });
+    const paragraphText = visualEditor.querySelector('p')?.firstChild;
+    if (!(paragraphText instanceof Text)) throw new Error('publish-pending-native-text-missing');
+    visualEditor.focus();
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(paragraphText);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    const before = new InputEvent('beforeinput', {
+      bubbles: true, cancelable: true, data: edited,
+      inputType: 'insertReplacementText'
+    });
+    Object.defineProperty(before, 'getTargetRanges', {
+      value: () => [{ startContainer: paragraphText, startOffset: 0,
+        endContainer: paragraphText, endOffset: paragraphText.length }]
+    });
+    visualEditor.dispatchEvent(before);
+    expect(before.defaultPrevented).toBe(false);
+    paragraphText.replaceData(0, paragraphText.length, edited);
+    selection?.collapse(paragraphText, paragraphText.length);
+    visualEditor.dispatchEvent(new InputEvent('input', {
+      bubbles: true, data: edited, inputType: 'insertReplacementText'
+    }));
     expect(props.submissionField.value).toBe(original);
 
     fireEvent.click(view.getByRole('button', { name: '更新文章' }));
@@ -20111,4 +20813,1147 @@ describe('FullPlan frozen Root lifecycle consumer', () => {
       view.unmount();
     }
   });
+
+  it.each(['```', '~~~ruby', '```ruby', 'plain'])('restores a Full literal paragraph insertion point for %s after locking, formal acceptance and unlocking', async (input) => {
+    const props = fixture();
+    const initial = '# Heading\n\nTarget paragraph.\n\n```\nkept\n```\n';
+    const typed = initial.replace('Target', `${input.replace(/[~`]/g, character => `\\${character}`)}Target`);
+    const insertion = typed.indexOf('Target');
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(initial.indexOf('Target'), initial.indexOf('Target'));
+    const originalCreate = observedSourceAdapter.createCodeMirrorDocumentSession;
+    const ownerRef: { current: CodeMirrorDocumentSession | null } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession').mockImplementation((options) => {
+      const owner = originalCreate(options);
+      ownerRef.current = owner;
+      return owner;
+    });
+    const held = deferred<PreviewResponse>();
+    let holdRefresh = false;
+    const heldRequest: { current: PreviewRequest | null } = { current: null };
+    const response = (request: PreviewRequest): PreviewResponse => ({
+      ...createPreviewResponse(request, `<h1>Heading</h1><p>${request.markdown === initial ? '' : input}Target paragraph.</p><pre><code>kept\n</code></pre>` as SafePreviewHtml, {}),
+      editMap: {
+        version: 1,
+        coordinate: 'line',
+        signature: request.signature,
+        blocks: [
+          { id: 'b0', startLine: 0, endLine: 2, editable: true },
+          { id: 'b1', startLine: 2, endLine: 4, editable: true },
+          { id: 'b2', startLine: 4, endLine: 8, editable: true }
+        ]
+      }
+    });
+    vi.mocked(props.previewPort.render).mockImplementation((request) => {
+      if (holdRefresh) {
+        heldRequest.current = request;
+        return held.promise;
+      }
+      return Promise.resolve(response(request));
+    });
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const surface = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      const owner = ownerRef.current;
+      if (!owner) throw new Error('full-lock-canonical-owner-missing');
+      surface.focus();
+      window.getSelection()?.collapse(surface.querySelector('p')?.firstChild ?? surface, 0);
+      for (let count = 0; count < input.length; count += 1) {
+        act(() => {
+          const native = window.getSelection();
+          const text = native?.anchorNode;
+          if (!(text instanceof Text)) throw new Error('full-lock-native-text-missing');
+          const offset = native?.anchorOffset ?? 0;
+          const character = input.charAt(count);
+          const key = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: character });
+          surface.dispatchEvent(key);
+          if (key.defaultPrevented) return;
+          const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: character, inputType: 'insertText' });
+          surface.dispatchEvent(before);
+          if (before.defaultPrevented) return;
+          text.insertData(offset, character);
+          native?.collapse(text, offset + 1);
+          surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: character, inputType: 'insertText' }));
+        });
+        await waitFor(() => expect(owner.getValue().replace(/\\([~`])/g, '$1')).toContain(`${input.slice(0, count + 1)}Target`));
+      }
+      await waitFor(() => expect(owner.getValue()).toBe(typed));
+      holdRefresh = true;
+      const lock = view.getByRole('button', { name: '锁定为只读' });
+      lock.focus();
+      fireEvent.click(lock);
+      await waitFor(() => expect(heldRequest.current).not.toBeNull());
+      const request = heldRequest.current;
+      if (!request) throw new Error('full-lock-formal-request-missing');
+      expect(request.markdown).toBe(typed);
+      holdRefresh = false;
+      await act(async () => held.resolve(response(request)));
+      const unlock = await view.findByRole('button', { name: '解除锁定并编辑' });
+      await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+      layoutPreviewSurface(view.container);
+      fireEvent.click(unlock);
+      const accepted = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() => expect(accepted.getAttribute('data-easymde-preview-phase')).toBe('ready'));
+      expect(owner.getValue()).toBe(typed);
+      expect(accepted.querySelector('pre code')?.textContent).toBe('kept\n');
+      const native = window.getSelection();
+      const anchor = native?.anchorNode;
+      expect(anchor?.parentElement?.closest('p')?.textContent).toBe(`${input}Target paragraph.`);
+      expect(native?.anchorOffset).toBe(input.length);
+      expect(owner.getSelection()).toEqual({ direction: 'none', start: insertion, end: insertion });
+      if (!(anchor instanceof Text)) throw new Error('full-lock-accepted-text-caret-missing');
+      act(() => {
+        const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: 'z', inputType: 'insertText' });
+        accepted.dispatchEvent(before);
+        if (before.defaultPrevented) return;
+        anchor.insertData(native?.anchorOffset ?? 0, 'z');
+        native?.collapse(anchor, input.length + 1);
+        accepted.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'z', inputType: 'insertText' }));
+      });
+      await waitFor(() => expect(owner.getValue()).toBe(typed.slice(0, insertion) + 'z' + typed.slice(insertion)));
+      act(() => {
+        const key = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' });
+        accepted.dispatchEvent(key);
+        if (key.defaultPrevented) return;
+        const selection = window.getSelection();
+        const text = selection?.anchorNode;
+        const offset = selection?.anchorOffset ?? 0;
+        if (!(text instanceof Text) || offset < 1) throw new Error('full-lock-delete-caret-missing');
+        const range = document.createRange();
+        range.setStart(text, offset - 1);
+        range.setEnd(text, offset);
+        const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'deleteContentBackward' });
+        Object.defineProperty(before, 'getTargetRanges', { value: () => [range] });
+        accepted.dispatchEvent(before);
+        if (before.defaultPrevented) return;
+        text.deleteData(offset - 1, 1);
+        selection?.collapse(text, offset - 1);
+        accepted.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+      });
+      await waitFor(() => expect(owner.getValue()).toBe(typed));
+      expect(window.getSelection()?.anchorOffset).toBe(input.length);
+      expect(owner.getSelection()).toEqual({ direction: 'none', start: insertion, end: insertion });
+      expect(accepted.querySelector('pre code')?.textContent).toBe('kept\n');
+      expect(accepted.querySelector('h1')?.textContent).toBe('Heading');
+      expect(props.onFailure).not.toHaveBeenCalled();
+    } finally {
+      holdRefresh = false;
+      if (heldRequest.current) held.resolve(response(heldRequest.current));
+      view.unmount();
+    }
+  });
+  it.each(['~', '`'])('enters Source with one click after a rapid %s pair before an existing pair without another document edit', async (marker) => {
+    const props = fixture();
+    const pair = marker.repeat(2);
+    const initial = `# Heading\n\n${pair}Target paragraph here.\n\n\x60\x60\x60\nalpha\nbeta\n\x60\x60\x60\n\n\x60\x60\x60ruby\nputs :kept\n\x60\x60\x60\n\n### Heading after\n\nFinal paragraph.`;
+    const escapedRun = marker.repeat(4).replace(/[~`]/g, character => `\\${character}`);
+    const expected = initial.replace(`${pair}Target`, `${escapedRun}Target`);
+    const insertion = initial.indexOf(pair);
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(insertion, insertion);
+    const originalCreate = observedSourceAdapter.createCodeMirrorDocumentSession;
+    const ownerRef: { current: CodeMirrorDocumentSession | null } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession').mockImplementation((options) => {
+      const owner = originalCreate(options);
+      ownerRef.current = owner;
+      return owner;
+    });
+    vi.mocked(props.previewPort.render).mockImplementation(async (request) => ({
+      ...createPreviewResponse(request, `<h1>Heading</h1><p>${request.markdown === initial ? pair : marker.repeat(4)}Target paragraph here.</p><pre><code>alpha\nbeta\n</code></pre><pre><code class="language-ruby">puts :kept\n</code></pre><h3>Heading after</h3><p>Final paragraph.</p>` as SafePreviewHtml, {}),
+      editMap: {
+        version: 1,
+        coordinate: 'line',
+        signature: request.signature,
+        blocks: [
+          { id: 'b0', startLine: 0, endLine: 2, editable: true },
+          { id: 'b1', startLine: 2, endLine: 4, editable: true },
+          { id: 'b2', startLine: 4, endLine: 9, editable: true },
+          { id: 'b3', startLine: 9, endLine: 13, editable: true },
+          { id: 'b4', startLine: 13, endLine: 15, editable: true },
+          { id: 'b5', startLine: 15, endLine: 16, editable: true }
+        ]
+      }
+    }));
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const surface = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      const owner = ownerRef.current;
+      if (!owner) throw new Error('rapid-source-canonical-owner-missing');
+      const text = surface.querySelector('p')?.firstChild;
+      if (!(text instanceof Text)) throw new Error('rapid-source-native-text-missing');
+      surface.focus();
+      window.getSelection()?.collapse(text, 0);
+      const initialRevision = owner.getRevision();
+      const initialHistory = owner.getHistoryState();
+      // Both native inputs precede the deferred serializer, as in the rapid consumer.
+      act(() => {
+        for (const character of pair) {
+          const key = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: character });
+          surface.dispatchEvent(key);
+          if (key.defaultPrevented) continue;
+          const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: character, inputType: 'insertText' });
+          surface.dispatchEvent(before);
+          if (before.defaultPrevented) continue;
+          const native = window.getSelection();
+          if (!(native?.anchorNode instanceof Text)) throw new Error('rapid-source-input-caret-missing');
+          const node = native.anchorNode;
+          const offset = native.anchorOffset;
+          node.insertData(offset, character);
+          native.collapse(node, offset + 1);
+          surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: character, inputType: 'insertText' }));
+        }
+      });
+      await waitFor(() => expect(owner.getValue()).toBe(expected));
+      const selection = { direction: 'none', start: insertion + 4, end: insertion + 4 };
+      expect(owner.getSelection()).toEqual(selection);
+      const native = window.getSelection();
+      const paragraph = surface.querySelector('p');
+      if (!paragraph || !native?.anchorNode) throw new Error('rapid-source-settled-caret-missing');
+      const prefix = document.createRange();
+      prefix.selectNodeContents(paragraph);
+      prefix.setEnd(native.anchorNode, native.anchorOffset);
+      expect(prefix.toString()).toBe(pair);
+      expect(paragraph.textContent).toBe(`${marker.repeat(4)}Target paragraph here.`);
+      expect(Array.from(surface.querySelectorAll('pre code'), node => node.textContent)).toEqual(['alpha\nbeta\n', 'puts :kept\n']);
+      expect(surface.querySelector('h3')?.textContent).toBe('Heading after');
+      const revision = owner.getRevision();
+      const history = owner.getHistoryState();
+      expect(revision).toBe(initialRevision + 1);
+      expect(history).toEqual({ redoDepth: 0, undoDepth: initialHistory.undoDepth + 1 });
+      expect(props.onFailure).not.toHaveBeenCalled();
+
+      // Source preparation must serialize the already committed DOM without an extra edit or retry.
+      fireEvent.click(view.getByRole('button', { name: '编辑模式' }));
+      await waitFor(() => expect(view.container.querySelector('.easymde-editor')?.classList.contains('is-immersive-source')).toBe(true));
+      expect(view.container.querySelector('.easymde-source-react .cm-content')).not.toBeNull();
+      expect(owner.getValue()).toBe(expected);
+      expect(props.submissionField.value).toBe(expected);
+      expect(owner.getSelection()).toEqual(selection);
+      expect(owner.getRevision()).toBe(revision);
+      expect(owner.getHistoryState()).toEqual(history);
+      expect(props.onFailure).not.toHaveBeenCalled();
+      act(() => { expect(owner.undo()).toBe(true); });
+      expect(owner.getValue()).toBe(initial);
+      expect(owner.getHistoryState()).toEqual({ redoDepth: 1, undoDepth: initialHistory.undoDepth });
+      act(() => { expect(owner.redo()).toBe(true); });
+      expect(owner.getValue()).toBe(expected);
+      expect(owner.getHistoryState()).toEqual(history);
+      expect(props.onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
+
+
+  it.each([{ marker: '~', scenario: 'astral row' }, { marker: '`', scenario: 'astral row' }, { marker: '~', scenario: 'backward Text range' }, { marker: '`', scenario: 'backward Text range' }] as const)('preserves decoded literal $scenario through one Source click ($marker)', async ({ marker, scenario }) => {
+    const props = fixture();
+    const pair = marker.repeat(2);
+    const astral = scenario === 'astral row' ? ' 🌱' : '';
+    const initial = `# Heading\n\n${pair}Target paragraph here.${astral}\n\n\x60\x60\x60\nalpha\nbeta\n\x60\x60\x60\n\n\x60\x60\x60ruby\nputs :kept\n\x60\x60\x60\n\n### Heading after\n\nFinal paragraph.`;
+    const escapedRun = marker.repeat(4).replace(/[~`]/g, character => `\\${character}`);
+    const expected = initial.replace(`${pair}Target`, `${escapedRun}Target`);
+    const insertion = initial.indexOf(pair);
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(insertion, insertion);
+    const originalCreate = observedSourceAdapter.createCodeMirrorDocumentSession;
+    const ownerRef: { current: CodeMirrorDocumentSession | null } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession').mockImplementation((options) => {
+      const owner = originalCreate(options);
+      ownerRef.current = owner;
+      return owner;
+    });
+    vi.mocked(props.previewPort.render).mockImplementation(async (request) => ({
+      ...createPreviewResponse(request, `<h1>Heading</h1><p>${request.markdown === initial ? pair : marker.repeat(4)}Target paragraph here.${astral}</p><pre><code>alpha\nbeta\n</code></pre><pre><code class="language-ruby">puts :kept\n</code></pre><h3>Heading after</h3><p>Final paragraph.</p>` as SafePreviewHtml, {}),
+      editMap: {
+        version: 1,
+        coordinate: 'line',
+        signature: request.signature,
+        blocks: [
+          { id: 'b0', startLine: 0, endLine: 2, editable: true },
+          { id: 'b1', startLine: 2, endLine: 4, editable: true },
+          { id: 'b2', startLine: 4, endLine: 9, editable: true },
+          { id: 'b3', startLine: 9, endLine: 13, editable: true },
+          { id: 'b4', startLine: 13, endLine: 15, editable: true },
+          { id: 'b5', startLine: 15, endLine: 16, editable: true }
+        ]
+      }
+    }));
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const surface = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      const owner = ownerRef.current;
+      if (!owner) throw new Error('rapid-source-canonical-owner-missing');
+      const text = surface.querySelector('p')?.firstChild;
+      if (!(text instanceof Text)) throw new Error('rapid-source-native-text-missing');
+      surface.focus();
+      window.getSelection()?.collapse(text, 0);
+      const initialRevision = owner.getRevision();
+      const initialHistory = owner.getHistoryState();
+      // Both native inputs precede the deferred serializer, as in the rapid consumer.
+      act(() => {
+        for (const character of pair) {
+          const key = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: character });
+          surface.dispatchEvent(key);
+          if (key.defaultPrevented) continue;
+          const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: character, inputType: 'insertText' });
+          surface.dispatchEvent(before);
+          if (before.defaultPrevented) continue;
+          const native = window.getSelection();
+          if (!(native?.anchorNode instanceof Text)) throw new Error('rapid-source-input-caret-missing');
+          const node = native.anchorNode;
+          const offset = native.anchorOffset;
+          node.insertData(offset, character);
+          native.collapse(node, offset + 1);
+          surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: character, inputType: 'insertText' }));
+        }
+      });
+      await waitFor(() => expect(owner.getValue()).toBe(expected));
+      let selection: DocumentSelection = { direction: 'none', start: insertion + 4, end: insertion + 4 };
+      expect(owner.getSelection()).toEqual(selection);
+      const native = window.getSelection();
+      const paragraph = surface.querySelector('p');
+      if (!paragraph || !native?.anchorNode) throw new Error('rapid-source-settled-caret-missing');
+      const prefix = document.createRange();
+      prefix.selectNodeContents(paragraph);
+      prefix.setEnd(native.anchorNode, native.anchorOffset);
+      expect(prefix.toString()).toBe(pair);
+      expect(paragraph.textContent).toBe(`${marker.repeat(4)}Target paragraph here.${astral}`);
+      expect(Array.from(surface.querySelectorAll('pre code'), node => node.textContent)).toEqual(['alpha\nbeta\n', 'puts :kept\n']);
+      expect(surface.querySelector('h3')?.textContent).toBe('Heading after');
+      const revision = owner.getRevision();
+      const history = owner.getHistoryState();
+      expect(revision).toBe(initialRevision + 1);
+      expect(history).toEqual({ redoDepth: 0, undoDepth: initialHistory.undoDepth + 1 });
+      expect(props.onFailure).not.toHaveBeenCalled();
+
+      if (scenario === 'backward Text range') {
+        const left = paragraph.firstChild;
+        if (!(left instanceof Text)) throw new Error('decoded-backward-text-missing');
+        const right = left.splitText(2);
+        const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 });
+        paragraph.dispatchEvent(down);
+        expect(down.defaultPrevented).toBe(false);
+        // Apply the native drag's backward range across adjacent Text nodes.
+        window.getSelection()?.setBaseAndExtent(right, 4, left, 1);
+        paragraph.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, button: 0 }));
+        document.dispatchEvent(new Event('selectionchange'));
+        const dragged = window.getSelection();
+        expect(dragged?.anchorNode).toBe(right);
+        expect(dragged?.anchorOffset).toBe(4);
+        expect(dragged?.focusNode).toBe(left);
+        expect(dragged?.focusOffset).toBe(1);
+        expect(dragged?.isCollapsed).toBe(false);
+        selection = { direction: 'backward', start: insertion + 2, end: expected.indexOf('Target') + 2 };
+        expect(owner.getRevision()).toBe(revision);
+        expect(owner.getHistoryState()).toEqual(history);
+      }
+
+      // Source preparation must serialize the already committed DOM without an extra edit or retry.
+      fireEvent.click(view.getByRole('button', { name: '编辑模式' }));
+      await waitFor(() => expect(view.container.querySelector('.easymde-editor')?.classList.contains('is-immersive-source')).toBe(true));
+      expect(view.container.querySelector('.easymde-source-react .cm-content')).not.toBeNull();
+      expect(owner.getValue()).toBe(expected);
+      expect(props.submissionField.value).toBe(expected);
+      expect(owner.getSelection()).toEqual(selection);
+      expect(owner.getRevision()).toBe(revision);
+      expect(owner.getHistoryState()).toEqual(history);
+      expect(props.onFailure).not.toHaveBeenCalled();
+      act(() => { expect(owner.undo()).toBe(true); });
+      expect(owner.getValue()).toBe(initial);
+      expect(owner.getHistoryState()).toEqual({ redoDepth: 1, undoDepth: initialHistory.undoDepth });
+      act(() => { expect(owner.redo()).toBe(true); });
+      expect(owner.getValue()).toBe(expected);
+      expect(owner.getHistoryState()).toEqual(history);
+      expect(props.onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
+});
+
+describe('whole-unit frozen consumer wave', () => {
+  const slash = String.fromCharCode(92);
+  const documentFor = (row: string): string => `# Synthetic Full fixture\n\n${row}\n\n\x60\x60\x60\nalpha\nbeta\n\x60\x60\x60\n\n\x60\x60\x60ruby\nputs :kept\n\x60\x60\x60\n\n### Heading after\n\nFinal paragraph.`;
+  const responseFor = (request: PreviewRequest, row: string, terminal = 'Final paragraph.'): PreviewResponse => ({
+    ...createPreviewResponse(request, `<h1>Synthetic Full fixture</h1><p>${row}</p><pre><code>alpha\nbeta\n</code></pre><pre><code class="language-ruby">puts :kept\n</code></pre><h3>Heading after</h3><p>${terminal}</p>` as SafePreviewHtml, {}),
+    editMap: {
+      version: 1, coordinate: 'line', signature: request.signature,
+      blocks: [
+        { id: 'b0', startLine: 0, endLine: 2, editable: true },
+        { id: 'b1', startLine: 2, endLine: 4, editable: true },
+        { id: 'b2', startLine: 4, endLine: 9, editable: true },
+        { id: 'b3', startLine: 9, endLine: 13, editable: true },
+        { id: 'b4', startLine: 13, endLine: 15, editable: true },
+        { id: 'b5', startLine: 15, endLine: 16, editable: true }
+      ]
+    }
+  });
+  const insertAtNativeCaret = (surface: HTMLElement, data: string): void => {
+    const key = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: data });
+    surface.dispatchEvent(key);
+    if (key.defaultPrevented) return;
+    const native = window.getSelection();
+    if (!(native?.anchorNode instanceof Text) || !native.isCollapsed) throw new Error('whole-unit-root-native-caret-missing');
+    const text = native.anchorNode;
+    const offset = native.anchorOffset;
+    const range = document.createRange();
+    range.setStart(text, offset); range.collapse(true);
+    const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true, data, inputType: 'insertText' });
+    Object.defineProperty(before, 'getTargetRanges', { value: () => [range] });
+    surface.dispatchEvent(before);
+    if (before.defaultPrevented) return;
+    text.insertData(offset, data);
+    native.collapse(text, offset + data.length);
+    surface.dispatchEvent(new InputEvent('input', { bubbles: true, data, inputType: 'insertText' }));
+  };
+
+  it.for(['~', '`'] as const)('preserves a whole-unit caret through one Source and Preview round trip (%s)', async (marker, { task }) => {
+    const props = fixture();
+    const sourcePrefix = `${(slash + marker).repeat(4)}Path `;
+    const visiblePrefix = `${marker.repeat(4)}Path `;
+    const sourceRow = `${sourcePrefix}${slash.repeat(2)}${marker} tail`;
+    const visibleRow = `${visiblePrefix}${slash}${marker} tail`;
+    const initial = documentFor(sourceRow);
+    const nativePoint = visiblePrefix.length + 1;
+    const point = initial.indexOf(sourceRow) + sourcePrefix.length + 2;
+    const expected = initial.slice(0, point) + 'x' + initial.slice(point);
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(0, 0);
+    const create = observedSourceAdapter.createCodeMirrorDocumentSession;
+    const ownerRef: { current: CodeMirrorDocumentSession | null } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession').mockImplementation(options => {
+      const owner = create(options); ownerRef.current = owner; return owner;
+    });
+    vi.mocked(props.previewPort.render).mockImplementation(async request => {
+      if (request.markdown === initial) return responseFor(request, visibleRow);
+      if (request.markdown === expected) return responseFor(request, visibleRow.slice(0, nativePoint) + 'x' + visibleRow.slice(nativePoint));
+      throw new Error('whole-unit-root-unexpected-formal-source');
+    });
+    const metadata = { phase: 'setup', point, nativePoint, actual: null as unknown };
+    Object.assign(task.meta, { wholeUnit: metadata });
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const surface = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      const owner = ownerRef.current;
+      const paragraph = surface.querySelector('[data-easymde-visual-block-id="b1"]');
+      const text = paragraph?.firstChild;
+      if (!owner || !(text instanceof Text)) throw new Error('whole-unit-root-owner-or-row-missing');
+      const revision = owner.getRevision();
+      const history = owner.getHistoryState();
+      surface.focus();
+      const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 });
+      paragraph?.dispatchEvent(down);
+      expect(down.defaultPrevented).toBe(false);
+      window.getSelection()?.collapse(text, nativePoint);
+      paragraph?.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, button: 0 }));
+      document.dispatchEvent(new Event('selectionchange'));
+      expect(text.data).toBe(visibleRow);
+      expect(window.getSelection()?.anchorOffset).toBe(nativePoint);
+      expect(owner.getValue()).toBe(initial);
+      metadata.phase = 'one-source-click';
+      fireEvent.click(view.getByRole('button', { name: '编辑模式' }));
+      await waitFor(() => expect(view.container.querySelector('.easymde-editor')?.classList.contains('is-immersive-source')).toBe(true));
+      metadata.actual = { value: owner.getValue(), selection: owner.getSelection(), revision: owner.getRevision(), history: owner.getHistoryState(), failures: vi.mocked(props.onFailure).mock.calls };
+      expect(owner.getValue()).toBe(initial);
+      expect(props.submissionField.value).toBe(initial);
+      expect(owner.getSelection(), 'Source must retain the legal point after both canonical backslashes').toEqual({ direction: 'none', start: point, end: point });
+      expect(owner.getRevision()).toBe(revision);
+      expect(owner.getHistoryState()).toEqual(history);
+      expect(props.onFailure).not.toHaveBeenCalled();
+      metadata.phase = 'preview-round-trip';
+      fireEvent.click(view.getByRole('button', { name: '预览模式' }));
+      const unlock = view.queryByRole('button', { name: '解除锁定并编辑' });
+      if (unlock) {
+        await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+        layoutPreviewSurface(view.container);
+        fireEvent.click(unlock);
+      }
+      const restored = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      const restoredText = restored.querySelector('[data-easymde-visual-block-id="b1"]')?.firstChild;
+      expect(window.getSelection()?.anchorNode).toBe(restoredText);
+      expect(window.getSelection()?.anchorOffset).toBe(nativePoint);
+      expect(owner.getRevision()).toBe(revision);
+      expect(owner.getHistoryState()).toEqual(history);
+      metadata.phase = 'round-trip-followup-input';
+      act(() => insertAtNativeCaret(restored, 'x'));
+      await waitFor(() => expect(owner.getRevision()).toBe(revision + 1));
+      expect(owner.getValue()).toBe(expected);
+      expect(owner.getSelection()).toEqual({ direction: 'none', start: point + 1, end: point + 1 });
+      expect(owner.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: history.undoDepth + 1 });
+      expect(Array.from(restored.querySelectorAll('pre code'), node => node.textContent)).toEqual(['alpha\nbeta\n', 'puts :kept\n']);
+      expect(restored.querySelector('h3')?.textContent).toBe('Heading after');
+      expect(restored.lastElementChild?.textContent).toBe('Final paragraph.');
+      metadata.phase = 'source-undo-redo';
+      fireEvent.click(view.getByRole('button', { name: '编辑模式' }));
+      await waitFor(() => expect(view.container.querySelector('.easymde-editor')?.classList.contains('is-immersive-source')).toBe(true));
+      const committedRevision = owner.getRevision();
+      expect(committedRevision).toBe(revision + 1);
+      act(() => { expect(owner.undo()).toBe(true); });
+      expect(owner.getValue()).toBe(initial);
+      expect(owner.getHistoryState()).toEqual({ redoDepth: 1, undoDepth: history.undoDepth });
+      act(() => { expect(owner.redo()).toBe(true); });
+      expect(owner.getValue()).toBe(expected);
+      expect(owner.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: history.undoDepth + 1 });
+      expect(props.onFailure).not.toHaveBeenCalled();
+      metadata.phase = 'complete';
+    } finally { view.unmount(); }
+  });
+
+  it.for(['~', '`'] as const)('sends a rapid terminal opener as a literal paragraph to the formal Preview owner (%s)', async (marker, { task }) => {
+    const props = fixture();
+    const initial = documentFor('Target paragraph here.');
+    const run = marker.repeat(3);
+    const escapedRun = (slash + marker).repeat(3);
+    const point = initial.indexOf('Final paragraph.');
+    const expected = initial.slice(0, point) + escapedRun + initial.slice(point);
+    const continued = expected.slice(0, point + escapedRun.length) + 'x' + expected.slice(point + escapedRun.length);
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    const create = observedSourceAdapter.createCodeMirrorDocumentSession;
+    const ownerRef: { current: CodeMirrorDocumentSession | null } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession').mockImplementation(options => {
+      const owner = create(options); ownerRef.current = owner; return owner;
+    });
+    vi.mocked(props.previewPort.render).mockImplementation(async request => {
+      if (request.markdown === initial) return responseFor(request, 'Target paragraph here.');
+      if (request.markdown === expected) return responseFor(request, 'Target paragraph here.', `${run}Final paragraph.`);
+      if (request.markdown === continued) return responseFor(request, 'Target paragraph here.', `${run}xFinal paragraph.`);
+      throw new Error('terminal-opener-unexpected-formal-source');
+    });
+    const metadata = { phase: 'setup', expected, actual: null as unknown, formalRequestReached: false };
+    Object.assign(task.meta, { wholeUnit: metadata });
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const surface = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      const owner = ownerRef.current;
+      const paragraph = surface.querySelector('[data-easymde-visual-block-id="b5"]');
+      const text = paragraph?.firstChild;
+      if (!owner || !(text instanceof Text)) throw new Error('terminal-root-owner-or-native-text-missing');
+      surface.focus(); window.getSelection()?.collapse(text, 0);
+      const revision = owner.getRevision();
+      const history = owner.getHistoryState();
+      metadata.phase = 'rapid-terminal-input-no-enter';
+      act(() => { for (const character of run) insertAtNativeCaret(surface, character); });
+      await waitFor(() => expect(owner.getRevision()).toBe(revision + 1));
+      metadata.actual = { value: owner.getValue(), selection: owner.getSelection(), revision: owner.getRevision(), history: owner.getHistoryState(), kinds: observedBlockIndex(owner.getValue()).blocks.map(block => block.kind), nativeOffset: window.getSelection()?.anchorOffset, failures: vi.mocked(props.onFailure).mock.calls };
+      expect(owner.getValue(), 'the formal request source must retain the terminal paragraph as escaped literal text').toBe(expected);
+      expect(observedBlockIndex(owner.getValue()).blocks.map(block => block.kind)).toEqual(['heading', 'paragraph', 'code', 'code', 'heading', 'paragraph']);
+      expect(owner.getSelection()).toEqual({ direction: 'none', start: point + escapedRun.length, end: point + escapedRun.length });
+      expect(owner.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: history.undoDepth + 1 });
+      expect(window.getSelection()?.anchorNode).toBe(text);
+      expect(window.getSelection()?.anchorOffset).toBe(run.length);
+      metadata.phase = 'lock-formal-refresh';
+      const requestCount = vi.mocked(props.previewPort.render).mock.calls.length;
+      fireEvent.click(view.getByRole('button', { name: '锁定为只读' }));
+      await waitFor(() => expect(vi.mocked(props.previewPort.render).mock.calls.length).toBeGreaterThan(requestCount));
+      const request = vi.mocked(props.previewPort.render).mock.calls.at(-1)?.[0];
+      expect(request?.markdown).toBe(expected);
+      metadata.formalRequestReached = true;
+      const unlock = await view.findByRole('button', { name: '解除锁定并编辑' });
+      await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+      layoutPreviewSurface(view.container);
+      fireEvent.click(unlock);
+      const restored = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() => expect(restored.getAttribute('data-easymde-preview-phase')).toBe('ready'));
+      expect(restored.querySelectorAll('p')).toHaveLength(2);
+      expect(restored.querySelectorAll('pre')).toHaveLength(2);
+      expect(restored.lastElementChild?.tagName).toBe('P');
+      expect(restored.lastElementChild?.textContent).toBe(`${run}Final paragraph.`);
+      expect(Array.from(restored.querySelectorAll('pre code'), node => node.textContent)).toEqual(['alpha\nbeta\n', 'puts :kept\n']);
+      expect(restored.querySelector('h1')?.textContent).toBe('Synthetic Full fixture');
+      expect(restored.querySelector('h3')?.textContent).toBe('Heading after');
+      expect(owner.getRevision()).toBe(revision + 1);
+      expect(owner.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: history.undoDepth + 1 });
+      expect(window.getSelection()?.anchorNode?.parentElement).toBe(restored.lastElementChild);
+      expect(window.getSelection()?.anchorOffset).toBe(run.length);
+      metadata.phase = 'formal-followup-input';
+      act(() => insertAtNativeCaret(restored, 'x'));
+      await waitFor(() => expect(owner.getRevision()).toBe(revision + 2));
+      expect(owner.getValue()).toBe(continued);
+      expect(owner.getSelection()).toEqual({ direction: 'none', start: point + escapedRun.length + 1, end: point + escapedRun.length + 1 });
+      expect(owner.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: history.undoDepth + 2 });
+      fireEvent.click(view.getByRole('button', { name: '编辑模式' }));
+      await waitFor(() => expect(view.container.querySelector('.easymde-editor')?.classList.contains('is-immersive-source')).toBe(true));
+      act(() => { expect(owner.undo()).toBe(true); });
+      expect(owner.getValue()).toBe(expected);
+      act(() => { expect(owner.redo()).toBe(true); });
+      expect(owner.getValue()).toBe(continued);
+      expect(props.onFailure).not.toHaveBeenCalled();
+      metadata.phase = 'complete';
+    } finally { view.unmount(); }
+  });
+});
+
+it.each(['preedit', 'queued settlement'] as const)('blocks autosave preparation while Full composition owns the DOM (%s)', async (phase) => {
+  const props = fixture();
+  const initial = 'prefix suffix';
+  const point = 7;
+  const preedit = "w'o'r'd";
+  const committed = 'word';
+  const expected = initial.slice(0, point) + committed + initial.slice(point);
+  props.submissionField.value = initial;
+  props.submissionField.defaultValue = initial;
+  props.submissionField.setSelectionRange(point, point);
+  const originalCreate = observedSourceAdapter.createCodeMirrorDocumentSession;
+  const ownerRef: { current: CodeMirrorDocumentSession | null } = { current: null };
+  vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession').mockImplementation((options) => {
+    const owner = originalCreate(options);
+    ownerRef.current = owner;
+    return owner;
+  });
+  vi.mocked(props.previewPort.render).mockImplementation(async (request) => ({
+    ...createPreviewResponse(request, `<p>${request.markdown}</p>` as SafePreviewHtml, {}),
+    editMap: { version: 1, coordinate: 'line', signature: request.signature,
+      blocks: [{ id: 'b0', startLine: 0, endLine: 1, editable: true }] }
+  }));
+  const view = render(<EditorRoot {...props} />);
+  try {
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const surface = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+    const owner = ownerRef.current;
+    const text = surface.querySelector('p')?.firstChild;
+    if (!owner || !(text instanceof Text)) throw new Error('autosave-composition-owner-missing');
+    surface.focus();
+    window.getSelection()?.collapse(text, point);
+    const revision = owner.getRevision();
+    const history = owner.getHistoryState();
+    act(() => {
+      surface.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' }));
+      surface.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: preedit }));
+      surface.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, data: preedit, inputType: 'insertCompositionText', isComposing: true }));
+      text.insertData(point, preedit);
+      window.getSelection()?.collapse(text, point + preedit.length);
+      surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: preedit, inputType: 'insertCompositionText', isComposing: true }));
+    });
+    expect(owner.getValue()).toBe(initial);
+    const confirm = () => {
+      surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter', keyCode: 229, isComposing: true }));
+      surface.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: committed }));
+      surface.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, data: committed, inputType: 'insertCompositionText', isComposing: true }));
+      text.replaceData(point, preedit.length, committed);
+      window.getSelection()?.collapse(text, point + committed.length - 1);
+      surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: committed, inputType: 'insertCompositionText', isComposing: true }));
+      surface.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: committed }));
+    };
+    if (phase === 'queued settlement') act(confirm);
+    const nativeOffset = window.getSelection()?.anchorOffset;
+    const requests = vi.mocked(props.previewPort.render).mock.calls.length;
+    let prepared: EditorSessionAutosavePreparationResult | undefined;
+    act(() => { prepared = props.sessionAutosave(); });
+    expect(prepared, 'autosave must defer while native composition owns uncommitted DOM').toBe('blocked');
+    expect(owner.getValue()).toBe(initial);
+    expect(props.submissionField.value).toBe(initial);
+    expect(owner.getRevision()).toBe(revision);
+    expect(owner.getHistoryState()).toEqual(history);
+    expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(requests);
+    expect(window.getSelection()?.anchorNode).toBe(text);
+    expect(window.getSelection()?.anchorOffset).toBe(nativeOffset);
+    expect(props.onFailure).not.toHaveBeenCalled();
+    if (phase === 'preedit') act(confirm);
+    await act(async () => { await Promise.resolve(); });
+    await waitFor(() => expect(owner.getValue()).toBe(expected));
+    expect(owner.getSelection()).toEqual({ direction: 'none', start: point + committed.length, end: point + committed.length });
+    expect(window.getSelection()?.anchorNode).toBe(text);
+    expect(window.getSelection()?.anchorOffset).toBe(point + committed.length);
+    expect(owner.getRevision()).toBe(revision + 1);
+    expect(owner.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: history.undoDepth + 1 });
+    act(() => { expect(props.sessionAutosave()).toBe('continue'); });
+    expect(owner.getValue()).toBe(expected);
+    expect(owner.getRevision()).toBe(revision + 1);
+    expect(owner.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: history.undoDepth + 1 });
+    expect(props.onFailure).not.toHaveBeenCalled();
+  } finally {
+    view.unmount();
+  }
+});
+
+it('commits terminal-start Chromium Enter through the real Root canonical owner without jumping to the document start', async ({ task }) => {
+  const props = fixture();
+  const initial = '# Synthetic heading\n\n\n\nabcdefgh\n\n```python\n\nabcdefghijklmnopqrst\nklmnopqrst0123456789\n```\n\nuvwxyz\n';
+  const sourcePoint = initial.indexOf('uvwxyz');
+  const entered = initial.slice(0, sourcePoint) + '  \n\n' + initial.slice(sourcePoint);
+  const point = sourcePoint + 4;
+  const typed = entered.slice(0, point) + 'x' + entered.slice(point);
+  props.submissionField.value = initial;
+  props.submissionField.defaultValue = initial;
+  props.submissionField.setSelectionRange(initial.length, initial.length);
+  const originalCreate = observedSourceAdapter.createCodeMirrorDocumentSession;
+  const ownerRef: { current: CodeMirrorDocumentSession | null } = { current: null };
+  vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession').mockImplementation((options) => {
+    const owner = originalCreate(options); ownerRef.current = owner; return owner;
+  });
+  vi.mocked(props.previewPort.render).mockImplementation(async (request) => {
+    if (request.markdown !== initial && request.markdown !== entered && request.markdown !== typed) {
+      throw new Error('terminal-start-preview-unexpected-document');
+    }
+    const changed = request.markdown !== initial;
+    const tail = request.markdown === typed ? 'xuvwxyz' : 'uvwxyz';
+    return {
+      ...createPreviewResponse(request, `<h1>Synthetic heading</h1><p>abcdefgh</p><pre><code class="language-python">\nabcdefghijklmnopqrst\nklmnopqrst0123456789\n</code></pre><p>${tail}</p>` as SafePreviewHtml, {}),
+      editMap: {
+        version: 1, coordinate: 'line', signature: request.signature,
+        blocks: [
+          { id: 'b0', startLine: 0, endLine: 4, editable: true },
+          { id: 'b1', startLine: 4, endLine: 6, editable: true },
+          { id: 'b2', startLine: 6, endLine: changed ? 14 : 12, editable: true },
+          { id: 'b3', startLine: changed ? 14 : 12, endLine: changed ? 16 : 14, editable: true }
+        ]
+      }
+    };
+  });
+  const view = render(<EditorRoot {...props} />);
+  try {
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    const unlock = await view.findByRole('button', { name: '解除锁定并编辑' });
+    await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+    layoutPreviewSurface(view.container); fireEvent.click(unlock);
+    const surface = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+    const owner = ownerRef.current;
+    if (!owner) throw new Error('terminal-start-root-document-owner-missing');
+    const original = surface.querySelectorAll('p')[1]; const text = original?.firstChild;
+    if (!(original instanceof HTMLParagraphElement) || !(text instanceof Text)) throw new Error('terminal-start-root-native-target-missing');
+    const protectedPre = surface.querySelector('pre');
+    surface.focus(); window.getSelection()?.collapse(text, 0);
+    act(() => {
+      const key = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' }); surface.dispatchEvent(key);
+      if (key.defaultPrevented) return;
+      const range = document.createRange(); range.setStart(text, 0); range.collapse(true);
+      const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertParagraph' });
+      Object.defineProperty(before, 'getTargetRanges', { value: () => [range] }); surface.dispatchEvent(before);
+      expect(before.defaultPrevented).toBe(false);
+      const preceding = original.cloneNode(false) as HTMLParagraphElement;
+      preceding.append(document.createElement('br')); original.before(preceding);
+      window.getSelection()?.collapse(text, 0);
+      surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertParagraph' }));
+    });
+    await waitFor(() => expect(owner.getValue() === entered || vi.mocked(props.onFailure).mock.calls.length > 0).toBe(true));
+    expect(props.onFailure).not.toHaveBeenCalled();
+    expect(owner.getValue()).toBe(entered);
+    expect(owner.getSelection()).toEqual({ direction: 'none', start: point, end: point });
+    const native = window.getSelection(); const anchor = native?.anchorNode;
+    expect(anchor).toBeInstanceOf(Text); expect(anchor?.textContent).toBe('uvwxyz'); expect(native?.anchorOffset).toBe(0);
+    expect(surface.querySelector('pre'), 'a native paragraph split must not remount the untouched code frame').toBe(protectedPre);
+    if (!(anchor instanceof Text) || !native) throw new Error('terminal-start-root-new-caret-missing');
+    act(() => {
+      const range = native.getRangeAt(0).cloneRange();
+      const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: 'x' });
+      Object.defineProperty(before, 'getTargetRanges', { value: () => [range] }); surface.dispatchEvent(before);
+      expect(before.defaultPrevented).toBe(false); anchor.insertData(0, 'x'); native.collapse(anchor, 1);
+      surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'x' }));
+    });
+    await waitFor(() => expect(owner.getValue()).toBe(typed));
+    expect(owner.getSelection()).toEqual({ direction: 'none', start: point + 1, end: point + 1 });
+    expect(window.getSelection()?.anchorNode?.textContent).toBe('xuvwxyz'); expect(window.getSelection()?.anchorOffset).toBe(1);
+    expect(surface.querySelector('pre code')?.textContent).toBe('\nabcdefghijklmnopqrst\nklmnopqrst0123456789\n');
+    expect(props.onFailure).not.toHaveBeenCalled();
+  } finally {
+    const owner = ownerRef.current; const native = window.getSelection();
+    Object.assign(task.meta, { terminalStartRoot: { source: owner?.getValue(), selection: owner?.getSelection(), failures: vi.mocked(props.onFailure).mock.calls.map(call => [...call]), native: { kind: native?.anchorNode?.nodeName, offset: native?.anchorOffset } } });
+    view.unmount();
+  }
+});
+
+it.for(['element', 'text'] as const)('keeps ordinary typing at a nonempty paragraph start after formal lock and repeated history with an omitted source gap (%s target)', async (targetKind, { task }) => {
+  const props = fixture();
+  const initial = '# Synthetic heading\n\n\n\nabcdefgh\n\n```python\n\nabcdefghijklmnopqrst\nklmnopqrst0123456789\n```\n\nuvwxyz\n';
+  const sourcePoint = initial.indexOf('abcdefgh');
+  const entered = initial.slice(0, sourcePoint) + '  \n\n' + initial.slice(sourcePoint);
+  const point = sourcePoint + 4;
+  const typed = entered.slice(0, point) + 'x' + entered.slice(point);
+  const continued = entered.slice(0, point) + 'q' + entered.slice(point);
+  props.submissionField.value = initial; props.submissionField.defaultValue = initial;
+  props.submissionField.setSelectionRange(initial.length, initial.length);
+  const originalCreate = observedSourceAdapter.createCodeMirrorDocumentSession;
+  const ownerRef: { current: CodeMirrorDocumentSession | null } = { current: null };
+  vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession').mockImplementation((options) => {
+    const owner = originalCreate(options); ownerRef.current = owner; return owner;
+  });
+  vi.mocked(props.previewPort.render).mockImplementation(async (request) => {
+    if (![initial, entered, typed, continued].includes(request.markdown)) throw new Error('history-gap-preview-unexpected-document');
+    const changed = request.markdown !== initial;
+    const body = request.markdown === typed ? 'xabcdefgh' : request.markdown === continued ? 'qabcdefgh' : 'abcdefgh';
+    return {
+      ...createPreviewResponse(request, `<h1>Synthetic heading</h1><p>${body}</p><pre><code class="language-python">\nabcdefghijklmnopqrst\nklmnopqrst0123456789\n</code></pre><p>uvwxyz</p>` as SafePreviewHtml, {}),
+      editMap: {
+        version: 1, coordinate: 'line', signature: request.signature,
+        blocks: [
+          { id: 'b0', startLine: 0, endLine: changed ? 6 : 4, editable: true },
+          { id: 'b1', startLine: changed ? 6 : 4, endLine: changed ? 8 : 6, editable: true },
+          { id: 'b2', startLine: changed ? 8 : 6, endLine: changed ? 14 : 12, editable: true },
+          { id: 'b3', startLine: changed ? 14 : 12, endLine: changed ? 16 : 14, editable: true }
+        ]
+      }
+    };
+  });
+  const view = render(<EditorRoot {...props} />);
+  const currentSurface = () => view.getByRole('textbox', { name: '可视化文章编辑器' });
+  const typeAtCurrentCaret = (character: string) => {
+    const surface = currentSurface();
+    const key = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: character }); surface.dispatchEvent(key);
+    if (key.defaultPrevented) return;
+    const native = window.getSelection();
+    if (!native || !native.rangeCount || !native.isCollapsed) throw new Error('history-gap-native-caret-missing');
+    const range = native.getRangeAt(0).cloneRange();
+    const targetRange = range.cloneRange();
+    if (targetKind === 'text' && targetRange.startContainer instanceof HTMLParagraphElement && targetRange.startOffset === 0) {
+      const first = targetRange.startContainer.firstChild;
+      if (!(first instanceof Text) || !first.data.length) throw new Error('history-gap-equivalent-text-target-missing');
+      targetRange.setStart(first, 0); targetRange.collapse(true);
+    }
+    const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: character });
+    Object.defineProperty(before, 'getTargetRanges', { value: () => [targetRange] }); surface.dispatchEvent(before);
+    if (before.defaultPrevented) return;
+    const container = range.startContainer;
+    const text = container instanceof Text ? container : container.childNodes[range.startOffset];
+    if (text instanceof Text) {
+      const offset = container instanceof Text ? range.startOffset : 0;
+      text.insertData(offset, character); native.collapse(text, offset + character.length);
+    } else {
+      const next = document.createTextNode(character); range.insertNode(next); native.collapse(next, character.length);
+    }
+    surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: character }));
+  };
+  try {
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' })); fireEvent.click(view.getByRole('button', { name: '预览' }));
+    const unlock = await view.findByRole('button', { name: '解除锁定并编辑' });
+    await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false)); layoutPreviewSurface(view.container); fireEvent.click(unlock);
+    const surface = await view.findByRole('textbox', { name: '可视化文章编辑器' }); const owner = ownerRef.current;
+    if (!owner) throw new Error('history-gap-root-source-owner-missing');
+    const original = surface.querySelector('p'); const text = original?.firstChild;
+    if (!(original instanceof HTMLParagraphElement) || !(text instanceof Text)) throw new Error('history-gap-root-original-paragraph-missing');
+    surface.focus(); window.getSelection()?.collapse(text, 0);
+    act(() => {
+      const key = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' }); surface.dispatchEvent(key);
+      if (key.defaultPrevented) return;
+      const range = document.createRange(); range.setStart(text, 0); range.collapse(true);
+      const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertParagraph' });
+      Object.defineProperty(before, 'getTargetRanges', { value: () => [range] }); surface.dispatchEvent(before);
+      if (before.defaultPrevented) return;
+      const preceding = original.cloneNode(false) as HTMLParagraphElement; preceding.append(document.createElement('br')); original.before(preceding);
+      window.getSelection()?.collapse(text, 0); surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertParagraph' }));
+    });
+    await waitFor(() => expect(owner.getValue()).toBe(entered));
+    expect(owner.getSelection()).toEqual({ direction: 'none', start: point, end: point });
+    act(() => typeAtCurrentCaret('x')); await waitFor(() => expect(owner.getValue()).toBe(typed));
+    const lock = view.getByRole('button', { name: '锁定为只读' }); lock.focus(); fireEvent.click(lock);
+    const freshUnlock = await view.findByRole('button', { name: '解除锁定并编辑' });
+    await waitFor(() => expect(freshUnlock.hasAttribute('disabled')).toBe(false)); layoutPreviewSurface(view.container); fireEvent.click(freshUnlock);
+    await view.findByRole('textbox', { name: '可视化文章编辑器' });
+    await waitFor(() => expect(window.getSelection()?.anchorNode?.textContent).toBe('xabcdefgh'));
+    const historyKey = (redo: boolean) => {
+      const current = currentSurface(); current.focus();
+      current.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ctrlKey: true, key: 'z', shiftKey: redo }));
+    };
+    act(() => historyKey(false)); await waitFor(() => expect(owner.getValue()).toBe(entered));
+    await waitFor(() => expect(window.getSelection()?.anchorNode?.textContent).toBe('abcdefgh'));
+    act(() => historyKey(true)); await waitFor(() => expect(owner.getValue()).toBe(typed));
+    await waitFor(() => expect(window.getSelection()?.anchorNode?.textContent).toBe('xabcdefgh'));
+    act(() => historyKey(false)); await waitFor(() => expect(owner.getValue()).toBe(entered));
+    await waitFor(() => expect(window.getSelection()?.anchorNode?.textContent).toBe('abcdefgh'));
+    expect(window.getSelection()?.anchorOffset).toBe(0);
+    expect(owner.getSelection()).toEqual({ direction: 'none', start: point, end: point });
+    const protectedPre = currentSurface().querySelector('pre');
+    act(() => typeAtCurrentCaret('q'));
+    await waitFor(() => expect(owner.getValue() === continued || vi.mocked(props.onFailure).mock.calls.length > 0).toBe(true));
+    expect(props.onFailure, 'typing is a normal paragraph edit, not an empty structural input').not.toHaveBeenCalled();
+    expect(owner.getValue()).toBe(continued);
+    expect(owner.getSelection()).toEqual({ direction: 'none', start: point + 1, end: point + 1 });
+    expect(window.getSelection()?.anchorNode?.textContent).toBe('qabcdefgh'); expect(window.getSelection()?.anchorOffset).toBe(1);
+    expect(currentSurface().querySelector('pre'), 'ordinary input must not rebuild the unrelated code frame').toBe(protectedPre);
+  } finally {
+    const owner = ownerRef.current; const native = window.getSelection();
+    Object.assign(task.meta, { ordinaryHistoryGap: { source: owner?.getValue(), selection: owner?.getSelection(), failures: vi.mocked(props.onFailure).mock.calls.map(call => [...call]), native: { kind: native?.anchorNode?.nodeName, offset: native?.anchorOffset } } });
+    view.unmount();
+  }
+});
+
+import { syncCodeFrameBackgrounds } from '../../integrations/preview-runtime/frontend-enhancement-runtime';
+
+it('keeps native-created Full code body typing editable through the real Root code-frame background owner', { timeout: 15_000 }, async ({ task }) => {
+  const props = fixture();
+  const anchorText = 'Writing anchor';
+  const initial = '# Synthetic heading\n\n\n\nWriting anchor\n\n```python\nPROTECTED_NEIGHBOR\n```\n\nTail stays.';
+  const anchorEnd = initial.indexOf(anchorText) + anchorText.length;
+  const prefix = initial.slice(0, anchorEnd) + '\n\n';
+  const suffix = initial.slice(anchorEnd);
+  const paragraphPoint = prefix.length;
+  const entered = prefix + '  ' + suffix;
+  const literal = prefix + '\\~\\~\\~bash' + suffix;
+  const nativeCodeSource = (body: string) => prefix + '```bash\n' + body + '\n```' + suffix;
+  const bodyPoint = paragraphPoint + '```bash\n'.length;
+  props.submissionField.value = initial;
+  props.submissionField.defaultValue = initial;
+  props.submissionField.setSelectionRange(0, 0);
+  const theme = document.createElement('style');
+  theme.textContent = 'code.hljs { background-color: rgb(12, 34, 56); }';
+  document.head.append(theme);
+  // The initial formal candidate is enhanced before admission, including its
+  // existing neighbor PRE. Only the real Root callback enhances the new PRE.
+  vi.mocked(props.enhancementPort.enhance).mockImplementation(async (surface) => {
+    syncCodeFrameBackgrounds(surface, window);
+  });
+  vi.mocked(props.enhancementPort.syncCodeFrameBackgrounds).mockImplementation((surface) => {
+    syncCodeFrameBackgrounds(surface, window);
+  });
+  const escapeHtml = (value: string) => value.replace(/&/gu, '&amp;').replace(/</gu, '&lt;').replace(/>/gu, '&gt;');
+  vi.mocked(props.previewPort.render).mockImplementation(async (request) => {
+    const blocks = observedBlockIndex(request.markdown).blocks;
+    const html = blocks.map((block, index) => {
+      const raw = request.markdown.slice(block.from, block.to).replace(/\n+$/u, '');
+      const marker = ` data-easymde-visual-block-id="b${index}"`;
+      if ('code' === block.kind) {
+        const lines = raw.split('\n');
+        const opening = /^(`{3,}|~{3,})([a-zA-Z0-9_-]*)$/u.exec(lines[0] ?? '');
+        if (!opening || lines.at(-1) !== opening[1]) throw new Error('root-native-frame-formal-fence-invalid');
+        return `<pre${marker}><code class="hljs language-${opening[2]}">${escapeHtml(lines.slice(1, -1).join('\n') + '\n')}</code></pre>`;
+      }
+      if ('heading' === block.kind) {
+        const heading = /^(#{1,6}) (.*)$/u.exec(raw);
+        if (!heading) throw new Error('root-native-frame-formal-heading-invalid');
+        return `<h${heading[1]!.length}${marker}>${escapeHtml(heading[2]!)}</h${heading[1]!.length}>`;
+      }
+      if ('paragraph' !== block.kind) throw new Error('root-native-frame-formal-block-unsupported');
+      return `<p${marker}>${escapeHtml(raw.replace(/\\([~`\\])/gu, '$1'))}</p>`;
+    }).join('');
+    return {
+      features: {}, html: html as SafePreviewHtml,
+      editMap: {
+        version: 1, coordinate: 'line', signature: request.signature,
+        blocks: blocks.map((block, index) => ({
+          id: `b${index}`, startLine: block.lineStart, endLine: block.lineEnd + 1, editable: true
+        }))
+      }
+    };
+  });
+  const sessions = vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession');
+  const receipt = {
+    phase: 'setup', admitted: false, realBackgroundReached: false,
+    classification: 'SETUP_PENDING', steps: [] as unknown[], error: null as string | null,
+    failedPhase: null as string | null
+  };
+  Object.assign(task.meta, { rootNativeCodeFrame: receipt });
+  const view = render(<EditorRoot {...props} />);
+  let owner: CodeMirrorDocumentSession | null = null;
+  let surface: HTMLElement | null = null;
+  const capture = (phase: string) => {
+    receipt.phase = phase;
+    const native = window.getSelection();
+    receipt.steps.push({
+      phase, value: owner?.getValue(), selection: owner?.getSelection(),
+      revision: owner?.getRevision(), history: owner?.getHistoryState(),
+      bridge: { value: props.submissionField.value, start: props.submissionField.selectionStart,
+        end: props.submissionField.selectionEnd, direction: props.submissionField.selectionDirection },
+      native: { connected: native?.anchorNode?.isConnected, node: native?.anchorNode?.nodeName,
+        text: native?.anchorNode?.textContent, offset: native?.anchorOffset, collapsed: native?.isCollapsed },
+      editable: surface?.getAttribute('contenteditable'), phaseAttribute: surface?.getAttribute('data-easymde-preview-phase'),
+      refreshing: surface?.getAttribute('data-easymde-preview-refreshing'),
+      frames: Array.from(surface?.querySelectorAll('pre') ?? []).map((pre) => ({
+        style: pre.getAttribute('style'), text: pre.querySelector('code')?.textContent
+      })),
+      requests: vi.mocked(props.previewPort.render).mock.calls.map(([request]) => ({ markdown: request.markdown, signature: request.signature })),
+      failures: vi.mocked(props.onFailure).mock.calls.map(([code]) => code)
+    });
+  };
+  try {
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览模式' }));
+    const unlock = await view.findByRole('button', { name: '解除锁定并编辑' });
+    await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+    layoutPreviewSurface(view.container);
+    fireEvent.click(unlock);
+    surface = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+    const visual = surface;
+    await waitFor(() => expect(visual.getAttribute('contenteditable')).toBe('true'));
+    const creation = sessions.mock.results[0];
+    if (!creation || 'return' !== creation.type) throw new Error('root-native-frame-real-document-missing');
+    owner = creation.value;
+    const documentOwner = owner;
+    const anchor = visual.querySelector('p');
+    const anchorNode = anchor?.firstChild;
+    const protectedPre = visual.querySelector('pre');
+    const protectedCode = protectedPre?.querySelector('code');
+    if (!(anchor instanceof HTMLParagraphElement) || !(anchorNode instanceof Text)
+      || !(protectedPre instanceof HTMLPreElement) || !(protectedCode instanceof HTMLElement)) {
+      throw new Error('root-native-frame-formal-neighbors-missing');
+    }
+    expect(anchor.textContent).toBe(anchorText);
+    expect(visual.querySelector('[data-easymde-preview-window-spacer]')).toBeNull();
+    expect(protectedPre.style.getPropertyValue('--easymde-code-frame-background')).toBe(window.getComputedStyle(protectedCode).backgroundColor);
+    expect(protectedPre.style.getPropertyValue('--easymde-code-frame-background')).toBe('rgb(12, 34, 56)');
+    const protectedHtml = protectedPre.outerHTML;
+    const initialRevision = documentOwner.getRevision();
+    const assertHealthy = () => {
+      expect(props.onFailure, receipt.phase).not.toHaveBeenCalled();
+      expect(view.container.querySelector('[role="alert"]'), receipt.phase).toBeNull();
+      expect(visual.getAttribute('contenteditable'), receipt.phase).toBe('true');
+      expect(protectedPre.isConnected).toBe(true);
+      expect(protectedPre.outerHTML).toBe(protectedHtml);
+      expect(visual.querySelector('pre code.language-python')).toBe(protectedCode);
+    };
+    const assertNativeAt = (root: HTMLElement, offset: number) => {
+      const native = window.getSelection();
+      expect(native?.isCollapsed, receipt.phase).toBe(true);
+      for (const [node, point] of [[native?.anchorNode, native?.anchorOffset], [native?.focusNode, native?.focusOffset]] as const) {
+        if (!node || point === undefined || !node.isConnected || !root.contains(node)) {
+          throw new Error(`root-native-frame-live-caret-missing:${receipt.phase}`);
+        }
+        const range = document.createRange();
+        range.selectNodeContents(root); range.setEnd(node, point);
+        expect(range.toString().length, receipt.phase).toBe(offset);
+      }
+      expect(document.activeElement).toBe(visual);
+    };
+    const assertDocument = (expected: string, caret: number) => {
+      expect(documentOwner.getValue(), receipt.phase).toBe(expected);
+      expect(props.submissionField.value, receipt.phase).toBe(expected);
+      expect(documentOwner.getSelection(), receipt.phase).toEqual({ direction: 'none', start: caret, end: caret });
+      expect([props.submissionField.selectionStart, props.submissionField.selectionEnd]).toEqual([caret, caret]);
+      expect(documentOwner.getHistoryState().redoDepth).toBe(0);
+      assertHealthy();
+    };
+    const key = (name: string) => {
+      const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: name });
+      visual.dispatchEvent(event); return event;
+    };
+    const typeNativeGlyph = (character: string, root: HTMLElement, offset: number) => {
+      assertNativeAt(root, offset);
+      expect(key(character).defaultPrevented, receipt.phase).toBe(false);
+      const native = window.getSelection();
+      const range = native?.rangeCount ? native.getRangeAt(0).cloneRange() : null;
+      if (!native || !range) throw new Error('root-native-frame-input-range-missing');
+      const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: character, inputType: 'insertText' });
+      Object.defineProperty(before, 'getTargetRanges', { value: () => [range.cloneRange()] });
+      visual.dispatchEvent(before);
+      expect(before.defaultPrevented, receipt.phase).toBe(false);
+      if (range.startContainer instanceof Text) {
+        const node = range.startContainer, point = range.startOffset;
+        node.insertData(point, character); native.collapse(node, point + character.length);
+      } else {
+        const node = document.createTextNode(character);
+        if (root instanceof HTMLParagraphElement && !root.textContent && root.firstChild instanceof HTMLBRElement) root.replaceChildren(node);
+        else range.insertNode(node);
+        native.collapse(node, character.length);
+      }
+      visual.dispatchEvent(new InputEvent('input', { bubbles: true, data: character, inputType: 'insertText' }));
+      assertNativeAt(root, offset + character.length);
+      assertHealthy();
+    };
+    capture('initial formally enhanced Full admission');
+    assertDocument(initial, 0);
+    visual.focus(); window.getSelection()?.collapse(anchorNode, anchorNode.length);
+    act(() => {
+      receipt.phase = 'genuine cloned-ID Enter';
+      assertNativeAt(anchor, anchorText.length);
+      expect(key('Enter').defaultPrevented).toBe(false);
+      const native = window.getSelection();
+      const range = native?.rangeCount ? native.getRangeAt(0).cloneRange() : null;
+      if (!native || !range) throw new Error('root-native-frame-Enter-range-missing');
+      const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertParagraph' });
+      Object.defineProperty(before, 'getTargetRanges', { value: () => [range] });
+      visual.dispatchEvent(before);
+      expect(before.defaultPrevented).toBe(false);
+      const created = anchor.cloneNode(false) as HTMLParagraphElement;
+      created.append(document.createElement('br')); anchor.after(created); native.collapse(created, 0);
+      expect(created.getAttribute('data-easymde-visual-block-id')).toBe(anchor.getAttribute('data-easymde-visual-block-id'));
+      visual.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertParagraph' }));
+    });
+    await waitFor(() => expect(documentOwner.getValue() === entered || vi.mocked(props.onFailure).mock.calls.length > 0).toBe(true));
+    capture('genuine cloned-ID Enter committed');
+    assertDocument(entered, paragraphPoint);
+    const createdParagraph = anchor.nextElementSibling;
+    if (!(createdParagraph instanceof HTMLParagraphElement)) throw new Error('root-native-frame-cloned-paragraph-missing');
+    assertNativeAt(createdParagraph, 0);
+    receipt.admitted = true;
+    act(() => {
+      for (const [index, character] of Array.from('~~~bash').entries()) {
+        receipt.phase = `literal prefix glyph ${index + 1}`;
+        typeNativeGlyph(character, createdParagraph, index);
+      }
+    });
+    await waitFor(() => expect(documentOwner.getValue() === literal || vi.mocked(props.onFailure).mock.calls.length > 0).toBe(true));
+    capture('literal prefix committed before explicit Enter');
+    assertDocument(literal, paragraphPoint + '\\~\\~\\~bash'.length);
+    assertNativeAt(createdParagraph, '~~~bash'.length);
+    act(() => {
+      receipt.phase = 'explicit Enter creates code frame';
+      expect(key('Enter').defaultPrevented).toBe(true);
+    });
+    capture('created code frame with real Root background sync');
+    assertDocument(nativeCodeSource(''), bodyPoint);
+    const createdPre = anchor.nextElementSibling;
+    const createdCode = createdPre?.querySelector('code');
+    if (!(createdPre instanceof HTMLPreElement) || !(createdCode instanceof HTMLElement)) throw new Error('root-native-frame-created-code-missing');
+    expect(createdPre).not.toBe(protectedPre);
+    expect(createdCode.classList.contains('hljs')).toBe(true);
+    expect(createdCode.classList.contains('language-bash')).toBe(true);
+    expect(createdCode.querySelector('[data-easymde-visual-code-placeholder]')).not.toBeNull();
+    expect(createdPre.style.getPropertyValue('--easymde-code-frame-background')).toBe(window.getComputedStyle(createdCode).backgroundColor);
+    expect(createdPre.style.getPropertyValue('--easymde-code-frame-background')).toBe('rgb(12, 34, 56)');
+    receipt.realBackgroundReached = true;
+    assertNativeAt(createdCode, 0);
+    const beforeBody = { revision: documentOwner.getRevision(), history: documentOwner.getHistoryState() };
+    // No ready wait, per-glyph debounce flush, or test caret placement after
+    // the explicit Enter. Both defaults consume the actual current Selection.
+    act(() => {
+      receipt.phase = 'created body native x';
+      typeNativeGlyph('x', createdCode, 0);
+      capture(receipt.phase);
+      receipt.phase = 'created body native y';
+      typeNativeGlyph('y', createdCode, 1);
+      capture(receipt.phase);
+    });
+    await waitFor(() => expect(documentOwner.getValue() === nativeCodeSource('xy') || vi.mocked(props.onFailure).mock.calls.length > 0).toBe(true));
+    capture('created body xy committed');
+    assertDocument(nativeCodeSource('xy'), bodyPoint + 2);
+    assertNativeAt(createdCode, 2);
+    expect(visual.querySelectorAll('pre')).toHaveLength(2);
+    expect(documentOwner.getRevision() - beforeBody.revision).toBeGreaterThanOrEqual(1);
+    expect(documentOwner.getRevision() - beforeBody.revision).toBeLessThanOrEqual(2);
+    expect(documentOwner.getHistoryState().undoDepth - beforeBody.history.undoDepth).toBeGreaterThanOrEqual(1);
+    expect(documentOwner.getHistoryState().undoDepth - beforeBody.history.undoDepth).toBeLessThanOrEqual(2);
+    expect(documentOwner.getRevision()).toBeGreaterThan(initialRevision);
+    receipt.classification = 'GREEN';
+  } catch (error) {
+    receipt.failedPhase = receipt.phase;
+    receipt.error = error instanceof Error ? error.message : String(error);
+    receipt.classification = receipt.admitted ? 'CONSUMER_RED' : 'SETUP_FAILURE';
+    capture(receipt.phase);
+    throw error;
+  } finally {
+    capture('final receipt');
+    view.unmount(); theme.remove();
+  }
 });

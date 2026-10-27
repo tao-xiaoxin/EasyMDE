@@ -43,7 +43,7 @@ type PreviewWindowRepositoryBlock = Readonly<{
 
 export type PreviewWindowNodeRepository = {
 	blocks: ReadonlyArray<PreviewWindowRepositoryBlock>;
-	ownedGap?: Readonly<{ node: HTMLElement; before: number; after: number }>;
+	ownedGap?: Readonly<{ node: HTMLElement; before: number; after: number | null }>;
 	context: PreviewWindowContext;
 	indexById: ReadonlyMap<string, number>;
 	model: ReturnType<typeof createPreviewWindowModel>;
@@ -642,7 +642,11 @@ export function advancePreviewWindowFlowBoundary(
 		!boundary ||
 		!node ||
 		boundary.epoch !== previewWindowGeometryEpochKey(repository.context) ||
-		!(boundary.first === node || index < repository.nodes.length - 1)
+		!(
+			boundary.first === node ||
+			boundary.last === node ||
+			index < repository.nodes.length - 1
+		)
 	)
 		return;
 	const origin =
@@ -665,6 +669,49 @@ export function advancePreviewWindowFlowBoundary(
 		throw new PreviewWindowDomError("preview-window-flow-boundary-invalid");
 	}
 	repository.flowBoundary = { ...boundary, origin, end };
+}
+
+/**
+ * Publishes the one measured-geometry transaction every window caller shares:
+ * the measured model height, the advanced flow boundary, and the block/gap
+ * epoch and known-range bookkeeping. Callers keep their own node/rect
+ * validation, measurement, scheduling, error policy and anchor-correction
+ * consumption; only this duplication of the repository transaction lives here.
+ */
+export function publishPreviewWindowMeasuredBlock(
+	repository: PreviewWindowNodeRepository,
+	surface: HTMLElement,
+	index: number,
+	measurement: PreviewWindowFlowMeasurement,
+	anchorIndex: number,
+	rect: DOMRect,
+): Readonly<{ anchorCorrection: number; delta: number; geometry: PreviewWindowFlowGeometry }> {
+	const geometry = measurement.geometry;
+	const update = repository.model.updateMeasuredHeight({
+		anchorIndex,
+		context: repository.context,
+		geometry,
+		index,
+		measuredHeight: geometry.borderHeight,
+	});
+	advancePreviewWindowFlowBoundary(
+		repository,
+		surface,
+		index,
+		geometry,
+		update.delta,
+		rect,
+	);
+	const epoch = previewWindowGeometryEpochKey(repository.context);
+	repository.spacerContentHeights.clear();
+	repository.flowGeometry[index] = geometry;
+	repository.flowGeometryEpoch[index] = epoch;
+	markPreviewWindowFlowGeometryMeasured(repository, index);
+	if (measurement.gapMeasured) {
+		repository.flowGapEpoch[index] = epoch;
+		markPreviewWindowFlowGapMeasured(repository, index);
+	}
+	return { anchorCorrection: update.anchorCorrection, delta: update.delta, geometry };
 }
 
 /**
@@ -701,31 +748,14 @@ export function measurePreviewWindowAdoptedBlock(
 		repository.ownedGap?.node,
 	);
 	if (!measurement) return;
-	const geometry = measurement.geometry;
-	const update = repository.model.updateMeasuredHeight({
-		anchorIndex: index,
-		context: repository.context,
-		geometry,
-		index,
-		measuredHeight: geometry.borderHeight,
-	});
-	advancePreviewWindowFlowBoundary(
+	publishPreviewWindowMeasuredBlock(
 		repository,
 		surface,
 		index,
-		geometry,
-		update.delta,
+		measurement,
+		index,
 		rect,
 	);
-	const epoch = previewWindowGeometryEpochKey(repository.context);
-	repository.spacerContentHeights.clear();
-	repository.flowGeometry[index] = geometry;
-	repository.flowGeometryEpoch[index] = epoch;
-	markPreviewWindowFlowGeometryMeasured(repository, index);
-	if (measurement.gapMeasured) {
-		repository.flowGapEpoch[index] = epoch;
-		markPreviewWindowFlowGapMeasured(repository, index);
-	}
 }
 
 function currentBlockSibling(
@@ -1097,13 +1127,19 @@ export function windowNodes(
 			nodes.push(node);
 		}
 	}
+	if (repository.ownedGap?.after === null) {
+		nodes.push(repository.ownedGap.node);
+	}
 	return nodes;
 }
 
 export function fullMaterializedNodes(
 	repository: PreviewWindowNodeRepository,
 ): ReadonlyArray<HTMLElement> {
-	return repository.nodes.flatMap((node, index) => repository.ownedGap?.after === index ? [repository.ownedGap.node, node] : [node]);
+	const nodes = repository.nodes.flatMap((node, index) => repository.ownedGap?.after === index ? [repository.ownedGap.node, node] : [node]);
+	return repository.ownedGap?.after === null
+		? [...nodes, repository.ownedGap.node]
+		: nodes;
 }
 
 export function viewportForCanvas(canvas: HTMLElement): PreviewWindowViewport {

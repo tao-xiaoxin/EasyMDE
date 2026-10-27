@@ -33,24 +33,68 @@ Markdown source, and Preview opens the rendered article. The immersive
 It does not save a browser preference or update WordPress settings. Its choice
 survives leaving and re-entering immersive writing in the same page, while a
 normal or hard refresh restores the Settings Center mode. The immersive
-Outline preference is separate and remains browser-persisted.
+Outline preference is separate and remains browser-persisted. Entering
+immersive writing and switching between immersive Source, Split and Preview
+preserve the Source editor's viewport, including when it is deliberately
+scrolled away from the caret; the document and selection do not change.
 In immersive Preview, the unlock control shows a busy state while the editable
 surface is being prepared. It becomes editable and receives focus only when
 preparation and any required long-document window are ready. Leaving Preview
 cancels a pending unlock. The busy control keeps keyboard focus while repeated
 activation is ignored.
+Choosing Source once also completes when a visual edit's Preview is still
+refreshing: the switch waits for that edit and Preview rather than requiring a
+second click. The handoff preserves the current Markdown and editing selection
+without an extra document edit or Undo/Redo step. If another Source, Split or
+Preview choice is made while preparation is pending, the latest choice wins;
+cancelling a Source switch leaves the current Preview editable.
+When a long Preview is unlocked again for the same accepted request, preparation is idempotent: it does not add a document edit or history step, duplicate the rendered roots, or change the current selection. The complete surface is also restored consistently when moving through immersive Source, Split and Preview.
+Long-document geometry may complete across bounded work batches while the
+unlock control remains busy; it does not guess a height or accept stale layout.
+An empty structural block with a real client rect may legitimately have zero
+height and still become ready, so an empty blockquote does not require a
+second unlock or a manual resize.
+If a visual transfer is still pending when you leave immersive Preview, the
+single exit request waits for that accepted transfer and then leaves safely;
+you do not need to click Exit again. A newer Source, Split or Preview choice
+supersedes the pending exit, and leaving or tearing down the page does not add a
+document edit or Undo/Redo step.
 In editable immersive Preview, Backspace at the start of an empty fenced code
 block removes its frame and returns to a paragraph. Undo and Redo restore the
 source, frame and caret, including fences left open at the end of the document.
 Deleting the now-empty paragraph back into a preceding heading leaves the caret
 at that heading's end. Enter and subsequent typing continue there without moving
-to the article start or changing neighboring code blocks.
+to the article start or changing neighboring code blocks. Delete at the end of
+a code body never consumes the next block: the keystroke resolves the current
+accepted code block's own source interval - independent of document order,
+language or duplicate bodies - so a terminal forward Delete is a structural
+no-op that keeps the caret in the code. In-body Backspace and forward-character
+deletions in that same interval edit normally, both directly and immediately
+after Undo/Redo while the refreshed Preview is still pending, under the
+current input lease; anything the lease cannot prove keeps its explicit
+rejection.
+A native Backspace at the start of an empty paragraph directly after a fenced
+code block joins that paragraph into the code: the article's Markdown does not
+change, the following blocks keep their content and identity, and the next
+Backspace continues deleting the code body's own last character. At the end of
+the article, the same keystroke on an empty ordinary paragraph removes only its
+trailing separator and returns the caret to the preceding paragraph's text end.
+Neither transition leaves the caret in the emptied paragraph or at the article
+start, and neither reports a failure.
+While that Preview is pending, a real arrow move - including Shift+Arrow -
+re-authenticates the native selection inside the same accepted code body. The
+canonical caret follows the move, a following Backspace or forward Delete
+removes exactly the selected source interval, and the accepted Preview restores
+the caret inside the code body. Foreign blocks, moved carets and unprovable
+selections keep the explicit rejection.
 Ctrl/Cmd+A selects the connected visual article. Backspace or Delete clears the
 canonical article only for that full visual-root selection. Cut, IME input,
 partial selections, and partial code selections keep their existing editing
 owners. The cleared surface immediately shows one empty paragraph and a usable
 caret, so the next character is accepted without waiting for another Preview.
 Undo and Redo restore the canonical source and connected caret.
+A newer pointer selection or Ctrl/Cmd+A takes precedence over a queued
+composition-end caret placement or a late Preview's selection restoration.
 If the source contains only terminal ASCII spaces or newlines, the empty
 paragraph is a visual presentation and those source bytes remain intact.
 Insertion at that boundary preserves them. Directly formatted list and quote
@@ -58,19 +102,43 @@ wrappers follow the same empty-Backspace behavior while non-empty code content
 remains unchanged. The caret in that fresh empty paragraph sits before the
 renderer's placeholder break. Typing remains available there while a Preview is
 pending, and IME preedit stays outside Markdown until composition ends.
+For a browser-created split paragraph, the formal accepted row is tried first. If it cannot prove the whole row, the editor uses the current owned plain paragraph only when its literal text certificate succeeds; an ID copied onto another root is not enough to make that root editable.
 After a structural Enter in a long windowed document, the accepted formal
 Preview restores the current canonical editing position before following input
 is accepted. The existing Markdown source remains authoritative; a structural
 transition that normalizes to unchanged Markdown does not create new persisted
-article content.
+article content. Pressing Enter at the end of a heading or paragraph opens a new
+input line that stays visible after the Preview is ready, including when the
+following source block is outside the mounted window; pressing Enter again adds
+another line at the same place and moves the caret to it. Typing there continues
+that new line without joining it to the next block. The Source viewport is not
+moved to compensate.
 When a new visual block is created by typing a tilde or backtick fence opener
 that can be represented as valid backtick syntax and pressing Enter, its source
 uses an equally wide backtick fence with the typed language or info string.
 Existing or pasted tilde fences retain their original family; an info string
 containing a backtick remains literal instead of forming an invalid shortcut.
-Until Enter is pressed, each typed tilde or backtick remains literal paragraph
-text, including a fourth consecutive marker; it does not absorb a following code
-block. Enter converts only the paragraph being edited.
+Until Enter is pressed, a typed tilde or backtick opener remains literal
+paragraph text, including a fourth marker, an info string, and a rapid burst of
+characters, even in the final paragraph. When typing a prefix before existing
+text, the caret stays between the new prefix and that text; following paragraphs
+and code blocks stay intact.
+Enter converts only the paragraph being edited. The same conversion is
+available while the Preview is still refreshing. After the accepted Preview,
+typing continues on the new fence's empty line for a converted block. A literal
+paragraph rebuilt by Preview or Undo/Redo restores its saved position throughout
+the paragraph, including within an info string or on a later line, when the
+accepted text proves that position. Unprovable selections remain explicit
+failures rather than moving to a guessed boundary.
+In the full visual document, Enter at a heading or paragraph end opens an editable
+paragraph there; Enter inside a paragraph splits it at the caret. The next
+character stays in that paragraph before and after Preview refresh. If the native
+browser leaves the original empty-paragraph placeholder break after the inserted
+Text, that immediate shape remains editable until the pending change settles.
+After Undo or Redo, a restored nonempty paragraph start remains directly typeable; no manual caret repositioning is needed.
+Undo and Redo preserve the original source gaps, neighboring code blocks and final
+line ending, and restore an Enter-created empty line when the renderer omits it.
+
 On narrow screens, the Outline opens over the writing area. It closes when
 Preview becomes editable or an editable Preview is resized into a narrow
 screen. Its show control can reopen it without changing the saved Outline

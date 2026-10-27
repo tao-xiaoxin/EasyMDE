@@ -648,6 +648,15 @@ function immersiveModeFromEditingMode(editingMode: string): ImmersiveViewMode {
   }
 }
 
+function immersiveLayoutClassName(
+  immersive: boolean,
+  mode: ImmersiveViewMode
+): string {
+  return `easymde-editor${immersive ? ' is-immersive' : ''}${
+    immersive ? ` is-immersive-${mode}` : ''
+  }`;
+}
+
 function WechatIcon() {
   return (
     <span className="easymde-wechat-glyph" aria-hidden="true">
@@ -1602,10 +1611,45 @@ export function EditorRoot(props: EditorRootProps) {
   const visualPreviewWindowUnlockRef =
     useRef<VisualPreviewWindowRequest | null>(null);
   const visualPreviewLockingRef = useRef(false);
+  /**
+   * The request that owns the current window hold. A superseded preparation
+   * may release only its own hold; a newer request's hold is never cleared by
+   * an older one resuming from an await.
+   */
+  const visualPreviewHoldOwnerRef = useRef<object | null>(null);
   const [visualPreviewUnlocking, setVisualPreviewUnlocking] = useState(false);
   const visualPreviewUnlockingRef = useRef(visualPreviewUnlocking);
   visualPreviewUnlockingRef.current = visualPreviewUnlocking;
   const [visualPreviewPending, setVisualPreviewPending] = useState(false);
+  /**
+   * One-shot unlock signal: incremented when the unlock owner enables visual
+   * editing so the activation effect places the canonical caret exactly once.
+   */
+  const [visualResumeCanonicalToken, setVisualResumeCanonicalToken] = useState(0);
+  /**
+   * A resume applies only when the unlock returns from a previous editing
+   * session (the lock/mode exit). A first entry into visual editing never
+   * re-selects anything.
+   */
+  const visualPreviewLeftEditingRef = useRef(false);
+  const visualPreviewPendingRef = useRef(visualPreviewPending);
+  visualPreviewPendingRef.current = visualPreviewPending;
+  /**
+   * Every explicit view choice is one request with its own identity. A
+   * preparation started for an older request must never commit after the user
+   * chooses again, so the applied transition is gated on this generation, not
+   * merely on the deferred slot being empty.
+   */
+  const immersiveModeRequestRef = useRef(0);
+  /**
+   * One view-mode or exit request may wait for the formal transfer that owned
+   * the surface when the user asked for it. The same safe preparation runs
+   * once that transfer settles; any later explicit request replaces it.
+   */
+  const deferredImmersiveModeRef = useRef<Readonly<{
+    generation: number;
+    mode: ImmersiveViewMode | null;
+  }> | null>(null);
   const [visualDocumentEndHistoryPending, setVisualDocumentEndHistoryPending] =
     useState(false);
   const visualDocumentEndHistoryPendingRef = useRef(false);
@@ -1678,6 +1722,38 @@ export function EditorRoot(props: EditorRootProps) {
   const immersiveModeRef = useRef(immersiveMode);
   immersiveModeRef.current = immersiveMode;
   const previousWechatLayoutRef = useRef({ immersive, mode: immersiveMode });
+  const layoutScrollRestoreRef = useRef<
+    Readonly<{ layout: string; restore: () => void }> | null
+  >(null);
+  const immersiveLayoutClass = immersiveLayoutClassName(
+    immersive,
+    immersiveMode
+  );
+  // Entering immersive, switching view mode, and leaving each commit a new
+  // layout class. CodeMirror's own scroll snapshot is captured immediately
+  // before that state update and restored here, after the class has committed,
+  // so its measure loop settles on the same scroll position instead of a
+  // transient viewport. The session owns every guard (teardown, detachment,
+  // visual-editing parking, stale document revision).
+  useLayoutEffect(() => {
+    const pending = layoutScrollRestoreRef.current;
+    layoutScrollRestoreRef.current = null;
+    if (!pending || pending.layout === immersiveLayoutClass) return;
+    pending.restore();
+  });
+  const captureLayoutScrollRestore = useCallback(() => {
+    const restore =
+      documentSession?.document.captureLayoutScrollRestore() ?? null;
+    layoutScrollRestoreRef.current = restore
+      ? {
+          layout: immersiveLayoutClassName(
+            immersiveRef.current,
+            immersiveModeRef.current
+          ),
+          restore
+        }
+      : null;
+  }, [documentSession]);
   const localDraftsEnabled =
     props.settings.general.autoSave && props.localDrafts.enabled;
   const scrollSyncEnabled = props.settings.general.syncScroll;
@@ -2323,6 +2399,8 @@ export function EditorRoot(props: EditorRootProps) {
     )
       return false;
     lastVisualFailureRef.current = null;
+    visualPreviewLeftEditingRef.current = visualPreviewEditingRef.current
+      || visualPreviewWindowRequestedRef.current;
     visualPreviewWindowRequestedRef.current = false;
     setVisualPreviewWindowRequested(false);
     visualPreviewEditingRef.current = false;
@@ -2411,6 +2489,10 @@ export function EditorRoot(props: EditorRootProps) {
       (snapshot.editMap?.blocks.length ?? 0)
       > DEFAULT_PREVIEW_WINDOW_MAX_MOUNTED;
     const enableVisualPreview = () => {
+      if (visualPreviewLeftEditingRef.current) {
+        visualPreviewLeftEditingRef.current = false;
+        setVisualResumeCanonicalToken((token) => token + 1);
+      }
       setPreviewSurfaceStatus('ready');
       setVisualPreviewChanged(false);
       setVisualPreviewPending(false);
@@ -2540,6 +2622,10 @@ export function EditorRoot(props: EditorRootProps) {
         }
         leaveVisualPreview();
         if (immersiveRef.current && 'preview' === immersiveModeRef.current) {
+          // Navigation owns its target viewport: a snapshot captured for the
+          // layout being left must never be replayed over the newly revealed
+          // source position.
+          layoutScrollRestoreRef.current = null;
           setImmersiveMode('source');
         }
       });
@@ -2556,7 +2642,11 @@ export function EditorRoot(props: EditorRootProps) {
    * materialization diagnostic nor abort its transition on a `false`.
    */
   const prepareSourceMutationWithPreview = useCallback(async (
-    options: Readonly<{ materialize?: boolean; suppressRefresh?: boolean }> = {}
+    options: Readonly<{
+      materialize?: boolean;
+      suppressRefresh?: boolean;
+      isCurrent?: () => boolean;
+    }> = {}
   ) => {
     if (
       !visualPreviewEditingRef.current
@@ -2566,9 +2656,29 @@ export function EditorRoot(props: EditorRootProps) {
     if (!prepareVisualSource()) return false;
     const previewRuntime = previewRuntimeRef.current;
     if (!previewRuntime) throw new Error('preview-runtime-unavailable');
+    const isCurrent = options.isCurrent;
+    const requestOwner = {};
+    // Undo only the state this exact request set. If a newer request already
+    // owns the hold, this is a no-op: its preparation owns the release.
+    const releaseOwnedHold = (): void => {
+      if (visualPreviewHoldOwnerRef.current !== requestOwner) return;
+      visualPreviewHoldOwnerRef.current = null;
+      // A torn-down Root never restores editing or schedules state; it only
+      // drops the ownership token it still held.
+      if (!rootActiveRef.current) return;
+      visualPreviewLockingRef.current = false;
+      visualPreviewWindowUnlockRef.current = null;
+      visualPreviewWindowRequestedRef.current = false;
+      setVisualPreviewWindowRequested(false);
+      // The held request itself made the surface non-editable while it waited;
+      // a cancelled request restores the editing the user still had.
+      visualPreviewEditingRef.current = true;
+      setVisualPreviewEditing(true);
+    };
     const holdWindow =
       visualPreviewEditingRef.current && visualPreviewNeedsWindow;
     if (holdWindow) {
+      visualPreviewHoldOwnerRef.current = requestOwner;
       flushSync(() => {
         visualPreviewLockingRef.current = true;
         visualPreviewWindowUnlockRef.current = null;
@@ -2587,16 +2697,31 @@ export function EditorRoot(props: EditorRootProps) {
           previewWindow.requestAnimationFrame(() => resolve());
         });
       });
+      if (isCurrent && !isCurrent()) {
+        releaseOwnedHold();
+        return false;
+      }
     }
     const leaveOptions: Readonly<{ suppressRefresh?: boolean }> =
       true === options.suppressRefresh ? { suppressRefresh: true } : {};
     if (false !== options.materialize) {
-      if (!(await previewRuntime.materialize())) {
+      const materialized = await previewRuntime.materialize();
+      if (isCurrent && !isCurrent()) {
+        releaseOwnedHold();
+        return false;
+      }
+      if (!materialized) {
+        visualPreviewHoldOwnerRef.current = null;
         visualPreviewLockingRef.current = false;
         leaveVisualPreview(leaveOptions);
         return false;
       }
     }
+    if (isCurrent && !isCurrent()) {
+      releaseOwnedHold();
+      return false;
+    }
+    visualPreviewHoldOwnerRef.current = null;
     visualPreviewLockingRef.current = false;
     leaveVisualPreview(leaveOptions);
     return true;
@@ -3781,17 +3906,29 @@ export function EditorRoot(props: EditorRootProps) {
           ? null
           : currentState.status
     }));
+    captureLayoutScrollRestore();
     immersiveRef.current = true;
     setImmersive(true);
-  }, [closeForToolbar, props.immersivePreferencesPort]);
+  }, [
+    captureLayoutScrollRestore,
+    closeForToolbar,
+    props.immersivePreferencesPort
+  ]);
   const exitImmersive = useCallback(() => {
+    const generation = ++immersiveModeRequestRef.current;
+    deferredImmersiveModeRef.current = null;
     cancelVisualUnlockPreparation();
     if (
       !visualPreviewEditingRef.current
       && !visualPreviewWindowRequestedRef.current
     ) {
+      captureLayoutScrollRestore();
       immersiveRef.current = false;
       setImmersive(false);
+      return;
+    }
+    if (visualPreviewPendingRef.current) {
+      deferredImmersiveModeRef.current = { generation, mode: null };
       return;
     }
     // Exiting immersive mode is a user CANCELLATION of visual preview: the
@@ -3800,32 +3937,131 @@ export function EditorRoot(props: EditorRootProps) {
     // just abandoned. Teardown therefore suppresses the leave-time refresh; a
     // not-ready surface is also acceptable, so materialize is skipped.
     void prepareSourceMutationWithPreview({
+      isCurrent: () => generation === immersiveModeRequestRef.current
+        && rootActiveRef.current && immersiveRef.current,
       materialize: false,
       suppressRefresh: true
     }).then((prepared) => {
-      if (!prepared || !rootActiveRef.current) return;
+      const current = generation === immersiveModeRequestRef.current
+        && rootActiveRef.current && immersiveRef.current;
+      if (!prepared || !current) {
+        if (!prepared && current && visualPreviewPendingRef.current
+          && !deferredImmersiveModeRef.current) {
+          deferredImmersiveModeRef.current = { generation, mode: null };
+        }
+        return;
+      }
+      captureLayoutScrollRestore();
       immersiveRef.current = false;
       setImmersive(false);
     });
-  }, [cancelVisualUnlockPreparation, prepareSourceMutationWithPreview]);
+  }, [
+    cancelVisualUnlockPreparation,
+    captureLayoutScrollRestore,
+    prepareSourceMutationWithPreview
+  ]);
   const changeImmersiveMode = useCallback(
     (mode: ImmersiveViewMode) => {
+      // Every explicit view choice is a new request identity and supersedes any
+      // preparation or deferred request that started before it, including
+      // choosing the current mode again (a deliberate cancel).
+      const generation = ++immersiveModeRequestRef.current;
+      deferredImmersiveModeRef.current = null;
       if (mode === immersiveModeRef.current) return;
       cancelVisualUnlockPreparation();
       if (
         !visualPreviewEditingRef.current
         && !visualPreviewWindowRequestedRef.current
       ) {
+        captureLayoutScrollRestore();
         setImmersiveMode(mode);
         return;
       }
-      void prepareSourceMutationWithPreview().then((prepared) => {
-        if (!prepared || !rootActiveRef.current) return;
+      // The surface's toolbar fallback refuses by design while a formal
+      // transfer is outstanding. That refusal is kept; the request waits for
+      // the transfer instead of being dropped, and nothing is bypassed.
+      if (visualPreviewPendingRef.current) {
+        deferredImmersiveModeRef.current = { generation, mode };
+        return;
+      }
+      void prepareSourceMutationWithPreview({
+        isCurrent: () => generation === immersiveModeRequestRef.current
+          && rootActiveRef.current && immersiveRef.current
+      }).then((prepared) => {
+        if (!prepared || !rootActiveRef.current || !immersiveRef.current) return;
+        // An older request must not commit after a newer explicit choice, even
+        // when its preparation has already passed every internal await.
+        if (generation !== immersiveModeRequestRef.current) return;
+        captureLayoutScrollRestore();
         setImmersiveMode(mode);
       });
     },
-    [cancelVisualUnlockPreparation, prepareSourceMutationWithPreview]
+    [
+      cancelVisualUnlockPreparation,
+      captureLayoutScrollRestore,
+      prepareSourceMutationWithPreview
+    ]
   );
+  // Run a deferred view request through the same safe preparation once its
+  // formal transfer has settled. The guards below are the same ones the direct
+  // path relies on; this adds no retry loop, timeout or second coordinator.
+  useEffect(() => {
+    if (visualPreviewPending) return;
+    const request = deferredImmersiveModeRef.current;
+    if (!request) return;
+    deferredImmersiveModeRef.current = null;
+    if (!rootActiveRef.current || !immersiveRef.current) return;
+    if (request.generation !== immersiveModeRequestRef.current) return;
+    if (null !== request.mode && request.mode === immersiveModeRef.current) return;
+    cancelVisualUnlockPreparation();
+    if (
+      !visualPreviewEditingRef.current
+      && !visualPreviewWindowRequestedRef.current
+    ) {
+      captureLayoutScrollRestore();
+      if (null === request.mode) {
+        immersiveRef.current = false;
+        setImmersive(false);
+      } else {
+        setImmersiveMode(request.mode);
+      }
+      return;
+    }
+    void prepareSourceMutationWithPreview({
+      ...(null === request.mode
+        ? { materialize: false, suppressRefresh: true }
+        : {}),
+      isCurrent: () => request.generation === immersiveModeRequestRef.current
+        && rootActiveRef.current && immersiveRef.current
+    }).then((prepared) => {
+      const current = rootActiveRef.current && immersiveRef.current
+        && request.generation === immersiveModeRequestRef.current
+        && (null === request.mode || request.mode !== immersiveModeRef.current);
+      if (!prepared || !current) {
+        // A newer transfer started before the preparation could run: wait for
+        // that one as the same request, then try the same safe path again. A
+        // superseded request is dropped by the generation check.
+        if (!prepared && current && visualPreviewPendingRef.current
+          && !deferredImmersiveModeRef.current) {
+          deferredImmersiveModeRef.current = request;
+        }
+        return;
+      }
+      if (deferredImmersiveModeRef.current) return;
+      captureLayoutScrollRestore();
+      if (null === request.mode) {
+        immersiveRef.current = false;
+        setImmersive(false);
+      } else {
+        setImmersiveMode(request.mode);
+      }
+    });
+  }, [
+    cancelVisualUnlockPreparation,
+    captureLayoutScrollRestore,
+    prepareSourceMutationWithPreview,
+    visualPreviewPending
+  ]);
   const copyWechatFromImmersive = useCallback(async () => {
     return 'copied' === (await wechatSession.copy()).status;
   }, [wechatSession]);
@@ -3904,6 +4140,7 @@ export function EditorRoot(props: EditorRootProps) {
     rootActiveRef.current = true;
     return () => {
       rootActiveRef.current = false;
+      visualPreviewHoldOwnerRef.current = null;
       contextMenuActionCoordinatorRef.current?.dispose();
       visualPreviewWindowUnlockRef.current = null;
       codeThemePreparationRef.current?.controller.abort();
@@ -5452,7 +5689,7 @@ export function EditorRoot(props: EditorRootProps) {
   return (
     <div
       ref={rootRef}
-      className={`easymde-editor${immersive ? ' is-immersive' : ''}${immersive ? ` is-immersive-${immersiveMode}` : ''}`}
+      className={immersiveLayoutClass}
       data-easymde-editor-owner="react"
       data-easymde-session-status={sessionSnapshot.status}
     >
@@ -5858,6 +6095,7 @@ export function EditorRoot(props: EditorRootProps) {
               visualPreviewWindowed && visualPreviewSnapshot.editMap ? (
                 <WindowedImmersiveVisualEditor
                   documentSession={documentSession}
+                  resumeCanonicalSelectionToken={visualResumeCanonicalToken}
                   editMap={visualPreviewSnapshot.editMap}
                   imageUploadEnabled={props.imageUpload.enabled}
                   imagePasteUploadEnabled={
@@ -5899,6 +6137,7 @@ export function EditorRoot(props: EditorRootProps) {
               ) : (
                 <ImmersiveVisualEditor
                   documentSession={documentSession}
+                  resumeCanonicalSelectionToken={visualResumeCanonicalToken}
                   imageUploadEnabled={props.imageUpload.enabled}
                   imagePasteUploadEnabled={
                     props.imageUpload.autoUploadPastedImages

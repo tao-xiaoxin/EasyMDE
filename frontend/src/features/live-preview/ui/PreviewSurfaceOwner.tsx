@@ -8,6 +8,7 @@ import {
 } from "@wordpress/element";
 import type { CSSProperties } from "react";
 import type { DocumentHistoryState } from "../../document-source/adapters/code-mirror-document-session";
+import { certifiedTextTailGapSlice } from "../../immersive-editor/visual-markdown";
 import type {
 	EditorMarkdownMathSpan,
 	EditorMarkdownSourceBlock,
@@ -58,11 +59,11 @@ import type {
 	PreviewScrollSnapshot,
 } from "../ports/preview-scroll-port";
 import {
-	advancePreviewWindowFlowBoundary,
 	capturePreviewWindowFlowBoundary,
 	createPreviewWindowRepository,
 	fullMaterializedNodes,
 	markPreviewWindowFlowGapMeasured,
+	publishPreviewWindowMeasuredBlock,
 	markPreviewWindowFlowGapUnknown,
 	markPreviewWindowFlowGeometryMeasured,
 	markPreviewWindowFlowGeometryUnknown,
@@ -484,11 +485,26 @@ type PreviewWindowGeometryPreparation = Readonly<{
 
 type PreviewWindowMountedGeometryMeasurement = {
 	anchorCorrection: number;
+	anchorGeometryMeasured: boolean;
 	anchorIndex: number;
 	contextKey: string;
 	indices: number[];
 	cursor: number;
 };
+function hasPreviewWindowLayoutBox(
+	node: HTMLElement,
+	rect: DOMRect,
+): boolean {
+	const hasPositiveHeight =
+		(Number.isFinite(rect.height) && rect.height > 0) ||
+		node.offsetHeight > 0;
+	return (
+		hasPositiveHeight ||
+		(Number.isFinite(rect.width) && rect.width > 0) ||
+		node.offsetWidth > 0 ||
+		node.getClientRects().length > 0
+	);
+}
 
 type PreviewEnhancementCandidate = Readonly<{
 	codeTheme: string;
@@ -1368,7 +1384,6 @@ async function measurePreviewWindowCandidateGeometry(
 	isCurrent: () => boolean,
 	signal: AbortSignal,
 ): Promise<boolean> {
-	const epoch = previewWindowGeometryEpochKey(repository.context);
 	let sliceStartedAt = stagingTime(scheduler, surface.ownerDocument);
 	for (let index = 0; index < repository.nodes.length; index += 1) {
 		if (signal.aborted || !isCurrent()) return false;
@@ -1385,20 +1400,7 @@ async function measurePreviewWindowCandidateGeometry(
 			repository.ownedGap?.node,
 		);
 		if (!measurement) continue;
-		repository.model.updateMeasuredHeight({
-			anchorIndex: 0,
-			context: repository.context,
-			geometry: measurement.geometry,
-			index,
-			measuredHeight: measurement.geometry.borderHeight,
-		});
-		repository.flowGeometry[index] = measurement.geometry;
-		repository.flowGeometryEpoch[index] = epoch;
-		markPreviewWindowFlowGeometryMeasured(repository, index);
-		if (measurement.gapMeasured) {
-			repository.flowGapEpoch[index] = epoch;
-			markPreviewWindowFlowGapMeasured(repository, index);
-		}
+		publishPreviewWindowMeasuredBlock(repository, surface, index, measurement, 0, rect);
 		if (
 			stagingTime(scheduler, surface.ownerDocument) - sliceStartedAt >=
 			PREVIEW_WINDOW_GEOMETRY_SLICE_BUDGET_MS
@@ -3267,7 +3269,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			const surface = surfaceRef.current;
 			if (!surface) throw new Error("preview-surface-missing");
 			const nodes = fullMaterializedNodes(repository);
-			if (hasExactSurfaceChildren(surface, nodes)) {
+			if (isFullMaterializedWindowSurface(surface, repository)) {
 				materializedOverrideRef.current = true;
 				return Promise.resolve(true);
 			}
@@ -3765,7 +3767,28 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 	function publishRequestState(requestState: PreviewRequestState): void {
 		const generation = ++generationRef.current;
 		bindDocumentEndPin(requestState, generation);
-		if ("loading" === requestState.kind || "success" === requestState.kind) {
+		// A pinned selection is a current edit: the editor's own anchor owns this
+		// request's viewport. Re-applying the previous review ratio when the
+		// formal render lands would displace the already-painted edited row a
+		// second time (the same owner is used by native Undo/Redo and by Enter).
+		const editOwnedViewport =
+			documentEndPinRef.current?.signature ===
+			requestState.request.signature;
+		// A review ratio must not be captured from a commit that is still painting
+		// or enhancing: those phases carry the transient DOM/scroll restore in
+		// flight, and replaying that transient ratio would become the next
+		// request's final position. Initial/loading content and a ready accepted
+		// render keep their existing capture contract.
+		const viewportSettled = !(
+			"html" === stateRef.current.kind
+			&& ("committing" === stateRef.current.phase
+				|| "enhancing" === stateRef.current.phase)
+		);
+		if (
+			!editOwnedViewport &&
+			viewportSettled &&
+			("loading" === requestState.kind || "success" === requestState.kind)
+		) {
 			captureScroll(generation);
 		} else {
 			scrollSnapshotRef.current = null;
@@ -4393,17 +4416,72 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 					windowGeometryRequiresMeasuredRef.current = false;
 					repository = previewWindowRepositoryRef.current;
 					let ownedGap = ownedGapRef.current;
+					let gapBlank = false;
 					if (ownedGap?.isLive() && ownedGap.markdown === activeCandidate.markdown) {
+						const retainedGap = ownedGap;
 						const starts = markdownLineStarts(activeCandidate.markdown);
+						const resolveBlockExtent = (extent: PreviewOwnedGap["before"]): Readonly<{ index: number; range: PreviewOwnedGap["before"] }> | null => {
+							const exact = activeCandidate.editMap!.blocks.flatMap((block, index) => {
+								const start = starts[block.startLine] ?? activeCandidate.markdown.length;
+								const end = starts[block.endLine] ?? activeCandidate.markdown.length;
+								return start === extent.start
+									&& end === extent.end
+									&& activeCandidate.markdown.slice(start, end) === extent.source
+									? [{ index, range: extent }]
+									: [];
+							});
+							if (exact.length === 1 && exact[0]) return exact[0];
+							if (extent.start !== retainedGap.before.start
+								|| extent.end !== retainedGap.before.end
+								|| extent.source !== retainedGap.before.source) return null;
+							const rebound = activeCandidate.editMap!.blocks.flatMap((block, index) => {
+								const start = starts[block.startLine] ?? activeCandidate.markdown.length;
+								const end = starts[block.endLine] ?? activeCandidate.markdown.length;
+								const formalSource = activeCandidate.markdown.slice(start, end);
+								const suffix = activeCandidate.markdown.slice(extent.end, end);
+								return start === extent.start
+									&& end > extent.end
+									&& end <= retainedGap.after.start
+									&& formalSource.startsWith(extent.source)
+									&& /^(?:\r\n|\r|\n)$/u.test(suffix)
+									? [{ index, range: { start, end, source: formalSource } }]
+									: [];
+							});
+							return rebound.length === 1 && rebound[0] ? rebound[0] : null;
+						};
+						const beforeMatch = resolveBlockExtent(ownedGap.before);
+						if (!beforeMatch) throw new PreviewWindowDomError("preview-owned-gap-source-range-stale");
+						if (beforeMatch.range !== ownedGap.before) {
+							ownedGap = { ...ownedGap, before: beforeMatch.range };
+							ownedGapRef.current = ownedGap;
+						}
 						const neighborIndices = [ownedGap.before, ownedGap.after].map((extent) => activeCandidate.editMap!.blocks.findIndex((block) =>
 							(starts[block.startLine] ?? activeCandidate.markdown.length) === extent.start
 							&& (starts[block.endLine] ?? activeCandidate.markdown.length) === extent.end
 							&& activeCandidate.markdown.slice(extent.start, extent.end) === extent.source));
-						const before = neighborIndices[0]!; const after = neighborIndices[1]!;
-						if (before >= 0 && after === before + 1 && /^(?:\r\n|\r|\n)+$/u.test(activeCandidate.markdown.slice(ownedGap.before.end, ownedGap.after.start))) {
+						const before = neighborIndices[0]!;
+						const mappedAfter = neighborIndices[1]!;
+						const eofAfter = mappedAfter < 0
+							&& before === activeCandidate.editMap.blocks.length - 1
+							&& ownedGap.after.start === activeCandidate.markdown.length
+							&& ownedGap.after.end === activeCandidate.markdown.length
+							&& "" === ownedGap.after.source;
+						const after = eofAfter ? null : mappedAfter;
+						// Same certificate predicate as the producer: a blank line, or the
+						// tight adjacency where the following row starts at this row's end
+						// (so the gap slice is only that row's own single line ending).
+						gapBlank = certifiedTextTailGapSlice(
+							activeCandidate.markdown.slice(ownedGap.before.end, ownedGap.after.start),
+							ownedGap.after.start <= ownedGap.before.end + 2,
+						);
+						if (before >= 0 && (eofAfter || after === before + 1) && gapBlank) {
 							const clone = ownedGap.node.cloneNode(true) as HTMLElement;
 							clone.removeAttribute(VISUAL_BLOCK_ATTRIBUTE);
-							repository.nodes[after]!.before(clone);
+							if (eofAfter) repository.nodes[before]!.after(clone);
+							else {
+								if (after === null) throw new PreviewWindowDomError("preview-owned-gap-neighbor-missing");
+								repository.nodes[after]!.before(clone);
+							}
 							repository.ownedGap = { node: clone, before, after };
 						}
 					}
@@ -4503,7 +4581,10 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 							? [...matchingDocumentEndPin.targetIndices]
 							: [];
 					if (repository.ownedGap && ownedGap?.isLive()) {
-						initialPinnedIndices.push(repository.ownedGap.before, repository.ownedGap.after);
+						initialPinnedIndices.push(repository.ownedGap.before);
+						if (repository.ownedGap.after !== null) {
+							initialPinnedIndices.push(repository.ownedGap.after);
+						}
 						repository.ownedGap.node.remove();
 						ownedGap.node.removeAttribute(VISUAL_BLOCK_ATTRIBUTE);
 						repository.ownedGap = { ...repository.ownedGap, node: ownedGap.node };
@@ -4819,7 +4900,10 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 
 		const pinnedIndices = (): readonly number[] => {
 			const pins = new Set<number>();
-			if (activeRepository.ownedGap) { pins.add(activeRepository.ownedGap.before); pins.add(activeRepository.ownedGap.after); }
+			if (activeRepository.ownedGap) {
+				pins.add(activeRepository.ownedGap.before);
+				if (activeRepository.ownedGap.after !== null) pins.add(activeRepository.ownedGap.after);
+			}
 			const selection = documentRef.getSelection?.();
 			if (
 				selection &&
@@ -4920,6 +5004,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 					}
 					pendingMountedGeometry = {
 						anchorCorrection: 0,
+						anchorGeometryMeasured: false,
 						anchorIndex: mountedIndices[0] ?? 0,
 						contextKey: geometryEpoch(),
 						cursor: 0,
@@ -4939,6 +5024,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 					pending.cursor += 1;
 					if (undefined === index) continue;
 					const canReusePreparedGeometry =
+						index !== pending.anchorIndex &&
 						installedWindowGeometryContextRef.current !== geometryEpoch() &&
 						activeRepository.flowGeometryEpoch[index] === geometryEpoch() &&
 						activeRepository.flowGapEpoch[index] === geometryEpoch();
@@ -4950,10 +5036,10 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 						);
 					}
 					const rect = node.getBoundingClientRect();
-					if (
-						(!Number.isFinite(rect.height) || rect.height <= 0) &&
-						node.offsetHeight <= 0
-					) {
+					const hasPositiveHeight =
+						(Number.isFinite(rect.height) && rect.height > 0) ||
+						node.offsetHeight > 0;
+					if (!hasPreviewWindowLayoutBox(node, rect)) {
 						if (
 							windowGeometryRequiresMeasuredRef.current &&
 							activeRepository.flowGeometryEpoch[index] !== geometryEpoch()
@@ -4977,38 +5063,38 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 						activeRepository.ownedGap?.node,
 					);
 					if (!measurement) {
+						if (
+							windowGeometryRequiresMeasuredRef.current &&
+							!hasPositiveHeight &&
+							activeRepository.flowGeometryEpoch[index] !== geometryEpoch()
+						) {
+							throw new PreviewWindowDomError(
+								"preview-window-flow-measurement-unavailable",
+							);
+						}
 						if (activeRepository.flowGeometryEpoch[index] !== geometryEpoch()) {
 							throw new PreviewWindowDomError(
 								"preview-window-flow-transform-unmeasured",
 							);
 						}
+						if (
+							index === pending.anchorIndex &&
+							activeRepository.flowGeometryEpoch[index] === geometryEpoch()
+						)
+							pending.anchorGeometryMeasured = true;
 						continue;
 					}
-					const geometry = measurement.geometry;
-					const update = activeRepository.model.updateMeasuredHeight({
-						anchorIndex: pending.anchorIndex,
-						context: activeRepository.context,
-						geometry,
-						index,
-						measuredHeight: geometry.borderHeight,
-					});
-					advancePreviewWindowFlowBoundary(
+					if (index === pending.anchorIndex)
+						pending.anchorGeometryMeasured = true;
+					const publication = publishPreviewWindowMeasuredBlock(
 						activeRepository,
 						surface,
 						index,
-						geometry,
-						update.delta,
+						measurement,
+						pending.anchorIndex,
 						rect,
 					);
-					activeRepository.spacerContentHeights.clear();
-					activeRepository.flowGeometry[index] = geometry;
-					activeRepository.flowGeometryEpoch[index] = geometryEpoch();
-					markPreviewWindowFlowGeometryMeasured(activeRepository, index);
-					if (measurement.gapMeasured) {
-						activeRepository.flowGapEpoch[index] = geometryEpoch();
-						markPreviewWindowFlowGapMeasured(activeRepository, index);
-					}
-					pending.anchorCorrection += update.anchorCorrection;
+					pending.anchorCorrection += publication.anchorCorrection;
 					if (
 						stagingTime(geometryScheduler, surface.ownerDocument) -
 							geometrySliceStartedAt >=
@@ -5019,8 +5105,18 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 						return;
 					}
 				}
+				if (
+					pendingMountedGeometry.indices.length > 0 &&
+					!pendingMountedGeometry.anchorGeometryMeasured
+				) {
+					// A hidden activation can expose connected roots before their first
+					// layout metric. Keep the repository uncommitted; the existing resize
+					// observer will re-enter this pass when the surface becomes measurable.
+					pendingMountedGeometry.cursor = 0;
+					pendingMountedGeometry.anchorCorrection = 0;
+					return;
+				}
 				const anchorCorrection = pendingMountedGeometry.anchorCorrection;
-				pendingMountedGeometry = null;
 				if (0 !== anchorCorrection) canvas.scrollTop += anchorCorrection;
 				const documentEndPin = documentEndPinRef.current;
 				const documentEndPinApplies = Boolean(
@@ -5054,7 +5150,14 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 							node.parentNode === surface,
 					);
 					if (survivingAnchor) {
-						const anchorTop = survivingAnchor.getBoundingClientRect().top;
+						const anchorRect = survivingAnchor.getBoundingClientRect();
+						if (!hasPreviewWindowLayoutBox(survivingAnchor, anchorRect)) {
+							pendingMountedGeometry.cursor = 0;
+							pendingMountedGeometry.anchorCorrection = 0;
+							pendingMountedGeometry.anchorGeometryMeasured = false;
+							return;
+						}
+						const anchorTop = anchorRect.top;
 						const documentTop = previewWindowFlowDocumentCoordinate(
 							surface,
 							anchorTop,
@@ -5070,6 +5173,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 						pendingWindowFlowAnchorRef.current = null;
 					}
 				}
+				pendingMountedGeometry = null;
 				if (
 					commit.nodes.length === surface.childNodes.length &&
 					commit.nodes.every(
@@ -5210,11 +5314,10 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 				!isFullMaterializedWindowSurface(surface, activeRepository)
 			)
 				return false;
-			const hasLayoutMetric = activeRepository.nodes.some((node) => {
-				const rect = node.getBoundingClientRect();
-				return rect.height > 0 || node.offsetHeight > 0;
-			});
-			if (!hasLayoutMetric) return false;
+			const hasLayoutBox = activeRepository.nodes.some((node) =>
+				hasPreviewWindowLayoutBox(node, node.getBoundingClientRect()),
+			);
+			if (!hasLayoutBox) return false;
 			const controller = new AbortController();
 			const preparation: PreviewWindowGeometryPreparation = {
 				controller,
@@ -5259,10 +5362,10 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 						throw new PreviewWindowDomError("preview-window-flow-node-missing");
 					}
 					const rect = node.getBoundingClientRect();
-					if (
-						(!Number.isFinite(rect.height) || rect.height <= 0) &&
-						node.offsetHeight <= 0
-					) {
+					const hasPositiveHeight =
+						(Number.isFinite(rect.height) && rect.height > 0) ||
+						node.offsetHeight > 0;
+					if (!hasPreviewWindowLayoutBox(node, rect)) {
 						throw new PreviewWindowDomError(
 							"preview-window-flow-measurement-unavailable",
 						);
@@ -5280,25 +5383,23 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 						activeRepository.ownedGap?.node,
 					);
 					if (!measurement) {
+						if (windowGeometryRequiresMeasuredRef.current && !hasPositiveHeight) {
+							throw new PreviewWindowDomError(
+								"preview-window-flow-measurement-unavailable",
+							);
+						}
 						throw new PreviewWindowDomError(
 							"preview-window-flow-transform-unmeasured",
 						);
 					}
-					const geometry = measurement.geometry;
-					activeRepository.model.updateMeasuredHeight({
-						anchorIndex: 0,
-						context: activeRepository.context,
-						geometry,
+					publishPreviewWindowMeasuredBlock(
+						activeRepository,
+						surface,
 						index,
-						measuredHeight: geometry.borderHeight,
-					});
-					activeRepository.flowGeometry[index] = geometry;
-					activeRepository.flowGeometryEpoch[index] = geometryEpoch();
-					markPreviewWindowFlowGeometryMeasured(activeRepository, index);
-					if (measurement.gapMeasured) {
-						activeRepository.flowGapEpoch[index] = geometryEpoch();
-						markPreviewWindowFlowGapMeasured(activeRepository, index);
-					}
+						measurement,
+						0,
+						rect,
+					);
 					if (
 						stagingTime(scheduler, surface.ownerDocument) - sliceStartedAt >=
 						PREVIEW_WINDOW_GEOMETRY_SLICE_BUDGET_MS

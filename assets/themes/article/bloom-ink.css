@@ -354,6 +354,13 @@
     fill: var(--text) !important;
 }
 
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .mindmap-node.section-root rect,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .mindmap-node.section-root path,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .mindmap-node.section-root circle,
+.easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .mindmap-node.section-root polygon {
+    fill: var(--bg) !important;
+}
+
 .easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .node rect,
 .easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .node circle,
 .easymde-rendered-content.easymde-markdown-theme-bloom-ink .easymde-mermaid .node ellipse,

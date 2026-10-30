@@ -1551,6 +1551,41 @@ test('Bloom adapters target live Mermaid roots and contain no unreachable focus 
   }
 });
 
+test('Bloom mindmap roots pair theme text with a readable background', () => {
+  const bloomFiles = readdirSync(join(repoRoot, 'assets/themes/article'))
+    .filter((name) => /^bloom-.*\.css$/.test(name));
+  assert.equal(bloomFiles.length, 12, 'all Bloom light variants should be present');
+
+  const dom = new JSDOM('<span></span>');
+  const probe = dom.window.document.querySelector('span');
+  const toHex = (value) => {
+    probe.style.color = '';
+    probe.style.color = `color-mix(in srgb, ${value} 100%, black)`;
+    const color = dom.window.getComputedStyle(probe).color;
+    const match = color.match(/^color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)\)$/);
+    assert.ok(match, `expected an opaque sRGB color for ${value}`);
+    return `#${match.slice(1).map((channel) => Math.round(Number(channel) * 255).toString(16).padStart(2, '0')).join('')}`;
+  };
+
+  for (const file of bloomFiles) {
+    const css = readFileSync(join(repoRoot, 'assets/themes/article', file), 'utf8');
+    const root = scopedArticleRoot(file.replace(/\.css$/, ''));
+    const textBody = cssRuleBodyMatching(css, `${root} .easymde-mermaid text`);
+    assert.match(textBody ?? '', /fill:\s*var\(--text\)\s*!important;/, `${file} should retain its Mermaid text color`);
+    assert.ok(
+      contrast(toHex(cssVariable(css, '--text')), toHex(cssVariable(css, '--bg'))) >= 4.5,
+      `${file} text and background should meet AA contrast`
+    );
+
+    for (const shape of ['rect', 'path', 'circle', 'polygon']) {
+      const selector = `${root} .easymde-mermaid .mindmap-node.section-root ${shape}`;
+      const body = cssRuleBodyMatching(css, selector);
+      assert.ok(body, `${file} should style the mindmap root ${shape}`);
+      assert.match(body.trim(), /^fill:\s*var\(--bg\)\s*!important;$/, `${file} should only set the root background fill`);
+    }
+  }
+});
+
 test('Phycat and Mdmdt adapters contain no document-host numbering, scrollbar, or page rules', () => {
   const phycatThemes = [
     'phycat-cherry',

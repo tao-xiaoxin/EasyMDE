@@ -305,6 +305,11 @@ Missing prerequisites fail explicitly. Performance evidence binds to the
 current manifest and artifact hashes rather than a historical bundle name.
 These diagnostics do not establish native WeChat or per-theme visual acceptance.
 
+Bloom theme palette checks must pair Mermaid text with the root-node background.
+For each Bloom variant, inspect the rendered mindmap root and a non-root node,
+verify text contrast and unchanged geometry, and compare the other diagram types.
+Source palette checks do not establish native WeChat or Reader fidelity.
+
 The neutral `phycat-sky` full-example DPR1/2 case verifies responsive SVG
 capture separately from decorated Bloom coverage. It derives eligible roles
 from each live layout, decodes the actual uploaded PNG bytes, checks integer

@@ -25,7 +25,7 @@ import {
 	setMarkdownTableAlignment,
 } from "./editor-markdown-table-mutation";
 import {
-	createEditorMarkdownBlockIndex,
+	createEditorMarkdownBlockIndex as createProfiledMarkdownBlockIndex,
 } from "./editor-markdown-block-index";
 import {
 	findEditorCodeContentTarget,
@@ -2082,3 +2082,7 @@ describe("editor context menu rules", () => {
 		).toBe(null);
 	});
 });
+
+function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {
+  return createProfiledMarkdownBlockIndex(source, options);
+}

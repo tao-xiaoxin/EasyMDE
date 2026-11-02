@@ -1,10 +1,12 @@
 import { createElement } from '@wordpress/element';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { EditorClipboardPort } from '../../contracts/ports/editor-clipboard-port';
 import { parseMarkdownImageScale } from '../image-scale/image-scale-contract';
 import { createVisualImageInteraction } from '../immersive-editor/visual-markdown';
+import { createEditorContextMenuOperationOwner } from './editor-context-menu-operation';
+import { useEditorContextMenuDemand } from './editor-context-menu-demand';
 import {
   EditorContextMenuFeature,
   type EditorContextMenuActionContext,
@@ -95,6 +97,59 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
+
+it('aborts and cleans the action operation when its transferred lifetime is cancelled or becomes stale', () => {
+  for (const mode of ['cancelled', 'stale'] as const) {
+    const listeners = new Set<() => void>();
+    const owner = createEditorContextMenuOperationOwner({
+      subscribeDocument: listener => { listeners.add(listener); return () => listeners.delete(listener); },
+      subscribeSelection: listener => { listeners.add(listener); return () => listeners.delete(listener); }
+    });
+    const lifetime = new AbortController();
+    const cancel = vi.fn();
+    let current = true;
+    const operation = owner.begin({
+      direction: 'ltr', position: { x: 0, y: 0 }, selection: { direction: 'none', start: 0, end: 0 },
+      surface: 'visual', surfaceIdentity: {}, value: ''
+    }, () => current, { signal: lifetime.signal, cancel });
+    if (mode === 'cancelled') lifetime.abort();
+    else {
+      current = false;
+      for (const listener of [...listeners]) listener();
+    }
+    expect(operation.controller.signal.aborted).toBe(true);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(listeners.size).toBe(0);
+    owner.finish(operation);
+    owner.dispose();
+    expect(cancel).toHaveBeenCalledOnce();
+  }
+});
+
+it('releases the target and retires the menu when an action throws synchronously', () => {
+  const visual = document.createElement('div');
+  visual.contentEditable = 'true';
+  visual.textContent = 'alpha';
+  layoutSurface(visual);
+  document.body.append(visual);
+  const release = vi.fn();
+  const { result, unmount } = renderHook(() => useEditorContextMenuDemand({
+    clipboard: clipboard(), direction: 'ltr', onAction: () => { throw new Error('synthetic-action-failed'); }, onFailure: vi.fn()
+  }));
+  act(() => result.current.openSurface({
+    boundaryElement: visual, element: visual,
+    captureTarget: () => ({ release, resolve: () => visual }),
+    getSnapshot: () => ({ selection: { direction: 'forward', start: 0, end: 5 }, value: 'alpha' }),
+    isEditable: () => true, kind: 'visual'
+  }, { x: 1, y: 1 }, visual, 'pointer'));
+  expect(result.current.readOpen()).not.toBeNull();
+  expect(() => act(() => result.current.invokeAction('cut'))).toThrow('synthetic-action-failed');
+  expect(result.current.readOpen()).toBeNull();
+  expect(release).toHaveBeenCalledOnce();
+  unmount();
+  expect(release).toHaveBeenCalledOnce();
+  visual.remove();
+});
 
 function layoutSurface(element: HTMLElement): void {
   Object.defineProperty(element, 'getBoundingClientRect', {
@@ -2255,6 +2310,114 @@ describe('EditorContextMenuFeature', () => {
     expect(onFailure).not.toHaveBeenCalled();
     action.resolve();
     view.unmount();
+  });
+
+  it.each(['resolve', 'reject', 'dispose'] as const)(
+    'retains the visual target lease for a deferred action until %s',
+    async (outcome) => {
+      const visual = document.createElement('div');
+      visual.contentEditable = 'true';
+      visual.tabIndex = -1;
+      visual.textContent = 'alpha beta';
+      layoutSurface(visual);
+      document.body.append(visual);
+      const release = vi.fn();
+      let settle!: () => void;
+      const action = new Promise<void>((resolve, reject) => {
+        settle = outcome === 'reject' ? () => reject(new Error('action-failed')) : resolve;
+      });
+      const view = render(
+        <EditorContextMenuFeature
+          clipboard={clipboard()}
+          direction="ltr"
+          labels={labels}
+          onAction={() => action}
+          onFailure={vi.fn()}
+          source={null}
+          visual={{
+            boundaryElement: visual,
+            captureTarget: () => ({ release, resolve: () => visual }),
+            element: visual,
+            getSnapshot: () => ({
+              revision: 1,
+              selection: { direction: 'forward', end: 5, start: 0 },
+              value: 'alpha beta'
+            }),
+            isEditable: () => true,
+            kind: 'visual'
+          }}
+        />
+      );
+      fireEvent.contextMenu(visual, { clientX: 20, clientY: 30 });
+      fireEvent.click(await screen.findByRole('menuitem', { name: labels.cut }));
+      await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+      expect(release).not.toHaveBeenCalled();
+      if (outcome === 'dispose') view.unmount();
+      if (outcome === 'dispose') expect(release).toHaveBeenCalledOnce();
+      settle();
+      await waitFor(() => expect(release).toHaveBeenCalledOnce());
+      if (outcome !== 'dispose') view.unmount();
+    }
+  );
+
+  it('invalidates a pending target when a new gesture replaces it', async () => {
+    const visual = document.createElement('div');
+    visual.contentEditable = 'true';
+    visual.textContent = 'alpha beta';
+    layoutSurface(visual);
+    document.body.append(visual);
+    const firstRelease = vi.fn();
+    const secondRelease = vi.fn();
+    const generatedRelease = vi.fn();
+    const action = deferred<void>();
+    let captures = 0;
+    let signal: AbortSignal | undefined;
+    const view = render(
+      <EditorContextMenuFeature
+        clipboard={clipboard()}
+        direction="ltr"
+        labels={labels}
+        onAction={(_id, _captured, context) => {
+          signal = context?.operation?.signal;
+          return action.promise;
+        }}
+        onFailure={vi.fn()}
+        source={null}
+        visual={{
+          boundaryElement: visual,
+          captureTarget: () => ({ release: captures++ === 0 ? firstRelease : secondRelease, resolve: () => visual }),
+          element: visual,
+          getActionContext: () => captures === 1 ? {
+            generated: {
+              canCopyImage: true, canCopyMathMl: true, canUseSource: true,
+              identity: () => null, kind: 'math', mode: 'immersive',
+              lease: { isCurrent: () => true, release: generatedRelease, root: visual, target: {} as never },
+              validateLease: () => true
+            }
+          } : null,
+          getSnapshot: () => ({
+            revision: 1, selection: { direction: 'forward', end: 5, start: 0 }, value: 'alpha beta'
+          }),
+          isEditable: () => true,
+          kind: 'visual'
+        }}
+      />
+    );
+    fireEvent.contextMenu(visual, { clientX: 20, clientY: 30 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: labels.cut }));
+    expect(signal?.aborted).toBe(false);
+    fireEvent.contextMenu(visual, { clientX: 40, clientY: 50 });
+    await screen.findByRole('menu');
+    expect(signal?.aborted).toBe(true);
+    expect(firstRelease).toHaveBeenCalledOnce();
+    expect(generatedRelease).toHaveBeenCalledOnce();
+    expect(secondRelease).not.toHaveBeenCalled();
+    action.resolve();
+    await act(async () => { await action.promise; });
+    expect(generatedRelease).toHaveBeenCalledOnce();
+    expect(secondRelease).not.toHaveBeenCalled();
+    view.unmount();
+    expect(secondRelease).toHaveBeenCalledOnce();
   });
 
   it('opens the menu again after a failed visual command retires the runtime generation', async () => {

@@ -58,6 +58,8 @@ export type OpenState = Readonly<{
 export type PendingAction = Readonly<{
 	context: EditorContextMenuActionContext | undefined;
 	promise: Promise<void>;
+	targetLease?: EditorContextMenuTargetLease;
+	cancel?: () => void;
 }>;
 
 export type PendingOpenDemand = Readonly<{
@@ -169,9 +171,9 @@ export function releasePendingUnlessActionOwns(
  */
 export function releaseTargetLeaseUnlessShared(
 	lease: EditorContextMenuTargetLease | null | undefined,
-	retained: EditorContextMenuTargetLease | null | undefined
+	...retained: ReadonlyArray<EditorContextMenuTargetLease | null | undefined>
 ): void {
-	if (lease && lease !== retained) lease.release();
+	if (lease && !retained.includes(lease)) lease.release();
 }
 
 export function releaseActionUnlessSharedWithPending(

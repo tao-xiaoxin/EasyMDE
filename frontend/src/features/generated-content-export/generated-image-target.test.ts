@@ -2,7 +2,7 @@ import { markdownLanguage } from "@codemirror/lang-markdown";
 import { describe, expect, it, vi } from "vitest";
 
 import type { EditorMarkdownSourceBlock } from "../../contracts/ports/editor-block-index-port";
-import { createEditorMarkdownBlockIndex } from "../editor-context-menu/editor-markdown-block-index";
+import { createEditorMarkdownBlockIndex as createProfiledMarkdownBlockIndex } from "../editor-context-menu/editor-markdown-block-index";
 import {
 	type MarkdownImageScaleMatch,
 	parseMarkdownImageScale,
@@ -595,3 +595,7 @@ describe("associateGeneratedImageTarget", () => {
 		).toBe(true);
 	});
 });
+
+function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {
+  return createProfiledMarkdownBlockIndex(source, options);
+}

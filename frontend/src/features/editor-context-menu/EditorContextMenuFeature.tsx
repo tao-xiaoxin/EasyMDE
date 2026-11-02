@@ -70,6 +70,11 @@ export type EditorContextMenuGeneratedContext = Readonly<{
 }>;
 
 export type EditorContextMenuActionContext = Readonly<{
+  operation?: Readonly<{
+    cancel: () => void;
+    signal: AbortSignal;
+    targetLease: EditorContextMenuTargetLease;
+  }>;
   code?: Readonly<{
     canCopyContent: boolean;
     canIndentBlock?: boolean;

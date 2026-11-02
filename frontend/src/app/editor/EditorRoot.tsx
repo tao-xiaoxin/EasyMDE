@@ -77,7 +77,8 @@ import type {
 import type {
   EditorMarkdownBlockIndexData,
   EditorMarkdownImageIndexData,
-  EditorMarkdownBlockIndexPort
+  EditorMarkdownBlockIndexPort,
+  ReferenceLabelCaseFoldProfile
 } from '../../contracts/ports/editor-block-index-port';
 import type {
   WechatClipboardCopyOptions,
@@ -527,6 +528,7 @@ export function focusVisualPreviewRuntime(
 }
 
 export type EditorRootProps = Readonly<{
+  referenceLabelCaseFoldProfile: ReferenceLabelCaseFoldProfile;
   appearance: AppearanceBootstrap;
   appearancePort: AppearancePort;
   document: DocumentSourceBootstrap;
@@ -1971,6 +1973,21 @@ export function EditorRoot(props: EditorRootProps) {
   const getAcceptedWindowSnapshot = useCallback(
     (): PreviewAcceptedWindowSnapshot | null =>
       previewRuntimeRef.current?.getAcceptedWindowSnapshot() ?? null,
+    []
+  );
+  const getAcceptedWindowRow = useCallback(
+    (request: Parameters<PreviewSurfaceRuntime['getAcceptedWindowRow']>[0]) =>
+      previewRuntimeRef.current?.getAcceptedWindowRow(request) ?? null,
+    []
+  );
+  const getAcceptedReferenceSource = useCallback(
+    (request: Parameters<PreviewSurfaceRuntime['getAcceptedReferenceSource']>[0]) =>
+      previewRuntimeRef.current?.getAcceptedReferenceSource(request) ?? null,
+    []
+  );
+  const revealAcceptedWindowRow = useCallback(
+    (request: Parameters<PreviewSurfaceRuntime['revealAcceptedWindowRow']>[0]) =>
+      previewRuntimeRef.current?.revealAcceptedWindowRow(request) ?? null,
     []
   );
   const clearScheduledWechatPreparation = useCallback(() => {
@@ -6094,6 +6111,7 @@ export function EditorRoot(props: EditorRootProps) {
             && previewRuntimeRef.current ? (
               visualPreviewWindowed && visualPreviewSnapshot.editMap ? (
                 <WindowedImmersiveVisualEditor
+                  referenceLabelCaseFoldProfile={props.referenceLabelCaseFoldProfile}
                   documentSession={documentSession}
                   resumeCanonicalSelectionToken={visualResumeCanonicalToken}
                   editMap={visualPreviewSnapshot.editMap}
@@ -6118,6 +6136,9 @@ export function EditorRoot(props: EditorRootProps) {
                     acceptedWindowSnapshotGeneration
                   }
                   getAcceptedWindowSnapshot={getAcceptedWindowSnapshot}
+                  getAcceptedWindowRow={getAcceptedWindowRow}
+                  getAcceptedReferenceSource={getAcceptedReferenceSource}
+                  revealAcceptedWindowRow={revealAcceptedWindowRow}
                   getGeneratedPreviewIdentity={
                     getVisualGeneratedPreviewIdentity
                   }
@@ -6136,6 +6157,7 @@ export function EditorRoot(props: EditorRootProps) {
                 />
               ) : (
                 <ImmersiveVisualEditor
+                  referenceLabelCaseFoldProfile={props.referenceLabelCaseFoldProfile}
                   documentSession={documentSession}
                   resumeCanonicalSelectionToken={visualResumeCanonicalToken}
                   imageUploadEnabled={props.imageUpload.enabled}
@@ -6165,6 +6187,7 @@ export function EditorRoot(props: EditorRootProps) {
                   prepareImageTargetBySelection={
                     prepareVisualImageTargetBySelection
                   }
+                  retainCompositionSurface={retainCompositionSurface}
                   requestPreview={handleVisualPreviewRequest}
                   surface={previewRuntimeRef.current.surface}
                 />

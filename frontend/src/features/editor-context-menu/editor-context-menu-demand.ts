@@ -93,7 +93,8 @@ export function useEditorContextMenuDemand(input: Readonly<{
 		releasePendingUnlessActionOwns(pending.state, actionPromiseRef.current);
 		releaseTargetLeaseUnlessShared(
 			pending.state.targetLease,
-			openRef.current?.targetLease
+			openRef.current?.targetLease,
+			actionPromiseRef.current?.targetLease
 		);
 	}, []);
 
@@ -126,7 +127,7 @@ export function useEditorContextMenuDemand(input: Readonly<{
 			actionPromiseRef.current
 		);
 		releasePendingUnlessActionOwns(current, actionPromiseRef.current);
-		releaseTargetLeaseUnlessShared(current.targetLease, null);
+		releaseTargetLeaseUnlessShared(current.targetLease, actionPromiseRef.current?.targetLease);
 		retireOpenState();
 		current.restoreFocus();
 	}, [retireOpenState]);
@@ -218,7 +219,7 @@ export function useEditorContextMenuDemand(input: Readonly<{
 			) {
 				refreshed.releasePending("unavailable");
 			}
-			releaseTargetLeaseUnlessShared(refreshed.targetLease, null);
+			releaseTargetLeaseUnlessShared(refreshed.targetLease, actionPromiseRef.current?.targetLease);
 			onFailureRef.current(refreshed.readiness.code);
 			return;
 		}
@@ -396,7 +397,7 @@ export function useEditorContextMenuDemand(input: Readonly<{
 				) {
 					next.releasePending("unavailable");
 				}
-				releaseTargetLeaseUnlessShared(next.targetLease, null);
+				releaseTargetLeaseUnlessShared(next.targetLease, actionPromiseRef.current?.targetLease);
 				onFailureRef.current(next.readiness.code);
 				return;
 			}
@@ -429,6 +430,10 @@ export function useEditorContextMenuDemand(input: Readonly<{
 		target: Element | null,
 		activation: "keyboard" | "pointer"
 	): void => {
+		const previousAction = actionPromiseRef.current;
+		if (previousAction?.cancel) {
+			previousAction.cancel();
+		}
 		clipboardAbortRef.current?.abort();
 		const clipboardController = new AbortController();
 		clipboardAbortRef.current = clipboardController;
@@ -451,7 +456,7 @@ export function useEditorContextMenuDemand(input: Readonly<{
 			actionPromiseRef.current
 		);
 		releasePendingUnlessActionOwns(previous, actionPromiseRef.current);
-		releaseTargetLeaseUnlessShared(previous?.targetLease, null);
+		releaseTargetLeaseUnlessShared(previous?.targetLease, previousAction?.targetLease);
 		retireOpenState();
 		let next: OpenState;
 		let lease: EditorContextMenuTargetLease | null = null;
@@ -553,7 +558,7 @@ export function useEditorContextMenuDemand(input: Readonly<{
 			actionPromiseRef.current
 		);
 		releasePendingUnlessActionOwns(current, actionPromiseRef.current);
-		releaseTargetLeaseUnlessShared(current?.targetLease, null);
+		releaseTargetLeaseUnlessShared(current?.targetLease, actionPromiseRef.current?.targetLease);
 		retireOpenState();
 		current?.restoreFocus();
 	}, [retireOpenState]);
@@ -570,9 +575,33 @@ export function useEditorContextMenuDemand(input: Readonly<{
 	const invokeAction = useCallback((id: string): void => {
 		const current = openRef.current;
 		if (!current) return;
-		const actionContext = current.actionContext ?? undefined;
+		const targetLease = current.targetLease ?? undefined;
+		const controller = targetLease ? new AbortController() : null;
+		let targetReleased = false;
+		let contextReleased = false;
+		const releaseTarget = (): void => {
+			if (!targetLease || targetReleased) return;
+			targetReleased = true;
+			targetLease.release();
+		};
+		const releaseContext = (): void => {
+			if (contextReleased) return;
+			contextReleased = true;
+			releaseActionContext(actionContext);
+		};
+		const cancel = (): void => {
+			controller?.abort();
+			releaseTarget();
+			if (
+				(openRef.current === current || !sharesOwnedLease(actionContext, openRef.current?.actionContext))
+				&& !sharesOwnedLease(actionContext, pendingOpenRef.current?.state.actionContext)
+			) releaseContext();
+		};
+		const actionContext = targetLease && controller
+			? { ...current.actionContext, operation: { cancel, signal: controller.signal, targetLease } }
+			: current.actionContext ?? undefined;
 		const actionStart = new Promise<void>(() => undefined);
-		actionPromiseRef.current = { context: actionContext, promise: actionStart };
+		actionPromiseRef.current = { context: actionContext, promise: actionStart, ...(targetLease ? { cancel, targetLease } : {}) };
 		let result: void | Promise<void>;
 		try {
 			result = undefined === actionContext
@@ -581,16 +610,27 @@ export function useEditorContextMenuDemand(input: Readonly<{
 		} catch (error) {
 			if (actionPromiseRef.current?.promise === actionStart)
 				actionPromiseRef.current = null;
-			releaseActionContext(actionContext);
+			cancel();
+			releaseContext();
+			retireOpenState();
+			current.restoreFocus();
 			throw error;
 		}
 		if (result && "function" === typeof result.then) {
 			const pending = Promise.resolve(result);
-			actionPromiseRef.current = { context: actionContext, promise: pending };
+			actionPromiseRef.current = { context: actionContext, promise: pending, ...(targetLease ? { cancel, targetLease } : {}) };
+			const releaseSettledTarget = (): void => {
+				if (
+					targetLease !== openRef.current?.targetLease
+					&& targetLease !== pendingOpenRef.current?.state.targetLease
+					&& targetLease !== actionPromiseRef.current?.targetLease
+				) releaseTarget();
+			};
 			void pending.then(
 				() => {
 					const currentAction = actionPromiseRef.current?.promise === pending;
 					if (currentAction) actionPromiseRef.current = null;
+					releaseSettledTarget();
 					const currentMenu = openRef.current?.actionContext;
 					const pendingMenu = pendingOpenRef.current?.state.actionContext;
 					if (
@@ -598,12 +638,13 @@ export function useEditorContextMenuDemand(input: Readonly<{
 						&& (currentMenu === actionContext
 							|| !sharesOwnedLease(actionContext, currentMenu))
 					) {
-						releaseActionContext(actionContext);
+						releaseContext();
 					}
 				},
 				() => {
 					const currentAction = actionPromiseRef.current?.promise === pending;
 					if (currentAction) actionPromiseRef.current = null;
+					releaseSettledTarget();
 					const currentMenu = openRef.current?.actionContext;
 					const pendingMenu = pendingOpenRef.current?.state.actionContext;
 					if (
@@ -611,16 +652,16 @@ export function useEditorContextMenuDemand(input: Readonly<{
 						&& (currentMenu === actionContext
 							|| !sharesOwnedLease(actionContext, currentMenu))
 					) {
-						releaseActionContext(actionContext);
+						releaseContext();
 					}
 				}
 			);
 		} else {
 			if (actionPromiseRef.current?.promise === actionStart)
 				actionPromiseRef.current = null;
-			releaseActionContext(actionContext);
+			releaseContext();
 		}
-	}, []);
+	}, [retireOpenState]);
 
 	const validateOwners = useCallback((
 		source: EditorContextMenuSurface | null,
@@ -712,13 +753,15 @@ export function useEditorContextMenuDemand(input: Readonly<{
 
 	const dispose = useCallback((): void => {
 		clipboardAbortRef.current?.abort();
+		const pendingAction = actionPromiseRef.current;
+		pendingAction?.cancel?.();
 		cancelPendingOpen();
 		releaseActionUnlessSharedWithPending(
 			openRef.current?.actionContext,
 			actionPromiseRef.current
 		);
 		releasePendingUnlessActionOwns(openRef.current, actionPromiseRef.current);
-		releaseTargetLeaseUnlessShared(openRef.current?.targetLease, null);
+		releaseTargetLeaseUnlessShared(openRef.current?.targetLease, pendingAction?.targetLease);
 		retireOpenState();
 	}, [cancelPendingOpen, retireOpenState]);
 

@@ -14,9 +14,9 @@ import { markdownLineStarts } from "../../../shared/markdown/markdown-line-model
 import { createCodeMirrorDocumentSession } from "../../document-source/adapters/code-mirror-document-session";
 import { createNativeTitleSession } from "../../document-source/adapters/native-title-session";
 import { createEditorDocumentSession } from "../../document-source/editor-document-session";
-import type { ImmersiveVisualEditorRuntime } from "../../immersive-editor/ui/ImmersiveVisualEditor";
+import { ImmersiveVisualEditor, type ImmersiveVisualEditorRuntime } from "../../immersive-editor/ui/ImmersiveVisualEditor";
 import { WindowedImmersiveVisualEditor } from "../../immersive-editor/ui/WindowedImmersiveVisualEditor";
-import { createEditorMarkdownBlockIndex } from "../../editor-context-menu/editor-markdown-block-index";
+import { createEditorMarkdownBlockIndex as createProfiledMarkdownBlockIndex } from "../../editor-context-menu/editor-markdown-block-index";
 import {
 	type GeneratedImageTargetIndex,
 	hydrateGeneratedImageTargetIndex,
@@ -598,6 +598,108 @@ function setup(options?: {
 }
 
 describe("PreviewSurfaceOwner", () => {
+	it("keeps the full editor usable after canceling a held obsolete candidate", async () => {
+		const document = markdownDocumentSource("before");
+		const revision = document.owner.getRevision;
+		if (!revision) throw new Error("retained-document-revision-missing");
+		const editMap: PreviewEditMap = { version: 1, coordinate: "line", signature: "initial", blocks: [{ id: "b0", editable: true, startLine: 0, endLine: 1 }] };
+		const status = vi.fn();
+		const snapshots = vi.fn();
+		const current = setup({ contentEditable: true, currentSourceSnapshot: () => ({ value: document.owner.getValue(), revision: revision() }),
+			initialHtml: '<p data-easymde-visual-block-id="b0">before</p>', initialEditMap: editMap, initialSignature: "initial",
+			onStatusChange: status, onSnapshotReady: snapshots });
+		let view: RenderResult | null = null;
+		try {
+			await waitFor(() => expect(status).toHaveBeenLastCalledWith("ready"));
+			const failure = vi.fn();
+			view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} documentSession={document.session}
+				imageUploadEnabled={false} imagePasteUploadEnabled={false} onCanonicalDocumentChange={vi.fn()}
+				onDiagnostic={vi.fn()} onDispose={vi.fn()} onFailure={failure} onMarkdownChange={vi.fn()}
+				onPendingChange={vi.fn()} onReady={vi.fn()} onTransferFailure={vi.fn()} pending={false}
+				previewSnapshot={{ editMap, revision: 1, signature: "initial" }} previewStatus="ready"
+				retainCompositionSurface={() => current.runtime.retainCompositionSurface()}
+				requestPreview={() => "history"} surface={current.surface} />);
+			const paragraph = current.surface.querySelector("p");
+			const text = paragraph?.firstChild;
+			if (!(text instanceof Text)) throw new Error("retained-document-text-missing");
+			current.surface.focus(); window.getSelection()?.collapse(text, text.length);
+			const lease = current.runtime.retainCompositionSurface();
+			act(() => current.session.schedule(request("before", "old"), true));
+			await act(async () => { current.responses[0]?.resolve({ html: safeHtml("<p>before</p>"), features: {} }); for (let index = 0; index < 20; index += 1) await Promise.resolve(); });
+			await waitFor(() => expect(current.surface.dataset.easymdePreviewPhase).toBe("committing"));
+			const insert = (value: string) => {
+				const before = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: value });
+				const range = window.getSelection()?.getRangeAt(0).cloneRange();
+				Object.defineProperty(before, "getTargetRanges", { value: () => range ? [range] : [] });
+				act(() => { current.surface.dispatchEvent(before); if (!before.defaultPrevented) {
+					const offset = text.length; text.insertData(offset, value); window.getSelection()?.collapse(text, offset + value.length);
+					current.surface.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+				} });
+				expect(before.defaultPrevented).toBe(false);
+			};
+			insert("X");
+			await waitFor(() => expect(document.owner.getValue()).toBe("beforeX"));
+			const published = snapshots.mock.calls.length;
+			act(() => lease.release());
+			expect(status).toHaveBeenLastCalledWith("ready");
+			expect(snapshots).toHaveBeenCalledTimes(published);
+			expect(current.surface.querySelector("p")).toBe(paragraph);
+			insert("Y");
+			await waitFor(() => expect(document.owner.getValue()).toBe("beforeXY"));
+			act(() => current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "historyUndo" })));
+			expect(document.owner.getValue()).toBe("beforeX");
+			act(() => current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "historyRedo" })));
+			expect(document.owner.getValue()).toBe("beforeXY");
+			expect(failure).not.toHaveBeenCalled();
+		} finally { view?.unmount(); current.unmount(); document.session.destroy(); document.container.remove(); document.submissionField.remove(); }
+	});
+	it("does not install a held formal candidate after its source changes", async () => {
+		let source = "before";
+		let revision = 0;
+		const onSnapshotReady = vi.fn();
+		const onStatusChange = vi.fn();
+		const current = setup({
+			contentEditable: true,
+			currentSourceSnapshot: () => ({ value: source, revision }),
+			initialHtml: "<p>before</p>",
+			onSnapshotReady,
+			onStatusChange,
+		});
+		try {
+			await waitFor(() => expect(current.surface.dataset.easymdePreviewPhase).toBe("ready"));
+			const lease = current.runtime.retainCompositionSurface();
+			act(() => current.session.schedule(request(source, "old"), true));
+			await act(async () => {
+				current.responses[0]?.resolve({ html: safeHtml("<p>before</p>"), features: {} });
+				for (let index = 0; index < 20; index += 1) await Promise.resolve();
+			});
+			await waitFor(() => expect(current.surface.dataset.easymdePreviewPhase).toBe("committing"));
+			const paragraph = current.surface.querySelector("p");
+			if (!paragraph) throw new Error("held-source-paragraph-missing");
+			paragraph.textContent = "edited";
+			current.surface.focus();
+			window.getSelection()?.collapse(paragraph.firstChild, 3);
+			source = "edited"; revision += 1;
+			const snapshotCount = onSnapshotReady.mock.calls.length;
+			act(() => lease.release());
+			expect(current.surface.querySelector("p")).toBe(paragraph);
+			expect(paragraph.textContent).toBe("edited");
+			expect(window.getSelection()?.anchorNode).toBe(paragraph.firstChild);
+			expect(window.getSelection()?.anchorOffset).toBe(3);
+			expect(onSnapshotReady).toHaveBeenCalledTimes(snapshotCount);
+			expect(onStatusChange).toHaveBeenLastCalledWith("ready");
+			expect(current.surface.getAttribute("aria-busy")).toBe("false");
+			current.rerender();
+			expect(current.surface.querySelector("p")).toBe(paragraph);
+			act(() => current.session.schedule(request(source, "new"), true));
+			await act(async () => {
+				current.responses[1]?.resolve({ html: safeHtml("<p>edited</p>"), features: {} });
+				for (let index = 0; index < 20; index += 1) await Promise.resolve();
+			});
+			await waitFor(() => expect(onSnapshotReady).toHaveBeenCalledWith(expect.any(String), "new", expect.anything()));
+			expect(current.surface.querySelector("p")?.textContent).toBe("edited");
+		} finally { current.unmount(); }
+	});
 	// Forty edits plus complete real-history traversal and twelve accepted
 	// transfers share this budget; each readiness barrier still has eight frames.
 	it.each(["code history", "empty fence gap", "empty fence gap composition"] as const)("keeps exact local code edits and pending real history across Preview window cadence (%s)", async (scenario) => {
@@ -726,7 +828,7 @@ describe("PreviewSurfaceOwner", () => {
 				requestPreview, requestPreviewAtDocumentEnd,
 				getAcceptedWindowSnapshot: current.runtime.getAcceptedWindowSnapshot, surface: current.surface,
 			};
-			const visual = () => <WindowedImmersiveVisualEditor {...props} editMap={snapshot.editMap} previewSnapshot={snapshot} previewStatus={status} acceptedWindowSnapshotGeneration={generation} />;
+			const visual = () => <WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} editMap={snapshot.editMap} previewSnapshot={snapshot} previewStatus={status} acceptedWindowSnapshotGeneration={generation} />;
 			view = render(visual());
 			updateVisual = () => queueMicrotask(() => {
 				if (updateVisual) view?.rerender(visual());
@@ -1236,7 +1338,7 @@ describe("PreviewSurfaceOwner", () => {
 				surface: current.surface,
 			};
 			const visual = () => (
-				<WindowedImmersiveVisualEditor
+				<WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
 					{...props}
 					acceptedWindowSnapshotGeneration={generation}
 					editMap={snapshot.editMap}
@@ -1470,7 +1572,7 @@ describe("PreviewSurfaceOwner", () => {
 			signature: fixture.editMap.signature,
 		};
 		const visual = () => (
-			<WindowedImmersiveVisualEditor
+			<WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
 				{...props}
 				acceptedWindowSnapshotGeneration={generation}
 				editMap={previewSnapshot.editMap}
@@ -4325,6 +4427,153 @@ describe("PreviewSurfaceOwner", () => {
 		geometry.restore();
 	});
 
+	it("retains only request-bound formal reference source across local changes", async () => {
+		const geometry = installSequenceGeometry();
+		const fixture = windowedFixture(320, "reference-source-witness");
+		const markdown = Array.from({ length: 320 }, (_, index) => `b${index}`).join("\n\n");
+		let currentSource = markdown.replace("b0", "x0");
+		const current = setup({
+			currentSourceSnapshot: () => ({ revision: 0, value: currentSource }),
+			initialEditMap: fixture.editMap, initialHtml: fixture.html,
+			initialSignature: fixture.editMap.signature, sourceRevision: 0,
+			stagingScheduler: { yield: () => Promise.resolve() }, windowed: true,
+		});
+		geometry.attach(current.canvas, current.surface);
+		try {
+			await act(async () => { for (let index = 0; index < 16; index += 1) await Promise.resolve(); await flushAnimationFrames(12); });
+			const initial = current.runtime.getAcceptedWindowSnapshot();
+			if (!initial) throw new Error("reference-source-initial-window-missing");
+			const initialRequest = { revision: initial.revision, signature: initial.signature };
+			expect(currentSource.length).toBe(markdown.length);
+			expect(current.runtime.getAcceptedReferenceSource(initialRequest)).toBeNull();
+			currentSource = markdown;
+			act(() => current.session.schedule(request(markdown, fixture.editMap.signature), true));
+			await act(async () => { current.responses[0]?.resolve({ ...fixture, features: {} }); for (let index = 0; index < 32; index += 1) await Promise.resolve(); await flushAnimationFrames(12); });
+			const accepted = current.runtime.getAcceptedWindowSnapshot();
+			if (!accepted) throw new Error("reference-source-accepted-window-missing");
+			const acceptedRequest = { revision: accepted.revision, signature: accepted.signature };
+			expect(current.runtime.getAcceptedReferenceSource(acceptedRequest)).toBe(markdown);
+			currentSource = markdown.replace("b0", "x0");
+			expect(current.runtime.getAcceptedReferenceSource(acceptedRequest)).toBe(markdown);
+			expect(current.runtime.getAcceptedReferenceSource({ ...acceptedRequest, revision: acceptedRequest.revision + 1 })).toBeNull();
+			currentSource = markdown;
+			act(() => current.session.schedule(request(markdown, fixture.editMap.signature), true));
+			await act(async () => { current.responses[1]?.resolve({ ...fixture, features: {} }); for (let index = 0; index < 32; index += 1) await Promise.resolve(); await flushAnimationFrames(12); });
+			const newer = current.runtime.getAcceptedWindowSnapshot();
+			if (!newer) throw new Error("reference-source-new-window-missing");
+			expect(current.runtime.getAcceptedReferenceSource(acceptedRequest)).toBeNull();
+			expect(current.runtime.getAcceptedReferenceSource({ revision: newer.revision, signature: newer.signature })).toBe(markdown);
+		} finally { current.unmount(); geometry.restore(); }
+	});
+
+	it("certifies an unmounted formal row without exposing a mutable repository node", async () => {
+		const geometry = installSequenceGeometry();
+		const fixture = windowedFixture(320, "formal-row-witness");
+		const markdown = Array.from({ length: 320 }, (_, index) => `b${index}`).join("\n\n");
+		let currentSource = markdown;
+		let currentRevision = 0;
+		const current = setup({
+			currentSourceSnapshot: () => ({ revision: currentRevision, value: currentSource }),
+			initialEditMap: fixture.editMap,
+			initialHtml: fixture.html,
+			initialSignature: fixture.editMap.signature,
+			sourceRevision: 0,
+			stagingScheduler: { yield: () => Promise.resolve() },
+			windowed: true,
+		});
+		geometry.attach(current.canvas, current.surface);
+		try {
+			await act(async () => {
+				for (let index = 0; index < 16; index += 1) await Promise.resolve();
+				await flushAnimationFrames(12);
+			});
+			const accepted = current.runtime.getAcceptedWindowSnapshot();
+			if (!accepted) throw new Error("formal-row-witness-snapshot-missing");
+			expect(current.surface.querySelector('[data-easymde-visual-block-id="b319"]')).toBeNull();
+			const rowRequest = { id: "b319", index: 319, revision: accepted.revision, signature: accepted.signature };
+			const row = current.runtime.getAcceptedWindowRow(rowRequest);
+			expect(row?.source).toBe(markdown);
+			expect(row?.sourceRange).toEqual({ start: markdown.lastIndexOf("b319"), end: markdown.length });
+			expect(row?.root.isConnected).toBe(false);
+			expect(row?.root.textContent).toBe("b319");
+			if (!row) throw new Error("formal-row-witness-missing");
+			row.root.textContent = "foreign clone mutation";
+			expect(current.runtime.getAcceptedWindowRow(rowRequest)?.root.textContent).toBe("b319");
+			currentSource = `${markdown}\nnew`;
+			currentRevision += 1;
+			expect(current.runtime.getAcceptedWindowRow(rowRequest)?.source).toBe(markdown);
+			expect(current.runtime.getAcceptedWindowRow({ ...rowRequest, revision: rowRequest.revision + 1 })).toBeNull();
+			expect(current.runtime.getAcceptedWindowRow({ ...rowRequest, index: 318 })).toBeNull();
+			const first = current.surface.querySelector('[data-easymde-visual-block-id="b0"]');
+			if (!(first instanceof HTMLElement)) throw new Error("formal-row-witness-first-missing");
+			first.setAttribute("contenteditable", "false");
+			expect(current.runtime.getAcceptedWindowRow({ ...rowRequest, id: "b0", index: 0 })).toBeNull();
+			currentSource = markdown;
+			currentRevision = 0;
+			act(() => current.session.schedule(request(markdown, fixture.editMap.signature), true));
+			await act(async () => {
+				current.responses[0]?.resolve({ ...fixture, features: {} });
+				for (let index = 0; index < 32; index += 1) await Promise.resolve();
+				await flushAnimationFrames(12);
+			});
+			const fresh = current.runtime.getAcceptedWindowSnapshot();
+			if (!fresh) throw new Error("formal-row-witness-new-snapshot-missing");
+			expect(fresh.revision).not.toBe(rowRequest.revision);
+			expect(current.runtime.getAcceptedWindowRow(rowRequest)).toBeNull();
+			expect(current.runtime.getAcceptedWindowRow({ ...rowRequest, revision: fresh.revision })?.source).toBe(markdown);
+		} finally {
+			current.unmount();
+			geometry.restore();
+		}
+	});
+
+	it("reveals an accepted unmounted row without displacing the retained end gap", async () => {
+		const geometry = installSequenceGeometry();
+		const fixture = windowedFixture(320, "reveal-formal-row");
+		const markdown = Array.from({ length: 320 }, (_, index) => `b${index}`).join("\n\n");
+		const current = setup({ contentEditable: true,
+			currentSourceSnapshot: () => ({ revision: 0, value: markdown }),
+			initialEditMap: fixture.editMap, initialHtml: fixture.html,
+			initialSignature: fixture.editMap.signature, sourceRevision: 0,
+			stagingScheduler: { yield: () => Promise.resolve() }, windowed: true });
+		geometry.attach(current.canvas, current.surface);
+		try {
+			await act(async () => {
+				for (let index = 0; index < 16; index += 1) await Promise.resolve();
+				await flushAnimationFrames(12);
+			});
+			current.canvas.scrollTop = 7440;
+			current.canvas.dispatchEvent(new Event("scroll"));
+			await act(async () => { await flushAnimationFrames(12); });
+			const accepted = current.runtime.getAcceptedWindowSnapshot();
+			if (!accepted) throw new Error("reveal-window-snapshot-missing");
+			expect(current.surface.querySelector('[data-easymde-visual-block-id="b0"]')).toBeNull();
+			const gap = document.createElement("p"); gap.append(document.createElement("br"));
+			current.surface.append(gap);
+			current.surface.tabIndex = 0; current.surface.focus(); window.getSelection()?.collapse(gap, 0);
+			const lease = current.runtime.retainCompositionSurface();
+			lease.retainGap?.({ node: gap, markdown, sourceRevision: 0, html: gap.innerHTML,
+				surface: current.surface, historyState: { undoDepth: 0, redoDepth: 0 },
+				before: { start: markdown.lastIndexOf("b319"), end: markdown.length, source: "b319" },
+				after: { start: markdown.length, end: markdown.length, source: "" },
+				isLive: () => gap.parentNode === current.surface });
+			lease.release();
+			const request = { gap, id: "b0", index: 0, revision: accepted.revision,
+				signature: accepted.signature, source: markdown, sourceRevision: 0 };
+			const refusal = vi.fn();
+			expect(current.runtime.revealAcceptedWindowRow({ ...request, sourceRevision: 1, onRefusal: refusal })).toBeNull();
+			expect(refusal).toHaveBeenCalledWith("source-epoch", expect.objectContaining({ sourceMatches: true, sourceRevisionMatches: false }));
+			expect(JSON.stringify(refusal.mock.calls)).not.toContain(markdown);
+			let revealed: ReturnType<typeof current.runtime.revealAcceptedWindowRow> = null;
+			act(() => { revealed = current.runtime.revealAcceptedWindowRow(request); });
+			expect(revealed).not.toBeNull();
+			expect(current.surface.querySelector('[data-easymde-visual-block-id="b0"]')?.isConnected).toBe(true);
+			expect(gap.isConnected).toBe(true);
+			expect(window.getSelection()?.anchorNode).toBe(gap);
+			expect(current.runtime.getAcceptedWindowSnapshot()).toEqual(revealed);
+		} finally { current.unmount(); geometry.restore(); }
+	});
+
 	it("adopts a mounted replacement before the next window commit can restore the old node", async () => {
 		const fixture = windowedFixture(320, "adopt-window-block");
 		const current = setup({
@@ -5785,7 +6034,47 @@ describe("PreviewSurfaceOwner", () => {
 		current.unmount();
 	});
 
-	it("rejects materialization while an accepted window commit is still committing", async () => {
+	it("publishes the installed window snapshot before a post-install scheduler yield", async () => {
+		const fixture = windowedFixture(320, "installed-window-owner");
+		const held = deferred<void>();
+		const snapshots: string[] = [];
+		let editorOwner = "full";
+		let ownerAtUndo: string | null = null;
+		let current!: ReturnType<typeof setup>;
+		const stagingScheduler: PreviewSurfaceStagingScheduler = {
+			yield: vi.fn(() => current?.surface.querySelector("[data-easymde-preview-window-spacer]")
+				? held.promise : Promise.resolve()),
+		};
+		current = setup({
+			initialHtml: "<p>Before</p>",
+			onSnapshotReady: (_html, signature) => {
+				snapshots.push(signature);
+				if (signature === "installed-window-owner") editorOwner = "windowed";
+			},
+			stagingScheduler,
+			windowed: true,
+		});
+		try {
+			current.surface.addEventListener("keydown", (event) => {
+				if (event.key === "z" && event.ctrlKey) ownerAtUndo = editorOwner;
+			});
+			act(() => current.session.schedule(request("# Windowed", "installed-window-owner"), true));
+			await act(async () => {
+				current.responses[0]?.resolve({ editMap: fixture.editMap, features: {}, html: fixture.html });
+				for (let index = 0; index < 20; index += 1) await Promise.resolve();
+				await flushAnimationFrames(2);
+			});
+			expect(current.surface.querySelector("[data-easymde-preview-window-spacer]")).not.toBeNull();
+			current.surface.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, ctrlKey: true, key: "z" }));
+			expect(ownerAtUndo).toBe("windowed");
+			expect(snapshots.at(-1)).toBe("installed-window-owner");
+		} finally {
+			held.resolve();
+			current.unmount();
+		}
+	});
+
+	it("rejects materialization while a window candidate is still staging", async () => {
 		const fixture = windowedFixture(320, "materialize-committing");
 		const pending: Array<ReturnType<typeof deferred<void>>> = [];
 		const stagingScheduler: PreviewSurfaceStagingScheduler = {
@@ -5821,18 +6110,19 @@ describe("PreviewSurfaceOwner", () => {
 			await Promise.resolve();
 			await flushAnimationFrames(2);
 		});
-		const commitBarrier = pending.shift();
-		if (!commitBarrier) {
-			throw new Error("materialize-committing-commit-barrier-missing");
+		const stagingYield = pending.shift();
+		if (!stagingYield) {
+			throw new Error("materialize-staging-yield-missing");
 		}
+		expect(current.surface.querySelector("[data-easymde-preview-window-spacer]")).toBeNull();
 
 		await expect(current.runtime.materialize()).resolves.toBe(false);
 		expect(current.onDiagnostic).toHaveBeenCalledWith(
 			"preview-window-materialize-not-ready",
 		);
-		commitBarrier.resolve();
+		stagingYield.resolve();
 		await act(async () => {
-			await commitBarrier.promise;
+			await stagingYield.promise;
 			await Promise.resolve();
 		});
 		current.unmount();
@@ -7226,31 +7516,14 @@ describe("PreviewSurfaceOwner", () => {
 	it("restores the latest scroll ratio only after a windowed HTML commit is ready", async () => {
 		const fixture = windowedFixture(320, "windowed-scroll");
 		const enhancement = deferred<void>();
-		const finishCommit = deferred<void>();
 		const statuses: PreviewSurfaceStatus[] = [];
 		let current!: ReturnType<typeof setup>;
-		let commitHeld = false;
 		let restoreMetrics: Readonly<{
 			busy: string | null;
 			hasWindowContent: boolean;
 			scrollHeight: number;
 			snapshotRatio: number;
 		}> | null = null;
-		const stagingScheduler = {
-			now: () => 0,
-			yield: () => {
-				const hasWindowContent = Boolean(
-					current?.surface.querySelector(
-						"[data-easymde-visual-block-id], [data-easymde-preview-window-spacer]",
-					),
-				);
-				if (!commitHeld && hasWindowContent) {
-					commitHeld = true;
-					return finishCommit.promise;
-				}
-				return Promise.resolve();
-			},
-		};
 		const scrollPort: PreviewScrollPort = {
 			capture: (canvas) => {
 				const maxScroll = Math.max(
@@ -7292,7 +7565,7 @@ describe("PreviewSurfaceOwner", () => {
 			initialHtml: "",
 			onStatusChange: (status) => statuses.push(status),
 			scrollPort,
-			stagingScheduler,
+			stagingScheduler: { now: () => 0, yield: () => Promise.resolve() },
 			windowed: true,
 		});
 		Object.defineProperty(current.canvas, "clientHeight", {
@@ -7334,21 +7607,11 @@ describe("PreviewSurfaceOwner", () => {
 			enhancement.resolve();
 			await enhancement.promise;
 		});
-		expect(commitHeld).toBe(true);
 		expect(
 			current.surface.querySelector(
 				"[data-easymde-visual-block-id], [data-easymde-preview-window-spacer]",
 			),
 		).not.toBeNull();
-		expect(current.surface.getAttribute("aria-busy")).toBe("true");
-		expect(statuses.at(-1)).toBe("loading");
-		expect(restoreMetrics).toBeNull();
-
-		await act(async () => {
-			finishCommit.resolve();
-			await finishCommit.promise;
-		});
-
 		expect(statuses.at(-1)).toBe("ready");
 		expect(restoreMetrics).toEqual({
 			busy: "false",
@@ -7839,7 +8102,7 @@ async function openGapComposition(options: Readonly<{ initialMarkdown?: string; 
 	const visual = () => {
 		const snapshot = getSnapshot();
 		return (
-			<WindowedImmersiveVisualEditor
+			<WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
 				{...props}
 				acceptedWindowSnapshotGeneration={fixture.getGeneration()}
 				editMap={snapshot.editMap}
@@ -8144,6 +8407,51 @@ describe("PreviewSurfaceOwner composition surface lease", () => {
 });
 
 describe("Windowed composition surface retention", () => {
+	it("continues editing and history while a real older Preview is superseded", async () => {
+		const fixture = await openGapComposition();
+		try {
+			fixture.startComposition();
+			const oldRequestCount = fixture.requests.length;
+			expect(oldRequestCount).toBeGreaterThan(0);
+			await fixture.resolvePending();
+			expect(fixture.documentOwner.getValue()).toBe(fixture.afterEnter);
+			fixture.endComposition("文");
+			const composed = `${fixture.afterEnter.slice(0, fixture.start + 1)}文${fixture.afterEnter.slice(fixture.start + 1)}`;
+			expect(fixture.documentOwner.getValue()).toBe(composed);
+			expect(fixture.requests.length).toBeGreaterThan(oldRequestCount);
+			const native = window.getSelection();
+			const range = native?.rangeCount ? native.getRangeAt(0).cloneRange() : null;
+			if (!range) throw new Error("window-supersession-range-missing");
+			const next = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: "X" });
+			Object.defineProperty(next, "getTargetRanges", { value: () => [range] });
+			act(() => {
+				fixture.surface.dispatchEvent(next);
+				if (!next.defaultPrevented) {
+					range.deleteContents();
+					const text = document.createTextNode("X"); range.insertNode(text); native?.collapse(text, 1);
+					fixture.surface.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "X" }));
+				}
+			});
+			const edited = `${composed.slice(0, fixture.start + 2)}X${composed.slice(fixture.start + 2)}`;
+			expect(fixture.onFailure).not.toHaveBeenCalled();
+			expect(fixture.documentOwner.getValue()).toBe(edited);
+			expect(fixture.documentOwner.getSelection()).toEqual({ direction: "none", start: fixture.start + 3, end: fixture.start + 3 });
+			fixture.dispatchHistory(false, false);
+			expect(fixture.documentOwner.getValue()).toBe(composed);
+			fixture.dispatchHistory(true, false);
+			expect(fixture.documentOwner.getValue()).toBe(edited);
+			expect(fixture.onFailure).not.toHaveBeenCalled();
+			expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+			await fixture.resolvePending();
+			await fixture.settle();
+			expect(fixture.getStatus()).toBe("ready");
+			expect(fixture.current.surface.getAttribute("aria-busy")).toBe("false");
+			const accepted = fixture.current.runtime.getAcceptedWindowSnapshot();
+			expect(accepted?.signature).toBe(fixture.requests.at(-1)?.signature);
+			expect(accepted?.sourceRevision).toBe(fixture.getRevision());
+		} finally { fixture.dispose(); }
+	});
+
 	interface HeldAcceptanceProbe {
 		afterEnter: string;
 		afterExit: string;
@@ -8280,16 +8588,19 @@ describe("Windowed composition surface retention", () => {
 			fixture.endComposition("文");
 			expect(fixture.documentOwner.getValue()).toBe(fixture.afterEnter);
 			expect(fixture.documentOwner.getValue()).not.toContain("文");
-			// The lease was revoked by the source change, so the current owner
-			// still accepts a frame; nothing of the old source is replayed.
+			// The outstanding response was rendered from a source older than the
+			// current one, so it must not install: the surface stays as it is and
+			// no accepted window claims the refused frame.
+			const nodes = Array.from(fixture.surface.childNodes);
 			await fixture.resolvePending();
+			expect(Array.from(fixture.surface.childNodes)).toEqual(nodes);
 			expect({
 				history: fixture.documentOwner.getHistoryState(),
 				revision: fixture.getRevision(),
 				selection: fixture.documentOwner.getSelection(),
 				value: fixture.documentOwner.getValue(),
 			}).toEqual(canonical);
-			expect(fixture.current.runtime.getAcceptedWindowSnapshot()).not.toBeNull();
+			expect(fixture.current.runtime.getAcceptedWindowSnapshot()).toBeNull();
 			expect(fixture.onFailure).not.toHaveBeenCalled();
 		} finally {
 			fixture.dispose();
@@ -8668,7 +8979,7 @@ describe("test-first Windowed owned editing draft", () => {
 	});
 });
 
-it("test-first v2 Round56 admits heading-tail abc during the installed formal commit after P0 retirement and ready", async () => {
+it("admits heading-tail abc after the installed formal window becomes ready", async () => {
 	const targetIndex = 160;
 	const initialMarkdown = Array.from({ length: 320 }, (_, index) => index === targetIndex - 1 ? "### Before" : index === targetIndex ? "~~~bash\nAB\n~~~" : index === targetIndex + 1 ? "### After" : index === targetIndex + 2 ? "~~~python\nNEIGHBOR\n~~~" : `Paragraph ${index}`).join("\n\n");
 	const initial = gapLeasePreview(initialMarkdown, "round56-initial");
@@ -8681,10 +8992,7 @@ it("test-first v2 Round56 admits heading-tail abc during the installed formal co
 	let generation = 0;
 	let pending = false;
 	let deferVisualProps = false;
-	let holdFormalReady = false;
 	let view: RenderResult | null = null;
-	let currentSurface: HTMLElement | null = null;
-	const heldReady: Array<{ promise: Promise<void>; resolve: (value: void) => void; reject: (reason?: unknown) => void }> = [];
 	const onFailure = vi.fn();
 	const onDiagnostic = vi.fn();
 	const onTransferFailure = vi.fn();
@@ -8705,14 +9013,8 @@ it("test-first v2 Round56 admits heading-tail abc during the installed formal co
 			snapshot = { editMap, signature, revision: snapshot.revision + 1 }; updateVisual();
 		},
 		onStatusChange: (next) => { status = next; updateVisual(); },
-		stagingScheduler: { now: () => 0, yield: () => {
-			if (holdFormalReady && currentSurface?.getAttribute("data-easymde-preview-phase") === "committing") {
-				const held = deferred<void>(); heldReady.push(held); return held.promise;
-			}
-			return Promise.resolve();
-		} },
+		stagingScheduler: { now: () => 0, yield: () => Promise.resolve() },
 	});
-	currentSurface = preview.surface;
 	geometry.attach(preview.canvas, preview.surface);
 	Object.defineProperty(preview.canvas, "clientHeight", { configurable: true, value: 240 });
 	preview.canvas.scrollTop = targetIndex * 24 - 48;
@@ -8736,7 +9038,7 @@ it("test-first v2 Round56 admits heading-tail abc during the installed formal co
 		getAcceptedWindowSnapshot: preview.runtime.getAcceptedWindowSnapshot,
 		requestPreview, requestPreviewAtDocumentEnd, surface: preview.surface,
 	};
-	const visual = () => <WindowedImmersiveVisualEditor {...props} pending={pending} previewStatus={status} editMap={snapshot.editMap} previewSnapshot={snapshot} acceptedWindowSnapshotGeneration={generation} />;
+	const visual = () => <WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} pending={pending} previewStatus={status} editMap={snapshot.editMap} previewSnapshot={snapshot} acceptedWindowSnapshotGeneration={generation} />;
 	const settleReady = async () => {
 		await act(async () => { for (let turn = 0; turn < 16; turn += 1) await Promise.resolve(); });
 		for (let frame = 0; frame < 8; frame += 1) {
@@ -8794,14 +9096,8 @@ it("test-first v2 Round56 admits heading-tail abc during the installed formal co
 		expect(source.owner.getSelection()).toEqual({ direction: "none", start: insertion, end: insertion });
 		expect(requests).toHaveLength(2);
 		const oldPhysicalNodes = Array.from(preview.surface.childNodes);
-		// Root can still hold the preceding map when the sink has installed the
-		// next formal frame. Bound that public-props lag to this input batch;
-		// never rebuild a trusted baseline from the live draft or fake an echo.
-		deferVisualProps = true; holdFormalReady = true;
-		await resolveResponse(1);
-		for (let frame = 0; frame < 8 && preview.surface.getAttribute("data-easymde-preview-phase") !== "committing"; frame += 1) await act(async () => { await flushAnimationFrames(1); });
-		expect(preview.surface.getAttribute("data-easymde-preview-phase")).toBe("committing");
-		expect(heldReady.length, "the real commit is installed before its final ready yield").toBeGreaterThan(0);
+		await resolveResponse(1); await settleReady();
+		expect(preview.surface.getAttribute("data-easymde-preview-phase")).toBe("ready");
 		expect(Array.from(preview.surface.childNodes)).not.toEqual(oldPhysicalNodes);
 		expect(paragraph.isConnected).toBe(true); expect(window.getSelection()?.anchorNode).toBe(paragraph);
 		const committedValues: string[] = [];
@@ -8823,8 +9119,6 @@ it("test-first v2 Round56 admits heading-tail abc during the installed formal co
 				const native = window.getSelection(); expect.soft(native?.anchorNode?.isConnected).toBe(true);
 				expect.soft(native?.anchorNode && paragraph.contains(native.anchorNode)).toBe(true);
 			}
-			deferVisualProps = false; holdFormalReady = false; updateVisual();
-			await act(async () => { for (const held of heldReady) held.resolve(); });
 			for (let index = 2; index < requests.length; index += 1) await resolveResponse(index);
 			await settleReady();
 			const expected = afterExit.slice(0, insertion) + "abc" + afterExit.slice(insertion);
@@ -8837,8 +9131,7 @@ it("test-first v2 Round56 admits heading-tail abc during the installed formal co
 			expect.soft(preview.surface.getAttribute("contenteditable")).toBe("true"); expect.soft(document.activeElement).toBe(preview.surface);
 		} finally { unsubscribe(); }
 	} finally {
-		deferVisualProps = true; holdFormalReady = false;
-		for (const held of heldReady) held.resolve();
+		deferVisualProps = true;
 		view?.unmount(); preview.unmount(); source.owner.destroy(); source.container.remove(); source.submissionField.remove(); geometry.restore();
 	}
 });
@@ -8917,7 +9210,7 @@ it("test-first v2 Windowed CODE insert then real formal accept preserves its nat
 		retainCompositionSurface: () => current.runtime.retainCompositionSurface(),
 		getAcceptedWindowSnapshot: current.runtime.getAcceptedWindowSnapshot,
 		requestPreview, requestPreviewAtDocumentEnd, surface: current.surface };
-	const visual = () => <WindowedImmersiveVisualEditor {...props} editMap={fixture.getSnapshot().editMap} previewSnapshot={fixture.getSnapshot()} previewStatus={fixture.getStatus()} pending={fixture.getStatus() !== "ready"} acceptedWindowSnapshotGeneration={fixture.getGeneration()} />;
+	const visual = () => <WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} editMap={fixture.getSnapshot().editMap} previewSnapshot={fixture.getSnapshot()} previewStatus={fixture.getStatus()} pending={fixture.getStatus() !== "ready"} acceptedWindowSnapshotGeneration={fixture.getGeneration()} />;
 	let view: RenderResult | null = render(visual());
 	fixture.setUpdateVisual(() => queueMicrotask(() => { if (view) view.rerender(visual()); }));
 	try {
@@ -9060,7 +9353,7 @@ it("test-first v3 local PRE to P keeps its source certificate and native heading
 		getAcceptedWindowSnapshot: current.runtime.getAcceptedWindowSnapshot,
 		requestPreview, requestPreviewAtDocumentEnd, surface: current.surface,
 	};
-	const visual = () => <WindowedImmersiveVisualEditor {...props} pending={pending} previewStatus={status} editMap={snapshot.editMap} previewSnapshot={snapshot} acceptedWindowSnapshotGeneration={generation} />;
+	const visual = () => <WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} pending={pending} previewStatus={status} editMap={snapshot.editMap} previewSnapshot={snapshot} acceptedWindowSnapshotGeneration={generation} />;
 	let deliveredRevision = getRevision();
 	const unsubscribe = source.owner.subscribe(() => {
 		const revision = getRevision(); if (revision === deliveredRevision) return;
@@ -9245,7 +9538,7 @@ it("test-first v4 advanced but unapplied Windowed candidate cannot raw-replay ov
 		getAcceptedWindowSnapshot: current.runtime.getAcceptedWindowSnapshot,
 		requestPreview, requestPreviewAtDocumentEnd, surface: current.surface,
 	};
-	const visual = () => <WindowedImmersiveVisualEditor {...props} pending={pending} previewStatus={status} editMap={snapshot.editMap} previewSnapshot={snapshot} acceptedWindowSnapshotGeneration={generation} />;
+	const visual = () => <WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} pending={pending} previewStatus={status} editMap={snapshot.editMap} previewSnapshot={snapshot} acceptedWindowSnapshotGeneration={generation} />;
 	let deliveredRevision = getRevision();
 	const unsubscribe = source.owner.subscribe(() => {
 		const revision = getRevision(); if (revision === deliveredRevision) return;
@@ -9430,7 +9723,7 @@ it.each([
 		},
 		surface: current.surface,
 	};
-	const visual = () => <WindowedImmersiveVisualEditor {...props} acceptedWindowSnapshotGeneration={fixture.getGeneration()} editMap={fixture.getSnapshot().editMap} previewSnapshot={fixture.getSnapshot()} previewStatus={fixture.getStatus()} />;
+	const visual = () => <WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} acceptedWindowSnapshotGeneration={fixture.getGeneration()} editMap={fixture.getSnapshot().editMap} previewSnapshot={fixture.getSnapshot()} previewStatus={fixture.getStatus()} />;
 	let view: RenderResult | null = render(visual());
 	fixture.setUpdateVisual(() => queueMicrotask(() => { if (view) view.rerender(visual()); }));
 	try {
@@ -9612,7 +9905,7 @@ it.each([
 		},
 		surface: current.surface,
 	};
-	const visual = () => <WindowedImmersiveVisualEditor {...props} acceptedWindowSnapshotGeneration={fixture.getGeneration()} editMap={fixture.getSnapshot().editMap} previewSnapshot={fixture.getSnapshot()} previewStatus={fixture.getStatus()} />;
+	const visual = () => <WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} acceptedWindowSnapshotGeneration={fixture.getGeneration()} editMap={fixture.getSnapshot().editMap} previewSnapshot={fixture.getSnapshot()} previewStatus={fixture.getStatus()} />;
 	let view: RenderResult | null = render(visual());
 	fixture.setUpdateVisual(() => queueMicrotask(() => { if (view) view.rerender(visual()); }));
 	try {
@@ -9841,7 +10134,7 @@ it.each([
 		},
 		surface: current.surface,
 	};
-	const visual = () => <WindowedImmersiveVisualEditor {...props} pending={fixture.getStatus() !== "ready"} acceptedWindowSnapshotGeneration={fixture.getGeneration()} editMap={fixture.getSnapshot().editMap} previewSnapshot={fixture.getSnapshot()} previewStatus={fixture.getStatus()} />;
+	const visual = () => <WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} pending={fixture.getStatus() !== "ready"} acceptedWindowSnapshotGeneration={fixture.getGeneration()} editMap={fixture.getSnapshot().editMap} previewSnapshot={fixture.getSnapshot()} previewStatus={fixture.getStatus()} />;
 	let view: RenderResult | null = render(visual());
 	fixture.setUpdateVisual(() => queueMicrotask(() => { if (view) view.rerender(visual()); }));
 	try {
@@ -10081,7 +10374,7 @@ it.each(["same-epoch layout", "retained native edit"] as const)(
 				},
 				surface: current.surface,
 			};
-			const visual = () => <WindowedImmersiveVisualEditor {...props} acceptedWindowSnapshotGeneration={fixture.getGeneration()} editMap={fixture.getSnapshot().editMap} previewSnapshot={fixture.getSnapshot()} previewStatus={fixture.getStatus()} />;
+			const visual = () => <WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} acceptedWindowSnapshotGeneration={fixture.getGeneration()} editMap={fixture.getSnapshot().editMap} previewSnapshot={fixture.getSnapshot()} previewStatus={fixture.getStatus()} />;
 			view = render(visual());
 			fixture.setUpdateVisual(() => queueMicrotask(() => { if (view) view.rerender(visual()); }));
 			await waitFor(() => expect(activeVisual().isEditable()).toBe(true));
@@ -10223,7 +10516,7 @@ it("keeps an adopted heading source witness usable for a later paragraph input",
 		},
 		surface: current.surface,
 	};
-	const visual = () => <WindowedImmersiveVisualEditor {...props} acceptedWindowSnapshotGeneration={fixture.getGeneration()} editMap={fixture.getSnapshot().editMap} previewSnapshot={fixture.getSnapshot()} previewStatus={fixture.getStatus()} />;
+	const visual = () => <WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} acceptedWindowSnapshotGeneration={fixture.getGeneration()} editMap={fixture.getSnapshot().editMap} previewSnapshot={fixture.getSnapshot()} previewStatus={fixture.getStatus()} />;
 	let view: RenderResult | null = render(visual());
 	fixture.setUpdateVisual(() => queueMicrotask(() => { if (view) view.rerender(visual()); }));
 	try {
@@ -10349,7 +10642,7 @@ it.each([
 		},
 		surface: current.surface,
 	};
-	const visual = () => <WindowedImmersiveVisualEditor {...props}
+	const visual = () => <WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props}
 		acceptedWindowSnapshotGeneration={fixture.getGeneration()}
 		editMap={fixture.getSnapshot().editMap} previewSnapshot={fixture.getSnapshot()}
 		previewStatus={fixture.getStatus()}
@@ -10438,3 +10731,7 @@ it.each([
 		current.unmount(); fixture.cleanup();
 	}
 });
+
+function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {
+  return createProfiledMarkdownBlockIndex(source, options);
+}

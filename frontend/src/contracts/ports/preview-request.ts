@@ -29,6 +29,22 @@ export type PreviewEditMap = Readonly<{
 	blocks: ReadonlyArray<PreviewEditMapBlock>;
 }>;
 
+/** A detached row from an accepted formal Preview, not a current-source lease. */
+export type PreviewAcceptedWindowRow = Readonly<{
+	root: HTMLElement;
+	source: string;
+	sourceRange: Readonly<{ start: number; end: number }>;
+	sourceRevision: number;
+}>;
+
+export type PreviewAcceptedWindowRowRequest = Readonly<{
+	id: string;
+	index: number;
+	revision: number;
+	signature: string;
+	onRefusal?: (reason: string, details: Readonly<Record<string, boolean | number>>) => void;
+}>;
+
 export type PreviewCodeBodyKind = "fenced" | "indented";
 
 export type PreviewCodeBodyMapEntry =

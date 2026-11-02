@@ -249,6 +249,28 @@ final class AdminAssets {
 		return $assets;
 	}
 
+	private static function reference_label_case_fold_profile( $php_version_id, $mbstring_available ) {
+		if ( ! $mbstring_available ) {
+			return 'unsupported';
+		}
+		if ( $php_version_id >= 70400 && $php_version_id < 70500 ) {
+			return 11;
+		}
+		if ( $php_version_id >= 80000 && $php_version_id < 80100 ) {
+			return 13;
+		}
+		if ( $php_version_id >= 80100 && $php_version_id < 80400 ) {
+			return 14;
+		}
+		if ( $php_version_id >= 80400 && $php_version_id < 80500 ) {
+			return 16;
+		}
+		if ( $php_version_id >= 80500 && $php_version_id < 80600 ) {
+			return 17;
+		}
+		return 'unsupported';
+	}
+
 	private function get_editor_root_bootstrap( $post_id, $post_type = '', $is_new_post = false ) {
 		$nonce         = wp_create_nonce( 'wp_rest' );
 		$strings       = $this->get_strings();
@@ -296,13 +318,17 @@ final class AdminAssets {
 			$theme_options['codeThemes']
 		);
 		return array(
-			'schemaVersion'             => 3,
-			'editorBlockIndexWorkerUrl' => $editor_block_index_worker_url,
-			'shortcodeHelpers'          => $this->toolbar_registry->get_shortcode_helpers_for_script(),
-			'document'                  => array(
+			'schemaVersion'                 => 3,
+			'referenceLabelCaseFoldProfile' => self::reference_label_case_fold_profile(
+				PHP_VERSION_ID,
+				extension_loaded( 'mbstring' ) && function_exists( 'mb_convert_case' ) && defined( 'MB_CASE_FOLD' )
+			),
+			'editorBlockIndexWorkerUrl'     => $editor_block_index_worker_url,
+			'shortcodeHelpers'              => $this->toolbar_registry->get_shortcode_helpers_for_script(),
+			'document'                      => array(
 				'strings' => array( 'editorLabel' => $strings['editorLabel'] ),
 			),
-			'appearance'                => array(
+			'appearance'                    => array(
 				'articleThemes'       => $theme_options['markdownThemes'],
 				'canManageCustomCss'  => current_user_can( 'unfiltered_html' ),
 				'codeThemeExplicit'   => $theme_options['codeThemeExplicit'],
@@ -331,7 +357,7 @@ final class AdminAssets {
 					'customCssDialog'  => $this->get_custom_css_dialog_strings(),
 				),
 			),
-			'fonts'                     => array(
+			'fonts'                         => array(
 				'options' => $theme_options['fontOptions'],
 				'state'   => array(
 					'customFont'  => $theme_state['customFont'],
@@ -348,7 +374,7 @@ final class AdminAssets {
 					'fontStackHelp' => $strings['fontStackHelp'],
 				),
 			),
-			'imageUpload'               => array(
+			'imageUpload'                   => array(
 				'allowedMimeTypes'       => $allowed_image_mime_types,
 				'allowedExtensions'      => $allowed_image_extensions,
 				'autoUploadPastedImages' => $settings['images']['autoUploadPastedImages'],
@@ -379,20 +405,20 @@ final class AdminAssets {
 					'pasteUploading'      => $strings['imagePasteUploading'],
 				),
 			),
-			'settings'                  => array(
+			'settings'                      => array(
 				'general'  => $settings['general'],
 				'markdown' => array(
 					'wordWrap' => $settings['markdown']['wordWrap'],
 				),
 			),
-			'layout'                    => array(
+			'layout'                        => array(
 				'direction' => is_rtl() ? 'rtl' : 'ltr',
 				'status'    => array(
 					'lastEdited' => $this->get_last_edited_label( $post_id ),
 					'wordCount'  => $strings['wordCount'],
 				),
 			),
-			'localDrafts'               => array(
+			'localDrafts'                   => array(
 				'enabled'          => true,
 				'locale'           => $storage['locale'],
 				'maxBytes'         => $storage['draftMaxBytes'],
@@ -415,7 +441,7 @@ final class AdminAssets {
 					'saved'         => $strings['draftSaved'],
 				),
 			),
-			'mediaPicker'               => array(
+			'mediaPicker'                   => array(
 				'canUseMedia'    => $can_use_media,
 				'defaultAlt'     => $strings['mediaDefaultAlt'],
 				'frameUrl'       => $can_use_media ? MediaPickerPage::get_url( $post_id, $post_type ) : '',
@@ -425,7 +451,7 @@ final class AdminAssets {
 				),
 				'placeholderAlt' => $strings['mediaAltText'],
 			),
-			'preview'                   => array(
+			'preview'                       => array(
 				'features'  => (object) array(),
 				'html'      => '',
 				'messages'  => array(
@@ -436,13 +462,13 @@ final class AdminAssets {
 				'postId'    => absint( $post_id ),
 				'signature' => '',
 			),
-			'previewEnhancement'        => array(
+			'previewEnhancement'            => array(
 				'assetBaseUrl' => Asset::url( '' ),
 				'assets'       => $preview_assets,
 				'codeThemes'   => $code_themes,
 				'strings'      => array( 'renderingFailed' => $strings['renderingFailed'] ),
 			),
-			'toolbar'                   => array(
+			'toolbar'                       => array(
 				'commands'  => $this->toolbar_registry->get_commands_for_script(),
 				'shortcuts' => $this->settings_center_repository->get_shortcut_config_for_script(),
 				'strings'   => array(
@@ -453,7 +479,7 @@ final class AdminAssets {
 					'undo'               => $strings['undo'],
 				),
 			),
-			'wechatExport'              => array(
+			'wechatExport'                  => array(
 				'enabled'              => true,
 				'pngConversionEnabled' => $settings['images']['wechatPngExportEnabled'],
 				'strings'              => array(
@@ -462,7 +488,7 @@ final class AdminAssets {
 					'unsupported' => $strings['copyWechatUnsupported'],
 				),
 			),
-			'strings'                   => array(
+			'strings'                       => array(
 				'contextMenu'        => $this->get_context_menu_strings( $strings ),
 				'immersive'          => array(
 					'autoSave'                    => __( 'Auto save', 'easymde' ),
@@ -576,7 +602,7 @@ final class AdminAssets {
 				'source'             => __( 'Markdown', 'easymde' ),
 				'toolbar'            => $strings['markdownToolbar'],
 			),
-			'wordpress'                 => array(
+			'wordpress'                     => array(
 				'customCssUrl'      => esc_url_raw( rest_url( 'easymde/v1/custom-css' ) ),
 				'isNewPost'         => (bool) $is_new_post || 0 === absint( $post_id ) || 'auto-draft' === get_post_status( $post_id ),
 				'nonce'             => $nonce,
@@ -1120,7 +1146,7 @@ final class AdminAssets {
 			'contextMenuDeleteImage'                   => __( 'Delete image', 'easymde' ),
 			'contextMenuDeleteRow'                     => __( 'Delete row', 'easymde' ),
 			'contextMenuDeleteTable'                   => __( 'Delete table', 'easymde' ),
-			'contextMenuDeleteThematicBreak'            => __( 'Delete horizontal rule', 'easymde' ),
+			'contextMenuDeleteThematicBreak'           => __( 'Delete horizontal rule', 'easymde' ),
 			'contextMenuDiagramBlock'                  => __( 'Diagram', 'easymde' ),
 			'contextMenuEditGeneratedContent'          => __( 'Edit', 'easymde' ),
 			'contextMenuFormatTableSource'             => __( 'Format Table Source', 'easymde' ),

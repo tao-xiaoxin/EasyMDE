@@ -235,6 +235,11 @@ function createFrontendAssetSources(root) {
     'scripts/vendor-licenses/mermaid-LICENSE',
     'MIT License\n\nCopyright fixture for mermaid\n'
   );
+  writeText(
+    root,
+    'scripts/vendor-licenses/unicode-LICENSE',
+    'Unicode License\n\nCopyright fixture for unicode data files\n'
+  );
   writeFileSync(packageJsonPath, JSON.stringify(packageJson));
   writeText(
     root,
@@ -790,6 +795,15 @@ test('release ZIP ships third-party notices with every compiled parser license',
     const packaged = zipFileContent(root, 'easymde/THIRD-PARTY-NOTICES.md');
     assert.equal(packaged, renderNotices(root));
     assert.equal(packaged, readFileSync(join(root, 'THIRD-PARTY-NOTICES.md'), 'utf8'));
+
+    // The compiled Unicode case-fold data ships its own required notice section.
+    assert.match(packaged, /## Unicode Character Database/);
+    assert.ok(
+      packaged.includes(
+        readFileSync(join(root, 'scripts/vendor-licenses/unicode-LICENSE'), 'utf8').trim()
+      ),
+      'ZIP notices miss the compiled Unicode data license'
+    );
 
     const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
     // Derive the required parser set from the real entrypoint imports and their

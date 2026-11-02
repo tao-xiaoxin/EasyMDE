@@ -190,6 +190,7 @@ See `SECURITY.md`, `UPGRADING.md`, and `THIRD-PARTY-NOTICES.md` in the release p
 * Keep a restored nonempty paragraph start directly typeable after Undo or Redo, preserving the exact source gap and neighboring blocks.
 * Keep long Preview unlock geometry strict across bounded work batches: a real zero-height structural box with a client rect remains a valid presentation, while stale epochs, transforms, incomplete capture, and unmeasured flow remain unavailable rather than being guessed.
 * Defer one immersive Preview exit through its pending formal transfer: the accepted completion then uses the guarded source path, newer mode choices supersede the exit, and teardown adds no document or history transaction or abandoned Preview request.
+* Keep characterwise Backspace through a document's emptied terminal block exact: the emptied heading is rewritten against its own source row instead of an identical marker run earlier in the document, a native join that cannot be placed in the source is left to the structural owner instead of dropping a mounted block, and the emptied block's marker row goes with it - so the source and the surface stay one pairing and the caret keeps typing.
 
 = 0.1.9 =
 

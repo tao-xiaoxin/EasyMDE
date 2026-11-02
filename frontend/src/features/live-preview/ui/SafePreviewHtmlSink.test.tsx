@@ -4,7 +4,7 @@ import type { ErrorInfo, ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SafePreviewHtml } from '../../../contracts/ports/preview-request';
-import { SafePreviewHtmlSink } from './SafePreviewHtmlSink';
+import { SafePreviewHtmlSink, type SafePreviewHtmlSinkWindowController } from './SafePreviewHtmlSink';
 
 type TestErrorBoundaryProps = Readonly<{
   children: ReactNode;
@@ -33,6 +33,33 @@ class TestErrorBoundary extends Component<
 }
 
 describe('SafePreviewHtmlSink window commits', () => {
+  it('keeps a synchronously revealed window and its selected gap across a stale render', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const controllerRef = createRef<SafePreviewHtmlSinkWindowController>();
+    const oldRow = document.createElement('p');
+    const newRow = document.createElement('p');
+    const gap = document.createElement('p');
+    gap.append(document.createElement('br'));
+    const oldCommit = { key: 1, nodes: [oldRow, gap], revision: 1 };
+    const nextCommit = { key: 2, nodes: [newRow, oldRow, gap], revision: 1 };
+    const props = { contentEditable: true, html: '' as SafePreviewHtml,
+      htmlRevision: 1, surfaceRef, windowControllerRef: controllerRef };
+    const view = render(<SafePreviewHtmlSink {...props} windowedCommit={oldCommit} />);
+    const surface = surfaceRef.current;
+    if (!surface || !controllerRef.current) throw new Error('test-window-controller-missing');
+    surface.tabIndex = 0;
+    surface.focus();
+    window.getSelection()?.collapse(gap, 0);
+    expect(controllerRef.current.commit(oldCommit, nextCommit)).toBe(true);
+    expect(Array.from(surface.childNodes)).toEqual(nextCommit.nodes);
+    expect(window.getSelection()?.anchorNode).toBe(gap);
+    expect(controllerRef.current.commit(oldCommit, nextCommit)).toBe(false);
+    view.rerender(<SafePreviewHtmlSink {...props} windowedCommit={oldCommit} ariaBusy />);
+    expect(Array.from(surface.childNodes)).toEqual(nextCommit.nodes);
+    view.rerender(<SafePreviewHtmlSink {...props} windowedCommit={nextCommit} />);
+    expect(Array.from(surface.childNodes)).toEqual(nextCommit.nodes);
+    expect(window.getSelection()?.anchorNode).toBe(gap);
+  });
   it('keeps adopted protected references when the same staged commit reconciles again', () => {
     const surfaceRef = createRef<HTMLElement>();
     const initialHtml = '<p>Before</p><div class="easymde-toc"><ul>'

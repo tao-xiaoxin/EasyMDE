@@ -364,7 +364,7 @@ export function createEditorContextMenuActionCoordinator(input: Readonly<{
       return true;
     };
     const beginOperation = (): EditorContextMenuActionOperation =>
-      operations.begin(captured, () => isCurrent(captured));
+      operations.begin(captured, () => isCurrent(captured), actionContext?.operation);
     const currentBlockIndex = (): EditorMarkdownBlockIndex | null | undefined =>
       document.getBlockIndex(captured.surface);
     const session: EditorContextMenuActionSession = {

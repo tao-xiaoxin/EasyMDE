@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { markdownLanguage } from "@codemirror/lang-markdown";
 
-import { createEditorMarkdownBlockIndex } from "./editor-markdown-block-index";
+import { createEditorMarkdownBlockIndex as createProfiledMarkdownBlockIndex } from "./editor-markdown-block-index";
 import {
 	type EditorSourceLinkCandidate,
 	type EditorSourceLinkResolution,
@@ -556,3 +556,7 @@ describe("findEditorSourceLink", () => {
 		},
 	);
 });
+
+function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {
+  return createProfiledMarkdownBlockIndex(source, options);
+}

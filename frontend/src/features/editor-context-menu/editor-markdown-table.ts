@@ -469,7 +469,7 @@ export function prepareMarkdownTable(
 		}
 		return preparedMarkdownTable(value, position, blockIndex);
 	}
-	return preparedMarkdownTable(value, position, createEditorMarkdownBlockIndex(value));
+	return preparedMarkdownTable(value, position, createEditorMarkdownBlockIndex(value, { referenceLabelCaseFoldProfile: "unsupported" }));
 }
 
 /**

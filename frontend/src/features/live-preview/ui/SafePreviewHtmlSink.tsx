@@ -35,6 +35,10 @@ export type SafePreviewHtmlSinkWindowCommit = Readonly<{
   selectionHandoff?: SafePreviewHtmlSinkSelectionHandoff;
 }>;
 
+export type SafePreviewHtmlSinkWindowController = Readonly<{
+  commit: (previous: SafePreviewHtmlSinkWindowCommit, next: SafePreviewHtmlSinkWindowCommit) => boolean;
+}>;
+
 export type SafePreviewHtmlSinkMaterializeCommit = Readonly<{
   key: number;
   nodes: ReadonlyArray<Node>;
@@ -75,6 +79,7 @@ type SafePreviewHtmlSinkProps = Readonly<{
   ) => void;
   onKeyDown?: KeyboardEventHandler<HTMLElement>;
   onPaste?: ClipboardEventHandler<HTMLElement>;
+  beforeStagedCommit?: (revision: number, hasInstalledHtml: boolean) => boolean;
   onStagedCommit?: (revision: number) => void;
   phase?: string;
   materializeCommit?: SafePreviewHtmlSinkMaterializeCommit | null;
@@ -84,6 +89,7 @@ type SafePreviewHtmlSinkProps = Readonly<{
   spellCheck?: boolean;
   stagedCommit?: SafePreviewHtmlSinkCommit | null;
   windowedCommit?: SafePreviewHtmlSinkWindowCommit | null;
+  windowControllerRef?: Ref<SafePreviewHtmlSinkWindowController>;
   statusClassName?: string;
   statusMessage?: string;
   statusRole?: string;
@@ -503,6 +509,7 @@ export function SafePreviewHtmlSink({
   onMaterializeFailure,
   onKeyDown,
   onPaste,
+  beforeStagedCommit,
   onStagedCommit,
   phase,
   refreshing = false,
@@ -510,6 +517,7 @@ export function SafePreviewHtmlSink({
   spellCheck,
   stagedCommit,
   windowedCommit,
+  windowControllerRef,
   statusClassName,
   statusMessage,
   statusRole,
@@ -526,6 +534,24 @@ export function SafePreviewHtmlSink({
     if (!htmlSurfaceRef.current) throw new Error('preview-surface-missing');
     return htmlSurfaceRef.current;
   }, []);
+  useImperativeHandle(windowControllerRef, () => ({
+    commit: (previous, next) => {
+      const surface = htmlSurfaceRef.current;
+      const applied = appliedSurfaceStateRef.current;
+      if (!surface || compositionGate?.isHeld() || !applied
+        || applied.revision !== htmlRevision || applied.html !== html
+        || applied.windowedCommitKey !== previous.key
+        || previous.revision !== htmlRevision || next.revision !== htmlRevision
+        || next.key <= previous.key || !hasExactChildren(surface, previous.nodes)) return false;
+      startWindowChildrenCommit(surface, next.nodes, () => {
+        appliedSurfaceStateRef.current = {
+          html, materializeCommitKey: null, revision: htmlRevision,
+          statusClassName, statusMessage, statusRole, windowedCommitKey: next.key
+        };
+      }, next.selectionHandoff);
+      return true;
+    }
+  }));
   useLayoutEffect(() => {
     const surface = htmlSurfaceRef.current;
     if (!surface) throw new Error('preview-surface-missing');
@@ -547,12 +573,18 @@ export function SafePreviewHtmlSink({
     const commit = stagedCommit?.revision === htmlRevision
       ? stagedCommit
       : null;
+    if ((commit || windowCommit) && beforeStagedCommit
+      && !beforeStagedCommit(htmlRevision, Boolean(appliedSurfaceState && appliedSurfaceState.html !== null))) {
+      // Keep the current surface until a newer, installable frame arrives.
+      deferredByHoldRef.current = true;
+      return undefined;
+    }
     // Pending HTML metadata may describe a candidate that never reached this
     // sink before supersession. Only an installable DOM commit can replace an
     // existing HTML presentation while loading or enhancing; raw metadata is
     // not permission to replay over its enhanced nodes or native draft.
     if (!windowCommit && !commit && !activeMaterializeCommit
-      && (phase === "loading" || phase === "enhancing")
+      && (phase === "loading" || phase === "enhancing" || phase === "retained")
       && html !== null && appliedSurfaceState
       && appliedSurfaceState.html !== null) return undefined;
     if (windowCommit || commit || activeMaterializeCommit) {
@@ -639,6 +671,9 @@ export function SafePreviewHtmlSink({
     }
 
     if (windowCommit) {
+      if (appliedSurfaceState && appliedSurfaceState.revision === htmlRevision
+        && appliedSurfaceState.html === html && appliedSurfaceState.windowedCommitKey !== null
+        && appliedSurfaceState.windowedCommitKey > windowCommit.key) return undefined;
       if (
         appliedSurfaceState
         && appliedSurfaceState.revision === htmlRevision
@@ -762,6 +797,7 @@ export function SafePreviewHtmlSink({
     materializeCommit,
     onMaterializeComplete,
     onMaterializeFailure,
+    beforeStagedCommit,
     onStagedCommit,
     stagedCommit,
     statusClassName,

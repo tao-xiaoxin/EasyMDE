@@ -9,6 +9,7 @@ import {
 	EDITOR_BLOCK_INDEX_PACKED_LINK_FIELDS,
 	EDITOR_BLOCK_INDEX_PACKED_MATH_FIELDS,
 	EDITOR_MARKDOWN_BLOCK_KIND_ORDER,
+	isReferenceLabelCaseFoldProfile,
 	type EditorBlockIndexWorkerRequest,
 	type EditorMarkdownBlockIndexBuildInput,
 	type EditorMarkdownBlockIndexData,
@@ -23,6 +24,7 @@ import {
 	type EditorMarkdownLinkCandidateKind,
 	type EditorMarkdownMathSpan,
 	type EditorMarkdownSourceBlock,
+	type ReferenceLabelCaseFoldProfile,
 	MAX_EDITOR_BLOCK_INDEX_BLOCKS,
 	MAX_EDITOR_BLOCK_INDEX_IMAGES,
 	MAX_EDITOR_BLOCK_INDEX_LINKS,
@@ -71,7 +73,9 @@ const VALIDATION_SLICE_MS = 4;
 const VALIDATION_FIRST_BATCH_SIZE = 8;
 const FAILURE_CODES = new Set<EditorMarkdownBlockIndexFailureCode>([
 	"editor-block-index-build-failed",
+	"editor-block-index-reference-profile-unavailable",
 	"editor-block-index-source-too-large",
+	"editor-block-index-worker-profile-invalid",
 	"editor-block-index-worker-request-invalid",
 ]);
 
@@ -192,6 +196,7 @@ async function lineCount(
 function validateBuildInput(
 	input: EditorMarkdownBlockIndexBuildInput,
 	signal: AbortSignal,
+	profile: ReferenceLabelCaseFoldProfile,
 ): EditorBlockIndexWorkerRequest | Promise<EditorBlockIndexWorkerRequest> {
 	if (
 		!record(input) ||
@@ -210,7 +215,7 @@ function validateBuildInput(
 		if (bytes > MAX_EDITOR_BLOCK_INDEX_SOURCE_BYTES) {
 			throw failure("editor-block-index-source-too-large");
 		}
-		return { ...input, type: "build" };
+		return { ...input, type: "build", referenceLabelCaseFoldProfile: profile };
 	};
 	const bytes = sourceByteLength(input.source, signal);
 	return "number" === typeof bytes
@@ -696,6 +701,7 @@ function defaultRuntime(): BrowserEditorBlockIndexWorkerRuntime | null {
 
 export type CreateBrowserEditorBlockIndexWorkerOptions = Readonly<{
 	assetBaseUrl: string;
+	referenceLabelCaseFoldProfile: ReferenceLabelCaseFoldProfile;
 	location?: Readonly<{ href: string; origin: string }>;
 	timeoutMs?: number;
 	Worker?: EditorBlockIndexWorkerConstructor;
@@ -705,6 +711,10 @@ export type CreateBrowserEditorBlockIndexWorkerOptions = Readonly<{
 export function createBrowserEditorBlockIndexWorker(
 	options: CreateBrowserEditorBlockIndexWorkerOptions,
 ): EditorMarkdownBlockIndexPort {
+	if (!isReferenceLabelCaseFoldProfile(options.referenceLabelCaseFoldProfile)) {
+		throw failure("editor-block-index-worker-profile-invalid");
+	}
+	const profile = options.referenceLabelCaseFoldProfile;
 	const runtime =
 		options.Worker && options.location
 			? { Worker: options.Worker, location: options.location }
@@ -768,7 +778,7 @@ export function createBrowserEditorBlockIndexWorker(
 			| EditorBlockIndexWorkerRequest
 			| Promise<EditorBlockIndexWorkerRequest>;
 		try {
-			requestInput = validateBuildInput(input, signal);
+			requestInput = validateBuildInput(input, signal, profile);
 		} catch (error) {
 			return Promise.reject(
 				error instanceof Error

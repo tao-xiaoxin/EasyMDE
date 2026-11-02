@@ -3,22 +3,31 @@ import {
   fireEvent,
   render as testingLibraryRender
 } from '@testing-library/react';
-import { createElement } from '@wordpress/element';
+import {
+  createElement,
+  createRef,
+  useCallback,
+  useState
+} from '@wordpress/element';
 import { describe, expect, it, vi, type Mock } from 'vitest';
 import { ChangeSet } from '@codemirror/state';
 
 import type { EditorClipboardPort } from '../../../contracts/ports/editor-clipboard-port';
-import type { PreviewEditMap } from '../../../contracts/ports/preview-request';
+import type { PreviewEditMap, SafePreviewHtml } from '../../../contracts/ports/preview-request';
 import {
   createCodeMirrorDocumentSession,
+  localTextChange,
   type CodeMirrorDocumentSession,
-  type DocumentTextChange
+  type DocumentTextChange,
+  type DocumentTextChangeRange
 } from '../../document-source/adapters/code-mirror-document-session';
 import { cutEditorSelection } from '../../editor-context-menu/editor-context-menu-clipboard';
 import type { EditorContextSnapshot } from '../../editor-context-menu/editor-context-menu-rules';
 import { editMarkdownTable } from '../../editor-context-menu/editor-markdown-table-mutation';
+import * as referencePreparation from '../../editor-context-menu/editor-markdown-link-preparation';
 import type { EditorDocumentSession } from '../../document-source/editor-document-session';
 import type { PreviewSurfaceStatus } from '../../live-preview/ui/PreviewSurfaceOwner';
+import { SafePreviewHtmlSink } from '../../live-preview/ui/SafePreviewHtmlSink';
 import * as visualMarkdown from '../visual-markdown';
 import {
   captureVisualThematicBreakSelection,
@@ -26,10 +35,84 @@ import {
   visualCodeBodyIntervalAtOrdinal
 } from '../visual-markdown';
 import {
+  acceptedDecodedBlockSelection,
+  applyTerminalTextRunWitness,
+  fullComposeDomCorrespondence,
+  fullSelectAcceptedDomCorrespondence,
   fullTransportedExtent,
-  ImmersiveVisualEditor,
-  type ImmersiveVisualEditorRuntime
+  ImmersiveVisualEditor as ProductionImmersiveVisualEditor,
+  visualEmptyStructuralInputIntent,
+  type ImmersiveVisualEditorProps,
+  type ImmersiveVisualEditorRuntime,
+  type TerminalTextRunIdentity,
+  type TerminalTextRunWitness
 } from './ImmersiveVisualEditor';
+
+const testRetainCompositionSurface = () => ({ release: () => undefined });
+function ImmersiveVisualEditor(props: Omit<ImmersiveVisualEditorProps, 'retainCompositionSurface'> &
+  Partial<Pick<ImmersiveVisualEditorProps, 'retainCompositionSurface'>>) {
+  return <ProductionImmersiveVisualEditor {...props}
+    retainCompositionSurface={props.retainCompositionSurface ?? testRetainCompositionSurface} />;
+}
+
+/**
+ * Every document double must answer `applyTextChange` the way the port
+ * requires: the range that describes the write, or `null` when the value did
+ * not change. The doubles in this file predate that return value, so this one
+ * wrapper makes all of them faithful instead of every fake restating it: the
+ * write is observed through `getValue()`, and a double that returned no range
+ * although the value changed is described with the session's own minimal-diff
+ * owner. The mock itself is kept, so the same call assertions still observe
+ * the same calls.
+ *
+ * A spy over a REAL session is not a double and is left alone: its call-through
+ * to the adapter is what applies the write, and that call-through cannot be
+ * reached as a mock implementation, so replacing one would drop the write.
+ * Real sessions are recognized by the adapter's own surface, which no fake
+ * here restates.
+ */
+const faithfulTextChangeDoubles = new WeakSet<object>();
+
+const realSessionDocumentMethods = [
+  'prepareContextMenuPointer',
+  'revealPosition',
+  'syncFromSubmissionField'
+] as const;
+
+function isRealDocumentSession(document: object): boolean {
+  return realSessionDocumentMethods.every(
+    (name) => 'function' === typeof (document as Record<string, unknown>)[name]
+  );
+}
+
+function enforceTextChangeRangeContract(
+  document: Readonly<{ applyTextChange?: unknown; getValue?: unknown }>
+): void {
+  const apply = document.applyTextChange;
+  const getValue = document.getValue;
+  if ('function' !== typeof apply || 'function' !== typeof getValue) return;
+  const mock = apply as Mock<
+    (change: DocumentTextChange) => DocumentTextChangeRange | null | undefined
+  >;
+  if ('function' !== typeof mock.mockImplementation
+    || faithfulTextChangeDoubles.has(mock)) return;
+  const original = mock.getMockImplementation?.();
+  if ('function' !== typeof original && isRealDocumentSession(document)) return;
+  mock.mockImplementation((change: DocumentTextChange) => {
+    const before = getValue.call(document) as string;
+    const result = 'function' === typeof original
+      ? original.call(document, change)
+      : undefined;
+    if (undefined !== result && null !== result) return result;
+    const after = getValue.call(document) as string;
+    // A double whose own value follows the write is described exactly. One
+    // that swallows the write still has to describe the write the caller
+    // committed, which is the range the session would have returned for it.
+    return localTextChange(before, after)
+      ?? localTextChange(before, change.value);
+  });
+  faithfulTextChangeDoubles.add(mock);
+}
 
 function render(
   ...args: Parameters<typeof testingLibraryRender>
@@ -39,7 +122,9 @@ function render(
     ? ui as { props?: { documentSession?: { document?: object } } }
     : null;
   const document = element?.props?.documentSession?.document as {
+    applyTextChange?: unknown;
     getHistoryState?: unknown;
+    getValue?: unknown;
     redo?: unknown;
     undo?: unknown;
   } | undefined;
@@ -52,6 +137,7 @@ function render(
       value: () => ({ redoDepth: 0, undoDepth: 0 })
     });
   }
+  if (document) enforceTextChangeRangeContract(document);
   return testingLibraryRender(ui, options);
 }
 
@@ -383,10 +469,10 @@ function createVisualHistoryRebuildFixture() {
     requestPreview,
     surface
   };
-  const view = render(<ImmersiveVisualEditor {...props} />);
+  const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
   const rerender = (previewStatus?: PreviewSurfaceStatus): void => {
     view.rerender(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         {...props}
         previewSnapshot={previewSnapshot}
         previewStatus={previewStatus ?? 'ready'}
@@ -499,14 +585,18 @@ async function performVisualHistoryCut(
 }
 
 async function visualHistoryCutCodeBlock(
-  fixture: ReturnType<typeof createVisualHistoryRebuildFixture>
+  fixture: ReturnType<typeof createVisualHistoryRebuildFixture>,
+  caret = 2
 ): Promise<Readonly<{ clipboardText: string; value: string }>> {
   const code = fixture.surface.querySelector('pre > code');
   const codeText = code?.firstChild;
   if (!(code instanceof HTMLElement) || !(codeText instanceof Text)) {
     throw new Error('visual-history-rebuild-code-missing');
   }
-  placeCaretInText(codeText, 2);
+  placeCaretInText(codeText, caret);
+  expect(fixture.runtime().prepareContextMenuDemand()).toBe(true);
+  const lease = fixture.runtime().captureContextMenuTarget(code);
+  if (!lease) throw new Error('visual-history-rebuild-code-lease-missing');
   expect(
     fixture.runtime().prepareContextMenuSelection?.(code, { x: 12, y: 12 })
   ).toBe(true);
@@ -517,7 +607,11 @@ async function visualHistoryCutCodeBlock(
     end: VISUAL_HISTORY_REBUILD_CODE_BLOCK_END,
     start: VISUAL_HISTORY_REBUILD_CODE_BLOCK_START
   });
-  return performVisualHistoryCut(fixture, prepared);
+  try {
+    return await performVisualHistoryCut(fixture, prepared);
+  } finally {
+    lease.release();
+  }
 }
 
 async function visualHistoryCutParagraph(
@@ -834,7 +928,7 @@ function createFullHistoryRemovalFixture(variant: FullHistoryRemovalVariant) {
     requestPreview,
     surface
   };
-  const view = render(<ImmersiveVisualEditor {...props} />);
+  const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
   const acceptPreview = (document: FullHistoryRemovalDocument): void => {
     const acceptedSignature = requestPreview.mock.results.at(-1)?.value;
     if ('string' !== typeof acceptedSignature) {
@@ -851,7 +945,7 @@ function createFullHistoryRemovalFixture(variant: FullHistoryRemovalVariant) {
       signature: acceptedSignature
     };
     view.rerender(
-      <ImmersiveVisualEditor {...props} previewSnapshot={previewSnapshot} />
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} previewSnapshot={previewSnapshot} />
     );
   };
   return {
@@ -898,7 +992,7 @@ describe('ImmersiveVisualEditor certified break caret', () => {
     const initial = '```js\nalpha\n```\n\n---';
     const removed = '\n\n---';
     const surface = document.createElement('article');
-    surface.contentEditable = 'true';
+    surface.setAttribute('contenteditable', 'true');
     surface.tabIndex = 0;
     surface.innerHTML =
       '<pre data-easymde-visual-block-id="b0"><code class="language-js">alpha\n</code></pre>'
@@ -955,7 +1049,7 @@ describe('ImmersiveVisualEditor certified break caret', () => {
       requestPreview,
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     surface.focus();
     try {
       const code = surface.querySelector('pre > code');
@@ -989,7 +1083,7 @@ describe('ImmersiveVisualEditor certified break caret', () => {
       surface.innerHTML =
         '\n<hr data-easymde-visual-block-id="b1">';
       view.rerender(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           {...props}
           previewSnapshot={{
             editMap: {
@@ -1097,7 +1191,7 @@ describe('ImmersiveVisualEditor certified break caret', () => {
       requestPreview,
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     surface.focus();
     try {
       const code = surface.querySelector('pre > code');
@@ -1128,7 +1222,7 @@ describe('ImmersiveVisualEditor certified break caret', () => {
       }
       surface.innerHTML = '\n<hr data-easymde-visual-block-id="b1">';
       view.rerender(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           {...props}
           previewSnapshot={{
             editMap: {
@@ -1298,7 +1392,7 @@ describe('ImmersiveVisualEditor certified break caret', () => {
       requestPreview,
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     surface.focus();
     try {
       const code = surface.querySelector('pre > code');
@@ -1330,7 +1424,7 @@ describe('ImmersiveVisualEditor certified break caret', () => {
       }
       surface.innerHTML = '<hr data-easymde-visual-block-id="b1">';
       view.rerender(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           {...props}
           previewSnapshot={{
             editMap: {
@@ -2556,7 +2650,7 @@ describe('ImmersiveVisualEditor', () => {
       current: null
     };
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -2624,7 +2718,7 @@ describe('ImmersiveVisualEditor', () => {
       current: null
     };
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -2696,7 +2790,7 @@ describe('ImmersiveVisualEditor', () => {
       current: null
     };
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -2769,7 +2863,7 @@ describe('ImmersiveVisualEditor', () => {
     };
     const onFailure = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -2850,7 +2944,7 @@ describe('ImmersiveVisualEditor', () => {
       current: null
     };
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -2918,7 +3012,7 @@ describe('ImmersiveVisualEditor', () => {
       current: null
     };
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -2981,7 +3075,7 @@ describe('ImmersiveVisualEditor', () => {
       current: null
     };
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={{ document: history.document } as unknown as EditorDocumentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -3048,7 +3142,7 @@ describe('ImmersiveVisualEditor', () => {
       current: null
     };
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -3112,7 +3206,7 @@ describe('ImmersiveVisualEditor', () => {
       current: null
     };
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -3184,7 +3278,7 @@ describe('ImmersiveVisualEditor', () => {
       current: null
     };
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -3255,7 +3349,7 @@ describe('ImmersiveVisualEditor', () => {
       current: null
     };
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={{ document: history.document } as unknown as EditorDocumentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -3308,7 +3402,7 @@ describe('ImmersiveVisualEditor', () => {
     };
     const onFailure = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={current.documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -3361,7 +3455,7 @@ describe('ImmersiveVisualEditor', () => {
     };
     const onFailure = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={current.documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -3412,7 +3506,7 @@ describe('ImmersiveVisualEditor', () => {
     const onFailure = vi.fn();
     current.surface.tabIndex = 0;
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={current.documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -3501,7 +3595,7 @@ describe('ImmersiveVisualEditor', () => {
     };
     const onFailure = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={current.documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -3554,7 +3648,7 @@ describe('ImmersiveVisualEditor', () => {
     };
     const onFailure = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={current.documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -3604,7 +3698,7 @@ describe('ImmersiveVisualEditor', () => {
     };
     const onFailure = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={current.documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -3722,7 +3816,7 @@ describe('ImmersiveVisualEditor', () => {
       version: 1
     };
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -3838,7 +3932,7 @@ describe('ImmersiveVisualEditor', () => {
     const onFailure = vi.fn();
     const requestPreview = vi.fn(() => 'canonical-change-next');
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -3941,7 +4035,7 @@ describe('ImmersiveVisualEditor', () => {
       runtime = nextRuntime;
     };
     const editor = (signature: string, snapshotRevision: number) =>
-      createElement(ImmersiveVisualEditor, {
+      createElement(ImmersiveVisualEditor, { referenceLabelCaseFoldProfile: 14,
         documentSession,
         imageUploadEnabled: false,
         imagePasteUploadEnabled: false,
@@ -4067,7 +4161,7 @@ describe('ImmersiveVisualEditor', () => {
         signature: string;
       }>
     ) =>
-      createElement(ImmersiveVisualEditor, {
+      createElement(ImmersiveVisualEditor, { referenceLabelCaseFoldProfile: 14,
         documentSession,
         imageUploadEnabled: false,
         imagePasteUploadEnabled: false,
@@ -4215,7 +4309,7 @@ describe('ImmersiveVisualEditor', () => {
       requestPreview,
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     const text = surface.querySelector('ul li')?.firstChild;
     if (!(text instanceof Text) || !runtime) {
       throw new Error('visual-native-preview-selection-fixture-missing');
@@ -4245,7 +4339,7 @@ describe('ImmersiveVisualEditor', () => {
 
       act(() => {
         view.rerender(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             {...props}
             previewSnapshot={{
               editMap: editMap('native-list-preview-next'),
@@ -4365,7 +4459,7 @@ describe('ImmersiveVisualEditor', () => {
       requestPreview,
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     try {
       const beforeText = surface.querySelector('p')?.firstChild;
       if (!(beforeText instanceof Text)) {
@@ -4396,7 +4490,7 @@ describe('ImmersiveVisualEditor', () => {
       surface.innerHTML = `${nextMath}<p data-easymde-visual-block-id="after">After</p>`;
       act(() => {
         view.rerender(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             {...props}
             previewSnapshot={{
               editMap: editMap('collapsed-cut-next', true),
@@ -4493,7 +4587,7 @@ describe('ImmersiveVisualEditor', () => {
       requestPreview,
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     try {
       const listText = surface.querySelector('li')?.firstChild;
       if (!(listText instanceof Text)) {
@@ -4523,7 +4617,7 @@ describe('ImmersiveVisualEditor', () => {
       ].join('');
       act(() => {
         view.rerender(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             {...props}
             previewSnapshot={{
               editMap: editMap('empty-list-next'),
@@ -4620,7 +4714,7 @@ describe('ImmersiveVisualEditor', () => {
       requestPreview,
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     try {
       const beforeText = surface.querySelector('p')?.firstChild;
       if (!(beforeText instanceof Text)) {
@@ -4660,7 +4754,7 @@ describe('ImmersiveVisualEditor', () => {
       };
       act(() => {
         view.rerender(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             {...props}
             previewSnapshot={previewSnapshot}
           />
@@ -4797,7 +4891,7 @@ describe('ImmersiveVisualEditor', () => {
       requestPreview,
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     const text = surface.querySelector('p')?.firstChild;
     if (!(text instanceof Text)) throw new Error('fenced-adopt-text-missing');
     placeCaretInText(text, nativeCaret);
@@ -4832,7 +4926,7 @@ describe('ImmersiveVisualEditor', () => {
     }
     act(() => {
       view.rerender(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           {...props}
           previewSnapshot={{
             editMap: editMap(mapSignature, true),
@@ -5092,7 +5186,7 @@ describe('ImmersiveVisualEditor', () => {
       requestPreview: vi.fn(() => 'indented-adopt'),
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     try {
       const text = surface.querySelectorAll('p')[0]?.firstChild;
       if (!(text instanceof Text)) throw new Error('indented-text-missing');
@@ -5130,7 +5224,7 @@ describe('ImmersiveVisualEditor', () => {
         });
       act(() => {
         view.rerender(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             {...props}
             previewSnapshot={{
               editMap: blocks('indented-adopt', true),
@@ -5255,7 +5349,7 @@ describe('ImmersiveVisualEditor', () => {
       requestPreview: vi.fn(() => 'crlf-adopt'),
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     try {
       const text = surface.querySelector('p')?.firstChild;
       if (!(text instanceof Text)) throw new Error('crlf-adopt-text-missing');
@@ -5283,7 +5377,7 @@ describe('ImmersiveVisualEditor', () => {
       ].join('');
       act(() => {
         view.rerender(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             {...props}
             previewSnapshot={{
               editMap: blocks('crlf-adopt', true),
@@ -5398,7 +5492,7 @@ describe('ImmersiveVisualEditor', () => {
       requestPreview: vi.fn(() => 'native-adopt'),
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     try {
       const text = surface.querySelector('p')?.firstChild;
       if (!(text instanceof Text)) throw new Error('native-adopt-text-missing');
@@ -5429,7 +5523,7 @@ describe('ImmersiveVisualEditor', () => {
       ].join('');
       act(() => {
         view.rerender(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             {...props}
             previewSnapshot={{
               editMap: blocks('native-adopt', true),
@@ -5590,7 +5684,7 @@ describe('ImmersiveVisualEditor', () => {
       requestPreview,
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     try {
       const text = surface.querySelector('p')?.firstChild;
       if (!(text instanceof Text)) throw new Error('fenced-adopt-text-missing');
@@ -5638,7 +5732,7 @@ describe('ImmersiveVisualEditor', () => {
         });
       act(() => {
         view.rerender(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             {...props}
             previewSnapshot={{
               editMap: editMap('fenced-adopt', true),
@@ -5812,7 +5906,7 @@ describe('ImmersiveVisualEditor', () => {
       requestPreview,
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     const genericMapper = vi
       .spyOn(visualMarkdown, 'visualCaretBoundaryFromSourceOffset')
       .mockImplementation(() => {
@@ -5844,7 +5938,7 @@ describe('ImmersiveVisualEditor', () => {
       ].join('');
       act(() => {
         view.rerender(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             {...props}
             previewSnapshot={{
               editMap: editMap('list-caret-next'),
@@ -5951,7 +6045,7 @@ describe('ImmersiveVisualEditor', () => {
       requestPreview: vi.fn(() => 'repeated-text-next'),
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     const genericMapper = vi
       .spyOn(visualMarkdown, 'visualCaretBoundaryFromSourceOffset')
       .mockImplementation(() => {
@@ -5992,7 +6086,7 @@ describe('ImmersiveVisualEditor', () => {
       ].join('');
       act(() => {
         view.rerender(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             {...props}
             previewSnapshot={{
               editMap: editMap('repeated-text-next'),
@@ -6105,7 +6199,7 @@ describe('ImmersiveVisualEditor', () => {
       requestPreview: vi.fn(() => 'loose-list-next'),
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     const genericMapper = vi
       .spyOn(visualMarkdown, 'visualCaretBoundaryFromSourceOffset')
       .mockImplementation(() => {
@@ -6142,7 +6236,7 @@ describe('ImmersiveVisualEditor', () => {
       ].join('');
       act(() => {
         view.rerender(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             {...props}
             previewSnapshot={{
               editMap: editMap('loose-list-next'),
@@ -6242,7 +6336,7 @@ describe('ImmersiveVisualEditor', () => {
       requestPreview: vi.fn(() => 'selection-drift-next'),
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     try {
       const text = surface.querySelector('li')?.firstChild;
       if (!(text instanceof Text)) {
@@ -6271,7 +6365,7 @@ describe('ImmersiveVisualEditor', () => {
       ].join('');
       act(() => {
         view.rerender(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             {...props}
             previewSnapshot={{
               editMap: editMap('selection-drift-next'),
@@ -6368,7 +6462,7 @@ describe('ImmersiveVisualEditor', () => {
       requestPreview: vi.fn(() => 'markup-insert-next'),
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     try {
       const text = surface.querySelector('li')?.firstChild;
       if (!(text instanceof Text)) {
@@ -6404,7 +6498,7 @@ describe('ImmersiveVisualEditor', () => {
       ].join('');
       act(() => {
         view.rerender(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             {...props}
             previewSnapshot={{
               editMap: editMap('markup-insert-next'),
@@ -6479,7 +6573,7 @@ describe('ImmersiveVisualEditor', () => {
     });
     let runtime: ImmersiveVisualEditorRuntime | null = null;
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -6541,7 +6635,7 @@ describe('ImmersiveVisualEditor', () => {
     };
     const onFailure = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={current.documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -6610,7 +6704,7 @@ describe('ImmersiveVisualEditor', () => {
     };
     const onFailure = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={current.documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -6683,7 +6777,7 @@ describe('ImmersiveVisualEditor', () => {
     };
     const onFailure = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={current.documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -6790,7 +6884,7 @@ describe('ImmersiveVisualEditor', () => {
     });
     let runtime: ImmersiveVisualEditorRuntime | null = null;
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -6884,7 +6978,7 @@ describe('ImmersiveVisualEditor', () => {
     const getGeneratedPreviewIdentity = vi.fn(() => null);
     const onReady = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -7016,12 +7110,12 @@ describe('ImmersiveVisualEditor', () => {
       surface
     };
 
-    const first = render(<ImmersiveVisualEditor {...props} />);
+    const first = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     expect(setVisualEditingActive).toHaveBeenCalledWith(true);
     first.unmount();
     expect(lifecycle).toEqual(['syntax:true', 'syntax:false', 'dispose']);
 
-    const second = render(<ImmersiveVisualEditor {...props} />);
+    const second = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     expect(setVisualEditingActive).toHaveBeenLastCalledWith(true);
     second.unmount();
     expect(lifecycle).toEqual([
@@ -7069,7 +7163,7 @@ describe('ImmersiveVisualEditor', () => {
     };
     const firstExternalChange = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         {...stableProps}
         onCanonicalDocumentChange={firstExternalChange}
       />
@@ -7080,7 +7174,7 @@ describe('ImmersiveVisualEditor', () => {
     expect(focus).toHaveBeenCalledOnce();
 
     view.rerender(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         {...stableProps}
         onCanonicalDocumentChange={vi.fn()}
       />
@@ -7092,6 +7186,116 @@ describe('ImmersiveVisualEditor', () => {
 
     view.unmount();
     expect(onDispose).toHaveBeenCalledOnce();
+  });
+
+  it('keeps one mounted runtime when onReady publishes parent state', () => {
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p data-easymde-visual-block-id="b0">Visual paragraph</p>';
+    surface.setAttribute('contenteditable', 'true');
+    document.body.append(surface);
+    const signature = 'mount-loop-accepted';
+    const documentSession = {
+      document: {
+        applyTextChange: vi.fn(),
+        getHistoryState: () => ({ redoDepth: 0, undoDepth: 0 }),
+        getRevision: () => 0,
+        getSelection: () => ({ direction: 'none', start: 0, end: 0 }),
+        getValue: () => 'Visual paragraph',
+        setVisualEditingActive: vi.fn(),
+        subscribe: () => vi.fn()
+      }
+    } as unknown as EditorDocumentSession;
+    const previewSnapshot = {
+      editMap: fullOwnerEditMap(signature, [
+        { endLine: 1, id: 'b0', startLine: 0 }
+      ]),
+      revision: 1,
+      signature
+    };
+    let readyCount = 0;
+    let disposeCount = 0;
+    let runtime: ImmersiveVisualEditorRuntime | null = null;
+    const failures: string[] = [];
+    const pageErrors: string[] = [];
+    const handlePageError = (event: ErrorEvent): void => {
+      pageErrors.push(event.message);
+    };
+    window.addEventListener('error', handlePageError);
+
+    function Harness({ tick }: Readonly<{ tick: number }>) {
+      const [readyRuntime, setReadyRuntime] =
+        useState<ImmersiveVisualEditorRuntime | null>(null);
+      const onReady = useCallback((next: ImmersiveVisualEditorRuntime) => {
+        readyCount += 1;
+        runtime = next;
+        setReadyRuntime(next);
+      }, []);
+      const onDispose = useCallback(() => {
+        disposeCount += 1;
+        runtime = null;
+        setReadyRuntime(null);
+      }, []);
+      const onFailure = useCallback((code: string) => {
+        failures.push(code);
+      }, []);
+      const noop = useCallback(() => undefined, []);
+      const requestPreview = useCallback(() => 'mount-loop-next', []);
+      return (
+        <div data-harness="" data-ready={readyRuntime ? 'true' : 'false'} data-tick={tick}>
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
+            documentSession={documentSession}
+            imageUploadEnabled={false}
+            imagePasteUploadEnabled={false}
+            onCanonicalDocumentChange={noop}
+            onDiagnostic={noop}
+            onDispose={onDispose}
+            onFailure={onFailure}
+            onMarkdownChange={noop}
+            onPendingChange={noop}
+            onReady={onReady}
+            onTransferFailure={noop}
+            pending={false}
+            previewSnapshot={previewSnapshot}
+            previewStatus='ready'
+            requestPreview={requestPreview}
+            surface={surface}
+          />
+        </div>
+      );
+    }
+
+    try {
+      const view = render(<Harness tick={0} />);
+      try {
+        const harness = view.container.querySelector('[data-harness]');
+        expect(harness?.getAttribute('data-ready')).toBe('true');
+        expect(harness?.getAttribute('data-tick')).toBe('0');
+        expect(readyCount).toBe(1);
+        expect(disposeCount).toBe(0);
+        expect(runtime).not.toBeNull();
+        expect(surface.isConnected).toBe(true);
+        expect(surface.getAttribute('contenteditable')).toBe('true');
+        expect(failures).toEqual([]);
+
+        view.rerender(<Harness tick={1} />);
+        expect(harness?.getAttribute('data-ready')).toBe('true');
+        expect(harness?.getAttribute('data-tick')).toBe('1');
+        expect(readyCount).toBe(1);
+        expect(disposeCount).toBe(0);
+        expect(runtime).not.toBeNull();
+        expect(surface.isConnected).toBe(true);
+        expect(surface.getAttribute('contenteditable')).toBe('true');
+        expect(failures).toEqual([]);
+        expect(pageErrors).toEqual([]);
+      } finally {
+        view.unmount();
+      }
+      expect(disposeCount).toBe(1);
+      expect(runtime).toBeNull();
+    } finally {
+      window.removeEventListener('error', handlePageError);
+      surface.remove();
+    }
   });
 
   it('focuses without scrolling and keeps contenteditable semantics independent of pending transfers', async () => {
@@ -7112,7 +7316,7 @@ describe('ImmersiveVisualEditor', () => {
     } as unknown as EditorDocumentSession;
     const focus = vi.spyOn(surface, 'focus');
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -7157,7 +7361,7 @@ describe('ImmersiveVisualEditor', () => {
         }
       } as unknown as EditorDocumentSession;
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={documentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -7239,7 +7443,7 @@ describe('ImmersiveVisualEditor', () => {
       }
     } as unknown as EditorDocumentSession;
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -7315,7 +7519,7 @@ describe('ImmersiveVisualEditor', () => {
     const requestPreview = vi.fn(() => 'pending-whole-document-paste');
     const onPendingChange = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={
           { document: history } as unknown as EditorDocumentSession
         }
@@ -7412,7 +7616,7 @@ describe('ImmersiveVisualEditor', () => {
         }
       } as unknown as EditorDocumentSession;
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={documentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -7473,7 +7677,7 @@ describe('ImmersiveVisualEditor', () => {
       } as unknown as EditorDocumentSession;
       const onFailure = vi.fn();
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={documentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -7541,9 +7745,14 @@ describe('ImmersiveVisualEditor', () => {
     }
   });
 
-  it.each(['~~~js', '```js'])(
-    'canonicalizes the %s fence when Enter follows rapid visual input',
-    (fence) => {
+  it.each([
+    ['~~~js', 'rapid'],
+    ['```js', 'rapid'],
+    ['~~~js', 'spaced'],
+    ['```js', 'spaced']
+  ] as const)(
+    'canonicalizes the %s fence when Enter follows %s visual input',
+    (fence, cadence) => {
       vi.useFakeTimers();
       try {
         let canonical = '';
@@ -7555,7 +7764,10 @@ describe('ImmersiveVisualEditor', () => {
         const surface = document.createElement('article');
         surface.innerHTML = '<p><br></p>';
         document.body.append(surface);
+        // The production session versions every canonical change.
+        let revision = 0;
         const applyTextChange = vi.fn((change: DocumentTextChange) => {
+          revision += 1;
           canonical = change.value;
           selection = change.selection;
         });
@@ -7563,6 +7775,7 @@ describe('ImmersiveVisualEditor', () => {
         const documentSession = {
           document: {
             applyTextChange,
+            getRevision: () => revision,
             getValue: () => canonical,
             getSelection: () => selection,
             setVisualEditingActive: vi.fn(),
@@ -7570,7 +7783,7 @@ describe('ImmersiveVisualEditor', () => {
           }
         } as unknown as EditorDocumentSession;
         const view = render(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             documentSession={documentSession}
             imageUploadEnabled={false}
             imagePasteUploadEnabled={false}
@@ -7627,6 +7840,12 @@ describe('ImmersiveVisualEditor', () => {
               inputType: 'insertText'
             })
           );
+          // Slower than the debounce: every key commits on its own.
+          if ('spaced' === cadence) {
+            act(() => {
+              vi.advanceTimersByTime(100);
+            });
+          }
         }
 
         placeAtEnd();
@@ -7724,7 +7943,7 @@ describe('ImmersiveVisualEditor', () => {
         document: { ...history.document, getRevision: () => revision }
       } as unknown as EditorDocumentSession;
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={documentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -7896,7 +8115,7 @@ describe('ImmersiveVisualEditor', () => {
         }
       } as unknown as EditorDocumentSession;
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={documentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -8118,7 +8337,7 @@ describe('ImmersiveVisualEditor', () => {
         }
       } as unknown as EditorDocumentSession;
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={documentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -8202,7 +8421,7 @@ describe('ImmersiveVisualEditor', () => {
         }
       } as unknown as EditorDocumentSession;
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={documentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -8344,7 +8563,7 @@ describe('ImmersiveVisualEditor', () => {
       const history = createHistoryDocument(markdown, true);
       const onFailure = vi.fn();
       render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={history as unknown as EditorDocumentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -8473,6 +8692,187 @@ describe('ImmersiveVisualEditor', () => {
     }
   });
 
+  it('consumes the real cross-block Backspace at the start of an accepted code body', () => {
+    vi.useFakeTimers();
+    const signature = 'cross-block-backspace-at-code-body-start';
+    const body = '#!/usr/bin/env bash and a longer tail for deletion';
+    const markdown = `lead\n\n~~~bash\n${body}\n~~~`;
+    const fixture = createFullOwnerFixture({
+      editMap: fullOwnerEditMap(signature, [
+        { id: 'b0', startLine: 0, endLine: 2 },
+        { id: 'b1', startLine: 2, endLine: 5 }
+      ]),
+      html: fullOwnerParagraphBlock('lead', 'b0')
+        + fullOwnerCodeBlock(`${body}\n`, 'b1', 'bash'),
+      markdown,
+      signature,
+      sourceCaret: 0
+    });
+    try {
+      fixture.surface.focus();
+      const paragraphText = fullOwnerTextAt(fixture.surface, 'p');
+      const code = fixture.surface.querySelector('pre > code');
+      const codeText = code?.firstChild;
+      if (!(code instanceof HTMLElement) || !(codeText instanceof Text)) {
+        throw new Error('cross-block-code-body-fixture-missing');
+      }
+      // A clean click lands the native caret at the body's absolute start, and
+      // Chromium then names the Backspace by a range whose START is a text node
+      // in the PRECEDING block and whose END is element-anchored at the body's
+      // own start. That is exactly the geometry the code-body projection cannot
+      // answer, so the press must be consumed byte-neutrally instead.
+      placeCaretInText(codeText, 0);
+      const target = document.createRange();
+      target.setStart(paragraphText, paragraphText.length);
+      target.setEnd(code, 0);
+      const before = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        target
+      );
+      // jsdom never runs the native default, so the flag is the only proof the
+      // press was stopped rather than left to mutate the surface.
+      expect(before.defaultPrevented).toBe(true);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.history.getValue()).toBe(markdown);
+      const selection = window.getSelection();
+      expect(selection?.isCollapsed).toBe(true);
+      expect(selection?.anchorNode).toBe(codeText);
+      expect(selection?.anchorOffset).toBe(0);
+      // The caret was not ejected and the accepted map was not poisoned, so the
+      // next ordinary in-body Backspace still commits as a real deletion.
+      const inBody = fullOwnerNativeDelete(
+        fixture.surface,
+        codeText,
+        0,
+        1,
+        'deleteContentBackward'
+      );
+      expect(inBody.prevented).toBe(false);
+      act(() => vi.advanceTimersByTime(80));
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.history.getValue()).toBe(`lead\n\n~~~bash\n${body.slice(1)}\n~~~`);
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('leaves a cross-block Backspace to the browser when the caret is outside the code body', () => {
+    vi.useFakeTimers();
+    const signature = 'cross-block-caret-outside-code-body';
+    const body = 'body bytes';
+    const markdown = `lead\n\n~~~bash\n${body}\n~~~`;
+    const fixture = createFullOwnerFixture({
+      editMap: fullOwnerEditMap(signature, [
+        { id: 'b0', startLine: 0, endLine: 2 },
+        { id: 'b1', startLine: 2, endLine: 5 }
+      ]),
+      html: fullOwnerParagraphBlock('lead', 'b0')
+        + fullOwnerCodeBlock(`${body}\n`, 'b1', 'bash'),
+      markdown,
+      signature,
+      sourceCaret: 0
+    });
+    try {
+      fixture.surface.focus();
+      const paragraphText = fullOwnerTextAt(fixture.surface, 'p');
+      const pre = fixture.surface.querySelector('pre');
+      const code = fixture.surface.querySelector('pre > code');
+      if (!(pre instanceof HTMLElement) || !(code instanceof HTMLElement)) {
+        throw new Error('cross-block-caret-outside-code-body-fixture-missing');
+      }
+      const selection = window.getSelection();
+      const caret = document.createRange();
+      caret.setStart(pre, 0);
+      caret.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(caret);
+      const target = document.createRange();
+      target.setStart(paragraphText, paragraphText.length);
+      target.setEnd(code, 0);
+      const before = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        target
+      );
+      act(() => vi.advanceTimersByTime(80));
+      // The caret is outside the body, so the code-body projection must not
+      // claim this target: the press stays the browser's own edit, no commit
+      // runs, and the document is untouched.
+      expect(before.defaultPrevented).toBe(false);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.history.getValue()).toBe(markdown);
+      // The element-anchored caret the user actually has is preserved: the
+      // owner neither ejects it nor relocates it into the body's text.
+      const after = window.getSelection();
+      expect(after?.isCollapsed).toBe(true);
+      expect(after?.anchorNode).toBe(pre);
+      expect(after?.anchorOffset).toBe(0);
+      // The body the target ends at keeps every byte, so nothing was claimed
+      // on its behalf either.
+      expect(code.textContent).toBe(`${body}\n`);
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('leaves a backward target that never reaches the code body to the browser', () => {
+    vi.useFakeTimers();
+    const signature = 'backward-target-outside-code-body';
+    const body = 'body bytes';
+    const markdown = `lead\n\n~~~bash\n${body}\n~~~`;
+    const fixture = createFullOwnerFixture({
+      editMap: fullOwnerEditMap(signature, [
+        { id: 'b0', startLine: 0, endLine: 2 },
+        { id: 'b1', startLine: 2, endLine: 5 }
+      ]),
+      html: fullOwnerParagraphBlock('lead', 'b0')
+        + fullOwnerCodeBlock(`${body}\n`, 'b1', 'bash'),
+      markdown,
+      signature,
+      sourceCaret: 0
+    });
+    try {
+      fixture.surface.focus();
+      const paragraphText = fullOwnerTextAt(fixture.surface, 'p');
+      const code = fixture.surface.querySelector('pre > code');
+      const codeText = code?.firstChild;
+      if (!(code instanceof HTMLElement) || !(codeText instanceof Text)) {
+        throw new Error('backward-target-outside-code-body-fixture-missing');
+      }
+      placeCaretInText(codeText, 0);
+      const target = document.createRange();
+      target.setStart(paragraphText, 0);
+      target.setEnd(paragraphText, paragraphText.length);
+      const before = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        target
+      );
+      act(() => vi.advanceTimersByTime(80));
+      // The target never touches the body, so the code-body owner must not
+      // claim it: the press stays the browser's own edit, no commit runs, and
+      // the document is untouched.
+      expect(before.defaultPrevented).toBe(false);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.history.getValue()).toBe(markdown);
+      // The in-body caret the user actually has is preserved: the owner does
+      // not eject it or rewrite it to the target's own paragraph position.
+      const after = window.getSelection();
+      expect(after?.isCollapsed).toBe(true);
+      expect(after?.anchorNode).toBe(codeText);
+      expect(after?.anchorOffset).toBe(0);
+      // The paragraph the target names keeps every byte, so the owner did not
+      // apply that out-of-body deletion on the code body's behalf.
+      expect(paragraphText.data).toBe('lead');
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it('accepts immediate text input after deleting a selected code body', () => {
     vi.useFakeTimers();
     try {
@@ -8488,7 +8888,7 @@ describe('ImmersiveVisualEditor', () => {
       const history = createHistoryDocument(markdown, true);
       const onFailure = vi.fn();
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={history as unknown as EditorDocumentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -8606,7 +9006,7 @@ describe('ImmersiveVisualEditor', () => {
         document: history.document
       } as unknown as EditorDocumentSession;
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={documentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -8714,7 +9114,7 @@ describe('ImmersiveVisualEditor', () => {
         }
       } as unknown as EditorDocumentSession;
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={documentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -8789,7 +9189,7 @@ describe('ImmersiveVisualEditor', () => {
       }
     } as unknown as EditorDocumentSession;
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={true}
         imagePasteUploadEnabled={false}
@@ -8847,7 +9247,7 @@ describe('ImmersiveVisualEditor', () => {
       runtimeHolder.current = nextRuntime;
     });
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -8908,7 +9308,7 @@ describe('ImmersiveVisualEditor', () => {
       current: ImmersiveVisualEditorRuntime | null;
     } = { current: null };
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -8998,7 +9398,7 @@ describe('ImmersiveVisualEditor', () => {
       current: ImmersiveVisualEditorRuntime | null;
     } = { current: null };
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -9076,7 +9476,7 @@ describe('ImmersiveVisualEditor', () => {
       const onFailure = vi.fn();
       const requestPreview = vi.fn(() => 'unexpected-preview');
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={history as unknown as EditorDocumentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -9197,7 +9597,7 @@ describe('ImmersiveVisualEditor', () => {
       const history = createHistoryDocument(markdown);
       const onFailure = vi.fn();
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={history as unknown as EditorDocumentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -9321,7 +9721,7 @@ describe('ImmersiveVisualEditor', () => {
         const history = createHistoryDocument(markdown);
         const onFailure = vi.fn();
         const view = render(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             documentSession={history as unknown as EditorDocumentSession}
             imageUploadEnabled={false}
             imagePasteUploadEnabled={false}
@@ -9471,7 +9871,7 @@ describe('ImmersiveVisualEditor', () => {
       const onFailure = vi.fn();
       const onDiagnostic = vi.fn();
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={history as unknown as EditorDocumentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -9571,7 +9971,7 @@ describe('ImmersiveVisualEditor', () => {
       const history = createHistoryDocument(markdown);
       const onFailure = vi.fn();
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={history as unknown as EditorDocumentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -9687,7 +10087,7 @@ describe('ImmersiveVisualEditor', () => {
     const redoCommand = vi.spyOn(history, 'redo');
     const onFailure = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={
           {
             document: history
@@ -9836,7 +10236,7 @@ describe('ImmersiveVisualEditor', () => {
     });
     const onFailure = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={
           {
             document: history
@@ -10083,7 +10483,7 @@ describe('ImmersiveVisualEditor', () => {
       requestPreview,
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
 
     try {
       expect(history.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: 1 });
@@ -10103,7 +10503,7 @@ describe('ImmersiveVisualEditor', () => {
 
       surface.innerHTML = '<p>Before</p>';
       view.rerender(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           {...props}
           previewSnapshot={{
             revision: 2,
@@ -10186,7 +10586,7 @@ describe('ImmersiveVisualEditor', () => {
       throw new Error('visual-history-ordinary-paragraph-missing');
     }
     placeCaretInText(initialText);
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
 
     const acceptPreview = (markdown: string): void => {
       const signature = requestPreview.mock.results.at(-1)?.value;
@@ -10196,7 +10596,7 @@ describe('ImmersiveVisualEditor', () => {
       surface.innerHTML = `<p>${markdown}</p>`;
       previewRevision += 1;
       view.rerender(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           {...props}
           previewSnapshot={{ revision: previewRevision, signature }}
         />
@@ -10440,7 +10840,7 @@ describe('ImmersiveVisualEditor', () => {
       throw new Error('visual-history-grouped-paragraph-missing');
     }
     placeCaretInText(text);
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
 
     try {
       const innerHTML = vi.spyOn(surface, 'innerHTML', 'get');
@@ -10538,7 +10938,7 @@ describe('ImmersiveVisualEditor', () => {
       requestPreview: vi.fn(() => 'unexpected-list-preview'),
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     const firstItem = surface.querySelector('li');
     const firstText = firstItem?.firstChild;
     if (!(firstItem instanceof HTMLLIElement) || !(firstText instanceof Text)) {
@@ -10666,7 +11066,7 @@ describe('ImmersiveVisualEditor', () => {
     const onFailure = vi.fn();
     const requestPreview = vi.fn(() => 'unexpected-paragraph-preview');
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={
           {
             document: history
@@ -10884,7 +11284,7 @@ describe('ImmersiveVisualEditor', () => {
       requestPreview: vi.fn(() => 'unexpected-underline-preview'),
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     const text = surface.querySelector('u')?.firstChild;
     if (!(text instanceof Text)) {
       throw new Error('visual-raw-underline-text-missing');
@@ -11004,7 +11404,7 @@ describe('ImmersiveVisualEditor', () => {
       requestPreview,
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
 
     try {
       const paragraphText = surface.querySelector('p')?.firstChild;
@@ -11088,7 +11488,7 @@ describe('ImmersiveVisualEditor', () => {
       surface.querySelector('span')?.append(document.createTextNode(''));
       previewRevision += 1;
       view.rerender(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           {...props}
           previewSnapshot={{
             editMap: completeEditMap('empty-code-after-undo'),
@@ -11160,7 +11560,7 @@ describe('ImmersiveVisualEditor', () => {
       requestPreview,
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
 
     try {
       const text = surface.querySelector('p')?.firstChild;
@@ -11210,7 +11610,7 @@ describe('ImmersiveVisualEditor', () => {
       expect(onCanonicalDocumentChange).toHaveBeenCalledOnce();
 
       view.rerender(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           {...props}
           previewSnapshot={{
             revision: 2,
@@ -11264,7 +11664,7 @@ describe('ImmersiveVisualEditor', () => {
         const onFailure = vi.fn();
         const requestPreview = vi.fn(() => 'unexpected-preview');
         const view = render(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             documentSession={history as unknown as EditorDocumentSession}
             imageUploadEnabled={false}
             imagePasteUploadEnabled={false}
@@ -11390,7 +11790,7 @@ describe('ImmersiveVisualEditor', () => {
       const onFailure = vi.fn();
       const requestPreview = vi.fn(() => 'unexpected-preview');
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={history as unknown as EditorDocumentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -11520,7 +11920,7 @@ describe('ImmersiveVisualEditor', () => {
         current: ImmersiveVisualEditorRuntime | null;
       } = { current: null };
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={
             {
               document: history
@@ -11668,7 +12068,7 @@ describe('ImmersiveVisualEditor', () => {
     const onFailure = vi.fn();
     const signature = 'local-code-cut-protected-preview';
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={
           {
             document: history
@@ -11815,10 +12215,8 @@ describe('ImmersiveVisualEditor', () => {
       expect(fixture.requestPreview).not.toHaveBeenCalled();
       const restored = fullOwnerTextAt(fixture.surface, 'blockquote > blockquote > p');
       expect(window.getSelection()?.toString()).toBe('inner');
-      expect(window.getSelection()?.anchorNode).toBe(restored);
-      expect(window.getSelection()?.anchorOffset).toBe(0);
-      expect(window.getSelection()?.focusNode).toBe(restored);
-      expect(window.getSelection()?.focusOffset).toBe(5);
+      if (!restored.parentElement) throw new Error('quote-restored-parent-missing');
+      fullOwnerExpectLocalSelection(restored.parentElement, 0, 5);
       expect(fixture.surface.querySelector('.easymde-math')).toBe(protectedNode);
       fullOwnerHistoryKey(fixture.surface, true);
       expect(fixture.history.getValue()).toBe(secondEmpty);
@@ -11854,7 +12252,7 @@ describe('ImmersiveVisualEditor', () => {
     const history = createHistoryDocument(emptyMarkdown);
     const onFailure = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={history as unknown as EditorDocumentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -12038,7 +12436,7 @@ describe('ImmersiveVisualEditor', () => {
     const onFailure = vi.fn();
     const signature = 'empty-quote-cancelled-code-input';
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={history as unknown as EditorDocumentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -12173,7 +12571,7 @@ describe('ImmersiveVisualEditor', () => {
     const requestPreview = vi.fn(() => 'unexpected-preview');
     const onFailure = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={history as unknown as EditorDocumentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -12356,7 +12754,7 @@ describe('ImmersiveVisualEditor', () => {
       const history = createHistoryDocument(markdown);
       const onFailure = vi.fn();
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={history as unknown as EditorDocumentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -12480,7 +12878,7 @@ describe('ImmersiveVisualEditor', () => {
     const onFailure = vi.fn();
     const signature = 'pending-code-to-empty-quote';
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={history as unknown as EditorDocumentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -12695,7 +13093,7 @@ describe('ImmersiveVisualEditor', () => {
     const onFailure = vi.fn();
     const signature = 'pending-code-to-empty-list';
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={history as unknown as EditorDocumentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -12850,7 +13248,7 @@ describe('ImmersiveVisualEditor', () => {
       current: ImmersiveVisualEditorRuntime | null;
     } = { current: null };
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={history as unknown as EditorDocumentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -12920,7 +13318,7 @@ describe('ImmersiveVisualEditor', () => {
         current: ImmersiveVisualEditorRuntime | null;
       } = { current: null };
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={history as unknown as EditorDocumentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -13015,7 +13413,7 @@ describe('ImmersiveVisualEditor', () => {
     } = { current: null };
     const onFailure = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={fixture as unknown as EditorDocumentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -13104,7 +13502,7 @@ describe('ImmersiveVisualEditor', () => {
     } = { current: null };
     const onFailure = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={fixture as unknown as EditorDocumentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -13200,7 +13598,7 @@ describe('ImmersiveVisualEditor', () => {
     } = { current: null };
     const onFailure = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={fixture as unknown as EditorDocumentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -13279,7 +13677,7 @@ describe('ImmersiveVisualEditor', () => {
     }
   });
 
-  it.each(['unchanged', 'foreign', 'unrelated', 'protected'] as const)(
+  it.each(['unchanged', 'foreign', 'unrelated', 'protected', 'selection'] as const)(
     'routes separate native history through the pending canonical owner with %s no-map DOM', (scenario) => {
     vi.useFakeTimers();
     try {
@@ -13290,7 +13688,7 @@ describe('ImmersiveVisualEditor', () => {
       const requestPreview = vi.fn(() => 'ordinary-history-target');
       const onFailure = vi.fn();
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={fixture as unknown as EditorDocumentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -13362,6 +13760,8 @@ describe('ImmersiveVisualEditor', () => {
         foreign.className = 'easymde-math';
         foreign.setAttribute('data-easymde-rendered', '1');
         surface.append(foreign);
+      } else if (scenario === 'selection') {
+        placeCaretInText(text, 0);
       }
       // A separate native/menu command, not the prevented shortcut's default action.
       const beforeHistory = new InputEvent('beforeinput', {
@@ -13379,7 +13779,9 @@ describe('ImmersiveVisualEditor', () => {
         expect(fixture.document.getHistoryState()).toEqual({ undoDepth: 0, redoDepth: 2 });
       } else {
         expect(onFailure).toHaveBeenCalledExactlyOnceWith(scenario === 'protected'
-          ? 'visual-editor-read-only-region-mutated' : 'visual-editor-canonical-change-dom-stale');
+          ? 'visual-editor-read-only-region-mutated'
+          : scenario === 'selection' ? 'visual-editor-pending-selection-stale'
+            : 'visual-editor-canonical-change-dom-stale');
         expect(fixture.document.getValue()).toBe('Alpha1');
         expect(fixture.undo).toHaveBeenCalledOnce();
         expect(requestPreview).toHaveBeenCalledOnce();
@@ -13405,7 +13807,7 @@ describe('ImmersiveVisualEditor', () => {
         current: ImmersiveVisualEditorRuntime | null;
       } = { current: null };
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={fixture as unknown as EditorDocumentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -13566,7 +13968,7 @@ describe('ImmersiveVisualEditor', () => {
       current: ImmersiveVisualEditorRuntime | null;
     } = { current: null };
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -13650,7 +14052,7 @@ describe('ImmersiveVisualEditor', () => {
       current: ImmersiveVisualEditorRuntime | null;
     } = { current: null };
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -13753,7 +14155,7 @@ describe('ImmersiveVisualEditor', () => {
       }
     } as unknown as EditorDocumentSession;
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -13817,7 +14219,7 @@ describe('ImmersiveVisualEditor', () => {
     } as unknown as EditorDocumentSession;
     let runtime: ImmersiveVisualEditorRuntime | null = null;
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -13897,7 +14299,7 @@ describe('ImmersiveVisualEditor', () => {
       current: ImmersiveVisualEditorRuntime | null;
     } = { current: null };
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -13969,7 +14371,7 @@ describe('ImmersiveVisualEditor', () => {
       current: ImmersiveVisualEditorRuntime | null;
     } = { current: null };
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -14076,7 +14478,7 @@ describe('ImmersiveVisualEditor', () => {
       current: ImmersiveVisualEditorRuntime | null;
     } = { current: null };
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -14145,7 +14547,7 @@ describe('ImmersiveVisualEditor', () => {
         current: ImmersiveVisualEditorRuntime | null;
       } = { current: null };
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={history as unknown as EditorDocumentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -14270,7 +14672,7 @@ describe('ImmersiveVisualEditor', () => {
     const history = createHistoryDocument(markdown);
     const onFailure = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={history as unknown as EditorDocumentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -14343,7 +14745,7 @@ describe('ImmersiveVisualEditor', () => {
     const history = createHistoryDocument(markdown);
     const onFailure = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={history as unknown as EditorDocumentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -14398,6 +14800,151 @@ describe('ImmersiveVisualEditor', () => {
     }
   });
 
+  it('hands the caret back into the restored accepted render after a refused deletion', () => {
+    vi.useFakeTimers();
+    const markdown = 'Alpha\n\nBeta';
+    const surface = document.createElement('article');
+    surface.contentEditable = 'true';
+    surface.innerHTML = '<p>Alpha</p><p>Beta</p>';
+    document.body.append(surface);
+    const history = createHistoryDocument(markdown);
+    // The canonical caret sits inside the second paragraph, which is where the
+    // accepted source last placed it. The session's own selection is the only
+    // authority for the position the caret has to come back to.
+    const canonicalSelection = {
+      direction: 'none' as const,
+      end: 9,
+      start: 9
+    };
+    const documentSession = {
+      document: {
+        ...history.document,
+        getSelection: () => canonicalSelection
+      }
+    } as unknown as EditorDocumentSession;
+    const onFailure = vi.fn();
+    const view = render(
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
+        documentSession={documentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={onFailure}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={vi.fn()}
+        onReady={vi.fn()}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{ revision: 1, signature: 'snapshot-handoff' }}
+        previewStatus='ready'
+        requestPreview={vi.fn(() => 'unexpected-preview')}
+        surface={surface}
+      />
+    );
+    try {
+      surface.focus();
+      const [alphaRow, betaRow] = Array.from(surface.children);
+      const alphaText = alphaRow?.firstChild;
+      const betaText = betaRow?.firstChild;
+      if (
+        !(alphaText instanceof Text)
+        || !(betaText instanceof Text)
+        || !betaRow
+      ) {
+        throw new Error('handoff-merge-text-missing');
+      }
+      // The unconsumed native structural merge: both rows become one paragraph
+      // and the accepted two-row render no longer describes this window.
+      alphaText.appendData(betaText.data);
+      betaRow.remove();
+      expect(surface.children.length).toBe(1);
+      placeCaretInText(alphaText, alphaText.data.length);
+      const refused = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'deleteContentBackward'
+      });
+      Object.defineProperty(refused, 'getTargetRanges', {
+        value: () => [
+          {
+            endContainer: alphaText,
+            endOffset: 9,
+            startContainer: alphaText,
+            startOffset: 8
+          }
+        ]
+      });
+      surface.dispatchEvent(refused);
+      // No intent describes this window, so the guard refuses the key and
+      // restores the accepted snapshot over the caret's own node.
+      expect(refused.defaultPrevented).toBe(true);
+      expect(onFailure).toHaveBeenCalledWith('visual-editor-selection-map-failed');
+      expect(history.document.getValue()).toBe(markdown);
+      // The accepted render really was restored, so the nodes below are new
+      // and the caret had to be handed back across the replacement.
+      expect(surface.children.length).toBe(2);
+
+      // The restore replaced every child. Without a handoff the browser
+      // collapses the selection onto the ARTICLE host at offset 0, so the
+      // caret has to be back inside the restored row at the canonical
+      // position inside the second paragraph.
+      const restoredText = surface.children[1]?.firstChild;
+      if (!(restoredText instanceof Text)) {
+        throw new Error('handoff-restored-text-missing');
+      }
+      expect(restoredText).not.toBe(betaText);
+      expect(serializeVisualMarkdown(surface)).toBe(markdown);
+      expect(window.getSelection()?.anchorNode).toBe(restoredText);
+      expect(window.getSelection()?.focusNode).toBe(restoredText);
+      expect(window.getSelection()?.anchorOffset).toBe(2);
+      expect(window.getSelection()?.isCollapsed).toBe(true);
+
+      // And the next Backspace is a live key again: the browser names the
+      // deletion by the caret it holds, so the target range is derived from
+      // the handed-back selection exactly as the native default would be.
+      const nextCaret = window.getSelection();
+      const nextNode = nextCaret?.anchorNode;
+      const nextOffset = nextCaret?.anchorOffset ?? 0;
+      if (!nextNode) throw new Error('handoff-next-caret-missing');
+      const next = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'deleteContentBackward'
+      });
+      Object.defineProperty(next, 'getTargetRanges', {
+        value: () => [
+          {
+            endContainer: nextNode,
+            endOffset: nextOffset,
+            startContainer: nextNode,
+            startOffset: Math.max(0, nextOffset - 1)
+          }
+        ]
+      });
+      surface.dispatchEvent(next);
+      expect(next.defaultPrevented).toBe(false);
+      deleteTextRange(restoredText, 1, 2);
+      placeCaretInText(restoredText, 1);
+      surface.dispatchEvent(
+        new InputEvent('input', {
+          bubbles: true,
+          inputType: 'deleteContentBackward'
+        })
+      );
+      act(() => vi.advanceTimersByTime(80));
+      expect(history.document.getValue()).toBe('Alpha\n\nBta');
+      expect(onFailure.mock.calls).toEqual([
+        ['visual-editor-selection-map-failed']
+      ]);
+    } finally {
+      view.unmount();
+      surface.remove();
+      vi.useRealTimers();
+    }
+  });
+
   function renderNativeInputSurface(
     markdown: string,
     html: string,
@@ -14409,7 +14956,7 @@ describe('ImmersiveVisualEditor', () => {
     document.body.append(surface);
     const history = createHistoryDocument(markdown);
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={history as unknown as EditorDocumentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -14699,7 +15246,7 @@ describe('ImmersiveVisualEditor', () => {
       requestPreview,
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     const before = surface.querySelector('p')?.firstChild;
     if (!(before instanceof Text)) {
       throw new Error('accepted-paste-text-missing');
@@ -14723,7 +15270,7 @@ describe('ImmersiveVisualEditor', () => {
     surface.innerHTML = acceptedHtml;
     act(() => {
       view.rerender(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           {...props}
           previewSnapshot={{ revision: 2, signature }}
         />
@@ -15563,7 +16110,7 @@ describe('ImmersiveVisualEditor', () => {
         requestPreview,
         surface
       };
-      const view = render(<ImmersiveVisualEditor {...editorProps} />);
+      const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...editorProps} />);
       try {
       const bodies = Array.from(surface.querySelectorAll('p'));
       const paragraphText = bodies[0]?.firstChild;
@@ -15586,7 +16133,7 @@ describe('ImmersiveVisualEditor', () => {
       tailText.insertData(tailText.length, '!');
       act(() => {
         view.rerender(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             {...editorProps}
             previewSnapshot={{ revision: 3, signature: 'accepted' }}
           />
@@ -15956,7 +16503,7 @@ describe('ImmersiveVisualEditor', () => {
         const onFailure = vi.fn();
         const requestPreview = vi.fn(() => 'unexpected-preview');
         const view = render(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             documentSession={documentSession}
             imageUploadEnabled={false}
             imagePasteUploadEnabled={false}
@@ -16065,12 +16612,12 @@ describe('ImmersiveVisualEditor', () => {
       const markdown = '~~~json\n{\n\n~~~';
       const signature = 'pending-code-spaces';
       const surface = document.createElement('article');
-      surface.innerHTML = '<pre><code>{\n\n</code></pre>';
+      surface.innerHTML = '<pre data-easymde-visual-block-id="b0"><code>{\n\n</code></pre>';
       document.body.append(surface);
       const history = createHistoryDocument(markdown, true);
       const onFailure = vi.fn();
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={history as unknown as EditorDocumentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -16094,13 +16641,18 @@ describe('ImmersiveVisualEditor', () => {
         />
       );
       const code = surface.querySelector('pre > code');
-      const text = code?.firstChild;
+      let text = code?.firstChild;
       if (!(code instanceof HTMLElement) || !(text instanceof Text)) {
         throw new Error('visual-pending-code-spaces-fixture-missing');
       }
       placeCaretInText(text, 2);
 
-      const dispatchSpace = (): InputEvent => {
+      const intervalMap = vi.spyOn(visualMarkdown, 'visualCodeBodyIntervalMap');
+      const intervalAtOrdinal = vi.spyOn(visualMarkdown, 'visualCodeBodyIntervalAtOrdinal');
+      const expansion = vi.spyOn(visualMarkdown, 'expandVisualCodeFenceForBody');
+      const referenceQuery = vi.spyOn(referencePreparation, 'markdownReferenceContextQuery');
+      const dispatchSpace = (): void => {
+        if (!(text instanceof Text)) throw new Error('visual-pending-code-spaces-text-missing');
         const beforeInput = new InputEvent('beforeinput', {
           bubbles: true,
           cancelable: true,
@@ -16118,16 +16670,71 @@ describe('ImmersiveVisualEditor', () => {
           inputType: 'insertText'
         });
         surface.dispatchEvent(input);
-        return input;
+      };
+      const assertGroup = (source: string, count: number): unknown => {
+        const indices = intervalMap.mock.calls.flatMap(([value], index) => value === source ? [index] : []);
+        expect(indices).toHaveLength(1);
+        expect(intervalAtOrdinal.mock.calls.filter(([value]) => value === source)).toHaveLength(0);
+        const interval = intervalMap.mock.results[indices[0] as number]?.value.get(0);
+        expect(interval).toBeDefined();
+        const calls = expansion.mock.calls.filter(([value]) => value === source);
+        expect(calls).toHaveLength(count);
+        for (const call of calls) {
+          expect(call[3]).toMatchObject({ sourceMarkdown: source, codeOrdinal: 0 });
+          expect(call[3]?.interval).toBe(interval);
+        }
+        return interval;
       };
 
-      dispatchSpace();
-      dispatchSpace();
-      act(() => vi.advanceTimersByTime(80));
-
-      expect(history.document.getValue()).toBe('~~~json\n{\n  \n~~~');
-      expect(text.data).toBe('{\n  \n');
-      expect(onFailure).not.toHaveBeenCalled();
+      try {
+        dispatchSpace();
+        dispatchSpace();
+        act(() => vi.advanceTimersByTime(80));
+        const firstInterval = assertGroup(markdown, 3);
+        const changedSource = '~~~json\n{\n  \n~~~';
+        expect(history.document.getValue()).toBe(changedSource);
+        expect(text.data).toBe('{\n  \n');
+        intervalMap.mockClear();
+        intervalAtOrdinal.mockClear();
+        expansion.mockClear();
+        dispatchSpace();
+        act(() => vi.advanceTimersByTime(80));
+        expect(assertGroup(changedSource, 2)).not.toBe(firstInterval);
+        expect(history.document.getValue()).toBe('~~~json\n{\n   \n~~~');
+        expect(text.data).toBe('{\n   \n');
+        expect(window.getSelection()?.anchorNode).toBe(text);
+        expect(window.getSelection()?.anchorOffset).toBe(5);
+        expect(onFailure).not.toHaveBeenCalled();
+        const undo = new KeyboardEvent('keydown', {
+          bubbles: true,
+          cancelable: true,
+          ctrlKey: true,
+          key: 'z'
+        });
+        surface.dispatchEvent(undo);
+        expect(undo.defaultPrevented).toBe(true);
+        expect(history.document.getValue()).toBe(markdown);
+        text = surface.querySelector('pre > code')?.firstChild;
+        if (!(text instanceof Text)) throw new Error('visual-code-undo-text-missing');
+        placeCaretInText(text, 2);
+        intervalMap.mockClear();
+        intervalAtOrdinal.mockClear();
+        expansion.mockClear();
+        dispatchSpace();
+        act(() => vi.advanceTimersByTime(80));
+        expect(assertGroup(markdown, 2)).not.toBe(firstInterval);
+        expect(history.document.getValue()).toBe('~~~json\n{\n \n~~~');
+        expect(text.data).toBe('{\n \n');
+        expect(window.getSelection()?.anchorNode).toBe(text);
+        expect(window.getSelection()?.anchorOffset).toBe(3);
+        expect(onFailure).not.toHaveBeenCalled();
+        expect(referenceQuery).not.toHaveBeenCalled();
+      } finally {
+        intervalMap.mockRestore();
+        intervalAtOrdinal.mockRestore();
+        expansion.mockRestore();
+        referenceQuery.mockRestore();
+      }
       view.unmount();
     } finally {
       vi.useRealTimers();
@@ -16155,7 +16762,7 @@ describe('ImmersiveVisualEditor', () => {
         } as unknown as EditorDocumentSession;
         const onFailure = vi.fn();
         const view = render(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             documentSession={documentSession}
             imageUploadEnabled={false}
             imagePasteUploadEnabled={false}
@@ -16244,7 +16851,7 @@ describe('ImmersiveVisualEditor', () => {
         const history = createHistoryDocument(markdown);
         const onFailure = vi.fn();
         const view = render(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             documentSession={
               {
                 document: history.document
@@ -16429,7 +17036,7 @@ describe('ImmersiveVisualEditor', () => {
           requestPreview,
           surface
         };
-        const view = render(<ImmersiveVisualEditor {...props} />);
+        const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
         const sourceText = surface.querySelector('p')?.firstChild;
         if (!(sourceText instanceof Text)) {
           throw new Error('visual-bare-native-paste-source-missing');
@@ -16452,7 +17059,7 @@ describe('ImmersiveVisualEditor', () => {
           '<pre data-easymde-visual-block-id="b0"><code></code></pre>';
         act(() => {
           view.rerender(
-            <ImmersiveVisualEditor
+            <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
               {...props}
               previewSnapshot={{
                 editMap: oneFencedBlockEditMap(markdown, signature),
@@ -16539,7 +17146,7 @@ describe('ImmersiveVisualEditor', () => {
         const history = createHistoryDocument(markdown);
         const onFailure = vi.fn();
         const view = render(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             documentSession={
               {
                 document: history.document
@@ -16678,7 +17285,7 @@ describe('ImmersiveVisualEditor', () => {
     } as unknown as EditorDocumentSession;
     const onFailure = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -16743,7 +17350,7 @@ describe('ImmersiveVisualEditor', () => {
     } as unknown as EditorDocumentSession;
     const onFailure = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -16817,7 +17424,7 @@ describe('ImmersiveVisualEditor', () => {
       const onFailure = vi.fn();
       const requestPreview = vi.fn(() => 'unexpected-preview');
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={documentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -16959,7 +17566,7 @@ describe('ImmersiveVisualEditor', () => {
     const onFailure = vi.fn();
     const requestPreview = vi.fn(() => 'unexpected-preview');
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -17093,7 +17700,7 @@ describe('ImmersiveVisualEditor', () => {
         current: null
       };
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={documentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -17219,7 +17826,7 @@ describe('ImmersiveVisualEditor', () => {
       });
       const onFailure = vi.fn();
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={
             {
               document: history
@@ -17375,7 +17982,7 @@ describe('ImmersiveVisualEditor', () => {
             current: null
           };
         const view = render(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             documentSession={documentSession}
             imageUploadEnabled={false}
             imagePasteUploadEnabled={false}
@@ -17527,7 +18134,7 @@ describe('ImmersiveVisualEditor', () => {
         } as unknown as EditorDocumentSession;
         const onFailure = vi.fn();
         const view = render(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             documentSession={documentSession}
             imageUploadEnabled={false}
             imagePasteUploadEnabled={false}
@@ -17669,7 +18276,7 @@ describe('ImmersiveVisualEditor', () => {
       } as unknown as EditorDocumentSession;
       const onFailure = vi.fn();
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={documentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -17749,7 +18356,7 @@ describe('ImmersiveVisualEditor', () => {
         current: ImmersiveVisualEditorRuntime | null;
       } = { current: null };
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={documentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -17821,7 +18428,7 @@ describe('ImmersiveVisualEditor', () => {
       } as unknown as EditorDocumentSession;
       const onFailure = vi.fn();
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={documentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -17888,7 +18495,7 @@ describe('ImmersiveVisualEditor', () => {
       } as unknown as EditorDocumentSession;
       const onCanonicalDocumentChange = vi.fn();
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={documentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -17985,7 +18592,7 @@ describe('ImmersiveVisualEditor', () => {
         requestPreview,
         surface
       };
-      const view = render(<ImmersiveVisualEditor {...props} />);
+      const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
       const paragraph = surface.querySelector('p');
       if (!(paragraph?.firstChild instanceof Text)) {
         throw new Error('visual-accepted-end-paragraph-missing');
@@ -18008,7 +18615,7 @@ describe('ImmersiveVisualEditor', () => {
       surface.innerHTML = '<p>Before <strong>Formatted</strong></p>';
       act(() => {
         view.rerender(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             {...props}
             previewSnapshot={{ revision: 2, signature: 'accepted' }}
           />
@@ -18099,7 +18706,7 @@ describe('ImmersiveVisualEditor', () => {
       requestPreview,
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     const sourceText = surface.querySelector('p')?.firstChild;
     if (!(sourceText instanceof Text)) {
       throw new Error('visual-code-fence-paste-source-missing');
@@ -18122,7 +18729,7 @@ describe('ImmersiveVisualEditor', () => {
     surface.innerHTML = '<pre><code>Alpha</code></pre>';
     act(() => {
       view.rerender(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           {...props}
           previewSnapshot={{ revision: 2, signature: 'accepted' }}
         />
@@ -18178,7 +18785,7 @@ describe('ImmersiveVisualEditor', () => {
         } as unknown as EditorDocumentSession;
         const onFailure = vi.fn();
         const view = render(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             documentSession={documentSession}
             imageUploadEnabled={false}
             imagePasteUploadEnabled={false}
@@ -18313,7 +18920,7 @@ describe('ImmersiveVisualEditor', () => {
         requestPreview,
         surface
       };
-      const view = render(<ImmersiveVisualEditor {...editorProps} />);
+      const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...editorProps} />);
       const paragraph = surface.querySelector('p');
       if (!(paragraph?.firstChild instanceof Text)) {
         throw new Error('visual-hot-delete-text-missing');
@@ -18334,7 +18941,7 @@ describe('ImmersiveVisualEditor', () => {
       const acceptedSnapshotClone = vi.spyOn(surface, 'cloneNode');
       act(() => {
         view.rerender(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             {...editorProps}
             previewSnapshot={{ revision: 3, signature: 'accepted' }}
           />
@@ -18420,7 +19027,7 @@ describe('ImmersiveVisualEditor', () => {
           }
         } as unknown as EditorDocumentSession;
         const view = render(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             documentSession={documentSession}
             imageUploadEnabled={false}
             imagePasteUploadEnabled={false}
@@ -18507,7 +19114,7 @@ describe('ImmersiveVisualEditor', () => {
         }
       } as unknown as EditorDocumentSession;
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={documentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -18594,7 +19201,7 @@ describe('ImmersiveVisualEditor', () => {
         }
       } as unknown as EditorDocumentSession;
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={documentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -18654,8 +19261,8 @@ describe('ImmersiveVisualEditor', () => {
       );
       act(() => vi.advanceTimersByTime(80));
 
-      expect(canonicalValue).toBe('Before ****');
-      expect(cloneNode).not.toHaveBeenCalled();
+      expect(canonicalValue).toBe('Before ');
+      expect(cloneNode).toHaveBeenCalledTimes(1);
       expect(innerHTML).not.toHaveBeenCalled();
       innerHTML.mockRestore();
       view.unmount();
@@ -18702,7 +19309,7 @@ describe('ImmersiveVisualEditor', () => {
         requestPreview,
         surface
       };
-      const view = render(<ImmersiveVisualEditor {...editorProps} />);
+      const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...editorProps} />);
       const paragraph = surface.querySelector('p');
       if (!(paragraph?.firstChild instanceof Text)) {
         throw new Error('visual-materialize-paste-text-missing');
@@ -18721,7 +19328,7 @@ describe('ImmersiveVisualEditor', () => {
       surface.innerHTML = '<p>Before <strong>Formatted</strong></p>';
       act(() => {
         view.rerender(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             {...editorProps}
             previewSnapshot={{ revision: 3, signature: 'accepted' }}
           />
@@ -18815,7 +19422,7 @@ describe('ImmersiveVisualEditor', () => {
         requestPreview,
         surface
       };
-      const view = render(<ImmersiveVisualEditor {...props} />);
+      const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
       const paragraph = surface.querySelector('p');
       if (!(paragraph?.firstChild instanceof Text)) {
         throw new Error('visual-post-paste-delete-text-missing');
@@ -18836,7 +19443,7 @@ describe('ImmersiveVisualEditor', () => {
         '<p>Before <strong>Formatted</strong></p><div class="easymde-math" data-easymde-rendered="1">$$x$$</div>';
       act(() => {
         view.rerender(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             {...props}
             previewSnapshot={{ revision: 2, signature: 'accepted' }}
           />
@@ -18911,7 +19518,7 @@ describe('ImmersiveVisualEditor', () => {
         const onFailure = vi.fn();
         const onTransferFailure = vi.fn();
         const view = render(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             documentSession={history as unknown as EditorDocumentSession}
             imageUploadEnabled={false}
             imagePasteUploadEnabled={false}
@@ -18959,6 +19566,21 @@ describe('ImmersiveVisualEditor', () => {
         expect(history.document.getValue()).toBe('');
         expect(onFailure).not.toHaveBeenCalled();
         expect(onTransferFailure).not.toHaveBeenCalled();
+        expect(history.applyTextChange).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            historySelectionBefore: {
+              direction: 'forward',
+              end: markdown.length,
+              start: 0
+            },
+            recordHistorySelection: true
+          })
+        );
+
+        fullOwnerHistoryKey(surface, false);
+        expect(history.document.getValue()).toBe(markdown);
+        fullOwnerHistoryKey(surface, true);
+        expect(history.document.getValue()).toBe('');
 
         const paragraph = surface.querySelector('p');
         if (!(paragraph instanceof HTMLElement)) {
@@ -19010,7 +19632,7 @@ describe('ImmersiveVisualEditor', () => {
         const onFailure = vi.fn();
         const onTransferFailure = vi.fn();
         const view = render(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             documentSession={history as unknown as EditorDocumentSession}
             imageUploadEnabled={false}
             imagePasteUploadEnabled={false}
@@ -19123,7 +19745,7 @@ describe('ImmersiveVisualEditor', () => {
         const onFailure = vi.fn();
         const onTransferFailure = vi.fn();
         const view = render(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             documentSession={history as unknown as EditorDocumentSession}
             imageUploadEnabled={false}
             imagePasteUploadEnabled={false}
@@ -19277,7 +19899,7 @@ describe('ImmersiveVisualEditor', () => {
       const onFailure = vi.fn();
       const onTransferFailure = vi.fn();
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={history as unknown as EditorDocumentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -19438,7 +20060,7 @@ describe('ImmersiveVisualEditor', () => {
           const onFailure = vi.fn();
           const onTransferFailure = vi.fn();
           const view = render(
-            <ImmersiveVisualEditor
+            <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
               documentSession={history as unknown as EditorDocumentSession}
               imageUploadEnabled={false}
               imagePasteUploadEnabled={false}
@@ -19612,7 +20234,7 @@ describe('ImmersiveVisualEditor', () => {
         requestPreview: vi.fn(() => 'accepted'),
         surface
       };
-      const view = render(<ImmersiveVisualEditor {...props} />);
+      const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
       const paragraph = surface.querySelector('p');
       if (!(paragraph?.firstChild instanceof Text)) {
         throw new Error('visual-post-paste-snapshot-text-missing');
@@ -19633,7 +20255,7 @@ describe('ImmersiveVisualEditor', () => {
         '<p>Before <strong>Formatted</strong></p><div class="easymde-math" data-easymde-rendered="1">$$x$$</div>';
       act(() => {
         view.rerender(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             {...props}
             previewSnapshot={{ revision: 2, signature: 'accepted' }}
           />
@@ -19686,7 +20308,7 @@ describe('ImmersiveVisualEditor', () => {
         }
       } as unknown as EditorDocumentSession;
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={documentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -19765,7 +20387,7 @@ describe('ImmersiveVisualEditor', () => {
         }
       } as unknown as EditorDocumentSession;
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={documentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -19840,7 +20462,7 @@ describe('ImmersiveVisualEditor', () => {
         }
       } as unknown as EditorDocumentSession;
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={documentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -19882,6 +20504,10 @@ describe('ImmersiveVisualEditor', () => {
       });
 
       expect(applyTextChange).toHaveBeenCalledOnce();
+      expect(applyTextChange).toHaveBeenCalledWith({
+        selection: { direction: 'none', end: 24, start: 24 },
+        value: 'Visual paragraph changed'
+      });
       expect(cloneNode).toHaveBeenCalledOnce();
       view.unmount();
     } finally {
@@ -19902,7 +20528,7 @@ describe('ImmersiveVisualEditor', () => {
         document: history.document
       } as unknown as EditorDocumentSession;
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={documentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -20005,7 +20631,7 @@ describe('ImmersiveVisualEditor', () => {
     const requestPreview = vi.fn(() => 'unexpected-preview');
     const onFailure = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={
           {
             document: history.document
@@ -20123,7 +20749,7 @@ describe('ImmersiveVisualEditor', () => {
       const history = createHistoryDocument(markdown);
       const onFailure = vi.fn();
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={history as unknown as EditorDocumentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -20227,7 +20853,7 @@ describe('ImmersiveVisualEditor', () => {
     const history = createHistoryDocument(markdown);
     const onFailure = vi.fn();
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={history as unknown as EditorDocumentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -20321,7 +20947,7 @@ describe('ImmersiveVisualEditor', () => {
         const onFailure = vi.fn();
         const requestPreview = vi.fn(() => 'unexpected-preview');
         const view = render(
-          <ImmersiveVisualEditor
+          <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
             documentSession={history as unknown as EditorDocumentSession}
             imageUploadEnabled={false}
             imagePasteUploadEnabled={false}
@@ -20514,7 +21140,7 @@ describe('ImmersiveVisualEditor', () => {
         }
       } as unknown as EditorDocumentSession;
       const view = render(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           documentSession={documentSession}
           imageUploadEnabled={false}
           imagePasteUploadEnabled={false}
@@ -20588,7 +21214,7 @@ describe('ImmersiveVisualEditor', () => {
       }
     } as unknown as EditorDocumentSession;
     const view = render(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
         documentSession={documentSession}
         imageUploadEnabled={false}
         imagePasteUploadEnabled={false}
@@ -20719,6 +21345,94 @@ describe('ImmersiveVisualEditor', () => {
       fixture.unmount();
     }
   });
+
+  it('restores the code caret after undoing a whole-fence context-menu cut', async () => {
+    const fixture = createVisualHistoryRebuildFixture();
+    try {
+      await visualHistoryCutCodeBlock(fixture);
+      fixture.acceptPreview(
+        VISUAL_HISTORY_REBUILD_CODE_REMAINDER,
+        VISUAL_HISTORY_REBUILD_CODE_REMAINDER_HTML,
+        visualHistoryRebuildCodeRemainderEditMap('unused')
+      );
+
+      fixture.surface.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        key: 'z'
+      }));
+      const caret = VISUAL_HISTORY_REBUILD_MARKDOWN.indexOf('alpha') + 2;
+      expect(fixture.history.getSelection()).toEqual({
+        direction: 'none', end: caret, start: caret
+      });
+      fixture.acceptPreview(
+        VISUAL_HISTORY_REBUILD_MARKDOWN,
+        VISUAL_HISTORY_REBUILD_HTML,
+        visualHistoryRebuildEditMap('unused')
+      );
+      const selection = window.getSelection();
+      expect(selection?.isCollapsed).toBe(true);
+      expect(selection?.anchorNode?.parentElement?.closest('code')).not.toBeNull();
+      expect(selection?.anchorOffset).toBe(2);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+    }
+  });
+
+  it.each(['pending', 'settled'] as const)(
+    'inserts at the restored code caret after whole-fence cut while Preview is %s',
+    async (timing) => {
+      vi.useFakeTimers();
+      const fixture = createVisualHistoryRebuildFixture();
+      try {
+        fixture.surface.focus();
+        await visualHistoryCutCodeBlock(fixture, 5);
+        fixture.acceptPreview(
+          VISUAL_HISTORY_REBUILD_CODE_REMAINDER,
+          VISUAL_HISTORY_REBUILD_CODE_REMAINDER_HTML,
+          visualHistoryRebuildCodeRemainderEditMap('unused')
+        );
+        fixture.surface.dispatchEvent(new KeyboardEvent('keydown', {
+          bubbles: true, cancelable: true, ctrlKey: true, key: 'z'
+        }));
+        expect(fixture.runtime().isTransferPending()).toBe(true);
+        if (timing === 'settled') {
+          fixture.acceptPreview(
+            VISUAL_HISTORY_REBUILD_MARKDOWN,
+            VISUAL_HISTORY_REBUILD_HTML,
+            visualHistoryRebuildEditMap('unused')
+          );
+          expect(fixture.runtime().isTransferPending()).toBe(false);
+        }
+        const selection = window.getSelection();
+        const range = selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+        if (!range || !selection?.anchorNode) throw new Error('restored-code-caret-missing');
+        const before = fullOwnerDispatchBeforeInput(
+          fixture.surface, { data: 'X', inputType: 'insertText' }, range
+        );
+        if (!before.defaultPrevented) {
+          if (!(selection.anchorNode instanceof Text)) throw new Error('restored-code-text-missing');
+          const text = selection.anchorNode;
+          const offset = selection.anchorOffset;
+          text.insertData(offset, 'X');
+          placeCaretInText(text, offset + 1);
+          fixture.surface.dispatchEvent(new InputEvent('input', {
+            bubbles: true, data: 'X', inputType: 'insertText'
+          }));
+          act(() => vi.advanceTimersByTime(100));
+        }
+        expect(fixture.history.getValue()).toBe(
+          VISUAL_HISTORY_REBUILD_MARKDOWN.replace('alpha', 'alphaX')
+        );
+        expect(fixture.onFailure).not.toHaveBeenCalled();
+      } finally {
+        fixture.unmount();
+        vi.useRealTimers();
+      }
+    }
+  );
 
   it('keeps the context-menu Cut working across an Undo that rebuilds the Preview', async () => {
     const fixture = createVisualHistoryRebuildFixture();
@@ -21100,6 +21814,621 @@ function fullOwnerEditMap(
   };
 }
 
+it.each([
+  { body: 'x', mode: 'start' },
+  { body: ' ', mode: 'end' },
+  { body: 'x', mode: 'foreign' },
+  { body: 'x', mode: 'wrong-start' },
+  { body: 'x', mode: 'wrong-end' }
+] as const)('checks the inline-code target during pending Redo for $mode and $body', ({ body, mode }) => {
+  vi.useFakeTimers();
+  const signature = 'pending-inline-redo';
+  const markdown = `foo \`${body}\` tail`;
+  const html = fullOwnerBlock(`<p>foo <code>${body}</code> tail</p>`, 'b0');
+  const editMap = fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]);
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 0 });
+  try {
+    fixture.surface.focus();
+    const wrapper = fixture.surface.querySelector('code');
+    const text = wrapper?.firstChild;
+    const preceding = wrapper?.previousSibling;
+    if (!(wrapper instanceof HTMLElement) || !(text instanceof Text) || !(preceding instanceof Text)) throw new Error('pending-inline-fixture-invalid');
+    window.getSelection()?.setBaseAndExtent(text, 0, text, text.length);
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, 0, text.length));
+      expect(before.defaultPrevented).toBe(false);
+      wrapper.remove();
+      placeCaretInText(preceding, preceding.length);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+      vi.advanceTimersByTime(80);
+    });
+    expect(fixture.history.getValue()).toBe('foo  tail');
+    fullOwnerHistoryKey(fixture.surface, false);
+    expect(fixture.history.getValue()).toBe(markdown);
+    if (fixture.runtime().isTransferPending()) fixture.accept({ editMap, html, markdown });
+    act(() => vi.advanceTimersByTime(0));
+    const restored = fixture.surface.querySelector('code');
+    const restoredText = restored?.firstChild;
+    if (!(restored instanceof HTMLElement) || !(restoredText instanceof Text)) throw new Error('pending-inline-restored-missing');
+    if (mode === 'end') window.getSelection()?.setBaseAndExtent(restoredText, 0, restored, 1);
+    else window.getSelection()?.setBaseAndExtent(restored, 0, restoredText, restoredText.length);
+    fullOwnerHistoryKey(fixture.surface, true);
+    expect(fixture.history.getValue()).toBe('foo  tail');
+    expect(fixture.runtime().isTransferPending()).toBe(true);
+    const targetText = mode === 'foreign' ? document.createTextNode(body) : restoredText;
+    const targetStart = mode === 'wrong-start' ? 1 : 0;
+    const targetEnd = mode === 'wrong-end' ? 0 : targetText.length;
+    const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: 'X', inputType: 'insertText' }, fullOwnerTargetRange(targetText, targetStart, targetEnd));
+    expect(before.defaultPrevented).toBe(true);
+    if (mode === 'start' || mode === 'end') {
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.history.getValue()).toBe('foo X tail');
+    } else {
+      expect(fixture.onFailure).toHaveBeenCalledWith('visual-editor-pending-input-unavailable');
+      expect(fixture.history.getValue()).toBe('foo  tail');
+    }
+  } finally { fixture.unmount(); vi.useRealTimers(); }
+});
+
+/**
+ * The reported window: one typed character, its Undo, then the Redo that
+ * restores it, with the Redo's accepted render still unpublished. The surface
+ * therefore still spells the pre-Redo document while the canonical caret is
+ * already the Redo's, which is exactly the state a key can arrive in.
+ */
+function createPendingRedoBackspaceFixture(signature: string, insert = 'X') {
+  const base: FullOwnerAcceptedDocument = {
+    editMap: fullOwnerEditMap(signature, [
+      { endLine: 1, id: 'b0', startLine: 0 },
+      { endLine: 3, id: 'b1', startLine: 2 }
+    ]),
+    html: fullOwnerParagraphBlock('Lead', 'b0')
+      + fullOwnerParagraphBlock('Text', 'b1'),
+    markdown: 'Lead\n\nText'
+  };
+  const typed: FullOwnerAcceptedDocument = {
+    editMap: base.editMap,
+    html: fullOwnerParagraphBlock('Lead', 'b0')
+      + fullOwnerParagraphBlock(`${insert}Text`, 'b1'),
+    markdown: `Lead\n\n${insert}Text`
+  };
+  const fixture = createFullOwnerFixture({ ...base, signature, sourceCaret: 6 });
+  fixture.surface.focus();
+  const selector = '[data-easymde-visual-block-id="b1"]';
+  const text = fullOwnerTextAt(fixture.surface, selector);
+  placeCaretInText(text, 0);
+  act(() => {
+    fullOwnerNativeInsert(fixture.surface, text, 0, insert, 'insertText', true);
+    vi.advanceTimersByTime(80);
+  });
+  expect(fixture.history.getValue()).toBe(typed.markdown);
+  if (fixture.runtime().isTransferPending()) fixture.accept(typed);
+  act(() => fullOwnerHistoryKey(fixture.surface, false));
+  expect(fixture.history.getValue()).toBe(base.markdown);
+  if (fixture.runtime().isTransferPending()) fixture.accept(base);
+  act(() => fullOwnerHistoryKey(fixture.surface, true));
+  expect(fixture.history.getValue()).toBe(typed.markdown);
+  expect(fixture.runtime().isTransferPending()).toBe(true);
+  return { base, fixture, selector, typed };
+}
+
+it('replays the Backspace a settling Redo render deferred for its target shape', () => {
+  vi.useFakeTimers();
+  const { base, fixture, selector, typed } =
+    createPendingRedoBackspaceFixture('deferred-pending-backspace');
+  try {
+    // The render is still settling 25 ms after the Redo.
+    act(() => vi.advanceTimersByTime(25));
+    const settling = fullOwnerTextAt(fixture.surface, selector);
+    const lead = fullOwnerTextAt(
+      fixture.surface,
+      '[data-easymde-visual-block-id="b0"]'
+    );
+    placeCaretInText(settling, 0);
+    // Chromium names a Backspace at the first offset of a paragraph with a
+    // range across nodes: from the previous paragraph's last byte to the
+    // surface boundary this paragraph starts at.
+    const refused = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      {
+        collapsed: false,
+        endContainer: fixture.surface,
+        endOffset: 1,
+        startContainer: lead,
+        startOffset: lead.length
+      } as unknown as Range
+    );
+    expect(refused.defaultPrevented).toBe(true);
+    // The lease is valid, so nothing is written and nothing is reported: the
+    // one key is held against this transfer's expectation.
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(typed.markdown);
+    // The accepted render lands and the deferred key is replayed exactly once.
+    act(() => fixture.accept(typed));
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe('Lead\n\nText');
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      end: 6,
+      start: 6
+    });
+    // A second acceptance cannot replay the key again.
+    act(() => {
+      if (fixture.runtime().isTransferPending()) fixture.accept(base);
+    });
+    expect(fixture.history.getValue()).toBe('Lead\n\nText');
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('replays two Backspaces deferred in one settling window as two edits', () => {
+  vi.useFakeTimers();
+  const { base, fixture, selector, typed } =
+    createPendingRedoBackspaceFixture('deferred-pending-backspace-twice', 'XY');
+  try {
+    // The render is still settling 25 ms after the Redo.
+    act(() => vi.advanceTimersByTime(25));
+    const settling = fullOwnerTextAt(fixture.surface, selector);
+    const lead = fullOwnerTextAt(
+      fixture.surface,
+      '[data-easymde-visual-block-id="b0"]'
+    );
+    placeCaretInText(settling, 0);
+    // Both presses name the same cross-node target, because the first one was
+    // prevented and the settling DOM never changed under the second.
+    const refusedTarget = () => ({
+      collapsed: false,
+      endContainer: fixture.surface,
+      endOffset: 1,
+      startContainer: lead,
+      startOffset: lead.length
+    } as unknown as Range);
+    const first = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      refusedTarget()
+    );
+    expect(first.defaultPrevented).toBe(true);
+    const second = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      refusedTarget()
+    );
+    expect(second.defaultPrevented).toBe(true);
+    // Two presses are held, not merged into one slot, and neither is reported.
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(typed.markdown);
+    // The accepted render replays the first press as its own edit.
+    act(() => fixture.accept(typed));
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe('Lead\n\nXText');
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      end: 7,
+      start: 7
+    });
+    // The second press is re-armed against the transfer that edit published, so
+    // it lands as the next edit instead of being lost with the first replay.
+    const onceDeleted: FullOwnerAcceptedDocument = {
+      editMap: base.editMap,
+      html: fullOwnerParagraphBlock('Lead', 'b0')
+        + fullOwnerParagraphBlock('XText', 'b1'),
+      markdown: 'Lead\n\nXText'
+    };
+    expect(fixture.runtime().isTransferPending()).toBe(true);
+    act(() => fixture.accept(onceDeleted));
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(base.markdown);
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      end: 6,
+      start: 6
+    });
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('replays a deferred Backspace at the caret acceptance realigned instead of failing the transfer', () => {
+  vi.useFakeTimers();
+  const signature = 'deferred-pending-backspace-realignment';
+  const base: FullOwnerAcceptedDocument = {
+    editMap: fullOwnerEditMap(signature, [
+      { endLine: 1, id: 'b0', startLine: 0 },
+      { endLine: 5, id: 'b1', startLine: 2 }
+    ]),
+    html: fullOwnerParagraphBlock('Lead', 'b0')
+      + fullOwnerCodeBlock('cod\n', 'b1'),
+    markdown: 'Lead\n\n```js\ncod\n```'
+  };
+  const typed: FullOwnerAcceptedDocument = {
+    editMap: base.editMap,
+    html: fullOwnerParagraphBlock('Lead', 'b0')
+      + fullOwnerCodeBlock('code\n', 'b1'),
+    markdown: 'Lead\n\n```js\ncode\n```'
+  };
+  const fixture = createFullOwnerFixture({
+    ...typed,
+    prepareHistory: (history) => {
+      // The Redo target's own history selection is the fenced block's END, past
+      // the closing delimiter: an offset a canonical caret can name but the
+      // render cannot express. Acceptance therefore places the caret at the
+      // code element's content boundary and realigns the canonical caret to
+      // the code body's end - a selection different from the one the transfer
+      // requested, which is what a deferred key must be judged against. The
+      // Undo target keeps a paragraph caret so the key that arrives while the
+      // Redo render settles is a caret the pending input path can read.
+      history.applyTextChange({
+        carryHistorySelectionWithoutEvent: true,
+        selection: { direction: 'none', end: 4, start: 4 },
+        value: base.markdown
+      });
+      history.applyTextChange({
+        carryHistorySelectionWithoutEvent: true,
+        selection: { direction: 'none', end: 20, start: 20 },
+        value: typed.markdown
+      });
+    },
+    signature,
+    sourceCaret: 20
+  });
+  try {
+    fixture.surface.focus();
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getValue()).toBe(base.markdown);
+    if (fixture.runtime().isTransferPending()) fixture.accept(base);
+    // The Undo restores the paragraph caret its own history entry names.
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      end: 4,
+      start: 4
+    });
+    act(() => fullOwnerHistoryKey(fixture.surface, true));
+    expect(fixture.history.getValue()).toBe(typed.markdown);
+    expect(fixture.runtime().isTransferPending()).toBe(true);
+    // The render is still settling, so the surface still holds the Undo render.
+    act(() => vi.advanceTimersByTime(25));
+    const lead = fullOwnerTextAt(
+      fixture.surface,
+      '[data-easymde-visual-block-id="b0"]'
+    );
+    placeCaretInText(lead, lead.length);
+    const refused = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      {
+        collapsed: false,
+        endContainer: fixture.surface,
+        endOffset: 1,
+        startContainer: lead,
+        startOffset: lead.length
+      } as unknown as Range
+    );
+    expect(refused.defaultPrevented).toBe(true);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(typed.markdown);
+    // Acceptance settles the caret at the code body's end (17) rather than at
+    // the requested block end (20), and the held key deletes the body's own
+    // trailing line ending from THERE. Judged against the stale request offset
+    // this was a reported `visual-editor-pending-selection-stale` transfer
+    // failure and no edit at all.
+    act(() => fixture.accept(typed));
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe('Lead\n\n```js\ncode```');
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      end: 16,
+      start: 16
+    });
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  { expected: 'visual-editor-pending-input-unavailable', scenario: 'two-target-ranges' },
+  { expected: 'visual-editor-pending-input-unavailable', scenario: 'target-away-from-caret' },
+  { expected: 'visual-editor-pending-selection-stale', scenario: 'moved-native-caret' }
+] as const)('still refuses a pending Backspace whose $scenario proves the lease wrong', ({ expected, scenario }) => {
+  vi.useFakeTimers();
+  const { fixture, selector, typed } =
+    createPendingRedoBackspaceFixture(`refused-pending-backspace-${scenario}`);
+  try {
+    const text = fullOwnerTextAt(fixture.surface, selector);
+    if ('moved-native-caret' === scenario) placeCaretInText(text, 2);
+    const before = fixture.history.getValue();
+    const event = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      data: null,
+      inputType: 'deleteContentBackward'
+    });
+    Object.defineProperty(event, 'getTargetRanges', {
+      configurable: true,
+      value: 'two-target-ranges' === scenario
+        ? () => [fullOwnerTargetRange(text, 0, 1), fullOwnerTargetRange(text, 0, 1)]
+        : () => [fullOwnerTargetRange(
+            text,
+            0,
+            'target-away-from-caret' === scenario ? 2 : 1
+          )]
+    });
+    fixture.surface.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(fixture.onFailure.mock.calls.map(([code]) => code)).toEqual([expected]);
+    expect(fixture.history.getValue()).toBe(before);
+    // A refused key is not deferred: the accepted render replays nothing.
+    act(() => fixture.accept(typed));
+    expect(fixture.history.getValue()).toBe(before);
+    expect(fixture.onFailure.mock.calls.map(([code]) => code)).toEqual([expected]);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each(['deleteContentForward', 'deleteContentBackward'] as const)('uses the actual single-text target when the caret is outside the inline wrapper (%s)', (inputType) => {
+  vi.useFakeTimers();
+  const signature = 'inline-target-not-caret';
+  const markdown = '- lead `x` tail\n- untouched';
+  const html = fullOwnerBlock('<ul><li>lead <code>x</code> tail</li><li>untouched</li></ul>', 'b0');
+  const editMap = fullOwnerEditMap(signature, [{ startLine: 0, endLine: 2, id: 'b0' }]);
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 0 });
+  try {
+    fixture.surface.focus();
+    const wrapper = fixture.surface.querySelector('code');
+    const text = wrapper?.firstChild;
+    const preceding = wrapper?.previousSibling;
+    const following = wrapper?.nextSibling;
+    if (!(wrapper instanceof HTMLElement) || !(text instanceof Text) || !(preceding instanceof Text) || !(following instanceof Text)) throw new Error('inline-target-fixture-invalid');
+    if (inputType === 'deleteContentForward') placeCaretInText(preceding, preceding.length);
+    else placeCaretInText(following, 0);
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType }, fullOwnerTargetRange(text, 0, 1));
+      expect(before.defaultPrevented).toBe(false);
+      wrapper.remove();
+      if (inputType === 'deleteContentForward') {
+        preceding.data = preceding.data.slice(0, -1) + '\u00a0';
+        placeCaretInText(preceding, preceding.length);
+      } else placeCaretInText(following, 0);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType }));
+      vi.advanceTimersByTime(80);
+    });
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe('- lead  tail\n- untouched');
+    fullOwnerHistoryKey(fixture.surface, false);
+    expect(fixture.history.getValue()).toBe(markdown);
+  } finally { fixture.unmount(); vi.useRealTimers(); }
+});
+
+it('rejects a stale inline target when another retained node is replaced', () => {
+  vi.useFakeTimers();
+  const signature = 'inline-target-stale';
+  const markdown = '- lead `x`\n- untouched';
+  const html = fullOwnerBlock('<ul><li>lead <code>x</code></li><li>untouched</li></ul>', 'b0');
+  const editMap = fullOwnerEditMap(signature, [{ startLine: 0, endLine: 2, id: 'b0' }]);
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 0 });
+  try {
+    fixture.surface.focus();
+    const wrapper = fixture.surface.querySelector('code');
+    const text = wrapper?.firstChild;
+    const preceding = wrapper?.previousSibling;
+    const other = fixture.surface.querySelectorAll('li')[1];
+    if (!(wrapper instanceof HTMLElement) || !(text instanceof Text) || !(preceding instanceof Text) || !(other instanceof HTMLElement)) throw new Error('inline-target-fixture-invalid');
+    placeCaretInText(preceding, preceding.length);
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentForward' }, fullOwnerTargetRange(text, 0, 1));
+      expect(before.defaultPrevented).toBe(false);
+      wrapper.remove();
+      other.replaceWith(other.cloneNode(true));
+      placeCaretInText(preceding, preceding.length);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentForward' }));
+      vi.advanceTimersByTime(80);
+    });
+    expect(fixture.onFailure).toHaveBeenCalledWith('visual-editor-inline-retirement-dom-stale');
+    expect(fixture.history.getValue()).toBe(markdown);
+  } finally { fixture.unmount(); vi.useRealTimers(); }
+});
+
+it.each([
+  { tag: 'code', syntax: '`x`' },
+  { tag: 'em', syntax: '*x*' },
+  { tag: 'strong', syntax: '**x**' },
+  { tag: 'del', syntax: '~~x~~' },
+  { tag: 'a', syntax: '[x](https://example.com)' }
+].flatMap((item) => [
+  { ...item, inputType: 'deleteContentBackward' as const },
+  { ...item, inputType: 'deleteContentForward' as const }
+]))('removes a retired inline $tag wrapper with its last character ($inputType)', ({ tag, syntax, inputType }) => {
+  vi.useFakeTimers();
+  const signature = 'retired-inline-wrapper';
+  const markdown = `- lead ${syntax}\n- untouched`;
+  const html = fullOwnerBlock(`<ul><li>lead <${tag}>x</${tag}></li><li>untouched</li></ul>`, 'b0');
+  const editMap = fullOwnerEditMap(signature, [{ startLine: 0, endLine: 2, id: 'b0' }]);
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 0 });
+  try {
+    fixture.surface.focus();
+    const wrapper = fixture.surface.querySelector(tag);
+    const text = wrapper?.firstChild;
+    const preceding = wrapper?.previousSibling;
+    if (!(wrapper instanceof HTMLElement) || !(text instanceof Text) || !(preceding instanceof Text)) throw new Error('inline-retirement-fixture-invalid');
+    placeCaretInText(text, inputType === 'deleteContentForward' ? 0 : 1);
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType }, fullOwnerTargetRange(text, 0, 1));
+      expect(before.defaultPrevented).toBe(false);
+      wrapper.remove();
+      preceding.data = preceding.data.slice(0, -1) + '\u00a0';
+      placeCaretInText(preceding, preceding.length);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType }));
+      vi.advanceTimersByTime(80);
+    });
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe('- lead \n- untouched');
+    fullOwnerHistoryKey(fixture.surface, false);
+    expect(fixture.history.getValue()).toBe(markdown);
+    fullOwnerHistoryKey(fixture.surface, true);
+    expect(fixture.history.getValue()).toBe('- lead \n- untouched');
+    const afterRedo = fullOwnerDispatchBeforeInput(fixture.surface, { data: 'Y', inputType: 'insertText' });
+    expect(afterRedo.defaultPrevented).toBe(true);
+    expect(fixture.history.getValue()).toBe('- lead Y\n- untouched');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally { fixture.unmount(); vi.useRealTimers(); }
+});
+
+it.each([
+  { tag: 'em', syntax: '*\\**', html: '*' },
+  { tag: 'strong', syntax: '**&amp;**', html: '&amp;' },
+  { tag: 'a', syntax: '[&amp;](https://example.com)', html: '&amp;' },
+  { tag: 'code', syntax: '` Z `', html: 'Z' },
+  { tag: 'code', syntax: '`` ` ``', html: '`' },
+  { tag: 'code', syntax: '`&amp;`', html: '&amp;amp;' },
+  { tag: 'code', syntax: '`\\*`', html: '\\*' }
+])('removes the complete source interval for a retired encoded $tag body $syntax', ({ tag, syntax, html: body }) => {
+  vi.useFakeTimers();
+  const signature = 'retired-encoded-inline-wrapper';
+  const markdown = `- lead ${syntax}\n- untouched`;
+  const html = fullOwnerBlock(`<ul><li>lead <${tag}>${body}</${tag}></li><li>untouched</li></ul>`, 'b0');
+  const editMap = fullOwnerEditMap(signature, [{ startLine: 0, endLine: 2, id: 'b0' }]);
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 0 });
+  try {
+    fixture.surface.focus();
+    const wrapper = fixture.surface.querySelector(tag);
+    const text = wrapper?.firstChild;
+    const preceding = wrapper?.previousSibling;
+    if (!(wrapper instanceof HTMLElement) || !(text instanceof Text) || !(preceding instanceof Text)) throw new Error('inline-retirement-fixture-invalid');
+    if (text.length === 1) placeCaretInText(text, text.length);
+    else window.getSelection()?.setBaseAndExtent(text, 0, text, text.length);
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, 0, text.length));
+      expect(before.defaultPrevented).toBe(false);
+      wrapper.remove();
+      preceding.data = preceding.data.slice(0, -1) + '\u00a0';
+      placeCaretInText(preceding, preceding.length);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+      vi.advanceTimersByTime(80);
+    });
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe('- lead \n- untouched');
+    fullOwnerHistoryKey(fixture.surface, false);
+    expect(fixture.history.getValue()).toBe(markdown);
+  } finally { fixture.unmount(); vi.useRealTimers(); }
+});
+
+it('deletes an all-space inline code body and restores exact source on undo', () => {
+  vi.useFakeTimers();
+  const signature = 'ambiguous-space-inline-code';
+  const markdown = '- lead `   `\n- untouched';
+  const html = fullOwnerBlock('<ul><li>lead <code>   </code></li><li>untouched</li></ul>', 'b0');
+  const editMap = fullOwnerEditMap(signature, [{ startLine: 0, endLine: 2, id: 'b0' }]);
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 0 });
+  try {
+    fixture.surface.focus();
+    const wrapper = fixture.surface.querySelector('code');
+    const text = wrapper?.firstChild;
+    const preceding = wrapper?.previousSibling;
+    if (!(wrapper instanceof HTMLElement) || !(text instanceof Text) || !(preceding instanceof Text)) throw new Error('inline-retirement-fixture-invalid');
+    window.getSelection()?.setBaseAndExtent(text, 0, text, text.length);
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, 0, text.length));
+      expect(before.defaultPrevented).toBe(false);
+      wrapper.remove();
+      preceding.data = preceding.data.slice(0, -1) + '\u00a0';
+      placeCaretInText(preceding, preceding.length);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+      vi.advanceTimersByTime(80);
+    });
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe('- lead \n- untouched');
+    fullOwnerHistoryKey(fixture.surface, false);
+    expect(fixture.history.getValue()).toBe(markdown);
+  } finally { fixture.unmount(); vi.useRealTimers(); }
+});
+
+it.each(['nested', 'partial', 'foreign', 'attribute'] as const)('keeps the inline retirement boundary for %s', (scenario) => {
+  vi.useFakeTimers();
+  const signature = 'inline-retirement-boundary';
+  const markdown = scenario === 'nested' ? '- lead **a *x* z**\n- untouched' : '- lead `xy`\n- untouched';
+  const html = fullOwnerBlock(scenario === 'nested'
+    ? '<ul><li>lead <strong>a <em>x</em> z</strong></li><li>untouched</li></ul>'
+    : '<ul><li>lead <code>xy</code></li><li>untouched</li></ul>', 'b0');
+  const editMap = fullOwnerEditMap(signature, [{ startLine: 0, endLine: 2, id: 'b0' }]);
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 0 });
+  try {
+    fixture.surface.focus();
+    const wrapper = fixture.surface.querySelector(scenario === 'nested' ? 'em' : 'code');
+    const text = wrapper?.firstChild;
+    if (!(wrapper instanceof HTMLElement) || !(text instanceof Text)) throw new Error('inline-boundary-fixture-invalid');
+    placeCaretInText(text, text.length);
+    act(() => {
+      const start = scenario === 'partial' ? 1 : 0;
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, start, text.length));
+      expect(before.defaultPrevented).toBe(false);
+      if (scenario === 'partial') {
+        text.deleteData(1, 1); placeCaretInText(text, 1);
+      } else {
+        const preceding = wrapper.previousSibling;
+        if (!(preceding instanceof Text)) throw new Error('inline-boundary-preceding-missing');
+        wrapper.remove(); placeCaretInText(preceding, preceding.length);
+        if (scenario === 'foreign') {
+          const other = fixture.surface.querySelectorAll('li')[1];
+          if (!other) throw new Error('inline-boundary-other-missing');
+          other.replaceWith(other.cloneNode(true));
+        } else if (scenario === 'attribute') {
+          fixture.surface.querySelectorAll('li')[1]?.setAttribute('title', 'changed');
+        }
+      }
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+      vi.advanceTimersByTime(80);
+    });
+    if (scenario === 'foreign' || scenario === 'attribute') {
+      expect(fixture.history.getValue()).toBe(markdown);
+      expect(fixture.onFailure).toHaveBeenCalledWith('visual-editor-inline-retirement-dom-stale');
+    } else {
+      expect(fixture.history.getValue()).toBe(scenario === 'nested' ? '- lead **a  z**\n- untouched' : '- lead `x`\n- untouched');
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    }
+  } finally { fixture.unmount(); vi.useRealTimers(); }
+});
+
+it('retires only the selected repeated inline wrapper', () => {
+  vi.useFakeTimers();
+  const signature = 'repeated-inline-retirement';
+  const markdown = '- `x` and `x`\n- untouched';
+  const html = fullOwnerBlock('<ul><li><code>x</code> and <code>x</code></li><li>untouched</li></ul>', 'b0');
+  const editMap = fullOwnerEditMap(signature, [{ startLine: 0, endLine: 2, id: 'b0' }]);
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 0 });
+  try {
+    fixture.surface.focus();
+    const wrapper = fixture.surface.querySelectorAll('code')[1];
+    const text = wrapper?.firstChild;
+    const preceding = wrapper?.previousSibling;
+    if (!(wrapper instanceof HTMLElement) || !(text instanceof Text) || !(preceding instanceof Text)) throw new Error('inline-retirement-fixture-invalid');
+    placeCaretInText(text, 1);
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, 0, 1));
+      expect(before.defaultPrevented).toBe(false);
+      wrapper.remove();
+      preceding.data = preceding.data.slice(0, -1) + '\u00a0';
+      placeCaretInText(preceding, preceding.length);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+      vi.advanceTimersByTime(80);
+    });
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe('- `x` and \n- untouched');
+  } finally { fixture.unmount(); vi.useRealTimers(); }
+});
+
 function fullOwnerBlock(html: string, id: string): string {
   const template = document.createElement('template');
   template.innerHTML = html;
@@ -21211,6 +22540,55 @@ function fullOwnerNativeInsert(
   return { prevented: false };
 }
 
+function fullOwnerExpectLocalSelection(root: HTMLElement, anchor: number, focus: number): void {
+  const selection = window.getSelection();
+  const anchorNode = selection?.anchorNode;
+  const focusNode = selection?.focusNode;
+  if (!selection || !anchorNode || !focusNode) throw new Error('full-owner-local-selection-missing');
+  expect(anchorNode.isConnected && focusNode.isConnected).toBe(true);
+  expect(root.contains(anchorNode) && root.contains(focusNode)).toBe(true);
+  expect(selection.isCollapsed).toBe(anchor === focus);
+  const offset = (node: Node, position: number): number => {
+    const range = document.createRange();
+    range.selectNodeContents(root);
+    range.setEnd(node, position);
+    return range.toString().length;
+  };
+  expect(offset(anchorNode, selection.anchorOffset)).toBe(anchor);
+  expect(offset(focusNode, selection.focusOffset)).toBe(focus);
+}
+
+function fullOwnerNativeInsertAtSelection(surface: HTMLElement, data: string): Readonly<{ prevented: boolean }> {
+  const selection = window.getSelection();
+  const node = selection?.anchorNode;
+  if (!selection || !node || !selection.isCollapsed) throw new Error('full-owner-native-caret-missing');
+  if (node instanceof Text) return fullOwnerNativeInsert(surface, node, selection.anchorOffset, data, 'insertText', true);
+  if (!(node instanceof HTMLElement)) throw new Error('full-owner-native-element-caret-missing');
+  const offset = selection.anchorOffset;
+  const before = fullOwnerDispatchBeforeInput(surface, { data, inputType: 'insertText' }, selection.getRangeAt(0).cloneRange());
+  if (before.defaultPrevented) return { prevented: true };
+  const preceding = node.childNodes[offset - 1];
+  const following = node.childNodes[offset];
+  let text: Text;
+  let caret: number;
+  if (preceding instanceof Text) {
+    text = preceding;
+    text.appendData(data);
+    caret = text.length;
+  } else if (following instanceof Text) {
+    text = following;
+    text.insertData(0, data);
+    caret = data.length;
+  } else {
+    text = document.createTextNode(data);
+    node.insertBefore(text, following ?? null);
+    caret = data.length;
+  }
+  selection.collapse(text, caret);
+  surface.dispatchEvent(new InputEvent('input', { bubbles: true, data, inputType: 'insertText' }));
+  return { prevented: false };
+}
+
 function fullOwnerNativeDelete(
   surface: HTMLElement,
   text: Text,
@@ -21318,14 +22696,17 @@ function fullOwnerTextAt(
 function createFullOwnerFixture(
   initial: FullOwnerAcceptedDocument & Readonly<{
     prepareHistory?: (history: CodeMirrorDocumentSession) => void;
+    referenceLabelCaseFoldProfile?: 14 | 'unsupported';
+    retainCompositionSurface?: () => Readonly<{ release: () => void }>;
     signature: string;
     sourceCaret?: number;
+    surface?: HTMLElement;
   }>
 ) {
-  const surface = document.createElement('article');
+  const surface = initial.surface ?? document.createElement('article');
   surface.contentEditable = 'true';
   surface.tabIndex = 0;
-  surface.innerHTML = initial.html;
+  if (!initial.surface) surface.innerHTML = initial.html;
   const container = document.createElement('div');
   const submissionField = document.createElement('textarea');
   submissionField.value = initial.markdown;
@@ -21333,7 +22714,8 @@ function createFullOwnerFixture(
   if (undefined !== initial.sourceCaret) {
     submissionField.setSelectionRange(initial.sourceCaret, initial.sourceCaret);
   }
-  document.body.append(surface, container, submissionField);
+  if (!initial.surface) document.body.append(surface);
+  document.body.append(container, submissionField);
   const history = createCodeMirrorDocumentSession({
     container,
     label: 'Markdown source',
@@ -21383,13 +22765,14 @@ function createFullOwnerFixture(
     pending: false,
     previewSnapshot,
     previewStatus: 'ready' as PreviewSurfaceStatus,
+    retainCompositionSurface: initial.retainCompositionSurface ?? testRetainCompositionSurface,
     requestPreview,
     surface
   };
-  let view = render(<ImmersiveVisualEditor {...props} />);
+  let view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={initial.referenceLabelCaseFoldProfile ?? 14} {...props} />);
   const rerender = (status: PreviewSurfaceStatus = 'ready'): void => {
     view.rerender(
-      <ImmersiveVisualEditor
+      <ImmersiveVisualEditor referenceLabelCaseFoldProfile={initial.referenceLabelCaseFoldProfile ?? 14}
         {...props}
         previewSnapshot={previewSnapshot}
         previewStatus={status}
@@ -21398,10 +22781,12 @@ function createFullOwnerFixture(
   };
   const install = (
     next: FullOwnerAcceptedDocument,
-    signature: string
+    signature: string,
+    beforeRender?: (surface: HTMLElement) => void
   ): void => {
     previewRevision += 1;
     surface.innerHTML = next.html;
+    beforeRender?.(surface);
     previewSnapshot = {
       editMap: next.editMap ? { ...next.editMap, signature } : null,
       revision: previewRevision,
@@ -21422,12 +22807,13 @@ function createFullOwnerFixture(
     },
     acceptWithSignature: (
       next: FullOwnerAcceptedDocument,
-      signature: string
+      signature: string,
+      beforeRender?: (surface: HTMLElement) => void
     ): void => {
       if (next.markdown !== history.getValue()) {
         throw new Error('full-owner-accepted-markdown-mismatch');
       }
-      install(next, signature);
+      install(next, signature, beforeRender);
     },
     remountFromAccepted: (next: FullOwnerAcceptedDocument): void => {
       if (next.markdown !== history.getValue()) {
@@ -21443,17 +22829,19 @@ function createFullOwnerFixture(
         revision: previewRevision,
         signature
       };
-      view = render(<ImmersiveVisualEditor {...props} previewSnapshot={previewSnapshot} />);
+      view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={initial.referenceLabelCaseFoldProfile ?? 14} {...props} previewSnapshot={previewSnapshot} />);
     },
     history,
+    onDiagnostic: props.onDiagnostic,
     onFailure,
     onTransferFailure,
     requestPreview,
     onDispose: props.onDispose,
+    onCanonicalDocumentChange: props.onCanonicalDocumentChange,
     onMarkdownChange,
     rerenderProps: (): void => {
       view.rerender(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           {...props}
           onCanonicalDocumentChange={vi.fn()}
           previewSnapshot={previewSnapshot}
@@ -21472,10 +22860,1216 @@ function createFullOwnerFixture(
       history.destroy();
       container.remove();
       submissionField.remove();
-      surface.remove();
+      if (!initial.surface) surface.remove();
     }
   };
 }
+
+it('prepares an initially accepted empty list item without writing document state', () => {
+  vi.useFakeTimers();
+  const signature = 'initial-empty-list-adoption';
+  const markdown = '- a\n-   \n- c\n';
+  const html = '<ul data-easymde-visual-block-id="b0">\n<li>a</li>\n<li>\n</li>\n<li>c</li>\n</ul>';
+  const editMap = fullOwnerEditMap(signature, [{ id: 'b0', startLine: 0, endLine: 3 }]);
+  const surface = document.createElement('article');
+  surface.innerHTML = html;
+  document.body.append(surface);
+  const [first, empty, last] = Array.from(surface.querySelectorAll('li'));
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 13, surface });
+  try {
+    expect(empty?.childNodes).toHaveLength(1);
+    expect(empty?.firstChild).toBeInstanceOf(HTMLBRElement);
+    expect(surface.querySelectorAll('li')[0]).toBe(first);
+    expect(surface.querySelectorAll('li')[2]).toBe(last);
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.history.getRevision()).toBe(0);
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: 13, end: 13 });
+    expect(fixture.history.getHistoryState()).toEqual({ undoDepth: 0, redoDepth: 0 });
+    expect(fixture.onMarkdownChange).not.toHaveBeenCalled();
+    expect(fixture.onCanonicalDocumentChange).not.toHaveBeenCalled();
+    expect(fixture.requestPreview).not.toHaveBeenCalled();
+    const placeholder = empty?.firstChild;
+    fixture.rerenderProps();
+    expect(empty?.firstChild).toBe(placeholder);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    const firstText = first?.firstChild;
+    if (!(empty instanceof HTMLElement) || !(firstText instanceof Text)) throw new Error('initial-empty-list-selection-missing');
+    window.getSelection()?.collapse(empty, 0);
+    const range = document.createRange();
+    range.setStart(firstText, firstText.length);
+    range.setEnd(empty, 0);
+    const before = fullOwnerDispatchBeforeInput(surface, { data: null, inputType: 'deleteContentBackward' }, range);
+    expect(before.defaultPrevented).toBe(true);
+    act(() => vi.advanceTimersByTime(160));
+    expect(fixture.history.getValue()).toBe('- a\n- c\n');
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: 3, end: 3 });
+    fullOwnerHistoryKey(surface, false);
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.runtime().isTransferPending()).toBe(false);
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: 6, end: 6 });
+    const restoredEmpty = surface.querySelectorAll('li')[1];
+    expect(restoredEmpty?.firstChild).toBeInstanceOf(HTMLBRElement);
+    const restoredNative = window.getSelection();
+    const anchor = restoredNative?.anchorNode;
+    expect({
+      inEmpty: restoredEmpty?.contains(anchor ?? null),
+      parent: anchor instanceof Element ? anchor.tagName : anchor?.parentElement?.tagName,
+      offset: restoredNative?.anchorOffset
+    }).toEqual({ inEmpty: true, parent: 'LI', offset: 0 });
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    surface.remove();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  {
+    name: 'nested',
+    html: '<ul><li>parent<ul><li>\n</li></ul></li><li>keep</li></ul>',
+    target: 'ul ul li'
+  },
+  {
+    name: 'quoted',
+    html: '<blockquote><ul><li>\n</li><li>keep</li></ul></blockquote>',
+    target: 'blockquote li'
+  }
+])('prepares a $name accepted empty item without changing protected descendants', ({ html, target }) => {
+  const surface = document.createElement('article');
+  surface.innerHTML = `${html}<div class="easymde-toc"><ul><li>\n</li></ul></div><div contenteditable="false"><ul><li>\n</li></ul></div>`;
+  document.body.append(surface);
+  const empty = surface.querySelector(target);
+  const protectedItems = Array.from(surface.querySelectorAll('.easymde-toc li, [contenteditable="false"] li'));
+  const protectedChildren = protectedItems.map((item) => item.firstChild);
+  const fixture = createFullOwnerFixture({ editMap: null, html: surface.innerHTML, markdown: '- item\n', signature: `empty-${target}`, sourceCaret: 7, surface });
+  try {
+    expect(empty?.firstChild).toBeInstanceOf(HTMLBRElement);
+    expect(protectedItems.map((item) => item.firstChild)).toEqual(protectedChildren);
+    expect(fixture.history.getValue()).toBe('- item\n');
+    expect(fixture.history.getRevision()).toBe(0);
+    expect(fixture.history.getHistoryState()).toEqual({ undoDepth: 0, redoDepth: 0 });
+    expect(fixture.onMarkdownChange).not.toHaveBeenCalled();
+    expect(fixture.onCanonicalDocumentChange).not.toHaveBeenCalled();
+    expect(fixture.requestPreview).not.toHaveBeenCalled();
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    surface.remove();
+  }
+});
+
+it.each([
+  { name: 'forward suffix', delimiter: '`', body: 'abc', from: 2, to: 3, inputType: 'deleteContentForward', mode: 'artifact' },
+  { name: 'backward suffix', delimiter: '`', body: 'abc', from: 2, to: 3, inputType: 'deleteContentBackward', mode: 'artifact' },
+  { name: 'double delimiter interior', delimiter: '``', body: 'a`b', from: 1, to: 2, inputType: 'deleteContentForward', mode: 'artifact' },
+  { name: 'unchanged neighbor', delimiter: '`', body: 'abc', from: 1, to: 2, inputType: 'deleteContentForward', mode: 'unchanged' },
+  { name: 'original NBSP', delimiter: '`', body: 'abc', from: 2, to: 3, inputType: 'deleteContentForward', mode: 'original-nbsp' },
+  { name: 'extra neighbor mutation', delimiter: '`', body: 'abc', from: 2, to: 3, inputType: 'deleteContentForward', mode: 'extra-neighbor' },
+  { name: 'previous neighbor mutation', delimiter: '`', body: 'abc', from: 2, to: 3, inputType: 'deleteContentForward', mode: 'previous' },
+  { name: 'replaced neighbor', delimiter: '`', body: 'abc', from: 2, to: 3, inputType: 'deleteContentForward', mode: 'replaced' },
+  { name: 'foreign root mutation', delimiter: '`', body: 'abc', from: 2, to: 3, inputType: 'deleteContentForward', mode: 'outside' },
+  { name: 'foreign intervening node', delimiter: '`', body: 'abc', from: 2, to: 3, inputType: 'deleteContentForward', mode: 'intervening' },
+  { name: 'changed code text', delimiter: '`', body: 'abc', from: 2, to: 3, inputType: 'deleteContentForward', mode: 'code-text' },
+  { name: 'changed code delimiter semantics', delimiter: '``', body: 'a`b', from: 2, to: 3, inputType: 'deleteContentForward', mode: 'source-owner' },
+  { name: 'stale source', delimiter: '`', body: 'abc', from: 2, to: 3, inputType: 'deleteContentForward', mode: 'source' },
+  { name: 'stale revision', delimiter: '`', body: 'abc', from: 2, to: 3, inputType: 'deleteContentForward', mode: 'revision' },
+  { name: 'changed protected region', delimiter: '`', body: 'abc', from: 2, to: 3, inputType: 'deleteContentForward', mode: 'readonly' }
+] as const)('authenticates inline code deletion with $name', ({ delimiter, body, from, to, inputType, mode }) => {
+  vi.useFakeTimers();
+  const signature = 'inline-code-neighbor-certificate';
+  const neighbor = mode === 'original-nbsp' ? '\u00a0tail' : ' tail';
+  const markdown = `Lead ${delimiter}${body}${delimiter}${neighbor}\n\nAfter${mode === 'readonly' ? '\n\n$$x$$' : ''}`;
+  const bodyStart = `Lead ${delimiter}`.length;
+  const fixture = createFullOwnerFixture({
+    markdown, signature, sourceCaret: 0,
+    html: fullOwnerBlock(`<p>Lead <code>${body}</code>${neighbor}</p>`, 'b0') + '\n' + fullOwnerParagraphBlock('After', 'b1')
+      + (mode === 'readonly' ? '\n' + fullOwnerBlock('<div class="easymde-math" data-easymde-rendered="1" data-easymde-visual-markdown-source="x"></div>', 'b2') : ''),
+    editMap: fullOwnerEditMap(signature, [{ id: 'b0', startLine: 0, endLine: 2 }, { id: 'b1', startLine: 2, endLine: 3 },
+      ...(mode === 'readonly' ? [{ id: 'b2', startLine: 4, endLine: 5, editable: false }] : [])])
+  });
+  try {
+    fixture.surface.setAttribute('contenteditable', 'true');
+    fixture.surface.focus();
+    const code = fixture.surface.querySelector('code');
+    const text = code?.firstChild;
+    const following = code?.nextSibling;
+    const preceding = code?.previousSibling;
+    if (!(code instanceof HTMLElement) || !(text instanceof Text) || !(following instanceof Text)
+      || !(preceding instanceof Text)) throw new Error('inline-code-neighbor-fixture-missing');
+    placeCaretInText(text, inputType === 'deleteContentBackward' ? to : from);
+    const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType }, fullOwnerTargetRange(text, from, to));
+    expect(before.defaultPrevented).toBe(false);
+    if (mode === 'source' || mode === 'revision') {
+      const changed = `${markdown}!`;
+      fixture.history.applyTextChange({ value: changed, selection: { direction: 'none', start: changed.length, end: changed.length } });
+      if (mode === 'revision') {
+        fixture.history.applyTextChange({ value: markdown, selection: { direction: 'none', start: 0, end: 0 } });
+      }
+    }
+    text.deleteData(from, to - from);
+    if (mode !== 'unchanged' && mode !== 'original-nbsp') following.replaceData(0, 1, '\u00a0');
+    if (mode === 'extra-neighbor') following.replaceData(1, 1, 'X');
+    if (mode === 'previous') preceding.appendData('X');
+    if (mode === 'replaced') following.replaceWith(following.cloneNode(true));
+    if (mode === 'outside') fixture.surface.querySelectorAll('p')[1]?.setAttribute('data-foreign', '1');
+    if (mode === 'readonly') fixture.surface.querySelector('.easymde-math')?.setAttribute('data-foreign', '1');
+    if (mode === 'intervening') code.after(document.createTextNode(' '));
+    if (mode === 'code-text') text.appendData('X');
+    window.getSelection()?.collapse(text, from);
+    fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType }));
+    act(() => vi.advanceTimersByTime(80));
+    const invalid = ['extra-neighbor', 'previous', 'replaced', 'outside', 'intervening', 'code-text', 'source-owner', 'source', 'revision', 'readonly'].includes(mode);
+    if (invalid) {
+      expect(fixture.onFailure).toHaveBeenCalledWith(['source-owner', 'source', 'revision'].includes(mode)
+        ? 'visual-editor-inline-code-deletion-source-stale' : 'visual-editor-inline-code-deletion-dom-stale');
+      expect(fixture.history.getValue()).toBe(mode === 'source' ? `${markdown}!` : markdown);
+    } else {
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.history.getValue()).toBe(markdown.slice(0, bodyStart + from) + markdown.slice(bodyStart + to));
+      expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: bodyStart + from, end: bodyStart + from });
+    }
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each(['', 'tail'])('retains the inline owner when deletion changes only delimiter presentation (neighbor=%j)', (neighbor) => {
+  vi.useFakeTimers();
+  const signature = 'inline-code-delimiter-presentation';
+  const markdown = `Lead \`\`a\`b\`\`${neighbor}\n\nAfter`;
+  const html = fullOwnerBlock(`<p>Lead <code>a\`b</code>${neighbor}</p>`, 'b0') + '\n' + fullOwnerParagraphBlock('After', 'b1');
+  const editMap = fullOwnerEditMap(signature, [{ id: 'b0', startLine: 0, endLine: 2 }, { id: 'b1', startLine: 2, endLine: 3 }]);
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 0 });
+  try {
+    fixture.surface.focus();
+    const code = fixture.surface.querySelector('code');
+    const text = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(text instanceof Text)) throw new Error('inline-delimiter-fixture-missing');
+    placeCaretInText(text, 1);
+    expect(fullOwnerNativeInsertAtSelection(fixture.surface, 'X').prevented).toBe(false);
+    act(() => vi.advanceTimersByTime(80));
+    const backspace = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, 1, 2));
+    expect(backspace.defaultPrevented).toBe(false);
+    text.deleteData(1, 1);
+    window.getSelection()?.collapse(text, 1);
+    fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue()).toBe(markdown);
+    const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentForward' }, fullOwnerTargetRange(text, 1, 2));
+    expect(before.defaultPrevented).toBe(false);
+    text.deleteData(1, 1);
+    window.getSelection()?.collapse(text, 1);
+    fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentForward' }));
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue()).toBe(`Lead \`\`ab\`\`${neighbor}\n\nAfter`);
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: 8, end: 8 });
+    const actualVisual = visualMarkdown.serializeVisualMarkdown(fixture.surface);
+    expect(actualVisual).toBe(`Lead \`ab\`${neighbor}\n\nAfter`);
+    expect(visualMarkdown.visualSelectionVisualOffset(fixture.surface, actualVisual)).toBe(7);
+    fullOwnerHistoryKey(fixture.surface, false);
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.runtime().isTransferPending()).toBe(true);
+    fullOwnerExpectLocalSelection(code, 1, 1);
+    expect(fullOwnerNativeInsertAtSelection(fixture.surface, 'Q').prevented).toBe(true);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(`Lead \`\`aQ\`b\`\`${neighbor}\n\nAfter`);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('continues inline literal input immediately after Undo while Preview is pending', () => {
+  vi.useFakeTimers();
+  const signature = 'inline-literal-pending-undo';
+  const markdown = 'Before.\n\nLead `\\*` tail.\n\nAfter.';
+  const editMap = fullOwnerEditMap(signature, [
+    { id: 'b0', startLine: 0, endLine: 2 },
+    { id: 'b1', startLine: 2, endLine: 4 },
+    { id: 'b2', startLine: 4, endLine: 5 }
+  ]);
+  const html = fullOwnerParagraphBlock('Before.', 'b0') + '\n'
+    + fullOwnerBlock('<p>Lead <code>\\*</code> tail.</p>', 'b1') + '\n'
+    + fullOwnerParagraphBlock('After.', 'b2') + '\n';
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 0 });
+  try {
+    fixture.surface.focus();
+    const code = fixture.surface.querySelector('p code');
+    const text = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(text instanceof Text)) throw new Error('inline-pending-fixture-missing');
+    placeCaretInText(text, 1);
+    expect(fullOwnerNativeInsertAtSelection(fixture.surface, 'X').prevented).toBe(false);
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue()).toBe('Before.\n\nLead `\\X*` tail.\n\nAfter.');
+    const deleteAtCurrentCaret = (inputType: 'deleteContentBackward' | 'deleteContentForward') => {
+      const selection = window.getSelection();
+      const node = selection?.anchorNode;
+      if (!selection?.isCollapsed || !(node instanceof Text)) throw new Error('inline-pending-native-caret-missing');
+      const start = selection.anchorOffset - (inputType === 'deleteContentBackward' ? 1 : 0);
+      const target = fullOwnerTargetRange(node, start, start + 1);
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType }, target);
+      expect(before.defaultPrevented).toBe(false);
+      node.deleteData(start, 1);
+      if (inputType === 'deleteContentForward') {
+        const next = code.nextSibling;
+        if (!(next instanceof Text) || !next.data.startsWith(' ')) throw new Error('inline-pending-neighbor-missing');
+        next.replaceData(0, 1, '\u00a0');
+      }
+      selection.collapse(node, start);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType }));
+      act(() => vi.advanceTimersByTime(80));
+    };
+    deleteAtCurrentCaret('deleteContentBackward');
+    expect(fixture.history.getValue()).toBe(markdown);
+    deleteAtCurrentCaret('deleteContentForward');
+    expect(fixture.history.getValue()).toBe('Before.\n\nLead `\\` tail.\n\nAfter.');
+    fullOwnerHistoryKey(fixture.surface, false);
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: 16, end: 16 });
+    expect(fixture.runtime().isTransferPending()).toBe(true);
+    const currentCode = fixture.surface.querySelector('p code');
+    if (!(currentCode instanceof HTMLElement)) throw new Error('inline-pending-code-missing');
+    expect(currentCode.textContent?.length).toBe(1);
+    fullOwnerExpectLocalSelection(currentCode, 1, 1);
+    expect(fullOwnerNativeInsertAtSelection(fixture.surface, 'Q').prevented).toBe(true);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe('Before.\n\nLead `\\Q*` tail.\n\nAfter.');
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: 17, end: 17 });
+    act(() => fixture.accept({ editMap, html: fullOwnerParagraphBlock('Before.', 'b0') + '\n'
+      + fullOwnerBlock('<p>Lead <code>\\Q*</code> tail.</p>', 'b1') + '\n'
+      + fullOwnerParagraphBlock('After.', 'b2') + '\n', markdown: fixture.history.getValue() }));
+    const acceptedCode = fixture.surface.querySelector('p code');
+    if (!(acceptedCode instanceof HTMLElement)) throw new Error('inline-pending-accepted-code-missing');
+    fullOwnerExpectLocalSelection(acceptedCode, 2, 2);
+    expect(acceptedCode.textContent?.length).toBe(3);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([3, 4, 5])('restores a formal inline-code literal boundary at source offset %i', (point) => {
+  vi.useFakeTimers();
+  const signature = 'accepted-inline-code-literal';
+  const prior = 'A `\\*` Z';
+  const current = 'B `\\*` Z';
+  const editMap = fullOwnerEditMap(signature, [{ id: 'b0', startLine: 0, endLine: 1 }]);
+  const fixture = createFullOwnerFixture({
+    editMap, html: fullOwnerBlock('<p>B <code>\\*</code> Z</p>', 'b0'),
+    markdown: current, signature, sourceCaret: 0,
+    prepareHistory: (history) => {
+      history.applyTextChange({ selection: { direction: 'none', start: point, end: point }, value: prior });
+      history.applyTextChange({ selection: { direction: 'none', start: 0, end: 0 }, value: current });
+    }
+  });
+  try {
+    fixture.surface.focus();
+    fullOwnerHistoryKey(fixture.surface, false);
+    expect(fixture.history.getValue()).toBe(prior);
+    expect(fixture.runtime().isTransferPending()).toBe(true);
+    act(() => fixture.accept({ editMap, html: fullOwnerBlock('<p>A <code>\\*</code> Z</p>', 'b0'), markdown: prior }));
+    const paragraph = fixture.surface.querySelector('p');
+    if (!(paragraph instanceof HTMLParagraphElement)) throw new Error('inline-literal-paragraph-missing');
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: point, end: point });
+    fullOwnerExpectLocalSelection(paragraph, point - 1, point - 1);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    if (point === 4) {
+      const code = paragraph.querySelector('code');
+      const selection = window.getSelection();
+      expect(code?.contains(selection?.anchorNode ?? null)).toBe(true);
+      if (!(code instanceof HTMLElement)) throw new Error('inline-literal-code-missing');
+      fullOwnerExpectLocalSelection(code, 1, 1);
+      expect(fullOwnerNativeInsertAtSelection(fixture.surface, 'X').prevented).toBe(false);
+      act(() => vi.advanceTimersByTime(80));
+      expect(fixture.history.getValue()).toBe('A `\\X*` Z');
+      expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: 5, end: 5 });
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    }
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('keeps cumulative accepted correspondence through a whole-value owner write', () => {
+  vi.useFakeTimers();
+  const signature = 'accepted-source-whole-value-ledger';
+  const acceptedMarkdown = 'Before.\n\nSecond.\n\nText\n\n[r]: https://example.test/12345678901234\n';
+  const currentMarkdown = 'Before.Second.\n\nText\n\n[r]: https://example.test/12345678901234\n';
+  const finalMarkdown = 'Before.Second.\n\nTex\n\n[r]: https://example.test/12345678901234\n';
+  const editMap = fullOwnerEditMap(signature, [
+    { id: 'b0', startLine: 0, endLine: 1 },
+    { id: 'b1', startLine: 2, endLine: 3 },
+    { id: 'b2', startLine: 4, endLine: 5 }
+  ]);
+  const fixture = createFullOwnerFixture({
+    editMap,
+    html: fullOwnerParagraphBlock('Before.', 'b0')
+      + '\n\n'
+      + fullOwnerParagraphBlock('Second.', 'b1')
+      + '\n\n'
+      + fullOwnerParagraphBlock('Text', 'b2')
+      + '\n',
+    markdown: acceptedMarkdown,
+    signature,
+    sourceCaret: 0
+  });
+  const applyTextChange = vi.spyOn(fixture.history, 'applyTextChange');
+  try {
+    fixture.surface.focus();
+    act(() => vi.advanceTimersByTime(600));
+    const target = fixture.surface.querySelector('[data-easymde-visual-block-id="b2"]');
+    const previousText = fullOwnerTextAt(fixture.surface, 'p');
+    const followingText = fullOwnerTextAt(fixture.surface, 'p', 1);
+    const following = followingText.parentElement;
+    const targetText = target?.firstChild;
+    if (!(target instanceof HTMLParagraphElement)
+      || !(following instanceof HTMLParagraphElement)
+      || !(targetText instanceof Text)) {
+      throw new Error('whole-value-ledger-fixture-missing');
+    }
+
+    expect(fixture.runtime().prepareContextMenuDemand()).toBe(true);
+    placeCaretInText(followingText, 0);
+    fixture.surface.dispatchEvent(new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Backspace'
+    }));
+    const joinTarget = document.createRange();
+    joinTarget.setStart(previousText, previousText.length);
+    joinTarget.setEnd(following, 0);
+    const beforeJoin = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      joinTarget
+    );
+    expect(beforeJoin.defaultPrevented).toBe(false);
+    previousText.appendData(followingText.data);
+    following.previousSibling?.remove();
+    following.remove();
+    placeCaretInText(previousText, 7);
+    fixture.surface.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      inputType: 'deleteContentBackward'
+    }));
+    act(() => vi.advanceTimersByTime(80));
+
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.history.getValue()).toBe(currentMarkdown);
+    expect(fixture.history.getRevision()).toBe(1);
+    expect(fixture.history.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: 1 });
+    expect(applyTextChange.mock.calls.some(([change]) =>
+      change.value === currentMarkdown && undefined === change.changes
+    )).toBe(true);
+    expect(fixture.runtime().isTransferPending()).toBe(false);
+    expect(fixture.surface.querySelector('[data-easymde-visual-block-id="b2"]'))
+      .toBe(target);
+    expect(target.firstChild).toBe(targetText);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+
+    const deletePrevented: boolean[] = [];
+    act(() => {
+      deletePrevented.push(fullOwnerNativeDelete(
+        fixture.surface,
+        targetText,
+        3,
+        4,
+        'deleteContentBackward'
+      ).prevented);
+      vi.advanceTimersByTime(80);
+    });
+    expect(deletePrevented).toEqual([false]);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.history.getValue()).toBe(finalMarkdown);
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      start: 19,
+      end: 19
+    });
+    expect(fixture.history.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: 2 });
+    expect(fixture.surface.querySelector('[data-easymde-visual-block-id="b2"]'))
+      .toBe(target);
+    expect(target.firstChild).toBe(targetText);
+    expect(targetText.data).toBe('Tex');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    applyTextChange.mockRestore();
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('keeps a no-render native round trip pending without acceptance or history writes', () => {
+  vi.useFakeTimers();
+  const signature = 'accepted-source-decoder-only';
+  const acceptedMarkdown = 'Lead\n\n[r]: https://example.test/12345678901234\n\nText\n';
+  const editMap = fullOwnerEditMap(signature, [
+    { id: 'b0', startLine: 0, endLine: 1 },
+    { id: 'b1', startLine: 4, endLine: 5 }
+  ]);
+  const fixture = createFullOwnerFixture({
+    editMap,
+    html: fullOwnerParagraphBlock('Lead', 'b0')
+      + '\n\n'
+      + fullOwnerParagraphBlock('Text', 'b1')
+      + '\n',
+    markdown: acceptedMarkdown,
+    signature,
+    sourceCaret: 10
+  });
+  try {
+    fixture.surface.focus();
+    fixture.onDiagnostic.mockClear();
+    const lead = fixture.surface.querySelector(
+      '[data-easymde-visual-block-id="b0"]'
+    );
+    const target = fixture.surface.querySelector(
+      '[data-easymde-visual-block-id="b1"]'
+    );
+    const leadText = lead?.firstChild;
+    const targetText = target?.firstChild;
+    if (!(lead instanceof HTMLParagraphElement)
+      || !(target instanceof HTMLParagraphElement)
+      || !(leadText instanceof Text)
+      || !(targetText instanceof Text)) {
+      throw new Error('accepted-source-decoder-fixture-missing');
+    }
+    const revision = fixture.history.getRevision();
+    const history = fixture.history.getHistoryState();
+    const acceptedChanges = fixture.onCanonicalDocumentChange.mock.calls.length;
+    expect(fullOwnerNativeInsert(
+      fixture.surface,
+      leadText,
+      leadText.length,
+      'X'
+    ).prevented).toBe(false);
+    expect(fullOwnerNativeDelete(
+      fixture.surface,
+      leadText,
+      leadText.length - 1,
+      leadText.length,
+      'deleteContentBackward'
+    ).prevented).toBe(false);
+    expect(leadText.data).toBe('Lead');
+    placeCaretInText(targetText, 4);
+    expect(fixture.runtime().isTransferPending()).toBe(false);
+    expect(fixture.history.getValue()).toBe(acceptedMarkdown);
+    expect(fixture.history.getRevision()).toBe(revision);
+    expect(fixture.history.getHistoryState()).toEqual(history);
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      start: 10,
+      end: 10
+    });
+    expect(fixture.surface.querySelector(
+      '[data-easymde-visual-block-id="b1"]'
+    )).toBe(target);
+    expect(target.firstChild).toBe(targetText);
+    expect(target.isConnected && targetText.isConnected).toBe(true);
+    expect(fixture.requestPreview).not.toHaveBeenCalled();
+    expect(fixture.onCanonicalDocumentChange).toHaveBeenCalledTimes(
+      acceptedChanges
+    );
+    expect(fixture.onDiagnostic).not.toHaveBeenCalled();
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+  } finally {
+    window.getSelection()?.removeAllRanges();
+    fixture.unmount();
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  }
+});
+
+function createAcceptedSourceDecoderProbe() {
+  const signature = 'accepted-source-decoder-only';
+  const acceptedMarkdown = 'Lead\n\n[r]: https://example.test/12345678901234\n\nText\n';
+  const currentMarkdown = 'Lead\n\nText\n';
+  expect(acceptedMarkdown).toHaveLength(53);
+  expect(currentMarkdown).toHaveLength(11);
+  const surface = document.createElement('article');
+  surface.innerHTML = fullOwnerParagraphBlock('Lead', 'b0')
+    + '\n\n'
+    + fullOwnerParagraphBlock('Text', 'b1')
+    + '\n';
+  document.body.append(surface);
+  const lead = surface.querySelector('[data-easymde-visual-block-id="b0"]');
+  const target = surface.querySelector('[data-easymde-visual-block-id="b1"]');
+  const leadText = lead?.firstChild;
+  const targetText = target?.firstChild;
+  if (!(target instanceof HTMLParagraphElement)
+    || !(targetText instanceof Text)
+    || !(leadText instanceof Text)) {
+    surface.remove();
+    throw new Error('accepted-source-decoder-probe-missing');
+  }
+  const baselineVisualMarkdown = serializeVisualMarkdown(surface);
+  if ('Lead\n\nText' !== baselineVisualMarkdown) {
+    surface.remove();
+    throw new Error('accepted-source-decoder-probe-visual-mismatch');
+  }
+  const editMap = fullOwnerEditMap(signature, [
+    { id: 'b0', startLine: 0, endLine: 1 },
+    { id: 'b1', startLine: 4, endLine: 5 }
+  ]);
+  const owner = {};
+  const nodes = Array.from(surface.childNodes);
+  const history = { redoDepth: 0, undoDepth: 0 };
+  const change = ChangeSet.of(
+    [{ from: 6, insert: '', to: 48 }],
+    acceptedMarkdown.length,
+    '\n'
+  ).desc;
+  const certificate = {
+    editMap,
+    html: surface.innerHTML,
+    nodes,
+    owner,
+    previewRevision: 1,
+    previewSignature: signature,
+    source: acceptedMarkdown,
+    sourceRevision: 0,
+    visual: baselineVisualMarkdown
+  };
+  const correspondence = {
+    change,
+    history,
+    insertionOwner: null,
+    origin: {
+      metadata: [],
+      nodes,
+      owner,
+      source: acceptedMarkdown,
+      sourceRevision: 0,
+      visual: baselineVisualMarkdown
+    },
+    owner,
+    source: currentMarkdown,
+    sourceRevision: 1
+  };
+  const context = {
+    acceptedMapCertificate: certificate,
+    acceptedPreview: { revision: 1, signature },
+    acceptedSourceMarkdown: acceptedMarkdown,
+    capturedPreviewRevision: 1,
+    correspondence,
+    currentRevision: 1,
+    history,
+    owner,
+    referenceLabelCaseFoldProfile: 14 as const
+  };
+  return {
+    acceptedMarkdown,
+    baselineVisualMarkdown,
+    certificate,
+    context,
+    correspondence,
+    currentMarkdown,
+    editMap,
+    lead,
+    leadText,
+    nodes,
+    owner,
+    surface,
+    target,
+    targetText
+  };
+}
+
+it('composes cumulative accepted-to-current correspondence without text matching', () => {
+  const probe = createAcceptedSourceDecoderProbe();
+  try {
+    const origin = {
+      metadata: [],
+      nodes: probe.nodes,
+      owner: probe.owner,
+      source: probe.acceptedMarkdown,
+      sourceRevision: 0,
+      visual: probe.baselineVisualMarkdown
+    };
+    const prior = {
+      change: ChangeSet.of([], probe.acceptedMarkdown.length, '\n').desc,
+      history: { redoDepth: 0, undoDepth: 0 },
+      insertionOwner: null,
+      origin,
+      owner: probe.owner,
+      source: probe.acceptedMarkdown,
+      sourceRevision: 0
+    };
+    const current = fullComposeDomCorrespondence(
+      prior,
+      origin,
+      [{ from: 6, insert: '', to: 48 }],
+      probe.acceptedMarkdown,
+      probe.currentMarkdown,
+      0,
+      1,
+      { redoDepth: 0, undoDepth: 0 },
+      { redoDepth: 0, undoDepth: 1 }
+    );
+    expect(current).not.toBeNull();
+    expect(current?.origin).toBe(origin);
+    expect(current?.source).toBe(probe.currentMarkdown);
+    expect(current?.sourceRevision).toBe(1);
+    expect(current?.history).toEqual({ redoDepth: 0, undoDepth: 1 });
+    expect(acceptedDecodedBlockSelection(
+      probe.surface,
+      {
+        anchorNode: probe.targetText,
+        anchorOffset: 4,
+        focusNode: probe.targetText,
+        focusOffset: 3
+      },
+      probe.currentMarkdown,
+      probe.baselineVisualMarkdown,
+      probe.editMap,
+      {
+        ...probe.context,
+        correspondence: current,
+        history: { redoDepth: 0, undoDepth: 1 }
+      }
+    )).toEqual({
+      source: { end: 10, start: 9 },
+      visual: { end: 10, start: 9 }
+    });
+    const removal = ChangeSet.of(
+      [{ from: 0, insert: '', to: 1 }],
+      probe.acceptedMarkdown.length,
+      '\n'
+    ).desc;
+    expect(fullTransportedExtent(
+      {
+        ...prior,
+        change: removal,
+        source: probe.acceptedMarkdown.slice(1)
+      },
+      { start: 0, end: 5 },
+      null
+    )).toBeNull();
+    const insertion = ChangeSet.of(
+      [{ from: 2, insert: 'Z', to: 2 }],
+      probe.acceptedMarkdown.length,
+      '\n'
+    ).desc;
+    expect(fullTransportedExtent(
+      {
+        ...prior,
+        change: insertion,
+        source: probe.acceptedMarkdown.slice(0, 2)
+          + 'Z'
+          + probe.acceptedMarkdown.slice(2)
+      },
+      { start: 0, end: 5 },
+      null
+    )).toBeNull();
+    expect(fullComposeDomCorrespondence(
+      prior,
+      { ...origin, owner: {} },
+      [{ from: 6, insert: '', to: 48 }],
+      probe.acceptedMarkdown,
+      probe.currentMarkdown,
+      0,
+      1,
+      { redoDepth: 0, undoDepth: 0 },
+      { redoDepth: 0, undoDepth: 1 }
+    )).toBeNull();
+    expect(fullComposeDomCorrespondence(
+      prior,
+      origin,
+      [{ from: 6, insert: '', to: 48 }],
+      probe.acceptedMarkdown,
+      probe.currentMarkdown,
+      0,
+      2,
+      { redoDepth: 0, undoDepth: 0 },
+      { redoDepth: 0, undoDepth: 1 }
+    )).toBeNull();
+  } finally {
+    probe.surface.remove();
+  }
+});
+
+it('maps accepted 51..52 through the exact correspondence to current 9..10', () => {
+  const probe = createAcceptedSourceDecoderProbe();
+  try {
+    const accepted = acceptedDecodedBlockSelection(
+      probe.surface,
+      {
+        anchorNode: probe.targetText,
+        anchorOffset: 4,
+        focusNode: probe.targetText,
+        focusOffset: 3
+      },
+      probe.acceptedMarkdown,
+      probe.baselineVisualMarkdown,
+      probe.editMap,
+      { ...probe.context, correspondence: null }
+    );
+    expect(accepted).toEqual({
+      source: { end: 52, start: 51 },
+      visual: { end: 10, start: 9 }
+    });
+    const current = acceptedDecodedBlockSelection(
+      probe.surface,
+      {
+        anchorNode: probe.targetText,
+        anchorOffset: 4,
+        focusNode: probe.targetText,
+        focusOffset: 3
+      },
+      probe.currentMarkdown,
+      probe.baselineVisualMarkdown,
+      probe.editMap,
+      probe.context
+    );
+    expect(current).toEqual({
+      source: { end: 10, start: 9 },
+      visual: { end: 10, start: 9 }
+    });
+  } finally {
+    probe.surface.remove();
+  }
+});
+
+it('falls through a stale pending candidate to the valid cumulative ledger', () => {
+  const probe = createAcceptedSourceDecoderProbe();
+  try {
+    const stalePending = {
+      ...probe.correspondence,
+      sourceRevision: 0
+    };
+    expect(fullSelectAcceptedDomCorrespondence(
+      [stalePending, probe.correspondence],
+      probe.owner,
+      probe.currentMarkdown,
+      1,
+      probe.context.history
+    )).toBe(probe.correspondence);
+  } finally {
+    probe.surface.remove();
+  }
+});
+
+it('certifies the current-source row of a Preview one refresh behind with equal line counts', () => {
+  const signature = 'accepted-source-current-row';
+  const acceptedMarkdown = 'Lead\n\nx\\~\n\nTail\n';
+  const currentMarkdown = 'Lead\n\nx\\~y\n\nTail\n';
+  const surface = document.createElement('article');
+  surface.innerHTML = fullOwnerParagraphBlock('Lead', 'b0')
+    + '\n\n'
+    + fullOwnerParagraphBlock('x~y', 'b1')
+    + '\n\n'
+    + fullOwnerParagraphBlock('Tail', 'b2')
+    + '\n';
+  document.body.append(surface);
+  try {
+    // The live DOM already spells the current row while the accepted Preview
+    // one refresh behind still spells the row it replaced. Both sources have
+    // the same line count, so only the block's own row can certify a caret.
+    const baselineVisualMarkdown = serializeVisualMarkdown(surface);
+    expect(baselineVisualMarkdown).toBe('Lead\n\nx~y\n\nTail');
+    expect(acceptedMarkdown.split('\n')).toHaveLength(
+      currentMarkdown.split('\n').length
+    );
+    const editMap = fullOwnerEditMap(signature, [
+      { endLine: 1, id: 'b0', startLine: 0 },
+      { endLine: 3, id: 'b1', startLine: 2 },
+      { endLine: 5, id: 'b2', startLine: 4 }
+    ]);
+    const owner = {};
+    const nodes = Array.from(surface.childNodes);
+    const history = { redoDepth: 0, undoDepth: 0 };
+    const change = ChangeSet.of(
+      [{ from: 9, insert: 'y' }],
+      acceptedMarkdown.length
+    ).desc;
+    const certificate = {
+      editMap,
+      html: surface.innerHTML,
+      nodes,
+      owner,
+      previewRevision: 1,
+      previewSignature: signature,
+      source: acceptedMarkdown,
+      sourceRevision: 0,
+      visual: baselineVisualMarkdown
+    };
+    const context = {
+      acceptedMapCertificate: certificate,
+      acceptedPreview: { revision: 1, signature },
+      acceptedSourceMarkdown: acceptedMarkdown,
+      capturedPreviewRevision: 1,
+      correspondence: {
+        change,
+        history,
+        insertionOwner: null,
+        origin: {
+          metadata: [],
+          nodes,
+          owner,
+          source: acceptedMarkdown,
+          sourceRevision: 0,
+          visual: baselineVisualMarkdown
+        },
+        owner,
+        source: currentMarkdown,
+        sourceRevision: 1
+      },
+      currentRevision: 1,
+      history,
+      owner,
+      referenceLabelCaseFoldProfile: 14 as const
+    };
+    const block = surface.querySelector('[data-easymde-visual-block-id="b1"]');
+    const text = block?.firstChild;
+    if (!(block instanceof HTMLParagraphElement) || !(text instanceof Text)) {
+      throw new Error('accepted-current-row-block-missing');
+    }
+    const certify = (offset: number) => acceptedDecodedBlockSelection(
+      surface,
+      {
+        anchorNode: text,
+        anchorOffset: offset,
+        focusNode: text,
+        focusOffset: offset
+      },
+      currentMarkdown,
+      baselineVisualMarkdown,
+      editMap,
+      context
+    );
+    // The unowned interior insertion is exactly what the accepted-row
+    // transport refuses, so those offsets cannot come from the accepted row:
+    // the certification below can only be the current row's own.
+    expect(fullTransportedExtent(
+      context.correspondence,
+      { end: 10, start: 6 },
+      null
+    )).toBeNull();
+    // The accepted slice spells `x\~`, so no accepted row describes the live
+    // `x~y` row; the current source's own row is the proof that holds. Its
+    // source offsets are the row's own (6..11) plus the caret's advance
+    // through the escaped marker, and its visual offsets are the row's
+    // visible start plus the visible character count.
+    expect(certify(3)).toEqual({
+      source: { end: 10, start: 10 },
+      visual: { end: 9, start: 9 }
+    });
+    expect(certify(2)).toEqual({
+      source: { end: 9, start: 9 },
+      visual: { end: 8, start: 8 }
+    });
+    expect(certify(1)).toEqual({
+      source: { end: 7, start: 7 },
+      visual: { end: 7, start: 7 }
+    });
+    expect(certify(0)).toEqual({
+      source: { end: 6, start: 6 },
+      visual: { end: 6, start: 6 }
+    });
+  } finally {
+    surface.remove();
+  }
+});
+
+it('rejects missing or stale accepted-source correspondence', () => {
+  const cases = [
+    (probe: ReturnType<typeof createAcceptedSourceDecoderProbe>) => ({
+      ...probe,
+      context: { ...probe.context, correspondence: null }
+    }),
+    (probe: ReturnType<typeof createAcceptedSourceDecoderProbe>) => ({
+      ...probe,
+      context: {
+        ...probe.context,
+        acceptedMapCertificate: { ...probe.certificate, source: 'stale' }
+      }
+    }),
+    (probe: ReturnType<typeof createAcceptedSourceDecoderProbe>) => ({
+      ...probe,
+      context: {
+        ...probe.context,
+        acceptedMapCertificate: { ...probe.certificate, owner: {} }
+      }
+    }),
+    (probe: ReturnType<typeof createAcceptedSourceDecoderProbe>) => ({
+      ...probe,
+      context: { ...probe.context, capturedPreviewRevision: 2 }
+    })
+  ];
+  for (const mutate of cases) {
+    const probe = createAcceptedSourceDecoderProbe();
+    try {
+      const state = mutate(probe);
+      expect(acceptedDecodedBlockSelection(
+        state.surface,
+        {
+          anchorNode: state.targetText,
+          anchorOffset: 4,
+          focusNode: state.targetText,
+          focusOffset: 3
+        },
+        state.currentMarkdown,
+        state.baselineVisualMarkdown,
+        state.editMap,
+        state.context
+      )).toBeNull();
+    } finally {
+      probe.surface.remove();
+    }
+  }
+});
+
+it('rejects noneditable, wrong-kind, and protected accepted targets', () => {
+  {
+    const probe = createAcceptedSourceDecoderProbe();
+    try {
+      const referenceMap = fullOwnerEditMap(probe.editMap.signature, [
+        { id: 'b0', startLine: 0, endLine: 1 },
+        { id: 'b1', startLine: 2, endLine: 3 }
+      ]);
+      expect(acceptedDecodedBlockSelection(
+        probe.surface,
+        {
+          anchorNode: probe.targetText,
+          anchorOffset: 4,
+          focusNode: probe.targetText,
+          focusOffset: 3
+        },
+        probe.currentMarkdown,
+        probe.baselineVisualMarkdown,
+        referenceMap,
+        probe.context
+      )).toBeNull();
+    } finally {
+      probe.surface.remove();
+    }
+  }
+  {
+    const probe = createAcceptedSourceDecoderProbe();
+    try {
+      const heading = document.createElement('h2');
+      heading.setAttribute('data-easymde-visual-block-id', 'b1');
+      heading.textContent = 'Text';
+      probe.target.replaceWith(heading);
+      const headingText = heading.firstChild;
+      if (!(headingText instanceof Text)) throw new Error('accepted-source-heading-text-missing');
+      expect(acceptedDecodedBlockSelection(
+        probe.surface,
+        {
+          anchorNode: headingText,
+          anchorOffset: 4,
+          focusNode: headingText,
+          focusOffset: 3
+        },
+        probe.currentMarkdown,
+        probe.baselineVisualMarkdown,
+        probe.editMap,
+        {
+          ...probe.context,
+          acceptedMapCertificate: {
+            ...probe.certificate,
+            nodes: [...probe.nodes.filter((node) => node !== probe.target), heading]
+          }
+        }
+      )).toBeNull();
+    } finally {
+      probe.surface.remove();
+    }
+  }
+  {
+    const probe = createAcceptedSourceDecoderProbe();
+    try {
+      const protectedText = document.createElement('span');
+      protectedText.setAttribute('contenteditable', 'false');
+      protectedText.className = 'easymde-toc';
+      protectedText.textContent = 'Text';
+      probe.target.replaceChildren(protectedText);
+      const text = protectedText.firstChild;
+      if (!(text instanceof Text)) throw new Error('accepted-source-protected-text-missing');
+      expect(acceptedDecodedBlockSelection(
+        probe.surface,
+        {
+          anchorNode: text,
+          anchorOffset: 4,
+          focusNode: text,
+          focusOffset: 3
+        },
+        probe.currentMarkdown,
+        probe.baselineVisualMarkdown,
+        probe.editMap,
+        probe.context
+      )).toBeNull();
+    } finally {
+      probe.surface.remove();
+    }
+  }
+});
+
+it('rejects replaced, disconnected, and out-of-extent accepted targets', () => {
+  for (const replacement of ['replaced', 'disconnected', 'other'] as const) {
+    const probe = createAcceptedSourceDecoderProbe();
+    try {
+      let selectionNode = probe.targetText;
+      if ('replaced' === replacement) {
+        const clone = probe.target.cloneNode(true) as HTMLElement;
+        probe.target.replaceWith(clone);
+        selectionNode = clone.firstChild as Text;
+      } else if ('disconnected' === replacement) {
+        probe.target.remove();
+      } else {
+        const outside = document.createElement('p');
+        outside.setAttribute('data-easymde-visual-block-id', 'b1');
+        outside.textContent = 'Text';
+        document.body.append(outside);
+        selectionNode = outside.firstChild as Text;
+        try {
+          expect(acceptedDecodedBlockSelection(
+            probe.surface,
+            {
+              anchorNode: selectionNode,
+              anchorOffset: 4,
+              focusNode: selectionNode,
+              focusOffset: 3
+            },
+            probe.currentMarkdown,
+            probe.baselineVisualMarkdown,
+            probe.editMap,
+            probe.context
+          )).toBeNull();
+        } finally {
+          outside.remove();
+        }
+        continue;
+      }
+      expect(acceptedDecodedBlockSelection(
+        probe.surface,
+        {
+          anchorNode: selectionNode,
+          anchorOffset: 4,
+          focusNode: selectionNode,
+          focusOffset: 3
+        },
+        probe.currentMarkdown,
+        probe.baselineVisualMarkdown,
+        probe.editMap,
+        probe.context
+      )).toBeNull();
+    } finally {
+      probe.surface.remove();
+    }
+  }
+  const probe = createAcceptedSourceDecoderProbe();
+  try {
+    const outsideExtent = fullOwnerEditMap(probe.editMap.signature, [
+      { id: 'b0', startLine: 0, endLine: 1 },
+      { id: 'b1', startLine: 5, endLine: 6 }
+    ]);
+    expect(acceptedDecodedBlockSelection(
+      probe.surface,
+      {
+        anchorNode: probe.targetText,
+        anchorOffset: 4,
+        focusNode: probe.targetText,
+        focusOffset: 3
+      },
+      probe.currentMarkdown,
+      probe.baselineVisualMarkdown,
+      outsideExtent,
+      probe.context
+    )).toBeNull();
+  } finally {
+    probe.surface.remove();
+  }
+});
+
+it('restores an accepted quoted list endpoint without a native witness', () => {
+  const signature = 'accepted-quoted-list-endpoint';
+  const markdown = '> - a\n> - c\n';
+  const acceptedMarkdown = '> - a\n> - b\n';
+  const editMap = fullOwnerEditMap(signature, [{ id: 'b0', startLine: 0, endLine: 2 }]);
+  const markup = (item: string) => `<blockquote data-easymde-visual-block-id="b0">\n<ul>\n<li>a</li>\n<li>${item}</li>\n</ul>\n</blockquote>`;
+  const fixture = createFullOwnerFixture({ editMap, html: markup('c'), markdown, signature, sourceCaret: 11 });
+  try {
+    fixture.surface.focus();
+    window.getSelection()?.removeAllRanges();
+    expect(fixture.runtime().applyCanonicalChange({
+      change: {
+        changes: { from: 10, insert: 'b', to: 11 },
+        selection: { direction: 'none', start: 11, end: 11 },
+        value: acceptedMarkdown
+      },
+      expected: { revision: fixture.history.getRevision(), selection: fixture.history.getSelection(), value: markdown }
+    })).toBe('handled');
+    expect(fixture.runtime().isTransferPending()).toBe(true);
+    act(() => fixture.accept({ editMap, html: markup('b'), markdown: acceptedMarkdown }));
+    const item = fixture.surface.querySelectorAll('li')[1];
+    const text = item?.firstChild;
+    expect(text).toBeInstanceOf(Text);
+    expect(window.getSelection()?.anchorNode).toBe(item);
+    expect(window.getSelection()?.anchorOffset).toBe(1);
+    expect(fixture.history.getValue()).toBe(acceptedMarkdown);
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: 11, end: 11 });
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+  }
+});
+
+it('prepares an accepted pending empty list item before restoring its native caret', () => {
+  vi.useFakeTimers();
+  const signature = 'pending-empty-list-adoption';
+  const markdown = '- a\n- b\n- c\n';
+  const acceptedMarkdown = '- a\n- \n- c\n';
+  const editMap = fullOwnerEditMap(signature, [{ id: 'b0', startLine: 0, endLine: 3 }]);
+  const html = '<ul data-easymde-visual-block-id="b0">\n<li>a</li>\n<li>b</li>\n<li>c</li>\n</ul>';
+  const acceptedHtml = '<ul data-easymde-visual-block-id="b0">\n<li>a</li>\n<li>\n</li>\n<li>c</li>\n</ul>';
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 6 });
+  try {
+    fixture.surface.focus();
+    const text = fixture.surface.querySelectorAll('li')[1]?.firstChild;
+    if (!(text instanceof Text)) throw new Error('pending-empty-list-initial-text-missing');
+    placeCaretInText(text, 0);
+    expect(fixture.runtime().applyCanonicalChange({
+      change: {
+        changes: { from: 6, insert: '', to: 7 },
+        selection: { direction: 'none', start: 6, end: 6 },
+        value: acceptedMarkdown
+      },
+      expected: { revision: fixture.history.getRevision(), selection: fixture.history.getSelection(), value: markdown }
+    })).toBe('handled');
+    expect(fixture.runtime().isTransferPending()).toBe(true);
+    const state = { revision: fixture.history.getRevision(), history: fixture.history.getHistoryState() };
+    act(() => fixture.accept({ editMap, html: acceptedHtml, markdown: acceptedMarkdown }));
+    const empty = fixture.surface.querySelectorAll('li')[1];
+    expect(empty?.firstChild).toBeInstanceOf(HTMLBRElement);
+    expect(fixture.history.getValue()).toBe(acceptedMarkdown);
+    expect(fixture.history.getRevision()).toBe(state.revision);
+    expect(fixture.history.getHistoryState()).toEqual(state.history);
+    const selection = window.getSelection();
+    expect(empty?.contains(selection?.anchorNode ?? null)).toBe(true);
+    if (!selection) throw new Error('pending-empty-list-restored-selection-missing');
+    const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: 'X', inputType: 'insertText' }, selection.getRangeAt(0).cloneRange());
+    expect(before.defaultPrevented).toBe(false);
+    const inserted = document.createTextNode('X');
+    empty?.replaceChildren(inserted);
+    placeCaretInText(inserted, 1);
+    fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'X', inputType: 'insertText' }));
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue()).toBe('- a\n- X\n- c\n');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
 
 it.each([[true, '~~~'], [false, '~~~'], [false, '```']] as const)('keeps manually typed fence info literal and the caret after every key in a normal Full paragraph without Enter (next code has info %s, family %s)', async (nextCodeHasInfo, family) => {
   vi.useFakeTimers();
@@ -21530,7 +24124,7 @@ it.each([[true, '~~~'], [false, '~~~'], [false, '```']] as const)('keeps manuall
       expect(source.endsWith(markdown), 'typing a prefix preserves all existing source bytes').toBe(true);
       const added = source.slice(0, source.length - markdown.length);
       expect(added.replace(/\\([~`])/g, '$1')).toBe(input.slice(0, count));
-      const blocks = createEditorMarkdownBlockIndex(source).blocks;
+      const blocks = createEditorMarkdownBlockIndex(source, { referenceLabelCaseFoldProfile: 14 }).blocks;
       expect(blocks[0]?.kind, 'typing without Enter must not turn the paragraph into a source fence').toBe('paragraph');
       expect(blocks.some(block => block.kind === 'code' && source.slice(block.from, block.to).trimEnd() === protectedFence)).toBe(true);
       expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: added.length, end: added.length });
@@ -21590,7 +24184,7 @@ it.each([['~~~', ''], ['~~~ruby', ''], ['```', ''], ['```ruby', ''], ['~~', '~~'
     expect(source.slice(0, insertion)).toBe(markdown.slice(0, insertion));
     expect(source.slice(target)).toBe(markdown.slice(markdown.indexOf('Target')));
     expect(source.slice(insertion, target).replace(/\\([~`])/g, '$1')).toBe(input + existingPrefix);
-    const blocks = createEditorMarkdownBlockIndex(source).blocks;
+    const blocks = createEditorMarkdownBlockIndex(source, { referenceLabelCaseFoldProfile: 14 }).blocks;
     expect(blocks[1]?.kind, 'a literal run must not become an opening fence and consume accepted neighbors').toBe('paragraph');
     expect(blocks.filter(block => block.kind === 'code').map(block => source.slice(block.from, block.to).trimEnd())).toEqual([
       '```\nalpha\nbeta\n```',
@@ -21664,11 +24258,11 @@ it.each([['~~~', 'tail'], ['```', 'tail'], ['~~~', 'second-line-run'], ['```', '
     expect(fixture.runtime().isEditable()).toBe(true);
     expect(fixture.runtime().isTransferPending()).toBe(false);
     expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: sourceCaret, end: sourceCaret });
-    const native = window.getSelection();
     const text = fullOwnerTextAt(fixture.surface, 'p');
-    expect(native?.anchorNode).toBe(text);
-    expect(native?.anchorOffset).toBe(visibleCaret);
-    act(() => fullOwnerNativeInsert(fixture.surface, text, visibleCaret, 'x', 'insertText', true));
+    if (!text.parentElement) throw new Error('literal-restored-parent-missing');
+    expect(visualMarkdown.coversMarkdownUnits(prior, sourceCaret, sourceCaret)).toBe(true);
+    fullOwnerExpectLocalSelection(text.parentElement, visibleCaret, visibleCaret);
+    act(() => expect(fullOwnerNativeInsertAtSelection(fixture.surface, 'x').prevented).toBe(false));
     await act(async () => { vi.advanceTimersByTime(1600); await Promise.resolve(); });
     expect(fixture.history.getValue()).toBe(`${escaped.slice(0, sourceCaret)}x${escaped.slice(sourceCaret)}\n\n${base}`);
     expect(fixture.surface.querySelector('pre code')?.textContent).toBe('KEEP\n');
@@ -21678,6 +24272,2006 @@ it.each([['~~~', 'tail'], ['```', 'tail'], ['~~~', 'second-line-run'], ['```', '
     expect(fixture.onFailure).not.toHaveBeenCalled();
     expect(fixture.onTransferFailure).not.toHaveBeenCalled();
   } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each(['x', ' '] as const)('removes a task item row emptied down to its renderer separator after respelled blocks with one history step ([%s])', async (state) => {
+  vi.useFakeTimers();
+  const task = `[${state}]`;
+  const input = 'x' === state ? '<input checked disabled type="checkbox">' : '<input disabled type="checkbox">';
+  // The serializer respells every block here (`---` as `* * *`, `25.` as
+  // `25\.`, `*` as `-` with a doubled renderer separator), so no line before
+  // the emptied row is literal unchanged text.
+  const markdown = `---\n\n## 25. T\n\n* ${task} A\n* ${task} B\n\n`;
+  const signature = 'full-emptied-task-item';
+  // The real Preview shape: the renderer's separator space opens the body text.
+  const fixture = createFullOwnerFixture({
+    markdown,
+    signature,
+    sourceCaret: markdown.length - 2,
+    html: `<hr data-easymde-visual-block-id="b0">\n<h2 id="25-t" data-easymde-visual-block-id="b1">25. T</h2>\n<ul class="task-list" data-easymde-visual-block-id="b2">\n<li class="task-list-item">${input} A</li>\n<li class="task-list-item">${input} B</li>\n</ul>\n`,
+    editMap: fullOwnerEditMap(signature, [
+      { id: 'b0', startLine: 0, endLine: 1 },
+      { id: 'b1', startLine: 2, endLine: 3 },
+      { id: 'b2', startLine: 4, endLine: 6 }
+    ])
+  });
+  try {
+    const item = fixture.surface.querySelectorAll('li')[1];
+    const text = item?.lastChild;
+    if (!(text instanceof Text) || ' B' !== text.data) throw new Error('full-emptied-task-body-missing');
+    fixture.surface.focus();
+    // One native Backspace as Chromium performs it: the separator it leaves as
+    // the last character of the body is kept as NBSP.
+    act(() => {
+      placeCaretInText(text, 2);
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, 1, 2));
+      expect(before.defaultPrevented).toBe(false);
+      text.data = ' ';
+      placeCaretInText(text, 1);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: null, inputType: 'deleteContentBackward' }));
+    });
+    await act(async () => { vi.advanceTimersByTime(90); await Promise.resolve(); });
+    const emptied = `---\n\n## 25. T\n\n* ${task} A\n* ${task} \n\n`;
+    expect(fixture.history.getValue()).toBe(emptied);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    let separator: InputEvent | null = null;
+    act(() => {
+      separator = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, 0, 1));
+      if (!separator.defaultPrevented) {
+        text.deleteData(0, 1);
+        fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: null, inputType: 'deleteContentBackward' }));
+      }
+    });
+    await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); });
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect((separator as InputEvent | null)?.defaultPrevented).toBe(true);
+    expect(fixture.history.getValue()).toBe(`---\n\n## 25. T\n\n* ${task} A\n\n`);
+    expect(fixture.surface.querySelectorAll('li')).toHaveLength(1);
+    expect(fixture.runtime().isEditable()).toBe(true);
+    // The row removal is its own history step: Undo restores the exact prior
+    // Markdown.
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getValue()).toBe(emptied);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each(['separator', 'debounce'] as const)('keeps an unmapped native deletion when a later deletion maps before the debounce settles (%s)', async (ending) => {
+  vi.useFakeTimers();
+  const markdown = '---\n\n## 25. T\n\n* [x] X\n* [x] 表格\n\n';
+  const signature = 'full-unmapped-then-mapped-deletion';
+  const fixture = createFullOwnerFixture({
+    markdown,
+    signature,
+    sourceCaret: markdown.length - 2,
+    html: '<hr data-easymde-visual-block-id="b0">\n<h2 id="25-t" data-easymde-visual-block-id="b1">25. T</h2>\n<ul class="task-list" data-easymde-visual-block-id="b2">\n<li class="task-list-item"><input checked disabled type="checkbox"> X</li>\n<li class="task-list-item"><input checked disabled type="checkbox"> 表格</li>\n</ul>\n',
+    editMap: fullOwnerEditMap(signature, [
+      { id: 'b0', startLine: 0, endLine: 1 },
+      { id: 'b1', startLine: 2, endLine: 3 },
+      { id: 'b2', startLine: 4, endLine: 6 }
+    ])
+  });
+  const sources: string[] = [];
+  const nativeBackspace = (text: Text, start: number, end: number, apply: () => void): InputEvent => {
+    const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, start, end));
+    if (!before.defaultPrevented) {
+      apply();
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: null, inputType: 'deleteContentBackward' }));
+    }
+    sources.push(fixture.history.getValue());
+    return before;
+  };
+  try {
+    const item = fixture.surface.querySelectorAll('li')[1];
+    const text = item?.lastChild;
+    if (!item || !(text instanceof Text) || ' 表格' !== text.data) throw new Error('full-unmapped-task-body-missing');
+    fixture.surface.focus();
+    // The caret Chromium leaves after an owner row removal: an element anchor
+    // after the body text, which no selection memory describes.
+    const selection = window.getSelection();
+    const caret = document.createRange();
+    caret.setStart(item, item.childNodes.length);
+    caret.collapse(true);
+    selection?.removeAllRanges();
+    selection?.addRange(caret);
+    act(() => {
+      const before = nativeBackspace(text, 2, 3, () => {
+        text.deleteData(2, 1);
+        placeCaretInText(text, 2);
+      });
+      expect(before.defaultPrevented).toBe(false);
+    });
+    // Inside the debounce: a deletion the owner maps from the text caret.
+    act(() => {
+      nativeBackspace(text, 1, 2, () => {
+        text.data = ' ';
+        placeCaretInText(text, 1);
+      });
+    });
+    if ('separator' === ending) {
+      act(() => {
+        nativeBackspace(text, 0, 1, () => text.deleteData(0, 1));
+      });
+    }
+    await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); });
+    sources.push(fixture.history.getValue());
+    // Until a commit the canonical source is the original; no commit may
+    // keep the natively deleted character.
+    for (const source of sources.filter((value) => value !== markdown)) expect(source).not.toContain('格');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe('separator' === ending
+      ? '---\n\n## 25. T\n\n* [x] X\n\n'
+      : '---\n\n## 25. T\n\n* [x] X\n* [x] \n\n');
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  ['rapid', '~~~'], ['rapid', '```'], ['spaced', '~~~'], ['spaced', '```']
+] as const)('converts a %s typed %sjs paragraph into its fence on Enter in a mapped document', async (cadence, family) => {
+  vi.useFakeTimers();
+  const right = '~~~python\nRIGHT\n~~~';
+  const initial = `### Heading\n\n${right}\n\nAfter`;
+  const signature = 'full-typed-fence-info-enter';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { id: 'b0', startLine: 0, endLine: 1 },
+      { id: 'b1', startLine: 2, endLine: 5 },
+      { id: 'b2', startLine: 6, endLine: 7 }
+    ]),
+    html: fullOwnerBlock('<h3>Heading</h3>', 'b0')
+      + fullOwnerCodeBlock('RIGHT\n', 'b1', 'python')
+      + fullOwnerParagraphBlock('After', 'b2'),
+    markdown: initial, signature, sourceCaret: 0
+  });
+  let disposed = false;
+  fixture.onMarkdownChange.mockImplementation(() => {
+    queueMicrotask(() => { if (!disposed) fixture.rerenderProps(); });
+  });
+  const settle = async (ms: number) => { await act(async () => { vi.advanceTimersByTime(ms); await Promise.resolve(); }); };
+  try {
+    fixture.surface.focus();
+    const headingText = fullOwnerTextAt(fixture.surface, 'h3');
+    placeCaretInText(headingText, headingText.length);
+    await act(async () => {
+      fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' }));
+      await Promise.resolve();
+    });
+    const typed = `${family}js`;
+    for (const character of typed) {
+      act(() => {
+        fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: character }));
+        const native = window.getSelection();
+        const range = native?.rangeCount ? native.getRangeAt(0).cloneRange() : null;
+        if (!range) throw new Error('full-typed-fence-range-missing');
+        const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: character, inputType: 'insertText' }, range.cloneRange());
+        if (before.defaultPrevented) return;
+        if (range.startContainer instanceof Text) {
+          const text = range.startContainer; const offset = range.startOffset;
+          text.insertData(offset, character); native?.collapse(text, offset + 1);
+        } else {
+          // Chromium inserts before the empty paragraph's terminal BR.
+          const text = document.createTextNode(character); range.insertNode(text); native?.collapse(text, 1);
+        }
+        fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: character, inputType: 'insertText' }));
+      });
+      // Slower than the debounce: every key commits on its own.
+      if ('spaced' === cadence) await settle(100);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    }
+    const typedSource = fixture.history.getValue();
+    const added = typedSource.slice('### Heading\n\n'.length, typedSource.indexOf(`\n\n${right}`));
+    if ('spaced' === cadence) {
+      // A typed opener stays a literal paragraph until the Enter command.
+      expect(added.replace(/\\([~`])/gu, '$1')).toBe(typed);
+      expect(createEditorMarkdownBlockIndex(typedSource, { referenceLabelCaseFoldProfile: 14 }).blocks[1]?.kind).toBe('paragraph');
+    }
+    act(() => {
+      fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' }));
+    });
+    await settle(160);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(`### Heading\n\n\`\`\`js\n\n\`\`\`\n\n${right}\n\nAfter`);
+    const caret = '### Heading\n\n```js\n'.length;
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: caret, end: caret });
+    expect(fixture.surface.querySelector('h3')?.nextElementSibling).toBeInstanceOf(HTMLPreElement);
+  } finally {
+    disposed = true; fixture.unmount(); vi.useRealTimers();
+  }
+});
+
+it.each([
+  ['rapid', '~~~'], ['rapid', '```'], ['spaced', '~~~'], ['spaced', '```']
+] as const)('converts a %s typed %sjs paragraph into its fence on Enter in an empty unmapped document', async (cadence, family) => {
+  vi.useFakeTimers();
+  // The browser's empty post: canonical '', one unidentified empty
+  // paragraph, and no Preview edit map.
+  const fixture = createFullOwnerFixture({
+    editMap: null,
+    html: '<p><br></p>',
+    markdown: '',
+    signature: 'full-empty-typed-fence-info-enter',
+    sourceCaret: 0
+  });
+  let disposed = false;
+  fixture.onMarkdownChange.mockImplementation(() => {
+    queueMicrotask(() => { if (!disposed) fixture.rerenderProps(); });
+  });
+  const settle = async (ms: number) => { await act(async () => { vi.advanceTimersByTime(ms); await Promise.resolve(); }); };
+  try {
+    const paragraph = fixture.surface.querySelector('p');
+    if (!(paragraph instanceof HTMLParagraphElement)) throw new Error('full-empty-paragraph-missing');
+    fixture.surface.focus();
+    const start = document.createRange();
+    start.setStart(paragraph, 0);
+    start.collapse(true);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(start);
+    const typed = `${family}js`;
+    for (const character of typed) {
+      act(() => {
+        fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: character }));
+        const native = window.getSelection();
+        const range = native?.rangeCount ? native.getRangeAt(0).cloneRange() : null;
+        if (!range) throw new Error('full-empty-typed-fence-range-missing');
+        const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: character, inputType: 'insertText' }, range.cloneRange());
+        if (before.defaultPrevented) return;
+        if (range.startContainer instanceof Text) {
+          const text = range.startContainer; const offset = range.startOffset;
+          text.insertData(offset, character); native?.collapse(text, offset + 1);
+        } else {
+          // Chromium replaces the empty paragraph's BR with the typed text.
+          const text = document.createTextNode(character); paragraph.replaceChildren(text); native?.collapse(text, 1);
+        }
+        fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: character, inputType: 'insertText' }));
+      });
+      // Slower than the debounce: every key commits on its own.
+      if ('spaced' === cadence) await settle(100);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    }
+    if ('spaced' === cadence) {
+      const typedSource = fixture.history.getValue();
+      // A typed opener stays a literal paragraph until the Enter command.
+      expect(typedSource.replace(/\\([~`])/gu, '$1')).toBe(typed);
+      expect(createEditorMarkdownBlockIndex(typedSource, { referenceLabelCaseFoldProfile: 14 }).blocks[0]?.kind).toBe('paragraph');
+    }
+    act(() => {
+      fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' }));
+    });
+    await settle(160);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe('```js\n\n```');
+    const caret = '```js\n'.length;
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: caret, end: caret });
+    expect(fixture.surface.firstElementChild).toBeInstanceOf(HTMLPreElement);
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    disposed = true; fixture.unmount(); vi.useRealTimers();
+  }
+});
+
+it.each([
+  ['rapid', '~~~'], ['rapid', '```'], ['spaced', '~~~'], ['spaced', '```']
+] as const)('converts a %s typed %s paragraph into its fence on Enter in an empty unmapped document', async (cadence, family) => {
+  vi.useFakeTimers();
+  // The bare run has no info string: every key but the last reaches the owner
+  // as plain text, and the run only becomes a complete opening on the third.
+  const fixture = createFullOwnerFixture({
+    editMap: null,
+    html: '<p><br></p>',
+    markdown: '',
+    signature: 'full-empty-typed-fence-bare-enter',
+    sourceCaret: 0
+  });
+  let disposed = false;
+  fixture.onMarkdownChange.mockImplementation(() => {
+    queueMicrotask(() => { if (!disposed) fixture.rerenderProps(); });
+  });
+  const settle = async (ms: number) => { await act(async () => { vi.advanceTimersByTime(ms); await Promise.resolve(); }); };
+  try {
+    const paragraph = fixture.surface.querySelector('p');
+    if (!(paragraph instanceof HTMLParagraphElement)) throw new Error('full-empty-bare-paragraph-missing');
+    fixture.surface.focus();
+    const start = document.createRange();
+    start.setStart(paragraph, 0);
+    start.collapse(true);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(start);
+    const typed = family;
+    for (const character of typed) {
+      act(() => {
+        fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: character }));
+        const native = window.getSelection();
+        const range = native?.rangeCount ? native.getRangeAt(0).cloneRange() : null;
+        if (!range) throw new Error('full-empty-bare-fence-range-missing');
+        const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: character, inputType: 'insertText' }, range.cloneRange());
+        if (before.defaultPrevented) return;
+        if (range.startContainer instanceof Text) {
+          const text = range.startContainer; const offset = range.startOffset;
+          text.insertData(offset, character); native?.collapse(text, offset + 1);
+        } else {
+          const text = document.createTextNode(character); paragraph.replaceChildren(text); native?.collapse(text, 1);
+        }
+        fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: character, inputType: 'insertText' }));
+      });
+      if ('spaced' === cadence) await settle(100);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    }
+    if ('spaced' === cadence) {
+      const typedSource = fixture.history.getValue();
+      expect(typedSource.replace(/\\([~`])/gu, '$1')).toBe(typed);
+      expect(createEditorMarkdownBlockIndex(typedSource, { referenceLabelCaseFoldProfile: 14 }).blocks[0]?.kind).toBe('paragraph');
+    }
+    act(() => {
+      fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' }));
+    });
+    await settle(160);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    // The Enter command canonicalizes the family to backticks of the typed
+    // length, whichever family the paragraph held.
+    const canonical = '`'.repeat(family.length);
+    expect(fixture.history.getValue()).toBe(`${canonical}\n\n${canonical}`);
+    const caret = `${canonical}\n`.length;
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: caret, end: caret });
+    expect(fixture.surface.firstElementChild).toBeInstanceOf(HTMLPreElement);
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    disposed = true; fixture.unmount(); vi.useRealTimers();
+  }
+});
+
+it.each([
+  ['rapid', '~~~'], ['rapid', '```'], ['spaced', '~~~'], ['spaced', '```']
+] as const)('converts a %s typed %s paragraph into its fence on Enter in a mapped document', async (cadence, family) => {
+  vi.useFakeTimers();
+  const right = '~~~python\nRIGHT\n~~~';
+  const initial = `### Heading\n\n${right}\n\nAfter`;
+  const signature = 'full-typed-fence-bare-enter';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { id: 'b0', startLine: 0, endLine: 1 },
+      { id: 'b1', startLine: 2, endLine: 5 },
+      { id: 'b2', startLine: 6, endLine: 7 }
+    ]),
+    html: fullOwnerBlock('<h3>Heading</h3>', 'b0')
+      + fullOwnerCodeBlock('RIGHT\n', 'b1', 'python')
+      + fullOwnerParagraphBlock('After', 'b2'),
+    markdown: initial, signature, sourceCaret: 0
+  });
+  let disposed = false;
+  fixture.onMarkdownChange.mockImplementation(() => {
+    queueMicrotask(() => { if (!disposed) fixture.rerenderProps(); });
+  });
+  const settle = async (ms: number) => { await act(async () => { vi.advanceTimersByTime(ms); await Promise.resolve(); }); };
+  try {
+    fixture.surface.focus();
+    const headingText = fullOwnerTextAt(fixture.surface, 'h3');
+    placeCaretInText(headingText, headingText.length);
+    await act(async () => {
+      fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' }));
+      await Promise.resolve();
+    });
+    const typed = family;
+    for (const character of typed) {
+      act(() => {
+        fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: character }));
+        const native = window.getSelection();
+        const range = native?.rangeCount ? native.getRangeAt(0).cloneRange() : null;
+        if (!range) throw new Error('full-typed-bare-fence-range-missing');
+        const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: character, inputType: 'insertText' }, range.cloneRange());
+        if (before.defaultPrevented) return;
+        if (range.startContainer instanceof Text) {
+          const text = range.startContainer; const offset = range.startOffset;
+          text.insertData(offset, character); native?.collapse(text, offset + 1);
+        } else {
+          const text = document.createTextNode(character); range.insertNode(text); native?.collapse(text, 1);
+        }
+        fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: character, inputType: 'insertText' }));
+      });
+      if ('spaced' === cadence) await settle(100);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    }
+    act(() => {
+      fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' }));
+    });
+    await settle(160);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    // Canonicalized to backticks of the typed length, as in the unmapped row.
+    const canonical = '`'.repeat(family.length);
+    expect(fixture.history.getValue()).toBe(`### Heading\n\n${canonical}\n\n${canonical}\n\n${right}\n\nAfter`);
+    expect(fixture.surface.querySelector('h3')?.nextElementSibling).toBeInstanceOf(HTMLPreElement);
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    disposed = true; fixture.unmount(); vi.useRealTimers();
+  }
+});
+
+it.each(['unmoved', 'moved', 'cleared'] as const)('compares a surface-level caret across consecutive Undo under a retained history transfer (%s)', async (caret) => {
+  vi.useFakeTimers();
+  const markdown = '---\n\n## 25. T\n\n* [x] A\n* [x] B\n* [x] C\n\n';
+  const signature = 'full-retained-surface-caret';
+  const fixture = createFullOwnerFixture({
+    markdown,
+    signature,
+    sourceCaret: markdown.length - 2,
+    html: '<hr data-easymde-visual-block-id="b0">\n<h2 id="25-t" data-easymde-visual-block-id="b1">25. T</h2>\n<ul class="task-list" data-easymde-visual-block-id="b2">\n<li class="task-list-item"><input checked disabled type="checkbox"> A</li>\n<li class="task-list-item"><input checked disabled type="checkbox"> B</li>\n<li class="task-list-item"><input checked disabled type="checkbox"> C</li>\n</ul>\n',
+    editMap: fullOwnerEditMap(signature, [
+      { id: 'b0', startLine: 0, endLine: 1 },
+      { id: 'b1', startLine: 2, endLine: 3 },
+      { id: 'b2', startLine: 4, endLine: 7 }
+    ])
+  });
+  const settle = async (ms: number) => { await act(async () => { vi.advanceTimersByTime(ms); await Promise.resolve(); }); };
+  const nativeBackspace = (text: Text, start: number, end: number, apply: () => void): void => {
+    const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, start, end));
+    if (before.defaultPrevented) return;
+    apply();
+    fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: null, inputType: 'deleteContentBackward' }));
+  };
+  const placeSurfaceCaret = (offset: number): void => {
+    const range = document.createRange();
+    range.setStart(fixture.surface, offset);
+    range.collapse(true);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+  };
+  try {
+    fixture.surface.focus();
+    // Two separate row removals give two Undo steps.
+    for (const index of [2, 1]) {
+      const text = fixture.surface.querySelectorAll('li')[index]?.lastChild;
+      if (!(text instanceof Text)) throw new Error('full-retained-surface-row-missing');
+      placeCaretInText(text, text.length);
+      act(() => nativeBackspace(text, 1, 2, () => { text.data = ' '; placeCaretInText(text, 1); }));
+      await settle(90);
+      act(() => nativeBackspace(text, 0, 1, () => text.deleteData(0, 1)));
+      await settle(160);
+    }
+    expect(fixture.history.getValue()).toBe('---\n\n## 25. T\n\n* [x] A\n\n');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    // A collapsed caret in the surface's own child gap, as Chromium leaves it
+    // after a block-boundary restore.
+    const gap = fixture.surface.childNodes.length - 1;
+    placeSurfaceCaret(gap);
+    // The first Undo publishes a retained history transfer; no Preview is
+    // installed before the second Undo.
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getValue()).toBe('---\n\n## 25. T\n\n* [x] A\n* [x] \n\n');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    if ('moved' === caret) placeSurfaceCaret(gap - 1);
+    if ('cleared' === caret) window.getSelection()?.removeAllRanges();
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    if ('unmoved' === caret) {
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+      expect(fixture.history.getValue()).toBe('---\n\n## 25. T\n\n* [x] A\n* [x] B\n\n');
+    } else {
+      // A caret that moved or vanished while the DOM is frozen fails closed.
+      expect(fixture.onFailure).toHaveBeenCalledExactlyOnceWith('visual-editor-pending-selection-stale');
+      expect(fixture.history.getValue()).toBe('---\n\n## 25. T\n\n* [x] A\n* [x] \n\n');
+    }
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  {
+    shape: 'tail after respelled blocks',
+    markdown: '---\n\n## 25. T\n\n* [x] A\n\n',
+    html: '<hr data-easymde-visual-block-id="b0">\n<h2 id="25-t" data-easymde-visual-block-id="b1">25. T</h2>\n<ul class="task-list" data-easymde-visual-block-id="b2">\n<li class="task-list-item"><input checked disabled type="checkbox"> A</li>\n</ul>\n',
+    rows: [{ id: 'b0', startLine: 0, endLine: 1 }, { id: 'b1', startLine: 2, endLine: 3 }, { id: 'b2', startLine: 4, endLine: 5 }],
+    removed: '---\n\n## 25. T\n\n',
+    caretSelector: 'h2',
+    caretText: '25. T'
+  },
+  {
+    shape: 'middle of the document',
+    markdown: '## H\n\n* [x] A\n\nPara\n',
+    html: '<h2 id="h" data-easymde-visual-block-id="b0">H</h2>\n<ul class="task-list" data-easymde-visual-block-id="b1">\n<li class="task-list-item"><input checked disabled type="checkbox"> A</li>\n</ul>\n<p data-easymde-visual-block-id="b2">Para</p>\n',
+    rows: [{ id: 'b0', startLine: 0, endLine: 1 }, { id: 'b1', startLine: 2, endLine: 3 }, { id: 'b2', startLine: 4, endLine: 5 }],
+    removed: '## H\n\nPara\n',
+    caretSelector: 'h2',
+    caretText: 'H'
+  },
+  {
+    shape: 'document start',
+    markdown: '* [x] A\n\nAfter\n',
+    html: '<ul class="task-list" data-easymde-visual-block-id="b0">\n<li class="task-list-item"><input checked disabled type="checkbox"> A</li>\n</ul>\n<p data-easymde-visual-block-id="b1">After</p>\n',
+    rows: [{ id: 'b0', startLine: 0, endLine: 1 }, { id: 'b1', startLine: 2, endLine: 3 }],
+    removed: 'After\n',
+    caretSelector: 'p',
+    caretText: ''
+  }
+] as const)('removes the sole task row of its list with its blank separator and keeps the caret in the preceding block ($shape)', async ({ markdown, html, rows, removed, caretSelector, caretText }) => {
+  vi.useFakeTimers();
+  const signature = 'full-sole-task-row-removal';
+  const fixture = createFullOwnerFixture({
+    markdown,
+    signature,
+    sourceCaret: markdown.indexOf('A') + 1,
+    html,
+    editMap: fullOwnerEditMap(signature, rows)
+  });
+  const settle = async (ms: number) => { await act(async () => { vi.advanceTimersByTime(ms); await Promise.resolve(); }); };
+  try {
+    const text = fixture.surface.querySelector('li')?.lastChild;
+    if (!(text instanceof Text) || ' A' !== text.data) throw new Error('full-sole-task-body-missing');
+    fixture.surface.focus();
+    act(() => {
+      placeCaretInText(text, 2);
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, 1, 2));
+      expect(before.defaultPrevented).toBe(false);
+      text.data = ' ';
+      placeCaretInText(text, 1);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: null, inputType: 'deleteContentBackward' }));
+    });
+    await settle(90);
+    expect(fixture.history.getValue()).toBe(markdown.replace('* [x] A', '* [x] '));
+    let separator: InputEvent | null = null;
+    act(() => {
+      separator = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, 0, 1));
+    });
+    await settle(160);
+    expect((separator as InputEvent | null)?.defaultPrevented).toBe(true);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(removed);
+    // The canonical caret is the end of the preceding content (or the start
+    // of the document), and the native caret is that block's text boundary.
+    const caret = caretText ? removed.indexOf(caretText) + caretText.length : 0;
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: caret, end: caret });
+    expect(fixture.surface.querySelector('li')).toBeNull();
+    const native = window.getSelection();
+    const block = fixture.surface.querySelector(caretSelector);
+    expect(block?.contains(native?.anchorNode ?? null)).toBe(true);
+    if (!native?.anchorNode || !block) throw new Error('full-sole-task-caret-missing');
+    const prefix = document.createRange();
+    prefix.selectNodeContents(block);
+    prefix.setEnd(native.anchorNode, native.anchorOffset);
+    expect(prefix.toString()).toBe(caretText);
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  { shape: 'bullet row', markdown: '* a\n* b\n', html: '<ul data-easymde-visual-block-id="b0">\n<li>a</li>\n<li>b</li>\n</ul>', removed: '* a\n', caret: 3, caretText: 'a' },
+  { shape: 'bullet row before a blank tail', markdown: '* a\n* b\n\n', html: '<ul data-easymde-visual-block-id="b0">\n<li>a</li>\n<li>b</li>\n</ul>', removed: '* a\n\n', caret: 3, caretText: 'a' },
+  { shape: 'bullet row with a trailing space', markdown: '* a\n* b \n', html: '<ul data-easymde-visual-block-id="b0">\n<li>a</li>\n<li>b</li>\n</ul>', removed: '* a\n', caret: 3, caretText: 'a' },
+  { shape: 'ordered row', markdown: '1. a\n2. b\n', html: '<ol data-easymde-visual-block-id="b0">\n<li>a</li>\n<li>b</li>\n</ol>', removed: '1. a\n', caret: 4, caretText: 'a' },
+  { shape: 'nested row', markdown: '- outer\n  - inner\n  - b\n', html: '<ul data-easymde-visual-block-id="b0">\n<li>outer\n<ul>\n<li>inner</li>\n<li>b</li>\n</ul>\n</li>\n</ul>', removed: '- outer\n  - inner\n', caret: 17, caretText: 'inner' },
+  { shape: 'nested continuation', markdown: '- heads\n  - i\n  - b\n', html: '<ul data-easymde-visual-block-id="b0">\n<li>heads\n<ul>\n<li>i</li>\n<li>b</li>\n</ul>\n</li>\n</ul>', removed: '- heads\n  - i\n', caret: 13, caretText: 'i' },
+  { shape: 'sole nested row', markdown: '- outer\n  - b\n', html: '<ul data-easymde-visual-block-id="b0">\n<li>outer\n<ul>\n<li>b</li>\n</ul>\n</li>\n</ul>', removed: '- outer\n', caret: 7, caretText: 'outer' },
+  { shape: 'third row', markdown: '* a\n* 错\n* b\n', html: '<ul data-easymde-visual-block-id="b0">\n<li>a</li>\n<li>错</li>\n<li>b</li>\n</ul>', removed: '* a\n* 错\n', caret: 7, caretText: '错' },
+  { shape: 'quoted row', markdown: '> * a\n> * b\n', html: '<blockquote data-easymde-visual-block-id="b0">\n<ul>\n<li>a</li>\n<li>b</li>\n</ul>\n</blockquote>', removed: '> * a\n', caret: 5, caretText: 'a' },
+  { shape: 'sole quoted row', markdown: 'plain\n\n> * b\n', html: '<p data-easymde-visual-block-id="b0">plain</p>\n<blockquote data-easymde-visual-block-id="b1">\n<ul>\n<li>b</li>\n</ul>\n</blockquote>', removed: 'plain\n', caret: 5, caretText: 'plain' },
+  { shape: 'inline code row before it', markdown: '* `61%`\n* b\n', html: '<ul data-easymde-visual-block-id="b0">\n<li><code>61%</code></li>\n<li>b</li>\n</ul>', removed: '* `61%`\n', caret: 7, caretText: '61%' }
+] as const)('removes an emptied $shape and keeps its caret at the preceding row end', async ({ shape, markdown, html, removed, caret, caretText }) => {
+  vi.useFakeTimers();
+  const signature = 'full-emptied-list-row';
+  const fixture = createFullOwnerFixture({
+    markdown, signature, sourceCaret: markdown.indexOf('b') + 1, html,
+    editMap: fullOwnerEditMap(signature, markdown.startsWith('plain')
+      ? [{ id: 'b0', startLine: 0, endLine: 1 }, { id: 'b1', startLine: 2, endLine: 3 }]
+      : [{ id: 'b0', startLine: 0, endLine: markdown.trimEnd().split('\n').length }])
+  });
+  const settle = async (ms: number) => { await act(async () => { vi.advanceTimersByTime(ms); await Promise.resolve(); }); };
+  try {
+    const items = Array.from(fixture.surface.querySelectorAll('li'));
+    const item = items[items.length - 1];
+    const text = item?.lastChild;
+    if (!item || !(text instanceof Text)) throw new Error('full-emptied-list-row-missing');
+    fixture.surface.focus();
+    act(() => {
+      placeCaretInText(text, 1);
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, 0, 1));
+      expect(before.defaultPrevented).toBe(false);
+      item.replaceChildren(document.createElement('br'));
+      window.getSelection()?.collapse(item, 0);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: null, inputType: 'deleteContentBackward' }));
+    });
+    await settle(90);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(markdown.replace('b', ''));
+    const previous = items[items.length - 2] ?? fixture.surface.querySelector('p');
+    const preceding = previous?.querySelector('code')?.firstChild ?? previous?.firstChild;
+    if (!(preceding instanceof Text)) throw new Error('full-emptied-list-row-neighbour-missing');
+    let deletion: InputEvent | null = null;
+    act(() => {
+      deletion = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, (() => {
+        const range = document.createRange();
+        range.setStart(preceding, preceding.length);
+        range.setEnd(item, 0);
+        return range;
+      })());
+    });
+    await settle(160);
+    expect((deletion as InputEvent | null)?.defaultPrevented).toBe(true);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(removed);
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: caret, end: caret });
+    expect(item.isConnected).toBe(false);
+    const native = window.getSelection();
+    if (!native?.anchorNode) throw new Error('full-emptied-list-row-caret-missing');
+    const prefix = document.createRange();
+    prefix.selectNodeContents(fixture.surface);
+    prefix.setEnd(native.anchorNode, native.anchorOffset);
+    expect(prefix.toString().replace(/\u200b/gu, '').trimEnd().endsWith(caretText)).toBe(true);
+    expect(fixture.runtime().isEditable()).toBe(true);
+    if (shape === 'nested continuation') {
+      if (!(previous instanceof HTMLLIElement) || !native.focusNode) throw new Error('nested-continuation-owner-missing');
+      const anchorElement = native.anchorNode instanceof Element ? native.anchorNode : native.anchorNode.parentElement;
+      const focusElement = native.focusNode instanceof Element ? native.focusNode : native.focusNode.parentElement;
+      const local = document.createRange();
+      local.selectNodeContents(previous);
+      local.setEnd(native.anchorNode, native.anchorOffset);
+      expect(native.isCollapsed).toBe(true);
+      expect(native.anchorNode.isConnected && native.focusNode.isConnected).toBe(true);
+      expect(anchorElement?.closest('li')).toBe(previous);
+      expect(focusElement?.closest('li')).toBe(previous);
+      expect(previous.closest('ul')?.closest('li')).not.toBeNull();
+      expect(local.toString().length).toBe(1);
+      expect(native.anchorNode === preceding || native.anchorNode === previous).toBe(true);
+      expect(native.anchorOffset).toBe(1);
+      if (native.anchorNode instanceof Text) {
+        expect(fullOwnerNativeInsert(fixture.surface, native.anchorNode, native.anchorOffset, 'Z', 'insertText', true).prevented).toBe(false);
+      } else {
+        const insert = fullOwnerDispatchBeforeInput(fixture.surface, { data: 'Z', inputType: 'insertText' }, native.getRangeAt(0).cloneRange());
+        expect(insert.defaultPrevented).toBe(false);
+        preceding.appendData('Z');
+        placeCaretInText(preceding, preceding.length);
+        fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'Z', inputType: 'insertText' }));
+      }
+      await settle(90);
+      expect(fixture.history.getValue()).toBe('- heads\n  - iZ\n');
+      expect(fixture.history.getValue()).toHaveLength(15);
+      expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: 14, end: 14 });
+      const continued = window.getSelection();
+      const continuedNode = continued?.anchorNode;
+      const continuedElement = continuedNode instanceof Element ? continuedNode : continuedNode?.parentElement;
+      if (!continued || !continuedNode) throw new Error('nested-continuation-caret-missing');
+      expect(continued.isCollapsed && continuedNode.isConnected).toBe(true);
+      expect(continuedElement?.closest('li')).toBe(previous);
+      const continuedLocal = document.createRange();
+      continuedLocal.selectNodeContents(previous);
+      continuedLocal.setEnd(continuedNode, continued.anchorOffset);
+      expect(continuedLocal.toString().length).toBe(2);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    }
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each(['fence before the list', 'continued heading edit'] as const)('keeps editing after removing the sole task row of its list (%s)', async (shape) => {
+  vi.useFakeTimers();
+  const fence = 'fence before the list' === shape;
+  const markdown = fence ? '```js\nx\n```\n\n* [x] A\n\n' : '---\n\n## 25. T\n\n* [x] A\n\n';
+  const signature = 'full-sole-task-row-follow-up';
+  const task = '<ul class="task-list" data-easymde-visual-block-id="%">\n<li class="task-list-item"><input checked disabled type="checkbox"> A</li>\n</ul>\n';
+  const fixture = createFullOwnerFixture({
+    markdown,
+    signature,
+    sourceCaret: markdown.indexOf('A') + 1,
+    html: fence
+      ? fullOwnerCodeBlock('x\n', 'b0', 'js') + task.replace('%', 'b1')
+      : '<hr data-easymde-visual-block-id="b0">\n<h2 id="25-t" data-easymde-visual-block-id="b1">25. T</h2>\n' + task.replace('%', 'b2'),
+    editMap: fullOwnerEditMap(signature, fence
+      ? [{ id: 'b0', startLine: 0, endLine: 3 }, { id: 'b1', startLine: 4, endLine: 5 }]
+      : [{ id: 'b0', startLine: 0, endLine: 1 }, { id: 'b1', startLine: 2, endLine: 3 }, { id: 'b2', startLine: 4, endLine: 5 }])
+  });
+  const settle = async (ms: number) => { await act(async () => { vi.advanceTimersByTime(ms); await Promise.resolve(); }); };
+  const failures = () => fixture.onFailure.mock.calls.map(([code]) => code);
+  try {
+    const text = fixture.surface.querySelector('li')?.lastChild;
+    if (!(text instanceof Text) || ' A' !== text.data) throw new Error('full-sole-task-follow-up-body-missing');
+    fixture.surface.focus();
+    act(() => {
+      placeCaretInText(text, 2);
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, 1, 2));
+      expect(before.defaultPrevented).toBe(false);
+      text.data = ' ';
+      placeCaretInText(text, 1);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: null, inputType: 'deleteContentBackward' }));
+    });
+    await settle(90);
+    act(() => {
+      const separator = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, 0, 1));
+      expect(separator.defaultPrevented).toBe(true);
+    });
+    await settle(160);
+    expect(failures()).toEqual([]);
+    const native = window.getSelection();
+    const anchor = native?.anchorNode ?? null;
+    if (fence) {
+      expect(fixture.history.getValue()).toBe('```js\nx\n```\n\n');
+      expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: 11, end: 11 });
+      // The caret stays in the preceding block: the code body's end.
+      const code = fixture.surface.querySelector('pre code');
+      expect(code?.contains(anchor)).toBe(true);
+      if (!code || !anchor) throw new Error('full-sole-task-follow-up-code-caret-missing');
+      const prefix = document.createRange();
+      prefix.selectNodeContents(code);
+      prefix.setEnd(anchor, native?.anchorOffset ?? 0);
+      expect(prefix.toString()).toBe('x');
+      expect(fixture.runtime().isEditable()).toBe(true);
+      return;
+    }
+    const heading = fixture.surface.querySelector('h2');
+    const headingText = heading?.firstChild;
+    if (!(headingText instanceof Text) || anchor !== headingText) throw new Error('full-sole-task-follow-up-heading-caret-missing');
+    expect(native?.anchorOffset).toBe(headingText.length);
+    // Step 175: one more native Backspace at that caret, then a typed key.
+    act(() => {
+      const end = headingText.length;
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(headingText, end - 1, end));
+      if (before.defaultPrevented) return;
+      headingText.deleteData(end - 1, 1);
+      placeCaretInText(headingText, end - 1);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: null, inputType: 'deleteContentBackward' }));
+    });
+    await settle(90);
+    expect(failures()).toEqual([]);
+    expect(fixture.history.getValue()).toBe('---\n\n## 25. \n\n');
+    act(() => {
+      const offset = headingText.length;
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: 'Z', inputType: 'insertText' }, fullOwnerTargetRange(headingText, offset, offset));
+      if (before.defaultPrevented) return;
+      headingText.insertData(offset, 'Z');
+      placeCaretInText(headingText, offset + 1);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'Z', inputType: 'insertText' }));
+    });
+    await settle(90);
+    expect(failures()).toEqual([]);
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(heading?.textContent).toBe('25. Z');
+    expect(fixture.history.getValue()).toBe('---\n\n## 25. Z\n\n');
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  { shape: 'numbered heading at the document end', markdown: '## 25. AB\n', html: '<h2 id="25" data-easymde-visual-block-id="b0">25. AB</h2>', rows: [{ id: 'b0', startLine: 0, endLine: 1 }], selector: 'h2', text: '25.', expected: '## 25.\n' },
+  { shape: 'plain heading at the document end', markdown: '## ab XY\n', html: '<h2 id="ab" data-easymde-visual-block-id="b0">ab XY</h2>', rows: [{ id: 'b0', startLine: 0, endLine: 1 }], selector: 'h2', text: 'ab', expected: '## ab\n' },
+  { shape: 'numbered heading before a paragraph', markdown: '## 25. AB\n\nAfter\n', html: '<h2 id="25" data-easymde-visual-block-id="b0">25. AB</h2><p data-easymde-visual-block-id="b1">After</p>', rows: [{ id: 'b0', startLine: 0, endLine: 1 }, { id: 'b1', startLine: 2, endLine: 3 }], selector: 'h2', text: '25.', expected: '## 25.\n\nAfter\n' },
+  { shape: 'escaped numbered paragraph', markdown: '25\\. AB\n', html: '<p data-easymde-visual-block-id="b0">25. AB</p>', rows: [{ id: 'b0', startLine: 0, endLine: 1 }], selector: 'p', text: '25.', expected: '25\\.\n' }
+] as const)('deletes a block-terminal space inside a pending deletion run whose serializer spelling changes ($shape)', async ({ markdown, html, rows, selector, text: remaining, expected }) => {
+  vi.useFakeTimers();
+  const signature = 'full-terminal-space-respelled';
+  const fixture = createFullOwnerFixture({ markdown, signature, sourceCaret: markdown.indexOf('\n'), html, editMap: fullOwnerEditMap(signature, rows) });
+  try {
+    const text = fixture.surface.querySelector(selector)?.firstChild;
+    if (!(text instanceof Text)) throw new Error('full-terminal-space-text-missing');
+    fixture.surface.focus();
+    placeCaretInText(text, text.length);
+    // Three native Backspaces inside one debounce window: the last letter,
+    // the next one (Chromium keeps the now-terminal space as NBSP), then
+    // that space.
+    for (let key = 0; key < 3; key += 1) {
+      act(() => {
+        const end = text.length;
+        const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, end - 1, end));
+        if (before.defaultPrevented) return;
+        text.deleteData(end - 1, 1);
+        if (text.data.endsWith(' ')) text.data = `${text.data.slice(0, -1)} `;
+        placeCaretInText(text, text.length);
+        fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: null, inputType: 'deleteContentBackward' }));
+      });
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    }
+    await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); });
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(text.data).toBe(remaining);
+    expect(fixture.history.getValue()).toBe(expected);
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('refuses a block-terminal space after a literal backslash without diverging from the committed source', async () => {
+  vi.useFakeTimers();
+  // `a\\.` renders a literal backslash before the period.
+  const markdown = '## a\\\\. AB\n';
+  const signature = 'full-terminal-space-literal-backslash';
+  const fixture = createFullOwnerFixture({
+    markdown,
+    signature,
+    sourceCaret: markdown.indexOf('\n'),
+    html: '<h2 id="a" data-easymde-visual-block-id="b0">a\\. AB</h2>',
+    editMap: fullOwnerEditMap(signature, [{ id: 'b0', startLine: 0, endLine: 1 }])
+  });
+  const heading = () => fixture.surface.querySelector('h2');
+  try {
+    const text = heading()?.firstChild;
+    if (!(text instanceof Text) || 'a\\. AB' !== text.data) throw new Error('full-terminal-backslash-text-missing');
+    fixture.surface.focus();
+    placeCaretInText(text, text.length);
+    const prevented: boolean[] = [];
+    for (let key = 0; key < 3; key += 1) {
+      act(() => {
+        const end = text.length;
+        const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, end - 1, end));
+        prevented.push(before.defaultPrevented);
+        if (before.defaultPrevented) return;
+        text.deleteData(end - 1, 1);
+        if (text.data.endsWith(' ')) text.data = `${text.data.slice(0, -1)} `;
+        placeCaretInText(text, text.length);
+        fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: null, inputType: 'deleteContentBackward' }));
+      });
+    }
+    await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); });
+    // The two proved deletions are kept; the unprovable third key is refused
+    // and leaves both the source and the surface exactly as they were.
+    expect(prevented).toEqual([false, false, true]);
+    expect(fixture.onFailure.mock.calls).toEqual([['visual-editor-selection-map-failed']]);
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe('## a\\\\. \n');
+    expect(heading()?.textContent).toBe('a\\. ');
+    expect(heading()?.firstChild).toBe(text);
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+// The thematic break sits between two editable roots of an accepted render;
+// the last root is the one the native edits empty or end in whitespace.
+const fullThematicBreakTailFixture = (before: string, tail: string, tailHtml: string): FullOwnerFixture => {
+  const markdown = `${before}\n\n---\n\n${tail}`;
+  const signature = 'thematic-break-tail';
+  return createFullOwnerFixture({
+    markdown,
+    signature,
+    sourceCaret: markdown.length - 1,
+    html: `<p data-easymde-visual-block-id="b0">${before}</p>\n<hr data-easymde-visual-block-id="b1">\n${tailHtml}\n`,
+    editMap: fullOwnerEditMap(signature, [
+      { id: 'b0', startLine: 0, endLine: 1 },
+      { id: 'b1', startLine: 2, endLine: 3 },
+      { id: 'b2', startLine: 4, endLine: 5 }
+    ])
+  });
+};
+
+const pressFullBackspaceKey = (surface: HTMLElement): boolean => {
+  const key = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' });
+  act(() => {
+    surface.dispatchEvent(key);
+  });
+  return key.defaultPrevented;
+};
+
+const stage3TableSource = [
+  '| Name | Value |',
+  '| :--- | ---: |',
+  '| `alpha` | 1 |',
+  '| beta | 2 |',
+  '| gamma | 3 |',
+  '| delta | 4 |'
+].join('\n');
+const stage3TableMarkdown = `Lead.\n\n${stage3TableSource}\n\n### Tail\n`;
+const stage3TableSectionHtml = (id: string | null = 'b1'): string => [
+  '<section class="table-container easymde-table-container"',
+  id ? ` data-easymde-visual-block-id="${id}">` : '>',
+  '<table>',
+  '<thead><tr><th align="left">Name</th><th align="right">Value</th></tr></thead>',
+  '<tbody>',
+  '<tr><td><code>alpha</code></td><td>1</td></tr>',
+  '<tr><td>beta</td><td>2</td></tr>',
+  '<tr><td>gamma</td><td>3</td></tr>',
+  '<tr><td>delta</td><td>4</td></tr>',
+  '</tbody>',
+  '</table>',
+  '</section>'
+].join('');
+
+function createStage3TableHeadingFixture(
+  options: Readonly<{
+    editMap?: PreviewEditMap;
+    html?: string;
+    markdown?: string;
+    signature?: string;
+  }> = {}
+) {
+  const signature = options.signature ?? 'stage3-table-before-h3';
+  const markdown = options.markdown ?? stage3TableMarkdown;
+  return createFullOwnerFixture({
+    editMap: options.editMap ?? fullOwnerEditMap(signature, [
+      { startLine: 0, endLine: 1, id: 'b0' },
+      { startLine: 2, endLine: 8, id: 'b1' },
+      { startLine: 9, endLine: 10, id: 'b2' }
+    ]),
+    html: options.html ?? fullOwnerParagraphBlock('Lead.', 'b0') + '\n'
+      + stage3TableSectionHtml() + '\n'
+      + fullOwnerBlock('<h3>Tail</h3>', 'b2') + '\n',
+    markdown,
+    signature,
+    sourceCaret: 0
+  });
+}
+
+it('removes an accepted GFM table before a heading at the native H3 start', async () => {
+  vi.useFakeTimers();
+  const expected = 'Lead.\n\n### Tail\n';
+  const fixture = createStage3TableHeadingFixture();
+  try {
+    fixture.surface.focus();
+    const heading = fixture.surface.querySelector('h3');
+    const headingText = heading?.firstChild;
+    if (!(heading instanceof HTMLHeadingElement) || !(headingText instanceof Text)) {
+      throw new Error('stage3-table-heading-missing');
+    }
+    placeCaretInText(headingText, 0);
+    expect(pressFullBackspaceKey(fixture.surface)).toBe(true);
+    await act(async () => {
+      vi.advanceTimersByTime(160);
+      await Promise.resolve();
+    });
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(expected);
+    expect(fixture.surface.querySelector('section')).toBeNull();
+    expect(fixture.surface.querySelector('h3')).toBe(heading);
+    expect(window.getSelection()?.anchorNode).toBe(headingText);
+    expect(window.getSelection()?.anchorOffset).toBe(0);
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      start: expected.indexOf('### ') + 4,
+      end: expected.indexOf('### ') + 4
+    });
+    expect(fixture.history.getHistoryState()).toEqual({
+      undoDepth: 1,
+      redoDepth: 0
+    });
+    expect(fixture.history.getRevision()).toBe(1);
+    expect(fixture.runtime().isEditable()).toBe(true);
+    expect(fixture.runtime().isTransferPending()).toBe(false);
+    expect(fixture.surface.isConnected).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('removes the accepted table prefix after later suffix-only canonical revisions', async () => {
+  vi.useFakeTimers();
+  const acceptedSuffix = 'S'.repeat(85);
+  const acceptedMarkdown = `Lead.\n\n${stage3TableSource}\n\n### Tail\n#### ${acceptedSuffix}\n`;
+  const signature = 'stage3-table-prefix-proof';
+  const acceptedHtml = fullOwnerParagraphBlock('Lead.', 'b0') + '\n'
+    + stage3TableSectionHtml() + '\n'
+    + fullOwnerBlock('<h3>Tail</h3>', 'b2') + '\n'
+    + fullOwnerBlock(`<h4>${acceptedSuffix}</h4>`, 'b3') + '\n';
+  const editMap = fullOwnerEditMap(signature, [
+    { startLine: 0, endLine: 1, id: 'b0' },
+    { startLine: 2, endLine: 8, id: 'b1' },
+    { startLine: 9, endLine: 10, id: 'b2' },
+    { startLine: 10, endLine: 11, id: 'b3' }
+  ]);
+  const fixture = createStage3TableHeadingFixture({
+    editMap,
+    html: acceptedHtml,
+    markdown: acceptedMarkdown,
+    signature
+  });
+  try {
+    fixture.surface.focus();
+    const table = fixture.surface.querySelector('table');
+    const heading = fixture.surface.querySelector('h3');
+    const headingText = heading?.firstChild;
+    const suffix = fixture.surface.querySelector('h4');
+    const suffixText = suffix?.firstChild;
+    if (!(table instanceof HTMLTableElement)
+      || !(heading instanceof HTMLHeadingElement)
+      || !(headingText instanceof Text)
+      || !(suffix instanceof HTMLHeadingElement)
+      || !(suffixText instanceof Text)) {
+      throw new Error('stage3-prefix-fixture-invalid');
+    }
+    for (let revision = 0; revision < 84; revision += 1) {
+      act(() => {
+        expect(fullOwnerNativeDelete(
+          fixture.surface,
+          suffixText,
+          suffixText.length - 1,
+          suffixText.length,
+          'deleteContentBackward'
+        ).prevented).toBe(false);
+        vi.advanceTimersByTime(80);
+      });
+    }
+    expect(fixture.history.getRevision()).toBe(84);
+    expect(fixture.runtime().isTransferPending()).toBe(false);
+    expect(fixture.surface.querySelector('table')).toBe(table);
+    expect(fixture.surface.querySelector('h3')).toBe(heading);
+    const beforeMarkdown = fixture.history.getValue();
+    const undoHtml = fixture.surface.innerHTML;
+    const tableStart = beforeMarkdown.indexOf(stage3TableSource);
+    const tableEnd = beforeMarkdown.indexOf('\n\n### ') + 1;
+    const rangeStart = tableStart - 1;
+    const preCaret = beforeMarkdown.indexOf('### ') + 4;
+    const postCaret = preCaret - (tableEnd - rangeStart);
+    const expectedMarkdown = beforeMarkdown.slice(0, rangeStart)
+      + beforeMarkdown.slice(tableEnd);
+    expect(tableStart).toBeGreaterThan(0);
+    expect(tableEnd).toBeGreaterThan(tableStart);
+    expect(preCaret).toBeGreaterThanOrEqual(tableEnd);
+
+    placeCaretInText(headingText, 0);
+    expect(pressFullBackspaceKey(fixture.surface)).toBe(true);
+    await act(async () => {
+      vi.advanceTimersByTime(160);
+      await Promise.resolve();
+    });
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(expectedMarkdown);
+    expect(fixture.surface.querySelector('table')).toBeNull();
+    expect(fixture.surface.querySelector('h3')).toBe(heading);
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      start: postCaret,
+      end: postCaret
+    });
+    expect(fixture.runtime().isEditable()).toBe(true);
+
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getValue()).toBe(beforeMarkdown);
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      start: preCaret,
+      end: preCaret
+    });
+    if (fixture.runtime().isTransferPending()) {
+      act(() => fixture.accept({
+        editMap,
+        html: undoHtml,
+        markdown: beforeMarkdown
+      }));
+    }
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  'before table',
+  'inside table',
+  'H3 body prefix'
+] as const)('refuses the table removal when the accepted prefix changes %s', async (variant) => {
+  vi.useFakeTimers();
+  const signature = `stage3-table-prefix-negative-${variant}`;
+  const fixture = createStage3TableHeadingFixture({ signature });
+  try {
+    fixture.surface.focus();
+    const table = fixture.surface.querySelector('table');
+    const heading = fixture.surface.querySelector('h3');
+    const headingText = heading?.firstChild;
+    if (!(table instanceof HTMLTableElement)
+      || !(heading instanceof HTMLHeadingElement)
+      || !(headingText instanceof Text)) {
+      throw new Error('stage3-prefix-negative-fixture-invalid');
+    }
+    const paragraphText = fixture.surface.querySelector('p')?.firstChild;
+    const tableText = fixture.surface.querySelectorAll('tbody tr')[1]
+      ?.querySelector('td')?.firstChild;
+    let targetHeading = heading;
+    if ('H3 body prefix' === variant) {
+      placeCaretInText(headingText, headingText.length);
+      expect(fixture.runtime().executeCommand({
+        action: 'heading',
+        group: 'heading',
+        icon: 'heading',
+        id: 'stage3-prefix-heading2',
+        label: 'Heading 2',
+        level: 2,
+        surface: 'heading-menu'
+      })).toBe('handled');
+      const changedHeading = fixture.surface.querySelector('h2');
+      if (!(changedHeading instanceof HTMLHeadingElement)) {
+        throw new Error('stage3-prefix-negative-heading-missing');
+      }
+      targetHeading = changedHeading;
+    } else {
+      const editedText = 'before table' === variant ? paragraphText : tableText;
+      if (!(editedText instanceof Text) || 0 === editedText.length) {
+        throw new Error('stage3-prefix-negative-text-missing');
+      }
+      act(() => {
+        expect(fullOwnerNativeDelete(
+          fixture.surface,
+          editedText,
+          editedText.length - 1,
+          editedText.length,
+          'deleteContentBackward'
+        ).prevented).toBe(false);
+        vi.advanceTimersByTime(80);
+      });
+    }
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    const beforeSource = fixture.history.getValue();
+    const beforeRevision = fixture.history.getRevision();
+    const beforeHtml = fixture.surface.innerHTML;
+
+    const targetHeadingText = targetHeading.firstChild;
+    if (!(targetHeadingText instanceof Text)) {
+      throw new Error('stage3-prefix-negative-target-heading-text-missing');
+    }
+    placeCaretInText(targetHeadingText, 0);
+    expect('H3 body prefix' === variant
+      ? fullOwnerDispatchBeforeInput(
+          fixture.surface,
+          { data: null, inputType: 'deleteContentBackward' }
+        ).defaultPrevented
+      : pressFullBackspaceKey(fixture.surface)).toBe(true);
+    await act(async () => {
+      vi.advanceTimersByTime(160);
+      await Promise.resolve();
+    });
+
+    expect(fixture.onFailure).toHaveBeenCalledWith(
+      'H3 body prefix' === variant
+        ? 'visual-editor-pending-selection-stale'
+        : 'visual-editor-selection-map-failed'
+    );
+    expect(fixture.history.getValue()).toBe(beforeSource);
+    expect(fixture.history.getRevision()).toBe(beforeRevision);
+    expect(fixture.surface.innerHTML).toBe(beforeHtml);
+    expect(fixture.surface.querySelector('table')).toBe(table);
+    expect(fixture.surface.querySelector('h2, h3')).toBe(targetHeading);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  'non-table atomic',
+  'missing block id',
+  'wrong block id',
+  'non-GFM table range',
+  'multiple table range',
+  'stale revision',
+  'foreign DOM'
+] as const)('refuses the table atomic removal for %s', async (variant) => {
+  vi.useFakeTimers();
+  const signature = `stage3-table-negative-${variant}`;
+  const nonGfmTable = [
+    'Name | Value',
+    'not a delimiter',
+    'alpha | 1',
+    'beta | 2',
+    'gamma | 3',
+    'delta | 4'
+  ].join('\n');
+  const nonGfmMarkdown = `Lead.\n\n${nonGfmTable}\n\n### Tail\n`;
+  const multipleTableMarkdown = `Lead.\n\n${stage3TableSource}\n\n${stage3TableSource}\n\n### Tail\n`;
+  const html = 'non-table atomic' === variant
+    ? fullOwnerParagraphBlock('Lead.', 'b0') + '\n'
+      + '<section class="table-container easymde-table-container" data-easymde-visual-block-id="b1"><div>not a table</div></section>\n'
+      + fullOwnerBlock('<h3>Tail</h3>', 'b2') + '\n'
+    : 'missing block id' === variant
+      ? fullOwnerParagraphBlock('Lead.', 'b0') + '\n'
+        + stage3TableSectionHtml(null) + '\n'
+        + fullOwnerBlock('<h3>Tail</h3>', 'b2') + '\n'
+      : 'wrong block id' === variant
+        ? fullOwnerParagraphBlock('Lead.', 'b0') + '\n'
+          + stage3TableSectionHtml('foreign') + '\n'
+          + fullOwnerBlock('<h3>Tail</h3>', 'b2') + '\n'
+        : undefined;
+  const editMap = 'multiple table range' === variant
+    ? fullOwnerEditMap(signature, [
+        { startLine: 0, endLine: 1, id: 'b0' },
+        { startLine: 2, endLine: 15, id: 'b1' },
+        { startLine: 16, endLine: 17, id: 'b2' }
+      ])
+    : fullOwnerEditMap(signature, [
+        { startLine: 0, endLine: 1, id: 'b0' },
+        { startLine: 2, endLine: 8, id: 'b1' },
+        { startLine: 9, endLine: 10, id: 'b2' }
+      ]);
+  const markdown = 'non-GFM table range' === variant
+    ? nonGfmMarkdown
+    : 'multiple table range' === variant
+      ? multipleTableMarkdown
+      : stage3TableMarkdown;
+  const fixture = createStage3TableHeadingFixture({
+    ...(html ? { html } : {}),
+    editMap,
+    markdown,
+    signature
+  });
+  try {
+    fixture.surface.focus();
+    if ('stale revision' === variant) {
+      fixture.history.applyTextChange({
+        selection: { direction: 'none', start: markdown.length + 1, end: markdown.length + 1 },
+        value: `${markdown}!`
+      });
+      fixture.history.applyTextChange({
+        selection: { direction: 'none', start: 0, end: 0 },
+        value: markdown
+      });
+    }
+    if ('foreign DOM' === variant) {
+      fixture.surface.querySelector('h3')?.setAttribute('data-foreign', '1');
+    }
+    const heading = fixture.surface.querySelector('h3');
+    const headingText = heading?.firstChild;
+    const atomic = fixture.surface.querySelector('section');
+    if (!(heading instanceof HTMLHeadingElement)
+      || !(headingText instanceof Text)
+      || !(atomic instanceof HTMLElement)) {
+      throw new Error('stage3-table-negative-fixture-invalid');
+    }
+    const before = {
+      history: fixture.history.getHistoryState(),
+      revision: fixture.history.getRevision(),
+      value: fixture.history.getValue()
+    };
+    placeCaretInText(headingText, 0);
+    expect(pressFullBackspaceKey(fixture.surface)).toBe(true);
+    await act(async () => {
+      vi.advanceTimersByTime(160);
+      await Promise.resolve();
+    });
+    expect(fixture.surface.querySelector('section')).not.toBeNull();
+    expect(fixture.history.getValue()).toBe(before.value);
+    expect(fixture.history.getRevision()).toBe(before.revision);
+    expect(fixture.history.getHistoryState()).toEqual(before.history);
+    expect(fixture.onFailure).toHaveBeenCalledWith(
+      ['stale revision', 'foreign DOM'].includes(variant)
+        ? 'visual-editor-canonical-change-dom-stale'
+        : 'visual-editor-selection-map-failed'
+    );
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  { cadence: 'pending deletions', settle: false, selection: false },
+  { cadence: 'settled deletions', settle: true, selection: false },
+  { cadence: 'a pending selection deletion', settle: false, selection: true }
+] as const)('removes the thematic break before a last heading emptied by $cadence', async ({ settle, selection }) => {
+  vi.useFakeTimers();
+  const fixture = fullThematicBreakTailFixture('Para', '## 25. AB\n\n', '<h2 id="25-ab" data-easymde-visual-block-id="b2">25. AB</h2>');
+  try {
+    const heading = fixture.surface.querySelector('h2');
+    const text = heading?.firstChild;
+    if (!(heading instanceof HTMLElement) || !(text instanceof Text)) throw new Error('full-thematic-break-heading-missing');
+    fixture.surface.focus();
+    placeCaretInText(text, text.length);
+    // Chromium keeps an emptied block open with a placeholder BR and leaves
+    // the caret on the block itself.
+    const emptyHeading = (): void => {
+      heading.replaceChildren(document.createElement('br'));
+      const range = document.createRange();
+      range.setStart(heading, 0);
+      window.getSelection()?.removeAllRanges();
+      window.getSelection()?.addRange(range);
+    };
+    const deleteNatively = (from: number, to: number): void => {
+      act(() => {
+        const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, from, to));
+        if (before.defaultPrevented) throw new Error('full-thematic-break-deletion-refused');
+        if (0 === from && to === text.length) emptyHeading();
+        else {
+          text.deleteData(from, to - from);
+          if (text.data.endsWith(' ')) text.data = `${text.data.slice(0, -1)} `;
+          placeCaretInText(text, text.length);
+        }
+        fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: null, inputType: 'deleteContentBackward' }));
+      });
+    };
+    if (selection) deleteNatively(0, text.length);
+    else while (heading.firstChild === text) deleteNatively(text.length - 1, text.length);
+    if (settle) await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); });
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+
+    // The serializer trims its whole output, so the emptied last heading's
+    // committed `## ` reads back as `##`: the same surface, not a foreign one.
+    expect(pressFullBackspaceKey(fixture.surface)).toBe(true);
+    await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); });
+
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    // The same result as Backspace on the accepted render of an empty heading:
+    // the break goes, the heading stays with the caret in it.
+    expect(fixture.history.getValue()).toBe('Para\n\n## \n\n');
+    expect(fixture.surface.querySelector('hr')).toBeNull();
+    expect(heading.isConnected).toBe(true);
+    expect(window.getSelection()?.anchorNode).toBe(heading);
+    expect(window.getSelection()?.anchorOffset).toBe(0);
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+// The emptied terminal heading is the document's own last block, so the row it
+// stands for is the source's last non-blank row. This document deliberately
+// carries a second, textually identical `\n\n##` run - the live `## 22. Ref`
+// heading - and a reference definition the renderer hides between the last
+// paragraph and that row. Both are what an interval read by aligning visual
+// text against source text gets wrong; neither can move a row read by position.
+const fullDuplicateSeparatorDocument = (): Readonly<{
+  html: string;
+  markdown: string;
+  rowStart: number;
+}> => {
+  const markdown = 'Para\n\n## 22. Ref\n\nBody.\n\n[ref]: https://example.com "Example"\n\n## \n\n';
+  return {
+    html: [
+      fullOwnerParagraphBlock('Para', 'b0'),
+      fullOwnerBlock('<h2 id="22-ref">22. Ref</h2>', 'b1'),
+      fullOwnerParagraphBlock('Body.', 'b2'),
+      fullOwnerBlock('<h2><br></h2>', 'b3')
+    ].join('\n'),
+    markdown,
+    rowStart: markdown.lastIndexOf('## ')
+  };
+};
+
+it.each(['an accepted map', 'no accepted map'] as const)(
+  'rewrites the emptied terminal heading against its own row, not the earlier identical run (%s)',
+  async (mapKind) => {
+    vi.useFakeTimers();
+    const accepted = fullDuplicateSeparatorDocument();
+    const signature = 'terminal-emptied-heading-own-row';
+    const fixture = createFullOwnerFixture({
+      editMap: 'an accepted map' === mapKind
+        ? fullOwnerEditMap(signature, [
+            { id: 'b0', startLine: 0, endLine: 1 },
+            { id: 'b1', startLine: 2, endLine: 3 },
+            { id: 'b2', startLine: 4, endLine: 5 },
+            { id: 'b3', startLine: 8, endLine: 9 }
+          ])
+        : null,
+      html: accepted.html,
+      markdown: accepted.markdown,
+      signature,
+      sourceCaret: accepted.markdown.length - 1
+    });
+    try {
+      const heading = fixture.surface.querySelectorAll('h2')[1];
+      if (!(heading instanceof HTMLElement)) throw new Error('terminal-emptied-heading-missing');
+      fixture.surface.focus();
+      window.getSelection()?.collapse(heading, 0);
+
+      expect(pressFullBackspaceKey(fixture.surface)).toBe(true);
+      await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); });
+
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+      // The terminal row's own bytes go and its line ending stays, so the
+      // earlier `## 22. Ref` run is untouched and no marker is left behind.
+      expect(fixture.history.getValue()).toBe(
+        'Para\n\n## 22. Ref\n\nBody.\n\n[ref]: https://example.com "Example"\n\n\n\n'
+      );
+      expect(fixture.history.getSelection()).toEqual({
+        direction: 'none',
+        end: accepted.rowStart,
+        start: accepted.rowStart
+      });
+      const rewritten = fixture.surface.querySelector('[data-easymde-visual-block-id="b3"]');
+      expect(rewritten?.tagName).toBe('P');
+      expect(fixture.runtime().isEditable()).toBe(true);
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  }
+);
+
+// The source still spells the emptied terminal block's own row, exactly as a
+// press that left a marker behind would: the block is gone from the surface but
+// `## ` is still the document's last non-blank row.
+const fullEmptiedRowTailFixture = (
+  signature: string,
+  editMap: PreviewEditMap | null
+): FullOwnerFixture => {
+  const markdown = 'Para\n\nBody.\n\n## \n\n';
+  return createFullOwnerFixture({
+    editMap,
+    html: [
+      fullOwnerParagraphBlock('Para', 'b0'),
+      fullOwnerParagraphBlock('Body.', 'b1'),
+      fullOwnerBlock('<p><br></p>', 'b2')
+    ].join('\n'),
+    markdown,
+    signature,
+    sourceCaret: markdown.length - 1
+  });
+};
+
+it('refuses the emptied terminal shortcut when the last row spells another block kind', async () => {
+  vi.useFakeTimers();
+  // The surface's terminal block is an emptied heading while the source's last
+  // non-blank row spells a quote: the row is marker-only, but it is not this
+  // block's row, so no positional edit may claim it.
+  const markdown = 'Para\n\n> \n\n';
+  const signature = 'terminal-row-kind-mismatch';
+  const fixture = createFullOwnerFixture({
+    editMap: null,
+    html: [
+      fullOwnerParagraphBlock('Para', 'b0'),
+      fullOwnerBlock('<h2><br></h2>', 'b1')
+    ].join('\n'),
+    markdown,
+    signature,
+    sourceCaret: markdown.length - 1
+  });
+  try {
+    const heading = fixture.surface.querySelector('h2');
+    if (!(heading instanceof HTMLElement)) throw new Error('terminal-kind-mismatch-heading-missing');
+    fixture.surface.focus();
+    window.getSelection()?.collapse(heading, 0);
+
+    expect(pressFullBackspaceKey(fixture.surface)).toBe(true);
+    await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); });
+
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.onFailure.mock.calls).toEqual([['visual-editor-markdown-merge-failed']]);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('removes an emptied terminal block with the marker row it still occupies', async () => {
+  vi.useFakeTimers();
+  const signature = 'terminal-emptied-block-own-row';
+  const fixture = fullEmptiedRowTailFixture(signature, fullOwnerEditMap(signature, [
+    { id: 'b0', startLine: 0, endLine: 1 },
+    { id: 'b1', startLine: 2, endLine: 3 },
+    { id: 'b2', startLine: 4, endLine: 5 }
+  ]));
+  try {
+    const emptied = fixture.surface.querySelector('[data-easymde-visual-block-id="b2"]');
+    if (!(emptied instanceof HTMLParagraphElement)) throw new Error('terminal-emptied-block-missing');
+    fixture.surface.focus();
+    const caret = document.createRange();
+    caret.setStart(emptied, 0);
+    caret.collapse(true);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(caret);
+
+    const before = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      caret.cloneRange()
+    );
+    expect(before.defaultPrevented).toBe(true);
+    await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); });
+
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    // The row goes with the block, so no `##` is left standing in its place.
+    expect(fixture.history.getValue()).toBe('Para\n\nBody.\n\n');
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', end: 13, start: 13 });
+    expect(emptied.isConnected).toBe(false);
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('leaves a native join it cannot place to the emptied-terminal owner', async () => {
+  vi.useFakeTimers();
+  const fixture = fullEmptiedRowTailFixture('terminal-unplaceable-join', null);
+  try {
+    const emptied = fixture.surface.querySelector('[data-easymde-visual-block-id="b2"]');
+    const text = fixture.surface.querySelector('[data-easymde-visual-block-id="b1"]')?.firstChild;
+    if (!(emptied instanceof HTMLParagraphElement) || !(text instanceof Text)) {
+      throw new Error('terminal-unplaceable-join-fixture-invalid');
+    }
+    fixture.surface.focus();
+    const caret = document.createRange();
+    caret.setStart(emptied, 0);
+    caret.collapse(true);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(caret);
+    // The browser names this press by the preceding row's text tail, and the
+    // marker row it would join across has no canonical interval of its own.
+    const target = document.createRange();
+    target.setStart(text, text.length);
+    target.setEnd(emptied, 0);
+
+    const before = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      target.cloneRange()
+    );
+    expect(before.defaultPrevented).toBe(true);
+    await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); });
+
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe('Para\n\nBody.\n\n');
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', end: 13, start: 13 });
+    expect(emptied.isConnected).toBe(false);
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('removes the thematic break before a last paragraph that ends in a typed space', async () => {
+  vi.useFakeTimers();
+  const fixture = fullThematicBreakTailFixture('Para', 'foo\n', '<p data-easymde-visual-block-id="b2">foo</p>');
+  try {
+    const paragraph = fixture.surface.querySelector('[data-easymde-visual-block-id="b2"]');
+    const text = paragraph?.firstChild;
+    if (!(paragraph instanceof HTMLElement) || !(text instanceof Text)) throw new Error('full-thematic-break-paragraph-missing');
+    fixture.surface.focus();
+    placeCaretInText(text, 3);
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: ' ', inputType: 'insertText' }, fullOwnerTargetRange(text, 3, 3));
+      if (before.defaultPrevented) throw new Error('full-thematic-break-space-refused');
+      text.data = 'foo ';
+      placeCaretInText(text, 4);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: ' ', inputType: 'insertText' }));
+    });
+    await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); });
+    expect(fixture.history.getValue()).toBe('Para\n\n---\n\nfoo \n');
+    placeCaretInText(text, 0);
+
+    expect(pressFullBackspaceKey(fixture.surface)).toBe(true);
+    await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); });
+
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe('Para\n\nfoo \n');
+    expect(fixture.surface.querySelector('hr')).toBeNull();
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('refuses the thematic-break Backspace after a foreign text change elsewhere on the surface', async () => {
+  vi.useFakeTimers();
+  const fixture = fullThematicBreakTailFixture('Para', '## 25. AB\n\n', '<h2 id="25-ab" data-easymde-visual-block-id="b2">25. AB</h2>');
+  try {
+    const heading = fixture.surface.querySelector('h2');
+    const text = heading?.firstChild;
+    const foreign = fixture.surface.querySelector('p')?.firstChild;
+    if (!(heading instanceof HTMLElement) || !(text instanceof Text) || !(foreign instanceof Text)) throw new Error('full-thematic-break-foreign-missing');
+    fixture.surface.focus();
+    placeCaretInText(text, text.length);
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, 0, text.length));
+      if (before.defaultPrevented) throw new Error('full-thematic-break-deletion-refused');
+      heading.replaceChildren(document.createElement('br'));
+      const range = document.createRange();
+      range.setStart(heading, 0);
+      window.getSelection()?.removeAllRanges();
+      window.getSelection()?.addRange(range);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: null, inputType: 'deleteContentBackward' }));
+    });
+    // Same node, same attributes, different text: only the serialization can
+    // tell this surface from the owner's.
+    foreign.data = 'Pbra';
+
+    expect(pressFullBackspaceKey(fixture.surface)).toBe(true);
+    await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); });
+
+    expect(fixture.onFailure.mock.calls).toEqual([['visual-editor-canonical-change-dom-stale']]);
+    expect(fixture.history.getValue()).not.toContain('Pbra');
+    expect(fixture.history.getValue()).toContain('---');
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+// One native space typed after the last paragraph's `foo`, committed by the
+// debounce: the committed visual ends in that space, the serializer's does not.
+const typeFullFinalSpace = async (fixture: FullOwnerFixture): Promise<void> => {
+  const text = fixture.surface.querySelector('[data-easymde-visual-block-id="b2"]')?.firstChild;
+  if (!(text instanceof Text) || 'foo' !== text.data) throw new Error('full-final-space-text-missing');
+  fixture.surface.focus();
+  placeCaretInText(text, 3);
+  act(() => {
+    const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: ' ', inputType: 'insertText' }, fullOwnerTargetRange(text, 3, 3));
+    if (before.defaultPrevented) throw new Error('full-final-space-refused');
+    text.data = 'foo ';
+    placeCaretInText(text, 4);
+    fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: ' ', inputType: 'insertText' }));
+  });
+  await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); });
+  expect(fixture.history.getValue()).toBe('Para\n\n---\n\nfoo \n');
+};
+
+const selectFullParagraphRun = (fixture: FullOwnerFixture): HTMLElement => {
+  const paragraph = fixture.surface.querySelector('[data-easymde-visual-block-id="b0"]');
+  const text = paragraph?.firstChild;
+  if (!(paragraph instanceof HTMLElement) || !(text instanceof Text)) throw new Error('full-final-space-paragraph-missing');
+  const native = window.getSelection();
+  native?.removeAllRanges();
+  native?.setBaseAndExtent(text, 1, text, 3);
+  return paragraph;
+};
+
+it.each(['forward', 'backward'] as const)('preserves the %s native context-menu range across a pending accepted Preview', async (direction) => {
+  vi.useFakeTimers();
+  const fixture = fullThematicBreakTailFixture('Para', 'foo\n', '<p data-easymde-visual-block-id="b2">foo</p>');
+  try {
+    await typeFullFinalSpace(fixture);
+    const paragraph = selectFullParagraphRun(fixture);
+    const text = paragraph.firstChild;
+    if (!(text instanceof Text)) throw new Error('full-final-space-selection-missing');
+    if (direction === 'backward') window.getSelection()?.setBaseAndExtent(text, 3, text, 1);
+    const originalRevision = fixture.history.getRevision?.();
+    const originalHistory = fixture.history.getHistoryState();
+    expect(fixture.history.getSelection()).not.toEqual({ direction, start: 1, end: 3 });
+    const originalSelection = fixture.history.getSelection();
+    const pureCapture = fixture.runtime().captureContextMenuTarget(paragraph);
+    if (!pureCapture) throw new Error('full-final-space-lease-missing');
+    pureCapture.release();
+    expect(fixture.history.getSelection()).toEqual(originalSelection);
+    expect(fixture.history.getRevision?.()).toBe(originalRevision);
+    expect(fixture.runtime().prepareContextMenuDemand()).toBe(true);
+    expect(fixture.history.getSelection()).toEqual({ direction, start: 1, end: 3 });
+    const lease = fixture.runtime().captureContextMenuTarget(paragraph);
+    if (!lease) throw new Error('full-final-space-lease-missing');
+    try {
+      expect(fixture.history.getSelection()).toEqual({ direction, start: 1, end: 3 });
+      expect(fixture.history.getValue()).toBe('Para\n\n---\n\nfoo \n');
+      expect(fixture.history.getRevision?.()).toBe(originalRevision);
+      expect(fixture.history.getHistoryState()).toEqual(originalHistory);
+      expect(fixture.runtime().needsAcceptedPreviewRefresh?.()).toBe(true);
+      expect(fixture.runtime().refreshAcceptedPreview?.()).toBe(true);
+      fixture.accept({
+        markdown: 'Para\n\n---\n\nfoo \n',
+        html: '<p data-easymde-visual-block-id="b0">Para</p>\n<hr data-easymde-visual-block-id="b1">\n<p data-easymde-visual-block-id="b2">foo </p>\n',
+        editMap: fullOwnerEditMap('final-space-refresh', [
+          { id: 'b0', startLine: 0, endLine: 1 },
+          { id: 'b1', startLine: 2, endLine: 3 },
+          { id: 'b2', startLine: 4, endLine: 5 }
+        ])
+      });
+      act(() => vi.advanceTimersByTime(0));
+      expect(fixture.history.getSelection()).toEqual({ direction, start: 1, end: 3 });
+      const native = window.getSelection();
+      expect(native?.toString()).toBe('ar');
+      expect(native?.anchorOffset).toBe(direction === 'forward' ? 1 : 3);
+      expect(native?.focusOffset).toBe(direction === 'forward' ? 3 : 1);
+      expect(fixture.history.getValue()).toBe('Para\n\n---\n\nfoo \n');
+      expect(fixture.history.getRevision?.()).toBe(originalRevision);
+      expect(fixture.history.getHistoryState()).toEqual(originalHistory);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    } finally { lease.release(); }
+  } finally { fixture.unmount(); vi.useRealTimers(); }
+});
+
+it.each([
+  { direction: 'forward', releaseEarly: false, activation: 'pointer' },
+  { direction: 'backward', releaseEarly: false, activation: 'pointer' },
+  { direction: 'forward', releaseEarly: true, activation: 'pointer' },
+  { direction: 'backward', releaseEarly: true, activation: 'pointer' },
+  { direction: 'forward', releaseEarly: true, activation: 'edge' },
+  { direction: 'forward', releaseEarly: false, activation: 'primary' },
+  { direction: 'forward', releaseEarly: false, activation: 'history' }
+] as const)('keeps authored-range provenance after Preview refresh: $direction releaseEarly=$releaseEarly $activation', async ({ direction, releaseEarly, activation }) => {
+  vi.useFakeTimers();
+  const signature = 'context-refresh-authored-image-range';
+  const markdown = 'Para ![alt](https://example.test/image.png)\n\n---\n\nfoo\n';
+  const updated = `${markdown.slice(0, -1)} \n`;
+  const rows = [
+    { id: 'b0', startLine: 0, endLine: 1 },
+    { id: 'b1', startLine: 2, endLine: 3 },
+    { id: 'b2', startLine: 4, endLine: 5 }
+  ];
+  const markup = (tail: string) => `<p data-easymde-visual-block-id="b0">Para <img alt="alt" src="https://example.test/image.png"></p>\n<hr data-easymde-visual-block-id="b1">\n<p data-easymde-visual-block-id="b2">${tail}</p>\n`;
+  const editMap = fullOwnerEditMap(signature, rows);
+  const fixture = createFullOwnerFixture({ editMap, html: markup('foo'), markdown, signature, sourceCaret: markdown.length - 1 });
+  try {
+    fixture.surface.focus();
+    const tail = fixture.surface.querySelector('[data-easymde-visual-block-id="b2"]')?.firstChild;
+    if (!(tail instanceof Text)) throw new Error('context-image-tail-missing');
+    placeCaretInText(tail, tail.length);
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: ' ', inputType: 'insertText' }, fullOwnerTargetRange(tail, tail.length, tail.length));
+      expect(before.defaultPrevented).toBe(false);
+      tail.appendData('\u00a0');
+      placeCaretInText(tail, tail.length);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: ' ', inputType: 'insertText' }));
+      vi.advanceTimersByTime(160);
+    });
+    expect(fixture.history.getValue()).toBe(updated);
+    const paragraph = selectFullParagraphRun(fixture);
+    const selectedText = paragraph.firstChild;
+    if (!(selectedText instanceof Text)) throw new Error('context-image-text-missing');
+    if (direction === 'backward') window.getSelection()?.setBaseAndExtent(selectedText, 3, selectedText, 1);
+    if (activation === 'edge') window.getSelection()?.setBaseAndExtent(selectedText, 0, selectedText, 3);
+    expect(fixture.runtime().prepareContextMenuDemand()).toBe(true);
+    const revision = fixture.history.getRevision?.();
+    const history = fixture.history.getHistoryState();
+    if (activation === 'edge') window.getSelection()?.setBaseAndExtent(paragraph, 0, selectedText, 3);
+    const lease = fixture.runtime().captureContextMenuTarget(paragraph);
+    if (!lease) throw new Error('context-image-lease-missing');
+    expect(fixture.runtime().refreshAcceptedPreview?.()).toBe(true);
+    if (releaseEarly) lease.release();
+    fixture.accept({ markdown: updated, html: markup('foo '), editMap });
+    await act(async () => { vi.advanceTimersByTime(0); await Promise.resolve(); });
+    if (!releaseEarly) lease.release();
+    const selectedValue = activation === 'edge' ? 'Par' : 'ar';
+    const start = activation === 'edge' ? 0 : 1;
+    expect(window.getSelection()?.toString()).toBe(selectedValue);
+    expect(window.getSelection()?.anchorOffset).toBe(direction === 'forward' ? start : 3);
+    expect(window.getSelection()?.focusOffset).toBe(direction === 'forward' ? 3 : 1);
+    expect(fixture.history.getSelection()).toEqual({ direction, start, end: 3 });
+    expect(fixture.history.getRevision?.()).toBe(revision);
+    expect(fixture.history.getHistoryState()).toEqual(history);
+    if (activation === 'history') {
+      const restoredText = fixture.surface.querySelector('[data-easymde-visual-block-id="b0"]')?.firstChild;
+      if (!(restoredText instanceof Text)) throw new Error('context-image-history-text-missing');
+      act(() => {
+        const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(restoredText, 1, 3));
+        expect(before.defaultPrevented).toBe(false);
+        restoredText.deleteData(1, 2);
+        placeCaretInText(restoredText, 1);
+        fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+        vi.advanceTimersByTime(80);
+      });
+      fullOwnerHistoryKey(fixture.surface, false);
+      expect(fixture.history.getValue()).toBe(updated);
+      if (fixture.runtime().isTransferPending()) fixture.accept({ markdown: updated, html: markup('foo '), editMap });
+      await act(async () => { vi.advanceTimersByTime(0); await Promise.resolve(); });
+      expect(window.getSelection()?.toString()).toBe('ar');
+      expect(fixture.runtime().needsAcceptedPreviewRefresh?.()).toBe(true);
+      expect(fixture.runtime().refreshAcceptedPreview?.()).toBe(true);
+      fixture.accept({ markdown: updated, html: markup('foo '), editMap });
+      await act(async () => { vi.advanceTimersByTime(0); await Promise.resolve(); });
+      expect(window.getSelection()?.toString()).toBe('ar');
+    }
+    const image = fixture.surface.querySelector('img');
+    if (!(image instanceof HTMLImageElement)) throw new Error('context-image-target-missing');
+    if (activation === 'pointer' || activation === 'edge') {
+      expect(fixture.runtime().prepareContextMenuSelection?.(image, { x: 4, y: 4 }, 'pointer')).toBe(true);
+      expect(window.getSelection()?.toString()).toBe(selectedValue);
+      expect(fixture.history.getSelection()).toEqual({ direction, start, end: 3 });
+    } else if (activation === 'primary') {
+      const event = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 });
+      image.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      expect(window.getSelection()?.getRangeAt(0).intersectsNode(image)).toBe(true);
+    } else {
+      expect(fixture.runtime().prepareContextMenuSelection?.(image, { x: 4, y: 4 }, 'pointer')).toBe(true);
+      expect(window.getSelection()?.getRangeAt(0).intersectsNode(image)).toBe(true);
+    }
+    expect(fixture.history.getValue()).toBe(updated);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally { fixture.unmount(); vi.useRealTimers(); }
+});
+
+it.each(['forward', 'backward'] as const)('publishes a %s cross-block native selection without changing source or history', (direction) => {
+  const markdown = 'Alpha\n\nBravo';
+  const signature = 'context-cross-block-selection';
+  const editMap = fullOwnerEditMap(signature, [
+    { id: 'b0', startLine: 0, endLine: 1 },
+    { id: 'b1', startLine: 2, endLine: 3 }
+  ]);
+  const html = fullOwnerParagraphBlock('Alpha', 'b0') + fullOwnerParagraphBlock('Bravo', 'b1');
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: markdown.length });
+  try {
+    fixture.surface.focus();
+    const first = fullOwnerTextAt(fixture.surface, 'p', 0);
+    const second = fullOwnerTextAt(fixture.surface, 'p', 1);
+    if (direction === 'forward') window.getSelection()?.setBaseAndExtent(first, 1, second, 2);
+    else window.getSelection()?.setBaseAndExtent(second, 2, first, 1);
+    const revision = fixture.history.getRevision?.();
+    const history = fixture.history.getHistoryState();
+    expect(fixture.runtime().prepareContextMenuDemand()).toBe(true);
+    expect(fixture.history.getSelection()).toEqual({ direction, start: 1, end: 9 });
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.history.getRevision?.()).toBe(revision);
+    expect(fixture.history.getHistoryState()).toEqual(history);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally { fixture.unmount(); }
+});
+
+it('preserves a committed final space while preparing the context menu and reauthenticates before deletion', async () => {
+  vi.useFakeTimers();
+  const fixture = fullThematicBreakTailFixture('Para', 'foo\n', '<p data-easymde-visual-block-id="b2">foo</p>');
+  try {
+    await typeFullFinalSpace(fixture);
+    const paragraph = selectFullParagraphRun(fixture);
+    const originalRevision = fixture.history.getRevision?.();
+    expect(fixture.runtime().prepareContextMenuDemand()).toBe(true);
+    expect(fixture.history.getValue()).toBe('Para\n\n---\n\nfoo \n');
+    expect(fixture.history.getRevision?.()).toBe(originalRevision);
+    const lease = fixture.runtime().captureContextMenuTarget(paragraph);
+    if (!lease) throw new Error('full-final-space-lease-missing');
+    expect(fixture.history.getValue()).toBe('Para\n\n---\n\nfoo \n');
+    expect(fixture.history.getRevision?.()).toBe(originalRevision);
+    try {
+      expect(fixture.runtime().prepareContextMenuSelection?.(paragraph, { x: 4, y: 4 })).toBe(true);
+      expect(fixture.history.getValue()).toBe('Para\n\n---\n\nfoo \n');
+      expect(fixture.history.getRevision?.()).toBe(originalRevision);
+      const prepared = fixture.history.getSelection();
+      expect(prepared).toEqual({ direction: 'forward', end: 3, start: 1 });
+      expect(fixture.runtime().needsAcceptedPreviewRefresh?.()).toBe(true);
+      expect(fixture.runtime().refreshAcceptedPreview?.()).toBe(true);
+      expect(fixture.requestPreview).toHaveBeenLastCalledWith('Para\n\n---\n\nfoo \n');
+      fixture.accept({
+        markdown: 'Para\n\n---\n\nfoo \n',
+        html: '<p data-easymde-visual-block-id="b0">Para</p>\n<hr data-easymde-visual-block-id="b1">\n<p data-easymde-visual-block-id="b2">foo </p>\n',
+        editMap: fullOwnerEditMap('final-space-refresh', [
+          { id: 'b0', startLine: 0, endLine: 1 },
+          { id: 'b1', startLine: 2, endLine: 3 },
+          { id: 'b2', startLine: 4, endLine: 5 }
+        ])
+      });
+      act(() => vi.advanceTimersByTime(0));
+      expect(fixture.history.getValue()).toBe('Para\n\n---\n\nfoo \n');
+      expect(fixture.history.getRevision?.()).toBe(originalRevision);
+      const value = 'Pa\n\n---\n\nfoo \n';
+      const result = fixture.runtime().applyCanonicalChange({
+        change: { changes: { from: 1, insert: '', to: 3 }, selection: { direction: 'none', end: 1, start: 1 }, value },
+        expected: { revision: fixture.history.getRevision?.() ?? 0, selection: prepared, value: 'Para\n\n---\n\nfoo \n' }
+      });
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(result).toBe('handled');
+    } finally {
+      lease.release();
+    }
+    expect(fixture.history.getValue()).toBe('Pa\n\n---\n\nfoo \n');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('refuses the context menu after a foreign text change following a commit that left a final space', async () => {
+  vi.useFakeTimers();
+  const fixture = fullThematicBreakTailFixture('Para', 'foo\n', '<p data-easymde-visual-block-id="b2">foo</p>');
+  try {
+    await typeFullFinalSpace(fixture);
+    const paragraph = selectFullParagraphRun(fixture);
+    const foreign = paragraph.firstChild;
+    if (!(foreign instanceof Text)) throw new Error('full-final-space-foreign-missing');
+    // Same node, same attributes, different text.
+    foreign.data = 'Pbra';
+    expect(fixture.runtime().prepareContextMenuDemand()).toBe(false);
+    expect(fixture.runtime().captureContextMenuTarget(paragraph)).toBeNull();
+    expect(fixture.history.getValue()).toBe('Para\n\n---\n\nfoo \n');
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('deletes a native selection right after a commit that left a final space', async () => {
+  vi.useFakeTimers();
+  const fixture = fullThematicBreakTailFixture('Para', 'foo\n', '<p data-easymde-visual-block-id="b2">foo</p>');
+  try {
+    await typeFullFinalSpace(fixture);
+    const text = selectFullParagraphRun(fixture).firstChild;
+    if (!(text instanceof Text)) throw new Error('full-final-space-selection-missing');
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, 1, 3));
+      if (before.defaultPrevented) throw new Error('full-final-space-selection-refused');
+      text.deleteData(1, 2);
+      placeCaretInText(text, 1);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: null, inputType: 'deleteContentBackward' }));
+    });
+    await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); });
+    expect(fixture.history.getValue()).toBe('Pa\n\n---\n\nfoo \n');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('prepares source navigation right after a commit that left a final space', async () => {
+  vi.useFakeTimers();
+  const fixture = fullThematicBreakTailFixture('Para', 'foo\n', '<p data-easymde-visual-block-id="b2">foo</p>');
+  try {
+    await typeFullFinalSpace(fixture);
+    expect(fixture.runtime().prepareSourceNavigation({
+      revision: fixture.history.getRevision?.() ?? 0,
+      value: fixture.history.getValue()
+    })).toBe(true);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([false, true])('runs Undo and Redo right after an unmapped commit that left a final space (redo first: %s)', async (redoFirst) => {
+  vi.useFakeTimers();
+  // The browser's empty post: no Preview edit map, so history checks the
+  // live surface against the committed visual itself.
+  const fixture = createFullOwnerFixture({ editMap: null, html: '<p><br></p>', markdown: '', signature: 'full-unmapped-final-space', sourceCaret: 0 });
+  let disposed = false;
+  fixture.onMarkdownChange.mockImplementation(() => {
+    queueMicrotask(() => { if (!disposed) fixture.rerenderProps(); });
+  });
+  const settle = async () => { await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); }); };
+  const history = (redo: boolean): void => {
+    act(() => {
+      fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ctrlKey: true, shiftKey: redo, key: 'z' }));
+    });
+  };
+  try {
+    const paragraph = fixture.surface.querySelector('p');
+    if (!(paragraph instanceof HTMLParagraphElement)) throw new Error('full-unmapped-paragraph-missing');
+    fixture.surface.focus();
+    const start = document.createRange();
+    start.setStart(paragraph, 0);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(start);
+    for (const character of ['a', ' ']) {
+      act(() => {
+        const native = window.getSelection();
+        const range = native?.rangeCount ? native.getRangeAt(0).cloneRange() : null;
+        if (!range) throw new Error('full-unmapped-range-missing');
+        const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: character, inputType: 'insertText' }, range.cloneRange());
+        if (before.defaultPrevented) throw new Error('full-unmapped-typing-refused');
+        if (range.startContainer instanceof Text) {
+          const text = range.startContainer;
+          text.insertData(range.startOffset, ' ' === character ? ' ' : character);
+          native?.collapse(text, range.startOffset + 1);
+        } else {
+          // Chromium replaces the empty paragraph's BR with the typed text.
+          const text = document.createTextNode(character);
+          paragraph.replaceChildren(text);
+          native?.collapse(text, 1);
+        }
+        fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: character, inputType: 'insertText' }));
+      });
+      await settle();
+    }
+    expect(fixture.history.getValue()).toBe('a ');
+    history(false);
+    await settle();
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe('a');
+    if (redoFirst) {
+      history(true);
+      await settle();
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.history.getValue()).toBe('a ');
+    }
+  } finally {
+    disposed = true;
     fixture.unmount();
     vi.useRealTimers();
   }
@@ -21757,12 +26351,12 @@ function fullOwnerRevision(fixture: FullOwnerFixture): number {
  */
 const fullOwnerApplyTextChangeSpies = new WeakMap<
   object,
-  Mock<(change: DocumentTextChange) => void>
+  Mock<(change: DocumentTextChange) => DocumentTextChangeRange | null>
 >();
 
 function fullOwnerApplyTextChangeSpy(
   fixture: FullOwnerFixture
-): Mock<(change: DocumentTextChange) => void> {
+): Mock<(change: DocumentTextChange) => DocumentTextChangeRange | null> {
   const key: object = fixture.history;
   const existing = fullOwnerApplyTextChangeSpies.get(key);
   if (existing) return existing;
@@ -26238,7 +30832,7 @@ describe('Full owner canonical document-end history', () => {
       requestPreview,
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     // Every accepted generation is an owner presentation change: the canonical
     // source, selection, history and revision must be identical across it.
     const canonicalState = () => ({
@@ -26253,7 +30847,7 @@ describe('Full owner canonical document-end history', () => {
       previewRevision += 1;
       surface.innerHTML = html;
       view.rerender(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           {...props}
           previewSnapshot={{
             editMap: {
@@ -26455,12 +31049,12 @@ describe('Full owner canonical document-end history', () => {
       requestPreview,
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     const publish = (html: string, signature?: string): void => {
       previewRevision += 1;
       surface.innerHTML = html;
       view.rerender(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           {...props}
           previewSnapshot={{
             editMap: {
@@ -26618,7 +31212,7 @@ describe('Full owner canonical document-end history', () => {
       requestPreview,
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     const canonicalState = () => ({
       history: history.getHistoryState(),
       revision: history.getRevision?.() ?? 0,
@@ -26630,7 +31224,7 @@ describe('Full owner canonical document-end history', () => {
       previewRevision += 1;
       surface.innerHTML = html;
       view.rerender(
-        <ImmersiveVisualEditor
+        <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
           {...props}
           previewSnapshot={{
             editMap: {
@@ -26839,7 +31433,7 @@ describe('Full owner canonical document-end history', () => {
       requestPreview,
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     try {
       const tailText = surface.querySelector(
         '[data-easymde-visual-block-id="b2"]'
@@ -26961,7 +31555,7 @@ describe('Full owner canonical document-end history', () => {
       requestPreview,
       surface
     };
-    const view = render(<ImmersiveVisualEditor {...props} />);
+    const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} />);
     try {
       const text = surface.querySelector(
         '[data-easymde-visual-block-id="b1"]'
@@ -27077,6 +31671,76 @@ function fullPlanExpectNativeRange(surface: HTMLElement, selector: string, start
   expect(selection?.isCollapsed).toBe(start === end);
   expect(document.activeElement).toBe(surface);
 }
+
+it('settles a composition whose certified text node is detached through the ordinary synchronizer', async () => {
+  vi.useFakeTimers();
+  const signature = 'detached-composition-origin';
+  const markdown = 'Before after.';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [{ endLine: 1, id: 'b0', startLine: 0 }]),
+    html: fullOwnerParagraphBlock(markdown, 'b0'),
+    markdown,
+    signature,
+    sourceCaret: 7
+  });
+  try {
+    const selector = '[data-easymde-visual-block-id="b0"]';
+    const text = fullOwnerTextAt(fixture.surface, selector);
+    fixture.surface.focus();
+    placeCaretInText(text, 7);
+    act(() => fixture.surface.dispatchEvent(
+      new CompositionEvent('compositionstart', { bubbles: true, data: '' })
+    ));
+    act(() => {
+      placeCaretInText(text, 7);
+      fixture.surface.dispatchEvent(new CompositionEvent('compositionupdate', {
+        bubbles: true,
+        data: 'X'
+      }));
+      const before = new InputEvent('beforeinput', {
+        bubbles: true,
+        data: 'X',
+        inputType: 'insertCompositionText',
+        isComposing: true
+      });
+      Object.defineProperty(before, 'getTargetRanges', {
+        value: () => [fullOwnerTargetRange(text, 7, 7)]
+      });
+      fixture.surface.dispatchEvent(before);
+      text.replaceData(7, 0, 'X');
+      placeCaretInText(text, 8);
+      fixture.surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        data: 'X',
+        inputType: 'insertCompositionText',
+        isComposing: true
+      }));
+    });
+    expect(fixture.history.getValue()).toBe(markdown);
+    // A render replaces the certified Text node while the composition is still
+    // open: the certificate has no subject left, so the settlement must fall
+    // through to the ordinary synchronizer instead of failing closed.
+    const replacement = document.createTextNode(text.data);
+    text.replaceWith(replacement);
+    expect(text.isConnected).toBe(false);
+    expect(replacement.data).toBe('Before Xafter.');
+    placeCaretInText(replacement, 8);
+    await act(async () => {
+      fixture.surface.dispatchEvent(new CompositionEvent('compositionend', {
+        bubbles: true,
+        data: 'X'
+      }));
+      await Promise.resolve();
+    });
+    expect(fixture.onFailure.mock.calls.map(([code]) => code))
+      .not.toContain('visual-editor-canonical-change-dom-stale');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe('Before Xafter.');
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
 
 it.each([
   { confirmation: 'Enter', drift: 0, key: 'Enter', keyupCode: 13 },
@@ -27720,7 +32384,7 @@ it.each(['~~~', '```'])('test-first v3 Full owner-created idless P preserves raw
       // escapes are valid too. Do not pin serializer bytes as the user intent.
       expect.soft(encoded.replace(/\\([~`])/g, '$1')).toBe(raw);
       expect.soft(fixture.history.getSelection()).toEqual({ direction: 'none', start: encodedStart + encoded.length, end: encodedStart + encoded.length });
-      const blocks = createEditorMarkdownBlockIndex(value).blocks;
+      const blocks = createEditorMarkdownBlockIndex(value, { referenceLabelCaseFoldProfile: 14 }).blocks;
       const rightBlock = blocks.find((block) => block.kind === 'code' && value.slice(block.from, block.to).trimEnd() === right);
       expect.soft(rightBlock, 'a literal prefix cannot swallow or reassign the following fenced code').toBeDefined();
       if (rightBlock) expect.soft(rightBlock.from).toBe(rightStart + delta);
@@ -27741,7 +32405,7 @@ it.each(['~~~', '```'])('test-first v3 Full owner-created idless P preserves raw
     const codePrefix = document.createRange(); codePrefix.selectNodeContents(code); codePrefix.setEnd(nativeCode.anchorNode, nativeCode.anchorOffset);
     expect(codePrefix.toString()).toBe('');
     const value = fixture.history.getValue();
-    const codeBlocks = createEditorMarkdownBlockIndex(value).blocks.filter((block) => block.kind === 'code');
+    const codeBlocks = createEditorMarkdownBlockIndex(value, { referenceLabelCaseFoldProfile: 14 }).blocks.filter((block) => block.kind === 'code');
     expect(codeBlocks).toHaveLength(3);
     const createdBlock = codeBlocks[1];
     if (!createdBlock) throw new Error('v3-idless-created-source-block-missing');
@@ -27917,7 +32581,7 @@ it('test-first v5 Full fresh formal H3 TextBR rapid three tildes then immediate 
     expect(fixture.onFailure).not.toHaveBeenCalled();
     expect(fixture.onTransferFailure).not.toHaveBeenCalled();
     const value = fixture.history.getValue();
-    const blocks = createEditorMarkdownBlockIndex(value).blocks.filter((block) => block.kind === 'code');
+    const blocks = createEditorMarkdownBlockIndex(value, { referenceLabelCaseFoldProfile: 14 }).blocks.filter((block) => block.kind === 'code');
     expect(blocks).toHaveLength(2);
     const createdBlock = blocks[0]; const following = blocks[1];
     if (!createdBlock || !following) throw new Error('v5-rapid-independent-canonical-fence-missing');
@@ -28103,7 +32767,7 @@ it('test-first v6 Full trailing LF normalized source keeps rapid three tildes an
     expect.soft(consoleErrors.mock.calls).toEqual([]);
     const value = fixture.history.getValue();
     expect.soft(value.endsWith('\n'), 'the canonical suffix LF is document content, never a normalization repair').toBe(true);
-    const blocks = createEditorMarkdownBlockIndex(value).blocks.filter((block) => block.kind === 'code');
+    const blocks = createEditorMarkdownBlockIndex(value, { referenceLabelCaseFoldProfile: 14 }).blocks.filter((block) => block.kind === 'code');
     metadata.canonicalCodeBlocks = blocks.length;
     expect.soft(blocks).toHaveLength(2);
     if (created instanceof HTMLPreElement && blocks.length === 2) {
@@ -28401,6 +33065,1082 @@ it.each([
   }
 });
 
+it('refuses the PRE-adjacent Backspace that would absorb a paragraph into the code block', () => {
+  vi.useFakeTimers();
+  const markdown = '# Heading\n\nBefore.\n\n~~~python\nalpha = 1\nbeta = 2\n~~~\n\nTail\n\nAfter.';
+  const signature = 'pre-adjacent-paragraph-backspace';
+  const editMap = fullOwnerEditMap(signature, [
+    { startLine: 0, endLine: 2, id: 'b0' },
+    { startLine: 2, endLine: 4, id: 'b1' },
+    { startLine: 4, endLine: 9, id: 'b2' },
+    { startLine: 9, endLine: 11, id: 'b3' },
+    { startLine: 11, endLine: 12, id: 'b4' }
+  ]);
+  const codeHtml = '<pre><code class="language-python">alpha = <span class="hljs-number">1</span>\nbeta = <span class="hljs-number">2</span>\n</code></pre>';
+  const html = fullOwnerBlock('<h1>Heading</h1>', 'b0')
+    + fullOwnerParagraphBlock('Before.', 'b1')
+    + fullOwnerBlock(codeHtml, 'b2')
+    + fullOwnerParagraphBlock('Tail', 'b3')
+    + fullOwnerParagraphBlock('After.', 'b4');
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 0 });
+  fixture.surface.setAttribute('contenteditable', 'true');
+  try {
+    fixture.surface.focus();
+    const paragraph = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b3"]');
+    const text = paragraph?.firstChild;
+    const code = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b2"] > code');
+    const terminal = code?.lastChild;
+    if (!(paragraph instanceof HTMLParagraphElement) || !(text instanceof Text)
+      || !(code instanceof HTMLElement) || !(terminal instanceof Text)
+      || !terminal.data.endsWith('\n')) {
+      throw new Error('pre-adjacent-paragraph-fixture-invalid');
+    }
+    const codeBody = code.textContent;
+    placeCaretInText(text, 0);
+    fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' }));
+    const target = document.createRange();
+    target.setStart(terminal, terminal.length - 1);
+    target.setEnd(paragraph, 0);
+    const before = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      target
+    );
+    if (!before.defaultPrevented) {
+      // Trusted Chromium input removes the code's renderer LF and appends the
+      // deleted paragraph to the retained PRE instead of refusing the press.
+      code.append(document.createTextNode(paragraph.textContent ?? ''));
+      paragraph.remove();
+      window.getSelection()?.removeAllRanges();
+      const caret = document.createRange();
+      caret.selectNodeContents(code);
+      caret.collapse(false);
+      window.getSelection()?.addRange(caret);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+    }
+    act(() => vi.advanceTimersByTime(80));
+    expect(before.defaultPrevented, 'the PRE-adjacent Backspace must refuse the browser default').toBe(true);
+    expect(fixture.history.getValue()).toBe(markdown.replace('~~~\n\nTail', '~~~\nTail'));
+    expect(fixture.surface.querySelector('[data-easymde-visual-block-id="b2"] > code')?.textContent)
+      .toBe(codeBody);
+    const retained = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b3"]');
+    expect(retained?.textContent).toBe('Tail');
+    const restored = window.getSelection();
+    expect(restored?.anchorNode && retained?.contains(restored.anchorNode)).toBe(true);
+    expect(restored?.anchorOffset).toBe(0);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure.mock.calls).toEqual([]);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('refuses the PRE-adjacent Backspace once the paragraph abuts the closing fence', () => {
+  vi.useFakeTimers();
+  // The state the blank-line removal above produces: the paragraph now sits on
+  // the line after the closing fence, so the caret's preceding byte is the
+  // fence's own terminator and no byte can be removed without destroying it.
+  const markdown = 'Before.\n\n~~~python\nalpha = 1\n~~~\nTail\n\nAfter.';
+  const signature = 'pre-abutting-paragraph-backspace';
+  const editMap = fullOwnerEditMap(signature, [
+    { startLine: 0, endLine: 2, id: 'b0' },
+    { startLine: 2, endLine: 5, id: 'b1' },
+    { startLine: 5, endLine: 6, id: 'b2' },
+    { startLine: 6, endLine: 8, id: 'b3' }
+  ]);
+  const html = fullOwnerParagraphBlock('Before.', 'b0')
+    + fullOwnerBlock('<pre><code class="language-python">alpha = <span class="hljs-number">1</span>\n</code></pre>', 'b1')
+    + fullOwnerParagraphBlock('Tail', 'b2')
+    + fullOwnerParagraphBlock('After.', 'b3');
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 0 });
+  fixture.surface.setAttribute('contenteditable', 'true');
+  try {
+    fixture.surface.focus();
+    const paragraph = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b2"]');
+    const text = paragraph?.firstChild;
+    const code = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b1"] > code');
+    const terminal = code?.lastChild;
+    if (!(paragraph instanceof HTMLParagraphElement) || !(text instanceof Text)
+      || !(code instanceof HTMLElement) || !(terminal instanceof Text)
+      || !terminal.data.endsWith('\n')) {
+      throw new Error('pre-abutting-paragraph-fixture-invalid');
+    }
+    const codeBody = code.textContent;
+    placeCaretInText(text, 0);
+    fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' }));
+    const target = document.createRange();
+    target.setStart(terminal, terminal.length - 1);
+    target.setEnd(paragraph, 0);
+    const before = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      target
+    );
+    act(() => vi.advanceTimersByTime(80));
+    expect(before.defaultPrevented, 'the fence terminator must never be the deleted byte').toBe(true);
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.surface.querySelector('[data-easymde-visual-block-id="b1"] > code')?.textContent)
+      .toBe(codeBody);
+    expect(fixture.surface.querySelector('[data-easymde-visual-block-id="b2"]')?.textContent).toBe('Tail');
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure.mock.calls).toEqual([]);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('hops the abutting PRE-adjacent Backspace into the code body so the next press deletes a body byte', () => {
+  vi.useFakeTimers();
+  // The state the sibling test's blank-line removal produces: the paragraph
+  // sits on the line after the closing fence, so the byte before the caret is
+  // the fence's own terminator and removing it would publish the paragraph as
+  // the block above's code bytes. The press is still owned, and it is
+  // byte-neutral: the caret crosses the boundary into the code body, where the
+  // next press is an ordinary one-byte deletion rather than a legal caret
+  // position the user cannot leave at all.
+  const markdown = 'Before.\n\n~~~python\nalpha = 1\n~~~\nTail\n\nAfter.';
+  const signature = 'pre-abutting-paragraph-backspace-hop';
+  const editMap = fullOwnerEditMap(signature, [
+    { startLine: 0, endLine: 2, id: 'b0' },
+    { startLine: 2, endLine: 5, id: 'b1' },
+    { startLine: 5, endLine: 6, id: 'b2' },
+    { startLine: 6, endLine: 8, id: 'b3' }
+  ]);
+  const html = fullOwnerParagraphBlock('Before.', 'b0')
+    + fullOwnerCodeBlock('alpha = 1\n', 'b1', 'python')
+    + fullOwnerParagraphBlock('Tail', 'b2')
+    + fullOwnerParagraphBlock('After.', 'b3');
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 0 });
+  fixture.surface.setAttribute('contenteditable', 'true');
+  try {
+    fixture.surface.focus();
+    const paragraph = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b2"]');
+    const text = paragraph?.firstChild;
+    const code = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b1"] > code');
+    const terminal = code?.lastChild;
+    if (!(paragraph instanceof HTMLParagraphElement) || !(text instanceof Text)
+      || !(code instanceof HTMLElement) || !(terminal instanceof Text)
+      || terminal.data !== 'alpha = 1\n') {
+      throw new Error('pre-abutting-paragraph-hop-fixture-invalid');
+    }
+    const codeBody = code.textContent;
+    // The two bytes presses 2 and 3 must remove, computed by hand from the
+    // fixture text alone: the last two body bytes of 'alpha = 1'. No assertion
+    // below derives them from the mapping under test, so a consistently wrong
+    // map still fails.
+    const removedBodyByte = markdown.indexOf('alpha = 1') + 'alpha = 1'.length - 1;
+    expect(removedBodyByte).toBe(27);
+    expect(markdown.slice(removedBodyByte, removedBodyByte + 1)).toBe('1');
+    expect(markdown.slice(removedBodyByte - 1, removedBodyByte)).toBe(' ');
+    const afterPressTwo = markdown.slice(0, removedBodyByte) + markdown.slice(removedBodyByte + 1);
+    expect(afterPressTwo).toBe('Before.\n\n~~~python\nalpha = \n~~~\nTail\n\nAfter.');
+    const afterPressThree = markdown.slice(0, removedBodyByte - 1) + markdown.slice(removedBodyByte + 1);
+    expect(afterPressThree).toBe('Before.\n\n~~~python\nalpha =\n~~~\nTail\n\nAfter.');
+
+    // A real engine deletes the byte before the caret it was given, and leaves
+    // the caret where the deletion ended. The caret is read from the live
+    // selection rather than placed here: press 2 must consume the caret press 1
+    // left, or the hop is not being witnessed at all.
+    const pressInCodeBody = (index: number): void => {
+      const selection = window.getSelection();
+      const node = selection?.anchorNode;
+      if (!selection?.isCollapsed || !(node instanceof Text) || selection.anchorOffset < 1) {
+        throw new Error(`pre-abutting-hop-caret-missing:${index}`);
+      }
+      const caret = selection.anchorOffset;
+      const before = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(node, caret - 1, caret)
+      );
+      if (!before.defaultPrevented) {
+        node.deleteData(caret - 1, 1);
+        placeCaretInText(node, caret - 1);
+        fixture.surface.dispatchEvent(
+          new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' })
+        );
+      }
+      act(() => vi.advanceTimersByTime(80));
+    };
+
+    placeCaretInText(text, 0);
+    fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' }));
+    const target = document.createRange();
+    target.setStart(terminal, terminal.length - 1);
+    target.setEnd(paragraph, 0);
+    const first = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      target
+    );
+    expect(first.defaultPrevented, 'the fence terminator must never be the deleted byte').toBe(true);
+    act(() => vi.advanceTimersByTime(80));
+    // Press 1 writes nothing at all, so its whole result is where the caret is.
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.surface.querySelector('[data-easymde-visual-block-id="b1"] > code')?.textContent).toBe(codeBody);
+    expect(fixture.surface.querySelector('[data-easymde-visual-block-id="b2"]')?.textContent).toBe('Tail');
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure.mock.calls).toEqual([]);
+    const hopped = window.getSelection();
+    expect(hopped?.isCollapsed, 'the hop leaves a collapsed caret').toBe(true);
+    expect(hopped?.anchorNode, 'the hop re-seats the caret in the code terminal').toBe(terminal);
+    expect(
+      hopped?.anchorOffset,
+      'the caret sits at the end of the code body, not inside the renderer line ending'
+    ).toBe(terminal.length - 1);
+
+    // Press 2 is the ordinary code-body deletion the hop exists to reach: one
+    // byte, taken at a mapped offset, with no failure code.
+    pressInCodeBody(2);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure.mock.calls).toEqual([]);
+    expect(fixture.history.getValue()).toBe(afterPressTwo);
+    expect(markdown.length - fixture.history.getValue().length, 'press 2 removes exactly one byte').toBe(1);
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      start: removedBodyByte,
+      end: removedBodyByte
+    });
+    const inCode = window.getSelection()?.anchorNode ?? null;
+    expect(fixture.surface.querySelector('pre > code')?.contains(inCode)).toBe(true);
+
+    // Press 3 shows the walk is neither locked nor stalling: the next byte
+    // before the caret goes too, still with no failure code.
+    pressInCodeBody(3);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure.mock.calls).toEqual([]);
+    expect(fixture.history.getValue()).toBe(afterPressThree);
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      start: removedBodyByte - 1,
+      end: removedBodyByte - 1
+    });
+
+    // Each deletion is one undo step, and the byte-neutral hop added none: two
+    // undos return the document to the state press 1 found it in.
+    fullOwnerHistoryKey(fixture.surface, false);
+    expect(fixture.history.getValue()).toBe(afterPressTwo);
+    fullOwnerHistoryKey(fixture.surface, false);
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.runtime().isTransferPending()).toBe(false);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure.mock.calls).toEqual([]);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('refuses the PRE-adjacent Backspace when the range ends at the paragraph text', () => {
+  vi.useFakeTimers();
+  // Same press as the element-endpoint case above, spelled the other way a real
+  // engine is free to report it: the target range's end boundary sits at the
+  // paragraph's own first text run rather than at the paragraph element. Both
+  // spellings describe offset 0 of the same paragraph and must take the handler.
+  const markdown = '# Heading\n\nBefore.\n\n~~~python\nalpha = 1\nbeta = 2\n~~~\n\nTail\n\nAfter.';
+  const signature = 'pre-adjacent-paragraph-text-endpoint';
+  const editMap = fullOwnerEditMap(signature, [
+    { startLine: 0, endLine: 2, id: 'b0' },
+    { startLine: 2, endLine: 4, id: 'b1' },
+    { startLine: 4, endLine: 9, id: 'b2' },
+    { startLine: 9, endLine: 11, id: 'b3' },
+    { startLine: 11, endLine: 12, id: 'b4' }
+  ]);
+  const codeHtml = '<pre><code class="language-python">alpha = <span class="hljs-number">1</span>\nbeta = <span class="hljs-number">2</span>\n</code></pre>';
+  const html = fullOwnerBlock('<h1>Heading</h1>', 'b0')
+    + fullOwnerParagraphBlock('Before.', 'b1')
+    + fullOwnerBlock(codeHtml, 'b2')
+    + fullOwnerParagraphBlock('Tail', 'b3')
+    + fullOwnerParagraphBlock('After.', 'b4');
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 0 });
+  fixture.surface.setAttribute('contenteditable', 'true');
+  try {
+    fixture.surface.focus();
+    const paragraph = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b3"]');
+    const text = paragraph?.firstChild;
+    const code = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b2"] > code');
+    const terminal = code?.lastChild;
+    if (!(paragraph instanceof HTMLParagraphElement) || !(text instanceof Text)
+      || !(code instanceof HTMLElement) || !(terminal instanceof Text)
+      || !terminal.data.endsWith('\n')) {
+      throw new Error('pre-adjacent-text-endpoint-fixture-invalid');
+    }
+    const codeBody = code.textContent;
+    placeCaretInText(text, 0);
+    fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' }));
+    const target = document.createRange();
+    target.setStart(terminal, terminal.length - 1);
+    target.setEnd(text, 0);
+    const before = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      target
+    );
+    if (!before.defaultPrevented) {
+      code.append(document.createTextNode(paragraph.textContent ?? ''));
+      paragraph.remove();
+      window.getSelection()?.removeAllRanges();
+      const caret = document.createRange();
+      caret.selectNodeContents(code);
+      caret.collapse(false);
+      window.getSelection()?.addRange(caret);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+    }
+    act(() => vi.advanceTimersByTime(80));
+    expect(before.defaultPrevented, 'the text-endpoint press must refuse the browser default').toBe(true);
+    expect(fixture.history.getValue()).toBe(markdown.replace('~~~\n\nTail', '~~~\nTail'));
+    expect(fixture.surface.querySelector('[data-easymde-visual-block-id="b2"] > code')?.textContent)
+      .toBe(codeBody);
+    const retained = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b3"]');
+    expect(retained?.textContent).toBe('Tail');
+    const restored = window.getSelection();
+    expect(restored?.anchorNode && retained?.contains(restored.anchorNode)).toBe(true);
+    expect(restored?.anchorOffset).toBe(0);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure.mock.calls).toEqual([]);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+/**
+ * Source and rendered fixtures for the declared-block-leading-run family: the
+ * paragraph line below the fence begins with one insignificant space
+ * (` before[34]`), which the renderer may draw as its own column (U+00A0) or
+ * drop entirely. The surface and the accepted visual can therefore spell that
+ * one byte differently while describing the same document.
+ */
+const DECLARED_RUN_MARKDOWN = 'Before.\n\n~~~python\nalpha = 1\n~~~\n\n the fence.\n\nAfter.';
+const DECLARED_RUN_DELETED = 'Before.\n\n~~~python\nalpha = 1\n~~~\n the fence.\n\nAfter.';
+
+function declaredRunPreAdjacentFixture(
+  signature: string,
+  paragraphText: string
+) {
+  const editMap = fullOwnerEditMap(signature, [
+    { startLine: 0, endLine: 2, id: 'b0' },
+    { startLine: 2, endLine: 5, id: 'b1' },
+    { startLine: 5, endLine: 7, id: 'b2' },
+    { startLine: 7, endLine: 9, id: 'b3' }
+  ]);
+  const html = fullOwnerParagraphBlock('Before.', 'b0')
+    + fullOwnerBlock('<pre><code class="language-python">alpha = <span class="hljs-number">1</span>\n</code></pre>', 'b1')
+    + fullOwnerParagraphBlock(paragraphText, 'b2')
+    + fullOwnerParagraphBlock('After.', 'b3');
+  const fixture = createFullOwnerFixture({
+    editMap,
+    html,
+    markdown: DECLARED_RUN_MARKDOWN,
+    signature,
+    sourceCaret: 0
+  });
+  fixture.surface.setAttribute('contenteditable', 'true');
+  return fixture;
+}
+
+/**
+ * The press itself: the caret at the paragraph's offset 0, the target range's
+ * start at the code's renderer line ending, exactly as Chromium spells the
+ * PRE-adjacent boundary. Returns the event so the caller can assert that the
+ * press was prevented.
+ */
+function pressDeclaredRunPreAdjacent(
+  fixture: ReturnType<typeof declaredRunPreAdjacentFixture>
+): Readonly<{
+  before: InputEvent;
+  paragraph: HTMLElement;
+  text: Text;
+  code: HTMLElement;
+  codeBody: string | null;
+}> {
+  const paragraph = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b2"]');
+  const text = paragraph?.firstChild;
+  const code = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b1"] > code');
+  const terminal = code?.lastChild;
+  if (!(paragraph instanceof HTMLParagraphElement) || !(text instanceof Text)
+    || !(code instanceof HTMLElement) || !(terminal instanceof Text)
+    || !terminal.data.endsWith('\n')) {
+    throw new Error('declared-run-pre-adjacent-fixture-invalid');
+  }
+  const codeBody = code.textContent;
+  placeCaretInText(text, 0);
+  fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' }));
+  const target = document.createRange();
+  target.setStart(terminal, terminal.length - 1);
+  target.setEnd(paragraph, 0);
+  const before = fullOwnerDispatchBeforeInput(
+    fixture.surface,
+    { data: null, inputType: 'deleteContentBackward' },
+    target
+  );
+  return { before, code, codeBody, paragraph, text };
+}
+
+it('owns the PRE-adjacent Backspace when the live surface respells a declared block-leading column', () => {
+  vi.useFakeTimers();
+  // The accepted visual was adopted from the dropped spelling; the surface then
+  // takes the renderer's non-breaking column. The two strings describe one
+  // document and differ in that one column's byte.
+  const fixture = declaredRunPreAdjacentFixture('pre-adjacent-declared-run-surface-respelled', 'the fence.');
+  try {
+    fixture.surface.focus();
+    const text = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b2"]')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('declared-run-respelling-text-missing');
+    text.insertData(0, '\u00a0');
+    const { before, codeBody } = pressDeclaredRunPreAdjacent(fixture);
+    act(() => vi.advanceTimersByTime(80));
+    expect(before.defaultPrevented, 'the declared-run respelling must not refuse the press').toBe(true);
+    // The stale-surface guard is the refusal under test: it must not fire.
+    expect(fixture.onFailure.mock.calls, 'the respelling must not be read as a stale surface').toEqual([]);
+    // Exactly one byte, and it is the blank line's own terminator.
+    expect(fixture.history.getValue()).toBe(DECLARED_RUN_DELETED);
+    expect(fixture.surface.querySelector('[data-easymde-visual-block-id="b1"] > code')?.textContent)
+      .toBe(codeBody);
+    const retained = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b2"]');
+    // The renderer's own column spelling of the line's insignificant leading run
+    // (U+00A0, or a space where it draws none) is not part of the document; the
+    // paragraph's own bytes are, and it is still a paragraph.
+    expect(retained?.textContent?.replace(/^[\u00a0 ]/u, '')).toBe('the fence.');
+    expect(fixture.onTransferFailure.mock.calls).toEqual([]);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('owns the PRE-adjacent Backspace when the accepted visual respells a declared block-leading column', () => {
+  vi.useFakeTimers();
+  // The opposite crossing: the accepted visual keeps the renderer's column while
+  // the live surface dropped it.
+  const fixture = declaredRunPreAdjacentFixture('pre-adjacent-declared-run-visual-respelled', '\u00a0the fence.');
+  try {
+    fixture.surface.focus();
+    const text = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b2"]')?.firstChild;
+    if (!(text instanceof Text) || '\u00a0' !== text.data[0]) {
+      throw new Error('declared-run-accepted-column-missing');
+    }
+    text.deleteData(0, 1);
+    const { before, codeBody } = pressDeclaredRunPreAdjacent(fixture);
+    act(() => vi.advanceTimersByTime(80));
+    expect(before.defaultPrevented, 'the declared-run respelling must not refuse the press').toBe(true);
+    expect(fixture.onFailure.mock.calls, 'the respelling must not be read as a stale surface').toEqual([]);
+    expect(fixture.history.getValue()).toBe(DECLARED_RUN_DELETED);
+    expect(fixture.surface.querySelector('[data-easymde-visual-block-id="b1"] > code')?.textContent)
+      .toBe(codeBody);
+    const retained = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b2"]');
+    // The renderer's own column spelling of the line's insignificant leading run
+    // (U+00A0, or a space where it draws none) is not part of the document; the
+    // paragraph's own bytes are, and it is still a paragraph.
+    expect(retained?.textContent?.replace(/^[\u00a0 ]/u, '')).toBe('the fence.');
+    expect(fixture.onTransferFailure.mock.calls).toEqual([]);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('refuses the PRE-adjacent Backspace when the surface differs beyond a declared block-leading column', () => {
+  vi.useFakeTimers();
+  // The no-broadening control: the same fixture and press, with the surface
+  // changed at a byte that is not the declared column. A stale surface must
+  // still be refused, and no byte may be lost.
+  const fixture = declaredRunPreAdjacentFixture('pre-adjacent-declared-run-unrelated-byte', 'the fence.');
+  try {
+    fixture.surface.focus();
+    const text = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b2"]')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('declared-run-unrelated-text-missing');
+    text.replaceData(0, 1, 'Z');
+    const { before } = pressDeclaredRunPreAdjacent(fixture);
+    act(() => vi.advanceTimersByTime(80));
+    expect(before.defaultPrevented, 'a stale surface still refuses the press').toBe(true);
+    expect(fixture.history.getValue()).toBe(DECLARED_RUN_MARKDOWN);
+    expect(fixture.onFailure).toHaveBeenCalledWith('visual-editor-canonical-change-dom-stale');
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('refuses a difference at the declared offset whose accepted side is not a column spelling', () => {
+  vi.useFakeTimers();
+  // The content half of the rule, at the offset the tie alone cannot decide: the
+  // surface difference BEGINS at the declared column's own offset, and the
+  // surface spells that column as U+00A0 with one byte of its own riding in front
+  // of it, so the respelled side is no spelling of that one run's bytes.
+  //
+  // Nothing here asserts WHERE the refusal comes from, deliberately: every
+  // refusal path in this component ends in `failVisualSynchronization`, which
+  // tries the accepted restore FIRST, so the guard's own throw and a refusal from
+  // the commit path beyond it both leave the surface restored and report the same
+  // shared code. An earlier version of this test asserted that no restore had run
+  // and demanded the typed bytes still be on the surface; it failed, and the
+  // assertion was what was wrong, not the code. Pinned here is the narrower true
+  // claim: this difference is refused, and no byte is lost.
+  const fixture = declaredRunPreAdjacentFixture('pre-adjacent-declared-run-non-spelling-excess', 'the fence.');
+  try {
+    fixture.surface.focus();
+    const text = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b2"]')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('declared-run-non-spelling-text-missing');
+    text.insertData(0, 'Z\u00a0');
+    expect(text.data).toBe('Z\u00a0the fence.');
+    const { before } = pressDeclaredRunPreAdjacent(fixture);
+    act(() => vi.advanceTimersByTime(80));
+    expect(before.defaultPrevented, 'a stale surface still refuses the press').toBe(true);
+    expect(fixture.history.getValue()).toBe(DECLARED_RUN_MARKDOWN);
+    expect(fixture.onFailure).toHaveBeenCalledWith('visual-editor-canonical-change-dom-stale');
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+// ---- (iv): the NON-destructive PRE-adjacent shapes. Three of them remove exactly
+// ONE byte — the terminator of the row above the caret — and none of them abuts a
+// fence line, so none of them may hop:
+//   T4  an EMPTY code body, so the press's target range has no text run to be
+//       spelled in and the terminal conjunct is false by construction;
+//   T5  a paragraph nested in a list item, whose parent is the `li`, not the surface;
+//   T6  a paragraph nested in a blockquote whose preceding row is a marker-only
+//       quote row (`>`), which the blank-row arithmetic does not currently recognise.
+// Every byte each press must remove is computed by hand from the fixture text alone,
+// so a consistently wrong mapping still fails.
+
+/** Press Backspace with the target range the engine spells for this shape. */
+function pressRowStartBackspace(
+  surface: HTMLElement,
+  start: Readonly<{ node: Node; offset: number }>,
+  paragraph: HTMLElement
+): InputEvent {
+  const target = document.createRange();
+  target.setStart(start.node, start.offset);
+  target.setEnd(paragraph, 0);
+  return fullOwnerDispatchBeforeInput(
+    surface,
+    { data: null, inputType: 'deleteContentBackward' },
+    target
+  );
+}
+
+/** The caret must never be seated inside the block above's code bytes. */
+function expectCaretOutsideCodeBody(surface: HTMLElement, code: HTMLElement): void {
+  const anchor = window.getSelection()?.anchorNode ?? null;
+  expect(Boolean(anchor) && code.contains(anchor), 'the caret is not inside the code body')
+    .toBe(false);
+}
+
+/** The owned deletion must leave the caret in the paragraph, not swept out of it. */
+function expectCaretInParagraph(paragraph: HTMLElement): void {
+  const anchor = window.getSelection()?.anchorNode ?? null;
+  expect(Boolean(anchor) && paragraph.contains(anchor), 'the caret is preserved in the paragraph')
+    .toBe(true);
+}
+
+it('owns the empty-code-body PRE-adjacent Backspace as the ordinary single-byte deletion', () => {
+  vi.useFakeTimers();
+  // T4. The body is empty, so there is no terminal text run inside the code
+  // element and the engine spells the target range at the CODE element itself. The
+  // byte before the caret is the blank row's own terminator, not a fence's, so the
+  // press is owned as the ordinary single-byte deletion and does not hop.
+  const markdown = '~~~js\n~~~\n\nthe fence.';
+  const signature = 'pre-empty-body-row-start-backspace';
+  const editMap = fullOwnerEditMap(signature, [
+    { startLine: 0, endLine: 3, id: 'b0' },
+    { startLine: 3, endLine: 4, id: 'b1' }
+  ]);
+  const html = fullOwnerCodeBlock('', 'b0') + fullOwnerParagraphBlock('the fence.', 'b1');
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 0 });
+  fixture.surface.setAttribute('contenteditable', 'true');
+  try {
+    fixture.surface.focus();
+    const paragraph = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b1"]');
+    const text = paragraph?.firstChild;
+    const code = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b0"] > code');
+    if (!(paragraph instanceof HTMLParagraphElement) || !(text instanceof Text)
+      || !(code instanceof HTMLElement) || 0 !== code.childNodes.length) {
+      throw new Error('pre-empty-body-backspace-fixture-invalid');
+    }
+    // Hand-computed from the fixture text alone: the blank row's terminator.
+    const removedByte = markdown.indexOf('the fence.') - 1;
+    expect(removedByte).toBe(10);
+    expect(markdown.slice(removedByte, removedByte + 1)).toBe('\n');
+    expect(markdown.slice(removedByte - 1, removedByte)).toBe('\n');
+    const expected = markdown.slice(0, removedByte) + markdown.slice(removedByte + 1);
+    expect(expected).toBe('~~~js\n~~~\nthe fence.');
+    placeCaretInText(text, 0);
+    const before = pressRowStartBackspace(fixture.surface, { node: code, offset: 0 }, paragraph);
+    act(() => vi.advanceTimersByTime(80));
+    expect(before.defaultPrevented, 'the press is owned').toBe(true);
+    expect(fixture.history.getValue(), 'exactly one byte, at the blank row terminator')
+      .toBe(expected);
+    expect(fixture.onFailure.mock.calls, 'the owned press reports no failure').toEqual([]);
+    expectCaretOutsideCodeBody(fixture.surface, code);
+    expectCaretInParagraph(paragraph);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('owns the nested list-item PRE-adjacent Backspace as the ordinary single-byte deletion', () => {
+  vi.useFakeTimers();
+  // T5. A loose list item holding a fenced block and then a paragraph, so the
+  // paragraph's parent is the `li` and its previous element sibling is the `pre`.
+  // The byte before the caret is the blank row's terminator (source 36), which is
+  // not a fence's, so this is the ordinary single-byte deletion.
+  const markdown = '- item intro\n\n  ~~~js\n  alpha\n  ~~~\n\n  the fence.';
+  const signature = 'pre-nested-list-row-start-backspace';
+  const editMap = fullOwnerEditMap(signature, [
+    { startLine: 0, endLine: 5, id: 'b0' },
+    { startLine: 6, endLine: 7, id: 'b1' }
+  ]);
+  const html = fullOwnerBlock(
+    '<ul><li><p>item intro</p><pre><code>alpha\n</code></pre><p>the fence.</p></li></ul>',
+    'b0'
+  ) + fullOwnerParagraphBlock('Tail', 'b1');
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 0 });
+  fixture.surface.setAttribute('contenteditable', 'true');
+  try {
+    fixture.surface.focus();
+    const paragraph = fixture.surface.querySelector<HTMLElement>('li > p:last-of-type');
+    const text = paragraph?.firstChild;
+    const code = fixture.surface.querySelector<HTMLElement>('li pre > code');
+    const terminal = code?.lastChild;
+    if (!(paragraph instanceof HTMLParagraphElement) || !(text instanceof Text)
+      || !(code instanceof HTMLElement) || !(terminal instanceof Text)
+      || paragraph.parentElement === fixture.surface
+      || paragraph.previousElementSibling !== code.parentElement
+      || !terminal.data.endsWith('\n')) {
+      throw new Error('pre-nested-list-backspace-fixture-invalid');
+    }
+    const removedByte = markdown.indexOf('  the fence.') - 1;
+    expect(removedByte).toBe(36);
+    expect(markdown.slice(removedByte, removedByte + 1)).toBe('\n');
+    expect(markdown.slice(removedByte - 1, removedByte)).toBe('\n');
+    const expected = markdown.slice(0, removedByte) + markdown.slice(removedByte + 1);
+    expect(expected).toBe('- item intro\n\n  ~~~js\n  alpha\n  ~~~\n  the fence.');
+    placeCaretInText(text, 0);
+    const before = pressRowStartBackspace(
+      fixture.surface,
+      { node: terminal, offset: terminal.length - 1 },
+      paragraph
+    );
+    act(() => vi.advanceTimersByTime(80));
+    expect(before.defaultPrevented, 'the press is owned').toBe(true);
+    expect(fixture.history.getValue(), 'exactly one byte, at the blank row terminator')
+      .toBe(expected);
+    // T5 keeps the structure: the item's own level is preserved, which is the
+    // property that separates its gate from T6's.
+    expect(fixture.history.getValue(), 'the item is not restructured into a deeper level')
+      .not.toContain('>>');
+    expect(fixture.onFailure.mock.calls, 'the owned press reports no failure').toEqual([]);
+    expectCaretOutsideCodeBody(fixture.surface, code);
+    expectCaretInParagraph(paragraph);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('owns the nested blockquote Backspace by removing the marker-only row terminator', () => {
+  vi.useFakeTimers();
+  // T6, ruled (a): the row above the paragraph is a marker-only quote row, and the
+  // removed byte is that row's own terminator (source 33), so the paragraph's row
+  // merges into a deeper quote level — `> the fence.` becomes `>> the fence.`. That
+  // is exactly what CodeMirror's own Backspace produces for the same key, and it is
+  // one byte, not the row's two.
+  const markdown = '> intro\n>\n> ~~~js\n> alpha\n> ~~~\n>\n> the fence.';
+  const signature = 'pre-nested-quote-marker-row-backspace';
+  const editMap = fullOwnerEditMap(signature, [
+    { startLine: 0, endLine: 5, id: 'b0' },
+    { startLine: 6, endLine: 7, id: 'b1' }
+  ]);
+  const html = fullOwnerBlock(
+    '<blockquote><p>intro</p><pre><code>alpha\n</code></pre><p>the fence.</p></blockquote>',
+    'b0'
+  ) + fullOwnerParagraphBlock('Tail', 'b1');
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 0 });
+  fixture.surface.setAttribute('contenteditable', 'true');
+  try {
+    fixture.surface.focus();
+    const paragraph = fixture.surface.querySelector<HTMLElement>('blockquote > p:last-of-type');
+    const text = paragraph?.firstChild;
+    const code = fixture.surface.querySelector<HTMLElement>('blockquote pre > code');
+    const terminal = code?.lastChild;
+    if (!(paragraph instanceof HTMLParagraphElement) || !(text instanceof Text)
+      || !(code instanceof HTMLElement) || !(terminal instanceof Text)
+      || paragraph.parentElement === fixture.surface
+      || paragraph.previousElementSibling !== code.parentElement
+      || !terminal.data.endsWith('\n')) {
+      throw new Error('pre-nested-quote-backspace-fixture-invalid');
+    }
+    const removedByte = markdown.indexOf('> the fence.') - 1;
+    expect(removedByte).toBe(33);
+    expect(markdown.slice(removedByte, removedByte + 1)).toBe('\n');
+    expect(markdown.slice(removedByte - 1, removedByte)).toBe('>');
+    const expected = markdown.slice(0, removedByte) + markdown.slice(removedByte + 1);
+    expect(expected).toBe('> intro\n>\n> ~~~js\n> alpha\n> ~~~\n>> the fence.');
+    placeCaretInText(text, 0);
+    const before = pressRowStartBackspace(
+      fixture.surface,
+      { node: terminal, offset: terminal.length - 1 },
+      paragraph
+    );
+    act(() => vi.advanceTimersByTime(80));
+    expect(before.defaultPrevented, 'the press is owned').toBe(true);
+    expect(fixture.history.getValue(), 'exactly one byte, at the marker-only row terminator')
+      .toBe(expected);
+    // T6 does restructure, and the restructuring is the meaning: the paragraph's
+    // row merges into the quote level the row above it already carried.
+    expect(fixture.history.getValue(), 'the merge is the meaning, one deeper quote level')
+      .toContain('>> the fence.');
+    expect(fixture.onFailure.mock.calls, 'the owned press reports no failure').toEqual([]);
+    expectCaretOutsideCodeBody(fixture.surface, code);
+    expectCaretInParagraph(paragraph);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('does not hop the nested ABUTTING Backspace, and removes no fence terminator', () => {
+  vi.useFakeTimers();
+  // The control that must hold now AND after (iv): with no blank row between the
+  // nested fence and the nested paragraph, the byte before the caret IS the fence
+  // line's own terminator, so removing it would publish the paragraph's text as
+  // code bytes. The nested family is not authorised to hop, so the press must leave
+  // the document byte-identical and must not seat the caret in the code body.
+  // WHICH refusal is reported is measured and reported separately rather than pinned,
+  // but a refusal there must be: the press cannot be silently swallowed.
+  const markdown = '> intro\n>\n> ~~~js\n> alpha\n> ~~~\n> the fence.';
+  const signature = 'pre-nested-quote-abutting-backspace-control';
+  const editMap = fullOwnerEditMap(signature, [
+    { startLine: 0, endLine: 5, id: 'b0' },
+    { startLine: 5, endLine: 6, id: 'b1' }
+  ]);
+  const html = fullOwnerBlock(
+    '<blockquote><p>intro</p><pre><code>alpha\n</code></pre><p>the fence.</p></blockquote>',
+    'b0'
+  ) + fullOwnerParagraphBlock('Tail', 'b1');
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 0 });
+  fixture.surface.setAttribute('contenteditable', 'true');
+  try {
+    fixture.surface.focus();
+    const paragraph = fixture.surface.querySelector<HTMLElement>('blockquote > p:last-of-type');
+    const text = paragraph?.firstChild;
+    const code = fixture.surface.querySelector<HTMLElement>('blockquote pre > code');
+    const terminal = code?.lastChild;
+    if (!(paragraph instanceof HTMLParagraphElement) || !(text instanceof Text)
+      || !(code instanceof HTMLElement) || !(terminal instanceof Text)
+      || paragraph.parentElement === fixture.surface
+      || !terminal.data.endsWith('\n')) {
+      throw new Error('pre-nested-quote-abutting-fixture-invalid');
+    }
+    // The byte the press would destroy, hand-computed from the fixture text alone.
+    const fenceTerminator = markdown.indexOf('> alpha') + '> alpha'.length;
+    expect(fenceTerminator).toBe(25);
+    expect(markdown.slice(fenceTerminator, fenceTerminator + 1)).toBe('\n');
+    const beforeValue = fixture.history.getValue();
+    placeCaretInText(text, 0);
+    const before = pressRowStartBackspace(
+      fixture.surface,
+      { node: terminal, offset: terminal.length - 1 },
+      paragraph
+    );
+    act(() => vi.advanceTimersByTime(80));
+    expect(before.defaultPrevented, 'the destructive byte is not deleted').toBe(true);
+    expect(fixture.history.getValue(), 'no byte may be lost').toBe(beforeValue);
+    const reported = fixture.onFailure.mock.calls.map(([code]) => code);
+    expect(reported.length, 'the refused press reports its refusal').toBeGreaterThan(0);
+    for (const code of reported) {
+      expect(String(code), 'the reported code names an editor failure')
+        .toMatch(/^visual-editor-[a-z0-9-]+$/);
+    }
+    expectCaretOutsideCodeBody(fixture.surface, code);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+// The emptied code fence: `lead`, a blank row, a three-row fence whose body is
+// one empty row, then the abutting paragraph. Hand-computed from the fixture
+// text: the fence's three rows and their terminators become ONE empty row, and
+// nothing else moves, so fourteen of the source's thirty-one bytes remain:
+// `lead\n\n` + the empty row's own line ending + ` the fence.\n`.
+const EMPTIED_FENCE_MARKDOWN = 'lead\n\n```bash\n\n```\n the fence.\n';
+const EMPTIED_FENCE_VALUE = 'lead\n\n\n the fence.\n';
+const emptiedFenceHtml = (body: string): string =>
+  fullOwnerParagraphBlock('lead', 'b0')
+  + fullOwnerBlock(
+    '<pre data-easymde-visual-fence="```" data-easymde-visual-fence-info="bash">'
+    + `<code class="language-bash">${body}</code></pre>`,
+    'b1'
+  )
+  + fullOwnerParagraphBlock(' the fence.', 'b2');
+
+it('owns the code-content-to-fence Backspace on an emptied code body', () => {
+  vi.useFakeTimers();
+  // The acceptance walk's press 57 shape. The caret sits at the LEFT EDGE of the
+  // code content, and the byte the press would take is the row boundary above it.
+  // The empty fence block is the accepted preview's (nothing local), and the row
+  // below it is the one the walk's own deletions shortened, which is why it keeps
+  // its leading column.
+  const markdown = EMPTIED_FENCE_MARKDOWN;
+  const signature = 'code-content-fence-emptied-body-backspace';
+  const editMap = fullOwnerEditMap(signature, [
+    { startLine: 0, endLine: 2, id: 'b0' },
+    { startLine: 2, endLine: 5, id: 'b1' },
+    { startLine: 5, endLine: 6, id: 'b2' }
+  ]);
+  const html = emptiedFenceHtml('\n');
+  // Hand-computed from the fixture text alone, so the expectation cannot follow
+  // the implementation into a wrong answer.
+  expect(markdown.slice(0, 6)).toBe('lead\n\n');
+  expect(markdown.slice(6, 13)).toBe('```bash');
+  expect(markdown.slice(15, 18)).toBe('```');
+  expect(markdown.slice(19)).toBe(' the fence.\n');
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 0 });
+  fixture.surface.setAttribute('contenteditable', 'true');
+  try {
+    fixture.surface.focus();
+    const code = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b1"] > code');
+    const codeText = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(codeText instanceof Text) || '\n' !== codeText.data) {
+      throw new Error('code-content-fence-fixture-invalid');
+    }
+    placeCaretInText(codeText, 0);
+    const press = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Backspace'
+    });
+    fixture.surface.dispatchEvent(press);
+    act(() => vi.advanceTimersByTime(80));
+    expect(press.defaultPrevented, 'the press is owned').toBe(true);
+    expect(fixture.onFailure.mock.calls, 'the owned press reports no failure').toEqual([]);
+    expect(fixture.history.getValue(), 'the emptied fence block becomes one empty row')
+      .toBe(EMPTIED_FENCE_VALUE);
+    expectCaretOutsideCodeBody(fixture.surface, code);
+    const emptied = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b1"]');
+    if (!(emptied instanceof HTMLParagraphElement)) {
+      throw new Error('code-content-fence-emptied-block-invalid');
+    }
+    expectCaretInParagraph(emptied);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('owns the code-content-to-fence Backspace after a native deletion emptied the code body', () => {
+  vi.useFakeTimers();
+  // Press 57 itself: the same press as the row above, but the code body was
+  // emptied by the native (beforeinput-owned) deletion immediately before it, so
+  // the accepted preview no longer spells the live code body. The press must
+  // still remove the emptied fence block whole, change nothing else, and leave
+  // the caret in the emptied block.
+  const signature = 'code-content-fence-emptied-by-native-delete';
+  const markdownAfterDelete = EMPTIED_FENCE_MARKDOWN;
+  const editMap = fullOwnerEditMap(signature, [
+    { startLine: 0, endLine: 2, id: 'b0' },
+    { startLine: 2, endLine: 5, id: 'b1' },
+    { startLine: 5, endLine: 6, id: 'b2' }
+  ]);
+  const fixture = createFullOwnerFixture({
+    editMap,
+    html: emptiedFenceHtml('e\n'),
+    markdown: 'lead\n\n```bash\ne\n```\n the fence.\n',
+    signature,
+    sourceCaret: 0
+  });
+  fixture.surface.setAttribute('contenteditable', 'true');
+  try {
+    fixture.surface.focus();
+    const code = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b1"] > code');
+    const codeText = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(codeText instanceof Text) || 'e\n' !== codeText.data) {
+      throw new Error('code-content-fence-native-delete-fixture-invalid');
+    }
+    fullOwnerNativeDelete(fixture.surface, codeText, 0, 1, 'deleteContentBackward');
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.onFailure.mock.calls, 'the emptying deletion is owned').toEqual([]);
+    expect(fixture.history.getValue(), 'the code body is empty in the source')
+      .toBe(markdownAfterDelete);
+    const afterDelete = window.getSelection();
+    expect(afterDelete?.anchorNode, 'the caret is at the left edge of the emptied code content')
+      .toBe(codeText);
+    expect(afterDelete?.anchorOffset).toBe(0);
+    const press = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Backspace'
+    });
+    fixture.surface.dispatchEvent(press);
+    act(() => vi.advanceTimersByTime(80));
+    expect(press.defaultPrevented, 'the press is owned').toBe(true);
+    expect(fixture.onFailure.mock.calls, 'the owned press reports no failure').toEqual([]);
+    expect(fixture.history.getValue(), 'the emptied fence block becomes one empty row')
+      .toBe(EMPTIED_FENCE_VALUE);
+    expectCaretOutsideCodeBody(fixture.surface, code);
+    const emptied = fixture.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b1"]');
+    if (!(emptied instanceof HTMLParagraphElement)) {
+      throw new Error('code-content-fence-emptied-block-invalid');
+    }
+    expectCaretInParagraph(emptied);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('deletes a witnessed terminal NBSP in the later repeated paragraph', () => {
+  vi.useFakeTimers();
+  const markdown = 'Paragraph earlier\n\nParagraph Alpha';
+  const signature = 'repeated-terminal-space';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { startLine: 0, endLine: 1, id: 'b0' },
+      { startLine: 2, endLine: 3, id: 'b1' }
+    ]),
+    html: fullOwnerParagraphBlock('Paragraph earlier', 'b0') + fullOwnerParagraphBlock('Paragraph Alpha', 'b1'),
+    markdown, signature, sourceCaret: 0
+  });
+  try {
+    const body = fixture.surface.lastElementChild;
+    const text = body?.firstChild;
+    if (!(body instanceof HTMLParagraphElement) || !(text instanceof Text)) throw new Error('repeated-terminal-paragraph-missing');
+    fixture.surface.focus();
+    placeCaretInText(text, text.length);
+    const backspace = () => {
+      const selection = window.getSelection();
+      const node = selection?.anchorNode;
+      const offset = selection?.anchorOffset;
+      if (!(node instanceof Text) || !offset || !body.contains(node)) throw new Error('repeated-terminal-caret-missing');
+      const key = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' });
+      fixture.surface.dispatchEvent(key);
+      if (key.defaultPrevented) return;
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(node, offset - 1, offset));
+      if (before.defaultPrevented) return;
+      node.deleteData(offset - 1, 1);
+      if (node.data.endsWith(' ')) node.replaceData(node.length - 1, 1, '\u00a0');
+      placeCaretInText(node, offset - 1);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+    };
+    act(() => { for (let i = 0; i < 5; i += 1) backspace(); });
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue()).toBe('Paragraph earlier\n\nParagraph ');
+    expect(body.textContent).toBe('Paragraph\u00a0');
+    act(() => backspace());
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue()).toBe('Paragraph earlier\n\nParagraph');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('does not inject a terminal witness from an earlier accepted render into a later history slot', () => {
+  vi.useFakeTimers();
+  const markdown = '# AB ';
+  const signature = 'terminal-witness-owner-transition';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]),
+    html: fullOwnerBlock('<h1>AB\u00a0</h1>', 'b0'),
+    markdown,
+    signature,
+    sourceCaret: 5
+  });
+  const accepted = (value: string, html: string): FullOwnerAcceptedDocument => ({
+    editMap: fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]),
+    html,
+    markdown: value
+  });
+  try {
+    fixture.surface.focus();
+    const heading = fixture.surface.firstElementChild;
+    const text = heading?.firstChild;
+    if (!(heading instanceof HTMLHeadingElement) || !(text instanceof Text)) {
+      throw new Error('terminal-witness-transition-heading-missing');
+    }
+    placeCaretInText(text, text.length);
+    const before = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      fullOwnerTargetRange(text, text.length - 1, text.length)
+    );
+    expect(before.defaultPrevented).toBe(false);
+    text.deleteData(text.length - 1, 1);
+    placeCaretInText(text, text.length);
+    fixture.surface.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      data: null,
+      inputType: 'deleteContentBackward'
+    }));
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue()).toBe('# AB');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    if (fixture.runtime().isTransferPending()) {
+      act(() => fixture.accept(accepted('# AB', fullOwnerBlock('<h1>AB</h1>', 'b0'))));
+    }
+
+    fixture.acceptWithSignature(
+      accepted('# AB', fullOwnerBlock('<h1><span>AB</span></h1>', 'b0')),
+      'terminal-witness-owner-transition-next'
+    );
+    const replacement = fixture.surface.querySelector('h1 > span')?.firstChild;
+    if (!(replacement instanceof Text)) {
+      throw new Error('terminal-witness-transition-replacement-missing');
+    }
+    placeCaretInText(replacement, replacement.length);
+    const second = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      fullOwnerTargetRange(replacement, replacement.length - 1, replacement.length)
+    );
+    expect(second.defaultPrevented).toBe(false);
+    replacement.deleteData(replacement.length - 1, 1);
+    placeCaretInText(replacement, replacement.length);
+    fixture.surface.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      data: null,
+      inputType: 'deleteContentBackward'
+    }));
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue()).toBe('# A');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    if (fixture.runtime().isTransferPending()) {
+      act(() => fixture.accept(accepted('# A', fullOwnerBlock('<h1><span>A</span></h1>', 'b0'))));
+    }
+
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getValue()).toBe('# AB');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    if (fixture.runtime().isTransferPending()) {
+      act(() => fixture.accept(accepted('# AB', fullOwnerBlock('<h1><span>AB</span></h1>', 'b0'))));
+    }
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      start: '# AB'.length,
+      end: '# AB'.length
+    });
+    const restoredText = fixture.surface.querySelector('h1 > span')?.firstChild;
+    expect(restoredText).toBeInstanceOf(Text);
+    expect((restoredText as Text).data).toBe('AB');
+    expect(window.getSelection()?.anchorNode).toBe(restoredText);
+    expect(window.getSelection()?.anchorOffset).toBe(2);
+    expect(fixture.runtime().isEditable()).toBe(true);
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
 it.each([
   ['h1', '# ', 'settled'],
   ['h3', '### ', 'settled'],
@@ -28423,7 +34163,7 @@ it.each([
   fixture.surface.setAttribute('contenteditable', 'true');
   try {
     fixture.surface.focus();
-    const block = fixture.surface.firstElementChild;
+    let block = fixture.surface.firstElementChild;
     const first = block?.firstChild;
     if (!(first instanceof Text)) throw new Error('native-trailing-space-text-missing');
     placeCaretInText(first, first.length);
@@ -28467,11 +34207,32 @@ it.each([
     act(() => vi.advanceTimersByTime(80));
     expect(fixture.history.getValue()).toBe(`${prefix}Alpha`);
     expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: prefix.length + 5, end: prefix.length + 5 });
-    const afterSpace = window.getSelection();
-    expect(block.contains(afterSpace?.anchorNode ?? null)).toBe(true);
-    if (!afterSpace?.anchorNode) throw new Error('native-trailing-space-next-caret-missing');
+    if (timing === 'settled') {
+      act(() => fullOwnerHistoryKey(fixture.surface, false));
+      expect(fixture.history.getValue()).toBe(`${prefix}Alpha `);
+      expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: prefix.length + 6, end: prefix.length + 6 });
+      block = fixture.surface.firstElementChild;
+      const restoredText = block?.firstChild;
+      if (!(restoredText instanceof Text)) throw new Error('native-trailing-space-undo-text-missing');
+      expect(restoredText.data).toBe('Alpha\u00a0');
+      const restoredCaret = window.getSelection();
+      expect(restoredCaret?.anchorNode).toBe(restoredText);
+      expect(restoredCaret?.anchorOffset).toBe(restoredText.length);
+      const restoredPosition = document.createRange();
+      restoredPosition.selectNodeContents(restoredText);
+      expect(restoredPosition.toString().length).toBe(6);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      act(() => fullOwnerHistoryKey(fixture.surface, true));
+      expect(fixture.history.getValue()).toBe(`${prefix}Alpha`);
+      expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: prefix.length + 5, end: prefix.length + 5 });
+      block = fixture.surface.firstElementChild;
+    }
+    const afterRedo = window.getSelection();
+    if (!block) throw new Error('native-trailing-space-redo-block-missing');
+    expect(block?.contains(afterRedo?.anchorNode ?? null)).toBe(true);
+    if (!afterRedo?.anchorNode) throw new Error('native-trailing-space-redo-caret-missing');
     position.selectNodeContents(block);
-    position.setEnd(afterSpace.anchorNode, afterSpace.anchorOffset);
+    position.setEnd(afterRedo.anchorNode, afterRedo.anchorOffset);
     expect(position.toString().length).toBe(5);
     backspace();
     act(() => vi.advanceTimersByTime(80));
@@ -28479,6 +34240,2378 @@ it.each([
     expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: prefix.length + 4, end: prefix.length + 4 });
     expect(fixture.onFailure).not.toHaveBeenCalled();
     expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each(['exact target', 'replaced target slot'] as const)(
+  'restores the logged terminal-NBSP history across accepted-Preview identity handoff through Undo6 (%s)',
+  (acceptance) => {
+  vi.useFakeTimers();
+  const markdown = '# AB \n\n';
+  const signature = 'logged-terminal-nbsp-order';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { startLine: 0, endLine: 1, id: 'b0' },
+      { startLine: 1, endLine: 3, id: 'b1' }
+    ]),
+    html: fullOwnerBlock('<h1>AB\u00a0</h1>', 'b0')
+      + fullOwnerBlock('<p><br></p>', 'b1'),
+    markdown,
+    signature,
+    sourceCaret: 5
+  });
+  const settle = (): void => {
+    act(() => vi.advanceTimersByTime(600));
+  };
+  const deleteTextRange = (text: Text, start: number, end: number, emptyHeading?: HTMLElement): void => {
+    placeCaretInText(text, end);
+    const before = fullOwnerDispatchBeforeInput(fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      fullOwnerTargetRange(text, start, end));
+    if (before.defaultPrevented) throw new Error('logged-terminal-delete-prevented');
+    if (emptyHeading && start === 0 && end === text.length) {
+      emptyHeading.replaceChildren(document.createElement('br'));
+      window.getSelection()?.collapse(emptyHeading, 0);
+    } else {
+      text.deleteData(start, end - start);
+      if (text.data.endsWith(' ')) text.replaceData(text.length - 1, 1, '\u00a0');
+      placeCaretInText(text, start);
+    }
+    fixture.surface.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      data: null,
+      inputType: 'deleteContentBackward'
+    }));
+    settle();
+  };
+  try {
+    fixture.surface.focus();
+    const heading = fixture.surface.firstElementChild;
+    const headingText = heading?.firstChild;
+    if (!(heading instanceof HTMLHeadingElement) || !(headingText instanceof Text)) {
+      throw new Error('logged-terminal-heading-missing');
+    }
+    deleteTextRange(headingText, headingText.length - 1, headingText.length);
+    expect(fixture.history.getValue()).toBe('# AB\n\n');
+    const afterSpace = heading.firstChild;
+    if (!(afterSpace instanceof Text)) throw new Error('logged-terminal-heading-text-missing');
+    deleteTextRange(afterSpace, afterSpace.length - 1, afterSpace.length);
+    expect(fixture.history.getValue()).toBe('# A\n\n');
+    const afterSecond = heading.firstChild;
+    if (!(afterSecond instanceof Text)) throw new Error('logged-terminal-heading-tail-missing');
+    deleteTextRange(afterSecond, 0, afterSecond.length, heading);
+    expect(fixture.history.getValue()).toBe('# \n\n');
+    expect(pressFullBackspaceKey(fixture.surface)).toBe(true);
+    settle();
+    expect(fixture.history.getValue()).toBe('\n\n');
+    // This accepted whitespace render changes the live Preview identity before
+    // Undo6 rebuilds the earlier trailing-space heading.
+    act(() => fixture.acceptWithSignature(
+      { editMap: null, html: '<p><br></p>', markdown: '\n\n' },
+      'logged-terminal-whitespace'
+    ));
+    const empty = fixture.surface.firstElementChild;
+    if (!(empty instanceof HTMLParagraphElement) || !(empty.firstChild instanceof HTMLBRElement)) {
+      throw new Error('logged-terminal-empty-paragraph-missing');
+    }
+    window.getSelection()?.collapse(empty, 0);
+    const clearTarget = document.createRange();
+    clearTarget.setStart(empty, 0);
+    clearTarget.collapse(true);
+    const clear = fullOwnerDispatchBeforeInput(fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' }, clearTarget);
+    expect(clear.defaultPrevented).toBe(true);
+    expect(fixture.history.getValue()).toBe('');
+    const emptyAfterClear = fixture.surface.querySelector('p');
+    if (!(emptyAfterClear instanceof HTMLParagraphElement)) throw new Error('logged-terminal-clear-missing');
+    window.getSelection()?.collapse(emptyAfterClear, 0);
+    const probeTarget = document.createRange();
+    probeTarget.setStart(emptyAfterClear, 0);
+    probeTarget.collapse(true);
+    const probe = fullOwnerDispatchBeforeInput(fixture.surface,
+      { data: 'X', inputType: 'insertText' }, probeTarget);
+    expect(probe.defaultPrevented).toBe(false);
+    const probeText = document.createTextNode('X');
+    emptyAfterClear.replaceChildren(probeText);
+    placeCaretInText(probeText, 1);
+    fixture.surface.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      data: 'X',
+      inputType: 'insertText'
+    }));
+    settle();
+    expect(fixture.history.getValue()).toBe('X');
+
+    const acceptedHistoryDocument = (value: string): FullOwnerAcceptedDocument => {
+      if (value === '') return { editMap: null, html: '', markdown: value };
+      if (value === '\n\n') return { editMap: null, html: '<p><br></p>', markdown: value };
+      const headingText = value === '# \n\n' ? '<br>' : value.slice(2, -2).trimEnd();
+      return {
+        editMap: fullOwnerEditMap(signature, [
+          { startLine: 0, endLine: 1, id: 'b0' },
+          { startLine: 1, endLine: 3, id: 'b1' }
+        ]),
+        html: fullOwnerBlock(`<h1>${headingText}</h1>`, 'b0')
+          + fullOwnerBlock('<p><br></p>', 'b1'),
+        markdown: value
+      };
+    };
+    const undo = (expected: string, caret: number, accept = true): void => {
+      const before = fixture.history.getHistoryState();
+      act(() => fullOwnerHistoryKey(fixture.surface, false));
+      if (fixture.history.getValue() !== expected) {
+        throw new Error([
+          'logged-terminal-undo-mismatch',
+          `expectedLength=${expected.length}`,
+          `actualLength=${fixture.history.getValue().length}`,
+          `undoBefore=${before.undoDepth}`,
+          `undoAfter=${fixture.history.getHistoryState().undoDepth}`,
+          `redoAfter=${fixture.history.getHistoryState().redoDepth}`,
+          `selectionStart=${fixture.history.getSelection().start}`,
+          `pending=${fixture.runtime().isTransferPending()}`,
+          `failures=${JSON.stringify(fixture.onFailure.mock.calls)}`
+        ].join(':'));
+      }
+      expect(fixture.history.getValue()).toBe(expected);
+      expect(fixture.history.getSelection()).toEqual({
+        direction: 'none',
+        start: caret,
+        end: caret
+      });
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      if (accept && fixture.runtime().isTransferPending()) {
+        if ('replaced target slot' === acceptance && expected === '# AB \n\n') {
+          act(() => fixture.acceptWithSignature(
+            acceptedHistoryDocument(expected),
+            'logged-terminal-replaced-target'
+          ));
+        } else {
+          act(() => fixture.accept(acceptedHistoryDocument(expected)));
+        }
+      }
+    };
+    const redo = (expected: string, caret: number, accept = true): void => {
+      act(() => fullOwnerHistoryKey(fixture.surface, true));
+      expect(fixture.history.getValue()).toBe(expected);
+      expect(fixture.history.getSelection()).toEqual({
+        direction: 'none',
+        start: caret,
+        end: caret
+      });
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      if (accept && fixture.runtime().isTransferPending()) {
+        act(() => fixture.accept(acceptedHistoryDocument(expected)));
+      }
+    };
+    undo('', 0);
+    undo('\n\n', 0);
+    undo('# \n\n', 2);
+    undo('# A\n\n', 3);
+    undo('# AB\n\n', 4);
+    undo('# AB \n\n', 5);
+    if ('replaced target slot' === acceptance) {
+      expect(fixture.onFailure).toHaveBeenCalledWith(
+        'visual-editor-history-preview-stale'
+      );
+      return;
+    }
+    redo('# AB\n\n', 4);
+    undo('# AB \n\n', 5);
+    const restoredHeading = fixture.surface.querySelector('h1');
+    const restoredText = restoredHeading?.firstChild;
+    if (!(restoredText instanceof Text)) throw new Error('logged-terminal-restored-heading-missing');
+    expect(restoredText.data).toBe('AB\u00a0');
+    const restoredSelection = window.getSelection();
+    expect(restoredSelection?.anchorNode).toBe(restoredText);
+    expect(restoredSelection?.anchorOffset).toBe(3);
+    expect(fixture.runtime().isEditable()).toBe(true);
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+  }
+);
+
+it('rebinds a terminal-space witness across Redo and Undo with new accepted Preview identities', () => {
+  vi.useFakeTimers();
+  const markdown = '# Alpha ';
+  const signature = 'terminal-space-redo-rebind';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]),
+    html: fullOwnerBlock('<h1>Alpha\u00a0</h1>', 'b0'),
+    markdown,
+    signature,
+    sourceCaret: markdown.length
+  });
+  const accepted = (value: string): FullOwnerAcceptedDocument => ({
+    editMap: fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]),
+    html: fullOwnerBlock(
+      `<h1>${value.endsWith(' ') ? 'Alpha\u00a0' : 'Alpha'}</h1>`,
+      'b0'
+    ),
+    markdown: value
+  });
+  const settle = (): void => {
+    act(() => vi.advanceTimersByTime(600));
+  };
+  const acceptPending = (): void => {
+    if (fixture.runtime().isTransferPending()) {
+      act(() => fixture.accept(accepted(fixture.history.getValue())));
+    }
+  };
+  try {
+    fixture.surface.focus();
+    const heading = fixture.surface.firstElementChild;
+    const text = heading?.firstChild;
+    if (!(heading instanceof HTMLHeadingElement) || !(text instanceof Text)) {
+      throw new Error('terminal-space-redo-heading-missing');
+    }
+    placeCaretInText(text, text.length);
+    const remove = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      fullOwnerTargetRange(text, text.length - 1, text.length)
+    );
+    expect(remove.defaultPrevented).toBe(false);
+    text.deleteData(text.length - 1, 1);
+    placeCaretInText(text, text.length);
+    fixture.surface.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      data: null,
+      inputType: 'deleteContentBackward'
+    }));
+    settle();
+    expect(fixture.history.getValue()).toBe('# Alpha');
+    acceptPending();
+
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getValue()).toBe(markdown);
+    acceptPending();
+    act(() => fullOwnerHistoryKey(fixture.surface, true));
+    expect(fixture.history.getValue()).toBe('# Alpha');
+    acceptPending();
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getValue()).toBe(markdown);
+    acceptPending();
+
+    const restoredHeading = fixture.surface.querySelector('h1');
+    const restoredText = restoredHeading?.firstChild;
+    if (!(restoredText instanceof Text)) {
+      throw new Error('terminal-space-redo-restored-text-missing');
+    }
+    expect(restoredText.data).toBe('Alpha\u00a0');
+    expect(window.getSelection()?.anchorNode).toBe(restoredText);
+    expect(window.getSelection()?.anchorOffset).toBe(restoredText.length);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  ['path', { textPath: [1, 0] }],
+  ['source offset', { sourceRange: { start: 3, end: 4 } }],
+  ['spelling', { live: 'AB ' }],
+  ['caret', { textOffset: 2 }]
+] as const)('rejects a terminal witness with changed %s', (_change, override) => {
+  const surface = document.createElement('article');
+  surface.contentEditable = 'true';
+  surface.tabIndex = 0;
+  surface.innerHTML = '<h1>AB</h1>';
+  document.body.append(surface);
+  const witness: TerminalTextRunWitness = {
+    canonical: 'AB ',
+    live: 'AB\u00a0',
+    sourceRange: { start: 4, end: 5 },
+    textOffset: 3,
+    textPath: [0, 0],
+    visualRange: { start: 0, end: 1 },
+    ...override
+  };
+  try {
+    expect(() => applyTerminalTextRunWitness(surface, '# AB \n\n', witness))
+      .toThrow('visual-editor-history-terminal-text-run-stale');
+    const text = surface.querySelector('h1')?.firstChild;
+    expect(text).toBeInstanceOf(Text);
+    expect((text as Text).data).toBe('AB');
+  } finally {
+    surface.remove();
+  }
+});
+
+it.each([
+  ['owner', { owner: {} }],
+  ['history slot', { historyUndoDepth: 8 }],
+  ['accepted signature', { previewSignature: 'foreign-signature' }]
+] as const)('treats a terminal witness from a foreign %s as inapplicable', (_name, override) => {
+  const surface = document.createElement('article');
+  surface.contentEditable = 'true';
+  surface.innerHTML = '<h1>AB</h1>';
+  document.body.append(surface);
+  const owner = {};
+  const currentIdentity = {
+    historyRedoDepth: 0,
+    historyUndoDepth: 7,
+    owner,
+    previewMapped: true,
+    previewMarkdown: '# AB \n\n',
+    previewRevision: 12,
+    previewSignature: 'current-signature'
+  };
+  const witnessIdentity = { ...currentIdentity, ...override };
+  const witness = {
+    canonical: 'AB ',
+    identity: witnessIdentity,
+    live: 'AB\u00a0',
+    sourceRange: { start: 4, end: 5 },
+    textOffset: 3,
+    textPath: [0, 0],
+    visualRange: { start: 0, end: 1 }
+  } as unknown as TerminalTextRunWitness;
+  const applyWithIdentity = applyTerminalTextRunWitness as unknown as (
+    surface: HTMLElement,
+    markdown: string,
+    witness: TerminalTextRunWitness,
+    allowTrimmedText: boolean,
+    identity: typeof currentIdentity
+  ) => boolean;
+  try {
+    expect(applyWithIdentity(surface, '# AB \n\n', witness, true, currentIdentity)).toBe(false);
+    expect(surface.querySelector('h1')?.textContent).toBe('AB');
+  } finally {
+    surface.remove();
+  }
+});
+
+it.each([
+  ['path', { textPath: [1, 0] }],
+  ['source offset', { sourceRange: { start: 3, end: 4 } }],
+  ['spelling', { live: 'AB ' }],
+  ['caret', { textOffset: 2 }]
+] as const)('hard-rejects a current-identity terminal witness with changed %s', (_name, override) => {
+  const surface = document.createElement('article');
+  surface.contentEditable = 'true';
+  surface.innerHTML = '<h1>AB</h1>';
+  document.body.append(surface);
+  const identity = {
+    historyRedoDepth: 0,
+    historyUndoDepth: 7,
+    owner: {},
+    previewMapped: true,
+    previewMarkdown: '# AB \n\n',
+    previewRevision: 12,
+    previewSignature: 'current-signature'
+  };
+  const witness = {
+    canonical: 'AB ',
+    identity,
+    live: 'AB\u00a0',
+    sourceRange: { start: 4, end: 5 },
+    textOffset: 3,
+    textPath: [0, 0],
+    visualRange: { start: 0, end: 1 },
+    ...override
+  } as unknown as TerminalTextRunWitness;
+  const applyWithIdentity = applyTerminalTextRunWitness as unknown as (
+    surface: HTMLElement,
+    markdown: string,
+    witness: TerminalTextRunWitness,
+    allowTrimmedText: boolean,
+    identity: TerminalTextRunIdentity
+  ) => boolean;
+  try {
+    expect(() => applyWithIdentity(surface, '# AB \n\n', witness, true, identity))
+      .toThrow('visual-editor-history-terminal-text-run-stale');
+  } finally {
+    surface.remove();
+  }
+});
+
+it('maps typing into an owned sole empty paragraph without serializing an empty fragment', () => {
+  const surface = document.createElement('article');
+  surface.innerHTML = '<p><br></p>';
+  document.body.append(surface);
+  try {
+    const paragraph = surface.firstElementChild;
+    if (!(paragraph instanceof HTMLParagraphElement)) throw new Error('empty-paragraph-missing');
+    window.getSelection()?.collapse(paragraph, 0);
+    const target = document.createRange();
+    target.setStart(paragraph, 0);
+    target.collapse(true);
+    const event = new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: 'X', inputType: 'insertText' });
+    Object.defineProperty(event, 'getTargetRanges', { value: () => [target] });
+    const intent = visualEmptyStructuralInputIntent(surface, event, '\n\n', '', {
+      body: paragraph, sourceLength: 0, sourceOffset: 0
+    });
+    expect(intent?.sourceSelection).toEqual({ start: 0, end: 0 });
+    expect(intent?.visualSelection).toEqual({ start: 0, end: 0 });
+  } finally {
+    surface.remove();
+  }
+});
+
+it.each([0, 1] as const)(
+  'consumes source-empty terminal Backspace at paragraph offset %i without mutation',
+  (offset) => {
+    vi.useFakeTimers();
+    const signature = `source-empty-terminal-noop-${offset}`;
+    const fixture = createFullOwnerFixture({
+      editMap: null,
+      html: '<p><br></p>',
+      markdown: '',
+      signature
+    });
+    try {
+      fixture.surface.setAttribute('contenteditable', 'true');
+      fixture.surface.focus();
+      const paragraph = fixture.surface.firstElementChild;
+      const breakNode = paragraph?.firstChild;
+      if (!(paragraph instanceof HTMLParagraphElement) || !(breakNode instanceof HTMLBRElement)) {
+        throw new Error('source-empty-terminal-shape-missing');
+      }
+      expect(serializeVisualMarkdown(fixture.surface)).toBe('');
+      window.getSelection()?.collapse(paragraph, offset);
+      const historyBefore = fixture.history.getHistoryState();
+      const revisionBefore = fixture.history.getRevision();
+      const htmlBefore = fixture.surface.innerHTML;
+
+      const event = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(paragraph, offset, offset)
+      );
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(fixture.history.getValue()).toBe('');
+      expect(fixture.history.getSelection()).toEqual({
+        direction: 'none',
+        start: 0,
+        end: 0
+      });
+      expect(fixture.history.getHistoryState()).toEqual(historyBefore);
+      expect(fixture.history.getRevision()).toBe(revisionBefore);
+      expect(fixture.surface.innerHTML).toBe(htmlBefore);
+      expect(fixture.surface.firstElementChild).toBe(paragraph);
+      expect(paragraph.firstChild).toBe(breakNode);
+      expect(document.activeElement).toBe(fixture.surface);
+      expect(fixture.runtime().isEditable()).toBe(true);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  }
+);
+
+it.each([0, 1] as const)(
+  'clears source-two terminal whitespace at paragraph offset %i once',
+  (offset) => {
+    vi.useFakeTimers();
+    const markdown = '\n\n';
+    const signature = `source-two-terminal-clear-${offset}`;
+    const fixture = createFullOwnerFixture({
+      editMap: fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]),
+      html: fullOwnerBlock('<p><br></p>', 'b0'),
+      markdown,
+      signature,
+      sourceCaret: 0
+    });
+    try {
+      fixture.surface.setAttribute('contenteditable', 'true');
+      fixture.surface.focus();
+      const paragraph = fixture.surface.firstElementChild;
+      if (!(paragraph instanceof HTMLParagraphElement)) throw new Error('source-two-terminal-paragraph-missing');
+      expect(serializeVisualMarkdown(fixture.surface)).toBe('');
+      window.getSelection()?.collapse(paragraph, offset);
+      const historyBefore = fixture.history.getHistoryState();
+      const revisionBefore = fixture.history.getRevision();
+
+      const event = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(paragraph, offset, offset)
+      );
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(fixture.history.getValue()).toBe('');
+      expect(fixture.history.getSelection()).toEqual({
+        direction: 'none',
+        start: 0,
+        end: 0
+      });
+      expect(fixture.history.getHistoryState()).toEqual({
+        redoDepth: 0,
+        undoDepth: historyBefore.undoDepth + 1
+      });
+      expect(fixture.history.getRevision()).toBe(revisionBefore + 1);
+      expect(fixture.surface.childNodes).toHaveLength(1);
+      expect(fixture.surface.firstElementChild).toBeInstanceOf(HTMLParagraphElement);
+      expect(fixture.surface.firstElementChild?.childNodes).toHaveLength(1);
+      expect(fixture.surface.firstElementChild?.firstChild).toBeInstanceOf(HTMLBRElement);
+      expect(fixture.runtime().isEditable()).toBe(true);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  }
+);
+
+it.each([0, 1] as const)(
+  'clears source-two terminal whitespace from native ARTICLE%i with matching target once',
+  (offset) => {
+    vi.useFakeTimers();
+    const markdown = '\n\n';
+    const signature = `source-two-article-terminal-clear-${offset}`;
+    const fixture = createFullOwnerFixture({
+      editMap: fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]),
+      html: fullOwnerBlock('<p><br></p>', 'b0'),
+      markdown,
+      signature,
+      sourceCaret: 0
+    });
+    try {
+      fixture.surface.setAttribute('contenteditable', 'true');
+      fixture.surface.focus();
+      const paragraph = fixture.surface.firstElementChild;
+      if (!(paragraph instanceof HTMLParagraphElement)) throw new Error('article-terminal-clear-paragraph-missing');
+      window.getSelection()?.collapse(fixture.surface, offset);
+      const historyBefore = fixture.history.getHistoryState();
+      const revisionBefore = fixture.history.getRevision();
+
+      const event = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(paragraph, offset, offset)
+      );
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(fixture.history.getValue()).toBe('');
+      expect(fixture.history.getSelection()).toEqual({
+        direction: 'none',
+        start: 0,
+        end: 0
+      });
+      expect(fixture.history.getHistoryState()).toEqual({
+        redoDepth: 0,
+        undoDepth: historyBefore.undoDepth + 1
+      });
+      expect(fixture.history.getRevision()).toBe(revisionBefore + 1);
+      expect(fixture.surface.childNodes).toHaveLength(1);
+      expect(fixture.surface.firstElementChild).toBeInstanceOf(HTMLParagraphElement);
+      expect(fixture.surface.firstElementChild?.firstChild).toBeInstanceOf(HTMLBRElement);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  }
+);
+
+it.each([0, 1] as const)(
+  'consumes source-empty native ARTICLE%i with matching target without mutation',
+  (offset) => {
+    vi.useFakeTimers();
+    const signature = `source-empty-article-terminal-noop-${offset}`;
+    const fixture = createFullOwnerFixture({
+      editMap: null,
+      html: '<p><br></p>',
+      markdown: '',
+      signature
+    });
+    try {
+      fixture.surface.setAttribute('contenteditable', 'true');
+      fixture.surface.focus();
+      const paragraph = fixture.surface.firstElementChild;
+      const breakNode = paragraph?.firstChild;
+      if (!(paragraph instanceof HTMLParagraphElement) || !(breakNode instanceof HTMLBRElement)) {
+        throw new Error('article-terminal-noop-shape-missing');
+      }
+      window.getSelection()?.collapse(fixture.surface, offset);
+      const historyBefore = fixture.history.getHistoryState();
+      const revisionBefore = fixture.history.getRevision();
+      const canonicalBefore = fixture.history.getSelection();
+      const htmlBefore = fixture.surface.innerHTML;
+
+      const event = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(paragraph, offset, offset)
+      );
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(fixture.history.getValue()).toBe('');
+      expect(fixture.history.getSelection()).toEqual(canonicalBefore);
+      expect(fixture.history.getHistoryState()).toEqual(historyBefore);
+      expect(fixture.history.getRevision()).toBe(revisionBefore);
+      expect(fixture.surface.innerHTML).toBe(htmlBefore);
+      expect(fixture.surface.firstElementChild).toBe(paragraph);
+      expect(paragraph.firstChild).toBe(breakNode);
+      expect(window.getSelection()?.anchorNode).toBe(fixture.surface);
+      expect(window.getSelection()?.anchorOffset).toBe(offset);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  }
+);
+
+it.each([
+  {
+    markdown: '',
+    name: 'source-empty paragraph target with native P1',
+    nativeKind: 'paragraph' as const,
+    nativeOffset: 1 as const,
+    targetKind: 'paragraph' as const,
+    targetOffset: 0 as const
+  },
+  {
+    markdown: '',
+    name: 'source-empty ARTICLE target with native P1',
+    nativeKind: 'paragraph' as const,
+    nativeOffset: 1 as const,
+    targetKind: 'surface' as const,
+    targetOffset: 0 as const
+  },
+  {
+    markdown: '\n\n',
+    name: 'source-two paragraph target with native P1',
+    nativeKind: 'paragraph' as const,
+    nativeOffset: 1 as const,
+    targetKind: 'paragraph' as const,
+    targetOffset: 0 as const
+  },
+  {
+    markdown: '\n\n',
+    name: 'source-two ARTICLE target with native ARTICLE1',
+    nativeKind: 'surface' as const,
+    nativeOffset: 1 as const,
+    targetKind: 'surface' as const,
+    targetOffset: 0 as const
+  }
+])('classifies terminal endpoints independently for $name', (scenario) => {
+  vi.useFakeTimers();
+  const signature = `terminal-endpoint-equivalence-${scenario.name.replaceAll(' ', '-')}`;
+  const clears = '' !== scenario.markdown;
+  const fixture = createFullOwnerFixture({
+    editMap: clears
+      ? fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }])
+      : null,
+    html: clears ? fullOwnerBlock('<p><br></p>', 'b0') : '<p><br></p>',
+    markdown: scenario.markdown,
+    signature,
+    ...(clears ? { sourceCaret: 0 } : {})
+  });
+  try {
+    fixture.surface.setAttribute('contenteditable', 'true');
+    fixture.surface.focus();
+    const paragraph = fixture.surface.firstElementChild;
+    const breakNode = paragraph?.firstChild;
+    if (!(paragraph instanceof HTMLParagraphElement) || !(breakNode instanceof HTMLBRElement)) {
+      throw new Error('terminal-endpoint-equivalence-shape-missing');
+    }
+    const nativeNode = 'surface' === scenario.nativeKind
+      ? fixture.surface
+      : paragraph;
+    const targetNode = 'surface' === scenario.targetKind
+      ? fixture.surface
+      : paragraph;
+    window.getSelection()?.collapse(nativeNode, scenario.nativeOffset);
+    const historyBefore = fixture.history.getHistoryState();
+    const revisionBefore = fixture.history.getRevision();
+    const canonicalBefore = fixture.history.getSelection();
+    const htmlBefore = fixture.surface.innerHTML;
+
+    const event = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      fullOwnerTargetRange(targetNode, scenario.targetOffset, scenario.targetOffset)
+    );
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(fixture.history.getValue()).toBe('');
+    expect(fixture.history.getSelection()).toEqual(clears ? {
+      direction: 'none',
+      start: 0,
+      end: 0
+    } : canonicalBefore);
+    expect(fixture.history.getHistoryState()).toEqual(clears ? {
+      redoDepth: 0,
+      undoDepth: historyBefore.undoDepth + 1
+    } : historyBefore);
+    expect(fixture.history.getRevision()).toBe(revisionBefore + (clears ? 1 : 0));
+    if (clears) {
+      expect(fixture.surface.childNodes).toHaveLength(1);
+      expect(fixture.surface.firstElementChild).toBeInstanceOf(HTMLParagraphElement);
+      expect(fixture.surface.firstElementChild?.firstChild).toBeInstanceOf(HTMLBRElement);
+    } else {
+      expect(fixture.surface.innerHTML).toBe(htmlBefore);
+      expect(fixture.surface.firstElementChild).toBe(paragraph);
+      expect(paragraph.firstChild).toBe(breakNode);
+    }
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  { clears: false, markdown: '', name: 'source-empty' },
+  { clears: true, markdown: '\n\n', name: 'source-two' }
+])('does not fail optional shortcut-window capture for a missing-ID $name terminal shape', (scenario) => {
+  vi.useFakeTimers();
+  const signature = `missing-id-terminal-optional-window-${scenario.name}`;
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]),
+    html: '<p><br></p>',
+    markdown: scenario.markdown,
+    signature,
+    sourceCaret: 0
+  });
+  const pageErrors: ErrorEvent[] = [];
+  const capturePageError = (event: ErrorEvent): void => {
+    pageErrors.push(event);
+  };
+  window.addEventListener('error', capturePageError);
+  try {
+    fixture.surface.setAttribute('contenteditable', 'true');
+    fixture.surface.focus();
+    const paragraph = fixture.surface.firstElementChild;
+    const breakNode = paragraph?.firstChild;
+    if (!(paragraph instanceof HTMLParagraphElement) || !(breakNode instanceof HTMLBRElement)) {
+      throw new Error('missing-id-terminal-shape-missing');
+    }
+    expect(paragraph.hasAttribute('data-easymde-visual-block-id')).toBe(false);
+    window.getSelection()?.collapse(paragraph, 1);
+    const historyBefore = fixture.history.getHistoryState();
+    const revisionBefore = fixture.history.getRevision();
+    const canonicalBefore = fixture.history.getSelection();
+    const htmlBefore = fixture.surface.innerHTML;
+
+    const keydown = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Backspace'
+    });
+    let thrown: unknown = null;
+    try {
+      fixture.surface.dispatchEvent(keydown);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeNull();
+    expect(pageErrors).toEqual([]);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(scenario.markdown);
+    expect(fixture.history.getHistoryState()).toEqual(historyBefore);
+    expect(fixture.history.getRevision()).toBe(revisionBefore);
+    expect(fixture.surface.innerHTML).toBe(htmlBefore);
+
+    const beforeinput = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      fullOwnerTargetRange(paragraph, 0, 0)
+    );
+
+    expect(beforeinput.defaultPrevented).toBe(true);
+    expect(fixture.history.getValue()).toBe('');
+    expect(fixture.history.getSelection()).toEqual(scenario.clears ? {
+      direction: 'none',
+      start: 0,
+      end: 0
+    } : canonicalBefore);
+    expect(fixture.history.getHistoryState()).toEqual(scenario.clears ? {
+      redoDepth: 0,
+      undoDepth: historyBefore.undoDepth + 1
+    } : historyBefore);
+    expect(fixture.history.getRevision()).toBe(revisionBefore + (scenario.clears ? 1 : 0));
+    if (scenario.clears) {
+      expect(fixture.surface.childNodes).toHaveLength(1);
+      expect(fixture.surface.firstElementChild?.firstChild).toBeInstanceOf(HTMLBRElement);
+    } else {
+      expect(fixture.surface.innerHTML).toBe(htmlBefore);
+      expect(fixture.surface.firstElementChild).toBe(paragraph);
+      expect(paragraph.firstChild).toBe(breakNode);
+    }
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    window.removeEventListener('error', capturePageError);
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  { blockId: 'b0', name: 'exact ID', shortcutHeading: true },
+  { blockId: null, name: 'missing ID', shortcutHeading: false },
+  { blockId: 'b1', name: 'mismatched ID', shortcutHeading: false }
+])('keeps nonterminal shortcut capture bounded for $name', ({ blockId, name, shortcutHeading }) => {
+  vi.useFakeTimers();
+  const signature = `nonterminal-shortcut-window-${name.replaceAll(' ', '-')}`;
+  const blockAttribute = null === blockId
+    ? ''
+    : ` data-easymde-visual-block-id="${blockId}"`;
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]),
+    html: `<p${blockAttribute}>#</p>`,
+    markdown: '#',
+    signature,
+    sourceCaret: 0
+  });
+  const pageErrors: ErrorEvent[] = [];
+  const capturePageError = (event: ErrorEvent): void => {
+    pageErrors.push(event);
+  };
+  window.addEventListener('error', capturePageError);
+  try {
+    fixture.surface.setAttribute('contenteditable', 'true');
+    fixture.surface.focus();
+    const paragraph = fixture.surface.firstElementChild;
+    const text = paragraph?.firstChild;
+    if (!(paragraph instanceof HTMLParagraphElement) || !(text instanceof Text)) {
+      throw new Error('nonterminal-shortcut-window-shape-missing');
+    }
+    placeCaretInText(text, text.length);
+    const keydown = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: ' '
+    });
+    let thrown: unknown = null;
+    try {
+      fixture.surface.dispatchEvent(keydown);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeNull();
+    expect(pageErrors).toEqual([]);
+    expect(keydown.defaultPrevented).toBe(true);
+    if (shortcutHeading) {
+      expect(fixture.surface.firstElementChild).toBeInstanceOf(HTMLHeadingElement);
+    }
+    expect(fixture.history.getValue()).toBe('#');
+  } finally {
+    window.removeEventListener('error', capturePageError);
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([0, 1] as const)(
+  'clears source-two terminal whitespace with an owned newline sibling at paragraph offset %i',
+  (offset) => {
+    vi.useFakeTimers();
+    const markdown = '\n\n';
+    const signature = `source-two-terminal-newline-sibling-${offset}`;
+    const fixture = createFullOwnerFixture({
+      editMap: fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]),
+      html: fullOwnerBlock('<p><br></p>', 'b0') + '\n',
+      markdown,
+      signature,
+      sourceCaret: 0
+    });
+    try {
+      fixture.surface.setAttribute('contenteditable', 'true');
+      fixture.surface.focus();
+      const paragraph = fixture.surface.firstElementChild;
+      if (!(paragraph instanceof HTMLParagraphElement)) throw new Error('newline-sibling-paragraph-missing');
+      expect(fixture.surface.childNodes).toHaveLength(2);
+      expect(fixture.surface.lastChild).toBeInstanceOf(Text);
+      window.getSelection()?.collapse(paragraph, offset);
+      const historyBefore = fixture.history.getHistoryState();
+      const revisionBefore = fixture.history.getRevision();
+      const htmlBefore = fixture.surface.innerHTML;
+
+      const event = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(paragraph, offset, offset)
+      );
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(fixture.history.getValue()).toBe('');
+      expect(fixture.history.getSelection()).toEqual({
+        direction: 'none',
+        start: 0,
+        end: 0
+      });
+      expect(fixture.history.getHistoryState()).toEqual({
+        redoDepth: 0,
+        undoDepth: historyBefore.undoDepth + 1
+      });
+      expect(fixture.history.getRevision()).toBe(revisionBefore + 1);
+      expect(fixture.surface.innerHTML).not.toBe(htmlBefore);
+      expect(fixture.surface.childNodes).toHaveLength(1);
+      expect(fixture.surface.firstElementChild?.firstChild).toBeInstanceOf(HTMLBRElement);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  }
+);
+
+it.each([0, 1] as const)(
+  'consumes source-empty terminal no-op with an owned newline sibling at paragraph offset %i',
+  (offset) => {
+    vi.useFakeTimers();
+    const signature = `source-empty-terminal-newline-sibling-${offset}`;
+    const fixture = createFullOwnerFixture({
+      editMap: null,
+      html: '<p><br></p>\n',
+      markdown: '',
+      signature
+    });
+    try {
+      fixture.surface.setAttribute('contenteditable', 'true');
+      fixture.surface.focus();
+      const paragraph = fixture.surface.firstElementChild;
+      const breakNode = paragraph?.firstChild;
+      if (!(paragraph instanceof HTMLParagraphElement) || !(breakNode instanceof HTMLBRElement)) {
+        throw new Error('newline-sibling-noop-shape-missing');
+      }
+      window.getSelection()?.collapse(paragraph, offset);
+      const historyBefore = fixture.history.getHistoryState();
+      const revisionBefore = fixture.history.getRevision();
+      const canonicalBefore = fixture.history.getSelection();
+      const htmlBefore = fixture.surface.innerHTML;
+
+      const event = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(paragraph, offset, offset)
+      );
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(fixture.history.getValue()).toBe('');
+      expect(fixture.history.getSelection()).toEqual(canonicalBefore);
+      expect(fixture.history.getHistoryState()).toEqual(historyBefore);
+      expect(fixture.history.getRevision()).toBe(revisionBefore);
+      expect(fixture.surface.innerHTML).toBe(htmlBefore);
+      expect(fixture.surface.firstElementChild).toBe(paragraph);
+      expect(paragraph.firstChild).toBe(breakNode);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  }
+);
+
+it('prevents terminal Backspace before flushing pending input and clears from the post-flush owner', () => {
+  vi.useFakeTimers();
+  const markdown = '\n\n';
+  const signature = 'terminal-pending-newline-sibling';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]),
+    html: fullOwnerBlock('<p><br></p>', 'b0') + '\n',
+    markdown,
+    signature,
+    sourceCaret: 0
+  });
+  try {
+    fixture.surface.setAttribute('contenteditable', 'true');
+    fixture.surface.focus();
+    const originalParagraph = fixture.surface.firstElementChild;
+    if (!(originalParagraph instanceof HTMLParagraphElement)) {
+      throw new Error('pending-newline-paragraph-missing');
+    }
+    window.getSelection()?.collapse(originalParagraph, 0);
+    const insert = fullOwnerNativeInsertAtSelection(fixture.surface, 'X');
+    expect(insert.prevented).toBe(false);
+    expect(fixture.history.getValue()).toBe(markdown);
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getValue()).toBe(markdown);
+    const paragraph = fixture.surface.firstElementChild;
+    if (!(paragraph instanceof HTMLParagraphElement)) {
+      throw new Error('pending-newline-restored-paragraph-missing');
+    }
+    expect(paragraph).not.toBe(originalParagraph);
+    const historyBefore = fixture.history.getHistoryState();
+    const revisionBefore = fixture.history.getRevision();
+    window.getSelection()?.collapse(paragraph, 0);
+    fixture.surface.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      data: null,
+      inputType: 'insertText'
+    }));
+
+    let beforeInput: InputEvent | null = null;
+    const ownerCaptures: Array<Readonly<{
+      history: ReturnType<typeof fixture.history.getHistoryState>;
+      paragraph: HTMLParagraphElement | null;
+      prevented: boolean;
+      revision: number;
+      source: string;
+    }>> = [];
+    const originalGetSelection = fixture.history.getSelection.bind(fixture.history);
+    const getSelection = vi.spyOn(fixture.history, 'getSelection');
+    getSelection.mockImplementation(() => {
+      const selection = originalGetSelection();
+      ownerCaptures.push({
+        history: fixture.history.getHistoryState(),
+        paragraph: fixture.surface.firstElementChild as HTMLParagraphElement | null,
+        prevented: beforeInput?.defaultPrevented ?? false,
+        revision: fixture.history.getRevision(),
+        source: fixture.history.getValue()
+      });
+      return selection;
+    });
+    const originalApply = fixture.history.applyTextChange.bind(fixture.history);
+    const applyTextChange = vi.spyOn(fixture.history, 'applyTextChange');
+    applyTextChange.mockImplementation((change) => {
+      return originalApply(change);
+    });
+
+    beforeInput = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      data: null,
+      inputType: 'deleteContentBackward'
+    });
+    Object.defineProperty(beforeInput, 'getTargetRanges', {
+      configurable: true,
+      value: () => [fullOwnerTargetRange(paragraph, 0, 0)]
+    });
+    fixture.surface.dispatchEvent(beforeInput);
+
+    const currentSourceCaptures = ownerCaptures.filter(
+      (capture) => capture.source === markdown
+    );
+    const observedPostFlushCapture = currentSourceCaptures.find(
+      (capture) => capture.prevented
+    );
+    if (!observedPostFlushCapture) {
+      throw new Error('pending-newline-flush-state-missing');
+    }
+    expect(beforeInput.defaultPrevented).toBe(true);
+    expect(currentSourceCaptures).toHaveLength(2);
+    expect(currentSourceCaptures[0]?.prevented).toBe(false);
+    expect(observedPostFlushCapture.paragraph).toBe(paragraph);
+    expect(observedPostFlushCapture.paragraph?.firstChild).toBeInstanceOf(HTMLBRElement);
+    expect(observedPostFlushCapture.prevented).toBe(true);
+    expect(observedPostFlushCapture.history).toEqual(historyBefore);
+    expect(observedPostFlushCapture.revision).toBe(revisionBefore);
+    expect(applyTextChange).toHaveBeenCalledTimes(1);
+    expect(applyTextChange).toHaveBeenCalledWith(expect.objectContaining({ value: '' }));
+    expect(fixture.history.getValue()).toBe('');
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      start: 0,
+      end: 0
+    });
+    expect(fixture.history.getHistoryState()).toEqual({
+      redoDepth: 0,
+      undoDepth: historyBefore.undoDepth + 1
+    });
+    expect(fixture.history.getRevision()).toBe(revisionBefore + 1);
+    expect(fixture.surface.childNodes).toHaveLength(1);
+    expect(fixture.surface.firstElementChild?.firstChild).toBeInstanceOf(HTMLBRElement);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  { name: 'an extra element', html: '<p><br></p>\n<span></span>' },
+  { name: 'non-whitespace text', html: '<p><br></p>text' },
+  { name: 'multiple paragraphs', html: '<p><br></p>\n<p><br></p>' },
+  { name: 'a foreign whitespace node', foreignWhitespace: true },
+  { name: 'a disconnected target', disconnected: true },
+  { name: 'a wrong canonical selection', canonicalOffset: 1 }
+])('does not consume terminal Backspace for $name', (scenario) => {
+  vi.useFakeTimers();
+  const markdown = '\n\n';
+  const signature = `terminal-shape-negative-${scenario.name.replaceAll(' ', '-')}`;
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]),
+    html: scenario.html ?? '<p><br></p>\n',
+    markdown,
+    signature,
+    sourceCaret: 0
+  });
+  try {
+    fixture.surface.setAttribute('contenteditable', 'true');
+    fixture.surface.focus();
+    const paragraph = fixture.surface.firstElementChild;
+    if (!(paragraph instanceof HTMLParagraphElement)) throw new Error('terminal-shape-negative-paragraph-missing');
+    if (scenario.foreignWhitespace) {
+      fixture.surface.append(document.createTextNode('\n'));
+    }
+    let targetNode: Node = paragraph;
+    if (scenario.disconnected) {
+      const disconnected = document.createElement('p');
+      disconnected.append(document.createElement('br'));
+      targetNode = disconnected;
+    }
+    if (undefined !== scenario.canonicalOffset) {
+      fixture.history.applyTextChange({
+        selection: {
+          direction: 'none',
+          end: scenario.canonicalOffset,
+          start: scenario.canonicalOffset
+        },
+        value: markdown
+      });
+    }
+    const nativeOffset = 'nativeOffset' in scenario && 'number' === typeof scenario.nativeOffset
+      ? scenario.nativeOffset : 0;
+    const targetOffset = 'targetOffset' in scenario && 'number' === typeof scenario.targetOffset
+      ? scenario.targetOffset : 0;
+    window.getSelection()?.collapse(paragraph, nativeOffset);
+    const historyBefore = fixture.history.getHistoryState();
+    const revisionBefore = fixture.history.getRevision();
+    const canonicalBefore = fixture.history.getSelection();
+    const htmlBefore = fixture.surface.innerHTML;
+    const event = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      data: null,
+      inputType: 'deleteContentBackward'
+    });
+    Object.defineProperty(event, 'getTargetRanges', {
+      configurable: true,
+      value: () => [{
+        collapsed: true,
+        endContainer: targetNode,
+        endOffset: targetOffset,
+        startContainer: targetNode,
+        startOffset: targetOffset
+      }]
+    });
+    fixture.surface.dispatchEvent(event);
+
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.history.getSelection()).toEqual(canonicalBefore);
+    expect(fixture.history.getHistoryState()).toEqual(historyBefore);
+    expect(fixture.history.getRevision()).toBe(revisionBefore);
+    expect(fixture.surface.innerHTML).toBe(htmlBefore);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  { name: 'a BR endpoint', node: 'br' as const },
+  { name: 'a DIV endpoint', node: 'div' as const },
+  { name: 'a nested element endpoint', node: 'nested' as const },
+  { name: 'another root endpoint', node: 'root' as const }
+])('does not consume terminal Backspace for $name', ({ name, node }) => {
+  vi.useFakeTimers();
+  const markdown = '\n\n';
+  const signature = `terminal-invalid-endpoint-${name.replaceAll(' ', '-')}`;
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]),
+    html: fullOwnerBlock('<p><br></p>', 'b0'),
+    markdown,
+    signature,
+    sourceCaret: 0
+  });
+  try {
+    fixture.surface.setAttribute('contenteditable', 'true');
+    fixture.surface.focus();
+    const paragraph = fixture.surface.firstElementChild;
+    if (!(paragraph instanceof HTMLParagraphElement) || !(paragraph.firstChild instanceof HTMLBRElement)) {
+      throw new Error('terminal-invalid-endpoint-shape-missing');
+    }
+    let targetNode: Node;
+    if ('br' === node) {
+      targetNode = paragraph.firstChild;
+    } else if ('div' === node) {
+      const div = document.createElement('div');
+      paragraph.append(div);
+      targetNode = div;
+    } else if ('nested' === node) {
+      const nested = document.createElement('span');
+      nested.append(document.createElement('br'));
+      paragraph.append(nested);
+      targetNode = nested;
+    } else {
+      const root = document.createElement('article');
+      const foreign = document.createElement('p');
+      foreign.append(document.createElement('br'));
+      root.append(foreign);
+      targetNode = root;
+    }
+    window.getSelection()?.collapse(paragraph, 0);
+    const historyBefore = fixture.history.getHistoryState();
+    const revisionBefore = fixture.history.getRevision();
+    const canonicalBefore = fixture.history.getSelection();
+    const htmlBefore = fixture.surface.innerHTML;
+
+    const event = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      fullOwnerTargetRange(targetNode, 0, 0)
+    );
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.history.getSelection()).toEqual(canonicalBefore);
+    expect(fixture.history.getHistoryState()).toEqual(historyBefore);
+    expect(fixture.history.getRevision()).toBe(revisionBefore);
+    expect(fixture.surface.innerHTML).toBe(htmlBefore);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  { name: 'a foreign paragraph', mode: 'foreign' as const },
+  { name: 'a disconnected paragraph', mode: 'disconnected' as const },
+  { name: 'multiple roots', html: '<p><br></p><p><br></p>' },
+  { name: 'a wrong canonical selection', canonicalOffset: 1 },
+  { name: 'a nonempty source', markdown: 'abc' },
+  { name: 'a target offset outside 0 and 1', targetOffset: 2 as const }
+])('does not consume ARTICLE-bound terminal Backspace for $name', (scenario) => {
+  vi.useFakeTimers();
+  const markdown = scenario.markdown ?? '';
+  const signature = `article-terminal-negative-${scenario.name.replaceAll(' ', '-')}`;
+  const fixture = createFullOwnerFixture({
+    editMap: null,
+    html: scenario.html ?? '<p><br></p>',
+    markdown,
+    signature
+  });
+  try {
+    fixture.surface.setAttribute('contenteditable', 'true');
+    fixture.surface.focus();
+    let paragraph = fixture.surface.firstElementChild;
+    if (!(paragraph instanceof HTMLParagraphElement)) throw new Error('article-terminal-negative-paragraph-missing');
+    let targetNode: Node = paragraph;
+    if ('foreign' === scenario.mode) {
+      const replacement = document.createElement('p');
+      replacement.append(document.createElement('br'));
+      paragraph.replaceWith(replacement);
+      paragraph = replacement;
+      targetNode = replacement;
+    } else if ('disconnected' === scenario.mode) {
+      const disconnected = document.createElement('p');
+      disconnected.append(document.createElement('br'));
+      targetNode = disconnected;
+    }
+    if (undefined !== scenario.canonicalOffset) {
+      fixture.history.applyTextChange({
+        selection: {
+          direction: 'none',
+          end: scenario.canonicalOffset,
+          start: scenario.canonicalOffset
+        },
+        value: markdown
+      });
+    }
+    const nativeOffset = 'nativeOffset' in scenario && 'number' === typeof scenario.nativeOffset
+      ? scenario.nativeOffset : 0;
+    const targetOffset = 'targetOffset' in scenario && 'number' === typeof scenario.targetOffset
+      ? scenario.targetOffset : 0;
+    window.getSelection()?.collapse(fixture.surface, nativeOffset);
+    const historyBefore = fixture.history.getHistoryState();
+    const revisionBefore = fixture.history.getRevision();
+    const canonicalBefore = fixture.history.getSelection();
+    const htmlBefore = fixture.surface.innerHTML;
+    const event = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      data: null,
+      inputType: 'deleteContentBackward'
+    });
+    Object.defineProperty(event, 'getTargetRanges', {
+      configurable: true,
+      value: () => [{
+        collapsed: true,
+        endContainer: targetNode,
+        endOffset: targetOffset,
+        startContainer: targetNode,
+        startOffset: targetOffset
+      }]
+    });
+    fixture.surface.dispatchEvent(event);
+
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.history.getSelection()).toEqual(canonicalBefore);
+    expect(fixture.history.getHistoryState()).toEqual(historyBefore);
+    expect(fixture.history.getRevision()).toBe(revisionBefore);
+    expect(fixture.surface.innerHTML).toBe(htmlBefore);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  { name: 'a nonempty source', markdown: 'abc', html: '<p><br></p>' },
+  { name: 'a foreign paragraph', markdown: '', html: '<p><br></p>', mode: 'foreign' as const },
+  { name: 'a disconnected paragraph', markdown: '', html: '<p><br></p>', mode: 'disconnected' as const },
+  { name: 'multiple top-level nodes', markdown: '', html: '<p><br></p><p><br></p>' },
+  { name: 'a wrong canonical selection', markdown: '', html: '<p><br></p>', canonicalOffset: 1 },
+  { name: 'a noncollapsed selection', markdown: '', html: '<p><br></p>', selection: 'range' as const },
+  { name: 'a backward selection', markdown: '', html: '<p><br></p>', selection: 'backward' as const },
+  { name: 'a target offset outside 0 and 1', markdown: '', html: '<p><br></p>', targetOffset: 2 }
+])('does not consume source-empty terminal Backspace for $name', (scenario) => {
+  vi.useFakeTimers();
+  const signature = `source-empty-terminal-negative-${scenario.name.replaceAll(' ', '-')}`;
+  const fixture = createFullOwnerFixture({
+    editMap: null,
+    html: scenario.html,
+    markdown: scenario.markdown,
+    signature
+  });
+  try {
+    fixture.surface.setAttribute('contenteditable', 'true');
+    fixture.surface.focus();
+    let paragraph = fixture.surface.firstElementChild;
+    if (!(paragraph instanceof HTMLParagraphElement)) throw new Error('source-empty-negative-paragraph-missing');
+    let targetNode: Node = paragraph;
+    if ('foreign' === scenario.mode) {
+      const replacement = document.createElement('p');
+      replacement.append(document.createElement('br'));
+      paragraph.replaceWith(replacement);
+      paragraph = replacement;
+      targetNode = replacement;
+    } else if ('disconnected' === scenario.mode) {
+      const disconnected = document.createElement('p');
+      disconnected.append(document.createElement('br'));
+      targetNode = disconnected;
+    }
+    if (undefined !== scenario.canonicalOffset) {
+      fixture.history.applyTextChange({
+        selection: {
+          direction: 'none',
+          end: scenario.canonicalOffset,
+          start: scenario.canonicalOffset
+        },
+        value: scenario.markdown
+      });
+    }
+    if ('range' === scenario.selection) {
+      window.getSelection()?.setBaseAndExtent(paragraph, 0, paragraph, 1);
+    } else if ('backward' === scenario.selection) {
+      window.getSelection()?.setBaseAndExtent(paragraph, 1, paragraph, 0);
+    } else {
+      window.getSelection()?.collapse(paragraph, 0);
+    }
+    const historyBefore = fixture.history.getHistoryState();
+    const revisionBefore = fixture.history.getRevision();
+    const canonicalBefore = fixture.history.getSelection();
+    const htmlBefore = fixture.surface.innerHTML;
+    const targetOffset = scenario.targetOffset ?? 0;
+
+    const event = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      data: null,
+      inputType: 'deleteContentBackward'
+    });
+    Object.defineProperty(event, 'getTargetRanges', {
+      configurable: true,
+      value: () => [{
+        collapsed: 'range' !== scenario.selection && 'backward' !== scenario.selection,
+        endContainer: targetNode,
+        endOffset: targetOffset,
+        startContainer: targetNode,
+        startOffset: targetOffset
+      }]
+    });
+    fixture.surface.dispatchEvent(event);
+
+    expect(fixture.history.getValue()).toBe(scenario.markdown);
+    expect(fixture.history.getSelection()).toEqual(canonicalBefore);
+    expect(fixture.history.getHistoryState()).toEqual(historyBefore);
+    expect(fixture.history.getRevision()).toBe(revisionBefore);
+    expect(fixture.surface.innerHTML).toBe(htmlBefore);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('clears the owned terminal empty paragraph through Backspace with complete history', () => {
+  vi.useFakeTimers();
+  const markdown = '\n\n';
+  const original = 'abc\n\n';
+  const signature = 'empty-paragraph-boundary-backspace';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]),
+    html: fullOwnerBlock('<p><br></p>', 'b0'),
+    markdown,
+    prepareHistory: (history) => {
+      history.applyTextChange({
+        selection: { direction: 'none', start: 0, end: 0 },
+        value: original
+      });
+      history.applyTextChange({
+        isolateHistoryBefore: true,
+        selection: { direction: 'none', start: 0, end: 0 },
+        value: markdown
+      });
+    },
+    signature
+  });
+  try {
+    fixture.surface.setAttribute('contenteditable', 'true');
+    fixture.surface.focus();
+    const paragraph = fixture.surface.firstElementChild;
+    if (!(paragraph instanceof HTMLParagraphElement)) throw new Error('empty-paragraph-missing');
+    window.getSelection()?.collapse(paragraph, 0);
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.runtime().isTransferPending()).toBe(false);
+    const historyBeforeClear = fixture.history.getHistoryState();
+    const target = document.createRange();
+    target.setStart(paragraph, 0);
+    target.collapse(true);
+    const extra = fullOwnerDispatchBeforeInput(fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' }, target);
+    expect(extra.defaultPrevented).toBe(true);
+    expect(fixture.history.getValue()).toBe('');
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: 0, end: 0 });
+    expect(fixture.history.getHistoryState()).toEqual({
+      redoDepth: 0,
+      undoDepth: historyBeforeClear.undoDepth + 1
+    });
+    expect(fixture.surface.innerHTML).toBe('<p><br></p>');
+    expect(document.activeElement).toBe(fixture.surface);
+    expect(fixture.surface.getAttribute('contenteditable')).toBe('true');
+    expect(fixture.history.isEditable()).toBe(true);
+    expect(fixture.runtime().isTransferPending()).toBe(false);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+
+    fullOwnerHistoryKey(fixture.surface, false);
+    expect(fixture.history.getValue()).toBe('\n\n');
+    fullOwnerHistoryKey(fixture.surface, false);
+    expect(fixture.history.getValue()).toBe(original);
+    fullOwnerHistoryKey(fixture.surface, true);
+    expect(fixture.history.getValue()).toBe('\n\n');
+    fullOwnerHistoryKey(fixture.surface, true);
+    expect(fixture.history.getValue()).toBe('');
+    expect(fixture.surface.childNodes).toHaveLength(1);
+    expect(fixture.surface.firstElementChild).toBeInstanceOf(HTMLParagraphElement);
+    expect(fixture.surface.firstElementChild?.childNodes).toHaveLength(1);
+    expect(fixture.surface.firstElementChild?.firstChild).toBeInstanceOf(HTMLBRElement);
+    if (fixture.runtime().isTransferPending()) {
+      act(() => fixture.accept({ editMap: null, html: '', markdown: '' }));
+    }
+    const empty = fixture.surface.querySelector('p');
+    if (!(empty instanceof HTMLParagraphElement)) throw new Error('redo-empty-paragraph-missing');
+    expect(empty.childNodes.length).toBe(1);
+    expect(empty.firstChild).toBeInstanceOf(HTMLBRElement);
+    window.getSelection()?.collapse(empty, 0);
+    const insertionTarget = document.createRange();
+    insertionTarget.setStart(empty, 0);
+    insertionTarget.collapse(true);
+    expect(fixture.runtime().isTransferPending()).toBe(false);
+    const insertion = fullOwnerDispatchBeforeInput(fixture.surface,
+      { data: 'X', inputType: 'insertText' }, insertionTarget);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe('');
+    expect(insertion.defaultPrevented).toBe(false);
+    const inserted = document.createTextNode('X');
+    empty.replaceChildren(inserted);
+    placeCaretInText(inserted, 1);
+    fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'X', inputType: 'insertText' }));
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue()).toBe('X');
+    fullOwnerHistoryKey(fixture.surface, false);
+    expect(fixture.history.getValue()).toBe('');
+    expect(fixture.surface.childNodes).toHaveLength(1);
+    expect(fixture.surface.firstElementChild).toBeInstanceOf(HTMLParagraphElement);
+    expect(fixture.surface.firstElementChild?.childNodes).toHaveLength(1);
+    expect(fixture.surface.firstElementChild?.firstChild).toBeInstanceOf(HTMLBRElement);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('restores the authenticated terminal caret before a second whole-document clear', () => {
+  vi.useFakeTimers();
+  const markdown = '\n\n';
+  const original = 'abc\n\n';
+  const signature = 'empty-paragraph-authenticated-clear-history';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]),
+    html: fullOwnerBlock('<p><br></p>', 'b0'),
+    markdown,
+    prepareHistory: (history) => {
+      history.applyTextChange({
+        selection: { direction: 'none', start: 0, end: 0 },
+        value: original
+      });
+      history.applyTextChange({
+        isolateHistoryBefore: true,
+        selection: { direction: 'none', start: 0, end: 0 },
+        value: markdown
+      });
+      history.applyTextChange({
+        selection: { direction: 'none', start: 0, end: 0 },
+        value: markdown
+      });
+    },
+    signature
+  });
+  try {
+    fixture.surface.setAttribute('contenteditable', 'true');
+    fixture.surface.focus();
+    const paragraph = fixture.surface.firstElementChild;
+    if (!(paragraph instanceof HTMLParagraphElement)) throw new Error('empty-paragraph-missing');
+    window.getSelection()?.collapse(paragraph, 0);
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      start: 0,
+      end: 0
+    });
+
+    const first = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      fullOwnerTargetRange(paragraph, 0, 0)
+    );
+    expect(first.defaultPrevented).toBe(true);
+    expect(fixture.history.getValue()).toBe('');
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      start: 0,
+      end: 0
+    });
+
+    fullOwnerHistoryKey(fixture.surface, false);
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      start: 0,
+      end: 0
+    });
+    const restored = fixture.surface.firstElementChild;
+    if (!(restored instanceof HTMLParagraphElement)) throw new Error('restored-empty-paragraph-missing');
+    expect(window.getSelection()?.anchorNode).toBe(restored);
+    expect(window.getSelection()?.anchorOffset).toBe(0);
+    expect(fixture.runtime().isEditable()).toBe(true);
+    expect(fixture.surface.getAttribute('contenteditable')).toBe('true');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+
+    const second = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      fullOwnerTargetRange(restored, 0, 0)
+    );
+    expect(second.defaultPrevented).toBe(true);
+    expect(fixture.history.getValue()).toBe('');
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      start: 0,
+      end: 0
+    });
+    expect(fixture.surface.innerHTML).toBe('<p><br></p>');
+    expect(fixture.runtime().isEditable()).toBe(true);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('restores P0 through a rebuilt accepted empty Preview after clear history replay', () => {
+  vi.useFakeTimers();
+  const markdown = '\n\n';
+  const original = 'abc\n\n';
+  const signature = 'terminal-clear-rebuild-p0';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]),
+    html: fullOwnerBlock('<p><br></p>', 'b0'),
+    markdown,
+    prepareHistory: (history) => {
+      history.applyTextChange({
+        selection: { direction: 'none', start: 0, end: 0 },
+        value: original
+      });
+      history.applyTextChange({
+        isolateHistoryBefore: true,
+        selection: { direction: 'none', start: 0, end: 0 },
+        value: markdown
+      });
+      history.applyTextChange({
+        selection: { direction: 'none', start: 0, end: 0 },
+        value: markdown
+      });
+    },
+    signature
+  });
+  try {
+    fixture.surface.setAttribute('contenteditable', 'true');
+    fixture.surface.focus();
+    const paragraph = fixture.surface.firstElementChild;
+    if (!(paragraph instanceof HTMLParagraphElement)) throw new Error('rebuild-empty-paragraph-missing');
+    window.getSelection()?.collapse(paragraph, 0);
+
+    const clear = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      fullOwnerTargetRange(paragraph, 0, 0)
+    );
+    expect(clear.defaultPrevented).toBe(true);
+    expect(fixture.history.getValue()).toBe('');
+
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      start: 0,
+      end: 0
+    });
+
+    act(() => fullOwnerHistoryKey(fixture.surface, true));
+    expect(fixture.history.getValue()).toBe('');
+    act(() => fixture.acceptWithSignature(
+      { editMap: null, html: '', markdown: '' },
+      'terminal-clear-empty-identity'
+    ));
+
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      start: 0,
+      end: 0
+    });
+    expect(fixture.runtime().isTransferPending()).toBe(true);
+    act(() => fixture.accept({
+      editMap: null,
+      html: '<p><br></p>',
+      markdown
+    }));
+
+    const restored = fixture.surface.firstElementChild;
+    if (!(restored instanceof HTMLParagraphElement)) throw new Error('rebuild-restored-paragraph-missing');
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      start: 0,
+      end: 0
+    });
+    expect(window.getSelection()?.anchorNode).toBe(restored);
+    expect(window.getSelection()?.anchorOffset).toBe(0);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+
+    const second = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      fullOwnerTargetRange(restored, 0, 0)
+    );
+    expect(second.defaultPrevented).toBe(true);
+    expect(fixture.history.getValue()).toBe('');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('keeps a genuine source-end P1 target selection through accepted Preview rebuild', () => {
+  vi.useFakeTimers();
+  const markdown = '\n\n';
+  const signature = 'terminal-clear-rebuild-p1-control';
+  const surface = document.createElement('article');
+  surface.innerHTML = fullOwnerBlock('<p><br></p>', 'b0');
+  document.body.append(surface);
+  surface.focus();
+  const initialParagraph = surface.firstElementChild;
+  if (!(initialParagraph instanceof HTMLParagraphElement)) throw new Error('p1-control-initial-paragraph-missing');
+  window.getSelection()?.collapse(initialParagraph, 1);
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]),
+    html: surface.innerHTML,
+    markdown,
+    signature,
+    sourceCaret: 2,
+    surface
+  });
+  try {
+    const paragraph = fixture.surface.firstElementChild;
+    if (!(paragraph instanceof HTMLParagraphElement)) throw new Error('p1-control-paragraph-missing');
+    act(() => fixture.acceptWithSignature({
+      editMap: fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]),
+      html: fullOwnerBlock('<p><br></p>', 'b0'),
+      markdown
+    }, 'terminal-p1-target-selection', (acceptedSurface) => {
+      const acceptedParagraph = acceptedSurface.firstElementChild;
+      if (!(acceptedParagraph instanceof HTMLParagraphElement)) throw new Error('p1-control-accepted-paragraph-missing');
+      window.getSelection()?.collapse(acceptedParagraph, 1);
+    }));
+    const acceptedParagraph = fixture.surface.firstElementChild;
+    if (!(acceptedParagraph instanceof HTMLParagraphElement)) throw new Error('p1-control-accepted-paragraph-missing');
+    expect(window.getSelection()?.anchorNode).toBe(acceptedParagraph);
+    expect(window.getSelection()?.anchorOffset).toBe(1);
+    expect(window.getSelection()?.anchorOffset).toBe(1);
+    expect(fixture.runtime().applyCanonicalChange({
+      change: {
+        changes: { from: 0, insert: '', to: markdown.length },
+        selection: { direction: 'none', end: 0, start: 0 },
+        value: ''
+      },
+      expected: {
+        revision: fixture.history.getRevision(),
+        selection: { direction: 'none', end: 2, start: 2 },
+        value: markdown
+      }
+    })).toBe('handled');
+    expect(fixture.history.getValue()).toBe('');
+    act(() => fixture.accept({ editMap: null, html: '', markdown: '' }));
+    expect(fixture.runtime().isTransferPending()).toBe(false);
+    expect(fixture.history.getHistoryState()).toEqual({
+      redoDepth: 0,
+      undoDepth: 1
+    });
+
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      start: 2,
+      end: 2
+    });
+    expect(fixture.runtime().isTransferPending()).toBe(true);
+    expect(fixture.requestPreview).toHaveBeenLastCalledWith(markdown);
+    const rebuildSignature = fixture.requestPreview.mock.results.at(-1)?.value;
+    if ('string' !== typeof rebuildSignature) throw new Error('p1-control-rebuild-signature-missing');
+    act(() => fixture.acceptWithSignature({
+      editMap: fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]),
+      html: fullOwnerBlock('<p><br></p>', 'b0'),
+      markdown
+    }, rebuildSignature));
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.runtime().isTransferPending()).toBe(false);
+
+    const restored = fixture.surface.firstElementChild;
+    if (!(restored instanceof HTMLParagraphElement)) throw new Error('p1-control-restored-paragraph-missing');
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      start: 2,
+      end: 2
+    });
+    expect(window.getSelection()?.anchorNode).toBe(restored);
+    expect(window.getSelection()?.anchorOffset).toBe(1);
+
+    const followUp = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: 'Y', inputType: 'insertText' },
+      fullOwnerTargetRange(restored, 1, 1)
+    );
+    expect(followUp.defaultPrevented).toBe(false);
+    const next = document.createTextNode('Y');
+    restored.insertBefore(next, restored.firstChild);
+    placeCaretInText(next, 1);
+    fixture.surface.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      data: 'Y',
+      inputType: 'insertText'
+    }));
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue()).toBe('Y\n\n');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    surface.remove();
+    vi.useRealTimers();
+  }
+});
+
+it('does not clear an owned terminal empty paragraph for a nonempty source', () => {
+  const markdown = 'abc\n\n';
+  const signature = 'terminal-empty-nonempty-source';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]),
+    html: fullOwnerParagraphBlock('abc', 'b0'),
+    markdown,
+    signature
+  });
+  try {
+    fixture.surface.focus();
+    const paragraph = fixture.surface.firstElementChild;
+    if (!(paragraph instanceof HTMLParagraphElement)) throw new Error('nonempty-source-paragraph-missing');
+    paragraph.replaceChildren(document.createElement('br'));
+    window.getSelection()?.collapse(paragraph, 0);
+    const history = fixture.history.getHistoryState();
+    const target = fullOwnerTargetRange(paragraph, 0, 0);
+    fullOwnerDispatchBeforeInput(fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' }, target);
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.history.getHistoryState()).toEqual(history);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+  }
+});
+
+it('does not clear a terminal empty paragraph outside the owned ledger', () => {
+  const markdown = '\n\n';
+  const signature = 'terminal-empty-nonowned-dom';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]),
+    html: fullOwnerBlock('<p><br></p>', 'b0'),
+    markdown,
+    signature
+  });
+  try {
+    fixture.surface.focus();
+    const replacement = document.createElement('p');
+    replacement.append(document.createElement('br'));
+    fixture.surface.replaceChildren(replacement);
+    window.getSelection()?.collapse(replacement, 0);
+    const history = fixture.history.getHistoryState();
+    const target = fullOwnerTargetRange(replacement, 0, 0);
+    fullOwnerDispatchBeforeInput(fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' }, target);
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.history.getHistoryState()).toEqual(history);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+  }
+});
+
+it.each([
+  { emptied: '<p></p>', shape: 'zero-child paragraph', target: 'collapsed' },
+  { emptied: '<p><br></p>', shape: 'paragraph holding only its placeholder break', target: 'collapsed' },
+  { emptied: '<div></div>', shape: 'zero-child div', target: 'collapsed' },
+  { emptied: '<div><br></div>', shape: 'div holding only its placeholder break', target: 'collapsed' },
+  { emptied: '<div></div>', shape: 'zero-child div', target: 'cross-block' },
+  { emptied: '<div><br></div>', shape: 'div holding only its placeholder break', target: 'cross-block' }
+] as const)('deletes the terminal block boundary from a $shape element caret ($target target)', async ({ emptied, target: targetKind }) => {
+  vi.useFakeTimers();
+  const markdown = 'AAA\n\n';
+  const signature = `terminal-emptied-block-${targetKind}`;
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { startLine: 0, endLine: 1, id: 'b0' },
+      { startLine: 2, endLine: 3, id: 'b1' }
+    ]),
+    html: fullOwnerParagraphBlock('AAA', 'b0') + fullOwnerBlock(emptied, 'b1'),
+    markdown,
+    signature
+  });
+  const settle = async (ms: number) => {
+    await act(async () => {
+      vi.advanceTimersByTime(ms);
+      await Promise.resolve();
+    });
+  };
+  try {
+    fixture.surface.focus();
+    const [row, gap] = Array.from(fixture.surface.children);
+    const text = row?.firstChild;
+    if (!(text instanceof Text) || !(gap instanceof HTMLElement)) {
+      throw new Error('terminal-emptied-block-missing');
+    }
+    // The emptied block is the document's last row and holds no editable text,
+    // so Chromium gives its caret the element itself at offset 0. A caret with
+    // nothing of its own to delete is reported collapsed on that block; a
+    // cross-block press is named by the preceding row's text tail instead.
+    window.getSelection()?.collapse(gap, 0);
+    expect(fixture.history.getValue()).toBe(markdown);
+    const undoBefore = fixture.history.getHistoryState().undoDepth;
+    const target = document.createRange();
+    if ('cross-block' === targetKind) {
+      target.setStart(text, text.length);
+      target.setEnd(gap, 0);
+    } else {
+      target.setStart(gap, 0);
+      target.collapse(true);
+    }
+    const deletion = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      target
+    );
+    expect(deletion.defaultPrevented).toBe(true);
+    await settle(160);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    // The canonical block boundary is gone: the emptied row and the blank
+    // separator that introduced it leave the source together.
+    expect(fixture.history.getValue()).toBe('AAA');
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      start: 3,
+      end: 3
+    });
+    expect(fixture.history.getHistoryState().undoDepth).toBe(undoBefore + 1);
+    expect(gap.isConnected).toBe(false);
+    expect(fixture.surface.children).toHaveLength(1);
+    const native = window.getSelection();
+    expect(native?.isCollapsed).toBe(true);
+    expect(native?.anchorNode).toBe(text);
+    expect(native?.anchorOffset).toBe(3);
+    expect(fixture.runtime().isEditable()).toBe(true);
+    // The same history path: one Undo restores the block boundary and the
+    // canonical caret the press deleted from.
+    fullOwnerHistoryKey(fixture.surface, false);
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      start: 5,
+      end: 5
+    });
+    fullOwnerHistoryKey(fixture.surface, true);
+    expect(fixture.history.getValue()).toBe('AAA');
+    // Editing continues: the next typed character lands at the caret the
+    // deletion left behind.
+    const restored = fixture.surface.firstElementChild?.firstChild;
+    if (!(restored instanceof Text)) throw new Error('terminal-emptied-block-restore-missing');
+    act(() => {
+      fullOwnerNativeInsert(fixture.surface, restored, 3, 'Z', 'insertText', true);
+      vi.advanceTimersByTime(80);
+    });
+    expect(fixture.history.getValue()).toBe('AAAZ');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('keeps an emptied block that is not the document end on its existing path', () => {
+  vi.useFakeTimers();
+  const markdown = 'AAA\n\n\n\nCCC';
+  const signature = 'nonterminal-emptied-block';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { startLine: 0, endLine: 1, id: 'b0' },
+      { startLine: 2, endLine: 3, id: 'b1' },
+      { startLine: 4, endLine: 5, id: 'b2' }
+    ]),
+    html: fullOwnerParagraphBlock('AAA', 'b0')
+      + fullOwnerBlock('<div></div>', 'b1')
+      + fullOwnerParagraphBlock('CCC', 'b2'),
+    markdown,
+    signature
+  });
+  try {
+    fixture.surface.focus();
+    const gap = fixture.surface.querySelector('[data-easymde-visual-block-id="b1"]');
+    if (!(gap instanceof HTMLElement)) throw new Error('nonterminal-emptied-block-missing');
+    window.getSelection()?.collapse(gap, 0);
+    const target = document.createRange();
+    target.setStart(gap, 0);
+    target.collapse(true);
+    const deletion = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      target
+    );
+    // Only the block the document ENDS on is this owner's: a block with a
+    // following row keeps whatever path it already had.
+    expect(deletion.defaultPrevented).toBe(false);
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.history.getHistoryState().undoDepth).toBe(0);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('does not clear a terminal whitespace surface with multiple top-level nodes', () => {
+  const markdown = '\n\n';
+  const signature = 'terminal-empty-multiple-nodes';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { startLine: 0, endLine: 1, id: 'b0' },
+      { startLine: 1, endLine: 2, id: 'b1' }
+    ]),
+    html: fullOwnerBlock('<p><br></p>', 'b0') + fullOwnerBlock('<p><br></p>', 'b1'),
+    markdown,
+    signature
+  });
+  try {
+    fixture.surface.focus();
+    const paragraph = fixture.surface.firstElementChild;
+    if (!(paragraph instanceof HTMLParagraphElement)) throw new Error('multiple-node-paragraph-missing');
+    window.getSelection()?.collapse(paragraph, 0);
+    const history = fixture.history.getHistoryState();
+    const target = fullOwnerTargetRange(paragraph, 0, 0);
+    fullOwnerDispatchBeforeInput(fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' }, target);
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.history.getHistoryState()).toEqual(history);
+    expect(fixture.surface.childNodes).toHaveLength(2);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+  }
+});
+
+it.each([false, true])('restores the native code caret after a typing run (two commits=%s)', (twoCommits) => {
+  vi.useFakeTimers();
+  const signature = 'code-typing-inverse-selection';
+  const markdown = `${'A'.repeat(27)}\n\n\`\`\`js\nabcdefghij\n\`\`\`\n\n${'Z'.repeat(13)}`;
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { id: 'b0', startLine: 0, endLine: 2 },
+      { id: 'b1', startLine: 2, endLine: 6 },
+      { id: 'b2', startLine: 6, endLine: 7 }
+    ]),
+    html: fullOwnerParagraphBlock('A'.repeat(27), 'b0') + '\n'
+      + fullOwnerCodeBlock('abcdefghij\n', 'b1') + '\n'
+      + fullOwnerParagraphBlock('Z'.repeat(13), 'b2') + '\n',
+    markdown,
+    signature,
+    sourceCaret: 64
+  });
+  try {
+    expect(markdown.length).toBe(64);
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: 64, end: 64 });
+    fixture.surface.focus();
+    const code = fullOwnerTextAt(fixture.surface, 'pre > code');
+    placeCaretInText(code, 10);
+    expect(fullOwnerNativeInsert(fixture.surface, code, 10, 'V', 'insertText', true).prevented).toBe(false);
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue()).toBe(markdown.slice(0, 45) + 'V' + markdown.slice(45));
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: 46, end: 46 });
+    if (twoCommits) {
+      expect(fullOwnerNativeInsert(fixture.surface, code, 11, 'Q', 'insertText', true).prevented).toBe(false);
+      act(() => vi.advanceTimersByTime(80));
+    }
+    const changed = markdown.slice(0, 45) + (twoCommits ? 'VQ' : 'V') + markdown.slice(45);
+    expect(fixture.history.getValue()).toBe(changed);
+    fullOwnerHistoryKey(fixture.surface, false);
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: 45, end: 45 });
+    const restored = window.getSelection();
+    expect(restored?.anchorNode).toBe(fullOwnerTextAt(fixture.surface, 'pre > code'));
+    expect(restored?.anchorOffset).toBe(10);
+    fullOwnerHistoryKey(fixture.surface, true);
+    expect(fixture.history.getValue()).toBe(changed);
+    const end = 45 + (twoCommits ? 2 : 1);
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: end, end });
+    const redone = window.getSelection();
+    if (!(redone?.anchorNode instanceof Text)) throw new Error('code-typing-redo-caret-missing');
+    expect(redone.anchorOffset).toBe(twoCommits ? 12 : 11);
+    expect(fullOwnerNativeInsert(fixture.surface, redone.anchorNode, redone.anchorOffset, 'X', 'insertText', true).prevented).toBe(false);
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue()).toBe(changed.slice(0, end) + 'X' + changed.slice(end));
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('rejects a native cross-paragraph replacement if an outside root changes', () => {
+  vi.useFakeTimers();
+  const markdown = 'Alpha\n\nBeta\n\nKeep';
+  const signature = 'cross-paragraph-foreign-mutation';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { startLine: 0, endLine: 2, id: 'b0' },
+      { startLine: 2, endLine: 4, id: 'b1' },
+      { startLine: 4, endLine: 5, id: 'b2' }
+    ]),
+    html: fullOwnerParagraphBlock('Alpha', 'b0') + '\n'
+      + fullOwnerParagraphBlock('Beta', 'b1') + '\n'
+      + fullOwnerParagraphBlock('Keep', 'b2') + '\n',
+    markdown,
+    signature
+  });
+  try {
+    fixture.surface.setAttribute('contenteditable', 'true');
+    fixture.surface.focus();
+    const first = fullOwnerTextAt(fixture.surface, 'p');
+    const last = fullOwnerTextAt(fixture.surface, 'p', 1);
+    const outside = fullOwnerTextAt(fixture.surface, 'p', 2);
+    const lastRoot = last.parentElement;
+    if (!(lastRoot instanceof HTMLParagraphElement)) throw new Error('replacement-paragraph-missing');
+    const range = document.createRange();
+    range.setStart(first, 2);
+    range.setEnd(last, 4);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: 'X', inputType: 'insertText' }, range.cloneRange());
+    expect(before.defaultPrevented).toBe(false);
+    first.replaceData(2, first.length - 2, 'X');
+    lastRoot.previousSibling?.remove();
+    lastRoot.remove();
+    outside.appendData('!');
+    placeCaretInText(first, 3);
+    fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'X', inputType: 'insertText' }));
+    expect(fixture.onFailure).toHaveBeenCalledWith('visual-editor-canonical-change-dom-stale');
+    expect(fixture.history.getValue()).toBe(markdown);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  { end: 4, attributed: true, label: 'attributed break' },
+  { end: 2, attributed: false, label: 'break after a retained suffix' }
+])('rejects a foreign $label in a native range replacement', ({ end, attributed }) => {
+  vi.useFakeTimers();
+  const markdown = 'Alpha\n\nBeta';
+  const signature = 'cross-paragraph-foreign-break';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { startLine: 0, endLine: 2, id: 'b0' },
+      { startLine: 2, endLine: 3, id: 'b1' }
+    ]),
+    html: fullOwnerParagraphBlock('Alpha', 'b0') + '\n'
+      + fullOwnerParagraphBlock('Beta', 'b1') + '\n',
+    markdown,
+    signature
+  });
+  try {
+    fixture.surface.setAttribute('contenteditable', 'true');
+    fixture.surface.focus();
+    const first = fullOwnerTextAt(fixture.surface, 'p');
+    const last = fullOwnerTextAt(fixture.surface, 'p', 1);
+    const lastRoot = last.parentElement;
+    if (!(lastRoot instanceof HTMLParagraphElement)) throw new Error('replacement-paragraph-missing');
+    const target = document.createRange();
+    target.setStart(first, 2);
+    target.setEnd(last, end);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(target);
+    const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: 'X', inputType: 'insertText' }, target.cloneRange());
+    expect(before.defaultPrevented).toBe(false);
+    first.replaceData(2, first.length - 2, `X${last.data.slice(end)}`);
+    lastRoot.previousSibling?.remove();
+    lastRoot.remove();
+    const breakNode = document.createElement('br');
+    if (attributed) breakNode.setAttribute('data-foreign', 'true');
+    first.parentElement?.append(breakNode);
+    placeCaretInText(first, first.length);
+    fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'X', inputType: 'insertText' }));
+    expect(fixture.onFailure).toHaveBeenCalledWith('visual-editor-canonical-change-dom-stale');
+    expect(fixture.history.getValue()).toBe(markdown);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  { direction: 'forward', immediate: false },
+  { direction: 'backward', immediate: false },
+  { direction: 'forward', immediate: true },
+  { direction: 'backward', immediate: true }
+] as const)(
+  'commits a $direction native cross-root replacement through a nested quote and task list (immediate=$immediate)',
+  ({ direction, immediate }) => {
+    vi.useFakeTimers();
+    const signature = `cross-root-nested-${direction}`;
+    const markdown = 'Lead\n\nAlpha\n\n> quote\n>\n> 1. one\n>    - [x] task\n\nOmega tail\n\nEnd';
+    const editMap = fullOwnerEditMap(signature, [
+      { startLine: 0, endLine: 2, id: 'b0' },
+      { startLine: 2, endLine: 4, id: 'b1' },
+      { startLine: 4, endLine: 9, id: 'b2' },
+      { startLine: 9, endLine: 11, id: 'b3' },
+      { startLine: 11, endLine: 12, id: 'b4' }
+    ]);
+    const html = fullOwnerParagraphBlock('Lead', 'b0') + '\n'
+      + fullOwnerParagraphBlock('Alpha', 'b1') + '\n'
+      + fullOwnerBlock('<blockquote><p>quote</p><ol><li>one<ul class="task-list"><li class="task-list-item"><input checked disabled type="checkbox"> task</li></ul></li></ol></blockquote>', 'b2') + '\n'
+      + fullOwnerParagraphBlock('Omega tail', 'b3') + '\n'
+      + fullOwnerParagraphBlock('End', 'b4') + '\n';
+    const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 0 });
+    try {
+      fixture.surface.focus();
+      const first = fullOwnerTextAt(fixture.surface, '[data-easymde-visual-block-id="b1"]');
+      const last = fullOwnerTextAt(fixture.surface, '[data-easymde-visual-block-id="b3"]');
+      const firstRoot = first.parentElement;
+      const lastRoot = last.parentElement;
+      if (!firstRoot || !lastRoot) throw new Error('cross-root-nested-fixture-missing');
+      const selection = window.getSelection();
+      if (!selection) throw new Error('cross-root-nested-selection-missing');
+      if (direction === 'backward') selection.setBaseAndExtent(last, 5, first, 2);
+      else selection.setBaseAndExtent(first, 2, last, 5);
+      const target = selection.getRangeAt(0).cloneRange();
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: 'M', inputType: 'insertText' }, target);
+      expect(before.defaultPrevented).toBe(false);
+      const merged = document.createTextNode('AlM tail');
+      firstRoot.replaceChildren(merged);
+      while (firstRoot.nextSibling && firstRoot.nextSibling !== lastRoot) firstRoot.nextSibling.remove();
+      lastRoot.remove();
+      expect(last.isConnected).toBe(false);
+      placeCaretInText(merged, 3);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'M', inputType: 'insertText' }));
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      if (immediate) {
+        expect(fullOwnerNativeInsert(fixture.surface, merged, 3, 'Q', 'insertText', true).prevented).toBe(false);
+      }
+      act(() => vi.advanceTimersByTime(80));
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      const changed = `Lead\n\nAlM${immediate ? 'Q' : ''} tail\n\nEnd`;
+      expect(fixture.history.getValue()).toBe(changed);
+      const historyStep = (redo: boolean, expected: string) => {
+        fullOwnerHistoryKey(fixture.surface, redo);
+        expect(fixture.history.getValue()).toBe(expected);
+        if (fixture.runtime().isTransferPending()) {
+          const original = expected === markdown;
+          const body = expected.includes('AlMQ tail') ? 'AlMQ tail' : 'AlM tail';
+          fixture.accept(original ? { editMap, html, markdown } : {
+            editMap: fullOwnerEditMap(signature, [
+              { startLine: 0, endLine: 2, id: 'b0' },
+              { startLine: 2, endLine: 4, id: 'b1' },
+              { startLine: 4, endLine: 5, id: 'b4' }
+            ]),
+            html: fullOwnerParagraphBlock('Lead', 'b0') + '\n'
+              + fullOwnerParagraphBlock(body, 'b1') + '\n'
+              + fullOwnerParagraphBlock('End', 'b4') + '\n',
+            markdown: expected
+          });
+        }
+        act(() => vi.advanceTimersByTime(0));
+      };
+      if (immediate) {
+        historyStep(false, 'Lead\n\nAlM tail\n\nEnd');
+      }
+      historyStep(false, markdown);
+      expect(fixture.history.getSelection()).toEqual({
+        direction, start: markdown.indexOf('Alpha') + 2, end: markdown.indexOf('Omega') + 5
+      });
+      if (immediate) {
+        historyStep(true, 'Lead\n\nAlM tail\n\nEnd');
+      }
+      historyStep(true, changed);
+      if (immediate) historyStep(false, 'Lead\n\nAlM tail\n\nEnd');
+      historyStep(false, markdown);
+      const restoredSelection = window.getSelection();
+      const restoredFirst = fullOwnerTextAt(fixture.surface, '[data-easymde-visual-block-id="b1"]');
+      const restoredLast = fullOwnerTextAt(fixture.surface, '[data-easymde-visual-block-id="b3"]');
+      expect(restoredSelection?.anchorNode).toBe(direction === 'backward' ? restoredLast : restoredFirst);
+      expect(restoredSelection?.anchorOffset).toBe(direction === 'backward' ? 5 : 2);
+      expect(restoredSelection?.focusNode).toBe(direction === 'backward' ? restoredFirst : restoredLast);
+      expect(restoredSelection?.focusOffset).toBe(direction === 'backward' ? 2 : 5);
+      if (!restoredSelection) throw new Error('cross-root-nested-restored-selection-missing');
+      const branch = fullOwnerDispatchBeforeInput(fixture.surface, { data: 'Z', inputType: 'insertText' }, restoredSelection.getRangeAt(0).cloneRange());
+      expect(branch.defaultPrevented).toBe(false);
+      const branchFirst = restoredFirst.parentElement;
+      const branchLast = restoredLast.parentElement;
+      if (!branchFirst || !branchLast) throw new Error('cross-root-nested-restored-root-missing');
+      const branchText = document.createTextNode('AlZ tail');
+      branchFirst.replaceChildren(branchText);
+      while (branchFirst.nextSibling && branchFirst.nextSibling !== branchLast) branchFirst.nextSibling.remove();
+      branchLast.remove();
+      placeCaretInText(branchText, 3);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'Z', inputType: 'insertText' }));
+      act(() => vi.advanceTimersByTime(80));
+      expect(fixture.history.getValue()).toBe('Lead\n\nAlZ tail\n\nEnd');
+      expect(fixture.history.getHistoryState().redoDepth).toBe(0);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  }
+);
+
+it('commits a native cross-paragraph replacement without adopting unrelated roots', () => {
+  vi.useFakeTimers();
+  const markdown = 'Alpha\n\nBeta';
+  const signature = 'cross-paragraph-native-replacement';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { startLine: 0, endLine: 2, id: 'b0' },
+      { startLine: 2, endLine: 3, id: 'b1' }
+    ]),
+    html: fullOwnerParagraphBlock('Alpha', 'b0') + '\n'
+      + fullOwnerParagraphBlock('Beta', 'b1') + '\n',
+    markdown,
+    signature
+  });
+  try {
+    fixture.surface.setAttribute('contenteditable', 'true');
+    fixture.surface.focus();
+    const first = fullOwnerTextAt(fixture.surface, 'p');
+    const last = fullOwnerTextAt(fixture.surface, 'p', 1);
+    const lastRoot = last.parentElement;
+    if (!(lastRoot instanceof HTMLParagraphElement)) throw new Error('replacement-paragraph-missing');
+    const range = document.createRange();
+    range.setStart(first, 2);
+    range.setEnd(last, 4);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: 'X', inputType: 'insertText' }, range.cloneRange());
+    expect(before.defaultPrevented).toBe(false);
+    first.replaceData(2, first.length - 2, 'X');
+    lastRoot.previousSibling?.remove();
+    lastRoot.remove();
+    first.parentElement?.append(document.createElement('br'));
+    placeCaretInText(first, 3);
+    fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'X', inputType: 'insertText' }));
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue()).toBe('AlX');
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: 3, end: 3 });
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('commits a native join of nonempty paragraphs with renderer whitespace', () => {
+  vi.useFakeTimers();
+  const markdown = 'Before.\n\nSecond.';
+  const signature = 'nonempty-paragraph-native-join';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { startLine: 0, endLine: 2, id: 'b0' },
+      { startLine: 2, endLine: 3, id: 'b1' }
+    ]),
+    html: fullOwnerParagraphBlock('Before.', 'b0') + '\n'
+      + fullOwnerParagraphBlock('Second.', 'b1') + '\n',
+    markdown,
+    signature,
+    sourceCaret: 9
+  });
+  try {
+    fixture.surface.setAttribute('contenteditable', 'true');
+    fixture.surface.focus();
+    const previousText = fullOwnerTextAt(fixture.surface, 'p');
+    const followingText = fullOwnerTextAt(fixture.surface, 'p', 1);
+    const following = followingText.parentElement;
+    if (!(following instanceof HTMLParagraphElement)) throw new Error('join-paragraph-missing');
+    expect(fixture.runtime().prepareContextMenuDemand()).toBe(true);
+    placeCaretInText(followingText, 0);
+    fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' }));
+    const target = document.createRange();
+    target.setStart(previousText, previousText.length);
+    target.setEnd(following, 0);
+    const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, target);
+    expect(before.defaultPrevented).toBe(false);
+    previousText.appendData(followingText.data);
+    following.previousSibling?.remove();
+    following.remove();
+    placeCaretInText(previousText, 7);
+    fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+    expect(fixture.surface.textContent).toBe('Before.Second.\n');
+    expect(fixture.runtime().isEditable()).toBe(true);
+    expect(fixture.runtime().isTransferPending()).toBe(false);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe('Before.Second.');
+    fullOwnerHistoryKey(fixture.surface, false);
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
   } finally {
     fixture.unmount();
     vi.useRealTimers();
@@ -28551,10 +36684,106 @@ it.each(['continuous', 'settled paragraph'] as const)('continues native EOF Back
     expect(fixture.surface.querySelector('[data-easymde-visual-block-id="b2"]')?.textContent).toBe('Second');
     expect(fixture.onFailure).not.toHaveBeenCalled();
     expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+
   } finally {
     fixture.unmount();
     vi.useRealTimers();
   }
+});
+
+it('consumes each empty join before the next native deletion in one continuous burst', () => {
+  vi.useFakeTimers();
+  const markdown = 'Before.\n\nSecond.\n\nTailXX';
+  const signature = 'continuous-two-empty-joins';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { startLine: 0, endLine: 2, id: 'b0' },
+      { startLine: 2, endLine: 4, id: 'b1' },
+      { startLine: 4, endLine: 5, id: 'b2' }
+    ]),
+    html: fullOwnerParagraphBlock('Before.', 'b0') + fullOwnerParagraphBlock('Second.', 'b1') + fullOwnerParagraphBlock('TailXX', 'b2'),
+    markdown, signature, sourceCaret: 0
+  });
+  try {
+    const paragraphs = Array.from(fixture.surface.querySelectorAll('p'));
+    const [first, second, tail] = paragraphs;
+    const firstText = first?.firstChild, secondText = second?.firstChild, tailText = tail?.firstChild;
+    if (!first || !second || !tail || !(firstText instanceof Text) || !(secondText instanceof Text) || !(tailText instanceof Text)) {
+      throw new Error('continuous-empty-joins-setup-invalid');
+    }
+    fixture.surface.focus();
+    placeCaretInText(tailText, tailText.length);
+    const erase = (body: HTMLParagraphElement, text: Text): void => {
+      for (let remaining = text.length; remaining > 0; remaining -= 1) {
+        fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' }));
+        expect(fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, remaining - 1, remaining)).defaultPrevented).toBe(false);
+        text.deleteData(remaining - 1, 1);
+        if (remaining === 1) {
+          text.remove(); body.append(document.createElement('br')); window.getSelection()?.collapse(body, 0);
+        } else placeCaretInText(text, remaining - 1);
+        fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+      }
+    };
+    const join = (prior: Text, empty: HTMLParagraphElement): void => {
+      fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' }));
+      const range = document.createRange(); range.setStart(prior, prior.length); range.setEnd(empty, 0);
+      expect(fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, range).defaultPrevented).toBe(false);
+      empty.remove(); placeCaretInText(prior, prior.length);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+    };
+    act(() => {
+      erase(tail, tailText);
+      join(secondText, tail);
+      erase(second, secondText);
+      join(firstText, second);
+      expect(fixture.history.getValue()).toBe('Before.\n\n');
+      fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' }));
+      expect(fullOwnerNativeDelete(fixture.surface, firstText, 6, 7, 'deleteContentBackward').prevented).toBe(false);
+      fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' }));
+      expect(fullOwnerNativeDelete(fixture.surface, firstText, 5, 6, 'deleteContentBackward').prevented).toBe(false);
+    });
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue().replace(/\n+$/u, '')).toBe('Befor');
+    expect(firstText.data).toBe('Befor');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+  } finally { fixture.unmount(); vi.useRealTimers(); }
+});
+
+it('rejects a native join when its retained root changes outside the witnessed operation', () => {
+  vi.useFakeTimers();
+  const markdown = 'Before.\n\nx';
+  const signature = 'foreign-empty-join';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { startLine: 0, endLine: 2, id: 'b0' },
+      { startLine: 2, endLine: 3, id: 'b1' }
+    ]),
+    html: fullOwnerParagraphBlock('Before.', 'b0') + fullOwnerParagraphBlock('x', 'b1'),
+    markdown, signature, sourceCaret: 0
+  });
+  try {
+    const first = fixture.surface.firstElementChild?.firstChild;
+    const empty = fixture.surface.lastElementChild;
+    const text = empty?.firstChild;
+    if (!(first instanceof Text) || !(empty instanceof HTMLParagraphElement) || !(text instanceof Text)) throw new Error('foreign-empty-join-setup-invalid');
+    fixture.surface.focus(); placeCaretInText(text, 1);
+    act(() => {
+      fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' }));
+      expect(fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, 0, 1)).defaultPrevented).toBe(false);
+      text.remove(); empty.append(document.createElement('br')); window.getSelection()?.collapse(empty, 0);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+      fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' }));
+      const range = document.createRange(); range.setStart(first, first.length); range.setEnd(empty, 0);
+      expect(fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, range).defaultPrevented).toBe(false);
+      const beforeJoin = fixture.history.getValue();
+      first.appendData('foreign'); empty.remove(); placeCaretInText(first, 7);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+      vi.advanceTimersByTime(80);
+      expect(fixture.history.getValue()).toBe(beforeJoin);
+    });
+    expect(fixture.onFailure).toHaveBeenCalled();
+  } finally { fixture.unmount(); vi.useRealTimers(); }
 });
 
 it('continues native text input from the sole empty paragraph after deletion', () => {
@@ -28664,7 +36893,7 @@ it('restores the whole code-body edit and keeps the caret inside the code body a
   });
   const onFailure = vi.fn();
   const view = render(
-    <ImmersiveVisualEditor
+    <ImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
       documentSession={{ document: history } as unknown as EditorDocumentSession}
       imageUploadEnabled={false}
       imagePasteUploadEnabled={false}
@@ -29146,7 +37375,7 @@ it.each(['unmount', 'new activation'] as const)('retires queued Full composition
     previewSnapshot: { revision: 1, signature, editMap: { ...base.editMap, signature } },
     previewStatus: 'ready' as PreviewSurfaceStatus,
   };
-  const view = render(<ImmersiveVisualEditor {...props} surface={surface} />);
+  const view = render(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} surface={surface} />);
   let unmounted = false;
   try {
     const text = fullOwnerTextAt(surface, '[data-easymde-visual-block-id="b1"]');
@@ -29161,7 +37390,7 @@ it.each(['unmount', 'new activation'] as const)('retires queued Full composition
         view.unmount(); unmounted = true;
       } else {
         // Same React instance and refs; a new effect now owns the shared activeRef.
-        flushSync(() => view.rerender(<ImmersiveVisualEditor {...props} surface={replacement} />));
+        flushSync(() => view.rerender(<ImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} surface={replacement} />));
         expect(callbacks.onReady).toHaveBeenCalledTimes(2);
         expect(callbacks.onDispose).toHaveBeenCalledTimes(1);
         const nextRuntime = callbacks.onReady.mock.calls.at(-1)?.[0] as ImmersiveVisualEditorRuntime | undefined;
@@ -29444,6 +37673,52 @@ describe('whole-unit frozen consumer wave', () => {
     }
   });
 
+  it('flattens a restoring Undo caret interior to an ATX heading marker run onto the heading\'s own text start', async () => {
+    vi.useFakeTimers();
+    const prior = accepted('Target paragraph here.', 'Target paragraph here.');
+    const current = accepted('Changed paragraph.', 'Changed paragraph.');
+    // Offset 1 sits between the `#` and the space of the ATX marker run that
+    // opens the first block, so a restoring Undo's own caret is a canonical
+    // position inside a run the renderer strips: only the heading element can
+    // spell it, and only if the accepted placement hands the mapper that
+    // element as its root instead of a wrapper around it.
+    const point = 1;
+    const fixture = createFullOwnerFixture({
+      ...current, signature: 'atx-marker-interior-undo', sourceCaret: 0,
+      prepareHistory: history => {
+        history.applyTextChange({ value: prior.markdown, selection: { direction: 'none', start: point, end: point } });
+        history.applyTextChange({ value: current.markdown, selection: { direction: 'none', start: current.markdown.indexOf('Changed'), end: current.markdown.indexOf('Changed') } });
+      }
+    });
+    try {
+      fixture.surface.focus();
+      expect(fixture.runtime().isEditable()).toBe(true);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      const revision = fixture.history.getRevision();
+      const history = fixture.history.getHistoryState();
+      act(() => fullOwnerHistoryKey(fixture.surface, false));
+      expect(fixture.history.getValue()).toBe(prior.markdown);
+      expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: point, end: point });
+      expect(fixture.history.getRevision()).toBe(revision + 1);
+      expect(fixture.history.getHistoryState()).toEqual({ redoDepth: 1, undoDepth: history.undoDepth - 1 });
+      expect(fixture.requestPreview).toHaveBeenLastCalledWith(prior.markdown);
+      act(() => fixture.accept(prior));
+      const heading = fullOwnerTextAt(fixture.surface, '[data-easymde-visual-block-id="b0"]');
+      expect(heading.data).toBe('Synthetic Full fixture');
+      expect(fixture.onFailure, 'the heading text start is the representable form of an interior marker-run caret').not.toHaveBeenCalled();
+      expect(fixture.runtime().isEditable()).toBe(true);
+      expect(fixture.history.getValue()).toBe(prior.markdown);
+      expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: point, end: point });
+      expect(window.getSelection()?.anchorNode, 'the restored caret must land in the heading text').toBe(heading);
+      expect(window.getSelection()?.anchorOffset).toBe(0);
+      expect(Array.from(fixture.surface.querySelectorAll('pre code'), code => code.textContent)).toEqual(['alpha\nbeta\n', 'puts :kept\n']);
+      expect(fixture.surface.querySelector('h3')?.textContent).toBe('Heading after');
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it.for(['~', '`'] as const)('keeps a rapid terminal paragraph opener literal before explicit Enter (%s)', async (marker, { task }) => {
     vi.useFakeTimers();
     const initial = accepted('Target paragraph here.', 'Target paragraph here.');
@@ -29476,9 +37751,9 @@ describe('whole-unit frozen consumer wave', () => {
         }
       });
       await act(async () => { vi.advanceTimersByTime(1600); await Promise.resolve(); });
-      metadata.actual = { value: fixture.history.getValue(), selection: fixture.history.getSelection(), revision: fixture.history.getRevision(), history: fixture.history.getHistoryState(), kinds: createEditorMarkdownBlockIndex(fixture.history.getValue()).blocks.map(block => block.kind), nativeOffset: window.getSelection()?.anchorOffset, failures: fixture.onFailure.mock.calls };
+      metadata.actual = { value: fixture.history.getValue(), selection: fixture.history.getSelection(), revision: fixture.history.getRevision(), history: fixture.history.getHistoryState(), kinds: createEditorMarkdownBlockIndex(fixture.history.getValue(), { referenceLabelCaseFoldProfile: 14 }).blocks.map(block => block.kind), nativeOffset: window.getSelection()?.anchorOffset, failures: fixture.onFailure.mock.calls };
       expect(fixture.history.getValue(), 'terminal paragraphs obey the same literal-before-Enter rule').toBe(expected);
-      expect(createEditorMarkdownBlockIndex(fixture.history.getValue()).blocks.map(block => block.kind)).toEqual(['heading', 'paragraph', 'code', 'code', 'heading', 'paragraph']);
+      expect(createEditorMarkdownBlockIndex(fixture.history.getValue(), { referenceLabelCaseFoldProfile: 14 }).blocks.map(block => block.kind)).toEqual(['heading', 'paragraph', 'code', 'code', 'heading', 'paragraph']);
       expect(fixture.surface.lastElementChild).toBe(paragraph);
       expect(paragraph?.tagName).toBe('P');
       expect(paragraph?.textContent).toBe(`${run}Final paragraph.`);
@@ -29641,7 +37916,7 @@ it.each(['insertion end', 'newer pointer'] as const)('settles composition in a n
     expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: sourceEnd, end: sourceEnd });
     expect(window.getSelection()?.anchorNode).toBe(text);
     expect(window.getSelection()?.anchorOffset).toBe(nativeEnd);
-    expect(createEditorMarkdownBlockIndex(fixture.history.getValue()).blocks.map(block => block.kind)).toEqual(['heading', 'paragraph', 'code', 'paragraph']);
+    expect(createEditorMarkdownBlockIndex(fixture.history.getValue(), { referenceLabelCaseFoldProfile: 14 }).blocks.map(block => block.kind)).toEqual(['heading', 'paragraph', 'code', 'paragraph']);
     expect([heading.outerHTML, code.outerHTML, tail.outerHTML]).toEqual(protectedHtml);
     expect(fixture.history.getRevision()).toBe(revision + 1);
     expect(fixture.history.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: history.undoDepth + 1 });
@@ -29923,6 +38198,53 @@ it('preserves a formal accepted escaped literal paragraph through unchanged prep
   }
 });
 
+it('undoes a middle formal composition to its native origin instead of a stale canonical caret', async () => {
+  vi.useFakeTimers();
+  const markdown = '# Heading\n\nBefore.\n\nAfter.';
+  const signature = 'formal-composition-history-origin';
+  const accepted = {
+    editMap: fullOwnerEditMap(signature, [
+      { startLine: 0, endLine: 1, id: 'b0' },
+      { startLine: 2, endLine: 3, id: 'b1' },
+      { startLine: 4, endLine: 5, id: 'b2' }
+    ]),
+    html: fullOwnerBlock('<h1>Heading</h1>', 'b0') + '\n'
+      + fullOwnerParagraphBlock('Before.', 'b1') + '\n'
+      + fullOwnerParagraphBlock('After.', 'b2') + '\n',
+    markdown
+  };
+  const fixture = createFullOwnerFixture({ ...accepted, signature, sourceCaret: markdown.length });
+  try {
+    const text = fullOwnerTextAt(fixture.surface, '[data-easymde-visual-block-id="b1"]');
+    const origin = markdown.indexOf('Before.') + 2;
+    fixture.surface.focus();
+    placeCaretInText(text, 2);
+    await act(async () => {
+      fullSelectionCompositionDraft(fixture.surface, text, 2, '你');
+      fixture.surface.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '你' }));
+      await Promise.resolve();
+    });
+    expect(fixture.history.getValue()).toBe(markdown.slice(0, origin) + '你' + markdown.slice(origin));
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    if (fixture.runtime().isTransferPending()) fixture.accept(accepted);
+    await act(async () => { await Promise.resolve(); });
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: origin, end: origin });
+    expect(window.getSelection()?.anchorNode?.parentElement?.getAttribute('data-easymde-visual-block-id')).toBe('b1');
+    expect(window.getSelection()?.anchorOffset).toBe(2);
+    const restoredText = window.getSelection()?.anchorNode;
+    if (!(restoredText instanceof Text)) throw new Error('composition-history-restored-text-missing');
+    act(() => fullOwnerNativeInsert(fixture.surface, restoredText, 2, 'X'));
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue()).toBe(markdown.slice(0, origin) + 'X' + markdown.slice(origin));
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
 it('preserves a formal escaped literal row for direct composition with a stale canonical caret', async () => {
   vi.useFakeTimers();
   const sourceRow = '\\~\\~\\~';
@@ -30065,7 +38387,7 @@ it('preserves canonical escape units during pending paragraph typing after fence
 });
 
 function fullOwnerSyntheticBlocksDocument(markdown: string): FullOwnerAcceptedDocument {
-  const blocks = createEditorMarkdownBlockIndex(markdown).blocks;
+  const blocks = createEditorMarkdownBlockIndex(markdown, { referenceLabelCaseFoldProfile: 14 }).blocks;
   const rows = blocks.map((block, index) => ({ id: `b${index}`,
     startLine: markdown.slice(0, block.from).split('\n').length - 1,
     endLine: markdown.slice(0, blocks[index + 1]?.from ?? markdown.length).split('\n').length - (index + 1 < blocks.length ? 1 : 0) }));
@@ -30085,6 +38407,111 @@ function fullOwnerSyntheticBlocksDocument(markdown: string): FullOwnerAcceptedDo
   }).join('');
   return { markdown, html, editMap: fullOwnerEditMap('synthetic-accepted-blocks', rows) };
 }
+
+it.each(['equivalent', 'different-edge', 'other-root'] as const)(
+  'keeps a code-menu Undo caret and validates the pending %s target', (targetKind) => {
+  const markdown = 'Before.\n\n~~~js\nalpha\n~~~\n\nAfter.';
+  const fence = '~~~js\nalpha\n~~~';
+  const start = markdown.indexOf(fence);
+  const end = start + fence.length;
+  const fixture = createFullOwnerFixture({
+    ...fullOwnerSyntheticBlocksDocument(markdown), signature: 'code-menu-history-lease'
+  });
+  try {
+    fixture.surface.focus();
+    const code = fixture.surface.querySelector('pre > code');
+    const text = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(text instanceof Text)) throw new Error('code-menu-test-code-missing');
+    placeCaretInText(text, 5);
+    expect(fixture.runtime().prepareContextMenuDemand()).toBe(true);
+    const lease = fixture.runtime().captureContextMenuTarget(code);
+    if (!lease) throw new Error('code-menu-test-lease-missing');
+    expect(lease.resolve()).not.toBeNull();
+    expect(fixture.runtime().prepareContextMenuSelection?.(code, { x: 1, y: 1 })).toBe(true);
+    const selection = fixture.history.getSelection();
+    fixture.surface.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    expect(fixture.runtime().applyCanonicalChange({
+      change: {
+        changes: { from: start, insert: '', to: end },
+        selection: { direction: 'none', start, end: start },
+        value: markdown.slice(0, start) + markdown.slice(end)
+      },
+      expected: { revision: fixture.history.getRevision?.(), selection, value: markdown }
+    })).toBe('handled');
+    lease.release();
+    fixture.accept(fullOwnerSyntheticBlocksDocument(fixture.history.getValue()));
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    const caret = markdown.indexOf('alpha') + 5;
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: caret, end: caret });
+    expect(fixture.runtime().isTransferPending()).toBe(true);
+    const native = window.getSelection();
+    const node = native?.anchorNode;
+    const offset = native?.anchorOffset;
+    if (!node || undefined === offset || !native?.isCollapsed) throw new Error('code-menu-test-pending-caret-missing');
+    const paragraph = node instanceof HTMLParagraphElement ? node : node.parentElement;
+    const textNode = paragraph?.firstChild;
+    if (!(paragraph instanceof HTMLParagraphElement) || !(textNode instanceof Text)) throw new Error('code-menu-test-pending-paragraph-missing');
+    const edge = offset === 0 ? 0 : textNode.length;
+    const other = Array.from(fixture.surface.querySelectorAll('p')).find((item) => item !== paragraph)?.firstChild;
+    if (!(other instanceof Text)) throw new Error('code-menu-test-other-paragraph-missing');
+    const target = targetKind === 'other-root'
+      ? fullOwnerTargetRange(other, 0, 0)
+      : targetKind === 'different-edge'
+        ? fullOwnerTargetRange(textNode, edge === 0 ? textNode.length : 0, edge === 0 ? textNode.length : 0)
+        : node === paragraph
+          ? fullOwnerTargetRange(textNode, edge, edge)
+          : fullOwnerTargetRange(paragraph, offset === 0 ? 0 : 1, offset === 0 ? 0 : 1);
+    const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: 'X', inputType: 'insertText' }, target);
+    expect(before.defaultPrevented).toBe(true);
+    if (targetKind === 'equivalent') {
+      expect(fixture.history.getValue()).toBe(markdown.replace('alpha', 'alphaX'));
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    } else {
+      expect(fixture.history.getValue()).toBe(markdown);
+      expect(fixture.onFailure).toHaveBeenCalledExactlyOnceWith('visual-editor-pending-input-unavailable');
+    }
+  } finally {
+    fixture.unmount();
+  }
+});
+
+it('does not reuse a code-menu caret after the native selection moves', () => {
+  const markdown = 'Before.\n\n~~~js\nalpha\n~~~\n\nAfter.';
+  const fence = '~~~js\nalpha\n~~~';
+  const start = markdown.indexOf(fence);
+  const end = start + fence.length;
+  const fixture = createFullOwnerFixture({
+    ...fullOwnerSyntheticBlocksDocument(markdown), signature: 'code-menu-drift'
+  });
+  try {
+    fixture.surface.focus();
+    const code = fixture.surface.querySelector('pre > code');
+    const text = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(text instanceof Text)) throw new Error('code-menu-test-code-missing');
+    placeCaretInText(text, 5);
+    expect(fixture.runtime().prepareContextMenuDemand()).toBe(true);
+    const lease = fixture.runtime().captureContextMenuTarget(code);
+    if (!lease) throw new Error('code-menu-test-lease-missing');
+    expect(fixture.runtime().prepareContextMenuSelection?.(code, { x: 1, y: 1 })).toBe(true);
+    const selection = fixture.history.getSelection();
+    placeCaretInText(text, 2);
+    expect(fixture.runtime().applyCanonicalChange({
+      change: {
+        changes: { from: start, insert: '', to: end },
+        selection: { direction: 'none', start, end: start },
+        value: markdown.slice(0, start) + markdown.slice(end)
+      },
+      expected: { revision: fixture.history.getRevision?.(), selection, value: markdown }
+    })).toBe('handled');
+    lease.release();
+    fixture.accept(fullOwnerSyntheticBlocksDocument(fixture.history.getValue()));
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getSelection()).toEqual(selection);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+  }
+});
 
 it.for(['~~~', '```'])('continues literal %s history after Enter deletion Undo and formal acceptance', async (family, { task }) => {
   vi.useFakeTimers();
@@ -30121,8 +38548,13 @@ it.for(['~~~', '```'])('continues literal %s history after Enter deletion Undo a
       text.insertData(offset, data); native.collapse(text, offset + data.length);
     } else {
       const paragraph = range.startContainer;
-      if (!(paragraph instanceof HTMLParagraphElement) || paragraph.textContent !== '') throw new Error('history-chain-empty-paragraph-missing');
-      const text = document.createTextNode(data); paragraph.replaceChildren(text); native.collapse(text, data.length);
+      if (!(paragraph instanceof HTMLParagraphElement)) throw new Error('history-chain-paragraph-missing');
+      const adjacent = paragraph.childNodes[range.startOffset - 1];
+      if (adjacent instanceof Text) {
+        adjacent.appendData(data); native.collapse(adjacent, adjacent.length);
+      } else if (paragraph.textContent === '') {
+        const text = document.createTextNode(data); paragraph.replaceChildren(text); native.collapse(text, data.length);
+      } else throw new Error('history-chain-paragraph-boundary-invalid');
     }
     fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data, inputType: 'insertText' }));
   };
@@ -30170,7 +38602,12 @@ it.for(['~~~', '```'])('continues literal %s history after Enter deletion Undo a
       if (!literalContinuation && literalStart >= 0) {
         const point = literalStart + literal.length;
         expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: point, end: point });
-        expect(window.getSelection()?.anchorOffset).toBe(family.length + 4);
+        expect(visualMarkdown.coversMarkdownUnits(value, point, point)).toBe(true);
+        const node = window.getSelection()?.anchorNode;
+        const element = node instanceof Element ? node : node?.parentElement;
+        const paragraph = element?.closest('p');
+        if (!(paragraph instanceof HTMLParagraphElement) || !fixture.surface.contains(paragraph)) throw new Error('history-chain-restored-paragraph-missing');
+        fullOwnerExpectLocalSelection(paragraph, family.length + 4, family.length + 4);
         act(() => type('q')); await settle('literal continuation q', 600);
         expect(fixture.history.getValue()).toBe(value.slice(0, point) + 'q' + value.slice(point));
         act(backspace); await settle('literal continuation Backspace', 600);
@@ -31468,6 +39905,1293 @@ describe('Full cross-Text native deletion history direction', () => {
   });
 });
 
+it.each(['before', 'after'] as const)(
+  'Full edits %s a resolved reference image without rewriting its Markdown',
+  async (side) => {
+    vi.useFakeTimers();
+    const path = '/wp-content/plugins/easymde/assets/images/easymde-editor-icon.png';
+    const source = `[pic]: ${path}\n\nOpening ![dot][pic] tail.\n\n`;
+    const markup = (opening: string, tail: string): string =>
+      fullOwnerBlock(`<p>${opening}<img src="${path}" alt="dot">${tail}</p>`, 'b0');
+    const base: FullOwnerAcceptedDocument = {
+      editMap: fullOwnerEditMap('reference-image-adjacent', [
+        { id: 'b0', startLine: 2, endLine: 3 }
+      ]),
+      html: markup('Opening ', ' tail.'),
+      markdown: source
+    };
+    const expected = 'before' === side
+      ? source.replace('Opening ', 'Opening X')
+      : source.replace(' tail.', ' tail.X');
+    const changed: FullOwnerAcceptedDocument = {
+      ...base,
+      html: markup('before' === side ? 'Opening X' : 'Opening ', 'after' === side ? ' tail.X' : ' tail.'),
+      markdown: expected
+    };
+    const fixture = createFullOwnerFixture({ ...base, signature: 'reference-image-adjacent-initial', sourceCaret: 0 });
+    try {
+      const paragraph = fixture.surface.querySelector('[data-easymde-visual-block-id="b0"]');
+      const text = 'before' === side ? paragraph?.firstChild : paragraph?.lastChild;
+      if (!(text instanceof Text)) throw new Error('reference-image-adjacent-text-missing');
+      if ('after' === side) {
+        const image = paragraph?.querySelector('img');
+        if (!(image instanceof HTMLImageElement)) throw new Error('reference-image-activation-missing');
+        const revision = fixture.history.getRevision();
+        const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 });
+        act(() => image.dispatchEvent(down));
+        expect(down.defaultPrevented).toBe(true);
+        expect(fixture.onFailure.mock.calls.map(([code]) => code)).toEqual([]);
+        expect(fixture.history.getValue()).toBe(source);
+        expect(fixture.history.getRevision()).toBe(revision);
+        expect(fixture.history.getHistoryState()).toEqual({ undoDepth: 0, redoDepth: 0 });
+        const start = source.indexOf('![dot][pic]');
+        expect(fixture.history.getSelection()).toEqual({ direction: 'forward', start, end: start + '![dot][pic]'.length });
+        expect(fixture.runtime().prepareToolbarFallback()).toBe(true);
+        expect(fixture.history.getSelection()).toEqual({ direction: 'forward', start, end: start + '![dot][pic]'.length });
+        expect(fixture.history.getValue()).toBe(source);
+        expect(fixture.history.getRevision()).toBe(revision);
+        expect(fixture.history.getHistoryState()).toEqual({ undoDepth: 0, redoDepth: 0 });
+        expect(fixture.onFailure).not.toHaveBeenCalled();
+      }
+      act(() => {
+        fullSelectionPointerCaret(fixture.surface, text, text.length);
+        fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'End' }));
+        expect(fullOwnerNativeInsert(fixture.surface, text, text.length, 'X', 'insertText', true).prevented).toBe(false);
+        vi.advanceTimersByTime(80);
+      });
+      expect(fixture.onFailure.mock.calls.map(([code]) => code)).toEqual([]);
+      expect(fixture.history.getValue()).toBe(expected);
+      expect(fixture.history.getHistoryState()).toEqual({ undoDepth: 1, redoDepth: 0 });
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+      if (fixture.runtime().isTransferPending()) act(() => fixture.accept(changed));
+      act(() => fullOwnerHistoryKey(fixture.surface, false));
+      expect(fixture.history.getValue()).toBe(source);
+      expect(fixture.history.getHistoryState()).toEqual({ undoDepth: 0, redoDepth: 1 });
+      if (fixture.runtime().isTransferPending()) act(() => fixture.accept(base));
+      const restored = fixture.surface.querySelector('[data-easymde-visual-block-id="b0"]');
+      const resumed = 'before' === side ? restored?.firstChild : restored?.lastChild;
+      if (!(resumed instanceof Text)) throw new Error('reference-image-restored-text-missing');
+      act(() => {
+        expect(fullOwnerNativeInsert(fixture.surface, resumed, resumed.length, 'Y').prevented).toBe(false);
+        vi.advanceTimersByTime(80);
+      });
+      expect(fixture.history.getValue()).toBe(expected.replace('X', 'Y'));
+      expect(fixture.history.getHistoryState()).toEqual({ undoDepth: 1, redoDepth: 0 });
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  }
+);
+
+it.each([
+  { source: '[k]: /local.png\n\nOpening ![dot][\u212a] tail.', profile: 'unsupported' as const,
+    code: 'visual-editor-reference-label-fold-profile-unavailable' },
+  { source: 'Opening ![dot][missing] tail.', profile: 14 as const,
+    code: 'visual-editor-image-source-map-failed' }
+])('Full refuses unproved reference image context before native input', ({ source, profile, code }) => {
+  vi.useFakeTimers();
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap('reference-image-unproved', [
+      { id: 'b0', startLine: source.startsWith('[') ? 2 : 0, endLine: source.startsWith('[') ? 3 : 1 }
+    ]),
+    html: fullOwnerBlock('<p>Opening <img src="/local.png" alt="dot"> tail.</p>', 'b0'),
+    markdown: source,
+    referenceLabelCaseFoldProfile: profile,
+    signature: 'reference-image-unproved'
+  });
+  try {
+    const text = fixture.surface.querySelector('p')?.lastChild;
+    if (!(text instanceof Text)) throw new Error('reference-image-unproved-text-missing');
+    act(() => expect(fullOwnerNativeInsert(fixture.surface, text, text.length, 'X').prevented).toBe(true));
+    expect(fixture.history.getValue()).toBe(source);
+    expect(fixture.history.getHistoryState()).toEqual({ undoDepth: 0, redoDepth: 0 });
+    expect(text.data).toBe(' tail.');
+    expect(fixture.onFailure).toHaveBeenCalledWith(code);
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  { tail: ' tail.', inserted: 'X' },
+  { tail: ' tail.X', inserted: 'X' },
+  { tail: ' tail.', inserted: '😊' },
+  { tail: ' tail.', inserted: 'e\u0301' },
+  { tail: ' tail.*', sourceTail: ' tail.\\*', inserted: 'X' }
+])('Full deletes $inserted during pending history rendering', ({ tail, sourceTail, inserted }) => {
+  vi.useFakeTimers();
+  const asset = '/wp-content/plugins/easymde/assets/images/easymde-editor-icon.png';
+  const sourceSpelling = sourceTail ?? tail;
+  const source = `[pic]: ${asset}\n\nOpening ![dot][pic]${sourceSpelling}\n\n`;
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap('reference-pending-history', [{ id: 'b0', startLine: 2, endLine: 3 }]),
+    html: fullOwnerBlock(`<p>Opening <img src="${asset}" alt="dot">${tail}</p>`, 'b0'),
+    markdown: source, signature: 'reference-pending-history'
+  });
+  const observedSteps: Array<ReadonlyArray<Readonly<{ from: number; to: number; insert: string }>>> = [];
+  const redo = fixture.history.redo.bind(fixture.history);
+  vi.spyOn(fixture.history, 'redo').mockImplementation((observe) => redo((changes) => {
+    observedSteps.push(changes);
+    observe?.(changes);
+  }));
+  try {
+    const image = fixture.surface.querySelector('img');
+    const text = fixture.surface.querySelector('p')?.lastChild;
+    if (!(image instanceof HTMLImageElement) || !(text instanceof Text)) throw new Error('reference-history-fixture-missing');
+    const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 });
+    act(() => image.dispatchEvent(down));
+    expect(down.defaultPrevented).toBe(true);
+    act(() => {
+      fullSelectionPointerCaret(fixture.surface, text, text.length);
+      expect(fullOwnerNativeInsert(fixture.surface, text, text.length, inserted, 'insertText', true).prevented).toBe(false);
+      vi.advanceTimersByTime(80);
+    });
+    expect(fixture.history.getValue()).toBe(source.replace(sourceSpelling, sourceSpelling + inserted));
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getValue()).toBe(source);
+    act(() => fullOwnerHistoryKey(fixture.surface, true));
+    expect(fixture.history.getValue()).toBe(source.replace(sourceSpelling, sourceSpelling + inserted));
+    const insertionAt = source.indexOf(sourceSpelling) + sourceSpelling.length;
+    expect(observedSteps[0]).toEqual([{ from: insertionAt, to: insertionAt, insert: inserted }]);
+    expect(fixture.runtime().isTransferPending()).toBe(true);
+    const currentTail = fixture.surface.querySelector('p')?.lastChild;
+    if (!(currentTail instanceof Text)) throw new Error('reference-history-tail-missing');
+    // The retained history presentation predates the Redo source by one key.
+    expect(currentTail.data).toBe(tail);
+    expect(window.getSelection()?.anchorNode).toBe(currentTail);
+    expect(window.getSelection()?.anchorOffset).toBe(currentTail.length);
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(currentTail, currentTail.length - 1, currentTail.length));
+      expect(before.defaultPrevented).toBe(true);
+    });
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(source);
+    expect(fixture.history.getHistoryState()).toEqual({ undoDepth: 2, redoDepth: 0 });
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getValue()).toBe(source.replace(sourceSpelling, sourceSpelling + inserted));
+    act(() => fullOwnerHistoryKey(fixture.surface, true));
+    expect(fixture.history.getValue()).toBe(source);
+    expect(fixture.runtime().isTransferPending()).toBe(true);
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(fixture.surface,
+        { data: 'Y', inputType: 'insertText' },
+        fullOwnerTargetRange(currentTail, currentTail.length, currentTail.length));
+      expect(before.defaultPrevented).toBe(true);
+    });
+    expect(fixture.history.getValue()).toBe(source.replace(sourceSpelling, sourceSpelling + 'Y'));
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each(['ordinary', 'pending'] as const)(
+  'Full retains a %s composition draft until its canonical commit', async (mode) => {
+  vi.useFakeTimers();
+  const source = 'Plain text';
+  const html = fullOwnerBlock('<p>Plain text</p>', 'b0');
+  const surfaceRef = createRef<HTMLElement>();
+  let held = 0;
+  let version = 0;
+  const retainCompositionSurface = () => {
+    held += 1;
+    version += 1;
+    let released = false;
+    return { release: () => {
+      if (released) throw new Error('test-composition-lease-double-release');
+      released = true;
+      held -= 1;
+      version += 1;
+    } };
+  };
+  const gate = () => ({ isHeld: () => held > 0, version });
+  const sink = testingLibraryRender(<SafePreviewHtmlSink contentEditable html={html as SafePreviewHtml}
+    htmlRevision={1} surfaceRef={surfaceRef} compositionGate={gate()} />);
+  const surface = surfaceRef.current;
+  if (!surface) throw new Error('composition-preview-surface-missing');
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap('composition-preview-race', [{ id: 'b0', startLine: 0, endLine: 1 }]),
+    html, markdown: source, retainCompositionSurface, signature: 'composition-preview-race', surface
+  });
+  try {
+    let text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('composition-preview-text-missing');
+    fullSelectionPointerCaret(surface, text, text.length);
+    if (mode === 'pending') {
+      act(() => {
+        if (!(text instanceof Text)) throw new Error('composition-preview-text-missing');
+        fullOwnerNativeInsert(surface, text, text.length, 'X', 'insertText', true);
+        vi.advanceTimersByTime(80);
+        fullOwnerHistoryKey(surface, false);
+        fullOwnerHistoryKey(surface, true);
+      });
+      expect(fixture.runtime().isTransferPending()).toBe(true);
+      text = surface.querySelector('p')?.firstChild;
+      if (!(text instanceof Text)) throw new Error('composition-preview-pending-text-missing');
+    }
+    const liveText = text;
+    const canonical = mode === 'pending' ? source + 'X' : source;
+    const historyBefore = fixture.history.getHistoryState();
+    act(() => surface.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })));
+    act(() => {
+      const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true,
+        data: '测', inputType: 'insertCompositionText', isComposing: true });
+      const range = fullOwnerTargetRange(liveText, liveText.length, liveText.length);
+      Object.defineProperty(before, 'getTargetRanges', { value: () => [range] });
+      surface.dispatchEvent(before);
+      expect(before.defaultPrevented).toBe(false);
+      liveText.appendData('测');
+      window.getSelection()?.collapse(liveText, liveText.length);
+      surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: '测',
+        inputType: 'insertCompositionText', isComposing: true }));
+    });
+    expect(fixture.history.getValue()).toBe(canonical);
+    const template = document.createElement('template');
+    const candidateHtml = mode === 'pending' ? fullOwnerBlock('<p>Plain textX</p>', 'b0') : html;
+    template.innerHTML = candidateHtml;
+    const staged = { nodes: Array.from(template.content.childNodes), revision: 2 };
+    const accepted = vi.fn();
+    act(() => sink.rerender(<SafePreviewHtmlSink contentEditable html={candidateHtml as SafePreviewHtml}
+      htmlRevision={2} surfaceRef={surfaceRef} compositionGate={gate()} stagedCommit={staged} onStagedCommit={accepted} />));
+    expect(surface.querySelector('p')?.firstChild).toBe(liveText);
+    expect(liveText.data).toBe(source + '测');
+    expect(accepted).not.toHaveBeenCalled();
+    await act(async () => {
+      surface.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '测' }));
+      if (mode === 'ordinary') expect(held).toBe(1);
+      await Promise.resolve();
+    });
+    expect(fixture.history.getValue()).toBe(canonical + '测');
+    expect(fixture.history.getHistoryState().undoDepth).toBe(historyBefore.undoDepth + 1);
+    expect(held).toBe(0);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    act(() => fullOwnerHistoryKey(surface, false));
+    expect(fixture.history.getValue()).toBe(canonical);
+    act(() => fullOwnerHistoryKey(surface, true));
+    expect(fixture.history.getValue()).toBe(canonical + '测');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    sink.unmount();
+    vi.useRealTimers();
+  }
+  }
+);
+
+it.each(['cancel', 'teardown', 'lease-failure', 'pending-pointer', 'pending-history', 'queued-teardown'] as const)(
+  'Full settles its composition Preview lease on %s', async (scenario) => {
+    vi.useFakeTimers();
+    const source = 'Plain text';
+    let held = 0;
+    const fixture = createFullOwnerFixture({
+      editMap: fullOwnerEditMap('composition-lease-lifecycle', [{ id: 'b0', startLine: 0, endLine: 1 }]),
+      html: fullOwnerBlock('<p>Plain text</p>', 'b0'), markdown: source,
+      retainCompositionSurface: () => {
+        if (scenario === 'lease-failure') throw new Error('preview-composition-surface-busy');
+        held += 1;
+        let released = false;
+        return { release: () => {
+          if (released) throw new Error('test-composition-lease-double-release');
+          released = true;
+          held -= 1;
+        } };
+      }, signature: 'composition-lease-lifecycle'
+    });
+    let unmounted = false;
+    try {
+      let text = fixture.surface.querySelector('p')?.firstChild;
+      if (!(text instanceof Text)) throw new Error('composition-lifecycle-text-missing');
+      fullSelectionPointerCaret(fixture.surface, text, text.length);
+      if (scenario === 'pending-pointer' || scenario === 'pending-history') {
+        act(() => {
+          if (!(text instanceof Text)) throw new Error('composition-lifecycle-text-missing');
+          fullOwnerNativeInsert(fixture.surface, text, text.length, 'X', 'insertText', true);
+          vi.advanceTimersByTime(80);
+          fullOwnerHistoryKey(fixture.surface, false);
+          fullOwnerHistoryKey(fixture.surface, true);
+        });
+        expect(fixture.runtime().isTransferPending()).toBe(true);
+        text = fixture.surface.querySelector('p')?.firstChild;
+        if (!(text instanceof Text)) throw new Error('composition-lifecycle-pending-text-missing');
+      }
+      act(() => fixture.surface.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })));
+      if (scenario === 'lease-failure') {
+        expect(held).toBe(0);
+        expect(fixture.onFailure).toHaveBeenCalledWith('visual-editor-input-surface-unavailable');
+        act(() => {
+          const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true,
+            data: '测', inputType: 'insertCompositionText', isComposing: true });
+          fixture.surface.dispatchEvent(before);
+          expect(before.defaultPrevented).toBe(true);
+        });
+      } else {
+        expect(held).toBe(1);
+        if (scenario === 'pending-pointer') {
+          act(() => fixture.surface.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 })));
+        } else if (scenario === 'pending-history') {
+          act(() => fullOwnerHistoryKey(fixture.surface, false));
+          expect(fixture.history.getValue()).toBe(source);
+        } else if (scenario === 'teardown') {
+          fixture.unmount();
+          unmounted = true;
+        } else {
+          if (scenario === 'queued-teardown') {
+            const liveText = text;
+            act(() => {
+              liveText.appendData('测');
+              window.getSelection()?.collapse(liveText, liveText.length);
+              fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: '测',
+                inputType: 'insertCompositionText', isComposing: true }));
+            });
+          }
+          await act(async () => {
+            fixture.surface.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true,
+              data: scenario === 'queued-teardown' ? '测' : '' }));
+            if (scenario === 'queued-teardown') {
+              fixture.unmount();
+              unmounted = true;
+            }
+            await Promise.resolve();
+          });
+        }
+        expect(held).toBe(0);
+      }
+    } finally {
+      if (!unmounted) fixture.unmount();
+      vi.useRealTimers();
+    }
+  }
+);
+
+it('Full holds a staged Preview until a native deletion commits', () => {
+  vi.useFakeTimers();
+  const source = '[pic]: /local.png\n\nOpening ![dot][pic] tail.\n\n';
+  const html = fullOwnerBlock('<p>Opening <img src="/local.png" alt="dot"> tail.</p>', 'b0');
+  const surfaceRef = createRef<HTMLElement>();
+  let held = 0;
+  let gateVersion = 0;
+  const retainCompositionSurface = vi.fn(() => {
+    held += 1;
+    gateVersion += 1;
+    let released = false;
+    return { release: () => {
+      if (released) throw new Error('test-preview-lease-double-release');
+      released = true;
+      held -= 1;
+      gateVersion += 1;
+    } };
+  });
+  const gate = () => ({ isHeld: () => held > 0, version: gateVersion });
+  const sink = testingLibraryRender(<SafePreviewHtmlSink contentEditable html={html as SafePreviewHtml}
+    htmlRevision={1} surfaceRef={surfaceRef} compositionGate={gate()} />);
+  const surface = surfaceRef.current;
+  if (!surface) throw new Error('reference-preview-surface-missing');
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap('reference-preview-race', [{ id: 'b0', startLine: 2, endLine: 3 }]),
+    html, markdown: source, retainCompositionSurface, signature: 'reference-preview-race', surface
+  });
+  try {
+    const image = surface.querySelector('img');
+    const initialTail = surface.querySelector('p')?.lastChild;
+    if (!(image instanceof HTMLImageElement) || !(initialTail instanceof Text)) throw new Error('reference-preview-race-fixture-missing');
+    act(() => image.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 })));
+    act(() => {
+      fullSelectionPointerCaret(surface, initialTail, initialTail.length);
+      fullOwnerNativeInsert(surface, initialTail, initialTail.length, 'X', 'insertText', true);
+      vi.advanceTimersByTime(80);
+      fullOwnerHistoryKey(surface, false);
+      fullOwnerHistoryKey(surface, true);
+    });
+    const tail = surface.querySelector('p')?.lastChild;
+    if (!(tail instanceof Text)) throw new Error('reference-preview-race-tail-missing');
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(surface, { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(tail, tail.length - 1, tail.length));
+      expect(before.defaultPrevented).toBe(true);
+    });
+    expect(fixture.history.getValue()).toBe(source);
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(surface, { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(tail, tail.length - 1, tail.length));
+      expect(before.defaultPrevented).toBe(false);
+      expect(held).toBe(1);
+      tail.deleteData(tail.length - 1, 1);
+      window.getSelection()?.collapse(tail, tail.length);
+      surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+    });
+    const template = document.createElement('template');
+    template.innerHTML = html;
+    const stagedCommit = { nodes: Array.from(template.content.childNodes), revision: 2 };
+    const onStagedCommit = vi.fn();
+    act(() => sink.rerender(<SafePreviewHtmlSink contentEditable html={html as SafePreviewHtml}
+      htmlRevision={2} surfaceRef={surfaceRef} compositionGate={gate()} stagedCommit={stagedCommit}
+      onStagedCommit={onStagedCommit} />));
+    expect(surface.querySelector('p')?.lastChild).toBe(tail);
+    expect(tail.data).toBe(' tail');
+    expect(window.getSelection()?.anchorNode).toBe(tail);
+    expect(window.getSelection()?.anchorOffset).toBe(tail.length);
+    expect(onStagedCommit).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue()).toBe(source.replace(' tail.', ' tail'));
+    expect(held).toBe(0);
+    // The Preview owner discards the old-source candidate after publication.
+    act(() => sink.rerender(<SafePreviewHtmlSink contentEditable html={html as SafePreviewHtml}
+      htmlRevision={2} surfaceRef={surfaceRef} compositionGate={gate()} phase="loading" />));
+    expect(surface.querySelector('p')?.lastChild).toBe(tail);
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(surface, { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(tail, tail.length - 1, tail.length));
+      expect(before.defaultPrevented).toBe(false);
+      tail.deleteData(tail.length - 1, 1);
+      window.getSelection()?.collapse(tail, tail.length);
+      surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+      vi.advanceTimersByTime(80);
+    });
+    expect(fixture.history.getValue()).toBe(source.replace(' tail.', ' tai'));
+    expect(window.getSelection()?.anchorNode).toBe(tail);
+    expect(window.getSelection()?.anchorOffset).toBe(tail.length);
+    expect(held).toBe(0);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    sink.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each(['settled', 'typing'] as const)(
+  'Full releases the Preview lease for native forward Delete at document end after %s', async (state) => {
+  vi.useFakeTimers();
+  const source = 'Plain text';
+  let held = 0;
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap('native-eof-delete', [{ id: 'b0', startLine: 0, endLine: 1 }]),
+    html: fullOwnerBlock('<p>Plain text</p>', 'b0'), markdown: source,
+    retainCompositionSurface: () => {
+      held += 1;
+      return { release: () => { held -= 1; } };
+    }, signature: 'native-eof-delete'
+  });
+  try {
+    const text = fixture.surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('native-eof-delete-text-missing');
+    fullSelectionPointerCaret(fixture.surface, text, text.length);
+    if (state === 'typing') {
+      act(() => expect(fullOwnerNativeInsert(fixture.surface, text, text.length, 'X', 'insertText', true).prevented).toBe(false));
+      expect(fixture.history.getValue()).toBe(source);
+      expect(held).toBe(1);
+    }
+    const beforeNoop = state === 'typing' ? source + 'X' : source;
+    const revision = fixture.history.getRevision();
+    const history = fixture.history.getHistoryState();
+    const selection = fixture.history.getSelection();
+    await act(async () => {
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentForward' },
+        fullOwnerTargetRange(text, text.length, text.length));
+      expect(before.defaultPrevented).toBe(true);
+      await Promise.resolve();
+    });
+    expect(held).toBe(0);
+    expect(fixture.history.getValue()).toBe(beforeNoop);
+    expect(fixture.history.getRevision()).toBe(revision + (state === 'typing' ? 1 : 0));
+    expect(fixture.history.getHistoryState()).toEqual(state === 'typing'
+      ? { undoDepth: history.undoDepth + 1, redoDepth: 0 } : history);
+    if (state === 'settled') expect(fixture.history.getSelection()).toEqual(selection);
+    expect(window.getSelection()?.anchorNode).toBe(text);
+    expect(window.getSelection()?.anchorOffset).toBe(text.length);
+    act(() => {
+      expect(fullOwnerNativeInsert(fixture.surface, text, text.length, 'X', 'insertText', true).prevented).toBe(false);
+      vi.advanceTimersByTime(80);
+    });
+    expect(fixture.history.getValue()).toBe(beforeNoop + 'X');
+    expect(held).toBe(0);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    act(() => fixture.acceptWithSignature({
+      editMap: fullOwnerEditMap('native-eof-accepted', [{ id: 'b0', startLine: 0, endLine: 1 }]),
+      html: fullOwnerBlock(`<p>${beforeNoop}X</p>`, 'b0'), markdown: beforeNoop + 'X'
+    }, 'native-eof-accepted'));
+    expect(fixture.surface.querySelector('p')?.textContent).toBe(beforeNoop + 'X');
+    expect(fixture.history.getValue()).toBe(beforeNoop + 'X');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+  }
+);
+
+it.each(['dom', 'source', 'revision'] as const)(
+  'Full rejects stale %s before a document-end forward Delete', (stale) => {
+    vi.useFakeTimers();
+    const source = 'Plain text';
+    let held = 0;
+    const fixture = createFullOwnerFixture({
+      editMap: fullOwnerEditMap('native-eof-stale', [{ id: 'b0', startLine: 0, endLine: 1 }]),
+      html: fullOwnerBlock('<p>Plain text</p>', 'b0'), markdown: source,
+      retainCompositionSurface: () => { held += 1; return { release: () => { held -= 1; } }; },
+      signature: 'native-eof-stale'
+    });
+    try {
+      const paragraph = fixture.surface.querySelector('p');
+      const text = paragraph?.firstChild;
+      if (!(paragraph instanceof HTMLParagraphElement) || !(text instanceof Text)) throw new Error('native-eof-stale-text-missing');
+      fullSelectionPointerCaret(fixture.surface, text, text.length);
+      let expected = source;
+      act(() => {
+        if (stale === 'dom') paragraph.className = 'foreign';
+        if (stale === 'source') {
+          expected = source + 'X';
+          fixture.history.applyTextChange({ value: expected, selection: { direction: 'none', start: 0, end: 0 } });
+        }
+        if (stale === 'revision') {
+          fixture.history.applyTextChange({ value: source + 'X', selection: { direction: 'none', start: 0, end: 0 } });
+          expect(fixture.history.undo()).toBe(true);
+        }
+        const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentForward' },
+          fullOwnerTargetRange(text, text.length, text.length));
+        expect(before.defaultPrevented).toBe(true);
+      });
+      expect(fixture.history.getValue()).toBe(expected);
+      expect(fixture.onFailure).toHaveBeenCalled();
+      expect(held).toBe(0);
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  }
+);
+
+it.each([
+  { name: 'following paragraph', source: 'End\n\nNext', html: '<p>End</p><p>Next</p>', offset: 3, end: 3 },
+  { name: 'following image', source: 'End![dot](/local.png)', html: '<p>End<img src="/local.png" alt="dot"></p>', offset: 3, end: 3 },
+  { name: 'following protected block', source: 'End\n\n---', html: '<p>End</p><hr contenteditable="false">', offset: 3, end: 3 },
+  { name: 'cross-block target', source: 'End\n\nNext', html: '<p>End</p><p>Next</p>', offset: 3, end: -1 },
+  { name: 'following text', source: 'EndX', html: '<p>EndX</p>', offset: 3, end: 4 }
+])('Full does not treat forward Delete before $name as document-end no-op', ({ source, html, offset, end }) => {
+  vi.useFakeTimers();
+  const fixture = createFullOwnerFixture({ editMap: null, html, markdown: source, signature: 'native-delete-nonterminal' });
+  try {
+    const text = fixture.surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('native-delete-nonterminal-text-missing');
+    fullSelectionPointerCaret(fixture.surface, text, offset);
+    act(() => {
+      const target = end < 0 ? document.createRange() : fullOwnerTargetRange(text, offset, end);
+      if (end < 0) {
+        const nextText = fixture.surface.querySelectorAll('p')[1]?.firstChild;
+        if (!(nextText instanceof Text)) throw new Error('native-delete-next-text-missing');
+        target.setStart(text, offset);
+        target.setEnd(nextText, 0);
+      }
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentForward' },
+        target);
+      expect(before.defaultPrevented).toBe(false);
+      if (end > offset) {
+        text.deleteData(offset, end - offset);
+        window.getSelection()?.collapse(text, offset);
+        fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentForward' }));
+        vi.advanceTimersByTime(80);
+      }
+    });
+    expect(fixture.history.getValue()).toBe(end > offset ? source.slice(0, offset) + source.slice(end) : source);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each(['history-flush', 'cancelled', 'teardown', 'lease-failure'] as const)(
+  'Full settles its native input Preview lease on %s', async (scenario) => {
+    vi.useFakeTimers();
+    const source = 'Plain text';
+    let held = 0;
+    const retainCompositionSurface = vi.fn(() => {
+      if (scenario === 'lease-failure') throw new Error('preview-composition-surface-busy');
+      held += 1;
+      let released = false;
+      return { release: () => {
+        if (released) throw new Error('test-preview-lease-double-release');
+        released = true;
+        held -= 1;
+      } };
+    });
+    const fixture = createFullOwnerFixture({
+      editMap: fullOwnerEditMap('native-preview-lease', [{ id: 'b0', startLine: 0, endLine: 1 }]),
+      html: fullOwnerBlock('<p>Plain text</p>', 'b0'), markdown: source,
+      retainCompositionSurface, signature: 'native-preview-lease'
+    });
+    let unmounted = false;
+    try {
+      const text = fixture.surface.querySelector('p')?.firstChild;
+      if (!(text instanceof Text)) throw new Error('native-preview-lease-text-missing');
+      fullSelectionPointerCaret(fixture.surface, text, text.length);
+      if (scenario === 'cancelled') {
+        const cancel = (event: Event) => event.preventDefault();
+        fixture.surface.addEventListener('beforeinput', cancel);
+        await act(async () => {
+          const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: 'X', inputType: 'insertText' },
+            fullOwnerTargetRange(text, text.length, text.length));
+          expect(before.defaultPrevented).toBe(true);
+          await Promise.resolve();
+        });
+        fixture.surface.removeEventListener('beforeinput', cancel);
+        expect(held).toBe(0);
+        expect(fixture.history.getValue()).toBe(source);
+      } else if (scenario === 'lease-failure') {
+        act(() => {
+          expect(fullOwnerNativeInsert(fixture.surface, text, text.length, 'X', 'insertText', true).prevented).toBe(true);
+        });
+        expect(fixture.history.getValue()).toBe(source);
+        expect(fixture.onFailure).toHaveBeenCalledWith('visual-editor-input-surface-unavailable');
+      } else {
+        act(() => expect(fullOwnerNativeInsert(fixture.surface, text, text.length, 'X', 'insertText', true).prevented).toBe(false));
+        expect(held).toBe(1);
+        if (scenario === 'history-flush') {
+          act(() => fullOwnerHistoryKey(fixture.surface, false));
+          expect(fixture.history.getValue()).toBe(source);
+        } else {
+          fixture.unmount();
+          unmounted = true;
+        }
+        expect(held).toBe(0);
+      }
+    } finally {
+      if (!unmounted) fixture.unmount();
+      vi.useRealTimers();
+    }
+  }
+);
+
+it('Full deletes from the retained DOM when pending history returns to the same source', () => {
+  vi.useFakeTimers();
+  const source = '[pic]: /local.png\n\nOpening ![dot][pic] tail.\n\n';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap('reference-history-repeat-delete', [{ id: 'b0', startLine: 2, endLine: 3 }]),
+    html: fullOwnerBlock('<p>Opening <img src="/local.png" alt="dot"> tail.</p>', 'b0'),
+    markdown: source, signature: 'reference-history-repeat-delete'
+  });
+  try {
+    const image = fixture.surface.querySelector('img');
+    const tail = fixture.surface.querySelector('p')?.lastChild;
+    if (!(image instanceof HTMLImageElement) || !(tail instanceof Text)) throw new Error('reference-history-repeat-fixture-missing');
+    act(() => image.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 })));
+    act(() => {
+      fullSelectionPointerCaret(fixture.surface, tail, tail.length);
+      fullOwnerNativeInsert(fixture.surface, tail, tail.length, 'X', 'insertText', true);
+      vi.advanceTimersByTime(80);
+      fullOwnerHistoryKey(fixture.surface, false);
+      fullOwnerHistoryKey(fixture.surface, true);
+    });
+    const current = fixture.surface.querySelector('p')?.lastChild;
+    if (!(current instanceof Text)) throw new Error('reference-history-repeat-tail-missing');
+    expect(fixture.runtime().isTransferPending()).toBe(true);
+    for (let index = 0; index < 3; index += 1) {
+      act(() => {
+        const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' },
+          fullOwnerTargetRange(current, current.length - 1, current.length));
+        expect(before.defaultPrevented).toBe(index === 0);
+        if (!before.defaultPrevented) {
+          current.deleteData(current.length - 1, 1);
+          window.getSelection()?.collapse(current, current.length);
+          fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+          vi.advanceTimersByTime(80);
+        }
+      });
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.history.getValue()).toBe(index === 0 ? source
+        : source.replace(' tail.', index === 1 ? ' tail' : ' tai'));
+      expect(current.data).toBe(index === 0 ? ' tail.' : index === 1 ? ' tail' : ' tai');
+      expect(window.getSelection()?.anchorNode).toBe(current);
+      expect(window.getSelection()?.anchorOffset).toBe(current.length);
+    }
+    const afterDeletes = source.replace(' tail.', ' tai');
+    act(() => {
+      expect(fullOwnerNativeInsert(fixture.surface, current, current.length, 'Y', 'insertText', true).prevented).toBe(false);
+      vi.advanceTimersByTime(80);
+    });
+    expect(fixture.history.getValue()).toBe(source.replace(' tail.', ' taiY'));
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getValue()).toBe(afterDeletes);
+    act(() => fullOwnerHistoryKey(fixture.surface, true));
+    expect(fixture.history.getValue()).toBe(source.replace(' tail.', ' taiY'));
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each(['selection', 'target', 'dom', 'source', 'definition', 'revision'] as const)(
+  'Full refuses stale %s before rejoining a retained history presentation', (stale) => {
+    vi.useFakeTimers();
+    const source = '[pic]: /local.png\n\nOpening ![dot][pic] tail.\n\n';
+    const fixture = createFullOwnerFixture({
+      editMap: fullOwnerEditMap('reference-history-rejoin-stale', [{ id: 'b0', startLine: 2, endLine: 3 }]),
+      html: fullOwnerBlock('<p>Opening <img src="/local.png" alt="dot"> tail.</p>', 'b0'),
+      markdown: source, signature: 'reference-history-rejoin-stale'
+    });
+    try {
+      const image = fixture.surface.querySelector('img');
+      const tail = fixture.surface.querySelector('p')?.lastChild;
+      if (!(image instanceof HTMLImageElement) || !(tail instanceof Text)) throw new Error('reference-history-rejoin-fixture-missing');
+      act(() => image.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 })));
+      act(() => {
+        fullSelectionPointerCaret(fixture.surface, tail, tail.length);
+        fullOwnerNativeInsert(fixture.surface, tail, tail.length, 'X', 'insertText', true);
+        vi.advanceTimersByTime(80);
+        fullOwnerHistoryKey(fixture.surface, false);
+        fullOwnerHistoryKey(fixture.surface, true);
+      });
+      const current = fixture.surface.querySelector('p')?.lastChild;
+      if (!(current instanceof Text)) throw new Error('reference-history-rejoin-tail-missing');
+      act(() => {
+        const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' },
+          fullOwnerTargetRange(current, current.length - 1, current.length));
+        expect(before.defaultPrevented).toBe(true);
+      });
+      expect(fixture.history.getValue()).toBe(source);
+      expect(fixture.runtime().isTransferPending()).toBe(true);
+      let expected = source;
+      act(() => {
+        if (stale === 'selection') window.getSelection()?.collapse(current, current.length - 1);
+        if (stale === 'dom') current.data += 'foreign';
+        if (stale === 'revision') {
+          fixture.history.applyTextChange({ value: source + 'z', selection: { direction: 'none', start: 0, end: 0 } });
+          expect(fixture.history.undo()).toBe(true);
+        }
+        if (stale === 'source' || stale === 'definition') {
+          expected = stale === 'source' ? source.replace('Opening', 'Changed') : source.replace('/local.png', '/other.png');
+          fixture.history.applyTextChange({ value: expected, selection: { direction: 'none', start: 0, end: 0 } });
+        }
+        const target = fullOwnerTargetRange(current, stale === 'target' ? current.length - 2 : current.length - 1, current.length);
+        const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, target);
+        expect(before.defaultPrevented).toBe(true);
+      });
+      expect(fixture.history.getValue()).toBe(expected);
+      expect(fixture.onFailure).toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  }
+);
+
+it.each(['selection', 'target', 'dom', 'source', 'definition', 'revision'] as const)(
+  'Full rejects stale pending history deletion %s', (stale) => {
+    vi.useFakeTimers();
+    const source = '[pic]: /local.png\n\nOpening ![dot][pic] tail.\n\n';
+    const changed = source.replace(' tail.', ' tail.X');
+    const fixture = createFullOwnerFixture({
+      editMap: fullOwnerEditMap('reference-history-stale', [{ id: 'b0', startLine: 2, endLine: 3 }]),
+      html: fullOwnerBlock('<p>Opening <img src="/local.png" alt="dot"> tail.</p>', 'b0'),
+      markdown: source, signature: 'reference-history-stale'
+    });
+    try {
+      const image = fixture.surface.querySelector('img');
+      const tail = fixture.surface.querySelector('p')?.lastChild;
+      if (!(image instanceof HTMLImageElement) || !(tail instanceof Text)) throw new Error('reference-history-stale-fixture-missing');
+      act(() => image.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 })));
+      act(() => {
+        fullSelectionPointerCaret(fixture.surface, tail, tail.length);
+        fullOwnerNativeInsert(fixture.surface, tail, tail.length, 'X', 'insertText', true);
+        vi.advanceTimersByTime(80);
+        fullOwnerHistoryKey(fixture.surface, false);
+        fullOwnerHistoryKey(fixture.surface, true);
+      });
+      expect(fixture.runtime().isTransferPending()).toBe(true);
+      expect(fixture.history.getValue()).toBe(changed);
+      const current = fixture.surface.querySelector('p')?.lastChild;
+      if (!(current instanceof Text)) throw new Error('reference-history-stale-tail-missing');
+      let expected = changed;
+      act(() => {
+        if (stale === 'selection') window.getSelection()?.collapse(current, current.length - 1);
+        if (stale === 'dom') current.data += 'foreign';
+        if (stale === 'revision') {
+          fixture.history.applyTextChange({ value: changed + 'z', selection: { direction: 'none', start: 0, end: 0 } });
+          expect(fixture.history.undo()).toBe(true);
+        }
+        if (stale === 'source' || stale === 'definition') {
+          expected = stale === 'source' ? changed.replace('Opening', 'Changed') : changed.replace('/local.png', '/other.png');
+          fixture.history.applyTextChange({ value: expected, selection: { direction: 'none', start: 0, end: 0 } });
+        }
+        const target = fullOwnerTargetRange(current, stale === 'target' ? current.length - 2 : current.length - 1, current.length);
+        const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, target);
+        expect(before.defaultPrevented).toBe(true);
+      });
+      expect(fixture.history.getValue()).toBe(expected);
+      expect(fixture.onFailure).toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  }
+);
+
+it('Full preserves authored space when native image deletion exposes a terminal NBSP', () => {
+  vi.useFakeTimers();
+  const source = '[pic]: /local.png\n\n[missing] ![dot][pic]\n\n';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap('reference-image-terminal-nbsp', [{ id: 'b0', startLine: 2, endLine: 3 }]),
+    html: fullOwnerBlock('<p>[missing] <img src="/local.png" alt="dot"></p>', 'b0'),
+    markdown: source, signature: 'reference-image-terminal-nbsp'
+  });
+  try {
+    const paragraph = fixture.surface.querySelector('p');
+    const text = paragraph?.firstChild;
+    const image = paragraph?.querySelector('img');
+    if (!(paragraph instanceof HTMLParagraphElement) || !(text instanceof Text) || !(image instanceof HTMLImageElement)) {
+      throw new Error('reference-image-terminal-nbsp-fixture-missing');
+    }
+    const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 });
+    act(() => image.dispatchEvent(down));
+    expect(down.defaultPrevented).toBe(true);
+    const native = window.getSelection();
+    if (!native) throw new Error('reference-image-terminal-nbsp-selection-missing');
+    const index = Array.from(paragraph.childNodes).indexOf(image);
+    native.collapse(paragraph, index + 1);
+    const target = document.createRange();
+    target.selectNode(image);
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, target);
+      expect(before.defaultPrevented).toBe(false);
+      text.data = text.data.slice(0, -1) + '\u00a0';
+      image.remove();
+      native.collapse(text, text.length);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+    });
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(source.replace('![dot][pic]', ''));
+    expect(paragraph.firstChild).toBe(text);
+    expect(native.anchorNode).toBe(text);
+    expect(native.anchorOffset).toBe(text.length);
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getValue()).toBe(source);
+    if (fixture.runtime().isTransferPending()) {
+      act(() => fixture.accept({
+        editMap: fullOwnerEditMap('reference-image-terminal-nbsp', [{ id: 'b0', startLine: 2, endLine: 3 }]),
+        html: fullOwnerBlock('<p>[missing] <img src="/local.png" alt="dot"></p>', 'b0'), markdown: source
+      }));
+    }
+    const resumed = fixture.surface.querySelector('p')?.firstChild;
+    if (!(resumed instanceof Text)) throw new Error('reference-image-terminal-nbsp-resume-missing');
+    act(() => {
+      fullOwnerNativeInsert(fixture.surface, resumed, resumed.length, 'Y');
+      vi.advanceTimersByTime(80);
+    });
+    expect(fixture.history.getValue()).toBe(source.replace('[missing] ', '[missing] Y'));
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  { name: 'unresolved reference text', definitions: '[a b]: /ghost.png\n\n[pic]: /local.png\n\n', prefix: '![x][a b] ', sourceImage: '![dot][pic]', tail: '' },
+  { name: 'plain text', definitions: '[pic]: /local.png\n\n', prefix: 'Opening ', sourceImage: '![dot][pic]', tail: '' },
+  { name: 'following text', definitions: '[pic]: /local.png\n\n', prefix: 'Opening ', sourceImage: '![dot][pic]', tail: ' tail' }
+])('Full undo of a native image deletion restores the caret after the image beside $name', ({ definitions, prefix, sourceImage, tail }) => {
+  vi.useFakeTimers();
+  const row = `${prefix}${sourceImage}${tail}`;
+  const source = `${definitions}${row}\n\n`;
+  const line = definitions.split('\n').length - 1;
+  const html = fullOwnerBlock(`<p>${prefix}<img src="/local.png" alt="dot">${tail}</p>`, 'b0');
+  const editMap = fullOwnerEditMap('image-undo-caret', [{ id: 'b0', startLine: line, endLine: line + 1 }]);
+  const fixture = createFullOwnerFixture({ editMap, html, markdown: source, signature: 'image-undo-caret' });
+  try {
+    const paragraph = fixture.surface.querySelector('p');
+    const image = paragraph?.querySelector('img');
+    const text = paragraph?.firstChild;
+    const native = window.getSelection();
+    if (!(paragraph instanceof HTMLParagraphElement) || !(image instanceof HTMLImageElement) || !(text instanceof Text) || !native) {
+      throw new Error('image-undo-caret-fixture-missing');
+    }
+    act(() => image.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 })));
+    native.collapse(paragraph, Array.from(paragraph.childNodes).indexOf(image) + 1);
+    const target = document.createRange();
+    target.selectNode(image);
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, target);
+      expect(before.defaultPrevented).toBe(false);
+      image.remove();
+      native.collapse(text, text.length);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+    });
+    expect(fixture.history.getValue()).toBe(source.replace(sourceImage, ''));
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getValue()).toBe(source);
+    if (fixture.runtime().isTransferPending()) {
+      act(() => fixture.accept({ editMap, html, markdown: source }));
+    }
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    const restored = fixture.surface.querySelector('p');
+    const restoredImage = restored?.querySelector('img');
+    if (!restored || !restoredImage) throw new Error('image-undo-caret-restore-missing');
+    const edge = document.createRange();
+    edge.setStartAfter(restoredImage);
+    edge.collapse(true);
+    const caret = document.createRange();
+    caret.setStart(native.anchorNode as Node, native.anchorOffset);
+    caret.collapse(true);
+    expect({ collapsed: native.isCollapsed, order: edge.compareBoundaryPoints(Range.START_TO_START, caret) }).toEqual({ collapsed: true, order: 0 });
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each(['prefix', 'multiple', 'clone', 'caret', 'attribute'] as const)(
+  'Full rejects a foreign %s during terminal NBSP image deletion', (scenario) => {
+    vi.useFakeTimers();
+    const source = '[pic]: /local.png\n\n[missing text] ![dot][pic]\n\n';
+    const fixture = createFullOwnerFixture({
+      editMap: fullOwnerEditMap('reference-image-nbsp-stale', [{ id: 'b0', startLine: 2, endLine: 3 }]),
+      html: fullOwnerBlock('<p>[missing text] <img src="/local.png" alt="dot"></p>', 'b0'),
+      markdown: source, signature: 'reference-image-nbsp-stale'
+    });
+    try {
+      const paragraph = fixture.surface.querySelector('p');
+      const text = paragraph?.firstChild;
+      const image = paragraph?.querySelector('img');
+      if (!(paragraph instanceof HTMLParagraphElement) || !(text instanceof Text) || !(image instanceof HTMLImageElement)) {
+        throw new Error('reference-image-nbsp-stale-fixture-missing');
+      }
+      act(() => image.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 })));
+      const native = window.getSelection();
+      if (!native) throw new Error('reference-image-nbsp-stale-selection-missing');
+      const index = Array.from(paragraph.childNodes).indexOf(image);
+      native.collapse(paragraph, index + 1);
+      const target = document.createRange();
+      target.selectNode(image);
+      act(() => {
+        const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, target);
+        expect(before.defaultPrevented).toBe(false);
+        text.data = scenario === 'multiple' ? text.data.slice(0, -1).replace(' ', '\u00a0') + '\u00a0'
+          : scenario === 'prefix' ? 'X' + text.data.slice(1, -1) + '\u00a0'
+            : text.data.slice(0, -1) + '\u00a0';
+        let selected = text;
+        if (scenario === 'clone') {
+          selected = text.cloneNode() as Text;
+          text.replaceWith(selected);
+        }
+        if (scenario === 'attribute') paragraph.className = 'foreign';
+        image.remove();
+        native.collapse(selected, selected.length - (scenario === 'caret' ? 1 : 0));
+        fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+      });
+      expect(fixture.history.getValue()).toBe(source);
+      expect(fixture.onFailure).toHaveBeenCalledWith('visual-editor-canonical-change-dom-stale');
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  }
+);
+
+it.each([
+  { ordinal: 0, lineEnding: '\n' },
+  { ordinal: 1, lineEnding: '\n' }
+])('Full Backspace removes identical reference image $ordinal with exact source bytes', ({ ordinal, lineEnding }) => {
+  vi.useFakeTimers();
+  const asset = '/wp-content/plugins/easymde/assets/images/easymde-editor-icon.png';
+  const source = `[first]: ${asset}\n\n[second]: ${asset}\n\n![dot][first] ![dot][second]\n\n`.replace(/\n/g, lineEnding);
+  const base: FullOwnerAcceptedDocument = {
+    editMap: fullOwnerEditMap('reference-image-identical', [{ id: 'b0', startLine: 4, endLine: 5 }]),
+    html: fullOwnerBlock(`<p><img src="${asset}" alt="dot"> <img src="${asset}" alt="dot"></p>`, 'b0'),
+    markdown: source
+  };
+  const fixture = createFullOwnerFixture({ ...base, signature: 'reference-image-identical' });
+  try {
+    const paragraph = fixture.surface.querySelector('p');
+    const images = paragraph?.querySelectorAll('img');
+    const first = images?.[0];
+    const second = images?.[1];
+    if (!(paragraph instanceof HTMLParagraphElement) || !(first instanceof HTMLImageElement)
+      || !(second instanceof HTMLImageElement)) throw new Error('reference-image-identical-fixture-missing');
+    const removed = ordinal === 0 ? first : second;
+    const surviving = ordinal === 0 ? second : first;
+    const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 });
+    act(() => removed.dispatchEvent(down));
+    expect(down.defaultPrevented).toBe(true);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    const native = window.getSelection();
+    const imageIndex = Array.from(paragraph.childNodes).indexOf(removed);
+    if (imageIndex < 0 || !native) throw new Error('reference-image-identical-target-missing');
+    native.collapse(paragraph, imageIndex + 1);
+    const target = document.createRange();
+    target.selectNode(removed);
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(
+        fixture.surface, { data: null, inputType: 'deleteContentBackward' }, target
+      );
+      if (!before.defaultPrevented) {
+        removed.remove();
+        native.collapse(paragraph, imageIndex);
+        fixture.surface.dispatchEvent(new InputEvent('input', {
+          bubbles: true, inputType: 'deleteContentBackward'
+        }));
+      }
+      vi.advanceTimersByTime(80);
+    });
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    const removedToken = `![dot][${ordinal === 0 ? 'first' : 'second'}]`;
+    const changed = source.replace(removedToken, '');
+    expect(fixture.history.getValue()).toBe(changed);
+    const caret = source.indexOf(removedToken);
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: caret, end: caret });
+    expect(fixture.surface.querySelector('img')).toBe(surviving);
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getValue()).toBe(source);
+    act(() => fullOwnerHistoryKey(fixture.surface, true));
+    expect(fixture.history.getValue()).toBe(changed);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('Full does not classify a native target containing text as image-only', () => {
+  vi.useFakeTimers();
+  const source = '[pic]: /local.png\n\nBefore ![dot][pic]\n\n';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap('reference-image-with-space', [{ id: 'b0', startLine: 2, endLine: 3 }]),
+    html: fullOwnerBlock('<p>Before <img src="/local.png" alt="dot"></p>', 'b0'),
+    markdown: source, signature: 'reference-image-with-space'
+  });
+  try {
+    const paragraph = fixture.surface.querySelector('p');
+    const text = paragraph?.firstChild;
+    const image = paragraph?.querySelector('img');
+    if (!(paragraph instanceof HTMLParagraphElement) || !(text instanceof Text) || !(image instanceof HTMLImageElement)) {
+      throw new Error('reference-image-with-space-fixture-missing');
+    }
+    const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 });
+    act(() => image.dispatchEvent(down));
+    expect(down.defaultPrevented).toBe(true);
+    const native = window.getSelection();
+    if (!native) throw new Error('reference-image-with-space-selection-missing');
+    native.collapse(paragraph, 2);
+    const target = document.createRange();
+    target.setStart(text, text.length - 1);
+    target.setEnd(paragraph, 2);
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, target);
+      if (!before.defaultPrevented) {
+        target.deleteContents();
+        native.collapse(text, text.length);
+        fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+        vi.advanceTimersByTime(80);
+      }
+    });
+    expect(fixture.history.getValue()).toBe(source.replace(' ![dot][pic]', ''));
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('Full retires the sole inline wrapper when its native image unit is deleted', () => {
+  vi.useFakeTimers();
+  const source = '[pic]: /local.png\n\nBefore **![dot][pic]** after.\n\n';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap('reference-image-wrapper', [{ id: 'b0', startLine: 2, endLine: 3 }]),
+    html: fullOwnerBlock('<p>Before <strong><img src="/local.png" alt="dot"></strong> after.</p>', 'b0'),
+    markdown: source, signature: 'reference-image-wrapper'
+  });
+  try {
+    const paragraph = fixture.surface.querySelector('p');
+    const image = paragraph?.querySelector('img');
+    const wrapper = paragraph?.querySelector('strong');
+    if (!(paragraph instanceof HTMLParagraphElement) || !(image instanceof HTMLImageElement) || !(wrapper instanceof HTMLElement)) {
+      throw new Error('reference-image-wrapper-fixture-missing');
+    }
+    const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 });
+    act(() => image.dispatchEvent(down));
+    expect(down.defaultPrevented).toBe(true);
+    const native = window.getSelection();
+    const index = Array.from(paragraph.childNodes).indexOf(wrapper);
+    if (!native) throw new Error('reference-image-wrapper-selection-missing');
+    native.collapse(paragraph, index + 1);
+    const target = document.createRange();
+    target.selectNode(wrapper);
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, target);
+      expect(before.defaultPrevented).toBe(false);
+      wrapper.remove();
+      native.collapse(paragraph, index);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+    });
+    expect(fixture.history.getValue()).toBe(source.replace('**![dot][pic]**', ''));
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('Full accepts the native empty paragraph placeholder after deleting its sole image', () => {
+  vi.useFakeTimers();
+  const source = '[pic]: /local.png\n\n![dot][pic]\n\n';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap('reference-image-empty', [{ id: 'b0', startLine: 2, endLine: 3 }]),
+    html: fullOwnerBlock('<p><img src="/local.png" alt="dot"></p>', 'b0'),
+    markdown: source, signature: 'reference-image-empty'
+  });
+  try {
+    const paragraph = fixture.surface.querySelector('p');
+    const image = paragraph?.querySelector('img');
+    if (!(paragraph instanceof HTMLParagraphElement) || !(image instanceof HTMLImageElement)) {
+      throw new Error('reference-image-empty-fixture-missing');
+    }
+    const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 });
+    act(() => image.dispatchEvent(down));
+    expect(down.defaultPrevented).toBe(true);
+    const native = window.getSelection();
+    if (!native) throw new Error('reference-image-empty-selection-missing');
+    native.collapse(paragraph, 1);
+    const target = document.createRange();
+    target.selectNode(image);
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, target);
+      expect(before.defaultPrevented).toBe(false);
+      image.remove();
+      paragraph.appendChild(document.createElement('br'));
+      native.collapse(paragraph, 0);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+    });
+    expect(fixture.history.getValue()).toBe(source.replace('![dot][pic]', ''));
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each(['source', 'definition'] as const)(
+  'Full rejects a stale %s during native image deletion', (change) => {
+    vi.useFakeTimers();
+    const source = '[pic]: /local.png\n\nBefore ![dot][pic] after.\n\n';
+    const changed = change === 'source' ? source.replace('Before', 'Changed') : source.replace('/local.png', '/other.png');
+    const fixture = createFullOwnerFixture({
+      editMap: fullOwnerEditMap('reference-image-stale', [{ id: 'b0', startLine: 2, endLine: 3 }]),
+      html: fullOwnerBlock('<p>Before <img src="/local.png" alt="dot"> after.</p>', 'b0'),
+      markdown: source, signature: 'reference-image-stale'
+    });
+    try {
+      const paragraph = fixture.surface.querySelector('p');
+      const image = paragraph?.querySelector('img');
+      if (!(paragraph instanceof HTMLParagraphElement) || !(image instanceof HTMLImageElement)) {
+        throw new Error('reference-image-stale-fixture-missing');
+      }
+      const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 });
+      act(() => image.dispatchEvent(down));
+      expect(down.defaultPrevented).toBe(true);
+      const native = window.getSelection();
+      const index = Array.from(paragraph.childNodes).indexOf(image);
+      if (!native) throw new Error('reference-image-stale-selection-missing');
+      native.collapse(paragraph, index + 1);
+      const target = document.createRange();
+      target.selectNode(image);
+      act(() => {
+        const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, target);
+        expect(before.defaultPrevented).toBe(false);
+        fixture.history.applyTextChange({ value: changed, selection: { direction: 'none', start: 0, end: 0 } });
+        image.remove();
+        native.collapse(paragraph, index);
+        fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+      });
+      expect(fixture.history.getValue()).toBe(changed);
+      expect(fixture.onFailure).toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  }
+);
+
+it('Full rejects foreign DOM changes during native image deletion', () => {
+  vi.useFakeTimers();
+  const source = '[pic]: /local.png\n\nBefore ![dot][pic] after.\n\n';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap('reference-image-foreign', [{ id: 'b0', startLine: 2, endLine: 3 }]),
+    html: fullOwnerBlock('<p>Before <img src="/local.png" alt="dot"> after.</p>', 'b0'),
+    markdown: source, signature: 'reference-image-foreign'
+  });
+  try {
+    const paragraph = fixture.surface.querySelector('p');
+    const image = paragraph?.querySelector('img');
+    const tail = paragraph?.lastChild;
+    if (!(paragraph instanceof HTMLParagraphElement) || !(image instanceof HTMLImageElement)
+      || !(tail instanceof Text)) throw new Error('reference-image-foreign-fixture-missing');
+    const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 });
+    act(() => image.dispatchEvent(down));
+    expect(down.defaultPrevented).toBe(true);
+    const native = window.getSelection();
+    const index = Array.from(paragraph.childNodes).indexOf(image);
+    if (!native) throw new Error('reference-image-foreign-selection-missing');
+    native.collapse(paragraph, index + 1);
+    const target = document.createRange();
+    target.selectNode(image);
+    act(() => {
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'deleteContentBackward' }, target);
+      expect(before.defaultPrevented).toBe(false);
+      tail.data += 'foreign';
+      image.remove();
+      native.collapse(paragraph, index);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+    });
+    expect(fixture.history.getValue()).toBe(source);
+    expect(fixture.onFailure).toHaveBeenCalledWith('visual-editor-canonical-change-dom-stale');
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('Full image activation refuses an unsupported reference profile without writing', () => {
+  vi.useFakeTimers();
+  const source = '[k]: /local.png\n\nOpening ![dot][\u212a] tail.';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap('reference-image-activation-unsupported', [
+      { id: 'b0', startLine: 2, endLine: 3 }
+    ]),
+    html: fullOwnerBlock('<p>Opening <img src="/local.png" alt="dot"> tail.</p>', 'b0'),
+    markdown: source,
+    referenceLabelCaseFoldProfile: 'unsupported',
+    signature: 'reference-image-activation-unsupported'
+  });
+  try {
+    const image = fixture.surface.querySelector('img');
+    if (!(image instanceof HTMLImageElement)) throw new Error('reference-image-activation-missing');
+    const revision = fixture.history.getRevision();
+    const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 });
+    act(() => image.dispatchEvent(down));
+    expect(down.defaultPrevented).toBe(true);
+    expect(fixture.onFailure).toHaveBeenCalledWith('visual-editor-reference-label-fold-profile-unavailable');
+    expect(fixture.history.getValue()).toBe(source);
+    expect(fixture.history.getRevision()).toBe(revision);
+    expect(fixture.history.getHistoryState()).toEqual({ undoDepth: 0, redoDepth: 0 });
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
 it('Full inline-image split-Text history restores the authored collapsed caret', async ({ task }) => {
   vi.useFakeTimers();
   const imageMarkdown = '![pic](image.png)';
@@ -31664,7 +41388,7 @@ describe('Full owned-gap sequential native deletion consumers', () => {
   const formalDocument = (markdown: string): FullOwnerAcceptedDocument => {
     const rows: FullOwnerRow[] = [];
     const html: string[] = [];
-    for (const block of createEditorMarkdownBlockIndex(markdown).blocks) {
+    for (const block of createEditorMarkdownBlockIndex(markdown, { referenceLabelCaseFoldProfile: 14 }).blocks) {
       const raw = markdown.slice(block.from, block.to).replace(/\n+$/u, '');
       if (!raw.trim()) continue;
       const id = `b${rows.length}`;
@@ -31681,6 +41405,76 @@ describe('Full owned-gap sequential native deletion consumers', () => {
     }
     return { markdown, html: html.join(''), editMap: fullOwnerEditMap('gap-formal-response', rows) };
   };
+
+  it.each(['~~~python', '```python'])('creates %s in a leading owned empty paragraph without changing following source', async (opening) => {
+    vi.useFakeTimers();
+    const initial = 'Before \\\\ path.\n\n\nMiddle.\n\nAfter.';
+    const fixture = createFullOwnerFixture({ ...formalDocument(initial), signature: 'leading-owned-gap', sourceCaret: 0 });
+    try {
+      const original = fixture.surface.querySelector('p');
+      const text = original?.firstChild;
+      if (!(original instanceof HTMLParagraphElement) || !(text instanceof Text)) throw new Error('leading-gap-setup-invalid');
+      fixture.surface.focus();
+      placeCaretInText(text, 0);
+      act(() => {
+        const enter = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' });
+        fixture.surface.dispatchEvent(enter);
+        expect(enter.defaultPrevented).toBe(false);
+        const native = window.getSelection()!;
+        const range = native.getRangeAt(0).cloneRange();
+        expect(fullOwnerDispatchBeforeInput(fixture.surface, { data: null, inputType: 'insertParagraph' }, range).defaultPrevented).toBe(false);
+        const leading = original.cloneNode(false) as HTMLParagraphElement;
+        leading.append(document.createElement('br'));
+        original.before(leading);
+        native.collapse(text, 0);
+        fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertParagraph' }));
+      });
+      expect(fixture.history.getValue()).toBe('  \n\n' + initial);
+      const native = window.getSelection()!;
+      const leading = fixture.surface.firstElementChild;
+      if (!(leading instanceof HTMLParagraphElement)) throw new Error('leading-gap-paragraph-missing');
+      native.collapse(leading, 0);
+      expect(serializeVisualMarkdown(fixture.surface)).toBe('Before \\\\ path.\n\nMiddle.\n\nAfter.');
+      act(() => {
+        for (const character of opening) {
+          const range = native.getRangeAt(0).cloneRange();
+          expect(fullOwnerDispatchBeforeInput(fixture.surface, { data: character, inputType: 'insertText' }, range).defaultPrevented,
+            `character ${character}; failures ${JSON.stringify(fixture.onFailure.mock.calls)}`).toBe(false);
+          if (range.startContainer instanceof Text) {
+            range.startContainer.insertData(range.startOffset, character);
+            native.collapse(range.startContainer, range.startOffset + 1);
+          } else {
+            const inserted = document.createTextNode(character);
+            leading.replaceChildren(inserted);
+            native.collapse(inserted, 1);
+          }
+          fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: character, inputType: 'insertText' }));
+        }
+        fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' }));
+      });
+      await act(async () => { vi.advanceTimersByTime(90); await Promise.resolve(); });
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+      expect(fixture.history.getValue()).toBe('```python\n\n```\n\n' + initial);
+      const code = fixture.surface.querySelector('pre code');
+      expect(code?.classList.contains('language-python')).toBe(true);
+      if (!(code instanceof HTMLElement)) throw new Error('leading-gap-code-missing');
+      act(() => {
+        const range = native.getRangeAt(0).cloneRange();
+        expect(fullOwnerDispatchBeforeInput(fixture.surface, { data: 'x', inputType: 'insertText' }, range).defaultPrevented).toBe(false);
+        const inserted = document.createTextNode('x');
+        code.replaceChildren(inserted);
+        native.collapse(inserted, 1);
+        fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'x', inputType: 'insertText' }));
+      });
+      await act(async () => { vi.advanceTimersByTime(90); await Promise.resolve(); });
+      expect(fixture.history.getValue()).toBe('```python\nx\n```\n\n' + initial);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  });
 
   it.for(scenarios)('$transition at $position with $family (element endpoint $elementEndpoint, burst $burstTyping) keeps every live caret through deletion and continuation', async (scenario, { task }) => {
     vi.useFakeTimers();
@@ -32073,4 +41867,86 @@ describe('Full owned-gap sequential native deletion consumers', () => {
       fixture.unmount(); vi.useRealTimers();
     }
   });
+});
+
+
+// The measured chain in one document: an emptied terminal heading is
+// respelled as a paragraph (the shortcut), then the browser names the next
+// press by the preceding row's text tail while a reference definition the
+// renderer hides still sits between them, and then ordinary typing must still
+// land. Each step owns its own canonical bytes, so the source and the surface
+// stay one pairing throughout.
+it('keeps the emptied terminal chain consistent across its shortcut, its join and the next key', async () => {
+  vi.useFakeTimers();
+  const accepted = fullDuplicateSeparatorDocument();
+  const signature = 'terminal-chain';
+  const fixture = createFullOwnerFixture({
+    editMap: null,
+    html: accepted.html,
+    markdown: accepted.markdown,
+    signature,
+    sourceCaret: accepted.markdown.length - 1
+  });
+  const settle = async (): Promise<void> => {
+    await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); });
+  };
+  try {
+    const heading = fixture.surface.querySelectorAll('h2')[1];
+    if (!(heading instanceof HTMLElement)) throw new Error('terminal-chain-heading-missing');
+    fixture.surface.focus();
+    window.getSelection()?.collapse(heading, 0);
+
+    // The emptied heading's own row goes; the earlier `## 22. Ref` row stays.
+    expect(pressFullBackspaceKey(fixture.surface)).toBe(true);
+    await settle();
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(
+      'Para\n\n## 22. Ref\n\nBody.\n\n[ref]: https://example.com "Example"\n\n\n\n'
+    );
+
+    // The emptied paragraph joins the preceding row, across the hidden
+    // definition: the owner reads the trailing separator run, not the press's
+    // text point, so the definition is never treated as block text.
+    const emptied = fixture.surface.querySelector('[data-easymde-visual-block-id="b3"]');
+    const text = fixture.surface.querySelector('[data-easymde-visual-block-id="b2"]')?.firstChild;
+    if (!(emptied instanceof HTMLElement) || !(text instanceof Text)) {
+      throw new Error('terminal-chain-join-fixture-invalid');
+    }
+    const caret = document.createRange();
+    caret.setStart(emptied, 0);
+    caret.collapse(true);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(caret);
+    const target = document.createRange();
+    target.setStart(text, text.length);
+    target.setEnd(emptied, 0);
+    const join = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      target.cloneRange()
+    );
+    expect(join.defaultPrevented).toBe(true);
+    await settle();
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(
+      'Para\n\n## 22. Ref\n\nBody.\n\n[ref]: https://example.com "Example"'
+    );
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', end: 61, start: 61 });
+    expect(emptied.isConnected).toBe(false);
+
+    // The caret is not stranded: the next key is ordinary native input again.
+    const tail = fixture.surface.querySelector('[data-easymde-visual-block-id="b2"]')?.firstChild;
+    if (!(tail instanceof Text)) throw new Error('terminal-chain-tail-missing');
+    expect(fullOwnerNativeInsert(fixture.surface, tail, tail.length, 'Z').prevented).toBe(false);
+    await settle();
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(
+      'Para\n\n## 22. Ref\n\nBody.Z\n\n[ref]: https://example.com "Example"'
+    );
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
 });

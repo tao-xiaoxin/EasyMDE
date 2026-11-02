@@ -1,9 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { markdownLanguage } from '@codemirror/lang-markdown';
+import { markdownReferenceDefinitionQuery, type MarkdownSyntaxNode } from '../editor-context-menu/editor-markdown-link-preparation';
 
 import type {
   PreviewEditMap,
   PreviewEditMapBlock
 } from '../../contracts/ports/preview-request';
+import type { VisualEmptyStructuralBodySelectionResult } from './visual-markdown';
 import * as markdownLineModel from '../../shared/markdown/markdown-line-model';
 import {
   isMarkdownTerminalWhitespaceSuffix,
@@ -11,7 +14,11 @@ import {
 } from '../../shared/markdown/markdown-line-model';
 
 import {
+  prepareVisualEmptyStructuralBodies,
   applyVisualBlockShortcut,
+  visualBlockShortcutRewriteTarget,
+  visualBlockShortcutRewritesEmptyBlock,
+  visualEmptiedTerminalRow,
   applyVisualInlineShortcut,
   applyVisualToolbarCommand,
   applyVisualMarkdownEditIntent,
@@ -21,6 +28,9 @@ import {
   classifyVisualSelectionProvenance,
   createVisualImageInteraction,
   createVisualMarkdownSourceIntervalMap,
+  declaredBlockLeadingRuns,
+  isDeclaredBlockLeadingRun,
+  createVisualMarkdownImageSourceIntervalMap,
   mapTextBoundaryFromInterval,
   expandVisualCodeFenceForBody,
   foldVisualMarkdownSoftBreaks,
@@ -30,6 +40,8 @@ import {
   createVisualCodeBodyIntervalsForPreviewBlocks,
   visualCodeBodyIntervalMap,
   createVisualMarkdownWindowChange,
+  nextGraphemeBoundary,
+  previousGraphemeBoundary,
   assertVisualMarkdownReadOnlySnapshot,
   captureVisualMarkdownReadOnlySnapshot,
   mergeVisualMarkdownChange,
@@ -42,6 +54,9 @@ import {
   visualCaretBoundaryFromSourceOffset,
   visualCodeFenceRootSourceOffset,
   visualBoundarySourceOffset,
+  visualSourceRangeForRenderedImage,
+  visualRetiredInlineSourceRange,
+  visualBoundaryForImageSourceEdge,
   prepareVisualTaskListMarkers,
   protectVisualMarkdownReadOnlyRegions,
   projectVisualCodeBodySelection,
@@ -51,6 +66,7 @@ import {
   shouldNormalizeVisualImageContextMenuSelection,
   serializeVisualMarkdown,
   serializeVisualMarkdownBlockFragment,
+  structuralEmptyLineRemoval,
   visualSelectionSourceRangeForBlocks,
   visualSelectionSourceRange,
   visualEmptyStructuralBodySelection,
@@ -62,6 +78,148 @@ import {
 } from './visual-markdown';
 
 describe('canonical escape-unit deletion', () => {
+  it.each([
+    ['single delimiter', 'A `\\*` Z', 'A <code>\\*</code> Z', 1],
+    ['consecutive slashes', 'A `\\\\*` Z', 'A <code>\\\\*</code> Z', 1],
+    ['multiple delimiters', 'A ``\\*`` Z', 'A <code>\\*</code> Z', 1],
+    ['CRLF', 'L\r\n\r\nA `\\*` Z', 'L</p><p>A <code>\\*</code> Z', 1]
+  ])('maps an inline code literal boundary for %s', (_label, source, html, textOffset) => {
+    const surface = editor(`<p>${html}</p>`);
+    const code = surface.querySelector('code');
+    const text = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(text instanceof Text)) {
+      throw new Error('visual-inline-code-body-missing');
+    }
+    const baseline = serializeVisualMarkdown(surface);
+    const expected = source.indexOf('\\') + textOffset;
+    const interval = createVisualMarkdownSourceIntervalMap(source, baseline);
+    expect(visualBoundarySourceOffset(surface, source, baseline, text, textOffset, interval))
+      .toBe(expected);
+    expect(mapTextBoundaryFromInterval(surface, text, textOffset, baseline, interval))
+      .toMatchObject({ sourceOffset: expected });
+    const boundary = visualCaretBoundaryFromSourceOffset(surface, source, baseline, expected);
+    expect(code.contains(boundary.node)).toBe(true);
+    const prefix = document.createRange();
+    prefix.selectNodeContents(code);
+    prefix.setEnd(boundary.node, boundary.offset);
+    expect(prefix.toString()).toBe(text.data.slice(0, textOffset));
+    expect(visualBoundarySourceOffset(surface, source, baseline, text, 0, interval))
+      .toBe(source.indexOf('\\'));
+    expect(visualBoundarySourceOffset(surface, source, baseline, text, text.length, interval))
+      .toBe(source.indexOf('\\') + text.length);
+    expect(visualBoundarySourceOffset(surface, source, baseline, code, 0, interval))
+      .toBe(source.indexOf('\\'));
+    expect(visualBoundarySourceOffset(surface, source, baseline, code, code.childNodes.length, interval))
+      .toBe(source.indexOf('\\') + text.length);
+    const start = visualCaretBoundaryFromSourceOffset(surface, source, baseline, source.indexOf('\\'));
+    expect(code.contains(start.node)).toBe(true);
+    const startPrefix = document.createRange();
+    startPrefix.selectNodeContents(code);
+    startPrefix.setEnd(start.node, start.offset);
+    expect(startPrefix.toString()).toBe('');
+    if (surface.children.length === 1 && surface.firstElementChild instanceof HTMLElement) {
+      const paragraph = surface.firstElementChild;
+      const localBaseline = serializeVisualMarkdownBlockFragment([paragraph]);
+      const localMap = createVisualMarkdownSourceIntervalMap(source, localBaseline);
+      expect(visualBoundarySourceOffset(paragraph, source, localBaseline, text, textOffset, localMap))
+        .toBe(expected);
+      const localBoundary = visualCaretBoundaryFromSourceOffset(paragraph, source, localBaseline, expected);
+      expect(code.contains(localBoundary.node)).toBe(true);
+    }
+  });
+
+  it('keeps ordinary escape units and source snapshot mismatches explicit', () => {
+    const source = 'A \\* Z';
+    const map = createVisualMarkdownSourceIntervalMap(source, source);
+    expect(map.coversSourceUnits(3, 3)).toBe(false);
+    expect(map.coversSourceUnits(-1, 0)).toBe(false);
+    const foreign = { ...map, source: 'A `\\*` Z' };
+    expect(() => foreign.coversSourceUnits(4, 4))
+      .toThrow('visual-editor-markdown-merge-failed');
+  });
+
+  it('keeps hidden delimiter insertions guarded without a code body read proof', () => {
+    const surface = editor('<p>A <code>\\*</code> Z</p>');
+    const source = 'A ``\\*`` Z';
+    const baseline = serializeVisualMarkdown(surface);
+    const marker = '\uE000\uE001\uE002\uE003';
+    const position = baseline.indexOf('\\');
+    expect(() => mergeVisualMarkdownChange(source, baseline,
+      baseline.slice(0, position) + marker + baseline.slice(position)))
+      .toThrow('visual-editor-markdown-merge-ambiguous');
+  });
+
+  it('does not certify an inline code body changed after the mapping snapshot', () => {
+    const surface = editor('<p>A <code>\\*</code> Z</p>');
+    const code = surface.querySelector('code');
+    const text = code?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-inline-code-body-missing');
+    const source = 'A ``\\*`` Z';
+    const baseline = serializeVisualMarkdown(surface);
+    const map = createVisualMarkdownSourceIntervalMap(source, baseline);
+    text.data = '\\!';
+    expect(() => visualBoundarySourceOffset(surface, source, baseline, text, 0, map))
+      .toThrow();
+  });
+
+  it('rejects a foreign inline code node and the interior of a multi-character delimiter', () => {
+    const surface = editor('<p>A <code>\\*</code> Z</p>');
+    const source = 'A ``\\*`` Z';
+    const baseline = serializeVisualMarkdown(surface);
+    const foreign = document.createTextNode('\\*');
+    expect(() => visualBoundarySourceOffset(surface, source, baseline, foreign, 1))
+      .toThrow('visual-editor-selection-map-failed');
+    expect(() => visualCaretBoundaryFromSourceOffset(surface, source, baseline, 3))
+      .toThrow('visual-editor-selection-map-failed');
+  });
+
+  it('maps a certified inline code endpoint in a detached accepted fragment', () => {
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p>A <code>\\*</code> Z</p>';
+    const code = surface.querySelector('code');
+    if (!(code instanceof HTMLElement)) throw new Error('visual-inline-code-body-missing');
+    const source = 'A ``\\*`` Z';
+    const baseline = serializeVisualMarkdownBlockFragment([surface]);
+    const boundary = visualCaretBoundaryFromSourceOffset(surface, source, baseline, 4, true, {
+      acceptedEndpointBlock: true
+    });
+    expect(code.contains(boundary.node)).toBe(true);
+    const prefix = document.createRange();
+    prefix.selectNodeContents(code);
+    prefix.setEnd(boundary.node, boundary.offset);
+    expect(prefix.toString()).toBe('');
+  });
+
+  it.each([
+    ['noneditable ancestor', '<span contenteditable="false"><code>\\*</code></span>'],
+    ['opaque child', '<code>\\*<img alt="" src="x"></code>']
+  ])('does not certify an inline code body with %s', (_label, html) => {
+    const surface = editor(`<p>A ${html} Z</p>`);
+    const text = surface.querySelector('code')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-inline-code-body-missing');
+    const source = 'A ``\\*`` Z';
+    const baseline = serializeVisualMarkdown(surface);
+    expect(() => visualBoundarySourceOffset(surface, source, baseline, text, 0))
+      .toThrow();
+  });
+
+  it('reports a controlled merge mismatch without exposing source text', () => {
+    const source = 'Private source';
+    const map = createVisualMarkdownSourceIntervalMap('Other source', 'Other source');
+    try {
+      mergeVisualMarkdownChangeDetails(source, source, '', map);
+      throw new Error('merge unexpectedly succeeded');
+    } catch (error) {
+      expect(error).toMatchObject({
+        message: 'visual-editor-markdown-merge-failed',
+        reason: 'map-snapshot-mismatch',
+        details: { sourceLength: source.length, baselineLength: source.length, editedLength: 0 }
+      });
+      expect(JSON.stringify(error)).not.toContain(source);
+      expect(JSON.stringify(error)).not.toContain('Other source');
+    }
+  });
+
   it.each(['~', '`', '*', '[', '\\'])('removes the whole single escaped %s unit', (marker) => {
     expect(mergeVisualMarkdownChangeDetails(`\\${marker}`, marker, '').value).toBe('');
   });
@@ -187,6 +345,132 @@ describe('visual Markdown editing', () => {
       surface.remove();
     }
   );
+
+  it.each([
+    {
+      baseline: '## 清单\n\n-',
+      edited: '## 清单',
+      source: '## 清单\n\n*\n'
+    },
+    {
+      baseline: '## 清单\n\n-',
+      edited: '## 清单',
+      source: '## 清单\n\n*'
+    },
+    {
+      baseline: '## 清单\n\n- ',
+      edited: '## 清单',
+      source: '## 清单\n\n* '
+    }
+  ])(
+    'removes a trailing empty structural row spelled differently in source (%#)',
+    ({ baseline, edited, source }) => {
+      // Replacing an emptied list with a paragraph removes the whole visual
+      // line. Its `-` spelling and the serializer's blank separator are not
+      // source bytes, so only the structural row proof can name the row.
+      expect(mergeVisualMarkdownChange(source, baseline, edited)).toBe(
+        '## 清单\n\n'
+      );
+    }
+  );
+
+  it('removes a trailing empty structural row from CRLF source', () => {
+    expect(
+      mergeVisualMarkdownChange(
+        '## 清单\r\n\r\n+\r\n',
+        '## 清单\r\n\r\n-',
+        '## 清单'
+      )
+    ).toBe('## 清单\r\n\r\n');
+  });
+
+  it.each([
+    { baseline: '-\n\n## B', edited: '## B', source: '*\n\n## B', expected: '\n## B' },
+    {
+      baseline: '## A\n\n-\n\n## B',
+      edited: '## A\n\n## B',
+      source: '## A\n\n*\n\n## B',
+      expected: '## A\n\n\n## B'
+    }
+  ])(
+    'removes a whole structural row without consuming the blank lines around it (%#)',
+    ({ baseline, edited, source, expected }) => {
+      expect(mergeVisualMarkdownChange(source, baseline, edited)).toBe(expected);
+    }
+  );
+
+  it.each([
+    { baseline: '>', source: '> ' },
+    { baseline: '1.', source: '1. ' }
+  ])(
+    'removes the separator the serializer trims from an emptied structural row ($baseline)',
+    ({ baseline, source }) => {
+      // The visual spelling of an empty row trims its separator; a literal
+      // match would leave that separator behind as a whitespace document.
+      expect(mergeVisualMarkdownChange(source, baseline, '')).toBe('');
+    }
+  );
+
+  it('keeps the structural row while only its body text is deleted', () => {
+    expect(mergeVisualMarkdownChange('> a', '> a', '> ')).toBe('> ');
+  });
+
+  it('refuses a structural visual removal against a non-structural source row', () => {
+    expect(() =>
+      mergeVisualMarkdownChange(
+        '## A\n\n# heading',
+        '## A\n\n-',
+        '## A'
+      )
+    ).toThrow('visual-editor-markdown-merge-failed');
+  });
+
+  it.each([
+    ['<ul>\n<li><br></li>\n</ul>', 'Backspace', true],
+    ['<ul>\n<li>A</li>\n</ul>', 'Backspace', false],
+    ['<blockquote>\n<p><br></p>\n</blockquote>', 'Backspace', true],
+    ['<h2><br></h2>', 'Backspace', true],
+    ['<p>Text</p>', 'Backspace', false]
+  ])(
+    'states whether a shortcut will rewrite the empty block %s',
+    (markup, key, expected) => {
+      const surface = editor(markup);
+      const block = surface.firstElementChild;
+      if (!(block instanceof HTMLElement)) {
+        throw new Error('visual-empty-rewrite-block-missing');
+      }
+      const editable = block.querySelector('li, p') ?? block;
+      placeCaret(editable, editable.childNodes.length);
+      const shortcut = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key
+      });
+      expect(visualBlockShortcutRewritesEmptyBlock(surface, shortcut)).toBe(
+        expected
+      );
+      // The predicate is read-only: it never consumes the event or mutates DOM.
+      expect(shortcut.defaultPrevented).toBe(false);
+      expect(surface.firstElementChild).toBe(block);
+      surface.remove();
+    }
+  );
+
+  it('does not request a flush for a marker-forming space shortcut', () => {
+    const surface = editor('<p>#</p>');
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) {
+      throw new Error('visual-heading-marker-text-missing');
+    }
+    placeCaret(text, text.length);
+    expect(
+      visualBlockShortcutRewritesEmptyBlock(
+        surface,
+        new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: ' ' })
+      )
+    ).toBe(false);
+    surface.remove();
+  });
 
   it('preserves a literal space inside a list item as content', () => {
     const surface = editor('<ul>\n<li> </li>\n</ul>');
@@ -444,7 +728,12 @@ describe('visual Markdown editing', () => {
         const uncached = project(codeOrdinal, localSelection, false);
         const cached = project(codeOrdinal, localSelection, true);
 
-        expect(cached, localSelection.label).toEqual(uncached);
+        // A cached interval additionally binds the source it was derived from.
+        expect(cached, localSelection.label).toEqual({
+          ...uncached,
+          sourceInterval: { ...uncached.sourceInterval, sourceMarkdown: markdown },
+          visualInterval: { ...uncached.visualInterval, sourceMarkdown: markdown }
+        });
         expect(cached.sourceSelection).toEqual({
           end: cached.sourceInterval.bodyStart + localSelection.end,
           start: cached.sourceInterval.bodyStart + localSelection.start
@@ -495,13 +784,14 @@ describe('visual Markdown editing', () => {
       for (const batch of [small, large]) {
         expect(batch.intervals.size).toBe(batch.codeBlockIds.length);
         for (const id of batch.codeBlockIds) {
-          expect(batch.intervals.get(id)).toEqual(
-            createVisualCodeBodyIntervalForPreviewBlock(
+          expect(batch.intervals.get(id)).toEqual({
+            ...createVisualCodeBodyIntervalForPreviewBlock(
               batch.markdown,
               batch.editMap,
               id
-            )
-          );
+            ),
+            sourceMarkdown: batch.markdown
+          });
         }
       }
     } finally {
@@ -664,6 +954,45 @@ describe('visual Markdown editing', () => {
       `${before}${outerFence}js\r\nBefore\r\n${fence}\r\nAfter\r\n${outerFence}\r\n${after}`
     );
     expect(expanded?.openingFenceDelta).toBe(1);
+  });
+
+  it.each(['~~~', '```'])('uses only a source-bound interval witness for %s expansion', (fence) => {
+    const source = `${fence}js\r\nBefore\r\n${fence}`;
+    const body = `Before\n${fence}x\n`;
+    const interval = visualCodeBodyIntervalMap(source).get(0);
+    if (!interval) throw new Error('code-body-witness-missing');
+    const witness = { sourceMarkdown: source, codeOrdinal: 0, interval };
+    expect(expandVisualCodeFenceForBody(source, 0, body, witness)).toEqual(expandVisualCodeFenceForBody(source, 0, body));
+    expect(() => expandVisualCodeFenceForBody(source.replace(/\r\n/g, '\n'), 0, body, witness)).toThrow('visual-editor-code-body-map-stale');
+    expect(() => expandVisualCodeFenceForBody(`    old\n\n${source}`, 0, body, witness)).toThrow('visual-editor-code-body-map-stale');
+    expect(() => expandVisualCodeFenceForBody(source, 1, body, witness)).toThrow('visual-editor-code-body-map-stale');
+    const unboundInterval = { ...interval, sourceMarkdown: undefined };
+    expect(() => expandVisualCodeFenceForBody(source, 0, body, { ...witness, interval: unboundInterval })).toThrow('visual-editor-code-body-map-stale');
+  });
+
+  it('keeps an open-EOF fence expansion identical with a source-bound interval', () => {
+    const source = '~~~js\nBefore\n';
+    const body = 'Before\n~~~x\n';
+    const interval = visualCodeBodyIntervalMap(source).get(0);
+    if (!interval) throw new Error('code-body-witness-missing');
+    expect(expandVisualCodeFenceForBody(source, 0, body, { sourceMarkdown: source, codeOrdinal: 0, interval }))
+      .toEqual(expandVisualCodeFenceForBody(source, 0, body));
+  });
+
+  it('keeps an indented list fence expansion identical with a source-bound interval', () => {
+    const source = '- item\n\n  ```js\n  Before\n  ```';
+    const body = '  Before\n  ```x\n';
+    const interval = visualCodeBodyIntervalMap(source).get(0);
+    if (!interval) throw new Error('code-body-witness-missing');
+    expect(expandVisualCodeFenceForBody(source, 0, body, { sourceMarkdown: source, codeOrdinal: 0, interval }))
+      .toEqual(expandVisualCodeFenceForBody(source, 0, body));
+  });
+
+  it('retains the existing unsupported quote-prefixed fence behavior', () => {
+    const source = '> ```js\n> Before\n> ```';
+    expect(visualCodeBodyIntervalMap(source).size).toBe(0);
+    expect(() => expandVisualCodeFenceForBody(source, 0, 'Before\n```x\n'))
+      .toThrow('visual-editor-code-body-map-invalid');
   });
 
   it('resolves a source selection to its unique closed fenced code body', () => {
@@ -1684,6 +2013,242 @@ A--&gt;B</code></pre>
     surface.remove();
   });
 
+  it('projects a repeated witnessed terminal space only through its matching owning prefix', () => {
+    const source = 'Paragraph earlier\n\nParagraph ';
+    const baseline = 'Paragraph earlier\n\nParagraph';
+    const surface = editor('<p>Paragraph earlier</p><p>Paragraph\u00a0</p>');
+    const node = surface.lastElementChild?.firstChild;
+    if (!(node instanceof Text)) throw new Error('repeated-witness-text-missing');
+    const interval = createVisualMarkdownSourceIntervalMap(source, baseline);
+    const witness = { data: 'Paragraph ' };
+    expect(mapTextBoundaryFromInterval(surface, node, node.length, baseline, interval, false, witness))
+      .toEqual({ sourceOffset: source.length, visualOffset: baseline.length });
+    expect(mapTextBoundaryFromInterval(surface, node, node.length - 1, baseline, interval, false, witness))
+      .toEqual({ sourceOffset: source.length - 1, visualOffset: baseline.length });
+    const wrongSource = createVisualMarkdownSourceIntervalMap('Paragraph earlier\n\nParagraphX', baseline);
+    expect(mapTextBoundaryFromInterval(surface, node, node.length, baseline, wrongSource, false, witness)).toBeNull();
+
+    const preceding = surface.firstElementChild;
+    if (!(preceding instanceof HTMLElement)) throw new Error('repeated-witness-prefix-missing');
+    preceding.textContent = 'Altered earlier';
+    expect(mapTextBoundaryFromInterval(surface, node, node.length, baseline, interval, false, witness)).toBeNull();
+    const foreign = document.createTextNode('Paragraph\u00a0');
+    expect(mapTextBoundaryFromInterval(surface, foreign, foreign.length, baseline, interval, false, witness)).toBeNull();
+    surface.remove();
+  });
+
+  // Press 153's geometry: the witnessed run ends its block and ends with a
+  // space, and the serializer spelled an escape inside it. `escape()` escapes
+  // `\ * - + = # ` ~ [ ] > _ .` in a non-code text node, but only five of them
+  // mid-run - the rest only at a line start, and `~` not at all - so each
+  // character stands in the DOM shape the serializer really writes its escape
+  // in, and the raw source is read back from the serializer instead of guessed.
+  // Every resolving row refused before the fix, because the pin compared the
+  // DOM's rendered spelling against the baseline's raw spelling; the two refusal
+  // rows below assert the hand-overs that stay refusals.
+  it.each([
+    ['*', 'Alpha *beta '],
+    ['-', '-Alpha beta '],
+    ['+', '+ Alpha beta '],
+    ['=', '=Alpha beta '],
+    ['#', '# Alpha beta '],
+    ['`', 'Alpha `beta '],
+    ['[', 'Alpha [beta '],
+    [']', 'Alpha ]beta '],
+    ['>', '>Alpha beta '],
+    ['_', 'Alpha _beta '],
+    ['.', '1. Alpha beta ']
+  ])(
+    'projects a witnessed terminal run the serializer escaped with %s',
+    (marker, renderedBody) => {
+      // The live DOM spells the run's terminal space as the NBSP artifact, so the
+      // row hands the mapper the same spelling the witness establishment folds.
+      const surface = editor(`<p>Lead</p><p>${renderedBody.replace(/ $/u, '\u00a0')}</p>`);
+      const block = surface.lastElementChild;
+      if (!(block instanceof HTMLElement)) throw new Error('escaped-witness-block-missing');
+      const node = block.firstChild;
+      if (!(node instanceof Text)) throw new Error('escaped-witness-text-missing');
+      // The browser spells the space before a collapsed caret as an NBSP while
+      // the committed source spells it as an ASCII space, so the raw spelling is
+      // read back from the serializer with the same fold the witness
+      // establishment makes, and the terminal space the block fragment trims is
+      // put back: that is the committed source this geometry is about.
+      const rawBody = `${serializeVisualMarkdownBlockFragment([block])
+        .replace(/\u00a0/gu, ' ')
+        .replace(/ +$/u, '')} `;
+      const source = `Lead\n\n${rawBody}`;
+      const renderedBlock = (block.textContent ?? '').replace(/\u00a0/gu, ' ');
+      // The premises, asserted rather than assumed: the serializer really
+      // spelled this character as an escape, the rendered spelling is the run
+      // the witness carries, and the raw spelling is longer by exactly that one
+      // escape - so a row whose geometry stops holding reds here.
+      expect(rawBody).toContain(`\\${marker}`);
+      expect(renderedBlock).toBe(renderedBody);
+      expect(rawBody.length - renderedBlock.length).toBe(1);
+      expect(
+        mapTextBoundaryFromInterval(
+          surface,
+          node,
+          node.length,
+          source,
+          createVisualMarkdownSourceIntervalMap(source, source),
+          false,
+          { data: renderedBody }
+        )
+      ).toEqual({ sourceOffset: source.length, visualOffset: source.length });
+      surface.remove();
+    }
+  );
+
+  it.each([
+    ['at the start of the run', '\\*Alpha beta ', '*Alpha beta ', '*Alpha beta '],
+    ['inside the run', 'Alpha \\*beta ', 'Alpha *beta ', 'Alpha *beta '],
+    ['at the end of the run', 'Alpha beta\\* ', 'Alpha beta* ', 'Alpha beta* '],
+    ['twice in the run', 'Alpha \\*beta\\_ ', 'Alpha *beta_ ', 'Alpha *beta_ ']
+  ])(
+    'projects a witnessed terminal run with an escape %s',
+    (_label, rawBody, renderedBody, witnessData) => {
+      const source = `Lead\n\n${rawBody}`;
+      const surface = editor(`<p>Lead</p><p>${renderedBody}</p>`);
+      const node = surface.lastElementChild?.firstChild;
+      if (!(node instanceof Text)) throw new Error('escaped-witness-text-missing');
+      const interval = createVisualMarkdownSourceIntervalMap(source, source);
+      // The same premise the per-character rows assert: the rendered spelling the
+      // DOM carries ends with the run the witness names, and the raw spelling is
+      // longer by exactly one character per escape the run carries.
+      const renderedBlock = (surface.lastElementChild?.textContent ?? '').replace(/ /gu, ' ');
+      expect(renderedBlock.endsWith(witnessData)).toBe(true);
+      expect(rawBody.length - renderedBlock.length).toBe(rawBody.split('\\').length - 1);
+      expect(
+        mapTextBoundaryFromInterval(
+          surface,
+          node,
+          node.length,
+          source,
+          interval,
+          false,
+          { data: witnessData }
+        )
+      ).toEqual({ sourceOffset: source.length, visualOffset: source.length });
+      surface.remove();
+    }
+  );
+
+  // The one escapable character whose escape spelling is itself a backslash run:
+  // the serializer writes `\\` for one rendered backslash, and which backslash a
+  // rendered position came from is the owning block's literal marker's to decide,
+  // so this path hands those boundaries over instead of guessing - the same
+  // hand-over the fast path makes when it meets an active escape. The premises are
+  // asserted as the resolving rows assert theirs, and then the refusal.
+  it('refuses a witnessed terminal run whose escape is a backslash run', () => {
+    const surface = editor('<p>Lead</p><p>Alpha \\beta\u00a0</p>');
+    const block = surface.lastElementChild;
+    if (!(block instanceof HTMLElement)) throw new Error('literal-witness-block-missing');
+    const node = block.firstChild;
+    if (!(node instanceof Text)) throw new Error('literal-witness-text-missing');
+    const rawBody = `${serializeVisualMarkdownBlockFragment([block])
+      .replace(/\u00a0/gu, ' ')
+      .replace(/ +$/u, '')} `;
+    const source = `Lead\n\n${rawBody}`;
+    const renderedBlock = (block.textContent ?? '').replace(/\u00a0/gu, ' ');
+    expect(rawBody).toContain('\\\\');
+    expect(renderedBlock).toBe('Alpha \\beta ');
+    expect(rawBody.length - renderedBlock.length).toBe(1);
+    expect(
+      mapTextBoundaryFromInterval(
+        surface,
+        node,
+        node.length,
+        source,
+        createVisualMarkdownSourceIntervalMap(source, source),
+        false,
+        { data: 'Alpha \\beta ' }
+      )
+    ).toBeNull();
+    surface.remove();
+  });
+
+  // The one escapable character this serializer never spells as an escape,
+  // measured rather than assumed: `escape()` has no rule for `~` inside a
+  // paragraph's own text, so no baseline the product produces carries a mid-run
+  // `\~`. A source that does carry one therefore has no provable baseline at
+  // all, and the mapping refuses it instead of guessing - which is what failing
+  // closed means here. A line-start run is a different spelling: the fence
+  // marker rule keeps the fence spelling there - a line-start run followed by an
+  // info string is a complete opening, not a growing literal - so this refusal
+  // is measured on the mid-run escape and the anchored row pins the fence
+  // spelling the fence rule owes.
+  it('refuses a witnessed terminal run whose escape the serializer never writes', () => {
+    const midRunSurface = editor('<p>Lead</p><p>Alpha ~beta </p>');
+    const midRunBlock = midRunSurface.lastElementChild;
+    if (!(midRunBlock instanceof HTMLElement)) throw new Error('tilde-witness-block-missing');
+    expect(serializeVisualMarkdownBlockFragment([midRunBlock])).not.toContain('\\');
+    const anchoredSurface = editor('<p>Lead</p><p>~~~Alpha beta </p>');
+    const anchoredBlock = anchoredSurface.lastElementChild;
+    if (!(anchoredBlock instanceof HTMLElement)) throw new Error('tilde-anchored-block-missing');
+    expect(serializeVisualMarkdownBlockFragment([anchoredBlock]))
+      .toBe('~~~Alpha beta');
+    midRunSurface.remove();
+    anchoredSurface.remove();
+    const source = 'Lead\n\nAlpha \\~beta ';
+    const surface = editor('<p>Lead</p><p>Alpha ~beta\u00a0</p>');
+    const node = surface.lastElementChild?.firstChild;
+    if (!(node instanceof Text)) throw new Error('tilde-witness-text-missing');
+    expect(
+      mapTextBoundaryFromInterval(
+        surface,
+        node,
+        node.length,
+        source,
+        createVisualMarkdownSourceIntervalMap(source, source),
+        false,
+        { data: 'Alpha ~beta ' }
+      )
+    ).toBeNull();
+    surface.remove();
+  });
+
+  it('keeps a witnessed terminal run without an escape unchanged', () => {
+    const rawBody = 'Alpha beta ';
+    const source = `Lead\n\n${rawBody}`;
+    const surface = editor('<p>Lead</p><p>Alpha beta\u00a0</p>');
+    const node = surface.lastElementChild?.firstChild;
+    if (!(node instanceof Text)) throw new Error('unescaped-witness-text-missing');
+    const interval = createVisualMarkdownSourceIntervalMap(source, source);
+    // The control's premise: no escape was written, so the rendered spelling the
+    // DOM carries is the raw spelling, and the run still resolves exactly as it
+    // did before the fix.
+    const renderedBlock = (surface.lastElementChild?.textContent ?? '').replace(/\u00a0/gu, ' ');
+    expect(renderedBlock).toBe(rawBody);
+    expect(rawBody.length - renderedBlock.length).toBe(rawBody.split('\\').length - 1);
+    expect(
+      mapTextBoundaryFromInterval(surface, node, node.length, source, interval, false, {
+        data: 'Alpha beta '
+      })
+    ).toEqual({ sourceOffset: source.length, visualOffset: source.length });
+    surface.remove();
+  });
+
+  it('still refuses a witnessed terminal run its block cannot prove', () => {
+    const source = 'Lead\n\nAlpha \\*beta ';
+    const surface = editor('<p>Lead</p><p>Alpha *beta\u00a0</p>');
+    const node = surface.lastElementChild?.firstChild;
+    if (!(node instanceof Text)) throw new Error('unprovable-witness-text-missing');
+    const interval = createVisualMarkdownSourceIntervalMap(source, source);
+    expect(
+      mapTextBoundaryFromInterval(surface, node, node.length, source, interval, false, {
+        data: 'Alpha omega '
+      })
+    ).toBeNull();
+    const foreign = document.createTextNode('Alpha *beta ');
+    expect(
+      mapTextBoundaryFromInterval(surface, foreign, foreign.length, source, interval, false, {
+        data: 'Alpha *beta '
+      })
+    ).toBeNull();
+    surface.remove();
+  });
+
   it('maps an escaped boundary on a detached endpoint-block clone', () => {
     const source = 'ab\\`c';
     const surface = editor('<p>ab`c</p>');
@@ -2029,6 +2594,29 @@ A--&gt;B</code></pre>
     );
   });
 
+  it.each([
+    { body: '   ', expected: '`   `' },
+    { body: '\t\t', expected: '`\t\t`' },
+    { body: ' \u00a0 ', expected: '`  \u00a0  `' },
+    { body: ' a  b ', expected: '`  a  b  `' },
+    { body: '`', expected: '`` ` ``' }
+  ])('serializes inline code body whitespace and delimiters: $body', ({ body, expected }) => {
+    const surface = editor('');
+    const paragraph = document.createElement('p');
+    const code = document.createElement('code');
+    code.textContent = body;
+    paragraph.append('Before ', code, ' after');
+    surface.append(paragraph);
+    expect(serializeVisualMarkdown(surface)).toBe(`Before ${expected} after`);
+    surface.remove();
+  });
+
+  it('serializes whitespace-only inline code as the sole paragraph content', () => {
+    const surface = editor('<p><code>   </code></p>');
+    expect(serializeVisualMarkdown(surface)).toBe('`   `');
+    surface.remove();
+  });
+
   it('keeps hard-break spacing after an inline image with surrounding text', () => {
     const surface = editor('');
     const paragraph = document.createElement('p');
@@ -2046,6 +2634,249 @@ A--&gt;B</code></pre>
     expect(serializeVisualMarkdown(surface)).toBe(
       'Text![](https://example.test/x)  \nNext'
     );
+  });
+
+  it('maps both source edges of an image in a detached formal row without moving native selection', () => {
+    const source = '![alt](https://example.test/image.png)';
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p><img alt="alt" src="https://example.test/image.png"></p>';
+    const paragraph = surface.firstElementChild;
+    if (!(paragraph instanceof HTMLElement)) throw new Error('detached-image-row-missing');
+    const baseline = serializeVisualMarkdown(surface);
+    const native = window.getSelection();
+    const beforeAnchor = native?.anchorNode;
+    const beforeOffset = native?.anchorOffset;
+    const start = visualCaretBoundaryFromSourceOffset(surface, source, baseline, 0);
+    const end = visualCaretBoundaryFromSourceOffset(surface, source, baseline, source.length);
+    expect(start).toEqual({ node: paragraph, offset: 0 });
+    expect(end).toEqual({ node: paragraph, offset: 1 });
+    expect(visualBoundarySourceOffset(surface, source, baseline, paragraph, 0)).toBe(0);
+    expect(visualBoundarySourceOffset(surface, source, baseline, paragraph, 1)).toBe(source.length);
+    expect(native?.anchorNode).toBe(beforeAnchor);
+    expect(native?.anchorOffset).toBe(beforeOffset);
+  });
+
+  it('maps text around a rendered reference image without rewriting its source token', () => {
+    const source = 'Opening ![dot][pic] tail.';
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p>Opening <img alt="dot" src="https://example.test/image.png"> tail.</p>';
+    const paragraph = surface.firstElementChild;
+    if (!(paragraph instanceof HTMLElement)) throw new Error('image-projection-row-missing');
+    const baseline = serializeVisualMarkdown(surface);
+    const imageStart = baseline.indexOf('![dot]');
+    const imageEnd = baseline.indexOf(' tail.');
+    const map = createVisualMarkdownImageSourceIntervalMap(surface, source, baseline, (label) => label === 'pic');
+    expect(map.resolve(imageStart)).toBe(source.indexOf('![dot]'));
+    expect(map.resolve(imageEnd)).toBe(source.indexOf(' tail.'));
+    expect(map.resolve(imageStart + 1)).toBeNull();
+    expect(visualBoundarySourceOffset(surface, source, baseline, paragraph, paragraph.childNodes.length, map)).toBe(source.length);
+    expect(mergeVisualMarkdownChangeDetails(source, baseline, `${baseline}X`, map).value).toBe(`${source}X`);
+    expect(mergeVisualMarkdownChangeDetails(source, baseline, baseline.replace('Opening ', 'OpenZing '), map).value)
+      .toBe(source.replace('Opening ', 'OpenZing '));
+  });
+
+  it('uses an exact image projection for generic selection and rejects stale maps even at document edges', () => {
+    const source = 'Opening ![dot][pic] tail.';
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p>Opening <img alt="dot" src="x"> tail.</p>';
+    document.body.append(surface);
+    const paragraph = surface.firstElementChild;
+    const text = paragraph?.lastChild;
+    if (!(paragraph instanceof HTMLElement) || !(text instanceof Text)) throw new Error('projected-selection-fixture-missing');
+    const baseline = serializeVisualMarkdown(surface);
+    const map = createVisualMarkdownImageSourceIntervalMap(surface, source, baseline, (label) => label === 'pic');
+    try {
+      window.getSelection()?.collapse(text, text.length);
+      expect(visualSelectionSourceRange(surface, source, baseline, baseline, { projectedIntervalMap: map }))
+        .toEqual({ direction: 'none', start: source.length, end: source.length });
+      window.getSelection()?.collapse(surface, 0);
+      expect(() => visualSelectionSourceRange(surface, `${source}x`, baseline, baseline, { projectedIntervalMap: map }))
+        .toThrow('visual-editor-markdown-merge-failed');
+      expect(() => visualSelectionSourceRange(surface, source, `${baseline}x`, `${baseline}x`, { projectedIntervalMap: map }))
+        .toThrow('visual-editor-markdown-merge-failed');
+    } finally { surface.remove(); }
+  });
+
+  it('maps a whole reference image but rejects partial image edits and stale snapshots', () => {
+    const source = '![dot][pic]';
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p><img alt="dot" src="https://example.test/image.png"></p>';
+    const baseline = serializeVisualMarkdown(surface);
+    const map = createVisualMarkdownImageSourceIntervalMap(surface, source, baseline, (label) => label === 'pic');
+    expect(mergeVisualMarkdownChangeDetails(source, baseline, '', map).value).toBe('');
+    expect(() => mergeVisualMarkdownChangeDetails(source, baseline, `${baseline.slice(0, 3)}X${baseline.slice(3)}`, map)).toThrow();
+    expect(() => mergeVisualMarkdownChangeDetails(`${source}x`, baseline, '', map)).toThrow('visual-editor-markdown-merge-failed');
+    expect(() => createVisualMarkdownImageSourceIntervalMap(surface, source, baseline, () => false)).toThrow('visual-editor-image-source-map-failed');
+  });
+
+  it('binds the formal image rather than an unresolved label with different whitespace and case folding', () => {
+    const source = '[a\u00a0b]: /ghost\n\n[STRASSE]: /real\n\n![x][a b] ![y][Stra\u00dfe]';
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p>![x][a b] <img src="/real" alt="y"></p>';
+    const baseline = serializeVisualMarkdown(surface);
+    const nodes: MarkdownSyntaxNode[] = [];
+    markdownLanguage.parser.parse(source).iterate({ enter(node) { nodes.push({ from: node.from, name: node.name, to: node.to }); } });
+    const definition = markdownReferenceDefinitionQuery(source, nodes, 14);
+    const map = createVisualMarkdownImageSourceIntervalMap(surface, source, baseline, (label) => definition(label) !== null);
+    expect(map.resolve(baseline.indexOf('![y]'))).toBe(source.indexOf('![y]'));
+  });
+
+  it.each([
+    { name: 'collapsed reference', source: 'left ![a][] right', html: '<p>left <img alt="a" src="x"> right</p>', labels: ['a'] },
+    { name: 'shortcut reference', source: 'left ![a] right', html: '<p>left <img alt="a" src="x"> right</p>', labels: ['a'] },
+    { name: 'repeated references', source: 'left ![a][id]![a][id] right', html: '<p>left <img alt="a" src="x"><img alt="a" src="x"> right</p>', labels: ['id'] },
+    { name: 'linked reference', source: 'left [![a][id]](y) right', html: '<p>left <a href="y"><img alt="a" src="x"></a> right</p>', labels: ['id'] },
+    { name: 'unresolved reference', source: 'left ![a][missing] ![b](x) right', html: '<p>left ![a][missing] <img alt="b" src="x"> right</p>', labels: [] },
+    { name: 'escaped image marker', source: 'left \\![a](x) ![b](x) right', html: '<p>left ![a](x) <img alt="b" src="x"> right</p>', labels: [] },
+    { name: 'literal code image', source: 'left `![a](x)` ![b](x) right', html: '<p>left <code>![a](x)</code> <img alt="b" src="x"> right</p>', labels: [] }
+  ])('preserves $name source while editing neighboring text', ({ source, html, labels }) => {
+    const surface = document.createElement('article'); surface.innerHTML = html;
+    const baseline = serializeVisualMarkdown(surface);
+    const map = createVisualMarkdownImageSourceIntervalMap(surface, source, baseline, (label) => labels.includes(label));
+    expect(mergeVisualMarkdownChangeDetails(source, baseline, `${baseline}X`, map).value).toBe(`${source}X`);
+    expect(mergeVisualMarkdownChangeDetails(source, baseline, baseline.replace(' right', ' rightX'), map).value)
+      .toBe(source.replace(' right', ' rightX'));
+  });
+
+  it('returns original CRLF offsets around a projected reference image', () => {
+    const source = 'Before\r\n\r\n![dot][pic]';
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p>Before</p><p><img alt="dot" src="x"></p>';
+    const baseline = serializeVisualMarkdown(surface);
+    const map = createVisualMarkdownImageSourceIntervalMap(surface, source, baseline, (label) => label === 'pic');
+    expect(map.resolve(baseline.indexOf('![dot]'))).toBe(source.indexOf('![dot]'));
+    expect(map.resolve(baseline.length)).toBe(source.length);
+  });
+
+  it('preserves a CRLF reference definition when editing adjacent text', () => {
+    const source = '[pic]: https://example.test/image.png\r\n\r\nOpening ![dot][pic] tail.';
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p>Opening <img alt="dot" src="https://example.test/image.png"> tail.</p>';
+    const baseline = serializeVisualMarkdown(surface);
+    const map = createVisualMarkdownImageSourceIntervalMap(surface, source, baseline, (label) => label === 'pic');
+    expect(mergeVisualMarkdownChangeDetails(source, baseline, `${baseline}X`, map).value).toBe(`${source}X`);
+    expect(mergeVisualMarkdownChangeDetails(source, baseline, baseline.replace('Opening ', 'OpenZing '), map).value)
+      .toBe(source.replace('Opening ', 'OpenZing '));
+  });
+
+  it('excludes protected generated images from editable image projection', () => {
+    const source = '![a][id]\n\n```mermaid\ngraph TD\n```';
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p><img alt="a" src="x"></p><div class="easymde-mermaid" contenteditable="false" data-easymde-visual-markdown-source="graph TD"><img alt="generated" src="generated.png"></div>';
+    const baseline = serializeVisualMarkdown(surface);
+    const map = createVisualMarkdownImageSourceIntervalMap(surface, source, baseline, (label) => label === 'id');
+    expect(map.resolve(0)).toBe(0);
+    expect(map.resolve(baseline.indexOf('\n\n```'))).toBe(source.indexOf('\n\n```'));
+  });
+
+  it.each([
+    { source: '[![a](x)](y)', html: '<p><a href="y"><img alt="a" src="x"></a></p>' },
+    { source: '![a][id]', html: '<p><img alt="a" src="x"></p>' },
+    { source: '[text ![a][id]](y)', html: '<p><a href="y">text <img alt="a" src="x"></a></p>' }
+  ])('maps the terminal image source edge of $source to its parent boundary', ({ source, html }) => {
+    const surface = document.createElement('article');
+    surface.innerHTML = html;
+    const paragraph = surface.querySelector('p');
+    const selection = window.getSelection();
+    const anchor = selection?.anchorNode;
+    const offset = selection?.anchorOffset;
+    expect(visualBoundaryForImageSourceEdge(surface, source, source.length, (label) => label === 'id')).toEqual({ node: paragraph, offset: 1 });
+    expect(selection?.anchorNode).toBe(anchor);
+    expect(selection?.anchorOffset).toBe(offset);
+  });
+
+  it('maps adjacent reference image edges without claiming intervening visible text', () => {
+    const source = '![a][id]![b][id]x';
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p><img alt="a" src="x"><img alt="b" src="x">x</p>';
+    const paragraph = surface.querySelector('p');
+    const defined = (label: string) => label === 'id';
+    expect(visualBoundaryForImageSourceEdge(surface, source, 0, defined)).toEqual({ node: paragraph, offset: 0 });
+    expect(visualBoundaryForImageSourceEdge(surface, source, '![a][id]'.length, defined)).toEqual({ node: paragraph, offset: 1 });
+    expect(visualBoundaryForImageSourceEdge(surface, source, source.length, defined)).toBeNull();
+    expect(() => visualBoundaryForImageSourceEdge(surface, source, 0, () => false)).toThrow('visual-editor-image-source-map-failed');
+  });
+
+  it('maps ordinary text on both sides of a reference image without moving selection', () => {
+    const source = 'Left ![a][id] Right';
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p>Left <img alt="a" src="x"> Right</p>';
+    const paragraph = surface.querySelector('p');
+    const left = paragraph?.firstChild;
+    const right = paragraph?.lastChild;
+    if (!(left instanceof Text) || !(right instanceof Text)) throw new Error('reference-image-adjacent-text-missing');
+    const baseline = serializeVisualMarkdown(surface);
+    const isDefined = (label: string) => label === 'id';
+    for (const [position, expectedNode, expectedOffset] of [
+      [2, left, 2],
+      [source.indexOf('Right') + 2, right, 3]
+    ] as const) {
+      expect(visualBoundaryForImageSourceEdge(surface, source, position, isDefined)).toBeNull();
+      expect(visualCaretBoundaryFromSourceOffset(surface, source, baseline, position)).toEqual({ node: expectedNode, offset: expectedOffset });
+    }
+  });
+
+  it.each([
+    { source: '![a](x)', html: '<p><img alt="a" src="x"></p>', index: 0, labels: [], token: '![a](x)' },
+    { source: '![a](x) ![a](x)', html: '<p><img alt="a" src="x"> <img alt="a" src="x"></p>', index: 1, labels: [], token: '![a](x)', last: true },
+    { source: '![a][id]', html: '<p><img alt="a" src="x"></p>', index: 0, labels: ['id'], token: '![a][id]' },
+    { source: '![a][]', html: '<p><img alt="a" src="x"></p>', index: 0, labels: ['a'], token: '![a][]' },
+    { source: '![a]', html: '<p><img alt="a" src="x"></p>', index: 0, labels: ['a'], token: '![a]' },
+    { source: '![a][missing] ![b](x)', html: '<p>![a][missing] <img alt="b" src="x"></p>', index: 0, labels: [], token: '![b](x)' },
+    { source: '[![a](x)](y)', html: '<p><a href="y"><img alt="a" src="x"></a></p>', index: 0, labels: [], token: '![a](x)' }
+  ])('proves the rendered image source interval for $source', ({ source, html, index, labels, token, last }) => {
+    const surface = document.createElement('article');
+    surface.innerHTML = html;
+    const image = surface.querySelectorAll('img')[index];
+    if (!(image instanceof HTMLImageElement)) throw new Error('rendered-image-witness-missing');
+    const start = last ? source.lastIndexOf(token) : source.indexOf(token);
+    expect(visualSourceRangeForRenderedImage(surface, image, source, (label) => (labels as readonly string[]).includes(label))).toEqual({ start, end: start + token.length });
+  });
+
+  it.each([
+    { source: '`![a](x)`', html: '<p><code>![a](x)</code><img alt="a" src="x"></p>' },
+    { source: '\\![a](x)', html: '<p>![a](x)<img alt="a" src="x"></p>' },
+    { source: '![a][missing]', html: '<p><img alt="a" src="x"></p>' },
+    { source: '![a](x)', html: '<p><span contenteditable="false"><img alt="a" src="x"></span></p>' },
+    { source: '![a](x) ![b](x)', html: '<p><img alt="a" src="x"></p>' }
+  ])('rejects an unproved or protected image correspondence for $source', ({ source, html }) => {
+    const surface = document.createElement('article');
+    surface.innerHTML = html;
+    const image = surface.querySelector('img');
+    if (!(image instanceof HTMLImageElement)) throw new Error('rendered-image-witness-missing');
+    expect(() => visualSourceRangeForRenderedImage(surface, image, source, () => false)).toThrow('visual-editor-image-source-map-failed');
+  });
+
+  it.each([
+    { source: '[![a](x)](y)', html: '<p><a href="y"><img alt="a" src="x"></a></p>', expected: '[![a](x)](y)' },
+    { source: '**![a](x)**', html: '<p><strong><img alt="a" src="x"></strong></p>', expected: '**![a](x)**' },
+    { source: '[x![a](x)](y)', html: '<p><a href="y">x<img alt="a" src="x"></a></p>', expected: '![a](x)' },
+    { source: '[![a](x)![b](x)](y)', html: '<p><a href="y"><img alt="a" src="x"><img alt="b" src="x"></a></p>', expected: '![a](x)' },
+    { source: '[![a](x)  \ny](y)', html: '<p><a href="y"><img alt="a" src="x"><br>y</a></p>', expected: '![a](x)' }
+  ])('retires only empty inline ancestors for $source', ({ source, html, expected }) => {
+    const surface = document.createElement('article');
+    surface.innerHTML = html;
+    const image = surface.querySelector('img');
+    if (!(image instanceof HTMLImageElement)) throw new Error('rendered-image-witness-missing');
+    const imageStart = source.indexOf('![a](x)');
+    const range = visualRetiredInlineSourceRange(surface, image, source, { start: imageStart, end: imageStart + '![a](x)'.length });
+    expect(source.slice(range.start, range.end)).toBe(expected);
+  });
+
+  it.each([
+    { name: 'standalone', source: '![a](https://example.test/a)', html: '<p><img alt="a" src="https://example.test/a"></p>', index: 0, expected: '' },
+    { name: 'adjacent prose', source: 'x![a](https://example.test/a)y', html: '<p>x<img alt="a" src="https://example.test/a">y</p>', index: 0, expected: 'xy' },
+    { name: 'repeated', source: '![a](https://example.test/a)![a](https://example.test/a)', html: '<p><img alt="a" src="https://example.test/a"><img alt="a" src="https://example.test/a"></p>', index: 1, expected: '![a](https://example.test/a)' },
+    { name: 'linked', source: '[![a](https://example.test/a)](https://example.test/b)', html: '<p><a href="https://example.test/b"><img alt="a" src="https://example.test/a"></a></p>', index: 0, expected: '' },
+    { name: 'resolved reference', source: '![a][id]\n\n[id]: https://example.test/a', html: '<p><img alt="a" src="https://example.test/a"></p>', index: 0, expected: '\n\n[id]: https://example.test/a' }
+  ])('removes only the parser-owned image and empty inline wrappers for $name', ({ source, html, index, expected }) => {
+    const surface = document.createElement('article');
+    surface.innerHTML = html;
+    const image = surface.querySelectorAll('img')[index];
+    if (!image) throw new Error('detached-image-unit-missing');
+    const imageRange = visualSourceRangeForRenderedImage(surface, image, source, (label) => label === 'id');
+    const range = visualRetiredInlineSourceRange(surface, image, source, imageRange);
+    expect(source.slice(0, range.start) + source.slice(range.end)).toBe(expected);
   });
 
   it('normalizes an image context-menu caret to the complete image node', () => {
@@ -2893,6 +3724,53 @@ still tilde</code></pre>
     );
   });
 
+  it('keeps the fence spelling a marker paragraph already carries, and escapes a bare run that would swallow what follows', () => {
+    // Two spellings, both measured against the round trip. A paragraph whose
+    // text is the fence's own marker line keeps that spelling: a run that is the
+    // document's last block, or is followed by a matching closing run of the
+    // same family and length with an empty info string, is the fence the surface
+    // draws, and escaping it writes a source the surface never holds. A bare run
+    // followed by blocks an unclosed fence would swallow is the literal case, so
+    // it keeps the escaped spelling. A run carrying an info string is a complete
+    // opening rather than a growing literal, and it keeps the fence spelling the
+    // frozen consumer rows require while a composed character is spliced into an
+    // escaped canonical source.
+    const geometries = [
+      ['a bare run at the end of the document', '<p>```</p>', '```'],
+      ['a run with an info string', '<p>```bash</p>', '```bash'],
+      ['a run before another block', '<p>```</p><p>tail</p>', '\\`\\`\\`\n\ntail'],
+      ['a run with an info string before another block', '<p>```bash</p><p>tail</p>', '```bash\n\ntail'],
+      ['two adjacent runs', '<p>```</p><p>```</p>', '```\n\n```'],
+      ['a run with trailing text on its line', '<p>```tail</p>', '```tail']
+    ] as const;
+    for (const [name, html, expected] of geometries) {
+      const surface = editor(html);
+      const baseline = serializeVisualMarkdown(surface);
+      expect(baseline, name).toBe(expected);
+      surface.remove();
+      const source = `${expected}\n`;
+      const map = createVisualMarkdownSourceIntervalMap(source, baseline);
+      expect(
+        map.hiddenSourceRanges.filter(({ end, start }) =>
+          '\\' === source[start] || '\\' === source[end - 1]),
+        `${name}: no escape may be hidden Markdown`
+      ).toEqual([]);
+      for (let at = 0; at <= baseline.length; at += 1) {
+        // The DOM never draws a caret between an escape and the character it
+        // escapes, so the offsets inside an escaped unit are not presses; every
+        // other offset is one the surface can make.
+        const insideEscape = at > 0 && at < baseline.length
+          && '\\' === baseline[at - 1] && '\\' !== baseline[at];
+        if (insideEscape) continue;
+        const inserted = `${baseline.slice(0, at)}X${baseline.slice(at)}`;
+        expect(
+          () => mergeVisualMarkdownChangeDetails(source, baseline, inserted, map),
+          `${name}: insertion at ${at}`
+        ).not.toThrow();
+      }
+    }
+  });
+
   it('keeps a backtick in an info string from becoming a source fence', () => {
     const surface = editor('<pre><code>body</code></pre>');
 
@@ -3494,6 +4372,9 @@ A--&gt;B</code></pre>
     expect(applyVisualBlockShortcut(surface, event)).toBe(false);
     expect(event.defaultPrevented).toBe(false);
     expect(surface.innerHTML).toBe('<p>~~~j`s</p>');
+    // The shortcut refuses, so the row stays the paragraph the surface draws;
+    // the run carries an info string, so it is a complete fence opening and the
+    // serializer keeps the fence spelling rather than escaping it.
     expect(serializeVisualMarkdown(surface)).toBe('~~~j`s');
   });
 
@@ -5467,6 +6348,87 @@ A--&gt;B</code></pre>
     ).toBeNull();
   });
 
+  it.each([
+    ['unordered', '<ul><li>outer\n<ul><li>inner</li><li><br></li></ul></li></ul>', '- outer\n  - inner\n  - \n', '  - \n'],
+    ['ordered', '<ul><li>outer\n<ol><li>inner</li><li><br></li></ol></li></ul>', '- outer\n  1. inner\n  2. \n', '  2. \n'],
+    ['quoted ordered', '<blockquote><ul><li>outer\n<ol><li>inner</li><li><br></li></ol></li></ul></blockquote>', '> - outer\n>   1. inner\n>   2. \n', '>   2. \n']
+  ])('certifies an empty nested $0 body using full-document ancestry', (
+    _description, markup, source, lastRow
+  ) => {
+    const surface = editor(markup);
+    const target = surface.querySelector('li li:last-child');
+    if (!(target instanceof HTMLElement)) throw new Error('visual-empty-row-target-missing');
+    placeCaret(target, 0);
+    const baseline = serializeVisualMarkdown(surface);
+    const expected = source.indexOf(lastRow) + lastRow.length - 1;
+    expect(visualEmptyStructuralBodySelection(surface, source, baseline))
+      .toMatchObject({ sourceOffset: expected });
+    expect(visualSelectionSourceRange(surface, source, baseline))
+      .toEqual({ direction: 'none', start: expected, end: expected });
+    expect(visualCaretBoundaryFromSourceOffset(surface, source, baseline, expected))
+      .toEqual({ node: target, offset: 0 });
+    expect(structuralEmptyLineRemoval(source, expected)).toEqual({
+      start: source.indexOf(lastRow), end: source.length,
+      caret: source.indexOf('inner') + 'inner'.length
+    });
+  });
+
+  it('rejects an empty nested row whose list ancestry differs from the source', () => {
+    const surface = editor('<ul><li>outer\n<ul><li>inner</li><li><br></li></ul></li></ul>');
+    const target = surface.querySelector('li li:last-child');
+    if (!(target instanceof HTMLElement)) throw new Error('visual-empty-row-target-missing');
+    placeCaret(target, 0);
+    const source = '- outer\n  1. inner\n  2. \n';
+    const baseline = serializeVisualMarkdown(surface);
+    expect(visualEmptyStructuralBodySelection(surface, source, baseline))
+      .toEqual({ failure: 'visual-editor-markdown-merge-failed' });
+  });
+
+  it.each([
+    ['star', '<ul><li>a</li><li><br></li></ul>', '* a\n* \n', 'li:last-child', 6, '* a\n', 3],
+    ['dash', '<ul><li>a</li><li><br></li></ul>', '- a\n- \n', 'li:last-child', 6, '- a\n', 3],
+    ['plus', '<ul><li>a</li><li><br></li></ul>', '+ a\n+ \n', 'li:last-child', 6, '+ a\n', 3],
+    ['extra spaces', '<ul><li>a</li><li><br></li></ul>', '* a\n*   \n', 'li:last-child', 6, '* a\n', 3],
+    ['middle extra spaces', '<ul><li>a</li><li><br></li><li>c</li></ul>', '- a\n-   \n- c\n', 'li:nth-child(2)', 6, '- a\n- c\n', 3],
+    ['middle extra spaces CRLF', '<ul><li>a</li><li><br></li><li>c</li></ul>', '- a\r\n-   \r\n- c\r\n', 'li:nth-child(2)', 7, '- a\r\n- c\r\n', 3],
+    ['CRLF', '<ul><li>a</li><li><br></li></ul>', '* a\r\n* \r\n', 'li:last-child', 7, '* a\r\n', 3],
+    ['ordered', '<ol><li>a</li><li><br></li></ol>', '1. a\n2. \n', 'li:last-child', 8, '1. a\n', 4],
+    ['quoted list', '<blockquote><ul><li>a</li><li><br></li></ul></blockquote>', '> * a\n> * \n', 'li:last-child', 10, '> * a\n', 5]
+  ])('maps and removes the parser-owned empty $0 row', (
+    _description, markup, source, selector, expectedOffset, expectedSource, expectedCaret
+  ) => {
+    const surface = editor(markup);
+    const target = surface.querySelector(selector);
+    if (!(target instanceof HTMLElement)) {
+      throw new Error('visual-empty-row-target-missing');
+    }
+    placeCaret(target, 0);
+    const baseline = serializeVisualMarkdown(surface);
+    const selection = visualEmptyStructuralBodySelection(surface, source, baseline);
+    expect(selection).toMatchObject({ sourceOffset: expectedOffset });
+    expect(visualSelectionSourceRange(surface, source, baseline)).toEqual({
+      direction: 'none', end: expectedOffset, start: expectedOffset
+    });
+    const removal = structuralEmptyLineRemoval(source, expectedOffset);
+    expect(removal).not.toBeNull();
+    if (!removal) throw new Error('visual-empty-row-removal-missing');
+    expect(source.slice(0, removal.start) + source.slice(removal.end)).toBe(expectedSource);
+    expect(removal.caret).toBe(expectedCaret);
+  });
+
+  it('rejects a selection marker in the source of an empty structural body', () => {
+    const surface = editor('<ul><li>a</li><li><br></li></ul>');
+    const target = surface.querySelector('li:last-child');
+    if (!(target instanceof HTMLElement)) throw new Error('visual-empty-row-target-missing');
+    placeCaret(target, 0);
+    const baseline = serializeVisualMarkdown(surface);
+    const source = '- a\n- \n\uE000\uE001\uE002\uE003';
+    expect(() => visualEmptyStructuralBodySelection(surface, source, baseline))
+      .toThrow('visual-editor-selection-marker-conflict');
+    expect(() => visualSelectionSourceRange(surface, source, baseline))
+      .toThrow('visual-editor-selection-marker-conflict');
+  });
+
   it('maps an empty structural body after one separator while preserving extra source space', () => {
     const surface = editor('<blockquote><p><br></p></blockquote><p>Tail</p>');
     const target = surface.querySelector('blockquote > p');
@@ -6792,5 +7754,965 @@ A--&gt;B</code></pre>
     const expectedOffset = firstText.data.indexOf(visiblePrefix.slice(localCaret));
     expect(localBoundary).toEqual({ node: firstText, offset: expectedOffset });
     expect(rootBoundary).toEqual({ node: firstText, offset: expectedOffset });
+  });
+});
+
+describe('structuralEmptyLineRemoval', () => {
+  it('removes a middle empty item row and keeps the caret on the previous row end', () => {
+    expect(
+      structuralEmptyLineRemoval('* alpha\n* \n* gamma\n', 10)
+    ).toEqual({ caret: 7, end: 11, start: 8 });
+  });
+
+  it('removes a first empty item row and keeps the caret on the retained body', () => {
+    expect(
+      structuralEmptyLineRemoval('* \n* beta\n', 2)
+    ).toEqual({ caret: 2, end: 3, start: 0 });
+  });
+
+  it('removes a last empty item row and keeps the caret on the previous row end', () => {
+    expect(
+      structuralEmptyLineRemoval('* alpha\n* \n', 10)
+    ).toEqual({ caret: 7, end: 11, start: 8 });
+  });
+
+  it('removes a task row whose body holds only the task glyph', () => {
+    expect(
+      structuralEmptyLineRemoval('* [x] alpha\n* [x] \n* [x] gamma\n', 14)
+    ).toEqual({ caret: 11, end: 19, start: 12 });
+  });
+
+  it('removes a sole empty item row and anchors the caret at the document start', () => {
+    expect(structuralEmptyLineRemoval('* \n', 2))
+      .toEqual({ caret: 0, end: 3, start: 0 });
+  });
+
+  it('refuses a body caret whose line still carries text', () => {
+    expect(structuralEmptyLineRemoval('* alpha\n* beta\n', 10)).toBeNull();
+  });
+
+  it('refuses an offset that is not the line body boundary', () => {
+    expect(structuralEmptyLineRemoval('* alpha\n* \n', 9)).toBeNull();
+  });
+
+  it('refuses a structural-looking line inside a fenced code body', () => {
+    expect(
+      structuralEmptyLineRemoval('```\n* \n```\n', 5)
+    ).toBeNull();
+  });
+
+  it.each([
+    ['after a heading at the document end', '## H\n\n* [x] \n\n', 12, { caret: 4, end: 13, start: 5 }],
+    ['between two blocks', '## H\n\n* [x] \n\nPara\n', 12, { caret: 4, end: 13, start: 5 }],
+    ['at the document start', '* [x] \n\nAfter\n', 6, { caret: 0, end: 8, start: 0 }]
+  ] as const)('removes the sole row of its block with one blank separator %s', (_shape, source, offset, removal) => {
+    expect(structuralEmptyLineRemoval(source, offset)).toEqual(removal);
+  });
+
+  it('removes an empty item inside a blockquote with its quote marker row', () => {
+    expect(
+      structuralEmptyLineRemoval('> * alpha\n> * \n> * gamma\n', 14)
+    ).toEqual({ caret: 9, end: 15, start: 10 });
+  });
+});
+
+describe('visualEmptiedTerminalRow', () => {
+  it('names the emptied heading row a terminal block still occupies', () => {
+    expect(visualEmptiedTerminalRow('Para\n\nBody.\n\n## \n\n'))
+      .toEqual({ blockKind: 'ATXHeading2', end: 16, start: 13 });
+  });
+
+  it('names the terminal run, never an earlier identical marker run', () => {
+    const source = 'Para\n\n## 22. Ref\n\nBody.\n\n## \n\n';
+    const row = visualEmptiedTerminalRow(source);
+    expect(row).toEqual({ blockKind: 'ATXHeading2', end: 28, start: 25 });
+    expect(row && source.slice(row.start, row.end)).toBe('## ');
+    expect(row?.start).toBe(source.lastIndexOf('## '));
+    expect(row?.start).toBeGreaterThan(source.indexOf('## 22.'));
+  });
+
+  it.each([
+    ['a list item', 'Para\n\n- \n', { blockKind: 'BulletList', end: 8, start: 6 }],
+    ['a task item', 'Para\n\n- [x] \n', { blockKind: 'BulletList', end: 12, start: 6 }],
+    ['a quote', 'Para\n\n> \n', { blockKind: 'Blockquote', end: 8, start: 6 }],
+    ['an ordered item', 'Para\n\n1. \n', { blockKind: 'OrderedList', end: 9, start: 6 }],
+    ['a marker without its separator', 'Para\n\n##\n', { blockKind: 'ATXHeading2', end: 8, start: 6 }],
+    ['a row behind blank lines', 'Para\n\n## \n\n\n', { blockKind: 'ATXHeading2', end: 9, start: 6 }]
+  ] as const)('names the emptied %s row', (_shape, source, row) => {
+    expect(visualEmptiedTerminalRow(source)).toEqual(row);
+  });
+
+  it.each([
+    ['a heading that carries text', 'Para\n\n## 22. Ref\n\n'],
+    ['a task item that carries text', 'Para\n\n- [x] A\n'],
+    ['a paragraph', 'Para\n\nBody.\n'],
+    ['a thematic break', 'Para\n\n---\n\n'],
+    ['an HTML block', 'Para\n\n<div>x</div>\n'],
+    ['a fence opener', 'Para\n\n```\n'],
+    ['a table row', 'Para\n\n| a | b |\n'],
+    ['a document of blank rows', '\n\n']
+  ] as const)('refuses %s', (_shape, source) => {
+    expect(visualEmptiedTerminalRow(source)).toBeNull();
+  });
+});
+
+describe('visualBlockShortcutRewriteTarget', () => {
+  const backspace = (): KeyboardEvent =>
+    new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' });
+
+  afterEach(() => {
+    document.body.replaceChildren();
+  });
+
+  it('names the emptied heading a Backspace is about to discard', () => {
+    const surface = editor('<h2><br></h2>');
+    const heading = surface.querySelector('h2');
+    if (!(heading instanceof HTMLElement)) throw new Error('emptied-heading-missing');
+    placeCaret(heading, 0);
+    expect(visualBlockShortcutRewriteTarget(surface, backspace())).toBe(heading);
+    expect(visualBlockShortcutRewritesEmptyBlock(surface, backspace())).toBe(true);
+  });
+
+  it('names no block when the caret sits in a paragraph', () => {
+    const surface = editor('<p>Body.</p>');
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('paragraph-text-missing');
+    placeCaret(text, text.length);
+    expect(visualBlockShortcutRewriteTarget(surface, backspace())).toBeNull();
+    expect(visualBlockShortcutRewritesEmptyBlock(surface, backspace())).toBe(false);
+  });
+});
+
+describe('emptied task item after respelled rows', () => {
+  // The real Preview of a rule, a numbered heading and a task list. The
+  // serializer respells all of them (`---` as `* * *`, `25.` as `25\.`, `*` as
+  // `-` with a doubled renderer separator), so no line before the emptied row
+  // is literal unchanged text an anchor could use.
+  const markup = '<hr>\n<h2 id="25-t">25. T</h2>\n<ul class="task-list">\n<li class="task-list-item"><input checked disabled type="checkbox"> A</li>\n<li class="task-list-item"><input checked disabled type="checkbox"> B</li>\n</ul>\n';
+  const source = '---\n\n## 25. T\n\n* [x] A\n* [x] \n\n';
+
+  it('maps the emptied body onto its own row', () => {
+    const surface = editor(markup);
+    prepareVisualTaskListMarkers(surface);
+    const text = surface.querySelectorAll('li')[1]?.lastChild;
+    if (!(text instanceof Text) || ' B' !== text.data) {
+      throw new Error('visual-respelled-task-body-missing');
+    }
+    // The owner's baseline is its committed serialization with the deletion
+    // of B applied; Chromium then keeps the separator as NBSP.
+    const committed = serializeVisualMarkdown(surface);
+    expect(committed.endsWith('- [x]  A\n- [x]  B')).toBe(true);
+    const baseline = committed.slice(0, -1);
+    text.data = ' ';
+    placeCaret(text, 1);
+
+    const selection = visualEmptyStructuralBodySelection(surface, source, baseline);
+    expect(selection && 'failure' in selection ? selection.failure : null).toBeNull();
+    if (!selection || 'failure' in selection) {
+      throw new Error('visual-respelled-task-selection-missing');
+    }
+    const removal = structuralEmptyLineRemoval(source, selection.sourceOffset);
+    if (!removal) throw new Error('visual-respelled-task-removal-missing');
+    expect(source.slice(0, removal.start) + source.slice(removal.end))
+      .toBe('---\n\n## 25. T\n\n* [x] A\n\n');
+    expect(removal.caret).toBe(source.indexOf('* [x] A') + '* [x] A'.length);
+    surface.remove();
+  });
+});
+
+describe('emptied structural rows spelled without their separator', () => {
+  // The serializer trims the separator that trails an empty structural body, so
+  // a row emptied in the visual editor reaches the canonical source as a bare
+  // marker (`* a\n* b\n*`). The row the caret owns must still be nameable, and
+  // only it: a bare marker sitting on another row of the run is not the row the
+  // caret reads.
+  const selectionAt = (
+    markup: string,
+    selector: string,
+    source: string
+  ): VisualEmptyStructuralBodySelectionResult => {
+    const surface = editor(markup);
+    const body = surface.querySelector(selector);
+    if (!(body instanceof HTMLElement)) {
+      throw new Error('visual-bare-marker-body-missing');
+    }
+    placeCaret(body, 0);
+    const selection = visualEmptyStructuralBodySelection(
+      surface,
+      source,
+      serializeVisualMarkdown(surface)
+    );
+    surface.remove();
+    return selection;
+  };
+  const namedOffset = (selection: VisualEmptyStructuralBodySelectionResult): number => {
+    if (!selection || 'failure' in selection) {
+      throw new Error(selection?.failure ?? 'visual-bare-marker-selection-missing');
+    }
+    return selection.sourceOffset;
+  };
+
+  it.each([
+    [
+      'the last row of a list',
+      '<ul>\n<li>a</li>\n<li>b</li>\n<li><br></li>\n</ul>\n',
+      'li:last-of-type',
+      '* a\n* b\n*\n',
+      9
+    ],
+    [
+      'the sole row of a list',
+      '<ul>\n<li><br></li>\n</ul>\n',
+      'li',
+      '*\n',
+      1
+    ],
+    [
+      'an emptied middle row',
+      '<ul>\n<li>a</li>\n<li><br></li>\n<li>c</li>\n</ul>\n',
+      'li:nth-of-type(2)',
+      '* a\n*\n* c\n',
+      5
+    ],
+    [
+      'the last row of a task list',
+      '<ul>\n<li>a</li>\n<li>b</li>\n<li><br></li>\n</ul>\n',
+      'li:last-of-type',
+      '* [x] a\n* [x] b\n* [x]\n',
+      18
+    ],
+    [
+      'an emptied nested row',
+      '<ul>\n<li>o</li>\n<li><ul>\n<li>i</li>\n<li><br></li>\n</ul></li>\n</ul>\n',
+      'ul ul li:last-of-type',
+      '- o\n  - i\n  -\n',
+      13
+    ]
+  ])('names %s', (_label, markup, selector, source, expected) => {
+    expect(namedOffset(selectionAt(markup, selector, source))).toBe(expected);
+  });
+
+  it('names the emptied row of a run bounded by fenced blocks', () => {
+    // Regression cover for the run's edges, not proof that the two ordinal
+    // spaces coincide: a fence is a code line, so both window guards — the
+    // baseline's `hasOnlyStructuralMarkdownLines` and the source's
+    // `hasOnlyStructuralSourceLines` — refuse it inside a run, and the run ends
+    // at the fence on both sides.
+    const source = '```\nbefore\n```\n\n* a\n* b\n*\n\n```\nafter\n```\n';
+    const bareRow = source.indexOf('* b\n') + '* b\n'.length;
+    expect(source.slice(bareRow, bareRow + 1)).toBe('*');
+    const offset = namedOffset(selectionAt(
+      '<pre><code>before</code></pre>\n<ul>\n<li>a</li>\n<li>b</li>\n'
+      + '<li><br></li>\n</ul>\n<pre><code>after</code></pre>\n',
+      'li:last-of-type',
+      source
+    ));
+    expect(offset).toBe(bareRow + 1);
+    expect(offset).toBeGreaterThan(source.indexOf('before'));
+    expect(offset).toBeLessThan(source.indexOf('```\nafter'));
+  });
+
+  it.each([
+    ['a blank line after the first row', '* a\n\n* b\n*'],
+    ['a blank line before the emptied row', '* a\n* b\n\n*']
+  ])('never names another row when the run has %s', (_label, source) => {
+    // The serializer writes the tight form, so a loose list's blank line is a
+    // source row the baseline does not have, the two windows stop holding the
+    // same number of rows, and their ordinals no longer address the same row.
+    // Naming the caret's own emptied row and refusing are both correct
+    // outcomes; naming any other row is not — `structuralEmptyLineRemoval`
+    // would delete that other line.
+    const selection = selectionAt(
+      '<ul>\n<li>a</li>\n<li>b</li>\n<li><br></li>\n</ul>\n',
+      'li:last-of-type',
+      source
+    );
+    if (selection && 'failure' in selection) return;
+    expect(namedOffset(selection)).toBe(source.lastIndexOf('*') + 1);
+  });
+
+  it('removes the emptied terminal row from the canonical source', () => {
+    const source = '* a\n* b\n*\n';
+    const sourceOffset = namedOffset(selectionAt(
+      '<ul>\n<li>a</li>\n<li>b</li>\n<li><br></li>\n</ul>\n',
+      'li:last-of-type',
+      source
+    ));
+    expect(structuralEmptyLineRemoval(source, sourceOffset))
+      .toEqual({ caret: 7, end: 10, start: 8 });
+  });
+
+  it('does not adopt a bare marker that sits on another row of the run', () => {
+    const selection = selectionAt(
+      '<ul>\n<li>a</li>\n<li><br></li>\n<li>c</li>\n</ul>\n',
+      'li:nth-of-type(2)',
+      '* a\n* c\n*\n'
+    );
+    expect(selection && 'failure' in selection ? selection.failure : null)
+      .toBe('visual-editor-markdown-merge-failed');
+  });
+});
+
+describe('renderer-spelled empty structural rows', () => {
+  const mounted = (html: string): HTMLElement => {
+    const editor = document.createElement('article');
+    editor.innerHTML = html;
+    document.body.append(editor);
+    return editor;
+  };
+  afterEach(() => {
+    document.body.replaceChildren();
+  });
+
+  it.each([
+    ['list', '<ul><li>a</li><li><br></li></ul>', '* a\n* \n', 6],
+    ['quoted list', '<blockquote><ul><li>a</li><li><br></li></ul></blockquote>', '> * a\n> * \n', 10],
+    ['CRLF list', '<ul><li>a</li><li><br></li></ul>', '* a\r\n* \r\n', 7]
+  ])('maps an accepted detached %s endpoint to its empty body', (_label, html, source, offset) => {
+    const fragment = document.createElement('article');
+    fragment.innerHTML = html;
+    const block = fragment.firstElementChild;
+    if (!(block instanceof HTMLElement)) throw new Error('visual-endpoint-block-missing');
+    const target = block.querySelector('li:last-child');
+    if (!(target instanceof HTMLElement)) throw new Error('visual-empty-row-target-missing');
+    const baseline = serializeVisualMarkdownBlockFragment([block]);
+    expect(visualCaretBoundaryFromSourceOffset(block, source, baseline, offset, true, {
+      acceptedEndpointBlock: true
+    })).toEqual({ node: target, offset: 0 });
+  });
+
+  it('rejects an unauthenticated detached empty body endpoint', () => {
+    const block = document.createElement('ul');
+    block.innerHTML = '<li>a</li><li><br></li>';
+    const baseline = serializeVisualMarkdownBlockFragment([block]);
+    expect(() => visualCaretBoundaryFromSourceOffset(block, '* a\n* \n', baseline, 6))
+      .toThrow('visual-editor-selection-map-failed');
+  });
+
+  it('rejects a foreign baseline for an accepted detached endpoint', () => {
+    const block = document.createElement('ul');
+    block.innerHTML = '<li>a</li><li><br></li>';
+    expect(() => visualCaretBoundaryFromSourceOffset(block, '* a\n* \n', '- other\n-', 6, true, {
+      acceptedEndpointBlock: true
+    })).toThrow('visual-editor-selection-map-failed');
+  });
+
+  it('rejects ambiguous source owners for an accepted detached endpoint', () => {
+    const block = document.createElement('blockquote');
+    block.innerHTML = '<p><br></p><blockquote><p><br></p><blockquote><p>deep</p></blockquote></blockquote>';
+    const baseline = serializeVisualMarkdownBlockFragment([block]);
+    const source = '> \n\n> > \n> > \n> >\n> > > deep\n';
+    expect(() => visualCaretBoundaryFromSourceOffset(block, source, baseline, 8, true, {
+      acceptedEndpointBlock: true
+    })).toThrow('visual-editor-markdown-merge-ambiguous');
+  });
+
+  it.each([
+    ['read-only body', '<li contenteditable="false"><br></li>'],
+    ['code body', '<li><code><br></code></li>']
+  ])('rejects an accepted detached endpoint in a %s', (_label, tail) => {
+    const block = document.createElement('ul');
+    block.innerHTML = `<li>a</li>${tail}`;
+    const baseline = serializeVisualMarkdownBlockFragment([block]);
+    expect(() => visualCaretBoundaryFromSourceOffset(block, '* a\n* \n', baseline, 6, true, {
+      acceptedEndpointBlock: true
+    })).toThrow('visual-editor-selection-map-failed');
+  });
+
+  it.each([
+    ['a list with a hard-wrapped trailing row', '<ul>\n<li>a</li>\n<li>b</li>\n</ul>\n', '* a\n* b\n'],
+    ['a longer list', '<ul>\n<li>aa</li>\n<li>bb</li>\n<li>cc</li>\n</ul>\n', '- aa\n- bb\n- cc\n'],
+    ['an ordered list', '<ol>\n<li>a</li>\n<li>b</li>\n</ol>\n', '1. a\n2. b\n'],
+    ['a quoted list', '<blockquote>\n<ul>\n<li>a</li>\n<li>b</li>\n</ul>\n</blockquote>\n', '> * a\n> * b\n']
+  ])('maps every row end of %s past the renderer formatting whitespace', (_shape, html, source) => {
+    const editor = mounted(html);
+    const items = Array.from(editor.querySelectorAll('li'));
+    const visual = serializeVisualMarkdown(editor);
+    const lines = source.trimEnd().split('\n');
+    let offset = 0;
+    lines.forEach((line, index) => {
+      offset += line.length;
+      const boundary = visualCaretBoundaryFromSourceOffset(editor, source, visual, offset);
+      expect(items[index]?.contains(boundary.node)).toBe(true);
+      offset += 1;
+    });
+  });
+
+  it.each([
+    ['nested unordered', '<ul>\n<li>outer\n<ul>\n<li>a</li>\n</ul>\n</li>\n</ul>', '- outer\n  - a\n', 13, 'ul > li > ul > li'],
+    ['nested unordered CRLF', '<ul>\n<li>outer\n<ul>\n<li>a</li>\n</ul>\n</li>\n</ul>', '- outer\r\n  - a\r\n', 14, 'ul > li > ul > li'],
+    ['quoted ordered', '<blockquote>\n<ul>\n<li>outer\n<ol>\n<li>a</li>\n</ol>\n</li>\n</ul>\n</blockquote>', '> - outer\n>   1. a\n', 18, 'blockquote > ul > li > ol > li']
+  ])('restores the source row end inside its $0 body', (_description, html, source, offset, selector) => {
+    const surface = mounted(html);
+    const target = surface.querySelector(selector);
+    if (!(target instanceof HTMLElement)) throw new Error('visual-nested-row-target-missing');
+    const boundary = visualCaretBoundaryFromSourceOffset(
+      surface, source, serializeVisualMarkdown(surface), offset
+    );
+    const owner = boundary.node instanceof Element ? boundary.node : boundary.node.parentElement;
+    expect(owner?.closest('li, p')).toBe(target);
+    const prefix = document.createRange();
+    prefix.selectNodeContents(target);
+    prefix.setEnd(boundary.node, boundary.offset);
+    expect(prefix.toString()).toBe('a');
+  });
+
+  it.each([
+    ['ordered list', '<ol><li>a</li><li>b</li></ol>', '1. a\n2. b\n']
+  ])('restores a nonempty row in a detached %s root', (_description, html, source) => {
+    const fragment = document.createElement('article');
+    fragment.innerHTML = html;
+    const block = fragment.firstElementChild;
+    if (!(block instanceof HTMLElement)) throw new Error('visual-endpoint-block-missing');
+    const target = block.querySelector('li:last-child');
+    if (!(target instanceof HTMLElement)) throw new Error('visual-row-target-missing');
+    const boundary = visualCaretBoundaryFromSourceOffset(
+      block, source, serializeVisualMarkdownBlockFragment([block]), source.indexOf('b') + 1
+    );
+    const owner = boundary.node instanceof Element ? boundary.node : boundary.node.parentElement;
+    expect(owner?.closest('li, p')).toBe(target);
+    const prefix = document.createRange();
+    prefix.selectNodeContents(target);
+    prefix.setEnd(boundary.node, boundary.offset);
+    expect(prefix.toString()).toBe('b');
+  });
+
+  it('restores a quoted row in its detached neutral endpoint container', () => {
+    const fragment = document.createElement('article');
+    fragment.innerHTML = '<blockquote><ul><li>a</li><li>b</li></ul></blockquote>';
+    const block = fragment.firstElementChild;
+    const target = block?.querySelector('li:last-child');
+    if (!(block instanceof HTMLElement) || !(target instanceof HTMLElement)) {
+      throw new Error('visual-quoted-endpoint-target-missing');
+    }
+    const source = '> * a\n> * b\n';
+    const baseline = serializeVisualMarkdownBlockFragment([block]);
+    const offset = source.indexOf('b') + 1;
+    expect(() => visualCaretBoundaryFromSourceOffset(block, source, baseline, offset))
+      .toThrow('visual-editor-selection-map-failed');
+    expect(() => visualCaretBoundaryFromSourceOffset(block, source, baseline, offset, true, {
+      acceptedEndpointBlock: true
+    })).toThrow('visual-editor-selection-map-failed');
+    const boundary = visualCaretBoundaryFromSourceOffset(fragment, source, baseline, offset, true, {
+      acceptedEndpointBlock: true
+    });
+    expect(block.contains(boundary.node)).toBe(true);
+    const owner = boundary.node instanceof Element ? boundary.node : boundary.node.parentElement;
+    expect(owner?.closest('li, p')).toBe(target);
+    const prefix = document.createRange();
+    prefix.selectNodeContents(target);
+    prefix.setEnd(boundary.node, boundary.offset);
+    expect(prefix.toString()).toBe('b');
+  });
+
+  it.each([
+    ['a marker-only last row', '<ul>\n<li>a</li>\n<li>\n</li></ul>\n', '- a\n-'],
+    ['a marker-only middle row', '<ul>\n<li>a</li>\n<li>\n</li><li>c</li>\n</ul>\n', '- a\n- \n- c'],
+    ['a sole marker-only row', '<ul>\n<li>\n</li></ul>\n', '-'],
+    ['a quoted marker-only row', '<blockquote>\n<ul>\n<li>a</li>\n<li>\n</li></ul>\n</blockquote>\n', '> - a\n> -'],
+    ['an emptied last row', '<ul>\n<li>a</li>\n<li><br></li>\n</ul>\n', '- a\n-'],
+    ['an emptied middle row', '<ul>\n<li>a</li>\n<li><br></li>\n<li>c</li>\n</ul>\n', '- a\n- \n- c'],
+    ['an emptied quoted row', '<blockquote>\n<ul>\n<li>a</li>\n<li><br></li>\n</ul>\n</blockquote>\n', '> - a\n> -'],
+    ['a text row keeping the native placeholder', '<ul>\n<li>a<br></li>\n<li>c</li>\n</ul>\n', '- a\n- c'],
+    ['an empty heading', '<p>plain</p>\n<h2></h2>\n', 'plain\n\n##'],
+    ['an empty quote', '<p>plain</p>\n<blockquote>\n</blockquote>\n', 'plain\n\n>']
+  ])('serializes %s by its marker alone', (_shape, html, expected) => {
+    expect(serializeVisualMarkdown(mounted(html))).toBe(expected);
+  });
+
+  it.each([
+    ['<ul>\n<li>\n</li></ul>\n', 'li'],
+    ['<ul>\n<li>a</li>\n<li>\n</li><li>c</li>\n</ul>\n', 'li:nth-child(2)'],
+    ['<h2></h2>\n', 'h2'],
+    ['<blockquote>\n</blockquote>\n', 'blockquote > p']
+  ])('gives %s the caret host Chromium leaves after emptying it', (html, bodySelector) => {
+    const editor = mounted(html);
+    const before = serializeVisualMarkdown(editor);
+    prepareVisualEmptyStructuralBodies(editor);
+    const body = editor.querySelector(bodySelector);
+    expect(body?.childNodes.length).toBe(1);
+    expect(body?.firstChild).toBeInstanceOf(HTMLBRElement);
+    expect(serializeVisualMarkdown(editor)).toBe(before);
+  });
+
+  it.each([
+    ['text', '<ul>\n<li>a</li>\n</ul>\n'],
+    ['a nested list', '<ul>\n<li>\n<ul>\n<li>x</li>\n</ul>\n</li>\n</ul>\n'],
+    ['a quoted paragraph', '<blockquote>\n<p>x</p>\n</blockquote>\n'],
+    ['an image', '<ul>\n<li><img src="a.png" alt="a"></li>\n</ul>\n'],
+    ['a read-only row', '<div class="easymde-toc"><ul>\n<li>\n</li></ul></div>\n']
+  ])('leaves a body holding %s untouched', (_shape, html) => {
+    const editor = mounted(html);
+    const before = editor.innerHTML;
+    prepareVisualEmptyStructuralBodies(editor);
+    expect(editor.innerHTML).toBe(before);
+  });
+
+  it.each([
+    ['preformatted content', '<pre><ul><li> </li></ul></pre>', 'li'],
+    ['code content', '<code><ul><li> </li></ul></code>', 'li'],
+    ['noneditable ancestor', '<div contenteditable="false"><ul><li> </li></ul></div>', 'li'],
+    ['noneditable body', '<ul><li contenteditable="false"> </li></ul>', 'li'],
+    ['noneditable quote', '<div contenteditable="false"><blockquote> </blockquote></div>', 'blockquote'],
+    ['generated math', '<div class="easymde-math" data-easymde-rendered><ul><li> </li></ul></div>', 'li'],
+    ['generated mermaid', '<div class="easymde-mermaid"><blockquote> </blockquote></div>', 'blockquote'],
+    ['generated footnotes', '<div class="footnotes"><ul><li> </li></ul></div>', 'li']
+  ])('does not prepare an empty body inside %s', (_description, html, selector) => {
+    const surface = mounted(html);
+    const body = surface.querySelector(selector);
+    if (!(body instanceof HTMLElement)) throw new Error('visual-protected-body-missing');
+    const child = body.firstChild;
+    const before = surface.innerHTML;
+    prepareVisualEmptyStructuralBodies(surface);
+    expect(surface.innerHTML).toBe(before);
+    expect(body.firstChild).toBe(child);
+  });
+
+  it.each([
+    ['a sole row', '<ul>\n<li>\n</li></ul>\n', '- \n', 2, 'li'],
+    ['a last row', '<ul>\n<li>a</li>\n<li>\n</li></ul>\n', '* a\n* \n', 6, 'li:nth-child(2)'],
+    ['a CRLF last row', '<ul>\n<li>a</li>\n<li>\n</li></ul>\n', '* a\r\n* \r\n', 7, 'li:nth-child(2)'],
+    ['a middle row', '<ul>\n<li>a</li>\n<li>\n</li><li>c</li>\n</ul>\n', '* a\n* \n* c\n', 6, 'li:nth-child(2)'],
+    ['a middle row with extra spaces', '<ul>\n<li>a</li>\n<li>\n</li><li>c</li>\n</ul>\n', '- a\n-   \n- c\n', 6, 'li:nth-child(2)'],
+    ['a CRLF middle row with extra spaces', '<ul>\n<li>a</li>\n<li>\n</li><li>c</li>\n</ul>\n', '- a\r\n-   \r\n- c\r\n', 7, 'li:nth-child(2)'],
+    ['an ordered row', '<ol>\n<li>a</li>\n<li>\n</li></ol>\n', '1. a\n2. \n', 8, 'li:nth-child(2)'],
+    ['a quoted row', '<blockquote>\n<ul>\n<li>a</li>\n<li>\n</li></ul>\n</blockquote>\n', '> * a\n> * \n', 10, 'li:nth-child(2)'],
+    ['a CRLF quoted row', '<blockquote>\n<ul>\n<li>a</li>\n<li>\n</li></ul>\n</blockquote>\n', '> * a\r\n> * \r\n', 11, 'li:nth-child(2)'],
+    ['a row beside a hidden reference', '<ul>\n<li>a</li>\n<li>\n</li></ul>\n', '* a\n* \n\n[ref]: /target\n', 6, 'li:nth-child(2)'],
+    ['a heading', '<p>plain</p>\n<h2></h2>\n', 'plain\n\n## \n', 10, 'h2'],
+    ['a quote', '<p>plain</p>\n<blockquote>\n</blockquote>\n', 'plain\n\n> \n', 9, 'blockquote > p']
+  ])('places a source caret on %s into its prepared body', (_shape, html, source, offset, bodySelector) => {
+    const editor = mounted(html);
+    prepareVisualEmptyStructuralBodies(editor);
+    const body = editor.querySelector(bodySelector);
+    const boundary = visualCaretBoundaryFromSourceOffset(
+      editor,
+      source,
+      serializeVisualMarkdown(editor),
+      offset
+    );
+    expect(boundary.node).toBe(body);
+  });
+
+  it('preserves the hidden reference when removing its preceding empty row', () => {
+    const surface = mounted('<ul>\n<li>a</li>\n<li>\n</li></ul>\n');
+    prepareVisualEmptyStructuralBodies(surface);
+    const body = surface.querySelector('li:nth-child(2)');
+    if (!(body instanceof HTMLElement)) throw new Error('visual-empty-row-target-missing');
+    const source = '* a\n* \n\n[ref]: /target\n';
+    const baseline = serializeVisualMarkdown(surface);
+    const boundary = visualCaretBoundaryFromSourceOffset(surface, source, baseline, 6);
+    expect(boundary).toEqual({ node: body, offset: 0 });
+    placeCaret(body, 0);
+    expect(visualEmptyStructuralBodySelection(surface, source, baseline))
+      .toMatchObject({ sourceOffset: 6 });
+    const removal = structuralEmptyLineRemoval(source, 6);
+    expect(removal).toEqual({ start: 4, end: 7, caret: 3 });
+    if (!removal) throw new Error('visual-empty-row-removal-missing');
+    const edited = source.slice(0, removal.start) + source.slice(removal.end);
+    expect(edited).toBe('* a\n\n[ref]: /target\n');
+    expect(edited.slice(0, removal.start) + source.slice(removal.start, removal.end)
+      + edited.slice(removal.start)).toBe(source);
+  });
+
+  it.each([
+    ['paragraph', 'ordinary paragraph'],
+    ['fenced code', '```\n[ref]: /target\n```'],
+    ['inline reference-looking text', 'text [ref]: /target']
+  ])('rejects an unrendered %s after an empty structural row', (_label, tail) => {
+    const surface = mounted('<ul>\n<li>a</li>\n<li>\n</li></ul>\n');
+    prepareVisualEmptyStructuralBodies(surface);
+    const source = `* a\n* \n\n${tail}\n`;
+    expect(() => visualCaretBoundaryFromSourceOffset(
+      surface, source, serializeVisualMarkdown(surface), 6
+    )).toThrow('visual-editor-markdown-merge-failed');
+  });
+});
+
+describe('a paragraph line that begins with an insignificant space', () => {
+  // The live DOM spells the line's leading space as NBSP, and the caret proof
+  // serializes the paragraph alone: the serializer trims its whole output, so
+  // the unmarked spelling of that one block drops the column while the marker
+  // keeps it. The proof then has to read the block's spelling as the document
+  // writes it, or the caret at the paragraph's first offset is refused as
+  // visual-editor-selection-map-failed.
+  const source = '~~~js\nalpha\n~~~\n\n the fence.\n';
+  const html = '<pre><code class="language-js">alpha\n</code></pre>'
+    + '<p>\u00a0the fence.</p>';
+
+  it('proves the caret before the column rather than past it', () => {
+    const surface = editor(html);
+    const paragraph = surface.lastElementChild;
+    const text = paragraph?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-paragraph-body-missing');
+    const baseline = serializeVisualMarkdown(surface);
+    const interval = createVisualMarkdownSourceIntervalMap(source, baseline);
+    const lineStart = source.lastIndexOf('\n\n') + 2;
+    // A character-wise Backspace here deletes the blank line's newline, so the
+    // boundary is the paragraph line's own start, not the offset after the
+    // space the renderer dropped.
+    expect(mapTextBoundaryFromInterval(surface, text, 0, baseline, interval))
+      .toMatchObject({ sourceOffset: lineStart });
+    expect(mapTextBoundaryFromInterval(surface, text, 1, baseline, interval))
+      .toMatchObject({ sourceOffset: lineStart + 1 });
+  });
+});
+
+describe('the declared block-leading run', () => {
+  const declared = (source: string, html: string) => {
+    const surface = editor(html);
+    const map = createVisualMarkdownSourceIntervalMap(
+      source,
+      serializeVisualMarkdown(surface)
+    );
+    return {
+      map,
+      runs: declaredBlockLeadingRuns(source, map),
+      surface
+    };
+  };
+
+  it('admits a dropped leading space followed by its line content', () => {
+    // The map owns the source's dropped space, the line ending precedes it and
+    // the line's own first character follows it, so the document declares it.
+    const source = '## Heading\n\n the fence.\n';
+    const { map, runs } = declared(
+      source,
+      '<h2>Heading</h2><p>the fence.</p>'
+    );
+    expect(runs).toEqual([{ end: 13, start: 12 }]);
+    expect(isDeclaredBlockLeadingRun(source, map, 12, 13)).toBe(true);
+    expect(map.hiddenSourceRanges).toContainEqual({ end: 13, start: 12 });
+  });
+
+  it('refuses an indented code line, whose owned range is the whole line', () => {
+    // The serializer re-spells the indented block as a fenced one, so the
+    // alignment owns the line's text rather than its four spaces and the run
+    // clause fails on the owned bytes. A declaration read off source line
+    // starts would admit this line as a leading column.
+    const source = 'Intro.\n\n    code line.\n\nTail.\n';
+    const { map, runs } = declared(
+      source,
+      '<p>Intro.</p><pre><code>code line.\n</code></pre><p>Tail.</p>'
+    );
+    expect(runs).toEqual([]);
+    const owned = map.hiddenSourceRanges.find(({ start }) => start === 8);
+    expect(owned).toBeDefined();
+    // Asked at its own offsets, the run of the same shape still answers no.
+    expect(isDeclaredBlockLeadingRun(source, map, 8, owned?.end ?? -1)).toBe(false);
+  });
+
+  it('refuses a whitespace-only line, whose owned range carries its ending', () => {
+    const source = 'Alpha.\n\n \nBravo.\n';
+    const { runs } = declared(
+      source,
+      '<p>Alpha.</p><p>Bravo.</p>'
+    );
+    expect(runs).toEqual([]);
+  });
+
+  it('refuses a run at the document start', () => {
+    // Owned and spelled as a column, but nothing precedes it, so it is not a
+    // line's leading run and the document-leading offset stays unexplained.
+    const source = ' lead.\n\nTail.\n';
+    const { map, runs } = declared(
+      source,
+      '<p>lead.</p><p>Tail.</p>'
+    );
+    expect(runs).toEqual([]);
+    expect(isDeclaredBlockLeadingRun(source, map, 0, 1)).toBe(false);
+    expect(map.hiddenSourceRanges).toContainEqual({ end: 1, start: 0 });
+  });
+
+  it('refuses a real source non-breaking space as content', () => {
+    const source = '## Heading\n\n\u00a0the fence.\n';
+    const { map, runs } = declared(
+      source,
+      '<h2>Heading</h2><p>the fence.</p>'
+    );
+    expect(runs).toEqual([]);
+    expect(isDeclaredBlockLeadingRun(source, map, 12, 13)).toBe(false);
+    expect(map.hiddenSourceRanges).toContainEqual({ end: 13, start: 12 });
+  });
+
+  it('refuses a document with no leading run at all', () => {
+    const source = '## Heading\n\nthe fence.\n';
+    const { runs } = declared(
+      source,
+      '<h2>Heading</h2><p>the fence.</p>'
+    );
+    expect(runs).toEqual([]);
+  });
+
+  it('answers the per-run question for each of two leading runs', () => {
+    // Two leading-space paragraph lines are an ordinary document, and the
+    // project's full-capability example is exactly the kind of file that holds
+    // more than one run of this shape. A document-wide answer would switch the
+    // rule off in such a file, so each run is asked about on its own and
+    // answered on its own.
+    const source = '## Heading\n\n one\n\n two\n';
+    const { map, runs } = declared(
+      source,
+      '<h2>Heading</h2><p>one</p><p>two</p>'
+    );
+    expect(runs).toEqual([
+      { end: 13, start: 12 },
+      { end: 19, start: 18 }
+    ]);
+    expect(isDeclaredBlockLeadingRun(source, map, 12, 13)).toBe(true);
+    expect(isDeclaredBlockLeadingRun(source, map, 18, 19)).toBe(true);
+  });
+
+  it('refuses the same shape asked at an offset the document does not own', () => {
+    // The question is about one run, so a caller holding the wrong bytes gets
+    // no. The document declares [12,13) and nothing else: sliding the range by
+    // one either way, asking for the whole line, asking for the empty range at
+    // the run's start, and asking at the document start all refuse.
+    const source = '## Heading\n\n the fence.\n';
+    const { map, runs } = declared(
+      source,
+      '<h2>Heading</h2><p>the fence.</p>'
+    );
+    expect(runs).toEqual([{ end: 13, start: 12 }]);
+    const wrong = [[11, 12], [13, 14], [12, 14], [12, 12], [0, 1]] as const;
+    for (const [start, end] of wrong) {
+      expect(isDeclaredBlockLeadingRun(source, map, start, end)).toBe(false);
+    }
+    expect(isDeclaredBlockLeadingRun(source, map, 12, 13)).toBe(true);
+  });
+});
+
+describe('the declared run in the correspondence layer', () => {
+  afterEach(() => {
+    document.body.replaceChildren();
+  });
+
+  // The live-DOM state the acceptance rows are about: the serializer's own
+  // output for the inspected surface is the committed visual, so the baseline
+  // is the surface's serialization and the hidden run is the source byte the
+  // baseline does not draw.
+  const correspondence = (source: string, html: string) => {
+    const surface = editor(html);
+    const baseline = serializeVisualMarkdown(surface);
+    const map = createVisualMarkdownSourceIntervalMap(source, baseline);
+    return { baseline, map, surface };
+  };
+  const paragraphText = (paragraph: Element): Text => {
+    const text = paragraph.firstChild;
+    if (!(text instanceof Text)) {
+      throw new Error('declared-run-fixture-invalid');
+    }
+    return text;
+  };
+  const caretIsAtParagraphStart = (caret: Readonly<{ node: Node }>, paragraph: Element) =>
+    caret.node === paragraph || caret.node.parentElement === paragraph;
+  // The same visual change a Backspace at the paragraph's start makes: the line
+  // ending that separates the two blocks is dropped from the visual.
+  const pressBeforeParagraph = (baseline: string, paragraphAt: number): string =>
+    `${baseline.slice(0, paragraphAt - 1)}${baseline.slice(paragraphAt)}`;
+
+  it('owns a dropped leading space with no fence in front of it', () => {
+    const source = '## Heading\n\n the fence.\n';
+    const { baseline, map, surface } = correspondence(
+      source,
+      '<h2>Heading</h2><p>the fence.</p>'
+    );
+    const paragraph = surface.querySelector('p');
+    if (!(paragraph instanceof HTMLParagraphElement)) {
+      throw new Error('declared-run-fixture-invalid');
+    }
+    const text = paragraphText(paragraph);
+    // The state, not a coincidence: the map owns the source's space at 12 and
+    // the baseline the live DOM serializes to draws the paragraph at 12.
+    expect(map.hiddenSourceRanges).toContainEqual({ end: 13, start: 12 });
+    expect(baseline.indexOf('the fence.')).toBe(12);
+    // The caret at the paragraph's first character is the declared run's own
+    // boundary, so the forward answer is the run's start, not the first
+    // character after it.
+    expect(mapTextBoundaryFromInterval(surface, text, 0, baseline, map))
+      .toMatchObject({ sourceOffset: 12, visualOffset: 12 });
+    placeCaret(text, 0);
+    expect(visualSelectionSourceRange(surface, source, baseline, baseline))
+      .toEqual({ direction: 'none', end: 12, start: 12 });
+    const caret = visualCaretBoundaryFromSourceOffset(surface, source, baseline, 12);
+    expect(caret.offset).toBe(0);
+    expect(caretIsAtParagraphStart(caret, paragraph)).toBe(true);
+  });
+
+  it('resolves the press on the declared start as the blank line terminator', () => {
+    const source = '## Heading\n\n the fence.\n';
+    const { baseline, map } = correspondence(
+      source,
+      '<h2>Heading</h2><p>the fence.</p>'
+    );
+    const paragraphAt = baseline.indexOf('the fence.');
+    const merged = mergeVisualMarkdownChangeDetails(
+      source,
+      baseline,
+      pressBeforeParagraph(baseline, paragraphAt),
+      map
+    );
+    expect(merged.value).toBe('## Heading\n the fence.\n');
+  });
+
+  it('owns a dropped leading space after a closing fence', () => {
+    const source = '~~~js\nalpha\n~~~\n\n the fence.\n';
+    const { baseline, map, surface } = correspondence(
+      source,
+      '<pre><code class="language-js">alpha\n</code></pre><p>the fence.</p>'
+    );
+    const paragraph = surface.querySelector('p');
+    if (!(paragraph instanceof HTMLParagraphElement)) {
+      throw new Error('declared-run-fixture-invalid');
+    }
+    const text = paragraphText(paragraph);
+    expect(map.hiddenSourceRanges).toContainEqual({ end: 18, start: 17 });
+    expect(baseline.indexOf('the fence.')).toBe(17);
+    expect(mapTextBoundaryFromInterval(surface, text, 0, baseline, map))
+      .toMatchObject({ sourceOffset: 17, visualOffset: 17 });
+    placeCaret(text, 0);
+    expect(visualSelectionSourceRange(surface, source, baseline, baseline))
+      .toEqual({ direction: 'none', end: 17, start: 17 });
+    const caret = visualCaretBoundaryFromSourceOffset(surface, source, baseline, 17);
+    expect(caret.offset).toBe(0);
+    expect(caretIsAtParagraphStart(caret, paragraph)).toBe(true);
+    const paragraphAt = baseline.indexOf('the fence.');
+    const merged = mergeVisualMarkdownChangeDetails(
+      source,
+      baseline,
+      pressBeforeParagraph(baseline, paragraphAt),
+      map
+    );
+    expect(merged.value).toBe('~~~js\nalpha\n~~~\n the fence.\n');
+  });
+
+  it('keeps the start it already answered when the DOM spells the column', () => {
+    // The state the build before this change already handled: the DOM spells
+    // the dropped run as NBSP, so the baseline the serializer writes for that
+    // surface draws the column. It answered the declared start then, and the
+    // boundary rule must not move it.
+    const source = '## Heading\n\n the fence.\n';
+    const { baseline, map, surface } = correspondence(
+      source,
+      '<h2>Heading</h2><p>\u00a0the fence.</p>'
+    );
+    const paragraph = surface.querySelector('p');
+    if (!(paragraph instanceof HTMLParagraphElement)) {
+      throw new Error('declared-run-fixture-invalid');
+    }
+    const text = paragraphText(paragraph);
+    expect(baseline.indexOf('\u00a0')).toBe(12);
+    expect(map.hiddenSourceRanges).toContainEqual({ end: 13, start: 12 });
+    expect(mapTextBoundaryFromInterval(surface, text, 0, baseline, map))
+      .toMatchObject({ sourceOffset: 12 });
+    placeCaret(text, 0);
+    expect(visualSelectionSourceRange(surface, source, baseline, baseline))
+      .toEqual({ direction: 'none', end: 12, start: 12 });
+  });
+
+  it('still refuses a hidden boundary the document does not declare', () => {
+    // A real non-breaking space in the source is content, not a dropped
+    // column, so the same press at the same offset stays ambiguous. This is
+    // the control that keeps the excusal scoped to declared runs.
+    const source = '## Heading\n\n\u00a0the fence.\n';
+    const { baseline, map } = correspondence(
+      source,
+      '<h2>Heading</h2><p>the fence.</p>'
+    );
+    expect(map.hiddenSourceRanges).toContainEqual({ end: 13, start: 12 });
+    expect(declaredBlockLeadingRuns(source, map)).toEqual([]);
+    const insertionAt = baseline.indexOf('the fence.');
+    expect(() => mergeVisualMarkdownChangeDetails(
+      source,
+      baseline,
+      `${baseline.slice(0, insertionAt)}X${baseline.slice(insertionAt)}`,
+      map
+    )).toThrow('visual-editor-markdown-merge-ambiguous');
+  });
+
+  it('owns each of two declared runs independently', () => {
+    const source = '## Heading\n\n one\n\n two\n';
+    const { baseline, map, surface } = correspondence(
+      source,
+      '<h2>Heading</h2><p>one</p><p>two</p>'
+    );
+    const paragraphs = Array.from(surface.querySelectorAll('p'));
+    expect(paragraphs).toHaveLength(2);
+    expect(declaredBlockLeadingRuns(source, map)).toEqual([
+      { end: 13, start: 12 },
+      { end: 19, start: 18 }
+    ]);
+    // Each run is asked about on its own, so the fix reaches both.
+    expect(isDeclaredBlockLeadingRun(source, map, 12, 13)).toBe(true);
+    expect(isDeclaredBlockLeadingRun(source, map, 18, 19)).toBe(true);
+    const lineStarts = [12, 18];
+    paragraphs.forEach((paragraph, index) => {
+      const text = paragraphText(paragraph);
+      const lineStart = lineStarts[index] ?? -1;
+      expect(mapTextBoundaryFromInterval(surface, text, 0, baseline, map))
+        .toMatchObject({ sourceOffset: lineStart });
+      placeCaret(text, 0);
+      expect(visualSelectionSourceRange(surface, source, baseline, baseline))
+        .toEqual({ direction: 'none', end: lineStart, start: lineStart });
+      const caret = visualCaretBoundaryFromSourceOffset(
+        surface,
+        source,
+        baseline,
+        lineStart
+      );
+      expect(caret.offset).toBe(0);
+      expect(caretIsAtParagraphStart(caret, paragraph)).toBe(true);
+    });
+  });
+});
+
+describe('grapheme boundaries', () => {
+  const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+  const samples = [
+    'plain',
+    'e\u0301x',
+    '\uD83D\uDE00x',
+    '\uD83C\uDDFA\uD83C\uDDF8\uD83C\uDDF7\uD83C\uDDE6!',
+    '\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67',
+    `a${'\u0301'.repeat(100)}`
+  ];
+  it.each(samples)(
+    'agrees with the whole-string segmentation of %j',
+    (text) => {
+      const starts = Array.from(segmenter.segment(text), (part) => part.index);
+      expect(starts[0]).toBe(0);
+      for (const [index, start] of starts.entries()) {
+        if (start > 0) {
+          expect(previousGraphemeBoundary(text, start)).toBe(
+            starts[index - 1]
+          );
+        }
+        if (start < text.length) {
+          expect(nextGraphemeBoundary(text, start)).toBe(
+            starts[index + 1] ?? text.length
+          );
+        }
+      }
+      expect(previousGraphemeBoundary(text, text.length)).toBe(starts.at(-1));
+      expect(nextGraphemeBoundary(text, text.length)).toBe(text.length);
+    }
+  );
+  it('grows past a cluster longer than its scan window', () => {
+    const cluster = `a${'\u0301'.repeat(100)}`;
+    const text = `x${cluster}b`;
+    expect(cluster.length).toBeGreaterThan(64);
+    expect(nextGraphemeBoundary(text, 0)).toBe(1);
+    expect(nextGraphemeBoundary(text, 1)).toBe(1 + cluster.length);
+    expect(previousGraphemeBoundary(text, 1 + cluster.length)).toBe(1);
+    expect(previousGraphemeBoundary(text, text.length)).toBe(
+      1 + cluster.length
+    );
+  });
+  it('clamps at the document edges', () => {
+    expect(previousGraphemeBoundary('', 0)).toBe(0);
+    expect(nextGraphemeBoundary('', 0)).toBe(0);
+    expect(previousGraphemeBoundary('ab', -3)).toBe(0);
+    expect(previousGraphemeBoundary('ab', 9)).toBe(1);
+    expect(nextGraphemeBoundary('ab', 9)).toBe(2);
   });
 });

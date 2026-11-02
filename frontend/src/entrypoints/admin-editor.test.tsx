@@ -91,6 +91,7 @@ vi.mock(
 const bootstrap = {
   appearance: {},
   document: {},
+  referenceLabelCaseFoldProfile: 14,
   editorBlockIndexWorkerUrl: 'https://example.test/wp-content/plugins/easymde/assets/build/editor-block-index-worker/assets/editor-block-index-worker-test.js',
   fonts: {},
   imageUpload: {
@@ -305,6 +306,7 @@ describe('mountAdminEditor', () => {
     );
     expect(createBrowserEditorBlockIndexWorker).toHaveBeenCalledWith(
       expect.objectContaining({
+        referenceLabelCaseFoldProfile: bootstrap.referenceLabelCaseFoldProfile,
         workerUrl: bootstrap.editorBlockIndexWorkerUrl
       })
     );

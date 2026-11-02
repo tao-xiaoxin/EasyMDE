@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { markdownLanguage } from "@codemirror/lang-markdown";
 
 import {
-	createEditorMarkdownBlockIndex,
+	createEditorMarkdownBlockIndex as createProfiledMarkdownBlockIndex,
 	type EditorMarkdownBlockKind,
 	findEditorMarkdownBlock,
 } from "./editor-markdown-block-index";
@@ -10,6 +11,7 @@ import {
 	findEditorCodeContentTarget,
 	readEditorCodeContent,
 } from "./editor-code-content-target";
+import { markdownReferenceLabels, type MarkdownSyntaxNode } from "./editor-markdown-link-preparation";
 
 function editorCodeBodyMap(
 	source: string,
@@ -68,6 +70,29 @@ function blockAt(
 }
 
 describe("createEditorMarkdownBlockIndex", () => {
+	it("uses the explicit renderer profile to project Unicode reference links", () => {
+		const source = "[STRASSE]: /target\n\n[Stra\u00dfe]";
+		const index = createEditorMarkdownBlockIndex(source, { referenceLabelCaseFoldProfile: 14 });
+		expect(index.linkCandidates?.map((link) => source.slice(link.from, link.to))).toEqual(["[Stra\u00dfe]"]);
+	});
+
+	it("rejects an unsupported Unicode reference proof without rejecting ordinary Unicode prose", () => {
+		const options = { referenceLabelCaseFoldProfile: "unsupported" as const };
+		expect(() => createEditorMarkdownBlockIndex("Ordinary \u00df prose", options)).not.toThrow();
+		expect(() => createEditorMarkdownBlockIndex("[STRASSE]: /x\n\n[Stra\u00dfe]", options))
+			.toThrow("visual-editor-reference-label-fold-profile-unavailable");
+		expect(createEditorMarkdownBlockIndex("[a]: /x\n\n[a]", options).linkCandidates).toHaveLength(1);
+	});
+
+	it("projects only parser-owned reference definitions using the existing label normalization", () => {
+		const source = "[ Some   Label ]: https://example.test/a\n\n```\n[hidden]: https://example.test/b\n```";
+		const nodes: MarkdownSyntaxNode[] = [];
+		markdownLanguage.parser.parse(source).iterate({ enter(node) { nodes.push({ from: node.from, name: node.name, to: node.to }); } });
+		const labels = markdownReferenceLabels(source, nodes, 14);
+		expect(labels.has("some label")).toBe(true);
+		expect(labels.has("hidden")).toBe(false);
+		expect(labels.has("missing")).toBe(false);
+	});
 	it("prepares the exact link candidates with their block ranges", () => {
 		const source =
 			'Before [caption](https://example.test "a)b") and <https://auto.test/x>\n\n[标题][引用]\n\n[引用]: https://example.test/ref';
@@ -1230,3 +1255,7 @@ describe("readEditorCodeContent", () => {
 		});
 	});
 });
+
+function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {
+  return createProfiledMarkdownBlockIndex(source, options);
+}

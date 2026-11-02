@@ -186,7 +186,7 @@ export function renderNotices(root = defaultRoot) {
   return `${[
     '# Third-Party Notices',
     '',
-    'This file is generated from `composer.lock`, `package-lock.json`, and the EasyMDE copied runtime asset manifest. Run `npm run notices:write` after changing runtime dependencies or copied frontend assets, then verify with `npm run notices:check`.',
+    'This file is generated from `composer.lock`, `package-lock.json`, the EasyMDE copied runtime asset manifest, and committed third-party data licenses. Run `npm run notices:write` after changing these inputs, then verify with `npm run notices:check`.',
     '',
     'Development-only tools such as PHPUnit, PHPCS, WPCS, Playwright, and Node package caches are not bundled in the release ZIP.',
     '',
@@ -208,7 +208,13 @@ export function renderNotices(root = defaultRoot) {
     '',
     'These packages are compiled into production browser bundles. Their required license notices follow.',
     '',
-    bundledFrontendLicenseTexts(root).join('\n\n')
+    bundledFrontendLicenseTexts(root).join('\n\n'),
+    '',
+    '## Unicode Character Database',
+    '',
+    'Versioned Unicode case-folding data is compiled into the editor and its block-index worker. The pinned inputs and checksums are in `scripts/generate-reference-case-fold.mjs`.',
+    '',
+    `\`\`\`text\n${readFileSync(join(root, 'scripts/vendor-licenses/unicode-LICENSE'), 'utf8').trim()}\n\`\`\``
   ].join('\n')}\n`;
 }
 

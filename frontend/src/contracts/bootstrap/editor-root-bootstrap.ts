@@ -1,4 +1,8 @@
-import { resolveEditorBlockIndexWorkerUrl } from '../ports/editor-block-index-port';
+import {
+  isReferenceLabelCaseFoldProfile,
+  resolveEditorBlockIndexWorkerUrl,
+  type ReferenceLabelCaseFoldProfile
+} from '../ports/editor-block-index-port';
 import {
   isPreviewFeatureKey,
   type PreviewFeatures,
@@ -151,6 +155,7 @@ export type EditorContextMenuBootstrapStrings = Readonly<{
 export type EditorRootBootstrap = Readonly<{
   appearance: AppearanceBootstrap;
   editorBlockIndexWorkerUrl: string;
+  referenceLabelCaseFoldProfile: ReferenceLabelCaseFoldProfile;
   schemaVersion: 3;
   document: DocumentSourceBootstrap;
   fonts: FontControlsBootstrap;
@@ -523,6 +528,9 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
   if (3 !== bootstrap.schemaVersion) {
     throw new EditorRootBootstrapError('editor-root-schema-unsupported');
   }
+  if (!isReferenceLabelCaseFoldProfile(bootstrap.referenceLabelCaseFoldProfile)) {
+    throw new EditorRootBootstrapError('editor-root-reference-fold-profile-invalid');
+  }
   const labels = objectValue(bootstrap.strings, 'editor-root-label-invalid');
   const immersive = objectValue(
     labels.immersive,
@@ -698,6 +706,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
 
   return {
     appearance,
+    referenceLabelCaseFoldProfile: bootstrap.referenceLabelCaseFoldProfile,
     editorBlockIndexWorkerUrl,
     schemaVersion: 3,
     document,

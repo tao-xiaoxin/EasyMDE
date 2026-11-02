@@ -11,6 +11,7 @@ export type EditorContextMenuOperationOwner = Readonly<{
 	begin: (
 		captured: EditorContextSnapshot,
 		isCurrent: () => boolean,
+		lifetime?: Readonly<{ signal: AbortSignal; cancel: () => void }>,
 	) => EditorContextMenuActionOperation;
 	dispose: () => void;
 	finish: (operation: EditorContextMenuActionOperation) => void;
@@ -43,6 +44,7 @@ export function createEditorContextMenuOperationOwner(input: Readonly<{
 	const begin = (
 		captured: EditorContextSnapshot,
 		isCurrent: () => boolean,
+		lifetime?: Readonly<{ signal: AbortSignal; cancel: () => void }>,
 	): EditorContextMenuActionOperation => {
 		const previous = active;
 		previous?.controller.abort();
@@ -53,17 +55,27 @@ export function createEditorContextMenuOperationOwner(input: Readonly<{
 		};
 		const unsubscribeDocument = input.subscribeDocument(check);
 		const unsubscribeSelection = input.subscribeSelection(check);
+		const abortFromLifetime = (): void => controller.abort();
+		const onAbort = (): void => {
+			operation.cleanup();
+			lifetime?.cancel();
+		};
 		const operation: EditorContextMenuActionOperation = {
 			captured,
 			cleanup: () => {
 				unsubscribeDocument();
 				unsubscribeSelection();
+				lifetime?.signal.removeEventListener('abort', abortFromLifetime);
+				controller.signal.removeEventListener('abort', onAbort);
 				if (active === operation) active = null;
 			},
 			controller,
 			isCurrent,
 		};
 		active = operation;
+		controller.signal.addEventListener('abort', onAbort, { once: true });
+		lifetime?.signal.addEventListener('abort', abortFromLifetime, { once: true });
+		if (lifetime?.signal.aborted) controller.abort();
 		check();
 		return operation;
 	};

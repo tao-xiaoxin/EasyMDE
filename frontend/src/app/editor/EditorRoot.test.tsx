@@ -58,7 +58,7 @@ import * as imageScaleContract from '../../features/image-scale/image-scale-cont
 import * as observedSourceAdapter from '../../features/document-source/adapters/code-mirror-document-session';
 import type { CodeMirrorDocumentSession, DocumentHistoryState, DocumentSelection } from '../../features/document-source/adapters/code-mirror-document-session';
 import {
-  createEditorMarkdownBlockIndex as observedBlockIndex
+  createEditorMarkdownBlockIndex as createProfiledMarkdownBlockIndex
 } from '../../features/editor-context-menu/editor-markdown-block-index';
 import {
   findEditorCodeContentTarget as observedCodeContentTarget
@@ -805,6 +805,7 @@ function fixture(): EditorRootProps &
         .mockResolvedValue({ status: 'failed', code: 'synthetic' })
     },
     document: { editorLabel: 'Markdown source' },
+    referenceLabelCaseFoldProfile: 14,
     enhancementPort: {
       dispose: vi.fn(),
       enhance: vi.fn().mockResolvedValue(undefined),
@@ -21957,3 +21958,7 @@ it('keeps native-created Full code body typing editable through the real Root co
     view.unmount(); theme.remove();
   }
 });
+
+function observedBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {
+  return createProfiledMarkdownBlockIndex(source, options);
+}

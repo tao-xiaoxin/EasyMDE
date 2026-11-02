@@ -2,7 +2,7 @@ import { act, render } from "@testing-library/react";
 import { createElement } from "@wordpress/element";
 import { describe, expect, it, vi } from "vitest";
 
-import type { PreviewEditMap } from "../../../contracts/ports/preview-request";
+import type { PreviewAcceptedWindowRow, PreviewAcceptedWindowRowRequest, PreviewEditMap } from "../../../contracts/ports/preview-request";
 import type {
 	DocumentHistoryState,
 	DocumentSelection,
@@ -11,8 +11,11 @@ import { createCodeMirrorDocumentSession } from "../../document-source/adapters/
 import { createNativeTitleSession } from "../../document-source/adapters/native-title-session";
 import type { EditorDocumentSession } from "../../document-source/editor-document-session";
 import { createEditorDocumentSession } from "../../document-source/editor-document-session";
+import * as visualMarkdown from "../visual-markdown";
 import {
 	createVisualMarkdownSourceRangeFromPreviewEditMap,
+	nextGraphemeBoundary,
+	previousGraphemeBoundary,
 	serializeVisualMarkdownBlockFragment,
 	visualSelectionSourceRangeForBlocks,
 } from "../visual-markdown";
@@ -21,6 +24,7 @@ import type {
 	ImmersiveWindowAcceptedSnapshot,
 } from "./ImmersiveVisualEditor";
 import {
+	equivalentParagraphBoundaries,
 	WindowedImmersiveVisualEditor,
 } from "./WindowedImmersiveVisualEditor";
 
@@ -152,6 +156,1203 @@ function fixture(
 		surface,
 	};
 }
+
+it.each(["accepted", "list", "quote", "heading", "table", "foreign clone", "changed serialization", "spacer", "protected", "canonical change"] as const)("reauthenticates pending row navigation only for the owned row: %s", (scenario) => {
+	const rowSource = scenario === "list" ? "- Paragraph text"
+		: scenario === "quote" ? "> Paragraph text"
+		: scenario === "heading" ? "## Paragraph text"
+		: scenario === "table" ? "| Label |\n| --- |\n| Paragraph text |"
+		: "Paragraph text";
+	const rowMarkup = scenario === "list" ? "<ul><li>Paragraph text</li></ul>"
+		: scenario === "quote" ? "<blockquote><p>Paragraph text</p></blockquote>"
+		: scenario === "heading" ? "<h2>Paragraph text</h2>"
+		: scenario === "table" ? "<table><thead><tr><th>Label</th></tr></thead><tbody><tr><td>Paragraph text</td></tr></tbody></table>"
+		: scenario === "protected" ? '<p><span class="easymde-math" data-easymde-rendered="true">Paragraph text</span></p>'
+		: "<p>Paragraph text</p>";
+	const rowTemplate = document.createElement("template"); rowTemplate.innerHTML = rowMarkup;
+	const rowElement = rowTemplate.content.firstElementChild;
+	if (!(rowElement instanceof HTMLElement)) throw new Error("pending-navigation-row-missing");
+	rowElement.setAttribute("data-easymde-visual-block-id", "b160");
+	const current = fixture({
+		blockOverrides: { 159: "# Heading", 160: rowSource },
+		markupOverrides: { 159: '<h1 data-easymde-visual-block-id="b159">Heading</h1>', 160: rowTemplate.innerHTML },
+		mounted: [159, 160, 161], paragraphBlocks: true,
+	});
+	current.surface.setAttribute("contenteditable", "true"); current.surface.tabIndex = 0;
+	const original = current.canonical();
+	const field = document.createElement("textarea"); field.value = field.defaultValue = original;
+	const container = document.createElement("div"); document.body.append(container, field);
+	const documentSession = createEditorDocumentSession(
+		createCodeMirrorDocumentSession({ container, label: "Markdown source", submissionField: field }),
+		createNativeTitleSession(null),
+	);
+	documentSession.document.setVisualEditingActive(true);
+	const paragraph = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b160"]');
+	const headingText = current.surface.querySelector("h1")?.firstChild;
+	const walker = paragraph ? document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT) : null;
+	let paragraphText: Node | null = null;
+	for (let node = walker?.nextNode(); node; node = walker?.nextNode()) {
+		if (node.nodeValue === "Paragraph text") { paragraphText = node; break; }
+	}
+	if (!paragraph || !(headingText instanceof Text) || !(paragraphText instanceof Text)) throw new Error("pending-paragraph-navigation-setup-invalid");
+	const accepted = acceptedWindowSnapshotForMountedBlock(current, paragraph);
+	const onCanonicalDocumentChange = vi.fn();
+	const rendered = renderWindowEditor(current, { documentSession, getAcceptedWindowSnapshot: () => accepted, onCanonicalDocumentChange });
+	try {
+		current.surface.focus(); placeCaret(headingText, 1);
+		const input = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: "X" });
+		act(() => {
+			current.surface.dispatchEvent(input);
+			if (!input.defaultPrevented) {
+				headingText.insertData(1, "X"); placeCaret(headingText, 2);
+				current.surface.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "X" }));
+			}
+			current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "historyUndo" }));
+			current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "historyRedo" }));
+		});
+		const typed = documentSession.document.getValue();
+		expect(typed).toBe(original.replace("# Heading", "# HXeading"));
+		const position = typed.indexOf("Paragraph text") + 1;
+		let navigationNode: Node = paragraphText;
+		let navigationOffset = 1;
+		if (scenario === "foreign clone") {
+			const clone = paragraph.cloneNode(true) as HTMLElement;
+			paragraph.replaceWith(clone);
+			if (!(clone.firstChild instanceof Text)) throw new Error("pending-navigation-clone-missing");
+			navigationNode = clone.firstChild;
+		} else if (scenario === "changed serialization") paragraphText.appendData("foreign");
+		else if (scenario === "spacer") {
+			const spacer = current.surface.querySelector("[data-easymde-preview-window-spacer]");
+			if (!(spacer instanceof HTMLElement)) throw new Error("pending-navigation-spacer-missing");
+			navigationNode = spacer; navigationOffset = 0;
+		}
+		if (scenario === "canonical change") documentSession.document.applyTextChange({ value: typed + "!", selection: { direction: "none", start: 0, end: 0 } });
+		const expectedBeforeInput = documentSession.document.getValue();
+		let inputPrevented = false;
+		act(() => {
+			current.surface.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+			window.getSelection()?.collapse(navigationNode, navigationOffset);
+			current.surface.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Home" }));
+			window.getSelection()?.collapse(navigationNode, 0);
+			current.surface.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowRight" }));
+			window.getSelection()?.collapse(navigationNode, navigationOffset);
+			const target = document.createRange(); target.setStart(navigationNode, navigationOffset); target.collapse(true);
+			const next = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: "Q" });
+			Object.defineProperty(next, "getTargetRanges", { value: () => [target] });
+			current.surface.dispatchEvent(next);
+			inputPrevented = next.defaultPrevented;
+		});
+		if (["accepted", "list", "quote", "heading", "table"].includes(scenario)) {
+			expect(documentSession.document.getValue()).toBe(typed.slice(0, position) + "Q" + typed.slice(position));
+			expect(rendered.onFailure).not.toHaveBeenCalled();
+		} else {
+			expect(documentSession.document.getValue()).toBe(expectedBeforeInput);
+			expect(inputPrevented).toBe(true);
+			if (scenario === "canonical change") expect(onCanonicalDocumentChange).toHaveBeenCalled();
+			else expect(rendered.onFailure).toHaveBeenCalled();
+		}
+	} finally { rendered.view.unmount(); documentSession.destroy(); container.remove(); field.remove(); current.surface.remove(); }
+});
+
+it.each(["owned", "foreign", "foreign during commit"] as const)(
+	"continues after a pending cross-row replacement and history, rejecting %s DOM",
+	(scenario) => {
+		const current = fixture({
+			blockOverrides: { 0: "Alpha.", 1: "Beta.", 2: "~~~js\nvalue = 1;\n~~~" },
+			markupOverrides: {
+				0: '<p data-easymde-visual-block-id="b0">Alpha.</p>',
+				1: '<p data-easymde-visual-block-id="b1">Beta.</p>',
+				2: '<pre data-easymde-visual-block-id="b2"><code>value = 1;\n</code></pre>',
+			},
+			mounted: [0, 1, 2, 3], paragraphBlocks: true,
+		});
+		current.surface.setAttribute("contenteditable", "true"); current.surface.tabIndex = 0;
+		const original = current.canonical();
+		const field = document.createElement("textarea"); field.value = field.defaultValue = original;
+		const container = document.createElement("div"); document.body.append(container, field);
+		const documentSession = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({ container, label: "Markdown source", submissionField: field }),
+			createNativeTitleSession(null),
+		);
+		documentSession.document.setVisualEditingActive(true);
+		const first = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b0"]');
+		const second = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b1"]');
+		const firstText = first?.firstChild; const secondText = second?.firstChild;
+		if (!first || !second || !(firstText instanceof Text) || !(secondText instanceof Text)) throw new Error("cross-row-fixture-missing");
+		const accepted = acceptedWindowSnapshotForMountedBlock(current, first);
+		const rendered = renderWindowEditor(current, { documentSession, getAcceptedWindowSnapshot: () => accepted });
+		try {
+			current.surface.focus();
+			act(() => {
+				current.surface.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+				window.getSelection()?.setBaseAndExtent(firstText, 2, secondText, 2);
+				const target = document.createRange(); target.setStart(firstText, 2); target.setEnd(secondText, 2);
+				const before = new InputEvent("beforeinput", { bubbles: true, cancelable: true, data: "Q", inputType: "insertText" });
+				Object.defineProperty(before, "getTargetRanges", { value: () => [target] });
+				current.surface.dispatchEvent(before);
+				expect(rendered.onFailure).not.toHaveBeenCalled();
+				expect(before.defaultPrevented).toBe(false);
+				first.textContent = "AlQta."; second.remove();
+				if (scenario === "foreign during commit") {
+					const foreign = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b2"]');
+					if (!foreign) throw new Error("cross-row-foreign-root-missing");
+					foreign.replaceWith(foreign.cloneNode(true));
+				}
+				const mergedText = first.firstChild;
+				if (!(mergedText instanceof Text)) throw new Error("cross-row-merged-text-missing");
+				placeCaret(mergedText, 3);
+				current.surface.dispatchEvent(new InputEvent("input", { bubbles: true, data: "Q", inputType: "insertText" }));
+			});
+			if (scenario === "foreign during commit") {
+				expect(documentSession.document.getValue()).toBe(original);
+				expect(rendered.onFailure).toHaveBeenCalled();
+				return;
+			}
+			const edited = original.replace("Alpha.\n\nBeta.", "AlQta.");
+			expect(documentSession.document.getValue()).toBe(edited);
+			act(() => current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "historyUndo" })));
+			expect(documentSession.document.getValue()).toBe(original);
+			act(() => current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "historyRedo" })));
+			expect(documentSession.document.getValue()).toBe(edited);
+			if (scenario === "foreign") {
+				const foreign = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b2"]');
+				if (!foreign) throw new Error("cross-row-foreign-root-missing");
+				foreign.replaceWith(foreign.cloneNode(true));
+			}
+			act(() => current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, data: "Z", inputType: "insertText" })));
+			if (scenario === "owned") {
+				expect(documentSession.document.getValue()).toBe(edited.replace("AlQta.", "AlQZta."));
+				expect(rendered.onFailure).not.toHaveBeenCalled();
+			} else {
+				expect(documentSession.document.getValue()).toBe(edited);
+				expect(rendered.onFailure).toHaveBeenCalledWith("visual-editor-window-pending-selection-stale:dom:visual-editor-window-source-navigation-dom-stale");
+			}
+		} finally { rendered.view.unmount(); documentSession.destroy(); container.remove(); field.remove(); current.surface.remove(); }
+	},
+);
+
+it("reports a privacy-safe merge reason before a failed native commit", () => {
+	vi.useFakeTimers();
+	const current = fixture({
+		blockOverrides: { 160: "Lead **word**" },
+		markupOverrides: { 160: '<p data-easymde-visual-block-id="b160">Lead <strong>word</strong></p>' },
+		mounted: [160], paragraphBlocks: true,
+	});
+	current.surface.setAttribute("contenteditable", "true"); current.surface.tabIndex = 0;
+	const onDiagnostic = vi.fn();
+	const rendered = renderWindowEditor(current, { onDiagnostic });
+	const original = current.canonical();
+	let spy: ReturnType<typeof vi.spyOn> | null = null;
+	try {
+		current.surface.focus();
+		const text = current.surface.querySelector("strong")?.firstChild;
+		if (!(text instanceof Text)) throw new Error("merge-diagnostic-text-missing");
+		placeCaret(text, 1);
+		const target = document.createRange(); target.setStart(text, 1); target.collapse(true);
+		const before = new InputEvent("beforeinput", { bubbles: true, cancelable: true, data: "Q", inputType: "insertText" });
+		Object.defineProperty(before, "getTargetRanges", { value: () => [target] });
+		act(() => current.surface.dispatchEvent(before));
+		expect(before.defaultPrevented).toBe(false);
+		spy = vi.spyOn(visualMarkdown, "mergeVisualMarkdownChangeDetails").mockImplementation(() => {
+			throw new visualMarkdown.VisualMarkdownMergeError("source-visual-slice-mismatch", {
+				sourceLength: 13, baselineLength: 13, editedLength: 14,
+				visualStart: 1, visualEnd: 2, sourceStart: 1, sourceEnd: 2,
+			});
+		});
+		act(() => {
+			text.insertData(1, "Q"); placeCaret(text, 2);
+			current.surface.dispatchEvent(new InputEvent("input", { bubbles: true, data: "Q", inputType: "insertText" }));
+			vi.advanceTimersByTime(100);
+		});
+		expect(rendered.onFailure).toHaveBeenCalledWith("visual-editor-markdown-merge-failed");
+		const diagnostic = onDiagnostic.mock.calls.find(([code]) => code.startsWith("visual-editor-window-merge:"))?.[0];
+		expect(diagnostic).toContain("reason=source-visual-slice-mismatch;");
+		expect(diagnostic).toContain('"phase":"commit-merge"');
+		expect(diagnostic).not.toContain("word");
+		expect(current.canonical()).toBe(original);
+	} finally { spy?.mockRestore(); rendered.view.unmount(); current.surface.remove(); vi.useRealTimers(); }
+});
+
+it.each(["undo", "pending insertion", "pending selection deletion"] as const)(
+	"keeps later rows bound to the canonical source through a %s while the Preview is pending",
+	(scenario) => {
+		// A CODE row projects through its exact fence slice, so it reads
+		// wrong as soon as its row drifts from the canonical source. The
+		// protected row after it has no source extent of its own and can
+		// never be the row a canonical edit belongs to.
+		const fence = "```js\nlet a = 1;\n```";
+		const current = fixture({
+			blockOverrides: { 159: "# Heading", 160: fence, 161: "$$x$$" },
+			markupOverrides: {
+				159: '<h1 data-easymde-visual-block-id="b159">Heading</h1>',
+				160: '<pre data-easymde-visual-block-id="b160"><code>let a = 1;\n</code></pre>',
+				161: '<p data-easymde-visual-block-id="b161"><span class="easymde-math" data-easymde-rendered="1" data-easymde-visual-markdown-source="x"><span class="katex-display"><span class="katex">x</span></span></span></p>',
+			},
+			mounted: [159, 160, 161, 162],
+			nonEditable: [161],
+			paragraphBlocks: true,
+		});
+		current.surface.setAttribute("contenteditable", "true"); current.surface.tabIndex = 0;
+		const original = current.canonical();
+		const field = document.createElement("textarea"); field.value = field.defaultValue = original;
+		const container = document.createElement("div"); document.body.append(container, field);
+		const documentSession = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({ container, label: "Markdown source", submissionField: field }),
+			createNativeTitleSession(null),
+		);
+		documentSession.document.setVisualEditingActive(true);
+		const heading = current.surface.querySelector("h1")?.firstChild;
+		const code = current.surface.querySelector('[data-easymde-visual-block-id="b160"] > code')?.firstChild;
+		if (!(heading instanceof Text) || !(code instanceof Text)) throw new Error("pending-ledger-row-text-missing");
+		const accepted = acceptedWindowSnapshotForMountedBlock(current, current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b160"]') ?? current.surface);
+		const rendered = renderWindowEditor(current, { documentSession, getAcceptedWindowSnapshot: () => accepted });
+		// A pointer gesture places the native selection the next input event targets.
+		const input = (inputType: string, node: Text, start: number, end: number, data: string | null = null): void => {
+			current.surface.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+			window.getSelection()?.setBaseAndExtent(node, start, node, end);
+			const target = document.createRange(); target.setStart(node, start); target.setEnd(node, end);
+			const event = new InputEvent("beforeinput", { bubbles: true, cancelable: true, data, inputType });
+			Object.defineProperty(event, "getTargetRanges", { value: () => [target] });
+			current.surface.dispatchEvent(event);
+		};
+		const history = (inputType: "historyRedo" | "historyUndo"): void => {
+			current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType }));
+		};
+		try {
+			current.surface.focus(); placeCaret(heading, 1);
+			act(() => {
+				const typed = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: "X" });
+				current.surface.dispatchEvent(typed);
+				if (!typed.defaultPrevented) {
+					heading.insertData(1, "X"); placeCaret(heading, 2);
+					current.surface.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "X" }));
+				}
+			});
+			const withX = original.replace("# Heading", "# HXeading");
+			expect(documentSession.document.getValue()).toBe(withX);
+			act(() => {
+				history("historyUndo");
+				if ("undo" === scenario) return;
+				// Redo leaves the source at X with its Preview outstanding.
+				history("historyRedo");
+				if ("pending insertion" === scenario) input("insertText", heading, 1, 1, "Y");
+				else input("deleteContentBackward", heading, 0, 2);
+			});
+			const edited = "undo" === scenario ? original
+				: "pending insertion" === scenario ? original.replace("# Heading", "# HYXeading")
+					: original.replace("# Heading", "# eading");
+			expect(documentSession.document.getValue()).toBe(edited);
+			act(() => input("insertText", code, 1, 1, "Q"));
+			expect(documentSession.document.getValue()).toBe(edited.replace("let a", "lQet a"));
+			expect(rendered.onFailure).not.toHaveBeenCalled();
+		} finally { rendered.view.unmount(); documentSession.destroy(); container.remove(); field.remove(); current.surface.remove(); }
+	},
+);
+
+it.each(["adjacent", "retargeted"] as const)(
+	"deletes beside a pending caret in a CODE that still shows its accepted body: %s target",
+	(scenario) => {
+		// A pending insertion is canonical-only, so the CODE keeps its
+		// accepted text while the source holds the newer body.
+		const current = fixture({
+			blockOverrides: { 159: "# Heading", 160: "```js\nlet a = 1;\n```" },
+			markupOverrides: {
+				159: '<h1 data-easymde-visual-block-id="b159">Heading</h1>',
+				160: '<pre data-easymde-visual-block-id="b160"><code>let a = 1;\n</code></pre>',
+			},
+			mounted: [159, 160, 161],
+			paragraphBlocks: true,
+		});
+		current.surface.setAttribute("contenteditable", "true"); current.surface.tabIndex = 0;
+		const original = current.canonical();
+		const field = document.createElement("textarea"); field.value = field.defaultValue = original;
+		const container = document.createElement("div"); document.body.append(container, field);
+		const documentSession = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({ container, label: "Markdown source", submissionField: field }),
+			createNativeTitleSession(null),
+		);
+		documentSession.document.setVisualEditingActive(true);
+		const heading = current.surface.querySelector("h1")?.firstChild;
+		const code = current.surface.querySelector('[data-easymde-visual-block-id="b160"] > code')?.firstChild;
+		if (!(heading instanceof Text) || !(code instanceof Text)) throw new Error("pending-code-row-text-missing");
+		const accepted = acceptedWindowSnapshotForMountedBlock(current, current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b160"]') ?? current.surface);
+		const onDiagnostic = vi.fn();
+		const rendered = renderWindowEditor(current, { documentSession, getAcceptedWindowSnapshot: () => accepted, onDiagnostic });
+		const input = (inputType: string, start: number, end: number, data: string | null = null): InputEvent => {
+			const target = document.createRange(); target.setStart(code, start); target.setEnd(code, end);
+			const event = new InputEvent("beforeinput", { bubbles: true, cancelable: true, data, inputType });
+			Object.defineProperty(event, "getTargetRanges", { value: () => [target] });
+			current.surface.dispatchEvent(event);
+			return event;
+		};
+		try {
+			current.surface.focus(); placeCaret(heading, 1);
+			act(() => {
+				const typed = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: "X" });
+				current.surface.dispatchEvent(typed);
+				if (!typed.defaultPrevented) {
+					heading.insertData(1, "X"); placeCaret(heading, 2);
+					current.surface.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "X" }));
+				}
+			});
+			const withX = original.replace("# Heading", "# HXeading");
+			act(() => {
+				// Undo and Redo leave the source at X with its Preview outstanding.
+				for (const inputType of ["historyUndo", "historyRedo"]) {
+					current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType }));
+				}
+				current.surface.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+				window.getSelection()?.collapse(code, 1);
+				input("insertText", 1, 1, "Y");
+			});
+			const typed = withX.replace("let a", "lYet a");
+			expect(documentSession.document.getValue()).toBe(typed);
+			expect(code.data).toBe("let a = 1;\n");
+			let prevented = false;
+			act(() => { prevented = ("adjacent" === scenario ? input("deleteContentBackward", 0, 1) : input("deleteContentBackward", 2, 3)).defaultPrevented; });
+			expect(prevented).toBe(true);
+			if ("adjacent" === scenario) {
+				expect(documentSession.document.getValue()).toBe(withX);
+				expect(rendered.onFailure).not.toHaveBeenCalled();
+				expect(onDiagnostic).not.toHaveBeenCalled();
+				// The next keystroke still reads the canonical caret.
+				act(() => input("insertText", 1, 1, "Z"));
+				expect(documentSession.document.getValue()).toBe(withX.replace("let a", "lZet a"));
+			} else {
+				expect(documentSession.document.getValue()).toBe(typed);
+				expect(rendered.onFailure).toHaveBeenCalledWith("visual-editor-window-pending-input-unavailable");
+				expect(onDiagnostic).toHaveBeenCalledWith(expect.stringContaining("visual-editor-window-pending-input:reason=pending-code-deletion-rejected;"));
+			}
+			expect(code.data).toBe("let a = 1;\n");
+		} finally { rendered.view.unmount(); documentSession.destroy(); container.remove(); field.remove(); current.surface.remove(); }
+	},
+);
+
+it.each(["spacer edge", "stale lease"] as const)(
+	"resolves a pending deletion the row cannot perform natively, or fails closed: %s",
+	(scenario) => {
+		// While a transfer is live the following input event publishes
+		// nothing, so a deletion the pending owner rejects must not reach the
+		// browser: the native result would leave a row nothing records.
+		const current = fixture({
+			blockOverrides: { 161: "# Heading" },
+			markupOverrides: { 161: '<h1 data-easymde-visual-block-id="b161">Heading</h1>' },
+			mounted: [160, 161, 162],
+			paragraphBlocks: true,
+		});
+		current.surface.setAttribute("contenteditable", "true"); current.surface.tabIndex = 0;
+		const original = current.canonical();
+		const field = document.createElement("textarea"); field.value = field.defaultValue = original;
+		const container = document.createElement("div"); document.body.append(container, field);
+		const documentSession = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({ container, label: "Markdown source", submissionField: field }),
+			createNativeTitleSession(null),
+		);
+		documentSession.document.setVisualEditingActive(true);
+		const spacer = current.surface.firstElementChild;
+		const row = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b160"]');
+		const rowText = row?.firstChild;
+		const heading = current.surface.querySelector("h1")?.firstChild;
+		if (!(spacer instanceof HTMLElement) || !spacer.hasAttribute("data-easymde-preview-window-spacer") ||
+			!row || !(rowText instanceof Text) || !(heading instanceof Text)) throw new Error("pending-deletion-fixture-invalid");
+		const accepted = acceptedWindowSnapshotForMountedBlock(current, row);
+		const onTransferFailure = vi.fn();
+		const onDiagnostic = vi.fn();
+		const rendered = renderWindowEditor(current, { documentSession, getAcceptedWindowSnapshot: () => accepted, onTransferFailure, onDiagnostic });
+		try {
+			current.surface.focus(); placeCaret(heading, 1);
+			act(() => {
+				const typed = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: "X" });
+				current.surface.dispatchEvent(typed);
+				if (!typed.defaultPrevented) {
+					heading.insertData(1, "X"); placeCaret(heading, 2);
+					current.surface.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "X" }));
+				}
+				// Undo and Redo leave the source at X with its Preview outstanding.
+				for (const inputType of ["historyUndo", "historyRedo"]) {
+					current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType }));
+				}
+			});
+			const typed = documentSession.document.getValue();
+			expect(typed).toBe(original.replace("# Heading", "# HXeading"));
+			const target = document.createRange();
+			if ("spacer edge" === scenario) {
+				// A real caret move hands the lease the start of the first mounted
+				// row, whose previous sibling is the unmounted window spacer.
+				current.surface.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+				window.getSelection()?.collapse(rowText, 0);
+				target.setStart(spacer, 0); target.setEnd(rowText, 0);
+			} else {
+				// The canonical selection moves away from the one the lease holds.
+				documentSession.document.applyTextChange({ value: typed, selection: { direction: "none", start: 0, end: 0 } });
+				target.setStart(heading, 1); target.setEnd(heading, 2);
+			}
+			const html = current.surface.innerHTML;
+			const deletion = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "deleteContentBackward" });
+			Object.defineProperty(deletion, "getTargetRanges", { value: () => [target] });
+			act(() => {
+				current.surface.dispatchEvent(deletion);
+				if (!deletion.defaultPrevented) {
+					// The browser's own result of an unprevented deletion.
+					if ("spacer edge" === scenario) { spacer.append(...row.childNodes); row.remove(); }
+					else target.deleteContents();
+					current.surface.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+				}
+			});
+			expect(deletion.defaultPrevented).toBe(true);
+			expect(current.surface.innerHTML).toBe(html);
+			if ("spacer edge" === scenario) {
+				// The separator is plain source: joining it needs no mounted neighbour.
+				const caret = typed.indexOf(rowText.data);
+				const joined = typed.slice(0, caret).trimEnd();
+				expect(documentSession.document.getValue()).toBe(joined + typed.slice(caret));
+				expect(documentSession.document.getSelection()).toMatchObject({ start: joined.length, end: joined.length });
+				expect(rendered.onFailure).not.toHaveBeenCalled();
+				expect(onDiagnostic).not.toHaveBeenCalled();
+				expect(onTransferFailure).not.toHaveBeenCalled();
+				return;
+			}
+			expect(documentSession.document.getValue()).toBe(typed);
+			expect(rendered.onFailure).toHaveBeenCalledWith("visual-editor-window-pending-input-unavailable");
+			expect(onDiagnostic).toHaveBeenCalledWith(expect.stringContaining("visual-editor-window-pending-input:reason=canonical-lease-rejected;"));
+			const diagnostic = onDiagnostic.mock.calls[0]?.[0];
+			if (typeof diagnostic !== "string") throw new Error("pending-deletion-diagnostic-missing");
+			const snapshot = JSON.parse(diagnostic.slice(diagnostic.indexOf(";") + 1));
+			expect(snapshot).toMatchObject({ inputType: "deleteContentBackward", sourceLength: typed.length, active: true, focused: true, targetCount: 1 });
+			expect(diagnostic).not.toContain("Heading");
+			expect(diagnostic).not.toContain("let a");
+			expect(onTransferFailure).not.toHaveBeenCalled();
+		} finally { rendered.view.unmount(); documentSession.destroy(); container.remove(); field.remove(); current.surface.remove(); }
+	},
+);
+
+it.each([
+	{ name: "mounted inline", blocks: [172, 173, 174], image: "![alt](https://example.test/image.png)", markup: '<img alt="alt" src="https://example.test/image.png">' },
+	{ name: "unmounted inline", blocks: [174], image: "![alt](https://example.test/image.png)", markup: '<img alt="alt" src="https://example.test/image.png">' },
+	{ name: "unmounted reference", blocks: [174], image: "![alt][id]", markup: '<img alt="alt" src="https://example.test/image.png">' },
+	{ name: "unmounted linked", blocks: [174], image: "[![alt](https://example.test/image.png)](https://example.test/)", markup: '<a href="https://example.test/"><img alt="alt" src="https://example.test/image.png"></a>' },
+	{ name: "unmounted inline placeholder", blocks: [174], image: "![alt](https://example.test/image.png)", markup: '<img alt="alt" src="https://example.test/image.png">', shape: "placeholder" },
+	{ name: "unmounted reference placeholder", blocks: [174], image: "![alt][id]", markup: '<img alt="alt" src="https://example.test/image.png">', shape: "placeholder" },
+	{ name: "unmounted linked placeholder", blocks: [174], image: "[![alt](https://example.test/image.png)](https://example.test/)", markup: '<a href="https://example.test/"><img alt="alt" src="https://example.test/image.png"></a>', shape: "placeholder" },
+	{ name: "unmounted authored break", blocks: [174], prefix: "Lead  \n", image: "![alt](https://example.test/image.png)", markup: 'Lead<br><img alt="alt" src="https://example.test/image.png">' },
+	{ name: "unmounted replaced authored break", blocks: [174], prefix: "Lead  \n", image: "![alt](https://example.test/image.png)", markup: 'Lead<br><img alt="alt" src="https://example.test/image.png">', tamper: "authored-break-replaced" },
+	{ name: "unmounted lost authored break", blocks: [174], prefix: "Lead  \n", image: "![alt](https://example.test/image.png)", markup: 'Lead<br><img alt="alt" src="https://example.test/image.png">', tamper: "authored-break-lost" },
+	{ name: "unmounted attributed placeholder", blocks: [174], image: "![alt](https://example.test/image.png)", markup: '<img alt="alt" src="https://example.test/image.png">', shape: "placeholder", tamper: "attributed-break" },
+	{ name: "unmounted multiple placeholders", blocks: [174], image: "![alt](https://example.test/image.png)", markup: '<img alt="alt" src="https://example.test/image.png">', shape: "placeholder", tamper: "multiple-breaks" },
+	{ name: "unmounted placeholder text", blocks: [174], image: "![alt](https://example.test/image.png)", markup: '<img alt="alt" src="https://example.test/image.png">', shape: "placeholder", tamper: "break-text" },
+	{ name: "unmounted placeholder wrong caret", blocks: [174], image: "![alt](https://example.test/image.png)", markup: '<img alt="alt" src="https://example.test/image.png">', shape: "placeholder", tamper: "break-caret" },
+	{ name: "unmounted placeholder parent end", blocks: [174], image: "![alt](https://example.test/image.png)", markup: '<img alt="alt" src="https://example.test/image.png">', shape: "placeholder", tamper: "parent-end" },
+	{ name: "unmounted placeholder changed root", blocks: [174], image: "![alt](https://example.test/image.png)", markup: '<img alt="alt" src="https://example.test/image.png">', shape: "placeholder", tamper: "break-root" },
+	{ name: "unmounted changed attribute", blocks: [174], image: "![alt](https://example.test/image.png)", markup: '<img alt="alt" src="https://example.test/image.png">', tamper: "attribute" },
+	{ name: "unmounted extra node", blocks: [174], image: "![alt](https://example.test/image.png)", markup: '<img alt="alt" src="https://example.test/image.png">', tamper: "node" },
+	{ name: "unmounted stale witness", blocks: [174], image: "![alt](https://example.test/image.png)", markup: '<img alt="alt" src="https://example.test/image.png">', tamper: "witness" },
+])("deletes the complete $name standalone image after a terminal diagram while Preview is pending", ({ blocks, image, markup, ...scenario }) => {
+	const diagram = "```mermaid\ngraph TD\n  A --> B\n```";
+	const prefix = "prefix" in scenario ? scenario.prefix : "";
+	const current = fixture({
+		blockOverrides: { 0: '[id]: https://example.test/image.png', 173: prefix + image, 174: `${diagram}\n` },
+		markupOverrides: {
+			173: `<p data-easymde-visual-block-id="b173">${markup}</p>`,
+			174: '<div data-easymde-visual-block-id="b174" class="easymde-mermaid" data-easymde-visual-markdown-source="graph TD\n  A --&gt; B">Rendered</div>',
+		},
+		mounted: blocks, paragraphBlocks: true, sourceBlockCount: 175,
+	});
+	current.surface.setAttribute("contenteditable", "true"); current.surface.tabIndex = 0;
+	const original = current.canonical();
+	const field = document.createElement("textarea"); field.value = field.defaultValue = original;
+	const container = document.createElement("div"); document.body.append(container, field);
+	const documentSession = createEditorDocumentSession(
+		createCodeMirrorDocumentSession({ container, label: "Markdown source", submissionField: field }),
+		createNativeTitleSession(null),
+	);
+	documentSession.document.setVisualEditingActive(true);
+	const rowRoot = document.createElement("p");
+	rowRoot.setAttribute("data-easymde-visual-block-id", "b173");
+	rowRoot.innerHTML = markup;
+	const imageStart = original.indexOf(image);
+	const rowStart = imageStart - prefix.length;
+	const atomicRoot = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b174"]');
+	if (!atomicRoot) throw new Error("pending-image-atomic-missing");
+	const acceptedSnapshot = { ...acceptedWindowSnapshotForMountedBlock(current, atomicRoot), revision: 7, sourceRevision: 0 };
+	const getAcceptedWindowSnapshot = () => acceptedSnapshot;
+	const getAcceptedWindowRow = vi.fn((request: PreviewAcceptedWindowRowRequest): PreviewAcceptedWindowRow | null =>
+		request.id === "b173" && request.index === 173 && request.revision === 7 && request.signature === "windowed"
+			? { root: rowRoot.cloneNode(true) as HTMLElement, source: original,
+					sourceRange: { start: rowStart, end: imageStart + image.length + 1 }, sourceRevision: "tamper" in scenario && scenario.tamper === "witness" ? 1 : 0 }
+			: null);
+	const revealAcceptedWindowRow = vi.fn((request: PreviewAcceptedWindowRowRequest & { gap: HTMLElement; source: string; sourceRevision: number }): ImmersiveWindowAcceptedSnapshot | null => {
+		if (!getAcceptedWindowRow(request) || request.source !== original || request.sourceRevision !== 0) return null;
+		const atomic = current.surface.querySelector('[data-easymde-visual-block-id="b174"]');
+		if (!atomic || request.gap.parentNode !== current.surface) return null;
+		current.surface.insertBefore(rowRoot, atomic);
+		return { blocks: Array.from(current.surface.children).flatMap((node) => {
+			if (!(node instanceof HTMLElement) || !node.hasAttribute("data-easymde-visual-block-id")) return [];
+			return [{ id: node.getAttribute("data-easymde-visual-block-id") ?? "", innerHTML: node.innerHTML, node }];
+		}), key: 2, nodes: Array.from(current.surface.childNodes), ownedGap: request.gap,
+			revision: request.revision, signature: request.signature };
+	});
+	const diagnosticSpy = vi.fn();
+	const rendered = renderWindowEditor(current, { documentSession, getAcceptedWindowSnapshot, getAcceptedWindowRow, revealAcceptedWindowRow,
+		getAcceptedReferenceSource: (request) => request.revision === 7 && request.signature === 'windowed' ? original : null,
+		onDiagnostic: diagnosticSpy });
+	try {
+		current.surface.focus();
+		window.getSelection()?.collapse(current.surface, current.surface.childNodes.length);
+		act(() => document.dispatchEvent(new Event("selectionchange")));
+		const gap = current.surface.lastElementChild;
+		expect(gap?.tagName).toBe("P");
+		expect(window.getSelection()?.anchorNode).toBe(gap);
+		const historyBefore = documentSession.document.getHistoryState();
+		act(() => {
+			current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "deleteContentBackward" }));
+		});
+		if ("tamper" in scenario && scenario.tamper === "witness") {
+			expect(documentSession.document.getValue()).toBe(original);
+			expect(documentSession.document.getRevision?.()).toBe(0);
+			expect(documentSession.document.getHistoryState()).toEqual(historyBefore);
+			expect(window.getSelection()?.anchorNode).toBe(gap);
+			expect(window.getSelection()?.anchorOffset).toBe(0);
+			expect(rendered.onFailure).toHaveBeenCalledWith("visual-editor-window-selection-map-failed");
+			const diagnostic = diagnosticSpy.mock.calls[0]?.[0];
+			expect(diagnostic).toContain("visual-editor-window-row-reveal:stage=row-witness;");
+			expect(diagnostic).not.toContain(image);
+			expect(revealAcceptedWindowRow).not.toHaveBeenCalled();
+			return;
+		}
+		const afterDiagram = documentSession.document.getValue();
+		expect(afterDiagram).toBe(original.slice(0, original.lastIndexOf(diagram) - 1));
+		expect(afterDiagram).not.toContain(diagram);
+		expect(afterDiagram).toContain(image);
+		const imageRow = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b173"]');
+		expect(imageRow?.isConnected).toBe(true);
+		expect(window.getSelection()?.anchorNode).toBe(imageRow);
+		expect(window.getSelection()?.anchorOffset).toBe(imageRow?.childNodes.length);
+		if (blocks.length === 1) {
+			expect(getAcceptedWindowRow).toHaveBeenCalledWith(expect.objectContaining({ revision: 7, index: 173 }));
+			expect(revealAcceptedWindowRow).toHaveBeenCalledWith(expect.objectContaining({ revision: 7, index: 173 }));
+		}
+		const expectedCaret = afterDiagram.indexOf(image) + image.length;
+		expect(documentSession.document.getSelection()).toMatchObject({ start: expectedCaret, end: expectedCaret });
+		const second = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "deleteContentBackward" });
+		if (!imageRow) throw new Error("pending-image-row-missing");
+		const originalBreak = imageRow.querySelector("br");
+		const imageTarget = document.createRange(); imageTarget.setStart(imageRow, imageRow.childNodes.length - 1); imageTarget.setEnd(imageRow, imageRow.childNodes.length);
+		Object.defineProperty(second, "getTargetRanges", { value: () => [imageTarget] });
+		act(() => {
+			current.surface.dispatchEvent(second);
+			if (!second.defaultPrevented) {
+				const caretOffset = imageRow.childNodes.length - 1;
+				imageTarget.deleteContents(); window.getSelection()?.collapse(imageRow, caretOffset);
+				if ("shape" in scenario && scenario.shape === "placeholder") imageRow.append(document.createElement("br"));
+				if ("tamper" in scenario && scenario.tamper === "attribute") imageRow.setAttribute("title", "foreign");
+				if ("tamper" in scenario && scenario.tamper === "node") imageRow.append(document.createElement("span"));
+				if ("tamper" in scenario && scenario.tamper === "attributed-break") imageRow.querySelector("br")?.setAttribute("title", "foreign");
+				if ("tamper" in scenario && scenario.tamper === "multiple-breaks") imageRow.append(document.createElement("br"));
+				if ("tamper" in scenario && scenario.tamper === "break-text") imageRow.append(document.createTextNode("foreign"));
+				if ("tamper" in scenario && scenario.tamper === "break-root") imageRow.setAttribute("title", "foreign");
+				if ("tamper" in scenario && scenario.tamper === "break-caret") window.getSelection()?.collapse(imageRow.firstChild, 0);
+				if ("tamper" in scenario && scenario.tamper === "parent-end") window.getSelection()?.collapse(imageRow, 1);
+				if ("tamper" in scenario && scenario.tamper === "authored-break-replaced") originalBreak?.replaceWith(document.createElement("br"));
+				if ("tamper" in scenario && scenario.tamper === "authored-break-lost") originalBreak?.remove();
+				current.surface.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+			}
+		});
+		if ("tamper" in scenario) {
+			expect(documentSession.document.getValue()).toBe(afterDiagram);
+			expect(rendered.onFailure).toHaveBeenCalledWith("visual-editor-window-pending-selection-stale");
+			const diagnostic = diagnosticSpy.mock.calls[0]?.[0];
+			expect(diagnostic).toContain("visual-editor-window-pending-image:stage=native-image-outcome;");
+			expect(diagnostic).not.toContain(image);
+			const details = JSON.parse(diagnostic.slice(diagnostic.indexOf(";") + 1));
+			expect(details).toMatchObject({ canonicalMatches: true, sourceMatches: true, blockConnected: true,
+				rootMatches: scenario.tamper === "authored-break-replaced" });
+			if (scenario.tamper === "authored-break-replaced") expect(details.retainedMatches).toBe(false);
+			return;
+		}
+		expect(rendered.onDiagnostic).not.toHaveBeenCalled();
+		expect(rendered.onFailure).not.toHaveBeenCalled();
+		expect(documentSession.document.getValue()).toBe(afterDiagram.replace(image, ""));
+		if (originalBreak) expect(imageRow.querySelector("br")).toBe(originalBreak);
+		if ("shape" in scenario && scenario.shape === "placeholder") expect(imageRow.firstChild).toBeInstanceOf(HTMLBRElement);
+		const afterImage = documentSession.document.getValue();
+		const insertionTarget = document.createRange(); insertionTarget.setStart(imageRow, window.getSelection()?.anchorOffset ?? 0); insertionTarget.collapse(true);
+		const insertion = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: "X" });
+		Object.defineProperty(insertion, "getTargetRanges", { value: () => [insertionTarget] });
+		act(() => current.surface.dispatchEvent(insertion));
+		const afterInsertion = afterImage.slice(0, imageStart) + "X" + afterImage.slice(imageStart);
+		expect(documentSession.document.getValue()).toBe(afterInsertion);
+		expect(rendered.onFailure).not.toHaveBeenCalled();
+		act(() => current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "historyUndo" })));
+		expect(documentSession.document.getValue()).toBe(afterImage);
+		act(() => current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "historyRedo" })));
+		expect(documentSession.document.getValue()).toBe(afterInsertion);
+		expect(rendered.onFailure).not.toHaveBeenCalled();
+	} finally { rendered.view.unmount(); documentSession.destroy(); container.remove(); field.remove(); current.surface.remove(); }
+});
+
+it("restores the unmounted text row caret after deleting a terminal diagram", () => {
+	const text = "A surviving paragraph.";
+	const diagram = "```mermaid\ngraph TD\n```";
+	const current = fixture({ blockOverrides: { 173: text, 174: `${diagram}\n` },
+		markupOverrides: { 174: '<div data-easymde-visual-block-id="b174" class="easymde-mermaid" data-easymde-visual-markdown-source="graph TD">Rendered</div>' },
+		mounted: [174], paragraphBlocks: true, sourceBlockCount: 175 });
+	const original = current.canonical();
+	const field = document.createElement("textarea"); field.value = field.defaultValue = original;
+	const container = document.createElement("div"); document.body.append(container, field);
+	const session = createEditorDocumentSession(createCodeMirrorDocumentSession({ container, label: "Markdown source", submissionField: field }), createNativeTitleSession(null));
+	const atomicRoot = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b174"]');
+	if (!atomicRoot) throw new Error("pending-text-atomic-missing");
+	const acceptedSnapshot = { ...acceptedWindowSnapshotForMountedBlock(current, atomicRoot), revision: 7, sourceRevision: 0 };
+	const getAcceptedWindowSnapshot = () => acceptedSnapshot;
+	const row = document.createElement("p"); row.setAttribute("data-easymde-visual-block-id", "b173"); row.textContent = text;
+	const rowStart = original.indexOf(text);
+	const getAcceptedWindowRow = (request: PreviewAcceptedWindowRowRequest): PreviewAcceptedWindowRow | null => request.id === "b173" && request.index === 173
+		? { root: row.cloneNode(true) as HTMLElement, source: original, sourceRevision: 0, sourceRange: { start: rowStart, end: rowStart + text.length + 1 } } : null;
+	const revealAcceptedWindowRow = (request: PreviewAcceptedWindowRowRequest & { gap: HTMLElement; source: string; sourceRevision: number }): ImmersiveWindowAcceptedSnapshot | null => {
+		const atomic = current.surface.querySelector('[data-easymde-visual-block-id="b174"]');
+		if (!atomic || !getAcceptedWindowRow(request) || request.source !== original || request.sourceRevision !== 0) return null;
+		current.surface.insertBefore(row, atomic);
+		return { blocks: Array.from(current.surface.children).flatMap((node) => node instanceof HTMLElement && node.hasAttribute("data-easymde-visual-block-id")
+			? [{ id: node.getAttribute("data-easymde-visual-block-id") ?? "", innerHTML: node.innerHTML, node }] : []),
+			key: 2, nodes: Array.from(current.surface.childNodes), ownedGap: request.gap, revision: request.revision, signature: request.signature };
+	};
+	const rendered = renderWindowEditor(current, { documentSession: session, getAcceptedWindowSnapshot, getAcceptedWindowRow, revealAcceptedWindowRow });
+	try {
+		current.surface.setAttribute("contenteditable", "true"); current.surface.tabIndex = 0; current.surface.focus();
+		window.getSelection()?.collapse(current.surface, current.surface.childNodes.length);
+		act(() => document.dispatchEvent(new Event("selectionchange")));
+		expect(window.getSelection()?.anchorNode).toBe(current.surface.lastElementChild);
+		act(() => current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "deleteContentBackward" })));
+		const value = original.slice(0, original.lastIndexOf(diagram) - 1);
+		expect(session.document.getValue()).toBe(value);
+		expect(row.isConnected).toBe(true);
+		expect(window.getSelection()?.anchorNode).toBe(row.firstChild);
+		expect(window.getSelection()?.anchorOffset).toBe(text.length);
+		expect(session.document.getSelection()).toMatchObject({ start: rowStart + text.length, end: rowStart + text.length });
+		expect(rendered.onFailure).not.toHaveBeenCalled();
+	} finally { rendered.view.unmount(); session.destroy(); container.remove(); field.remove(); current.surface.remove(); }
+});
+
+it("deletes a ready reference image using its native target without rewriting its definition", () => {
+	const image = '![alt][id]';
+	const current = fixture({
+		blockOverrides: { 0: '[id]: https://example.test/image.png', 319: image },
+		markupOverrides: { 319: '<p data-easymde-visual-block-id="b319"><img alt="alt" src="https://example.test/image.png"></p>' },
+		mounted: [319], paragraphBlocks: true,
+	});
+	const original = current.canonical();
+	const field = document.createElement('textarea'); field.value = field.defaultValue = original;
+	const container = document.createElement('div'); document.body.append(container, field);
+	const session = createEditorDocumentSession(createCodeMirrorDocumentSession({ container, label: 'Markdown source', submissionField: field }), createNativeTitleSession(null));
+	const certifiedRow = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b319"]');
+	if (!certifiedRow) throw new Error('ready-reference-certificate-missing');
+	const accepted = acceptedWindowSnapshotForMountedBlock(current, certifiedRow);
+	const rendered = renderWindowEditor(current, { documentSession: session,
+		getAcceptedWindowSnapshot: () => accepted,
+		getAcceptedReferenceSource: (request) => request.revision === accepted.revision && request.signature === accepted.signature ? original : null });
+	try {
+		const row = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b319"]');
+		if (!row) throw new Error('ready-reference-image-row-missing');
+		current.surface.tabIndex = 0; current.surface.setAttribute('contenteditable', 'true'); current.surface.focus();
+		window.getSelection()?.collapse(row, 1);
+		const target = document.createRange(); target.setStart(row, 0); target.setEnd(row, 1);
+		const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'deleteContentBackward' });
+		Object.defineProperty(before, 'getTargetRanges', { value: () => [target] });
+		act(() => {
+			current.surface.dispatchEvent(before);
+			if (!before.defaultPrevented) {
+				target.deleteContents(); row.append(document.createElement('br')); window.getSelection()?.collapse(row, 0);
+				current.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+			}
+		});
+		expect(rendered.onFailure).not.toHaveBeenCalled();
+		expect(session.document.getValue()).toBe(original.replace(image, ''));
+		expect(session.document.getValue()).toContain('[id]: https://example.test/image.png');
+	} finally { rendered.view.unmount(); session.destroy(); container.remove(); field.remove(); current.surface.remove(); }
+});
+
+it('selects a reference image on primary activation without changing document history', () => {
+	const token = '![alt][id]';
+	const current = fixture({
+		blockOverrides: { 0: '[id]: https://example.test/image.png', 319: `Left ${token} Right` },
+		markupOverrides: { 319: '<p data-easymde-visual-block-id="b319">Left <img alt="alt" src="https://example.test/image.png"> Right</p>' },
+		mounted: [319], paragraphBlocks: true,
+	});
+	const original = current.canonical();
+	const field = document.createElement('textarea'); field.value = field.defaultValue = original;
+	const container = document.createElement('div'); document.body.append(container, field);
+	const session = createEditorDocumentSession(createCodeMirrorDocumentSession({ container, label: 'Markdown source', submissionField: field }), createNativeTitleSession(null));
+	const row = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b319"]');
+	const image = row?.querySelector('img');
+	if (!row || !image || !(row.firstChild instanceof Text)) throw new Error('reference-image-activation-fixture-missing');
+	const accepted = acceptedWindowSnapshotForMountedBlock(current, row);
+	const rendered = renderWindowEditor(current, { documentSession: session,
+		getAcceptedWindowSnapshot: () => accepted,
+		getAcceptedReferenceSource: (request) => request.revision === accepted.revision && request.signature === accepted.signature ? original : null });
+	try {
+		current.surface.tabIndex = 0; current.surface.setAttribute('contenteditable', 'true'); current.surface.focus();
+		window.getSelection()?.collapse(row.firstChild, 2);
+		const history = session.document.getHistoryState();
+		const revision = session.document.getRevision?.();
+		const pointer = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 });
+		act(() => image.dispatchEvent(pointer));
+		const start = original.lastIndexOf(token);
+		expect(pointer.defaultPrevented).toBe(true);
+		expect(rendered.onFailure).not.toHaveBeenCalled();
+		expect(session.document.getValue()).toBe(original);
+		expect(session.document.getRevision?.()).toBe(revision);
+		expect(session.document.getHistoryState()).toEqual(history);
+		expect(session.document.getSelection()).toMatchObject({ start, end: start + token.length });
+	} finally { rendered.view.unmount(); session.destroy(); container.remove(); field.remove(); current.surface.remove(); }
+});
+
+it("restores a reference image history caret to its parent boundary", () => {
+	const image = '![alt][id]';
+	const current = fixture({
+		blockOverrides: { 0: '[id]: https://example.test/image.png', 319: `${image}\n` },
+		markupOverrides: { 319: '<p data-easymde-visual-block-id="b319"><img alt="alt" src="https://example.test/image.png"></p>' },
+		mounted: [319], paragraphBlocks: true,
+	});
+	const original = current.canonical();
+	const alternate = original.replace('Line 1', 'Changed 1');
+	const field = document.createElement('textarea'); field.value = field.defaultValue = original;
+	const container = document.createElement('div'); document.body.append(container, field);
+	const session = createEditorDocumentSession(createCodeMirrorDocumentSession({ container, label: 'Markdown source', submissionField: field }), createNativeTitleSession(null));
+	session.document.applyTextChange({ changes: { from: original.indexOf('Line 1'), to: original.indexOf('Line 1') + 'Line 1'.length, insert: 'Changed 1' }, value: alternate,
+		selection: { direction: 'none', start: alternate.length - 1, end: alternate.length - 1 }, recordHistorySelection: true });
+	expect(session.document.undo()).toBe(true);
+	const signature = 'reference-image-history';
+	const rendered = renderWindowEditor(current, { documentSession: session, requestPreview: () => signature, requestPreviewAtDocumentEnd: () => ({ signature, release: vi.fn() }) });
+	try {
+		current.surface.tabIndex = 0; current.surface.setAttribute('contenteditable', 'true'); current.surface.focus();
+		act(() => current.surface.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'historyRedo' })));
+		expect(session.document.getValue()).toBe(alternate);
+		current.surface.innerHTML = '<div data-easymde-preview-window-spacer="1"></div><p data-easymde-visual-block-id="b319"><img alt="alt" src="https://example.test/image.png"></p>';
+		const imageNode = current.surface.querySelector('img');
+		if (!(imageNode instanceof HTMLImageElement)) throw new Error('reference-history-image-missing');
+		window.getSelection()?.collapse(imageNode, 0);
+		rendered.rerenderPreview({ ...current.editMap, signature }, { revision: 2, signature });
+		const paragraph = current.surface.querySelector('[data-easymde-visual-block-id="b319"]');
+		expect(window.getSelection()?.anchorNode).toBe(paragraph);
+		expect(window.getSelection()?.anchorOffset).toBe(1);
+		expect(rendered.onFailure).not.toHaveBeenCalled();
+	} finally { rendered.view.unmount(); session.destroy(); container.remove(); field.remove(); current.surface.remove(); }
+});
+
+it.each(['before', 'after', 'after-end'] as const)("edits and undoes text %s a reference image while preserving the definition", (side) => {
+	const current = fixture({
+		blockOverrides: { 0: '[id]: https://example.test/image.png', 319: 'Left ![alt][id] Right' },
+		markupOverrides: { 319: '<p data-easymde-visual-block-id="b319">Left <img alt="alt" src="https://example.test/image.png"> Right</p>' },
+		mounted: [319], paragraphBlocks: true,
+	});
+	const original = current.canonical();
+	const field = document.createElement('textarea'); field.value = field.defaultValue = original;
+	const container = document.createElement('div'); document.body.append(container, field);
+	const session = createEditorDocumentSession(createCodeMirrorDocumentSession({ container, label: 'Markdown source', submissionField: field }), createNativeTitleSession(null));
+	const certifiedRow = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b319"]');
+	if (!certifiedRow) throw new Error('reference-neighbor-certificate-missing');
+	const accepted = acceptedWindowSnapshotForMountedBlock(current, certifiedRow);
+	const rendered = renderWindowEditor(current, { documentSession: session,
+		getAcceptedWindowSnapshot: () => accepted,
+		getAcceptedReferenceSource: (request) => request.revision === accepted.revision && request.signature === accepted.signature ? original : null });
+	try {
+		const paragraph = current.surface.querySelector('[data-easymde-visual-block-id="b319"]');
+		const text = side === 'before' ? paragraph?.firstChild : paragraph?.lastChild;
+		if (!(text instanceof Text)) throw new Error('reference-adjacent-text-missing');
+		if (!(paragraph instanceof HTMLElement)) throw new Error('reference-adjacent-paragraph-missing');
+		current.surface.tabIndex = 0; current.surface.setAttribute('contenteditable', 'true'); current.surface.focus();
+		const offset = side === 'before' ? 2 : side === 'after-end' ? text.length : 3;
+		const caretNode = side === 'after-end' ? paragraph : text;
+		const caretOffset = side === 'after-end' ? paragraph.childNodes.length : offset;
+		window.getSelection()?.collapse(caretNode, caretOffset);
+		const target = document.createRange(); target.setStart(caretNode, caretOffset); target.collapse(true);
+		const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: 'Z' });
+		Object.defineProperty(before, 'getTargetRanges', { value: () => [target] });
+		act(() => {
+			current.surface.dispatchEvent(before);
+			if (!before.defaultPrevented) {
+				text.insertData(offset, 'Z'); window.getSelection()?.collapse(text, offset + 1);
+				current.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'Z' }));
+			}
+		});
+		const edited = side === 'before' ? original.replace('Left ', 'LeZft ') : side === 'after-end'
+			? original.replace(' Right', ' RightZ') : original.replace(' Right', ' RiZght');
+		expect(session.document.getValue()).toBe(edited);
+		expect(rendered.onFailure).not.toHaveBeenCalled();
+		act(() => current.surface.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'historyUndo' })));
+		expect(session.document.getValue()).toBe(original);
+		act(() => current.surface.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'historyRedo' })));
+		expect(session.document.getValue()).toBe(edited);
+	} finally { rendered.view.unmount(); session.destroy(); container.remove(); field.remove(); current.surface.remove(); }
+});
+
+it.each([
+	{ name: 'first identical image', source: '![a][one]![a][two]', html: '<img alt="a" src="https://example.test/image.png"><img alt="a" src="https://example.test/image.png">', start: 0, end: 1, token: '![a][one]' },
+	{ name: 'second image after authored space', source: '![a][one] ![a][two]', html: '<img alt="a" src="https://example.test/image.png"> <img alt="a" src="https://example.test/image.png">', start: 2, end: 3, token: '![a][two]' },
+	{ name: 'first image with a replaced retained sibling', source: '![a][one]![a][two]', html: '<img alt="a" src="https://example.test/image.png"><img alt="a" src="https://example.test/image.png">', start: 0, end: 1, token: '![a][one]', tamper: true },
+	{ name: 'first image with a moved native caret', source: '![a][one]![a][two]', html: '<img alt="a" src="https://example.test/image.png"><img alt="a" src="https://example.test/image.png">', start: 0, end: 1, token: '![a][one]', movedCaret: true },
+])('deletes the selected $name without changing neighboring source', ({ source, html, start, end, token, ...scenario }) => {
+	const current = fixture({
+		blockOverrides: { 0: '[one]: https://example.test/image.png\n[two]: https://example.test/image.png', 319: source },
+		markupOverrides: { 319: `<p data-easymde-visual-block-id="b319">${html}</p>` },
+		mounted: [319], paragraphBlocks: true,
+	});
+	const original = current.canonical();
+	const field = document.createElement('textarea'); field.value = field.defaultValue = original;
+	const container = document.createElement('div'); document.body.append(container, field);
+	const session = createEditorDocumentSession(createCodeMirrorDocumentSession({ container, label: 'Markdown source', submissionField: field }), createNativeTitleSession(null));
+	const row = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b319"]');
+	if (!row) throw new Error('repeated-reference-row-missing');
+	const accepted = acceptedWindowSnapshotForMountedBlock(current, row);
+	const rendered = renderWindowEditor(current, { documentSession: session,
+		getAcceptedWindowSnapshot: () => accepted,
+		getAcceptedReferenceSource: (request) => request.revision === accepted.revision && request.signature === accepted.signature ? original : null });
+	try {
+		current.surface.tabIndex = 0; current.surface.setAttribute('contenteditable', 'true'); current.surface.focus();
+		window.getSelection()?.collapse(row, end);
+		const target = document.createRange(); target.setStart(row, start); target.setEnd(row, end);
+		const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'deleteContentBackward' });
+		Object.defineProperty(before, 'getTargetRanges', { value: () => [target] });
+		act(() => {
+			current.surface.dispatchEvent(before);
+			if (!before.defaultPrevented) {
+				target.deleteContents();
+				if ('tamper' in scenario && scenario.tamper && row.firstChild) row.firstChild.replaceWith(row.firstChild.cloneNode(true));
+				window.getSelection()?.collapse(row, 'movedCaret' in scenario && scenario.movedCaret ? row.childNodes.length : start);
+				current.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+			}
+		});
+		if (('tamper' in scenario && scenario.tamper) || ('movedCaret' in scenario && scenario.movedCaret)) {
+			expect(rendered.onFailure).toHaveBeenCalledWith('visual-editor-window-pending-selection-stale');
+			expect(session.document.getValue()).toBe(original);
+			return;
+		}
+		expect(rendered.onFailure).not.toHaveBeenCalled();
+		const insertionOffset = original.lastIndexOf(token);
+		const edited = original.replace(token, '');
+		expect(session.document.getValue()).toBe(edited);
+		act(() => current.surface.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'historyUndo' })));
+		expect(session.document.getValue()).toBe(original);
+		act(() => current.surface.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'historyRedo' })));
+		expect(session.document.getValue()).toBe(edited);
+		const insertion = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: 'X' });
+		act(() => current.surface.dispatchEvent(insertion));
+		expect(session.document.getValue()).toBe(edited.slice(0, insertionOffset) + 'X' + edited.slice(insertionOffset));
+		expect(rendered.onFailure).not.toHaveBeenCalled();
+	} finally { rendered.view.unmount(); session.destroy(); container.remove(); field.remove(); current.surface.remove(); }
+});
+
+it("natively deletes pending text beside a reference image, so the row follows the source at once", () => {
+	const current = fixture({
+		blockOverrides: { 0: "[pic]: https://example.test/image.png", 319: "Opening ![a][pic] tail." },
+		markupOverrides: { 319: '<p data-easymde-visual-block-id="b319">Opening <img alt="a" src="https://example.test/image.png"> tail.</p>' },
+		mounted: [319], paragraphBlocks: true,
+	});
+	const original = current.canonical();
+	const field = document.createElement("textarea"); field.value = field.defaultValue = original;
+	const container = document.createElement("div"); document.body.append(container, field);
+	const session = createEditorDocumentSession(createCodeMirrorDocumentSession({ container, label: "Markdown source", submissionField: field }), createNativeTitleSession(null));
+	const row = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b319"]');
+	const tail = row?.lastChild;
+	if (!row || !(tail instanceof Text)) throw new Error("reference-row-fixture-missing");
+	const accepted = acceptedWindowSnapshotForMountedBlock(current, row);
+	const onFailure = vi.fn<(code: string) => void>();
+	const rendered = renderWindowEditor(current, { documentSession: session, onFailure,
+		getAcceptedWindowSnapshot: () => accepted,
+		getAcceptedReferenceSource: (request) => request.revision === accepted.revision && request.signature === accepted.signature ? original : null });
+	try {
+		current.surface.tabIndex = 0; current.surface.setAttribute("contenteditable", "true"); current.surface.focus();
+		window.getSelection()?.collapse(tail, tail.length);
+		act(() => {
+			const typed = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: "X" });
+			current.surface.dispatchEvent(typed);
+			if (!typed.defaultPrevented) {
+				tail.appendData("X"); window.getSelection()?.collapse(tail, tail.length);
+				current.surface.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "X" }));
+			}
+			// Undo and Redo leave the source at X with its Preview outstanding.
+			for (const inputType of ["historyUndo", "historyRedo"]) {
+				current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType }));
+			}
+		});
+		expect(session.document.getValue()).toBe(original.replace(" tail.", " tail.X"));
+		expect(tail.data).toBe(" tail.X");
+		const target = document.createRange(); target.setStart(tail, tail.length - 1); target.setEnd(tail, tail.length);
+		const before = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "deleteContentBackward" });
+		Object.defineProperty(before, "getTargetRanges", { value: () => [target] });
+		act(() => {
+			current.surface.dispatchEvent(before);
+			if (!before.defaultPrevented) {
+				tail.deleteData(tail.length - 1, 1); window.getSelection()?.collapse(tail, tail.length);
+				current.surface.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+			}
+		});
+		expect(onFailure).not.toHaveBeenCalled();
+		expect(session.document.getValue()).toBe(original);
+		expect(tail.data).toBe(" tail.");
+		expect(window.getSelection()?.anchorOffset).toBe(tail.length);
+	} finally { rendered.view.unmount(); session.destroy(); container.remove(); field.remove(); current.surface.remove(); }
+});
+
+const NATIVE_SPACE_IMAGE = '<img alt="a" src="https://example.test/image.png">';
+const nativeSpaceImageDeletion = (
+	source: string,
+	html: string,
+	definitions: string,
+	token: string,
+	outcome: (row: HTMLElement, preceding: Text) => void,
+) => {
+	const current = fixture({
+		blockOverrides: { 0: definitions, 319: source },
+		markupOverrides: { 319: `<p data-easymde-visual-block-id="b319">${html}</p>` },
+		mounted: [319], paragraphBlocks: true,
+	});
+	const original = current.canonical();
+	const field = document.createElement('textarea'); field.value = field.defaultValue = original;
+	const container = document.createElement('div'); document.body.append(container, field);
+	const session = createEditorDocumentSession(createCodeMirrorDocumentSession({ container, label: 'Markdown source', submissionField: field }), createNativeTitleSession(null));
+	const row = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b319"]');
+	const image = row?.lastChild;
+	const preceding = image?.previousSibling;
+	if (!row || !(image instanceof HTMLImageElement) || !(preceding instanceof Text)) throw new Error('native-space-image-fixture-missing');
+	const accepted = acceptedWindowSnapshotForMountedBlock(current, row);
+	const onFailure = vi.fn<(code: string) => void>();
+	const onDiagnostic = vi.fn<(diagnostic: string) => void>();
+	const rendered = renderWindowEditor(current, { documentSession: session, onDiagnostic, onFailure,
+		getAcceptedWindowSnapshot: () => accepted,
+		getAcceptedReferenceSource: (request) => request.revision === accepted.revision && request.signature === accepted.signature ? original : null });
+	try {
+		current.surface.tabIndex = 0; current.surface.setAttribute('contenteditable', 'true'); current.surface.focus();
+		const after = row.childNodes.length;
+		window.getSelection()?.collapse(row, after);
+		const target = document.createRange(); target.setStart(row, after - 1); target.setEnd(row, after);
+		const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'deleteContentBackward' });
+		Object.defineProperty(before, 'getTargetRanges', { value: () => [target] });
+		act(() => {
+			current.surface.dispatchEvent(before);
+			expect(before.defaultPrevented).toBe(false);
+			image.remove();
+			outcome(row, preceding);
+			current.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+		});
+		const end = original.lastIndexOf(token) + token.length;
+		return { edited: original.slice(0, end - token.length) + original.slice(end), failures: onFailure.mock.calls.map((call) => call[0]),
+			diagnostics: onDiagnostic.mock.calls.map((call) => call[0]), original, selection: session.document.getSelection(), value: session.document.getValue() };
+	} finally { rendered.view.unmount(); session.destroy(); container.remove(); field.remove(); current.surface.remove(); }
+};
+// Chromium's own outcome of deleting an image after a space: the same Text node
+// keeps its length, its last SPACE becomes NBSP, and the caret stays at its end.
+const chromiumTerminalSpace = (_row: HTMLElement, preceding: Text): void => {
+	preceding.data = `${preceding.data.slice(0, -1)} `;
+	window.getSelection()?.collapse(preceding, preceding.length);
+};
+
+it.each([
+	{ name: 'plain text', source: 'text ![a][one]', html: `text ${NATIVE_SPACE_IMAGE}`, token: '![a][one]', definitions: '[one]: https://example.test/image.png' },
+	{ name: 'a repeated image', source: '![dot][first] ![dot][second]', html: `${NATIVE_SPACE_IMAGE} ${NATIVE_SPACE_IMAGE}`, token: '![dot][second]', definitions: '[first]: https://example.test/image.png\n[second]: https://example.test/image.png' },
+	{ name: 'a normalized reference image', source: '![x][a b] ![y][Straße]', html: `${NATIVE_SPACE_IMAGE} ${NATIVE_SPACE_IMAGE}`, token: '![y][Straße]', definitions: '[a b]: https://example.test/image.png\n[STRASSE]: https://example.test/image.png' },
+	{ name: 'math and a link', source: '$x$ [l](https://example.test/) ![a](https://example.test/image.png)', html: `<span class="easymde-math easymde-math-inline">$x$</span> <a href="https://example.test/">l</a> ${NATIVE_SPACE_IMAGE}`, token: '![a](https://example.test/image.png)', definitions: 'Lead' },
+])('keeps the ASCII space when Chromium turns it into NBSP while deleting the image after $name', ({ source, html, token, definitions }) => {
+	const result = nativeSpaceImageDeletion(source, html, definitions, token, chromiumTerminalSpace);
+	expect(result.diagnostics).toEqual([]);
+	expect(result.failures).toEqual([]);
+	expect(result.value).toBe(result.edited);
+	expect(result.value).toContain(source.slice(0, source.lastIndexOf(token)));
+	const caret = result.original.lastIndexOf(token);
+	expect(result.selection).toMatchObject({ start: caret, end: caret });
+});
+
+it.each([
+	{ name: 'another character of the preceding Text changed', html: `text ${NATIVE_SPACE_IMAGE}`, source: 'text ![a][one]', outcome: (_row: HTMLElement, preceding: Text) => {
+		preceding.data = 'tExt '; window.getSelection()?.collapse(preceding, preceding.length);
+	} },
+	{ name: 'the NBSP is not at the end of the preceding Text', html: `text ${NATIVE_SPACE_IMAGE}`, source: 'text ![a][one]', outcome: (_row: HTMLElement, preceding: Text) => {
+		preceding.data = 'te t '; window.getSelection()?.collapse(preceding, preceding.length);
+	} },
+	{ name: 'the native caret is not at the end of the preceding Text', html: `text ${NATIVE_SPACE_IMAGE}`, source: 'text ![a][one]', outcome: (_row: HTMLElement, preceding: Text) => {
+		preceding.data = 'text '; window.getSelection()?.collapse(preceding, 2);
+	} },
+	{ name: 'the native caret is on the parent boundary', html: `text ${NATIVE_SPACE_IMAGE}`, source: 'text ![a][one]', outcome: (row: HTMLElement, preceding: Text) => {
+		preceding.data = 'text '; window.getSelection()?.collapse(row, 1);
+	} },
+	{ name: 'only a different Text changed', html: `first <em>x</em> text ${NATIVE_SPACE_IMAGE}`, source: 'first *x* text ![a][one]', outcome: (row: HTMLElement, preceding: Text) => {
+		const first = row.firstChild;
+		if (first instanceof Text) first.data = 'first ';
+		window.getSelection()?.collapse(preceding, preceding.length);
+	} },
+	{ name: 'a different Text changed alongside the preceding one', html: `first <em>x</em> text ${NATIVE_SPACE_IMAGE}`, source: 'first *x* text ![a][one]', outcome: (row: HTMLElement, preceding: Text) => {
+		const first = row.firstChild;
+		if (first instanceof Text) first.data = 'first ';
+		chromiumTerminalSpace(row, preceding);
+	} },
+])('refuses the image deletion when $name', ({ html, source, outcome }) => {
+	const result = nativeSpaceImageDeletion(source, html, '[one]: https://example.test/image.png', '![a][one]', outcome);
+	expect(result.value).toBe(result.original);
+	expect(result.failures).toEqual(['visual-editor-window-pending-selection-stale']);
+	expect(result.diagnostics.join()).toContain('stage=native-image-outcome;');
+});
+
+it.each(['missing', 'changed'] as const)("refuses a %s reference certificate without disabling unrelated text edits", (state) => {
+	const current = fixture({
+		blockOverrides: { 0: '[id]: https://example.test/image.png', 318: 'Safe text', 319: 'Left ![alt][id] Right' },
+		markupOverrides: { 318: '<p data-easymde-visual-block-id="b318">Safe text</p>', 319: '<p data-easymde-visual-block-id="b319">Left <img alt="alt" src="https://example.test/image.png"> Right</p>' },
+		mounted: [318, 319], paragraphBlocks: true,
+	});
+	const original = current.canonical();
+	const field = document.createElement('textarea'); field.value = field.defaultValue = original;
+	const container = document.createElement('div'); document.body.append(container, field);
+	const session = createEditorDocumentSession(createCodeMirrorDocumentSession({ container, label: 'Markdown source', submissionField: field }), createNativeTitleSession(null));
+	const row = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b319"]');
+	const plain = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b318"]');
+	if (!row || !plain || !(row.firstChild instanceof Text) || !(plain.firstChild instanceof Text)) throw new Error('reference-certificate-fixture-missing');
+	const accepted = acceptedWindowSnapshotForMountedBlock(current, row);
+	const onTransferFailure = vi.fn();
+	const rendered = renderWindowEditor(current, { documentSession: session, onTransferFailure,
+		getAcceptedWindowSnapshot: () => accepted,
+		getAcceptedReferenceSource: () => state === 'missing' ? null : original.replace('/image.png', '/other.png') });
+	try {
+		current.surface.tabIndex = 0; current.surface.setAttribute('contenteditable', 'true'); current.surface.focus();
+		window.getSelection()?.collapse(row.firstChild, 2);
+		const priorSelection = session.document.getSelection();
+		const priorHistory = session.document.getHistoryState();
+		const priorRevision = session.document.getRevision?.();
+		const event = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: 'X' });
+		act(() => current.surface.dispatchEvent(event));
+		expect(event.defaultPrevented).toBe(true);
+		expect(rendered.onFailure).toHaveBeenCalledWith('visual-editor-reference-context-stale');
+		expect(onTransferFailure).not.toHaveBeenCalled();
+		expect(session.document.getValue()).toBe(original);
+		expect(session.document.getRevision?.()).toBe(priorRevision);
+		expect(session.document.getHistoryState()).toEqual(priorHistory);
+		expect(session.document.getSelection()).toEqual(priorSelection);
+		expect(window.getSelection()?.anchorNode).toBe(row.firstChild);
+		expect(window.getSelection()?.anchorOffset).toBe(2);
+		expect(current.surface.getAttribute('contenteditable')).toBe('true');
+		const text = plain.firstChild;
+		if (!(text instanceof Text)) throw new Error('reference-certificate-plain-text-missing');
+		window.getSelection()?.collapse(text, 4);
+		const next = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: 'X' });
+		act(() => {
+			current.surface.dispatchEvent(next);
+			if (!next.defaultPrevented) { text.insertData(4, 'X'); window.getSelection()?.collapse(text, 5); current.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'X' })); }
+		});
+		expect(next.defaultPrevented).toBe(false);
+		expect(session.document.getValue()).toBe(original.replace('Safe text', 'SafeX text'));
+	} finally { rendered.view.unmount(); session.destroy(); container.remove(); field.remove(); current.surface.remove(); }
+});
+
+it("deletes an image-only paragraph's native in-row target beside a spacer", () => {
+	const imageMarkdown = "![alt](https://example.test/image.png)";
+	const current = fixture({
+		blockOverrides: { 174: imageMarkdown },
+		markupOverrides: { 174: '<p data-easymde-visual-block-id="b174"><img alt="alt" src="https://example.test/image.png"></p>' },
+		mounted: [174], paragraphBlocks: true, sourceBlockCount: 175,
+	});
+	const onFailure = vi.fn();
+	const { view } = renderWindowEditor(current, { onFailure });
+	try {
+		const paragraph = current.surface.querySelector('[data-easymde-visual-block-id="b174"]');
+		if (!(paragraph instanceof HTMLParagraphElement)) throw new Error("image-row-missing");
+		// jsdom only focuses a contenteditable surface through an explicit tabindex.
+		current.surface.tabIndex = 0;
+		current.surface.focus();
+		expect(document.activeElement).toBe(current.surface);
+		window.getSelection()?.collapse(paragraph, 1);
+		const target = document.createRange(); target.setStart(paragraph, 0); target.setEnd(paragraph, 1);
+		const before = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "deleteContentBackward" });
+		Object.defineProperty(before, "getTargetRanges", { value: () => [target] });
+		act(() => {
+			current.surface.dispatchEvent(before);
+			if (!before.defaultPrevented) {
+				paragraph.replaceChildren(document.createElement("br")); window.getSelection()?.collapse(paragraph, 0);
+				current.surface.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+			}
+		});
+		expect(before.defaultPrevented).toBe(false);
+		expect(current.canonical()).toBe(Array.from({ length: 174 }, (_, index) => `Line ${index}`).join("\n\n") + "\n\n");
+		expect(onFailure).not.toHaveBeenCalled();
+	} finally { view.unmount(); current.surface.remove(); }
+});
+
+it.each(["equivalent", "equivalent reversed", "image gap", "break gap"] as const)(
+	"recognizes a linked image deletion boundary only without a rendered-unit gap: %s",
+	(scenario) => {
+		const image = "![alt](https://example.test/image.png)";
+		const source = `[${image}](https://example.test/link)` + (scenario === "image gap" ? image : scenario === "break gap" ? "  \nnext" : "");
+		const gap = scenario === "image gap" ? '<img alt="alt" src="https://example.test/image.png">' : scenario === "break gap" ? "<br>next" : "";
+		const current = fixture({
+			blockOverrides: { 174: source },
+			markupOverrides: { 174: `<p data-easymde-visual-block-id="b174"><a href="https://example.test/link"><img alt="alt" src="https://example.test/image.png"></a>${gap}</p>` },
+			mounted: [174], paragraphBlocks: true, sourceBlockCount: 175,
+		});
+		const onFailure = vi.fn();
+		const { view } = renderWindowEditor(current, { onFailure });
+		try {
+			const paragraph = current.surface.querySelector<HTMLParagraphElement>('[data-easymde-visual-block-id="b174"]');
+			const link = paragraph?.querySelector('a');
+			if (!paragraph || !link) throw new Error("linked-image-row-missing");
+			current.surface.focus();
+			if (scenario === "equivalent reversed") window.getSelection()?.collapse(link, 1);
+			else window.getSelection()?.collapse(paragraph, scenario === "equivalent" ? 1 : 2);
+			const target = document.createRange();
+			if (scenario === "equivalent reversed") { target.setStart(paragraph, 0); target.setEnd(paragraph, 1); }
+			else { target.setStart(link, 0); target.setEnd(link, 1); }
+			const event = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "deleteContentBackward" });
+			Object.defineProperty(event, "getTargetRanges", { value: () => [target] });
+			act(() => current.surface.dispatchEvent(event));
+			if (scenario === "equivalent" || scenario === "equivalent reversed") {
+				expect(event.defaultPrevented).toBe(false);
+				expect(onFailure).not.toHaveBeenCalled();
+			} else {
+				expect(event.defaultPrevented).toBe(true);
+				expect(onFailure).toHaveBeenCalled();
+			}
+		} finally { view.unmount(); current.surface.remove(); }
+	},
+);
+
+it("does not treat a visible text corridor as equivalent paragraph boundaries", () => {
+	const paragraph = document.createElement("p");
+	paragraph.innerHTML = '<a><img alt="a" src="x"></a>x';
+	const link = paragraph.querySelector("a");
+	if (!link) throw new Error("linked-image-row-missing");
+	expect(equivalentParagraphBoundaries(paragraph, { node: link, offset: 1 }, { node: paragraph, offset: 2 })).toBe(false);
+	expect(equivalentParagraphBoundaries(paragraph, { node: paragraph, offset: 2 }, { node: link, offset: 1 })).toBe(false);
+});
+
+it.each(["crosses spacer", "misses caret", "protected object"] as const)(
+	"rejects a native paragraph target that %s",
+	(scenario) => {
+		const imageMarkdown = "![alt](https://example.test/image.png)";
+		const content = scenario === "protected object"
+			? '<span class="easymde-math" data-easymde-rendered="true">x</span>'
+			: '<img alt="alt" src="https://example.test/image.png">';
+		const current = fixture({
+			blockOverrides: { 174: imageMarkdown },
+			markupOverrides: { 174: `<p data-easymde-visual-block-id="b174">${content}</p>` },
+			mounted: [174], paragraphBlocks: true, sourceBlockCount: 175,
+		});
+		const onFailure = vi.fn();
+		const { view } = renderWindowEditor(current, { onFailure });
+		try {
+			const paragraph = current.surface.querySelector('[data-easymde-visual-block-id="b174"]');
+			if (!(paragraph instanceof HTMLParagraphElement)) throw new Error("image-row-missing");
+			const original = current.canonical();
+			current.surface.focus(); window.getSelection()?.collapse(paragraph, scenario === "misses caret" ? 0 : 1);
+			const target = document.createRange();
+			if (scenario === "crosses spacer") target.setStart(current.surface, 0);
+			else target.setStart(paragraph, 0);
+			target.setEnd(paragraph, 1);
+			const before = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "deleteContentBackward" });
+			Object.defineProperty(before, "getTargetRanges", { value: () => [target] });
+			act(() => current.surface.dispatchEvent(before));
+			expect(before.defaultPrevented).toBe(true);
+			expect(current.canonical()).toBe(original);
+			expect(current.documentChanges).not.toHaveBeenCalled();
+			expect(onFailure).toHaveBeenCalled();
+		} finally { view.unmount(); current.surface.remove(); }
+	},
+);
 
 it.each(["~", "`", "*"])("deletes one repeated escaped %s at a native paragraph caret without losing source ownership", (marker) => {
 	const original = (`\\${marker}`).repeat(3);
@@ -336,6 +1537,9 @@ function renderWindowEditor(
 		pending?: boolean;
 		acceptedWindowSnapshotGeneration?: number;
 		getAcceptedWindowSnapshot?: () => ImmersiveWindowAcceptedSnapshot | null;
+		getAcceptedReferenceSource?: (request: Readonly<{ revision: number; signature: string }>) => string | null;
+		getAcceptedWindowRow?: (request: PreviewAcceptedWindowRowRequest) => PreviewAcceptedWindowRow | null;
+		revealAcceptedWindowRow?: (request: PreviewAcceptedWindowRowRequest & { gap: HTMLElement; source: string; sourceRevision: number }) => ImmersiveWindowAcceptedSnapshot | null;
 		getGeneratedPreviewIdentity?: ImmersiveVisualEditorRuntime["getGeneratedPreviewIdentity"];
 		prepareGeneratedContentTarget?: ImmersiveVisualEditorRuntime["prepareGeneratedContentTarget"];
 		prepareGeneratedContentTargetForSelection?: ImmersiveVisualEditorRuntime["prepareGeneratedContentTargetForSelection"];
@@ -381,6 +1585,13 @@ function renderWindowEditor(
 		...(options.getAcceptedWindowSnapshot
 			? { getAcceptedWindowSnapshot: options.getAcceptedWindowSnapshot }
 			: {}),
+		...(options.getAcceptedReferenceSource ? { getAcceptedReferenceSource: options.getAcceptedReferenceSource } : {}),
+		...(options.getAcceptedWindowRow
+			? { getAcceptedWindowRow: options.getAcceptedWindowRow }
+			: {}),
+		...(options.revealAcceptedWindowRow
+			? { revealAcceptedWindowRow: options.revealAcceptedWindowRow }
+			: {}),
 		...(options.getGeneratedPreviewIdentity
 			? { getGeneratedPreviewIdentity: options.getGeneratedPreviewIdentity }
 			: {}),
@@ -407,7 +1618,7 @@ function renderWindowEditor(
 		requestPreviewAtDocumentEnd,
 		surface: current.surface,
 	};
-	const view = render(<WindowedImmersiveVisualEditor {...componentProps} />);
+	const view = render(<WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...componentProps} />);
 	return {
 		onDiagnostic,
 		onFailure,
@@ -418,7 +1629,7 @@ function renderWindowEditor(
 			previewSnapshot: Readonly<{ revision: number; signature: string }>,
 		) =>
 			view.rerender(
-				<WindowedImmersiveVisualEditor
+				<WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
 					{...componentProps}
 					editMap={editMap}
 					previewSnapshot={previewSnapshot}
@@ -427,7 +1638,7 @@ function renderWindowEditor(
 		view,
 		rerenderAcceptedWindow: (generation: number) =>
 			view.rerender(
-				<WindowedImmersiveVisualEditor
+				<WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
 					{...componentProps}
 					acceptedWindowSnapshotGeneration={generation}
 				/>,
@@ -436,7 +1647,7 @@ function renderWindowEditor(
 		// prop; the surface stays editable, exactly as the real producer does.
 		rerenderPending: (nextPending: boolean) =>
 			view.rerender(
-				<WindowedImmersiveVisualEditor
+				<WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
 					{...componentProps}
 					pending={nextPending}
 				/>,
@@ -446,7 +1657,7 @@ function renderWindowEditor(
 			nextPending: boolean,
 		) =>
 			view.rerender(
-				<WindowedImmersiveVisualEditor
+				<WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
 					{...componentProps}
 					acceptedWindowSnapshotGeneration={generation}
 					pending={nextPending}
@@ -461,7 +1672,7 @@ function renderWindowEditor(
 			generation: number,
 		) =>
 			view.rerender(
-				<WindowedImmersiveVisualEditor
+				<WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
 					{...componentProps}
 					acceptedWindowSnapshotGeneration={generation}
 					editMap={editMap}
@@ -7156,7 +8367,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 		const onFailure = vi.fn();
 		const cloneSurface = vi.spyOn(current.surface, "cloneNode");
 		const view = render(
-			<WindowedImmersiveVisualEditor
+			<WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
 				documentSession={current.documentSession}
 				editMap={current.editMap}
 				imagePasteUploadEnabled={false}
@@ -8304,7 +9515,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 	it("keeps repeated Backspace edits in one mounted Block exact", () => {
 		const current = fixture();
 		const view = render(
-			<WindowedImmersiveVisualEditor
+			<WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
 				documentSession={current.documentSession}
 				editMap={current.editMap}
 				imagePasteUploadEnabled={false}
@@ -8360,7 +9571,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 		const requestPreview = vi.fn(() => "paste-signature");
 		const onPendingChange = vi.fn();
 		const view = render(
-			<WindowedImmersiveVisualEditor
+			<WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
 				documentSession={current.documentSession}
 				editMap={current.editMap}
 				imagePasteUploadEnabled={false}
@@ -8511,6 +9722,772 @@ describe("WindowedImmersiveVisualEditor", () => {
 		view.unmount();
 	});
 
+	it("opens the terminal paragraph from a root-end caret after the trailing spacer", () => {
+		const current = fixture();
+		const requestPreviewAtDocumentEnd = vi.fn(
+			(
+				markdown: string,
+				sourceSelection?: Readonly<{ end: number; start: number }>,
+			) => ({
+				release: vi.fn(),
+				signature: `root-end-enter:${markdown.length}:${sourceSelection?.start ?? -1}`,
+			}),
+		);
+		const onFailure = vi.fn();
+		const { view } = renderWindowEditor(current, {
+			onFailure,
+			requestPreviewAtDocumentEnd,
+		});
+		try {
+			current.surface.tabIndex = 0;
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.focus();
+			// Control+End in Chromium leaves the collapsed caret on the editing
+			// host itself, after the trailing spacer that stands for every
+			// unmounted row. That position is the canonical document end.
+			const trailing = current.surface.lastChild;
+			expect(
+				trailing instanceof HTMLElement &&
+					trailing.hasAttribute("data-easymde-preview-window-spacer"),
+			).toBe(true);
+			const range = document.createRange();
+			range.setStart(current.surface, current.surface.childNodes.length);
+			range.collapse(true);
+			const selection = window.getSelection();
+			selection?.removeAllRanges();
+			selection?.addRange(range);
+
+			const initial = current.canonical();
+			const enter = new KeyboardEvent("keydown", {
+				bubbles: true,
+				cancelable: true,
+				key: "Enter",
+			});
+			current.surface.dispatchEvent(enter);
+
+			// The terminal line is a new paragraph: the same canonical edit the
+			// full surface makes when Enter splits its last row, and the caret
+			// stays at that document end so the restored window mounts it.
+			const entered = `${initial}\n\n`;
+			expect(enter.defaultPrevented).toBe(true);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(current.canonical()).toBe(entered);
+			expect(current.documentSession.document.getSelection()).toEqual({
+				direction: "none",
+				end: entered.length,
+				start: entered.length,
+			});
+			expect(requestPreviewAtDocumentEnd).toHaveBeenCalledWith(entered, {
+				direction: "none",
+				end: entered.length,
+				start: entered.length,
+			});
+			// The owner's own document-end paragraph is the caret's real address,
+			// so the next typed character is admitted instead of being lost while
+			// the Preview that mounts the new terminal row is outstanding.
+			const sink = current.surface.lastElementChild;
+			expect(sink?.hasAttribute("data-easymde-visual-block-id")).toBe(false);
+			expect(sink?.textContent).toBe("");
+			const typing = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				data: "~",
+				inputType: "insertText",
+			});
+			current.surface.dispatchEvent(typing);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(current.canonical()).toBe(`${entered}~`);
+			expect(current.documentSession.document.getSelection()).toEqual({
+				direction: "none",
+				end: entered.length + 1,
+				start: entered.length + 1,
+			});
+		} finally {
+			view.unmount();
+			current.surface.remove();
+		}
+	});
+
+	it("opens the terminal paragraph from a settled root-end caret once the window mounts the last row", () => {
+		// The window advances while the caret stands on the host boundary, so by
+		// the time Enter arrives the terminal row is mounted and nothing trails
+		// it. The position is still the document end.
+		const current = fixture({ mounted: [160, 319] });
+		const requestPreviewAtDocumentEnd = vi.fn(
+			(
+				markdown: string,
+				sourceSelection?: Readonly<{ end: number; start: number }>,
+			) => ({
+				release: vi.fn(),
+				signature: `settled-root-end:${markdown.length}:${sourceSelection?.start ?? -1}`,
+			}),
+		);
+		const onFailure = vi.fn();
+		const { view } = renderWindowEditor(current, {
+			onFailure,
+			requestPreviewAtDocumentEnd,
+		});
+		try {
+			current.surface.tabIndex = 0;
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.focus();
+			expect(
+				current.surface.lastElementChild?.getAttribute(
+					"data-easymde-visual-block-id",
+				),
+			).toBe("b319");
+			expect(
+				current.surface.querySelector(
+					"[data-easymde-preview-window-spacer]",
+				),
+			).not.toBeNull();
+			const range = document.createRange();
+			range.setStart(current.surface, current.surface.childNodes.length);
+			range.collapse(true);
+			const selection = window.getSelection();
+			selection?.removeAllRanges();
+			selection?.addRange(range);
+
+			const initial = current.canonical();
+			const enter = new KeyboardEvent("keydown", {
+				bubbles: true,
+				cancelable: true,
+				key: "Enter",
+			});
+			current.surface.dispatchEvent(enter);
+
+			const entered = `${initial}\n\n`;
+			expect(enter.defaultPrevented).toBe(true);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(current.canonical()).toBe(entered);
+			expect(current.documentSession.document.getSelection()).toEqual({
+				direction: "none",
+				end: entered.length,
+				start: entered.length,
+			});
+			expect(requestPreviewAtDocumentEnd).toHaveBeenCalledWith(entered, {
+				direction: "none",
+				end: entered.length,
+				start: entered.length,
+			});
+			const sink = current.surface.lastElementChild;
+			expect(sink?.hasAttribute("data-easymde-visual-block-id")).toBe(false);
+			const typing = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				data: "~",
+				inputType: "insertText",
+			});
+			current.surface.dispatchEvent(typing);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(current.canonical()).toBe(`${entered}~`);
+			expect(current.documentSession.document.getSelection()).toEqual({
+				direction: "none",
+				end: entered.length + 1,
+				start: entered.length + 1,
+			});
+		} finally {
+			view.unmount();
+			current.surface.remove();
+		}
+	});
+
+	it("deletes the terminal character from a certified root-end caret and keeps the run going", () => {
+		const current = fixture();
+		const requestPreviewAtDocumentEnd = vi.fn(
+			(
+				markdown: string,
+				sourceSelection?: Readonly<{ end: number; start: number }>,
+			) => ({
+				release: vi.fn(),
+				signature: `root-end-backspace:${markdown.length}:${sourceSelection?.start ?? -1}`,
+			}),
+		);
+		const onFailure = vi.fn();
+		const { view } = renderWindowEditor(current, {
+			onFailure,
+			requestPreviewAtDocumentEnd,
+		});
+		try {
+			current.surface.tabIndex = 0;
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.focus();
+			// The certified shape: the caret Chromium leaves on the editing host
+			// at its own end, after the trailing spacer that stands for every
+			// unmounted row.
+			expect(
+				current.surface.lastElementChild?.hasAttribute(
+					"data-easymde-preview-window-spacer",
+				),
+			).toBe(true);
+			const range = document.createRange();
+			range.setStart(current.surface, current.surface.childNodes.length);
+			range.collapse(true);
+			const selection = window.getSelection();
+			selection?.removeAllRanges();
+			selection?.addRange(range);
+
+			const initial = current.canonical();
+			const backspace = new KeyboardEvent("keydown", {
+				bubbles: true,
+				cancelable: true,
+				key: "Backspace",
+			});
+			current.surface.dispatchEvent(backspace);
+
+			// Exactly the one grapheme before the terminal row's own text, never a
+			// line ending, and the caret names that new text end.
+			const once = initial.slice(0, -1);
+			expect(backspace.defaultPrevented).toBe(true);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(current.canonical()).toBe(once);
+			expect(current.documentSession.document.getSelection()).toEqual({
+				direction: "none",
+				end: once.length,
+				start: once.length,
+			});
+			expect(requestPreviewAtDocumentEnd).toHaveBeenCalledWith(once, {
+				direction: "none",
+				end: once.length,
+				start: once.length,
+			});
+
+			// A characterwise run: each later press arrives while that transfer is
+			// still outstanding, so the keydown leaves it to the pending deletion
+			// owner, which deletes at the lease's canonical caret. One grapheme per
+			// press, no synchronization failure.
+			for (let press = 2; press <= 5; press += 1) {
+				current.surface.dispatchEvent(
+					new KeyboardEvent("keydown", {
+						bubbles: true,
+						cancelable: true,
+						key: "Backspace",
+					}),
+				);
+				const beforeInput = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "deleteContentBackward",
+				});
+				current.surface.dispatchEvent(beforeInput);
+				expect(beforeInput.defaultPrevented).toBe(true);
+				expect(onFailure).not.toHaveBeenCalled();
+				expect(current.canonical()).toBe(initial.slice(0, -press));
+				expect(current.documentSession.document.getSelection()).toEqual({
+					direction: "none",
+					end: initial.length - press,
+					start: initial.length - press,
+				});
+			}
+		} finally {
+			view.unmount();
+			current.surface.remove();
+		}
+	});
+
+	it.each([
+		{ cluster: "e\u0301", name: "a combining mark" },
+		{ cluster: "\u{1F600}", name: "a surrogate pair" },
+		{ cluster: "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}", name: "a ZWJ emoji" },
+		{ cluster: "\u{1F1EF}\u{1F1F5}", name: "a regional-indicator pair" },
+		{ cluster: `a${"\u0301".repeat(70)}`, name: "a cluster longer than the scan window" },
+	])(
+		"deletes exactly the grapheme of $name before a certified root-end caret",
+		({ cluster }) => {
+			// The canonical boundary owner is the answer this owner must give:
+			// the windowed editor keeps no private copy of the grapheme rule.
+			const current = fixture({ blockOverrides: { 319: `Line 319${cluster}` } });
+			const requestPreviewAtDocumentEnd = vi.fn(
+				(
+					markdown: string,
+					sourceSelection?: Readonly<{ end: number; start: number }>,
+				) => ({
+					release: vi.fn(),
+					signature: `root-end-grapheme:${markdown.length}:${sourceSelection?.start ?? -1}`,
+				}),
+			);
+			const onFailure = vi.fn();
+			const { view } = renderWindowEditor(current, {
+				onFailure,
+				requestPreviewAtDocumentEnd,
+			});
+			try {
+				current.surface.tabIndex = 0;
+				current.surface.setAttribute("contenteditable", "true");
+				current.surface.focus();
+				const range = document.createRange();
+				range.setStart(current.surface, current.surface.childNodes.length);
+				range.collapse(true);
+				const selection = window.getSelection();
+				selection?.removeAllRanges();
+				selection?.addRange(range);
+
+				const initial = current.canonical();
+				expect(initial.endsWith(cluster)).toBe(true);
+				const expected = initial.slice(
+					0,
+					previousGraphemeBoundary(initial, initial.length),
+				);
+				expect(expected).toBe(initial.slice(0, initial.length - cluster.length));
+
+				const backspace = new KeyboardEvent("keydown", {
+					bubbles: true,
+					cancelable: true,
+					key: "Backspace",
+				});
+				current.surface.dispatchEvent(backspace);
+
+				expect(backspace.defaultPrevented).toBe(true);
+				expect(onFailure).not.toHaveBeenCalled();
+				expect(current.canonical()).toBe(expected);
+				expect(current.documentSession.document.getSelection()).toEqual({
+					direction: "none",
+					end: expected.length,
+					start: expected.length,
+				});
+			} finally {
+				view.unmount();
+				current.surface.remove();
+			}
+		},
+	);
+
+	it.each([
+		{ cluster: "e\u0301", name: "a combining mark" },
+		{ cluster: "\u{1F600}", name: "a surrogate pair" },
+		{ cluster: "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}", name: "a ZWJ emoji" },
+		{ cluster: "\u{1F1EF}\u{1F1F5}", name: "a regional-indicator pair" },
+		{ cluster: `a${"\u0301".repeat(70)}`, name: "a cluster longer than the scan window" },
+	])(
+		"deletes exactly the next grapheme of $name at a pending canonical caret",
+		({ cluster }) => {
+			const prefix = "ab";
+			const suffix = "tail";
+			const blockSource = `${prefix}${cluster}${suffix}`;
+			const current = fixture({
+				blockOverrides: { 160: blockSource },
+				markupOverrides: {
+					160: `<p data-easymde-visual-block-id="b160">${blockSource}</p>`,
+				},
+				mounted: [159, 160, 161],
+			});
+			const field = document.createElement("textarea");
+			field.value = field.defaultValue = current.canonical();
+			const container = document.createElement("div");
+			document.body.append(container, field);
+			const documentSession = createEditorDocumentSession(
+				createCodeMirrorDocumentSession({
+					container,
+					label: "Markdown source",
+					submissionField: field,
+				}),
+				createNativeTitleSession(null),
+			);
+			documentSession.document.setVisualEditingActive(true);
+			const onFailure = vi.fn();
+			const rendered = renderWindowEditor(current, {
+				documentSession,
+				onFailure,
+			});
+			try {
+				current.surface.tabIndex = 0;
+				current.surface.setAttribute("contenteditable", "true");
+				current.surface.focus();
+				const paragraph = current.surface.querySelector<HTMLElement>(
+					'[data-easymde-visual-block-id="b160"]',
+				);
+				const text = paragraph?.firstChild;
+				if (!(text instanceof Text)) {
+					throw new Error("windowed-grapheme-row-text-missing");
+				}
+				placeCaret(text, prefix.length);
+				act(() => {
+					current.surface.dispatchEvent(
+						new InputEvent("beforeinput", {
+							bubbles: true,
+							cancelable: true,
+							data: "X",
+							inputType: "insertText",
+						}),
+					);
+					text.insertData(prefix.length, "X");
+					placeCaret(text, prefix.length + 1);
+					current.surface.dispatchEvent(
+						new InputEvent("input", {
+							bubbles: true,
+							data: "X",
+							inputType: "insertText",
+						}),
+					);
+				});
+				expect(documentSession.document.getValue()).toContain(
+					`${prefix}X${cluster}${suffix}`,
+				);
+				// The history step records a transfer whose canonical caret is
+				// the point the insertion started at, while the mounted row
+				// still spells the inserted text: no row proves the pending
+				// source, so the deletion reads that canonical caret.
+				act(() => {
+					current.surface.dispatchEvent(
+						new InputEvent("beforeinput", {
+							bubbles: true,
+							cancelable: true,
+							inputType: "historyUndo",
+						}),
+					);
+				});
+				const pending = documentSession.document.getValue();
+				const caret = documentSession.document.getSelection().start;
+				expect(
+					pending.slice(caret, caret + cluster.length + suffix.length),
+				).toBe(`${cluster}${suffix}`);
+				expect(nextGraphemeBoundary(pending, caret)).toBe(
+					caret + cluster.length,
+				);
+				expect(onFailure).not.toHaveBeenCalled();
+
+				const beforeInput = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "deleteContentForward",
+				});
+				act(() => {
+					current.surface.dispatchEvent(beforeInput);
+				});
+				expect(beforeInput.defaultPrevented).toBe(true);
+				expect(onFailure).not.toHaveBeenCalled();
+				expect(documentSession.document.getValue()).toBe(
+					pending.slice(0, caret) + pending.slice(caret + cluster.length),
+				);
+				expect(documentSession.document.getSelection()).toEqual({
+					direction: "none",
+					end: caret,
+					start: caret,
+				});
+			} finally {
+				rendered.view.unmount();
+				documentSession.destroy();
+				container.remove();
+				field.remove();
+				current.surface.remove();
+			}
+		},
+	);
+
+	it.each([
+		"plain",
+		"e\u0301x",
+		"\uD83D\uDE00x",
+		"\uD83C\uDDFA\uD83C\uDDF8\uD83C\uDDF7\uD83C\uDDEA!",
+		"\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67",
+		`a${"\u0301".repeat(100)}b`,
+	])(
+		"answers the former unbounded tail scan at every index of %j",
+		(text) => {
+			// The windowed editor's deleted helper segmented the whole tail from
+			// `index`. The canonical export reads a growing head window, so the
+			// equivalence this replacement claims is per index, not per cluster
+			// start: an index inside a cluster must answer identically too.
+			const segmenter = new Intl.Segmenter(undefined, {
+				granularity: "grapheme",
+			});
+			const unbounded = (index: number): number => {
+				if (index >= text.length) return text.length;
+				for (const part of segmenter.segment(text.slice(index))) {
+					if (part.index === 0) return index + part.segment.length;
+				}
+				return text.length;
+			};
+			for (let index = 0; index <= text.length; index += 1) {
+				expect(nextGraphemeBoundary(text, index)).toBe(unbounded(index));
+			}
+		},
+	);
+
+	it("refuses a document-end Backspace that would delete a Markdown delimiter", () => {
+		// The terminal row is unmounted, so its own source is the only
+		// authority. `**bold**` renders `bold`: the trailing `*` is syntax, not
+		// a visible character, so the certified document end refuses the
+		// deletion instead of rewriting the block's Markdown. The mounted row
+		// deletes the `d` through its own serialization; this position must not
+		// disagree with it.
+		const current = fixture({ blockOverrides: { 319: "**bold**" } });
+		const requestPreviewAtDocumentEnd = vi.fn(
+			(
+				markdown: string,
+				sourceSelection?: Readonly<{ end: number; start: number }>,
+			) => ({
+				release: vi.fn(),
+				signature: `refused-root-end-backspace:${markdown.length}:${sourceSelection?.start ?? -1}`,
+			}),
+		);
+		const onFailure = vi.fn();
+		const { view } = renderWindowEditor(current, {
+			onFailure,
+			requestPreviewAtDocumentEnd,
+		});
+		try {
+			current.surface.tabIndex = 0;
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.focus();
+			expect(
+				current.surface.lastElementChild?.hasAttribute(
+					"data-easymde-preview-window-spacer",
+				),
+			).toBe(true);
+			const range = document.createRange();
+			range.setStart(current.surface, current.surface.childNodes.length);
+			range.collapse(true);
+			const selection = window.getSelection();
+			selection?.removeAllRanges();
+			selection?.addRange(range);
+
+			const initial = current.canonical();
+			expect(initial.endsWith("**bold**")).toBe(true);
+			const backspace = new KeyboardEvent("keydown", {
+				bubbles: true,
+				cancelable: true,
+				key: "Backspace",
+			});
+			current.surface.dispatchEvent(backspace);
+
+			// No deletion, no structural rewrite, and no transfer: the refused
+			// candidate keeps the existing root-end rejection.
+			expect(current.canonical()).toBe(initial);
+			expect(current.documentChanges).not.toHaveBeenCalled();
+			expect(requestPreviewAtDocumentEnd).not.toHaveBeenCalled();
+			expect(onFailure).toHaveBeenCalledWith(
+				"visual-editor-selection-map-failed",
+			);
+		} finally {
+			view.unmount();
+			current.surface.remove();
+		}
+	});
+
+	it("refuses a document-end Enter while an unterminated fence still owns the terminal line", () => {
+		// The fence is still open at the end of the document, so its own row
+		// owns that terminal line: a line break there appends one code body
+		// line. The document-end paragraph would append the two separators a
+		// following paragraph needs, which spells a second blank line inside
+		// the fence instead.
+		const current = fixture({
+			blockOverrides: { 319: "```\ncode" },
+			markupOverrides: {
+				319: '<pre data-easymde-visual-block-id="b319" data-easymde-visual-fence-open-eof="1"><code>code</code></pre>',
+			},
+			mounted: [318, 319],
+		});
+		const requestPreviewAtDocumentEnd = vi.fn(
+			(markdown: string) => ({
+				release: vi.fn(),
+				signature: `open-fence:${markdown.length}`,
+			}),
+		);
+		const onFailure = vi.fn();
+		const { view } = renderWindowEditor(current, {
+			onFailure,
+			requestPreviewAtDocumentEnd,
+		});
+		try {
+			current.surface.tabIndex = 0;
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.focus();
+			const range = document.createRange();
+			range.setStart(current.surface, current.surface.childNodes.length);
+			range.collapse(true);
+			const selection = window.getSelection();
+			selection?.removeAllRanges();
+			selection?.addRange(range);
+
+			const initial = current.canonical();
+			expect(initial.endsWith("```\ncode")).toBe(true);
+			const enter = new KeyboardEvent("keydown", {
+				bubbles: true,
+				cancelable: true,
+				key: "Enter",
+			});
+			current.surface.dispatchEvent(enter);
+
+			// The proof refuses the caret: no terminal separators, no transfer,
+			// and no paragraph after the row the open fence owns. The press is
+			// left to that row's own line break instead.
+			expect(current.canonical()).toBe(initial);
+			expect(current.documentChanges).not.toHaveBeenCalled();
+			expect(requestPreviewAtDocumentEnd).not.toHaveBeenCalled();
+			expect(enter.defaultPrevented).toBe(false);
+			expect(
+				current.surface.lastElementChild?.getAttribute(
+					"data-easymde-visual-block-id",
+				),
+			).toBe("b319");
+			expect(onFailure).not.toHaveBeenCalled();
+		} finally {
+			view.unmount();
+			current.surface.remove();
+		}
+	});
+
+	it("refuses the same document-end Enter while the open fence row is not mounted yet", () => {
+		// The window has not advanced to the terminal row, so a trailing spacer
+		// is the last child and no mounted row carries the open-fence metadata.
+		// The document's own source is still the authority: its last block is
+		// the fence that never closed, so this caret may not open a paragraph.
+		const current = fixture({ blockOverrides: { 319: "```\ncode" } });
+		const requestPreviewAtDocumentEnd = vi.fn(
+			(markdown: string) => ({
+				release: vi.fn(),
+				signature: `open-fence-unmounted:${markdown.length}`,
+			}),
+		);
+		const onFailure = vi.fn();
+		const { view } = renderWindowEditor(current, {
+			onFailure,
+			requestPreviewAtDocumentEnd,
+		});
+		try {
+			current.surface.tabIndex = 0;
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.focus();
+			expect(
+				current.surface.lastElementChild?.hasAttribute(
+					"data-easymde-preview-window-spacer",
+				),
+			).toBe(true);
+			const range = document.createRange();
+			range.setStart(current.surface, current.surface.childNodes.length);
+			range.collapse(true);
+			const selection = window.getSelection();
+			selection?.removeAllRanges();
+			selection?.addRange(range);
+
+			const initial = current.canonical();
+			const enter = new KeyboardEvent("keydown", {
+				bubbles: true,
+				cancelable: true,
+				key: "Enter",
+			});
+			current.surface.dispatchEvent(enter);
+
+			// No separators, no transfer: the position keeps the existing
+			// root-end rejection.
+			expect(current.canonical()).toBe(initial);
+			expect(current.documentChanges).not.toHaveBeenCalled();
+			expect(requestPreviewAtDocumentEnd).not.toHaveBeenCalled();
+			expect(onFailure).toHaveBeenCalledWith(
+				"visual-editor-selection-map-failed",
+			);
+		} finally {
+			view.unmount();
+			current.surface.remove();
+		}
+	});
+
+	it.each(["a $x$", "a $$x$$", "a[^"] as const)(
+		"refuses a document-end Backspace that would delete the editor-only delimiter of %s",
+		(source) => {
+			// The renderer consumes these spellings as syntax of its own, so the
+			// closing math delimiter and the footnote opener render no character
+			// of their own. The terminal row is unmounted, so its source is the
+			// only authority: the deletion is refused instead of rewriting the
+			// block's Markdown where the mounted row would delete a visible
+			// character.
+			const current = fixture({ blockOverrides: { 319: source } });
+			const requestPreviewAtDocumentEnd = vi.fn(
+				(markdown: string) => ({
+					release: vi.fn(),
+					signature: `refused-editor-delimiter:${markdown.length}`,
+				}),
+			);
+			const onFailure = vi.fn();
+			const { view } = renderWindowEditor(current, {
+				onFailure,
+				requestPreviewAtDocumentEnd,
+			});
+			try {
+				current.surface.tabIndex = 0;
+				current.surface.setAttribute("contenteditable", "true");
+				current.surface.focus();
+				const range = document.createRange();
+				range.setStart(current.surface, current.surface.childNodes.length);
+				range.collapse(true);
+				const selection = window.getSelection();
+				selection?.removeAllRanges();
+				selection?.addRange(range);
+
+				const initial = current.canonical();
+				expect(initial.endsWith(source)).toBe(true);
+				const backspace = new KeyboardEvent("keydown", {
+					bubbles: true,
+					cancelable: true,
+					key: "Backspace",
+				});
+				current.surface.dispatchEvent(backspace);
+
+				expect(backspace.defaultPrevented).toBe(true);
+				expect(current.canonical()).toBe(initial);
+				expect(current.documentChanges).not.toHaveBeenCalled();
+				expect(requestPreviewAtDocumentEnd).not.toHaveBeenCalled();
+				expect(onFailure).toHaveBeenCalledWith(
+					"visual-editor-selection-map-failed",
+				);
+			} finally {
+				view.unmount();
+				current.surface.remove();
+			}
+		},
+	);
+
+	it("refuses a document-end Backspace that would delete a hard-break marker", () => {
+		// The block's own source is `a\` followed by its line ending, which the
+		// renderer spells as one `<br>`. The backslash is that break's marker
+		// and renders nothing itself, so deleting it alone would remove more
+		// than the one visible unit this proof promises.
+		const current = fixture({ blockOverrides: { 319: "a\\\n" } });
+		const requestPreviewAtDocumentEnd = vi.fn(
+			(markdown: string) => ({
+				release: vi.fn(),
+				signature: `refused-hard-break:${markdown.length}`,
+			}),
+		);
+		const onFailure = vi.fn();
+		const { view } = renderWindowEditor(current, {
+			onFailure,
+			requestPreviewAtDocumentEnd,
+		});
+		try {
+			current.surface.tabIndex = 0;
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.focus();
+			const range = document.createRange();
+			range.setStart(current.surface, current.surface.childNodes.length);
+			range.collapse(true);
+			const selection = window.getSelection();
+			selection?.removeAllRanges();
+			selection?.addRange(range);
+
+			const initial = current.canonical();
+			expect(initial.endsWith("a\\\n")).toBe(true);
+			const backspace = new KeyboardEvent("keydown", {
+				bubbles: true,
+				cancelable: true,
+				key: "Backspace",
+			});
+			current.surface.dispatchEvent(backspace);
+
+			expect(backspace.defaultPrevented).toBe(true);
+			expect(current.canonical()).toBe(initial);
+			expect(current.documentChanges).not.toHaveBeenCalled();
+			expect(requestPreviewAtDocumentEnd).not.toHaveBeenCalled();
+			expect(onFailure).toHaveBeenCalledWith(
+				"visual-editor-selection-map-failed",
+			);
+		} finally {
+			view.unmount();
+			current.surface.remove();
+		}
+	});
+
 	it("rejects a destructive selection that crosses an unmounted spacer", () => {
 		const current = fixture();
 		current.surface.insertAdjacentHTML(
@@ -8519,7 +10496,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 		);
 		const onFailure = vi.fn();
 		const view = render(
-			<WindowedImmersiveVisualEditor
+			<WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
 				documentSession={current.documentSession}
 				editMap={current.editMap}
 				imagePasteUploadEnabled={false}
@@ -9170,7 +11147,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 		const settlePreview = (revision: number) => {
 			act(() => {
 				view.rerender(
-					<WindowedImmersiveVisualEditor
+					<WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
 						documentSession={current.documentSession}
 						editMap={settledEditMap}
 						imagePasteUploadEnabled={false}
@@ -10954,11 +12931,14 @@ describe("WindowedImmersiveVisualEditor", () => {
 			expect(documentSession.document.undo()).toBe(true);
 			assertHistory(initialMarkdown, initialMarkdown.length);
 			expect(documentSession.document.redo()).toBe(true);
-			// Redoing the whole run restores the caret CodeMirror maps from the
-			// run's pre-edit start selection through the composed change, which
-			// lands one stop short of the run's own post-edit caret - the same
-			// position a native typing run redoes to.
-			assertHistory(afterY, bodyStart + 1);
+			// Redoing the whole run restores the state that run itself ended in:
+			// the composed change re-inserts "xy" and the canonical history
+			// selection restores the run's own committed caret, the same
+			// `bodyStart + 2` the run asserted when it was typed. An earlier
+			// expectation of `bodyStart + 1` came from the replay dropping the
+			// newest commit's selection effect and keeping the oldest one, which
+			// left the caret in the middle of the text it had just restored.
+			assertHistory(afterY, bodyStart + 2);
 			expect(documentSession.document.redo()).toBe(true);
 			assertHistory(afterLineBreak, bodyStart + 2 + lineEnding.length);
 
@@ -10967,6 +12947,135 @@ describe("WindowedImmersiveVisualEditor", () => {
 			submissionField.remove();
 		},
 	);
+
+	it("redoes a joined code-body typing run back to the state the run itself ended in", () => {
+		const lineEnding = "\n";
+		const blockIndex = 160;
+		const fence = "~~~";
+		const current = fixture({
+			blockOverrides: { [blockIndex]: fence },
+			markupOverrides: {
+				[blockIndex]: `<pre data-easymde-visual-block-id="b${blockIndex}"><code></code></pre>`,
+			},
+			mounted: [159, blockIndex],
+			paragraphBlocks: true,
+			sourceBlockCount: blockIndex + 1,
+		});
+		const initialMarkdown = current.canonical();
+		const submissionField = document.createElement("textarea");
+		submissionField.value = initialMarkdown;
+		submissionField.defaultValue = initialMarkdown;
+		submissionField.setSelectionRange(
+			initialMarkdown.length,
+			initialMarkdown.length,
+		);
+		const container = document.createElement("div");
+		document.body.append(container, submissionField);
+		const codeMirrorDocument = createCodeMirrorDocumentSession({
+			container,
+			label: "Markdown source",
+			submissionField,
+		});
+		const documentSession = createEditorDocumentSession(
+			codeMirrorDocument,
+			createNativeTitleSession(null),
+		);
+		documentSession.registerSubmissionState({
+			appleFont: "system",
+			codeTheme: "dark",
+			codeThemeExplicit: false,
+			customCssId: "",
+			customFont: "none",
+			markdownTheme: "default",
+			serifFont: "off",
+			windowsFont: "system",
+		});
+		const onFailure = vi.fn();
+		const { view } = renderWindowEditor(current, {
+			documentSession,
+			onFailure,
+		});
+		current.surface.tabIndex = 0;
+		current.surface.setAttribute("contenteditable", "true");
+		current.surface.focus();
+
+		const pre = current.surface.querySelector<HTMLElement>(
+			`[data-easymde-visual-block-id="b${blockIndex}"]`,
+		);
+		const code = pre?.querySelector(":scope > code");
+		if (!(pre instanceof HTMLElement) || !(code instanceof HTMLElement)) {
+			throw new Error("windowed-joined-run-code-missing");
+		}
+		const placeCodeCaret = (offset: number) => {
+			const range = document.createRange();
+			range.setStart(code, offset);
+			range.collapse(true);
+			const selection = window.getSelection();
+			selection?.removeAllRanges();
+			selection?.addRange(range);
+		};
+		const dispatchText = (data: string, offset: number) => {
+			const beforeInput = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				data,
+				inputType: "insertText",
+			});
+			current.surface.dispatchEvent(beforeInput);
+			expect(beforeInput.defaultPrevented).toBe(false);
+			let text: Text | null =
+				code.firstChild instanceof Text ? code.firstChild : null;
+			if (!text) {
+				text = document.createTextNode("");
+				code.append(text);
+			}
+			text.insertData(offset, data);
+			placeCaret(text, offset + data.length);
+			current.surface.dispatchEvent(
+				new InputEvent("input", {
+					bubbles: true,
+					data,
+					inputType: "insertText",
+				}),
+			);
+		};
+
+		// One continuous typing run: "x" then "y" with no intervening edit.
+		placeCodeCaret(0);
+		dispatchText("x", 0);
+		dispatchText("y", 1);
+		const typedValue = documentSession.document.getValue();
+		const typedSelection = documentSession.document.getSelection();
+		expect(typedValue).toBe(`${initialMarkdown}${lineEnding}xy${lineEnding}`);
+		expect(typedSelection).toEqual({
+			direction: "none",
+			end: initialMarkdown.length + 3,
+			start: initialMarkdown.length + 3,
+		});
+		expect(onFailure).not.toHaveBeenCalled();
+
+		view.unmount();
+		// The pair is one undo step: undo returns to the run's own start.
+		expect(documentSession.document.undo()).toBe(true);
+		expect(documentSession.document.getValue()).toBe(initialMarkdown);
+		expect(documentSession.document.getSelection()).toEqual({
+			direction: "none",
+			end: initialMarkdown.length,
+			start: initialMarkdown.length,
+		});
+		// Redo restores the run exactly as it was typed: the same text AND the
+		// same committed caret, never a caret inside the text it just restored.
+		expect(documentSession.document.redo()).toBe(true);
+		expect(documentSession.document.getValue()).toBe(typedValue);
+		expect(documentSession.document.getSelection()).toEqual(typedSelection);
+		documentSession.document.flush();
+		expect(submissionField.selectionEnd).toBe(typedSelection.end);
+		expect(onFailure).not.toHaveBeenCalled();
+
+		documentSession.destroy();
+		container.remove();
+		submissionField.remove();
+	});
 
 	it("restores the accepted window region when noncancelable code input loses PRE identity", () => {
 		const blockIndex = 160;
@@ -11893,7 +14002,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 				testDocumentEndPreviewRequestUsing(requestPreview),
 			surface: current.surface,
 		};
-		const view = render(<WindowedImmersiveVisualEditor {...componentProps} />);
+		const view = render(<WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...componentProps} />);
 		const oldPre = current.surface.querySelector<HTMLElement>(
 			`[data-easymde-visual-block-id="b${blockIndex}"]`,
 		);
@@ -12138,7 +14247,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 			selection.setBaseAndExtent(current.surface, 0, current.surface, 0);
 			act(() => {
 				view.rerender(
-					<WindowedImmersiveVisualEditor
+					<WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
 						{...componentProps}
 						editMap={editMapForBody(body, signature)}
 						previewSnapshot={{ revision, signature }}
@@ -12385,7 +14494,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 	it("commits one canonical transaction after IME composition ends", async () => {
 		const current = fixture();
 		const view = render(
-			<WindowedImmersiveVisualEditor
+			<WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
 				documentSession={current.documentSession}
 				editMap={current.editMap}
 				imagePasteUploadEnabled={false}
@@ -12536,7 +14645,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 		Object.assign(current.documentSession.document, { undo });
 		const requestPreview = vi.fn(() => "undo-signature");
 		const view = render(
-			<WindowedImmersiveVisualEditor
+			<WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
 				documentSession={current.documentSession}
 				editMap={current.editMap}
 				imagePasteUploadEnabled={false}
@@ -12589,7 +14698,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 			Object.assign(current.documentSession.document, { undo });
 			const requestPreview = vi.fn(() => "undo-signature");
 			const view = render(
-				<WindowedImmersiveVisualEditor
+				<WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
 					documentSession={current.documentSession}
 					editMap={current.editMap}
 					imagePasteUploadEnabled={false}
@@ -12645,7 +14754,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 			Object.assign(current.documentSession.document, { redo });
 			const requestPreview = vi.fn(() => "redo-signature");
 			const view = render(
-				<WindowedImmersiveVisualEditor
+				<WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
 					documentSession={current.documentSession}
 					editMap={current.editMap}
 					imagePasteUploadEnabled={false}
@@ -12689,7 +14798,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 	it("claims native keyboard history while a formal Preview is pending", () => {
 		const current = fixture();
 		const view = render(
-			<WindowedImmersiveVisualEditor
+			<WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
 				documentSession={current.documentSession}
 				editMap={current.editMap}
 				imagePasteUploadEnabled={false}
@@ -12734,7 +14843,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 			const current = fixture();
 			const onFailure = vi.fn();
 			const view = render(
-				<WindowedImmersiveVisualEditor
+				<WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14}
 					documentSession={current.documentSession}
 					editMap={current.editMap}
 					imagePasteUploadEnabled={false}

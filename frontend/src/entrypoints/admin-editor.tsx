@@ -369,6 +369,7 @@ export function mountAdminEditor(
   const browserWorker = (windowRef as Window & { Worker?: unknown }).Worker;
   const editorBlockIndexPort = createBrowserEditorBlockIndexWorker({
     assetBaseUrl: bootstrap.previewEnhancement.assetBaseUrl,
+    referenceLabelCaseFoldProfile: bootstrap.referenceLabelCaseFoldProfile,
     location: {
       href: windowRef.location.href,
       origin: windowRef.location.origin
@@ -406,6 +407,7 @@ export function mountAdminEditor(
       siteUrl: windowRef.location.href
     }),
     document: bootstrap.document,
+    referenceLabelCaseFoldProfile: bootstrap.referenceLabelCaseFoldProfile,
     contextMenuStrings: bootstrap.contextMenuStrings,
     editorBlockIndexPort,
     editorClipboardPort,

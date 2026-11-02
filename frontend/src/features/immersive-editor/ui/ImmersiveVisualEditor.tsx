@@ -1,8 +1,11 @@
 import { useCallback, useLayoutEffect, useRef, useState } from '@wordpress/element';
 
 import { type ChangeDesc, ChangeSet } from '@codemirror/state';
+import { markdownLanguage } from '@codemirror/lang-markdown';
+import { decodeHTMLStrict } from 'entities';
 
 import type { ToolbarCommand } from '../../../contracts/bootstrap/toolbar-bootstrap';
+import type { ReferenceLabelCaseFoldProfile } from '../../../contracts/ports/editor-block-index-port';
 import type { PreviewEditMap } from '../../../contracts/ports/preview-request';
 import {
   type VisualProtectedNodeAttribute,
@@ -19,6 +22,11 @@ import type {
   EditorContextMenuSurfaceSnapshot,
   EditorContextMenuTargetLease
 } from '../../editor-context-menu/EditorContextMenuFeature';
+import {
+  createEditorMarkdownBlockIndex,
+  type EditorMarkdownBlockKind
+} from '../../editor-context-menu/editor-markdown-block-index';
+import { markdownReferenceContextQuery, type MarkdownSyntaxNode } from '../../editor-context-menu/editor-markdown-link-preparation';
 import type {
   PreviewGeneratedContentTargetForSelectionRequest,
   PreviewGeneratedContentTargetLease,
@@ -29,7 +37,8 @@ import type {
   PreviewImageTargetPinLease,
   PreviewImageTargetRequest,
   PreviewImageTargetSelectionRequest,
-  PreviewSurfaceStatus
+  PreviewSurfaceStatus,
+  PreviewCompositionSurfaceLease
 } from '../../live-preview/ui/PreviewSurfaceOwner';
 import {
   type AcceptedPasteDocumentBoundary,
@@ -49,6 +58,9 @@ import {
   visualStructuralBoundaryTokenNear,
   visualStructuralBoundarySelection,
   visualStructuralParagraphInsertion,
+  visualBlockShortcutRewriteTarget,
+  visualBlockShortcutRewritesEmptyBlock,
+  visualEmptiedTerminalRow,
   placeVisualStructuralBoundarySelection,
   prepareVisualThematicBreakPointerSelection,
   captureVisualCodeInputSnapshot,
@@ -63,7 +75,9 @@ import {
   createVisualMarkdownDirectSourceIntervalMap,
   createVisualCodeBodyIntervalForPreviewBlock,
   createVisualMarkdownSourceIntervalMap,
+  createVisualMarkdownImageSourceIntervalMap,
   coversMarkdownUnits,
+  declaredBlockLeadingRuns,
   expandVisualCodeFenceForBody,
   mapTextBoundaryFromInterval,
   mergeVisualMarkdownChangeDetails,
@@ -72,11 +86,14 @@ import {
   placeVisualCaretAfterAcceptedCodeFenceAtDocumentEnd,
   placeVisualCaretAtAcceptedPasteDocumentBoundary,
   placeVisualCaretFromSourceOffset,
+  prepareVisualEmptyStructuralBodies,
   prepareVisualTaskListMarkers,
+  previousGraphemeBoundary,
   projectVisualCodeBodySelection,
   projectVisualLiteralFencePrefix,
   projectVisualLiteralParagraphLine,
   isMarkdownFenceOpeningLine,
+  isVisualCaretAtAcceptedPasteDocumentBoundary,
   projectVisualMarkdownRemovalSelection,
   protectVisualMarkdownReadOnlyRegions,
   reconcileVisualCodeBodyDom,
@@ -84,7 +101,9 @@ import {
   restoreVisualCodeFenceOpenEofMetadata,
   serializeVisualMarkdown,
   serializeVisualMarkdownBlockFragment,
+  structuralEmptyLineRemoval,
   type VisualCodeBodyInterval,
+  type VisualCodeBodyIntervalWitness,
   type VisualCodeInputSnapshot,
   type VisualMarkdownReadOnlySnapshot,
   type VisualMarkdownMergeEdit,
@@ -99,13 +118,17 @@ import {
   visualCodeBodyIntervalMap,
   visualCodeBodyIntervalAtOrdinal,
   visualCodeBodyOrdinalForSourceRange,
+  visualRetiredInlineSourceRange,
   visualBoundarySourceOffset,
+  visualBoundaryForImageSourceEdge,
   visualCaretBoundaryFromSourceOffset,
   visualCodeFenceRootSourceOffset,
+  visualEmptyStructuralBodyAtCaret,
   visualEmptyStructuralBodySelection,
   visualSelectionSourceRange,
   visualSelectionSourceRangeForBlocks,
   visualSelectionVisualOffset,
+  visualSerializationMatchesCommitted,
   visualStructuralBodyIsEmpty,
   isVisualThematicBreakSource,
   visualThematicBreakSourceSelection,
@@ -303,6 +326,7 @@ export type VisualPreviewSnapshot = Readonly<{
 
 export type ImmersiveVisualEditorProps = Readonly<{
   documentSession: EditorDocumentSession;
+  referenceLabelCaseFoldProfile: ReferenceLabelCaseFoldProfile;
   imageUploadEnabled: boolean;
   imagePasteUploadEnabled: boolean;
   onCanonicalDocumentChange: () => void;
@@ -337,6 +361,7 @@ export type ImmersiveVisualEditorProps = Readonly<{
   getAcceptedWindowSnapshot?: () => ImmersiveWindowAcceptedSnapshot | null;
   previewSnapshot: VisualPreviewSnapshot;
   previewStatus: PreviewSurfaceStatus;
+  retainCompositionSurface: () => PreviewCompositionSurfaceLease;
   requestPreview: (markdown: string) => string;
   surface: HTMLElement;
 }>;
@@ -391,6 +416,16 @@ type FullPendingPlacement =
  * presentation a replay may retain or normalize.
  */
 type FullPendingHistoryProof = Readonly<{
+  acceptedPreview?: VisualHistoryPreviewIdentity;
+  historySnapshot?: Readonly<{
+    depth: number;
+    slot: VisualHistorySlot;
+    snapshot: VisualHistorySnapshot;
+  }>;
+  selection?: Readonly<{
+    sourceSelection: VisualSelectionSourceRange;
+    witness: VisualHistorySelection;
+  }>;
   slot?: Readonly<{ depth: number; value: VisualHistorySlot }>;
   tablePresentation?: FullHistoryTablePresentation;
   emptyParagraph?: Readonly<{
@@ -428,6 +463,11 @@ type FullPendingTransferSpec = Readonly<{
   expectation: FullCanonicalExpectation;
   /** The proof a known-history table replay requires. */
   historyProof?: FullPendingHistoryProof;
+  /** The verified owner presentation retained while history rebuilds Preview. */
+  retainedHistoryPresentation?: Readonly<{
+    owned: FullOwnedDom;
+    readOnly: VisualMarkdownReadOnlySnapshot;
+  }>;
   kind: 'history' | 'native' | 'paste';
   /** Where acceptance places this transfer's native caret. */
   placement: FullPendingPlacement;
@@ -595,6 +635,7 @@ type FullAcceptedSelectionOrigin = Readonly<{
   kind: string;
   owner: object;
   selection: VisualSelectionSourceRange;
+  selectionProvenance: 'authored' | 'owner' | 'unknown';
   source: string;
   sourceRevision: number;
 }>;
@@ -657,6 +698,7 @@ type FullAcceptedSelectionPublication = {
 
 type FullContextLeaseState = {
   lease: EditorContextMenuTargetLease;
+  nativeSelection: VisualHistorySelection | null;
   publication: FullAcceptedSelectionPublication | null;
   released: boolean;
   witness: FullContextSourceWitness;
@@ -711,10 +753,8 @@ type FullPendingNativeRootTransition = {
 };
 
 /**
- * One short-lived native EOF join: Backspace at the start of an empty
- * paragraph whose default merges it into the preceding code block. The
- * provenance is the browser's own target range; it is consumed once and never
- * reconstructed after the mutation.
+ * One short-lived native root join. The browser's target range is captured
+ * before the mutation and the resulting ledger is consumed once.
  */
 type FullPendingNativeRootJoin = {
   readonly kind: 'join';
@@ -726,6 +766,7 @@ type FullPendingNativeRootJoin = {
   readonly hasFollowingRoot: boolean;
   readonly joinRoot: HTMLElement;
   readonly lineEndingLength: number;
+  readonly mergedRoot?: HTMLElement;
   readonly owner: object;
   readonly preRoot: HTMLElement;
   readonly preRootSerialization: string | null;
@@ -733,10 +774,57 @@ type FullPendingNativeRootJoin = {
   readonly source: string;
   readonly sourceRevision: number;
   readonly sourceRange?: Readonly<{ end: number; start: number }>;
+  /**
+   * The browser's non-paragraph join shape: it removes the paragraph and
+   * appends its text to the retained block. Only a single insertion of that
+   * exact text may change the block's own text content.
+   */
+  readonly textJoin?: Readonly<{
+    joinText: string;
+    preRootText: string;
+    tagName: string;
+  }>;
+  readonly visual: string;
   readonly terminal: Text | null;
   readonly terminalBefore: string;
   readonly windowIndex: number;
 };
+
+type FullPendingNativeRange = {
+  readonly kind: 'range';
+  readonly allowTerminalBreak: boolean;
+  candidate: Readonly<{
+    metadata: ReadonlyArray<FullOwnedNodeMetadata>;
+    nodes: ReadonlyArray<Node>;
+  }> | null;
+  readonly expectedRoot: HTMLElement;
+  readonly firstIndex: number;
+  readonly inputType: string;
+  readonly lastIndex: number;
+  readonly nodes: ReadonlyArray<Node>;
+  readonly outsideSnapshots: ReadonlyArray<Node | null>;
+  readonly owner: object;
+  readonly source: string;
+  readonly sourceRevision: number;
+};
+
+type FullPendingNativeImageDeletion = Readonly<{
+  kind: 'image-deletion';
+  expected: HTMLElement;
+  inputType: string;
+  nodes: ReadonlyArray<Node>;
+  owner: object;
+  certificate: FullMapCertificate;
+  parent: Node;
+  parentOffset: number;
+  precedingText: Readonly<{ node: Text; path: ReadonlyArray<number>; data: string }> | null;
+  removed: Node;
+  retained: ReadonlyArray<Readonly<{ node: Node; metadata: FullOwnedNodeMetadata }>>;
+  source: string;
+  sourceRevision: number;
+  sourceRange: Readonly<{ start: number; end: number }>;
+  historyOffset: number;
+}>;
 
 /** The literal-text grammar one whole plain paragraph line must match. */
 const FULL_LITERAL_TEXT_LINE = /^[\p{L}\p{N}][\p{L}\p{M}\p{N} ,!?;]*$/u;
@@ -794,6 +882,56 @@ function fullOwnedDomMatches(
       && fullOwnedNodeMetadataEqual(fullOwnedNodeMetadata(node), expected)
     );
   });
+}
+
+function equivalentNativeBoundary(
+  root: HTMLElement, node: Node, offset: number, expectedNode: Node, expectedOffset: number
+): boolean {
+  const points = (initial: Node, initialOffset: number): Array<readonly [Node, number]> => {
+    const result: Array<readonly [Node, number]> = [];
+    let current = initial;
+    let position = initialOffset;
+    while (root.contains(current)) {
+      result.push([current, position]);
+      if (current === root || !current.parentNode) break;
+      const size = current instanceof Text ? current.length : current.childNodes.length;
+      if (position !== 0 && position !== size) break;
+      const index = Array.from(current.parentNode.childNodes).indexOf(current as ChildNode);
+      if (index < 0) break;
+      position = index + (position === size ? 1 : 0);
+      current = current.parentNode;
+    }
+    return result;
+  };
+  const expected = points(expectedNode, expectedOffset);
+  return points(node, offset).some(([item, position]) =>
+    expected.some(([other, otherPosition]) => item === other && position === otherPosition));
+}
+
+/**
+ * Whether a composition certificate's own Text node is still the mounted node
+ * that certificate was captured on. The native ownership proof and the
+ * fail-closed settlement check ask exactly this one question.
+ */
+function compositionOriginTextIsMounted(
+  surface: HTMLElement,
+  origin: Readonly<{ textNode: Text }> | null
+): boolean {
+  return Boolean(
+    origin
+    && origin.textNode.isConnected
+    && surface.contains(origin.textNode)
+  );
+}
+
+function terminalEmptyOffset(
+  surface: HTMLElement,
+  ownedParagraph: HTMLParagraphElement,
+  node: Node,
+  offset: number
+): 0 | 1 | null {
+  if (0 !== offset && 1 !== offset) return null;
+  return node === ownedParagraph || node === surface ? offset : null;
 }
 
 /**
@@ -924,6 +1062,73 @@ function fullBlankLineSeparator(gap: string): boolean {
   // terminal terminator, so a single blank line leaves exactly ONE remaining
   // line break here. The gap must be whitespace and must contain one.
   return /^\s*(?:\r\n|\n|\r)\s*$/u.test(gap);
+}
+
+/**
+ * An emptied block the surface still mounts as its document's last row: no
+ * children at all, or only the placeholder break native editing leaves behind.
+ * It holds no editable text, so its caret is an element caret at offset 0 and
+ * Chromium's own join has no byte of its own to prove. The canonical block
+ * boundary in front of it is then the press's whole edit.
+ */
+function emptiedTerminalVisualBlock(
+  node: Node | null | undefined
+): node is HTMLElement {
+  return node instanceof HTMLElement
+    && ['DIV', 'P'].includes(node.tagName)
+    && null === node.nextElementSibling
+    && (0 === node.childNodes.length
+      || (1 === node.childNodes.length
+        && node.firstChild instanceof HTMLBRElement));
+}
+
+/**
+ * The source row kind each discardable block spells. A shortcut only discards a
+ * block whose markers outlive its body, so this mapping is what proves a
+ * marker-only row is that block's own row and not another block's. A fence is
+ * deliberately absent: its canonical extent is its whole fence rather than one
+ * row, and the fence owners keep those presses.
+ */
+const EMPTIED_ROW_BLOCK_KIND_BY_TAG: Record<string, string> = {
+  BLOCKQUOTE: 'Blockquote',
+  H1: 'ATXHeading1',
+  H2: 'ATXHeading2',
+  H3: 'ATXHeading3',
+  H4: 'ATXHeading4',
+  H5: 'ATXHeading5',
+  H6: 'ATXHeading6',
+  OL: 'OrderedList',
+  UL: 'BulletList'
+};
+
+/**
+ * The start of the separator run a canonical source ends on, or null. An
+ * emptied block mounted at the document end owns no text of its own, so the
+ * canonical bytes it stands for are exactly that trailing run. The run must
+ * still pass the join separator's own proof, which keeps a hard break's
+ * trailing spaces (no line ending) out of the deleted interval.
+ */
+function fullTerminalSeparatorStart(source: string): number | null {
+  let start = source.length;
+  while (start > 0 && /[ \t\r\n]/u.test(source.charAt(start - 1))) start -= 1;
+  return start < source.length
+    && null !== fullNativeJoinSeparator(source, start, false)
+    ? start
+    : null;
+}
+
+/**
+ * The last Text node inside a visual block, in document order: the node a caret
+ * at that block's own content end belongs to. A block with no text at all has
+ * none, and the caller keeps its own element-end boundary instead.
+ */
+function terminalVisualTextNode(root: Element): Text | null {
+  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let last: Text | null = null;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    last = node as Text;
+  }
+  return last;
 }
 
 function fullNativeJoinSeparator(
@@ -1135,6 +1340,38 @@ function fullChangeDescriptor(
   return desc;
 }
 
+/** Whether one actual descriptor reconstructs exactly this source pair. */
+function fullChangeMatchesSourcePair(
+  change: ChangeDesc,
+  beforeSource: string,
+  afterSource: string
+): boolean {
+  if (
+    change.length !== beforeSource.length
+    || change.newLength !== afterSource.length
+  ) return false;
+  let cursor = 0;
+  let expected = '';
+  let valid = true;
+  change.iterChangedRanges((fromA, toA, fromB, toB) => {
+    if (
+      !valid
+      || fromA < cursor
+      || fromA > toA
+      || fromB > toB
+      || toA > beforeSource.length
+      || toB > afterSource.length
+    ) {
+      valid = false;
+      return;
+    }
+    expected += beforeSource.slice(cursor, fromA);
+    expected += afterSource.slice(fromB, toB);
+    cursor = toA;
+  });
+  return valid && expected + beforeSource.slice(cursor) === afterSource;
+}
+
 function fullChangeDescriptorForEdits(
   beforeSource: string,
   afterSource: string,
@@ -1161,6 +1398,126 @@ function fullChangeDescriptorForEdits(
   return desc;
 }
 
+function fullIdentityChangeDescriptor(source: string): ChangeDesc | null {
+  try {
+    return ChangeSet.of([], source.length, '\n').desc;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Compose one explicitly witnessed owner transition onto a cumulative
+ * accepted-source descriptor. The source pair is checked by applying the
+ * exact edits to the previous source; no text matching or guessed diff is
+ * admitted.
+ */
+export function fullComposeDomCorrespondence(
+  prior: FullPendingDomCorrespondence,
+  origin: FullOwnedDom,
+  changes: ReadonlyArray<Readonly<{ from: number; insert: string; to: number }>>,
+  before: string,
+  after: string,
+  beforeRevision: number | undefined,
+  afterRevision: number | undefined,
+  beforeHistory: DocumentHistoryState,
+  afterHistory: DocumentHistoryState
+): FullPendingDomCorrespondence | null {
+  if (
+    prior.origin !== origin
+    || prior.owner !== origin.owner
+    || prior.source !== before
+    || prior.sourceRevision !== beforeRevision
+    || prior.history.undoDepth !== beforeHistory.undoDepth
+    || prior.history.redoDepth !== beforeHistory.redoDepth
+    || !Number.isSafeInteger(beforeRevision)
+    || !Number.isSafeInteger(afterRevision)
+    || afterRevision !== (beforeRevision as number) + 1
+  ) return null;
+  let offset = 0;
+  let observed = '';
+  for (const change of changes) {
+    if (
+      !Number.isSafeInteger(change.from)
+      || !Number.isSafeInteger(change.to)
+      || change.from < offset
+      || change.to < change.from
+      || change.to > before.length
+    ) return null;
+    observed += before.slice(offset, change.from) + change.insert;
+    offset = change.to;
+  }
+  observed += before.slice(offset);
+  if (observed !== after) return null;
+  let next: ChangeDesc;
+  try {
+    next = ChangeSet.of(changes, before.length, '\n').desc;
+  } catch {
+    return null;
+  }
+  let composed: ChangeDesc;
+  try {
+    composed = prior.change.composeDesc(next);
+  } catch {
+    return null;
+  }
+  if (
+    composed.length !== origin.source.length
+    || composed.newLength !== after.length
+  ) return null;
+  return {
+    change: composed,
+    history: afterHistory,
+    insertionOwner: null,
+    origin,
+    owner: origin.owner,
+    source: after,
+    sourceRevision: afterRevision as number
+  };
+}
+
+function fullAcceptedDomCorrespondenceApplies(
+  candidate: FullPendingDomCorrespondence | null,
+  owner: object,
+  currentSourceMarkdown: string | null,
+  currentRevision: number | null,
+  currentHistory: DocumentHistoryState
+): candidate is FullPendingDomCorrespondence {
+  return Boolean(
+    candidate
+    && candidate.owner === owner
+    && candidate.origin.owner === owner
+    && candidate.source === currentSourceMarkdown
+    && candidate.sourceRevision === currentRevision
+    && candidate.history.undoDepth === currentHistory.undoDepth
+    && candidate.history.redoDepth === currentHistory.redoDepth
+    && fullChangeMatchesSourcePair(
+      candidate.change,
+      candidate.origin.source,
+      candidate.source
+    )
+  );
+}
+
+export function fullSelectAcceptedDomCorrespondence(
+  candidates: ReadonlyArray<FullPendingDomCorrespondence | null>,
+  owner: object,
+  currentSourceMarkdown: string | null,
+  currentRevision: number | null,
+  currentHistory: DocumentHistoryState
+): FullPendingDomCorrespondence | null {
+  for (const candidate of candidates) {
+    if (fullAcceptedDomCorrespondenceApplies(
+      candidate,
+      owner,
+      currentSourceMarkdown,
+      currentRevision,
+      currentHistory
+    )) return candidate;
+  }
+  return null;
+}
+
 function canonicalChangeRemovesVisualBlock(
   sourceMarkdown: string,
   sourceRange: Readonly<{ end: number; start: number }>,
@@ -1184,6 +1541,91 @@ function directVisualBlockForSelectionNode(
     element = element.parentElement;
   }
   return element?.parentElement === surface ? element : null;
+}
+
+/**
+ * A direct visual root the browser cannot merge across as text: a thematic
+ * break, a table, or a rendered protected object. Backspace at the following
+ * block start removes the whole object; it never edits through it.
+ */
+function isAtomicVisualRoot(node: HTMLElement): boolean {
+  if (node instanceof HTMLHRElement) return true;
+  if (node.matches('section, .easymde-table-container')) return true;
+  if (node.matches(VISUAL_MARKDOWN_READ_ONLY_SELECTOR)) {
+    // Generated navigation and footnote furniture is not a document block.
+    return !node.matches('.easymde-toc, .footnotes-sep, .footnotes');
+  }
+  return false;
+}
+
+/** A paragraph whose only content is inline image(s): no text to join. */
+function isImageOnlyVisualRoot(node: HTMLElement): boolean {
+  return 'P' === node.tagName
+    && '' === (node.textContent ?? '').trim()
+    && null !== node.querySelector('img')
+    && !node.matches(VISUAL_MARKDOWN_READ_ONLY_SELECTOR);
+}
+
+/** A block that can hold the joined inline content of a previous paragraph. */
+function isVisualTextJoinTarget(node: HTMLElement): boolean {
+  return ['P', 'BLOCKQUOTE', 'OL', 'UL'].includes(node.tagName)
+    || /^H[1-6]$/u.test(node.tagName);
+}
+
+/** The deepest inline-content container at the start of a joined block. */
+function visualInlinePrependTarget(block: HTMLElement): HTMLElement {
+  let target = block;
+  for (;;) {
+    if (!['BLOCKQUOTE', 'OL', 'UL'].includes(target.tagName)) return target;
+    const first = target.firstElementChild;
+    if (!(first instanceof HTMLElement)) return target;
+    target = first;
+  }
+}
+
+/** The deepest inline-content container at the end of a joined block. */
+function visualInlineAppendTarget(block: HTMLElement): HTMLElement {
+  let target = block;
+  for (;;) {
+    if (!['BLOCKQUOTE', 'OL', 'UL'].includes(target.tagName)) return target;
+    const last = target.lastElementChild;
+    if (!(last instanceof HTMLElement)) return target;
+    target = last;
+  }
+}
+
+/** Whether the collapsed native caret is at the visual end of `block`. */
+function caretAtVisualRootEnd(block: HTMLElement): boolean {
+  const selection = block.ownerDocument.defaultView?.getSelection();
+  if (
+    !selection?.isCollapsed
+    || selection.rangeCount !== 1
+    || !selection.anchorNode
+    || selection.anchorNode !== selection.focusNode
+    || selection.anchorOffset !== selection.focusOffset
+    || !block.contains(selection.anchorNode)
+  ) return false;
+  const suffix = block.ownerDocument.createRange();
+  suffix.selectNodeContents(block);
+  suffix.setStart(selection.anchorNode, selection.anchorOffset);
+  return '' === suffix.toString().trim();
+}
+
+/** Whether the collapsed caret has no rendered text before it in its block. */
+function caretAtVisualRootStart(block: HTMLElement): boolean {
+  const selection = block.ownerDocument.defaultView?.getSelection();
+  if (
+    !selection?.isCollapsed
+    || selection.rangeCount !== 1
+    || !selection.anchorNode
+    || selection.anchorNode !== selection.focusNode
+    || selection.anchorOffset !== selection.focusOffset
+    || !block.contains(selection.anchorNode)
+  ) return false;
+  const prefix = block.ownerDocument.createRange();
+  prefix.selectNodeContents(block);
+  prefix.setEnd(selection.anchorNode, selection.anchorOffset);
+  return '' === prefix.toString().trim();
 }
 
 function acceptedTopLevelVisualChildren(
@@ -1297,6 +1739,11 @@ function captureAcceptedTopLevelVisualWindow(
   // that topology; leave shortcut ownership to its other proofs instead of
   // invoking the strict duplicate-id assertion below.
   if (!fullMapNamesElements(surface, editMap)) return null;
+  const elements = Array.from(surface.children);
+  if (elements.some((element, index) => {
+    const id = element.getAttribute('data-easymde-visual-block-id');
+    return !id || id !== editMap.blocks[index]?.id;
+  })) return null;
   const children = acceptedTopLevelVisualChildren(surface, editMap);
   const selection = surface.ownerDocument.defaultView?.getSelection();
   if (!selection?.anchorNode || !selection.focusNode) return null;
@@ -1488,7 +1935,8 @@ function acceptedTopLevelVisualSelection(
   previewSignature: string,
   previewRevision: number,
   capturedPreviewRevision: number | null,
-  acceptedPreviewSource: string | null
+  acceptedPreviewSource: string | null,
+  referenceDefined: (label: string) => boolean
 ): VisualSelectionSourceRange | null {
   const thematicBreakSelection = captureVisualThematicBreakSelection(surface);
   if (
@@ -1590,10 +2038,19 @@ function acceptedTopLevelVisualSelection(
       sourceRange.end
     );
     const baselineSlice = serializeVisualMarkdownBlockFragment(blocks);
+    let projectedIntervalMap: VisualMarkdownSourceIntervalMap | undefined;
+    if (blocks.some((block) => block.matches('img') || block.querySelector('img'))) {
+      const fragment = surface.ownerDocument.createElement('article');
+      fragment.append(...blocks.map((block) => block.cloneNode(true)));
+      projectedIntervalMap = createVisualMarkdownImageSourceIntervalMap(
+        fragment, sourceSlice, baselineSlice, referenceDefined
+      );
+    }
     const relative = visualSelectionSourceRangeForBlocks(
       blocks,
       sourceSlice,
-      baselineSlice
+      baselineSlice,
+      projectedIntervalMap
     );
     return {
       direction: relative.direction,
@@ -1806,6 +2263,7 @@ type SynchronizeMarkdownOptions = Readonly<{
   acceptedTopLevelSelection?: boolean;
   historySelectionBefore?: VisualSelectionSourceRange;
   historySelectionWitness?: VisualHistorySelectionWitness;
+  terminalTextRun?: TerminalTextRunWitness;
   ownerResult?: Readonly<{
     value: string;
     selection: VisualSelectionSourceRange;
@@ -1833,6 +2291,7 @@ type CaptureSnapshotOptions = Readonly<{
   cacheSourceIntervalMap?: boolean;
   historyRestore?: boolean;
   tablePresentation?: FullAcceptedTablePresentation;
+  terminalTextRun?: TerminalTextRunWitness;
 }>;
 
 type VisualCodeStructureValidation = Readonly<{
@@ -1936,6 +2395,10 @@ function singleCodeBodyTypingChange(
 
 
 type ApplyDocumentChangeOptions = Readonly<{
+  acceptedDomChanges?: ReadonlyArray<
+    Readonly<{ from: number; insert: string; to: number }>
+  >;
+  historyBeforeSnapshot?: VisualHistorySnapshot;
   historySelectionWitness?: VisualHistorySelectionWitness;
   isolateHistoryBefore?: boolean;
   /**
@@ -1946,10 +2409,18 @@ type ApplyDocumentChangeOptions = Readonly<{
    */
   joinPreviousHistory?: boolean;
   rejectCodeStructureMismatch?: boolean;
+  terminalTextRun?: TerminalTextRunWitness;
   validatedCodeStructure?: VisualCodeStructureValidation;
 }>;
 
 const VISUAL_INPUT_DEBOUNCE_MS = 80;
+/**
+ * How many Backspaces one settling window may hold. Each press is replayed as
+ * its own edit, so this bound is what keeps a render that never settles from
+ * growing an unbounded queue; past it the refusal is reported instead of a key
+ * being dropped.
+ */
+const DEFERRED_PENDING_BACKSPACE_LIMIT = 8;
 const VISUAL_CANONICAL_ADOPTION_PENDING_CODE =
   'visual-editor-canonical-change-preview-adoption-pending';
 const VISUAL_CANONICAL_STALE_SERIALIZATION_CODE =
@@ -2055,6 +2526,42 @@ type VisualSourceIntervalMapRecord = Readonly<{
   visualMarkdown: string;
 }>;
 
+function visualReferenceContextQuery(
+  source: string,
+  formalSource: string | null,
+  profile: ReferenceLabelCaseFoldProfile
+): (label: string) => boolean {
+  let query: ((label: string) => boolean) | null = null;
+  return (label) => {
+    if (!query) {
+      if (null === formalSource) throw new Error('visual-editor-reference-context-stale');
+      const parse = (markdown: string): MarkdownSyntaxNode[] => {
+        const nodes: MarkdownSyntaxNode[] = [];
+        markdownLanguage.parser.parse(markdown).iterate({ enter: (node) => {
+          nodes.push({ from: node.from, name: node.name, to: node.to });
+        } });
+        return nodes;
+      };
+      const currentNodes = parse(source);
+      query = markdownReferenceContextQuery(source, currentNodes, formalSource,
+        source === formalSource ? currentNodes : parse(formalSource), profile);
+    }
+    return query(label);
+  };
+}
+
+function imageAwareVisualSourceIntervalMap(
+  surface: HTMLElement,
+  source: string,
+  visual: string,
+  formalSource: string | null,
+  profile: ReferenceLabelCaseFoldProfile
+): VisualMarkdownSourceIntervalMap {
+  return createVisualMarkdownImageSourceIntervalMap(
+    surface, source, visual, visualReferenceContextQuery(source, formalSource, profile)
+  );
+}
+
 type VisualHistorySelectionBoundary = Readonly<{
   offset: number;
   path: ReadonlyArray<number>;
@@ -2132,7 +2639,69 @@ type VisualHistoryPreviewIdentity = Readonly<{
   markdown: string | null;
   revision: number;
   signature: string;
+  terminalTextRun?: TerminalTextRunWitness;
 }>;
+
+export type TerminalTextRunIdentity = Readonly<{
+  historyRedoDepth: number;
+  historyUndoDepth: number;
+  owner: object;
+  previewMapped: boolean;
+  previewMarkdown: string | null;
+  previewRevision: number;
+  previewSignature: string;
+}>;
+
+export type TerminalTextRunWitness = Readonly<{
+  canonical: string;
+  identity?: TerminalTextRunIdentity;
+  live: string;
+  sourceRange: Readonly<{ end: number; start: number }>;
+  textOffset: number;
+  textPath: ReadonlyArray<number>;
+  visualRange: Readonly<{ end: number; start: number }>;
+}>;
+
+function terminalTextRunIdentityEqual(
+  left: TerminalTextRunIdentity,
+  right: TerminalTextRunIdentity
+): boolean {
+  return left.owner === right.owner
+    && left.historyUndoDepth === right.historyUndoDepth
+    && left.historyRedoDepth === right.historyRedoDepth
+    && left.previewMapped === right.previewMapped
+    && left.previewMarkdown === right.previewMarkdown
+    && left.previewRevision === right.previewRevision
+    && left.previewSignature === right.previewSignature;
+}
+
+function terminalTextRunIdentityMatches(
+  witness: TerminalTextRunWitness,
+  identity: TerminalTextRunIdentity
+): boolean {
+  return Boolean(witness.identity && terminalTextRunIdentityEqual(witness.identity, identity));
+}
+
+function terminalTextRunIdentityFor(
+  owner: object,
+  historyState: DocumentHistoryState,
+  acceptedPreview: Readonly<{
+    mapped: boolean;
+    markdown: string | null;
+    revision: number;
+    signature: string;
+  }>
+): TerminalTextRunIdentity {
+  return {
+    historyRedoDepth: historyState.redoDepth,
+    historyUndoDepth: historyState.undoDepth,
+    owner,
+    previewMapped: acceptedPreview.mapped,
+    previewMarkdown: acceptedPreview.markdown,
+    previewRevision: acceptedPreview.revision,
+    previewSignature: acceptedPreview.signature
+  };
+}
 
 type VisualHistorySnapshot = Readonly<{
   acceptedCodeBodies: ReadonlyArray<IndexedAcceptedCodeBodyCorrespondence>;
@@ -2151,6 +2720,7 @@ type VisualHistorySnapshot = Readonly<{
   markdown: string;
   selection: VisualHistorySelection | null;
   tablePresentation: FullAcceptedTablePresentation | null;
+  terminalTextRun?: TerminalTextRunWitness;
 }>;
 
 type VisualHistorySelectionWitness = Readonly<{
@@ -2163,6 +2733,7 @@ type VisualHistorySelectionWitness = Readonly<{
   revision: number;
   selection: VisualHistorySelection;
   sourceMarkdown: string;
+  terminalTextRun?: TerminalTextRunWitness;
 }>;
 
 type VisualHistorySlot =
@@ -2177,8 +2748,11 @@ type VisualHistorySlot =
     }>;
 
 type VisualInputIntent = Readonly<{
+  inlineCodeDeletion?: InlineCodeDeletionWitness;
+  inlineRetirement?: InlineRetirementWitness;
   codeBlockStructure?: Readonly<{
     baseMarkdown: string;
+    baseIntervalWitness?: VisualCodeBodyIntervalWitness;
     blockId: string | null;
     codeOrdinal: number;
     localPre?: HTMLElement;
@@ -2204,6 +2778,7 @@ type VisualInputIntent = Readonly<{
   inputType: string;
   literalFencePrefix?: Readonly<{ markdown: string; offset: number }>;
   sourceSelection: Readonly<{ end: number; start: number }>;
+  terminalTextRun?: TerminalTextRunWitness;
   /**
    * The authored caret sat on the renderer's own terminal code-body line, so
    * the projection was clamped to the body's last line. The browser's default
@@ -2215,6 +2790,38 @@ type VisualInputIntent = Readonly<{
   textNode: Text;
   textSelection: Readonly<{ end: number; start: number }>;
   visualSelection: Readonly<{ end: number; start: number }>;
+}>;
+
+type InlineRetirementWitness = Readonly<{
+  nodes: ReadonlyArray<Node>;
+  snapshot: HTMLElement;
+  wrappers: ReadonlyArray<Readonly<{
+    node: HTMLElement;
+    path: ReadonlyArray<number>;
+    precedingText: Text | null;
+    precedingTextPath: ReadonlyArray<number> | null;
+    sourceRange: Readonly<{ end: number; start: number }> | null;
+  }>>;
+}>;
+
+type InlineCodeDeletionWitness = Readonly<{
+  allowNeighborArtifact: boolean;
+  code: HTMLElement;
+  inputType: string;
+  neighbor: Text | null;
+  neighborPath: ReadonlyArray<number> | null;
+  nodes: ReadonlyArray<Node>;
+  opening: Readonly<{ from: number; to: number }>;
+  closing: Readonly<{ from: number; to: number }>;
+  revision: number;
+  snapshot: HTMLElement;
+  source: string;
+  sourceStart: number;
+  sourceEnd: number;
+  target: Text;
+  targetPath: ReadonlyArray<number>;
+  targetStart: number;
+  targetEnd: number;
 }>;
 
 type VisualEmptyStructuralInput = Readonly<{
@@ -2283,6 +2890,7 @@ type PendingVisualIntent = Readonly<{
   inputType: string;
   codeBlockStructure?: Readonly<{
     baseMarkdown: string;
+    baseIntervalWitness?: VisualCodeBodyIntervalWitness;
     blockId: string | null;
     codeOrdinal: number;
     localPre?: HTMLElement;
@@ -2304,6 +2912,7 @@ type PendingVisualIntent = Readonly<{
   }>;
   historySelectionWitness?: VisualHistorySelectionWitness;
   historyOrigin?: 'empty-structural';
+  terminalTextRun?: TerminalTextRunWitness;
   deferSourceChange?: boolean;
   memory: VisualSelectionMemory | null;
   /**
@@ -3285,7 +3894,7 @@ function mapSelectionFromInterval(
     baselineVisualMarkdown,
     sourceIntervalMap,
     acceptedPrefixOnly,
-    textOverride?.node === current.anchorNode ? textOverride.data : undefined
+    textOverride?.node === current.anchorNode ? textOverride : undefined
   );
   // A collapsed selection asks the same boundary twice; its projection is
   // pure, so reuse the anchor result instead of serializing the block again.
@@ -3301,7 +3910,7 @@ function mapSelectionFromInterval(
         baselineVisualMarkdown,
         sourceIntervalMap,
         acceptedPrefixOnly,
-        textOverride?.node === current.focusNode ? textOverride.data : undefined
+        textOverride?.node === current.focusNode ? textOverride : undefined
       );
   if (!anchor || !focus) return null;
   return {
@@ -3777,7 +4386,34 @@ function nativeDocumentSelectionDirection(
   return 0 === order ? 'none' : order < 0 ? 'forward' : 'backward';
 }
 
-function acceptedDecodedBlockSelection(
+type AcceptedDecodedBlockContext = Readonly<{
+  acceptedMapCertificate: FullMapCertificate | null;
+  acceptedPreview: Readonly<{ revision: number; signature: string }>;
+  acceptedSourceMarkdown: string | null;
+  capturedPreviewRevision: number | null;
+  correspondence: FullPendingDomCorrespondence | null;
+  currentRevision: number | null;
+  history: DocumentHistoryState;
+  owner: object;
+  referenceLabelCaseFoldProfile: ReferenceLabelCaseFoldProfile;
+}>;
+
+function acceptedDecodedVisualBlockKind(
+  block: HTMLElement
+): EditorMarkdownBlockKind | null {
+  if (block instanceof HTMLParagraphElement) return 'paragraph';
+  if (/^H[1-6]$/u.test(block.tagName)) return 'heading';
+  if (block instanceof HTMLUListElement || block instanceof HTMLOListElement)
+    return 'list';
+  if (block instanceof HTMLQuoteElement) return 'quote';
+  if (block instanceof HTMLPreElement) return 'code';
+  if (block instanceof HTMLHRElement) return 'thematic-break';
+  if (block.matches('section.table-container, section.easymde-table-container')
+    && block.querySelector('table')) return 'table';
+  return null;
+}
+
+export function acceptedDecodedBlockSelection(
   surface: HTMLElement,
   selection: Readonly<{
     anchorNode: Node;
@@ -3787,14 +4423,52 @@ function acceptedDecodedBlockSelection(
   }>,
   sourceMarkdown: string,
   baselineVisualMarkdown: string,
-  editMap: PreviewEditMap | null
+  editMap: PreviewEditMap | null,
+  context: AcceptedDecodedBlockContext
 ): Readonly<{
   source: Readonly<{ start: number; end: number }>;
   visual: Readonly<{ start: number; end: number }>;
 }> | null {
+  const acceptedSourceMarkdown = context.acceptedSourceMarkdown;
+  if (null === acceptedSourceMarkdown) return null;
   if (!editMap || 0 === editMap.blocks.length) return null;
+  if (
+    editMap.signature !== context.acceptedPreview.signature
+    || context.capturedPreviewRevision !== context.acceptedPreview.revision
+  ) return null;
+  const certificate = context.acceptedMapCertificate;
+  if (
+    !certificate
+    || certificate.owner !== context.owner
+    || certificate.editMap !== editMap
+    || certificate.previewRevision !== context.acceptedPreview.revision
+    || certificate.previewSignature !== context.acceptedPreview.signature
+    || certificate.source !== acceptedSourceMarkdown
+  ) return null;
+  const sourceCorrespondence = acceptedSourceMarkdown === sourceMarkdown
+    ? null
+    : context.correspondence;
+  if (
+    acceptedSourceMarkdown !== sourceMarkdown
+    && (
+      !sourceCorrespondence
+      || sourceCorrespondence.owner !== context.owner
+      || sourceCorrespondence.origin.owner !== context.owner
+      || sourceCorrespondence.origin.source !== acceptedSourceMarkdown
+      || sourceCorrespondence.source !== sourceMarkdown
+      || sourceCorrespondence.history.undoDepth !== context.history.undoDepth
+      || sourceCorrespondence.history.redoDepth !== context.history.redoDepth
+      || (null !== context.currentRevision
+        && sourceCorrespondence.sourceRevision !== context.currentRevision)
+      || !fullChangeMatchesSourcePair(
+        sourceCorrespondence.change,
+        acceptedSourceMarkdown,
+        sourceMarkdown
+      )
+    )
+  ) return null;
   const baselineIntervalMap = createVisualMarkdownSourceIntervalMap(
-    sourceMarkdown,
+    acceptedSourceMarkdown,
     baselineVisualMarkdown
   );
   const baselineOffsetAtSource = (
@@ -3810,7 +4484,10 @@ function acceptedDecodedBlockSelection(
     }
     return preferEnd ? last : first;
   };
-  const lineStarts = markdownLineStarts(sourceMarkdown);
+  const lineStarts = markdownLineStarts(acceptedSourceMarkdown);
+  // A selection resolves both endpoints through the same block rows, so the
+  // current source's own line starts are read at most once per selection.
+  let currentLineStarts: number[] | null = null;
   const resolve = (
     node: Node,
     offset: number
@@ -3820,17 +4497,159 @@ function acceptedDecodedBlockSelection(
     if (!(block instanceof HTMLElement)) return null;
     const id = block.getAttribute('data-easymde-visual-block-id');
     if (!id) return null;
-    const entry = editMap.blocks.find((candidate) => candidate.id === id);
-    if (!entry) return null;
+    const entries = editMap.blocks.filter((candidate) => candidate.id === id);
+    const entry = entries[0];
+    const blockIndex = Array.prototype.indexOf.call(surface.children, block);
+    const domKind = acceptedDecodedVisualBlockKind(block);
+    if (
+      entries.length !== 1
+      || !entry?.editable
+    ) return null;
+    if (
+      !block.isConnected
+      || !surface.contains(block)
+      || !certificate.nodes.includes(block)
+    ) return null;
+    if (
+      element?.closest(
+        `[contenteditable="false"], ${VISUAL_MARKDOWN_READ_ONLY_SELECTOR}`
+      )
+    ) return null;
     const blockStart = lineStarts[entry.startLine];
     if (undefined === blockStart) return null;
     const blockEnd = entry.endLine >= lineStarts.length
-      ? sourceMarkdown.length
+      ? acceptedSourceMarkdown.length
       : lineStarts[entry.endLine]!;
-    const sourceBlock = sourceMarkdown.slice(blockStart, blockEnd);
-    const correspondence = acceptedDecodedRowCorrespondence(block, sourceBlock);
-    if (!correspondence) return null;
-    const { boundaries, sourceOffsets: advance, visible } = correspondence;
+    const sourceBlock = acceptedSourceMarkdown.slice(blockStart, blockEnd);
+    // The accepted Preview can be one refresh behind the canonical source
+    // while the user is already typing in the live DOM. The block's own
+    // decoded row is then still the DOM's own spelling, but the accepted
+    // slice no longer spells it, so nothing above can transport an offset out
+    // of it. The accepted line range still addresses this same block only when
+    // the write that produced the current source maps BOTH of the block's own
+    // boundaries there; the row the current source spells is then the proof
+    // that holds. A global line-count equality is not that proof - an interior
+    // edit that keeps the line count still moves every later row - and
+    // `fullTransportedExtent` is not either, because it refuses the unowned
+    // interior insertion that is exactly the live-typing case.
+    const currentRow = (() => {
+      if (acceptedSourceMarkdown === sourceMarkdown || !sourceCorrespondence) {
+        return null;
+      }
+      const currentRowLineStarts =
+        currentLineStarts ??= markdownLineStarts(sourceMarkdown);
+      const start = currentRowLineStarts[entry.startLine];
+      if (undefined === start) return null;
+      const end = entry.endLine >= currentRowLineStarts.length
+        ? sourceMarkdown.length
+        : currentRowLineStarts[entry.endLine];
+      if (undefined === end || end <= start) return null;
+      if (sourceCorrespondence.change.mapPos(blockStart, 1) !== start
+        || sourceCorrespondence.change.mapPos(blockEnd, -1) !== end) {
+        return null;
+      }
+      return { end, source: sourceMarkdown.slice(start, end), start };
+    })();
+    const acceptedIndex = createEditorMarkdownBlockIndex(sourceBlock, {
+      referenceLabelCaseFoldProfile: context.referenceLabelCaseFoldProfile
+    });
+    const acceptedBlock = acceptedIndex.blocks[0];
+    if (
+      acceptedIndex.blocks.length !== 1
+      || !acceptedBlock
+    ) return null;
+    if (!acceptedBlock.editable) return null;
+    if (acceptedBlock.kind !== domKind) return null;
+    if (
+      0 !== acceptedBlock.from
+      || '' !== sourceBlock.slice(acceptedBlock.to).trim()
+    ) return null;
+    if (blockIndex < 0) return null;
+    const precedingBlocks = Array.from(surface.children)
+      .slice(0, blockIndex)
+      .filter((child): child is HTMLElement => child instanceof HTMLElement);
+    const serializedPrefix = 0 === precedingBlocks.length
+      ? ''
+      : serializeVisualMarkdownBlockFragment(precedingBlocks);
+    const blockVisual = serializeVisualMarkdownBlockFragment([block]);
+    const blockSeparator = serializedPrefix.length > 0
+      ? ['\n\n', '\n', ''].find((candidate) =>
+          baselineVisualMarkdown.startsWith(
+            serializedPrefix + candidate + blockVisual
+          )
+        )
+      : '';
+    const blockVisualStart = undefined === blockSeparator
+      ? null
+      : serializedPrefix.length + blockSeparator.length;
+    const transportOffset = (acceptedOffset: number): number | null => {
+      if (!sourceCorrespondence) return acceptedOffset;
+      const transportedBlock = fullTransportedExtent(
+        sourceCorrespondence,
+        { end: blockEnd, start: blockStart },
+        sourceCorrespondence.insertionOwner === block ? block : null
+      );
+      if (!transportedBlock) return null;
+      const transported =
+        transportedBlock.start + acceptedOffset - blockStart;
+      return transported >= transportedBlock.start
+        && transported <= transportedBlock.end
+        ? transported
+        : null;
+    };
+    if (node === block && 0 === offset && null !== blockVisualStart) {
+      const sourceOffset = transportOffset(blockStart);
+      return null === sourceOffset
+        ? null
+        : { sourceOffset, visualOffset: blockVisualStart };
+    }
+    if (node instanceof Text && null !== blockVisualStart) {
+      const mapped = mapTextBoundaryFromInterval(
+        surface,
+        node,
+        offset,
+        baselineVisualMarkdown,
+        baselineIntervalMap
+      );
+      const blockVisualEnd = blockVisualStart + blockVisual.length;
+      if (
+        mapped
+        && mapped.sourceOffset >= blockStart
+        && mapped.sourceOffset <= blockEnd
+        && mapped.visualOffset >= blockVisualStart
+        && mapped.visualOffset <= blockVisualEnd
+      ) {
+        const sourceOffset = transportOffset(mapped.sourceOffset);
+        if (null !== sourceOffset) {
+          return { sourceOffset, visualOffset: mapped.visualOffset };
+        }
+      }
+    }
+    // The row this block certifies, with the extent it was read from: an
+    // accepted row is transported through the correspondence, a row read out
+    // of the current source is already in the current source's own offsets.
+    const acceptedRow = acceptedDecodedRowCorrespondence(block, sourceBlock);
+    const currentSourceRow = acceptedRow ? null : currentRow;
+    const currentRowCorrespondence = currentSourceRow
+      ? acceptedDecodedRowCorrespondence(block, currentSourceRow.source)
+      : null;
+    const row = acceptedRow
+      ? {
+          correspondence: acceptedRow,
+          end: blockEnd,
+          start: blockStart,
+          transported: true
+        }
+      : currentRowCorrespondence && currentSourceRow
+        ? {
+            correspondence: currentRowCorrespondence,
+            end: currentSourceRow.end,
+            start: currentSourceRow.start,
+            transported: false
+          }
+        : null;
+    if (!row) return null;
+    const { boundaries, sourceOffsets: advance, visible } = row.correspondence;
     let visibleIndex = 0;
     if (node === block && 0 === offset) {
       visibleIndex = 0;
@@ -3849,18 +4668,14 @@ function acceptedDecodedBlockSelection(
         visibleIndex = match.after;
       }
     }
+    const rowOffset = row.start + (advance[visibleIndex] ?? -1);
+    if (rowOffset < row.start || rowOffset > row.end) return null;
+    const sourceOffset = row.transported
+      ? transportOffset(rowOffset)
+      : rowOffset;
+    if (null === sourceOffset) return null;
     // Soft breaks serialize as one space, so the block certificate is the
     // serialized prefix plus this row under the same spelling.
-    const blockIndex = Array.prototype.indexOf.call(surface.children, block);
-    if (blockIndex < 0) return null;
-    const sourceOffset = blockStart + (advance[visibleIndex] ?? -1);
-    if (sourceOffset < blockStart) return null;
-    const precedingBlocks = Array.from(surface.children)
-      .slice(0, blockIndex)
-      .filter((child): child is HTMLElement => child instanceof HTMLElement);
-    const serializedPrefix = 0 === precedingBlocks.length
-      ? ''
-      : serializeVisualMarkdownBlockFragment(precedingBlocks);
     const normalizedVisible = visible.replace(/\n/gu, ' ');
     // The surface serializer joins rows with a blank-line separator; the
     // single-block fragment provably ends before that separator.
@@ -3876,8 +4691,12 @@ function acceptedDecodedBlockSelection(
       // root is a code block. The DOM correspondence remains formal, but the
       // baseline spelling is longer than its visible text; use the existing
       // source/visual interval alignment for the exact whole-unit boundary.
+      // That alignment is the accepted pair's, so it can only answer for an
+      // accepted row: a row read out of the current source has no accepted
+      // interval to project through.
+      if (!row.transported) return null;
       const visualOffset = baselineOffsetAtSource(
-        sourceOffset,
+        rowOffset,
         visibleIndex === boundaries.length
       );
       if (null === visualOffset) return null;
@@ -3908,6 +4727,230 @@ function acceptedDecodedBlockSelection(
   };
 }
 
+function captureInlineCodeDeletion(
+  surface: HTMLElement,
+  intent: VisualInputIntent,
+  source: string,
+  revision: number
+): InlineCodeDeletionWitness | null {
+  const target = intent.textNode;
+  const code = target.parentElement;
+  const neighbor = code?.nextSibling;
+  if (!intent.hasTargetRange || !intent.inputType.startsWith('delete')
+    || intent.textSelection.start >= intent.textSelection.end
+    || intent.textSelection.end - intent.textSelection.start >= target.length
+    || !(code instanceof HTMLElement) || code.tagName !== 'CODE'
+    || code.childNodes.length !== 1 || code.firstChild !== target
+    || code.closest('pre, [contenteditable="false"]')
+    || code.closest(VISUAL_MARKDOWN_READ_ONLY_SELECTOR)) return null;
+  const matches: Array<Readonly<{ opening: Readonly<{ from: number; to: number }>; closing: Readonly<{ from: number; to: number }> }>> = [];
+  markdownLanguage.parser.parse(source).iterate({ enter: (node) => {
+    if (node.name !== 'InlineCode') return;
+    const marks = node.node.getChildren('CodeMark');
+    if (marks.length !== 2 || marks[0]?.from !== node.from || marks[1]?.to !== node.to) return;
+    const opening = marks[0];
+    const closing = marks[1];
+    if (!opening || !closing || intent.sourceSelection.start < opening.to
+      || intent.sourceSelection.end > closing.from) return;
+    let body = source.slice(opening.to, closing.from).replace(/\r\n|\r|\n/gu, ' ');
+    if (body.startsWith(' ') && body.endsWith(' ') && /[^ ]/u.test(body)) body = body.slice(1, -1);
+    const deleted = source.slice(intent.sourceSelection.start, intent.sourceSelection.end).replace(/\r\n|\r|\n/gu, ' ');
+    if (body === intent.textData && deleted === intent.textData.slice(intent.textSelection.start, intent.textSelection.end)) {
+      matches.push({ opening: { from: opening.from, to: opening.to }, closing: { from: closing.from, to: closing.to } });
+    }
+  } });
+  const match = matches.length === 1 ? matches[0] : null;
+  if (!match) return null;
+  const targetPath = visualNodePath(surface, target);
+  const textNeighbor = neighbor instanceof Text ? neighbor : null;
+  const neighborPath = textNeighbor ? visualNodePath(surface, textNeighbor) : null;
+  if (!targetPath || (textNeighbor && !neighborPath)) throw new Error('visual-editor-inline-code-deletion-stale');
+  const nodes: Node[] = [];
+  const walker = surface.ownerDocument.createTreeWalker(surface, NodeFilter.SHOW_ALL);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node);
+  return { allowNeighborArtifact: Boolean(textNeighbor?.data.startsWith(' ') && source[match.closing.to] === ' '),
+    code, inputType: intent.inputType, neighbor: textNeighbor, neighborPath, nodes, revision, ...match,
+    snapshot: surface.cloneNode(true) as HTMLElement, source,
+    sourceStart: intent.sourceSelection.start, sourceEnd: intent.sourceSelection.end, target, targetPath,
+    targetStart: intent.textSelection.start, targetEnd: intent.textSelection.end };
+}
+
+function verifyInlineCodeDeletion(surface: HTMLElement, witness: InlineCodeDeletionWitness, resultSource: string): void {
+  const expectedTarget = visualNodeAtPath(witness.snapshot, witness.targetPath);
+  const expectedNeighbor = witness.neighborPath ? visualNodeAtPath(witness.snapshot, witness.neighborPath) : null;
+  if (!(expectedTarget instanceof Text) || (witness.neighbor && !(expectedNeighbor instanceof Text))
+    || witness.target.parentNode !== witness.code
+    || (witness.neighbor && witness.code.nextSibling !== witness.neighbor)) {
+    throw new Error('visual-editor-inline-code-deletion-dom-stale');
+  }
+  expectedTarget.deleteData(witness.targetStart, witness.targetEnd - witness.targetStart);
+  if (witness.allowNeighborArtifact && witness.neighbor && expectedNeighbor instanceof Text
+    && witness.neighbor.data === '\u00a0' + expectedNeighbor.data.slice(1)) {
+    expectedNeighbor.replaceData(0, 1, '\u00a0');
+  }
+  const selection = surface.ownerDocument.defaultView?.getSelection();
+  const nodes: Node[] = [];
+  const walker = surface.ownerDocument.createTreeWalker(surface, NodeFilter.SHOW_ALL);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node);
+  if (!selection?.isCollapsed || !selection.anchorNode
+    || !equivalentNativeBoundary(surface, selection.anchorNode, selection.anchorOffset,
+      witness.target, witness.targetStart)
+    || witness.nodes.length !== nodes.length
+    || witness.nodes.some((node, index) => node !== nodes[index])
+    || !witness.snapshot.isEqualNode(surface)) {
+    throw new Error('visual-editor-inline-code-deletion-dom-stale');
+  }
+  if (resultSource !== witness.source.slice(0, witness.sourceStart) + witness.source.slice(witness.sourceEnd)) {
+    throw new Error('visual-editor-inline-code-deletion-source-stale');
+  }
+  const removed = witness.sourceEnd - witness.sourceStart;
+  let matching = 0;
+  markdownLanguage.parser.parse(resultSource).iterate({ enter: (node) => {
+    if (node.name !== 'InlineCode') return;
+    const marks = node.node.getChildren('CodeMark');
+    const opening = marks[0];
+    const closing = marks[1];
+    if (marks.length !== 2 || !opening || !closing
+      || opening.from !== witness.opening.from || opening.to !== witness.opening.to
+      || closing.from !== witness.closing.from - removed || closing.to !== witness.closing.to - removed
+      || opening.from !== node.from || closing.to !== node.to) return;
+    let body = resultSource.slice(opening.to, closing.from).replace(/\r\n|\r|\n/gu, ' ');
+    if (body.startsWith(' ') && body.endsWith(' ') && /[^ ]/u.test(body)) body = body.slice(1, -1);
+    if (body === witness.target.data) matching += 1;
+  } });
+  if (matching !== 1) throw new Error('visual-editor-inline-code-deletion-source-stale');
+}
+
+function captureInlineRetirement(
+  surface: HTMLElement,
+  intent: VisualInputIntent,
+  source: string
+): InlineRetirementWitness | null {
+  if (!intent.hasTargetRange || !intent.inputType.startsWith('delete')
+    || intent.textSelection.start !== 0
+    || intent.textSelection.end !== intent.textData.length
+    || !intent.textData || intent.textNode.parentElement?.closest('pre, [contenteditable="false"]')
+    || intent.textNode.parentElement?.closest(VISUAL_MARKDOWN_READ_ONLY_SELECTOR)) return null;
+  const names: Readonly<Record<string, readonly [string, string]>> = {
+    A: ['Link', 'LinkMark'], CODE: ['InlineCode', 'CodeMark'],
+    DEL: ['Strikethrough', 'StrikethroughMark'], EM: ['Emphasis', 'EmphasisMark'],
+    STRONG: ['StrongEmphasis', 'EmphasisMark']
+  };
+  const wrappers: HTMLElement[] = [];
+  let child: Node = intent.textNode;
+  let parent = child.parentElement;
+  while (parent && parent !== surface && names[parent.tagName]
+    && parent.childNodes.length === 1 && parent.firstChild === child) {
+    wrappers.push(parent);
+    child = parent;
+    parent = parent.parentElement;
+  }
+  if (!wrappers.length) return null;
+  const candidates: Array<Readonly<{ name: string; start: number; end: number; bodyStart: number; bodyEnd: number; visibleStart: number; visibleEnd: number; visible: string | null }>> = [];
+  markdownLanguage.parser.parse(source).iterate({ enter: (ref) => {
+    const marks = Object.values(names).find(([name]) => name === ref.name);
+    if (!marks) return;
+    const boundaries = ref.node.getChildren(marks[1]);
+    const first = boundaries[0];
+    const last = 'Link' === ref.name ? boundaries[1] : boundaries[boundaries.length - 1];
+    if (first && last && first.from === ref.from && first.to <= last.from) {
+      let visibleStart = first.to;
+      let visibleEnd = last.from;
+      let visible: string | null = '';
+      if ('InlineCode' === ref.name) {
+        const body = source.slice(visibleStart, visibleEnd);
+        visible = body.replace(/\r\n|\r|\n/gu, ' ');
+        if (visible.startsWith(' ') && visible.endsWith(' ') && /[^ ]/u.test(visible)) {
+          visible = visible.slice(1, -1);
+          visibleStart += body.startsWith('\r\n') ? 2 : 1;
+          visibleEnd -= body.endsWith('\r\n') ? 2 : 1;
+        }
+      } else {
+        let cursor = first.to;
+        for (let child = ref.node.firstChild; child; child = child.nextSibling) {
+          if (child.from < first.to || child.to > last.from) continue;
+          visible += source.slice(cursor, child.from);
+          if ('Escape' === child.name) visible += source.slice(child.from + 1, child.to);
+          else if ('Entity' === child.name) visible += decodeHTMLStrict(source.slice(child.from, child.to));
+          else { visible = null; break; }
+          cursor = child.to;
+        }
+        if (visible !== null) visible += source.slice(cursor, last.from);
+      }
+      candidates.push({ name: ref.name, start: ref.from, end: ref.to, bodyStart: first.to, bodyEnd: last.from, visibleStart, visibleEnd, visible });
+    }
+  } });
+  let childRange: Readonly<{ start: number; end: number }> | null = null;
+  const mapped = wrappers.map((node, index) => {
+    const name = names[node.tagName]?.[0];
+    const matches = candidates.filter((candidate) => candidate.name === name && (index === 0
+      ? candidate.visible === intent.textData
+        && [candidate.bodyStart, candidate.visibleStart].includes(intent.sourceSelection.start)
+        && [candidate.visibleEnd, candidate.bodyEnd, candidate.end].includes(intent.sourceSelection.end)
+      : childRange !== null && candidate.bodyStart === childRange.start && candidate.bodyEnd === childRange.end));
+    const match = matches.length === 1 ? matches[0] : undefined;
+    const sourceRange = match ? { start: match.start, end: match.end } : null;
+    childRange = sourceRange;
+    const path = visualNodePath(surface, node);
+    if (!path) throw new Error('visual-editor-inline-retirement-stale');
+    const precedingText = node.previousSibling instanceof Text ? node.previousSibling : null;
+    return { node, path, precedingText,
+      precedingTextPath: precedingText ? visualNodePath(surface, precedingText) : null,
+      sourceRange };
+  });
+  const walker = surface.ownerDocument.createTreeWalker(surface, NodeFilter.SHOW_ALL);
+  const nodes: Node[] = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node);
+  return { nodes, snapshot: surface.cloneNode(true) as HTMLElement, wrappers: mapped };
+}
+
+export function nativeTerminalSpaceArtifact(selection: Selection | null, text: Text | null, before: string): boolean {
+  return Boolean(text && selection?.isCollapsed && selection.anchorNode === text
+    && selection.anchorOffset === text.length && before.endsWith(' ')
+    && text.data === before.slice(0, -1) + '\u00a0');
+}
+
+function retiredInlineSourceRange(
+  surface: HTMLElement,
+  witness: InlineRetirementWitness
+): Readonly<{ end: number; start: number }> | null {
+  const retired = witness.wrappers.filter(({ node }) => !node.isConnected);
+  if (!retired.length) return null;
+  const outermost = retired[retired.length - 1];
+  if (!outermost?.sourceRange || retired.some(({ sourceRange }) => !sourceRange)) {
+    throw new Error('visual-editor-inline-retirement-map-failed');
+  }
+  const expected = witness.snapshot;
+  const expectedWrapper = visualNodeAtPath(expected, outermost.path);
+  if (!expectedWrapper?.parentNode) throw new Error('visual-editor-inline-retirement-stale');
+  const preceding = outermost.precedingText;
+  const expectedPreceding = outermost.precedingTextPath
+    ? visualNodeAtPath(expected, outermost.precedingTextPath) : null;
+  const selection = surface.ownerDocument.defaultView?.getSelection();
+  if (preceding && expectedPreceding instanceof Text
+    && nativeTerminalSpaceArtifact(selection ?? null, preceding, expectedPreceding.data)) {
+    expectedPreceding.data = preceding.data;
+  }
+  const expectedParent = expectedWrapper.parentNode;
+  expectedParent.removeChild(expectedWrapper);
+  // A wrapper that was its block's whole content leaves Chromium's placeholder.
+  const liveParent = visualNodeAtPath(surface, outermost.path.slice(0, -1));
+  const placeholder = 0 === expectedParent.childNodes.length && liveParent?.childNodes.length === 1
+    && liveParent.firstChild instanceof HTMLBRElement && 0 === liveParent.firstChild.attributes.length
+    ? liveParent.firstChild : null;
+  if (placeholder) expectedParent.appendChild(placeholder.cloneNode());
+  const walker = surface.ownerDocument.createTreeWalker(surface, NodeFilter.SHOW_ALL);
+  const actualNodes: Node[] = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node !== placeholder) actualNodes.push(node);
+  }
+  const retained = witness.nodes.filter((node) => node !== outermost.node && !outermost.node.contains(node));
+  if (retained.length !== actualNodes.length
+    || retained.some((node, index) => node !== actualNodes[index])
+    || !expected.isEqualNode(surface)) throw new Error('visual-editor-inline-retirement-dom-stale');
+  return outermost.sourceRange;
+}
+
 function visualInputIntent(
   surface: HTMLElement,
   event: InputEvent,
@@ -3920,8 +4963,10 @@ function visualInputIntent(
   // a whole-document alignment, and only a projection needs the map.
   intervalMapFor: () => VisualMarkdownSourceIntervalMap,
   acceptedPrefixOnly: boolean,
-  localCertificate: LocalVisualBoundaryCertificate | null = null
+  localCertificate: LocalVisualBoundaryCertificate | null = null,
+  acceptedDecodedContext?: AcceptedDecodedBlockContext
 ): VisualInputIntent | null {
+  const targetRange = event.getTargetRanges?.()[0];
   const current = currentTextSelection(surface)
     ?? nativeVisualTextSelection(surface, event);
   if (!current) return null;
@@ -3958,10 +5003,11 @@ function visualInputIntent(
    * The canonical spelling of a terminal browser NBSP artifact, or null. The
    * browser stores the ASCII space before a collapsed caret as a trailing NBSP
    * when that space is the last character it rendered. The accepted baseline
-   * in hand already carries the ASCII space the artifact replaced, so a
-   * deletion whose own target is exactly that terminal artifact is witnessed:
-   * project this one node under its ASCII spelling without touching the live
-   * text node or the caret.
+   * usually carries the ASCII space the artifact replaced; when the serializer
+   * trimmed that space because the run also ends the block, the baseline only
+   * holds the run's visible part. A deletion whose own target is exactly the
+   * terminal artifact is witnessed: the projection reads this one node under
+   * its canonical spelling without touching the live text node or the caret.
    */
   let deletedTerminalNbsp: Readonly<{ data: string; node: Text }> | null = null;
   const mapBoundary = (
@@ -3999,22 +5045,25 @@ function visualInputIntent(
         intervalMapFor(),
         acceptedPrefixOnly,
         deletedTerminalNbsp?.node === boundary.node
-          ? deletedTerminalNbsp.data
+          ? deletedTerminalNbsp
           : undefined
       )
       ?? (() => {
-        const decoded = acceptedDecodedBlockSelection(
-          surface,
-          {
-            anchorNode: boundary.node,
-            anchorOffset: boundary.offset,
-            focusNode: boundary.node,
-            focusOffset: boundary.offset
-          },
-          sourceMarkdown,
-          baselineVisualMarkdown,
-          acceptedEditMap
-        );
+        const decoded = acceptedDecodedContext
+          ? acceptedDecodedBlockSelection(
+              surface,
+              {
+                anchorNode: boundary.node,
+                anchorOffset: boundary.offset,
+                focusNode: boundary.node,
+                focusOffset: boundary.offset
+              },
+              sourceMarkdown,
+              baselineVisualMarkdown,
+              acceptedEditMap,
+              acceptedDecodedContext
+            )
+          : null;
         return decoded
           ? {
               sourceOffset: decoded.source.start,
@@ -4024,7 +5073,6 @@ function visualInputIntent(
       })();
     return result;
   };
-  const targetRange = event.getTargetRanges?.()[0];
   const currentCollapsed =
     current.anchorNode === current.focusNode
     && current.anchorOffset === current.focusOffset;
@@ -4034,6 +5082,24 @@ function visualInputIntent(
     && targetRange.endContainer === current.focusNode
     && targetRange.startOffset === current.anchorOffset
     && targetRange.endOffset === current.focusOffset
+  );
+  // A backward/forward deletion names its own character span, so its target
+  // range is never the collapsed caret. When that span is inside the caret's
+  // own Text run and touches the caret, both endpoints are exactly that
+  // caret's raw delta: the caret proof below projects them, including while a
+  // held key leaves the DOM ahead of the last committed baseline.
+  const targetIsCaretAdjacentDeletion = Boolean(
+    currentCollapsed
+    && targetRange
+    && targetRange.startContainer === current.anchorNode
+    && targetRange.endContainer === current.anchorNode
+    && targetRange.startOffset < targetRange.endOffset
+    && (
+      ('deleteContentBackward' === event.inputType
+        && targetRange.endOffset === current.anchorOffset)
+      || ('deleteContentForward' === event.inputType
+        && targetRange.startOffset === current.anchorOffset)
+    )
   );
   if (
     'deleteContentBackward' === event.inputType
@@ -4052,17 +5118,47 @@ function visualInputIntent(
       && !artifact.parentElement?.closest('pre, code, [contenteditable="false"]')
     ) {
       const data = artifact.data.replace(/\u00a0/gu, ' ');
-      const source = intervalMapFor().source;
+      // The run is compared as rendered text: the serializer and the source
+      // may spell its punctuation with backslash escapes (`25\.`).
+      const rendered = (markdown: string): string =>
+        markdown.replace(/\\([!-/:-@[-`{-~])/gu, '$1');
+      const source = rendered(intervalMapFor().source);
+      const baseline = rendered(baselineVisualMarkdown);
       const sourceOffset = source.indexOf(data);
+      const visible = data.replace(/ +$/u, '');
+      // The baseline must carry this run somewhere: whole, or without the
+      // terminal spaces the serializer trims when the run ends its block.
+      // Which occurrence is this node's own is proved by the projection.
       if (
         sourceOffset >= 0
-        && ' ' === source[sourceOffset + data.length - 1]
-        && baselineVisualMarkdown.indexOf(data) >= 0
+        && (
+          baseline.indexOf(data) >= 0
+          || (visible !== data && baseline.indexOf(visible) >= 0)
+        )
       ) {
         deletedTerminalNbsp = { data, node: artifact };
       }
     }
   }
+  const terminalTextRunFor = (
+    start: Readonly<{ sourceOffset: number; visualOffset: number }>,
+    end: Readonly<{ sourceOffset: number; visualOffset: number }>,
+    textOffset: number
+  ): TerminalTextRunWitness | undefined => {
+    if (!deletedTerminalNbsp
+      || end.sourceOffset - start.sourceOffset !== 1
+      || end.visualOffset < start.visualOffset
+      || textOffset !== deletedTerminalNbsp.node.length) return undefined;
+    const textPath = visualNodePath(surface, deletedTerminalNbsp.node);
+    return textPath ? {
+      canonical: deletedTerminalNbsp.data,
+      live: deletedTerminalNbsp.node.data,
+      sourceRange: { end: end.sourceOffset, start: start.sourceOffset },
+      textOffset,
+      textPath,
+      visualRange: { end: end.visualOffset, start: start.visualOffset }
+    } : undefined;
+  };
   // A retained local paragraph may carry a formal id copied by native Enter,
   // while its escaped source spelling is not the formal row that id names.
   // Project both current endpoints through the authenticated literal run before
@@ -4111,13 +5207,16 @@ function visualInputIntent(
         deletedTerminalNbsp ?? undefined
       );
   const decodedMapped = !memoryMapped && !intervalMapped
-    ? acceptedDecodedBlockSelection(
-        surface,
-        current,
-        sourceMarkdown,
-        baselineVisualMarkdown,
-        acceptedEditMap
-      )
+    ? acceptedDecodedContext
+      ? acceptedDecodedBlockSelection(
+          surface,
+          current,
+          sourceMarkdown,
+          baselineVisualMarkdown,
+          acceptedEditMap,
+          acceptedDecodedContext
+        )
+      : null
     : null;
   if (
     !intervalMapped
@@ -4126,8 +5225,17 @@ function visualInputIntent(
     && current.anchorNode instanceof Text
     && current.focusNode instanceof Text
     && event.inputType.startsWith('delete')
-    && intervalMapFor().source.indexOf(current.anchorNode.data) < 0
-  ) return null;
+    // The witnessed terminal-NBSP artifact is the canonical run under the
+    // browser's spelling: read it the way its projection does, or a real run
+    // whose live text keeps a trailing NBSP would be refused as foreign.
+    && intervalMapFor().source.indexOf(
+      deletedTerminalNbsp?.node === current.anchorNode
+        ? deletedTerminalNbsp.data
+        : current.anchorNode.data
+    ) < 0
+  ) {
+    return null;
+  }
   const mapped = memoryMapped ?? intervalMapped ?? decodedMapped;
   if (!mapped) return null;
 
@@ -4223,6 +5331,10 @@ function visualInputIntent(
                   : undefined;
               })()
             : undefined;
+        const textNode = targetRange.startContainer === targetRange.endContainer
+          ? targetRange.startContainer
+          : current.anchorNode;
+        const terminalTextRun = terminalTextRunFor(start, end, textSelection.end);
         return {
           data: event.data,
           ...(emptyParagraphTarget ? { emptyParagraphTarget } : {}),
@@ -4231,15 +5343,20 @@ function visualInputIntent(
           historySelectionBefore,
           inputType: event.inputType,
           sourceSelection: { end: sourceEnd, start: sourceStart },
-          textData: current.anchorNode.data,
-          textNode: current.anchorNode,
+          ...(terminalTextRun ? { terminalTextRun } : {}),
+          textData: textNode.data,
+          textNode,
           textSelection,
           visualSelection: { end: visualEnd, start: visualStart }
         };
       }
     }
   }
-  if (targetRange && !targetRangeMatchesCurrent) {
+  if (
+    targetRange
+    && !targetRangeMatchesCurrent
+    && !targetIsCaretAdjacentDeletion
+  ) {
     const targetStartNode = targetRange.startContainer;
     const targetEndNode = targetRange.endContainer;
     const targetStart = mapBoundary(targetStartNode, targetRange.startOffset);
@@ -4281,6 +5398,7 @@ function visualInputIntent(
     ) {
       return null;
     }
+    const terminalTextRun = terminalTextRunFor(start, end, textSelection.end);
     return {
       data: event.data,
       ...(emptyParagraphTarget ? { emptyParagraphTarget } : {}),
@@ -4288,6 +5406,7 @@ function visualInputIntent(
       historySelectionBefore,
       inputType: event.inputType,
       sourceSelection: { end: end.sourceOffset, start: start.sourceOffset },
+      ...(terminalTextRun ? { terminalTextRun } : {}),
       textData: current.anchorNode.data,
       textNode: current.anchorNode,
       textSelection,
@@ -4357,9 +5476,7 @@ function visualInputIntent(
             end: wordEndAfter(current.anchorNode, current.anchorOffset),
             start: current.anchorOffset
           };
-  } else {
-    return null;
-  }
+  } else return null;
 
   // A computed endpoint is an offset in raw text, so it is projected through
   // the same canonical owner as the caret: deleting the raw character behind
@@ -4387,9 +5504,8 @@ function visualInputIntent(
     || sourceEnd > sourceMarkdown.length
     || end.visualOffset < start.visualOffset
     || end.visualOffset > visualLength
-  ) {
-    return null;
-  }
+  ) return null;
+  const terminalTextRun = terminalTextRunFor(start, end, textSelection.end);
   return {
     data: event.data,
     ...(emptyParagraphTarget ? { emptyParagraphTarget } : {}),
@@ -4397,6 +5513,7 @@ function visualInputIntent(
     historySelectionBefore,
     inputType: event.inputType,
     sourceSelection: { end: sourceEnd, start: sourceStart },
+    ...(terminalTextRun ? { terminalTextRun } : {}),
     textData: current.anchorNode.data,
     textNode: current.anchorNode,
     textSelection,
@@ -4404,7 +5521,7 @@ function visualInputIntent(
   };
 }
 
-function visualEmptyStructuralInputIntent(
+export function visualEmptyStructuralInputIntent(
   surface: HTMLElement,
   event: InputEvent,
   sourceMarkdown: string,
@@ -4451,16 +5568,29 @@ function visualEmptyStructuralInputIntent(
   const placeholder = anchorNode.firstChild;
   if (!(placeholder instanceof HTMLBRElement)) return null;
   const plain = plainBody?.body === anchorNode ? plainBody : null;
-  const terminalOmission = Boolean(plain && anchorNode === surface.lastElementChild
-    && serializeVisualMarkdownBlockFragment(Array.from(surface.children).slice(0, -1)
-      .filter((node): node is HTMLElement => node instanceof HTMLElement)) === baselineVisualMarkdown);
+  const prefix = plain && anchorNode === surface.lastElementChild
+    ? Array.from(surface.children).slice(0, -1)
+      .filter((node): node is HTMLElement => node instanceof HTMLElement)
+    : null;
+  const terminalOmission = prefix !== null
+    && (prefix.length === 0 ? '' : serializeVisualMarkdownBlockFragment(prefix))
+      === baselineVisualMarkdown;
+  const suffix = plain && anchorNode === surface.firstElementChild
+    ? Array.from(surface.children).slice(1)
+      .filter((node): node is HTMLElement => node instanceof HTMLElement)
+    : null;
+  const leadingOmission = suffix !== null
+    && (suffix.length === 0 ? '' : serializeVisualMarkdownBlockFragment(suffix))
+      === baselineVisualMarkdown;
+  const omitted = terminalOmission || leadingOmission;
   const mapped = plain
     ? { sourceOffset: plain.sourceOffset, visualOffset: terminalOmission
-        ? baselineVisualMarkdown.length : visualSelectionVisualOffset(surface, baselineVisualMarkdown) }
+        ? baselineVisualMarkdown.length : leadingOmission
+          ? 0 : visualSelectionVisualOffset(surface, baselineVisualMarkdown) }
     : visualEmptyStructuralBodySelection(surface, sourceMarkdown, baselineVisualMarkdown, baselineVisualMarkdown);
   if (!mapped) return null;
   if ('failure' in mapped) throw new Error(mapped.failure);
-  if (plain && !terminalOmission && baselineVisualMarkdown.slice(mapped.visualOffset, mapped.visualOffset + 2) !== '  ') {
+  if (plain && !omitted && baselineVisualMarkdown.slice(mapped.visualOffset, mapped.visualOffset + 2) !== '  ') {
     throw new Error('visual-editor-empty-structural-input-map-failed');
   }
   const bodyPath = visualNodePath(surface, anchorNode);
@@ -4489,7 +5619,7 @@ function visualEmptyStructuralInputIntent(
     },
     visualMarkdown: baselineVisualMarkdown,
     visualSelection: {
-      end: mapped.visualOffset + (plain && !terminalOmission ? 2 : 0),
+      end: mapped.visualOffset + (plain && !omitted ? 2 : 0),
       start: mapped.visualOffset
     }
   };
@@ -4599,6 +5729,31 @@ function captureVisualHistorySelection(
     backward: !selection.isCollapsed && !forward,
     focus: { offset: selection.focusOffset, path: focusPath }
   };
+}
+
+/**
+ * The caret a retained history presentation is compared by. While that
+ * presentation is retained its DOM is proven identical, so a collapsed caret in
+ * the surface's own child gap is a stable position: it is recorded as the
+ * surface's child offset, the representation the structural gap capture uses.
+ * A caret outside the surface, or no range at all, stays unavailable.
+ */
+function captureRetainedVisualHistorySelection(
+  surface: HTMLElement,
+  structural?: Parameters<typeof captureVisualHistorySelection>[1]
+): VisualHistorySelection | null {
+  const captured = captureVisualHistorySelection(surface, structural);
+  if (captured) return captured;
+  const selection = surface.ownerDocument.defaultView?.getSelection();
+  if (
+    !selection?.rangeCount
+    || !selection.isCollapsed
+    || selection.anchorNode !== surface
+    || selection.focusNode !== surface
+    || selection.anchorOffset !== selection.focusOffset
+  ) return null;
+  const boundary = { offset: selection.anchorOffset, path: [] };
+  return { anchor: boundary, backward: false, focus: boundary };
 }
 
 function visualNodeAtPath(
@@ -4748,6 +5903,105 @@ function restoreVisualHistorySelection(
   }
 }
 
+function restoreTerminalEmptyHistorySelection(
+  surface: HTMLElement,
+  markdown: string,
+  proof: NonNullable<FullPendingHistoryProof['selection']>
+): boolean {
+  const { sourceSelection, witness } = proof;
+  const paragraph = surface.firstElementChild;
+  const witnessedSourceSelection = witness.sourceSelection;
+  if (
+    !isVisualMarkdownEmpty(markdown)
+    || 'none' !== sourceSelection.direction
+    || sourceSelection.start !== sourceSelection.end
+    || sourceSelection.start < 0
+    || sourceSelection.end > markdown.length
+    || !witnessedSourceSelection
+    || witnessedSourceSelection.direction !== sourceSelection.direction
+    || witnessedSourceSelection.start !== sourceSelection.start
+    || witnessedSourceSelection.end !== sourceSelection.end
+    || witness.backward
+    || !visualHistorySelectionBoundaryEqual(witness.anchor, witness.focus)
+    || witness.anchor.path.length !== 1
+    || witness.anchor.path[0] !== 0
+    || ![0, 1].includes(witness.anchor.offset)
+    || surface.childNodes.length !== 1
+    || !(paragraph instanceof HTMLParagraphElement)
+    || paragraph.parentElement !== surface
+    || paragraph.childNodes.length !== 1
+    || !(paragraph.firstChild instanceof HTMLBRElement)
+  ) return false;
+  return restoreVisualHistorySelection(surface, witness);
+}
+
+function terminalTextRunWitnessText(
+  surface: HTMLElement,
+  markdown: string,
+  witness: TerminalTextRunWitness,
+  allowTrimmedText: boolean
+): Text {
+  const { canonical, live, sourceRange, visualRange } = witness;
+  if (
+    !canonical.endsWith(' ')
+    || live !== `${canonical.slice(0, -1)}\u00a0`
+    || !Number.isSafeInteger(sourceRange.start)
+    || !Number.isSafeInteger(sourceRange.end)
+    || sourceRange.start < 0
+    || sourceRange.end !== sourceRange.start + 1
+    || sourceRange.end > markdown.length
+    || markdown.slice(sourceRange.start, sourceRange.end)
+      !== canonical.slice(-1)
+    || !Number.isSafeInteger(visualRange.start)
+    || !Number.isSafeInteger(visualRange.end)
+    || visualRange.start < 0
+    || visualRange.end < visualRange.start
+    || !Number.isSafeInteger(witness.textOffset)
+    || witness.textOffset !== live.length
+  ) throw new Error('visual-editor-history-terminal-text-run-stale');
+  const text = visualNodeAtPath(surface, witness.textPath);
+  const acceptedSpellings = allowTrimmedText
+    ? [canonical, canonical.slice(0, -1), canonical.trimEnd(), live]
+    : [live];
+  if (!(text instanceof Text) || !acceptedSpellings.includes(text.data)) {
+    throw new Error('visual-editor-history-terminal-text-run-stale');
+  }
+  return text;
+}
+
+export function applyTerminalTextRunWitness(
+  surface: HTMLElement,
+  markdown: string,
+  witness: TerminalTextRunWitness,
+  allowTrimmedText = true,
+  expectedIdentity?: TerminalTextRunIdentity
+): boolean {
+  if (
+    (witness.identity && (!expectedIdentity
+      || !terminalTextRunIdentityMatches(witness, expectedIdentity)))
+    || (expectedIdentity && !witness.identity)
+  ) return false;
+  const text = terminalTextRunWitnessText(
+    surface,
+    markdown,
+    witness,
+    allowTrimmedText
+  );
+  text.data = witness.live;
+  surface.focus({ preventScroll: true });
+  const selection = surface.ownerDocument.defaultView?.getSelection();
+  if (!selection) {
+    throw new Error('visual-editor-history-terminal-text-run-stale');
+  }
+  selection.setBaseAndExtent(
+    text,
+    witness.textOffset,
+    text,
+    witness.textOffset
+  );
+  return true;
+}
+
 function placeVisualSelectionFromSourceRange(
   surface: HTMLElement,
   sourceMarkdown: string,
@@ -4871,13 +6125,31 @@ function acceptedVisualCaretBoundaryFromSourceOffset(
   baselineVisualMarkdown: string,
   sourceOffset: number
 ): Readonly<{ node: Node; offset: number }> {
+  // A fence block and a heading block are both mapped against the block
+  // itself. The fence root's boundary space starts at the code body instead of
+  // its opening delimiter, and the plain-heading boundary helper recognizes an
+  // ATX heading by reading the editor element's own tagName - so wrapping a
+  // heading in an article hides the very root that helper needs and declines
+  // the heading's own marker-run offsets, where the caret of an accepted
+  // heading is the only representable position. Every other block keeps the
+  // article root.
+  const endpointRoot = clone.matches('pre, h1, h2, h3, h4, h5, h6')
+    ? clone
+    : clone.ownerDocument.createElement('article');
+  if (endpointRoot !== clone) endpointRoot.append(clone);
   try {
-    return visualCaretBoundaryFromSourceOffset(
-      clone,
+    const boundary = visualCaretBoundaryFromSourceOffset(
+      endpointRoot,
       sourceMarkdown,
       baselineVisualMarkdown,
-      sourceOffset
+      sourceOffset,
+      true,
+      { acceptedEndpointBlock: true }
     );
+    if (!clone.contains(boundary.node)) {
+      throw new Error('visual-editor-accepted-boundary-outside-block');
+    }
+    return boundary;
   } catch (error) {
     const recoverableErrors = new Set([
       'visual-editor-markdown-merge-ambiguous',
@@ -5067,6 +6339,7 @@ function placeVisualSelectionFromAcceptedSourceRange(
   editMap: PreviewEditMap,
   selectionRange: VisualSelectionSourceRange,
   visualSelection: VisualHistorySelection | null,
+  referenceDefined: (label: string) => boolean,
   canonicalReplacement?: CanonicalReplacementBoundary
 ): void {
   const children = acceptedTopLevelVisualChildren(surface, editMap);
@@ -5177,6 +6450,19 @@ function placeVisualSelectionFromAcceptedSourceRange(
     }
     const clone = block.cloneNode(true) as HTMLElement;
     const endpointMarkdown = sourceMarkdown.slice(range.start, range.end);
+    const localOffset = sourceOffset - range.start;
+    if (!clone.matches('pre') && !coversMarkdownUnits(endpointMarkdown, localOffset, localOffset)) {
+      let inlineCodeBody = false;
+      markdownLanguage.parser.parse(sourceMarkdown).iterate({ enter: (node) => {
+        if (node.name !== 'InlineCode' || sourceOffset < node.from || sourceOffset > node.to) return;
+        const marks = node.node.getChildren('CodeMark');
+        if (marks.length === 2 && marks[0]?.from === node.from && marks[1]?.to === node.to
+          && sourceOffset >= marks[0].to && sourceOffset <= marks[1].from) {
+          inlineCodeBody = true;
+        }
+      } });
+      if (!inlineCodeBody) throw new Error('visual-editor-selection-map-failed');
+    }
     // The formal renderer's fence markup carries no fence metadata: this owner
     // restores it from the source during capture, and the accepted mapping runs
     // before that restore. Restore it on the mapping clone from the same source
@@ -5192,14 +6478,17 @@ function placeVisualSelectionFromAcceptedSourceRange(
     const rootOffset = visualCodeFenceRootSourceOffset(
       clone,
       endpointMarkdown,
-      sourceOffset - range.start
+      localOffset
     );
     if (rootOffset < 0) {
       throw new Error('visual-editor-selection-map-failed');
     }
+    const imageBoundary = clone.querySelector('img')
+      ? visualBoundaryForImageSourceEdge(clone, endpointMarkdown, rootOffset, referenceDefined)
+      : null;
     let boundary: Readonly<{ node: Node; offset: number }>;
     try {
-      boundary = acceptedVisualCaretBoundaryFromSourceOffset(
+      boundary = imageBoundary ?? acceptedVisualCaretBoundaryFromSourceOffset(
         clone,
         endpointMarkdown,
         endpointBaseline,
@@ -5715,8 +7004,109 @@ function placeVisualSelectionFromAcceptedSourceRange(
   }
 }
 
+/**
+ * The spellings a declared block-leading run can take in rendered markdown: the
+ * run's own bytes, the renderer's non-breaking column of the same width, or
+ * nothing at all where the renderer drops it.
+ */
+function declaredBlockLeadingRunSpellings(
+  run: string
+): ReadonlyArray<string> {
+  return [
+    run,
+    run.replace(/[ \t]/gu, '\u00a0'),
+    ''
+  ];
+}
+
+/**
+ * Whether a live serialization and an accepted visual describe the same
+ * document while spelling one declared block-leading run differently.
+ *
+ * A paragraph line's insignificant leading run is drawn as a column of its own
+ * (the DOM spells it U+00A0) or dropped outright, and the accepted visual can
+ * have been spelled the other way — the surface then differs from the visual by
+ * that one column and by nothing else. That is the whole test: outside the
+ * run's own bytes the two strings must agree byte for byte, and each side must
+ * spell the run as one of the renderer's spellings of it. The difference is
+ * also tied to the declared run by the column's own source offset, so a
+ * difference at any byte the declaration does not cover — a run the document
+ * never declared, a byte inside a line, a structural boundary — stays a surface
+ * the commit did not describe.
+ */
+function visualSerializationRespellsDeclaredRunOnly(
+  source: string,
+  serialized: string,
+  committed: string
+): boolean {
+  if (serialized === committed) return false;
+  // Everything before and after the column agrees, so the difference is one
+  // contiguous middle, measured from both ends of the shorter string.
+  const shortest = Math.min(serialized.length, committed.length);
+  let prefix = 0;
+  while (prefix < shortest && serialized[prefix] === committed[prefix]) prefix += 1;
+  let suffix = 0;
+  while (
+    suffix < shortest - prefix
+    && serialized[serialized.length - 1 - suffix] === committed[committed.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+  const respelled = serialized.slice(prefix, serialized.length - suffix);
+  const accepted = committed.slice(prefix, committed.length - suffix);
+  const map = createVisualMarkdownSourceIntervalMap(source, serialized);
+  const columnSourceOffset = map.sourceOffsetAt(prefix);
+  if (undefined === columnSourceOffset) return false;
+  return declaredBlockLeadingRuns(source, map).some((run) => {
+    if (run.start !== columnSourceOffset) return false;
+    const spellings = declaredBlockLeadingRunSpellings(source.slice(run.start, run.end));
+    return spellings.includes(respelled) && spellings.includes(accepted);
+  });
+}
+
+/**
+ * The byte this press owns — the terminator of the row above the row the
+ * mapping answered — and `null` where that row above carries bytes of its own,
+ * which are the bytes a removed terminator would move into the paragraph's row.
+ *
+ * A row above that carries nothing of its own is either blank — a row spelled
+ * with spaces or tabs counts as blank, exactly as it does to the Markdown
+ * reader — or a row of the paragraph's own container markers, the `>` above a
+ * block quote's paragraph that the ordinary join merges into the quoted level
+ * below it. Those markers are recognised as the bytes the container itself
+ * wrote, by reading the row above as a proper prefix of the paragraph's own
+ * row, so no character is ever a marker by name: the closing fence line of the
+ * block above is not a prefix of the paragraph row below it and is refused
+ * without this predicate ever naming `~~~`, and a paragraph's own row begins
+ * with its text, so no fence-shaped row can pass as its container's markers.
+ *
+ * The mapping answers a character of the paragraph's own row rather than the
+ * offset the row begins at — nested, that character can sit behind the row's
+ * own indentation and its container's markers — so the row is read from where
+ * the answered character's row begins, not from the character. `point` is the
+ * offset of the owned byte and `length` its length, and one terminator is one
+ * unit however many bytes it is spelled with, which is how the ordinary join
+ * removes it.
+ */
+function ownedRowTerminator(
+  source: string,
+  caretOffset: number
+): Readonly<{ length: number; point: number }> | null {
+  const rowStart = caretOffset
+    - (/[^\r\n]*$/u.exec(source.slice(0, caretOffset))?.[0] ?? '').length;
+  const terminator = /(?:\r\n|\r|\n)$/u.exec(source.slice(0, rowStart))?.[0];
+  if (undefined === terminator) return null;
+  const point = rowStart - terminator.length;
+  const above = /([^\r\n]*)$/u.exec(source.slice(0, point))?.[1] ?? '';
+  const ownRow = /^[^\r\n]*/u.exec(source.slice(rowStart))?.[0] ?? '';
+  const blank = /^[ \t]*$/u.test(above);
+  const containerMarkers = above.length < ownRow.length && ownRow.startsWith(above);
+  return blank || containerMarkers ? { length: terminator.length, point } : null;
+}
+
 export function ImmersiveVisualEditor({
   documentSession,
+  referenceLabelCaseFoldProfile,
   imageUploadEnabled,
   imagePasteUploadEnabled,
   onCanonicalDocumentChange,
@@ -5736,6 +7126,7 @@ export function ImmersiveVisualEditor({
   prepareGeneratedContentTargetForSelection,
   previewSnapshot,
   previewStatus,
+  retainCompositionSurface,
   requestPreview,
   surface
 }: ImmersiveVisualEditorProps) {
@@ -5751,6 +7142,31 @@ export function ImmersiveVisualEditor({
   const acceptedCodeBodySnapshotsRef = useRef(new Map<number, HTMLElement>());
   const externalChangeReportedRef = useRef(false);
   const pendingTransferRef = useRef<PendingMarkdownTransfer | null>(null);
+  /**
+   * The Backspaces a settling render refused for a reason about the event's own
+   * target range rather than about the lease, with a bounded count. Every press
+   * is bound to the lease that refused it, so it can only ever be replayed
+   * against the exact accepted expectation that lease named, and every press
+   * becomes its own edit: the acceptance replays one, and the rest are re-armed
+   * against the transfer that replay publishes.
+   */
+  const deferredPendingBackspaceRef = useRef<
+    Readonly<{ count: number; lease: PendingMarkdownTransfer }> | null
+  >(null);
+  /**
+   * Replays the deferred keys once the accepted render has landed. The owner
+   * that can write them is the same effect that owns the pending input paths,
+   * so it publishes the replay here rather than reaching across effects. The
+   * caller passes both the expectation acceptance settled on and the selection
+   * it published, because placement may realign the canonical caret after the
+   * fact.
+   */
+  const replayDeferredPendingBackspaceRef = useRef<
+    (
+      acceptedExpectation: FullCanonicalExpectation,
+      publishedSelection: VisualSelectionSourceRange
+    ) => void
+  >(() => undefined);
   /**
    * The owner's OWN last pure single-line insertion, in the canonical source it
    * produced. It exists for exactly one purpose: a presentation boundary this
@@ -5869,15 +7285,173 @@ export function ImmersiveVisualEditor({
   const acceptedLocalCodeBodiesRef = useRef<
     ReadonlyArray<IndexedLocalVisualCodeBodyProvenance>
   >([]);
+  // The formal Preview origin the owned pairing descends from. Only a real
+  // accepted render installs it; a local commit only makes it inapplicable.
+  const mapCertificateRef = useRef<FullMapCertificate | null>(null);
+  const acceptedDomCorrespondenceRef =
+    useRef<FullPendingDomCorrespondence | null>(null);
   const visualTransferFailureReportedRef = useRef(false);
+  const acceptedDecodedBlockContext = (
+    currentSourceMarkdown: string | null = sourceMarkdownRef.current,
+    correspondence: FullPendingDomCorrespondence | null =
+      pendingTransferRef.current?.spec.correspondence ?? null
+  ): AcceptedDecodedBlockContext => {
+    const acceptedDomCorrespondence = acceptedDomCorrespondenceRef.current;
+    const acceptedSourceMarkdown =
+      acceptedDomCorrespondence?.origin.source
+      ?? visualCodeBodyPreviewSourceRef.current;
+    const currentRevision = documentSession.document.getRevision?.() ?? null;
+    const currentHistory = documentHistoryState(documentSession.document);
+    let pendingCandidate: FullPendingDomCorrespondence | null = null;
+    if (
+      null !== acceptedSourceMarkdown
+      && acceptedSourceMarkdown !== currentSourceMarkdown
+    ) {
+      const pending = pendingVisualIntentResultRef.current;
+      const origin = pending?.historyGroupOrigin?.owned ?? ownedDomRef.current;
+      const change = pending
+        && pending.baseSourceMarkdown === acceptedSourceMarkdown
+        && pending.result.sourceMarkdown === currentSourceMarkdown
+        ? fullChangeDescriptor(
+            pending.baseSourceMarkdown,
+            pending.result.sourceMarkdown,
+            pending.sourceChange
+          )
+        : null;
+      if (
+        pending
+        && origin
+        && origin.owner === fullOwnerRef.current
+        && origin.source === pending.baseSourceMarkdown
+        && change
+      ) {
+        const pendingCorrespondence = {
+          change,
+          history: documentHistoryState(documentSession.document),
+          insertionOwner: null,
+          origin,
+          owner: fullOwnerRef.current,
+          source: pending.result.sourceMarkdown,
+          sourceRevision: origin.sourceRevision
+        } as const;
+        pendingCandidate = pendingCorrespondence;
+      }
+    }
+    const acceptedCandidate =
+      acceptedDomCorrespondence
+      && acceptedDomCorrespondenceMapMatches(acceptedDomCorrespondence)
+        ? acceptedDomCorrespondence
+        : null;
+    const transport = fullSelectAcceptedDomCorrespondence(
+      [correspondence, pendingCandidate, acceptedCandidate],
+      fullOwnerRef.current,
+      currentSourceMarkdown,
+      currentRevision,
+      currentHistory
+    );
+    return {
+      acceptedMapCertificate: mapCertificateRef.current,
+      acceptedPreview: {
+        revision: previewSnapshotRef.current.revision,
+        signature: previewSnapshotRef.current.signature
+      },
+      acceptedSourceMarkdown,
+      capturedPreviewRevision: capturedPreviewRevisionRef.current,
+      correspondence: transport,
+      currentRevision,
+      history: currentHistory,
+      owner: fullOwnerRef.current,
+      referenceLabelCaseFoldProfile
+    };
+  };
   // The verified current DOM/source pairing: the node ledger this owner
   // published at a real owner operation, plus the source/visual it described.
   // It is a reference record, never a second document: the strings are the
   // existing ones and the nodes are the live top-level children.
   const ownedDomRef = useRef<FullOwnedDom | null>(null);
-  // The formal Preview origin the owned pairing descends from. Only a real
-  // accepted render installs it; a local commit only makes it inapplicable.
-  const mapCertificateRef = useRef<FullMapCertificate | null>(null);
+  const acceptedDomCorrespondenceMapMatches = useCallback(
+    (correspondence: FullPendingDomCorrespondence): boolean => {
+      const certificate = mapCertificateRef.current;
+      const snapshot = previewSnapshotRef.current;
+      return Boolean(
+        certificate
+        && certificate.owner === fullOwnerRef.current
+        && certificate.source === correspondence.origin.source
+        && certificate.visual === correspondence.origin.visual
+        && certificate.editMap.signature === snapshot.signature
+        && certificate.previewSignature === snapshot.signature
+        && certificate.previewRevision === snapshot.revision
+        && capturedPreviewRevisionRef.current === snapshot.revision
+      );
+    },
+    []
+  );
+  const installAcceptedDomCorrespondence = useCallback(
+    (origin: FullOwnedDom): boolean => {
+      const change = fullIdentityChangeDescriptor(origin.source);
+      if (!change || !acceptedDomCorrespondenceMapMatches({
+        change,
+        history: documentHistoryState(documentSession.document),
+        insertionOwner: null,
+        origin,
+        owner: fullOwnerRef.current,
+        source: origin.source,
+        sourceRevision: origin.sourceRevision
+      })) {
+        acceptedDomCorrespondenceRef.current = null;
+        return false;
+      }
+      acceptedDomCorrespondenceRef.current = {
+        change,
+        history: documentHistoryState(documentSession.document),
+        insertionOwner: null,
+        origin,
+        owner: fullOwnerRef.current,
+        source: origin.source,
+        sourceRevision: origin.sourceRevision
+      };
+      return true;
+    },
+    [acceptedDomCorrespondenceMapMatches, documentSession]
+  );
+  const updateAcceptedDomCorrespondence = useCallback(
+    (
+      before: string,
+      after: string,
+      changes: ReadonlyArray<
+        Readonly<{ from: number; insert: string; to: number }>
+      >,
+      beforeRevision: number | undefined,
+      beforeHistory: DocumentHistoryState,
+      afterRevision: number | undefined,
+      afterHistory: DocumentHistoryState
+    ): boolean => {
+      const prior = acceptedDomCorrespondenceRef.current;
+      if (!prior) return false;
+      if (!acceptedDomCorrespondenceMapMatches(prior)) {
+        acceptedDomCorrespondenceRef.current = null;
+        return false;
+      }
+      const next = fullComposeDomCorrespondence(
+        prior,
+        prior.origin,
+        changes,
+        before,
+        after,
+        beforeRevision,
+        afterRevision,
+        beforeHistory,
+        afterHistory
+      );
+      if (!next) {
+        acceptedDomCorrespondenceRef.current = null;
+        return false;
+      }
+      acceptedDomCorrespondenceRef.current = next;
+      return true;
+    },
+    [acceptedDomCorrespondenceMapMatches, documentSession]
+  );
   /**
    * A render whose accepted map does not name every mounted top-level element.
    * The owner may hold the render's own node ledger, but it has no formal
@@ -5891,7 +7465,7 @@ export function ImmersiveVisualEditor({
   // One operation-scoped native witness. Consumers narrow this discriminated
   // record at the point of use, so a later input cannot borrow another shape.
   const pendingNativeOperationRef = useRef<
-    FullPendingNativeRootTransition | FullPendingNativeRootJoin | null
+    FullPendingNativeRootTransition | FullPendingNativeRootJoin | FullPendingNativeRange | FullPendingNativeImageDeletion | null
   >(null);
   const fullOwnerRef = useRef<object>({});
   // Whether the owning effect that publishes this runtime is still live. The
@@ -6159,6 +7733,7 @@ export function ImmersiveVisualEditor({
   ): FullOwnedDom | null => {
     if (!ledger) {
       ownedDomRef.current = null;
+      acceptedDomCorrespondenceRef.current = null;
       return null;
     }
     const owned: FullOwnedDom = {
@@ -6461,14 +8036,110 @@ export function ImmersiveVisualEditor({
     pendingNativeOperationRef.current = transition;
   };
 
+  const captureNativeRange = (
+    event: InputEvent,
+    source: string,
+    visual: string
+  ): void => {
+    if (event.isComposing || event.defaultPrevented) return;
+    if (!['insertText', 'insertReplacementText', 'deleteContentBackward',
+      'deleteContentForward', 'deleteByCut'].includes(event.inputType)) return;
+    const target = event.getTargetRanges?.()[0];
+    const selection = surface.ownerDocument.defaultView?.getSelection();
+    if (!target || target.collapsed || !selection || selection.rangeCount !== 1
+      || selection.isCollapsed) return;
+    const selected = selection.getRangeAt(0);
+    if (selected.startContainer !== target.startContainer
+      || selected.startOffset !== target.startOffset
+      || selected.endContainer !== target.endContainer
+      || selected.endOffset !== target.endOffset) return;
+    const owned = ownedDomRef.current;
+    const nodes = Array.from(surface.childNodes);
+    if (!owned || owned.owner !== fullOwnerRef.current || owned.source !== source
+      || owned.visual !== visual || documentSession.document.getValue() !== source
+      || owned.sourceRevision !== documentSession.document.getRevision?.()
+      || !ownedLedgerRetains(nodes)) return;
+    const first = directVisualBlockForSelectionNode(surface, target.startContainer);
+    const last = directVisualBlockForSelectionNode(surface, target.endContainer);
+    if (!first || !last || first === last || first.parentElement !== surface
+      || last.parentElement !== surface) return;
+    const firstIndex = nodes.indexOf(first);
+    const lastIndex = nodes.indexOf(last);
+    if (firstIndex < 0 || lastIndex <= firstIndex) return;
+    const prefix = surface.ownerDocument.createRange();
+    prefix.setStart(first, 0);
+    prefix.setEnd(target.startContainer, target.startOffset);
+    const suffix = surface.ownerDocument.createRange();
+    suffix.setStart(target.endContainer, target.endOffset);
+    suffix.setEnd(last, last.childNodes.length);
+    const suffixFragment = suffix.cloneContents();
+    suffixFragment.normalize();
+    const expectedRoot = first.cloneNode(false) as HTMLElement;
+    expectedRoot.append(prefix.cloneContents());
+    if (event.data) expectedRoot.append(surface.ownerDocument.createTextNode(event.data));
+    expectedRoot.append(suffixFragment.cloneNode(true));
+    expectedRoot.normalize();
+    pendingNativeOperationRef.current = {
+      kind: 'range', allowTerminalBreak: Boolean(event.data) && !suffixFragment.hasChildNodes(),
+      candidate: null, expectedRoot, firstIndex,
+      inputType: event.inputType, lastIndex, nodes,
+      outsideSnapshots: nodes.map((node, index) =>
+        index < firstIndex || index > lastIndex ? node.cloneNode(true) : null),
+      owner: fullOwnerRef.current, source, sourceRevision: owned.sourceRevision
+    };
+  };
+
+  const verifyNativeRange = (event: InputEvent): void => {
+    const range = pendingNativeOperationRef.current;
+    if (range?.kind !== 'range') return;
+    pendingNativeOperationRef.current = null;
+    const owned = ownedDomRef.current;
+    if (!owned || range.owner !== fullOwnerRef.current
+      || range.inputType !== event.inputType || owned.source !== range.source
+      || range.source !== documentSession.document.getValue()
+      || range.sourceRevision !== documentSession.document.getRevision?.()) return;
+    const snapshot = readOnlySnapshotRef.current;
+    if (!snapshot) return;
+    try { assertVisualMarkdownReadOnlySnapshot(surface, snapshot); } catch { return; }
+    const nodes = Array.from(surface.childNodes);
+    const removedCount = range.lastIndex - range.firstIndex;
+    if (nodes.length !== range.nodes.length - removedCount
+      || nodes[range.firstIndex] !== range.nodes[range.firstIndex]) return;
+    for (let index = range.firstIndex + 1; index <= range.lastIndex; index += 1) {
+      if (range.nodes[index]?.isConnected) return;
+    }
+    for (let index = 0; index < nodes.length; index += 1) {
+      if (index === range.firstIndex) continue;
+      const prior = index < range.firstIndex ? index : index + removedCount;
+      const original = range.nodes[prior];
+      const originalSnapshot = range.outsideSnapshots[prior];
+      if (!original || nodes[index] !== original || !originalSnapshot
+        || !original.isEqualNode(originalSnapshot)) return;
+    }
+    const surviving = nodes[range.firstIndex];
+    if (!(surviving instanceof HTMLElement)) return;
+    const actual = surviving.cloneNode(true);
+    actual.normalize();
+    if (!range.expectedRoot.isEqualNode(actual)) {
+      const terminal = surviving.lastChild;
+      const text = terminal?.previousSibling;
+      const selection = surface.ownerDocument.defaultView?.getSelection();
+      if (!range.allowTerminalBreak || !(terminal instanceof HTMLBRElement)
+        || terminal.attributes.length !== 0 || !(text instanceof Text)
+        || !selection?.isCollapsed || selection.anchorNode !== text
+        || selection.anchorOffset !== text.length) return;
+      actual.lastChild?.remove();
+      actual.normalize();
+      if (!range.expectedRoot.isEqualNode(actual)) return;
+    }
+    range.candidate = { nodes, metadata: nodes.map(fullOwnedNodeMetadata) };
+    pendingNativeOperationRef.current = range;
+  };
+
   /**
-   * Capture the one native EOF join this owner supports: Backspace at the
-   * start of an empty paragraph whose default merges it into the preceding
-   * code block. The browser removes that paragraph, the block's renderer-only
-   * terminal LF text, and any whitespace text between the two roots, while the
-   * serialized Markdown stays byte-identical. The target range the browser
-   * reports is the provenance; the pre-default serialization is the bounded
-   * zero-byte proof. Anything else keeps the ordinary strict path.
+   * Capture a native Backspace join using the browser's target range. Empty
+   * paragraphs and nonempty paragraph bodies have different post-default
+   * proofs; anything not covered by either keeps the ordinary strict path.
    */
   const captureNativeRootJoin = (
     event: InputEvent,
@@ -6477,8 +8148,7 @@ export function ImmersiveVisualEditor({
   ): void => {
     if ('deleteContentBackward' !== event.inputType || event.defaultPrevented)
       return;
-    const pending = pendingNativeOperationRef.current;
-    if (pending?.kind === 'join' && pending.candidate) return;
+    // A new beforeinput event cannot reuse the previous event's join proof.
     pendingNativeOperationRef.current = null;
     const target = event.getTargetRanges?.()[0];
     if (!target || target.collapsed) return;
@@ -6509,13 +8179,14 @@ export function ImmersiveVisualEditor({
       );
       if (!code || code.lastChild !== terminal) return;
     } else if (
-      !['P'].includes(preRoot.tagName)
+      !['P', 'BLOCKQUOTE', 'OL', 'UL'].includes(preRoot.tagName)
       && !/^H[1-6]$/u.test(preRoot.tagName)
     ) {
       return;
     } else if (target.startOffset !== terminal.data.length) {
       return;
     }
+    if (preRoot.matches(VISUAL_MARKDOWN_READ_ONLY_SELECTOR)) return;
     const joinRoot = (
       target.endContainer instanceof HTMLElement
         ? target.endContainer
@@ -6523,7 +8194,44 @@ export function ImmersiveVisualEditor({
     );
     if (!joinRoot || 'P' !== joinRoot.tagName) return;
     if (joinRoot.parentElement !== surface) return;
-    if (joinRoot.contains(target.endContainer) || joinRoot === target.endContainer) {
+    const nonemptyJoin = '' !== (joinRoot.textContent ?? '').trim();
+    let mergedRoot: HTMLElement | undefined;
+    let textJoin: Readonly<{
+      joinText: string;
+      preRootText: string;
+      tagName: string;
+    }> | undefined;
+    if (nonemptyJoin) {
+      const selection = surface.ownerDocument.defaultView?.getSelection();
+      if (
+        target.endContainer !== joinRoot
+        || target.endOffset !== 0 || !selection?.isCollapsed
+        || !selection.anchorNode || selection.anchorOffset !== 0
+        || !joinRoot.contains(selection.anchorNode)
+      ) return;
+      let first: Node = selection.anchorNode;
+      while (first !== joinRoot) {
+        if (!first.parentNode || first.parentNode.firstChild !== first) return;
+        first = first.parentNode;
+      }
+      if ('P' === preRoot.tagName) {
+        mergedRoot = preRoot.cloneNode(true) as HTMLElement;
+        for (const child of Array.from(joinRoot.childNodes)) {
+          mergedRoot.appendChild(child.cloneNode(true));
+        }
+        mergedRoot.normalize();
+      } else {
+        // Chromium removes the paragraph and appends its content to the
+        // retained heading/list/quote/fence. Inline wrapper elements differ by
+        // block type, so the proof is the block's own text: the exact joined
+        // text appears once and removing it restores the pre-join text.
+        textJoin = {
+          joinText: joinRoot.textContent ?? '',
+          preRootText: preRoot.textContent ?? '',
+          tagName: preRoot.tagName
+        };
+      }
+    } else if (joinRoot.contains(target.endContainer) || joinRoot === target.endContainer) {
       const remainder = surface.ownerDocument.createRange();
       remainder.setStart(target.endContainer, target.endOffset);
       remainder.setEnd(joinRoot, joinRoot.childNodes.length);
@@ -6531,8 +8239,8 @@ export function ImmersiveVisualEditor({
     } else {
       return;
     }
-    if ('' !== (joinRoot.textContent ?? '').trim()) return;
     if (
+      !nonemptyJoin &&
       Array.from(joinRoot.children).some(
         (child) => !(child instanceof HTMLBRElement)
       )
@@ -6587,6 +8295,31 @@ export function ImmersiveVisualEditor({
         sourceRange = undefined;
       }
     }
+    // A code-block join cannot be projected through the code's own text map,
+    // but the deleted paragraph's caret still has one source boundary: the
+    // start of the text the browser is about to append.
+    if (!sourceRange && textJoin) {
+      try {
+        const end = visualSelectionSourceRange(
+          surface,
+          sourceMarkdown,
+          visualMarkdown,
+          visualMarkdown,
+          { structuralEmptyParagraphRemoval: true }
+        ).start;
+        sourceRange = { end, start: end };
+      } catch {
+        sourceRange = undefined;
+      }
+    }
+    // A join this owner cannot place in the canonical source has no interval
+    // to commit, and every consumer of a placed join requires one. Claiming
+    // the press anyway would let the browser remove a root the canonical
+    // source never accounted for, so the press is left unclaimed and the
+    // structural owner that can place it handles it instead. A code-fence join
+    // is the exception: its proof is the block's own serialization, it commits
+    // as a zero-byte ledger advance, and it needs no source interval.
+    if (!sourceRange && 'PRE' !== preRoot.tagName) return;
     pendingNativeOperationRef.current = {
       kind: 'join',
       candidate: null,
@@ -6594,12 +8327,17 @@ export function ImmersiveVisualEditor({
       hasFollowingRoot: Boolean(joinRoot.nextElementSibling),
       joinRoot,
       lineEndingLength,
+      ...(mergedRoot ? { mergedRoot } : {}),
       owner: fullOwnerRef.current,
       preRoot,
       preRootSerialization,
       sharedTerminal,
       source: owned.source,
       sourceRevision: owned.sourceRevision,
+      ...(textJoin ? { textJoin } : {}),
+      visual: owned.visual,
+      // Only a code-fence join may carry no interval: its proof is the block's
+      // own serialization, and it commits as a zero-byte ledger advance.
       ...(sourceRange ? { sourceRange } : {}),
       terminal,
       terminalBefore: terminal.data,
@@ -6608,13 +8346,8 @@ export function ImmersiveVisualEditor({
   };
 
   /**
-   * Verify the captured join against the DOM the browser actually produced.
-   * Only the exact captured removal is admitted: the code root is retained at
-   * its index with unchanged element metadata, the terminal LF, the empty
-   * paragraph and exactly the captured inter-root whitespace texts are gone,
-   * every other root is the same node with unchanged metadata, and the
-   * serialized Markdown is byte-identical to the pre-default snapshot. A
-   * same-id clone or any other node delta keeps the strict refusal.
+   * Verify the captured join against the actual DOM, including the retained
+   * root, its expected contents, the removed nodes and the surrounding ledger.
    */
   const verifyNativeRootJoin = (): void => {
     const pending = pendingNativeOperationRef.current;
@@ -6638,7 +8371,36 @@ export function ImmersiveVisualEditor({
     if (join.preRoot.parentNode !== surface || !join.preRoot.isConnected) return;
     if (join.joinRoot.isConnected) return;
     if (join.interRoot.some((node) => node.isConnected)) return;
-    if (join.terminal?.isConnected) {
+    if (join.mergedRoot) {
+      const actual = join.preRoot.cloneNode(true) as HTMLElement;
+      actual.normalize();
+      if (!join.mergedRoot.isEqualNode(actual)) return;
+    } else if (join.textJoin) {
+      if (join.textJoin.tagName !== join.preRoot.tagName) return;
+      if (join.preRoot.querySelector(VISUAL_MARKDOWN_READ_ONLY_SELECTOR))
+        return;
+      const actualText = join.preRoot.textContent ?? '';
+      const { joinText, preRootText } = join.textJoin;
+      // Renderer-only terminal line endings sit on either side of the inserted
+      // text depending on the block type (a list keeps one inside the last LI,
+      // a fenced body keeps its terminal LF). They carry no Markdown bytes, so
+      // the proof compares the text with that terminal whitespace removed.
+      const joinBody = joinText.replace(/\s+$/u, '');
+      const preBody = preRootText.replace(/\s+$/u, '');
+      if ('' === joinBody) return;
+      let insertion = actualText.indexOf(joinBody);
+      let inserted = false;
+      while (insertion >= 0) {
+        const remaining = actualText.slice(0, insertion)
+          + actualText.slice(insertion + joinBody.length);
+        if (remaining.replace(/\s+$/u, '') === preBody) {
+          inserted = true;
+          break;
+        }
+        insertion = actualText.indexOf(joinBody, insertion + 1);
+      }
+      if (!inserted) return;
+    } else if (join.terminal?.isConnected) {
       if (!join.sharedTerminal || !join.preRoot.contains(join.terminal)) return;
       if (
         join.terminal.data !==
@@ -6649,10 +8411,11 @@ export function ImmersiveVisualEditor({
       )
         return;
     }
-    // Every admitted join must still serialize to the exact code block it was
+    // A zero-byte join must still serialize to the exact code block it was
     // captured from, whether the renderer LF was trimmed from a shared Text or
     // its own node disappeared. A join that also removed code bytes or changed
-    // any code character therefore stays refused.
+    // any code character therefore stays refused. A text join is proven by
+    // the insertion of the joined text above instead.
     if (null === join.preRootSerialization) return;
     let codeSerialization: string;
     try {
@@ -6660,7 +8423,8 @@ export function ImmersiveVisualEditor({
     } catch {
       return;
     }
-    if (codeSerialization !== join.preRootSerialization) return;
+    if (!join.mergedRoot && !join.textJoin
+      && codeSerialization !== join.preRootSerialization) return;
     const removedCount = 1 + join.interRoot.length;
     if (owned.nodes.length < removedCount + 1) return;
     const nodes = Array.from(surface.childNodes);
@@ -6682,8 +8446,7 @@ export function ImmersiveVisualEditor({
       if (
         !metadata ||
         !fullOwnedNodeMetadataEqual(fullOwnedNodeMetadata(node), metadata)
-      )
-        return;
+      ) return;
     }
     const preMetadata = owned.metadata[preIndex];
     if (
@@ -6702,21 +8465,26 @@ export function ImmersiveVisualEditor({
   };
 
   /**
-   * The verified native EOF-join ledger, consumable once. The candidate must
+   * The verified native join or range ledger, consumable once. The candidate must
    * still be the live top-level window by node identity; anything else leaves
    * the strict gates untouched.
    */
-  const consumeVerifiedNativeRootJoin = (consume = true): Readonly<{
+  const consumeVerifiedNativeRootLedger = (consume = true): Readonly<{
     metadata: ReadonlyArray<FullOwnedNodeMetadata>;
     nodes: ReadonlyArray<Node>;
   }> | null => {
     const pending = pendingNativeOperationRef.current;
-    const candidate = pending?.kind === 'join' ? pending.candidate : null;
+    const candidate = pending?.kind === 'join' || pending?.kind === 'range'
+      ? pending.candidate : null;
     if (!candidate) return null;
     const nodes = Array.from(surface.childNodes);
     if (
       candidate.nodes.length !== nodes.length ||
-      candidate.nodes.some((node, index) => node !== nodes[index])
+      candidate.nodes.some((node, index) => {
+        const metadata = candidate.metadata[index];
+        return node !== nodes[index] || !metadata
+          || !fullOwnedNodeMetadataEqual(fullOwnedNodeMetadata(node), metadata);
+      })
     )
       return null;
     if (consume) pendingNativeOperationRef.current = null;
@@ -6743,7 +8511,7 @@ export function ImmersiveVisualEditor({
       return retained;
     }
     const pending = pendingNativeOperationRef.current;
-    const candidate = pending?.candidate ?? null;
+    const candidate = pending && pending.kind !== 'image-deletion' ? pending.candidate : null;
     if (candidate) {
       if (
         candidate.nodes.length === nodes.length &&
@@ -6971,10 +8739,14 @@ export function ImmersiveVisualEditor({
       nodes.length === before.length
       && nodes.every((node, index) => node === before[index])
     ) return null;
-    if (previewSnapshotRef.current.editMap) {
+    const mappedSurface = Boolean(previewSnapshotRef.current.editMap);
+    // An owned fence command proves its one replaced position the same way on
+    // a surface without an edit map (an empty document), where no node
+    // carries a block identity to fall back on.
+    if (mappedSurface || ownsFenceCommand) {
       // Heading Enter is a synchronous owner command, not an observed native
       // insertion: its sole new node is the empty paragraph after that heading.
-      if (nodes.length === before.length + 1) {
+      if (mappedSurface && nodes.length === before.length + 1) {
         const insertedIndex = nodes.findIndex((node, index) => node !== before[index]);
         const inserted = nodes[insertedIndex];
         const previous = nodes[insertedIndex - 1];
@@ -7036,7 +8808,7 @@ export function ImmersiveVisualEditor({
    * and still describes the canonical document. This is the current-owner
    * half of the applicability proof: a failure here is not refreshable.
    */
-  const ownedDomIsCurrent = (): boolean => {
+  const ownedDomIsCurrent = (serializedSurface?: string): boolean => {
     const owned = ownedDomRef.current;
     if (!owned || !activeRef.current) return false;
     if (owned.owner !== fullOwnerRef.current) return false;
@@ -7048,7 +8820,7 @@ export function ImmersiveVisualEditor({
     if (!readOnlySnapshot) return false;
     try {
       assertVisualMarkdownReadOnlySnapshot(surface, readOnlySnapshot);
-      if (serializeVisualMarkdown(surface) !== owned.visual) return false;
+      if (!visualSerializationMatchesCommitted(serializedSurface ?? serializeVisualMarkdown(surface), owned.visual)) return false;
     } catch {
       return false;
     }
@@ -7068,6 +8840,19 @@ export function ImmersiveVisualEditor({
    * whole-row stability domain. Merge equality alone is never the topology
    * proof, and an unproved row is a refresh rather than an omission.
    */
+  const referenceContextFor = (source: string): ((label: string) => boolean) => {
+    const certificate = mapCertificateRef.current;
+    const snapshot = previewSnapshotRef.current;
+    const formalSource = certificate
+      && certificate.owner === fullOwnerRef.current
+      && certificate.previewSignature === snapshot.signature
+      && certificate.previewRevision === snapshot.revision
+      && capturedPreviewRevisionRef.current === snapshot.revision
+      && certificate.editMap.signature === snapshot.signature
+      ? certificate.source : null;
+    return visualReferenceContextQuery(source, formalSource, referenceLabelCaseFoldProfile);
+  };
+
   const certifyAcceptedMapApplicability = (): FullMapApplicability => {
     if (!activeRef.current || externalChangeReportedRef.current) return 'invalid';
     if (visualTransferFailureReportedRef.current) return 'invalid';
@@ -7510,6 +9295,14 @@ export function ImmersiveVisualEditor({
     // here is the live state this proof just validated, read once and stored
     // together with the ledger that describes those exact nodes, so the next
     // comparison is against what was proved rather than an older render.
+    if (surface.querySelector('img')) {
+      try {
+        imageAwareVisualSourceIntervalMap(surface, owned.source, owned.visual,
+          certificate.source, referenceLabelCaseFoldProfile);
+      } catch {
+        return 'refresh';
+      }
+    }
     const validatedHtml = surface.innerHTML;
     acceptedHtmlRef.current = validatedHtml;
     acceptedNodesRef.current = owned.nodes;
@@ -7524,6 +9317,11 @@ export function ImmersiveVisualEditor({
       sourceRevision: owned.sourceRevision,
       visual: owned.visual
     };
+    const acceptedCorrespondence = acceptedDomCorrespondenceRef.current;
+    if (
+      acceptedCorrespondence
+      && acceptedCorrespondence.origin.source !== mapCertificateRef.current.source
+    ) acceptedDomCorrespondenceRef.current = null;
     if (visualCodeBodyOrdinalsRef.current) {
       const memo = visualCodeBodyOrdinalsRef.current;
       if (memo.previewSourceMarkdown !== owned.source) {
@@ -7881,7 +9679,8 @@ export function ImmersiveVisualEditor({
     (
       markdown: string,
       html: string | undefined = undefined,
-      tablePresentation: FullAcceptedTablePresentation | null = null
+      tablePresentation: FullAcceptedTablePresentation | null = null,
+      terminalTextRun: TerminalTextRunWitness | null = null
     ): VisualHistorySnapshot => {
       const resolvedHtml = html ?? (
         acceptedCodeBodySnapshotsRef.current.size
@@ -7958,7 +9757,7 @@ export function ImmersiveVisualEditor({
         });
         return records;
       })();
-      const selection = captureVisualHistorySelection(
+      const capturedSelection = captureVisualHistorySelection(
         surface,
         () =>
           structuralCaptureFor(
@@ -7967,19 +9766,80 @@ export function ImmersiveVisualEditor({
             documentSession.document.getSelection?.().start ?? -1
           )
       );
+      const selection = (() => {
+        const paragraph = surface.firstElementChild;
+        if (
+          !capturedSelection
+          || capturedSelection.sourceSelection
+          || !isVisualMarkdownEmpty(markdown)
+          || capturedSelection.backward
+          || !visualHistorySelectionBoundaryEqual(
+            capturedSelection.anchor,
+            capturedSelection.focus
+          )
+          || capturedSelection.anchor.path.length !== 1
+          || capturedSelection.anchor.path[0] !== 0
+          || ![0, 1].includes(capturedSelection.anchor.offset)
+          || surface.childNodes.length !== 1
+          || !(paragraph instanceof HTMLParagraphElement)
+          || paragraph.parentElement !== surface
+          || paragraph.childNodes.length !== 1
+          || !(paragraph.firstChild instanceof HTMLBRElement)
+        ) return capturedSelection;
+        const canonicalSelection = documentSession.document.getSelection?.();
+        const sourceSelection = 0 === capturedSelection.anchor.offset
+          ? { direction: 'none' as const, start: 0, end: 0 }
+          : canonicalSelection
+              && 'none' === canonicalSelection.direction
+              && canonicalSelection.start === markdown.length
+              && canonicalSelection.end === markdown.length
+            ? {
+                direction: 'none' as const,
+                start: markdown.length,
+                end: markdown.length
+              }
+            : null;
+        return sourceSelection
+          ? { ...capturedSelection, sourceSelection }
+          : capturedSelection;
+      })();
       const domPair = undefined !== html && visualHistoryDomPairObserverRef.current
         ? {
             owner: fullOwnerRef.current,
             token: visualHistoryDomPairTokenRef.current
           }
         : undefined;
+      const acceptedPreview = previewSnapshotRef.current;
+      let boundTerminalTextRun: TerminalTextRunWitness | undefined;
+      if (terminalTextRun) {
+        terminalTextRunWitnessText(surface, markdown, terminalTextRun, false);
+        if (!Number.isSafeInteger(acceptedPreview.revision)
+          || !acceptedPreview.signature) {
+          throw new Error('visual-editor-history-terminal-text-run-stale');
+        }
+        boundTerminalTextRun = terminalTextRun.identity
+          ? terminalTextRun
+          : {
+              ...terminalTextRun,
+              identity: {
+                historyRedoDepth: historyState.redoDepth,
+                historyUndoDepth: historyState.undoDepth,
+                owner: fullOwnerRef.current,
+                previewMapped: Boolean(acceptedPreview.editMap),
+                previewMarkdown: visualCodeBodyPreviewSourceRef.current,
+                previewRevision: acceptedPreview.revision,
+                previewSignature: acceptedPreview.signature
+              }
+            };
+      }
       return {
         acceptedCodeBodies,
         acceptedPreview: {
-          mapped: Boolean(previewSnapshotRef.current.editMap),
+          mapped: Boolean(acceptedPreview.editMap),
           markdown: visualCodeBodyPreviewSourceRef.current,
-          revision: previewSnapshotRef.current.revision,
-          signature: previewSnapshotRef.current.signature
+          revision: acceptedPreview.revision,
+          signature: acceptedPreview.signature,
+          ...(boundTerminalTextRun ? { terminalTextRun: boundTerminalTextRun } : {})
         },
         codeBodyPreviewSourceMarkdown: visualCodeBodyPreviewSourceRef.current,
         codeBodyPreviewStructureSignature:
@@ -7991,6 +9851,7 @@ export function ImmersiveVisualEditor({
         markdown,
         tablePresentation: retainedPresentation,
         ...(domPair ? { domPair } : {}),
+        ...(boundTerminalTextRun ? { terminalTextRun: boundTerminalTextRun } : {}),
         selection: selection && domPair && !visualHistorySelectionNeedsNormalization(surface)
           ? { ...selection, nativePathPaired: true }
           : selection
@@ -8008,6 +9869,16 @@ export function ImmersiveVisualEditor({
    */
   const visualHistorySnapshotIsRestorable = useCallback(
     (snapshot: VisualHistorySnapshot): boolean => {
+      if (snapshot.terminalTextRun) {
+        if (
+          snapshot.acceptedPreview.terminalTextRun !== snapshot.terminalTextRun
+          || !terminalTextRunIdentityMatches(snapshot.terminalTextRun, terminalTextRunIdentityFor(
+            fullOwnerRef.current,
+            snapshot.historyState,
+            snapshot.acceptedPreview
+          ))
+        ) return false;
+      }
       const current = previewSnapshotRef.current;
       // A Preview without an edit map has no block identity that could be
       // paired with stale DOM. Preserve the existing plain-text history path;
@@ -8021,7 +9892,7 @@ export function ImmersiveVisualEditor({
       }
       return current.editMap.signature === current.signature;
     },
-    []
+    [fullOwnerRef]
   );
 
   const appendVisualHistoryTransition = useCallback(
@@ -8126,7 +9997,8 @@ export function ImmersiveVisualEditor({
    */
   const captureVisualHistorySelectionWitness = useCallback(
     (
-      historySelectionBefore: VisualSelectionSourceRange
+      historySelectionBefore: VisualSelectionSourceRange,
+      authenticatedSelection?: VisualHistorySelection
     ): VisualHistorySelectionWitness | null => {
       const sourceMarkdown = sourceMarkdownRef.current;
       if (null === sourceMarkdown) return null;
@@ -8174,7 +10046,8 @@ export function ImmersiveVisualEditor({
       );
       const revision = documentSession.document.getRevision?.();
       if (!Number.isSafeInteger(revision)) return null;
-      const selection = captureVisualHistorySelection(surface);
+      const selection = authenticatedSelection
+        ?? captureVisualHistorySelection(surface);
       if (!selection) return null;
       const nativeSelection = surface.ownerDocument.defaultView?.getSelection();
       const witnessedHistorySelectionBefore = nativeSelection
@@ -8250,10 +10123,34 @@ export function ImmersiveVisualEditor({
     ) {
       return;
     }
+    const terminalTextRun = witness.terminalTextRun
+      && slot.snapshot.domPair?.owner === fullOwnerRef.current
+      && terminalTextRunIdentityMatches(witness.terminalTextRun, {
+        historyRedoDepth: slot.snapshot.historyState.redoDepth,
+        historyUndoDepth: slot.snapshot.historyState.undoDepth,
+        owner: fullOwnerRef.current,
+        previewMapped: slot.snapshot.acceptedPreview.mapped,
+        previewMarkdown: slot.snapshot.acceptedPreview.markdown,
+        previewRevision: slot.snapshot.acceptedPreview.revision,
+        previewSignature: slot.snapshot.acceptedPreview.signature
+      })
+      ? witness.terminalTextRun : undefined;
       visualHistorySnapshotsRef.current.set(historyBefore.undoDepth, {
         kind: 'snapshot',
         markdown: slot.markdown,
-        snapshot: { ...slot.snapshot, selection: witness.selection }
+        snapshot: {
+          ...slot.snapshot,
+          acceptedPreview: {
+            ...slot.snapshot.acceptedPreview,
+            ...(terminalTextRun
+              ? { terminalTextRun }
+              : {})
+          },
+          selection: witness.selection,
+          ...(terminalTextRun
+            ? { terminalTextRun }
+            : {})
+        }
       });
     },
     [documentSession]
@@ -8322,6 +10219,7 @@ export function ImmersiveVisualEditor({
         visualCodeBodyOrdinalsRef.current = null;
         visualCodeBodyDomOrderInvalidRef.current = true;
       }
+      if (options.acceptedPreviewSource) prepareVisualEmptyStructuralBodies(surface);
       prepareVisualTaskListMarkers(surface);
       ensureEmptyVisualParagraph(surface, sourceMarkdown);
       protectVisualMarkdownReadOnlyRegions(surface);
@@ -8368,7 +10266,8 @@ export function ImmersiveVisualEditor({
       const capturedHistorySnapshot = captureVisualHistorySnapshot(
           sourceMarkdown,
           html,
-          options.tablePresentation
+          options.tablePresentation,
+          options.terminalTextRun ?? null
         );
       const historySnapshot = {
         ...capturedHistorySnapshot,
@@ -8444,6 +10343,11 @@ export function ImmersiveVisualEditor({
               visual: owned.visual
             }
           : null;
+        if (mapCertificateRef.current) {
+          installAcceptedDomCorrespondence(owned);
+        } else {
+          acceptedDomCorrespondenceRef.current = null;
+        }
         acceptedCodeBodyCorrespondenceRef.current =
           snapshot.editMap && acceptedMapNamesLedger
             ? captureAcceptedCodeBodyCorrespondence(
@@ -8484,6 +10388,7 @@ export function ImmersiveVisualEditor({
           );
         } else {
           ownedDomRef.current = null;
+          acceptedDomCorrespondenceRef.current = null;
         }
       }
       if (retainedLocal && previousMemory && ownedDomRef.current?.source === sourceMarkdown) {
@@ -8529,6 +10434,7 @@ export function ImmersiveVisualEditor({
       captureVisualHistorySnapshot,
       consumeVisualDomMutations,
       documentSession,
+      installAcceptedDomCorrespondence,
       surface
     ]
   );
@@ -8624,6 +10530,11 @@ export function ImmersiveVisualEditor({
               visual: pasteOwned.visual
             }
           : null;
+      if (mapCertificateRef.current && pasteOwned) {
+        installAcceptedDomCorrespondence(pasteOwned);
+      } else {
+        acceptedDomCorrespondenceRef.current = null;
+      }
       acceptedHtmlRef.current =
         null === mapCertificateRef.current
           ? null
@@ -8633,7 +10544,12 @@ export function ImmersiveVisualEditor({
           ? acceptedNodesRef.current
           : pasteOwned?.nodes ?? acceptedNodesRef.current;
     },
-    [captureVisualHistorySnapshot, documentSession, surface]
+    [
+      captureVisualHistorySnapshot,
+      documentSession,
+      installAcceptedDomCorrespondence,
+      surface
+    ]
   );
 
   const materializeVisualBaseline = useCallback((): boolean => {
@@ -8685,6 +10601,26 @@ export function ImmersiveVisualEditor({
     acceptedCodeBodySnapshotsRef.current.clear();
     const localCodeBodies = acceptedLocalCodeBodiesRef.current;
     clearVisualLocalCodeBodyProvenance();
+    // The canonical caret this restore owes back, read BEFORE the wholesale
+    // write: that write removes every node the selection can name, and the
+    // browser then collapses the native selection onto this host. A session
+    // without a selection owner contributes this owner's own last mapped
+    // range, which is the same source-space selection it last proved.
+    const canonicalSelection =
+      documentSession.document.getSelection?.() ?? lastSelectionRef.current;
+    // Only a caret this surface already owned is handed back: the write is
+    // about to remove its node, so the ownership has to be read here. A
+    // selection that lives somewhere else (a toolbar control, the source
+    // pane) belongs to that owner and is never moved by this restore.
+    const nativeSelectionBefore =
+      surface.ownerDocument.defaultView?.getSelection();
+    const caretWasOwned = Boolean(
+      nativeSelectionBefore
+      && (nativeSelectionBefore.anchorNode === surface
+        || surface.contains(nativeSelectionBefore.anchorNode))
+      && (nativeSelectionBefore.focusNode === surface
+        || surface.contains(nativeSelectionBefore.focusNode))
+    );
     surface.innerHTML = acceptedHtml;
     const preElements = visualCodePreOrder();
     for (const [preIndex, preSnapshot] of codeBodySnapshots) {
@@ -8698,6 +10634,61 @@ export function ImmersiveVisualEditor({
     installVisualLocalCodeBodyProvenance(markdown, localCodeBodies);
     acceptedLocalCodeBodiesRef.current = localCodeBodies;
     recordCurrentVisualHistorySnapshot(markdown);
+    // The write above replaced every child, so the caret's own node is gone
+    // and the browser left the selection anchored on this host. Every sibling
+    // owner hands the caret off after replacing children; this restore was the
+    // only one that did not, which made the next key a dead press. The handoff
+    // is BEST EFFORT and nothing else: the accepted render, the history slot
+    // and this function's success are already settled, and a caret the
+    // accepted source cannot express is left wherever the last successful
+    // placement put it - the host the restore collapsed onto when the mapper
+    // refused before placing anything, or the range start when only the second
+    // placement failed. Never a new failure and never a changed return value.
+    //
+    // It runs only for a caret this surface owned before the write: a
+    // selection that lives in another owner is never moved by a repair.
+    if (caretWasOwned) {
+      // captureSnapshot has just serialized this exact DOM and published the
+      // result, so the baseline is the mounted render's own spelling instead
+      // of an assumption about the accepted HTML. No extra serialization.
+      const baselineVisualMarkdown = visualMarkdownRef.current;
+      const handoff =
+        canonicalSelection
+        // The canonical selection only indexes the document it belongs to, so
+        // a session that has already moved on contributes nothing.
+        && documentSession.document.getValue?.() === markdown
+        && Number.isSafeInteger(canonicalSelection.start)
+        && Number.isSafeInteger(canonicalSelection.end)
+        && canonicalSelection.start >= 0
+        && canonicalSelection.end >= canonicalSelection.start
+        && canonicalSelection.end <= markdown.length
+        && ('none' !== canonicalSelection.direction
+          || canonicalSelection.start === canonicalSelection.end)
+          ? {
+              direction: canonicalSelection.direction,
+              end: canonicalSelection.end,
+              start: canonicalSelection.start
+            }
+          : null;
+      if (handoff && null !== baselineVisualMarkdown) {
+        try {
+          // The restored surface is the accepted render of exactly this
+          // source/baseline pair, which is the whole precondition of the
+          // source-range mapper: the same helper the history-restore owner
+          // uses after it installs a source's own DOM. It also covers a
+          // non-collapsed canonical selection, so no second helper is needed.
+          placeVisualSelectionFromSourceRange(
+            surface,
+            markdown,
+            baselineVisualMarkdown,
+            handoff
+          );
+        } catch {
+          // A source offset this render cannot express (a fence delimiter
+          // line, a hidden source run) keeps today's behaviour.
+        }
+      }
+    }
     return true;
   }, [
     captureSnapshot,
@@ -8729,6 +10720,9 @@ export function ImmersiveVisualEditor({
       ) {
         throw new Error('visual-editor-code-body-map-stale');
       }
+      const sourceRevisionBefore = sourceChanged
+        ? documentSession.document.getRevision?.()
+        : undefined;
       const historyBefore = sourceChanged
         ? documentHistoryState(documentSession.document)
         : null;
@@ -8744,6 +10738,52 @@ export function ImmersiveVisualEditor({
         }
         if (current.markdown !== sourceMarkdownRef.current) {
           throw new Error('visual-editor-history-snapshot-stale');
+        }
+        if (options.terminalTextRun) {
+          const witness = options.terminalTextRun;
+          const accepted = previewSnapshotRef.current;
+          const currentIdentity = terminalTextRunIdentityFor(
+            fullOwnerRef.current,
+            historyBefore,
+            {
+              mapped: Boolean(accepted.editMap),
+              markdown: visualCodeBodyPreviewSourceRef.current,
+              revision: accepted.revision,
+              signature: accepted.signature
+            }
+          );
+          // An earlier owner, slot or accepted render may leave a terminal
+          // witness in the pending deletion group. It is not evidence about
+          // this slot, so ordinary history rebuild remains authoritative.
+          if (terminalTextRunIdentityMatches(witness, currentIdentity)) {
+            if (
+              !witness.canonical.endsWith(' ')
+              || witness.live !== `${witness.canonical.slice(0, -1)}\u00a0`
+              || witness.sourceRange.start < 0
+              || witness.sourceRange.end !== witness.sourceRange.start + 1
+              || witness.sourceRange.end > sourceMarkdownRef.current.length
+              || sourceMarkdownRef.current.slice(
+                witness.sourceRange.start,
+                witness.sourceRange.end
+              ) !== witness.canonical.slice(-1)
+            ) throw new Error('visual-editor-history-terminal-text-run-stale');
+            const captured = options.historyBeforeSnapshot;
+            if (
+              captured
+              && captured.markdown === sourceMarkdownRef.current
+              && captured.terminalTextRun === witness
+              && captured.acceptedPreview.terminalTextRun === witness
+              && captured.historyState.undoDepth === historyBefore.undoDepth
+              && captured.historyState.redoDepth === historyBefore.redoDepth
+              && captured.domPair?.owner === fullOwnerRef.current
+            ) {
+              visualHistorySnapshotsRef.current.set(historyBefore.undoDepth, {
+                kind: 'snapshot',
+                markdown: current.markdown,
+                snapshot: captured
+              });
+            }
+          }
         }
         // The operation's own pre-edit caret is only written here, at the
         // commit that retires this exact slot, and only while the slot, the
@@ -8780,8 +10820,11 @@ export function ImmersiveVisualEditor({
         && codeBodyTypingRunRef.current
       );
       selfWriteRef.current = true;
+      let exactDocumentChange: ReturnType<
+        EditorDocumentSession['document']['applyTextChange']
+      > = null;
       try {
-        documentSession.document.applyTextChange({
+        exactDocumentChange = documentSession.document.applyTextChange({
           ...change,
           ...(isolateHistoryBefore
             ? { isolateHistoryBefore: true }
@@ -8797,9 +10840,31 @@ export function ImmersiveVisualEditor({
         );
       }
       if (sourceChanged && historyBefore) {
+        const sourceRevisionAfter = documentSession.document.getRevision?.();
+        const historyAfter = documentHistoryState(documentSession.document);
+        // A committed source write is always described by the range the
+        // session returned: `getValue()` is the source this write started
+        // from (proved above) and the value it wrote differs from it, so the
+        // session had a real change to describe. A session that returns no
+        // range here is broken, not a case to paper over with a second diff
+        // owner.
+        if (!exactDocumentChange) {
+          throw new Error('visual-editor-document-change-range-missing');
+        }
+        const acceptedDomChanges = options.acceptedDomChanges
+          ?? [exactDocumentChange];
+        updateAcceptedDomCorrespondence(
+          sourceBeforeChange ?? '',
+          change.value,
+          acceptedDomChanges,
+          sourceRevisionBefore,
+          historyBefore,
+          sourceRevisionAfter,
+          historyAfter
+        );
         recordVisualHistoryMutation(
           historyBefore,
-          documentHistoryState(documentSession.document),
+          historyAfter,
           isolateHistoryBefore
         );
       }
@@ -8809,6 +10874,7 @@ export function ImmersiveVisualEditor({
     },
     [
       applyVisualHistorySelectionWitness,
+      updateAcceptedDomCorrespondence,
       captureVisualHistorySnapshot,
       documentSession,
       recordVisualHistoryMutation,
@@ -9250,6 +11316,29 @@ export function ImmersiveVisualEditor({
         : null);
     if (!extent) return null;
     const canonical = documentSession.document.getSelection();
+    const selectionProvenance = ((): FullAcceptedSelectionOrigin['selectionProvenance'] => {
+      const current = currentTextSelection(surface);
+      const readOnly = readOnlySnapshotRef.current;
+      if (!readOnly || native.isCollapsed || native.rangeCount !== 1
+        || !native.focusNode || !surface.contains(native.focusNode)
+        || !ownedDomIsCurrent()) return 'unknown';
+      try {
+        const nativeSnapshot = captureVisualHistorySelection(surface);
+        const ownerPlaced = ownerPlacedSelectionRef.current;
+        if (!nativeSnapshot) return 'unknown';
+        if (ownerPlaced && visualHistorySelectionEqual(ownerPlaced, nativeSnapshot)) return 'owner';
+        if (!current || !surface.contains(current.anchorNode) || !surface.contains(current.focusNode)) return 'unknown';
+        const range = native.getRangeAt(0);
+        if (readOnly.some(({ node }) => node.contains(current.anchorNode)
+          || node.contains(current.focusNode) || range.intersectsNode(node))) return 'unknown';
+        const mapped = mapSelectionFromInterval(surface, current, visual, intervalMap, true);
+        return mapped && mapped.source.start === canonical.start
+          && mapped.source.end === canonical.end
+          && nativeDocumentSelectionDirection(native) === canonical.direction ? 'authored' : 'unknown';
+      } catch {
+        return 'unknown';
+      }
+    })();
     return {
       extent,
       kind: root.tagName.toLowerCase(),
@@ -9259,6 +11348,7 @@ export function ImmersiveVisualEditor({
         end: canonical.end,
         start: canonical.start
       },
+      selectionProvenance,
       source,
       sourceRevision: revision as number
     };
@@ -9587,7 +11677,8 @@ export function ImmersiveVisualEditor({
     inputBlock: VisualCodeInputSnapshot,
     markdown: string,
     required = false,
-    allowAuthenticatedPendingBody = false
+    allowAuthenticatedPendingBody = false,
+    intervalAtOrdinal = visualCodeBodyIntervalAtOrdinal
   ): number | null => {
     const localProvenance = visualLocalCodeBodyProvenance(inputBlock, markdown);
     if (localProvenance) return localProvenance.codeOrdinal;
@@ -9610,7 +11701,7 @@ export function ImmersiveVisualEditor({
           }
           previousOrdinal = mounted.interval.codeOrdinal;
         }
-        const interval = visualCodeBodyIntervalAtOrdinal(
+        const interval = intervalAtOrdinal(
           markdown,
           correspondence.interval.codeOrdinal
         );
@@ -9822,6 +11913,9 @@ export function ImmersiveVisualEditor({
         return;
       }
       pendingTransferRef.current = null;
+      // A key deferred against this transfer dies with it: the transfer it was
+      // bound to is terminal and no later acceptance may replay it.
+      deferredPendingBackspaceRef.current = null;
       acceptedPasteDocumentBoundaryRef.current = null;
       pendingNativeOperationRef.current = null;
       // A transfer's operation-bound correspondence dies with the transfer.
@@ -9901,14 +11995,14 @@ const failVisualSynchronization = useCallback(
         // as it was. As soon as this owner holds an origin certificate, only a
         // verified ledger may advance it.
         const noProvedOrigin = !mapCertificateRef.current;
-        if (editedVisualMarkdown === baselineVisualMarkdown
+        if ((editedVisualMarkdown === baselineVisualMarkdown || ownedDomIsCurrent(editedVisualMarkdown))
           && (!options.ownerResult || options.ownerResult.value === sourceMarkdown)) {
           // A zero-byte own native join changes the node window without
           // changing the source, so this gate admits exactly that bounded
           // witness and nothing else.
           const verifiedJoinLedger = retainedLedger
             ? null
-            : consumeVerifiedNativeRootJoin(false);
+            : consumeVerifiedNativeRootLedger(false);
           if (!retainedLedger && !verifiedJoinLedger && !noProvedOrigin) {
             throw new Error('visual-editor-canonical-change-dom-stale');
           }
@@ -9972,19 +12066,25 @@ const failVisualSynchronization = useCallback(
                   structuralCapture = null;
                 }
               }
+              const referenceDefined = referenceContextFor(sourceMarkdown);
               const genericSelection = (): VisualSelectionSourceRange => {
+                const projectedIntervalMap = surface.querySelector('img')
+                  ? createVisualMarkdownImageSourceIntervalMap(
+                      surface, sourceMarkdown, baselineVisualMarkdown, referenceDefined
+                    )
+                  : undefined;
                 try {
                   return visualSelectionSourceRange(
                     surface,
                     sourceMarkdown,
                     baselineVisualMarkdown,
                     editedVisualMarkdown,
-                    options.acceptedDocumentBoundary
-                      ? {
-                          acceptedPasteDocumentBoundary:
-                            options.acceptedDocumentBoundary
-                        }
-                      : {}
+                    {
+                      ...(options.acceptedDocumentBoundary
+                        ? { acceptedPasteDocumentBoundary: options.acceptedDocumentBoundary }
+                        : {}),
+                      ...(projectedIntervalMap ? { projectedIntervalMap } : {})
+                    }
                   );
                 } catch (error) {
                   // The already-projected literal row is a certified native
@@ -10004,7 +12104,8 @@ const failVisualSynchronization = useCallback(
                         },
                         sourceMarkdown,
                         editedVisualMarkdown,
-                        previewSnapshotRef.current.editMap ?? null
+                        previewSnapshotRef.current.editMap ?? null,
+                        acceptedDecodedBlockContext(sourceMarkdown)
                       )
                     : null;
                   if (!certified) throw error;
@@ -10027,7 +12128,8 @@ const failVisualSynchronization = useCallback(
                   current,
                   sourceMarkdown,
                   baselineVisualMarkdown,
-                  previewSnapshotRef.current.editMap ?? null
+                  previewSnapshotRef.current.editMap ?? null,
+                  acceptedDecodedBlockContext(sourceMarkdown)
                 );
                 if (!formal) return null;
                 const native = surface.ownerDocument.defaultView?.getSelection();
@@ -10064,7 +12166,8 @@ const failVisualSynchronization = useCallback(
                       current,
                       sourceMarkdown,
                       baselineVisualMarkdown,
-                      previewSnapshotRef.current.editMap ?? null
+                      previewSnapshotRef.current.editMap ?? null,
+                      acceptedDecodedBlockContext(sourceMarkdown)
                     );
                 if (formal) return null;
                 const certificate = localCompositionVisualCertificate(
@@ -10094,7 +12197,8 @@ const failVisualSynchronization = useCallback(
                       previewSnapshotRef.current.signature,
                       previewSnapshotRef.current.revision,
                       capturedPreviewRevisionRef.current,
-                      visualCodeBodyPreviewSourceRef.current
+                      visualCodeBodyPreviewSourceRef.current,
+                      referenceDefined
                     )
                   : null) ??
                 formalCompositionSelection() ??
@@ -10120,7 +12224,7 @@ const failVisualSynchronization = useCallback(
               value: sourceMarkdown
             });
           }
-          visualMarkdownRef.current = editedVisualMarkdown;
+          visualMarkdownRef.current = baselineVisualMarkdown;
           const unchangedNodes = Array.from(surface.childNodes);
           const unchangedLedger = retainedLedger
             ?? verifiedJoinLedger
@@ -10143,7 +12247,7 @@ const failVisualSynchronization = useCallback(
           // Markdown: that is exactly the laundering this check exists for.
           publishOwnedDom(
             sourceMarkdown,
-            editedVisualMarkdown,
+            baselineVisualMarkdown,
             documentSession.document.getRevision?.() ?? 0,
             unchangedLedger
           );
@@ -10196,10 +12300,14 @@ const failVisualSynchronization = useCallback(
                 sourceMarkdown,
                 baselineVisualMarkdown,
                 editedVisualMarkdown,
-                undefined,
+                visualSourceIntervalMapRef.current?.sourceMarkdown === sourceMarkdown
+                  && visualSourceIntervalMapRef.current.visualMarkdown === baselineVisualMarkdown
+                  ? visualSourceIntervalMapRef.current.map
+                  : undefined,
                 {
                   structuralEmptyParagraphRemoval: Boolean(
-                    pendingNativeOperationRef.current?.candidate
+                    pendingNativeOperationRef.current?.kind !== 'image-deletion'
+                    && pendingNativeOperationRef.current?.candidate
                   )
                 }
               );
@@ -10235,7 +12343,8 @@ const failVisualSynchronization = useCallback(
                 editedVisualMarkdown,
                 {
                   structuralEmptyParagraphRemoval: Boolean(
-                    pendingNativeOperationRef.current?.candidate
+                    pendingNativeOperationRef.current?.kind !== 'image-deletion'
+                    && pendingNativeOperationRef.current?.candidate
                   )
                 }
               );
@@ -10390,6 +12499,15 @@ const failVisualSynchronization = useCallback(
             value
           },
           {
+            ...(mergeResult.edits.length
+              ? {
+                  acceptedDomChanges: mergeResult.edits.map((edit) => ({
+                    from: edit.start,
+                    insert: edit.replacement,
+                    to: edit.end
+                  }))
+                }
+              : {}),
             ...(historySelectionWitness
               ? { historySelectionWitness }
               : {}),
@@ -10569,16 +12687,19 @@ const failVisualSynchronization = useCallback(
     (spec: FullPendingTransferSpec, notifyMarkdownChange?: () => void): void => {
       const markdown = spec.expectation.value;
       const selection = spec.expectation.selection;
+      const capture = spec.retainedHistoryPresentation
+        ? captureRetainedVisualHistorySelection
+        : captureVisualHistorySelection;
       const visualSelection =
         'structural' === spec.presentation
-          ? captureVisualHistorySelection(surface, () =>
+          ? capture(surface, () =>
               structuralCaptureFor(
                 markdown,
                 previewSnapshotRef.current.editMap,
                 documentSession.document.getSelection?.().start ?? -1
               )
             )
-          : captureVisualHistorySelection(surface);
+          : capture(surface);
       // The owner may advance its OWN recorded presentation boundary by its own
       // pure single-line insertion. The five bounds are all required: the record
       // belongs to the transfer being created here, it was produced by this
@@ -10590,6 +12711,7 @@ const failVisualSynchronization = useCallback(
       const ownerInsertion = ownerInsertionRef.current;
       const presentationSelection =
         'structural' === spec.presentation
+        && !spec.retainedHistoryPresentation
         && ownerInsertion
         && ownerInsertion.source === markdown
         && visualSelection
@@ -10890,6 +13012,7 @@ const failVisualSynchronization = useCallback(
     let recoveredSourceSelection: VisualSelectionSourceRange | null = null;
     let recoveredTablePresentation: FullAcceptedTablePresentation | undefined;
     let restoredEmptyParagraph = false;
+    let appliedTerminalTextRun: TerminalTextRunWitness | undefined;
     const activeElement = surface.ownerDocument.activeElement;
     const shouldRestoreFocus = !pendingCanonicalCompositionRef.current && pending.restoreFocus !== false &&
       (activeElement === surface || activeElement === surface.ownerDocument.body ||
@@ -10920,6 +13043,27 @@ const failVisualSynchronization = useCallback(
           })
         ) {
           throw new Error('visual-editor-history-preview-stale');
+        }
+        const acceptedIdentity = spec.historyProof?.acceptedPreview;
+        if (acceptedIdentity && (
+          !Number.isSafeInteger(acceptedIdentity.revision)
+          || !acceptedIdentity.signature
+        )) throw new Error('visual-editor-history-preview-stale');
+        const historySnapshotProof = spec.historyProof?.historySnapshot;
+        if (historySnapshotProof) {
+          const slot = visualHistorySnapshotsRef.current.get(
+            historySnapshotProof.depth
+          );
+          if (
+            slot !== historySnapshotProof.slot
+            || historySnapshotProof.slot.kind !== 'snapshot'
+            || historySnapshotProof.slot.snapshot !== historySnapshotProof.snapshot
+            || historySnapshotProof.slot.markdown !== expectation.value
+            || historySnapshotProof.snapshot.markdown !== expectation.value
+            || historySnapshotProof.depth !== observation.history?.undoDepth
+            || historySnapshotProof.snapshot.terminalTextRun
+              !== historySnapshotProof.snapshot.acceptedPreview.terminalTextRun
+          ) throw new Error('visual-editor-history-preview-stale');
         }
         const slotProof = spec.historyProof?.slot;
         if (slotProof) {
@@ -10955,6 +13099,29 @@ const failVisualSynchronization = useCallback(
           || expectation.selection.start !== expectation.selection.end)) {
           throw new Error('visual-editor-history-preview-stale');
         }
+        const selectionProof = spec.historyProof?.selection;
+        if (selectionProof) {
+          const sourceSelection = selectionProof.sourceSelection;
+          const witnessedSourceSelection = selectionProof.witness.sourceSelection;
+          if (
+            !Number.isSafeInteger(sourceSelection.start)
+            || !Number.isSafeInteger(sourceSelection.end)
+            || sourceSelection.start < 0
+            || sourceSelection.end < sourceSelection.start
+            || sourceSelection.end > expectation.value.length
+          ) throw new Error('visual-editor-history-selection-witness-stale');
+          if (
+            sourceSelection.direction !== expectation.selection.direction
+            || sourceSelection.start !== expectation.selection.start
+            || sourceSelection.end !== expectation.selection.end
+          ) throw new Error('visual-editor-history-selection-canonical-stale');
+          if (
+            !witnessedSourceSelection
+            || witnessedSourceSelection.direction !== sourceSelection.direction
+            || witnessedSourceSelection.start !== sourceSelection.start
+            || witnessedSourceSelection.end !== sourceSelection.end
+          ) throw new Error('visual-editor-history-selection-source-stale');
+        }
       } else if (undefined !== expectation.revision) {
         const observation = readCanonicalObservation(documentSession.document, {
           history: true,
@@ -10973,7 +13140,49 @@ const failVisualSynchronization = useCallback(
           throw new Error('visual-editor-canonical-change-stale');
         }
       }
-      if (shouldRestoreFocus) {
+      if (historyTransfer) {
+        const acceptedIdentity = spec.historyProof?.acceptedPreview;
+        const historySlot = spec.historyProof?.slot?.value;
+        const historySnapshot = spec.historyProof?.historySnapshot?.snapshot
+          ?? (historySlot?.kind === 'snapshot' ? historySlot.snapshot : null);
+        const terminalTextRun = acceptedIdentity?.terminalTextRun;
+        if (
+          acceptedIdentity
+          && terminalTextRun
+          && historySnapshot
+          && historySnapshot.acceptedPreview.signature === acceptedIdentity.signature
+          && historySnapshot.acceptedPreview.revision === acceptedIdentity.revision
+          && historySnapshot.acceptedPreview.mapped === acceptedIdentity.mapped
+          && applyTerminalTextRunWitness(
+            surface,
+            expectation.value,
+            terminalTextRun,
+            true,
+            terminalTextRunIdentityFor(
+              fullOwnerRef.current,
+              historySnapshot.historyState,
+              acceptedIdentity
+            )
+          )
+        ) {
+          appliedTerminalTextRun = {
+            ...terminalTextRun,
+            identity: terminalTextRunIdentityFor(
+              fullOwnerRef.current,
+              documentHistoryState(documentSession.document),
+              {
+                mapped: Boolean(previewSnapshotRef.current.editMap),
+                markdown: expectation.value,
+                revision: previewSnapshotRef.current.revision,
+                signature: previewSnapshotRef.current.signature
+              }
+            )
+          };
+          recoveredSourceSelection = expectation.selection;
+        }
+      }
+      if (acceptedPreview) prepareVisualEmptyStructuralBodies(surface);
+      if (shouldRestoreFocus && !appliedTerminalTextRun) {
       try {
         if (acceptedDocumentBoundary) {
           placeVisualCaretAtAcceptedPasteDocumentBoundary(
@@ -10982,6 +13191,7 @@ const failVisualSynchronization = useCallback(
           );
         } else if (acceptedPreview) {
           const editMap = previewSnapshotRef.current.editMap;
+          const historySelectionProof = spec.historyProof?.selection;
           if (!editMap) {
             // An accepted empty source has no Preview block to map: the paper
             // placeholder owns the surface with a null edit map. The
@@ -10997,6 +13207,15 @@ const failVisualSynchronization = useCallback(
             // paragraph and its terminal caret; `captureSnapshot` below keeps
             // that same shape.
             resetEmptyVisualParagraph(surface);
+            if (historySelectionProof) {
+              if (!restoreTerminalEmptyHistorySelection(
+                surface,
+                expectation.value,
+                historySelectionProof
+              )) throw new Error('visual-editor-history-terminal-selection-stale');
+              recoveredSourceSelection =
+                historySelectionProof.sourceSelection;
+            }
           } else if (spec.historyProof?.emptyParagraph) {
             const proof = spec.historyProof.emptyParagraph;
             const starts = markdownLineStarts(expectation.value);
@@ -11038,6 +13257,17 @@ const failVisualSynchronization = useCallback(
             ownedEmptyParagraphRef.current = { body: paragraph, owner: fullOwnerRef.current, source: expectation.value,
               revision: documentSession.document.getRevision?.() ?? 0, sourceLength: 2, sourceOffset: proof.sourceOffset };
             recoveredSourceSelection = expectation.selection;
+          } else if (
+            historySelectionProof
+            && isVisualMarkdownEmpty(expectation.value)
+          ) {
+            if (!restoreTerminalEmptyHistorySelection(
+              surface,
+              expectation.value,
+              historySelectionProof
+            )) throw new Error('visual-editor-history-terminal-selection-stale');
+            recoveredSourceSelection =
+              historySelectionProof.sourceSelection;
           } else {
             placeVisualSelectionFromAcceptedSourceRange(
               surface,
@@ -11045,6 +13275,7 @@ const failVisualSynchronization = useCallback(
               editMap,
               expectation.selection,
               pending.visualSelection,
+              referenceContextFor(expectation.value),
               spec.replacement
             );
           }
@@ -11301,7 +13532,10 @@ const failVisualSynchronization = useCallback(
       } else if (acceptedPreview) {
         captureSnapshot(expectation.value, {
           acceptedPreviewSource: true,
-          ...(recoveredTablePresentation ? { tablePresentation: recoveredTablePresentation } : {})
+          ...(recoveredTablePresentation ? { tablePresentation: recoveredTablePresentation } : {}),
+          ...(appliedTerminalTextRun
+            ? { terminalTextRun: appliedTerminalTextRun }
+            : {})
         });
       } else {
         captureAcceptedPasteSnapshot(expectation.value);
@@ -11367,12 +13601,20 @@ const failVisualSynchronization = useCallback(
       acceptedPasteDocumentBoundaryRef.current = acceptedDocumentBoundary;
       lastSelectionRef.current =
         recoveredSourceSelection ?? expectation.selection;
-      // The placement above is this owner's own publication of a native
-      // selection. Recording it here is what lets a later pointer image demand
-      // replace it: a selection the user made never passes through this point.
-      // A surface whose selection cannot be captured records nothing, which
-      // keeps the stricter gesture policy.
-      if (!shouldRestoreFocus) {
+      // A same-source Preview can restore an authored selection. Only a
+      // positively owned range gains the later pointer-replacement privilege.
+      const origin = spec.selectionOrigin;
+      const restoredUnownedRange = spec.kind === 'native'
+        && spec.placement.kind === 'accepted-preview'
+        && expectation.selection.start !== expectation.selection.end
+        && !(origin?.selectionProvenance === 'owner'
+          && origin.owner === fullOwnerRef.current
+          && origin.source === expectation.value
+          && origin.sourceRevision === expectation.revision
+          && origin.selection.start === expectation.selection.start
+          && origin.selection.end === expectation.selection.end
+          && origin.selection.direction === expectation.selection.direction);
+      if (!shouldRestoreFocus || restoredUnownedRange) {
         ownerPlacedSelectionRef.current = null;
       } else {
         try {
@@ -11433,6 +13675,16 @@ const failVisualSynchronization = useCallback(
     if (selectionDiagnostic) {
       onDiagnostic(selectionDiagnostic);
     }
+    // The transfer is cleared and the accepted render has placed its caret, so
+    // a Backspace this window deferred for its own target shape can now be
+    // replayed against exactly the state this acceptance published: the
+    // accepted expectation plus the selection the placement settled on. The
+    // two differ whenever acceptance had to realign the canonical caret after
+    // placing it, and the deferred key belongs to the caret it settled on.
+    replayDeferredPendingBackspaceRef.current(
+      expectation,
+      recoveredSourceSelection ?? expectation.selection
+    );
   }, [
     applyDocumentChange,
     captureAcceptedPasteSnapshot,
@@ -11522,7 +13774,8 @@ const failVisualSynchronization = useCallback(
             documentSession.document.getValue(),
             editMapOnEnable,
             canonicalSelection,
-            null
+            null,
+            referenceContextFor(documentSession.document.getValue())
           );
         } catch (error) {
           // A canonical caret that the accepted map cannot express is a real
@@ -11558,6 +13811,19 @@ const failVisualSynchronization = useCallback(
       synchronizeSelection: () => runtime.prepareMediaSelection()
     });
     let composing = false;
+    let nativeInputSurfaceLease: PreviewCompositionSurfaceLease | null = null;
+    let compositionSurfaceLease: PreviewCompositionSurfaceLease | null = null;
+    let processingNativeBeforeInput = false;
+    const releaseNativeInputSurface = (): void => {
+      const lease = nativeInputSurfaceLease;
+      nativeInputSurfaceLease = null;
+      lease?.release();
+    };
+    const releaseCompositionSurface = (lease: PreviewCompositionSurfaceLease | null): void => {
+      if (!lease || compositionSurfaceLease !== lease) return;
+      compositionSurfaceLease = null;
+      lease.release();
+    };
     let compositionRejected = false;
     let rejectedCompositionSelection: VisualHistorySelection | null = null;
     let compositionCommitScheduled = false;
@@ -11617,7 +13883,16 @@ const failVisualSynchronization = useCallback(
       const map = previewSnapshotRef.current.editMap;
       if (!snapshot) throw new Error('visual-editor-pending-input-unavailable');
       assertVisualMarkdownReadOnlySnapshot(surface, snapshot);
-      if (map) assertAcceptedTopLevelVisualSurface(surface, map, acceptedHtmlRef.current, acceptedNodesRef.current);
+      const retained = pendingTransferRef.current?.spec.retainedHistoryPresentation;
+      if (retained) {
+        if (
+          retained.readOnly !== snapshot
+          || retained.owned !== ownedDomRef.current
+          || retained.owned.owner !== fullOwnerRef.current
+          || !fullOwnedDomMatches(surface, retained.owned)
+          || !visualSerializationMatchesCommitted(serializeVisualMarkdown(surface), retained.owned.visual)
+        ) throw new Error('visual-editor-canonical-change-dom-stale');
+      } else if (map) assertAcceptedTopLevelVisualSurface(surface, map, acceptedHtmlRef.current, acceptedNodesRef.current);
       else if (acceptedHtmlRef.current === null || surface.innerHTML !== acceptedHtmlRef.current) {
         throw new Error('visual-editor-canonical-change-dom-stale');
       }
@@ -11625,7 +13900,9 @@ const failVisualSynchronization = useCallback(
     };
     const pendingInputLease = (event?: InputEvent): PendingMarkdownTransfer => {
       const lease = pendingTransferRef.current;
-      const current = captureVisualHistorySelection(
+      const capture = lease?.spec.retainedHistoryPresentation
+        ? captureRetainedVisualHistorySelection : captureVisualHistorySelection;
+      const current = capture(
         surface,
         () =>
           structuralCaptureFor(
@@ -11654,10 +13931,36 @@ const failVisualSynchronization = useCallback(
       }
       let matches = !target || (target.startContainer === range.startContainer && target.startOffset === range.startOffset &&
         target.endContainer === range.endContainer && target.endOffset === range.endOffset);
+      if (!matches && target && !range.collapsed) {
+        const equivalentEndpoint = (left: Node, leftOffset: number, right: Node, rightOffset: number): boolean => {
+          if (left === right) return leftOffset === rightOffset;
+          const wrapper = left instanceof HTMLElement ? left : right instanceof HTMLElement ? right : null;
+          const text = left instanceof Text ? left : right instanceof Text ? right : null;
+          if (!wrapper || !text || !surface.contains(wrapper) || wrapper.firstChild !== text
+            || wrapper.childNodes.length !== 1 || !['A', 'CODE', 'DEL', 'EM', 'STRONG'].includes(wrapper.tagName)
+            || wrapper.closest('pre, [contenteditable="false"]')
+            || wrapper.closest(VISUAL_MARKDOWN_READ_ONLY_SELECTOR)) return false;
+          const wrapperOffset = wrapper === left ? leftOffset : rightOffset;
+          const textOffset = text === left ? leftOffset : rightOffset;
+          return (wrapperOffset === 0 && textOffset === 0)
+            || (wrapperOffset === 1 && textOffset === text.length);
+        };
+        matches = equivalentEndpoint(range.startContainer, range.startOffset, target.startContainer, target.startOffset)
+          && equivalentEndpoint(range.endContainer, range.endOffset, target.endContainer, target.endOffset);
+      }
       if (!matches && target && range.collapsed && target.startContainer === target.endContainer &&
           target.startOffset === target.endOffset && event?.inputType !== 'insertReplacementText') {
+        const nativeText = nativeVisualTextBoundary(
+          surface, range.startContainer, range.startOffset
+        );
+        const targetText = nativeVisualTextBoundary(
+          surface, target.startContainer, target.startOffset
+        );
+        matches = Boolean(nativeText && targetText
+          && nativeText.node === targetText.node
+          && nativeText.offset === targetText.offset);
         const block = captureVisualCodeInputSnapshot(selectedVisualCodeBlock(surface));
-        if (block) {
+        if (!matches && block) {
           const nativeOffset = visualCodeBodyDomOffset(block.code, { node: range.startContainer, offset: range.startOffset });
           const targetOffset = visualCodeBodyDomOffset(block.code, { node: target.startContainer, offset: target.startOffset });
           matches = nativeOffset !== null && nativeOffset === targetOffset;
@@ -11668,6 +13971,101 @@ const failVisualSynchronization = useCallback(
         throw new Error('visual-editor-pending-input-unavailable');
       }
       return lease;
+    };
+    /**
+     * The canonical range one pending Backspace deletes, or null when this
+     * event's own target range is a shape this lease cannot describe.
+     *
+     * A null is NOT a lease failure. Every conjunct above it is a statement
+     * about the lease and still throws; the only thing that can refuse here is
+     * the target range's own geometry. Chromium names a Backspace at a block's
+     * first offset with a range across nodes while the accepted render is still
+     * settling, and the same key names an in-node range once it has landed, so
+     * the caller defers that key instead of failing the transfer.
+     */
+    const pendingHistoryInsertionDeletion = (
+      lease: PendingMarkdownTransfer, event: InputEvent
+    ): Readonly<{ start: number; end: number }> | null => {
+      const correspondence = lease.spec.correspondence;
+      const retained = lease.spec.retainedHistoryPresentation;
+      const selection = surface.ownerDocument.defaultView?.getSelection();
+      const targets = event.getTargetRanges?.() ?? [];
+      const target = targets[0];
+      const text = selection?.anchorNode;
+      const canonical = lease.spec.expectation.selection;
+      if (event.inputType !== 'deleteContentBackward' || !correspondence || !retained
+        || correspondence.origin !== retained.owned || correspondence.owner !== fullOwnerRef.current
+        || correspondence.source !== lease.spec.expectation.value
+        || correspondence.sourceRevision !== lease.spec.expectation.revision
+        || correspondence.history.undoDepth !== lease.spec.expectation.history?.undoDepth
+        || correspondence.history.redoDepth !== lease.spec.expectation.history?.redoDepth
+        || canonical.start !== canonical.end || !selection?.isCollapsed || !(text instanceof Text)
+        || selection.focusNode !== text || selection.focusOffset !== selection.anchorOffset
+        || targets.length !== 1 || !target
+        || text.parentElement?.closest(`pre, code, [contenteditable="false"], ${VISUAL_MARKDOWN_READ_ONLY_SELECTOR}`)) {
+        throw new Error('visual-editor-pending-input-unavailable');
+      }
+      if (target.startContainer !== text || target.endContainer !== text) {
+        return null;
+      }
+      if (target.endOffset !== selection.anchorOffset
+        || target.startOffset >= target.endOffset) {
+        throw new Error('visual-editor-pending-input-unavailable');
+      }
+      if (previousGraphemeBoundary(text.data, selection.anchorOffset) !== target.startOffset) {
+        throw new Error('visual-editor-pending-input-unavailable');
+      }
+      const origin = correspondence.origin;
+      const map = createVisualMarkdownImageSourceIntervalMap(
+        surface, origin.source, origin.visual, referenceContextFor(correspondence.source)
+      );
+      const boundary = mapTextBoundaryFromInterval(surface, text, selection.anchorOffset, origin.visual, map);
+      const targetStart = mapTextBoundaryFromInterval(surface, text, target.startOffset, origin.visual, map);
+      if (!boundary || !targetStart || targetStart.sourceOffset >= boundary.sourceOffset) {
+        throw new Error('visual-editor-pending-input-unavailable');
+      }
+      if (origin.source === correspondence.source && boundary.sourceOffset === canonical.start) {
+        const intent = visualInputIntent(surface, event, null, origin.source, origin.visual.length,
+          origin.visual, null, () => map, false, null,
+          acceptedDecodedBlockContext(
+            origin.source,
+            lease.spec.correspondence ?? null
+          ));
+        if (!intent || intent.sourceSelection.start !== targetStart.sourceOffset
+          || intent.sourceSelection.end !== boundary.sourceOffset
+          || !coversMarkdownUnits(origin.source, intent.sourceSelection.start, intent.sourceSelection.end)) {
+          throw new Error('visual-editor-pending-input-unavailable');
+        }
+        return intent.sourceSelection;
+      }
+      const insertions: Array<Readonly<{ from: number; to: number }>> = [];
+      correspondence.change.iterChangedRanges((fromA, toA, fromB, toB) => {
+        if (fromA === toA && fromA === boundary.sourceOffset && toB === canonical.start && fromB < toB) {
+          insertions.push({ from: fromB, to: toB });
+        }
+      });
+      const insertion = insertions.length === 1 ? insertions[0] : undefined;
+      if (!insertion) throw new Error('visual-editor-pending-input-unavailable');
+      const inserted = correspondence.source.slice(insertion.from, insertion.to);
+      const beforeText = text.data.slice(0, selection.anchorOffset);
+      const combined = beforeText + inserted;
+      const lastStart = previousGraphemeBoundary(combined, combined.length);
+      if (lastStart < beforeText.length || /[\r\n]/u.test(inserted)) {
+        throw new Error('visual-editor-pending-input-unavailable');
+      }
+      const start = insertion.from + lastStart - beforeText.length;
+      const end = insertion.to;
+      let plain = false;
+      let unsafe = false;
+      markdownLanguage.parser.parse(correspondence.source).iterate({ enter: (node) => {
+        if (node.from >= end || node.to <= start) return;
+        if (node.name === 'Paragraph') plain = true;
+        if (!['Document', 'Paragraph', 'Link', 'Emphasis', 'StrongEmphasis', 'Strikethrough'].includes(node.name)) unsafe = true;
+      } });
+      if (!plain || unsafe || !coversMarkdownUnits(correspondence.source, start, end)) {
+        throw new Error('visual-editor-pending-input-unavailable');
+      }
+      return { start, end };
     };
     /**
      * The operation-bound correspondence that survives one more KNOWN canonical
@@ -11705,7 +14103,7 @@ const failVisualSynchronization = useCallback(
       if (!readOnlySnapshot) return null;
       try {
         assertVisualMarkdownReadOnlySnapshot(surface, readOnlySnapshot);
-        if (serializeVisualMarkdown(surface) !== origin.visual) return null;
+        if (!visualSerializationMatchesCommitted(serializeVisualMarkdown(surface), origin.visual)) return null;
       } catch {
         return null;
       }
@@ -11805,6 +14203,7 @@ const failVisualSynchronization = useCallback(
       // top-level window this owner cannot prove. It publishes nothing and the
       // next demand re-authenticates formally.
       ownedDomRef.current = null;
+      acceptedDomCorrespondenceRef.current = null;
       const history = documentHistoryState(documentSession.document);
       const revision = documentSession.document.getRevision?.();
       publishPendingTransfer({
@@ -11877,10 +14276,13 @@ const failVisualSynchronization = useCallback(
         text
       );
     };
-    const applyPendingCanonicalText = (lease: PendingMarkdownTransfer, text: string, nativeTyping = false): void => {
+    const applyPendingCanonicalText = (
+      lease: PendingMarkdownTransfer, text: string, nativeTyping = false,
+      provenRange?: Readonly<{ start: number; end: number }>
+    ): void => {
       assertPendingCanonicalLease(lease);
       const source = lease.spec.expectation.value;
-      const { start, end } = lease.spec.expectation.selection;
+      const { start, end } = provenRange ?? lease.spec.expectation.selection;
       const replacement = text.replace(/\r\n|\r/g, '\n');
       let value = source.slice(0, start) + replacement + source.slice(end);
       if (value === source) return;
@@ -11932,7 +14334,9 @@ const failVisualSynchronization = useCallback(
         },
         kind: 'native',
         placement: { kind: 'accepted-preview' },
-        presentation: 'structural',
+        presentation: lease.spec.retainedHistoryPresentation ? 'plain' : 'structural',
+        ...(lease.spec.retainedHistoryPresentation
+          ? { retainedHistoryPresentation: lease.spec.retainedHistoryPresentation } : {}),
         ...(correspondence
           ? {
               correspondence: {
@@ -11947,6 +14351,150 @@ const failVisualSynchronization = useCallback(
         pendingTransferRef.current = { ...pendingTransferRef.current, restoreFocus: false };
       }
     };
+    /**
+     * Replays the Backspaces a settling render deferred, against the accepted
+     * state that render published.
+     *
+     * A synthetic key cannot make the browser perform its own default edit, so
+     * this does not re-dispatch the event: it asks the same intent owner the
+     * ordinary path asks for the canonical range of a backward deletion at the
+     * settled caret, and writes that range through the same canonical writer
+     * every pending input uses. The key is dropped silently unless the accepted
+     * expectation is still exactly the one the refusing lease named, and unless
+     * the settled caret has a whole Markdown unit before it in its own Text run
+     * (a block start is a browser-owned cross-root join, which no canonical
+     * range here can describe).
+     *
+     * Acceptance may realign the canonical caret after it placed it - a
+     * document-end placement inside a trailing fenced block lands at the code
+     * element's content boundary - and publishes that selection instead of the
+     * offset the request named. The deferred key belongs to the caret the
+     * render settled on, so the write lease is re-based to the published
+     * selection, but only after that selection is proved to be the canonical
+     * one. A selection that has already moved on drops the key; it never turns
+     * a legitimate deferred press into a transfer failure.
+     *
+     * One press is written per acceptance. The remaining presses are re-armed
+     * against the transfer this write publishes, so each one lands as its own
+     * edit when that render settles instead of being lost or merged.
+     */
+    const replayDeferredPendingBackspace = (
+      acceptedExpectation: FullCanonicalExpectation,
+      publishedSelection: VisualSelectionSourceRange
+    ): void => {
+      const deferred = deferredPendingBackspaceRef.current;
+      if (!deferred) return;
+      deferredPendingBackspaceRef.current = null;
+      if (!active
+        || externalChangeReportedRef.current
+        || visualTransferFailureReportedRef.current) return;
+      const lease = deferred.lease;
+      const expectation = lease.spec.expectation;
+      if (
+        expectation.value !== acceptedExpectation.value
+        || expectation.revision !== acceptedExpectation.revision
+        || expectation.selection.start !== acceptedExpectation.selection.start
+        || expectation.selection.end !== acceptedExpectation.selection.end
+        || expectation.selection.direction !== acceptedExpectation.selection.direction
+        || expectation.history?.undoDepth !== acceptedExpectation.history?.undoDepth
+        || expectation.history?.redoDepth !== acceptedExpectation.history?.redoDepth
+      ) return;
+      // The re-based lease may only claim the selection acceptance really
+      // published: anything else means the canonical state moved on between
+      // publication and this replay, and the key is not this owner's to write.
+      const canonicalSelection = documentSession.document.getSelection?.();
+      if (
+        !canonicalSelection
+        || canonicalSelection.start !== publishedSelection.start
+        || canonicalSelection.end !== publishedSelection.end
+        || canonicalSelection.direction !== publishedSelection.direction
+      ) return;
+      const writeLease: PendingMarkdownTransfer =
+        expectation.selection.start === publishedSelection.start
+        && expectation.selection.end === publishedSelection.end
+        && expectation.selection.direction === publishedSelection.direction
+          ? lease
+          : {
+              ...lease,
+              spec: {
+                ...lease.spec,
+                expectation: { ...expectation, selection: publishedSelection }
+              }
+            };
+      const source = sourceMarkdownRef.current;
+      const visual = visualMarkdownRef.current;
+      const native = surface.ownerDocument.defaultView?.getSelection();
+      const text = native?.anchorNode;
+      if (
+        !native?.isCollapsed
+        || native.focusNode !== text
+        || !(text instanceof Text)
+        || !surface.contains(text)
+        || null === source
+        || null === visual
+        || source !== expectation.value
+      ) return;
+      const offset = native.anchorOffset;
+      if (offset <= 0) return;
+      const previous = previousGraphemeBoundary(text.data, offset);
+      if (previous >= offset) return;
+      const target = surface.ownerDocument.createRange();
+      target.setStart(text, previous);
+      target.setEnd(text, offset);
+      const replay = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'deleteContentBackward'
+      });
+      Object.defineProperty(replay, 'getTargetRanges', {
+        configurable: true,
+        value: () => [target]
+      });
+      try {
+        const record = visualSourceIntervalMapRef.current;
+        const intent = visualInputIntent(
+          surface,
+          replay,
+          null,
+          source,
+          visual.length,
+          visual,
+          previewSnapshotRef.current.editMap ?? null,
+          () => record
+            && record.sourceMarkdown === source
+            && record.visualMarkdown === visual
+            ? record.map
+            : createVisualMarkdownSourceIntervalMap(source, visual),
+          false,
+          null,
+          acceptedDecodedBlockContext(source)
+        );
+        if (!intent
+          || intent.sourceSelection.start >= intent.sourceSelection.end
+          || !coversMarkdownUnits(
+            source,
+            intent.sourceSelection.start,
+            intent.sourceSelection.end
+          )) return;
+        applyPendingCanonicalText(writeLease, '', false, intent.sourceSelection);
+      } catch (error) {
+        failPendingTransfer(
+          visualEditorFailureCode(error, 'visual-editor-pending-input-unavailable')
+        );
+        return;
+      }
+      const remaining = deferred.count - 1;
+      if (remaining <= 0) return;
+      const next = pendingTransferRef.current;
+      if (!next) {
+        // Every press must become its own edit, so a write that published no
+        // transfer to carry the remaining presses is reported, never dropped.
+        failPendingTransfer('visual-editor-pending-input-unavailable');
+        return;
+      }
+      deferredPendingBackspaceRef.current = { count: remaining, lease: next };
+    };
+    replayDeferredPendingBackspaceRef.current = replayDeferredPendingBackspace;
     const finishPendingCompositionDom = (restoreSelection: boolean): void => {
       const draft = pendingComposition;
       pendingComposition = null;
@@ -11975,7 +14523,7 @@ const failVisualSynchronization = useCallback(
       if (!sameWindow && restoreSelection) {
         const map = previewSnapshotRef.current.editMap;
         if (!map) throw new Error('visual-editor-selection-map-missing');
-        placeVisualSelectionFromAcceptedSourceRange(surface, draft.lease.spec.expectation.value, map, draft.lease.spec.expectation.selection, null);
+        placeVisualSelectionFromAcceptedSourceRange(surface, draft.lease.spec.expectation.value, map, draft.lease.spec.expectation.selection, null, referenceContextFor(draft.lease.spec.expectation.value));
       }
     };
     const invalidatePendingInputSelection = (): void => {
@@ -11983,6 +14531,7 @@ const failVisualSynchronization = useCallback(
         cancelledPendingComposition = true;
         try { finishPendingCompositionDom(false); }
         catch (error) { failPendingTransfer(visualEditorFailureCode(error, 'visual-editor-pending-selection-stale')); }
+        finally { releaseCompositionSurface(compositionSurfaceLease); }
       }
       const lease = pendingTransferRef.current;
       if (lease) pendingTransferRef.current = { ...lease, visualSelection: null, restoreFocus: false };
@@ -12009,11 +14558,33 @@ const failVisualSynchronization = useCallback(
       ) {
         throw new Error('visual-editor-code-body-map-stale');
       }
+      const witness = structure.baseIntervalWitness;
+      if (witness && (witness.sourceMarkdown !== structure.baseMarkdown
+        || witness.codeOrdinal !== structure.codeOrdinal
+        || witness.interval.codeOrdinal !== structure.codeOrdinal
+        || (witness.interval as VisualCodeBodyInterval & { sourceMarkdown?: unknown }).sourceMarkdown !== structure.baseMarkdown)) {
+        throw new Error('visual-editor-code-body-map-stale');
+      }
+      let intervals: ReturnType<typeof visualCodeBodyIntervalMap> | undefined;
+      const intervalAtOrdinal = (markdown: string, codeOrdinal: number): VisualCodeBodyInterval => {
+        if (markdown !== structure.baseMarkdown) {
+          throw new Error('visual-editor-code-body-map-stale');
+        }
+        if (witness) {
+          if (codeOrdinal !== witness.codeOrdinal) throw new Error('visual-editor-code-body-map-stale');
+          return witness.interval;
+        }
+        intervals ??= visualCodeBodyIntervalMap(markdown);
+        const interval = intervals.get(codeOrdinal);
+        if (!interval) throw new Error('visual-editor-code-body-map-invalid');
+        return interval;
+      };
       const ordinal = codeOrdinalForInputBlock(
         inputBlock,
         structure.baseMarkdown,
         true,
-        true
+        true,
+        intervalAtOrdinal
       );
       if (ordinal !== structure.codeOrdinal) {
         throw new Error('visual-editor-code-body-map-stale');
@@ -12021,7 +14592,12 @@ const failVisualSynchronization = useCallback(
       const expansion = expandVisualCodeFenceForBody(
         structure.baseMarkdown,
         ordinal,
-        inputBlock.codeText
+        inputBlock.codeText,
+        witness ?? {
+          sourceMarkdown: structure.baseMarkdown,
+          codeOrdinal: ordinal,
+          interval: intervalAtOrdinal(structure.baseMarkdown, ordinal)
+        }
       );
       if (!expansion) return null;
       const sourceChange = pending.sourceChange;
@@ -12485,7 +15061,8 @@ const failVisualSynchronization = useCallback(
             selection: committedResult.selection,
             ...(pending.historySelectionBefore ? {
               historySelectionBefore: pending.historySelectionBefore,
-              recordHistorySelection: !startsNativeTypingRun
+              recordHistorySelection: !startsNativeTypingRun,
+              ...(startsNativeTypingRun ? { carryHistorySelectionWithoutEvent: true } : {})
             } : {}),
             value: committedResult.sourceMarkdown,
             ...(null === expandedPreviewSource &&
@@ -12499,6 +15076,14 @@ const failVisualSynchronization = useCallback(
               ? {
                   historySelectionWitness:
                     pending.historySelectionWitness
+                }
+              : {}),
+            ...(pending.terminalTextRun
+              ? {
+                  terminalTextRun: pending.terminalTextRun,
+                  ...(pending.historyBefore
+                    ? { historyBeforeSnapshot: pending.historyBefore }
+                    : {})
                 }
               : {}),
             // A plain native character typed into one code body continues the
@@ -12636,7 +15221,7 @@ const failVisualSynchronization = useCallback(
               metadata: retainedLedger.nodes.map(fullOwnedNodeMetadata),
               nodes: retainedLedger.nodes
             }
-          : consumeVerifiedNativeRootJoin();
+          : consumeVerifiedNativeRootLedger();
         publishOwnedDom(
           committedResult.sourceMarkdown,
           committedVisualMarkdown,
@@ -12647,7 +15232,7 @@ const failVisualSynchronization = useCallback(
         // A zero-byte own native join changes the node window without changing
         // the source, so the ordinary source-change publication never runs.
         // Only the verified bounded join witness may refresh the pairing here.
-        const joinLedger = consumeVerifiedNativeRootJoin();
+        const joinLedger = consumeVerifiedNativeRootLedger();
         if (joinLedger) {
           acceptedHtmlRef.current = surface.innerHTML;
           acceptedNodesRef.current = joinLedger.nodes;
@@ -12704,7 +15289,8 @@ const failVisualSynchronization = useCallback(
       return true;
     };
 
-    const commitVisualInput = (): boolean => {
+    const commitVisualInput = (historySelectionBefore?: VisualSelectionSourceRange): boolean => {
+      try {
       pendingUnmappedVisualInputRef.current = false;
       continuingUnmappedVisualInputRef.current = false;
       if (visualTransferFailureReportedRef.current) {
@@ -12726,11 +15312,15 @@ const failVisualSynchronization = useCallback(
         return true;
       }
       visualInputPendingRef.current = false;
-      return synchronizeMarkdown(
-        compositionCodeBodyLocalPre
+      return synchronizeMarkdown({
+        ...(compositionCodeBodyLocalPre
           ? { localCodeBodyInputPre: compositionCodeBodyLocalPre }
-          : { rejectCodeStructureMismatch: compositionCodeBodyCommit }
-      );
+          : { rejectCodeStructureMismatch: compositionCodeBodyCommit }),
+        ...(historySelectionBefore ? { historySelectionBefore } : {})
+      });
+      } finally {
+        if (!processingNativeBeforeInput) releaseNativeInputSurface();
+      }
     };
     const flushVisualInput = (): boolean => {
       const wasPending = visualInputPendingRef.current;
@@ -12738,7 +15328,10 @@ const failVisualSynchronization = useCallback(
         clearTimeout(visualInputTimerRef.current);
         visualInputTimerRef.current = null;
       }
-      if (!wasPending) return true;
+      if (!wasPending) {
+        if (!processingNativeBeforeInput) releaseNativeInputSurface();
+        return true;
+      }
       return commitVisualInput();
     };
     const scheduleVisualInput = (): void => {
@@ -12753,7 +15346,10 @@ const failVisualSynchronization = useCallback(
     };
     flushVisualInputRef.current = flushVisualInput;
 
-    const clearWholeVisualDocument = (): boolean => {
+    const clearWholeVisualDocument = (
+      historySelectionBefore: VisualSelectionSourceRange,
+      historySelectionWitness: VisualHistorySelectionWitness
+    ): boolean => {
       const sourceMarkdown = sourceMarkdownRef.current;
       if (null === sourceMarkdown) {
         return failVisualSynchronization(
@@ -12769,10 +15365,11 @@ const failVisualSynchronization = useCallback(
         resetEmptyVisualParagraph(surface);
         applyDocumentChange({
           changes: { from: 0, insert: '', to: sourceMarkdown.length },
+          historySelectionBefore,
           recordHistorySelection: true,
           selection,
           value: ''
-        });
+        }, { historySelectionWitness });
         clearVisualLocalCodeBodyProvenance();
         visualCodeBodyPreviewSourceRef.current = '';
         visualCodeBodyPreviewStructureRef.current =
@@ -12949,10 +15546,47 @@ const failVisualSynchronization = useCallback(
           normalizeVisualCodePlaceholders(surface, 'historyUndo', pre);
         }
       }
+      let restoredTerminalTextRun: TerminalTextRunWitness | undefined;
+      const restoreTerminalTextRun = (): boolean => {
+        const witness = snapshot.terminalTextRun;
+        if (!witness) return false;
+        const identity = terminalTextRunIdentityFor(
+          fullOwnerRef.current,
+          snapshot.historyState,
+          snapshot.acceptedPreview
+        );
+        const applied = applyTerminalTextRunWitness(
+          surface,
+          snapshot.markdown,
+          witness,
+          true,
+          identity
+        );
+        if (applied) {
+          const accepted = previewSnapshotRef.current;
+          restoredTerminalTextRun = {
+            ...witness,
+            identity: terminalTextRunIdentityFor(
+              fullOwnerRef.current,
+              documentHistoryState(documentSession.document),
+              {
+                mapped: Boolean(accepted.editMap),
+                markdown: snapshot.markdown,
+                revision: accepted.revision,
+                signature: accepted.signature
+              }
+            )
+          };
+        }
+        return applied;
+      };
       const sourceSelection = snapshot.selection?.sourceSelection;
       const restorePath =
-        (!sourceSelection || snapshot.selection?.nativePathPaired === true)
-        && restoreVisualHistorySelection(surface, snapshot.selection);
+        restoreTerminalTextRun()
+        || (
+          (!sourceSelection || snapshot.selection?.nativePathPaired === true)
+          && restoreVisualHistorySelection(surface, snapshot.selection)
+        );
       if (!restorePath) {
         if (!sourceSelection) {
           throw new Error('visual-editor-history-selection-restore-failed');
@@ -12966,6 +15600,9 @@ const failVisualSynchronization = useCallback(
       }
       captureSnapshot(snapshot.markdown, {
         historyRestore: true,
+        ...(restoredTerminalTextRun
+          ? { terminalTextRun: restoredTerminalTextRun }
+          : {}),
         ...(snapshot.tablePresentation ? { tablePresentation: snapshot.tablePresentation } : {})
       });
       const restoredEmpty = snapshot.emptyParagraph
@@ -13010,15 +15647,59 @@ const failVisualSynchronization = useCallback(
       if (documentSession.document.getValue() !== snapshot.markdown) {
         throw new Error('visual-editor-history-snapshot-stale');
       }
+      const recapturedSnapshot = captureVisualHistorySnapshot(
+        snapshot.markdown,
+        surface.innerHTML,
+        snapshot.tablePresentation,
+        restoredTerminalTextRun ?? null
+      );
       visualHistorySnapshotsRef.current.set(historyState.undoDepth, {
         kind: 'snapshot',
         markdown: snapshot.markdown,
-        snapshot: captureVisualHistorySnapshot(
-          snapshot.markdown,
-          surface.innerHTML,
-          snapshot.tablePresentation
-        )
+        snapshot: snapshot.selection?.sourceSelection
+          ? { ...recapturedSnapshot, selection: snapshot.selection }
+          : recapturedSnapshot
       });
+    };
+
+    const historyCorrespondence = (
+      origin: FullOwnedDom | undefined,
+      prior: FullPendingDomCorrespondence | undefined,
+      before: string,
+      beforeRevision: number | undefined,
+      beforeHistory: DocumentHistoryState,
+      changes: ReadonlyArray<Readonly<{ from: number; to: number; insert: string }>> | null,
+      after: string,
+      revision: number | undefined,
+      history: DocumentHistoryState
+    ): FullPendingDomCorrespondence | null => {
+      if (!origin || origin.owner !== fullOwnerRef.current || ownedDomRef.current !== origin
+        || !fullOwnedDomMatches(surface, origin) || !changes
+        || !Number.isSafeInteger(beforeRevision) || !Number.isSafeInteger(revision)
+        || revision !== (beforeRevision as number) + 1) return null;
+      let offset = 0;
+      let observed = '';
+      for (const change of changes) {
+        if (!Number.isSafeInteger(change.from) || !Number.isSafeInteger(change.to)
+          || change.from < offset || change.to < change.from || change.to > before.length) return null;
+        observed += before.slice(offset, change.from) + change.insert;
+        offset = change.to;
+      }
+      observed += before.slice(offset);
+      if (observed !== after) return null;
+      let descriptor: ChangeDesc;
+      try { descriptor = ChangeSet.of(changes, before.length, '\n').desc; }
+      catch { return null; }
+      if (prior && prior.origin === origin && prior.owner === fullOwnerRef.current
+        && prior.source === before && prior.sourceRevision === beforeRevision
+        && prior.history.undoDepth === beforeHistory.undoDepth
+        && prior.history.redoDepth === beforeHistory.redoDepth) {
+        try { descriptor = prior.change.composeDesc(descriptor); }
+        catch { return null; }
+      } else if (origin.source !== before || origin.sourceRevision !== beforeRevision) return null;
+      if (descriptor.length !== origin.source.length || descriptor.newLength !== after.length) return null;
+      return { change: descriptor, history, insertionOwner: null, origin,
+        owner: fullOwnerRef.current, source: after, sourceRevision: revision as number };
     };
 
     const runHistory = (redo: boolean): boolean => {
@@ -13033,11 +15714,23 @@ const failVisualSynchronization = useCallback(
         try {
           assertPendingCanonicalLease(transfer);
           assertPendingInputDom();
+          if (transfer.spec.retainedHistoryPresentation) {
+            const current = captureRetainedVisualHistorySelection(surface);
+            if (
+              !transfer.visualSelection
+              || !current
+              || !visualHistorySelectionEqual(transfer.visualSelection, current)
+            ) throw new Error('visual-editor-pending-selection-stale');
+          }
           const before = documentHistoryState(documentSession.document);
           if (redo ? before.redoDepth === 0 : before.undoDepth === 0) return false;
+          const beforeValue = documentSession.document.getValue();
+          const beforeRevision = documentSession.document.getRevision?.();
+          const observed: { changes: ReadonlyArray<Readonly<{ from: number; to: number; insert: string }>> | null } = { changes: null };
           let changed: boolean;
           selfWriteRef.current = true;
-          try { changed = redo ? documentSession.document.redo() : documentSession.document.undo(); }
+          try { changed = redo ? documentSession.document.redo((changes) => { observed.changes = changes; })
+            : documentSession.document.undo((changes) => { observed.changes = changes; }); }
           finally { selfWriteRef.current = false; }
           if (!changed) return false;
           const value = documentSession.document.getValue();
@@ -13049,6 +15742,17 @@ const failVisualSynchronization = useCallback(
           onMarkdownChange();
           const selection = documentSession.document.getSelection();
           const revision = documentSession.document.getRevision?.();
+          const correspondence = historyCorrespondence(transfer.spec.retainedHistoryPresentation?.owned,
+            transfer.spec.correspondence, beforeValue, beforeRevision, before, observed.changes, value, revision, history);
+          updateAcceptedDomCorrespondence(
+            beforeValue,
+            value,
+            observed.changes ?? [],
+            beforeRevision,
+            before,
+            revision,
+            history
+          );
           publishPendingTransfer({
             expectation: {
               history,
@@ -13058,7 +15762,11 @@ const failVisualSynchronization = useCallback(
             },
             kind: 'native',
             placement: { kind: 'accepted-preview' },
-            presentation: 'structural'
+            presentation: 'plain',
+            ...(correspondence ? { correspondence } : {}),
+            ...(transfer.spec.retainedHistoryPresentation
+              ? { retainedHistoryPresentation: transfer.spec.retainedHistoryPresentation }
+              : {})
           });
           return true;
         } catch (error) {
@@ -13072,7 +15780,8 @@ const failVisualSynchronization = useCallback(
           const readOnly = readOnlySnapshotRef.current;
           if (!readOnly) throw new Error('visual-editor-read-only-snapshot-missing');
           assertVisualMarkdownReadOnlySnapshot(surface, readOnly);
-          if (serializeVisualMarkdown(surface) !== visualMarkdownRef.current) {
+          if (null === visualMarkdownRef.current
+            || !visualSerializationMatchesCommitted(serializeVisualMarkdown(surface), visualMarkdownRef.current)) {
             throw new Error('visual-editor-canonical-change-dom-stale');
           }
           const depth = documentHistoryState(documentSession.document).undoDepth;
@@ -13115,6 +15824,13 @@ const failVisualSynchronization = useCallback(
         currentMarkdown,
         surface.innerHTML
       );
+      const retainedOwned = ownedDomRef.current;
+      const retainedReadOnly = readOnlySnapshotRef.current;
+      const retainedHistoryPresentation = retainedOwned && retainedReadOnly
+        && retainedOwned.sourceRevision === documentSession.document.getRevision?.()
+        && ownedDomIsCurrent()
+        ? { owned: retainedOwned, readOnly: retainedReadOnly }
+        : null;
       const targetDepth = historyBefore.undoDepth + (redo ? 1 : -1);
       const targetSlot = visualHistorySnapshotsRef.current.get(targetDepth);
       const targetHasTablePresentation = targetSlot?.kind === 'snapshot'
@@ -13133,6 +15849,8 @@ const failVisualSynchronization = useCallback(
       }
       let changed = false;
       let previewRequested = false;
+      const historyRevisionBefore = documentSession.document.getRevision?.();
+      const observed: { changes: ReadonlyArray<Readonly<{ from: number; to: number; insert: string }>> | null } = { changes: null };
       try {
         const protectedSnapshot = readOnlySnapshotRef.current;
         if (!protectedSnapshot) throw new Error('visual-editor-read-only-snapshot-missing');
@@ -13140,8 +15858,8 @@ const failVisualSynchronization = useCallback(
         selfWriteRef.current = true;
         try {
           changed = redo
-            ? documentSession.document.redo()
-            : documentSession.document.undo();
+            ? documentSession.document.redo((changes) => { observed.changes = changes; })
+            : documentSession.document.undo((changes) => { observed.changes = changes; });
         } finally {
           selfWriteRef.current = false;
         }
@@ -13153,6 +15871,20 @@ const failVisualSynchronization = useCallback(
         }
         const targetSnapshot =
           targetSlot?.kind === 'snapshot' ? targetSlot.snapshot : null;
+        const targetHistorySnapshotProof = targetSnapshot
+          && targetSlot?.kind === 'snapshot'
+          && targetSnapshot.terminalTextRun
+          && targetSnapshot.acceptedPreview.terminalTextRun === targetSnapshot.terminalTextRun
+          ? { depth: targetDepth, slot: targetSlot, snapshot: targetSnapshot }
+          : undefined;
+        const targetSelectionProof = targetSnapshot?.selection?.sourceSelection
+          ? {
+              sourceSelection: {
+                ...targetSnapshot.selection.sourceSelection
+              },
+              witness: targetSnapshot.selection
+            }
+          : undefined;
         const restoreInPlace =
           null !== targetSnapshot
           && visualHistorySnapshotIsRestorable(targetSnapshot);
@@ -13181,11 +15913,13 @@ const failVisualSynchronization = useCallback(
           sourceMarkdownRef.current = targetMarkdown;
           const selection = documentSession.document.getSelection();
           const revision = documentSession.document.getRevision?.();
+          const correspondence = historyCorrespondence(retainedHistoryPresentation?.owned, undefined,
+            currentMarkdown, historyRevisionBefore, historyBefore, observed.changes, targetMarkdown, revision, historyAfter);
           const presentation = targetSnapshot?.tablePresentation;
           const historyOriginStillOwned = Boolean(
             ownedHistoryOrigin && ownedDomRef.current === ownedHistoryOrigin
             && fullOwnedDomMatches(surface, ownedHistoryOrigin)
-            && serializeVisualMarkdown(surface) === ownedHistoryOrigin.visual
+            && visualSerializationMatchesCommitted(serializeVisualMarkdown(surface), ownedHistoryOrigin.visual)
           );
           if (historyOriginStillOwned) assertVisualMarkdownReadOnlySnapshot(surface, protectedSnapshot);
           const historyTablePresentation: FullHistoryTablePresentation | null =
@@ -13263,18 +15997,32 @@ const failVisualSynchronization = useCallback(
             {
               expectation: {
                 history: historyAfter,
+                ...(undefined !== revision ? { revision } : {}),
                 selection,
                 value: targetMarkdown
               },
               ...(selectionOrigin ? { selectionOrigin } : {}),
+              ...(correspondence ? { correspondence } : {}),
               kind: 'history',
+              ...(retainedHistoryPresentation ? { retainedHistoryPresentation } : {}),
               placement: acceptsMappedPreview
                 ? { kind: 'accepted-preview' }
                 : { kind: 'source' },
               presentation: 'plain',
               ...(historyTablePresentation || rebuildSlot || emptyParagraph
+                || targetSelectionProof
+                || targetSnapshot?.acceptedPreview.terminalTextRun
                 ? {
                     historyProof: {
+                      ...(targetSelectionProof
+                        ? { selection: targetSelectionProof }
+                        : {}),
+                      ...(targetSnapshot?.acceptedPreview.terminalTextRun
+                        ? { acceptedPreview: targetSnapshot.acceptedPreview }
+                        : {}),
+                      ...(targetHistorySnapshotProof
+                        ? { historySnapshot: targetHistorySnapshotProof }
+                        : {}),
                       ...(emptyParagraph ? { emptyParagraph } : {}),
                       ...(historyTablePresentation
                         ? { tablePresentation: historyTablePresentation }
@@ -13321,12 +16069,17 @@ const failVisualSynchronization = useCallback(
               targetMarkdown,
               previewSnapshotRef.current.editMap,
               operationSelection!,
-              null
+              null,
+              referenceContextFor(targetMarkdown)
             );
             ownerPlacedSelectionRef.current =
               captureVisualHistorySelection(surface);
-          } catch {
-            // The snapshot placement stands; see above.
+          } catch (error) {
+            // A snapshot placement stands. Without one the caret is gone, and
+            // the next key would land wherever the browser chooses.
+            if (!ownerPlacedSelectionRef.current) {
+              onFailure(visualEditorFailureCode(error, 'visual-editor-selection-map-failed'));
+            }
           }
         }
         onMarkdownChange();
@@ -13557,7 +16310,8 @@ const failVisualSynchronization = useCallback(
                     witness,
                     source,
                     baseline,
-                    previewSnapshotRef.current.editMap ?? null
+                    previewSnapshotRef.current.editMap ?? null,
+                    acceptedDecodedBlockContext(source)
                   )
                 : null;
               if (localOwnedTextRoot && !formalMapping) {
@@ -13764,8 +16518,7 @@ const failVisualSynchronization = useCallback(
         compositionOrigin
         && nativeAtEnd?.isCollapsed
         && nativeAtEnd.anchorNode === compositionOrigin.textNode
-        && compositionOrigin.textNode.isConnected
-        && surface.contains(compositionOrigin.textNode)
+        && compositionOriginTextIsMounted(surface, compositionOrigin)
         && compositionOrigin.textNode.data === expectedCommittedText
         && nativeAtEnd.anchorOffset >= compositionOrigin.textOffset
         && nativeAtEnd.anchorOffset
@@ -13806,7 +16559,24 @@ const failVisualSynchronization = useCallback(
             + compositionOrigin.visual.slice(visualRange.end)
         };
       })();
-      if (compositionOrigin?.localCertificate && !compositionOriginCommit) {
+      /**
+       * A local composition certificate is a statement about one exact native
+       * Text node. While that node is still the mounted one the certificate
+       * was captured on, a settlement that cannot reproduce the certified pair
+       * proves the DOM moved underneath it and must fail closed. Once the node
+       * itself is gone the certificate has no subject left - there is no stale
+       * pair left to protect - and the ordinary synchronizer owns the surface,
+       * re-deriving the whole commit from the live DOM.
+       */
+      const certifiedCompositionOriginIsMounted = compositionOriginTextIsMounted(
+        surface,
+        compositionOrigin
+      );
+      if (
+        compositionOrigin?.localCertificate
+        && !compositionOriginCommit
+        && certifiedCompositionOriginIsMounted
+      ) {
         failVisualSynchronization(new Error('visual-editor-canonical-change-dom-stale'));
         return;
       }
@@ -13817,7 +16587,9 @@ const failVisualSynchronization = useCallback(
       compositionCodeBodyCommit = Boolean(
         codeBodyContext && !codeBodyContext.localPre
       );
+      const settlementLease = compositionSurfaceLease;
       queueMicrotask(() => {
+        try {
         compositionCommitScheduled = false;
         // Reuse the same effect-local lifecycle gate as commitVisualInput.
         // The shared activeRef can belong to a newer activation; this queued
@@ -13839,6 +16611,27 @@ const failVisualSynchronization = useCallback(
           && nativeAtSettlement.focusNode === nativeWitness.focusNode
           && nativeAtSettlement.focusOffset === nativeWitness.focusOffset
         );
+        const compositionHistoryBefore = compositionOriginCommit
+          && compositionOrigin
+          && sourceMarkdownRef.current === compositionOrigin.source
+          && visualMarkdownRef.current === compositionOrigin.serializedVisual
+          && documentSession.document.getValue() === compositionOrigin.source
+          && documentSession.document.getRevision?.() === compositionOrigin.revision
+          ? {
+              direction: 'none' as const,
+              start: compositionOrigin.sourceRange.start,
+              end: compositionOrigin.sourceRange.end
+            }
+          : undefined;
+        const pendingCompositionResult = pendingVisualIntentResultRef.current;
+        if (compositionHistoryBefore && pendingCompositionResult
+          && pendingCompositionResult.baseSourceMarkdown === compositionOrigin?.source
+          && pendingCompositionResult.result.sourceMarkdown === compositionOriginCommit?.value) {
+          pendingVisualIntentResultRef.current = {
+            ...pendingCompositionResult,
+            historySelectionBefore: compositionHistoryBefore
+          };
+        }
         let ownerCompositionSettlement: Readonly<{
           selection: VisualSelectionSourceRange;
           value: string;
@@ -14057,11 +16850,12 @@ const failVisualSynchronization = useCallback(
             // ownerResult branch above is intentionally unavailable here.
             pendingVisualIntentResultRef.current = null;
             committed = synchronizeMarkdown({
+              ...(compositionHistoryBefore ? { historySelectionBefore: compositionHistoryBefore } : {}),
               mapSelectionWhenUnchanged: true,
               preferVisualSelection: true
             });
           } else {
-            committed = commitVisualInput();
+            committed = commitVisualInput(compositionHistoryBefore);
           }
         } finally {
           compositionCodeBodyCommit = false;
@@ -14153,7 +16947,8 @@ const failVisualSynchronization = useCallback(
                   end: compositionOriginCommit.insertionEnd,
                   start: compositionOriginCommit.insertionEnd
                 },
-                null
+                null,
+                referenceContextFor(settledSource)
               );
             } catch (error) {
               failVisualSynchronization(error);
@@ -14220,9 +17015,43 @@ const failVisualSynchronization = useCallback(
         } catch (error) {
           failVisualSynchronization(error);
         }
+        } finally {
+          releaseCompositionSurface(settlementLease);
+        }
       });
     };
+    const isNativeForwardDocumentEnd = (event: InputEvent): boolean => {
+      const native = surface.ownerDocument.defaultView?.getSelection();
+      const targets = event.getTargetRanges?.() ?? [];
+      const target = targets[0];
+      const node = native?.anchorNode;
+      const root = node ? directVisualBlockForSelectionNode(surface, node) : null;
+      const children = Array.from(surface.childNodes);
+      return Boolean(event.inputType === 'deleteContentForward' && targets.length === 1 && target?.collapsed
+        && native?.isCollapsed && node instanceof Text && native.focusNode === node
+        && native.anchorOffset === native.focusOffset && target.startContainer === node
+        && target.endContainer === node && target.startOffset === native.anchorOffset
+        && target.endOffset === native.anchorOffset && root instanceof HTMLElement
+        && root === surface.lastElementChild
+        && equivalentNativeBoundary(root, node, native.anchorOffset, root, root.childNodes.length)
+        && children.slice(children.indexOf(root) + 1).every((child) => child instanceof Text && /^\s*$/u.test(child.data))
+        && isVisualCaretAtAcceptedPasteDocumentBoundary(surface, 'end'));
+    };
     const handleBeforeInput = (event: InputEvent) => {
+      const codeIntervals = new Map<string, ReadonlyMap<number, VisualCodeBodyInterval>>();
+      const intervalsFor = (markdown: string): ReadonlyMap<number, VisualCodeBodyInterval> => {
+        let intervals = codeIntervals.get(markdown);
+        if (!intervals) {
+          intervals = visualCodeBodyIntervalMap(markdown);
+          codeIntervals.set(markdown, intervals);
+        }
+        return intervals;
+      };
+      const intervalAtOrdinal = (markdown: string, ordinal: number): VisualCodeBodyInterval => {
+        const interval = intervalsFor(markdown).get(ordinal);
+        if (!interval) throw new Error('visual-editor-code-body-map-invalid');
+        return interval;
+      };
       // A history command is not an edit gesture: it must first SETTLE the
       // pending edit whose pre-edit selection it is about to undo. Clearing or
       // replacing that operation's witness here would record the transient
@@ -14230,6 +17059,66 @@ const failVisualSynchronization = useCallback(
       // consumes the witness; only a non-history event starts a new one.
       const historyCommand =
         'historyUndo' === event.inputType || 'historyRedo' === event.inputType;
+      if (visualInputPendingRef.current
+        && pendingNativeOperationRef.current?.kind === 'range'
+        && pendingNativeOperationRef.current.candidate
+        && !flushVisualInput()) {
+        event.preventDefault();
+        return;
+      }
+      if (visualInputPendingRef.current && !pendingTransferRef.current && isNativeForwardDocumentEnd(event)
+        && !flushVisualInput()) {
+        event.preventDefault();
+        return;
+      }
+      if (!pendingTransferRef.current && !visualInputPendingRef.current && isNativeForwardDocumentEnd(event)) {
+        const owned = ownedDomRef.current;
+        if (!owned || owned.sourceRevision !== documentSession.document.getRevision?.() || !ownedDomIsCurrent()) {
+          if (event.cancelable) {
+            event.preventDefault();
+            onFailure('visual-editor-canonical-change-dom-stale');
+          } else {
+            failVisualSynchronization(new Error('visual-editor-canonical-change-dom-stale'));
+          }
+          return;
+        }
+      }
+      const matchingHistory = pendingTransferRef.current;
+      if (event.inputType === 'deleteContentBackward' && !event.isComposing && !composing
+        && !pendingComposition && matchingHistory?.spec.retainedHistoryPresentation
+        && matchingHistory.spec.retainedHistoryPresentation.owned.source === matchingHistory.spec.expectation.value) {
+        try {
+          const lease = pendingInputLease();
+          if (lease !== matchingHistory) throw new Error('visual-editor-pending-selection-stale');
+          pendingHistoryInsertionDeletion(lease, event);
+          const nativeBefore = captureRetainedVisualHistorySelection(surface);
+          const beforeDom = surface.cloneNode(true);
+          const walker = surface.ownerDocument.createTreeWalker(surface, NodeFilter.SHOW_ALL);
+          const beforeNodes: Node[] = [];
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) beforeNodes.push(node);
+          captureSnapshot(lease.spec.expectation.value);
+          const owned = ownedDomRef.current;
+          const nativeAfter = captureRetainedVisualHistorySelection(surface);
+          const afterWalker = surface.ownerDocument.createTreeWalker(surface, NodeFilter.SHOW_ALL);
+          const afterNodes: Node[] = [];
+          for (let node = afterWalker.nextNode(); node; node = afterWalker.nextNode()) afterNodes.push(node);
+          if (pendingTransferRef.current !== lease || !owned || owned.owner !== fullOwnerRef.current
+            || owned.source !== lease.spec.expectation.value
+            || owned.sourceRevision !== documentSession.document.getRevision?.()
+            || !fullOwnedDomMatches(surface, owned) || !nativeBefore || !nativeAfter
+            || !surface.isEqualNode(beforeDom) || beforeNodes.length !== afterNodes.length
+            || beforeNodes.some((node, index) => node !== afterNodes[index])
+            || !visualHistorySelectionEqual(nativeBefore, nativeAfter)) {
+            throw new Error('visual-editor-canonical-change-dom-stale');
+          }
+          pendingTransferRef.current = null;
+          onPendingChange(false);
+        } catch (error) {
+          if (event.cancelable) event.preventDefault();
+          onFailure(visualEditorFailureCode(error, 'visual-editor-pending-input-unavailable'));
+          return;
+        }
+      }
       pendingVisualEmptyStructuralInputRef.current = null;
       continuingUnmappedVisualInputRef.current = false;
       if (!historyCommand) pendingEditSelectionBeforeRef.current = null;
@@ -14274,6 +17163,308 @@ const failVisualSynchronization = useCallback(
         return;
       }
       completedPendingComposition = null;
+      if ('deleteContentBackward' === event.inputType && event.cancelable
+        && !event.isComposing && !composing && !pendingComposition) {
+        const captureTerminalEmptyIntent = (): Readonly<{
+          nativeOffset: 0 | 1;
+          source: string;
+        }> | null => {
+          const currentTarget = event.getTargetRanges?.()[0];
+          const source = sourceMarkdownRef.current;
+          const visual = visualMarkdownRef.current;
+          const owned = ownedDomRef.current;
+          const canonicalSelection = documentSession.document.getSelection?.();
+          const revision = documentSession.document.getRevision?.();
+          const nodes = Array.from(surface.childNodes);
+          const paragraphs = nodes.filter(
+            (node): node is HTMLParagraphElement =>
+              node instanceof HTMLParagraphElement
+          );
+          const paragraph = paragraphs[0];
+          const nativeSelection =
+            surface.ownerDocument.defaultView?.getSelection();
+          if (!paragraph) return null;
+          const targetStartOffset = currentTarget
+            ? terminalEmptyOffset(
+                surface,
+                paragraph,
+                currentTarget.startContainer,
+                currentTarget.startOffset
+              )
+            : null;
+          const targetEndOffset = currentTarget
+            ? terminalEmptyOffset(
+                surface,
+                paragraph,
+                currentTarget.endContainer,
+                currentTarget.endOffset
+              )
+            : null;
+          const nativeAnchorOffset = nativeSelection?.anchorNode
+            ? terminalEmptyOffset(
+                surface,
+                paragraph,
+                nativeSelection.anchorNode,
+                nativeSelection.anchorOffset
+              )
+            : null;
+          const nativeFocusOffset = nativeSelection?.focusNode
+            ? terminalEmptyOffset(
+                surface,
+                paragraph,
+                nativeSelection.focusNode,
+                nativeSelection.focusOffset
+              )
+            : null;
+          if (
+            !currentTarget?.collapsed
+            || null === targetStartOffset
+            || null === targetEndOffset
+            || 1 !== paragraphs.length
+            || nodes[0] !== paragraph
+            || paragraph.parentElement !== surface
+            || paragraph.childNodes.length !== 1
+            || !(paragraph.firstChild instanceof HTMLBRElement)
+            || nodes.some((node) => node !== paragraph
+              && (!(node instanceof Text) || !/^\s*$/u.test(node.data)))
+            || null === source
+            || null === visual
+            || ('' !== source && !isVisualMarkdownEmpty(source))
+            || owned?.owner !== fullOwnerRef.current
+            || owned.source !== source
+            || owned.visual !== visual
+            || documentSession.document.getValue() !== source
+            || owned.sourceRevision !== revision
+            || canonicalSelection?.direction !== 'none'
+            || canonicalSelection.start !== 0
+            || canonicalSelection.end !== 0
+            || !documentSession.document.isEditable()
+            || surface.ownerDocument.activeElement !== surface
+            || !ownedLedgerRetains(nodes)
+            || !nativeSelection
+            || nativeSelection.rangeCount !== 1
+            || !nativeSelection.isCollapsed
+            || !nativeSelection.anchorNode
+            || !nativeSelection.focusNode
+            || null === nativeAnchorOffset
+            || null === nativeFocusOffset
+          ) return null;
+          return { nativeOffset: nativeAnchorOffset, source };
+        };
+        const finishTerminalEmpty = (
+          intent: NonNullable<ReturnType<typeof captureTerminalEmptyIntent>>
+        ): void => {
+          if ('' === intent.source) return;
+          const historySelectionBefore = {
+            direction: 'none' as const,
+            end: 0,
+            start: 0
+          };
+          const terminalVisualSelection = {
+            anchor: { offset: intent.nativeOffset, path: [0] },
+            backward: false,
+            focus: { offset: intent.nativeOffset, path: [0] }
+          };
+          const historySelectionWitness =
+            captureVisualHistorySelectionWitness(
+              historySelectionBefore,
+              terminalVisualSelection
+            );
+          if (!historySelectionWitness) {
+            failVisualSynchronization(new Error(
+              'visual-editor-history-selection-witness-missing'
+            ));
+            return;
+          }
+          clearWholeVisualDocument(
+            historySelectionBefore,
+            historySelectionWitness
+          );
+        };
+        const initialTerminalIntent = captureTerminalEmptyIntent();
+        if (initialTerminalIntent) {
+          event.preventDefault();
+          if (!visualInputPendingRef.current) {
+            finishTerminalEmpty(initialTerminalIntent);
+            return;
+          }
+          if (!flushVisualInput()) return;
+          const currentTerminalIntent = captureTerminalEmptyIntent();
+          if (!currentTerminalIntent) return;
+          finishTerminalEmpty(currentTerminalIntent);
+          return;
+        }
+      }
+      // A paragraph whose previous sibling is a rendered code block has no
+      // editable character of its own at its start: the fence, the info string
+      // and the body bytes all belong to the block above. Chromium's default
+      // instead appends the paragraph to the retained PRE, which would publish
+      // the paragraph's text as code bytes. That default is what the press is
+      // owned for; what the owned press then does with the bytes is the
+      // ordinary single-byte deletion — the line ending that separates the two
+      // blocks — except where that byte is a block boundary's own terminator,
+      // which is owned byte-neutrally with the caret moved across it.
+      //
+      // The paragraph need not be the surface's own child: the same default
+      // reaches a paragraph nested one level down, in a list item or a block
+      // quote, and the same one-byte join owns it. The caret crosses into the
+      // code body only where that body has bytes and where the row above the
+      // caret is the fence line's own row; a nested paragraph and a body with no
+      // bytes are therefore owned by the deletion where the row above stands
+      // for nothing of its own, and not owned at all where it does not.
+      if ('deleteContentBackward' === event.inputType && event.cancelable
+        && !event.isComposing && !composing && !pendingComposition
+        && !pendingTransferRef.current && null === pendingNativeOperationRef.current) {
+        const native = surface.ownerDocument.defaultView?.getSelection();
+        const target = event.getTargetRanges?.()[0];
+        const paragraph = target?.endContainer instanceof HTMLElement
+          ? target.endContainer
+          : target?.endContainer?.parentElement ?? null;
+        const terminal = target?.startContainer;
+        const fence = paragraph?.previousElementSibling;
+        const code = fence instanceof HTMLPreElement
+          ? Array.from(fence.children).find(
+            (child): child is HTMLElement => 'CODE' === child.tagName
+          )
+          : undefined;
+        const fenceLineEnding = terminal instanceof Text
+          ? /(?:\r\n|\r|\n)$/u.exec(terminal.data)?.[0]
+          : undefined;
+        // The start side has two spellings of the same place. A body with bytes
+        // ends at the renderer's own line ending inside the code's terminal text
+        // run; a body with no bytes has no text run at all, so its end is the
+        // code element's own offset 0.
+        const emptyCodeBody = undefined !== code && null === code.firstChild;
+        const terminalAtBodyEnd = emptyCodeBody
+          ? terminal === code && 0 === target?.startOffset
+          : terminal instanceof Text && fenceLineEnding
+            && code?.lastChild === terminal
+            && target?.startOffset === terminal.data.length - fenceLineEnding.length;
+        // The row above the caret is the byte this press owns, so a press is
+        // owned by the movement — the caret crossing into a body it cannot
+        // otherwise enter — only where that row is a genuine block boundary,
+        // read from the accepted visual. A nested paragraph and a body with no
+        // bytes have no body byte to cross into, so they are bound to the row:
+        // their press is the ordinary deletion or it is not owned at all, and
+        // the row is therefore part of the claim itself rather than of the work
+        // the claim then does. Reading it without throwing is deliberate: the
+        // mapping throws when it cannot answer, and a press this predicate
+        // declines must still reach the generic path and its reported code.
+        const paragraphContainer = paragraph?.parentElement ?? null;
+        const rowBoundPress = emptyCodeBody
+          || (null !== paragraphContainer && paragraphContainer !== surface);
+        const ownedRowBeforeCaret = (): Readonly<{ length: number; point: number }> | null => {
+          const source = sourceMarkdownRef.current;
+          const visual = visualMarkdownRef.current;
+          if (null === source || null === visual) return null;
+          try {
+            return ownedRowTerminator(
+              source,
+              visualSelectionSourceRange(surface, source, visual, visual).start
+            );
+          } catch { return null; }
+        };
+        // Chromium spells the end of this target range either at the paragraph
+        // element itself or at the paragraph's first text run; both describe the
+        // same caret position at the paragraph's offset 0, so both must claim
+        // the press. The start side is left strict: only the code's terminal
+        // text run, with the offset sitting at the renderer's own line ending,
+        // or the code element of a body with no bytes, can lose a byte to this
+        // default.
+        const anchoredAtParagraphStart = undefined !== target
+          && 0 === target.endOffset
+          && (target.endContainer === paragraph
+            || (target.endContainer instanceof Text
+              && target.endContainer === paragraph?.firstChild));
+        if (target?.collapsed === false
+          && paragraph instanceof HTMLParagraphElement
+          && null !== paragraphContainer
+          && anchoredAtParagraphStart
+          && fence instanceof HTMLPreElement
+          && code && terminalAtBodyEnd
+          && native?.isCollapsed && native.anchorNode && native.anchorOffset === 0
+          && paragraph.contains(native.anchorNode)
+          && '' !== (paragraph.textContent ?? '').trim()
+          && (!rowBoundPress || null !== ownedRowBeforeCaret())) {
+          event.preventDefault();
+          try {
+            if (!event.cancelable) throw new Error('visual-editor-beforeinput-not-cancelable');
+            if (!flushVisualInput()) return;
+            const source = sourceMarkdownRef.current;
+            const visual = visualMarkdownRef.current;
+            const owned = ownedDomRef.current;
+            const nodes = Array.from(surface.childNodes);
+            const serializedSurface = serializeVisualMarkdown(surface);
+            const serializationMatchesCommitted = null !== visual
+              && visualSerializationMatchesCommitted(serializedSurface, visual);
+            // A surface differs from the accepted visual when the renderer
+            // respelled the declared run this press is about — one column,
+            // drawn as its own non-breaking byte or dropped, spelled the other
+            // way by the accepted visual. That is not a stale surface.
+            const declaredRunRespelling = !serializationMatchesCommitted
+              && null !== source && null !== visual
+              && visualSerializationRespellsDeclaredRunOnly(source, serializedSurface, visual);
+            if (null === source || null === visual || !owned
+              || !ownedLedgerRetains(nodes)
+              || owned.owner !== fullOwnerRef.current
+              || owned.source !== source
+              || owned.sourceRevision !== (documentSession.document.getRevision?.() ?? 0)
+              || documentSession.document.getValue() !== source
+              || (!serializationMatchesCommitted && !declaredRunRespelling)) {
+              throw new Error('visual-editor-canonical-change-dom-stale');
+            }
+            // The caret is read from the live surface, so a surface that
+            // respelled the declared run is mapped through its own spelling.
+            const baseline = declaredRunRespelling ? serializedSurface : visual;
+            const caretSourceOffset = visualSelectionSourceRange(
+              surface,
+              source,
+              baseline,
+              baseline
+            ).start;
+            // The removable byte is the terminator of the row above the row the
+            // caret's own character sits in, and only where that row above
+            // stands for nothing of its own: only then does removing that one
+            // unit join the paragraph to the block above. With the paragraph
+            // abutting the closing fence, the row above is that fence line, and
+            // removing its own terminator would append the paragraph to the
+            // block above and publish its text as code bytes. The press is still
+            // owned: nothing is written, and the caret crosses the boundary into
+            // the code body, so the next press deletes a body byte instead of
+            // stalling at a legal caret position the user cannot leave.
+            const ownedByte = ownedRowTerminator(source, caretSourceOffset);
+            if (null === ownedByte) {
+              // A press bound to its row was claimed on the strength of a row
+              // read through the accepted visual, and has no body byte to cross
+              // into, so a row that is not there now can only be a mapping that
+              // moved. Report it as the generic path reports its own mapping
+              // failures rather than move the caret into a body this press must
+              // not enter.
+              if (rowBoundPress) {
+                throw new Error('visual-editor-selection-map-failed');
+              }
+              // The terminal run is the body's bytes followed by the
+              // renderer's own line ending, so the body ends just before it.
+              // Every press that reaches this point was claimed at the end of a
+              // body with bytes, so a spelling that says otherwise is that same
+              // mapping failure.
+              if (!(terminal instanceof Text) || !fenceLineEnding) {
+                throw new Error('visual-editor-selection-map-failed');
+              }
+              const bodyEnd = terminal.data.length - fenceLineEnding.length;
+              native.setBaseAndExtent(terminal, bodyEnd, terminal, bodyEnd);
+              return;
+            }
+            const point = ownedByte.point;
+            synchronizeMarkdown({ ownerResult: {
+              ledger: { nodes, metadata: nodes.map(fullOwnedNodeMetadata) },
+              selection: { direction: 'none', start: point, end: point },
+              value: source.slice(0, point) + source.slice(point + ownedByte.length)
+            } });
+          } catch (error) { failVisualSynchronization(error); }
+          return;
+        }
+      }
       // Capture a cross-root native deletion before the empty-paragraph owner
       // can classify the caret. The raw target range is the operation witness;
       // the paragraph-specific path below must not consume an H1/P join first.
@@ -14299,18 +17490,39 @@ const failVisualSynchronization = useCallback(
       // An empty paragraph has an element caret, not a Text caret. Its native
       // cross-block deletion therefore cannot use the ordinary text intent.
       // Consume only the exact owned P0 -> preceding text-tail transition.
+      // The same block may be the emptied row the document ends on: the
+      // renderer leaves it without children (or with only its placeholder
+      // break), and once the browser has respelled that row it can be a DIV.
+      // That block owns no text, so the canonical bytes it stands for are the
+      // separator run the source ends on; this owner deletes that block
+      // boundary instead of letting the native default run unowned.
       if ('deleteContentBackward' === event.inputType && !pendingTransferRef.current
         && !composing && !event.isComposing && !pendingComposition) {
         const native = surface.ownerDocument.defaultView?.getSelection();
         const gap = native?.anchorNode;
         const target = event.getTargetRanges?.()[0];
-        if (pendingNativeOperationRef.current?.kind !== 'join' && native?.isCollapsed && gap instanceof HTMLParagraphElement
+        const placeholderGap = gap instanceof HTMLParagraphElement
+          && gap.childNodes.length === 1
+          && gap.firstChild instanceof HTMLBRElement;
+        const terminalGap = emptiedTerminalVisualBlock(gap);
+        // The browser names a cross-block press by the preceding row's text
+        // tail; a caret with nothing of its own to delete arrives collapsed on
+        // the emptied terminal block itself.
+        const elementPress = Boolean(target?.collapsed)
+          && target?.startContainer === gap
+          && target?.endOffset === 0;
+        if (pendingNativeOperationRef.current?.kind !== 'join' && native?.isCollapsed
+          && (placeholderGap || terminalGap)
           && native.anchorOffset === 0 && gap.parentNode === surface
-          && gap.childNodes.length === 1 && gap.firstChild instanceof HTMLBRElement
-          && target?.startContainer instanceof Text && target.endContainer === gap
-          && target.endOffset === 0 && target.startOffset === target.startContainer.length
-          && !target.startContainer.parentElement?.closest('pre, code, [contenteditable="false"]')
-          && directVisualBlockForSelectionNode(surface, target.startContainer) === gap.previousElementSibling) {
+          && (
+            (target?.startContainer instanceof Text
+              && target.endContainer === gap
+              && target.endOffset === 0
+              && target.startOffset === target.startContainer.length
+              && !target.startContainer.parentElement?.closest('pre, code, [contenteditable="false"]')
+              && directVisualBlockForSelectionNode(surface, target.startContainer) === gap.previousElementSibling)
+            || (terminalGap && elementPress && null !== gap.previousElementSibling)
+          )) {
           event.preventDefault();
           try {
             if (!event.cancelable) throw new Error('visual-editor-beforeinput-not-cancelable');
@@ -14320,6 +17532,9 @@ const failVisualSynchronization = useCallback(
             const owned = ownedDomRef.current;
             const nodes = Array.from(surface.childNodes);
             const serializedSurface = serializeVisualMarkdown(surface);
+            const crossBlockText = target?.startContainer instanceof Text
+              ? target.startContainer
+              : null;
             // The renderer's terminal empty paragraph is not always spelled by
             // the serializer, while the accepted visual keeps its blank line.
             // That one trailing spelling difference is not a stale surface.
@@ -14330,29 +17545,76 @@ const failVisualSynchronization = useCallback(
             if (source === null || visual === null || !owned || !ownedLedgerRetains(nodes)
               || owned.source !== source || owned.sourceRevision !== (documentSession.document.getRevision?.() ?? 0)
               || documentSession.document.getValue() !== source
-              || (serializedSurface !== visual && !terminalEmptyParagraphSpelling)) {
+              || (!visualSerializationMatchesCommitted(serializedSurface, visual) && !terminalEmptyParagraphSpelling)) {
               throw new Error('visual-editor-canonical-change-dom-stale');
             }
-            const boundary = mapTextBoundaryFromInterval(surface, target.startContainer,
-              target.startOffset, visual, createVisualMarkdownSourceIntervalMap(source, visual), false);
-            if (!boundary) throw new Error('visual-editor-selection-map-failed');
-            const next = gap.nextElementSibling;
-            const separator = fullNativeJoinSeparator(
-              source,
-              boundary.sourceOffset,
-              Boolean(next)
-            );
-            if (!separator || (next && separator.end > source.length)) {
-              throw new Error('visual-editor-selection-map-failed');
+            // The caret's offset is read from the live surface, so it is mapped
+            // through the serializer's spelling whenever only the committed
+            // visual's edge whitespace differs from it. The emptied terminal
+            // block owns no text of its own, so the whole of what it stands for
+            // is its own canonical extent: the marker row the source still
+            // spells, or the trailing separator run when it spells none. Both
+            // are read positionally, so a press named by the preceding row's
+            // text tail and one named by the block itself reach the same bytes
+            // instead of a point inside a marker - or past source the renderer
+            // hides, which no separator proof can cross.
+            const baseline = serializedSurface === visual || terminalEmptyParagraphSpelling ? visual : serializedSurface;
+            const terminalBlock = null === gap.nextElementSibling;
+            const emptiedRow = terminalBlock
+              ? visualEmptiedTerminalRow(source)
+              : null;
+            let boundary: number | null = emptiedRow?.start ?? null;
+            if (null === boundary && terminalBlock) {
+              boundary = fullTerminalSeparatorStart(source);
             }
-            const value = source.slice(0, boundary.sourceOffset)
-              + (next
-                ? separator.lineEnding + separator.lineEnding
-                : '')
-              + source.slice(separator.end);
-            const selection = { direction: 'none' as const, start: boundary.sourceOffset, end: boundary.sourceOffset };
+            if (null === boundary && !elementPress) {
+              if (!crossBlockText || !target) {
+                throw new Error('visual-editor-selection-map-failed');
+              }
+              boundary = mapTextBoundaryFromInterval(surface, crossBlockText,
+                target.startOffset, baseline, createVisualMarkdownSourceIntervalMap(source, baseline), false)?.sourceOffset ?? null;
+            }
+            if (null === boundary) throw new Error('visual-editor-selection-map-failed');
+            const next = gap.nextElementSibling;
+            let value: string;
+            if (emptiedRow) {
+              // The row the emptied block still occupies goes with it, together
+              // with the separator that terminated the document behind it.
+              value = source.slice(0, emptiedRow.start);
+            } else {
+              const separator = fullNativeJoinSeparator(
+                source,
+                boundary,
+                Boolean(next)
+              );
+              if (!separator || (next && separator.end > source.length)) {
+                throw new Error('visual-editor-selection-map-failed');
+              }
+              value = source.slice(0, boundary)
+                + (next
+                  ? separator.lineEnding + separator.lineEnding
+                  : '')
+                + source.slice(separator.end);
+            }
+            const selection = { direction: 'none' as const, start: boundary, end: boundary };
+            const preceding = gap.previousElementSibling;
             gap.remove();
-            native.setBaseAndExtent(target.startContainer, target.startOffset, target.startContainer, target.startOffset);
+            if (elementPress) {
+              // The element caret had no text of its own to hold. The canonical
+              // boundary is the end of the row the block was removed from, so
+              // the caret lands on that row's own terminal text run.
+              if (!preceding) throw new Error('visual-editor-selection-map-failed');
+              const tail = terminalVisualTextNode(preceding);
+              if (tail) native.setBaseAndExtent(tail, tail.length, tail, tail.length);
+              else native.setBaseAndExtent(preceding, preceding.childNodes.length,
+                preceding, preceding.childNodes.length);
+            } else {
+              if (!crossBlockText || !target) {
+                throw new Error('visual-editor-selection-map-failed');
+              }
+              native.setBaseAndExtent(crossBlockText, target.startOffset,
+                crossBlockText, target.startOffset);
+            }
             const retained = nodes.filter((node) => node !== gap);
             synchronizeMarkdown({ ownerResult: { value, selection,
               ledger: { nodes: retained, metadata: retained.map(fullOwnedNodeMetadata) } } });
@@ -14371,6 +17633,7 @@ const failVisualSynchronization = useCallback(
           cancelledPendingComposition = true;
           try { finishPendingCompositionDom(surface.ownerDocument.activeElement === surface); runHistory(event.inputType === 'historyRedo'); }
           catch (error) { failPendingTransfer(visualEditorFailureCode(error, 'visual-editor-pending-selection-stale')); }
+          finally { releaseCompositionSurface(compositionSurfaceLease); }
           return;
         }
         if (event.isComposing || event.inputType.includes('Composition')) return;
@@ -14383,6 +17646,37 @@ const failVisualSynchronization = useCallback(
           if (!event.cancelable) throw new Error('visual-editor-beforeinput-not-cancelable');
           if (event.inputType === 'historyUndo' || event.inputType === 'historyRedo') {
             runHistory(event.inputType === 'historyRedo');
+            return;
+          }
+          if (event.inputType === 'deleteContentBackward') {
+            const lease = pendingInputLease();
+            const range = pendingHistoryInsertionDeletion(lease, event);
+            if (!range) {
+              // The lease is valid and nothing was written: this key's own
+              // target range named a boundary across nodes while the accepted
+              // render was still settling. Keep it bound to this lease and
+              // replay it once that render has landed. The prevented press left
+              // the DOM unchanged, so a second press arrives with the SAME
+              // lease and is counted instead of overwriting the first: two
+              // presses must become two edits, never one.
+              const deferred = deferredPendingBackspaceRef.current;
+              if (!deferred || deferred.lease !== lease) {
+                deferredPendingBackspaceRef.current = { count: 1, lease };
+              } else if (deferred.count >= DEFERRED_PENDING_BACKSPACE_LIMIT) {
+                // A settling window that keeps swallowing keys past the bound
+                // cannot carry them all as edits, so the held presses are
+                // reported as one refusal instead of being dropped silently.
+                deferredPendingBackspaceRef.current = null;
+                throw new Error('visual-editor-pending-input-unavailable');
+              } else {
+                deferredPendingBackspaceRef.current = {
+                  count: deferred.count + 1,
+                  lease
+                };
+              }
+              return;
+            }
+            applyPendingCanonicalText(lease, '', false, range);
             return;
           }
           if ((event.inputType !== 'insertText' && event.inputType !== 'insertReplacementText' && event.inputType !== 'insertLineBreak') ||
@@ -14398,6 +17692,221 @@ const failVisualSynchronization = useCallback(
           else onFailure(code);
         }
         return;
+      }
+      if ((event.inputType === 'deleteContentBackward' || event.inputType === 'deleteContentForward')
+        && !event.isComposing && !composing && !pendingComposition && !event.defaultPrevented) {
+        const targets = event.getTargetRanges?.() ?? [];
+        const target = targets[0];
+        const parent = target?.startContainer;
+        const removed = parent && target?.endContainer === parent
+          && target.endOffset === target.startOffset + 1
+          ? parent.childNodes[target.startOffset] : null;
+        let image: Node | null = removed ?? null;
+        while (image instanceof HTMLElement && !(image instanceof HTMLImageElement)
+          && ['A', 'DEL', 'EM', 'STRONG'].includes(image.tagName)
+          && image.childNodes.length === 1) image = image.firstChild;
+        const native = surface.ownerDocument.defaultView?.getSelection();
+        const expectedOffset = target && event.inputType === 'deleteContentBackward'
+          ? target.endOffset : target?.startOffset;
+        if (image instanceof HTMLImageElement && removed && parent && target) {
+          try {
+            if (!event.cancelable) throw new Error('visual-editor-beforeinput-not-cancelable');
+            if (!flushVisualInput()) { event.preventDefault(); return; }
+            if (targets.length !== 1 || !native?.isCollapsed || !native.anchorNode
+              || expectedOffset === undefined || !surface.contains(parent)
+              || parent.childNodes[target.startOffset] !== removed
+              || !equivalentNativeBoundary(surface, native.anchorNode, native.anchorOffset, parent, expectedOffset)) {
+              throw new Error('visual-editor-image-source-map-failed');
+            }
+            if ('current' !== certifyAcceptedMapApplicability()) throw new Error('visual-editor-image-source-map-failed');
+            const source = sourceMarkdownRef.current;
+            const visual = visualMarkdownRef.current;
+            const owned = ownedDomRef.current;
+            const certificate = mapCertificateRef.current;
+            if (source === null || visual === null || !owned || !certificate
+              || documentSession.document.getValue() !== source
+              || owned.sourceRevision !== documentSession.document.getRevision?.()) {
+              throw new Error('visual-editor-canonical-change-dom-stale');
+            }
+            const map = createVisualMarkdownImageSourceIntervalMap(surface, source, visual, referenceContextFor(source));
+            const images = Array.from(surface.querySelectorAll('img')).filter((item) =>
+              !item.closest(`pre, [contenteditable="false"], ${VISUAL_MARKDOWN_READ_ONLY_SELECTOR}`));
+            const unit = map.imageUnits?.[images.indexOf(image)];
+            const start = unit && map.originalOffsetAt(unit.sourceStart);
+            const end = unit && map.originalOffsetAt(unit.sourceEnd);
+            if (start === undefined || end === undefined) throw new Error('visual-editor-image-source-map-failed');
+            const root = directVisualBlockForSelectionNode(surface, image);
+            if (!(root instanceof HTMLElement)) throw new Error('visual-editor-image-source-map-failed');
+            const expanded = visualRetiredInlineSourceRange(root, image, source, { start, end });
+            let outer: Node = image;
+            while (outer.parentNode !== root && outer.parentNode instanceof HTMLElement
+              && ['A', 'DEL', 'EM', 'STRONG'].includes(outer.parentNode.tagName)
+              && outer.parentNode.childNodes.length === 1) outer = outer.parentNode;
+            if (outer !== removed && (expanded.start !== start || expanded.end !== end)) {
+              throw new Error('visual-editor-inline-retirement-map-failed');
+            }
+            const path: number[] = [];
+            for (let node: Node = removed; node !== surface;) {
+              const ancestor = node.parentNode;
+              if (!ancestor) throw new Error('visual-editor-image-source-map-failed');
+              path.unshift(Array.prototype.indexOf.call(ancestor.childNodes, node) as number);
+              node = ancestor;
+            }
+            const expected = surface.cloneNode(true) as HTMLElement;
+            let clone: Node = expected;
+            for (const index of path) {
+              const child = clone.childNodes[index];
+              if (!child) throw new Error('visual-editor-image-source-map-failed');
+              clone = child;
+            }
+            clone.parentNode?.removeChild(clone);
+            const precedingNode = removed.previousSibling instanceof Text ? removed.previousSibling : null;
+            const precedingPath = precedingNode && visualNodePath(surface, precedingNode);
+            if (precedingNode && !precedingPath) throw new Error('visual-editor-image-source-map-failed');
+            const walker = surface.ownerDocument.createTreeWalker(surface, NodeFilter.SHOW_ALL);
+            const retained: Array<Readonly<{ node: Node; metadata: FullOwnedNodeMetadata }>> = [];
+            for (let node: Node | null = walker.nextNode(); node; node = walker.nextNode()) {
+              if (node !== removed && !removed.contains(node)) retained.push({ node, metadata: fullOwnedNodeMetadata(node) });
+            }
+            pendingNativeOperationRef.current = {
+              kind: 'image-deletion', certificate, expected, inputType: event.inputType,
+              nodes: owned.nodes, owner: fullOwnerRef.current, parent, parentOffset: target.startOffset,
+              precedingText: precedingNode && precedingPath
+                ? { node: precedingNode, path: precedingPath, data: precedingNode.data } : null,
+              removed, retained, source, sourceRevision: owned.sourceRevision, sourceRange: expanded,
+              historyOffset: event.inputType === 'deleteContentBackward' ? expanded.end : expanded.start
+            };
+            return;
+          } catch (error) {
+            event.preventDefault();
+            onFailure(visualEditorFailureCode(error, 'visual-editor-image-source-map-failed'));
+            return;
+          }
+        }
+      }
+      // An empty list item has an element caret, not a Text caret, so the
+      // ordinary text intent cannot describe it. Chromium's own default is not
+      // a usable fallback either: it removes the item with a caret jump to the
+      // article start, or splices a task checkbox into a neighbour. The item's
+      // canonical row is exactly one Markdown line, and the marker/interval
+      // proof below names that row, so this owner removes the row and the node
+      // rendering it together.
+      if ('deleteContentBackward' === event.inputType && event.cancelable
+        && !event.isComposing && !composing && !pendingComposition
+        && !event.defaultPrevented) {
+        const native = surface.ownerDocument.defaultView?.getSelection();
+        const item = visualEmptyStructuralBodyAtCaret(surface)?.body;
+        if (
+          native?.isCollapsed
+          && native.anchorNode === native.focusNode
+          && item instanceof HTMLLIElement
+          && null !== item.parentElement
+          && ['OL', 'UL'].includes(item.parentElement.tagName)
+        ) {
+          event.preventDefault();
+          try {
+            if (!flushVisualInput()) return;
+            const source = sourceMarkdownRef.current;
+            const visual = visualMarkdownRef.current;
+            const owned = ownedDomRef.current;
+            const repeatedBody = visualEmptyStructuralBodyAtCaret(surface);
+            if (
+              null === source
+              || null === visual
+              || !owned
+              || !repeatedBody
+              || repeatedBody.body !== item
+            ) throw new Error('visual-editor-structural-removal-stale');
+            if (
+              owned.owner !== fullOwnerRef.current
+              || owned.source !== source
+              || owned.sourceRevision !==
+                (documentSession.document.getRevision?.() ?? 0)
+              || documentSession.document.getValue() !== source
+              || !ownedLedgerRetains(Array.from(surface.childNodes))
+            ) throw new Error('visual-editor-canonical-change-dom-stale');
+            const bodySelection = visualEmptyStructuralBodySelection(
+              surface,
+              source,
+              visual
+            );
+            if (!bodySelection || 'failure' in bodySelection) {
+              throw new Error('visual-editor-markdown-merge-failed');
+            }
+            const removal = structuralEmptyLineRemoval(
+              source,
+              bodySelection.sourceOffset
+            );
+            if (!removal) {
+              throw new Error('visual-editor-markdown-merge-failed');
+            }
+            const list = item.parentElement;
+            if (null === list) {
+              throw new Error('visual-editor-structural-removal-stale');
+            }
+            const readOnlySnapshot = readOnlySnapshotRef.current;
+            if (null === readOnlySnapshot) {
+              throw new Error('visual-editor-read-only-snapshot-missing');
+            }
+            assertVisualMarkdownReadOnlySnapshot(surface, readOnlySnapshot);
+            const value = source.slice(0, removal.start)
+              + source.slice(removal.end);
+            if (item.previousSibling instanceof Text && '' === item.previousSibling.data.trim()) {
+              item.previousSibling.remove();
+            }
+            item.remove();
+            // Containers the row alone kept alive go with its source line.
+            let emptied: Element = list;
+            while (emptied !== surface && !emptied.querySelector('li, img, hr, table, pre')
+              && '' === (emptied.textContent ?? '').trim()) {
+              const container: Element | null = emptied.parentElement;
+              emptied.remove();
+              if (!container) break;
+              emptied = container;
+            }
+            const editedVisual = serializeVisualMarkdown(surface);
+            if (editedVisual === visual) {
+              throw new Error('visual-editor-canonical-change-dom-stale');
+            }
+            if ('' !== value) {
+              placeVisualCaretFromSourceOffset(
+                surface,
+                value,
+                editedVisual,
+                removal.caret
+              );
+            } else {
+              // The document's last row is gone; its caret needs a block to live in.
+              const paragraph = surface.ownerDocument.createElement('p');
+              paragraph.append(surface.ownerDocument.createElement('br'));
+              surface.replaceChildren(paragraph);
+              native?.collapse(paragraph, 0);
+            }
+            const retained = Array.from(surface.childNodes);
+            synchronizeMarkdown({
+              ownerResult: {
+                historySelectionBefore: {
+                  direction: 'none',
+                  end: bodySelection.sourceOffset,
+                  start: bodySelection.sourceOffset
+                },
+                ledger: {
+                  metadata: retained.map(fullOwnedNodeMetadata),
+                  nodes: retained
+                },
+                selection: {
+                  direction: 'none',
+                  end: removal.caret,
+                  start: removal.caret
+                },
+                value
+              }
+            });
+          } catch (error) {
+            failVisualSynchronization(error);
+          }
+          return;
+        }
       }
       const isHistoryInput =
         'historyUndo' === event.inputType || 'historyRedo' === event.inputType;
@@ -14556,6 +18065,9 @@ const failVisualSynchronization = useCallback(
             pendingCodeStructure.blockId
       );
       let pendingCodeInputOrdinal: number | null = null;
+      let pendingCodeInputSource: string | null = null;
+      let pendingCodeInputPre: HTMLElement | null = null;
+      let pendingCodeInputOwner: typeof pendingVisual = null;
       if (pendingCodeStructure && selectedCodePre && pendingVisual) {
         const localBlock = captureVisualCodeInputSnapshot(selectedCodePre);
         if (pendingCodeStructure.localPre === selectedCodePre) {
@@ -14603,6 +18115,9 @@ const failVisualSynchronization = useCallback(
               }
               pendingCodeInputCanContinue = true;
               pendingCodeInputOrdinal = pendingCodeStructure.codeOrdinal;
+              pendingCodeInputSource = pendingVisual.result.sourceMarkdown;
+              pendingCodeInputPre = selectedCodePre;
+              pendingCodeInputOwner = pendingVisual;
             } catch (error) {
               event.preventDefault();
               failVisualSynchronization(error);
@@ -14610,12 +18125,20 @@ const failVisualSynchronization = useCallback(
             }
           } else {
             try {
-              pendingCodeInputCanContinue =
-                codeOrdinalForInputBlock(
+              const ordinal = codeOrdinalForInputBlock(
                   localBlock,
                   pendingVisual.result.sourceMarkdown,
-                  true
-                ) === pendingCodeStructure.codeOrdinal;
+                  true,
+                  false,
+                  intervalAtOrdinal
+                );
+              pendingCodeInputCanContinue = ordinal === pendingCodeStructure.codeOrdinal;
+              if (pendingCodeInputCanContinue) {
+                pendingCodeInputOrdinal = ordinal;
+                pendingCodeInputSource = pendingVisual.result.sourceMarkdown;
+                pendingCodeInputPre = selectedCodePre;
+                pendingCodeInputOwner = pendingVisual;
+              }
             } catch (error) {
               event.preventDefault();
               failVisualSynchronization(error);
@@ -14697,12 +18220,51 @@ const failVisualSynchronization = useCallback(
           onFailure('visual-editor-whole-document-selection-stale');
           return;
         }
-        clearWholeVisualDocument();
+        const source = sourceMarkdownRef.current;
+        const nativeSelection = surface.ownerDocument.defaultView?.getSelection();
+        if (
+          null === source
+          || !nativeSelection
+          || nativeSelection.anchorNode !== surface
+          || nativeSelection.focusNode !== surface
+        ) {
+          failVisualSynchronization(new Error(
+            'visual-editor-whole-document-selection-stale'
+          ));
+          return;
+        }
+        const historySelectionBefore = {
+          direction: nativeDocumentSelectionDirection(nativeSelection),
+          end: source.length,
+          start: 0
+        };
+        const historySelectionWitness =
+          captureVisualHistorySelectionWitness(
+            historySelectionBefore,
+            {
+              anchor: { offset: nativeSelection.anchorOffset, path: [] },
+              backward: 'backward' === historySelectionBefore.direction,
+              focus: { offset: nativeSelection.focusOffset, path: [] }
+            }
+          );
+        if (!historySelectionWitness) {
+          failVisualSynchronization(new Error(
+            'visual-editor-history-selection-witness-missing'
+          ));
+          return;
+        }
+        clearWholeVisualDocument(
+          historySelectionBefore,
+          historySelectionWitness
+        );
         return;
       }
+      // Pending input without a pending result is a DOM change no intent
+      // describes, whatever its inputType. A fast intent is derived from the
+      // stored baseline plus the pending result chain, so it must not be
+      // derived until the full merge has accepted that change.
       const continuesUnmappedInput = Boolean(
         visualInputPendingRef.current &&
-          pendingUnmappedVisualInputRef.current &&
           !pendingVisualIntentResultRef.current
       );
       if (continuesUnmappedInput && !flushVisualInput()) {
@@ -14788,8 +18350,8 @@ const failVisualSynchronization = useCallback(
           return codeBodyIntervalInventory;
         }
         codeBodyIntervalInventory = {
-          source: visualCodeBodyIntervalMap(sourceMarkdown),
-          visual: visualCodeBodyIntervalMap(visualMarkdown)
+          source: intervalsFor(sourceMarkdown),
+          visual: intervalsFor(visualMarkdown)
         };
         return codeBodyIntervalInventory;
       };
@@ -14907,8 +18469,11 @@ const failVisualSynchronization = useCallback(
       if (visualInputBlock) {
         try {
           visualInputCodeOrdinal =
-            pendingCodeInputOrdinal ??
-            codeOrdinalForInputBlock(visualInputBlock, sourceMarkdown);
+            (pendingCodeInputOwner === pendingVisualIntentResultRef.current
+              && pendingCodeInputSource === sourceMarkdown && pendingCodeInputPre === visualInputBlock.pre
+              ? pendingCodeInputOrdinal
+              : null) ??
+            codeOrdinalForInputBlock(visualInputBlock, sourceMarkdown, false, false, intervalAtOrdinal);
           if (null !== visualInputCodeOrdinal) {
             historyBefore =
               pendingVisualIntentResultRef.current?.historyBefore ??
@@ -14933,7 +18498,9 @@ const failVisualSynchronization = useCallback(
               : codeOrdinalForInputBlock(
                   visualInputBlock,
                   sourceMarkdown,
-                  true
+                  true,
+                  false,
+                  intervalAtOrdinal
                 );
           if (null === codeOrdinal) {
             throw new Error('visual-editor-code-body-map-ambiguous');
@@ -15043,6 +18610,30 @@ const failVisualSynchronization = useCallback(
         // linear input on its own, which keeps consecutive typing free of the
         // document-wide diff this owner must not run per keystroke.
         let effectiveSourceIntervalMap = sourceIntervalMap;
+        if (surface.querySelector('img')) {
+          try {
+            const certificate = mapCertificateRef.current;
+            const snapshot = previewSnapshotRef.current;
+            const formalSource = certificate
+              && certificate.owner === fullOwnerRef.current
+              && certificate.previewSignature === snapshot.signature
+              && certificate.previewRevision === snapshot.revision
+              && certificate.editMap.signature === snapshot.signature
+              ? certificate.source : null;
+            effectiveSourceIntervalMap = imageAwareVisualSourceIntervalMap(
+              surface, sourceMarkdown, visualMarkdown, formalSource, referenceLabelCaseFoldProfile
+            );
+            visualSourceIntervalMapRef.current = {
+              map: effectiveSourceIntervalMap,
+              sourceMarkdown,
+              visualMarkdown
+            };
+          } catch (error) {
+            event.preventDefault();
+            onFailure(visualEditorFailureCode(error, 'visual-editor-image-source-map-failed'));
+            return;
+          }
+        }
         const intervalMapFor = () => {
           if (!effectiveSourceIntervalMap) {
             effectiveSourceIntervalMap = createVisualMarkdownSourceIntervalMap(
@@ -15170,8 +18761,26 @@ const failVisualSynchronization = useCallback(
           previewSnapshotRef.current.editMap ?? null,
           intervalMapFor,
           acceptedPrefixOnly,
-          localLiteralCertificate
+          localLiteralCertificate,
+          acceptedDecodedBlockContext(sourceMarkdown)
         );
+        if (
+          genericIntent?.terminalTextRun
+          && (!historyBefore || historyBefore.terminalTextRun !== genericIntent.terminalTextRun)
+        ) {
+          historyBefore = captureVisualHistorySnapshot(
+            sourceMarkdown,
+            surface.innerHTML,
+            null,
+            genericIntent.terminalTextRun
+          );
+          if (historyBefore.terminalTextRun) {
+            genericIntent = {
+              ...genericIntent,
+              terminalTextRun: historyBefore.terminalTextRun
+            };
+          }
+        }
         const correspondenceCodeBody = Boolean(
           visualInputBlock
           && acceptedCodeBodyCorrespondenceRef.current.has(
@@ -15185,14 +18794,22 @@ const failVisualSynchronization = useCallback(
             && !event.isComposing
             && !correspondenceCodeBody
           ) {
-            historySelectionWitness =
+            const capturedSelectionWitness =
               captureVisualHistorySelectionWitness(
                 genericIntent.historySelectionBefore ?? {
                   direction: 'none',
                   end: genericIntent.sourceSelection.end,
                   start: genericIntent.sourceSelection.start
                 }
-              ) ?? undefined;
+              );
+            historySelectionWitness = capturedSelectionWitness
+              ? {
+                  ...capturedSelectionWitness,
+                  ...(genericIntent.terminalTextRun
+                    ? { terminalTextRun: genericIntent.terminalTextRun }
+                    : {})
+                }
+              : undefined;
           }
           const rawSelection = pendingEditSelectionBeforeRef.current;
           if (rawSelection && genericIntent.historySelectionBefore) {
@@ -15218,10 +18835,14 @@ const failVisualSynchronization = useCallback(
               || nativeTargetRange.endOffset !== nativeSelection.focusOffset
             )
           );
+        let materializedRetry = false;
         if (
           !genericIntent
           && targetRangeMismatch()
-          && acceptedPrefixOnly
+          // A pending result's visual side is arithmetic, not this surface's
+          // serialization either: a later key can respell what it already
+          // holds (`25\. ` loses its escape once the space goes).
+          && (acceptedPrefixOnly || null !== pendingVisualIntentResultRef.current)
           && !visualInputBlock
           && nativeSelection?.isCollapsed
           && nativeSelection.anchorNode instanceof Text
@@ -15249,6 +18870,7 @@ const failVisualSynchronization = useCallback(
             );
             return;
           }
+          materializedRetry = true;
           const retriedSource = sourceMarkdownRef.current;
           const retriedVisual = visualMarkdownRef.current;
           const retriedRecord = visualSourceIntervalMapRef.current;
@@ -15273,13 +18895,36 @@ const failVisualSynchronization = useCallback(
                   retriedSource,
                   retriedVisual
                 ),
-              false
+              false,
+              null,
+              acceptedDecodedBlockContext(retriedSource)
             );
+            if (
+              genericIntent?.terminalTextRun
+              && (!historyBefore || historyBefore.terminalTextRun !== genericIntent.terminalTextRun)
+            ) {
+              historyBefore = captureVisualHistorySnapshot(
+                retriedSource,
+                surface.innerHTML,
+                null,
+                genericIntent.terminalTextRun
+              );
+              if (historyBefore.terminalTextRun) {
+                genericIntent = {
+                  ...genericIntent,
+                  terminalTextRun: historyBefore.terminalTextRun
+                };
+              }
+            }
           }
         }
         if (!genericIntent && targetRangeMismatch()) {
           event.preventDefault();
-          failVisualSynchronization(new Error('visual-editor-selection-map-failed'));
+          // After the retry the surface is the pair it just committed and
+          // serialized, and this key's default never ran: there is nothing to
+          // restore, and the older accepted render would contradict the source.
+          if (materializedRetry) onFailure('visual-editor-selection-map-failed');
+          else failVisualSynchronization(new Error('visual-editor-selection-map-failed'));
           return;
         }
         const selection = surface.ownerDocument.defaultView?.getSelection();
@@ -15332,7 +18977,7 @@ const failVisualSynchronization = useCallback(
               if (null === visualInputCodeOrdinal) {
                 throw new Error('visual-editor-code-body-map-ambiguous');
               }
-              const interval = visualCodeBodyIntervalAtOrdinal(
+              const interval = intervalAtOrdinal(
                 sourceMarkdown,
                 visualInputCodeOrdinal
               );
@@ -15366,6 +19011,38 @@ const failVisualSynchronization = useCallback(
             return;
           }
         }
+        // Chromium names a backward deletion at the START of a code body the
+        // same way, mirrored: the target range LEAVES the body at its start
+        // (into the preceding block), because no in-body character precedes the
+        // caret. The live caret is still the body's own position, so this too
+        // is a no-op at the body's structural start - not a stale selection.
+        // Consume the native event, keep the caret where the user placed it,
+        // and let the structural boundary refuse the edit instead of ejecting
+        // the caret and reporting the body's own mapping as invalid. A caret
+        // outside the body, or a target that does not reach the body's start at
+        // all, stays on the existing rejection path: those really do contradict
+        // the code-body owner.
+        if (
+          'deleteContentBackward' === event.inputType &&
+          visualInputBlock &&
+          collapsedCodeCaret &&
+          event.cancelable
+        ) {
+          const backwardTarget = event.getTargetRanges?.()[0];
+          const targetStartInside =
+            !backwardTarget
+            || backwardTarget.startContainer === visualInputBlock.code
+            || visualInputBlock.code.contains(backwardTarget.startContainer);
+          const targetEndInside = Boolean(
+            backwardTarget
+            && (backwardTarget.endContainer === visualInputBlock.code
+              || visualInputBlock.code.contains(backwardTarget.endContainer))
+          );
+          if (!targetStartInside && targetEndInside) {
+            event.preventDefault();
+            return;
+          }
+        }
         // A collapsed caret inside a fenced code body is owned by the code
         // body, not by the whole-document interval map. The generic intent maps
         // the SAME native boundary through the document alignment, which at the
@@ -15387,7 +19064,7 @@ const failVisualSynchronization = useCallback(
         const authenticatedCodeBody = correspondenceCodeBody;
         if (genericIntent && visualInputBlock && collapsedCodeCaret) {
           try {
-            const interval = visualCodeBodyIntervalAtOrdinal(
+            const interval = intervalAtOrdinal(
               sourceMarkdown,
               visualInputCodeOrdinal ?? 0
             );
@@ -15401,6 +19078,10 @@ const failVisualSynchronization = useCallback(
         }
         if (
           pendingNativeOperationRef.current?.kind === 'join'
+          && !pendingNativeOperationRef.current.candidate
+          && pendingNativeOperationRef.current.owner === fullOwnerRef.current
+          && pendingNativeOperationRef.current.source === documentSession.document.getValue()
+          && pendingNativeOperationRef.current.sourceRevision === documentSession.document.getRevision?.()
           && 'deleteContentBackward' === event.inputType
         ) {
           // The browser's cross-root deletion owns this target range. Its end
@@ -15466,7 +19147,9 @@ const failVisualSynchronization = useCallback(
                 : codeOrdinalForInputBlock(
                     visualInputBlock,
                     sourceMarkdown,
-                    true
+                    true,
+                    false,
+                    intervalAtOrdinal
                   );
             if (null === codeOrdinal) {
               throw new Error('visual-editor-code-body-map-ambiguous');
@@ -15501,6 +19184,44 @@ const failVisualSynchronization = useCallback(
           }
         }
       }
+      const emptyEndIntent = pendingVisualIntentRef.current;
+      const emptyEndNode = surface.ownerDocument.defaultView?.getSelection()?.anchorNode;
+      const emptyEndOwned = ownedDomRef.current;
+      if (event.cancelable && event.inputType === 'deleteContentForward' && !event.defaultPrevented
+        && !pendingTransferRef.current && !pendingNativeOperationRef.current
+        && !visualInputPendingRef.current && !pendingVisualIntentResultRef.current
+        && !visualInputBlock && emptyEndIntent?.hasTargetRange && !emptyEndIntent.codeBody
+        && emptyEndIntent.sourceSelection.start === emptyEndIntent.sourceSelection.end
+        && emptyEndIntent.visualSelection.start === emptyEndIntent.visualSelection.end
+        && emptyEndIntent.textSelection.start === emptyEndIntent.textSelection.end
+        && isNativeForwardDocumentEnd(event) && emptyEndNode instanceof Text
+        && emptyEndIntent.textNode === emptyEndNode
+        && emptyEndOwned?.source === sourceMarkdown
+        && emptyEndOwned.sourceRevision === documentSession.document.getRevision?.()
+        && ownedDomIsCurrent()) {
+        event.preventDefault();
+        pendingVisualIntentRef.current = null;
+        pendingEditSelectionBeforeRef.current = null;
+        visualInputBlock = null;
+        visualInputCodeOrdinal = null;
+        return;
+      }
+      if (pendingVisualIntentRef.current && !pendingNativeOperationRef.current
+        && !event.defaultPrevented) {
+        captureNativeRange(event, sourceMarkdown, visualMarkdown);
+      }
+      if (pendingVisualIntentRef.current && !event.defaultPrevented
+        && !pendingVisualIntentRef.current.codeBody) {
+        const revision = documentSession.document.getRevision?.();
+        if (typeof revision === 'number' && Number.isSafeInteger(revision)
+          && documentSession.document.getValue() === sourceMarkdown
+          && sourceMarkdownRef.current === sourceMarkdown) {
+          const suffix = captureInlineCodeDeletion(surface, pendingVisualIntentRef.current, sourceMarkdown, revision);
+          if (suffix) pendingVisualIntentRef.current = { ...pendingVisualIntentRef.current, inlineCodeDeletion: suffix };
+        }
+        const retirement = captureInlineRetirement(surface, pendingVisualIntentRef.current, sourceMarkdown);
+        if (retirement) pendingVisualIntentRef.current = { ...pendingVisualIntentRef.current, inlineRetirement: retirement };
+      }
       if (
         pendingVisualIntentRef.current &&
         visualInputBlock &&
@@ -15532,11 +19253,31 @@ const failVisualSynchronization = useCallback(
             !/[\r\n~`]/u.test(removed + replacement) &&
             sameBlock &&
             (!previousCodeStructure || previousCodeStructure.preserving);
+          const baseMarkdown = previousCodeStructure?.baseMarkdown ?? sourceMarkdown;
+          let baseIntervalWitness = previousCodeStructure?.baseIntervalWitness;
+          if (!localProvenance && blockId) {
+            try {
+              if (baseIntervalWitness && (!sameBlock
+                || baseIntervalWitness.sourceMarkdown !== baseMarkdown
+                || baseIntervalWitness.codeOrdinal !== visualInputCodeOrdinal)) {
+                throw new Error('visual-editor-code-body-map-stale');
+              }
+              baseIntervalWitness ??= Object.freeze({
+                sourceMarkdown: baseMarkdown,
+                codeOrdinal: visualInputCodeOrdinal,
+                interval: intervalAtOrdinal(baseMarkdown, visualInputCodeOrdinal)
+              });
+            } catch (error) {
+              event.preventDefault();
+              failVisualSynchronization(error);
+              return;
+            }
+          }
           pendingVisualIntentRef.current = {
             ...pendingVisualIntentRef.current,
             codeBlockStructure: {
-              baseMarkdown:
-                previousCodeStructure?.baseMarkdown ?? sourceMarkdown,
+              baseMarkdown,
+              ...(baseIntervalWitness ? { baseIntervalWitness } : {}),
               blockId: blockId ?? null,
               codeOrdinal: visualInputCodeOrdinal,
               ...(localProvenance ? { localPre: visualInputBlock.pre } : {}),
@@ -15712,6 +19453,76 @@ const failVisualSynchronization = useCallback(
       visualInputBlock = null;
       let mappedRawCodeBody = null !== visualInputCodeOrdinal;
       visualInputCodeOrdinal = null;
+      const imageDeletion = pendingNativeOperationRef.current;
+      if (imageDeletion?.kind === 'image-deletion') {
+        try {
+          const selection = surface.ownerDocument.defaultView?.getSelection();
+          const preceding = imageDeletion.precedingText;
+          const expectedPreceding = preceding && visualNodeAtPath(imageDeletion.expected, preceding.path);
+          const terminalSpaceArtifact = Boolean(preceding && expectedPreceding instanceof Text
+            && expectedPreceding.data === preceding.data
+            && preceding.node.parentNode === imageDeletion.parent
+            && imageDeletion.parent.childNodes[imageDeletion.parentOffset - 1] === preceding.node
+            && nativeTerminalSpaceArtifact(selection ?? null, preceding.node, preceding.data));
+          if (terminalSpaceArtifact && preceding && expectedPreceding instanceof Text) {
+            expectedPreceding.data = preceding.node.data;
+          }
+          const placeholder = imageDeletion.parent instanceof HTMLParagraphElement
+            && imageDeletion.parent.childNodes.length === 1
+            && imageDeletion.parent.firstChild instanceof HTMLBRElement
+            && imageDeletion.parent.firstChild.attributes.length === 0
+              ? imageDeletion.parent.firstChild : null;
+          if (placeholder) {
+            const path = visualNodePath(surface, imageDeletion.parent);
+            const expectedParent = path && visualNodeAtPath(imageDeletion.expected, path);
+            if (!(expectedParent instanceof HTMLParagraphElement) || expectedParent.childNodes.length !== 0) {
+              throw new Error('visual-editor-canonical-change-dom-stale');
+            }
+            expectedParent.appendChild(placeholder.cloneNode());
+          }
+          const walker = surface.ownerDocument.createTreeWalker(surface, NodeFilter.SHOW_ALL);
+          const nodes: Node[] = [];
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            if (node !== placeholder) nodes.push(node);
+          }
+          if (event.inputType !== imageDeletion.inputType || imageDeletion.owner !== fullOwnerRef.current
+            || mapCertificateRef.current !== imageDeletion.certificate
+            || sourceMarkdownRef.current !== imageDeletion.source
+            || documentSession.document.getValue() !== imageDeletion.source
+            || documentSession.document.getRevision?.() !== imageDeletion.sourceRevision
+            || imageDeletion.removed.parentNode !== null || !surface.isEqualNode(imageDeletion.expected)
+            || !selection?.isCollapsed || !selection.anchorNode
+            || !equivalentNativeBoundary(surface, selection.anchorNode, selection.anchorOffset,
+              imageDeletion.parent, imageDeletion.parentOffset)
+            || nodes.length !== imageDeletion.retained.length
+            || nodes.some((node, index) => {
+              const retained = imageDeletion.retained[index];
+              return !retained || retained.node !== node || (
+                !(terminalSpaceArtifact && preceding && node === preceding.node
+                  && retained.metadata.kind === 'data' && retained.metadata.nodeType === node.nodeType
+                  && retained.metadata.data === preceding.data)
+                && !fullOwnedNodeMetadataEqual(fullOwnedNodeMetadata(node), retained.metadata)
+              );
+            })) throw new Error('visual-editor-canonical-change-dom-stale');
+          const roots = Array.from(surface.childNodes);
+          if (roots.length !== imageDeletion.nodes.length
+            || roots.some((node, index) => node !== imageDeletion.nodes[index])) {
+            throw new Error('visual-editor-canonical-change-dom-stale');
+          }
+          const { start, end } = imageDeletion.sourceRange;
+          const value = imageDeletion.source.slice(0, start) + imageDeletion.source.slice(end);
+          synchronizeMarkdown({ ownerResult: {
+            historySelectionBefore: { direction: 'none', start: imageDeletion.historyOffset, end: imageDeletion.historyOffset },
+            ledger: { nodes: roots, metadata: roots.map(fullOwnedNodeMetadata) },
+            selection: { direction: 'none', start, end: start }, value
+          } });
+        } catch (error) {
+          failVisualSynchronization(error);
+        } finally {
+          if (pendingNativeOperationRef.current === imageDeletion) pendingNativeOperationRef.current = null;
+        }
+        return;
+      }
       // Verify the native structural split once, before anything reads the
       // surface. The verified candidate ledger is what the ordinary
       // synchronizer may publish for this commit; without it the DOM window
@@ -15722,9 +19533,39 @@ const failVisualSynchronization = useCallback(
       if ('deleteContentBackward' === event.inputType) {
         verifyNativeRootJoin();
       }
+      verifyNativeRange(event);
       const pendingNative = pendingNativeOperationRef.current;
       const nativeJoin =
         pendingNative?.kind === 'join' ? pendingNative : null;
+      if (
+        'deleteContentBackward' === event.inputType
+        && nativeJoin?.candidate && (nativeJoin.mergedRoot || nativeJoin.textJoin)
+        && nativeJoin.sourceRange
+        && nativeJoin.source === documentSession.document.getValue()
+        && nativeJoin.sourceRevision === documentSession.document.getRevision?.()
+      ) {
+        try {
+          const editedVisual = serializeVisualMarkdown(surface);
+          const value = mergeVisualMarkdownChangeDetails(
+            nativeJoin.source, nativeJoin.visual, editedVisual
+          ).value;
+          const selection = visualSelectionSourceRange(
+            surface, nativeJoin.source, nativeJoin.visual, editedVisual
+          );
+          const before = nativeJoin.sourceRange.end;
+          synchronizeMarkdown({ ownerResult: {
+            historySelectionBefore: { direction: 'none', start: before, end: before },
+            ledger: nativeJoin.candidate,
+            selection,
+            value
+          } });
+        } catch (error) {
+          failVisualSynchronization(error);
+        } finally {
+          if (pendingNativeOperationRef.current === nativeJoin) pendingNativeOperationRef.current = null;
+        }
+        return;
+      }
       if (
         'deleteContentBackward' === event.inputType
         && nativeJoin?.kind === 'join'
@@ -15761,18 +19602,22 @@ const failVisualSynchronization = useCallback(
             const value = canonicalSource.slice(0, start)
               + lineEnding + lineEnding
               + canonicalSource.slice(separatorEnd);
-            if (synchronizeMarkdown({
-              ownerResult: {
-                historySelectionBefore: {
-                  direction: 'none',
-                  end: start,
-                  start
-                },
-                ledger: nativeJoin.candidate,
-                selection: { direction: 'none', end: start, start },
-                value
-              }
-            })) return;
+            try {
+              if (synchronizeMarkdown({
+                ownerResult: {
+                  historySelectionBefore: {
+                    direction: 'none',
+                    end: start,
+                    start
+                  },
+                  ledger: nativeJoin.candidate,
+                  selection: { direction: 'none', end: start, start },
+                  value
+                }
+              })) return;
+            } finally {
+              if (pendingNativeOperationRef.current === nativeJoin) pendingNativeOperationRef.current = null;
+            }
           }
         }
       }
@@ -15816,7 +19661,7 @@ const failVisualSynchronization = useCallback(
             historySelectionBefore: { direction: 'none', start: split.sourceOffset, end: split.sourceOffset },
             selection: { direction: 'none', start: point, end: point } } })) {
             ownedEmptyParagraphRef.current = { body: prefix, owner: fullOwnerRef.current, source: value,
-              revision: documentSession.document.getRevision?.() ?? 0, sourceLength: 2, sourceOffset: point };
+              revision: documentSession.document.getRevision?.() ?? 0, sourceLength: 2, sourceOffset: split.sourceOffset };
             const historyUndoDepth = documentHistoryState(documentSession.document).undoDepth;
             emptyParagraphHistoryRef.current = {
               depth: historyUndoDepth, historyUndoDepth, markdown: value, sourceOffset: point
@@ -16086,7 +19931,9 @@ const failVisualSynchronization = useCallback(
       pendingVisualIntentRef.current = null;
       if (intent) {
         if (!intent.codeBody && ['insertText', 'insertReplacementText'].includes(intent.inputType)
-          && mapCertificateRef.current && !ownedLedgerRetains(Array.from(surface.childNodes))) {
+          && mapCertificateRef.current && !ownedLedgerRetains(Array.from(surface.childNodes))
+          && !(pendingNativeOperationRef.current?.kind === 'range'
+            && pendingNativeOperationRef.current.candidate)) {
           failVisualSynchronization(new Error('visual-editor-canonical-change-dom-stale'));
           return;
         }
@@ -16157,10 +20004,18 @@ const failVisualSynchronization = useCallback(
             intent.hasTargetRange &&
             intent.inputType.startsWith('delete') &&
             !intent.textNode.isConnected;
+          let retiredRange: Readonly<{ start: number; end: number }> | null = null;
+          try {
+            if (intent.inlineRetirement) retiredRange = retiredInlineSourceRange(surface, intent.inlineRetirement);
+          } catch (error) {
+            failVisualSynchronization(error);
+            return;
+          }
+          const sourceSelection = retiredRange ?? intent.sourceSelection;
           const result = applyVisualMarkdownEditIntent(
             sourceMarkdown,
             visualMarkdown,
-            intent.sourceSelection,
+            sourceSelection,
             intent.visualSelection,
             intent.inputType,
             intent.data,
@@ -16185,8 +20040,28 @@ const failVisualSynchronization = useCallback(
                   }
                 : {}
           );
+          let verifiedInlineVisual: Readonly<{ markdown: string; offset: number }> | null = null;
+          if (intent.inlineCodeDeletion) {
+            try {
+              const witness = intent.inlineCodeDeletion;
+              if (!result || event.inputType !== witness.inputType
+                || sourceMarkdownRef.current !== witness.source
+                || documentSession.document.getValue() !== witness.source
+                || documentSession.document.getRevision?.() !== witness.revision) {
+                throw new Error('visual-editor-inline-code-deletion-source-stale');
+              }
+              verifyInlineCodeDeletion(surface, witness, result.sourceMarkdown);
+              const markdown = serializeVisualMarkdown(surface);
+              verifiedInlineVisual = { markdown, offset: visualSelectionVisualOffset(surface, markdown) };
+            } catch (error) {
+              failVisualSynchronization(error);
+              return;
+            }
+          }
           let domMatchesIntent = false;
-          if (result && intent.codeBody) {
+          if (result && verifiedInlineVisual) {
+            domMatchesIntent = true;
+          } else if (result && intent.codeBody) {
             try {
               if (!inputBlock) {
                 throw new Error('visual-editor-code-body-snapshot-missing');
@@ -16255,6 +20130,10 @@ const failVisualSynchronization = useCallback(
             domMatchesIntent =
               intent.crossTextTarget.owner.parentNode === surface
               && serializeVisualMarkdown(surface) === result.visualMarkdown;
+          } else if (result && pendingNativeOperationRef.current?.kind === 'range'
+            && pendingNativeOperationRef.current.candidate) {
+            domMatchesIntent = Boolean(consumeVerifiedNativeRootLedger(false))
+              && serializeVisualMarkdown(surface) === result.visualMarkdown;
           } else {
             domMatchesIntent =
               browserTextMatchesExpected(intent.textNode.data, expectedText) ||
@@ -16269,16 +20148,17 @@ const failVisualSynchronization = useCallback(
             pendingUnmappedVisualInputRef.current = false;
             continuingUnmappedVisualInputRef.current = false;
             const committedVisualMarkdown =
-              event.inputType.startsWith('delete') &&
-              visualStructuralBodyIsEmpty(surface)
+              verifiedInlineVisual?.markdown ?? (event.inputType.startsWith('delete') &&
+              (retiredRange !== null || visualStructuralBodyIsEmpty(surface))
                 ? serializeVisualMarkdown(surface)
-                : result.visualMarkdown;
+                : result.visualMarkdown);
             const committedResult =
-              committedVisualMarkdown === result.visualMarkdown
+              committedVisualMarkdown === result.visualMarkdown && !verifiedInlineVisual
                 ? result
                 : {
                     ...result,
-                    visualMarkdown: committedVisualMarkdown
+                    visualMarkdown: committedVisualMarkdown,
+                    ...(verifiedInlineVisual ? { visualSelection: { start: verifiedInlineVisual.offset, end: verifiedInlineVisual.offset } } : {})
                   };
             const codeBlockStructure = intent.codeBlockStructure
               ? {
@@ -16379,6 +20259,9 @@ const failVisualSynchronization = useCallback(
                 && (historyGroupOrigin || previewSnapshotRef.current.editMap)
                 ? { historySelectionBefore: transactionHistorySelectionBefore } : {}),
               ...(historySelectionWitness ? { historySelectionWitness } : {}),
+              ...(intent.terminalTextRun
+                ? { terminalTextRun: intent.terminalTextRun }
+                : {}),
               ...(intent.codeBody && inputBlock
                 ? {
                     codeBodyTopology: {
@@ -16408,9 +20291,9 @@ const failVisualSynchronization = useCallback(
               ),
               result: committedResult,
               sourceChange: {
-                from: intent.sourceSelection.start,
+                from: sourceSelection.start,
                 insert: canonicalSourceReplacement,
-                to: intent.sourceSelection.end
+                to: sourceSelection.end
               }
             };
             if ('' === committedResult.visualMarkdown) {
@@ -16479,6 +20362,7 @@ const failVisualSynchronization = useCallback(
         cancelledPendingComposition = true;
         try { finishPendingCompositionDom(surface.ownerDocument.activeElement === surface); runHistory('y' === key || event.shiftKey); }
         catch (error) { failPendingTransfer(visualEditorFailureCode(error, 'visual-editor-pending-selection-stale')); }
+        finally { releaseCompositionSurface(compositionSurfaceLease); }
         return;
       }
       if (composing || event.isComposing) return;
@@ -16518,10 +20402,11 @@ const failVisualSynchronization = useCallback(
         }
         return;
       }
-      if (!['Backspace', ' ', 'Enter'].includes(event.key)) return;
+      if (!['Backspace', 'Delete', ' ', 'Enter'].includes(event.key)) return;
       let canApplyShortcut = true;
       let historyBefore: VisualHistorySnapshot | null = null;
       let ownerCodeFenceCommand: OwnerCodeFenceCommand | undefined;
+      let fenceRemovalNeedsTypedValue = false;
       let headingEnter: Readonly<{ owned: FullOwnedDom; root: HTMLElement; sourceOffset: number }> | null = null;
       const beforeEmptyCodeFenceRemoval = (): boolean => {
         if (!flushVisualInput()) {
@@ -16544,8 +20429,28 @@ const failVisualSynchronization = useCallback(
         const input = pre ? captureVisualCodeInputSnapshot(pre) : null;
         const owned = ownedDomRef.current;
         const provenance = input ? visualLocalCodeBodyProvenance(input, beforeMarkdown) : null;
-        const interval = provenance
-          ? visualCodeBodyIntervalAtOrdinal(beforeMarkdown, provenance.codeOrdinal)
+        // Which source code body this PRE is.
+        //
+        // A locally created body answers through its own registration. A fence
+        // that arrived with the accepted preview registers none, and its
+        // ordinal is then asked of the accepted correspondence - but only on a
+        // press no certificate describes at all: none captured a top-level
+        // window (the preview still spells a code body this document has since
+        // emptied) and the visual baseline is not the source's own spelling, so
+        // the general merge would have to reconcile two spellings of the very
+        // block this command removes. Such a removal is this owner's own
+        // command and its value is typed below; every press whose baseline does
+        // spell the source keeps the merge it has today. Either witness is
+        // still validated against the LIVE source - fence markers, language and
+        // body - before the gate below may trust it.
+        const localCodeOrdinal = provenance?.codeOrdinal ?? null;
+        const acceptedCodeOrdinal = null === localCodeOrdinal && input
+          && !shortcutWindow && visualMarkdownRef.current !== beforeMarkdown
+          ? codeOrdinalForInputBlock(input, beforeMarkdown)
+          : null;
+        const codeOrdinal = localCodeOrdinal ?? acceptedCodeOrdinal;
+        const interval = null !== codeOrdinal
+          ? visualCodeBodyIntervalAtOrdinal(beforeMarkdown, codeOrdinal)
           : null;
         const normalizedCodeText = input
           ? normalizeCodeLineEndings(input.codeText)
@@ -16557,17 +20462,372 @@ const failVisualSynchronization = useCallback(
           : null;
         const sourceBodyEmpty = Boolean(interval
           && ('' === sourceBody || sourceBody === interval.lineEnding));
-        if (input && provenance && interval && domBodyEmpty && sourceBodyEmpty && owned
+        if (input && interval && domBodyEmpty && sourceBodyEmpty && owned
           && owned.source === beforeMarkdown && owned.source === documentSession.document.getValue()
           && owned.sourceRevision === documentSession.document.getRevision?.()
           && fullOwnedDomMatches(surface, owned)) {
           ownerCodeFenceCommand = { kind: 'remove', owned, prior: input.pre, html: input.pre.innerHTML,
             historySelectionBefore: { direction: 'none', start: interval.bodyStart, end: interval.bodyStart },
             sourceStart: interval.sourceBlockStart, sourceEnd: interval.sourceBlockEnd };
+          // Only the correspondence witness means the surface cannot spell
+          // this removal's value itself; the local registration path keeps the
+          // merge that has always certified it.
+          fenceRemovalNeedsTypedValue = null !== acceptedCodeOrdinal;
         }
         return true;
       };
       const codeBlocksBefore = new Set(visualCodePreOrder());
+      /**
+       * A deletion at the visual edge of a block whose adjacent sibling is an
+       * atomic object or an image-only paragraph. Chromium cannot merge across
+       * those roots: it either drops the selection to the surface start or
+       * deletes the protected object without an owner witness. The owner
+       * removes the atomic object, or joins the image paragraph's inline
+       * content into the current block, and derives the canonical value
+       * through the same merge used for native joins.
+       */
+      const removeAdjacentAtomicRoot = (): boolean => {
+        const backward = 'Backspace' === event.key;
+        if (
+          (!backward && 'Delete' !== event.key)
+          || event.altKey
+          || event.ctrlKey
+          || event.metaKey
+          || event.shiftKey
+          || event.isComposing
+          || event.defaultPrevented
+        ) return false;
+        const readCaret = () =>
+          surface.ownerDocument.defaultView?.getSelection();
+        let native = readCaret();
+        const initialBlock = native?.isCollapsed && native.rangeCount === 1
+          ? directVisualBlockForSelectionNode(surface, native.anchorNode)
+          : null;
+        if (
+          !native?.anchorNode
+          || !initialBlock
+          || initialBlock.parentElement !== surface
+          || initialBlock.matches(VISUAL_MARKDOWN_READ_ONLY_SELECTOR)
+          || !(backward
+            ? caretAtVisualRootStart(initialBlock)
+            : caretAtVisualRootEnd(initialBlock))
+        ) return false;
+        const atomic = backward
+          ? initialBlock.previousElementSibling
+          : initialBlock.nextElementSibling;
+        if (!(atomic instanceof HTMLElement)) return false;
+        const removeAtomic = isAtomicVisualRoot(atomic);
+        const joinImage = !removeAtomic
+          && isImageOnlyVisualRoot(atomic)
+          && isVisualTextJoinTarget(initialBlock);
+        if (!removeAtomic && !joinImage) return false;
+        // Everything between the two roots is the renderer's blank-line
+        // separator; no other content may be jumped over.
+        const betweenEnd = backward ? initialBlock : atomic;
+        for (
+          let node = backward ? atomic.nextSibling : initialBlock.nextSibling;
+          node && node !== betweenEnd;
+          node = node.nextSibling
+        ) {
+          if (!(node instanceof Text) || !/^\s*$/u.test(node.data)) return false;
+        }
+        const tableAtomic = removeAtomic && atomic.matches(
+          'section.table-container, section.easymde-table-container'
+        );
+        event.preventDefault();
+        try {
+          if (!event.cancelable)
+            throw new Error('visual-editor-beforeinput-not-cancelable');
+          if (!flushVisualInput()) {
+            return true;
+          }
+          native = readCaret();
+          const block = native?.isCollapsed && native.rangeCount === 1
+            ? directVisualBlockForSelectionNode(surface, native.anchorNode)
+            : null;
+          if (
+            !native?.anchorNode
+            || !block
+            || block !== initialBlock
+            || !block.isConnected
+            || !(backward
+              ? caretAtVisualRootStart(block)
+              : caretAtVisualRootEnd(block))
+          ) throw new Error('visual-editor-canonical-change-dom-stale');
+          const source = sourceMarkdownRef.current;
+          const committedVisual = visualMarkdownRef.current;
+          const owned = ownedDomRef.current;
+          const retained = ownedLedgerRetains(Array.from(surface.childNodes));
+          if (
+            null === source
+            || null === committedVisual
+            || !owned
+            || !retained
+            || owned.source !== source
+            || owned.visual !== committedVisual
+            || owned.sourceRevision
+              !== (documentSession.document.getRevision?.() ?? 0)
+            || documentSession.document.getValue() !== source
+          ) throw new Error('visual-editor-canonical-change-dom-stale');
+          // The serializer's spelling is the baseline the merge below compares
+          // the edited surface against, so its offsets are the edited ones.
+          const visual = serializeVisualMarkdown(surface);
+          if (!visualSerializationMatchesCommitted(visual, committedVisual))
+            throw new Error('visual-editor-canonical-change-dom-stale');
+          const readOnlySnapshot = readOnlySnapshotRef.current;
+          if (!readOnlySnapshot)
+            throw new Error('visual-editor-read-only-snapshot-missing');
+          assertVisualMarkdownReadOnlySnapshot(surface, readOnlySnapshot);
+          const protectedRoot = atomic.matches(
+            VISUAL_MARKDOWN_READ_ONLY_SELECTOR
+          );
+          let tableRemoval: Readonly<{
+            caret: number;
+            end: number;
+            historyCaret: number;
+            start: number;
+          }> | null = null;
+          if (tableAtomic) {
+            const preview = previewSnapshotRef.current;
+            const table = atomic.querySelector('table');
+            const tableCount = atomic.querySelectorAll('table').length;
+            const blockId = atomic.getAttribute(
+              'data-easymde-visual-block-id'
+            );
+            const editMap = preview.editMap;
+            const acceptedSource = visualCodeBodyPreviewSourceRef.current;
+            const preRemovalSelection = visualSelectionSourceRange(
+              surface,
+              source,
+              visual,
+              visual
+            );
+            if (
+              'none' !== preRemovalSelection.direction
+              || preRemovalSelection.start !== preRemovalSelection.end
+              || !Number.isSafeInteger(preRemovalSelection.start)
+              || preRemovalSelection.start < 0
+              || preRemovalSelection.start > source.length
+            ) throw new Error('visual-editor-selection-map-failed');
+            const preCaret = preRemovalSelection.start;
+            if (
+              !(table instanceof HTMLTableElement)
+              || tableCount !== 1
+            ) throw new Error('visual-editor-selection-map-failed');
+            if (!blockId || !editMap)
+              throw new Error('visual-editor-selection-map-failed');
+            if (editMap.signature !== preview.signature)
+              throw new Error('visual-editor-selection-map-failed');
+            if (capturedPreviewRevisionRef.current !== preview.revision)
+              throw new Error('visual-editor-selection-map-failed');
+            // Native edits after the heading may advance the canonical source
+            // while this accepted map still describes the table and heading.
+            // The command removes only bytes before this caret, so its exact
+            // accepted prefix - not an arbitrary table slice - is the proof.
+            if (
+              null === acceptedSource
+              || preCaret > acceptedSource.length
+              || source.slice(0, preCaret)
+                !== acceptedSource.slice(0, preCaret)
+            ) throw new Error('visual-editor-selection-map-failed');
+            if (!acceptedNodesRef.current?.includes(atomic))
+              throw new Error('visual-editor-selection-map-failed');
+            const matchingBlocks = editMap.blocks.filter(
+              (block) => block.id === blockId
+            );
+            const index = editMap.blocks.findIndex(
+              (block) => block.id === blockId
+            );
+            if (matchingBlocks.length !== 1 || index < 0)
+              throw new Error('visual-editor-selection-map-failed');
+            const range = createVisualMarkdownSourceRangeFromPreviewEditMap(
+              source,
+              editMap,
+              { end: index + 1, start: index }
+            );
+            const containedBlocks = createEditorMarkdownBlockIndex(source, {
+              referenceLabelCaseFoldProfile
+            }).blocks.filter(
+              (block) => block.from >= range.start && block.from < range.end
+            );
+            const sourceTable = containedBlocks[0];
+            if (
+              containedBlocks.length !== 1
+              || !sourceTable
+            ) throw new Error('visual-editor-selection-map-failed');
+            if (sourceTable.kind !== 'table')
+              throw new Error('visual-editor-selection-map-failed');
+            if (sourceTable.from !== range.start)
+              throw new Error('visual-editor-selection-map-failed');
+            const rangeTail = source.slice(sourceTable.to, range.end);
+            if ('' !== rangeTail.trim())
+              throw new Error('visual-editor-selection-map-failed');
+            let start = range.start;
+            let end = range.end;
+            if (start >= 2 && '\r\n' === source.slice(start - 2, start)) {
+              start -= 2;
+            } else if (start > 0 && '\n' === source[start - 1]) {
+              start -= 1;
+            } else if ('\r\n' === source.slice(end, end + 2)) {
+              end += 2;
+            } else if ('\n' === source[end]) {
+              end += 1;
+            }
+            const removedLength = end - start;
+            const caret = preCaret - removedLength;
+            if (
+              removedLength <= 0
+              || preCaret < end
+              || caret < 0
+              || caret > source.length - removedLength
+            ) throw new Error('visual-editor-selection-map-failed');
+            tableRemoval = { caret, end, historyCaret: preCaret, start };
+          }
+          // Keep one separator: the surviving blank line is what makes the
+          // two remaining blocks canonical Markdown neighbours.
+          const separator =
+            atomic.previousSibling instanceof Text
+            && /^\s*$/u.test(atomic.previousSibling.data)
+              ? atomic.previousSibling
+              : atomic.nextSibling instanceof Text
+                && /^\s*$/u.test(atomic.nextSibling.data)
+                ? atomic.nextSibling
+                : null;
+          if (joinImage) {
+            // Move the paragraph's inline content (image and any spacing or
+            // wrappers) to the caret's edge of the current block. The native
+            // caret stays in its text node, so it lands on the correct side
+            // of the joined image without an owner-placed reset.
+            if (backward) {
+              const target = visualInlinePrependTarget(initialBlock);
+              const first = target.firstChild;
+              for (const child of Array.from(atomic.childNodes)) {
+                target.insertBefore(child, first);
+              }
+            } else {
+              const target = visualInlineAppendTarget(initialBlock);
+              for (const child of Array.from(atomic.childNodes)) {
+                target.append(child);
+              }
+            }
+            atomic.remove();
+          } else {
+            atomic.remove();
+          }
+          separator?.remove();
+          const commitNodes = Array.from(surface.childNodes);
+          const commitLedger = {
+            metadata: commitNodes.map(fullOwnedNodeMetadata),
+            nodes: commitNodes
+          };
+          if (protectedRoot) {
+            // The owner just proved the removal of this exact protected root.
+            // Refresh the guard to the remaining regions so the commit can
+            // still prove that nothing else about them changed.
+            const expected = readOnlySnapshot.filter(
+              (region) => region.node !== atomic
+            );
+            const current = captureVisualMarkdownReadOnlySnapshot(surface);
+            if (
+              expected.length !== current.length
+              || expected.some((region, index) => {
+                const actual = current[index];
+                return (
+                  !actual
+                  || actual.node !== region.node
+                  || actual.innerHTML !== region.innerHTML
+                  || !visualProtectedNodeAttributesEqual(
+                    actual.attributes,
+                    region.attributes
+                  )
+                );
+              })
+            ) throw new Error('visual-editor-read-only-region-mutated');
+            readOnlySnapshotRef.current = current;
+          }
+          const editedVisual = serializeVisualMarkdown(surface);
+          let value: string;
+          let selection: ReturnType<typeof visualSelectionSourceRange>;
+          if (atomic instanceof HTMLHRElement) {
+            // The renderer canonicalizes every thematic-break spelling to
+            // `* * *`, so a byte merge against the authored `---`/`___`/`***`
+            // cannot align. The accepted Preview names this exact source row;
+            // remove the block line and one adjacent line ending there.
+            const blockId = atomic.getAttribute(
+              'data-easymde-visual-block-id'
+            );
+            const editMap = previewSnapshotRef.current.editMap;
+            const index = blockId && editMap
+              ? editMap.blocks.findIndex((block) => block.id === blockId)
+              : -1;
+            if (!editMap || !blockId || index < 0)
+              throw new Error('visual-editor-selection-map-failed');
+            const hrRange = createVisualMarkdownSourceRangeFromPreviewEditMap(
+              source,
+              editMap,
+              { end: index + 1, start: index }
+            );
+            if (!isVisualThematicBreakSource(source, hrRange))
+              throw new Error('visual-editor-selection-map-failed');
+            let start = hrRange.start;
+            let end = hrRange.end;
+            if (start >= 2 && '\r\n' === source.slice(start - 2, start)) {
+              start -= 2;
+            } else if (start > 0 && '\n' === source[start - 1]) {
+              start -= 1;
+            } else if ('\r\n' === source.slice(end, end + 2)) {
+              end += 2;
+            } else if ('\n' === source[end]) {
+              end += 1;
+            }
+            value = source.slice(0, start) + source.slice(end);
+            const caret = Math.min(start, value.length);
+            selection = { direction: 'none', end: caret, start: caret };
+          } else if (tableRemoval) {
+            value = source.slice(0, tableRemoval.start)
+              + source.slice(tableRemoval.end);
+            const caret = tableRemoval.caret;
+            selection = { direction: 'none', end: caret, start: caret };
+          } else {
+            value = mergeVisualMarkdownChangeDetails(
+              source,
+              visual,
+              editedVisual
+            ).value;
+            selection = visualSelectionSourceRange(
+              surface,
+              source,
+              visual,
+              editedVisual
+            );
+          }
+          // The caret stays exactly where the user pressed Backspace.
+          native.setBaseAndExtent(
+            native.anchorNode,
+            native.anchorOffset,
+            native.anchorNode,
+            native.anchorOffset
+          );
+          const historyCaret = tableRemoval?.historyCaret ?? selection.start;
+          synchronizeMarkdown({ ownerResult: {
+            historySelectionBefore: {
+              direction: 'none',
+              start: historyCaret,
+              end: historyCaret
+            },
+            ledger: commitLedger,
+            selection,
+            value
+          } });
+        } catch (error) {
+          failVisualSynchronization(error);
+        }
+        return true;
+      };
+      if (removeAdjacentAtomicRoot()) return;
+      // Forward deletion inside ordinary text is native; only the certified
+      // cross-root case above is owner-owned.
+      if (event.key === 'Delete') return;
       // A block shortcut rewrites the block the caret is in and preserves that
       // block's accepted identity, so it can state the exact window it is about
       // to change BEFORE it changes it. That typed window is the only way a
@@ -16624,7 +20884,7 @@ const failVisualSynchronization = useCallback(
               assertVisualMarkdownReadOnlySnapshot(surface, readOnly);
               if (owned.source !== sourceMarkdownRef.current || owned.visual !== visualMarkdownRef.current
                 || !fullOwnedDomMatches(surface, owned)
-                || (observed !== owned.visual && observed !== projectedVisual)) {
+                || (!visualSerializationMatchesCommitted(observed, owned.visual) && observed !== projectedVisual)) {
                 throw new Error('visual-editor-canonical-change-dom-stale');
               }
             } catch (error) { event.preventDefault(); failVisualSynchronization(error); return; }
@@ -16632,6 +20892,39 @@ const failVisualSynchronization = useCallback(
           }
         }
       }
+      // A shortcut that replaces an empty block discards it, so any debounced
+      // edit still pending on that block must be committed first. Otherwise
+      // the shortcut's merge would compare the post-rewrite surface with a
+      // baseline that still contains the deleted text.
+      if (
+        visualBlockShortcutRewritesEmptyBlock(surface, event)
+        && !flushVisualInput()
+      ) {
+        event.preventDefault();
+        return;
+      }
+      // The block this press discards owns no text, so the canonical bytes it
+      // stands for are its own source row. Read that row here, from the source
+      // and the block's position, before the rewrite detaches it: the row is
+      // positional, so a textually identical marker run earlier in the
+      // document can never stand in for this one. The row must also spell this
+      // block's own kind, so a surface whose terminal row belongs to some
+      // other block yields no row at all rather than the wrong one.
+      const emptyRewriteSource = sourceMarkdownRef.current;
+      const emptyRewriteBlock = visualBlockShortcutRewriteTarget(surface, event);
+      const emptyRewriteRow = (() => {
+        if (
+          null === emptyRewriteSource
+          || !emptyRewriteBlock
+          || emptyRewriteBlock.parentElement !== surface
+          || null !== emptyRewriteBlock.nextElementSibling
+        ) return null;
+        const expectedKind =
+          EMPTIED_ROW_BLOCK_KIND_BY_TAG[emptyRewriteBlock.tagName];
+        if (!expectedKind) return null;
+        const row = visualEmptiedTerminalRow(emptyRewriteSource);
+        return row && row.blockKind === expectedKind ? row : null;
+      })();
       const shortcutPrecedingNodes = Array.from(surface.childNodes);
       const shortcutWindow = captureAcceptedTopLevelVisualWindow(
         surface,
@@ -16694,6 +20987,41 @@ const failVisualSynchronization = useCallback(
               value: owned.source.slice(0, sourceStart) + fenceMarkdown + owned.source.slice(sourceEnd),
               historySelectionBefore: { direction: 'none', start: sourceEnd, end: sourceEnd },
               selection: { direction: 'none', start: caret, end: caret }
+            };
+          }
+          if (ownerCodeFenceCommand?.kind === 'remove' && fenceRemovalNeedsTypedValue) {
+            // No certificate describes this press, so the removal's value is
+            // typed from the source rows that fence occupies: those rows become
+            // the one empty row the block is visualised as. The command, its
+            // interval and the ledger are all proved above, so this is a value,
+            // not an assumption.
+            const ledger = verifiedOwnerCommandLedger(shortcutPrecedingNodes, ownerCodeFenceCommand);
+            if (!ledger) {
+              throw new Error('visual-editor-canonical-change-dom-stale');
+            }
+            const { owned, sourceStart, sourceEnd } = ownerCodeFenceCommand;
+            fenceOwnerResult = {
+              ledger,
+              value: owned.source.slice(0, sourceStart) + '\n' + owned.source.slice(sourceEnd),
+              selection: { direction: 'none', start: sourceStart, end: sourceStart }
+            };
+          }
+          if (!fenceOwnerResult && emptyRewriteRow && null !== emptyRewriteSource) {
+            // The discarded block's own row is this press's whole edit: the
+            // row's bytes go, the line ending that terminated it stays, and
+            // the caret is the row's start. Both the interval and the caret
+            // are the source's own positions, so no merge has to search for
+            // equal text - which is what let an earlier identical marker run
+            // stand in for this one.
+            const ledger = verifiedOwnerCommandLedger(shortcutPrecedingNodes);
+            if (!ledger) {
+              throw new Error('visual-editor-canonical-change-dom-stale');
+            }
+            const { end, start } = emptyRewriteRow;
+            fenceOwnerResult = {
+              ledger,
+              value: emptyRewriteSource.slice(0, start) + emptyRewriteSource.slice(end),
+              selection: { direction: 'none', start, end: start }
             };
           }
         } catch (error) {
@@ -16782,18 +21110,78 @@ const failVisualSynchronization = useCallback(
     const handleContextMenuSurfaceFocus = (): void => {
       invalidateContextMenuSelection();
     };
+    const handleCompositionStartWithSurfaceLease = (): void => {
+      if (compositionSurfaceLease) {
+        if (compositionCommitScheduled) cancelledPendingComposition = true;
+        onFailure('visual-editor-composition-active');
+        return;
+      }
+      handleCompositionStart();
+      if (!composing) return;
+      try {
+        compositionSurfaceLease = retainCompositionSurface();
+      } catch (error) {
+        pendingComposition = null;
+        pendingCanonicalCompositionRef.current = false;
+        composing = false;
+        cancelledPendingComposition = true;
+        onFailure(visualEditorFailureCode(error, 'visual-editor-input-surface-unavailable'));
+      }
+    };
+    const handleCompositionEndWithSurfaceLease = (event: CompositionEvent): void => {
+      const lease = compositionSurfaceLease;
+      try { handleCompositionEnd(event); }
+      finally {
+        if (!compositionCommitScheduled) releaseCompositionSurface(lease);
+      }
+    };
+    const handleBeforeInputWithSurfaceLease = (event: InputEvent): void => {
+      const nativeEdit = !event.defaultPrevented && !event.isComposing && !composing
+        && !pendingComposition && !['historyUndo', 'historyRedo'].includes(event.inputType);
+      try {
+        if (nativeEdit && !nativeInputSurfaceLease) nativeInputSurfaceLease = retainCompositionSurface();
+        processingNativeBeforeInput = true;
+        try { handleBeforeInput(event); }
+        finally { processingNativeBeforeInput = false; }
+        // A pre-input flush can settle the previous burst during this event.
+        if (nativeEdit && !event.defaultPrevented && !nativeInputSurfaceLease) {
+          nativeInputSurfaceLease = retainCompositionSurface();
+        }
+      } catch (error) {
+        if (event.cancelable) event.preventDefault();
+        if (!visualInputPendingRef.current) releaseNativeInputSurface();
+        if (event.cancelable) onFailure(visualEditorFailureCode(error, 'visual-editor-input-surface-unavailable'));
+        else failVisualSynchronization(error);
+        return;
+      }
+      if (event.defaultPrevented && !visualInputPendingRef.current) releaseNativeInputSurface();
+      else if (nativeEdit && nativeInputSurfaceLease) {
+        const lease = nativeInputSurfaceLease;
+        queueMicrotask(() => {
+          if (event.defaultPrevented && nativeInputSurfaceLease === lease && !visualInputPendingRef.current) {
+            releaseNativeInputSurface();
+          }
+        });
+      }
+    };
+    const handleInputWithSurfaceLease = (event: InputEvent): void => {
+      try { handleInput(event); }
+      finally {
+        if (!visualInputPendingRef.current) releaseNativeInputSurface();
+      }
+    };
     surface.ownerDocument.addEventListener(
       'selectionchange',
       handleContextMenuSelectionChange,
       true
     );
     surface.addEventListener('focusin', handleContextMenuSurfaceFocus);
-    surface.addEventListener('compositionstart', handleCompositionStart);
-    surface.addEventListener('compositionend', handleCompositionEnd);
+    surface.addEventListener('compositionstart', handleCompositionStartWithSurfaceLease);
+    surface.addEventListener('compositionend', handleCompositionEndWithSurfaceLease);
     surface.addEventListener('drop', handleDrop);
-    surface.addEventListener('beforeinput', handleBeforeInput);
+    surface.addEventListener('beforeinput', handleBeforeInputWithSurfaceLease);
     surface.addEventListener('pointerdown', handlePendingPointerDown);
-    surface.addEventListener('input', handleInput);
+    surface.addEventListener('input', handleInputWithSurfaceLease);
     surface.addEventListener('keydown', handleKeyDown);
     surface.addEventListener('paste', handlePaste);
 
@@ -17557,6 +21945,7 @@ const failVisualSynchronization = useCallback(
       allowAcceptedTransition: boolean
     ): EditorContextMenuTargetLease => {
       const state: FullContextLeaseState = {
+        nativeSelection: captureVisualHistorySelection(surface),
         lease: {
           release: () => {
             if (state.released) return;
@@ -17747,14 +22136,32 @@ const failVisualSynchronization = useCallback(
         if (!readOnlySnapshot) return false;
         try {
           assertVisualMarkdownReadOnlySnapshot(surface, readOnlySnapshot);
-          return serializeVisualMarkdown(surface)
-            === correspondence.origin.visual;
+          return visualSerializationMatchesCommitted(
+            serializeVisualMarkdown(surface),
+            correspondence.origin.visual
+          );
         } catch {
           return false;
         }
       }
       if (!documentSession.document.isEditable()) return false;
-      return ownedDomIsCurrent();
+      if (!ownedDomIsCurrent()) return false;
+      const native = surface.ownerDocument.defaultView?.getSelection();
+      if (!native?.rangeCount || !native.anchorNode || !native.focusNode
+        || !surface.contains(native.anchorNode) || !surface.contains(native.focusNode)) return true;
+      if (!(native.anchorNode instanceof Text) || !(native.focusNode instanceof Text)
+        || native.anchorNode.parentElement?.closest('pre, a, [contenteditable="false"]')
+        || native.focusNode.parentElement?.closest('pre, a, [contenteditable="false"]')
+        || native.anchorNode.parentElement?.closest(VISUAL_MARKDOWN_READ_ONLY_SELECTOR)
+        || native.focusNode.parentElement?.closest(VISUAL_MARKDOWN_READ_ONLY_SELECTOR)) return true;
+      const ownerPlaced = ownerPlacedSelectionRef.current;
+      const current = captureVisualHistorySelection(surface);
+      if (ownerPlaced && current && visualHistorySelectionEqual(ownerPlaced, current)) return true;
+      const range = native.getRangeAt(0);
+      const readOnly = readOnlySnapshotRef.current;
+      if (!readOnly || readOnly.some(({ node }) => node.contains(native.anchorNode)
+        || node.contains(native.focusNode) || (!range.collapsed && range.intersectsNode(node)))) return false;
+      return synchronizeMarkdown({ mapSelectionWhenUnchanged: true });
     };
 
     /**
@@ -17949,7 +22356,7 @@ const failVisualSynchronization = useCallback(
       if (!readOnlySnapshot) return null;
       try {
         assertVisualMarkdownReadOnlySnapshot(surface, readOnlySnapshot);
-        if (serializeVisualMarkdown(surface) !== origin.visual) return null;
+        if (!visualSerializationMatchesCommitted(serializeVisualMarkdown(surface), origin.visual)) return null;
       } catch {
         return null;
       }
@@ -18340,7 +22747,8 @@ const failVisualSynchronization = useCallback(
                     previewSnapshotRef.current.signature,
                     previewSnapshotRef.current.revision,
                     capturedPreviewRevisionRef.current,
-                    visualCodeBodyPreviewSourceRef.current
+                    visualCodeBodyPreviewSourceRef.current,
+                    referenceContextFor(currentValue)
                   );
                   if (
                     !acceptedSelection ||
@@ -18368,6 +22776,81 @@ const failVisualSynchronization = useCallback(
             }
           }
           commandSelection = captureVisualHistorySelection(surface);
+          const menuLease = contextMenuLeaseRef.current;
+          const nativeSelection = surface.ownerDocument.defaultView?.getSelection();
+          const nativePre = nativeSelection?.anchorNode?.parentElement?.closest('pre');
+          const nativePreIndex = nativePre
+            ? acceptedTopLevelVisualChildren(surface, editMap).indexOf(nativePre)
+            : -1;
+          const nativePreRow = nativePreIndex >= 0
+            ? visualStructuralBoundaryRows(currentValue, editMap)[nativePreIndex]
+            : null;
+          const nativePreRange = nativePreRow
+            ? fullRowContentExtent(currentValue, nativePreRow)
+            : null;
+          const codeInterval = menuLease?.witness.subtarget.kind === 'code'
+            ? menuLease.witness.subtarget.interval
+            : null;
+          const codeContentRange = codeInterval && nativePreRow
+            ? fullRowContentExtent(currentValue, {
+                ...nativePreRow,
+                start: codeInterval.sourceBlockStart,
+                end: codeInterval.sourceBlockEnd
+              })
+            : null;
+          let historySelectionBefore: VisualSelectionSourceRange | undefined;
+          if (
+            menuLease
+            && !menuLease.released
+            && menuLease.witness.owner === fullOwnerRef.current
+            && menuLease.witness.source === currentValue
+            && menuLease.witness.sourceRevision === currentRevision
+            && menuLease.witness.capturedRoot === nativePre
+            && menuLease.witness.subtarget.kind === 'code'
+            && menuLease.nativeSelection
+            && commandSelection
+            && visualHistorySelectionEqual(menuLease.nativeSelection, commandSelection)
+            && nativeSelection?.isCollapsed
+            && nativePreRange
+            && nativePreRow?.editable
+            && codeContentRange
+            && menuLease.witness.extent.start === nativePreRange.start
+            && menuLease.witness.extent.end === nativePreRange.end
+            && codeContentRange.start === nativePreRange.start
+            && codeContentRange.end <= nativePreRange.end
+            && codeContentRange.start === request.expected.selection.start
+            && request.expected.selection.end >= codeContentRange.end
+            && request.expected.selection.end <= nativePreRow.end
+            && request.change.changes.from === codeContentRange.start
+            && request.change.changes.to === codeContentRange.end
+            && request.change.changes.insert === ''
+            && commandSelection.anchor.offset === commandSelection.focus.offset
+            && commandSelection.anchor.path.length === commandSelection.focus.path.length
+            && commandSelection.anchor.path.every(
+              (part, index) => part === commandSelection?.focus.path[index]
+            )
+            && request.expected.selection.start !== request.expected.selection.end
+          ) {
+            const committedVisual = visualMarkdownRef.current;
+            // The live serialization is the baseline: the native selection's
+            // offsets are read from the surface it spells.
+            const baseline = serializeVisualMarkdown(surface);
+            if (null === committedVisual || !visualSerializationMatchesCommitted(baseline, committedVisual)) {
+              throw new Error('visual-editor-canonical-change-dom-stale');
+            }
+            const mapped = visualSelectionSourceRange(
+              surface, currentValue, baseline, baseline
+            );
+            if (
+              mapped.direction !== 'none'
+              || mapped.start !== mapped.end
+              || mapped.start < request.expected.selection.start
+              || mapped.end > request.expected.selection.end
+            ) {
+              throw new Error('visual-editor-canonical-change-selection-stale');
+            }
+            historySelectionBefore = mapped;
+          }
           // The actual operation descriptor is derived from the changes this
           // request authorizes, against the exact source it replaces. It is the
           // only thing that says which of two identical occurrences moved.
@@ -18396,6 +22879,7 @@ const failVisualSynchronization = useCallback(
           applyDocumentChange(
             {
               changes: request.change.changes,
+              ...(historySelectionBefore ? { historySelectionBefore } : {}),
               recordHistorySelection: true,
               selection: committedSelection,
               value: request.change.value
@@ -19160,7 +23644,10 @@ const failVisualSynchronization = useCallback(
           const acceptedVisualMarkdown = visualMarkdownRef.current;
           if (
             null === acceptedVisualMarkdown ||
-            serializeVisualMarkdown(surface) !== acceptedVisualMarkdown
+            !visualSerializationMatchesCommitted(
+              serializeVisualMarkdown(surface),
+              acceptedVisualMarkdown
+            )
           ) {
             throw new Error('visual-editor-source-navigation-dom-stale');
           }
@@ -19285,6 +23772,10 @@ const failVisualSynchronization = useCallback(
       } catch (error) {
         cleanupError = error;
       }
+      try { releaseNativeInputSurface(); }
+      catch (error) { cleanupError ??= error; }
+      try { releaseCompositionSurface(compositionSurfaceLease); }
+      catch (error) { cleanupError ??= error; }
       const continuity = emptyParagraphHistoryRef.current;
       if (continuity) {
         const slot = visualHistorySnapshotsRef.current.get(continuity.depth);
@@ -19328,12 +23819,12 @@ const failVisualSynchronization = useCallback(
       ) {
         visualCodeBodyDomOrderObserverRef.current = null;
       }
-      surface.removeEventListener('compositionstart', handleCompositionStart);
-      surface.removeEventListener('compositionend', handleCompositionEnd);
+      surface.removeEventListener('compositionstart', handleCompositionStartWithSurfaceLease);
+      surface.removeEventListener('compositionend', handleCompositionEndWithSurfaceLease);
       surface.removeEventListener('drop', handleDrop);
-      surface.removeEventListener('beforeinput', handleBeforeInput);
+      surface.removeEventListener('beforeinput', handleBeforeInputWithSurfaceLease);
       surface.removeEventListener('pointerdown', handlePendingPointerDown);
-      surface.removeEventListener('input', handleInput);
+      surface.removeEventListener('input', handleInputWithSurfaceLease);
       surface.removeEventListener('keydown', handleKeyDown);
       surface.removeEventListener('paste', handlePaste);
       surface.ownerDocument.removeEventListener(
@@ -19347,8 +23838,11 @@ const failVisualSynchronization = useCallback(
       // structural record and the owned pairing/certificate the revoked lease
       // was proved against.
       pendingNativeOperationRef.current = null;
+      deferredPendingBackspaceRef.current = null;
+      replayDeferredPendingBackspaceRef.current = () => undefined;
       ownedDomRef.current = null;
       mapCertificateRef.current = null;
+      acceptedDomCorrespondenceRef.current = null;
       refreshAttemptRef.current = null;
       if (null !== visualInputTimerRef.current) {
         clearTimeout(visualInputTimerRef.current);
@@ -19389,6 +23883,7 @@ const failVisualSynchronization = useCallback(
     prepareGeneratedContentTargetForSelection,
     prepareImageTargetBySelection,
     recordCurrentVisualHistorySnapshot,
+    retainCompositionSurface,
     requestMarkdownTransfer,
     publishPendingTransfer,
     surface,

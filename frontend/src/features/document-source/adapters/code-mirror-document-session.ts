@@ -56,6 +56,8 @@ const canonicalHistorySelectionField = StateField.define<DocumentSelection | nul
     return next;
   }
 });
+// Grouped history replays inverse effects in reverse edit order. Reverse only
+// this provider's effects so the next inversion restores the latest selection.
 const invertCanonicalHistorySelection = (transaction: Transaction) =>
   transaction.effects.flatMap((effect) => {
     if (!effect.is(canonicalHistorySelectionEffect)) return [];
@@ -63,7 +65,7 @@ const invertCanonicalHistorySelection = (transaction: Transaction) =>
       inverse: effect.value.selection,
       selection: effect.value.inverse
     })];
-  });
+  }).reverse();
 
 export type DocumentTextChangeRange = Readonly<{
   from: number;
@@ -116,7 +118,7 @@ export type DocumentCursorPosition = Readonly<{
 }>;
 
 export type CodeMirrorDocumentSession = Readonly<{
-  applyTextChange: (change: DocumentTextChange) => void;
+  applyTextChange: (change: DocumentTextChange) => DocumentTextChangeRange | null;
   canRedo: () => boolean;
   canUndo: () => boolean;
   destroy: () => void;
@@ -154,14 +156,23 @@ export type CodeMirrorDocumentSession = Readonly<{
   getValue: () => string;
   getRevision: () => number;
   replaceSavedValue: (value: string) => void;
-  redo: () => boolean;
+  /**
+   * Applies one history step. A caller that keeps offsets bound to this
+   * document passes `observe` to receive the exact replacements the step
+   * made, in the pre-step document's coordinates and ascending order.
+   */
+  redo: (observe?: DocumentHistoryStepObserver) => boolean;
   revealPosition: (position: number) => void;
   subscribe: (listener: () => void) => () => void;
   subscribeSelection: (listener: () => void) => () => void;
   setVisualEditingActive: (active: boolean) => void;
   syncFromSubmissionField: () => void;
-  undo: () => boolean;
+  undo: (observe?: DocumentHistoryStepObserver) => boolean;
 }>;
+
+export type DocumentHistoryStepObserver = (
+  changes: ReadonlyArray<DocumentTextChangeRange>
+) => void;
 
 type CreateCodeMirrorDocumentSessionOptions = Readonly<{
   container: HTMLElement;
@@ -210,7 +221,17 @@ function clampPosition(value: number, documentLength: number): number {
   return Math.max(0, Math.min(documentLength, value));
 }
 
-function localTextChange(
+/**
+ * The one minimal-diff owner for a whole-value write: the smallest single
+ * replacement that replays `currentValue` as `nextValue`, or `null` when the
+ * values are identical.
+ *
+ * Exported for the editor's unit-test doubles only: a double that returns no
+ * range from `applyTextChange` violates the port, so the harness describes the
+ * write with this same owner instead of a second diff implementation. No
+ * production caller derives a committed range from it.
+ */
+export function localTextChange(
   currentValue: string,
   nextValue: string
 ): Readonly<{ from: number; insert: string; to: number }> | null {
@@ -369,8 +390,50 @@ export function createCodeMirrorDocumentSession({
     markdownLanguage,
     syntaxHighlighting(markdownHighlightStyle)
   ];
+  // Visual editing records one history event per keystroke so undo walks
+  // back one edit at a time. The default depth of 100 events would silently
+  // drop the beginning of a long pass (typing a document in, or deleting one
+  // back to its start), leaving the oldest reachable state partway through.
+  // Scale the retained depth to the document so a full pass stays undoable,
+  // and keep growing it as the document does: a fixture typed in after mount
+  // has no length at creation, but its own deletion still runs one event per
+  // character.
+  const historyCompartment = new Compartment();
+  const historyDepthEffect = StateEffect.define<number>();
+  // The configured depth travels with the state, not with the session, so a
+  // transaction that is built but never applied cannot report capacity the
+  // history field does not actually have.
+  const historyDepthField = StateField.define<number>({
+    create: () => Math.max(1_000, initialValue.length * 2),
+    update: (depth, transaction) => {
+      for (const effect of transaction.effects) {
+        if (effect.is(historyDepthEffect)) return effect.value;
+      }
+      return depth;
+    }
+  });
+  const historyExtensions = (depth: number) => history({ minDepth: depth });
   const extensions = [
-    history(),
+    historyCompartment.of(
+      historyExtensions(Math.max(1_000, initialValue.length * 2))
+    ),
+    historyDepthField,
+    // A transaction extender runs before the transaction's state is built, so
+    // the reconfigure below belongs to the same update as the change that made
+    // the document longer: its history event is retained at the new depth
+    // rather than trimmed at the old one. Depth only ever grows.
+    EditorState.transactionExtender.of((transaction) => {
+      const required = Math.max(1_000, transaction.newDoc.length * 2);
+      if (required <= transaction.startState.field(historyDepthField)) {
+        return null;
+      }
+      return {
+        effects: [
+          historyDepthEffect.of(required),
+          historyCompartment.reconfigure(historyExtensions(required))
+        ]
+      };
+    }),
     canonicalHistorySelectionField,
     invertedEffects.of(invertCanonicalHistorySelection),
     markdownSyntax.of(markdownSyntaxExtensions),
@@ -621,6 +684,28 @@ export function createCodeMirrorDocumentSession({
       view.dispatch(transaction);
     }
   };
+  const runHistoryStep = (
+    command: typeof undoCommand,
+    observe?: DocumentHistoryStepObserver
+  ): boolean => {
+    if (destroyed) return false;
+    const changes: DocumentTextChangeRange[] = [];
+    const changed = command({
+      dispatch: (transaction: Transaction) => {
+        if (observe) {
+          transaction.changes.iterChanges((from, to, _fromB, _toB, inserted) => {
+            changes.push({ from, insert: inserted.toString(), to });
+          });
+        }
+        dispatchAuthoritative(transaction);
+      },
+      state: authoritativeState()
+    });
+    if (changed) restoreHistorySelection();
+    if (changed && !visualEditingActive) view.focus();
+    if (changed) observe?.(changes);
+    return changed;
+  };
 
   const mutationObserver = new MutationObserver(() => {
     if (destroyed) {
@@ -711,7 +796,7 @@ export function createCodeMirrorDocumentSession({
       value
     }: DocumentTextChange) {
       if (destroyed) {
-        return;
+        return null;
       }
       const state = authoritativeState();
       const selectionBefore = stateSelection(state);
@@ -786,6 +871,7 @@ export function createCodeMirrorDocumentSession({
         // already recorded this edit's canonical caret.
         recordCanonicalHistorySelection();
       }
+      return resolvedChanges;
     },
     canUndo: () => !destroyed && undoDepth(authoritativeState()) > 0,
     canRedo: () => !destroyed && redoDepth(authoritativeState()) > 0,
@@ -991,29 +1077,7 @@ export function createCodeMirrorDocumentSession({
       visualEditingActive = false;
     },
     syncFromSubmissionField: syncFromNative,
-    redo() {
-      if (destroyed) return false;
-      const state = authoritativeState();
-      const changed = redoCommand({
-        dispatch: (transaction: Transaction) =>
-          dispatchAuthoritative(transaction),
-        state
-      });
-      if (changed) restoreHistorySelection();
-      if (changed && !visualEditingActive) view.focus();
-      return changed;
-    },
-    undo() {
-      if (destroyed) return false;
-      const state = authoritativeState();
-      const changed = undoCommand({
-        dispatch: (transaction: Transaction) =>
-          dispatchAuthoritative(transaction),
-        state
-      });
-      if (changed) restoreHistorySelection();
-      if (changed && !visualEditingActive) view.focus();
-      return changed;
-    }
+    redo: (observe) => runHistoryStep(redoCommand, observe),
+    undo: (observe) => runHistoryStep(undoCommand, observe)
   };
 }

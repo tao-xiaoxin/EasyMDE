@@ -63,6 +63,13 @@ test('compiled Markdown parser packages have explicit notice ownership', () => {
   assert.ok(Object.hasOwn(bundledFrontendPackages, 'mermaid'));
 });
 
+test('generated Unicode case-fold data retains its license in compiled runtime notices', () => {
+  const notices = renderNotices(repoRoot);
+  const license = readFileSync(join(repoRoot, 'scripts/vendor-licenses/unicode-LICENSE'), 'utf8').trim();
+  assert.match(notices, /## Unicode Character Database/);
+  assert.ok(notices.includes(license));
+});
+
 test('compiled code-indentation parsers keep their own upstream notices', () => {
   // The engine behind detached code formatting imports these language packages,
   // which compile their parsers into the release bundle. Derive the required

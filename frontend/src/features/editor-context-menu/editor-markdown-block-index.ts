@@ -6,6 +6,7 @@ import type {
 	EditorMarkdownImageBlock,
 	EditorMarkdownImageRange,
 	EditorMarkdownSourceBlock,
+	ReferenceLabelCaseFoldProfile,
 } from "../../contracts/ports/editor-block-index-port";
 import { markdownLineStarts } from "../../shared/markdown/markdown-line-model";
 import { lineIndexAtOffsets } from "./editor-markdown-lines";
@@ -244,6 +245,7 @@ function inlineCodeRanges(
 function parserSnapshot(
 	source: string,
 	projection: NewlineProjection,
+	profile: ReferenceLabelCaseFoldProfile,
 ): ParserSnapshot {
 	const starts = markdownLineStarts(source);
 	const tree = markdownLanguage.parser.parse(projection.text);
@@ -334,7 +336,7 @@ function parserSnapshot(
 			...inlineCodeRanges(projection.text, codeRanges),
 		]),
 		imageNodes,
-		linkNodes: projectedLinkNodes(projection.text, syntaxNodes),
+		linkNodes: projectedLinkNodes(projection.text, syntaxNodes, profile),
 		unavailableRanges: mergeRanges(unavailableRanges),
 	};
 }
@@ -417,10 +419,11 @@ function imageIndexForBlocks(
 
 export function createEditorMarkdownBlockIndex(
 	source: string,
+	options: Readonly<{ referenceLabelCaseFoldProfile: ReferenceLabelCaseFoldProfile }>,
 ): EditorMarkdownBlockIndex {
 	const starts = markdownLineStarts(source);
 	const projection = projectNewlines(source);
-	const parsed = parserSnapshot(source, projection);
+	const parsed = parserSnapshot(source, projection, options.referenceLabelCaseFoldProfile);
 	const projectedRanges = mathRanges(
 		projection.text,
 		mergeRanges([...parsed.codeRanges, ...parsed.unavailableRanges]),

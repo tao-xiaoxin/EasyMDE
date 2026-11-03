@@ -1564,16 +1564,6 @@ function placeCaretAtEnd(node: Node): void {
   selection.addRange(range);
 }
 
-function placeCaretAfter(node: Node): void {
-  const selection = window.getSelection();
-  if (!selection || !node.parentNode) return;
-  const range = document.createRange();
-  range.setStartAfter(node);
-  range.collapse(true);
-  selection.removeAllRanges();
-  selection.addRange(range);
-}
-
 function markShortcutApplied(
   element: HTMLElement,
   kind: 'block' | 'inline'
@@ -3971,7 +3961,26 @@ export function applyVisualInlineShortcut(editor: HTMLElement): boolean {
     }
     range.insertNode(formatted);
     markShortcutApplied(formatted, 'inline');
-    placeCaretAfter(formatted);
+    // The caret must sit outside the closed unit, not on the element boundary
+    // after it: Chromium canonicalizes that boundary to the deepest text
+    // position before it, i.e. the end of the unit's own text, so the next
+    // character would be typed inside the delimiters. The deletion-stable
+    // anchor keeps the position in the block's own text, and keeps it there
+    // across a Backspace that would otherwise consume the anchor and return
+    // the caret to that same ambiguous boundary.
+    const container = formatted.parentNode;
+    if (!container) {
+      throw new Error('visual-editor-inline-shortcut-container-missing');
+    }
+    placeVisualCaretAtBoundary(
+      editor,
+      {
+        node: container,
+        offset:
+          Array.prototype.indexOf.call(container.childNodes, formatted) + 1
+      },
+      { deletionStable: true }
+    );
     return true;
   }
   return false;
@@ -5994,9 +6003,36 @@ function visualBoundaryAt(
   return null;
 }
 
+const VISUAL_NEUTRAL_CARET_MARKER = '\u200b';
+
+/**
+ * The anchor a caret needs when the deletion that follows must stay neutral.
+ *
+ * A caret placed on the element boundary after a closed inline unit is
+ * ambiguous: Chromium canonicalizes that boundary to the deepest text position
+ * before it, which is the end of the unit's own text, so the next character is
+ * typed inside the delimiters. Anchoring the caret in a U+200B text node of the
+ * block itself removes the ambiguity, because the caret then lives inside a
+ * text node rather than on an element boundary.
+ *
+ * One zero-width character is not enough to survive a native Backspace: the
+ * press deletes the character before the caret, which empties and prunes the
+ * anchor node and returns the caret to the ambiguous boundary. Two characters
+ * with the caret between them leave the node non-empty across that press, so
+ * the position stays outside the unit and the next character is still plain
+ * text. The anchor survives exactly that one press: a second Backspace consumes
+ * the remaining character and returns the caret to the unit's own text, which
+ * is then the deliberate "edit inside the unit" path. Both characters are
+ * stripped before serialization exactly like the single-character anchor.
+ */
+const VISUAL_DELETION_STABLE_CARET_ANCHOR =
+  VISUAL_NEUTRAL_CARET_MARKER.repeat(2);
+const VISUAL_DELETION_STABLE_CARET_OFFSET = 1;
+
 function neutralVisualCaretBoundary(
   editor: HTMLElement,
-  boundary: VisualBoundary
+  boundary: VisualBoundary,
+  options: Readonly<{ deletionStable?: boolean }> = {}
 ): VisualBoundary {
   if (
     boundary.node === editor
@@ -6020,21 +6056,34 @@ function neutralVisualCaretBoundary(
     element = element.parentElement;
   }
   if (!endsWithFormatting) return boundary;
-  const caret = editor.ownerDocument.createTextNode('\u200b');
+  // A code body owns its text: an anchor inserted here would sit outside the
+  // serializer's caret-marker sweep and be authored into the document, so the
+  // caret stays on the code text itself.
+  if (boundary.node.closest('pre, code')) return boundary;
+  const deletionStable = options.deletionStable === true;
+  const caret = editor.ownerDocument.createTextNode(
+    deletionStable
+      ? VISUAL_DELETION_STABLE_CARET_ANCHOR
+      : VISUAL_NEUTRAL_CARET_MARKER
+  );
   boundary.node.insertBefore(
     caret,
     boundary.node.childNodes[boundary.offset] ?? null
   );
-  return { node: caret, offset: 1 };
+  return {
+    node: caret,
+    offset: deletionStable ? VISUAL_DELETION_STABLE_CARET_OFFSET : 1
+  };
 }
 
 function placeVisualCaretAtBoundary(
   editor: HTMLElement,
-  boundary: VisualBoundary
+  boundary: VisualBoundary,
+  options: Readonly<{ deletionStable?: boolean }> = {}
 ): void {
   const selection = editor.ownerDocument.defaultView?.getSelection();
   if (!selection) throw new Error('visual-editor-selection-unavailable');
-  const caret = neutralVisualCaretBoundary(editor, boundary);
+  const caret = neutralVisualCaretBoundary(editor, boundary, options);
   const range = editor.ownerDocument.createRange();
   range.setStart(caret.node, caret.offset);
   range.collapse(true);

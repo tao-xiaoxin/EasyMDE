@@ -537,6 +537,37 @@ publishing the selection-only canonical caret with its direction preserved; a
 selected deletion's target must equal that authenticated interval exactly for
 both Backspace and Delete, and the post-delete caret is the interval start.
 
+A table edge is not a deletion target. A table's cells are the only
+caret-editable runs its canonical row spells, so the pipes and the line break
+between two cells are renderer syntax no caret owns: Backspace at a cell's own
+content start, Delete or its word-deletion variants at a cell's own content
+end, and the matching edge of a paragraph that faces a table root all name a
+boundary with no canonical character to remove. Chromium still
+reports those presses with a target range that leaves the caret's own cell -
+into the neighbouring cell, the row, or the table container - so the Full owner
+claims the cancelable press before the generic selection mapper runs, consumes
+it, keeps the caret, and reports no failure code: a position with no editor
+action is not an inconsistent mapping. A heading, list item, quote or code body
+is not this shape, because each opens with a marker or fence line of its own
+and keeps its own owner. A deletion whose selection spans two
+cells is refused the same way, because removing the separator that spells their
+boundary would have to invent a row spelling the surface does not render. A
+press the browser will not cancel keeps the
+`visual-editor-selection-map-failed` rejection, since the uncommitted native
+structural edit would otherwise diverge from the canonical source.
+
+A marker row is not a table edge. A list item's `- `, a quote row's `>` and an
+ATX heading's `#{1,6}` are renderer syntax no caret owns, so Backspace at that
+row's own start is a structural join: the owner proves on a clone that the
+source loses exactly the row separator and its marker run - including a
+heading's closing run, which the renderer never draws - then appends the row's
+inline content to the block before it and leaves the caret at the seam. Where
+the join cannot be placed - no block before the row, a target that cannot hold
+text, a nested or protected row, a spelling that is not only markers - the
+press is consumed with no write and no failure code, and a row at the document
+start stays a silent no-op. A genuinely inconsistent DOM still reports its
+stable failure.
+
 A certified empty-code-gap IME session also retains the Preview surface for its
 own lifetime. The Windowed owner takes one runtime lease, so the sink installs
 no commit and publishes no certificate for the held content, and mounted
@@ -921,9 +952,14 @@ from the real operation descriptor; another root's boundary insertion is
 excluded, and an ambiguous unowned empty extent is rejected.
 Full heading-tail Enter and witnessed native paragraph splits preserve the
 canonical bytes outside the exact insertion, including inter-block gaps and the
-terminal LF. A newly empty paragraph has a source-owned two-space body; the
-next native character replaces that body rather than inserting at a neighboring
-code block. When a browser's native insertion leaves the original empty-
+terminal LF. The heading Enter window is proved by shape alone: one inserted
+empty paragraph directly after the heading that stood at that position before
+the command, with every other node the very object it was. That proof needs no
+accepted block identity, so a surface whose accepted render carries no edit map
+- and therefore no identities at all - still admits its own heading command.
+A newly empty paragraph has a source-owned two-space body; the next native
+character replaces that body rather than inserting at a neighboring code block.
+When a browser's native insertion leaves the original empty-
 paragraph `BR` after the new Text node, that witnessed Text+`BR` shape remains
 the owned immediate-input presentation; it is not normalized away before the
 pending edit settles. Its operation-issued source/revision and node witness

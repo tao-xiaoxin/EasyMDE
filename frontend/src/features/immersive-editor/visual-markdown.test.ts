@@ -252,6 +252,67 @@ function placeCaret(element: Node, offset: number): void {
   selection?.addRange(range);
 }
 
+/**
+ * The text position Chromium resolves a collapsed visual caret to.
+ *
+ * A caret on an element boundary is ambiguous, and Chromium canonicalizes it to
+ * the deepest text position before that boundary. Reproducing that resolution
+ * is what makes a caret left "after" a closed inline unit behave like the end
+ * of that unit's own text, exactly as it does in the browser; inserting blindly
+ * at the raw offset would hide the defect these helpers cover.
+ */
+function resolvedVisualCaret(): Readonly<{ node: Text; offset: number }> {
+  const selection = window.getSelection();
+  if (!selection?.isCollapsed || !selection.anchorNode) {
+    throw new Error('visual-caret-not-collapsed');
+  }
+  let node: Node = selection.anchorNode;
+  let offset = selection.anchorOffset;
+  while (!(node instanceof Text)) {
+    const child = node.childNodes[offset - 1];
+    if (!child) throw new Error('visual-caret-has-no-text-position');
+    node = child;
+    offset = child instanceof Text ? child.length : child.childNodes.length;
+  }
+  return { node, offset };
+}
+
+/** Type `text` at the caret the way a native `insertText` does. */
+function typeAtVisualCaret(text: string): void {
+  const caret = resolvedVisualCaret();
+  caret.node.insertData(caret.offset, text);
+  placeCaret(caret.node, caret.offset + text.length);
+}
+
+/**
+ * Press Backspace at the caret the way the browser does: the character before
+ * the resolved caret position is removed, and a caret at the start of a text
+ * node removes the previous text position's last character.
+ */
+function pressBackspaceAtVisualCaret(): void {
+  const caret = resolvedVisualCaret();
+  if (caret.offset > 0) {
+    caret.node.deleteData(caret.offset - 1, 1);
+    placeCaret(caret.node, caret.offset - 1);
+    return;
+  }
+  const block = caret.node.parentElement;
+  if (!block) throw new Error('visual-caret-block-missing');
+  const texts: Text[] = [];
+  const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+  let current = walker.nextNode();
+  while (current) {
+    if (current instanceof Text) texts.push(current);
+    current = walker.nextNode();
+  }
+  const previous = texts[texts.indexOf(caret.node) - 1];
+  if (!previous || previous.length < 1) {
+    throw new Error('visual-caret-previous-text-missing');
+  }
+  previous.deleteData(previous.length - 1, 1);
+  placeCaret(previous, previous.length);
+}
+
 /** One inert image-interaction owner for tests that drive it directly. */
 function imageInteraction(surface: HTMLElement) {
   return createVisualImageInteraction(surface, {
@@ -4459,6 +4520,34 @@ A--&gt;B</code></pre>
     expect(serializeVisualMarkdown(surface)).toBe('`````js linenos=true\n\n`````');
   });
 
+  it('keeps a code-body caret on the code text instead of a zero-width anchor', () => {
+    const surface = editor(
+      '<pre data-easymde-visual-fence="~~~"><code>Alpha</code></pre><p>Tail</p>'
+    );
+    const source = serializeVisualMarkdown(surface);
+    const pre = surface.querySelector('pre');
+    const code = surface.querySelector('pre > code');
+    if (!(pre instanceof HTMLElement) || !(code instanceof HTMLElement)) {
+      throw new Error('visual-anchored-code-missing');
+    }
+
+    // A fence body's own end maps to the `code` element boundary, so this used
+    // to insert a U+200B caret anchor inside the code body. That anchor
+    // survived serialization and reached the canonical document through the
+    // code-body input intent.
+    placeVisualCaretFromSourceOffset(
+      surface,
+      source,
+      source,
+      '~~~\nAlpha'.length
+    );
+
+    expect(code.textContent).toBe('Alpha');
+    expect(captureVisualCodeInputSnapshot(pre)?.codeText).toBe('Alpha');
+    expect(surface.textContent).not.toContain('\u200b');
+    expect(serializeVisualMarkdown(surface)).toBe(source);
+  });
+
   it('preserves the empty code text node across native history and deletion', () => {
     const surface = editor('<p>~~~bash</p>');
     const paragraph = surface.querySelector('p');
@@ -5258,6 +5347,160 @@ A--&gt;B</code></pre>
 
     expect(applyVisualInlineShortcut(surface)).toBe(true);
     expect(surface.querySelector('strong.markdown-inline-applied')).not.toBeNull();
+  });
+
+  /**
+   * The continuation matrix for `applyVisualInlineShortcut`.
+   *
+   * Every row except the link failed before the neutral placement: the caret
+   * was collapsed on the block boundary after the new unit, Chromium resolved
+   * that boundary to the deepest text position before it - the end of the
+   * unit's own text - and the continuation was typed inside the delimiters.
+   * `a **bold**` + ` b` therefore canonicalized to `a **bold b**`, the em rows
+   * to `a *italic b*`, the del row to `a ~~strike b~~`, and both code rows
+   * swallowed the space into the code span. The link row is the case Chromium
+   * already tolerated because it refuses to insert inside an anchor; it stays
+   * here so the placement is covered for `<a>` exactly like every other closed
+   * unit, and so a reverted placement is still visible for it.
+   */
+  it.each([
+    {
+      continuation: 'a **bold** b',
+      markup: 'strong',
+      typed: 'a **bold**'
+    },
+    {
+      continuation: 'a **bold** b',
+      markup: 'strong',
+      typed: 'a __bold__'
+    },
+    {
+      continuation: 'a *italic* b',
+      markup: 'em',
+      typed: 'a *italic*'
+    },
+    {
+      continuation: 'a *italic* b',
+      markup: 'em',
+      typed: 'a _italic_'
+    },
+    {
+      continuation: 'a ~~strike~~ b',
+      markup: 'del',
+      typed: 'a ~~strike~~'
+    },
+    {
+      continuation: 'a `code` b',
+      markup: 'code',
+      typed: 'a `code`'
+    },
+    {
+      continuation: 'a `co de` b',
+      markup: 'code',
+      typed: 'a `co de`'
+    },
+    {
+      continuation: 'a [link](https://example.test) b',
+      markup: 'a',
+      typed: 'a [link](https://example.test)'
+    }
+  ])(
+    'keeps a continued line outside the closed $markup unit typed as $typed',
+    ({ continuation, markup, typed }) => {
+      const surface = editor(`<p>${typed}</p>`);
+      const text = surface.querySelector('p')?.firstChild;
+      if (!(text instanceof Text)) {
+        throw new Error('visual-inline-caret-text-missing');
+      }
+      placeCaret(text, text.length);
+
+      expect(applyVisualInlineShortcut(surface)).toBe(true);
+
+      const unit = surface.querySelector(markup);
+      const anchor = window.getSelection()?.anchorNode;
+      // The caret is the block's own text immediately after the closed unit,
+      // not the ambiguous element boundary after it.
+      expect(anchor).toBeInstanceOf(Text);
+      if (!(anchor instanceof Text)) {
+        throw new Error('visual-inline-caret-anchor-missing');
+      }
+      expect(anchor.parentElement?.tagName).toBe('P');
+      expect(anchor.previousSibling).toBe(unit);
+
+      typeAtVisualCaret(' b');
+
+      expect(serializeVisualMarkdown(surface)).toBe(continuation);
+    }
+  );
+
+  it('maps the caret after a closed inline unit to the source offset after its delimiters', () => {
+    const surface = editor('<p>a **bold**</p>');
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) {
+      throw new Error('visual-inline-anchor-text-missing');
+    }
+    placeCaret(text, text.length);
+
+    expect(applyVisualInlineShortcut(surface)).toBe(true);
+
+    const source = serializeVisualMarkdown(surface);
+    expect(source).toBe('a **bold**');
+    expect(visualSelectionSourceRange(surface, source, source)).toEqual({
+      direction: 'none',
+      end: source.length,
+      start: source.length
+    });
+  });
+
+  it('keeps the caret outside a closed inline unit across a Backspace on the anchor', () => {
+    const surface = editor('<p>a **bold**</p>');
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) {
+      throw new Error('visual-inline-anchor-text-missing');
+    }
+    placeCaret(text, text.length);
+
+    expect(applyVisualInlineShortcut(surface)).toBe(true);
+
+    // A single zero-width anchor is consumed by this press: the node empties,
+    // Chromium prunes it, and the caret resolves back to the end of the unit's
+    // own text, where the `x` below would be typed inside the delimiters.
+    pressBackspaceAtVisualCaret();
+
+    const caret = window.getSelection()?.anchorNode;
+    expect(caret).toBeInstanceOf(Text);
+    if (!(caret instanceof Text)) {
+      throw new Error('visual-inline-caret-anchor-missing');
+    }
+    expect(caret.parentElement?.tagName).toBe('P');
+    expect(caret.previousSibling).toBe(surface.querySelector('strong'));
+
+    typeAtVisualCaret('x');
+
+    expect(serializeVisualMarkdown(surface)).toBe('a **bold**x');
+  });
+
+  it('keeps a typed space outside a closed inline unit across a Backspace on it', () => {
+    const surface = editor('<p>a **bold**</p>');
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) {
+      throw new Error('visual-inline-anchor-text-missing');
+    }
+    placeCaret(text, text.length);
+
+    expect(applyVisualInlineShortcut(surface)).toBe(true);
+    typeAtVisualCaret(' ');
+    // The space belongs to the paragraph, not to the unit: a trailing space of
+    // a paragraph is not authored into the source, so the canonical line is
+    // unchanged here, while a space typed inside the unit would show up as
+    // `a **bold **`.
+    expect(surface.querySelector('strong')?.textContent).toBe('bold');
+    expect(serializeVisualMarkdown(surface)).toBe('a **bold**');
+
+    pressBackspaceAtVisualCaret();
+    typeAtVisualCaret('x');
+
+    expect(serializeVisualMarkdown(surface)).toBe('a **bold**x');
   });
 
   it('applies reference heading toolbar commands to the visual document', () => {

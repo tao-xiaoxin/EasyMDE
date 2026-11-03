@@ -7898,7 +7898,9 @@ export function visualTextBoundarySourceProjection(
   }
   const owned = ownedProjectionBlock(surface, node);
   if (!owned) return null;
-  const { block, blockMarkdown, prefixAndBlock } = owned;
+  const { block, blockMarkdown } = owned;
+  const prefixAndBlock = owned.prefixAndBlock();
+  if (null === prefixAndBlock) return null;
   let blockStart = -1;
   if (baselineVisualMarkdown.startsWith(prefixAndBlock)) {
     blockStart = prefixAndBlock.length - blockMarkdown.length;
@@ -7963,6 +7965,41 @@ export function visualTextBoundarySourceProjection(
 }
 
 /**
+ * The last owned projection block per surface, and the prefix fragment it
+ * carries. A press projects more than one boundary of one block — the caret's
+ * edge and the deleted edge — against a DOM that does not change between them,
+ * so one entry answers the whole press.
+ *
+ * Every field is keyed on what the fragment is a function of: the block's own
+ * identity and `outerHTML` for the block's fragment (the serializer reads only
+ * attributes, classes and text), and the identity and `outerHTML` of every
+ * block the prefix carries, which also covers every preceding sibling. A
+ * changed block, a changed preceding sibling or a changed surface recomputes
+ * instead of answering with a stale projection.
+ */
+const ownedProjectionBlockMemos = new WeakMap<
+  HTMLElement,
+  Readonly<{
+    block: HTMLElement;
+    blockFragment: string;
+    blockHtml: string;
+    prefix: Readonly<{
+      blocks: ReadonlyArray<HTMLElement>;
+      html: ReadonlyArray<string>;
+      value: string | null;
+    }> | null;
+  }>
+>();
+
+/**
+ * The horizontal columns `serializeVisualMarkdown`'s whole-output trim drops
+ * from a fragment's leading spelling. They are the run a block's own
+ * serialization can lose and the prefix restores; a line break ends the run,
+ * because blocks are separated by one.
+ */
+const VISUAL_TRIMMED_COLUMNS = /[ \t\u00a0]/u;
+
+/**
  * The baseline range the node's owning block serializes to. A witnessed run
  * may use the exact DOM prefix to identify a repeated block; otherwise its
  * serialization must be unique. Text uniqueness alone is not DOM provenance.
@@ -7973,6 +8010,14 @@ export function visualTextBoundarySourceProjection(
  * itself the block (a block-scoped or detached endpoint clone), and the
  * serialization of the blocks up to and including the owner for a
  * whole-surface root.
+ *
+ * The prefix is a *proof of position*, and it is only ever read as one: a
+ * projection consults it when the baseline in hand starts with it, or when the
+ * block's own spelling needs the columns the whole-output trim dropped. An
+ * ordinary in-block press — a character deletion inside one text node — proves
+ * the run from the block's own spelling and never reads it, so the fragment is
+ * built on first use instead of on every press, and the press's second
+ * projection reuses the one the first built.
  */
 function ownedProjectionBlock(
   surface: HTMLElement,
@@ -7980,7 +8025,7 @@ function ownedProjectionBlock(
 ): Readonly<{
   block: HTMLElement;
   blockMarkdown: string;
-  prefixAndBlock: string;
+  prefixAndBlock: () => string | null;
 }> | null {
   if (!surface.contains(node)) return null;
   let block: HTMLElement | null = node.parentElement;
@@ -7988,41 +8033,127 @@ function ownedProjectionBlock(
     block = block.parentElement;
   }
   if (!block) return null;
-  let blockMarkdown: string;
-  try {
-    blockMarkdown = serializeVisualMarkdownBlockFragment([block]);
-  } catch {
-    return null;
-  }
-  if (!blockMarkdown) return null;
+  const blockHtml = block.outerHTML;
+  const blockMarkdown = ownedBlockFragment(surface, block, blockHtml);
+  if (null === blockMarkdown || !blockMarkdown) return null;
   // A root may be its own block only as a detached endpoint clone: the native
   // windowed owners map per-block crops, and an attached crop is the whole
   // document's own root, whose position only its prefix can prove.
   if (block === surface) {
     if (surface.isConnected) return null;
-    return { block, blockMarkdown, prefixAndBlock: blockMarkdown };
+    return { block, blockMarkdown, prefixAndBlock: () => blockMarkdown };
   }
   const children = Array.from(surface.children).filter(
     (child): child is HTMLElement => child instanceof HTMLElement
   );
   const blockIndex = children.indexOf(block);
   if (blockIndex < 0) return null;
-  try {
-    const prefixAndBlock = serializeVisualMarkdownBlockFragment(
-      children.slice(0, blockIndex + 1)
-    );
-    return {
+  const prefixBlocks = children.slice(0, blockIndex + 1);
+  const prefixAndBlock = (): string | null =>
+    ownedPrefixAndBlock(
+      surface,
       block,
-      blockMarkdown: blockFragmentSpellingInPrefix(
-        blockMarkdown,
-        prefixAndBlock
-      ),
-      prefixAndBlock
-    };
+      blockHtml,
+      blockMarkdown,
+      prefixBlocks
+    );
+  // The whole-output trim only strips the fragment's *leading* whitespace, and
+  // a block's serialization opens either with its first rendered character or
+  // with a marker of its own (heading hashes, a list bullet, a fence), so only
+  // a block whose leading text is one of those columns keeps a spelling the
+  // prefix has to complete. Every other block keeps its own spelling, and the
+  // prefix stays unbuilt until a proof reads it.
+  const leading = (block.textContent ?? '').charAt(0);
+  if ('' === leading || !VISUAL_TRIMMED_COLUMNS.test(leading)) {
+    return { block, blockMarkdown, prefixAndBlock };
+  }
+  // This block's own spelling is the one the trim shortened, so the prefix is
+  // the only spelling that carries its leading columns: a prefix that cannot be
+  // serialized proves nothing here, exactly as it proved nothing before.
+  const prefix = prefixAndBlock();
+  if (null === prefix) return null;
+  return {
+    block,
+    blockMarkdown: blockFragmentSpellingInPrefix(blockMarkdown, prefix),
+    prefixAndBlock
+  };
+}
+
+/**
+ * The block's own fragment, as `serializeVisualMarkdownBlockFragment([block])`
+ * spells it, or null when the block cannot be serialized.
+ */
+function ownedBlockFragment(
+  surface: HTMLElement,
+  block: HTMLElement,
+  blockHtml: string
+): string | null {
+  const memo = ownedProjectionBlockMemos.get(surface);
+  if (memo && memo.block === block && memo.blockHtml === blockHtml) {
+    return memo.blockFragment;
+  }
+  let blockFragment: string;
+  try {
+    blockFragment = serializeVisualMarkdownBlockFragment([block]);
   } catch {
     return null;
   }
+  ownedProjectionBlockMemos.set(surface, {
+    block,
+    blockFragment,
+    blockHtml,
+    prefix: null
+  });
+  return blockFragment;
 }
+
+/**
+ * The serialization of the surface's blocks up to and including `block`, or
+ * null when that fragment cannot be serialized.
+ */
+function ownedPrefixAndBlock(
+  surface: HTMLElement,
+  block: HTMLElement,
+  blockHtml: string,
+  blockFragment: string,
+  prefixBlocks: ReadonlyArray<HTMLElement>
+): string | null {
+  const memo = ownedProjectionBlockMemos.get(surface);
+  const prefix = memo
+    && memo.block === block
+    && memo.blockHtml === blockHtml
+    && memo.blockFragment === blockFragment
+      ? memo.prefix
+      : null;
+  if (
+    prefix
+    && prefix.blocks.length === prefixBlocks.length
+    && prefix.blocks.every((candidate, index) => candidate === prefixBlocks[index])
+    && prefix.html.every(
+      (html, index) => html === prefixBlocks[index]?.outerHTML
+    )
+  ) {
+    return prefix.value;
+  }
+  let value: string | null;
+  try {
+    value = serializeVisualMarkdownBlockFragment(prefixBlocks);
+  } catch {
+    value = null;
+  }
+  ownedProjectionBlockMemos.set(surface, {
+    block,
+    blockFragment,
+    blockHtml,
+    prefix: {
+      blocks: prefixBlocks,
+      html: prefixBlocks.map((candidate) => candidate.outerHTML),
+      value
+    }
+  });
+  return value;
+}
+
 
 /**
  * The block's own spelling as the document writes it. `serializeVisualMarkdown`
@@ -8043,7 +8174,7 @@ function blockFragmentSpellingInPrefix(
   if (!prefixAndBlock.endsWith(blockMarkdown)) return blockMarkdown;
   const head = prefixAndBlock.length - blockMarkdown.length;
   let start = head;
-  while (start > 0 && /[ \t\u00a0]/u.test(prefixAndBlock[start - 1]!)) {
+  while (start > 0 && VISUAL_TRIMMED_COLUMNS.test(prefixAndBlock[start - 1]!)) {
     start -= 1;
   }
   return prefixAndBlock.slice(start);
@@ -8058,12 +8189,15 @@ function owningBlockBaselineRange(
 ): Readonly<{ end: number; start: number }> | null {
   const owned = ownedProjectionBlock(surface, node);
   if (!owned) return null;
-  const { blockMarkdown, prefixAndBlock } = owned;
-  if (witnessed && baselineVisualMarkdown.startsWith(prefixAndBlock)) {
-    return {
-      end: prefixAndBlock.length,
-      start: prefixAndBlock.length - blockMarkdown.length
-    };
+  const { blockMarkdown } = owned;
+  if (witnessed) {
+    const prefixAndBlock = owned.prefixAndBlock();
+    if (null !== prefixAndBlock && baselineVisualMarkdown.startsWith(prefixAndBlock)) {
+      return {
+        end: prefixAndBlock.length,
+        start: prefixAndBlock.length - blockMarkdown.length
+      };
+    }
   }
   if (!acceptedPrefixOnly) {
     const first = baselineVisualMarkdown.indexOf(blockMarkdown);
@@ -8080,7 +8214,10 @@ function owningBlockBaselineRange(
   // serialization can still sit inside another block whose rendering happens
   // to spell the same text. Only the DOM's own prefix proves this block's
   // position there.
-  if (!baselineVisualMarkdown.startsWith(prefixAndBlock)) return null;
+  const prefixAndBlock = owned.prefixAndBlock();
+  if (null === prefixAndBlock || !baselineVisualMarkdown.startsWith(prefixAndBlock)) {
+    return null;
+  }
   return {
     end: prefixAndBlock.length,
     start: prefixAndBlock.length - blockMarkdown.length

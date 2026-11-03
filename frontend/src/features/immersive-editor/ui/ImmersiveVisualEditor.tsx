@@ -1697,6 +1697,38 @@ function visualMarkerRowAtCaret(surface: HTMLElement): HTMLElement | null {
 }
 
 /**
+ * The restore callback for an emptied body whose caret Chromium named AFTER its
+ * placeholder break, or null for every other caret.
+ *
+ * An emptied block holds nothing but the break the renderer leaves in it, so
+ * the block's own offset 0 and offset 1 are the same caret: nothing stands
+ * between them. Chromium nonetheless reports the caret at offset 1, while the
+ * boundary proofs read the caret's visual position, which only offset 0 has.
+ * Collapsing the caret across the placeholder therefore changes no visible
+ * position - and the caller puts it back exactly where it was when the press
+ * ends unclaimed, so a refused press still leaves the caret untouched.
+ */
+function collapsePlaceholderBodyCaret(
+  surface: HTMLElement,
+  body: HTMLElement
+): (() => void) | null {
+  const selection = surface.ownerDocument.defaultView?.getSelection();
+  if (
+    !selection?.isCollapsed
+    || selection.anchorNode !== body
+    || selection.anchorOffset !== 1
+  ) return null;
+  const children = Array.from(body.childNodes);
+  const placeholderOnly = children.length === 0
+    || (children.length === 1 && children[0] instanceof HTMLBRElement);
+  if (!placeholderOnly) return null;
+  selection.collapse(body, 0);
+  return () => {
+    surface.ownerDocument.defaultView?.getSelection()?.collapse(body, 1);
+  };
+}
+
+/**
  * Whether this row can be joined as inline content: a leaf text block whose
  * body is text, not a nested structure, a rendered control (a task list's
  * checkbox) or a protected region. Anything else keeps the press as the silent
@@ -7318,6 +7350,46 @@ function ownedRowTerminator(
   return blank || containerMarkers ? { length: terminator.length, point } : null;
 }
 
+/**
+ * The ordinary deletion family: the presses a Backspace/Delete key, a word
+ * deletion or a selection removal produces. A press in this family that this
+ * owner cannot map is never a terminal failure - it is refused, or silently
+ * re-derived from the accepted render, and the session stays editable. Only a
+ * genuine protected-region refusal still reports for it.
+ */
+const VISUAL_DELETION_INPUT_TYPES: Readonly<Record<string, true>> = {
+  deleteByCut: true,
+  deleteByDrag: true,
+  deleteContentBackward: true,
+  deleteContentForward: true,
+  deleteWordBackward: true,
+  deleteWordForward: true
+};
+
+function isVisualDeletionInputType(
+  inputType: string | null | undefined
+): boolean {
+  return 'string' === typeof inputType && true === VISUAL_DELETION_INPUT_TYPES[inputType];
+}
+
+/**
+ * The failure codes a deletion must still report: the user really touched a
+ * read-only or protected region, or this owner has no protected-region
+ * inventory at all. Those refuse a protected mutation, which is not an
+ * unmappable ordinary edit and must stay truthful.
+ */
+function isProtectedVisualFailureCode(code: string): boolean {
+  return 'visual-editor-read-only-region-mutated' === code
+    || 'visual-editor-read-only-snapshot-missing' === code;
+}
+
+/**
+ * How many unmappable deletions this owner refused instead of failing. The
+ * count is published on the surface as an ordinary diagnostic attribute - it is
+ * never a failure code, never a status message, and never reaches Root.
+ */
+const VISUAL_DELETION_REPAIR_ATTRIBUTE = 'data-easymde-visual-deletion-repair';
+
 export function ImmersiveVisualEditor({
   documentSession,
   referenceLabelCaseFoldProfile,
@@ -7326,7 +7398,7 @@ export function ImmersiveVisualEditor({
   onCanonicalDocumentChange,
   onDiagnostic,
   onDispose,
-  onFailure,
+  onFailure: notifyVisualFailure,
   onMarkdownChange,
   onPendingChange,
   onReady,
@@ -7344,6 +7416,45 @@ export function ImmersiveVisualEditor({
   requestPreview,
   surface
 }: ImmersiveVisualEditorProps) {
+  /**
+   * The input a press is currently applying. Set for the whole of one
+   * beforeinput/input/keydown dispatch and for the debounced commit that
+   * dispatch armed, because both run work that can fail. The failure owner
+   * reads the press this way instead of guessing from the DOM: an ordinary
+   * deletion that this owner cannot map must never become a terminal failure.
+   */
+  const visualInputTypeInFlightRef = useRef<string | null>(null);
+  /** The press a scheduled commit belongs to; consumed by that commit. */
+  const pendingVisualInputTypeRef = useRef<string | null>(null);
+  /** Unmappable deletions refused so far - diagnostics only, never a code. */
+  const visualDeletionRepairCountRef = useRef(0);
+  const recordRefusedVisualDeletion = useCallback((): void => {
+    visualDeletionRepairCountRef.current += 1;
+    const count = String(visualDeletionRepairCountRef.current);
+    if (count !== surface.getAttribute(VISUAL_DELETION_REPAIR_ATTRIBUTE)) {
+      surface.setAttribute(VISUAL_DELETION_REPAIR_ATTRIBUTE, count);
+    }
+  }, [surface]);
+  /**
+   * The one reporter for visual failures. A press in the deletion family is
+   * never allowed to publish a failure: it is refused, or silently re-derived
+   * from the accepted render, and the user keeps typing. Everything else - an
+   * insertion, a paste, a structural command, or a protected region the user
+   * really touched - keeps reporting truthfully.
+   */
+  const onFailure = useCallback(
+    (code: string): void => {
+      if (
+        isVisualDeletionInputType(visualInputTypeInFlightRef.current)
+        && !isProtectedVisualFailureCode(code)
+      ) {
+        recordRefusedVisualDeletion();
+        return;
+      }
+      notifyVisualFailure(code);
+    },
+    [notifyVisualFailure, recordRefusedVisualDeletion]
+  );
   // A Preview sink can adopt the new DOM without changing the accepted
   // snapshot object identity. This tick is only advanced while a canonical
   // transfer is waiting for that adoption, giving the commit effect a real
@@ -10931,6 +11042,52 @@ export function ImmersiveVisualEditor({
     surface
   ]);
 
+  /**
+   * The only repair a deletion is allowed. The press wrote nothing this owner
+   * could prove, so it is not acted on: the accepted render is re-derived
+   * silently when the DOM really diverged from it, the canonical selection is
+   * never moved, and nothing is reported - no failure code, no snapshot
+   * rollback claiming a pairing this owner cannot prove, no transfer failure
+   * and no lock. The user keeps typing and keeps their undo history.
+   */
+  const repairUnmappedVisualDeletion = useCallback((): void => {
+    recordRefusedVisualDeletion();
+    const acceptedHtml = acceptedHtmlRef.current;
+    // A surface that still spells the accepted render has nothing to
+    // re-derive: the press was refused before the browser could touch it, so
+    // the caret and the nodes stay exactly where the user left them.
+    if (null === acceptedHtml || acceptedHtml === surface.innerHTML) return;
+    let repaired = false;
+    try {
+      repaired = restoreAcceptedSnapshot();
+    } catch {
+      // A render this owner can no longer re-derive is left as it is. The
+      // press writes nothing and the next key gets its own chance; reporting
+      // here is exactly what must never happen for a deletion.
+    }
+    if (!repaired) return;
+    // The restore wrote a fresh render of the accepted source, so those nodes
+    // are the pairing this owner just proved. Publishing them is what lets the
+    // very next key commit: without it the following edit fails an ownership
+    // check it could never satisfy again, and the user would be left with a
+    // surface that refuses every keystroke.
+    const repairedNodes = Array.from(surface.childNodes);
+    publishOwnedDom(
+      sourceMarkdownRef.current ?? '',
+      visualMarkdownRef.current ?? '',
+      documentSession.document.getRevision?.() ?? 0,
+      {
+        metadata: repairedNodes.map(fullOwnedNodeMetadata),
+        nodes: repairedNodes
+      }
+    );
+  }, [
+    documentSession,
+    recordRefusedVisualDeletion,
+    restoreAcceptedSnapshot,
+    surface
+  ]);
+
   const applyDocumentChange = useCallback(
     (
       change: Parameters<
@@ -12146,8 +12303,11 @@ export function ImmersiveVisualEditor({
       }
       if (!pendingTransferRef.current) {
         // Already terminal: report the code, but never repeat the one
-        // transfer-failure notification or a second pending settle.
-        onFailure(code);
+        // transfer-failure notification or a second pending settle. A
+        // transfer's terminal state is not an unmappable edit, so it reports
+        // through the raw owner even when the press that discovered it was a
+        // deletion: Root pairs this code with the notification below.
+        notifyVisualFailure(code);
         return;
       }
       pendingTransferRef.current = null;
@@ -12165,11 +12325,11 @@ export function ImmersiveVisualEditor({
       // observe a terminal failure, so it must be set before anything publishes
       // readiness.
       visualTransferFailureReportedRef.current = true;
-      onFailure(code);
+      notifyVisualFailure(code);
       onTransferFailure();
       onPendingChange(false);
     },
-    [onFailure, onPendingChange, onTransferFailure]
+    [notifyVisualFailure, onPendingChange, onTransferFailure]
   );
 
 const failVisualSynchronization = useCallback(
@@ -12178,6 +12338,18 @@ const failVisualSynchronization = useCallback(
         error instanceof Error
           ? error.message
           : 'visual-editor-markdown-sync-failed';
+        // A deletion this owner cannot prove is not a failure of the session:
+        // it is silently re-derived and the user keeps editing. This is the
+        // one gate that used to roll the surface back and then lock it, so no
+        // deletion may pass it. A protected-region refusal is not this case
+        // and keeps its truthful report below.
+        if (
+          isVisualDeletionInputType(visualInputTypeInFlightRef.current)
+          && !isProtectedVisualFailureCode(code)
+        ) {
+          repairUnmappedVisualDeletion();
+          return false;
+        }
             if (restoreAcceptedSnapshot()) {
         onFailure(code);
         return false;
@@ -12188,7 +12360,12 @@ const failVisualSynchronization = useCallback(
       onTransferFailure();
       return false;
     },
-    [onFailure, onTransferFailure, restoreAcceptedSnapshot]
+    [
+      onFailure,
+      onTransferFailure,
+      repairUnmappedVisualDeletion,
+      restoreAcceptedSnapshot
+    ]
   );
 
   const synchronizeMarkdown = useCallback(
@@ -15621,6 +15798,16 @@ const failVisualSynchronization = useCallback(
     };
 
     const commitVisualInput = (historySelectionBefore?: VisualSelectionSourceRange): boolean => {
+      // A scheduled commit lands long after the event that armed it, so the
+      // press it settles is named here for the failure owner: a deletion's own
+      // commit must not be able to report, roll back or lock, exactly like the
+      // synchronous press that armed it. The previous press is restored after,
+      // so the work of a newer dispatch is still attributed to itself.
+      const previousInFlightInputType = visualInputTypeInFlightRef.current;
+      const settlingInputType = pendingVisualInputTypeRef.current;
+      if (null !== settlingInputType) {
+        visualInputTypeInFlightRef.current = settlingInputType;
+      }
       try {
       pendingUnmappedVisualInputRef.current = false;
       continuingUnmappedVisualInputRef.current = false;
@@ -15650,6 +15837,8 @@ const failVisualSynchronization = useCallback(
         ...(historySelectionBefore ? { historySelectionBefore } : {})
       });
       } finally {
+        pendingVisualInputTypeRef.current = null;
+        visualInputTypeInFlightRef.current = previousInFlightInputType;
         if (!processingNativeBeforeInput) releaseNativeInputSurface();
       }
     };
@@ -15667,6 +15856,9 @@ const failVisualSynchronization = useCallback(
     };
     const scheduleVisualInput = (): void => {
       visualInputPendingRef.current = true;
+      // Which press this debounce belongs to. Read from the dispatch that arms
+      // it, because the commit runs after that event is gone.
+      pendingVisualInputTypeRef.current = visualInputTypeInFlightRef.current;
       if (null !== visualInputTimerRef.current) {
         clearTimeout(visualInputTimerRef.current);
       }
@@ -18126,6 +18318,16 @@ const failVisualSynchronization = useCallback(
       // canonical row is exactly one Markdown line, and the marker/interval
       // proof below names that row, so this owner removes the row and the node
       // rendering it together.
+      //
+      // The press is claimed only once a write is proven, and every proof is
+      // taken AFTER the flush: the flush may commit an earlier key and
+      // re-render this window, so the row is the empty item the caret is in
+      // when the proofs run, named by its position rather than by node
+      // identity. A caret that no longer names this press's row stays
+      // unclaimed for the marker-row join owner below; a row this owner names
+      // but cannot place is consumed as a silent no-op, with the caret and the
+      // surface exactly as they were. Only a canonical/surface disagreement is
+      // reported: a proof that no longer describes the caret's row is not one.
       if ('deleteContentBackward' === event.inputType && event.cancelable
         && !event.isComposing && !composing && !pendingComposition
         && !event.defaultPrevented) {
@@ -18138,20 +18340,27 @@ const failVisualSynchronization = useCallback(
           && null !== item.parentElement
           && ['OL', 'UL'].includes(item.parentElement.tagName)
         ) {
-          event.preventDefault();
-          try {
-            if (!flushVisualInput()) return;
+          // The row the press arrived on, named without its node identity: the
+          // flush below may re-render this window and replace every node while
+          // the caret keeps the same row.
+          const rowPath = visualNodePath(surface, item);
+          let claimed = false;
+          const claim = (): void => {
+            if (claimed) return;
+            claimed = true;
+            event.preventDefault();
+          };
+          const removeEmptiedRow = (): void => {
+            if (!flushVisualInput()) {
+              claim();
+              return;
+            }
             const source = sourceMarkdownRef.current;
             const visual = visualMarkdownRef.current;
             const owned = ownedDomRef.current;
-            const repeatedBody = visualEmptyStructuralBodyAtCaret(surface);
-            if (
-              null === source
-              || null === visual
-              || !owned
-              || !repeatedBody
-              || repeatedBody.body !== item
-            ) throw new Error('visual-editor-structural-removal-stale');
+            if (null === source || null === visual || !owned) {
+              throw new Error('visual-editor-structural-removal-stale');
+            }
             if (
               owned.owner !== fullOwnerRef.current
               || owned.source !== source
@@ -18160,36 +18369,60 @@ const failVisualSynchronization = useCallback(
               || documentSession.document.getValue() !== source
               || !ownedLedgerRetains(Array.from(surface.childNodes))
             ) throw new Error('visual-editor-canonical-change-dom-stale');
+            const repeatedBody = visualEmptyStructuralBodyAtCaret(surface)?.body ?? null;
+            const list = repeatedBody instanceof HTMLLIElement
+              ? repeatedBody.parentElement
+              : null;
+            if (
+              null === repeatedBody
+              || null === list
+              || !['OL', 'UL'].includes(list.tagName)
+              || null === rowPath
+              || visualNodePath(surface, repeatedBody)?.join('.') !== rowPath.join('.')
+            ) {
+              // The flush moved the caret off the row this press arrived on, or
+              // that row is no longer an empty list item: nothing here names
+              // this press's row.
+              return;
+            }
+            // The row's own canonical bytes, proven from the caret's visual
+            // position. The emptied row's caret may sit after Chromium's
+            // placeholder break, which is the same position as the body's own
+            // offset 0 but has no visual mapping of its own; that caret is
+            // collapsed across the placeholder for this proof and put back when
+            // the press ends unclaimed.
+            const restoreCaret = collapsePlaceholderBodyCaret(surface, repeatedBody);
             const bodySelection = visualEmptyStructuralBodySelection(
               surface,
               source,
               visual
             );
-            if (!bodySelection || 'failure' in bodySelection) {
-              throw new Error('visual-editor-markdown-merge-failed');
-            }
-            const removal = structuralEmptyLineRemoval(
-              source,
-              bodySelection.sourceOffset
-            );
-            if (!removal) {
-              throw new Error('visual-editor-markdown-merge-failed');
-            }
-            const list = item.parentElement;
-            if (null === list) {
-              throw new Error('visual-editor-structural-removal-stale');
+            const removal = bodySelection && !('failure' in bodySelection)
+              ? structuralEmptyLineRemoval(source, bodySelection.sourceOffset)
+              : null;
+            if (!bodySelection || 'failure' in bodySelection || !removal) {
+              // The caret's empty item is not a canonical row this proof can
+              // name. That row is still the press's own row, and the join owner
+              // below cannot place it either - an emptied row carries no text
+              // to join - so the press is consumed here as the silent no-op:
+              // no byte, no caret move, no failure code.
+              restoreCaret?.();
+              claim();
+              return;
             }
             const readOnlySnapshot = readOnlySnapshotRef.current;
             if (null === readOnlySnapshot) {
               throw new Error('visual-editor-read-only-snapshot-missing');
             }
             assertVisualMarkdownReadOnlySnapshot(surface, readOnlySnapshot);
+            claim();
             const value = source.slice(0, removal.start)
               + source.slice(removal.end);
-            if (item.previousSibling instanceof Text && '' === item.previousSibling.data.trim()) {
-              item.previousSibling.remove();
+            if (repeatedBody.previousSibling instanceof Text
+              && '' === repeatedBody.previousSibling.data.trim()) {
+              repeatedBody.previousSibling.remove();
             }
-            item.remove();
+            repeatedBody.remove();
             // Containers the row alone kept alive go with its source line.
             let emptied: Element = list;
             while (emptied !== surface && !emptied.querySelector('li, img, hr, table, pre')
@@ -18237,10 +18470,17 @@ const failVisualSynchronization = useCallback(
                 value
               }
             });
+          };
+          try {
+            removeEmptiedRow();
           } catch (error) {
+            claim();
             failVisualSynchronization(error);
           }
-          return;
+          // An unclaimed press is not this owner's: the caret no longer names
+          // its row, so the marker-row join owner below reads the live caret
+          // instead.
+          if (claimed) return;
         }
       }
       // A Backspace at the visual start of a marker row - a list item's `- `,
@@ -19569,6 +19809,18 @@ const failVisualSynchronization = useCallback(
         }
         if (!genericIntent && targetRangeMismatch()) {
           event.preventDefault();
+          // An ordinary deletion whose caret this owner cannot name is simply
+          // not acted on: the press is consumed and nothing is reported - no
+          // failure code, no transfer failure, no lock. When the surface no
+          // longer spells the accepted render (an unconsumed native merge, or a
+          // key the browser would not cancel) it is re-derived silently and the
+          // caret comes back with it; otherwise the caret and the nodes stay
+          // exactly as the user left them. The repair count is the only trace,
+          // and it is not a failure.
+          if (isVisualDeletionInputType(event.inputType)) {
+            repairUnmappedVisualDeletion();
+            return;
+          }
           // After the retry the surface is the pair it just committed and
           // serialized, and this key's default never ran: there is nothing to
           // restore, and the older accepted render would contradict the source.
@@ -20992,6 +21244,18 @@ const failVisualSynchronization = useCallback(
         return;
     };
     const handleKeyDown = (event: KeyboardEvent) => {
+      // A Backspace/Delete shortcut runs here, before the browser names its own
+      // `inputType`. Name the press for the whole handler so a deletion this
+      // owner cannot map refuses silently instead of reporting, restoring the
+      // accepted render or locking, exactly like the beforeinput that follows
+      // it. Every other key keeps the unset value and reports truthfully.
+      const previousInFlightInputType = visualInputTypeInFlightRef.current;
+      if ('Backspace' === event.key) {
+        visualInputTypeInFlightRef.current = 'deleteContentBackward';
+      } else if ('Delete' === event.key) {
+        visualInputTypeInFlightRef.current = 'deleteContentForward';
+      }
+      try {
       if (visualTransferFailureReportedRef.current) {
         event.preventDefault();
         return;
@@ -21607,6 +21871,9 @@ const failVisualSynchronization = useCallback(
           );
         }
       }
+      } finally {
+        visualInputTypeInFlightRef.current = previousInFlightInputType;
+      }
     };
     const handlePaste = (event: ClipboardEvent) => {
       if (event.defaultPrevented) return;
@@ -21680,37 +21947,50 @@ const failVisualSynchronization = useCallback(
       }
     };
     const handleBeforeInputWithSurfaceLease = (event: InputEvent): void => {
-      const nativeEdit = !event.defaultPrevented && !event.isComposing && !composing
-        && !pendingComposition && !['historyUndo', 'historyRedo'].includes(event.inputType);
+      // Name the press for the whole dispatch, including its catch: a deletion
+      // this owner cannot map must not report, and the failure owner reads the
+      // press from here rather than guessing from the DOM.
+      const previousInFlightInputType = visualInputTypeInFlightRef.current;
+      visualInputTypeInFlightRef.current = event.inputType;
       try {
-        if (nativeEdit && !nativeInputSurfaceLease) nativeInputSurfaceLease = retainCompositionSurface();
-        processingNativeBeforeInput = true;
-        try { handleBeforeInput(event); }
-        finally { processingNativeBeforeInput = false; }
-        // A pre-input flush can settle the previous burst during this event.
-        if (nativeEdit && !event.defaultPrevented && !nativeInputSurfaceLease) {
-          nativeInputSurfaceLease = retainCompositionSurface();
-        }
-      } catch (error) {
-        if (event.cancelable) event.preventDefault();
-        if (!visualInputPendingRef.current) releaseNativeInputSurface();
-        if (event.cancelable) onFailure(visualEditorFailureCode(error, 'visual-editor-input-surface-unavailable'));
-        else failVisualSynchronization(error);
-        return;
-      }
-      if (event.defaultPrevented && !visualInputPendingRef.current) releaseNativeInputSurface();
-      else if (nativeEdit && nativeInputSurfaceLease) {
-        const lease = nativeInputSurfaceLease;
-        queueMicrotask(() => {
-          if (event.defaultPrevented && nativeInputSurfaceLease === lease && !visualInputPendingRef.current) {
-            releaseNativeInputSurface();
+        const nativeEdit = !event.defaultPrevented && !event.isComposing && !composing
+          && !pendingComposition && !['historyUndo', 'historyRedo'].includes(event.inputType);
+        try {
+          if (nativeEdit && !nativeInputSurfaceLease) nativeInputSurfaceLease = retainCompositionSurface();
+          processingNativeBeforeInput = true;
+          try { handleBeforeInput(event); }
+          finally { processingNativeBeforeInput = false; }
+          // A pre-input flush can settle the previous burst during this event.
+          if (nativeEdit && !event.defaultPrevented && !nativeInputSurfaceLease) {
+            nativeInputSurfaceLease = retainCompositionSurface();
           }
-        });
+        } catch (error) {
+          if (event.cancelable) event.preventDefault();
+          if (!visualInputPendingRef.current) releaseNativeInputSurface();
+          if (event.cancelable) onFailure(visualEditorFailureCode(error, 'visual-editor-input-surface-unavailable'));
+          else failVisualSynchronization(error);
+          return;
+        }
+        if (event.defaultPrevented && !visualInputPendingRef.current) releaseNativeInputSurface();
+        else if (nativeEdit && nativeInputSurfaceLease) {
+          const lease = nativeInputSurfaceLease;
+          queueMicrotask(() => {
+            if (event.defaultPrevented && nativeInputSurfaceLease === lease && !visualInputPendingRef.current) {
+              releaseNativeInputSurface();
+            }
+          });
+        }
+      } finally {
+        visualInputTypeInFlightRef.current = previousInFlightInputType;
       }
     };
     const handleInputWithSurfaceLease = (event: InputEvent): void => {
-      try { handleInput(event); }
-      finally {
+      const previousInFlightInputType = visualInputTypeInFlightRef.current;
+      visualInputTypeInFlightRef.current = event.inputType;
+      try {
+        handleInput(event);
+      } finally {
+        visualInputTypeInFlightRef.current = previousInFlightInputType;
         if (!visualInputPendingRef.current) releaseNativeInputSurface();
       }
     };
@@ -24427,6 +24707,7 @@ const failVisualSynchronization = useCallback(
     prepareGeneratedContentTargetForSelection,
     prepareImageTargetBySelection,
     recordCurrentVisualHistorySnapshot,
+    repairUnmappedVisualDeletion,
     retainCompositionSurface,
     requestMarkdownTransfer,
     publishPendingTransfer,

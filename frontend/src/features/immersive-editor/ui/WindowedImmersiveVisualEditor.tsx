@@ -3500,6 +3500,36 @@ function normalizedWindowedBlockSerialization(block: HTMLElement): string {
 }
 
 /**
+ * The exact live DOM a block's accepted serialization was computed from: the
+ * root's own attributes in document order plus its inner HTML. The serializer
+ * reads nothing outside the root it is handed, so an editable root that still
+ * spells this input serializes to the same string. A capture therefore reuses
+ * the stored serialization while the live root still spells it, and recomputes
+ * only the roots that changed.
+ */
+type AcceptedWindowedBlockSpelling = Readonly<{
+	attributes: string;
+	innerHTML: string;
+}>;
+
+/**
+ * An attribute name cannot contain the `\u0000` separator and every value is
+ * length-prefixed, so two different attribute sets can never spell one string.
+ */
+function windowedBlockSpelling(
+	block: HTMLElement,
+): AcceptedWindowedBlockSpelling {
+	const attributes = block.attributes;
+	let spelling = "";
+	for (let index = 0; index < attributes.length; index += 1) {
+		const attribute = attributes[index];
+		if (!attribute) continue;
+		spelling += `${attribute.name}\u0000${attribute.value.length}\u0000${attribute.value}\u0001`;
+	}
+	return { attributes: spelling, innerHTML: block.innerHTML };
+}
+
+/**
  * Whether a ledger has a row for every block the surface currently mounts.
  * Used before adopting a freshly built ledger: a map for a newer source than
  * the mounted DOM would otherwise strand live children with no row.
@@ -3535,10 +3565,57 @@ type AcceptedWindowedBlockRecord = Readonly<{
   id: string;
   index: number;
   serialization: string | null;
+  // The spelling the accepted serialization was computed from, or `null` when
+  // the row carries no serialization in its proof.
+  spelling: AcceptedWindowedBlockSpelling | null;
   start: number;
 }>;
 
 type AcceptedWindowedBlocks = WeakMap<HTMLElement, AcceptedWindowedBlockRecord>;
+
+/**
+ * The immutable record for one accepted mounted root. An editable root's
+ * serialization proves that this node still spells its accepted row, so it is
+ * recomputed only when the live root no longer spells the input the prior
+ * record's serialization was computed from. A retained node whose identity the
+ * caller already validated hands its stored serialization forward; every other
+ * root is serialized from the live DOM.
+ */
+function acceptedWindowedBlockRecord(
+	block: HTMLElement,
+	id: string,
+	range: EffectiveBlockRange,
+	prior: AcceptedWindowedBlockRecord | null,
+): AcceptedWindowedBlockRecord {
+	const identity = {
+		editable: range.editable,
+		// The effective bounds are read AFTER the real ledger shift, so a
+		// local edit in an earlier row refreshes later rows truthfully
+		// instead of freezing pre-edit offsets.
+		end: range.end,
+		id,
+		index: range.index,
+		start: range.start,
+	};
+	if (!range.editable) return { ...identity, serialization: null, spelling: null };
+	const spelling = windowedBlockSpelling(block);
+	const retained =
+		prior &&
+		prior.editable &&
+		null !== prior.serialization &&
+		null !== prior.spelling &&
+		prior.spelling.innerHTML === spelling.innerHTML &&
+		prior.spelling.attributes === spelling.attributes
+			? prior
+			: null;
+	return {
+		...identity,
+		serialization: retained
+			? retained.serialization
+			: normalizedWindowedBlockSerialization(block),
+		spelling,
+	};
+}
 
 class WindowedDomStaleError extends Error {
 	constructor(readonly reason: string) {
@@ -3649,39 +3726,34 @@ function captureAcceptedWindowedBlockSerializations(
 			throw new WindowedDomStaleError("capture-duplicate-row");
 		}
 		claimedIds.add(id);
-		if (previous) {
-			// A local owner refresh reads nodes that were already accepted. Its
-			// prior immutable identity is the only authority for which row such a
-			// node may continue to own, so a label changed during the same task
-			// can never become the next record's identity. A node with no prior
-			// record was not retained by this edit; it is a new root that the
-			// existing adoption path already validated, and it is admitted only
-			// here, never in place of a retained node's proof.
-			const prior = previous.get(block);
-			if (
-				prior &&
-				(
-					prior.id !== id ||
-					prior.index !== range.index ||
-					prior.editable !== range.editable
-				)
-			) {
-				throw new WindowedDomStaleError("capture-prior-binding");
-			}
+		// A local owner refresh reads nodes that were already accepted. Its
+		// prior immutable identity is the only authority for which row such a
+		// node may continue to own, so a label changed during the same task
+		// can never become the next record's identity. A node with no prior
+		// record was not retained by this edit; it is a new root that the
+		// existing adoption path already validated, and it is admitted only
+		// here, never in place of a retained node's proof.
+		const prior = previous ? previous.get(block) ?? null : null;
+		if (
+			prior &&
+			(
+				prior.id !== id ||
+				prior.index !== range.index ||
+				prior.editable !== range.editable
+			)
+		) {
+			throw new WindowedDomStaleError("capture-prior-binding");
 		}
-		accepted.set(block, {
-			editable: range.editable,
-			// The effective bounds are read AFTER the real ledger shift, so a
-			// local edit in an earlier row refreshes later rows truthfully
-			// instead of freezing pre-edit offsets.
-			end: range.end,
-			id,
-			index: range.index,
-			serialization: range.editable
-				? normalizedWindowedBlockSerialization(block)
-				: null,
-			start: range.start,
-		});
+		// The prior record is the only source of a reusable snapshot: a root
+		// that still spells the exact DOM its stored serialization was computed
+		// from hands that serialization forward, and every root that changed is
+		// serialized again. A bare revision counter could never stand in for
+		// this check, because the record - not the counter - is the proof that
+		// each root still spells its accepted row.
+		accepted.set(
+			block,
+			acceptedWindowedBlockRecord(block, id, range, prior),
+		);
 	}
 	return accepted;
 }
@@ -3787,16 +3859,10 @@ function registerAcceptedWindowSnapshot(
 		// The record's identity is the snapshot's accepted id, never a label
 		// read from the live node, and its bounds are the effective ledger row
 		// validated above.
-		accepted.set(block, {
-			editable: range.editable,
-			end: range.end,
-			id: acceptedBlock.id,
-			index: range.index,
-			serialization: range.editable
-				? normalizedWindowedBlockSerialization(block)
-				: null,
-			start: range.start,
-		});
+		accepted.set(
+			block,
+			acceptedWindowedBlockRecord(block, acceptedBlock.id, range, null),
+		);
 	}
 	return accepted;
 }

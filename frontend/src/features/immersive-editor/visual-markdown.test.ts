@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { markdownLanguage } from '@codemirror/lang-markdown';
+import TurndownService from 'turndown';
 import { markdownReferenceDefinitionQuery, type MarkdownSyntaxNode } from '../editor-context-menu/editor-markdown-link-preparation';
 
 import type {
@@ -8957,5 +8958,187 @@ describe('grapheme boundaries', () => {
     expect(previousGraphemeBoundary('ab', -3)).toBe(0);
     expect(previousGraphemeBoundary('ab', 9)).toBe(1);
     expect(nextGraphemeBoundary('ab', 9)).toBe(2);
+  });
+});
+
+/**
+ * One press projects two boundaries of the block the caret sits in: the
+ * caret's own edge and the deleted edge. Both projections used to serialize
+ * that block and then the whole document prefix up to it, although a character
+ * deletion inside one text node is proved by the block's own spelling alone.
+ * The block's fragment is now built on first use and reused within the press,
+ * and the prefix is built only by a projection that reads it as a proof.
+ */
+describe('the block-fragment projection one press pays for', () => {
+  const source = 'First paragraph.\n\nSecond paragraph here.';
+
+  const twoParagraphs = (): Readonly<{ surface: HTMLElement; text: Text }> => {
+    const surface = editor(
+      '<p data-easymde-visual-block-id="b0">First paragraph.</p>'
+        + '<p data-easymde-visual-block-id="b1">Second paragraph here.</p>'
+    );
+    const text = surface.lastElementChild?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-paragraph-body-missing');
+    return { surface, text };
+  };
+
+  /**
+   * How many times the markdown serializer actually ran, and what the press
+   * answered. `serializeVisualMarkdown` is the one owner of the turndown call,
+   * so this counts the work the fragment projections do, not the projections.
+   */
+  function serializedDuring<T>(run: () => T): Readonly<{ runs: number; value: T }> {
+    const turndown = vi.spyOn(TurndownService.prototype, 'turndown');
+    try {
+      const value = run();
+      return { runs: turndown.mock.calls.length, value };
+    } finally {
+      turndown.mockRestore();
+    }
+  }
+
+  /** One projection on a surface nothing was projected on before. */
+  const controlProjection = (
+    offset: number,
+    witness?: Readonly<{ data: string }>
+  ): Readonly<{ sourceOffset: number; visualOffset: number }> | null => {
+    const fresh = twoParagraphs();
+    const baseline = serializeVisualMarkdown(fresh.surface);
+    const interval = createVisualMarkdownSourceIntervalMap(source, baseline);
+    return mapTextBoundaryFromInterval(
+      fresh.surface,
+      fresh.text,
+      offset,
+      baseline,
+      interval,
+      false,
+      witness ?? { data: fresh.text.data }
+    );
+  };
+
+  afterEach(() => {
+    document.body.replaceChildren();
+  });
+
+  it('serializes the owning block once for a plain in-block character deletion', () => {
+    const { surface, text } = twoParagraphs();
+    const baseline = serializeVisualMarkdown(surface);
+    const interval = createVisualMarkdownSourceIntervalMap(source, baseline);
+    const { runs, value } = serializedDuring(() => ({
+      caret: mapTextBoundaryFromInterval(
+        surface, text, text.length, baseline, interval
+      ),
+      deletedEdge: mapTextBoundaryFromInterval(
+        surface, text, text.length - 1, baseline, interval
+      )
+    }));
+    expect(value.caret).toEqual({ sourceOffset: 40, visualOffset: 40 });
+    expect(value.deletedEdge).toEqual({ sourceOffset: 39, visualOffset: 39 });
+    // The block's own spelling is serialized once and the press's second
+    // projection reads it back. The prefix — the whole document up to this
+    // block — is never built: this press proves its run from the block alone.
+    expect(runs).toBe(1);
+  });
+
+  it('keeps the same projection for a structural press', () => {
+    // A witnessed press proves the block's position through the document's own
+    // prefix, which is the structural read the memo has to keep exact.
+    const { surface, text } = twoParagraphs();
+    const baseline = serializeVisualMarkdown(surface);
+    const interval = createVisualMarkdownSourceIntervalMap(source, baseline);
+    const witness = { data: text.data };
+    const { runs, value } = serializedDuring(() => ({
+      caret: mapTextBoundaryFromInterval(
+        surface, text, text.length, baseline, interval, false, witness
+      ),
+      start: mapTextBoundaryFromInterval(
+        surface, text, 0, baseline, interval, false, witness
+      )
+    }));
+    expect(value.caret).toEqual({ sourceOffset: 40, visualOffset: 40 });
+    expect(value.start).toEqual({ sourceOffset: 18, visualOffset: 18 });
+    expect(value.caret).toEqual(controlProjection(text.length, witness));
+    expect(value.start).toEqual(controlProjection(0, witness));
+    // The block and its prefix are each serialized once for the whole press,
+    // and the second projection reuses both.
+    expect(runs).toBe(2);
+  });
+
+  it('still spells a block whose leading columns the trim dropped', () => {
+    // The renderer keeps the paragraph's leading space as NBSP, and the block
+    // serialized alone loses that column: only the prefix carries it, so the
+    // block's spelling is the prefix's tail.
+    const surface = editor(
+      '<p data-easymde-visual-block-id="b0">First paragraph.</p>'
+        + '<p data-easymde-visual-block-id="b1">\u00a0the fence.</p>'
+    );
+    const text = surface.lastElementChild?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-paragraph-body-missing');
+    const leadingSource = 'First paragraph.\n\n the fence.';
+    const baseline = serializeVisualMarkdown(surface);
+    const interval = createVisualMarkdownSourceIntervalMap(leadingSource, baseline);
+    const { runs, value } = serializedDuring(() => ({
+      caret: mapTextBoundaryFromInterval(
+        surface, text, text.length, baseline, interval
+      ),
+      deletedEdge: mapTextBoundaryFromInterval(
+        surface, text, text.length - 1, baseline, interval
+      )
+    }));
+    expect(value.caret).toEqual({ sourceOffset: 29, visualOffset: 29 });
+    expect(value.deletedEdge).toEqual({ sourceOffset: 28, visualOffset: 28 });
+    // The prefix is what this block's own spelling needs, and the press builds
+    // it once.
+    expect(runs).toBe(2);
+  });
+
+  it('recomputes the fragment when the block changes between presses', () => {
+    const { surface, text } = twoParagraphs();
+    const baseline = serializeVisualMarkdown(surface);
+    const interval = createVisualMarkdownSourceIntervalMap(source, baseline);
+    expect(
+      mapTextBoundaryFromInterval(surface, text, text.length, baseline, interval)
+    ).toEqual({ sourceOffset: 40, visualOffset: 40 });
+    // The browser applied the deletion, so the block's own DOM moved with it.
+    text.data = 'Second paragraph her!';
+    const editedSource = 'First paragraph.\n\nSecond paragraph her!';
+    const editedBaseline = serializeVisualMarkdown(surface);
+    const editedInterval = createVisualMarkdownSourceIntervalMap(
+      editedSource,
+      editedBaseline
+    );
+    expect(
+      mapTextBoundaryFromInterval(
+        surface, text, text.length, editedBaseline, editedInterval
+      )
+    ).toEqual({ sourceOffset: 39, visualOffset: 39 });
+  });
+
+  it('recomputes the prefix when a preceding block changes', () => {
+    const { surface, text } = twoParagraphs();
+    const first = surface.firstElementChild?.firstChild;
+    if (!(first instanceof Text)) throw new Error('visual-paragraph-body-missing');
+    const baseline = serializeVisualMarkdown(surface);
+    const interval = createVisualMarkdownSourceIntervalMap(source, baseline);
+    const witness = { data: text.data };
+    expect(
+      mapTextBoundaryFromInterval(
+        surface, text, text.length, baseline, interval, false, witness
+      )
+    ).toEqual({ sourceOffset: 40, visualOffset: 40 });
+    // The caret's block is untouched, so its own fragment is still the one the
+    // memo holds; the prefix that proves where that block sits is not.
+    first.data = 'First paragraph, extended.';
+    const grownSource = 'First paragraph, extended.\n\nSecond paragraph here.';
+    const grownBaseline = serializeVisualMarkdown(surface);
+    const grownInterval = createVisualMarkdownSourceIntervalMap(
+      grownSource,
+      grownBaseline
+    );
+    expect(
+      mapTextBoundaryFromInterval(
+        surface, text, text.length, grownBaseline, grownInterval, false, witness
+      )
+    ).toEqual({ sourceOffset: 50, visualOffset: 50 });
   });
 });

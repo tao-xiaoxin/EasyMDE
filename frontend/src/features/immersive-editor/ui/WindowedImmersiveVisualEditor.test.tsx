@@ -8707,6 +8707,122 @@ describe("WindowedImmersiveVisualEditor", () => {
 		view.unmount();
 	});
 
+	it("reuses the stored serialization of every unchanged root and keeps every captured value", () => {
+		// A long window is the per-keystroke cost case: the capture used to
+		// serialize every mounted root, so one typed character paid for the
+		// whole window. The stored record must hand its serialization forward
+		// while the live root still spells the DOM it was computed from, and
+		// the captured values must stay exactly what a full recompute yields.
+		const mounted = Array.from({ length: 170 }, (_, index) => 150 + index);
+		const current = fixture({
+			mounted,
+			paragraphBlocks: true,
+			sourceBlockCount: 400,
+		});
+		current.surface.setAttribute("contenteditable", "true");
+		current.surface.tabIndex = 0;
+		const serializer = vi.spyOn(
+			visualMarkdown,
+			"serializeVisualMarkdownBlockFragment",
+		);
+		// A capture serializes one detached clone per root; the merge path
+		// serializes the live region's connected roots. Only the former says
+		// which roots the capture actually recomputed.
+		const captureCalls = (): Array<Readonly<{ blockId: string; markdown: string }>> =>
+			serializer.mock.calls.flatMap((call, index) => {
+				const block = 1 === call[0].length ? call[0][0] : undefined;
+				if (!block || block.isConnected) return [];
+				const result = serializer.mock.results[index];
+				if (result?.type !== "return") return [];
+				return [
+					{
+						blockId:
+							block.getAttribute("data-easymde-visual-block-id") ?? "",
+						markdown: result.value as string,
+					},
+				];
+			});
+		const rendered = renderWindowEditor(current);
+		const original = current.canonical();
+		try {
+			current.surface.focus();
+			const target = current.surface.querySelector<HTMLElement>(
+				'[data-easymde-visual-block-id="b160"]',
+			);
+			const text = target?.firstChild;
+			if (!(text instanceof Text)) {
+				throw new Error("windowed-reuse-target-missing");
+			}
+			placeCaret(text, 1);
+			const range = document.createRange();
+			range.setStart(text, 1);
+			range.collapse(true);
+			const before = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				data: "Q",
+				inputType: "insertText",
+			});
+			Object.defineProperty(before, "getTargetRanges", { value: () => [range] });
+			act(() => current.surface.dispatchEvent(before));
+			expect(before.defaultPrevented).toBe(false);
+			const mountCaptures = captureCalls().length;
+			expect(mountCaptures).toBe(mounted.length);
+			act(() => {
+				text.insertData(1, "Q");
+				placeCaret(text, 2);
+				current.surface.dispatchEvent(
+					new InputEvent("input", {
+						bubbles: true,
+						data: "Q",
+						inputType: "insertText",
+					}),
+				);
+			});
+			expect(rendered.onFailure).not.toHaveBeenCalled();
+			expect(current.canonical()).toBe(
+				original.replace("Line 160", "LQine 160"),
+			);
+			// One root changed; every other mounted root reuses its snapshot.
+			const captures = captureCalls();
+			expect(captures.length - mountCaptures).toBe(1);
+			expect(captures[captures.length - 1]?.blockId).toBe("b160");
+			// The captured serializations are byte-identical to a full
+			// recompute of the same mixed window: the changed root carries its
+			// new text and every unchanged root still carries its own.
+			const captured = new Map(
+				captures.map(({ blockId, markdown }) => [blockId, markdown]),
+			);
+			const expected = new Map<string, string>();
+			for (const block of Array.from(current.surface.children)) {
+				if (
+					!(block instanceof HTMLElement) ||
+					block.hasAttribute("data-easymde-preview-window-spacer")
+				) {
+					continue;
+				}
+				const clone = block.cloneNode(true) as HTMLElement;
+				for (const protectedNode of clone.querySelectorAll<HTMLElement>(
+					visualMarkdown.VISUAL_MARKDOWN_READ_ONLY_SELECTOR,
+				)) {
+					protectedNode.remove();
+				}
+				expected.set(
+					block.getAttribute("data-easymde-visual-block-id") ?? "",
+					serializeVisualMarkdownBlockFragment([clone]),
+				);
+			}
+			expect(captured.size).toBe(mounted.length);
+			expect(captured.get("b160")).toBe("LQine 160");
+			expect(captured.get("b150")).toBe("Line 150");
+			expect(captured).toEqual(expected);
+		} finally {
+			serializer.mockRestore();
+			rendered.view.unmount();
+			current.surface.remove();
+		}
+	});
+
 	describe("active code-body native editing", () => {
 		function mountCodeSequence(
 			fences: ReadonlyArray<Readonly<{ language: string; body: string; markup?: string | undefined }>>,

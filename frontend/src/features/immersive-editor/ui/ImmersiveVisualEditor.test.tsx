@@ -14786,7 +14786,9 @@ describe('ImmersiveVisualEditor', () => {
       });
       surface.dispatchEvent(beforeInput);
       // The raw offset 2 sits inside the run the serializer collapses, so no
-      // DOM boundary proves it and the deletion stays unapplied.
+      // DOM boundary proves it and the deletion stays unapplied. An ordinary
+      // deletion is never a reported failure: the press is refused, the
+      // document is untouched, and the session keeps editing.
       expect(beforeInput.defaultPrevented).toBe(true);
       expect(text.data).toBe('a  b`c');
       expect(history.document.getValue()).toBe(markdown);
@@ -14794,7 +14796,8 @@ describe('ImmersiveVisualEditor', () => {
         redoDepth: 0,
         undoDepth: 0
       });
-      expect(onFailure).toHaveBeenCalledWith('visual-editor-selection-map-failed');
+      expect(onFailure).not.toHaveBeenCalled();
+      expect(surface.getAttribute('data-easymde-visual-deletion-repair')).toBe('1');
     } finally {
       view.unmount();
       surface.remove();
@@ -14879,9 +14882,10 @@ describe('ImmersiveVisualEditor', () => {
       });
       surface.dispatchEvent(refused);
       // No intent describes this window, so the guard refuses the key and
-      // restores the accepted snapshot over the caret's own node.
+      // restores the accepted snapshot over the caret's own node - silently:
+      // an ordinary deletion never publishes a failure code.
       expect(refused.defaultPrevented).toBe(true);
-      expect(onFailure).toHaveBeenCalledWith('visual-editor-selection-map-failed');
+      expect(onFailure).not.toHaveBeenCalled();
       expect(history.document.getValue()).toBe(markdown);
       // The accepted render really was restored, so the nodes below are new
       // and the caret had to be handed back across the replacement.
@@ -14936,9 +14940,9 @@ describe('ImmersiveVisualEditor', () => {
       );
       act(() => vi.advanceTimersByTime(80));
       expect(history.document.getValue()).toBe('Alpha\n\nBta');
-      expect(onFailure.mock.calls).toEqual([
-        ['visual-editor-selection-map-failed']
-      ]);
+      // The refused press published nothing; the live Backspace that followed
+      // is the only thing that ever wrote.
+      expect(onFailure.mock.calls).toEqual([]);
     } finally {
       view.unmount();
       surface.remove();
@@ -15454,9 +15458,9 @@ describe('ImmersiveVisualEditor', () => {
       expect(surface.querySelector('strong')?.textContent).toBe('Formatted');
       expect(window.getSelection()?.anchorNode).toBe(text);
       expect(window.getSelection()?.anchorOffset).toBe(text.length);
-      expect(onFailure.mock.calls).toEqual([
-        ['visual-editor-markdown-baseline-failed']
-      ]);
+      // A deletion whose baseline cannot be materialized is refused, not
+      // reported: the press writes nothing and the session stays editable.
+      expect(onFailure.mock.calls).toEqual([]);
       expect(onTransferFailure).not.toHaveBeenCalled();
     } finally {
       cloneNode.mockRestore();
@@ -22293,12 +22297,18 @@ it.each([
     });
     fixture.surface.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
-    expect(fixture.onFailure.mock.calls.map(([code]) => code)).toEqual([expected]);
+    // A deletion whose lease proof fails is refused, never reported: the
+    // accepted render stays, the session stays editable, and no failure code
+    // - least of all the one this press used to publish - reaches Root.
+    expect(fixture.onFailure.mock.calls.map(([code]) => code)).toEqual([]);
     expect(fixture.history.getValue()).toBe(before);
     // A refused key is not deferred: the accepted render replays nothing.
     act(() => fixture.accept(typed));
     expect(fixture.history.getValue()).toBe(before);
-    expect(fixture.onFailure.mock.calls.map(([code]) => code)).toEqual([expected]);
+    expect(fixture.onFailure).not.toHaveBeenCalledWith(expected);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.runtime().isEditable()).toBe(true);
   } finally {
     fixture.unmount();
     vi.useRealTimers();
@@ -22374,18 +22384,16 @@ it('still refuses a pending Backspace whose range covers a quoted paragraph inli
     // The enclosing quote is still exempt as a container, but an inline
     // delimiter is not an ancestor of the paragraph: the range spends syntax
     // bytes of its own, so the transfer is refused and nothing is written.
+    // A refused deletion reports nothing at all.
     expect(press.defaultPrevented).toBe(true);
-    expect(fixture.onFailure).toHaveBeenCalledExactlyOnceWith(
-      'visual-editor-pending-input-unavailable'
-    );
+    expect(fixture.onFailure).not.toHaveBeenCalled();
     expect(fixture.history.getValue()).toBe(typed.markdown);
     expect(typed.markdown).toBe('Lead\n\n> Text`x`');
     // A refused key is not deferred: the accepted render replays nothing.
     act(() => fixture.accept(typed));
     expect(fixture.history.getValue()).toBe(typed.markdown);
-    expect(fixture.onFailure).toHaveBeenCalledExactlyOnceWith(
-      'visual-editor-pending-input-unavailable'
-    );
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.runtime().isEditable()).toBe(true);
   } finally {
     fixture.unmount();
     vi.useRealTimers();
@@ -22519,12 +22527,16 @@ it.each([
     });
     fixture.surface.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
-    expect(fixture.onFailure.mock.calls.map(([code]) => code)).toEqual([expected]);
+    // A deletion whose lease proof fails is refused, never reported.
+    expect(fixture.onFailure.mock.calls.map(([code]) => code)).toEqual([]);
     expect(fixture.history.getValue()).toBe(before);
     // A refused key is not deferred: the accepted render replays nothing.
     act(() => fixture.accept(typed));
     expect(fixture.history.getValue()).toBe(before);
-    expect(fixture.onFailure.mock.calls.map(([code]) => code)).toEqual([expected]);
+    expect(fixture.onFailure).not.toHaveBeenCalledWith(expected);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.runtime().isEditable()).toBe(true);
   } finally {
     fixture.unmount();
     vi.useRealTimers();
@@ -22589,8 +22601,12 @@ it('rejects a stale inline target when another retained node is replaced', () =>
       fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentForward' }));
       vi.advanceTimersByTime(80);
     });
-    expect(fixture.onFailure).toHaveBeenCalledWith('visual-editor-inline-retirement-dom-stale');
+    // The replacement is still refused - nothing is written and the source is
+    // untouched - but an ordinary deletion never publishes a failure code.
+    expect(fixture.onFailure).not.toHaveBeenCalled();
     expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.runtime().isEditable()).toBe(true);
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
   } finally { fixture.unmount(); vi.useRealTimers(); }
 });
 
@@ -22745,8 +22761,11 @@ it.each(['nested', 'partial', 'foreign', 'attribute'] as const)('keeps the inlin
       vi.advanceTimersByTime(80);
     });
     if (scenario === 'foreign' || scenario === 'attribute') {
+      // The tampered window is still refused - the source is untouched - but
+      // an ordinary deletion never publishes a failure code for it.
       expect(fixture.history.getValue()).toBe(markdown);
-      expect(fixture.onFailure).toHaveBeenCalledWith('visual-editor-inline-retirement-dom-stale');
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.runtime().isEditable()).toBe(true);
     } else {
       expect(fixture.history.getValue()).toBe(scenario === 'nested' ? '- lead **a  z**\n- untouched' : '- lead `x`\n- untouched');
       expect(fixture.onFailure).not.toHaveBeenCalled();
@@ -23374,9 +23393,18 @@ it.each([
     act(() => vi.advanceTimersByTime(80));
     const invalid = ['extra-neighbor', 'previous', 'replaced', 'outside', 'intervening', 'code-text', 'source-owner', 'source', 'revision', 'readonly'].includes(mode);
     if (invalid) {
-      expect(fixture.onFailure).toHaveBeenCalledWith(['source-owner', 'source', 'revision'].includes(mode)
-        ? 'visual-editor-inline-code-deletion-source-stale' : 'visual-editor-inline-code-deletion-dom-stale');
+      // Each of these is this owner refusing a deletion whose own witness no
+      // longer describes the surface. The refusal is silent by contract: no
+      // failure code, no lock, and the canonical source is exactly where the
+      // user left it.
+      expect(fixture.onFailure).not.toHaveBeenCalled();
       expect(fixture.history.getValue()).toBe(mode === 'source' ? `${markdown}!` : markdown);
+      // The external source/revision change legitimately takes the surface out
+      // of visual editing on its own; the deletion refusal adds no lock.
+      if (!['source', 'revision'].includes(mode)) {
+        expect(fixture.runtime().isEditable()).toBe(true);
+        expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+      }
     } else {
       expect(fixture.onFailure).not.toHaveBeenCalled();
       expect(fixture.history.getValue()).toBe(markdown.slice(0, bodyStart + from) + markdown.slice(bodyStart + to));
@@ -25673,16 +25701,16 @@ it('refuses a block-terminal space after a literal backslash without diverging f
     // The two proved deletions are kept; the unprovable third key is refused
     // and leaves both the source and the surface exactly as they were.
     expect(prevented).toEqual([false, false, true]);
-    expect(fixture.onFailure.mock.calls).toEqual([['visual-editor-selection-map-failed']]);
+    // An ordinary deletion is never a reported failure: the refused key
+    // publishes nothing, locks nothing, and the session keeps editing.
+    expect(fixture.onFailure.mock.calls).toEqual([]);
     expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.surface.getAttribute('data-easymde-visual-deletion-repair')).toBe('1');
     expect(fixture.history.getValue()).toBe('## a\\\\. \n');
-    // The two proved deletions stand and the third key is refused by the
-    // ordinary synchronizer's own mapping proof. The surface keeps the
-    // canonical trailing space spelled the way this editor spells it - the
-    // NBSP the browser's own respell produced - instead of rolling back to the
-    // older accepted render, which is what a witness-driven abort used to do.
-    expect(heading()?.textContent).toBe('a\\.\u00a0');
-    expect(heading()?.firstChild).toBe(text);
+    // The two proved deletions stand and the third key is refused. The diverged
+    // window is re-derived silently from the accepted render, so the browser's
+    // transient NBSP respell is replaced by the accepted spelling of this run.
+    expect(heading()?.textContent).toBe('a\\. AB');
     expect(fixture.runtime().isEditable()).toBe(true);
   } finally {
     fixture.unmount();
@@ -26443,12 +26471,12 @@ it('refuses a deletion whose selection spans two table cells without changing th
   }
 });
 
-it('still reports an unmappable table-edge press the browser will not cancel', async () => {
+it('refuses an unmappable table-edge press the browser will not cancel without reporting it', async () => {
   vi.useFakeTimers();
-  // The table-edge owner can only claim a press it can actually suppress: an
-  // event the browser will not cancel would leave the native structural edit
-  // applied with nothing committed, so that press keeps the ordinary failure
-  // path and its stable code instead of being published as a no-op.
+  // The table-edge owner can only claim a press it can actually suppress, so a
+  // non-cancelable event keeps the ordinary path. That path is still never a
+  // reported failure: the press is refused, the canonical source is untouched,
+  // and the session keeps editing.
   const fixture = createEditableTableFixture();
   try {
     fixture.surface.focus();
@@ -26475,21 +26503,25 @@ it('still reports an unmappable table-edge press the browser will not cancel', a
       vi.advanceTimersByTime(160);
       await Promise.resolve();
     });
-    expect(fixture.onFailure.mock.calls).toEqual([
-      ['visual-editor-selection-map-failed']
-    ]);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.runtime().isEditable()).toBe(true);
     expect(fixture.history.getValue()).toBe(editableTableMarkdown);
+    expect(
+      fixture.surface.getAttribute('data-easymde-visual-deletion-repair')
+    ).toBe('1');
   } finally {
     fixture.unmount();
     vi.useRealTimers();
   }
 });
 
-it('still reports a caret the canonical source does not spell', () => {
+it('refuses a caret the canonical source does not spell without reporting it', () => {
   vi.useFakeTimers();
   // The surface's paragraph renders a spelling the canonical source does not
   // hold, so no projection can name this caret. It is not a table edge, so the
-  // table-edge owner must not claim it.
+  // table-edge owner must not claim it - and an ordinary deletion is refused
+  // silently instead of being published as a failure.
   const markdown = 'Other text.\n';
   const signature = 'table-edge-control-foreign-text';
   const fixture = createFullOwnerFixture({
@@ -26512,10 +26544,13 @@ it('still reports a caret the canonical source does not spell', () => {
       );
     });
     expect(beforeInput.defaultPrevented).toBe(true);
-    expect(fixture.onFailure.mock.calls).toEqual([
-      ['visual-editor-selection-map-failed']
-    ]);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.runtime().isEditable()).toBe(true);
     expect(fixture.history.getValue()).toBe(markdown);
+    // The refused press left the caret exactly where the user put it.
+    expect(window.getSelection()?.anchorNode).toBe(text);
+    expect(window.getSelection()?.anchorOffset).toBe(4);
   } finally {
     fixture.unmount();
     vi.useRealTimers();
@@ -26705,8 +26740,12 @@ it('refuses the emptied terminal shortcut when the last row spells another block
     expect(pressFullBackspaceKey(fixture.surface)).toBe(true);
     await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); });
 
+    // The row is still refused, but a Backspace never publishes a failure:
+    // the source stays exactly as it was and the session keeps editing.
     expect(fixture.history.getValue()).toBe(markdown);
-    expect(fixture.onFailure.mock.calls).toEqual([['visual-editor-markdown-merge-failed']]);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.runtime().isEditable()).toBe(true);
   } finally {
     fixture.unmount();
     vi.useRealTimers();
@@ -26851,7 +26890,13 @@ it('refuses the thematic-break Backspace after a foreign text change elsewhere o
     expect(pressFullBackspaceKey(fixture.surface)).toBe(true);
     await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); });
 
-    expect(fixture.onFailure.mock.calls).toEqual([['visual-editor-canonical-change-dom-stale']]);
+    // The press is refused and nothing is reported: no failure code, no lock,
+    // and the canonical source never learns about the foreign text. Whether the
+    // surface can be re-derived is the restore owner's own proof - here the
+    // history slot is a rematerialize marker, so the repair honestly declines
+    // instead of claiming a pairing it cannot prove.
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
     expect(fixture.history.getValue()).not.toContain('Pbra');
     expect(fixture.history.getValue()).toContain('---');
   } finally {
@@ -33954,11 +33999,14 @@ it.each([
     if (invalidJoin) {
       // A matching PRE and root ledger cannot authorize losing shared body
       // bytes or changing another code character outside the witnessed LF.
+      // The refusal is silent: a Backspace never publishes a failure code.
       act(() => vi.advanceTimersByTime(80));
       expect(fixture.history.getValue()).toBe(beforeJoin.value);
       expect(fixture.history.getRevision?.()).toBe(beforeJoin.revision);
       expect(fixture.history.getHistoryState()).toEqual(beforeJoin.history);
-      expect(fixture.onFailure).toHaveBeenCalled();
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+      expect(fixture.runtime().isEditable()).toBe(true);
       return;
     }
     const withoutTail = markdown.replace('TailXX', '');
@@ -34000,8 +34048,12 @@ it.each([
     }
     act(() => vi.advanceTimersByTime(80));
     if (timing === 'foreign clone') {
+      // The replaced root is still refused, but a Backspace never publishes a
+      // failure code and never locks the surface.
       expect(fixture.history.getValue()).toBe(withoutTail);
-      expect(fixture.onFailure).toHaveBeenCalledWith('visual-editor-canonical-change-dom-stale');
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+      expect(fixture.runtime().isEditable()).toBe(true);
     } else {
       const deletedAt = markdown.indexOf(body) + body.length - 2;
       const expected = withoutTail.slice(0, deletedAt) + withoutTail.slice(deletedAt + 1);
@@ -34521,7 +34573,11 @@ it('refuses the PRE-adjacent Backspace when the surface differs beyond a declare
     act(() => vi.advanceTimersByTime(80));
     expect(before.defaultPrevented, 'a stale surface still refuses the press').toBe(true);
     expect(fixture.history.getValue()).toBe(DECLARED_RUN_MARKDOWN);
-    expect(fixture.onFailure).toHaveBeenCalledWith('visual-editor-canonical-change-dom-stale');
+    // A stale surface is still refused and no byte is lost - but a Backspace
+    // never publishes a failure code and never locks the session.
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.runtime().isEditable()).toBe(true);
   } finally {
     fixture.unmount();
     vi.useRealTimers();
@@ -34536,13 +34592,11 @@ it('refuses a difference at the declared offset whose accepted side is not a col
   // of it, so the respelled side is no spelling of that one run's bytes.
   //
   // Nothing here asserts WHERE the refusal comes from, deliberately: every
-  // refusal path in this component ends in `failVisualSynchronization`, which
-  // tries the accepted restore FIRST, so the guard's own throw and a refusal from
-  // the commit path beyond it both leave the surface restored and report the same
-  // shared code. An earlier version of this test asserted that no restore had run
-  // and demanded the typed bytes still be on the surface; it failed, and the
-  // assertion was what was wrong, not the code. Pinned here is the narrower true
-  // claim: this difference is refused, and no byte is lost.
+  // refusal path in this component runs the same silent deletion repair, so the
+  // guard's own throw and a refusal from the commit path beyond it both leave
+  // the surface re-derived from the accepted render and report nothing at all.
+  // An ordinary Backspace never publishes a failure code - it refuses the press,
+  // keeps the canonical source, and the session stays editable.
   const fixture = declaredRunPreAdjacentFixture('pre-adjacent-declared-run-non-spelling-excess', 'the fence.');
   try {
     fixture.surface.focus();
@@ -34554,7 +34608,9 @@ it('refuses a difference at the declared offset whose accepted side is not a col
     act(() => vi.advanceTimersByTime(80));
     expect(before.defaultPrevented, 'a stale surface still refuses the press').toBe(true);
     expect(fixture.history.getValue()).toBe(DECLARED_RUN_MARKDOWN);
-    expect(fixture.onFailure).toHaveBeenCalledWith('visual-editor-canonical-change-dom-stale');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.runtime().isEditable()).toBe(true);
   } finally {
     fixture.unmount();
     vi.useRealTimers();
@@ -34776,8 +34832,8 @@ it('does not hop the nested ABUTTING Backspace, and removes no fence terminator'
   // line's own terminator, so removing it would publish the paragraph's text as
   // code bytes. The nested family is not authorised to hop, so the press must leave
   // the document byte-identical and must not seat the caret in the code body.
-  // WHICH refusal is reported is measured and reported separately rather than pinned,
-  // but a refusal there must be: the press cannot be silently swallowed.
+  // The refusal is silent by contract - an ordinary Backspace never publishes a
+  // failure code - so the only trace is the repair count the surface publishes.
   const markdown = '> intro\n>\n> ~~~js\n> alpha\n> ~~~\n> the fence.';
   const signature = 'pre-nested-quote-abutting-backspace-control';
   const editMap = fullOwnerEditMap(signature, [
@@ -34816,12 +34872,12 @@ it('does not hop the nested ABUTTING Backspace, and removes no fence terminator'
     act(() => vi.advanceTimersByTime(80));
     expect(before.defaultPrevented, 'the destructive byte is not deleted').toBe(true);
     expect(fixture.history.getValue(), 'no byte may be lost').toBe(beforeValue);
-    const reported = fixture.onFailure.mock.calls.map(([code]) => code);
-    expect(reported.length, 'the refused press reports its refusal').toBeGreaterThan(0);
-    for (const code of reported) {
-      expect(String(code), 'the reported code names an editor failure')
-        .toMatch(/^visual-editor-[a-z0-9-]+$/);
-    }
+    expect(fixture.onFailure, 'a refused Backspace publishes no failure code').not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.runtime().isEditable()).toBe(true);
+    expect(
+      fixture.surface.getAttribute('data-easymde-visual-deletion-repair')
+    ).toBe('1');
     expectCaretOutsideCodeBody(fixture.surface, code);
   } finally {
     fixture.unmount();
@@ -35164,6 +35220,164 @@ it('keeps a document-start heading a silent no-op', () => {
       expect(selection?.anchorNode).toBe(text);
       expect(selection?.anchorOffset).toBe(0);
     }
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+/**
+ * The reported shape: a characterwise Backspace run walks a list item's text
+ * down to nothing, and the press after it lands on the emptied item.
+ *
+ * Chromium spells that caret two ways - on the item itself, before the
+ * placeholder break its own edit left in the body, and after that break at the
+ * item's own offset 1. Both are the same caret: the body holds nothing else for
+ * them to stand on either side of. Only the first had a visual mapping, so the
+ * second reached the owner's marker/interval proof as an unmappable position
+ * and the press was reported as `visual-editor-markdown-merge-failed` with the
+ * canonical source frozen: measured against this fixture, the source stayed at
+ * `段落内容。\n\n- \n` while every later press replayed the same refusal. The
+ * caret is now collapsed across the placeholder for that proof - the position
+ * it names is the same one - and both spellings remove the item's canonical
+ * row: `- ` and the separator that terminates the block above it (source
+ * 6..10), leaving `段落内容。\n` with the caret at the end of `段落内容。`.
+ */
+const EMPTIED_LIST_ITEM_MARKDOWN = '段落内容。\n\n- 列表项一\n';
+const EMPTIED_LIST_ITEM_VALUE = '段落内容。\n';
+const EMPTIED_LIST_ITEM_HTML = fullOwnerParagraphBlock('段落内容。', 'b0')
+  + fullOwnerBlock('<ul><li>列表项一</li></ul>', 'b1');
+
+function placeCaretInElement(element: HTMLElement, offset = 0): void {
+  const selection = window.getSelection();
+  const range = document.createRange();
+  range.setStart(element, offset);
+  range.collapse(true);
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+it.each([
+  { caret: 'before its placeholder break', offset: 0 },
+  { caret: 'after its placeholder break', offset: 1 }
+] as const)('removes an emptied list item with the caret $caret', ({ offset }) => {
+  vi.useFakeTimers();
+  const signature = `emptied-list-item-caret-${offset}`;
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { startLine: 0, endLine: 1, id: 'b0' },
+      { startLine: 2, endLine: 3, id: 'b1' }
+    ]),
+    html: EMPTIED_LIST_ITEM_HTML,
+    markdown: EMPTIED_LIST_ITEM_MARKDOWN,
+    signature,
+    sourceCaret: 0
+  });
+  try {
+    fixture.surface.focus();
+    const text = fullOwnerTextAt(fixture.surface, 'li');
+    // The deletion run: three real Backspaces take the item's text to nothing.
+    for (let index = text.data.length; index > 0; index -= 1) {
+      const press = fullOwnerNativeDelete(fixture.surface, text, index - 1, index, 'deleteContentBackward');
+      expect(press.prevented, 'the in-item deletions stay ordinary native edits').toBe(false);
+      act(() => vi.advanceTimersByTime(80));
+    }
+    expect(fixture.history.getValue(), 'the item is emptied, not removed').toBe('段落内容。\n\n- \n');
+    expect(fixture.onFailure.mock.calls, 'the deletion run reports nothing').toEqual([]);
+    const item = fixture.surface.querySelector('li');
+    if (!(item instanceof HTMLLIElement)) throw new Error('emptied-list-item-missing');
+    // The emptied body the renderer leaves: its placeholder break, with the
+    // caret on one side of it.
+    item.replaceChildren(document.createElement('br'));
+    placeCaretInElement(item, offset);
+    let boundary!: InputEvent;
+    act(() => {
+      boundary = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(item, offset, offset)
+      );
+    });
+    expect(boundary.defaultPrevented, 'the emptied row is owned').toBe(true);
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue(), 'the row and its separator are gone')
+      .toBe(EMPTIED_LIST_ITEM_VALUE);
+    expect(fixture.history.getSelection(), 'the caret sits at the end of the block above')
+      .toEqual({ direction: 'none', end: 5, start: 5 });
+    expect(fixture.onFailure.mock.calls, 'the press reports no failure').toEqual([]);
+    expect(fixture.onTransferFailure.mock.calls, 'the run is not ended').toEqual([]);
+    expect(fixture.surface.querySelector('li'), 'the emptied item is gone').toBeNull();
+    // One press beyond: the run continues on ordinary editable text.
+    const paragraphText = fullOwnerTextAt(fixture.surface, 'p');
+    const beyond = fullOwnerNativeDelete(fixture.surface, paragraphText, 4, 5, 'deleteContentBackward');
+    expect(beyond.prevented, 'the next press is an ordinary native edit').toBe(false);
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue(), 'the next press still acts').toBe('段落内容\n');
+    expect(fixture.onFailure.mock.calls, 'no press reports a failure').toEqual([]);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+/**
+ * The same emptied item when it is a task row: the body keeps the rendered
+ * checkbox as its own marker, and the caret Chromium would place before it has
+ * no canonical row this owner's proof can name. The press is then a silent
+ * no-op - no byte, no caret move, no failure code - instead of the
+ * `visual-editor-markdown-merge-failed` this shape used to report while
+ * freezing the canonical source.
+ */
+it('keeps a press on an emptied task item a silent no-op', () => {
+  vi.useFakeTimers();
+  const signature = 'emptied-task-item-silent';
+  const markdown = '段落内容。\n\n- [ ] 列表项一\n';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { startLine: 0, endLine: 1, id: 'b0' },
+      { startLine: 2, endLine: 3, id: 'b1' }
+    ]),
+    html: fullOwnerParagraphBlock('段落内容。', 'b0')
+      + fullOwnerBlock(
+        '<ul><li><input type="checkbox" class="easymde-task-checkbox">列表项一</li></ul>',
+        'b1'
+      ),
+    markdown,
+    signature,
+    sourceCaret: 0
+  });
+  try {
+    fixture.surface.focus();
+    const item = fixture.surface.querySelector('li');
+    const text = Array.from(item?.childNodes ?? []).find((node) => node instanceof Text);
+    if (!(item instanceof HTMLLIElement) || !(text instanceof Text)) {
+      throw new Error('emptied-task-item-fixture-invalid');
+    }
+    for (let index = text.data.length; index > 0; index -= 1) {
+      const press = fullOwnerNativeDelete(fixture.surface, text, index - 1, index, 'deleteContentBackward');
+      expect(press.prevented, 'the in-item deletions stay ordinary native edits').toBe(false);
+      act(() => vi.advanceTimersByTime(80));
+    }
+    expect(fixture.history.getValue()).toBe('段落内容。\n\n- [ ] \n');
+    expect(fixture.surface.querySelectorAll('li')).toHaveLength(1);
+    placeCaretInElement(item, 0);
+    let boundary!: InputEvent;
+    act(() => {
+      boundary = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(item, 0, 0)
+      );
+    });
+    expect(boundary.defaultPrevented, 'the press is consumed').toBe(true);
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue(), 'no byte is written').toBe('段落内容。\n\n- [ ] \n');
+    expect(fixture.onFailure.mock.calls, 'no failure is reported').toEqual([]);
+    expect(fixture.onTransferFailure.mock.calls, 'the run is not ended').toEqual([]);
+    expect(fixture.surface.querySelector('li'), 'the row is untouched').toBe(item);
+    const selection = window.getSelection();
+    expect(selection?.anchorNode, 'the caret does not move').toBe(item);
+    expect(selection?.anchorOffset).toBe(0);
   } finally {
     fixture.unmount();
     vi.useRealTimers();
@@ -38095,7 +38309,11 @@ it('rejects a native join when its retained root changes outside the witnessed o
       vi.advanceTimersByTime(80);
       expect(fixture.history.getValue()).toBe(beforeJoin);
     });
-    expect(fixture.onFailure).toHaveBeenCalled();
+    // The join is still refused, but a Backspace never reports: no failure
+    // code, no lock, and the canonical source is untouched.
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.runtime().isEditable()).toBe(true);
   } finally { fixture.unmount(); vi.useRealTimers(); }
 });
 
@@ -41776,7 +41994,14 @@ it.each(['dom', 'source', 'revision'] as const)(
         expect(before.defaultPrevented).toBe(true);
       });
       expect(fixture.history.getValue()).toBe(expected);
-      expect(fixture.onFailure).toHaveBeenCalled();
+      // The stale witness still refuses the press - nothing is written - but an
+      // ordinary forward Delete never publishes a failure code or locks.
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+      // Only the DOM-only divergence keeps the surface in visual editing: the
+      // source/revision variants move the canonical document themselves, which
+      // is the owner's own external-change lock and not this refusal.
+      if (stale === 'dom') expect(fixture.runtime().isEditable()).toBe(true);
       expect(held).toBe(0);
     } finally {
       fixture.unmount();
@@ -41992,7 +42217,10 @@ it.each(['selection', 'target', 'dom', 'source', 'definition', 'revision'] as co
         expect(before.defaultPrevented).toBe(true);
       });
       expect(fixture.history.getValue()).toBe(expected);
-      expect(fixture.onFailure).toHaveBeenCalled();
+      // The stale witness still refuses the press, but a deletion never
+      // publishes a failure code and never locks the session.
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.onTransferFailure).not.toHaveBeenCalled();
     } finally {
       fixture.unmount();
       vi.useRealTimers();
@@ -42043,7 +42271,10 @@ it.each(['selection', 'target', 'dom', 'source', 'definition', 'revision'] as co
         expect(before.defaultPrevented).toBe(true);
       });
       expect(fixture.history.getValue()).toBe(expected);
-      expect(fixture.onFailure).toHaveBeenCalled();
+      // The stale witness still refuses the press, but a deletion never
+      // publishes a failure code and never locks the session.
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.onTransferFailure).not.toHaveBeenCalled();
     } finally {
       fixture.unmount();
       vi.useRealTimers();
@@ -42204,7 +42435,10 @@ it.each(['prefix', 'multiple', 'clone', 'caret', 'attribute'] as const)(
         fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
       });
       expect(fixture.history.getValue()).toBe(source);
-      expect(fixture.onFailure).toHaveBeenCalledWith('visual-editor-canonical-change-dom-stale');
+      // The tampered image witness is still refused and nothing is written,
+      // but a Backspace never publishes a failure code or locks the session.
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.onTransferFailure).not.toHaveBeenCalled();
     } finally {
       fixture.unmount();
       vi.useRealTimers();
@@ -42427,7 +42661,10 @@ it.each(['source', 'definition'] as const)(
         fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
       });
       expect(fixture.history.getValue()).toBe(changed);
-      expect(fixture.onFailure).toHaveBeenCalled();
+      // The stale image witness still refuses the press and writes nothing,
+      // but a deletion never publishes a failure code or locks the session.
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.onTransferFailure).not.toHaveBeenCalled();
     } finally {
       fixture.unmount();
       vi.useRealTimers();
@@ -42467,7 +42704,11 @@ it('Full rejects foreign DOM changes during native image deletion', () => {
       fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
     });
     expect(fixture.history.getValue()).toBe(source);
-    expect(fixture.onFailure).toHaveBeenCalledWith('visual-editor-canonical-change-dom-stale');
+    // The foreign window is still refused, but a deletion never publishes a
+    // failure code and never locks the session.
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.runtime().isEditable()).toBe(true);
   } finally {
     fixture.unmount();
     vi.useRealTimers();
@@ -43376,3 +43617,215 @@ it('inserts at the visual end of a row a hidden reference definition follows', a
   }
 });
 
+/**
+ * An ordinary Backspace/Delete is never allowed to break the session.
+ *
+ * The editor still refuses a press it cannot prove - nothing is written and the
+ * canonical source never moves - but the refusal is silent: no failure code
+ * reaches Root, no snapshot rollback claims a pairing this owner cannot prove,
+ * no transfer failure locks the surface, and the user keeps typing and undo.
+ * The only trace is the repair count published on the surface, which is a
+ * diagnostic counter and never a failure code. Every non-deletion press keeps
+ * its truthful failure.
+ */
+describe('ImmersiveVisualEditor deletion refusal policy', () => {
+  /** Two rows: one the map can name, one whose DOM spelling the source lacks. */
+  const createDeletionPolicyFixture = (
+    signature: string
+  ): Readonly<{ fixture: ReturnType<typeof createFullOwnerFixture>; markdown: string }> => {
+    const markdown = 'Alpha text.\n\nOther text.\n';
+    return {
+      fixture: createFullOwnerFixture({
+        editMap: fullOwnerEditMap(signature, [
+          { endLine: 1, id: 'b0', startLine: 0 },
+          { endLine: 3, id: 'b1', startLine: 2 }
+        ]),
+        html: fullOwnerParagraphBlock('Alpha text.', 'b0')
+          + fullOwnerParagraphBlock('Rendered text.', 'b1'),
+        markdown,
+        signature,
+        sourceCaret: 0
+      }),
+      markdown
+    };
+  };
+
+  it('refuses an unmappable deletion without writing or reporting, and the next Backspace still works', () => {
+    vi.useFakeTimers();
+    const { fixture, markdown } = createDeletionPolicyFixture('deletion-policy-refusal');
+    try {
+      fixture.surface.focus();
+      const unmappable = fullOwnerTextAt(
+        fixture.surface,
+        '[data-easymde-visual-block-id="b1"]'
+      );
+      placeCaretInText(unmappable, 4);
+      let refused!: InputEvent;
+      act(() => {
+        refused = fullOwnerDispatchBeforeInput(
+          fixture.surface,
+          { data: null, inputType: 'deleteContentBackward' },
+          fullOwnerTargetRange(unmappable, 3, 4)
+        );
+      });
+      expect(refused.defaultPrevented).toBe(true);
+      // Nothing written, nothing reported, nothing locked.
+      expect(fixture.history.getValue()).toBe(markdown);
+      expect(fixture.history.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: 0 });
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+      expect(fixture.runtime().isEditable()).toBe(true);
+      // The caret and the surface are exactly where the user left them.
+      expect(window.getSelection()?.anchorNode).toBe(unmappable);
+      expect(window.getSelection()?.anchorOffset).toBe(4);
+      expect(unmappable.data).toBe('Rendered text.');
+      // The only trace is the diagnostic counter, never a failure code.
+      expect(
+        fixture.surface.getAttribute('data-easymde-visual-deletion-repair')
+      ).toBe('1');
+
+      // The next Backspace is a live key: a mappable deletion still commits.
+      const mappable = fullOwnerTextAt(
+        fixture.surface,
+        '[data-easymde-visual-block-id="b0"]'
+      );
+      const deleted = fullOwnerNativeDelete(
+        fixture.surface,
+        mappable,
+        mappable.length - 1,
+        mappable.length,
+        'deleteContentBackward'
+      );
+      expect(deleted.prevented).toBe(false);
+      act(() => vi.advanceTimersByTime(160));
+      expect(fixture.history.getValue()).toBe('Alpha text\n\nOther text.\n');
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('re-derives a diverged surface after a refused deletion and the next insertion commits', () => {
+    vi.useFakeTimers();
+    const signature = 'deletion-policy-repair';
+    const markdown = 'Alpha\n\nBeta\n';
+    const fixture = createFullOwnerFixture({
+      editMap: fullOwnerEditMap(signature, [
+        { endLine: 1, id: 'b0', startLine: 0 },
+        { endLine: 3, id: 'b1', startLine: 2 }
+      ]),
+      html: fullOwnerParagraphBlock('Alpha', 'b0')
+        + fullOwnerParagraphBlock('Beta', 'b1'),
+      markdown,
+      signature,
+      sourceCaret: markdown.length
+    });
+    try {
+      fixture.surface.focus();
+      const alphaRow = fixture.surface.querySelector(
+        '[data-easymde-visual-block-id="b0"]'
+      );
+      const betaRow = fixture.surface.querySelector(
+        '[data-easymde-visual-block-id="b1"]'
+      );
+      const alphaText = alphaRow?.firstChild;
+      const betaText = betaRow?.firstChild;
+      if (
+        !(alphaText instanceof Text)
+        || !(betaText instanceof Text)
+        || !(betaRow instanceof HTMLElement)
+      ) throw new Error('deletion-policy-repair-fixture-invalid');
+      // The unconsumed native structural merge: both rows become one paragraph
+      // and the accepted two-row render no longer describes this window.
+      alphaText.appendData(betaText.data);
+      betaRow.remove();
+      placeCaretInText(alphaText, alphaText.data.length);
+      let refused!: InputEvent;
+      act(() => {
+        refused = fullOwnerDispatchBeforeInput(
+          fixture.surface,
+          { data: null, inputType: 'deleteContentBackward' },
+          fullOwnerTargetRange(alphaText, alphaText.data.length - 1, alphaText.data.length)
+        );
+      });
+      expect(refused.defaultPrevented).toBe(true);
+      // The diverged surface was re-derived from the accepted render, silently:
+      // no failure code, no transfer failure, no lock.
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+      expect(fixture.runtime().isEditable()).toBe(true);
+      expect(fixture.history.getValue()).toBe(markdown);
+      expect(fixture.history.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: 0 });
+      expect(fixture.surface.children.length).toBe(2);
+      const repairedBeta = fullOwnerTextAt(
+        fixture.surface,
+        '[data-easymde-visual-block-id="b1"]'
+      );
+      expect(repairedBeta).not.toBe(betaText);
+      expect(repairedBeta.data).toBe('Beta');
+      expect(
+        fixture.surface.getAttribute('data-easymde-visual-deletion-repair')
+      ).toBe('1');
+
+      // The very next insertion commits against the restored surface.
+      const inserted = fullOwnerNativeInsert(
+        fixture.surface,
+        repairedBeta,
+        repairedBeta.length,
+        '!'
+      );
+      act(() => vi.advanceTimersByTime(160));
+      expect({
+        failures: fixture.onFailure.mock.calls.map(([code]) => code),
+        prevented: inserted.prevented,
+        source: fixture.history.getValue(),
+        transferFailures: fixture.onTransferFailure.mock.calls.length
+      }).toEqual({
+        failures: [],
+        prevented: false,
+        source: 'Alpha\n\nBeta!\n',
+        transferFailures: 0
+      });
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('still reports the stable failure for a non-deletion input at the same unmappable caret', () => {
+    vi.useFakeTimers();
+    const { fixture, markdown } = createDeletionPolicyFixture('deletion-policy-non-deletion');
+    try {
+      fixture.surface.focus();
+      const unmappable = fullOwnerTextAt(
+        fixture.surface,
+        '[data-easymde-visual-block-id="b1"]'
+      );
+      placeCaretInText(unmappable, 4);
+      let inserted!: InputEvent;
+      act(() => {
+        inserted = fullOwnerDispatchBeforeInput(
+          fixture.surface,
+          { data: 'Z', inputType: 'insertText' },
+          fullOwnerTargetRange(unmappable, 3, 3)
+        );
+      });
+      expect(inserted.defaultPrevented).toBe(true);
+      // An insertion is not a deletion: its failure is still truthful.
+      expect(fixture.onFailure.mock.calls).toEqual([
+        ['visual-editor-selection-map-failed']
+      ]);
+      expect(fixture.history.getValue()).toBe(markdown);
+      expect(unmappable.data).toBe('Rendered text.');
+      // The deletion-only diagnostic counter never moved.
+      expect(
+        fixture.surface.getAttribute('data-easymde-visual-deletion-repair')
+      ).toBeNull();
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  });
+});

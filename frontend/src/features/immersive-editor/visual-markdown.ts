@@ -5192,6 +5192,106 @@ function emptyStructuralSeparatorEnd(
   return sourceStart + 1;
 }
 
+/**
+ * The start of the source suffix that renders to nothing: a run of link
+ * reference definitions closing the document, together with the blank lines
+ * that separate them from the last drawn line. Null when the document does not
+ * close with such a run.
+ *
+ * A definition's own bytes are exactly the bytes the serializer writes inline
+ * for the link that does render, so a character diff given both sides of that
+ * link finds them twice and can match the definition to the rendered link
+ * instead of to the row that is drawn. The drawn row is then left with no
+ * source offset at all, and every caret inside its tail fails closed. The
+ * suffix is therefore owned as hidden source rather than aligned: what is
+ * drawn keeps its own spelling, and the definitions keep theirs.
+ */
+function trailingHiddenReferenceStart(
+  source: string,
+  baselineVisualMarkdown: string
+): number | null {
+  // Only a definition line can close such a run, so every other document
+  // answers from its own last non-blank character, without a parse.
+  let lastContent = source.length;
+  while (lastContent > 0 && /[ \t\r\n]/u.test(source[lastContent - 1] ?? '')) {
+    lastContent -= 1;
+  }
+  if (0 === lastContent) return null;
+  const lastLineStart = source.lastIndexOf('\n', lastContent - 1) + 1;
+  if (
+    !/^[ \t]{0,3}\[[^\]\n]+\]:/u.test(
+      source.slice(lastLineStart, lastContent)
+    )
+  ) return null;
+  const nodes: Array<Readonly<{ from: number; name: string; to: number }>> = [];
+  const cursor = markdownLanguage.parser.parse(source).cursor();
+  if (!cursor.firstChild()) return null;
+  do {
+    nodes.push({ from: cursor.from, name: cursor.name, to: cursor.to });
+  } while (cursor.nextSibling());
+  // The run has to reach the document's end: an earlier definition is drawn
+  // nowhere either, but it is not this suffix and its own rows still bound it.
+  let first = nodes.length;
+  while (first > 0 && 'LinkReference' === nodes[first - 1]?.name) first -= 1;
+  if (first === nodes.length) return null;
+  for (let index = first; index < nodes.length; index += 1) {
+    const previous = nodes[index - 1];
+    const node = nodes[index];
+    if (
+      !node
+      || (previous && !/^[ \t\r\n]*$/u.test(source.slice(previous.to, node.from)))
+    ) return null;
+  }
+  const lastNode = nodes[nodes.length - 1];
+  if (!lastNode || !/^[ \t\r\n]*$/u.test(source.slice(lastNode.to))) {
+    return null;
+  }
+  // The blank lines between the last drawn row and the first definition render
+  // to nothing as well, but the row's own content does not: ending the drawn
+  // prefix at that content is what leaves the boundary after its last
+  // character a real source offset.
+  const firstReference = nodes[first]?.from ?? 0;
+  const drawn = markdownLineRanges(source)
+    .filter((line) =>
+      line.end <= firstReference
+      && /\S/u.test(source.slice(line.start, line.contentEnd)))
+    .pop();
+  if (!drawn) return 0;
+  // An emptied structural row draws only its marker: the separator run the
+  // serializer trims is renderer-only whitespace. It belongs to the hidden
+  // suffix only while the baseline does not spell it; when the baseline draws
+  // the run, the suffix starts after it.
+  const separatorStart = emptiedStructuralRowSeparatorStart(
+    source,
+    drawn.contentEnd
+  );
+  return null !== separatorStart
+    && !baselineVisualMarkdown.endsWith(
+      source.slice(separatorStart, drawn.contentEnd)
+    )
+    ? separatorStart
+    : drawn.contentEnd;
+}
+
+/**
+ * The start of the separator run that follows an emptied structural row's
+ * marker, when the row's own content ends at `end`. The row draws only its
+ * marker, so that run is renderer-only whitespace. Null when the line ending
+ * there is not one the structural owner already owns.
+ */
+function emptiedStructuralRowSeparatorStart(
+  source: string,
+  end: number
+): number | null {
+  let separatorStart = end;
+  while (separatorStart > 0 && /[ \t]/u.test(source[separatorStart - 1] ?? '')) {
+    separatorStart -= 1;
+  }
+  if (separatorStart === end) return null;
+  const boundary = emptyStructuralSeparatorEnd(source, separatorStart);
+  return null !== boundary && boundary <= end ? separatorStart : null;
+}
+
 export type VisualMarkdownSourceIntervalMap = Readonly<{
   baselineVisualMarkdown: string;
   /**
@@ -5395,7 +5495,31 @@ function buildVisualMarkdownSourceIntervalMap(
     baselinePosition = unit.baselineEnd;
     baselineSourceSegments.push({ baselineStart: unit.baselineEnd, baselineEnd: unit.baselineEnd, sourceStart: unit.sourceEnd });
   }
-  align(source.slice(sourcePosition), baselineVisualMarkdown.slice(baselinePosition));
+  // The definitions that close a document are hidden source, not drawn text:
+  // the destination and title they spell are drawn inline at the link that
+  // uses them, so a character diff over both spaces can match a definition to
+  // the rendered link and leave the row that *is* drawn without any source
+  // offset. Aligning the drawn prefix only keeps every drawn row on its own
+  // spelling; the suffix the renderer draws nothing for is owned as hidden.
+  const hiddenTailStart = trailingHiddenReferenceStart(source, baselineVisualMarkdown);
+  const drawnSourceEnd = null !== hiddenTailStart && hiddenTailStart > sourcePosition
+    ? hiddenTailStart
+    : source.length;
+  align(
+    source.slice(sourcePosition, drawnSourceEnd),
+    baselineVisualMarkdown.slice(baselinePosition)
+  );
+  if (drawnSourceEnd < source.length) {
+    hiddenSourceRanges.push({ end: source.length, start: drawnSourceEnd });
+    // The baseline's own end is the boundary after the last drawn character,
+    // not the end of the suffix nothing is drawn for: the caret there sits at
+    // the end of that row, and a deletion at it takes that row's last byte.
+    baselineSourceSegments.push({
+      baselineEnd: baselineVisualMarkdown.length,
+      baselineStart: baselineVisualMarkdown.length,
+      sourceStart: drawnSourceEnd
+    });
+  }
 
   const rawSourceOffsetAt = (visualOffset: number): number | undefined => {
     let lower = 0;

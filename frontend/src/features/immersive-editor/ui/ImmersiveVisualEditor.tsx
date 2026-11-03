@@ -81,6 +81,7 @@ import {
   expandVisualCodeFenceForBody,
   mapTextBoundaryFromInterval,
   mergeVisualMarkdownChangeDetails,
+  nextGraphemeBoundary,
   normalizeVisualCaretAtDocumentBoundary,
   normalizeVisualCodePlaceholders,
   placeVisualCaretAfterAcceptedCodeFenceAtDocumentEnd,
@@ -13973,19 +13974,32 @@ const failVisualSynchronization = useCallback(
       return lease;
     };
     /**
-     * The canonical range one pending Backspace deletes, or null when this
+     * The canonical range one pending deletion deletes, or null when this
      * event's own target range is a shape this lease cannot describe.
      *
-     * A null is NOT a lease failure. Every conjunct above it is a statement
-     * about the lease and still throws; the only thing that can refuse here is
-     * the target range's own geometry. Chromium names a Backspace at a block's
-     * first offset with a range across nodes while the accepted render is still
-     * settling, and the same key names an in-node range once it has landed, so
-     * the caller defers that key instead of failing the transfer.
+     * Both directions are owned here. A Backspace names the one grapheme
+     * before the caret and a forward Delete the one after it, so the direction
+     * only decides which edge of the same target range touches the caret and
+     * which end of the same canonical span that edge derives; the lease's own
+     * proof, the projection, the paragraph-only safety gate and the pending
+     * insertion reconstruction below are one implementation read from that
+     * edge, never a second copy.
+     *
+     * A null is NOT a lease failure, and only a Backspace can produce one.
+     * Every conjunct above it is a statement about the lease and still throws;
+     * the only thing that can refuse here is the target range's own geometry.
+     * Chromium names a Backspace at a block's first offset with a range across
+     * nodes while the accepted render is still settling, and the same key
+     * names an in-node range once it has landed, so the caller defers that key
+     * instead of failing the transfer. A forward Delete has no deferred replay
+     * owner - the held key is written back as a backward deletion - so a
+     * forward target this lease cannot describe is refused, never held.
      */
     const pendingHistoryInsertionDeletion = (
       lease: PendingMarkdownTransfer, event: InputEvent
     ): Readonly<{ start: number; end: number }> | null => {
+      const backward = 'deleteContentBackward' === event.inputType;
+      const forward = 'deleteContentForward' === event.inputType;
       const correspondence = lease.spec.correspondence;
       const retained = lease.spec.retainedHistoryPresentation;
       const selection = surface.ownerDocument.defaultView?.getSelection();
@@ -13993,7 +14007,7 @@ const failVisualSynchronization = useCallback(
       const target = targets[0];
       const text = selection?.anchorNode;
       const canonical = lease.spec.expectation.selection;
-      if (event.inputType !== 'deleteContentBackward' || !correspondence || !retained
+      if ((!backward && !forward) || !correspondence || !retained
         || correspondence.origin !== retained.owned || correspondence.owner !== fullOwnerRef.current
         || correspondence.source !== lease.spec.expectation.value
         || correspondence.sourceRevision !== lease.spec.expectation.revision
@@ -14006,13 +14020,23 @@ const failVisualSynchronization = useCallback(
         throw new Error('visual-editor-pending-input-unavailable');
       }
       if (target.startContainer !== text || target.endContainer !== text) {
+        if (forward) throw new Error('visual-editor-pending-input-unavailable');
         return null;
       }
-      if (target.endOffset !== selection.anchorOffset
+      // The caret's own edge of the target range: a Backspace ends at the
+      // caret, a forward Delete starts there.
+      const caretEdge = backward ? target.endOffset : target.startOffset;
+      const deletedEdge = backward ? target.startOffset : target.endOffset;
+      if (caretEdge !== selection.anchorOffset
         || target.startOffset >= target.endOffset) {
         throw new Error('visual-editor-pending-input-unavailable');
       }
-      if (previousGraphemeBoundary(text.data, selection.anchorOffset) !== target.startOffset) {
+      // The target must name exactly the one grapheme on the deleting side of
+      // the caret, as this run itself segments it.
+      const graphemeEdge = backward
+        ? previousGraphemeBoundary(text.data, selection.anchorOffset)
+        : nextGraphemeBoundary(text.data, selection.anchorOffset);
+      if (graphemeEdge !== deletedEdge) {
         throw new Error('visual-editor-pending-input-unavailable');
       }
       const origin = correspondence.origin;
@@ -14020,10 +14044,18 @@ const failVisualSynchronization = useCallback(
         surface, origin.source, origin.visual, referenceContextFor(correspondence.source)
       );
       const boundary = mapTextBoundaryFromInterval(surface, text, selection.anchorOffset, origin.visual, map);
-      const targetStart = mapTextBoundaryFromInterval(surface, text, target.startOffset, origin.visual, map);
-      if (!boundary || !targetStart || targetStart.sourceOffset >= boundary.sourceOffset) {
+      const targetEdge = mapTextBoundaryFromInterval(surface, text, deletedEdge, origin.visual, map);
+      if (!boundary || !targetEdge
+        || (backward
+          ? targetEdge.sourceOffset >= boundary.sourceOffset
+          : targetEdge.sourceOffset <= boundary.sourceOffset)) {
         throw new Error('visual-editor-pending-input-unavailable');
       }
+      // The canonical span the two projected endpoints describe: the caret
+      // keeps its own projection and the deleted edge supplies the other end.
+      const canonicalSpan = backward
+        ? { end: boundary.sourceOffset, start: targetEdge.sourceOffset }
+        : { end: targetEdge.sourceOffset, start: boundary.sourceOffset };
       if (origin.source === correspondence.source && boundary.sourceOffset === canonical.start) {
         const intent = visualInputIntent(surface, event, null, origin.source, origin.visual.length,
           origin.visual, null, () => map, false, null,
@@ -14031,37 +14063,78 @@ const failVisualSynchronization = useCallback(
             origin.source,
             lease.spec.correspondence ?? null
           ));
-        if (!intent || intent.sourceSelection.start !== targetStart.sourceOffset
-          || intent.sourceSelection.end !== boundary.sourceOffset
+        if (!intent || intent.sourceSelection.start !== canonicalSpan.start
+          || intent.sourceSelection.end !== canonicalSpan.end
           || !coversMarkdownUnits(origin.source, intent.sourceSelection.start, intent.sourceSelection.end)) {
           throw new Error('visual-editor-pending-input-unavailable');
         }
         return intent.sourceSelection;
       }
-      const insertions: Array<Readonly<{ from: number; to: number }>> = [];
-      correspondence.change.iterChangedRanges((fromA, toA, fromB, toB) => {
-        if (fromA === toA && fromA === boundary.sourceOffset && toB === canonical.start && fromB < toB) {
-          insertions.push({ from: fromB, to: toB });
+      // The render has not published this transfer's own edit yet, so the
+      // range the browser named is carried into the canonical source on each
+      // direction's own terms.
+      let start: number;
+      let end: number;
+      if (backward) {
+        // A Backspace names the run's previous grapheme, which the pending
+        // insertion may have replaced with its own last byte: the deleted
+        // grapheme is reconstructed as the tail of the combined run.
+        const insertions: Array<Readonly<{ from: number; to: number }>> = [];
+        correspondence.change.iterChangedRanges((fromA, toA, fromB, toB) => {
+          if (fromA === toA && fromA === boundary.sourceOffset && toB === canonical.start && fromB < toB) {
+            insertions.push({ from: fromB, to: toB });
+          }
+        });
+        const insertion = insertions.length === 1 ? insertions[0] : undefined;
+        if (!insertion) throw new Error('visual-editor-pending-input-unavailable');
+        const inserted = correspondence.source.slice(insertion.from, insertion.to);
+        const beforeText = text.data.slice(0, selection.anchorOffset);
+        const combined = beforeText + inserted;
+        const lastStart = previousGraphemeBoundary(combined, combined.length);
+        if (lastStart < beforeText.length || /[\r\n]/u.test(inserted)) {
+          throw new Error('visual-editor-pending-input-unavailable');
         }
-      });
-      const insertion = insertions.length === 1 ? insertions[0] : undefined;
-      if (!insertion) throw new Error('visual-editor-pending-input-unavailable');
-      const inserted = correspondence.source.slice(insertion.from, insertion.to);
-      const beforeText = text.data.slice(0, selection.anchorOffset);
-      const combined = beforeText + inserted;
-      const lastStart = previousGraphemeBoundary(combined, combined.length);
-      if (lastStart < beforeText.length || /[\r\n]/u.test(inserted)) {
-        throw new Error('visual-editor-pending-input-unavailable');
+        start = insertion.from + lastStart - beforeText.length;
+        end = insertion.to;
+      } else {
+        // A forward Delete names the run's next grapheme, which the pending
+        // edit never replaced: both endpoints are positions of the origin
+        // document, so this transfer's own operation maps them onto the
+        // canonical source. The caret's image must be the caret the lease
+        // holds, and the bytes the span spends must be the run bytes the
+        // browser named - an escape or a spelling the projection does not
+        // repeat is refused instead of guessed.
+        start = correspondence.change.mapPos(boundary.sourceOffset, 1);
+        end = correspondence.change.mapPos(targetEdge.sourceOffset, 1);
+        if (start !== canonical.start || end <= start
+          || correspondence.source.slice(start, end)
+            !== text.data.slice(selection.anchorOffset, deletedEdge)) {
+          throw new Error('visual-editor-pending-input-unavailable');
+        }
       }
-      const start = insertion.from + lastStart - beforeText.length;
-      const end = insertion.to;
-      let plain = false;
-      let unsafe = false;
+      const touched: MarkdownSyntaxNode[] = [];
+      const containers = new Set<string>();
       markdownLanguage.parser.parse(correspondence.source).iterate({ enter: (node) => {
         if (node.from >= end || node.to <= start) return;
-        if (node.name === 'Paragraph') plain = true;
-        if (!['Document', 'Paragraph', 'Link', 'Emphasis', 'StrongEmphasis', 'Strikethrough'].includes(node.name)) unsafe = true;
+        touched.push({ from: node.from, name: node.name, to: node.to });
+        // A Paragraph is the one block whose bytes are text the range deletes.
+        // A block container around it (a quote, a list item, a table cell)
+        // only holds that text and contributes none of its own bytes to a
+        // range that lies strictly inside the paragraph, so the container is
+        // describable. The container's own markers parse as separate nodes (a
+        // `>` on a continuation line, a list mark, a table delimiter) and
+        // never as an ancestor of the paragraph, so a range that overlaps one
+        // is still refused below.
+        if (node.name !== 'Paragraph' || node.from > start || end > node.to) return;
+        for (let parent = node.node.parent; parent; parent = parent.parent) {
+          containers.add(`${parent.from}:${parent.to}:${parent.name}`);
+        }
       } });
+      const plain = touched.some((node) => node.name === 'Paragraph');
+      const unsafe = touched.some((node) =>
+        !['Document', 'Paragraph', 'Link', 'Emphasis', 'StrongEmphasis', 'Strikethrough'].includes(node.name)
+        && !containers.has(`${node.from}:${node.to}:${node.name}`)
+      );
       if (!plain || unsafe || !coversMarkdownUnits(correspondence.source, start, end)) {
         throw new Error('visual-editor-pending-input-unavailable');
       }
@@ -17648,7 +17721,8 @@ const failVisualSynchronization = useCallback(
             runHistory(event.inputType === 'historyRedo');
             return;
           }
-          if (event.inputType === 'deleteContentBackward') {
+          if (event.inputType === 'deleteContentBackward'
+            || event.inputType === 'deleteContentForward') {
             const lease = pendingInputLease();
             const range = pendingHistoryInsertionDeletion(lease, event);
             if (!range) {
@@ -17658,7 +17732,10 @@ const failVisualSynchronization = useCallback(
               // replay it once that render has landed. The prevented press left
               // the DOM unchanged, so a second press arrives with the SAME
               // lease and is counted instead of overwriting the first: two
-              // presses must become two edits, never one.
+              // presses must become two edits, never one. Only a Backspace can
+              // reach here: the forward Delete is refused by the owner above
+              // when its target is a shape no canonical range describes, so a
+              // held key is always the one the replay knows how to write.
               const deferred = deferredPendingBackspaceRef.current;
               if (!deferred || deferred.lease !== lease) {
                 deferredPendingBackspaceRef.current = { count: 1, lease };

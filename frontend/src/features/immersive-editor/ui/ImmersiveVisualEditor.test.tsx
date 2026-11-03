@@ -21912,6 +21912,132 @@ function createPendingRedoBackspaceFixture(signature: string, insert = 'X') {
   return { base, fixture, selector, typed };
 }
 
+/**
+ * The same pending-history window as `createPendingRedoBackspaceFixture`, with
+ * the typed text landing at the END of a blockquote's own paragraph instead of
+ * at a top-level paragraph's first offset.
+ *
+ * The end of the run matters: at a paragraph's first offset the browser names
+ * a cross-node Backspace range, which the owner defers rather than describes.
+ * At the end of the run the key is one in-node range whose deleted bytes sit
+ * strictly inside that paragraph, so the lease either describes them or
+ * refuses the transfer - there is no deferral to hide behind.
+ *
+ * `insertedHtml` is the accepted render of `insert`; they differ when the
+ * typed text is Markdown syntax of its own (`` `x` `` renders as `<code>x</code>`).
+ */
+function createPendingRedoBackspaceQuoteFixture(
+  signature: string,
+  insert: string,
+  insertedHtml = insert
+) {
+  const base: FullOwnerAcceptedDocument = {
+    editMap: fullOwnerEditMap(signature, [
+      { endLine: 1, id: 'b0', startLine: 0 },
+      { endLine: 3, id: 'b1', startLine: 2 }
+    ]),
+    html: fullOwnerParagraphBlock('Lead', 'b0')
+      + fullOwnerBlock('<blockquote><p>Text</p></blockquote>', 'b1'),
+    markdown: 'Lead\n\n> Text'
+  };
+  const typed: FullOwnerAcceptedDocument = {
+    editMap: base.editMap,
+    html: fullOwnerParagraphBlock('Lead', 'b0')
+      + fullOwnerBlock(
+        `<blockquote><p>Text${insertedHtml}</p></blockquote>`,
+        'b1'
+      ),
+    markdown: `Lead\n\n> Text${insert}`
+  };
+  const fixture = createFullOwnerFixture({ ...base, signature, sourceCaret: 12 });
+  fixture.surface.focus();
+  const selector = '[data-easymde-visual-block-id="b1"] p';
+  const text = fullOwnerTextAt(fixture.surface, selector);
+  placeCaretInText(text, text.length);
+  act(() => {
+    fullOwnerNativeInsert(
+      fixture.surface,
+      text,
+      text.length,
+      insert,
+      'insertText',
+      true
+    );
+    vi.advanceTimersByTime(80);
+  });
+  expect(fixture.history.getValue()).toBe(typed.markdown);
+  if (fixture.runtime().isTransferPending()) fixture.accept(typed);
+  act(() => fullOwnerHistoryKey(fixture.surface, false));
+  expect(fixture.history.getValue()).toBe(base.markdown);
+  if (fixture.runtime().isTransferPending()) fixture.accept(base);
+  act(() => fullOwnerHistoryKey(fixture.surface, true));
+  expect(fixture.history.getValue()).toBe(typed.markdown);
+  expect(fixture.runtime().isTransferPending()).toBe(true);
+  return { base, fixture, selector, typed };
+}
+
+/**
+ * The same pending-history window as `createPendingRedoBackspaceQuoteFixture`,
+ * with the typed byte landing INSIDE the quote's paragraph so the caret has a
+ * rendered grapheme after it.
+ *
+ * The forward Delete needs that shape: its target range is the run's next
+ * grapheme rather than its previous one, and the deleted bytes still sit
+ * strictly inside the quote's own Paragraph. The Redo restores the caret right
+ * after the typed byte (`Lead\n\n> Te|Xxt`), so the key deletes the `x` that
+ * follows it and the typed byte itself survives.
+ */
+function createPendingRedoForwardDeleteQuoteFixture(signature: string) {
+  const base: FullOwnerAcceptedDocument = {
+    editMap: fullOwnerEditMap(signature, [
+      { endLine: 1, id: 'b0', startLine: 0 },
+      { endLine: 3, id: 'b1', startLine: 2 }
+    ]),
+    html: fullOwnerParagraphBlock('Lead', 'b0')
+      + fullOwnerBlock('<blockquote><p>Text</p></blockquote>', 'b1'),
+    markdown: 'Lead\n\n> Text'
+  };
+  const typed: FullOwnerAcceptedDocument = {
+    editMap: base.editMap,
+    html: fullOwnerParagraphBlock('Lead', 'b0')
+      + fullOwnerBlock('<blockquote><p>TeXxt</p></blockquote>', 'b1'),
+    markdown: 'Lead\n\n> TeXxt'
+  };
+  const deleted: FullOwnerAcceptedDocument = {
+    editMap: base.editMap,
+    html: fullOwnerParagraphBlock('Lead', 'b0')
+      + fullOwnerBlock('<blockquote><p>TeXt</p></blockquote>', 'b1'),
+    markdown: 'Lead\n\n> TeXt'
+  };
+  // The reported sequence's own render: the Backspace that lands first takes
+  // the typed byte, so the forward Delete that follows takes the run's next
+  // grapheme from the Redo's own document.
+  const swept: FullOwnerAcceptedDocument = {
+    editMap: base.editMap,
+    html: fullOwnerParagraphBlock('Lead', 'b0')
+      + fullOwnerBlock('<blockquote><p>Tet</p></blockquote>', 'b1'),
+    markdown: 'Lead\n\n> Tet'
+  };
+  const fixture = createFullOwnerFixture({ ...base, signature, sourceCaret: 12 });
+  fixture.surface.focus();
+  const selector = '[data-easymde-visual-block-id="b1"] p';
+  const text = fullOwnerTextAt(fixture.surface, selector);
+  placeCaretInText(text, 2);
+  act(() => {
+    fullOwnerNativeInsert(fixture.surface, text, 2, 'X', 'insertText', true);
+    vi.advanceTimersByTime(80);
+  });
+  expect(fixture.history.getValue()).toBe(typed.markdown);
+  if (fixture.runtime().isTransferPending()) fixture.accept(typed);
+  act(() => fullOwnerHistoryKey(fixture.surface, false));
+  expect(fixture.history.getValue()).toBe(base.markdown);
+  if (fixture.runtime().isTransferPending()) fixture.accept(base);
+  act(() => fullOwnerHistoryKey(fixture.surface, true));
+  expect(fixture.history.getValue()).toBe(typed.markdown);
+  expect(fixture.runtime().isTransferPending()).toBe(true);
+  return { base, deleted, fixture, selector, swept, typed };
+}
+
 it('replays the Backspace a settling Redo render deferred for its target shape', () => {
   vi.useFakeTimers();
   const { base, fixture, selector, typed } =
@@ -22162,6 +22288,232 @@ it.each([
             text,
             0,
             'target-away-from-caret' === scenario ? 2 : 1
+          )]
+    });
+    fixture.surface.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(fixture.onFailure.mock.calls.map(([code]) => code)).toEqual([expected]);
+    expect(fixture.history.getValue()).toBe(before);
+    // A refused key is not deferred: the accepted render replays nothing.
+    act(() => fixture.accept(typed));
+    expect(fixture.history.getValue()).toBe(before);
+    expect(fixture.onFailure.mock.calls.map(([code]) => code)).toEqual([expected]);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('accepts a pending Backspace whose deleted range lies inside a quoted paragraph', () => {
+  vi.useFakeTimers();
+  const { base, fixture, selector, typed } =
+    createPendingRedoBackspaceQuoteFixture('pending-backspace-quoted-paragraph', 'X');
+  try {
+    // The Redo render is still settling, so the surface still spells the
+    // pre-Redo document while the canonical caret is already the Redo's.
+    act(() => vi.advanceTimersByTime(25));
+    const settling = fullOwnerTextAt(fixture.surface, selector);
+    placeCaretInText(settling, settling.length);
+    const press = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      fullOwnerTargetRange(settling, settling.length - 1, settling.length)
+    );
+    // The deleted bytes are the typed byte, and they lie strictly inside the
+    // quote's own Paragraph. A blockquote only encloses that text and spends
+    // none of its own bytes on this range, so the lease describes it and the
+    // key is written as one canonical edit instead of failing the transfer.
+    expect(press.defaultPrevented).toBe(true);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(base.markdown);
+    // Exactly the typed byte is gone: the quote marker and the rest of the
+    // paragraph survive the edit.
+    expect(fixture.history.getValue()).toBe('Lead\n\n> Text');
+    // The accepted render lands and replays nothing a second time.
+    act(() => fixture.accept(base));
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(base.markdown);
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      end: 12,
+      start: 12
+    });
+    expect(typed.markdown).toBe('Lead\n\n> TextX');
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+  // Measured counterfactual: with the enclosing-container exemption removed
+  // from the canonical-shape gate (the `containers.add` loop skipped), this
+  // exact press reports `visual-editor-pending-input-unavailable` and the
+  // canonical source stays at `Lead\n\n> TextX`, because the quote parses as a
+  // `Blockquote` node touched by the range. The gate's own `Paragraph`
+  // containment test is what turns that node into a describable container.
+});
+
+it('still refuses a pending Backspace whose range covers a quoted paragraph inline delimiter', () => {
+  vi.useFakeTimers();
+  // The typed text is Markdown syntax of its own: its last byte is the closing
+  // backtick of an InlineCode, not paragraph text.
+  const { fixture, selector, typed } = createPendingRedoBackspaceQuoteFixture(
+    'pending-backspace-quoted-delimiter',
+    '`x`',
+    '<code>x</code>'
+  );
+  try {
+    act(() => vi.advanceTimersByTime(25));
+    const settling = fullOwnerTextAt(fixture.surface, selector);
+    placeCaretInText(settling, settling.length);
+    const press = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      fullOwnerTargetRange(settling, settling.length - 1, settling.length)
+    );
+    // The enclosing quote is still exempt as a container, but an inline
+    // delimiter is not an ancestor of the paragraph: the range spends syntax
+    // bytes of its own, so the transfer is refused and nothing is written.
+    expect(press.defaultPrevented).toBe(true);
+    expect(fixture.onFailure).toHaveBeenCalledExactlyOnceWith(
+      'visual-editor-pending-input-unavailable'
+    );
+    expect(fixture.history.getValue()).toBe(typed.markdown);
+    expect(typed.markdown).toBe('Lead\n\n> Text`x`');
+    // A refused key is not deferred: the accepted render replays nothing.
+    act(() => fixture.accept(typed));
+    expect(fixture.history.getValue()).toBe(typed.markdown);
+    expect(fixture.onFailure).toHaveBeenCalledExactlyOnceWith(
+      'visual-editor-pending-input-unavailable'
+    );
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('accepts a pending forward Delete whose deleted grapheme lies inside a quoted paragraph', () => {
+  vi.useFakeTimers();
+  const { deleted, fixture, selector, typed } =
+    createPendingRedoForwardDeleteQuoteFixture('pending-forward-delete-quoted-paragraph');
+  try {
+    // The Redo render is still settling, so the surface still spells the
+    // pre-Redo document while the canonical caret is already the Redo's.
+    act(() => vi.advanceTimersByTime(25));
+    const settling = fullOwnerTextAt(fixture.surface, selector);
+    // The canonical caret sits right after the typed byte, which the settling
+    // render still spells as the `x` it replaced.
+    placeCaretInText(settling, 2);
+    const press = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentForward' },
+      fullOwnerTargetRange(settling, 2, 3)
+    );
+    // The deleted byte is the grapheme AFTER the caret, and it lies strictly
+    // inside the quote's own Paragraph, so the lease describes it and the key
+    // is written as one canonical edit instead of failing the transfer.
+    expect(press.defaultPrevented).toBe(true);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    // Exactly the next grapheme is gone: the typed byte before the caret, the
+    // quote marker and the rest of the paragraph survive the edit.
+    expect(fixture.history.getValue()).toBe('Lead\n\n> TeXt');
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      end: 11,
+      start: 11
+    });
+    expect(typed.markdown).toBe('Lead\n\n> TeXxt');
+    // The accepted render lands and replays nothing a second time.
+    act(() => fixture.accept(deleted));
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(deleted.markdown);
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      end: 11,
+      start: 11
+    });
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('accepts the forward Delete that follows a pending Backspace in the same settling window', () => {
+  vi.useFakeTimers();
+  const { fixture, selector, swept, typed } =
+    createPendingRedoForwardDeleteQuoteFixture('pending-backspace-then-forward-delete');
+  try {
+    // The reported sequence: Undo, Redo, a Backspace that is written
+    // canonically, and then the forward Delete the same window refused.
+    act(() => vi.advanceTimersByTime(25));
+    const settling = fullOwnerTextAt(fixture.surface, selector);
+    placeCaretInText(settling, 2);
+    const backspace = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      fullOwnerTargetRange(settling, 1, 2)
+    );
+    expect(backspace.defaultPrevented).toBe(true);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    // The Backspace takes the typed byte, so the canonical source is the
+    // pre-Redo document the settling surface already spells.
+    expect(fixture.history.getValue()).toBe('Lead\n\n> Text');
+    expect(typed.markdown).toBe('Lead\n\n> TeXxt');
+    const forward = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentForward' },
+      fullOwnerTargetRange(settling, 2, 3)
+    );
+    expect(forward.defaultPrevented).toBe(true);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    // The next grapheme after the caret is gone and the caret keeps its
+    // place, so one key is one edit instead of a refused transfer.
+    expect(fixture.history.getValue()).toBe(swept.markdown);
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none',
+      end: 10,
+      start: 10
+    });
+    act(() => fixture.accept(swept));
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(swept.markdown);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  { expected: 'visual-editor-pending-input-unavailable', scenario: 'target-away-from-caret' },
+  { expected: 'visual-editor-pending-input-unavailable', scenario: 'target-two-graphemes' },
+  { expected: 'visual-editor-pending-selection-stale', scenario: 'moved-native-caret' }
+] as const)('still refuses a pending forward Delete whose $scenario proves the lease wrong', ({ expected, scenario }) => {
+  vi.useFakeTimers();
+  const { fixture, selector, typed } =
+    createPendingRedoForwardDeleteQuoteFixture(`refused-pending-forward-delete-${scenario}`);
+  try {
+    const text = fullOwnerTextAt(fixture.surface, selector);
+    // The stale-caret control moves the native caret off the one the lease
+    // published; every other control keeps it and only the key's own target
+    // range is wrong.
+    const caret = 'moved-native-caret' === scenario ? 1 : 2;
+    placeCaretInText(text, caret);
+    const before = fixture.history.getValue();
+    const event = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      data: null,
+      inputType: 'deleteContentForward'
+    });
+    Object.defineProperty(event, 'getTargetRanges', {
+      configurable: true,
+      value: 'target-away-from-caret' === scenario
+        ? () => [fullOwnerTargetRange(text, 3, 4)]
+        : () => [fullOwnerTargetRange(
+            text,
+            caret,
+            'target-two-graphemes' === scenario ? caret + 2 : caret + 1
           )]
     });
     fixture.surface.dispatchEvent(event);
@@ -41950,3 +42302,116 @@ it('keeps the emptied terminal chain consistent across its shortcut, its join an
     vi.useRealTimers();
   }
 });
+
+// A rendered paragraph whose own row is followed by source that renders to
+// nothing. The definition spells the destination and title the serializer
+// writes inline for the link that *does* render, so a character diff over the
+// source and the baseline finds those bytes on both sides and matches the
+// definition to the rendered link; the row's own tail is then left with no
+// source offset at all and every caret inside it fails closed. The press here
+// is an ordinary in-text backward deletion at that tail, so it must delete
+// exactly the character it names and leave the definition intact.
+it('maps a paragraph-tail Backspace when a hidden reference definition follows its row', async () => {
+  vi.useFakeTimers();
+  const signature = 'hidden-reference-tail';
+  const markdown = [
+    'Lead',
+    '',
+    '这是一个 [OpenAI][openai-link] 链接。',
+    '',
+    '[openai-link]: https://openai.com "OpenAI"'
+  ].join('\n');
+  const html = fullOwnerParagraphBlock('Lead', 'b0')
+    + fullOwnerBlock(
+      '<p>这是一个 <a href="https://openai.com" title="OpenAI">OpenAI</a> 链接。</p>',
+      'b1'
+    );
+  const editMap = fullOwnerEditMap(signature, [
+    { endLine: 1, id: 'b0', startLine: 0 },
+    { endLine: 3, id: 'b1', startLine: 2 }
+  ]);
+  const fixture = createFullOwnerFixture({
+    editMap,
+    html,
+    markdown,
+    signature,
+    sourceCaret: markdown.length
+  });
+  const settle = async (): Promise<void> => {
+    await act(async () => {
+      vi.advanceTimersByTime(160);
+      await Promise.resolve();
+    });
+  };
+  try {
+    fixture.surface.focus();
+    const text = fixture.surface.querySelector(
+      '[data-easymde-visual-block-id="b1"]'
+    )?.lastChild;
+    if (!(text instanceof Text)) {
+      throw new Error('hidden-reference-tail-text-missing');
+    }
+    expect(text.data).toBe(' 链接。');
+    placeCaretInText(text, text.length);
+    const event = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      fullOwnerTargetRange(text, text.length - 1, text.length)
+    );
+    expect(event.defaultPrevented).toBe(false);
+    text.deleteData(text.length - 1, 1);
+    placeCaretInText(text, text.length);
+    fixture.surface.dispatchEvent(
+      new InputEvent('input', {
+        bubbles: true,
+        inputType: 'deleteContentBackward'
+      })
+    );
+    await settle();
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(
+      'Lead\n\n这是一个 [OpenAI][openai-link] 链接\n\n'
+        + '[openai-link]: https://openai.com "OpenAI"'
+    );
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+// The same suffix is also the position a caret at the visual end of the
+// document names, so an insertion there must still land at the end of the
+// drawn row — in front of the definitions, never inside them.
+it('inserts at the visual end of a row a hidden reference definition follows', async () => {
+  vi.useFakeTimers();
+  const signature = 'hidden-reference-tail-insert';
+  const markdown = 'Lead\n\nPara\n\n[ref]: https://example.com "Example"';
+  const html = fullOwnerParagraphBlock('Lead', 'b0')
+    + fullOwnerParagraphBlock('Para', 'b1');
+  const editMap = fullOwnerEditMap(signature, [
+    { endLine: 1, id: 'b0', startLine: 0 },
+    { endLine: 3, id: 'b1', startLine: 2 }
+  ]);
+  const fixture = createFullOwnerFixture({
+    editMap, html, markdown, signature, sourceCaret: markdown.length
+  });
+  const settle = async (): Promise<void> => {
+    await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); });
+  };
+  try {
+    fixture.surface.focus();
+    const text = fullOwnerTextAt(fixture.surface, '[data-easymde-visual-block-id="b1"]');
+    const result = fullOwnerNativeInsert(fixture.surface, text, text.length, 'X');
+    await settle();
+    expect({
+      failures: vi.mocked(fixture.onFailure).mock.calls.map(([code]) => code),
+      prevented: result.prevented,
+      source: fixture.history.getValue()
+    }).toEqual({ failures: [], prevented: false, source: 'Lead\n\nParaX\n\n[ref]: https://example.com "Example"' });
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+

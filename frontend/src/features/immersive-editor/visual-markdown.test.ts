@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { markdownLanguage } from '@codemirror/lang-markdown';
 import TurndownService from 'turndown';
 import { markdownReferenceDefinitionQuery, type MarkdownSyntaxNode } from '../editor-context-menu/editor-markdown-link-preparation';
+import { prepareMarkdownTable } from '../editor-context-menu/editor-markdown-table';
 
 import type {
   PreviewEditMap,
@@ -54,6 +55,7 @@ import {
   placeVisualCaretFromSourceOffset,
   visualCaretBoundaryFromSourceOffset,
   visualCodeFenceRootSourceOffset,
+  visualTableDeletionWalk,
   visualBoundarySourceOffset,
   visualSourceRangeForRenderedImage,
   visualRetiredInlineSourceRange,
@@ -2098,6 +2100,64 @@ A--&gt;B</code></pre>
     expect(mapTextBoundaryFromInterval(surface, foreign, foreign.length, baseline, interval, false, witness)).toBeNull();
     surface.remove();
   });
+
+  // The reported stall: the run above is the LAST block, so the boundary that
+  // closes it resolves to the near side of the hidden range the serializer's
+  // dropped space left behind. A block another block follows resolves that same
+  // boundary to the FAR side, and both of its canonical positions were lost:
+  // the space's own offset was read one byte late and the caret after it had no
+  // projection at all, so the Backspace that deletes that space was refused.
+  // Both spellings of the space occur in one real burst - the browser's NBSP
+  // artifact and the ASCII space the accepted render restores - so both are
+  // pinned here.
+  it.each([
+    ['the browser NBSP artifact', '\u00a0', true],
+    ['the accepted ASCII space', ' ', false]
+  ])(
+    'projects a block-terminal space of a block another block follows (%s)',
+    (_label, spelling, witnessed) => {
+      const run = '支持 Emoji：😀 😎 🎉 🔥 💡 ✅';
+      const source = `${run} \n\nNext para`;
+      const baseline = `${run}\n\nNext para`;
+      const surface = editor(`<p>${run}${spelling}</p><p>Next para</p>`);
+      const node = surface.firstElementChild?.firstChild;
+      if (!(node instanceof Text)) throw new Error('followed-terminal-space-text-missing');
+      expect(node.data).toBe(`${run}${spelling}`);
+      const interval = createVisualMarkdownSourceIntervalMap(source, baseline);
+      const witness = witnessed ? { data: `${run} ` } : undefined;
+      // The space's own boundary keeps the space's canonical offset, and the
+      // caret after it is the offset that follows the space. Both name the same
+      // place on the surface: the end of the block's visible run.
+      expect(
+        mapTextBoundaryFromInterval(
+          surface, node, node.length - 1, baseline, interval, false, witness
+        )
+      ).toEqual({ sourceOffset: run.length, visualOffset: run.length });
+      expect(
+        mapTextBoundaryFromInterval(
+          surface, node, node.length, baseline, interval, false, witness
+        )
+      ).toEqual({ sourceOffset: run.length + 1, visualOffset: run.length });
+      // A caret inside the visible run is unaffected by the dropped tail.
+      expect(
+        mapTextBoundaryFromInterval(
+          surface, node, run.length - 1, baseline, interval, false, witness
+        )
+      ).toEqual({ sourceOffset: run.length - 1, visualOffset: run.length - 1 });
+      // The proof is the block's own terminal run: a source that does not spell
+      // the dropped space there is still refused.
+      const wrongSource = createVisualMarkdownSourceIntervalMap(
+        `${run}X\n\nNext para`,
+        baseline
+      );
+      expect(
+        mapTextBoundaryFromInterval(
+          surface, node, node.length, baseline, wrongSource, false, witness
+        )
+      ).toBeNull();
+      surface.remove();
+    }
+  );
 
   // Press 153's geometry: the witnessed run ends its block and ends with a
   // space, and the serializer spelled an escape inside it. `escape()` escapes
@@ -4245,18 +4305,7 @@ A--&gt;B</code></pre>
     });
   });
 
-  it('round-trips static Crimson task markers through the visual editor', () => {
-    const surface = editor(`
-      <ul class="task-list">
-        <li class="task-list-item"><span class="easymde-task-checkbox is-checked" role="checkbox" aria-checked="true" aria-disabled="true">✓</span>Done</li>
-        <li class="task-list-item"><span class="easymde-task-checkbox" role="checkbox" aria-checked="false" aria-disabled="true"></span>Todo</li>
-      </ul>
-    `);
-
-    expect(serializeVisualMarkdown(surface)).toBe('- [x] Done\n- [ ] Todo');
-  });
-
-  it('prepares native Crimson task inputs only for the visual editor', () => {
+  it('round-trips the native task markers the renderer draws', () => {
     const surface = editor(`
       <ul class="task-list">
         <li class="task-list-item"><input type="checkbox" checked disabled>Done</li>
@@ -4264,15 +4313,71 @@ A--&gt;B</code></pre>
       </ul>
     `);
 
+    expect(serializeVisualMarkdown(surface)).toBe('- [x] Done\n- [ ] Todo');
+  });
+
+  it('keeps each native task input in place when preparing the visual editor', () => {
+    const surface = editor(`
+      <ul class="task-list">
+        <li class="task-list-item"><input type="checkbox" checked disabled>Done</li>
+        <li class="task-list-item"><p><input type="checkbox" disabled>Todo</p></li>
+      </ul>
+    `);
+    const inputs = Array.from(surface.querySelectorAll('input[type="checkbox"]'));
+
     prepareVisualTaskListMarkers(surface);
 
-    expect(surface.querySelectorAll('input[type="checkbox"]')).toHaveLength(0);
-    expect(surface.querySelectorAll('.easymde-task-checkbox')).toHaveLength(2);
+    const prepared = Array.from(surface.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'));
+    expect(prepared).toHaveLength(2);
+    prepared.forEach((input, index) => expect(input).toBe(inputs[index]));
+    for (const input of prepared) {
+      expect(input.getAttribute('contenteditable')).toBe('false');
+    }
+    expect(surface.querySelectorAll('span')).toHaveLength(0);
+    expect(serializeVisualMarkdown(surface)).toBe('- [x] Done\n- [ ] Todo');
+  });
+
+  it('serializes the same task markers before and after the prepare step', () => {
+    const surface = editor(`
+      <ul class="task-list">
+        <li class="task-list-item"><input type="checkbox" checked disabled>Done</li>
+        <li class="task-list-item"><p><input type="checkbox" disabled>Todo</p></li>
+      </ul>
+    `);
+    const before = serializeVisualMarkdown(surface);
+
+    prepareVisualTaskListMarkers(surface);
+
+    expect(before).toBe('- [x] Done\n- [ ] Todo');
+    expect(serializeVisualMarkdown(surface)).toBe(before);
+  });
+
+  it('keeps the same marker nodes when the surface is prepared again', () => {
+    const surface = editor(`
+      <ul class="task-list">
+        <li class="task-list-item"><input type="checkbox" checked disabled>Done</li>
+        <li class="task-list-item"><p><input type="checkbox" disabled>Todo</p></li>
+      </ul>
+    `);
+    const inputs = Array.from(surface.querySelectorAll('input[type="checkbox"]'));
+    const parents = inputs.map((input) => input.parentElement);
+
+    // A locked surface is unlocked once, but every accepted render prepares it
+    // again; the marker the article draws must stay the node it already drew.
+    prepareVisualTaskListMarkers(surface);
+    prepareVisualTaskListMarkers(surface);
+
+    const prepared = Array.from(surface.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'));
+    expect(prepared).toHaveLength(inputs.length);
+    prepared.forEach((input, index) => {
+      expect(input).toBe(inputs[index]);
+      expect(input.parentElement).toBe(parents[index]);
+    });
     expect(serializeVisualMarkdown(surface)).toBe('- [x] Done\n- [ ] Todo');
   });
 
   it('treats a checked empty task marker as empty without relying on execCommand', () => {
-    const surface = editor('<ul class="task-list"><li class="task-list-item"><span class="easymde-task-checkbox is-checked">✓</span></li></ul>');
+    const surface = editor('<ul class="task-list"><li class="task-list-item"><input type="checkbox" checked contenteditable="false"></li></ul>');
     const item = surface.querySelector('li') as HTMLLIElement;
     placeCaret(item, item.childNodes.length);
     const original = Object.getOwnPropertyDescriptor(document, 'execCommand');
@@ -9142,3 +9247,190 @@ describe('the block-fragment projection one press pays for', () => {
     ).toEqual({ sourceOffset: 50, visualOffset: 50 });
   });
 });
+
+
+describe('visualTableDeletionWalk', () => {
+  const table = '| Head | Tail |\n| --- | --- |\n| one | two |\n';
+
+  /** The independent table parser's own view of a walk's result. */
+  const parsedColumns = (value: string, position: number): Readonly<{
+    columns: number;
+    rows: number;
+  }> | null => {
+    const prepared = prepareMarkdownTable(value, position);
+    if (!prepared) return null;
+    return {
+      columns: prepared.context.columnCount,
+      rows: prepared.context.rowCount
+    };
+  };
+
+  it('removes the previous cell\'s last character when Backspace sits at a cell start', () => {
+    const twoStart = table.indexOf('two');
+    const walk = visualTableDeletionWalk(table, twoStart, 'backward');
+    expect(walk?.kind).toBe('walk');
+    if (!walk || 'walk' !== walk.kind) throw new Error('walk-missing');
+    const oneEnd = table.indexOf('one') + 3;
+    expect(walk.index).toBe(oneEnd - 1);
+    expect(walk.caret).toBe(oneEnd - 1);
+    expect(walk.cell).toEqual({ column: 0, row: 1 });
+    expect(walk.value).toBe(table.replace('| one | two |', '| on | two |'));
+    // The removed byte is a cell character: never a pipe or a line ending.
+    expect(table[walk.index]).toBe('e');
+    expect(parsedColumns(walk.value, walk.caret)).toEqual(
+      parsedColumns(table, walk.index)
+    );
+  });
+
+  it('removes the next cell\'s first character when Delete sits at a cell end', () => {
+    const oneEnd = table.indexOf('one') + 3;
+    const walk = visualTableDeletionWalk(table, oneEnd, 'forward');
+    expect(walk?.kind).toBe('walk');
+    if (!walk || 'walk' !== walk.kind) throw new Error('walk-missing');
+    expect(walk.index).toBe(table.indexOf('two'));
+    expect(walk.caret).toBe(table.indexOf('two'));
+    expect(walk.value).toBe(table.replace('| one | two |', '| one | wo |'));
+    expect(table[walk.index]).toBe('t');
+    expect(parsedColumns(walk.value, walk.caret)).toEqual(
+      parsedColumns(table, walk.index)
+    );
+  });
+
+  it('walks out of an empty cell into the last cell of the previous row', () => {
+    const emptied = '| Head | Tail |\n| --- | --- |\n|  | two |\n';
+    // The empty cell keeps its pipes; its own start is the position after the
+    // opening pipe.
+    const caret = emptied.indexOf('|  |') + 1;
+    const walk = visualTableDeletionWalk(emptied, caret, 'backward');
+    expect(walk?.kind).toBe('walk');
+    if (!walk || 'walk' !== walk.kind) throw new Error('walk-missing');
+    expect(walk.cell).toEqual({ column: 1, row: 0 });
+    expect(walk.value).toBe(emptied.replace('| Tail |', '| Tai |'));
+    expect(emptied[walk.index]).toBe('l');
+    expect(parsedColumns(walk.value, walk.caret)).toEqual(
+      parsedColumns(emptied, walk.index)
+    );
+  });
+
+  it('keeps walking across the delimiter row into the header', () => {
+    const emptied = '| Head | Tail |\n| --- | --- |\n|  |  |\n';
+    const caret = emptied.indexOf('|  |') + 1;
+    const walk = visualTableDeletionWalk(emptied, caret, 'backward');
+    expect(walk?.kind).toBe('walk');
+    if (!walk || 'walk' !== walk.kind) throw new Error('walk-missing');
+    // The delimiter row is framing, not a cell: the previous cell is `Tail`.
+    expect(walk.cell).toEqual({ column: 1, row: 0 });
+    expect(walk.value).toBe(emptied.replace('| Tail |', '| Tai |'));
+  });
+
+  it('deletes the last TEXT character of a cell ending in inline code', () => {
+    const source = '| Head | Tail |\n| --- | --- |\n| x `cd` | y |\n';
+    const yStart = source.indexOf('y |');
+    const walk = visualTableDeletionWalk(source, yStart, 'backward');
+    expect(walk?.kind).toBe('walk');
+    if (!walk || 'walk' !== walk.kind) throw new Error('walk-missing');
+    // The closing backtick is markup: the code's `d` is the text character.
+    expect(source[walk.index]).toBe('d');
+    expect(walk.caret).toBe(walk.index);
+    expect(walk.value).toBe(source.replace('x `cd`', 'x `c`'));
+    expect(parsedColumns(walk.value, walk.caret)).toEqual(
+      parsedColumns(source, walk.index)
+    );
+  });
+
+  it('retires an inline code span its deletion empties', () => {
+    const source = '| Head | Tail |\n| --- | --- |\n| `a` | c |\n';
+    const cStart = source.indexOf('c |');
+    const walk = visualTableDeletionWalk(source, cStart, 'backward');
+    expect(walk?.kind).toBe('walk');
+    if (!walk || 'walk' !== walk.kind) throw new Error('walk-missing');
+    const spanStart = source.indexOf('`a`');
+    expect(walk.index).toBe(spanStart + 1);
+    expect(walk.from).toBe(spanStart);
+    expect(walk.to).toBe(spanStart + 3);
+    expect(walk.caret).toBe(spanStart);
+    // The empty span's markup goes with its text; the cell keeps its pipes.
+    expect(walk.value).toBe(source.replace('`a`', ''));
+    expect(parsedColumns(walk.value, walk.caret)).toEqual(
+      parsedColumns(source, walk.index)
+    );
+  });
+
+  it('deletes the text character after a break, never the break', () => {
+    const source = '| Head | Tail |\n| --- | --- |\n| a | one<br>two |\n| x | y |\n';
+    const xStart = source.indexOf('x |');
+    const walk = visualTableDeletionWalk(source, xStart, 'backward');
+    expect(walk?.kind).toBe('walk');
+    if (!walk || 'walk' !== walk.kind) throw new Error('walk-missing');
+    // The last text character is the `o` of `two`; `<br>` stays untouched.
+    expect(source[walk.index]).toBe('o');
+    expect(walk.value).toBe(source.replace('one<br>two', 'one<br>tw'));
+    expect(walk.value).toContain('one<br>tw');
+    expect(parsedColumns(walk.value, walk.caret)).toEqual(
+      parsedColumns(source, walk.index)
+    );
+  });
+
+  it('removes a text character spelled as an escape with its spelling', () => {
+    const source = '| Head | Tail |\n| --- | --- |\n| a | b\\* |\n| x | y |\n';
+    const xStart = source.indexOf('x |');
+    const walk = visualTableDeletionWalk(source, xStart, 'backward');
+    expect(walk?.kind).toBe('walk');
+    if (!walk || 'walk' !== walk.kind) throw new Error('walk-missing');
+    // `\*` spells one text character, so both of its bytes go.
+    expect(source.slice(walk.from, walk.to)).toBe('\\*');
+    expect(walk.value).toBe(source.replace('b\\*', 'b'));
+    expect(parsedColumns(walk.value, walk.caret)).toEqual(
+      parsedColumns(source, walk.index)
+    );
+  });
+
+  it('does nothing before the first cell of the first row', () => {
+    expect(
+      visualTableDeletionWalk(table, table.indexOf('Head'), 'backward')
+    ).toEqual({ kind: 'boundary' });
+  });
+
+  it('does nothing after the last cell of the last row', () => {
+    const twoEnd = table.indexOf('two') + 3;
+    expect(visualTableDeletionWalk(table, twoEnd, 'forward')).toEqual({
+      kind: 'boundary'
+    });
+  });
+
+  it('leaves a caret inside a cell\'s own text to ordinary in-cell editing', () => {
+    const inside = table.indexOf('one') + 1;
+    expect(visualTableDeletionWalk(table, inside, 'backward')).toBeNull();
+    expect(visualTableDeletionWalk(table, inside, 'forward')).toBeNull();
+  });
+
+  it('keeps the same table and column count at every cell edge', () => {
+    const source = '| A | B | C |\n| --- | --- | --- |\n| a1 | b1 | c1 |\n| a2 | b2 | c2 |\n';
+    const cellTexts = ['A', 'B', 'C', 'a1', 'b1', 'c1', 'a2', 'b2', 'c2'];
+    let walks = 0;
+    for (const text of cellTexts) {
+      const start = source.indexOf(text);
+      expect(start).toBeGreaterThan(-1);
+      for (const [offset, direction] of [
+        [start, 'backward'],
+        [start + text.length, 'forward']
+      ] as const) {
+        const walk = visualTableDeletionWalk(source, offset, direction);
+        if (!walk || 'walk' !== walk.kind) continue;
+        walks += 1;
+        // The removed byte is a cell character: never a pipe or a line ending.
+        expect(['|', '\n', '\r']).not.toContain(source[walk.index]);
+        expect(walk.value.length).toBe(source.length - 1);
+        expect(walk.caret).toBe(walk.index);
+        // An independent table parser still reads the same table.
+        expect(parsedColumns(walk.value, walk.caret)).toEqual(
+          parsedColumns(source, walk.index)
+        );
+      }
+    }
+    // Only the two outer edges are boundaries; every other edge walks.
+    expect(walks).toBe(16);
+  });
+});
+
+

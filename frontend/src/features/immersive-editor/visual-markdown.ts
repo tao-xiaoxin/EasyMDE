@@ -1957,6 +1957,12 @@ export function restoreVisualSelection(
   }
 }
 
+/**
+ * Suppress the editing surface of each rendered task marker. The marker is the
+ * renderer's native `<input type="checkbox">`, the exact node the Preview drew,
+ * so the unlocked article keeps the checkbox element (and its stylesheet); the
+ * only change is that the control is no longer an editable position.
+ */
 export function prepareVisualTaskListMarkers(root: HTMLElement): void {
   for (const item of root.querySelectorAll<HTMLLIElement>('li.task-list-item')) {
     const inputs: HTMLInputElement[] = [];
@@ -1972,15 +1978,13 @@ export function prepareVisualTaskListMarkers(root: HTMLElement): void {
       }
     }
     for (const input of inputs) {
-      const marker = root.ownerDocument.createElement('span');
-      const checked = input.checked;
-      marker.className = `easymde-task-checkbox${checked ? ' is-checked' : ''}`;
-      marker.setAttribute('role', 'checkbox');
-      marker.setAttribute('aria-checked', checked ? 'true' : 'false');
-      marker.setAttribute('aria-disabled', 'true');
-      marker.contentEditable = 'false';
-      if (checked) marker.textContent = '✓';
-      input.replaceWith(marker);
+      // The renderer's own control stays in place: replacing it would swap the
+      // article's checkbox for a different element and with it the stylesheet
+      // that draws it, so the unlocked surface would stop matching the Preview
+      // it was unlocked from. Only the editing surface is suppressed, which
+      // keeps the caret and the typed text off the marker. The attribute is
+      // written directly because it is the state the DOM reports.
+      input.setAttribute('contenteditable', 'false');
     }
   }
 }
@@ -4156,25 +4160,19 @@ function unwrap(element: Element): void {
   element.remove();
 }
 
-function restoreTaskListCheckboxInputs(root: HTMLElement): void {
-  for (const checkbox of root.querySelectorAll<HTMLElement>('.easymde-task-checkbox')) {
-    const input = root.ownerDocument.createElement('input');
-    input.type = 'checkbox';
-    input.checked = 'true' === checkbox.getAttribute('aria-checked')
-      || checkbox.classList.contains('is-checked');
-    input.disabled = true;
-    input.contentEditable = 'false';
-    const paragraph = checkbox.parentElement;
-    const item = paragraph?.parentElement;
-    if ('P' === paragraph?.tagName && 'LI' === item?.tagName) {
-      item.insertBefore(input, paragraph);
-      for (const child of Array.from(paragraph.childNodes)) {
-        if (child !== checkbox) item.insertBefore(child, paragraph);
-      }
-      paragraph.remove();
-    } else {
-      checkbox.replaceWith(input);
-    }
+/**
+ * The GFM task rule serializes a marker only when the marker is the item's own
+ * child, so an item the renderer wrapped in a paragraph is unwrapped on the
+ * serialization clone: the native control and the item's text move up one level
+ * together and keep their order. The marker itself is never rebuilt.
+ */
+function unwrapTaskListItemCheckboxParagraphs(root: HTMLElement): void {
+  for (const paragraph of Array.from(root.querySelectorAll<HTMLElement>('li > p'))) {
+    const item = paragraph.parentElement;
+    if (!item || 'LI' !== item.tagName) continue;
+    if (!paragraph.querySelector(':scope > input[type="checkbox"]')) continue;
+    while (paragraph.firstChild) item.insertBefore(paragraph.firstChild, paragraph);
+    paragraph.remove();
   }
 }
 
@@ -4212,8 +4210,8 @@ function restoreThemeFootnoteLinks(root: HTMLElement): void {
 
 function markdownSerializationRoot(editor: HTMLElement): HTMLElement {
   const root = editor.cloneNode(true) as HTMLElement;
-  restoreTaskListCheckboxInputs(root);
   restoreThemeFootnoteLinks(root);
+  unwrapTaskListItemCheckboxParagraphs(root);
 
   for (const heading of root.querySelectorAll('h1, h2, h3, h4, h5, h6')) {
     for (const decoration of heading.querySelectorAll(
@@ -4567,6 +4565,40 @@ export function visualRetiredInlineSourceRange(
   return range;
 }
 
+/**
+ * The full source range of an inline code span one deletion empties, or null.
+ * A code span whose text is gone has no spelling of its own: deleting its last
+ * text character must take its delimiters with it, or the cell keeps a bare
+ * pair of backticks that render as literal text on the next render.
+ */
+export function visualEmptiedInlineCodeSourceRange(
+  markdown: string,
+  range: Readonly<{ end: number; start: number }>
+): Readonly<{ end: number; start: number }> | null {
+  if (
+    !Number.isInteger(range.start)
+    || !Number.isInteger(range.end)
+    || range.start < 0
+    || range.end <= range.start
+    || range.end > markdown.length
+  ) return null;
+  const tree = markdownLanguage.parser.parse(markdown);
+  const resolved = tree.resolveInner(range.start, 1);
+  let node: typeof resolved | null = resolved;
+  while (node && 'InlineCode' !== node.name) node = node.parent;
+  if (!node || node.from > range.start || node.to < range.end) return null;
+  const marks: Array<Readonly<{ from: number; to: number }>> = [];
+  for (let child = node.firstChild; child; child = child.nextSibling) {
+    if ('CodeMark' === child.name) marks.push({ from: child.from, to: child.to });
+  }
+  const first = marks[0];
+  const last = marks[marks.length - 1];
+  if (!first || !last || marks.length < 2) return null;
+  // Only the deletion of the span's WHOLE text retires it.
+  if (range.start !== first.to || range.end !== last.from) return null;
+  return { end: node.to, start: node.from };
+}
+
 /** A visible parent boundary for an image token or a proved inline edge. */
 export function visualBoundaryForImageSourceEdge(
   root: HTMLElement,
@@ -4793,6 +4825,15 @@ function visualMarkdownSerializer(): TurndownService {
     strongDelimiter: '**'
   });
   service.use(gfm);
+  // A table cell spells its line break as raw `<br>`: the default hard-break
+  // spelling (`  \n`) would split the row the cell belongs to. The canonical
+  // row keeps the break inside its own cell, so the serializer must too.
+  service.addRule('easymde-table-cell-break', {
+    filter: (node) =>
+      'BR' === node.nodeName
+      && Boolean(node.parentElement?.closest('td, th')),
+    replacement: () => '<br>'
+  });
   service.addRule('easymde-image-scale', {
     filter: (node) => 'IMG' === node.nodeName,
     replacement: (_content, node) => {
@@ -8483,30 +8524,43 @@ function witnessedTextRunProjection(
   const visible = data.replace(/ +$/u, '');
   const trimmed = visible === data ? null : pinned(visible, renderedBlock.text);
   if (null === trimmed) return null;
-  if (offset <= visible.length) {
+  if (offset < visible.length) {
     const visualOffset = rawVisualOffset(trimmed + offset);
     if (null === visualOffset) return null;
     const sourceOffset = sourceIntervalMap.resolve(visualOffset);
     if (null === sourceOffset) return null;
     return { sourceOffset, visualOffset };
   }
+  // The visible run's own end, or a position inside the terminal spelling the
+  // serializer dropped. That spelling is a hidden source range the alignment
+  // still owns, and the boundary closing the visible run resolves to whichever
+  // side of it the alignment recorded: before it when the run also ends the
+  // document, after it when the block's own separator follows. The two sides
+  // are one place on the surface, so the trimmed spelling itself decides where
+  // the run canonically ends; every raw offset is then carried from that one
+  // end, character by character, exactly as the serializer dropped it.
   const boundaryOffset = rawVisualOffset(trimmed + visible.length);
   if (null === boundaryOffset) return null;
   const boundary = sourceIntervalMap.resolve(boundaryOffset);
   if (null === boundary) return null;
-  const collapsed = offset - visible.length;
   const trimmedSpelling = data.slice(visible.length);
-  if (
-    collapsed > trimmedSpelling.length
-    || sourceIntervalMap.source.slice(
-      boundary,
-      boundary + collapsed
-    ) !== trimmedSpelling.slice(0, collapsed)
-  ) {
-    return null;
-  }
+  const afterBoundary = sourceIntervalMap.source.slice(
+    boundary,
+    boundary + trimmedSpelling.length
+  ) === trimmedSpelling;
+  const beforeBoundary = boundary >= trimmedSpelling.length
+    && sourceIntervalMap.source.slice(
+      boundary - trimmedSpelling.length,
+      boundary
+    ) === trimmedSpelling;
+  if (afterBoundary === beforeBoundary) return null;
+  const runEnd = beforeBoundary
+    ? boundary - trimmedSpelling.length
+    : boundary;
+  const collapsed = offset - visible.length;
+  if (collapsed > trimmedSpelling.length) return null;
   return {
-    sourceOffset: boundary + collapsed,
+    sourceOffset: runEnd + collapsed,
     visualOffset: boundaryOffset
   };
 }
@@ -8557,10 +8611,24 @@ function uniqueTextProjection(
     }
   } else {
     visualOffset = baselineVisualMarkdown.indexOf(data);
-    if (
-      visualOffset < 0
-      || visualOffset !== baselineVisualMarkdown.lastIndexOf(data)
-    ) {
+    if (visualOffset < 0) {
+      // A run that ends with its block's own terminal space is not spelled
+      // literally in the baseline: the serializer drops that space, so the
+      // only spelling left is the visible part. The block-proved terminal
+      // projection owns it - the visible part must end this block's own
+      // serialization and the dropped spelling must abut the boundary the
+      // alignment recorded - and every other run still fails closed.
+      return data.endsWith(' ')
+        ? witnessedTextRunProjection(
+            sourceIntervalMap,
+            baselineVisualMarkdown,
+            blockRange,
+            data,
+            offset
+          )
+        : null;
+    }
+    if (visualOffset !== baselineVisualMarkdown.lastIndexOf(data)) {
       return null;
     }
   }
@@ -9268,6 +9336,475 @@ export function visualSelectionSourceRange(
   };
 }
 
+/**
+ * One table cell's own source spelling. `rawStart`/`rawEnd` are the bytes
+ * between the two pipes (or the row edge); `contentStart`/`contentEnd` are the
+ * trimmed content the renderer shows. A cell whose content is empty keeps its
+ * place between the pipes and reports no content range at all.
+ */
+type VisualTableRowCell = Readonly<{
+  contentEnd: number;
+  contentStart: number;
+  empty: boolean;
+  /** The cell's own inline syntax nodes, so a deletion can name its TEXT. */
+  inline: ReadonlyArray<VisualTableToken>;
+  rawEnd: number;
+  rawStart: number;
+}>;
+
+type VisualTableBlock = Readonly<{
+  from: number;
+  rows: ReadonlyArray<ReadonlyArray<VisualTableRowCell>>;
+}>;
+
+type VisualTableToken = Readonly<{
+  from: number;
+  inline?: ReadonlyArray<VisualTableToken>;
+  name: string;
+  to: number;
+}>;
+
+/**
+ * Inline syntax whose whole range spells exactly one character of the cell's
+ * text: an escape (`\*`) or an entity (`&amp;`). Removing that text character
+ * removes its spelling with it.
+ */
+const VISUAL_TABLE_INLINE_TEXT_UNIT: ReadonlySet<string> = new Set([
+  'Entity',
+  'Escape'
+]);
+
+/**
+ * Inline spans a deletion may retire once it has emptied their text: inline
+ * code and the formatting wrappers. A link is not retired - its URL is content
+ * the user may still want, and an empty label is a valid link.
+ */
+const VISUAL_TABLE_INLINE_RETIRABLE: ReadonlySet<string> = new Set([
+  'Emphasis',
+  'InlineCode',
+  'Strikethrough',
+  'StrongEmphasis'
+]);
+
+/**
+ * The cells one table row spells, in column order. A row is a run of cells
+ * separated by its own delimiter nodes; a leading pipe opens the row and a
+ * trailing one closes it without spelling a cell of its own, and whitespace
+ * after that closing pipe is row framing rather than another empty cell.
+ *
+ * A slot with no cell node is only an empty cell when the bytes it covers are
+ * blank. Any other shape is not a row this walk understands, and the caller
+ * refuses the press rather than guess at it.
+ */
+function visualTableRowCells(
+  sourceMarkdown: string,
+  tokens: ReadonlyArray<VisualTableToken>,
+  rowFrom: number,
+  rowTo: number
+): ReadonlyArray<VisualTableRowCell> | null {
+  const slots: Array<Readonly<{ rawEnd: number; rawStart: number }>> = [];
+  let start = rowFrom;
+  let leadingPipe = false;
+  let lastWasDelimiter = false;
+  for (const token of tokens) {
+    if ('TableDelimiter' !== token.name) {
+      lastWasDelimiter = false;
+      continue;
+    }
+    if (!leadingPipe && 0 === slots.length && token.from === rowFrom) {
+      leadingPipe = true;
+      start = token.to;
+      lastWasDelimiter = true;
+      continue;
+    }
+    slots.push({ rawEnd: token.from, rawStart: start });
+    start = token.to;
+    lastWasDelimiter = true;
+  }
+  if (start < rowTo) {
+    const trailing = sourceMarkdown.slice(start, rowTo);
+    // Whitespace behind a closing pipe is framing, not a cell. Without that
+    // pipe the run is the row's last cell, which keeps its own raw extent.
+    if (!lastWasDelimiter || /\S/u.test(trailing)) {
+      slots.push({ rawEnd: rowTo, rawStart: start });
+    }
+  }
+  const cellNodes = tokens.filter((token) => 'TableCell' === token.name);
+  const cells: VisualTableRowCell[] = [];
+  for (const slot of slots) {
+    const node = cellNodes.find(
+      (candidate) =>
+        candidate.from >= slot.rawStart && candidate.to <= slot.rawEnd
+    );
+    if (!node) {
+      if (/\S/u.test(sourceMarkdown.slice(slot.rawStart, slot.rawEnd))) {
+        return null;
+      }
+      cells.push({
+        contentEnd: slot.rawStart,
+        contentStart: slot.rawStart,
+        empty: true,
+        inline: [],
+        rawEnd: slot.rawEnd,
+        rawStart: slot.rawStart
+      });
+      continue;
+    }
+    cells.push({
+      contentEnd: node.to,
+      contentStart: node.from,
+      empty: false,
+      inline: node.inline ?? [],
+      rawEnd: slot.rawEnd,
+      rawStart: slot.rawStart
+    });
+  }
+  return cells;
+}
+
+/**
+ * The GFM table whose own bytes cover the offset, read through the same
+ * Markdown syntax tree the rest of this module parses. The delimiter row is
+ * framing, not a row of cells, so it never joins the reading order.
+ */
+function visualMarkdownTableAt(
+  sourceMarkdown: string,
+  sourceOffset: number
+): VisualTableBlock | null {
+  if (
+    !Number.isInteger(sourceOffset)
+    || sourceOffset < 0
+    || sourceOffset > sourceMarkdown.length
+  ) return null;
+  const tree = markdownLanguage.parser.parse(sourceMarkdown);
+  const resolved = tree.resolveInner(sourceOffset, 1);
+  let node: typeof resolved | null = resolved;
+  while (node && 'Table' !== node.name) node = node.parent;
+  if (!node || sourceOffset < node.from || sourceOffset > node.to) return null;
+  const rows: Array<ReadonlyArray<VisualTableRowCell>> = [];
+  for (
+    let child = node.firstChild;
+    child;
+    child = child.nextSibling
+  ) {
+    if ('TableHeader' !== child.name && 'TableRow' !== child.name) continue;
+    const tokens: VisualTableToken[] = [];
+    for (
+      let token = child.firstChild;
+      token;
+      token = token.nextSibling
+    ) {
+      if ('TableCell' !== token.name) {
+        tokens.push({ from: token.from, name: token.name, to: token.to });
+        continue;
+      }
+      const inline: VisualTableToken[] = [];
+      const stack: Array<typeof token> = [];
+      for (let nested = token.firstChild; nested; nested = nested.nextSibling) {
+        stack.push(nested);
+      }
+      while (stack.length > 0) {
+        const current = stack.pop();
+        if (!current) break;
+        inline.push({ from: current.from, name: current.name, to: current.to });
+        for (
+          let nested = current.firstChild;
+          nested;
+          nested = nested.nextSibling
+        ) {
+          stack.push(nested);
+        }
+      }
+      tokens.push({
+        from: token.from,
+        inline,
+        name: token.name,
+        to: token.to
+      });
+    }
+    const cells = visualTableRowCells(
+      sourceMarkdown,
+      tokens,
+      child.from,
+      child.to
+    );
+    if (!cells) return null;
+    rows.push(cells);
+  }
+  return rows.length > 0 ? { from: node.from, rows } : null;
+}
+
+/**
+ * The source range one cell-edge deletion removes from a cell, and the text
+ * character that deletion is about.
+ *
+ * Backspace removes the cell's LAST text character, Delete its FIRST: markup,
+ * pipes and breaks are stepped over, never deleted. An escape or an entity is
+ * one text character spelled by several bytes, so its whole spelling goes.
+ * When the deletion empties an inline code span - or another formatting
+ * wrapper - the now-empty span's markup is retired with it instead of leaving
+ * a bare `` `` `` or `**` behind. The caret follows the deleted text
+ * character, so it is exactly one character earlier inside that cell.
+ */
+function visualTableCellTextDeletion(
+  cell: VisualTableRowCell,
+  direction: 'backward' | 'forward'
+): Readonly<{ from: number; textFrom: number; textTo: number; to: number }> | null {
+  if (cell.empty) return null;
+  const { inline } = cell;
+  const units = inline.filter((node) =>
+    VISUAL_TABLE_INLINE_TEXT_UNIT.has(node.name)
+  );
+  // Everything that is not a text unit, a formatting wrapper or a link is
+  // markup to step over whole: marks, a link's URL, raw HTML (the `<br>` a
+  // table cell uses for a line break), images, autolinks and comments.
+  const skips = inline.filter(
+    (node) =>
+      !VISUAL_TABLE_INLINE_TEXT_UNIT.has(node.name)
+      && !VISUAL_TABLE_INLINE_RETIRABLE.has(node.name)
+      && 'Link' !== node.name
+  );
+  const unitAt = (index: number): VisualTableToken | null =>
+    units.find((unit) => unit.from <= index && index < unit.to) ?? null;
+  // The edge of the innermost markup node covering a position, so the scan
+  // steps over a whole delimiter, tag or URL instead of into it.
+  const skipEdge = (index: number, edge: 'from' | 'to'): number | null => {
+    let found: number | null = null;
+    for (const skip of skips) {
+      if (skip.from > index || index >= skip.to) continue;
+      const candidate = 'from' === edge ? skip.from : skip.to;
+      found = null === found
+        ? candidate
+        : 'from' === edge
+          ? Math.min(found, candidate)
+          : Math.max(found, candidate);
+    }
+    return found;
+  };
+  let unit: Readonly<{ from: number; to: number }> | null = null;
+  if ('backward' === direction) {
+    let cursor = cell.contentEnd - 1;
+    while (cursor >= cell.contentStart) {
+      const found = unitAt(cursor);
+      if (found) {
+        unit = { from: found.from, to: found.to };
+        break;
+      }
+      const skipFrom = skipEdge(cursor, 'from');
+      if (null === skipFrom) {
+        unit = { from: cursor, to: cursor + 1 };
+        break;
+      }
+      cursor = skipFrom - 1;
+    }
+  } else {
+    let cursor = cell.contentStart;
+    while (cursor < cell.contentEnd) {
+      const found = unitAt(cursor);
+      if (found) {
+        unit = { from: found.from, to: found.to };
+        break;
+      }
+      const skipTo = skipEdge(cursor, 'to');
+      if (null === skipTo) {
+        unit = { from: cursor, to: cursor + 1 };
+        break;
+      }
+      cursor = skipTo;
+    }
+  }
+  if (!unit) return null;
+  const deleted = unit;
+  let from = deleted.from;
+  let to = deleted.to;
+  // Retire every formatting wrapper this deletion empties, innermost first. A
+  // wrapper still holding text of its own keeps its markup.
+  for (;;) {
+    const container = inline
+      .filter(
+        (node) =>
+          VISUAL_TABLE_INLINE_RETIRABLE.has(node.name)
+          && node.from <= from
+          && node.to >= to
+          && (node.from < from || node.to > to)
+      )
+      .sort((left, right) => left.to - left.from - (right.to - right.from))[0];
+    if (!container) break;
+    let otherText = false;
+    let cursor = container.from;
+    while (cursor < container.to) {
+      // The character this deletion removes is the one text unit already
+      // accounted for; every other text position keeps the wrapper alive.
+      if (cursor >= deleted.from && cursor < deleted.to) {
+        cursor = deleted.to;
+        continue;
+      }
+      if (unitAt(cursor)) {
+        otherText = true;
+        break;
+      }
+      const skipTo = skipEdge(cursor, 'to');
+      if (null === skipTo || skipTo <= cursor) {
+        otherText = true;
+        break;
+      }
+      cursor = skipTo;
+    }
+    if (otherText) break;
+    from = container.from;
+    to = container.to;
+  }
+  return { from, textFrom: deleted.from, textTo: deleted.to, to };
+}
+
+/**
+ * Whether the removal kept the table the same table. The deleted unit is a
+ * text character of a cell's own content (plus the markup of a span it
+ * emptied), so no pipe, delimiter or line ending can move: the table must
+ * still start at the same byte, keep its rows, and keep the header's own
+ * column count. A row may only lose its last empty cell, which is the same
+ * column count spelled without a trailing pipe; a row that GAINED a cell means
+ * an escape was removed and a pipe became real, which is exactly the spelling
+ * this proof refuses.
+ */
+function visualTableShapeSurvives(
+  sourceMarkdown: string,
+  table: VisualTableBlock,
+  sourceOffset: number
+): boolean {
+  const next = visualMarkdownTableAt(
+    sourceMarkdown,
+    Math.min(sourceOffset, sourceMarkdown.length)
+  );
+  if (!next || next.from !== table.from) return false;
+  if (next.rows.length !== table.rows.length) return false;
+  const header = table.rows[0];
+  const nextHeader = next.rows[0];
+  if (!header || !nextHeader || header.length !== nextHeader.length) {
+    return false;
+  }
+  return next.rows.every((row, index) => {
+    const before = table.rows[index];
+    return Boolean(before) && row.length <= (before?.length ?? 0);
+  });
+}
+
+/**
+ * The ordered deletion walk across a GFM table's cells.
+ *
+ * A table's cells are the only caret-editable runs its canonical rows spell:
+ * the pipes and the line break between two cells are renderer syntax no caret
+ * owns. A deletion at a cell's content edge therefore crosses into the
+ * neighbouring cell in reading order - the previous cell of the same row, then
+ * the last cell of the previous row, and so on - and removes that cell's edge
+ * TEXT character there. The caret follows the removed character, so
+ * consecutive presses keep walking instead of stopping at a cell boundary.
+ *
+ * Only the offset the caret actually holds is considered: a caret inside a
+ * cell's own text is an ordinary in-cell deletion and is not this walk's. A
+ * cell that is already empty keeps its pipes and is stepped over, exactly as
+ * reading order requires, and so is a cell that holds only markup. Nothing
+ * before the first cell of the first row (for Backspace) and nothing after the
+ * last cell of the last row (for Delete) leaves the press in place.
+ */
+export type VisualTableDeletionWalk =
+  | Readonly<{
+      caret: number;
+      cell: Readonly<{ column: number; row: number }>;
+      /** The source range the removal deletes. */
+      from: number;
+      /** The removed text character's own source start. */
+      index: number;
+      kind: 'walk';
+      /** The removed text character's own source end (its spelling). */
+      textTo: number;
+      to: number;
+      value: string;
+    }>
+  | Readonly<{ kind: 'boundary' }>;
+
+export function visualTableDeletionWalk(
+  sourceMarkdown: string,
+  sourceOffset: number,
+  direction: 'backward' | 'forward'
+): VisualTableDeletionWalk | null {
+  const table = visualMarkdownTableAt(sourceMarkdown, sourceOffset);
+  if (!table) return null;
+  const flat: Array<
+    Readonly<{ cell: VisualTableRowCell; column: number; row: number }>
+  > = [];
+  table.rows.forEach((cells, row) => {
+    cells.forEach((cell, column) => {
+      flat.push({ cell, column, row });
+    });
+  });
+  const caretCells = flat
+    .map((entry, flatIndex) => ({ entry, flatIndex }))
+    .filter(({ entry }) => {
+      const { cell } = entry;
+      if (cell.empty) {
+        return sourceOffset >= cell.rawStart && sourceOffset <= cell.rawEnd;
+      }
+      // The caret's own edge is the cell's TEXT edge, not its byte edge: a
+      // cell that opens with inline code or a break spells bytes before its
+      // first text character, and the caret at that content start projects
+      // onto the first text character itself.
+      const first = visualTableCellTextDeletion(cell, 'forward');
+      const last = visualTableCellTextDeletion(cell, 'backward');
+      return 'backward' === direction
+        ? sourceOffset >= cell.rawStart
+          && sourceOffset <= (first?.textFrom ?? cell.contentStart)
+        : sourceOffset >= (last?.textTo ?? cell.contentEnd)
+          && sourceOffset <= cell.rawEnd;
+    });
+  if (1 !== caretCells.length) return null;
+  const caretCell = caretCells[0];
+  if (!caretCell) return null;
+  const caretFlat = caretCell.flatIndex;
+  let target: Readonly<{
+    cell: VisualTableRowCell;
+    column: number;
+    deletion: Readonly<{ from: number; textFrom: number; textTo: number; to: number }>;
+    row: number;
+  }> | null = null;
+  const step = 'backward' === direction ? -1 : 1;
+  for (
+    let flatIndex = caretFlat + step;
+    flatIndex >= 0 && flatIndex < flat.length;
+    flatIndex += step
+  ) {
+    const entry = flat[flatIndex];
+    if (!entry) continue;
+    const deletion = visualTableCellTextDeletion(entry.cell, direction);
+    if (!deletion) continue;
+    target = { ...entry, deletion };
+    break;
+  }
+  if (!target) return { kind: 'boundary' };
+  const { deletion } = target;
+  if (
+    deletion.from < 0
+    || deletion.to > sourceMarkdown.length
+    || deletion.from >= deletion.to
+    || deletion.textFrom < deletion.from
+    || deletion.textTo > deletion.to
+  ) return null;
+  const value =
+    sourceMarkdown.slice(0, deletion.from)
+    + sourceMarkdown.slice(deletion.to);
+  if (!visualTableShapeSurvives(value, table, deletion.from)) return null;
+  return {
+    caret: deletion.from,
+    cell: { column: target.column, row: target.row },
+    from: deletion.from,
+    index: deletion.textFrom,
+    kind: 'walk',
+    textTo: deletion.textTo,
+    to: deletion.to,
+    value
+  };
+}
+
 export type VisualMarkdownEditSelection = Readonly<{
   direction: 'backward' | 'forward' | 'none';
   end: number;
@@ -9624,63 +10161,157 @@ export function structuralEmptyLineRemoval(
     if (
       !/^(?:\[[ xX]\])?[ \t]*$/u.test(lineText.slice(bodyBoundary))
     ) return null;
-    const previous = lines[index - 1];
-    const previousText = previous
-      ? sourceMarkdown.slice(previous.start, previous.contentEnd)
-      : '';
-    const previousBodyBoundary = structuralMarkerBodyBoundary(previousText);
-    const previousCaret = previous
-      ? Math.max(
-          previous.start + previousText.trimEnd().length,
-          previous.start + (previousBodyBoundary ?? 0)
-        )
-      : 0;
-    if (
-      previous
-      && previousCaret > previous.start
-      && !overlapsMarkdownCodeContext(previous.start, previous.end, codeRanges)
-    ) return { caret: previousCaret, end: line.end, start: line.start };
-    const next = lines[index + 1];
-    const nextBodyBoundary = next
-      ? structuralMarkerBodyBoundary(
-          sourceMarkdown.slice(next.start, next.contentEnd)
-        )
-      : null;
-    if (next && null !== nextBodyBoundary) {
-      // The retained row keeps its own body boundary, shifted by the row that
-      // is removed in front of it.
-      return {
-        caret: next.start - (line.end - line.start) + nextBodyBoundary,
-        end: line.end,
-        start: line.start
-      };
-    }
-    const blank = (range: typeof line | undefined): boolean => Boolean(
-      range && '' === sourceMarkdown.slice(range.start, range.contentEnd).trim()
-    );
-    if ((!previous || blank(previous)) && (!next || blank(next))) {
-      // The row is its block's only row. Its block goes with it, and so does
-      // one blank separator beside it; the caret is the end of the nearest
-      // preceding content (or the start of the document).
-      let caret = 0;
-      for (let before = index - 1; before >= 0; before -= 1) {
-        const range = lines[before];
-        if (!range || blank(range)) continue;
-        const text = sourceMarkdown.slice(range.start, range.contentEnd);
-        caret = Math.max(
-          range.start + text.trimEnd().length,
-          range.start + (structuralMarkerBodyBoundary(text) ?? 0)
-        );
-        break;
-      }
-      if (previous) return { caret, end: line.end, start: previous.start };
-      if (next) return { caret, end: next.end, start: line.start };
-    }
-    // The row sits at the edge the document keeps: after removal this offset
-    // is the new end of the preceding content (or the start of the document).
-    return { caret: line.start, end: line.end, start: line.start };
+    return structuralRowRemoval(sourceMarkdown, lines, index);
   }
   return null;
+}
+
+/**
+ * The canonical bytes a marker-only row stands for, and the caret the press
+ * that removes it leaves behind: the row itself, one blank separator beside it,
+ * and the end of the nearest preceding content. The caller has already proved
+ * the row is its own block's marker run; this only decides which separator goes
+ * with it, so a removal can neither leave two blank lines behind nor eat the
+ * row above.
+ */
+function structuralRowRemoval(
+  sourceMarkdown: string,
+  lines: ReadonlyArray<MarkdownLineRange>,
+  index: number
+): Readonly<{ caret: number; end: number; start: number }> | null {
+  const line = lines[index];
+  if (!line) return null;
+  const codeRanges = markdownCodeContextRanges(sourceMarkdown);
+  const previous = lines[index - 1];
+  const previousText = previous
+    ? sourceMarkdown.slice(previous.start, previous.contentEnd)
+    : '';
+  const previousBodyBoundary = structuralMarkerBodyBoundary(previousText);
+  const previousCaret = previous
+    ? Math.max(
+        previous.start + previousText.trimEnd().length,
+        previous.start + (previousBodyBoundary ?? 0)
+      )
+    : 0;
+  if (
+    previous
+    && previousCaret > previous.start
+    && !overlapsMarkdownCodeContext(previous.start, previous.end, codeRanges)
+  ) return { caret: previousCaret, end: line.end, start: line.start };
+  const next = lines[index + 1];
+  const nextBodyBoundary = next
+    ? structuralMarkerBodyBoundary(
+        sourceMarkdown.slice(next.start, next.contentEnd)
+      )
+    : null;
+  if (next && null !== nextBodyBoundary) {
+    // The retained row keeps its own body boundary, shifted by the row that
+    // is removed in front of it.
+    return {
+      caret: next.start - (line.end - line.start) + nextBodyBoundary,
+      end: line.end,
+      start: line.start
+    };
+  }
+  const blank = (range: typeof line | undefined): boolean => Boolean(
+    range && '' === sourceMarkdown.slice(range.start, range.contentEnd).trim()
+  );
+  if ((!previous || blank(previous)) && (!next || blank(next))) {
+    // The row is its block's only row. Its block goes with it, and so does
+    // one blank separator beside it; the caret is the end of the nearest
+    // preceding content (or the start of the document).
+    let caret = 0;
+    for (let before = index - 1; before >= 0; before -= 1) {
+      const range = lines[before];
+      if (!range || blank(range)) continue;
+      const text = sourceMarkdown.slice(range.start, range.contentEnd);
+      caret = Math.max(
+        range.start + text.trimEnd().length,
+        range.start + (structuralMarkerBodyBoundary(text) ?? 0)
+      );
+      break;
+    }
+    if (previous) return { caret, end: line.end, start: previous.start };
+    if (next) return { caret, end: next.end, start: line.start };
+  }
+  // The row sits at the edge the document keeps: after removal this offset
+  // is the new end of the preceding content (or the start of the document).
+  return { caret: line.start, end: line.end, start: line.start };
+}
+
+function emptiedHeadingRowRemovalAt(
+  sourceMarkdown: string,
+  lines: ReadonlyArray<MarkdownLineRange>,
+  index: number
+): Readonly<{ caret: number; end: number; start: number }> | null {
+  const line = lines[index];
+  if (!line) return null;
+  if (
+    !/^ {0,3}#{1,6}[ \t]*$/u.test(
+      sourceMarkdown.slice(line.start, line.contentEnd)
+    )
+  ) return null;
+  if (
+    overlapsMarkdownCodeContext(
+      line.start,
+      line.end,
+      markdownCodeContextRanges(sourceMarkdown)
+    )
+  ) return null;
+  return structuralRowRemoval(sourceMarkdown, lines, index);
+}
+
+/**
+ * The source row an emptied ATX heading still occupies, read from the block's
+ * own accepted range, or null when that row is not one.
+ *
+ * The renderer mounts a marker-only heading row (`## `) as a plain empty
+ * paragraph, so the surface holds neither the marker nor a body: the row's own
+ * marker run is the only place the block still exists. The accepted map places
+ * the block, and the row it starts on must be exactly one marker run with
+ * nothing but the renderer's separator after it. The removal then takes that
+ * row and one blank separator beside it - the same rule an emptied list item's
+ * row uses, because both rows are their block's only content.
+ */
+export function emptiedHeadingRowRemoval(
+  sourceMarkdown: string,
+  blockStart: number,
+  blockEnd: number
+): Readonly<{ caret: number; end: number; start: number }> | null {
+  if (
+    !Number.isInteger(blockStart)
+    || !Number.isInteger(blockEnd)
+    || blockStart < 0
+    || blockEnd < blockStart
+    || blockEnd > sourceMarkdown.length
+  ) return null;
+  const lines = markdownLineRanges(sourceMarkdown);
+  const index = lines.findIndex((line) => line.start === blockStart);
+  const line = lines[index];
+  if (!line || blockEnd < line.contentEnd || blockEnd > line.end) return null;
+  return emptiedHeadingRowRemovalAt(sourceMarkdown, lines, index);
+}
+
+/**
+ * The same retirement for the document's first mounted block, read
+ * positionally from the source alone.
+ *
+ * An emptied heading's marker run is never drawn, so an accepted map that no
+ * longer names the row - a repaired press drops it - would leave the row
+ * unnamed. The surface's first block is still the source's first block, so its
+ * row is the source's first non-blank row; a document that opens with anything
+ * else yields no row here.
+ */
+export function firstEmptiedHeadingRowRemoval(
+  sourceMarkdown: string
+): Readonly<{ caret: number; end: number; start: number }> | null {
+  const lines = markdownLineRanges(sourceMarkdown);
+  const index = lines.findIndex(
+    (line) => '' !== sourceMarkdown.slice(line.start, line.contentEnd).trim()
+  );
+  return index < 0
+    ? null
+    : emptiedHeadingRowRemovalAt(sourceMarkdown, lines, index);
 }
 
 /**

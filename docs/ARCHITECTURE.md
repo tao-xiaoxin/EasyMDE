@@ -561,12 +561,29 @@ ATX heading's `#{1,6}` are renderer syntax no caret owns, so Backspace at that
 row's own start is a structural join: the owner proves on a clone that the
 source loses exactly the row separator and its marker run - including a
 heading's closing run, which the renderer never draws - then appends the row's
-inline content to the block before it and leaves the caret at the seam. Where
-the join cannot be placed - no block before the row, a target that cannot hold
+inline content to the block before it and leaves the caret at the seam. A plain
+paragraph's own start is the same boundary without a marker of its own: the
+clone proof there removes the separator that terminates the block above, and
+nothing else of the paragraph, then appends the paragraph's inline content to
+the preceding paragraph, heading, quote row or list item. A paragraph that
+faces a table, a fence or an emptied row keeps that edge's own owner. An
+emptied heading row is the same boundary with its marker run left standing in
+the source: the renderer draws no marker for it, so the row is placed by its
+own accepted block range - and, when that map no longer names it, by the
+source's own first row - rather than by its DOM. The empty-block shortcut
+declines such a row whenever canonical content still follows it, because
+rewriting the block to a paragraph has no byte to prove and would leave the
+source unchanged; the structural owner then retires the marker run together
+with one separator beside it, the rule an emptied list item's row already uses.
+The row's block goes with it, unless that row was the document's only block:
+that press leaves the existing empty-document state (`''` with its placeholder
+paragraph) and puts the caret in it. A row the source ends on keeps the
+shortcut's own positional removal. Where the
+join cannot be placed - no block before the row, a target that cannot hold
 text, a nested or protected row, a spelling that is not only markers - the
-press is consumed with no write and no failure code, and a row at the document
-start stays a silent no-op. A genuinely inconsistent DOM still reports its
-stable failure.
+press is consumed with no write and no failure code, and a heading row that
+still carries content at the document start stays a silent no-op. A genuinely
+inconsistent DOM still reports its stable failure.
 
 A certified empty-code-gap IME session also retains the Preview surface for its
 own lifetime. The Windowed owner takes one runtime lease, so the sink installs

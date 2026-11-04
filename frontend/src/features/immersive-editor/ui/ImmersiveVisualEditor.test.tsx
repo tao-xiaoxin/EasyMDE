@@ -26225,26 +26225,259 @@ it('does not claim a heading marker press as a table-edge no-op', () => {
   }
 });
 
-it('consumes Backspace at a table cell\'s own start without reporting a mapping failure', () => {
+/**
+ * One Backspace at a cell's own content start. Chromium names it by a target
+ * range that reaches back into the preceding cell, which is exactly the press
+ * the ordered walk owns.
+ */
+const pressTableBackspaceAtCellStart = (
+  fixture: FullOwnerFixture,
+  cell: HTMLElement,
+  previous: HTMLElement
+): InputEvent => {
+  placeCaretInText(tableCellText(cell), 0);
+  let beforeInput!: InputEvent;
+  act(() => {
+    beforeInput = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      tableBoundaryTargetRange(
+        tableCellText(previous),
+        tableCellText(previous).length,
+        cell,
+        0
+      )
+    );
+  });
+  return beforeInput;
+};
+
+/** The same press mirrored: Delete at a cell's own content end. */
+const pressTableDeleteAtCellEnd = (
+  fixture: FullOwnerFixture,
+  cell: HTMLElement,
+  next: HTMLElement
+): InputEvent => {
+  const text = tableCellText(cell);
+  placeCaretInText(text, text.length);
+  let beforeInput!: InputEvent;
+  act(() => {
+    beforeInput = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentForward' },
+      tableBoundaryTargetRange(text, text.length, next, 0)
+    );
+  });
+  return beforeInput;
+};
+
+it('walks Backspace from a cell start into the previous cell and deletes its last character', () => {
   vi.useFakeTimers();
   const fixture = createEditableTableFixture();
   try {
     fixture.surface.focus();
-    const { cells, section } = editableTableSurfaceParts(fixture.surface);
-    // The header row's second cell and the first body cell the caret sits in.
-    const previous = cells[1];
-    const cell = cells[2];
+    const { cells } = editableTableSurfaceParts(fixture.surface);
+    // The body row `| one | two |`: the caret sits at the start of `two`.
+    const previous = cells[2];
+    const cell = cells[3];
     if (!previous || !cell) throw new Error('editable-table-cell-missing');
-    const text = tableCellText(cell);
-    placeCaretInText(text, 0);
+    const previousText = tableCellText(previous);
+    expect(previousText.data).toBe('one');
+    const surfaceChildren = Array.from(fixture.surface.childNodes);
+    const beforeInput = pressTableBackspaceAtCellStart(fixture, cell, previous);
+    expect(beforeInput.defaultPrevented).toBe(true);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    // The deleted character is the `e` of `one`, and the caret lands on that
+    // cell's new content end. The row keeps both its pipes and its columns.
+    expect(fixture.history.getValue()).toBe(
+      editableTableMarkdown.replace('| one | two |', '| on | two |')
+    );
+    expect(previousText.data).toBe('on');
+    expect(tableCellText(cell).data).toBe('two');
+    // The press is a real canonical deletion, not a refusal followed by a
+    // snapshot re-derive: no surface child was replaced.
+    const afterChildren = Array.from(fixture.surface.childNodes);
+    expect(afterChildren.length).toBe(surfaceChildren.length);
+    expect(
+      afterChildren.every((node, index) => node === surfaceChildren[index])
+    ).toBe(true);
+    expect(fixture.onDiagnostic).not.toHaveBeenCalled();
+    expect(window.getSelection()?.anchorNode).toBe(previousText);
+    expect(window.getSelection()?.anchorOffset).toBe(2);
+    expect(fixture.history.getHistoryState()).toEqual({
+      redoDepth: 0,
+      undoDepth: 1
+    });
+    expect(fixture.runtime().isEditable()).toBe(true);
+    // The resulting row is still the same table with the same column count.
+    const table = fixture.surface.querySelector('table');
+    expect(table?.rows[2]?.cells.length).toBe(2);
+    expect(table?.rows[0]?.cells.length).toBe(2);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('keeps walking Backspace left across cells and rows, one character per press', async () => {
+  vi.useFakeTimers();
+  const fixture = createEditableTableFixture();
+  const settle = async (): Promise<void> => {
+    await act(async () => {
+      vi.advanceTimersByTime(160);
+      await Promise.resolve();
+    });
+  };
+  try {
+    fixture.surface.focus();
+    const { cells } = editableTableSurfaceParts(fixture.surface);
+    // Reading order from `two`: `one`, then the previous row's `Tail`, then
+    // `Head`. `cells` is [Head, Tail, one, two, three, four].
+    const [head, tail, one, two] = cells;
+    if (!head || !tail || !one || !two) throw new Error('editable-table-cell-missing');
+    const oneText = tableCellText(one);
+    const tailText = tableCellText(tail);
+    const headText = tableCellText(head);
+    const twoText = tableCellText(two);
+    const table = fixture.surface.querySelector('table');
+    if (!table) throw new Error('editable-table-missing');
+    const rowOf = (cell: HTMLElement): HTMLTableRowElement => {
+      if (!(cell.parentElement instanceof HTMLTableRowElement)) {
+        throw new Error('editable-table-row-missing');
+      }
+      return cell.parentElement;
+    };
+
+    // Press 1 - the walk: `e` of `one`.
+    expect(pressTableBackspaceAtCellStart(fixture, two, one).defaultPrevented).toBe(true);
+    expect(oneText.data).toBe('on');
+    expect(window.getSelection()?.anchorNode).toBe(oneText);
+    expect(window.getSelection()?.anchorOffset).toBe(2);
+    // Presses 2 and 3 - ordinary in-cell deletions that empty the cell.
+    const second = fullOwnerNativeDelete(
+      fixture.surface,
+      oneText,
+      1,
+      2,
+      'deleteContentBackward'
+    );
+    expect(second.prevented).toBe(false);
+    await settle();
+    expect(oneText.data).toBe('o');
+    const third = fullOwnerNativeDelete(
+      fixture.surface,
+      oneText,
+      0,
+      1,
+      'deleteContentBackward'
+    );
+    expect(third.prevented).toBe(false);
+    await settle();
+    expect(oneText.data).toBe('');
+    expect(fixture.history.getValue()).toBe(
+      editableTableMarkdown.replace('| one |', '|  |')
+    );
+    // Press 4 - the walk continues out of the emptied cell into the LAST cell
+    // of the previous row, deleting its last character.
+    expect(pressTableBackspaceAtCellStart(fixture, one, tail).defaultPrevented).toBe(true);
+    expect(tailText.data).toBe('Tai');
+    expect(window.getSelection()?.anchorNode).toBe(tailText);
+    expect(window.getSelection()?.anchorOffset).toBe(3);
+    expect(fixture.history.getValue()).toBe(
+      editableTableMarkdown
+        .replace('| one |', '|  |')
+        .replace('| Head | Tail |', '| Head | Tai |')
+    );
+    // The emptied cell kept its pipes and its column.
+    expect(rowOf(one).cells.length).toBe(2);
+    expect(table.rows[1]?.cells[1]?.textContent).toBe('two');
+    // Presses 5-7 - ordinary in-cell deletions that empty `Tail`.
+    for (const [start, end] of [[2, 3], [1, 2], [0, 1]] as const) {
+      expect(
+        fullOwnerNativeDelete(
+          fixture.surface,
+          tailText,
+          start,
+          end,
+          'deleteContentBackward'
+        ).prevented
+      ).toBe(false);
+      await settle();
+    }
+    expect(tailText.data).toBe('');
+    // Press 8 - the walk continues into the previous row's first cell.
+    expect(pressTableBackspaceAtCellStart(fixture, tail, head).defaultPrevented).toBe(true);
+    expect(headText.data).toBe('Hea');
+    expect(window.getSelection()?.anchorNode).toBe(headText);
+    expect(window.getSelection()?.anchorOffset).toBe(3);
+    expect(fixture.history.getValue()).toBe(
+      editableTableMarkdown
+        .replace('| one |', '|  |')
+        .replace('| Head | Tail |', '| Hea |  |')
+    );
+    expect(rowOf(head).cells.length).toBe(2);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('walks Delete from a cell end into the next cell and deletes its first character', () => {
+  vi.useFakeTimers();
+  const fixture = createEditableTableFixture();
+  try {
+    fixture.surface.focus();
+    const { cells } = editableTableSurfaceParts(fixture.surface);
+    const cell = cells[2];
+    const next = cells[3];
+    if (!cell || !next) throw new Error('editable-table-cell-missing');
+    const nextText = tableCellText(next);
+    expect(nextText.data).toBe('two');
+    const beforeInput = pressTableDeleteAtCellEnd(fixture, cell, next);
+    expect(beforeInput.defaultPrevented).toBe(true);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe(
+      editableTableMarkdown.replace('| one | two |', '| one | wo |')
+    );
+    expect(nextText.data).toBe('wo');
+    expect(window.getSelection()?.anchorNode).toBe(nextText);
+    expect(window.getSelection()?.anchorOffset).toBe(0);
+    expect(fixture.history.getHistoryState()).toEqual({
+      redoDepth: 0,
+      undoDepth: 1
+    });
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('leaves Backspace at the first cell of the first row as a silent no-op', () => {
+  vi.useFakeTimers();
+  const fixture = createEditableTableFixture();
+  try {
+    fixture.surface.focus();
+    const { cells } = editableTableSurfaceParts(fixture.surface);
+    const first = cells[0];
+    const second = cells[1];
+    if (!first || !second) throw new Error('editable-table-cell-missing');
+    const text = tableCellText(first);
+    expect(text.data).toBe('Head');
     const before = tableBoundarySnapshot(fixture);
     let beforeInput!: InputEvent;
     act(() => {
+      placeCaretInText(text, 0);
       beforeInput = fullOwnerDispatchBeforeInput(
         fixture.surface,
         { data: null, inputType: 'deleteContentBackward' },
-        // Chromium reaches back into the preceding cell: `"Tail"[4] -> TD[0]`.
-        tableBoundaryTargetRange(tableCellText(previous), 4, cell, 0)
+        // Nothing precedes the first cell: `TD[0] -> TD[0]`.
+        tableBoundaryTargetRange(first, 0, first, 0)
       );
     });
     expect(beforeInput.defaultPrevented).toBe(true);
@@ -26253,7 +26486,6 @@ it('consumes Backspace at a table cell\'s own start without reporting a mapping 
     expect(tableBoundarySnapshot(fixture)).toEqual(before);
     expect(window.getSelection()?.anchorNode).toBe(text);
     expect(window.getSelection()?.anchorOffset).toBe(0);
-    expect(fixture.surface.contains(section)).toBe(true);
     expect(fixture.runtime().isEditable()).toBe(true);
   } finally {
     fixture.unmount();
@@ -26338,17 +26570,20 @@ it('consumes Delete at the paragraph end before a table without reporting a mapp
   }
 });
 
-it('keeps an emptied table cell and the canonical row in agreement across the boundary press', async () => {
+it('walks out of an emptied table cell after a coalesced in-cell burst', async () => {
   vi.useFakeTimers();
   const fixture = createEditableTableFixture();
   try {
     fixture.surface.focus();
-    const { cells, section } = editableTableSurfaceParts(fixture.surface);
+    const { cells } = editableTableSurfaceParts(fixture.surface);
     const cell = cells[2];
     const previous = cells[1];
     if (!cell || !previous) throw new Error('editable-table-cell-missing');
     const text = tableCellText(cell);
-    // Two genuine in-cell deletions: `one` loses its `n`, then its `o`.
+    const previousText = tableCellText(previous);
+    // Two genuine in-cell deletions in one debounce group: `one` loses its
+    // `n`, then its `o`, so a single pending commit still has to land before
+    // the boundary press can walk.
     for (const caret of [2, 1]) {
       let beforeInput!: InputEvent;
       act(() => {
@@ -26371,41 +26606,661 @@ it('keeps an emptied table cell and the canonical row in agreement across the bo
       });
       expect(beforeInput.defaultPrevented).toBe(false);
     }
-    await act(async () => {
-      vi.advanceTimersByTime(160);
-      await Promise.resolve();
-    });
-    expect(fixture.onFailure).not.toHaveBeenCalled();
-    expect(text.data).toBe('e');
-    expect(fixture.history.getValue()).toBe(
-      editableTableMarkdown.replace('| one |', '| e |')
-    );
-    // The third press sits on the cell's own start: no canonical character is
-    // left in this cell to remove. Without the table-edge owner this press is
-    // reported as `visual-editor-selection-map-failed` and the failure restore
-    // re-renders the accepted table, leaving the source spelling `| e |` over a
-    // cell that visibly reads `one`.
-    const before = tableBoundarySnapshot(fixture);
+    expect(fixture.history.getValue()).toBe(editableTableMarkdown);
+    // The third press sits on the cell's own start. The walk owns it: the
+    // pending burst is committed first, then the previous cell in reading
+    // order - the LAST cell of the previous row - loses its last character.
     let boundaryPress!: InputEvent;
     act(() => {
       boundaryPress = fullOwnerDispatchBeforeInput(
         fixture.surface,
         { data: null, inputType: 'deleteContentBackward' },
-        tableBoundaryTargetRange(tableCellText(previous), 4, cell, 0)
+        tableBoundaryTargetRange(previousText, previousText.length, cell, 0)
       );
     });
     expect(boundaryPress.defaultPrevented).toBe(true);
     expect(fixture.onFailure).not.toHaveBeenCalled();
     expect(fixture.onTransferFailure).not.toHaveBeenCalled();
-    expect(tableBoundarySnapshot(fixture)).toEqual(before);
-    // The visible cell still spells the canonical row's own cell.
-    expect(cell.textContent).toBe('e');
+    // The emptied cell keeps its pipes, and the row is still a valid two-cell
+    // row; `Tail` lost its last character.
+    expect(text.data).toBe('e');
+    expect(previousText.data).toBe('Tai');
     expect(fixture.history.getValue()).toBe(
-      editableTableMarkdown.replace('| one |', '| e |')
+      editableTableMarkdown
+        .replace('| one |', '| e |')
+        .replace('| Head | Tail |', '| Head | Tai |')
     );
-    expect(window.getSelection()?.anchorNode).toBe(text);
-    expect(window.getSelection()?.anchorOffset).toBe(0);
-    expect(fixture.surface.contains(section)).toBe(true);
+    expect(window.getSelection()?.anchorNode).toBe(previousText);
+    expect(window.getSelection()?.anchorOffset).toBe(3);
+    // The coalesced burst is one history entry and the walk is its own.
+    expect(fixture.history.getHistoryState()).toEqual({
+      redoDepth: 0,
+      undoDepth: 2
+    });
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+// A table whose cells spell inline code and a raw break. Both are cell TEXT
+// shapes the walk has to cross uniformly: the break is raw `<br>` in the
+// canonical row, and inline code is a span the deletion may retire once its
+// text is gone.
+const inlineTableMarkdown = [
+  'Intro line.',
+  '',
+  '| Head | Tail |',
+  '| --- | --- |',
+  '| `ab` | c |',
+  '| d | one<br>two |',
+  '| x `cd` | y |',
+  '',
+  'Outro line.'
+].join('\n');
+
+const inlineTableHtml = (id: string): string => [
+  '<section class="table-container easymde-table-container"',
+  ` data-easymde-visual-block-id="${id}">`,
+  '<table>',
+  '<thead><tr><th>Head</th><th>Tail</th></tr></thead>',
+  '<tbody>',
+  '<tr><td><code>ab</code></td><td>c</td></tr>',
+  '<tr><td>d</td><td>one<br>two</td></tr>',
+  '<tr><td>x <code>cd</code></td><td>y</td></tr>',
+  '</tbody>',
+  '</table>',
+  '</section>'
+].join('');
+
+function createInlineTableFixture() {
+  const signature = 'inline-table-walk';
+  return createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { startLine: 0, endLine: 1, id: 'b0' },
+      { startLine: 2, endLine: 7, id: 'b1' },
+      { startLine: 8, endLine: 9, id: 'b2' }
+    ]),
+    html: fullOwnerParagraphBlock('Intro line.', 'b0') + '\n'
+      + inlineTableHtml('b1') + '\n'
+      + fullOwnerParagraphBlock('Outro line.', 'b2') + '\n',
+    markdown: inlineTableMarkdown,
+    signature,
+    sourceCaret: inlineTableMarkdown.indexOf('Outro line.')
+  });
+}
+
+/** The caret's own cell index (among `td, th`) and its text offset there. */
+const tableCaretTrace = (
+  surface: HTMLElement
+): Readonly<{ cell: number; offset: number }> => {
+  const selection = window.getSelection();
+  const node = selection?.anchorNode;
+  const offset = selection?.anchorOffset;
+  if (!node || undefined === offset) throw new Error('table-caret-missing');
+  const cells = Array.from(surface.querySelectorAll('td, th'));
+  const element = node instanceof Element ? node : node.parentElement;
+  const cell = element?.closest('td, th') ?? null;
+  if (!(cell instanceof HTMLElement)) throw new Error('table-caret-outside-cell');
+  const range = document.createRange();
+  range.setStart(cell, 0);
+  range.setEnd(node, offset);
+  return { cell: cells.indexOf(cell), offset: range.toString().length };
+};
+
+const inlineTableParts = (
+  fixture: FullOwnerFixture
+): Readonly<{
+  table: HTMLTableElement;
+  codeText: Text;
+  tailText: Text;
+  cCell: HTMLElement;
+  breakCell: HTMLElement;
+  twoText: Text;
+  xCellText: Text;
+  yCellText: Text;
+}> => {
+  const table = fixture.surface.querySelector('table');
+  const codeText = table?.rows[1]?.cells[0]?.querySelector('code')?.firstChild;
+  const tailCell = table?.rows[0]?.cells[1];
+  const cCell = table?.rows[1]?.cells[1];
+  const breakCell = table?.rows[2]?.cells[1];
+  const xCell = table?.rows[3]?.cells[0];
+  const yCell = table?.rows[3]?.cells[1];
+  const twoText = breakCell?.lastChild;
+  const xCellText = xCell?.firstChild;
+  const yCellText = yCell?.firstChild;
+  if (
+    !(table instanceof HTMLTableElement)
+    || !(codeText instanceof Text)
+    || !(tailCell instanceof HTMLElement)
+    || !(cCell instanceof HTMLElement)
+    || !(breakCell instanceof HTMLElement)
+    || !(xCell instanceof HTMLElement)
+    || !(yCell instanceof HTMLElement)
+    || !(twoText instanceof Text)
+    || !(xCellText instanceof Text)
+    || !(yCellText instanceof Text)
+  ) {
+    throw new Error('inline-table-fixture-invalid');
+  }
+  return {
+    breakCell,
+    cCell,
+    codeText,
+    table,
+    tailText: tableCellText(tailCell),
+    twoText,
+    xCellText,
+    yCellText
+  };
+};
+
+it('walks out of a cell that opens with inline code into the previous cell', () => {
+  vi.useFakeTimers();
+  const fixture = createInlineTableFixture();
+  try {
+    fixture.surface.focus();
+    const { codeText, tailText } = inlineTableParts(fixture);
+    const surfaceChildren = Array.from(fixture.surface.childNodes);
+    // The code cell's own text start is a cell edge: its canonical position is
+    // the code span's first character, not the backtick before it.
+    placeCaretInText(codeText, 0);
+    expect(tableCaretTrace(fixture.surface)).toEqual({ cell: 2, offset: 0 });
+    let beforeInput!: InputEvent;
+    act(() => {
+      beforeInput = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        tableBoundaryTargetRange(codeText, 0, codeText, 0)
+      );
+    });
+    expect(beforeInput.defaultPrevented).toBe(true);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    // The previous cell in reading order is the header row's last cell.
+    expect(fixture.history.getValue()).toBe(
+      inlineTableMarkdown.replace('| Head | Tail |', '| Head | Tai |')
+    );
+    expect(tailText.data).toBe('Tai');
+    expect(tableCaretTrace(fixture.surface)).toEqual({ cell: 1, offset: 3 });
+    expect(fixture.surface.getAttribute('data-easymde-visual-deletion-repair'))
+      .toBeNull();
+    expect(fixture.onDiagnostic).not.toHaveBeenCalled();
+    const afterChildren = Array.from(fixture.surface.childNodes);
+    expect(afterChildren.length).toBe(surfaceChildren.length);
+    expect(
+      afterChildren.every((node, index) => node === surfaceChildren[index])
+    ).toBe(true);
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('deletes the last text character of a cell ending in inline code', () => {
+  vi.useFakeTimers();
+  const fixture = createInlineTableFixture();
+  try {
+    fixture.surface.focus();
+    const { table, yCellText } = inlineTableParts(fixture);
+    const codeCell = table.rows[3]?.cells[0];
+    const codeText = codeCell?.querySelector('code')?.firstChild;
+    if (!(codeCell instanceof HTMLElement) || !(codeText instanceof Text)) {
+      throw new Error('inline-table-code-missing');
+    }
+    placeCaretInText(yCellText, 0);
+    let beforeInput!: InputEvent;
+    act(() => {
+      beforeInput = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        tableBoundaryTargetRange(yCellText, 0, yCellText, 0)
+      );
+    });
+    expect(beforeInput.defaultPrevented).toBe(true);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    // `x `cd`` loses the code's last text character, not its closing mark.
+    expect(fixture.history.getValue()).toBe(
+      inlineTableMarkdown.replace('| x `cd` | y |', '| x `c` | y |')
+    );
+    expect(codeText.data).toBe('c');
+    expect(codeCell.querySelector('code')).not.toBeNull();
+    expect(tableCaretTrace(fixture.surface)).toEqual({ cell: 6, offset: 3 });
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('retires an emptied inline code span instead of leaving its markup', () => {
+  vi.useFakeTimers();
+  const fixture = createInlineTableFixture();
+  try {
+    fixture.surface.focus();
+    const { cCell } = inlineTableParts(fixture);
+    const cText = tableCellText(cCell);
+    // First press: `ab` loses its last text character through the walk.
+    placeCaretInText(cText, 0);
+    act(() => {
+      fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        tableBoundaryTargetRange(cText, 0, cText, 0)
+      );
+    });
+    expect(fixture.history.getValue()).toBe(
+      inlineTableMarkdown.replace('| `ab` | c |', '| `a` | c |')
+    );
+    // Second press: the code span holds one character, so deleting it empties
+    // the span; its markup goes with the text instead of leaving ````.
+    placeCaretInText(cText, 0);
+    act(() => {
+      fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        tableBoundaryTargetRange(cText, 0, cText, 0)
+      );
+    });
+    expect(fixture.history.getValue()).toBe(
+      inlineTableMarkdown.replace('| `ab` | c |', '|  | c |')
+    );
+    const codeCell = fixture.surface.querySelector('table')?.rows[1]?.cells[0];
+    if (!(codeCell instanceof HTMLElement)) {
+      throw new Error('inline-table-code-cell-missing');
+    }
+    expect(codeCell.querySelector('code')).toBeNull();
+    expect(codeCell.textContent).toBe('');
+    expect(tableCaretTrace(fixture.surface)).toEqual({ cell: 2, offset: 0 });
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('deletes the last text character of a cell that contains a break', () => {
+  vi.useFakeTimers();
+  const fixture = createInlineTableFixture();
+  try {
+    fixture.surface.focus();
+    const { breakCell, twoText, xCellText } = inlineTableParts(fixture);
+    const breakElement = breakCell.querySelector('br');
+    placeCaretInText(xCellText, 0);
+    let beforeInput!: InputEvent;
+    act(() => {
+      beforeInput = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        tableBoundaryTargetRange(xCellText, 0, xCellText, 0)
+      );
+    });
+    expect(beforeInput.defaultPrevented).toBe(true);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    // The break is never the deleted unit: the text character after it goes.
+    expect(fixture.history.getValue()).toBe(
+      inlineTableMarkdown.replace('one<br>two', 'one<br>tw')
+    );
+    expect(twoText.data).toBe('tw');
+    expect(breakCell.querySelector('br')).toBe(breakElement);
+    expect(tableCaretTrace(fixture.surface)).toEqual({ cell: 5, offset: 5 });
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('walks out of a cell containing a break into the previous cell', () => {
+  vi.useFakeTimers();
+  const fixture = createInlineTableFixture();
+  try {
+    fixture.surface.focus();
+    const { breakCell, table } = inlineTableParts(fixture);
+    const firstText = breakCell.firstChild;
+    const dCell = table.rows[2]?.cells[0];
+    if (!(firstText instanceof Text) || !(dCell instanceof HTMLElement)) {
+      throw new Error('inline-table-break-text-missing');
+    }
+    const dText = tableCellText(dCell);
+    placeCaretInText(firstText, 0);
+    expect(tableCaretTrace(fixture.surface)).toEqual({ cell: 5, offset: 0 });
+    let beforeInput!: InputEvent;
+    act(() => {
+      beforeInput = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        tableBoundaryTargetRange(firstText, 0, firstText, 0)
+      );
+    });
+    expect(beforeInput.defaultPrevented).toBe(true);
+    // The previous cell in reading order is the same row's first cell.
+    expect(fixture.history.getValue()).toBe(
+      inlineTableMarkdown.replace('| d | one<br>two |', '|  | one<br>two |')
+    );
+    expect(dText.data).toBe('');
+    expect(tableCaretTrace(fixture.surface)).toEqual({ cell: 4, offset: 0 });
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('keeps every table walk press caret-stable, selection-consistent and re-render-free', async () => {
+  vi.useFakeTimers();
+  const fixture = createEditableTableFixture();
+  const settle = async (): Promise<void> => {
+    await act(async () => {
+      vi.advanceTimersByTime(160);
+      await Promise.resolve();
+    });
+  };
+  try {
+    fixture.surface.focus();
+    const { cells } = editableTableSurfaceParts(fixture.surface);
+    const [, tail, one, two] = cells;
+    if (!tail || !one || !two) throw new Error('editable-table-cell-missing');
+    const oneText = tableCellText(one);
+    const tailText = tableCellText(tail);
+    const topLevelChurn: MutationRecord[] = [];
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        if ('childList' === record.type && record.target === fixture.surface) {
+          topLevelChurn.push(record);
+        }
+      }
+    });
+    observer.observe(fixture.surface, { childList: true, subtree: true });
+    const trace: Array<Readonly<{ cell: number; offset: number }>> = [];
+    const expectSettledSelection = (): void => {
+      trace.push(tableCaretTrace(fixture.surface));
+      const source = fixture.history.getValue();
+      const visual = serializeVisualMarkdown(fixture.surface);
+      const mapped = visualMarkdown.visualSelectionSourceRange(
+        fixture.surface,
+        source,
+        visual,
+        visual
+      );
+      expect(fixture.history.getSelection()).toEqual({
+        direction: 'none',
+        end: mapped.end,
+        start: mapped.start
+      });
+      expect(fixture.surface.getAttribute('data-easymde-visual-deletion-repair'))
+        .toBeNull();
+      expect(fixture.onFailure.mock.calls).toEqual([]);
+    };
+
+    // Walk from `two` into `one`, then two ordinary in-cell deletions.
+    expect(pressTableBackspaceAtCellStart(fixture, two, one).defaultPrevented).toBe(true);
+    expectSettledSelection();
+    expect(fullOwnerNativeDelete(fixture.surface, oneText, 1, 2, 'deleteContentBackward').prevented).toBe(false);
+    await settle();
+    expectSettledSelection();
+    expect(fullOwnerNativeDelete(fixture.surface, oneText, 0, 1, 'deleteContentBackward').prevented).toBe(false);
+    await settle();
+    expectSettledSelection();
+    // The emptied cell walks into the previous row's last cell.
+    expect(pressTableBackspaceAtCellStart(fixture, one, tail).defaultPrevented).toBe(true);
+    expectSettledSelection();
+    expect(fullOwnerNativeDelete(fixture.surface, tailText, 2, 3, 'deleteContentBackward').prevented).toBe(false);
+    await settle();
+    expectSettledSelection();
+    observer.disconnect();
+
+    expect(trace).toEqual([
+      { cell: 2, offset: 2 },
+      { cell: 2, offset: 1 },
+      { cell: 2, offset: 0 },
+      { cell: 1, offset: 3 },
+      { cell: 1, offset: 2 }
+    ]);
+    expect(topLevelChurn).toEqual([]);
+    expect(fixture.history.getValue()).toBe(
+      editableTableMarkdown
+        .replace('| one |', '|  |')
+        .replace('| Head | Tail |', '| Head | Ta |')
+    );
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+/** The caret's row (among the table's rows), cell index and text offset. */
+const tableCaretPosition = (
+  surface: HTMLElement
+): Readonly<{ cell: number; offset: number; row: number }> => {
+  const trace = tableCaretTrace(surface);
+  const selection = window.getSelection();
+  const node = selection?.anchorNode;
+  const element = node instanceof Element ? node : node?.parentElement;
+  const cell = element?.closest('td, th') ?? null;
+  const table = cell?.closest('table') ?? null;
+  const row =
+    cell?.parentElement instanceof HTMLTableRowElement
+    && table instanceof HTMLTableElement
+      ? Array.prototype.indexOf.call(table.rows, cell.parentElement)
+      : -1;
+  return { ...trace, row };
+};
+
+// The user's own jump measurement: a body cell whose inline code empties, then
+// the walk has to cross the row boundary into the header row and stop at the
+// table's outer edge.
+const jumpTableMarkdown = [
+  '开头段落…',
+  '',
+  '## 小标题',
+  '',
+  '- item1',
+  '- item2',
+  '',
+  '| 列A | 列B | 列C |',
+  '| --- | --- | --- |',
+  '| `code1` | text2 | 文本三 |',
+  '| a1 | b2 | c3 |',
+  '',
+  '结尾段落…'
+].join('\n');
+
+const jumpTableHtml = (): string => [
+  fullOwnerParagraphBlock('开头段落…', 'b0'),
+  fullOwnerBlock('<h2 id="小标题">小标题</h2>', 'b1'),
+  fullOwnerBlock('<ul><li>item1</li><li>item2</li></ul>', 'b2'),
+  [
+    '<section class="table-container easymde-table-container"',
+    ' data-easymde-visual-block-id="b3">',
+    '<table>',
+    '<thead><tr><th>列A</th><th>列B</th><th>列C</th></tr></thead>',
+    '<tbody>',
+    '<tr><td><code>code1</code></td><td>text2</td><td>文本三</td></tr>',
+    '<tr><td>a1</td><td>b2</td><td>c3</td></tr>',
+    '</tbody>',
+    '</table>',
+    '</section>'
+  ].join(''),
+  fullOwnerParagraphBlock('结尾段落…', 'b4'),
+  ''
+].join('\n');
+
+function createJumpTableFixture() {
+  const signature = 'jump-table-walk';
+  return createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { startLine: 0, endLine: 1, id: 'b0' },
+      { startLine: 2, endLine: 3, id: 'b1' },
+      { startLine: 4, endLine: 6, id: 'b2' },
+      { startLine: 7, endLine: 12, id: 'b3' },
+      { startLine: 13, endLine: 14, id: 'b4' }
+    ]),
+    html: jumpTableHtml(),
+    markdown: jumpTableMarkdown,
+    signature,
+    sourceCaret: jumpTableMarkdown.indexOf('结尾段落')
+  });
+}
+
+it('walks across the row boundary into the header row and stops at the table edge', async () => {
+  vi.useFakeTimers();
+  const fixture = createJumpTableFixture();
+  const settle = async (): Promise<void> => {
+    await act(async () => {
+      vi.advanceTimersByTime(160);
+      await Promise.resolve();
+    });
+  };
+  try {
+    fixture.surface.focus();
+    const table = fixture.surface.querySelector('table');
+    if (!(table instanceof HTMLTableElement)) throw new Error('jump-table-missing');
+    const text2 = table.rows[1]?.cells[1]?.firstChild;
+    if (!(text2 instanceof Text)) throw new Error('jump-text2-missing');
+    placeCaretInText(text2, 0);
+
+    const expected = (
+      header: readonly [string, string, string],
+      code: string
+    ): string =>
+      jumpTableMarkdown
+        .replace('| 列A | 列B | 列C |', `| ${header.join(' | ')} |`)
+        .replace('| `code1` |', `| ${code} |`);
+
+    const trace: Array<Readonly<{ cell: number; offset: number; row: number }>> = [];
+    const values: string[] = [];
+    const prevented: boolean[] = [];
+    for (let press = 0; press < 14; press += 1) {
+      const selection = window.getSelection();
+      const node = selection?.anchorNode;
+      const offset = selection?.anchorOffset ?? 0;
+      const element = node instanceof Element ? node : node?.parentElement;
+      const cell = element?.closest('td, th') ?? null;
+      const cellOffset = (() => {
+        if (!cell) return -1;
+        const range = document.createRange();
+        range.setStart(cell, 0);
+        range.setEnd(node ?? cell, offset);
+        return range.toString().length;
+      })();
+      if (cell && 0 === cellOffset) {
+        // The walk owns a press at a cell's own text start.
+        let beforeInput!: InputEvent;
+        act(() => {
+          beforeInput = fullOwnerDispatchBeforeInput(
+            fixture.surface,
+            { data: null, inputType: 'deleteContentBackward' },
+            fullOwnerTargetRange(node ?? cell, offset, offset)
+          );
+        });
+        prevented.push(beforeInput.defaultPrevented);
+        await settle();
+      } else {
+        // Every other press is the ordinary in-cell deletion.
+        if (!(node instanceof Text) || offset <= 0) {
+          throw new Error('jump-caret-shape-unexpected');
+        }
+        expect(
+          fullOwnerNativeDelete(
+            fixture.surface,
+            node,
+            offset - 1,
+            offset,
+            'deleteContentBackward'
+          ).prevented
+        ).toBe(false);
+        prevented.push(false);
+        await settle();
+      }
+      const position = tableCaretPosition(fixture.surface);
+      trace.push(position);
+      values.push(fixture.history.getValue());
+      // The caret never leaves the table, and the canonical selection always
+      // agrees with the native one.
+      expect(position.row).toBeGreaterThanOrEqual(0);
+      expect(position.cell).toBeGreaterThanOrEqual(0);
+      const source = fixture.history.getValue();
+      const visual = serializeVisualMarkdown(fixture.surface);
+      const mapped = visualMarkdown.visualSelectionSourceRange(
+        fixture.surface,
+        source,
+        visual,
+        visual
+      );
+      expect(fixture.history.getSelection(), `press ${press + 1}`).toEqual({
+        direction: 'none',
+        end: mapped.end,
+        start: mapped.start
+      });
+      expect(fixture.surface.getAttribute('data-easymde-visual-deletion-repair'))
+        .toBeNull();
+      expect(fixture.onFailure.mock.calls).toEqual([]);
+      expect(fixture.onDiagnostic.mock.calls).toEqual([]);
+    }
+
+    // Press 1 walks into the code cell; 2-5 empty it (the last one retires the
+    // span); 6 walks into the header's last cell; 7 empties it; 8 into `列B`;
+    // 9 empties it; 10 into `列A`; 11 empties it; 12-14 sit on the table's
+    // outer edge and stay there.
+    expect(trace, JSON.stringify(trace)).toEqual([
+      { cell: 3, offset: 4, row: 1 },
+      { cell: 3, offset: 3, row: 1 },
+      { cell: 3, offset: 2, row: 1 },
+      { cell: 3, offset: 1, row: 1 },
+      { cell: 3, offset: 0, row: 1 },
+      { cell: 2, offset: 1, row: 0 },
+      { cell: 2, offset: 0, row: 0 },
+      { cell: 1, offset: 1, row: 0 },
+      { cell: 1, offset: 0, row: 0 },
+      { cell: 0, offset: 1, row: 0 },
+      { cell: 0, offset: 0, row: 0 },
+      { cell: 0, offset: 0, row: 0 },
+      { cell: 0, offset: 0, row: 0 },
+      { cell: 0, offset: 0, row: 0 }
+    ]);
+    expect(prevented).toEqual([
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true
+    ]);
+    expect(values).toEqual([
+      expected(['列A', '列B', '列C'], '`code`'),
+      expected(['列A', '列B', '列C'], '`cod`'),
+      expected(['列A', '列B', '列C'], '`co`'),
+      expected(['列A', '列B', '列C'], '`c`'),
+      expected(['列A', '列B', '列C'], ''),
+      expected(['列A', '列B', '列'], ''),
+      expected(['列A', '列B', ''], ''),
+      expected(['列A', '列', ''], ''),
+      expected(['列A', '', ''], ''),
+      expected(['列', '', ''], ''),
+      expected(['', '', ''], ''),
+      expected(['', '', ''], ''),
+      expected(['', '', ''], ''),
+      expected(['', '', ''], '')
+    ]);
+    expect(fixture.history.getValue()).toBe(
+      expected(['', '', ''], '')
+    );
+    expect(fixture.surface.querySelector('table')).toBe(table);
     expect(fixture.runtime().isEditable()).toBe(true);
   } finally {
     fixture.unmount();
@@ -35227,6 +36082,283 @@ it('keeps a document-start heading a silent no-op', () => {
 });
 
 /**
+ * A plain paragraph's own start is the same structural boundary a marker row
+ * has: the paragraph owns no character before its first one, and the only
+ * bytes in front of it are the separator that terminates the block above.
+ * Chromium names that press with the row's own element endpoint, which no text
+ * projection can describe, so no native join witness exists and the structural
+ * join owner has to place it. These cases pin the four join targets a plain
+ * paragraph can have - a paragraph, an ATX heading, a list item and a quote
+ * row - plus the document-start paragraph, which has nothing to join into.
+ */
+const PARAGRAPH_ROW_PLAIN_MARKDOWN = 'A\n\nB\n';
+
+it('joins a plain paragraph at its start into the paragraph before it', () => {
+  vi.useFakeTimers();
+  // Hand-computed from the fixture text alone: the separator `\n\n` is source
+  // 1..3 and the caret sits at 3, so the join removes exactly those two bytes
+  // and lands the caret at the seam, offset 1.
+  const signature = 'paragraph-row-plain-start';
+  const markdown = PARAGRAPH_ROW_PLAIN_MARKDOWN;
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { startLine: 0, endLine: 1, id: 'b0' },
+      { startLine: 2, endLine: 3, id: 'b1' }
+    ]),
+    html: fullOwnerParagraphBlock('A', 'b0') + fullOwnerParagraphBlock('B', 'b1'),
+    markdown,
+    signature,
+    sourceCaret: 0
+  });
+  try {
+    fixture.surface.focus();
+    const row = fixture.surface.querySelectorAll('p')[1];
+    const text = row?.firstChild;
+    if (!(row instanceof HTMLParagraphElement) || !(text instanceof Text)) {
+      throw new Error('paragraph-row-plain-fixture-invalid');
+    }
+    expect(text.data).toBe('B');
+    const historyBefore = fixture.history.getHistoryState();
+    const boundary = pressRowStartJoin(fixture.surface, row, text);
+    expect(boundary.defaultPrevented, 'the boundary press is owned').toBe(true);
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue(), 'only the separator is gone').toBe('AB\n');
+    expect(fixture.history.getSelection(), 'the caret sits at the join seam')
+      .toEqual({ direction: 'none', end: 1, start: 1 });
+    expect(
+      fixture.history.getHistoryState().undoDepth,
+      'the join is one history entry'
+    ).toBe(historyBefore.undoDepth + 1);
+    expect(fixture.onFailure.mock.calls, 'the boundary press reports no failure')
+      .toEqual([]);
+    const joined = fixture.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b0"]'
+    );
+    expect(joined?.textContent, 'the paragraph joined into the block above')
+      .toBe('AB');
+    expect(fixture.surface.querySelectorAll('p'), 'the joined row is gone')
+      .toHaveLength(1);
+    // One press beyond: the joined text is ordinary editable text again.
+    const joinedText = joined?.firstChild;
+    if (!(joinedText instanceof Text)) {
+      throw new Error('paragraph-row-plain-joined-missing');
+    }
+    const beyond = fullOwnerNativeDelete(
+      fixture.surface,
+      joinedText,
+      0,
+      1,
+      'deleteContentBackward'
+    );
+    expect(beyond.prevented, 'the next press is an ordinary native edit').toBe(false);
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue(), 'the next press still acts').toBe('B\n');
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', end: 0, start: 0 });
+    expect(fixture.onFailure.mock.calls, 'no press reports a failure').toEqual([]);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('joins a plain paragraph at its start into the heading before it', () => {
+  vi.useFakeTimers();
+  // A heading is a text join target of its own: the paragraph's inline content
+  // is appended to the heading's text, so `## H` plus `B` is `## HB`. The
+  // separator `\n\n` is source 4..6 and the caret sits at 6, which is the
+  // heading row's line end; the seam is offset 4, between `H` and `B`.
+  const signature = 'paragraph-row-heading-before';
+  const markdown = '## H\n\nB\n';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { startLine: 0, endLine: 1, id: 'b0' },
+      { startLine: 2, endLine: 3, id: 'b1' }
+    ]),
+    html: fullOwnerBlock('<h2>H</h2>', 'b0') + fullOwnerParagraphBlock('B', 'b1'),
+    markdown,
+    signature,
+    sourceCaret: 0
+  });
+  try {
+    fixture.surface.focus();
+    const row = fixture.surface.querySelectorAll('p')[0];
+    const text = row?.firstChild;
+    if (!(row instanceof HTMLParagraphElement) || !(text instanceof Text)
+      || row.previousElementSibling?.tagName !== 'H2') {
+      throw new Error('paragraph-row-heading-fixture-invalid');
+    }
+    const historyBefore = fixture.history.getHistoryState();
+    const boundary = pressRowStartJoin(fixture.surface, row, text);
+    expect(boundary.defaultPrevented, 'the boundary press is owned').toBe(true);
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue(), 'the paragraph joined the heading text')
+      .toBe('## HB\n');
+    expect(fixture.history.getSelection(), 'the caret sits at the join seam')
+      .toEqual({ direction: 'none', end: 4, start: 4 });
+    expect(
+      fixture.history.getHistoryState().undoDepth,
+      'the join is one history entry'
+    ).toBe(historyBefore.undoDepth + 1);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    const heading = fixture.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b0"]'
+    );
+    expect(heading?.tagName, 'the block above keeps its own kind').toBe('H2');
+    expect(heading?.textContent, 'the heading text carries the joined text')
+      .toBe('HB');
+    expect(fixture.surface.querySelectorAll('p')).toHaveLength(0);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('joins a plain paragraph at its start into the list item before it', () => {
+  vi.useFakeTimers();
+  // The block above the paragraph is a list, whose join target is its last
+  // item: `- I` plus `B` is `- IB`, with the list and the item kept. The
+  // separator `\n\n` is source 3..5 and the seam is offset 3.
+  const signature = 'paragraph-row-list-before';
+  const markdown = '- I\n\nB\n';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { startLine: 0, endLine: 1, id: 'b0' },
+      { startLine: 2, endLine: 3, id: 'b1' }
+    ]),
+    html: fullOwnerBlock('<ul><li>I</li></ul>', 'b0') + fullOwnerParagraphBlock('B', 'b1'),
+    markdown,
+    signature,
+    sourceCaret: 0
+  });
+  try {
+    fixture.surface.focus();
+    const row = fixture.surface.querySelectorAll('p')[0];
+    const text = row?.firstChild;
+    if (!(row instanceof HTMLParagraphElement) || !(text instanceof Text)
+      || row.previousElementSibling?.tagName !== 'UL') {
+      throw new Error('paragraph-row-list-fixture-invalid');
+    }
+    const historyBefore = fixture.history.getHistoryState();
+    const boundary = pressRowStartJoin(fixture.surface, row, text);
+    expect(boundary.defaultPrevented, 'the boundary press is owned').toBe(true);
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue(), 'the paragraph joined the item text')
+      .toBe('- IB\n');
+    expect(fixture.history.getSelection(), 'the caret sits at the join seam')
+      .toEqual({ direction: 'none', end: 3, start: 3 });
+    expect(
+      fixture.history.getHistoryState().undoDepth,
+      'the join is one history entry'
+    ).toBe(historyBefore.undoDepth + 1);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(
+      fixture.surface.querySelector<HTMLElement>('li')?.textContent,
+      'the item carries the joined text'
+    ).toBe('IB');
+    expect(fixture.surface.querySelectorAll('p')).toHaveLength(0);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('joins a plain paragraph at its start into the quote before it', () => {
+  vi.useFakeTimers();
+  // The reported shape: a paragraph whose block above is a quote row. The
+  // quote's join target is its own inner paragraph, so `> Q` plus `B` is
+  // `> QB` with the quote kept. The separator `\n\n` is source 3..5 and the
+  // seam is offset 3, right after the quote text.
+  const signature = 'paragraph-row-quote-before';
+  const markdown = '> Q\n\nB\n';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { startLine: 0, endLine: 1, id: 'b0' },
+      { startLine: 2, endLine: 3, id: 'b1' }
+    ]),
+    html: fullOwnerBlock('<blockquote><p>Q</p></blockquote>', 'b0')
+      + fullOwnerParagraphBlock('B', 'b1'),
+    markdown,
+    signature,
+    sourceCaret: 0
+  });
+  try {
+    fixture.surface.focus();
+    const row = fixture.surface.querySelectorAll('p')[1];
+    const text = row?.firstChild;
+    if (!(row instanceof HTMLParagraphElement) || !(text instanceof Text)
+      || row.previousElementSibling?.tagName !== 'BLOCKQUOTE') {
+      throw new Error('paragraph-row-quote-fixture-invalid');
+    }
+    const historyBefore = fixture.history.getHistoryState();
+    const boundary = pressRowStartJoin(fixture.surface, row, text);
+    expect(boundary.defaultPrevented, 'the boundary press is owned').toBe(true);
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue(), 'the paragraph joined the quote text')
+      .toBe('> QB\n');
+    expect(fixture.history.getSelection(), 'the caret sits at the join seam')
+      .toEqual({ direction: 'none', end: 3, start: 3 });
+    expect(
+      fixture.history.getHistoryState().undoDepth,
+      'the join is one history entry'
+    ).toBe(historyBefore.undoDepth + 1);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(
+      fixture.surface.querySelector<HTMLElement>('blockquote')?.textContent,
+      'the quote carries the joined text'
+    ).toBe('QB');
+    expect(fixture.surface.querySelectorAll('p')).toHaveLength(1);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('keeps a document-start plain paragraph a silent no-op', () => {
+  vi.useFakeTimers();
+  // A paragraph that opens the document has no block before it, so there is
+  // nothing to join into: the press writes no byte, moves no caret and reports
+  // no failure code.
+  const signature = 'paragraph-row-document-start';
+  const markdown = 'B\n';
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]),
+    html: fullOwnerParagraphBlock('B', 'b0'),
+    markdown,
+    signature,
+    sourceCaret: 0
+  });
+  try {
+    fixture.surface.focus();
+    const row = fixture.surface.querySelector('p');
+    const text = row?.firstChild;
+    if (!(row instanceof HTMLParagraphElement) || !(text instanceof Text)) {
+      throw new Error('paragraph-row-document-start-fixture-invalid');
+    }
+    const before = fixture.history.getSelection();
+    const historyBefore = fixture.history.getHistoryState();
+    act(() => {
+      pressRowStartJoin(fixture.surface, row, text);
+    });
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.history.getValue(), 'no byte is written').toBe(markdown);
+    expect(fixture.history.getSelection(), 'the caret does not move').toEqual(before);
+    expect(
+      fixture.history.getHistoryState().undoDepth,
+      'no history entry'
+    ).toBe(historyBefore.undoDepth);
+    expect(fixture.onFailure.mock.calls, 'nothing is reported').toEqual([]);
+    expect(fixture.surface.querySelector('p'), 'the row is untouched').toBe(row);
+    expect(row.firstChild).toBe(text);
+    const selection = window.getSelection();
+    expect(selection?.anchorNode).toBe(text);
+    expect(selection?.anchorOffset).toBe(0);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+/**
  * The reported shape: a characterwise Backspace run walks a list item's text
  * down to nothing, and the press after it lands on the emptied item.
  *
@@ -43823,6 +44955,426 @@ describe('ImmersiveVisualEditor deletion refusal policy', () => {
       expect(
         fixture.surface.getAttribute('data-easymde-visual-deletion-repair')
       ).toBeNull();
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  });
+});
+
+/**
+ * The reported stall: a paragraph whose source line ends with a space, and
+ * whose block is followed by another one.
+ *
+ * The serializer drops a block-terminal space, so the accepted baseline spells
+ * that paragraph without it while the surface and the canonical source both
+ * keep it. A caret at the run's own end therefore names a boundary the
+ * alignment can only describe through the hidden range the trimmed space left
+ * behind, and a press it could not describe was refused: nothing was written,
+ * no failure was reported, and every later press at that caret was refused the
+ * same way - the block simply stopped deleting.
+ *
+ * Both spellings of that space are covered here, because both occur in one real
+ * burst: the browser respells the now-terminal space as an NBSP, and the
+ * accepted render spells it back as the ASCII space the source carries.
+ */
+it('deletes a paragraph block-terminal space the serializer trims, and the block after it still deletes', async () => {
+  vi.useFakeTimers();
+  const signature = 'terminal-space-paragraph-deletion';
+  const run = '支持 Emoji：😀 😎 🎉 🔥 💡 ✅';
+  const markdown = `${run} \n\nNext para\n`;
+  const fixture = createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { endLine: 1, id: 'b0', startLine: 0 },
+      { endLine: 3, id: 'b1', startLine: 2 }
+    ]),
+    html: fullOwnerParagraphBlock(`${run} `, 'b0')
+      + fullOwnerParagraphBlock('Next para', 'b1'),
+    markdown,
+    signature,
+    sourceCaret: 0
+  });
+  const settle = async (): Promise<void> => {
+    await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); });
+  };
+  try {
+    fixture.surface.focus();
+    const text = fullOwnerTextAt(
+      fixture.surface,
+      '[data-easymde-visual-block-id="b0"]'
+    );
+    expect(text.data).toBe(`${run} `);
+    // The browser's own spelling of a space that just became the run's last
+    // character: the first Backspace deletes it, not the letter before it.
+    text.replaceData(text.length - 1, 1, '\u00a0');
+    const space = fullOwnerNativeDelete(
+      fixture.surface,
+      text,
+      text.length - 1,
+      text.length,
+      'deleteContentBackward'
+    );
+    expect(space.prevented, 'the terminal space is an ordinary deletion').toBe(false);
+    await settle();
+    expect(fixture.history.getValue(), 'exactly the space is gone')
+      .toBe(`${run}\n\nNext para\n`);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(
+      fixture.surface.getAttribute('data-easymde-visual-deletion-repair'),
+      'nothing was refused'
+    ).toBeNull();
+    expect(fixture.runtime().isEditable()).toBe(true);
+
+    // The same block keeps deleting: the letter before the space is now the
+    // run's own end, in the accepted render's ASCII spelling.
+    const letter = fullOwnerNativeDelete(
+      fixture.surface,
+      text,
+      text.length - 1,
+      text.length,
+      'deleteContentBackward'
+    );
+    expect(letter.prevented, 'the next press is an ordinary deletion').toBe(false);
+    await settle();
+    expect(fixture.history.getValue()).toBe(`${run.slice(0, -1)}\n\nNext para\n`);
+
+    // And so does the block after it: one refused press may never leave the
+    // rest of the document unable to delete.
+    const next = fullOwnerTextAt(
+      fixture.surface,
+      '[data-easymde-visual-block-id="b1"]'
+    );
+    const following = fullOwnerNativeDelete(
+      fixture.surface,
+      next,
+      next.length - 1,
+      next.length,
+      'deleteContentBackward'
+    );
+    expect(following.prevented, 'the following block is unaffected').toBe(false);
+    await settle();
+    expect(fixture.history.getValue()).toBe(`${run.slice(0, -1)}\n\nNext par\n`);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+/**
+ * The reported shape: a characterwise Backspace run walks a heading's text down
+ * to nothing, and the press after it lands on the emptied row.
+ *
+ * A marker-only heading row (`## `) is mounted as a plain empty paragraph, so
+ * the surface holds neither the marker nor a body: the row exists only in the
+ * canonical source. Measured against the live bundle, that press had no owner -
+ * the marker-row join owner refuses a row with no content, the emptied-row
+ * owner only knows list items, and the empty-paragraph owner needs a block
+ * before the row - so the press was a silent no-op and every later press was
+ * the same, with the marker run still standing in the source. The row now
+ * retires from its own accepted block range: the marker run and one separator
+ * beside it, which is the same rule an emptied list item's row uses.
+ */
+describe('emptied heading row marker retirement', () => {
+  it('retires an emptied heading row that is the document\'s only block', () => {
+    vi.useFakeTimers();
+    // Hand-computed from the fixture text alone: `## ` is source 0..3 and the
+    // blank row behind it is 3..5, so both go and the document keeps no bytes.
+    const signature = 'emptied-heading-document-only';
+    const markdown = '## \n\n';
+    const fixture = createFullOwnerFixture({
+      editMap: fullOwnerEditMap(signature, [{ endLine: 1, id: 'b0', startLine: 0 }]),
+      html: fullOwnerBlock('<p><br></p>', 'b0'),
+      markdown,
+      signature,
+      sourceCaret: 3
+    });
+    try {
+      fixture.surface.focus();
+      const emptied = fixture.surface.querySelector('[data-easymde-visual-block-id="b0"]');
+      if (!(emptied instanceof HTMLParagraphElement)) {
+        throw new Error('emptied-heading-row-missing');
+      }
+      // The report's caret: on the emptied row itself, at its own offset 0.
+      placeCaretInElement(emptied, 0);
+      const historyBefore = fixture.history.getHistoryState();
+      const before = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(emptied, 0, 0)
+      );
+      expect(before.defaultPrevented, 'the emptied row is owned').toBe(true);
+      act(() => vi.advanceTimersByTime(80));
+      expect(fixture.history.getValue(), 'the marker run and its separator are gone')
+        .toBe('');
+      expect(fixture.history.getSelection(), 'the caret sits in the empty paragraph')
+        .toEqual({ direction: 'none', end: 0, start: 0 });
+      expect(fixture.onFailure.mock.calls, 'the press reports no failure').toEqual([]);
+      expect(fixture.onTransferFailure.mock.calls).toEqual([]);
+      expect(
+        fixture.surface.getAttribute('data-easymde-visual-deletion-repair'),
+        'nothing is re-derived or restored'
+      ).toBeNull();
+      // The existing empty-document state: one paragraph holding its placeholder.
+      const paragraph = fixture.surface.querySelector('p');
+      expect(fixture.surface.childNodes).toHaveLength(1);
+      expect(paragraph?.childNodes).toHaveLength(1);
+      expect(paragraph?.firstChild).toBeInstanceOf(HTMLBRElement);
+      expect(window.getSelection()?.anchorNode).toBe(paragraph);
+      expect(window.getSelection()?.anchorOffset).toBe(0);
+      expect(fixture.runtime().isEditable()).toBe(true);
+      expect(fixture.history.getHistoryState().undoDepth, 'one history entry')
+        .toBe(historyBefore.undoDepth + 1);
+      // One press beyond is the documented empty-document no-op: nothing is
+      // written, nothing is reported, and the editor keeps editing.
+      if (!paragraph) throw new Error('emptied-heading-empty-paragraph-missing');
+      const afterRetirement = fixture.history.getHistoryState();
+      const beyond = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(paragraph, 0, 0)
+      );
+      expect(beyond.defaultPrevented, 'the empty document press is consumed').toBe(true);
+      act(() => vi.advanceTimersByTime(80));
+      expect(fixture.history.getValue(), 'the empty document is not rewritten').toBe('');
+      expect(fixture.history.getSelection()).toEqual({ direction: 'none', end: 0, start: 0 });
+      expect(fixture.history.getHistoryState().undoDepth, 'no history entry for a no-op')
+        .toBe(afterRetirement.undoDepth);
+      expect(fixture.onFailure.mock.calls).toEqual([]);
+      expect(fixture.runtime().isEditable()).toBe(true);
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('joins an emptied heading row into the block before it', () => {
+    vi.useFakeTimers();
+    // Hand-computed: `段落` is source 0..2, the blank row is 2..3 and `## ` is
+    // 3..6, so the press removes 2..6 and leaves `段落\n`.
+    const signature = 'emptied-heading-after-paragraph';
+    const markdown = '段落\n\n## ';
+    const fixture = createFullOwnerFixture({
+      editMap: fullOwnerEditMap(signature, [
+        { endLine: 1, id: 'b0', startLine: 0 },
+        { endLine: 3, id: 'b1', startLine: 2 }
+      ]),
+      html: fullOwnerParagraphBlock('段落', 'b0') + fullOwnerBlock('<p><br></p>', 'b1'),
+      markdown,
+      signature,
+      sourceCaret: 2
+    });
+    try {
+      fixture.surface.focus();
+      const emptied = fixture.surface.querySelectorAll('p')[1];
+      const preceding = fixture.surface.querySelectorAll('p')[0]?.firstChild;
+      if (!(emptied instanceof HTMLParagraphElement) || !(preceding instanceof Text)) {
+        throw new Error('emptied-heading-row-missing');
+      }
+      placeCaretInElement(emptied, 0);
+      const historyBefore = fixture.history.getHistoryState();
+      // The browser names a cross-block press by the preceding row's text tail.
+      const target = document.createRange();
+      target.setStart(preceding, preceding.length);
+      target.setEnd(emptied, 0);
+      const before = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        target
+      );
+      expect(before.defaultPrevented, 'the emptied row is owned').toBe(true);
+      act(() => vi.advanceTimersByTime(80));
+      expect(fixture.history.getValue(), 'the marker and the separator are gone')
+        .toBe('段落\n');
+      expect(fixture.history.getSelection(), 'the caret sits at the seam')
+        .toEqual({ direction: 'none', end: 3, start: 3 });
+      expect(fixture.onFailure.mock.calls, 'the press reports no failure').toEqual([]);
+      expect(fixture.onTransferFailure.mock.calls).toEqual([]);
+      expect(
+        fixture.surface.getAttribute('data-easymde-visual-deletion-repair'),
+        'nothing is re-derived or restored'
+      ).toBeNull();
+      expect(fixture.history.getHistoryState().undoDepth, 'one history entry')
+        .toBe(historyBefore.undoDepth + 1);
+      // The row joined into the paragraph: the surface holds that paragraph
+      // alone, with the caret at the end of its text.
+      const joined = fixture.surface.querySelector<HTMLElement>(
+        '[data-easymde-visual-block-id="b0"]'
+      );
+      expect(joined?.textContent).toBe('段落');
+      expect(fixture.surface.querySelectorAll('p')).toHaveLength(1);
+      const text = joined?.firstChild;
+      if (!(text instanceof Text)) throw new Error('emptied-heading-joined-missing');
+      expect(window.getSelection()?.anchorNode).toBe(text);
+      expect(window.getSelection()?.anchorOffset).toBe(2);
+      // One press beyond: the joined text is ordinary editable text again.
+      const beyond = fullOwnerNativeDelete(fixture.surface, text, 1, 2, 'deleteContentBackward');
+      expect(beyond.prevented, 'the next press is an ordinary native edit').toBe(false);
+      act(() => vi.advanceTimersByTime(80));
+      expect(fixture.history.getValue(), 'the next press still acts').toBe('段\n');
+      expect(fixture.onFailure.mock.calls, 'no press reports a failure').toEqual([]);
+      expect(fixture.runtime().isEditable()).toBe(true);
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('retires a document-start emptied heading row and leaves the next block first', () => {
+    vi.useFakeTimers();
+    // The measured browser shape: the emptied row is the document's first block
+    // and is still the heading element the accepted render mounted
+    // (`<h2><br></h2>`) - the plain empty paragraph only appears after the block
+    // rewrite this press must not perform. `## ` is source 0..3 and the blank
+    // row is 3..5, so both go and `### 三级标题` becomes the first row.
+    const signature = 'emptied-heading-document-start-chain';
+    const markdown = '## \n\n### 三级标题\n';
+    const fixture = createFullOwnerFixture({
+      editMap: fullOwnerEditMap(signature, [
+        { endLine: 1, id: 'b0', startLine: 0 },
+        { endLine: 3, id: 'b1', startLine: 2 }
+      ]),
+      html: fullOwnerBlock('<h2><br></h2>', 'b0')
+        + fullOwnerBlock('<h3>三级标题</h3>', 'b1'),
+      markdown,
+      signature,
+      sourceCaret: 3
+    });
+    try {
+      fixture.surface.focus();
+      const emptied = fixture.surface.querySelector('[data-easymde-visual-block-id="b0"]');
+      if (!(emptied instanceof HTMLHeadingElement)) {
+        throw new Error('emptied-heading-row-missing');
+      }
+      // The caret the browser names on an emptied heading: the element itself
+      // at its own offset 0.
+      placeCaretInElement(emptied, 0);
+      const historyBefore = fixture.history.getHistoryState();
+      // The keydown must leave this press to the structural owner: the block
+      // rewrite it used to perform cannot place a row the renderer never drew,
+      // so it left the canonical source unchanged.
+      expect(
+        pressFullBackspaceKey(fixture.surface),
+        'the empty-block shortcut declines the press'
+      ).toBe(false);
+      expect(emptied.isConnected, 'the row is not rewritten').toBe(true);
+      expect(emptied.tagName).toBe('H2');
+      // The browser's own beforeinput for that same press.
+      const before = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(emptied, 0, 0)
+      );
+      expect(before.defaultPrevented, 'the emptied row is owned').toBe(true);
+      act(() => vi.advanceTimersByTime(80));
+      expect(fixture.history.getValue(), 'the marker row and its separator are gone')
+        .toBe('### 三级标题\n');
+      expect(fixture.history.getSelection(), 'the caret sits at the next row\'s start')
+        .toEqual({ direction: 'none', end: 0, start: 0 });
+      expect(fixture.onFailure.mock.calls, 'the press reports no failure').toEqual([]);
+      expect(fixture.onTransferFailure.mock.calls).toEqual([]);
+      expect(
+        fixture.surface.getAttribute('data-easymde-visual-deletion-repair'),
+        'nothing is re-derived or restored'
+      ).toBeNull();
+      expect(fixture.history.getHistoryState().undoDepth, 'one history entry')
+        .toBe(historyBefore.undoDepth + 1);
+      const heading = fixture.surface.querySelector('h3');
+      expect(fixture.surface.querySelectorAll('p')).toHaveLength(0);
+      expect(fixture.surface.querySelector('h2'), 'the emptied row is gone').toBeNull();
+      expect(heading?.textContent).toBe('三级标题');
+      const headingText = heading?.firstChild;
+      if (!(headingText instanceof Text)) {
+        throw new Error('emptied-heading-next-row-missing');
+      }
+      expect(window.getSelection()?.anchorNode).toBe(headingText);
+      expect(window.getSelection()?.anchorOffset).toBe(0);
+      expect(fixture.runtime().isEditable()).toBe(true);
+      // One press beyond: the row now at the document start is a heading with
+      // content, whose own boundary is the documented silent no-op - no write,
+      // no failure, and the editor keeps editing.
+      placeCaretInText(headingText, 0);
+      const afterRetirement = fixture.history.getHistoryState();
+      const boundary = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(headingText, 0, 0)
+      );
+      expect(boundary.defaultPrevented, 'the boundary press is consumed').toBe(true);
+      act(() => vi.advanceTimersByTime(80));
+      expect(fixture.history.getValue(), 'no byte is written').toBe('### 三级标题\n');
+      expect(fixture.history.getHistoryState().undoDepth, 'no history entry for a no-op')
+        .toBe(afterRetirement.undoDepth);
+      expect(fixture.onFailure.mock.calls).toEqual([]);
+      expect(
+        fixture.surface.getAttribute('data-easymde-visual-deletion-repair'),
+        'nothing is re-derived or restored'
+      ).toBeNull();
+      expect(fixture.surface.querySelector('h3'), 'the row is untouched').toBe(heading);
+      expect(fixture.runtime().isEditable()).toBe(true);
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('retires the emptied heading row the surface spells as a plain empty paragraph', () => {
+    vi.useFakeTimers();
+    // The respelled shape a repaired press leaves behind: the row is a plain
+    // `<p><br></p>` and the accepted map no longer names it, so the row is read
+    // positionally from the source's first row. Hand-computed from the fixture
+    // text alone: `## ` is source 0..3 and the blank row is 3..5.
+    const signature = 'emptied-heading-document-start-respelled';
+    const markdown = '## \n\n### 三级标题\n';
+    const fixture = createFullOwnerFixture({
+      editMap: null,
+      html: fullOwnerBlock('<p><br></p>', 'b0')
+        + fullOwnerBlock('<h3>三级标题</h3>', 'b1'),
+      markdown,
+      signature,
+      sourceCaret: 3
+    });
+    try {
+      fixture.surface.focus();
+      const emptied = fixture.surface.querySelector('[data-easymde-visual-block-id="b0"]');
+      if (!(emptied instanceof HTMLParagraphElement)) {
+        throw new Error('emptied-heading-row-missing');
+      }
+      // The caret the report measured: a P element at offset 0.
+      placeCaretInElement(emptied, 0);
+      const historyBefore = fixture.history.getHistoryState();
+      const before = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(emptied, 0, 0)
+      );
+      expect(before.defaultPrevented, 'the emptied row is owned').toBe(true);
+      act(() => vi.advanceTimersByTime(80));
+      expect(fixture.history.getValue(), 'the marker row and its separator are gone')
+        .toBe('### 三级标题\n');
+      expect(fixture.history.getSelection(), 'the caret sits at the next row\'s start')
+        .toEqual({ direction: 'none', end: 0, start: 0 });
+      expect(fixture.onFailure.mock.calls, 'the press reports no failure').toEqual([]);
+      expect(fixture.onTransferFailure.mock.calls).toEqual([]);
+      expect(
+        fixture.surface.getAttribute('data-easymde-visual-deletion-repair'),
+        'nothing is re-derived or restored'
+      ).toBeNull();
+      expect(fixture.history.getHistoryState().undoDepth, 'one history entry')
+        .toBe(historyBefore.undoDepth + 1);
+      const heading = fixture.surface.querySelector('h3');
+      expect(fixture.surface.querySelectorAll('p')).toHaveLength(0);
+      expect(heading?.textContent).toBe('三级标题');
+      const headingText = heading?.firstChild;
+      if (!(headingText instanceof Text)) {
+        throw new Error('emptied-heading-next-row-missing');
+      }
+      expect(window.getSelection()?.anchorNode).toBe(headingText);
+      expect(window.getSelection()?.anchorOffset).toBe(0);
+      expect(fixture.runtime().isEditable()).toBe(true);
     } finally {
       fixture.unmount();
       vi.useRealTimers();

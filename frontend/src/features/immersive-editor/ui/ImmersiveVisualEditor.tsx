@@ -60,6 +60,7 @@ import {
   visualStructuralParagraphInsertion,
   visualBlockShortcutRewriteTarget,
   visualBlockShortcutRewritesEmptyBlock,
+  visualEmptiedInlineCodeSourceRange,
   visualEmptiedTerminalRow,
   placeVisualStructuralBoundarySelection,
   prepareVisualThematicBreakPointerSelection,
@@ -103,6 +104,8 @@ import {
   serializeVisualMarkdown,
   serializeVisualMarkdownBlockFragment,
   structuralEmptyLineRemoval,
+  emptiedHeadingRowRemoval,
+  firstEmptiedHeadingRowRemoval,
   type VisualCodeBodyInterval,
   type VisualCodeBodyIntervalWitness,
   type VisualCodeInputSnapshot,
@@ -131,6 +134,7 @@ import {
   visualSelectionVisualOffset,
   visualSerializationMatchesCommitted,
   visualStructuralBodyIsEmpty,
+  visualTableDeletionWalk,
   isVisualThematicBreakSource,
   visualThematicBreakSourceSelection,
   visualThematicBreakTarget,
@@ -1647,9 +1651,15 @@ function caretAtVisualRootStart(block: HTMLElement): boolean {
 
 /**
  * The row a Backspace at its own visual start has to join into the block
- * before it: a list item, whose source row carries the list marker, an ATX
- * heading, whose row carries its `#`..`######` marker, or a block whose row
- * carries a quote marker.
+ * before it, and whether that row's own canonical bytes open with a block
+ * marker.
+ *
+ * A marker row is a list item, whose source row carries the list marker, an
+ * ATX heading, whose row carries its `#`..`######` marker, or a block whose row
+ * carries a quote marker. A plain paragraph is the same structural boundary
+ * without a marker of its own: its first character is editable, but nothing
+ * precedes it in its row, so the only bytes in front of the caret are the
+ * separator that terminates the block above.
  *
  * Such a row owns no editable character at its start. The marker and the
  * separator that terminates the block above are renderer syntax, so the press
@@ -1658,7 +1668,9 @@ function caretAtVisualRootStart(block: HTMLElement): boolean {
  * spells that range with an ELEMENT endpoint (the row, or the row's own first
  * text run at offset 0), which no text projection can describe.
  */
-function visualMarkerRowAtCaret(surface: HTMLElement): HTMLElement | null {
+function visualJoinRowAtCaret(
+  surface: HTMLElement
+): Readonly<{ markerBearing: boolean; row: HTMLElement }> | null {
   const selection = surface.ownerDocument.defaultView?.getSelection();
   if (
     !selection?.isCollapsed
@@ -1679,21 +1691,35 @@ function visualMarkerRowAtCaret(surface: HTMLElement): HTMLElement | null {
     // canonical row opens with `#{1,6}` and the renderer draws no marker for
     // it, so its own start is the same structural boundary.
     if (/^H[1-6]$/u.test(element.tagName)) break;
+    // A plain paragraph is a structural row only as the surface's own child:
+    // the paragraphs inside a quote or a list item already belong to their
+    // container's row.
+    if (element instanceof HTMLParagraphElement
+      && element.parentElement === surface) break;
     const parent: HTMLElement | null = element.parentElement;
     if (!parent || parent === surface) return null;
     if ('BLOCKQUOTE' === parent.tagName) break;
     element = parent;
   }
   const row = element;
-  const parent = row.parentElement;
-  if (!parent) return null;
-  const markerBearing =
-    (row instanceof HTMLLIElement && ['OL', 'UL'].includes(parent.tagName))
-    || 'BLOCKQUOTE' === parent.tagName
-    || /^H[1-6]$/u.test(row.tagName);
-  if (!markerBearing) return null;
+  if (!row.parentElement) return null;
   // Nothing may already be rendered before the caret inside its own row.
-  return caretAtVisualRootStart(row) ? row : null;
+  if (!caretAtVisualRootStart(row)) return null;
+  return { markerBearing: visualRowCarriesMarker(row), row };
+}
+
+/**
+ * Whether this row's own canonical bytes open with a block marker: a list
+ * item's `- `/`1. `, a quote row's `> ` or an ATX heading's `#{1,6}`. A plain
+ * paragraph carries none, so the only bytes in front of its first character
+ * are the separator that terminates the block above it.
+ */
+function visualRowCarriesMarker(row: HTMLElement): boolean {
+  const parent = row.parentElement;
+  return (row instanceof HTMLLIElement && null !== parent
+      && ['OL', 'UL'].includes(parent.tagName))
+    || (null !== parent && 'BLOCKQUOTE' === parent.tagName)
+    || /^H[1-6]$/u.test(row.tagName);
 }
 
 /**
@@ -1734,7 +1760,7 @@ function collapsePlaceholderBodyCaret(
  * checkbox) or a protected region. Anything else keeps the press as the silent
  * no-op rather than guess at a spelling.
  */
-function visualJoinableMarkerRow(row: HTMLElement): boolean {
+function visualJoinableRow(row: HTMLElement): boolean {
   if (!['P', 'LI'].includes(row.tagName) && !/^H[1-6]$/u.test(row.tagName)) {
     return false;
   }
@@ -1792,17 +1818,39 @@ function visualJoinAppendTarget(target: HTMLElement): HTMLElement | null {
 }
 
 /**
+ * The inline container a row at its own start joins into: the append target of
+ * the block before it, or null when there is no such block or it cannot hold
+ * text.
+ */
+function visualJoinAppendTargetBefore(
+  surface: HTMLElement,
+  row: HTMLElement
+): HTMLElement | null {
+  const target = visualJoinTargetBefore(surface, row);
+  return target ? visualJoinAppendTarget(target) : null;
+}
+
+/**
  * Whether the canonical bytes between two joined blocks are exactly the row
  * separators and the joined row's own block markers - the only bytes a
  * structural join may remove. A quote row's own empty continuation line is a
  * marker too, so line endings and markers may interleave, and an ATX heading's
  * run is `#{1,6}` (its optional closing run sits after the caret, on the row
- * itself, never in these bytes). Any other spelling - a hard break's trailing
- * spaces, a task checkbox, an authored character - is not this join.
+ * itself, never in these bytes). A plain paragraph row carries no marker of
+ * its own, so in front of it only the separator's own line endings may go; a
+ * space run there is the block above's trailing syntax (a hard break), which
+ * this join never removes. Any other spelling - a task checkbox, an authored
+ * character - is not this join.
  */
-function visualJoinMarkerRun(removed: string): boolean {
-  return /^(?:(?:\r\n|\r|\n)|[ \t]|[-+*#>]|\d{1,9}[.)])+$/u.test(removed)
-    && /(?:[-+*#>]|\d{1,9}[.)])/u.test(removed);
+function visualJoinMarkerRun(
+  removed: string,
+  markerBearing: boolean
+): boolean {
+  if (!/^(?:(?:\r\n|\r|\n)|[ \t]|[-+*#>]|\d{1,9}[.)])+$/u.test(removed)) {
+    return false;
+  }
+  if (/(?:[-+*#>]|\d{1,9}[.)])/u.test(removed)) return true;
+  return !markerBearing && /^(?:\r\n|\r|\n)+$/u.test(removed);
 }
 
 /**
@@ -1830,6 +1878,62 @@ function joinVisualMarkerRow(
     emptied.remove();
     emptied = parent;
   }
+}
+
+/**
+ * The canonical bytes an emptied heading row still stands for, or null when
+ * this row is not one.
+ *
+ * The renderer draws no marker for an emptied heading, so the row exists only
+ * in the source: the surface holds either the heading element itself with a
+ * placeholder, or the plain empty paragraph a repaired press left in its place.
+ * The row is placed by its own block identity and the accepted map's line range
+ * rather than by its DOM, and when that map no longer names it, the document's
+ * first block is read positionally from the source's first row. Such a row
+ * holds no content to move into the block above, so retiring it is the row and
+ * one separator beside it - the same rule an emptied list item's row uses.
+ */
+function emptiedHeadingRowRetirement(
+  surface: HTMLElement,
+  row: HTMLElement | null,
+  sourceMarkdown: string | null,
+  editMap: PreviewEditMap | null | undefined
+): Readonly<{ caret: number; end: number; start: number }> | null {
+  if (
+    !row
+    || null === sourceMarkdown
+    || !(
+      row instanceof HTMLParagraphElement
+      || /^H[1-6]$/u.test(row.tagName)
+    )
+    || row.parentElement !== surface
+    || '' !== (row.textContent ?? '').trim()
+    || Array.from(row.children).some(
+      (child) => !(child instanceof HTMLBRElement)
+    )
+  ) return null;
+  const index = Array.prototype.indexOf.call(surface.childNodes, row);
+  const block = index < 0
+    ? undefined
+    : visualStructuralBoundarySurfaceBlocks(
+        surface,
+        sourceMarkdown,
+        editMap
+      )[index];
+  if (block?.editable) {
+    const removal = emptiedHeadingRowRemoval(
+      sourceMarkdown,
+      block.start,
+      block.end
+    );
+    if (removal) return removal;
+  }
+  // The accepted map may not name the row at all: the marker is never drawn,
+  // and a repaired press drops the map. The document's first mounted block is
+  // still the source's first block, so that row is read positionally instead.
+  return null === row.previousElementSibling
+    ? firstEmptiedHeadingRowRemoval(sourceMarkdown)
+    : null;
 }
 
 /**
@@ -8519,6 +8623,15 @@ export function ImmersiveVisualEditor({
     );
     if (!joinRoot || 'P' !== joinRoot.tagName) return;
     if (joinRoot.parentElement !== surface) return;
+    // An emptied heading row carries its marker run only in the source, so the
+    // browser's own join has no byte of its own to prove: the structural owner
+    // below retires the row from its accepted range instead.
+    if (emptiedHeadingRowRetirement(
+      surface,
+      joinRoot,
+      sourceMarkdown,
+      previewSnapshotRef.current.editMap
+    )) return;
     const nonemptyJoin = '' !== (joinRoot.textContent ?? '').trim();
     let mergedRoot: HTMLElement | undefined;
     let textJoin: Readonly<{
@@ -18083,6 +18196,17 @@ const failVisualSynchronization = useCallback(
             // hides, which no separator proof can cross.
             const baseline = serializedSurface === visual || terminalEmptyParagraphSpelling ? visual : serializedSurface;
             const terminalBlock = null === gap.nextElementSibling;
+            // A block the renderer mounts for a marker-only heading row holds
+            // no text at all, so the marker run exists only in the source. The
+            // row is read from the block's accepted range; when it is one, the
+            // row itself - not just the separator in front of it - is what this
+            // press removes.
+            const emptiedHeadingRow = emptiedHeadingRowRetirement(
+              surface,
+              gap instanceof HTMLElement ? gap : null,
+              source,
+              previewSnapshotRef.current.editMap
+            );
             const emptiedRow = terminalBlock
               ? visualEmptiedTerminalRow(source)
               : null;
@@ -18100,7 +18224,13 @@ const failVisualSynchronization = useCallback(
             if (null === boundary) throw new Error('visual-editor-selection-map-failed');
             const next = gap.nextElementSibling;
             let value: string;
-            if (emptiedRow) {
+            if (emptiedHeadingRow) {
+              // The emptied heading's row is marker-only: its marker run and
+              // one separator beside it are the whole of what the block stands
+              // for, so both go with the block.
+              value = source.slice(0, emptiedHeadingRow.start)
+                + source.slice(emptiedHeadingRow.end);
+            } else if (emptiedRow) {
               // The row the emptied block still occupies goes with it, together
               // with the separator that terminated the document behind it.
               value = source.slice(0, emptiedRow.start);
@@ -18119,7 +18249,14 @@ const failVisualSynchronization = useCallback(
                   : '')
                 + source.slice(separator.end);
             }
-            const selection = { direction: 'none' as const, start: boundary, end: boundary };
+            // The row's own start is the canonical boundary the press leaves.
+            // When the row and a separator in front of it went together, that
+            // start can sit past the shortened document; the caret is then the
+            // document end itself.
+            const caret = emptiedHeadingRow
+              ? Math.min(boundary, value.length)
+              : boundary;
+            const selection = { direction: 'none' as const, start: caret, end: caret };
             const preceding = gap.previousElementSibling;
             gap.remove();
             if (elementPress) {
@@ -18483,9 +18620,10 @@ const failVisualSynchronization = useCallback(
           if (claimed) return;
         }
       }
-      // A Backspace at the visual start of a marker row - a list item's `- `,
-      // a quote row's `>` - has no editable character of its own to delete:
-      // the marker and the separator that terminates the block above are
+      // A Backspace at the visual start of a structural row - a list item's
+      // `- `, a quote row's `>`, or a plain paragraph's own first character -
+      // has no editable character of its own to delete: the marker (when the
+      // row has one) and the separator that terminates the block above are
       // renderer syntax. Chromium's default merges the row into the block
       // before it, which is a structural change this owner must place in the
       // canonical source; left unclaimed, that default rewrites a window the
@@ -18502,21 +18640,47 @@ const failVisualSynchronization = useCallback(
         && !event.isComposing && !composing && !pendingComposition
         && !event.defaultPrevented && !pendingTransferRef.current
         && null === pendingNativeOperationRef.current) {
-        const row = visualMarkerRowAtCaret(surface);
+        const joinRow = visualJoinRowAtCaret(surface);
+        const row = joinRow?.row ?? null;
         const direct = row?.previousElementSibling ?? null;
         // A row whose own previous sibling is a fence line abuts that fence:
         // the paragraph-after-fence owner keeps that boundary, refusal
         // included. Every other boundary in front of a marker row has no other
         // owner, so this one claims it rather than leave the press unowned.
+        //
+        // A plain paragraph's own start is also the emptied-row owner's
+        // boundary and the fence and table edges', so it is claimed only when
+        // this join can actually place it: a joinable row with a block before
+        // it that holds text. A press this owner does not claim keeps its
+        // existing owner; one it claims but cannot prove stays the silent
+        // no-op it always was.
+        // An emptied heading row is mounted as a plain empty paragraph, so its
+        // marker run lives only in the source and the row's own DOM cannot name
+        // it. The row is read from its accepted block range instead, and the
+        // claim below re-proves it after the flush.
+        const emptiedHeading = null === joinRow || joinRow.markerBearing
+          ? null
+          : emptiedHeadingRowRetirement(
+              surface,
+              row,
+              sourceMarkdownRef.current,
+              previewSnapshotRef.current.editMap
+            );
+        const claimable = null !== joinRow && (
+          joinRow.markerBearing
+          || null !== emptiedHeading
+          || (visualJoinableRow(joinRow.row)
+            && null !== visualJoinAppendTargetBefore(surface, joinRow.row))
+        );
         const abutting = direct instanceof HTMLPreElement;
-        if (row && !abutting) {
+        if (row && !abutting && claimable) {
           event.preventDefault();
           try {
             if (!flushVisualInput()) return;
             // The flush may have committed an earlier key and re-rendered this
             // window; a row that is no longer the caret's own row is not this
             // press's row.
-            if (visualMarkerRowAtCaret(surface) !== row) return;
+            if (visualJoinRowAtCaret(surface)?.row !== row) return;
             const source = sourceMarkdownRef.current;
             const visual = visualMarkdownRef.current;
             const owned = ownedDomRef.current;
@@ -18533,10 +18697,68 @@ const failVisualSynchronization = useCallback(
               throw new Error('visual-editor-canonical-change-dom-stale');
             }
             assertVisualMarkdownReadOnlySnapshot(surface, readOnlySnapshot);
-            if (!visualJoinableMarkerRow(row)) return;
-            const joinTarget = visualJoinTargetBefore(surface, row);
-            if (!joinTarget) return;
-            const appendTarget = visualJoinAppendTarget(joinTarget);
+            // An emptied heading row carries no content of its own: the marker
+            // run and one separator beside it are the whole of what this press
+            // removes, and the row's own block goes with them. The row is the
+            // one the accepted map places, re-proved here against the source
+            // the flush left behind.
+            const emptied = emptiedHeadingRowRetirement(
+              surface,
+              row,
+              source,
+              previewSnapshotRef.current.editMap
+            );
+            if (emptied) {
+              const value = source.slice(0, emptied.start)
+                + source.slice(emptied.end);
+              // A row whose canonical bytes are the whole document must be the
+              // only mounted block; anything else is a surface this press does
+              // not own.
+              if ('' !== value && null === row.previousElementSibling
+                && null === row.nextElementSibling) return;
+              const native = surface.ownerDocument.defaultView?.getSelection();
+              row.remove();
+              if ('' !== value) {
+                placeVisualCaretFromSourceOffset(
+                  surface,
+                  value,
+                  serializeVisualMarkdown(surface),
+                  emptied.caret
+                );
+                // A retirement at the document's start leaves the caret on the
+                // surface edge itself; the first editable boundary is the same
+                // position inside the block that is now first, which is where
+                // the user's next press has to act.
+                normalizeVisualCaretAtDocumentBoundary(surface);
+              } else {
+                // The document's last row is gone; its caret needs a block to
+                // live in. This is the empty-document state every other owner
+                // leaves behind.
+                const paragraph = surface.ownerDocument.createElement('p');
+                paragraph.append(surface.ownerDocument.createElement('br'));
+                surface.replaceChildren(paragraph);
+                native?.collapse(paragraph, 0);
+              }
+              const retained = Array.from(surface.childNodes);
+              synchronizeMarkdown({
+                ownerResult: {
+                  ledger: {
+                    metadata: retained.map(fullOwnedNodeMetadata),
+                    nodes: retained
+                  },
+                  selection: {
+                    direction: 'none',
+                    end: emptied.caret,
+                    start: emptied.caret
+                  },
+                  value
+                }
+              });
+              return;
+            }
+            if (!visualJoinableRow(row)) return;
+            const markerBearing = visualRowCarriesMarker(row);
+            const appendTarget = visualJoinAppendTargetBefore(surface, row);
             if (!appendTarget) return;
             // The caret's own canonical boundary and the end of the block it
             // joins into are the two ends of the bytes this press removes.
@@ -18580,7 +18802,10 @@ const failVisualSynchronization = useCallback(
               } catch { return null; }
               if (null === previousEnd || previousEnd >= caret) return null;
               // Only a row separator and the joined row's own markers may go.
-              if (!visualJoinMarkerRun(source.slice(previousEnd, caret))) {
+              if (!visualJoinMarkerRun(
+                source.slice(previousEnd, caret),
+                markerBearing
+              )) {
                 return null;
               }
               // The row's rendered text ends where its canonical row's text
@@ -19151,6 +19376,17 @@ const failVisualSynchronization = useCallback(
         && intervalMapRecord.visualMarkdown === visualMarkdown
           ? intervalMapRecord.map
           : null;
+      // A caret inside a table cell is owned by the ordered walk, not by the
+      // empty-paragraph fallback this gate guards: the walk states its own
+      // canonical position and never needs the document-wide map.
+      const tableCellCaretSelected = (): boolean => {
+        const selection = surface.ownerDocument.defaultView?.getSelection();
+        const node = selection?.anchorNode;
+        const element = node instanceof Element
+          ? node
+          : node?.parentElement ?? null;
+        return Boolean(element?.closest('td, th'));
+      };
       const hasValidOwnedEmptyParagraph = (): boolean => {
         const gap = ownedEmptyParagraphRef.current;
         if (!gap || null === sourceMarkdown || null === visualMarkdown
@@ -19192,7 +19428,9 @@ const failVisualSynchronization = useCallback(
               ? intervalMapRecord.map
               : null;
         }
-        if (!hasValidOwnedEmptyParagraph()) return;
+        if (!hasValidOwnedEmptyParagraph() && !tableCellCaretSelected()) {
+          return;
+        }
       }
       if (null === sourceMarkdown || null === visualMarkdown) return;
       try {
@@ -19540,6 +19778,66 @@ const failVisualSynchronization = useCallback(
           ) return null;
           return localBoundaryCertificate;
         })();
+        const tableCellOf = (node: Node | null): HTMLElement | null => {
+          const element = node instanceof Element
+            ? node
+            : node?.parentElement ?? null;
+          return element?.closest('td, th') ?? null;
+        };
+        const textOffsetWithin = (
+          host: Node,
+          node: Node,
+          offset: number
+        ): number | null => {
+          try {
+            const range = surface.ownerDocument.createRange();
+            range.setStart(host, 0);
+            range.setEnd(node, offset);
+            return range.toString().length;
+          } catch { return null; }
+        };
+        /**
+         * Whether this press sits on a table cell's own content edge. A
+         * table's cells are the only caret-editable runs its canonical rows
+         * spell, so a deletion at a cell's content edge has to cross into the
+         * neighbouring cell in reading order and remove that cell's edge
+         * character there. The edge itself is read from the live cell - the
+         * same position the native default would have merged - and the
+         * canonical walk is resolved after any pending input is committed.
+         *
+         * A protected cell keeps its own refusal: the walk never writes
+         * through a read-only or otherwise non-editable region.
+         */
+        const tableCellDeletionAtEdge = (): boolean => {
+          if (!event.cancelable || !nativeSelection) return false;
+          const backward = 'deleteContentBackward' === event.inputType
+            || 'deleteWordBackward' === event.inputType;
+          const forward = 'deleteContentForward' === event.inputType
+            || 'deleteWordForward' === event.inputType;
+          if (!backward && !forward) return false;
+          if (!nativeSelection.isCollapsed) return false;
+          const caret = nativeSelection.anchorNode;
+          if (!caret) return false;
+          const cell = tableCellOf(caret);
+          // The caret may sit on a Text run or on the cell itself: an emptied
+          // cell has no Text run left, and Chromium parks the caret on the TD.
+          if (
+            !cell
+            || !surface.contains(cell)
+            || cell.closest(
+              `[contenteditable="false"], ${VISUAL_MARKDOWN_READ_ONLY_SELECTOR}`
+            )
+          ) return false;
+          const offset = textOffsetWithin(
+            cell,
+            caret,
+            nativeSelection.anchorOffset
+          );
+          if (null === offset) return false;
+          return backward
+            ? 0 === offset
+            : offset === (cell.textContent ?? '').length;
+        };
         /**
          * A table's cells are the only caret-editable runs its canonical row
          * spells. The pipes and the line break between two cells are renderer
@@ -19548,11 +19846,11 @@ const failVisualSynchronization = useCallback(
          *
          * Chromium still names such a press: its target range leaves the
          * caret's own cell - into the neighbouring cell, the row, or the table
-         * container - or spans two cells at once. That is a position this
-         * editor does not act on, not an inconsistent mapping. Suppress the
-         * native default (it would merge or empty the cells with nothing
-         * committed), keep the caret where the user placed it, and report
-         * nothing.
+         * container - or spans two cells at once. The ordered walk above owns
+         * a caret at an editable cell's own content edge; what stays here is
+         * the press this editor does not act on at all. Suppress the native
+         * default (it would merge or empty the cells with nothing committed),
+         * keep the caret where the user placed it, and report nothing.
          *
          * Only a press the browser will actually cancel is claimed here: an
          * event it will not cancel falls through to the failure path below,
@@ -19566,39 +19864,27 @@ const failVisualSynchronization = useCallback(
           const forward = 'deleteContentForward' === event.inputType
             || 'deleteWordForward' === event.inputType;
           if (!backward && !forward) return false;
-          const cellOf = (node: Node | null): HTMLElement | null => {
-            const element = node instanceof Element
-              ? node
-              : node?.parentElement ?? null;
-            return element?.closest('td, th') ?? null;
-          };
-          const textOffsetWithin = (
-            host: Node,
-            node: Node,
-            offset: number
-          ): number | null => {
-            try {
-              const range = surface.ownerDocument.createRange();
-              range.setStart(host, 0);
-              range.setEnd(node, offset);
-              return range.toString().length;
-            } catch { return null; }
-          };
           // A selection spanning two cells would have to remove the separator
           // that spells their boundary. The source holds no character for it,
           // so the row this owner could write back is not the row the surface
           // renders: refuse the press instead of inventing that spelling.
           if (!nativeSelection.isCollapsed) {
-            const anchorCell = cellOf(nativeSelection.anchorNode);
-            const focusCell = cellOf(nativeSelection.focusNode);
+            const anchorCell = tableCellOf(nativeSelection.anchorNode);
+            const focusCell = tableCellOf(nativeSelection.focusNode);
             return null !== anchorCell
               && null !== focusCell
               && anchorCell !== focusCell;
           }
           const caret = nativeSelection.anchorNode;
           if (!(caret instanceof Text)) return false;
-          const cell = cellOf(caret);
+          const cell = tableCellOf(caret);
           if (cell) {
+            // An editable cell's own edge belongs to the ordered walk. Only a
+            // cell whose content is read-only or protected stays refused here,
+            // exactly as it did before the walk existed.
+            if (!cell.closest(
+              `[contenteditable="false"], ${VISUAL_MARKDOWN_READ_ONLY_SELECTOR}`
+            )) return false;
             const offset = textOffsetWithin(
               cell,
               caret,
@@ -19636,6 +19922,221 @@ const failVisualSynchronization = useCallback(
             ? 0 === offset
             : offset === (block.textContent ?? '').length;
         };
+        if (tableCellDeletionAtEdge()) {
+          event.preventDefault();
+          if (!flushVisualInput()) return;
+          try {
+            const source = sourceMarkdownRef.current;
+            const visual = visualMarkdownRef.current;
+            const owned = ownedDomRef.current;
+            const nodes = Array.from(surface.childNodes);
+            if (
+              null === source
+              || null === visual
+              || !owned
+              || owned.owner !== fullOwnerRef.current
+              || owned.source !== source
+              || owned.sourceRevision !== (documentSession.document.getRevision?.() ?? 0)
+              || documentSession.document.getValue() !== source
+              || !ownedLedgerRetains(nodes)
+            ) {
+              throw new Error('visual-editor-canonical-change-dom-stale');
+            }
+            const native = surface.ownerDocument.defaultView?.getSelection();
+            const caret = native?.anchorNode;
+            if (!native || !native.isCollapsed || !caret || !tableCellOf(caret)) {
+              return;
+            }
+            // A caret this render cannot project onto the canonical row is a
+            // position this owner does not act on: the press stays where it
+            // is, with nothing written and nothing reported. The same holds
+            // for the table's own outer edge - nothing precedes the first
+            // cell of the first row, and nothing follows the last cell of the
+            // last row.
+            let caretSourceOffset: Readonly<{
+              direction: 'backward' | 'forward' | 'none';
+              end: number;
+              start: number;
+            }>;
+            try {
+              caretSourceOffset = visualSelectionSourceRange(
+                surface,
+                source,
+                visual,
+                visual
+              );
+            } catch { return; }
+            if (
+              'none' !== caretSourceOffset.direction
+              || caretSourceOffset.start !== caretSourceOffset.end
+            ) return;
+            const walk = visualTableDeletionWalk(
+              source,
+              caretSourceOffset.start,
+              'deleteContentBackward' === event.inputType
+                || 'deleteWordBackward' === event.inputType
+                ? 'backward'
+                : 'forward'
+            );
+            if (!walk || 'walk' !== walk.kind) return;
+            // The character this walk removes is proved to be one character of
+            // the surface's own text: the canonical boundary just before it,
+            // or - when that boundary is the cell's element edge - the one
+            // just after it. Any other shape is a spelling this owner cannot
+            // remove without guessing, and the press stays in place.
+            let deleted: Readonly<{ node: Text; offset: number }> | null = null;
+            try {
+              const before = visualCaretBoundaryFromSourceOffset(
+                surface,
+                source,
+                visual,
+                walk.index
+              );
+              if (
+                before.node instanceof Text
+                && before.offset < before.node.data.length
+              ) {
+                before.node.deleteData(before.offset, 1);
+                deleted = { node: before.node, offset: before.offset };
+              } else {
+                // Both of the unit's boundaries can be element edges: an
+                // inline code span's first character sits at the span's own
+                // start. The character is then the first text position the
+                // unit's range covers.
+                const after = visualCaretBoundaryFromSourceOffset(
+                  surface,
+                  source,
+                  visual,
+                  walk.index + 1
+                );
+                const root = before.node instanceof Element
+                  ? before.node
+                  : before.node.parentElement;
+                if (root) {
+                  const range = surface.ownerDocument.createRange();
+                  range.setStart(before.node, before.offset);
+                  range.setEnd(after.node, after.offset);
+                  const textWalker = surface.ownerDocument.createTreeWalker(
+                    root,
+                    NodeFilter.SHOW_TEXT
+                  );
+                  for (
+                    let node = textWalker.nextNode();
+                    node;
+                    node = textWalker.nextNode()
+                  ) {
+                    if (!(node instanceof Text) || 0 === node.data.length) {
+                      continue;
+                    }
+                    if (!range.intersectsNode(node)) continue;
+                    node.deleteData(0, 1);
+                    deleted = { node, offset: 0 };
+                    break;
+                  }
+                }
+              }
+            } catch { deleted = null; }
+            if (!deleted) return;
+            const cell = tableCellOf(deleted.node);
+            // A text character spelled inside inline markup keeps that markup
+            // while it still holds text. When this deletion emptied it, the
+            // now-empty wrapper goes with it - the canonical walk retired the
+            // same span - so the cell does not keep a bare `` or `**`.
+            const retired =
+              walk.from !== walk.index || walk.to !== walk.textTo;
+            let wrapperAnchor: Readonly<{ node: Node; offset: number }> | null =
+              null;
+            if (retired && cell) {
+              let wrapper = deleted.node.parentElement;
+              let anchorNode: Node = deleted.node;
+              let anchorOffset = deleted.offset;
+              while (
+                wrapper
+                && wrapper !== cell
+                && '' === (wrapper.textContent ?? '')
+                && /^(?:CODE|STRONG|EM|DEL|S|STRIKE)$/u.test(wrapper.tagName)
+              ) {
+                const parent = wrapper.parentElement;
+                anchorNode = parent ?? cell;
+                anchorOffset = parent
+                  ? Array.prototype.indexOf.call(parent.childNodes, wrapper)
+                  : 0;
+                wrapper.remove();
+                wrapper = parent;
+              }
+              wrapperAnchor = { node: anchorNode, offset: anchorOffset };
+            }
+            let caretSource = walk.caret;
+            if (retired) {
+              // The removed span took its own text with it, so the caret is
+              // read from the canonical position on the surface this press
+              // just produced instead of from a node that no longer exists.
+              try {
+                placeVisualCaretFromSourceOffset(
+                  surface,
+                  walk.value,
+                  serializeVisualMarkdown(surface),
+                  walk.caret
+                );
+              } catch {
+                if (wrapperAnchor) {
+                  native.setBaseAndExtent(
+                    wrapperAnchor.node,
+                    wrapperAnchor.offset,
+                    wrapperAnchor.node,
+                    wrapperAnchor.offset
+                  );
+                }
+              }
+              // An emptied cell's own caret can sit one padding byte either
+              // side of the retired span. Name the position the native caret
+              // actually holds, so the canonical selection and the caret the
+              // user sees are the same position rather than two neighbours.
+              try {
+                const placedVisual = serializeVisualMarkdown(surface);
+                const placed = visualSelectionSourceRange(
+                  surface,
+                  walk.value,
+                  placedVisual,
+                  placedVisual
+                );
+                if ('none' === placed.direction && placed.start === placed.end) {
+                  caretSource = placed.start;
+                }
+              } catch { /* the walk's own caret stays the answer */ }
+            } else {
+              native.setBaseAndExtent(
+                deleted.node,
+                deleted.offset,
+                deleted.node,
+                deleted.offset
+              );
+            }
+            synchronizeMarkdown({
+              isolateHistoryBefore: true,
+              ownerResult: {
+                historySelectionBefore: {
+                  direction: 'none',
+                  end: caretSourceOffset.start,
+                  start: caretSourceOffset.start
+                },
+                ledger: {
+                  metadata: nodes.map(fullOwnedNodeMetadata),
+                  nodes
+                },
+                selection: {
+                  direction: 'none',
+                  end: caretSource,
+                  start: caretSource
+                },
+                value: walk.value
+              }
+            });
+          } catch (error) {
+            failVisualSynchronization(error);
+          }
+          return;
+        }
         if (tableEdgeDeletionHasNoAction()) {
           event.preventDefault();
           return;
@@ -20913,11 +21414,67 @@ const failVisualSynchronization = useCallback(
             return;
           }
           const sourceSelection = retiredRange ?? intent.sourceSelection;
+          // A deletion that empties an inline code span takes the span's
+          // delimiters with it: the emptied span has no spelling of its own,
+          // so leaving a bare pair of backticks behind would turn them into
+          // the cell's literal text. Both spaces are expanded on their own
+          // parse, so the source and the visible row retire the same span.
+          const deletionIntent = intent.inputType.startsWith('delete')
+            || 'deleteByCut' === intent.inputType;
+          const emptiedSourceCode = deletionIntent
+            ? visualEmptiedInlineCodeSourceRange(sourceMarkdown, sourceSelection)
+            : null;
+          const emptiedVisualCode = deletionIntent
+            ? visualEmptiedInlineCodeSourceRange(visualMarkdown, intent.visualSelection)
+            : null;
+          const effectiveSourceSelection = emptiedSourceCode ?? sourceSelection;
+          const effectiveVisualSelection = emptiedVisualCode ?? intent.visualSelection;
+          if (emptiedSourceCode || emptiedVisualCode) {
+            // The emptied span's markup goes with its text in the surface too,
+            // so the caret cannot stay inside an element the canonical row no
+            // longer spells. It lands where the span was, which is the same
+            // position the canonical selection names.
+            const native = surface.ownerDocument.defaultView?.getSelection();
+            const anchor = native?.anchorNode;
+            const element = anchor instanceof Element
+              ? anchor
+              : anchor?.parentElement ?? null;
+            const cell = element?.closest('td, th') ?? null;
+            let wrapper = element?.closest(
+              'code, strong, em, del, s, strike'
+            ) ?? null;
+            let removedParent: Node | null = null;
+            let removedIndex = 0;
+            while (
+              wrapper
+              && wrapper !== cell
+              && '' === (wrapper.textContent ?? '')
+              && /^(?:CODE|STRONG|EM|DEL|S|STRIKE)$/u.test(wrapper.tagName)
+            ) {
+              const parent = wrapper.parentElement;
+              if (!parent) break;
+              removedParent = parent;
+              removedIndex = Array.prototype.indexOf.call(
+                parent.childNodes,
+                wrapper
+              );
+              wrapper.remove();
+              wrapper = parent;
+            }
+            if (removedParent) {
+              native?.setBaseAndExtent(
+                removedParent,
+                removedIndex,
+                removedParent,
+                removedIndex
+              );
+            }
+          }
           const result = applyVisualMarkdownEditIntent(
             sourceMarkdown,
             visualMarkdown,
-            sourceSelection,
-            intent.visualSelection,
+            effectiveSourceSelection,
+            effectiveVisualSelection,
             intent.inputType,
             intent.data,
             intent.codeBody
@@ -21192,9 +21749,9 @@ const failVisualSynchronization = useCallback(
               ),
               result: committedResult,
               sourceChange: {
-                from: sourceSelection.start,
+                from: effectiveSourceSelection.start,
                 insert: canonicalSourceReplacement,
-                to: sourceSelection.end
+                to: effectiveSourceSelection.end
               }
             };
             if ('' === committedResult.visualMarkdown) {
@@ -21720,6 +22277,29 @@ const failVisualSynchronization = useCallback(
       // other block yields no row at all rather than the wrong one.
       const emptyRewriteSource = sourceMarkdownRef.current;
       const emptyRewriteBlock = visualBlockShortcutRewriteTarget(surface, event);
+      // An emptied heading row's marker run exists only in the source: the
+      // renderer draws no marker for it, so rewriting the block to a paragraph
+      // has no byte to prove and cannot place the row - the rewrite leaves the
+      // canonical source unchanged. A row that still has canonical content after
+      // it is therefore left unclaimed here, and the structural join owner
+      // retires the marker row together with the separator beside it. A row the
+      // source ends on keeps this shortcut's own positional removal below.
+      if (
+        'Backspace' === event.key
+        && null !== emptyRewriteBlock
+        && null !== emptyRewriteSource
+      ) {
+        const emptiedHeading = emptiedHeadingRowRetirement(
+          surface,
+          emptyRewriteBlock,
+          emptyRewriteSource,
+          previewSnapshotRef.current.editMap
+        );
+        if (
+          emptiedHeading
+          && /\S/u.test(emptyRewriteSource.slice(emptiedHeading.end))
+        ) return;
+      }
       const emptyRewriteRow = (() => {
         if (
           null === emptyRewriteSource

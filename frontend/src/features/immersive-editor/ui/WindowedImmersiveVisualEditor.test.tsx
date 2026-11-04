@@ -11143,6 +11143,523 @@ describe("WindowedImmersiveVisualEditor", () => {
 		},
 	);
 
+	/**
+	 * The renderer's table root: a `section` container around the table, which
+	 * is exactly why the root classifier alone called it atomic.
+	 */
+	const windowedTableSectionHtml = (id: string): string =>
+		`<section class="table-container easymde-table-container" data-easymde-visual-block-id="${id}">` +
+		"<table><thead><tr><th>Head</th><th>Tail</th></tr></thead>" +
+		"<tbody><tr><td>one</td><td>two</td></tr>" +
+		"<tr><td>three</td><td>four</td></tr></tbody></table>" +
+		"</section>";
+	const windowedTableMarkdown = [
+		"| Head | Tail |",
+		"| --- | --- |",
+		"| one | two |",
+		"| three | four |",
+	].join("\n");
+
+	/**
+	 * A table's cells hold the caret, so the boundary in front of a table is
+	 * the ordinary join position between two editable blocks - the contract
+	 * the Full surface applies (`isAtomicVisualRoot` +
+	 * `hasEditableVisualInterior`). One Backspace there must never be read as
+	 * removing one atomic object. A table also holds no text of its own, so
+	 * the join is not representable: the press is a consumed no-op with no
+	 * write, the same outcome the Full surface's table-edge owner produces,
+	 * and the table's own source bytes survive.
+	 *
+	 * The first row mounts a window inside a document above the mount
+	 * threshold, the shape a real >160-block document uses; the second mounts
+	 * every block of a document below it, so the classification is proved on
+	 * both shapes and both owners agree.
+	 */
+	it.each([
+		{
+			blockIndices: [159, 160, 161] as const,
+			name: "a window above the mount threshold",
+			sourceBlockCount: 320,
+		},
+		{
+			blockIndices: [0, 1, 2] as const,
+			name: "a document below the mount threshold",
+			sourceBlockCount: 3,
+		},
+	])(
+		"keeps a table byte-identical for Backspace at the following paragraph start in $name",
+		({ blockIndices, sourceBlockCount }) => {
+			const [beforeIndex, tableIndex, afterIndex] = blockIndices;
+			const tableMarkdown = windowedTableMarkdown;
+			const current = fixture({
+				blockOverrides: { [tableIndex]: tableMarkdown },
+				markupOverrides: {
+					[tableIndex]: windowedTableSectionHtml(`b${tableIndex}`),
+				},
+				mounted: blockIndices,
+				paragraphBlocks: true,
+				sourceBlockCount,
+			});
+			const original = current.canonical();
+			const tableStart = original.indexOf(tableMarkdown);
+			if (tableStart < 0) throw new Error("windowed-table-source-missing");
+			const tableSource = original.slice(
+				tableStart,
+				tableStart + tableMarkdown.length,
+			);
+			const onDiagnostic = vi.fn();
+			const onFailure = vi.fn();
+			const onTransferFailure = vi.fn();
+			const { view } = renderWindowEditor(current, {
+				onDiagnostic,
+				onFailure,
+				onTransferFailure,
+			});
+			const tableBlock = current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${tableIndex}"]`,
+			);
+			const paragraph = current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${afterIndex}"]`,
+			);
+			const text = paragraph?.firstChild;
+			if (
+				!(tableBlock instanceof HTMLElement) ||
+				!(tableBlock.querySelector("table") instanceof HTMLTableElement) ||
+				!(paragraph instanceof HTMLParagraphElement) ||
+				!(text instanceof Text) ||
+				!(
+					current.surface.querySelector(
+						`[data-easymde-visual-block-id="b${beforeIndex}"]`,
+					) instanceof HTMLElement
+				)
+			) {
+				throw new Error("windowed-table-boundary-fixture-invalid");
+			}
+			placeCaret(text, 0);
+			const keyDown = new KeyboardEvent("keydown", {
+				bubbles: true,
+				cancelable: true,
+				key: "Backspace",
+			});
+			current.surface.dispatchEvent(keyDown);
+			const beforeInput = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				inputType: "deleteContentBackward",
+			});
+			current.surface.dispatchEvent(beforeInput);
+			// The owner consumes the boundary press itself: no native merge
+			// follows and no input event is reported.
+			expect(beforeInput.defaultPrevented).toBe(true);
+
+			expect(current.canonical()).toBe(original);
+			expect(
+				current.canonical().slice(tableStart, tableStart + tableMarkdown.length),
+			).toBe(tableSource);
+			expect(current.documentChanges).not.toHaveBeenCalled();
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+			expect(onDiagnostic).not.toHaveBeenCalled();
+			expect(current.surface.querySelector("table")).not.toBeNull();
+			expect(
+				current.surface.querySelector(
+					`[data-easymde-visual-block-id="b${tableIndex}"]`,
+				),
+			).toBe(tableBlock);
+			expect(window.getSelection()?.anchorNode).toBe(text);
+			expect(window.getSelection()?.anchorOffset).toBe(0);
+			view.unmount();
+		},
+	);
+
+	/**
+	 * The document-edge caret in front of the table: the same classification
+	 * governs an object addressed by the host boundary, not only an adjacent
+	 * sibling. A table there is not an object to remove either.
+	 */
+	it("keeps a table byte-identical for Delete at the surface start before it", () => {
+		const current = fixture({
+			blockOverrides: { 0: windowedTableMarkdown },
+			markupOverrides: { 0: windowedTableSectionHtml("b0") },
+			mounted: [0, 1, 2],
+			paragraphBlocks: true,
+			sourceBlockCount: 3,
+		});
+		const original = current.canonical();
+		const tableStart = original.indexOf(windowedTableMarkdown);
+		if (tableStart < 0) throw new Error("windowed-table-source-missing");
+		const onFailure = vi.fn();
+		const { view } = renderWindowEditor(current, { onFailure });
+		if (!(current.surface.querySelector("table") instanceof HTMLTableElement)) {
+			throw new Error("windowed-table-root-fixture-invalid");
+		}
+		const range = document.createRange();
+		range.setStart(current.surface, 0);
+		range.collapse(true);
+		const selection = window.getSelection();
+		selection?.removeAllRanges();
+		selection?.addRange(range);
+		const beforeInput = new InputEvent("beforeinput", {
+			bubbles: true,
+			cancelable: true,
+			inputType: "deleteContentForward",
+		});
+		current.surface.dispatchEvent(beforeInput);
+
+		expect(beforeInput.defaultPrevented).toBe(true);
+		expect(current.canonical()).toBe(original);
+		expect(
+			current.canonical().slice(
+				tableStart,
+				tableStart + windowedTableMarkdown.length,
+			),
+		).toBe(windowedTableMarkdown);
+		expect(current.documentChanges).not.toHaveBeenCalled();
+		expect(onFailure).not.toHaveBeenCalled();
+		view.unmount();
+	});
+
+	/**
+	 * The same boundary while a formal Preview is outstanding. The pending
+	 * lease owns its own deletions, so it must apply the same classification:
+	 * the table is not an object to remove, and the join the pending path
+	 * would otherwise commit is not representable for a table. The press is
+	 * consumed with no write.
+	 */
+	it("consumes a pending Backspace at the paragraph start after a table without writing", () => {
+		const tableIndex = 160;
+		const current = fixture({
+			blockOverrides: { [tableIndex]: windowedTableMarkdown },
+			markupOverrides: {
+				[tableIndex]: windowedTableSectionHtml(`b${tableIndex}`),
+			},
+			mounted: [159, 160, 161],
+			paragraphBlocks: true,
+		});
+		const original = current.canonical();
+		const tableStart = original.indexOf(windowedTableMarkdown);
+		if (tableStart < 0) throw new Error("windowed-table-source-missing");
+		const onFailure = vi.fn();
+		const onDiagnostic = vi.fn();
+		const requestPreview = vi.fn(() => "pending-table-boundary");
+		const { view } = renderWindowEditor(current, {
+			onDiagnostic,
+			onFailure,
+			requestPreview,
+		});
+		current.surface.tabIndex = 0;
+		current.surface.setAttribute("contenteditable", "true");
+		current.surface.focus();
+		const paragraph = current.surface.querySelector<HTMLElement>(
+			'[data-easymde-visual-block-id="b161"]',
+		);
+		const text = paragraph?.firstChild;
+		if (
+			!(paragraph instanceof HTMLParagraphElement) ||
+			!(text instanceof Text) ||
+			!(current.surface.querySelector("table") instanceof HTMLTableElement)
+		) {
+			throw new Error("windowed-table-pending-fixture-invalid");
+		}
+		// A structural Enter leaves a formal Preview outstanding: the pending
+		// lease, not the generic region owner, now handles deletions.
+		placeCaret(text, text.length);
+		const enter = new KeyboardEvent("keydown", {
+			bubbles: true,
+			cancelable: true,
+			key: "Enter",
+		});
+		current.surface.dispatchEvent(enter);
+		expect(enter.defaultPrevented).toBe(true);
+		expect(requestPreview).toHaveBeenCalled();
+		const pendingValue = current.canonical();
+		// The pointer gesture retires the old caret; the following Backspace
+		// re-authenticates the pending lease at the paragraph start. The
+		// structural edit above may have replaced the row's nodes, so the
+		// caret is placed on the row mounted now.
+		current.surface.dispatchEvent(
+			new MouseEvent("pointerdown", { bubbles: true, button: 0 }),
+		);
+		const liveParagraph = current.surface.querySelector<HTMLElement>(
+			'[data-easymde-visual-block-id="b161"]',
+		);
+		const liveText = liveParagraph?.firstChild;
+		if (!(liveText instanceof Text)) {
+			throw new Error("windowed-table-pending-row-missing");
+		}
+		placeCaret(liveText, 0);
+		const changesBeforeDeletion = current.documentChanges.mock.calls.length;
+		const beforeInput = new InputEvent("beforeinput", {
+			bubbles: true,
+			cancelable: true,
+			inputType: "deleteContentBackward",
+		});
+		const target = document.createRange();
+		target.setStart(liveText, 0);
+		target.collapse(true);
+		Object.defineProperty(beforeInput, "getTargetRanges", {
+			value: () => [target],
+		});
+		current.surface.dispatchEvent(beforeInput);
+
+		expect(beforeInput.defaultPrevented).toBe(true);
+		expect(current.canonical()).toBe(pendingValue);
+		expect(
+			current.canonical().slice(
+				tableStart,
+				tableStart + windowedTableMarkdown.length,
+			),
+		).toBe(windowedTableMarkdown);
+		expect(current.documentChanges).toHaveBeenCalledTimes(
+			changesBeforeDeletion,
+		);
+		expect(onDiagnostic).not.toHaveBeenCalled();
+		expect(onFailure).not.toHaveBeenCalled();
+		view.unmount();
+	});
+
+	it("still removes a thematic break with no editable interior at the following paragraph start", () => {
+		const blockIndex = 160;
+		const current = fixture({
+			blockOverrides: { [blockIndex]: "---" },
+			markupOverrides: {
+				[blockIndex]: `<hr data-easymde-visual-block-id="b${blockIndex}">`,
+			},
+			mounted: [159, 160, 161],
+			paragraphBlocks: true,
+		});
+		const original = current.canonical();
+		const markerStart = original.indexOf("---");
+		if (markerStart < 1) throw new Error("windowed-hr-source-missing");
+		const expected =
+			original.slice(0, markerStart - 1) +
+			original.slice(markerStart + "---\n".length);
+		const onFailure = vi.fn();
+		const requestPreview = vi.fn(() => "hr-boundary");
+		const { view } = renderWindowEditor(current, { onFailure, requestPreview });
+		const paragraph = current.surface.querySelector<HTMLElement>(
+			'[data-easymde-visual-block-id="b161"]',
+		);
+		const text = paragraph?.firstChild;
+		if (
+			!(current.surface.querySelector("hr") instanceof HTMLHRElement) ||
+			!(paragraph instanceof HTMLParagraphElement) ||
+			!(text instanceof Text)
+		) {
+			throw new Error("windowed-hr-boundary-fixture-invalid");
+		}
+		placeCaret(text, 0);
+		const beforeInput = new InputEvent("beforeinput", {
+			bubbles: true,
+			cancelable: true,
+			inputType: "deleteContentBackward",
+		});
+		current.surface.dispatchEvent(beforeInput);
+
+		expect(beforeInput.defaultPrevented).toBe(true);
+		expect(current.canonical()).toBe(expected);
+		expect(requestPreview).toHaveBeenCalledWith(expected);
+		expect(onFailure).not.toHaveBeenCalled();
+		view.unmount();
+	});
+
+	/**
+	 * The document-end sink after a trailing table.
+	 *
+	 * The sink's Backspace removes the trailing object's own source range, so
+	 * that object must pass the removal proof, not only the caret-entry
+	 * classifier. Without it, `documentEndGapAtomic` returned the table
+	 * container (a `section` the caret cannot enter) and this press deleted the
+	 * table's whole source extent plus one separator line ending - the same
+	 * silent data loss the mid-document adjacent removal already refuses. The
+	 * neighbour proof now owns the press: it is consumed with no write and the
+	 * table's bytes are untouched.
+	 */
+	it("keeps a trailing table byte-identical for Backspace in the certified document-end sink", () => {
+		const tableIndex = 174;
+		const current = fixture({
+			blockOverrides: { [tableIndex]: `${windowedTableMarkdown}\n` },
+			markupOverrides: {
+				[tableIndex]: windowedTableSectionHtml(`b${tableIndex}`),
+			},
+			mounted: [tableIndex - 1, tableIndex],
+			paragraphBlocks: true,
+			sourceBlockCount: tableIndex + 1,
+		});
+		const original = current.canonical();
+		const tableStart = original.indexOf(windowedTableMarkdown);
+		if (tableStart < 0) throw new Error("windowed-table-source-missing");
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = original;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const session = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container,
+				label: "Markdown source",
+				submissionField: field,
+			}),
+			createNativeTitleSession(null),
+		);
+		const tableRoot = current.surface.querySelector<HTMLElement>(
+			`[data-easymde-visual-block-id="b${tableIndex}"]`,
+		);
+		if (
+			!(tableRoot instanceof HTMLElement) ||
+			!(tableRoot.querySelector("table") instanceof HTMLTableElement)
+		) {
+			throw new Error("windowed-table-sink-fixture-invalid");
+		}
+		const acceptedSnapshot = {
+			...acceptedWindowSnapshotForMountedBlock(current, tableRoot),
+			revision: 7,
+			sourceRevision: 0,
+		};
+		const onFailure = vi.fn();
+		const onDiagnostic = vi.fn();
+		const rendered = renderWindowEditor(current, {
+			documentSession: session,
+			getAcceptedWindowSnapshot: () => acceptedSnapshot,
+			onDiagnostic,
+			onFailure,
+		});
+		try {
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.tabIndex = 0;
+			current.surface.focus();
+			// Chromium keeps a host-end caret on the host itself after a
+			// trailing object it cannot enter; the owner's own paragraph is the
+			// certified address for that canonical document end.
+			window.getSelection()?.collapse(
+				current.surface,
+				current.surface.childNodes.length,
+			);
+			act(() => document.dispatchEvent(new Event("selectionchange")));
+			const sink = current.surface.lastElementChild;
+			expect(sink?.tagName).toBe("P");
+			expect(sink?.hasAttribute("data-easymde-visual-block-id")).toBe(false);
+			expect(window.getSelection()?.anchorNode).toBe(sink);
+			expect(session.document.getSelection()).toMatchObject({
+				start: original.length,
+				end: original.length,
+			});
+			const revision = session.document.getRevision?.();
+
+			const beforeInput = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				inputType: "deleteContentBackward",
+			});
+			act(() => current.surface.dispatchEvent(beforeInput));
+
+			expect(beforeInput.defaultPrevented).toBe(true);
+			expect(session.document.getValue()).toBe(original);
+			expect(
+				session.document
+					.getValue()
+					.slice(tableStart, tableStart + windowedTableMarkdown.length),
+			).toBe(windowedTableMarkdown);
+			expect(session.document.getRevision?.()).toBe(revision);
+			expect(current.surface.querySelector("table")).not.toBeNull();
+			expect(current.surface.lastElementChild).toBe(sink);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onDiagnostic).not.toHaveBeenCalled();
+		} finally {
+			rendered.view.unmount();
+			session.destroy();
+			container.remove();
+			field.remove();
+			current.surface.remove();
+		}
+	});
+
+	/**
+	 * The control for the sink's removal proof: a thematic break is a real
+	 * atomic root with no editable interior, so the same certified sink
+	 * Backspace still removes its source extent and one separator line ending.
+	 */
+	it("still removes a trailing thematic break from the certified document-end sink", () => {
+		const markerIndex = 174;
+		const current = fixture({
+			blockOverrides: { [markerIndex]: "---\n" },
+			markupOverrides: {
+				[markerIndex]: `<hr data-easymde-visual-block-id="b${markerIndex}">`,
+			},
+			mounted: [markerIndex - 1, markerIndex],
+			paragraphBlocks: true,
+			sourceBlockCount: markerIndex + 1,
+		});
+		const original = current.canonical();
+		const markerStart = original.lastIndexOf("---");
+		if (markerStart < 1) throw new Error("windowed-hr-source-missing");
+		const expected =
+			original.slice(0, markerStart - 1) +
+			original.slice(markerStart + "---\n".length);
+		if (expected.includes("---")) {
+			throw new Error("windowed-hr-control-expectation-invalid");
+		}
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = original;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const session = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container,
+				label: "Markdown source",
+				submissionField: field,
+			}),
+			createNativeTitleSession(null),
+		);
+		const markerRoot = current.surface.querySelector<HTMLElement>(
+			`[data-easymde-visual-block-id="b${markerIndex}"]`,
+		);
+		if (!(markerRoot instanceof HTMLHRElement)) {
+			throw new Error("windowed-hr-sink-fixture-invalid");
+		}
+		const acceptedSnapshot = {
+			...acceptedWindowSnapshotForMountedBlock(current, markerRoot),
+			revision: 7,
+			sourceRevision: 0,
+		};
+		const onFailure = vi.fn();
+		const rendered = renderWindowEditor(current, {
+			documentSession: session,
+			getAcceptedWindowSnapshot: () => acceptedSnapshot,
+			onFailure,
+		});
+		try {
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.tabIndex = 0;
+			current.surface.focus();
+			window.getSelection()?.collapse(
+				current.surface,
+				current.surface.childNodes.length,
+			);
+			act(() => document.dispatchEvent(new Event("selectionchange")));
+			const sink = current.surface.lastElementChild;
+			expect(sink?.tagName).toBe("P");
+			expect(window.getSelection()?.anchorNode).toBe(sink);
+
+			const beforeInput = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				inputType: "deleteContentBackward",
+			});
+			act(() => current.surface.dispatchEvent(beforeInput));
+
+			expect(beforeInput.defaultPrevented).toBe(true);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(session.document.getValue()).toBe(expected);
+			expect(session.document.getValue()).not.toContain("---");
+		} finally {
+			rendered.view.unmount();
+			session.destroy();
+			container.remove();
+			field.remove();
+			current.surface.remove();
+		}
+	});
+
 	it("rejects a protected-region mutation discovered during Windowed commit", () => {
 		const blockIndex = 160;
 		const mermaidSource = "flowchart TD\nA-->B";

@@ -135,6 +135,8 @@ import {
   visualSerializationMatchesCommitted,
   visualStructuralBodyIsEmpty,
   visualTableDeletionWalk,
+  type VisualTableDeletionWalk,
+  visualTableCellDeletionPosition,
   isVisualThematicBreakSource,
   visualThematicBreakSourceSelection,
   visualThematicBreakTarget,
@@ -18147,7 +18149,21 @@ const failVisualSynchronization = useCallback(
         const elementPress = Boolean(target?.collapsed)
           && target?.startContainer === gap
           && target?.endOffset === 0;
+        // A gap that faces a table is the ordered walk's press. The walk
+        // continues INTO the table from its own outer edge and removes one
+        // cell character; this owner would instead rewrite the separator run
+        // beside the table's last row, so it must never claim the junction.
+        const gapFacesTable = gap instanceof HTMLElement
+          && gap.previousElementSibling instanceof HTMLElement
+          && gap.previousElementSibling.matches(
+            'section.table-container, section.easymde-table-container'
+          )
+          && !gap.previousElementSibling.closest(
+            `[contenteditable="false"], ${VISUAL_MARKDOWN_READ_ONLY_SELECTOR}`
+          )
+          && null !== gap.previousElementSibling.querySelector('table');
         if (pendingNativeOperationRef.current?.kind !== 'join' && native?.isCollapsed
+          && !gapFacesTable
           && (placeholderGap || terminalGap)
           && native.anchorOffset === 0 && gap.parentNode === surface
           && (
@@ -19797,46 +19813,111 @@ const failVisualSynchronization = useCallback(
           } catch { return null; }
         };
         /**
-         * Whether this press sits on a table cell's own content edge. A
-         * table's cells are the only caret-editable runs its canonical rows
-         * spell, so a deletion at a cell's content edge has to cross into the
-         * neighbouring cell in reading order and remove that cell's edge
-         * character there. The edge itself is read from the live cell - the
-         * same position the native default would have merged - and the
-         * canonical walk is resolved after any pending input is committed.
+         * The table the press faces from OUTSIDE its cells, or null. The caret
+         * can sit at the start of the paragraph AFTER the table (Backspace) or
+         * at the end of the paragraph BEFORE it (Delete), and - when that
+         * facing block was emptied - directly on the surface boundary between
+         * the table root and its neighbour.
+         *
+         * Reading order continues into the table from that edge: the last cell
+         * of the last row, or the first cell of the first row. So this press
+         * belongs to the ordered walk and never to a structural join, which is
+         * the only other owner that could touch the table root.
+         */
+        const facingTableEdge = (
+          backward: boolean
+        ): 'after' | 'before' | null => {
+          // Read the live selection: this runs again after a pending flush has
+          // respelled the surface, and only the caret that exists then can
+          // name the edge the press still owns.
+          const selection = surface.ownerDocument.defaultView?.getSelection();
+          const caret = selection?.anchorNode;
+          if (!selection?.isCollapsed || !caret) return null;
+          const tableRoot = (node: Node | null): boolean =>
+            node instanceof HTMLElement
+            && node.matches(
+              'section.table-container, section.easymde-table-container'
+            )
+            // A protected table keeps its own refusal: the walk may never
+            // write through a read-only region.
+            && !node.closest(
+              `[contenteditable="false"], ${VISUAL_MARKDOWN_READ_ONLY_SELECTOR}`
+            )
+            && null !== node.querySelector('table');
+          const block = directVisualBlockForSelectionNode(surface, caret);
+          if (block instanceof HTMLParagraphElement) {
+            const offset = textOffsetWithin(
+              block,
+              caret,
+              selection.anchorOffset
+            );
+            if (null === offset) return null;
+            if (
+              backward
+                ? 0 !== offset
+                : offset !== (block.textContent ?? '').length
+            ) return null;
+            const neighbor = backward
+              ? block.previousElementSibling
+              : block.nextElementSibling;
+            return tableRoot(neighbor) ? (backward ? 'after' : 'before') : null;
+          }
+          if (caret !== surface) return null;
+          const index = selection.anchorOffset;
+          const neighbor = backward
+            ? surface.childNodes[index - 1] ?? null
+            : surface.childNodes[index] ?? null;
+          return tableRoot(neighbor) ? (backward ? 'after' : 'before') : null;
+        };
+        /**
+         * Which table boundary owns this press, or null. A caret on an
+         * editable cell's own content edge belongs to the in-table walk; a
+         * caret on the table's OUTER edge belongs to the same walk entered
+         * from that side. Both remove exactly one cell TEXT character, so the
+         * table's source bytes never change - and the table root is never
+         * removed - through a structural join.
          *
          * A protected cell keeps its own refusal: the walk never writes
          * through a read-only or otherwise non-editable region.
          */
-        const tableCellDeletionAtEdge = (): boolean => {
-          if (!event.cancelable || !nativeSelection) return false;
+        const tableDeletionAtEdge = (): (
+          | Readonly<{ edge: 'after' | 'before'; kind: 'outer' }>
+          | Readonly<{ kind: 'cell' }>
+        ) | null => {
+          if (!event.cancelable || !nativeSelection) return null;
           const backward = 'deleteContentBackward' === event.inputType
             || 'deleteWordBackward' === event.inputType;
           const forward = 'deleteContentForward' === event.inputType
             || 'deleteWordForward' === event.inputType;
-          if (!backward && !forward) return false;
-          if (!nativeSelection.isCollapsed) return false;
+          if (!backward && !forward) return null;
+          if (!nativeSelection.isCollapsed) return null;
           const caret = nativeSelection.anchorNode;
-          if (!caret) return false;
+          if (!caret) return null;
           const cell = tableCellOf(caret);
-          // The caret may sit on a Text run or on the cell itself: an emptied
-          // cell has no Text run left, and Chromium parks the caret on the TD.
-          if (
-            !cell
-            || !surface.contains(cell)
-            || cell.closest(
-              `[contenteditable="false"], ${VISUAL_MARKDOWN_READ_ONLY_SELECTOR}`
-            )
-          ) return false;
-          const offset = textOffsetWithin(
-            cell,
-            caret,
-            nativeSelection.anchorOffset
-          );
-          if (null === offset) return false;
-          return backward
-            ? 0 === offset
-            : offset === (cell.textContent ?? '').length;
+          if (cell) {
+            // The caret may sit on a Text run or on the cell itself: an
+            // emptied cell has no Text run left, and Chromium parks the caret
+            // on the TD.
+            if (
+              !surface.contains(cell)
+              || cell.closest(
+                `[contenteditable="false"], ${VISUAL_MARKDOWN_READ_ONLY_SELECTOR}`
+              )
+            ) return null;
+            const offset = textOffsetWithin(
+              cell,
+              caret,
+              nativeSelection.anchorOffset
+            );
+            if (null === offset) return null;
+            return backward
+              ? 0 === offset ? { kind: 'cell' } : null
+              : offset === (cell.textContent ?? '').length
+                ? { kind: 'cell' }
+                : null;
+          }
+          const edge = facingTableEdge(backward);
+          return edge ? { edge, kind: 'outer' } : null;
         };
         /**
          * A table's cells are the only caret-editable runs its canonical row
@@ -19876,6 +19957,22 @@ const failVisualSynchronization = useCallback(
               && anchorCell !== focusCell;
           }
           const caret = nativeSelection.anchorNode;
+          if (caret === surface) {
+            // A caret parked in the surface's own child gap beside a table
+            // root is the same junction without a block of its own. The walk
+            // above owns it whenever it can resolve the press; this fallback
+            // keeps a press it released a clean no-op instead of letting the
+            // native default remove the table root.
+            const index = nativeSelection.anchorOffset;
+            const neighbor = backward
+              ? surface.childNodes[index - 1] ?? null
+              : surface.childNodes[index] ?? null;
+            return neighbor instanceof HTMLElement
+              && neighbor.matches(
+                'section.table-container, section.easymde-table-container'
+              )
+              && null !== neighbor.querySelector('table');
+          }
           if (!(caret instanceof Text)) return false;
           const cell = tableCellOf(caret);
           if (cell) {
@@ -19897,9 +19994,13 @@ const failVisualSynchronization = useCallback(
           }
           // The same edge one level up: a paragraph that faces a table has no
           // text to join with it, because a table root holds no text of its
-          // own. A heading, list item, quote or code body is not this shape:
-          // each opens with a marker (or a fence line) of its own, so a press
-          // there is a real edit with its own owner, never a silent no-op.
+          // own. The ordered walk above owns this junction whenever it can
+          // resolve it, so this is the fallback for a press the walk released
+          // rather than a second action: keep the caret, write nothing, and
+          // never let a structural join reach the table. A heading, list item,
+          // quote or code body is not this shape: each opens with a marker (or
+          // a fence line) of its own, so a press there is a real edit with its
+          // own owner, never a silent no-op.
           const block = directVisualBlockForSelectionNode(surface, caret);
           if (!(block instanceof HTMLParagraphElement)) return false;
           const neighbor = backward
@@ -19922,9 +20023,34 @@ const failVisualSynchronization = useCallback(
             ? 0 === offset
             : offset === (block.textContent ?? '').length;
         };
-        if (tableCellDeletionAtEdge()) {
-          event.preventDefault();
+        const tableDeletionCaret = tableDeletionAtEdge();
+        if (tableDeletionCaret) {
           if (!flushVisualInput()) return;
+          // Resolve the press before claiming it. The browser cancels its own
+          // cell merge only once this owner has proved it can act: a press
+          // this walk cannot resolve is released to the policy below instead
+          // of being swallowed with nothing written.
+          // An OUTER-edge press this walk cannot resolve must never be
+          // released to native editing: the browser would join the facing
+          // block into the table or remove the table root, which is the whole
+          // data-loss shape this owner exists to prevent. It stays the
+          // documented no-op instead - caret unmoved, nothing written,
+          // nothing reported. A cell press keeps its release: the browser's
+          // own in-cell merge is safe there.
+          const releaseTablePress = (): void => {
+            if ('outer' === tableDeletionCaret.kind) event.preventDefault();
+          };
+          let deletionPlan: Readonly<{
+            caretSourceOffset: Readonly<{
+              direction: 'backward' | 'forward' | 'none';
+              end: number;
+              start: number;
+            }>;
+            deleted: Readonly<{ node: Text; offset: number }>;
+            native: Selection;
+            nodes: Node[];
+            walk: Extract<VisualTableDeletionWalk, { kind: 'walk' }>;
+          }> | null = null;
           try {
             const source = sourceMarkdownRef.current;
             const visual = visualMarkdownRef.current;
@@ -19944,15 +20070,31 @@ const failVisualSynchronization = useCallback(
             }
             const native = surface.ownerDocument.defaultView?.getSelection();
             const caret = native?.anchorNode;
-            if (!native || !native.isCollapsed || !caret || !tableCellOf(caret)) {
+            if (!native || !native.isCollapsed || !caret) {
+              releaseTablePress();
+              return;
+            }
+            const backward = 'deleteContentBackward' === event.inputType
+              || 'deleteWordBackward' === event.inputType;
+            const caretCellElement = tableCellOf(caret);
+            // The flush above may have respelled the caret's own block. Only
+            // the same boundary this press started on still owns it: a cell
+            // caret for the in-table walk, or the same facing table edge for
+            // the outer one.
+            if ('cell' === tableDeletionCaret.kind) {
+              if (!caretCellElement) return;
+            } else if (
+              facingTableEdge(backward) !== tableDeletionCaret.edge
+            ) {
+              releaseTablePress();
               return;
             }
             // A caret this render cannot project onto the canonical row is a
-            // position this owner does not act on: the press stays where it
-            // is, with nothing written and nothing reported. The same holds
-            // for the table's own outer edge - nothing precedes the first
-            // cell of the first row, and nothing follows the last cell of the
-            // last row.
+            // position this owner does not act on: the press is released to
+            // the browser and to the policy below, with nothing written and
+            // nothing reported. The table's own outer edge is the walk's own
+            // verdict instead: nothing precedes the first cell of the first
+            // row, and nothing follows the last cell of the last row.
             let caretSourceOffset: Readonly<{
               direction: 'backward' | 'forward' | 'none';
               end: number;
@@ -19965,78 +20107,93 @@ const failVisualSynchronization = useCallback(
                 visual,
                 visual
               );
-            } catch { return; }
+            } catch {
+              releaseTablePress();
+              return;
+            }
             if (
               'none' !== caretSourceOffset.direction
               || caretSourceOffset.start !== caretSourceOffset.end
-            ) return;
+            ) {
+              releaseTablePress();
+              return;
+            }
+            // The caret's own cell is read from the rendered row, not from
+            // the projected byte: an emptied cell parks the caret on an
+            // element boundary the projection can place a padding byte either
+            // side of, and the row/cell ordinal has no such ambiguity.
+            const caretRow = caretCellElement?.parentElement;
+            const caretTable = caretCellElement?.closest('table');
+            const caretCellOrdinal =
+              caretCellElement instanceof HTMLElement
+              && caretRow instanceof HTMLTableRowElement
+              && caretTable instanceof HTMLTableElement
+                ? {
+                    column: Array.prototype.indexOf.call(
+                      caretRow.cells,
+                      caretCellElement
+                    ),
+                    row: Array.prototype.indexOf.call(caretTable.rows, caretRow)
+                  }
+                : undefined;
             const walk = visualTableDeletionWalk(
               source,
               caretSourceOffset.start,
-              'deleteContentBackward' === event.inputType
-                || 'deleteWordBackward' === event.inputType
-                ? 'backward'
-                : 'forward'
+              backward ? 'backward' : 'forward',
+              caretCellOrdinal,
+              'outer' === tableDeletionCaret.kind
+                ? tableDeletionCaret.edge
+                : undefined
             );
-            if (!walk || 'walk' !== walk.kind) return;
+            if (!walk) {
+              releaseTablePress();
+              return;
+            }
+            // The walk's own boundary verdict is a resolved press: nothing
+            // before the first cell of the first row (or after the last cell
+            // of the last row) has a canonical character to remove. Claim it
+            // so the browser's cell merge cannot run with nothing committed.
+            if ('walk' !== walk.kind) {
+              event.preventDefault();
+              return;
+            }
             // The character this walk removes is proved to be one character of
             // the surface's own text: the canonical boundary just before it,
             // or - when that boundary is the cell's element edge - the one
             // just after it. Any other shape is a spelling this owner cannot
-            // remove without guessing, and the press stays in place.
-            let deleted: Readonly<{ node: Text; offset: number }> | null = null;
-            try {
-              const before = visualCaretBoundaryFromSourceOffset(
-                surface,
-                source,
-                visual,
-                walk.index
-              );
-              if (
-                before.node instanceof Text
-                && before.offset < before.node.data.length
-              ) {
-                before.node.deleteData(before.offset, 1);
-                deleted = { node: before.node, offset: before.offset };
-              } else {
-                // Both of the unit's boundaries can be element edges: an
-                // inline code span's first character sits at the span's own
-                // start. The character is then the first text position the
-                // unit's range covers.
-                const after = visualCaretBoundaryFromSourceOffset(
-                  surface,
-                  source,
-                  visual,
-                  walk.index + 1
-                );
-                const root = before.node instanceof Element
-                  ? before.node
-                  : before.node.parentElement;
-                if (root) {
-                  const range = surface.ownerDocument.createRange();
-                  range.setStart(before.node, before.offset);
-                  range.setEnd(after.node, after.offset);
-                  const textWalker = surface.ownerDocument.createTreeWalker(
-                    root,
-                    NodeFilter.SHOW_TEXT
-                  );
-                  for (
-                    let node = textWalker.nextNode();
-                    node;
-                    node = textWalker.nextNode()
-                  ) {
-                    if (!(node instanceof Text) || 0 === node.data.length) {
-                      continue;
-                    }
-                    if (!range.intersectsNode(node)) continue;
-                    node.deleteData(0, 1);
-                    deleted = { node, offset: 0 };
-                    break;
-                  }
-                }
-              }
-            } catch { deleted = null; }
-            if (!deleted) return;
+            // remove without guessing, so the press is released, not claimed.
+            const deleted = visualTableCellDeletionPosition(
+              surface,
+              source,
+              visual,
+              walk.index
+            );
+            if (!deleted) {
+              releaseTablePress();
+              return;
+            }
+            deletionPlan = { caretSourceOffset, deleted, native, nodes, walk };
+          } catch (error) {
+            // The press is not claimed here: it falls through to the policy
+            // below. A staleness proof is still reported - the surface no
+            // longer spells the accepted document - but it no longer rides on
+            // a cancelled press.
+            if (
+              error instanceof Error
+              && 'visual-editor-canonical-change-dom-stale' === error.message
+            ) {
+              failVisualSynchronization(error);
+            }
+            return;
+          }
+          if (!deletionPlan) {
+            releaseTablePress();
+            return;
+          }
+          event.preventDefault();
+          try {
+            const { caretSourceOffset, deleted, native, nodes, walk } = deletionPlan;
+            deleted.node.deleteData(deleted.offset, 1);
             const cell = tableCellOf(deleted.node);
             // A text character spelled inside inline markup keeps that markup
             // while it still holds text. When this deletion emptied it, the

@@ -111,9 +111,14 @@ const WINDOW_SPACER_ATTRIBUTE = "data-easymde-preview-window-spacer";
 
 /**
  * A direct surface root the browser cannot merge into a neighbouring text
- * block: an object with no editable descendant (thematic break, table, math,
+ * block: an object the caret cannot enter (thematic break, rendered math,
  * mermaid). Backspace at the visual start of the next block removes the whole
  * object instead of asking Chromium to merge across it.
+ *
+ * This classifier answers only "can the caret enter this root"; it does not
+ * license removing the root's source. A table container is also a `section`,
+ * yet its cells hold the caret. Source removal asks
+ * `isWindowedAtomicRemovalRoot`, which adds the interior proof below.
  */
 function isWindowedAtomicRoot(node: HTMLElement): boolean {
 	if (node instanceof HTMLHRElement) return true;
@@ -122,6 +127,32 @@ function isWindowedAtomicRoot(node: HTMLElement): boolean {
 		return !node.matches(".easymde-toc, .footnotes-sep, .footnotes");
 	}
 	return false;
+}
+
+/**
+ * Whether a root carries an editable interior: a descendant that can hold a
+ * caret. Deleting such a root as one object would destroy text the user can
+ * still edit, so adjacent-object removal may only act on a root that has
+ * none - a thematic break or a rendered protected object. A table (cells), a
+ * list (items) or a paragraph is an editable interior: its edge is a text
+ * join, never an object deletion.
+ *
+ * This is the Full surface's `hasEditableVisualInterior` contract, kept
+ * identical so both owners classify the same DOM the same way.
+ */
+function hasEditableWindowedInterior(node: HTMLElement): boolean {
+	return null !== node.querySelector("table, td, th, li, p, pre");
+}
+
+/**
+ * A root adjacent-object removal may delete as one object: an atomic root
+ * with no descendant that can hold a caret. A table container is a
+ * `section`, so the root classifier alone called it atomic and one
+ * Backspace deleted the whole table; the Full surface already excludes such
+ * roots the same way (`isAtomicVisualRoot` + `hasEditableVisualInterior`).
+ */
+function isWindowedAtomicRemovalRoot(node: HTMLElement): boolean {
+	return isWindowedAtomicRoot(node) && !hasEditableWindowedInterior(node);
 }
 
 /** Whether the collapsed native caret is at the visual start of `block`. */
@@ -6157,7 +6188,17 @@ export function WindowedImmersiveVisualEditor({
 				? gap
 				: null;
 		};
-		/** The nearest materialised node before the sink, ignoring separators. */
+		/**
+		 * The nearest materialised node before the sink, ignoring separators,
+		 * when that node is an object this owner may remove as a whole.
+		 *
+		 * The sink's Backspace removes the trailing object's own source range,
+		 * so the node must pass the removal proof, not only the caret-entry
+		 * classifier: a table container is an atomic root the caret cannot
+		 * enter, yet its cells are editable interior, and removing it would
+		 * delete the table's whole source. Such a root is refused here, and
+		 * the adjacent-neighbour proof below consumes the press with no write.
+		 */
 		const documentEndGapAtomic = (
 			gap: WindowedEmptyCodeGap,
 		): HTMLElement | null => {
@@ -6167,7 +6208,7 @@ export function WindowedImmersiveVisualEditor({
 			}
 			return node instanceof HTMLElement
 				&& !node.hasAttribute(WINDOW_SPACER_ATTRIBUTE)
-				&& isWindowedAtomicRoot(node)
+				&& isWindowedAtomicRemovalRoot(node)
 				? node
 				: null;
 		};
@@ -7423,7 +7464,7 @@ export function WindowedImmersiveVisualEditor({
 			};
 			if (
 				adjacent instanceof HTMLElement &&
-				isWindowedAtomicRoot(adjacent)
+				isWindowedAtomicRemovalRoot(adjacent)
 			) {
 				const atomicRange = acceptedWindowedBlockRange(
 					adjacent,
@@ -7474,6 +7515,16 @@ export function WindowedImmersiveVisualEditor({
 					end,
 					Math.max(0, Math.min(source.length, caret - (end - start))),
 				);
+				return true;
+			}
+			if (
+				adjacent instanceof HTMLElement &&
+				isWindowedAtomicRoot(adjacent)
+			) {
+				// A root with an editable interior is not an object this owner
+				// may delete, and a table holds no text of its own, so the join
+				// below is not representable either. The press is consumed with
+				// no write, as the Full surface's table-edge owner does.
 				return true;
 			}
 			// Joining two content roots removes every whitespace unit between
@@ -9044,7 +9095,10 @@ export function WindowedImmersiveVisualEditor({
 					// The certified document-end sink is the surface's real
 					// paragraph for the caret position after a trailing atomic
 					// object. The sink owns no source row, so its Backspace
-					// removes that object rather than collapsing onto it.
+					// removes that object rather than collapsing onto it - but
+					// only an object the removal proof admits. A root with an
+					// editable interior (a table) leaves `sinkAtomic` null, and
+					// the neighbour proof below consumes the press with no write.
 					const documentEndGap = backward ? documentEndGapCaret() : null;
 					const sinkAtomic = documentEndGap
 						? documentEndGapAtomic(documentEndGap)
@@ -9057,11 +9111,22 @@ export function WindowedImmersiveVisualEditor({
 							initialBlock: null,
 						};
 					}
-					const rootAtomic = rootAtomicEdgeTarget(
+					const rootAtomicEdge = rootAtomicEdgeTarget(
 						backward ? "end" : "start",
 					);
+					const rootAtomic = rootAtomicEdge &&
+						isWindowedAtomicRemovalRoot(rootAtomicEdge)
+						? rootAtomicEdge
+						: null;
 					if (rootAtomic) {
 						removal = { atomic: rootAtomic, backward, initialBlock: null };
+					} else if (rootAtomicEdge && event.cancelable) {
+						// A root with an editable interior at the document edge is
+						// not an object to remove, and no text row stands on its
+						// far side to join: the press is a no-op, exactly as the
+						// Full surface treats the same boundary.
+						event.preventDefault();
+						return;
 					}
 					const native = surface.ownerDocument.defaultView?.getSelection();
 					const selectionNode = native?.anchorNode ?? null;
@@ -9098,7 +9163,7 @@ export function WindowedImmersiveVisualEditor({
 						if (
 							atomic instanceof HTMLElement &&
 							!atomic.hasAttribute(WINDOW_SPACER_ATTRIBUTE) &&
-							isWindowedAtomicRoot(atomic)
+							isWindowedAtomicRemovalRoot(atomic)
 						) {
 							let between = backward ? atomic.nextSibling : initialBlock.nextSibling;
 							const betweenEnd = backward ? initialBlock : atomic;
@@ -9113,6 +9178,20 @@ export function WindowedImmersiveVisualEditor({
 							if (separatorOnly) {
 								removal = { atomic, backward, initialBlock };
 							}
+						} else if (
+							atomic instanceof HTMLElement &&
+							!atomic.hasAttribute(WINDOW_SPACER_ATTRIBUTE) &&
+							isWindowedAtomicRoot(atomic) &&
+							event.cancelable
+						) {
+							// A root with an editable interior is not an object this
+							// owner may delete, and a table holds no text of its own,
+							// so joining the neighbouring line into its last row is
+							// not representable either. The press is a no-op,
+							// exactly as the Full surface's table-edge owner treats
+							// the same boundary.
+							event.preventDefault();
+							return;
 						}
 					}
 				} catch (error) {

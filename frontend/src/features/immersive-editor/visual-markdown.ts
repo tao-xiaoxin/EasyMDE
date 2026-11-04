@@ -4768,6 +4768,33 @@ export function createVisualMarkdownWindowChange(
 
 let visualMarkdownService: TurndownService | null = null;
 
+/**
+ * Whether a rendered row spells the table's delimiter row. This is the GFM
+ * table rule's own question, asked of the row's CELLS: a rendered row carries
+ * the newlines between its cells, and a caret-marked serialization carries the
+ * selection marker, as text nodes that name no column of their own.
+ */
+function visualTableRowIsHeading(row: HTMLTableRowElement): boolean {
+  const parent = row.parentElement;
+  if (!parent) return false;
+  if ('THEAD' === parent.nodeName) return true;
+  const previous = parent.previousElementSibling;
+  const firstBody = 'TBODY' === parent.nodeName
+    && (
+      null === previous
+      || (
+        'THEAD' === previous.nodeName
+        && '' === (previous.textContent ?? '').trim()
+      )
+    );
+  return parent.firstElementChild === row
+    && ('TABLE' === parent.nodeName || firstBody)
+    && Array.prototype.every.call(
+      row.cells,
+      (cell: HTMLTableCellElement) => 'TH' === cell.nodeName
+    );
+}
+
 function visualMarkdownSerializer(): TurndownService {
   if (visualMarkdownService) return visualMarkdownService;
 
@@ -4825,14 +4852,55 @@ function visualMarkdownSerializer(): TurndownService {
     strongDelimiter: '**'
   });
   service.use(gfm);
+  // The renderer spells its table markup with the newlines between the cells,
+  // and a caret-marked serialization parks its selection marker in the row it
+  // is proving, so a row's raw `childNodes` can carry text nodes that belong
+  // to no column. The GFM plugin's row rule walks those raw children, reads
+  // `align` off each one and places the delimiter row's leading pipe by raw
+  // index: on this DOM it threw `childNodes[i].getAttribute is not a
+  // function`, and even without the throw the delimiter row would lose its
+  // leading pipe. Read the row's own cells instead - a text node between two
+  // cells is framing, never a column.
+  service.addRule('easymde-table-row', {
+    filter: (node) => 'TR' === node.nodeName,
+    replacement: (content, node) => {
+      const row = node as HTMLTableRowElement;
+      // Only a heading row spells the delimiter row of the table.
+      if (!visualTableRowIsHeading(row)) return `\n${content}`;
+      let borderCells = '';
+      Array.prototype.forEach.call(
+        row.cells,
+        (cell: HTMLTableCellElement, index: number) => {
+          const align = (cell.getAttribute('align') ?? '').toLowerCase();
+          const border = 'left' === align
+            ? ':--'
+            : 'right' === align ? '--:' : 'center' === align ? ':-:' : '---';
+          borderCells += `${0 === index ? '| ' : ' '}${border} |`;
+        }
+      );
+      return `\n${content}${borderCells ? `\n${borderCells}` : ''}`;
+    }
+  });
   // A table cell spells its line break as raw `<br>`: the default hard-break
   // spelling (`  \n`) would split the row the cell belongs to. The canonical
   // row keeps the break inside its own cell, so the serializer must too.
+  //
+  // A cell that holds no content at all is the exception: Chromium parks a
+  // caret placeholder `<br>` in an emptied cell, and that byte spells no line
+  // break. Serializing it would turn an empty cell into `| <br> |` while the
+  // canonical row says `|  |`, which is the spelling mismatch that stops the
+  // next caret from projecting onto the row.
   service.addRule('easymde-table-cell-break', {
     filter: (node) =>
       'BR' === node.nodeName
       && Boolean(node.parentElement?.closest('td, th')),
-    replacement: () => '<br>'
+    replacement: (_content, node) => {
+      const parent = node.parentElement;
+      const placeholder = parent
+        && 1 === parent.childNodes.length
+        && parent.firstChild === node;
+      return placeholder ? '' : '<br>';
+    }
   });
   service.addRule('easymde-image-scale', {
     filter: (node) => 'IMG' === node.nodeName,
@@ -9535,6 +9603,49 @@ function visualMarkdownTableAt(
 }
 
 /**
+ * The GFM table that lies on one side of the offset with nothing but
+ * whitespace between that side and the offset.
+ *
+ * A table's outer edge belongs to no cell: a caret in the block after the
+ * table has no cell of its own, so the table is found from its own boundary
+ * instead of from the caret's byte. `direction` names the side the press reads
+ * from - 'backward' looks for a table ENDING before the offset (the caret is
+ * in the block after it), 'forward' for one STARTING after it. Anything
+ * non-blank between the table and the offset means the press is not this edge.
+ */
+function visualMarkdownTableAdjacent(
+  sourceMarkdown: string,
+  sourceOffset: number,
+  direction: 'backward' | 'forward'
+): VisualTableBlock | null {
+  if (
+    !Number.isInteger(sourceOffset)
+    || sourceOffset < 0
+    || sourceOffset > sourceMarkdown.length
+  ) return null;
+  const tree = markdownLanguage.parser.parse(sourceMarkdown);
+  const tables: Array<Readonly<{ from: number; to: number }>> = [];
+  tree.iterate({
+    enter: (node) => {
+      if ('Table' === node.name) tables.push({ from: node.from, to: node.to });
+    }
+  });
+  let chosen: Readonly<{ from: number; to: number }> | null = null;
+  for (const table of tables) {
+    if ('backward' === direction) {
+      if (table.to > sourceOffset) continue;
+      if (!/^\s*$/u.test(sourceMarkdown.slice(table.to, sourceOffset))) continue;
+      if (!chosen || table.to > chosen.to) chosen = table;
+      continue;
+    }
+    if (table.from < sourceOffset) continue;
+    if (!/^\s*$/u.test(sourceMarkdown.slice(sourceOffset, table.from))) continue;
+    if (!chosen || table.from < chosen.from) chosen = table;
+  }
+  return chosen ? visualMarkdownTableAt(sourceMarkdown, chosen.from) : null;
+}
+
+/**
  * The source range one cell-edge deletion removes from a cell, and the text
  * character that deletion is about.
  *
@@ -9706,6 +9817,14 @@ function visualTableShapeSurvives(
  * reading order requires, and so is a cell that holds only markup. Nothing
  * before the first cell of the first row (for Backspace) and nothing after the
  * last cell of the last row (for Delete) leaves the press in place.
+ *
+ * The table's OUTER edge is part of the same reading order: a caret in the
+ * block after the table (Backspace) enters it at the last cell of the last
+ * row, and a caret in the block before it (Delete) enters at the first cell of
+ * the first row. That press removes one cell TEXT character exactly like an
+ * in-table press; it never joins or removes the table root, so the table's
+ * source bytes can only ever change one character at a time through this
+ * walk.
  */
 export type VisualTableDeletionWalk =
   | Readonly<{
@@ -9726,9 +9845,33 @@ export type VisualTableDeletionWalk =
 export function visualTableDeletionWalk(
   sourceMarkdown: string,
   sourceOffset: number,
-  direction: 'backward' | 'forward'
+  direction: 'backward' | 'forward',
+  /**
+   * The caret's own cell, when the caller can read it from the rendered row.
+   * A caret parked on an emptied cell is an element boundary the source
+   * projection can place a padding byte either side of; the DOM row and cell
+   * ordinal name the cell without that ambiguity.
+   */
+  caretCell?: Readonly<{ column: number; row: number }>,
+  /**
+   * The table's own OUTER edge, when the caret sits in the block after it
+   * ('after', entered by Backspace) or before it ('before', entered by
+   * Delete) instead of in one of its cells. The table is then located from
+   * that side and reading order starts at its own boundary: the last cell of
+   * the last row, or the first cell of the first row.
+   */
+  caretEdge?: 'after' | 'before'
 ): VisualTableDeletionWalk | null {
-  const table = visualMarkdownTableAt(sourceMarkdown, sourceOffset);
+  let table: VisualTableBlock | null;
+  if (!caretEdge) {
+    table = visualMarkdownTableAt(sourceMarkdown, sourceOffset);
+  } else if (('after' === caretEdge) === ('backward' === direction)) {
+    // The caret's block lies on the side the press reads from, so the press
+    // enters the table through that same side's first cell in reading order.
+    table = visualMarkdownTableAdjacent(sourceMarkdown, sourceOffset, direction);
+  } else {
+    return null;
+  }
   if (!table) return null;
   const flat: Array<
     Readonly<{ cell: VisualTableRowCell; column: number; row: number }>
@@ -9738,29 +9881,42 @@ export function visualTableDeletionWalk(
       flat.push({ cell, column, row });
     });
   });
-  const caretCells = flat
-    .map((entry, flatIndex) => ({ entry, flatIndex }))
-    .filter(({ entry }) => {
-      const { cell } = entry;
-      if (cell.empty) {
-        return sourceOffset >= cell.rawStart && sourceOffset <= cell.rawEnd;
-      }
-      // The caret's own edge is the cell's TEXT edge, not its byte edge: a
-      // cell that opens with inline code or a break spells bytes before its
-      // first text character, and the caret at that content start projects
-      // onto the first text character itself.
-      const first = visualTableCellTextDeletion(cell, 'forward');
-      const last = visualTableCellTextDeletion(cell, 'backward');
-      return 'backward' === direction
-        ? sourceOffset >= cell.rawStart
-          && sourceOffset <= (first?.textFrom ?? cell.contentStart)
-        : sourceOffset >= (last?.textTo ?? cell.contentEnd)
-          && sourceOffset <= cell.rawEnd;
-    });
-  if (1 !== caretCells.length) return null;
-  const caretCell = caretCells[0];
-  if (!caretCell) return null;
-  const caretFlat = caretCell.flatIndex;
+  let caretFlat = -1;
+  if (caretCell) {
+    caretFlat = flat.findIndex(
+      (entry) => entry.row === caretCell.row && entry.column === caretCell.column
+    );
+    if (caretFlat < 0) return null;
+  } else if (caretEdge) {
+    // The caret is outside the table, so reading order starts at the table's
+    // own boundary: one past its last cell for a Backspace, one before its
+    // first cell for a Delete. The step below then lands on the edge cell.
+    caretFlat = 'after' === caretEdge ? flat.length : -1;
+  } else {
+    const caretCells = flat
+      .map((entry, flatIndex) => ({ entry, flatIndex }))
+      .filter(({ entry }) => {
+        const { cell } = entry;
+        if (cell.empty) {
+          return sourceOffset >= cell.rawStart && sourceOffset <= cell.rawEnd;
+        }
+        // The caret's own edge is the cell's TEXT edge, not its byte edge: a
+        // cell that opens with inline code or a break spells bytes before its
+        // first text character, and the caret at that content start projects
+        // onto the first text character itself.
+        const first = visualTableCellTextDeletion(cell, 'forward');
+        const last = visualTableCellTextDeletion(cell, 'backward');
+        return 'backward' === direction
+          ? sourceOffset >= cell.rawStart
+            && sourceOffset <= (first?.textFrom ?? cell.contentStart)
+          : sourceOffset >= (last?.textTo ?? cell.contentEnd)
+            && sourceOffset <= cell.rawEnd;
+      });
+    if (1 !== caretCells.length) return null;
+    const found = caretCells[0];
+    if (!found) return null;
+    caretFlat = found.flatIndex;
+  }
   let target: Readonly<{
     cell: VisualTableRowCell;
     column: number;
@@ -9803,6 +9959,67 @@ export function visualTableDeletionWalk(
     to: deletion.to,
     value
   };
+}
+
+/**
+ * The DOM text position one table-cell deletion removes, proved without
+ * touching the surface.
+ *
+ * The walk names the character by its SOURCE offset; this maps that offset
+ * back onto the rendered cell and returns the text position the press would
+ * delete. Both of the character's boundaries can be element edges - an inline
+ * code span's first character sits at the span's own start - so the fallback
+ * reads the first text position the character's range covers.
+ *
+ * A press is only claimed once this proof succeeds: returning `null` is the
+ * caller's licence to release the press instead of swallowing it.
+ */
+export function visualTableCellDeletionPosition(
+  editor: HTMLElement,
+  sourceMarkdown: string,
+  baselineVisualMarkdown: string,
+  sourceOffset: number
+): Readonly<{ node: Text; offset: number }> | null {
+  try {
+    const before = visualCaretBoundaryFromSourceOffset(
+      editor,
+      sourceMarkdown,
+      baselineVisualMarkdown,
+      sourceOffset
+    );
+    if (before.node instanceof Text && before.offset < before.node.data.length) {
+      return { node: before.node, offset: before.offset };
+    }
+    const after = visualCaretBoundaryFromSourceOffset(
+      editor,
+      sourceMarkdown,
+      baselineVisualMarkdown,
+      sourceOffset + 1
+    );
+    const root = before.node instanceof Element
+      ? before.node
+      : before.node.parentElement;
+    if (!root) return null;
+    const range = editor.ownerDocument.createRange();
+    range.setStart(before.node, before.offset);
+    range.setEnd(after.node, after.offset);
+    const textWalker = editor.ownerDocument.createTreeWalker(
+      root,
+      NodeFilter.SHOW_TEXT
+    );
+    for (
+      let node = textWalker.nextNode();
+      node;
+      node = textWalker.nextNode()
+    ) {
+      if (!(node instanceof Text) || 0 === node.data.length) continue;
+      if (!range.intersectsNode(node)) continue;
+      return { node, offset: 0 };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export type VisualMarkdownEditSelection = Readonly<{

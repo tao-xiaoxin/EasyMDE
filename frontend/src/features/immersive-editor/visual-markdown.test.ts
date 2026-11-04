@@ -56,6 +56,7 @@ import {
   visualCaretBoundaryFromSourceOffset,
   visualCodeFenceRootSourceOffset,
   visualTableDeletionWalk,
+  visualTableCellDeletionPosition,
   visualBoundarySourceOffset,
   visualSourceRangeForRenderedImage,
   visualRetiredInlineSourceRange,
@@ -9385,6 +9386,24 @@ describe('visualTableDeletionWalk', () => {
     );
   });
 
+  it('uses the rendered cell ordinal when the caret byte lands elsewhere', () => {
+    const source = '| Head | Tail |\n| --- | --- |\n| one | two |\n';
+    // The projected byte sits at the start of `two` (column 1), but the caret
+    // is really in the emptied first cell of that row: the DOM ordinal names
+    // the cell without the empty-cell padding ambiguity.
+    const walk = visualTableDeletionWalk(
+      source,
+      source.indexOf('two'),
+      'backward',
+      { column: 0, row: 1 }
+    );
+    expect(walk?.kind).toBe('walk');
+    if (!walk || 'walk' !== walk.kind) throw new Error('walk-missing');
+    // The previous cell of (row 1, column 0) is the header's last cell.
+    expect(walk.cell).toEqual({ column: 1, row: 0 });
+    expect(walk.value).toBe(source.replace('| Tail |', '| Tai |'));
+  });
+
   it('does nothing before the first cell of the first row', () => {
     expect(
       visualTableDeletionWalk(table, table.indexOf('Head'), 'backward')
@@ -9431,6 +9450,290 @@ describe('visualTableDeletionWalk', () => {
     // Only the two outer edges are boundaries; every other edge walks.
     expect(walks).toBe(16);
   });
+
+  describe('the table\'s own outer edges', () => {
+    const source = [
+      '第三行 ijkl',
+      '',
+      '| 列A | 列B |',
+      '| --- | --- |',
+      '| x1 | y1 |',
+      '',
+      '第四行 mnop'
+    ].join('\n');
+    const beforeTable = source.indexOf('第三行 ijkl')
+      + '第三行 ijkl'.length;
+    const afterTable = source.indexOf('第四行 mnop');
+
+    it('enters the last cell of the last row from the block after the table', () => {
+      const walk = visualTableDeletionWalk(
+        source,
+        afterTable,
+        'backward',
+        undefined,
+        'after'
+      );
+      expect(walk?.kind).toBe('walk');
+      if ('walk' !== walk?.kind) throw new Error('walk-missing');
+      expect(walk.cell).toEqual({ column: 1, row: 1 });
+      expect(walk.index).toBe(source.indexOf('y1') + 1);
+      expect(source[walk.index]).toBe('1');
+      expect(walk.caret).toBe(walk.index);
+      expect(walk.value).toBe(source.replace('| x1 | y1 |', '| x1 | y |'));
+      // The table bytes are the same table one text character shorter.
+      expect(parsedColumns(walk.value, walk.caret)).toEqual(
+        parsedColumns(source, walk.index)
+      );
+    });
+
+    it('enters the first cell of the first row from the block before the table', () => {
+      const walk = visualTableDeletionWalk(
+        source,
+        beforeTable,
+        'forward',
+        undefined,
+        'before'
+      );
+      expect(walk?.kind).toBe('walk');
+      if ('walk' !== walk?.kind) throw new Error('walk-missing');
+      expect(walk.cell).toEqual({ column: 0, row: 0 });
+      expect(walk.index).toBe(source.indexOf('列A'));
+      expect(source[walk.index]).toBe('列');
+      expect(walk.value).toBe(
+        source.replace('| 列A | 列B |', '| A | 列B |')
+      );
+      expect(parsedColumns(walk.value, walk.caret)).toEqual(
+        parsedColumns(source, walk.index)
+      );
+    });
+
+    it('steps over an empty last cell when entering from after the table', () => {
+      const emptied = [
+        '第三行 ijkl',
+        '',
+        '| 列A | 列B |',
+        '| --- | --- |',
+        '| x1 |  |',
+        '',
+        '第四行 mnop'
+      ].join('\n');
+      const walk = visualTableDeletionWalk(
+        emptied,
+        emptied.indexOf('第四行 mnop'),
+        'backward',
+        undefined,
+        'after'
+      );
+      expect(walk?.kind).toBe('walk');
+      if ('walk' !== walk?.kind) throw new Error('walk-missing');
+      // An empty cell keeps its pipes and is stepped over, exactly like an
+      // in-table press: the previous cell of the same row is `x1`.
+      expect(walk.cell).toEqual({ column: 0, row: 1 });
+      expect(walk.value).toBe(emptied.replace('| x1 |', '| x |'));
+    });
+
+    it('is a boundary when every cell is already empty', () => {
+      const emptied = [
+        '第三行 ijkl',
+        '',
+        '|  |  |',
+        '| --- | --- |',
+        '|  |  |',
+        '',
+        '第四行 mnop'
+      ].join('\n');
+      expect(visualTableDeletionWalk(
+        emptied,
+        emptied.indexOf('第四行 mnop'),
+        'backward',
+        undefined,
+        'after'
+      )).toEqual({ kind: 'boundary' });
+    });
+
+    it('refuses an edge and a direction that read from opposite sides', () => {
+      expect(visualTableDeletionWalk(
+        source,
+        afterTable,
+        'forward',
+        undefined,
+        'after'
+      )).toBeNull();
+      expect(visualTableDeletionWalk(
+        source,
+        beforeTable,
+        'backward',
+        undefined,
+        'before'
+      )).toBeNull();
+    });
+
+    it('refuses a table that is not adjacent to the offset', () => {
+      // A blank line is the separator; any other byte between the table and
+      // the caret means the press is not this edge.
+      const separated = `${source.replace('第四行 mnop', '')}not a paragraph\n`;
+      expect(visualTableDeletionWalk(
+        separated,
+        separated.length,
+        'backward',
+        undefined,
+        'after'
+      )).toBeNull();
+      // A table on the other side of the offset is not this press either.
+      expect(visualTableDeletionWalk(
+        source,
+        source.length,
+        'backward',
+        undefined,
+        'before'
+      )).toBeNull();
+    });
+  });
 });
 
 
+
+it('serializes a lone placeholder br in an emptied table cell as nothing', () => {
+  const surface = document.createElement('article');
+  surface.innerHTML = '<section class="table-container easymde-table-container" data-easymde-visual-block-id="b1"><table><thead><tr><th>列A</th><th>列B</th><th>列C</th></tr></thead><tbody><tr><td><br></td><td>text2</td><td>文本三</td></tr><tr><td>a1</td><td>b2</td><td>c3</td></tr></tbody></table></section>';
+  expect(serializeVisualMarkdown(surface)).toBe(
+    '| 列A | 列B | 列C |\n| --- | --- | --- |\n|  | text2 | 文本三 |\n| a1 | b2 | c3 |'
+  );
+});
+
+it('keeps a real break inside a table cell', () => {
+  const surface = document.createElement('article');
+  surface.innerHTML = '<section class="table-container easymde-table-container" data-easymde-visual-block-id="b1"><table><thead><tr><th>列A</th><th>列B</th></tr></thead><tbody><tr><td>one<br>two</td><td>x</td></tr></tbody></table></section>';
+  expect(serializeVisualMarkdown(surface)).toBe(
+    '| 列A | 列B |\n| --- | --- |\n| one<br>two | x |'
+  );
+});
+
+// The browser measurement this test mirrors: the rendered table the editor
+// mounts is pretty-printed, so every `<tr>` carries the newlines between its
+// cells as Text children (`<tr>\n<th>列A</th>\n<th>列B</th>\n...`). Turndown
+// collapses those whitespace nodes, so this shape alone never threw; it pins
+// the rendered row the row rule must keep reading through its cells. The
+// measured throw itself is driven by the selection marker in the next test.
+it('serializes a rendered table whose rows carry the newlines between cells', () => {
+  const surface = document.createElement('article');
+  surface.innerHTML = [
+    '<section class="table-container easymde-table-container"',
+    ' data-easymde-visual-block-id="b1">',
+    '<table>\n<thead>\n<tr>\n<th>列A</th>\n<th>列B</th>\n<th>列C</th>\n</tr>\n</thead>\n',
+    '<tbody>\n<tr>\n<td><br></td>\n<td>text2</td>\n<td>文本三</td>\n</tr>\n',
+    '<tr>\n<td>a1</td>\n<td>b2</td>\n<td>c3</td>\n</tr>\n</tbody>\n</table>',
+    '</section>'
+  ].join('');
+  const headerRow = surface.querySelector('thead tr');
+  expect(headerRow?.childNodes.length).toBe(7);
+  expect(serializeVisualMarkdown(surface)).toBe(
+    '| 列A | 列B | 列C |\n| --- | --- | --- |\n|  | text2 | 文本三 |\n| a1 | b2 | c3 |'
+  );
+});
+
+it('serializes the same pretty-printed table with column alignment', () => {
+  const surface = document.createElement('article');
+  surface.innerHTML = [
+    '<section class="table-container easymde-table-container"',
+    ' data-easymde-visual-block-id="b1">',
+    '<table>\n<thead>\n<tr>\n',
+    '<th align="left">a</th>\n<th align="center">b</th>\n<th align="right">c</th>\n',
+    '</tr>\n</thead>\n<tbody>\n<tr>\n<td>1</td>\n<td>2</td>\n<td>3</td>\n</tr>\n</tbody>\n</table>',
+    '</section>'
+  ].join('');
+  expect(serializeVisualMarkdown(surface)).toBe(
+    '| a | b | c |\n| :-- | :-: | --: |\n| 1 | 2 | 3 |'
+  );
+});
+
+// The measured failing serialization: the caret projection clones the surface
+// and parks its selection marker (`\uE000\uE001\uE002\uE003`) at the boundary it
+// is proving, so the header `<tr>` carries a text node that names no column.
+// The GFM row rule read `align` off that node and threw
+// `childNodes[i].getAttribute is not a function`, which is what made every
+// press into the header row a silent no-op. The marker must survive the
+// serializer: the boundary proof reads it back out of the output, so removing
+// it must reproduce the unmarked baseline byte for byte.
+it('serializes a rendered row that carries the selection marker', () => {
+  const surface = document.createElement('article');
+  surface.innerHTML = [
+    '<section class="table-container easymde-table-container"',
+    ' data-easymde-visual-block-id="b1">',
+    '<table>\n<thead>\n<tr>\n<th>列A</th>\n<th>列B</th>\n<th>列C</th>\n</tr>\n</thead>\n',
+    '<tbody>\n<tr>\n<td><br></td>\n<td>text2</td>\n<td>文本三</td>\n</tr>\n',
+    '<tr>\n<td>a1</td>\n<td>b2</td>\n<td>c3</td>\n</tr>\n</tbody>\n</table>',
+    '</section>'
+  ].join('');
+  const row = surface.querySelector('thead tr');
+  if (!(row instanceof HTMLTableRowElement)) throw new Error('marker-row-missing');
+  // The projection inserts its marker with a DOM range, so the row keeps it as
+  // a child. A parsed HTML string cannot reproduce this: the HTML parser
+  // foster-parents a stray text node out of the table.
+  row.append(document.createTextNode('\uE000\uE001\uE002\uE003'));
+  expect(row.childNodes.length).toBe(8);
+  expect(serializeVisualMarkdown(surface)).toBe(
+    '| 列A | 列B | 列C |\uE000\uE001\uE002\uE003\n| --- | --- | --- |\n'
+    + '|  | text2 | 文本三 |\n| a1 | b2 | c3 |'
+  );
+});
+
+describe('visualTableCellDeletionPosition', () => {
+  const markdown = '| 列A | 列B |\n| --- | --- |\n| one | two |';
+  const rendered = (): HTMLElement => {
+    const surface = document.createElement('article');
+    surface.innerHTML = [
+      '<section class="table-container easymde-table-container"',
+      ' data-easymde-visual-block-id="b0">',
+      '<table>\n<thead>\n<tr>\n<th>列A</th>\n<th>列B</th>\n</tr>\n</thead>\n',
+      '<tbody>\n<tr>\n<td>one</td>\n<td>two</td>\n</tr>\n</tbody>\n</table>',
+      '</section>'
+    ].join('');
+    return surface;
+  };
+
+  it('resolves the header character a backward walk removes', () => {
+    const surface = rendered();
+    const visual = serializeVisualMarkdown(surface);
+    const index = markdown.indexOf('列B') + 1;
+    expect(markdown[index]).toBe('B');
+    const position = visualTableCellDeletionPosition(
+      surface,
+      markdown,
+      visual,
+      index
+    );
+    expect(position).not.toBeNull();
+    expect(position?.node.data).toBe('列B');
+    expect(position?.offset).toBe(1);
+  });
+
+  it('resolves a body cell character without touching the surface', () => {
+    const surface = rendered();
+    const visual = serializeVisualMarkdown(surface);
+    const before = surface.innerHTML;
+    const index = markdown.indexOf('one');
+    const position = visualTableCellDeletionPosition(
+      surface,
+      markdown,
+      visual,
+      index
+    );
+    expect(position?.node.data).toBe('one');
+    expect(position?.offset).toBe(0);
+    expect(surface.innerHTML).toBe(before);
+  });
+
+  it('returns null for a byte that is not a cell character', () => {
+    const surface = rendered();
+    const visual = serializeVisualMarkdown(surface);
+    expect(
+      visualTableCellDeletionPosition(
+        surface,
+        markdown,
+        visual,
+        markdown.indexOf('---')
+      )
+    ).toBeNull();
+  });
+});

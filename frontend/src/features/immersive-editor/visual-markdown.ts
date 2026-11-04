@@ -1,4 +1,4 @@
-import type { Change } from 'diff';
+import type { BaseOptions, Change, LinesOptions } from 'diff';
 import { markdownLanguage } from '@codemirror/lang-markdown';
 import { diffChars, diffLines } from 'diff';
 import TurndownService from 'turndown';
@@ -41,6 +41,65 @@ const VISUAL_CODE_PLACEHOLDER_ATTRIBUTE =
  * with surrounding prose, fragmenting one insertion into unrelated edits.
  */
 const VISUAL_SELECTION_MARKER = '\uE000\uE001\uE002\uE003';
+
+/**
+ * One unit of per-press work the serializer owners performed: a Turndown run,
+ * a call into the text diff, or a build of a whole-document source interval
+ * map. The performance regression test reads these numbers; they are plain
+ * integer increments and never change a byte of output.
+ */
+export type VisualEditorPerformanceCounters = Readonly<{
+  /** Block-fragment projections (`serializeVisualMarkdownBlockFragment`). */
+  blockSerializations: number;
+  /** `diffLines`/`diffChars` calls. */
+  diffCalls: number;
+  /** The direct canonical-only map, which runs no diff. */
+  directSourceMapBuilds: number;
+  /** Diff-aligned source interval maps built over a whole document. */
+  sourceMapBuilds: number;
+  /** `serializeVisualMarkdown` calls; each is exactly one Turndown run. */
+  turndownRuns: number;
+}>;
+
+const visualEditorPerformance = {
+  blockSerializations: 0,
+  diffCalls: 0,
+  directSourceMapBuilds: 0,
+  sourceMapBuilds: 0,
+  turndownRuns: 0
+};
+
+/** The counters as they stand now, copied so a caller cannot mutate them. */
+export function visualEditorPerformanceCounters(): VisualEditorPerformanceCounters {
+  return { ...visualEditorPerformance };
+}
+
+/** Start a new measurement window. */
+export function resetVisualEditorPerformanceCounters(): void {
+  visualEditorPerformance.blockSerializations = 0;
+  visualEditorPerformance.diffCalls = 0;
+  visualEditorPerformance.directSourceMapBuilds = 0;
+  visualEditorPerformance.sourceMapBuilds = 0;
+  visualEditorPerformance.turndownRuns = 0;
+}
+
+const countedDiffLines = (
+  left: string,
+  right: string,
+  options?: LinesOptions
+): Change[] => {
+  visualEditorPerformance.diffCalls += 1;
+  return diffLines(left, right, options);
+};
+
+const countedDiffChars = (
+  left: string,
+  right: string,
+  options?: BaseOptions
+): Change[] => {
+  visualEditorPerformance.diffCalls += 1;
+  return diffChars(left, right, options);
+};
 
 export type VisualThematicBreakSelection = Readonly<{
   block: HTMLHRElement;
@@ -4338,6 +4397,7 @@ export function serializeVisualMarkdown(editor: HTMLElement): string {
     || editor.querySelector(PREVIEW_WINDOW_SPACER_SELECTOR)) {
     throw new Error('visual-editor-window-incomplete');
   }
+  visualEditorPerformance.turndownRuns += 1;
   const service = visualMarkdownSerializer();
   const serializationRoot = markdownSerializationRoot(editor);
   removeVisualCaretMarkersFromSerializationRoot(serializationRoot);
@@ -4455,6 +4515,7 @@ export function serializeVisualMarkdownBlockFragment(
   if (!documentRef) {
     throw new Error('visual-editor-window-block-range-invalid');
   }
+  visualEditorPerformance.blockSerializations += 1;
   const fragment = documentRef.createElement('article');
   for (const block of blocks) {
     if (
@@ -4502,6 +4563,33 @@ function visualImageSourceRanges(
     throw new Error('visual-editor-image-source-map-failed');
   }
   return { images, ranges };
+}
+
+/**
+ * The Markdown one rendered image spells, memoized on the image itself.
+ *
+ * `serializeVisualMarkdownBlockFragment([image])` is a pure function of that
+ * image's own subtree: the fragment root holds nothing but the image, and the
+ * serializer's projections (theme footnote links, task-list paragraphs, image
+ * whitespace) all read that subtree alone. A character press never edits an
+ * image, so without this memo every keystroke re-runs Turndown once per image
+ * to re-prove a spelling that cannot have changed.
+ *
+ * The entry is keyed on the subtree's own `outerHTML`, so any change to the
+ * image (source, alt text, size, a replaced node) is a miss and re-proves the
+ * new spelling. The caller still compares the result against the baseline it
+ * holds, so the proof itself is unchanged.
+ */
+const visualImageFragmentSpellings =
+  new WeakMap<Element, Readonly<{ html: string; value: string }>>();
+
+function visualImageFragmentSpelling(image: HTMLImageElement): string {
+  const html = image.outerHTML;
+  const cached = visualImageFragmentSpellings.get(image);
+  if (cached && cached.html === html) return cached.value;
+  const value = serializeVisualMarkdownBlockFragment([image]);
+  visualImageFragmentSpellings.set(image, { html, value });
+  return value;
 }
 
 /** Bind an image in a certified formal row to its parser-owned source token. */
@@ -5486,6 +5574,7 @@ function buildVisualMarkdownSourceIntervalMap(
   baselineVisualMarkdown: string,
   imageUnits: NonNullable<VisualMarkdownSourceIntervalMap['imageUnits']> = []
 ): VisualMarkdownSourceIntervalMap {
+  visualEditorPerformance.sourceMapBuilds += 1;
   const hasCrLf = sourceMarkdown.includes('\r\n');
   const source = hasCrLf
     ? sourceMarkdown.replace(/\r\n/g, '\n')
@@ -5580,7 +5669,7 @@ function buildVisualMarkdownSourceIntervalMap(
       value: baselinePart
     }]);
   } else {
-    const lineParts = diffLines(sourcePart, baselinePart, {
+    const lineParts = countedDiffLines(sourcePart, baselinePart, {
       newlineIsToken: true
     });
     for (let index = 0; index < lineParts.length; index += 1) {
@@ -5588,12 +5677,12 @@ function buildVisualMarkdownSourceIntervalMap(
       if (!part) continue;
       const next = lineParts[index + 1];
       if (part.removed && next?.added) {
-        mapParts(diffChars(part.value, next.value));
+        mapParts(countedDiffChars(part.value, next.value));
         index += 1;
         continue;
       }
       if (part.added && next?.removed) {
-        mapParts(diffChars(next.value, part.value));
+        mapParts(countedDiffChars(next.value, part.value));
         index += 1;
         continue;
       }
@@ -5877,6 +5966,48 @@ export function isDeclaredBlockLeadingRun(
   );
 }
 
+type VisualImageSourceUnit =
+  NonNullable<VisualMarkdownSourceIntervalMap['imageUnits']>[number];
+
+/**
+ * Prove every rendered image against its own parser-owned source token and the
+ * baseline range its own spelling occupies.
+ *
+ * This is the whole image half of the alignment and nothing else: it parses the
+ * two Markdown spaces and compares one memoized spelling per image, but it
+ * never diffs them. A caller that must report an unprovable image on every
+ * press can therefore run it without paying for the document-wide alignment.
+ *
+ * The caller must prove that reference definitions still match the accepted
+ * snapshot; label existence alone cannot establish an image's destination or
+ * title.
+ */
+export function visualImageSourceUnits(
+  root: HTMLElement,
+  sourceMarkdown: string,
+  baselineVisualMarkdown: string,
+  referenceDefined: (label: string) => boolean
+): ReadonlyArray<VisualImageSourceUnit> {
+  if (!Array.from(root.querySelectorAll('img')).some((image) =>
+    !image.closest(`pre, ${VISUAL_MARKDOWN_READ_ONLY_SELECTOR}`))) {
+    return [];
+  }
+  const source = sourceMarkdown.replace(/\r\n/g, '\n');
+  const sourceImages = visualImageSourceRanges(root, source, referenceDefined, true);
+  const baselineImages = visualImageSourceRanges(root, baselineVisualMarkdown, () => false, true);
+  return sourceImages.images.map((image, index) => {
+    const sourceRange = sourceImages.ranges[index];
+    const baselineRange = baselineImages.ranges[index];
+    if (!sourceRange || !baselineRange || baselineImages.images[index] !== image
+      || image.closest(`pre, [contenteditable="false"], ${VISUAL_MARKDOWN_READ_ONLY_SELECTOR}`)
+      || baselineVisualMarkdown.slice(baselineRange.start, baselineRange.end) !== visualImageFragmentSpelling(image)) {
+      throw new Error('visual-editor-image-source-map-failed');
+    }
+    return { sourceStart: sourceRange.start, sourceEnd: sourceRange.end,
+      baselineStart: baselineRange.start, baselineEnd: baselineRange.end };
+  });
+}
+
 /**
  * Project parser-owned image units against a formally accepted visual snapshot.
  * The caller must prove that reference definitions still match that snapshot;
@@ -5888,24 +6019,12 @@ export function createVisualMarkdownImageSourceIntervalMap(
   baselineVisualMarkdown: string,
   referenceDefined: (label: string) => boolean
 ): VisualMarkdownSourceIntervalMap {
-  if (!Array.from(root.querySelectorAll('img')).some((image) =>
-    !image.closest(`pre, ${VISUAL_MARKDOWN_READ_ONLY_SELECTOR}`))) {
+  const imageUnits = visualImageSourceUnits(
+    root, sourceMarkdown, baselineVisualMarkdown, referenceDefined
+  );
+  if (0 === imageUnits.length) {
     return createVisualMarkdownSourceIntervalMap(sourceMarkdown, baselineVisualMarkdown);
   }
-  const source = sourceMarkdown.replace(/\r\n/g, '\n');
-  const sourceImages = visualImageSourceRanges(root, source, referenceDefined, true);
-  const baselineImages = visualImageSourceRanges(root, baselineVisualMarkdown, () => false, true);
-  const imageUnits = sourceImages.images.map((image, index) => {
-    const sourceRange = sourceImages.ranges[index];
-    const baselineRange = baselineImages.ranges[index];
-    if (!sourceRange || !baselineRange || baselineImages.images[index] !== image
-      || image.closest(`pre, [contenteditable="false"], ${VISUAL_MARKDOWN_READ_ONLY_SELECTOR}`)
-      || baselineVisualMarkdown.slice(baselineRange.start, baselineRange.end) !== serializeVisualMarkdownBlockFragment([image])) {
-      throw new Error('visual-editor-image-source-map-failed');
-    }
-    return { sourceStart: sourceRange.start, sourceEnd: sourceRange.end,
-      baselineStart: baselineRange.start, baselineEnd: baselineRange.end };
-  });
   return buildVisualMarkdownSourceIntervalMap(sourceMarkdown, baselineVisualMarkdown, imageUnits);
 }
 
@@ -5919,6 +6038,7 @@ export function createVisualMarkdownImageSourceIntervalMap(
 export function createVisualMarkdownDirectSourceIntervalMap(
   sourceMarkdown: string
 ): VisualMarkdownSourceIntervalMap {
+  visualEditorPerformance.directSourceMapBuilds += 1;
   const hasCrLf = sourceMarkdown.includes('\r\n');
   const source = hasCrLf
     ? sourceMarkdown.replace(/\r\n/g, '\n')
@@ -7702,7 +7822,7 @@ function unchangedVisualSourceAnchors(
   const anchors: UnchangedVisualSourceAnchor[] = [];
   let sourcePosition = 0;
   let baselinePosition = 0;
-  for (const part of diffLines(source, baseline, { newlineIsToken: true })) {
+  for (const part of countedDiffLines(source, baseline, { newlineIsToken: true })) {
     if (part.added) {
       baselinePosition += part.value.length;
       continue;
@@ -9418,6 +9538,12 @@ type VisualTableRowCell = Readonly<{
   inline: ReadonlyArray<VisualTableToken>;
   rawEnd: number;
   rawStart: number;
+  /**
+   * A cell the renderer creates for a short row while the source spells no
+   * such slot. Reading order must visit it - the caret can sit in it - but it
+   * covers no source bytes at all, so no source offset can name it.
+   */
+  synthetic: boolean;
 }>;
 
 type VisualTableBlock = Readonly<{
@@ -9514,7 +9640,8 @@ function visualTableRowCells(
         empty: true,
         inline: [],
         rawEnd: slot.rawEnd,
-        rawStart: slot.rawStart
+        rawStart: slot.rawStart,
+        synthetic: false
       });
       continue;
     }
@@ -9524,20 +9651,59 @@ function visualTableRowCells(
       empty: false,
       inline: node.inline ?? [],
       rawEnd: slot.rawEnd,
-      rawStart: slot.rawStart
+      rawStart: slot.rawStart,
+      synthetic: false
     });
   }
   return cells;
 }
 
 /**
+ * A body row's cells as the renderer lays them out. The header row's cell
+ * count is the table's column count, a short body row is padded with empty
+ * cells up to it, and a long one is cut at it - the renderer never shows a
+ * surplus column (`vendor/league/commonmark/src/Extension/Table/TableParser.php`).
+ *
+ * The alignment is reading order only. A padded cell covers no source bytes of
+ * its own, and the surplus slots stay exactly as the user spelled them: the
+ * walk must never rewrite a byte the surface does not show.
+ */
+function alignedVisualTableRow(
+  cells: ReadonlyArray<VisualTableRowCell>,
+  columns: number,
+  rowEnd: number
+): ReadonlyArray<VisualTableRowCell> {
+  if (cells.length === columns) return cells;
+  const aligned = cells.slice(0, columns);
+  while (aligned.length < columns) {
+    aligned.push({
+      contentEnd: rowEnd,
+      contentStart: rowEnd,
+      empty: true,
+      inline: [],
+      rawEnd: rowEnd,
+      rawStart: rowEnd,
+      synthetic: true
+    });
+  }
+  return aligned;
+}
+
+/**
  * The GFM table whose own bytes cover the offset, read through the same
  * Markdown syntax tree the rest of this module parses. The delimiter row is
  * framing, not a row of cells, so it never joins the reading order.
+ *
+ * `cellProved` is the caller's statement that the DOM already placed this caret
+ * in a rendered cell. The last cell of a table can end exactly at the table's
+ * own last byte - a short row's padded cell is spelled by no source byte at all
+ * - and the forward reading of such an offset belongs to the block AFTER the
+ * table. A proved cell therefore falls back to the reading that ends inside it.
  */
 function visualMarkdownTableAt(
   sourceMarkdown: string,
-  sourceOffset: number
+  sourceOffset: number,
+  options: Readonly<{ cellProved?: boolean }> = {}
 ): VisualTableBlock | null {
   if (
     !Number.isInteger(sourceOffset)
@@ -9546,10 +9712,21 @@ function visualMarkdownTableAt(
   ) return null;
   const tree = markdownLanguage.parser.parse(sourceMarkdown);
   const resolved = tree.resolveInner(sourceOffset, 1);
-  let node: typeof resolved | null = resolved;
-  while (node && 'Table' !== node.name) node = node.parent;
-  if (!node || sourceOffset < node.from || sourceOffset > node.to) return null;
+  const tableAt = (bias: -1 | 1): typeof resolved | null => {
+    let candidate: typeof resolved | null = bias === 1
+      ? resolved
+      : tree.resolveInner(sourceOffset, -1);
+    while (candidate && 'Table' !== candidate.name) candidate = candidate.parent;
+    return candidate
+      && sourceOffset >= candidate.from
+      && sourceOffset <= candidate.to
+      ? candidate
+      : null;
+  };
+  const node = tableAt(1) ?? (options.cellProved === true ? tableAt(-1) : null);
+  if (!node) return null;
   const rows: Array<ReadonlyArray<VisualTableRowCell>> = [];
+  let columns = 0;
   for (
     let child = node.firstChild;
     child;
@@ -9597,9 +9774,16 @@ function visualMarkdownTableAt(
       child.to
     );
     if (!cells) return null;
-    rows.push(cells);
+    if (0 === rows.length) {
+      // The header row defines the rendered column count; the renderer reads
+      // it from the header's own cells, not from the delimiter row.
+      columns = cells.length;
+      rows.push(cells);
+      continue;
+    }
+    rows.push(alignedVisualTableRow(cells, columns, child.to));
   }
-  return rows.length > 0 ? { from: node.from, rows } : null;
+  return rows.length > 0 && columns > 0 ? { from: node.from, rows } : null;
 }
 
 /**
@@ -9811,6 +9995,13 @@ function visualTableShapeSurvives(
  * TEXT character there. The caret follows the removed character, so
  * consecutive presses keep walking instead of stopping at a cell boundary.
  *
+ * Reading order is the RENDERED one, not the source's own slot list: a short
+ * body row is padded with the empty cells the renderer creates, and a body
+ * row's surplus columns are not visited at all, because the surface never
+ * shows them. A padded cell owns no bytes, so a caret there is named by its
+ * DOM row/cell ordinal and the walk continues from it like from any empty
+ * cell; the surplus slots keep their source spelling untouched.
+ *
  * Only the offset the caret actually holds is considered: a caret inside a
  * cell's own text is an ordinary in-cell deletion and is not this walk's. A
  * cell that is already empty keeps its pipes and is stepped over, exactly as
@@ -9864,7 +10055,9 @@ export function visualTableDeletionWalk(
 ): VisualTableDeletionWalk | null {
   let table: VisualTableBlock | null;
   if (!caretEdge) {
-    table = visualMarkdownTableAt(sourceMarkdown, sourceOffset);
+    table = visualMarkdownTableAt(sourceMarkdown, sourceOffset, {
+      cellProved: undefined !== caretCell
+    });
   } else if (('after' === caretEdge) === ('backward' === direction)) {
     // The caret's block lies on the side the press reads from, so the press
     // enters the table through that same side's first cell in reading order.
@@ -9897,6 +10090,9 @@ export function visualTableDeletionWalk(
       .map((entry, flatIndex) => ({ entry, flatIndex }))
       .filter(({ entry }) => {
         const { cell } = entry;
+        // A padded cell covers no source bytes, so no source offset names it:
+        // a caret inside one is named by its DOM ordinal instead.
+        if (cell.synthetic) return false;
         if (cell.empty) {
           return sourceOffset >= cell.rawStart && sourceOffset <= cell.rawEnd;
         }
@@ -10705,7 +10901,7 @@ export function mergeVisualMarkdownChangeDetails(
   let baselinePosition = 0;
 
   const edits: VisualMarkdownMergeEdit[] = [];
-  const visualChanges = diffChars(
+  const visualChanges = countedDiffChars(
     baselineVisualMarkdown,
     editedVisualMarkdown
   );

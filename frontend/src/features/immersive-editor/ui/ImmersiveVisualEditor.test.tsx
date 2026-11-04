@@ -27971,10 +27971,12 @@ it('walks from the caret parked on an emptied td into the pretty-printed header 
   }
 });
 
-// A rendered row can hold a cell the canonical row does not spell. The ordered
-// walk then has no cell to name, and the press must fall through to the policy
-// below instead of being cancelled with nothing written.
-it('does not claim a table press the ordered walk cannot resolve', () => {
+// A rendered row can hold a cell the canonical row does not spell - a surplus
+// column the renderer never shows. The ordered walk then has no rendered cell
+// to name, so the press is refused outright: cancelled with nothing written,
+// nothing reported and the surface left exactly as it was. It is never handed
+// back to native editing, whose default would merge the cells.
+it('refuses a table press the ordered walk cannot resolve', () => {
   vi.useFakeTimers();
   const markdown = [
     'Intro line.',
@@ -28024,11 +28026,20 @@ it('does not claim a table press the ordered walk cannot resolve', () => {
         tableBoundaryTargetRange(headerTailText, headerTailText.length, extra, 0)
       );
     });
-    // The walk cannot name a canonical cell for this caret, so the press is
-    // released to the policy below instead of being swallowed.
-    expect(beforeInput.defaultPrevented).toBe(false);
+    // The walk cannot name a rendered cell for this caret, so the press is
+    // this owner's clean no-op: cancelled, nothing written, nothing reported.
+    expect(beforeInput.defaultPrevented).toBe(true);
     expect(fixture.history.getValue()).toBe(markdown);
-    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure.mock.calls).toEqual([]);
+    expect(
+      fixture.surface.getAttribute('data-easymde-visual-deletion-repair')
+    ).toBeNull();
+    expect(headerTailText.data).toBe('b');
+    expect(extra.textContent).toBe('extra');
+    expect(window.getSelection()?.anchorNode).toBe(extra);
+    expect(window.getSelection()?.anchorOffset).toBe(0);
+    expect(fixture.runtime().isEditable()).toBe(true);
   } finally {
     fixture.unmount();
     vi.useRealTimers();
@@ -28173,6 +28184,664 @@ it('refuses a caret the canonical source does not spell without reporting it', (
     // The refused press left the caret exactly where the user put it.
     expect(window.getSelection()?.anchorNode).toBe(text);
     expect(window.getSelection()?.anchorOffset).toBe(4);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+/**
+ * The renderer pads a short body row to the header's column count
+ * (`TableParser::parseInlines` autocompletes the missing body cells). The walk's
+ * reading order must be that rendered order: the padded cell holds a real caret,
+ * and a caret no reading order visits is a press no owner can name.
+ */
+const paddedRowMarkdown = [
+  'Intro line.',
+  '',
+  '| H1 | H2 |',
+  '| --- | --- |',
+  '| one |',
+  '',
+  'Outro line.'
+].join('\n');
+
+const paddedRowHtml = (id: string): string => [
+  '<section class="table-container easymde-table-container"',
+  ` data-easymde-visual-block-id="${id}">`,
+  '<table>',
+  '<thead><tr><th>H1</th><th>H2</th></tr></thead>',
+  // The renderer creates this cell empty; Chromium mounts its caret
+  // placeholder break in a cell the user can put the caret in.
+  '<tbody><tr><td>one</td><td><br></td></tr></tbody>',
+  '</table>',
+  '</section>'
+].join('');
+
+function createPaddedRowFixture() {
+  const signature = 'padded-short-row-walk';
+  return createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { endLine: 1, id: 'b0', startLine: 0 },
+      { endLine: 5, id: 'b1', startLine: 2 },
+      { endLine: 7, id: 'b2', startLine: 6 }
+    ]),
+    html: fullOwnerParagraphBlock('Intro line.', 'b0') + '\n'
+      + paddedRowHtml('b1') + '\n'
+      + fullOwnerParagraphBlock('Outro line.', 'b2') + '\n',
+    markdown: paddedRowMarkdown,
+    signature,
+    sourceCaret: paddedRowMarkdown.indexOf('Outro line.')
+  });
+}
+
+it('cancels a press from the cell the renderer padded into a short body row', () => {
+  vi.useFakeTimers();
+  const fixture = createPaddedRowFixture();
+  try {
+    fixture.surface.focus();
+    const table = fixture.surface.querySelector('table');
+    if (!(table instanceof HTMLTableElement)) {
+      throw new Error('padded-row-table-missing');
+    }
+    const row = table.rows[1];
+    if (!(row instanceof HTMLTableRowElement)) {
+      throw new Error('padded-row-missing');
+    }
+    const real = row.cells[0];
+    const padded = row.cells[1];
+    if (!(real instanceof HTMLElement) || !(padded instanceof HTMLElement)) {
+      throw new Error('padded-row-cells-missing');
+    }
+    // The rendered shape the source does not spell: two columns, the missing
+    // body cell created empty and holding no byte of the canonical row.
+    expect(row.cells.length).toBe(2);
+    expect(real.textContent).toBe('one');
+    expect(padded.textContent).toBe('');
+    expect(padded.firstChild).toBeInstanceOf(HTMLBRElement);
+    const realText = tableCellText(real);
+
+    // Negative control: a press INSIDE the cell is an ordinary in-cell
+    // deletion, not a table boundary, so this owner never claims it.
+    placeCaretInText(realText, 1);
+    let control!: InputEvent;
+    act(() => {
+      control = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(realText, 0, 1)
+      );
+    });
+    expect(control.defaultPrevented).toBe(false);
+    expect(fixture.history.getValue()).toBe(paddedRowMarkdown);
+
+    // Chromium parks the caret on the padded TD element itself, with nothing of
+    // its own to delete. The walk's reading order DOES hold this cell - it is
+    // padded to the header's column count, so the step out of it lands on
+    // `one` - but the accepted VISUAL spells that empty cell while the source
+    // row does not, so no source position can be projected for this caret. The
+    // press is therefore the owner's clean cancellation, never the native merge
+    // that would empty or join the cells.
+    window.getSelection()?.setBaseAndExtent(padded, 0, padded, 0);
+    const before = {
+      cells: Array.from(fixture.surface.querySelectorAll('th, td')).map(
+        (cell) => cell.textContent
+      ),
+      history: fixture.history.getHistoryState(),
+      html: fixture.surface.innerHTML,
+      revision: fixture.history.getRevision(),
+      value: fixture.history.getValue()
+    };
+    let beforeInput!: InputEvent;
+    act(() => {
+      beforeInput = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        tableBoundaryTargetRange(realText, realText.length, padded, 0)
+      );
+    });
+    expect(beforeInput.defaultPrevented).toBe(true);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure.mock.calls).toEqual([]);
+    expect(fixture.onDiagnostic.mock.calls).toEqual([]);
+    // Unchanged, byte for byte: source, DOM, caret and history.
+    expect(fixture.history.getValue()).toBe(paddedRowMarkdown);
+    expect(fixture.surface.innerHTML).toBe(before.html);
+    expect(
+      Array.from(fixture.surface.querySelectorAll('th, td')).map(
+        (cell) => cell.textContent
+      )
+    ).toEqual(before.cells);
+    expect(fixture.history.getHistoryState()).toEqual(before.history);
+    expect(fixture.history.getRevision()).toBe(before.revision);
+    expect(row.cells.length).toBe(2);
+    expect(padded.isConnected).toBe(true);
+    expect(window.getSelection()?.anchorNode).toBe(padded);
+    expect(window.getSelection()?.anchorOffset).toBe(0);
+    expect(
+      fixture.surface.getAttribute('data-easymde-visual-deletion-repair')
+    ).toBeNull();
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+/**
+ * A body row can spell MORE cells than the header. The renderer never shows the
+ * surplus ones ("Body can not have more columns than head"), so reading order
+ * has to stop at the last rendered cell - and the surplus bytes must keep their
+ * exact spelling, because the walk never writes a byte the surface does not
+ * show.
+ */
+const surplusColumnMarkdown = [
+  'Intro line.',
+  '',
+  '| a | b |',
+  '| --- | --- |',
+  '| 1 | 2 | extra |',
+  '',
+  'Outro line.'
+].join('\n');
+
+const surplusColumnHtml = (id: string): string => [
+  '<section class="table-container easymde-table-container"',
+  ` data-easymde-visual-block-id="${id}">`,
+  '<table>',
+  '<thead><tr><th>a</th><th>b</th></tr></thead>',
+  '<tbody><tr><td>1</td><td>2</td></tr></tbody>',
+  '</table>',
+  '</section>'
+].join('');
+
+function createSurplusColumnFixture() {
+  const signature = 'surplus-column-walk';
+  return createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { endLine: 1, id: 'b0', startLine: 0 },
+      { endLine: 5, id: 'b1', startLine: 2 },
+      { endLine: 7, id: 'b2', startLine: 6 }
+    ]),
+    html: fullOwnerParagraphBlock('Intro line.', 'b0') + '\n'
+      + surplusColumnHtml('b1') + '\n'
+      + fullOwnerParagraphBlock('Outro line.', 'b2') + '\n',
+    markdown: surplusColumnMarkdown,
+    signature,
+    sourceCaret: surplusColumnMarkdown.indexOf('Outro line.')
+  });
+}
+
+it('enters a surplus-column row at its last rendered cell and leaves the surplus bytes', () => {
+  vi.useFakeTimers();
+  const fixture = createSurplusColumnFixture();
+  try {
+    fixture.surface.focus();
+    const table = fixture.surface.querySelector('table');
+    const paragraph = fixture.surface.querySelector('[data-easymde-visual-block-id="b2"]');
+    const paragraphText = paragraph?.firstChild;
+    if (!(table instanceof HTMLTableElement)
+      || !(paragraph instanceof HTMLParagraphElement)
+      || !(paragraphText instanceof Text)) {
+      throw new Error('surplus-column-fixture-invalid');
+    }
+    const row = table.rows[1];
+    const lastRendered = row?.cells[1];
+    if (!(row instanceof HTMLTableRowElement) || !(lastRendered instanceof HTMLElement)) {
+      throw new Error('surplus-column-cell-missing');
+    }
+    // The surface shows two columns and no cell for `extra`.
+    expect(row.cells.length).toBe(2);
+    expect(lastRendered.textContent).toBe('2');
+    const lastText = tableCellText(lastRendered);
+
+    // Negative control: the same press one character into the paragraph is a
+    // text join, not the table's outer edge.
+    placeCaretInText(paragraphText, 3);
+    let control!: InputEvent;
+    act(() => {
+      control = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(paragraphText, 2, 3)
+      );
+    });
+    expect(control.defaultPrevented).toBe(false);
+    expect(fixture.history.getValue()).toBe(surplusColumnMarkdown);
+
+    // The junction press: Backspace at the paragraph start after the table.
+    placeCaretInText(paragraphText, 0);
+    let beforeInput!: InputEvent;
+    act(() => {
+      beforeInput = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        tableBoundaryTargetRange(lastText, lastText.length, paragraphText, 0)
+      );
+    });
+    expect(beforeInput.defaultPrevented).toBe(true);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure.mock.calls).toEqual([]);
+    // Reading order stops at the last cell the SURFACE shows, so `2` loses its
+    // character. The unrendered `extra` column keeps every one of its bytes.
+    expect(fixture.history.getValue()).toBe(
+      surplusColumnMarkdown.replace('| 1 | 2 | extra |', '| 1 |  | extra |')
+    );
+    expect(lastText.data).toBe('');
+    expect(fixture.history.getValue()).toContain('| extra |');
+    expect(row.cells.length).toBe(2);
+    expect(paragraphText.data).toBe('Outro line.');
+    expect(tableCaretPosition(fixture.surface)).toEqual({
+      cell: 3,
+      offset: 0,
+      row: 1
+    });
+    expect(
+      fixture.surface.getAttribute('data-easymde-visual-deletion-repair')
+    ).toBeNull();
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('cancels a table-edge press whose pending flush cannot commit', async () => {
+  vi.useFakeTimers();
+  const fixture = createEditableTableFixture();
+  const settle = async (): Promise<void> => {
+    await act(async () => {
+      vi.advanceTimersByTime(160);
+      await Promise.resolve();
+    });
+  };
+  try {
+    fixture.surface.focus();
+    const { cells, text: paragraphText } = editableTableSurfaceParts(fixture.surface);
+    const one = cells[2];
+    const two = cells[3];
+    const tail = cells[1];
+    if (!one || !two || !tail) throw new Error('editable-table-cell-missing');
+    const oneText = tableCellText(one);
+
+    // Control: with nothing pending, the same press is the ordered walk's and
+    // removes exactly one cell character.
+    expect(pressTableBackspaceAtCellStart(fixture, two, one).defaultPrevented).toBe(true);
+    await settle();
+    expect(fixture.history.getValue()).toBe(
+      editableTableMarkdown.replace('| one | two |', '| on | two |')
+    );
+
+    // A pending in-cell deletion stays uncommitted until a flush.
+    expect(
+      fullOwnerNativeDelete(fixture.surface, oneText, 1, 2, 'deleteContentBackward')
+        .prevented
+    ).toBe(false);
+    expect(fixture.history.getValue()).toBe(
+      editableTableMarkdown.replace('| one | two |', '| on | two |')
+    );
+    // The canonical document advances behind the pending edit, so the flush can
+    // no longer commit what the surface holds.
+    fixture.history.applyTextChange({
+      selection: { direction: 'none', end: 0, start: 0 },
+      value: `${fixture.history.getValue()}X`
+    });
+    const sourceAtPress = fixture.history.getValue();
+
+    // The same junction press: an outer-edge press at the cell start after the
+    // flush fails. It is still this owner's press, so it is cancelled instead
+    // of being handed to the browser's default.
+    expect(
+      pressTableBackspaceAtCellStart(fixture, one, tail).defaultPrevented
+    ).toBe(true);
+    await settle();
+    expect(fixture.history.getValue()).toBe(sourceAtPress);
+    expect(paragraphText.data).toBe('Outro line.');
+    expect(fixture.surface.querySelector('table')).not.toBeNull();
+    // A cancelled press publishes nothing of its own: no failure code and no
+    // transfer failure. Only the failed flush recorded its silent re-derive.
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure.mock.calls).toEqual([]);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+/**
+ * The emptied terminal row can be a bare `<div><br></div>` once the browser has
+ * respelled the renderer's paragraph. It spells no text, so its element caret IS
+ * the block boundary, and the table before it is the junction the ordered walk
+ * owns.
+ */
+const divAfterTableMarkdown = [
+  'Intro line.',
+  '',
+  '| a | b |',
+  '| --- | --- |',
+  '| 1 | 2 |',
+  ''
+].join('\n');
+
+const divAfterTableHtml = (id: string): string => [
+  '<section class="table-container easymde-table-container"',
+  ` data-easymde-visual-block-id="${id}">`,
+  '<table>',
+  '<thead><tr><th>a</th><th>b</th></tr></thead>',
+  '<tbody><tr><td>1</td><td>2</td></tr></tbody>',
+  '</table>',
+  '</section>'
+].join('');
+
+function createDivAfterTableFixture() {
+  const signature = 'div-after-table-walk';
+  return createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { endLine: 1, id: 'b0', startLine: 0 },
+      { endLine: 5, id: 'b1', startLine: 2 }
+    ]),
+    html: fullOwnerParagraphBlock('Intro line.', 'b0') + '\n'
+      + divAfterTableHtml('b1') + '\n'
+      + '<div><br></div>',
+    markdown: divAfterTableMarkdown,
+    signature,
+    sourceCaret: divAfterTableMarkdown.length - 1
+  });
+}
+
+it('owns the junction when the emptied row after a table is a bare div', () => {
+  vi.useFakeTimers();
+  const fixture = createDivAfterTableFixture();
+  try {
+    fixture.surface.focus();
+    const table = fixture.surface.querySelector('table');
+    const gap = fixture.surface.lastElementChild;
+    if (!(table instanceof HTMLTableElement) || !(gap instanceof HTMLDivElement)) {
+      throw new Error('div-after-table-fixture-invalid');
+    }
+    expect(gap.tagName).toBe('DIV');
+    expect(gap.childNodes.length).toBe(1);
+    expect(gap.firstChild).toBeInstanceOf(HTMLBRElement);
+    const lastText = tableCellText(table.rows[1]!.cells[1]!);
+
+    // Negative control: an element caret that is NOT the gap block's own
+    // boundary is not this contact, so the table owner leaves it alone.
+    window.getSelection()?.setBaseAndExtent(gap, 1, gap, 1);
+    let control!: InputEvent;
+    act(() => {
+      control = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(gap, 1, 1)
+      );
+    });
+    expect(control.defaultPrevented).toBe(false);
+    expect(fixture.history.getValue()).toBe(divAfterTableMarkdown);
+
+    // Chromium parks the caret on the DIV element at offset 0.
+    window.getSelection()?.setBaseAndExtent(gap, 0, gap, 0);
+    let beforeInput!: InputEvent;
+    act(() => {
+      beforeInput = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        tableBoundaryTargetRange(lastText, lastText.length, gap, 0)
+      );
+    });
+    expect(beforeInput.defaultPrevented).toBe(true);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure.mock.calls).toEqual([]);
+    // The press is owned: either it proves exactly one cell character or it is a
+    // clean cancellation - never the native merge that would remove the table
+    // root or join the gap into it.
+    const afterPress = fixture.history.getValue();
+    expect([
+      divAfterTableMarkdown,
+      divAfterTableMarkdown.replace('| 1 | 2 |', '| 1 |  |')
+    ]).toContain(afterPress);
+    expect(fixture.surface.querySelector('table')).toBe(table);
+    expect(gap.isConnected).toBe(true);
+    expect(fixture.surface.lastElementChild).toBe(gap);
+    expect(
+      fixture.surface.getAttribute('data-easymde-visual-deletion-repair')
+    ).toBeNull();
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+/**
+ * Two tables can be neighbours across nothing but the renderer's own separator
+ * text. A caret parked on the surface in that gap is the same junction in both
+ * directions, and neither direction may fall through to native editing.
+ */
+const twoTableGapMarkdown = [
+  '| a | b |',
+  '| --- | --- |',
+  '| 1 | 2 |',
+  '',
+  '| c | d |',
+  '| --- | --- |',
+  '| 3 | 4 |',
+  '',
+  'Tail one.',
+  '',
+  'Tail two.'
+].join('\n');
+
+const twoTableSectionHtml = (
+  id: string,
+  cells: Readonly<[string, string]>
+): string => [
+  '<section class="table-container easymde-table-container"',
+  ` data-easymde-visual-block-id="${id}">`,
+  '<table>',
+  `<thead><tr><th>${cells[0]}</th><th>${cells[1]}</th></tr></thead>`,
+  '<tbody><tr><td>1</td><td>2</td></tr></tbody>',
+  '</table>',
+  '</section>'
+].join('');
+
+const twoTableGapHtml = (): string =>
+  twoTableSectionHtml('b0', ['a', 'b']) + '\n'
+  + [
+    '<section class="table-container easymde-table-container"',
+    ' data-easymde-visual-block-id="b1">',
+    '<table>',
+    '<thead><tr><th>c</th><th>d</th></tr></thead>',
+    '<tbody><tr><td>3</td><td>4</td></tr></tbody>',
+    '</table>',
+    '</section>'
+  ].join('') + '\n'
+  + fullOwnerParagraphBlock('Tail one.', 'b2') + '\n'
+  + fullOwnerParagraphBlock('Tail two.', 'b3') + '\n';
+
+function createTwoTableGapFixture() {
+  const signature = 'two-table-separator-gap';
+  return createFullOwnerFixture({
+    editMap: fullOwnerEditMap(signature, [
+      { endLine: 3, id: 'b0', startLine: 0 },
+      { endLine: 7, id: 'b1', startLine: 4 },
+      { endLine: 9, id: 'b2', startLine: 8 },
+      { endLine: 11, id: 'b3', startLine: 10 }
+    ]),
+    html: twoTableGapHtml(),
+    markdown: twoTableGapMarkdown,
+    signature,
+    sourceCaret: twoTableGapMarkdown.indexOf('Tail two.')
+  });
+}
+
+it('owns both directions of a surface gap whose only bytes are the renderer separator', async () => {
+  vi.useFakeTimers();
+  const fixture = createTwoTableGapFixture();
+  const settle = async (): Promise<void> => {
+    await act(async () => {
+      vi.advanceTimersByTime(160);
+      await Promise.resolve();
+    });
+  };
+  try {
+    fixture.surface.focus();
+    const tables = Array.from(fixture.surface.querySelectorAll('table'));
+    const [first, second] = tables;
+    if (!(first instanceof HTMLTableElement) || !(second instanceof HTMLTableElement)) {
+      throw new Error('two-table-fixture-invalid');
+    }
+    // The surface's own ordering: section, the pretty-printer's newline text,
+    // section.
+    expect(fixture.surface.childNodes[0]).toBe(first.parentElement);
+    expect(fixture.surface.childNodes[1]).toBeInstanceOf(Text);
+    expect((fixture.surface.childNodes[1] as Text).data).toBe('\n');
+    expect(fixture.surface.childNodes[2]).toBe(second.parentElement);
+    const firstLast = tableCellText(first.rows[1]!.cells[1]!);
+    const secondHeaderFirst = tableCellText(second.rows[0]!.cells[0]!);
+
+    // Backspace on the surface between the separator text and the second table:
+    // the press reaches the FIRST table through that certified separator text.
+    window.getSelection()?.setBaseAndExtent(fixture.surface, 2, fixture.surface, 2);
+    let backward!: InputEvent;
+    act(() => {
+      backward = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(fixture.surface, 2, 2)
+      );
+    });
+    expect(backward.defaultPrevented).toBe(true);
+    await settle();
+    expect(fixture.history.getValue()).toBe(
+      twoTableGapMarkdown.replace('| 1 | 2 |', '| 1 |  |')
+    );
+    expect(firstLast.data).toBe('');
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+
+    // Delete on the surface between the first table and the separator text: the
+    // press reaches the SECOND table through the same separator text.
+    window.getSelection()?.setBaseAndExtent(fixture.surface, 1, fixture.surface, 1);
+    let forward!: InputEvent;
+    act(() => {
+      forward = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentForward' },
+        fullOwnerTargetRange(fixture.surface, 1, 1)
+      );
+    });
+    expect(forward.defaultPrevented).toBe(true);
+    await settle();
+    expect(fixture.history.getValue()).toBe(
+      twoTableGapMarkdown
+        .replace('| 1 | 2 |', '| 1 |  |')
+        .replace('| c | d |', '|  | d |')
+    );
+    expect(secondHeaderFirst.data).toBe('');
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure.mock.calls).toEqual([]);
+    expect(fixture.runtime().isEditable()).toBe(true);
+
+    // Negative control: a surface gap between two PARAGRAPHS is not a table
+    // contact, so the table owner leaves that press to the ordinary policy.
+    const tailOneIndex = Array.prototype.indexOf.call(
+      fixture.surface.childNodes,
+      fixture.surface.querySelector('[data-easymde-visual-block-id="b2"]')
+    );
+    expect(tailOneIndex).toBeGreaterThan(0);
+    window.getSelection()?.setBaseAndExtent(
+      fixture.surface,
+      tailOneIndex + 1,
+      fixture.surface,
+      tailOneIndex + 1
+    );
+    let control!: InputEvent;
+    act(() => {
+      control = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        fullOwnerTargetRange(fixture.surface, tailOneIndex + 1, tailOneIndex + 1)
+      );
+    });
+    expect(control.defaultPrevented).toBe(false);
+    expect(
+      fixture.surface.getAttribute('data-easymde-visual-deletion-repair')
+    ).toBeNull();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('refuses a table-edge press whose ledger no longer describes the surface', async () => {
+  vi.useFakeTimers();
+  const fixture = createOuterEdgeTableFixture();
+  const settle = async (): Promise<void> => {
+    await act(async () => {
+      vi.advanceTimersByTime(160);
+      await Promise.resolve();
+    });
+  };
+  try {
+    fixture.surface.focus();
+    const table = fixture.surface.querySelector('table');
+    const paragraph = fixture.surface.querySelector('[data-easymde-visual-block-id="b2"]');
+    const paragraphText = paragraph?.firstChild;
+    if (!(table instanceof HTMLTableElement)
+      || !(paragraph instanceof HTMLParagraphElement)
+      || !(paragraphText instanceof Text)) {
+      throw new Error('outer-edge-fixture-invalid');
+    }
+    const lastText = tableCellText(table.rows[1]!.cells[1]!);
+
+    // A foreign node beside the table: the surface is no longer the ledger this
+    // owner published, so the press has nothing it can prove.
+    const foreign = fixture.surface.ownerDocument.createTextNode('foreign');
+    fixture.surface.append(foreign);
+    placeCaretInText(paragraphText, 0);
+    let beforeInput!: InputEvent;
+    act(() => {
+      beforeInput = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        tableBoundaryTargetRange(lastText, lastText.length, paragraphText, 0)
+      );
+    });
+    // Cancelled with nothing reported: no failure code, no transfer failure, no
+    // repair counter, and neither the source nor the surface moved.
+    expect(beforeInput.defaultPrevented).toBe(true);
+    expect(fixture.history.getValue()).toBe(outerEdgeTableMarkdown);
+    expect(lastText.data).toBe('y1');
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.onTransferFailure.mock.calls).toEqual([]);
+    expect(
+      fixture.surface.getAttribute('data-easymde-visual-deletion-repair')
+    ).toBeNull();
+    expect(foreign.isConnected).toBe(true);
+    expect(window.getSelection()?.anchorNode).toBe(paragraphText);
+    expect(window.getSelection()?.anchorOffset).toBe(0);
+    await settle();
+    expect(fixture.history.getValue()).toBe(outerEdgeTableMarkdown);
+
+    // Control: with the ledger restored, the very same press is the ordered
+    // walk's and removes exactly one cell character.
+    foreign.remove();
+    placeCaretInText(paragraphText, 0);
+    let control!: InputEvent;
+    act(() => {
+      control = fullOwnerDispatchBeforeInput(
+        fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' },
+        tableBoundaryTargetRange(lastText, lastText.length, paragraphText, 0)
+      );
+    });
+    expect(control.defaultPrevented).toBe(true);
+    await settle();
+    expect(fixture.history.getValue()).toBe(
+      outerEdgeTableMarkdown.replace('| x1 | y1 |', '| x1 | y |')
+    );
+    expect(lastText.data).toBe('y');
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.runtime().isEditable()).toBe(true);
   } finally {
     fixture.unmount();
     vi.useRealTimers();

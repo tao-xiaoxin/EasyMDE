@@ -9297,6 +9297,72 @@ describe('visualTableDeletionWalk', () => {
     );
   });
 
+  it('walks out of the cell the renderer padded into a short row', () => {
+    // `| one |` under a two-column header renders an EMPTY second cell
+    // (TableParser autocompletes the missing body cells). Reading order is the
+    // rendered one, so the caret in that padded cell steps into `one` - and
+    // the source keeps its own short spelling, with no cell written into it.
+    const short = '| Head | Tail |\n| --- | --- |\n| one |\n';
+    const walk = visualTableDeletionWalk(
+      short,
+      short.indexOf('| one |') + '| one |'.length,
+      'backward',
+      { column: 1, row: 1 }
+    );
+    expect(walk?.kind).toBe('walk');
+    if (!walk || 'walk' !== walk.kind) throw new Error('walk-missing');
+    expect(walk.index).toBe(short.indexOf('one') + 2);
+    expect(walk.cell).toEqual({ column: 0, row: 1 });
+    expect(walk.value).toBe(short.replace('| one |', '| on |'));
+    expect(walk.value).not.toContain('| on |  |');
+    expect(parsedColumns(walk.value, walk.caret)).toEqual(
+      parsedColumns(short, walk.index)
+    );
+  });
+
+  it('enters a short row through the empty cell the renderer padded', () => {
+    const short = '| Head | Tail |\n| --- | --- |\n| one |\n';
+    const walk = visualTableDeletionWalk(
+      short,
+      short.trimEnd().length,
+      'backward',
+      undefined,
+      'after'
+    );
+    expect(walk?.kind).toBe('walk');
+    if (!walk || 'walk' !== walk.kind) throw new Error('walk-missing');
+    expect(walk.cell).toEqual({ column: 0, row: 1 });
+    expect(walk.value).toBe(short.replace('| one |', '| on |'));
+  });
+
+  it('never visits the surplus columns the renderer does not show', () => {
+    // A body row may spell MORE cells than the header; the renderer cuts them
+    // ("Body can not have more columns than head"). Reading order ends at the
+    // last RENDERED cell, and the surplus bytes are never rewritten.
+    const long = '| Head | Tail |\n| --- | --- |\n| one | two | extra |\n';
+    const walk = visualTableDeletionWalk(
+      long,
+      long.trimEnd().length,
+      'backward',
+      undefined,
+      'after'
+    );
+    expect(walk?.kind).toBe('walk');
+    if (!walk || 'walk' !== walk.kind) throw new Error('walk-missing');
+    expect(walk.cell).toEqual({ column: 1, row: 1 });
+    expect(walk.value).toBe(
+      long.replace('| one | two | extra |', '| one | tw | extra |')
+    );
+    expect(walk.value).toContain('| extra |');
+    // A caret in the surplus cell names no rendered cell at all.
+    expect(
+      visualTableDeletionWalk(long, long.indexOf('extra'), 'backward', {
+        column: 2,
+        row: 1
+      })
+    ).toBeNull();
+  });
+
   it('walks out of an empty cell into the last cell of the previous row', () => {
     const emptied = '| Head | Tail |\n| --- | --- |\n|  | two |\n';
     // The empty cell keeps its pipes; its own start is the position after the

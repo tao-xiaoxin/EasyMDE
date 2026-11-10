@@ -3270,6 +3270,77 @@ function assertVisualActionState(state, phase) {
   }
 }
 
+async function readVisualEscapeSelectionState(target, expectedSource) {
+  return target.evaluate((paragraph, expected) => {
+    const surface = paragraph.closest('[data-easymde-preview-html-sink][role="textbox"]');
+    if (!surface) throw new Error('visual-escape-surface-missing');
+    const native = surface.ownerDocument.defaultView?.getSelection();
+    const range = native?.rangeCount === 1 ? native.getRangeAt(0) : null;
+    const boundary = (node, offset) => {
+      const insideTarget = Boolean(node && paragraph.contains(node));
+      let targetOffset = null;
+      if (insideTarget) {
+        const prefix = paragraph.ownerDocument.createRange();
+        prefix.selectNodeContents(paragraph);
+        prefix.setEnd(node, offset);
+        targetOffset = prefix.toString().length;
+      }
+      return {
+        connected: Boolean(node?.isConnected),
+        insideSurface: Boolean(node && surface.contains(node)),
+        insideTarget,
+        nodeType: node?.nodeType ?? null,
+        targetOffset
+      };
+    };
+    // Read the existing document owner; this observer never dispatches an edit
+    // or places/restores the native selection.
+    const root = document.querySelector('#easymde-editor-root');
+    const key = root && Object.getOwnPropertyNames(root).find((name) => name.startsWith('__reactContainer$'));
+    const queue = [root?.[key]?.stateNode?.current?.child];
+    const owners = new Set();
+    while (queue.length) {
+      const fiber = queue.pop();
+      if (!fiber) continue;
+      for (const owner of [fiber.memoizedProps?.documentSession?.document, fiber.memoizedProps?.ordinaryStatus?.document]) {
+        if (owner) owners.add(owner);
+      }
+      queue.push(fiber.child, fiber.sibling);
+    }
+    const owner = [...owners][0];
+    const rect = paragraph.getBoundingClientRect();
+    return {
+      native: {
+        anchor: boundary(native?.anchorNode, native?.anchorOffset),
+        focus: boundary(native?.focusNode, native?.focusOffset),
+        backward: Boolean(range && !native.isCollapsed
+          && native.anchorNode === range.endContainer && native.anchorOffset === range.endOffset),
+        collapsed: native?.isCollapsed ?? true,
+        rangeCount: native?.rangeCount ?? 0,
+        selectedUnits: native?.toString().length ?? 0
+      },
+      canonical: {
+        ownerCount: owners.size,
+        revision: owner?.getRevision(),
+        history: owner?.getHistoryState(),
+        selection: owner?.getSelection(),
+        sourceExact: owner?.getValue() === expected
+          && document.querySelector('#easymde-source')?.value === expected
+      },
+      activeSurface: document.activeElement === surface,
+      activeMenuItem: Boolean(document.activeElement?.closest('[data-easymde-context-menu-item]')),
+      contentEditable: surface.getAttribute('contenteditable'),
+      lock: document.querySelector('.easymde-immersive-preview-lock')?.getAttribute('aria-pressed'),
+      error: surface.getAttribute('data-easymde-preview-error'),
+      geometry: {
+        width: rect.width,
+        height: rect.height,
+        inViewport: rect.bottom > 0 && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth
+      }
+    };
+  }, expectedSource);
+}
+
 async function readVisualPreviewAcceptanceState(visualEditor) {
   if (0 === await visualEditor.count()) {
     return {
@@ -7205,6 +7276,115 @@ test.describe('Editor context menu production surfaces', () => {
           mountedAfter
         })}`
       );
+    }
+  });
+
+  test.describe('native backward-selection Escape return', () => {
+    for (const owner of ['full', 'windowed']) {
+      test(`preserves ${owner} Visual backward selection after focused menu Escape and continues input Undo`, async ({ page }) => {
+        const consoleProbe = startSourceMediaConsoleProbe(page);
+        const failures = [];
+        const onPageError = () => failures.push('page-error');
+        const onPopup = () => failures.push('popup');
+        const onConsole = (message) => {
+          if (message.type() === 'error' && !/^\[EasyMDE\]/u.test(message.text())) {
+            failures.push('browser-console-error');
+          }
+        };
+        page.on('pageerror', onPageError);
+        page.on('popup', onPopup);
+        page.on('console', onConsole);
+        const observations = {};
+        let phase = 'setup';
+        try {
+          await login(page);
+          await openNewPost(page);
+          const expectedBuild = process.env.EASYMDE_E2E_EXPECT_EDITOR_BUILD;
+          if (expectedBuild) {
+            await expect.poll(() => page.evaluate(() => [...new Set(performance.getEntriesByType('resource')
+              .map((entry) => new URL(entry.name).pathname.split('/').pop())
+              .filter((name) => /^admin-editor-[A-Za-z0-9_-]+\.js$/u.test(name ?? '') && !name.includes('loader-')))]))
+              .toEqual([expectedBuild]);
+          }
+          const { markdown, source } = await loadCanonicalFixture(page, owner === 'full' ? 1 : 2);
+          const { visualEditor } = await enterFullVisual(page);
+          await waitForVisualPreviewAccepted(visualEditor, `${owner}-escape-before`);
+          const spacers = visualEditor.locator('[data-easymde-preview-window-spacer]');
+          if (owner === 'windowed') await expect.poll(() => spacers.count()).toBeGreaterThan(0);
+          else await expect(spacers).toHaveCount(0);
+          const paragraph = visualEditor.locator('p').filter({ hasText: '普通文本' }).first();
+          if (owner === 'windowed') await ensureWindowedVisualTargetMounted(page, paragraph, 0);
+          await prepareVisualTarget(visualEditor, paragraph);
+          phase = 'real-backward-selection';
+          await paragraph.click({ position: { x: 3, y: 3 } });
+          await page.keyboard.press('Home');
+          for (let index = 0; index < 4; index += 1) await page.keyboard.press('ArrowRight');
+          for (let index = 0; index < 3; index += 1) await page.keyboard.press('Shift+ArrowLeft');
+          observations.before = await readVisualEscapeSelectionState(paragraph, markdown);
+          const before = observations.before;
+          expect(before.native).toMatchObject({
+            backward: true, collapsed: false, rangeCount: 1, selectedUnits: 3,
+            anchor: { connected: true, insideSurface: true, insideTarget: true, targetOffset: 4 },
+            focus: { connected: true, insideSurface: true, insideTarget: true, targetOffset: 1 }
+          });
+          expect(before.canonical).toMatchObject({ ownerCount: 1, sourceExact: true, revision: expect.any(Number) });
+          expect(before.canonical.history).toMatchObject({ undoDepth: expect.any(Number), redoDepth: expect.any(Number) });
+          expect(before).toMatchObject({ activeSurface: true, contentEditable: 'true', lock: 'false', error: null });
+          expect(before.geometry.inViewport).toBe(true);
+          phase = 'focused-menu';
+          await page.keyboard.press('Shift+F10');
+          await expect(rootMenu(page)).toBeVisible();
+          const focusedItem = rootMenu(page).locator('[role="menuitem"]:focus');
+          await expect(focusedItem).toHaveCount(1);
+          await expect(focusedItem).toBeFocused();
+          observations.menuFocused = await readVisualEscapeSelectionState(paragraph, markdown);
+          expect(observations.menuFocused.activeMenuItem).toBe(true);
+          expect(observations.menuFocused.native).toEqual(before.native);
+          expect(observations.menuFocused.canonical.revision).toBe(before.canonical.revision);
+          expect(observations.menuFocused.canonical.history).toEqual(before.canonical.history);
+          expect(observations.menuFocused.canonical.sourceExact).toBe(true);
+          phase = 'Escape-return';
+          await page.keyboard.press('Escape');
+          await expect(page.locator(menuSelector)).toHaveCount(0);
+          await expect(visualEditor).toBeFocused();
+          observations.afterEscape = await readVisualEscapeSelectionState(paragraph, markdown);
+          const after = observations.afterEscape;
+          expect(after.native).toEqual(before.native);
+          expect(after).toMatchObject({ activeSurface: true, activeMenuItem: false, contentEditable: 'true', lock: 'false', error: null });
+          expect(after.canonical).toMatchObject({ ownerCount: 1, sourceExact: true, revision: before.canonical.revision });
+          expect(after.canonical.history).toEqual(before.canonical.history);
+          await assertSourceExactValue(source, markdown, `${owner}-Escape-source-unchanged`);
+          expect(consoleProbe.codes()).toEqual([]);
+          expect(failures).toEqual([]);
+          phase = 'direct-replacement';
+          const start = occurrenceOffset(markdown, '普通文本') + 1;
+          const replacement = `${markdown.slice(0, start)}X${markdown.slice(start + 3)}`;
+          // No intervening focus or caret repair: replace the returned range.
+          await page.keyboard.type('X');
+          await waitForSourceExactValue(source, replacement, `${owner}-Escape-direct-input`);
+          phase = 'replacement-Undo';
+          await page.keyboard.press('ControlOrMeta+z');
+          await waitForSourceExactValue(source, markdown, `${owner}-Escape-input-Undo`);
+          await waitForVisualPreviewAccepted(visualEditor, `${owner}-Escape-input-Undo`);
+          observations.afterUndo = await readVisualEscapeSelectionState(paragraph, markdown);
+          expect(observations.afterUndo.canonical).toMatchObject({ ownerCount: 1, sourceExact: true });
+          expect(observations.afterUndo.canonical.history).toEqual({ undoDepth: before.canonical.history.undoDepth, redoDepth: 1 });
+          expect(observations.afterUndo.native).toEqual(before.native);
+          expect(observations.afterUndo).toMatchObject({ activeSurface: true, contentEditable: 'true', lock: 'false', error: null });
+          expect(consoleProbe.codes()).toEqual([]);
+          expect(failures).toEqual([]);
+          console.log(JSON.stringify({ phase: 'visual-Escape-backward-complete', owner, observations }));
+        } catch (error) {
+          console.log(JSON.stringify({ phase: 'visual-Escape-backward-first-failure', owner, operation: phase,
+            observations, consoleCodes: consoleProbe.codes(), failures }));
+          throw error;
+        } finally {
+          consoleProbe.stop();
+          page.off('pageerror', onPageError);
+          page.off('popup', onPopup);
+          page.off('console', onConsole);
+        }
+      });
     }
   });
 

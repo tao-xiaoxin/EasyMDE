@@ -1001,6 +1001,58 @@ and restores the Settings Center editing mode after both normal and CDP hard
 reloads. It loads no Legacy Focus assets and remains zero-write until the user
 invokes a legitimate WordPress mutation.
 
+The focused Windowed rich-cell keyboard cases in
+`tests/e2e/visual-basic-editing.spec.mjs` are opt-in, not part of default or
+`[short-stage]` registration. Use the existing authorized WordPress test
+configuration and the complete frozen, manifest-backed editor bundle basename
+for `EASYMDE_E2E_EXPECT_EDITOR_BUILD` (`admin-editor-<hash>.js`, not just the hash
+or the loader). The browser checks the actual loaded filename against this
+expectation. Choose a fresh output directory for each exact case.
+
+```bash
+env -u EASYMDE_E2E_COLD_MERGE_DEBUG_MODULE \
+  EASYMDE_E2E_RICH_TABLE_CODE=complete \
+  EASYMDE_E2E_EXPECT_EDITOR_BUILD="<frozen_admin_editor_basename>" \
+  npm run test:e2e -- tests/e2e/visual-basic-editing.spec.mjs \
+  --project=chromium --workers=1 --retries=0 --max-failures=1 --reporter=line \
+  --output="<fresh_case_output_dir>" \
+  --grep '\[rich-table-code\] windowed ready fixed CODE Enter Backspace history and right-span continuation$'
+
+env -u EASYMDE_E2E_COLD_MERGE_DEBUG_MODULE \
+  EASYMDE_E2E_RICH_TABLE_INLINE=complete \
+  EASYMDE_E2E_EXPECT_EDITOR_BUILD="<frozen_admin_editor_basename>" \
+  npm run test:e2e -- tests/e2e/visual-basic-editing.spec.mjs \
+  --project=chromium --workers=1 --retries=0 --max-failures=1 --reporter=line \
+  --output="<fresh_case_output_dir>" \
+  --grep '\[rich-table-inline\] windowed ready fixed A Enter Backspace history and right-span continuation$'
+```
+
+Run one exact case at a time: CODE `ready`, then `held` only after it passes;
+then the inline kinds `A`, `EM`, `STRONG`, `DEL`, and `NESTED`, each `ready`
+before `held`. For the paired command, replace only `windowed ready` with
+`windowed held`; for the inline kind, replace only `fixed A` with the declared
+kind. Keep the escaped brackets and trailing `$` title-suffix match rather than
+adding a start anchor. Stop the remaining matrix at the first failure. Each
+case needs its own browser context and isolated synthetic article; never share
+an article, native editing context, or held Preview route between runs. These
+commands select only the `chromium` project with one worker, not the performance
+project, and provide no performance or frame-smoothness comparison.
+
+These cases cover Windowed nested quote/list table cells, exact fixed
+S0/S1/S1T/ST source, native Enter/Backspace, Undo/Redo, restored-boundary
+continuation, and preserved surrounding syntax and link attributes. The held
+variant fetches the real PHP 200 response for the exact declared request and
+withholds delivery; pending native edits and later formal publication have
+separate assertions. A `ready` flag alone does not prove a current formal
+certificate. Only ready pre-input navigation may retain the exact captured
+pre-navigation canonical selection: the private certificate must prove the
+same owner/session/runtime/surface, unchanged complete source/history/revision,
+formal identity and nodes, no transfer or lease, no intervening input/history
+events, and the unique native target with its strict boundary proof. This
+exception never applies to pending navigation or post-input assertions, and
+does not set or repair the selection. The broader editor acceptance matrix
+remains unverified as a whole; these focused opt-ins do not replace that gate.
+
 The immersive visual Markdown regression coverage also exercises the unlocked
 Preview paper, completed block and inline syntax, bounded visual-input
 coalescing, explicit selection-loss failure without end-of-document appends,

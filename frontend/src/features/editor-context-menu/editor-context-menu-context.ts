@@ -1,6 +1,7 @@
 import type {
 	EditorContextMenuActionContext,
 	EditorContextMenuFeatureProps,
+	EditorContextMenuPreparedSelection,
 	EditorContextMenuSurface,
 	EditorContextMenuSurfaceSnapshot,
 	EditorContextMenuTargetLease
@@ -33,7 +34,10 @@ export type CapturedContextSelection = Readonly<{
 	range: Range;
 }>;
 
+import type { EditorContextMenuScrollBaseline } from "./editor-context-menu-scroll";
+
 export type OpenState = Readonly<{
+	scrollBaseline?: EditorContextMenuScrollBaseline;
 	actionContext: EditorContextMenuActionContext | null;
 	activation: "keyboard" | "pointer";
 	block: MarkdownBlock | null;
@@ -223,6 +227,28 @@ export function surfaceSnapshotStillDescribesPendingDemand(
 		&& captured.selection.direction === snapshot.selection.direction;
 }
 
+/**
+ * A visible menu refresh may preserve the selection its own preparation
+ * already established. This is deliberately stricter than pending-demand
+ * readiness: the certificate exists only for the same exact fresh snapshot
+ * (revision, value, selection, surface identity and generation) and only for
+ * a non-collapsed authored range. A menu-focus collapse is admitted by the
+ * demand caller; a new gesture never receives this certificate.
+ */
+export function surfaceSnapshotStillDescribesPreparedSelection(
+	state: OpenState,
+	surface: EditorContextMenuSurface,
+	snapshot: EditorContextMenuSurfaceSnapshot
+): boolean {
+	const captured = state.captured;
+	return surfaceSnapshotStillDescribesPendingDemand(state, surface, snapshot)
+		&& undefined !== captured.revision
+		&& captured.revision === snapshot.revision
+		&& undefined !== captured.surfaceGeneration
+		&& captured.surfaceGeneration === surface.generation
+		&& captured.selection.start !== captured.selection.end;
+}
+
 function blockForContext(
 	value: string,
 	selection: EditorSelection,
@@ -344,7 +370,8 @@ export function contextSurface(
 	anchorTarget: Element | null,
 	targetLease: EditorContextMenuTargetLease | null,
 	heading: EditorContextMenuFeatureProps["heading"],
-	activation: "keyboard" | "pointer"
+	activation: "keyboard" | "pointer",
+	preparedSelection?: EditorContextMenuPreparedSelection
 ): OpenState {
 	if (!surface.element.isConnected) {
 		throw new Error("editor-context-menu-surface-disconnected");
@@ -438,7 +465,15 @@ export function contextSurface(
 	const target = resolveLeasedTarget();
 	if (
 		surface.prepare
-		&& !surface.prepare(target, blockIndex, position, activation)
+		&& !(preparedSelection
+			? surface.prepare(
+					target,
+					blockIndex,
+					position,
+					activation,
+					preparedSelection
+				)
+			: surface.prepare(target, blockIndex, position, activation))
 	) {
 		throw new Error("editor-context-menu-selection-map-failed");
 	}

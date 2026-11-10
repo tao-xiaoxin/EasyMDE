@@ -213,6 +213,15 @@ export function projectedLinkNodes(
 	nodes: ReadonlyArray<MarkdownSyntaxNode>,
 	profile: ReferenceLabelCaseFoldProfile,
 ): ReadonlyArray<ParserLinkNode> {
+	return parserProjectedLinkNodes(text, nodes, profile);
+}
+
+function parserProjectedLinkNodes(
+	text: string,
+	nodes: ReadonlyArray<MarkdownSyntaxNode>,
+	profile: ReferenceLabelCaseFoldProfile,
+	referenceDefined?: (label: string) => boolean,
+): ReadonlyArray<ParserLinkNode> {
 	const structure = markdownSyntaxStructure(nodes);
 	const { ancestorsAt, children, namesAt, urlDescendants } = structure;
 	let definition: ReturnType<typeof markdownReferenceDefinitionQuery> | null = null;
@@ -245,7 +254,7 @@ export function projectedLinkNodes(
 			const hasUrl = 1 === urlDescendants[index];
 			if ("[" === text[node.from] && ")" === text[node.to - 1] && hasUrl) {
 				created[index] = 1;
-			} else if (!(!hasUrl && "[^" === text.slice(node.from, node.from + 2))) {
+			} else if (referenceDefined || !(!hasUrl && "[^" === text.slice(node.from, node.from + 2))) {
 				const malformed =
 					0 !== (namesAt.get(node.to) ?? 0) ||
 					"(" === text[node.to] ||
@@ -266,7 +275,7 @@ export function projectedLinkNodes(
 							? labelText
 							: text.slice(node.from + 1, (label?.from ?? node.to) - 1);
 					definition ??= markdownReferenceDefinitionQuery(text, nodes, profile);
-					if (definition(rawLabel)) {
+					if (referenceDefined ? referenceDefined(rawLabel) : definition(rawLabel)) {
 						created[index] = 1;
 						referenceLinks[index] = 1;
 					}
@@ -346,6 +355,29 @@ export function projectedLinkNodes(
 		}
 	}
 	return projected;
+}
+
+/** Render-mapping bindings only; Source command admission above is unchanged. */
+export function renderedReferenceLinkBodies(
+	text: string,
+	nodes: ReadonlyArray<MarkdownSyntaxNode>,
+	profile: ReferenceLabelCaseFoldProfile,
+	referenceDefined: (label: string) => boolean,
+): ReadonlyArray<ParserLinkNode & Readonly<{ bodyStart: number; bodyEnd: number }>> {
+	const projected = parserProjectedLinkNodes(text, nodes, profile, referenceDefined);
+	const structure = markdownSyntaxStructure(nodes);
+	return projected.flatMap((link) => {
+		const index = nodes.findIndex((node) => node.name === 'Link' && node.from === link.from && node.to === link.to);
+		if (index < 0) return [];
+		const marks = (structure.children[index] ?? []).flatMap((child) => {
+			const node = nodes[child];
+			return node?.name === 'LinkMark' ? [node] : [];
+		});
+		const open = marks[0];
+		const close = marks[1];
+		if (!open || !close || text.slice(open.from, open.to) !== '[' || text.slice(close.from, close.to) !== ']') return [];
+		return [{ ...link, bodyStart: open.to, bodyEnd: close.from }];
+	});
 }
 
 /**

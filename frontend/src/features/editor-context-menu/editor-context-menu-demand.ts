@@ -25,8 +25,10 @@ import {
 	releaseTargetLeaseUnlessShared,
 	restoreCapturedContextSelection,
 	sharesOwnedLease,
-	surfaceSnapshotStillDescribesPendingDemand
+	surfaceSnapshotStillDescribesPendingDemand,
+	surfaceSnapshotStillDescribesPreparedSelection
 } from "./editor-context-menu-context";
+import { captureEditorContextMenuScrollBaseline } from "./editor-context-menu-scroll";
 
 export type EditorContextMenuDemandController = Readonly<{
 	cancelPending: () => void;
@@ -152,16 +154,49 @@ export function useEditorContextMenuDemand(input: Readonly<{
 			retireVisibleDemand(current);
 			if (reportFailure) onFailureRef.current(reportFailure);
 		};
+		const snapshot = surface.getSnapshot();
 		if (
 			!surfaceSnapshotStillDescribesPendingDemand(
 				current,
 				surface,
-				surface.getSnapshot()
+				snapshot
 			)
 		) {
 			retire(null);
 			return;
 		}
+		const ownerDocument = surface.element.ownerDocument;
+		const native = ownerDocument.defaultView?.getSelection();
+		const menuFocused = Boolean(
+			ownerDocument.activeElement?.closest(
+				"[data-easymde-context-menu-layer]"
+			)
+		);
+		const nativeInsideSurface = Boolean(
+			native?.anchorNode
+			&& native.focusNode
+			&& surface.element.contains(native.anchorNode)
+			&& surface.element.contains(native.focusNode)
+		);
+		const capturedRevision = current.captured.revision;
+		const capturedGeneration = current.captured.surfaceGeneration;
+		const preparedSelection =
+			surfaceSnapshotStillDescribesPreparedSelection(
+				current,
+				surface,
+				snapshot
+			)
+			&& undefined !== capturedRevision
+			&& undefined !== capturedGeneration
+			&& menuFocused
+			&& native?.isCollapsed === true
+			&& !nativeInsideSurface
+				? {
+						revision: capturedRevision,
+						selection: current.captured.selection,
+						surfaceGeneration: capturedGeneration
+					}
+				: undefined;
 		let refreshed: OpenState;
 		try {
 			refreshed = {
@@ -175,7 +210,8 @@ export function useEditorContextMenuDemand(input: Readonly<{
 					current.targetElement,
 					current.targetLease,
 					headingRef.current,
-					current.activation
+					current.activation,
+					preparedSelection
 				),
 				generation: current.generation
 			};
@@ -348,7 +384,10 @@ export function useEditorContextMenuDemand(input: Readonly<{
 						headingRef.current,
 						pending.state.activation
 					),
-					generation: pending.state.generation
+					generation: pending.state.generation,
+					...(pending.state.scrollBaseline
+						? { scrollBaseline: pending.state.scrollBaseline }
+						: {})
 				};
 			} catch (error) {
 				// The owner cannot authenticate this gesture's block any more, so the
@@ -430,6 +469,12 @@ export function useEditorContextMenuDemand(input: Readonly<{
 		target: Element | null,
 		activation: "keyboard" | "pointer"
 	): void => {
+		const pendingScrollBaseline = surface.element.ownerDocument.defaultView
+			? captureEditorContextMenuScrollBaseline(
+				surface.element,
+				surface.element.ownerDocument.defaultView
+			)
+			: undefined;
 		const previousAction = actionPromiseRef.current;
 		if (previousAction?.cancel) {
 			previousAction.cancel();
@@ -515,7 +560,8 @@ export function useEditorContextMenuDemand(input: Readonly<{
 					headingRef.current,
 					activation
 				),
-				generation
+				generation,
+				...(pendingScrollBaseline ? { scrollBaseline: pendingScrollBaseline } : {})
 			};
 		} catch (error) {
 			// Releasing here covers a capture that succeeded before a later

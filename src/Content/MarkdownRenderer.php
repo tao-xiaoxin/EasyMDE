@@ -127,6 +127,7 @@ final class MarkdownRenderer {
 			)
 		);
 		TableAlignmentAnnotation::register( $converter->getEnvironment() );
+		$converter->getEnvironment()->addExtension( new TableCellBreakExtension() );
 		if ( $with_projection ) {
 			if ( ! $projection_budget instanceof CodeProjectionBudget ) {
 				$projection_budget = new CodeProjectionBudget();

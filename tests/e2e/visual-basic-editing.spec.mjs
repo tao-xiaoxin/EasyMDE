@@ -1,4 +1,6 @@
 import { writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
 
 import { expect, test } from '@playwright/test';
 
@@ -65,19 +67,21 @@ async function expectSource(source, expected) {
   }).toBe(true);
 }
 
-async function readCurrentDocumentOwner(page) {
-  return page.evaluate(() => {
+async function readCurrentDocumentOwner(page, ownerObservation = null, fenceObservation = null) {
+  return page.evaluate(({ ownerObservation, fenceObservation }) => {
     const root = document.querySelector('#easymde-editor-root');
     const keys = root ? Object.getOwnPropertyNames(root).filter((key) => key.startsWith('__reactContainer$')) : [];
     if (keys.length !== 1) throw new Error('test-document-owner-root-unavailable');
     const current = root[keys[0]]?.stateNode?.current;
     if (current?.tag !== 3) throw new Error('test-document-owner-current-unavailable');
     const owners = new Set();
+    const diagnosticFibers = fenceObservation?.pendingProof ? [] : null;
     const pending = current.child ? [current.child] : [];
     let visited = 0;
     while (pending.length) {
       const fiber = pending.pop();
       if (++visited > 8192) throw new Error('test-document-owner-traversal-bound');
+      diagnosticFibers?.push(fiber);
       const props = fiber.memoizedProps;
       for (const owner of [props?.documentSession?.document, props?.ordinaryStatus?.document]) {
         if (owner) owners.add(owner);
@@ -92,14 +96,161 @@ async function readCurrentDocumentOwner(page) {
     }
     const selection = owner.getSelection();
     const history = owner.getHistoryState();
+    if (ownerObservation) {
+      if (!window.__shortBranchCausal) throw new Error('test-branch-diagnostic-observer-unavailable');
+      const finalRedoStart = ownerObservation.boundary === 'before-final-redo' && ownerObservation.direction === 'redo'
+        && Number.isInteger(ownerObservation.targetDepth) && history.redoDepth > 0
+        && ownerObservation.targetDepth - history.undoDepth === 1;
+      window.__shortBranchCausal.stage({ ...ownerObservation, finalRedoStart }, { selection, history });
+    }
+    let fenceSnapshot;
+    if (fenceObservation) {
+      const owned = fenceObservation.ownership;
+      const surface = owned?.surface ?? document.querySelector('[data-easymde-preview-html-sink][role="textbox"]');
+      if (!surface) throw new Error('test-fence-continuation-surface-unavailable');
+      const paragraphs = [...surface.querySelectorAll(':scope > p')].filter((p) => p.textContent === 'Z');
+      const paragraph = paragraphs.length === 1 ? paragraphs[0] : null;
+      const text = paragraph?.childNodes.length === 1 && paragraph.firstChild instanceof Text
+        && paragraph.firstChild.data === 'Z' ? paragraph.firstChild : null;
+      const native = surface.ownerDocument.getSelection();
+      const nativeState = { paragraphCount: paragraphs.length, paragraphConnected: !!paragraph?.isConnected,
+        surfaceConnected: surface.isConnected, editable: surface.isContentEditable,
+        singleZText: !!text, collapsed: native?.isCollapsed === true,
+        anchorIsCurrentZText: !!text && native?.anchorNode === text,
+        focusIsCurrentZText: !!text && native?.focusNode === text,
+        anchorConnectedInside: !!native?.anchorNode?.isConnected && surface.contains(native.anchorNode),
+        focusConnectedInside: !!native?.focusNode?.isConnected && surface.contains(native.focusNode),
+        anchorOffset: native?.anchorOffset ?? null, focusOffset: native?.focusOffset ?? null };
+      let continuedState = null;
+      if (owned) {
+        const p = owned.paragraph, children = Array.from(surface.childNodes);
+        const indexes = owned.following.map((node) => children.indexOf(node));
+        continuedState = { sameParagraph: !!p && p.isConnected && p.parentNode === surface,
+          independentZParagraph: !!p && p.childNodes.length === 1 && p.firstChild instanceof Text && p.firstChild.data === 'Z',
+          nativeTextEnd: !!p && native?.isCollapsed === true && native.anchorNode === p.firstChild && native.focusNode === p.firstChild
+            && native.anchorOffset === 1 && native.focusOffset === 1,
+          followingIntact: owned.following.every((node) => node.isConnected && node.parentNode === surface)
+            && indexes.every((index, at) => index >= 0 && (at === 0 || index > indexes[at - 1])),
+          followingTailIntact: owned.following.length > 0 && children.at(-1) === owned.following.at(-1) };
+      }
+      let branchState = null;
+      if (fenceObservation.nativeBranch) {
+        const branchParagraphs = [...surface.querySelectorAll(':scope > p')].filter((p) => p.textContent === 'ZB');
+        const branchParagraph = branchParagraphs.length === 1 ? branchParagraphs[0] : null;
+        const branchText = branchParagraph?.childNodes.length === 1 && branchParagraph.firstChild instanceof Text
+          && branchParagraph.firstChild.data === 'ZB' ? branchParagraph.firstChild : null;
+        branchState = { paragraphCount: branchParagraphs.length, paragraphConnected: !!branchParagraph?.isConnected,
+          paragraphDirect: !!branchParagraph && branchParagraph.parentNode === surface,
+          paragraphEditable: !!branchParagraph && branchParagraph.isContentEditable,
+          surfaceConnected: surface.isConnected, editable: surface.isContentEditable,
+          singleZBText: !!branchText, collapsed: native?.isCollapsed === true,
+          anchorIsCurrentZBText: !!branchText && native?.anchorNode === branchText,
+          focusIsCurrentZBText: !!branchText && native?.focusNode === branchText,
+          anchorIsCurrentZBParagraph: !!branchParagraph && native?.anchorNode === branchParagraph,
+          focusIsCurrentZBParagraph: !!branchParagraph && native?.focusNode === branchParagraph,
+          anchorConnectedInside: !!native?.anchorNode?.isConnected && surface.contains(native.anchorNode),
+          focusConnectedInside: !!native?.focusNode?.isConnected && surface.contains(native.focusNode),
+          anchorOffset: native?.anchorOffset ?? null, focusOffset: native?.focusOffset ?? null,
+          anchor: { nodeType: native?.anchorNode?.nodeType ?? null,
+            tag: native?.anchorNode instanceof Element ? native.anchorNode.tagName : null,
+            parentTag: native?.anchorNode?.parentElement?.tagName ?? null,
+            offset: native?.anchorOffset ?? null },
+          focus: { nodeType: native?.focusNode?.nodeType ?? null,
+            tag: native?.focusNode instanceof Element ? native.focusNode.tagName : null,
+            parentTag: native?.focusNode?.parentElement?.tagName ?? null,
+            offset: native?.focusOffset ?? null } };
+      }
+      let pendingProof = null;
+      if (fenceObservation.pendingProof) {
+        const value = owner.getValue();
+        const revision = owner.getRevision();
+        const refsFor = (fiber) => {
+          const refs = []; let count = 0;
+          for (let hook = fiber?.memoizedState; hook; hook = hook.next) {
+            if (++count > 512) throw new Error('test-document-owner-hook-bound');
+            const state = hook.memoizedState;
+            if (state && Object.hasOwn(state, 'current')) refs.push(state.current);
+          }
+          return refs;
+        };
+        const sourceField = document.querySelector('#easymde-source');
+        const editorRoots = diagnosticFibers.filter(({ memoizedProps: props }) => props?.submissionField === sourceField
+          && typeof props.nativePublishPort?.read === 'function'
+          && typeof props.immersiveStrings?.previewEditorLabel === 'string');
+        const runtimes = new Set();
+        for (const fiber of editorRoots) for (const ref of refsFor(fiber)) {
+          if (ref?.surface === surface && typeof ref.isTransferPending === 'function'
+            && typeof ref.isEditable === 'function') runtimes.add(ref);
+        }
+        const runtime = runtimes.size === 1 ? [...runtimes][0] : null;
+        const fullFibers = diagnosticFibers.filter(({ memoizedProps: props }) => props?.surface === surface
+          && props.documentSession?.document === owner
+          && ['requestPreview', 'retainCompositionSurface', 'onReady'].every((key) => typeof props[key] === 'function'));
+        const refs = fullFibers.length === 1 ? refsFor(fullFibers[0]) : [];
+        const presentations = [...new Set(refs.filter((ref) => ref && typeof ref.owner === 'object' && ref.owner !== null
+          && typeof ref.source === 'string' && typeof ref.visual === 'string' && Number.isInteger(ref.sourceRevision)
+          && Array.isArray(ref.nodes) && Array.isArray(ref.metadata) && ref.nodes.length === ref.metadata.length))];
+        const presentation = presentations.length === 1 ? presentations[0] : null;
+        const transfers = [...new Set(refs.filter((ref) => ref && ['requesting', 'rendering'].includes(ref.phase)
+          && ['history', 'native', 'paste'].includes(ref.spec?.kind)
+          && typeof ref.spec?.expectation?.value === 'string'))];
+        const transfer = transfers.length === 1 ? transfers[0] : null;
+        const retained = transfer?.spec.retainedHistoryPresentation;
+        const lease = transfer?.visualSelection;
+        const nativePath = (node) => {
+          if (node === surface) return [];
+          if (!node || !surface.contains(node)) return null;
+          const path = [];
+          for (let current = node; current && current !== surface;) {
+            const parent = current.parentNode;
+            if (!parent) return null;
+            const index = [...parent.childNodes]
+              .filter((child) => child === current || !(child instanceof Text && child.data === ''))
+              .indexOf(current);
+            if (index < 0) return null;
+            path.unshift(index); current = parent;
+          }
+          return path;
+        };
+        const matchesLease = (node, offset, boundary) => {
+          const path = nativePath(node);
+          return !!path && !!boundary && offset === boundary.offset && path.length === boundary.path.length
+            && path.every((part, at) => part === boundary.path[at]);
+        };
+        const presentationNodesCurrent = !!presentation && presentation.nodes.length === surface.childNodes.length
+          && presentation.nodes.every((node, at) => surface.childNodes[at] === node);
+        pendingProof = {
+          transferPending: runtime ? runtime.isTransferPending() : null,
+          runtimeEditable: runtime ? runtime.isEditable() : null,
+          transferKind: transfer?.spec.kind ?? null,
+          transferPhase: transfer?.phase ?? null,
+          expectationRevisionCurrent: transfer ? transfer.spec.expectation.revision === revision : null,
+          expectationValueCurrent: transfer ? transfer.spec.expectation.value === value : null,
+          retainedOwnedSameLedger: !!retained && !!presentation && retained.owned === presentation,
+          retainedOwnerSameToken: !!retained && !!presentation && retained.owned?.owner === presentation.owner,
+          presentationCurrent: !!presentation && presentation.sourceRevision === revision
+            && presentation.source === value && presentationNodesCurrent,
+          // A retained presentation is authenticated by the exact native
+          // endpoints the transfer itself recorded, whether that presentation
+          // is collapsed or a ranged view of the same retained span. The
+          // canonical caret is a separate point and is never substituted here.
+          nativeMatchesLease: !!lease && lease.backward === false
+            && matchesLease(native.anchorNode, native.anchorOffset, lease.anchor)
+            && matchesLease(native.focusNode, native.focusOffset, lease.focus)
+        };
+      }
+      fenceSnapshot = { nativeState, continuedState, ...(branchState ? { branchState } : {}),
+        ...(pendingProof ? { pendingProof } : {}) };
+    }
     return {
       selection: { start: selection.start, end: selection.end, direction: selection.direction },
       history: { undoDepth: history.undoDepth, redoDepth: history.redoDepth },
       revision: owner.getRevision(),
       editable: owner.isEditable(),
-      sourceInputConnected: owner.getInputElement().isConnected
+      sourceInputConnected: owner.getInputElement().isConnected,
+      ...(fenceSnapshot ? { fenceSnapshot } : {})
     };
-  });
+  }, { ownerObservation, fenceObservation });
 }
 
 async function readFullCrossBlockState(visual, expected = {}) {
@@ -338,12 +489,33 @@ async function readWindowedSmokeState(visual, target = {}) {
     };
     const selection = owner.getSelection(), history = owner.getHistoryState();
     const runtimePending = runtime.isTransferPending();
+    let previewEvidence;
+    if (expected.previewEvidence) {
+      const props = windowed[0].memoizedProps;
+      if (typeof props.getGeneratedPreviewIdentity !== 'function') throw new Error('test-windowed-reader-preview-getter-unavailable');
+      const generated = props.getGeneratedPreviewIdentity();
+      const certificate = props.getAcceptedWindowSnapshot();
+      const children = [...surface.childNodes];
+      const nodesCurrent = !!certificate && certificate.nodes.length === children.length
+        && certificate.nodes.every((node, index) => node === children[index]);
+      // The owner-local snapshot counter is NOT a publisher generation.
+      previewEvidence = { ownerLocalRevision: props.previewSnapshot.revision,
+        publisherGeneration: generated?.revision ?? null, publisherSourceRevision: generated?.sourceRevision ?? null,
+        windowKey: certificate?.key ?? null, windowGeneration: certificate?.revision ?? null,
+        windowSourceRevision: certificate?.sourceRevision ?? null, mapBlocks: props.editMap.blocks.length,
+        nodesCurrent, formalCurrent: !!generated && !!certificate && nodesCurrent
+          && generated.sourceRevision === owner.getRevision() && certificate.sourceRevision === owner.getRevision()
+          && certificate.revision === generated.revision && certificate.signature === generated.signature
+          && props.previewSnapshot.signature === generated.signature && props.editMap.signature === generated.signature
+          && generated.editMap === props.editMap && certificate.editMap === props.editMap };
+    }
     return { phase: surface.getAttribute('data-easymde-preview-phase'), runtimePending,
       pendingNativeAuthentication: runtimePending ? 'unverified-windowed-dom-lease' : 'not-pending',
       runtimeEditable: runtime.isEditable(), documentEditable: owner.isEditable(),
       documentSelection: { start: selection.start, end: selection.end, direction: selection.direction },
       documentHistory: { undoDepth: history.undoDepth, redoDepth: history.redoDepth }, revision: owner.getRevision(),
       ...(expected.expectedSource === undefined ? {} : { sourceMatchesExpected: owner.getValue() === expected.expectedSource }),
+      ...(expected.previewEvidence ? { previewEvidence } : {}),
       sourceLength: owner.getValue().length, windowedControllerCount: windowed.length, runtimeCount: runtimes.size,
       spacers: surface.querySelectorAll('[data-easymde-preview-window-spacer]').length,
       effectiveEditable: surface.isContentEditable, contenteditable: surface.getAttribute('contenteditable'),
@@ -454,7 +626,7 @@ async function expectNativeTail(row, expected) {
   });
 }
 
-async function openVisual(page, markdown, pasteFrom) {
+async function openVisual(page, markdown, pasteFrom, beforeFixture) {
   const failures = [];
   const recordFirstFailure = (code) => {
     if (firstRuntimeFailureObservations.has(page)) return;
@@ -542,6 +714,7 @@ async function openVisual(page, markdown, pasteFrom) {
   console.log(JSON.stringify({ phase: 'loaded-editor-build', files: runtimeBuilds }));
   const expectedBuild = process.env.EASYMDE_E2E_EXPECT_EDITOR_BUILD;
   if (expectedBuild) expect(runtimeBuilds, 'The browser must load the frozen production build').toEqual([expectedBuild]);
+  await beforeFixture?.();
   await sourceEditor.click();
   // Fixture preparation only. All subsequent edits use keyboard/mouse actions.
   if (pasteFrom === undefined) {
@@ -648,6 +821,865 @@ async function expectCaretAfterImage(visual, alt, ordinal = 0) {
     imageMounted: true, sameRow: true, afterImage: true,
     nativeVoid: false, collapsed: true, focused: true
   });
+}
+
+const shortStageBlocks = [
+  { kind: 'paragraph', source: '中文 abc aaa \\*文字\\*', body: [...'中文 abc aaa ', '\\*', '文', '字', '\\*'] },
+  { kind: 'heading', source: '# Heading', body: [...'Heading'] },
+  { kind: 'paragraph', source: 'Target paragraph here.', body: [...'Target paragraph here.'] },
+  { kind: 'code', source: '~~~bash\necho hi\n~~~', body: [...'echo hi'] },
+  { kind: 'paragraph', source: 'End.', body: [...'End.'] }
+];
+const shortStageInitial = shortStageBlocks.map((block) => block.source).join('\n\n');
+
+function shortStageDeletionOracle(mode) {
+  const values = new Map();
+  const add = (value, rank) => values.set(value, Math.max(values.get(value) ?? -1, rank));
+  if (mode !== 'full') {
+    for (let end = shortStageInitial.length; end >= 0; end -= 1) add(shortStageInitial.slice(0, end), end);
+  } else {
+    // Independently declared EOF states: preceding blocks stay byte-for-byte
+    // untouched. Only the current body's literal units and its empty-row
+    // representation may disappear; arbitrary subsequences are not accepted.
+    for (let index = shortStageBlocks.length - 1; index >= 0; index -= 1) {
+      const block = shortStageBlocks[index];
+      const prefix = shortStageBlocks.slice(0, index).map((item) => item.source).join('\n\n')
+        + (index ? '\n\n' : '');
+      for (let remaining = block.body.length; remaining >= 0; remaining -= 1) {
+        const body = block.body.slice(0, remaining).join('');
+        const source = block.kind === 'code' ? `~~~bash\n${body}\n~~~`
+          : block.kind === 'heading' ? `# ${body}` : body;
+        for (const ending of ['', '\n', '\n\n']) add(prefix + source + ending, index * 100 + remaining);
+      }
+      for (const empty of ['', ' ', '  ', '\n', '\n\n']) add(prefix + empty, index * 100);
+    }
+  }
+  add('', 0);
+  return values;
+}
+
+async function openShortStage(page, mode, initial, beforeFixture) {
+  const opened = await openVisual(page, initial, undefined, beforeFixture);
+  const strings = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.strings.immersive);
+  if (mode === 'split') await page.getByRole('button', { name: strings.split, exact: true }).last().click();
+  if (mode === 'ordinary') await page.getByRole('button', { name: strings.exit, exact: true }).click();
+  const surface = mode === 'full' ? opened.visual : page.locator('.easymde-source-react .cm-content');
+  await expect(surface).toBeVisible();
+  await expect(surface).toHaveAttribute('contenteditable', 'true');
+  if (mode === 'full') await expect(opened.visual.locator('[data-easymde-preview-window-spacer]')).toHaveCount(0);
+  if (mode !== 'full') await surface.click();
+  return { ...opened, surface, mode };
+}
+
+async function installBackgroundProbe(page) {
+  const readCapabilities = () => page.evaluate(() => ({
+    hooks: typeof window.wp?.hooks?.addAction === 'function'
+      && typeof window.wp.hooks.removeAction === 'function'
+      && typeof window.wp.hooks.doAction === 'function',
+    jquery: typeof window.jQuery === 'function',
+    heartbeatInterval: typeof window.wp?.heartbeat?.interval === 'function',
+    postChanged: typeof window.wp?.autosave?.server?.postChanged === 'function',
+    autosaveInterval: Number(window.autosaveL10n?.autosaveInterval) > 0
+  }));
+  let capabilities = await readCapabilities();
+  const deadline = Date.now() + 15_000;
+  while (Object.values(capabilities).some((value) => !value) && Date.now() < deadline) {
+    await page.waitForTimeout(100);
+    capabilities = await readCapabilities();
+  }
+  const missing = Object.entries(capabilities)
+    .filter(([, value]) => !value)
+    .map(([key]) => key);
+  if (missing.length) throw new Error(`background-core-api-missing:${missing.join(',')}`);
+  return page.evaluate(() => {
+    const readInterval = () => {
+      const heartbeat = window.wp?.heartbeat;
+      if (!heartbeat || 'function' !== typeof heartbeat.interval) return null;
+      try {
+        const value = heartbeat.interval();
+        return Number.isFinite(value) && value > 0 ? value : null;
+      } catch {
+        return null;
+      }
+    };
+    const readMinimalInterval = () => {
+      const value = Number(window.heartbeatSettings?.minimalInterval);
+      return Number.isFinite(value) && value > 0 && value <= 600 ? value : 0;
+    };
+    const readHeartbeat = () => {
+      const heartbeat = window.wp?.heartbeat;
+      let coreHasFocus = null, connectionError = null;
+      try {
+        if (heartbeat && 'function' === typeof heartbeat.hasFocus) {
+          coreHasFocus = Boolean(heartbeat.hasFocus());
+        }
+      } catch { /* read-only observation */ }
+      try {
+        if (heartbeat && 'function' === typeof heartbeat.hasConnectionError) {
+          connectionError = Boolean(heartbeat.hasConnectionError());
+        }
+      } catch { /* read-only observation */ }
+      return {
+        interval: readInterval(),
+        minimalInterval: readMinimalInterval(),
+        visibility: document.visibilityState,
+        documentHasFocus: document.hasFocus(),
+        coreHasFocus,
+        connectionError
+      };
+    };
+    const hooks = window.wp?.hooks;
+    if (!hooks || 'function' !== typeof hooks.addAction
+      || 'function' !== typeof hooks.removeAction) {
+      throw new Error('background-hook-api-unavailable');
+    }
+    if (!window.jQuery) throw new Error('background-jquery-unavailable');
+    const send = [], tick = [], autosave = [], autosaveAttempts = [], visibility = [], focus = [];
+    let pendingSend = null, pendingAutosaveAttempt = null;
+    const onSend = () => {
+      const heartbeat = readHeartbeat();
+      const entry = { ordinal: send.length + 1, at: performance.now(),
+        visibility: heartbeat.visibility, documentHasFocus: heartbeat.documentHasFocus,
+        coreHasFocus: heartbeat.coreHasFocus };
+      send.push(entry);
+      pendingSend = entry;
+    };
+    const onTick = () => {
+      const at = performance.now();
+      const matched = pendingSend;
+      tick.push({ ordinal: tick.length + 1, at,
+        durationMs: matched === null ? null : Math.max(0, at - matched.at),
+        sendOrdinal: matched?.ordinal ?? null,
+        sendVisibility: matched?.visibility ?? null,
+        sendDocumentHasFocus: matched?.documentHasFocus ?? null,
+        sendCoreHasFocus: matched?.coreHasFocus ?? null,
+        visibility: document.visibilityState,
+        documentHasFocus: document.hasFocus() });
+      pendingSend = null;
+    };
+    const onBeforeAutosave = (_event, data) => {
+      const heartbeat = readHeartbeat();
+      let postChanged = null, contentMatchesCurrent = null;
+      try { postChanged = Boolean(window.wp?.autosave?.server?.postChanged?.()); }
+      catch { /* read-only observation */ }
+      try {
+        const source = document.querySelector('#easymde-source')?.value ?? '';
+        contentMatchesCurrent = typeof data?.content === 'string'
+          && data.content === source;
+      } catch { /* read-only observation */ }
+      const entry = { ordinal: autosaveAttempts.length + 1, at: performance.now(),
+        visibility: heartbeat.visibility, documentHasFocus: heartbeat.documentHasFocus,
+        coreHasFocus: heartbeat.coreHasFocus, postChanged, contentMatchesCurrent };
+      autosaveAttempts.push(entry);
+      pendingAutosaveAttempt = entry;
+    };
+    const onAfterAutosave = (_event, data) => {
+      const matched = pendingAutosaveAttempt;
+      autosave.push({ ordinal: autosave.length + 1, at: performance.now(),
+        success: data?.success === true,
+        status: document.visibilityState,
+        attemptOrdinal: matched?.ordinal ?? null,
+        visibility: document.visibilityState,
+        documentHasFocus: document.hasFocus() });
+      pendingAutosaveAttempt = null;
+    };
+    const onVisibility = () => {
+      const heartbeat = readHeartbeat();
+      visibility.push({ ordinal: visibility.length + 1, at: performance.now(),
+        state: document.visibilityState, documentHasFocus: heartbeat.documentHasFocus,
+        coreHasFocus: heartbeat.coreHasFocus });
+    };
+    const onFocus = () => {
+      const heartbeat = readHeartbeat();
+      focus.push({ ordinal: focus.length + 1, at: performance.now(), type: 'focus',
+        documentHasFocus: heartbeat.documentHasFocus,
+        coreHasFocus: heartbeat.coreHasFocus });
+    };
+    const onBlur = () => {
+      const heartbeat = readHeartbeat();
+      focus.push({ ordinal: focus.length + 1, at: performance.now(), type: 'blur',
+        documentHasFocus: heartbeat.documentHasFocus,
+        coreHasFocus: heartbeat.coreHasFocus });
+    };
+    hooks.addAction('heartbeat.send', 'easymde-background-probe', onSend);
+    hooks.addAction('heartbeat.tick', 'easymde-background-probe', onTick);
+    window.jQuery(document).on('before-autosave.easymdeBackgroundProbe', onBeforeAutosave);
+    window.jQuery(document).on('after-autosave.easymdeBackgroundProbe', onAfterAutosave);
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('blur', onBlur);
+    const localDraftPolicy = () => {
+      const bootstrap = window.EasyMDEEditorRootBootstrap;
+      const general = bootstrap?.settings?.general;
+      const drafts = bootstrap?.localDrafts;
+      const interval = Number(general?.autoSaveInterval);
+      const exposed = Number.isFinite(interval) && interval > 0;
+      return { applicable: Boolean(general?.autoSave && drafts?.enabled && exposed),
+        exposed, intervalSeconds: exposed ? interval : null };
+    };
+    const localDraftObservation = () => {
+      const policy = localDraftPolicy();
+      if (!policy.applicable) return { ...policy, storage: null };
+      const bootstrap = window.EasyMDEEditorRootBootstrap;
+      const drafts = bootstrap?.localDrafts;
+      const field = Number(document.querySelector('#post_ID')?.value);
+      const postId = Number.isSafeInteger(field) && field >= 0 ? field : Number(drafts?.postId);
+      const identity = `${drafts?.siteKey}:${drafts?.userId}:${postId || 'new'}`;
+      const key = `easymde:draft:v${drafts?.schemaVersion}:${identity}`;
+      const source = document.querySelector('#easymde-source')?.value ?? '';
+      try {
+        const raw = window.localStorage.getItem(key);
+        if (raw === null) {
+          return { ...policy, storage: { present: false, updatedAt: null,
+            contentMatchesCurrent: false, invalid: false } };
+        }
+        const parsed = JSON.parse(raw);
+        const content = typeof parsed?.content === 'string' ? parsed.content : null;
+        const updatedAt = Number(parsed?.updatedAt);
+        return { ...policy, storage: {
+          present: true,
+          updatedAt: Number.isInteger(updatedAt) && updatedAt > 0 ? updatedAt : null,
+          contentMatchesCurrent: content !== null && content === source,
+          invalid: content === null
+        } };
+      } catch {
+        return { ...policy, storage: { present: false, updatedAt: null,
+          contentMatchesCurrent: false, invalid: true } };
+      }
+    };
+    window.__easymdeBackgroundProbe = {
+      read: () => {
+        const surface = document.querySelector('[data-easymde-preview-html-sink]');
+        return {
+          intervals: { heartbeat: readInterval(),
+            autosave: Number(window.autosaveL10n?.autosaveInterval) || null,
+            localDraft: localDraftPolicy() },
+          heartbeat: readHeartbeat(),
+          localDraft: localDraftObservation(),
+          send: [...send], tick: [...tick], autosave: [...autosave],
+          autosaveAttempts: [...autosaveAttempts], visibility: [...visibility],
+          focus: [...focus],
+          visibilityState: document.visibilityState,
+          documentHasFocus: document.hasFocus(),
+          postChanged: Boolean(window.wp?.autosave?.server?.postChanged?.()),
+          sessionStatus: document.querySelector('[data-easymde-session-status]')
+            ?.getAttribute('data-easymde-session-status') ?? null,
+          surfaceEditable: Boolean(surface?.isContentEditable),
+          lockPressed: document.querySelector('.easymde-immersive-preview-lock')
+            ?.getAttribute('aria-pressed') ?? null
+        };
+      },
+      cleanup: () => {
+        hooks.removeAction('heartbeat.send', 'easymde-background-probe');
+        hooks.removeAction('heartbeat.tick', 'easymde-background-probe');
+        window.jQuery(document).off('before-autosave.easymdeBackgroundProbe');
+        window.jQuery(document).off('after-autosave.easymdeBackgroundProbe');
+        document.removeEventListener('visibilitychange', onVisibility);
+        window.removeEventListener('focus', onFocus);
+        window.removeEventListener('blur', onBlur);
+        delete window.__easymdeBackgroundProbe;
+      }
+    };
+    return { heartbeat: readHeartbeat(),
+      autosave: Number(window.autosaveL10n?.autosaveInterval) || null,
+      localDraft: localDraftObservation() };
+  });
+}
+
+async function startShortStageProbe(page, stage, allowedValues, { backgroundObservation = false, allowLocked = false, frames = null } = {}) {
+  const healthFailures = [];
+  let emptySeen = false;
+  await page.exposeFunction('__shortStageSignal', (event) => {
+    if (event.kind === 'empty') emptySeen = true;
+    else if (event.kind === 'shortcut') console.log(JSON.stringify({ phase: 'short-stage-first-Redo-shortcut', ...event.shortcut }));
+    else if (event.kind === 'visual-deviation') frames?.preserveFirstAnomaly(event.code);
+    else { frames?.preserveFirstAnomaly(event.code); healthFailures.push(event.code); }
+  });
+  await page.evaluate(({ mode, allowed, backgroundObservation, allowLocked }) => {
+    const root = document.querySelector('#easymde-editor-root');
+    const key = Object.getOwnPropertyNames(root).find((name) => name.startsWith('__reactContainer$'));
+    const pending = [root[key]?.stateNode?.current?.child], owners = new Set();
+    while (pending.length) {
+      const fiber = pending.pop();
+      if (!fiber) continue;
+      for (const owner of [fiber.memoizedProps?.documentSession?.document, fiber.memoizedProps?.ordinaryStatus?.document]) {
+        if (owner) owners.add(owner);
+      }
+      pending.push(fiber.child, fiber.sibling);
+    }
+    if (owners.size !== 1) throw new Error('short-stage-owner-not-unique');
+    const owner = [...owners][0], legal = new Set(allowed), rows = [], health = [];
+    let recording = true, active = true, failure = null, ranks = null, previousRank = Infinity;
+    const refuse = (code) => {
+      if (failure) return;
+      const native = getSelection();
+      failure = { code, sourceLength: owner.getValue().length, revision: owner.getRevision(),
+        history: owner.getHistoryState(), selection: owner.getSelection(),
+        native: { anchorConnected: !!native?.anchorNode?.isConnected, focusConnected: !!native?.focusNode?.isConnected,
+          anchorTag: native?.anchorNode?.nodeName, anchorOffset: native?.anchorOffset,
+          focusTag: native?.focusNode?.nodeName, focusOffset: native?.focusOffset, collapsed: native?.isCollapsed } };
+      void window.__shortStageSignal({ kind: 'failure', code });
+    };
+    // Source/native baselines stay private. Each of at most 16 quiet periods
+    // retains first-2/last-30 scalar samples; every rAF/document notification is checked.
+    let quiet = null, pauseBaseline = null, layoutObserver = null, firstDeviation = null;
+    const periods = [];
+    const keep = (first, last, value) => {
+      if (first.length < 2) first.push(value);
+      else { last.push(value); if (last.length > 30) last.shift(); }
+    };
+    const surfaceNow = () => mode === 'full'
+      ? document.querySelector(allowLocked ? '[data-easymde-preview-html-sink]' : '[data-easymde-preview-html-sink][role="textbox"]')
+      : document.querySelector('.easymde-source-react .cm-content');
+    const rect = node => {
+      const box = node?.getBoundingClientRect();
+      return box ? { x: box.x, y: box.y, width: box.width, height: box.height } : null;
+    };
+    const deviation = (code, sample) => {
+      if (firstDeviation) return;
+      firstDeviation = { code, period: quiet?.report.label ?? null, sample };
+      void window.__shortStageSignal({ kind: 'visual-deviation', code });
+    };
+    const sampleQuiet = kind => {
+      if (!quiet) {
+        if (pauseBaseline) {
+          const history = owner.getHistoryState();
+          if (owner.getValue() !== pauseBaseline.value || document.querySelector('#easymde-source')?.value !== pauseBaseline.value
+            || owner.getRevision() !== pauseBaseline.revision || history.undoDepth !== pauseBaseline.undoDepth
+            || history.redoDepth !== pauseBaseline.redoDepth) refuse('short-stage-quiet-document-mutated');
+        }
+        return;
+      }
+      const { baseline, report } = quiet, surface = surfaceNow();
+      const history = owner.getHistoryState();
+      const sample = { kind, at: performance.now(), sourceLength: owner.getValue().length,
+        revision: owner.getRevision(), undoDepth: history.undoDepth, redoDepth: history.redoDepth,
+        sourceUnchanged: owner.getValue() === baseline.value && document.querySelector('#easymde-source')?.value === baseline.value,
+        revisionUnchanged: owner.getRevision() === baseline.revision,
+        historyDepthsUnchanged: history.undoDepth === baseline.undoDepth && history.redoDepth === baseline.redoDepth,
+        surfaceSame: surface === baseline.surface, phase: surface?.getAttribute('data-easymde-preview-phase') ?? null,
+        busy: surface?.getAttribute('aria-busy') ?? null, focused: document.hasFocus(),
+        visible: document.visibilityState === 'visible', editable: surface?.isContentEditable === true,
+        lock: document.querySelector('.easymde-immersive-preview-lock')?.getAttribute('aria-pressed') ?? null,
+        nodes: baseline.nodes.map(({ selector, node, box }) => {
+          const live = surface?.querySelector(selector), current = rect(live);
+          return { same: live === node, connected: node.isConnected, visible: Boolean(current && current.width > 0 && current.height > 0
+            && current.y < innerHeight && current.y + current.height > 0), box: current,
+            delta: box && current ? Math.max(...Object.keys(box).map(key => Math.abs(current[key] - box[key]))) : null };
+        }),
+        windowScroll: { x: window.scrollX, y: window.scrollY },
+        ancestorScroll: baseline.scroll.map(item => ({ top: item.node.scrollTop, left: item.node.scrollLeft })),
+        scrollSame: window.scrollX === baseline.windowX && window.scrollY === baseline.windowY
+          && baseline.scroll.every(item => item.node.scrollTop === item.top && item.node.scrollLeft === item.left) };
+      report.samples++; if (kind === 'raf') report.rafSamples++;
+      report.sourceUnchanged &&= sample.sourceUnchanged;
+      report.revisionUnchanged &&= sample.revisionUnchanged;
+      report.historyDepthsUnchanged &&= sample.historyDepthsUnchanged;
+      if (!sample.surfaceSame || sample.nodes.some(node => !node.same || !node.connected)) report.identityChangeSamples++;
+      if (sample.nodes.some(node => node.delta === null || node.delta > 0)) report.geometryChangeSamples++;
+      if (!sample.scrollSame) report.scrollChangeSamples++;
+      report.maxGeometryDelta = Math.max(report.maxGeometryDelta, ...sample.nodes.map(node => node.delta ?? 0));
+      keep(report.first, report.last, sample);
+      if (!sample.sourceUnchanged || !sample.revisionUnchanged || !sample.historyDepthsUnchanged) refuse('short-stage-quiet-document-mutated');
+      if (!sample.surfaceSame || sample.nodes.some(node => !node.same || !node.connected || node.delta === null || node.delta > 0) || !sample.scrollSame) {
+        deviation('short-stage-quiet-visual-change', sample);
+      }
+    };
+    const observeLayout = entries => {
+      if (!quiet) return;
+      for (const entry of entries) {
+        if (entry.startTime < quiet.report.startedAt) continue;
+        const sample = { at: entry.startTime, value: entry.value, recentInput: entry.hadRecentInput,
+          editorSourceCount: (entry.sources ?? []).filter(source => source.node && root.contains(source.node)).length };
+        quiet.report.layoutShiftCount++; quiet.report.layoutShiftValue += entry.value;
+        keep(quiet.report.layoutFirst, quiet.report.layoutLast, sample);
+        if (sample.editorSourceCount) deviation('short-stage-editor-layout-shift', sample);
+      }
+    };
+    const layoutShiftSupported = backgroundObservation && Boolean(window.PerformanceObserver?.supportedEntryTypes?.includes('layout-shift'));
+    if (layoutShiftSupported) {
+      layoutObserver = new PerformanceObserver(list => observeLayout(list.getEntries()));
+      layoutObserver.observe({ type: 'layout-shift', buffered: false });
+    }
+    const endQuiet = () => {
+      observeLayout(layoutObserver?.takeRecords() ?? []); sampleQuiet('end');
+      if (quiet) {
+        quiet.report.endedAt = performance.now(); quiet = null;
+      }
+      return { failure, firstDeviation, layoutShiftSupported, periods };
+    };
+    const beginQuiet = label => {
+      endQuiet();
+      if (periods.length >= 16) return refuse('short-stage-quiet-period-bound');
+      const surface = surfaceNow(), history = owner.getHistoryState();
+      pauseBaseline ??= { value: owner.getValue(), revision: owner.getRevision(), undoDepth: history.undoDepth, redoDepth: history.redoDepth };
+      const nodes = ['h1', 'p'].map(selector => ({ selector, node: surface?.querySelector(selector) }))
+        .filter(item => item.node && (() => { const box = rect(item.node); return box && box.width > 0 && box.height > 0
+          && box.y < innerHeight && box.y + box.height > 0; })())
+        .map(item => ({ ...item, box: rect(item.node) }));
+      const scroll = [];
+      let ancestor = surface;
+      for (; ancestor && scroll.length < 16; ancestor = ancestor.parentElement) scroll.push({ node: ancestor, top: ancestor.scrollTop, left: ancestor.scrollLeft });
+      const report = { label, startedAt: performance.now(), endedAt: null, samples: 0, rafSamples: 0,
+        visibleUntouchedNodeCount: nodes.length, sourceUnchanged: true, revisionUnchanged: true, historyDepthsUnchanged: true,
+        baseline: { sourceLength: pauseBaseline.value.length, revision: pauseBaseline.revision,
+          undoDepth: pauseBaseline.undoDepth, redoDepth: pauseBaseline.redoDepth }, scrollAncestorSamplingComplete: ancestor === null,
+        identityChangeSamples: 0, geometryChangeSamples: 0, scrollChangeSamples: 0, maxGeometryDelta: 0,
+        layoutShiftCount: 0, layoutShiftValue: 0, first: [], last: [], layoutFirst: [], layoutLast: [] };
+      quiet = { baseline: { ...pauseBaseline, surface, nodes, scroll, windowX: window.scrollX, windowY: window.scrollY }, report };
+      periods.push(report); sampleQuiet('begin');
+    };
+    const observe = () => {
+      if (!recording || failure) return;
+      sampleQuiet('document');
+      const value = owner.getValue();
+      if (!legal.has(value)) return refuse('short-stage-independent-source-oracle');
+      if (ranks) {
+        const rank = ranks.get(value);
+        if (rank > previousRank) return refuse('short-stage-independent-deletion-order');
+        previousRank = rank;
+      }
+      if (rows.length === 1024) return refuse('short-stage-canonical-observation-bound');
+      rows.push({ value, history: owner.getHistoryState(), revision: owner.getRevision() });
+      if (value === '') void window.__shortStageSignal({ kind: 'empty' });
+    };
+    const unsubscribe = owner.subscribe(observe);
+    observe();
+    const sample = () => {
+      if (!active) return;
+      const surface = surfaceNow();
+      const native = getSelection();
+      const state = { editable: owner.isEditable() && !!surface?.isContentEditable,
+        lock: mode === 'full' ? document.querySelector('.easymde-immersive-preview-lock')?.getAttribute('aria-pressed') : null,
+        nativeConnected: !!native?.anchorNode?.isConnected && !!native?.focusNode?.isConnected,
+        nativeInside: !!surface && !!native?.anchorNode && !!native?.focusNode
+          && surface.contains(native.anchorNode) && surface.contains(native.focusNode),
+        failure: !!document.querySelector('[data-easymde-visual-failure]') };
+      const userLocked = allowLocked && state.lock === 'true';
+      if ((!state.editable && !userLocked) || state.failure || mode === 'full' && state.lock !== 'false' && !userLocked) refuse('short-stage-lock-or-editability');
+      if (!userLocked && (!state.nativeConnected || !state.nativeInside)) refuse('short-stage-native-selection-outside-owner');
+      sampleQuiet('raf');
+      if (health.length < 128 && JSON.stringify(health.at(-1)) !== JSON.stringify(state)) health.push(state);
+      requestAnimationFrame(sample);
+    };
+    sample();
+    let firstRedo = null;
+    const onShortcut = (event) => {
+      if (firstRedo || !(event.ctrlKey || event.metaKey) || event.code !== 'KeyZ' || !event.shiftKey) return;
+      const target = event.target instanceof Element ? event.target : null;
+      firstRedo = { key: event.key, code: event.code, ctrl: event.ctrlKey, meta: event.metaKey,
+        shift: event.shiftKey, alt: event.altKey, trusted: event.isTrusted,
+        owner: target?.closest('.easymde-source-react .cm-content') ? 'Source'
+          : target?.closest('[data-easymde-preview-html-sink][role="textbox"]') ? 'Visual' : 'outside',
+        history: owner.getHistoryState(), selection: owner.getSelection(), revision: owner.getRevision() };
+      void window.__shortStageSignal({ kind: 'shortcut', shortcut: firstRedo });
+    };
+    document.addEventListener('keydown', onShortcut, true);
+    window.__shortStageProbe = {
+      snapshot: () => ({ rows: [...rows], health: [...health], failure, firstRedo }),
+      beginQuiet, endQuiet,
+      resumeEditing: () => { const observation = endQuiet(); pauseBaseline = null; return observation; },
+      beginDeletion: (entries) => {
+        ranks = new Map(entries); previousRank = Infinity;
+        legal.clear(); for (const value of ranks.keys()) legal.add(value);
+        rows.length = 0; observe();
+      },
+      allow: (values) => { ranks = null; legal.clear(); for (const value of values) legal.add(value); },
+      stopRecording: () => { recording = false; unsubscribe(); },
+      stop: () => { endQuiet(); layoutObserver?.disconnect(); active = false; recording = false; unsubscribe(); document.removeEventListener('keydown', onShortcut, true); }
+    };
+  }, { mode: stage.mode, allowed: [...allowedValues], backgroundObservation, allowLocked });
+  const onPopup = () => healthFailures.push('short-stage-popup');
+  page.on('popup', onPopup);
+  const guard = () => {
+    frames?.guard();
+    expect(stage.failures, 'short-stage continuous editor errors').toEqual([]);
+    expect(healthFailures, 'short-stage continuous health monitor').toEqual([]);
+  };
+  return {
+    guard,
+    async beginQuiet(label) {
+      guard(); frames?.stage(label);
+      await page.evaluate(label => window.__shortStageProbe.beginQuiet(label), label);
+      guard();
+    },
+    async endQuiet() {
+      const observation = await page.evaluate(() => window.__shortStageProbe.endQuiet());
+      expect(observation.failure, 'quiet period preserves source/revision/history depths').toBeNull();
+      guard();
+    },
+    async resumeEditing() {
+      const observation = await page.evaluate(() => window.__shortStageProbe.resumeEditing());
+      expect(observation.failure, 'quiet periods preserve document before resumed editing').toBeNull();
+      guard();
+    },
+    empty: () => emptySeen,
+    press: async (key) => { guard(); await page.keyboard.press(key); guard(); },
+    type: async (text) => {
+      for (const character of text) { guard(); await page.keyboard.type(character); guard(); }
+    },
+    snapshot: () => page.evaluate(() => window.__shortStageProbe.snapshot()),
+    freeze: () => page.evaluate(() => window.__shortStageProbe.stopRecording()),
+    beginDeletion: (oracle) => page.evaluate((entries) => window.__shortStageProbe.beginDeletion(entries), [...oracle]),
+    allow: (values) => page.evaluate((allowed) => window.__shortStageProbe.allow(allowed), [...values]),
+    async stop() {
+      page.off('popup', onPopup);
+      let observation = null;
+      try {
+        if (backgroundObservation) {
+          observation = await page.evaluate(() => window.__shortStageProbe.endQuiet());
+          console.log(JSON.stringify({ phase: 'short-stage-background-scalar-evidence',
+            sampling: 'every-rAF-and-document-notification; max-16-periods; first-2-last-30-per-period', ...observation }));
+        }
+      } finally { await page.evaluate(() => window.__shortStageProbe?.stop()); }
+      if (backgroundObservation) {
+        expect(observation.failure, 'quiet period document invariants survive cleanup').toBeNull();
+        guard();
+      }
+    }
+  };
+}
+
+async function startShortStageFrames(page, surface, { retainStages = false } = {}) {
+  const require = createRequire(import.meta.url);
+  const { PNG } = require(join(dirname(require.resolve('playwright-core/package.json')), 'lib/utilsBundle.js'));
+  const box = await surface.boundingBox(), viewport = page.viewportSize();
+  if (!box || !viewport) throw new Error('short-stage-private-frame-region-unavailable');
+  const clip = { x: Math.max(0, Math.ceil(box.x)), y: Math.max(0, Math.ceil(box.y)),
+    right: Math.min(viewport.width, Math.floor(box.x + box.width)),
+    bottom: Math.min(viewport.height, Math.floor(box.y + box.height)) };
+  if (clip.right <= clip.x || clip.bottom <= clip.y) throw new Error('short-stage-private-frame-region-empty');
+  if (retainStages) {
+    const configured = test.info().project.use;
+    const assets = await page.evaluate(() => [...new Set(performance.getEntriesByType('resource')
+      .map(entry => new URL(entry.name).pathname.split('/').at(-1))
+      .filter(name => /^admin-editor-[A-Za-z0-9_-]+\.js$/u.test(name ?? '') && !name.includes('loader-')))]);
+    console.log(JSON.stringify({ phase: 'short-stage-background-runtime', browserVersion: page.context().browser()?.version() ?? null,
+      headless: configured.headless ?? true, channel: configured.channel ?? null,
+      configuredBinary: configured.launchOptions?.executablePath?.split(/[\\/]/u).at(-1) ?? null,
+      expectedAsset: process.env.EASYMDE_E2E_EXPECT_EDITOR_BUILD ?? null, assets }));
+  }
+  const cdp = await page.context().newCDPSession(page), first = [], tail = [], pendingAcks = new Set(), failures = [];
+  let operation = 'before-actions', lifecycle = 'running', acceptingFrames = true, ackTotal = 0, ackSucceeded = 0;
+  const stages = new Map();
+  let anomaly = null;
+  const stage = label => {
+    operation = label;
+    if (!retainStages || stages.has(label)) return;
+    if (stages.size === 16) { recordFailure('stage-bound', new Error('stage-bound')); return; }
+    stages.set(label, { received: 0, first: [], last: [] });
+  };
+  const recordFailure = (stage, error, ackOrdinal = null) => {
+    const message = typeof error?.message === 'string' ? error.message : '';
+    const code = message.includes('Target page, context or browser has been closed') ? 'cdp-target-closed'
+      : /session closed/iu.test(message) ? 'cdp-session-closed' : 'frame-operation-rejected';
+    const failure = { stage, lifecycle, operation, ackOrdinal, code,
+      errorClass: typeof error?.name === 'string' && /^[A-Za-z]*Error$/u.test(error.name) ? error.name : 'UnknownError' };
+    failures.push(failure);
+    console.log(JSON.stringify({ phase: 'short-stage-frame-capture-failure', ...failure }));
+  };
+  stage(operation);
+  const onFrame = (event) => {
+    if (acceptingFrames) {
+      const frame = { data: event.data, operation, timestamp: event.metadata.timestamp, ordinal: ackTotal + 1 };
+      if (first.length < 2) first.push(frame);
+      else { tail.push(frame); if (tail.length > 30) tail.shift(); }
+      const period = stages.get(operation);
+      if (period) {
+        period.received++;
+        if (!period.first.length) period.first.push(frame);
+        else { period.last.push(frame); if (period.last.length > 2) period.last.shift(); }
+      }
+      if (anomaly?.awaitingAfter) { anomaly.after = frame; anomaly.awaitingAfter = false; }
+    }
+    const ordinal = ++ackTotal;
+    let sending;
+    try { sending = cdp.send('Page.screencastFrameAck', { sessionId: event.sessionId }); }
+    catch (error) { recordFailure('ack', error, ordinal); return; }
+    const ack = sending.then(() => { ackSucceeded += 1; }, (error) => { recordFailure('ack', error, ordinal); });
+    pendingAcks.add(ack);
+    void ack.then(() => { pendingAcks.delete(ack); }, () => { pendingAcks.delete(ack); });
+  };
+  cdp.on('Page.screencastFrame', onFrame);
+  try { await cdp.send('Page.startScreencast', { format: 'png', maxWidth: viewport.width, maxHeight: viewport.height, everyNthFrame: 1 }); }
+  catch (error) {
+    lifecycle = 'setup-failed'; recordFailure('start-screencast', error);
+    acceptingFrames = false; cdp.off('Page.screencastFrame', onFrame);
+    await Promise.allSettled([...pendingAcks]);
+    try { await cdp.detach(); } catch (detachError) { recordFailure('detach', detachError); }
+    throw new Error('short-stage-compositor-start-failed');
+  }
+  return {
+    stage,
+    guard() { if (failures.length) throw new Error('short-stage-compositor-capture-failed'); },
+    preserveFirstAnomaly(code) {
+      if (!anomaly) anomaly = { code, operation, before: tail.at(-1) ?? first.at(-1) ?? null,
+        after: null, awaitingAfter: true };
+    },
+    async stop(label) {
+      lifecycle = 'stopping';
+      const pendingAtStop = pendingAcks.size;
+      try { await cdp.send('Page.stopScreencast'); }
+      catch (error) { recordFailure('stop-screencast', error); }
+      finally { acceptingFrames = false; cdp.off('Page.screencastFrame', onFrame); }
+      await Promise.allSettled([...pendingAcks]);
+      const pendingAtDetach = pendingAcks.size;
+      try { await cdp.detach(); } catch (error) { recordFailure('detach', error); }
+      lifecycle = 'stopped';
+      const frames = [...new Set([...first, ...tail, ...[...stages.values()].flatMap(period => [...period.first, ...period.last]),
+        ...[anomaly?.before, anomaly?.after].filter(Boolean)])].sort((left, right) => left.ordinal - right.ordinal), evidence = [];
+      try {
+        for (const [index, frame] of frames.entries()) {
+          // Decode/crop only after actions and transport shutdown. Raw viewport frames never leave memory.
+          const image = PNG.sync.read(Buffer.from(frame.data, 'base64'));
+          const sx = image.width / viewport.width, sy = image.height / viewport.height;
+          const x = Math.ceil(clip.x * sx), y = Math.ceil(clip.y * sy);
+          const width = Math.floor(clip.right * sx) - x, height = Math.floor(clip.bottom * sy) - y;
+          const cropped = new PNG({ width, height });
+          PNG.bitblt(image, cropped, x, y, width, height, 0, 0);
+          const path = test.info().outputPath(`${label}-article-frame-${index}.png`);
+          await writeFile(path, PNG.sync.write(cropped));
+          await test.info().attach(`${label}-article-frame-${index}`, { path, contentType: 'image/png' });
+          evidence.push({ operation: frame.operation, ordinal: frame.ordinal, timestamp: frame.timestamp, width, height });
+        }
+      } catch (error) { recordFailure('crop-save-attach', error); }
+      console.log(JSON.stringify({ phase: 'short-stage-private-compositor-evidence', label,
+        sampling: retainStages ? 'continuous-ACK; first-2-last-30-global; max-16-stages-first-1-last-2; max-2-anomaly-neighbors; max-82-retained-frames'
+          : 'first-2-last-30-limited-coverage', frameCount: frames.length, savedFrameCount: evidence.length,
+        captureClip: clip,
+        periods: [...stages].map(([label, period]) => ({ label, received: period.received,
+          retained: period.first.length + period.last.length })),
+        anomaly: anomaly ? { code: anomaly.code, operation: anomaly.operation, beforeOrdinal: anomaly.before?.ordinal ?? null,
+          afterOrdinal: anomaly.after?.ordinal ?? null, capture: 'last-received-before-and-first-after-signal-not-onset-proof' } : null,
+        ackAudit: { total: ackTotal, succeeded: ackSucceeded, rejected: failures.filter((failure) => failure.stage === 'ack').length,
+          pendingAtStop, pendingAtDetach, pendingAfterCleanup: pendingAcks.size }, failures, frames: evidence }));
+      if (failures.length) throw new Error('short-stage-compositor-capture-failed');
+      expect(frames.length, 'bounded compositor evidence requires more than one real frame').toBeGreaterThan(1);
+    }
+  };
+}
+
+function shortStageHistoryLedger(rows, initial, allowed) {
+  const ledger = new Map(), baseline = rows[0].history.undoDepth;
+  for (const row of rows) {
+    expect(allowed.has(row.value), 'each historical source was independently declared and verified').toBe(true);
+    expect(row.history.undoDepth).toBeGreaterThanOrEqual(baseline);
+    if (row.history.undoDepth === baseline) {
+      expect(row.value === initial, 'fixture must remain a reachable history boundary').toBe(true);
+    }
+    ledger.set(row.history.undoDepth, row.value);
+  }
+  return { ledger, baseline, latest: rows.at(-1).history.undoDepth };
+}
+
+async function shortStageReplayHistory(page, stage, probe, history, direction, targetDepth, observationReferences = null, sourceContract = null) {
+  const key = direction === 'undo' ? 'Control+z' : 'Control+Shift+Z';
+  const bound = history.ledger.size * 3 + 16;
+  const sourceUndo = sourceContract?.mode === 'source' && direction === 'undo';
+  const sourceRedo = sourceContract?.mode === 'source' && direction === 'redo';
+  const expectedRedo = sourceContract?.expectedRedo ?? null;
+  for (let step = 0; step < bound; step += 1) {
+    const before = await readCurrentDocumentOwner(page, observationReferences
+      ? { phase: 'history', boundary: direction === 'redo' ? 'before-final-redo' : 'before-history-undo', direction, targetDepth, step, references: observationReferences } : null);
+    if (sourceUndo) {
+      if (before.history.undoDepth === targetDepth) return;
+      const beforeExpected = history.ledger.get(before.history.undoDepth);
+      expect(beforeExpected, 'source undo must begin at a declared fixture state').toBeDefined();
+      await expectSource(stage.source, beforeExpected);
+    } else if (sourceRedo) {
+      if (expectedRedo.length === 0) {
+        expect(before.history.redoDepth, 'source redo must exhaust the real redo stack').toBe(0);
+        return;
+      }
+      expect(before.history.redoDepth, 'source redo must not issue an empty Redo').toBeGreaterThan(0);
+    } else if (before.history.undoDepth === targetDepth) return;
+    await probe.press(key);
+    const after = await readCurrentDocumentOwner(page, observationReferences
+      ? { phase: 'history', boundary: direction === 'redo' ? 'after-final-redo' : 'after-history-undo', direction, targetDepth, step } : null);
+    console.log(JSON.stringify({ phase: 'short-stage-history-step', mode: stage.mode, direction, step,
+      before, after }));
+    if (sourceRedo) {
+      expect(after.history.redoDepth).toBeLessThan(before.history.redoDepth);
+      expect(after.history.undoDepth).toBeGreaterThan(before.history.undoDepth);
+      const expectedSource = expectedRedo.pop();
+      expect(expectedSource, 'source redo expectation must be unique').toBeDefined();
+      await expectSource(stage.source, expectedSource);
+    } else if (sourceUndo) {
+      expect(after.history.undoDepth).toBeLessThan(before.history.undoDepth);
+      const afterExpected = history.ledger.get(after.history.undoDepth);
+      expect(afterExpected, 'source undo must land on a declared fixture state').toBeDefined();
+      await expectSource(stage.source, afterExpected);
+      const beforeExpected = history.ledger.get(before.history.undoDepth);
+      if (after.history.redoDepth > before.history.redoDepth) {
+        expectedRedo.push(beforeExpected);
+      } else {
+        expect(afterExpected, 'undo without redo growth must not drop a source mutation')
+          .toBe(beforeExpected);
+      }
+    } else {
+      expect(direction === 'undo' ? after.history.undoDepth <= before.history.undoDepth
+        : after.history.undoDepth >= before.history.undoDepth).toBe(true);
+      expect(history.ledger.has(after.history.undoDepth), 'natural history group must have a verified expected source').toBe(true);
+      await expectSource(stage.source, history.ledger.get(after.history.undoDepth));
+    }
+    console.log(JSON.stringify({ phase: 'short-stage-history-exact', mode: stage.mode, direction, step,
+      undoDepth: after.history.undoDepth, exact: true }));
+  }
+  throw new Error('short-stage-natural-history-progress-bound');
+}
+
+async function finishShortStageObservation(probe, frames, label, failed) {
+  let firstCleanupError = null;
+  for (const cleanup of [() => probe.stop(), () => frames.stop(label)]) {
+    try { await cleanup(); }
+    catch (error) {
+      firstCleanupError ??= error;
+      console.log(JSON.stringify({ phase: 'short-stage-evidence-cleanup-failure', label, errorClass: error.name,
+        code: /^short-stage-[a-z-]+$/u.test(error.message ?? '') ? error.message : 'cleanup-operation-rejected' }));
+    }
+  }
+  if (!failed && firstCleanupError) throw firstCleanupError;
+}
+
+for (const mode of ['ordinary', 'split', 'full']) {
+for (const pacing of ['normal', 'burst']) {
+  test(`[short-stage] ${mode} ${pacing} mixed lifecycle reaches source zero and replays natural history`, async ({ page }) => {
+    const stage = await openShortStage(page, mode, shortStageInitial);
+    const diagnosticModule = mode === 'full' && pacing === 'normal' ? process.env.EASYMDE_E2E_BRANCH_DIAGNOSTIC_MODULE : null;
+    const branchDiagnostic = diagnosticModule ? await (await import(diagnosticModule)).start(page, {
+      outputPath: test.info().outputPath('branch-causal-observation-v6.json')
+    }) : null;
+    const positions = [
+      { selector: 'p', index: 0, needle: shortStageBlocks[0].source, offset: 1 },
+      { selector: 'h1', index: 0, needle: 'Heading', offset: 2 },
+      { selector: 'p', index: 1, needle: 'Target paragraph here.', offset: 7 },
+      { selector: 'pre code', index: 0, needle: 'echo hi', offset: 2 },
+      { selector: 'p', index: 2, needle: 'End.', offset: 1 }
+    ];
+    const oracle = shortStageDeletionOracle(mode);
+    const entered = mode === 'full' ? 'Z\n\n  ' : 'Z\n';
+    const continued = mode === 'full' ? 'Z\n\nXY' : 'Z\nXY';
+    const shortened = mode === 'full' ? 'Z\n\nX' : 'Z\nX';
+    const allowed = new Set([...oracle.keys(), 'Z', entered, continued, shortened]);
+    for (const position of positions) {
+      const offset = shortStageInitial.indexOf(position.needle) + position.offset;
+      allowed.add(shortStageInitial.slice(0, offset) + 'V' + shortStageInitial.slice(offset));
+    }
+    const probe = await startShortStageProbe(page, stage, allowed);
+    const frames = await startShortStageFrames(page, stage.surface);
+    let phase = 'whole-document-Backspace', failed = true;
+    try {
+      phase = 'real-mouse-and-arrow-positions'; frames.stage(phase);
+      for (const position of positions) {
+        const sourceOffset = shortStageInitial.indexOf(position.needle) + position.offset;
+        probe.guard();
+        if (mode === 'full') {
+          await stage.visual.locator(position.selector).nth(position.index).click({ position: { x: 3, y: 3 } });
+          await probe.press('Home');
+          for (let index = 0; index < position.offset; index += 1) await probe.press('ArrowRight');
+        } else {
+          await stage.surface.click(); await probe.press('Control+Home');
+          for (let index = 0; index < sourceOffset; index += 1) await probe.press('ArrowRight');
+        }
+        await probe.type('V');
+        await expectSource(stage.source, shortStageInitial.slice(0, sourceOffset) + 'V' + shortStageInitial.slice(sourceOffset));
+        await probe.press('Backspace'); await expectSource(stage.source, shortStageInitial);
+      }
+      await stage.surface.click(); await probe.press('Control+End');
+      await probe.beginDeletion(oracle);
+      phase = 'whole-document-Backspace';
+      frames.stage(phase);
+      let rank = Infinity, consumed = 0;
+      const checkDeletionRows = async () => {
+        const observation = await probe.snapshot();
+        for (const row of observation.rows.slice(consumed)) {
+          expect(oracle.has(row.value), 'EOF deletion must match a complete independently declared state').toBe(true);
+          const next = oracle.get(row.value);
+          expect(next, 'EOF deletion may not grow or reorder a preceding block').toBeLessThanOrEqual(rank);
+          rank = next;
+        }
+        consumed = observation.rows.length;
+        probe.guard();
+      };
+      for (let key = 0; key < shortStageInitial.length * 3 + 16 && !probe.empty(); key += 1) {
+        await probe.press('Backspace');
+        if (pacing === 'normal') await checkDeletionRows();
+      }
+      await expectSource(stage.source, '');
+      await checkDeletionRows();
+      phase = 'extra-Backspace-at-source-zero'; frames.stage(phase);
+      const zero = await readCurrentDocumentOwner(page);
+      for (let key = 0; key < 3; key += 1) await probe.press('Backspace');
+      await expectSource(stage.source, '');
+      const afterExtra = await readCurrentDocumentOwner(page);
+      expect(afterExtra.history).toEqual(zero.history);
+      expect(afterExtra.revision).toBe(zero.revision);
+      expect(afterExtra.selection).toEqual(zero.selection);
+      phase = 'empty-input-Enter-immediate-input'; frames.stage(phase);
+      await probe.allow(new Set(['', 'Z', entered, continued, shortened]));
+      await probe.type('Z');
+      if (pacing === 'normal') await expectSource(stage.source, 'Z');
+      await probe.press('Enter');
+      if (pacing === 'normal') await expectSource(stage.source, entered);
+      await probe.type('XY');
+      await expectSource(stage.source, continued);
+      await probe.press('Backspace');
+      await expectSource(stage.source, shortened);
+      const forward = await probe.snapshot();
+      const history = shortStageHistoryLedger(forward.rows, shortStageInitial, allowed);
+      await probe.freeze();
+      phase = 'groupwise-Undo-full-exact'; frames.stage(phase);
+      await shortStageReplayHistory(page, stage, probe, history, 'undo', history.baseline, branchDiagnostic ? {} : null);
+      await expectSource(stage.source, shortStageInitial);
+      phase = 'groupwise-Redo-full-exact'; frames.stage(phase);
+      await shortStageReplayHistory(page, stage, probe, history, 'redo', history.latest,
+        branchDiagnostic ? { continued, shortened, branched: continued + 'B' } : null);
+      await expectSource(stage.source, shortened);
+      phase = 'history-branch-and-continuation'; frames.stage(phase);
+      await probe.press('Control+z');
+      const branchPoint = await readCurrentDocumentOwner(page, branchDiagnostic ? { phase: 'branch', boundary: 'branch' } : null);
+      expect(history.ledger.has(branchPoint.history.undoDepth)).toBe(true);
+      const branchBefore = history.ledger.get(branchPoint.history.undoDepth);
+      await expectSource(stage.source, branchBefore);
+      const branch = branchBefore.slice(0, branchPoint.selection.start) + 'B' + branchBefore.slice(branchPoint.selection.end);
+      await probe.type('B');
+      await expectSource(stage.source, branch);
+      expect((await readCurrentDocumentOwner(page)).history.redoDepth).toBe(0);
+      await probe.press('Control+z'); await expectSource(stage.source, branchBefore);
+      await probe.press('Control+Shift+Z'); await expectSource(stage.source, branch);
+      await probe.press('Control+z'); await expectSource(stage.source, branchBefore);
+      await shortStageReplayHistory(page, stage, probe, history, 'undo', history.baseline, branchDiagnostic ? {} : null);
+      await expectSource(stage.source, shortStageInitial);
+      phase = 'restored-middle-direct-continuation'; frames.stage(phase);
+      const offset = shortStageInitial.indexOf('Target paragraph here.') + 1;
+      if (mode === 'full') {
+        await stage.visual.locator('p').nth(1).click({ position: { x: 3, y: 3 } });
+        await probe.press('Home'); await probe.press('ArrowRight');
+      } else {
+        await stage.surface.click(); await probe.press('Control+Home');
+        for (let index = 0; index < offset; index += 1) await probe.press('ArrowRight');
+      }
+      await probe.type('Q');
+      await expectSource(stage.source, shortStageInitial.slice(0, offset) + 'Q' + shortStageInitial.slice(offset));
+      await probe.press('Control+z'); await expectSource(stage.source, shortStageInitial);
+      if (mode === 'full') await expect(stage.visual).not.toHaveAttribute('aria-busy', 'true');
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      probe.guard();
+      console.log(JSON.stringify({ phase: 'short-stage-lifecycle-complete', mode, pacing,
+        trueSourceZero: true, naturalHistoryGroups: history.ledger.size - 1,
+        final: await readCurrentDocumentOwner(page), health: forward.health, realOSIME: false }));
+      failed = false;
+    } catch (error) {
+      console.log(JSON.stringify({ phase: 'short-stage-lifecycle-first-failure', mode, pacing, operation: phase,
+        owner: await readCurrentDocumentOwner(page), failures: stage.failures,
+        firstObservation: (await probe.snapshot()).failure }));
+      throw error;
+    } finally {
+      if (branchDiagnostic) await branchDiagnostic.stop({ failed });
+      await finishShortStageObservation(probe, frames, `short-${mode}-${pacing}`, failed);
+    }
+  });
+}
 }
 
 test('nonempty paragraph join keeps source, selection and immediate undo editing consistent', async ({ page }) => {
@@ -1871,65 +2903,51 @@ test(`ordinary and immersive split source preserve literal ${fence} fence edits 
 });
 }
 
-test('a rejected secondary image gesture preserves authored text and continued editing after Preview adoption', async ({ page }) => {
+test('a rejected secondary image gesture keeps the authored text range and the generic menu', async ({ page }) => {
   const image = '![test image](/wp-content/plugins/easymde/assets/images/easymde-editor-icon.png)';
   const initial = `Para\n\n${image}\n\nfoo\n`;
   const { failures, source, visual } = await openVisual(page, initial);
   await expect.poll(() => visual.locator('img').evaluate((element) => element.complete && element.naturalWidth > 0)).toBe(true);
-  let release = () => {};
-  let fetched = false;
-  let first = true;
-  const gate = new Promise((resolve) => { release = resolve; });
-  await page.route((url) => url.pathname.endsWith('/easymde/v1/preview')
-    || url.searchParams.get('rest_route') === '/easymde/v1/preview', async (route) => {
-    if (!first) return route.continue();
-    first = false;
-    const response = await route.fetch();
-    fetched = true;
-    await gate;
-    try { await route.fulfill({ response }); }
-    catch (error) { if (route.request().failure()?.errorText !== 'net::ERR_ABORTED') throw error; }
+  await visual.locator('p').last().click();
+  await page.keyboard.press('End');
+  await page.keyboard.type(' ');
+  const withSpace = initial.replace('foo\n', 'foo \n');
+  await expectSource(source, withSpace);
+  await visual.locator('p').first().click();
+  await page.keyboard.press('Home');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Shift+ArrowRight');
+  await page.keyboard.press('Shift+ArrowRight');
+  const point = await visual.evaluate(() => {
+    const selection = getSelection();
+    if (!selection?.rangeCount || selection.isCollapsed) throw new Error('authored-range-unavailable');
+    const rect = selection.getRangeAt(0).getBoundingClientRect();
+    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
   });
-  try {
-    await visual.locator('p').last().click();
-    await page.keyboard.press('End');
-    await page.keyboard.type(' ');
-    const withSpace = initial.replace('foo\n', 'foo \n');
-    await expectSource(source, withSpace);
-    await visual.locator('p').first().click();
-    await page.keyboard.press('Home');
-    await page.keyboard.press('ArrowRight');
-    await page.keyboard.press('Shift+ArrowRight');
-    await page.keyboard.press('Shift+ArrowRight');
-    const point = await visual.evaluate(() => {
-      const selection = getSelection();
-      if (!selection?.rangeCount || selection.isCollapsed) throw new Error('authored-range-unavailable');
-      const rect = selection.getRangeAt(0).getBoundingClientRect();
-      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-    });
-    await page.mouse.click(point.x, point.y, { button: 'right' });
-    await expect.poll(() => fetched).toBe(true);
-    release();
-    await expect(page.locator('[data-easymde-context-menu-item="bold"]').last()).toBeEnabled();
-    await page.keyboard.press('Escape');
-    expect(await visual.evaluate(() => getSelection()?.toString() === 'ar')).toBe(true);
-    expect(failures).toEqual([]);
-    await visual.locator('img').click({ button: 'right' });
-    expect(await visual.evaluate(() => getSelection()?.toString() === 'ar')).toBe(true);
-    await expectSource(source, withSpace);
-    // Existing image policy rejects a text range outside the hit image. There
-    // is no second menu to cancel; Escape would leave immersive writing.
-    await expect.poll(() => failures.length).toBe(1);
-    expect(failures).toEqual(['editor-context-menu-image-stale']);
-    await expect(page.locator('[data-easymde-context-menu="true"]')).toHaveCount(0);
-    await page.keyboard.type('Z');
-    await expectSource(source, withSpace.replace('Para', 'PZa'));
-    await expectLiveSelection(visual);
-    expect(failures).toEqual(['editor-context-menu-image-stale']);
-  } finally {
-    release();
-    await page.unrouteAll({ behavior: 'wait' });
-  }
+  await page.mouse.click(point.x, point.y, { button: 'right' });
+  await expect(page.locator('[data-easymde-context-menu-item="bold"]').last()).toBeEnabled();
+  expect(await visual.evaluate(() => getSelection()?.toString() === 'ar')).toBe(true);
+  expect(failures).toEqual([]);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-easymde-context-menu="true"]')).toHaveCount(0);
+  expect(await visual.evaluate(() => getSelection()?.toString() === 'ar')).toBe(true);
+  await expectSource(source, withSpace);
+  await visual.locator('img').click({ button: 'right' });
+  await expect(page.locator('[data-easymde-context-menu-item="bold"]').last()).toBeEnabled();
+  expect(await visual.evaluate(() => getSelection()?.toString() === 'ar')).toBe(true);
+  expect(failures).toEqual([]);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-easymde-context-menu="true"]')).toHaveCount(0);
+  await expectSource(source, withSpace);
+  await visual.locator('p').first().click();
+  await page.keyboard.press('Home');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Shift+ArrowRight');
+  await page.keyboard.press('Shift+ArrowRight');
+  await page.keyboard.type('Z');
+  await expectSource(source, withSpace.replace('Para', 'PZa'));
+  await expectLiveSelection(visual);
+  expect(failures).toEqual([]);
 });
 
 for (const size of ['full', 'windowed']) {
@@ -2467,6 +3485,1370 @@ test('windowed cross-row replacement keeps history and immediate pending input u
     await page.unrouteAll({ behavior: 'wait' });
   }
 });
+
+test('windowed held PHP history keeps complete math range through release and replacement Undo', async ({ page }) => {
+  // Same-P complete-math selection: fixed source [1,14], not a three-block range.
+  const tail = '\n\nTarget.\n\nAfter.';
+  const initial = 'Before\n$x$\nAfter' + tail + '\n\n'
+    + Array.from({ length: 161 }, (_, index) => `Filler ${index + 1}.`).join('\n\n');
+  const typed = initial.replace(tail, '\n\nTarget.V\n\nAfter.');
+  const selection = { start: 1, end: 14, direction: 'forward' };
+  const replaced = initial.slice(0, selection.start) + 'X' + initial.slice(selection.end);
+  const { failures, source, visual } = await openVisual(page, initial);
+  await expect(visual.locator('[data-easymde-preview-window-spacer]').first()).toBeAttached();
+  const sink = page.locator('[data-easymde-preview-html-sink]');
+  const lock = page.locator('.easymde-immersive-preview-lock');
+  let held = null, phase = 'initial-formal-window', lastAtom = null;
+  const checkpoint = async (expected, pending = false) => {
+    await expectSource(source, expected);
+    await expect.poll(async () => {
+      lastAtom = await readWindowedSmokeState(visual, { expectedSource: expected, previewEvidence: true });
+      return lastAtom.sourceMatchesExpected && lastAtom.runtimePending === pending
+        && (pending || lastAtom.phase === 'ready' && lastAtom.previewEvidence.formalCurrent);
+    }).toBe(true);
+    expect(failures).toEqual([]);
+    expect(lastAtom).toMatchObject({ runtimeEditable: true, documentEditable: true, effectiveEditable: true,
+      contenteditable: 'true', lock: 'false', session: 'ready', windowedControllerCount: 1, runtimeCount: 1 });
+    expect(lastAtom.spacers).toBeGreaterThan(0);
+    expect(lastAtom.previewEvidence.mapBlocks).toBeGreaterThan(160);
+    return lastAtom;
+  };
+  const unchangedOwner = async (before) => {
+    const after = await readCurrentDocumentOwner(page);
+    expect(after).toMatchObject({ revision: before.revision, history: before.history, selection: before.selection, editable: true });
+  };
+  const nativeRange = async (measure = false) => visual.evaluate((surface, measure) => {
+    const paragraphs = [...surface.querySelectorAll('p')].filter((p) => p.textContent.includes('Before') && p.textContent.includes('After'));
+    if (paragraphs.length !== 1) throw new Error('test-windowed-math-paragraph-not-unique');
+    const paragraph = paragraphs[0], maths = paragraph.querySelectorAll('.easymde-math[data-easymde-rendered]');
+    if (maths.length !== 1) throw new Error('test-windowed-math-object-not-unique');
+    const math = maths[0];
+    const boundary = (needle, delta) => {
+      const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT), matches = [];
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (node.parentElement?.closest('.easymde-math')) continue;
+        const at = node.textContent.indexOf(needle);
+        if (at >= 0) matches.push({ node, offset: at + delta });
+      }
+      if (matches.length !== 1) throw new Error('test-windowed-math-boundary-not-unique');
+      return matches[0];
+    };
+    const start = boundary('Before', 1), end = boundary('After', 3);
+    const point = ({ node, offset }) => {
+      const range = document.createRange(); range.setStart(node, offset); range.collapse(true);
+      const rect = range.getBoundingClientRect();
+      if (rect.height <= 0) throw new Error('test-windowed-math-boundary-not-visible');
+      return { x: rect.left + 0.1, y: rect.top + rect.height / 2 };
+    };
+    const native = getSelection(), range = native?.rangeCount === 1 ? native.getRangeAt(0) : null;
+    const atom = document.createRange(); atom.selectNode(math);
+    return { points: measure ? { start: point(start), end: point(end) } : null,
+      proof: { anchorExact: native?.anchorNode === start.node && native.anchorOffset === start.offset,
+        focusExact: native?.focusNode === end.node && native.focusOffset === end.offset,
+        anchorOffset: native?.anchorOffset ?? null, focusOffset: native?.focusOffset ?? null,
+        connected: !!native?.anchorNode?.isConnected && !!native?.focusNode?.isConnected,
+        focused: document.activeElement === surface,
+        forward: !!range && !native.isCollapsed && range.startContainer === native.anchorNode && range.startOffset === native.anchorOffset,
+        wholeMath: !!range && range.compareBoundaryPoints(Range.START_TO_START, atom) <= 0
+          && range.compareBoundaryPoints(Range.END_TO_END, atom) >= 0
+          && !math.contains(native.anchorNode) && !math.contains(native.focusNode) } };
+  }, measure);
+  const expectNativeRange = async () => {
+    expect((await nativeRange()).proof).toEqual({ anchorExact: true, focusExact: true, anchorOffset: 1, focusOffset: 4,
+      connected: true, focused: true, forward: true, wholeMath: true });
+  };
+  try {
+    const baseline = await checkpoint(initial);
+    phase = 'real-V-input'; await visual.locator('p').filter({ hasText: 'Target.' }).first().click();
+    await page.keyboard.press('End'); await page.keyboard.type('V'); await expectSource(source, typed);
+    expect(failures).toEqual([]);
+    const beforeLock = await readCurrentDocumentOwner(page);
+    expect(beforeLock.revision).toBe(baseline.revision + 1);
+    expect(beforeLock.history).toEqual({ undoDepth: baseline.documentHistory.undoDepth + 1, redoDepth: 0 });
+    // Explicit user preparation: a newly accepted V Preview makes the later
+    // real Undo use a formal history transfer, not an ordinary input debounce.
+    const formalV = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      if (!(url.pathname.endsWith('/easymde/v1/preview') || url.searchParams.get('rest_route') === '/easymde/v1/preview')) return false;
+      try { return response.request().postDataJSON()?.markdown === typed; } catch { return false; }
+    }).then((response) => response, () => null);
+    phase = 'explicit-user-lock-and-formal-V'; await lock.click();
+    await expect(lock).toHaveAttribute('aria-pressed', 'true');
+    expect(await sink.evaluate((surface) => surface.isContentEditable)).toBe(false);
+    await unchangedOwner(beforeLock); await expectSource(source, typed); expect(failures).toEqual([]);
+    const response = await formalV; expect(response, 'The explicit lock must receive the real V PHP response').not.toBeNull();
+    expect(response.status()).toBe(200); expect(await response.finished()).toBeNull();
+    await expect(sink).toHaveAttribute('aria-busy', 'false');
+    await unchangedOwner(beforeLock); await expectSource(source, typed);
+    phase = 'explicit-user-unlock'; await lock.click(); await expect(lock).toHaveAttribute('aria-pressed', 'false');
+    const acceptedV = await checkpoint(typed); await unchangedOwner(beforeLock);
+    expect(acceptedV.previewEvidence.publisherGeneration).toBeGreaterThan(baseline.previewEvidence.publisherGeneration);
+    phase = 'real-Undo-base-held-PHP'; held = await holdFormalPreview(page);
+    await visual.locator('p').filter({ hasText: 'Target.V' }).first().click(); await page.keyboard.press('End');
+    await page.keyboard.press('Control+z'); await expectSource(source, initial);
+    await held.waitFor(initial); // Exact request, real PHP200 fetched, fulfillment still gated.
+    const beforeDrag = await checkpoint(initial, true);
+    expect(beforeDrag.revision).toBe(beforeLock.revision + 1);
+    expect(beforeDrag.documentHistory).toEqual({ undoDepth: baseline.documentHistory.undoDepth, redoDepth: 1 });
+    phase = 'real-complete-math-pointer-drag'; const { points } = await nativeRange(true);
+    await page.mouse.move(points.start.x, points.start.y); await page.mouse.down();
+    try { await page.mouse.move(points.end.x, points.end.y, { steps: 16 }); } finally { await page.mouse.up(); }
+    expect(failures).toEqual([]); await expectNativeRange();
+    const dragged = await checkpoint(initial, true);
+    expect(dragged.revision).toBe(beforeDrag.revision); expect(dragged.documentHistory).toEqual(beforeDrag.documentHistory);
+    // Pending canonical publication is observed, not forced. The completed
+    // accepted tree must preserve the original fixed native/source range.
+    phase = 'release-real-PHP-and-preserve-range'; await held.close(); held = null;
+    const accepted = await checkpoint(initial); await expectNativeRange();
+    expect(accepted.revision).toBe(beforeDrag.revision); expect(accepted.documentHistory).toEqual(beforeDrag.documentHistory);
+    expect(accepted.documentSelection).toEqual(selection);
+    expect(accepted.previewEvidence.publisherGeneration).toBeGreaterThan(acceptedV.previewEvidence.publisherGeneration);
+    expect(accepted.previewEvidence.windowKey).not.toBe(acceptedV.previewEvidence.windowKey);
+    phase = 'real-X-replacement'; await page.keyboard.type('X');
+    const changed = await checkpoint(replaced);
+    expect(changed.revision).toBe(accepted.revision + 1);
+    expect(changed.documentHistory).toEqual({ undoDepth: accepted.documentHistory.undoDepth + 1, redoDepth: 0 });
+    expect(changed.documentSelection).toEqual({ start: 2, end: 2, direction: 'none' });
+    expect(changed).toMatchObject({ nativeCollapsed: true, nativeAnchor: { connected: true, inside: true, parentTag: 'P', offset: 2 },
+      nativeFocus: { connected: true, inside: true, parentTag: 'P', offset: 2 } });
+    phase = 'real-Undo-replacement'; await page.keyboard.press('Control+z');
+    const restored = await checkpoint(initial); await expectNativeRange();
+    expect(restored.revision).toBe(changed.revision + 1);
+    expect(restored.documentHistory).toEqual({ undoDepth: accepted.documentHistory.undoDepth, redoDepth: 1 });
+    expect(restored.documentSelection).toEqual(selection);
+    expect(failures).toEqual([]);
+  } catch (error) {
+    console.log(JSON.stringify({ phase: 'windowed-held-math-first-failure', operation: phase, state: lastAtom, failures }));
+    throw error;
+  } finally { if (held) await held.close(); }
+});
+
+for (const timing of ['held', 'accepted']) {
+test(`windowed nested table ${timing} PHP history keeps Enter and atomic Backspace exact`, async ({ page }) => {
+  const padding = '\n\n' + Array.from({ length: 161 }, (_, index) => `Filler ${index + 1}.`).join('\n\n');
+  const tableHead = '>   | Left | Right |\n>   | --- | --- |\n';
+  const plainTable = tableHead + '>   | AB | CD |' + padding;
+  const breakTable = tableHead + '>   | A<br>B | CD |' + padding;
+  const baselineHead = '> - Before.\n>\n>   ```js\n>   retained();\n>   ```\n>\n>   After.\n>\n';
+  const replacedHead = '> - BRfter.\n>\n';
+  // Independent source fixtures, never derived from the current document or an edit map.
+  const SourceFixture = { baseline: baselineHead + plainTable, replaced: replacedHead + plainTable,
+    withBreak: replacedHead + breakTable };
+  const cellCaret = (replacedHead + tableHead + '>   | A').length;
+  const crossSelection = { start: '> - B'.length, end: baselineHead.indexOf('>   After.') + '>   A'.length, direction: 'forward' };
+  const { failures, source, visual } = await openVisual(page, SourceFixture.baseline);
+  const lock = page.locator('.easymde-immersive-preview-lock');
+  const sink = page.locator('[data-easymde-preview-html-sink]');
+  const cell = visual.locator('blockquote li table tbody td').first();
+  let held = null, retainedNodes = null, receipts = null, phase = 'formal-code-baseline', lastAtom = null;
+  let expectedSource = SourceFixture.baseline;
+  let firstMergeDiagnostic = null;
+  let coldMergeDebug = null;
+  let firstCaseError = null;
+  const cleanupResults = [];
+  const tableDiagnostics = { pendingInput: null, sourceNavigation: null, tableNative: null, tableAdmission: null };
+  let diagnosticOrdinal = 0;
+  const captureTableDiagnostic = (message) => {
+    if (message.type() !== 'error') return;
+    const text = message.text();
+    if (text.length > 16384) return;
+    diagnosticOrdinal++;
+    const parse = (json) => {
+      try { const data = JSON.parse(json); return data && typeof data === 'object' && !Array.isArray(data) ? data : null; }
+      catch { return null; }
+    };
+    const observe = () => ({ operation: phase, consoleOrdinal: diagnosticOrdinal, parsed: false });
+    const pick = (observation, data, integers, booleans, enums = {}, nullable = false) => {
+      if (!data) return;
+      observation.parsed = true;
+      let invalidFieldCount = 0;
+      for (const field of integers) {
+        if (!Object.hasOwn(data, field)) continue;
+        if (nullable && data[field] === null) { observation[field] = null; continue; }
+        if (Number.isSafeInteger(data[field]) && data[field] >= -1) observation[field] = data[field];
+        else invalidFieldCount++;
+      }
+      for (const field of booleans) {
+        if (!Object.hasOwn(data, field)) continue;
+        if (nullable && data[field] === null) { observation[field] = null; continue; }
+        if (typeof data[field] === 'boolean') observation[field] = data[field];
+        else invalidFieldCount++;
+      }
+      for (const [field, values] of Object.entries(enums)) {
+        if (!Object.hasOwn(data, field)) continue;
+        if (nullable && data[field] === null) { observation[field] = null; continue; }
+        observation[field] = values.includes(data[field]) ? data[field] : 'unrecognized';
+        if (observation[field] === 'unrecognized') invalidFieldCount++;
+      }
+      observation.invalidFieldCount = invalidFieldCount;
+    };
+    const inputTypes = ['insertText', 'insertReplacementText', 'insertLineBreak', 'insertParagraph', 'deleteByCut',
+      'deleteContentBackward', 'deleteContentForward', 'deleteWordBackward', 'deleteWordForward', 'other'];
+    const navigation = text.match(/visual-editor-window-source-navigation-dom-stale:([a-z0-9-]+)(?:$|;)/u);
+    if (navigation) {
+      if (tableDiagnostics.sourceNavigation) return;
+      const reasons = ['capture-missing-row', 'capture-duplicate-row', 'capture-prior-binding',
+        'mount-child-identity', 'mount-block-binding', 'mount-serialization', 'commit-block-binding',
+        'commit-child-identity', 'commit-surrounding-block-stale', 'native-deletion-identity',
+        'history-gap-child-identity', 'history-gap-presentation', 'history-gap-anchor',
+        'pending-native-surrounding-stale', 'pending-table-cell-proof-missing', 'pending-table-cell-snapshot-missing',
+        'pending-table-wrapper-stale', 'pending-table-structure-stale', 'pending-table-target-cell-stale',
+        'pending-table-protected-placement-stale', 'pending-table-retained-detached', 'pending-table-retained-binding',
+        'pending-table-surrounding-stale', 'composition-block-identity', 'history-text-replay', 'history-text-source',
+        'history-text-block-binding', 'history-text-spelling', 'history-text-path'];
+      tableDiagnostics.sourceNavigation = { operation: phase, consoleOrdinal: diagnosticOrdinal,
+        reason: reasons.includes(navigation[1]) ? navigation[1] : 'unrecognized', reasonRecognized: reasons.includes(navigation[1]) };
+      return;
+    }
+    const admission = text.match(/visual-editor-window-table-admission;(\{.*\})$/u);
+    if (admission) {
+      if (tableDiagnostics.tableAdmission) return;
+      const observation = observe(), data = parse(admission[1]);
+      tableDiagnostics.tableAdmission = observation;
+      const tags = ['BLOCKQUOTE', 'UL', 'OL', 'LI', 'TABLE', 'SECTION', 'DIV', 'ARTICLE'];
+      pick(observation, data,
+        ['row', 'column', 'caret', 'tableFrom', 'tableTo', 'sourceCellFrom', 'sourceCellTo', 'local', 'absolute',
+          'ownerStart', 'ownerEnd', 'projectionFrom', 'projectionTo', 'baselineLength', 'tableSourceLength'],
+        ['nested', 'mapperReturned', 'projectionPresent'],
+        { stage: ['lease', 'selection-bounds', 'parser-table', 'dom-cell-ordinal', 'source-cell', 'caret-in-cell',
+          'table-caret-map-mismatch', 'capture', 'structure-target', 'owner-binding', 'caret-in-owner',
+          'table-in-owner', 'cell-projection', 'cell-projection-bounds', 'nested-range'],
+        ownerBlockTag: tags, tableRootTag: tags,
+        errorCode: ['visual-editor-selection-map-failed', 'visual-editor-markdown-merge-ambiguous', 'other'] }, true);
+      return;
+    }
+    const native = text.match(/visual-editor-window-table-native;(\{.*\})$/u);
+    if (native) {
+      if (tableDiagnostics.tableNative) return;
+      const observation = observe(), data = parse(native[1]);
+      tableDiagnostics.tableNative = observation;
+      pick(observation, data,
+        ['canonicalLength', 'sourceLength', 'liveCount', 'retainedCount', 'retainedMismatch', 'adjacentTexts',
+          'expectedTexts', 'nativeRangeCount', 'anchorType', 'anchorOffset', 'focusType', 'focusOffset', 'proofIndex'],
+        ['active', 'externalChange', 'canonicalMatches', 'sourceMatches', 'revisionMatches', 'selectionMatches',
+          'historyMatches', 'rootEqual', 'removedConnected', 'nativeCollapsed', 'anchorConnected', 'anchorEquivalent',
+          'focusEquivalent', 'rejectedBeforeInput', 'pendingComposition', 'composing', 'isComposing', 'inputTypeMatches', 'restored'],
+        { stage: ['input-context-rejected', 'epoch-rejected', 'outcome-root', 'outcome-retained-count', 'outcome-retained-identity',
+          'outcome-range', 'outcome-collapsed', 'outcome-anchor', 'outcome-focus', 'rollback-source-diverged', 'rollback-restored'],
+        capturedInputType: inputTypes, eventInputType: inputTypes });
+      if (data && Object.hasOwn(data, 'adjacentTextIndexes')) {
+        if (Array.isArray(data.adjacentTextIndexes) && data.adjacentTextIndexes.every((value) => Number.isSafeInteger(value) && value >= 0)) {
+          observation.adjacentTextIndexCount = data.adjacentTextIndexes.length;
+          observation.adjacentTextIndexes = data.adjacentTextIndexes.slice(0, 32);
+          observation.adjacentTextIndexesTruncated = data.adjacentTextIndexes.length > 32;
+        } else observation.invalidFieldCount++;
+      }
+      return;
+    }
+    const match = text.match(/visual-editor-window-(merge|pending-input):reason=([a-z0-9-]+);(\{.*\})$/u);
+    if (!match || (match[1] === 'merge' ? firstMergeDiagnostic : tableDiagnostics.pendingInput)) return;
+    const observation = observe(), data = parse(match[3]);
+    if (match[1] === 'pending-input') {
+      const reasons = ['lease-source', 'selection-bounds', 'canonical-deletion-unavailable', 'selection-deletion-not-cancelable',
+        'canonical-lease-rejected', 'lease-selection-stale', 'lease-read-only', 'lease-gate-rejected',
+        'lease-dom-mount-child-identity', 'lease-dom-mount-block-binding', 'lease-dom-mount-serialization',
+        'lease-dom-read-only-snapshot-missing', 'lease-dom-read-only-region-mutated', 'lease-dom-unclassified',
+        'pending-table-cell-unproved', 'row-serialization-failed', 'pending-table-source-epoch', 'pending-table-row-binding',
+        'image-target-unproved', 'image-source-map-failed', 'target-probe-unavailable', 'restored-code-target-stale',
+        'multiple-targets', 'target-range-mismatch', 'replacement-range-unsupported', 'restored-range-unowned',
+        'shortcut-pre-root-missing', 'shortcut-serialization-empty', 'pending-code-deletion-rejected', 'unsupported-pending-input'];
+      observation.reason = reasons.includes(match[2]) ? match[2] : 'unrecognized';
+      observation.reasonRecognized = reasons.includes(match[2]);
+      tableDiagnostics.pendingInput = observation;
+      pick(observation, data,
+        ['sourceLength', 'canonicalLength', 'mountedLength', 'leaseLength', 'transferLength', 'selectionStart', 'selectionEnd',
+          'leaseStart', 'leaseEnd', 'undoDepth', 'redoDepth', 'leaseUndoDepth', 'leaseRedoDepth', 'rangeCount', 'anchorType',
+          'anchorOffset', 'focusType', 'focusOffset', 'targetCount', 'targetStartType', 'targetStartOffset', 'targetEndType',
+          'targetEndOffset', 'liveChildren', 'acceptedChildren'],
+        ['eventAvailable', 'sourceMatchesLease', 'canonicalMatchesSource', 'canonicalMatchesLease', 'transferMatchesLease',
+          'signatureMatches', 'focused', 'active', 'externalChange', 'pendingProp', 'anchorConnected', 'focusConnected',
+          'targetStartConnected', 'targetEndConnected', 'childrenMatch'],
+        { selectionDirection: ['none', 'forward', 'backward'], leaseDirection: ['none', 'forward', 'backward'], inputType: inputTypes });
+      return;
+    }
+    const reasons = ['map-snapshot-mismatch', 'unmapped-normalized-boundary', 'source-visual-slice-mismatch',
+      'unmapped-original-boundary', 'unclassified'];
+    observation.reason = reasons.includes(match[2]) ? match[2] : 'unrecognized';
+    firstMergeDiagnostic = observation;
+    pick(observation, data,
+      ['sourceStart', 'sourceEnd', 'baselineLength', 'editedLength', 'blockCount', 'canonicalLength', 'sourceLength',
+        'mountedLength', 'rangeCount', 'anchorType', 'anchorOffset', 'focusType', 'focusOffset'],
+      ['structural', 'bodyInput', 'deletion', 'canonicalMatchesSource', 'mountedMatchesSource', 'leaseMatchesSource', 'focused'],
+      { phase: ['unclassified', 'beforeinput-selection', 'commit-setup', 'commit-native-deletion-selection', 'commit-merge',
+        'commit-selection', 'pending-code-merge', 'pending-code-selection', 'pending-native-serialization', 'pending-native-merge', 'pending-native-selection'] });
+    if (data?.merge && typeof data.merge === 'object' && !Array.isArray(data.merge)) {
+      observation.merge = {};
+      for (const key of ['sourceLength', 'baselineLength', 'editedLength', 'visualStart', 'visualEnd', 'sourceStart', 'sourceEnd']) {
+        if (Number.isSafeInteger(data.merge[key])) observation.merge[key] = data.merge[key];
+      }
+    }
+  };
+  const checkpoint = async (expected, pending, formal = false) => {
+    expectedSource = expected;
+    await expectSource(source, expected);
+    await expect.poll(async () => {
+      lastAtom = await readWindowedSmokeState(visual, { expectedSource: expected, previewEvidence: formal });
+      return lastAtom.sourceMatchesExpected && (pending === undefined || lastAtom.runtimePending === pending)
+        && (!formal || lastAtom.phase === 'ready' && lastAtom.previewEvidence.formalCurrent);
+    }).toBe(true);
+    expect(lastAtom).toMatchObject({ runtimeEditable: true, documentEditable: true, effectiveEditable: true,
+      contenteditable: 'true', lock: 'false', session: 'ready', windowedControllerCount: 1, runtimeCount: 1 });
+    expect(lastAtom.spacers).toBeGreaterThan(0);
+    expect(failures).toEqual([]);
+    return lastAtom;
+  };
+  const point = async (locator, text, offset) => locator.evaluate((element, target) => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT), matches = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) if (node.data === target.text) matches.push(node);
+    if (matches.length !== 1) throw new Error('test-table-text-boundary-not-unique');
+    const range = document.createRange(); range.setStart(matches[0], target.offset); range.collapse(true);
+    const rect = range.getBoundingClientRect();
+    if (rect.height <= 0) throw new Error('test-table-text-boundary-not-visible');
+    return { x: rect.left + 0.1, y: rect.top + rect.height / 2 };
+  }, { text, offset });
+  const nativeCell = async () => cell.evaluate((element) => {
+    const native = getSelection(), inside = !!native?.anchorNode && element.contains(native.anchorNode)
+      && !!native.focusNode && element.contains(native.focusNode);
+    const prefix = document.createRange(); prefix.selectNodeContents(element);
+    if (inside) prefix.setEnd(native.anchorNode, native.anchorOffset); else prefix.collapse(true);
+    return { connected: element.isConnected, inside, collapsed: native?.isCollapsed === true,
+      prefixText: prefix.toString(), prefixBreaks: prefix.cloneContents().querySelectorAll('br').length,
+      breaks: element.querySelectorAll('br').length, atB0: native?.anchorNode instanceof Text
+        && native.anchorNode.data === 'B' && native.anchorOffset === 0 && native.focusNode === native.anchorNode && native.focusOffset === 0 };
+  });
+  const acceptThroughUserLock = async (expected) => {
+    const before = await readCurrentDocumentOwner(page);
+    const responsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      if (!(url.pathname.endsWith('/easymde/v1/preview') || url.searchParams.get('rest_route') === '/easymde/v1/preview')) return false;
+      try { return response.request().postDataJSON()?.markdown === expected; } catch { return false; }
+    });
+    await lock.click(); await expect(lock).toHaveAttribute('aria-pressed', 'true');
+    const response = await responsePromise;
+    expect(response.status()).toBe(200); expect(await response.finished()).toBeNull();
+    await expect(sink).toHaveAttribute('aria-busy', 'false');
+    await lock.click(); await expect(lock).toHaveAttribute('aria-pressed', 'false');
+    await checkpoint(expected, false, true);
+    const after = await readCurrentDocumentOwner(page);
+    expect(after).toMatchObject({ revision: before.revision, history: before.history });
+    await expectSource(source, expected);
+  };
+  const expectEdit = async (expected, revision, undoDepth, redoDepth, caret) => {
+    const state = await checkpoint(expected, timing === 'held' ? true : undefined);
+    expect(state.revision).toBe(revision);
+    expect(state.documentHistory).toEqual({ undoDepth, redoDepth });
+    expect(state.documentSelection).toEqual({ start: caret, end: caret, direction: 'none' });
+    return state;
+  };
+  // The shared observer retains refusal codes only; keep the first scalar payload locally, never raw console text.
+  page.on('console', captureTableDiagnostic);
+  try {
+    await checkpoint(SourceFixture.baseline, false, true);
+    await expect(visual.locator('blockquote li pre code')).toHaveCount(1);
+    await expect(visual.locator('blockquote li table')).toHaveCount(1);
+    await expect(cell).toHaveText('AB');
+    const before = visual.locator('blockquote li p').filter({ hasText: /^Before\.$/u });
+    const after = visual.locator('blockquote li p').filter({ hasText: /^After\.$/u });
+    const start = await point(before, 'Before.', 1), end = await point(after, 'After.', 1);
+    phase = 'real-P-code-P-drag';
+    await page.mouse.move(start.x, start.y); await page.mouse.down();
+    try { await page.mouse.move(end.x, end.y, { steps: 16 }); } finally { await page.mouse.up(); }
+    const intent = await readWindowedSmokeState(visual, { selector: 'blockquote li p', index: 0, focusIndex: 1 });
+    expect(intent).toMatchObject({ nativeCollapsed: false, nativeDirection: 'forward',
+      nativeAnchor: { targetContains: true, bodyOffset: 1 }, nativeFocus: { targetContains: true, bodyOffset: 1 } });
+    const debugModule = timing === 'held' ? process.env.EASYMDE_E2E_COLD_MERGE_DEBUG_MODULE : null;
+    if (debugModule) coldMergeDebug = await (await import(debugModule)).start(page, {
+      expectedBundle: process.env.EASYMDE_E2E_EXPECT_EDITOR_BUILD
+    });
+    phase = 'real-R-cross-replacement';
+    try { await page.keyboard.type('R'); } finally { if (coldMergeDebug) await coldMergeDebug.close(); }
+    if (coldMergeDebug) console.log(JSON.stringify({ phase: 'cold-merge-private-sample', state: coldMergeDebug.snapshot() }));
+    await expectSource(source, SourceFixture.replaced);
+    const replacement = await readCurrentDocumentOwner(page);
+    expect(replacement.selection).toEqual({ start: 6, end: 6, direction: 'none' });
+    phase = 'formal-R-user-lock'; await acceptThroughUserLock(SourceFixture.replaced);
+    await expect(visual.locator('blockquote li pre code')).toHaveCount(0);
+    phase = 'real-Undo-formal-code-baseline'; await page.keyboard.press('Control+z');
+    const baseline = await checkpoint(SourceFixture.baseline, false, true);
+    expect(baseline.revision).toBe(replacement.revision + 1);
+    expect(baseline.documentHistory).toEqual({ undoDepth: replacement.history.undoDepth - 1, redoDepth: 1 });
+    expect(baseline.documentSelection).toEqual(crossSelection);
+    await expect(visual.locator('blockquote li pre code')).toHaveCount(1);
+    retainedNodes = await visual.evaluateHandle((surface) => [...surface.childNodes]);
+    held = await holdFormalPreview(page);
+    phase = 'real-Redo-R-held-PHP'; await page.keyboard.press('Control+Shift+z');
+    await expectSource(source, SourceFixture.replaced); await held.waitFor(SourceFixture.replaced);
+    const pending = await checkpoint(SourceFixture.replaced, true);
+    expect(pending.revision).toBe(baseline.revision + 1);
+    expect(pending.documentHistory).toEqual({ undoDepth: baseline.documentHistory.undoDepth + 1, redoDepth: 0 });
+    expect(await visual.evaluate((surface, nodes) => nodes.length === surface.childNodes.length
+      && nodes.every((node, index) => node === surface.childNodes[index]), retainedNodes)).toBe(true);
+    await expect(visual.locator('blockquote li pre code')).toHaveCount(1);
+    if (timing === 'accepted') {
+      phase = 'accept-real-Redo-R'; await held.close(); held = null;
+      await checkpoint(SourceFixture.replaced, false, true);
+      await expect(visual.locator('blockquote li pre code')).toHaveCount(0);
+    }
+    receipts = await visual.evaluateHandle((surface) => {
+      const events = [];
+      const observe = (event) => {
+        const native = getSelection(), element = native?.anchorNode?.parentElement?.closest('td');
+        events.push({ trusted: event.isTrusted, inputType: event.inputType, collapsed: native?.isCollapsed === true,
+          row: element?.parentElement?.rowIndex ?? null, column: element?.cellIndex ?? null,
+          offset: native?.anchorOffset ?? null, ranges: event.getTargetRanges().length });
+      };
+      surface.addEventListener('beforeinput', observe, true);
+      return { events, dispose: () => surface.removeEventListener('beforeinput', observe, true) };
+    });
+    phase = 'real-TD1-pointer'; const tdPoint = await point(cell, 'AB', 1);
+    await page.mouse.click(tdPoint.x, tdPoint.y);
+    expect(await nativeCell()).toMatchObject({ connected: true, inside: true, collapsed: true, prefixText: 'A', prefixBreaks: 0, breaks: 0 });
+    phase = 'real-table-Enter'; await page.keyboard.press('Enter');
+    await expectEdit(SourceFixture.withBreak, baseline.revision + 2, baseline.documentHistory.undoDepth + 2, 0, cellCaret + 4);
+    expect(await receipts.evaluate((observer) => observer.events.find((event) => event.inputType === 'insertParagraph')))
+      .toEqual({ trusted: true, inputType: 'insertParagraph', collapsed: true, row: 1, column: 0, offset: 1, ranges: 1 });
+    if (timing === 'held') {
+      phase = 'real-break-PHP200-still-withheld'; await held.waitFor(SourceFixture.withBreak);
+      await checkpoint(SourceFixture.withBreak, true);
+    } else {
+      phase = 'formal-break-user-lock'; await acceptThroughUserLock(SourceFixture.withBreak);
+      // A toolbar lock can move native focus. Restore the legal point with a real B0 click.
+      phase = 'real-accepted-B0-pointer'; const b0 = await point(cell, 'B', 0);
+      await page.mouse.click(b0.x, b0.y);
+      expect(await nativeCell()).toMatchObject({ atB0: true });
+      await checkpoint(SourceFixture.withBreak, false, true);
+    }
+    expect(await nativeCell()).toMatchObject({ connected: true, inside: true, collapsed: true,
+      prefixText: 'A', prefixBreaks: 1, breaks: 1 });
+    phase = 'real-atomic-marker-Backspace'; await page.keyboard.press('Backspace');
+    await expectEdit(SourceFixture.replaced, baseline.revision + 3, baseline.documentHistory.undoDepth + 3, 0, cellCaret);
+    expect(await nativeCell()).toMatchObject({ connected: true, inside: true, collapsed: true,
+      prefixText: 'A', prefixBreaks: 0, breaks: 0 });
+    phase = 'real-Undo-marker-Backspace'; await page.keyboard.press('Control+z');
+    await expectEdit(SourceFixture.withBreak, baseline.revision + 4, baseline.documentHistory.undoDepth + 2, 1, cellCaret + 4);
+    phase = 'real-Redo-marker-Backspace'; await page.keyboard.press('Control+Shift+z');
+    await expectEdit(SourceFixture.replaced, baseline.revision + 5, baseline.documentHistory.undoDepth + 3, 0, cellCaret);
+    if (held) { phase = 'release-final-table-PHP'; await held.close(); held = null; }
+    await checkpoint(SourceFixture.replaced, false, true);
+    expect(await nativeCell()).toMatchObject({ connected: true, inside: true, collapsed: true, prefixText: 'A', prefixBreaks: 0, breaks: 0 });
+    expect(failures).toEqual([]);
+  } catch (error) {
+    firstCaseError = error;
+    // Direct page/owner reads never wait for a visual locator that failure teardown removed.
+    const documentOwner = await readCurrentDocumentOwner(page)
+      .then((owner) => ({ available: true, ...owner }), () => ({ available: false }));
+    const snapshot = await page.evaluate((expected) => {
+      const surface = document.querySelector('[data-easymde-preview-html-sink][role="textbox"]');
+      const field = document.querySelector('#easymde-source');
+      const native = document.getSelection();
+      const tags = ['P', 'TD', 'TH', 'SPAN', 'CODE', 'EM', 'STRONG', 'DEL', 'A', 'ARTICLE', 'DIV', 'SECTION', 'LI', 'BLOCKQUOTE'];
+      const point = (node, offset) => ({ connected: !!node?.isConnected,
+        inside: !!surface && !!node && surface.contains(node), nodeType: node?.nodeType ?? null, offset,
+        parentTag: tags.includes(node?.parentElement?.tagName) ? node.parentElement.tagName : 'unrecognized',
+        textLength: node instanceof Text ? node.length : null });
+      const rect = surface?.getBoundingClientRect();
+      const x = Math.max(0, rect?.left ?? 0), y = Math.max(0, rect?.top ?? 0);
+      const right = Math.min(innerWidth, rect?.right ?? 0), bottom = Math.min(innerHeight, rect?.bottom ?? 0);
+      return { available: true, visualOwnerPresent: !!surface,
+        sourceLength: field instanceof HTMLTextAreaElement ? field.value.length : null,
+        sourceMatchesExpected: field instanceof HTMLTextAreaElement ? field.value === expected : null,
+        expectedLength: expected.length, nativeCollapsed: native?.isCollapsed ?? null,
+        nativeAnchor: point(native?.anchorNode, native?.anchorOffset ?? null),
+        nativeFocus: point(native?.focusNode, native?.focusOffset ?? null),
+        editable: surface?.getAttribute('contenteditable') ?? null,
+        effectiveEditable: surface?.isContentEditable ?? null,
+        locked: document.querySelector('.easymde-immersive-preview-lock')?.getAttribute('aria-pressed') ?? null,
+        session: document.querySelector('[data-easymde-session-status]')?.getAttribute('data-easymde-session-status') ?? null,
+        previewPhase: surface?.getAttribute('data-easymde-preview-phase') ?? null,
+        busy: surface?.getAttribute('aria-busy') ?? null,
+        screenshotClip: right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null };
+    }, expectedSource).catch(() => ({ available: false }));
+    const screenshot = { available: false, attached: false };
+    if (snapshot.available && snapshot.visualOwnerPresent && snapshot.screenshotClip) {
+      try {
+        const body = await page.screenshot({ clip: snapshot.screenshotClip, timeout: 2000 });
+        await test.info().attach('table-history-first-failure', { body, contentType: 'image/png' });
+        screenshot.available = true; screenshot.attached = true;
+      } catch { screenshot.step = 'failure-screenshot'; }
+    }
+    console.log(JSON.stringify({ phase: 'windowed-table-first-failure', timing, operation: phase,
+      state: { observedAfterFailure: true, documentOwner, snapshot }, preErrorCheckpoint: lastAtom,
+      failures, mergeDiagnostic: firstMergeDiagnostic, pendingInputDiagnostic: tableDiagnostics.pendingInput,
+      sourceNavigationDiagnostic: tableDiagnostics.sourceNavigation, tableNativeDiagnostic: tableDiagnostics.tableNative,
+      tableAdmissionDiagnostic: tableDiagnostics.tableAdmission, failureScreenshot: screenshot,
+      coldMergeDebug: coldMergeDebug?.snapshot() ?? null }));
+    throw error;
+  } finally {
+    const cleanup = async (step, operation) => {
+      try { await operation(); cleanupResults.push({ step, completed: true }); }
+      catch { cleanupResults.push({ step, completed: false }); }
+    };
+    // Release real withheld responses before any receipt/DOM-handle operation can fail.
+    if (held) await cleanup('held-preview-close', () => held.close());
+    await cleanup('console-listener-remove', () => page.off('console', captureTableDiagnostic));
+    if (coldMergeDebug) await cleanup('cold-debugger-close', async () => {
+      await coldMergeDebug.close();
+      const state = coldMergeDebug.snapshot();
+      if (!state.detached || (state.targetPauses > 0 && !state.resumed)) throw new Error('cold-merge-debug-cleanup-incomplete');
+    });
+    if (receipts) {
+      await cleanup('receipt-observer-remove', () => receipts.evaluate((observer) => observer.dispose()));
+      await cleanup('receipt-handle-dispose', () => receipts.dispose());
+    }
+    if (retainedNodes) await cleanup('retained-handle-dispose', () => retainedNodes.dispose());
+    const cleanupFailed = cleanupResults.some((result) => !result.completed);
+    console.log(JSON.stringify({ phase: 'windowed-table-cleanup', timing, operation: phase,
+      primaryErrorPresent: firstCaseError !== null, cleanupFailed, resources: cleanupResults }));
+    if (cleanupFailed && firstCaseError === null) throw new Error('windowed-table-cleanup-failed');
+  }
+});
+}
+
+// Opt-in rich CODE acceptance; excluded from default registration and [short-stage].
+if (process.env.EASYMDE_E2E_RICH_TABLE_CODE === 'complete') {
+for (const timing of ['ready', 'held']) {
+test(`[rich-table-code] windowed ${timing} fixed CODE Enter Backspace history and right-span continuation`, async ({ page }) => {
+  const prefix = 'Lead.\n\n> - Keep.\n>\n>   | Left | Target | Right |\n>   | :--- | :---: | ---: |\n'
+    + '>   | up | guard | end |\n>   | left | ';
+  const suffix = ' | right |\n>   | down | guard | end |\n\nAfter.\n\n'
+    + Array.from({ length: 161 }, (_, index) => `Filler ${index + 1}.`).join('\n\n');
+  // Each real-BR-separated segment uses inherited Turndown code spelling. A/B need one backtick each.
+  const SourceFixture = { S0: prefix + 'L `AB` R' + suffix, S1: prefix + 'L `A`<br>`B` R' + suffix,
+    S1T: prefix + 'L `A`<br>`TB` R' + suffix, ST: prefix + 'L `ATB` R' + suffix,
+    SV: prefix.replace(/^Lead\./u, 'Lead.V') + 'L `AB` R' + suffix };
+  // Independent diagnostic candidates only; none can replace an edit oracle.
+  const sourceCandidates = { joinedS0: 'L `AB` R', adjacentOriginalCodeSpansWithoutBR: 'L `A``B` R',
+    sameGlyphWiderDelimiter: 'L ``AB`` R', spacedSpans: 'L `A` `B` R' };
+  const caret = { S0: (prefix + 'L `A').length, S1: (prefix + 'L `A`<br>`').length,
+    S1T: (prefix + 'L `A`<br>`T').length, ST: (prefix + 'L `AT').length };
+  const { failures, source, visual } = await openVisual(page, SourceFixture.S0);
+  const surface = await visual.elementHandle();
+  if (!surface) throw new Error('rich-code-surface-unavailable');
+  const cell = visual.locator('blockquote li table tbody tr').nth(1).locator('td').nth(1);
+  const lock = page.locator('.easymde-immersive-preview-lock');
+  let held = null, receipts = null, retainedNodes = null, phase = 'formal-S0', expectedKey = 'S0';
+  let primaryError = null, lastObservation = null;
+  const diagnostics = { merge: null, pending: null, admission: null, native: null, navigation: null };
+  const observeDiagnostic = (message) => {
+    if (message.type() !== 'error') return;
+    const text = message.text(); if (text.length > 16384) return;
+    const match = text.match(/visual-editor-window-(merge|pending-input|table-admission|table-native|source-navigation-dom-stale)(?::reason=([a-z0-9-]+);|:([a-z0-9-]+)|;)(\{.*\})?$/u);
+    if (!match) return;
+    const family = { merge: 'merge', 'pending-input': 'pending', 'table-admission': 'admission',
+      'table-native': 'native', 'source-navigation-dom-stale': 'navigation' }[match[1]];
+    if (diagnostics[family]) return;
+    const observation = { operation: phase, parsed: false };
+    diagnostics[family] = observation;
+    const reasons = ['pending-table-cell-unproved', 'pending-table-cell-proof-missing', 'pending-table-cell-snapshot-missing',
+      'pending-table-wrapper-stale', 'pending-table-structure-stale', 'pending-table-target-cell-stale',
+      'pending-table-protected-placement-stale', 'pending-table-retained-detached', 'pending-table-retained-binding',
+      'pending-table-surrounding-stale', 'lease-source', 'selection-bounds', 'lease-selection-stale', 'lease-read-only',
+      'lease-gate-rejected', 'lease-dom-mount-child-identity', 'lease-dom-mount-block-binding', 'lease-dom-mount-serialization',
+      'map-snapshot-mismatch', 'unmapped-normalized-boundary', 'source-visual-slice-mismatch', 'unmapped-original-boundary', 'unclassified'];
+    const reason = match[2] ?? match[3];
+    if (reason) observation.reason = reasons.includes(reason) ? reason : 'unrecognized';
+    if (!match[4]) return;
+    let data; try { data = JSON.parse(match[4]); } catch { return; }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return;
+    observation.parsed = true;
+    for (const key of ['sourceLength', 'canonicalLength', 'mountedLength', 'leaseLength', 'transferLength', 'sourceStart', 'sourceEnd',
+      'selectionStart', 'selectionEnd', 'leaseStart', 'leaseEnd', 'undoDepth', 'redoDepth', 'leaseUndoDepth', 'leaseRedoDepth',
+      'rangeCount', 'anchorType', 'anchorOffset', 'focusType', 'focusOffset', 'targetCount', 'targetStartType', 'targetStartOffset',
+      'targetEndType', 'targetEndOffset', 'liveChildren', 'acceptedChildren', 'row', 'column', 'caret', 'tableFrom', 'tableTo',
+      'sourceCellFrom', 'sourceCellTo', 'local', 'absolute', 'ownerStart', 'ownerEnd', 'projectionFrom', 'projectionTo',
+      'baselineLength', 'editedLength', 'blockCount', 'tableSourceLength']) {
+      if (data[key] === null || Number.isSafeInteger(data[key])) observation[key] = data[key];
+    }
+    for (const key of ['eventAvailable', 'sourceMatchesLease', 'canonicalMatchesSource', 'canonicalMatchesLease', 'transferMatchesLease',
+      'signatureMatches', 'focused', 'active', 'externalChange', 'pendingProp', 'anchorConnected', 'focusConnected',
+      'targetStartConnected', 'targetEndConnected', 'childrenMatch', 'nested', 'mapperReturned', 'projectionPresent',
+      'canonicalMatches', 'sourceMatches', 'revisionMatches', 'selectionMatches', 'historyMatches', 'nativeCollapsed']) {
+      if (data[key] === null || typeof data[key] === 'boolean') observation[key] = data[key];
+    }
+    const nativeStageSchemas = {
+      'target-shape': { numbers: ['startOffset', 'endOffset', 'startChildCount', 'endChildCount'],
+        booleans: ['sameContainer'], tags: ['targetStartTag', 'targetEndTag'] },
+      'target-content-certified': { booleans: ['certified'] },
+      'target-facing-certified': { booleans: ['certified'] },
+      'clone-target-path': { booleans: ['startResolved', 'endResolved'] },
+      'merge-single-delete': { numbers: ['editCount', 'from', 'to', 'insertLength'] },
+      'canonical-facing': { numbers: ['caret', 'caretFacing'], booleans: ['facingMatches'] },
+      'removed-resolution': { numbers: ['resolvedIndex'], tags: ['startTag', 'endTag'] },
+      'removed-parent': { booleans: ['removedIsBR', 'removedParentIsCell', 'removedParentIsContainer'], tags: ['removedParentTag'] }
+    };
+    const stages = ['lease', 'selection-bounds', 'parser-table', 'dom-cell-ordinal', 'source-cell', 'caret-in-cell',
+      'table-caret-map-mismatch', 'capture', 'structure-target', 'owner-binding', 'caret-in-owner', 'table-in-owner',
+      'cell-projection', 'cell-projection-bounds', 'nested-range', 'input-context-rejected', 'epoch-rejected', 'outcome-root',
+      'outcome-retained-count', 'outcome-retained-identity', 'outcome-range', 'outcome-collapsed', 'outcome-anchor', 'outcome-focus',
+      'rollback-source-diverged', 'rollback-restored', ...Object.keys(nativeStageSchemas)];
+    if (Object.hasOwn(data, 'stage')) observation.stage = data.stage === null ? null : stages.includes(data.stage) ? data.stage : 'unrecognized';
+    if (Object.hasOwn(data, 'stageEvidence')) {
+      const schema = Object.hasOwn(nativeStageSchemas, data.stage) ? nativeStageSchemas[data.stage] : null;
+      const evidence = data.stageEvidence;
+      if (evidence === null) observation.stageEvidence = null;
+      else {
+        observation.stageEvidenceSchemaKnown = !!schema && !!evidence && typeof evidence === 'object' && !Array.isArray(evidence);
+        if (observation.stageEvidenceSchemaKnown) {
+          const safe = {};
+          for (const key of schema.numbers ?? []) if (Number.isSafeInteger(evidence[key])) safe[key] = evidence[key];
+          for (const key of schema.booleans ?? []) if (typeof evidence[key] === 'boolean') safe[key] = evidence[key];
+          for (const key of schema.tags ?? []) if (Object.hasOwn(evidence, key)) {
+            safe[key] = evidence[key] === null ? null
+              : ['TD', 'TH', 'CODE', 'BR', 'SPAN', 'A', 'EM', 'STRONG', 'B', 'I', 'DEL', 'S', 'STRIKE', 'MARK', 'SUB', 'SUP', 'P', 'DIV'].includes(evidence[key])
+                ? evidence[key] : 'unrecognized';
+          }
+          observation.stageEvidence = safe;
+        }
+      }
+    }
+    if (Object.hasOwn(data, 'inputType')) observation.inputType = ['insertText', 'insertParagraph', 'insertLineBreak',
+      'deleteContentBackward', 'deleteContentForward', 'other'].includes(data.inputType) ? data.inputType : 'unrecognized';
+    for (const key of ['selectionDirection', 'leaseDirection']) if (Object.hasOwn(data, key)) {
+      observation[key] = ['none', 'forward', 'backward'].includes(data[key]) ? data[key] : 'unrecognized';
+    }
+    for (const key of ['ownerBlockTag', 'tableRootTag']) if (Object.hasOwn(data, key)) {
+      observation[key] = ['BLOCKQUOTE', 'UL', 'OL', 'LI', 'TABLE', 'SECTION', 'DIV', 'ARTICLE'].includes(data[key]) ? data[key] : 'unrecognized';
+    }
+    if (Object.hasOwn(data, 'errorCode')) observation.errorCode = ['visual-editor-selection-map-failed', 'visual-editor-markdown-merge-ambiguous', 'other'].includes(data.errorCode) ? data.errorCode : 'unrecognized';
+  };
+  page.on('console', observeDiagnostic);
+  const runtimeState = (key, formal = false) => readWindowedSmokeState(surface, { expectedSource: SourceFixture[key], previewEvidence: formal });
+  const checkpoint = async (stage, key, pending, formal = false, point = null, renderRequired = true) => {
+    phase = stage; expectedKey = key;
+    await expectSource(source, SourceFixture[key]);
+    await expect.poll(async () => {
+      expect(failures).toEqual([]);
+      const state = await runtimeState(key, formal);
+      return state.sourceMatchesExpected && (pending === undefined || state.runtimePending === pending)
+        && (!formal || state.phase === 'ready' && state.previewEvidence.formalCurrent);
+    }).toBe(true);
+    const state = await runtimeState(key, formal), owner = await readCurrentDocumentOwner(page);
+    const render = receipts ? await receipts.evaluate((observer, kind) => observer.safe(kind), key === 'SV' ? 'S0' : key) : null;
+    lastObservation = { stage, fixedOracle: key, expectedLength: SourceFixture[key].length, sourceDocLength: state.sourceLength,
+      owner, runtimePending: state.runtimePending, phase: state.phase, render,
+      presentation: renderRequired ? 'render-checked' : 'history-presentation-observed-not-oracled' };
+    console.log(JSON.stringify({ event: 'rich-code-checkpoint', timing, ...lastObservation }));
+    expect(state).toMatchObject({ runtimeEditable: true, documentEditable: true, effectiveEditable: true,
+      contenteditable: 'true', lock: 'false', session: 'ready', windowedControllerCount: 1, runtimeCount: 1 });
+    expect(state.spacers).toBeGreaterThan(0);
+    if (render) {
+      expect(render.current.guardCellsExact).toBe(true);
+      if (!renderRequired) expect(render).toMatchObject({ nativeConnected: true, nativeInsideCell: true, nativeCollapsed: true });
+      if (renderRequired) expect(render.current).toMatchObject({ matchesExpectedText: true, matchesExpectedCodeGlyphs: true,
+        expectedBreakCount: true, literalBrVisible: false });
+      if (formal) expect(render.current.codeCount).toBe(key === 'S1' || key === 'S1T' ? 2 : 1);
+      if (point) expect(render).toMatchObject({ nativeConnected: true, nativeInsideCell: true, nativeCollapsed: true,
+        nativeInsideCode: true, codeGlyphOffset: point === 'right-T' || point === 'middle-T' ? 2 : 1,
+        prefixBreaks: point === 'middle' || point === 'middle-T' ? 0 : 1,
+        ...(point === 'right' ? { atRightB0: true } : {}) });
+    }
+    expect(failures).toEqual([]);
+    return { state, owner, render };
+  };
+  const acceptFixed = async (key) => {
+    const before = await readCurrentDocumentOwner(page);
+    await expectSource(source, SourceFixture[key]);
+    const responsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      if (!(url.pathname.endsWith('/easymde/v1/preview') || url.searchParams.get('rest_route') === '/easymde/v1/preview')) return false;
+      try { return response.request().postDataJSON()?.markdown === SourceFixture[key]; } catch { return false; }
+    });
+    await lock.click(); await expect(lock).toHaveAttribute('aria-pressed', 'true');
+    const response = await responsePromise; expect(response.status()).toBe(200); expect(await response.finished()).toBeNull();
+    await expect(page.locator('[data-easymde-preview-html-sink]')).toHaveAttribute('aria-busy', 'false');
+    await lock.click(); await expect(lock).toHaveAttribute('aria-pressed', 'false');
+    await checkpoint('formal-' + key, key, false, true);
+    expect(await readCurrentDocumentOwner(page)).toMatchObject({ revision: before.revision, history: before.history });
+  };
+  const clickCode = async (text, offset) => {
+    const code = cell.locator('code').filter({ hasText: new RegExp('^' + text + '$', 'u') });
+    const point = await code.evaluate((element, target) => {
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT), matches = [];
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) if (node.data === target.text) matches.push(node);
+      if (matches.length !== 1) throw new Error('rich-code-boundary-unproved');
+      const range = document.createRange(); range.setStart(matches[0], target.offset); range.collapse(true);
+      const rect = range.getBoundingClientRect();
+      if (rect.height <= 0) throw new Error('rich-code-boundary-not-visible');
+      return { x: rect.left + 0.1, y: rect.top + rect.height / 2 };
+    }, { text, offset });
+    await page.mouse.click(point.x, point.y);
+  };
+  try {
+    const loaded = await checkpoint('initial-formal-S0', 'S0', false, true);
+    phase = 'loaded-unique-CODE-target';
+    expect(SourceFixture.S0.length).toBe(2153);
+    await expect(visual.locator('blockquote li table')).toHaveCount(1);
+    await expect(visual.locator('blockquote li table tbody')).toHaveCount(1);
+    await expect(visual.locator('blockquote li table tbody tr')).toHaveCount(3);
+    await expect(cell).toHaveCount(1);
+    const loadedTarget = await cell.evaluate((target) => {
+      const table = target.closest('table'), rows = [...(table?.tBodies[0]?.rows ?? [])];
+      const guards = [['up', 'guard', 'end'], ['left', null, 'right'], ['down', 'guard', 'end']];
+      const codes = target.querySelectorAll('code');
+      return { targetOrdinalExact: rows[1]?.cells[1] === target,
+        headersExact: [...(table?.tHead?.rows[0]?.cells ?? [])].map((node) => node.textContent).join('|') === 'Left|Target|Right',
+        guardCellsExact: rows.length === 3 && rows.every((row, index) => row.cells.length === 3
+          && [...row.cells].every((node, column) => guards[index][column] === null || node.textContent === guards[index][column])),
+        targetTextExact: target.innerText === 'L AB R', codeCount: codes.length,
+        codeGlyphsExact: codes.length === 1 && codes[0].textContent === 'AB',
+        noBreaks: target.querySelectorAll('br').length === 0 };
+    });
+    console.log(JSON.stringify({ event: 'rich-code-loaded-prerequisite', timing, sourceExact: loaded.state.sourceMatchesExpected,
+      sourceLength: loaded.state.sourceLength, ...loadedTarget }));
+    expect(loaded.state.sourceMatchesExpected).toBe(true);
+    expect(loadedTarget).toEqual({ targetOrdinalExact: true, headersExact: true, guardCellsExact: true,
+      targetTextExact: true, codeCount: 1, codeGlyphsExact: true, noBreaks: true });
+    await visual.locator('p').filter({ hasText: /^Lead\.$/u }).first().click();
+    await page.keyboard.press('End'); phase = 'real-Lead-V'; await page.keyboard.type('V');
+    await expectSource(source, SourceFixture.SV); await acceptFixed('SV');
+    await visual.locator('p').filter({ hasText: /^Lead\.V$/u }).first().click(); await page.keyboard.press('End');
+    retainedNodes = await surface.evaluateHandle((root) => [...root.childNodes]);
+    held = await holdFormalPreview(page);
+    phase = 'real-Undo-V-held-S0'; await page.keyboard.press('Control+z');
+    await expectSource(source, SourceFixture.S0); await held.waitFor(SourceFixture.S0);
+    await checkpoint('real-S0-PHP200-withheld', 'S0', true);
+    expect(await surface.evaluate((root, nodes) => root.childNodes.length === nodes.length
+      && nodes.every((node, index) => root.childNodes[index] === node), retainedNodes)).toBe(true);
+    if (timing === 'ready') { await held.close(); held = null; await checkpoint('released-formal-S0', 'S0', false, true); }
+    receipts = await surface.evaluateHandle((root) => {
+      let nativeEnter = null, nativeText = null, nativeBackspace = null;
+      const events = [];
+      const target = () => root.querySelector('blockquote li table tbody')?.rows[1]?.cells[1] ?? null;
+      const privateShape = () => {
+        const cell = target(), rows = [...(root.querySelector('blockquote li table')?.tBodies[0]?.rows ?? [])];
+        const guards = [['up', 'guard', 'end'], ['left', null, 'right'], ['down', 'guard', 'end']];
+        return { available: !!cell, text: cell?.innerText ?? '', codeText: [...(cell?.querySelectorAll('code') ?? [])].map((node) => node.textContent).join(''),
+          breaks: cell?.querySelectorAll('br').length ?? 0, codeCount: cell?.querySelectorAll('code').length ?? 0,
+          guardCellsExact: rows.length === 3 && rows.every((row, index) => row.cells.length === 3
+            && [...row.cells].every((node, column) => guards[index][column] === null || node.textContent === guards[index][column])) };
+      };
+      const observe = (event) => {
+        if (!(event.target instanceof Node) || !root.contains(event.target)) return;
+        const inputTypes = ['insertParagraph', 'insertLineBreak', 'insertText', 'deleteContentBackward', 'historyUndo', 'historyRedo'];
+        if (events.length < 32) events.push({ type: event.type, inputType: inputTypes.includes(event.inputType) ? event.inputType : 'unrecognized', trusted: event.isTrusted });
+        if (event.type !== 'input') return;
+        if ((event.inputType === 'insertParagraph' || event.inputType === 'insertLineBreak') && !nativeEnter) nativeEnter = { ...privateShape(), trusted: event.isTrusted };
+        if (event.inputType === 'deleteContentBackward') nativeBackspace = { ...privateShape(), trusted: event.isTrusted };
+        if (event.inputType === 'insertText' && target()?.contains(getSelection()?.anchorNode)) nativeText = { ...privateShape(), trusted: event.isTrusted };
+      };
+      document.addEventListener('beforeinput', observe, true); document.addEventListener('input', observe, true);
+      return { safe: (kind) => {
+        const current = privateShape(), cell = target(), native = getSelection(), anchor = native?.anchorNode;
+        const expected = kind === 'S1T' ? { text: 'L A\nTB R', glyphs: 'ATB', breaks: 1 }
+          : kind === 'S1' ? { text: 'L A\nB R', glyphs: 'AB', breaks: 1 }
+          : kind === 'ST' ? { text: 'L ATB R', glyphs: 'ATB', breaks: 0 } : { text: 'L AB R', glyphs: 'AB', breaks: 0 };
+        const scalar = (shape) => ({ available: shape.available, textLength: shape.text.length, codeTextLength: shape.codeText.length,
+          breaks: shape.breaks, codeCount: shape.codeCount, matchesExpectedText: shape.text === expected.text,
+          matchesExpectedCodeGlyphs: shape.codeText === expected.glyphs, expectedBreakCount: shape.breaks === expected.breaks,
+          literalBrVisible: shape.text.includes('<br>'), guardCellsExact: shape.guardCellsExact });
+        const inside = !!cell && !!anchor && cell.contains(anchor) && !!native?.focusNode && cell.contains(native.focusNode);
+        let codeGlyphOffset = null, prefixBreaks = null;
+        if (inside) {
+          const range = document.createRange(); range.selectNodeContents(cell); range.setEnd(anchor, native.anchorOffset);
+          const fragment = range.cloneContents();
+          codeGlyphOffset = [...fragment.querySelectorAll('code')].reduce((sum, node) => sum + node.textContent.length, 0);
+          prefixBreaks = fragment.querySelectorAll('br').length;
+        }
+        const comparison = kind === 'S1' ? nativeEnter : kind === 'S1T' || kind === 'ST' ? nativeText : nativeBackspace;
+        const codeOf = (node) => (node instanceof Element ? node : node?.parentElement)?.closest('code') ?? null;
+        const anchorCode = codeOf(anchor), focusCode = codeOf(native?.focusNode);
+        const nativeInsideCode = !!anchorCode && !!cell?.contains(anchorCode) && anchorCode === focusCode;
+        const sameCollapsedPoint = native?.isCollapsed === true && native.anchorNode === native.focusNode
+          && native.anchorOffset === native.focusOffset;
+        const domMatchesDeclaredS1 = kind === 'S1' && current.text === 'L A\nB R' && current.codeText === 'AB'
+          && current.breaks === 1 && codeGlyphOffset === 1 && prefixBreaks === 1;
+        const rightCodes = [...(cell?.querySelectorAll('code') ?? [])].filter((node) => node.parentElement === cell
+          && node.textContent === 'B' && !node.querySelector('br'));
+        const rightCode = rightCodes.length === 1 ? rightCodes[0] : null;
+        const rightTexts = [];
+        if (rightCode) {
+          const walker = document.createTreeWalker(rightCode, NodeFilter.SHOW_TEXT);
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) if (node.data === 'B') rightTexts.push(node);
+        }
+        const rightText = rightTexts.length === 1 ? rightTexts[0] : null;
+        const transparent = (node) => node instanceof Element && ['SPAN', 'EM', 'STRONG', 'B', 'I', 'S', 'DEL', 'MARK', 'SUB', 'SUP'].includes(node.tagName)
+          && !node.matches('[contenteditable], [hidden], [inert], [aria-hidden="true"], [role], [tabindex]');
+        const proveRightStart = (node, offset) => {
+          const proof = { kind: 'none', equivalent: false, withinRightCode: false, corridorForward: false,
+            corridorNoText: false, corridorNoComment: false, corridorNoOpaque: false, rightTextReached: false };
+          if (node instanceof Text && node.data === 'B' && offset === 0 && nativeInsideCode && inside) {
+            return { ...proof, kind: 'text-zero', equivalent: true, withinRightCode: !!rightCode?.contains(node),
+              corridorForward: true, corridorNoText: true, corridorNoComment: true, corridorNoOpaque: true,
+              rightTextReached: node === rightText };
+          }
+          if (!rightCode || !rightText || !(node instanceof Element) || !rightCode.contains(node)
+            || codeOf(node) !== rightCode || (node === rightCode ? offset !== 0 : !transparent(node))
+            || rightCode.matches('[contenteditable], [hidden], [inert], [aria-hidden="true"], [role], [tabindex]')) return proof;
+          proof.withinRightCode = true;
+          const point = document.createRange(), textStart = document.createRange();
+          point.setStart(node, offset); point.collapse(true); textStart.setStart(rightText, 0); textStart.collapse(true);
+          proof.corridorForward = point.compareBoundaryPoints(Range.START_TO_START, textStart) <= 0;
+          proof.corridorNoText = true; proof.corridorNoComment = true; proof.corridorNoOpaque = true;
+          // Inspect original nodes, not cloneContents' artificial empty Text at the B0 endpoint.
+          // Requiring the entire CODE-start corridor also excludes hidden/protected ancestors before the point.
+          const walker = document.createTreeWalker(rightCode, NodeFilter.SHOW_ALL);
+          for (let part = walker.nextNode(); part; part = walker.nextNode()) {
+            if (part === rightText) { proof.rightTextReached = true; break; }
+            if (part.nodeType === Node.TEXT_NODE) proof.corridorNoText = false;
+            else if (part.nodeType === Node.COMMENT_NODE) proof.corridorNoComment = false;
+            else if (!transparent(part)) proof.corridorNoOpaque = false;
+          }
+          proof.equivalent = proof.corridorForward && proof.corridorNoText && proof.corridorNoComment
+            && proof.corridorNoOpaque && proof.rightTextReached;
+          proof.kind = proof.equivalent ? node === rightCode ? 'right-code-zero' : 'empty-phrasing-corridor' : 'none';
+          return proof;
+        };
+        const anchorProof = proveRightStart(anchor, native?.anchorOffset ?? 0);
+        const focusProof = proveRightStart(native?.focusNode, native?.focusOffset ?? 0);
+        const semanticEquivalentRightStart = domMatchesDeclaredS1 && inside && nativeInsideCode && sameCollapsedPoint
+          && anchorProof.equivalent && focusProof.equivalent;
+        const rawPoint = (node, offset) => ({ nodeType: node?.nodeType ?? null,
+          ownTag: node instanceof Element ? node.tagName : null, parentTag: node?.parentElement?.tagName ?? null,
+          offset, connected: !!node?.isConnected });
+        return { current: scalar(current), nativeEnter: nativeEnter ? { ...scalar(nativeEnter), trusted: nativeEnter.trusted } : null,
+          currentTextEqualsNative: comparison ? current.text === comparison.text : null,
+          currentCodeGlyphsEqualNative: comparison ? current.codeText === comparison.codeText : null,
+          nativeConnected: !!anchor?.isConnected && !!native?.focusNode?.isConnected,
+          nativeInsideCell: inside, nativeCollapsed: native?.isCollapsed === true,
+          nativeInsideCode,
+          codeGlyphOffset, prefixBreaks,
+          nativeAnchor: rawPoint(anchor, native?.anchorOffset ?? 0), nativeFocus: rawPoint(native?.focusNode, native?.focusOffset ?? 0),
+          atRightB0: semanticEquivalentRightStart, semanticEquivalentRightStart,
+          rightStartProof: { sameCollapsedPoint, domMatchesDeclaredS1, rightCodeCandidateCount: rightCodes.length,
+            rawTextB0: anchor instanceof Text && anchor.data === 'B' && native.anchorOffset === 0,
+            anchor: anchorProof, focus: focusProof }, events: events.slice() };
+      }, dispose: () => { document.removeEventListener('beforeinput', observe, true); document.removeEventListener('input', observe, true); } };
+    });
+    const base = await checkpoint('before-CODE-Enter', 'S0', timing === 'held');
+    await clickCode('AB', 1);
+    expect(await receipts.evaluate((observer) => observer.safe('S0'))).toMatchObject({ nativeConnected: true,
+      nativeInsideCell: true, nativeCollapsed: true, nativeInsideCode: true, codeGlyphOffset: 1, prefixBreaks: 0 });
+    const edit = async (stage, key, step, undoDelta, redoDepth, pending, formal = false, point = null, renderRequired = true) => {
+      const state = await checkpoint(stage, key, pending, formal, point, renderRequired);
+      expect(state.owner.revision).toBe(base.owner.revision + step);
+      expect(state.owner.history).toEqual({ undoDepth: base.owner.history.undoDepth + undoDelta, redoDepth });
+      expect(state.owner.selection).toEqual({ start: caret[key], end: caret[key], direction: 'none' });
+      return state;
+    };
+    phase = 'real-CODE-Enter'; await page.keyboard.press('Enter');
+    const entered = await edit('CODE-Enter', 'S1', 1, 1, 0, timing === 'held' ? true : undefined, false, 'right');
+    expect(entered.render.nativeEnter).toMatchObject({ trusted: true, matchesExpectedText: true,
+      matchesExpectedCodeGlyphs: true, expectedBreakCount: true, literalBrVisible: false });
+    if (timing === 'held') {
+      await held.waitFor(SourceFixture.S1); await checkpoint('real-S1-PHP200-still-withheld', 'S1', true, false, 'right');
+    } else {
+      await acceptFixed('S1'); await clickCode('B', 0);
+      await edit('formal-S1-real-B0', 'S1', 1, 1, 0, false, true, 'right');
+    }
+    phase = 'real-CODE-immediate-Backspace'; await page.keyboard.press('Backspace');
+    await edit('CODE-Backspace-fixed-S0', 'S0', 2, 2, 0, timing === 'held' ? true : undefined, false, 'middle');
+    phase = 'real-Undo-CODE-Backspace'; await page.keyboard.press('Control+z');
+    await edit('Undo-CODE-Backspace-fixed-S1', 'S1', 3, 1, 1, timing === 'held' ? true : undefined, false, null, false);
+    phase = 'real-Redo-CODE-Backspace'; await page.keyboard.press('Control+Shift+z');
+    await edit('Redo-CODE-Backspace-fixed-S0', 'S0', 4, 2, 0, timing === 'held' ? true : undefined, false, null, false);
+    if (held) { await held.close(); held = null; }
+    await edit('released-formal-S0', 'S0', 4, 2, 0, false, true, 'middle');
+    phase = 'real-Undo-BS-to-S1'; await page.keyboard.press('Control+z');
+    await edit('Undo-BS-formal-S1-right-point', 'S1', 5, 1, 1, false, true, 'right');
+    phase = 'real-Undo-CODE-Enter'; await page.keyboard.press('Control+z');
+    await edit('Undo-Enter-formal-S0', 'S0', 6, 0, 2, false, true, 'middle');
+    phase = 'real-Redo-CODE-Enter'; await page.keyboard.press('Control+Shift+z');
+    // No click/selection repair here: exercise the previously unverified Redo S1 native CODE boundary.
+    await edit('Redo-Enter-formal-S1-right-point', 'S1', 7, 1, 1, false, true, 'right');
+    phase = 'real-right-span-T'; await page.keyboard.type('T');
+    await edit('right-span-fixed-S1T', 'S1T', 8, 2, 0, undefined, false, 'right-T');
+    await acceptFixed('S1T'); await clickCode('TB', 1);
+    await edit('formal-S1T-real-TB-point', 'S1T', 8, 2, 0, false, true, 'right-T');
+    phase = 'real-Undo-right-span-T'; await page.keyboard.press('Control+z');
+    await edit('Undo-right-T-formal-S1', 'S1', 9, 1, 1, false, true, 'right');
+    phase = 'real-Undo-Enter-for-ST'; await page.keyboard.press('Control+z');
+    await edit('restored-formal-S0-for-ST', 'S0', 10, 0, 2, false, true, 'middle');
+    phase = 'real-original-span-T'; await page.keyboard.type('T');
+    await edit('original-span-fixed-ST', 'ST', 11, 1, 0, undefined, false, 'middle-T');
+    phase = 'real-Undo-original-span-T'; await page.keyboard.press('Control+z');
+    await edit('final-formal-S0', 'S0', 12, 0, 1, false, true, 'middle');
+    expect(failures).toEqual([]);
+  } catch (error) {
+    primaryError = error;
+    const owner = await readCurrentDocumentOwner(page).then((value) => ({ available: true, ...value }), () => ({ available: false }));
+    const current = await page.evaluate(({ expected, prefix, suffix, candidates }) => {
+      const field = document.querySelector('#easymde-source'), active = document.querySelector('[data-easymde-preview-html-sink][role="textbox"]');
+      // Actual strings stay private in this evaluation; emit exact-match booleans and a bounded enum only.
+      const value = field instanceof HTMLTextAreaElement ? field.value : null;
+      const outsideCellExact = value !== null && value.length >= prefix.length + suffix.length
+        && value.startsWith(prefix) && value.endsWith(suffix);
+      const target = outsideCellExact ? value.slice(prefix.length, value.length - suffix.length) : null;
+      const candidateExact = Object.fromEntries(Object.entries(candidates).map(([kind, candidate]) => [kind, target !== null && target === candidate]));
+      const classification = Object.keys(candidates).find((kind) => candidateExact[kind]) ?? 'other';
+      return { available: true, sourceLength: value?.length ?? null,
+        sourceExact: value === null ? null : value === expected, visualOwnerPresent: !!active,
+        sourceClassification: { available: value !== null, outsideCellExact, targetExtractable: target !== null,
+          classification, candidateExact },
+        locked: document.querySelector('.easymde-immersive-preview-lock')?.getAttribute('aria-pressed') ?? null };
+    }, { expected: SourceFixture[expectedKey], prefix, suffix, candidates: sourceCandidates }).catch(() => ({ available: false }));
+    const native = receipts ? await receipts.evaluate((observer, kind) => observer.safe(kind), expectedKey)
+      .then((value) => ({ available: true, ...value }), () => ({ available: false })) : { available: false };
+    // Read once at failure: do not wait for Preview publication or repair the native caret.
+    const finalFormal = await runtimeState(expectedKey, true).then((state) => ({ available: true,
+      phase: state.phase, runtimePending: state.runtimePending, revision: state.revision, sourceLength: state.sourceLength,
+      sourceMatchesFixedOracle: state.sourceMatchesExpected, formalCurrent: state.previewEvidence.formalCurrent,
+      nodesCurrent: state.previewEvidence.nodesCurrent, publisherGeneration: state.previewEvidence.publisherGeneration,
+      publisherSourceRevision: state.previewEvidence.publisherSourceRevision,
+      windowGeneration: state.previewEvidence.windowGeneration, windowSourceRevision: state.previewEvidence.windowSourceRevision }),
+    () => ({ available: false }));
+    console.log(JSON.stringify({ event: 'rich-code-first-failure', timing, operation: phase, fixedOracle: expectedKey,
+      owner, current, native, finalFormal, preErrorCheckpoint: lastObservation, failures, diagnostics }));
+    throw error;
+  } finally {
+    const resources = [];
+    const cleanup = async (step, action) => { try { await action(); resources.push({ step, completed: true }); }
+      catch { resources.push({ step, completed: false }); } };
+    if (held) await cleanup('held-preview-close', () => held.close());
+    await cleanup('rich-console-remove', () => page.off('console', observeDiagnostic));
+    if (receipts) { await cleanup('rich-observer-remove', () => receipts.evaluate((observer) => observer.dispose()));
+      await cleanup('rich-receipt-dispose', () => receipts.dispose()); }
+    if (retainedNodes) await cleanup('rich-retained-dispose', () => retainedNodes.dispose());
+    await cleanup('rich-surface-dispose', () => surface.dispose());
+    const cleanupFailed = resources.some((value) => !value.completed);
+    console.log(JSON.stringify({ event: 'rich-code-cleanup', timing, cleanupFailed, resources }));
+    if (cleanupFailed && primaryError === null) throw new Error('rich-code-cleanup-failed');
+  }
+});
+}
+}
+
+// Opt-in non-CODE rich cells. Keep the separately frozen CODE acceptance unchanged.
+if (process.env.EASYMDE_E2E_RICH_TABLE_INLINE === 'complete') {
+const richInlineHref = 'https://example.com/rich?q=1&v=2';
+const richInlineCases = [
+  { kind: 'A', selector: 'a', chain: ['A'], before: 'L [', after: `](${richInlineHref} "Keep") R`, linked: true },
+  { kind: 'EM', selector: 'em', chain: ['EM'], before: 'L *', after: '* R', linked: false },
+  { kind: 'STRONG', selector: 'strong', chain: ['STRONG'], before: 'L **', after: '** R', linked: false },
+  { kind: 'DEL', selector: 'del, s, strike', chain: ['DEL'], before: 'L ~~', after: '~~ R', linked: false },
+  { kind: 'NESTED', selector: 'em', chain: ['STRONG', 'A', 'DEL', 'EM'], before: 'L **[~~*',
+    after: `*~~](${richInlineHref} "Keep")** R`, linked: true }
+];
+for (const inline of richInlineCases) {
+for (const timing of ['ready', 'held']) {
+test(`[rich-table-inline] windowed ${timing} fixed ${inline.kind} Enter Backspace history and right-span continuation`, async ({ page }) => {
+  const prefix = 'Lead.\n\n> - Keep.\n>\n>   | Left | Target | Right |\n>   | :--- | :---: | ---: |\n'
+    + '>   | up | guard | end |\n>   | left | ';
+  const suffix = ' | right |\n>   | down | guard | end |\n\n'
+    + 'After \\*literal\\* **outside** *emphasis* [keep](https://example.com/keep?q=1&v=2 "Guard").\n\n'
+    + Array.from({ length: 161 }, (_, index) => `Filler ${index + 1}.`).join('\n\n');
+  // Fixed semantic contract: unlike CODE, these wrappers contain the real BR without splitting/normalizing tags.
+  // Every oracle is built only from these declared fragments, never from native DOM or a PHP response.
+  const bodies = { S0: 'AB', S1: 'A<br>B', S1T: 'A<br>TB', ST: 'ATB' };
+  const targetSource = Object.fromEntries(Object.entries(bodies).map(([key, body]) => [key, inline.before + body + inline.after]));
+  const SourceFixture = Object.fromEntries(Object.entries(targetSource).map(([key, value]) => [key, prefix + value + suffix]));
+  SourceFixture.SV = prefix.replace(/^Lead\./u, 'Lead.V') + targetSource.S0 + suffix;
+  const sourceMiddle = prefix.length + inline.before.length + 1;
+  const caret = { S0: sourceMiddle, S1: sourceMiddle + 4, S1T: sourceMiddle + 5, ST: sourceMiddle + 1 };
+  const { failures, source, visual } = await openVisual(page, SourceFixture.S0);
+  const surface = await visual.elementHandle();
+  if (!surface) throw new Error('rich-inline-surface-unavailable');
+  const cell = visual.locator('blockquote li table tbody tr').nth(1).locator('td').nth(1);
+  const lock = page.locator('.easymde-immersive-preview-lock');
+  const browserErrors = { pageErrors: 0, popups: 0, dialogs: 0 };
+  const onPageError = () => { browserErrors.pageErrors++; };
+  const onPopup = () => { browserErrors.popups++; };
+  const onDialog = (dialog) => { browserErrors.dialogs++; void dialog.dismiss().catch(() => {}); };
+  page.on('pageerror', onPageError); page.on('popup', onPopup); page.on('dialog', onDialog);
+  let phase = 'initial-formal-S0', expectedKey = 'S0', held = null, retainedNodes = null, receipts = null;
+  let primaryError = null, lastObservation = null;
+  const healthy = () => { expect(failures).toEqual([]); expect(browserErrors).toEqual({ pageErrors: 0, popups: 0, dialogs: 0 }); };
+  const runtimeState = (key, formal = false) => readWindowedSmokeState(surface, { expectedSource: SourceFixture[key], previewEvidence: formal });
+  const checkpoint = async (stage, key, pending, formal = false, point = false, renderRequired = true) => {
+    phase = stage; expectedKey = key; healthy();
+    await expectSource(source, SourceFixture[key]);
+    await expect.poll(async () => {
+      healthy(); const state = await runtimeState(key, formal);
+      return state.sourceMatchesExpected && (pending === undefined || state.runtimePending === pending)
+        && (!formal || state.phase === 'ready' && state.previewEvidence.formalCurrent);
+    }).toBe(true);
+    const state = await runtimeState(key, formal), owner = await readCurrentDocumentOwner(page);
+    const render = receipts ? await receipts.evaluate((observer, kind) => observer.safe(kind), key === 'SV' ? 'S0' : key) : null;
+    lastObservation = { stage, fixedOracle: key, sourceExact: state.sourceMatchesExpected, sourceLength: state.sourceLength,
+      owner, phase: state.phase, runtimePending: state.runtimePending,
+      formal: formal ? { formalCurrent: state.previewEvidence.formalCurrent, nodesCurrent: state.previewEvidence.nodesCurrent,
+        publisherGeneration: state.previewEvidence.publisherGeneration, publisherSourceRevision: state.previewEvidence.publisherSourceRevision,
+        windowGeneration: state.previewEvidence.windowGeneration, windowSourceRevision: state.previewEvidence.windowSourceRevision } : null,
+      presentation: renderRequired ? 'render-checked' : 'history-presentation-observed-not-oracled', render, browserErrors: { ...browserErrors } };
+    console.log(JSON.stringify({ event: 'rich-inline-checkpoint', kind: inline.kind, timing, ...lastObservation }));
+    expect(state).toMatchObject({ runtimeEditable: true, documentEditable: true, effectiveEditable: true, contenteditable: 'true',
+      lock: 'false', session: 'ready', windowedControllerCount: 1, runtimeCount: 1 });
+    expect(state.spacers).toBeGreaterThan(0);
+    if (render) {
+      expect(render.current).toMatchObject({ available: true, tableUnique: true, targetUnique: true, headersExact: true,
+        guardCellsExact: true, leafCount: 1, chainExact: true, linkAttributesExact: true, leafEditable: true, codeCount: 0 });
+      if (renderRequired) expect(render.current).toMatchObject({ textExact: true, glyphsExact: true, breakCountExact: true,
+        breakInsideLeaf: true, literalBrVisible: false });
+      if (!renderRequired) expect(render).toMatchObject({ nativeConnected: true, nativeInsideCell: true, nativeCollapsed: true });
+      if (point) expect(render).toMatchObject({ nativeConnected: true, nativeInsideCell: true, nativeInsideLeaf: true,
+        nativeCollapsed: true, semanticBeforeB: true, bodyGlyphPrefix: key === 'S1T' || key === 'ST' ? 2 : 1,
+        prefixBreaks: key === 'S1' || key === 'S1T' ? 1 : 0 });
+    }
+    healthy(); return { state, owner, render };
+  };
+  const acceptFixed = async (key) => {
+    const before = await readCurrentDocumentOwner(page); await expectSource(source, SourceFixture[key]);
+    const responsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      if (!(url.pathname.endsWith('/easymde/v1/preview') || url.searchParams.get('rest_route') === '/easymde/v1/preview')) return false;
+      try { return response.request().postDataJSON()?.markdown === SourceFixture[key]; } catch { return false; }
+    });
+    await lock.click(); await expect(lock).toHaveAttribute('aria-pressed', 'true');
+    const response = await responsePromise; expect(response.status()).toBe(200); expect(await response.finished()).toBeNull();
+    await expect(page.locator('[data-easymde-preview-html-sink]')).toHaveAttribute('aria-busy', 'false');
+    await lock.click(); await expect(lock).toHaveAttribute('aria-pressed', 'false');
+    await checkpoint('formal-' + key, key, false, true);
+    expect(await readCurrentDocumentOwner(page)).toMatchObject({ revision: before.revision, history: before.history });
+  };
+  const clickBeforeB = async () => {
+    const point = await cell.evaluate((target, selector) => {
+      const leaves = target.querySelectorAll(selector);
+      if (leaves.length !== 1) throw new Error('rich-inline-pointer-leaf-not-unique');
+      const walker = document.createTreeWalker(leaves[0], NodeFilter.SHOW_TEXT), matches = [];
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        for (let index = 0; index < node.data.length; index++) if (node.data[index] === 'B') matches.push({ node, offset: index });
+      }
+      if (matches.length !== 1) throw new Error('rich-inline-pointer-B-not-unique');
+      const range = document.createRange(); range.setStart(matches[0].node, matches[0].offset); range.collapse(true);
+      const rect = range.getBoundingClientRect();
+      if (rect.height <= 0) throw new Error('rich-inline-pointer-not-visible');
+      return { x: rect.left + 0.1, y: rect.top + rect.height / 2 };
+    }, inline.selector);
+    await page.mouse.click(point.x, point.y);
+  };
+  try {
+    await checkpoint('initial-formal-S0', 'S0', false, true);
+    await expect(visual.locator('blockquote li table')).toHaveCount(1);
+    await expect(visual.locator('blockquote li table tbody')).toHaveCount(1);
+    await expect(visual.locator('blockquote li table tbody tr')).toHaveCount(3);
+    await expect(cell).toHaveCount(1);
+    receipts = await surface.evaluateHandle((root, spec) => {
+      const events = []; let nativeEnter = null, nativeText = null, nativeBackspace = null;
+      let readyNavigationBaseline = null, rootInputEvents = 0, rootHistoryKeys = 0;
+      const readReadyIdentity = () => {
+        const container = document.querySelector('#easymde-editor-root');
+        const keys = container ? Object.getOwnPropertyNames(container).filter((key) => key.startsWith('__reactContainer$')) : [];
+        const current = keys.length === 1 ? container[keys[0]]?.stateNode?.current : null;
+        if (current?.tag !== 3) throw new Error('rich-inline-ready-root-unavailable');
+        const fibers = [], owners = new Set(), pending = current.child ? [current.child] : [];
+        while (pending.length) {
+          if (fibers.length >= 8192) throw new Error('rich-inline-ready-fiber-bound');
+          const fiber = pending.pop(); fibers.push(fiber);
+          for (const owner of [fiber.memoizedProps?.documentSession?.document, fiber.memoizedProps?.ordinaryStatus?.document]) if (owner) owners.add(owner);
+          if (fiber.child) pending.push(fiber.child); if (fiber.sibling) pending.push(fiber.sibling);
+        }
+        if (owners.size !== 1) throw new Error('rich-inline-ready-owner-not-unique');
+        const owner = owners.values().next().value;
+        const controllers = fibers.filter(({ memoizedProps: props }) => props?.surface === root && props.documentSession?.document === owner
+          && props.editMap?.version === 1 && ['getAcceptedWindowSnapshot', 'getAcceptedWindowRow', 'requestPreviewAtDocumentEnd',
+            'prepareWindowBlockAdoption'].every((key) => typeof props[key] === 'function'));
+        if (controllers.length !== 1) throw new Error('rich-inline-ready-controller-not-unique');
+        const controller = controllers[0], props = controller.memoizedProps, sourceField = document.querySelector('#easymde-source');
+        const editorRoots = fibers.filter(({ memoizedProps: entry }) => entry?.submissionField === sourceField
+          && typeof entry.nativePublishPort?.read === 'function' && typeof entry.immersiveStrings?.previewEditorLabel === 'string');
+        if (editorRoots.length !== 1) throw new Error('rich-inline-ready-editor-root-not-unique');
+        const runtimes = new Set(); let hooks = 0;
+        for (let hook = editorRoots[0].memoizedState; hook; hook = hook.next) {
+          if (++hooks > 512) throw new Error('rich-inline-ready-hook-bound');
+          const ref = hook.memoizedState, value = ref && Object.hasOwn(ref, 'current') ? ref.current : null;
+          if (value?.surface === root && ['isEditable', 'isTransferPending', 'executeCommand', 'prepareContextMenuDemand']
+            .every((key) => typeof value[key] === 'function')) runtimes.add(value);
+        }
+        if (runtimes.size !== 1) throw new Error('rich-inline-ready-runtime-not-unique');
+        // The pinned Windowed owner declares these as its first two useRef slots; retain their identities too.
+        const transferRef = controller.memoizedState?.memoizedState, leaseRef = controller.memoizedState?.next?.memoizedState;
+        if (!transferRef || !leaseRef || !Object.hasOwn(transferRef, 'current') || !Object.hasOwn(leaseRef, 'current')) {
+          throw new Error('rich-inline-ready-transfer-slots-unavailable');
+        }
+        const runtime = runtimes.values().next().value, value = owner.getValue(), revision = owner.getRevision();
+        const selection = owner.getSelection(), history = owner.getHistoryState(), generated = props.getGeneratedPreviewIdentity();
+        const accepted = props.getAcceptedWindowSnapshot(), nodes = [...root.childNodes];
+        const nodesCurrent = !!accepted && accepted.nodes.length === nodes.length && accepted.nodes.every((node, index) => node === nodes[index]);
+        const formalCurrent = !!generated && !!accepted && nodesCurrent && generated.sourceRevision === revision
+          && accepted.sourceRevision === revision && accepted.revision === generated.revision && accepted.signature === generated.signature
+          && props.previewSnapshot.signature === generated.signature && props.editMap.signature === generated.signature
+          && generated.editMap === props.editMap && accepted.editMap === props.editMap;
+        return { container, controller, owner, session: props.documentSession, runtime, surface: root, transferRef, leaseRef,
+          transfer: transferRef.current, lease: leaseRef.current, value, revision, selectionJSON: JSON.stringify(selection),
+          historyJSON: JSON.stringify(history), selection: { start: selection.start, end: selection.end, direction: selection.direction },
+          history: { undoDepth: history.undoDepth, redoDepth: history.redoDepth }, nodes, nodesCurrent, formalCurrent,
+          fieldMatchesOwner: sourceField instanceof HTMLTextAreaElement && sourceField.value === value,
+          ready: root.getAttribute('data-easymde-preview-phase') === 'ready' && !runtime.isTransferPending()
+            && document.querySelector('[data-easymde-session-status]')?.getAttribute('data-easymde-session-status') === 'ready'
+            && root.isConnected && root.isContentEditable && runtime.isEditable() && owner.isEditable(),
+          editMap: props.editMap, generatedRevision: generated?.revision, generatedSourceRevision: generated?.sourceRevision,
+          generatedSignature: generated?.signature, generatedMap: generated?.editMap,
+          acceptedKey: accepted?.key, acceptedRevision: accepted?.revision, acceptedSourceRevision: accepted?.sourceRevision,
+          acceptedSignature: accepted?.signature, acceptedMap: accepted?.editMap, rootInputEvents, rootHistoryKeys };
+      };
+      const target = () => root.querySelector('blockquote li table tbody')?.rows[1]?.cells[1] ?? null;
+      const shape = () => {
+        const cell = target(), tables = root.querySelectorAll('blockquote li table'), table = tables.length === 1 ? tables[0] : null;
+        const rows = [...(table?.tBodies[0]?.rows ?? [])], leaves = [...(cell?.querySelectorAll(spec.selector) ?? [])];
+        const leaf = leaves.length === 1 ? leaves[0] : null, chain = [], links = [...(cell?.querySelectorAll('a') ?? [])];
+        for (let node = leaf; node && node !== cell; node = node.parentElement) {
+          if (node.tagName !== 'SPAN') chain.unshift(['S', 'STRIKE'].includes(node.tagName) ? 'DEL' : node.tagName);
+        }
+        const guards = [['up', 'guard', 'end'], ['left', null, 'right'], ['down', 'guard', 'end']];
+        return { available: !!cell, tableUnique: tables.length === 1, targetUnique: rows[1]?.cells[1] === cell,
+          headersExact: [...(table?.tHead?.rows[0]?.cells ?? [])].map((node) => node.textContent).join('|') === 'Left|Target|Right',
+          guardCellsExact: rows.length === 3 && rows.every((row, index) => row.cells.length === 3
+            && [...row.cells].every((node, column) => guards[index][column] === null || node.textContent === guards[index][column])),
+          text: cell?.innerText ?? '', glyphs: leaf?.textContent ?? '', breaks: cell?.querySelectorAll('br').length ?? 0,
+          leafBreaks: leaf?.querySelectorAll('br').length ?? 0, leafCount: leaves.length,
+          chainExact: chain.length === spec.chain.length && chain.every((tag, index) => tag === spec.chain[index]),
+          linkAttributesExact: spec.linked ? links.length === 1 && links[0].getAttribute('href') === spec.href
+            && links[0].getAttribute('title') === 'Keep' : links.length === 0,
+          leafEditable: leaf?.isContentEditable === true, codeCount: cell?.querySelectorAll('code').length ?? 0 };
+      };
+      const observe = (event) => {
+        if (!(event.target instanceof Node) || !root.contains(event.target)) return;
+        if (event.type === 'keydown') {
+          if ((event.ctrlKey || event.metaKey) && ['z', 'y'].includes(event.key.toLowerCase())) rootHistoryKeys++;
+          return;
+        }
+        rootInputEvents++;
+        const cell = target(), selection = getSelection();
+        if (!cell?.contains(selection?.anchorNode)) return;
+        const types = ['insertParagraph', 'insertLineBreak', 'deleteContentBackward', 'insertText', 'historyUndo', 'historyRedo'];
+        if (events.length < 40) events.push({ type: event.type, inputType: types.includes(event.inputType) ? event.inputType : 'unrecognized',
+          trusted: event.isTrusted, collapsed: selection?.isCollapsed === true });
+        if (event.type !== 'input') return;
+        if ((event.inputType === 'insertParagraph' || event.inputType === 'insertLineBreak') && !nativeEnter) nativeEnter = { ...shape(), trusted: event.isTrusted };
+        if (event.inputType === 'deleteContentBackward') nativeBackspace = { ...shape(), trusted: event.isTrusted };
+        if (event.inputType === 'insertText') nativeText = { ...shape(), trusted: event.isTrusted };
+      };
+      document.addEventListener('beforeinput', observe, true); document.addEventListener('input', observe, true); document.addEventListener('keydown', observe, true);
+      return {
+        captureReadyNavigation: (expectedSource) => {
+          const before = readReadyIdentity(); readyNavigationBaseline = { ...before, expectedSource };
+          return { ready: before.ready, sourceExact: before.value === expectedSource && before.fieldMatchesOwner,
+            noTransfer: before.transfer === null, noLease: before.lease === null,
+            formalCurrent: before.formalCurrent, nodesCurrent: before.nodesCurrent, revision: before.revision,
+            selection: before.selection, history: before.history };
+        },
+        checkReadyNavigation: (targetCaret) => {
+          if (!readyNavigationBaseline) throw new Error('rich-inline-ready-baseline-unavailable');
+          const before = readyNavigationBaseline, after = readReadyIdentity();
+          const retained = after.selectionJSON === before.selectionJSON;
+          const alreadyTarget = after.selection.start === targetCaret && after.selection.end === targetCaret && after.selection.direction === 'none';
+          return { readyBeforeAndAfter: before.ready && after.ready,
+            sameOwner: after.owner === before.owner, sameSession: after.session === before.session,
+            sameRuntime: after.runtime === before.runtime, sameSurface: after.surface === before.surface && after.container === before.container,
+            sameWindowedOwner: after.controller === before.controller || after.controller === before.controller.alternate,
+            sameTransferRef: after.transferRef === before.transferRef, sameLeaseRef: after.leaseRef === before.leaseRef,
+            noTransfer: before.transfer === null && after.transfer === null, noLease: before.lease === null && after.lease === null,
+            sourceExact: before.value === before.expectedSource && after.value === before.expectedSource,
+            fieldMatchesOwner: before.fieldMatchesOwner && after.fieldMatchesOwner,
+            revisionUnchanged: after.revision === before.revision, fullHistoryUnchanged: after.historyJSON === before.historyJSON,
+            canonicalSelectionAllowed: alreadyTarget || retained,
+            canonicalMode: alreadyTarget ? 'already-target' : retained ? 'retained-pre-navigation' : 'unproved',
+            baselineCanonical: before.selection, currentCanonical: after.selection,
+            formalCurrent: before.formalCurrent && after.formalCurrent, nodesCurrent: before.nodesCurrent && after.nodesCurrent,
+            nodesUnchanged: after.nodes.length === before.nodes.length && after.nodes.every((node, index) => node === before.nodes[index]),
+            formalIdentityUnchanged: after.editMap === before.editMap && after.generatedRevision === before.generatedRevision
+              && after.generatedSourceRevision === before.generatedSourceRevision && after.generatedSignature === before.generatedSignature
+              && after.generatedMap === before.generatedMap && after.acceptedKey === before.acceptedKey
+              && after.acceptedRevision === before.acceptedRevision && after.acceptedSourceRevision === before.acceptedSourceRevision
+              && after.acceptedSignature === before.acceptedSignature && after.acceptedMap === before.acceptedMap,
+            noInputEvents: after.rootInputEvents === before.rootInputEvents, noHistoryKeys: after.rootHistoryKeys === before.rootHistoryKeys };
+        },
+        safe: (kind) => {
+        const current = shape(), cell = target(), leaves = [...(cell?.querySelectorAll(spec.selector) ?? [])], leaf = leaves.length === 1 ? leaves[0] : null;
+        const native = getSelection(), anchor = native?.anchorNode, focus = native?.focusNode;
+        const glyphs = kind === 'S1T' || kind === 'ST' ? 'ATB' : 'AB';
+        const breaks = kind === 'S1' || kind === 'S1T' ? 1 : 0;
+        const expectedText = kind === 'S1T' ? 'L A\nTB R' : kind === 'S1' ? 'L A\nB R' : kind === 'ST' ? 'L ATB R' : 'L AB R';
+        const scalar = (value) => ({ available: value.available, tableUnique: value.tableUnique, targetUnique: value.targetUnique,
+          headersExact: value.headersExact, guardCellsExact: value.guardCellsExact, leafCount: value.leafCount, chainExact: value.chainExact,
+          linkAttributesExact: value.linkAttributesExact, leafEditable: value.leafEditable, codeCount: value.codeCount,
+          textLength: value.text.length, glyphLength: value.glyphs.length, breaks: value.breaks,
+          textExact: value.text === expectedText, glyphsExact: value.glyphs === glyphs, breakCountExact: value.breaks === breaks,
+          breakInsideLeaf: value.leafBreaks === value.breaks, literalBrVisible: value.text.includes('<br>') });
+        const insideCell = !!cell && !!anchor && !!focus && cell.contains(anchor) && cell.contains(focus);
+        const insideLeaf = !!leaf && !!anchor && !!focus && leaf.contains(anchor) && leaf.contains(focus);
+        const sameCollapsedPoint = native?.isCollapsed === true && anchor === focus && native.anchorOffset === native.focusOffset;
+        const bPoints = [];
+        if (leaf) {
+          const walker = document.createTreeWalker(leaf, NodeFilter.SHOW_TEXT);
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            for (let offset = 0; offset < node.data.length; offset++) if (node.data[offset] === 'B') bPoints.push({ node, offset });
+          }
+        }
+        const targetPoint = bPoints.length === 1 ? bPoints[0] : null;
+        const transparent = (node) => node instanceof Element
+          && ['A', 'EM', 'STRONG', 'B', 'I', 'DEL', 'S', 'STRIKE', 'SPAN', 'MARK', 'SUB', 'SUP'].includes(node.tagName)
+          && !node.matches('[contenteditable], [hidden], [inert], [aria-hidden="true"], [role], [tabindex]');
+        let rank = 0, targetRank = null, anchorRank = null, focusRank = null;
+        const record = (node, offset, value) => {
+          if (targetPoint?.node === node && targetPoint.offset === offset) targetRank = value;
+          if (anchor === node && native.anchorOffset === offset) anchorRank = value;
+          if (focus === node && native.focusOffset === offset) focusRank = value;
+        };
+        const visit = (node) => {
+          if (node instanceof Text) {
+            for (let offset = 0; offset <= node.data.length; offset++) record(node, offset, rank + offset);
+            rank += Math.max(1, node.data.length); return;
+          }
+          // BR/comment/opaque nodes carry a nonzero token: equivalence cannot cross any of them.
+          if (!transparent(node)) { rank++; return; }
+          record(node, 0, rank);
+          [...node.childNodes].forEach((child, index) => { visit(child); record(node, index + 1, rank); });
+        };
+        if (leaf) visit(leaf);
+        const forward = (node, offset) => {
+          if (!targetPoint || !node || !leaf?.contains(node)) return false;
+          const actual = document.createRange(), expected = document.createRange();
+          actual.setStart(node, offset); actual.collapse(true); expected.setStart(targetPoint.node, targetPoint.offset); expected.collapse(true);
+          return actual.compareBoundaryPoints(Range.START_TO_START, expected) <= 0;
+        };
+        const anchorForward = forward(anchor, native?.anchorOffset ?? 0), focusForward = forward(focus, native?.focusOffset ?? 0);
+        const noObservableTokenBetween = targetRank !== null && anchorRank === targetRank && focusRank === targetRank;
+        const semanticBeforeB = insideLeaf && sameCollapsedPoint && bPoints.length === 1 && anchorForward && focusForward && noObservableTokenBetween;
+        let bodyGlyphPrefix = null, prefixBreaks = null;
+        if (insideLeaf) {
+          const range = document.createRange(); range.selectNodeContents(leaf); range.setEnd(anchor, native.anchorOffset);
+          const fragment = range.cloneContents(); bodyGlyphPrefix = fragment.textContent.length; prefixBreaks = fragment.querySelectorAll('br').length;
+        }
+        const raw = (node, offset) => ({ nodeType: node?.nodeType ?? null, ownTag: node instanceof Element ? node.tagName : null,
+          parentTag: node?.parentElement?.tagName ?? null, offset, connected: !!node?.isConnected });
+        const comparison = kind === 'S1' ? nativeEnter : kind === 'S1T' || kind === 'ST' ? nativeText : nativeBackspace;
+        return { current: scalar(current), nativeEnter: nativeEnter ? { ...scalar(nativeEnter), trusted: nativeEnter.trusted } : null,
+          nativeText: nativeText ? { ...scalar(nativeText), trusted: nativeText.trusted } : null,
+          nativeBackspace: nativeBackspace ? { ...scalar(nativeBackspace), trusted: nativeBackspace.trusted } : null,
+          matchesNativeText: comparison ? current.text === comparison.text : null, matchesNativeGlyphs: comparison ? current.glyphs === comparison.glyphs : null,
+          nativeConnected: !!anchor?.isConnected && !!focus?.isConnected, nativeInsideCell: insideCell, nativeInsideLeaf: insideLeaf,
+          nativeCollapsed: native?.isCollapsed === true, nativeAnchor: raw(anchor, native?.anchorOffset ?? 0), nativeFocus: raw(focus, native?.focusOffset ?? 0),
+          bodyGlyphPrefix, prefixBreaks, semanticBeforeB,
+          boundaryProof: { leafUnique: leaves.length === 1, bTextUnique: bPoints.length === 1, sameCollapsedPoint,
+            targetRank, anchorRank, focusRank, anchorForward, focusForward, noObservableTokenBetween,
+            rawTextBeforeB: !!targetPoint && anchor === targetPoint.node && native.anchorOffset === targetPoint.offset }, events: events.slice() };
+      }, dispose: () => { document.removeEventListener('beforeinput', observe, true); document.removeEventListener('input', observe, true);
+        document.removeEventListener('keydown', observe, true); readyNavigationBaseline = null; } };
+    }, { selector: inline.selector, chain: inline.chain, linked: inline.linked, href: richInlineHref });
+    await checkpoint('loaded-unique-rich-target', 'S0', false, true);
+    await visual.locator('p').filter({ hasText: /^Lead\.$/u }).first().click(); await page.keyboard.press('End');
+    phase = 'real-Lead-V'; await page.keyboard.type('V'); await expectSource(source, SourceFixture.SV); await acceptFixed('SV');
+    await visual.locator('p').filter({ hasText: /^Lead\.V$/u }).first().click(); await page.keyboard.press('End');
+    retainedNodes = await surface.evaluateHandle((root) => [...root.childNodes]); held = await holdFormalPreview(page);
+    phase = 'real-Undo-V-held-S0'; await page.keyboard.press('Control+z');
+    await expectSource(source, SourceFixture.S0); await held.waitFor(SourceFixture.S0);
+    await checkpoint('real-S0-PHP200-withheld', 'S0', true);
+    expect(await surface.evaluate((root, nodes) => root.childNodes.length === nodes.length
+      && nodes.every((node, index) => root.childNodes[index] === node), retainedNodes)).toBe(true);
+    if (timing === 'ready') { await held.close(); held = null; await checkpoint('released-formal-S0', 'S0', false, true); }
+    const base = await checkpoint('before-rich-Enter', 'S0', timing === 'held');
+    if (timing === 'ready') {
+      phase = 'capture-ready-pre-navigation';
+      const before = await receipts.evaluate((observer, expected) => observer.captureReadyNavigation(expected), SourceFixture.S0);
+      console.log(JSON.stringify({ event: 'rich-inline-ready-pre-navigation', kind: inline.kind, timing, before }));
+      expect(before).toMatchObject({ ready: true, sourceExact: true, noTransfer: true, noLease: true, formalCurrent: true, nodesCurrent: true });
+    }
+    await clickBeforeB();
+    await checkpoint('real-initial-before-B', 'S0', timing === 'held', timing === 'ready', true);
+    expect(await readCurrentDocumentOwner(page)).toMatchObject({ revision: base.owner.revision, history: base.owner.history });
+    if (timing === 'ready') {
+      const evidence = await receipts.evaluate((observer, targetCaret) => ({ certificate: observer.checkReadyNavigation(targetCaret),
+        native: observer.safe('S0') }), caret.S0);
+      console.log(JSON.stringify({ event: 'rich-inline-ready-native-first', kind: inline.kind, timing, ...evidence }));
+      expect(evidence.certificate).toMatchObject({ readyBeforeAndAfter: true, sameOwner: true, sameSession: true,
+        sameRuntime: true, sameSurface: true, sameWindowedOwner: true, sameTransferRef: true, sameLeaseRef: true,
+        noTransfer: true, noLease: true, sourceExact: true, fieldMatchesOwner: true, revisionUnchanged: true,
+        fullHistoryUnchanged: true, canonicalSelectionAllowed: true, formalCurrent: true, nodesCurrent: true,
+        nodesUnchanged: true, formalIdentityUnchanged: true, noInputEvents: true, noHistoryKeys: true });
+      expect(evidence.native).toMatchObject({ nativeConnected: true, nativeInsideCell: true, nativeInsideLeaf: true,
+        nativeCollapsed: true, semanticBeforeB: true, bodyGlyphPrefix: 1, prefixBreaks: 0,
+        current: { tableUnique: true, targetUnique: true, leafCount: 1, chainExact: true, linkAttributesExact: true,
+          leafEditable: true, textExact: true, glyphsExact: true, breakCountExact: true, guardCellsExact: true } });
+    } else {
+      // Pending navigation retains its separate strict canonical target requirement.
+      expect(await readCurrentDocumentOwner(page)).toMatchObject({ selection: { start: caret.S0, end: caret.S0, direction: 'none' } });
+    }
+    const edit = async (stage, key, step, undoDelta, redoDepth, pending, formal = false, point = true, renderRequired = true) => {
+      const state = await checkpoint(stage, key, pending, formal, point, renderRequired);
+      expect(state.owner.revision).toBe(base.owner.revision + step);
+      expect(state.owner.history).toEqual({ undoDepth: base.owner.history.undoDepth + undoDelta, redoDepth });
+      expect(state.owner.selection).toEqual({ start: caret[key], end: caret[key], direction: 'none' }); return state;
+    };
+    phase = 'real-rich-Enter'; await page.keyboard.press('Enter');
+    const entered = await edit('rich-Enter-fixed-S1', 'S1', 1, 1, 0, timing === 'held' ? true : undefined);
+    expect(entered.render.nativeEnter).toMatchObject({ trusted: true, textExact: true, glyphsExact: true, breakCountExact: true,
+      breakInsideLeaf: true, chainExact: true, linkAttributesExact: true });
+    if (timing === 'held') { await held.waitFor(SourceFixture.S1); await checkpoint('real-S1-PHP200-still-withheld', 'S1', true, false, true); }
+    else { await acceptFixed('S1'); await clickBeforeB(); await edit('formal-S1-real-before-B', 'S1', 1, 1, 0, false, true); }
+    phase = 'real-rich-Backspace'; await page.keyboard.press('Backspace');
+    const deleted = await edit('rich-Backspace-fixed-S0', 'S0', 2, 2, 0, timing === 'held' ? true : undefined);
+    expect(deleted.render.nativeBackspace).toMatchObject({ trusted: true, textExact: true, glyphsExact: true,
+      breakCountExact: true, chainExact: true, linkAttributesExact: true });
+    phase = 'real-Undo-rich-Backspace'; await page.keyboard.press('Control+z');
+    await edit('Undo-rich-Backspace-fixed-S1', 'S1', 3, 1, 1, timing === 'held' ? true : undefined, false, false, false);
+    phase = 'real-Redo-rich-Backspace'; await page.keyboard.press('Control+Shift+z');
+    await edit('Redo-rich-Backspace-fixed-S0', 'S0', 4, 2, 0, timing === 'held' ? true : undefined, false, false, false);
+    if (held) { await held.close(); held = null; }
+    await edit('released-formal-S0', 'S0', 4, 2, 0, false, true);
+    phase = 'real-Undo-BS-to-S1'; await page.keyboard.press('Control+z');
+    await edit('Undo-BS-formal-S1-before-B', 'S1', 5, 1, 1, false, true);
+    phase = 'real-Undo-rich-Enter'; await page.keyboard.press('Control+z');
+    await edit('Undo-Enter-formal-S0', 'S0', 6, 0, 2, false, true);
+    phase = 'real-Redo-rich-Enter'; await page.keyboard.press('Control+Shift+z');
+    await edit('Redo-Enter-formal-S1-before-B', 'S1', 7, 1, 1, false, true);
+    // No pointer/selection repair between the proven history-restored point and this real input.
+    phase = 'real-right-span-T'; await page.keyboard.type('T');
+    const rightTyped = await edit('right-span-fixed-S1T', 'S1T', 8, 2, 0, undefined);
+    expect(rightTyped.render.nativeText).toMatchObject({ trusted: true, textExact: true, glyphsExact: true,
+      chainExact: true, linkAttributesExact: true });
+    await acceptFixed('S1T'); await clickBeforeB(); await edit('formal-S1T-real-before-B', 'S1T', 8, 2, 0, false, true);
+    phase = 'real-Undo-right-span-T'; await page.keyboard.press('Control+z');
+    await edit('Undo-right-T-formal-S1', 'S1', 9, 1, 1, false, true);
+    phase = 'real-Undo-Enter-for-ST'; await page.keyboard.press('Control+z');
+    await edit('restored-formal-S0-for-ST', 'S0', 10, 0, 2, false, true);
+    phase = 'real-original-span-T'; await page.keyboard.type('T');
+    const originalTyped = await edit('original-span-fixed-ST', 'ST', 11, 1, 0, undefined);
+    expect(originalTyped.render.nativeText).toMatchObject({ trusted: true, textExact: true, glyphsExact: true,
+      chainExact: true, linkAttributesExact: true });
+    phase = 'real-Undo-original-span-T'; await page.keyboard.press('Control+z');
+    await edit('final-formal-S0', 'S0', 12, 0, 1, false, true); healthy();
+  } catch (error) {
+    primaryError = error;
+    const owner = await readCurrentDocumentOwner(page).then((value) => ({ available: true, ...value }), () => ({ available: false }));
+    const current = await page.evaluate(({ prefix, suffix, expected, variants }) => {
+      const field = document.querySelector('#easymde-source'), value = field instanceof HTMLTextAreaElement ? field.value : null;
+      const outsideCellExact = value !== null && value.length >= prefix.length + suffix.length && value.startsWith(prefix) && value.endsWith(suffix);
+      const target = outsideCellExact ? value.slice(prefix.length, value.length - suffix.length) : null;
+      return { available: value !== null, sourceLength: value?.length ?? null, sourceExact: value === expected, outsideCellExact,
+        targetMatchesDeclared: Object.fromEntries(Object.entries(variants).map(([key, candidate]) => [key, target !== null && target === candidate])) };
+    }, { prefix, suffix, expected: SourceFixture[expectedKey], variants: targetSource }).catch(() => ({ available: false }));
+    const native = receipts ? await receipts.evaluate((observer, key) => observer.safe(key), expectedKey).catch(() => ({ available: false })) : null;
+    const finalFormal = await runtimeState(expectedKey, true).then((state) => ({ available: true, phase: state.phase,
+      runtimePending: state.runtimePending, revision: state.revision, sourceLength: state.sourceLength,
+      formalCurrent: state.previewEvidence.formalCurrent, nodesCurrent: state.previewEvidence.nodesCurrent,
+      publisherGeneration: state.previewEvidence.publisherGeneration, publisherSourceRevision: state.previewEvidence.publisherSourceRevision,
+      windowGeneration: state.previewEvidence.windowGeneration, windowSourceRevision: state.previewEvidence.windowSourceRevision }), () => ({ available: false }));
+    console.log(JSON.stringify({ event: 'rich-inline-first-failure', kind: inline.kind, timing, operation: phase, fixedOracle: expectedKey,
+      owner, current, native, finalFormal, preErrorCheckpoint: lastObservation, failures, browserErrors }));
+    throw error;
+  } finally {
+    const resources = [];
+    const cleanup = async (step, action) => { try { await action(); resources.push({ step, completed: true }); }
+      catch { resources.push({ step, completed: false }); } };
+    if (held) await cleanup('held-preview-close', () => held.close());
+    await cleanup('rich-inline-page-listeners-remove', () => { page.off('pageerror', onPageError); page.off('popup', onPopup); page.off('dialog', onDialog); });
+    if (receipts) { await cleanup('rich-inline-observer-remove', () => receipts.evaluate((observer) => observer.dispose()));
+      await cleanup('rich-inline-receipt-dispose', () => receipts.dispose()); }
+    if (retainedNodes) await cleanup('rich-inline-retained-dispose', () => retainedNodes.dispose());
+    await cleanup('rich-inline-surface-dispose', () => surface.dispose());
+    const cleanupFailed = resources.some((value) => !value.completed);
+    console.log(JSON.stringify({ event: 'rich-inline-cleanup', kind: inline.kind, timing, cleanupFailed, resources }));
+    if (cleanupFailed && primaryError === null) throw new Error('rich-inline-cleanup-failed');
+  }
+});
+}
+}
+}
 
 test('windowed rich starting blocks retain exact source through mixed position history', async ({ page }) => {
   const blocks = [
@@ -3336,5 +5718,879 @@ test('held same-source formal Preview preserves active Chromium composition and 
   } finally {
     if (!gateClosed) await gate.close();
     await input.detach();
+  }
+});
+
+const shortFenceRepresentatives = [
+  { marker: '```', language: 'bash', position: 'start', pacing: 'normal' },
+  { marker: '````', language: '', position: 'start', pacing: 'burst' },
+  { marker: '````', language: 'python', position: 'middle', pacing: 'normal' },
+  { marker: '```', language: 'javascript', position: 'middle', pacing: 'burst' },
+  { marker: '```', language: '', position: 'end', pacing: 'normal' },
+  { marker: '````', language: 'bash', position: 'end', pacing: 'burst' },
+  { marker: '~~~', language: 'python', position: 'start', pacing: 'normal' },
+  { marker: '~~~~', language: '', position: 'start', pacing: 'burst' },
+  { marker: '~~~~', language: 'bash', position: 'middle', pacing: 'normal' },
+  { marker: '~~~', language: 'javascript', position: 'middle', pacing: 'burst' },
+  { marker: '~~~', language: '', position: 'end', pacing: 'normal' },
+  { marker: '~~~~', language: 'python', position: 'end', pacing: 'burst' }
+];
+
+function shortFenceFixture(position) {
+  if (position === 'start') return 'Slot\n\n# Heading\n\nAfter.\n\n- keep item';
+  if (position === 'middle') return '# Heading\n\nSlot\n\nAfter.\n\n- keep item';
+  return '# Heading\n\nBefore.\n\n- keep item\n\nSlot\n\n';
+}
+
+for (const fence of shortFenceRepresentatives) {
+  test(`[short-stage] full ${fence.pacing} ${fence.position} fence ${fence.marker}${fence.language || '(no-language)'} lifecycle`, async ({ page }) => {
+    const initial = shortFenceFixture(fence.position), opener = fence.marker + fence.language;
+    const stage = await openShortStage(page, 'full', initial);
+    const emptySlot = initial.replace('Slot', '');
+    const literal = (text) => initial.replace('Slot', text.replace(/[`~]/gu, '\\$&'));
+    // Full's existing shortcut contract canonicalises the visual fence family
+    // to backticks. Source-owner cases below instead retain literal markers.
+    const marker = '`'.repeat(fence.marker.length);
+    const code = (body) => initial.replace('Slot', `${marker}${fence.language}\n${body}\n${marker}`);
+    // At absolute start, the new fence's row domain and its following two-LF
+    // separator occupy this fixed fixture slot. Preserve the following source
+    // byte-for-byte; other positions retain their unverified existing oracle.
+    const startSlot = 'Slot\n\n';
+    if (fence.position === 'start') expect(initial.startsWith(startSlot)).toBe(true);
+    const exited = fence.position === 'start'
+      ? initial.slice(startSlot.length)
+      : fence.position === 'end'
+        ? initial.slice(0, initial.indexOf('Slot'))
+        : initial.replace('Slot', '  ');
+    const continued = initial.replace('Slot', 'Z');
+    const continuedCaret = initial.indexOf('Slot') + 'Z'.length;
+    const branched = initial.replace('Slot', 'ZB');
+    const allowed = new Set([initial, emptySlot, exited, continued]);
+    for (let end = 1; end <= opener.length; end += 1) allowed.add(literal(opener.slice(0, end)));
+    for (const body of ['', 'a', 'ab', 'a\n', 'a\nx', 'a\nxy', 'a\nQ']) allowed.add(code(body));
+    const probe = await startShortStageProbe(page, stage, allowed);
+    const frames = await startShortStageFrames(page, stage.surface);
+    let phase = 'real-slot-selection', failed = true;
+    let exitOwnership = null;
+    const assertContinuedCaret = (point, owner) => {
+      expect(owner.selection, `${point}: document caret must follow the fixed fixture Z, not a paragraph separator`).toEqual({
+        start: continuedCaret, end: continuedCaret, direction: 'none'
+      });
+      if (point === 'after-final-Redo-before-B' && owner.fenceSnapshot?.pendingProof?.transferPending === true) {
+        // The proven pre-B shape: the history transfer is still rendering over
+        // the retained owned presentation, its canonical expectation names the
+        // current revision and source, and the native presentation is exactly
+        // the range that transfer recorded (collapsed or ranged). The retained
+        // DOM is the old presentation, so the accepted Z Text is not required
+        // until the transfer settles.
+        const pendingProof = { ...owner.fenceSnapshot.pendingProof };
+        delete pendingProof.presentationCurrent;
+        expect(pendingProof, `${point}: pending history transfer must retain its own proved presentation and current canonical lease`).toEqual({
+          transferPending: true,
+          runtimeEditable: false,
+          transferKind: 'history',
+          transferPhase: 'rendering',
+          expectationRevisionCurrent: true,
+          expectationValueCurrent: true,
+          retainedOwnedSameLedger: true,
+          retainedOwnerSameToken: true,
+          nativeMatchesLease: true
+        });
+        return;
+      }
+      expect(owner.fenceSnapshot.nativeState, `${point}: native caret must remain usable at the current Z paragraph Text1`).toEqual({
+        paragraphCount: 1, paragraphConnected: true, surfaceConnected: true, editable: true,
+        singleZText: true, collapsed: true, anchorIsCurrentZText: true, focusIsCurrentZText: true,
+        anchorConnectedInside: true, focusConnectedInside: true, anchorOffset: 1, focusOffset: 1
+      });
+    };
+    try {
+      frames.stage(phase);
+      await stage.visual.locator('p').filter({ hasText: /^Slot$/u }).click({ position: { x: 3, y: 3 } });
+      await probe.press('Home'); await probe.press('Shift+End');
+      phase = 'unfinished-opener-and-characterwise-clear'; frames.stage(phase);
+      await probe.type(opener);
+      if (fence.pacing === 'normal') await expectSource(stage.source, literal(opener));
+      for (let key = 0; key < opener.length; key += 1) await probe.press('Backspace');
+      await expectSource(stage.source, emptySlot);
+      await expect(stage.visual.locator('pre')).toHaveCount(0);
+      phase = 'Enter-immediate-body-delete-newline-replace'; frames.stage(phase);
+      await probe.type(opener);
+      if (fence.pacing === 'normal') await expectSource(stage.source, literal(opener));
+      await probe.press('Enter'); await probe.type('ab');
+      if (fence.pacing === 'normal') await expectSource(stage.source, code('ab'));
+      await probe.press('Backspace');
+      if (fence.pacing === 'normal') await expectSource(stage.source, code('a'));
+      await probe.press('Enter'); await probe.type('xy');
+      if (fence.pacing === 'normal') await expectSource(stage.source, code('a\nxy'));
+      await probe.press('Shift+ArrowLeft'); await probe.press('Shift+ArrowLeft');
+      await probe.type('Q'); await expectSource(stage.source, code('a\nQ'));
+      await expect.poll(() => stage.visual.locator('pre').evaluate((pre, language) => ({
+        marker: pre.getAttribute('data-easymde-visual-fence'),
+        language: pre.getAttribute('data-easymde-visual-fence-info'),
+        body: pre.querySelector('code')?.textContent?.replace(/\n$/u, ''),
+        languageClass: pre.querySelector('code')?.classList.contains(`language-${language}`)
+      }), fence.language)).toMatchObject({ marker, language: fence.language, body: 'a\nQ', ...(fence.language ? { languageClass: true } : {}) });
+      phase = 'clear-code-and-native-structure-exit'; frames.stage(phase);
+      for (let key = 0; key < 3; key += 1) await probe.press('Shift+ArrowLeft');
+      expect(await stage.visual.locator('pre code').evaluate((element) => {
+        const native = getSelection();
+        return !!native && element.contains(native.anchorNode) && element.contains(native.focusNode)
+          && native.toString() === 'a\nQ';
+      })).toBe(true);
+      await probe.press('Backspace'); await expectSource(stage.source, code(''));
+      if (fence.position === 'start' || fence.position === 'end') {
+        exitOwnership = await stage.visual.evaluateHandle((surface) => {
+          const pres = surface.querySelectorAll('pre');
+          if (pres.length !== 1) throw new Error('short-stage-exit-pre-not-unique');
+          const pre = pres[0]; let frame = pre;
+          while (frame.parentNode && frame.parentNode !== surface) frame = frame.parentNode;
+          if (frame.parentNode !== surface) throw new Error('short-stage-exit-frame-not-direct');
+          const children = Array.from(surface.childNodes);
+          const frameIndex = children.indexOf(frame);
+          return { surface, pre, frame,
+            prefix: children.slice(0, frameIndex),
+            following: children.slice(frameIndex + 1),
+            paragraphs: new Set(surface.querySelectorAll(':scope > p')), paragraph: null };
+        });
+      }
+      await probe.press('Backspace'); await expectSource(stage.source, exited);
+      if (exitOwnership) {
+        const exitedState = await exitOwnership.evaluate((owned) => {
+          const { surface } = owned, children = Array.from(surface.childNodes);
+          const added = [...surface.querySelectorAll(':scope > p')].filter((p) => !owned.paragraphs.has(p));
+          owned.paragraph = added.length === 1 ? added[0] : null;
+          const p = owned.paragraph, native = surface.ownerDocument.getSelection();
+          const prefixIndexes = owned.prefix.map((node) => children.indexOf(node));
+          const indexes = owned.following.map((node) => children.indexOf(node));
+          return { preRemoved: !surface.contains(owned.pre), frameRemoved: !surface.contains(owned.frame),
+            preCount: surface.querySelectorAll('pre').length, newParagraphCount: added.length,
+            soleBR: !!p && p.childNodes.length === 1 && p.firstChild instanceof HTMLBRElement,
+            nativeP0: !!p && native?.isCollapsed === true && native.anchorNode === p && native.focusNode === p
+              && native.anchorOffset === 0 && native.focusOffset === 0,
+            editable: surface.isConnected && surface.isContentEditable,
+            lock: document.querySelector('.easymde-immersive-preview-lock')?.getAttribute('aria-pressed'),
+            prefixIntact: owned.prefix.every((node, at) => node.isConnected && node.parentNode === surface
+              && prefixIndexes[at] === at),
+            followingIntact: owned.following.every((node) => node.isConnected && node.parentNode === surface)
+              && indexes.every((index, at) => index >= 0 && (at === 0 || index > indexes[at - 1])),
+            followingTailIntact: owned.following.length > 0
+              ? children.at(-1) === owned.following.at(-1)
+              : children.at(-1) === p };
+        });
+        expect(exitedState).toEqual({ preRemoved: true, frameRemoved: true, preCount: 0, newParagraphCount: 1,
+          soleBR: true, nativeP0: true, editable: true, lock: 'false', prefixIntact: true,
+          followingIntact: true, followingTailIntact: true });
+      }
+      await probe.type('Z'); await expectSource(stage.source, continued);
+      const continuedSnapshot = await readCurrentDocumentOwner(page, null, { ownership: exitOwnership });
+      assertContinuedCaret('after-Z', continuedSnapshot);
+      if (exitOwnership) {
+        const continuedState = continuedSnapshot.fenceSnapshot.continuedState;
+        expect(continuedState).toEqual({ sameParagraph: true, independentZParagraph: true, nativeTextEnd: true,
+          followingIntact: true, followingTailIntact: true });
+      }
+      await expect(stage.visual.locator('pre')).toHaveCount(0);
+      const observation = await probe.snapshot();
+      const history = shortStageHistoryLedger(observation.rows, initial, allowed);
+      await probe.freeze();
+      phase = 'natural-group-Undo-Redo-and-continued-editing'; frames.stage(phase);
+      await shortStageReplayHistory(page, stage, probe, history, 'undo', history.baseline);
+      await expectSource(stage.source, initial);
+      await shortStageReplayHistory(page, stage, probe, history, 'redo', history.latest);
+      await expectSource(stage.source, continued);
+      // Continue directly at the native caret returned by the final history
+      // group; do not click, focus or replace its selection from JavaScript.
+      const caret = await readCurrentDocumentOwner(page, null, { ownership: exitOwnership, pendingProof: true });
+      assertContinuedCaret('after-final-Redo-before-B', caret);
+      await probe.type('B'); await expectSource(stage.source, branched);
+      const committed = await readCurrentDocumentOwner(page, null,
+        { ownership: exitOwnership, pendingProof: true, nativeBranch: true });
+      expect(committed.selection, 'after-B-source-commit: canonical caret must follow the committed ZB').toEqual({
+        start: continuedCaret + 1, end: continuedCaret + 1, direction: 'none'
+      });
+      const branchEndForm = (branch, side) => {
+        if (!branch || branch.singleZBText !== true || branch.collapsed !== true) return null;
+        if (branch[`${side}IsCurrentZBText`] === true && branch[`${side}Offset`] === 2) return 'text';
+        if (branch[`${side}IsCurrentZBParagraph`] === true && branch[`${side}Offset`] === 1) return 'element';
+        return null;
+      };
+      await expect.poll(async () => {
+        const settling = await readCurrentDocumentOwner(page, null,
+          { ownership: exitOwnership, pendingProof: true, nativeBranch: true });
+        const branch = settling.fenceSnapshot.branchState;
+        return settling.selection.start === continuedCaret + 1
+          && settling.selection.end === continuedCaret + 1
+          && settling.selection.direction === 'none'
+          && branch.paragraphCount === 1 && branch.paragraphConnected === true
+          && branch.paragraphDirect === true && branch.paragraphEditable === true
+          && branch.surfaceConnected === true && branch.editable === true
+          && branch.anchorConnectedInside === true && branch.focusConnectedInside === true
+          && branchEndForm(branch, 'anchor') !== null
+          && branchEndForm(branch, 'focus') !== null
+          && settling.fenceSnapshot.pendingProof?.transferPending === false
+          && settling.fenceSnapshot.pendingProof?.presentationCurrent === true;
+      }, { message: 'B must commit and naturally settle into the current accepted ZB Text2', timeout: 15000 }).toBe(true);
+      const accepted = await readCurrentDocumentOwner(page, null,
+        { ownership: exitOwnership, pendingProof: true, nativeBranch: true });
+      expect(accepted.selection, 'after-B-accepted: canonical caret must remain on the accepted ZB').toEqual({
+        start: continuedCaret + 1, end: continuedCaret + 1, direction: 'none'
+      });
+      expect(accepted.fenceSnapshot.pendingProof?.transferPending,
+        'after-B-accepted: the accepted read must not carry a pending transfer').toBe(false);
+      expect(accepted.fenceSnapshot.pendingProof?.presentationCurrent,
+        'after-B-accepted: the accepted presentation must be the current source').toBe(true);
+      const acceptedBranch = accepted.fenceSnapshot.branchState;
+      expect(acceptedBranch, `after-B-accepted: raw native/branch snapshot ${JSON.stringify(acceptedBranch)}`).toMatchObject({
+        paragraphCount: 1, paragraphConnected: true, paragraphDirect: true, paragraphEditable: true,
+        surfaceConnected: true, editable: true, singleZBText: true, collapsed: true,
+        anchorConnectedInside: true, focusConnectedInside: true
+      });
+      expect(branchEndForm(acceptedBranch, 'anchor'),
+        `after-B-accepted anchor: ${JSON.stringify(acceptedBranch)}`).not.toBeNull();
+      expect(branchEndForm(acceptedBranch, 'focus'),
+        `after-B-accepted focus: ${JSON.stringify(acceptedBranch)}`).not.toBeNull();
+      await probe.press('Control+z'); await expectSource(stage.source, continued);
+      await shortStageReplayHistory(page, stage, probe, history, 'undo', history.baseline);
+      await expectSource(stage.source, initial);
+      await expect(stage.visual).not.toHaveAttribute('aria-busy', 'true');
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      probe.guard();
+      console.log(JSON.stringify({ phase: 'short-stage-fence-complete', position: fence.position,
+        pacing: fence.pacing, family: fence.marker[0] === '~' ? 'tilde' : 'backtick', markerLength: fence.marker.length,
+        language: fence.language, naturalHistoryGroups: history.ledger.size - 1, sourceExact: true, realOSIME: false }));
+      failed = false;
+    } catch (error) {
+      console.log(JSON.stringify({ phase: 'short-stage-fence-first-failure', operation: phase,
+        position: fence.position, pacing: fence.pacing, markerLength: fence.marker.length,
+        owner: await readCurrentDocumentOwner(page), failures: stage.failures,
+        firstObservation: (await probe.snapshot()).failure }));
+      throw error;
+    } finally {
+      try { await exitOwnership?.dispose(); } finally {
+        await finishShortStageObservation(probe, frames,
+          `short-fence-${fence.marker[0] === '~' ? 'tilde' : 'backtick'}-${fence.position}-${fence.pacing}`, failed);
+      }
+    }
+  });
+}
+
+for (const sourceCase of [
+  { mode: 'ordinary', marker: '````', language: 'bash' },
+  { mode: 'ordinary', marker: '~~~', language: 'python' },
+  { mode: 'split', marker: '```', language: 'javascript' },
+  { mode: 'split', marker: '~~~~', language: '' }
+]) {
+  test(`[short-stage] ${sourceCase.mode} literal fence ${sourceCase.marker}${sourceCase.language || '(no-language)'} preserves syntax and natural history`, async ({ page }) => {
+    const { mode, marker, language } = sourceCase;
+    const initial = `  ${marker}${language}  \n  value = 1  \n  ${marker}\n\nAfter.\n\n- keep item\n`;
+    const stage = await openShortStage(page, mode, initial);
+    const point = initial.indexOf('value = 1');
+    const typed = initial.slice(0, point) + 'X' + initial.slice(point);
+    const closing = initial.indexOf(`  ${marker}`, initial.indexOf('\n') + 1) + 2;
+    const shorterMarker = initial.slice(0, closing) + initial.slice(closing + 1);
+    const newline = initial + '\n', unicode = newline + '中🙂';
+    const allowed = new Set([initial, typed, shorterMarker, newline, newline + '中', unicode]);
+    const probe = await startShortStageProbe(page, stage, allowed);
+    const frames = await startShortStageFrames(page, stage.surface);
+    let phase = 'literal-fence-body-position', failed = true;
+    try {
+      frames.stage(phase);
+      await stage.surface.click(); await probe.press('Control+Home');
+      await probe.press('ArrowDown'); await probe.press('Home');
+      const beforeX = await readCurrentDocumentOwner(page);
+      expect(beforeX.selection, 'X: real keyboard caret must be the fixed body point').toEqual({
+        start: point, end: point, direction: 'none'
+      });
+      await probe.type('X'); await expectSource(stage.source, typed);
+      await probe.press('Backspace'); await expectSource(stage.source, initial);
+      phase = 'literal-closing-marker-delete-and-retype'; frames.stage(phase);
+      await probe.press('Control+Home'); await probe.press('ArrowDown'); await probe.press('ArrowDown');
+      await probe.press('Home');
+      const beforeClosingDelete = await readCurrentDocumentOwner(page);
+      expect(beforeClosingDelete.selection,
+        'closing marker: real keyboard caret must be the fixed marker start').toEqual({
+        start: closing, end: closing, direction: 'none'
+      });
+      await probe.press('Delete'); await expectSource(stage.source, shorterMarker);
+      await probe.type(marker[0]); await expectSource(stage.source, initial);
+      phase = 'source-newline-Unicode-and-delete'; frames.stage(phase);
+      await probe.press('Control+End'); await probe.press('Enter');
+      await probe.type('中🙂'); await expectSource(stage.source, unicode);
+      await probe.press('Backspace'); await expectSource(stage.source, newline + '中');
+      await probe.press('Backspace'); await expectSource(stage.source, newline);
+      const observation = await probe.snapshot();
+      const history = shortStageHistoryLedger(observation.rows, initial, allowed);
+      await probe.freeze();
+      phase = 'source-natural-group-Undo-Redo'; frames.stage(phase);
+      const sourceHistory = { mode: 'source', expectedRedo: [] };
+      await shortStageReplayHistory(page, stage, probe, history, 'undo', history.baseline, null, sourceHistory);
+      await expectSource(stage.source, initial);
+      await shortStageReplayHistory(page, stage, probe, history, 'redo', null, null, sourceHistory);
+      await expectSource(stage.source, newline);
+      await probe.type('Q'); await expectSource(stage.source, newline + 'Q');
+      await probe.press('Control+z'); await expectSource(stage.source, newline);
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      probe.guard();
+      console.log(JSON.stringify({ phase: 'short-stage-literal-fence-complete', mode,
+        family: marker[0] === '~' ? 'tilde' : 'backtick', markerLength: marker.length, language,
+        literalSyntaxExact: true, sourceOwnerOnly: true, realOSIME: false }));
+      failed = false;
+    } catch (error) {
+      console.log(JSON.stringify({ phase: 'short-stage-literal-fence-first-failure', mode, operation: phase,
+        owner: await readCurrentDocumentOwner(page), failures: stage.failures,
+        firstObservation: (await probe.snapshot()).failure }));
+      throw error;
+    } finally {
+      await finishShortStageObservation(probe, frames, `short-source-${mode}-${marker[0] === '~' ? 'tilde' : 'backtick'}`, failed);
+    }
+  });
+}
+
+test('[short-stage] full reverse P-H2-P mouse range keeps unselected ends and natural history', async ({ page }) => {
+  const initial = 'Before.\n\nalphaX\n\n## Heading\n\nYzeta\n\nAfter.';
+  const replaced = 'Before.\n\nalphaMzeta\n\nAfter.';
+  const continued = 'Before.\n\nalphaMQzeta\n\nAfter.';
+  const stage = await openShortStage(page, 'full', initial);
+  const allowed = new Set([initial, replaced, continued]);
+  const probe = await startShortStageProbe(page, stage, allowed);
+  const frames = await startShortStageFrames(page, stage.surface);
+  let phase = 'real-reverse-cross-block-drag', failed = true;
+  try {
+    frames.stage(phase);
+    const point = (row, offset) => row.evaluate((paragraph, at) => {
+      const text = paragraph.firstChild;
+      if (!(text instanceof Text) || at >= text.length) throw new Error('short-stage-cross-block-point-unavailable');
+      const range = paragraph.ownerDocument.createRange();
+      range.setStart(text, at); range.setEnd(text, at + 1);
+      const rect = range.getBoundingClientRect();
+      return { x: rect.x + 1, y: rect.y + rect.height / 2 };
+    }, offset);
+    const from = await point(stage.visual.locator('p').nth(2), 1);
+    const to = await point(stage.visual.locator('p').nth(1), 5);
+    await page.mouse.move(from.x, from.y); await page.mouse.down();
+    await page.mouse.move(to.x, to.y, { steps: 8 }); await page.mouse.up();
+    probe.guard();
+    const native = await stage.visual.evaluate((surface) => {
+      const selection = getSelection(), paragraphs = surface.querySelectorAll('p');
+      const offset = (paragraph, node, end) => {
+        if (!node || !paragraph.contains(node)) return null;
+        const prefix = paragraph.ownerDocument.createRange();
+        prefix.selectNodeContents(paragraph); prefix.setEnd(node, end);
+        return prefix.toString().length;
+      };
+      const range = selection?.rangeCount === 1 ? selection.getRangeAt(0) : null;
+      return { backward: !!range && !selection.isCollapsed && range.endContainer === selection.anchorNode
+        && range.endOffset === selection.anchorOffset,
+        anchorOffset: offset(paragraphs[2], selection?.anchorNode, selection?.anchorOffset),
+        focusOffset: offset(paragraphs[1], selection?.focusNode, selection?.focusOffset) };
+    });
+    expect(native).toEqual({ backward: true, anchorOffset: 1, focusOffset: 5 });
+    phase = 'cross-block-replace-and-immediate-continue'; frames.stage(phase);
+    await probe.type('M'); await expectSource(stage.source, replaced);
+    await probe.type('Q'); await expectSource(stage.source, continued);
+    const observation = await probe.snapshot();
+    const history = shortStageHistoryLedger(observation.rows, initial, allowed);
+    await probe.freeze();
+    phase = 'cross-block-natural-Undo-Redo'; frames.stage(phase);
+    await shortStageReplayHistory(page, stage, probe, history, 'undo', history.baseline);
+    await expectSource(stage.source, initial);
+    await shortStageReplayHistory(page, stage, probe, history, 'redo', history.latest);
+    await expectSource(stage.source, continued);
+    await expect(stage.visual).not.toHaveAttribute('aria-busy', 'true');
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    probe.guard();
+    console.log(JSON.stringify({ phase: 'short-stage-backward-cross-block-complete', native,
+      sourceExact: true, owner: await readCurrentDocumentOwner(page) }));
+    failed = false;
+  } catch (error) {
+    console.log(JSON.stringify({ phase: 'short-stage-backward-cross-block-first-failure', operation: phase,
+      owner: await readCurrentDocumentOwner(page), firstObservation: (await probe.snapshot()).failure }));
+    throw error;
+  } finally {
+    await finishShortStageObservation(probe, frames, 'short-backward-cross-block', failed);
+  }
+});
+
+test('[short-stage-background] dirty article survives focus loss and natural autosave', async ({ page }) => {
+  test.setTimeout(780_000);
+  const initial = '# 背景\n\nAlpha 开始。\n\nBeta 结束。';
+  const afterForeground = initial + '甲A';
+  const afterReturn = afterForeground + '乙B';
+  const afterDelete = afterForeground + '乙';
+  const caseDeadline = Date.now() + 720_000;
+  const boundedTimeout = (desired) => {
+    const remaining = caseDeadline - Date.now();
+    if (remaining <= 0) throw new Error('background-case-budget-exhausted');
+    return Math.min(desired, remaining);
+  };
+  const coverage = {
+    foregroundCycle: false, backgroundCycle: false, returnCycle: false,
+    returnFocus: false, focusLost: false, autosaveSuccess: false,
+    postChanged: null, sessionReady: false, intervals: null,
+    localDraft: { applicable: null, intervalSeconds: null, saved: null,
+      updatedAtAdvanced: false, contentMatchesCurrent: false }
+  };
+  const healthFailures = [];
+  const onPopup = () => healthFailures.push('background-popup');
+  page.on('popup', onPopup);
+  let second = null;
+  let stage = null;
+  let stageProbe = null;
+  let frames = null;
+  let finalProbe = null;
+  let primaryError = null;
+  const disableFocusOverride = async (targetPage) => {
+    const cdp = await targetPage.context().newCDPSession(targetPage);
+    await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: false });
+    return cdp;
+  };
+  const focusOverrideSessions = [];
+  const detachFocusOverrides = async () => {
+    const failures = [];
+    for (const cdp of focusOverrideSessions.splice(0)) {
+      try { await cdp.detach(); }
+      catch { failures.push('focus-override-detach'); }
+    }
+    if (failures.length) throw new Error(failures.join(','));
+  };
+  const readProbe = () => page.evaluate(() => window.__easymdeBackgroundProbe.read());
+  const throwUncovered = (codes) => {
+    throw new Error(`background-stage-uncovered:${[...new Set(codes)].join(',')}`);
+  };
+  const reportSafeCoverage = () => {
+    const safe = { ...coverage };
+    if (finalProbe) {
+      safe.sendCount = finalProbe.send.length;
+      safe.tickCount = finalProbe.tick.length;
+      safe.autosaveCount = finalProbe.autosave.length;
+    }
+    console.log(JSON.stringify({
+      phase: 'short-stage-background-coverage-finally',
+      coverage: safe
+    }));
+  };
+  try {
+    await page.bringToFront();
+    focusOverrideSessions.push(await disableFocusOverride(page));
+    stage = await openShortStage(page, 'full', initial, () => installBackgroundProbe(page));
+    frames = await startShortStageFrames(page, stage.surface, { retainStages: true });
+    stageProbe = await startShortStageProbe(page, stage,
+      [initial, initial + '甲', afterForeground, afterReturn, afterDelete], { backgroundObservation: true, frames });
+    let localDraftUpdatedAtBaseline = null;
+    const waitUntil = async (predicate, { message, timeout }) => {
+      const deadline = Date.now() + timeout;
+      while (Date.now() < deadline) {
+        if (await predicate()) return true;
+        await page.waitForTimeout(Math.max(1, Math.min(250, deadline - Date.now())));
+      }
+      console.log(JSON.stringify({ phase: 'short-stage-background-wait-timeout', message }));
+      return false;
+    };
+    const guard = async ({ focused = true } = {}) => {
+      stageProbe.guard();
+      if (healthFailures.length) throw new Error(`background-health:${healthFailures[0]}`);
+      if (stage.failures.length) throw new Error(`background-stage-failure:${stage.failures[0]}`);
+      const state = await readProbe();
+      if (state.sessionStatus !== 'ready') {
+        throw new Error(`background-session:${state.sessionStatus}`);
+      }
+      if (state.heartbeat.connectionError === true) {
+        throw new Error('background-heartbeat-connection-error');
+      }
+      if (focused
+        && (state.documentHasFocus !== true || state.heartbeat.coreHasFocus !== true)) {
+        throw new Error('background-unexpected-focus-loss');
+      }
+      if (!focused
+        && (state.documentHasFocus !== false || state.heartbeat.coreHasFocus !== false)) {
+        throw new Error('background-expected-focus-loss-not-observed');
+      }
+      if (state.surfaceEditable !== true || state.lockPressed !== 'false') {
+        throw new Error('background-unexpected-readonly-or-lock');
+      }
+      return state;
+    };
+    const installed = await guard();
+    coverage.intervals = installed.intervals;
+    coverage.localDraft = {
+      applicable: installed.localDraft.applicable,
+      intervalSeconds: installed.localDraft.intervalSeconds,
+      saved: installed.localDraft.applicable ? false : null,
+      updatedAtAdvanced: false,
+      contentMatchesCurrent: false
+    };
+    localDraftUpdatedAtBaseline = installed.localDraft.storage?.updatedAt ?? null;
+    const waitForCycle = async (phase, focused) => {
+      const start = await guard({ focused });
+      const interval = Math.max(Number(start.heartbeat.interval) || 0,
+        Number(start.heartbeat.minimalInterval) || 0,
+        focused ? 0 : 120);
+      if (!(interval > 0)) return false;
+      const baselineSendOrdinal = start.send.at(-1)?.ordinal ?? 0;
+      const baselineTickOrdinal = start.tick.at(-1)?.ordinal ?? 0;
+      const timeout = boundedTimeout(interval * 1000 * 2 + 20_000);
+      await stageProbe.beginQuiet(`${phase}-heartbeat`);
+      const observed = await waitUntil(async () => {
+        await guard({ focused });
+        const current = await readProbe();
+        return current.tick.some((entry) => entry.ordinal > baselineTickOrdinal
+          && entry.durationMs !== null
+          && entry.sendOrdinal !== null
+          && entry.sendOrdinal > baselineSendOrdinal
+          && entry.sendDocumentHasFocus === focused
+          && entry.sendCoreHasFocus === focused);
+      }, { message: `${phase} natural heartbeat send→tick`, timeout });
+      await stageProbe.endQuiet();
+      return observed;
+    };
+    const waitForAutosave = async () => {
+      const start = await guard();
+      const autosaveSeconds = Number(start.intervals.autosave);
+      const heartbeatSeconds = Math.max(Number(start.heartbeat.interval) || 0,
+        Number(start.heartbeat.minimalInterval) || 0);
+      if (!(autosaveSeconds > 0) || !(heartbeatSeconds > 0)) return false;
+      const timeout = boundedTimeout(
+        (Math.max(autosaveSeconds, heartbeatSeconds) + heartbeatSeconds) * 1000 + 20_000);
+      await stageProbe.beginQuiet('natural-autosave');
+      const observed = await waitUntil(async () => {
+        await guard();
+        const current = await readProbe();
+        return current.autosave.some((entry) => {
+          if (entry.success !== true || entry.attemptOrdinal === null) return false;
+          const attempt = current.autosaveAttempts.find(
+            (candidate) => candidate.ordinal === entry.attemptOrdinal);
+          return attempt?.postChanged === true
+            && (attempt.contentMatchesCurrent === true || attempt.at >= dirtyAt);
+        });
+      }, { message: 'natural Core autosave success after post-dirty attempt', timeout });
+      await stageProbe.endQuiet();
+      return observed;
+    };
+    const waitForLocalDraft = async () => {
+      if (!coverage.localDraft.applicable) return true;
+      const draftSeconds = Number(coverage.localDraft.intervalSeconds);
+      if (!(draftSeconds > 0)) return false;
+      const timeout = boundedTimeout(draftSeconds * 1000 + 20_000);
+      await stageProbe.beginQuiet('local-draft-debounce');
+      const observed = await waitUntil(async () => {
+        await guard();
+        const current = await readProbe();
+        const storage = current.localDraft.storage;
+        const advanced = storage?.present === true && storage.updatedAt !== null
+          && (localDraftUpdatedAtBaseline === null
+            || storage.updatedAt > localDraftUpdatedAtBaseline);
+        coverage.localDraft.updatedAtAdvanced = advanced;
+        coverage.localDraft.contentMatchesCurrent = storage?.contentMatchesCurrent === true;
+        return advanced && coverage.localDraft.contentMatchesCurrent;
+      }, { message: 'local draft debounce completion evidence', timeout });
+      await stageProbe.endQuiet();
+      return observed;
+    };
+    await guard();
+    await stage.visual.locator('p').last().click();
+    await stageProbe.press('End');
+    await guard();
+    await stageProbe.type('甲A');
+    await guard();
+    await expectSource(stage.source, afterForeground);
+    const dirtyProbe = await readProbe();
+    coverage.postChanged = dirtyProbe.postChanged;
+    const dirtyAt = await page.evaluate(() => performance.now());
+    if (coverage.localDraft.applicable) {
+      coverage.localDraft.saved = await waitForLocalDraft();
+    }
+    coverage.foregroundCycle = await waitForCycle('foreground', true);
+    coverage.autosaveSuccess = await waitForAutosave();
+    await guard();
+    const blurBaseline = (await readProbe()).focus.filter(
+      (entry) => entry.type === 'blur').at(-1)?.ordinal ?? 0;
+    await stageProbe.beginQuiet('focus-out');
+    second = await page.context().newPage();
+    focusOverrideSessions.push(await disableFocusOverride(second));
+    await second.goto('about:blank');
+    await second.bringToFront();
+    coverage.focusLost = await waitUntil(async () => {
+      const current = await readProbe();
+      return current.documentHasFocus === false
+        && current.heartbeat.coreHasFocus === false
+        && current.focus.some((entry) => entry.type === 'blur'
+          && entry.ordinal > blurBaseline);
+    }, { message: 'first page must lose real focus', timeout: boundedTimeout(15_000) });
+    await stageProbe.endQuiet();
+    if (!coverage.focusLost) throwUncovered(['focus-loss']);
+    coverage.backgroundCycle = await waitForCycle('background', false);
+    if (!coverage.backgroundCycle) throwUncovered(['background-heartbeat']);
+    const focusBaseline = (await readProbe()).focus.filter(
+      (entry) => entry.type === 'focus').at(-1)?.ordinal ?? 0;
+    await stageProbe.beginQuiet('focus-return');
+    await page.bringToFront();
+    coverage.returnFocus = await waitUntil(async () => {
+      const current = await readProbe();
+      return current.documentHasFocus === true
+        && current.heartbeat.coreHasFocus === true
+        && current.focus.some((entry) => entry.type === 'focus'
+          && entry.ordinal > focusBaseline);
+    }, { message: 'first page must regain real focus', timeout: boundedTimeout(15_000) });
+    await stageProbe.endQuiet();
+    if (!coverage.returnFocus) throwUncovered(['return-focus']);
+    coverage.returnCycle = await waitForCycle('return', true);
+    if (!coverage.returnCycle) throwUncovered(['return-heartbeat']);
+    const inputUnmet = [];
+    if (coverage.postChanged !== true) inputUnmet.push('pre-save-dirty');
+    if (!coverage.foregroundCycle) inputUnmet.push('foreground-heartbeat');
+    if (coverage.localDraft.applicable === true && coverage.localDraft.saved !== true) {
+      inputUnmet.push('local-draft-save');
+    }
+    if (!coverage.autosaveSuccess) inputUnmet.push('autosave-success');
+    if (inputUnmet.length) throwUncovered(inputUnmet);
+    await guard();
+    frames.stage('post-cycle-native-editing');
+    await stageProbe.resumeEditing();
+    await stageProbe.type('乙B');
+    await guard();
+    await expectSource(stage.source, afterReturn);
+    await guard();
+    await stageProbe.press('Backspace');
+    await guard();
+    await expectSource(stage.source, afterDelete);
+    await guard();
+    await stageProbe.press('Control+z');
+    await guard();
+    await expectSource(stage.source, afterReturn);
+    await guard();
+    await stageProbe.press('Control+Shift+z');
+    await guard();
+    await expectSource(stage.source, afterDelete);
+    expect(stage.failures).toEqual([]);
+    finalProbe = await readProbe();
+    coverage.sessionReady = finalProbe.sessionStatus === 'ready';
+    const unmet = [];
+    if (coverage.postChanged !== true) unmet.push('pre-save-dirty');
+    if (!coverage.foregroundCycle) unmet.push('foreground-heartbeat');
+    if (!coverage.focusLost) unmet.push('focus-loss');
+    if (!coverage.backgroundCycle) unmet.push('background-heartbeat');
+    if (!coverage.returnFocus) unmet.push('return-focus');
+    if (!coverage.returnCycle) unmet.push('return-heartbeat');
+    if (!coverage.autosaveSuccess) unmet.push('autosave-success');
+    if (!coverage.sessionReady) unmet.push('session-ready');
+    if (coverage.localDraft.applicable === true && coverage.localDraft.saved !== true) {
+      unmet.push('local-draft-save');
+    }
+    if (unmet.length) throwUncovered(unmet);
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    const cleanupFailures = [];
+    try { reportSafeCoverage(); } catch { cleanupFailures.push('coverage-report'); }
+    try { page.off('popup', onPopup); } catch { cleanupFailures.push('popup-listener-off'); }
+    try { await stageProbe?.stop(); } catch { cleanupFailures.push('stage-probe-stop'); }
+    try { await frames?.stop('background-complete-observation'); } catch { cleanupFailures.push('compositor-stop'); }
+    try { await page.evaluate(() => window.__easymdeBackgroundProbe?.cleanup()); }
+    catch { cleanupFailures.push('background-probe-cleanup'); }
+    try { await detachFocusOverrides(); }
+    catch { cleanupFailures.push('focus-override-detach'); }
+    if (second) {
+      try { await second.close(); } catch { cleanupFailures.push('second-page-close'); }
+    }
+    if (cleanupFailures.length) {
+      console.log(JSON.stringify({
+        phase: 'short-stage-background-cleanup-failure',
+        failures: cleanupFailures
+      }));
+      if (!primaryError) {
+        throw new Error(`background-cleanup-failed:${cleanupFailures.join(',')}`);
+      }
+    }
+  }
+});
+
+test('[short-stage-lock] active Preview lock survives natural cycles and resumes editing', async ({ page }) => {
+  test.setTimeout(540_000);
+  const initial = '# 锁\n\nAlpha 开始。\n\nBeta 结束。';
+  const typed = initial + 'V';
+  const resumed = typed + 'X';
+  const sink = page.locator('[data-easymde-preview-html-sink]');
+  const lock = page.locator('.easymde-immersive-preview-lock');
+  const caseDeadline = Date.now() + 480_000;
+  const boundedTimeout = (desired) => {
+    const remaining = caseDeadline - Date.now();
+    if (remaining <= 0) throw new Error('lock-case-budget-exhausted');
+    return Math.min(desired, remaining);
+  };
+  let stage = null;
+  let stageProbe = null, frames = null;
+  let primaryError = null;
+  const readProbe = () => page.evaluate(() => window.__easymdeBackgroundProbe.read());
+  const waitUntil = async (predicate, { message, timeout }) => {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      if (await predicate()) return true;
+      await page.waitForTimeout(Math.max(1, Math.min(250, deadline - Date.now())));
+    }
+    console.log(JSON.stringify({ phase: 'short-stage-lock-wait-timeout', message }));
+    return false;
+  };
+  const guard = async ({ locked = false } = {}) => {
+    stageProbe?.guard();
+    if (stage.failures.length) throw new Error(`lock-stage-failure:${stage.failures[0]}`);
+    const state = await readProbe();
+    if (state.visibilityState !== 'visible') {
+      throw new Error(`lock-stage-visibility:${state.visibilityState}`);
+    }
+    if (state.sessionStatus !== 'ready') {
+      throw new Error(`lock-stage-session:${state.sessionStatus}`);
+    }
+    if (state.heartbeat.connectionError === true) {
+      throw new Error('lock-stage-heartbeat-connection-error');
+    }
+    if (state.lockPressed !== (locked ? 'true' : 'false')) {
+      throw new Error(`lock-stage-lock:${state.lockPressed}`);
+    }
+    if (locked ? state.surfaceEditable !== false : state.surfaceEditable !== true) {
+      throw new Error(locked ? 'lock-stage-unexpected-editable' : 'lock-stage-unexpected-readonly');
+    }
+    return state;
+  };
+  const waitForCycle = async (label, locked) => {
+    const start = await guard({ locked });
+    const interval = Math.max(Number(start.heartbeat.interval) || 0,
+      Number(start.heartbeat.minimalInterval) || 0);
+    if (!(interval > 0)) throw new Error(`lock-stage-uncovered:${label}-interval`);
+    const baselineSendOrdinal = start.send.at(-1)?.ordinal ?? 0;
+    const baselineTickOrdinal = start.tick.at(-1)?.ordinal ?? 0;
+    const timeout = boundedTimeout(interval * 1000 * 2 + 20_000);
+    await stageProbe.beginQuiet(`${label}-heartbeat`);
+    const covered = await waitUntil(async () => {
+      await guard({ locked });
+      const current = await readProbe();
+      return current.tick.some((entry) => entry.ordinal > baselineTickOrdinal
+        && entry.durationMs !== null
+        && entry.sendOrdinal !== null
+        && entry.sendOrdinal > baselineSendOrdinal
+        && entry.sendVisibility === 'visible');
+    }, { message: `${label} natural heartbeat`, timeout });
+    await stageProbe.endQuiet();
+    if (!covered) throw new Error(`lock-stage-uncovered:${label}-heartbeat`);
+  };
+  const waitForAutosave = async (dirtyAt) => {
+    const start = await guard();
+    const autosaveSeconds = Number(start.intervals.autosave);
+    const heartbeatSeconds = Math.max(Number(start.heartbeat.interval) || 0,
+      Number(start.heartbeat.minimalInterval) || 0);
+    if (!(autosaveSeconds > 0) || !(heartbeatSeconds > 0)) {
+      throw new Error('lock-stage-uncovered:pre-lock-autosave-interval');
+    }
+    const timeout = boundedTimeout(
+      (Math.max(autosaveSeconds, heartbeatSeconds) + heartbeatSeconds) * 1000 + 20_000);
+    await stageProbe.beginQuiet('pre-lock-autosave');
+    const covered = await waitUntil(async () => {
+      await guard();
+      const current = await readProbe();
+      return current.autosave.some((entry) => {
+        if (entry.success !== true || entry.attemptOrdinal === null) return false;
+        const attempt = current.autosaveAttempts.find(
+          (candidate) => candidate.ordinal === entry.attemptOrdinal);
+        return attempt?.postChanged === true
+          && (attempt.contentMatchesCurrent === true || attempt.at >= dirtyAt);
+      });
+    }, { message: 'pre-lock natural autosave', timeout });
+    await stageProbe.endQuiet();
+    if (!covered) throw new Error('lock-stage-uncovered:pre-lock-autosave');
+  };
+  try {
+    await page.bringToFront();
+    stage = await openShortStage(page, 'full', initial, () => installBackgroundProbe(page));
+    frames = await startShortStageFrames(page, stage.surface, { retainStages: true });
+    stageProbe = await startShortStageProbe(page, stage, [initial, typed, resumed],
+      { backgroundObservation: true, allowLocked: true, frames });
+    await guard();
+    await sink.locator('p').last().click();
+    await page.keyboard.press('End');
+    await page.keyboard.type('V');
+    await guard();
+    await expectSource(stage.source, typed);
+    const dirtyAt = await page.evaluate(() => performance.now());
+    await waitForAutosave(dirtyAt);
+    await waitForCycle('pre-lock', false);
+    await expectSource(stage.source, typed);
+    const beforeLock = await readCurrentDocumentOwner(page);
+    await guard();
+    await stageProbe.beginQuiet('user-lock-toggle');
+    await lock.click();
+    await expect(lock).toHaveAttribute('aria-pressed', 'true');
+    const lockedSink = await sink.evaluate((surface) => ({
+      effectiveEditable: surface.isContentEditable,
+      contenteditable: surface.getAttribute('contenteditable')
+    }));
+    expect(lockedSink.effectiveEditable, 'locked sink must be effectively read-only').toBe(false);
+    expect(lockedSink.contenteditable).not.toBe('true');
+    await guard({ locked: true });
+    await sink.locator('p').last().click();
+    await guard({ locked: true });
+    await stageProbe.endQuiet();
+    await waitForCycle('locked', true);
+    await expect(lock).toHaveAttribute('aria-pressed', 'true');
+    const afterCycleSink = await sink.evaluate((surface) => ({
+      effectiveEditable: surface.isContentEditable,
+      contenteditable: surface.getAttribute('contenteditable')
+    }));
+    expect(afterCycleSink.effectiveEditable, 'lock must survive a natural cycle').toBe(false);
+    const afterCycle = await readCurrentDocumentOwner(page);
+    expect(afterCycle.revision, 'natural cycle must not change revision while locked').toBe(beforeLock.revision);
+    expect(afterCycle.history, 'natural cycle must not change history while locked').toEqual(beforeLock.history);
+    await expectSource(stage.source, typed);
+    await stageProbe.beginQuiet('locked-negative-inputs');
+    for (const key of ['Q', 'Backspace', 'Enter']) {
+      await guard({ locked: true });
+      if (key === 'Q') await page.keyboard.type('Q');
+      else await page.keyboard.press(key);
+      await expectSource(stage.source, typed);
+      const lockedOwner = await readCurrentDocumentOwner(page);
+      expect(lockedOwner.revision, `${key}: locked revision must not change`).toBe(beforeLock.revision);
+      expect(lockedOwner.history, `${key}: locked history must not change`).toEqual(beforeLock.history);
+      await guard({ locked: true });
+    }
+    await stageProbe.endQuiet();
+    expect(stage.failures).toEqual([]);
+    await guard({ locked: true });
+    await stageProbe.beginQuiet('user-unlock-toggle');
+    await lock.click();
+    await expect(sink).toHaveAttribute('contenteditable', 'true');
+    await guard();
+    await stageProbe.endQuiet();
+    frames.stage('resumed-native-editing');
+    await stageProbe.resumeEditing();
+    await page.keyboard.type('X');
+    await expectSource(stage.source, resumed);
+    await guard();
+    await page.keyboard.press('Control+z');
+    await guard();
+    await expectSource(stage.source, typed);
+    await guard();
+    await page.keyboard.press('Control+Shift+z');
+    await guard();
+    await expectSource(stage.source, resumed);
+    await guard();
+    expect(stage.failures).toEqual([]);
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    const cleanupFailures = [];
+    try { await stageProbe?.stop(); } catch { cleanupFailures.push('stage-probe-stop'); }
+    try { await frames?.stop('lock-complete-observation'); } catch { cleanupFailures.push('compositor-stop'); }
+    try { await page.evaluate(() => window.__easymdeBackgroundProbe?.cleanup()); }
+    catch { cleanupFailures.push('background-probe-cleanup'); }
+    if (cleanupFailures.length) {
+      console.log(JSON.stringify({
+        phase: 'short-stage-lock-cleanup-failure',
+        failures: cleanupFailures
+      }));
+      if (!primaryError) {
+        throw new Error(`lock-cleanup-failed:${cleanupFailures.join(',')}`);
+      }
+    }
   }
 });

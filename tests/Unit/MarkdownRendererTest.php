@@ -1153,4 +1153,114 @@ MD;
         $this->assertStringNotContainsString('<select', $html);
         $this->assertStringNotContainsString('<textarea', $html);
     }
+
+    public function test_controlled_table_cell_break_is_only_the_exact_lowercase_token()
+    {
+        $renderers = array(
+            'render'         => static function ( $markdown ) {
+                return MarkdownRenderer::render( $markdown, 'default' );
+            },
+            'render_preview' => static function ( $markdown ) {
+                $preview = MarkdownRenderer::render_preview( $markdown, 'default' );
+                return $preview['html'];
+            },
+        );
+        $shape = static function ( $html, $cell_index = 0 ) {
+            $document              = new DOMDocument( '1.0', 'UTF-8' );
+            $previous_libxml_state = libxml_use_internal_errors( true );
+            try {
+                $loaded = $document->loadHTML(
+                    '<?xml encoding="UTF-8"><div id="table-break-root">' . $html . '</div>',
+                    LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+                );
+            } finally {
+                libxml_clear_errors();
+                libxml_use_internal_errors( $previous_libxml_state );
+            }
+            $root = $document->getElementById( 'table-break-root' );
+            if ( ! $loaded || ! $root instanceof DOMElement ) {
+                return null;
+            }
+            $xpath = new DOMXPath( $document );
+            $cell  = $xpath->query( '//th|//td' )->item( $cell_index );
+            if ( ! $cell instanceof DOMElement ) {
+                return null;
+            }
+            $children = array();
+            foreach ( $cell->childNodes as $child ) {
+                $children[] = array(
+                    'type'  => $child->nodeType,
+                    'name'  => strtolower( $child->nodeName ),
+                    'text'  => $child->nodeType === XML_TEXT_NODE ? $child->nodeValue : null,
+                    'attrs' => $child instanceof DOMElement ? $child->attributes->length : 0,
+                );
+            }
+            return $children;
+        };
+        $assert_break = static function ( $html ) use ( $shape ) {
+            $children = $shape( $html );
+            if ( ! is_array( $children ) ) {
+                return false;
+            }
+            foreach ( $children as $child ) {
+                if ( 'br' !== $child['name'] ) {
+                    continue;
+                }
+                return $child;
+            }
+            return false;
+        };
+        $assert_no_break = static function ( $html ) use ( $shape ) {
+            $children = $shape( $html );
+            if ( ! is_array( $children ) ) {
+                return true;
+            }
+            foreach ( $children as $child ) {
+                if ( 'br' === $child['name'] ) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        foreach ( $renderers as $name => $render ) {
+            $children = $shape( $render( "| A<br>B |\n| --- |\n" ) );
+            $this->assertSame(
+                array(
+                    array( 'type' => XML_TEXT_NODE, 'name' => '#text', 'text' => 'A', 'attrs' => 0 ),
+                    array( 'type' => XML_ELEMENT_NODE, 'name' => 'br', 'text' => null, 'attrs' => 0 ),
+                    array( 'type' => XML_TEXT_NODE, 'name' => '#text', 'text' => 'B', 'attrs' => 0 ),
+                ),
+                $children,
+                $name
+            );
+            $this->assertNotFalse( $assert_break( $render( "| A<br>B |\n| --- |\n" ) ) );
+
+            foreach (
+                array(
+                    'paragraph'   => 'A<br>B',
+                    'uppercase'   => "| A<BR>B |\n| --- |\n",
+                    'self-closing'=> "| A<br/>B |\n| --- |\n",
+                    'attributes'  => "| A<br class=\"x\">B |\n| --- |\n",
+                    'code-span'   => "| `<br>` |\n| --- |\n",
+                    'escaped'     => "| A\\<br>B |\n| --- |\n",
+                    'entity'      => "| A&lt;br&gt;B |\n| --- |\n",
+                    'dangerous'   => "| A<script>x</script>B |\n| --- |\n",
+                ) as $case => $markdown
+            ) {
+                $this->assertTrue( $assert_no_break( $render( $markdown ) ), $name . ':' . $case );
+            }
+        }
+
+        $adjacent = $renderers['render_preview']( "| A<br>B | C<br>D |\n| --- | --- |\n" );
+        $this->assertNotFalse( $assert_break( $adjacent ) );
+        $this->assertSame( array( 'A', 'B' ), array_values( array_map( static function ( $child ) {
+            return $child['text'];
+        }, array_filter( $shape( $adjacent, 0 ), static function ( $child ) {
+            return null !== $child['text'];
+        } ) ) ) );
+
+        $quoted = $renderers['render_preview']( "> | A<br>B |\n> | --- |\n" );
+        $this->assertNotFalse( $assert_break( $quoted ) );
+    }
 }

@@ -10,6 +10,7 @@ import {
   waitFor,
   within
 } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { EditorSelection } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import observedKatex from 'katex';
@@ -65,6 +66,14 @@ import {
 } from '../../features/editor-context-menu/editor-code-content-target';
 import type { EditorContextMenuSurfaceSnapshot, EditorContextMenuTargetLease } from '../../features/editor-context-menu/EditorContextMenuFeature';
 import * as observedPreviewOwner from '../../features/live-preview/ui/PreviewSurfaceOwner';
+import * as observedActionCoordinator from '../../features/editor-context-menu/editor-context-menu-action-coordinator';
+import * as observedSink from '../../features/live-preview/ui/SafePreviewHtmlSink';
+import type {
+  SafePreviewHtmlSinkCommit,
+  SafePreviewHtmlSinkMaterializeCommit,
+  SafePreviewHtmlSinkWindowCommit
+} from '../../features/live-preview/ui/SafePreviewHtmlSink';
+import * as observedWindowedOwner from '../../features/immersive-editor/ui/WindowedImmersiveVisualEditor';
 import { DEFAULT_PREVIEW_WINDOW_MAX_MOUNTED } from '../../features/live-preview/model/preview-window-model';
 import {
   focusVisualPreviewRuntime,
@@ -333,6 +342,221 @@ function layoutPreviewSurface(container: HTMLElement): void {
   layoutContextMenuSurface(surface, { keepLivePreviewGeometry: true });
 }
 
+type PointerGestureDriver = Readonly<{
+  down: (target: Node, isTrusted: boolean) => void;
+  release: (
+    type: 'pointerup' | 'pointercancel',
+    target: Node,
+    isTrusted: boolean
+  ) => void;
+}>;
+
+type PointerGestureRegistration = {
+  listener: EventListener;
+  target: EventTarget;
+  type: string;
+};
+
+const POINTER_GESTURE_EVENT_TYPES: Readonly<Record<string, true>> = {
+  pointercancel: true,
+  pointerdown: true,
+  pointerup: true
+};
+
+/**
+ * Capture the pointer listeners the real owners register during mount, so the
+ * test can deliver an engine-style record (including `isTrusted`) to the same
+ * consumers a browser would invoke. The record is modeled, not a real browser
+ * gesture; production admission checks are unchanged.
+ */
+function capturePointerGestureRegistrations(): (
+  surface: HTMLElement
+) => PointerGestureDriver {
+  const registrations: PointerGestureRegistration[] = [];
+  const addEventListener = EventTarget.prototype.addEventListener;
+  const removeEventListener = EventTarget.prototype.removeEventListener;
+  vi.spyOn(EventTarget.prototype, 'addEventListener').mockImplementation(
+    function (
+      this: EventTarget,
+      type: string,
+      listener: EventListenerOrEventListenerObject | null,
+      options?: boolean | AddEventListenerOptions
+    ) {
+      if (
+        null !== listener
+        && 'function' === typeof listener
+        && true === POINTER_GESTURE_EVENT_TYPES[type]
+        && !registrations.some(
+          (entry) =>
+            entry.target === this
+            && entry.type === type
+            && entry.listener === listener
+        )
+      ) {
+        registrations.push({ listener, target: this, type });
+      }
+      addEventListener.call(this, type, listener, options);
+    }
+  );
+  vi.spyOn(EventTarget.prototype, 'removeEventListener').mockImplementation(
+    function (
+      this: EventTarget,
+      type: string,
+      listener: EventListenerOrEventListenerObject | null,
+      options?: boolean | EventListenerOptions
+    ) {
+      if (
+        'function' === typeof listener
+        && true === POINTER_GESTURE_EVENT_TYPES[type]
+      ) {
+        const index = registrations.findIndex(
+          (entry) =>
+            entry.target === this
+            && entry.type === type
+            && entry.listener === listener
+        );
+        if (index >= 0) registrations.splice(index, 1);
+      }
+      removeEventListener.call(this, type, listener, options);
+    }
+  );
+  return (surface) => {
+    let baseline: Set<PointerGestureRegistration> = new Set();
+    const invoke = (
+      type: 'pointerdown' | 'pointerup' | 'pointercancel',
+      currentTarget: EventTarget,
+      target: Node,
+      isTrusted: boolean,
+      entries: ReadonlyArray<PointerGestureRegistration>
+    ): void => {
+      const listeners = Array.from(
+        new Set(entries.map((entry) => entry.listener))
+      );
+      if (0 === listeners.length) {
+        throw new Error(`visual-pointer-listener-missing:${type}`);
+      }
+      for (const listener of listeners) {
+        listener.call(currentTarget, {
+          altKey: false,
+          bubbles: true,
+          button: 0,
+          buttons: 'pointerdown' === type ? 1 : 0,
+          cancelable: true,
+          clientX: 12,
+          clientY: 16,
+          composed: true,
+          ctrlKey: false,
+          currentTarget,
+          defaultPrevented: false,
+          detail: 0,
+          isPrimary: true,
+          isTrusted,
+          metaKey: false,
+          pageX: 12,
+          pageY: 16,
+          pointerId: 7,
+          pointerType: 'mouse',
+          preventDefault: vi.fn(),
+          screenX: 12,
+          screenY: 16,
+          shiftKey: false,
+          stopImmediatePropagation: vi.fn(),
+          stopPropagation: vi.fn(),
+          target,
+          type,
+          view: window
+        } as unknown as PointerEvent);
+      }
+    };
+    return {
+      down: (target, isTrusted) => {
+        baseline = new Set(registrations);
+        const surfaceEntries = registrations.filter(
+          (entry) => entry.type === 'pointerdown' && entry.target === surface
+        );
+        invoke('pointerdown', surface, target, isTrusted, surfaceEntries);
+      },
+      release: (type, target, isTrusted) => {
+        const gestureEntries = registrations.filter(
+          (entry) =>
+            !baseline.has(entry)
+            && entry.type === type
+            && entry.target === document
+        );
+        invoke(type, document, target, isTrusted, gestureEntries);
+      }
+    };
+  };
+}
+
+/**
+ * Uses the actually restored accepted native range (never a re-created one)
+ * to continue editing: a cancelable beforeinput replaces the selected Lead
+ * with X. If the production does not consume it, the browser default over the
+ * actual range is simulated before the input event. Acceptance must not have
+ * changed revision/history; this edit must add exactly one history step.
+ */
+async function continueEditingRestoredLeadSelection(
+  options: Readonly<{
+    visual: HTMLElement;
+    owner: CodeMirrorDocumentSession;
+    acceptedSource: string;
+    acceptedRevision: number | undefined;
+    acceptedHistory: DocumentHistoryState;
+    onFailure: (code: string) => void;
+    label: string;
+  }>
+): Promise<void> {
+  const {
+    visual,
+    owner,
+    acceptedSource,
+    acceptedRevision,
+    acceptedHistory,
+    onFailure,
+    label
+  } = options;
+  expect(acceptedSource.startsWith('Lead')).toBe(true);
+  const selection = window.getSelection();
+  if (!selection?.rangeCount || selection.isCollapsed) {
+    throw new Error(`${label}-restored-selection-missing`);
+  }
+  const target = selection.getRangeAt(0).cloneRange();
+  expect(target.toString()).toBe('Lead');
+  const beforeinput = new InputEvent('beforeinput', {
+    bubbles: true,
+    cancelable: true,
+    data: 'X',
+    inputType: 'insertText'
+  });
+  visual.dispatchEvent(beforeinput);
+  if (!beforeinput.defaultPrevented) {
+    target.deleteContents();
+    const inserted = document.createTextNode('X');
+    target.insertNode(inserted);
+    const caret = document.createRange();
+    caret.setStart(inserted, 1);
+    caret.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(caret);
+    visual.dispatchEvent(
+      new InputEvent('input', {
+        bubbles: true,
+        data: 'X',
+        inputType: 'insertText'
+      })
+    );
+  }
+  const expected = 'X' + acceptedSource.slice('Lead'.length);
+  await waitFor(() => expect(owner.getValue()).toBe(expected));
+  expect(owner.getSelection()).toEqual({ direction: 'none', end: 1, start: 1 });
+  if (undefined !== acceptedRevision) {
+    expect(owner.getRevision?.()).toBe(acceptedRevision + 1);
+  }
+  expect(owner.getHistoryState().undoDepth).toBe(acceptedHistory.undoDepth + 1);
+  expect(onFailure).not.toHaveBeenCalled();
+}
+
 type QueuedAnimationFrames = {
   callbacks: Map<number, FrameRequestCallback>;
   restore: () => void;
@@ -396,14 +620,35 @@ async function drainAnimationFrames(
 async function drainAnimationFramesUntil(
   frameQueue: QueuedAnimationFrames,
   ready: () => boolean,
-  maxFrames = 24
+  maxFrames = 1024
 ): Promise<void> {
+  // Pump until the queued frames are quiescent. The old fixed 24-frame budget
+  // was a readiness deadline, so an otherwise-correct handoff that needed one
+  // more frame failed. The queue is settled only after several consecutive
+  // empty batches survive a microtask flush; the large cap is solely a
+  // dead-loop guard and is never used as a readiness budget.
+  let quietBatches = 0;
   for (let index = 0; index < maxFrames; index += 1) {
     if (ready()) return;
-    if (!(await drainAnimationFrameBatch(frameQueue, index))) {
+    const drained = await drainAnimationFrameBatch(frameQueue, index);
+    if (!drained) {
       await act(async () => {
         await Promise.resolve();
       });
+    }
+    if (0 === frameQueue.callbacks.size) {
+      quietBatches += 1;
+      await act(async () => {
+        await Promise.resolve();
+      });
+      if (ready()) return;
+      if (frameQueue.callbacks.size > 0) {
+        quietBatches = 0;
+      } else if (quietBatches >= 3) {
+        break;
+      }
+    } else {
+      quietBatches = 0;
     }
   }
   if (!ready()) throw new Error('animation-frame-readiness-bound-exceeded');
@@ -1294,11 +1539,646 @@ async function renderMixedGeneratedVisual(
         )
       ].join('')
     : '<p>Before</p><p><span class="easymde-math easymde-math-inline"><span class="katex"><span class="katex-mathml"><math><mi>x</mi></math></span></span></span></p><p>After</p>';
-  vi.mocked(props.previewPort.render).mockImplementation((request) =>
-    Promise.resolve(
-      createPreviewResponse(request, rendered as SafePreviewHtml, { math: true })
-    )
+  // Temporary bounded observation of this helper's real unlock/materialize
+  // chain. It is passive: every original callback is delegated, no scheduler
+  // is added, no probe is sent through onDiagnostic, and no content, URL or
+  // signature text is recorded. Remove once the first missing boundary is
+  // established.
+  type DiagnosticFields = Record<string, unknown>;
+  const numberFromEnv = (name: string): number | null => {
+    const value = Number.parseInt(process.env[name] ?? '', 10);
+    return Number.isFinite(value) ? value : null;
+  };
+  const receipt: {
+    case: string;
+    nativeRange: string;
+    pid: number;
+    poolId: number | null;
+    workerId: number | null;
+    fakeTimers: boolean;
+    events: DiagnosticFields[];
+    overflow: number;
+    counts: Record<string, number>;
+  } = {
+    case: windowed ? 'windowed' : 'full',
+    nativeRange,
+    pid: process.pid,
+    poolId: numberFromEnv('VITEST_POOL_ID'),
+    workerId: numberFromEnv('VITEST_WORKER_ID'),
+    fakeTimers: vi.isFakeTimers(),
+    events: [],
+    overflow: 0,
+    counts: {}
+  };
+  const bump = (key: string): void => {
+    receipt.counts[key] = (receipt.counts[key] ?? 0) + 1;
+  };
+  const perKind: Record<string, number> = {};
+  const streamEvents = new Set([
+    'owner:render',
+    'preview:request',
+    'preview:response',
+    'sink:render'
+  ]);
+  const pinnedEvents = new Set(['pre-render', 'entry', 'failure-exit']);
+  const keyEvents = new Set([
+    'owner:snapshot',
+    'owner:status',
+    'failure-exit',
+    'unlock:native-click',
+    'before-unlock',
+    'after-unlock-click',
+    'preview-loaded',
+    'post-layout',
+    'textbox-found',
+    'success-exit',
+    'theme:prepare-start',
+    'theme:prepare-resolved',
+    'theme:prepare-rejected',
+    'theme:prepare-commit',
+    'theme:prepare-cancel',
+    'theme:prepare-implementation-missing',
+    'theme:prepare-implementation-self',
+    'theme:commit-implementation-missing',
+    'theme:commit-implementation-self',
+    'theme:cancel-implementation-missing',
+    'theme:cancel-implementation-self',
+    'theme:prepared-spy-failed',
+    'owner:diagnostic',
+    'owner:dispose',
+    'owner:ready',
+    'owner:window-ready',
+    'windowed:render',
+    'windowed:ready',
+    'windowed:dispose',
+    'windowed:failure',
+    'windowed:diagnostic',
+    'sink:staged',
+    'sink:materialize-complete',
+    'sink:materialize-failure'
+  ]);
+  let eventSeq = 0;
+  const observe = (event: string, fields: DiagnosticFields = {}): void => {
+    eventSeq += 1;
+    const eventLimit = streamEvents.has(event) ? 6 : 0;
+    if (eventLimit > 0 && (perKind[event] ?? 0) >= eventLimit) {
+      receipt.overflow += 1;
+      return;
+    }
+    if (receipt.events.length >= 64) {
+      const incomingKey = keyEvents.has(event);
+      const removable = receipt.events.findIndex(
+        (entry) => !pinnedEvents.has(String(entry.event))
+          && (incomingKey || !keyEvents.has(String(entry.event)))
+      );
+      if (removable < 0) {
+        receipt.overflow += 1;
+        return;
+      }
+      receipt.events.splice(removable, 1);
+      receipt.overflow += 1;
+    }
+    perKind[event] = (perKind[event] ?? 0) + 1;
+    receipt.events.push({ seq: eventSeq, event, ...fields });
+  };
+  const numberOrNull = (value: unknown): number | null =>
+    'number' === typeof value && Number.isFinite(value) ? value : null;
+  const stableCode = (value: unknown): string | null => {
+    if (
+      'string' === typeof value
+      && value.length <= 120
+      && /^[a-z0-9:_.\/-]+$/i.test(value)
+    ) {
+      return value;
+    }
+    if (value instanceof Error) return value.name;
+    return typeof value;
+  };
+  const signatureIds = new Map<string, number>();
+  let signatureIdSeq = 0;
+  let hasPreviousSignature = false;
+  let previousSignature: unknown = null;
+  const observeSignature = (
+    signature: unknown
+  ): { signatureSeq: number | null; signatureSameAsPrevious: boolean } => {
+    let id: number | null = null;
+    if ('string' === typeof signature) {
+      id = signatureIds.get(signature) ?? null;
+      if (null === id) {
+        id = ++signatureIdSeq;
+        signatureIds.set(signature, id);
+      }
+    }
+    const same = hasPreviousSignature && previousSignature === signature;
+    hasPreviousSignature = true;
+    previousSignature = signature;
+    return { signatureSeq: id, signatureSameAsPrevious: same };
+  };
+  const commitSummary = (
+    commit:
+      | SafePreviewHtmlSinkCommit
+      | SafePreviewHtmlSinkMaterializeCommit
+      | SafePreviewHtmlSinkWindowCommit
+      | null
+      | undefined
+  ): DiagnosticFields | null => {
+    if (!commit) return null;
+    return {
+      key: 'key' in commit ? numberOrNull(commit.key) : null,
+      revision: numberOrNull(commit.revision),
+      nodeCount: commit.nodes.length
+    };
+  };
+  const sinkState = (container: ParentNode): DiagnosticFields => {
+    const sink = container.querySelector<HTMLElement>(
+      '[data-easymde-preview-html-sink="1"]'
+    );
+    const unlock = container.querySelector<HTMLButtonElement>(
+      'button.easymde-immersive-preview-lock'
+    );
+    const spacers = sink
+      ? Array.from(sink.querySelectorAll<HTMLElement>(
+          '[data-easymde-preview-window-spacer]'
+        ))
+      : [];
+    const rect = sink?.getBoundingClientRect();
+    return {
+      unlock: unlock
+        ? {
+            present: true,
+            disabled: unlock.hasAttribute('disabled'),
+            ariaBusy: unlock.getAttribute('aria-busy'),
+            ariaDisabled: unlock.getAttribute('aria-disabled'),
+            pressed: unlock.getAttribute('aria-pressed')
+          }
+        : { present: false },
+      sink: sink
+        ? {
+            present: true,
+            phase: sink.getAttribute('data-easymde-preview-phase'),
+            ariaBusy: sink.getAttribute('aria-busy'),
+            contentEditable: sink.getAttribute('contenteditable'),
+            role: sink.getAttribute('role'),
+            error: sink.hasAttribute('data-easymde-preview-error'),
+            accepted: sink.hasAttribute('data-easymde-preview-accepted'),
+            refreshing: sink.hasAttribute('data-easymde-preview-refreshing'),
+            blockCount: sink.querySelectorAll(
+              '[data-easymde-visual-block-id]'
+            ).length,
+            windowSpacers: spacers.map((spacer) => ({
+              start: numberOrNull(Number.parseInt(
+                spacer.getAttribute('data-easymde-preview-window-start') ?? '',
+                10
+              )),
+              end: numberOrNull(Number.parseInt(
+                spacer.getAttribute('data-easymde-preview-window-end') ?? '',
+                10
+              ))
+            })),
+            rectHeight: rect ? Math.round(rect.height) : null,
+            rectWidth: rect ? Math.round(rect.width) : null,
+            clientHeight: sink.clientHeight,
+            clientWidth: sink.clientWidth,
+            parentHeight: sink.parentElement
+              ? Math.round(sink.parentElement.getBoundingClientRect().height)
+              : null,
+            parentScrollTop: sink.parentElement?.scrollTop ?? null
+          }
+        : { present: false },
+      editorCount: container.querySelectorAll(
+        '[data-easymde-editor-owner="react"]'
+      ).length,
+      sinkCount: container.querySelectorAll(
+        '[data-easymde-preview-html-sink="1"]'
+      ).length,
+      geometrySurfaces: previewGeometrySurfaces.size,
+      geometryPrototype: previewGeometryPrototypeInstalled,
+      fakeTimers: vi.isFakeTimers()
+    };
+  };
+  const snapshot = (
+    label: string,
+    container: ParentNode,
+    fields: DiagnosticFields = {}
+  ): void => {
+    observe(label, { ...sinkState(container), ...fields });
+  };
+  let summaryContainer: ParentNode = document;
+  let summarized = false;
+  let lastOwnerProps: DiagnosticFields | null = null;
+  let lastOwnerEditMap: DiagnosticFields | null = null;
+  let lastSinkWindowCommit: DiagnosticFields | null = null;
+  let lastSinkMaterializeCommit: DiagnosticFields | null = null;
+  let lastSinkStagedCommit: DiagnosticFields | null = null;
+  let lastRuntimeState: DiagnosticFields | null = null;
+  let preparedCommitCalls: (() => number) | null = null;
+  let preparedCancelCalls: (() => number) | null = null;
+  const emitSummary = (
+    outcome: 'helper-returned' | 'failure',
+    error?: unknown
+  ): void => {
+    if (summarized) return;
+    summarized = true;
+    try {
+      const finalState = sinkState(summaryContainer);
+      process.stdout.write(
+        'EASYMDE_MIXED_GENERATED_RECEIPT '
+        + JSON.stringify({
+            ...receipt,
+            outcome,
+            errorKind: 'failure' === outcome
+              ? (error instanceof Error ? error.name : typeof error)
+              : null,
+            preparedCommitCalls: preparedCommitCalls?.() ?? null,
+            preparedCancelCalls: preparedCancelCalls?.() ?? null,
+            lastOwnerProps,
+            lastOwnerEditMap,
+            lastSinkWindowCommit,
+            lastSinkMaterializeCommit,
+            lastSinkStagedCommit,
+            lastRuntimeState,
+            finalState
+          })
+        + '\n'
+      );
+    } catch {
+      // Observation must never replace the original test error.
+    }
+  };
+  try {
+
+  let previewRequestSeq = 0;
+  vi.mocked(props.previewPort.render).mockImplementation((request) => {
+    previewRequestSeq += 1;
+    bump('previewRequest');
+    const signature = observeSignature(request.signature);
+    observe('preview:request', {
+      requestSeq: previewRequestSeq,
+      markdownLength: request.markdown.length,
+      markdownLines: request.markdown.split(/\r\n|\r|\n/).length,
+      ...signature
+    });
+    const response = createPreviewResponse(
+      request,
+      rendered as SafePreviewHtml,
+      { math: true }
+    );
+    const editMap = response.editMap;
+    const blocks = editMap?.blocks ?? [];
+    const mapSignature = editMap
+      ? observeSignature(editMap.signature)
+      : null;
+    observe('preview:response', {
+      requestSeq: previewRequestSeq,
+      editMapPresent: Boolean(editMap),
+      mapBlocks: blocks.length,
+      mapStart: blocks.length
+        ? Math.min(...blocks.map((block) => block.startLine))
+        : null,
+      mapEnd: blocks.length
+        ? Math.max(...blocks.map((block) => block.endLine))
+        : null,
+      mapSignatureSeq: mapSignature?.signatureSeq ?? null,
+      mapSignatureMatchesRequest: editMap
+        ? editMap.signature === request.signature
+        : null
+    });
+    return Promise.resolve(response);
+  });
+
+  const originalPrepare = props.enhancementPort.prepareCodeTheme;
+  let prepareDelegate: typeof originalPrepare | null = null;
+  let prepareSelfReference = false;
+  if (vi.isMockFunction(originalPrepare)) {
+    const implementation = vi.mocked<typeof originalPrepare>(originalPrepare)
+      .getMockImplementation() ?? null;
+    prepareSelfReference = Object.is(implementation, originalPrepare);
+    if (!prepareSelfReference) prepareDelegate = implementation;
+  } else {
+    prepareDelegate = originalPrepare;
+  }
+  if (prepareDelegate) {
+    const delegate = prepareDelegate;
+    vi.spyOn(props.enhancementPort, 'prepareCodeTheme').mockImplementation((
+      context: Parameters<typeof originalPrepare>[0]
+    ) => {
+      bump('themePrepareStart');
+      observe('theme:prepare-start', { aborted: context.signal.aborted });
+      const promise = delegate.call(props.enhancementPort, context);
+      void promise.then(
+        (prepared) => {
+          bump('themePrepareResolved');
+          observe('theme:prepare-resolved', {
+            aborted: context.signal.aborted
+          });
+          try {
+            let commitDelegate: (() => void) | null = null;
+            let commitSelfReference = false;
+            if (vi.isMockFunction(prepared.commit)) {
+              const commitMock = prepared.commit;
+              preparedCommitCalls = () => commitMock.mock.calls.length;
+              const implementation = vi.mocked<() => void>(commitMock)
+                .getMockImplementation() ?? null;
+              commitSelfReference = Object.is(
+                implementation,
+                prepared.commit
+              );
+              if (!commitSelfReference && implementation) {
+                commitDelegate = implementation;
+              }
+            } else {
+              commitDelegate = prepared.commit;
+            }
+            if (commitDelegate) {
+              const delegateToCommit = commitDelegate;
+              vi.spyOn(prepared, 'commit').mockImplementation(() => {
+                bump('themeCommit');
+                observe('theme:prepare-commit', {
+                  aborted: context.signal.aborted
+                });
+                delegateToCommit.call(prepared);
+              });
+            } else {
+              observe(
+                commitSelfReference
+                  ? 'theme:commit-implementation-self'
+                  : 'theme:commit-implementation-missing'
+              );
+            }
+            let cancelDelegate: (() => void) | null = null;
+            let cancelSelfReference = false;
+            if (vi.isMockFunction(prepared.cancel)) {
+              const cancelMock = prepared.cancel;
+              preparedCancelCalls = () => cancelMock.mock.calls.length;
+              const implementation = vi.mocked<() => void>(cancelMock)
+                .getMockImplementation() ?? null;
+              cancelSelfReference = Object.is(
+                implementation,
+                prepared.cancel
+              );
+              if (!cancelSelfReference && implementation) {
+                cancelDelegate = implementation;
+              }
+            } else {
+              cancelDelegate = prepared.cancel;
+            }
+            if (cancelDelegate) {
+              const delegateToCancel = cancelDelegate;
+              vi.spyOn(prepared, 'cancel').mockImplementation(() => {
+                bump('themeCancel');
+                observe('theme:prepare-cancel', {
+                  aborted: context.signal.aborted
+                });
+                delegateToCancel.call(prepared);
+              });
+            } else {
+              observe(
+                cancelSelfReference
+                  ? 'theme:cancel-implementation-self'
+                  : 'theme:cancel-implementation-missing'
+              );
+            }
+          } catch {
+            observe('theme:prepared-spy-failed');
+          }
+        },
+        (error: unknown) => {
+          bump('themePrepareRejected');
+          observe('theme:prepare-rejected', {
+            aborted: context.signal.aborted,
+            kind: stableCode(error)
+          });
+        }
+      );
+      return promise;
+    });
+  } else {
+    observe(
+      prepareSelfReference
+        ? 'theme:prepare-implementation-self'
+        : 'theme:prepare-implementation-missing'
+    );
+  }
+
+  const realOwner = observedPreviewOwner.PreviewSurfaceOwner;
+  const stagingScheduler = {
+    now: () => 0,
+    yield: () => Promise.resolve()
+  };
+  vi.spyOn(observedPreviewOwner, 'PreviewSurfaceOwner').mockImplementation(
+    (ownerProps) => {
+      bump('ownerRender');
+      const ownerState = {
+        windowed: ownerProps.windowed ?? null,
+        contentEditable: ownerProps.contentEditable ?? null,
+        role: ownerProps.role ?? null,
+        sourceRevision: numberOrNull(ownerProps.sourceRevision),
+        initialRevision: numberOrNull(ownerProps.initialRevision),
+        initialSignature: observeSignature(
+          ownerProps.initial.signature
+        ).signatureSeq,
+        initialMapBlocks: ownerProps.initial.editMap?.blocks.length ?? null
+      };
+      lastOwnerProps = ownerState;
+      observe('owner:render', ownerState);
+      const onDiagnostic = observedCallback((code: string) => {
+        bump('ownerDiagnostic');
+        observe('owner:diagnostic', { code: stableCode(code) });
+        ownerProps.onDiagnostic?.(code);
+      }, [ownerProps.onDiagnostic, observe]);
+      const onDispose = observedCallback((
+        runtime: Parameters<
+          NonNullable<typeof ownerProps.onDispose>
+        >[0]
+      ) => {
+        bump('ownerDispose');
+        observe('owner:dispose', {
+          surface: runtime?.surface?.tagName ?? null
+        });
+        ownerProps.onDispose?.(runtime);
+      }, [ownerProps.onDispose, observe]);
+      const onReady = observedCallback((
+        runtime: Parameters<typeof ownerProps.onReady>[0]
+      ) => {
+        bump('ownerReady');
+        observe('owner:ready', {
+          surface: runtime?.surface?.tagName ?? null
+        });
+        ownerProps.onReady(runtime);
+      }, [ownerProps.onReady, observe]);
+      const onSnapshotReady = observedCallback((
+        ...args: Parameters<NonNullable<typeof ownerProps.onSnapshotReady>>
+      ) => {
+        bump('ownerSnapshot');
+        const [, signature, editMap] = args;
+        const blocks = editMap?.blocks ?? [];
+        const snapshotFields = {
+          ...observeSignature(signature),
+          mapBlocks: blocks.length,
+          mapStart: blocks.length
+            ? Math.min(...blocks.map((block) => block.startLine))
+            : null,
+          mapEnd: blocks.length
+            ? Math.max(...blocks.map((block) => block.endLine))
+            : null
+        };
+        lastOwnerEditMap = snapshotFields;
+        observe('owner:snapshot', snapshotFields);
+        ownerProps.onSnapshotReady?.(...args);
+      }, [ownerProps.onSnapshotReady, observe]);
+      const onStatusChange = observedCallback((
+        status: Parameters<
+          NonNullable<typeof ownerProps.onStatusChange>
+        >[0]
+      ) => {
+        bump('ownerStatus');
+        observe('owner:status', { status });
+        ownerProps.onStatusChange?.(status);
+      }, [ownerProps.onStatusChange, observe]);
+      const onWindowReady = observedCallback(() => {
+        bump('ownerWindowReady');
+        let windowState: DiagnosticFields | null = null;
+        try {
+          windowState = sinkState(summaryContainer);
+        } catch {
+          windowState = null;
+        }
+        observe('owner:window-ready', {
+          acceptedWindowSnapshotObserved: false,
+          ownerEditMap: lastOwnerEditMap,
+          runtimeState: lastRuntimeState,
+          sinkMaterializeCommit: lastSinkMaterializeCommit,
+          sinkStagedCommit: lastSinkStagedCommit,
+          sinkState: windowState,
+          sinkWindowCommit: lastSinkWindowCommit
+        });
+        ownerProps.onWindowReady?.();
+      }, [ownerProps.onWindowReady, observe]);
+      return realOwner({
+        ...ownerProps,
+        onReady,
+        stagingScheduler,
+        ...(ownerProps.onDiagnostic ? { onDiagnostic } : {}),
+        ...(ownerProps.onDispose ? { onDispose } : {}),
+        ...(ownerProps.onSnapshotReady ? { onSnapshotReady } : {}),
+        ...(ownerProps.onStatusChange ? { onStatusChange } : {}),
+        ...(ownerProps.onWindowReady ? { onWindowReady } : {})
+      });
+    }
   );
+
+  const realSink = observedSink.SafePreviewHtmlSink;
+  vi.spyOn(observedSink, 'SafePreviewHtmlSink').mockImplementation(
+    (sinkProps) => {
+      bump('sinkRender');
+      const windowedCommit = commitSummary(sinkProps.windowedCommit);
+      const materializeCommit = commitSummary(sinkProps.materializeCommit);
+      const stagedCommit = commitSummary(sinkProps.stagedCommit);
+      lastSinkWindowCommit = windowedCommit;
+      lastSinkMaterializeCommit = materializeCommit;
+      lastSinkStagedCommit = stagedCommit;
+      observe('sink:render', {
+        phase: sinkProps.phase ?? null,
+        ariaBusy: sinkProps.ariaBusy ?? null,
+        contentEditable: sinkProps.contentEditable ?? null,
+        role: sinkProps.role ?? null,
+        htmlRevision: numberOrNull(sinkProps.htmlRevision),
+        error: Boolean(sinkProps.error),
+        windowedCommit,
+        materializeCommit,
+        stagedCommit
+      });
+      const onStagedCommit = observedCallback((revision: number) => {
+        bump('sinkStaged');
+        observe('sink:staged', { revision: numberOrNull(revision) });
+        sinkProps.onStagedCommit?.(revision);
+      }, [sinkProps.onStagedCommit, observe]);
+      const onMaterializeComplete = observedCallback((
+        revision: number,
+        key: number
+      ) => {
+        bump('sinkMaterializeComplete');
+        observe('sink:materialize-complete', {
+          revision: numberOrNull(revision),
+          key: numberOrNull(key)
+        });
+        sinkProps.onMaterializeComplete?.(revision, key);
+      }, [sinkProps.onMaterializeComplete, observe]);
+      const onMaterializeFailure = observedCallback((
+        revision: number,
+        key: number,
+        error: unknown
+      ) => {
+        bump('sinkMaterializeFailure');
+        observe('sink:materialize-failure', {
+          revision: numberOrNull(revision),
+          key: numberOrNull(key),
+          kind: stableCode(error)
+        });
+        sinkProps.onMaterializeFailure?.(revision, key, error);
+      }, [sinkProps.onMaterializeFailure, observe]);
+      return realSink({
+        ...sinkProps,
+        ...(sinkProps.onStagedCommit ? { onStagedCommit } : {}),
+        ...(sinkProps.onMaterializeComplete ? { onMaterializeComplete } : {}),
+        ...(sinkProps.onMaterializeFailure ? { onMaterializeFailure } : {})
+      });
+    }
+  );
+
+  const realWindowedOwner =
+    observedWindowedOwner.WindowedImmersiveVisualEditor;
+  vi.spyOn(
+    observedWindowedOwner,
+    'WindowedImmersiveVisualEditor'
+  ).mockImplementation((runtimeProps) => {
+    bump('windowedRender');
+    const runtimeState = {
+      previewStatus: runtimeProps.previewStatus,
+      editMapBlocks: runtimeProps.editMap?.blocks.length ?? null,
+      acceptedGeneration: numberOrNull(
+        runtimeProps.acceptedWindowSnapshotGeneration
+      ),
+      pending: Boolean(runtimeProps.pending)
+    };
+    lastRuntimeState = runtimeState;
+    observe('windowed:render', runtimeState);
+    const onDiagnostic = observedCallback((code: string) => {
+      bump('windowedDiagnostic');
+      observe('windowed:diagnostic', { code: stableCode(code) });
+      runtimeProps.onDiagnostic(code);
+    }, [runtimeProps.onDiagnostic, observe]);
+    const onDispose = observedCallback((
+      runtime: Parameters<typeof runtimeProps.onDispose>[0]
+    ) => {
+      bump('windowedDispose');
+      observe('windowed:dispose', {
+        surface: runtime?.surface?.tagName ?? null
+      });
+      runtimeProps.onDispose(runtime);
+    }, [runtimeProps.onDispose, observe]);
+    const onFailure = observedCallback((code: string) => {
+      bump('windowedFailure');
+      observe('windowed:failure', { code: stableCode(code) });
+      runtimeProps.onFailure(code);
+    }, [runtimeProps.onFailure, observe]);
+    const onReady = observedCallback((
+      runtime: Parameters<typeof runtimeProps.onReady>[0]
+    ) => {
+      bump('windowedReady');
+      observe('windowed:ready', {
+        surface: runtime?.surface?.tagName ?? null
+      });
+      runtimeProps.onReady(runtime);
+    }, [runtimeProps.onReady, observe]);
+    return realWindowedOwner({
+      ...runtimeProps,
+      onDiagnostic,
+      onDispose,
+      onFailure,
+      onReady
+    });
+  });
   const editorBlockIndexPort: EditorMarkdownBlockIndexPort = {
     build: vi.fn(async ({ source }) => ({
       ...imageBlockIndexData(source),
@@ -1319,6 +2199,7 @@ async function renderMixedGeneratedVisual(
     copyMathMl: vi.fn().mockResolvedValue({ status: 'copied' }),
     dispose: vi.fn(),
   } as GeneratedContentExportSession;
+  snapshot('pre-render', document);
   const view = render(
     <EditorRoot
       {...props}
@@ -1326,14 +2207,67 @@ async function renderMixedGeneratedVisual(
       generatedContentExportSession={generatedContentExportSession}
     />
   );
+  summaryContainer = view.container;
+  snapshot('entry', view.container);
   fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
   fireEvent.click(view.getByRole('button', { name: '预览' }));
   await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+  snapshot('preview-loaded', view.container);
   layoutPreviewSurface(view.container);
-  fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+  snapshot('post-layout', view.container);
+  const unlock = await view.findByRole('button', {
+    name: '解除锁定并编辑'
+  });
+  await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+  snapshot('before-unlock', view.container);
+  let nativeUnlockClicks = 0;
+  const onNativeUnlockClick = (): void => {
+    nativeUnlockClicks += 1;
+    bump('unlockNativeClick');
+    observe('unlock:native-click', { count: nativeUnlockClicks });
+  };
+  unlock.addEventListener('click', onNativeUnlockClick);
+  try {
+    fireEvent.click(unlock);
+  } finally {
+    unlock.removeEventListener('click', onNativeUnlockClick);
+  }
+  snapshot('after-unlock-click', view.container, { nativeUnlockClicks });
   const visual = await view.findByRole('textbox', {
     name: '可视化文章编辑器'
   });
+  snapshot('textbox-found', view.container);
+  if (windowed) {
+    expect(receipt.counts.ownerWindowReady ?? 0).toBeGreaterThan(0);
+    expect(receipt.counts.windowedRender ?? 0).toBeGreaterThan(0);
+    const spacers = Array.from(
+      visual.querySelectorAll<HTMLElement>(
+        '[data-easymde-preview-window-spacer]'
+      )
+    );
+    expect(spacers.length).toBeGreaterThan(0);
+    const sourceLineCount = sourceMarkdown.split(/\r\n|\r|\n/).length;
+    for (const spacer of spacers) {
+      const start = Number.parseInt(
+        spacer.getAttribute('data-easymde-preview-window-start') ?? '',
+        10
+      );
+      const end = Number.parseInt(
+        spacer.getAttribute('data-easymde-preview-window-end') ?? '',
+        10
+      );
+      expect(Number.isFinite(start)).toBe(true);
+      expect(Number.isFinite(end)).toBe(true);
+      expect(start).toBeGreaterThanOrEqual(0);
+      expect(end).toBeGreaterThan(start);
+      expect(end).toBeLessThanOrEqual(sourceLineCount);
+    }
+    const mountedBlocks = visual.querySelectorAll(
+      '[data-easymde-visual-block-id]'
+    ).length;
+    expect(mountedBlocks).toBeGreaterThan(0);
+    expect(mountedBlocks).toBeLessThan(sourceLineCount);
+  }
   const math = visual.querySelector<HTMLElement>('.easymde-math');
   const paragraphs = visual.querySelectorAll('p');
   const beforeText = paragraphs[0]?.firstChild;
@@ -1397,35 +2331,354 @@ async function renderMixedGeneratedVisual(
   nativeSelection?.addRange(range);
   layoutContextMenuSurface(visual);
   fireEvent.contextMenu(math, { clientX: 24, clientY: 30 });
+  try {
+    observe('success-exit', sinkState(summaryContainer));
+  } catch {
+    // Observation only.
+  }
+  emitSummary('helper-returned');
   return { cleanupNativeRange, math, props, sourceMarkdown, view, visual };
+  } catch (error) {
+    try {
+      observe('failure-exit', sinkState(summaryContainer));
+    } catch {
+      // Observation only.
+    }
+    emitSummary('failure', error);
+    throw error;
+  }
 }
 
 describe('EditorRoot', () => {
   it.each([false, true] as const)(
     'uses the real native mixed selection for %s generated visual context',
     async (windowed) => {
-      const { props, sourceMarkdown, view } =
+      type ClickProbeState = {
+        actions: Array<Record<string, unknown>>;
+        capabilitiesCalls: number;
+        lastCapabilities: { clipboard: boolean; document: boolean } | null;
+        settled: Array<Record<string, unknown>>;
+        stages: Array<Record<string, unknown>>;
+        emitted: boolean;
+        overflow: number;
+      };
+      const createClickProbe = (): ClickProbeState => ({
+        actions: [],
+        capabilitiesCalls: 0,
+        lastCapabilities: null,
+        settled: [],
+        stages: [],
+        emitted: false,
+        overflow: 0
+      });
+      const documentOwnerRef: {
+        current: CodeMirrorDocumentSession | null;
+      } = { current: null };
+      const user = userEvent.setup();
+      const realCreateDocumentSession =
+        observedSourceAdapter.createCodeMirrorDocumentSession;
+      vi.spyOn(
+        observedSourceAdapter,
+        'createCodeMirrorDocumentSession'
+      ).mockImplementation((options) => {
+        const owner = realCreateDocumentSession(options);
+        documentOwnerRef.current = owner;
+        return owner;
+      });
+      let probeState: ClickProbeState | null = null;
+      if (windowed) {
+        const state = createClickProbe();
+        probeState = state;
+        const realCreateCoordinator =
+          observedActionCoordinator.createEditorContextMenuActionCoordinator;
+        vi.spyOn(
+          observedActionCoordinator,
+          'createEditorContextMenuActionCoordinator'
+        ).mockImplementation((input) => {
+          const realGetCapabilities = input.getCapabilities;
+          const coordinator = realCreateCoordinator({
+            ...input,
+            getCapabilities: () => {
+              state.capabilitiesCalls += 1;
+              const capabilities = realGetCapabilities();
+              state.lastCapabilities = {
+                clipboard: Boolean(capabilities.clipboard),
+                document: Boolean(capabilities.document)
+              };
+              return capabilities;
+            }
+          });
+          const realOnAction = coordinator.onAction;
+          const wrappedOnAction: typeof realOnAction = (
+            id,
+            captured,
+            actionContext
+          ) => {
+            if (state.actions.length >= 16) {
+              state.overflow += 1;
+            } else {
+              state.actions.push({
+                id,
+                actionContextKeys: actionContext
+                  ? Object.keys(actionContext).sort()
+                  : [],
+                captured: {
+                  direction: captured.direction,
+                  hasSurfaceIdentity: Boolean(captured.surfaceIdentity),
+                  position: captured.position,
+                  revision: captured.revision ?? null,
+                  selection: {
+                    direction: captured.selection.direction,
+                    end: captured.selection.end,
+                    start: captured.selection.start
+                  },
+                  surface: captured.surface,
+                  surfaceGeneration: captured.surfaceGeneration ?? null,
+                  valueLength: captured.value.length
+                }
+              });
+            }
+            const result = realOnAction(id, captured, actionContext);
+            if (result && 'then' in result) {
+              void result.then(
+                () => {
+                  if (state.settled.length < 16) {
+                    state.settled.push({ id, status: 'fulfilled' });
+                  } else {
+                    state.overflow += 1;
+                  }
+                },
+                (error: unknown) => {
+                  if (state.settled.length < 16) {
+                    state.settled.push({
+                      id,
+                      kind: error instanceof Error ? error.name : typeof error,
+                      status: 'rejected'
+                    });
+                  } else {
+                    state.overflow += 1;
+                  }
+                }
+              );
+            }
+            return result;
+          };
+          return { ...coordinator, onAction: wrappedOnAction };
+        });
+      }
+      const { props, sourceMarkdown, view, visual } =
         await renderMixedGeneratedVisual(windowed);
-      const copyAs = await within(document.body).findByRole('menuitem', {
-        name: 'Copy / Paste as'
-      });
-      expect(within(document.body).queryByRole('menuitem', {
-        name: 'Formula'
-      })).toBeNull();
-      fireEvent.click(copyAs);
-      const copyMarkdown = await within(document.body).findByRole('menuitem', {
-        name: 'Copy as Markdown'
-      });
-      expect(copyMarkdown.getAttribute('aria-disabled')).toBe('false');
-      fireEvent.click(copyMarkdown);
-      await waitFor(() => expect(props.editorClipboardPort?.write).toHaveBeenCalledWith(
-        'efore\n$x$\nAft'
-      ));
-      expect(props.submissionField.value).toBe(sourceMarkdown);
-      expect(props.onFailure).not.toHaveBeenCalled();
-      view.unmount();
+      const probe = probeState;
+      const expectMixedCanonical = (): void => {
+        const owner = documentOwnerRef.current;
+        if (!owner) throw new Error('inside-canonical-document-missing');
+        expect(owner.getSelection()).toEqual({
+          direction: 'forward',
+          start: 1,
+          end: 14
+        });
+      };
+      const expectClickable = (item: HTMLElement, label: string): void => {
+        expect(item.isConnected, `${label} connected`).toBe(true);
+        expect(item.hasAttribute('disabled'), `${label} disabled`).toBe(false);
+        expect(
+          item.getAttribute('aria-disabled'),
+          `${label} aria-disabled`
+        ).not.toBe('true');
+      };
+      const readState = (
+        copyAs: Element | null,
+        copyMarkdown: Element | null
+      ): Record<string, unknown> => {
+        const native = window.getSelection();
+        const nodeState = (node: Node | null) => node
+          ? {
+              connected: node.isConnected,
+              insideVisual: visual.contains(node),
+              nodeName: node.nodeName,
+              nodeType: node.nodeType,
+              parentName: node.parentElement?.tagName ?? null
+            }
+          : null;
+        const owner = documentOwnerRef.current;
+        const buttonState = (button: Element | null) => button
+          ? {
+              ariaBusy: button.getAttribute('aria-busy'),
+              ariaDisabled: button.getAttribute('aria-disabled'),
+              connected: button.isConnected,
+              disabled: button.hasAttribute('disabled')
+            }
+          : null;
+        return {
+          native: native
+            ? {
+                anchor: nodeState(native.anchorNode),
+                anchorOffset: native.anchorOffset,
+                focus: nodeState(native.focusNode),
+                focusOffset: native.focusOffset,
+                isCollapsed: native.isCollapsed,
+                rangeCount: native.rangeCount
+              }
+            : null,
+          canonical: owner
+            ? {
+                history: owner.getHistoryState(),
+                revision: owner.getRevision(),
+                selection: owner.getSelection(),
+                valueLength: owner.getValue().length
+              }
+            : null,
+          copyAs: buttonState(copyAs),
+          copyMarkdown: buttonState(copyMarkdown),
+          clipboardWriteCalls: props.editorClipboardPort
+            ? vi.mocked(props.editorClipboardPort.write).mock.calls.length
+            : null,
+          onFailureCodes: vi.mocked(props.onFailure).mock.calls.map(
+            ([code]) => typeof code === 'string' ? code : typeof code
+          ),
+          capabilities: probe?.lastCapabilities ?? null,
+          capabilitiesCalls: probe?.capabilitiesCalls ?? null
+        };
+      };
+      const snapshot = (
+        label: string,
+        copyAs: Element | null,
+        copyMarkdown: Element | null,
+        extra: Record<string, unknown> = {}
+      ): void => {
+        if (!probe) return;
+        try {
+          if (probe.stages.length >= 16) {
+            probe.overflow += 1;
+            return;
+          }
+          probe.stages.push({
+            label,
+            ...readState(copyAs, copyMarkdown),
+            ...extra
+          });
+        } catch {
+          probe.overflow += 1;
+        }
+      };
+      const emit = (): void => {
+        if (!probe || probe.emitted) return;
+        probe.emitted = true;
+        try {
+          process.stdout.write(
+            'EASYMDE_MIXED_CLICK_PROBE '
+            + JSON.stringify({
+                actions: probe.actions,
+                capabilitiesCalls: probe.capabilitiesCalls,
+                case: 'windowed-inside',
+                lastCapabilities: probe.lastCapabilities,
+                overflow: probe.overflow,
+                settled: probe.settled,
+                stages: probe.stages
+              })
+            + '\n'
+          );
+        } catch {
+          // Observation only.
+        }
+      };
+      try {
+        const copyAs = await within(document.body).findByRole('menuitem', {
+          name: 'Copy / Paste as'
+        });
+        snapshot('before-copy-as', copyAs, null);
+        expect(within(document.body).queryByRole('menuitem', {
+          name: 'Formula'
+        })).toBeNull();
+        expectClickable(copyAs, 'copy-as');
+        expectMixedCanonical();
+        await user.click(copyAs);
+        snapshot('after-copy-as', copyAs, null);
+        expectMixedCanonical();
+        const copyMarkdown = await within(document.body).findByRole('menuitem', {
+          name: 'Copy as Markdown'
+        });
+        snapshot('before-copy-markdown', copyAs, copyMarkdown);
+        expect(copyMarkdown.getAttribute('aria-disabled')).toBe('false');
+        expectClickable(copyMarkdown, 'copy-markdown');
+        expectMixedCanonical();
+        await user.click(copyMarkdown);
+        snapshot('after-copy-sync', copyAs, copyMarkdown);
+        expectMixedCanonical();
+        try {
+          await waitFor(() => expect(props.editorClipboardPort?.write).toHaveBeenCalledWith(
+            'efore\n$x$\nAft'
+          ));
+        } catch (error) {
+          snapshot('wait-failure', copyAs, copyMarkdown, {
+            waitErrorKind: error instanceof Error ? error.name : typeof error
+          });
+          throw error;
+        }
+        expect(props.submissionField.value).toBe(sourceMarkdown);
+        expect(props.onFailure).not.toHaveBeenCalled();
+        view.unmount();
+      } finally {
+        emit();
+      }
     }
   );
+
+  it('does not reuse a prepared mixed range after the document revision changes', async () => {
+    const ownerRef: {
+      current: CodeMirrorDocumentSession | null;
+    } = { current: null };
+    const realCreateDocumentSession =
+      observedSourceAdapter.createCodeMirrorDocumentSession;
+    vi.spyOn(
+      observedSourceAdapter,
+      'createCodeMirrorDocumentSession'
+    ).mockImplementation((options) => {
+      const owner = realCreateDocumentSession(options);
+      ownerRef.current = owner;
+      return owner;
+    });
+    const { props, sourceMarkdown, view } = await renderMixedGeneratedVisual(true);
+    try {
+      await within(document.body).findByRole('menuitem', {
+        name: 'Copy / Paste as'
+      });
+      const owner = ownerRef.current;
+      if (!owner) throw new Error('mixed-refresh-owner-missing');
+      expect(owner.getSelection()).toEqual({
+        direction: 'forward',
+        start: 1,
+        end: 14
+      });
+      const next = sourceMarkdown + '!';
+      act(() => {
+        owner.applyTextChange({
+          selection: {
+            direction: 'none',
+            end: next.length,
+            start: next.length
+          },
+          value: next
+        });
+      });
+      await waitFor(() => {
+        expect(within(document.body).queryByRole('menu')).toBeNull();
+      });
+      expect(owner.getSelection()).not.toEqual({
+        direction: 'forward',
+        start: 1,
+        end: 14
+      });
+      expect(props.onFailure).toHaveBeenCalled();
+      expect(
+        vi.mocked(props.onFailure).mock.calls.some(([code]) =>
+          String(code).includes('visual-editor-canonical-document-changed')
+        )
+      ).toBe(true);
+    } finally {
+      view.unmount();
+    }
+  });
 
   it.each([
     [false, 'foreign'],
@@ -3128,6 +4381,1136 @@ describe('EditorRoot', () => {
     view.unmount();
   });
 
+  it('keeps a deliberate text selection outside the pointed image as a generic menu', async () => {
+    const props = fixture();
+    const sourceMarkdown =
+      '![target](https://example.test/target.png)\n\nElsewhere text';
+    props.submissionField.value = sourceMarkdown;
+    props.submissionField.defaultValue = sourceMarkdown;
+    props.submissionField.setSelectionRange(0, 0);
+    const realCreateDocumentSession =
+      observedSourceAdapter.createCodeMirrorDocumentSession;
+    const documentOwnerRef: {
+      current: CodeMirrorDocumentSession | null;
+    } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+      .mockImplementation((options) => {
+        const owner = realCreateDocumentSession(options);
+        documentOwnerRef.current = owner;
+        return owner;
+      });
+    vi.mocked(props.previewPort.render).mockImplementation((request) => {
+      const response = createPreviewResponse(
+        request,
+        '<p><img alt="target" src="https://example.test/target.png"></p><p>Elsewhere text</p>' as SafePreviewHtml,
+        {}
+      );
+      return Promise.resolve({
+        ...response,
+        editMap: {
+          version: 1 as const,
+          coordinate: 'line' as const,
+          signature: request.signature,
+          blocks: [
+            { id: 'b0', startLine: 0, endLine: 1, editable: true },
+            { id: 'b1', startLine: 2, endLine: 3, editable: true }
+          ]
+        }
+      });
+    });
+    const view = render(
+      <EditorRoot {...props} editorBlockIndexPort={sourceLinkBlockIndexPort()} />
+    );
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    const unlock = await view.findByRole('button', {
+      name: '解除锁定并编辑'
+    });
+    await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+    fireEvent.click(unlock);
+    const visual = await view.findByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const image = visual.querySelector('img');
+    const elsewhere = visual.querySelectorAll('p')[1]?.firstChild;
+    if (!(image instanceof HTMLImageElement) || !(elsewhere instanceof Text)) {
+      throw new Error('visual-outside-image-selection-fixture-missing');
+    }
+    const owner = documentOwnerRef.current;
+    if (!owner) throw new Error('source-document-owner-missing');
+    const elsewhereStart = sourceMarkdown.indexOf('Elsewhere text');
+    layoutContextMenuSurface(visual);
+
+    for (const direction of ['forward', 'backward'] as const) {
+      visual.focus();
+      const nativeSelection = window.getSelection();
+      if (!nativeSelection) throw new Error('native-selection-missing');
+      nativeSelection.removeAllRanges();
+      nativeSelection.setBaseAndExtent(
+        elsewhere,
+        'forward' === direction ? 0 : elsewhere.length,
+        elsewhere,
+        'forward' === direction ? elsewhere.length : 0
+      );
+
+      // A deliberate text selection wholly outside the pointed image keeps
+      // its own native endpoints and direction before the gesture.
+      expect(nativeSelection.isCollapsed).toBe(false);
+      expect(nativeSelection.anchorNode).toBe(elsewhere);
+      expect(nativeSelection.anchorOffset).toBe(
+        'forward' === direction ? 0 : elsewhere.length
+      );
+      expect(nativeSelection.focusNode).toBe(elsewhere);
+      expect(nativeSelection.focusOffset).toBe(
+        'forward' === direction ? elsewhere.length : 0
+      );
+
+      // The actual user-selected state the image gesture must leave alone.
+      const before = {
+        history: owner.getHistoryState(),
+        revision: owner.getRevision?.(),
+        value: owner.getValue()
+      };
+
+      fireEvent.pointerDown(image, { button: 2, clientX: 24, clientY: 30 });
+      fireEvent.contextMenu(image, { clientX: 24, clientY: 30 });
+      const menu = await within(document.body).findByRole('menu');
+      for (const name of [
+        'Image scale',
+        'Delete image',
+        'Copy image',
+        'Upload image'
+      ]) {
+        expect(
+          within(menu).queryByRole('menuitem', { name })
+        ).toBeNull();
+      }
+      expect(props.onFailure).not.toHaveBeenCalledWith(
+        'editor-context-menu-image-stale'
+      );
+      expect(props.onFailure).not.toHaveBeenCalled();
+
+      // Pointing at the IMG must not rewrite the user's text selection: the
+      // same endpoints and the same direction survive the generic menu.
+      const kept = window.getSelection();
+      expect(kept?.isCollapsed).toBe(false);
+      expect(kept?.anchorNode).toBe(elsewhere);
+      expect(kept?.anchorOffset).toBe(
+        'forward' === direction ? 0 : elsewhere.length
+      );
+      expect(kept?.focusNode).toBe(elsewhere);
+      expect(kept?.focusOffset).toBe(
+        'forward' === direction ? elsewhere.length : 0
+      );
+
+      // The canonical document carries the same deliberate text extent and
+      // direction, not the pointed image interval.
+      expect(owner.getSelection()).toEqual({
+        direction,
+        end: sourceMarkdown.length,
+        start: elsewhereStart
+      });
+
+      // A menu gesture is not an edit: value, revision and history stay at
+      // the state the user's own selection read.
+      expect(owner.getValue()).toBe(before.value);
+      expect(props.submissionField.value).toBe(before.value);
+      expect(owner.getRevision?.()).toBe(before.revision);
+      expect(owner.getHistoryState()).toEqual(before.history);
+
+      fireEvent.keyDown(document, { key: 'Escape' });
+      await waitFor(() =>
+        expect(within(document.body).queryByRole('menu')).toBeNull()
+      );
+    }
+    view.unmount();
+  });
+
+  it.each([
+    'pointerup',
+    'pointercancel',
+    'focus-out',
+    'untrusted',
+    'untrusted-up'
+  ] as const)(
+    'holds a pending accepted Preview across an unfinished visual pointer drag (%s)',
+    async (release) => {
+      const props = fixture();
+      const mermaid = '```mermaid\nflowchart TD\nA-->B\n```';
+      const initial = `Lead\n\n${mermaid}\n\nTail`;
+      const diagramStart = initial.indexOf(mermaid);
+      if (diagramStart < 0) {
+        throw new Error('visual-pointer-diagram-source-missing');
+      }
+      // The generated lease's parser fullRange ends at the closing fence end,
+      // [diagramStart, diagramStart + mermaid.length), excluding the LF after
+      // it. That remaining LF plus the blank separator line produce the real
+      // deleted source. The accepted initial render map is unchanged.
+      const deleted = initial.slice(0, diagramStart)
+        + initial.slice(diagramStart + mermaid.length);
+      expect(deleted).toBe('Lead\n\n\n\nTail');
+      props.submissionField.value = initial;
+      props.submissionField.defaultValue = initial;
+      props.submissionField.setSelectionRange(0, 0);
+      const realCreateDocumentSession =
+        observedSourceAdapter.createCodeMirrorDocumentSession;
+      const documentOwnerRef: {
+        current: CodeMirrorDocumentSession | null;
+      } = { current: null };
+      vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+        .mockImplementation((options) => {
+          const owner = realCreateDocumentSession(options);
+          documentOwnerRef.current = owner;
+          return owner;
+        });
+      // Explicit source dispatch: only the accepted initial source and the
+      // real generated-delete source have a response. Any other source is a
+      // fixture error, never a real-signature response with unrelated HTML.
+      const responseFor = (request: PreviewRequest): PreviewResponse => {
+        if (request.markdown === deleted) {
+          const deletedResponse = createPreviewResponse(
+            request,
+            '<p>Lead</p><p>Tail</p>' as SafePreviewHtml,
+            {}
+          );
+          return {
+            ...deletedResponse,
+            editMap: {
+              version: 1 as const,
+              coordinate: 'line' as const,
+              signature: request.signature,
+              blocks: [
+                { id: 'b0', startLine: 0, endLine: 1, editable: true },
+                { id: 'b1', startLine: 4, endLine: 5, editable: true }
+              ]
+            }
+          };
+        }
+        if (request.markdown !== initial) {
+          throw new Error('visual-pointer-response-source-unexpected');
+        }
+        const response = createPreviewResponse(
+          request,
+          ('<p>Lead</p>'
+            + '<div class="easymde-mermaid" data-easymde-visual-markdown-source="flowchart TD\nA-->B"><svg></svg></div>'
+            + '<p>Tail</p>') as SafePreviewHtml,
+          { mermaid: true }
+        );
+        return {
+          ...response,
+          editMap: {
+            version: 1 as const,
+            coordinate: 'line' as const,
+            signature: request.signature,
+            blocks: [
+              { id: 'b0', startLine: 0, endLine: 1, editable: true },
+              { id: 'b1', startLine: 2, endLine: 6, editable: true },
+              { id: 'b2', startLine: 7, endLine: 8, editable: true }
+            ]
+          }
+        };
+      };
+      const generatedContentExportSession = {
+        copyAsImage: vi.fn().mockResolvedValue({ status: 'copied' }),
+        copyMathMl: vi.fn().mockResolvedValue({ status: 'copied' }),
+        dispose: vi.fn()
+      } as GeneratedContentExportSession;
+      const deleteResponse = deferred<PreviewResponse>();
+      const deleteRequestRef: { current: PreviewRequest | null } = {
+        current: null
+      };
+      const undoResponse = deferred<PreviewResponse>();
+      const undoRequestRef: { current: PreviewRequest | null } = {
+        current: null
+      };
+      let holdDeleteResponse = false;
+      let holdUndoResponse = false;
+      vi.mocked(props.previewPort.render).mockImplementation((request) => {
+        // The Diagram menu's code-content query uses the scoped code-owner
+        // fence source, not the whole document. Answer it truthfully for that
+        // source; it is never a Delete or Undo demand response.
+        if (isCodeContentQuery(request)) {
+          return Promise.resolve(
+            createCodeContentPreviewResponse(
+              request,
+              request.markdown,
+              request.markdown.indexOf('flowchart TD'),
+              'flowchart TD\nA-->B\n'
+            )
+          );
+        }
+        if (holdDeleteResponse && request.markdown === deleted) {
+          deleteRequestRef.current = request;
+          return deleteResponse.promise;
+        }
+        if (holdUndoResponse && request.markdown === initial) {
+          undoRequestRef.current = request;
+          return undoResponse.promise;
+        }
+        return Promise.resolve(responseFor(request));
+      });
+      const createPointerGesture = capturePointerGestureRegistrations();
+      const view = render(
+        <EditorRoot
+          {...props}
+          editorBlockIndexPort={sourceLinkBlockIndexPort()}
+          generatedContentExportSession={generatedContentExportSession}
+        />
+      );
+      // A real focus target outside the editor: the focus-out case must move
+      // document.activeElement here, not synthesize a blur event.
+      const externalFocus = document.createElement('button');
+      externalFocus.type = 'button';
+      externalFocus.textContent = 'outside pointer gesture';
+      document.body.append(externalFocus);
+      try {
+        fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+        fireEvent.click(view.getByRole('button', { name: '预览' }));
+        await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+        layoutPreviewSurface(view.container);
+        const unlock = await view.findByRole('button', {
+          name: '解除锁定并编辑'
+        });
+        await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+        fireEvent.click(unlock);
+        const visual = await view.findByRole('textbox', {
+          name: '可视化文章编辑器'
+        });
+        expect(visual.getAttribute('data-easymde-preview-html-sink')).toBe('1');
+        await waitFor(() =>
+          expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+        );
+        const owner = documentOwnerRef.current;
+        if (!owner) throw new Error('visual-pointer-document-owner-missing');
+        const diagram = visual.querySelector('.easymde-mermaid');
+        if (!(diagram instanceof HTMLElement)) {
+          throw new Error('visual-pointer-diagram-missing');
+        }
+        const nativeSelection = window.getSelection();
+        if (!nativeSelection) {
+          throw new Error('visual-pointer-selection-missing');
+        }
+        // A rendered diagram cannot own a caret; a plain right click reaches
+        // the generated Diagram context.
+        nativeSelection.removeAllRanges();
+        layoutContextMenuSurface(visual);
+        fireEvent.contextMenu(diagram, { clientX: 24, clientY: 30 });
+        const menu = await within(document.body).findByRole('menu');
+        const diagramTrigger = within(menu).getByRole('menuitem', {
+          name: 'Diagram'
+        });
+        fireEvent.pointerDown(diagramTrigger, { button: 0 });
+        fireEvent.click(diagramTrigger);
+        const diagramSubmenu = await within(document.body).findByRole('menu', {
+          name: 'Diagram'
+        });
+        const deleteDiagram = within(diagramSubmenu).getByRole('menuitem', {
+          name: 'Delete'
+        });
+        expect(deleteDiagram.getAttribute('aria-disabled')).toBe('false');
+        // Hold the real canonical Delete response; the old diagram DOM stays
+        // mounted while the pending history Undo is prepared.
+        holdDeleteResponse = true;
+        fireEvent.click(deleteDiagram);
+        await waitFor(() => expect(owner.getValue()).toBe(deleted));
+        await waitFor(() => expect(deleteRequestRef.current).not.toBeNull());
+        await waitFor(() =>
+          expect(visual.getAttribute('data-easymde-preview-phase')).not.toBe('ready')
+        );
+        const deletedRequest = deleteRequestRef.current;
+        if (!deletedRequest) {
+          throw new Error('visual-pointer-delete-request-missing');
+        }
+        // The strict held predicate captured exactly the real delete source,
+        // and the demand-render classification sees that one request.
+        expect(deletedRequest.markdown).toBe(deleted);
+        expect(
+          demandRenders(vi.mocked(props.previewPort.render)).filter(
+            (request) => request.markdown === deleted
+          )
+        ).toHaveLength(1);
+        // The old diagram is still mounted and the delete response is not yet
+        // accepted; no application failure may be attributed to this window.
+        expect(visual.querySelector('.easymde-mermaid')).not.toBeNull();
+        expect(props.onFailure).not.toHaveBeenCalled();
+        expect(
+          view.container.querySelector('[data-easymde-visual-failure]')
+        ).toBeNull();
+
+        // The Delete response stays unresolved. In this pending state the
+        // real Ctrl+Z enters Full's existing pending-history branch and issues
+        // its own request for the restored initial source.
+        holdUndoResponse = true;
+        visual.focus();
+        fireEvent.keyDown(visual, { cancelable: true, ctrlKey: true, key: 'z' });
+        await waitFor(() => expect(owner.getValue()).toBe(initial));
+        await waitFor(() => expect(undoRequestRef.current).not.toBeNull());
+        await waitFor(() =>
+          expect(visual.getAttribute('data-easymde-preview-phase')).toBe('loading')
+        );
+        expect(visual.getAttribute('contenteditable')).toBe('true');
+
+        const lead = visual.querySelectorAll('p')[0];
+        const leadText = lead?.firstChild;
+        if (!(lead instanceof HTMLElement) || !(leadText instanceof Text)) {
+          throw new Error('visual-pointer-lead-text-missing');
+        }
+        const beforeGesture = {
+          history: owner.getHistoryState(),
+          revision: owner.getRevision?.(),
+          selection: owner.getSelection(),
+          value: owner.getValue()
+        };
+        // externalFocus (created outside the editor before the try) is the
+        // real document.activeElement target for the focus-out case below.
+        // The shared driver invokes the pointer listeners the real owners
+        // registered during mount with an engine-style record whose trust is
+        // explicit. This models the unit-test event, not a real browser
+        // gesture; production admission stays intact and the untrusted case
+        // below proves refusal instead of weakening it.
+        const pointerGesture = createPointerGesture(visual);
+
+        // A primary pointer drag wholly inside the Lead paragraph. No
+        // pointerup or cancel is delivered until the release branch below;
+        // the native range models the browser's own drag result.
+        visual.focus();
+        pointerGesture.down(lead, 'untrusted' !== release);
+        nativeSelection.removeAllRanges();
+        nativeSelection.setBaseAndExtent(leadText, 0, leadText, leadText.length);
+        expect(nativeSelection.isCollapsed).toBe(false);
+        expect(nativeSelection.anchorNode).toBe(leadText);
+        expect(nativeSelection.anchorOffset).toBe(0);
+        expect(nativeSelection.focusNode).toBe(leadText);
+        expect(nativeSelection.focusOffset).toBe(leadText.length);
+
+        const undoRequest = undoRequestRef.current;
+        if (!undoRequest) throw new Error('visual-pointer-undo-request-missing');
+        await act(async () => {
+          undoResponse.resolve(responseFor(undoRequest));
+          await undoResponse.promise;
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        await waitFor(() =>
+          expect(visual.getAttribute('data-easymde-preview-phase')).not.toBe('loading')
+        );
+
+        if ('untrusted' === release) {
+          // An untrusted down acquired no hold: the pending frame follows its
+          // ordinary sink path, so the dragged nodes are replaced and the
+          // range is not protected. Refusal is silent (no failure code). This
+          // proves acquisition refusal only: no gesture-period release
+          // listener is registered, so it makes no completion claim.
+          await waitFor(() =>
+            expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+          );
+          expect(visual.querySelectorAll('p')[0]).not.toBe(lead);
+          expect(leadText.isConnected).toBe(false);
+          expect(owner.getValue()).toBe(beforeGesture.value);
+          expect(owner.getSelection()).toEqual(beforeGesture.selection);
+          expect(owner.getRevision?.()).toBe(beforeGesture.revision);
+          expect(owner.getHistoryState()).toEqual(beforeGesture.history);
+          expect(props.onFailure).not.toHaveBeenCalled();
+          return;
+        }
+
+        // The held gesture's live nodes and native range survive: the real
+        // sink deferred the accepted frame and the owner stays committing
+        // until release. The untrusted acquisition above proved the contrast.
+        expect(visual.querySelectorAll('p')[0]).toBe(lead);
+        expect(leadText.isConnected).toBe(true);
+        const heldSelection = window.getSelection();
+        expect(heldSelection?.isCollapsed).toBe(false);
+        expect(heldSelection?.anchorNode).toBe(leadText);
+        expect(heldSelection?.anchorOffset).toBe(0);
+        expect(heldSelection?.focusNode).toBe(leadText);
+        expect(heldSelection?.focusOffset).toBe(leadText.length);
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('committing');
+        expect(owner.getValue()).toBe(beforeGesture.value);
+        expect(owner.getSelection()).toEqual(beforeGesture.selection);
+        expect(owner.getRevision?.()).toBe(beforeGesture.revision);
+        expect(owner.getHistoryState()).toEqual(beforeGesture.history);
+        expect(props.onFailure).not.toHaveBeenCalled();
+
+        if ('pointerup' === release) {
+          // Close the remaining focus observation: before the trusted
+          // completion the surface must still own document.activeElement and
+          // the native selection must still be the user's Lead range. No
+          // refocus or restore is performed to satisfy these assertions.
+          expect(document.activeElement).toBe(visual);
+          const releaseSelection = window.getSelection();
+          expect(releaseSelection?.isCollapsed).toBe(false);
+          expect(releaseSelection?.anchorNode).toBe(leadText);
+          expect(releaseSelection?.anchorOffset).toBe(0);
+          expect(releaseSelection?.focusNode).toBe(leadText);
+          expect(releaseSelection?.focusOffset).toBe(leadText.length);
+          pointerGesture.release('pointerup', lead, true);
+          await waitFor(() =>
+            expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+          );
+          // Completion published the final range before releasing the hold;
+          // acceptance then projects that expectation onto the NEW DOM.
+          expect(owner.getSelection()).toEqual({
+            direction: 'forward',
+            end: 'Lead'.length,
+            start: 0
+          });
+          expect(owner.getValue()).toBe(beforeGesture.value);
+          expect(owner.getRevision?.()).toBe(beforeGesture.revision);
+          expect(owner.getHistoryState()).toEqual(beforeGesture.history);
+          const acceptedParagraph = visual.querySelectorAll('p')[0];
+          if (!(acceptedParagraph instanceof HTMLElement)) {
+            throw new Error('visual-pointer-accepted-paragraph-missing');
+          }
+          expect(
+            acceptedParagraph.getAttribute('data-easymde-visual-block-id')
+          ).toBe('b0');
+          expect(acceptedParagraph.textContent).toBe('Lead');
+          expect(acceptedParagraph).not.toBe(lead);
+          expect(lead.isConnected).toBe(false);
+          expect(leadText.isConnected).toBe(false);
+          const acceptedSelection = window.getSelection();
+          if (!acceptedSelection) {
+            throw new Error('visual-pointer-accepted-selection-missing');
+          }
+          expect(acceptedSelection.rangeCount).toBe(1);
+          expect(acceptedSelection.isCollapsed).toBe(false);
+          const acceptedAnchor = acceptedSelection.anchorNode;
+          const acceptedFocus = acceptedSelection.focusNode;
+          if (!acceptedAnchor || !acceptedFocus) {
+            throw new Error('visual-pointer-accepted-selection-missing');
+          }
+          expect(acceptedParagraph.contains(acceptedAnchor)).toBe(true);
+          expect(acceptedParagraph.contains(acceptedFocus)).toBe(true);
+          const anchorPrefix = document.createRange();
+          anchorPrefix.selectNodeContents(acceptedParagraph);
+          anchorPrefix.setEnd(acceptedAnchor, acceptedSelection.anchorOffset);
+          expect(anchorPrefix.toString()).toBe('');
+          const focusPrefix = document.createRange();
+          focusPrefix.selectNodeContents(acceptedParagraph);
+          focusPrefix.setEnd(acceptedFocus, acceptedSelection.focusOffset);
+          expect(focusPrefix.toString()).toBe('Lead');
+          expect(acceptedSelection.toString()).toBe('Lead');
+          await continueEditingRestoredLeadSelection({
+            acceptedHistory: owner.getHistoryState(),
+            acceptedRevision: owner.getRevision?.(),
+            acceptedSource: owner.getValue(),
+            label: 'visual-pointer',
+            onFailure: props.onFailure,
+            owner,
+            visual
+          });
+        } else {
+          if ('pointercancel' === release) {
+            // A cancel releases the hold without any completion publication;
+            // its own release does not require a trusted completion record.
+            pointerGesture.release('pointercancel', lead, true);
+          } else if ('untrusted-up' === release) {
+            // The trusted acquisition is held, but an untrusted completion
+            // must not publish the range; the hold is released as a cancel.
+            pointerGesture.release('pointerup', lead, false);
+          } else {
+            // Real focus transfer to the independent control fires the
+            // surface blur listener. The cancelled gesture must not let the
+            // owner reclaim focus during or after the accepted install.
+            externalFocus.focus();
+            expect(document.activeElement).toBe(externalFocus);
+          }
+          await waitFor(() =>
+            expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+          );
+          // Cancel/focus-out releases without publishing; acceptance must not
+          // replay the old history expectation over the user's range.
+          expect(owner.getValue()).toBe(beforeGesture.value);
+          expect(owner.getSelection()).toEqual(beforeGesture.selection);
+          expect(owner.getRevision?.()).toBe(beforeGesture.revision);
+          expect(owner.getHistoryState()).toEqual(beforeGesture.history);
+          if ('focus-out' === release) {
+            expect(document.activeElement).toBe(externalFocus);
+          }
+        }
+        expect(props.onFailure).not.toHaveBeenCalled();
+      } finally {
+        externalFocus.remove();
+        view.unmount();
+      }
+    }
+  );
+
+  it('holds a structural native Preview that lands during an unfinished visual pointer drag', async () => {
+    const props = fixture();
+    const initial = 'Lead\n\n---\n\nTail';
+    const edited = 'Lead\n\nx\n\n---\n\nTail';
+    const hrStart = initial.indexOf('---');
+    if (hrStart < 0) throw new Error('native-drag-hr-source-missing');
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    // The certified HR gap producer starts from the canonical HR point in the
+    // initial session selection; no runtime owner selection write is used.
+    props.submissionField.setSelectionRange(hrStart, hrStart);
+    const realCreateDocumentSession =
+      observedSourceAdapter.createCodeMirrorDocumentSession;
+    const documentOwnerRef: {
+      current: CodeMirrorDocumentSession | null;
+    } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+      .mockImplementation((options) => {
+        const owner = realCreateDocumentSession(options);
+        documentOwnerRef.current = owner;
+        return owner;
+      });
+    // Explicit source dispatch: the initial render and the structural insert.
+    // Any other source is a fixture error, not unrelated HTML under a real
+    // signature.
+    const responseFor = (request: PreviewRequest): PreviewResponse => {
+      if (request.markdown === edited) {
+        const editedResponse = createPreviewResponse(
+          request,
+          '<p>Lead</p><p>x</p><hr><p>Tail</p>' as SafePreviewHtml,
+          {}
+        );
+        return {
+          ...editedResponse,
+          editMap: {
+            version: 1 as const,
+            coordinate: 'line' as const,
+            signature: request.signature,
+            blocks: [
+              { id: 'b0', startLine: 0, endLine: 1, editable: true },
+              { id: 'b1', startLine: 2, endLine: 3, editable: true },
+              { id: 'b2', startLine: 4, endLine: 5, editable: true },
+              { id: 'b3', startLine: 6, endLine: 7, editable: true }
+            ]
+          }
+        };
+      }
+      if (request.markdown !== initial) {
+        throw new Error('native-drag-response-source-unexpected');
+      }
+      const response = createPreviewResponse(
+        request,
+        '<p>Lead</p><hr><p>Tail</p>' as SafePreviewHtml,
+        {}
+      );
+      return {
+        ...response,
+        editMap: {
+          version: 1 as const,
+          coordinate: 'line' as const,
+          signature: request.signature,
+          blocks: [
+            { id: 'b0', startLine: 0, endLine: 1, editable: true },
+            { id: 'b1', startLine: 2, endLine: 3, editable: true },
+            { id: 'b2', startLine: 4, endLine: 5, editable: true }
+          ]
+        }
+      };
+    };
+    const editResponse = deferred<PreviewResponse>();
+    const editRequestRef: { current: PreviewRequest | null } = {
+      current: null
+    };
+    let holdEditResponse = false;
+    vi.mocked(props.previewPort.render).mockImplementation((request) => {
+      if (holdEditResponse && request.markdown === edited) {
+        editRequestRef.current = request;
+        return editResponse.promise;
+      }
+      return Promise.resolve(responseFor(request));
+    });
+    const createPointerGesture = capturePointerGestureRegistrations();
+    const view = render(
+      <EditorRoot {...props} editorBlockIndexPort={sourceLinkBlockIndexPort()} />
+    );
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      const unlock = await view.findByRole('button', {
+        name: '解除锁定并编辑'
+      });
+      await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+      fireEvent.click(unlock);
+      const visual = await view.findByRole('textbox', {
+        name: '可视化文章编辑器'
+      });
+      expect(visual.getAttribute('data-easymde-preview-html-sink')).toBe('1');
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      const owner = documentOwnerRef.current;
+      if (!owner) throw new Error('native-drag-document-owner-missing');
+
+      // The certified HR parent gap is a real native producer: a cancelable
+      // beforeinput at (surface, hrChildIndex) with the canonical point at the
+      // HR start is consumed by the structural writer, which publishes the
+      // native Preview transfer and requests its response. The browser default
+      // is prevented, so no DOM mutation or input event is simulated.
+      visual.focus();
+      const thematicBreak = visual.querySelector('hr');
+      if (!(thematicBreak instanceof HTMLHRElement)) {
+        throw new Error('native-drag-hr-missing');
+      }
+      const hrIndex = Array.from(visual.childNodes).indexOf(thematicBreak);
+      const nativeSelection = window.getSelection();
+      if (!nativeSelection) throw new Error('native-drag-selection-missing');
+      nativeSelection.removeAllRanges();
+      const gapRange = document.createRange();
+      gapRange.setStart(visual, hrIndex);
+      gapRange.collapse(true);
+      nativeSelection.addRange(gapRange);
+      expect(nativeSelection.isCollapsed).toBe(true);
+      expect(nativeSelection.anchorNode).toBe(visual);
+      expect(nativeSelection.anchorOffset).toBe(hrIndex);
+      expect(nativeSelection.focusNode).toBe(visual);
+      expect(nativeSelection.focusOffset).toBe(hrIndex);
+      expect(owner.getSelection()).toEqual({
+        direction: 'none',
+        start: hrStart,
+        end: hrStart
+      });
+      holdEditResponse = true;
+      const structuralInput = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: 'x',
+        inputType: 'insertText'
+      });
+      visual.dispatchEvent(structuralInput);
+      expect(structuralInput.defaultPrevented).toBe(true);
+      await waitFor(() => expect(owner.getValue()).toBe(edited));
+      await waitFor(() => expect(editRequestRef.current).not.toBeNull());
+      // Observe the real Full pending state produced by the structural writer.
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).not.toBe('ready')
+      );
+      const beforeGesture = {
+        history: owner.getHistoryState(),
+        revision: owner.getRevision?.(),
+        selection: owner.getSelection(),
+        value: owner.getValue()
+      };
+
+      const lead = visual.querySelectorAll('p')[0];
+      const leadText = lead?.firstChild;
+      if (!(lead instanceof HTMLElement) || !(leadText instanceof Text)) {
+        throw new Error('native-drag-lead-text-missing');
+      }
+      const pointerGesture = createPointerGesture(visual);
+      visual.focus();
+      pointerGesture.down(lead, true);
+      nativeSelection.removeAllRanges();
+      nativeSelection.setBaseAndExtent(leadText, 0, leadText, leadText.length);
+      expect(nativeSelection.isCollapsed).toBe(false);
+      expect(nativeSelection.anchorNode).toBe(leadText);
+      expect(nativeSelection.anchorOffset).toBe(0);
+      expect(nativeSelection.focusNode).toBe(leadText);
+      expect(nativeSelection.focusOffset).toBe(leadText.length);
+
+      const editRequest = editRequestRef.current;
+      if (!editRequest) throw new Error('native-drag-edit-request-missing');
+      await act(async () => {
+        editResponse.resolve(responseFor(editRequest));
+        await editResponse.promise;
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).not.toBe('loading')
+      );
+
+      // The edit's response landed mid-gesture; the real sink gate held it.
+      expect(visual.querySelectorAll('p')[0]).toBe(lead);
+      expect(leadText.isConnected).toBe(true);
+      const heldSelection = window.getSelection();
+      expect(heldSelection?.isCollapsed).toBe(false);
+      expect(heldSelection?.anchorNode).toBe(leadText);
+      expect(heldSelection?.anchorOffset).toBe(0);
+      expect(heldSelection?.focusNode).toBe(leadText);
+      expect(heldSelection?.focusOffset).toBe(leadText.length);
+      expect(visual.getAttribute('data-easymde-preview-phase')).toBe('committing');
+      expect(owner.getValue()).toBe(beforeGesture.value);
+      expect(owner.getSelection()).toEqual(beforeGesture.selection);
+      expect(owner.getRevision?.()).toBe(beforeGesture.revision);
+      expect(owner.getHistoryState()).toEqual(beforeGesture.history);
+      expect(props.onFailure).not.toHaveBeenCalled();
+
+      // Close the remaining focus observation: the surface must still own
+      // document.activeElement and the native selection must still be the
+      // user's Lead range. No refocus or restore is performed.
+      expect(document.activeElement).toBe(visual);
+      const releaseSelection = window.getSelection();
+      expect(releaseSelection?.isCollapsed).toBe(false);
+      expect(releaseSelection?.anchorNode).toBe(leadText);
+      expect(releaseSelection?.anchorOffset).toBe(0);
+      expect(releaseSelection?.focusNode).toBe(leadText);
+      expect(releaseSelection?.focusOffset).toBe(leadText.length);
+
+      pointerGesture.release('pointerup', lead, true);
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      // The native completion publishes the user's range before release;
+      // acceptance projects it onto the NEW DOM while the edit's revision
+      // and history stay unchanged.
+      expect(owner.getSelection()).toEqual({
+        direction: 'forward',
+        end: 'Lead'.length,
+        start: 0
+      });
+      expect(owner.getValue()).toBe(beforeGesture.value);
+      expect(owner.getRevision?.()).toBe(beforeGesture.revision);
+      expect(owner.getHistoryState()).toEqual(beforeGesture.history);
+      const acceptedParagraph = visual.querySelectorAll('p')[0];
+      if (!(acceptedParagraph instanceof HTMLElement)) {
+        throw new Error('native-drag-accepted-paragraph-missing');
+      }
+      expect(
+        acceptedParagraph.getAttribute('data-easymde-visual-block-id')
+      ).toBe('b0');
+      expect(acceptedParagraph.textContent).toBe('Lead');
+      expect(acceptedParagraph).not.toBe(lead);
+      expect(lead.isConnected).toBe(false);
+      expect(leadText.isConnected).toBe(false);
+      const acceptedSelection = window.getSelection();
+      if (!acceptedSelection) {
+        throw new Error('native-drag-accepted-selection-missing');
+      }
+      expect(acceptedSelection.rangeCount).toBe(1);
+      expect(acceptedSelection.isCollapsed).toBe(false);
+      const acceptedAnchor = acceptedSelection.anchorNode;
+      const acceptedFocus = acceptedSelection.focusNode;
+      if (!acceptedAnchor || !acceptedFocus) {
+        throw new Error('native-drag-accepted-selection-missing');
+      }
+      expect(acceptedParagraph.contains(acceptedAnchor)).toBe(true);
+      expect(acceptedParagraph.contains(acceptedFocus)).toBe(true);
+      const anchorPrefix = document.createRange();
+      anchorPrefix.selectNodeContents(acceptedParagraph);
+      anchorPrefix.setEnd(acceptedAnchor, acceptedSelection.anchorOffset);
+      expect(anchorPrefix.toString()).toBe('');
+      const focusPrefix = document.createRange();
+      focusPrefix.selectNodeContents(acceptedParagraph);
+      focusPrefix.setEnd(acceptedFocus, acceptedSelection.focusOffset);
+      expect(focusPrefix.toString()).toBe('Lead');
+      expect(acceptedSelection.toString()).toBe('Lead');
+      await continueEditingRestoredLeadSelection({
+        acceptedHistory: owner.getHistoryState(),
+        acceptedRevision: owner.getRevision?.(),
+        acceptedSource: owner.getValue(),
+        label: 'native-drag',
+        onFailure: props.onFailure,
+        owner,
+        visual
+      });
+      expect(props.onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('holds a structural HR-gap Undo and Redo chain across an unfinished visual pointer drag', async () => {
+    const props = fixture();
+    const initial = 'Lead\n\n---\n\nTail';
+    const edited = 'Lead\n\nx\n\n---\n\nTail';
+    const hrStart = initial.indexOf('---');
+    if (hrStart < 0) throw new Error('chain-hr-source-missing');
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(hrStart, hrStart);
+    const realCreateDocumentSession =
+      observedSourceAdapter.createCodeMirrorDocumentSession;
+    const documentOwnerRef: {
+      current: CodeMirrorDocumentSession | null;
+    } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+      .mockImplementation((options) => {
+        const owner = realCreateDocumentSession(options);
+        documentOwnerRef.current = owner;
+        return owner;
+      });
+    const responseFor = (request: PreviewRequest): PreviewResponse => {
+      if (request.markdown === edited) {
+        const editedResponse = createPreviewResponse(
+          request,
+          '<p>Lead</p><p>x</p><hr><p>Tail</p>' as SafePreviewHtml,
+          {}
+        );
+        return {
+          ...editedResponse,
+          editMap: {
+            version: 1 as const,
+            coordinate: 'line' as const,
+            signature: request.signature,
+            blocks: [
+              { id: 'b0', startLine: 0, endLine: 1, editable: true },
+              { id: 'b1', startLine: 2, endLine: 3, editable: true },
+              { id: 'b2', startLine: 4, endLine: 5, editable: true },
+              { id: 'b3', startLine: 6, endLine: 7, editable: true }
+            ]
+          }
+        };
+      }
+      if (request.markdown !== initial) {
+        throw new Error('chain-response-source-unexpected');
+      }
+      const response = createPreviewResponse(
+        request,
+        '<p>Lead</p><hr><p>Tail</p>' as SafePreviewHtml,
+        {}
+      );
+      return {
+        ...response,
+        editMap: {
+          version: 1 as const,
+          coordinate: 'line' as const,
+          signature: request.signature,
+          blocks: [
+            { id: 'b0', startLine: 0, endLine: 1, editable: true },
+            { id: 'b1', startLine: 2, endLine: 3, editable: true },
+            { id: 'b2', startLine: 4, endLine: 5, editable: true }
+          ]
+        }
+      };
+    };
+    const structuralResponse = deferred<PreviewResponse>();
+    const structuralRequestRef: { current: PreviewRequest | null } = {
+      current: null
+    };
+    const undoResponse = deferred<PreviewResponse>();
+    const undoRequestRef: { current: PreviewRequest | null } = {
+      current: null
+    };
+    const redoResponse = deferred<PreviewResponse>();
+    const redoRequestRef: { current: PreviewRequest | null } = {
+      current: null
+    };
+    let holdStructural = false;
+    let holdUndo = false;
+    let holdRedo = false;
+    vi.mocked(props.previewPort.render).mockImplementation((request) => {
+      if (holdStructural && request.markdown === edited) {
+        structuralRequestRef.current = request;
+        return structuralResponse.promise;
+      }
+      if (holdUndo && request.markdown === initial) {
+        undoRequestRef.current = request;
+        return undoResponse.promise;
+      }
+      if (holdRedo && request.markdown === edited) {
+        redoRequestRef.current = request;
+        return redoResponse.promise;
+      }
+      return Promise.resolve(responseFor(request));
+    });
+    const createPointerGesture = capturePointerGestureRegistrations();
+    const view = render(
+      <EditorRoot {...props} editorBlockIndexPort={sourceLinkBlockIndexPort()} />
+    );
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      const unlock = await view.findByRole('button', {
+        name: '解除锁定并编辑'
+      });
+      await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+      fireEvent.click(unlock);
+      const visual = await view.findByRole('textbox', {
+        name: '可视化文章编辑器'
+      });
+      expect(visual.getAttribute('data-easymde-preview-html-sink')).toBe('1');
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      const owner = documentOwnerRef.current;
+      if (!owner) throw new Error('chain-document-owner-missing');
+
+      // The structural HR-gap producer, through the production user entry.
+      visual.focus();
+      const thematicBreak = visual.querySelector('hr');
+      if (!(thematicBreak instanceof HTMLHRElement)) {
+        throw new Error('chain-hr-missing');
+      }
+      const hrIndex = Array.from(visual.childNodes).indexOf(thematicBreak);
+      const nativeSelection = window.getSelection();
+      if (!nativeSelection) throw new Error('chain-selection-missing');
+      nativeSelection.removeAllRanges();
+      const gapRange = document.createRange();
+      gapRange.setStart(visual, hrIndex);
+      gapRange.collapse(true);
+      nativeSelection.addRange(gapRange);
+      expect(owner.getSelection()).toEqual({
+        direction: 'none',
+        start: hrStart,
+        end: hrStart
+      });
+      holdStructural = true;
+      const structuralInput = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: 'x',
+        inputType: 'insertText'
+      });
+      visual.dispatchEvent(structuralInput);
+      expect(structuralInput.defaultPrevented).toBe(true);
+      await waitFor(() => expect(owner.getValue()).toBe(edited));
+      await waitFor(() => expect(structuralRequestRef.current).not.toBeNull());
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).not.toBe('ready')
+      );
+      holdStructural = false;
+
+      // Immediate Undo without accepting the structural response.
+      holdUndo = true;
+      visual.focus();
+      fireEvent.keyDown(visual, { cancelable: true, ctrlKey: true, key: 'z' });
+      await waitFor(() => expect(owner.getValue()).toBe(initial));
+      await waitFor(() => expect(undoRequestRef.current).not.toBeNull());
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('loading')
+      );
+      holdUndo = false;
+
+      // Redo representative on the same pending chain; its response is the
+      // independent held response delivered during the pointer drag.
+      holdRedo = true;
+      fireEvent.keyDown(visual, {
+        cancelable: true,
+        ctrlKey: true,
+        key: 'z',
+        shiftKey: true
+      });
+      await waitFor(() => expect(owner.getValue()).toBe(edited));
+      await waitFor(() => expect(redoRequestRef.current).not.toBeNull());
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('loading')
+      );
+      // The redo request receipt is held by its own deferred; later edited
+      // sources are answered normally.
+      holdRedo = false;
+      const beforeGesture = {
+        history: owner.getHistoryState(),
+        revision: owner.getRevision?.(),
+        selection: owner.getSelection(),
+        value: owner.getValue()
+      };
+
+      const lead = visual.querySelectorAll('p')[0];
+      const leadText = lead?.firstChild;
+      if (!(lead instanceof HTMLElement) || !(leadText instanceof Text)) {
+        throw new Error('chain-lead-text-missing');
+      }
+      const pointerGesture = createPointerGesture(visual);
+      visual.focus();
+      pointerGesture.down(lead, true);
+      nativeSelection.removeAllRanges();
+      nativeSelection.setBaseAndExtent(leadText, 0, leadText, leadText.length);
+      expect(nativeSelection.isCollapsed).toBe(false);
+      expect(nativeSelection.anchorNode).toBe(leadText);
+      expect(nativeSelection.anchorOffset).toBe(0);
+      expect(nativeSelection.focusNode).toBe(leadText);
+      expect(nativeSelection.focusOffset).toBe(leadText.length);
+
+      const redoRequest = redoRequestRef.current;
+      if (!redoRequest) throw new Error('chain-redo-request-missing');
+      await act(async () => {
+        redoResponse.resolve(responseFor(redoRequest));
+        await redoResponse.promise;
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).not.toBe('loading')
+      );
+
+      expect(visual.querySelectorAll('p')[0]).toBe(lead);
+      expect(leadText.isConnected).toBe(true);
+      const heldSelection = window.getSelection();
+      expect(heldSelection?.isCollapsed).toBe(false);
+      expect(heldSelection?.anchorNode).toBe(leadText);
+      expect(heldSelection?.anchorOffset).toBe(0);
+      expect(heldSelection?.focusNode).toBe(leadText);
+      expect(heldSelection?.focusOffset).toBe(leadText.length);
+      expect(visual.getAttribute('data-easymde-preview-phase')).toBe('committing');
+      expect(owner.getValue()).toBe(beforeGesture.value);
+      expect(owner.getSelection()).toEqual(beforeGesture.selection);
+      expect(owner.getRevision?.()).toBe(beforeGesture.revision);
+      expect(owner.getHistoryState()).toEqual(beforeGesture.history);
+      expect(props.onFailure).not.toHaveBeenCalled();
+
+      // Focus observation before the trusted completion: no refocus/restore.
+      expect(document.activeElement).toBe(visual);
+      const releaseSelection = window.getSelection();
+      expect(releaseSelection?.isCollapsed).toBe(false);
+      expect(releaseSelection?.anchorNode).toBe(leadText);
+      expect(releaseSelection?.anchorOffset).toBe(0);
+      expect(releaseSelection?.focusNode).toBe(leadText);
+      expect(releaseSelection?.focusOffset).toBe(leadText.length);
+
+      pointerGesture.release('pointerup', lead, true);
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      expect(owner.getSelection()).toEqual({
+        direction: 'forward',
+        end: 'Lead'.length,
+        start: 0
+      });
+      expect(owner.getValue()).toBe(edited);
+      expect(owner.getRevision?.()).toBe(beforeGesture.revision);
+      expect(owner.getHistoryState()).toEqual(beforeGesture.history);
+      const acceptedParagraph = visual.querySelectorAll('p')[0];
+      if (!(acceptedParagraph instanceof HTMLElement)) {
+        throw new Error('chain-accepted-paragraph-missing');
+      }
+      expect(
+        acceptedParagraph.getAttribute('data-easymde-visual-block-id')
+      ).toBe('b0');
+      expect(acceptedParagraph.textContent).toBe('Lead');
+      expect(acceptedParagraph).not.toBe(lead);
+      expect(lead.isConnected).toBe(false);
+      expect(leadText.isConnected).toBe(false);
+      const acceptedSelection = window.getSelection();
+      if (!acceptedSelection) {
+        throw new Error('chain-accepted-selection-missing');
+      }
+      expect(acceptedSelection.rangeCount).toBe(1);
+      expect(acceptedSelection.isCollapsed).toBe(false);
+      const acceptedAnchor = acceptedSelection.anchorNode;
+      const acceptedFocus = acceptedSelection.focusNode;
+      if (!acceptedAnchor || !acceptedFocus) {
+        throw new Error('chain-accepted-selection-missing');
+      }
+      expect(acceptedParagraph.contains(acceptedAnchor)).toBe(true);
+      expect(acceptedParagraph.contains(acceptedFocus)).toBe(true);
+      const anchorPrefix = document.createRange();
+      anchorPrefix.selectNodeContents(acceptedParagraph);
+      anchorPrefix.setEnd(acceptedAnchor, acceptedSelection.anchorOffset);
+      expect(anchorPrefix.toString()).toBe('');
+      const focusPrefix = document.createRange();
+      focusPrefix.selectNodeContents(acceptedParagraph);
+      focusPrefix.setEnd(acceptedFocus, acceptedSelection.focusOffset);
+      expect(focusPrefix.toString()).toBe('Lead');
+      expect(acceptedSelection.toString()).toBe('Lead');
+      await continueEditingRestoredLeadSelection({
+        acceptedHistory: owner.getHistoryState(),
+        acceptedRevision: owner.getRevision?.(),
+        acceptedSource: owner.getValue(),
+        label: 'chain',
+        onFailure: props.onFailure,
+        owner,
+        visual
+      });
+      expect(props.onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
+
   it('keeps a paragraph image menu off a selection that names the sibling image', async () => {
     const props = fixture();
     const sourceMarkdown =
@@ -3356,18 +5739,19 @@ describe('EditorRoot', () => {
     view.unmount();
   });
 
-  it('keeps a failed visual Cut transfer an explicit failure after the canonical write', async () => {
+  it('continues native input and Undo after Cut leaves a renderer-omitted leading space', async () => {
     const props = fixture();
+    const originalCreate = observedSourceAdapter.createCodeMirrorDocumentSession;
+    const cutOwnerRef: { current: CodeMirrorDocumentSession | null } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession').mockImplementation((options) => {
+      const owner = originalCreate(options);
+      cutOwnerRef.current = owner;
+      return owner;
+    });
     props.submissionField.value = 'Rendered paragraph';
     props.submissionField.defaultValue = 'Rendered paragraph';
-    vi.mocked(props.previewPort.render).mockImplementation((request) =>
-      Promise.resolve(
-        createPreviewResponse(
-          request,
-          `<p>${request.markdown}</p>` as SafePreviewHtml,
-          {}
-        )
-      )
+    vi.mocked(props.previewPort.render).mockImplementation(async (request) =>
+      createPreviewResponse(request, `<p>${request.markdown.trimStart()}</p>` as SafePreviewHtml, {})
     );
     const view = render(<EditorRoot {...props} />);
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
@@ -3397,27 +5781,49 @@ describe('EditorRoot', () => {
       within(document.body).getByRole('menuitem', { name: 'Cut' })
     );
     await waitFor(() => expect(props.submissionField.value).toBe(' paragraph'));
-    // The canonical write landed, but the visual transaction that maps the
-    // cut result failed. It must stay an explicit failure instead of being
-    // announced as a completed command.
-    const failureCodes = vi
-      .mocked(props.onFailure)
-      .mock.calls.map(([code]) => code);
-    expect(
-      failureCodes.some((code) =>
-        /^visual-editor-(?:selection-map|markdown-merge)/u.test(code)
-      )
-    ).toBe(true);
-    await waitFor(() =>
-      expect(
-        view.queryByRole('textbox', { name: '可视化文章编辑器' })
-      ).toBeNull()
-    );
-    await waitFor(() =>
-      expect(
-        view.queryByText('The editor action could not be completed.')
-      ).not.toBeNull()
-    );
+    const owner = cutOwnerRef.current;
+    if (!owner) throw new Error('visual-cut-canonical-owner-missing');
+    expect(owner.getValue()).toBe(' paragraph');
+    expect(owner.getHistoryState()).toEqual({ undoDepth: 1, redoDepth: 0 });
+    await waitFor(() => expect(vi.mocked(props.previewPort.render).mock.calls.some(([request]) => request.markdown === ' paragraph')).toBe(true));
+    await waitFor(() => expect(visual.textContent).toBe('paragraph'));
+    await waitFor(() => expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready'));
+    expect(props.onFailure).not.toHaveBeenCalled();
+    expect(visual.getAttribute('contenteditable')).toBe('true');
+    expect(view.queryByText('The editor action could not be completed.')).toBeNull();
+    expect(owner.getSelection()).toEqual({ direction: 'none', start: 0, end: 0 });
+    act(() => {
+      const selection = window.getSelection();
+      const target = visual.querySelector('p')?.firstChild;
+      if (!selection || !(target instanceof Text)) throw new Error('visual-cut-continuation-caret-missing');
+      expect([target, target.parentElement]).toContain(selection.anchorNode);
+      expect(selection.anchorOffset).toBe(0);
+      expect(selection.isCollapsed).toBe(true);
+      const key = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'q' });
+      visual.dispatchEvent(key);
+      if (key.defaultPrevented) return;
+      const insertion = document.createRange();
+      insertion.setStart(target, 0);
+      insertion.collapse(true);
+      const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: 'q' });
+      Object.defineProperty(before, 'getTargetRanges', { value: () => [insertion] });
+      visual.dispatchEvent(before);
+      if (before.defaultPrevented) return;
+      target.insertData(0, 'q');
+      selection.collapse(target, 1);
+      visual.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'q' }));
+    });
+    // The new native intent owns the visible Text boundary after the
+    // renderer-only indentation; it does not move that space into the body.
+    await waitFor(() => expect(owner.getValue()).toBe(' qparagraph'));
+    fireEvent.keyDown(visual, { key: 'z', ctrlKey: true });
+    await waitFor(() => expect(owner.getValue()).toBe(' paragraph'));
+    // Undo restores this native intent's pre-key source boundary, after the
+    // indentation, rather than the earlier Cut transaction's endpoint.
+    expect(owner.getSelection()).toEqual({ direction: 'none', start: 1, end: 1 });
+    expect(owner.getHistoryState()).toEqual({ undoDepth: 1, redoDepth: 1 });
+    expect(visual.getAttribute('contenteditable')).toBe('true');
+    expect(props.onFailure).not.toHaveBeenCalled();
     view.unmount();
   });
 
@@ -7999,6 +10405,101 @@ describe('EditorRoot', () => {
     view.unmount();
   });
 
+  it('transfers the canonical caret when a visual deletion crosses the window threshold', async () => {
+    const props = fixture();
+    const initial = Array.from({ length: 161 }, (_, index) => `line ${index}`).join('\n');
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    const originalCreate = observedSourceAdapter.createCodeMirrorDocumentSession;
+    const ownerRef: { current: CodeMirrorDocumentSession | null } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession').mockImplementation((options) => {
+      const owner = originalCreate(options);
+      ownerRef.current = owner;
+      return owner;
+    });
+    vi.mocked(props.previewPort.render).mockImplementation(async (request) => {
+      const lines = request.markdown.split('\n');
+      return {
+        ...createPreviewResponse(request, lines.map((line) => `<p>${line}</p>`).join('') as SafePreviewHtml, {}),
+        editMap: {
+          version: 1,
+          coordinate: 'line',
+          signature: request.signature,
+          blocks: lines.map((_line, index) => ({ id: `b${index}`, startLine: index, endLine: index + 1, editable: true }))
+        }
+      };
+    });
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      const unlock = await view.findByRole('button', { name: '解除锁定并编辑' });
+      await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+      layoutPreviewSurface(view.container);
+      fireEvent.click(unlock);
+      const surface = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() => expect(surface.querySelector('[data-easymde-preview-window-spacer]')).not.toBeNull());
+      const paragraphs = surface.querySelectorAll('p');
+      const startText = paragraphs[1]?.firstChild;
+      const endText = paragraphs[2]?.firstChild;
+      if (!(startText instanceof Text) || !(endText instanceof Text)) throw new Error('threshold-selection-text-missing');
+      const range = document.createRange();
+      range.setStart(startText, 4);
+      range.setEnd(endText, 4);
+      surface.focus();
+      window.getSelection()?.removeAllRanges();
+      window.getSelection()?.addRange(range);
+      const start = initial.indexOf('line 1') + 4;
+      const end = initial.indexOf('line 2') + 4;
+      const deleted = initial.slice(0, start) + initial.slice(end);
+      layoutContextMenuSurface(surface);
+      fireEvent.contextMenu(surface, { clientX: 24, clientY: 30 });
+      fireEvent.click(await within(document.body).findByRole('menuitem', { name: 'Cut' }));
+      const owner = ownerRef.current;
+      if (!owner) throw new Error('threshold-canonical-owner-missing');
+      await waitFor(() => expect(owner.getValue()).toBe(deleted));
+      await waitFor(() => expect(surface.querySelector('[data-easymde-preview-window-spacer]')).toBeNull());
+      expect(await view.findByRole('textbox', { name: '可视化文章编辑器' })).toBe(surface);
+      expect(surface.querySelectorAll('p')).toHaveLength(160);
+      expect(owner.getSelection()).toEqual({ direction: 'none', start, end: start });
+      const native = window.getSelection();
+      expect(native?.anchorNode?.parentElement?.closest('p')).toBe(surface.querySelectorAll('p')[1]);
+      expect(native?.anchorOffset).toBe(4);
+      const text = native?.anchorNode;
+      if (!(text instanceof Text)) throw new Error('threshold-transferred-caret-missing');
+      act(() => {
+        const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: 'q' });
+        surface.dispatchEvent(before);
+        if (before.defaultPrevented) return;
+        text.insertData(native?.anchorOffset ?? 0, 'q');
+        native?.collapse(text, 5);
+        surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'q' }));
+      });
+      await waitFor(() => expect(owner.getValue()).toBe(deleted.slice(0, start) + 'q' + deleted.slice(start)));
+      act(() => {
+        const selection = window.getSelection();
+        const currentText = selection?.anchorNode;
+        const offset = selection?.anchorOffset ?? 0;
+        if (!(currentText instanceof Text) || offset < 1) throw new Error('threshold-delete-caret-missing');
+        const range = document.createRange();
+        range.setStart(currentText, offset - 1);
+        range.setEnd(currentText, offset);
+        const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'deleteContentBackward' });
+        Object.defineProperty(before, 'getTargetRanges', { value: () => [range] });
+        surface.dispatchEvent(before);
+        if (before.defaultPrevented) return;
+        currentText.deleteData(offset - 1, 1);
+        selection?.collapse(currentText, offset - 1);
+        surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+      });
+      await waitFor(() => expect(owner.getValue()).toBe(deleted));
+      expect(owner.getSelection()).toEqual({ direction: 'none', start, end: start });
+      expect(props.onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
+
   it.each([false, true] as const)(
     'keeps generated visual Preview protected without changing Markdown (%s)',
     async (windowed) => {
@@ -10243,8 +12744,13 @@ describe('EditorRoot', () => {
         expect(request.signature).not.toBe('0:' + initial.length);
         expect(pending.signal?.aborted).toBe(false);
         if ('enhancing' === pendingStage) {
-          expect(pending.enhancement?.isCurrent()).toBe(true);
-          expect(pending.enhancement?.signal.aborted).toBe(false);
+          // The enhancing phase includes staged population and marker capture
+          // before the enhancement Port starts. Exit must race the actual held
+          // enhancement lease, not merely that broader presentation phase.
+          await waitFor(() => {
+            expect(pending.enhancement?.isCurrent()).toBe(true);
+            expect(pending.enhancement?.signal.aborted).toBe(false);
+          });
         } else {
           expect(pending.enhancement).toBeNull();
         }
@@ -11979,6 +14485,372 @@ describe('EditorRoot', () => {
     expect(
       sink?.querySelector('[data-easymde-preview-window-spacer]')
     ).toBeNull();
+    expect(props.onFailure).not.toHaveBeenCalled();
+    expect(props.submissionField.value).toBe(markdown);
+  });
+
+  function captureSourceOwner(): { current: CodeMirrorDocumentSession | null } {
+    const ownerRef: { current: CodeMirrorDocumentSession | null } = {
+      current: null
+    };
+    const realCreate = observedSourceAdapter.createCodeMirrorDocumentSession;
+    vi.spyOn(
+      observedSourceAdapter,
+      'createCodeMirrorDocumentSession'
+    ).mockImplementation((options) => {
+      const owner = realCreate(options);
+      ownerRef.current = owner;
+      return owner;
+    });
+    return ownerRef;
+  }
+
+  it('locks a Full visual Preview during a pending render without an error or canonical mutation, then unlocks and continues', async () => {
+    const baseProps = fixture();
+    const initial = 'Text';
+    const props = {
+      ...baseProps,
+      preview: {
+        ...baseProps.preview,
+        html: '<p>Text</p>' as SafePreviewHtml,
+        signature: 'pending-lock-initial'
+      }
+    };
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(0, 0);
+    const responseFor = (request: PreviewRequest): PreviewResponse =>
+      createPreviewResponse(
+        request,
+        `<p>${request.markdown}</p>` as SafePreviewHtml,
+        {}
+      );
+    const ownerRef = captureSourceOwner();
+    const held: Array<{
+      request: PreviewRequest;
+      resolve: (response: PreviewResponse) => void;
+    }> = [];
+    let holdRenders = false;
+    vi.mocked(props.previewPort.render).mockImplementation((request) => {
+      if (holdRenders) {
+        return new Promise<PreviewResponse>((resolve) => {
+          held.push({ request, resolve });
+        });
+      }
+      return Promise.resolve(responseFor(request));
+    });
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      const unlock = await view.findByRole('button', { name: '解除锁定并编辑' });
+      await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+      layoutPreviewSurface(view.container);
+      fireEvent.click(unlock);
+      const visual = await view.findByRole('textbox', {
+        name: '可视化文章编辑器'
+      });
+      await waitFor(() =>
+        expect(visual.getAttribute('contenteditable')).toBe('true')
+      );
+      const owner = ownerRef.current;
+      if (!owner) throw new Error('pending-lock-owner-missing');
+      const text = visual.querySelector('p')?.firstChild;
+      if (!(text instanceof Text)) throw new Error('pending-lock-text-missing');
+      holdRenders = true;
+      visual.focus();
+      layoutContextMenuSurface(visual);
+      const cutRange = document.createRange();
+      cutRange.setStart(text, 0);
+      cutRange.setEnd(text, 1);
+      const cutSelection = window.getSelection();
+      cutSelection?.removeAllRanges();
+      cutSelection?.addRange(cutRange);
+      document.dispatchEvent(new Event('selectionchange'));
+      fireEvent.contextMenu(text.parentElement as HTMLElement, {
+        clientX: 24,
+        clientY: 30
+      });
+      const menu = await within(document.body).findByRole('menu');
+      fireEvent.click(within(menu).getByRole('menuitem', { name: 'Cut' }));
+      await waitFor(() => expect(owner.getValue()).toBe('ext'));
+      await waitFor(() => expect(held.length).toBeGreaterThan(0));
+      const edited = owner.getValue();
+      expect(held.some(({ request }) => request.markdown === edited)).toBe(true);
+      const beforeLock = {
+        history: owner.getHistoryState(),
+        nativeValue: props.submissionField.value,
+        revision: owner.getRevision(),
+        selection: owner.getSelection(),
+        value: owner.getValue()
+      };
+      fireEvent.click(view.getByRole('button', { name: '锁定为只读' }));
+      await waitFor(() =>
+        expect(
+          view.queryByRole('textbox', { name: '可视化文章编辑器' })
+        ).toBeNull()
+      );
+      const sink = view.container.querySelector<HTMLElement>(
+        '[data-easymde-preview-html-sink="1"]'
+      );
+      if (!sink) throw new Error('pending-lock-sink-missing');
+      expect(sink.getAttribute('contenteditable')).not.toBe('true');
+      expect(sink.textContent).toContain('Text');
+      expect(
+        view.getByRole('button', { name: '解除锁定并编辑' })
+          .hasAttribute('disabled')
+      ).toBe(true);
+      expect(props.onFailure).not.toHaveBeenCalled();
+      expect({
+        history: owner.getHistoryState(),
+        nativeValue: props.submissionField.value,
+        revision: owner.getRevision(),
+        selection: owner.getSelection(),
+        value: owner.getValue()
+      }).toEqual(beforeLock);
+      await act(async () => {
+        holdRenders = false;
+        for (const entry of held.splice(0)) {
+          entry.resolve(responseFor(entry.request));
+        }
+        await Promise.resolve();
+      });
+      await waitFor(() =>
+        expect(sink.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      const unlockAfter = view.getByRole('button', {
+        name: '解除锁定并编辑'
+      });
+      await waitFor(() =>
+        expect(unlockAfter.hasAttribute('disabled')).toBe(false)
+      );
+      fireEvent.click(unlockAfter);
+      const visualAfter = await view.findByRole('textbox', {
+        name: '可视化文章编辑器'
+      });
+      await waitFor(() =>
+        expect(visualAfter.getAttribute('contenteditable')).toBe('true')
+      );
+      const historyBeforeContinue = owner.getHistoryState();
+      const valueBeforeContinue = owner.getValue();
+      visualAfter.innerHTML = `<p>${valueBeforeContinue}C</p>`;
+      fireEvent.input(visualAfter);
+      await waitFor(() =>
+        expect(owner.getValue()).toBe(`${valueBeforeContinue}C`)
+      );
+      expect(owner.getHistoryState().undoDepth).toBeGreaterThan(
+        historyBeforeContinue.undoDepth
+      );
+      expect(props.onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('locks a Windowed visual Preview during a pending render, restores the full read-only Preview on ready, and continues after unlock', async () => {
+    const baseProps = fixture();
+    const lines = Array.from({ length: 200 }, (_, index) => `Paragraph ${index}`);
+    const markdown = lines.join('\n');
+    const props = {
+      ...baseProps,
+      preview: {
+        ...baseProps.preview,
+        html: lines.map((line) => `<p>${line}</p>`).join('') as SafePreviewHtml,
+        signature: 'pending-windowed-lock-initial'
+      }
+    };
+    props.submissionField.value = markdown;
+    props.submissionField.defaultValue = markdown;
+    props.submissionField.setSelectionRange(0, 0);
+    const responseFor = (request: PreviewRequest): PreviewResponse =>
+      createPreviewResponse(
+        request,
+        request.markdown
+          .split('\n')
+          .map((line) => `<p>${line}</p>`)
+          .join('') as SafePreviewHtml,
+        {}
+      );
+    const ownerRef = captureSourceOwner();
+    const held: Array<{
+      request: PreviewRequest;
+      resolve: (response: PreviewResponse) => void;
+    }> = [];
+    let holdRenders = false;
+    vi.mocked(props.previewPort.render).mockImplementation((request) => {
+      if (holdRenders) {
+        return new Promise<PreviewResponse>((resolve) => {
+          held.push({ request, resolve });
+        });
+      }
+      return Promise.resolve(responseFor(request));
+    });
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      const unlock = await view.findByRole('button', { name: '解除锁定并编辑' });
+      await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+      layoutPreviewSurface(view.container);
+      fireEvent.click(unlock);
+      const visual = await view.findByRole('textbox', {
+        name: '可视化文章编辑器'
+      });
+      await waitFor(() =>
+        expect(
+          visual.querySelector('[data-easymde-preview-window-spacer]')
+        ).not.toBeNull()
+      );
+      const owner = ownerRef.current;
+      if (!owner) throw new Error('pending-windowed-lock-owner-missing');
+      const text = visual.querySelector('p')?.firstChild;
+      if (!(text instanceof Text)) throw new Error('pending-windowed-lock-text-missing');
+      holdRenders = true;
+      visual.focus();
+      layoutContextMenuSurface(visual);
+      const cutRange = document.createRange();
+      cutRange.setStart(text, 0);
+      cutRange.setEnd(text, 1);
+      const cutSelection = window.getSelection();
+      cutSelection?.removeAllRanges();
+      cutSelection?.addRange(cutRange);
+      document.dispatchEvent(new Event('selectionchange'));
+      fireEvent.contextMenu(text.parentElement as HTMLElement, {
+        clientX: 24,
+        clientY: 30
+      });
+      const menu = await within(document.body).findByRole('menu');
+      fireEvent.click(within(menu).getByRole('menuitem', { name: 'Cut' }));
+      await waitFor(() => expect(owner.getValue()).not.toBe(markdown));
+      await waitFor(() => expect(held.length).toBeGreaterThan(0));
+      const edited = owner.getValue();
+      expect(held.some(({ request }) => request.markdown === edited)).toBe(true);
+      const beforeLock = {
+        history: owner.getHistoryState(),
+        nativeValue: props.submissionField.value,
+        revision: owner.getRevision(),
+        selection: owner.getSelection(),
+        value: owner.getValue()
+      };
+      fireEvent.click(view.getByRole('button', { name: '锁定为只读' }));
+      // The Windowed owner still owns a pending transfer, so its toolbar
+      // fallback refuses the handoff: the lock is not applied, the visual
+      // editor stays local-editable, and no failure is reported.
+      expect(
+        view.getByRole('textbox', { name: '可视化文章编辑器' })
+      ).toBe(visual);
+      expect(visual.getAttribute('contenteditable')).toBe('true');
+      expect(props.onFailure).not.toHaveBeenCalled();
+      expect({
+        history: owner.getHistoryState(),
+        nativeValue: props.submissionField.value,
+        revision: owner.getRevision(),
+        selection: owner.getSelection(),
+        value: owner.getValue()
+      }).toEqual(beforeLock);
+      await act(async () => {
+        holdRenders = false;
+        for (const entry of held.splice(0)) {
+          entry.resolve(responseFor(entry.request));
+        }
+        await Promise.resolve();
+      });
+      const settlingSink = view.container.querySelector<HTMLElement>(
+        '[data-easymde-preview-html-sink="1"]'
+      );
+      await waitFor(() =>
+        expect(
+          settlingSink?.getAttribute('data-easymde-preview-phase')
+        ).toBe('ready')
+      );
+      fireEvent.click(view.getByRole('button', { name: '锁定为只读' }));
+      await waitFor(() =>
+        expect(
+          view.queryByRole('textbox', { name: '可视化文章编辑器' })
+        ).toBeNull()
+      );
+      const sink = view.container.querySelector<HTMLElement>(
+        '[data-easymde-preview-html-sink="1"]'
+      );
+      if (!sink) throw new Error('pending-windowed-lock-sink-missing');
+      expect(sink.getAttribute('contenteditable')).not.toBe('true');
+      expect(sink.textContent).toContain('Paragraph 1');
+      expect(
+        view.getByRole('button', { name: '解除锁定并编辑' })
+          .getAttribute('aria-pressed')
+      ).toBe('true');
+      expect(props.onFailure).not.toHaveBeenCalled();
+      expect({
+        history: owner.getHistoryState(),
+        nativeValue: props.submissionField.value,
+        revision: owner.getRevision(),
+        selection: owner.getSelection(),
+        value: owner.getValue()
+      }).toEqual(beforeLock);
+      await waitFor(() =>
+        expect(
+          sink.querySelectorAll('[data-easymde-visual-block-id]')
+        ).toHaveLength(lines.length)
+      );
+      expect(
+        sink.querySelector('[data-easymde-preview-window-spacer]')
+      ).toBeNull();
+      expect(props.onFailure).not.toHaveBeenCalled();
+      layoutPreviewSurface(view.container);
+      const unlockAfter = view.getByRole('button', {
+        name: '解除锁定并编辑'
+      });
+      await waitFor(() =>
+        expect(unlockAfter.hasAttribute('disabled')).toBe(false)
+      );
+      fireEvent.click(unlockAfter);
+      const visualAfter = await view.findByRole(
+        'textbox',
+        { name: '可视化文章编辑器' },
+        { timeout: 10_000 }
+      );
+      await waitFor(() =>
+        expect(
+          visualAfter.querySelector('[data-easymde-preview-window-spacer]')
+        ).not.toBeNull()
+      );
+      const historyBeforeContinue = owner.getHistoryState();
+      const valueBeforeContinue = owner.getValue();
+      const continueText = visualAfter.querySelector('p')?.firstChild;
+      if (!(continueText instanceof Text)) {
+        throw new Error('pending-windowed-lock-continuation-text-missing');
+      }
+      act(() => {
+        const selection = window.getSelection();
+        selection?.collapse(continueText, 0);
+        const before = new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          inputType: 'insertText',
+          data: 'w'
+        });
+        visualAfter.dispatchEvent(before);
+        if (before.defaultPrevented) return;
+        continueText.insertData(0, 'w');
+        selection?.collapse(continueText, 1);
+        visualAfter.dispatchEvent(
+          new InputEvent('input', {
+            bubbles: true,
+            inputType: 'insertText',
+            data: 'w'
+          })
+        );
+      });
+      await waitFor(() =>
+        expect(owner.getValue().length).toBe(valueBeforeContinue.length + 1)
+      );
+      expect(owner.getHistoryState().undoDepth).toBeGreaterThan(
+        historyBeforeContinue.undoDepth
+      );
+      expect(props.onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
   });
 
   it('does not unlock a queued windowed visual Preview after a newer snapshot supersedes it', async () => {

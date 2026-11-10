@@ -99,6 +99,13 @@ type SafePreviewHtmlSinkProps = Readonly<{
 
 type AppliedSurfaceState = Readonly<{
   html: SafePreviewHtml | null;
+  /**
+   * The DOM serialization this sink itself installed for `html`. A local edit
+   * (a native deletion the editor has not committed yet) changes the surface
+   * without changing the requested HTML, so identical HTML is only a no-op
+   * when the mounted children still spell exactly what the sink wrote.
+   */
+  renderedHtml?: string | null;
   revision: number;
   statusClassName: string | undefined;
   statusMessage: string | undefined;
@@ -602,6 +609,16 @@ export function SafePreviewHtmlSink({
       && appliedSurfaceState.statusMessage === statusMessage
       && appliedSurfaceState.statusRole === statusRole
       && null === appliedSurfaceState.windowedCommitKey
+      // Identical HTML is only a no-op while the mounted children still spell
+      // the render this sink installed. A native edit mutates the accepted DOM
+      // without changing the requested HTML (or its revision), so skipping here
+      // would keep the edited DOM as the next accepted baseline while the source
+      // still describes the original render. Materialize/window commit states
+      // do not record `renderedHtml`; their identities are verified elsewhere.
+      && (
+        'string' !== typeof appliedSurfaceState.renderedHtml
+        || appliedSurfaceState.renderedHtml === surface.innerHTML
+      )
     ) {
       return;
     }
@@ -770,6 +787,7 @@ export function SafePreviewHtmlSink({
         appliedSurfaceStateRef.current = {
           html,
           materializeCommitKey: null,
+          renderedHtml: surface.innerHTML,
           revision: htmlRevision,
           statusClassName,
           statusMessage,
@@ -783,6 +801,10 @@ export function SafePreviewHtmlSink({
     appliedSurfaceStateRef.current = {
       html,
       materializeCommitKey: null,
+      // Read back what the browser actually installed: attribute quoting and
+      // entity spelling are the browser's, and a later identical request must
+      // compare against this exact serialization, not the request string.
+      renderedHtml: surface.innerHTML,
       revision: htmlRevision,
       statusClassName,
       statusMessage,

@@ -146,6 +146,7 @@ import {
   EditorContextMenuFeature,
   type EditorContextMenuActionContext,
   type EditorContextMenuGeneratedContext,
+  type EditorContextMenuPreparedSelection,
   type EditorContextMenuSurface,
   type EditorContextMenuSurfaceSnapshot
 } from '../../features/editor-context-menu/EditorContextMenuFeature';
@@ -1769,7 +1770,20 @@ export function EditorRoot(props: EditorRootProps) {
   const previewVisible = immersive
     ? 'source' !== immersiveMode
     : 'source' !== props.settings.general.editingMode;
-  const visualPreviewWindowed = visualPreviewUsesWindowedOwner(
+  // The previous visual owner and whether its replacement is a caret
+  // transfer. This is deliberately a ref read at the top of the render and
+  // written back at the end: a derived-state update here would re-render just
+  // to describe the render that is already running.
+  const visualOwnerSelectionResumeRef = useRef<Readonly<{
+    editing: boolean;
+    transferred: boolean;
+    windowed: boolean;
+  }>>({ editing: false, transferred: false, windowed: false });
+  const previousVisualOwnerSelectionResume =
+    visualOwnerSelectionResumeRef.current;
+  // The owner identity never includes the sticky retention term below; that
+  // term only decides which surface stays mounted while its transfer settles.
+  const primaryVisualPreviewWindowed = visualPreviewUsesWindowedOwner(
     visualPreviewNeedsWindow,
     visualDocumentEndHistoryPending || visualWindowedHistoryBranchHeld,
     visualPreviewEditing,
@@ -1777,6 +1791,14 @@ export function EditorRoot(props: EditorRootProps) {
   ) || (
     visualPreviewWindowRequestedRef.current
     && visualPreviewEditing
+  );
+  const visualPreviewWindowed = primaryVisualPreviewWindowed || (
+    // The accepted map may cross the threshold before its transfer settles.
+    // Keep that transfer's Windowed owner until the surface can change with it.
+    visualPreviewPending
+    && visualPreviewEditing
+    && previousVisualOwnerSelectionResume.editing
+    && previousVisualOwnerSelectionResume.windowed
   );
   const currentVisualPreviewSurfaceWindowed =
     visualPreviewSurfaceUsesWindowedOwner(
@@ -1798,6 +1820,30 @@ export function EditorRoot(props: EditorRootProps) {
       visualPreviewNeedsWindow
     );
   visualPreviewSurfaceWindowedRef.current = visualPreviewSurfaceWindowed;
+  // Both visual owners share the sink, but changing its window projection
+  // replaces its children. A native range left on that sink is not a caret
+  // transfer. Arm the incoming owner's accepted-source selection lifecycle
+  // before it mounts, without changing the canonical selection or history.
+  const visualOwnerChanged =
+    previousVisualOwnerSelectionResume.editing !== visualPreviewEditing
+    || previousVisualOwnerSelectionResume.windowed !==
+      primaryVisualPreviewWindowed;
+  const visualOwnerSelectionTransferred = visualOwnerChanged
+    ? visualPreviewEditing
+      && previousVisualOwnerSelectionResume.editing
+      && previousVisualOwnerSelectionResume.windowed !==
+        primaryVisualPreviewWindowed
+    : previousVisualOwnerSelectionResume.transferred;
+  if (visualOwnerChanged && visualOwnerSelectionTransferred) {
+    // One token per real transfer; the ref write below stops the render this
+    // increment schedules from counting the same transition again.
+    setVisualResumeCanonicalToken((token) => token + 1);
+  }
+  visualOwnerSelectionResumeRef.current = {
+    editing: visualPreviewEditing,
+    transferred: visualOwnerSelectionTransferred,
+    windowed: primaryVisualPreviewWindowed
+  };
   useEffect(() => {
     if ('failed' === immersivePreferences.status) {
       reportFailure(immersivePreferences.code);
@@ -5292,16 +5338,15 @@ export function EditorRoot(props: EditorRootProps) {
             // Only the no-source-match case is a stale Preview target and
             // must fail explicitly instead of silently degrading.
             //
-            // A genuine mixed range (text + image + text) is the other valid
-            // case without a source match: no single image contains the whole
-            // selection, so `prepared` is null by definition. That gesture is
-            // still deliberate user intent, not a stale pointer target, and it
-            // is proved from the live native selection itself: one non-collapsed
-            // range whose endpoints are connected inside this runtime's surface
-            // and which actually intersects the hit image. Anything else - a
-            // collapsed caret, a foreign or detached range, or a range that does
-            // not cover the pointed image - stays an explicit stale-image
-            // failure.
+            // Any deliberate text range is the other valid case without a
+            // source match: one non-collapsed range whose endpoints are
+            // connected inside this runtime's surface and whose selected text
+            // is non-blank, whether or not it intersects the pointed image.
+            // Such a range is not a stale pointer target, so `prepared` is
+            // null by definition and the generic menu remains correct.
+            // Anything else - a collapsed caret, a foreign or detached range,
+            // or an image-node range with no selected text - stays an explicit
+            // stale-image failure.
             const nativeSelection =
               runtime.surface.ownerDocument.defaultView?.getSelection();
             // An image-node selection (`selectNode(img)`) selects no text at
@@ -5309,7 +5354,7 @@ export function EditorRoot(props: EditorRootProps) {
             // requiring non-blank selected text keeps the pointer-image stale
             // case - where the retired `<img>` node range survives - failing
             // exactly as before, while a real text+image range is admitted.
-            const deliberateSelectionCoversHitImage = Boolean(
+            const deliberateNativeSelection = Boolean(
               nativeSelection
               && 1 === nativeSelection.rangeCount
               && !nativeSelection.isCollapsed
@@ -5318,9 +5363,14 @@ export function EditorRoot(props: EditorRootProps) {
               && runtime.surface.contains(nativeSelection.anchorNode)
               && runtime.surface.contains(nativeSelection.focusNode)
               && '' !== nativeSelection.getRangeAt(0).toString().trim()
-              && nativeSelection.getRangeAt(0).intersectsNode(imageElement)
             );
-            if (!deliberateSelectionCoversHitImage) {
+            // Preserve a real user text range even when the pointed image is
+            // outside it. The click must not publish the old range as the IMG
+            // target, but it also must not turn a valid preserved selection
+            // into the retired-image stale failure. An image-node selection or
+            // a detached/foreign range has no such text and still fails the
+            // stale proof above. No second selection state is stored here.
+            if (!deliberateNativeSelection) {
               throw new Error('editor-context-menu-image-stale');
             }
           }
@@ -5535,7 +5585,8 @@ export function EditorRoot(props: EditorRootProps) {
         target,
         blockIndex,
         point,
-        activation = 'keyboard'
+        activation = 'keyboard',
+        preparedSelection?: EditorContextMenuPreparedSelection
       ) => {
         const generated =
           generatedRootAtTarget(target ?? null, 'math')
@@ -5553,6 +5604,18 @@ export function EditorRoot(props: EditorRootProps) {
             nativeSelection
           );
           if ('boundary' === route || 'invalid' === route) return false;
+          const prepared = documentSession.document.getSelection();
+          if (
+            'collapsed' === route
+            && preparedSelection
+            && preparedSelection.revision === revision
+            && preparedSelection.surfaceGeneration === visualEditorGeneration
+            && preparedSelection.selection.direction === prepared.direction
+            && preparedSelection.selection.start === prepared.start
+            && preparedSelection.selection.end === prepared.end
+          ) {
+            return true;
+          }
           if ('inside' === route) {
             const selectionInsideRoot = Boolean(
               nativeSelection?.anchorNode
@@ -6047,7 +6110,14 @@ export function EditorRoot(props: EditorRootProps) {
             unlocking={visualPreviewUnlocking}
             onToggleEditable={() => {
               if (visualPreviewEditing) {
-                void prepareSourceMutationWithPreview();
+                // Locking returns this same Preview to read-only; it does not
+                // consume the accepted window as a result. Use the teardown
+                // policy: the canonical source is already synchronized, a
+                // not-ready render is acceptable, and the Preview owner's own
+                // windowed release restores/retains the read-only surface.
+                // Requesting full materialization here would turn a legitimate
+                // loading readiness return into a page error.
+                void prepareSourceMutationWithPreview({ materialize: false });
                 return;
               }
               requestVisualPreviewUnlock();
@@ -6114,6 +6184,7 @@ export function EditorRoot(props: EditorRootProps) {
                   referenceLabelCaseFoldProfile={props.referenceLabelCaseFoldProfile}
                   documentSession={documentSession}
                   resumeCanonicalSelectionToken={visualResumeCanonicalToken}
+                  resumeCanonicalSelectionOnOwnerTransfer={visualOwnerSelectionTransferred}
                   editMap={visualPreviewSnapshot.editMap}
                   imageUploadEnabled={props.imageUpload.enabled}
                   imagePasteUploadEnabled={
@@ -6160,6 +6231,7 @@ export function EditorRoot(props: EditorRootProps) {
                   referenceLabelCaseFoldProfile={props.referenceLabelCaseFoldProfile}
                   documentSession={documentSession}
                   resumeCanonicalSelectionToken={visualResumeCanonicalToken}
+                  resumeCanonicalSelectionOnOwnerTransfer={visualOwnerSelectionTransferred}
                   imageUploadEnabled={props.imageUpload.enabled}
                   imagePasteUploadEnabled={
                     props.imageUpload.autoUploadPastedImages

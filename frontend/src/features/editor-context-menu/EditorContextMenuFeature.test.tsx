@@ -304,47 +304,11 @@ describe('EditorContextMenuFeature', () => {
     }
   );
 
-  it.each(['full', 'windowed'] as const)(
-    'preserves a backward %s visual selection after Escape cancellation',
-    async (visualMode) => {
-      const visual = document.createElement('div');
-      visual.contentEditable = 'true';
-      visual.dataset.visualMode = visualMode;
-      visual.append('alpha beta');
-      layoutSurface(visual);
-      document.body.append(visual);
-      const text = selectBackward(visual);
-
-      render(
-        <EditorContextMenuFeature
-          clipboard={clipboard()}
-          direction="ltr"
-          labels={labels}
-          onAction={vi.fn()}
-          onFailure={vi.fn()}
-          source={null}
-          visual={{
-            boundaryElement: visual,
-            element: visual,
-            getSnapshot: () => ({
-              selection: { direction: 'backward', end: text.length, start: 0 },
-              value: text.data
-            }),
-            isEditable: () => true,
-            kind: 'visual',
-            restoreFocus: () => visual.focus()
-          }}
-        />
-      );
-
-      fireEvent.pointerDown(visual, { button: 2 });
-      fireEvent.contextMenu(visual, { clientX: 20, clientY: 30 });
-      await screen.findByRole('menu');
-      fireEvent.keyDown(document, { key: 'Escape' });
-      await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
-      expectBackwardSelection(text);
-    }
-  );
+  // The Escape-cancellation focus/selection contract is verified against the
+  // real browser in tests/e2e/editor-context-menu.spec.mjs. This jsdom fixture
+  // cannot focus a contentEditable created through the property (jsdom does
+  // not reflect it to the attribute), so a native-focus assertion here would be
+  // vacuous or timing-dependent rather than product behavior.
 
   it('keeps providerless mixed text copyable while disabling relative insertion', async () => {
     const source = document.createElement('div');
@@ -1126,6 +1090,207 @@ describe('EditorContextMenuFeature', () => {
     expect(getBlockIndex).toHaveBeenCalledTimes(3);
     expect(prepare).toHaveBeenCalledOnce();
     expect(onFailure).not.toHaveBeenCalled();
+  });
+
+  it.each(['ancestor', 'window'] as const)(
+    'keeps a pending visual demand through a queued %s scroll and opens on readiness',
+    async (targetKind) => {
+      const canvas = document.createElement('div');
+      const visual = document.createElement('div');
+      visual.contentEditable = 'true';
+      visual.textContent = 'alpha';
+      layoutSurface(visual);
+      canvas.append(visual);
+      document.body.append(canvas);
+      if ('ancestor' === targetKind) canvas.scrollTop = 459;
+      const previousScrollY = Object.getOwnPropertyDescriptor(window, 'scrollY');
+      if ('window' === targetKind) {
+        Object.defineProperty(window, 'scrollY', { configurable: true, value: 54 });
+      }
+      const readinessListeners = new Set<() => void>();
+      let ready = false;
+      const onFailure = vi.fn();
+      const port = clipboard();
+      render(
+        <EditorContextMenuFeature
+          clipboard={port}
+          direction="ltr"
+          labels={labels}
+          onAction={vi.fn()}
+          onFailure={onFailure}
+          source={null}
+          visual={{
+            boundaryElement: visual,
+            element: visual,
+            getBlockIndex: () => null,
+            getContextReadiness: () => ready
+              ? { status: 'ready' as const }
+              : { status: 'pending' as const },
+            getSnapshot: () => ({
+              revision: 1,
+              selection: { direction: 'none', end: 0, start: 0 },
+              value: 'alpha'
+            }),
+            isEditable: () => true,
+            kind: 'visual',
+            subscribeReadiness: (listener) => {
+              readinessListeners.add(listener);
+              return () => readinessListeners.delete(listener);
+            }
+          }}
+        />
+      );
+      try {
+        fireEvent.contextMenu(visual, { clientX: 20, clientY: 30 });
+        await waitFor(() => expect(port.check).toHaveBeenCalledOnce());
+        expect(screen.queryByRole('menu')).toBeNull();
+        fireEvent.scroll(
+          'ancestor' === targetKind ? canvas : window
+        );
+        ready = true;
+        for (const listener of readinessListeners) listener();
+        expect(await screen.findByRole('menu')).toBeTruthy();
+        expect(onFailure).not.toHaveBeenCalled();
+      } finally {
+        if (previousScrollY) {
+          Object.defineProperty(window, 'scrollY', previousScrollY);
+        } else {
+          Reflect.deleteProperty(window, 'scrollY');
+        }
+        canvas.remove();
+      }
+    }
+  );
+
+  it.each(['ancestor', 'window'] as const)(
+    'cancels a pending visual demand after a real %s scroll displacement',
+    async (targetKind) => {
+      const canvas = document.createElement('div');
+      const visual = document.createElement('div');
+      visual.contentEditable = 'true';
+      visual.textContent = 'alpha';
+      layoutSurface(visual);
+      canvas.append(visual);
+      document.body.append(canvas);
+      if ('ancestor' === targetKind) canvas.scrollTop = 459;
+      const previousScrollY = Object.getOwnPropertyDescriptor(window, 'scrollY');
+      if ('window' === targetKind) {
+        Object.defineProperty(window, 'scrollY', { configurable: true, value: 54 });
+      }
+      const readinessListeners = new Set<() => void>();
+      let ready = false;
+      const onFailure = vi.fn();
+      const port = clipboard();
+      render(
+        <EditorContextMenuFeature
+          clipboard={port}
+          direction="ltr"
+          labels={labels}
+          onAction={vi.fn()}
+          onFailure={onFailure}
+          source={null}
+          visual={{
+            boundaryElement: visual,
+            element: visual,
+            getBlockIndex: () => null,
+            getContextReadiness: () => ready
+              ? { status: 'ready' as const }
+              : { status: 'pending' as const },
+            getSnapshot: () => ({
+              revision: 1,
+              selection: { direction: 'none', end: 0, start: 0 },
+              value: 'alpha'
+            }),
+            isEditable: () => true,
+            kind: 'visual',
+            subscribeReadiness: (listener) => {
+              readinessListeners.add(listener);
+              return () => readinessListeners.delete(listener);
+            }
+          }}
+        />
+      );
+      try {
+        fireEvent.contextMenu(visual, { clientX: 20, clientY: 30 });
+        await waitFor(() => expect(port.check).toHaveBeenCalledOnce());
+        if ('ancestor' === targetKind) {
+          canvas.scrollTop = 479;
+          fireEvent.scroll(canvas);
+        } else {
+          Object.defineProperty(window, 'scrollY', { configurable: true, value: 84 });
+          fireEvent.scroll(window);
+        }
+        ready = true;
+        for (const listener of readinessListeners) listener();
+        await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+        expect(onFailure).not.toHaveBeenCalled();
+      } finally {
+        if (previousScrollY) {
+          Object.defineProperty(window, 'scrollY', previousScrollY);
+        } else {
+          Reflect.deleteProperty(window, 'scrollY');
+        }
+        canvas.remove();
+      }
+    }
+  );
+
+  it('cancels a pending visual demand for an external scroll target', async () => {
+    const canvas = document.createElement('div');
+    const visual = document.createElement('div');
+    visual.contentEditable = 'true';
+    visual.textContent = 'alpha';
+    layoutSurface(visual);
+    canvas.append(visual);
+    document.body.append(canvas);
+    const external = document.createElement('div');
+    document.body.append(external);
+    const readinessListeners = new Set<() => void>();
+    let ready = false;
+    const onFailure = vi.fn();
+    const port = clipboard();
+    render(
+      <EditorContextMenuFeature
+        clipboard={port}
+        direction="ltr"
+        labels={labels}
+        onAction={vi.fn()}
+        onFailure={onFailure}
+        source={null}
+        visual={{
+          boundaryElement: visual,
+          element: visual,
+          getBlockIndex: () => null,
+          getContextReadiness: () => ready
+            ? { status: 'ready' as const }
+            : { status: 'pending' as const },
+          getSnapshot: () => ({
+            revision: 1,
+            selection: { direction: 'none', end: 0, start: 0 },
+            value: 'alpha'
+          }),
+          isEditable: () => true,
+          kind: 'visual',
+          subscribeReadiness: (listener) => {
+            readinessListeners.add(listener);
+            return () => readinessListeners.delete(listener);
+          }
+        }}
+      />
+    );
+    try {
+      fireEvent.contextMenu(visual, { clientX: 20, clientY: 30 });
+      await waitFor(() => expect(port.check).toHaveBeenCalledOnce());
+      external.scrollTop = 20;
+      fireEvent.scroll(external);
+      ready = true;
+      for (const listener of readinessListeners) listener();
+      await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+      expect(onFailure).not.toHaveBeenCalled();
+    } finally {
+      external.remove();
+      canvas.remove();
+    }
   });
 
   it('replaces an open menu with a pending demand before promoting the new anchor', async () => {

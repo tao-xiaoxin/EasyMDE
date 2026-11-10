@@ -650,6 +650,121 @@ describe('SafePreviewHtmlSink window commits', () => {
     expect(onCommit).toHaveBeenCalledTimes(2);
   });
 
+  it('does not restore a semantic handoff over a newer native selection', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const previous = document.createElement('p');
+    const anchor = document.createElement('p');
+    const replacement = document.createElement('p');
+    previous.textContent = 'previous';
+    anchor.textContent = 'anchor';
+    replacement.textContent = 'replacement';
+    const onCommit = vi.fn();
+    const view = render(
+      <SafePreviewHtmlSink
+        contentEditable
+        html={'' as SafePreviewHtml}
+        htmlRevision={1}
+        onStagedCommit={onCommit}
+        surfaceRef={surfaceRef}
+        windowedCommit={{ key: 1, nodes: [previous, anchor], revision: 1 }}
+      />
+    );
+    const surface = surfaceRef.current;
+    const previousText = previous.firstChild;
+    const anchorText = anchor.firstChild;
+    const replacementText = replacement.firstChild;
+    if (!surface || !(previousText instanceof Text) || !(anchorText instanceof Text)
+      || !(replacementText instanceof Text)) {
+      throw new Error('semantic-handoff-selection-fixture-missing');
+    }
+    surface.focus();
+    window.getSelection()?.collapse(previousText, 2);
+    window.getSelection()?.collapse(anchorText, 3);
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        contentEditable
+        html={'' as SafePreviewHtml}
+        htmlRevision={1}
+        onStagedCommit={onCommit}
+        surfaceRef={surfaceRef}
+        windowedCommit={{
+          key: 2,
+          nodes: [replacement, anchor],
+          revision: 1,
+          selectionHandoff: {
+            previous: { node: previousText, offset: 2 },
+            next: { node: replacementText, offset: 2 },
+            isCurrent: () => true
+          }
+        }}
+      />
+    );
+
+    const selection = window.getSelection();
+    expect(selection?.anchorNode).toBe(anchorText);
+    expect(selection?.anchorOffset).toBe(3);
+    expect(selection?.focusNode).toBe(anchorText);
+    expect(selection?.focusOffset).toBe(3);
+    expect(onCommit).toHaveBeenCalledTimes(2);
+    view.unmount();
+  });
+
+  it('does not restore a semantic handoff whose current proof is false', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const previous = document.createElement('p');
+    const anchor = document.createElement('p');
+    const replacement = document.createElement('p');
+    previous.textContent = 'previous';
+    anchor.textContent = 'anchor';
+    replacement.textContent = 'replacement';
+    const onCommit = vi.fn();
+    const view = render(
+      <SafePreviewHtmlSink
+        contentEditable
+        html={'' as SafePreviewHtml}
+        htmlRevision={1}
+        onStagedCommit={onCommit}
+        surfaceRef={surfaceRef}
+        windowedCommit={{ key: 1, nodes: [previous, anchor], revision: 1 }}
+      />
+    );
+    const surface = surfaceRef.current;
+    const previousText = previous.firstChild;
+    const replacementText = replacement.firstChild;
+    if (!surface || !(previousText instanceof Text) || !(replacementText instanceof Text)) {
+      throw new Error('stale-semantic-handoff-fixture-missing');
+    }
+    surface.focus();
+    window.getSelection()?.collapse(previousText, 2);
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        contentEditable
+        html={'' as SafePreviewHtml}
+        htmlRevision={1}
+        onStagedCommit={onCommit}
+        surfaceRef={surfaceRef}
+        windowedCommit={{
+          key: 2,
+          nodes: [replacement, anchor],
+          revision: 1,
+          selectionHandoff: {
+            previous: { node: previousText, offset: 2 },
+            next: { node: replacementText, offset: 2 },
+            isCurrent: () => false
+          }
+        }}
+      />
+    );
+
+    const selection = window.getSelection();
+    expect(selection?.anchorNode === replacementText
+      && selection.anchorOffset === 2).toBe(false);
+    expect(onCommit).toHaveBeenCalledTimes(2);
+    view.unmount();
+  });
+
   it('restores spacer range and geometry after cancelling a partial materialization', async () => {
     const surfaceRef = createRef<HTMLElement>();
     const nodes = Array.from({ length: 520 }, (_, index) => {
@@ -1334,4 +1449,27 @@ describe('test-first SafePreviewHtmlSink live draft retention', () => {
       } finally { view.unmount(); }
     }
   );
+});
+
+describe('SafePreviewHtmlSink identical HTML', () => {
+  it('reinstalls the accepted HTML when a native edit mutated the mounted surface', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const html = '<p>Para after protected PARA-PROTECTED-AFTER.</p>' as SafePreviewHtml;
+    const props = { contentEditable: true, html, htmlRevision: 4, phase: 'ready', surfaceRef };
+    const view = render(<SafePreviewHtmlSink {...props} />);
+    try {
+      const surface = surfaceRef.current;
+      if (!surface) throw new Error('test-surface-missing');
+      expect(surface.textContent).toBe('Para after protected PARA-PROTECTED-AFTER.');
+      const text = surface.querySelector('p')?.firstChild;
+      if (!(text instanceof Text)) throw new Error('test-text-missing');
+      // A native Backspace removed the space, while the source and therefore
+      // the requested HTML still describe the original render.
+      text.data = 'Para after protectedPARA-PROTECTED-AFTER.';
+      view.rerender(<SafePreviewHtmlSink {...props} phase="stale" />);
+      expect(surface.textContent).toBe('Para after protected PARA-PROTECTED-AFTER.');
+    } finally {
+      view.unmount();
+    }
+  });
 });

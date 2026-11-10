@@ -47,6 +47,12 @@ type SurfaceSnapshot = Readonly<{
 
 export type EditorContextMenuSurfaceSnapshot = SurfaceSnapshot;
 
+export type EditorContextMenuPreparedSelection = Readonly<{
+  revision?: number;
+  selection: EditorSelection;
+  surfaceGeneration?: number;
+}>;
+
 export type EditorContextMenuGeneratedContext = Readonly<{
   canCopyImage: boolean;
   canCopyMathMl: boolean;
@@ -179,7 +185,14 @@ export type EditorContextMenuSurface = Readonly<{
      * the Context Menu key or Shift+F10 asked for the menu and the current
      * selection has to be kept.
      */
-    activation?: 'keyboard' | 'pointer'
+    activation?: 'keyboard' | 'pointer',
+    /**
+     * A visible same-demand refresh may re-run this callback after menu focus
+     * has moved the native selection. This certificate is the already
+     * prepared, non-collapsed author selection captured by that demand; it is
+     * absent for every new gesture.
+     */
+    preparedSelection?: EditorContextMenuPreparedSelection
   ) => boolean;
   /**
    * Establish the selection a *pointer* activation must be captured with,

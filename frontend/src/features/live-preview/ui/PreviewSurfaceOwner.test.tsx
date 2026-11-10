@@ -1,6 +1,6 @@
 import { act, render, type RenderResult, waitFor } from "@testing-library/react";
 import { createElement } from "@wordpress/element";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import type {
 	PreviewEditMap,
@@ -14,7 +14,11 @@ import { markdownLineStarts } from "../../../shared/markdown/markdown-line-model
 import { createCodeMirrorDocumentSession } from "../../document-source/adapters/code-mirror-document-session";
 import { createNativeTitleSession } from "../../document-source/adapters/native-title-session";
 import { createEditorDocumentSession } from "../../document-source/editor-document-session";
-import { ImmersiveVisualEditor, type ImmersiveVisualEditorRuntime } from "../../immersive-editor/ui/ImmersiveVisualEditor";
+import {
+  ImmersiveVisualEditor,
+  type ImmersiveVisualEditorRuntime,
+  type VisualPreviewSnapshot
+} from "../../immersive-editor/ui/ImmersiveVisualEditor";
 import { WindowedImmersiveVisualEditor } from "../../immersive-editor/ui/WindowedImmersiveVisualEditor";
 import { createEditorMarkdownBlockIndex as createProfiledMarkdownBlockIndex } from "../../editor-context-menu/editor-markdown-block-index";
 import {
@@ -598,6 +602,10 @@ function setup(options?: {
 }
 
 describe("PreviewSurfaceOwner", () => {
+	let activeTestSignal: AbortSignal | null = null;
+	beforeEach((context) => {
+		activeTestSignal = context.signal;
+	});
 	it("keeps the full editor usable after canceling a held obsolete candidate", async () => {
 		const document = markdownDocumentSource("before");
 		const revision = document.owner.getRevision;
@@ -702,7 +710,83 @@ describe("PreviewSurfaceOwner", () => {
 	});
 	// Forty edits plus complete real-history traversal and twelve accepted
 	// transfers share this budget; each readiness barrier still has eight frames.
-	it.each(["code history", "empty fence gap", "empty fence gap composition"] as const)("keeps exact local code edits and pending real history across Preview window cadence (%s)", async (scenario) => {
+	const runPreviewWindowCadence = async (
+		scenario: "code history" | "empty fence gap" | "empty fence gap composition",
+	) => {
+		const signal = activeTestSignal;
+		const throwIfAborted = (): void => {
+			if (signal?.aborted) throw signal.reason;
+		};
+		let resolveCleanup!: () => void;
+		const cleanupDone = new Promise<void>((resolve) => {
+			resolveCleanup = resolve;
+		});
+		throwIfAborted();
+		const probe = scenario === "code history" ? {
+			startedAt: Date.now(),
+			stages: [] as Array<{
+				stage: string;
+				at: number;
+				frames: number;
+				requests: number;
+				responses: number;
+				ready: boolean;
+				accepted: boolean;
+				status: string;
+			}>,
+			frames: 0,
+			completedFrames: 0,
+			requests: 0,
+			responses: 0,
+			ready: false,
+			accepted: false,
+			status: "idle",
+			finallyEntered: false,
+			finallyCompleted: false,
+			hookRan: false,
+		} : null;
+		const mark = (stage: string): void => {
+			if (!probe || probe.stages.length >= 32) return;
+			probe.stages.push({
+				stage,
+				at: Date.now() - probe.startedAt,
+				frames: probe.frames,
+				requests: probe.requests,
+				responses: probe.responses,
+				ready: probe.ready,
+				accepted: probe.accepted,
+				status: probe.status,
+			});
+		};
+		if (probe) {
+			mark("test-start");
+			onTestFinished((context) => {
+				probe.hookRan = true;
+				mark("on-test-finished");
+				try {
+					const receipt = {
+						scenario: "code history",
+						elapsedMs: Date.now() - probe.startedAt,
+						frames: probe.frames,
+						completedFrames: probe.completedFrames,
+						requests: probe.requests,
+						responses: probe.responses,
+						ready: probe.ready,
+						accepted: probe.accepted,
+						status: probe.status,
+						finallyEntered: probe.finallyEntered,
+						finallyCompleted: probe.finallyCompleted,
+						hookRan: probe.hookRan,
+						runnerState: context.task.result?.state ?? "unknown",
+						aborted: context.signal.aborted,
+						stages: probe.stages.slice(),
+					};
+					process.stdout.write(`PREVIEW_SURFACE_OWNER_CODE_HISTORY ${JSON.stringify(receipt)}\n`);
+				} catch {
+					// Probe output must never replace the runner's original failure.
+				}
+			});
+		}
 		const body = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n";
 		const initialMarkdown = Array.from({ length: 320 }, (_, index) =>
 			[1, 3].includes(index) ? `~~~js\n${body}~~~` : [4, 60].includes(index) ? "$x$" : `Paragraph ${index}`,
@@ -728,6 +812,7 @@ describe("PreviewSurfaceOwner", () => {
 			};
 		};
 		const initial = previewFor(initialMarkdown, "window-cadence");
+		mark("setup:preview-fixture");
 		const submissionField = document.createElement("textarea");
 		submissionField.value = submissionField.defaultValue = initialMarkdown;
 		const container = document.createElement("div");
@@ -739,10 +824,20 @@ describe("PreviewSurfaceOwner", () => {
 		const getRevision = documentOwner.getRevision;
 		if (!getRevision) throw new Error("window-cadence-revision-owner-missing");
 		documentSession.registerSubmissionState({ appleFont: "system", codeTheme: "github", codeThemeExplicit: false, customCssId: "", customFont: "none", markdownTheme: "default", serifFont: "off", windowsFont: "system" });
+		mark("setup:document-session");
 		let generation = 0;
 		let snapshot: { editMap: PreviewEditMap; revision: number; signature: string } = { editMap: initial.editMap, revision: 1, signature: initial.editMap.signature };
 		let status: PreviewSurfaceStatus = "ready";
 		let updateVisual: (() => void) | null = null;
+		let readAccepted: (() => boolean) | null = null;
+		const readAcceptedSafe = (): boolean => {
+			if (!readAccepted) return false;
+			try {
+				return readAccepted();
+			} catch {
+				return false;
+			}
+		};
 		const onFailure = vi.fn();
 		const onDiagnostic = vi.fn();
 		let scrollCanvas: HTMLElement | null = null;
@@ -759,15 +854,34 @@ describe("PreviewSurfaceOwner", () => {
 			contentEditable: true, initialEditMap: initial.editMap, initialHtml: initial.html, initialSignature: initial.editMap.signature,
 			currentSourceSnapshot: () => ({ revision: getRevision(), value: documentOwner.getValue() }),
 			onDiagnostic,
-			onWindowReady: () => { generation += 1; updateVisual?.(); },
+			onWindowReady: () => {
+				generation += 1;
+				if (probe) probe.accepted = readAcceptedSafe();
+				updateVisual?.();
+			},
 			onSnapshotReady: (_html, signature, editMap) => {
 				if (!editMap) throw new Error("window-cadence-edit-map-missing");
 				snapshot = { editMap, signature, revision: snapshot.revision + 1 };
+				if (probe) probe.accepted = readAcceptedSafe();
 				updateVisual?.();
 			},
-			onStatusChange: (next) => { status = next; updateVisual?.(); },
+			onStatusChange: (next) => {
+				status = next;
+				if (probe) {
+					probe.status = next;
+					probe.ready = "ready" === next;
+				}
+				updateVisual?.();
+			},
 			stagingScheduler: { now: () => 0, yield: () => Promise.resolve() }, windowed: true,
 		});
+		readAccepted = () => Boolean(current.runtime.getAcceptedWindowSnapshot());
+		if (probe) {
+			probe.accepted = readAcceptedSafe();
+			probe.status = status;
+			probe.ready = status === "ready";
+		}
+		mark("setup:owner");
 		scrollCanvas = current.canvas;
 		Object.defineProperty(current.canvas, "clientHeight", { configurable: true, value: 240 });
 		current.canvas.dispatchEvent(new Event("scroll"));
@@ -775,15 +889,27 @@ describe("PreviewSurfaceOwner", () => {
 		const menuButton = document.createElement("button");
 		menuButton.setAttribute("role", "menuitem");
 		const outsideButton = document.createElement("button");
+		onTestFinished(async () => {
+			await cleanupDone;
+		});
 		try {
 			const settleFrames = async () => {
+				throwIfAborted();
 				await act(async () => {
 					for (let index = 0; index < 16; index += 1) await Promise.resolve();
 				});
+				throwIfAborted();
 				// Flush React after each real frame, and stop when the actual owner
 				// publishes a ready certificate instead of sleeping eight frames.
 				for (let frame = 0; frame < 8; frame += 1) {
+					throwIfAborted();
+					if (probe) probe.frames += 1;
 					await act(async () => { await flushAnimationFrames(1); });
+					throwIfAborted();
+					if (probe) {
+						probe.completedFrames += 1;
+						probe.accepted = readAcceptedSafe();
+					}
 					if (status === "ready" && current.runtime.getAcceptedWindowSnapshot()) return;
 				}
 				expect(status).toBe("ready");
@@ -795,6 +921,7 @@ describe("PreviewSurfaceOwner", () => {
 			expect(onDiagnostic.mock.calls).toEqual([]);
 			const firstWindow = current.runtime.getAcceptedWindowSnapshot();
 			expect(firstWindow).not.toBeNull();
+			mark("setup:initial-ready");
 			expect(firstWindow?.blocks.map((block) => block.id)).toContain("b4");
 			for (const block of firstWindow?.blocks ?? []) {
 				expect(block.innerHTML).toBe(block.node.innerHTML);
@@ -804,6 +931,7 @@ describe("PreviewSurfaceOwner", () => {
 			const requestPreview = (markdown: string) => {
 				const signature = `window-history-${requests.length + 1}`;
 				requests.push({ markdown, signature });
+				if (probe) probe.requests += 1;
 				current.session.schedule(request(markdown, signature), true);
 				return signature;
 			};
@@ -831,10 +959,12 @@ describe("PreviewSurfaceOwner", () => {
 			const visual = () => <WindowedImmersiveVisualEditor referenceLabelCaseFoldProfile={14} {...props} editMap={snapshot.editMap} previewSnapshot={snapshot} previewStatus={status} acceptedWindowSnapshotGeneration={generation} />;
 			view = render(visual());
 			updateVisual = () => queueMicrotask(() => {
+				if (signal?.aborted) return;
 				if (updateVisual) view?.rerender(visual());
 			});
 			current.surface.tabIndex = 0;
 			current.surface.focus();
+			mark("setup:visual-mounted");
 			const codeAt = (id: string) => {
 				const code = current.surface.querySelector(`[data-easymde-visual-block-id="${id}"] > code`);
 				if (!(code instanceof HTMLElement)) throw new Error("window-cadence-code-missing");
@@ -995,9 +1125,12 @@ describe("PreviewSurfaceOwner", () => {
 				expect(onTransferFailure).not.toHaveBeenCalled();
 				return;
 			}
+			mark("edits:start");
+			throwIfAborted();
 			for (const id of ["b1", "b3"]) {
 				const code = codeAt(id);
 				for (let key = 0; key < 20; key += 1) {
+					throwIfAborted();
 					const from = sourceBodyStart(id) + 39 - key;
 					expect(from).toBeGreaterThan(5);
 					expected = expected.slice(0, from) + expected.slice(from + 1);
@@ -1008,7 +1141,9 @@ describe("PreviewSurfaceOwner", () => {
 						const oldNodes = Array.from(current.surface.childNodes);
 						current.canvas.scrollTop = id === "b1" ? 1440 : 1680;
 						current.canvas.dispatchEvent(new Event("scroll"));
+						mark(`scroll:${id}`);
 						await settleFrames();
+						throwIfAborted();
 						expect(onDiagnostic.mock.calls).toEqual([]);
 						expect(current.runtime.getAcceptedWindowSnapshot()).not.toBeNull();
 						expect(Array.from(current.surface.childNodes)).not.toEqual(oldNodes);
@@ -1018,7 +1153,9 @@ describe("PreviewSurfaceOwner", () => {
 				current.canvas.scrollTop = 0;
 				current.canvas.dispatchEvent(new Event("scroll"));
 				await settleFrames();
+				throwIfAborted();
 			}
+			mark("edits:end");
 			const code = codeAt("b3");
 			const remaining = code.textContent ?? "";
 			const bodyStart = sourceBodyStart("b3");
@@ -1028,6 +1165,8 @@ describe("PreviewSurfaceOwner", () => {
 			committedSelections.set(expected, documentOwner.getSelection());
 			expect(code.textContent).toBe("");
 			if (!visualRuntime) throw new Error("window-cadence-runtime-missing");
+			mark("menu:start");
+			throwIfAborted();
 			const menuCode = codeAt("b1");
 			select(menuCode, 20);
 			const menuFence = `~~~js\n${menuCode.textContent ?? ""}~~~`;
@@ -1060,27 +1199,37 @@ describe("PreviewSurfaceOwner", () => {
 			select(menuCode, 20);
 			expect(documentOwner.getValue()).toBe(removed);
 			committedSelections.set(removed, documentOwner.getSelection());
+			mark("menu:end");
 			const history = (redo: boolean, keyboard: boolean) => act(() => {
+				throwIfAborted();
 				const event = keyboard
 					? new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "z", ctrlKey: true, shiftKey: redo })
 					: new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: redo ? "historyRedo" : "historyUndo" });
 				current.surface.dispatchEvent(event);
 				expect(event.defaultPrevented).toBe(true);
+				throwIfAborted();
 			});
 			const captureHistory = () => ({ value: documentOwner.getValue(), selection: documentOwner.getSelection(), history: documentOwner.getHistoryState() });
 			let deliveredResponses = 0;
 			const acceptResponses = async () => {
+				throwIfAborted();
 				await act(async () => {
 					expect(current.responses).toHaveLength(requests.length);
 					for (; deliveredResponses < requests.length; deliveredResponses += 1) {
+						throwIfAborted();
 						const previewRequest = requests[deliveredResponses];
 						if (!previewRequest) throw new Error("window-cadence-preview-request-missing");
 						current.responses[deliveredResponses]?.resolve(previewFor(previewRequest.markdown, previewRequest.signature));
+						if (probe) probe.responses += 1;
 					}
 				});
+				throwIfAborted();
 				await settleFrames();
+				throwIfAborted();
 			};
 			const compose = async (data: string, acceptWhileComposing: boolean) => {
+				throwIfAborted();
+				mark(acceptWhileComposing ? "composition:accepted:start" : "composition:held:start");
 				const before = captureHistory();
 				expect(status).toBe("loading");
 				act(() => {
@@ -1104,6 +1253,8 @@ describe("PreviewSurfaceOwner", () => {
 				expect(documentOwner.getValue()).toBe(composed);
 				expect(documentOwner.getSelection()).toEqual({ direction: "none", start: before.selection.start + data.length, end: before.selection.start + data.length });
 				expect(documentOwner.getHistoryState().undoDepth).toBe(before.history.undoDepth + 1);
+				throwIfAborted();
+				mark("composition:end");
 			};
 			// This draft is in the deleted frame's old DOM, not its new canonical caret.
 			await compose("中", false);
@@ -1160,11 +1311,16 @@ describe("PreviewSurfaceOwner", () => {
 			current.surface.focus();
 
 			const undoStates = [captureHistory()];
+			mark("undo:start");
+			throwIfAborted();
 			for (let count = 0; count < 64 && documentOwner.getValue() !== initialMarkdown; count += 1) {
+				throwIfAborted();
 				history(false, count % 2 === 0);
 				expect(documentOwner.getValue()).not.toBe(undoStates.at(-1)?.value);
 				undoStates.push(captureHistory());
 			}
+			mark("undo:end");
+			throwIfAborted();
 			expect(documentOwner.getValue()).toBe(initialMarkdown);
 			await acceptResponses();
 			expect(documentOwner.getValue()).toBe(initialMarkdown);
@@ -1181,7 +1337,10 @@ describe("PreviewSurfaceOwner", () => {
 			expect(caretRange.toString().length).toBe(40);
 			expect(status).toBe("ready");
 			expect(current.surface.querySelectorAll("pre")).toHaveLength(2);
+			mark("redo:start");
+			throwIfAborted();
 			for (const [index, state] of undoStates.slice(0, -1).reverse().entries()) {
+				throwIfAborted();
 				history(true, index % 2 !== 0);
 				expect(documentOwner.getValue()).toBe(state.value);
 				expect(documentOwner.getHistoryState()).toEqual(state.history);
@@ -1189,7 +1348,9 @@ describe("PreviewSurfaceOwner", () => {
 				// not the preceding edit's committed selection restored by Redo.
 				expect(documentOwner.getSelection()).toEqual(committedSelections.get(state.value));
 			}
+			mark("redo:end");
 			await acceptResponses();
+			throwIfAborted();
 			expect(documentOwner.getValue()).toBe(removed);
 			expect(captureHistory()).toEqual(undoStates[0]);
 			expect(window.getSelection()?.anchorNode?.isConnected).toBe(true);
@@ -1198,17 +1359,46 @@ describe("PreviewSurfaceOwner", () => {
 			expect(onFailure).not.toHaveBeenCalled();
 			expect(onDiagnostic).not.toHaveBeenCalled();
 			expect(onTransferFailure).not.toHaveBeenCalled();
+			mark("handler-completed");
 		} finally {
-			updateVisual = null;
-			view?.unmount();
-			current.unmount();
-			documentOwner.destroy();
-			container.remove();
-			menuButton.remove();
-			outsideButton.remove();
-			submissionField.remove();
-			rectSpy.mockRestore();
+			if (probe) {
+				probe.finallyEntered = true;
+				mark("finally-entered");
+			}
+			let cleanupSucceeded = false;
+			try {
+				updateVisual = null;
+				view?.unmount();
+				current.unmount();
+				documentOwner.destroy();
+				container.remove();
+				menuButton.remove();
+				outsideButton.remove();
+				submissionField.remove();
+				rectSpy.mockRestore();
+				cleanupSucceeded = true;
+			} finally {
+				try {
+					if (probe && cleanupSucceeded) {
+						probe.finallyCompleted = true;
+						mark("finally-completed");
+					}
+				} finally {
+					resolveCleanup();
+				}
+			}
 		}
+	};
+
+	// Measured isolated workload: normal same-chain 9322ms, 40 edits 2810ms,
+	// all Undo 1029ms, all Redo 1037ms, and 97/97 responses completed. 20s is
+	// only this workload's runner cap, not a product/performance change.
+	it("keeps exact local code edits and pending real history across Preview window cadence (code history)", async () => {
+		await runPreviewWindowCadence("code history");
+	}, 20_000);
+
+	it.each(["empty fence gap", "empty fence gap composition"] as const)("keeps exact local code edits and pending real history across Preview window cadence (%s)", async (scenario) => {
+		await runPreviewWindowCadence(scenario);
 	}, 10_000);
 
 	it("certifies list- and blockquote-nested fence metadata in one accepted window transaction", async () => {
@@ -3947,6 +4137,7 @@ describe("PreviewSurfaceOwner", () => {
 		expect(
 			current.surface.querySelectorAll("[data-easymde-visual-block-id]").length,
 		).toBeLessThanOrEqual(160);
+		current.unmount();
 	});
 
 	it("remeasures mounted flow geometry after a same-epoch layout change", async () => {
@@ -4028,6 +4219,7 @@ describe("PreviewSurfaceOwner", () => {
 		);
 		expect(after).not.toBeNull();
 		if (!after) throw new Error("same-epoch-updated-spacer-missing");
+		current.unmount();
 	});
 
 	it("does not publish an estimated Ready window after an epoch reset during a transform", async () => {
@@ -4097,6 +4289,7 @@ describe("PreviewSurfaceOwner", () => {
 		expect(
 			current.surface.querySelector("[data-easymde-preview-window-spacer]"),
 		).not.toBeNull();
+		current.unmount();
 	});
 
 	it("keeps an ordinary bounded resize usable with mounted current-epoch geometry", async () => {
@@ -4141,16 +4334,17 @@ describe("PreviewSurfaceOwner", () => {
 			for (let index = 0; index < 64; index += 1) await Promise.resolve();
 			await flushAnimationFrames(8);
 		});
-		vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
-			function (this: HTMLElement) {
-				const id = this.getAttribute("data-easymde-visual-block-id");
-				if (id?.startsWith("b")) {
-					const index = Number.parseInt(id.slice(1), 10);
-					return previewRect(index * 24, 24);
-				}
-				return previewRect(0, 0);
-			},
-		);
+		const prototypeRect = vi.spyOn(
+			HTMLElement.prototype,
+			"getBoundingClientRect",
+		).mockImplementation(function (this: HTMLElement) {
+			const id = this.getAttribute("data-easymde-visual-block-id");
+			if (id?.startsWith("b")) {
+				const index = Number.parseInt(id.slice(1), 10);
+				return previewRect(index * 24, 24);
+			}
+			return previewRect(0, 0);
+		});
 
 		surfaceWidth = 700;
 		window.dispatchEvent(new Event("resize"));
@@ -4162,6 +4356,8 @@ describe("PreviewSurfaceOwner", () => {
 		expect(
 			current.surface.querySelectorAll("[data-easymde-visual-block-id]").length,
 		).toBeLessThanOrEqual(160);
+		prototypeRect.mockRestore();
+		current.unmount();
 	});
 
 	it("retains measured flow when the editing presentation class is added", async () => {
@@ -4229,6 +4425,7 @@ describe("PreviewSurfaceOwner", () => {
 		expect(diagnostics).toEqual([]);
 		expect(Number.parseFloat(after.style.blockSize)).toBe(beforeHeight);
 		expect(current.surface.getAttribute("contenteditable")).toBe("true");
+		current.unmount();
 	});
 
 	it("cancels a paused geometry bootstrap when a newer Preview supersedes it", async () => {
@@ -4301,6 +4498,7 @@ describe("PreviewSurfaceOwner", () => {
 		expect(
 			current.surface.querySelector("[data-easymde-preview-window-spacer]"),
 		).toBeNull();
+		current.unmount();
 	});
 
 	it("retains the installed bounded window when hot geometry becomes unavailable", async () => {
@@ -4349,6 +4547,7 @@ describe("PreviewSurfaceOwner", () => {
 			current.surface.querySelector("[data-easymde-preview-window-spacer]"),
 		).not.toBeNull();
 		expect(current.surface.getAttribute("contenteditable")).toBe("false");
+		current.unmount();
 	});
 
 	it("advances only the explicitly adopted same-node content baseline", async () => {
@@ -5306,6 +5505,107 @@ describe("PreviewSurfaceOwner", () => {
 		lease.release();
 		replaceChildren.mockRestore();
 	});
+
+	it.each([
+		{
+			first: "b0",
+			label: "whole-document",
+			last: "b219",
+			select: (markdown: string) => ({ end: markdown.length, start: 0 }),
+		},
+		{
+			first: "b20",
+			label: "partial-wide",
+			last: "b200",
+			select: (markdown: string) => ({
+				end: markdown.indexOf("line-200"),
+				start: markdown.indexOf("line-20"),
+			}),
+		},
+	])(
+		"pins only bounded endpoints for a $label history selection",
+		async ({ first, last, select }) => {
+			const signature = "history-source-selection-bounded";
+			const fixture = documentEndFixture(220, signature);
+			const current = setup({
+				contentEditable: true,
+				initialHtml: "<p>Initial preview</p>",
+				stagingScheduler: { yield: () => Promise.resolve() },
+				windowed: true,
+			});
+			await act(async () => flushAnimationFrames());
+			const selection = select(fixture.markdown);
+			if (selection.start < 0 || selection.end <= selection.start) {
+				throw new Error("preview-test-wide-selection-missing");
+			}
+			const lease = current.runtime.prepareDocumentEndWindowPin(
+				signature,
+				selection,
+			);
+			const replaceChildren = vi.spyOn(current.surface, "replaceChildren");
+			act(() => {
+				current.session.schedule(request(fixture.markdown, signature), true);
+			});
+			await act(async () => {
+				current.responses[0]?.resolve({
+					editMap: fixture.editMap,
+					features: {},
+					html: fixture.html,
+				});
+				for (let index = 0; index < 24; index += 1) await Promise.resolve();
+				await flushAnimationFrames(12);
+			});
+
+			const initialCommit = replaceChildren.mock.calls[0];
+			expect(current.onDiagnostic).not.toHaveBeenCalled();
+			expect(initialCommit).toBeDefined();
+			const initialElements =
+				initialCommit?.filter(
+					(node): node is HTMLElement => node instanceof HTMLElement,
+				) ?? [];
+			const initialBlockCount = initialElements.filter((node) =>
+				node.hasAttribute("data-easymde-visual-block-id"),
+			).length;
+			expect(initialBlockCount).toBeLessThanOrEqual(160);
+			expect(
+				initialElements.some(
+					(node) => first === node.getAttribute("data-easymde-visual-block-id"),
+				),
+			).toBe(true);
+			expect(
+				initialElements.some(
+					(node) => last === node.getAttribute("data-easymde-visual-block-id"),
+				),
+			).toBe(true);
+			let coveredThrough = 0;
+			for (const range of previewWindowRanges(initialElements)) {
+				expect(range.start).toBe(coveredThrough);
+				expect(range.end).toBeGreaterThan(range.start);
+				coveredThrough = range.end;
+			}
+			expect(coveredThrough).toBe(220);
+			expect(
+				current.surface.querySelector(
+					`[data-easymde-visual-block-id="${first}"]`,
+				),
+			).not.toBeNull();
+			expect(
+				current.surface.querySelector(
+					`[data-easymde-visual-block-id="${last}"]`,
+				),
+			).not.toBeNull();
+			expect(current.renderPreview.mock.calls[0]?.[0]).toEqual(
+				expect.objectContaining({ markdown: fixture.markdown }),
+			);
+
+			act(() => lease.release());
+			await act(async () => flushAnimationFrames(12));
+			expect(current.onDiagnostic).not.toHaveBeenCalled();
+			expect(current.runtime.getAcceptedWindowSnapshot()).not.toBeNull();
+			replaceChildren.mockRestore();
+			current.unmount();
+		},
+	);
 
 	it("maps a selection ending at an empty line boundary to the previous Preview block", async () => {
 		const signature = "history-source-selection-empty-line-boundary";
@@ -10735,3 +11035,485 @@ it.each([
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {
   return createProfiledMarkdownBlockIndex(source, options);
 }
+
+it("preserves an ordinary text caret through a windowed preview replacement", async () => {
+  const markdown = Array.from({ length: 320 }, (_, index) =>
+    index === 5 ? "### Heading" : `Paragraph ${index}`
+  ).join("\n\n");
+  const fixture = await openWindowedOwner({ initialMarkdown: markdown });
+  try {
+    const root = fixture.current.surface.querySelector(
+      '[data-easymde-visual-block-id="b5"]'
+    );
+    const text = root?.firstChild;
+    if (!(root instanceof HTMLHeadingElement) || !(text instanceof Text)) {
+      throw new Error("ordinary-handoff-heading-missing");
+    }
+    fixture.current.surface.tabIndex = 0;
+    fixture.current.surface.focus();
+    window.getSelection()?.collapse(text, 2);
+    const signature = "ordinary-handoff-next";
+    fixture.current.session.schedule(request(markdown, signature), true);
+    const response = fixture.current.responses.at(-1);
+    if (!response) throw new Error("ordinary-handoff-response-missing");
+    const next = gapLeasePreview(markdown, signature);
+    const template = document.createElement("template");
+    template.innerHTML = next.html;
+    const candidate = template.content.querySelector(
+      '[data-easymde-visual-block-id="b5"]'
+    );
+    if (!(candidate instanceof HTMLHeadingElement)) {
+      throw new Error("ordinary-handoff-candidate-missing");
+    }
+    candidate.innerHTML = `<span>${candidate.textContent ?? ""}</span>`;
+    await act(async () => {
+      response.resolve({
+        html: template.innerHTML as SafePreviewHtml,
+        features: {},
+        editMap: next.editMap
+      });
+    });
+    await fixture.settle();
+    const replaced = fixture.current.surface.querySelector(
+      '[data-easymde-visual-block-id="b5"]'
+    );
+    const replacedText = replaced?.querySelector("span")?.firstChild;
+    const native = window.getSelection();
+    expect(replaced).toBeInstanceOf(HTMLHeadingElement);
+    expect(replacedText).toBeInstanceOf(Text);
+    expect(native?.isCollapsed).toBe(true);
+    expect(native?.anchorNode).toBe(replacedText);
+    expect(native?.anchorOffset).toBe(2);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onDiagnostic).not.toHaveBeenCalled();
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+/**
+ * The handoff an installed empty (paper) presentation shares with a non-empty
+ * history request.
+ *
+ * The owner keeps `state.html` empty while its surface already holds the
+ * accepted empty presentation, so `stageCandidate` hands the sink a
+ * pre-acceptance "first paint" commit built from the server nodes alongside
+ * `phase: "enhancing"` (the pre-acceptance branch, `PreviewSurfaceOwner.tsx`
+ * `stagedCommit: !hasCurrentHtml && !windowedFirstPaint ? ...`). That frame is
+ * not an accepted render: it must not replace the presentation the editor's
+ * `assertPendingInputDom` still certifies, and the history operation that is
+ * pending over it must still reach the canonical writer.
+ *
+ * The chain only uses the product's own paths: the empty-source request is the
+ * real `kind: "empty"` branch, the non-empty request is issued by
+ * `runHistory`'s own `requestPreview`, and the write is the editor's own
+ * `historyUndo`. The transfer reaches the retained sub-branch of
+ * `assertPendingInputDom` because `runHistory` published it with
+ * `retainedHistoryPresentation` (the empty ledger) before its undo/redo write.
+ */
+describe("PreviewSurfaceOwner installed empty presentation across a first-paint history render", () => {
+	it.each(["historyUndo", "insertText"] as const)("keeps the accepted empty presentation while the non-empty history render is staging and lets the next %s write", async (nextInput) => {
+		// The empty document carries no history. The chain's single undo entry is
+		// created by the document session's own writer, the same call the editor
+		// uses, so the premise is a real write and is asserted rather than
+		// assumed from the fixture's initial value.
+		const document = markdownDocumentSource("");
+		document.owner.applyTextChange({
+			changes: { from: 0, insert: "Z", to: 0 },
+			selection: { direction: "none", end: 1, start: 1 },
+			value: "Z"
+		});
+		expect(document.owner.getHistoryState()).toEqual({
+			redoDepth: 0,
+			undoDepth: 1
+		});
+		const acceptedEditMap: PreviewEditMap = {
+			blocks: [{ editable: true, endLine: 1, id: "b0", startLine: 0 }],
+			coordinate: "line",
+			signature: "initial",
+			version: 1
+		};
+		// The three channels EditorRoot publishes. Their callback identities must be
+		// stable: the Full owner's mount effect depends on them and its cleanup
+		// calls onPendingChange(false) unconditionally, so a fresh callback per
+		// render would tear the effect down and feed another render back in.
+		// EditorRoot replaces this state object on every publication; a
+		// status/pending-only update keeps reusing it.
+		let snapshot: VisualPreviewSnapshot = {
+			editMap: acceptedEditMap,
+			revision: 0,
+			signature: ""
+		};
+		let status: PreviewSurfaceStatus = "loading";
+		let pending = false;
+		let editorRuntime: ImmersiveVisualEditorRuntime | null = null;
+		let editorView: RenderResult | null = null;
+		let disposed = false;
+		let visualUpdateQueued = false;
+		let requestVisualUpdate: (() => void) | null = null;
+		const diagnostics: string[] = [];
+		const failure = vi.fn();
+		const transferFailure = vi.fn();
+		const onDispose = vi.fn();
+		const onMarkdownChange = vi.fn();
+		const onCanonicalDocumentChange = vi.fn();
+		const onEditorDiagnostic = vi.fn();
+		// A re-armable suspension of the real enhancement: every superseding
+		// candidate must be observed while its pre-acceptance frame exists, so the
+		// hold is armed per candidate instead of once.
+		let activeHold: Promise<void> | null = null;
+		let releaseHold: (() => void) | null = null;
+		const enhance = vi.fn(() => activeHold ?? Promise.resolve());
+		const armEnhancementHold = (): void => {
+			const hold = deferred<void>();
+			activeHold = hold.promise;
+			releaseHold = () => hold.resolve();
+		};
+		const releaseEnhancementHold = (): void => {
+			releaseHold?.();
+			activeHold = null;
+			releaseHold = null;
+		};
+		// Re-render only when a channel value actually changes, and never after
+		// teardown: an unchanged publication or a cleanup-time pending(false) must
+		// not loop back through the owner.
+		const publishSnapshot = (
+			_html: SafePreviewHtml,
+			signature: string,
+			editMap: PreviewEditMap | null
+		): void => {
+			snapshot = { editMap, revision: snapshot.revision + 1, signature };
+			requestVisualUpdate?.();
+		};
+		const publishStatus = (next: PreviewSurfaceStatus): void => {
+			if (next === status) return;
+			status = next;
+			requestVisualUpdate?.();
+		};
+		const changePending = (next: boolean): void => {
+			if (next === pending) return;
+			pending = next;
+			requestVisualUpdate?.();
+		};
+		const onEditorReady = (runtime: ImmersiveVisualEditorRuntime): void => {
+			editorRuntime = runtime;
+		};
+		const current = setup({
+			contentEditable: true,
+			emptyMode: "paper",
+			currentSourceSnapshot: () => ({
+				revision: document.owner.getRevision?.() ?? 0,
+				value: document.owner.getValue()
+			}),
+			enhance,
+			initialEditMap: acceptedEditMap,
+			initialHtml: '<p data-easymde-visual-block-id="b0">Z</p>',
+			initialSignature: "initial",
+			onDiagnostic: (code: string) => diagnostics.push(code),
+			onSnapshotReady: publishSnapshot,
+			onStatusChange: publishStatus,
+			sourceRevision: document.owner.getRevision?.() ?? 0
+		});
+		const requestPreview = (markdown: string) => {
+			const signature = `accepted-history:${markdown}`;
+			current.session.schedule(request(markdown, signature), true);
+			return signature;
+		};
+		const retainCompositionSurface = () =>
+			current.runtime.retainCompositionSurface();
+		// `isTransferPending` belongs to the Full owner's runtime, not the Preview
+		// owner's runtime; it is captured from the editor's own onReady.
+		const isTransferPending = (): boolean =>
+			editorRuntime?.isTransferPending() ?? false;
+		try {
+			await waitFor(() => expect(status).toBe("ready"));
+			expect(snapshot.signature).toBe("initial");
+			const editor = () => (
+				<ImmersiveVisualEditor
+					documentSession={document.session}
+					imagePasteUploadEnabled={false}
+					imageUploadEnabled={false}
+					onCanonicalDocumentChange={onCanonicalDocumentChange}
+					onDiagnostic={onEditorDiagnostic}
+					onDispose={onDispose}
+					onFailure={failure}
+					onMarkdownChange={onMarkdownChange}
+					onPendingChange={changePending}
+					onReady={onEditorReady}
+					onTransferFailure={transferFailure}
+					pending={pending}
+					previewSnapshot={snapshot}
+					previewStatus={status}
+					referenceLabelCaseFoldProfile={14}
+					requestPreview={requestPreview}
+					retainCompositionSurface={retainCompositionSurface}
+					surface={current.surface}
+				/>
+			);
+			editorView = render(editor());
+			requestVisualUpdate = () => {
+				if (disposed || visualUpdateQueued || !editorView) return;
+				visualUpdateQueued = true;
+				queueMicrotask(() => {
+					visualUpdateQueued = false;
+					if (!disposed && editorView) editorView.rerender(editor());
+				});
+			};
+			await act(async () => {
+				for (let index = 0; index < 8; index += 1) {
+					await Promise.resolve();
+				}
+			});
+			expect(document.owner.getValue()).toBe("Z");
+			expect(current.surface.textContent).toBe("Z");
+
+			// 1. Undo to the empty source. The real empty-source request is the
+			//    paper placeholder, so it accepts without a port render.
+			await act(async () => {
+				current.surface.dispatchEvent(
+					new InputEvent("beforeinput", {
+						bubbles: true,
+						cancelable: true,
+						inputType: "historyUndo"
+					})
+				);
+				for (let index = 0; index < 16; index += 1) {
+					await Promise.resolve();
+				}
+			});
+			expect(document.owner.getValue()).toBe("");
+			expect(current.renderPreview).not.toHaveBeenCalled();
+			// The empty paper render must now be installed: this is the paper
+			// placeholder the editor can edit, with no edit map and no port render.
+			expect(status).toBe("ready");
+			expect(snapshot.signature).toBe("accepted-history:");
+			expect(snapshot.editMap).toBeNull();
+			expect(isTransferPending()).toBe(false);
+			expect(current.surface.childNodes).toHaveLength(1);
+			expect(current.surface.textContent).toBe("");
+			const acceptedEmptyParagraph = current.surface.firstChild;
+			if (!(acceptedEmptyParagraph instanceof HTMLParagraphElement)) {
+				throw new Error("accepted-empty-presentation-missing");
+			}
+
+			// 2. Redo to the non-empty history target. The owner still holds the
+			//    empty placeholder, so this render is the pre-acceptance frame.
+			armEnhancementHold();
+			await act(async () => {
+				current.surface.dispatchEvent(
+					new InputEvent("beforeinput", {
+						bubbles: true,
+						cancelable: true,
+						inputType: "historyRedo"
+					})
+				);
+				for (let index = 0; index < 16; index += 1) {
+					await Promise.resolve();
+				}
+			});
+			expect(document.owner.getValue()).toBe("Z");
+			await waitFor(() =>
+				expect(current.renderPreview).toHaveBeenCalledTimes(1)
+			);
+			expect(current.renderPreview.mock.calls[0]?.[0]?.markdown).toBe("Z");
+			const signatureBeforeStaging = snapshot.signature;
+			await act(async () => {
+				current.responses[0]?.resolve({
+					editMap: {
+						...acceptedEditMap,
+						signature: "accepted-history:Z"
+					},
+					features: {},
+					html: '<p data-easymde-visual-block-id="b0">Z</p>' as SafePreviewHtml
+				});
+				for (let index = 0; index < 20; index += 1) {
+					await Promise.resolve();
+				}
+			});
+			// The frame the history render has not accepted must not replace the
+			// presentation the editor still certifies.
+			expect(current.surface.childNodes).toHaveLength(1);
+			expect(current.surface.firstChild).toBe(acceptedEmptyParagraph);
+			expect(current.surface.textContent).toBe("");
+			expect(current.surface.dataset.easymdePreviewPhase).not.toBe("ready");
+			// v6 recorded the editor's memoized `previewStatus` as "loading" while
+			// the un-accepted frame owned the surface; the synced channel must say
+			// the same here.
+			expect(status).toBe("loading");
+			expect(isTransferPending()).toBe(true);
+			// The unaccepted staging frame must not publish over the paper's
+			// installed state.
+			expect(snapshot.signature).toBe(signatureBeforeStaging);
+			expect(failure).not.toHaveBeenCalled();
+			expect(transferFailure).not.toHaveBeenCalled();
+
+			// 3. The pending history lease is proved against the retained ledger
+			//    and the next operation reaches the canonical writer. The
+			//    insertText case arrives on the same retained sole-BR paragraph,
+			//    with the browser's own caret after the BR.
+			if ("insertText" === nextInput) {
+				const targetRange = current.surface.ownerDocument.createRange();
+				targetRange.setStart(acceptedEmptyParagraph, 0);
+				targetRange.setEnd(acceptedEmptyParagraph, 0);
+				const insert = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					data: "B",
+					inputType: "insertText"
+				});
+				Object.defineProperty(insert, "getTargetRanges", {
+					value: () => [targetRange]
+				});
+				expect(current.surface.firstElementChild).toBe(acceptedEmptyParagraph);
+				expect(acceptedEmptyParagraph.firstChild).toBeInstanceOf(HTMLBRElement);
+				await act(async () => {
+					window.getSelection()?.collapse(acceptedEmptyParagraph, 1);
+					current.surface.dispatchEvent(insert);
+					for (let index = 0; index < 16; index += 1) {
+						await Promise.resolve();
+					}
+				});
+				expect(insert.defaultPrevented).toBe(true);
+				expect(document.owner.getValue()).toBe("ZB");
+				expect(document.owner.getSelection()).toEqual({
+					direction: "none",
+					end: 2,
+					start: 2
+				});
+				expect(failure).not.toHaveBeenCalled();
+				expect(transferFailure).not.toHaveBeenCalled();
+				expect(current.surface.firstElementChild).toBe(acceptedEmptyParagraph);
+				expect(snapshot.signature).toBe(signatureBeforeStaging);
+			} else {
+				await act(async () => {
+					current.surface.dispatchEvent(
+						new InputEvent("beforeinput", {
+							bubbles: true,
+							cancelable: true,
+							inputType: "historyUndo"
+						})
+					);
+					for (let index = 0; index < 16; index += 1) {
+						await Promise.resolve();
+					}
+				});
+				expect(document.owner.getValue()).toBe("");
+				expect(failure).not.toHaveBeenCalled();
+				expect(transferFailure).not.toHaveBeenCalled();
+				expect(snapshot.signature).toBe("accepted-history:");
+				expect(isTransferPending()).toBe(false);
+				expect(current.surface.childNodes).toHaveLength(1);
+			}
+
+			// 4. The first candidate is now stale; releasing it must not install,
+			//    publish or fail. The accepted empty presentation stands.
+			const acceptedEmptyParagraphAfterUndo = current.surface.firstChild;
+			await act(async () => {
+				releaseEnhancementHold();
+				for (let index = 0; index < 20; index += 1) {
+					await Promise.resolve();
+				}
+			});
+			// A released, superseded candidate must not install anything.
+			expect(snapshot.signature).toBe(
+				"insertText" === nextInput ? signatureBeforeStaging : "accepted-history:"
+			);
+			expect(current.surface.childNodes).toHaveLength(1);
+			expect(current.surface.textContent).toBe("");
+			expect(failure).not.toHaveBeenCalled();
+			expect(transferFailure).not.toHaveBeenCalled();
+
+			// 5. A second, superseding history request must be qualified the same
+			//    way: its pre-acceptance frame must not replace the accepted
+			//    presentation either, and then the real committing frame takes it.
+			armEnhancementHold();
+			await act(async () => {
+				current.surface.dispatchEvent(
+					new InputEvent("beforeinput", {
+						bubbles: true,
+						cancelable: true,
+						inputType: "historyRedo"
+					})
+				);
+				for (let index = 0; index < 16; index += 1) {
+					await Promise.resolve();
+				}
+			});
+			if ("insertText" === nextInput) {
+				expect(document.owner.getValue()).toBe("ZB");
+				expect(current.renderPreview).toHaveBeenCalledTimes(2);
+			} else {
+				expect(document.owner.getValue()).toBe("Z");
+				await waitFor(() =>
+					expect(current.renderPreview).toHaveBeenCalledTimes(2)
+				);
+			}
+			const signatureBeforeSecondStaging = snapshot.signature;
+			await act(async () => {
+				current.responses[1]?.resolve(
+					"insertText" === nextInput
+						? {
+								editMap: {
+									...acceptedEditMap,
+									signature: "accepted-history:ZB"
+								},
+								features: {},
+								html: '<p data-easymde-visual-block-id="b0">ZB</p>' as SafePreviewHtml
+							}
+						: {
+								editMap: {
+									...acceptedEditMap,
+									signature: "accepted-history:Z"
+								},
+								features: {},
+								html: '<p data-easymde-visual-block-id="b0">Z</p>' as SafePreviewHtml
+							}
+				);
+				for (let index = 0; index < 20; index += 1) {
+					await Promise.resolve();
+				}
+			});
+			expect(current.surface.childNodes).toHaveLength(1);
+			expect(current.surface.firstChild).toBe(acceptedEmptyParagraphAfterUndo);
+			expect(status).toBe("loading");
+			expect(isTransferPending()).toBe(true);
+			//             The unaccepted staging frame must not publish over the paper's
+			//             installed state.
+			expect(snapshot.signature).toBe(signatureBeforeSecondStaging);
+			await act(async () => {
+				releaseEnhancementHold();
+				for (let index = 0; index < 20; index += 1) {
+					await Promise.resolve();
+				}
+			});
+			await waitFor(() =>
+				expect(snapshot.signature).toBe(
+					"insertText" === nextInput ? "accepted-history:ZB" : "accepted-history:Z"
+				)
+			);
+			expect(isTransferPending()).toBe(false);
+			expect(pending).toBe(false);
+			expect(status).toBe("ready");
+			expect(
+				current.surface.querySelector('[data-easymde-visual-block-id="b0"]')
+			).not.toBeNull();
+			expect(current.surface.textContent).toBe(
+				"insertText" === nextInput ? "ZB" : "Z"
+			);
+			expect(failure).not.toHaveBeenCalled();
+			expect(transferFailure).not.toHaveBeenCalled();
+			expect(diagnostics.filter((code) => code.includes("dom-stale"))).toEqual(
+				[]
+			);
+		} finally {
+			disposed = true;
+			releaseEnhancementHold();
+			editorView?.unmount();
+			editorView = null;
+			current.unmount();
+			document.session.destroy();
+			document.container.remove();
+			document.submissionField.remove();
+		}
+	});
+});

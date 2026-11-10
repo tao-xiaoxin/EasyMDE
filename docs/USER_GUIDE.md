@@ -209,6 +209,18 @@ focused Undo/Redo in a long document, Preview brings the exact history caret's
 block into the mounted window before restoring the caret; it does not take
 focus back from another control.
 
+In a table cell, Backspace protects only the cell's absolute content start, not
+an empty cell as a whole. If Enter creates a line break in an otherwise empty
+cell, Backspace removes that break even though the cell has no text. A single
+renderer placeholder break still represents an empty cell: only the exact
+lowercase, attribute-free `<br>` token in a table cell is a line break, while
+attributes, `<BR>`, `<br/>`, code spans, escapes and entities are not. Other raw
+HTML remains stripped. Enter stays native; the editor adds no table-specific
+Enter command. Typing into a selection that spans two cells, or that mixes a
+cell with the area outside the table, is cancelled before the browser's
+default: the text stays unchanged, nothing is locked, and the table keeps its
+cells.
+
 
 A selection spanning an object and surrounding text keeps text commands;
 it does not expose that object's deletion, alignment or adjacent insertion.

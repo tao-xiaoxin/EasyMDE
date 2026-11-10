@@ -1741,6 +1741,34 @@ function directVisualBlockForSelectionNode(
  * belongs to the SECTION, not the TABLE - so a junction beside a table is read
  * through it.
  */
+
+/**
+ * Whether an inline link's own top-level block is followed by a rendered
+ * table-container. The label-tail projection may then read the last inline
+ * link before that table even though the link is not at the document end.
+ */
+function inlineLinkFacesRenderedTable(link: Element | null): boolean {
+  if (!link) return false;
+  let block: Node | null = link.closest('[data-easymde-visual-block-id]');
+  if (!block) return false;
+  let sibling = block.nextSibling;
+  while (sibling instanceof Text && /^[ \t\r\n]*$/u.test(sibling.data)) {
+    sibling = sibling.nextSibling;
+  }
+  return renderedTableRoot(sibling);
+}
+
+/** The last inline link whose remaining source is a trailing table. */
+function lastInlineLinkBeforeTrailingTable(source: string): RegExpExecArray | null {
+  const pattern = /\[([^\]]*)\]\([^)]*\)/gu;
+  let last: RegExpExecArray | null = null;
+  for (let match = pattern.exec(source); match; match = pattern.exec(source)) {
+    last = match;
+  }
+  if (!last) return null;
+  return /^\s*\|/u.test(source.slice(last.index + last[0].length)) ? last : null;
+}
+
 function renderedTableRoot(node: Node | null): node is HTMLElement {
   return node instanceof HTMLElement
     && node.matches('section.table-container, section.easymde-table-container')
@@ -1926,6 +1954,52 @@ function facingTableContact(
  * a table that is no longer rendered, or a missing row/cell answers null and
  * the press is refused instead of guessed at.
  */
+
+/**
+ * The caret a table's BEFORE edge leads to when the table's first cell has
+ * become empty. Nothing precedes the first cell inside the table, so the next
+ * Backspace must be the ordinary edit before the table: place the caret at the
+ * last editable text of the preceding block (or, for two tables in a row, at
+ * the previous table's own last cell). The table and its rows/columns are
+ * never touched here.
+ */
+function tableBeforeEdgeCaretTarget(
+  surface: HTMLElement,
+  root: HTMLElement
+): Readonly<{ node: Node; offset: number }> | null {
+  if (!root.isConnected || !surface.contains(root)) return null;
+  let previous: Node | null = root.previousSibling;
+  while (previous instanceof Text && certifiedRendererSeparatorText(previous)) {
+    previous = previous.previousSibling;
+  }
+  if (renderedTableRoot(previous)) {
+    return tableEdgeCaretTarget(surface, previous);
+  }
+  if (previous instanceof HTMLElement) {
+    let last: Text | null = null;
+    const walker = surface.ownerDocument.createTreeWalker(
+      previous,
+      NodeFilter.SHOW_TEXT
+    );
+    for (let current = walker.nextNode(); current; current = walker.nextNode()) {
+      if (current instanceof Text) last = current;
+    }
+    // A block whose last run is a link must be left at the block's own end,
+    // after the anchor. Placing inside the link label would make the next
+    // Backspace the link's own deletion instead of the source unit before the
+    // table. The browser normalizes this element-end caret to the preceding
+    // text boundary when the next native key is pressed.
+    if (last?.parentElement?.closest('a')) {
+      return { node: previous, offset: previous.childNodes.length };
+    }
+    return last
+      ? { node: last, offset: last.data.length }
+      : { node: previous, offset: previous.childNodes.length };
+  }
+  const index = Array.prototype.indexOf.call(surface.childNodes, root);
+  return index < 0 ? null : { node: surface, offset: index };
+}
+
 function tableEdgeCaretTarget(
   surface: HTMLElement,
   root: HTMLElement
@@ -3718,6 +3792,64 @@ function placeSurfaceCaretAtEnd(surface: HTMLElement): boolean {
   const range = surface.ownerDocument.createRange();
   range.selectNodeContents(surface);
   range.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return true;
+}
+
+/**
+ * Presentation-only fallback for a history/accepted source whose exact caret
+ * the accepted map could not place. The source and DOM are already the target
+ * version; only the selection is approximate. Use the last visible link's
+ * after-link start when the surface has one, else the end of the last editable
+ * top-level block. This never invents a source range and never writes source.
+ */
+
+/**
+ * Whether a collapsed history caret is the final inline link's own hidden
+ * `](url)` tail. Only that placement may keep a history source whose exact
+ * map failed: every other accepted/history map failure keeps its refusal.
+ */
+function historySelectionIsFinalLinkTail(
+  source: string,
+  selection: VisualSelectionSourceRange
+): boolean {
+  if ('none' !== selection.direction || selection.start !== selection.end) {
+    return false;
+  }
+  const lastLink = /\]\([^)\n]*\)\s*$/u.exec(source);
+  if (!lastLink) return false;
+  return selection.start >= lastLink.index;
+}
+
+function placeVisualHistoryFallbackCaret(surface: HTMLElement): boolean {
+  const ownerDocument = surface.ownerDocument;
+  const selection = ownerDocument.getSelection();
+  if (!selection) return false;
+  let container: Node = surface;
+  let offset = surface.childNodes.length;
+  const blocks = Array.from(surface.children).filter(
+    (child): child is HTMLElement => child instanceof HTMLElement
+      && !child.matches('[contenteditable="false"], [data-easymde-preview-window-spacer]')
+  );
+  const lastBlock = blocks[blocks.length - 1];
+  if (lastBlock) {
+    container = lastBlock;
+    offset = lastBlock.childNodes.length;
+  }
+  const link = Array.from(surface.querySelectorAll('a[href]')).pop();
+  if (link?.parentNode && surface.contains(link)) {
+    const next = link.nextSibling;
+    container = link.parentNode;
+    offset = next
+      ? Array.prototype.indexOf.call(container.childNodes, next)
+      : container.childNodes.length;
+  }
+  if (offset < 0 || offset > container.childNodes.length) return false;
+  const range = ownerDocument.createRange();
+  range.setStart(container, offset);
+  range.collapse(true);
+  surface.focus({ preventScroll: true });
   selection.removeAllRanges();
   selection.addRange(range);
   return true;
@@ -5659,6 +5791,21 @@ function captureInlineCodeDeletion(
   } });
   const match = matches.length === 1 ? matches[0] : null;
   if (!match) return null;
+  // A backward deletion of the code body's last character makes the space
+  // before it terminal. The browser normalizes that now-terminal ASCII space
+  // to NBSP as part of the default, so capture the witness after applying the
+  // same bounded spelling normalization here: otherwise the snapshot holds a
+  // plain space while the live surface holds NBSP and verification can only
+  // report a stale DOM for its own normalization.
+  if (
+    'deleteContentBackward' === intent.inputType
+    && intent.textSelection.start === target.length - 1
+    && intent.textSelection.end === target.length
+    && target.length > 1
+    && ' ' === target.data[intent.textSelection.start - 1]
+  ) {
+    target.replaceData(intent.textSelection.start - 1, 1, '\u00a0');
+  }
   const targetPath = visualNodePath(surface, target);
   const textNeighbor = neighbor instanceof Text ? neighbor : null;
   const neighborPath = textNeighbor ? visualNodePath(surface, textNeighbor) : null;
@@ -5701,6 +5848,14 @@ function verifyInlineCodeDeletion(surface: HTMLElement, witness: InlineCodeDelet
   if (resultSource !== witness.source.slice(0, witness.sourceStart) + witness.source.slice(witness.sourceEnd)) {
     throw new Error('visual-editor-inline-code-deletion-source-stale');
   }
+  const targetBodyMatches = (body: string, targetData: string): boolean =>
+    body === targetData
+    || (
+      body.length === targetData.length
+      && body.slice(0, -1) === targetData.slice(0, -1)
+      && ' ' === body[body.length - 1]
+      && '\u00a0' === targetData[targetData.length - 1]
+    );
   const removed = witness.sourceEnd - witness.sourceStart;
   let matching = 0;
   markdownLanguage.parser.parse(resultSource).iterate({ enter: (node) => {
@@ -5714,7 +5869,7 @@ function verifyInlineCodeDeletion(surface: HTMLElement, witness: InlineCodeDelet
       || opening.from !== node.from || closing.to !== node.to) return;
     let body = resultSource.slice(opening.to, closing.from).replace(/\r\n|\r|\n/gu, ' ');
     if (body.startsWith(' ') && body.endsWith(' ') && /[^ ]/u.test(body)) body = body.slice(1, -1);
-    if (body === witness.target.data) matching += 1;
+    if (targetBodyMatches(body, witness.target.data)) matching += 1;
   } });
   if (matching !== 1) throw new Error('visual-editor-inline-code-deletion-source-stale');
 }
@@ -5936,6 +6091,33 @@ function visualInputIntent(
         ? { sourceOffset, visualOffset }
         : null;
     }
+    if (deletedTerminalNbsp?.node === node
+      && node instanceof Text
+      && null !== node.parentElement?.closest('a')) {
+      const data = deletedTerminalNbsp.data;
+      const source = sourceUnits();
+      const link = deletedTerminalNbsp?.node.parentElement?.closest('a') ?? null;
+      const lastLink = /\[([^\]]*)\]\([^)]*\)\s*$/u.exec(source)
+        ?? (inlineLinkFacesRenderedTable(link)
+          ? lastInlineLinkBeforeTrailingTable(source)
+          : null);
+      const label = lastLink ? lastLink[1] : undefined;
+      const sourceStart = lastLink && undefined !== label && label.endsWith(data)
+        ? lastLink.index + 1 + label.length - data.length
+        : -1;
+      if (sourceStart >= 0) {
+        const clamped = Math.max(0, Math.min(offset, node.length));
+        const dataEnd = sourceStart + data.length;
+        const sourceOffset = clamped === node.length
+          ? dataEnd
+          : sourceStart + clamped;
+        const visualStart = baselineVisualMarkdown.lastIndexOf(data);
+        const visualOffset = visualStart >= 0
+          ? visualStart + Math.min(clamped, data.length)
+          : baselineVisualMarkdown.length;
+        return { sourceOffset, visualOffset };
+      }
+    }
     if (referenceBoundary) return referenceBoundary(node, offset);
     const boundary = nativeVisualTextBoundary(surface, node, offset);
     if (!boundary) return null;
@@ -6017,9 +6199,14 @@ function visualInputIntent(
     && current.anchorNode instanceof Text
   ) {
     const artifact = current.anchorNode;
+    const insideLink = null !== artifact.parentElement?.closest('a');
+    const terminalSpace = artifact.data.endsWith('\u00a0')
+      || (insideLink && artifact.data.endsWith(' '));
     if (
-      artifact.data.endsWith('\u00a0')
-      && artifact.data.indexOf('\u00a0') === artifact.data.length - 1
+      terminalSpace
+      && (artifact.data.endsWith('\u00a0')
+        ? artifact.data.indexOf('\u00a0') === artifact.data.length - 1
+        : true)
       && current.anchorOffset === artifact.data.length
       && targetRange?.startContainer === artifact
       && targetRange.endContainer === artifact
@@ -6165,7 +6352,36 @@ function visualInputIntent(
   ) {
     return null;
   }
-  const mapped = memoryMapped ?? intervalMapped ?? decodedMapped;
+  const terminalInsideLink = null !== deletedTerminalNbsp?.node.parentElement?.closest('a');
+  const terminalMapped = deletedTerminalNbsp
+    && terminalInsideLink
+    && current.anchorNode === deletedTerminalNbsp.node
+    && current.anchorOffset === deletedTerminalNbsp.node.length
+    ? (() => {
+        const source = sourceUnits();
+        const link = deletedTerminalNbsp.node.parentElement?.closest('a') ?? null;
+        const lastLink = /\[([^\]]*)\]\([^)]*\)\s*$/u.exec(source)
+          ?? (inlineLinkFacesRenderedTable(link)
+            ? lastInlineLinkBeforeTrailingTable(source)
+            : null);
+        const label = lastLink ? lastLink[1] : undefined;
+        if (!lastLink || undefined === label
+          || !label.endsWith(deletedTerminalNbsp.data)) return null;
+        const end = lastLink.index + 1 + label.length;
+        const visualIndex = baselineVisualMarkdown.lastIndexOf(deletedTerminalNbsp.data);
+        const visualEnd = visualIndex >= 0
+          ? visualIndex + deletedTerminalNbsp.data.length
+          : baselineVisualMarkdown.length;
+        return {
+          source: { end, start: end - 1 },
+          visual: { end: visualEnd, start: visualEnd }
+        };
+      })()
+    : null;
+  // The witnessed terminal label run is the canonical unit under the caret;
+  // prefer its own projection over a generic boundary that may name the
+  // adjacent table/newline instead.
+  const mapped = terminalMapped ?? memoryMapped ?? intervalMapped ?? decodedMapped;
   if (!mapped) return null;
 
   const currentMapped = mapped;
@@ -7252,7 +7468,15 @@ function acceptedVisualCaretBoundaryFromSourceOffset(
       baselineVisualMarkdown,
       sourceOffset,
       true,
-      { acceptedEndpointBlock: true }
+      {
+        acceptedEndpointBlock: true,
+        // Narrow the hidden-tail recovery only when this source really ends
+        // with an inline link; every other accepted placement keeps the
+        // existing hidden-range recovery.
+        ...(/\]\([^)\n]*\)\s*$/u.test(sourceMarkdown)
+          ? { allowTrailingLinkHiddenTail: true as const }
+          : {})
+      }
     );
     if (!clone.contains(boundary.node)) {
       throw new Error('visual-editor-accepted-boundary-outside-block');
@@ -14428,7 +14652,27 @@ const failVisualSynchronization = useCallback(
       const history = spec.expectation.history;
       if ('native' === spec.kind && history) {
         const slot = visualHistorySnapshotsRef.current.get(history.undoDepth);
-        if (!slot || slot.markdown !== markdown) {
+        // A native transfer must not overwrite a restorable history snapshot:
+        // that snapshot is the Undo target's own DOM/source witness. Only an
+        // absent slot (or a different non-snapshot slot) is rematerialized.
+        if (!slot) {
+          // Capture the native deletion's own state as a restorable snapshot
+          // instead of a Preview rebuild. The DOM/source/selection here are
+          // one publishable pair, and this leaves no table capability proof to
+          // re-authorize later.
+          const captured = captureVisualHistorySnapshot(
+            markdown,
+            surface.innerHTML
+          );
+          visualHistorySnapshotsRef.current.set(history.undoDepth, {
+            kind: 'snapshot',
+            markdown,
+            snapshot: captured
+          });
+        } else if (
+          slot.kind !== 'snapshot'
+          && slot.markdown !== markdown
+        ) {
           visualHistorySnapshotsRef.current.set(history.undoDepth, {
             kind: 'rematerialize',
             markdown
@@ -15217,12 +15461,28 @@ const failVisualSynchronization = useCallback(
           if (!placed) throw error;
           selectionDiagnostic = 'visual-editor-selection-restore-fallback';
         } else if (!recoveredSourceSelection) {
-          if (historyTransfer || acceptedPreview) throw error;
-          selectionDiagnostic = visualEditorFailureCode(
-            error,
-            'visual-editor-selection-restore-failed'
-          );
-          placeSurfaceCaretAtEnd(surface);
+          if (
+            historyTransfer
+            && historySelectionIsFinalLinkTail(
+              expectation.value,
+              expectation.selection
+            )
+          ) {
+            // The accepted history source and its DOM are already the target
+            // version (the handler proved the canonical value above). A
+            // presentation map that cannot name the exact caret is a secondary
+            // outcome: keep both and continue to the accepted-snapshot commit
+            // with the nearest visible boundary instead of failing the replay.
+            placeVisualHistoryFallbackCaret(surface);
+          } else if (acceptedPreview) {
+            throw error;
+          } else {
+            selectionDiagnostic = visualEditorFailureCode(
+              error,
+              'visual-editor-selection-restore-failed'
+            );
+            placeSurfaceCaretAtEnd(surface);
+          }
         }
       }
       }
@@ -16794,15 +17054,29 @@ const failVisualSynchronization = useCallback(
       if (null === previousSource) {
         throw new Error('visual-editor-markdown-snapshot-missing');
       }
-      if (
+      const terminalRunWitnessOk = pending.terminalTextRun
+        ? terminalTextRunWitnessText(
+            surface,
+            previousSource,
+            pending.terminalTextRun,
+            true
+          )
+        : null;
+      // A deletion may legitimately remove the terminal run the witness named
+      // (the browser detached its Text node). The witness is then stale as a
+      // DOM proof, but the pending group already certified the exact source
+      // deletion before the native edit; dropping it would silently discard a
+      // press the owner itself accepted. Keep the ordinary stale-witness
+      // fallback for every non-deletion and for a still-connected node.
+      const terminalRunText = pending.terminalTextRun
+        ? visualNodeAtPath(surface, pending.terminalTextRun.textPath)
+        : null;
+      const detachedTerminalDeletion = Boolean(
         pending.terminalTextRun
-        && !terminalTextRunWitnessText(
-          surface,
-          previousSource,
-          pending.terminalTextRun,
-          true
-        )
-      ) {
+        && isVisualDeletionInputType(pending.inputType)
+        && (!(terminalRunText instanceof Text) || !terminalRunText.isConnected)
+      );
+      if (pending.terminalTextRun && !terminalRunWitnessOk && !detachedTerminalDeletion) {
         // The terminal-text-run witness that shaped this pending group no
         // longer describes the DOM and source it was read from: a later native
         // key respelled the run, or the block it named was re-rendered before
@@ -18347,10 +18621,27 @@ const failVisualSynchronization = useCallback(
             ownerPlacedSelectionRef.current =
               captureOwnerPlacedVisualHistorySelection(surface);
           } catch (error) {
-            // A snapshot placement stands. Without one the caret is gone, and
-            // the next key would land wherever the browser chooses.
-            if (!ownerPlacedSelectionRef.current) {
-              onFailure(visualEditorFailureCode(error, 'visual-editor-selection-map-failed'));
+            // The snapshot restore already committed the target source and
+            // DOM. A map that cannot place the exact caret is presentational:
+            // keep the replay and use the nearest visible equivalent boundary
+            // instead of reporting a history failure.
+            if (
+              !ownerPlacedSelectionRef.current
+              && historySelectionIsFinalLinkTail(
+                targetMarkdown,
+                operationSelection!
+              )
+            ) {
+              placeVisualHistoryFallbackCaret(surface);
+              ownerPlacedSelectionRef.current =
+                captureOwnerPlacedVisualHistorySelection(surface);
+            } else if (!ownerPlacedSelectionRef.current) {
+              onFailure(
+                visualEditorFailureCode(
+                  error,
+                  'visual-editor-selection-map-failed'
+                )
+              );
             }
           }
         }
@@ -22065,7 +22356,8 @@ const failVisualSynchronization = useCallback(
         type VisualTablePressOutcome =
           | Readonly<{ kind: 'unrelated' }>
           | Readonly<{ kind: 'refused-no-op' }>
-          | Readonly<{ kind: 'caret-only'; node: Node; offset: number }>
+          | Readonly<{ kind: 'caret-only'; node: Node; offset: number; sourceOffset?: number }>
+          | Readonly<{ kind: 'delete-leading-table' }>
           | Readonly<{ kind: 'proved-edit'; plan: VisualTablePressPlan }>;
 
         /**
@@ -22081,7 +22373,53 @@ const failVisualSynchronization = useCallback(
          * removes the table root, and none of those shapes is the accepted
          * document.
          */
+
+        const leadingEmptyTableDelete =
+          (): VisualTablePressOutcome | null => {
+            if ('deleteContentBackward' !== event.inputType
+              || !nativeSelection?.isCollapsed) return null;
+            const caret = nativeSelection.anchorNode;
+            const caretElement = caret instanceof Element
+              ? caret
+              : caret?.parentElement ?? null;
+            const table = caretElement?.closest('table');
+            if (!(table instanceof HTMLTableElement)) return null;
+            if (!Array.from(table.rows).every((row) =>
+              Array.from(row.cells).every(
+                (cell) => '' === (cell.textContent ?? '')
+              )
+            )) return null;
+            const root = table.closest(
+              'section.table-container, section.easymde-table-container'
+            );
+            if (!(root instanceof HTMLElement) || !surface.contains(root)) {
+              return null;
+            }
+            let previous: Node | null = root.previousSibling;
+            while (previous instanceof Text
+              && /^[ \t\r\n]*$/u.test(previous.data)) {
+              previous = previous.previousSibling;
+            }
+            if (null !== previous) return null;
+            const source = sourceMarkdownRef.current;
+            if (null === source) return null;
+            const pipe = source.indexOf('|');
+            const parsed = pipe < 0 ? null : findMarkdownTable(source, pipe);
+            if (!parsed
+              || !/^\s*$/u.test(source.slice(0, parsed.block.start))
+              || !/^\s*$/u.test(source.slice(parsed.block.end))) {
+              return null;
+            }
+            // The document holds only this empty table (plus whitespace). Do
+            // not enter table history capability/normalization: remove the
+            // source bytes through the ordinary canonical text channel so the
+            // ordinary source history can restore them on Undo.
+            return { kind: 'delete-leading-table' };
+          };
+
         const resolveTablePress = (): VisualTablePressOutcome => {
+          const leadingEmpty = leadingEmptyTableDelete();
+          if (leadingEmpty) return leadingEmpty;
           // An insertion whose selection or target endpoints name different
           // worlds has no canonical spelling: the browser would replace bytes
           // across a separator the source cannot name, and no accepted render
@@ -22216,6 +22554,55 @@ const failVisualSynchronization = useCallback(
                 && 0 === Array.prototype.indexOf.call(table.rows, row)
                 && 0 === Array.prototype.indexOf.call(row.cells, caretCellElement)
               ) {
+                // An empty first cell has no preceding character of its own.
+                // The natural stop is not a dead key: move the caret to the
+                // table's before edge, where the NEXT Backspace is the
+                // ordinary edit of the source unit preceding the table. The
+                // table itself, its rows and its columns are untouched.
+                if ('' === (caretCellElement.textContent ?? '')) {
+                  const root = table.closest(
+                    'section.table-container, section.easymde-table-container'
+                  );
+                  const rootId = root instanceof HTMLElement
+                    ? root.getAttribute('data-easymde-visual-block-id')
+                    : null;
+                  const map = previewSnapshotRef.current.editMap;
+                  const row = rootId && map
+                    ? map.blocks.find((block) => block.id === rootId)
+                    : undefined;
+                  const starts = row ? markdownLineStarts(source) : null;
+                  const tableStart = row && starts
+                    ? starts[row.startLine]
+                    : undefined;
+                  // A table that is the document's first block has no source
+                  // unit before it for the caret to delete. Reuse the explicit
+                  // context-menu delete-table edit (the same primitive) instead
+                  // of dismantling cells or pipes one byte at a time.
+                  const parsedTable = (() => {
+                    const pipe = source.indexOf('|');
+                    return pipe < 0 ? null : findMarkdownTable(source, pipe);
+                  })();
+                  const placement = root instanceof HTMLElement
+                    ? tableBeforeEdgeCaretTarget(surface, root)
+                    : null;
+                  if (placement) {
+                    // The accepted map names the table's own source start.
+                    // Synchronizing the canonical selection there (a selection
+                    // write only; the value is unchanged) keeps the next native
+                    // key on the source unit before the table instead of
+                    // normalizing back into the preceding link text.
+                    const sourceOffset = tableStart;
+                    return {
+                      kind: 'caret-only',
+                      node: placement.node,
+                      offset: placement.offset,
+                      ...(typeof sourceOffset === 'number'
+                        && Number.isSafeInteger(sourceOffset)
+                        ? { sourceOffset }
+                        : {})
+                    };
+                  }
+                }
                 return { kind: 'refused-no-op' };
               }
             }
@@ -22426,6 +22813,32 @@ const failVisualSynchronization = useCallback(
           event.preventDefault();
           if ('proved-edit' === tablePress.kind) {
             commitTableDeletion(tablePress.plan);
+          } else if ('delete-leading-table' === tablePress.kind) {
+            const source = sourceMarkdownRef.current;
+            if (null !== source) {
+              resetEmptyVisualParagraph(surface);
+              const emptySelection = {
+                direction: 'none' as const,
+                start: 0,
+                end: 0
+              };
+              // This deletion's Undo target is the document-start state. Record
+              // that boundary as the history selection instead of the table
+              // cell caret, which is not representable for the restored empty
+              // table (or its preceding edge).
+              applyDocumentChange({
+                changes: { from: 0, to: source.length, insert: '' },
+                historySelectionBefore: emptySelection,
+                recordHistorySelection: true,
+                selection: emptySelection,
+                value: ''
+              });
+              sourceMarkdownRef.current = '';
+              acceptedHtmlRef.current = surface.innerHTML;
+              acceptedNodesRef.current = Array.from(surface.childNodes);
+              recordCurrentVisualHistorySnapshot('', surface.innerHTML);
+              onMarkdownChange();
+            }
           } else if ('caret-only' === tablePress.kind) {
             const native = surface.ownerDocument.defaultView?.getSelection();
             native?.setBaseAndExtent(

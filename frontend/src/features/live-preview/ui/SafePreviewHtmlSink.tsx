@@ -562,6 +562,41 @@ export function SafePreviewHtmlSink({
   useLayoutEffect(() => {
     const surface = htmlSurfaceRef.current;
     if (!surface) throw new Error('preview-surface-missing');
+    const witnessRegistry = (
+      globalThis as unknown as {
+        __VISUAL_WITNESS?: WeakMap<
+          HTMLElement,
+          () => { pending: boolean; sourceLinkLabelLength: number | null }
+        >;
+      }
+    ).__VISUAL_WITNESS;
+    const visualWitness = witnessRegistry?.get(surface)?.() ?? null;
+    const lastAnchorLabelLength = (value: string | null): number | null => {
+      if (null === value) return null;
+      const template = surface.ownerDocument.createElement('template');
+      template.innerHTML = value;
+      const anchors = template.content.querySelectorAll('a');
+      const anchor = anchors[anchors.length - 1];
+      return anchor ? (anchor.textContent ?? '').length : null;
+    };
+    // A late Preview acceptance must never overwrite input this owner has not
+    // committed yet, nor an accepted render whose last link label no longer
+    // matches the current canonical source. Defer; the next accepted frame for
+    // the committed source re-runs this effect. The template parse runs only
+    // for a surface that actually has a visual owner, never in ordinary
+    // Preview-only tests or renders.
+    if (visualWitness?.pending) {
+      deferredByHoldRef.current = true;
+      return undefined;
+    }
+    if (visualWitness && null !== visualWitness.sourceLinkLabelLength) {
+      const acceptedLabelLength = lastAnchorLabelLength(html);
+      if (null !== acceptedLabelLength
+        && acceptedLabelLength !== visualWitness.sourceLinkLabelLength) {
+        deferredByHoldRef.current = true;
+        return undefined;
+      }
+    }
     if (compositionGate?.isHeld()) {
       // The lease owner publishes the canonical text and its new Preview
       // request before releasing, so this effect re-runs with the newest

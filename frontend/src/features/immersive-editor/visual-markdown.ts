@@ -7926,6 +7926,24 @@ function visualExactTextRunBoundary(
 }
 
 /**
+ * Whether a hidden source run lies inside the final inline link's own
+ * `](url)` interval. Only that tail is safe to clamp for a history/accepted
+ * placement: the rendered link owns its label, while the destination bytes
+ * drawn nowhere are the exact position the accepted caret cannot otherwise
+ * name.
+ */
+function hiddenRegionIsLastLinkDestination(
+  source: string,
+  range: Readonly<{ end: number; start: number }>
+): boolean {
+  const open = source.lastIndexOf('](');
+  if (open < 0) return false;
+  const close = source.indexOf(')', open + 2);
+  if (close < 0) return false;
+  return range.start >= open && range.end <= close + 1;
+}
+
+/**
  * The boundary a budget-exhausted candidate walk can still prove from source
  * alone. The walk spends its budget guessing before it reaches a boundary the
  * DOM cannot produce: a fence delimiter line whose visual form is metadata, a
@@ -7947,7 +7965,8 @@ function visualProvedBoundaryForExhaustedWalk(
   mappedNeighbours: Readonly<{
     lower: VisualMappedWalkNeighbour | null;
     upper: VisualMappedWalkNeighbour | null;
-  }> = { lower: null, upper: null }
+  }> = { lower: null, upper: null },
+  allowTrailingLinkHiddenTail = false
 ): VisualBoundary | null {
   if (allowCodeFenceDelimiter) {
     const delimiterBodyOffset = visualCodeFenceDelimiterBodyOffset(
@@ -7984,6 +8003,14 @@ function visualProvedBoundaryForExhaustedWalk(
     );
   });
   if (!hiddenRegion) return null;
+  // The history/accepted placement recovery is narrowed to the final inline
+  // link's own `](url)` bytes. Ordinary placements keep their existing hidden
+  // recovery: a hidden reference definition, a leading indentation column or
+  // any other hidden run must not be clamped here.
+  if (
+    allowTrailingLinkHiddenTail
+    && !hiddenRegionIsLastLinkDestination(sourceMarkdown, hiddenRegion)
+  ) return null;
   // The region's own edges are the next candidates, but they can themselves be
   // unrepresentable: a pasted fence-looking run swallows the rest of its
   // paragraph, so neither the region's start nor its end has a DOM boundary of
@@ -8131,7 +8158,7 @@ export function visualCaretBoundaryFromSourceOffset(
   baselineVisualMarkdown: string,
   sourceOffset: number,
   allowCodeFenceDelimiter = true,
-  options: Readonly<{ acceptedEndpointBlock?: true; referenceBlockContext?: VisualReferenceBlockContext }> = {}
+  options: Readonly<{ acceptedEndpointBlock?: true; allowTrailingLinkHiddenTail?: true; referenceBlockContext?: VisualReferenceBlockContext }> = {}
 ): Readonly<{ node: Node; offset: number }> {
   if (options.referenceBlockContext) {
     const context = options.referenceBlockContext;
@@ -8487,7 +8514,8 @@ export function visualCaretBoundaryFromSourceOffset(
           boundaryIndex,
           mappedOffsets,
           sourceOffset
-        )
+        ),
+        options.allowTrailingLinkHiddenTail === true
       );
       if (provedBoundary) return provedBoundary;
       if (null === exhaustedError) exhaustedError = error;
@@ -8540,7 +8568,8 @@ export function visualCaretBoundaryFromSourceOffset(
         boundaryIndex,
         mappedOffsets,
         sourceOffset
-      )
+      ),
+      options.allowTrailingLinkHiddenTail === true
     );
     if (provedBoundary) return provedBoundary;
     throw new Error('visual-editor-selection-map-failed');

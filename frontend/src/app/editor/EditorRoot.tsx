@@ -1495,6 +1495,17 @@ export function EditorRoot(props: EditorRootProps) {
     null
   );
   const lastVisualFailureRef = useRef<string | null>(null);
+  /**
+   * Bounded proof that the next transfer failure may belong to a native
+   * history navigation. Keydown/beforeinput for Ctrl/Cmd+Z stamps the value
+   * the history operation starts from; any non-history input clears it again.
+   * A history failure is answered by Root without leaving Visual editing,
+   * while ordinary input and paste failures keep the existing exit path.
+   */
+  const visualHistoryNavigationRef = useRef<{
+    at: number;
+    valueBefore: string | null;
+  } | null>(null);
   const applyVisualCanonicalChangeRef =
     useRef<ApplyVisualCanonicalChange | null>(null);
   const acceptedWindowSnapshotKeyRef = useRef<number | null>(null);
@@ -2334,9 +2345,17 @@ export function EditorRoot(props: EditorRootProps) {
   >(() => false);
   const handleVisualFailure = useCallback(
     (code: string) => {
+      const historyNavigation = visualHistoryNavigationRef.current;
+      const historyAcceptedFailure =
+        'visual-editor-selection-map-failed' === code
+        && null !== historyNavigation
+        && Date.now() - historyNavigation.at < 10_000
+        && visualPreviewEditingRef.current;
       lastVisualFailureRef.current = code;
-      rootRef.current?.setAttribute('data-easymde-visual-failure', code);
-      reportFailure(code);
+      if (!historyAcceptedFailure) {
+        rootRef.current?.setAttribute('data-easymde-visual-failure', code);
+        reportFailure(code);
+      }
       if (isAcceptedDomInvalidatingFailure(code)) {
         // Leaving because the accepted DOM is gone must not schedule a refresh
         // of the source the user was editing. The leave owner is declared below
@@ -3500,9 +3519,121 @@ export function EditorRoot(props: EditorRootProps) {
     },
     [props.contextMenuStrings?.statusActionFailed, publishEditorStatus]
   );
+  useEffect(() => {
+    const ownerDocument = rootRef.current?.ownerDocument;
+    if (!ownerDocument) return undefined;
+    const markHistoryNavigation = (event: Event): void => {
+      const surface = visualEditorRuntimeRef.current?.surface;
+      if (
+        !surface?.isConnected
+        || !(event.target instanceof Node)
+        || !surface.contains(event.target)
+      ) return;
+      if (event instanceof KeyboardEvent) {
+        if (
+          (event.ctrlKey || event.metaKey)
+          && !event.altKey
+          && 'z' === event.key.toLowerCase()
+          && !visualHistoryNavigationRef.current
+        ) {
+          visualHistoryNavigationRef.current = {
+            at: Date.now(),
+            valueBefore: documentSession?.document.getValue() ?? null
+          };
+        }
+        return;
+      }
+      const inputType = 'inputType' in event
+        ? String((event as InputEvent).inputType)
+        : '';
+      if ('historyUndo' === inputType || 'historyRedo' === inputType) {
+        if (!visualHistoryNavigationRef.current) {
+          visualHistoryNavigationRef.current = { at: Date.now(), valueBefore: null };
+        }
+      } else if ('' !== inputType) {
+        visualHistoryNavigationRef.current = null;
+      }
+    };
+    ownerDocument.addEventListener('keydown', markHistoryNavigation, true);
+    ownerDocument.addEventListener('beforeinput', markHistoryNavigation, true);
+    ownerDocument.addEventListener('input', markHistoryNavigation, true);
+    return () => {
+      ownerDocument.removeEventListener('keydown', markHistoryNavigation, true);
+      ownerDocument.removeEventListener('beforeinput', markHistoryNavigation, true);
+      ownerDocument.removeEventListener('input', markHistoryNavigation, true);
+    };
+  }, [documentSession]);
   const handleVisualTransferFailure = useCallback(() => {
     const code = lastVisualFailureRef.current;
     lastVisualFailureRef.current = null;
+    const historyNavigation = visualHistoryNavigationRef.current;
+    const currentValue = documentSession?.document.getValue() ?? null;
+    const historySourceRestored =
+      null !== historyNavigation
+      && null !== currentValue
+      && (
+        null === historyNavigation.valueBefore
+        || currentValue !== historyNavigation.valueBefore
+      );
+    if (
+      'visual-editor-selection-map-failed' === code
+      && historySourceRestored
+      && visualPreviewEditingRef.current
+    ) {
+      visualHistoryNavigationRef.current = null;
+      rootRef.current?.removeAttribute('data-easymde-visual-failure');
+      setEditorStatusState((current) =>
+        'visual-transfer-failed' === current.status?.id
+          ? { ...current, status: null }
+          : current
+      );
+      visualPreviewEditingRef.current = true;
+      setVisualPreviewEditing(true);
+      setVisualPreviewPending(false);
+      const surface = visualEditorRuntimeRef.current?.surface;
+      if (surface?.isConnected) {
+        const selection = surface.ownerDocument.getSelection();
+        const hasSelection = Boolean(
+          selection
+          && selection.rangeCount > 0
+          && selection.anchorNode
+          && surface.contains(selection.anchorNode)
+        );
+        if (!hasSelection) {
+          // Place the caret on the nearest visible equivalent boundary: after
+          // the last visible link when the snapshot has one, else at the end
+          // of the last editable top-level block. This is a DOM-only fallback;
+          // it does not invent a source range.
+          const link = surface.querySelector('a[href]');
+          let container: Node = surface;
+          let offset = surface.childNodes.length;
+          const blocks = Array.from(surface.children).filter(
+            (child): child is HTMLElement => child instanceof HTMLElement
+          );
+          const lastBlock = blocks[blocks.length - 1];
+          if (lastBlock) {
+            container = lastBlock;
+            offset = lastBlock.childNodes.length;
+          }
+          if (link && link.isConnected && link.parentNode) {
+            const next = link.nextSibling;
+            container = link.parentNode;
+            offset = next
+              ? Array.prototype.indexOf.call(container.childNodes, next)
+              : container.childNodes.length;
+          }
+          if (offset >= 0 && offset <= container.childNodes.length) {
+            const range = surface.ownerDocument.createRange();
+            range.setStart(container, offset);
+            range.collapse(true);
+            selection?.removeAllRanges();
+            selection?.addRange(range);
+          }
+        }
+        surface.focus({ preventScroll: true });
+      }
+      return;
+    }
     // The canonical write and the visual transaction that turns it into a
     // stable accepted Preview are different completion owners. A transferred
     // value that already equals the document says nothing about the transfer
@@ -3531,6 +3662,7 @@ export function EditorRoot(props: EditorRootProps) {
       needsCatchUpRender ? {} : { suppressRefresh: true }
     );
   }, [
+    documentSession,
     leaveVisualPreview,
     reportVisualTransferFailure
   ]);

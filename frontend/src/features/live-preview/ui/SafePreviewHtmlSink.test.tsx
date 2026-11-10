@@ -1473,3 +1473,64 @@ describe('SafePreviewHtmlSink identical HTML', () => {
     }
   });
 });
+
+describe('SafePreviewHtmlSink accepted install gate', () => {
+  it('defers an accepted render while a visual intent is pending', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const initial = '<p><a href="/x">link text</a> </p>' as SafePreviewHtml;
+    const stale = '<p><a href="/x">link text</a></p>' as SafePreviewHtml;
+    const view = render(
+      <SafePreviewHtmlSink contentEditable html={initial} htmlRevision={1} surfaceRef={surfaceRef} />
+    );
+    const surface = surfaceRef.current;
+    if (!surface) throw new Error('test-surface-missing');
+    try {
+      surface.innerHTML = '<p><a href="/x">link</a></p>';
+      let witness = { pending: true, sourceLinkLabelLength: 5 };
+      const registry = new WeakMap<HTMLElement, () => typeof witness>();
+      registry.set(surface, () => witness);
+      (globalThis as typeof globalThis & { __VISUAL_WITNESS?: unknown }).__VISUAL_WITNESS = registry;
+      view.rerender(
+        <SafePreviewHtmlSink contentEditable html={stale} htmlRevision={2} surfaceRef={surfaceRef} />
+      );
+      expect(surface.querySelector('a')?.textContent).toBe('link');
+      witness = { pending: false, sourceLinkLabelLength: 9 };
+      view.rerender(
+        <SafePreviewHtmlSink contentEditable html={stale} htmlRevision={3} surfaceRef={surfaceRef} />
+      );
+      expect(surface.querySelector('a')?.textContent).toBe('link text');
+    } finally {
+      delete (globalThis as typeof globalThis & { __VISUAL_WITNESS?: unknown }).__VISUAL_WITNESS;
+      view.unmount();
+    }
+  });
+
+  it('defers an accepted render whose last link label lags the source', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const initial = '<p><a href="/x">link text</a></p>' as SafePreviewHtml;
+    const view = render(
+      <SafePreviewHtmlSink contentEditable html={initial} htmlRevision={1} surfaceRef={surfaceRef} />
+    );
+    const surface = surfaceRef.current;
+    if (!surface) throw new Error('test-surface-missing');
+    try {
+      surface.innerHTML = '<p><a href="/x">link</a></p>';
+      let witness = { pending: false, sourceLinkLabelLength: 5 };
+      const registry = new WeakMap<HTMLElement, () => typeof witness>();
+      registry.set(surface, () => witness);
+      (globalThis as typeof globalThis & { __VISUAL_WITNESS?: unknown }).__VISUAL_WITNESS = registry;
+      view.rerender(
+        <SafePreviewHtmlSink contentEditable html={initial} htmlRevision={2} surfaceRef={surfaceRef} />
+      );
+      expect(surface.querySelector('a')?.textContent).toBe('link');
+      witness = { pending: false, sourceLinkLabelLength: 9 };
+      view.rerender(
+        <SafePreviewHtmlSink contentEditable html={initial} htmlRevision={3} surfaceRef={surfaceRef} />
+      );
+      expect(surface.querySelector('a')?.textContent).toBe('link text');
+    } finally {
+      delete (globalThis as typeof globalThis & { __VISUAL_WITNESS?: unknown }).__VISUAL_WITNESS;
+      view.unmount();
+    }
+  });
+});

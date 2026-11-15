@@ -561,7 +561,20 @@ ordinary terminal empty paragraph, the one renderer-only trailing spelling
 difference between the serializer and the owned visual is admitted only while the
 DOM is otherwise the retained ledger; the canonical splice removes the trailing
 separator, returns the native caret to the preceding text, and keeps every other
-block.
+block. An emptied block whose own row is a bare block marker - a list, task,
+quote or numbering marker with no text - is not spelled by the serializer at
+all; that trailing marker row is the same admitted spelling difference, so the
+press still names the row's canonical bytes instead of treating the surface as
+stale.
+The owner's own published DOM/source pairing is also the baseline of a document
+that began empty: without it every later press is proved against a baseline that
+never existed, so publishing initializes a missing accepted visual baseline. A
+Preview re-render legitimately replaces the top-level nodes it repaints, leaving
+the retained node identities gone while the surface still serializes to that
+same verified pairing; the owner rebuilds its ledger from those live nodes in
+exactly that case. Every other node delta, and any pairing whose source,
+revision or serialization no longer matches, keeps the explicit
+`visual-editor-canonical-change-dom-stale` refusal.
 Full does not equate a terminal DOM block with physical source EOF when
 reference definitions remain hidden after it. `fullHiddenReferenceTail` keeps
 the source block immediately before the contiguous trailing `LinkReference`
@@ -613,6 +626,21 @@ selected - inside one accepted editable code body during a pending transfer,
 publishing the selection-only canonical caret with its direction preserved; a
 selected deletion's target must equal that authenticated interval exactly for
 both Backspace and Delete, and the post-delete caret is the interval start.
+
+An inline protected atom — the renderer's MathML/KaTeX span inside an editable
+block — is a whole canonical unit in both visual owners. A cancelable
+Backspace/Delete whose collapsed caret sits directly beside that span (at the
+Text offset that touches it, or at the block's own element boundary in front of
+or behind it) is claimed before any caret projection: `preventDefault` runs, the
+node is removed, the read-only snapshot is refreshed to the surviving regions,
+and the ordinary visual merge derives the canonical range from the resulting
+serialization, so the accepted render repaints and history keeps one entry per
+press. The press never falls through to the browser default, whose native
+deletion would remove the node without touching the source and leave the surface
+describing protected regions the accepted snapshot no longer names — the
+terminal `visual-editor-read-only-region-mutated` failure that made every later
+key a dead press. Top-level atomic roots keep their own adjacent-root owner; this
+rule covers the atoms a block still mounts.
 
 A table's outer edge is an atomic boundary in both visual owners: a cancelable
 Backspace with the caret in the block after a rendered table, or Delete with it
@@ -1068,7 +1096,13 @@ For that input action, a partial intersection, an endpoint inside protection, an
 unowned or external range, a stale snapshot or an unproved map is refused before
 the browser default and writes no source, history or DOM. A selection or context
 preparation refusal may restore the accepted surface through its existing owner,
-but it does not change canonical body or history and never reports success.
+but it does not change canonical body or history and never reports success. An
+ordinary deletion the owner cannot map is refused silently, with no lock and no
+failure report, so typing continues; a restoration the owner attempted and could
+not complete - a decline that cannot prove the owed caret or a restore that
+threw - is the one deletion failure it reports truthfully
+(`visual-editor-deletion-repair-failed`), because every later press would
+otherwise be refused with nothing restored.
 When that restore installs fresh accepted nodes, the owner rebinds the restored
 ledger and accepted correspondence only under the current accepted source,
 revision, signature and edit map, so the next legal edit and Undo continue from
@@ -1245,7 +1279,7 @@ visual input uses a trailing 80-millisecond debounce, composition cancels an
 older pending timer, and lock, view changes, autosave, publish, toolbar, and
 teardown flush pending input before their owner runs. Within one input/commit,
 the same exact source reuses one bounded read-only code model (line starts,
-code blocks, fenced intervals and structure signature) instead of re-parsing
+code blocks, body intervals and structure signature) instead of re-parsing
 it; a different source or code ordinal recomputes from scratch. If the
 serialized visual Markdown is unchanged, the transition flush skips selection
 mapping and document synchronization entirely. A changed transaction requires a current
@@ -1358,9 +1392,9 @@ native input is accepted.
 When the generic map cannot project a collapsed caret inside CODE, the existing
 code-body projection owns only that caret input; non-collapsed selections retain
 the generic owner.
-For a mapped fenced code block, the visual editor resolves the active Preview
+For a mapped fenced or indented code block, the visual editor resolves the active Preview
 segment to one Markdown source body interval. One visual block may contain more
-than one fenced segment and PRE. The code-body structure identity is the
+than one code segment and PRE. The code-body structure identity is the
 accepted visual block plus that segment's code ordinal, never the block ID
 alone, document order, language, or body text. A sibling segment in the same
 block resets the pending base source and interval witness instead of inheriting
@@ -1375,6 +1409,62 @@ a deletion that consumes a complete terminal empty body line also consumes
 that line's container prefix and terminator, including CRLF, while the caret
 and source-offset mapper still resolve the empty line's code start after that
 prefix. Other content deletions and insertions keep their exact source bytes.
+Indented leaves, including quote/list children, use the structural parser's
+`CodeBlock`/`CodeText` ranges and line-prefix geometry in that same inventory,
+even in a document with no fences. Their interval kind is `indented`, with no
+fence/info or open-EOF state; delimiter expansion and local fence provenance
+remain fenced-only. Full routes deletion of the last indented content through
+the structural code-shortcut synchronizer: it removes that leaf's own source
+extent once, records the native pre-operation caret and DOM snapshot for Undo,
+and publishes synchronously with the command's proven owner-result ledger.
+It does not require a canonical-command map from an older formal Preview.
+Nested retirement replaces the leaf in place, retaining the top-level root and
+all sibling node identities. The existing structural command carries an
+in-place mutation proof: outside-leaf node metadata and child order must remain
+unchanged, and only the parent's proven leaf position may become the empty
+paragraph or be removed. Protected content in the leaf or its ancestors still
+refuses retirement; unrelated protected siblings are neither cloned nor replaced.
+The retirement decision uses the current PRE identity and a collapsed canonical
+document selection whose source-to-code offset round-trips inside the leaf.
+The canonical body and that offset, not potentially lagging DOM body offsets,
+prove the last-character deletion. Current-source correspondence, revision,
+owned DOM and protected-state checks still apply. Only when that authenticated
+PRE's body text disagrees with the canonical body does its pre-operation history
+slot use the existing `rematerialize` path: Undo restores exact source and the
+canonical caret through formal Preview instead of resurrecting stale body HTML.
+Ordinary body commits and matching-body structural removals retain snapshots;
+fenced history is unaffected.
+Indented source-bound edit witnesses validate complete line geometry, prefixes,
+terminators and empty-body metadata by value. Rebuilding the bounded exact-source
+memo must not invalidate an otherwise identical witness merely by allocating a
+new `bodyLines` array; changed geometry still fails closed.
+Chromium spells a significant trailing space inside rendered CODE as U+00A0
+while the canonical source keeps U+0020. Visual-versus-source comparison of
+inline and block code text therefore runs one directional, position-only rule
+in `visualCodeTextMatchesCanonical`: a canonical ASCII space may match a DOM
+U+00A0 at the same index, and never the reverse. The rule changes projection and
+verification only; it never rewrites a value, and edit spans are still spliced
+from the original bytes, so an authored U+00A0 or entity keeps its exact bytes
+and any other difference still refuses.
+An authored nested empty paragraph retains the exact blank container rows on
+both sides of its canonical anchor in the existing empty-paragraph provenance
+and history owner. Backspace prefers the preceding row; Delete prefers the
+following row, with the other adjacent row available when that side is absent.
+The destination is proved against the current owned source/visual pair before
+any DOM or selection mutation; renderer whitespace is never a caret target.
+The authenticated post-command surface spelling advances the current HTML and
+history pairing without advancing the formal map certificate, so a later
+refusal cannot restore the retired leaf from older Preview HTML. An uncommitted
+authored mutation is rolled back on refusal with both selections preserved.
+It does not relax the ordinary
+code-body structure-signature guard or reserialize the document per key.
+Lezer's string input treats only LF as a line break, so the model replaces bare
+CR with LF only in its parser input, one UTF-16 unit for one unit; geometry and
+edits still address the original source and preserve its actual terminators.
+Accepted indented-body selection endpoints, including Undo, resolve through
+that row's own PRE ordinal and code-body source offsets before generic marker
+mapping. The projected code text and source endpoint must agree exactly, and
+the boundary's editable ancestry remains required.
 A Windowed pending deletion consumes that edit's `from`, `to`, `insert` and
 `sourceCaret` directly and preserves the same prefix and Undo/Redo semantics;
 it does not rebuild a raw offset range.
@@ -2003,8 +2093,8 @@ block therefore does not relabel a surviving PRE by a stale ordinal. History
 snapshots retain indexed correspondence and rebind it only to validated
 rematerialized PREs; a missing identity, foreign reorder or unproved topology
 change still fails before another block can be written. The interval inventory
-is parsed once per commit and indexed by its parser-issued ordinal, including
-when unsupported indented leaves leave gaps in that inventory.
+is parsed once per commit and indexed by its parser-issued ordinal for both
+fenced and indented leaves, without gaps for unsupported body kinds.
 The transported closed-fence syntax excludes its trailing separator line ending.
 Both overlap detection and byte reconstruction use the same half-open interval:
 an adjacent deletion/replacement leaves it intact, while an actual overlap still

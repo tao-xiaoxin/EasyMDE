@@ -813,10 +813,21 @@ export function SafePreviewHtmlSink({
       return undefined;
     }
     if (null !== html) {
+      // An empty Preview frame cannot describe an editable surface that already
+      // holds content: an unsaved Post whose first render has not landed yet
+      // would otherwise lose the text the Editor owns. The Editor's own commit
+      // publishes the next frame for the source it wrote.
+      if (contentEditable && '' === html && surface.hasChildNodes()) {
+        return undefined;
+      }
       // This is the sole sink for PHP-rendered, server-sanitized Preview HTML.
       deferredByHoldRef.current = false;
       surface.innerHTML = html;
     } else {
+      // The Editor owns this surface while it is editable. A Preview state with
+      // no HTML - an unsaved Post whose first render has not landed yet - is a
+      // missing render, not permission to discard the content being edited.
+      if (contentEditable && surface.hasChildNodes()) return undefined;
       surface.replaceChildren();
       if (!statusMessage) {
         appliedSurfaceStateRef.current = {
@@ -848,6 +859,7 @@ export function SafePreviewHtmlSink({
     };
     return undefined;
   }, [
+    contentEditable,
     html,
     htmlRevision,
     materializeScheduler,

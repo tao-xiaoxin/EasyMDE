@@ -1534,3 +1534,49 @@ describe('SafePreviewHtmlSink accepted install gate', () => {
     }
   });
 });
+
+describe('SafePreviewHtmlSink editable surfaces', () => {
+  it('keeps the Editor-owned content when an empty frame arrives', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const view = render(
+      createElement(SafePreviewHtmlSink, {
+        contentEditable: true,
+        html: '<p>alpha</p>' as SafePreviewHtml,
+        htmlRevision: 1,
+        surfaceRef
+      })
+    );
+    expect(surfaceRef.current?.innerHTML).toBe('<p>alpha</p>');
+    view.rerender(
+      createElement(SafePreviewHtmlSink, {
+        contentEditable: true,
+        html: '' as SafePreviewHtml,
+        htmlRevision: 2,
+        surfaceRef
+      })
+    );
+    expect(surfaceRef.current?.innerHTML).toBe('<p>alpha</p>');
+    view.unmount();
+  });
+
+  it('still clears a Preview-only surface when an empty frame arrives', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const view = render(
+      createElement(SafePreviewHtmlSink, {
+        html: '<p>alpha</p>' as SafePreviewHtml,
+        htmlRevision: 1,
+        surfaceRef
+      })
+    );
+    expect(surfaceRef.current?.innerHTML).toBe('<p>alpha</p>');
+    view.rerender(
+      createElement(SafePreviewHtmlSink, {
+        html: '' as SafePreviewHtml,
+        htmlRevision: 2,
+        surfaceRef
+      })
+    );
+    expect(surfaceRef.current?.innerHTML).toBe('');
+    view.unmount();
+  });
+});

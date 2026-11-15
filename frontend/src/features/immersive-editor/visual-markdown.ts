@@ -2320,7 +2320,7 @@ function lineIndexAtOffset(
   return Math.max(0, high);
 }
 
-function lezerNestedFencedBlocks(
+function lezerSupplementalCodeBlocks(
   markdown: string,
   lineStarts: ReadonlyArray<number>,
   rawOpeningLines: ReadonlySet<number>
@@ -2328,6 +2328,7 @@ function lezerNestedFencedBlocks(
   type Fence = {
     codeInfo: Array<Readonly<{ from: number; to: number }>>;
     codeMarks: Array<Readonly<{ from: number; to: number }>>;
+    indented: boolean;
     codeTexts: Array<Readonly<{ from: number; to: number }>>;
     from: number;
     to: number;
@@ -2335,12 +2336,19 @@ function lezerNestedFencedBlocks(
   const fences: Fence[] = [];
   const stack: Fence[] = [];
   const listMarks: Array<Readonly<{ from: number; to: number }>> = [];
-  markdownLanguage.parser.parse(markdown).iterate({
+  // Lezer's string input splits on LF, not bare CR. Replace only bare CR for
+  // parsing: one UTF-16 code unit replaces one unit, so every tree offset still
+  // addresses the original canonical source and its actual line terminators.
+  const parserSource = /\r(?!\n)/u.test(markdown)
+    ? markdown.replace(/\r(?!\n)/gu, '\n')
+    : markdown;
+  markdownLanguage.parser.parse(parserSource).iterate({
     enter: (node) => {
-      if ('FencedCode' === node.name) {
+      if ('FencedCode' === node.name || 'CodeBlock' === node.name) {
         stack.push({
           codeInfo: [],
           codeMarks: [],
+          indented: 'CodeBlock' === node.name,
           codeTexts: [],
           from: node.from,
           to: node.to
@@ -2362,7 +2370,7 @@ function lezerNestedFencedBlocks(
       }
     },
     leave: (node) => {
-      if ('FencedCode' !== node.name) return;
+      if ('FencedCode' !== node.name && 'CodeBlock' !== node.name) return;
       const fence = stack.pop();
       if (fence) fences.push(fence);
     }
@@ -2370,6 +2378,55 @@ function lezerNestedFencedBlocks(
 
   const nested: MarkdownCodeBlock[] = [];
   for (const fence of fences) {
+    if (fence.indented) {
+      const openingLine = lineIndexAtOffset(lineStarts, fence.from);
+      const bodyStart = lineStarts[openingLine] ?? fence.from;
+      const lastLine = lineIndexAtOffset(lineStarts, Math.max(fence.from, fence.to - 1));
+      const bodyEnd = sourceLineParts(markdown, lineStarts[lastLine] ?? fence.to).nextStart;
+      const bodyLines: VisualCodeBodyLine[] = [];
+      let codeCursor = 0;
+      let emptyBodyLineCount = 0;
+      for (let lineStart = bodyStart; lineStart < bodyEnd;) {
+        const parts = sourceLineParts(markdown, lineStart);
+        const ranges = fence.codeTexts.filter((text) =>
+          text.from < parts.contentEnd && text.to > lineStart
+        );
+        const sourceContentStart = ranges.length
+          ? Math.max(lineStart, ranges[0]?.from ?? parts.contentEnd)
+          : parts.contentEnd;
+        const sourceContentEnd = ranges.length
+          ? Math.min(parts.contentEnd, ranges[ranges.length - 1]?.to ?? parts.contentEnd)
+          : parts.contentEnd;
+        const prefix = markdown.slice(lineStart, sourceContentStart);
+        const continuation = [...prefix];
+        for (const mark of listMarks) {
+          if (mark.from < lineStart || mark.to > sourceContentStart) continue;
+          for (let offset = mark.from; offset < mark.to; offset += 1) {
+            continuation[offset - lineStart] = ' ';
+          }
+        }
+        const continuationPrefix = sourceContentStart === sourceContentEnd
+          ? bodyLines[0]?.continuationPrefix ?? continuation.join('')
+          : continuation.join('');
+        if (sourceContentStart === sourceContentEnd) emptyBodyLineCount += 1;
+        bodyLines.push({
+          sourceLineStart: lineStart, sourceContentStart, sourceContentEnd,
+          sourceLineEnd: parts.contentEnd, lineEnding: parts.ending,
+          prefix, continuationPrefix, codeStart: codeCursor,
+          codeEnd: codeCursor + sourceContentEnd - sourceContentStart + parts.ending.length
+        });
+        codeCursor += sourceContentEnd - sourceContentStart + parts.ending.length;
+        lineStart = parts.nextStart;
+      }
+      nested.push({
+        bodyStart, bodyEnd, bodyLines,
+        bodyEmptyPrefix: bodyLines[0]?.continuationPrefix ?? '',
+        closed: true, closingLine: null, emptyBodyLineCount,
+        family: '', fenceIndent: 0, kind: 'indented', info: '', language: '',
+        lineEnding: bodyLines[0]?.lineEnding ?? '', ordinal: 0, openingLine
+      });
+      continue;
+    }
     const openingMark = fence.codeMarks[0];
     const closingMark =
       fence.codeMarks.length > 1
@@ -2466,7 +2523,6 @@ function markdownCodeBlocksUncached(
   markdown: string,
   lineStarts: ReadonlyArray<number>
 ): ReadonlyArray<MarkdownCodeBlock> {
-  if (!markdown.includes('```') && !markdown.includes('~~~')) return [];
   const blocks: MarkdownCodeBlock[] = [];
   let active: {
     blockIndex: number;
@@ -2518,25 +2574,7 @@ function markdownCodeBlocksUncached(
         || 0 === lineIndex
         || isBlankLine(lines[lineIndex - 1] ?? ''))
     ) {
-      if (!inIndentedCode) {
-        blocks.push({
-          closed: null,
-          bodyEnd: null,
-          bodyStart: null,
-          closingLine: null,
-          family: null,
-          fenceIndent: 0,
-          kind: 'indented',
-          info: '',
-          language: '',
-          emptyBodyLineCount: null,
-          lineEnding: null,
-          ordinal,
-          openingLine: null
-        });
-        ordinal += 1;
-        inIndentedCode = true;
-      }
+      inIndentedCode = true;
       continue;
     }
     if (inIndentedCode) {
@@ -2597,7 +2635,7 @@ function markdownCodeBlocksUncached(
         : []
     )
   );
-  const nested = lezerNestedFencedBlocks(
+  const nested = lezerSupplementalCodeBlocks(
     markdown,
     lineStarts,
     rawOpeningLines
@@ -2655,6 +2693,7 @@ export function visualCodeBodyOrdinalForSourceRange(
 }
 
 export type VisualCodeBodyInterval = Readonly<{
+  kind: 'fenced' | 'indented';
   bodyEnd: number;
   bodyStart: number;
   bodyLines?: ReadonlyArray<VisualCodeBodyLine>;
@@ -2686,10 +2725,9 @@ function visualCodeBodyIntervalFromBlock(
     && null === codeBlock.closingLine
     && codeBlock.bodyEnd === markdown.length;
   if (
-    'fenced' !== codeBlock.kind
-    || (true !== codeBlock.closed && !openAtDocumentEnd)
+    (true !== codeBlock.closed && !openAtDocumentEnd)
     || null === codeBlock.openingLine
-    || (true === codeBlock.closed && null === codeBlock.closingLine)
+    || ('fenced' === codeBlock.kind && true === codeBlock.closed && null === codeBlock.closingLine)
     || (false === codeBlock.closed && !openAtDocumentEnd)
     || null === codeBlock.bodyStart
     || null === codeBlock.bodyEnd
@@ -2699,13 +2737,16 @@ function visualCodeBodyIntervalFromBlock(
     throw new Error('visual-editor-code-body-map-invalid');
   }
   const sourceBlockStart = lineStarts[codeBlock.openingLine];
-  const sourceBlockEnd = true === codeBlock.closed && null !== codeBlock.closingLine
-    ? lineStarts[codeBlock.closingLine + 1] ?? markdown.length
-    : markdown.length;
+  const sourceBlockEnd = 'indented' === codeBlock.kind
+    ? codeBlock.bodyEnd
+    : true === codeBlock.closed && null !== codeBlock.closingLine
+      ? lineStarts[codeBlock.closingLine + 1] ?? markdown.length
+      : markdown.length;
   if (undefined === sourceBlockStart) {
     throw new Error('visual-editor-code-body-map-invalid');
   }
   return {
+    kind: codeBlock.kind,
     bodyEnd: codeBlock.bodyEnd,
     bodyStart: codeBlock.bodyStart,
     ...(codeBlock.bodyLines ? { bodyLines: codeBlock.bodyLines } : {}),
@@ -2744,7 +2785,7 @@ const markdownCodeOrdinalMemo: MarkdownCodeOrdinalEntry[] = [];
 
 /**
  * One read-only parse of an exact Markdown source: line starts, code blocks,
- * fenced intervals and the structure signature. Callers that need several of
+ * body intervals and the structure signature. Callers that need several of
  * these within one input/commit share this result instead of re-scanning the
  * whole source. The fixed-size memo is exact-string keyed and bounded; a miss
  * runs the original parser, and a different source never reuses an entry.
@@ -2753,24 +2794,13 @@ function markdownCodeModel(markdown: string): MarkdownCodeModel {
   for (const entry of markdownCodeModelMemo) {
     if (entry.markdown === markdown) return entry;
   }
-  const hasFence = markdown.includes('```') || markdown.includes('~~~');
-  const lineStarts: ReadonlyArray<number> = hasFence
-    ? Object.freeze(markdownLineStarts(markdown))
-    : Object.freeze([] as number[]);
-  const blocks: ReadonlyArray<MarkdownCodeBlock> = hasFence
-    ? Object.freeze(
-        markdownCodeBlocksUncached(markdown, lineStarts).map((block) =>
-          Object.freeze(block)
-        )
-      )
-    : Object.freeze([] as MarkdownCodeBlock[]);
-  const intervals = Object.freeze(
-    blocks.flatMap((codeBlock) =>
-      'fenced' === codeBlock.kind
-        ? [Object.freeze(visualCodeBodyIntervalFromBlock(markdown, codeBlock, lineStarts))]
-        : []
-    )
+  const lineStarts = Object.freeze(markdownLineStarts(markdown));
+  const blocks = Object.freeze(
+    markdownCodeBlocksUncached(markdown, lineStarts).map((block) => Object.freeze(block))
   );
+  const intervals = Object.freeze(blocks.map((codeBlock) =>
+    Object.freeze(visualCodeBodyIntervalFromBlock(markdown, codeBlock, lineStarts))
+  ));
   const signature = JSON.stringify(blocks.map((block) => [
     block.kind,
     block.family,
@@ -2815,13 +2845,7 @@ export function visualCodeBodyIntervals(
   return markdownCodeModel(markdown).intervals;
 }
 
-/**
- * The interval list is intentionally limited to fenced blocks for callers
- * that enumerate rendered PREs. Their `codeOrdinal` still belongs to the full
- * Markdown code-block list, which may also contain indented blocks. Keep the
- * ordinal relationship explicit for cached projections instead of treating
- * the filtered list position as an ordinal.
- */
+/** Reads visible code bytes without the source line's container/indent prefix. */
 export function visualCodeBodyText(
   interval: VisualCodeBodyInterval,
   markdown: string
@@ -2958,7 +2982,20 @@ export function visualCodeBodySourceEdit(
   }
   const prefix = visualCodeBodyContinuationPrefix(interval, markdown, codeStart);
   const rawInsert = insert.replace(/\r\n|\r|\n/gu, (ending) => ending + prefix);
-  const insertWithEmptyPrefix = empty ? prefix + rawInsert : rawInsert;
+  let insertWithEmptyPrefix = empty ? prefix + rawInsert : rawInsert;
+  if ('indented' === interval.kind && '' !== insert) {
+    const line = interval.bodyLines?.find((candidate) =>
+      candidate.codeStart === codeStart
+      && candidate.sourceContentStart === candidate.sourceContentEnd
+    );
+    if (line) {
+      // A parser-owned interior blank row need not carry the code indent.
+      // Materialize it only when this edit gives that row content; otherwise
+      // typing would turn the body into a paragraph and invalidate its owner.
+      from = line.sourceLineStart;
+      insertWithEmptyPrefix = line.continuationPrefix + rawInsert;
+    }
+  }
   return {
     caret: codeStart + insert.length,
     from,
@@ -3018,10 +3055,21 @@ function normalizeCodeBodyLineEndings(value: string): string {
   return value.replace(/\r\n|\r/g, '\n');
 }
 
+/** Position-only browser spelling: canonical NBSP and every other byte stay literal. */
+export function visualCodeTextMatchesCanonical(canonical: string, dom: string): boolean {
+  if (canonical === dom) return true;
+  if (canonical.length !== dom.length) return false;
+  for (let index = 0; index < canonical.length; index += 1) {
+    if (canonical[index] !== dom[index]
+      && !(' ' === canonical[index] && '\u00a0' === dom[index])) return false;
+  }
+  return true;
+}
+
 function codeBodyTextMatchesDom(markdownText: string, domText: string): boolean {
-  return markdownText === domText
-    || markdownText === `${domText}\n`
-    || domText === `${markdownText}\n`;
+  return visualCodeTextMatchesCanonical(markdownText, domText)
+    || visualCodeTextMatchesCanonical(markdownText, `${domText}\n`)
+    || visualCodeTextMatchesCanonical(`${markdownText}\n`, domText);
 }
 
 function isBrowserCodeColorFont(node: Node): node is HTMLElement {
@@ -3446,6 +3494,11 @@ export function createVisualCodeBodyOrdinalsForPreviewBlocks(
         continue;
       }
       if (sourceBlock.openingLine >= previewBlock.endLine) break;
+      const isIndentedBlockInPreviewRange =
+        'indented' === sourceBlock.kind
+        && true === sourceBlock.closed
+        && null !== sourceBlock.bodyEnd
+        && sourceBlock.bodyEnd <= end;
       const isClosedBlockInPreviewRange =
         true === sourceBlock.closed
         && null !== sourceBlock.closingLine
@@ -3459,12 +3512,11 @@ export function createVisualCodeBodyOrdinalsForPreviewBlocks(
         && end === markdown.length;
       if (
         previewBlock.editable
-        && 'fenced' === sourceBlock.kind
         && null !== sourceBlock.bodyStart
         && sourceBlock.openingLine >= previewBlock.startLine
         && sourceBlock.openingLine < previewBlock.endLine
         && sourceBlock.bodyStart >= start
-        && (isClosedBlockInPreviewRange || isOpenBlockMappedThroughEof)
+        && (isIndentedBlockInPreviewRange || isClosedBlockInPreviewRange || isOpenBlockMappedThroughEof)
       ) {
         candidates.push(sourceBlock);
       }
@@ -3773,7 +3825,7 @@ export function captureVisualCodeInputSnapshot(
     code,
     codeClassName: code.className,
     codeText: code.textContent ?? '',
-    fence: block.getAttribute(VISUAL_FENCE_ATTRIBUTE),
+    fence: block.getAttribute(VISUAL_FENCE_ATTRIBUTE) ?? '',
     fenceInfo: block.getAttribute(VISUAL_FENCE_INFO_ATTRIBUTE),
     fenceOpenEof: block.getAttribute(VISUAL_FENCE_OPEN_EOF_ATTRIBUTE),
     placeholder: strictVisualCodePlaceholder(code),
@@ -3863,6 +3915,42 @@ export function expandVisualCodeFenceForBody(
   if (witness) {
     interval = witness.interval;
     const boundSource = (interval as VisualCodeBodyInterval & { sourceMarkdown?: unknown }).sourceMarkdown;
+    if ('indented' === interval.kind) {
+      // There are no delimiters to expand. Retain the exact-source witness
+      // checks against the canonical inventory instead of inventing a fence.
+      const canonical = visualCodeBodyIntervalAtOrdinal(sourceMarkdown, codeOrdinal);
+      const lines = interval.bodyLines;
+      const canonicalLines = canonical.bodyLines;
+      if (witness.sourceMarkdown !== sourceMarkdown || boundSource !== sourceMarkdown
+        || witness.codeOrdinal !== codeOrdinal || canonical.kind !== 'indented'
+        || interval.codeOrdinal !== canonical.codeOrdinal
+        || interval.sourceBlockStart !== canonical.sourceBlockStart
+        || interval.sourceBlockEnd !== canonical.sourceBlockEnd
+        || interval.bodyStart !== canonical.bodyStart || interval.bodyEnd !== canonical.bodyEnd
+        || interval.info !== canonical.info
+        || interval.bodyEmptyPrefix !== canonical.bodyEmptyPrefix
+        || interval.emptyBodyLineCount !== canonical.emptyBodyLineCount
+        // Exact-source memo eviction may rebuild equal geometry in a different
+        // array. Validate the bytes' complete coordinates, not cache identity.
+        || !lines || !canonicalLines || lines.length !== canonicalLines.length
+        || lines.some((line, index) => {
+          const expected = canonicalLines[index];
+          return !expected
+            || line.sourceLineStart !== expected.sourceLineStart
+            || line.sourceContentStart !== expected.sourceContentStart
+            || line.sourceContentEnd !== expected.sourceContentEnd
+            || line.sourceLineEnd !== expected.sourceLineEnd
+            || line.lineEnding !== expected.lineEnding
+            || line.prefix !== expected.prefix
+            || line.continuationPrefix !== expected.continuationPrefix
+            || line.codeStart !== expected.codeStart || line.codeEnd !== expected.codeEnd;
+        })
+        || interval.fence !== canonical.fence || interval.closed !== canonical.closed
+        || interval.lineEnding !== canonical.lineEnding) {
+        throw new Error('visual-editor-code-body-map-stale');
+      }
+      return null;
+    }
     const positions = [interval.sourceBlockStart, interval.bodyStart, interval.bodyEnd, interval.sourceBlockEnd];
     const validPositions = positions.every((position) => Number.isInteger(position) && position >= 0 && position <= sourceMarkdown.length)
       && interval.sourceBlockStart <= interval.bodyStart && interval.bodyStart <= interval.bodyEnd
@@ -3887,6 +3975,7 @@ export function expandVisualCodeFenceForBody(
   } else {
     interval = visualCodeBodyIntervalAtOrdinal(sourceMarkdown, codeOrdinal);
   }
+  if ('indented' === interval.kind) return null;
   const fence = visualCodeFenceForBody(interval.fence, codeBody);
   if (fence.length === interval.fence.length) return null;
 
@@ -5353,12 +5442,12 @@ export function visualSourceRangeForRenderedImage(
   return ranges[ordinal];
 }
 
-const inlineSourceNames: Readonly<Record<string, readonly [string, string]>> = {
+export const inlineSourceNames: Readonly<Record<string, readonly [string, string]>> = {
   A: ['Link', 'LinkMark'], DEL: ['Strikethrough', 'StrikethroughMark'],
   EM: ['Emphasis', 'EmphasisMark'], STRONG: ['StrongEmphasis', 'EmphasisMark']
 };
 
-function inlineSourceBodyIntervals(source: string) {
+export function inlineSourceBodyIntervals(source: string) {
   const candidates: Array<Readonly<{ name: string; start: number; end: number; bodyStart: number; bodyEnd: number }>> = [];
   markdownLanguage.parser.parse(source).iterate({ enter: (ref) => {
     const kind = Object.values(inlineSourceNames).find(([name]) => name === ref.name);
@@ -6003,16 +6092,67 @@ export type VisualReferenceBlockContext = Readonly<{
   referenceLabelCaseFoldProfile: ReferenceLabelCaseFoldProfile;
 }>;
 
+/**
+ * The renderer spells a footnote reference as an anchor whose href is the
+ * definition's own content, so the generic link serializer writes it back as
+ * an inline `[^](content)` link. The source spells that same reference as
+ * `[^label]`, and only that spelling names the bytes the caret sits in. When
+ * the anchor's href is exactly one of the document's footnote definitions, the
+ * serialized block is re-spelled as the reference it renders; anything else
+ * keeps the serializer's own output.
+ */
+function footnoteReferenceBlockSpelling(
+  serialized: string,
+  source: string
+): Readonly<{ labels: ReadonlySet<string>; text: string }> {
+  const definitions = new Map<string, string>();
+  for (const line of source.split(/\r\n|\r|\n/u)) {
+    const definition = /^\[\^([^\]]+)\]:[ \t]*(.*)$/u.exec(line);
+    const content = definition?.[2]?.trim() ?? '';
+    const label = definition?.[1] ?? '';
+    if (!content || !label) continue;
+    definitions.set(content, label);
+  }
+  const labels = new Set<string>();
+  if (0 === definitions.size || !serialized.includes('[^](')) {
+    return { labels, text: serialized };
+  }
+  const text = serialized.replace(/\[\^\]\(([^)\s]*)\)/gu, (whole, href: string) => {
+    let decoded = href;
+    try {
+      decoded = decodeURIComponent(href);
+    } catch {
+      decoded = href;
+    }
+    const label = definitions.get(decoded);
+    if (undefined === label) return whole;
+    labels.add(label);
+    labels.add(`^${label}`);
+    return `[^${label}]`;
+  });
+  return { labels, text };
+}
+
 function referenceBlockCorrespondence(
   source: string,
   baseline: string,
   context: VisualReferenceBlockContext
 ): Readonly<{ sourceAt: (node: Node, offset: number) => number | undefined; boundaryAt: (offset: number) => Readonly<{ node: Node; offset: number }> | undefined; baselineAt: (offset: number) => number | undefined }> {
-  const { block, sourceRange: range, baselineBlockMarkdown: localBaseline, baselineVisualStart: visualStart } = context;
+  const { block, sourceRange: range, baselineBlockMarkdown: rawBaseline, baselineVisualStart: visualStart } = context;
+  // The accepted baseline is a serialization of the same render, so it spells
+  // a footnote reference the same way that render does. The source spelling is
+  // the one the caret's bytes live in, so both sides are compared and walked in
+  // that spelling; the visual prefix before the block is unchanged by it.
+  const footnoteSpelling = footnoteReferenceBlockSpelling(rawBaseline, source);
+  const localBaseline = footnoteSpelling.text;
   const fail = (): never => { throw new Error('visual-editor-reference-block-map-failed'); };
+  const serializedBlock = footnoteReferenceBlockSpelling(
+    serializeVisualMarkdownBlockFragment([block]),
+    source
+  ).text;
   if (range.start < 0 || range.end > source.length || range.end <= range.start
-    || baseline.slice(visualStart, visualStart + localBaseline.length) !== localBaseline
-    || serializeVisualMarkdownBlockFragment([block]) !== localBaseline
+    || baseline.slice(visualStart, visualStart + rawBaseline.length) !== rawBaseline
+    || serializedBlock !== localBaseline
     || block.closest(`[contenteditable="false"], ${VISUAL_MARKDOWN_READ_ONLY_SELECTOR}`)
     || block.querySelector(`[contenteditable="false"], ${VISUAL_MARKDOWN_READ_ONLY_SELECTOR}`)) return fail();
   const nodes = (text: string): MarkdownSyntaxNode[] => {
@@ -6022,7 +6162,11 @@ function referenceBlockCorrespondence(
   };
   const sourceLinks = renderedReferenceLinkBodies(source, nodes(source), context.referenceLabelCaseFoldProfile, context.referenceDefined)
     .filter((link) => link.from >= range.start && link.to <= range.end);
-  const baselineLinks = renderedReferenceLinkBodies(localBaseline, nodes(localBaseline), context.referenceLabelCaseFoldProfile, () => false);
+  // Only the labels this projection itself re-spelled are references on the
+  // baseline side: every other baseline link stays inline and is answered the
+  // way it always was.
+  const baselineLinks = renderedReferenceLinkBodies(localBaseline, nodes(localBaseline),
+    context.referenceLabelCaseFoldProfile, (label) => footnoteSpelling.labels.has(label));
   const anchors = Array.from(block.querySelectorAll('a'));
   if (!sourceLinks.some((link) => link.reference) || sourceLinks.length !== baselineLinks.length
     || anchors.length !== sourceLinks.length) return fail();
@@ -6102,13 +6246,33 @@ function referenceBlockCorrespondence(
           fail();
           return;
         }
-        sourcePosition = link.bodyStart;
-        walk(child);
-        if (sourcePosition !== link.bodyEnd) {
-          fail();
-          return;
+        // A footnote reference renders as one superscript glyph, not as its
+        // `[^label]` spelling: the glyph's two edges are the token's own edges,
+        // so a deletion that names the glyph names the whole reference. The
+        // anchor holds exactly that one Text.
+        const renderedGlyph = child.childNodes.length === 1 ? child.firstChild : null;
+        // Only the superscript the footnote renderer mounts is one glyph for
+        // the whole reference. A reference link whose own label starts with
+        // `^` renders its label text and is walked as the text it is.
+        if (source.startsWith('[^', link.from)
+          && renderedGlyph instanceof Text && '^' === renderedGlyph.data) {
+          const glyph = renderedGlyph;
+          if (!(glyph instanceof Text)) {
+            fail();
+            return;
+          }
+          nativePair(glyph, 0, link.from);
+          nativePair(glyph, glyph.length, link.to);
+          sourcePosition = link.to;
+        } else {
+          sourcePosition = link.bodyStart;
+          walk(child);
+          if (sourcePosition !== link.bodyEnd) {
+            fail();
+            return;
+          }
+          sourcePosition = link.to;
         }
-        sourcePosition = link.to;
       } else {
         fail();
         return;
@@ -6216,7 +6380,20 @@ export function visualBoundarySourceOffset(
         editor, text, textOffset, baselineVisualMarkdown, intervalMap, false, undefined,
         !editor.isConnected && options.acceptedEndpointBlock === true
       );
-      const normalized = projection && intervalMap.sourceOffsetAt(projection.visualOffset);
+      // The code-body proof owns its canonical bytes, including delimiter
+      // padding the ordinary character alignment may hide. Invert only CRLF
+      // normalization here; do not project the display alias a second time.
+      let normalized = projection?.sourceOffset;
+      if (projection && intervalMap.source.length !== sourceMarkdown.length) {
+        let low = 0;
+        let high = intervalMap.source.length;
+        while (low < high) {
+          const middle = (low + high) >>> 1;
+          if ((intervalMap.originalOffsetAt(middle) ?? Infinity) < projection.sourceOffset) low = middle + 1;
+          else high = middle;
+        }
+        normalized = intervalMap.originalOffsetAt(low) === projection.sourceOffset ? low : undefined;
+      }
       if (projection && undefined !== normalized && null !== normalized
         && intervalMap.originalOffsetAt(normalized) === projection.sourceOffset
         && intervalMap.matchesInlineCodeBody(normalized, projection.visualOffset,
@@ -6486,6 +6663,55 @@ function trailingHiddenReferenceStart(
     : drawn.contentEnd;
 }
 
+
+/**
+ * The start of a trailing run of structural quote rows - a quote's own blank
+ * continuation lines - that closes the document. The renderer draws those rows
+ * before the last quoted paragraph rather than after it, so a character diff
+ * over the whole tail matches the final paragraph to an earlier row and leaves
+ * the document's last visible line with no source offset at all. The run is
+ * owned as hidden source instead, exactly like a closing reference suffix.
+ */
+function trailingStructuralQuoteRowStart(source: string, baselineVisualMarkdown: string): number | null {
+  let start = source.length;
+  let cursor = source.length;
+  while (cursor > 0) {
+    const lineStart = source.lastIndexOf('\n', cursor - 1) + 1;
+    if (!/^>[ \t]*$/u.test(source.slice(lineStart, cursor))) break;
+    start = lineStart;
+    if (0 === lineStart) break;
+    cursor = lineStart - 1;
+  }
+  // A document built only of quote rows has nothing before the run to align.
+  if (start >= source.length || start <= 0) return null;
+  // Those rows are drawn before the quoted line that precedes them, so the
+  // visual has to end with that line's own drawn content. Anything else is a
+  // quoted blank row the renderer really does close the document with, and its
+  // bytes stay part of the alignment.
+  const precedingLineStart = source.lastIndexOf('\n', start - 2) + 1;
+  const preceding = source.slice(precedingLineStart, start).replace(/\n$/u, '');
+  // The renderer draws a quoted line without its own `>` marker, so the visual
+  // tail carries that line's content only.
+  // A quoted line's trailing spaces draw nothing (the renderer trims them), so
+  // both sides are compared with that trimming.
+  const precedingDrawn = preceding.replace(/^>[ \t]?/u, '').replace(/[ \t]+$/u, '');
+  if (0 === precedingDrawn.length) return null;
+  const drawnTail = baselineVisualMarkdown.replace(/[ \t]+$/u, '')
+    .slice(-precedingDrawn.length);
+  if (drawnTail.length !== precedingDrawn.length) return null;
+  for (let index = 0; index < precedingDrawn.length; index += 1) {
+    const left = precedingDrawn[index];
+    const right = drawnTail[index];
+    if (left === right) continue;
+    if ((' ' === left && '\u00a0' === right) || ('\u00a0' === left && ' ' === right)) continue;
+    return null;
+  }
+  // The line ending in front of the hidden rows draws nothing either - the
+  // renderer's row separator is structural - so hiding it keeps a caret at the
+  // end of the last drawn line on that line instead of one unit past it.
+  return start > 0 && '\n' === source[start - 1] ? start - 1 : start;
+}
+
 /**
  * The start of the separator run that follows an emptied structural row's
  * marker, when the row's own content ends at `end`. The row draws only its
@@ -6517,6 +6743,9 @@ export type VisualMarkdownSourceIntervalMap = Readonly<{
   canonicalSource: string;
   coversSourceUnits: (start: number, end: number) => boolean;
   matchesInlineCodeBody: (sourceOffset: number, visualOffset: number, literal: string, bodyOffset: number) => boolean;
+  projectInlineCodeBody: (blockMarkdown: string, codeOrdinal: number, codeCount: number,
+    literal: string, bodyOffset: number, prefixAndBlock?: string | null) =>
+    Readonly<{ sourceOffset: number; visualOffset: number }> | null;
   hiddenSourceRanges: ReadonlyArray<Readonly<{ end: number; start: number }>>;
   imageUnits?: ReadonlyArray<Readonly<{ sourceStart: number; sourceEnd: number; baselineStart: number; baselineEnd: number }>>;
   originalOffsetAt: (sourceOffset: number) => number | undefined;
@@ -6538,7 +6767,10 @@ export type VisualMarkdownSourceIntervalMap = Readonly<{
 }>;
 
 function createVisualSourceUnitCheck(source: string, baseline: string) {
-  type InlineBody = Readonly<{ start: number; end: number }>;
+  type InlineBody = Readonly<{
+    start: number; end: number; opening: number; closing: number;
+    textStart: number; literal: string;
+  }>;
   let inlineBodies: InlineBody[] | null = null;
   let baselineBodies: InlineBody[] | null = null;
   const parseBodies = (value: string): InlineBody[] => {
@@ -6547,7 +6779,12 @@ function createVisualSourceUnitCheck(source: string, baseline: string) {
       if ('InlineCode' !== node.name) return;
       const marks = node.node.getChildren('CodeMark');
       if (marks.length !== 2 || marks[0]?.from !== node.from || marks[1]?.to !== node.to) return;
-      bodies.push({ start: marks[0].to, end: marks[1].from });
+      const start = marks[0].to;
+      const end = marks[1].from;
+      const raw = value.slice(start, end).replace(/\r\n|\r|\n/gu, ' ');
+      const padded = raw.startsWith(' ') && raw.endsWith(' ') && /[^ ]/u.test(raw);
+      bodies.push({ start, end, opening: node.from, closing: node.to,
+        textStart: start + (padded ? 1 : 0), literal: padded ? raw.slice(1, -1) : raw });
     });
     return bodies;
   };
@@ -6564,16 +6801,52 @@ function createVisualSourceUnitCheck(source: string, baseline: string) {
   const matches = (currentSource: string, currentBaseline: string, sourceOffset: number,
     visualOffset: number, literal: string, bodyOffset: number): boolean => {
     if (currentSource !== source || currentBaseline !== baseline) return false;
-    const sourceMatches = sourceBodies().filter((body) => sourceOffset >= body.start
-      && sourceOffset <= body.end && sourceOffset - body.start === bodyOffset
-      && source.slice(body.start, body.end) === literal);
+    const sourceMatches = sourceBodies().filter((body) => sourceOffset - body.textStart === bodyOffset
+      && bodyOffset >= 0 && bodyOffset <= body.literal.length
+      && visualCodeTextMatchesCanonical(body.literal, literal));
+    if (1 !== sourceMatches.length) return false;
+    const canonical = sourceMatches[0];
+    if (!canonical) return false;
     baselineBodies ??= parseBodies(baseline);
-    const visualMatches = baselineBodies.filter((body) => visualOffset >= body.start
-      && visualOffset <= body.end && visualOffset - body.start === bodyOffset
-      && baseline.slice(body.start, body.end) === literal);
-    return sourceMatches.length === 1 && visualMatches.length === 1;
+    const visualMatches = baselineBodies.filter((body) => visualOffset - body.textStart === bodyOffset
+      && visualCodeTextMatchesCanonical(canonical.literal, body.literal)
+      && body.literal.length === literal.length);
+    return visualMatches.length === 1;
   };
-  return { covers, matches };
+  // Match this DOM block around its one selected code span. Only that span's
+  // display spelling may differ; its CodeMark boundaries must still align to
+  // one canonical span. This never normalizes a baseline, DOM, or source byte.
+  const project = (blockMarkdown: string, codeOrdinal: number, codeCount: number,
+    literal: string, bodyOffset: number, sourceOffsetAt: (offset: number) => number | undefined,
+    prefixAndBlock?: string | null): Readonly<{ sourceOffset: number; visualOffset: number }> | null => {
+    if (!Number.isInteger(bodyOffset) || bodyOffset < 0 || bodyOffset > literal.length) return null;
+    const blockBodies = parseBodies(blockMarkdown);
+    const owned = blockBodies[codeOrdinal];
+    if (blockBodies.length !== codeCount || !owned || owned.literal !== literal) return null;
+    const before = blockMarkdown.slice(0, owned.opening);
+    const after = blockMarkdown.slice(owned.closing);
+    const prefix = undefined === prefixAndBlock ? undefined
+      : null === prefixAndBlock || !prefixAndBlock.endsWith(blockMarkdown) ? null
+        : prefixAndBlock.slice(0, prefixAndBlock.length - blockMarkdown.length);
+    if (null === prefix) return null;
+    baselineBodies ??= parseBodies(baseline);
+    let result: Readonly<{ sourceOffset: number; visualOffset: number }> | null = null;
+    for (const body of baselineBodies) {
+      const blockStart = body.opening - before.length;
+      if (blockStart < 0 || baseline.slice(blockStart, body.opening) !== before
+        || baseline.slice(body.closing, body.closing + after.length) !== after
+        || (undefined !== prefix && (blockStart !== prefix.length || !baseline.startsWith(prefix)))) continue;
+      const opening = sourceOffsetAt(body.opening);
+      const closing = sourceOffsetAt(body.closing);
+      const canonical = sourceBodies().find((candidate) => candidate.opening === opening && candidate.closing === closing);
+      if (!canonical || !visualCodeTextMatchesCanonical(canonical.literal, literal)
+        || !visualCodeTextMatchesCanonical(canonical.literal, body.literal)) continue;
+      if (result) return null;
+      result = { sourceOffset: canonical.textStart + bodyOffset, visualOffset: body.textStart + bodyOffset };
+    }
+    return result;
+  };
+  return { covers, matches, project };
 }
 
 /**
@@ -6773,9 +7046,12 @@ function buildVisualMarkdownSourceIntervalMapUncached(
   // offset. Aligning the drawn prefix only keeps every drawn row on its own
   // spelling; the suffix the renderer draws nothing for is owned as hidden.
   const hiddenTailStart = trailingHiddenReferenceStart(source, baselineVisualMarkdown);
-  const drawnSourceEnd = null !== hiddenTailStart && hiddenTailStart > sourcePosition
-    ? hiddenTailStart
-    : source.length;
+  const quoteRowTailStart = trailingStructuralQuoteRowStart(source, baselineVisualMarkdown);
+  const drawnSourceEnd = Math.min(
+    source.length,
+    null !== hiddenTailStart && hiddenTailStart > sourcePosition ? hiddenTailStart : source.length,
+    null !== quoteRowTailStart && quoteRowTailStart > sourcePosition ? quoteRowTailStart : source.length
+  );
   align(
     source.slice(sourcePosition, drawnSourceEnd),
     baselineVisualMarkdown.slice(baselinePosition)
@@ -6880,6 +7156,14 @@ function buildVisualMarkdownSourceIntervalMapUncached(
     },
     matchesInlineCodeBody(sourceOffset, visualOffset, literal, bodyOffset) {
       return sourceUnitCheck.matches(this.source, this.baselineVisualMarkdown, sourceOffset, visualOffset, literal, bodyOffset);
+    },
+    projectInlineCodeBody(blockMarkdown, codeOrdinal, codeCount, literal, bodyOffset, prefixAndBlock) {
+      if (this.source !== source || this.baselineVisualMarkdown !== baselineVisualMarkdown
+        || this.canonicalSource !== sourceMarkdown) return null;
+      const projected = sourceUnitCheck.project(blockMarkdown, codeOrdinal, codeCount,
+        literal, bodyOffset, sourceOffsetAt, prefixAndBlock);
+      const sourceOffset = projected ? originalOffsetAt(projected.sourceOffset) : undefined;
+      return projected && undefined !== sourceOffset ? { ...projected, sourceOffset } : null;
     },
     hiddenSourceRanges,
     ...(imageUnits.length ? { imageUnits } : {}),
@@ -7150,6 +7434,14 @@ export function createVisualMarkdownDirectSourceIntervalMap(
     },
     matchesInlineCodeBody(sourceOffset, visualOffset, literal, bodyOffset) {
       return sourceUnitCheck.matches(this.source, this.baselineVisualMarkdown, sourceOffset, visualOffset, literal, bodyOffset);
+    },
+    projectInlineCodeBody(blockMarkdown, codeOrdinal, codeCount, literal, bodyOffset, prefixAndBlock) {
+      if (this.source !== source || this.baselineVisualMarkdown !== source
+        || this.canonicalSource !== sourceMarkdown) return null;
+      const projected = sourceUnitCheck.project(blockMarkdown, codeOrdinal, codeCount,
+        literal, bodyOffset, sourceOffsetAt, prefixAndBlock);
+      const sourceOffset = projected ? originalOffsetAt(projected.sourceOffset) : undefined;
+      return projected && undefined !== sourceOffset ? { ...projected, sourceOffset } : null;
     },
     hiddenSourceRanges: [],
     originalOffsetAt,
@@ -8299,19 +8591,20 @@ export function visualCaretBoundaryFromSourceOffset(
   };
   const mappedOffsets = new Map<number, number | null>();
   // The attempt constant guards against a walk that cannot settle; it is not a
-  // statement about how large a mounted block may be. A legitimate row can own
-  // more boundary segments than the constant, and then the walk used to stop
-  // guessing before it had covered the row at all. The walk therefore runs its
-  // FIRST pass under the constant, exactly as before, so every offset that
-  // resolves today still resolves identically. Only when that pass is
-  // exhausted AND its source proof owns nothing does the same walk resume with
-  // the row's own segment count as the budget; a walk that still cannot settle
-  // exhausts that too and keeps its explicit failure.
+  // statement about how large a mounted block may be. The walk counts the
+  // boundary POSITIONS it has resolved, and one position may own several
+  // segments, so the segment count is not an upper bound for it. The walk
+  // therefore runs its FIRST pass under the constant, exactly as before, so
+  // every offset that resolves today still resolves identically. Only when that
+  // pass is exhausted AND its source proof owns nothing does the same walk
+  // resume with the number of positions it can possibly visit as the budget; a
+  // walk that still cannot settle exhausts that too and keeps its explicit
+  // failure.
   const walkBudgets = [
     VISUAL_CARET_MAPPING_ATTEMPT_LIMIT,
     Math.max(
       VISUAL_CARET_MAPPING_ATTEMPT_LIMIT,
-      boundaryIndex.segments.length
+      boundaryIndex.length
     )
   ];
   let mappingAttemptLimit = walkBudgets[0] as number;
@@ -8521,9 +8814,16 @@ export function visualCaretBoundaryFromSourceOffset(
       if (null === exhaustedError) exhaustedError = error;
       // The constant's proof owns nothing here. When this row is larger than
       // that constant, the walk it interrupted never covered the row: run it
-      // again with the row's own segment count. Anything else keeps its
-      // original failure immediately.
+      // again with the number of positions the row can own. Anything else
+      // keeps its original failure immediately.
       if (budgetIndex + 1 < walkBudgets.length) continue;
+      // The final pass budgets every boundary position the row owns, so
+      // spending it means the whole row was resolved and no position matched:
+      // the absence is proved, not unknown, and the callers that recover from
+      // a proved absence must see that instead of an interrupted guess.
+      if (mappingAttempts > mappingAttemptLimit) {
+        throw new Error('visual-editor-selection-map-failed');
+      }
       throw exhaustedError;
     }
     break;
@@ -9663,6 +9963,7 @@ function owningBlockBaselineRange(
  * escape unit: before anything else an odd backslash is a literal character
  * with a rendered boundary on either side of it.
  */
+
 const MARKDOWN_ESCAPABLE_PUNCTUATION = /^[!-/:-@[-`{-~]$/u;
 
 /**
@@ -9946,11 +10247,17 @@ function witnessedTextRunProjection(
   const blockText = keepsTerminalSpace
     ? renderedBlock.text + baselineVisualMarkdown[blockRange.end]
     : renderedBlock.text;
+  // The framing char after a block that does not end the document is the
+  // separator the block's own text carries; a block that ends the baseline has
+  // no such char, and its end edge is the baseline end itself.
+  const blockEndRaw = keepsTerminalSpace
+    ? blockRange.end + 1
+    : blockRange.end;
   const rawVisualOffset = (renderedOffset: number): number | null => {
     if (renderedOffset < 0 || renderedOffset > blockText.length) return null;
     return renderedOffset < renderedBlock.rawOffsets.length
       ? renderedBlock.rawOffsets[renderedOffset] as number
-      : blockRange.end + 1;
+      : blockEndRaw;
   };
   const pinned = (spelling: string, text: string): number | null =>
     text.endsWith(spelling) ? text.length - spelling.length : null;
@@ -10114,6 +10421,19 @@ function uniqueTextProjection(
     && (data.length !== node.data.length
       || data !== node.data.replace(/\u00a0/gu, ' '))
   ) return null;
+  const code = node.parentElement;
+  if (node.data.includes('\u00a0') && code?.tagName === 'CODE'
+    && code.childNodes.length === 1 && code.firstChild === node
+    && !code.closest(`pre, [contenteditable="false"], ${VISUAL_MARKDOWN_READ_ONLY_SELECTOR}`)) {
+    const owned = ownedProjectionBlock(surface, node);
+    if (owned) {
+      const codes = Array.from(owned.block.querySelectorAll('code')).filter((candidate) => !candidate.closest('pre'));
+      const projected = sourceIntervalMap.projectInlineCodeBody(owned.blockMarkdown,
+        codes.indexOf(code), codes.length, node.data, offset,
+        acceptedPrefixOnly ? owned.prefixAndBlock() : undefined);
+      if (projected) return projected;
+    }
+  }
   const blockRange = owningBlockBaselineRange(
     surface,
     node,
@@ -12344,6 +12664,126 @@ export function firstEmptiedHeadingRowRemoval(
   const index = lines.findIndex(
     (line) => '' !== sourceMarkdown.slice(line.start, line.contentEnd).trim()
   );
+  return index < 0
+    ? null
+    : emptiedHeadingRowRemovalAt(sourceMarkdown, lines, index);
+}
+
+/**
+ * The removal of the one emptied heading row of `level` in the source, or null
+ * when the document holds none or more than one.
+ *
+ * An accepted map that already describes a longer source cannot name a row the
+ * user just emptied. The row's own canonical bytes are still known - the row
+ * renders as an empty heading of that level - and the source has to hold
+ * exactly one line that spells it, so a single match is provable rather than
+ * guessed. Lines that cannot be an emptied ATX heading are rejected without
+ * parsing.
+ */
+export function uniqueEmptiedHeadingRowRemoval(
+  sourceMarkdown: string,
+  level: number
+): Readonly<{ caret: number; end: number; start: number }> | null {
+  const lines = markdownLineRanges(sourceMarkdown);
+  const marker = new RegExp(`^#{${level}}[ \\t]*$`, 'u');
+  let found = -1;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line) continue;
+    const text = sourceMarkdown.slice(line.start, line.contentEnd);
+    if (!marker.test(text)) continue;
+    if (`ATXHeading${level}` !== markdownRowEmptiedBlockKind(text)) continue;
+    if (found >= 0) return null;
+    found = index;
+  }
+  return found < 0 ? null : emptiedHeadingRowRemovalAt(sourceMarkdown, lines, found);
+}
+
+/**
+ * Joins the one plain-text ATX heading row of `level` whose rendered body is
+ * `rowText` into the block above it, proved from source alone. The accepted
+ * edit map may no longer describe a longer source, but the row's level, its
+ * plain body and its uniqueness still name one source line and one removable
+ * marker run. A heading whose body contains inline markup is refused because
+ * rendered text no longer equals the source body.
+ */
+export function uniquePlainHeadingRowJoinRemoval(
+  sourceMarkdown: string,
+  level: number,
+  rowText: string
+): Readonly<{ caret: number; value: string }> | null {
+  if (!rowText || /[*_`~[\]\\!<>]/u.test(rowText)) return null;
+  const lines = markdownLineRanges(sourceMarkdown);
+  const hashes = '#'.repeat(level);
+  let found = -1;
+  let textStart = -1;
+  let trailingStart = -1;
+  let trailingEnd = -1;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line) continue;
+    const lineText = sourceMarkdown.slice(line.start, line.contentEnd);
+    if (!lineText.startsWith(hashes)) continue;
+    const afterHashes = lineText.charAt(level);
+    if (' ' !== afterHashes && '\t' !== afterHashes) continue;
+    if ('#' === lineText.charAt(level)) continue;
+    const after = lineText.slice(level);
+    const space = /^[ \t]+/u.exec(after);
+    if (!space) continue;
+    const bodyStart = level + space[0].length;
+    const body = lineText.slice(bodyStart);
+    const closing = /[ \t]+#+[ \t]*$/u.exec(body);
+    const content = closing ? body.slice(0, closing.index) : body;
+    const trimmed = content.replace(/[ \t]+$/u, '');
+    if (trimmed !== rowText) continue;
+    const leading = content.length - content.replace(/^[ \t]+/u, '').length;
+    const actualTextStart = bodyStart + leading;
+    if (lineText.slice(actualTextStart, actualTextStart + rowText.length) !== rowText) continue;
+    if (found >= 0) return null;
+    found = index;
+    textStart = line.start + actualTextStart;
+    if (closing) {
+      trailingStart = line.start + bodyStart + closing.index;
+      trailingEnd = line.contentEnd;
+    }
+  }
+  if (found < 0) return null;
+  const line = lines[found];
+  if (!line || textStart < 0) return null;
+  let prev = found - 1;
+  while (prev >= 0) {
+    const prevLine = lines[prev];
+    if (prevLine && '' !== sourceMarkdown.slice(prevLine.start, prevLine.contentEnd).trim()) break;
+    prev -= 1;
+  }
+  if (prev < 0) return null;
+  const prevLine = lines[prev];
+  if (!prevLine) return null;
+  const start = prevLine.contentEnd;
+  const removed = sourceMarkdown.slice(start, textStart);
+  if (!/^(?:(?:\r\n|\r|\n)|[ \t#])+$/u.test(removed) || !/#/u.test(removed)) return null;
+  const value = trailingStart >= 0 && trailingEnd >= 0
+    ? sourceMarkdown.slice(0, start) + sourceMarkdown.slice(textStart, trailingStart) + sourceMarkdown.slice(trailingEnd)
+    : sourceMarkdown.slice(0, start) + sourceMarkdown.slice(textStart);
+  return { caret: start, value };
+}
+
+/**
+ * The mirror of `firstEmptiedHeadingRowRemoval` for a document whose last
+ * mounted block is an emptied row: the trailing non-blank source line is that
+ * row's own line, so its removal is read positionally even while the accepted
+ * edit map still describes an older, longer source.
+ */
+export function lastEmptiedHeadingRowRemoval(
+  sourceMarkdown: string
+): Readonly<{ caret: number; end: number; start: number }> | null {
+  const lines = markdownLineRanges(sourceMarkdown);
+  let index = lines.length - 1;
+  while (index >= 0) {
+    const line = lines[index];
+    if (!line || '' !== sourceMarkdown.slice(line.start, line.contentEnd).trim()) break;
+    index -= 1;
+  }
   return index < 0
     ? null
     : emptiedHeadingRowRemovalAt(sourceMarkdown, lines, index);

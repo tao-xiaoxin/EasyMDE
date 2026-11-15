@@ -24379,3 +24379,216 @@ describe("Windowed context-menu cut history caret", () => {
 		}
 	});
 });
+
+it("retires an emptied heading row on a Backspace at its own start", () => {
+	const current = fixture({
+		blockOverrides: { 0: "Lead paragraph", 1: "## ", 2: "Tail paragraph" },
+		markupOverrides: {
+			0: '<p data-easymde-visual-block-id="b0">Lead paragraph</p>',
+			1: '<p data-easymde-visual-block-id="b1"><br></p>',
+			2: '<p data-easymde-visual-block-id="b2">Tail paragraph</p>',
+		},
+		mounted: [0, 1, 2],
+		paragraphBlocks: true,
+		sourceBlockCount: 3,
+	});
+	current.surface.setAttribute("contenteditable", "true");
+	current.surface.tabIndex = 0;
+	const original = current.canonical();
+	expect(original).toBe("Lead paragraph\n\n## \n\nTail paragraph");
+	const field = document.createElement("textarea");
+	field.value = field.defaultValue = original;
+	const container = document.createElement("div");
+	document.body.append(container, field);
+	const documentSession = createEditorDocumentSession(
+		createCodeMirrorDocumentSession({ container, label: "Markdown source", submissionField: field }),
+		createNativeTitleSession(null),
+	);
+	documentSession.document.setVisualEditingActive(true);
+	const row = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b1"]');
+	if (!row) throw new Error("emptied-heading-row-missing");
+	const rendered = renderWindowEditor(current, { documentSession });
+	try {
+		current.surface.focus();
+		window.getSelection()?.collapse(row, 0);
+		const input = new InputEvent("beforeinput", {
+			bubbles: true,
+			cancelable: true,
+			inputType: "deleteContentBackward",
+		});
+		act(() => { current.surface.dispatchEvent(input); });
+		expect(input.defaultPrevented).toBe(true);
+		expect(documentSession.document.getValue()).toBe("Lead paragraph\n\nTail paragraph");
+		expect(rendered.requestPreview).toHaveBeenCalledWith("Lead paragraph\n\nTail paragraph");
+		expect(rendered.onFailure).not.toHaveBeenCalled();
+		expect(documentSession.document.getHistoryState().undoDepth).toBeGreaterThan(0);
+	} finally {
+		rendered.view.unmount();
+		documentSession.destroy();
+		container.remove();
+		field.remove();
+		current.surface.remove();
+	}
+});
+
+it("leaves a heading row with content to its own owners", () => {
+	const current = fixture({
+		blockOverrides: { 0: "Lead paragraph", 1: "## Heading", 2: "Tail paragraph" },
+		markupOverrides: {
+			0: '<p data-easymde-visual-block-id="b0">Lead paragraph</p>',
+			1: '<h2 data-easymde-visual-block-id="b1">Heading</h2>',
+			2: '<p data-easymde-visual-block-id="b2">Tail paragraph</p>',
+		},
+		mounted: [0, 1, 2],
+		paragraphBlocks: true,
+		sourceBlockCount: 3,
+	});
+	current.surface.setAttribute("contenteditable", "true");
+	current.surface.tabIndex = 0;
+	const original = current.canonical();
+	const field = document.createElement("textarea");
+	field.value = field.defaultValue = original;
+	const container = document.createElement("div");
+	document.body.append(container, field);
+	const documentSession = createEditorDocumentSession(
+		createCodeMirrorDocumentSession({ container, label: "Markdown source", submissionField: field }),
+		createNativeTitleSession(null),
+	);
+	documentSession.document.setVisualEditingActive(true);
+	const headingText = current.surface.querySelector("h2")?.firstChild;
+	if (!(headingText instanceof Text)) throw new Error("heading-row-text-missing");
+	const rendered = renderWindowEditor(current, { documentSession });
+	try {
+		current.surface.focus();
+		placeCaret(headingText, 0);
+		const input = new InputEvent("beforeinput", {
+			bubbles: true,
+			cancelable: true,
+			inputType: "deleteContentBackward",
+		});
+		act(() => { current.surface.dispatchEvent(input); });
+		expect(documentSession.document.getValue()).toBe(original);
+		expect(rendered.requestPreview).not.toHaveBeenCalled();
+	} finally {
+		rendered.view.unmount();
+		documentSession.destroy();
+		container.remove();
+		field.remove();
+		current.surface.remove();
+	}
+});
+
+it("retires only the emptied heading row the caret names, not a neighbour within three lines", () => {
+	const current = fixture({
+		blockOverrides: { 0: "Lead paragraph", 1: "## ", 2: "## ", 3: "Tail paragraph" },
+		markupOverrides: {
+			0: '<p data-easymde-visual-block-id="b0">Lead paragraph</p>',
+			1: '<p data-easymde-visual-block-id="b1"><br></p>',
+			2: '<p data-easymde-visual-block-id="b2"><br></p>',
+			3: '<p data-easymde-visual-block-id="b3">Tail paragraph</p>',
+		},
+		mounted: [0, 1, 2, 3],
+		paragraphBlocks: true,
+		sourceBlockCount: 4,
+	});
+	current.surface.setAttribute("contenteditable", "true");
+	current.surface.tabIndex = 0;
+	const original = current.canonical();
+	expect(original).toBe("Lead paragraph\n\n## \n\n## \n\nTail paragraph");
+	// The two emptied headings are two lines apart, so the map's startLine
+	// window (±3) contains both: only the accepted range may name this row.
+	expect(current.editMap.blocks[1]?.startLine).toBe(2);
+	expect(current.editMap.blocks[2]?.startLine).toBe(4);
+	const field = document.createElement("textarea");
+	field.value = field.defaultValue = original;
+	const container = document.createElement("div");
+	document.body.append(container, field);
+	const documentSession = createEditorDocumentSession(
+		createCodeMirrorDocumentSession({ container, label: "Markdown source", submissionField: field }),
+		createNativeTitleSession(null),
+	);
+	documentSession.document.setVisualEditingActive(true);
+	const second = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b2"]');
+	if (!second) throw new Error("second-emptied-heading-missing");
+	const rendered = renderWindowEditor(current, { documentSession });
+	try {
+		current.surface.focus();
+		window.getSelection()?.collapse(second, 0);
+		const input = new InputEvent("beforeinput", {
+			bubbles: true,
+			cancelable: true,
+			inputType: "deleteContentBackward",
+		});
+		act(() => { current.surface.dispatchEvent(input); });
+		expect(documentSession.document.getValue()).toBe("Lead paragraph\n\n## \n\nTail paragraph");
+		expect(rendered.onFailure).not.toHaveBeenCalled();
+	} finally {
+		rendered.view.unmount();
+		documentSession.destroy();
+		container.remove();
+		field.remove();
+		current.surface.remove();
+	}
+});
+
+it("never retires the neighbour row when the accepted map's startLine lags by one", () => {
+	const current = fixture({
+		blockOverrides: { 0: "Lead paragraph", 1: "## ", 2: "## ", 3: "Tail paragraph" },
+		markupOverrides: {
+			0: '<p data-easymde-visual-block-id="b0">Lead paragraph</p>',
+			1: '<p data-easymde-visual-block-id="b1"><br></p>',
+			2: '<p data-easymde-visual-block-id="b2"><br></p>',
+			3: '<p data-easymde-visual-block-id="b3">Tail paragraph</p>',
+		},
+		mounted: [0, 1, 2, 3],
+		paragraphBlocks: true,
+		sourceBlockCount: 4,
+	});
+	current.surface.setAttribute("contenteditable", "true");
+	current.surface.tabIndex = 0;
+	const original = current.canonical();
+	// The accepted map starts this block one line early, so its ±3 window
+	// reaches the neighbouring emptied heading first.
+	const second = current.editMap.blocks[2];
+	if (!second) throw new Error("offset-map-block-missing");
+	current.editMap = {
+		...current.editMap,
+		blocks: current.editMap.blocks.map((block, index) =>
+			index === 2 ? { ...block, startLine: block.startLine - 1 } : block
+		),
+	};
+	const field = document.createElement("textarea");
+	field.value = field.defaultValue = original;
+	const container = document.createElement("div");
+	document.body.append(container, field);
+	const documentSession = createEditorDocumentSession(
+		createCodeMirrorDocumentSession({ container, label: "Markdown source", submissionField: field }),
+		createNativeTitleSession(null),
+	);
+	documentSession.document.setVisualEditingActive(true);
+	const row = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b2"]');
+	if (!row) throw new Error("offset-row-missing");
+	const rendered = renderWindowEditor(current, { documentSession });
+	try {
+		current.surface.focus();
+		window.getSelection()?.collapse(row, 0);
+		const input = new InputEvent("beforeinput", {
+			bubbles: true,
+			cancelable: true,
+			inputType: "deleteContentBackward",
+		});
+		act(() => { current.surface.dispatchEvent(input); });
+		const value = documentSession.document.getValue();
+		// The map lags the row, so the press is claimed and refused: the
+		// canonical source keeps both emptied heading rows (the neighbour is
+		// never retired in its place) and exactly one failure is reported.
+		expect(value).toBe(original);
+		expect(rendered.onFailure).toHaveBeenCalledTimes(1);
+	} finally {
+		rendered.view.unmount();
+		documentSession.destroy();
+		container.remove();
+		field.remove();
+		current.surface.remove();
+	}
+});

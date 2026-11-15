@@ -10,6 +10,7 @@ import type {
   PreviewEditMapBlock
 } from '../../contracts/ports/preview-request';
 import type { VisualEmptyStructuralBodySelectionResult } from './visual-markdown';
+import { uniquePlainHeadingRowJoinRemoval } from './visual-markdown';
 import * as markdownLineModel from '../../shared/markdown/markdown-line-model';
 import {
   isMarkdownTerminalWhitespaceSuffix,
@@ -81,6 +82,7 @@ import {
   prepareVisualTaskListMarkers,
   protectVisualMarkdownReadOnlyRegions,
   projectVisualCodeBodySelection,
+  visualCodeTextMatchesCanonical,
   projectVisualMarkdownRemovalSelection,
   reconcileVisualCodeBodyDom,
   restoreVisualCodeFenceFamilies,
@@ -148,6 +150,71 @@ describe('canonical escape-unit deletion', () => {
       const localBoundary = visualCaretBoundaryFromSourceOffset(paragraph, source, localBaseline, expected);
       expect(code.contains(localBoundary.node)).toBe(true);
     }
+  });
+
+  it.each([
+    ['trailing space', 'x ', 'x\u00a0'],
+    ['leading space', ' x', '\u00a0x'],
+    ['both padded edges', ' x ', '\u00a0x\u00a0'],
+    ['space-only span', '  ', '\u00a0\u00a0'],
+    ['mixed authored NBSP', 'x\u00a0 ', 'x\u00a0\u00a0'],
+    ['authored NBSP unchanged', 'x\u00a0', 'x\u00a0']
+  ])('maps %s code display spelling to original CRLF source offsets', (_label, body, domBody) => {
+    const padded = body.startsWith(' ') && body.endsWith(' ') && /[^ ]/u.test(body);
+    const raw = padded ? ` ${body} ` : body;
+    const source = `Lead\r\n\r\nA \`${raw}\` Z`;
+    const surface = editor(`<p>Lead</p><p>A <code>${domBody}</code> Z</p>`);
+    const text = surface.querySelector('code')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('code-display-alias-fixture-missing');
+    // A committed baseline can still spell ASCII; a native accepted DOM can
+    // instead have recorded NBSP. Neither spelling changes the original bytes.
+    for (const baseline of [source.replace(/\r\n/gu, '\n'), serializeVisualMarkdown(surface)]) {
+      const map = createVisualMarkdownSourceIntervalMap(source, baseline);
+      const start = source.indexOf('`') + 1 + (padded ? 1 : 0);
+      for (let offset = 0; offset <= body.length; offset += 1) {
+        expect(mapTextBoundaryFromInterval(surface, text, offset, baseline, map))
+          .toEqual(expect.objectContaining({ sourceOffset: start + offset }));
+        expect(visualBoundarySourceOffset(surface, source, baseline, text, offset, map))
+          .toBe(start + offset);
+      }
+      expect(map.canonicalSource).toBe(source);
+    }
+    expect(text.data).toBe(domBody);
+  });
+
+  it('keeps code display aliases directional and refuses every other changed byte', () => {
+    expect(visualCodeTextMatchesCanonical('x ', 'x\u00a0')).toBe(true);
+    expect(visualCodeTextMatchesCanonical('x\u00a0', 'x ')).toBe(false);
+    expect(visualCodeTextMatchesCanonical('x&nbsp;', 'x\u00a0')).toBe(false);
+    expect(visualCodeTextMatchesCanonical('x ', 'y\u00a0')).toBe(false);
+    expect(visualCodeTextMatchesCanonical('x\u00a0 ', 'x\u00a0\u00a0')).toBe(true);
+    expect(visualCodeTextMatchesCanonical('x\u00a0 ', 'x \u00a0')).toBe(false);
+  });
+
+  it.each([
+    ['authored NBSP', 'x\u00a0', 'x '],
+    ['authored entity spelling', 'x&nbsp;', 'x\u00a0'],
+    ['another changed byte', 'x ', 'y\u00a0']
+  ])('keeps the %s inline code display difference outside the alias proof', (_label, body, domBody) => {
+    const source = `A \`${body}\` Z`;
+    const baseline = `A \`${domBody}\` Z`;
+    const map = createVisualMarkdownSourceIntervalMap(source, baseline);
+    expect(map.projectInlineCodeBody(baseline, 0, 1, domBody, 1)).toBeNull();
+    expect(map.canonicalSource).toBe(source);
+  });
+
+  it('requires a unique owning block or its exact prefix for code display aliases', () => {
+    const block = 'A `x\u00a0` Z';
+    const baseline = `${block}\n\n${block}`;
+    const source = baseline.replace(/\u00a0/gu, ' ');
+    const map = createVisualMarkdownSourceIntervalMap(source, baseline);
+    expect(map.projectInlineCodeBody(block, 0, 1, 'x\u00a0', 2)).toBeNull();
+    expect(map.projectInlineCodeBody(block, 0, 1, 'x\u00a0', 2, block))
+      .toEqual({ sourceOffset: 5, visualOffset: 5 });
+    expect(map.projectInlineCodeBody(block, 0, 1, 'x\u00a0', 2, baseline))
+      .toEqual({ sourceOffset: block.length + 2 + 5, visualOffset: block.length + 2 + 5 });
+    expect({ ...map, source: source + 'foreign' }.projectInlineCodeBody(block, 0, 1, 'x\u00a0', 2, block))
+      .toBeNull();
   });
 
   it('keeps ordinary escape units and source snapshot mismatches explicit', () => {
@@ -950,7 +1017,61 @@ describe('visual Markdown editing', () => {
     expect(projection.emptyBodyLineCount).toBe(2);
   });
 
-  it('keeps cached code intervals keyed by sparse Markdown code ordinals', () => {
+  it.each([
+    { prefix: '    ', startLine: 2, source: 'Lead.\n\n    alpha\n    beta\n\nTail.\n' },
+    { prefix: '>     ', startLine: 0, source: '>     alpha\n>     beta\n>\n> Tail.\n' },
+    { prefix: '>       ', startLine: 2, source: '> - item\n>\n>       alpha\n>       beta\n>\n>   Tail.\n' }
+  ])('models a no-fence indented body with prefix $prefix', ({ prefix, startLine, source }) => {
+    const endLine = startLine + 2;
+    const editMap = previewEditMap([
+      previewBlock('b0', 0 === startLine ? 0 : startLine, endLine)
+    ]);
+    const interval = visualCodeBodyIntervalAtOrdinal(source, 0);
+    expect(interval).toMatchObject({ kind: 'indented', closed: true, fence: '', info: '', codeOrdinal: 0 });
+    expect(visualCodeBlockCount(source)).toBe(1);
+    expect(visualCodeBodyText(interval, source)).toBe('alpha\nbeta\n');
+    expect(source.slice(interval.sourceBlockStart, interval.sourceBlockEnd))
+      .toBe(`${prefix}alpha\n${prefix}beta\n`);
+    expect(interval.bodyLines?.map((line) => line.prefix)).toEqual([prefix, prefix]);
+    expect(createVisualCodeBodyOrdinalsForPreviewBlocks(source, editMap).get('b0')).toEqual([0]);
+    expect(createVisualCodeBodyIntervalsForPreviewBlocks(source, editMap).get('b0')?.[0])
+      .toMatchObject({ kind: 'indented', codeOrdinal: 0 });
+    const bindings = createVisualCodeBodyBindingsForPreviewBlocks(source, editMap);
+    expect(previewCodeBodyBindingForPreviewPre(bindings, 'b0', 0)?.ordinal).toBe(0);
+    expect(visualCodeBodySourceOffset(interval, source, 7)).toBe(source.indexOf('beta') + 1);
+    const edit = visualCodeBodySourceEdit(interval, source, 4, 5, '');
+    expect(source.slice(0, edit.from) + edit.insert + source.slice(edit.to))
+      .toBe(source.replace('alpha', 'alph'));
+    const insert = visualCodeBodySourceEdit(interval, source, 2, 2, 'X\nY');
+    expect(insert.insert).toBe(`X\n${prefix}Y`);
+    expect(expandVisualCodeFenceForBody(source, 0, '```')).toBeNull();
+  });
+
+  it.each(['\n', '\r\n', '\r'])('keeps interior indented blank rows but excludes trailing blanks for %j', (ending) => {
+    const source = ['>     alpha', '>', '>     beta', '>', '> Tail.'].join(ending);
+    const interval = visualCodeBodyIntervalAtOrdinal(source, 0);
+    expect(visualCodeBodyText(interval, source)).toBe(`alpha${ending}${ending}beta${ending}`);
+    expect(source.slice(interval.sourceBlockEnd)).toBe(`>${ending}> Tail.`);
+    const blankCodeOffset = 'alpha'.length + ending.length;
+    const edit = visualCodeBodySourceEdit(interval, source, blankCodeOffset, blankCodeOffset, 'Z');
+    expect(source.slice(0, edit.from) + edit.insert + source.slice(edit.to))
+      .toBe(['>     alpha', '>     Z', '>     beta', '>', '> Tail.'].join(ending));
+    const next = source.slice(0, edit.from) + edit.insert + source.slice(edit.to);
+    expect(visualCodeBodyText(visualCodeBodyIntervalAtOrdinal(next, 0), next))
+      .toBe(`alpha${ending}Z${ending}beta${ending}`);
+  });
+
+  it('keeps indented and fenced sibling PRE bindings in one parser order', () => {
+    const source = '>     same\n>\n> ```js\n> same\n> ```\n';
+    const map = previewEditMap([previewBlock('b0', 0, 5)]);
+    const bindings = createVisualCodeBodyBindingsForPreviewBlocks(source, map);
+    expect(createVisualCodeBodyOrdinalsForPreviewBlocks(source, map).get('b0')).toEqual([0, 1]);
+    expect(previewCodeBodyBindingForPreviewPre(bindings, 'b0', 0)?.interval.kind).toBe('indented');
+    expect(previewCodeBodyBindingForPreviewPre(bindings, 'b0', 1)?.interval.kind).toBe('fenced');
+    expect(previewCodeBodyBindingForPreviewPre(bindings, 'b0', 2)).toBeNull();
+  });
+
+  it('keeps cached code intervals keyed by all Markdown code ordinals', () => {
     const markdown = [
       '    same',
       '',
@@ -973,7 +1094,10 @@ describe('visual Markdown editing', () => {
       editMap
     );
 
-    expect(intervals.get(0)).toBeUndefined();
+    // The former fence-only inventory left ordinal zero unsupported. Indented
+    // leaves now have intervals too; noneditable Preview rows still have none.
+    expect(intervals.get(0)).toMatchObject({ kind: 'indented', codeOrdinal: 0, fence: '', info: '' });
+    expect(intervalsByBlock.has('b0')).toBe(false);
     expect(intervals.get(1)?.codeOrdinal).toBe(1);
     expect(intervals.get(2)?.codeOrdinal).toBe(2);
     expect(intervalsByBlock.get('b1')?.[0]?.codeOrdinal).toBe(1);
@@ -1323,6 +1447,30 @@ describe('visual Markdown editing', () => {
     expect(() => expandVisualCodeFenceForBody(source, 0, body, { ...witness, interval: unboundInterval })).toThrow('visual-editor-code-body-map-stale');
   });
 
+  it('accepts an exact indented witness after memo eviction but refuses a changed line prefix', () => {
+    const source = '>     C\n';
+    const interval = visualCodeBodyIntervalMap(source).get(0);
+    if (!interval?.bodyLines?.length) throw new Error('indented-witness-lines-missing');
+    const witness = { sourceMarkdown: source, codeOrdinal: 0, interval };
+    // Both bounded memos must be able to retire this source without retiring
+    // a still-source-bound edit witness that names exactly the same bytes.
+    for (let index = 0; index < 8; index += 1) {
+      visualCodeBodyIntervalAtOrdinal(`~~~js\ncache-${index}\n~~~\n`, 0);
+    }
+    const rebuilt = visualCodeBodyIntervalAtOrdinal(source, 0);
+    expect(rebuilt.bodyLines).not.toBe(interval.bodyLines);
+    expect(rebuilt.bodyLines).toEqual(interval.bodyLines);
+    expect(expandVisualCodeFenceForBody(source, 0, 'CZ\n', witness)).toBeNull();
+    const changed = {
+      ...interval,
+      bodyLines: interval.bodyLines.map((line, index) => index === 0
+        ? { ...line, prefix: `${line.prefix} ` }
+        : line)
+    };
+    expect(() => expandVisualCodeFenceForBody(source, 0, 'CZ\n', { ...witness, interval: changed }))
+      .toThrow('visual-editor-code-body-map-stale');
+  });
+
   it('keeps an open-EOF fence expansion identical with a source-bound interval', () => {
     const source = '~~~js\nBefore\n';
     const body = 'Before\n~~~x\n';
@@ -1587,6 +1735,8 @@ describe('visual Markdown editing', () => {
         editMap,
         'b0'
       )).toEqual({
+        // The new discriminator preserves this unclosed fence's EOF contract.
+        kind: 'fenced',
         bodyEnd: markdown.length,
         bodyStart: markdown.length,
         closed: false,
@@ -1748,6 +1898,40 @@ describe('visual Markdown editing', () => {
       ).closed).toBe(false);
     }
   );
+
+  it.each([
+    ['fenced', '~~~\nx \n~~~'],
+    ['indented', '    x \n'],
+    ['quoted indented', '>     x \n']
+  ])('maps the %s code body NBSP artifact to an ASCII-space source splice', (_label, markdown) => {
+    const surface = editor('<pre><code>x\u00a0\n</code></pre>');
+    const code = surface.querySelector('code');
+    const text = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(text instanceof Text)) throw new Error('code-body-alias-fixture-missing');
+    const projection = projectVisualCodeBodySelection(code, markdown, markdown, 0, {
+      start: { node: text, offset: 1 }, end: { node: text, offset: 2 }
+    });
+    expect(markdown.slice(projection.sourceSelection.start, projection.sourceSelection.end)).toBe(' ');
+    const edit = visualCodeBodySourceEdit(projection.sourceInterval, markdown, 1, 2, '');
+    expect(markdown.slice(0, edit.from) + edit.insert + markdown.slice(edit.to)).toBe(markdown.replace('x ', 'x'));
+    expect(text.data).toBe('x\u00a0\n');
+  });
+
+  it.each([
+    ['authored NBSP', 'x\u00a0', 'x '],
+    ['authored entity spelling', 'x&nbsp;', 'x\u00a0'],
+    ['unrelated character change', 'x ', 'y\u00a0']
+  ])('refuses a %s code-body difference rather than aliasing source bytes', (_label, body, domBody) => {
+    const markdown = `~~~\n${body}\n~~~`;
+    const surface = editor(`<pre><code>${domBody}\n</code></pre>`);
+    const code = surface.querySelector('code');
+    const text = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(text instanceof Text)) throw new Error('code-body-alias-refusal-fixture-missing');
+    expect(() => projectVisualCodeBodySelection(code, markdown, markdown, 0, {
+      start: { node: text, offset: 1 }, end: { node: text, offset: 1 }
+    })).toThrow('visual-editor-code-body-projection-mismatch');
+    expect(markdown).toBe(`~~~\n${body}\n~~~`);
+  });
 
   it('maps source offsets through an accepted Highlight.js token span', () => {
     const markdown = '~~~js\nAlpha\n~~~';
@@ -11598,5 +11782,54 @@ describe('normalization-only quote-framing gaps in the shared merger', () => {
         sourceEnd: 18
       });
     }
+  });
+});
+
+
+describe('uniquePlainHeadingRowJoinRemoval', () => {
+  it('joins the one plain heading row into the block above it', () => {
+    const removal = uniquePlainHeadingRowJoinRemoval(
+      'before\n\n## 24. Title\n\nafter\n',
+      2,
+      '24. Title'
+    );
+    expect(removal).toEqual({
+      caret: 6,
+      value: 'before24. Title\n\nafter\n'
+    });
+  });
+
+  it('drops a closing hash run the renderer never drew', () => {
+    const removal = uniquePlainHeadingRowJoinRemoval(
+      'before\n\n## T ##\n\nafter\n',
+      2,
+      'T'
+    );
+    expect(removal).toEqual({
+      caret: 6,
+      value: 'beforeT\n\nafter\n'
+    });
+  });
+
+  it('refuses two identical heading rows', () => {
+    expect(
+      uniquePlainHeadingRowJoinRemoval(
+        'before\n\n## T\n\nmid\n\n## T\n\nafter\n',
+        2,
+        'T'
+      )
+    ).toBeNull();
+  });
+
+  it('refuses a heading whose body renders different markup', () => {
+    expect(
+      uniquePlainHeadingRowJoinRemoval('before\n\n## **T**\n\nafter\n', 2, 'T')
+    ).toBeNull();
+  });
+
+  it('refuses a row that is not the only match of its level', () => {
+    expect(
+      uniquePlainHeadingRowJoinRemoval('before\n\n### T\n\nafter\n', 2, 'T')
+    ).toBeNull();
   });
 });

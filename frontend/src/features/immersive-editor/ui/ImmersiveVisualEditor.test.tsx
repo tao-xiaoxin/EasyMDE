@@ -9,7 +9,7 @@ import {
   useCallback,
   useState
 } from '@wordpress/element';
-import { describe, expect, it, vi, type Mock } from 'vitest';
+import { describe, expect, it, vi, type Mock, type MockInstance } from 'vitest';
 import { ChangeSet } from '@codemirror/state';
 import { createHook } from 'node:async_hooks';
 import { PerformanceObserver, type PerformanceEntry as NodePerformanceEntry } from 'node:perf_hooks';
@@ -26455,6 +26455,510 @@ it('keeps a pending history restore owner-placed so a pointer image target is se
   }
 });
 
+it.each([
+  { label: 'top-level', prefix: '    ', markdown: '    alpha\n\nTail.\n', html: '<pre data-easymde-visual-block-id="b0"><code>alpha\n</code></pre><p data-easymde-visual-block-id="b1">Tail.</p>', rows: [{ id: 'b0', startLine: 0, endLine: 1 }, { id: 'b1', startLine: 2, endLine: 3 }] },
+  { label: 'quote', prefix: '>     ', markdown: '>     alpha\n>\n> Tail.\n', html: '<blockquote data-easymde-visual-block-id="b0"><pre><code>alpha\n</code></pre><p>Tail.</p></blockquote>', rows: [{ id: 'b0', startLine: 0, endLine: 3 }] },
+  { label: 'quote/list', prefix: '>       ', markdown: '> - item\n>\n>       alpha\n>\n>   Tail.\n', html: '<blockquote data-easymde-visual-block-id="b0"><ul><li><p>item</p><pre><code>alpha\n</code></pre><p>Tail.</p></li></ul></blockquote>', rows: [{ id: 'b0', startLine: 0, endLine: 5 }] }
+])('commits repeated Backspace/Delete and typing in a $label indented body', ({ label, prefix, markdown, html, rows }) => {
+  vi.useFakeTimers();
+  const signature = `indented-body-${label}`;
+  const fixture = createFullOwnerFixture({ markdown, html, signature, editMap: fullOwnerEditMap(signature, rows) });
+  try {
+    const { surface } = fixture;
+    const initial = surface.querySelector('pre code')?.firstChild;
+    if (!(initial instanceof Text)) throw new Error('indented-code-fixture-missing');
+    surface.focus();
+    placeCaretInText(initial, 5);
+    let body = 'alpha';
+    for (const inputType of ['deleteContentBackward', 'deleteContentBackward', 'deleteContentForward', 'insertText']) {
+      const selection = window.getSelection();
+      const text = selection?.anchorNode;
+      const position = selection?.anchorOffset ?? -1;
+      if (!(text instanceof Text) || !text.parentElement?.closest('pre code') || position < 0) {
+        throw new Error('indented-code-caret-not-retained');
+      }
+      // Forward Delete uses the current caret too: move once to an interior
+      // byte, then let the owner retain it for the following typing operation.
+      if ('deleteContentForward' === inputType) placeCaretInText(text, 1);
+      const caret = window.getSelection()?.anchorOffset ?? -1;
+      const from = 'deleteContentBackward' === inputType ? caret - 1 : caret;
+      const to = 'insertText' === inputType ? caret : from + 1;
+      const insert = 'insertText' === inputType ? 'Z' : '';
+      const target = document.createRange();
+      target.setStart(text, from);
+      target.setEnd(text, to);
+      const event = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType, data: insert || null });
+      Object.defineProperty(event, 'getTargetRanges', { value: () => [target] });
+      act(() => {
+        surface.dispatchEvent(event);
+        if (!event.defaultPrevented) {
+          text.replaceData(from, to - from, insert);
+          placeCaretInText(text, from + insert.length);
+          surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType, data: insert || null }));
+        }
+        vi.advanceTimersByTime(1000);
+      });
+      body = body.slice(0, from) + insert + body.slice(to);
+      expect(fixture.history.getValue()).toBe(markdown.replace(`${prefix}alpha`, `${prefix}${body}`));
+      expect(window.getSelection()?.anchorOffset).toBe(from + insert.length);
+      expect(surface.querySelector('pre code')?.textContent).toBe(`${body}\n`);
+      expect(surface.hasAttribute('data-easymde-visual-deletion-repair')).toBe(false);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    }
+  } finally {
+    fixture.unmount();
+  }
+});
+
+it.each([
+  { side: 'preceding', key: 'Backspace', markdown: '# Heading\n\n> Before.\n>     \n>     C\n', html: '<h1 data-easymde-visual-block-id="b0">Heading</h1><blockquote data-easymde-visual-block-id="b1"><p>Before.</p>\n<pre><code>C\n</code></pre>\n</blockquote>', afterLeaf: '# Heading\n\n> Before.\n>     \n', afterRow: '# Heading\n\n> Before.\n', text: 'Before.', caret: 7, subsequent: '# Heading\n\n> Before\n' },
+  { side: 'following', key: 'Delete', markdown: '# Heading\n\n>     C\n>     \n> After.\n', html: '<h1 data-easymde-visual-block-id="b0">Heading</h1><blockquote data-easymde-visual-block-id="b1"><pre><code>C\n</code></pre>\n<p>After.</p></blockquote>', afterLeaf: '# Heading\n\n>     \n> After.\n', afterRow: '# Heading\n\n> After.\n', text: 'After.', caret: 0, subsequent: '# Heading\n\n> fter.\n' }
+])('retires the $side blank container row in one $key and continues in blockquote content', ({ side, key, markdown, html, afterLeaf, afterRow, text, caret, subsequent }) => {
+  vi.useFakeTimers();
+  const signature = `indented-gap-${side}`;
+  const fixture = createFullOwnerFixture({
+    markdown, html, signature, sourceCaret: markdown.indexOf('C') + 1,
+    editMap: fullOwnerEditMap(signature, [{ id: 'b0', startLine: 0, endLine: 1 }, { id: 'b1', startLine: 2, endLine: 5 }])
+  });
+  try {
+    const code = fixture.surface.querySelector('code')?.firstChild;
+    if (!(code instanceof Text)) throw new Error('adjacent-indented-gap-code-missing');
+    fixture.surface.focus();
+    placeCaretInText(code, 1);
+    const last = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' });
+    act(() => fixture.surface.dispatchEvent(last));
+    expect(last.defaultPrevented).toBe(true);
+    expect(fixture.history.getValue()).toBe(afterLeaf);
+    expect(fixture.surface.querySelector('pre')).toBeNull();
+    const gap = window.getSelection()?.anchorNode;
+    expect(gap instanceof HTMLParagraphElement).toBe(true);
+    const history = fixture.history.getHistoryState();
+    const retire = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key });
+    act(() => fixture.surface.dispatchEvent(retire));
+    expect(retire.defaultPrevented).toBe(true);
+    expect(fixture.history.getValue()).toBe(afterRow);
+    expect(fixture.history.getHistoryState().undoDepth).toBe(history.undoDepth + 1);
+    const native = window.getSelection();
+    const remaining = native?.anchorNode;
+    expect(remaining instanceof Text).toBe(true);
+    expect(remaining?.textContent).toBe(text);
+    expect(native?.anchorOffset).toBe(caret);
+    expect(remaining?.parentElement?.closest('blockquote')).toBe(fixture.surface.querySelector('blockquote'));
+    if (!(remaining instanceof Text)) throw new Error('adjacent-indented-gap-content-missing');
+    const from = key === 'Backspace' ? caret - 1 : caret;
+    const inputType = key === 'Backspace' ? 'deleteContentBackward' : 'deleteContentForward';
+    act(() => {
+      fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key }));
+      const before = fullOwnerDispatchBeforeInput(fixture.surface, { inputType, data: null }, fullOwnerTargetRange(remaining, from, from + 1));
+      if (!before.defaultPrevented) {
+        remaining.deleteData(from, 1);
+        placeCaretInText(remaining, from);
+        fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType }));
+      }
+      vi.advanceTimersByTime(220);
+    });
+    expect(fixture.history.getValue()).toBe(subsequent);
+    expect(window.getSelection()?.anchorNode?.parentElement?.closest('blockquote')).toBe(fixture.surface.querySelector('blockquote'));
+    expect(fixture.surface.hasAttribute('data-easymde-visual-deletion-repair')).toBe(false);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+  }
+});
+
+it('keeps the source and both selections unchanged when a post-retirement row destination refuses, then continues without escaping', () => {
+  vi.useFakeTimers();
+  const signature = 'indented-gap-refused-destination';
+  const markdown = '# Heading\n\n> Before.\n>     \n>     C\n';
+  const fixture = createFullOwnerFixture({
+    markdown, signature, sourceCaret: markdown.indexOf('C') + 1,
+    html: '<h1 data-easymde-visual-block-id="b0">Heading</h1><blockquote data-easymde-visual-block-id="b1"><p>Before.</p>\n<pre><code>C\n</code></pre>\n</blockquote>',
+    editMap: fullOwnerEditMap(signature, [{ id: 'b0', startLine: 0, endLine: 1 }, { id: 'b1', startLine: 2, endLine: 5 }])
+  });
+  const original = visualMarkdown.visualBoundarySourceOffset;
+  let mapper: MockInstance<typeof visualMarkdown.visualBoundarySourceOffset> | undefined;
+  try {
+    const code = fixture.surface.querySelector('code')?.firstChild;
+    if (!(code instanceof Text)) throw new Error('refused-indented-gap-code-missing');
+    fixture.surface.focus();
+    placeCaretInText(code, 1);
+    act(() => fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' })));
+    const source = '# Heading\n\n> Before.\n>     \n';
+    expect(fixture.history.getValue()).toBe(source);
+    const beforeText = fixture.surface.querySelector('blockquote p')?.firstChild;
+    const gap = window.getSelection()?.anchorNode;
+    if (!(beforeText instanceof Text) || !(gap instanceof HTMLParagraphElement)) throw new Error('refused-indented-gap-placeholder-missing');
+    const canonical = fixture.history.getSelection();
+    const history = fixture.history.getHistoryState();
+    const html = fixture.surface.innerHTML;
+    mapper = vi.spyOn(visualMarkdown, 'visualBoundarySourceOffset').mockImplementation((...args) => {
+      if (args[3] === beforeText && args[4] === beforeText.length) throw new Error('visual-editor-selection-map-failed');
+      return original(...args);
+    });
+    for (let press = 1; press <= 2; press += 1) {
+      const key = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' });
+      act(() => { fixture.surface.dispatchEvent(key); vi.advanceTimersByTime(220); });
+      expect(key.defaultPrevented).toBe(true);
+      expect(fixture.history.getValue()).toBe(source);
+      expect(fixture.history.getSelection()).toEqual(canonical);
+      expect(fixture.history.getHistoryState()).toEqual(history);
+      expect(fixture.surface.innerHTML).toBe(html);
+      expect(window.getSelection()?.anchorNode).toBe(gap);
+      expect(window.getSelection()?.focusNode).toBe(gap);
+      expect(window.getSelection()?.anchorOffset).toBe(0);
+      expect(window.getSelection()?.focusOffset).toBe(0);
+      expect(gap.closest('blockquote')).toBe(fixture.surface.querySelector('blockquote'));
+      expect(fixture.surface.querySelector('pre')).toBeNull();
+      expect(fixture.surface.getAttribute('data-easymde-visual-deletion-repair')).toBe(String(press));
+    }
+    mapper.mockRestore();
+    mapper = undefined;
+    const next = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' });
+    act(() => fixture.surface.dispatchEvent(next));
+    expect(next.defaultPrevented).toBe(true);
+    expect(fixture.history.getValue()).toBe('# Heading\n\n> Before.\n');
+    expect(window.getSelection()?.anchorNode).toBe(beforeText);
+    expect(window.getSelection()?.anchorOffset).toBe(7);
+    expect(fixture.surface.getAttribute('data-easymde-visual-deletion-repair')).toBe('2');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+  } finally {
+    mapper?.mockRestore();
+    fixture.unmount();
+  }
+});
+
+it('retires an indented leaf and its blank row in place without replacing an inline-math sibling', () => {
+  vi.useFakeTimers();
+  const signature = 'indented-leaf-protected-sibling';
+  const markdown = '> Intro $x$\n>\n>     C\n>\n> Tail.\n';
+  const fixture = createFullOwnerFixture({
+    markdown, signature, sourceCaret: markdown.indexOf('C') + 1,
+    html: '<blockquote data-easymde-visual-block-id="b0"><p>Intro <span class="easymde-math easymde-math-inline" data-easymde-rendered="1" data-easymde-visual-markdown-source="x"><span class="katex">x</span></span></p><pre><code>C\n</code></pre><p>Tail.</p></blockquote>',
+    editMap: fullOwnerEditMap(signature, [{ id: 'b0', startLine: 0, endLine: 5 }])
+  });
+  try {
+    const root = fixture.surface.firstElementChild;
+    const math = fixture.surface.querySelector('.easymde-math-inline');
+    const rendered = math?.firstElementChild;
+    const html = math?.outerHTML;
+    const text = fixture.surface.querySelector('pre code')?.firstChild;
+    if (!(text instanceof Text) || !(math instanceof HTMLElement)) throw new Error('indented-protected-sibling-fixture-missing');
+    fixture.surface.focus();
+    placeCaretInText(text, 1);
+    const history = fixture.history.getHistoryState();
+    const sixth = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' });
+    act(() => { fixture.surface.dispatchEvent(sixth); vi.advanceTimersByTime(220); });
+    expect(sixth.defaultPrevented).toBe(true);
+    expect(fixture.history.getValue()).toBe('> Intro $x$\n>\n>\n> Tail.\n');
+    expect(fixture.history.getHistoryState().undoDepth).toBe(history.undoDepth + 1);
+    expect(fixture.surface.firstElementChild).toBe(root);
+    expect(fixture.surface.querySelector('.easymde-math-inline')).toBe(math);
+    expect(math.firstElementChild).toBe(rendered);
+    expect(math.outerHTML).toBe(html);
+    expect(fixture.surface.querySelector('pre')).toBeNull();
+    expect(fixture.runtime().isTransferPending()).toBe(false);
+    expect(fixture.requestPreview).not.toHaveBeenCalled();
+    const seventh = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' });
+    act(() => { fixture.surface.dispatchEvent(seventh); vi.advanceTimersByTime(220); });
+    expect(seventh.defaultPrevented).toBe(true);
+    expect(fixture.history.getValue()).toBe('> Intro $x$\n>\n> Tail.\n');
+    expect(fixture.surface.firstElementChild).toBe(root);
+    expect(fixture.surface.querySelector('.easymde-math-inline')).toBe(math);
+    expect(math.firstElementChild).toBe(rendered);
+    expect(math.outerHTML).toBe(html);
+    expect(window.getSelection()?.anchorNode).toBe(fixture.surface.querySelector('p:last-child')?.firstChild);
+    expect(window.getSelection()?.anchorOffset).toBe(0);
+    expect(fixture.surface.hasAttribute('data-easymde-visual-deletion-repair')).toBe(false);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+  }
+});
+
+it('refuses indented leaf retirement with visual-editor-code-body-map-stale when the leaf contains protected content', () => {
+  vi.useFakeTimers();
+  const signature = 'indented-leaf-protected-subtree';
+  const markdown = '>     C\n';
+  const fixture = createFullOwnerFixture({
+    markdown, signature, sourceCaret: markdown.indexOf('C') + 1,
+    html: '<blockquote data-easymde-visual-block-id="b0"><pre><code>C<span class="easymde-math easymde-math-inline" data-easymde-rendered="1" data-easymde-visual-markdown-source="x"><span class="katex">x</span></span>\n</code></pre></blockquote>',
+    editMap: fullOwnerEditMap(signature, [{ id: 'b0', startLine: 0, endLine: 1 }])
+  });
+  // The deletion refusal owner intentionally reports no banner. Observe the
+  // exact constructed stable code without changing that production contract.
+  const errors = vi.spyOn(globalThis, 'Error');
+  try {
+    const pre = fixture.surface.querySelector('pre');
+    const math = fixture.surface.querySelector('.easymde-math-inline');
+    const text = fixture.surface.querySelector('code')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('indented-protected-subtree-fixture-missing');
+    fixture.surface.focus();
+    placeCaretInText(text, 1);
+    const before = fixture.history.getHistoryState();
+    const selection = fixture.history.getSelection();
+    const key = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' });
+    act(() => fixture.surface.dispatchEvent(key));
+    expect(errors).toHaveBeenCalledWith('visual-editor-code-body-map-stale');
+    expect(key.defaultPrevented).toBe(true);
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.history.getHistoryState()).toEqual(before);
+    expect(fixture.history.getSelection()).toEqual(selection);
+    expect(fixture.surface.querySelector('pre')).toBe(pre);
+    expect(fixture.surface.querySelector('.easymde-math-inline')).toBe(math);
+    expect(window.getSelection()?.anchorNode).toBe(text);
+    expect(window.getSelection()?.anchorOffset).toBe(1);
+    expect(fixture.surface.getAttribute('data-easymde-visual-deletion-repair')).toBe('1');
+    expect(fixture.requestPreview).not.toHaveBeenCalled();
+  } finally {
+    errors.mockRestore();
+    fixture.unmount();
+  }
+});
+
+it('retires the sixth quote-indented Backspace structurally, continues on the seventh row, and restores original Undo typing', () => {
+  vi.useFakeTimers();
+  const signature = 'quote-indented-sixth-backspace';
+  const markdown = '> Intro\n>\n>     Child \n>\n> Tail.\n';
+  const fixture = createFullOwnerFixture({
+    markdown, signature,
+    html: '<blockquote data-easymde-visual-block-id="b0"><p>Intro</p><pre><code>Child \n</code></pre><p>Tail.</p></blockquote>',
+    editMap: fullOwnerEditMap(signature, [{ id: 'b0', startLine: 0, endLine: 5 }])
+  });
+  const assertClean = (): void => {
+    expect(fixture.surface.hasAttribute('data-easymde-visual-deletion-repair')).toBe(false);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(fixture.onDiagnostic.mock.calls.flat().filter((value) =>
+      typeof value === 'string' && value.includes('visual-editor-canonical-change-')
+    )).toEqual([]);
+  };
+  try {
+    const first = fixture.surface.querySelector('code')?.firstChild;
+    if (!(first instanceof Text)) throw new Error('quote-indented-sixth-fixture-missing');
+    fixture.surface.focus();
+    placeCaretInText(first, 6);
+    for (const body of ['Child', 'Chil', 'Chi', 'Ch', 'C']) {
+      const native = window.getSelection();
+      const text = native?.anchorNode;
+      const position = native?.anchorOffset ?? -1;
+      if (!(text instanceof Text) || position < 1) throw new Error('quote-indented-sequential-caret-missing');
+      act(() => {
+        const key = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' });
+        fixture.surface.dispatchEvent(key);
+        expect(key.defaultPrevented).toBe(false);
+        const before = fullOwnerDispatchBeforeInput(fixture.surface,
+          { inputType: 'deleteContentBackward', data: null }, fullOwnerTargetRange(text, position - 1, position));
+        if (!before.defaultPrevented) {
+          text.deleteData(position - 1, 1);
+          placeCaretInText(text, position - 1);
+          fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+        }
+        vi.advanceTimersByTime(220);
+      });
+      expect(fixture.history.getValue()).toBe(markdown.replace('Child ', body));
+      expect(window.getSelection()?.anchorOffset).toBe(body.length);
+      assertClean();
+    }
+    const beforeLeaf = fixture.history.getHistoryState();
+    const sixth = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' });
+    act(() => { fixture.surface.dispatchEvent(sixth); vi.advanceTimersByTime(220); });
+    const leafRemoved = '> Intro\n>\n>\n> Tail.\n';
+    expect(sixth.defaultPrevented).toBe(true);
+    expect(fixture.history.getValue()).toBe(leafRemoved);
+    expect(fixture.history.getHistoryState().undoDepth).toBe(beforeLeaf.undoDepth + 1);
+    expect(fixture.surface.querySelector('pre')).toBeNull();
+    // Empty fenced shortcuts publish synchronously through synchronizeMarkdown,
+    // not a canonical-command Preview transfer. Indented retirement must use
+    // that same observable owner, even after five unpreviewed body commits.
+    expect(fixture.runtime().isTransferPending()).toBe(false);
+    expect(fixture.requestPreview).not.toHaveBeenCalled();
+    expect(window.getSelection()?.anchorNode).toBe(fixture.surface.querySelectorAll('blockquote p')[1]);
+    assertClean();
+    const seventh = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' });
+    act(() => { fixture.surface.dispatchEvent(seventh); vi.advanceTimersByTime(220); });
+    expect(seventh.defaultPrevented).toBe(true);
+    expect(fixture.history.getValue()).toBe('> Intro\n>\n> Tail.\n');
+    const tail = fixture.surface.querySelector('blockquote p:last-child')?.firstChild;
+    expect(window.getSelection()?.anchorNode).toBe(tail);
+    expect(window.getSelection()?.anchorOffset).toBe(0);
+    assertClean();
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getValue()).toBe(leafRemoved);
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getValue()).toBe(markdown.replace('Child ', 'C'));
+    expect(window.getSelection()?.anchorNode).toBe(fixture.surface.querySelector('code')?.firstChild);
+    expect(window.getSelection()?.anchorOffset).toBe(1);
+    // Replay native history back through the preceding body deletion group(s),
+    // rather than pretending that the leaf's one history slot restores bytes
+    // removed by five distinct earlier input operations.
+    for (let step = 0; step < 5 && fixture.history.getValue() !== markdown; step += 1) {
+      act(() => fullOwnerHistoryKey(fixture.surface, false));
+    }
+    expect(fixture.history.getValue()).toBe(markdown);
+    const restored = fixture.surface.querySelector('code')?.firstChild;
+    expect(window.getSelection()?.anchorNode).toBe(restored);
+    expect(window.getSelection()?.anchorOffset).toBe(6);
+    if (!(restored instanceof Text)) throw new Error('quote-indented-original-undo-text-missing');
+    const target = fullOwnerTargetRange(restored, 6, 6);
+    act(() => {
+      const type = fullOwnerDispatchBeforeInput(fixture.surface, { inputType: 'insertText', data: 'Z' }, target);
+      if (!type.defaultPrevented) {
+        restored.insertData(6, 'Z');
+        placeCaretInText(restored, 7);
+        fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'Z' }));
+      }
+      vi.advanceTimersByTime(220);
+    });
+    expect(fixture.history.getValue()).toBe(markdown.replace('Child ', 'Child Z'));
+    expect(window.getSelection()?.anchorOffset).toBe(7);
+    assertClean();
+  } finally {
+    fixture.unmount();
+  }
+});
+
+it.each([6, 4])('retires a canonical final indented glyph while its authenticated PRE retains stale text at offset %i', (visualOffset) => {
+  vi.useFakeTimers();
+  const signature = `stale-indented-canonical-caret-${visualOffset}`;
+  const markdown = '> Intro\n>\n>     C\n>\n> Tail.\n';
+  const sourceCaret = markdown.indexOf('C') + 1;
+  const rows = [{ id: 'b0', startLine: 0, endLine: 5 }];
+  const fixture = createFullOwnerFixture({
+    markdown, sourceCaret, signature,
+    // The owned PRE still carries the earlier presentation. Its code offsets
+    // are not offsets into the current one-character canonical body.
+    html: '<blockquote data-easymde-visual-block-id="b0"><p>Intro</p><pre><code>Child \n</code></pre><p>Tail.</p></blockquote>',
+    editMap: fullOwnerEditMap(signature, rows)
+  });
+  try {
+    const text = fixture.surface.querySelector('code')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('stale-indented-canonical-fixture-missing');
+    fixture.surface.focus();
+    placeCaretInText(text, visualOffset);
+    expect(fixture.history.getSelection()).toMatchObject({ start: sourceCaret, end: sourceCaret });
+    expect(text.data).toBe('Child \n');
+    const before = fixture.history.getHistoryState();
+    const key = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' });
+    act(() => { fixture.surface.dispatchEvent(key); vi.advanceTimersByTime(220); });
+    expect(key.defaultPrevented).toBe(true);
+    expect(fixture.history.getValue()).toBe('> Intro\n>\n>\n> Tail.\n');
+    expect(fixture.history.getHistoryState().undoDepth).toBe(before.undoDepth + 1);
+    expect(fixture.surface.querySelector('pre')).toBeNull();
+    expect(fixture.runtime().isTransferPending()).toBe(false);
+    expect(fixture.requestPreview).not.toHaveBeenCalled();
+    expect(fixture.surface.hasAttribute('data-easymde-visual-deletion-repair')).toBe(false);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    // Only this mismatched-body history slot requires formal rematerialization.
+    // Native history retains the exact source and canonical pre-press caret;
+    // stale Child HTML must never be reinstated as the body for canonical C.
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.history.getSelection()).toMatchObject({ start: sourceCaret, end: sourceCaret });
+    expect(fixture.runtime().isTransferPending()).toBe(true);
+    expect(fixture.requestPreview).toHaveBeenLastCalledWith(markdown);
+    act(() => fixture.accept({
+      markdown,
+      html: '<blockquote data-easymde-visual-block-id="b0"><p>Intro</p><pre><code>C\n</code></pre><p>Tail.</p></blockquote>',
+      editMap: fullOwnerEditMap('stale-indented-undo-accepted', rows)
+    }));
+    expect(fixture.onFailure.mock.calls.flat().join('|')).toBe('');
+    expect(fixture.onTransferFailure.mock.calls).toEqual([]);
+    expect(fixture.runtime().isTransferPending()).toBe(false);
+    expect(fixture.history.getSelection()).toMatchObject({ start: sourceCaret, end: sourceCaret });
+    const restored = fixture.surface.querySelector('code')?.firstChild;
+    expect(window.getSelection()?.anchorNode).toBe(restored);
+    expect(window.getSelection()?.anchorOffset).toBe(1);
+    if (!(restored instanceof Text)) throw new Error('stale-indented-undo-code-missing');
+    act(() => {
+      const type = fullOwnerDispatchBeforeInput(fixture.surface,
+        { inputType: 'insertText', data: 'Z' }, fullOwnerTargetRange(restored, 1, 1));
+      if (!type.defaultPrevented) {
+        restored.insertData(1, 'Z');
+        placeCaretInText(restored, 2);
+        fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'Z' }));
+      }
+      vi.advanceTimersByTime(220);
+    });
+    expect(fixture.onFailure.mock.calls.flat().join('|')).toBe('');
+    expect(fixture.onTransferFailure.mock.calls).toEqual([]);
+    expect(fixture.history.getValue()).toBe(markdown.replace('C\n', 'CZ\n'));
+    expect(window.getSelection()?.anchorOffset).toBe(2);
+    expect(fixture.surface.hasAttribute('data-easymde-visual-deletion-repair')).toBe(false);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+  }
+});
+
+it('removes the last top-level indented glyph through the structural shortcut owner and restores its Undo typing caret', () => {
+  vi.useFakeTimers();
+  const signature = 'indented-last-glyph';
+  const markdown = '    X\n\nTail.\n';
+  const initial = {
+    markdown,
+    html: '<pre data-easymde-visual-block-id="b0"><code>X\n</code></pre><p data-easymde-visual-block-id="b1">Tail.</p>',
+    editMap: fullOwnerEditMap(signature, [{ id: 'b0', startLine: 0, endLine: 1 }, { id: 'b1', startLine: 2, endLine: 3 }])
+  };
+  const fixture = createFullOwnerFixture({ ...initial, signature, sourceCaret: markdown.indexOf('X') + 1 });
+  try {
+    const text = fixture.surface.querySelector('pre code')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('indented-last-glyph-fixture-missing');
+    fixture.surface.focus();
+    placeCaretInText(text, 1);
+    const before = fixture.history.getHistoryState();
+    const target = document.createRange();
+    target.setStart(text, 0);
+    target.setEnd(text, 1);
+    const event = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'deleteContentBackward' });
+    Object.defineProperty(event, 'getTargetRanges', { value: () => [target] });
+    act(() => fixture.surface.dispatchEvent(event));
+    expect(event.defaultPrevented).toBe(true);
+    expect(fixture.history.getValue()).toBe('\nTail.\n');
+    expect(fixture.history.getHistoryState().undoDepth).toBe(before.undoDepth + 1);
+    expect(fixture.runtime().isTransferPending()).toBe(false);
+    expect(fixture.requestPreview).not.toHaveBeenCalled();
+    expect(fixture.onMarkdownChange).toHaveBeenCalled();
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getValue()).toBe(markdown);
+    const restored = fixture.surface.querySelector('pre code')?.firstChild;
+    expect(window.getSelection()?.anchorNode).toBe(restored);
+    expect(window.getSelection()?.anchorOffset).toBe(1);
+    if (!(restored instanceof Text)) throw new Error('indented-undo-body-text-missing');
+    const insertTarget = document.createRange();
+    insertTarget.setStart(restored, 1);
+    insertTarget.collapse(true);
+    const type = new InputEvent('beforeinput', {
+      bubbles: true, cancelable: true, inputType: 'insertText', data: 'Z'
+    });
+    Object.defineProperty(type, 'getTargetRanges', { value: () => [insertTarget] });
+    act(() => {
+      fixture.surface.dispatchEvent(type);
+      if (!type.defaultPrevented) {
+        restored.insertData(1, 'Z');
+        placeCaretInText(restored, 2);
+        fixture.surface.dispatchEvent(new InputEvent('input', {
+          bubbles: true, inputType: 'insertText', data: 'Z'
+        }));
+      }
+      vi.advanceTimersByTime(1000);
+    });
+    expect(fixture.history.getValue()).toBe('    XZ\n\nTail.\n');
+    expect(fixture.surface.querySelector('pre code')?.textContent).toBe('XZ\n');
+    expect(window.getSelection()?.anchorOffset).toBe(2);
+    expect(fixture.surface.hasAttribute('data-easymde-visual-deletion-repair')).toBe(false);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+  }
+});
+
 it('edits a nested quote/list code body through canonical history', () => {
   vi.useFakeTimers();
   const signature = 'nested-quote-list-code-body';
@@ -26982,6 +27486,156 @@ it.each([
   }
 );
 
+it('deletes one character inside an inline link label without leaving the source', () => {
+  vi.useFakeTimers();
+  const signature = 'inline-link-label-delete';
+  const markdown = 'A [OpenAI][openai-link], keep\n\n[openai-link]: https://example.com/nested';
+  const html = '<p data-easymde-visual-block-id="b0">A <a href="https://example.com/nested">OpenAI</a>, keep</p>';
+  const editMap = fullOwnerEditMap(signature, [
+    { id: 'b0', startLine: 0, endLine: 1 }
+  ]);
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature });
+  try {
+    const surface = fixture.surface;
+    const text = surface.querySelector('a')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('inline-link-delete-text-missing');
+    surface.focus();
+    placeCaretInText(text, 2);
+    const target = document.createRange();
+    target.setStart(text, 1);
+    target.setEnd(text, 2);
+    const before = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      data: null,
+      inputType: 'deleteContentBackward'
+    });
+    Object.defineProperty(before, 'getTargetRanges', { value: () => [target] });
+    surface.dispatchEvent(before);
+    expect({
+      prevented: before.defaultPrevented,
+      failures: vi.mocked(fixture.onFailure).mock.calls.map(([code]) => code)
+    }).toEqual({ prevented: false, failures: [] });
+    text.deleteData(1, 1);
+    placeCaretInText(text, 1);
+    surface.dispatchEvent(
+      new InputEvent('input', {
+        bubbles: true,
+        inputType: 'deleteContentBackward'
+      })
+    );
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(fixture.history.getValue()).toBe(
+      'A [OenAI][openai-link], keep\n\n[openai-link]: https://example.com/nested'
+    );
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('deletes a caret-only link label with a decoded CJK destination', () => {
+  vi.useFakeTimers();
+  const signature = 'cjk-destination-link-delete';
+  const markdown = 'Markdown 支持脚注功能。[^](这是一个简单脚注。)\n\n'
+    + '[^note]: 这是一个较长的脚注内容，可用于补充说明、引用来源或备注信息。\n';
+  const html = '<p data-easymde-visual-block-id="b0">Markdown 支持脚注功能。'
+    + '<a href="%E8%BF%99%E6%98%AF%E4%B8%80%E4%B8%AA%E7%AE%80%E5%8D%95%E8%84%9A%E6%B3%A8%E3%80%82">^</a></p>';
+  const editMap = fullOwnerEditMap(signature, [
+    { id: 'b0', startLine: 0, endLine: 1 }
+  ]);
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature });
+  try {
+    const surface = fixture.surface;
+    const text = surface.querySelector('a')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('cjk-link-text-missing');
+    surface.focus();
+    placeCaretInText(text, 1);
+    const target = document.createRange();
+    target.setStart(text, 0);
+    target.setEnd(text, 1);
+    const before = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      data: null,
+      inputType: 'deleteContentBackward'
+    });
+    Object.defineProperty(before, 'getTargetRanges', { value: () => [target] });
+    surface.dispatchEvent(before);
+    expect({
+      prevented: before.defaultPrevented,
+      failures: vi.mocked(fixture.onFailure).mock.calls.map(([code]) => code)
+    }).toEqual({ prevented: false, failures: [] });
+    text.deleteData(0, 1);
+    placeCaretInText(text, 0);
+    surface.dispatchEvent(
+      new InputEvent('input', {
+        bubbles: true,
+        inputType: 'deleteContentBackward'
+      })
+    );
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(fixture.history.getValue()).toBe(
+      'Markdown 支持脚注功能。[](这是一个简单脚注。)\n\n'
+        + '[^note]: 这是一个较长的脚注内容，可用于补充说明、引用来源或备注信息。\n'
+    );
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('deletes the footnote marker a rendered footnote link stands for', () => {
+  vi.useFakeTimers();
+  const signature = 'footnote-marker-delete';
+  const markdown = 'Markdown 支持脚注功能。[^1]\n\n[^1]: 这是一个简单脚注。\n';
+  const html = '<p data-easymde-visual-block-id="b0">Markdown 支持脚注功能。'
+    + '<a href="%E8%BF%99%E6%98%AF%E4%B8%80%E4%B8%AA%E7%AE%80%E5%8D%95%E8%84%9A%E6%B3%A8%E3%80%82">^</a></p>';
+  const editMap = fullOwnerEditMap(signature, [
+    { id: 'b0', startLine: 0, endLine: 1 }
+  ]);
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature });
+  try {
+    const surface = fixture.surface;
+    const text = surface.querySelector('a')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('footnote-marker-text-missing');
+    surface.focus();
+    placeCaretInText(text, 1);
+    const target = document.createRange();
+    target.setStart(text, 0);
+    target.setEnd(text, 1);
+    const before = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      data: null,
+      inputType: 'deleteContentBackward'
+    });
+    Object.defineProperty(before, 'getTargetRanges', { value: () => [target] });
+    surface.dispatchEvent(before);
+    expect({
+      prevented: before.defaultPrevented,
+      failures: vi.mocked(fixture.onFailure).mock.calls.map(([code]) => code)
+    }).toEqual({ prevented: false, failures: [] });
+    text.deleteData(0, 1);
+    placeCaretInText(text, 0);
+    surface.dispatchEvent(
+      new InputEvent('input', {
+        bubbles: true,
+        inputType: 'deleteContentBackward'
+      })
+    );
+    act(() => { vi.advanceTimersByTime(1000); });
+    // The superscript glyph is one unit: the press that names it retires the
+    // whole reference, and the definition it points at stays untouched.
+    expect(fixture.history.getValue()).toBe(
+      'Markdown 支持脚注功能。\n\n[^1]: 这是一个简单脚注。\n'
+    );
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
 it('keeps consecutive ordinary, CJK and emoji input inside an inline link label', () => {
   vi.useFakeTimers();
   const signature = 'inline-link-consecutive';
@@ -27279,6 +27933,440 @@ it.each([
   }
 });
 
+it.each([false, true])('restores a diverged code body or truthfully reports repair failure (blocked=%s)', (blocked) => {
+  vi.useFakeTimers();
+  const signature = `diverged-inline-code-repair-${blocked}`;
+  const markdown = 'Lead.\n\n> - item with **nested emphasis** and `child code`\n>\n> \n';
+  const caret = markdown.indexOf('child code') + 6;
+  const fixture = createFullOwnerFixture({ markdown, signature, sourceCaret: caret,
+    html: '<p data-easymde-visual-block-id="b0">Lead.</p>'
+      + '<blockquote data-easymde-visual-block-id="b1"><ul><li><p>item with <strong>nested emphasis</strong> and <code>child code</code></p></li></ul></blockquote>',
+    editMap: fullOwnerEditMap(signature, [{ id: 'b0', startLine: 0, endLine: 2 }, { id: 'b1', startLine: 2, endLine: 5 }]) });
+  let mapper: MockInstance<typeof visualMarkdown.visualCaretBoundaryFromSourceOffset> | undefined;
+  try {
+    fixture.surface.focus();
+    const accepted = fixture.surface.innerHTML;
+    const text = fixture.surface.querySelector('code')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('diverged-code-repair-text-missing');
+    text.deleteData(6, 4);
+    placeCaretInText(text, 6);
+    const canonical = fixture.history.getSelection();
+    if (blocked) mapper = vi.spyOn(visualMarkdown, 'visualCaretBoundaryFromSourceOffset').mockImplementation(() => {
+      throw new Error('visual-editor-selection-map-failed');
+    });
+    act(() => {
+      fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' }));
+      vi.advanceTimersByTime(220);
+    });
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.history.getSelection()).toEqual(canonical);
+    expect(fixture.history.getHistoryState().undoDepth).toBe(0);
+    if (blocked) {
+      expect(fixture.onFailure).toHaveBeenCalledExactlyOnceWith('visual-editor-deletion-repair-failed');
+      expect(fixture.onTransferFailure).toHaveBeenCalledTimes(1);
+      expect(window.getSelection()?.anchorNode).toBe(text);
+      expect(window.getSelection()?.anchorOffset).toBe(6);
+    } else {
+      expect(fixture.surface.innerHTML).toBe(accepted);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      const restored = window.getSelection()?.anchorNode;
+      if (!(restored instanceof Text)) throw new Error('restored-code-repair-caret-missing');
+      expect(restored.data).toBe('child code');
+      expect(window.getSelection()?.anchorOffset).toBe(6);
+      act(() => { fullOwnerNativeDelete(fixture.surface, restored, 5, 6, 'deleteContentBackward'); vi.advanceTimersByTime(220); });
+      expect(fixture.history.getValue()).toBe(markdown.replace('child code', 'childcode'));
+      expect(fixture.history.getHistoryState().undoDepth).toBe(1);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    }
+  } finally { mapper?.mockRestore(); fixture.unmount(); }
+});
+
+it('keeps quote EOF refusal at an editable text caret and the next typed character commits', () => {
+  vi.useFakeTimers();
+  const signature = 'quote-eof-refusal-text-caret';
+  const markdown = '> Tail.\n>\n> \n';
+  const fixture = createFullOwnerFixture({
+    markdown, signature, sourceCaret: '> Tail.'.length,
+    html: '<blockquote data-easymde-visual-block-id="b0"><p>Tail.</p></blockquote>',
+    editMap: fullOwnerEditMap(signature, [{ id: 'b0', startLine: 0, endLine: 3 }])
+  });
+  try {
+    fixture.surface.focus();
+    const initial = fixture.surface.querySelector('p')?.firstChild;
+    if (!(initial instanceof Text)) throw new Error('quote-eof-tail-text-missing');
+    placeCaretInText(initial, initial.length);
+    for (let press = 1; press <= 8; press += 1) {
+      act(() => {
+        const key = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' });
+        fixture.surface.dispatchEvent(key);
+        if (!key.defaultPrevented) {
+          const native = window.getSelection();
+          const node = native?.anchorNode;
+          const offset = native?.anchorOffset ?? 0;
+          if (!native?.isCollapsed || !node) throw new Error('quote-eof-key-caret-missing');
+          const from = node instanceof Text ? Math.max(0, offset - 1) : offset;
+          const range = document.createRange();
+          range.setStart(node, from);
+          range.setEnd(node, offset);
+          const before = fullOwnerDispatchBeforeInput(fixture.surface,
+            { inputType: 'deleteContentBackward', data: null }, range);
+          if (!before.defaultPrevented && node instanceof Text && from < offset) {
+            node.deleteData(from, offset - from);
+            if (node.length === 0 && node.parentElement instanceof HTMLParagraphElement) {
+              const p = node.parentElement;
+              p.replaceChildren(document.createElement('br'));
+              window.getSelection()?.collapse(p, 0);
+            } else placeCaretInText(node, from);
+            fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+          } else if (!before.defaultPrevented && node instanceof HTMLParagraphElement
+            && node.childNodes.length === 1 && node.firstChild instanceof HTMLBRElement && offset === 0) {
+            // Chromium can drop the now-redundant placeholder on this empty
+            // root Backspace even though no source character precedes it.
+            node.replaceChildren();
+            window.getSelection()?.collapse(node, 0);
+            fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+          }
+        }
+        vi.advanceTimersByTime(220);
+      });
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    }
+    expect(fixture.history.getValue().length).toBe(6);
+    expect(Number(fixture.surface.getAttribute('data-easymde-visual-deletion-repair') ?? 0)).toBeLessThanOrEqual(1);
+    const native = window.getSelection();
+    expect(native?.anchorNode).toBeInstanceOf(Text);
+    expect(fixture.surface.contains(native?.anchorNode ?? null)).toBe(true);
+    const before = fixture.history.getValue();
+    const canonical = fixture.history.getSelection();
+    const depth = fixture.history.getHistoryState().undoDepth;
+    const repairs = fixture.surface.getAttribute('data-easymde-visual-deletion-repair');
+    act(() => {
+      const inserted = fullOwnerNativeInsertAtSelection(fixture.surface, 'Z');
+      expect(inserted.prevented).toBe(false);
+      vi.advanceTimersByTime(220);
+    });
+    expect(fixture.history.getValue()).toBe(before.slice(0, canonical.start) + 'Z' + before.slice(canonical.end));
+    expect(fixture.history.getHistoryState().undoDepth).toBe(depth + 1);
+    expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: canonical.start + 1, end: canonical.start + 1 });
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.surface.getAttribute('data-easymde-visual-deletion-repair')).toBe(repairs);
+    const typed = window.getSelection()?.anchorNode;
+    const offset = window.getSelection()?.anchorOffset ?? 0;
+    if (!(typed instanceof Text)) throw new Error('quote-eof-typed-caret-missing');
+    act(() => {
+      fullOwnerNativeDelete(fixture.surface, typed, offset - 1, offset, 'deleteContentBackward');
+      vi.advanceTimersByTime(220);
+    });
+    expect(fixture.history.getValue()).toBe(before);
+    expect(fixture.history.getHistoryState().undoDepth).toBe(depth + 2);
+    expect(fixture.surface.getAttribute('data-easymde-visual-deletion-repair')).toBe(repairs);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+  }
+});
+
+it.each([
+  { quote: false, selectedChanged: false }, { quote: true, selectedChanged: false },
+  { quote: false, selectedChanged: true }, { quote: true, selectedChanged: true }
+].flatMap((fixture) => ['beforeinput', 'Backspace', 'Delete'].map((method) => ({ ...fixture, method }))))('preserves both selections before refused deletion repair (quote=$quote, selectedChanged=$selectedChanged, method=$method)', ({ quote, selectedChanged, method }) => {
+  vi.useFakeTimers();
+  const signature = `terminal-code-refusal-${quote}-${selectedChanged}`;
+  const prefix = quote ? '> Alpha ' : 'Alpha ';
+  const markdown = `${prefix}\`x \`\n`;
+  const fixture = createFullOwnerFixture({
+    markdown, signature, sourceCaret: 0,
+    html: quote ? '<blockquote data-easymde-visual-block-id="b0"><p>Alpha <code>x </code></p></blockquote>'
+      : '<p data-easymde-visual-block-id="b0">Alpha <code>x </code></p>',
+    editMap: fullOwnerEditMap(signature, [{ id: 'b0', startLine: 0, endLine: 1 }])
+  });
+  let intervalMapper: MockInstance<typeof visualMarkdown.mapTextBoundaryFromInterval> | undefined;
+  let boundaryMapper: MockInstance<typeof visualMarkdown.visualBoundarySourceOffset> | undefined;
+  try {
+    const block = fixture.surface.firstChild;
+    const text = fixture.surface.querySelector('code')?.firstChild;
+    if (!(block instanceof HTMLElement) || !(text instanceof Text)) throw new Error('terminal-code-refusal-fixture-missing');
+    fixture.surface.focus();
+    const foreign = document.createElement('p');
+    foreign.textContent = 'foreign';
+    if (selectedChanged) text.replaceData(1, 1, '\u00a0');
+    else fixture.surface.append(foreign);
+    placeCaretInText(text, 1);
+    const canonical = fixture.history.getSelection();
+    const history = fixture.history.getHistoryState();
+    const html = fixture.surface.innerHTML;
+    intervalMapper = vi.spyOn(visualMarkdown, 'mapTextBoundaryFromInterval').mockReturnValue(null);
+    boundaryMapper = vi.spyOn(visualMarkdown, 'visualBoundarySourceOffset').mockImplementation(() => {
+      throw new Error('visual-editor-selection-map-failed');
+    });
+    for (let press = 1; press <= 2; press += 1) {
+      act(() => {
+        if (method === 'beforeinput') {
+          const event = fullOwnerDispatchBeforeInput(fixture.surface,
+            { inputType: 'deleteContentBackward', data: null }, fullOwnerTargetRange(text, 0, 1));
+          expect(event.defaultPrevented).toBe(true);
+        } else {
+          const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: method });
+          fixture.surface.dispatchEvent(event);
+          expect(event.defaultPrevented).toBe(true);
+        }
+        vi.advanceTimersByTime(200);
+      });
+      expect(fixture.history.getValue()).toBe(markdown);
+      expect(fixture.history.getSelection()).toEqual(canonical);
+      expect(fixture.history.getHistoryState()).toEqual(history);
+      expect(fixture.surface.firstChild).toBe(block);
+      expect(window.getSelection()?.anchorNode).toBe(text);
+      expect(window.getSelection()?.focusNode).toBe(text);
+      expect(window.getSelection()?.anchorOffset).toBe(1);
+      expect(window.getSelection()?.focusOffset).toBe(1);
+      if (selectedChanged) expect(fixture.surface.innerHTML).toBe(html);
+      else expect(foreign.isConnected).toBe(false);
+      expect(fixture.surface.getAttribute('data-easymde-visual-deletion-repair')).toBe(String(press));
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    }
+  } finally {
+    intervalMapper?.mockRestore();
+    boundaryMapper?.mockRestore();
+    fixture.unmount();
+  }
+});
+
+it.each([false, true])('authenticates native space-only code spelling and forward retirement (quote=%s)', (quote) => {
+  vi.useFakeTimers();
+  const signature = `native-terminal-code-space-${quote}`;
+  const prefix = quote ? '> Alpha ' : 'Alpha ';
+  const suffix = '\n';
+  const markdown = `${prefix}\`x \`${suffix}`;
+  const fixture = createFullOwnerFixture({
+    markdown, signature, sourceCaret: prefix.length + 2,
+    html: quote ? '<blockquote data-easymde-visual-block-id="b0"><p>Alpha <code>x </code></p></blockquote>'
+      : '<p data-easymde-visual-block-id="b0">Alpha <code>x </code></p>',
+    editMap: fullOwnerEditMap(signature, [{ id: 'b0', startLine: 0, endLine: 1 }])
+  });
+  try {
+    fixture.surface.focus();
+    const p = fixture.surface.querySelector('p');
+    const code = p?.querySelector('code');
+    const text = code?.firstChild;
+    if (!(p instanceof HTMLElement) || !(code instanceof HTMLElement) || !(text instanceof Text)) throw new Error('native-code-space-fixture-missing');
+    for (const [index, inputType] of ['deleteContentBackward', 'deleteContentForward'].entries()) {
+      placeCaretInText(text, index === 0 ? 1 : 0);
+      act(() => {
+        const event = fullOwnerDispatchBeforeInput(fixture.surface, { inputType, data: null }, fullOwnerTargetRange(text, 0, 1));
+        expect(event.defaultPrevented).toBe(false);
+        text.deleteData(0, 1);
+        if (index === 0) text.replaceData(0, 1, '\u00a0');
+        placeCaretInText(text, 0);
+        fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType }));
+        vi.advanceTimersByTime(200);
+      });
+      expect(fixture.history.getValue()).toBe(prefix + (index === 0 ? '` `' : '') + suffix);
+      const caret = prefix.length + (index === 0 ? 1 : 0);
+      expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: caret, end: caret });
+      expect(window.getSelection()?.anchorNode).toBe(index === 0 ? text : p);
+      expect(window.getSelection()?.anchorOffset).toBe(index === 0 ? 0 : 1);
+      expect(fixture.history.getHistoryState().undoDepth).toBe(index + 1);
+      expect(fixture.surface.hasAttribute('data-easymde-visual-deletion-repair')).toBe(false);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    }
+    expect(fixture.surface.querySelector('code')).toBeNull();
+  } finally {
+    fixture.unmount();
+  }
+});
+
+it.each([false, true])('commits terminal inline-code whitespace and controls (quote=%s)', (quote) => {
+  vi.useFakeTimers();
+  const prefix = quote ? '> item with **nested emphasis** and ' : 'Alpha ';
+  const renderedPrefix = quote ? 'item with <strong>nested emphasis</strong> and ' : 'Alpha ';
+  const suffix = quote ? '\n>\n> \n' : '\n';
+  for (const scenario of ['terminal code', 'terminal forward', 'terminal code end', 'mid-paragraph code', 'no-space code', 'outside code space', 'plain space'] as const) {
+    const label = `terminal-inline-whitespace-${quote}-${scenario}`;
+    const letters = quote ? 'child' : 'x';
+    const body = scenario === 'plain space' ? 'beta ' : letters + (scenario === 'outside code space' || scenario === 'no-space code' ? '' : ' ');
+    const tail = scenario === 'mid-paragraph code' ? ' beta' : scenario === 'outside code space' ? ' ' : '';
+    const markdown = prefix + (scenario === 'plain space' ? body : `\`${body}\`${tail}`) + suffix;
+    // Exercise the existing significant-terminal-space DOM spelling in these
+    // controls while retaining their exact ASCII-space source bytes.
+    const domBody = scenario === 'plain space' ? body.slice(0, -1) + '\u00a0' : body;
+    const domTail = scenario === 'outside code space' ? '\u00a0' : tail;
+    const paragraph = renderedPrefix + (scenario === 'plain space' ? domBody : `<code>${domBody}</code>${domTail}`);
+    const fixture = createFullOwnerFixture({
+      markdown, signature: label, sourceCaret: scenario === 'outside code space'
+        ? markdown.length - suffix.length : prefix.length + (scenario === 'plain space' ? body.length : 1 + letters.length),
+      html: quote ? `<blockquote data-easymde-visual-block-id="b0"><p>${paragraph}</p></blockquote>`
+        : `<p data-easymde-visual-block-id="b0">${paragraph}</p>`,
+      editMap: fullOwnerEditMap(label, [{ id: 'b0', startLine: 0, endLine: quote ? 3 : 1 }])
+    });
+    try {
+      fixture.surface.focus();
+      const p = fixture.surface.querySelector('p');
+      const code = p?.querySelector('code');
+      if (!(p instanceof HTMLParagraphElement)) throw new Error('terminal-code-paragraph-missing');
+      if (scenario === 'outside code space' || scenario === 'plain space') {
+        const text = p.lastChild;
+        if (!(text instanceof Text)) throw new Error('terminal-space-control-missing');
+        const offset = text.length;
+        placeCaretInText(text, offset);
+        act(() => {
+          fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' }));
+          const event = fullOwnerDispatchBeforeInput(fixture.surface,
+            { inputType: 'deleteContentBackward', data: null }, fullOwnerTargetRange(text, offset - 1, offset));
+          expect(event.defaultPrevented).toBe(false);
+          text.deleteData(offset - 1, 1);
+          placeCaretInText(text, offset - 1);
+          fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+          vi.advanceTimersByTime(200);
+        });
+        const expected = scenario === 'plain space' ? prefix + 'beta' + suffix : prefix + `\`${letters}\`` + suffix;
+        expect(fixture.history.getValue()).toBe(expected);
+        expect(fixture.history.getSelection()).toEqual({ direction: 'none',
+          start: expected.length - suffix.length, end: expected.length - suffix.length });
+        expect(window.getSelection()?.anchorNode).toBe(text);
+        expect(window.getSelection()?.anchorOffset).toBe(offset - 1);
+      } else {
+        const text = code?.firstChild;
+        if (!(code instanceof HTMLElement) || !(text instanceof Text)) throw new Error('terminal-code-text-missing');
+        let remaining = body;
+        while (remaining.length > 0) {
+          // End is before the trailing space: Backspace removes letters;
+          // Delete at offset zero then removes the surviving space. Also
+          // exercise forward deletion at End and an explicit after-space caret.
+          const forward = (scenario === 'terminal forward' && remaining === body)
+            || (scenario === 'terminal code' && remaining === ' ');
+          const offset = scenario === 'terminal code' || (scenario === 'terminal forward' && remaining === body)
+            ? remaining.length - 1 : remaining.length;
+          const from = forward ? offset : offset - 1;
+          const to = forward ? offset + 1 : offset;
+          const inputType = forward ? 'deleteContentForward' : 'deleteContentBackward';
+          placeCaretInText(text, offset);
+          const historyBefore = fixture.history.getHistoryState().undoDepth;
+          act(() => {
+            const key = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: forward ? 'Delete' : 'Backspace' });
+            fixture.surface.dispatchEvent(key);
+            if (!key.defaultPrevented) {
+              const event = fullOwnerDispatchBeforeInput(fixture.surface,
+                { inputType, data: null }, fullOwnerTargetRange(text, from, to));
+              expect(event.defaultPrevented).toBe(false);
+              text.deleteData(from, to - from);
+              if (' ' === text.data) text.replaceData(0, 1, '\u00a0');
+              placeCaretInText(text, from);
+              fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType }));
+            }
+            vi.advanceTimersByTime(200);
+          });
+          remaining = remaining.slice(0, from) + remaining.slice(to);
+          expect(fixture.history.getValue()).toBe(prefix + (remaining ? `\`${remaining}\`` : '') + tail + suffix);
+          const caret = prefix.length + (remaining ? 1 + from : 0);
+          expect(fixture.history.getSelection()).toEqual({ direction: 'none', start: caret, end: caret });
+          if (remaining) {
+            expect(fixture.surface.querySelector('code')).toBe(code);
+            expect(window.getSelection()?.anchorNode).toBe(text);
+            expect(window.getSelection()?.anchorOffset).toBe(from);
+          } else {
+            expect(fixture.surface.querySelector('code')).toBeNull();
+            expect(window.getSelection()?.anchorNode).toBe(p);
+            expect(window.getSelection()?.anchorOffset).toBe(quote ? 3 : 1);
+          }
+          expect(fixture.history.getHistoryState().undoDepth).toBe(historyBefore + 1);
+          expect(fixture.surface.hasAttribute('data-easymde-visual-deletion-repair')).toBe(false);
+          expect(fixture.onFailure).not.toHaveBeenCalled();
+          expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+        }
+      }
+      expect(fixture.history.getHistoryState().undoDepth).toBe(
+        scenario === 'outside code space' || scenario === 'plain space' ? 1 : body.length
+      );
+      expect(fixture.surface.hasAttribute('data-easymde-visual-deletion-repair')).toBe(false);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+    }
+  }
+});
+
+it.each([
+  { label: 'plain trailing-space primary', body: 'x ', domBody: 'x ', direction: 'backward', quote: false },
+  { label: 'quote trailing space', body: 'child ', domBody: 'child ', direction: 'backward', quote: true },
+  { label: 'quote leading space', body: ' child', domBody: ' child', direction: 'forward', quote: true },
+  // Chromium's significant-code-space spelling is not a change to the source.
+  { label: 'plain trailing NBSP artifact', body: 'x ', domBody: 'x\u00a0', direction: 'backward', quote: false },
+  { label: 'quote trailing NBSP artifact', body: 'child ', domBody: 'child\u00a0', direction: 'backward', quote: true },
+  { label: 'quote leading NBSP artifact', body: ' child', domBody: '\u00a0child', direction: 'forward', quote: true },
+  { label: 'authored NBSP control', body: 'x\u00a0', domBody: 'x\u00a0', direction: 'backward', quote: false },
+  { label: 'mixed authored NBSP and space artifact', body: 'x\u00a0 ', domBody: 'x\u00a0\u00a0', direction: 'backward', quote: true },
+  { label: 'authored entity spelling control', body: 'x&nbsp;', domBody: 'x&nbsp;', direction: 'backward', quote: false },
+  { label: 'plain no-space control', body: 'x', domBody: 'x', direction: 'backward', quote: false },
+  { label: 'quote no-space control', body: 'child', domBody: 'child', direction: 'backward', quote: true }
+])('deletes $label inline-code content through its ordinary owner and retires the emptied span', ({ label, body, domBody, direction, quote }) => {
+  vi.useFakeTimers();
+  const signature = `inline-code-edge-space-${label}`;
+  const prefix = quote ? '> item with **nested emphasis** and ' : 'Alpha ';
+  const suffix = quote ? '\n>\n> \n' : ' \n';
+  const markdown = `${prefix}\`${body}\`${suffix}`;
+  const escapedDomBody = domBody.replace(/&/gu, '&amp;');
+  const paragraph = quote ? `item with <strong>nested emphasis</strong> and <code>${escapedDomBody}</code>` : `Alpha <code>${escapedDomBody}</code> `;
+  const fixture = createFullOwnerFixture({
+    markdown, signature, sourceCaret: prefix.length + 1 + (direction === 'backward' ? body.length : 0),
+    html: quote ? `<blockquote data-easymde-visual-block-id="b0"><p>${paragraph}</p></blockquote>` : `<p data-easymde-visual-block-id="b0">${paragraph}</p>`,
+    editMap: fullOwnerEditMap(signature, [{ id: 'b0', startLine: 0, endLine: quote ? 3 : 1 }])
+  });
+  try {
+    const code = fixture.surface.querySelector('code');
+    const initial = code?.firstChild;
+    if (!(initial instanceof Text)) throw new Error('inline-code-edge-space-fixture-missing');
+    fixture.surface.focus();
+    placeCaretInText(initial, direction === 'backward' ? body.length : 0);
+    const baseline = visualMarkdown.serializeVisualMarkdown(fixture.surface);
+    expect(visualMarkdown.visualBoundarySourceOffset(fixture.surface, markdown, baseline, initial, 0)).toBe(prefix.length + 1);
+    expect(visualMarkdown.visualBoundarySourceOffset(fixture.surface, markdown, baseline, initial, body.length)).toBe(prefix.length + 1 + body.length);
+    let remaining = body;
+    while (remaining.length > 0) {
+      const text = window.getSelection()?.anchorNode;
+      const caret = window.getSelection()?.anchorOffset ?? -1;
+      if (!(text instanceof Text) || text.parentElement !== code) throw new Error('inline-code-edge-space-caret-lost');
+      const from = direction === 'backward' ? caret - 1 : caret;
+      const inputType = direction === 'backward' ? 'deleteContentBackward' : 'deleteContentForward';
+      act(() => {
+        const key = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: direction === 'backward' ? 'Backspace' : 'Delete' });
+        fixture.surface.dispatchEvent(key);
+        if (!key.defaultPrevented) {
+          const event = fullOwnerDispatchBeforeInput(fixture.surface, { inputType, data: null }, fullOwnerTargetRange(text, from, from + 1));
+          if (!event.defaultPrevented) {
+            text.deleteData(from, 1);
+            placeCaretInText(text, from);
+            fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType }));
+          }
+        }
+        vi.advanceTimersByTime(200);
+      });
+      remaining = direction === 'backward' ? remaining.slice(0, -1) : remaining.slice(1);
+      expect(fixture.history.getValue()).toBe(remaining ? `${prefix}\`${remaining}\`${suffix}` : `${prefix}${suffix}`);
+      if (remaining) {
+        expect(fixture.surface.querySelector('code')?.textContent).toBe(remaining);
+        expect(window.getSelection()?.anchorNode?.parentElement).toBe(code);
+        expect(window.getSelection()?.anchorOffset).toBe(direction === 'backward' ? remaining.length : 0);
+      } else {
+        expect(fixture.surface.querySelector('code')).toBeNull();
+      }
+      const caretNode = window.getSelection()?.anchorNode;
+      const element = caretNode instanceof HTMLElement ? caretNode : caretNode?.parentElement;
+      expect(element?.closest('p')).toBe(fixture.surface.querySelector('p'));
+      expect(fixture.surface.hasAttribute('data-easymde-visual-deletion-repair')).toBe(false);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    }
+  } finally {
+    fixture.unmount();
+  }
+});
+
 it('authenticates a backward inline-code end deletion after terminal-space normalization', () => {
   vi.useFakeTimers();
   const signature = 'inline-code-terminal-space';
@@ -27324,6 +28412,24 @@ it('authenticates a backward inline-code end deletion after terminal-space norma
       start: bodyStart + 3,
       end: bodyStart + 3
     });
+    // The following press removes the canonical ASCII space, not a new NBSP
+    // source byte, and leaves the caret inside this same authenticated span.
+    placeCaretInText(text, 3);
+    act(() => {
+      const next = fullOwnerDispatchBeforeInput(fixture.surface,
+        { data: null, inputType: 'deleteContentBackward' }, fullOwnerTargetRange(text, 2, 3));
+      expect(next.defaultPrevented).toBe(false);
+      text.deleteData(2, 1);
+      placeCaretInText(text, 2);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+      vi.advanceTimersByTime(200);
+    });
+    expect(fixture.history.getValue()).toBe('Lead `ab` tail\n\nAfter');
+    expect(window.getSelection()?.anchorNode).toBe(text);
+    expect(window.getSelection()?.anchorOffset).toBe(2);
+    expect(fixture.surface.hasAttribute('data-easymde-visual-deletion-repair')).toBe(false);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
   } finally {
     fixture.unmount();
     vi.useRealTimers();
@@ -30059,7 +31165,7 @@ it('keeps the surface editable when Enter opens the block after a heading in a m
   const markdown = '## Section';
   const signature = 'full-mapped-heading-enter';
   const fixture = createFullOwnerFixture({
-    editMap: fullOwnerEditMap(signature, [{ endLine: 1, id: 'b0', startLine: 0 }]),
+    editMap: null,
     html: fullOwnerBlock('<h2>Section</h2>', 'b0'),
     markdown,
     signature,
@@ -30548,10 +31654,30 @@ it('refuses a block-terminal space after a literal backslash without diverging f
     expect(fixture.onTransferFailure).not.toHaveBeenCalled();
     expect(fixture.surface.getAttribute('data-easymde-visual-deletion-repair')).toBe('1');
     expect(fixture.history.getValue()).toBe('## a\\\\. \n');
-    // The two proved deletions stand and the third key is refused. The diverged
-    // window is re-derived silently from the accepted render, so the browser's
-    // transient NBSP respell is replaced by the accepted spelling of this run.
-    expect(heading()?.textContent).toBe('a\\. AB');
+    // The old assertion reintroduced AB from a pre-edit accepted render even
+    // though both deletions were committed. Keep the authenticated terminal
+    // NBSP spelling and the original native text/caret instead.
+    expect(heading()?.firstChild).toBe(text);
+    expect(text.data).toBe('a\\.\u00a0');
+    expect(window.getSelection()?.anchorNode).toBe(text);
+    expect(window.getSelection()?.anchorOffset).toBe(text.length);
+    // Continuation at this escaped terminal run is not yet proved. The safe
+    // boundary cancels it before default: no NBSP is written into Markdown,
+    // no partial DOM mutation and no history slot is fabricated.
+    const historyBefore = fixture.history.getHistoryState();
+    const htmlBefore = fixture.surface.innerHTML;
+    const selectionBefore = fixture.history.getSelection();
+    const inserted = fullOwnerNativeInsert(fixture.surface, text, text.length, 'Z');
+    await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); });
+    expect(inserted.prevented).toBe(true);
+    expect(fixture.history.getValue()).toBe('## a\\\\. \n');
+    expect(fixture.history.getHistoryState()).toEqual(historyBefore);
+    expect(fixture.history.getSelection()).toEqual(selectionBefore);
+    expect(fixture.surface.innerHTML).toBe(htmlBefore);
+    expect(window.getSelection()?.anchorNode).toBe(text);
+    expect(window.getSelection()?.anchorOffset).toBe(text.length);
+    expect(fixture.onFailure).toHaveBeenCalledExactlyOnceWith('visual-editor-selection-map-failed');
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
     expect(fixture.runtime().isEditable()).toBe(true);
   } finally {
     fixture.unmount();
@@ -31878,6 +33004,215 @@ it('leaves Backspace at the first cell of the first row as a silent no-op', () =
     expect(window.getSelection()?.anchorNode).toBe(text);
     expect(window.getSelection()?.anchorOffset).toBe(0);
     expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('writes the canonical character a rendered cell lost to an uncommitted deletion', () => {
+  vi.useFakeTimers();
+  const fixture = createEditableTableFixture();
+  try {
+    fixture.surface.focus();
+    const { cells } = editableTableSurfaceParts(fixture.surface);
+    // The first body cell spells `one`. The browser has already removed its
+    // last character while the canonical document still holds it: the commit
+    // that press belonged to was refused, so the next press may not name that
+    // character against the rendered text.
+    const cell = cells[2];
+    if (!(cell instanceof HTMLTableCellElement)) {
+      throw new Error('editable-table-body-cell-missing');
+    }
+    const text = tableCellText(cell);
+    expect(text.data).toBe('one');
+    text.deleteData(text.data.length - 1, 1);
+    placeCaretInText(text, text.data.length);
+    const before = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      fullOwnerTargetRange(text, text.data.length, text.data.length)
+    );
+    expect(
+      before.defaultPrevented,
+      'the owner answers the press instead of refusing it'
+    ).toBe(true);
+    act(() => vi.advanceTimersByTime(80));
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+    expect(
+      fixture.history.getValue(),
+      'the missing character is removed from its own source bytes'
+    ).toBe(editableTableMarkdown.replace('| one | two |', '| on | two |'));
+    expect(cell.textContent).toBe('on');
+    expect(
+      fixture.surface.getAttribute('data-easymde-visual-deletion-repair'),
+      'nothing is re-derived or restored'
+    ).toBeNull();
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('deletes an inline image from the following text start as one image unit', async () => {
+  vi.useFakeTimers();
+  const markdown = '![dot](/img.png)Text after image.\n';
+  const signature = 'image-tail-delete';
+  const fixture = createFullOwnerFixture({
+    markdown,
+    signature,
+    sourceCaret: markdown.indexOf('Text after image.'),
+    html: fullOwnerBlock(
+      '<p><img src="/img.png" alt="dot">Text after image.</p>',
+      'b0'
+    ),
+    editMap: fullOwnerEditMap(signature, [
+      { id: 'b0', startLine: 0, endLine: 1 }
+    ])
+  });
+  const settle = async (): Promise<void> => {
+    await act(async () => {
+      vi.advanceTimersByTime(160);
+      await Promise.resolve();
+    });
+  };
+  try {
+    fixture.surface.focus();
+    const paragraph = fixture.surface.querySelector('p');
+    const text = [...(paragraph?.childNodes ?? [])].find(
+      (node): node is Text => node instanceof Text && node.data.startsWith('Text')
+    );
+    const image = paragraph?.querySelector('img');
+    if (!(paragraph instanceof HTMLParagraphElement) || !text
+      || !(image instanceof HTMLImageElement)) {
+      throw new Error('image-tail-fixture-missing');
+    }
+    placeCaretInText(text, 0);
+    const before = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      fullOwnerTargetRange(text, 0, 0)
+    );
+    // The synthesized image-deletion proof leaves the default to Chromium,
+    // exactly like a target range that selects the image itself.
+    expect(before.defaultPrevented).toBe(false);
+    act(() => {
+      image.remove();
+      window.getSelection()?.collapse(text, 0);
+      fixture.surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true, inputType: 'deleteContentBackward'
+      }));
+      vi.advanceTimersByTime(80);
+    });
+    await settle();
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe('Text after image.\n');
+    expect(fixture.history.getSelection()).toEqual({
+      direction: 'none', start: 0, end: 0
+    });
+    expect(fixture.surface.querySelector('img')).toBeNull();
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    await settle();
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('deletes an image-only block from its own P start as one image unit', async () => {
+  vi.useFakeTimers();
+  const markdown = '![dot](/img.png)\n\n\n';
+  const signature = 'image-only-block-delete';
+  const fixture = createFullOwnerFixture({
+    markdown,
+    signature,
+    html: fullOwnerBlock('<p><img src="/img.png" alt="dot"><br></p>', 'b0'),
+    editMap: fullOwnerEditMap(signature, [
+      { id: 'b0', startLine: 0, endLine: 1 }
+    ])
+  });
+  const settle = async (): Promise<void> => {
+    await act(async () => {
+      vi.advanceTimersByTime(160);
+      await Promise.resolve();
+    });
+  };
+  try {
+    fixture.surface.focus();
+    const paragraph = fixture.surface.querySelector('p');
+    const image = paragraph?.querySelector('img');
+    if (!(paragraph instanceof HTMLParagraphElement)
+      || !(image instanceof HTMLImageElement)) {
+      throw new Error('image-only-block-fixture-missing');
+    }
+    window.getSelection()?.collapse(paragraph, 0);
+    const before = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      fullOwnerTargetRange(paragraph, 0, 0)
+    );
+    expect(before.defaultPrevented).toBe(true);
+    await settle();
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe('\n\n\n');
+    expect(fixture.surface.querySelector('img')).toBeNull();
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    await settle();
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('removes a protected math root from its own end through the atomic owner path', () => {
+  vi.useFakeTimers();
+  const markdown = 'Before\n\n$$x$$\n\nAfter\n';
+  const signature = 'protected-self-delete';
+  const fixture = createFullOwnerFixture({
+    markdown,
+    signature,
+    html: [
+      fullOwnerBlock('<p>Before</p>', 'b0'),
+      fullOwnerBlock(
+        '<div class="easymde-math" data-easymde-rendered="1" data-easymde-visual-markdown-source="x"><span class="katex">x</span></div>',
+        'b1'
+      ),
+      fullOwnerBlock('<p>After</p>', 'b2')
+    ].join(''),
+    editMap: fullOwnerEditMap(signature, [
+      { id: 'b0', startLine: 0, endLine: 1 },
+      { editable: false, id: 'b1', startLine: 2, endLine: 3 },
+      { id: 'b2', startLine: 4, endLine: 5 }
+    ])
+  });
+  try {
+    fixture.surface.focus();
+    const math = fixture.surface.querySelector('.easymde-math');
+    const text = math?.querySelector('.katex')?.lastChild;
+    if (!(math instanceof HTMLElement) || !(text instanceof Text)) {
+      throw new Error('protected-self-delete-fixture-missing');
+    }
+    const selection = window.getSelection();
+    selection?.collapse(text, text.length);
+    const key = new KeyboardEvent('keydown', {
+      bubbles: true, cancelable: true, key: 'Backspace'
+    });
+    act(() => {
+      fixture.surface.dispatchEvent(key);
+      vi.advanceTimersByTime(80);
+    });
+    expect(key.defaultPrevented).toBe(true);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.history.getValue()).toBe('Before\n\nAfter\n');
+    act(() => fullOwnerHistoryKey(fixture.surface, false));
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
   } finally {
     fixture.unmount();
     vi.useRealTimers();
@@ -36338,7 +37673,10 @@ it('refuses the thematic-break Backspace after a foreign text change elsewhere o
     // tell this surface from the owner's.
     foreign.data = 'Pbra';
 
-    expect(pressFullBackspaceKey(fixture.surface)).toBe(true);
+    // A refused press now leaves the browser default intact: the atomic owner
+    // prevents the key only where it actually writes the canonical source, so a
+    // proof failure must not swallow it for the owners behind it.
+    expect(pressFullBackspaceKey(fixture.surface)).toBe(false);
     await act(async () => { vi.advanceTimersByTime(160); await Promise.resolve(); });
 
     // The press is refused and nothing is reported: no failure code, no lock,
@@ -43057,8 +44395,16 @@ describe('FullPlan frozen sequential fence deletion consumer', () => {
       expect(fixture.history.getValue().split(/\n{2,}/u).filter((block) => '' !== block.trim())).toEqual(segments.filter((_segment, index) => index !== fenceIndex).map((segment) => segment.source));
       expect(fixture.surface.contains(window.getSelection()?.anchorNode ?? null)).toBe(true);
       expect(window.getSelection()?.isCollapsed).toBe(true);
-      expect(window.getSelection()?.anchorNode).toBe(gap);
-      expect(window.getSelection()?.anchorOffset).toBe(0);
+      // The structural producer installs the row's own empty Text before its
+      // placeholder BR so the emptied row keeps a TEXT caret; the element
+      // caret this assertion used to pin was that older shape, not a stronger
+      // proof. The row itself is still the anchor's block, at its start.
+      const exitCaret = window.getSelection();
+      const exitCaretNode = exitCaret?.anchorNode;
+      expect(exitCaretNode === gap
+        || (exitCaretNode instanceof Text && exitCaretNode.parentElement === gap
+          && '' === exitCaretNode.data)).toBe(true);
+      expect(exitCaret?.anchorOffset).toBe(0);
       if (unrelated) expect(fixture.surface.querySelector('code.language-ruby')).toBe(unrelated);
       // The user's EXTRA deletion is a real cross-block target range from the
       // surviving heading tail to the now-empty P0. Only emulate browser
@@ -43090,8 +44436,14 @@ describe('FullPlan frozen sequential fence deletion consumer', () => {
       const paragraph = fixture.surface.querySelector('h3')?.nextElementSibling;
       if (!(paragraph instanceof HTMLParagraphElement)) throw new Error('full-plan-heading-enter-paragraph-missing');
       expect(paragraph.querySelectorAll('br')).toHaveLength(1);
-      expect(window.getSelection()?.anchorNode).toBe(paragraph);
-      expect(window.getSelection()?.anchorOffset).toBe(0);
+      // Same owned-row shape as the fence exit above: the caret is either the
+      // row itself or its proved empty Text, both at the row's own start.
+      const enterCaret = window.getSelection();
+      const enterCaretNode = enterCaret?.anchorNode;
+      expect(enterCaretNode === paragraph
+        || (enterCaretNode instanceof Text && enterCaretNode.parentElement === paragraph
+          && '' === enterCaretNode.data)).toBe(true);
+      expect(enterCaret?.anchorOffset).toBe(0);
       const finalSegments = segments.filter((_segment, index) => index !== fenceIndex).map((segment) => segment.source);
       for (const [index, character] of ['a', 'b', 'c'].entries()) {
         if (0 === index) {
@@ -43177,7 +44529,13 @@ it.each(['~~~', '```'])('test-first v3 Full owner-created idless P preserves raw
     act(() => fixture.surface.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' })));
     const exitGap = fixture.surface.querySelector('[data-easymde-visual-block-id="b2"]');
     if (!(exitGap instanceof HTMLParagraphElement)) throw new Error('v3-idless-native-PRE-exit-prerequisite-failed');
-    expect(exitGap.firstChild).toBeInstanceOf(HTMLBRElement);
+    // The emptied row owns an optional empty Text before its placeholder BR.
+    // The BR is still the row's only rendered placeholder; the leading Text
+    // is the empty text caret the structural producer installed.
+    const exitRow = Array.from(exitGap.childNodes);
+    expect(exitRow.at(-1)).toBeInstanceOf(HTMLBRElement);
+    expect(exitRow.every((node) => node === exitRow.at(-1)
+      || (node instanceof Text && '' === node.data))).toBe(true);
     const beforeHeadingText = fullOwnerTextAt(fixture.surface, 'h3');
     act(() => {
       const key = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Backspace' }); fixture.surface.dispatchEvent(key);
@@ -43202,8 +44560,16 @@ it.each(['~~~', '```'])('test-first v3 Full owner-created idless P preserves raw
     const paragraph = fixture.surface.querySelector('h3')?.nextElementSibling;
     if (!(paragraph instanceof HTMLParagraphElement)) throw new Error('v3-idless-real-owner-Enter-prerequisite-failed');
     expect(paragraph.hasAttribute('data-easymde-visual-block-id')).toBe(false);
-    expect(paragraph.childNodes).toHaveLength(1); expect(paragraph.firstChild).toBeInstanceOf(HTMLBRElement);
-    expect(window.getSelection()?.anchorNode).toBe(paragraph); expect(window.getSelection()?.anchorOffset).toBe(0);
+    const enterRow = Array.from(paragraph.childNodes);
+    expect(enterRow.at(-1)).toBeInstanceOf(HTMLBRElement);
+    expect(enterRow.every((node) => node === enterRow.at(-1)
+      || (node instanceof Text && '' === node.data))).toBe(true);
+    const enterNative = window.getSelection();
+    const enterNativeNode = enterNative?.anchorNode;
+    expect(enterNativeNode === paragraph
+      || (enterNativeNode instanceof Text && enterNativeNode.parentElement === paragraph
+        && '' === enterNativeNode.data)).toBe(true);
+    expect(enterNative?.anchorOffset).toBe(0);
     expect(fixture.onFailure.mock.calls).toEqual([]); expect(fixture.onTransferFailure.mock.calls).toEqual([]);
     const baseline = fixture.history.getValue();
     const headingEnd = baseline.indexOf('### Before') + '### Before'.length;
@@ -44483,6 +45849,70 @@ it('refuses a difference at the declared offset whose accepted side is not a col
 // so a consistently wrong mapping still fails.
 
 /** Press Backspace with the target range the engine spells for this shape. */
+it('owns a marker-only quote row Backspace from the element caret the browser leaves', () => {
+  vi.useFakeTimers();
+  const signature = 'quote-marker-row-element-caret';
+  const markdown = 'Lead\n\n>\n';
+  const editMap = fullOwnerEditMap(signature, [
+    { startLine: 0, endLine: 1, id: 'b0' },
+    { startLine: 2, endLine: 3, id: 'b1' }
+  ]);
+  const html = fullOwnerParagraphBlock('Lead', 'b0')
+    + fullOwnerBlock('<blockquote><p></p></blockquote>', 'b1');
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 0 });
+  fixture.surface.setAttribute('contenteditable', 'true');
+  try {
+    fixture.surface.focus();
+    const quote = fixture.surface.querySelector<HTMLElement>('blockquote');
+    const paragraph = quote?.firstElementChild;
+    if (!(quote instanceof HTMLElement) || !(paragraph instanceof HTMLParagraphElement)) {
+      throw new Error('quote-element-caret-fixture-invalid');
+    }
+    window.getSelection()?.collapse(paragraph, 0);
+    const event = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' }
+    );
+    act(() => { vi.advanceTimersByTime(80); });
+    expect(event.defaultPrevented, 'the press is owned').toBe(true);
+    expect(fixture.history.getValue(), 'the marker row is retired by one byte')
+      .toBe('Lead\n\n');
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+    expect(fixture.runtime().isEditable()).toBe(true);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it('records a refused structural deletion the caret cannot own', () => {
+  vi.useFakeTimers();
+  const signature = 'quote-marker-row-unowned';
+  const markdown = 'Lead\n\n>\n';
+  const editMap = fullOwnerEditMap(signature, [{ startLine: 0, endLine: 1, id: 'b0' }]);
+  const html = fullOwnerParagraphBlock('Lead', 'b0')
+    + '<blockquote><p></p></blockquote>';
+  const fixture = createFullOwnerFixture({ editMap, html, markdown, signature, sourceCaret: 0 });
+  fixture.surface.setAttribute('contenteditable', 'true');
+  try {
+    fixture.surface.focus();
+    const paragraph = fixture.surface.querySelector<HTMLParagraphElement>('blockquote p');
+    if (!(paragraph instanceof HTMLParagraphElement)) throw new Error('quote-row-missing');
+    window.getSelection()?.collapse(paragraph, 0);
+    const event = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' }
+    );
+    act(() => { vi.advanceTimersByTime(80); });
+    expect(fixture.surface.getAttribute('data-easymde-visual-deletion-repair')).toBe('1');
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.onFailure.mock.calls).toEqual([]);
+  } finally {
+    fixture.unmount();
+    vi.useRealTimers();
+  }
+});
+
 function pressRowStartBackspace(
   surface: HTMLElement,
   start: Readonly<{ node: Node; offset: number }>,
@@ -48760,8 +50190,14 @@ it('keeps the middle slot body caret before structural separators after empty-co
       const before = fullOwnerDispatchBeforeInput(fixture.surface,
         { data: 'Z', inputType: 'insertText' }, native.getRangeAt(0).cloneRange());
       expect(before.defaultPrevented).toBe(false);
-      const text = document.createTextNode('Z');
-      paragraph.replaceChildren(text); native.collapse(text, 1);
+      // The exited row now carries its own empty Text, so Chromium's default
+      // types into that node. Replacing the row's children would delete the
+      // very caret node the structural producer witnessed, which no real
+      // default does; the owned-row path requires that identity to survive.
+      const caretNode = native.anchorNode;
+      if (!(caretNode instanceof Text)) throw new Error('doc-middle-exit-caret-text-missing');
+      caretNode.insertData(caretNode.length, 'Z');
+      native.collapse(caretNode, caretNode.length);
       fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'Z', inputType: 'insertText' }));
     });
     await act(async () => { vi.advanceTimersByTime(90); await Promise.resolve(); });
@@ -56262,3 +57698,297 @@ it.each(['burst', 'normal'] as const)('keeps a real empty-source Enter then imme
     vi.useRealTimers();
   }
 });
+
+it.each([
+  { name: 'escaped star', source: '**a\\***\n', body: 'a*' },
+  { name: 'entity ampersand', source: '**a&amp;**\n', body: 'a&' }
+] as const)('removes the escaped last character with its own source bytes: $name', async ({ source, body }) => {
+  vi.useFakeTimers();
+  const html = fullOwnerBlock(`<p><strong>${body.replace('&', '&amp;')}</strong></p>`, 'b0');
+  const fixture = createFullOwnerFixture({
+    markdown: source,
+    signature: 'inline-tail-escape',
+    html,
+    editMap: fullOwnerEditMap('inline-tail-escape', [{ id: 'b0', startLine: 0, endLine: 1 }]),
+    sourceCaret: source.length - 1
+  });
+  try {
+    fixture.surface.focus();
+    const text = fixture.surface.querySelector('strong')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('inline-tail-text-missing');
+    const at = text.data.length;
+    window.getSelection()?.collapse(text, at);
+    const before = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      fullOwnerTargetRange(text, at - 1, at)
+    );
+    if (!before.defaultPrevented) {
+      text.deleteData(at - 1, 1);
+      window.getSelection()?.collapse(text, at - 1);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: null, inputType: 'deleteContentBackward' }));
+    }
+    await act(async () => { vi.advanceTimersByTime(200); await Promise.resolve(); });
+    expect(fixture.history.getValue()).toBe('**a**\n');
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    act(() => { fullOwnerHistoryKey(fixture.surface, false); });
+    await act(async () => { vi.advanceTimersByTime(200); await Promise.resolve(); });
+    expect(fixture.history.getValue()).toBe(source);
+  } finally { fixture.unmount(); vi.useRealTimers(); }
+});
+
+it('leaves a non-atomic protected TOC root to its own owners at Backspace', () => {
+  vi.useFakeTimers();
+  const markdown = 'Before\n\n[TOC]\n\nAfter\n';
+  const signature = 'toc-protected-not-atomic';
+  const fixture = createFullOwnerFixture({
+    markdown,
+    signature,
+    html: [
+      fullOwnerBlock('<p>Before</p>', 'b0'),
+      fullOwnerBlock(
+        '<div class="easymde-toc" data-easymde-visual-markdown-source="[TOC]">[TOC]</div>',
+        'b1'
+      ),
+      fullOwnerBlock('<p>After</p>', 'b2')
+    ].join(''),
+    editMap: fullOwnerEditMap(signature, [
+      { id: 'b0', startLine: 0, endLine: 1 },
+      { editable: false, id: 'b1', startLine: 2, endLine: 3 },
+      { id: 'b2', startLine: 4, endLine: 5 }
+    ])
+  });
+  try {
+    fixture.surface.focus();
+    const toc = fixture.surface.querySelector('.easymde-toc');
+    if (!(toc instanceof HTMLElement)) throw new Error('toc-root-missing');
+    const range = document.createRange();
+    range.setStart(toc, toc.childNodes.length);
+    range.collapse(true);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    const caretBefore = window.getSelection()?.anchorNode;
+    expect(pressFullBackspaceKey(fixture.surface)).toBe(false);
+    act(() => { vi.advanceTimersByTime(200); });
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.surface.querySelector('.easymde-toc')).not.toBeNull();
+    expect(window.getSelection()?.anchorNode).toBe(caretBefore);
+  } finally { fixture.unmount(); vi.useRealTimers(); }
+});
+
+it('leaves an atomic-root Backspace unclaimed when the accepted map no longer names the root', () => {
+  vi.useFakeTimers();
+  const markdown = 'Before\n\n$$x$$\n\nAfter\n';
+  const signature = 'atomic-root-dropped-map';
+  const fixture = createFullOwnerFixture({
+    markdown,
+    signature,
+    html: [
+      fullOwnerBlock('<p>Before</p>', 'b0'),
+      fullOwnerBlock(
+        '<div class="easymde-math" data-easymde-rendered="1" data-easymde-visual-markdown-source="x"><span class="katex">x</span></div>',
+        'b1'
+      ),
+      fullOwnerBlock('<p>After</p>', 'b2')
+    ].join(''),
+    // The map names the paragraphs but not the protected math root.
+    editMap: fullOwnerEditMap(signature, [
+      { id: 'b0', startLine: 0, endLine: 1 },
+      { id: 'b2', startLine: 4, endLine: 5 }
+    ])
+  });
+  try {
+    fixture.surface.focus();
+    const math = fixture.surface.querySelector('.easymde-math');
+    const text = math?.querySelector('.katex')?.lastChild;
+    if (!(math instanceof HTMLElement) || !(text instanceof Text)) {
+      throw new Error('dropped-map-math-missing');
+    }
+    placeCaretInText(text, text.length);
+    expect(pressFullBackspaceKey(fixture.surface)).toBe(false);
+    act(() => { vi.advanceTimersByTime(200); });
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.surface.querySelector('.easymde-math')).toBe(math);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally { fixture.unmount(); vi.useRealTimers(); }
+});
+
+it('does not remove a whole multi-codepoint entity for one Backspace', async () => {
+  vi.useFakeTimers();
+  const source = '**a&NotEqualTilde;**\n';
+  const html = fullOwnerBlock('<p><strong>a\u2242\u0338</strong></p>', 'b0');
+  const fixture = createFullOwnerFixture({
+    markdown: source,
+    signature: 'inline-tail-multi-entity',
+    html,
+    editMap: fullOwnerEditMap('inline-tail-multi-entity', [{ id: 'b0', startLine: 0, endLine: 1 }]),
+    sourceCaret: source.length - 1
+  });
+  try {
+    fixture.surface.focus();
+    const text = fixture.surface.querySelector('strong')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('multi-entity-text-missing');
+    const at = text.data.length;
+    window.getSelection()?.collapse(text, at);
+    const before = fullOwnerDispatchBeforeInput(
+      fixture.surface,
+      { data: null, inputType: 'deleteContentBackward' },
+      fullOwnerTargetRange(text, at - 1, at)
+    );
+    if (!before.defaultPrevented) {
+      text.deleteData(at - 1, 1);
+      window.getSelection()?.collapse(text, at - 1);
+      fixture.surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: null, inputType: 'deleteContentBackward' }));
+    }
+    await act(async () => { vi.advanceTimersByTime(200); await Promise.resolve(); });
+    const value = fixture.history.getValue();
+    // The entity spells two visible code points; one press may remove at most
+    // one of them, never the whole `&NotEqualTilde;` run.
+    expect(value).not.toBe('**a**\n');
+    expect(value.length).toBeGreaterThanOrEqual(source.length - 1);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+  } finally { fixture.unmount(); vi.useRealTimers(); }
+});
+
+it('leaves the EOF footnotes root to its own owners at Backspace', () => {
+  vi.useFakeTimers();
+  const markdown = 'Before\n\nFootnote body.\n';
+  const signature = 'eof-footnotes-protected';
+  const fixture = createFullOwnerFixture({
+    markdown,
+    signature,
+    html: [
+      fullOwnerBlock('<p>Before</p>', 'b0'),
+      fullOwnerBlock('<div class="footnotes"><p>Footnote body.</p></div>', 'b1')
+    ].join(''),
+    editMap: fullOwnerEditMap(signature, [
+      { id: 'b0', startLine: 0, endLine: 1 },
+      { editable: false, id: 'b1', startLine: 2, endLine: 3 }
+    ])
+  });
+  try {
+    fixture.surface.focus();
+    const footnotes = fixture.surface.querySelector('.footnotes');
+    if (!(footnotes instanceof HTMLElement)) throw new Error('eof-footnotes-missing');
+    const range = document.createRange();
+    range.setStart(footnotes, footnotes.childNodes.length);
+    range.collapse(true);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    const caretBefore = window.getSelection()?.anchorNode;
+    expect(pressFullBackspaceKey(fixture.surface)).toBe(false);
+    act(() => { vi.advanceTimersByTime(200); });
+    expect(fixture.history.getValue()).toBe(markdown);
+    expect(fixture.onFailure).not.toHaveBeenCalled();
+    expect(fixture.surface.querySelector('.footnotes')).toBe(footnotes);
+    expect(window.getSelection()?.anchorNode).toBe(caretBefore);
+  } finally { fixture.unmount(); vi.useRealTimers(); }
+});
+
+/**
+ * The reported 180-byte repro (real Chromium, real keys after unlock):
+ *
+ *   > ## Quoted heading
+ *   >
+ *   > Outer **strong** and *emphasis* with [X](https://example.com/nested), `inline`, and span with **nested emphasis** and `child code`.
+ *   >     
+ *   >     Child 
+ *   >
+ *   > 
+ *
+ * The accepted render is one quoted root: heading, the rich paragraph, and the
+ * indented leaf as `<pre><code>Child \n</code></pre>`. The trailing quote rows
+ * are renderer-hidden. Control+End leaves the canonical selection at 180 while
+ * the editable caret is the leaf's own `#text("Child \n")@6`, whose source
+ * point is 175. Both a Backspace there and typing Q were refused silently in
+ * the live build: length stayed 180, the deletion-repair counter rose, and no
+ * failure was published. Each edit must stay inside the leaf's body bytes and
+ * preserve the hidden `\n>\n> ` suffix.
+ */
+it.each(['backspace', 'typing'] as const)(
+  'edits the terminal indented leaf under a hidden quote suffix (%s)',
+  (kind) => {
+    vi.useFakeTimers();
+    const markdown = '> ## Quoted heading\n>\n> Outer **strong** and *emphasis* with [X](https://example.com/nested), `inline`, and span with **nested emphasis** and `child code`.\n>     \n>     Child \n>\n> ';
+    const signature = 'quoted-terminal-leaf-repro';
+    const fixture = createFullOwnerFixture({
+      editMap: fullOwnerEditMap(signature, [{ endLine: 7, id: 'b0', startLine: 0 }]),
+      html: fullOwnerBlock(
+        '<blockquote><h2>Quoted heading</h2>'
+        + '<p>Outer <strong>strong</strong> and <em>emphasis</em> with '
+        + '<a href="https://example.com/nested">X</a>, <code>inline</code>, and span with '
+        + '<strong>nested emphasis</strong> and <code>child code</code>.</p>'
+        + '<pre><code>Child \n</code></pre></blockquote>',
+        'b0'
+      ),
+      markdown,
+      signature,
+      sourceCaret: markdown.length
+    });
+    try {
+      fixture.surface.focus();
+      const code = fixture.surface.querySelector('blockquote pre > code');
+      const body = code?.firstChild;
+      if (!(body instanceof Text) || body.data !== 'Child \n') {
+        throw new Error('quoted-terminal-leaf-fixture-missing');
+      }
+      // The canonical selection the unlock left behind, and the editable leaf
+      // point the same caret names (body offset 6 == source offset 175).
+      expect(fixture.history.getSelection()).toEqual({
+        direction: 'none', start: markdown.length, end: markdown.length
+      });
+      placeCaretInText(body, 6);
+      const repairs = fixture.surface.getAttribute('data-easymde-visual-deletion-repair');
+      const before = fixture.history.getHistoryState();
+      act(() => {
+        const key = new KeyboardEvent('keydown', {
+          bubbles: true, cancelable: true, key: kind === 'backspace' ? 'Backspace' : 'Q'
+        });
+        fixture.surface.dispatchEvent(key);
+        if (key.defaultPrevented) return;
+        if (kind === 'backspace') {
+          fullOwnerDispatchBeforeInput(
+            fixture.surface,
+            { data: null, inputType: 'deleteContentBackward' },
+            fullOwnerTargetRange(body, 5, 6)
+          );
+          body.deleteData(5, 1);
+          placeCaretInText(body, 5);
+          fixture.surface.dispatchEvent(new InputEvent('input', {
+            bubbles: true, inputType: 'deleteContentBackward', data: null
+          }));
+        } else {
+          fullOwnerDispatchBeforeInput(
+            fixture.surface,
+            { data: 'Q', inputType: 'insertText' },
+            fullOwnerTargetRange(body, 6, 6)
+          );
+          body.insertData(6, 'Q');
+          placeCaretInText(body, 7);
+          fixture.surface.dispatchEvent(new InputEvent('input', {
+            bubbles: true, inputType: 'insertText', data: 'Q'
+          }));
+        }
+        vi.advanceTimersByTime(220);
+      });
+      act(() => vi.advanceTimersByTime(220));
+      expect(fixture.history.getValue(), 'only the leaf body byte changes').toBe(
+        kind === 'backspace'
+          ? `${markdown.slice(0, 174)}${markdown.slice(175)}`
+          : `${markdown.slice(0, 175)}Q${markdown.slice(175)}`
+      );
+      expect(fixture.history.getHistoryState().undoDepth).toBe(before.undoDepth + 1);
+      expect(fixture.surface.getAttribute('data-easymde-visual-deletion-repair')).toBe(repairs);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.onTransferFailure).not.toHaveBeenCalled();
+      expect(fixture.runtime().isEditable()).toBe(true);
+      expect(fixture.surface.querySelector('blockquote pre > code')?.contains(
+        window.getSelection()?.anchorNode ?? null
+      )).toBe(true);
+    } finally {
+      fixture.unmount();
+      vi.useRealTimers();
+    }
+  }
+);

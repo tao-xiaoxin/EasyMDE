@@ -104,6 +104,10 @@ import {
 	visualTableCellAbsoluteStart,
 	visualMarkdownTableAt,
 } from "../visual-markdown";
+import {
+	emptiedHeadingRowRetirement,
+	visualJoinRowAtCaret,
+} from "../visual-structural-row";
 import type {
 	ImmersiveVisualEditorProps,
 	ImmersiveVisualEditorRuntime,
@@ -1373,7 +1377,7 @@ function endsInsideOpenCodeFence(markdown: string): boolean {
 		openCodeFenceSource = markdown;
 		openCodeFenceAtDocumentEnd = visualCodeBodyIntervals(markdown).some(
 			(interval) =>
-				!interval.closed && interval.sourceBlockEnd === markdown.length,
+				"fenced" === interval.kind && !interval.closed && interval.sourceBlockEnd === markdown.length,
 		);
 	}
 	return openCodeFenceAtDocumentEnd;
@@ -1538,7 +1542,7 @@ function windowedCodeBodyInputIntent(
 			const interval = 1 === intervals.length ? intervals[0] : null;
 			const blockId = ownerBlock.getAttribute(VISUAL_BLOCK_ATTRIBUTE);
 			if (
-				interval &&
+				interval && "fenced" === interval.kind &&
 				blockId &&
 				interval.sourceBlockStart === 0 &&
 				interval.sourceBlockEnd <= localSource.length
@@ -3160,6 +3164,49 @@ function createBlockRanges(
 	return new SourceRangeLedger(ranges);
 }
 
+/** A source line that carries nothing but an ATX heading's own marker run. */
+const WINDOWED_EMPTIED_HEADING_ROW =
+	/^ {0,3}#{1,6}[ \t]*(?:\r\n|\r|\n)?$/u;
+
+/**
+ * The source row an emptied heading row still occupies, proved from the
+ * accepted map's own line coordinate.
+ *
+ * The renderer draws no marker for an emptied heading, so a mounted empty
+ * paragraph holds none of its bytes: the row exists only as the marker-only
+ * line its block names. The block's `startLine` is that row's own line, and a
+ * small window around it tolerates the separator rows a repair leaves behind
+ * without searching the document for some other marker. No match leaves the
+ * caller to the retirement owner's own map and document-start placement.
+ */
+function windowedEmptiedHeadingSourceRow(
+	markdown: string,
+	editMap: PreviewEditMap,
+	row: HTMLElement,
+): Readonly<{ end: number; start: number }> | undefined {
+	const id = row.getAttribute(VISUAL_BLOCK_ATTRIBUTE);
+	if (!id) return undefined;
+	const block = editMap.blocks.find((candidate) => candidate.id === id);
+	if (!block?.editable) return undefined;
+	const lineStarts = markdownLineStarts(markdown);
+	const lastLine = lineStarts.length - 1;
+	const centre = Math.min(Math.max(block.startLine, 0), lastLine);
+	for (let distance = 0; distance <= 3; distance += 1) {
+		const candidates =
+			0 === distance ? [centre] : [centre - distance, centre + distance];
+		for (const line of candidates) {
+			if (line < 0 || line > lastLine) continue;
+			const start = lineStarts[line];
+			const end = line === lastLine ? markdown.length : lineStarts[line + 1];
+			if (undefined === start || undefined === end) continue;
+			if (WINDOWED_EMPTIED_HEADING_ROW.test(markdown.slice(start, end))) {
+				return { end, start };
+			}
+		}
+	}
+	return undefined;
+}
+
 function blockPreElements(blocks: ReadonlyArray<HTMLElement>): HTMLElement[] {
 	return blocks.flatMap((block) => [
 		...(block.matches("pre") ? [block] : []),
@@ -4134,6 +4181,7 @@ function exactStructuralBlockSourceInterval(
 		return null;
 	}
 	if (
+		"fenced" !== interval.kind ||
 		0 !== interval.codeOrdinal ||
 		0 !== interval.sourceBlockStart ||
 		interval.sourceBlockEnd !== slice.length
@@ -6604,7 +6652,7 @@ export function WindowedImmersiveVisualEditor({
 					thematicBreakSelection.block.parentElement !== surface
 				) {
 
-					throw new Error('visual-editor-selection-map-failed');
+				  throw new Error('visual-editor-selection-map-failed');
 				}
 				const adjacentRange = (index: number): EffectiveBlockRange | null => {
 					const adjacent = editMapRef.current.blocks[index];
@@ -8896,7 +8944,7 @@ export function WindowedImmersiveVisualEditor({
 			const interval = localInterval;
 			const body = blockSlice.slice(interval.bodyStart, interval.bodyEnd);
 			const native = surface.ownerDocument.defaultView?.getSelection();
-			if (!interval.closed || (body !== "" && body !== interval.lineEnding)
+			if ("fenced" !== interval.kind || !interval.closed || (body !== "" && body !== interval.lineEnding)
 				|| lease.selection.start !== blockStart + interval.bodyStart || lease.selection.end !== lease.selection.start
 				|| !native?.isCollapsed || !native.anchorNode || !native.focusNode
 				|| visualCodeBodyDomOffset(inputBlock.code, { node: native.anchorNode, offset: native.anchorOffset }) !== 0
@@ -9446,7 +9494,7 @@ export function WindowedImmersiveVisualEditor({
 						lease.markdown.slice(blockStart, blockEnd),
 						0,
 					);
-					if (!interval || !exactStructuralBlockSourceInterval(lease.markdown, codeBlock)) {
+					if (!interval || "fenced" !== interval.kind || !exactStructuralBlockSourceInterval(lease.markdown, codeBlock)) {
 						throw new Error("visual-editor-window-pending-selection-stale");
 					}
 				} else {
@@ -9463,6 +9511,7 @@ export function WindowedImmersiveVisualEditor({
 						)
 					: null;
 				const emptyClosingSelection = null !== selectedBinding
+					&& "fenced" === selectedBinding.interval.kind
 					&& selectedBinding.interval.bodyStart === selectedBinding.interval.bodyEnd
 					&& (selectedBinding.interval.bodyEmptyPrefix?.length ?? 0) > 0
 					&& lease.selection.start === selectedBinding.interval.bodyStart
@@ -12989,7 +13038,140 @@ export function WindowedImmersiveVisualEditor({
 				value: markdown.slice(0, from) + markdown.slice(to),
 			};
 		};
+		/**
+		 * A Backspace at the visual start of an emptied heading row retires the
+		 * row.
+		 *
+		 * The renderer draws no marker for an emptied heading, so the row exists
+		 * only in the source: the marker run and one separator beside it are the
+		 * whole of what the press removes, and the row goes with them. The
+		 * removal is proved in the source before anything is written, so a press
+		 * this owner cannot place stays the silent no-op it always was - the DOM
+		 * and the caret are not touched.
+		 */
+		const retireWindowedEmptiedHeadingRow = (event: InputEvent): boolean => {
+			if ("deleteContentBackward" !== event.inputType || !event.cancelable) {
+				return false;
+			}
+			if (event.isComposing || composing) return false;
+			if (pendingRef.current || pendingPropRef.current) return false;
+			const native = surface.ownerDocument.defaultView?.getSelection();
+			if (
+				!native?.isCollapsed ||
+				1 !== native.rangeCount ||
+				!native.anchorNode ||
+				native.anchorNode !== native.focusNode ||
+				native.anchorOffset !== native.focusOffset ||
+				!surface.contains(native.anchorNode)
+			) return false;
+			const joinRow = visualJoinRowAtCaret(surface);
+			const row = joinRow?.row ?? null;
+			if (!row || row.parentElement !== surface) return false;
+			// A protected row is never this owner's boundary.
+			if (
+				row.closest(
+					`[contenteditable="false"], ${VISUAL_MARKDOWN_READ_ONLY_SELECTOR}`,
+				)
+			) return false;
+			let source: string;
+			let editMap: PreviewEditMap;
+			try {
+				source = assertReadySourceAndDom();
+				editMap = editMapRef.current;
+			} catch {
+				return false;
+			}
+			// The row's own accepted range is authoritative: the map's line
+			// coordinate may lag, and a ±3 window would otherwise let a second
+			// emptied heading within three lines stand in for this one. The
+			// window candidate is only used when it is exactly that range.
+			const own = acceptedWindowedBlockRange(
+				row,
+				rangesRef.current,
+				acceptedBlockSerializationsRef.current,
+			);
+			const ownRow = own && own.editable && own.end > own.start
+				&& WINDOWED_EMPTIED_HEADING_ROW.test(source.slice(own.start, own.end))
+				? { end: own.end, start: own.start }
+				: undefined;
+			// Without an own accepted range the window candidate cannot be
+			// proved, so it is never trusted: `ownRow` alone may name the row.
+			const currentSourceRow = ownRow ?? undefined;
+			// The retirement's positional fallback reads the document's first
+			// source row. A window that merely mounts this row first must not
+			// borrow it, so that arm is only asked for once the ledger proves the
+			// row is the document's own first block.
+			if (!currentSourceRow && null === row.previousElementSibling) {
+				if (
+					!own ||
+					0 !== own.index ||
+					!/^\s*$/u.test(source.slice(0, own.start))
+				) return false;
+			}
+			const removal = emptiedHeadingRowRetirement(
+				surface,
+				row,
+				source,
+				editMap,
+				currentSourceRow,
+			);
+			if (!removal || removal.start >= removal.end) return false;
+			const value =
+				source.slice(0, removal.start) + source.slice(removal.end);
+			if (value === source) return false;
+			// A retirement that leaves content behind cannot have been the only
+			// mounted row of a surface this press owns.
+			if (
+				"" !== value &&
+				null === row.previousElementSibling &&
+				null === row.nextElementSibling
+			) return false;
+			event.preventDefault();
+			const postSelection: DocumentSelection = {
+				direction: "none",
+				end: removal.caret,
+				start: removal.caret,
+			};
+			try {
+				const committedSelection = projectVisualMarkdownRemovalSelection(
+					editMap.blocks.map((block) => rangesRef.current.get(block.id)),
+					source,
+					{ from: removal.start, insert: "", to: removal.end },
+					postSelection,
+					value,
+				);
+				regionRef.current = null;
+				applyDocumentChange({ selection: postSelection, value: source });
+				applyDocumentChange({
+					changes: { from: removal.start, insert: "", to: removal.end },
+					deferNativeBridge: false,
+					isolateHistoryBefore: true,
+					recordHistorySelection: true,
+					selection: committedSelection,
+					value,
+				});
+				sourceRef.current = value;
+				onMarkdownChange();
+				requestFormalPreview(
+					value,
+					{
+						historyState: documentSession.document.getHistoryState(),
+						restoreFocus: surface.ownerDocument.activeElement === surface,
+						selection: committedSelection,
+					},
+					{
+						pinWindowSelection:
+							committedSelection.start === value.length && value.length > 0,
+					},
+				);
+			} catch (error) {
+				report(error);
+				onTransferFailure();
+			}
+			return true;
+		};
 		const handleBeforeInput = (event: InputEvent) => {
+			(window as any).__probe = { ...((window as any).__probe ?? {}), wive: (((window as any).__probe?.wive ?? 0) + 1) };
 			visualInputBlock = null;
 			textDeletion = null;
 			if (!event.cancelable &&
@@ -13445,6 +13627,7 @@ export function WindowedImmersiveVisualEditor({
 			}
 			if (replaceCrossSpacerSelection(event)) return;
 			if (composing || event.isComposing) return;
+			if (retireWindowedEmptiedHeadingRow(event)) return;
 			const emptyCodeGap = acceptedEmptyCodeGap();
 			if (emptyCodeGap && (event.inputType === "insertParagraph" || event.inputType === "insertLineBreak"
 				|| ((event.inputType === "insertText" || event.inputType === "insertReplacementText") && event.data !== null))) {
@@ -15873,6 +16056,7 @@ export function WindowedImmersiveVisualEditor({
 			}
 		});
 
+		(window as any).__probe = { ...((window as any).__probe ?? {}), mountedWive: 1 };
 		surface.addEventListener("beforeinput", handleBeforeInput);
 		surface.addEventListener("pointerdown", handlePendingPointerDown);
 		surface.addEventListener("pointerup", handlePendingPointerUp);

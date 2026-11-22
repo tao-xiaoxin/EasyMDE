@@ -890,8 +890,8 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 			ob_start();
 			$this->admin_assets->render_react_editor_preload();
 			$preload = ob_get_clean();
-			$this->assertMatchesRegularExpression( '#^<link rel="preload" as="script" fetchpriority="high" href="http://example\.org/.*/assets/build/assets/admin-editor-[A-Za-z0-9_-]+\.js">\n$#', $preload );
-			$this->assertSame( 1, substr_count( $preload, 'rel="preload"' ) );
+			$this->assertMatchesRegularExpression( '#^<link rel="modulepreload" fetchpriority="high" href="http://example\.org/.*/assets/build/assets/admin-editor-[A-Za-z0-9_-]+\.js">\n$#', $preload );
+			$this->assertSame( 1, substr_count( $preload, 'rel="modulepreload"' ) );
 
 			ob_start();
 			$this->admin_assets->render_react_editor_preload();

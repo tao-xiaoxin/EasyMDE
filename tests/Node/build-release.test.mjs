@@ -279,6 +279,8 @@ function createCompleteFixture(root) {
   const frontendEntry = 'frontend/src/entrypoints/admin-editor.tsx';
   const frontendScript = 'assets/admin-editor-fixture.js';
   const frontendMetadata = 'assets/admin-editor-fixture.asset.php';
+  const frontendDynamicSource = 'frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts';
+  const frontendChunk = 'assets/admin-editor-chunk-fixture.js';
   const adminEditorLoaderEntry = 'frontend/src/entrypoints/admin-editor-loader.ts';
   const adminEditorLoaderScript = 'assets/admin-editor-loader-fixture.js';
   const adminEditorLoaderMetadata = 'assets/admin-editor-loader-fixture.asset.php';
@@ -309,9 +311,15 @@ function createCompleteFixture(root) {
     'assets/build/manifest.json',
     JSON.stringify({
       [frontendEntry]: {
+        dynamicImports: [frontendDynamicSource],
         file: frontendScript,
         isEntry: true,
         src: frontendEntry
+      },
+      [frontendDynamicSource]: {
+        file: frontendChunk,
+        isDynamicEntry: true,
+        src: frontendDynamicSource
       }
     })
   );
@@ -325,13 +333,16 @@ function createCompleteFixture(root) {
           handle: 'easymde-admin-editor-toolbar',
           file: frontendScript,
           asset: frontendMetadata,
+          moduleFormat: 'esm',
           dependencies: ['wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n'],
-          resources: []
+          resources: [],
+          chunks: [frontendChunk]
         }
       }
     })
   );
   writeText(root, `assets/build/${frontendScript}`, 'window.EasyMDEEditorRootBootstrap = {};\n');
+  writeText(root, `assets/build/${frontendChunk}`, 'export const chunkFixture = true;\n');
   writeText(
     root,
     `assets/build/${frontendMetadata}`,
@@ -721,6 +732,7 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.includes('easymde/languages/easymde-zh_CN-easymde-admin-editor-toolbar.json'));
     assert.ok(entries.includes('easymde/assets/build/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-[A-Za-z0-9_-]+\.js$/.test(entry)));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-chunk-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
     assert.ok(entries.includes('easymde/assets/build/admin-editor-loader/manifest.json'));
     assert.ok(entries.includes('easymde/assets/build/admin-editor-loader/wordpress-manifest.json'));
@@ -903,6 +915,14 @@ test('release build rejects frontend artifacts outside the production manifests'
       () => buildRelease({ root }),
       /unexpected production frontend artifacts:[\s\S]*admin-editor-stale\.js/
     );
+
+    rmSync(join(root, 'assets/build/assets/admin-editor-stale.js'), { force: true });
+    writeText(root, 'assets/build/assets/admin-editor-chunk-orphan.js', 'export {};\n');
+
+    assert.throws(
+      () => buildRelease({ root }),
+      /unexpected production frontend artifacts:[\s\S]*admin-editor-chunk-orphan\.js/
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1041,6 +1061,7 @@ test('release build fails when required runtime assets or templates are missing'
     rmSync(join(root, 'assets/build/media-picker/assets/media-picker-bridge-fixture.js'), { force: true });
     rmSync(join(root, 'assets/css/frontend/code-copy.css'), { force: true });
     rmSync(join(root, 'assets/build/assets/admin-editor-fixture.js'), { force: true });
+    rmSync(join(root, 'assets/build/assets/admin-editor-chunk-fixture.js'), { force: true });
     rmSync(join(root, 'assets/build/code-copy/assets/frontend-code-copy-fixture.js'), { force: true });
     rmSync(join(root, 'assets/images/easymde-editor-icon.png'), { force: true });
     rmSync(join(root, 'THIRD-PARTY-NOTICES.md'), { force: true });
@@ -1055,6 +1076,7 @@ test('release build fails when required runtime assets or templates are missing'
     assert.ok(missing.includes('assets/build/media-picker/assets/media-picker-bridge-fixture.js'));
     assert.ok(missing.includes('assets/css/frontend/code-copy.css'));
     assert.ok(missing.includes('assets/build/assets/admin-editor-fixture.js'));
+    assert.ok(missing.includes('assets/build/assets/admin-editor-chunk-fixture.js'));
     assert.ok(missing.includes('assets/build/code-copy/assets/frontend-code-copy-fixture.js'));
     assert.ok(missing.includes('assets/images/easymde-editor-icon.png'));
     assert.ok(missing.includes('THIRD-PARTY-NOTICES.md'));

@@ -1,10 +1,6 @@
 import { css } from "@codemirror/lang-css";
 import { html } from "@codemirror/lang-html";
 import { javascript } from "@codemirror/lang-javascript";
-import { json } from "@codemirror/lang-json";
-import { python } from "@codemirror/lang-python";
-import { sql } from "@codemirror/lang-sql";
-import { yaml } from "@codemirror/lang-yaml";
 import {
 	ensureSyntaxTree,
 	indentRange,
@@ -139,13 +135,9 @@ function languageAlias(token: string): LanguageAlias | null {
 		: null;
 }
 
-function resolveLanguage(
-	language: string,
-	info: string | undefined,
-): ResolvedLanguage | null {
-	const token = languageToken(language, info);
-	const alias = languageAlias(token);
-	if (!alias) return null;
+async function loadLanguageSupport(
+	alias: LanguageAlias,
+): Promise<ResolvedLanguage> {
 	switch (alias.family) {
 		case "css":
 			return { support: css() };
@@ -164,14 +156,22 @@ function resolveLanguage(
 				default:
 					return { support: javascript() };
 			}
-		case "json":
+		case "json": {
+			const { json } = await import("@codemirror/lang-json");
 			return { support: json() };
-		case "python":
+		}
+		case "python": {
+			const { python } = await import("@codemirror/lang-python");
 			return { support: python() };
-		case "sql":
+		}
+		case "sql": {
+			const { sql } = await import("@codemirror/lang-sql");
 			return { support: sql() };
-		case "yaml":
+		}
+		case "yaml": {
+			const { yaml } = await import("@codemirror/lang-yaml");
 			return { support: yaml() };
+		}
 	}
 }
 
@@ -282,8 +282,8 @@ export async function indentEditorCode({
 	if (utf8ByteLength(content) > MAX_EDITOR_CODE_INDENTATION_BYTES) {
 		return unavailable("editor-code-indentation-query-too-large");
 	}
-	const resolved = resolveLanguage(language, info);
-	if (!resolved) {
+	const alias = languageAlias(languageToken(language, info));
+	if (!alias) {
 		return unavailable("editor-code-indentation-language-unsupported");
 	}
 	const physical = splitPhysicalLines(content);
@@ -303,6 +303,10 @@ export async function indentEditorCode({
 			: Math.max(from, (starts[range.endLine] ?? from) - 1);
 	let state: EditorState;
 	try {
+		const resolved = await loadLanguageSupport(alias);
+		if (signal?.aborted) {
+			return unavailable("editor-code-indentation-cancelled");
+		}
 		state = EditorState.create({
 			doc: normalized,
 			extensions: [resolved.support, indentUnit.of("  ")],

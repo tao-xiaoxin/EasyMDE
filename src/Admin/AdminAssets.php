@@ -62,7 +62,7 @@ final class AdminAssets {
 		}
 
 		remove_action( $this->react_editor_preload_hook, array( $this, 'render_react_editor_preload' ), 0 );
-		echo '<link rel="preload" as="script" fetchpriority="high" href="' . esc_url( $this->react_editor_preload_url ) . '">' . "\n";
+		echo '<link rel="modulepreload" fetchpriority="high" href="' . esc_url( $this->react_editor_preload_url ) . '">' . "\n";
 		$this->react_editor_preload_hook = '';
 		$this->react_editor_preload_url  = '';
 	}

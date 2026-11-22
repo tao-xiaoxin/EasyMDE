@@ -18,12 +18,20 @@ import { createBrowserToolbarShortcuts } from '../integrations/browser/keyboard/
 import { createBrowserLocalDraftStorage } from '../integrations/browser/local-drafts/browser-local-draft-storage';
 import { createBrowserImmersivePreferencesPort } from '../integrations/browser/immersive-preferences/browser-immersive-preferences';
 import { createBrowserImmersiveEnvironment } from '../integrations/browser/immersive/create-browser-immersive-environment';
-import { createBrowserPreviewScroll } from '../integrations/browser/preview/create-browser-preview-scroll';
+import type {
+  WechatClipboardPort,
+  WechatClipboardResult
+} from '../contracts/ports/wechat-clipboard-port';
 import {
-  createBrowserWechatClipboard,
-  type ClipboardItemConstructor
+  WechatVisualRasterizationError,
+  type WechatVisualRasterizationPort
+} from '../contracts/ports/wechat-visual-rasterization-port';
+import { createBrowserPreviewScroll } from '../integrations/browser/preview/create-browser-preview-scroll';
+import type {
+  BrowserWechatClipboardRuntime,
+  ClipboardItemConstructor
 } from '../integrations/browser/wechat/create-browser-wechat-clipboard';
-import { createBrowserWechatVisualRasterizer } from '../integrations/browser/wechat/create-browser-wechat-visual-rasterizer';
+import type { BrowserWechatVisualRasterizerRuntime } from '../integrations/browser/wechat/create-browser-wechat-visual-rasterizer';
 import { createGeneratedContentExportSession } from '../features/generated-content-export/generated-content-export-session';
 import {
   createBrowserPreviewEnhancementPort,
@@ -173,6 +181,173 @@ function localStorage(windowRef: Window): Storage | null {
   } catch {
     return null;
   }
+}
+
+function wechatBackgroundPreparationAbortError(): Error {
+  const error = new Error('wechat-background-preparation-cancelled');
+  error.name = 'AbortError';
+  return error;
+}
+
+function raceWithAbort<T>(
+  promise: Promise<T>,
+  signal: AbortSignal | undefined,
+  createAbortError: () => Error
+): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(createAbortError());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      reject(createAbortError());
+    };
+    const cleanup = () => {
+      signal.removeEventListener('abort', onAbort);
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    void promise.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error: unknown) => {
+        cleanup();
+        reject(error);
+      }
+    );
+  });
+}
+
+function createLazyBrowserWechatClipboard(
+  runtime: BrowserWechatClipboardRuntime,
+  isActive: () => boolean
+): WechatClipboardPort {
+  let resolvedPort: WechatClipboardPort | null = null;
+  let portPromise: Promise<WechatClipboardPort> | null = null;
+  const loadPort = (): Promise<WechatClipboardPort> => {
+    if (resolvedPort) return Promise.resolve(resolvedPort);
+    if (!portPromise) {
+      portPromise = import(
+        '../integrations/browser/wechat/create-browser-wechat-clipboard'
+      ).then(
+        ({ createBrowserWechatClipboard }) => {
+          const port = createBrowserWechatClipboard(runtime);
+          resolvedPort = port;
+          return port;
+        },
+        (error: unknown) => {
+          portPromise = null;
+          throw error;
+        }
+      );
+    }
+    return portPromise;
+  };
+
+  return {
+    prepare(preview, options = {}): Promise<void> {
+      if (!isActive()) return Promise.resolve();
+      if (options.signal?.aborted) {
+        return Promise.reject(wechatBackgroundPreparationAbortError());
+      }
+      if (resolvedPort) {
+        return resolvedPort.prepare
+          ? resolvedPort.prepare(preview, options)
+          : Promise.resolve();
+      }
+      return raceWithAbort(
+        loadPort(),
+        options.signal,
+        wechatBackgroundPreparationAbortError
+      ).then((port) => {
+        if (!isActive()) return undefined;
+        if (options.signal?.aborted) {
+          throw wechatBackgroundPreparationAbortError();
+        }
+        return port.prepare ? port.prepare(preview, options) : undefined;
+      });
+    },
+    copy(preview, options = {}): Promise<WechatClipboardResult> {
+      const failure = (): WechatClipboardResult =>
+        true === options.pngConversionEnabled
+          ? {
+              code: 'wechat-png-clipboard-failed',
+              sideEffects: 'none',
+              status: 'failed'
+            }
+          : { code: 'wechat-copy-failed', status: 'failed' };
+      if (!isActive() || options.signal?.aborted) {
+        return Promise.resolve(failure());
+      }
+      if (resolvedPort) {
+        return resolvedPort.copy(preview, options);
+      }
+      return loadPort().then(
+        (port) => {
+          if (!isActive() || options.signal?.aborted) {
+            return failure();
+          }
+          return port.copy(preview, options);
+        },
+        () => failure()
+      );
+    }
+  };
+}
+
+function createLazyBrowserWechatVisualRasterizer(
+  runtime: BrowserWechatVisualRasterizerRuntime,
+  isActive: () => boolean
+): WechatVisualRasterizationPort {
+  let resolvedPort: WechatVisualRasterizationPort | null = null;
+  let portPromise: Promise<WechatVisualRasterizationPort> | null = null;
+  const cancelledError = (): Error =>
+    new WechatVisualRasterizationError('wechat-png-rasterization-cancelled');
+  const loadPort = (): Promise<WechatVisualRasterizationPort> => {
+    if (resolvedPort) return Promise.resolve(resolvedPort);
+    if (!portPromise) {
+      portPromise = import(
+        '../integrations/browser/wechat/create-browser-wechat-visual-rasterizer'
+      ).then(
+        ({ createBrowserWechatVisualRasterizer }) => {
+          const port = createBrowserWechatVisualRasterizer(runtime);
+          resolvedPort = port;
+          return port;
+        },
+        (error: unknown) => {
+          portPromise = null;
+          throw error;
+        }
+      );
+    }
+    return portPromise;
+  };
+
+  return {
+    rasterize(request) {
+      if (!isActive() || request.signal.aborted) {
+        return Promise.reject(cancelledError());
+      }
+      if (resolvedPort) {
+        return resolvedPort.rasterize(request);
+      }
+      return raceWithAbort(loadPort(), request.signal, cancelledError).then(
+        (port) => {
+          if (!isActive() || request.signal.aborted) {
+            throw cancelledError();
+          }
+          return port.rasterize(request);
+        },
+        (error: unknown) => {
+          if (error instanceof WechatVisualRasterizationError) {
+            throw error;
+          }
+          throw new WechatVisualRasterizationError(
+            'wechat-png-rasterization-unavailable'
+          );
+        }
+      );
+    }
+  };
 }
 
 export function mountAdminEditor(
@@ -383,13 +558,16 @@ export function mountAdminEditor(
       : {}),
     workerUrl: bootstrap.editorBlockIndexWorkerUrl
   });
-  const wechatVisualRasterizer = createBrowserWechatVisualRasterizer({
-    blob: Blob,
-    document: documentRef,
-    file: File,
-    image: Image,
-    xmlSerializer: XMLSerializer
-  });
+  const wechatVisualRasterizer = createLazyBrowserWechatVisualRasterizer(
+    {
+      blob: Blob,
+      document: documentRef,
+      file: File,
+      image: Image,
+      xmlSerializer: XMLSerializer
+    },
+    () => active
+  );
   const generatedContentExportSession = createGeneratedContentExportSession({
     clipboard: editorClipboardPort,
     rasterizer: wechatVisualRasterizer
@@ -536,20 +714,23 @@ export function mountAdminEditor(
     submissionField,
     titleField,
     toolbar: bootstrap.toolbar,
-    wechatClipboard: createBrowserWechatClipboard({
-      blob: Blob,
-      clipboardItem: clipboardItem(windowRef),
-      document: documentRef,
-      fetch: (input, init) => windowRef.fetch(input, init),
-      getComputedStyle: (element, pseudoElement) => windowRef.getComputedStyle(element, pseudoElement),
-      getSelection: () => windowRef.getSelection(),
-      pageOffset: () => ({ x: windowRef.scrollX, y: windowRef.scrollY }),
-      scrollTo: (x, y) => windowRef.scrollTo(x, y),
-      write: windowRef.navigator.clipboard?.write
-        ? (items) =>
-            windowRef.navigator.clipboard.write(items as ClipboardItems)
-        : null
-    }),
+    wechatClipboard: createLazyBrowserWechatClipboard(
+      {
+        blob: Blob,
+        clipboardItem: clipboardItem(windowRef),
+        document: documentRef,
+        fetch: (input, init) => windowRef.fetch(input, init),
+        getComputedStyle: (element, pseudoElement) => windowRef.getComputedStyle(element, pseudoElement),
+        getSelection: () => windowRef.getSelection(),
+        pageOffset: () => ({ x: windowRef.scrollX, y: windowRef.scrollY }),
+        scrollTo: (x, y) => windowRef.scrollTo(x, y),
+        write: windowRef.navigator.clipboard?.write
+          ? (items) =>
+              windowRef.navigator.clipboard.write(items as ClipboardItems)
+          : null
+      },
+      () => active
+    ),
     wechatExport: bootstrap.wechatExport,
     wechatVisualRasterizationPort: wechatVisualRasterizer,
     simplifiedFormattingParser: {

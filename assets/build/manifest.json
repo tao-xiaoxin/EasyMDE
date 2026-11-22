@@ -1,8 +1,70 @@
 {
   "frontend/src/entrypoints/admin-editor.tsx": {
-    "file": "assets/admin-editor-BaG4S0FO.js",
+    "file": "assets/admin-editor-Da9TC--r.js",
     "name": "editor",
     "src": "frontend/src/entrypoints/admin-editor.tsx",
-    "isEntry": true
+    "isEntry": true,
+    "dynamicImports": [
+      "node_modules/@codemirror/lang-json/dist/index.js",
+      "node_modules/@codemirror/lang-python/dist/index.js",
+      "node_modules/@codemirror/lang-sql/dist/index.js",
+      "node_modules/@codemirror/lang-yaml/dist/index.js",
+      "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts",
+      "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts"
+    ]
+  },
+  "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts": {
+    "file": "assets/admin-editor-chunk-ytSZCO28.js",
+    "name": "create-browser-wechat-clipboard",
+    "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "frontend/src/entrypoints/admin-editor.tsx"
+    ]
+  },
+  "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts": {
+    "file": "assets/admin-editor-chunk-4mrAfL-F.js",
+    "name": "create-browser-wechat-visual-rasterizer",
+    "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "frontend/src/entrypoints/admin-editor.tsx"
+    ]
+  },
+  "node_modules/@codemirror/lang-json/dist/index.js": {
+    "file": "assets/admin-editor-chunk-QeXrjCzi.js",
+    "name": "dist",
+    "src": "node_modules/@codemirror/lang-json/dist/index.js",
+    "isDynamicEntry": true,
+    "imports": [
+      "frontend/src/entrypoints/admin-editor.tsx"
+    ]
+  },
+  "node_modules/@codemirror/lang-python/dist/index.js": {
+    "file": "assets/admin-editor-chunk-CuH-10IG.js",
+    "name": "dist",
+    "src": "node_modules/@codemirror/lang-python/dist/index.js",
+    "isDynamicEntry": true,
+    "imports": [
+      "frontend/src/entrypoints/admin-editor.tsx"
+    ]
+  },
+  "node_modules/@codemirror/lang-sql/dist/index.js": {
+    "file": "assets/admin-editor-chunk-CCb0qeQj.js",
+    "name": "dist",
+    "src": "node_modules/@codemirror/lang-sql/dist/index.js",
+    "isDynamicEntry": true,
+    "imports": [
+      "frontend/src/entrypoints/admin-editor.tsx"
+    ]
+  },
+  "node_modules/@codemirror/lang-yaml/dist/index.js": {
+    "file": "assets/admin-editor-chunk-Csy1FSf6.js",
+    "name": "dist",
+    "src": "node_modules/@codemirror/lang-yaml/dist/index.js",
+    "isDynamicEntry": true,
+    "imports": [
+      "frontend/src/entrypoints/admin-editor.tsx"
+    ]
   }
 }

@@ -105,7 +105,15 @@ Non-negotiable product and authority rules:
 - Focus Mode / immersive writing is excluded from the ordinary editor's default
   surface. The immersive presentation is a same-root exception: it reuses the
   existing document, Preview, native form, and WordPress capability owners
-  without a second root or persistence path.
+  without a second root or persistence path. For immersive live-visual editing
+  only, an authorized browser-side structured editor projection (ProseMirror
+  core packages, MIT) may provide one unified in-memory editing view over the
+  existing article theme CSS DOM, keeping complex/custom blocks as
+  raw-source-preserving protected atom cards, performing zero write-back on
+  read/view without edits, and synchronizing legitimate edits back to canonical
+  Markdown without becoming a persistence or formal rendering authority;
+  rationale belongs to
+  [ADR-002](docs/decisions/ADR-002-visual-editor-and-esm-architecture.md).
 - Ordinary Editor integration uses focused Ports and Adapters rather than
   scattering WordPress DOM, browser globals, or REST access through Components.
   This boundary covers the ordinary Editor Root and its protected document,
@@ -124,8 +132,13 @@ Non-negotiable product and authority rules:
   JavaScript, or z-index escalation. Other admin routes retain the native shell,
   and missing Settings assets expose a dedicated accessible failure and exit.
 - React and TypeScript, built with Vite and the WordPress-provided React 18
-  runtime, are the approved browser architecture. Normal focused Feature work
-  does not need a separate architecture-only Issue.
+  runtime, are the approved browser architecture. Vite builds may emit modern
+  local ES Modules with dynamic code splitting (targeting WordPress 6.7+ and
+  `es2020`, keeping all assets 100% local/offline, reusing the WordPress
+  React 18 `wp.element` runtime, and preserving public WordPress script handle
+  compatibility; see
+  [ADR-002](docs/decisions/ADR-002-visual-editor-and-esm-architecture.md)).
+  Normal focused Feature work does not need a separate architecture-only Issue.
 - React ecosystem dependencies needed by a focused task do not need separate
   architecture approval, but each must have a current non-duplicative purpose,
   acceptable license and package weight, no prohibited remote runtime or
@@ -387,8 +400,16 @@ Custom CSS:
 Markdown and HTML:
 
 - `league/commonmark`, through PHP `EasyMDE\Content\MarkdownRenderer`, is the
-  only production Markdown renderer.
-- Do not silently fall back to a partial or browser-side Markdown renderer.
+  only authoritative production Markdown renderer for Save/Publish
+  (`post_content`), public pages, read-only Split/Preview panes, and WeChat
+  Clipboard export.
+- Do not silently fall back to a partial or browser-side Markdown renderer for
+  formal rendering or persistence. An authorized browser-side structured
+  editor projection (ProseMirror, see
+  [ADR-002](docs/decisions/ADR-002-visual-editor-and-esm-architecture.md)) is
+  strictly an in-memory immersive visual-editing view synced back to canonical
+  Markdown on legitimate edits, never a persistence or formal rendering
+  authority.
 - Release packages include required Composer dependencies. When unavailable in
   development, show a clear administrator-visible failure and do not generate
   inconsistent output.
@@ -472,7 +493,10 @@ belong to `CONTRIBUTING.md`.
   dependencies, workflows, documents, compatibility layers, or speculative
   generality beyond the current verified need. A more elaborate solution
   requires concrete evidence that the simpler design cannot satisfy the
-  current constraints.
+  current constraints. Splitting complex modules into cohesive, focused files
+  (typically 200–700 lines) with single-direction layering is encouraged
+  maintainability hygiene, not overdesign (see
+  [ADR-002](docs/decisions/ADR-002-visual-editor-and-esm-architecture.md)).
 - For a material architecture, security, compatibility, migration, or release
   decision, explain why the chosen approach is necessary, which constraint it
   satisfies, and why a simpler alternative is insufficient.

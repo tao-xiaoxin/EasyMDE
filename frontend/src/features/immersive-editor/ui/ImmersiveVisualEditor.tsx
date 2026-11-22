@@ -7,6 +7,13 @@ import { decodeHTMLStrict } from 'entities';
 import type { ToolbarCommand } from '../../../contracts/bootstrap/toolbar-bootstrap';
 import type { ReferenceLabelCaseFoldProfile } from '../../../contracts/ports/editor-block-index-port';
 import type { PreviewEditMap } from '../../../contracts/ports/preview-request';
+import type {
+  ImmersiveVisualEditorRuntime,
+  ImmersiveWindowAcceptedSnapshot,
+  VisualCanonicalChangeRequest,
+  VisualToolbarCommandOptions,
+  VisualToolbarCommandResult
+} from '../../../contracts/visual-editor';
 import {
   type VisualProtectedNodeAttribute,
   prepareVisualProtectedNodeAdoption,
@@ -181,127 +188,13 @@ import {
   visualRowCarriesMarker
 } from '../visual-structural-row';
 
-export type ImmersiveVisualEditorRuntime = Readonly<{
-  executeCommand: (
-    command: ToolbarCommand,
-    options?: VisualToolbarCommandOptions
-  ) => VisualToolbarCommandResult;
-  applyCanonicalChange: (
-    request: VisualCanonicalChangeRequest
-  ) => VisualToolbarCommandResult;
-  getGeneratedPreviewIdentity: () => PreviewGeneratedPreviewIdentity | null;
-  isEditable: () => boolean;
-  /**
-   * Synchronous owner state: the accepted Preview no longer describes the
-   * canonical source, so its edit map may not be used to prepare a selection.
-   * This covers both an in-flight transfer and the window where the new
-   * canonical source is published but its accepted Preview is not installed
-   * yet. Context-menu readiness reads this directly instead of a React render
-   * value that can lag the owner.
-   */
-  isTransferPending: () => boolean;
-  prepareImageTarget: (
-    request: PreviewImageTargetRequest
-  ) => PreviewImageTargetLease | null;
-  prepareImageTargetBySelection: (
-    request: PreviewImageTargetSelectionRequest
-  ) => PreviewImageTargetPinLease | null;
-  prepareGeneratedContentTarget: (
-    request: PreviewGeneratedContentTargetRequest
-  ) => PreviewGeneratedContentTargetLease | null;
-  prepareGeneratedContentTargetForSelection: (
-    request: PreviewGeneratedContentTargetForSelectionRequest
-  ) => PreviewGeneratedContentTargetPinLease | null;
-  /**
-   * The pure preflight a demand runs exactly once, before this owner captures
-   * its target: settle the user-authored native input this owner already
-   * accepted, then report whether the document is still this owner's to
-   * describe. It requests no render, maps no target, and places no selection.
-   * An existing pending Preview alone is not a preflight failure, because the
-   * demand parks on readiness for that render instead; a pending input that
-   * cannot settle is a real failure this owner has already reported exactly
-   * once, so callers must not report it again.
-   */
-  prepareContextMenuDemand: () => boolean;
-  /**
-   * Capture the logical block - and the exact subtarget - that the user's one
-   * gesture addressed, as a witness in the current canonical source. Capture
-   * is pure: no selection placement, no document write, no render request. It
-   * runs once per initial gesture, after `prepareContextMenuDemand`.
-   *
-   * `resolve` returns the element that block became in the accepted render for
-   * the same source, so a formal re-authentication that renumbers roots or
-   * replaces nodes still yields the block the user pointed at. It returns null
-   * for a released, replaced, foreign, ambiguous, or stale target, which
-   * callers must treat as the target being lost - never as permission to fall
-   * back to the pre-render element or to an old coordinate.
-   */
-  captureContextMenuTarget: (
-    target: Element | null
-  ) => EditorContextMenuTargetLease | null;
-  prepareMediaSelection: () => boolean;
-  prepareContextMenuSelection?: (
-    target?: Element | null,
-    point?: Readonly<{ x: number; y: number }>,
-    activation?: 'keyboard' | 'pointer'
-  ) => boolean;
-  /**
-   * True when the accepted Preview cannot be shown to describe the current
-   * canonical source - this owner committed a local edit it could not prove
-   * line-preserving, or a previous document's render still stands beside a new
-   * source. A demand calls `refreshAcceptedPreview` instead of refusing: the
-   * refresh requests the formal Preview for the current canonical source, the
-   * demand stays parked on readiness, and the same gesture completes once that
-   * render is accepted. A foreign DOM change, an unknown canonical revision,
-   * or a lost transfer is not refreshable and still fails explicitly.
-   */
-  needsAcceptedPreviewRefresh?: () => boolean;
-  /**
-   * Request the formal Preview for the current canonical source, supplying the
-   * canonical revision, native history, and selection the acceptance must
-   * match, and keep the owner in a pending transfer until that render is
-   * accepted. Returns false when the source is not a trusted staleness, which
-   * callers must report as an explicit failure rather than retrying.
-   */
-  refreshAcceptedPreview?: () => boolean;
-  prepareSourceNavigation: (
-    expected: Readonly<{ revision: number; value: string }>
-  ) => boolean;
-  prepareToolbarFallback: () => boolean;
-  surface: HTMLElement;
-}>;
-
-export type VisualToolbarCommandResult =
-  | 'blocked'
-  | 'failed'
-  | 'handled'
-  | 'unsupported';
-
-export type VisualToolbarCommandOptions = Readonly<{
-  requestPreviewTransfer?: boolean;
-}>;
-
-export type VisualCanonicalChangeRequest = Readonly<{
-  change: Readonly<{
-    changes: Readonly<{ from: number; insert: string; to: number }>;
-    selection: Readonly<{
-      direction: 'backward' | 'forward' | 'none';
-      end: number;
-      start: number;
-    }>;
-    selectionFallback?: 'caret' | 'reflow-caret';
-    value: string;
-  }>;
-  expected: Readonly<{
-    revision: number;
-    selection: Readonly<{
-      direction: 'backward' | 'forward' | 'none';
-      end: number;
-      start: number;
-    }>;
-    value: string;
-  }>;
-}>;
+export type {
+  ImmersiveVisualEditorRuntime,
+  ImmersiveWindowAcceptedSnapshot,
+  VisualCanonicalChangeRequest,
+  VisualToolbarCommandOptions,
+  VisualToolbarCommandResult
+};
 
 export function assertVisualCanonicalChangeRequest(
   request: VisualCanonicalChangeRequest,
@@ -343,25 +236,6 @@ export function assertVisualCanonicalChangeRequest(
     throw new Error('visual-editor-canonical-change-invalid');
   }
 }
-
-export type ImmersiveWindowAcceptedSnapshot = Readonly<{
-  blocks: ReadonlyArray<
-    Readonly<{
-      id: string;
-      innerHTML: string;
-      node: HTMLElement;
-    }>
-  >;
-  /** Formal ledger and canonical revision published with these exact nodes. */
-  editMap?: PreviewEditMap;
-  sourceRevision?: number;
-  key: number;
-  nodes: ReadonlyArray<Node>;
-  /** Owner-certified physical gap; never a formal edit-map row. */
-  ownedGap?: HTMLElement;
-  revision: number;
-  signature: string;
-}>;
 
 export type VisualPreviewSnapshot = Readonly<{
   editMap?: PreviewEditMap | null;

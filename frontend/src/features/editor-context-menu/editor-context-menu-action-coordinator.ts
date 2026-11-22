@@ -27,7 +27,7 @@ import {
   type EditorTextEdit
 } from "./editor-context-menu-text-edit";
 import { isEditorContextCurrent } from "./editor-context-menu-rules";
-import type { VisualCanonicalChangeRequest } from "../immersive-editor/ui/ImmersiveVisualEditor";
+import type { VisualCanonicalChangeRequest } from "../../contracts/visual-editor";
 import { runCodeContextMenuAction } from "./editor-context-menu-code-actions";
 import { runGeneratedContextMenuAction } from "./editor-context-menu-generated-actions";
 import { runImageContextMenuAction } from "./editor-context-menu-image-actions";

@@ -118,10 +118,10 @@ import {
 	visualJoinRowAtCaret,
 } from "../visual-structural-row";
 import type {
-	ImmersiveVisualEditorProps,
 	ImmersiveVisualEditorRuntime,
 	ImmersiveWindowAcceptedSnapshot,
-} from "./ImmersiveVisualEditor";
+} from "../../../contracts/visual-editor";
+import type { ImmersiveVisualEditorProps } from "./ImmersiveVisualEditor";
 import type { EditorContextMenuTargetLease } from "../../editor-context-menu/EditorContextMenuFeature";
 import { markdownReferenceContextQuery, markdownReferenceLabelQuery, type MarkdownSyntaxNode } from "../../editor-context-menu/editor-markdown-link-preparation";
 import {

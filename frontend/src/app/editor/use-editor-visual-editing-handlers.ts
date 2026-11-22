@@ -215,7 +215,9 @@ export function useEditorVisualEditingHandlers({
         }
       );
     }
-    const surface = previewRuntimeRef.current?.surface;
+    const surface =
+      visualEditorRuntimeRef.current?.surface
+      ?? previewRuntimeRef.current?.surface;
     if (surface) {
       const codeFrames = Array.from(
         surface.querySelectorAll<HTMLElement>('pre > code.hljs')
@@ -247,7 +249,8 @@ export function useEditorVisualEditingHandlers({
     setVisualPreviewChanged,
     setVisualWindowedHistoryBranchHeld,
     syncedVisualCodeFramesRef,
-    visualDocumentEndHistoryPendingRef
+    visualDocumentEndHistoryPendingRef,
+    visualEditorRuntimeRef
   ]);
 
   const handleVisualPendingChange = useCallback(
@@ -278,10 +281,8 @@ export function useEditorVisualEditingHandlers({
   );
 
   const handleVisualCanonicalDocumentChange = useCallback(() => {
-    lastVisualFailureRef.current = null;
-    leaveVisualPreview();
-    reportFailure('visual-editor-canonical-document-changed');
-  }, [lastVisualFailureRef, leaveVisualPreview, reportFailure]);
+    setVisualPreviewChanged(true);
+  }, [setVisualPreviewChanged]);
 
   const reportVisualToolbarFailure = useCallback(() => {
     const message = contextMenuStrings?.statusActionFailed;
@@ -383,44 +384,45 @@ export function useEditorVisualEditingHandlers({
       if (!runtime) {
         throw new Error('visual-editor-runtime-unavailable');
       }
+      if ('image' === command.action) {
+        if (!runtime.prepareMediaSelection()) {
+          reportVisualToolbarFailure();
+          return 'blocked';
+        }
+        return 'unsupported';
+      }
       const result = runtime.executeCommand(command);
       if ('handled' === result) return result;
       if ('unsupported' !== result) {
         reportVisualToolbarFailure();
         return result;
       }
-      if ('image' !== command.action) {
-        if (!runtime.prepareMediaSelection()) {
-          reportVisualToolbarFailure();
-          return 'blocked';
-        }
-        const planned = plan?.();
-        const revision = documentSession?.document.getRevision?.();
-        if (planned && undefined !== revision) {
-          const canonicalResult = runtime.applyCanonicalChange({
-            change: planned.change,
-            expected: {
-              revision,
-              selection: planned.expected.selection,
-              value: planned.expected.value
-            }
-          });
-          if ('handled' === canonicalResult) {
-            return canonicalResult;
+      if (!runtime.prepareMediaSelection()) {
+        reportVisualToolbarFailure();
+        return 'blocked';
+      }
+      const planned = plan?.();
+      const revision = documentSession?.document.getRevision?.();
+      if (planned && undefined !== revision) {
+        const canonicalResult = runtime.applyCanonicalChange({
+          change: planned.change,
+          expected: {
+            revision,
+            selection: planned.expected.selection,
+            value: planned.expected.value
           }
-          reportVisualToolbarFailure();
+        });
+        if ('handled' === canonicalResult) {
           return canonicalResult;
         }
+        reportVisualToolbarFailure();
+        return canonicalResult;
       }
-      const prepared =
-        'image' === command.action
-          ? runtime.prepareMediaSelection()
-          : runtime.prepareToolbarFallback();
+      const prepared = runtime.prepareToolbarFallback();
       if (!prepared) {
         reportVisualToolbarFailure();
         return 'blocked';
       }
-      if ('image' === command.action) return 'unsupported';
       leaveVisualPreview();
       return 'unsupported';
     },

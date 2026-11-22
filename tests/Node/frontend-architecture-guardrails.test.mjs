@@ -19,9 +19,6 @@ const MAX_ZERO_JSX_TSX_LINES = 400;
  * cleanup PRs can delete their entry from this map.
  */
 const LEGACY_LARGE_FILE_LINE_CEILINGS = {
-	"frontend/src/features/immersive-editor/ui/ImmersiveVisualEditor.tsx": 34829,
-	"frontend/src/features/immersive-editor/ui/WindowedImmersiveVisualEditor.tsx": 20999,
-	"frontend/src/features/immersive-editor/visual-markdown.ts": 16524,
 	"frontend/src/features/live-preview/ui/PreviewSurfaceOwner.tsx": 6821,
 };
 
@@ -29,10 +26,7 @@ const LEGACY_LARGE_FILE_LINE_CEILINGS = {
  * Pre-existing zero-JSX multi-thousand-line `.tsx` controllers slated for
  * replacement under ADR-002. No new `.tsx` file over 400 lines may omit JSX.
  */
-const LEGACY_ZERO_JSX_LARGE_TSX_ALLOWLIST = new Set([
-	"frontend/src/features/immersive-editor/ui/ImmersiveVisualEditor.tsx",
-	"frontend/src/features/immersive-editor/ui/WindowedImmersiveVisualEditor.tsx",
-]);
+const LEGACY_ZERO_JSX_LARGE_TSX_ALLOWLIST = new Set();
 
 /**
  * Single pre-existing type-only import of `ImmersiveStrings` from

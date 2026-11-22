@@ -22,8 +22,7 @@ import type { EditorMarkdownBlockIndex } from '../../features/editor-context-men
 import type {
   PreviewImageTargetLease,
   PreviewImageTargetPinLease,
-  PreviewSurfaceRuntime,
-  PreviewSurfaceStatus
+  PreviewSurfaceRuntime
 } from '../../features/live-preview/ui/PreviewSurfaceOwner';
 import {
   editorCodeContentActionContext,
@@ -58,7 +57,6 @@ export type CreateVisualContextMenuSurfaceDeps = Readonly<{
   imageUpload: EditorRootProps['imageUpload'];
   pendingImageTargetPinRef: SharedRef<PendingImageTargetPin | null>;
   previewRuntimeRef: SharedRef<PreviewSurfaceRuntime | null>;
-  previewSurfaceStatusRef: SharedRef<PreviewSurfaceStatus>;
   releasePendingImageTargetPin: () => void;
   requestContextMenuBlockIndex: (
     owner: object,
@@ -88,7 +86,6 @@ export function createVisualContextMenuSurface(
     imageUpload,
     pendingImageTargetPinRef,
     previewRuntimeRef,
-    previewSurfaceStatusRef,
     releasePendingImageTargetPin,
     requestContextMenuBlockIndex,
     runtime,
@@ -473,10 +470,7 @@ export function createVisualContextMenuSurface(
         runtime.refreshAcceptedPreview?.();
         return { status: 'pending' };
       }
-      if (
-        runtime.isTransferPending()
-        || 'loading' === previewSurfaceStatusRef.current
-      ) {
+      if (runtime.isTransferPending()) {
         return { status: 'pending' };
       }
       if (hasBlockIndexPort) {

@@ -8,10 +8,7 @@ import type {
   PreviewSurfaceStatus
 } from '../../features/live-preview/ui/PreviewSurfaceOwner';
 import { WECHAT_PREPARATION_DEBOUNCE_MS } from './editor-root-helpers';
-import type {
-  ImmersiveVisualEditorRuntime,
-  SharedRef
-} from './editor-root-types';
+import type { SharedRef } from './editor-root-types';
 
 export type UseEditorWechatPreparationOptions = Readonly<{
   immersive: boolean;
@@ -21,8 +18,6 @@ export type UseEditorWechatPreparationOptions = Readonly<{
   previewRuntimeRef: SharedRef<PreviewSurfaceRuntime | null>;
   previewSurfaceStatusRef: SharedRef<PreviewSurfaceStatus>;
   rootActiveRef: SharedRef<boolean>;
-  visualEditorRuntimeRef: SharedRef<ImmersiveVisualEditorRuntime | null>;
-  visualEditorSurface: HTMLElement | null;
   visualPreviewEditingRef: SharedRef<boolean>;
   visualPreviewLockingRef: SharedRef<boolean>;
   visualPreviewUnlockingRef: SharedRef<boolean>;
@@ -39,8 +34,6 @@ export function useEditorWechatPreparation({
   previewRuntimeRef,
   previewSurfaceStatusRef,
   rootActiveRef,
-  visualEditorRuntimeRef,
-  visualEditorSurface,
   visualPreviewEditingRef,
   visualPreviewLockingRef,
   visualPreviewUnlockingRef,
@@ -136,14 +129,12 @@ export function useEditorWechatPreparation({
 
   const scheduleCurrentWechatPreviewPreparation = useCallback(() => {
     if (visualPreviewEditingRef.current) return;
-    const surface = visualPreviewEditingRef.current
-      ? visualEditorRuntimeRef.current?.surface
-      : previewRuntimeRef.current?.surface;
-    scheduleWechatPreviewPreparation(surface ?? null);
+    scheduleWechatPreviewPreparation(
+      previewRuntimeRef.current?.surface ?? null
+    );
   }, [
     previewRuntimeRef,
     scheduleWechatPreviewPreparation,
-    visualEditorRuntimeRef,
     visualPreviewEditingRef
   ]);
 
@@ -166,8 +157,7 @@ export function useEditorWechatPreparation({
     if (!wechatExportEnabled || !wechatClipboard.prepare) {
       return undefined;
     }
-    const surface =
-      visualEditorSurface ?? previewRuntimeRef.current?.surface ?? null;
+    const surface = previewRuntimeRef.current?.surface ?? null;
     if (!surface) return undefined;
     return immersiveEnvironment.observePreviewLayout(
       surface,
@@ -178,7 +168,6 @@ export function useEditorWechatPreparation({
     previewRuntimeGeneration,
     previewRuntimeRef,
     scheduleCurrentWechatPreviewPreparation,
-    visualEditorSurface,
     wechatClipboard,
     wechatExportEnabled
   ]);

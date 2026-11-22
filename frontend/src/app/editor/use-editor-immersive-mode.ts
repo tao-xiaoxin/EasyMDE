@@ -30,6 +30,7 @@ export type UseEditorImmersiveModeOptions = Readonly<{
   cancelVisualUnlockPreparation: () => void;
   closeForToolbar: (focusTarget?: HTMLElement) => void;
   documentSession: EditorDocumentSession | null;
+  hasUnsyncedVisualChanges: () => boolean;
   immersive: boolean;
   immersiveEnvironment: ImmersiveEnvironmentPort;
   immersiveMode: ImmersiveViewMode;
@@ -68,6 +69,7 @@ export function useEditorImmersiveMode({
   cancelVisualUnlockPreparation,
   closeForToolbar,
   documentSession,
+  hasUnsyncedVisualChanges,
   immersive,
   immersiveEnvironment,
   immersiveMode,
@@ -208,18 +210,13 @@ export function useEditorImmersiveMode({
       deferredImmersiveModeRef.current = { generation, mode: null };
       return;
     }
-    // Exiting immersive mode is a user CANCELLATION of visual preview: the
-    // accepted source is already what the canonical document holds, so
-    // re-rendering it here would issue a session render for a demand the user
-    // just abandoned. Teardown therefore suppresses the leave-time refresh; a
-    // not-ready surface is also acceptable, so materialize is skipped.
     void prepareSourceMutationWithPreview({
       isCurrent: () =>
         generation === immersiveModeRequestRef.current
         && rootActiveRef.current
         && immersiveRef.current,
       materialize: false,
-      suppressRefresh: true
+      suppressRefresh: !hasUnsyncedVisualChanges()
     }).then((prepared) => {
       const current =
         generation === immersiveModeRequestRef.current
@@ -243,6 +240,7 @@ export function useEditorImmersiveMode({
   }, [
     cancelVisualUnlockPreparation,
     captureLayoutScrollRestore,
+    hasUnsyncedVisualChanges,
     immersiveRef,
     prepareSourceMutationWithPreview,
     rootActiveRef,
@@ -333,7 +331,7 @@ export function useEditorImmersiveMode({
     }
     void prepareSourceMutationWithPreview({
       ...(null === request.mode
-        ? { materialize: false, suppressRefresh: true }
+        ? { materialize: false, suppressRefresh: !hasUnsyncedVisualChanges() }
         : {}),
       isCurrent: () =>
         request.generation === immersiveModeRequestRef.current
@@ -371,6 +369,7 @@ export function useEditorImmersiveMode({
   }, [
     cancelVisualUnlockPreparation,
     captureLayoutScrollRestore,
+    hasUnsyncedVisualChanges,
     immersiveModeRef,
     immersiveRef,
     prepareSourceMutationWithPreview,

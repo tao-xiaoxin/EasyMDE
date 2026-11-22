@@ -36,7 +36,6 @@ import type {
   EditorStatus,
   EditorStatusState,
   EditorSubmissionState,
-  ImmersiveVisualEditorRuntime,
   SharedRef
 } from './editor-root-types';
 
@@ -76,8 +75,6 @@ export type UseEditorAppearanceBridgeOptions = Readonly<{
   ) => void;
   submissionStateRef: SharedRef<EditorSubmissionState>;
   toolbarSessionRef: SharedRef<EditorToolbarSession | null>;
-  visualEditorRuntimeRef: SharedRef<ImmersiveVisualEditorRuntime | null>;
-  visualPreviewEditing: boolean;
   visualPreviewEditingRef: SharedRef<boolean>;
 }>;
 
@@ -109,8 +106,6 @@ export function useEditorAppearanceBridge({
   setEditorStatusState,
   submissionStateRef,
   toolbarSessionRef,
-  visualEditorRuntimeRef,
-  visualPreviewEditing,
   visualPreviewEditingRef
 }: UseEditorAppearanceBridgeOptions) {
   const codeThemeFrameSyncPendingRef = useRef<string | null>(null);
@@ -288,7 +283,11 @@ export function useEditorAppearanceBridge({
         if (defaults) {
           fontControlsSessionRef.current?.replaceState(defaults);
         }
-        if (markupChanged || visualPreviewWasEditing) {
+        const customCssChanged =
+          previousState.customCssId !== state.customCssId
+          || ('custom' === state.markdownTheme
+            && 'custom' !== previousState.markdownTheme);
+        if (markupChanged || visualPreviewWasEditing || customCssChanged) {
           previewRefreshPendingRef.current = true;
           schedulePreview(true);
         } else {
@@ -383,9 +382,7 @@ export function useEditorAppearanceBridge({
         };
         documentSession?.replaceSubmissionState(submissionStateRef.current);
         scheduleWechatPreviewPreparation(
-          visualEditorRuntimeRef.current?.surface
-            ?? previewRuntimeRef.current?.surface
-            ?? null
+          previewRuntimeRef.current?.surface ?? null
         );
       },
       closeOtherPopovers: () => {
@@ -403,8 +400,7 @@ export function useEditorAppearanceBridge({
       rawFontControlsPort,
       scheduleWechatPreviewPreparation,
       submissionStateRef,
-      toolbarSessionRef,
-      visualEditorRuntimeRef
+      toolbarSessionRef
     ]
   );
 
@@ -450,7 +446,6 @@ export function useEditorAppearanceBridge({
     'easymde-code-mac',
     `easymde-markdown-theme-${appearanceState.markdownTheme}`,
     `easymde-code-theme-${renderedCodeTheme}`,
-    visualPreviewEditing ? 'easymde-immersive-visual-editor' : '',
     'custom' === appearanceState.markdownTheme
       ? 'easymde-custom-css-active'
       : '',

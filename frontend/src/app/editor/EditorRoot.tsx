@@ -240,8 +240,6 @@ export function EditorRoot(props: EditorRootProps) {
     setEditorStatusState: session.setEditorStatusState,
     submissionStateRef: session.submissionStateRef,
     toolbarSessionRef,
-    visualEditorRuntimeRef,
-    visualPreviewEditing: visual.visualPreviewEditing,
     visualPreviewEditingRef
   });
 
@@ -270,6 +268,7 @@ export function EditorRoot(props: EditorRootProps) {
     visualPreviewEditing: visual.visualPreviewEditing,
     visualPreviewEditingRef,
     visualPreviewWindowRequestedRef,
+    waitForFreshFormalPreview: visual.waitForFreshFormalPreview,
     wechatClipboard: props.wechatClipboard,
     wechatExport: props.wechatExport,
     wechatVisualRasterizationPort: props.wechatVisualRasterizationPort
@@ -297,7 +296,6 @@ export function EditorRoot(props: EditorRootProps) {
     previewPort: session.previewPort,
     previewRuntimeGeneration: visual.previewRuntimeGeneration,
     previewRuntimeRef,
-    previewSurfaceStatusRef: visual.previewSurfaceStatusRef,
     publishEditorStatus: session.publishEditorStatus,
     releasePendingContextResourcesRef,
     remoteImageImportPort: media.remoteImageImportPort,
@@ -600,10 +598,8 @@ export function EditorRoot(props: EditorRootProps) {
           <ImmersivePreviewSurface
             active={visual.immersive && 'preview' === visual.immersiveMode}
             canEdit={
-              'ready' === visual.previewSurfaceStatus
-              && null !== visual.visualPreviewSnapshot
-              && visual.visualPreviewHasEditableMap
-              && null !== documentSession
+              null !== documentSession
+              && 'error' !== visual.previewSurfaceStatus
             }
             changed={visual.visualPreviewChanged}
             editable={visual.visualPreviewEditing}
@@ -612,13 +608,6 @@ export function EditorRoot(props: EditorRootProps) {
             unlocking={visual.visualPreviewUnlocking}
             onToggleEditable={() => {
               if (visual.visualPreviewEditing) {
-                // Locking returns this same Preview to read-only; it does not
-                // consume the accepted window as a result. Use the teardown
-                // policy: the canonical source is already synchronized, a
-                // not-ready render is acceptable, and the Preview owner's own
-                // windowed release restores/retains the read-only surface.
-                // Requesting full materialization here would turn a legitimate
-                // loading readiness return into a page error.
                 void visual.prepareSourceMutationWithPreview({
                   materialize: false
                 });
@@ -635,7 +624,11 @@ export function EditorRoot(props: EditorRootProps) {
             strings={props.immersiveStrings}
           >
             <PreviewSurfaceOwner
-              className={appearance.previewClassName}
+              className={
+                visual.visualPreviewEditing
+                  ? `${appearance.previewClassName} easymde-preview-surface-hidden`
+                  : appearance.previewClassName
+              }
               emptyMode={
                 visual.immersive && 'preview' === visual.immersiveMode
                   ? 'paper'
@@ -671,28 +664,12 @@ export function EditorRoot(props: EditorRootProps) {
               scrollPort={props.scrollPort}
               sourceRevision={documentSession?.document.getRevision?.() ?? 0}
               style={appearance.previewStyle}
-              {...(visual.visualPreviewEditing
-                ? {
-                    contentEditable: true,
-                    label: props.immersiveStrings.previewEditorLabel,
-                    role: 'textbox',
-                    spellCheck: true
-                  }
-                : {})}
-              windowed={visual.visualPreviewSurfaceWindowed}
+              windowed={false}
             />
-            {visual.visualPreviewEditing
-            && visual.visualPreviewSnapshot
-            && documentSession
-            && previewRuntimeRef.current ? (
+            {visual.visualPreviewEditing && documentSession ? (
               <ImmersiveVisualEditorHost
-                acceptedWindowSnapshotGeneration={
-                  visual.acceptedWindowSnapshotGeneration
-                }
+                className={appearance.previewClassName}
                 documentSession={documentSession}
-                getAcceptedReferenceSource={visual.getAcceptedReferenceSource}
-                getAcceptedWindowRow={visual.getAcceptedWindowRow}
-                getAcceptedWindowSnapshot={visual.getAcceptedWindowSnapshot}
                 getGeneratedPreviewIdentity={
                   visual.getVisualGeneratedPreviewIdentity
                 }
@@ -700,46 +677,17 @@ export function EditorRoot(props: EditorRootProps) {
                   props.imageUpload.autoUploadPastedImages
                 }
                 imageUploadEnabled={props.imageUpload.enabled}
+                label={props.immersiveStrings.previewEditorLabel}
                 onCanonicalDocumentChange={
                   visual.handleVisualCanonicalDocumentChange
                 }
-                onDiagnostic={reportFailure}
                 onDispose={visual.handleVisualEditorDispose}
                 onFailure={visual.handleVisualFailure}
+                onImageDropFiles={media.handleVisualImageDropFiles}
+                onImagePasteFiles={media.handleVisualImagePasteFiles}
                 onMarkdownChange={visual.handleVisualMarkdownChange}
-                onPendingChange={visual.handleVisualPendingChange}
                 onReady={visual.handleVisualEditorReady}
-                onTransferFailure={visual.handleVisualTransferFailure}
-                pending={visual.visualPreviewPending}
-                prepareGeneratedContentTarget={
-                  visual.prepareVisualGeneratedContentTarget
-                }
-                prepareImageTarget={visual.prepareVisualImageTarget}
-                prepareImageTargetBySelection={
-                  visual.prepareVisualImageTargetBySelection
-                }
-                prepareWindowBlockAdoption={
-                  visual.prepareVisualWindowBlockAdoption
-                }
-                previewSnapshot={visual.visualPreviewSnapshot}
-                previewStatus={visual.previewSurfaceStatus}
-                referenceLabelCaseFoldProfile={
-                  props.referenceLabelCaseFoldProfile
-                }
-                requestPreview={visual.handleVisualPreviewRequest}
-                requestPreviewAtDocumentEnd={
-                  visual.handleVisualPreviewAtDocumentEnd
-                }
-                resumeCanonicalSelectionOnOwnerTransfer={
-                  visual.visualOwnerSelectionTransferred
-                }
-                resumeCanonicalSelectionToken={
-                  visual.visualResumeCanonicalToken
-                }
-                retainCompositionSurface={visual.retainCompositionSurface}
-                revealAcceptedWindowRow={visual.revealAcceptedWindowRow}
-                surface={previewRuntimeRef.current.surface}
-                windowed={visual.visualPreviewWindowed}
+                style={appearance.previewStyle}
               />
             ) : null}
           </ImmersivePreviewSurface>

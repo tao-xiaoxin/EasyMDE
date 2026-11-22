@@ -8,7 +8,6 @@ import {
 } from "@wordpress/element";
 import type { CSSProperties } from "react";
 import type { DocumentHistoryState } from "../../document-source/adapters/code-mirror-document-session";
-import { certifiedTextTailGapSlice } from "../../immersive-editor/visual-markdown";
 import type {
 	EditorMarkdownMathSpan,
 	EditorMarkdownSourceBlock,
@@ -41,14 +40,6 @@ import {
 	type GeneratedImageTargetSelection,
 	generatedImageTargetCount,
 } from "../../generated-content-export/generated-image-target";
-import {
-	projectVisualCodeFenceMetadata,
-	projectVisualCodeBodySelection,
-	serializeVisualMarkdownBlockFragment,
-	visualBoundarySourceOffset,
-	visualCaretBoundaryFromSourceOffset,
-	visualCodeBodyBoundaryAtOffset,
-} from "../../immersive-editor/visual-markdown";
 import {
 	createPreviewRequestSession,
 	type PreviewRequestSession,
@@ -1300,41 +1291,12 @@ function createAcceptedWindowSnapshot(
 	});
 }
 
-function previewWindowFenceBindings(
-	repository: PreviewWindowNodeRepository,
-	markdown: string,
-): ((root: HTMLElement) => Readonly<{ end: number; start: number }> | null) | null {
-	if (!markdown) return null;
-	const lineStarts = markdownLineStarts(markdown);
-	const bindings = new Map<string, Readonly<{ end: number; start: number }>>();
-	let previousEndLine = 0;
-	for (const entry of repository.blocks) {
-		const block = entry.map;
-		if (
-			!Number.isInteger(block.startLine) ||
-			!Number.isInteger(block.endLine) ||
-			block.startLine < previousEndLine ||
-			block.startLine < 0 ||
-			block.endLine < block.startLine ||
-			block.endLine > lineStarts.length ||
-			(block.editable && block.endLine === block.startLine)
-		) {
-			return null;
-		}
-		previousEndLine = block.endLine;
-		if (!block.editable) continue;
-		const start = lineStarts[block.startLine];
-		const end =
-			block.endLine === lineStarts.length
-				? markdown.length
-				: lineStarts[block.endLine];
-		if (undefined === start || undefined === end) return null;
-		bindings.set(block.id, { end, start });
-	}
-	return (root: HTMLElement) => {
-		const id = root.getAttribute(VISUAL_BLOCK_ATTRIBUTE) ?? "";
-		return id ? (bindings.get(id) ?? null) : null;
-	};
+function certifiedTextTailGapSlice(
+	gapSlice: string,
+	tightAdjacent: boolean,
+): boolean {
+	if (/^[\r\n]{2,}$/u.test(gapSlice)) return true;
+	return tightAdjacent && /^[\r\n]?$/u.test(gapSlice);
 }
 
 const ACCEPTED_WINDOW_BASELINE_SHIFT_COMPACTION_LIMIT = 64;
@@ -1577,7 +1539,6 @@ function compactAcceptedWindowBaseline(
 }
 
 function captureAcceptedWindowBaseline(
-	surface: HTMLElement,
 	repository: PreviewWindowNodeRepository,
 	revision: number,
 	signature: string,
@@ -1588,12 +1549,6 @@ function captureAcceptedWindowBaseline(
 		validatePreviewWindowRepository(repository);
 	} catch {
 		return null;
-	}
-	if (markdown) {
-		const binding = previewWindowFenceBindings(repository, markdown);
-		if (binding) {
-			projectVisualCodeFenceMetadata(markdown, surface, binding);
-		}
 	}
 	markVisualProtectedNodesReadOnly(repository.nodes);
 	const blocksByNode = new Map<HTMLElement, AcceptedWindowBaseBlockRecord>();
@@ -5204,7 +5159,6 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 						return;
 					}
 					pendingWindowBaselineRef.current = captureAcceptedWindowBaseline(
-						candidateSurface,
 						repository,
 						generation,
 						activeCandidate.signature,
@@ -5297,7 +5251,6 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 					}
 					// A surviving accepted row is the native editing anchor, not a
 					// pixel offset to repair after replacing its selection subtree.
-					let selectionHandoff: SafePreviewHtmlSinkSelectionHandoff | undefined;
 					const native = surface.ownerDocument.defaultView?.getSelection();
 					let selectedRoot: Node | null = native?.isCollapsed ? native.anchorNode : null;
 					while (selectedRoot && selectedRoot.parentNode !== surface) selectedRoot = selectedRoot.parentNode;
@@ -5326,189 +5279,6 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 							repository.blocks = repository.blocks.map((block, ordinal) => ordinal === index ? { ...block, node: selectedRoot as HTMLElement } : block);
 							if (pendingWindowBaselineRef.current) pendingWindowBaselineRef.current = extendAcceptedWindowBaseline(pendingWindowBaselineRef.current, id, selectedRoot);
 							initialPinnedIndices.push(index);
-						} else if (candidateNode && candidateNode.tagName === selectedRoot.tagName && native?.anchorNode && native.isCollapsed) {
-							const previousRoot = selectedRoot;
-							const previousPoint = { node: native.anchorNode, offset: native.anchorOffset };
-							const previousCodes = Array.from(previousRoot.querySelectorAll<HTMLElement>("pre > code"));
-							const previousCode = previousPoint.node instanceof Element ? previousPoint.node.closest("code") : previousPoint.node.parentElement?.closest("code");
-							const codeOrdinal = previousCode instanceof HTMLElement ? previousCodes.indexOf(previousCode) : -1;
-							const nextCodes = Array.from(candidateNode.querySelectorAll<HTMLElement>("pre > code"));
-							const nextCode = nextCodes[codeOrdinal];
-							if (previousCode instanceof HTMLElement && codeOrdinal >= 0 && nextCode && nextCodes.length === previousCodes.length) {
-								const sourceSlice = activeCandidate.markdown.slice(previousRange.start, previousRange.end);
-								const projection = projectVisualCodeBodySelection(previousCode, sourceSlice,
-									serializeVisualMarkdownBlockFragment([previousRoot]), codeOrdinal, { start: previousPoint, end: previousPoint });
-								const sourceBodyOffset = projection.sourceSelection.start - projection.sourceInterval.bodyStart;
-								const nextPoint = visualCodeBodyBoundaryAtOffset(nextCode, projection.sourceText.slice(0, sourceBodyOffset).replace(/\r\n|\r/g, "\n").length);
-								const nextProjection = projectVisualCodeBodySelection(nextCode, sourceSlice,
-									serializeVisualMarkdownBlockFragment([candidateNode]), codeOrdinal, { start: nextPoint, end: nextPoint });
-								if (nextProjection.sourceSelection.start !== projection.sourceSelection.start || nextProjection.sourceSelection.end !== projection.sourceSelection.end) {
-									throw new PreviewWindowDomError("preview-window-code-selection-projection-mismatch");
-								}
-								const nextHtml = candidateNode.innerHTML;
-								const nextId = repository.blocks[index]!.map.id;
-								selectionHandoff = {
-									previous: previousPoint, next: nextPoint,
-									isCurrent: () => {
-										const liveSource = readCurrentSourceSnapshot();
-										if (!ownerActiveRef.current || generationRef.current !== generation
-											|| liveSource?.revision !== currentSource.revision || liveSource.value !== currentSource.value
-											|| previousRoot.innerHTML !== previousBlock.innerHTML
-											|| previousRoot.getAttribute(VISUAL_BLOCK_ATTRIBUTE) !== previousBlock.id
-											|| candidateNode.innerHTML !== nextHtml || candidateNode.getAttribute(VISUAL_BLOCK_ATTRIBUTE) !== nextId
-											|| previousRoot.querySelectorAll("pre > code")[codeOrdinal] !== previousCode
-											|| candidateNode.querySelectorAll("pre > code")[codeOrdinal] !== nextCode
-											|| !previousCode.contains(previousPoint.node) || !nextCode.contains(nextPoint.node)
-											|| previousPoint.offset < 0 || previousPoint.offset > (previousPoint.node instanceof Text ? previousPoint.node.length : previousPoint.node.childNodes.length)
-											|| nextPoint.offset < 0 || nextPoint.offset > nextPoint.node.length) return false;
-										const livePrevious = projectVisualCodeBodySelection(previousCode, sourceSlice,
-											serializeVisualMarkdownBlockFragment([previousRoot]), codeOrdinal, { start: previousPoint, end: previousPoint });
-										const liveNext = projectVisualCodeBodySelection(nextCode, sourceSlice,
-											serializeVisualMarkdownBlockFragment([candidateNode]), codeOrdinal, { start: nextPoint, end: nextPoint });
-										return livePrevious.sourceSelection.start === projection.sourceSelection.start
-											&& livePrevious.sourceSelection.end === projection.sourceSelection.end
-											&& liveNext.sourceSelection.start === projection.sourceSelection.start
-											&& liveNext.sourceSelection.end === projection.sourceSelection.end;
-									},
-								};
-								initialPinnedIndices.push(index);
-							} else if (previousPoint.node instanceof Text) {
-								// Ordinary text keeps the same semantic caret through a
-								// windowed replacement. This is not an H2 special case:
-								// the accepted block's own source range and serialization
-								// map the live Text point to source, then the candidate's
-								// own serialization maps that exact source offset back.
-								// A failed round trip is an explicit handoff failure, not
-								// permission to let the selection collapse to ARTICLE.
-								try {
-									const sourceSlice = activeCandidate.markdown.slice(previousRange.start, previousRange.end);
-									const previousSerialization = serializeVisualMarkdownBlockFragment([previousRoot]);
-									const candidateSerialization = serializeVisualMarkdownBlockFragment([candidateNode]);
-									// The block-local source mapping helpers express a heading
-									// body relative to its marker; invert the exact source
-									// mapping instead of assuming a heading or paragraph
-									// prefix. The hint is exact for ordinary paragraphs; the
-									// bounded scan proves headings and inline spellings.
-									const sourceOffsetsForPoint = (
-										root: HTMLElement,
-										serialization: string,
-										pointNode: Node,
-										pointOffset: number
-									): ReadonlyArray<number> => {
-										const matches = new Set<number>();
-										const consider = (offset: number): void => {
-											if (!Number.isInteger(offset) || offset < 0
-												|| offset > sourceSlice.length || matches.has(offset)) return;
-											try {
-												const point = visualCaretBoundaryFromSourceOffset(
-													root,
-													sourceSlice,
-													serialization,
-													offset
-												);
-												if (point.node === pointNode && point.offset === pointOffset) {
-													matches.add(offset);
-												}
-											} catch {
-												// No caret is representable at this offset.
-											}
-										};
-										try {
-											consider(visualBoundarySourceOffset(
-												root,
-												sourceSlice,
-												serialization,
-												pointNode,
-												pointOffset
-											));
-										} catch {
-											// The owner refused this caret; no fallback
-											// offset is invented for it.
-										}
-										return [...matches];
-									};
-									const previousOffsets = sourceOffsetsForPoint(
-										previousRoot,
-										previousSerialization,
-										previousPoint.node,
-										previousPoint.offset
-									);
-									if (1 !== previousOffsets.length) {
-										throw new Error("preview-window-selection-handoff-source-missing");
-									}
-									const sourceOffset = previousOffsets[0] as number;
-									const nextPoint = visualCaretBoundaryFromSourceOffset(
-										candidateNode,
-										sourceSlice,
-										candidateSerialization,
-										sourceOffset
-									);
-									if (!(nextPoint.node instanceof Text)) {
-										throw new Error("preview-window-selection-handoff-target-missing");
-									}
-									const candidateOffsets = sourceOffsetsForPoint(
-										candidateNode,
-										candidateSerialization,
-										nextPoint.node,
-										nextPoint.offset
-									);
-									if (1 !== candidateOffsets.length || candidateOffsets[0] !== sourceOffset) {
-										throw new Error("preview-window-selection-handoff-round-trip");
-									}
-									const nextHtml = candidateNode.innerHTML;
-									const nextId = repository.blocks[index]!.map.id;
-									selectionHandoff = {
-										previous: previousPoint,
-										next: nextPoint,
-										isCurrent: () => {
-											const liveSource = readCurrentSourceSnapshot();
-											if (!ownerActiveRef.current || generationRef.current !== generation
-												|| liveSource?.revision !== currentSource.revision
-												|| liveSource.value !== currentSource.value
-												|| previousRoot.innerHTML !== previousBlock.innerHTML
-												|| previousRoot.getAttribute(VISUAL_BLOCK_ATTRIBUTE) !== previousBlock.id
-												|| candidateNode.innerHTML !== nextHtml
-												|| candidateNode.getAttribute(VISUAL_BLOCK_ATTRIBUTE) !== nextId
-												|| !previousRoot.contains(previousPoint.node)
-												|| !candidateNode.contains(nextPoint.node)
-												|| !(previousPoint.node instanceof Text)
-												|| previousPoint.offset < 0
-												|| previousPoint.offset > previousPoint.node.length
-												|| nextPoint.offset < 0
-												|| nextPoint.offset > (nextPoint.node instanceof Text
-													? nextPoint.node.length
-													: nextPoint.node.childNodes.length)) return false;
-											try {
-												if (!(previousPoint.node instanceof Text)
-													|| !(nextPoint.node instanceof Text)) return false;
-												const livePrevious = sourceOffsetsForPoint(
-													previousRoot,
-													previousSerialization,
-													previousPoint.node,
-													previousPoint.offset
-												);
-												const liveNext = sourceOffsetsForPoint(
-													candidateNode,
-													candidateSerialization,
-													nextPoint.node,
-													nextPoint.offset
-												);
-												return 1 === livePrevious.length
-													&& 1 === liveNext.length
-													&& livePrevious[0] === sourceOffset
-													&& liveNext[0] === sourceOffset;
-											} catch {
-												return false;
-											}
-										}
-									};
-									initialPinnedIndices.push(index);
-								} catch {
-									throw new PreviewWindowDomError(
-										"preview-window-selection-handoff-unavailable"
-									);
-								}
-							}
 						}
 					}
 					const initialWindow = repository.model.getWindow({
@@ -5523,7 +5293,6 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 						key: ++windowCommitKeyRef.current,
 						nodes: [...windowNodes(repository, initialWindow)],
 						revision: generation,
-						...(selectionHandoff ? { selectionHandoff } : {}),
 					};
 					pinAcceptedWindowBaselineNodes(
 						pendingWindowBaselineRef.current,
@@ -5676,7 +5445,6 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 							? acceptedGeneratedPreviewRef.current.markdown
 							: (readCurrentSourceSnapshot()?.value ?? null);
 				acceptedWindowBaselineRef.current = captureAcceptedWindowBaseline(
-					surface,
 					repository,
 					state.generation,
 					state.signature,

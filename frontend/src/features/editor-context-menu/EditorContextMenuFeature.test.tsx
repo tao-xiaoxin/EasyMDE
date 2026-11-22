@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { EditorClipboardPort } from '../../contracts/ports/editor-clipboard-port';
 import { parseMarkdownImageScale } from '../image-scale/image-scale-contract';
-import { createVisualImageInteraction } from '../immersive-editor/visual-markdown';
 import { createEditorContextMenuOperationOwner } from './editor-context-menu-operation';
 import { useEditorContextMenuDemand } from './editor-context-menu-demand';
 import {
@@ -5150,14 +5149,19 @@ describe('EditorContextMenuFeature', () => {
     }
     window.getSelection()?.removeAllRanges();
     const activations: Array<string | undefined> = [];
-    // The real visual owner hands every gesture to one image-interaction
-    // owner; this harness mirrors that wiring with an inert hook set.
-    const imageInteraction = createVisualImageInteraction(surface, {
-      canActivate: () => true,
-      focus: () => undefined,
-      report: () => undefined,
-      synchronizeSelection: () => true
-    });
+    const selectPointedImage = (
+      target: Element | null | undefined,
+      activation: 'keyboard' | 'pointer'
+    ): void => {
+      if ('pointer' !== activation || !target) return;
+      const image = target instanceof HTMLImageElement ? target : target.closest('img');
+      if (!image || !surface.contains(image)) return;
+      const range = document.createRange();
+      range.selectNode(image);
+      const live = window.getSelection();
+      live?.removeAllRanges();
+      live?.addRange(range);
+    };
     let selection: {
       direction: 'backward' | 'forward' | 'none';
       end: number;
@@ -5179,9 +5183,7 @@ describe('EditorContextMenuFeature', () => {
           kind: 'visual',
           prepare: (target, _blockIndex, _position, activation) => {
             activations.push(activation);
-            // The interaction owner decides whether the gesture may rebind the
-            // selection, exactly as the real visual runtime does.
-            imageInteraction.select(target, activation ?? 'keyboard');
+            selectPointedImage(target, activation ?? 'keyboard');
             const live = window.getSelection();
             if (!live?.anchorNode || !live.focusNode) return false;
             selection = live.isCollapsed
@@ -5218,7 +5220,6 @@ describe('EditorContextMenuFeature', () => {
       expect(activations).toEqual(['pointer', 'pointer', 'keyboard'])
     );
     expect(window.getSelection()?.anchorNode).toBe(secondParagraph);
-    imageInteraction.dispose();
   });
 
   it('captures scroll baseline after prepareDemand and preparePointerSelection so synchronous scrollTop clamping does not cancel a pending menu while real post-gesture scroll still cancels it', async () => {

@@ -1,4 +1,5 @@
 import {
+  flushSync,
   useCallback,
   useEffect,
   useMemo,
@@ -14,8 +15,9 @@ import type { RemoteImageImportPort } from '../../contracts/ports/remote-image-i
 import type { WechatClipboardCopyOptions } from '../../contracts/ports/wechat-clipboard-port';
 import type { EditorDocumentSession } from '../../features/document-source/ui/EditorDocumentSource';
 import {
+  type ImageUploadSessionController,
   type ImageUploadStatus,
-  createImageUploadSession,
+  createImageUploadSessionController,
   createRemoteImageImportCoordinator
 } from '../../features/image-upload/image-upload-session';
 import { openFeaturedImagePicker } from '../../features/immersive-editor/open-featured-image-picker';
@@ -66,6 +68,7 @@ export type UseEditorMediaUploadBridgeOptions = Readonly<{
   visualPreviewEditing: boolean;
   visualPreviewEditingRef: SharedRef<boolean>;
   visualPreviewWindowRequestedRef: SharedRef<boolean>;
+  waitForFreshFormalPreview: () => Promise<HTMLElement | null>;
   wechatClipboard: EditorRootProps['wechatClipboard'];
   wechatExport: EditorRootProps['wechatExport'];
   wechatVisualRasterizationPort: EditorRootProps['wechatVisualRasterizationPort'];
@@ -96,6 +99,7 @@ export function useEditorMediaUploadBridge({
   visualPreviewEditing,
   visualPreviewEditingRef,
   visualPreviewWindowRequestedRef,
+  waitForFreshFormalPreview,
   wechatClipboard,
   wechatExport,
   wechatVisualRasterizationPort
@@ -103,6 +107,9 @@ export function useEditorMediaUploadBridge({
   const mediaOperationRef = useRef<Promise<unknown> | null>(null);
   const featuredImageOperationRef =
     useRef<Promise<NativeFeaturedImage | null> | null>(null);
+  const imageUploadControllerRef = useRef<ImageUploadSessionController | null>(
+    null
+  );
   const imageUploadOperationSequenceRef = useRef(0);
   const [mediaPickerDialog, setMediaPickerDialog] = useState<
     'media' | 'featured' | null
@@ -247,11 +254,14 @@ export function useEditorMediaUploadBridge({
           || visualPreviewWindowRequestedRef.current
         ) {
           if (!prepareVisualSource()) return null;
-          const previewRuntime = previewRuntimeRef.current;
-          if (!previewRuntime || !(await previewRuntime.materialize())) {
-            return null;
-          }
-          leaveVisualPreview();
+          flushSync(() => {
+            leaveVisualPreview({ suppressRefresh: true });
+          });
+          const freshSurface = await waitForFreshFormalPreview();
+          if (!freshSurface) return null;
+          return freshSurface.querySelector('[data-easymde-preview-window-spacer]')
+            ? null
+            : freshSurface;
         }
         const surface = previewRuntimeRef.current?.surface ?? null;
         return surface?.querySelector('[data-easymde-preview-window-spacer]')
@@ -263,10 +273,7 @@ export function useEditorMediaUploadBridge({
       clipboard: wechatClipboard,
       copyOptions,
       enabled: wechatExport.enabled,
-      getPreview: () =>
-        visualEditorRuntimeRef.current?.surface
-        ?? previewRuntimeRef.current?.surface
-        ?? null,
+      getPreview: () => previewRuntimeRef.current?.surface ?? null,
       onDiagnostic: reportFailure,
       onStatus: setWechatStatus,
       strings: wechatExport.strings
@@ -280,9 +287,9 @@ export function useEditorMediaUploadBridge({
     previewRuntimeRef,
     reportFailure,
     setWechatStatus,
-    visualEditorRuntimeRef,
     visualPreviewEditingRef,
     visualPreviewWindowRequestedRef,
+    waitForFreshFormalPreview,
     wechatClipboard,
     wechatExport,
     wechatVisualRasterizationPort
@@ -431,6 +438,20 @@ export function useEditorMediaUploadBridge({
 
   useEffect(() => () => wechatSession.dispose(), [wechatSession]);
 
+  const handleVisualImagePasteFiles = useCallback(
+    (files: ReadonlyArray<File>, event: ClipboardEvent) => {
+      imageUploadControllerRef.current?.uploadFiles(files, 'paste', event);
+    },
+    []
+  );
+
+  const handleVisualImageDropFiles = useCallback(
+    (files: ReadonlyArray<File>, event: DragEvent) => {
+      imageUploadControllerRef.current?.uploadFiles(files, 'drop', event);
+    },
+    []
+  );
+
   useEffect(() => {
     void previewRuntimeGeneration;
     if (!documentSession || !remoteImageImportCoordinator) {
@@ -446,17 +467,23 @@ export function useEditorMediaUploadBridge({
     const visualRuntime = visualPreviewEditing
       ? visualEditorRuntimeRef.current
       : null;
-    return createImageUploadSession({
+    const controller = createImageUploadSessionController({
       allowedExtensions: imageUpload.allowedExtensions,
       allowedMimeTypes: imageUpload.allowedMimeTypes,
       autoUploadPastedImages: imageUpload.autoUploadPastedImages,
+      delegateLocalFileEvents: Boolean(visualRuntime),
       document: visualRuntime
         ? {
             applyTextChange: (change) => {
               canonicalDocument.applyTextChange(change);
-              leaveVisualPreview();
             },
-            focus: canonicalDocument.focus,
+            focus: () => {
+              if (visualRuntime.surface.isConnected) {
+                visualRuntime.surface.focus({ preventScroll: true });
+              } else {
+                canonicalDocument.focus();
+              }
+            },
             getSnapshot: () => {
               if (!visualRuntime.prepareMediaSelection()) {
                 throw new Error('visual-editor-selection-map-failed');
@@ -479,11 +506,17 @@ export function useEditorMediaUploadBridge({
       target: visualEditorSurface ?? documentSession.document.getInputElement(),
       upload: imageUploadPort
     });
+    imageUploadControllerRef.current = controller;
+    return () => {
+      if (imageUploadControllerRef.current === controller) {
+        imageUploadControllerRef.current = null;
+      }
+      controller.dispose();
+    };
   }, [
     documentSession,
     imageUpload,
     imageUploadPort,
-    leaveVisualPreview,
     nextImageUploadOperationId,
     previewRuntimeGeneration,
     remoteImageImportCoordinator,
@@ -500,6 +533,8 @@ export function useEditorMediaUploadBridge({
     copyWechatFromImmersive,
     executeRootExternalCommand,
     handleMediaPickerAttachError,
+    handleVisualImageDropFiles,
+    handleVisualImagePasteFiles,
     mediaPickerDialog,
     openMediaPicker,
     remoteImageImportPort,

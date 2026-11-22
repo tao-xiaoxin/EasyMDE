@@ -222,43 +222,63 @@ export function generatedRootAtTarget(
   if (!target) return null;
   const selector = 'math' === kind ? '.easymde-math' : '.easymde-mermaid';
   const root = target.closest(selector);
-  const block = root?.closest<HTMLElement>('[data-easymde-visual-block-id]');
-  if (!(root instanceof HTMLElement) || !block) return null;
-  const roots = (
-    block.matches(selector)
-      ? [block, ...Array.from(block.querySelectorAll<HTMLElement>(selector))]
-      : Array.from(block.querySelectorAll<HTMLElement>(selector))
-  )
-    .filter(
-      (candidate) =>
-        candidate.closest('[data-easymde-visual-block-id]') === block
+  if (!(root instanceof HTMLElement)) return null;
+  const block = root.closest<HTMLElement>('[data-easymde-visual-block-id]');
+  if (block) {
+    const roots = (
+      block.matches(selector)
+        ? [block, ...Array.from(block.querySelectorAll<HTMLElement>(selector))]
+        : Array.from(block.querySelectorAll<HTMLElement>(selector))
     )
-    .filter(
-      (candidate) =>
-        candidate === block
-        || candidate.parentElement?.closest(selector) === null
-    );
+      .filter(
+        (candidate) =>
+          candidate.closest('[data-easymde-visual-block-id]') === block
+      )
+      .filter(
+        (candidate) =>
+          candidate === block
+          || candidate.parentElement?.closest(selector) === null
+      );
+    const ordinal = roots.indexOf(root);
+    return ordinal < 0 ? null : { ordinal, root };
+  }
+  const proseMirrorSurface = root.closest<HTMLElement>(
+    '.easymde-prosemirror-editor'
+  );
+  if (!proseMirrorSurface) return null;
+  const roots = Array.from(
+    proseMirrorSurface.querySelectorAll<HTMLElement>(selector)
+  ).filter(
+    (candidate) => candidate.parentElement?.closest(selector) === null
+  );
   const ordinal = roots.indexOf(root);
   return ordinal < 0 ? null : { ordinal, root };
 }
 
 /**
  * The pointer image's rendered identity: the visual block it belongs to and
- * its image slot inside that block. The windowed owner keeps both stable
- * across an accepted Preview re-render, so two elements with the same
- * identity describe the same source image while any other pair does not.
+ * its image slot inside that block.
  */
 export function visualImageSlotIdentity(
   image: HTMLImageElement
 ): Readonly<{ blockId: string; ordinal: number }> | null {
   const block = image.closest<HTMLElement>('[data-easymde-visual-block-id]');
   const blockId = block?.getAttribute('data-easymde-visual-block-id');
-  if (!block || !blockId) return null;
-  const images = Array.from(block.querySelectorAll('img')).filter(
-    (candidate) => candidate.closest('[data-easymde-visual-block-id]') === block
+  if (block && blockId) {
+    const images = Array.from(block.querySelectorAll('img')).filter(
+      (candidate) => candidate.closest('[data-easymde-visual-block-id]') === block
+    );
+    const ordinal = images.indexOf(image);
+    return ordinal < 0 ? null : { blockId, ordinal };
+  }
+  const proseMirrorSurface = image.closest<HTMLElement>(
+    '.easymde-prosemirror-editor'
   );
-  const ordinal = images.indexOf(image);
-  return ordinal < 0 ? null : { blockId, ordinal };
+  if (!proseMirrorSurface) return null;
+  const ordinal = Array.from(proseMirrorSurface.querySelectorAll('img')).indexOf(
+    image
+  );
+  return ordinal < 0 ? null : { blockId: 'pm-block-0', ordinal };
 }
 
 export function generatedMathMlAvailable(root: Element): boolean {

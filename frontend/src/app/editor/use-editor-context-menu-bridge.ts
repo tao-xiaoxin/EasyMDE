@@ -36,10 +36,7 @@ import {
   type EditorSourceLinkQuerySession,
   createEditorSourceLinkQuery
 } from '../../features/editor-context-menu/editor-source-link-query';
-import type {
-  PreviewSurfaceRuntime,
-  PreviewSurfaceStatus
-} from '../../features/live-preview/ui/PreviewSurfaceOwner';
+import type { PreviewSurfaceRuntime } from '../../features/live-preview/ui/PreviewSurfaceOwner';
 import { createBrowserEditorImageHydrationScheduler } from '../../integrations/browser/editor-context-menu/create-browser-editor-image-hydration-scheduler';
 import {
   createContextMenuActionCapabilities,
@@ -94,7 +91,6 @@ export type UseEditorContextMenuBridgeOptions = Readonly<{
   previewPort: PreviewRequestPort;
   previewRuntimeGeneration: number;
   previewRuntimeRef: SharedRef<PreviewSurfaceRuntime | null>;
-  previewSurfaceStatusRef: SharedRef<PreviewSurfaceStatus>;
   publishEditorStatus: (status: EditorStatus) => void;
   releasePendingContextResourcesRef: SharedRef<
     (reason?: 'cancelled' | 'unavailable') => void
@@ -136,7 +132,6 @@ export function useEditorContextMenuBridge({
   previewPort,
   previewRuntimeGeneration,
   previewRuntimeRef,
-  previewSurfaceStatusRef,
   publishEditorStatus,
   releasePendingContextResourcesRef,
   remoteImageImportPort,
@@ -755,7 +750,6 @@ export function useEditorContextMenuBridge({
       imageUpload,
       pendingImageTargetPinRef,
       previewRuntimeRef,
-      previewSurfaceStatusRef,
       releasePendingImageTargetPin,
       requestContextMenuBlockIndex,
       runtime,
@@ -775,7 +769,6 @@ export function useEditorContextMenuBridge({
     imageUpload,
     previewRuntimeGeneration,
     previewRuntimeRef,
-    previewSurfaceStatusRef,
     releasePendingImageTargetPin,
     requestContextMenuBlockIndex,
     subscribeContextMenuBlockIndex,

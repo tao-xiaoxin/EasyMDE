@@ -264,11 +264,14 @@ function mapInlineAtomRangeInBlock(
 	return { start: entry.mdStart, end: entry.mdEnd };
 }
 
+const INLINE_MARK_OPEN_GAP_PATTERN = /^[*_~`]+$/;
+
 function mapPmPosToMdOffset(
 	doc: ProseMirrorNode,
 	blocks: ReadonlyArray<TopLevelBlockSourceSpan>,
 	markdown: string,
 	pmPos: number,
+	firstSelectedChar?: string,
 ): number {
 	const clampedPos = clampNumber(pmPos, 0, doc.content.size);
 	const entry = findBlockEntryForPmPos(blocks, clampedPos);
@@ -281,7 +284,16 @@ function mapPmPosToMdOffset(
 	}
 	const slice = markdown.slice(entry.mdStart, entry.mdEnd);
 	const textBefore = doc.textBetween(entry.pmPos, clampedPos, "\n", "\uFFFC");
-	const relativeOffset = advanceThroughSourceForText(slice, textBefore);
+	let relativeOffset = advanceThroughSourceForText(slice, textBefore);
+	if (firstSelectedChar && firstSelectedChar.length === 1 && firstSelectedChar !== "\uFFFC") {
+		const nextCharIdx = slice.indexOf(firstSelectedChar, relativeOffset);
+		if (
+			nextCharIdx > relativeOffset &&
+			INLINE_MARK_OPEN_GAP_PATTERN.test(slice.slice(relativeOffset, nextCharIdx))
+		) {
+			relativeOffset = nextCharIdx;
+		}
+	}
 	return clampNumber(entry.mdStart + relativeOffset, entry.mdStart, entry.mdEnd);
 }
 
@@ -305,10 +317,19 @@ export function computeVisualSelectionToMarkdownSelection(
 		return { direction: "none", end: entry.mdEnd, start: entry.mdStart };
 	}
 
-	const fromOffset = mapPmPosToMdOffset(doc, blocks, markdown, selection.from);
 	if (selection.empty) {
+		const fromOffset = mapPmPosToMdOffset(doc, blocks, markdown, selection.from);
 		return { direction: "none", end: fromOffset, start: fromOffset };
 	}
+	const selectedText = doc.textBetween(selection.from, selection.to, "\n", "\uFFFC");
+	const firstSelectedChar = selectedText.length > 0 ? selectedText[0] : undefined;
+	const fromOffset = mapPmPosToMdOffset(
+		doc,
+		blocks,
+		markdown,
+		selection.from,
+		firstSelectedChar,
+	);
 	const toOffset = mapPmPosToMdOffset(doc, blocks, markdown, selection.to);
 	const start = Math.min(fromOffset, toOffset);
 	const end = Math.max(fromOffset, toOffset);

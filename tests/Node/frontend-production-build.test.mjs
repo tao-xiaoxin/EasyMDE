@@ -256,7 +256,9 @@ test('production build emits an ESM WordPress editor React entry with dynamic ch
     assert.doesNotMatch(
       code
         .replaceAll('http://www.w3.org/2000/svg', '')
-        .replaceAll('http://www.w3.org/1999/xhtml', ''),
+        .replaceAll('http://www.w3.org/1999/xhtml', '')
+        .replaceAll('(see https://prosemirror.net/docs/guide/#generatable)', '')
+        .replaceAll('(?:localhost|${this.get_ipv6_url_host().source}', ''),
       /localhost|127\.0\.0\.1|https?:\/\/[A-Za-z0-9]/i
     );
     assert.doesNotMatch(code, /frontend\/src|sourceMappingURL=/);

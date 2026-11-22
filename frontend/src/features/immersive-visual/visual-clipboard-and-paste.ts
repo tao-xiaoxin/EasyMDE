@@ -1,5 +1,5 @@
 import { Fragment, type Node as ProseMirrorNode, Slice } from "prosemirror-model";
-import { Plugin, PluginKey, Selection } from "prosemirror-state";
+import { Plugin, PluginKey, Selection, TextSelection } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import { parseMarkdownToVisualDoc } from "./markdown-parser";
 import { visualEditorSchema } from "./visual-schema";
@@ -138,7 +138,27 @@ function insertParsedMarkdownDoc(
 		parsedDoc.childCount === 1 &&
 		parsedDoc.firstChild?.type === visualEditorSchema.nodes.paragraph
 	) {
-		const inlineSlice = new Slice(parsedDoc.firstChild.content, 0, 0);
+		const leadingSpace = /^[ \t]+/.exec(normalized)?.[0] ?? "";
+		const trailingSpace = /[ \t]+$/.exec(normalized)?.[0] ?? "";
+		let inlineContent = parsedDoc.firstChild.content;
+		if (
+			leadingSpace.length > 0 &&
+			!parsedDoc.firstChild.textContent.startsWith(leadingSpace)
+		) {
+			inlineContent = Fragment.from(visualEditorSchema.text(leadingSpace)).append(
+				inlineContent,
+			);
+		}
+		if (
+			trailingSpace.length > 0 &&
+			normalized.trim().length > 0 &&
+			!parsedDoc.firstChild.textContent.endsWith(trailingSpace)
+		) {
+			inlineContent = inlineContent.append(
+				Fragment.from(visualEditorSchema.text(trailingSpace)),
+			);
+		}
+		const inlineSlice = new Slice(inlineContent, 0, 0);
 		view.dispatch(view.state.tr.replaceSelection(inlineSlice).scrollIntoView());
 		return true;
 	}
@@ -183,12 +203,162 @@ function shouldTreatAsPlainMarkdownPaste(
 	);
 }
 
+function syncDomSelectionIntoView(view: EditorView): void {
+	const domSelection = view.dom.ownerDocument.defaultView?.getSelection();
+	if (!domSelection || domSelection.rangeCount === 0) {
+		return;
+	}
+	const range = domSelection.getRangeAt(0);
+	if (
+		!view.dom.contains(range.startContainer) ||
+		!view.dom.contains(range.endContainer)
+	) {
+		return;
+	}
+	try {
+		const from = view.posAtDOM(range.startContainer, range.startOffset);
+		const to = view.posAtDOM(range.endContainer, range.endOffset);
+		if (
+			from >= 0 &&
+			to >= 0 &&
+			from <= view.state.doc.content.size &&
+			to <= view.state.doc.content.size
+		) {
+			const nextSelection = TextSelection.create(view.state.doc, from, to);
+			if (!nextSelection.eq(view.state.selection)) {
+				view.dispatch(view.state.tr.setSelection(nextSelection));
+			}
+		}
+	} catch {
+		// Keep current ProseMirror selection when DOM range cannot be mapped.
+	}
+}
+
+function readTransferData(
+	transfer: DataTransfer | null | undefined,
+	type: string,
+): string {
+	if (!transfer || typeof transfer.getData !== "function") {
+		return "";
+	}
+	return transfer.getData(type) ?? "";
+}
+
+const IMAGE_TAG_PATTERN = /<img\b/i;
+
 export function createVisualClipboardPlugin(
 	options: VisualClipboardPluginOptions = {},
 ): Plugin {
 	return new Plugin({
 		key: VISUAL_CLIPBOARD_PLUGIN_KEY,
 		props: {
+			handleDOMEvents: {
+				paste(view, event) {
+					if (!view.editable) {
+						return false;
+					}
+					const clipboardData = event.clipboardData;
+					if (!clipboardData) {
+						return false;
+					}
+					const imageFiles = extractImageFilesFromDataTransfer(clipboardData);
+					if (imageFiles.length > 0) {
+						const uploadEnabled = resolveBooleanOption(
+							options.imageUploadEnabled,
+							false,
+						);
+						const pasteUploadEnabled = resolveBooleanOption(
+							options.imagePasteUploadEnabled,
+							false,
+						);
+						if (uploadEnabled && pasteUploadEnabled && options.onImagePaste) {
+							syncDomSelectionIntoView(view);
+							event.preventDefault();
+							options.onImagePaste(imageFiles, event);
+							return true;
+						}
+						return false;
+					}
+
+					const plainText = readTransferData(clipboardData, "text/plain");
+					const htmlData = readTransferData(clipboardData, "text/html");
+					const uploadEnabled = resolveBooleanOption(
+						options.imageUploadEnabled,
+						false,
+					);
+					if (
+						!uploadEnabled &&
+						plainText.length > 0 &&
+						IMAGE_TAG_PATTERN.test(htmlData)
+					) {
+						syncDomSelectionIntoView(view);
+						event.preventDefault();
+						return insertParsedMarkdownDoc(view, plainText);
+					}
+					return false;
+				},
+
+				drop(view, event) {
+					if (!view.editable) {
+						return false;
+					}
+					const dataTransfer = event.dataTransfer;
+					if (!dataTransfer) {
+						return false;
+					}
+					const imageFiles = extractImageFilesFromDataTransfer(dataTransfer);
+					const uploadEnabled = resolveBooleanOption(
+						options.imageUploadEnabled,
+						true,
+					);
+					if (imageFiles.length > 0) {
+						if (!uploadEnabled || !options.onImageDrop) {
+							return false;
+						}
+						event.preventDefault();
+						let positioned = false;
+						if (
+							Number.isFinite(event.clientX) &&
+							Number.isFinite(event.clientY)
+						) {
+							const coords = view.posAtCoords({
+								left: event.clientX,
+								top: event.clientY,
+							});
+							if (
+								coords &&
+								coords.pos >= 0 &&
+								coords.pos <= view.state.doc.content.size
+							) {
+								const dropSelection = Selection.near(
+									view.state.doc.resolve(coords.pos),
+								);
+								view.dispatch(view.state.tr.setSelection(dropSelection));
+								positioned = true;
+							}
+						}
+						if (!positioned) {
+							syncDomSelectionIntoView(view);
+						}
+						options.onImageDrop(imageFiles, event);
+						return true;
+					}
+
+					const plainText = readTransferData(dataTransfer, "text/plain");
+					const htmlData = readTransferData(dataTransfer, "text/html");
+					if (
+						!uploadEnabled &&
+						plainText.length > 0 &&
+						IMAGE_TAG_PATTERN.test(htmlData)
+					) {
+						syncDomSelectionIntoView(view);
+						event.preventDefault();
+						return insertParsedMarkdownDoc(view, plainText);
+					}
+					return false;
+				},
+			},
+
 			handlePaste(view, event) {
 				if (!view.editable) {
 					return false;
@@ -209,17 +379,19 @@ export function createVisualClipboardPlugin(
 						false,
 					);
 					if (uploadEnabled && pasteUploadEnabled && options.onImagePaste) {
+						syncDomSelectionIntoView(view);
 						event.preventDefault();
 						options.onImagePaste(imageFiles, event);
 						return true;
 					}
 				}
 
-				const plainText = clipboardData.getData("text/plain");
+				const plainText = readTransferData(clipboardData, "text/plain");
 				if (isSelectionInCodeBlock(view)) {
 					if (plainText.length === 0) {
 						return false;
 					}
+					syncDomSelectionIntoView(view);
 					event.preventDefault();
 					const normalizedCode = plainText.replace(/\r\n?/g, "\n");
 					view.dispatch(
@@ -228,11 +400,12 @@ export function createVisualClipboardPlugin(
 					return true;
 				}
 
-				const htmlData = clipboardData.getData("text/html");
+				const htmlData = readTransferData(clipboardData, "text/html");
 				if (!shouldTreatAsPlainMarkdownPaste(plainText, htmlData)) {
 					return false;
 				}
 
+				syncDomSelectionIntoView(view);
 				event.preventDefault();
 				return insertParsedMarkdownDoc(view, plainText);
 			},

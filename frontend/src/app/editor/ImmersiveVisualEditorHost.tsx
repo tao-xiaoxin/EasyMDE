@@ -1,182 +1,155 @@
-import { createElement } from '@wordpress/element';
+import { createElement, useEffect, useRef, useState } from '@wordpress/element';
+import type { CSSProperties, ComponentType } from 'react';
 
-import type { ReferenceLabelCaseFoldProfile } from '../../contracts/ports/editor-block-index-port';
 import type {
   ImmersiveVisualEditorRuntime,
-  ImmersiveWindowAcceptedSnapshot
+  VisualEditorGeneratedPreviewIdentity
 } from '../../contracts/visual-editor';
 import type { EditorDocumentSession } from '../../features/document-source/ui/EditorDocumentSource';
-import { ImmersiveVisualEditor } from '../../features/immersive-editor/ui/ImmersiveVisualEditor';
-import { WindowedImmersiveVisualEditor } from '../../features/immersive-editor/ui/WindowedImmersiveVisualEditor';
-import type {
-  PreviewSourceSelection,
-  PreviewSurfaceRuntime,
-  PreviewSurfaceStatus
-} from '../../features/live-preview/ui/PreviewSurfaceOwner';
-import type { EditorVisualPreviewSnapshot } from './editor-root-types';
+import type { MountedProseMirrorVisualEditorProps } from '../../features/immersive-visual/MountedProseMirrorVisualEditor';
+
+type VisualEditorComponent = ComponentType<MountedProseMirrorVisualEditorProps>;
+
+let cachedComponent: VisualEditorComponent | null = null;
+let pendingLoad: Promise<VisualEditorComponent> | null = null;
+
+function loadVisualEditorComponent(): Promise<VisualEditorComponent> {
+  if (cachedComponent) {
+    return Promise.resolve(cachedComponent);
+  }
+  if (!pendingLoad) {
+    pendingLoad = import(
+      '../../features/immersive-visual/MountedProseMirrorVisualEditor'
+    )
+      .then((module) => {
+        cachedComponent = module.MountedProseMirrorVisualEditor;
+        return cachedComponent;
+      })
+      .catch((error: unknown) => {
+        pendingLoad = null;
+        throw error;
+      });
+  }
+  return pendingLoad;
+}
+
+/**
+ * Loads the lazy ProseMirror visual editor ESM chunk on demand and caches it
+ * so subsequent unlocks render synchronously without reloading the chunk.
+ */
+export function preloadImmersiveVisualEditor(): Promise<void> {
+  return loadVisualEditorComponent().then(() => undefined);
+}
+
+/**
+ * Resets the module-level lazy component cache in unit tests.
+ */
+export function resetImmersiveVisualEditorCacheForTests(): void {
+  cachedComponent = null;
+  pendingLoad = null;
+}
 
 export type ImmersiveVisualEditorHostProps = Readonly<{
-  acceptedWindowSnapshotGeneration: number;
+  className?: string;
   documentSession: EditorDocumentSession;
-  getAcceptedReferenceSource: (
-    request: Parameters<PreviewSurfaceRuntime['getAcceptedReferenceSource']>[0]
-  ) => ReturnType<PreviewSurfaceRuntime['getAcceptedReferenceSource']>;
-  getAcceptedWindowRow: (
-    request: Parameters<PreviewSurfaceRuntime['getAcceptedWindowRow']>[0]
-  ) => ReturnType<PreviewSurfaceRuntime['getAcceptedWindowRow']>;
-  getAcceptedWindowSnapshot: () => ImmersiveWindowAcceptedSnapshot | null;
-  getGeneratedPreviewIdentity: () => ReturnType<
-    PreviewSurfaceRuntime['getGeneratedPreviewIdentity']
-  >;
+  editable?: boolean;
+  getGeneratedPreviewIdentity?: () => VisualEditorGeneratedPreviewIdentity | null;
   imagePasteUploadEnabled: boolean;
   imageUploadEnabled: boolean;
-  onCanonicalDocumentChange: () => void;
-  onDiagnostic: (code: string) => void;
+  label?: string;
+  onCanonicalDocumentChange?: (markdown: string) => void;
   onDispose: (runtime: ImmersiveVisualEditorRuntime) => void;
   onFailure: (code: string) => void;
-  onMarkdownChange: () => void;
-  onPendingChange: (pending: boolean) => void;
+  onImageDropFiles?: (files: ReadonlyArray<File>, event: DragEvent) => void;
+  onImagePasteFiles?: (
+    files: ReadonlyArray<File>,
+    event: ClipboardEvent
+  ) => void;
+  onMarkdownChange: (markdown: string) => void;
   onReady: (runtime: ImmersiveVisualEditorRuntime) => void;
-  onTransferFailure: () => void;
-  pending: boolean;
-  prepareGeneratedContentTarget: PreviewSurfaceRuntime['prepareGeneratedContentTarget'];
-  prepareImageTarget: PreviewSurfaceRuntime['prepareImageTarget'];
-  prepareImageTargetBySelection: PreviewSurfaceRuntime['prepareImageTargetBySelection'];
-  prepareWindowBlockAdoption: (node: HTMLElement) => (() => boolean) | null;
-  previewSnapshot: EditorVisualPreviewSnapshot;
-  previewStatus: PreviewSurfaceStatus;
-  referenceLabelCaseFoldProfile: ReferenceLabelCaseFoldProfile;
-  requestPreview: (
-    markdown: string,
-    options?: Readonly<{ immediate?: boolean }>
-  ) => string;
-  requestPreviewAtDocumentEnd: (
-    markdown: string,
-    sourceSelection?: PreviewSourceSelection,
-    options?: Readonly<{ immediate?: boolean }>
-  ) => Readonly<{
-    onSelectionRestored: () => void;
-    release: () => void;
-    signature: string;
-  }>;
-  resumeCanonicalSelectionOnOwnerTransfer: boolean;
-  resumeCanonicalSelectionToken: number;
-  retainCompositionSurface: () => Readonly<{ release: () => void }>;
-  revealAcceptedWindowRow: (
-    request: Parameters<PreviewSurfaceRuntime['revealAcceptedWindowRow']>[0]
-  ) => ReturnType<PreviewSurfaceRuntime['revealAcceptedWindowRow']>;
-  surface: HTMLElement;
-  windowed: boolean;
+  style?: CSSProperties;
 }>;
 
 /**
  * Single pluggable host seam for the immersive visual editor surface.
- * Switches between the windowed (>160-block) and full visual editor owners
- * without leaking visual-owner selection into EditorRoot.
+ * Lazily loads the unified ProseMirror visual editor ESM chunk on first unlock
+ * so ordinary editing never downloads ProseMirror or markdown-it.
  */
 export function ImmersiveVisualEditorHost({
-  acceptedWindowSnapshotGeneration,
+  className,
   documentSession,
-  getAcceptedReferenceSource,
-  getAcceptedWindowRow,
-  getAcceptedWindowSnapshot,
+  editable,
   getGeneratedPreviewIdentity,
   imagePasteUploadEnabled,
   imageUploadEnabled,
+  label,
   onCanonicalDocumentChange,
-  onDiagnostic,
   onDispose,
   onFailure,
+  onImageDropFiles,
+  onImagePasteFiles,
   onMarkdownChange,
-  onPendingChange,
   onReady,
-  onTransferFailure,
-  pending,
-  prepareGeneratedContentTarget,
-  prepareImageTarget,
-  prepareImageTargetBySelection,
-  prepareWindowBlockAdoption,
-  previewSnapshot,
-  previewStatus,
-  referenceLabelCaseFoldProfile,
-  requestPreview,
-  requestPreviewAtDocumentEnd,
-  resumeCanonicalSelectionOnOwnerTransfer,
-  resumeCanonicalSelectionToken,
-  retainCompositionSurface,
-  revealAcceptedWindowRow,
-  surface,
-  windowed
+  style
 }: ImmersiveVisualEditorHostProps) {
-  if (windowed && previewSnapshot.editMap) {
-    return (
-      <WindowedImmersiveVisualEditor
-        referenceLabelCaseFoldProfile={referenceLabelCaseFoldProfile}
-        documentSession={documentSession}
-        resumeCanonicalSelectionToken={resumeCanonicalSelectionToken}
-        resumeCanonicalSelectionOnOwnerTransfer={
-          resumeCanonicalSelectionOnOwnerTransfer
+  const [LoadedComponent, setLoadedComponent] =
+    useState<VisualEditorComponent | null>(() => cachedComponent);
+  const onFailureRef = useRef(onFailure);
+  onFailureRef.current = onFailure;
+
+  useEffect(() => {
+    if (LoadedComponent) {
+      return undefined;
+    }
+    let active = true;
+    void loadVisualEditorComponent()
+      .then((component) => {
+        if (active) {
+          setLoadedComponent(() => component);
         }
-        editMap={previewSnapshot.editMap}
-        imageUploadEnabled={imageUploadEnabled}
-        imagePasteUploadEnabled={imagePasteUploadEnabled}
-        onCanonicalDocumentChange={onCanonicalDocumentChange}
-        onDiagnostic={onDiagnostic}
-        onDispose={onDispose}
-        onFailure={onFailure}
-        onMarkdownChange={onMarkdownChange}
-        onPendingChange={onPendingChange}
-        onReady={onReady}
-        onTransferFailure={onTransferFailure}
-        pending={pending}
-        previewSnapshot={previewSnapshot}
-        previewStatus={previewStatus}
-        acceptedWindowSnapshotGeneration={acceptedWindowSnapshotGeneration}
-        getAcceptedWindowSnapshot={getAcceptedWindowSnapshot}
-        getAcceptedWindowRow={getAcceptedWindowRow}
-        getAcceptedReferenceSource={getAcceptedReferenceSource}
-        revealAcceptedWindowRow={revealAcceptedWindowRow}
-        getGeneratedPreviewIdentity={getGeneratedPreviewIdentity}
-        prepareGeneratedContentTarget={prepareGeneratedContentTarget}
-        prepareImageTarget={prepareImageTarget}
-        prepareImageTargetBySelection={prepareImageTargetBySelection}
-        prepareWindowBlockAdoption={prepareWindowBlockAdoption}
-        retainCompositionSurface={retainCompositionSurface}
-        requestPreview={requestPreview}
-        requestPreviewAtDocumentEnd={requestPreviewAtDocumentEnd}
-        surface={surface}
+      })
+      .catch(() => {
+        if (active) {
+          onFailureRef.current('visual-editor-load-failed');
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [LoadedComponent]);
+
+  if (!LoadedComponent) {
+    return (
+      <div
+        className={className}
+        style={style}
+        aria-busy="true"
+        data-easymde-visual-loading="1"
       />
     );
   }
 
   return (
-    <ImmersiveVisualEditor
-      referenceLabelCaseFoldProfile={referenceLabelCaseFoldProfile}
+    <LoadedComponent
       documentSession={documentSession}
-      resumeCanonicalSelectionToken={resumeCanonicalSelectionToken}
-      resumeCanonicalSelectionOnOwnerTransfer={
-        resumeCanonicalSelectionOnOwnerTransfer
-      }
-      imageUploadEnabled={imageUploadEnabled}
       imagePasteUploadEnabled={imagePasteUploadEnabled}
-      onCanonicalDocumentChange={onCanonicalDocumentChange}
-      onDiagnostic={onDiagnostic}
+      imageUploadEnabled={imageUploadEnabled}
       onDispose={onDispose}
       onFailure={onFailure}
       onMarkdownChange={onMarkdownChange}
-      onPendingChange={onPendingChange}
       onReady={onReady}
-      onTransferFailure={onTransferFailure}
-      pending={pending}
-      previewSnapshot={previewSnapshot}
-      previewStatus={previewStatus}
-      getGeneratedPreviewIdentity={getGeneratedPreviewIdentity}
-      prepareGeneratedContentTarget={prepareGeneratedContentTarget}
-      prepareImageTarget={prepareImageTarget}
-      prepareImageTargetBySelection={prepareImageTargetBySelection}
-      retainCompositionSurface={retainCompositionSurface}
-      requestPreview={requestPreview}
-      surface={surface}
+      {...(className !== undefined ? { className } : {})}
+      {...(editable !== undefined ? { editable } : {})}
+      {...(getGeneratedPreviewIdentity !== undefined
+        ? { getGeneratedPreviewIdentity }
+        : {})}
+      {...(label !== undefined ? { label } : {})}
+      {...(onCanonicalDocumentChange !== undefined
+        ? { onCanonicalDocumentChange }
+        : {})}
+      {...(onImageDropFiles !== undefined ? { onImageDropFiles } : {})}
+      {...(onImagePasteFiles !== undefined ? { onImagePasteFiles } : {})}
+      {...(style !== undefined ? { style } : {})}
     />
   );
 }

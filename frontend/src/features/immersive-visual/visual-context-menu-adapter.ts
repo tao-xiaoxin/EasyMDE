@@ -1,4 +1,4 @@
-import { NodeSelection, Selection } from "prosemirror-state";
+import { NodeSelection, Selection, TextSelection } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import type { ToolbarCommand } from "../../contracts/bootstrap/toolbar-bootstrap";
 import type {
@@ -384,10 +384,42 @@ export function createProseMirrorVisualRuntime(
 		syncCanonicalSelectionOnly(documentSession, mapped, runWithEchoSuppressed);
 	};
 
+	const syncDomSelectionToView = (): Selection => {
+		const domSelection = view.dom.ownerDocument.defaultView?.getSelection();
+		if (domSelection && domSelection.rangeCount > 0) {
+			const range = domSelection.getRangeAt(0);
+			if (
+				view.dom.contains(range.startContainer) &&
+				view.dom.contains(range.endContainer)
+			) {
+				try {
+					const from = view.posAtDOM(range.startContainer, range.startOffset);
+					const to = view.posAtDOM(range.endContainer, range.endOffset);
+					if (
+						from >= 0 &&
+						to >= 0 &&
+						from <= view.state.doc.content.size &&
+						to <= view.state.doc.content.size
+					) {
+						const nextSelection = TextSelection.create(view.state.doc, from, to);
+						if (!nextSelection.eq(view.state.selection)) {
+							view.dispatch(view.state.tr.setSelection(nextSelection));
+						}
+						return nextSelection;
+					}
+				} catch {
+					// Fall back to the current ProseMirror selection.
+				}
+			}
+		}
+		return view.state.selection;
+	};
+
 	const syncCurrentEditableSelection = (): boolean => {
 		if (!isLiveEditable()) return false;
 		flushPendingSync();
-		syncSelectionFromView(view.state.selection);
+		const activeSelection = syncDomSelectionToView();
+		syncSelectionFromView(activeSelection);
 		return true;
 	};
 

@@ -120,7 +120,13 @@ export function focusVisualPreviewRuntime(
   onFailure: (code: string) => void
 ): boolean {
   const surface = runtime?.surface;
-  if (!surface?.isConnected || !surface.isContentEditable) {
+  const editable = Boolean(
+    surface
+      && ('boolean' === typeof surface.isContentEditable
+        ? surface.isContentEditable
+        : 'true' === surface.getAttribute('contenteditable'))
+  );
+  if (!surface?.isConnected || !editable) {
     onFailure('visual-editor-focus-surface-unavailable');
     return false;
   }

@@ -4,6 +4,7 @@ import {
 	useLayoutEffect,
 	useRef,
 } from "@wordpress/element";
+import type { CSSProperties } from "react";
 import { dropCursor } from "prosemirror-dropcursor";
 import { gapCursor } from "prosemirror-gapcursor";
 import { history } from "prosemirror-history";
@@ -43,30 +44,49 @@ export type ProseMirrorVisualEditorProps = Readonly<{
 	getGeneratedPreviewIdentity?: () => VisualEditorGeneratedPreviewIdentity | null;
 	imagePasteUploadEnabled?: boolean;
 	imageUploadEnabled?: boolean;
+	label?: string;
 	nodeViews?: EditorProps["nodeViews"];
 	onCanonicalDocumentChange?: (markdown: string) => void;
 	onDispose?: (runtime: ImmersiveVisualEditorRuntime) => void;
+	onFailure?: (code: string) => void;
 	onImageDrop?: (files: ReadonlyArray<File>, event: DragEvent) => void;
 	onImagePaste?: (files: ReadonlyArray<File>, event: ClipboardEvent) => void;
 	onMarkdownChange?: (markdown: string) => void;
 	onReady?: (runtime: ImmersiveVisualEditorRuntime) => void;
+	style?: CSSProperties;
 }>;
+
+function appendUniqueClasses(target: string[], raw: string | undefined): void {
+	if (!raw) {
+		return;
+	}
+	for (const token of raw.trim().split(/\s+/)) {
+		if (token.length > 0 && target.indexOf(token) < 0) {
+			target.push(token);
+		}
+	}
+}
 
 function buildContainerClassName(
 	articleThemeClass: string | undefined,
 	extraClassName: string | undefined,
 ): string {
-	const classes = ["easymde-rendered-content"];
-	const trimmedTheme = articleThemeClass?.trim();
-	if (trimmedTheme && trimmedTheme.length > 0) {
-		classes.push(trimmedTheme);
-	}
-	classes.push("easymde-code-mac", "easymde-prosemirror-surface");
-	const trimmedExtra = extraClassName?.trim();
-	if (trimmedExtra && trimmedExtra.length > 0) {
-		classes.push(trimmedExtra);
-	}
+	const classes: string[] = [];
+	appendUniqueClasses(classes, "easymde-rendered-content");
+	appendUniqueClasses(classes, articleThemeClass);
+	appendUniqueClasses(classes, "easymde-code-mac easymde-prosemirror-surface");
+	appendUniqueClasses(classes, extraClassName);
 	return classes.join(" ");
+}
+
+function buildEditorAttributes(label: string | undefined): Record<string, string> {
+	return {
+		class: "easymde-prosemirror-editor ProseMirror easymde-immersive-visual-editor",
+		role: "textbox",
+		"aria-multiline": "true",
+		spellcheck: "true",
+		...(label && label.length > 0 ? { "aria-label": label } : {}),
+	};
 }
 
 /**
@@ -82,7 +102,9 @@ export function ProseMirrorVisualEditor(props: ProseMirrorVisualEditorProps) {
 		documentSession,
 		editable = true,
 		extraPlugins,
+		label,
 		nodeViews,
+		style,
 	} = props;
 
 	const hostRef = useRef<HTMLDivElement | null>(null);
@@ -167,46 +189,48 @@ export function ProseMirrorVisualEditor(props: ProseMirrorVisualEditorProps) {
 			if (roundTripGuard.isUnmodified(activeView.state.doc)) {
 				return;
 			}
-			const nextMarkdown = roundTripGuard.serialize(activeView.state.doc);
-			const currentCanonical = documentSession.document.getValue();
-			if (
-				nextMarkdown === lastSyncedMarkdown &&
-				nextMarkdown === currentCanonical
-			) {
-				roundTripGuard = createMarkdownRoundTripGuard(
+			try {
+				const nextMarkdown = roundTripGuard.serialize(activeView.state.doc);
+				const currentCanonical = documentSession.document.getValue();
+				if (
+					nextMarkdown === lastSyncedMarkdown &&
+					nextMarkdown === currentCanonical
+				) {
+					roundTripGuard = createMarkdownRoundTripGuard(
+						nextMarkdown,
+						activeView.state.doc,
+					);
+					return;
+				}
+
+				const nextSelection = computeVisualSelectionToMarkdownSelection(
+					activeView.state.doc,
+					activeView.state.selection,
 					nextMarkdown,
-					activeView.state.doc,
 				);
-				return;
-			}
 
-			const nextSelection = computeVisualSelectionToMarkdownSelection(
-				activeView.state.doc,
-				activeView.state.selection,
-				nextMarkdown,
-			);
-
-			runWithEchoSuppressed(() => {
-				documentSession.document.applyTextChange({
-					selection: nextSelection,
-					value: nextMarkdown,
+				runWithEchoSuppressed(() => {
+					documentSession.document.applyTextChange({
+						selection: nextSelection,
+						value: nextMarkdown,
+					});
+					lastSyncedMarkdown = documentSession.document.getValue();
+					lastSyncedRevision = documentSession.document.getRevision();
+					roundTripGuard = createMarkdownRoundTripGuard(
+						lastSyncedMarkdown,
+						activeView.state.doc,
+					);
 				});
-				lastSyncedMarkdown = documentSession.document.getValue();
-				lastSyncedRevision = documentSession.document.getRevision();
-				roundTripGuard = createMarkdownRoundTripGuard(
-					lastSyncedMarkdown,
-					activeView.state.doc,
-				);
-			});
 
-			latestPropsRef.current.onMarkdownChange?.(lastSyncedMarkdown);
-			latestPropsRef.current.onCanonicalDocumentChange?.(lastSyncedMarkdown);
+				latestPropsRef.current.onMarkdownChange?.(lastSyncedMarkdown);
+				latestPropsRef.current.onCanonicalDocumentChange?.(lastSyncedMarkdown);
+			} catch {
+				latestPropsRef.current.onFailure?.("visual-editor-sync-failed");
+			}
 		};
 
 		const view = new EditorView(container, {
-			attributes: {
-				class: "easymde-prosemirror-editor ProseMirror",
-			},
+			attributes: () => buildEditorAttributes(latestPropsRef.current.label),
 			dispatchTransaction(transaction) {
 				if (disposed) {
 					return;
@@ -383,15 +407,17 @@ export function ProseMirrorVisualEditor(props: ProseMirrorVisualEditorProps) {
 			return;
 		}
 		activeView.setProps({
+			attributes: () => buildEditorAttributes(label),
 			editable: () => editable && documentSession.document.isEditable(),
 		});
-	}, [documentSession, editable]);
+	}, [documentSession, editable, label]);
 
 	return (
 		<div
 			ref={hostRef}
 			className={buildContainerClassName(articleThemeClass, className)}
 			data-easymde-prosemirror-host="1"
+			{...(style !== undefined ? { style } : {})}
 		/>
 	);
 }

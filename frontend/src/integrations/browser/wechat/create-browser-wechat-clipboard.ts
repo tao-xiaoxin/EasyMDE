@@ -134,14 +134,20 @@ export function createBrowserWechatClipboard(
       preview: HTMLElement,
       options: WechatClipboardCopyOptions = {}
     ): Promise<WechatClipboardResult> {
-      if (!previewReady(preview)) {
+      const hiddenFormalPreview =
+        Boolean(options.resolvePreview)
+        && preview.classList.contains('easymde-preview-surface-hidden');
+      if (!hiddenFormalPreview && !previewReady(preview)) {
         return { code: 'wechat-preview-unavailable', status: 'failed' };
       }
 
       const pngConversionEnabled = true === options.pngConversionEnabled;
       const requiresPreviewResolution = Boolean(
-        options.resolvePreview
-        && preview.querySelector('[data-easymde-preview-window-spacer]')
+        hiddenFormalPreview
+        || (
+          options.resolvePreview
+          && preview.querySelector('[data-easymde-preview-window-spacer]')
+        )
       );
       if (pngConversionEnabled && (!runtime.write || !runtime.clipboardItem)) {
         return {

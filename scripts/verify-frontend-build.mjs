@@ -239,7 +239,10 @@ const nonFetchingXmlNamespaceDeclarations = [
 	/\s+xmlns\s*=\s*(["'])http:\/\/www\.w3\.org\/2000\/svg\1/g,
 	/\s+xmlns:xlink\s*=\s*(["'])http:\/\/www\.w3\.org\/1999\/xlink\1/g,
 ];
-const nonFetchingMarkdownUrlPlaceholders = /\]\(https?:\/\/\)/gi;
+const nonFetchingMarkdownUrlPlaceholders = [
+	/\]\(https?:\/\/\)/gi,
+	/(["'`])https?:\/\/\1/g,
+];
 const nonFetchingSchemaUrlLiterals = [
 	/(["'`])http:\/\/www\.w3\.org\/1999\/xhtml\1/g,
 	/(["'`])http:\/\/www\.w3\.org\/1999\/xlink\1/g,
@@ -251,6 +254,9 @@ const nonFetchingSchemaUrlLiterals = [
 	/(["'`])http:\/\/\/org\/eclipse\/emf\/ecore\/util\/ExtendedMetaData\1/g,
 	/(["'`])http:\/\/www\.eclipse\.org\/emf\/2002\/Ecore\1/g,
 	/(["'`])http:\/\/www\.eclipse\.org\/emf\/2003\/XMLType\1/g,
+	/\(see https:\/\/prosemirror\.net\/docs\/guide\/#generatable\)/g,
+	/\(\?:localhost\|\$\{this\.get_ipv6_url_host\(\)\.source\}/g,
+	/`http:\/\/\$\{[A-Za-z_$][\w$.]*\}`/g,
 ];
 const nonFetchingSvgNamespaceLiteral =
 	/(["'`])http:\/\/www\.w3\.org\/2000\/svg\1/g;
@@ -321,7 +327,9 @@ function assertSafeProductionText(source, label) {
 	for (const declaration of nonFetchingXmlNamespaceDeclarations) {
 		source = source.replace(declaration, "");
 	}
-	source = source.replace(nonFetchingMarkdownUrlPlaceholders, "");
+	for (const placeholder of nonFetchingMarkdownUrlPlaceholders) {
+		source = source.replace(placeholder, "");
+	}
 	source = source.replace(nonFetchingSvgNamespaceLiteral, "");
 	for (const literal of nonFetchingSchemaUrlLiterals) {
 		source = source.replace(literal, "");

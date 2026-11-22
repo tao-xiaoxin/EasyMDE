@@ -1,0 +1,1 @@
+(function(){var e=window;function t(){let t=e.EasyMDEFrontendConfig||{};e.EasyMDEEnhancements&&e.EasyMDEEnhancements.enhance(document,t)}document.readyState===`loading`?document.addEventListener(`DOMContentLoaded`,t,{once:!0}):t()})();

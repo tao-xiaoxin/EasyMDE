@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "entries": {
+    "frontend/src/entrypoints/frontend-enhancements.ts": {
+      "handle": "easymde-enhancements",
+      "file": "assets/frontend-enhancements-e1iege8D.js",
+      "asset": "assets/frontend-enhancements-e1iege8D.asset.php",
+      "dependencies": [],
+      "resources": []
+    }
+  }
+}

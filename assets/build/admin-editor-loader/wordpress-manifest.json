@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "entries": {
+    "frontend/src/entrypoints/admin-editor-loader.ts": {
+      "handle": "easymde-admin-editor-toolbar",
+      "file": "assets/admin-editor-loader-BanDoQqu.js",
+      "asset": "assets/admin-editor-loader-BanDoQqu.asset.php",
+      "dependencies": [
+        "wp-api-fetch",
+        "wp-element",
+        "wp-hooks",
+        "wp-i18n"
+      ],
+      "resources": []
+    }
+  }
+}

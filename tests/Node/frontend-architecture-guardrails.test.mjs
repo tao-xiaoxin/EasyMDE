@@ -19,7 +19,6 @@ const MAX_ZERO_JSX_TSX_LINES = 400;
  * cleanup PRs can delete their entry from this map.
  */
 const LEGACY_LARGE_FILE_LINE_CEILINGS = {
-	"frontend/src/app/editor/EditorRoot.tsx": 6395,
 	"frontend/src/features/immersive-editor/ui/ImmersiveVisualEditor.tsx": 34829,
 	"frontend/src/features/immersive-editor/ui/WindowedImmersiveVisualEditor.tsx": 20999,
 	"frontend/src/features/immersive-editor/visual-markdown.ts": 16524,

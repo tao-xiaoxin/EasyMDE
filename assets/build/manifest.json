@@ -1,6 +1,6 @@
 {
   "frontend/src/entrypoints/admin-editor.tsx": {
-    "file": "assets/admin-editor-Da9TC--r.js",
+    "file": "assets/admin-editor-qhIvUaxZ.js",
     "name": "editor",
     "src": "frontend/src/entrypoints/admin-editor.tsx",
     "isEntry": true,
@@ -14,7 +14,7 @@
     ]
   },
   "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts": {
-    "file": "assets/admin-editor-chunk-ytSZCO28.js",
+    "file": "assets/admin-editor-chunk-BH600gxM.js",
     "name": "create-browser-wechat-clipboard",
     "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts",
     "isDynamicEntry": true,
@@ -23,7 +23,7 @@
     ]
   },
   "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts": {
-    "file": "assets/admin-editor-chunk-4mrAfL-F.js",
+    "file": "assets/admin-editor-chunk-Cuh1L1mB.js",
     "name": "create-browser-wechat-visual-rasterizer",
     "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts",
     "isDynamicEntry": true,
@@ -32,7 +32,7 @@
     ]
   },
   "node_modules/@codemirror/lang-json/dist/index.js": {
-    "file": "assets/admin-editor-chunk-QeXrjCzi.js",
+    "file": "assets/admin-editor-chunk-Cm0Ysicl.js",
     "name": "dist",
     "src": "node_modules/@codemirror/lang-json/dist/index.js",
     "isDynamicEntry": true,
@@ -41,7 +41,7 @@
     ]
   },
   "node_modules/@codemirror/lang-python/dist/index.js": {
-    "file": "assets/admin-editor-chunk-CuH-10IG.js",
+    "file": "assets/admin-editor-chunk-DZ8i-972.js",
     "name": "dist",
     "src": "node_modules/@codemirror/lang-python/dist/index.js",
     "isDynamicEntry": true,
@@ -50,7 +50,7 @@
     ]
   },
   "node_modules/@codemirror/lang-sql/dist/index.js": {
-    "file": "assets/admin-editor-chunk-CCb0qeQj.js",
+    "file": "assets/admin-editor-chunk-D4LmKUeJ.js",
     "name": "dist",
     "src": "node_modules/@codemirror/lang-sql/dist/index.js",
     "isDynamicEntry": true,
@@ -59,7 +59,7 @@
     ]
   },
   "node_modules/@codemirror/lang-yaml/dist/index.js": {
-    "file": "assets/admin-editor-chunk-Csy1FSf6.js",
+    "file": "assets/admin-editor-chunk-il5YRw-W.js",
     "name": "dist",
     "src": "node_modules/@codemirror/lang-yaml/dist/index.js",
     "isDynamicEntry": true,

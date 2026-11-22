@@ -39,10 +39,10 @@ form, Save, Publish, Revision, Media, and security authority. `_easymde_markdown
 remains canonical Markdown and `post_content` remains compatibility HTML.
 
 The shared `EditorContextMenuFeature` is mounted by this Root and binds only to
-the editable CodeMirror source surface and the active immersive visual surface.
-It is reused by ordinary Source, immersive Source, non-windowed Visual, and
-Windowed Visual presentations; title fields, Settings, native WordPress
-controls, and read-only Preview are outside its event boundary. The menu model
+the editable CodeMirror source surface and the active immersive ProseMirror visual
+surface. It is reused by ordinary Source, immersive Source, and unified immersive
+Visual presentations; title fields, Settings, native WordPress controls, and
+read-only Preview are outside its event boundary. The menu model
 delegates Bold to the active toolbar command executor, Clipboard operations to
 the browser Clipboard Port, HTML copy to the formal PHP Preview Port, table and
 paragraph edits to the Markdown context rules, image scale to the seven-value
@@ -194,7 +194,7 @@ menu capture reads prepared structure without synchronously reparsing a document
 
 The Vite entry under `frontend/test/build-contract/` remains test-only. It proves that React, ReactDOM, and `@wordpress/element` resolve to the WordPress-provided `wp-element` runtime, while the configured classic JSX transform emits calls to its public `createElement` API instead of assuming an unavailable automatic JSX-runtime global. It also proves that Vite and WordPress manifests agree on the generated script, dependency metadata, and plugin-relative resource paths. Its output is written to `.cache/easymde-frontend-contract/`, is not enqueued by WordPress, and is excluded from the installable plugin ZIP.
 
-`frontend/src/entrypoints/admin-editor-loader.ts` is the PHP-enqueued production loader for the ordinary Editor. `AdminAssets` validates `assets/build/admin-editor-loader/wordpress-manifest.json` and `assets/build/wordpress-manifest.json`, enqueues the stable `easymde-admin-editor-toolbar` loader handle, and serializes the versioned loader Bootstrap with `mainScriptUrl`. The loader reads and same-origin-validates `mainScriptUrl`, dynamically loads the hashed `frontend/src/entrypoints/admin-editor.tsx` main entry, and starts the same React Editor Root after its DOM gate is ready. `templates/admin/editor-shell.php` provides one empty `#easymde-editor-root` mount and native WordPress submission fields. The Markdown field remains visible until CodeMirror owns a working document session; React then hides both that bridge field and `#postdivrich`, restoring them on teardown or failure; there is no parallel Legacy editor container.
+`frontend/src/entrypoints/admin-editor-loader.ts` is the PHP-enqueued production loader for the ordinary Editor. `AdminAssets` validates `assets/build/admin-editor-loader/wordpress-manifest.json` and `assets/build/wordpress-manifest.json`, enqueues the stable `easymde-admin-editor-toolbar` loader handle, emits `<link rel="modulepreload">` hints for the main entry, and serializes the versioned loader Bootstrap with `mainScriptUrl` and `moduleFormat: "esm"`. The loader reads and same-origin-validates `mainScriptUrl`, dynamically loads the hashed local ES Module entry (`frontend/src/entrypoints/admin-editor.tsx`, compiled with Vite `format: "es"`, target `es2020`, reusing the WordPress 6.7 React 18 `wp.element` global via `wordpressEsmExternals()`), and starts the same React Editor Root after its DOM gate is ready. Heavy on-demand capabilities—specifically the unified ProseMirror + `markdown-it` immersive visual editor (`frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx`), the WeChat Clipboard serializer/rasterizer (`frontend/src/integrations/browser/wechat/`), and secondary CodeMirror indentation language packs—are dynamically code-split into local chunks loaded only when activated. `templates/admin/editor-shell.php` provides one empty `#easymde-editor-root` mount and native WordPress submission fields. The Markdown field remains visible until CodeMirror owns a working document session; React then hides both that bridge field and `#postdivrich`, restoring them on teardown or failure; there is no parallel Legacy editor container.
 
 `frontend/src/entrypoints/frontend-code-copy.ts` is a separate, non-React
 production entry for published EasyMDE content. `FrontendAssets` conditionally
@@ -256,11 +256,16 @@ distinguishable new frame is accepted only when the visible Settings pixels
 before and after are exactly equal across the complete analysis.
 
 The entrypoint parses external data before mounting, constructs focused
-WordPress and browser Adapters, mounts one `EditorRoot`, and owns idempotent
+WordPress and browser Adapters, mounts one modular `EditorRoot` (`frontend/src/app/editor/EditorRoot.tsx` composed from focused feature-bridge hooks and `ImmersiveVisualEditorHost.tsx`), and owns idempotent
 teardown. The Root composes Toolbar/commands, CodeMirror document and title
-sessions, server Preview and local post-response enhancements, Appearance and
-Custom CSS, Fonts, Media and image upload, Local Drafts, WeChat export,
-the fixed Source/Preview layout, and WordPress session state.
+sessions, the modular read-only `PreviewSurfaceOwner` (`frontend/src/features/live-preview/ui/`) and local post-response enhancements, Appearance and
+Custom CSS, Fonts, Media and image upload, Local Drafts, the modular WeChat export pipeline (`frontend/src/integrations/browser/wechat/`),
+the fixed Source/Preview layout, and WordPress session state. The independent
+Settings Center Root (`frontend/src/app/settings/`) is similarly decomposed into
+focused section pages and controls. All production frontend modules follow
+automated architecture guardrails in `tests/Node/frontend-architecture-guardrails.test.mjs`
+(unidirectional layering, a strict 1,200-line ceiling with zero legacy exceptions,
+and a 400-line ceiling on zero-JSX `.tsx` controllers).
 Ordinary Editor Components depend on typed Ports; WordPress DOM, `wp.media`,
 REST, Storage, and Clipboard access for the ordinary document and protected
 operations remain in focused Integration Adapters. The independent Settings
@@ -271,11 +276,39 @@ CodeMirror owns the in-page Markdown value, Selection, Focus, Undo history, and
 source scrolling. The native title and React-owned hidden Markdown fields are
 synchronous submission bridges and are flushed before WordPress serializes the
 open form.
-Windowed visual edits publish their exact CodeMirror state and internal
-subscribers synchronously. Repeated non-structural edits may coalesce the
-native Markdown-field projection into the next browser task; autosave, native
-submission, mode exit, and teardown synchronously flush that projection before
-WordPress or an extension may serialize the form.
+
+### Unified ProseMirror Immersive Visual Editor
+
+When the user unlocks immersive Preview, `ImmersiveVisualEditorHost` dynamically
+imports `MountedProseMirrorVisualEditor` (`frontend/src/features/immersive-visual/`)
+while keeping `PreviewSurfaceOwner` strictly read-only and hidden (retaining it as
+the formal PHP `SafePreviewHtmlSink` owner for WeChat Clipboard export and lock-back
+refreshes). `ProseMirrorVisualEditor` mounts `EditorView` directly onto the themed
+`.easymde-preview.easymde-rendered-content` surface via `{ mount: container }` so
+every descendant and direct-child CSS selector across all 46 registered article
+themes applies identically to formal Preview.
+
+- **Single unified engine**: Handles both short and large (>160-block) documents
+  in one in-memory ProseMirror projection without full/windowed engine splitting
+  or DOM spacers (rationale in
+  [ADR-002](decisions/ADR-002-visual-editor-and-esm-architecture.md)).
+- **Zero-write on read & surgical block preservation**: Opening or unlocking a
+  document performs zero canonical writes (`createMarkdownRoundTripGuard`).
+  Localized edits preserve every untouched top-level block's original raw
+  Markdown (bullet style, padded table columns, reference links, inter-block
+  spacing, and trailing newlines), and undoing back to the initial state restores
+  byte-identical source.
+- **Protected atoms & custom NodeViews**: `node-views/` preserves KaTeX math,
+  Mermaid diagrams, `[TOC]`, footnotes, reference definitions, and raw HTML blocks
+  as non-corrupting atomic cards (with double-click raw-source editing), renders
+  Mac 3-dot code frames with incremental `Decoration.inline` Highlight.js tokens,
+  supports interactive task-list checkboxes, and provides click-to-select image
+  blue rings and 7-value width scaling (`{width=25%..200%}`).
+- **Canonical synchronization**: Legitimate edits synchronize back to
+  `EditorDocumentSession` (CodeMirror + native form bridge) after IME composition
+  ends; locking back to read-only or invoking WeChat Copy refreshes the formal
+  PHP `MarkdownRenderer` Preview without making ProseMirror a persistence or
+  formal rendering authority.
 React neither submits a closed field allowlist nor treats synchronization as a
 successful Save, so unknown WordPress and extension fields remain intact.
 
@@ -385,38 +418,16 @@ These checks reuse the existing visual mapper and canonical selection owner.
 
 Image activation is gesture-owned rather than inferred from menu coordinates. The
 shared Feature decides whether a real pointer gesture preceded the `contextmenu`
-event and passes that activation through the surface preparation hook. One
-per-surface owner (`createVisualImageInteraction` in
-`frontend/src/features/immersive-editor/visual-markdown.ts`) then holds the whole
-image interaction: the gesture policy, the exact image-node range it placed
-itself, the primary-button activation, selection drift, and the visible marker.
-Each visual runtime contributes only its own readiness rule, focus operation,
-canonical selection publication, and failure reporting, so the two runtimes share
-no duplicated image handlers and no cross-owner feedback registry. A pointer
-demand may replace only the exact range that owner placed for an earlier image or
-the selection that same owner placed itself while adopting a render, a keyboard
-activation replaces no selection, and the primary button on the image itself
-replaces whatever the selection was. "Placed itself" is tracked, not inferred: the
-runtime records the native selection at the adoption and history-restore points it
-publishes, drops the record when the selection drifts, and reports that predicate
-to the shared owner. A history replay that is still awaiting its accepted Preview
-uses the same history transfer kind and owner-placement mark as the in-place
-history replay; it does not become an unowned native range merely because that
-preview path is pending. A later user selection still wins by the same drift
-comparison. A selection the user made is therefore never discarded, while
-a selection a history restore left behind (for example the code-block range after
-an Undo) no longer blocks image commands for a pointer on an image. A deliberate
-mixed text/object range keeps its extent, and the Root still requires the hit
-image's block-id, image ordinal, source, revision, and live lease to agree before
-image commands are exposed. Any deliberate text range has no single image
-source range, so it is recognised as that gesture - one non-collapsed range, both
-endpoints connected inside the surface, and non-blank selected text - and keeps
-the generic text menu whether or not it intersects the pointed image; an
-image-node selection carries no selected text, so a retired `<img>` still fails
-`editor-context-menu-image-stale`. Replacing an
-already-open menu keeps the existing demand lifecycle: the previous demand is
-retired before the next pointer target is published, and a lease owned by an
-asynchronous action is never released early.
+event and passes that activation through the surface preparation hook. Inside
+the unified ProseMirror visual editor, `image-node-view.ts` and
+`visual-context-menu-adapter.ts` (`frontend/src/features/immersive-visual/`)
+coordinate image `NodeSelection`, the transient `.easymde-visual-image-selected`
+blue selection ring (which writes no Markdown, attributes, or export state),
+pointer right-click targeting, and canonical selection synchronization. A pointer
+context menu on an image targets the pointed image cleanly, while a deliberate
+mixed text/object selection keeps generic text commands instead of destructive
+object actions. Replacing an already-open menu retires the previous demand first,
+and leases owned by asynchronous actions remain bound until completion.
 
 A primary-button activation also focuses the visual surface, selects the image
 node, and publishes the corresponding source range through the existing

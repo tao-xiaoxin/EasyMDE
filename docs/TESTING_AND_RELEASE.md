@@ -244,7 +244,7 @@ npm run notices:check
 npm test
 ```
 
-`npm run frontend:check` verifies the locked generated Lucide nodes, runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and read-only production comparisons for all nine manifest-backed Vite entries. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, CodeMirror 6, and development-only `lucide-react@0.487.0` on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
+`npm run frontend:check` verifies the locked generated Lucide nodes, runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and read-only production comparisons for all nine manifest-backed Vite entries (including the local ESM `format: "es"` + dynamic code-splitting chunks of `admin-editor.tsx`). `npm test` runs all Node tests including `tests/Node/frontend-architecture-guardrails.test.mjs`, which enforces unidirectional frontend layering, a strict 1,200-line production file ceiling with zero legacy exceptions, and a 400-line zero-JSX `.tsx` controller ceiling. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, CodeMirror 6, ProseMirror core (`prosemirror-*`) + `markdown-it`, and development-only `lucide-react@0.487.0` on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
 
 The test-only build writes to `.cache/easymde-frontend-contract/`. `npm run build:frontend` writes the committed outputs for the nine Vite configs below, while `npm run check:frontend-production` writes temporary outputs, validates each output, and compares each complete file set and its bytes with the committed runtimes without rewriting them. The validators fail on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps.
 
@@ -335,113 +335,51 @@ real WordPress locale loading or authenticated browser Clipboard/media flows;
 those remain an explicit E2E/unverified boundary until run in the authorized
 Chinese WordPress environment.
 
-For a code-body-copy or Full Visual Cut increment, use the focused regressions
-and rebuild the runtime before this bounded browser check:
+For a code-body-copy or visual Cut increment, use the focused regressions
+under `tests/e2e/context-menu/` and rebuild the runtime before this bounded
+browser check:
 
 ```bash
-EASYMDE_E2E_BASE_URL=http://localhost:8094 npx playwright test tests/e2e/editor-context-menu.spec.mjs --project=chromium --workers=1 --trace=off --grep 'copies canonical Bash code content without fences in Source and Full Visual|accepts Full Visual list Cut through accepted Preview and native Undo'
+EASYMDE_E2E_BASE_URL=http://localhost:8094 npx playwright test tests/e2e/context-menu/ --project=chromium --workers=1 --trace=off --grep 'copies canonical Bash code content without fences in Source and Full Visual|accepts Full Visual list Cut through accepted Preview and native Undo'
 ```
 
 Code-copy verification must reach the formal PHP `codeMap`, not a synthetic
 body or browser container-stripping oracle. Cut must start with the actual
-non-collapsed native selection and retain an editable accepted Preview before
-native Undo. A passing parser or menu-inventory test proves neither behavior.
+non-collapsed native selection before native Undo. A passing parser or
+menu-inventory test proves neither behavior.
 
-Two executable owner regressions bound the adoption and image-gesture rules that
-surround that matrix. `adopts an accepted empty Preview without an edit map`
-(`ImmersiveVisualEditor.test.tsx`) drives a whole-document removal through the
-canonical owner and adopts an accepted empty render whose Preview publishes no
-edit map, then requires one empty paragraph with a BR, a connected collapsed
-caret, no reported failure, and the pending flag cleared; a non-empty accepted
-source still fails explicitly without its map. `replaces only an owner-placed
-selection for a pointer image demand` (`visual-markdown.test.ts`) proves the
-shared image owner replaces a non-collapsed in-surface range only while the rule
-that owns the selection reports it as its own publication, and keeps the same
-range when that ownership claim is withdrawn, which is the deliberate user
-selection the menu must describe. Neither test proves real browser Clipboard,
-media upload, or the full 2×20 lifecycle matrix.
+Unit and component coverage for the unified ProseMirror immersive visual editor
+lives under `frontend/src/features/immersive-visual/`:
 
-Three full-owner keydown regressions pin the whitespace-only Backspace clear.
-`normalizes whitespace-only document DOM on extra Backspace keydown` requires
-the canonical value to become empty with one history step, reset DOM and a
-connected caret with no failure, then byte-exact Undo/Redo; a further Backspace
-after Redo is a no-op. `restores pre-reset DOM and Selection when empty-document
-sync fails before canonical write` and `keeps reset DOM after empty-document
-sync fails after canonical write` pin the failure split: the first keeps the
-original nodes and native selection with unchanged history and revision, while
-the second keeps the committed empty source, reset presentation, connected
-caret and history step and reports the failure. These are unit evidence only;
-they do not claim the browser gate or any other gate result.
-The focused empty-paragraph history regression is `restores a certified
-zero-length empty paragraph across formal Preview with raw LF gaps
-(br-only|empty-text-br)` in `ImmersiveVisualEditor.test.tsx`. Both real-owner
-variants drive native `Q` input at the certified caret, exact raw LF source and
-selection, formal Preview acceptance, naturally grouped Undo/Redo, and immediate
-next-key editing after the restored certified `P0`; the empty-`Text` variant
-begins from the Chrome `P > empty Text + BR` native caret while the accepted
-snapshot remains a single-BR `P`. Malformed path, non-P body, and HTML-mismatch
-branches are static-only until separately executed and must not be reported as
-runtime coverage.
-`retires one LF when native Backspace joins an emptied terminal paragraph into a
-heading` is the focused component owner regression for the terminal join. It
-drives real CodeMirror and native `beforeinput` input emulation, checks one-LF
-source consistency, a true pre-edit selection, the public `applyTextChange`
-history-record flag, Undo/Redo restoration, and continued native input. This is
-unit coverage only; it does not prove deployed browser behavior or performance.
-`newPREEOF EOF PRE join retires one separator LF without changing the code body`
-is the focused component regression for a certified closed PRE at owned EOF. It
-checks the public returned mutation range for exactly one final LF, fragmented
-highlighted code coordinates (`local 3`, cumulative `7`), unchanged code/fence
-bytes, natural Undo/Redo, and continued native typing through real CodeMirror.
-Four public-repair variants cover foreign PRE, reordered root, fence-info
-mismatch, and stale empty-paragraph metadata, requiring unchanged
-source/revision/writes plus the public repair/refusal diagnostics. This remains
-component-only coverage and does not claim unsupported/cancel, CRLF,
-deployed-browser, or performance coverage.
-The parameterized `keeps EOF|middle deletion at its code boundary after an empty
-paragraph joins PRE` family is the adjacent owner regression. Its EOF join
-baseline removes the final separator LF while the middle baseline preserves it;
-continuous and settled cases separately count the actual public port mutations
-(tail flush then LF, or LF only), and four normal cases then delete exactly one
-original body unit with the canonical/native code caret. Two foreign-clone cases
-replace an unrelated retained paragraph after the join before the next deletion and require zero body writes,
-unchanged revision/history, an editable surface, and the public
-repair/refusal diagnostic. The two invalid removal cases preserve the entire
-source/revision/history and the middle cases retain the following PRE identity.
-This remains component coverage and does not claim CRLF, browser, or performance
-behavior.
-`newUndo59 fragmented code inverse keeps cumulative code caret` is the focused
-component regression for conditional inverse ownership. It runs a legal
-fragmented code body through actual CodeMirror plus simulated native
-`beforeinput`/`input` events in a component test, not a browser, and requires
-exact source and code plaintext, canonical/native caret, Undo only (no Redo),
-failure/health state, and the public history-selection record flag. This is
-component coverage only; it does not prove deployed browser behavior.
+```bash
+npm run test:frontend -- frontend/src/features/immersive-visual
+```
 
-Several owner regressions pin the demand paths around those rules.
-`keeps the canonical code-block delete available after a native text edit
-advanced canonical` and `commits an exact replacement after a native text edit
-advanced canonical` (`ImmersiveVisualEditor.test.tsx`) type into the accepted
-full surface so the canonical document advances with no new render, then run
-either the fence context demand and the canonical block removal, or an exact
-replacement over a native text selection - the shape Cut and Paste commit
-through. Both require a handled request, exact bytes, a truthful pending
-transfer, and editability after the accepted render lands. The second case
-exists because the exact-replacement path also resolves the accepted top-level
-selection against the accepted Preview source, so a stale accepted source fails
-there even when the map check passes.
+- `visual-editor-core.test.ts` covers the ProseMirror schema, EasyMDE semantic
+  HTML parity, image width scale and URL sanitization, `prosemirror-tables`
+  editing, `markdown-it` prescanning/parsing/serialization, lossless round-trip
+  of `docs/examples/markdown-full-capability-test.md`, surgical block-level
+  preservation of untouched Markdown (list markers, padded tables, reference
+  links, trailing newlines) with byte-identical Undo restore, block/inline input
+  rules, toolbar commands, and code-block/atomic-block keyboard contracts.
+- `prosemirror-visual-editor.test.tsx` covers `ProseMirrorVisualEditor`
+  mounting directly on the themed preview root, zero-write on read, IME
+  composition deferral, external canonical sync without echo loops, unified
+  220-block long-document handling without window splitting, paste/drop
+  handling, and context-menu/target-lease runtime contracts.
+- `node-views/node-views.test.ts` covers Mac 3-dot code-block NodeViews,
+  incremental `Decoration.inline` Highlight.js highlighting, resizable image
+  NodeViews with click blue-ring selection, protected KaTeX/Mermaid/TOC/footnote
+  atom cards with inline raw-source editing, interactive task-list checkboxes,
+  and theme-compatible table containers.
+- `frontend/src/app/editor/EditorRoot.test.tsx` covers the `EditorRoot`
+  switchover to ProseMirror on unlock, keeping `PreviewSurfaceOwner` hidden and
+  strictly read-only during visual editing, refreshing formal PHP Preview on
+  lock and WeChat Copy, and unlocking >160-block documents in one unified
+  surface.
 
-The accepted render baseline deliberately trails such a local edit, so the owner
-records that staleness instead of serializing on every keystroke, then at the
-next canonical demand proves the surface still serializes to the Markdown the
-commit recorded before adopting it as the baseline. Only the content baseline is
-re-read; the node-identity ledger stays as the render published it, so a replaced
-top-level node is still rejected. `rejects a canonical demand when the surface
-changed after the committed local edit` is its paired negative and fails with
-`visual-editor-canonical-change-dom-stale`, which is what makes the refresh a
-proof rather than a comparison of the surface with itself; the existing `maps ...
-without cloning the visual surface` cases keep the per-keystroke cost contract
-executable.
+These are unit and component evidence only; they do not substitute for real
+Chromium E2E verification in an authorized WordPress environment.
 
 The edit map is line indexed, so the accepted Preview source may advance with a
 local commit only when that commit leaves every block line range in place. The
@@ -783,7 +721,7 @@ For Source link-resolution wiring, the bounded partial-caption/reference
 browser check is:
 
 ```bash
-EASYMDE_E2E_BASE_URL=http://localhost:8094 npx playwright test tests/e2e/editor-context-menu.spec.mjs --project=chromium --workers=1 --trace=off --grep 'copies explicit and reference Link addresses from partial Source captions in ordinary and immersive split modes'
+EASYMDE_E2E_BASE_URL=http://localhost:8094 npx playwright test tests/e2e/context-menu/table-link-and-code-menu.spec.mjs --project=chromium --workers=1 --trace=off --grep 'copies explicit and reference Link addresses from partial Source captions in ordinary and immersive split modes'
 ```
 
 It uses exact native selections within inline and reference captions and checks
@@ -794,28 +732,28 @@ navigation, Visual link actions or dependency-absent Root configurations.
 For the bounded code-indentation behavior check, run:
 
 ```bash
-EASYMDE_E2E_BASE_URL=http://localhost:8094 npx playwright test tests/e2e/editor-context-menu.spec.mjs --project=chromium --workers=1 --trace=off --grep 'repairs TS code indentation in Source and Full Visual while preserving code bytes and Undo'
+EASYMDE_E2E_BASE_URL=http://localhost:8094 npx playwright test tests/e2e/context-menu/table-link-and-code-menu.spec.mjs --project=chromium --workers=1 --trace=off --grep 'repairs TS code indentation in Source and Full Visual while preserving code bytes and Undo'
 ```
 
 It misindents the canonical fixture only in browser memory and checks selected
 half-open rows, whole-block correction, exact source, native Undo, repeat no-op,
-and visible-disabled Bash actions in ordinary Source and Full Visual. It does
-not establish every language, immersive split or Windowed Visual behavior.
+and visible-disabled Bash actions in ordinary Source and immersive Visual.
 
-The complete canonical-fixture context-menu browser matrix is:
+The complete canonical-fixture context-menu browser directory is
+`tests/e2e/context-menu/` (`image-export-and-probes.spec.mjs`,
+`source-menu-and-media.spec.mjs`, `table-link-and-code-menu.spec.mjs`,
+`visual-menu-and-thematic-breaks.spec.mjs`):
 
 ```bash
-EASYMDE_E2E_BASE_URL=http://localhost:8094 npx playwright test tests/e2e/editor-context-menu.spec.mjs --project=chromium --workers=1 --trace=off
+EASYMDE_E2E_BASE_URL=http://localhost:8094 npx playwright test tests/e2e/context-menu/ --project=chromium --workers=1 --trace=off
 ```
 
 Use the authorized local site URL and credentials from the ignored root `.env`;
 never put credentials in command arguments or captured traces. The fixture is
 `docs/examples/markdown-full-capability-test.md`; the browser test replaces only
-its image URL with a local served copy for deterministic image loading. Record
-category results separately for ordinary Source, immersive split Source, full
-Visual and Windowed Visual. Menu inventory alone does not prove Clipboard PNG
-pixels, download completion, media upload, or Save/reload persistence; exercise
-and record those separately.
+its image URL with a local served copy for deterministic image loading. Menu
+inventory alone does not prove Clipboard PNG pixels, download completion, media
+upload, or Save/reload persistence; exercise and record those separately.
 
 For virtualized CodeMirror Source, replace fixture bytes through native
 Ctrl/Mod+A and browser text insertion, never contenteditable `.fill()` of the
@@ -824,19 +762,12 @@ exercise native Undo/Redo rather than inferring history from DOM text. Clipboard
 permission probes must preserve and restore grants for the entire browser
 context, demonstrate real negative write denial with explicit UI failure and
 unchanged canonical/history state, then demonstrate actual restored success.
-Bound Full and Windowed action groups independently rather than spending one
-whole-case deadline on unrelated renders; retain a dedicated same-document
-Full-to-Windowed transition/re-entry proof instead of dropping that invariant.
 
-The focused visual Markdown-transfer regression is:
+The focused ProseMirror visual-editing unit and component suite is:
 
 ```bash
-npm run test:frontend -- frontend/src/features/immersive-editor/ui/ImmersiveVisualEditor.test.tsx -t "skips target code-structure validation while a Markdown paste awaits formal Preview"
+npm run test:frontend -- frontend/src/features/immersive-visual
 ```
-
-It verifies the canonical and submission-field insertion, one Preview request,
-unchanged history ownership, no redundant code-topology signature scan, and
-blocking of further `beforeinput` while the accepted paste Preview is pending.
 
 ## WeChat Clipboard Verification
 
@@ -1058,285 +989,38 @@ and restores the Settings Center editing mode after both normal and CDP hard
 reloads. It loads no Legacy Focus assets and remains zero-write until the user
 invokes a legitimate WordPress mutation.
 
-The two `[oracle-contract]` checks in
-`tests/e2e/visual-basic-editing.spec.mjs` cover the short-stage code
-certificate without a browser: `certified code history treats only the closing
-renderer LF as representation-only` proves that exactly one declared closing
-fence LF may differ while source, complete code body, block identity, caret,
-and provenance remain strict, and `certified code observer rejects forged
-body, caret, structure, and provenance` exercises the negative controls for
-body loss or replacement, internal/terminal LF loss, extra whitespace, wrong
-block or PRE shape, caret direction/range, missing proof, and ambiguous
-declarations. These are contract-level checks only; they do not claim a
-browser, natural keyboard, full Basic, or release-gate result.
+The Playwright E2E suites are organized into domain-focused directories under
+`tests/e2e/`:
 
-The focused Windowed rich-cell keyboard cases in
-`tests/e2e/visual-basic-editing.spec.mjs` are opt-in, not part of default or
-`[short-stage]` registration. Use the existing authorized WordPress test
-configuration and the complete frozen, manifest-backed editor bundle basename
-for `EASYMDE_E2E_EXPECT_EDITOR_BUILD` (`admin-editor-<hash>.js`, not just the hash
-or the loader). The browser checks the actual loaded filename against this
-expectation. Choose a fresh output directory for each exact case.
+- `tests/e2e/ordinary/`: ordinary split editor, toolbar/bridge, themes and
+  appearance, publishing/revisions/WeChat export, code fences, immersive
+  editing, and performance budgets (formerly `tests/e2e/easymde.spec.mjs`).
+- `tests/e2e/visual/`: immersive visual editing suites covering typing and
+  paragraphs, short-stage and fences, monitor/oracle contracts, and long-doc
+  workflows (formerly `tests/e2e/visual-basic-editing.spec.mjs`).
+- `tests/e2e/context-menu/`: shared context-menu suites across Source and
+  immersive visual surfaces (formerly `tests/e2e/editor-context-menu.spec.mjs`).
+- Standalone suites: `tests/e2e/inkwell.spec.mjs`,
+  `tests/e2e/settings-center.spec.mjs`, `tests/e2e/theme-layout-audit.spec.mjs`,
+  `tests/e2e/immersive-unlock-latency.spec.mjs`, and
+  `tests/e2e/visual-windowed-document-end.spec.mjs`.
 
-```bash
-env -u EASYMDE_E2E_COLD_MERGE_DEBUG_MODULE \
-  EASYMDE_E2E_RICH_TABLE_CODE=complete \
-  EASYMDE_E2E_EXPECT_EDITOR_BUILD="<frozen_admin_editor_basename>" \
-  npm run test:e2e -- tests/e2e/visual-basic-editing.spec.mjs \
-  --project=chromium --workers=1 --retries=0 --max-failures=1 --reporter=line \
-  --output="<fresh_case_output_dir>" \
-  --grep '\[rich-table-code\] windowed ready fixed CODE Enter Backspace history and right-span continuation$'
+The two `[oracle-contract]` checks in `tests/e2e/visual/oracle-contracts.spec.mjs`
+cover the short-stage code certificate without a browser. The opt-in rich-cell
+keyboard cases live in `tests/e2e/visual/windowed-tables-and-inline.spec.mjs`,
+and the four native-paste code-fence deletion cases live in
+`tests/e2e/ordinary/immersive-code-fence-deletion.spec.mjs`.
 
-env -u EASYMDE_E2E_COLD_MERGE_DEBUG_MODULE \
-  EASYMDE_E2E_RICH_TABLE_INLINE=complete \
-  EASYMDE_E2E_EXPECT_EDITOR_BUILD="<frozen_admin_editor_basename>" \
-  npm run test:e2e -- tests/e2e/visual-basic-editing.spec.mjs \
-  --project=chromium --workers=1 --retries=0 --max-failures=1 --reporter=line \
-  --output="<fresh_case_output_dir>" \
-  --grep '\[rich-table-inline\] windowed ready fixed A Enter Backspace history and right-span continuation$'
-```
-
-Run one exact case at a time: CODE `ready`, then `held` only after it passes;
-then the inline kinds `A`, `EM`, `STRONG`, `DEL`, and `NESTED`, each `ready`
-before `held`. For the paired command, replace only `windowed ready` with
-`windowed held`; for the inline kind, replace only `fixed A` with the declared
-kind. Keep the escaped brackets and trailing `$` title-suffix match rather than
-adding a start anchor. Stop the remaining matrix at the first failure. Each
-case needs its own browser context and isolated synthetic article; never share
-an article, native editing context, or held Preview route between runs. These
-commands select only the `chromium` project with one worker, not the performance
-project, and provide no performance or frame-smoothness comparison.
-
-These cases cover Windowed nested quote/list table cells, exact fixed
-S0/S1/S1T/ST source, native Enter/Backspace, Undo/Redo, restored-boundary
-continuation, and preserved surrounding syntax and link attributes. The held
-variant fetches the real PHP 200 response for the exact declared request and
-withholds delivery; pending native edits and later formal publication have
-separate assertions. A `ready` flag alone does not prove a current formal
-certificate. Only ready pre-input navigation may retain the exact captured
-pre-navigation canonical selection: the private certificate must prove the
-same owner/session/runtime/surface, unchanged complete source/history/revision,
-formal identity and nodes, no transfer or lease, no intervening input/history
-events, and the unique native target with its strict boundary proof. This
-exception never applies to pending navigation or post-input assertions, and
-does not set or repair the selection. The broader editor acceptance matrix
-remains unverified as a whole; these focused opt-ins do not replace that gate.
-
-The immersive visual Markdown regression coverage also exercises the unlocked
-Preview paper, completed block and inline syntax, bounded visual-input
-coalescing, explicit selection-loss failure without end-of-document appends,
-consecutive full Markdown pastes through the server Preview owner, one Preview
-request per paste, and zero Preview requests for ordinary visual keystrokes.
-Fenced-code cases cover typed and pasted tilde and backtick fences, including
-the rule that a newly formed tilde shortcut becomes an equally wide backtick
-fence while accepted or pasted tilde source remains unchanged. They also cover
-valid multi-token info strings and info strings that cannot form a valid
-backtick shortcut,
-literal Markdown-looking text inside `CODE`/`PRE`, zero or multiple blank body
-lines, successive input, line endings, caret placement, Undo/Redo, highlighted
-code cleared and retyped, and windowed block offsets.
-Fresh-fence browser evidence samples computed PRE transforms from the first DOM
-mutation through painted frames, then verifies immediate code-body persistence;
-shortcut feedback must not transform a root while Windowed geometry is measured.
-Windowed code, EOF input, repeated-delete, and paragraph-history cases seek the
-target inside the spacer's declared block range using its measured flow height,
-refining the seek as mounted windows narrow that range. Scrolling only to the
-start of a large omitted range does not establish that a later target mounted.
-The existing exact source, caret, history, and bounded-window assertions remain
-the acceptance boundary after that geometry-aware setup.
-Native clipboard cases paste each bare three-character opener, assert that the
-initial source is unchanged, then type body text and check persistence, history,
-caret, and frame geometry. Unclosed EOF bodies retain their open state, including
-literal fence content that requires a wider opener. The four final native-paste
-deletion cases in `tests/e2e/easymde.spec.mjs` are `keeps native pasted backtick-json-closed body deletion on
-one visual caret`, `keeps native pasted tilde-closed body deletion on one visual
-caret`, `keeps native pasted backtick-json-open-eof body deletion on one visual
-caret`, and `keeps native pasted tilde-open-eof body deletion on one visual
-caret`.
-Each of those four native-paste deletion Playwright cases records privacy-safe
-caret geometry and attaches a diagnostic screenshot with `caret: 'initial'`. The
-assertions own the current connected DOM Selection, source range, code/frame
-dimensions, and visual owner counts; those bounds do not prove every Chrome
-caret-paint or compositor state. The reported two-position blinking caret was
-not reproduced by this coverage. Track any future reproduction and evidence in
-[Issue 243](https://github.com/tao-xiaoxin/EasyMDE/issues/243); this contract
-makes no fix claim. They assert the canonical Markdown and editable DOM body
-agree after each transition while the shared Mac frame retains its full width
-and non-collapsing code area.
-
-The windowed structural-selection contract requires `Range.selectNode(pre)`
-on a direct child of the surface to be authenticated and owned, to defer from
-`keydown` without a false selection error, to remove the proved fenced interval
-exactly once with both surrounding headings surviving and a matching Preview
-transfer carrying the post-removal caret, to keep the context menu available for
-the owned selection, and to keep rejecting a root or spacer selection that is
-not that exact single fence. The runtime behavior is implemented in
-`WindowedImmersiveVisualEditor.tsx`, while dedicated standalone regressions
-(`writes one canonical fence removal for an exact parent-anchored PRE selection`,
-`defers a Backspace on an exact parent-anchored fence selection to beforeinput`,
-and `does not remove a fence when the root selection is not that exact fence`)
-remain planned, unverified coverage rather than live executable tests in
-`WindowedImmersiveVisualEditor.test.tsx`.
-
-For break caret and certified gap handling, actually present executable tests in
-`ImmersiveVisualEditor.test.tsx` include `rejects a replaced accepted break row
-before any structural write` and `prepares the certified gap for keyboard
-activation with unpublished canonical selection`, as well as `restores the
-surviving break caret across inter-root newline nodes`. In `EditorRoot.test.tsx`,
-keyboard activation across certified gaps is exercised by the Shift+F10 and
-ContextMenu variants (`Full Shift+F10 before HR`, `Full ContextMenu after HR`,
-`Windowed Shift+F10 before HR`, and `Windowed ContextMenu after HR`), and
-rejection controls are verified by `refuses keyboard menu on ambiguous adjacent
-HR when canonical is noncollapsed for $name`, `refuses keyboard menu and
-preserves state on replaced same-ID HR for $name`, and `rejects beforeinput text
-insertion on intact accepted DOM when canonical caret is mismatched for $name`.
-By contrast, standalone Windowed suite tests named `keeps the certified HR caret
-and edits after removal` and `keeps an HR-only survivor editable after removal`,
-as well as rejection control `rejects a %s accepted child mutation before any
-write`, physical Space ownership through beforeinput, whole-target noncollapsed
-rejection at the certified gap, adjacent break token preservation, uncertified gap
-refusal beside a text row, and LF/CRLF interior PRE body deletion in real history
-(`records an interior PRE body deletion near the body end in real history`)
-represent design contract specifications and planned coverage, not present
-executable tests in `WindowedImmersiveVisualEditor.test.tsx`.
-
-For exact-fence and consecutive deletions, the real-CodeMirror exact-fence
-deletion matrix (covering Cut, backward/forward word deletion, and content
-deletion for accepted PREs with one history entry and exact pending Undo/Redo)
-and consecutive deletion coverage (`commits twenty real deletions in each of two
-code bodies with exact canonical bytes`) are planned test specifications rather
-than standalone executable tests in `WindowedImmersiveVisualEditor.test.tsx`.
-Pre-fix evidence from historical audit runs reproduced twelve unauthorized
-Cut/word removals, while content-deletion negatives and legal controls passed.
-Executable multi-deletion verification under cadence is provided by `PreviewSurfaceOwner.test.tsx`,
-and block merging with exact bytes is verified by `merges adjacent Blocks for $name with exact canonical bytes`
-in `WindowedImmersiveVisualEditor.test.tsx`.
-
-The production-cadence regression is `keeps exact local code edits and pending
-real history across Preview window cadence` in `PreviewSurfaceOwner.test.tsx`.
-It composes the real CodeMirror session, Preview owner, window repository and
-Safe HTML sink: twenty exact deletions in each of two bodies straddle actual
-window commits after the eighth key, including newly mounted protected math.
-It then empties a body, prepares a fence context target, and removes the fence
-while a real menu-like control owns focus. Before any response completes,
-ordinary `ZX` input must add exactly two canonical characters and remain
-undoable. IME final data is checked both against the old deleted frame and
-across a real late Preview replacement. Keyboard/native-input Undo and Redo
-restore exact content, selection and history depths, including Undo of the
-typed text followed by Undo of the fence. A newer outside focus is retained;
-the accepted history remount otherwise restores a connected caret.
-Initial candidate protection must already match the installed certificate before
-the visual editor mounts. In `PreviewSurfaceOwner.test.tsx`, `advances only the
-explicitly adopted same-node content baseline` is an executable test keeping an
-unrelated mutation outside the accepted block, whereas `publishes same-node
-content only after canonical acceptance` remains an unverified baseline guard.
-The cadence fixture supplies measured viewport geometry and locates duplicate
-code bodies through the actual edit-map line coordinates, not body-text search.
-An empty visual body retains the canonical delimiter-separating newline. Redo
-selection is compared with the recorded forward commit; a deliberate caret move
-before the next edit is a different, valid Undo selection. Historical pre-fix
-evidence demonstrated that restoring only the old structural-only adoption gate
-caused this regression to refuse `b1 Backspace 9`.
-The same file carries the executable prefix `keeps a pinned text-tail caret
-editable across an unconsumed same-source ready window reorder (fresh public
-Preview epoch=false|true)`. Its steady and fresh public-epoch variants accept a
-same-source new signature through the real Preview session, run an actual
-scroll RAF window commit with the Root notification still unconsumed, then send
-the next key immediately. They verify exact canonical source and native caret,
-retained row identity, the next-key continuation, and finite Undo/Redo across
-declared S0/S1/S2 states. Related executable negatives keep same-ID foreign
-nodes, protected or foreign DOM mutation, source mismatch, and null/stale
-accepted state refused. These are real-owner unit tests, not browser
-acceptance.
-
-Real-document pending input ownership and native event cancelability in
-`ImmersiveVisualEditor.test.tsx` are covered by executable parameterized suites:
-`rejects unproved pending Full input without a canonical mutation for %s`
-(parameterized over `paragraph`, `replacement`, `replacement-selection`,
-`foreign`, `mutated`, `protected`, `pointer`, `navigation`, `selection`,
-`paste`, `drop`, and `noncancelable`) and `keeps pending Full IME ownership under
-newer %s intent` (parameterized over `history`, `noncancelable-undo`,
-`noncancelable-redo`, `selection`, and `outside`). Together they prove that
-unproved replacement targets, pending paragraph semantics, newer caret/selection
-intent, foreign nodes, unrelated mutations, and protected targets yield no
-canonical write; that newer history cancels an IME draft and late final data
-cannot overwrite history; and that noncancelable history fails explicitly before
-any canonical write or draft restoration, while cancelable history supersedes the
-pending response. In historical pre-fix runs, four noncancelable cases changed
-canonical history before the event-cancelability guards were enforced.
-Full-owner regressions also include `commits pending Full text and canonical
-history before Preview for $name` and `commits pending Full IME once across a late
-Preview (late=%s)`. Standalone matrices named `keeps canonical pending input
-ownership for ...` and `admits pending native ...` are historical or planned
-umbrella descriptors rather than distinct test names.
-
-The leading-fence Full regressions in `ImmersiveVisualEditor.test.tsx` are
-`restores leading-fence Full history after late Preview (historyFirst=%s)` and
-`keeps Full canonical removal selection paired through typing Undo Redo and Preview
-rebuilds`. They mirror the real 106-character fenced control and its 50-character,
-two-leading-newline paragraph remainder. Physical-style `ZX` input is accepted
-while Preview is held; separate cases accept a late typed render before history
-or rebuild after pending history, then perform exact Redo/removal and Undo/fence
-restoration through fresh accepted maps. Canonical content, submission bridge,
-history depths, editability and connected native selection must remain paired;
-pre-fix run evidence recorded that the old source-only rematerialization branch
-reproduced `visual-editor-selection-map-failed` in both cases.
-Separate native Undo during a pending keyboard Undo without an active selection
-map is covered in `ImmersiveVisualEditor.test.tsx` by the parameterized unit
-regression `routes separate native history through the pending canonical owner with %s no-map DOM`
-(`unchanged`, `foreign`, `unrelated`, and `protected`). That test proves the
-synthetic document session fixture routes a second native `historyUndo` through
-the pending canonical owner to reach preceding history, while foreign IDs,
-unrelated HTML, and protected additions reject without a canonical write. This
-verifies the unit/fixture owner contract, though not a real CodeMirror session
-or browser-native history engine. Pending keyboard history under formal Preview
-is additionally verified in `WindowedImmersiveVisualEditor.test.tsx` by `claims native
-keyboard history while a formal Preview is pending`.
-
-The live `visual-markdown.test.ts` coverage in this area uses fixture-level source
-mapping and merge cases, including `maps CRLF, lone-CR, and LF line starts with
-the same UTF-16 offsets`, `maps source offsets through an accepted Highlight.js
-token span`, `maps source offsets inside formatting without consuming a hidden
-trailing line ending`, `fails instead of rewriting visual syntax that cannot map
-to source text`, `merges one edited Block fragment without changing CRLF content
-outside it`, and `preserves untouched mixed line endings during a visual edit`.
-These tests cover source-bound mapping, line-ending preservation, and pure merge
-behavior in their fixture contracts. They do not establish the previously named
-numbered-heading command matrix, dedicated serializer-escape matrix, native DOM
-rendering, canonical selection updates, or Undo/Redo history cycles; those broader
-command, DOM, selection, history, and serializer-escape behaviors remain planned
-or unverified at this layer.
-
-Visual and windowed fence normalization is covered across `visual-markdown.test.ts`
-and `WindowedImmersiveVisualEditor.test.tsx`. In `visual-markdown.test.ts`,
-executable fence interval and EOF regressions include `discards forged open-EOF
-metadata when restoring a closed source fence`, `keeps code-block structure stable
-across line shifts and detects inserted fences`, and `maps an open EOF code body
-when rendered code adds a terminal newline after blank lines`, alongside source
-interval and serialization tests that verify escape gaps and block-local CRLF
-fence caret projection. In `WindowedImmersiveVisualEditor.test.tsx`, windowed
-nested-fence certificate handling and bounded EOF validation are executable via
-`registers accepted window certificate with list and blockquote nested fences and
-preserves navigation`, `rejects accepted window certificate for nested fence when
-DOM or bindings are invalid`, `restores a noncancelable mutation when an open
-fence slice stops before canonical EOF`, and `rejects an exact parent-anchored
-deletion when an open fence slice stops before canonical EOF`: the direct
-parent-anchored case rejects with `visual-editor-window-selection-invalid`,
-while the composition/region case rejects with
-`visual-editor-window-open-fence-source-range-invalid`. Any broader parser-proven fence
-projection matrix (such as dedicated standalone cases asserting same-body fence
-binding solely through opener intervals, list/quote ancestry binding, multi-fence
-interval isolation per list item, or cropped-row EOF claim retention) is planned
-or unverified coverage rather than present executable tests.
-
-Rollback handling at runtime is implemented in `WindowedImmersiveVisualEditor.tsx`
-(via `restoreWindowRegion` and region recovery) and `ImmersiveVisualEditor.tsx`.
-However, dedicated standalone unit tests named `rejects a noncancelable boundary edit
-with a collapsed code-body caret and restores both blocks`, `restores a structural
-merge failure that leaves canonical source unchanged`, and `preserves protected inline
-node identity across a structural rollback` are planned / unverified coverage
-specifications; no executable test cases under those exact names currently exist in
-the frontend test suites.
+With the cutover to the unified ProseMirror immersive visual editor
+([ADR-002](decisions/ADR-002-visual-editor-and-esm-architecture.md)), the former
+`ImmersiveVisualEditor.tsx`, `WindowedImmersiveVisualEditor.tsx`, and
+`visual-markdown.ts` controllers and their legacy `contentEditable`-adoption
+unit suites were physically removed. Read-only Preview surface stability,
+windowed commit staging, and `SafePreviewHtmlSink` contracts remain covered by
+the modular `PreviewSurfaceOwner.test.tsx` (130 tests) and
+`SafePreviewHtmlSink.test.tsx` (38 tests) suites under
+`frontend/src/features/live-preview/ui/`, while unified immersive visual editing
+is verified by `frontend/src/features/immersive-visual/` and `EditorRoot.test.tsx`.
 The dedicated immersive unlock browser cases measure in-page click-to-pending,
 the first rAF observation of a pending control that meets the existing
 visibility conditions (not a pixel-presentation claim),

@@ -18,9 +18,7 @@ const MAX_ZERO_JSX_TSX_LINES = 400;
  * grow past their recorded ceiling. Once shrunk below 1,200 lines (or removed),
  * cleanup PRs can delete their entry from this map.
  */
-const LEGACY_LARGE_FILE_LINE_CEILINGS = {
-	"frontend/src/features/live-preview/ui/PreviewSurfaceOwner.tsx": 6821,
-};
+const LEGACY_LARGE_FILE_LINE_CEILINGS = {};
 
 /**
  * Pre-existing zero-JSX multi-thousand-line `.tsx` controllers slated for

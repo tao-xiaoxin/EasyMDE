@@ -30,6 +30,7 @@ import {
   shouldCopyReleaseFile
 } from '../../scripts/build-release.mjs';
 import {
+  bundledFrontendLicensePaths,
   bundledFrontendPackages,
   renderNotices
 } from '../../scripts/third-party-notices.mjs';
@@ -224,9 +225,11 @@ function createFrontendAssetSources(root) {
       resolved: `https://registry.npmjs.org/${packageName}/fixture.tgz`,
       license: 'MIT'
     };
+    const licensePath =
+      bundledFrontendLicensePaths[packageName] || `node_modules/${packageName}/LICENSE`;
     writeText(
       root,
-      `node_modules/${packageName}/LICENSE`,
+      licensePath,
       `MIT License\n\nCopyright fixture for ${packageName}\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the "Software"), to deal\nin the Software without restriction.\n`
     );
   }

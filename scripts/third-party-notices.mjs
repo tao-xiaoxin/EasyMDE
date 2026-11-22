@@ -50,7 +50,6 @@ export const bundledFrontendPackages = {
   '@lezer/yaml': 'YAML parser used by official YAML language support for detached code formatting.',
   '@marijn/find-cluster-break': 'Unicode grapheme boundary handling used by CodeMirror state.',
   crelt: 'DOM element construction used by CodeMirror view.',
-  diff: 'Character-level change mapping used to preserve canonical Markdown during visual editing.',
   entities: 'Complete HTML character-reference decoding for Markdown-derived publish excerpts and Markdown tokenization.',
   'linkify-it': 'URL detection support used by markdown-it when parsing Markdown into the immersive visual editor.',
   'lucide-react': 'Locked build-time icon nodes used by the ordinary and immersive editor interfaces.',
@@ -73,13 +72,11 @@ export const bundledFrontendPackages = {
   'punycode.js': 'Punycode domain encoding helpers used by markdown-it.',
   'rope-sequence': 'Persistent rope sequence data structure used by ProseMirror history.',
   'style-mod': 'Scoped runtime style modules used by CodeMirror view.',
-  turndown: 'Converts the editable Preview DOM into a visual Markdown change model.',
-  'turndown-plugin-gfm': 'GFM table and task-list conversion for visual Markdown editing.',
   'uc.micro': 'Unicode character category regex helpers used by markdown-it and linkify-it.',
   'w3c-keyname': 'Cross-browser keyboard key normalization used by CodeMirror and ProseMirror views.'
 };
 
-const bundledFrontendLicensePaths = {
+export const bundledFrontendLicensePaths = {
   // Mermaid's package metadata declares MIT but does not ship a LICENSE file
   // in the installed distribution. Keep the verified text in the repository
   // so generated notices remain deterministic and fail closed when missing.

@@ -1,10 +1,11 @@
 {
   "frontend/src/entrypoints/admin-editor.tsx": {
-    "file": "assets/admin-editor-qhIvUaxZ.js",
+    "file": "assets/admin-editor-DCx02mMB.js",
     "name": "editor",
     "src": "frontend/src/entrypoints/admin-editor.tsx",
     "isEntry": true,
     "dynamicImports": [
+      "frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx",
       "node_modules/@codemirror/lang-json/dist/index.js",
       "node_modules/@codemirror/lang-python/dist/index.js",
       "node_modules/@codemirror/lang-sql/dist/index.js",
@@ -13,8 +14,17 @@
       "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts"
     ]
   },
+  "frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx": {
+    "file": "assets/admin-editor-chunk-DVSFWaz0.js",
+    "name": "MountedProseMirrorVisualEditor",
+    "src": "frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "frontend/src/entrypoints/admin-editor.tsx"
+    ]
+  },
   "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts": {
-    "file": "assets/admin-editor-chunk-BH600gxM.js",
+    "file": "assets/admin-editor-chunk-DxDv5zcU.js",
     "name": "create-browser-wechat-clipboard",
     "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts",
     "isDynamicEntry": true,
@@ -23,7 +33,7 @@
     ]
   },
   "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts": {
-    "file": "assets/admin-editor-chunk-Cuh1L1mB.js",
+    "file": "assets/admin-editor-chunk-DRJIlaPW.js",
     "name": "create-browser-wechat-visual-rasterizer",
     "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts",
     "isDynamicEntry": true,
@@ -32,7 +42,7 @@
     ]
   },
   "node_modules/@codemirror/lang-json/dist/index.js": {
-    "file": "assets/admin-editor-chunk-Cm0Ysicl.js",
+    "file": "assets/admin-editor-chunk-BDLGOTU8.js",
     "name": "dist",
     "src": "node_modules/@codemirror/lang-json/dist/index.js",
     "isDynamicEntry": true,
@@ -41,7 +51,7 @@
     ]
   },
   "node_modules/@codemirror/lang-python/dist/index.js": {
-    "file": "assets/admin-editor-chunk-DZ8i-972.js",
+    "file": "assets/admin-editor-chunk-C604A-ke.js",
     "name": "dist",
     "src": "node_modules/@codemirror/lang-python/dist/index.js",
     "isDynamicEntry": true,
@@ -50,7 +60,7 @@
     ]
   },
   "node_modules/@codemirror/lang-sql/dist/index.js": {
-    "file": "assets/admin-editor-chunk-D4LmKUeJ.js",
+    "file": "assets/admin-editor-chunk-BfsbUYcc.js",
     "name": "dist",
     "src": "node_modules/@codemirror/lang-sql/dist/index.js",
     "isDynamicEntry": true,
@@ -59,7 +69,7 @@
     ]
   },
   "node_modules/@codemirror/lang-yaml/dist/index.js": {
-    "file": "assets/admin-editor-chunk-il5YRw-W.js",
+    "file": "assets/admin-editor-chunk-DETvmaPE.js",
     "name": "dist",
     "src": "node_modules/@codemirror/lang-yaml/dist/index.js",
     "isDynamicEntry": true,

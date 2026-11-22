@@ -300,6 +300,7 @@ export type ImmersiveVisualEditorRuntime = Readonly<{
 		expected: Readonly<{ revision: number; value: string }>,
 	) => boolean;
 	prepareToolbarFallback: () => boolean;
+	focus?: () => void;
 	surface: HTMLElement;
 }>;
 

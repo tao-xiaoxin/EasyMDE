@@ -67,9 +67,13 @@ const ATOMIC_NODE_NAMES = new Set([
 	"protected_inline",
 ]);
 
-const MERMAID_FENCE_HEADER_PATTERN = /^ {0,3}(?:`{3,}|~{3,})\s*mermaid(?:\s|$)/i;
+const MERMAID_FENCE_HEADER_PATTERN =
+	/^ {0,3}(?:`{3,}|~{3,})\s*mermaid(?:\s|$)/i;
 
-function sameSelection(left: VisualEditorSelection, right: VisualEditorSelection): boolean {
+function sameSelection(
+	left: VisualEditorSelection,
+	right: VisualEditorSelection,
+): boolean {
 	return (
 		left.start === right.start &&
 		left.end === right.end &&
@@ -96,7 +100,10 @@ function syncCanonicalSelectionOnly(
 	});
 }
 
-function resolvePosForDomElement(view: EditorView, element: Element): number | null {
+function resolvePosForDomElement(
+	view: EditorView,
+	element: Element,
+): number | null {
 	try {
 		const pos = view.posAtDOM(element, 0);
 		return pos >= 0 && pos <= view.state.doc.content.size ? pos : null;
@@ -105,11 +112,15 @@ function resolvePosForDomElement(view: EditorView, element: Element): number | n
 	}
 }
 
-function resolveAtomicNodeSelection(view: EditorView, element: Element): NodeSelection | null {
+function resolveAtomicNodeSelection(
+	view: EditorView,
+	element: Element,
+): NodeSelection | null {
 	const pos = resolvePosForDomElement(view, element);
 	if (pos === null) return null;
 	for (const candidatePos of [pos, pos - 1]) {
-		if (candidatePos < 0 || candidatePos >= view.state.doc.content.size) continue;
+		if (candidatePos < 0 || candidatePos >= view.state.doc.content.size)
+			continue;
 		const node = view.state.doc.nodeAt(candidatePos);
 		if (node && ATOMIC_NODE_NAMES.has(node.type.name)) {
 			try {
@@ -134,7 +145,9 @@ function resolveSelectionForPointerTarget(
 	if (target && view.dom.contains(target)) {
 		const atomicTarget =
 			(target instanceof HTMLImageElement ? target : target.closest("img")) ??
-			target.closest("[data-easymde-protected-block], [data-easymde-protected-inline]") ??
+			target.closest(
+				"[data-easymde-protected-block], [data-easymde-protected-inline]",
+			) ??
 			target.closest("hr");
 		if (atomicTarget && view.dom.contains(atomicTarget)) {
 			const atomicSel = resolveAtomicNodeSelection(view, atomicTarget);
@@ -146,7 +159,11 @@ function resolveSelectionForPointerTarget(
 
 	if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
 		const coords = view.posAtCoords({ left: point.x, top: point.y });
-		if (coords && coords.pos >= 0 && coords.pos <= view.state.doc.content.size) {
+		if (
+			coords &&
+			coords.pos >= 0 &&
+			coords.pos <= view.state.doc.content.size
+		) {
 			if (coords.inside >= 0) {
 				const insideNode = view.state.doc.nodeAt(coords.inside);
 				if (insideNode && ATOMIC_NODE_NAMES.has(insideNode.type.name)) {
@@ -211,11 +228,17 @@ function findImageMatchInIndex(
 function collectMermaidBlocks(
 	index: VisualEditorGeneratedContentTargetIndex,
 ): ReadonlyArray<Readonly<{ blockIdx: number; from: number; to: number }>> {
-	const results: Array<Readonly<{ blockIdx: number; from: number; to: number }>> = [];
+	const results: Array<
+		Readonly<{ blockIdx: number; from: number; to: number }>
+	> = [];
 	for (let i = 0; i < index.blocks.length; i += 1) {
 		const block = index.blocks[i];
 		if (block?.kind !== "code") continue;
-		if (MERMAID_FENCE_HEADER_PATTERN.test(index.source.slice(block.from, block.to))) {
+		if (
+			MERMAID_FENCE_HEADER_PATTERN.test(
+				index.source.slice(block.from, block.to),
+			)
+		) {
 			results.push({ blockIdx: i, from: block.from, to: block.to });
 		}
 	}
@@ -232,7 +255,12 @@ function extractMermaidOriginal(
 	const firstNl = full.indexOf("\n");
 	const lastNl = full.lastIndexOf("\n");
 	if (firstNl < 0 || lastNl <= firstNl) {
-		return { body: full, bodyRange: { from, to }, full, fullRange: { from, to } };
+		return {
+			body: full,
+			bodyRange: { from, to },
+			full,
+			fullRange: { from, to },
+		};
 	}
 	const bodyFrom = from + firstNl + 1;
 	const bodyTo = from + lastNl;
@@ -251,12 +279,15 @@ function findGeneratedContentOriginal(
 	element: Element | null,
 ): GeneratedContentResolution | null {
 	const source = index.source;
-	const domRaw = element?.getAttribute("data-easymde-visual-markdown-source") ?? null;
+	const domRaw =
+		element?.getAttribute("data-easymde-visual-markdown-source") ?? null;
 
 	if (kind === "math") {
 		const matchedIdx =
 			domRaw !== null
-				? index.mathSpans.findIndex((span) => source.slice(span.from, span.to) === domRaw)
+				? index.mathSpans.findIndex(
+						(span) => source.slice(span.from, span.to) === domRaw,
+					)
 				: -1;
 		const resolvedIdx = matchedIdx >= 0 ? matchedIdx : ordinal;
 		const span = index.mathSpans[resolvedIdx];
@@ -276,7 +307,9 @@ function findGeneratedContentOriginal(
 	const mermaidBlocks = collectMermaidBlocks(index);
 	const matchedIdx =
 		domRaw !== null
-			? mermaidBlocks.findIndex((entry) => source.slice(entry.from, entry.to) === domRaw)
+			? mermaidBlocks.findIndex(
+					(entry) => source.slice(entry.from, entry.to) === domRaw,
+				)
 			: -1;
 	const resolvedIdx = matchedIdx >= 0 ? matchedIdx : ordinal;
 	const entry = mermaidBlocks[resolvedIdx];
@@ -306,7 +339,12 @@ function createPinLease<TRoot extends Element, TTarget>(
 		...handle,
 		getLease: () =>
 			handle.isCurrent()
-				? { isCurrent: handle.isCurrent, release: () => undefined, root, target }
+				? {
+						isCurrent: handle.isCurrent,
+						release: () => undefined,
+						root,
+						target,
+					}
 				: null,
 		target,
 	};
@@ -401,7 +439,11 @@ export function createProseMirrorVisualRuntime(
 						from <= view.state.doc.content.size &&
 						to <= view.state.doc.content.size
 					) {
-						const nextSelection = TextSelection.create(view.state.doc, from, to);
+						const nextSelection = TextSelection.create(
+							view.state.doc,
+							from,
+							to,
+						);
 						if (!nextSelection.eq(view.state.selection)) {
 							view.dispatch(view.state.tr.setSelection(nextSelection));
 						}
@@ -433,7 +475,8 @@ export function createProseMirrorVisualRuntime(
 			?.getAttribute("data-easymde-visual-block-id");
 		return {
 			acceptedPreview: acceptedPreviewFor(index.revision, index.source.length),
-			blockId: domBlockId && domBlockId.length > 0 ? domBlockId : matchInfo.blockId,
+			blockId:
+				domBlockId && domBlockId.length > 0 ? domBlockId : matchInfo.blockId,
 			ordinal: matchInfo.ordinal,
 			original: {
 				alt: matchInfo.match.alt,
@@ -471,7 +514,9 @@ export function createProseMirrorVisualRuntime(
 			return result;
 		},
 
-		applyCanonicalChange(request: VisualCanonicalChangeRequest): VisualToolbarCommandResult {
+		applyCanonicalChange(
+			request: VisualCanonicalChangeRequest,
+		): VisualToolbarCommandResult {
 			if (!isLiveEditable()) return "blocked";
 			flushPendingSync();
 			const doc = documentSession.document;
@@ -492,7 +537,11 @@ export function createProseMirrorVisualRuntime(
 					});
 				});
 				const nextValue = doc.getValue();
-				applyExternalCanonicalUpdate(nextValue, doc.getRevision(), request.change.selection);
+				applyExternalCanonicalUpdate(
+					nextValue,
+					doc.getRevision(),
+					request.change.selection,
+				);
 				onMarkdownChange?.(nextValue);
 				onCanonicalDocumentChange?.(nextValue);
 				return "handled";
@@ -514,8 +563,15 @@ export function createProseMirrorVisualRuntime(
 			return isLiveEditable();
 		},
 
-		captureContextMenuTarget(target: Element | null): VisualEditorContextMenuTargetLease | null {
-			if (disposed || !target || !view.dom.isConnected || !view.dom.contains(target)) {
+		captureContextMenuTarget(
+			target: Element | null,
+		): VisualEditorContextMenuTargetLease | null {
+			if (
+				disposed ||
+				!target ||
+				!view.dom.isConnected ||
+				!view.dom.contains(target)
+			) {
 				return null;
 			}
 			const capturedRevision = documentSession.document.getRevision();
@@ -527,13 +583,18 @@ export function createProseMirrorVisualRuntime(
 					view.dom.contains(target) &&
 					documentSession.document.getRevision() === capturedRevision,
 			);
-			return { release: handle.release, resolve: () => (handle.isCurrent() ? target : null) };
+			return {
+				release: handle.release,
+				resolve: () => (handle.isCurrent() ? target : null),
+			};
 		},
 
 		prepareContextMenuSelection(target, point, activation): boolean {
 			if (!isLiveEditable()) return false;
 			flushPendingSync();
-			syncSelectionFromView(resolveSelectionForPointerTarget(view, target, point, activation));
+			syncSelectionFromView(
+				resolveSelectionForPointerTarget(view, target, point, activation),
+			);
 			return true;
 		},
 
@@ -548,7 +609,9 @@ export function createProseMirrorVisualRuntime(
 			) {
 				return null;
 			}
-			const elementOrdinal = Array.from(view.dom.querySelectorAll("img")).indexOf(request.element);
+			const elementOrdinal = Array.from(
+				view.dom.querySelectorAll("img"),
+			).indexOf(request.element);
 			const matchInfo =
 				findImageMatchInIndex(
 					request.index,
@@ -556,7 +619,11 @@ export function createProseMirrorVisualRuntime(
 					elementOrdinal >= 0 ? elementOrdinal : undefined,
 				) ?? findImageMatchInIndex(request.index, request.selection);
 			if (!matchInfo) return null;
-			const target = buildImageTarget(matchInfo, request.element, request.index);
+			const target = buildImageTarget(
+				matchInfo,
+				request.element,
+				request.index,
+			);
 			const handle = createTrackedHandle(
 				() =>
 					isIndexCurrent(request.index.revision, request.index.source) &&
@@ -567,7 +634,8 @@ export function createProseMirrorVisualRuntime(
 		},
 
 		prepareImageTargetBySelection(request) {
-			if (!isIndexCurrent(request.index.revision, request.index.source)) return null;
+			if (!isIndexCurrent(request.index.revision, request.index.source))
+				return null;
 			const matchInfo = findImageMatchInIndex(request.index, request.selection);
 			if (!matchInfo) return null;
 			const imageIndex = request.index.images.indexOf(matchInfo.match);
@@ -600,7 +668,11 @@ export function createProseMirrorVisualRuntime(
 				request.element,
 			);
 			if (!resolved) return null;
-			const target = buildGeneratedTarget(request.kind, resolved, request.index);
+			const target = buildGeneratedTarget(
+				request.kind,
+				resolved,
+				request.index,
+			);
 			const handle = createTrackedHandle(
 				() =>
 					isIndexCurrent(request.index.revision, request.index.source) &&
@@ -611,7 +683,8 @@ export function createProseMirrorVisualRuntime(
 		},
 
 		prepareGeneratedContentTargetForSelection(request) {
-			if (!isIndexCurrent(request.index.revision, request.index.source)) return null;
+			if (!isIndexCurrent(request.index.revision, request.index.source))
+				return null;
 			let kind: VisualEditorGeneratedContentKind | null = null;
 			let resolved: GeneratedContentResolution | null = null;
 			const mathIdx = request.index.mathSpans.findIndex((span) =>
@@ -619,23 +692,38 @@ export function createProseMirrorVisualRuntime(
 			);
 			if (mathIdx >= 0) {
 				kind = "math";
-				resolved = findGeneratedContentOriginal(request.index, "math", mathIdx, null);
+				resolved = findGeneratedContentOriginal(
+					request.index,
+					"math",
+					mathIdx,
+					null,
+				);
 			} else {
-				const mermaidIdx = collectMermaidBlocks(request.index).findIndex((entry) =>
-					selectionMatchesRange(request.selection, entry.from, entry.to),
+				const mermaidIdx = collectMermaidBlocks(request.index).findIndex(
+					(entry) =>
+						selectionMatchesRange(request.selection, entry.from, entry.to),
 				);
 				if (mermaidIdx >= 0) {
 					kind = "mermaid";
-					resolved = findGeneratedContentOriginal(request.index, "mermaid", mermaidIdx, null);
+					resolved = findGeneratedContentOriginal(
+						request.index,
+						"mermaid",
+						mermaidIdx,
+						null,
+					);
 				}
 			}
 			if (!resolved || !kind) return null;
 			const elements = Array.from(
-				view.dom.querySelectorAll(kind === "math" ? ".easymde-math" : ".easymde-mermaid"),
+				view.dom.querySelectorAll(
+					kind === "math" ? ".easymde-math" : ".easymde-mermaid",
+				),
 			);
 			const rootElement =
 				elements.find(
-					(el) => el.getAttribute("data-easymde-visual-markdown-source") === resolved.original.full,
+					(el) =>
+						el.getAttribute("data-easymde-visual-markdown-source") ===
+						resolved.original.full,
 				) ?? elements[resolved.ordinal];
 			if (!rootElement?.isConnected) return null;
 			const target = buildGeneratedTarget(kind, resolved, request.index);
@@ -652,11 +740,20 @@ export function createProseMirrorVisualRuntime(
 			if (disposed) return false;
 			flushPendingSync();
 			const doc = documentSession.document;
-			if (doc.getRevision() !== expected.revision || doc.getValue() !== expected.value) {
+			if (
+				doc.getRevision() !== expected.revision ||
+				doc.getValue() !== expected.value
+			) {
 				return false;
 			}
 			syncSelectionFromView(view.state.selection);
 			return true;
+		},
+
+		focus(): void {
+			if (!disposed && view.dom.isConnected) {
+				view.focus();
+			}
 		},
 
 		surface: view.dom,

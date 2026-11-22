@@ -20,13 +20,10 @@ const MAX_ZERO_JSX_TSX_LINES = 400;
  */
 const LEGACY_LARGE_FILE_LINE_CEILINGS = {
 	"frontend/src/app/editor/EditorRoot.tsx": 6395,
-	"frontend/src/app/settings/ImagesSettingsPage.tsx": 1712,
-	"frontend/src/app/settings/SettingsCenterRoot.tsx": 1426,
 	"frontend/src/features/immersive-editor/ui/ImmersiveVisualEditor.tsx": 34829,
 	"frontend/src/features/immersive-editor/ui/WindowedImmersiveVisualEditor.tsx": 20999,
 	"frontend/src/features/immersive-editor/visual-markdown.ts": 16524,
 	"frontend/src/features/live-preview/ui/PreviewSurfaceOwner.tsx": 6821,
-	"frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts": 3474,
 };
 
 /**

@@ -1681,7 +1681,7 @@ function extendAcceptedWindowBaseline(
 	}
 	let shifts = baseline.shifts;
 	if (0 !== delta && previousRange && changedRange) {
-		const lastShift = shifts.at(-1);
+		const lastShift = shifts[shifts.length - 1];
 		if (
 			lastShift &&
 			baseline.lastEditedBlockId === id &&

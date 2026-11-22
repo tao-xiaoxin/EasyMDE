@@ -4,13 +4,13 @@ import {
 	useLayoutEffect,
 	useRef,
 } from "@wordpress/element";
-import type { CSSProperties } from "react";
 import { dropCursor } from "prosemirror-dropcursor";
 import { gapCursor } from "prosemirror-gapcursor";
 import { history } from "prosemirror-history";
 import { Slice } from "prosemirror-model";
 import { EditorState, type Plugin } from "prosemirror-state";
 import { type EditorProps, EditorView } from "prosemirror-view";
+import type { CSSProperties } from "react";
 import type {
 	ImmersiveVisualEditorRuntime,
 	VisualEditorGeneratedPreviewIdentity,
@@ -67,21 +67,23 @@ function appendUniqueClasses(target: string[], raw: string | undefined): void {
 	}
 }
 
-function buildContainerClassName(
+function buildEditorAttributes(
 	articleThemeClass: string | undefined,
 	extraClassName: string | undefined,
-): string {
+	label: string | undefined,
+): Record<string, string> {
 	const classes: string[] = [];
 	appendUniqueClasses(classes, "easymde-rendered-content");
 	appendUniqueClasses(classes, articleThemeClass);
 	appendUniqueClasses(classes, "easymde-code-mac easymde-prosemirror-surface");
 	appendUniqueClasses(classes, extraClassName);
-	return classes.join(" ");
-}
-
-function buildEditorAttributes(label: string | undefined): Record<string, string> {
+	appendUniqueClasses(
+		classes,
+		"easymde-prosemirror-editor easymde-immersive-visual-editor",
+	);
+	const normalizedClasses = classes.filter((token) => token !== "ProseMirror");
 	return {
-		class: "easymde-prosemirror-editor ProseMirror easymde-immersive-visual-editor",
+		class: normalizedClasses.join(" "),
 		role: "textbox",
 		"aria-multiline": "true",
 		spellcheck: "true",
@@ -229,34 +231,42 @@ export function ProseMirrorVisualEditor(props: ProseMirrorVisualEditorProps) {
 			}
 		};
 
-		const view = new EditorView(container, {
-			attributes: () => buildEditorAttributes(latestPropsRef.current.label),
-			dispatchTransaction(transaction) {
-				if (disposed) {
-					return;
-				}
-				const nextState = view.state.apply(transaction);
-				view.updateState(nextState);
+		const view = new EditorView(
+			{ mount: container },
+			{
+				attributes: () =>
+					buildEditorAttributes(
+						latestPropsRef.current.articleThemeClass,
+						latestPropsRef.current.className,
+						latestPropsRef.current.label,
+					),
+				dispatchTransaction(transaction) {
+					if (disposed) {
+						return;
+					}
+					const nextState = view.state.apply(transaction);
+					view.updateState(nextState);
 
-				if (!transaction.docChanged) {
-					return;
-				}
-				if (transaction.getMeta(CANONICAL_SYNC_TRANSACTION_META) === true) {
-					return;
-				}
-				if (isComposing || view.composing) {
-					pendingCompositionSync = true;
-					return;
-				}
-				pendingCompositionSync = false;
-				commitProseMirrorDocToCanonical(view);
+					if (!transaction.docChanged) {
+						return;
+					}
+					if (transaction.getMeta(CANONICAL_SYNC_TRANSACTION_META) === true) {
+						return;
+					}
+					if (isComposing || view.composing) {
+						pendingCompositionSync = true;
+						return;
+					}
+					pendingCompositionSync = false;
+					commitProseMirrorDocToCanonical(view);
+				},
+				editable: () =>
+					(latestPropsRef.current.editable ?? true) &&
+					documentSession.document.isEditable(),
+				...(nodeViews !== undefined ? { nodeViews } : {}),
+				state: initialState,
 			},
-			editable: () =>
-				(latestPropsRef.current.editable ?? true) &&
-				documentSession.document.isEditable(),
-			...(nodeViews !== undefined ? { nodeViews } : {}),
-			state: initialState,
-		});
+		);
 
 		viewRef.current = view;
 
@@ -407,15 +417,15 @@ export function ProseMirrorVisualEditor(props: ProseMirrorVisualEditorProps) {
 			return;
 		}
 		activeView.setProps({
-			attributes: () => buildEditorAttributes(label),
+			attributes: () =>
+				buildEditorAttributes(articleThemeClass, className, label),
 			editable: () => editable && documentSession.document.isEditable(),
 		});
-	}, [documentSession, editable, label]);
+	}, [articleThemeClass, className, documentSession, editable, label]);
 
 	return (
 		<div
 			ref={hostRef}
-			className={buildContainerClassName(articleThemeClass, className)}
 			data-easymde-prosemirror-host="1"
 			{...(style !== undefined ? { style } : {})}
 		/>

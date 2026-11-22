@@ -11,6 +11,8 @@ import {
 	type PreviewWindowNodeRepository,
 	reconcilePreviewWindowSpacerFlow,
 	fullMaterializedNodes,
+	validatePreviewWindowRepositoryBlock,
+	validatePreviewWindowRepositoryHeader,
 	windowNodes,
 } from "./preview-window-dom";
 
@@ -702,5 +704,62 @@ describe("preview-window-dom", () => {
 			reconcilePreviewWindowSpacerFlow(repository, surface, spacer, flowEpoch),
 		).toThrow("preview-window-flow-boundary-verification-failed");
 		canvas.remove();
+	});
+
+	it("validates repository header and individual blocks in O(1) without scanning unrelated blocks", () => {
+		const first = root("b0");
+		const second = root("b1");
+		const third = root("b2");
+		const model = createPreviewWindowModel(
+			[block("b0", 0), block("b1", 1), block("b2", 2)],
+			context,
+		);
+		const repository = {
+			blocks: [
+				{ index: 0, map: block("b0", 0), node: first },
+				{ index: 1, map: block("b1", 1), node: second },
+				{ index: 2, map: block("b2", 2), node: third },
+			],
+			context,
+			indexById: new Map([
+				["b0", 0],
+				["b1", 1],
+				["b2", 2],
+			]),
+			model,
+			nodes: [first, second, third],
+			flowGeometry: [...model.flowGeometries],
+			flowGeometryEpoch: [null, null, null],
+			flowGapEpoch: [null, null, null],
+			flowBoundary: null,
+			spacerContentHeights: new Map(),
+			spacers: new Map(),
+		} satisfies PreviewWindowNodeRepository;
+
+		const thirdAttrSpy = vi.spyOn(third, "getAttribute");
+		validatePreviewWindowRepositoryHeader(repository);
+		validatePreviewWindowRepositoryBlock(repository, 0);
+		expect(thirdAttrSpy).not.toHaveBeenCalled();
+
+		first.setAttribute("data-easymde-visual-block-id", "tampered");
+		expect(() => validatePreviewWindowRepositoryBlock(repository, 0)).toThrow(
+			"preview-window-block-map-marker-mismatch",
+		);
+		first.setAttribute("data-easymde-visual-block-id", "b0");
+
+		repository.flowGeometry[1] = {
+			borderHeight: Number.NaN,
+			marginBefore: 0,
+			marginAfter: 0,
+			gapAfter: 0,
+		};
+		expect(() => validatePreviewWindowRepositoryBlock(repository, 1)).toThrow(
+			"preview-window-flow-geometry-invalid",
+		);
+
+		repository.flowGeometryEpoch.pop();
+		expect(() => validatePreviewWindowRepositoryHeader(repository)).toThrow(
+			"preview-window-flow-epoch-missing",
+		);
 	});
 });

@@ -1694,7 +1694,19 @@ function preserveVisualBlockIdentity(
   target: HTMLElement
 ): void {
   const id = source.getAttribute('data-easymde-visual-block-id');
-  if (id) target.setAttribute('data-easymde-visual-block-id', id);
+  if (!id) return;
+  const parent = source.parentElement;
+  if (
+    parent
+    && Array.from(parent.children).some(
+      (sibling) =>
+        sibling !== source
+        && sibling.getAttribute('data-easymde-visual-block-id') === id
+    )
+  ) {
+    return;
+  }
+  target.setAttribute('data-easymde-visual-block-id', id);
 }
 
 function visualBlockForNode(editor: HTMLElement, node: Node | null): HTMLElement | null {
@@ -1798,6 +1810,218 @@ function selectVisualContents(
   );
 }
 
+function matchesVisualInlineTag(
+  element: Element,
+  tagName: VisualInlineWrap['tagName']
+): boolean {
+  const tag = element.tagName.toUpperCase();
+  switch (tagName) {
+    case 'strong':
+      return 'STRONG' === tag || 'B' === tag;
+    case 'em':
+      return 'EM' === tag || 'I' === tag;
+    case 'del':
+      return 'DEL' === tag || 'S' === tag || 'STRIKE' === tag;
+    case 'code':
+      return 'CODE' === tag;
+  }
+}
+
+function fragmentHasInlineContent(root: ParentNode): boolean {
+  return (
+    null !== root.querySelector('img, br')
+    || (root.textContent ?? '').length > 0
+  );
+}
+
+function findMatchingInlineWrapperForRange(
+  range: Range,
+  block: HTMLElement,
+  tagName: VisualInlineWrap['tagName']
+): Readonly<{ element: HTMLElement; spansEntireElement: boolean }> | null {
+  let ancestor: HTMLElement | null =
+    range.commonAncestorContainer instanceof HTMLElement
+      ? range.commonAncestorContainer
+      : range.commonAncestorContainer.parentElement;
+  while (ancestor && ancestor !== block && block.contains(ancestor)) {
+    if (matchesVisualInlineTag(ancestor, tagName)) {
+      return { element: ancestor, spansEntireElement: false };
+    }
+    ancestor = ancestor.parentElement;
+  }
+  const common = range.commonAncestorContainer;
+  if (!(common instanceof HTMLElement) || !block.contains(common)) {
+    return null;
+  }
+  const documentRef = block.ownerDocument;
+  const intersecting = Array.from(common.childNodes).filter((child) => {
+    const childRange = documentRef.createRange();
+    childRange.selectNode(child);
+    const endsBeforeOrAtStart =
+      childRange.compareBoundaryPoints(Range.END_TO_START, range) >= 0;
+    const startsAfterOrAtEnd =
+      childRange.compareBoundaryPoints(Range.START_TO_END, range) <= 0;
+    if (endsBeforeOrAtStart || startsAfterOrAtEnd) return false;
+    if (child instanceof Text) {
+      const sliceStart =
+        child === range.startContainer ? range.startOffset : 0;
+      const sliceEnd =
+        child === range.endContainer ? range.endOffset : child.data.length;
+      return sliceEnd > sliceStart;
+    }
+    return true;
+  });
+  if (
+    1 === intersecting.length
+    && intersecting[0] instanceof HTMLElement
+    && matchesVisualInlineTag(intersecting[0], tagName)
+  ) {
+    return { element: intersecting[0], spansEntireElement: true };
+  }
+  return null;
+}
+
+function trimFragmentOuterWhitespace(
+  contents: DocumentFragment
+): Readonly<{ leadingWhitespace: string; trailingWhitespace: string }> {
+  let leadingWhitespace = '';
+  let trailingWhitespace = '';
+  const removeEmptyAncestors = (emptyNode: Node): void => {
+    let current: Node | null = emptyNode;
+    while (
+      current
+      && current !== contents
+      && 0 === current.childNodes.length
+      && (!(current instanceof Text) || 0 === current.data.length)
+    ) {
+      const parent: ParentNode | null = current.parentNode;
+      parent?.removeChild(current);
+      current = parent instanceof Node ? parent : null;
+    }
+  };
+  while (contents.firstChild) {
+    let edge: Node = contents.firstChild;
+    while (
+      edge instanceof HTMLElement
+      && 'IMG' !== edge.tagName
+      && 'BR' !== edge.tagName
+      && 'CODE' !== edge.tagName
+      && edge.firstChild
+    ) {
+      edge = edge.firstChild;
+    }
+    if (!(edge instanceof Text)) break;
+    const match = /^[ \t\r\n]+/u.exec(edge.data);
+    if (!match) break;
+    leadingWhitespace += match[0];
+    edge.deleteData(0, match[0].length);
+    if (0 === edge.data.length) {
+      removeEmptyAncestors(edge);
+    } else {
+      break;
+    }
+  }
+  while (contents.lastChild) {
+    let edge: Node = contents.lastChild;
+    while (
+      edge instanceof HTMLElement
+      && 'IMG' !== edge.tagName
+      && 'BR' !== edge.tagName
+      && 'CODE' !== edge.tagName
+      && edge.lastChild
+    ) {
+      edge = edge.lastChild;
+    }
+    if (!(edge instanceof Text)) break;
+    const match = /[ \t\r\n]+$/u.exec(edge.data);
+    if (!match) break;
+    trailingWhitespace = match[0] + trailingWhitespace;
+    edge.deleteData(edge.data.length - match[0].length, match[0].length);
+    if (0 === edge.data.length) {
+      removeEmptyAncestors(edge);
+    } else {
+      break;
+    }
+  }
+  return { leadingWhitespace, trailingWhitespace };
+}
+
+function selectUnwrappedNodesAfterNormalize(
+  documentRef: Document,
+  block: HTMLElement,
+  selectedNodes: ReadonlyArray<Node>,
+  backward: boolean
+): void {
+  const firstNode = selectedNodes[0];
+  const lastNode = selectedNodes[selectedNodes.length - 1];
+  if (!firstNode || !lastNode) return;
+  let startTextRoot: Text | null = null;
+  let startTextOffset = 0;
+  if (firstNode instanceof Text) {
+    let cursor: Text = firstNode;
+    while (cursor.previousSibling instanceof Text) {
+      cursor = cursor.previousSibling;
+      startTextOffset += cursor.data.length;
+    }
+    startTextRoot = cursor;
+  }
+  let endTextRoot: Text | null = null;
+  let endTextOffset = 0;
+  if (lastNode instanceof Text) {
+    let cursor: Text = lastNode;
+    endTextOffset = lastNode.data.length;
+    while (cursor.previousSibling instanceof Text) {
+      cursor = cursor.previousSibling;
+      endTextOffset += cursor.data.length;
+    }
+    endTextRoot = cursor;
+  }
+  block.normalize();
+  if (
+    startTextRoot
+    && endTextRoot
+    && startTextRoot === endTextRoot
+    && startTextRoot.isConnected
+  ) {
+    selectVisualText(
+      documentRef,
+      startTextRoot,
+      startTextOffset,
+      endTextOffset,
+      backward
+    );
+    return;
+  }
+  const startContainer = startTextRoot && startTextRoot.isConnected
+    ? startTextRoot
+    : firstNode.parentNode;
+  const startOffset = startTextRoot && startTextRoot.isConnected
+    ? startTextOffset
+    : startContainer
+      ? Array.prototype.indexOf.call(startContainer.childNodes, firstNode)
+      : -1;
+  const endContainer = endTextRoot && endTextRoot.isConnected
+    ? endTextRoot
+    : lastNode.parentNode;
+  const endOffset = endTextRoot && endTextRoot.isConnected
+    ? endTextOffset
+    : endContainer
+      ? Array.prototype.indexOf.call(endContainer.childNodes, lastNode) + 1
+      : -1;
+  if (!startContainer || !endContainer || startOffset < 0 || endOffset < 0) {
+    return;
+  }
+  const selection = documentRef.defaultView?.getSelection();
+  if (!selection) throw new Error('visual-editor-selection-unavailable');
+  selection.removeAllRanges();
+  selection.setBaseAndExtent(
+    backward ? endContainer : startContainer,
+    backward ? endOffset : startOffset,
+    backward ? startContainer : endContainer,
+    backward ? startOffset : endOffset
+  );
+}
+
 function applyVisualInlineToolbarCommand(
   editor: HTMLElement,
   block: HTMLElement,
@@ -1822,22 +2046,121 @@ function applyVisualInlineToolbarCommand(
   ) return false;
 
   const documentRef = editor.ownerDocument;
-  const formatted = documentRef.createElement(wrap.tagName);
-  if (selection.isCollapsed) {
-    if ('' === (block.textContent ?? '') && block.firstElementChild?.matches('br')) {
-      block.replaceChildren();
-    }
-    const marker = documentRef.createTextNode('');
-    formatted.append(marker);
-    range.insertNode(formatted);
-    markShortcutApplied(formatted, 'inline');
-    selectVisualText(documentRef, marker, 0, 0);
+  if (selection.isCollapsed || range.collapsed) {
+    // Spec 11.20 #2: an inline formatting command on a collapsed selection
+    // must not emit empty delimiter pairs (such as `****`) or empty markup.
+    // Returning `true` keeps visual ownership intact as a clean no-op.
     return true;
   }
 
+  const wrapTag = wrap.tagName.toUpperCase();
+  const trimsOuterWhitespace =
+    'EM' === wrapTag || 'STRONG' === wrapTag || 'DEL' === wrapTag;
+  const existing = findMatchingInlineWrapperForRange(
+    range,
+    block,
+    wrap.tagName
+  );
+  if (existing) {
+    const wrapper = existing.element;
+    const toggleRange = documentRef.createRange();
+    if (existing.spansEntireElement) {
+      toggleRange.selectNodeContents(wrapper);
+    } else {
+      toggleRange.setStart(range.startContainer, range.startOffset);
+      toggleRange.setEnd(range.endContainer, range.endOffset);
+    }
+    const afterRange = documentRef.createRange();
+    afterRange.setStart(toggleRange.endContainer, toggleRange.endOffset);
+    afterRange.setEnd(wrapper, wrapper.childNodes.length);
+    const hasAfter =
+      !afterRange.collapsed
+      && fragmentHasInlineContent(afterRange.cloneContents());
+    const afterFragment = hasAfter ? afterRange.extractContents() : null;
+    const selectedFragment = toggleRange.extractContents();
+    const beforeFragment = documentRef.createDocumentFragment();
+    while (wrapper.firstChild) beforeFragment.append(wrapper.firstChild);
+
+    const replacementNodes: Node[] = [];
+    if (fragmentHasInlineContent(beforeFragment)) {
+      const beforeWhitespace = trimsOuterWhitespace
+        ? trimFragmentOuterWhitespace(beforeFragment)
+        : { leadingWhitespace: '', trailingWhitespace: '' };
+      if ('' !== beforeWhitespace.leadingWhitespace) {
+        replacementNodes.push(
+          documentRef.createTextNode(beforeWhitespace.leadingWhitespace)
+        );
+      }
+      if (fragmentHasInlineContent(beforeFragment)) {
+        const beforeWrapper = documentRef.createElement(wrapper.tagName);
+        beforeWrapper.append(beforeFragment);
+        replacementNodes.push(beforeWrapper);
+      }
+      if ('' !== beforeWhitespace.trailingWhitespace) {
+        replacementNodes.push(
+          documentRef.createTextNode(beforeWhitespace.trailingWhitespace)
+        );
+      }
+    }
+
+    const selectedNodes = Array.from(selectedFragment.childNodes);
+    replacementNodes.push(...selectedNodes);
+
+    if (afterFragment && fragmentHasInlineContent(afterFragment)) {
+      const afterWhitespace = trimsOuterWhitespace
+        ? trimFragmentOuterWhitespace(afterFragment)
+        : { leadingWhitespace: '', trailingWhitespace: '' };
+      if ('' !== afterWhitespace.leadingWhitespace) {
+        replacementNodes.push(
+          documentRef.createTextNode(afterWhitespace.leadingWhitespace)
+        );
+      }
+      if (fragmentHasInlineContent(afterFragment)) {
+        const afterWrapper = documentRef.createElement(wrapper.tagName);
+        afterWrapper.append(afterFragment);
+        replacementNodes.push(afterWrapper);
+      }
+      if ('' !== afterWhitespace.trailingWhitespace) {
+        replacementNodes.push(
+          documentRef.createTextNode(afterWhitespace.trailingWhitespace)
+        );
+      }
+    }
+
+    wrapper.replaceWith(...replacementNodes);
+    selectUnwrappedNodesAfterNormalize(
+      documentRef,
+      block,
+      selectedNodes,
+      snapshot.backward
+    );
+    return true;
+  }
+
+  if (trimsOuterWhitespace) {
+    const preview = range.cloneContents();
+    if (
+      !preview.querySelector('img, br')
+      && /^[ \t\r\n]*$/u.test(preview.textContent ?? '')
+    ) {
+      return true;
+    }
+  }
+
+  const formatted = documentRef.createElement(wrap.tagName);
   const contents = range.extractContents();
+  const { leadingWhitespace, trailingWhitespace } = trimsOuterWhitespace
+    ? trimFragmentOuterWhitespace(contents)
+    : { leadingWhitespace: '', trailingWhitespace: '' };
   formatted.append(contents);
+  if ('' !== trailingWhitespace) {
+    range.insertNode(documentRef.createTextNode(trailingWhitespace));
+  }
   range.insertNode(formatted);
+  if ('' !== leadingWhitespace) {
+    range.insertNode(documentRef.createTextNode(leadingWhitespace));
+  }
+  block.normalize();
   markShortcutApplied(formatted, 'inline');
   selectVisualContents(documentRef, formatted, snapshot.backward);
   return true;
@@ -2859,6 +3182,40 @@ export function visualCodeBodyText(
     text += line.lineEnding;
   }
   return text;
+}
+
+/**
+ * Editable source end offset of a code block's body, excluding the single
+ * representation-only line terminator before a closed fence's closing
+ * delimiter.
+ */
+export function visualCodeBodyEditableSourceEnd(
+  interval: VisualCodeBodyInterval,
+  markdown: string
+): number {
+  if (!interval.closed) return interval.bodyEnd;
+  const bodyEnding = /(?:\r\n|\r|\n)$/u.exec(
+    markdown.slice(interval.bodyStart, interval.bodyEnd)
+  )?.[0] ?? '';
+  return interval.bodyEnd - bodyEnding.length;
+}
+
+/**
+ * Editable length of a code block's normalized DOM body text, excluding the
+ * single representation-only line terminator before a closed fence's closing
+ * delimiter (matching `codeBlockEditableEndBoundary`).
+ */
+export function visualCodeBodyEditableLength(
+  interval: VisualCodeBodyInterval,
+  markdown: string
+): number {
+  const normalizedBody = normalizeCodeBodyLineEndings(
+    visualCodeBodyText(interval, markdown)
+  );
+  if (!interval.closed) return normalizedBody.length;
+  return normalizedBody.endsWith('\n')
+    ? normalizedBody.length - 1
+    : normalizedBody.length;
 }
 
 export function visualCodeBodySourceOffset(
@@ -4633,10 +4990,22 @@ export function applyVisualBlockShortcut(
       pre.append(code);
       pre.setAttribute(
         VISUAL_FENCE_ATTRIBUTE,
-        '`'.repeat(fenceFamily.length)
+        fenceFamily
       );
       pre.setAttribute(VISUAL_FENCE_INFO_ATTRIBUTE, fence.info);
-      preserveVisualBlockIdentity(block, pre);
+      const blockId = block.getAttribute('data-easymde-visual-block-id');
+      const hasDuplicateBlockId =
+        null !== blockId
+        && Array.from(
+          editor.querySelectorAll('[data-easymde-visual-block-id]')
+        ).some(
+          (candidate) =>
+            candidate !== block
+            && candidate.getAttribute('data-easymde-visual-block-id') === blockId
+        );
+      if (!hasDuplicateBlockId) {
+        preserveVisualBlockIdentity(block, pre);
+      }
       block.replaceWith(pre);
       markShortcutApplied(pre, 'block');
       selectVisualCodePlaceholder(editablePlaceholder);
@@ -5291,7 +5660,10 @@ export function visualSerializationMatchesCommitted(
   serialized: string,
   committed: string
 ): boolean {
-  return serialized === committed || serialized === committed.trim();
+  return (
+    serialized === committed
+    || serialized === committed.replace(/^[ \t\r\n]+|[ \t\r\n]+$/gu, '')
+  );
 }
 
 export function createVisualMarkdownSourceRangeFromPreviewEditMap(
@@ -5519,6 +5891,125 @@ export function visualEmptiedInlineCodeSourceRange(
   // Only the deletion of the span's WHOLE text retires it.
   if (range.start !== first.to || range.end !== last.from) return null;
   return { end: node.to, start: node.from };
+}
+
+/**
+ * Projects Markdown inline source into its rendered visible text by stripping
+ * Lezer `HTMLTag` nodes (matching CommonMark `html_input = strip` and the
+ * interval map's hidden-tag model) and decoding ASCII-punctuation backslash
+ * escapes.
+ */
+export function projectRenderedMarkdownInlineText(markdown: string): string {
+  let projected = markdown;
+  if (projected.includes('<')) {
+    const parts: string[] = [];
+    let cursor = 0;
+    markdownLanguage.parser.parse(projected).iterate({
+      enter: (node) => {
+        if ('HTMLTag' !== node.name || node.from < cursor) return;
+        parts.push(projected.slice(cursor, node.from));
+        cursor = node.to;
+      }
+    });
+    if (cursor > 0) {
+      parts.push(projected.slice(cursor));
+      projected = parts.join('');
+    }
+  }
+  return projected.replace(/\\([!-/:-@[-`{-~])/gu, '$1');
+}
+
+const OPENING_INLINE_HTML_TAG = /^<([A-Za-z][A-Za-z0-9-]*)(?:[\s/][^>]*)?>$/u;
+const CLOSING_INLINE_HTML_TAG = /^<\/([A-Za-z][A-Za-z0-9-]*)\s*>$/u;
+
+/**
+ * Expands a deletion range through paired stripped inline HTML tags (such as
+ * `<kbd>K</kbd>`) when deleting the final visible content leaves the opening
+ * tag empty, so canonical Markdown never retains an orphaned `<kbd>`.
+ */
+export function visualEmptiedInlineHtmlTagSourceRange(
+  markdown: string,
+  range: Readonly<{ end: number; start: number }>
+): Readonly<{ end: number; start: number }> | null {
+  if (
+    !Number.isInteger(range.start)
+    || !Number.isInteger(range.end)
+    || range.start < 0
+    || range.end <= range.start
+    || range.end > markdown.length
+    || !markdown.includes('<')
+  ) return null;
+  const tags: Array<Readonly<{
+    from: number;
+    kind: 'close' | 'open';
+    name: string;
+    to: number;
+  }>> = [];
+  markdownLanguage.parser.parse(markdown).iterate({
+    enter: (node) => {
+      if ('HTMLTag' !== node.name) return;
+      const raw = markdown.slice(node.from, node.to);
+      const closeMatch = CLOSING_INLINE_HTML_TAG.exec(raw);
+      if (closeMatch?.[1]) {
+        tags.push({
+          from: node.from,
+          kind: 'close',
+          name: closeMatch[1].toLowerCase(),
+          to: node.to
+        });
+        return;
+      }
+      if (raw.endsWith('/>')) return;
+      const openMatch = OPENING_INLINE_HTML_TAG.exec(raw);
+      if (openMatch?.[1]) {
+        tags.push({
+          from: node.from,
+          kind: 'open',
+          name: openMatch[1].toLowerCase(),
+          to: node.to
+        });
+      }
+    }
+  });
+  if (0 === tags.length) return null;
+  let start = range.start;
+  let end = range.end;
+  let expanded = false;
+  while (true) {
+    const openTag = tags.find((tag) => 'open' === tag.kind && tag.to === start);
+    if (!openTag) break;
+    const closeTag =
+      tags.find(
+        (tag) =>
+          'close' === tag.kind
+          && tag.name === openTag.name
+          && tag.from >= start
+          && tag.to === end
+      )
+      ?? tags.find(
+        (tag) =>
+          'close' === tag.kind
+          && tag.name === openTag.name
+          && tag.from === end
+      );
+    if (!closeTag) break;
+    let depth = 0;
+    let balanced = true;
+    for (const inner of tags) {
+      if (inner.from < openTag.to || inner.to > closeTag.from) continue;
+      if (inner.name !== openTag.name) continue;
+      depth += 'open' === inner.kind ? 1 : -1;
+      if (depth < 0) {
+        balanced = false;
+        break;
+      }
+    }
+    if (!balanced || 0 !== depth) break;
+    start = openTag.from;
+    end = Math.max(end, closeTag.to);
+    expanded = true;
+  }
+  return expanded ? { end, start } : null;
 }
 
 /** A visible parent boundary for an image token or a proved inline edge. */
@@ -6402,6 +6893,117 @@ export function visualBoundarySourceOffset(
       }
     }
   }
+  const enclosingPre =
+    'PRE' === editor.tagName
+      ? editor
+      : 1 === editor.children.length
+        && editor.firstElementChild instanceof HTMLElement
+        && 'PRE' === editor.firstElementChild.tagName
+        ? editor.firstElementChild
+        : null;
+  if (
+    enclosingPre instanceof HTMLElement
+    && (enclosingPre === editor || editor.contains(enclosingPre))
+  ) {
+    const preIsRoot = enclosingPre === editor;
+    const preCode = directCodeChild(enclosingPre);
+    if (
+      preCode
+      && (node === enclosingPre || preCode === node || preCode.contains(node))
+    ) {
+      const isFencedCandidate =
+        enclosingPre.matches(`pre[${VISUAL_FENCE_ATTRIBUTE}]`)
+        || null !== sourceSliceFenceOpening(sourceMarkdown);
+      if (isFencedCandidate) {
+        const readOnlySelector = `[contenteditable="false"], ${VISUAL_MARKDOWN_READ_ONLY_SELECTOR}`;
+        if (
+          enclosingPre.matches(readOnlySelector)
+          || preCode.matches(readOnlySelector)
+          || null !== preCode.querySelector(readOnlySelector)
+        ) {
+          throw new Error('visual-editor-selection-map-failed');
+        }
+        let interval: VisualCodeBodyInterval | null = null;
+        try {
+          interval = visualCodeBodyIntervalAtOrdinal(sourceMarkdown, 0);
+        } catch {
+          interval = null;
+        }
+        if (
+          interval
+          && 'fenced' === interval.kind
+          && (preIsRoot || interval.closed)
+        ) {
+          const fenceAttr = enclosingPre.getAttribute(VISUAL_FENCE_ATTRIBUTE);
+          if (fenceAttr && fenceAttr !== interval.fence) {
+            if (preIsRoot) throw new Error('visual-editor-selection-map-failed');
+          } else {
+            const rawBody = visualCodeBodyText(interval, sourceMarkdown);
+            const normalizedRawBody = normalizeCodeBodyLineEndings(rawBody);
+            const normalizedDomBody = normalizeCodeBodyLineEndings(
+              visualCodeBodyDomText(preCode)
+            );
+            const domMatchesCanonical =
+              normalizedDomBody === normalizedRawBody
+              || (
+                interval.closed
+                && '' !== interval.lineEnding
+                && normalizedRawBody.endsWith('\n')
+                && normalizedDomBody === normalizedRawBody.slice(0, -1)
+              );
+            if (!domMatchesCanonical) {
+              if (preIsRoot) throw new Error('visual-editor-selection-map-failed');
+            } else {
+              // When `<code>` has editable text content, refuse element-wrapper
+              // boundaries (`(pre, ...)` / `(code, ...)`) on a direct `<pre>`
+              // root so binary search resolves strictly to the editable `Text`
+              // node inside `<code>`.
+              if (
+                preIsRoot
+                && (node === enclosingPre || node === preCode)
+                && '' !== normalizedDomBody
+              ) {
+                throw new Error('visual-editor-selection-map-failed');
+              }
+              let codeOffset: number;
+              if (node === enclosingPre) {
+                const codeIndex = Array.prototype.indexOf.call(
+                  enclosingPre.childNodes,
+                  preCode
+                );
+                codeOffset = offset <= codeIndex ? 0 : normalizedDomBody.length;
+              } else {
+                const preRange = editor.ownerDocument.createRange();
+                preRange.selectNodeContents(preCode);
+                preRange.setEnd(node, offset);
+                const probe = editor.ownerDocument.createElement('code');
+                probe.append(preRange.cloneContents());
+                codeOffset = visualCodeBodyDomText(probe).length;
+              }
+              const maxEditableCodeOffset = visualCodeBodyEditableLength(
+                interval,
+                sourceMarkdown
+              );
+              if (codeOffset > maxEditableCodeOffset) {
+                throw new Error('visual-editor-selection-map-failed');
+              }
+              if (preIsRoot) {
+                return sourceOffsetForCodeText(
+                  sourceMarkdown.slice(interval.bodyStart, interval.bodyEnd),
+                  codeOffset
+                );
+              }
+              return visualCodeBodySourceOffset(
+                interval,
+                sourceMarkdown,
+                codeOffset
+              );
+            }
+          }
+        }
+      }
+    }
+  }
   const clone = editor.cloneNode(true) as HTMLElement;
   let cloneNode: Node = clone;
   for (const index of path) {
@@ -6503,6 +7105,15 @@ export function visualBoundarySourceOffset(
   const normalizedBaseline = normalizeNbsp
     ? baselineVisualMarkdown.replace(/\u00a0/gu, ' ')
     : baselineVisualMarkdown;
+  const normalizedMarked = normalizeNbsp
+    ? provenMarkedVisualMarkdown.replace(/\u00a0/gu, ' ')
+    : provenMarkedVisualMarkdown;
+  const markerIndex = normalizedMarked.indexOf(marker);
+  if (markerIndex < 0 || markerIndex !== normalizedMarked.lastIndexOf(marker)) {
+    throw new Error('visual-editor-selection-map-failed');
+  }
+  const withoutMarker = normalizedMarked.slice(0, markerIndex)
+    + normalizedMarked.slice(markerIndex + marker.length);
   const mergedProjectedMap = normalizeNbsp && projectedIntervalMap
     ? {
         ...projectedIntervalMap,
@@ -6512,9 +7123,7 @@ export function visualBoundarySourceOffset(
   const markedSource = mergeVisualMarkdownChange(
     sourceMarkdown,
     normalizedBaseline,
-    normalizeNbsp
-      ? provenMarkedVisualMarkdown.replace(/\u00a0/gu, ' ')
-      : provenMarkedVisualMarkdown,
+    normalizedMarked,
     mergedProjectedMap,
     options
   );
@@ -6523,7 +7132,65 @@ export function visualBoundarySourceOffset(
 
     throw new Error('visual-editor-selection-map-failed');
   }
-  return sourceOffset;
+  const mergedSource = markedSource.slice(0, sourceOffset)
+    + markedSource.slice(sourceOffset + marker.length);
+  const currentUnmarkedVisual = withoutMarker !== normalizedBaseline
+    ? (useBlockFragment
+        ? serializeVisualMarkdownBlockFragment([editor])
+        : serializeVisualMarkdown(editor))
+    : baselineVisualMarkdown;
+  const unchangedDomOverflow =
+    sourceOffset > sourceMarkdown.length
+    && currentUnmarkedVisual === baselineVisualMarkdown;
+  if (sourceOffset > mergedSource.length) {
+    throw new Error('visual-editor-selection-map-failed');
+  }
+  if (unchangedDomOverflow) {
+    if (
+      !mergedSource.startsWith(sourceMarkdown)
+      || !/^[ \u00a0]+$/u.test(mergedSource.slice(sourceMarkdown.length))
+    ) {
+      throw new Error('visual-editor-selection-map-failed');
+    }
+  }
+  const resolvedSourceOffset = unchangedDomOverflow
+    ? sourceMarkdown.length
+    : sourceOffset;
+  const splitInlineDelimiter = ((): boolean => {
+    if (withoutMarker === normalizedBaseline || sourceOffset > sourceMarkdown.length) {
+      return false;
+    }
+    let insideDelimiter = false;
+    markdownLanguage.parser.parse(sourceMarkdown).iterate({
+      enter: (syntaxNode) => {
+        if (
+          ('EmphasisMark' === syntaxNode.name || 'StrikethroughMark' === syntaxNode.name)
+          && syntaxNode.from < resolvedSourceOffset
+          && resolvedSourceOffset < syntaxNode.to
+        ) {
+          insideDelimiter = true;
+        }
+      }
+    });
+    return insideDelimiter;
+  })();
+  if (
+    !coversMarkdownUnits(mergedSource, sourceOffset, sourceOffset)
+    || (
+      withoutMarker !== normalizedBaseline
+      && (
+        splitInlineDelimiter
+        || (
+          sourceOffset <= sourceMarkdown.length
+          && !coversMarkdownUnits(sourceMarkdown, resolvedSourceOffset, resolvedSourceOffset)
+          && currentUnmarkedVisual === baselineVisualMarkdown
+        )
+      )
+    )
+  ) {
+    throw new Error('visual-editor-selection-map-failed');
+  }
+  return resolvedSourceOffset;
 }
 
 type VisualBoundary = Readonly<{
@@ -6583,10 +7250,135 @@ function emptyStructuralSeparatorEnd(
 }
 
 /**
- * The start of the source suffix that renders to nothing: a run of link
- * reference definitions closing the document, together with the blank lines
- * that separate them from the last drawn line. Null when the document does not
- * close with such a run.
+ * One top-level source block the renderer draws nothing for: a link reference
+ * or footnote definition, or a raw HTML block the server preview strips
+ * because raw Markdown HTML is disabled. `next` is the start of the following
+ * top-level block (or the source end), so `[from, next)` is the block together
+ * with the blank lines that separate it from what follows.
+ */
+export type UnrenderedMarkdownSourceBlock = Readonly<{
+  from: number;
+  name: string;
+  next: number;
+  to: number;
+}>;
+
+const UNRENDERED_SOURCE_BLOCK_CANDIDATE = /^[ \t]{0,3}(?:<|\[[^\]\n]+\]:)/mu;
+const RAW_HTML_SOURCE_BLOCK_NAMES: ReadonlySet<string> = new Set([
+  'CommentBlock',
+  'HTMLBlock',
+  'ProcessingInstructionBlock'
+]);
+let lastSourceOnlyMarkdownBlocks: Readonly<{
+  blocks: ReadonlyArray<UnrenderedMarkdownSourceBlock>;
+  source: string;
+}> | null = null;
+let lastUnrenderedMarkdownSourceBlocks: Readonly<{
+  baseline: string;
+  blocks: ReadonlyArray<UnrenderedMarkdownSourceBlock>;
+  source: string;
+}> | null = null;
+
+/**
+ * Whether a top-level Markdown node is source-only by the rendering policy:
+ * a link reference or footnote definition, or a raw HTML block, which the
+ * production renderer strips (`html_input = strip`).
+ */
+export function isSourceOnlyMarkdownBlockName(name: string): boolean {
+  return 'LinkReference' === name || RAW_HTML_SOURCE_BLOCK_NAMES.has(name);
+}
+
+/**
+ * The top-level source-only blocks of `source` by the rendering policy, in
+ * document order. Structural row owners that only hold the source ask this;
+ * the source interval map asks `unrenderedMarkdownSourceBlocks`, which also
+ * proves every raw HTML block absent from the drawn baseline.
+ */
+export function sourceOnlyMarkdownBlocks(
+  source: string
+): ReadonlyArray<UnrenderedMarkdownSourceBlock> {
+  const cached = lastSourceOnlyMarkdownBlocks;
+  if (cached && cached.source === source) return cached.blocks;
+  const blocks: UnrenderedMarkdownSourceBlock[] = [];
+  if (UNRENDERED_SOURCE_BLOCK_CANDIDATE.test(source)) {
+    const cursor = markdownLanguage.parser.parse(source).cursor();
+    if (cursor.firstChild()) {
+      let previous: { from: number; name: string; next: number; to: number } | null = null;
+      do {
+        if (previous) previous.next = cursor.from;
+        previous = null;
+        if (!isSourceOnlyMarkdownBlockName(cursor.name)) continue;
+        previous = { from: cursor.from, name: cursor.name, next: source.length, to: cursor.to };
+        blocks.push(previous);
+      } while (cursor.nextSibling());
+    }
+  }
+  lastSourceOnlyMarkdownBlocks = { blocks, source };
+  return blocks;
+}
+
+/**
+ * The top-level source blocks that render to nothing, in document order.
+ *
+ * Definitions never draw a row of their own. A raw HTML block is owned as
+ * unrendered only when the drawn document proves it absent: neither its own
+ * spelling nor the text its tags enclose occurs in the drawn baseline more
+ * often than the rest of the source accounts for. An HTML block the renderer
+ * escaped or kept therefore stays part of the alignment, so no drawn text is
+ * ever dropped.
+ */
+export function unrenderedMarkdownSourceBlocks(
+  source: string,
+  baselineVisualMarkdown: string
+): ReadonlyArray<UnrenderedMarkdownSourceBlock> {
+  const cached = lastUnrenderedMarkdownSourceBlocks;
+  if (cached && cached.source === source && cached.baseline === baselineVisualMarkdown) {
+    return cached.blocks;
+  }
+  const blocks: UnrenderedMarkdownSourceBlock[] = [];
+  const candidates = sourceOnlyMarkdownBlocks(source);
+  if (0 !== candidates.length) {
+    // Compared as drawn text: escapes decoded and every whitespace run read as
+    // one space, so a line break or soft-break spelling never hides a match.
+    const decode = (markdown: string): string =>
+      markdown.replace(/\\([!-/:-@[-`{-~])/gu, '$1').replace(/\s+/gu, ' ');
+    const occurrences = (text: string, needle: string): number => {
+      let count = 0;
+      for (let index = text.indexOf(needle); index >= 0; index = text.indexOf(needle, index + needle.length)) {
+        count += 1;
+      }
+      return count;
+    };
+    let decodedBaseline: string | null = null;
+    let decodedSource: string | null = null;
+    const drawn = (from: number, to: number): boolean => {
+      const blockText = source.slice(from, to);
+      const enclosed = decode(blockText.replace(/<[^>]*>/gu, ' ')).trim();
+      // An entity spells its text differently in source and drawing; such a
+      // block cannot be proved absent, so it stays aligned.
+      if (enclosed.includes('&')) return true;
+      decodedBaseline ??= decode(baselineVisualMarkdown);
+      decodedSource ??= decode(source);
+      const decodedBlock = decode(blockText);
+      const firstLine = decode(blockText.split(/\r\n|\r|\n/u)[0] ?? '').trim();
+      return [firstLine, enclosed].some((needle) =>
+        '' !== needle
+        && occurrences(decodedBaseline as string, needle)
+          > occurrences(decodedSource as string, needle) - occurrences(decodedBlock, needle));
+    };
+    for (const block of candidates) {
+      if ('LinkReference' === block.name || !drawn(block.from, block.to)) blocks.push(block);
+    }
+  }
+  lastUnrenderedMarkdownSourceBlocks = { baseline: baselineVisualMarkdown, blocks, source };
+  return blocks;
+}
+
+/**
+ * The start of the source suffix that renders to nothing: a run of
+ * unrendered source blocks (definitions and stripped raw HTML) closing the
+ * document, together with the blank lines that separate them from the last
+ * drawn line. Null when the document does not close with such a run.
  *
  * A definition's own bytes are exactly the bytes the serializer writes inline
  * for the link that does render, so a character diff given both sides of that
@@ -6594,53 +7386,30 @@ function emptyStructuralSeparatorEnd(
  * instead of to the row that is drawn. The drawn row is then left with no
  * source offset at all, and every caret inside its tail fails closed. The
  * suffix is therefore owned as hidden source rather than aligned: what is
- * drawn keeps its own spelling, and the definitions keep theirs.
+ * drawn keeps its own spelling, and the unrendered blocks keep theirs.
  */
 function trailingHiddenReferenceStart(
   source: string,
-  baselineVisualMarkdown: string
+  baselineVisualMarkdown: string,
+  unrendered: ReadonlyArray<UnrenderedMarkdownSourceBlock>
 ): number | null {
-  // Only a definition line can close such a run, so every other document
-  // answers from its own last non-blank character, without a parse.
-  let lastContent = source.length;
-  while (lastContent > 0 && /[ \t\r\n]/u.test(source[lastContent - 1] ?? '')) {
-    lastContent -= 1;
+  // The run has to reach the document's end: an earlier unrendered block is
+  // drawn nowhere either, but it is not this suffix and its own rows still
+  // bound it.
+  let first = unrendered.length;
+  let boundary = source.length;
+  while (first > 0) {
+    const block = unrendered[first - 1];
+    if (!block || !/^[ \t\r\n]*$/u.test(source.slice(block.to, boundary))) break;
+    boundary = block.from;
+    first -= 1;
   }
-  if (0 === lastContent) return null;
-  const lastLineStart = source.lastIndexOf('\n', lastContent - 1) + 1;
-  if (
-    !/^[ \t]{0,3}\[[^\]\n]+\]:/u.test(
-      source.slice(lastLineStart, lastContent)
-    )
-  ) return null;
-  const nodes: Array<Readonly<{ from: number; name: string; to: number }>> = [];
-  const cursor = markdownLanguage.parser.parse(source).cursor();
-  if (!cursor.firstChild()) return null;
-  do {
-    nodes.push({ from: cursor.from, name: cursor.name, to: cursor.to });
-  } while (cursor.nextSibling());
-  // The run has to reach the document's end: an earlier definition is drawn
-  // nowhere either, but it is not this suffix and its own rows still bound it.
-  let first = nodes.length;
-  while (first > 0 && 'LinkReference' === nodes[first - 1]?.name) first -= 1;
-  if (first === nodes.length) return null;
-  for (let index = first; index < nodes.length; index += 1) {
-    const previous = nodes[index - 1];
-    const node = nodes[index];
-    if (
-      !node
-      || (previous && !/^[ \t\r\n]*$/u.test(source.slice(previous.to, node.from)))
-    ) return null;
-  }
-  const lastNode = nodes[nodes.length - 1];
-  if (!lastNode || !/^[ \t\r\n]*$/u.test(source.slice(lastNode.to))) {
-    return null;
-  }
+  if (first === unrendered.length) return null;
   // The blank lines between the last drawn row and the first definition render
   // to nothing as well, but the row's own content does not: ending the drawn
   // prefix at that content is what leaves the boundary after its last
   // character a real source offset.
-  const firstReference = nodes[first]?.from ?? 0;
+  const firstReference = unrendered[first]?.from ?? 0;
   const drawn = markdownLineRanges(source)
     .filter((line) =>
       line.end <= firstReference
@@ -6673,11 +7442,17 @@ function trailingHiddenReferenceStart(
  * owned as hidden source instead, exactly like a closing reference suffix.
  */
 function trailingStructuralQuoteRowStart(source: string, baselineVisualMarkdown: string): number | null {
-  let start = source.length;
   let cursor = source.length;
   while (cursor > 0) {
     const lineStart = source.lastIndexOf('\n', cursor - 1) + 1;
-    if (!/^>[ \t]*$/u.test(source.slice(lineStart, cursor))) break;
+    if (!/^[ \t]*\r?$/u.test(source.slice(lineStart, cursor))) break;
+    if (0 === lineStart) return null;
+    cursor = lineStart - 1;
+  }
+  let start = source.length;
+  while (cursor > 0) {
+    const lineStart = source.lastIndexOf('\n', cursor - 1) + 1;
+    if (!/^>[ \t]*\r?$/u.test(source.slice(lineStart, cursor))) break;
     start = lineStart;
     if (0 === lineStart) break;
     cursor = lineStart - 1;
@@ -6689,7 +7464,7 @@ function trailingStructuralQuoteRowStart(source: string, baselineVisualMarkdown:
   // quoted blank row the renderer really does close the document with, and its
   // bytes stay part of the alignment.
   const precedingLineStart = source.lastIndexOf('\n', start - 2) + 1;
-  const preceding = source.slice(precedingLineStart, start).replace(/\n$/u, '');
+  const preceding = source.slice(precedingLineStart, start).replace(/\r?\n$/u, '');
   // The renderer draws a quoted line without its own `>` marker, so the visual
   // tail carries that line's content only.
   // A quoted line's trailing spaces draw nothing (the renderer trims them), so
@@ -6709,7 +7484,10 @@ function trailingStructuralQuoteRowStart(source: string, baselineVisualMarkdown:
   // The line ending in front of the hidden rows draws nothing either - the
   // renderer's row separator is structural - so hiding it keeps a caret at the
   // end of the last drawn line on that line instead of one unit past it.
-  return start > 0 && '\n' === source[start - 1] ? start - 1 : start;
+  if (start > 0 && '\n' === source[start - 1]) {
+    return start >= 2 && '\r' === source[start - 2] ? start - 2 : start - 1;
+  }
+  return start;
 }
 
 /**
@@ -6935,8 +7713,47 @@ function buildVisualMarkdownSourceIntervalMapUncached(
   const serializerEscapeGaps = new Map<number, number>();
   let sourcePosition = 0;
   let baselinePosition = 0;
+  // Unrendered source blocks (definitions and stripped raw HTML) are anchors,
+  // not diff input: the renderer draws nothing for them, so a character diff
+  // that sees their bytes can pair them with a neighbouring drawn block and
+  // leave that block's own spelling unmapped. Each `align` call removes the
+  // blocks inside its source slice before diffing and re-inserts them here, at
+  // their exact source offsets, as hidden ranges. `pendingCuts` holds those
+  // still ahead of `sourcePosition`, in document order.
+  const unrenderedBlocks = unrenderedMarkdownSourceBlocks(source, baselineVisualMarkdown);
+  let pendingCuts: Array<Readonly<{ end: number; start: number }>> = [];
+  const flushCuts = (): void => {
+    while (pendingCuts[0]?.start === sourcePosition) {
+      const cut = pendingCuts.shift() as Readonly<{ end: number; start: number }>;
+      hiddenSourceRanges.push({ end: cut.end, start: cut.start });
+      sourcePosition = cut.end;
+      // The drawn boundary at the anchor belongs to the block that follows it,
+      // exactly like an image unit's edge: a preceding segment's end must not
+      // answer it with the anchor's own start.
+      baselineSourceSegments.push({
+        baselineEnd: baselinePosition,
+        baselineStart: baselinePosition,
+        sourceStart: cut.end
+      });
+    }
+  };
+  // Consumes `length` diff-space source characters from `sourcePosition`,
+  // emitting each contiguous source run between cuts.
+  const consumeSource = (length: number, emit: (start: number, length: number) => void): void => {
+    flushCuts();
+    let remaining = length;
+    while (remaining > 0) {
+      const cut = pendingCuts[0];
+      const chunk = cut ? Math.min(remaining, cut.start - sourcePosition) : remaining;
+      emit(sourcePosition, chunk);
+      sourcePosition += chunk;
+      remaining -= chunk;
+      flushCuts();
+    }
+  };
   const mapParts = (parts: ReadonlyArray<Change>): void => {
     for (const part of parts) {
+      flushCuts();
       if (part.added) {
         // A single backslash the serializer emitted directly before the
         // punctuation the source already owns is a serializer artifact, not a
@@ -6960,20 +7777,19 @@ function buildVisualMarkdownSourceIntervalMapUncached(
         continue;
       }
       if (part.removed) {
-        hiddenSourceRanges.push({
-          end: sourcePosition + part.value.length,
-          start: sourcePosition
+        consumeSource(part.value.length, (start, length) => {
+          hiddenSourceRanges.push({ end: start + length, start });
         });
-        sourcePosition += part.value.length;
         continue;
       }
-      baselineSourceSegments.push({
-        baselineEnd: baselinePosition + part.value.length,
-        baselineStart: baselinePosition,
-        sourceStart: sourcePosition
+      consumeSource(part.value.length, (start, length) => {
+        baselineSourceSegments.push({
+          baselineEnd: baselinePosition + length,
+          baselineStart: baselinePosition,
+          sourceStart: start
+        });
+        baselinePosition += length;
       });
-      sourcePosition += part.value.length;
-      baselinePosition += part.value.length;
     }
   };
 
@@ -6986,18 +7802,31 @@ function buildVisualMarkdownSourceIntervalMapUncached(
   // difference (including any length difference) keeps the line/char diff
   // below, so an offset the serializer really did hide still stays unmapped
   // and the merge guard still refuses it.
-  const align = (sourcePart: string, baselinePart: string): void => {
-  const softBreakAligned = sourcePart.length === baselinePart.length
-    && (() => {
-      for (let index = 0; index < sourcePart.length; index += 1) {
-        const sourceCharacter = sourcePart[index];
-        const visualCharacter = baselinePart[index];
-        if (sourceCharacter === visualCharacter) continue;
-        if ('\n' === sourceCharacter && ' ' === visualCharacter) continue;
-        return false;
-      }
-      return true;
-    })();
+  const align = (sourceEnd: number, baselinePart: string): void => {
+  pendingCuts = [];
+  let sourcePart = '';
+  let cursor = sourcePosition;
+  for (const block of unrenderedBlocks) {
+    const end = Math.min(block.next, sourceEnd);
+    if (block.from < cursor || end <= block.from) continue;
+    sourcePart += source.slice(cursor, block.from);
+    pendingCuts.push({ end, start: block.from });
+    cursor = end;
+  }
+  sourcePart += source.slice(cursor, sourceEnd);
+  flushCuts();
+  const isSoftBreakAligned = (sourceValue: string, visualValue: string): boolean => {
+    if (sourceValue.length !== visualValue.length) return false;
+    for (let index = 0; index < sourceValue.length; index += 1) {
+      const sourceCharacter = sourceValue[index];
+      const visualCharacter = visualValue[index];
+      if (sourceCharacter === visualCharacter) continue;
+      if ('\n' === sourceCharacter && ' ' === visualCharacter) continue;
+      return false;
+    }
+    return true;
+  };
+  const softBreakAligned = isSoftBreakAligned(sourcePart, baselinePart);
   if (sourcePart === baselinePart || softBreakAligned) {
     mapParts([{
       added: false,
@@ -7008,23 +7837,501 @@ function buildVisualMarkdownSourceIntervalMapUncached(
   } else {
     const lineParts = countedDiffLines(sourcePart, baselinePart, {
       newlineIsToken: true
-    });
+    }).map((part) => ({ ...part }));
+    const stripListQuoteMarkerForPairing = (line: string): string =>
+      line
+        .replace(
+          /^(?:[ \t]*>[ \t]*|[ \t]*(?:[-+*]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?)+/u,
+          ''
+        )
+        .replace(/\\([^\s\\])/gu, (match, escaped: string) =>
+          MARKDOWN_ESCAPABLE_PUNCTUATION.test(escaped) ? escaped : match
+        )
+        .trim();
+    const coalescePaddedListCluster = (
+      startIndex: number
+    ): Readonly<{ endIndex: number; parts: Change[] }> | null => {
+      let endIndex = startIndex;
+      while (endIndex + 1 < lineParts.length) {
+        const candidate = lineParts[endIndex + 1];
+        if (!candidate) break;
+        if (candidate.added || candidate.removed || /^\n+$/u.test(candidate.value)) {
+          endIndex += 1;
+          continue;
+        }
+        break;
+      }
+      while (
+        endIndex > startIndex
+        && !lineParts[endIndex]?.added
+        && !lineParts[endIndex]?.removed
+      ) {
+        endIndex -= 1;
+      }
+      if (endIndex <= startIndex) return null;
+      let hasAddedWhitespaceLine = false;
+      for (let cursor = startIndex; cursor <= endIndex; cursor += 1) {
+        const candidate = lineParts[cursor];
+        if (
+          candidate?.added
+          && candidate.value.split('\n').some((line) => /^[ \t]+$/u.test(line))
+        ) {
+          hasAddedWhitespaceLine = true;
+          break;
+        }
+      }
+      if (!hasAddedWhitespaceLine) return null;
+      let clusterSource = '';
+      let clusterVisual = '';
+      for (let cursor = startIndex; cursor <= endIndex; cursor += 1) {
+        const candidate = lineParts[cursor];
+        if (!candidate) continue;
+        if (candidate.removed) {
+          clusterSource += candidate.value;
+        } else if (candidate.added) {
+          clusterVisual += candidate.value;
+        } else {
+          clusterSource += candidate.value;
+          clusterVisual += candidate.value;
+        }
+      }
+      const sourceLines = clusterSource.split('\n');
+      const visualLines = clusterVisual.split('\n');
+      const sourceNonBlank: Array<Readonly<{ index: number; key: string }>> = [];
+      for (let lineIndex = 0; lineIndex < sourceLines.length; lineIndex += 1) {
+        const key = stripListQuoteMarkerForPairing(sourceLines[lineIndex] ?? '');
+        if ('' !== key) sourceNonBlank.push({ index: lineIndex, key });
+      }
+      const visualNonBlank: Array<Readonly<{ index: number; key: string }>> = [];
+      for (let lineIndex = 0; lineIndex < visualLines.length; lineIndex += 1) {
+        const key = stripListQuoteMarkerForPairing(visualLines[lineIndex] ?? '');
+        if ('' !== key) visualNonBlank.push({ index: lineIndex, key });
+      }
+      if (
+        sourceNonBlank.length < 2
+        || visualNonBlank.length < 2
+        || sourceNonBlank.length * visualNonBlank.length > 250_000
+      ) return null;
+      const rows = sourceNonBlank.length;
+      const cols = visualNonBlank.length;
+      const stride = cols + 1;
+      const dp = new Uint32Array((rows + 1) * stride);
+      for (let row = rows - 1; row >= 0; row -= 1) {
+        const sourceEntry = sourceNonBlank[row];
+        if (!sourceEntry) continue;
+        for (let col = cols - 1; col >= 0; col -= 1) {
+          const visualEntry = visualNonBlank[col];
+          if (!visualEntry) continue;
+          const cell = row * stride + col;
+          if (sourceEntry.key === visualEntry.key) {
+            dp[cell] = (dp[(row + 1) * stride + (col + 1)] ?? 0) + 1;
+          } else {
+            const down = dp[(row + 1) * stride + col] ?? 0;
+            const right = dp[row * stride + (col + 1)] ?? 0;
+            dp[cell] = down >= right ? down : right;
+          }
+        }
+      }
+      if ((dp[0] ?? 0) < 2) return null;
+      const pairs: Array<Readonly<{ sourceLine: number; visualLine: number }>> = [];
+      let row = 0;
+      let col = 0;
+      while (row < rows && col < cols) {
+        const sourceEntry = sourceNonBlank[row];
+        const visualEntry = visualNonBlank[col];
+        if (!sourceEntry || !visualEntry) break;
+        if (sourceEntry.key === visualEntry.key) {
+          pairs.push({
+            sourceLine: sourceEntry.index,
+            visualLine: visualEntry.index
+          });
+          row += 1;
+          col += 1;
+        } else if (
+          (dp[(row + 1) * stride + col] ?? 0) >= (dp[row * stride + (col + 1)] ?? 0)
+        ) {
+          row += 1;
+        } else {
+          col += 1;
+        }
+      }
+      const parts: Change[] = [];
+      const emitGap = (
+        sFrom: number,
+        sTo: number,
+        vFrom: number,
+        vTo: number
+      ): void => {
+        let gapSource = '';
+        for (let lineIndex = sFrom; lineIndex < sTo; lineIndex += 1) {
+          gapSource += (sourceLines[lineIndex] ?? '')
+            + (lineIndex < sourceLines.length - 1 ? '\n' : '');
+        }
+        let gapVisual = '';
+        for (let lineIndex = vFrom; lineIndex < vTo; lineIndex += 1) {
+          gapVisual += (visualLines[lineIndex] ?? '')
+            + (lineIndex < visualLines.length - 1 ? '\n' : '');
+        }
+        if ('' === gapSource && '' === gapVisual) return;
+        if ('' === gapSource) {
+          parts.push({ added: true, count: gapVisual.length, removed: false, value: gapVisual });
+        } else if ('' === gapVisual) {
+          parts.push({ added: false, count: gapSource.length, removed: true, value: gapSource });
+        } else {
+          parts.push(...countedDiffChars(gapSource, gapVisual));
+        }
+      };
+      let sCursor = 0;
+      let vCursor = 0;
+      for (const pair of pairs) {
+        emitGap(sCursor, pair.sourceLine, vCursor, pair.visualLine);
+        const sText = sourceLines[pair.sourceLine] ?? '';
+        const vText = visualLines[pair.visualLine] ?? '';
+        if (sText === vText) {
+          if ('' !== sText) {
+            parts.push({ added: false, count: sText.length, removed: false, value: sText });
+          }
+        } else {
+          parts.push(...countedDiffChars(sText, vText));
+        }
+        const sHasNl = pair.sourceLine < sourceLines.length - 1;
+        const vHasNl = pair.visualLine < visualLines.length - 1;
+        if (sHasNl && vHasNl) {
+          parts.push({ added: false, count: 1, removed: false, value: '\n' });
+        } else if (sHasNl) {
+          parts.push({ added: false, count: 1, removed: true, value: '\n' });
+        } else if (vHasNl) {
+          parts.push({ added: true, count: 1, removed: false, value: '\n' });
+        }
+        sCursor = pair.sourceLine + 1;
+        vCursor = pair.visualLine + 1;
+      }
+      emitGap(sCursor, sourceLines.length, vCursor, visualLines.length);
+      return { endIndex, parts };
+    };
+    const countLeadingQuotes = (line: string): number => {
+      let offset = 0;
+      let depth = 0;
+      for (;;) {
+        const match = /^ {0,3}> ?/u.exec(line.slice(offset));
+        if (!match) break;
+        offset += match[0].length;
+        depth += 1;
+      }
+      return depth;
+    };
+    const matchSoftBreakToVisualLine = (
+      sourceText: string,
+      visualText: string,
+      allowPrefix: boolean
+    ): Readonly<{ complete: boolean; consumedSource: number }> | null => {
+      if (visualText.includes('\n')) return null;
+      const quoteDepth = countLeadingQuotes(visualText);
+      let sIdx = 0;
+      let vIdx = 0;
+      while (sIdx < sourceText.length && vIdx < visualText.length) {
+        const sChar = sourceText[sIdx];
+        const vChar = visualText[vIdx];
+        if (sChar === vChar) {
+          sIdx += 1;
+          vIdx += 1;
+          continue;
+        }
+        if (
+          '\\' === vChar
+          && undefined !== sChar
+          && vIdx + 1 < visualText.length
+          && visualText[vIdx + 1] === sChar
+          && MARKDOWN_ESCAPABLE_PUNCTUATION.test(sChar)
+        ) {
+          sIdx += 1;
+          vIdx += 2;
+          continue;
+        }
+        if ('\n' === sChar && ' ' === vChar) {
+          sIdx += 1;
+          if (sIdx < sourceText.length && '\n' === sourceText[sIdx]) {
+            return null;
+          }
+          for (let q = 0; q < quoteDepth && sIdx < sourceText.length; q += 1) {
+            const qMatch = /^ {0,3}> ?/u.exec(sourceText.slice(sIdx));
+            if (!qMatch) break;
+            sIdx += qMatch[0].length;
+          }
+          while (
+            sIdx < sourceText.length
+            && (' ' === sourceText[sIdx] || '\t' === sourceText[sIdx])
+          ) {
+            sIdx += 1;
+          }
+          if (sIdx < sourceText.length && '\n' === sourceText[sIdx]) {
+            return null;
+          }
+          vIdx += 1;
+          continue;
+        }
+        return null;
+      }
+      if (vIdx === visualText.length) {
+        if (sIdx === sourceText.length || '\n' === sourceText[sIdx]) {
+          return { complete: true, consumedSource: sIdx };
+        }
+        return null;
+      }
+      if (allowPrefix && sIdx === sourceText.length) {
+        return { complete: false, consumedSource: sIdx };
+      }
+      return null;
+    };
+    const buildSoftBreakAlignedParts = (
+      combinedSource: string,
+      visualLine: string
+    ): Change[] => {
+      const quoteDepth = countLeadingQuotes(visualLine);
+      const parts: Change[] = [];
+      let sSegStart = 0;
+      let vSegStart = 0;
+      let sIdx = 0;
+      let vIdx = 0;
+      const flushSegment = (sEnd: number, vEnd: number): void => {
+        const sSeg = combinedSource.slice(sSegStart, sEnd);
+        const vSeg = visualLine.slice(vSegStart, vEnd);
+        if ('' === sSeg && '' === vSeg) return;
+        if (sSeg === vSeg) {
+          parts.push({ added: false, count: sSeg.length, removed: false, value: sSeg });
+        } else {
+          parts.push(...countedDiffChars(sSeg, vSeg));
+        }
+      };
+      while (sIdx < combinedSource.length && vIdx < visualLine.length) {
+        const sChar = combinedSource[sIdx];
+        const vChar = visualLine[vIdx];
+        if (sChar === vChar) {
+          sIdx += 1;
+          vIdx += 1;
+          continue;
+        }
+        if (
+          '\\' === vChar
+          && undefined !== sChar
+          && vIdx + 1 < visualLine.length
+          && visualLine[vIdx + 1] === sChar
+          && MARKDOWN_ESCAPABLE_PUNCTUATION.test(sChar)
+        ) {
+          sIdx += 1;
+          vIdx += 2;
+          continue;
+        }
+        if ('\n' === sChar && ' ' === vChar) {
+          const breakStart = sIdx;
+          sIdx += 1;
+          for (let q = 0; q < quoteDepth && sIdx < combinedSource.length; q += 1) {
+            const qMatch = /^ {0,3}> ?/u.exec(combinedSource.slice(sIdx));
+            if (!qMatch) break;
+            sIdx += qMatch[0].length;
+          }
+          while (
+            sIdx < combinedSource.length
+            && (' ' === combinedSource[sIdx] || '\t' === combinedSource[sIdx])
+          ) {
+            sIdx += 1;
+          }
+          flushSegment(breakStart, vIdx);
+          const sourceBreak = combinedSource.slice(breakStart, sIdx);
+          if (1 === sourceBreak.length) {
+            parts.push({ added: false, count: 1, removed: false, value: ' ' });
+          } else {
+            parts.push({
+              added: false,
+              count: sourceBreak.length,
+              removed: true,
+              value: sourceBreak
+            });
+            parts.push({ added: true, count: 1, removed: false, value: ' ' });
+          }
+          vIdx += 1;
+          sSegStart = sIdx;
+          vSegStart = vIdx;
+          continue;
+        }
+        return countedDiffChars(combinedSource, visualLine);
+      }
+      flushSegment(combinedSource.length, visualLine.length);
+      return parts;
+    };
+    const coalesceSoftBreakHunk = (
+      startIndex: number,
+      removedValue: string,
+      addedValue: string
+    ): Readonly<{ endIndex: number; parts: Change[] }> | null => {
+      if (addedValue.includes('\n')) return null;
+      const initialMatch = matchSoftBreakToVisualLine(removedValue, addedValue, true);
+      if (!initialMatch) return null;
+      if (initialMatch.complete) {
+        if (initialMatch.consumedSource !== removedValue.length) return null;
+        if (isSoftBreakAligned(removedValue, addedValue)) {
+          return {
+            endIndex: startIndex + 1,
+            parts: [{ added: false, count: addedValue.length, removed: false, value: addedValue }]
+          };
+        }
+        if (removedValue.includes('\n')) {
+          return {
+            endIndex: startIndex + 1,
+            parts: buildSoftBreakAlignedParts(removedValue, addedValue)
+          };
+        }
+        return null;
+      }
+      let combinedSource = removedValue;
+      let borrowedVisualNewlines = 0;
+      let matchedEndIndex = -1;
+      let matchedRemainder: Change | null = null;
+      for (let cursorIndex = startIndex + 2; cursorIndex < lineParts.length; cursorIndex += 1) {
+        const candidate = lineParts[cursorIndex];
+        if (!candidate) break;
+        if (!candidate.added && !candidate.removed) {
+          if (!/^\n+$/u.test(candidate.value)) break;
+          if (candidate.value.length > 1) break;
+          const nextCombined = combinedSource + candidate.value;
+          const match = matchSoftBreakToVisualLine(nextCombined, addedValue, true);
+          if (!match) return null;
+          combinedSource = nextCombined;
+          borrowedVisualNewlines += candidate.value.length;
+          if (match.complete) {
+            matchedEndIndex = cursorIndex;
+            break;
+          }
+          continue;
+        }
+        if (candidate.removed) {
+          const nextCombined = combinedSource + candidate.value;
+          const match = matchSoftBreakToVisualLine(nextCombined, addedValue, true);
+          if (!match) return null;
+          if (match.complete) {
+            const consumedFromCandidate = match.consumedSource - combinedSource.length;
+            if (consumedFromCandidate < 0) return null;
+            combinedSource += candidate.value.slice(0, consumedFromCandidate);
+            const remainder = candidate.value.slice(consumedFromCandidate);
+            if (remainder.length > 0) {
+              matchedRemainder = { ...candidate, count: remainder.length, value: remainder };
+            }
+            matchedEndIndex = cursorIndex;
+            break;
+          }
+          combinedSource = nextCombined;
+          continue;
+        }
+        break;
+      }
+      if (matchedEndIndex < 0) return null;
+      let trailingCommonNewlines = 0;
+      let cursorIndex = matchedEndIndex;
+      if (matchedRemainder) {
+        const leadingNl = /^\n+/u.exec(matchedRemainder.value)?.[0].length ?? 0;
+        const cancel = Math.min(borrowedVisualNewlines, leadingNl);
+        if (cancel > 0) {
+          borrowedVisualNewlines -= cancel;
+          trailingCommonNewlines += cancel;
+          const rest = matchedRemainder.value.slice(cancel);
+          matchedRemainder = rest.length > 0
+            ? { ...matchedRemainder, count: rest.length, value: rest }
+            : null;
+        }
+      }
+      if (!matchedRemainder) {
+        while (borrowedVisualNewlines > 0 && cursorIndex + 1 < lineParts.length) {
+          const nextCandidate = lineParts[cursorIndex + 1];
+          if (!nextCandidate) break;
+          if (!nextCandidate.added && !nextCandidate.removed && /^\n+$/u.test(nextCandidate.value)) {
+            trailingCommonNewlines += nextCandidate.value.length;
+            cursorIndex += 1;
+            continue;
+          }
+          if (nextCandidate.removed) {
+            const leadingNl = /^\n+/u.exec(nextCandidate.value)?.[0].length ?? 0;
+            const cancel = Math.min(borrowedVisualNewlines, leadingNl);
+            if (0 === cancel) break;
+            borrowedVisualNewlines -= cancel;
+            trailingCommonNewlines += cancel;
+            const rest = nextCandidate.value.slice(cancel);
+            cursorIndex += 1;
+            if (rest.length > 0) {
+              matchedRemainder = { ...nextCandidate, count: rest.length, value: rest };
+            }
+            continue;
+          }
+          break;
+        }
+      }
+      if (matchedRemainder) {
+        lineParts[cursorIndex] = matchedRemainder;
+        cursorIndex -= 1;
+      }
+      const parts: Change[] = isSoftBreakAligned(combinedSource, addedValue)
+        ? [{
+            added: false,
+            count: addedValue.length + trailingCommonNewlines,
+            removed: false,
+            value: addedValue + '\n'.repeat(trailingCommonNewlines)
+          }]
+        : [
+            ...buildSoftBreakAlignedParts(combinedSource, addedValue),
+            ...(trailingCommonNewlines > 0
+              ? [{
+                  added: false,
+                  count: trailingCommonNewlines,
+                  removed: false,
+                  value: '\n'.repeat(trailingCommonNewlines)
+                }]
+              : [])
+          ];
+      if (borrowedVisualNewlines > 0) {
+        const extra = '\n'.repeat(borrowedVisualNewlines);
+        parts.push({ added: true, count: extra.length, removed: false, value: extra });
+      }
+      return { endIndex: cursorIndex, parts };
+    };
     for (let index = 0; index < lineParts.length; index += 1) {
       const part = lineParts[index];
       if (!part) continue;
+      if (part.removed || part.added) {
+        const paddedCluster = coalescePaddedListCluster(index);
+        if (paddedCluster) {
+          mapParts(paddedCluster.parts);
+          index = paddedCluster.endIndex;
+          continue;
+        }
+      }
       const next = lineParts[index + 1];
       if (part.removed && next?.added) {
+        const coalesced = coalesceSoftBreakHunk(index, part.value, next.value);
+        if (coalesced) {
+          mapParts(coalesced.parts);
+          index = coalesced.endIndex;
+          continue;
+        }
         mapParts(countedDiffChars(part.value, next.value));
         index += 1;
         continue;
       }
       if (part.added && next?.removed) {
+        const coalesced = coalesceSoftBreakHunk(index, next.value, part.value);
+        if (coalesced) {
+          mapParts(coalesced.parts);
+          index = coalesced.endIndex;
+          continue;
+        }
         mapParts(countedDiffChars(next.value, part.value));
         index += 1;
         continue;
       }
       mapParts([part]);
     }
+    }
+    flushCuts();
+    if (0 !== pendingCuts.length || sourcePosition !== sourceEnd) {
+      throw new Error('visual-editor-selection-map-failed');
     }
   };
   for (const unit of imageUnits) {
@@ -7033,7 +8340,7 @@ function buildVisualMarkdownSourceIntervalMapUncached(
       || unit.baselineEnd <= unit.baselineStart || unit.baselineEnd > baselineVisualMarkdown.length) {
       throw new Error('visual-editor-image-source-map-failed');
     }
-    align(source.slice(sourcePosition, unit.sourceStart), baselineVisualMarkdown.slice(baselinePosition, unit.baselineStart));
+    align(unit.sourceStart, baselineVisualMarkdown.slice(baselinePosition, unit.baselineStart));
     baselineSourceSegments.push({ baselineStart: unit.baselineStart, baselineEnd: unit.baselineStart, sourceStart: unit.sourceStart });
     sourcePosition = unit.sourceEnd;
     baselinePosition = unit.baselineEnd;
@@ -7045,17 +8352,14 @@ function buildVisualMarkdownSourceIntervalMapUncached(
   // the rendered link and leave the row that *is* drawn without any source
   // offset. Aligning the drawn prefix only keeps every drawn row on its own
   // spelling; the suffix the renderer draws nothing for is owned as hidden.
-  const hiddenTailStart = trailingHiddenReferenceStart(source, baselineVisualMarkdown);
+  const hiddenTailStart = trailingHiddenReferenceStart(source, baselineVisualMarkdown, unrenderedBlocks);
   const quoteRowTailStart = trailingStructuralQuoteRowStart(source, baselineVisualMarkdown);
   const drawnSourceEnd = Math.min(
     source.length,
     null !== hiddenTailStart && hiddenTailStart > sourcePosition ? hiddenTailStart : source.length,
     null !== quoteRowTailStart && quoteRowTailStart > sourcePosition ? quoteRowTailStart : source.length
   );
-  align(
-    source.slice(sourcePosition, drawnSourceEnd),
-    baselineVisualMarkdown.slice(baselinePosition)
-  );
+  align(drawnSourceEnd, baselineVisualMarkdown.slice(baselinePosition));
   if (drawnSourceEnd < source.length) {
     hiddenSourceRanges.push({ end: source.length, start: drawnSourceEnd });
     // The baseline's own end is the boundary after the last drawn character,
@@ -7200,6 +8504,19 @@ export function createVisualMarkdownSourceIntervalMap(
   baselineVisualMarkdown: string
 ): VisualMarkdownSourceIntervalMap {
   return buildVisualMarkdownSourceIntervalMap(sourceMarkdown, baselineVisualMarkdown);
+}
+
+/**
+ * One certified block's own source/visual alignment: the block's source slice
+ * against that block's own serialized spelling, never the whole document. It
+ * bypasses the document-map cache so a block-local projection cannot evict
+ * the whole-document alignment the surrounding press still reads.
+ */
+export function createVisualMarkdownBlockSourceIntervalMap(
+  blockSourceMarkdown: string,
+  blockVisualMarkdown: string
+): VisualMarkdownSourceIntervalMap {
+  return buildVisualMarkdownSourceIntervalMapUncached(blockSourceMarkdown, blockVisualMarkdown);
 }
 
 /**
@@ -7677,7 +8994,7 @@ function neutralVisualCaretBoundary(
   };
 }
 
-function placeVisualCaretAtBoundary(
+export function placeVisualCaretAtBoundary(
   editor: HTMLElement,
   boundary: VisualBoundary,
   options: Readonly<{ deletionStable?: boolean }> = {}
@@ -7692,11 +9009,39 @@ function placeVisualCaretAtBoundary(
   selection.addRange(range);
 }
 
+const VISUAL_INTER_BLOCK_WHITESPACE_CONTAINERS = new Set([
+  'ARTICLE',
+  'BLOCKQUOTE',
+  'OL',
+  'SECTION',
+  'TABLE',
+  'TBODY',
+  'TFOOT',
+  'THEAD',
+  'TR',
+  'UL'
+]);
+
+function isInterBlockFormattingWhitespaceText(node: Node): boolean {
+  if (Node.TEXT_NODE !== node.nodeType) return false;
+  const text = node.textContent ?? '';
+  if (!/^[ \t\r\n]*$/u.test(text)) return false;
+  const parent = node.parentElement;
+  if (!parent || parent.closest('pre, code')) return false;
+  if (VISUAL_INTER_BLOCK_WHITESPACE_CONTAINERS.has(parent.tagName)) return true;
+  if ('DIV' === parent.tagName && (null !== parent.firstElementChild || /[\r\n]/u.test(text))) {
+    return true;
+  }
+  return /[\r\n]/u.test(text)
+    && null !== parent.querySelector('p, div, blockquote, ul, ol, li, pre, table, h1, h2, h3, h4, h5, h6');
+}
+
 function visualEditableBoundaryAtEdge(
   node: Node,
   edge: 'end' | 'start'
 ): VisualBoundary | null {
   if (Node.TEXT_NODE === node.nodeType) {
+    if (isInterBlockFormattingWhitespaceText(node)) return null;
     return {
       node,
       offset: 'start' === edge ? 0 : node.textContent?.length ?? 0
@@ -7706,13 +9051,39 @@ function visualEditableBoundaryAtEdge(
     return null;
   }
   const children = Array.from(node.childNodes);
-  const ordered = 'start' === edge ? children : children.reverse();
-  for (const child of ordered) {
-    if (child instanceof Element && isVisualCaretExcludedElement(child)) {
-      continue;
+  if ('start' === edge) {
+    for (const child of children) {
+      if (child instanceof Element && isVisualCaretExcludedElement(child)) {
+        continue;
+      }
+      const boundary = visualEditableBoundaryAtEdge(child, edge);
+      if (boundary) return boundary;
     }
-    const boundary = visualEditableBoundaryAtEdge(child, edge);
-    if (boundary) return boundary;
+  } else {
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      const child = children[index];
+      if (!child) continue;
+      if (child instanceof Element && isVisualCaretExcludedElement(child)) {
+        // A trailing inline read-only atom (e.g. inline math span) is real
+        // content at the block's end: place the boundary directly after it
+        // rather than jumping behind it into earlier text.
+        if (
+          !VISUAL_CARET_OPAQUE_TAGS.has(child.tagName)
+          && !VISUAL_BLOCK_CHILD_TAGS.has(child.tagName)
+          && !child.hasAttribute('data-easymde-preview-window-spacer')
+          && !child.classList.contains('prefix')
+          && !child.classList.contains('suffix')
+          && ('false' === child.getAttribute('contenteditable')
+            || child.matches(VISUAL_MARKDOWN_READ_ONLY_SELECTOR))
+          && !VISUAL_INTER_BLOCK_WHITESPACE_CONTAINERS.has(node.tagName)
+        ) {
+          return { node, offset: index + 1 };
+        }
+        continue;
+      }
+      const boundary = visualEditableBoundaryAtEdge(child, edge);
+      if (boundary) return boundary;
+    }
   }
   return {
     node,
@@ -8033,6 +9404,247 @@ export function placeVisualCaretAfterAcceptedCodeFenceAtDocumentEnd(
   return true;
 }
 
+const VISUAL_TERMINAL_EDITABLE_CONTAINER_TAGS: ReadonlySet<string> = new Set([
+  'BLOCKQUOTE',
+  'OL',
+  'UL'
+]);
+
+const VISUAL_TERMINAL_EDITABLE_TEXT_BLOCK_TAGS: ReadonlySet<string> = new Set([
+  'H1',
+  'H2',
+  'H3',
+  'H4',
+  'H5',
+  'H6',
+  'LI',
+  'P'
+]);
+
+function lastMeaningfulVisualChildNode(
+  container: Element,
+  skipGeneratedTail: boolean
+): Node | null {
+  for (let index = container.childNodes.length - 1; index >= 0; index -= 1) {
+    const child = container.childNodes[index];
+    if (!child) continue;
+    if (Node.TEXT_NODE === child.nodeType) {
+      if (isInterBlockFormattingWhitespaceText(child)) continue;
+      return child;
+    }
+    if (child instanceof Element) {
+      if (
+        skipGeneratedTail
+        && (
+          child.hasAttribute('data-easymde-preview-window-spacer')
+          || child.classList.contains('footnotes')
+          || child.classList.contains('footnotes-sep')
+        )
+      ) {
+        continue;
+      }
+      if (
+        /^H[1-6]$/u.test(container.tagName)
+        && (
+          child.classList.contains('prefix')
+          || child.classList.contains('suffix')
+        )
+      ) {
+        continue;
+      }
+      return child;
+    }
+  }
+  return null;
+}
+
+function isVisualTerminalReadOnlyOrAtomicElement(element: Element): boolean {
+  return (
+    isVisualCaretExcludedElement(element)
+    || element.matches(VISUAL_MARKDOWN_READ_ONLY_SELECTOR)
+    || element.classList.contains('easymde-math-display')
+    || element.classList.contains('easymde-mermaid')
+    || 'TABLE' === element.tagName
+    || 'PRE' === element.tagName
+  );
+}
+
+/**
+ * The terminal editable text block inside a visual container root, or `null`
+ * when the root terminates in an atomic/read-only block (`HR`, `TABLE`, `PRE`,
+ * `IMG`, `.easymde-mermaid`, `.easymde-math-display`) or an explicit trailing
+ * `<br>` placeholder block that requires a surface boundary.
+ */
+function terminalEditableVisualTextBlock(
+  editor: HTMLElement
+): Readonly<{ block: HTMLElement; root: HTMLElement }> | null {
+  const rootLastChild = lastMeaningfulVisualChildNode(editor, true);
+  if (!(rootLastChild instanceof HTMLElement)) {
+    return null;
+  }
+  const readOnlySelector =
+    `[contenteditable="false"], ${VISUAL_MARKDOWN_READ_ONLY_SELECTOR}`;
+  const readOnlyAncestor = rootLastChild.closest(readOnlySelector);
+  if (
+    (readOnlyAncestor && editor.contains(readOnlyAncestor))
+    || rootLastChild.querySelector(readOnlySelector)
+  ) {
+    return null;
+  }
+  let current: HTMLElement = rootLastChild;
+  while (true) {
+    if (isVisualTerminalReadOnlyOrAtomicElement(current)) {
+      return null;
+    }
+    if (VISUAL_TERMINAL_EDITABLE_CONTAINER_TAGS.has(current.tagName)) {
+      const child = lastMeaningfulVisualChildNode(current, false);
+      if (!(child instanceof HTMLElement)) return null;
+      current = child;
+      continue;
+    }
+    if ('LI' === current.tagName) {
+      const child = lastMeaningfulVisualChildNode(current, false);
+      if (
+        child instanceof HTMLElement
+        && (
+          VISUAL_BLOCK_CHILD_TAGS.has(child.tagName)
+          || 'DIV' === child.tagName
+          || 'SECTION' === child.tagName
+          || isVisualTerminalReadOnlyOrAtomicElement(child)
+        )
+      ) {
+        current = child;
+        continue;
+      }
+    }
+    if (!VISUAL_TERMINAL_EDITABLE_TEXT_BLOCK_TAGS.has(current.tagName)) {
+      return null;
+    }
+    const leafTail = lastMeaningfulVisualChildNode(current, false);
+    if (
+      leafTail instanceof Element
+      && (
+        VISUAL_CARET_OPAQUE_TAGS.has(leafTail.tagName)
+        || leafTail instanceof SVGElement
+      )
+    ) {
+      return null;
+    }
+    return { block: current, root: rootLastChild };
+  }
+}
+
+function hasMeaningfulVisualChildBefore(root: HTMLElement): boolean {
+  for (
+    let sibling = root.previousSibling;
+    sibling;
+    sibling = sibling.previousSibling
+  ) {
+    if (Node.TEXT_NODE === sibling.nodeType) {
+      if (isInterBlockFormattingWhitespaceText(sibling)) continue;
+      return true;
+    }
+    if (sibling instanceof Element) {
+      if (sibling.hasAttribute('data-easymde-preview-window-spacer')) continue;
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Proves the source prefix ending at a terminal candidate is the Markdown the
+ * rendered terminal block stands for, so a tampered or foreign terminal DOM can
+ * never borrow the trailing-whitespace restoration.
+ */
+function terminalSourcePrefixMatchesRenderedBlock(
+  terminalRoot: HTMLElement,
+  sourceMarkdown: string,
+  baselineVisualMarkdown: string,
+  renderedEnd: number
+): boolean {
+  const normalizedPrefix = sourceMarkdown
+    .slice(0, renderedEnd)
+    .replace(/\r\n/gu, '\n');
+  if (normalizedPrefix.replace(/^(?:[ \t]*\n)+/u, '') === baselineVisualMarkdown) {
+    return true;
+  }
+  if (!hasMeaningfulVisualChildBefore(terminalRoot)) return false;
+  let serializedRoot: string;
+  try {
+    serializedRoot = serializeVisualMarkdownBlockFragment([terminalRoot]);
+  } catch (error) {
+    if (
+      error instanceof Error
+      && [
+        'visual-editor-markdown-merge-ambiguous',
+        'visual-editor-markdown-merge-failed',
+        'visual-editor-selection-map-failed',
+        'visual-editor-window-block-range-invalid'
+      ].includes(error.message)
+    ) {
+      return false;
+    }
+    throw error;
+  }
+  return (
+    serializedRoot.length > 0
+    && normalizedPrefix.endsWith(serializedRoot)
+    && '\n' === normalizedPrefix[normalizedPrefix.length - serializedRoot.length - 1]
+  );
+}
+
+function findTerminalEditableBlockTrailingWhitespaceBoundary(
+  editor: HTMLElement,
+  sourceMarkdown: string,
+  baselineVisualMarkdown: string,
+  sourceOffset: number,
+  mapCandidateOffset: (boundary: VisualBoundary) => number | null
+): VisualBoundary | null {
+  const terminal = terminalEditableVisualTextBlock(editor);
+  if (!terminal) return null;
+  const terminalBlock = terminal.block;
+  const terminalCandidates: VisualBoundary[] = [];
+  const addTerminalCandidate = (boundary: VisualBoundary | null): void => {
+    if (
+      !boundary
+      || terminalCandidates.some(
+        (candidate) =>
+          candidate.node === boundary.node
+          && candidate.offset === boundary.offset
+      )
+    ) {
+      return;
+    }
+    terminalCandidates.push(boundary);
+  };
+  addTerminalCandidate(visualEditableBoundaryAtEdge(terminalBlock, 'end'));
+  addTerminalCandidate({
+    node: terminalBlock,
+    offset: terminalBlock.childNodes.length
+  });
+  for (const candidate of terminalCandidates) {
+    const renderedEnd = mapCandidateOffset(candidate);
+    if (
+      null !== renderedEnd
+      && renderedEnd < sourceOffset
+      && isMarkdownTerminalWhitespaceSuffix(
+        sourceMarkdown.slice(renderedEnd, sourceOffset)
+      )
+    ) {
+      return terminalSourcePrefixMatchesRenderedBlock(
+        terminal.root,
+        sourceMarkdown,
+        baselineVisualMarkdown,
+        renderedEnd
+      )
+        ? candidate
+        : null;
+    }
+  }
+  return null;
+}
+
 function findVisualCaretAtSourceBoundary(
   editor: HTMLElement,
   sourceMarkdown: string,
@@ -8042,18 +9654,25 @@ function findVisualCaretAtSourceBoundary(
   if (sourceOffset !== 0 && sourceOffset !== sourceMarkdown.length) {
     return null;
   }
-  for (const boundary of visualSourceBoundaryCandidates(editor, sourceOffset)) {
+  const mappedCache: Array<Readonly<{
+    node: Node;
+    offset: number;
+    result: number | null;
+  }>> = [];
+  const mapCandidateOffset = (boundary: VisualBoundary): number | null => {
+    const cached = mappedCache.find(
+      (entry) => entry.node === boundary.node && entry.offset === boundary.offset
+    );
+    if (cached) return cached.result;
+    let result: number | null;
     try {
-      const mappedOffset = visualBoundarySourceOffset(
+      result = visualBoundarySourceOffset(
         editor,
         sourceMarkdown,
         baselineVisualMarkdown,
         boundary.node,
         boundary.offset
       );
-      if (mappedOffset === sourceOffset) {
-        return boundary;
-      }
     } catch (error) {
       if (
         error instanceof Error
@@ -8063,9 +9682,43 @@ function findVisualCaretAtSourceBoundary(
           'visual-editor-selection-map-failed'
         ].includes(error.message)
       ) {
-        continue;
+        result = null;
+      } else {
+        throw error;
       }
-      throw error;
+    }
+    mappedCache.push({
+      node: boundary.node,
+      offset: boundary.offset,
+      result
+    });
+    return result;
+  };
+  const rootEndBoundary =
+    sourceOffset > 0 && sourceOffset === sourceMarkdown.length
+      ? { node: editor, offset: editor.childNodes.length }
+      : null;
+
+  for (const boundary of visualSourceBoundaryCandidates(editor, sourceOffset)) {
+    if (
+      rootEndBoundary
+      && boundary.node === rootEndBoundary.node
+      && boundary.offset === rootEndBoundary.offset
+    ) {
+      const terminalBoundary = findTerminalEditableBlockTrailingWhitespaceBoundary(
+        editor,
+        sourceMarkdown,
+        baselineVisualMarkdown,
+        sourceOffset,
+        mapCandidateOffset
+      );
+      if (terminalBoundary) {
+        return terminalBoundary;
+      }
+    }
+    const mappedOffset = mapCandidateOffset(boundary);
+    if (mappedOffset === sourceOffset) {
+      return boundary;
     }
   }
   return null;
@@ -8489,13 +10142,21 @@ export function visualCaretBoundaryFromSourceOffset(
     ? structuralMarkdownLineInDocument(
         sourceLineText,
         sourceLine.start,
-        sourceTree!
+        sourceTree!,
+        true
       )
+    : null;
+  const emptyStructuralBoundaryOffset = sourceLine && sourceStructure
+    ? sourceLine.start + sourceStructure.bodyBoundary
     : null;
   if (
     sourceLine
     && sourceStructure
-    && sourceOffset === sourceLine.start + sourceStructure.bodyBoundary
+    && null !== emptyStructuralBoundaryOffset
+    && (
+      sourceOffset === emptyStructuralBoundaryOffset
+      || sourceOffset === sourceLine.contentEnd
+    )
     && !overlapsMarkdownCodeContext(
       sourceLine.start,
       sourceLine.end,
@@ -8533,10 +10194,18 @@ export function visualCaretBoundaryFromSourceOffset(
         acceptedEndpointBlock, sourceLineTaskMarker
       );
       if (!result) continue;
-      if ('failure' in result) throw new Error(result.failure);
+      if ('failure' in result) {
+        if (sourceOffset === emptyStructuralBoundaryOffset) {
+          throw new Error(result.failure);
+        }
+        continue;
+      }
       const originalOffset = boundaryIntervalMap.originalOffsetAt(result.sourceOffset);
       if (undefined === originalOffset) throw new Error('visual-editor-selection-map-failed');
-      if (originalOffset !== sourceOffset) continue;
+      if (
+        originalOffset !== sourceOffset
+        && originalOffset !== emptyStructuralBoundaryOffset
+      ) continue;
       if (match) throw new Error('visual-editor-markdown-merge-ambiguous');
       match = body;
     }
@@ -8544,11 +10213,29 @@ export function visualCaretBoundaryFromSourceOffset(
       // The accepted block carries the source line's own literal marker shape
       // at the same list ancestry: the strict source-owned projection below
       // may still prove this boundary from the literal Text. Without both
-      // proofs the original failure stands.
-      if (!sourceLineTaskMarker || 0 === bodies.size) {
+      // proofs the original failure stands for the exact empty-body column; a
+      // `line.contentEnd` offset falls through to the document-boundary / walk
+      // mappers below.
+      if (
+        sourceOffset === emptyStructuralBoundaryOffset
+        && (!sourceLineTaskMarker || 0 === bodies.size)
+      ) {
         throw new Error('visual-editor-selection-map-failed');
       }
     } else {
+      if (
+        sourceLineTaskMarker
+        && sourceOffset === sourceLine.contentEnd
+        && sourceOffset !== emptyStructuralBoundaryOffset
+      ) {
+        const literalText = Array.from(match.childNodes).find(
+          (child): child is Text =>
+            child instanceof Text && /^\[[ xX]\]$/u.test(child.data)
+        );
+        if (literalText) {
+          return { node: literalText, offset: literalText.data.length };
+        }
+      }
       return { node: match, offset: 0 };
     }
   }
@@ -8729,6 +10416,7 @@ export function visualCaretBoundaryFromSourceOffset(
   for (const [budgetIndex, budget] of walkBudgets.entries()) {
     mappingAttemptLimit = budget;
     mappingAttempts = 0;
+    matchingOwnerSearch = false;
     let lower = 0;
     let upper = boundaryIndex.length - 1;
     try {
@@ -8786,7 +10474,22 @@ export function visualCaretBoundaryFromSourceOffset(
         }
       }
     } catch (error) {
-      if (matchingOwnerSearch) throw error;
+      if (matchingOwnerSearch) {
+        // Across large surfaces, resolving a structural-row owner plateau can
+        // exhaust Pass 0's 32-attempt cap before finishing the plateau walk.
+        // Continue to Pass 1's wider budget instead of aborting early, while
+        // preserving genuine budget exhaustion after the final pass and every
+        // non-budget failure immediately.
+        if (
+          error instanceof Error
+          && 'visual-editor-selection-map-budget-exceeded' === error.message
+          && budgetIndex + 1 < walkBudgets.length
+        ) {
+          if (null === exhaustedError) exhaustedError = error;
+          continue;
+        }
+        throw error;
+      }
       // The walk spends its budget guessing before it can reach a boundary no
       // DOM offset can produce. Only that exhausted walk reaches the
       // source-proved recovery; every other failure and every exhausted walk
@@ -8957,7 +10660,7 @@ function visualCodeFenceDelimiterBodyOffset(
       && sourceOffset >= openingStart
       && sourceOffset < openingEnd
     ) {
-      return bodyStart;
+      return rootIsFenceOwner ? 0 : bodyStart;
     }
     if (null === block.closingLine) continue;
     const closingStart = lineStarts[block.closingLine];
@@ -8973,12 +10676,19 @@ function visualCodeFenceDelimiterBodyOffset(
       // space, so the code text's own end is the representable target there; a
       // container root keeps source space, where only the body's trailing line
       // terminator stays outside the code text.
+      const interval = visualCodeBodyIntervalFromBlock(
+        sourceMarkdown,
+        block,
+        lineStarts
+      );
       const code = rootIsFenceOwner ? directCodeChild(editor) : null;
-      if (code) return code.textContent?.length ?? 0;
-      const bodyEnding = /(?:\r\n|\r|\n)$/u.exec(
-        sourceMarkdown.slice(bodyStart, bodyEnd)
-      )?.[0] ?? '';
-      return bodyEnd - bodyEnding.length;
+      if (code) {
+        return Math.min(
+          code.textContent?.length ?? 0,
+          visualCodeBodyEditableLength(interval, sourceMarkdown)
+        );
+      }
+      return visualCodeBodyEditableSourceEnd(interval, sourceMarkdown);
     }
   }
   return null;
@@ -10179,22 +11889,13 @@ function renderedSliceOffsets(
   start: number,
   end: number
 ): Readonly<{ rawOffsets: readonly number[]; text: string }> {
-  const slice = markdown.slice(start, end);
   const rawOffsets: number[] = [start];
-  // A backslash run of two or more spells a literal backslash, and which
-  // backslash a rendered position came from is not this slice's to decide: the
-  // slice is left unfolded so the owning block's literal marker keeps those
-  // boundaries, exactly as an active escape hands them over on the fast path.
-  if (slice.includes('\\\\')) {
-    for (let index = start; index < end; index += 1) rawOffsets.push(index + 1);
-    return { rawOffsets, text: slice };
-  }
   let text = '';
   for (let index = start; index < end; ) {
     if (
       index + 1 < end
       && '\\' === markdown[index]
-      && !isMarkdownUnitBoundary(markdown, index + 1)
+      && MARKDOWN_ESCAPABLE_PUNCTUATION.test(markdown[index + 1] ?? '')
     ) {
       text += markdown[index + 1];
       index += 2;
@@ -10229,7 +11930,7 @@ function witnessedTextRunProjection(
   data: string,
   offset: number
 ): Readonly<{ sourceOffset: number; visualOffset: number }> | null {
-  if (!data.endsWith(' ')) return null;
+  if (!data.endsWith(' ') && !data.endsWith('\u00a0')) return null;
   const renderedBlock = renderedSliceOffsets(
     baselineVisualMarkdown,
     blockRange.start,
@@ -10628,7 +12329,13 @@ function uniqueTextProjection(
     && visualOffset + data.length === blockRange.end + 1
       ? 1
       : 0;
-  if (visualOffset + data.length > blockRange.end + terminalSpace) {
+  let terminalNbsp = 0;
+  if (data.endsWith('\u00a0')) {
+    while ('\u00a0' === baselineVisualMarkdown[blockRange.end + terminalNbsp]) {
+      terminalNbsp += 1;
+    }
+  }
+  if (visualOffset + data.length > blockRange.end + Math.max(terminalSpace, terminalNbsp)) {
     return null;
   }
   return {
@@ -10764,7 +12471,7 @@ export function visualEmptyStructuralBodyAtCaret(
   return visualEmptyStructuralBodyAtBoundary(editor, selection.anchorNode, selection.anchorOffset);
 }
 
-function visualEmptyStructuralBodyAtBoundary(
+export function visualEmptyStructuralBodyAtBoundary(
   editor: HTMLElement,
   anchor: Node,
   offset: number,
@@ -11265,20 +12972,35 @@ export function visualSelectionSourceRange(
       : sourceMarkdown.length;
     return { direction: 'none', end: offset, start: offset };
   }
-  if (
-    currentVisualMarkdown === baselineVisualMarkdown
-    && selection.anchorNode === editor
-    && selection.focusNode === editor
-    && selection.anchorOffset === selection.focusOffset
-    && (
-      selection.anchorOffset === 0
-      || selection.anchorOffset === editor.childNodes.length
-    )
-  ) {
-    const offset = selection.anchorOffset === 0
-      ? 0
-      : sourceMarkdown.length;
-    return { direction: 'none', end: offset, start: offset };
+  const rootEdgeSourceOffset = (node: Node, offset: number): number | null => {
+    if (
+      currentVisualMarkdown !== baselineVisualMarkdown
+      || node !== editor
+    ) {
+      return null;
+    }
+    if (offset === 0) return 0;
+    if (offset === editor.childNodes.length) return sourceMarkdown.length;
+    return null;
+  };
+  const anchorRootEdge = rootEdgeSourceOffset(
+    selection.anchorNode,
+    selection.anchorOffset
+  );
+  const focusRootEdge = selection.isCollapsed
+    ? anchorRootEdge
+    : rootEdgeSourceOffset(selection.focusNode, selection.focusOffset);
+  if (null !== anchorRootEdge && null !== focusRootEdge) {
+    return {
+      direction:
+        anchorRootEdge === focusRootEdge
+          ? 'none'
+          : anchorRootEdge > focusRootEdge
+            ? 'backward'
+            : 'forward',
+      end: Math.max(anchorRootEdge, focusRootEdge),
+      start: Math.min(anchorRootEdge, focusRootEdge)
+    };
   }
   const neutralSelection = neutralEmptyStructuralBodySelection(
     editor,
@@ -11306,13 +13028,13 @@ export function visualSelectionSourceRange(
     );
     return { direction: 'none', end: offset, start: offset };
   }
-  const anchor = boundarySourceOffset(
+  const anchor = anchorRootEdge ?? boundarySourceOffset(
     selection.anchorNode,
     selection.anchorOffset
   );
   const focus = selection.isCollapsed
     ? anchor
-    : boundarySourceOffset(selection.focusNode, selection.focusOffset);
+    : focusRootEdge ?? boundarySourceOffset(selection.focusNode, selection.focusOffset);
   return {
     direction: anchor === focus ? 'none' : anchor > focus ? 'backward' : 'forward',
     end: Math.max(anchor, focus),
@@ -12521,40 +14243,241 @@ export function structuralEmptyLineRemoval(
   return null;
 }
 
+export type EmptiedStructuralRowSignature = Readonly<{
+  headingLevel?: 1 | 2 | 3 | 4 | 5 | 6 | 'any';
+  listKinds: ReadonlyArray<'ol' | 'ul'>;
+  quoteDepth: number;
+  taskItem?: boolean;
+}>;
+
+export type EmptiedStructuralRowRangeHint = Readonly<{
+  end: number;
+  /**
+   * Require the hint to cover exactly one source line: it must start at the
+   * line start and end between the line's content end and its terminator.
+   * Used for top-level (unquoted, non-list) rows so a lagging map range can
+   * never retire a neighbouring row.
+   */
+  exactLine?: boolean;
+  position?: 'first' | 'last';
+  start: number;
+}>;
+
+export type EmptiedStructuralRowRemoval = Readonly<{
+  caret: number;
+  end: number;
+  lineContentEnd: number;
+  start: number;
+}>;
+
+type ParsedEmptiedStructuralRow = Readonly<{
+  blockKind: string;
+  headingLevel?: 1 | 2 | 3 | 4 | 5 | 6;
+  listKinds: ReadonlyArray<'ol' | 'ul'>;
+  quoteDepth: number;
+  taskItem: boolean;
+}>;
+
+function parseEmptiedStructuralRowLine(
+  text: string
+): ParsedEmptiedStructuralRow | null {
+  if ('' === text.trim() || /[\r\n]/u.test(text)) return null;
+  const tree = markdownLanguage.parser.parse(text);
+  const topBlock = tree.topNode.firstChild;
+  if (
+    !topBlock
+    || topBlock.nextSibling
+    || true !== EMPTIED_ROW_BLOCK_KINDS[topBlock.name]
+  ) return null;
+  if (
+    !/^[ \t]*$/u.test(text.slice(0, topBlock.from))
+    || !/^[ \t]*$/u.test(text.slice(topBlock.to))
+  ) return null;
+  let quoteDepth = 0;
+  const listKinds: Array<'ol' | 'ul'> = [];
+  let headingLevel: 1 | 2 | 3 | 4 | 5 | 6 | undefined;
+  let taskItem = false;
+  let seenList = false;
+  let seenHeading = false;
+  let invalid = false;
+  const tokenSpans: Array<Readonly<{ from: number; to: number }>> = [];
+  tree.cursor().iterate((node) => {
+    if (invalid) return false;
+    switch (node.name) {
+      case 'Document':
+      case 'ListItem':
+      case 'Task':
+        return;
+      case 'Blockquote':
+        if (seenList || seenHeading) {
+          invalid = true;
+          return false;
+        }
+        quoteDepth += 1;
+        return;
+      case 'BulletList':
+        if (seenHeading) {
+          invalid = true;
+          return false;
+        }
+        seenList = true;
+        listKinds.push('ul');
+        return;
+      case 'OrderedList':
+        if (seenHeading) {
+          invalid = true;
+          return false;
+        }
+        seenList = true;
+        listKinds.push('ol');
+        return;
+      case 'QuoteMark':
+      case 'ListMark':
+      case 'HeaderMark':
+        tokenSpans.push({ from: node.from, to: node.to });
+        return;
+      case 'TaskMarker':
+        taskItem = true;
+        tokenSpans.push({ from: node.from, to: node.to });
+        return;
+      case 'Paragraph':
+        // A bare task checkbox with no trailing space (`- [ ]` or `> - [x]`)
+        // parses as a ListItem > Paragraph rather than ListItem > Task.
+        if (
+          seenList
+          && !seenHeading
+          && !taskItem
+          && /^\[[ xX]\]$/u.test(text.slice(node.from, node.to))
+        ) {
+          taskItem = true;
+          tokenSpans.push({ from: node.from, to: node.to });
+          return false;
+        }
+        invalid = true;
+        return false;
+      case 'ATXHeading1':
+      case 'ATXHeading2':
+      case 'ATXHeading3':
+      case 'ATXHeading4':
+      case 'ATXHeading5':
+      case 'ATXHeading6':
+        if (seenHeading || taskItem) {
+          invalid = true;
+          return false;
+        }
+        seenHeading = true;
+        headingLevel = Number(
+          node.name.slice('ATXHeading'.length)
+        ) as 1 | 2 | 3 | 4 | 5 | 6;
+        return;
+      default:
+        invalid = true;
+        return false;
+    }
+  });
+  if (invalid || 0 === tokenSpans.length) return null;
+  tokenSpans.sort((a, b) => a.from - b.from);
+  let cursor = 0;
+  for (const span of tokenSpans) {
+    if (span.from < cursor) return null;
+    if (!/^[ \t]*$/u.test(text.slice(cursor, span.from))) return null;
+    cursor = span.to;
+  }
+  if (!/^[ \t]*$/u.test(text.slice(cursor))) return null;
+  return {
+    blockKind: topBlock.name,
+    ...(undefined !== headingLevel ? { headingLevel } : {}),
+    listKinds,
+    quoteDepth,
+    taskItem
+  };
+}
+
+function lineSeparatorDepth(
+  sourceMarkdown: string,
+  range: MarkdownLineRange | undefined,
+  codeRanges: ReadonlyArray<MarkdownCodeContextRange>
+): number | null {
+  if (!range) return null;
+  if (overlapsMarkdownCodeContext(range.start, range.end, codeRanges)) {
+    return null;
+  }
+  const text = sourceMarkdown.slice(range.start, range.contentEnd);
+  if ('' === text.trim()) return 0;
+  if (!/^(?:[ \t]*>)+[ \t]*$/u.test(text)) return null;
+  const parsed = parseEmptiedStructuralRowLine(text);
+  if (
+    !parsed
+    || parsed.quoteDepth < 1
+    || parsed.listKinds.length > 0
+    || undefined !== parsed.headingLevel
+    || parsed.taskItem
+  ) return null;
+  return parsed.quoteDepth;
+}
+
 /**
  * The canonical bytes a marker-only row stands for, and the caret the press
- * that removes it leaves behind: the row itself, one blank separator beside it,
- * and the end of the nearest preceding content. The caller has already proved
- * the row is its own block's marker run; this only decides which separator goes
- * with it, so a removal can neither leave two blank lines behind nor eat the
- * row above.
+ * that removes it leaves behind: the row itself, one separator beside it
+ * (blank line at depth 0, or a bare quote line of depth `<= quoteDepth` inside
+ * quotes), and the end of the nearest preceding content. The caller has already
+ * proved the row is its own block's marker run; this only decides which
+ * separator goes with it, so a removal can neither leave dangling separators
+ * behind nor eat the wrong quote separator or the row above.
+ *
+ * The caret is always the end of the nearest preceding *drawn* content: a
+ * source-only block (a definition or a stripped raw HTML block) has no drawn
+ * row, so a caret placed on it would name a position no presentation can
+ * show. Its lines are skipped exactly like separators.
  */
 function structuralRowRemoval(
   sourceMarkdown: string,
   lines: ReadonlyArray<MarkdownLineRange>,
-  index: number
+  index: number,
+  quoteDepth = 0
 ): Readonly<{ caret: number; end: number; start: number }> | null {
   const line = lines[index];
   if (!line) return null;
   const codeRanges = markdownCodeContextRanges(sourceMarkdown);
+  const sourceOnlyBlocks = sourceOnlyMarkdownBlocks(sourceMarkdown);
+  const sourceOnly = (range: MarkdownLineRange): boolean =>
+    sourceOnlyBlocks.some((block) => range.start >= block.from && range.contentEnd <= block.to);
+  const sepDepth = (range: MarkdownLineRange | undefined): number | null => {
+    const depth = lineSeparatorDepth(sourceMarkdown, range, codeRanges);
+    return null !== depth && depth <= quoteDepth ? depth : null;
+  };
+  const drawnCaretBefore = (rowIndex: number): number => {
+    for (let before = rowIndex - 1; before >= 0; before -= 1) {
+      const range = lines[before];
+      if (!range || null !== sepDepth(range) || sourceOnly(range)) continue;
+      const text = sourceMarkdown.slice(range.start, range.contentEnd);
+      return Math.max(
+        range.start + text.trimEnd().length,
+        range.start + (structuralMarkerBodyBoundary(text) ?? 0)
+      );
+    }
+    return 0;
+  };
   const previous = lines[index - 1];
-  const previousText = previous
-    ? sourceMarkdown.slice(previous.start, previous.contentEnd)
-    : '';
-  const previousBodyBoundary = structuralMarkerBodyBoundary(previousText);
-  const previousCaret = previous
-    ? Math.max(
-        previous.start + previousText.trimEnd().length,
-        previous.start + (previousBodyBoundary ?? 0)
-      )
-    : 0;
-  if (
-    previous
-    && previousCaret > previous.start
-    && !overlapsMarkdownCodeContext(previous.start, previous.end, codeRanges)
-  ) return { caret: previousCaret, end: line.end, start: line.start };
+  const prevSep = sepDepth(previous);
+  if (previous && null === prevSep && sourceOnly(previous)) {
+    return { caret: drawnCaretBefore(index), end: line.end, start: line.start };
+  }
+  if (previous && null === prevSep) {
+    const previousText = sourceMarkdown.slice(previous.start, previous.contentEnd);
+    const previousBodyBoundary = structuralMarkerBodyBoundary(previousText);
+    const previousCaret = Math.max(
+      previous.start + previousText.trimEnd().length,
+      previous.start + (previousBodyBoundary ?? 0)
+    );
+    if (
+      previousCaret > previous.start
+      && !overlapsMarkdownCodeContext(previous.start, previous.end, codeRanges)
+    ) return { caret: previousCaret, end: line.end, start: line.start };
+  }
   const next = lines[index + 1];
-  const nextBodyBoundary = next
+  const nextSep = sepDepth(next);
+  const nextBodyBoundary = next && null === nextSep
     ? structuralMarkerBodyBoundary(
         sourceMarkdown.slice(next.start, next.contentEnd)
       )
@@ -12568,23 +14491,17 @@ function structuralRowRemoval(
       start: line.start
     };
   }
-  const blank = (range: typeof line | undefined): boolean => Boolean(
-    range && '' === sourceMarkdown.slice(range.start, range.contentEnd).trim()
-  );
-  if ((!previous || blank(previous)) && (!next || blank(next))) {
-    // The row is its block's only row. Its block goes with it, and so does
-    // one blank separator beside it; the caret is the end of the nearest
-    // preceding content (or the start of the document).
-    let caret = 0;
-    for (let before = index - 1; before >= 0; before -= 1) {
-      const range = lines[before];
-      if (!range || blank(range)) continue;
-      const text = sourceMarkdown.slice(range.start, range.contentEnd);
-      caret = Math.max(
-        range.start + text.trimEnd().length,
-        range.start + (structuralMarkerBodyBoundary(text) ?? 0)
-      );
-      break;
+  if ((!previous || null !== prevSep) && (!next || null !== nextSep)) {
+    // The row is separated from any neighbours at this quote depth. Retire the
+    // row together with one matching separator beside it; prefer the deeper
+    // separator when `next` continues an inner quote (`nextSep > prevSep`) so a
+    // first-in-quote row drops its inner `>` separator rather than the outer
+    // blank/quote separator before the quote block.
+    const caret = drawnCaretBefore(index);
+    if (previous && next && null !== prevSep && null !== nextSep) {
+      return nextSep > prevSep
+        ? { caret, end: next.end, start: line.start }
+        : { caret, end: line.end, start: previous.start };
     }
     if (previous) return { caret, end: line.end, start: previous.start };
     if (next) return { caret, end: next.end, start: line.start };
@@ -12592,6 +14509,190 @@ function structuralRowRemoval(
   // The row sits at the edge the document keeps: after removal this offset
   // is the new end of the preceding content (or the start of the document).
   return { caret: line.start, end: line.end, start: line.start };
+}
+
+function markdownNonStructuralContextRanges(
+  tree: Tree
+): ReadonlyArray<MarkdownCodeContextRange> {
+  const ranges: MarkdownCodeContextRange[] = [];
+  tree.cursor().iterate((node) => {
+    if (['CodeBlock', 'FencedCode', 'HTMLBlock'].includes(node.name)) {
+      ranges.push({ end: node.to, start: node.from });
+    }
+  });
+  return ranges;
+}
+
+function documentEmptiedRowSignatureAtLine(
+  sourceMarkdown: string,
+  tree: Tree,
+  blockedRanges: ReadonlyArray<MarkdownCodeContextRange>,
+  line: MarkdownLineRange
+): Omit<ParsedEmptiedStructuralRow, 'blockKind'> | null {
+  if (overlapsMarkdownCodeContext(line.start, line.end, blockedRanges)) {
+    return null;
+  }
+  const text = sourceMarkdown.slice(line.start, line.contentEnd);
+  const parsed = parseEmptiedStructuralRowLine(text);
+  if (!parsed) return null;
+  let lastMarker: SyntaxNode | null = null;
+  tree.cursor().iterate((node) => {
+    if (node.to <= line.start || node.from > line.contentEnd) return false;
+    if (
+      node.from >= line.start
+      && node.to <= line.contentEnd
+      && (
+        'QuoteMark' === node.name
+        || 'ListMark' === node.name
+        || 'HeaderMark' === node.name
+        || 'TaskMarker' === node.name
+      )
+    ) {
+      if (!lastMarker || node.to >= lastMarker.to) {
+        lastMarker = node.node;
+      }
+    }
+    return undefined;
+  });
+  if (!lastMarker) return null;
+  let quoteDepth = 0;
+  const listKinds: Array<'ol' | 'ul'> = [];
+  let headingLevel: 1 | 2 | 3 | 4 | 5 | 6 | undefined;
+  let seenQuote = false;
+  let current: SyntaxNode | null = (lastMarker as SyntaxNode).parent;
+  while (current) {
+    if (
+      'CodeBlock' === current.name
+      || 'FencedCode' === current.name
+      || 'HTMLBlock' === current.name
+      || 'InlineCode' === current.name
+      || 'Paragraph' === current.name
+    ) return null;
+    if ('Blockquote' === current.name) {
+      quoteDepth += 1;
+      seenQuote = true;
+    } else if ('BulletList' === current.name) {
+      if (seenQuote) return null;
+      listKinds.unshift('ul');
+    } else if ('OrderedList' === current.name) {
+      if (seenQuote) return null;
+      listKinds.unshift('ol');
+    } else if (/^ATXHeading([1-6])$/u.test(current.name)) {
+      headingLevel = Number(
+        current.name.slice('ATXHeading'.length)
+      ) as 1 | 2 | 3 | 4 | 5 | 6;
+    }
+    current = current.parent;
+  }
+  if (headingLevel !== parsed.headingLevel) return null;
+  return {
+    ...(undefined !== headingLevel ? { headingLevel } : {}),
+    listKinds,
+    quoteDepth,
+    taskItem: parsed.taskItem
+  };
+}
+
+function emptiedStructuralRowSignatureMatches(
+  candidate: Omit<ParsedEmptiedStructuralRow, 'blockKind'>,
+  expected: EmptiedStructuralRowSignature
+): boolean {
+  if (candidate.quoteDepth !== expected.quoteDepth) return false;
+  if (candidate.listKinds.length !== expected.listKinds.length) return false;
+  if (candidate.listKinds.some((kind, idx) => kind !== expected.listKinds[idx])) {
+    return false;
+  }
+  if ('any' === expected.headingLevel) {
+    if (undefined === candidate.headingLevel) return false;
+  } else if (candidate.headingLevel !== expected.headingLevel) {
+    return false;
+  }
+  return Boolean(expected.taskItem) === candidate.taskItem;
+}
+
+/**
+ * The canonical removal for an emptied structural Markdown row matching
+ * `signature` (exact quote depth, list nesting, optional heading level, and
+ * task-item flag), proved against the full-document Lezer parse tree so code
+ * contexts, non-empty bodies (including text before a closing ATX
+ * `HeaderMark`), and mismatched ancestry are always refused.
+ */
+export function emptiedStructuralRowRemoval(
+  sourceMarkdown: string,
+  signature: EmptiedStructuralRowSignature,
+  rangeHint?: EmptiedStructuralRowRangeHint
+): EmptiedStructuralRowRemoval | null {
+  if (
+    !Number.isInteger(signature.quoteDepth)
+    || signature.quoteDepth < 0
+    || (
+      0 === signature.quoteDepth
+      && 0 === signature.listKinds.length
+      && undefined === signature.headingLevel
+    )
+  ) return null;
+  if (rangeHint) {
+    if (
+      !Number.isInteger(rangeHint.start)
+      || !Number.isInteger(rangeHint.end)
+      || rangeHint.start < 0
+      || rangeHint.end <= rangeHint.start
+      || rangeHint.end > sourceMarkdown.length
+    ) return null;
+  }
+  const lines = markdownLineRanges(sourceMarkdown);
+  const tree = markdownLanguage.parser.parse(sourceMarkdown);
+  const blockedRanges = markdownNonStructuralContextRanges(tree);
+  const matches: number[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line) continue;
+    if (rangeHint) {
+      if (rangeHint.exactLine) {
+        if (
+          line.start !== rangeHint.start
+          || rangeHint.end < line.contentEnd
+          || rangeHint.end > line.end
+        ) continue;
+      } else if (
+        line.start < rangeHint.start
+        || line.start >= rangeHint.end
+        || line.contentEnd > rangeHint.end
+      ) continue;
+    }
+    const candidate = documentEmptiedRowSignatureAtLine(
+      sourceMarkdown,
+      tree,
+      blockedRanges,
+      line
+    );
+    if (candidate && emptiedStructuralRowSignatureMatches(candidate, signature)) {
+      matches.push(index);
+    }
+  }
+  if (0 === matches.length) return null;
+  let targetIndex: number | undefined;
+  if (1 === matches.length) {
+    targetIndex = matches[0];
+  } else if ('first' === rangeHint?.position) {
+    targetIndex = matches[0];
+  } else if ('last' === rangeHint?.position) {
+    targetIndex = matches[matches.length - 1];
+  } else {
+    return null;
+  }
+  if (undefined === targetIndex) return null;
+  const targetLine = lines[targetIndex];
+  if (!targetLine) return null;
+  const removal = structuralRowRemoval(
+    sourceMarkdown,
+    lines,
+    targetIndex,
+    signature.quoteDepth
+  );
+  return removal
+    ? { ...removal, lineContentEnd: targetLine.contentEnd }
+    : null;
 }
 
 function emptiedHeadingRowRemovalAt(
@@ -12808,46 +14909,16 @@ const EMPTIED_ROW_BLOCK_KINDS: Record<string, true> = {
 };
 
 /**
- * The marker tokens that spell a block's structure in its own row. A row's body
- * is whatever follows the last of them.
- */
-const EMPTIED_ROW_MARKER_KINDS: Record<string, true> = {
-  HeaderMark: true,
-  ListMark: true,
-  QuoteMark: true
-};
-
-/**
  * The kind of block one source row spells when that row carries block markers
  * and no body at all - the row a block with no text of its own still occupies -
  * or null. The Markdown parser decides both halves: the row must be exactly one
- * emptyable block, and the bytes after its last marker must be only the
- * renderer's separator (plus, for a task item, its checkbox). A row that merely
- * looks like markers (an HTML block, a table row, a thematic break, or a marker
- * followed by text) is therefore never one.
+ * emptyable block, and every byte outside its structural markers (plus, for a
+ * task item, its checkbox) must be horizontal whitespace. A row that merely
+ * looks like markers (an HTML block, a table row, a thematic break, or text
+ * before a closing ATX `HeaderMark`) is therefore never one.
  */
 function markdownRowEmptiedBlockKind(text: string): string | null {
-  if ('' === text.trim()) return null;
-  const tree = markdownLanguage.parser.parse(text);
-  const block = tree.topNode.firstChild;
-  if (
-    !block
-    || block.nextSibling
-    || block.from !== 0
-    || block.to !== text.length
-    || true !== EMPTIED_ROW_BLOCK_KINDS[block.name]
-  ) return null;
-  let markerEnd = 0;
-  tree.cursor().iterate((node) => {
-    if (true === EMPTIED_ROW_MARKER_KINDS[node.name] && node.to > markerEnd) {
-      markerEnd = node.to;
-    }
-  });
-  const body = text.slice(markerEnd);
-  const taskGlyph = /^[ \t]+\[[ xX]\](?=[ \t]|$)/u.exec(body);
-  return /^[ \t]*$/u.test(taskGlyph ? body.slice(taskGlyph[0].length) : body)
-    ? block.name
-    : null;
+  return parseEmptiedStructuralRowLine(text)?.blockKind ?? null;
 }
 
 /**
@@ -13026,8 +15097,12 @@ export function mergeVisualMarkdownChangeDetails(
   // order, so a framing no-op can never share provenance with a real splice
   // that appears later in the same diff.
   let framingGapMemo: ReadonlyMap<number, number> | null = null;
-  const framingGapAnchors = (): ReadonlyMap<number, number> =>
-    framingGapMemo ?? (framingGapMemo = normalizedFramingGapAnchors(sourceIntervalMap, source));
+  const framingGapAnchors = (): ReadonlyMap<number, number> => {
+    if (framingGapMemo === null) {
+      framingGapMemo = normalizedFramingGapAnchors(sourceIntervalMap, source);
+    }
+    return framingGapMemo;
+  };
   let realChangeAnchorMemo: ReadonlyMap<number, number> | null = null;
   const realChangeAnchors = (): ReadonlyMap<number, number> => {
     if (realChangeAnchorMemo) return realChangeAnchorMemo;
@@ -13050,7 +15125,7 @@ export function mergeVisualMarkdownChangeDetails(
         cursor = runEnd;
       }
       const pureFramingWhitespace = true === candidate.removed
-        && /^[ 	]+$/u.test(candidate.value)
+        && /^[ \t]+$/u.test(candidate.value)
         && visualChanges[partIndex + 1]?.added !== true;
       if (pureFramingWhitespace) continue;
       count(sourceIntervalMap.sourceOffsetAt(runStart));
@@ -13320,6 +15395,230 @@ export function mergeVisualMarkdownChangeDetails(
       if (undefined !== missingStart && missingStart === sourceEnd && !anchorSharedWithRealChange(missingStart)) continue;
       if (undefined !== missingEnd && missingEnd === sourceStart && !anchorSharedWithRealChange(missingEnd)) continue;
     }
+    // CommonMark §4.3 Setext headings render as `<h1>`/`<h2>` and serialize as
+    // ATX `# `/`## `, leaving the underline (`\n===`, `\n---`, `\n  -`, `\n> ---`)
+    // in `hiddenSourceRanges` and synthesizing the ATX marks + space. These
+    // parser-independent helpers prove Setext structure directly against
+    // CommonMark §4.3 (without relying on Lezer, which misparses list-nested
+    // `  -` underlines) so end-of-heading caret/insertions and emptying the
+    // last character succeed while non-Setext hidden runs stay strictly refused.
+    const parseSetextPrefix = (
+      line: string
+    ): Readonly<{
+      inner: string;
+      innerStart: number;
+      listContentColumn: number;
+      quoteDepth: number;
+    }> | null => {
+      let offset = 0;
+      let quoteDepth = 0;
+      for (;;) {
+        if (/^ *\t/u.test(line.slice(offset))) return null;
+        const quoteMatch = /^ {0,3}> ?/u.exec(line.slice(offset));
+        if (!quoteMatch) break;
+        offset += quoteMatch[0].length;
+        quoteDepth += 1;
+      }
+      const afterQuotes = offset;
+      let listContentColumn = 0;
+      for (;;) {
+        if (/^ *\t/u.test(line.slice(offset))) return null;
+        const listMatch = /^( *)(?:[-+*]|\d{1,9}[.)])( {1,4})/u.exec(
+          line.slice(offset)
+        );
+        if (!listMatch) break;
+        offset += listMatch[0].length;
+        listContentColumn = offset - afterQuotes;
+      }
+      if (0 === listContentColumn && /^ *\t/u.test(line.slice(offset))) {
+        return null;
+      }
+      return {
+        inner: line.slice(offset),
+        innerStart: offset,
+        listContentColumn,
+        quoteDepth
+      };
+    };
+    const matchSetextUnderlinePrefix = (
+      tail: string,
+      quoteDepth: number,
+      listContentColumn: number,
+      atxLevel: 1 | 2,
+      requireEnd: boolean
+    ): number | null => {
+      const nlMatch = /^\r?\n/u.exec(tail);
+      if (!nlMatch) return null;
+      let cursor = nlMatch[0].length;
+      for (let q = 0; q < quoteDepth; q += 1) {
+        const qMatch = /^ {0,3}> ?/u.exec(tail.slice(cursor));
+        if (!qMatch) return null;
+        cursor += qMatch[0].length;
+      }
+      let indent = 0;
+      while (' ' === tail[cursor + indent]) indent += 1;
+      if ('\t' === tail[cursor + indent]) return null;
+      if (indent < listContentColumn || indent > listContentColumn + 3) {
+        return null;
+      }
+      cursor += indent;
+      const markMatch = (1 === atxLevel ? /^=+/u : /^-+/u).exec(
+        tail.slice(cursor)
+      );
+      if (!markMatch) return null;
+      cursor += markMatch[0].length;
+      const trailingSpaces = /^[ \t]*/u.exec(tail.slice(cursor));
+      cursor += trailingSpaces ? trailingSpaces[0].length : 0;
+      if (requireEnd) {
+        return /^(?:\r?\n[ \t]*)*$/u.test(tail.slice(cursor))
+          ? tail.length
+          : null;
+      }
+      return cursor === tail.length
+        || '\n' === tail[cursor]
+        || '\r' === tail[cursor]
+        ? cursor
+        : null;
+    };
+    const sourceSetextLineInfo = (
+      sourceLineEndOffset: number,
+      expectedQuoteDepth: number,
+      expectList: boolean
+    ): Readonly<{
+      innerStart: number;
+      listContentColumn: number;
+      quoteDepth: number;
+    }> | null => {
+      if (sourceLineEndOffset <= 0) return null;
+      const sourceLineStart = source.lastIndexOf('\n', sourceLineEndOffset - 1) + 1;
+      const parsed = parseSetextPrefix(
+        source.slice(sourceLineStart, sourceLineEndOffset)
+      );
+      if (
+        !parsed
+        || parsed.quoteDepth !== expectedQuoteDepth
+        || !/\S/u.test(parsed.inner)
+        || /^ {0,3}#{1,6}(?:[ \t]|$)/u.test(parsed.inner)
+      ) return null;
+      let listContentColumn = parsed.listContentColumn;
+      if (0 === listContentColumn && expectList) {
+        let scanEnd = sourceLineStart - 1;
+        while (scanEnd > 0) {
+          const prevStart = source.lastIndexOf('\n', scanEnd - 1) + 1;
+          const prevParsed = parseSetextPrefix(source.slice(prevStart, scanEnd));
+          if (
+            !prevParsed
+            || prevParsed.quoteDepth !== expectedQuoteDepth
+            || !/\S/u.test(prevParsed.inner)
+            || /^ {0,3}#{1,6}(?:[ \t]|$)/u.test(prevParsed.inner)
+          ) break;
+          if (prevParsed.listContentColumn > 0) {
+            listContentColumn = prevParsed.listContentColumn;
+            break;
+          }
+          scanEnd = prevStart - 1;
+        }
+        if (0 === listContentColumn) return null;
+      } else if (0 === listContentColumn && /^ {4}/u.test(parsed.inner)) {
+        return null;
+      }
+      return {
+        innerStart: sourceLineStart + parsed.innerStart,
+        listContentColumn,
+        quoteDepth: parsed.quoteDepth
+      };
+    };
+    const emptiedSetextHeadingEdit = (
+      allowUnwrap: boolean
+    ): Readonly<{ end: number; replacement: string; start: number }> | null => {
+      if (true !== part.removed || '' !== replacement || undefined === sourceEnd) {
+        return null;
+      }
+      if (undefined === sourceStart) {
+        if (start <= 0 || !replacedVisualText.startsWith(' ')) return null;
+        const removedText = replacedVisualText.slice(1);
+        if ('' === removedText || /[\r\n]/u.test(removedText)) return null;
+        const visualLineStart = baselineVisualMarkdown.lastIndexOf('\n', start - 1) + 1;
+        const visualPrefix = parseSetextPrefix(
+          baselineVisualMarkdown.slice(visualLineStart, start)
+        );
+        if (
+          !visualPrefix
+          || ('#' !== visualPrefix.inner && '##' !== visualPrefix.inner)
+        ) return null;
+        const atxMarks = visualPrefix.inner;
+        const atxLevel: 1 | 2 = '#' === atxMarks ? 1 : 2;
+        const textStart = sourceIntervalMap.sourceOffsetAt(start + 1);
+        if (undefined === textStart || textStart >= sourceEnd) return null;
+        if (source.slice(textStart, sourceEnd) !== removedText) return null;
+        const sourceInfo = sourceSetextLineInfo(
+          sourceEnd,
+          visualPrefix.quoteDepth,
+          visualPrefix.listContentColumn > 0
+        );
+        if (
+          !sourceInfo
+          || !/^ {0,3}$/u.test(source.slice(sourceInfo.innerStart, textStart))
+        ) return null;
+        const underlineLength = matchSetextUnderlinePrefix(
+          source.slice(sourceEnd),
+          sourceInfo.quoteDepth,
+          sourceInfo.listContentColumn,
+          atxLevel,
+          false
+        );
+        if (null === underlineLength) return null;
+        return {
+          end: sourceEnd + underlineLength,
+          replacement: atxMarks,
+          start: textStart
+        };
+      }
+      if (!allowUnwrap) return null;
+      const unwrapMatch = /^( ?)(#{1,2}) ([^\r\n]+)$/u.exec(replacedVisualText);
+      if (!unwrapMatch) return null;
+      const leadSpace = unwrapMatch[1] ?? '';
+      const atxMarks = unwrapMatch[2] === '#' ? '#' : '##';
+      const removedText = unwrapMatch[3] ?? '';
+      if ('' === removedText) return null;
+      const atxLevel: 1 | 2 = '#' === atxMarks ? 1 : 2;
+      const atxSpaceOffset = start + leadSpace.length + atxMarks.length;
+      if (undefined !== sourceIntervalMap.sourceOffsetAt(atxSpaceOffset)) {
+        return null;
+      }
+      const visualLineStart = start > 0
+        ? baselineVisualMarkdown.lastIndexOf('\n', start - 1) + 1
+        : 0;
+      const visualPrefix = parseSetextPrefix(
+        baselineVisualMarkdown.slice(visualLineStart, start + leadSpace.length)
+      );
+      if (!visualPrefix || '' !== visualPrefix.inner) return null;
+      const textStart = sourceIntervalMap.sourceOffsetAt(atxSpaceOffset + 1);
+      if (undefined === textStart || textStart >= sourceEnd) return null;
+      if (source.slice(textStart, sourceEnd) !== removedText) return null;
+      const sourceInfo = sourceSetextLineInfo(
+        sourceEnd,
+        visualPrefix.quoteDepth,
+        visualPrefix.listContentColumn > 0
+      );
+      if (
+        !sourceInfo
+        || !/^ {0,3}$/u.test(source.slice(sourceInfo.innerStart, textStart))
+      ) return null;
+      const underlineLength = matchSetextUnderlinePrefix(
+        source.slice(sourceEnd),
+        sourceInfo.quoteDepth,
+        sourceInfo.listContentColumn,
+        atxLevel,
+        false
+      );
+      if (null === underlineLength) return null;
+      return {
+        end: sourceEnd + underlineLength,
+        replacement: '',
+        start: textStart
+      };
+    };
     // A whole structural line that only the alignment, not literal text, can
     // associate with its source line. Its visual spelling (`-` for any bullet,
     // `[x]` for a task glyph, trimmed separator) never equals the source
@@ -13334,6 +15633,15 @@ export function mergeVisualMarkdownChangeDetails(
         )
       : null;
     if (undefined === sourceStart || undefined === sourceEnd) {
+      const setextEmptyEdit = emptiedSetextHeadingEdit(false);
+      if (
+        setextEmptyEdit
+        && recordOriginalRangeEdit(
+          setextEmptyEdit.start,
+          setextEmptyEdit.end,
+          setextEmptyEdit.replacement
+        )
+      ) continue;
       if (
         structuralLineRemoval
         && recordOriginalRangeEdit(
@@ -13393,6 +15701,15 @@ export function mergeVisualMarkdownChangeDetails(
         baselineVisualMarkdown.slice(start, end)
       );
     if (!sourceSliceMatchesVisual && !consumesStructuralSeparator) {
+      const setextUnwrapEdit = emptiedSetextHeadingEdit(true);
+      if (
+        setextUnwrapEdit
+        && recordOriginalRangeEdit(
+          setextUnwrapEdit.start,
+          setextUnwrapEdit.end,
+          setextUnwrapEdit.replacement
+        )
+      ) continue;
       if (
         structuralLineRemoval
         && recordOriginalRangeEdit(
@@ -13529,6 +15846,88 @@ export function mergeVisualMarkdownChangeDetails(
       if (!block) return false;
       return run.length === Math.min(block.fenceIndent, indentWidth);
     };
+    const insertionPrecedesSetextUnderline = (
+      hiddenStart: number,
+      hiddenEnd: number
+    ): boolean => {
+      if (0 !== replacedVisualText.length) return false;
+      if (sourceStart !== sourceEnd || sourceStart !== hiddenStart) return false;
+      if (start <= 0) return false;
+      if (
+        start < baselineVisualMarkdown.length
+        && '\n' !== baselineVisualMarkdown[start]
+        && '\r' !== baselineVisualMarkdown[start]
+      ) return false;
+      let visualScanEnd = start;
+      let openingVisual: Readonly<{
+        atxLevel: 1 | 2;
+        hasList: boolean;
+        quoteDepth: number;
+      }> | null = null;
+      let expectedQuoteDepth: number | null = null;
+      while (visualScanEnd > 0) {
+        const visualLineStart = baselineVisualMarkdown.lastIndexOf('\n', visualScanEnd - 1) + 1;
+        const visualParsed = parseSetextPrefix(
+          baselineVisualMarkdown.slice(visualLineStart, visualScanEnd)
+        );
+        if (!visualParsed || !/\S/u.test(visualParsed.inner)) break;
+        if (null === expectedQuoteDepth) {
+          expectedQuoteDepth = visualParsed.quoteDepth;
+        } else if (visualParsed.quoteDepth !== expectedQuoteDepth) {
+          break;
+        }
+        const atxMatch = /^(#{1,2}) (.*\S.*)$/u.exec(visualParsed.inner);
+        if (atxMatch) {
+          openingVisual = {
+            atxLevel: '#' === atxMatch[1] ? 1 : 2,
+            hasList: visualParsed.listContentColumn > 0,
+            quoteDepth: visualParsed.quoteDepth
+          };
+          break;
+        }
+        if (visualParsed.listContentColumn > 0) break;
+        visualScanEnd = visualLineStart - 1;
+      }
+      if (!openingVisual) return false;
+      const sourceInfo = sourceSetextLineInfo(
+        sourceStart,
+        openingVisual.quoteDepth,
+        openingVisual.hasList
+      );
+      if (!sourceInfo) return false;
+      return null !== matchSetextUnderlinePrefix(
+        source.slice(hiddenStart, hiddenEnd),
+        sourceInfo.quoteDepth,
+        sourceInfo.listContentColumn,
+        openingVisual.atxLevel,
+        true
+      );
+    };
+    // A quoted soft break (`\n> `) is drawn as one visual space `' '` in the
+    // serialized baseline: the space's left boundary belongs unambiguously to
+    // the end of line 1 (`hiddenStart`), and its right boundary belongs
+    // unambiguously to the start of line 2 (`hiddenEnd`). Both the source run
+    // shape and both sides of the baseline space must agree.
+    const hiddenRunIsSpelledBySoftBreakSpace = (
+      hiddenStart: number,
+      hiddenEnd: number
+    ): boolean => {
+      if (0 !== replacedVisualText.length || sourceStart !== sourceEnd) {
+        return false;
+      }
+      const hidden = source.slice(hiddenStart, hiddenEnd);
+      if (!/^\n(?: {0,3}> ?)+[ \t]*$/u.test(hidden)) return false;
+      if (sourceStart === hiddenStart) {
+        return ' ' === baselineVisualMarkdown[start]
+          && sourceIntervalMap.sourceOffsetAt(start + 1) === hiddenEnd;
+      }
+      if (sourceStart === hiddenEnd) {
+        return start > 0
+          && ' ' === baselineVisualMarkdown[start - 1]
+          && sourceIntervalMap.sourceOffsetAt(start - 1) === hiddenStart;
+      }
+      return false;
+    };
     const insertionTouchesHiddenBoundary = 0 === replacedVisualText.length
       && hiddenSourceRanges.some(({ end: hiddenEnd, start: hiddenStart }) =>
         (sourceStart === hiddenStart || sourceStart === hiddenEnd)
@@ -13542,8 +15941,10 @@ export function mergeVisualMarkdownChangeDetails(
           )
           )
           || hiddenRunIsSpelledByBaselineColumn(hiddenStart, hiddenEnd)
+          || hiddenRunIsSpelledBySoftBreakSpace(hiddenStart, hiddenEnd)
           || touchesDeclaredRun(hiddenStart, hiddenEnd)
           || insertionOpensFencedBodyColumn(hiddenStart, hiddenEnd)
+          || insertionPrecedesSetextUnderline(hiddenStart, hiddenEnd)
         )
       );
     if (editOverlapsHiddenSource || insertionTouchesHiddenBoundary) {
@@ -13990,9 +16391,12 @@ export function visualCodeFenceRootSourceOffset(
   } catch {
     return -1;
   }
-  const { bodyEnd, bodyStart } = interval;
+  const { bodyStart } = interval;
+  const editableEnd = visualCodeBodyEditableSourceEnd(interval, markdown);
   if (sourceOffset < bodyStart) return 0;
-  return sourceOffset >= bodyEnd ? bodyEnd - bodyStart : sourceOffset - bodyStart;
+  return sourceOffset >= editableEnd
+    ? editableEnd - bodyStart
+    : sourceOffset - bodyStart;
 }
 
 export function mergeVisualMarkdownChange(

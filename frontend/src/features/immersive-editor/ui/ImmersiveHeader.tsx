@@ -130,6 +130,8 @@ export function ImmersiveHeader({
             key={value}
             type="button"
             className={mode === value ? 'is-active' : ''}
+            aria-label={label}
+            title={label}
             aria-pressed={mode === value}
             onClick={() => onModeChange(value)}
           >

@@ -566,6 +566,33 @@ quote or numbering marker with no text - is not spelled by the serializer at
 all; that trailing marker row is the same admitted spelling difference, so the
 press still names the row's canonical bytes instead of treating the surface as
 stale.
+For a verified native terminal join, the ordinary structural-gap path still
+removes its separator; the pure-LF terminal form retires exactly one final LF
+only when no following root remains, the current captured source is exact with
+no shorter pending source, and the owned separator covers EOF/pure LF. Its
+pre-edit actual canonical collapsed selection must match both the complete native
+projection and the owned empty paragraph captured before the native default,
+travel through the existing owner/source/revision proof, and be recorded as
+`historySelectionBefore`; that record restores the inverse P0 and the post-heading-tail
+selection. For a certified closed fenced PRE at owned EOF, the source-range path
+may be absent: the owner authenticates the current code through existing
+provenance/correspondence, requires a parsed closed fence with a nonempty pure-LF
+tail outside it, keeps canonical EOF preselection separate from the code-body-tail
+postselection, and compares the removed empty paragraph's frozen metadata before
+retiring exactly one final LF through the existing history owner. Other
+nonterminal, uncertified PRE, shorter-pending, and nonpure-LF joins remain
+unchanged.
+The ordinary fast visual-intent path that is about to write the canonical document performs
+its root-ledger authentication before `applyDocumentChange`, not after it. A
+retained live top-level window keeps same-node editing admissible; an already
+verified native join/range/split candidate may supply the next ledger. With a
+formal origin present, missing either proof leaves no verified ledger and the
+transition is refused before source, revision or history can move. A surface
+with no proved origin keeps its authoring path, an expanded Preview publication
+keeps its separate strategy. The pre-write ledger proof only authorizes the
+write: after the callback, publication still rechecks the live retained window
+and then consumes a pending native candidate, refreezing metadata only for that
+publication.
 The owner's own published DOM/source pairing is also the baseline of a document
 that began empty: without it every later press is proved against a baseline that
 never existed, so publishing initializes a missing accepted visual baseline. A
@@ -750,6 +777,13 @@ the serialization treat it as content before the marker. Cells containing text,
 more than one break, or any other child do not receive this equivalence.
 This scoped proof does not widen paragraph, heading, code, or general element
 selection mapping, and adds no separate source map, renderer, or pending state.
+In the Windowed owner, when a pending history insertion exists only in canonical
+source while the accepted plain top-level cell still shows the old text, Backspace
+may cancel it only when removing exactly one inserted grapheme reproduces the
+whole mounted source and the live editable lease, target range, accepted ledger,
+baseline and table/cell serialization all agree. Otherwise the table's existing
+refusal stands. The cancellation uses the existing canonical, history and Preview
+owners.
 A Text caret beside a cell line break may have an element target range instead.
 Full proves the target's direction-facing endpoint equivalent to that caret
 through the existing DOM-boundary owner. A single owned, same-cell structural
@@ -763,6 +797,19 @@ stale targets retain refusal; Enter has no new command or serializer rule.
 After an accepted native edit joins adjacent Text nodes, the history recorder
 uses the existing normalized selection-path pairing so re-parsing snapshot HTML
 does not lose the Redo caret.
+An empty-paragraph history selection has one additional certified producer path.
+When Chromium parks the native caret in a connected empty `Text` child
+immediately before the sole `BR`, the owner may serialize that exact native path
+back to the certificate body path only after rechecking the current certificate
+owner, source, numeric revision, owned ledger, canonical collapsed offset, the
+existing `0|2` extent and structural rows, editable ancestry, the exact
+`P > empty Text + BR` DOM, and the snapshot's single-BR `P` through
+`outerHTML`. It returns only the certified body path at offset `0`; the existing
+paired selection witness and all consumer source, selection, history, and failure
+guards remain in force. The certificate also carries its existing `0|2` extent
+through the pending-history proof and restores the declared length; the legacy
+length-2 continuity restriction is unchanged. A replaced path, non-P body, or
+HTML mismatch is refused, never accepted through serialization fallback.
 
 Table-cell native `BR` joins preserve one inline-code source span by coalescing
 adjacent, same-attribute `CODE` siblings only in the serialization clone,
@@ -998,6 +1045,12 @@ admitted unlock accepts a measured window before enabling and focusing the
 editable pane. Root snapshot revisions count accepted snapshots, whereas Preview
 window generations advance on each request state (loading and success); those
 clocks are not compared as if they were one revision sequence.
+Within one accepted Preview window epoch, a ready viewport reorder's installed
+snapshot may be consumed synchronously before the next input, before Root's
+window-generation render reaches the consumer. This handoff uses the current
+accepted identity rather than restarting the input owner; canonical source,
+numeric source revision, signature/revision, exact node order and
+protected/read-only proofs still gate adoption.
 View changes remain Root-owned. If a formal visual transfer is pending, one
 Source click records the requested mode until that transfer settles, then uses
 the same guarded preparation and materialization path as a direct switch.
@@ -1666,6 +1719,11 @@ independently. CodeMirror records the explicit inverse and post-selection withou
 a preliminary selection write, DOM serialization or extra document history entry.
 This prevents a stale hidden Source caret at a trailing neighbor from becoming the
 table promotion's Undo/Redo caret.
+In the two hybrid delete-intent constructions, the validated code-body
+`historySelectionBefore` is copied after the generic intent spread only when that
+proof supplies it; an absent value leaves the generic inverse intact. The derived
+snapshot and selection-witness identity checks remain authoritative, and no
+adapter, grouping, or permission behavior changes.
 
 Full history pairs a native Text path with a captured HTML snapshot only while
 the surface's mutation epoch still matches that snapshot. The existing code-order
@@ -2148,14 +2206,25 @@ this projection. The parser check runs only for that hidden boundary case, so
 ordinary input keeps its existing fast path. An input that leaves a structural
 body empty flushes through the existing pending-intent or visual-input merge
 owner; it does not use the whole-document transaction below. That transaction is
-reserved for Backspace/Delete over a connected full-root selection.
+otherwise reserved for Backspace/Delete over a connected full-root selection. It
+also owns one narrow keydown path for Backspace: a focused, editable,
+whitespace-only source with no pending input, an empty read-only snapshot, and
+an accepted DOM ledger that still matches the current source clears to the empty
+canonical source.
 
 The whole-root deletion transaction resets the visual surface to one empty
 paragraph with a BR and a connected caret in the same input turn before the
-next native character can arrive. Markdown remains canonical: terminal ASCII
-spaces or newlines may use the empty paragraph presentation while their source
-bytes remain intact, and unlock or Read paths preserve those bytes. Insertion
-at the visual boundary preserves the whitespace. Directly formatted list and
+next native character can arrive; the full-root selection deletion clears the
+canonical source. Outside that selection path, terminal ASCII spaces or newlines
+may use the empty paragraph presentation while their source bytes remain intact,
+and unlock or Read paths preserve those bytes. Insertion at the visual boundary
+preserves the whitespace. The accepted-whitespace Backspace clear is the separate
+explicit path that writes the empty source. For the whitespace-only keydown path,
+the owner retains the original child nodes and native selection until the
+canonical write succeeds. A synchronization failure before that write restores
+those exact nodes and that selection; a failure after the write keeps the committed
+empty source and reset presentation and is reported
+instead of restoring stale DOM. Directly formatted list and
 blockquote bodies use the same empty-Backspace presentation rule while
 non-empty LI, P, PRE, and CODE content remains source-owned. An empty
 structural body keeps its accepted local snapshot through immediate next input,

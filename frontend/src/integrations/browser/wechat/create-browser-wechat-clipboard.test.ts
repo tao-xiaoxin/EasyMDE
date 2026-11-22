@@ -5027,4 +5027,187 @@ describe('createBrowserWechatClipboard', () => {
     });
     expect(document.querySelector('.easymde-copy-sandbox')).toBeNull();
   });
+
+  it('skips full pseudo-element style extraction when content is none or normal while preserving rendered pseudo-elements', async () => {
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<h2>Heading</h2><p class="none-pseudo">None</p><p class="normal-pseudo">Normal</p>';
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Heading\nNone\nNormal'
+    });
+
+    const nonContentReadsOnAbsentPseudo: Array<string> = [];
+    const nonContentReadsOnPresentPseudo: Array<string> = [];
+    const trackedDeclaration = (
+      values: Record<string, string>,
+      tracker: string[]
+    ): CSSStyleDeclaration => ({
+      getPropertyValue: (property: string) => {
+        if ('content' !== property) tracker.push(property);
+        return values[property] ?? '';
+      }
+    } as unknown as CSSStyleDeclaration);
+
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) {
+          if ('H2' === element.tagName && '::before' === pseudoElement) {
+            return trackedDeclaration({
+              color: 'rgb(12, 34, 56)',
+              content: '"★"',
+              display: 'inline-block'
+            }, nonContentReadsOnPresentPseudo);
+          }
+          if ('H2' === element.tagName && '::after' === pseudoElement) {
+            return trackedDeclaration({
+              'background-color': 'rgb(1, 2, 3)',
+              content: '""',
+              display: 'inline-block',
+              height: '4px',
+              width: '12px'
+            }, nonContentReadsOnPresentPseudo);
+          }
+          if (element.classList.contains('none-pseudo')) {
+            return trackedDeclaration({
+              color: 'rgb(200, 0, 0)',
+              content: 'none'
+            }, nonContentReadsOnAbsentPseudo);
+          }
+          if (element.classList.contains('normal-pseudo')) {
+            return trackedDeclaration({
+              color: 'rgb(0, 200, 0)',
+              content: 'normal'
+            }, nonContentReadsOnAbsentPseudo);
+          }
+          return trackedDeclaration({}, nonContentReadsOnAbsentPseudo);
+        }
+        return computedStyle(element);
+      },
+      getSelection: window.getSelection.bind(window),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); },
+      pageOffset: () => ({ x: 0, y: 0 })
+    });
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({
+      method: 'clipboard',
+      status: 'copied'
+    });
+
+    expect(nonContentReadsOnAbsentPseudo).toEqual([]);
+    expect(nonContentReadsOnPresentPseudo.length).toBeGreaterThan(0);
+
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    if (!htmlBlob) throw new Error('clipboard html missing');
+    const holder = document.createElement('div');
+    holder.innerHTML = await blobText(htmlBlob);
+
+    const h2 = holder.querySelector('h2');
+    expect(h2).not.toBeNull();
+    const markers = h2?.querySelectorAll(':scope > span[aria-hidden="true"]');
+    expect(markers).toHaveLength(2);
+    expect(markers?.[0]?.textContent).toBe('★');
+    expect(markers?.[0]?.getAttribute('style')).toContain('color:rgb(12, 34, 56)');
+    expect(markers?.[1]?.textContent).toBe(' ');
+    expect(markers?.[1]?.getAttribute('style')).toContain('font-size:0');
+    expect(markers?.[1]?.getAttribute('style')).toContain('width:12px');
+
+    holder.querySelectorAll('p').forEach((paragraph) => {
+      expect(paragraph.querySelector('span[aria-hidden="true"]')).toBeNull();
+    });
+  });
+
+  it('yields cooperatively during background finalization and matches non-background HTML output byte-for-byte', async () => {
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    const paragraphs = Array.from(
+      { length: 140 },
+      (_, index) => `<p id="p-${index}">Paragraph ${index}</p>`
+    ).join('');
+    preview.innerHTML = `<div>${paragraphs}<pre><code>const a = 1;\nconst b = 2;</code></pre><table><tbody><tr><td>Cell</td></tr></tbody></table></div>`;
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Paragraph 0\nconst a = 1;\nconst b = 2;\nCell'
+    });
+
+    const baseRuntime = {
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      scrollTo: vi.fn(),
+      write: async (items: unknown[]) => { writes.push(items); },
+      pageOffset: () => ({ x: 0, y: 0 })
+    };
+
+    const nonBackgroundClipboard = createBrowserWechatClipboard(baseRuntime);
+    await expect(nonBackgroundClipboard.copy(preview)).resolves.toEqual({
+      method: 'clipboard',
+      status: 'copied'
+    });
+    const nonBgItem = (writes[0] as ClipboardItemStub[])[0];
+    const nonBgHtml = await blobText(nonBgItem?.payload['text/html'] as Blob);
+    const nonBgText = await blobText(nonBgItem?.payload['text/plain'] as Blob);
+
+    let now = 1_000;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
+      now += 1;
+      return now;
+    });
+    let treeWalkerStarted = false;
+    let yieldsDuringFinalization = 0;
+    const originalCreateTreeWalker = document.createTreeWalker.bind(document);
+    const treeWalkerSpy = vi.spyOn(document, 'createTreeWalker').mockImplementation((...args) => {
+      treeWalkerStarted = true;
+      now += 10;
+      return originalCreateTreeWalker(...args);
+    });
+    const originalSetTimeout = window.setTimeout.bind(window);
+    const timeoutSpy = vi.spyOn(window, 'setTimeout').mockImplementation(((
+      handler: TimerHandler,
+      timeout?: number,
+      ...args: unknown[]
+    ) => {
+      if (0 === timeout && treeWalkerStarted) {
+        yieldsDuringFinalization += 1;
+      }
+      return originalSetTimeout(handler, timeout, ...args);
+    }) as typeof window.setTimeout);
+    try {
+      const backgroundClipboard = createBrowserWechatClipboard(baseRuntime);
+      await prepareClipboard(backgroundClipboard, preview, { background: true });
+      const yieldCalls = timeoutSpy.mock.calls.filter(([, delay]) => 0 === delay);
+      expect(yieldCalls.length).toBeGreaterThan(2);
+      expect(yieldsDuringFinalization).toBeGreaterThanOrEqual(1);
+
+      await expect(backgroundClipboard.copy(preview)).resolves.toEqual({
+        method: 'clipboard',
+        status: 'copied'
+      });
+      const bgItem = (writes[1] as ClipboardItemStub[])[0];
+      const bgHtml = await blobText(bgItem?.payload['text/html'] as Blob);
+      const bgText = await blobText(bgItem?.payload['text/plain'] as Blob);
+
+      expect(bgHtml).toBe(nonBgHtml);
+      expect(bgText).toBe(nonBgText);
+    } finally {
+      nowSpy.mockRestore();
+      treeWalkerSpy.mockRestore();
+      timeoutSpy.mockRestore();
+    }
+  });
 });

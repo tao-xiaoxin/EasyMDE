@@ -22,7 +22,7 @@ import type {
 	PreviewRequestState,
 	SafePreviewHtml,
 } from "../../../contracts/ports/preview-request";
-import { prepareVisualProtectedNodeAdoption } from "../../../shared/dom/visual-protected-node-adoption";
+import { VISUAL_MARKDOWN_READ_ONLY_SELECTOR } from "../../../contracts/visual-markdown-read-only";
 import {
 	isMarkdownTerminalWhitespaceSuffix,
 	markdownLineStarts,
@@ -83,6 +83,8 @@ import {
 	VISUAL_BLOCK_ATTRIBUTE,
 	validatePreviewWindowMarkup,
 	validatePreviewWindowRepository,
+	validatePreviewWindowRepositoryBlock,
+	validatePreviewWindowRepositoryHeader,
 	viewportForCanvas,
 	windowNodes,
 } from "./preview-window-dom";
@@ -100,6 +102,32 @@ function previewFailureCode(error: unknown): string {
 	return error instanceof PreviewWindowDomError
 		? error.message
 		: previewEnhancementFailureCode(error);
+}
+
+/**
+ * The sink boundary for a same-generation window install.
+ *
+ * `precommit` is the only stage that proves the sink did not install the next
+ * commit. `installed` retains ownership of the actual sink commit even when
+ * certification, snapshot publication, readiness, or diagnostic notification
+ * fails; a consumer must not roll it back to the previous DOM.
+ */
+export class PreviewWindowInstallFault extends Error {
+	constructor(
+		readonly stage: "precommit" | "installed",
+		readonly code: string,
+		override readonly cause?: unknown,
+		readonly diagnosticCause?: unknown,
+	) {
+		super(code);
+		this.name = "PreviewWindowInstallFault";
+	}
+}
+
+export function isPreviewWindowInstallFault(
+	error: unknown,
+): error is PreviewWindowInstallFault {
+	return error instanceof PreviewWindowInstallFault;
 }
 
 function previewNeedsWindow(editMap: PreviewEditMap | null): boolean {
@@ -689,23 +717,67 @@ type MutablePreviewWindowCommit = {
 	selectionHandoff?: SafePreviewHtmlSinkSelectionHandoff;
 };
 
+type AcceptedWindowSourceRange = Readonly<{ start: number; end: number }>;
+
 type AcceptedWindowBlockBaseline = Readonly<{
 	id: string;
 	innerHTML: string;
 	node: HTMLElement;
 	rootSnapshot: HTMLElement;
-	sourceRange: Readonly<{ start: number; end: number }> | null;
+	sourceRange: AcceptedWindowSourceRange | null;
+}>;
+
+type AcceptedWindowBaseBlockRecord = {
+	readonly id: string;
+	innerHTML: string | null;
+	readonly node: HTMLElement;
+	rootSnapshot: HTMLElement | null;
+	readonly sourceRange: AcceptedWindowSourceRange | null;
+};
+
+type AcceptedWindowBaselineBase = Readonly<{
+	blocksByNode: ReadonlyMap<HTMLElement, AcceptedWindowBaseBlockRecord>;
+	nodeById: ReadonlyMap<string, HTMLElement>;
+}>;
+
+type AcceptedWindowBlockOverride = Readonly<{
+	id: string;
+	innerHTML: string;
+	node: HTMLElement;
+	rootSnapshot: HTMLElement;
+	shiftIndex: number;
+	sourceRange: AcceptedWindowSourceRange | null;
+}>;
+
+type AcceptedWindowRangeShift = Readonly<{
+	at: number;
+	delta: number;
+	sourceBlockId: string;
+	sourceEnd: number;
+	sourceStart: number;
 }>;
 
 type AcceptedWindowBaseline = Readonly<{
-	blocks: ReadonlyMap<HTMLElement, AcceptedWindowBlockBaseline>;
-	revision: number;
-	signature: string;
+	base: AcceptedWindowBaselineBase;
+	lastEditedBlockId: string | null;
 	markdown: string | null;
+	overridesById: ReadonlyMap<string, AcceptedWindowBlockOverride>;
+	overridesByNode: ReadonlyMap<HTMLElement, AcceptedWindowBlockOverride>;
+	revision: number;
+	shifts: ReadonlyArray<AcceptedWindowRangeShift>;
+	signature: string;
 	/** Local range transport does not renew the formal edit map. */
 	sourceMapCurrent: boolean;
 	sourceRevision: number | null;
 }>;
+
+type PendingAdoptedBlockMeasurements = {
+	frame: number | null;
+	indices: Set<number>;
+	repository: PreviewWindowNodeRepository;
+	surface: HTMLElement;
+	windowRef: Window | null;
+};
 
 type PendingPreviewScrollRestore = Readonly<{
 	generation: number;
@@ -786,6 +858,8 @@ export type PreviewSurfaceRuntime = Readonly<{
 	getAcceptedWindowRow: (request: PreviewAcceptedWindowRowRequest) => PreviewAcceptedWindowRow | null;
 	revealAcceptedWindowRow: (request: PreviewAcceptedWindowRowRequest & Readonly<{
 		gap: HTMLElement; source: string; sourceRevision: number;
+		/** Text-row continuation retires the temporary caret address; atomic rows retain it. */
+		retainGap?: boolean;
 		onRefusal?: (reason: string, details: Readonly<Record<string, boolean | number>>) => void;
 	}>) => PreviewAcceptedWindowSnapshot | null;
 	materialize: () => Promise<boolean>;
@@ -1163,12 +1237,17 @@ function createAcceptedWindowSnapshot(
 	)
 		return null;
 	try {
-		validatePreviewWindowRepository(repository);
+		validatePreviewWindowRepositoryHeader(repository);
 	} catch {
 		return null;
 	}
+	const ownedGap = repository.ownedGap?.node ?? null;
+	// A certified gap is presentation of this exact commit. Omitting it from the
+	// installed child sequence while still publishing it as owned would describe
+	// a DOM the sink never wrote.
+	if (ownedGap && !commit.nodes.includes(ownedGap)) return null;
 	const blocks = commit.nodes.flatMap((node) => {
-		if (node === repository.ownedGap?.node) return [];
+		if (node === ownedGap) return [];
 		if (
 			!(node instanceof HTMLElement) ||
 			node.hasAttribute(PREVIEW_WINDOW_SPACER_ATTRIBUTE)
@@ -1176,8 +1255,16 @@ function createAcceptedWindowSnapshot(
 			return [];
 		const id = node.getAttribute(VISUAL_BLOCK_ATTRIBUTE);
 		const index = id ? repository.indexById.get(id) : undefined;
-		const entry = undefined !== index ? repository.blocks[index] : null;
-		const accepted = entry ? baseline.blocks.get(entry.node) : null;
+		if (undefined === index) return [null];
+		try {
+			validatePreviewWindowRepositoryBlock(repository, index);
+		} catch {
+			return [null];
+		}
+		const entry = repository.blocks[index];
+		const accepted = entry
+			? readAcceptedWindowBaselineBlock(baseline, entry.node)
+			: null;
 		if (
 			!entry ||
 			entry.node !== node ||
@@ -1207,7 +1294,7 @@ function createAcceptedWindowSnapshot(
 		nodes: Object.freeze([...commit.nodes]),
 		...(baseline.sourceMapCurrent && state.editMap ? { editMap: state.editMap } : {}),
 		...(baseline.sourceRevision !== null ? { sourceRevision: baseline.sourceRevision } : {}),
-		...(repository.ownedGap ? { ownedGap: repository.ownedGap.node } : {}),
+		...(ownedGap ? { ownedGap } : {}),
 		revision: commit.revision,
 		signature: state.signature,
 	});
@@ -1250,6 +1337,245 @@ function previewWindowFenceBindings(
 	};
 }
 
+const ACCEPTED_WINDOW_BASELINE_SHIFT_COMPACTION_LIMIT = 64;
+
+function markVisualProtectedNodesReadOnly(
+	roots: ReadonlyArray<HTMLElement>,
+): void {
+	for (const root of roots) {
+		if (
+			root.matches(VISUAL_MARKDOWN_READ_ONLY_SELECTOR) &&
+			!root.hasAttribute("contenteditable")
+		) {
+			root.setAttribute("contenteditable", "false");
+		}
+		const nested = root.querySelectorAll(VISUAL_MARKDOWN_READ_ONLY_SELECTOR);
+		for (let index = 0; index < nested.length; index += 1) {
+			const candidate = nested[index];
+			if (
+				candidate instanceof HTMLElement &&
+				!candidate.hasAttribute("contenteditable")
+			) {
+				candidate.setAttribute("contenteditable", "false");
+			}
+		}
+	}
+}
+
+function stringsEqualRange(
+	left: string,
+	leftStart: number,
+	right: string,
+	rightStart: number,
+	length: number,
+): boolean {
+	if (length <= 0) return true;
+	if (left === right && leftStart === rightStart) return true;
+	if (
+		leftStart < 0 ||
+		rightStart < 0 ||
+		leftStart + length > left.length ||
+		rightStart + length > right.length
+	) {
+		return false;
+	}
+	if (
+		left.charCodeAt(leftStart) !== right.charCodeAt(rightStart) ||
+		left.charCodeAt(leftStart + length - 1) !==
+			right.charCodeAt(rightStart + length - 1)
+	) {
+		return false;
+	}
+	for (let offset = 1; offset < length - 1; offset += 1) {
+		if (
+			left.charCodeAt(leftStart + offset) !==
+			right.charCodeAt(rightStart + offset)
+		) {
+			return false;
+		}
+	}
+	return true;
+}
+
+function captureNodeBaselineSnapshot(
+	node: HTMLElement,
+): Readonly<{ innerHTML: string; rootSnapshot: HTMLElement }> | null {
+	const rootSnapshot = node.cloneNode(false);
+	if (!(rootSnapshot instanceof HTMLElement)) return null;
+	return {
+		innerHTML: node.innerHTML,
+		rootSnapshot,
+	};
+}
+
+function ensureBaseBlockCaptured(
+	record: AcceptedWindowBaseBlockRecord,
+): Readonly<{ innerHTML: string; rootSnapshot: HTMLElement }> | null {
+	if (null !== record.innerHTML && null !== record.rootSnapshot) {
+		return {
+			innerHTML: record.innerHTML,
+			rootSnapshot: record.rootSnapshot,
+		};
+	}
+	const captured = captureNodeBaselineSnapshot(record.node);
+	if (!captured) return null;
+	record.innerHTML = captured.innerHTML;
+	record.rootSnapshot = captured.rootSnapshot;
+	return captured;
+}
+
+function applyBaselineRangeShifts(
+	range: AcceptedWindowSourceRange | null,
+	shifts: ReadonlyArray<AcceptedWindowRangeShift>,
+	fromIndex: number,
+): AcceptedWindowSourceRange | null {
+	if (!range || fromIndex >= shifts.length) return range;
+	let start = range.start;
+	let end = range.end;
+	for (let index = fromIndex; index < shifts.length; index += 1) {
+		const shift = shifts[index];
+		if (!shift || 0 === shift.delta) continue;
+		if (start >= shift.at) {
+			start += shift.delta;
+			end += shift.delta;
+		}
+	}
+	return start === range.start && end === range.end ? range : { start, end };
+}
+
+function pinAcceptedWindowBaselineNodes(
+	baseline: AcceptedWindowBaseline | null,
+	nodes: ReadonlyArray<Node>,
+): void {
+	if (!baseline) return;
+	for (const node of nodes) {
+		if (!(node instanceof HTMLElement)) continue;
+		const baseRecord = baseline.base.blocksByNode.get(node);
+		if (!baseRecord || baseline.overridesById.has(baseRecord.id)) continue;
+		ensureBaseBlockCaptured(baseRecord);
+	}
+}
+
+function readAcceptedWindowBaselineBlock(
+	baseline: AcceptedWindowBaseline | null,
+	node: HTMLElement,
+): AcceptedWindowBlockBaseline | null {
+	if (!baseline) return null;
+	const override = baseline.overridesByNode.get(node);
+	if (override) {
+		const sourceRange = applyBaselineRangeShifts(
+			override.sourceRange,
+			baseline.shifts,
+			override.shiftIndex,
+		);
+		if (sourceRange === override.sourceRange) {
+			return override;
+		}
+		return Object.freeze({
+			id: override.id,
+			innerHTML: override.innerHTML,
+			node: override.node,
+			rootSnapshot: override.rootSnapshot,
+			sourceRange,
+		});
+	}
+	const baseRecord = baseline.base.blocksByNode.get(node);
+	if (!baseRecord || baseline.overridesById.has(baseRecord.id)) {
+		return null;
+	}
+	const captured = ensureBaseBlockCaptured(baseRecord);
+	if (!captured) return null;
+	const sourceRange = applyBaselineRangeShifts(
+		baseRecord.sourceRange,
+		baseline.shifts,
+		0,
+	);
+	return Object.freeze({
+		id: baseRecord.id,
+		innerHTML: captured.innerHTML,
+		node: baseRecord.node,
+		rootSnapshot: captured.rootSnapshot,
+		sourceRange,
+	});
+}
+
+function readAcceptedWindowBaselineRange(
+	baseline: AcceptedWindowBaseline,
+	id: string,
+	node: HTMLElement,
+): AcceptedWindowSourceRange | null {
+	const overrideByNode = baseline.overridesByNode.get(node);
+	if (overrideByNode) {
+		return applyBaselineRangeShifts(
+			overrideByNode.sourceRange,
+			baseline.shifts,
+			overrideByNode.shiftIndex,
+		);
+	}
+	const baseByNode = baseline.base.blocksByNode.get(node);
+	if (baseByNode && !baseline.overridesById.has(baseByNode.id)) {
+		return applyBaselineRangeShifts(baseByNode.sourceRange, baseline.shifts, 0);
+	}
+	const overrideById = baseline.overridesById.get(id);
+	if (overrideById) {
+		return applyBaselineRangeShifts(
+			overrideById.sourceRange,
+			baseline.shifts,
+			overrideById.shiftIndex,
+		);
+	}
+	const baseNode = baseline.base.nodeById.get(id);
+	const baseById = baseNode ? baseline.base.blocksByNode.get(baseNode) : null;
+	if (!baseById) return null;
+	return applyBaselineRangeShifts(baseById.sourceRange, baseline.shifts, 0);
+}
+
+function compactAcceptedWindowBaseline(
+	baseline: AcceptedWindowBaseline,
+): AcceptedWindowBaseline {
+	const blocksByNode = new Map<HTMLElement, AcceptedWindowBaseBlockRecord>();
+	const nodeById = new Map<string, HTMLElement>();
+	for (const [baseNode, record] of baseline.base.blocksByNode) {
+		if (baseline.overridesById.has(record.id)) continue;
+		const shiftedRange = applyBaselineRangeShifts(
+			record.sourceRange,
+			baseline.shifts,
+			0,
+		);
+		blocksByNode.set(baseNode, {
+			id: record.id,
+			innerHTML: record.innerHTML,
+			node: record.node,
+			rootSnapshot: record.rootSnapshot,
+			sourceRange: shiftedRange,
+		});
+		nodeById.set(record.id, baseNode);
+	}
+	for (const override of baseline.overridesById.values()) {
+		const shiftedRange = applyBaselineRangeShifts(
+			override.sourceRange,
+			baseline.shifts,
+			override.shiftIndex,
+		);
+		blocksByNode.set(override.node, {
+			id: override.id,
+			innerHTML: override.innerHTML,
+			node: override.node,
+			rootSnapshot: override.rootSnapshot,
+			sourceRange: shiftedRange,
+		});
+		nodeById.set(override.id, override.node);
+	}
+	return Object.freeze({
+		...baseline,
+		base: Object.freeze({ blocksByNode, nodeById }),
+		lastEditedBlockId: null,
+		overridesById: new Map(),
+		overridesByNode: new Map(),
+		shifts: Object.freeze([]),
+	});
+}
+
 function captureAcceptedWindowBaseline(
 	surface: HTMLElement,
 	repository: PreviewWindowNodeRepository,
@@ -1269,27 +1595,38 @@ function captureAcceptedWindowBaseline(
 			projectVisualCodeFenceMetadata(markdown, surface, binding);
 		}
 	}
-	prepareVisualProtectedNodeAdoption([], repository.nodes);
-	const blocks = new Map<HTMLElement, AcceptedWindowBlockBaseline>();
+	markVisualProtectedNodesReadOnly(repository.nodes);
+	const blocksByNode = new Map<HTMLElement, AcceptedWindowBaseBlockRecord>();
+	const nodeById = new Map<string, HTMLElement>();
 	const starts = null != markdown ? markdownLineStarts(markdown) : null;
 	for (const entry of repository.blocks) {
-		const clone = entry.node.cloneNode(true);
-		if (!(clone instanceof HTMLElement)) return null;
-		blocks.set(
-			entry.node,
-			Object.freeze({
-				id: entry.map.id,
-				innerHTML: clone.innerHTML,
-				node: entry.node,
-				rootSnapshot: clone.cloneNode(false) as HTMLElement,
-				sourceRange: starts && null != markdown ? {
-					start: starts[entry.map.startLine] ?? markdown.length,
-					end: starts[entry.map.endLine] ?? markdown.length,
-				} : null,
-			}),
-		);
+		blocksByNode.set(entry.node, {
+			id: entry.map.id,
+			innerHTML: null,
+			node: entry.node,
+			rootSnapshot: null,
+			sourceRange:
+				starts && null != markdown
+					? {
+							start: starts[entry.map.startLine] ?? markdown.length,
+							end: starts[entry.map.endLine] ?? markdown.length,
+						}
+					: null,
+		});
+		nodeById.set(entry.map.id, entry.node);
 	}
-	return Object.freeze({ blocks, revision, signature, markdown: markdown ?? null, sourceRevision, sourceMapCurrent: true });
+	return Object.freeze({
+		base: Object.freeze({ blocksByNode, nodeById }),
+		lastEditedBlockId: null,
+		markdown: markdown ?? null,
+		overridesById: new Map(),
+		overridesByNode: new Map(),
+		revision,
+		shifts: Object.freeze([]),
+		signature,
+		sourceMapCurrent: true,
+		sourceRevision,
+	});
 }
 
 function extendAcceptedWindowBaseline(
@@ -1298,38 +1635,119 @@ function extendAcceptedWindowBaseline(
 	node: HTMLElement,
 	sourceSnapshot: PreviewSourceSnapshot | null = null,
 ): AcceptedWindowBaseline {
-	const clone = node.cloneNode(true);
-	if (!(clone instanceof HTMLElement)) {
+	const captured = captureNodeBaselineSnapshot(node);
+	if (!captured) {
 		throw new PreviewWindowDomError("preview-window-baseline-capture-failed");
 	}
-	const previous = baseline.blocks.get(node) ?? [...baseline.blocks.values()].find((block) => block.id === id);
-	const previousRange = previous?.sourceRange ?? null;
+	const previousRange = readAcceptedWindowBaselineRange(baseline, id, node);
 	let markdown = baseline.markdown;
 	let sourceRevision = baseline.sourceRevision;
 	let changedRange = previousRange;
 	let delta = 0;
-	if (sourceSnapshot && markdown !== null && previousRange && sourceSnapshot.value !== markdown) {
+	if (
+		sourceSnapshot &&
+		markdown !== null &&
+		previousRange &&
+		sourceSnapshot.value !== markdown
+	) {
 		delta = sourceSnapshot.value.length - markdown.length;
 		const end = previousRange.end + delta;
-		if (end < previousRange.start
-			|| !sourceSnapshot.value.startsWith(markdown.slice(0, previousRange.start))
-			|| sourceSnapshot.value.slice(end) !== markdown.slice(previousRange.end)) {
-			throw new PreviewWindowDomError("preview-window-local-source-witness-stale");
+		if (
+			end < previousRange.start ||
+			!stringsEqualRange(
+				sourceSnapshot.value,
+				0,
+				markdown,
+				0,
+				previousRange.start,
+			) ||
+			!stringsEqualRange(
+				sourceSnapshot.value,
+				end,
+				markdown,
+				previousRange.end,
+				markdown.length - previousRange.end,
+			)
+		) {
+			throw new PreviewWindowDomError(
+				"preview-window-local-source-witness-stale",
+			);
 		}
 		changedRange = { start: previousRange.start, end };
 		markdown = sourceSnapshot.value;
 		sourceRevision = sourceSnapshot.revision;
-	} else if (sourceSnapshot && sourceSnapshot.value === markdown) sourceRevision = sourceSnapshot.revision;
-	const blocks = new Map<HTMLElement, AcceptedWindowBlockBaseline>();
-	for (const [root, block] of baseline.blocks) {
-		if (block.id === id) continue;
-		const range = block.sourceRange;
-		blocks.set(root, delta && previousRange && range && range.start >= previousRange.end
-			? Object.freeze({ ...block, sourceRange: { start: range.start + delta, end: range.end + delta } }) : block);
+	} else if (sourceSnapshot && sourceSnapshot.value === markdown) {
+		sourceRevision = sourceSnapshot.revision;
 	}
-	blocks.set(node, Object.freeze({ id, innerHTML: clone.innerHTML, node, rootSnapshot: clone.cloneNode(false) as HTMLElement, sourceRange: changedRange }));
-	return Object.freeze({ ...baseline, blocks, markdown, sourceRevision,
-		sourceMapCurrent: baseline.sourceMapCurrent && markdown === baseline.markdown });
+	let shifts = baseline.shifts;
+	if (0 !== delta && previousRange && changedRange) {
+		const lastShift = shifts.at(-1);
+		if (
+			lastShift &&
+			baseline.lastEditedBlockId === id &&
+			lastShift.sourceBlockId === id &&
+			lastShift.sourceStart === previousRange.start &&
+			lastShift.sourceEnd === previousRange.end &&
+			lastShift.sourceEnd > lastShift.sourceStart
+		) {
+			const nextShifts = shifts.slice(0, -1);
+			nextShifts.push(
+				Object.freeze({
+					at: lastShift.at,
+					delta: lastShift.delta + delta,
+					sourceBlockId: id,
+					sourceEnd: changedRange.end,
+					sourceStart: lastShift.sourceStart,
+				}),
+			);
+			shifts = Object.freeze(nextShifts);
+		} else {
+			shifts = Object.freeze([
+				...shifts,
+				Object.freeze({
+					at: previousRange.end,
+					delta,
+					sourceBlockId: id,
+					sourceEnd: changedRange.end,
+					sourceStart: previousRange.start,
+				}),
+			]);
+		}
+	}
+	const overridesById = new Map(baseline.overridesById);
+	const overridesByNode = new Map(baseline.overridesByNode);
+	const existingById = overridesById.get(id);
+	if (existingById && existingById.node !== node) {
+		overridesByNode.delete(existingById.node);
+	}
+	const existingByNode = overridesByNode.get(node);
+	if (existingByNode && existingByNode.id !== id) {
+		overridesById.delete(existingByNode.id);
+	}
+	const nextOverride: AcceptedWindowBlockOverride = Object.freeze({
+		id,
+		innerHTML: captured.innerHTML,
+		node,
+		rootSnapshot: captured.rootSnapshot,
+		shiftIndex: shifts.length,
+		sourceRange: changedRange,
+	});
+	overridesById.set(id, nextOverride);
+	overridesByNode.set(node, nextOverride);
+	const nextBaseline: AcceptedWindowBaseline = Object.freeze({
+		...baseline,
+		lastEditedBlockId: id,
+		markdown,
+		overridesById,
+		overridesByNode,
+		shifts,
+		sourceMapCurrent:
+			baseline.sourceMapCurrent && markdown === baseline.markdown,
+		sourceRevision,
+	});
+	return shifts.length >= ACCEPTED_WINDOW_BASELINE_SHIFT_COMPACTION_LIMIT
+		? compactAcceptedWindowBaseline(nextBaseline)
+		: nextBaseline;
 }
 
 function surfaceStatus(state: PreviewSurfaceState): PreviewSurfaceStatus {
@@ -1414,6 +1832,7 @@ async function measurePreviewWindowCandidateGeometry(
 			repository.nodes[index + 1] ?? null,
 			previousGeometry,
 			repository.ownedGap?.node,
+			rect,
 		);
 		if (!measurement) continue;
 		publishPreviewWindowMeasuredBlock(repository, surface, index, measurement, 0, rect);
@@ -1699,6 +2118,8 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 	);
 	const acceptedWindowBaselineRef = useRef<AcceptedWindowBaseline | null>(null);
 	const pendingWindowBaselineRef = useRef<AcceptedWindowBaseline | null>(null);
+	const pendingAdoptedMeasurementsRef =
+		useRef<PendingAdoptedBlockMeasurements | null>(null);
 	const acceptedWindowSnapshotRef =
 		useRef<PreviewAcceptedWindowSnapshot | null>(null);
 	const installedWindowSnapshotRef = useRef<PreviewAcceptedWindowSnapshot | null>(null);
@@ -2298,19 +2719,23 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			if (!source || source.value !== acceptedWindowBaselineRef.current?.markdown) return null;
 		}
 		try {
-			validatePreviewWindowRepository(repository);
+			validatePreviewWindowRepositoryHeader(repository);
 		} catch {
 			return null;
 		}
 		for (const block of accepted.blocks) {
 			const index = repository.indexById.get(block.id);
-			const currentBlock =
-				undefined !== index ? repository.blocks[index] : null;
+			if (undefined === index) return null;
+			try {
+				validatePreviewWindowRepositoryBlock(repository, index);
+			} catch {
+				return null;
+			}
+			const currentBlock = repository.blocks[index];
 			if (
 				!currentBlock ||
 				currentBlock.map.id !== block.id ||
 				currentBlock.node !== block.node ||
-				undefined === index ||
 				repository.nodes[index] !== block.node ||
 				block.node.getAttribute(VISUAL_BLOCK_ATTRIBUTE) !== block.id
 			)
@@ -2349,7 +2774,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 		if (!entry || entry.index !== request.index || entry.map.id !== request.id
 			|| !entry.map.editable || repository.nodes[request.index] !== entry.node
 			|| repository.indexById.get(request.id) !== request.index) return reject("row-binding");
-		const block = baseline.blocks.get(entry.node);
+		const block = readAcceptedWindowBaselineBlock(baseline, entry.node);
 		const range = block?.sourceRange;
 		if (!block || block.id !== request.id || !range || range.start < 0
 			|| range.end < range.start || range.end > baseline.markdown.length
@@ -2790,7 +3215,139 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 		windowStyleEpochRef.current += 1;
 	}
 
+	const cancelPendingAdoptedMeasurements = useCallback(() => {
+		const pending = pendingAdoptedMeasurementsRef.current;
+		if (!pending) return;
+		if (null !== pending.frame) {
+			if (pending.windowRef?.cancelAnimationFrame) {
+				pending.windowRef.cancelAnimationFrame(pending.frame);
+			} else if (pending.windowRef) {
+				pending.windowRef.clearTimeout(pending.frame);
+			} else {
+				clearTimeout(pending.frame);
+			}
+		}
+		pendingAdoptedMeasurementsRef.current = null;
+	}, []);
+
+	const flushPendingAdoptedMeasurements = useCallback(
+		(
+			repository?: PreviewWindowNodeRepository,
+			surface?: HTMLElement,
+		): void => {
+			const pending = pendingAdoptedMeasurementsRef.current;
+			if (!pending) return;
+			if (
+				(repository && pending.repository !== repository) ||
+				(surface && pending.surface !== surface)
+			) {
+				cancelPendingAdoptedMeasurements();
+				return;
+			}
+			cancelPendingAdoptedMeasurements();
+			if (
+				!ownerActiveRef.current ||
+				!windowedRef.current ||
+				previewWindowRepositoryRef.current !== pending.repository ||
+				surfaceRef.current !== pending.surface ||
+				!pending.surface.isConnected
+			) {
+				return;
+			}
+			const current = stateRef.current;
+			if (
+				"html" !== current.kind ||
+				current.generation !== pending.repository.context.revision ||
+				current.htmlRevision !== pending.repository.context.revision ||
+				current.signature !== pending.repository.context.signature
+			) {
+				return;
+			}
+			const indices = [...pending.indices].sort((left, right) => left - right);
+			for (const index of indices) {
+				measurePreviewWindowAdoptedBlock(
+					pending.repository,
+					pending.surface,
+					index,
+				);
+			}
+		},
+		[cancelPendingAdoptedMeasurements],
+	);
+
+	const scheduleAdoptedBlockMeasurement = useCallback(
+		(
+			repository: PreviewWindowNodeRepository,
+			surface: HTMLElement,
+			index: number,
+		): void => {
+			const existing = pendingAdoptedMeasurementsRef.current;
+			if (
+				existing &&
+				existing.repository === repository &&
+				existing.surface === surface
+			) {
+				existing.indices.add(index);
+				return;
+			}
+			cancelPendingAdoptedMeasurements();
+			const windowRef = surface.ownerDocument.defaultView;
+			const pending: PendingAdoptedBlockMeasurements = {
+				frame: null,
+				indices: new Set([index]),
+				repository,
+				surface,
+				windowRef,
+			};
+			pendingAdoptedMeasurementsRef.current = pending;
+			const run = (): void => {
+				if (pendingAdoptedMeasurementsRef.current !== pending) return;
+				pending.frame = null;
+				if (compositionSurfaceHeldRef.current) return;
+				try {
+					flushPendingAdoptedMeasurements(repository, surface);
+				} catch (error) {
+					if (
+						!ownerActiveRef.current ||
+						previewWindowRepositoryRef.current !== repository
+					) {
+						return;
+					}
+					previewWindowRepositoryRef.current = null;
+					acceptedWindowSnapshotRef.current = null;
+					installedWindowSnapshotRef.current = null;
+					props.onDiagnostic?.(previewFailureCode(error));
+					setState((current) =>
+						"html" === current.kind &&
+						current.generation === repository.context.revision
+							? {
+									...current,
+									phase: "failed",
+									signature: "",
+									materializeCommit: null,
+									stagedCommit: null,
+									windowedCommit: retainedWindowedCommit(current),
+									windowedFailure: true,
+								}
+							: current,
+					);
+				}
+			};
+			pending.frame = windowRef?.requestAnimationFrame
+				? windowRef.requestAnimationFrame(run)
+				: windowRef
+					? (windowRef.setTimeout(run, 0) as unknown as number)
+					: (setTimeout(run, 0) as unknown as number);
+		},
+		[
+			cancelPendingAdoptedMeasurements,
+			flushPendingAdoptedMeasurements,
+			props.onDiagnostic,
+		],
+	);
+
 	const discardPendingWork = useCallback(() => {
+		cancelPendingAdoptedMeasurements();
 		geometryPreparationRef.current?.controller.abort();
 		geometryPreparationRef.current = null;
 		const pendingMaterialization = materializePendingRef.current;
@@ -2809,7 +3366,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 		installedWindowSnapshotRef.current = null;
 		discardEnhancementCandidate(enhancementCandidateRef.current);
 		enhancementCandidateRef.current = null;
-	}, []);
+	}, [cancelPendingAdoptedMeasurements]);
 
 	const discardStaging = useCallback(() => {
 		discardPendingWork();
@@ -2824,6 +3381,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			surface: HTMLElement,
 			commit: Readonly<{ nodes: ReadonlyArray<Node>; revision: number }>,
 		): void => {
+			flushPendingAdoptedMeasurements(repository, surface);
 			const epoch = previewWindowGeometryEpochKey(repository.context);
 			for (const node of commit.nodes) {
 				if (
@@ -2844,7 +3402,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 				);
 			}
 		},
-		[],
+		[flushPendingAdoptedMeasurements],
 	);
 
 	const beforeStagedCommit = useCallback((revision: number, hasInstalledHtml: boolean): boolean => {
@@ -3321,6 +3879,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			const surface = surfaceRef.current;
 			if (!surface) throw new Error("preview-surface-missing");
 			const nodes = fullMaterializedNodes(repository);
+			pinAcceptedWindowBaselineNodes(acceptedWindowBaselineRef.current, nodes);
 			if (isFullMaterializedWindowSurface(surface, repository)) {
 				materializedOverrideRef.current = true;
 				return Promise.resolve(true);
@@ -3399,7 +3958,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			return null;
 
 		try {
-			validatePreviewWindowRepository(repository);
+			validatePreviewWindowRepositoryHeader(repository);
 		} catch {
 			return null;
 		}
@@ -3413,12 +3972,14 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			!block ||
 			block.index !== index ||
 			block.map.id !== id ||
-			repository.indexById.size !== repository.nodes.length ||
-			repository.blocks.some(
-				(entry) => repository.indexById.get(entry.map.id) !== entry.index,
-			)
+			repository.indexById.size !== repository.nodes.length
 		)
 			return null;
+		try {
+			validatePreviewWindowRepositoryBlock(repository, index);
+		} catch {
+			return null;
+		}
 
 		const mountedIndices = new Set<number>();
 		let previousIndex = -1;
@@ -3428,7 +3989,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			retainedGap && retainedGap.surface === surface && retainedGap.isLive()
 				? retainedGap.node
 				: null;
-		for (const child of Array.from(surface.children)) {
+		for (const child of expectedChildren) {
 			if (child.hasAttribute(PREVIEW_WINDOW_SPACER_ATTRIBUTE)) continue;
 			const childId = child.getAttribute(VISUAL_BLOCK_ATTRIBUTE);
 			// The consumer's certified empty-source row owns no block: it is the
@@ -3449,6 +4010,13 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			mountedIndices.add(childIndex);
 			if (child !== node && repository.nodes[childIndex] !== child) {
 				return null;
+			}
+			if (childIndex !== index) {
+				try {
+					validatePreviewWindowRepositoryBlock(repository, childIndex);
+				} catch {
+					return null;
+				}
 			}
 		}
 		if (!mountedIndices.has(index)) return null;
@@ -3521,10 +4089,18 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			}
 
 			try {
-				validatePreviewWindowRepository(repository);
+				validatePreviewWindowRepositoryHeader(repository);
+				if (repository.indexById.size !== repository.nodes.length) {
+					throw new PreviewWindowDomError(
+						"preview-window-repository-count-mismatch",
+					);
+				}
+				for (const mountedIndex of mountedIndices) {
+					validatePreviewWindowRepositoryBlock(repository, mountedIndex);
+				}
 			} catch {
 				restoreAcceptedNode();
-			return false;
+				return false;
 			}
 
 			const currentBlock = repository.blocks[index];
@@ -3553,11 +4129,12 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 					restoreAcceptedNode();
 					return false;
 				}
+				const sourceSnapshot = readCurrentSourceSnapshot();
 				acceptedWindowBaselineRef.current = extendAcceptedWindowBaseline(
 					acceptedWindowBaselineRef.current,
 					id,
 					node,
-					readCurrentSourceSnapshot(),
+					sourceSnapshot,
 				);
 				if (
 					pendingWindowBaselineRef.current?.revision ===
@@ -3569,17 +4146,21 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 						pendingWindowBaselineRef.current,
 						id,
 						node,
-						readCurrentSourceSnapshot(),
+						sourceSnapshot,
 					);
 				}
 				// The retained root now describes accepted content the flow model
-				// has not measured. Record that exact content here, in the same
-				// accepted transition, so a later window commit can still compare
-				// its installed surface with a boundary that describes it.
+				// has not measured. Coalesce measurement onto the next animation
+				// frame (or flush synchronously before any geometry reader) so
+				// steady-state typing does not force a synchronous layout reflow
+				// on every keystroke while keeping the boundary exact before any
+				// spacer reconciliation compares them.
 				// A second finalization after replacement adoption advances only
 				// the canonical witness; the replacement geometry was invalidated
 				// once by the pre-canonical DOM transaction below.
-				if (!replacementAdopted) measurePreviewWindowAdoptedBlock(repository, surface, index);
+				if (!replacementAdopted) {
+					scheduleAdoptedBlockMeasurement(repository, surface, index);
+				}
 				acceptedWindowSnapshotRef.current = null;
 				installedWindowSnapshotRef.current = null;
 				return true;
@@ -3591,6 +4172,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 				restoreAcceptedNode();
 				return false;
 			}
+			flushPendingAdoptedMeasurements(repository, surface);
 
 			// Repository adoption and the sink's accepted child list are one
 			// transition. Otherwise loading rejects the old PRE identity and
@@ -3728,9 +4310,36 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			pendingWindowBaselineRef.current = nextPendingBaseline;
 			replacementAdopted = true;
 			if (acceptedCommit && acceptedNodes) {
-				setState((current) => current.kind === "html" && current.windowedCommit === acceptedCommit
-					? { ...current, windowedCommit: { ...acceptedCommit, nodes: acceptedNodes } }
-					: current);
+				const adoptedCommit = { ...acceptedCommit, nodes: acceptedNodes };
+				if (
+					pendingCommit?.key === acceptedCommit.key &&
+					pendingCommit.revision === acceptedCommit.revision &&
+					pendingWindowCommitRef.current === pendingCommit
+				) {
+					// This adoption has made the queued node sequence current in the
+					// repository and surface. The synchronous sink will not recertify
+					// the already-installed key, so retire that exact queue entry and
+					// let the normal owner pass measure and publish the adopted DOM.
+					pendingWindowCommitRef.current = null;
+					windowCommitPendingRef.current = false;
+				}
+				if (
+					"html" === currentState.kind &&
+					currentState.windowedCommit === acceptedCommit
+				) {
+					// Match the sink-owner protocol: publish the adopted owner state
+					// synchronously, then let React follow with the same object. The
+					// scheduled certification pass must never read the old node list.
+					const adoptedState: PreviewHtmlState = {
+						...currentState,
+						windowedCommit: adoptedCommit,
+					};
+					stateRef.current = adoptedState;
+					setState((current) =>
+						current === currentState ? adoptedState : current,
+					);
+					scheduleWindowRef.current();
+				}
 			}
 			return true;
 		};
@@ -3872,6 +4481,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 							materializeCommit: null,
 							stagedCommit: null,
 							windowedCommit: retainedWindowedCommit(current),
+							windowedFailure: false,
 						}
 					: "paper" === emptyModeRef.current
 						? {
@@ -3888,6 +4498,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 								materializeCommit: null,
 								stagedCommit: null,
 								windowedCommit: null,
+								windowedFailure: false,
 							}
 						: { generation, kind: "loading" },
 			);
@@ -3928,7 +4539,6 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 							materializeCommit: null,
 							stagedCommit: null,
 							windowedCommit: retainedWindowedCommit(current),
-							...(windowedRef.current ? { windowedFailure: true } : {}),
 						}
 					: { generation, kind: "error" },
 			);
@@ -3977,14 +4587,14 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 				sourceNodes: ReadonlyArray<Node>;
 				surface: HTMLElement;
 			}>;
-			const windowedFirstPaint =
-				windowedRef.current &&
-				previewNeedsWindow(requestState.response.editMap ?? null);
+			const largePreview = previewNeedsWindow(
+				requestState.response.editMap ?? null,
+			);
 			try {
 				candidateMarkup = createEnhancementCandidate(
 					activeSurface,
 					requestState.response.html,
-				!windowedRef.current,
+					!windowedRef.current && !largePreview,
 					requestState.response.preparedMarkup?.sourceNodes,
 				);
 			} catch (error) {
@@ -4022,7 +4632,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 					html:
 						hasCurrentPresentation && "html" === current.kind
 							? current.html
-							: windowedFirstPaint
+							: largePreview
 								? ("" as SafePreviewHtml)
 								: requestState.response.html,
 					htmlRevision:
@@ -4035,7 +4645,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 					...(retainedPaper ? { paperPlaceholder: true as const } : {}),
 					materializeCommit: null,
 					stagedCommit:
-						!hasCurrentPresentation && !windowedFirstPaint
+						!hasCurrentPresentation && !largePreview
 							? {
 									nodes: candidateMarkup.sourceNodes.map((node) =>
 										node.cloneNode(true),
@@ -4145,11 +4755,12 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			materializedOverrideRef.current = false;
 			return;
 		}
+		cancelPendingAdoptedMeasurements();
 		acceptedWindowSnapshotRef.current = null;
 		installedWindowSnapshotRef.current = null;
 		const documentEndPin = documentEndPinRef.current;
 		if (documentEndPin) clearDocumentEndPin(documentEndPin, false);
-	}, [props.windowed]);
+	}, [cancelPendingAdoptedMeasurements, props.windowed]);
 
 	useLayoutEffect(() => {
 		setState((current) => {
@@ -4297,7 +4908,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			const candidateMarkup = createEnhancementCandidate(
 				surface,
 				state.html,
-				!windowedRef.current,
+				!windowedRef.current && !previewNeedsWindow(state.editMap),
 			);
 			candidate = {
 				codeTheme: state.codeTheme,
@@ -4338,22 +4949,40 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			props.onDiagnostic?.(previewFailureCode(error));
 			enhancementCandidateRef.current = null;
 			pendingWindowBaselineRef.current = null;
-			previewWindowRepositoryRef.current = null;
-			setState((current) =>
-				"html" === current.kind && current.generation === generation
-					? {
-							...current,
-							html: activeCandidate.serverHtml,
-							htmlRevision: generation,
-							phase: "failed",
-							signature: "",
-							materializeCommit: null,
-							stagedCommit: null,
-							windowedCommit: null,
-							...(windowedRef.current ? { windowedFailure: true } : {}),
-						}
-					: current,
-			);
+			if (previewWindowRepositoryRef.current?.context.revision === generation) {
+				previewWindowRepositoryRef.current = null;
+			}
+			setState((current) => {
+				if ("html" !== current.kind || current.generation !== generation) {
+					return current;
+				}
+				const retainedWindow =
+					windowedRef.current && "paper" === emptyModeRef.current
+						? retainedWindowedCommit(current)
+						: null;
+				if (retainedWindow) {
+					return {
+						...current,
+						phase: "failed",
+						signature: "",
+						materializeCommit: null,
+						stagedCommit: null,
+						windowedCommit: retainedWindow,
+						windowedFailure: false,
+					};
+				}
+				return {
+					...current,
+					html: activeCandidate.serverHtml,
+					htmlRevision: generation,
+					phase: "failed",
+					signature: "",
+					materializeCommit: null,
+					stagedCommit: null,
+					windowedCommit: null,
+					...(windowedRef.current ? { windowedFailure: true } : {}),
+				};
+			});
 		};
 
 		const runEnhancement = async (): Promise<void> => {
@@ -4439,8 +5068,8 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 						return;
 					}
 				}
-				const largeWindow =
-					windowedRef.current && previewNeedsWindow(activeCandidate.editMap);
+				const largePreview = previewNeedsWindow(activeCandidate.editMap);
+				const largeWindow = windowedRef.current && largePreview;
 				const preparedDocumentEndPin = documentEndPinRef.current;
 				let matchingDocumentEndPin =
 					preparedDocumentEndPin &&
@@ -4462,16 +5091,9 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 					clearDocumentEndPin(matchingDocumentEndPin, false);
 					matchingDocumentEndPin = null;
 				}
-				const enhancedHtml = largeWindow
+				const enhancedHtml = largePreview
 					? activeCandidate.serverHtml
 					: (candidateSurface.innerHTML as SafePreviewHtml);
-				if (largeWindow) {
-					await scheduler.yield();
-					if (!isCurrent() || controller.signal.aborted) {
-						candidateSurface.remove();
-						return;
-					}
-				}
 				let repository: PreviewWindowNodeRepository | null = null;
 				let windowedCommit: MutablePreviewWindowCommit | null = null;
 				let stagedCommit: SafePreviewHtmlSinkCommit | null = null;
@@ -4680,7 +5302,10 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 					let selectedRoot: Node | null = native?.isCollapsed ? native.anchorNode : null;
 					while (selectedRoot && selectedRoot.parentNode !== surface) selectedRoot = selectedRoot.parentNode;
 					const previousBaseline = acceptedWindowBaselineRef.current;
-					const previousBlock = selectedRoot instanceof HTMLElement ? previousBaseline?.blocks.get(selectedRoot) : null;
+					const previousBlock =
+						selectedRoot instanceof HTMLElement
+							? readAcceptedWindowBaselineBlock(previousBaseline, selectedRoot)
+							: null;
 					const previousRange = previousBlock?.sourceRange;
 					const currentSource = readCurrentSourceSnapshot();
 					if (selectedRoot instanceof HTMLElement && previousBlock && previousRange && previousBaseline
@@ -4900,6 +5525,10 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 						revision: generation,
 						...(selectionHandoff ? { selectionHandoff } : {}),
 					};
+					pinAcceptedWindowBaselineNodes(
+						pendingWindowBaselineRef.current,
+						windowedCommit.nodes,
+					);
 					windowCommitPendingRef.current = true;
 					acceptedWindowSnapshotRef.current = null;
 					installedWindowSnapshotRef.current = null;
@@ -5095,6 +5724,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 					widthEpoch: windowWidthEpochRef.current,
 				},
 			);
+			cancelPendingAdoptedMeasurements();
 			resetPreviewWindowFlowGeometry(activeRepository);
 			if (hadMeasuredGeometry) {
 				windowGeometryRequiresMeasuredRef.current = true;
@@ -5258,6 +5888,153 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			adoptedOwnedGapNode = live.node;
 		};
 
+		const installAcceptedWindowCommit = (
+			current: PreviewHtmlState,
+			repository: PreviewWindowNodeRepository,
+			commit: MutablePreviewWindowCommit,
+			gapRequest?: Readonly<{ gap: HTMLElement; retainGap?: boolean }>,
+		): PreviewAcceptedWindowSnapshot | null => {
+			const prepared = (() => {
+				try {
+					const installedCommit = current.windowedCommit;
+					if (!installedCommit) return null;
+					const gap = gapRequest?.gap ?? null;
+					const retainGap = gapRequest?.retainGap !== false;
+					if (!retainGap && gap && !commit.nodes.includes(gap)) return null;
+					const nextCommit = {
+						...commit,
+						nodes: retainGap || !gap
+							? [...commit.nodes]
+							: commit.nodes.filter((node) => node !== gap),
+					} satisfies MutablePreviewWindowCommit;
+					const baseline = acceptedWindowBaselineRef.current;
+					if (
+						!baseline ||
+						baseline.revision !== current.htmlRevision ||
+						baseline.signature !== current.signature ||
+						nextCommit.revision !== current.htmlRevision ||
+						nextCommit.revision !== current.generation
+					) throw new Error("preview-window-install-precommit-invalid");
+					// Validate every owner-local fact the final snapshot depends on
+					// while the previous DOM is still the installed one. Only the
+					// post-commit surface comparison remains for
+					// createAcceptedWindowSnapshot.
+					validatePreviewWindowRepository(repository);
+					pinAcceptedWindowBaselineNodes(baseline, nextCommit.nodes);
+					return {
+						gap,
+						nextCommit,
+						previous: {
+							...installedCommit,
+							nodes: Array.from(surface.childNodes),
+						} satisfies SafePreviewHtmlSinkWindowCommit,
+						retainGap,
+					};
+				} catch (error) {
+					throw new PreviewWindowInstallFault(
+						"precommit",
+						previewFailureCode(error),
+						error,
+					);
+				}
+			})();
+			if (!prepared) return null;
+			const { gap, nextCommit, previous, retainGap } = prepared;
+			let committed = false;
+			try {
+				committed = windowControllerRef.current?.commit(previous, nextCommit) ?? false;
+			} catch (error) {
+				throw new PreviewWindowInstallFault(
+					"installed",
+					previewFailureCode(error),
+					error,
+				);
+			}
+			// Only a false return or a refusal is a confirmed non-install. Once the
+			// sink has started its synchronous write, every later fault belongs to the
+			// installed generation and must not be rolled back by the consumer.
+			if (!committed) return null;
+			const queued = pendingWindowCommitRef.current;
+			if (
+				queued &&
+				queued.key < nextCommit.key &&
+				queued.revision === nextCommit.revision
+			) {
+				// The synchronous install owns this generation now. No older queued
+				// window may later replay its node sequence over the installed DOM.
+				pendingWindowCommitRef.current = null;
+			}
+			windowCommitPendingRef.current = false;
+			try {
+				if (!retainGap && gap) {
+					// The temporary document-end caret paragraph is retired by the
+					// synchronous sink commit that revealed its target row. It must not
+					// survive in the repository or in the accepted snapshot behind the
+					// publisher.
+					if (ownedGapRef.current?.node === gap) ownedGapRef.current = null;
+					if (repository.ownedGap?.node === gap) delete repository.ownedGap;
+				}
+				reconcileInstalledWindowCommit(repository, surface, nextCommit);
+				const next: PreviewHtmlState = { ...current, windowedCommit: nextCommit };
+				const snapshot = createAcceptedWindowSnapshot(
+					surface,
+					repository,
+					nextCommit,
+					next,
+					acceptedWindowBaselineRef.current,
+				);
+				if (!snapshot) throw new Error("preview-window-install-snapshot-invalid");
+				stateRef.current = next;
+				acceptedWindowSnapshotRef.current = snapshot;
+				installedWindowSnapshotRef.current = snapshot;
+				installedWindowGeometryContextRef.current =
+					previewWindowGeometryEpochKey(repository.context);
+				setState((state) => state === current ? next : state);
+				props.onWindowReady?.();
+				return snapshot;
+			} catch (error) {
+				const code = previewFailureCode(error);
+				// The sink already installed nextCommit. From this point on the fault
+				// must retain that DOM owner even when certification, snapshot
+				// publication, or readiness notification fails. Clearing the commit
+				// would let the sink replace the installed nodes with the old HTML.
+				const fault = new PreviewWindowInstallFault("installed", code, error);
+				acceptedWindowSnapshotRef.current = null;
+				installedWindowSnapshotRef.current = null;
+				installedWindowGeometryContextRef.current = null;
+				pendingWindowCommitRef.current = null;
+				windowCommitPendingRef.current = false;
+				const failedState: PreviewHtmlState = {
+					...current,
+					phase: "failed",
+					signature: "",
+					materializeCommit: null,
+					stagedCommit: null,
+					windowedCommit: nextCommit,
+					windowedFailure: true,
+				};
+				stateRef.current = failedState;
+				setState((state) =>
+					"html" === state.kind && state.generation === current.generation
+						? failedState
+						: state,
+				);
+				try {
+					props.onDiagnostic?.(code);
+				} catch (diagnosticError) {
+					// Keep the original installed-stage code and primary cause. The
+					// callback failure is retained as metadata, never logged raw.
+					throw new PreviewWindowInstallFault(
+						"installed",
+						code,
+						error,
+						diagnosticError,
+					);
+				}
+				throw fault;
+			}
+		};
+
 		const revealAcceptedWindowRow: PreviewSurfaceRuntime["revealAcceptedWindowRow"] = (request) => {
 			const current = stateRef.current;
 			const source = readCurrentSourceSnapshot();
@@ -5272,6 +6049,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 					materializationPending: materializationPendingRef.current, materialized: materializedOverrideRef.current,
 					stateReady: "html" === current.kind && current.phase === "ready",
 					epochMatches: "html" === current.kind && current.generation === request.revision && current.signature === request.signature,
+					generationMatches: generationRef.current === request.revision,
 					sourceMatches: Boolean(source && source.value === request.source), sourceRevisionMatches: source?.revision === request.sourceRevision,
 					acceptedPresent: Boolean(accepted), acceptedOwnedGapSame: accepted?.ownedGap === request.gap,
 					acceptedContainsGap: accepted?.nodes.includes(request.gap) ?? false,
@@ -5285,10 +6063,24 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 				});
 				return null;
 			};
+			// Formal candidate staging increments generationRef and clears the
+			// accepted snapshot before it publishes a queued window for that new
+			// generation. The supersession predicate therefore remains a defensive
+			// guard, not a path synthesized by the current public lifecycle. The
+			// generation check below rejects any reveal begun after that request.
+			const queuedWindow = pendingWindowCommitRef.current;
+			const queuedWindowIsSupersedable = Boolean(
+				queuedWindow &&
+				queuedWindow.revision === request.revision &&
+				accepted?.revision === request.revision &&
+				accepted.signature === request.signature,
+			);
 			if (disposed || !ownerActiveRef.current || !windowedRef.current
-				|| compositionSurfaceHeldRef.current || windowCommitPendingRef.current
+				|| compositionSurfaceHeldRef.current
+				|| (windowCommitPendingRef.current && !queuedWindowIsSupersedable)
 				|| materializationPendingRef.current || materializedOverrideRef.current
 				|| "html" !== current.kind || current.phase !== "ready" || !current.windowedCommit
+				|| generationRef.current !== request.revision
 				|| current.generation !== request.revision || current.signature !== request.signature) return reject("owner-state");
 			if (!source || source.value !== request.source || source.revision !== request.sourceRevision) return reject("source-epoch");
 			if (!accepted || accepted.key !== current.windowedCommit.key) return reject("accepted-commit");
@@ -5297,9 +6089,17 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 				|| retained.sourceRevision !== request.sourceRevision || !retained.isLive()) return reject("gap-lease");
 			if (surface.ownerDocument.activeElement !== surface || !native?.isCollapsed
 				|| !native.anchorNode || !request.gap.contains(native.anchorNode)) return reject("native-gap");
+			// A retained gap can be the caret address for more than one row reveal.
+			// Once the first reveal commits, its accepted snapshot contains that gap
+			// as owned presentation rather than as an accepted row; remove exactly
+			// that node for the row-shape proof so the same live gap can reveal the
+			// next accepted row.
+			const acceptedRows = accepted.ownedGap === request.gap
+				? accepted.nodes.filter((node) => node !== request.gap)
+				: accepted.nodes;
 			const currentWithoutGap = Array.from(surface.childNodes).filter((node) => node !== request.gap);
-			if (currentWithoutGap.length !== accepted.nodes.length
-				|| currentWithoutGap.some((node, index) => node !== accepted.nodes[index])) return reject("children-shape");
+			if (currentWithoutGap.length !== acceptedRows.length
+				|| currentWithoutGap.some((node, index) => node !== acceptedRows[index])) return reject("children-shape");
 			adoptRetainedOwnedGap();
 			if (activeRepository.ownedGap?.node !== request.gap) return reject("gap-adoption");
 			const pins = new Set(pinnedIndices());
@@ -5308,6 +6108,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 				const index = previewWindowBlockIndexForNode(activeRepository, surface, node);
 				if (index !== null) pins.add(index);
 			}
+			flushPendingAdoptedMeasurements(activeRepository, surface);
 			const result = activeRepository.model.getWindow({ context: activeRepository.context,
 				pinnedIndices: [...pins], viewport: viewportForCanvas(canvas) });
 			const commit: MutablePreviewWindowCommit = { key: ++windowCommitKeyRef.current,
@@ -5315,17 +6116,13 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			if (!commit.nodes.includes(request.gap) || !commit.nodes.includes(activeRepository.nodes[request.index] as Node)
 				|| currentWithoutGap.some((node) => node instanceof HTMLElement
 					&& !node.hasAttribute(PREVIEW_WINDOW_SPACER_ATTRIBUTE) && !commit.nodes.includes(node))) return reject("window-plan");
-			const previous = { ...current.windowedCommit, nodes: Array.from(surface.childNodes) };
-			if (!windowControllerRef.current?.commit(previous, commit)) return reject("sink-commit");
-			const next = { ...current, windowedCommit: commit };
-			reconcileInstalledWindowCommit(activeRepository, surface, commit);
-			const snapshot = createAcceptedWindowSnapshot(surface, activeRepository, commit, next, acceptedWindowBaselineRef.current);
-			if (!snapshot) throw new Error("preview-window-reveal-snapshot-invalid");
-			stateRef.current = next;
-			acceptedWindowSnapshotRef.current = snapshot;
-			installedWindowSnapshotRef.current = snapshot;
-			setState((state) => state === current ? next : state);
-			return snapshot;
+			const snapshot = installAcceptedWindowCommit(
+				current,
+				activeRepository,
+				commit,
+				{ gap: request.gap, retainGap: request.retainGap !== false },
+			);
+			return snapshot ?? reject("sink-commit");
 		};
 		revealAcceptedWindowRowRef.current = revealAcceptedWindowRow;
 
@@ -5342,8 +6139,41 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 				// preedit height. Release re-runs this effect with fresh props.
 				return;
 			}
+			const readyState = stateRef.current;
+			const hasInstalledWindow =
+				"html" === readyState.kind &&
+				"ready" === readyState.phase &&
+				Boolean(readyState.windowedCommit);
+			const readySourceOwner = hasInstalledWindow
+				? currentSourceSnapshotRef.current
+				: undefined;
+			const readySource = readySourceOwner
+				? readCurrentSourceSnapshot()
+				: null;
+			const readyBaseline = acceptedWindowBaselineRef.current;
+			if (
+				hasInstalledWindow &&
+				(!ownerActiveRef.current ||
+					readyState.generation !== activeRepository.context.revision ||
+					readyState.htmlRevision !== activeRepository.context.revision ||
+					readyState.signature !== activeRepository.context.signature ||
+					!readyBaseline ||
+					readyBaseline.revision !== readyState.htmlRevision ||
+					readyBaseline.signature !== readyState.signature ||
+					(readySourceOwner &&
+						(!readySource ||
+							readySource.value !== readyBaseline.markdown ||
+							(null !== readyBaseline.sourceRevision &&
+								readySource.revision !== readyBaseline.sourceRevision))))
+			) {
+				// An existing window reorder is installable only against its accepted
+				// DOM generation. A configured source owner must also be ready; an
+				// absent optional owner is not the same as a provided null snapshot.
+				return;
+			}
 			try {
 				activeRepository.model.assertCurrent(activeRepository.context);
+				flushPendingAdoptedMeasurements(activeRepository, surface);
 				adoptRetainedOwnedGap();
 				if (
 					pendingMountedGeometry &&
@@ -5420,6 +6250,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 						activeRepository.nodes[index + 1] ?? null,
 						previousGeometry,
 						activeRepository.ownedGap?.node,
+						rect,
 					);
 					if (!measurement) {
 						if (
@@ -5580,22 +6411,43 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 					}
 					return;
 				}
-				windowCommitPendingRef.current = true;
-				acceptedWindowSnapshotRef.current = null;
-				installedWindowSnapshotRef.current = null;
-				pendingWindowCommitRef.current = commit;
-				setState((current) =>
-					"html" === current.kind &&
-					current.generation === activeRepository.context.revision &&
-					"ready" === current.phase
-						? { ...current, windowedCommit: commit }
-						: current,
-				);
+				if (hasInstalledWindow) {
+					const snapshot = installAcceptedWindowCommit(
+						readyState,
+						activeRepository,
+						commit,
+						activeRepository.ownedGap
+							? { gap: activeRepository.ownedGap.node, retainGap: true }
+							: undefined,
+					);
+					if (!snapshot) {
+						throw new PreviewWindowDomError(
+							"preview-window-install-refused",
+						);
+					}
+				} else {
+					// The first full-DOM to window transition keeps the existing staged
+					// installation protocol. The synchronous sink path requires an
+					// already installed commit to replace.
+					pinAcceptedWindowBaselineNodes(
+						acceptedWindowBaselineRef.current,
+						commit.nodes,
+					);
+					windowCommitPendingRef.current = true;
+					acceptedWindowSnapshotRef.current = null;
+					installedWindowSnapshotRef.current = null;
+					pendingWindowCommitRef.current = commit;
+					setState((current) =>
+						"html" === current.kind &&
+						current.generation === activeRepository.context.revision &&
+						"ready" === current.phase
+							? { ...current, windowedCommit: commit }
+							: current,
+					);
+				}
 			} catch (error) {
 				windowCommitPendingRef.current = false;
 				pendingWindowCommitRef.current = null;
-				acceptedWindowSnapshotRef.current = null;
-				installedWindowSnapshotRef.current = null;
 				previewWindowRepositoryRef.current = null;
 				props.onDiagnostic?.(previewFailureCode(error));
 				setState((current) =>
@@ -5655,6 +6507,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 						widthEpoch: windowWidthEpochRef.current,
 					},
 				);
+				cancelPendingAdoptedMeasurements();
 				resetPreviewWindowFlowGeometry(activeRepository);
 				if (hadMeasuredGeometry) {
 					windowGeometryRequiresMeasuredRef.current = true;
@@ -5740,6 +6593,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 						activeRepository.nodes[index + 1] ?? null,
 						previousGeometry,
 						activeRepository.ownedGap?.node,
+						rect,
 					);
 					if (!measurement) {
 						if (windowGeometryRequiresMeasuredRef.current && !hasPositiveHeight) {
@@ -5849,6 +6703,8 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 		readyHtml?.phase,
 		readyHtml?.signature,
 		windowedEditing,
+		cancelPendingAdoptedMeasurements,
+		flushPendingAdoptedMeasurements,
 		materialize,
 		props.className,
 		props.onDiagnostic,
@@ -5906,6 +6762,12 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			onStagedCommit={onStagedCommit}
 			refreshing={busy}
 			compositionGate={compositionSurfaceGate}
+			acceptedEmpty={
+				"html" === state.kind &&
+				"" === state.html &&
+				"ready" === state.phase &&
+				state.paperPlaceholder === true
+			}
 			acceptedHtml={
 				"html" === state.kind &&
 				Boolean(state.html.trim()) &&

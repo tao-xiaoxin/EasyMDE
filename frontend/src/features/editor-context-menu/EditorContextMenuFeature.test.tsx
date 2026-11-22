@@ -5220,4 +5220,100 @@ describe('EditorContextMenuFeature', () => {
     expect(window.getSelection()?.anchorNode).toBe(secondParagraph);
     imageInteraction.dispose();
   });
+
+  it('captures scroll baseline after prepareDemand and preparePointerSelection so synchronous scrollTop clamping does not cancel a pending menu while real post-gesture scroll still cancels it', async () => {
+    const canvas = document.createElement('div');
+    const visual = document.createElement('div');
+    visual.contentEditable = 'true';
+    visual.textContent = 'alpha';
+    layoutSurface(visual);
+    canvas.append(visual);
+    document.body.append(canvas);
+    canvas.scrollTop = 945;
+
+    const readinessListeners = new Set<() => void>();
+    let ready = false;
+    let clampOnDemand = true;
+    let clampOnPointer = false;
+    const onFailure = vi.fn();
+    const port = clipboard();
+    const view = render(
+      <EditorContextMenuFeature
+        clipboard={port}
+        direction="ltr"
+        labels={labels}
+        onAction={vi.fn()}
+        onFailure={onFailure}
+        source={null}
+        visual={{
+          boundaryElement: visual,
+          element: visual,
+          getBlockIndex: () => null,
+          getContextReadiness: () =>
+            ready
+              ? { status: 'ready' as const }
+              : { status: 'pending' as const },
+          getSnapshot: () => ({
+            revision: 1,
+            selection: { direction: 'none', end: 0, start: 0 },
+            value: 'alpha'
+          }),
+          isEditable: () => true,
+          kind: 'visual',
+          prepareDemand: () => {
+            if (clampOnDemand) canvas.scrollTop = 889;
+            return true;
+          },
+          preparePointerSelection: () => {
+            if (clampOnPointer) canvas.scrollTop = 840;
+            return true;
+          },
+          subscribeReadiness: (listener) => {
+            readinessListeners.add(listener);
+            return () => readinessListeners.delete(listener);
+          }
+        }}
+      />
+    );
+    try {
+      // Phase 1: synchronous scrollTop clamp inside prepareDemand (e.g. retiring
+      // a detached documentEndSink) dispatches an async scroll event at the
+      // clamped offset (889), which matches the post-preparation baseline and
+      // must NOT cancel the pending menu.
+      fireEvent.mouseDown(visual, { button: 2, clientX: 20, clientY: 30 });
+      fireEvent.contextMenu(visual, { clientX: 20, clientY: 30 });
+      await waitFor(() => expect(port.check).toHaveBeenCalledTimes(1));
+      expect(screen.queryByRole('menu')).toBeNull();
+      fireEvent.scroll(canvas);
+      ready = true;
+      for (const listener of readinessListeners) listener();
+      expect(await screen.findByRole('menu')).toBeTruthy();
+      expect(onFailure).not.toHaveBeenCalled();
+
+      // Dismiss and test Phase 2: synchronous clamp inside preparePointerSelection
+      // also stays aligned with the baseline, while a genuine subsequent scroll
+      // (840 -> 800) still cancels the pending menu.
+      fireEvent.keyDown(document, { key: 'Escape' });
+      await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+
+      ready = false;
+      clampOnDemand = false;
+      clampOnPointer = true;
+      fireEvent.mouseDown(visual, { button: 2, clientX: 20, clientY: 30 });
+      fireEvent.contextMenu(visual, { clientX: 20, clientY: 30 });
+      await waitFor(() => expect(port.check).toHaveBeenCalledTimes(2));
+      // Async scroll from clamping at 840 keeps pending demand alive.
+      fireEvent.scroll(canvas);
+      // Genuine user scroll away from 840 cancels the pending demand.
+      canvas.scrollTop = 800;
+      fireEvent.scroll(canvas);
+      ready = true;
+      for (const listener of readinessListeners) listener();
+      await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+      expect(onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      canvas.remove();
+    }
+  });
 });

@@ -4103,6 +4103,12 @@ describe('EditorRoot', () => {
     // Dispatch local text input on the Full visual surface
     const paragraphText = visual.querySelector('p')?.firstChild;
     if (!(paragraphText instanceof Text)) throw new Error('visual-text-missing');
+    const selection = window.getSelection();
+    const initialCaret = document.createRange();
+    initialCaret.setStart(paragraphText, paragraphText.length);
+    initialCaret.collapse(true);
+    selection?.removeAllRanges();
+    selection?.addRange(initialCaret);
     visual.dispatchEvent(
       new InputEvent('beforeinput', {
         bubbles: true,
@@ -4115,7 +4121,6 @@ describe('EditorRoot', () => {
     const caret = document.createRange();
     caret.setStart(paragraphText, paragraphText.length);
     caret.collapse(true);
-    const selection = window.getSelection();
     selection?.removeAllRanges();
     selection?.addRange(caret);
     visual.dispatchEvent(
@@ -5875,19 +5880,24 @@ describe('EditorRoot', () => {
     );
 
     // The canonical write lands, but the rejected Preview transfer is a
-    // visual transaction failure: it must stay visible instead of being
-    // announced as a completed command.
+    // visual transaction failure: Spec 11.12 #1 keeps visual editing unlocked
+    // while showing the visible privacy-safe alert and preserving canonical
+    // Markdown without an automatic retry.
     await waitFor(() => expect(props.submissionField.value).toBe(cutMarkdown));
-    await waitFor(() =>
-      expect(
-        view.queryByRole('textbox', { name: '可视化文章编辑器' })
-      ).toBeNull()
-    );
     await waitFor(() =>
       expect(
         view.queryByText('The editor action could not be completed.')
       ).not.toBeNull()
     );
+    const unlockedVisualAfterCut = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    expect(unlockedVisualAfterCut.getAttribute('contenteditable')).toBe('true');
+    expect(
+      view.container
+        .querySelector('[data-easymde-visual-failure]')
+        ?.getAttribute('data-easymde-visual-failure')
+    ).toBe('visual-editor-native-preview-failed');
     view.unmount();
   });
 
@@ -7676,13 +7686,28 @@ describe('EditorRoot', () => {
       expect(props.onFailure).toHaveBeenLastCalledWith(
         'visual-editor-native-preview-failed'
       );
-      // Terminal: the owner left the editable surface, no menu opened, and no
-      // second request was issued after the failure settled.
-      await waitFor(() =>
-        expect(
-          view.queryByRole('textbox', { name: '可视化文章编辑器' })
-        ).toBeNull()
-      );
+      // Spec 11.12 #1: preview render failure shows a visible privacy-safe
+      // alert, keeps visual editing unlocked, opens no menu, and issues no
+      // automatic second request after the failure settles.
+      const editableAfterFailure = view.getByRole('textbox', {
+        name: '可视化文章编辑器'
+      });
+      expect(editableAfterFailure.getAttribute('contenteditable')).toBe('true');
+      expect(
+        view.container
+          .querySelector('[data-easymde-visual-failure]')
+          ?.getAttribute('data-easymde-visual-failure')
+      ).toBe('visual-editor-native-preview-failed');
+      await waitFor(() => {
+        const alerts = view.queryAllByRole('alert');
+        expect(alerts.length).toBeGreaterThan(0);
+        for (const alert of alerts) {
+          expect(alert.textContent ?? '').not.toContain(
+            'preview-render-unavailable'
+          );
+          expect(alert.textContent ?? '').not.toContain('alpha');
+        }
+      });
       const requestsAtFailure = vi.mocked(props.previewPort.render).mock.calls.length;
       expect(requestsAtFailure).toBe(requestsBeforeGesture + 1);
       await act(async () => {
@@ -14105,7 +14130,7 @@ describe('EditorRoot', () => {
       })
     );
     expect(visualEditor.querySelector('pre > code.hljs')).not.toBeNull();
-    await waitFor(() => expect(props.submissionField.value).toBe('```\n\n```'));
+    await waitFor(() => expect(props.submissionField.value).toBe('~~~\n\n~~~'));
     await waitFor(() =>
       expect(
         props.enhancementPort.syncCodeFrameBackgrounds
@@ -15907,7 +15932,7 @@ describe('EditorRoot', () => {
     expect(view.queryByText(props.preview.messages.error)).toBeNull();
   });
 
-  it('leaves visual editing and preserves canonical Markdown when pasted Preview rendering fails', async () => {
+  it('keeps visual editing unlocked with a visible alert and no retry when pasted Preview rendering fails', async () => {
     const baseProps = fixture();
     baseProps.submissionField.value = 'Before';
     baseProps.submissionField.defaultValue = 'Before';
@@ -15964,20 +15989,205 @@ describe('EditorRoot', () => {
 
     expect(props.submissionField.value).toBe(expectedMarkdown);
     await waitFor(() =>
-      expect(
-        view.queryByRole('textbox', { name: '可视化文章编辑器' })
-      ).toBeNull()
+      expect(props.onFailure).toHaveBeenCalledWith(
+        'visual-editor-markdown-paste-render-failed'
+      )
     );
-    await waitFor(() => {
-      const preview = view.container.querySelector<HTMLElement>(
-        '[data-easymde-preview-html-sink]'
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // Spec 11.12 #1: visual editing stays unlocked and editable, canonical
+    // Markdown is preserved, a privacy-safe alert is visible, and NO automatic
+    // retry request is fired.
+    const unlockedVisualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    expect(unlockedVisualEditor.getAttribute('contenteditable')).toBe('true');
+    expect(props.submissionField.value).toBe(expectedMarkdown);
+    expect(pastedPreviewRequests).toBe(1);
+    expect(
+      view.container
+        .querySelector('[data-easymde-visual-failure]')
+        ?.getAttribute('data-easymde-visual-failure')
+    ).toBe('visual-editor-markdown-paste-render-failed');
+    const failureAlerts = view.getAllByRole('alert');
+    expect(failureAlerts.length).toBeGreaterThan(0);
+    for (const alert of failureAlerts) {
+      expect(alert.textContent ?? '').not.toContain(
+        'synthetic-preview-failure'
       );
-      expect(preview?.querySelector('strong')?.textContent).toBe('new');
+      expect(alert.textContent ?? '').not.toContain('Before');
+      expect(alert.textContent ?? '').not.toContain('**new**');
+    }
+
+    // Subsequent Ctrl+Z recovers canonical Markdown cleanly and clears the
+    // failure attribute and editor alert.
+    unlockedVisualEditor.focus();
+    fireEvent.keyDown(unlockedVisualEditor, {
+      cancelable: true,
+      ctrlKey: true,
+      key: 'z'
+    });
+    await waitFor(() => expect(props.submissionField.value).toBe('Before'));
+    expect(
+      view.container.querySelector('[data-easymde-visual-failure]')
+    ).toBeNull();
+    expect(
+      view.queryByText(contextMenuStrings.statusActionFailed)
+    ).toBeNull();
+
+    // A subsequent paste once the Preview endpoint recovers renders cleanly
+    // and clears every remaining alert while staying unlocked.
+    const recoveredParagraph = unlockedVisualEditor.querySelector('p');
+    if (!recoveredParagraph) {
+      throw new Error('missing recovered visual paste target');
+    }
+    const recoveredRange = document.createRange();
+    recoveredRange.selectNodeContents(recoveredParagraph);
+    recoveredRange.collapse(false);
+    selection?.removeAllRanges();
+    selection?.addRange(recoveredRange);
+    fireEvent.paste(unlockedVisualEditor, {
+      clipboardData: {
+        getData: (type: string) => ('text/plain' === type ? pastedMarkdown : '')
+      }
+    });
+
+    await waitFor(() => {
+      expect(props.submissionField.value).toBe(expectedMarkdown);
+      expect(
+        unlockedVisualEditor.querySelector('strong')?.textContent
+      ).toBe('new');
     });
     expect(pastedPreviewRequests).toBe(2);
-    expect(props.onFailure).toHaveBeenCalledWith(
-      'visual-editor-markdown-paste-render-failed'
+    expect(unlockedVisualEditor.getAttribute('contenteditable')).toBe('true');
+    expect(
+      view.container.querySelector('[data-easymde-visual-failure]')
+    ).toBeNull();
+    expect(view.queryAllByRole('alert')).toHaveLength(0);
+  });
+
+  it('keeps visual editing unlocked with a visible alert and no retry when history Preview rendering fails', async () => {
+    const baseProps = fixture();
+    baseProps.submissionField.value = 'Before';
+    baseProps.submissionField.defaultValue = 'Before';
+    const props = {
+      ...baseProps,
+      preview: {
+        ...baseProps.preview,
+        html: '<p>Before</p>' as SafePreviewHtml
+      }
+    };
+    const pastedMarkdown = '\n\n# Heading';
+    const pastedExpected = 'Before\n\n# Heading';
+    let failUndoPreview = false;
+    let undoPreviewRequests = 0;
+    vi.mocked(props.previewPort.render).mockImplementation((request) => {
+      if (request.markdown === pastedExpected) {
+        return Promise.resolve(
+          createPreviewResponse(
+            request,
+            '<p>Before</p><h1>Heading</h1>' as SafePreviewHtml,
+            {}
+          )
+        );
+      }
+      if (failUndoPreview && 'Before' === request.markdown) {
+        undoPreviewRequests += 1;
+        return 1 === undoPreviewRequests
+          ? Promise.reject(new Error('synthetic-history-preview-500'))
+          : Promise.resolve(
+              createPreviewResponse(
+                request,
+                '<p>Before</p>' as SafePreviewHtml,
+                {}
+              )
+            );
+      }
+      return Promise.resolve(
+        createPreviewResponse(request, '<p>Before</p>' as SafePreviewHtml, {})
+      );
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visualEditor = await view.findByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const paragraph = visualEditor.querySelector('p');
+    if (!paragraph) throw new Error('missing visual history failure target');
+    const range = document.createRange();
+    range.selectNodeContents(paragraph);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    fireEvent.paste(visualEditor, {
+      clipboardData: {
+        getData: (type: string) => ('text/plain' === type ? pastedMarkdown : '')
+      }
+    });
+    await waitFor(() => {
+      expect(props.submissionField.value).toBe(pastedExpected);
+      expect(visualEditor.querySelector('h1')?.textContent).toBe('Heading');
+    });
+
+    // Next undo triggers a fresh preview request that fails with HTTP 500.
+    failUndoPreview = true;
+    visualEditor.focus();
+    fireEvent.keyDown(visualEditor, {
+      cancelable: true,
+      ctrlKey: true,
+      key: 'z'
+    });
+    await waitFor(() => expect(props.submissionField.value).toBe('Before'));
+    await waitFor(() =>
+      expect(props.onFailure).toHaveBeenCalledWith(
+        'visual-editor-history-preview-failed'
+      )
     );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(undoPreviewRequests).toBe(1);
+    expect(
+      view
+        .getByRole('textbox', { name: '可视化文章编辑器' })
+        .getAttribute('contenteditable')
+    ).toBe('true');
+    expect(
+      view.container
+        .querySelector('[data-easymde-visual-failure]')
+        ?.getAttribute('data-easymde-visual-failure')
+    ).toBe('visual-editor-history-preview-failed');
+    const alerts = view.getAllByRole('alert');
+    expect(alerts.length).toBeGreaterThan(0);
+    for (const alert of alerts) {
+      expect(alert.textContent ?? '').not.toContain(
+        'synthetic-history-preview-500'
+      );
+    }
+
+    // Redo once preview recovers clears the failure attribute and alerts.
+    fireEvent.keyDown(visualEditor, {
+      cancelable: true,
+      ctrlKey: true,
+      key: 'y'
+    });
+    await waitFor(() => {
+      expect(props.submissionField.value).toBe(pastedExpected);
+      expect(view.queryAllByRole('alert')).toHaveLength(0);
+    });
+    expect(
+      view.container.querySelector('[data-easymde-visual-failure]')
+    ).toBeNull();
   });
 
   it('allows locking during a pending Markdown render and ignores its late response', async () => {
@@ -24585,8 +24795,8 @@ it('keeps native-created Full code body typing editable through the real Root co
   const paragraphPoint = prefix.length;
   const entered = prefix + '  ' + suffix;
   const literal = prefix + '\\~\\~\\~bash' + suffix;
-  const nativeCodeSource = (body: string) => prefix + '```bash\n' + body + '\n```' + suffix;
-  const bodyPoint = paragraphPoint + '```bash\n'.length;
+  const nativeCodeSource = (body: string) => prefix + '~~~bash\n' + body + '\n~~~' + suffix;
+  const bodyPoint = paragraphPoint + '~~~bash\n'.length;
   props.submissionField.value = initial;
   props.submissionField.defaultValue = initial;
   props.submissionField.setSelectionRange(0, 0);
@@ -24828,6 +25038,81 @@ it('keeps native-created Full code body typing editable through the real Root co
   } finally {
     capture('final receipt');
     view.unmount(); theme.remove();
+  }
+});
+
+it('Fix 3b: surfaces an unrecoverable formal history selection-map failure and exits visual editing instead of silently suppressing it', async () => {
+  const props = fixture();
+  props.submissionField.value = 'Alpha';
+  props.submissionField.defaultValue = 'Alpha';
+  const realCreateDocumentSession = observedSourceAdapter.createCodeMirrorDocumentSession;
+  const documentOwnerRef: {
+    current: ReturnType<typeof realCreateDocumentSession> | null;
+  } = { current: null };
+  vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+    .mockImplementation((options) => {
+      const owner = realCreateDocumentSession(options);
+      documentOwnerRef.current = owner;
+      return owner;
+    });
+  vi.mocked(props.previewPort.render).mockImplementation((request) => {
+    // When visual editing undoes back to 'Alpha', return completely mismatched
+    // HTML so formal history selection placement throws an unrecoverable
+    // `visual-editor-selection-map-failed`.
+    const html = 'AlphaX' === request.markdown
+      ? '<p>AlphaX</p>'
+      : '<p>Completely different unmappable preview</p>';
+    return Promise.resolve(
+      createPreviewResponse(request, html as SafePreviewHtml, {})
+    );
+  });
+
+  const view = render(<EditorRoot {...props} />);
+  try {
+    await waitFor(() => expect(documentOwnerRef.current).not.toBeNull());
+    const owner = documentOwnerRef.current;
+    if (!owner) throw new Error('fix-3b-owner-missing');
+
+    // Commit a canonical edit before unlocking visual editing so 'Alpha' lives
+    // in document history without any cached visual snapshot.
+    act(() => {
+      owner.applyTextChange({
+        changes: { from: 5, insert: 'X', to: 5 },
+        selection: { direction: 'none', end: 6, start: 6 },
+        value: 'AlphaX'
+      });
+    });
+    expect(owner.getValue()).toBe('AlphaX');
+    expect(owner.getHistoryState().undoDepth).toBeGreaterThanOrEqual(1);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    const unlock = await view.findByRole('button', { name: '解除锁定并编辑' });
+    await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+    fireEvent.click(unlock);
+    const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+    await waitFor(() =>
+      expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+    );
+    expect(props.onFailure).not.toHaveBeenCalled();
+
+    // Undo back to 'Alpha', whose formal render fails selection mapping.
+    visual.focus();
+    fireEvent.keyDown(visual, { cancelable: true, ctrlKey: true, key: 'z' });
+
+    await waitFor(() =>
+      expect(props.onFailure).toHaveBeenCalledWith('visual-editor-selection-map-failed')
+    );
+    const root = view.container.querySelector('[data-easymde-editor-owner="react"]');
+    expect(root?.getAttribute('data-easymde-visual-failure')).toBe(
+      'visual-editor-selection-map-failed'
+    );
+    await waitFor(() =>
+      expect(view.queryByRole('textbox', { name: '可视化文章编辑器' })).toBeNull()
+    );
+    expect(owner.getValue()).toBe('Alpha');
+  } finally {
+    view.unmount();
   }
 });
 

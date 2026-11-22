@@ -88,16 +88,21 @@ removes exactly the selected source interval, and the accepted Preview restores
 the caret inside the code body. Foreign blocks, moved carets and unprovable
 selections keep the explicit rejection.
 Ctrl/Cmd+A selects the connected visual article. Backspace or Delete clears the
-canonical article only for that full visual-root selection. Cut, IME input,
-partial selections, and partial code selections keep their existing editing
-owners. The cleared surface immediately shows one empty paragraph and a usable
-caret, so the next character is accepted without waiting for another Preview.
-Undo and Redo restore the canonical source and connected caret.
+canonical article for that full visual-root selection. A Backspace on a
+whitespace-only article may also clear its remaining whitespace when no input is
+pending and the editable surface still matches the accepted document. Cut, IME
+input, partial selections, and partial code selections keep their existing
+editing owners. The cleared surface
+immediately shows one empty paragraph and a usable caret, so the next character
+is accepted without waiting for another Preview. Undo and Redo restore the
+canonical source and connected caret.
 A newer pointer selection or Ctrl/Cmd+A takes precedence over a queued
 composition-end caret placement or a late Preview's selection restoration.
 If the source contains only terminal ASCII spaces or newlines, the empty
-paragraph is a visual presentation and those source bytes remain intact.
-Insertion at that boundary preserves them. Directly formatted list and quote
+paragraph is a visual presentation and those source bytes remain intact through
+insertion and opening or unlocking. A Backspace on the accepted whitespace-only
+surface clears the remaining whitespace to an empty source, and Undo/Redo
+restore it with a connected caret. Directly formatted list and quote
 wrappers follow the same empty-Backspace behavior while non-empty code content
 remains unchanged. The caret in that fresh empty paragraph sits before the
 renderer's placeholder break. Typing remains available there while a Preview is

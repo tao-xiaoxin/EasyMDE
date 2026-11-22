@@ -81,7 +81,12 @@ import {
   visualBoundaryForImageSourceEdge,
   prepareVisualTaskListMarkers,
   protectVisualMarkdownReadOnlyRegions,
+  projectRenderedMarkdownInlineText,
   projectVisualCodeBodySelection,
+  visualCodeBodyEditableLength,
+  visualCodeBodyEditableSourceEnd,
+  visualEmptiedInlineHtmlTagSourceRange,
+  visualSerializationMatchesCommitted,
   visualCodeTextMatchesCanonical,
   projectVisualMarkdownRemovalSelection,
   reconcileVisualCodeBodyDom,
@@ -2957,13 +2962,10 @@ A--&gt;B</code></pre>
     }
   );
 
-  // The one escapable character whose escape spelling is itself a backslash run:
-  // the serializer writes `\\` for one rendered backslash, and which backslash a
-  // rendered position came from is the owning block's literal marker's to decide,
-  // so this path hands those boundaries over instead of guessing - the same
-  // hand-over the fast path makes when it meets an active escape. The premises are
-  // asserted as the resolving rows assert theirs, and then the refusal.
-  it('refuses a witnessed terminal run whose escape is a backslash run', () => {
+  // CommonMark backslash escapes pair greedily left to right (`\\` -> `\`), so
+  // a witnessed terminal run carrying an escaped backslash unfolds
+  // deterministically and maps its exact trailing boundary.
+  it('resolves a witnessed terminal run whose escape is a backslash run', () => {
     const surface = editor('<p>Lead</p><p>Alpha \\beta\u00a0</p>');
     const block = surface.lastElementChild;
     if (!(block instanceof HTMLElement)) throw new Error('literal-witness-block-missing');
@@ -2987,7 +2989,7 @@ A--&gt;B</code></pre>
         false,
         { data: 'Alpha \\beta ' }
       )
-    ).toBeNull();
+    ).toEqual({ sourceOffset: source.length, visualOffset: source.length });
     surface.remove();
   });
 
@@ -3251,8 +3253,8 @@ A--&gt;B</code></pre>
       blockBaseline,
       requested
     );
-    expect(closing.node).toBe(code);
-    expect(closing.offset).toBe(code.childNodes.length);
+    expect(closing.node).toBe(code.firstChild);
+    expect(closing.offset).toBe(1);
     block.removeAttribute('data-easymde-visual-fence');
     expect(() =>
       visualCaretBoundaryFromSourceOffset(
@@ -3304,8 +3306,8 @@ A--&gt;B</code></pre>
       blockBaseline,
       blockSource.length - 1
     );
-    expect(closing.node).toBe(code);
-    expect(closing.offset).toBe(code.childNodes.length);
+    expect(closing.node).toBe(code.firstChild);
+    expect(closing.offset).toBe((code.firstChild?.textContent?.length ?? 0) - 1);
 
     block.removeAttribute('data-easymde-visual-fence');
     expect(() =>
@@ -5579,7 +5581,7 @@ A--&gt;B</code></pre>
     expect(window.getSelection()?.anchorOffset).toBe(0);
     expect(window.getSelection()?.focusOffset).toBe(0);
     const inputFence = fence.match(/^(`{3,}|~{3,})/)?.[1];
-    const closingFence = inputFence ? '`'.repeat(inputFence.length) : null;
+    const closingFence = inputFence ?? null;
     const info = fence.slice(inputFence?.length ?? 0);
     if (!closingFence) throw new Error('visual-canonical-fence-missing');
     expect(surface.querySelector('pre')?.getAttribute(
@@ -5629,9 +5631,7 @@ A--&gt;B</code></pre>
       expect(code?.className).toBe('hljs');
     }
     const inputFamily = fence.match(/^(`{3,}|~{3,})/)?.[1];
-    const canonicalFamily = inputFamily
-      ? '`'.repeat(inputFamily.length)
-      : '';
+    const canonicalFamily = inputFamily ?? '';
     expect(serializeVisualMarkdown(surface)).toBe(
       `${canonicalFamily}${info}\n\n${canonicalFamily}`
     );
@@ -5811,14 +5811,14 @@ A--&gt;B</code></pre>
     }
 
     placeholderText.data = 'x';
-    expect(serializeVisualMarkdown(surface)).toBe('```bash\nx\n```');
+    expect(serializeVisualMarkdown(surface)).toBe('~~~bash\nx\n~~~');
     placeholder.removeAttribute('data-easymde-visual-code-placeholder');
     placeCaret(placeholderText, placeholderText.length);
-    expect(serializeVisualMarkdown(surface)).toBe('```bash\nx\n```');
+    expect(serializeVisualMarkdown(surface)).toBe('~~~bash\nx\n~~~');
 
     placeholderText.data = '';
     normalizeVisualCodePlaceholders(surface, 'historyUndo', code.parentElement);
-    expect(serializeVisualMarkdown(surface)).toBe('```bash\n\n```');
+    expect(serializeVisualMarkdown(surface)).toBe('~~~bash\n\n~~~');
     expect(code.firstChild).toBe(placeholder);
     expect(placeholder.firstChild).toBe(placeholderText);
     expect(placeholder.hasAttribute('data-easymde-visual-code-placeholder')).toBe(true);
@@ -5826,14 +5826,14 @@ A--&gt;B</code></pre>
 
     placeholderText.data = 'x';
     normalizeVisualCodePlaceholders(surface, 'historyRedo', code.parentElement);
-    expect(serializeVisualMarkdown(surface)).toBe('```bash\nx\n```');
+    expect(serializeVisualMarkdown(surface)).toBe('~~~bash\nx\n~~~');
     expect(code.firstChild).toBe(placeholder);
     expect(placeholder.firstChild).toBe(placeholderText);
     expect(placeholder.hasAttribute('data-easymde-visual-code-placeholder')).toBe(false);
 
     placeholderText.data = '';
     normalizeVisualCodePlaceholders(surface, 'deleteContentBackward', code.parentElement);
-    expect(serializeVisualMarkdown(surface)).toBe('```bash\n\n```');
+    expect(serializeVisualMarkdown(surface)).toBe('~~~bash\n\n~~~');
     expect(code.firstChild).toBe(placeholder);
     expect(placeholder.firstChild).toBe(placeholderText);
 
@@ -6872,7 +6872,7 @@ A--&gt;B</code></pre>
     expect(selection?.focusOffset).toBe(7);
   });
 
-  it('inserts an empty local inline wrapper at a collapsed selection', () => {
+  it('treats a collapsed inline toolbar wrap as a clean no-op without emitting empty delimiters', () => {
     const surface = editor('<p>Toolbar bold</p>');
     const text = surface.querySelector('p')?.firstChild;
     if (!(text instanceof Text)) throw new Error('visual-toolbar-collapsed-text-missing');
@@ -6888,11 +6888,11 @@ A--&gt;B</code></pre>
       suffix: '**',
       surface: 'main'
     })).toBe(true);
-    const strong = surface.querySelector('p > strong');
-    expect(strong).not.toBeNull();
-    expect(serializeVisualMarkdown(surface)).toBe('Toolbar**** bold');
+    expect(surface.querySelector('p > strong')).toBeNull();
+    expect(serializeVisualMarkdown(surface)).toBe('Toolbar bold');
     expect(window.getSelection()?.isCollapsed).toBe(true);
-    expect(window.getSelection()?.anchorNode?.parentElement).toBe(strong);
+    expect(window.getSelection()?.anchorNode).toBe(text);
+    expect(window.getSelection()?.anchorOffset).toBe(7);
   });
 
   it('preserves a backward visual selection for a local inline wrap', () => {
@@ -8925,12 +8925,13 @@ A--&gt;B</code></pre>
     const slice = '~~~js\nalpha\n~~~';
     // The code body starts after the opening delimiter line, so the body's own
     // first offset is the root offset 0 and body offset 5 is the root offset 5.
-    // The opening delimiter line and the closing one clamp to the body's edges.
+    // The opening delimiter line and the closing one clamp to the editable
+    // body edges (excluding the representation-only newline before `~~~`).
     expect(visualCodeFenceRootSourceOffset(pre, slice, 6)).toBe(0);
     expect(visualCodeFenceRootSourceOffset(pre, slice, 11)).toBe(5);
     expect(visualCodeFenceRootSourceOffset(pre, slice, 2)).toBe(0);
-    expect(visualCodeFenceRootSourceOffset(pre, slice, 12)).toBe(6);
-    expect(visualCodeFenceRootSourceOffset(pre, slice, 15)).toBe(6);
+    expect(visualCodeFenceRootSourceOffset(pre, slice, 12)).toBe(5);
+    expect(visualCodeFenceRootSourceOffset(pre, slice, 15)).toBe(5);
     expect(visualCodeFenceRootSourceOffset(paragraph, 'text', 3)).toBe(3);
   });
 
@@ -11831,5 +11832,714 @@ describe('uniquePlainHeadingRowJoinRemoval', () => {
     expect(
       uniquePlainHeadingRowJoinRemoval('before\n\n### T\n\nafter\n', 2, 'T')
     ).toBeNull();
+  });
+
+  it('preserves tilde fence family when applying a visual block fence shortcut', () => {
+    const surface = editor('<p>~~~python</p>');
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) {
+      throw new Error('tilde-fence-shortcut-text-missing');
+    }
+    placeCaret(text, text.length);
+    const event = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter'
+    });
+    expect(applyVisualBlockShortcut(surface, event)).toBe(true);
+    expect(event.defaultPrevented).toBe(true);
+    const pre = surface.firstElementChild;
+    expect(pre?.tagName).toBe('PRE');
+    expect(pre?.getAttribute('data-easymde-visual-fence')).toBe('~~~');
+    expect(pre?.getAttribute('data-easymde-visual-fence-info')).toBe('python');
+    expect(serializeVisualMarkdown(surface)).toBe('~~~python\n\n~~~');
+    surface.remove();
+  });
+
+  it('projects inline source by stripping Lezer HTMLTag nodes and decoding backslash escapes', () => {
+    expect(projectRenderedMarkdownInlineText('<kbd>⌘</kbd> + <kbd>K</kbd>')).toBe('⌘ + K');
+    expect(projectRenderedMarkdownInlineText('<kbd>⌘</kbd> + <kbd>')).toBe('⌘ + ');
+    expect(projectRenderedMarkdownInlineText('a \\<kbd>b</kbd> \\*c\\*')).toBe('a <kbd>b *c*');
+    expect(projectRenderedMarkdownInlineText('a `<code>x</code>` b')).toBe('a `<code>x</code>` b');
+  });
+
+  it('retires paired stripped inline HTML tags when deleting their final visible character', () => {
+    const markdown = '<kbd>⌘</kbd> + <kbd>K</kbd>';
+    expect(visualEmptiedInlineHtmlTagSourceRange(markdown, { start: 20, end: 27 })).toEqual({
+      start: 15,
+      end: 27
+    });
+    expect(visualEmptiedInlineHtmlTagSourceRange(markdown, { start: 20, end: 21 })).toEqual({
+      start: 15,
+      end: 27
+    });
+    expect(visualEmptiedInlineHtmlTagSourceRange('<span><kbd>K</kbd></span>', { start: 11, end: 18 })).toEqual({
+      start: 0,
+      end: 25
+    });
+    expect(visualEmptiedInlineHtmlTagSourceRange('<kbd>ab</kbd>', { start: 6, end: 13 })).toBeNull();
+  });
+
+  it('computes closed-fence editable body length and maps fenced pre boundaries with trailing blank lines', () => {
+    const closed = '```bash\na\n\n```';
+    const closedInterval = visualCodeBodyIntervalAtOrdinal(closed, 0);
+    expect(visualCodeBodyEditableLength(closedInterval, closed)).toBe(2);
+    expect(visualCodeBodyEditableSourceEnd(closedInterval, closed)).toBe(10);
+
+    const open = '```bash\na\n';
+    const openInterval = visualCodeBodyIntervalAtOrdinal(open, 0);
+    expect(visualCodeBodyEditableLength(openInterval, open)).toBe(2);
+    expect(visualCodeBodyEditableSourceEnd(openInterval, open)).toBe(10);
+
+    const surface = editor('<pre data-easymde-visual-fence="```" data-easymde-visual-fence-info="bash"><code>a\n\n</code></pre>');
+    const pre = surface.firstElementChild as HTMLElement;
+    const text = pre.querySelector('code')?.firstChild as Text;
+    const baseline = serializeVisualMarkdownBlockFragment([pre]);
+    expect(visualBoundarySourceOffset(pre, closed, baseline, text, 0)).toBe(0);
+    expect(visualBoundarySourceOffset(pre, closed, baseline, text, 1)).toBe(1);
+    expect(visualBoundarySourceOffset(pre, closed, baseline, text, 2)).toBe(2);
+    surface.remove();
+  });
+
+  it('trims leading and trailing ASCII whitespace outside bold/italic/strike wraps and skips whitespace-only ranges', () => {
+    const surface = editor('<p>段落 A：中文</p>');
+    const text = surface.querySelector('p')?.firstChild as Text;
+    const range = document.createRange();
+    range.setStart(text, 2);
+    range.setEnd(text, 6);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    expect(applyVisualToolbarCommand(surface, {
+      action: 'wrap',
+      group: 'format',
+      icon: 'editor-bold',
+      id: 'bold',
+      label: 'Bold',
+      prefix: '**',
+      suffix: '**',
+      surface: 'main'
+    })).toBe(true);
+    expect(serializeVisualMarkdown(surface)).toBe('段落 **A：中**文');
+    expect(surface.querySelector('p > strong')?.textContent).toBe('A：中');
+    expect(selection?.toString()).toBe('A：中');
+
+    // Whitespace-only selection is a clean no-op.
+    const wsSurface = editor('<p>alpha   beta</p>');
+    const wsText = wsSurface.querySelector('p')?.firstChild as Text;
+    const wsRange = document.createRange();
+    wsRange.setStart(wsText, 5);
+    wsRange.setEnd(wsText, 8);
+    selection?.removeAllRanges();
+    selection?.addRange(wsRange);
+    expect(applyVisualToolbarCommand(wsSurface, {
+      action: 'wrap',
+      group: 'format',
+      icon: 'editor-bold',
+      id: 'bold',
+      label: 'Bold',
+      prefix: '**',
+      suffix: '**',
+      surface: 'main'
+    })).toBe(true);
+    expect(wsSurface.querySelector('strong')).toBeNull();
+    expect(wsSurface.textContent).toBe('alpha   beta');
+    surface.remove();
+    wsSurface.remove();
+  });
+
+  it('refuses a mid-delimiter offset in visualBoundarySourceOffset when Turndown hoists whitespace', () => {
+    const surface = editor('<p>段落<strong> A：中</strong>文</p>');
+    const strongText = surface.querySelector('strong')?.firstChild as Text;
+    const markdown = '段落 **A：中**文';
+    expect(() =>
+      visualBoundarySourceOffset(surface, markdown, markdown, strongText, 0)
+    ).toThrow('visual-editor-selection-map-failed');
+    surface.remove();
+  });
+
+  it('matches committed visual serialization with ASCII whitespace trimming only, preserving U+00A0', () => {
+    expect(visualSerializationMatchesCommitted('foo', 'foo ')).toBe(true);
+    expect(visualSerializationMatchesCommitted('foo', 'foo\n')).toBe(true);
+    expect(visualSerializationMatchesCommitted('foo', 'foo\u00a0')).toBe(false);
+    expect(visualSerializationMatchesCommitted('foo\u00a0', 'foo\u00a0')).toBe(true);
+  });
+
+  it('Fix 1b: unfolds \\\\ alongside \\* and \\_ when mapping a witnessed trailing space', () => {
+    const surface = editor(
+      '<p>Lead</p><p>段落一：中文与 English 混排 ABCABCABC，转义 *星号*、_下划线_、\\反斜杠\u00a0</p>'
+    );
+    const block = surface.lastElementChild;
+    if (!(block instanceof HTMLElement)) throw new Error('fix-1b-block-missing');
+    const node = block.firstChild;
+    if (!(node instanceof Text)) throw new Error('fix-1b-text-missing');
+    const source =
+      'Lead\n\n段落一：中文与 English 混排 ABCABCABC，转义 \\*星号\\*、\\_下划线\\_、\\\\反斜杠 ';
+    const baseline =
+      'Lead\n\n段落一：中文与 English 混排 ABCABCABC，转义 \\*星号\\*、\\_下划线\\_、\\\\反斜杠';
+    const interval = createVisualMarkdownSourceIntervalMap(source, baseline);
+    const witness = { data: node.data.replace(/\u00a0/gu, ' ') };
+    expect(
+      mapTextBoundaryFromInterval(
+        surface,
+        node,
+        node.length,
+        baseline,
+        interval,
+        false,
+        witness
+      )
+    ).toEqual({ sourceOffset: source.length, visualOffset: baseline.length });
+    expect(
+      mapTextBoundaryFromInterval(
+        surface,
+        node,
+        node.length - 1,
+        baseline,
+        interval,
+        false,
+        witness
+      )
+    ).toEqual({ sourceOffset: source.length - 1, visualOffset: baseline.length });
+    surface.remove();
+  });
+
+  it('Fix 2: strips duplicate Chromium-cloned block id when creating a local fenced <pre>', () => {
+    const surface = editor(
+      '<p data-easymde-visual-block-id="bLast">Alpha</p><p data-easymde-visual-block-id="bLast">```text</p>'
+    );
+    const splitP = surface.lastElementChild as HTMLElement;
+    const text = splitP.firstChild as Text;
+    placeCaret(text, text.length);
+    const event = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter'
+    });
+    expect(applyVisualBlockShortcut(surface, event)).toBe(true);
+    const pre = surface.querySelector('pre');
+    expect(pre).not.toBeNull();
+    expect(pre?.hasAttribute('data-easymde-visual-block-id')).toBe(false);
+    expect(surface.firstElementChild?.getAttribute('data-easymde-visual-block-id')).toBe('bLast');
+    surface.remove();
+
+    // Unique block identity is still preserved when no sibling shares it.
+    const uniqueSurface = editor('<p data-easymde-visual-block-id="bUnique">```text</p>');
+    const uniqueP = uniqueSurface.firstElementChild as HTMLElement;
+    const uniqueText = uniqueP.firstChild as Text;
+    placeCaret(uniqueText, uniqueText.length);
+    const uniqueEvent = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter'
+    });
+    expect(applyVisualBlockShortcut(uniqueSurface, uniqueEvent)).toBe(true);
+    expect(uniqueSurface.querySelector('pre')?.getAttribute('data-easymde-visual-block-id')).toBe('bUnique');
+    uniqueSurface.remove();
+  });
+
+  it.each([
+    { fence: '```', info: 'bash', editableEnd: 10 },
+    { fence: '~~~', info: 'python', editableEnd: 12 }
+  ] as const)(
+    'Fix 3: visualSelectionSourceRangeForBlocks rejects closed-fence offset 3 past terminal newline for $fence$info',
+    ({ fence, info, editableEnd }) => {
+      const source = `${fence}${info}\na\n\n${fence}`;
+      const surface = editor(
+        `<pre data-easymde-visual-fence="${fence}" data-easymde-visual-fence-info="${info}"><code>a\n\n</code></pre>`
+      );
+      const pre = surface.firstElementChild as HTMLElement;
+      const text = pre.querySelector('code')?.firstChild as Text;
+      const baseline = serializeVisualMarkdownBlockFragment([pre]);
+
+      // Caret at offset 3 ("a\n\n|") sits after the closed fence's representation-only terminal newline.
+      placeCaret(text, 3);
+      expect(() =>
+        visualSelectionSourceRangeForBlocks([pre], source, baseline)
+      ).toThrow('visual-editor-selection-map-failed');
+
+      // Caret at offset 2 ("a\n|\n") maps cleanly to canonical editableEnd.
+      placeCaret(text, 2);
+      expect(
+        visualSelectionSourceRangeForBlocks([pre], source, baseline)
+      ).toEqual({
+        direction: 'none',
+        end: editableEnd,
+        start: editableEnd
+      });
+
+      // Opening-delimiter recovery on a direct <pre> root maps to code body start (0), not full-block bodyStart.
+      const openingBoundary = visualCaretBoundaryFromSourceOffset(
+        pre,
+        source,
+        baseline,
+        0
+      );
+      expect(openingBoundary).toEqual({ node: text, offset: 0 });
+      surface.remove();
+    }
+  );
+
+  it.each([
+    { id: 'bold', label: 'Bold', prefix: '**', suffix: '**', tag: 'strong', wrapped: '段落 **A：中**文' },
+    { id: 'italic', label: 'Italic', prefix: '*', suffix: '*', tag: 'em', wrapped: '段落 *A：中*文' },
+    { id: 'strikethrough', label: 'Strike', prefix: '~~', suffix: '~~', tag: 'del', wrapped: '段落 ~~A：中~~文' },
+    { id: 'code', label: 'Code', prefix: '`', suffix: '`', tag: 'code', wrapped: '段落 `A：中`文' }
+  ] as const)(
+    'Fix 4a: pressing $id twice toggles off cleanly without double-wrapping',
+    ({ id, label, prefix, suffix, tag, wrapped }) => {
+      const command = {
+        action: 'wrap' as const,
+        group: 'format' as const,
+        icon: `editor-${id}`,
+        id,
+        label,
+        prefix,
+        suffix,
+        surface: 'main' as const
+      };
+      const surface = editor('<p>段落 A：中文</p>');
+      const text = surface.querySelector('p')?.firstChild as Text;
+      const selection = window.getSelection();
+      selection?.setBaseAndExtent(text, 3, text, 6);
+
+      // 1st press wraps
+      expect(applyVisualToolbarCommand(surface, command)).toBe(true);
+      expect(serializeVisualMarkdown(surface)).toBe(wrapped);
+      expect(surface.querySelectorAll(tag)).toHaveLength(1);
+      expect(selection?.toString()).toBe('A：中');
+
+      // 2nd press unwraps cleanly (no **** / ~~...~~ nesting)
+      expect(applyVisualToolbarCommand(surface, command)).toBe(true);
+      expect(serializeVisualMarkdown(surface)).toBe('段落 A：中文');
+      expect(surface.querySelectorAll(tag)).toHaveLength(0);
+      expect(selection?.toString()).toBe('A：中');
+
+      // 3rd press wraps again cleanly
+      expect(applyVisualToolbarCommand(surface, command)).toBe(true);
+      expect(serializeVisualMarkdown(surface)).toBe(wrapped);
+      expect(surface.querySelectorAll(tag)).toHaveLength(1);
+      surface.remove();
+    }
+  );
+
+  it('Fix 4a: toggling off a partial sub-range inside an inline element splits cleanly without empty wrappers', () => {
+    const boldCommand = {
+      action: 'wrap' as const,
+      group: 'format' as const,
+      icon: 'editor-bold',
+      id: 'bold',
+      label: 'Bold',
+      prefix: '**',
+      suffix: '**',
+      surface: 'main' as const
+    };
+    const surface = editor('<p><strong>hello world again</strong></p>');
+    const strongText = surface.querySelector('strong')?.firstChild as Text;
+    const selection = window.getSelection();
+    // Select middle word "world"
+    selection?.setBaseAndExtent(strongText, 6, strongText, 11);
+    expect(applyVisualToolbarCommand(surface, boldCommand)).toBe(true);
+    expect(serializeVisualMarkdown(surface)).toBe('**hello** world **again**');
+    expect(surface.querySelectorAll('strong')).toHaveLength(2);
+    expect(selection?.toString()).toBe('world');
+    surface.remove();
+
+    // Select trailing word "world" in "hello world" (no empty trailing wrapper)
+    const trailSurface = editor('<p><strong>hello world</strong></p>');
+    const trailText = trailSurface.querySelector('strong')?.firstChild as Text;
+    selection?.setBaseAndExtent(trailText, 6, trailText, 11);
+    expect(applyVisualToolbarCommand(trailSurface, boldCommand)).toBe(true);
+    expect(serializeVisualMarkdown(trailSurface)).toBe('**hello** world');
+    expect(trailSurface.querySelectorAll('strong')).toHaveLength(1);
+    expect(selection?.toString()).toBe('world');
+    trailSurface.remove();
+  });
+});
+
+describe('Prod Fix 15-Full regressions', () => {
+  it('Fix 3: aligns softbreaks per-hunk inside multi-block documents even when source and baseline lengths differ', () => {
+    const source = '# H1\n\n## H2\n\n> 加载中引用\nab\n\n---\n\n段落 B';
+    const surface = editor(
+      '<h1>H1</h1>\n<h2>H2</h2>\n<blockquote><p>加载中引用\nab</p></blockquote>\n<hr>\n<p>段落 B</p>'
+    );
+    const baseline = serializeVisualMarkdown(surface);
+    expect(baseline).toBe('# H1\n\n## H2\n\n> 加载中引用 ab\n\n* * *\n\n段落 B');
+    expect(source.length).not.toBe(baseline.length);
+
+    const map = createVisualMarkdownSourceIntervalMap(source, baseline);
+    const visualAbEnd = baseline.indexOf('ab') + 2;
+    const sourceAbEnd = source.indexOf('ab') + 2;
+    expect(map.sourceOffsetAt(baseline.indexOf('ab'))).toBe(source.indexOf('ab'));
+    expect(map.sourceOffsetAt(baseline.indexOf('ab') + 1)).toBe(source.indexOf('ab') + 1);
+    expect(map.sourceOffsetAt(visualAbEnd)).toBe(sourceAbEnd);
+
+    // Deleting 'b' from the serialized visual text merges cleanly into source without throwing.
+    const editedVisual = baseline.slice(0, visualAbEnd - 1) + baseline.slice(visualAbEnd);
+    const merged = mergeVisualMarkdownChangeDetails(source, baseline, editedVisual, map);
+    expect(merged.value).toBe('# H1\n\n## H2\n\n> 加载中引用\na\n\n---\n\n段落 B');
+
+    // Multi-line (3-line) softbreak in a multi-block document also maps every character 1-to-1.
+    const multiSource = '# H1\n\n> line1\nline2\nline3\n\n---';
+    const multiBaseline = '# H1\n\n> line1 line2 line3\n\n* * *';
+    const multiMap = createVisualMarkdownSourceIntervalMap(multiSource, multiBaseline);
+    expect(multiMap.sourceOffsetAt(multiBaseline.indexOf('line2'))).toBe(multiSource.indexOf('line2'));
+    expect(multiMap.sourceOffsetAt(multiBaseline.indexOf('line3') + 5)).toBe(multiSource.indexOf('line3') + 5);
+    surface.remove();
+  });
+
+  it('Fix 4: visualBoundarySourceOffset projects trailing-whitespace overflow to sourceMarkdown.length and fails closed on non-whitespace overflow', () => {
+    // Trailing NBSP stripped by serializeVisualMarkdown -> project to sourceMarkdown.length (4), never 5.
+    const nbspSurface = editor('<p>Tail\u00a0</p>');
+    const nbspP = nbspSurface.firstElementChild as HTMLElement;
+    const nbspText = nbspP.firstChild as Text;
+    expect(serializeVisualMarkdownBlockFragment([nbspP])).toBe('Tail');
+    expect(
+      visualBoundarySourceOffset(nbspP, 'Tail', 'Tail', nbspText, 5)
+    ).toBe(4);
+
+    // Non-whitespace overflow on unchanged-DOM mapping (trailing <br> emits "  \n" before marker) -> fail closed.
+    const brSurface = editor('<p>Tail<br></p>');
+    const brP = brSurface.firstElementChild as HTMLElement;
+    expect(serializeVisualMarkdownBlockFragment([brP])).toBe('Tail');
+    expect(() =>
+      visualBoundarySourceOffset(brP, 'Tail', 'Tail', brP, 2)
+    ).toThrow('visual-editor-selection-map-failed');
+    brSurface.remove();
+    nbspSurface.remove();
+  });
+
+  it('maps whole-surface root-edge selections without overflowing sourceMarkdown.length', () => {
+    const surface = editor('<p>Rendered</p>');
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(surface);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    expect(
+      visualSelectionSourceRange(surface, 'Rendered', 'Rendered')
+    ).toEqual({ direction: 'forward', end: 8, start: 0 });
+    selection?.setBaseAndExtent(surface, surface.childNodes.length, surface, 0);
+    expect(
+      visualSelectionSourceRange(surface, 'Rendered', 'Rendered')
+    ).toEqual({ direction: 'backward', end: 8, start: 0 });
+    surface.remove();
+  });
+});
+
+describe('Prod Fix 17-Core regressions', () => {
+  it('Fix 2a: maps end-of-heading caret, deletion, and insertion on list-nested, top-level, and quoted Setext headings', () => {
+    const cases: ReadonlyArray<Readonly<{
+      deletedExpected: string;
+      deletedVisual: string;
+      expectedOffset: number;
+      html: string;
+      insertedExpected: string;
+      insertedVisual: string;
+      name: string;
+      source: string;
+      textSelector: string;
+    }>> = [
+      {
+        deletedExpected: '- 列表项一\n- 列表项\n  -',
+        deletedVisual: '- 列表项一\n- ## 列表项',
+        expectedOffset: 13,
+        html: '<ul><li>列表项一</li><li><h2>列表项二</h2></li></ul>',
+        insertedExpected: '- 列表项一\n- 列表项二X\n  -',
+        insertedVisual: '- 列表项一\n- ## 列表项二X',
+        name: 'list-nested Setext H2',
+        source: '- 列表项一\n- 列表项二\n  -',
+        textSelector: 'h2'
+      },
+      {
+        deletedExpected: 'Titl\n---',
+        deletedVisual: '## Titl',
+        expectedOffset: 5,
+        html: '<h2>Title</h2>',
+        insertedExpected: 'TitleX\n---',
+        insertedVisual: '## TitleX',
+        name: 'top-level Setext H2',
+        source: 'Title\n---',
+        textSelector: 'h2'
+      },
+      {
+        deletedExpected: 'Titl\n===',
+        deletedVisual: '# Titl',
+        expectedOffset: 5,
+        html: '<h1>Title</h1>',
+        insertedExpected: 'TitleX\n===',
+        insertedVisual: '# TitleX',
+        name: 'top-level Setext H1',
+        source: 'Title\n===',
+        textSelector: 'h1'
+      },
+      {
+        deletedExpected: '> Titl\n> ---',
+        deletedVisual: '> ## Titl',
+        expectedOffset: 7,
+        html: '<blockquote><h2>Title</h2></blockquote>',
+        insertedExpected: '> TitleX\n> ---',
+        insertedVisual: '> ## TitleX',
+        name: 'quoted Setext H2',
+        source: '> Title\n> ---',
+        textSelector: 'blockquote h2'
+      }
+    ];
+
+    for (const testCase of cases) {
+      const surface = editor(testCase.html);
+      const rootBlock = surface.firstElementChild as HTMLElement;
+      const heading = surface.querySelector(testCase.textSelector) as HTMLElement;
+      const text = heading.firstChild as Text;
+      const baseline = serializeVisualMarkdownBlockFragment([rootBlock]);
+      const selection = window.getSelection();
+      selection?.collapse(text, text.length);
+
+      expect(
+        visualSelectionSourceRangeForBlocks([rootBlock], testCase.source, baseline),
+        testCase.name
+      ).toEqual({
+        direction: 'none',
+        end: testCase.expectedOffset,
+        start: testCase.expectedOffset
+      });
+      expect(
+        mergeVisualMarkdownChange(testCase.source, baseline, testCase.deletedVisual),
+        `${testCase.name} delete`
+      ).toBe(testCase.deletedExpected);
+      expect(
+        mergeVisualMarkdownChange(testCase.source, baseline, testCase.insertedVisual),
+        `${testCase.name} insert`
+      ).toBe(testCase.insertedExpected);
+      surface.remove();
+    }
+  });
+
+  it('Fix 2a security: keeps non-Setext hidden runs strictly refused as ambiguous', () => {
+    expect(() =>
+      mergeVisualMarkdownChange(
+        'Title\n<!-- hidden -->',
+        'Title',
+        'TitleX'
+      )
+    ).toThrow('visual-editor-markdown-merge-ambiguous');
+
+    expect(() =>
+      mergeVisualMarkdownChange(
+        'Title\n[ref]: https://example.com',
+        'Title',
+        'TitleX'
+      )
+    ).toThrow('visual-editor-markdown-merge-ambiguous');
+
+    expect(() =>
+      mergeVisualMarkdownChange(
+        '## Title\n---',
+        '## Title',
+        '## TitleX'
+      )
+    ).toThrow('visual-editor-markdown-merge-ambiguous');
+
+    expect(() =>
+      mergeVisualMarkdownChange(
+        'Title\n---',
+        '# Title',
+        '# TitleX'
+      )
+    ).toThrow('visual-editor-markdown-merge-ambiguous');
+
+    expect(() =>
+      mergeVisualMarkdownChange(
+        '- 列表项一\n- 列表项二\n      -',
+        '- 列表项一\n- ## 列表项二',
+        '- 列表项一\n- ## 列表项二X'
+      )
+    ).toThrow('visual-editor-markdown-merge-ambiguous');
+
+    expect(() =>
+      mergeVisualMarkdownChange(
+        'Title\n---\n<!-- hidden -->',
+        '## Title',
+        '## TitleX'
+      )
+    ).toThrow('visual-editor-markdown-merge-ambiguous');
+  });
+
+  it('Fix 2b: rewrites emptied Setext headings to ATX empty headings and handles complete heading unwrap', () => {
+    expect(
+      mergeVisualMarkdownChange(
+        '- 列表项一\n- 列\n  -',
+        '- 列表项一\n- ## 列',
+        '- 列表项一\n- ##'
+      )
+    ).toBe('- 列表项一\n- ##');
+
+    expect(mergeVisualMarkdownChange('T\n---', '## T', '##')).toBe('##');
+    expect(mergeVisualMarkdownChange('T\n===', '# T', '#')).toBe('#');
+    expect(
+      mergeVisualMarkdownChange('T\n---\n\nNext', '## T\n\nNext', '##\n\nNext')
+    ).toBe('##\n\nNext');
+    expect(
+      mergeVisualMarkdownChange('> T\n> ---', '> ## T', '> ##')
+    ).toBe('> ##');
+
+    // Sibling guard: browser completely unwraps emptied Setext heading.
+    expect(
+      mergeVisualMarkdownChange(
+        '- 列表项一\n- 列\n  -',
+        '- 列表项一\n- ## 列',
+        '- 列表项一\n-'
+      )
+    ).toBe('- 列表项一\n- ');
+    expect(mergeVisualMarkdownChange('T\n---', '## T', '')).toBe('');
+  });
+
+  it('Fix 2 (Bug D): aligns all item boundaries in loose nested * lists despite Turndown blank-line padding', () => {
+    const source = [
+      '* 前端开发',
+      '* 后端开发',
+      '',
+      '  * Python',
+      '  * Node.js',
+      '  * Go',
+      '* 运维部署',
+      '',
+      '  * Docker',
+      '  * Nginx',
+      '  * Kubernetes'
+    ].join('\n');
+    const surface = editor(
+      '<ul>'
+      + '<li><p>前端开发</p></li>'
+      + '<li><p>后端开发</p><ul><li>Python</li><li>Node.js</li><li>Go</li></ul></li>'
+      + '<li><p>运维部署</p><ul><li>Docker</li><li>Nginx</li><li>Kubernetes</li></ul></li>'
+      + '</ul>'
+    );
+    const baseline = serializeVisualMarkdown(surface);
+    const items = [
+      '前端开发',
+      '后端开发',
+      'Python',
+      'Node.js',
+      'Go',
+      '运维部署',
+      'Docker',
+      'Nginx',
+      'Kubernetes'
+    ];
+    const walker = document.createTreeWalker(surface, NodeFilter.SHOW_TEXT);
+    const textNodes = new Map<string, Text>();
+    let currentNode: Node | null = walker.nextNode();
+    while (currentNode) {
+      if (currentNode instanceof Text && '' !== currentNode.data.trim()) {
+        textNodes.set(currentNode.data, currentNode);
+      }
+      currentNode = walker.nextNode();
+    }
+
+    for (const label of items) {
+      const textNode = textNodes.get(label);
+      expect(textNode, label).toBeInstanceOf(Text);
+      const sourceBase = source.indexOf(label);
+      expect(sourceBase, label).toBeGreaterThanOrEqual(0);
+      for (let offset = 0; offset <= label.length; offset += 1) {
+        expect(
+          visualBoundarySourceOffset(
+            surface,
+            source,
+            baseline,
+            textNode as Text,
+            offset
+          ),
+          `${label}@${offset}`
+        ).toBe(sourceBase + offset);
+      }
+    }
+
+    const edited = baseline.replace('Kubernetes', 'Kubernete');
+    expect(mergeVisualMarkdownChange(source, baseline, edited)).toBe(
+      source.replace('Kubernetes', 'Kubernete')
+    );
+    surface.remove();
+  });
+
+  it('Fix 2 (Bug E): aligns both lines of quoted callout soft breaks with escaped brackets', () => {
+    const source = [
+      '> [!NOTE]',
+      '> 这是一个提示块，部分平台如 GitHub 支持。',
+      '',
+      '> [!TIP]',
+      '> 这是一个技巧提示。'
+    ].join('\n');
+    const surface = editor(
+      '<blockquote><p>[!NOTE]\n这是一个提示块，部分平台如 GitHub 支持。</p></blockquote>'
+      + '<blockquote><p>[!TIP]\n这是一个技巧提示。</p></blockquote>'
+    );
+    const baseline = serializeVisualMarkdown(surface);
+    expect(baseline).toBe(
+      '> \\[!NOTE\\] 这是一个提示块，部分平台如 GitHub 支持。\n\n> \\[!TIP\\] 这是一个技巧提示。'
+    );
+
+    const paragraphs = Array.from(surface.querySelectorAll('blockquote p'));
+    expect(paragraphs).toHaveLength(2);
+
+    const noteText = paragraphs[0]?.firstChild as Text;
+    const noteLine1 = '[!NOTE]';
+    const noteLine2 = '这是一个提示块，部分平台如 GitHub 支持。';
+    const noteLine1Source = source.indexOf(noteLine1);
+    const noteLine2Source = source.indexOf(noteLine2);
+    const noteLine2DomStart = noteText.data.indexOf(noteLine2);
+
+    for (let offset = 0; offset <= noteLine1.length; offset += 1) {
+      expect(
+        visualBoundarySourceOffset(surface, source, baseline, noteText, offset),
+        `note line1 @${offset}`
+      ).toBe(noteLine1Source + offset);
+    }
+    for (let offset = 0; offset <= noteLine2.length; offset += 1) {
+      expect(
+        visualBoundarySourceOffset(
+          surface,
+          source,
+          baseline,
+          noteText,
+          noteLine2DomStart + offset
+        ),
+        `note line2 @${offset}`
+      ).toBe(noteLine2Source + offset);
+    }
+
+    const tipText = paragraphs[1]?.firstChild as Text;
+    const tipLine1 = '[!TIP]';
+    const tipLine2 = '这是一个技巧提示。';
+    const tipLine1Source = source.indexOf(tipLine1);
+    const tipLine2Source = source.indexOf(tipLine2);
+    const tipLine2DomStart = tipText.data.indexOf(tipLine2);
+
+    for (let offset = 0; offset <= tipLine1.length; offset += 1) {
+      expect(
+        visualBoundarySourceOffset(surface, source, baseline, tipText, offset),
+        `tip line1 @${offset}`
+      ).toBe(tipLine1Source + offset);
+    }
+    for (let offset = 0; offset <= tipLine2.length; offset += 1) {
+      expect(
+        visualBoundarySourceOffset(
+          surface,
+          source,
+          baseline,
+          tipText,
+          tipLine2DomStart + offset
+        ),
+        `tip line2 @${offset}`
+      ).toBe(tipLine2Source + offset);
+    }
+
+    const edited = baseline.replace('GitHub 支持。', 'GitHub 支持');
+    expect(mergeVisualMarkdownChange(source, baseline, edited)).toBe(
+      source.replace('GitHub 支持。', 'GitHub 支持')
+    );
+    surface.remove();
   });
 });

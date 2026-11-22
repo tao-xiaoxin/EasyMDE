@@ -361,6 +361,63 @@ range when that ownership claim is withdrawn, which is the deliberate user
 selection the menu must describe. Neither test proves real browser Clipboard,
 media upload, or the full 2×20 lifecycle matrix.
 
+Three full-owner keydown regressions pin the whitespace-only Backspace clear.
+`normalizes whitespace-only document DOM on extra Backspace keydown` requires
+the canonical value to become empty with one history step, reset DOM and a
+connected caret with no failure, then byte-exact Undo/Redo; a further Backspace
+after Redo is a no-op. `restores pre-reset DOM and Selection when empty-document
+sync fails before canonical write` and `keeps reset DOM after empty-document
+sync fails after canonical write` pin the failure split: the first keeps the
+original nodes and native selection with unchanged history and revision, while
+the second keeps the committed empty source, reset presentation, connected
+caret and history step and reports the failure. These are unit evidence only;
+they do not claim the browser gate or any other gate result.
+The focused empty-paragraph history regression is `restores a certified
+zero-length empty paragraph across formal Preview with raw LF gaps
+(br-only|empty-text-br)` in `ImmersiveVisualEditor.test.tsx`. Both real-owner
+variants drive native `Q` input at the certified caret, exact raw LF source and
+selection, formal Preview acceptance, naturally grouped Undo/Redo, and immediate
+next-key editing after the restored certified `P0`; the empty-`Text` variant
+begins from the Chrome `P > empty Text + BR` native caret while the accepted
+snapshot remains a single-BR `P`. Malformed path, non-P body, and HTML-mismatch
+branches are static-only until separately executed and must not be reported as
+runtime coverage.
+`retires one LF when native Backspace joins an emptied terminal paragraph into a
+heading` is the focused component owner regression for the terminal join. It
+drives real CodeMirror and native `beforeinput` input emulation, checks one-LF
+source consistency, a true pre-edit selection, the public `applyTextChange`
+history-record flag, Undo/Redo restoration, and continued native input. This is
+unit coverage only; it does not prove deployed browser behavior or performance.
+`newPREEOF EOF PRE join retires one separator LF without changing the code body`
+is the focused component regression for a certified closed PRE at owned EOF. It
+checks the public returned mutation range for exactly one final LF, fragmented
+highlighted code coordinates (`local 3`, cumulative `7`), unchanged code/fence
+bytes, natural Undo/Redo, and continued native typing through real CodeMirror.
+Four public-repair variants cover foreign PRE, reordered root, fence-info
+mismatch, and stale empty-paragraph metadata, requiring unchanged
+source/revision/writes plus the public repair/refusal diagnostics. This remains
+component-only coverage and does not claim unsupported/cancel, CRLF,
+deployed-browser, or performance coverage.
+The parameterized `keeps EOF|middle deletion at its code boundary after an empty
+paragraph joins PRE` family is the adjacent owner regression. Its EOF join
+baseline removes the final separator LF while the middle baseline preserves it;
+continuous and settled cases separately count the actual public port mutations
+(tail flush then LF, or LF only), and four normal cases then delete exactly one
+original body unit with the canonical/native code caret. Two foreign-clone cases
+replace an unrelated retained paragraph after the join before the next deletion and require zero body writes,
+unchanged revision/history, an editable surface, and the public
+repair/refusal diagnostic. The two invalid removal cases preserve the entire
+source/revision/history and the middle cases retain the following PRE identity.
+This remains component coverage and does not claim CRLF, browser, or performance
+behavior.
+`newUndo59 fragmented code inverse keeps cumulative code caret` is the focused
+component regression for conditional inverse ownership. It runs a legal
+fragmented code body through actual CodeMirror plus simulated native
+`beforeinput`/`input` events in a component test, not a browser, and requires
+exact source and code plaintext, canonical/native caret, Undo only (no Redo),
+failure/health state, and the public history-selection record flag. This is
+component coverage only; it does not prove deployed browser behavior.
+
 Several owner regressions pin the demand paths around those rules.
 `keeps the canonical code-block delete available after a native text edit
 advanced canonical` and `commits an exact replacement after a native text edit
@@ -1001,6 +1058,18 @@ and restores the Settings Center editing mode after both normal and CDP hard
 reloads. It loads no Legacy Focus assets and remains zero-write until the user
 invokes a legitimate WordPress mutation.
 
+The two `[oracle-contract]` checks in
+`tests/e2e/visual-basic-editing.spec.mjs` cover the short-stage code
+certificate without a browser: `certified code history treats only the closing
+renderer LF as representation-only` proves that exactly one declared closing
+fence LF may differ while source, complete code body, block identity, caret,
+and provenance remain strict, and `certified code observer rejects forged
+body, caret, structure, and provenance` exercises the negative controls for
+body loss or replacement, internal/terminal LF loss, extra whitespace, wrong
+block or PRE shape, caret direction/range, missing proof, and ambiguous
+declarations. These are contract-level checks only; they do not claim a
+browser, natural keyboard, full Basic, or release-gate result.
+
 The focused Windowed rich-cell keyboard cases in
 `tests/e2e/visual-basic-editing.spec.mjs` are opt-in, not part of default or
 `[short-stage]` registration. Use the existing authorized WordPress test
@@ -1168,6 +1237,17 @@ selection is compared with the recorded forward commit; a deliberate caret move
 before the next edit is a different, valid Undo selection. Historical pre-fix
 evidence demonstrated that restoring only the old structural-only adoption gate
 caused this regression to refuse `b1 Backspace 9`.
+The same file carries the executable prefix `keeps a pinned text-tail caret
+editable across an unconsumed same-source ready window reorder (fresh public
+Preview epoch=false|true)`. Its steady and fresh public-epoch variants accept a
+same-source new signature through the real Preview session, run an actual
+scroll RAF window commit with the Root notification still unconsumed, then send
+the next key immediately. They verify exact canonical source and native caret,
+retained row identity, the next-key continuation, and finite Undo/Redo across
+declared S0/S1/S2 states. Related executable negatives keep same-ID foreign
+nodes, protected or foreign DOM mutation, source mismatch, and null/stale
+accepted state refused. These are real-owner unit tests, not browser
+acceptance.
 
 Real-document pending input ownership and native event cancelability in
 `ImmersiveVisualEditor.test.tsx` are covered by executable parameterized suites:
@@ -1257,13 +1337,44 @@ merge failure that leaves canonical source unchanged`, and `preserves protected 
 node identity across a structural rollback` are planned / unverified coverage
 specifications; no executable test cases under those exact names currently exist in
 the frontend test suites.
-The dedicated immersive unlock browser cases measure in-page click-to-pending, first visible pending
-frame, click-to-focused-editable timing, and Long Tasks. They also check
+The dedicated immersive unlock browser cases measure in-page click-to-pending,
+the first rAF observation of a pending control that meets the existing
+visibility conditions (not a pixel-presentation claim),
+click-to-focused-editable timing, and Long Tasks. After login, the suite waits
+for dashboard load and a bounded monitor drain before opening a new post.
+Formal latency values must be finite and non-negative; an invalid measurement
+fails with a fixed measurement error and is never clamped.
+`clickToPendingFrameMs` retains its historical field name but now measures
+the first visibility-qualified rAF callback's `performance.now` observation
+delay from the trusted click; the raw rAF timestamp remains diagnostic. The
+`100ms` bound is unchanged, and old-algorithm data must not be mixed with or
+used to accept the new algorithm. `MutationObserver` `pendingAt` is only
+observation time, not the instant of the DOM mutation. They also check
 repeated pointer, Enter, and Space activation, focus retained on the pending
 control, focus handed to the ready editor, cancellation, bounded window
 mounting, and absence of Preview or document writes. A private maintainer
 document is tested locally by native paste and exact source comparison; its
 content is not part of the public fixtures or test artifacts.
+
+The shared `tests/e2e/helpers/visual-browser-monitor.mjs` lifecycle
+installs before login and retains only privacy-safe scalar event
+summaries. It drains and stops history/CDP observation, performs a
+final drain before the acknowledged rejection cutoff, then finalizes
+and detaches. The monitor-contract tests hold real fetch,
+history-stop, final-drain, and transport-failure paths. Semantic
+document-end checks accept exactly the host EOF or a declared terminal
+row, with settled and transient outcomes distinguished.
+
+Preview read supersession is accepted only for the exact same post and a
+predeclared ordered source request when a later Preview read actually
+finishes 2xx and the final public source, DOM, caret, and health assertions
+pass. This requires actual request order and unique request identity; it does
+not impose a final HTTP-response requirement for later local character input.
+The latest, unknown, or pending request, errors, non-aborts, other-post
+requests, and HTTP failures remain failures. Raw request failures remain
+visible, with approved supersession counts reported separately. Explicit
+cancellation expectations remain strict.
+
 For code-map changes, test a locally typed fence without a Preview block ID,
 an accepted mapped empty fence, and a mapped block whose ID order or fence
 topology becomes stale. The stale input must be blocked without changing the

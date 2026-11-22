@@ -281,11 +281,27 @@ export function previewWindowBlockIndexForNode(
 	return null;
 }
 
-export function validatePreviewWindowRepository(
+function validatePreviewWindowFlowGeometryEntry(
+	geometry: PreviewWindowFlowGeometry | undefined,
+): void {
+	if (!geometry) {
+		fail("preview-window-flow-geometry-missing");
+	}
+	if (
+		!Number.isFinite(geometry.borderHeight) ||
+		geometry.borderHeight < 0 ||
+		!Number.isFinite(geometry.marginBefore) ||
+		!Number.isFinite(geometry.marginAfter) ||
+		!Number.isFinite(geometry.gapAfter) ||
+		geometry.borderHeight + geometry.gapAfter < 0
+	) {
+		fail("preview-window-flow-geometry-invalid");
+	}
+}
+
+export function validatePreviewWindowRepositoryHeader(
 	repository: PreviewWindowNodeRepository,
 ): void {
-	// The repository is detached after the staging candidate is removed, so
-	// validate its node sequence without relying on a connected parent.
 	if (repository.nodes.length !== repository.blocks.length) {
 		fail("preview-window-repository-count-mismatch");
 	}
@@ -298,17 +314,35 @@ export function validatePreviewWindowRepository(
 	) {
 		fail("preview-window-flow-epoch-missing");
 	}
+}
+
+export function validatePreviewWindowRepositoryBlock(
+	repository: PreviewWindowNodeRepository,
+	index: number,
+): void {
+	validatePreviewWindowFlowGeometryEntry(repository.flowGeometry[index]);
+	const block = repository.blocks[index];
+	if (
+		!block ||
+		block.index !== index ||
+		repository.nodes[index] !== block.node ||
+		repository.indexById.get(block.map.id) !== index
+	) {
+		fail("preview-window-repository-order-invalid");
+	}
+	if (block.node.getAttribute(VISUAL_BLOCK_ATTRIBUTE) !== block.map.id) {
+		fail("preview-window-block-map-marker-mismatch");
+	}
+}
+
+export function validatePreviewWindowRepository(
+	repository: PreviewWindowNodeRepository,
+): void {
+	// The repository is detached after the staging candidate is removed, so
+	// validate its node sequence without relying on a connected parent.
+	validatePreviewWindowRepositoryHeader(repository);
 	for (const geometry of repository.flowGeometry) {
-		if (
-			!Number.isFinite(geometry.borderHeight) ||
-			geometry.borderHeight < 0 ||
-			!Number.isFinite(geometry.marginBefore) ||
-			!Number.isFinite(geometry.marginAfter) ||
-			!Number.isFinite(geometry.gapAfter) ||
-			geometry.borderHeight + geometry.gapAfter < 0
-		) {
-			fail("preview-window-flow-geometry-invalid");
-		}
+		validatePreviewWindowFlowGeometryEntry(geometry);
 	}
 	repository.blocks.forEach((block, index) => {
 		if (repository.nodes[index] !== block.node) {
@@ -385,11 +419,12 @@ export function measurePreviewWindowBlockGeometry(
 		gapAfter: 0,
 	},
 	ownedGap?: HTMLElement,
+	precomputedRect?: DOMRect,
 ): PreviewWindowFlowMeasurement | null {
 	if (!node.isConnected) {
 		throw new PreviewWindowDomError("preview-window-flow-node-disconnected");
 	}
-	const rect = node.getBoundingClientRect();
+	const rect = precomputedRect ?? node.getBoundingClientRect();
 	const style = node.ownerDocument.defaultView?.getComputedStyle(node) ?? null;
 	const nextStyle =
 		nextNode?.ownerDocument.defaultView?.getComputedStyle(nextNode) ?? null;
@@ -746,6 +781,7 @@ export function measurePreviewWindowAdoptedBlock(
 		repository.nodes[index + 1] ?? null,
 		previousGeometry,
 		repository.ownedGap?.node,
+		rect,
 	);
 	if (!measurement) return;
 	publishPreviewWindowMeasuredBlock(

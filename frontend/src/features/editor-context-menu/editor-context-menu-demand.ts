@@ -469,12 +469,6 @@ export function useEditorContextMenuDemand(input: Readonly<{
 		target: Element | null,
 		activation: "keyboard" | "pointer"
 	): void => {
-		const pendingScrollBaseline = surface.element.ownerDocument.defaultView
-			? captureEditorContextMenuScrollBaseline(
-				surface.element,
-				surface.element.ownerDocument.defaultView
-			)
-			: undefined;
 		const previousAction = actionPromiseRef.current;
 		if (previousAction?.cancel) {
 			previousAction.cancel();
@@ -543,6 +537,19 @@ export function useEditorContextMenuDemand(input: Readonly<{
 							: "editor-context-menu-source-read-only")
 				);
 			}
+			// Capture the scroll baseline only after demand and pointer
+			// preparation succeed: synchronous preparation may retire a
+			// trailing presentation (such as a detached document-end sink) and
+			// let the browser clamp scrollTop before the async scroll event
+			// arrives. Recording the post-preparation scroll position keeps that
+			// layout settle from cancelling the menu while real post-gesture
+			// scrolling still dismisses it.
+			const pendingScrollBaseline = surface.element.ownerDocument.defaultView
+				? captureEditorContextMenuScrollBaseline(
+					surface.element,
+					surface.element.ownerDocument.defaultView
+				)
+				: undefined;
 			// Capture the target once, while the element the user pointed at is
 			// still live. Capture is pure: it reads the owner's provenance without
 			// writing the document, moving the selection, or requesting a render.

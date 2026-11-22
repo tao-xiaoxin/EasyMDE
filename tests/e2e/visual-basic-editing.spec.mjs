@@ -1,8 +1,15 @@
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 
 import { expect, test } from '@playwright/test';
+
+import {
+  createPreviewReadOperationLedger,
+  finishVisualBrowserMonitor as finishSharedVisualBrowserMonitor,
+  installHistoryObserver,
+  installVisualBrowserMonitor as installSharedVisualBrowserMonitor
+} from './helpers/visual-browser-monitor.mjs';
 
 // Installed Playwright otherwise captures the article's ARIA text on failure.
 process.env.PLAYWRIGHT_NO_COPY_PROMPT = '1';
@@ -11,48 +18,613 @@ process.env.PLAYWRIGHT_NO_COPY_PROMPT = '1';
 // Do not record login fields, network payloads, or unsanitized diagnostics.
 test.use({ trace: 'off', video: 'off', screenshot: 'off', permissions: ['clipboard-read', 'clipboard-write'] });
 
+
 const firstRuntimeFailureObservations = new WeakMap();
+const browserMonitors = new WeakMap();
+const OWNED_POST_ANNOTATION = 'easymde-e2e-owned-post';
+let ownedPostCapture = null;
+
+function monitorPathClass(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    if (url.pathname.endsWith('/easymde/v1/preview')
+      || url.searchParams.get('rest_route') === '/easymde/v1/preview') return 'preview';
+    if (url.pathname.includes('/easymde/v1/') || url.searchParams.get('rest_route')?.startsWith('/easymde/v1/')) return 'easymde-api';
+    if (url.pathname.endsWith('/admin-ajax.php')) return 'admin-ajax';
+    if (url.pathname.includes('/wp-content/plugins/')) return 'plugin-asset';
+    if (url.pathname.includes('/wp-admin/')) return 'wp-admin';
+    return 'other';
+  } catch { return 'invalid'; }
+}
+
+async function installBrowserMonitor(page, { baseURL = test.info().project.use.baseURL } = {}) {
+  const existing = browserMonitors.get(page);
+  if (existing) return existing;
+  const state = {
+    counts: { consoleWarnings: 0, consoleErrors: 0, pageErrors: 0, unhandledRejections: 0,
+      dialogs: 0, requestFailures: 0, httpErrors: 0, navigations: 0, popups: 0 },
+    approved: { previewCancellations: 0, setupNavigations: 0, dialogs: 0, popups: 0 },
+    issues: [],
+    rejectionIngressStopped: false,
+    sealed: false,
+    detached: false
+  };
+  const preview = {
+    expectedAborts: new WeakMap(),
+    failures: [],
+    httpFailures: [],
+    pendingConsoleFailures: [],
+    approvedAborts: 0,
+    eventOrdinal: 0
+  };
+  const navigationExpectations = [];
+  const dialogExpectations = [];
+  const popupExpectations = [];
+  const pendingHandlers = new Set();
+  const inFlightRequests = new Set();
+  const previewReadLedger = createPreviewReadOperationLedger({
+    origin: new URL(baseURL).origin,
+    record: (code) => record(code),
+    deferredAbortCode: () => 'preview-request-cancellation-unapproved',
+    onApprovedAborts: (count) => {
+      preview.approvedAborts += count;
+      state.approved.previewCancellations += count;
+    }
+  });
+  let historyObserver = null;
+  let eventOrdinal = 0;
+  const noteEvent = () => { eventOrdinal += 1; };
+  const record = (code) => { if (state.issues.length < 128) state.issues.push(code); };
+  const track = (promise) => {
+    const tracked = Promise.resolve(promise);
+    pendingHandlers.add(tracked);
+    void tracked.finally(() => pendingHandlers.delete(tracked));
+    return tracked;
+  };
+  const trackableRequest = (request) => !['eventsource', 'ping'].includes(request.resourceType());
+  const notePreviewEvent = () => { preview.eventOrdinal += 1; return preview.eventOrdinal; };
+  const pairPreviewConsoleFailure = (failure) => {
+    const index = preview.pendingConsoleFailures.findIndex(
+      (consoleFailure) => !consoleFailure.failurePaired && consoleFailure.pathClass === failure.pathClass
+    );
+    if (index < 0) return false;
+    const [consoleFailure] = preview.pendingConsoleFailures.splice(index, 1);
+    failure.consolePaired = true;
+    consoleFailure.failurePaired = true;
+    return true;
+  };
+  const onRequest = (request) => {
+    noteEvent();
+    if (trackableRequest(request)) inFlightRequests.add(request);
+    previewReadLedger.observeRequest(request);
+  };
+  const onRequestFinished = (request) => {
+    noteEvent();
+    inFlightRequests.delete(request);
+    previewReadLedger.observeFinished(request);
+  };
+  const onConsole = (message) => {
+    noteEvent();
+    if (message.type() === 'warning') {
+      state.counts.consoleWarnings += 1;
+      record('console-warning');
+    } else if (message.type() === 'error') {
+      state.counts.consoleErrors += 1;
+      const text = message.text();
+      const code = text.match(/\[EasyMDE\]\s+([a-z0-9-]+)/u)?.[1];
+      if (!code && text.startsWith('Failed to load resource:')
+        && monitorPathClass(message.location().url) === 'preview') {
+        const previewOrdinal = notePreviewEvent();
+        const httpFailure = preview.httpFailures.find((entry) => !entry.consolePaired);
+        if (httpFailure) {
+          httpFailure.consolePaired = true;
+          return;
+        }
+        const candidate = preview.failures.find(
+          (failure) => !failure.consolePaired && failure.pathClass === 'preview'
+        );
+        if (candidate) candidate.consolePaired = true;
+        else preview.pendingConsoleFailures.push({ pathClass: 'preview', failurePaired: false, previewOrdinal });
+      } else {
+        record(code ? `console-error:${code}` : 'console-error:unclassified');
+      }
+    }
+  };
+  const onPageError = () => { noteEvent(); state.counts.pageErrors += 1; record('page-error'); };
+  const onDialog = (dialog) => {
+    noteEvent();
+    state.counts.dialogs += 1;
+    const type = ['alert', 'confirm', 'prompt', 'beforeunload'].includes(dialog.type()) ? dialog.type() : 'unknown';
+    const index = dialogExpectations.findIndex((expected) => expected.type === type && !expected.claimed);
+    const expected = index >= 0 ? dialogExpectations[index] : null;
+    if (expected) expected.claimed = true;
+    else record(`dialog:${type}`);
+    const action = expected?.action ?? 'dismiss';
+    const operation = action === 'accept' ? dialog.accept() : dialog.dismiss();
+    track(operation.then(() => {
+      if (expected) state.approved.dialogs += 1;
+    }, () => record('dialog-action-failed')));
+  };
+  const onPopup = (popup) => {
+    noteEvent();
+    state.counts.popups += 1;
+    const pathClass = monitorPathClass(popup.url());
+    const index = popupExpectations.findIndex((expected) => expected.pathClass === pathClass && !expected.claimed);
+    const expected = index >= 0 ? popupExpectations[index] : null;
+    if (expected) expected.claimed = true;
+    else record(`popup:${pathClass}`);
+    track(popup.close().then(() => {
+      if (expected) state.approved.popups += 1;
+    }, () => record('popup-close-failed')));
+  };
+  const onRequestFailed = (request) => {
+    noteEvent();
+    inFlightRequests.delete(request);
+    state.counts.requestFailures += 1;
+    const ledgerDeferred = previewReadLedger.observeFailure(request);
+    const pathClass = monitorPathClass(request.url());
+    const resourceType = request.resourceType();
+    if (pathClass === 'preview' && request.failure()?.errorText === 'net::ERR_ABORTED') {
+      const failure = { request, pathClass: 'preview', consolePaired: false, approved: false,
+        ledgerDeferred, previewOrdinal: notePreviewEvent() };
+      preview.failures.push(failure);
+      pairPreviewConsoleFailure(failure);
+    } else {
+      if (!ledgerDeferred) record(`request-failed:${pathClass}:${resourceType}`);
+      if (pathClass === 'preview') {
+        const failure = { request, pathClass: 'preview', consolePaired: false, approved: false,
+          ledgerDeferred: true, previewOrdinal: notePreviewEvent() };
+        preview.failures.push(failure);
+        pairPreviewConsoleFailure(failure);
+      }
+    }
+  };
+  const onResponse = (response) => {
+    noteEvent();
+    previewReadLedger.observeResponse(response.request(), response.status());
+    if (response.status() < 400) return;
+    const pathClass = monitorPathClass(response.url());
+    if (pathClass === 'preview') {
+      const httpFailure = { pathClass: 'preview', consolePaired: false, previewOrdinal: notePreviewEvent() };
+      if (!pairPreviewConsoleFailure(httpFailure)) preview.httpFailures.push(httpFailure);
+    }
+    const resourceType = response.request().resourceType();
+    state.counts.httpErrors += 1;
+    record(`http-${response.status()}:${pathClass}:${resourceType}`);
+  };
+  const handleDocumentNavigation = (url) => {
+    noteEvent();
+    state.counts.navigations += 1;
+    let destination;
+    try {
+      destination = new URL(url);
+    } catch {
+      record('main-frame-navigation:invalid');
+      return false;
+    }
+    const index = navigationExpectations.findIndex((expected) => !expected.claimed
+      && expected.origin === destination.origin && expected.pathname === destination.pathname
+      && expected.search === destination.search && expected.hash === destination.hash);
+    if (index >= 0) {
+      navigationExpectations[index].claimed = true;
+      state.approved.setupNavigations += 1;
+      return true;
+    }
+    record(`main-frame-navigation:${monitorPathClass(destination.href)}`);
+    return false;
+  };
+  page.on('request', onRequest);
+  page.on('requestfinished', onRequestFinished);
+  page.on('console', onConsole);
+  page.on('pageerror', onPageError);
+  page.on('dialog', onDialog);
+  page.on('popup', onPopup);
+  page.on('requestfailed', onRequestFailed);
+  page.on('response', onResponse);
+  try {
+    historyObserver = await installHistoryObserver(page, {
+      onDocumentNavigation: handleDocumentNavigation,
+      recordIssue: record
+    });
+  } catch {
+    page.off('request', onRequest);
+    page.off('requestfinished', onRequestFinished);
+    page.off('console', onConsole);
+    page.off('pageerror', onPageError);
+    page.off('dialog', onDialog);
+    page.off('popup', onPopup);
+    page.off('requestfailed', onRequestFailed);
+    page.off('response', onResponse);
+    throw new Error('browser-monitor-install-failed');
+  }
+  Object.assign(state, {
+    expectNavigation(destination, action, baseURL = test.info().project.use.baseURL) {
+      if (typeof action !== 'string' || !/^[a-z0-9-]+$/u.test(action)) {
+        throw new Error('browser-monitor-invalid-navigation-action');
+      }
+      let parsed;
+      try {
+        const base = new URL(baseURL);
+        parsed = new URL(destination, base);
+        if (parsed.origin !== base.origin
+          || !['http:', 'https:'].includes(parsed.protocol)) throw new Error();
+      } catch {
+        throw new Error('browser-monitor-invalid-navigation-destination');
+      }
+      navigationExpectations.push({
+        origin: parsed.origin, pathname: parsed.pathname, search: parsed.search,
+        hash: parsed.hash, pathClass: monitorPathClass(parsed.href), action, claimed: false
+      });
+    },
+    markUnhandledRejection() { state.counts.unhandledRejections += 1; record('unhandled-rejection'); },
+    async flushHistory() {
+      return historyObserver?.flush?.() ?? false;
+    },
+    async stopHistory() {
+      return historyObserver?.stop?.() ?? false;
+    },
+    async assertInputReady() {
+      const drained = await state.drain({ timeoutMs: 5_000, quietMs: 300 });
+      const rejectionClean = await state.flushRejections();
+      const historyClean = await state.flushHistory();
+      if (!drained || !rejectionClean || !historyClean || state.issues.length > 0) {
+        throw new Error('browser-monitor-not-clean-before-input');
+      }
+    },
+    async flushRejections() {
+      if (page.isClosed()) { record('rejection-barrier-page-closed'); return false; }
+      try {
+        const current = new URL(page.url());
+        if (current.protocol === 'about:') return true;
+      } catch {
+        record('rejection-barrier-unavailable');
+        return false;
+      }
+      let timer;
+      try {
+        const timeout = new Promise((resolve) => { timer = setTimeout(resolve, 2_000); });
+        const results = await Promise.race([Promise.all(page.frames().map((frame) => frame.evaluate(
+          (key) => window[key]?.flush?.() ?? null,
+          '__easymdeRejectionBridge'
+        ).catch(() => null))), timeout]);
+        if (!Array.isArray(results)) { record('rejection-barrier-timeout'); return false; }
+        let clean = true;
+        for (const result of results) {
+          if (!result) { record('rejection-barrier-unavailable'); clean = false; continue; }
+          if (result.failed > 0) { record('rejection-notification-transport-failed'); clean = false; }
+          if (result.pending > 0) { record('rejection-barrier-pending'); clean = false; }
+        }
+        return clean;
+      } catch {
+        record('rejection-barrier-unavailable');
+        return false;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    async stopRejections() {
+      if (state.rejectionIngressStopped) return;
+      state.rejectionIngressStopped = true;
+      if (page.isClosed()) { record('rejection-barrier-page-closed'); return; }
+      let timer;
+      try {
+        const timeout = new Promise((resolve) => { timer = setTimeout(resolve, 2_000); });
+        const results = await Promise.race([Promise.all(page.frames().map((frame) => frame.evaluate(
+          (key) => window[key]?.stop?.() ?? null,
+          '__easymdeRejectionBridge'
+        ).catch(() => null))), timeout]);
+        if (!Array.isArray(results)) { record('rejection-barrier-timeout'); return; }
+        for (const result of results) {
+          if (!result) { record('rejection-barrier-unavailable'); continue; }
+          if (result.failed > 0) record('rejection-notification-transport-failed');
+          if (result.pending > 0) record('rejection-barrier-pending');
+        }
+      } catch {
+        record('rejection-barrier-unavailable');
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    expectDialog(type, action = 'dismiss') {
+      if (!['alert', 'confirm', 'prompt', 'beforeunload'].includes(type)
+        || !['accept', 'dismiss'].includes(action)) throw new Error('browser-monitor-invalid-dialog-expectation');
+      dialogExpectations.push({ type, action, claimed: false });
+    },
+    expectPopup(pathClass = 'other', action = 'close') {
+      if (action !== 'close' || !['preview', 'easymde-api', 'admin-ajax', 'plugin-asset', 'wp-admin', 'other', 'invalid'].includes(pathClass)) {
+        throw new Error('browser-monitor-invalid-popup-expectation');
+      }
+      popupExpectations.push({ pathClass, action, claimed: false });
+    },
+    expectPreviewCancellation(request, action = 'test-cancellation') {
+      if (monitorPathClass(request.url()) !== 'preview' || !['test-cancellation', 'supersede', 'teardown'].includes(action)) {
+        throw new Error('browser-monitor-invalid-preview-cancellation-expectation');
+      }
+      preview.expectedAborts.set(request, { action });
+    },
+    beginPreviewReadOperation(declaration) {
+      return previewReadLedger.begin(declaration);
+    },
+    beginPhased(declaration) {
+      return previewReadLedger.beginPhased(declaration);
+    },
+    enterPhase(operationId, phaseId) {
+      return previewReadLedger.enterPhase(operationId, phaseId);
+    },
+    provePreviewReadOperation(operationId, evidence) {
+      return previewReadLedger.prove(operationId, evidence);
+    },
+    async drain({ timeoutMs = 5_000, quietMs = 50 } = {}) {
+      const deadline = Date.now() + timeoutMs;
+      const settleHandlers = async (limitMs) => {
+        if (pendingHandlers.size === 0) return true;
+        let timer;
+        const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(false), limitMs); });
+        const settled = Promise.allSettled([...pendingHandlers]).then(() => true);
+        const result = await Promise.race([settled, timeout]);
+        clearTimeout(timer);
+        return result;
+      };
+      while (Date.now() < deadline) {
+        const remaining = Math.max(1, deadline - Date.now());
+        await settleHandlers(Math.min(remaining, 50));
+        if (inFlightRequests.size === 0 && pendingHandlers.size === 0) {
+          const observed = eventOrdinal;
+          await new Promise((resolve) => setTimeout(resolve, Math.min(quietMs, Math.max(1, deadline - Date.now()))));
+          if (observed === eventOrdinal && inFlightRequests.size === 0 && pendingHandlers.size === 0) return true;
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, Math.min(50, Math.max(1, deadline - Date.now()))));
+        }
+      }
+      record('browser-monitor-drain-timeout');
+      return false;
+    },
+    finalize() {
+      if (state.sealed) return;
+      state.sealed = true;
+      previewReadLedger.finalize();
+      for (const failure of preview.failures) {
+        if (failure.ledgerDeferred) continue;
+        if (preview.expectedAborts.has(failure.request)) {
+          failure.approved = true;
+          preview.approvedAborts += 1;
+          state.approved.previewCancellations += 1;
+        } else {
+          record('preview-request-cancellation-unapproved');
+        }
+      }
+      for (const failure of preview.pendingConsoleFailures) if (!failure.failurePaired) record('preview-console-failure-unpaired');
+      for (const expected of navigationExpectations) if (!expected.claimed) {
+        record(`navigation-expected-missing:${expected.pathClass}:${expected.action}`);
+      }
+      for (const expected of dialogExpectations) if (!expected.claimed) record(`dialog-expected-missing:${expected.type}`);
+      for (const expected of popupExpectations) if (!expected.claimed) record(`popup-expected-missing:${expected.pathClass}`);
+    },
+    recordFailure(code) {
+      if (typeof code === 'string' && /^[a-z0-9][a-z0-9-]{0,79}$/u.test(code)) record(code);
+    },
+    summary() { return { counts: { ...state.counts }, approved: { ...state.approved },
+      issues: [...new Set(state.issues)], history: historyObserver?.snapshot?.() ?? null }; },
+    async detach() {
+      if (state.detached) return true;
+      page.off('request', onRequest);
+      page.off('requestfinished', onRequestFinished);
+      page.off('console', onConsole);
+      page.off('pageerror', onPageError);
+      page.off('dialog', onDialog);
+      page.off('popup', onPopup);
+      page.off('requestfailed', onRequestFailed);
+      page.off('response', onResponse);
+      const historyDetached = await historyObserver?.detach?.() ?? true;
+      state.detached = true;
+      if (historyDetached === false) record('monitor-history-detach-failed');
+      return historyDetached !== false;
+    }
+  });
+  browserMonitors.set(page, state);
+  return state;
+}
+
+async function installMonitorRejectionBridge(page, browserMonitor, onUnhandled = () => {}) {
+  await page.exposeFunction('__easymdeReportRejection', () => {
+    browserMonitor.markUnhandledRejection();
+    onUnhandled();
+  });
+  await page.addInitScript(() => {
+    const pending = new Map();
+    let observed = 0;
+    let confirmed = 0;
+    let failed = 0;
+    let nextId = 1;
+    let accepting = true;
+    let notificationListener;
+    const notify = () => {
+      if (!accepting) return;
+      observed += 1;
+      const id = nextId;
+      nextId += 1;
+      let operation;
+      try {
+        if (typeof window.__easymdeReportRejection !== 'function') { failed += 1; return; }
+        operation = Promise.resolve(window.__easymdeReportRejection(id));
+      } catch {
+        failed += 1;
+        return;
+      }
+      const tracked = Promise.resolve(operation).then(
+        () => { confirmed += 1; pending.delete(id); },
+        () => { failed += 1; pending.delete(id); }
+      );
+      pending.set(id, tracked);
+    };
+    const flush = async () => {
+      let boundary = observed;
+      do {
+        await Promise.allSettled([...pending.values()]);
+        if (boundary === observed && pending.size === 0) break;
+        boundary = observed;
+      } while (accepting);
+      return { observed, pending: pending.size, confirmed, failed };
+    };
+    window.__easymdeRejectionBridge = {
+      get observed() { return observed; },
+      get pending() { return pending.size; },
+      get confirmed() { return confirmed; },
+      get failed() { return failed; },
+      async flush() { return flush(); },
+      async stop() {
+        accepting = false;
+        window.removeEventListener('unhandledrejection', notificationListener);
+        await flush();
+        return { observed, pending: pending.size, confirmed, failed };
+      }
+    };
+    notificationListener = () => { void notify(); };
+    window.addEventListener('unhandledrejection', notificationListener);
+  });
+}
+
+async function finalizeBasicMonitor(monitor) {
+  try { await monitor.drain(); } catch { monitor.recordFailure('browser-monitor-drain-failed'); }
+  try { await monitor.stopHistory(); } catch { monitor.recordFailure('browser-monitor-history-stop-failed'); }
+  try { await monitor.drain(); } catch { monitor.recordFailure('browser-monitor-final-drain-failed'); }
+  try { await monitor.stopRejections(); } catch { monitor.recordFailure('browser-monitor-rejection-shutdown-failed'); }
+  try { monitor.finalize(); } catch { monitor.recordFailure('browser-monitor-finalize-failed'); }
+  try { await monitor.detach(); } catch { monitor.recordFailure('browser-monitor-detach-failed'); }
+  return monitor.summary();
+}
 
 test.afterEach(async ({ page }, result) => {
-  if (result.status === result.expectedStatus || page.isClosed()) return;
-  const firstRuntimeFailure = firstRuntimeFailureObservations.get(page);
-  if (firstRuntimeFailure) console.log(JSON.stringify(await firstRuntimeFailure));
-  const states = await page.evaluate(() => window.__easymdeTestEditabilityStates ?? []);
-  await result.attach('editability-transitions', {
-    body: JSON.stringify(states),
-    contentType: 'application/json'
-  });
-  const firstFailure = await page.evaluate(() => {
-    const surface = document.querySelector('[data-easymde-preview-html-sink][role="textbox"]');
-    const native = document.getSelection();
-    const input = document.querySelector('.easymde-source-react .cm-content');
-    // Read only the installed CodeMirror view's scalar selection. Tile is the
-    // current version's DOM link used by EditorView.findFromDOM().
-    const canonical = input?.cmTile?.root?.view?.state?.selection?.main;
-    const point = (node, offset) => ({
-      connected: !!node?.isConnected,
-      inside: !!node && !!surface?.contains(node),
-      nodeType: node?.nodeType ?? null,
-      parentTag: node?.parentElement?.tagName ?? null,
-      offset,
-      textLength: node instanceof Text ? node.length : null
+  const monitor = browserMonitors.get(page);
+  const ownership = ownedPostCapture;
+  ownedPostCapture = null;
+  const primaryFailure = result.status !== result.expectedStatus;
+  let monitorSummary = null;
+  let monitorFailure = null;
+  if (primaryFailure && !page.isClosed()) {
+    try {
+      const firstRuntimeFailure = firstRuntimeFailureObservations.get(page);
+      if (firstRuntimeFailure) {
+        const observation = await firstRuntimeFailure;
+        const state = observation.state;
+        console.log(JSON.stringify({ ...observation,
+          state: state?.runtimeEditable === undefined ? safeFullCrossBlockState(state) : safeWindowedState(state) }));
+      }
+      const states = await page.evaluate(() => window.__easymdeTestEditabilityStates ?? []);
+      await result.attach('editability-transitions', {
+        body: JSON.stringify(states),
+        contentType: 'application/json'
+      });
+      const firstFailure = await page.evaluate(() => {
+        const surface = document.querySelector('[data-easymde-preview-html-sink][role="textbox"]');
+        const native = document.getSelection();
+        const point = (node, offset) => ({
+          connected: !!node?.isConnected,
+          inside: !!node && !!surface?.contains(node),
+          nodeType: node?.nodeType ?? null,
+          parentTag: node?.parentElement?.tagName ?? null,
+          offset,
+          textLength: node instanceof Text ? node.length : null
+        });
+        return {
+          phase: 'first-browser-failure-state',
+          sourceLength: document.querySelector('#easymde-source')?.value.length ?? null,
+          nativeAnchor: point(native?.anchorNode, native?.anchorOffset ?? null),
+          nativeFocus: point(native?.focusNode, native?.focusOffset ?? null),
+          nativeCollapsed: native?.isCollapsed ?? null,
+          editable: surface?.getAttribute('contenteditable') ?? null,
+          effectiveEditable: surface?.isContentEditable ?? null,
+          locked: document.querySelector('.easymde-immersive-preview-lock')?.getAttribute('aria-pressed') ?? null,
+          session: document.querySelector('[data-easymde-session-status]')?.getAttribute('data-easymde-session-status') ?? null,
+          previewPhase: surface?.getAttribute('data-easymde-preview-phase') ?? null,
+          busy: surface?.getAttribute('aria-busy') ?? null
+        };
+      });
+      console.log(JSON.stringify(firstFailure));
+    } catch {
+      console.log(JSON.stringify({ phase: 'after-each-evidence-unavailable' }));
+    }
+  }
+
+  if (monitor) {
+    try {
+      monitorSummary = await finalizeBasicMonitor(monitor);
+    } catch {
+      try { monitor.recordFailure('browser-monitor-finalization-failed'); } catch { /* safe fallback below */ }
+      try { await monitor.detach(); } catch { try { monitor.recordFailure('browser-monitor-detach-failed'); } catch { /* safe log below */ } }
+      try {
+        monitorSummary = monitor.summary();
+      } catch {
+        monitorSummary = {
+          counts: {}, approved: {}, issues: ['browser-monitor-summary-unavailable'], history: null
+        };
+        console.log(JSON.stringify({ phase: 'browser-monitor-summary-unavailable' }));
+      }
+    }
+  } else {
+    monitorSummary = { available: false, counts: {}, approved: {}, issues: [], history: null };
+  }
+
+  if (ownership) {
+    try {
+      await result.attach(OWNED_POST_ANNOTATION, {
+        body: JSON.stringify(ownership),
+        contentType: 'application/json'
+      });
+    } catch {
+      console.log(JSON.stringify({ phase: 'owned-post-attachment-unavailable' }));
+      if (!primaryFailure) monitorFailure = new Error('easymde-e2e-owned-post-attachment-failed');
+    }
+  }
+
+  try {
+    await result.attach('browser-monitor', {
+      body: JSON.stringify(monitorSummary),
+      contentType: 'application/json'
     });
-    return {
-      phase: 'first-browser-failure-state',
-      sourceLength: document.querySelector('#easymde-source')?.value.length ?? null,
-      nativeAnchor: point(native?.anchorNode, native?.anchorOffset ?? null),
-      nativeFocus: point(native?.focusNode, native?.focusOffset ?? null),
-      nativeCollapsed: native?.isCollapsed ?? null,
-      parkedCodeMirrorSelection: canonical ? { anchor: canonical.anchor, head: canonical.head } : null,
-      editable: surface?.getAttribute('contenteditable') ?? null,
-      effectiveEditable: surface?.isContentEditable ?? null,
-      locked: document.querySelector('.easymde-immersive-preview-lock')?.getAttribute('aria-pressed') ?? null,
-      session: document.querySelector('[data-easymde-session-status]')?.getAttribute('data-easymde-session-status') ?? null,
-      previewPhase: surface?.getAttribute('data-easymde-preview-phase') ?? null,
-      busy: surface?.getAttribute('aria-busy') ?? null
-    };
+  } catch {
+    try { monitor?.recordFailure?.('browser-monitor-attachment-failed'); } catch { /* safe log below */ }
+    console.log(JSON.stringify({ phase: 'browser-monitor-attachment-unavailable' }));
+    if (!primaryFailure) monitorFailure = new Error('browser-monitor-attachment-failed');
+  }
+
+  if (!primaryFailure && !monitorFailure && monitorSummary?.issues?.length > 0) {
+    monitorFailure = new Error(`browser-monitor-unapproved:${monitorSummary.issues.join(',')}`);
+  }
+  if (monitorFailure && !primaryFailure) throw monitorFailure;
+});
+
+// The e2e origin is http:// (not a secure context), so Chromium exposes no
+// navigator.clipboard and the product correctly answers
+// `editor-clipboard-unsupported` rather than pretending a cut succeeded. This
+// page-level stub fills only that missing platform API; the product's own
+// clipboard adapter lookup, menu cut deletion and undo history still run
+// against the real code. On a secure origin the real API is left untouched.
+test.beforeEach(async ({ page }) => {
+  ownedPostCapture = null;
+  await page.addInitScript(() => {
+    if (navigator.clipboard) return;
+    let written = '';
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText(text) {
+          written = String(text);
+          return Promise.resolve();
+        },
+        readText() {
+          return Promise.resolve(written);
+        },
+        write(items) {
+          const plain = Array.from(items ?? []).find((item) => item?.types?.includes('text/plain'));
+          if (!plain) return Promise.resolve();
+          return Promise.resolve(plain.getType('text/plain'))
+            .then((blob) => blob.text())
+            .then((text) => { written = text; });
+        }
+      }
+    });
   });
-  console.log(JSON.stringify(firstFailure));
 });
 
 function environment(name) {
@@ -67,286 +639,174 @@ async function expectSource(source, expected) {
   }).toBe(true);
 }
 
-async function readCurrentDocumentOwner(page, ownerObservation = null, fenceObservation = null) {
-  return page.evaluate(({ ownerObservation, fenceObservation }) => {
-    const root = document.querySelector('#easymde-editor-root');
-    const keys = root ? Object.getOwnPropertyNames(root).filter((key) => key.startsWith('__reactContainer$')) : [];
-    if (keys.length !== 1) throw new Error('test-document-owner-root-unavailable');
-    const current = root[keys[0]]?.stateNode?.current;
-    if (current?.tag !== 3) throw new Error('test-document-owner-current-unavailable');
-    const owners = new Set();
-    const diagnosticFibers = fenceObservation?.pendingProof ? [] : null;
-    const pending = current.child ? [current.child] : [];
-    let visited = 0;
-    while (pending.length) {
-      const fiber = pending.pop();
-      if (++visited > 8192) throw new Error('test-document-owner-traversal-bound');
-      diagnosticFibers?.push(fiber);
-      const props = fiber.memoizedProps;
-      for (const owner of [props?.documentSession?.document, props?.ordinaryStatus?.document]) {
-        if (owner) owners.add(owner);
+function safePublicState(state) {
+  return state ? { sourceLength: state.sourceLength, contenteditable: state.contenteditable,
+    sourceInputConnected: state.sourceInputConnected,
+    sourceEditable: state.sourceEditable, visualEditable: state.visualEditable,
+    effectiveEditable: state.effectiveEditable, focused: state.focused, lock: state.lock,
+    session: state.session, previewPhase: state.previewPhase, busy: state.busy,
+    failure: state.failure, repairCount: state.repairCount, nativeConnected: state.nativeConnected,
+    nativeCollapsed: state.nativeCollapsed, nativeDirection: state.nativeDirection } : null;
+}
+
+function safeFullCrossBlockState(state) {
+  return state ? { sourceLength: state.sourceLength, phase: state.phase,
+    effectiveEditable: state.effectiveEditable, focused: state.focused, lock: state.lock,
+    session: state.session, busy: state.busy, failure: state.failure,
+    nativeConnected: state.nativeConnected, collapsed: state.collapsed,
+    direction: state.direction, spacerCount: state.spacerCount } : null;
+}
+
+function safeWindowedState(state) {
+  return state ? { sourceLength: state.sourceLength, phase: state.phase,
+    previewLoading: state.previewLoading, runtimeEditable: state.runtimeEditable,
+    documentEditable: state.documentEditable, effectiveEditable: state.effectiveEditable,
+    contenteditable: state.contenteditable, focused: state.focused, lock: state.lock,
+    session: state.session, nativeCollapsed: state.nativeCollapsed,
+    nativeDirection: state.nativeDirection, spacers: state.spacers } : null;
+}
+
+async function readPublicEditorState(page) {
+  return page.evaluate(() => {
+    const source = document.querySelector('#easymde-source');
+    const visualSurface = document.querySelector('[data-easymde-preview-html-sink][role="textbox"]')
+      ?? document.querySelector('[data-easymde-preview-html-sink]');
+    const sourceSurface = document.querySelector('.easymde-source-react .cm-content');
+    const native = document.getSelection();
+    const surface = sourceSurface?.contains(native?.anchorNode) && sourceSurface?.contains(native?.focusNode)
+      ? sourceSurface : visualSurface;
+    const range = native?.rangeCount === 1 ? native.getRangeAt(0) : null;
+    const point = (node, offset) => {
+      const element = node instanceof Element ? node : node?.parentElement ?? null;
+      const line = element?.closest('.cm-line') ?? null;
+      let linePrefix = null;
+      if (line && node?.isConnected) {
+        const prefix = line.ownerDocument.createRange();
+        prefix.selectNodeContents(line);
+        prefix.setEnd(node, offset);
+        linePrefix = prefix.toString();
       }
-      if (fiber.sibling) pending.push(fiber.sibling);
-      if (fiber.child) pending.push(fiber.child);
-    }
-    if (owners.size !== 1) throw new Error('test-document-owner-identity-unavailable');
-    const owner = owners.values().next().value;
-    for (const name of ['getSelection', 'getHistoryState', 'getRevision', 'isEditable', 'getInputElement']) {
-      if (typeof owner[name] !== 'function') throw new Error('test-document-owner-getter-unavailable');
-    }
-    const selection = owner.getSelection();
-    const history = owner.getHistoryState();
-    if (ownerObservation) {
-      if (!window.__shortBranchCausal) throw new Error('test-branch-diagnostic-observer-unavailable');
-      const finalRedoStart = ownerObservation.boundary === 'before-final-redo' && ownerObservation.direction === 'redo'
-        && Number.isInteger(ownerObservation.targetDepth) && history.redoDepth > 0
-        && ownerObservation.targetDepth - history.undoDepth === 1;
-      window.__shortBranchCausal.stage({ ...ownerObservation, finalRedoStart }, { selection, history });
-    }
-    let fenceSnapshot;
-    if (fenceObservation) {
-      const owned = fenceObservation.ownership;
-      const surface = owned?.surface ?? document.querySelector('[data-easymde-preview-html-sink][role="textbox"]');
-      if (!surface) throw new Error('test-fence-continuation-surface-unavailable');
-      const paragraphs = [...surface.querySelectorAll(':scope > p')].filter((p) => p.textContent === 'Z');
-      const paragraph = paragraphs.length === 1 ? paragraphs[0] : null;
-      const text = paragraph?.childNodes.length === 1 && paragraph.firstChild instanceof Text
-        && paragraph.firstChild.data === 'Z' ? paragraph.firstChild : null;
-      const native = surface.ownerDocument.getSelection();
-      const nativeState = { paragraphCount: paragraphs.length, paragraphConnected: !!paragraph?.isConnected,
-        surfaceConnected: surface.isConnected, editable: surface.isContentEditable,
-        singleZText: !!text, collapsed: native?.isCollapsed === true,
-        anchorIsCurrentZText: !!text && native?.anchorNode === text,
-        focusIsCurrentZText: !!text && native?.focusNode === text,
-        anchorConnectedInside: !!native?.anchorNode?.isConnected && surface.contains(native.anchorNode),
-        focusConnectedInside: !!native?.focusNode?.isConnected && surface.contains(native.focusNode),
-        anchorOffset: native?.anchorOffset ?? null, focusOffset: native?.focusOffset ?? null };
-      let continuedState = null;
-      if (owned) {
-        const p = owned.paragraph, children = Array.from(surface.childNodes);
-        const indexes = owned.following.map((node) => children.indexOf(node));
-        continuedState = { sameParagraph: !!p && p.isConnected && p.parentNode === surface,
-          independentZParagraph: !!p && p.childNodes.length === 1 && p.firstChild instanceof Text && p.firstChild.data === 'Z',
-          nativeTextEnd: !!p && native?.isCollapsed === true && native.anchorNode === p.firstChild && native.focusNode === p.firstChild
-            && native.anchorOffset === 1 && native.focusOffset === 1,
-          followingIntact: owned.following.every((node) => node.isConnected && node.parentNode === surface)
-            && indexes.every((index, at) => index >= 0 && (at === 0 || index > indexes[at - 1])),
-          followingTailIntact: owned.following.length > 0 && children.at(-1) === owned.following.at(-1) };
-      }
-      let branchState = null;
-      if (fenceObservation.nativeBranch) {
-        const branchParagraphs = [...surface.querySelectorAll(':scope > p')].filter((p) => p.textContent === 'ZB');
-        const branchParagraph = branchParagraphs.length === 1 ? branchParagraphs[0] : null;
-        const branchText = branchParagraph?.childNodes.length === 1 && branchParagraph.firstChild instanceof Text
-          && branchParagraph.firstChild.data === 'ZB' ? branchParagraph.firstChild : null;
-        branchState = { paragraphCount: branchParagraphs.length, paragraphConnected: !!branchParagraph?.isConnected,
-          paragraphDirect: !!branchParagraph && branchParagraph.parentNode === surface,
-          paragraphEditable: !!branchParagraph && branchParagraph.isContentEditable,
-          surfaceConnected: surface.isConnected, editable: surface.isContentEditable,
-          singleZBText: !!branchText, collapsed: native?.isCollapsed === true,
-          anchorIsCurrentZBText: !!branchText && native?.anchorNode === branchText,
-          focusIsCurrentZBText: !!branchText && native?.focusNode === branchText,
-          anchorIsCurrentZBParagraph: !!branchParagraph && native?.anchorNode === branchParagraph,
-          focusIsCurrentZBParagraph: !!branchParagraph && native?.focusNode === branchParagraph,
-          anchorConnectedInside: !!native?.anchorNode?.isConnected && surface.contains(native.anchorNode),
-          focusConnectedInside: !!native?.focusNode?.isConnected && surface.contains(native.focusNode),
-          anchorOffset: native?.anchorOffset ?? null, focusOffset: native?.focusOffset ?? null,
-          anchor: { nodeType: native?.anchorNode?.nodeType ?? null,
-            tag: native?.anchorNode instanceof Element ? native.anchorNode.tagName : null,
-            parentTag: native?.anchorNode?.parentElement?.tagName ?? null,
-            offset: native?.anchorOffset ?? null },
-          focus: { nodeType: native?.focusNode?.nodeType ?? null,
-            tag: native?.focusNode instanceof Element ? native.focusNode.tagName : null,
-            parentTag: native?.focusNode?.parentElement?.tagName ?? null,
-            offset: native?.focusOffset ?? null } };
-      }
-      let pendingProof = null;
-      if (fenceObservation.pendingProof) {
-        const value = owner.getValue();
-        const revision = owner.getRevision();
-        const refsFor = (fiber) => {
-          const refs = []; let count = 0;
-          for (let hook = fiber?.memoizedState; hook; hook = hook.next) {
-            if (++count > 512) throw new Error('test-document-owner-hook-bound');
-            const state = hook.memoizedState;
-            if (state && Object.hasOwn(state, 'current')) refs.push(state.current);
-          }
-          return refs;
-        };
-        const sourceField = document.querySelector('#easymde-source');
-        const editorRoots = diagnosticFibers.filter(({ memoizedProps: props }) => props?.submissionField === sourceField
-          && typeof props.nativePublishPort?.read === 'function'
-          && typeof props.immersiveStrings?.previewEditorLabel === 'string');
-        const runtimes = new Set();
-        for (const fiber of editorRoots) for (const ref of refsFor(fiber)) {
-          if (ref?.surface === surface && typeof ref.isTransferPending === 'function'
-            && typeof ref.isEditable === 'function') runtimes.add(ref);
-        }
-        const runtime = runtimes.size === 1 ? [...runtimes][0] : null;
-        const fullFibers = diagnosticFibers.filter(({ memoizedProps: props }) => props?.surface === surface
-          && props.documentSession?.document === owner
-          && ['requestPreview', 'retainCompositionSurface', 'onReady'].every((key) => typeof props[key] === 'function'));
-        const refs = fullFibers.length === 1 ? refsFor(fullFibers[0]) : [];
-        const presentations = [...new Set(refs.filter((ref) => ref && typeof ref.owner === 'object' && ref.owner !== null
-          && typeof ref.source === 'string' && typeof ref.visual === 'string' && Number.isInteger(ref.sourceRevision)
-          && Array.isArray(ref.nodes) && Array.isArray(ref.metadata) && ref.nodes.length === ref.metadata.length))];
-        const presentation = presentations.length === 1 ? presentations[0] : null;
-        const transfers = [...new Set(refs.filter((ref) => ref && ['requesting', 'rendering'].includes(ref.phase)
-          && ['history', 'native', 'paste'].includes(ref.spec?.kind)
-          && typeof ref.spec?.expectation?.value === 'string'))];
-        const transfer = transfers.length === 1 ? transfers[0] : null;
-        const retained = transfer?.spec.retainedHistoryPresentation;
-        const lease = transfer?.visualSelection;
-        const nativePath = (node) => {
-          if (node === surface) return [];
-          if (!node || !surface.contains(node)) return null;
-          const path = [];
-          for (let current = node; current && current !== surface;) {
-            const parent = current.parentNode;
-            if (!parent) return null;
-            const index = [...parent.childNodes]
-              .filter((child) => child === current || !(child instanceof Text && child.data === ''))
-              .indexOf(current);
-            if (index < 0) return null;
-            path.unshift(index); current = parent;
-          }
-          return path;
-        };
-        const matchesLease = (node, offset, boundary) => {
-          const path = nativePath(node);
-          return !!path && !!boundary && offset === boundary.offset && path.length === boundary.path.length
-            && path.every((part, at) => part === boundary.path[at]);
-        };
-        const presentationNodesCurrent = !!presentation && presentation.nodes.length === surface.childNodes.length
-          && presentation.nodes.every((node, at) => surface.childNodes[at] === node);
-        pendingProof = {
-          transferPending: runtime ? runtime.isTransferPending() : null,
-          runtimeEditable: runtime ? runtime.isEditable() : null,
-          transferKind: transfer?.spec.kind ?? null,
-          transferPhase: transfer?.phase ?? null,
-          expectationRevisionCurrent: transfer ? transfer.spec.expectation.revision === revision : null,
-          expectationValueCurrent: transfer ? transfer.spec.expectation.value === value : null,
-          retainedOwnedSameLedger: !!retained && !!presentation && retained.owned === presentation,
-          retainedOwnerSameToken: !!retained && !!presentation && retained.owned?.owner === presentation.owner,
-          presentationCurrent: !!presentation && presentation.sourceRevision === revision
-            && presentation.source === value && presentationNodesCurrent,
-          // A retained presentation is authenticated by the exact native
-          // endpoints the transfer itself recorded, whether that presentation
-          // is collapsed or a ranged view of the same retained span. The
-          // canonical caret is a separate point and is never substituted here.
-          nativeMatchesLease: !!lease && lease.backward === false
-            && matchesLease(native.anchorNode, native.anchorOffset, lease.anchor)
-            && matchesLease(native.focusNode, native.focusOffset, lease.focus)
-        };
-      }
-      fenceSnapshot = { nativeState, continuedState, ...(branchState ? { branchState } : {}),
-        ...(pendingProof ? { pendingProof } : {}) };
-    }
-    return {
-      selection: { start: selection.start, end: selection.end, direction: selection.direction },
-      history: { undoDepth: history.undoDepth, redoDepth: history.redoDepth },
-      revision: owner.getRevision(),
-      editable: owner.isEditable(),
-      sourceInputConnected: owner.getInputElement().isConnected,
-      ...(fenceSnapshot ? { fenceSnapshot } : {})
+      return {
+        connected: !!node?.isConnected,
+        nodeType: node?.nodeType ?? null,
+        tag: node instanceof Element ? node.tagName : null,
+        parentTag: node?.parentElement?.tagName ?? null,
+        offset,
+        textLength: node instanceof Text ? node.length : null,
+        lineText: line?.textContent ?? null,
+        linePrefix
+      };
     };
-  }, { ownerObservation, fenceObservation });
+    const anchor = point(native?.anchorNode, native?.anchorOffset ?? 0);
+    const focus = point(native?.focusNode, native?.focusOffset ?? 0);
+    const backward = !!native && !native.isCollapsed && !!range
+      && !(range.startContainer === native.anchorNode && range.startOffset === native.anchorOffset);
+    const active = surface?.ownerDocument.activeElement ?? null;
+    const sourceEditable = sourceSurface?.isContentEditable === true
+      || (source instanceof HTMLTextAreaElement && !source.readOnly && !source.disabled);
+    const visualEditable = visualSurface?.isContentEditable === true;
+    return {
+      source: source instanceof HTMLTextAreaElement ? source.value : null,
+      sourceLength: source instanceof HTMLTextAreaElement ? source.value.length : null,
+      sourceInputConnected: !!source?.isConnected,
+      sourceEditable,
+      visualEditable,
+      surfaceConnected: !!surface?.isConnected,
+      effectiveEditable: surface?.isContentEditable === true,
+      contenteditable: surface?.getAttribute('contenteditable') ?? null,
+      editable: surface?.isContentEditable === true,
+      activeEditable: active?.isContentEditable === true,
+      focused: active === surface,
+      lock: surface?.ownerDocument.querySelector('.easymde-immersive-preview-lock')
+        ?.getAttribute('aria-pressed') ?? null,
+      session: surface?.ownerDocument.querySelector('[data-easymde-session-status]')
+        ?.getAttribute('data-easymde-session-status') ?? null,
+      previewPhase: surface?.getAttribute('data-easymde-preview-phase') ?? null,
+      busy: surface?.getAttribute('aria-busy') ?? null,
+      failure: surface?.ownerDocument.querySelector('[data-easymde-visual-failure]')
+        ?.getAttribute('data-easymde-visual-failure') ?? null,
+      repairCount: Number(surface?.ownerDocument.querySelector('[data-easymde-visual-deletion-repair]')
+        ?.getAttribute('data-easymde-visual-deletion-repair') ?? 0),
+      spacerCount: surface?.querySelectorAll('[data-easymde-preview-window-spacer]').length ?? 0,
+      nativeConnected: !!native?.anchorNode?.isConnected && !!native.focusNode?.isConnected
+        && !!surface?.contains(native.anchorNode) && !!surface?.contains(native.focusNode),
+      nativeInside: !!native?.anchorNode && !!native?.focusNode
+        && !!surface?.contains(native.anchorNode) && !!surface?.contains(native.focusNode),
+      nativeCollapsed: native?.isCollapsed ?? null,
+      nativeDirection: native?.isCollapsed ? 'none' : backward ? 'backward' : 'forward',
+      nativeAnchor: anchor,
+      nativeFocus: focus,
+      selectionTextLength: native && !native.isCollapsed ? native.toString().length : 0
+    };
+  });
+}
+
+async function readShortStageFinalPreviewCertificate(page, expectedSource) {
+  return page.evaluate((sourceValue) => {
+    const source = document.querySelector('#easymde-source');
+    const sinks = [...document.querySelectorAll('[data-easymde-preview-html-sink="1"]')];
+    const sink = sinks.length === 1 ? sinks[0] : null;
+    const blocks = sink ? [...sink.querySelectorAll('p, h1, pre')] : [];
+    const paragraphs = blocks.filter((block) => block.tagName === 'P');
+    const headings = blocks.filter((block) => block.tagName === 'H1');
+    const pres = blocks.filter((block) => block.tagName === 'PRE');
+    const codeNodes = pres.length === 1 ? [...pres[0].querySelectorAll('code')] : [];
+    const codeText = codeNodes.length === 1 ? codeNodes[0].textContent : null;
+    return {
+      sourceExact: source instanceof HTMLTextAreaElement ? source.value === sourceValue : false,
+      sinkCount: sinks.length,
+      sinkConnected: !!sink?.isConnected,
+      blockOrderExact: blocks.map((block) => block.tagName).join(',') === 'P,H1,P,PRE,P',
+      paragraphCount: paragraphs.length,
+      paragraphTextExact: paragraphs.length === 3
+        && paragraphs[0].textContent === '中文 abc aaa *文字*'
+        && paragraphs[1].textContent === 'Target paragraph here.'
+        && paragraphs[2].textContent === 'End.',
+      headingCount: headings.length,
+      headingTextExact: headings.length === 1 && headings[0].textContent === 'Heading',
+      preCount: pres.length,
+      codeCount: codeNodes.length,
+      codeTextExact: codeText === 'echo hi' || codeText === 'echo hi\n',
+      phaseReady: sink?.getAttribute('data-easymde-preview-phase') === 'ready',
+      acceptedOne: sink?.getAttribute('data-easymde-preview-accepted') === '1',
+      busyFalse: sink?.getAttribute('aria-busy') === 'false',
+      previewErrorAbsent: !!sink && !sink.hasAttribute('data-easymde-preview-error'),
+      refreshingAbsent: !!sink && !sink.hasAttribute('data-easymde-preview-refreshing'),
+      globalFailureAbsent: !document.querySelector('[data-easymde-visual-failure]')
+    };
+  }, expectedSource);
 }
 
 async function readFullCrossBlockState(visual, expected = {}) {
   return visual.evaluate((surface, target) => {
-    const root = surface.ownerDocument.querySelector('#easymde-editor-root');
-    const keys = root ? Object.getOwnPropertyNames(root).filter((key) => key.startsWith('__reactContainer$')) : [];
-    if (keys.length !== 1) throw new Error('test-full-reader-root-unavailable');
-    const current = root[keys[0]]?.stateNode?.current;
-    if (current?.tag !== 3) throw new Error('test-full-reader-current-unavailable');
-    const fibers = [];
-    const owners = new Set();
-    const pending = current.child ? [current.child] : [];
-    while (pending.length) {
-      if (fibers.length >= 8192) throw new Error('test-full-reader-traversal-bound');
-      const fiber = pending.pop(); fibers.push(fiber);
-      const props = fiber.memoizedProps;
-      for (const owner of [props?.documentSession?.document, props?.ordinaryStatus?.document]) if (owner) owners.add(owner);
-      if (fiber.child) pending.push(fiber.child);
-      if (fiber.sibling) pending.push(fiber.sibling);
-    }
-    if (owners.size !== 1) throw new Error('test-full-reader-document-identity-unavailable');
-    const documentOwner = owners.values().next().value;
-    const fullFibers = fibers.filter(({ memoizedProps: props }) => props?.surface === surface
-      && props.documentSession?.document === documentOwner
-      && ['requestPreview', 'retainCompositionSurface', 'onReady'].every((key) => typeof props[key] === 'function'));
-    if (fullFibers.length !== 1) throw new Error('test-full-reader-fiber-identity-unavailable');
-    const refs = [];
-    let hooks = 0;
-    for (let hook = fullFibers[0].memoizedState; hook; hook = hook.next) {
-      if (++hooks > 512) throw new Error('test-full-reader-hook-bound');
-      const value = hook.memoizedState;
-      if (value && Object.hasOwn(value, 'current')) refs.push(value.current);
-    }
-    const isOwned = (value) => value && typeof value.owner === 'object' && value.owner !== null
-      && typeof value.source === 'string' && typeof value.visual === 'string'
-      && Number.isInteger(value.sourceRevision) && Array.isArray(value.nodes) && Array.isArray(value.metadata)
-      && value.nodes.length === value.metadata.length;
-    const ownedValues = [...new Set(refs.filter(isOwned))];
-    if (ownedValues.length !== 1) throw new Error('test-full-reader-owned-identity-unavailable');
-    const owned = ownedValues[0];
-    if (refs.filter((value) => value === owned.owner).length !== 1) throw new Error('test-full-reader-owner-token-unavailable');
-    const transfers = [...new Set(refs.filter((value) => value
-      && ['requesting', 'rendering'].includes(value.phase)
-      && ['history', 'native', 'paste'].includes(value.spec?.kind)
-      && ['plain', 'structural'].includes(value.spec?.presentation)
-      && ['accepted-preview', 'paste-boundary', 'source'].includes(value.spec?.placement?.kind)
-      && typeof value.spec?.expectation?.value === 'string' && value.spec.expectation.selection
-      && Number.isInteger(value.previousPreview?.revision) && typeof value.previousPreview?.signature === 'string'
-      && typeof value.signature === 'string' && Object.hasOwn(value, 'visualSelection')))];
-    const transferCandidates = [...new Set(refs.filter((value) => value && value.spec && Object.hasOwn(value, 'phase')))];
-    if (transferCandidates.length !== transfers.length) throw new Error('test-full-reader-transfer-shape-unavailable');
-    if (transfers.length > 1) throw new Error('test-full-reader-transfer-identity-ambiguous');
-    const transfer = transfers[0] ?? null;
+    const source = surface.ownerDocument.querySelector('#easymde-source');
     const native = surface.ownerDocument.getSelection();
+    const range = native?.rangeCount === 1 ? native.getRangeAt(0) : null;
     const path = (node) => {
       const result = [];
       for (let currentNode = node; currentNode && currentNode !== surface;) {
         const parent = currentNode.parentNode;
         if (!parent) return null;
-        const index = [...parent.childNodes].filter((child) => child === currentNode || !(child instanceof Text && child.data === '')).indexOf(currentNode);
+        const index = [...parent.childNodes]
+          .filter((child) => child === currentNode || !(child instanceof Text && child.data === ''))
+          .indexOf(currentNode);
         if (index < 0) return null;
-        result.unshift(index); currentNode = parent;
+        result.unshift(index);
+        currentNode = parent;
         if (currentNode === surface) return result;
       }
       return node === surface ? [] : null;
     };
-    const sameBoundary = (node, offset, boundary) => {
-      const actual = path(node);
-      return !!actual && !!boundary && offset === boundary.offset
-        && actual.length === boundary.path.length && actual.every((part, index) => part === boundary.path[index]);
-    };
-    const range = native?.rangeCount === 1 ? native.getRangeAt(0) : null;
     const backward = !!native && !native.isCollapsed && !!range
       && !(range.startContainer === native.anchorNode && range.startOffset === native.anchorOffset);
-    const nativeMatchesLease = !!transfer?.visualSelection && !!range
-      && sameBoundary(native.anchorNode, native.anchorOffset, transfer.visualSelection.anchor)
-      && sameBoundary(native.focusNode, native.focusOffset, transfer.visualSelection.focus)
-      && backward === transfer.visualSelection.backward;
-    const selection = documentOwner.getSelection();
-    const history = documentOwner.getHistoryState();
-    const revision = documentOwner.getRevision();
-    const sameSelection = (left, right) => !!right && left.start === right.start && left.end === right.end && left.direction === right.direction;
-    const expectation = transfer?.spec.expectation;
-    const canonicalExact = !!expectation && expectation.value === documentOwner.getValue()
-      && sameSelection(selection, expectation.selection)
-      && (expectation.revision === undefined || expectation.revision === revision)
-      && (!expectation.history || expectation.history.undoDepth === history.undoDepth && expectation.history.redoDepth === history.redoDepth);
-    const retained = transfer?.spec.retainedHistoryPresentation;
-    const retainedCurrent = !!retained && retained.owned === owned && Array.isArray(retained.readOnly)
-      && refs.filter((value) => value === retained.readOnly).length === 1;
     const rows = [...surface.querySelectorAll(':scope > p')];
     const first = rows.find((row) => row.textContent?.startsWith('alpha'));
     const last = target.selected ? rows.find((row) => row.textContent?.startsWith('Yz')) : first;
     const endpoint = (node, offset, row, textOffset) => {
-      if (!node?.isConnected || !row?.contains(node)) return false;
-      const prefix = surface.ownerDocument.createRange(); prefix.selectNodeContents(row); prefix.setEnd(node, offset);
+      if (!row?.contains(node) || !node?.isConnected) return false;
+      const prefix = surface.ownerDocument.createRange();
+      prefix.selectNodeContents(row);
+      prefix.setEnd(node, offset);
       return prefix.toString().length === textOffset;
     };
     const reverse = target.selected && target.direction === 'backward';
@@ -355,47 +815,45 @@ async function readFullCrossBlockState(visual, expected = {}) {
     const listItem = target.list ? listElement?.closest('li') : null;
     let listBodyOffset = null;
     if (listItem && surface.contains(listItem) && native?.anchorNode) {
-      const prefix = surface.ownerDocument.createRange(); prefix.selectNodeContents(listItem);
-      prefix.setEnd(native.anchorNode, native.anchorOffset); listBodyOffset = prefix.toString().length;
+      const prefix = surface.ownerDocument.createRange();
+      prefix.selectNodeContents(listItem);
+      prefix.setEnd(native.anchorNode, native.anchorOffset);
+      listBodyOffset = prefix.toString().length;
     }
     const inlineCodePoint = (node, offset) => {
       const element = node instanceof Element ? node : node?.parentElement;
       const code = element?.closest('code');
       if (!code || code.closest('pre') || !surface.contains(code) || !node?.isConnected) return null;
-      const prefix = surface.ownerDocument.createRange(); prefix.selectNodeContents(code); prefix.setEnd(node, offset);
+      const prefix = surface.ownerDocument.createRange();
+      prefix.selectNodeContents(code);
+      prefix.setEnd(node, offset);
       const codes = [...surface.querySelectorAll('code')].filter((candidate) => !candidate.closest('pre'));
       return { bodyOffset: prefix.toString().length, bodyLength: code.textContent.length, codeIndex: codes.indexOf(code) };
     };
+    const phase = surface.getAttribute('data-easymde-preview-phase');
+    const sourceValue = source instanceof HTMLTextAreaElement ? source.value : null;
     return {
-      phase: transfer?.phase ?? 'ready', transferKind: transfer?.spec.kind ?? null,
-      pendingCount: transfers.length, ownedCount: ownedValues.length, fullFiberCount: fullFibers.length,
-      retainedCurrent, nativeMatchesLease, canonicalExact,
-      ...(target.ownerProof ? {
-        leaseExpectation: expectation ? { sourceLength: expectation.value.length,
-          selection: { start: expectation.selection.start, end: expectation.selection.end, direction: expectation.selection.direction },
-          revision: expectation.revision ?? null,
-          history: expectation.history ? { undoDepth: expectation.history.undoDepth, redoDepth: expectation.history.redoDepth } : null } : null,
-        ownerProof: { retainedPresent: !!retained, retainedOwnedEqCurrent: !!retained && retained.owned === owned,
-          retainedOwnerEqCurrentToken: !!retained && retained.owned?.owner === owned.owner,
-          retainedReadOnlyIsArray: !!retained && Array.isArray(retained.readOnly),
-          readOnlyDirectRefCount: retained ? refs.filter((value) => value === retained.readOnly).length : null,
-          ownedTopLevelNodesExact: owned.nodes.length === surface.childNodes.length
-            && owned.nodes.every((node, index) => surface.childNodes[index] === node) },
-        nativeEndpoints: {
-          anchor: { path: path(native?.anchorNode), offset: native?.anchorOffset ?? null,
-            nodeType: native?.anchorNode?.nodeType ?? null, tag: native?.anchorNode?.parentElement?.tagName ?? null },
-          focus: { path: path(native?.focusNode), offset: native?.focusOffset ?? null,
-            nodeType: native?.focusNode?.nodeType ?? null, tag: native?.focusNode?.parentElement?.tagName ?? null }
-        }
-      } : {}),
-      expectedDocumentSelection: target.committed ? sameSelection(selection, target.committed) : null,
-      documentSelection: { start: selection.start, end: selection.end, direction: selection.direction },
-      documentHistory: { undoDepth: history.undoDepth, redoDepth: history.redoDepth }, documentRevision: revision,
+      phase,
+      sourceLength: sourceValue?.length ?? null,
+      ...(target.expectedSource === undefined ? {} : { sourceMatchesExpected: sourceValue === target.expectedSource }),
+      editable: surface.isContentEditable,
+      effectiveEditable: surface.isContentEditable,
+      contenteditable: surface.getAttribute('contenteditable'),
+      focused: surface.ownerDocument.activeElement === surface,
+      nativeConnected: !!native?.anchorNode?.isConnected && !!native.focusNode?.isConnected
+        && surface.contains(native.anchorNode) && surface.contains(native.focusNode),
+      nativeEndpoints: {
+        anchor: { path: path(native?.anchorNode), offset: native?.anchorOffset ?? null,
+          nodeType: native?.anchorNode?.nodeType ?? null, tag: native?.anchorNode?.parentElement?.tagName ?? null },
+        focus: { path: path(native?.focusNode), offset: native?.focusOffset ?? null,
+          nodeType: native?.focusNode?.nodeType ?? null, tag: native?.focusNode?.parentElement?.tagName ?? null }
+      },
       ...(target.paragraph ? { nativeParagraph: (() => {
         const element = native?.anchorNode instanceof Element ? native.anchorNode : native?.anchorNode?.parentElement;
         const paragraph = element?.closest('p');
         if (!paragraph || !surface.contains(paragraph) || !native?.anchorNode) return null;
-        const prefix = surface.ownerDocument.createRange(); prefix.selectNodeContents(paragraph);
+        const prefix = surface.ownerDocument.createRange();
+        prefix.selectNodeContents(paragraph);
         prefix.setEnd(native.anchorNode, native.anchorOffset);
         return { index: [...surface.querySelectorAll('p')].indexOf(paragraph),
           bodyOffset: prefix.toString().length, bodyLength: paragraph.textContent.length };
@@ -410,58 +868,26 @@ async function readFullCrossBlockState(visual, expected = {}) {
         itemChildren: listItem ? [...listItem.childNodes].map((node) => ({ nodeType: node.nodeType,
           tag: node instanceof Element ? node.tagName : null, textLength: node instanceof Text ? node.length : null })) : []
       } } : {}),
-      anchorMatches: endpoint(native?.anchorNode, native?.anchorOffset, reverse ? last : first, reverse ? 1 : target.offset),
-      focusMatches: endpoint(native?.focusNode, native?.focusOffset, reverse ? first : last,
+      anchorMatches: endpoint(native?.anchorNode, native?.anchorOffset ?? -1, reverse ? last : first,
+        reverse ? 1 : target.offset),
+      focusMatches: endpoint(native?.focusNode, native?.focusOffset ?? -1, reverse ? first : last,
         target.selected ? reverse ? target.offset : 1 : target.offset),
       direction: native?.isCollapsed ? 'none' : backward ? 'backward' : 'forward',
       collapsed: native?.isCollapsed ?? null,
-      nativeConnected: !!native?.anchorNode?.isConnected && !!native.focusNode?.isConnected
-        && surface.contains(native.anchorNode) && surface.contains(native.focusNode),
-      focused: surface.ownerDocument.activeElement === surface, editable: surface.isContentEditable && documentOwner.isEditable(),
       lock: surface.ownerDocument.querySelector('.easymde-immersive-preview-lock')?.getAttribute('aria-pressed'),
       session: surface.ownerDocument.querySelector('[data-easymde-session-status]')?.getAttribute('data-easymde-session-status'),
-      previewPhase: surface.getAttribute('data-easymde-preview-phase'), busy: surface.getAttribute('aria-busy')
+      previewPhase: phase, busy: surface.getAttribute('aria-busy'),
+      failure: surface.ownerDocument.querySelector('[data-easymde-visual-failure]')?.getAttribute('data-easymde-visual-failure') ?? null,
+      spacerCount: surface.querySelectorAll('[data-easymde-preview-window-spacer]').length
     };
   }, expected);
 }
 
-// These four initial Windowed cases are bounded source/history smoke tests.
-// A pending native representation is observed, never certified by Full rules.
 async function readWindowedSmokeState(visual, target = {}) {
   return visual.evaluate((surface, expected) => {
-    const root = surface.ownerDocument.querySelector('#easymde-editor-root');
-    const keys = root ? Object.getOwnPropertyNames(root).filter(key => key.startsWith('__reactContainer$')) : [];
-    if (keys.length !== 1) throw new Error('test-windowed-reader-root-unavailable');
-    const current = root[keys[0]]?.stateNode?.current;
-    if (current?.tag !== 3) throw new Error('test-windowed-reader-current-unavailable');
-    const pending = current.child ? [current.child] : []; const fibers = []; const owners = new Set();
-    while (pending.length) {
-      if (fibers.length >= 8192) throw new Error('test-windowed-reader-traversal-bound');
-      const fiber = pending.pop(); fibers.push(fiber); const props = fiber.memoizedProps;
-      for (const owner of [props?.documentSession?.document, props?.ordinaryStatus?.document]) if (owner) owners.add(owner);
-      if (fiber.child) pending.push(fiber.child); if (fiber.sibling) pending.push(fiber.sibling);
-    }
-    if (owners.size !== 1) throw new Error('test-windowed-reader-document-not-unique');
-    const owner = owners.values().next().value;
-    const windowed = fibers.filter(({memoizedProps: props}) => props?.surface === surface && props.documentSession?.document === owner
-      && props.editMap?.version === 1 && ['getAcceptedWindowSnapshot','getAcceptedWindowRow','requestPreviewAtDocumentEnd',
-        'prepareWindowBlockAdoption'].every(key => typeof props[key] === 'function'));
-    if (windowed.length !== 1) throw new Error('test-windowed-reader-controller-not-unique');
-    const sourceField = surface.ownerDocument.querySelector('#easymde-source');
-    const editorRoots = fibers.filter(({memoizedProps: props}) => props?.submissionField === sourceField
-      && typeof props.nativePublishPort?.read === 'function' && typeof props.immersiveStrings?.previewEditorLabel === 'string');
-    if (editorRoots.length !== 1) throw new Error('test-windowed-reader-editor-root-not-unique');
-    const runtimes = new Set(); let hooks = 0;
-    for (let hook = editorRoots[0].memoizedState; hook; hook = hook.next) {
-      if (++hooks > 512) throw new Error('test-windowed-reader-hook-bound');
-      const value = hook.memoizedState;
-      const runtime = value && Object.hasOwn(value, 'current') ? value.current : null;
-      if (runtime?.surface === surface && ['isEditable','isTransferPending','executeCommand','prepareContextMenuDemand']
-        .every(key => typeof runtime[key] === 'function')) runtimes.add(runtime);
-    }
-    if (runtimes.size !== 1) throw new Error('test-windowed-reader-runtime-not-unique');
-    const runtime = runtimes.values().next().value;
-    const native = surface.ownerDocument.getSelection(); const range = native?.rangeCount === 1 ? native.getRangeAt(0) : null;
+    const source = surface.ownerDocument.querySelector('#easymde-source');
+    const native = surface.ownerDocument.getSelection();
+    const range = native?.rangeCount === 1 ? native.getRangeAt(0) : null;
     const backward = !!native && !native.isCollapsed && !!range
       && !(range.startContainer === native.anchorNode && range.startOffset === native.anchorOffset);
     const point = (node, offset, selector, index) => {
@@ -487,41 +913,20 @@ async function readWindowedSmokeState(visual, target = {}) {
           isBeforeCodeText: node instanceof Text && node === previous,
           beforeCodeTextOffset: node === previous ? offset : null } } : {}) };
     };
-    const selection = owner.getSelection(), history = owner.getHistoryState();
-    const runtimePending = runtime.isTransferPending();
-    let previewEvidence;
-    if (expected.previewEvidence) {
-      const props = windowed[0].memoizedProps;
-      if (typeof props.getGeneratedPreviewIdentity !== 'function') throw new Error('test-windowed-reader-preview-getter-unavailable');
-      const generated = props.getGeneratedPreviewIdentity();
-      const certificate = props.getAcceptedWindowSnapshot();
-      const children = [...surface.childNodes];
-      const nodesCurrent = !!certificate && certificate.nodes.length === children.length
-        && certificate.nodes.every((node, index) => node === children[index]);
-      // The owner-local snapshot counter is NOT a publisher generation.
-      previewEvidence = { ownerLocalRevision: props.previewSnapshot.revision,
-        publisherGeneration: generated?.revision ?? null, publisherSourceRevision: generated?.sourceRevision ?? null,
-        windowKey: certificate?.key ?? null, windowGeneration: certificate?.revision ?? null,
-        windowSourceRevision: certificate?.sourceRevision ?? null, mapBlocks: props.editMap.blocks.length,
-        nodesCurrent, formalCurrent: !!generated && !!certificate && nodesCurrent
-          && generated.sourceRevision === owner.getRevision() && certificate.sourceRevision === owner.getRevision()
-          && certificate.revision === generated.revision && certificate.signature === generated.signature
-          && props.previewSnapshot.signature === generated.signature && props.editMap.signature === generated.signature
-          && generated.editMap === props.editMap && certificate.editMap === props.editMap };
-    }
-    return { phase: surface.getAttribute('data-easymde-preview-phase'), runtimePending,
-      pendingNativeAuthentication: runtimePending ? 'unverified-windowed-dom-lease' : 'not-pending',
-      runtimeEditable: runtime.isEditable(), documentEditable: owner.isEditable(),
-      documentSelection: { start: selection.start, end: selection.end, direction: selection.direction },
-      documentHistory: { undoDepth: history.undoDepth, redoDepth: history.redoDepth }, revision: owner.getRevision(),
-      ...(expected.expectedSource === undefined ? {} : { sourceMatchesExpected: owner.getValue() === expected.expectedSource }),
-      ...(expected.previewEvidence ? { previewEvidence } : {}),
-      sourceLength: owner.getValue().length, windowedControllerCount: windowed.length, runtimeCount: runtimes.size,
+    const phase = surface.getAttribute('data-easymde-preview-phase');
+    const busy = surface.getAttribute('aria-busy');
+    const sourceValue = source instanceof HTMLTextAreaElement ? source.value : null;
+    return { phase,
+      previewLoading: phase === 'loading' || busy === 'true',
+      runtimeEditable: surface.isContentEditable, documentEditable: surface.isContentEditable,
+      ...(expected.expectedSource === undefined ? {} : { sourceMatchesExpected: sourceValue === expected.expectedSource }),
+      sourceLength: sourceValue?.length ?? null,
       spacers: surface.querySelectorAll('[data-easymde-preview-window-spacer]').length,
       effectiveEditable: surface.isContentEditable, contenteditable: surface.getAttribute('contenteditable'),
       lock: surface.ownerDocument.querySelector('.easymde-immersive-preview-lock')?.getAttribute('aria-pressed'),
       session: surface.ownerDocument.querySelector('[data-easymde-session-status]')?.getAttribute('data-easymde-session-status'),
-      focused: surface.ownerDocument.activeElement === surface, nativeCollapsed: native?.isCollapsed ?? null,
+      focused: surface.ownerDocument.activeElement === surface,
+      nativeCollapsed: native?.isCollapsed ?? null,
       nativeDirection: native?.isCollapsed ? 'none' : backward ? 'backward' : 'forward',
       nativeAnchor: point(native?.anchorNode, native?.anchorOffset ?? 0, expected.selector, expected.index),
       nativeFocus: point(native?.focusNode, native?.focusOffset ?? 0, expected.focusSelector ?? expected.selector, expected.focusIndex ?? expected.index)
@@ -529,20 +934,22 @@ async function readWindowedSmokeState(visual, target = {}) {
   }, target);
 }
 
-async function expectWindowedSmokeCheckpoint(visual, failures, stage, expectedSelection, target, nativeOffset, direction = 'none') {
+async function expectWindowedSmokeCheckpoint(visual, failures, stage, target, nativeOffset, direction = 'none') {
   const state = await readWindowedSmokeState(visual, target);
-  console.log(JSON.stringify({ phase: 'windowed-smoke-first-atom', stage, expectedSelection, state }));
+  console.log(JSON.stringify({ phase: 'windowed-smoke-first-atom', stage,
+    state: { sourceLength: state.sourceLength, phase: state.phase, nativeCollapsed: state.nativeCollapsed,
+      nativeDirection: state.nativeDirection } }));
   expect(failures).toEqual([]);
   expect(state).toMatchObject({ runtimeEditable: true, documentEditable: true, effectiveEditable: true,
     contenteditable: 'true', lock: 'false', session: 'ready', focused: true,
-    windowedControllerCount: 1, runtimeCount: 1, nativeAnchor: { connected: true, inside: true },
-    nativeFocus: { connected: true, inside: true } });
+    nativeAnchor: { connected: true, inside: true }, nativeFocus: { connected: true, inside: true } });
   expect(state.spacers).toBeGreaterThan(0);
   if (target.expectedSource !== undefined) expect(state.sourceMatchesExpected).toBe(true);
-  if (expectedSelection) expect(state.documentSelection).toEqual(expectedSelection);
-  if (!state.runtimePending) expect(state).toMatchObject({ nativeDirection: direction, nativeCollapsed: direction === 'none',
-    nativeAnchor: { targetContains: true, bodyOffset: nativeOffset },
-    nativeFocus: { targetContains: true, bodyOffset: target.focusOffset ?? nativeOffset } });
+  if (!state.previewLoading) {
+    expect(state).toMatchObject({ nativeDirection: direction, nativeCollapsed: direction === 'none',
+      nativeAnchor: { targetContains: true, bodyOffset: nativeOffset },
+      nativeFocus: { targetContains: true, bodyOffset: target.focusOffset ?? nativeOffset } });
+  }
   return state;
 }
 
@@ -553,7 +960,10 @@ async function holdFormalPreview(page) {
   const aborted = (entry) => entry.request.failure()?.errorText === 'net::ERR_ABORTED';
   const onFailure = (request) => {
     const entry = entries.find((candidate) => candidate.request === request);
-    if (entry && aborted(entry)) entry.release();
+    if (entry && aborted(entry)) {
+      browserMonitors.get(page)?.expectPreviewCancellation(request, 'supersede');
+      entry.release();
+    }
   };
   page.on('requestfailed', onFailure);
   await page.route((url) => url.pathname.endsWith('/easymde/v1/preview')
@@ -626,8 +1036,318 @@ async function expectNativeTail(row, expected) {
   });
 }
 
+async function captureOwnedPost(page) {
+  const capture = await page.evaluate(() => {
+    const values = [...new Set(
+      [...document.querySelectorAll('#post_ID, input[name="post_ID"]')]
+        .map((input) => input instanceof HTMLInputElement ? input.value.trim() : null)
+        .filter((value) => value !== null)
+    )];
+    if (values.length === 0) {
+      return {
+        status: 'unidentified', code: 'basic-owned-post-id-missing',
+        beforeFixture: true, route: 'new-post'
+      };
+    }
+    if (values.length !== 1 || !/^[1-9][0-9]*$/u.test(values[0])) {
+      return {
+        status: 'unidentified', code: 'basic-owned-post-id-ambiguous',
+        beforeFixture: true, route: 'new-post'
+      };
+    }
+    const postId = Number(values[0]);
+    if (!Number.isSafeInteger(postId) || String(postId) !== values[0]) {
+      return {
+        status: 'unidentified', code: 'basic-owned-post-id-unsafe',
+        beforeFixture: true, route: 'new-post'
+      };
+    }
+    return { status: 'identified', postId, beforeFixture: true, route: 'new-post' };
+  });
+  ownedPostCapture = capture;
+  test.info().annotations.push({
+    type: OWNED_POST_ANNOTATION,
+    description: JSON.stringify(capture)
+  });
+  if (capture.status !== 'identified') throw new Error(capture.code);
+  return capture;
+}
+
+async function readBeforeFixturePreparation(page) {
+  const capture = ownedPostCapture;
+  if (!capture || capture.status !== 'identified'
+    || !Number.isSafeInteger(capture.postId) || capture.postId <= 0) {
+    throw new Error('basic-before-fixture-owned-post-invalid');
+  }
+  const state = await page.evaluate((expectedPostId) => {
+    const readField = (selector) => {
+      const fields = [...document.querySelectorAll(selector)];
+      const field = fields.length === 1 ? fields[0] : null;
+      return {
+        unique: fields.length === 1,
+        value: field instanceof HTMLInputElement
+          || field instanceof HTMLTextAreaElement
+          || field instanceof HTMLSelectElement
+          ? field.value
+          : null
+      };
+    };
+    const postValues = [...new Set([...document.querySelectorAll('#post_ID, input[name="post_ID"]')]
+      .map((field) => field instanceof HTMLInputElement ? field.value.trim() : null)
+      .filter((value) => value !== null))];
+    const markdownTheme = readField('#easymde-markdown-theme-field');
+    const codeTheme = readField('#easymde-code-theme-field');
+    const customCssId = readField('#easymde-custom-css-id-field');
+    return {
+      postMatches: postValues.length === 1 && postValues[0] === String(expectedPostId),
+      fieldsPresent: markdownTheme.value !== null && codeTheme.value !== null && customCssId.value !== null,
+      fieldsUnique: markdownTheme.unique && codeTheme.unique && customCssId.unique,
+      renderParams: {
+        markdown_theme: markdownTheme.value,
+        code_theme: codeTheme.value,
+        custom_css_id: customCssId.value
+      }
+    };
+  }, capture.postId);
+  if (!state.postMatches || !state.fieldsPresent || !state.fieldsUnique
+    || Object.values(state.renderParams).some((value) => typeof value !== 'string')) {
+    throw new Error('basic-before-fixture-render-params-invalid');
+  }
+  return { postId: capture.postId, renderParams: state.renderParams };
+}
+
+function createPhasedPreviewOperationTracker(phases) {
+  let operationId = null;
+  let browserMonitor = null;
+  return {
+    beforeFixture: ({ browserMonitor: monitor, postId, renderParams }) => {
+      browserMonitor = monitor;
+      operationId = monitor.beginPhased({ postId, renderParams, phases });
+      expect(Number.isSafeInteger(operationId)).toBe(true);
+    },
+    enterPhase(phaseId) {
+      if (browserMonitor && operationId !== null) {
+        browserMonitor.enterPhase(operationId, phaseId);
+      }
+    },
+    async prove({ visual = null, locked = false, drainTimeoutMs = 8_000, quietMs = 450 } = {}) {
+      if (!browserMonitor || operationId === null) {
+        throw new Error('preview-read-operation-tracker-not-started');
+      }
+      if (visual && !locked) {
+        await expect(visual).not.toHaveAttribute('aria-busy', 'true');
+      }
+      const drained = await browserMonitor.drain({ timeoutMs: drainTimeoutMs, quietMs });
+      expect(drained, 'final Preview drain must settle before read-operation proof').toBe(true);
+      const proof = browserMonitor.provePreviewReadOperation(operationId, { finalUiVerified: true });
+      expect(proof.approved, `declared Preview read operation must prove recoverable cancellation (${proof.code})`).toBe(true);
+      expect(proof.code).toBe('preview-read-operation-approved');
+      return proof;
+    }
+  };
+}
+
+const safeLoginErrorNames = new Set([
+  'AggregateError',
+  'AssertionError',
+  'DOMException',
+  'Error',
+  'EvalError',
+  'RangeError',
+  'ReferenceError',
+  'SyntaxError',
+  'TimeoutError',
+  'TypeError',
+  'URIError'
+]);
+
+function safeCaughtLoginErrorType(error) {
+  try {
+    if (error instanceof Error) {
+      return safeLoginErrorNames.has(error.name) ? error.name : 'Error';
+    }
+  } catch {}
+  return typeof error;
+}
+
+function createSafeLoginStageError(failureCode, caughtError) {
+  const safeCauseType = safeCaughtLoginErrorType(caughtError);
+  const error = new Error(`${failureCode} (${safeCauseType})`);
+  error.name = 'WordPressLoginStageError';
+  error.code = failureCode;
+  error.safeCauseType = safeCauseType;
+  return error;
+}
+
+function createSafeLoginAggregateError(stageError, caughtCleanupError) {
+  const cleanupError = createSafeLoginStageError(
+    'wordpress-login-failure-state-cleanup-failed',
+    caughtCleanupError
+  );
+  const error = new AggregateError(
+    [stageError, cleanupError],
+    'wordpress-login-failure-state-aggregate-failed'
+  );
+  error.code = 'wordpress-login-failure-state-aggregate-failed';
+  return error;
+}
+
+async function loginRedirectDestination(page) {
+  const destination = await page.evaluate(() => {
+    const redirect = document.querySelector('#loginform input[name="redirect_to"]');
+    return redirect instanceof HTMLInputElement ? redirect.value : null;
+  });
+  if (!destination) throw new Error('wordpress-login-redirect-target-unavailable');
+  return destination;
+}
+
+async function waitForLoginFocusQuiescence(page) {
+  const focusSettled = await page.evaluate(() => new Promise((resolve) => {
+    const quietPeriodMs = 250;
+    const timeoutMs = 2_000;
+    let quietTimer;
+    let timeoutTimer;
+
+    const cleanup = () => {
+      window.clearTimeout(quietTimer);
+      window.clearTimeout(timeoutTimer);
+      document.removeEventListener('focusin', observeFocus, true);
+    };
+    const finish = (settled) => {
+      cleanup();
+      resolve(settled);
+    };
+    const observeFocus = () => {
+      window.clearTimeout(quietTimer);
+      quietTimer = window.setTimeout(() => finish(true), quietPeriodMs);
+    };
+
+    document.addEventListener('focusin', observeFocus, true);
+    quietTimer = window.setTimeout(() => finish(true), quietPeriodMs);
+    timeoutTimer = window.setTimeout(() => finish(false), timeoutMs);
+  }));
+  if (!focusSettled) throw new Error('wordpress-login-focus-did-not-settle');
+}
+
+async function loginWordPressAdmin(page, browserMonitor) {
+  let failureCode = 'wordpress-login-page-unavailable';
+  try {
+    browserMonitor.expectNavigation('/wp-login.php', 'open-login');
+    await browserMonitor.flushHistory();
+    await browserMonitor.flushRejections();
+    await page.goto('/wp-login.php');
+    failureCode = 'wordpress-login-focus-did-not-settle';
+    await waitForLoginFocusQuiescence(page);
+    failureCode = 'wordpress-login-credential-entry-failed';
+    await page.locator('#user_login').fill(environment('WORDPRESS_ADMIN_USER'));
+    failureCode = 'wordpress-login-state-monitor-unavailable';
+    const usernameMonitorInstalled = await page.evaluate(() => {
+      const username = document.querySelector('#user_login');
+      if (!(username instanceof HTMLInputElement)) return false;
+
+      const initialValue = username.value;
+      let usernameChangedAfterFill = false;
+      const inputListener = () => {
+        if (username.value !== initialValue) usernameChangedAfterFill = true;
+      };
+      username.addEventListener('input', inputListener);
+      window.__easymdeLoginEntryState = {
+        isUsernameUnchanged: () => (
+          !usernameChangedAfterFill
+          && username.value === initialValue
+          && document.querySelector('#user_login') === username
+        ),
+        cleanup: () => username.removeEventListener('input', inputListener)
+      };
+      return true;
+    });
+    if (!usernameMonitorInstalled) throw new Error('wordpress-login-state-monitor-unavailable');
+
+    failureCode = 'wordpress-login-credential-entry-failed';
+    const password = page.locator('#user_pass');
+    await password.focus();
+    await page.keyboard.type(environment('WORDPRESS_ADMIN_PASSWORD'));
+    failureCode = 'wordpress-login-pre-submit-state-invalid';
+    const loginStateIsValid = await page.evaluate(() => {
+      const username = document.querySelector('#user_login');
+      const passwordField = document.querySelector('#user_pass');
+      const state = window.__easymdeLoginEntryState;
+      try {
+        return username instanceof HTMLInputElement
+          && passwordField instanceof HTMLInputElement
+          && state?.isUsernameUnchanged() === true
+          && username.value.length > 0
+          && passwordField.value.length > 0
+          && document.activeElement === passwordField;
+      } finally {
+        try {
+          state?.cleanup();
+        } finally {
+          delete window.__easymdeLoginEntryState;
+        }
+      }
+    });
+    if (!loginStateIsValid) throw new Error(failureCode);
+
+    failureCode = 'wordpress-login-submit-failed';
+    browserMonitor.expectNavigation(await loginRedirectDestination(page), 'login-submit');
+    await browserMonitor.flushHistory();
+    await browserMonitor.flushRejections();
+    const submitRequested = await page.evaluate(() => {
+      const form = document.querySelector('#loginform');
+      const submit = document.querySelector('#wp-submit');
+      if (!(form instanceof HTMLFormElement)
+        || !(submit instanceof HTMLInputElement || submit instanceof HTMLButtonElement)) {
+        return false;
+      }
+      form.requestSubmit(submit);
+      return true;
+    });
+    if (!submitRequested) throw new Error(failureCode);
+
+    failureCode = 'wordpress-login-session-not-established';
+    await expect(page.locator('#wpadminbar')).toBeVisible();
+  } catch (caughtOperationError) {
+    const stageError = createSafeLoginStageError(failureCode, caughtOperationError);
+    try {
+      await page.evaluate(() => {
+        const username = document.querySelector('#user_login');
+        const password = document.querySelector('#user_pass');
+        if (username instanceof HTMLInputElement) username.value = '';
+        if (password instanceof HTMLInputElement) password.value = '';
+        const state = window.__easymdeLoginEntryState;
+        try {
+          state?.cleanup();
+        } finally {
+          delete window.__easymdeLoginEntryState;
+        }
+      });
+    } catch (caughtCleanupError) {
+      throw createSafeLoginAggregateError(stageError, caughtCleanupError);
+    }
+    throw stageError;
+  }
+}
+
+async function waitForBasicDashboardSetupReadiness(page, browserMonitor) {
+  let drainCompleted = false;
+  let issues = null;
+  try {
+    await page.waitForLoadState('load', { timeout: 8_000 });
+    drainCompleted = await browserMonitor.drain({ timeoutMs: 8_000, quietMs: 300 });
+    issues = browserMonitor.summary().issues;
+  } catch {
+    throw new Error('basic-dashboard-setup-not-ready');
+  }
+  if (drainCompleted !== true || !Array.isArray(issues) || issues.length > 0) {
+    throw new Error('basic-dashboard-setup-not-ready');
+  }
+}
+
 async function openVisual(page, markdown, pasteFrom, beforeFixture) {
   const failures = [];
+  const browserMonitor = await installBrowserMonitor(page);
+  const rejectionBridges = new Set();
   const recordFirstFailure = (code) => {
     if (firstRuntimeFailureObservations.has(page)) return;
     // Observe only the first runtime failure. This is the first Playwright
@@ -637,7 +1357,7 @@ async function openVisual(page, markdown, pasteFrom, beforeFixture) {
       if (!surface) throw new Error('test-first-refusal-surface-unavailable');
       try {
         const windowed = await surface.evaluate(node => !!node.querySelector('[data-easymde-preview-window-spacer]'));
-        return windowed ? await readWindowedSmokeState(surface) : await readFullCrossBlockState(surface, { ownerProof: true });
+        return windowed ? await readWindowedSmokeState(surface) : await readFullCrossBlockState(surface);
       }
       finally { await surface.dispose(); }
     })()
@@ -645,34 +1365,11 @@ async function openVisual(page, markdown, pasteFrom, beforeFixture) {
       .catch(() => ({ phase: 'first-refusal-observation-unavailable', code }));
     firstRuntimeFailureObservations.set(page, observation);
   };
-  await page.exposeFunction('__easymdeReportRejection', () => {
-    recordFirstFailure('browser-unhandled-rejection'); failures.push('browser-unhandled-rejection');
-  });
-  page.on('pageerror', () => { recordFirstFailure('browser-page-error'); failures.push('browser-page-error'); });
-  page.on('console', (message) => {
-    if (message.type() !== 'error') return;
-    const text = message.text();
-    const code = text.match(/\[EasyMDE\]\s+([a-z0-9-]+)/u)?.[1];
-    if (code) {
-      if (failures.length === 0) console.log(JSON.stringify({ phase: 'editor-first-refusal', code }));
-      recordFirstFailure(code);
-      // This owner emits only the reviewed scalar refusal payload. Forward it
-      // on failure without adding reads or observers to successful keystrokes.
-      failures.push(code);
-    } else if (text.startsWith('Failed to load resource:')) {
-      const location = message.location().url;
-      if (location.includes('/easymde/v1/') || location.includes('rest_route=%2Feasymde')
-        || location.includes('/wp-content/plugins/') || location.includes('/admin-ajax.php')) {
-        failures.push('editor-resource-load-failed');
-      } else {
-        console.log(JSON.stringify({ phase: 'browser-network-noise', category: 'unrelated-resource' }));
-      }
-    } else {
-      failures.push('uncategorized-browser-console-error');
-    }
+  await installMonitorRejectionBridge(page, browserMonitor, () => {
+    recordFirstFailure('browser-unhandled-rejection');
+    failures.push('browser-unhandled-rejection');
   });
   await page.addInitScript(() => {
-    window.addEventListener('unhandledrejection', () => { void window.__easymdeReportRejection(); });
     const states = [];
     window.__easymdeTestEditabilityStates = states;
     let previous = '';
@@ -699,14 +1396,15 @@ async function openVisual(page, markdown, pasteFrom, beforeFixture) {
     });
     window.addEventListener('pagehide', () => observer.disconnect(), { once: true });
   });
-  await page.goto('/wp-login.php');
-  await page.locator('#user_login').fill(environment('WORDPRESS_ADMIN_USER'));
-  await page.locator('#user_pass').fill(environment('WORDPRESS_ADMIN_PASSWORD'));
-  await page.locator('#wp-submit').click();
-  await expect(page.locator('#wpadminbar')).toBeVisible();
+  await loginWordPressAdmin(page, browserMonitor);
+  await waitForBasicDashboardSetupReadiness(page, browserMonitor);
+  browserMonitor.expectNavigation('/wp-admin/post-new.php', 'open-new-post');
+  await browserMonitor.flushHistory();
+  await browserMonitor.flushRejections();
   await page.goto('/wp-admin/post-new.php');
   const sourceEditor = page.locator('.easymde-source-react .cm-content');
   await expect(sourceEditor).toBeVisible();
+  await captureOwnedPost(page);
   const runtimeBuilds = await page.evaluate(() => [...new Set(performance.getEntriesByType('resource')
     .map((entry) => new URL(entry.name).pathname.split('/').at(-1))
     .filter((name) => /^admin-editor-[A-Za-z0-9_-]+\.js$/u.test(name ?? '') && !name.includes('loader-')))]);
@@ -714,18 +1412,36 @@ async function openVisual(page, markdown, pasteFrom, beforeFixture) {
   console.log(JSON.stringify({ phase: 'loaded-editor-build', files: runtimeBuilds }));
   const expectedBuild = process.env.EASYMDE_E2E_EXPECT_EDITOR_BUILD;
   if (expectedBuild) expect(runtimeBuilds, 'The browser must load the frozen production build').toEqual([expectedBuild]);
-  await beforeFixture?.();
+  const fixturePreparation = beforeFixture ? await readBeforeFixturePreparation(page) : null;
+  if (beforeFixture) await beforeFixture({ ...fixturePreparation, browserMonitor });
+  await browserMonitor.assertInputReady();
   await sourceEditor.click();
   // Fixture preparation only. All subsequent edits use keyboard/mouse actions.
   if (pasteFrom === undefined) {
     await page.keyboard.insertText(markdown);
   } else {
-    // Fixture preparation only, through the real paste route: CRLF text is put
-    // on the clipboard and pasted with the keyboard. The assertion below then
-    // states the normalisation contract for that route (the browser hands the
-    // editor the LF form), so a CRLF fixture can never be asserted verbatim.
-    await page.evaluate((text) => navigator.clipboard.writeText(text), pasteFrom);
-    await page.keyboard.press('Control+v');
+    // Fixture preparation only, through the real paste route. Prefer the
+    // Clipboard API when the origin is secure. Under an insecure origin that API
+    // is unavailable, so dispatch a paste event carrying the original CRLF text;
+    // this still exercises the editor's paste path and its CRLF-to-LF contract.
+    // The insecure-origin stub installed above makes navigator.clipboard exist,
+    // but Control+V reads the OS clipboard, not that stub, so the API route is
+    // gated on window.isSecureContext rather than on the stub's presence.
+    const usedClipboardApi = await page.evaluate(async (text) => {
+      if (window.isSecureContext && typeof navigator.clipboard?.writeText === 'function') {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+      const clipboardData = new DataTransfer();
+      clipboardData.setData('text/plain', text);
+      document.activeElement.dispatchEvent(new ClipboardEvent('paste', {
+        clipboardData,
+        bubbles: true,
+        cancelable: true
+      }));
+      return false;
+    }, pasteFrom);
+    if (usedClipboardApi) await page.keyboard.press('Control+v');
   }
   const source = page.locator('#easymde-source');
   await expectSource(source, markdown);
@@ -738,7 +1454,7 @@ async function openVisual(page, markdown, pasteFrom, beforeFixture) {
   await page.getByRole('button', { name: strings.previewUnlockEdit, exact: true }).click();
   const visual = page.getByRole('textbox', { name: strings.previewEditorLabel });
   await expect(visual).toHaveAttribute('contenteditable', 'true');
-  return { failures, source, visual };
+  return { failures, source, visual, browserMonitor };
 }
 
 async function readSettledSource(source, stableReads = 6) {
@@ -832,6 +1548,198 @@ const shortStageBlocks = [
 ];
 const shortStageInitial = shortStageBlocks.map((block) => block.source).join('\n\n');
 
+function shortStageUniqueCodeDeclarations(declarations) {
+  const grouped = new Map();
+  for (const declaration of declarations) {
+    if (!declaration || typeof declaration.source !== 'string'
+      || !declaration.descriptor || typeof declaration.descriptor !== 'object') continue;
+    if (!grouped.has(declaration.source)) grouped.set(declaration.source, []);
+    grouped.get(declaration.source).push(declaration.descriptor);
+  }
+  const unique = new Map();
+  for (const [source, descriptors] of grouped) {
+    const distinct = new Map(descriptors.map((descriptor) => [JSON.stringify(descriptor), descriptor]));
+    if (distinct.size === 1) unique.set(source, distinct.values().next().value);
+  }
+  return unique;
+}
+
+function shortStageBuildCodeDescriptors(blocks) {
+  const declarations = [];
+  let codeOrdinal = 0;
+  for (let codeBlockOrdinal = 0; codeBlockOrdinal < blocks.length; codeBlockOrdinal += 1) {
+    const codeBlock = blocks[codeBlockOrdinal];
+    if (codeBlock.kind !== 'code') continue;
+    const openingEnd = codeBlock.source.indexOf('\n');
+    const closingStart = codeBlock.source.lastIndexOf('\n');
+    if (openingEnd < 0 || closingStart <= openingEnd) {
+      throw new Error('short-stage-code-declaration-invalid');
+    }
+    const opening = codeBlock.source.slice(0, openingEnd + 1);
+    const closing = codeBlock.source.slice(closingStart + 1);
+    const codePrefix = blocks.slice(0, codeBlockOrdinal).map((item) => item.source).join('\n\n')
+      + (codeBlockOrdinal ? '\n\n' : '');
+    const descriptorForBody = (body) => {
+      const bodyStart = codePrefix.length + opening.length;
+      const bodyEnd = bodyStart + body.length;
+      const sourceBlockEnd = bodyEnd + 1 + closing.length;
+      return Object.freeze({
+        blockOrdinal: codeBlockOrdinal, codeOrdinal, body, bodyStart, bodyEnd,
+        closingFenceLfStart: bodyEnd, closingFenceLfEnd: bodyEnd + 1,
+        sourceBlockStart: codePrefix.length, sourceBlockEnd
+      });
+    };
+    const fullDescriptor = descriptorForBody(codeBlock.body.join(''));
+    for (let cursorOrdinal = codeBlockOrdinal; cursorOrdinal < blocks.length; cursorOrdinal += 1) {
+      const cursorBlock = blocks[cursorOrdinal];
+      const cursorPrefix = blocks.slice(0, cursorOrdinal).map((item) => item.source).join('\n\n')
+        + (cursorOrdinal ? '\n\n' : '');
+      const cursorOpeningEnd = cursorBlock.source.indexOf('\n');
+      const cursorClosingStart = cursorBlock.source.lastIndexOf('\n');
+      const cursorOpening = cursorOpeningEnd < 0 ? null : cursorBlock.source.slice(0, cursorOpeningEnd + 1);
+      const cursorClosing = cursorClosingStart < 0 ? null : cursorBlock.source.slice(cursorClosingStart + 1);
+      for (let remaining = cursorBlock.body.length; remaining >= 0; remaining -= 1) {
+        const body = cursorBlock.body.slice(0, remaining).join('');
+        const sourceBlock = cursorBlock.kind === 'code' ? `${cursorOpening}${body}\n${cursorClosing}`
+          : cursorBlock.kind === 'heading' ? `# ${body}` : body;
+        const descriptor = cursorOrdinal === codeBlockOrdinal ? descriptorForBody(body) : fullDescriptor;
+        for (const ending of ['', '\n', '\n\n']) {
+          declarations.push({ source: cursorPrefix + sourceBlock + ending, descriptor });
+        }
+      }
+      const descriptor = cursorOrdinal === codeBlockOrdinal ? descriptorForBody('') : fullDescriptor;
+      for (const empty of ['', ' ', '  ', '\n', '\n\n']) {
+        declarations.push({ source: cursorPrefix + empty, descriptor });
+      }
+    }
+    codeOrdinal += 1;
+  }
+  return shortStageUniqueCodeDeclarations(declarations);
+}
+
+const shortStageDeclaredCodeDescriptors = shortStageBuildCodeDescriptors(shortStageBlocks);
+
+function createShortStageCodeCertifier() {
+  return function certifyShortStageCode(evidence) {
+    if (evidence?.codeCandidate !== true) return null;
+    const safeInt = (value) => Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000
+      ? value : null;
+    const hashText = (value) => {
+      let hash = 2166136261;
+      for (let index = 0; index < value.length; index += 1) {
+        hash ^= value.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+      }
+      return hash >>> 0;
+    };
+    const source = typeof evidence.source === 'string' ? evidence.source : null;
+    const descriptor = evidence.descriptor && typeof evidence.descriptor === 'object'
+      && typeof evidence.descriptor.body === 'string' ? evidence.descriptor : null;
+    const body = descriptor?.body ?? null;
+    const bodyStart = safeInt(descriptor?.bodyStart);
+    const bodyEnd = safeInt(descriptor?.bodyEnd);
+    const blockOrdinal = safeInt(descriptor?.blockOrdinal);
+    const codeOrdinal = safeInt(descriptor?.codeOrdinal);
+    const sourceBlockStart = safeInt(descriptor?.sourceBlockStart);
+    const sourceBlockEnd = safeInt(descriptor?.sourceBlockEnd);
+    const descriptorAvailable = evidence.sourceDeclared === true && !!descriptor && body !== null
+      && bodyStart !== null && bodyEnd !== null && blockOrdinal !== null && codeOrdinal !== null
+      && sourceBlockStart !== null && sourceBlockEnd !== null;
+    const sourceBodyExact = descriptorAvailable && source !== null
+      && bodyEnd === bodyStart + body.length && sourceBlockStart <= bodyStart
+      && bodyEnd <= sourceBlockEnd && sourceBlockEnd <= source.length
+      && source.slice(bodyStart, bodyEnd) === body;
+    const domText = typeof evidence.domText === 'string' ? evidence.domText : null;
+    const domBodyVariant = sourceBodyExact && domText === body ? 'literal'
+      : sourceBodyExact && domText === `${body}\n` ? 'literal+closing-lf' : null;
+    const observedBlockOrdinal = safeInt(evidence.observedBlockOrdinal);
+    const observedCodeOrdinal = safeInt(evidence.observedCodeOrdinal);
+    const prePresent = evidence.prePresent === true;
+    const preChildCount = safeInt(evidence.preChildCount);
+    const preOnlyCode = preChildCount === 1 && evidence.preDirectCode === true;
+    const correctBlock = descriptorAvailable && observedBlockOrdinal === blockOrdinal;
+    const correctCode = descriptorAvailable && observedCodeOrdinal === codeOrdinal;
+    const blockConnected = evidence.blockConnected === true;
+    const preConnected = evidence.preConnected === true;
+    const codeConnected = evidence.codeConnected === true;
+    const blockOwnsPre = evidence.blockOwnsPre === true;
+    const preInsideSurface = evidence.preInsideSurface === true;
+    const codeInsidePre = evidence.codeInsidePre === true;
+    const anchorPrefix = typeof evidence.anchorPrefix === 'string' ? evidence.anchorPrefix : null;
+    const focusPrefix = typeof evidence.focusPrefix === 'string' ? evidence.focusPrefix : null;
+    const prefixValid = (prefix) => sourceBodyExact && prefix !== null
+      && prefix.length <= body.length && prefix === body.slice(0, prefix.length);
+    const anchorPrefixMatch = prefixValid(anchorPrefix);
+    const focusPrefixMatch = prefixValid(focusPrefix);
+    const anchorCumulative = anchorPrefix === null ? null : anchorPrefix.length;
+    const focusCumulative = focusPrefix === null ? null : focusPrefix.length;
+    const anchorInBody = anchorPrefixMatch;
+    const focusInBody = focusPrefixMatch;
+    const anchorSourceOffset = anchorPrefixMatch ? bodyStart + anchorCumulative : null;
+    const focusSourceOffset = focusPrefixMatch ? bodyStart + focusCumulative : null;
+    const nativeCollapsed = typeof evidence.nativeCollapsed === 'boolean'
+      ? evidence.nativeCollapsed : null;
+    const nativeDirection = ['none', 'forward', 'backward'].includes(evidence.nativeDirection)
+      ? evidence.nativeDirection : null;
+    const anchorLocal = safeInt(evidence.anchorLocal);
+    const focusLocal = safeInt(evidence.focusLocal);
+    const structuralValid = descriptorAvailable && sourceBodyExact && domBodyVariant !== null
+      && prePresent && preOnlyCode && correctBlock && correctCode && blockConnected && preConnected
+      && codeConnected && blockOwnsPre && preInsideSurface && codeInsidePre;
+    const selectionOrderValid = anchorPrefixMatch && focusPrefixMatch && (
+      nativeCollapsed === true
+        ? nativeDirection === 'none'
+          && anchorCumulative === focusCumulative && anchorSourceOffset === focusSourceOffset
+        : nativeCollapsed === false && (
+          (nativeDirection === 'forward'
+            && anchorCumulative < focusCumulative && anchorSourceOffset < focusSourceOffset)
+          || (nativeDirection === 'backward'
+            && anchorCumulative > focusCumulative && anchorSourceOffset > focusSourceOffset)
+        )
+    );
+    const nativeValid = anchorLocal !== null && focusLocal !== null && selectionOrderValid;
+    return {
+      codeCandidate: true,
+      valid: structuralValid && nativeValid,
+      descriptorAvailable,
+      sourceBodyExact,
+      bodyHash: body === null ? null : hashText(body),
+      blockOrdinal,
+      codeOrdinal,
+      bodyStart,
+      bodyEnd,
+      bodyLength: body?.length ?? null,
+      domTextLength: safeInt(domText?.length),
+      domBodyVariant,
+      prePresent,
+      preOrdinal: safeInt(evidence.preOrdinal),
+      observedBlockOrdinal,
+      observedCodeOrdinal,
+      preOnlyCode,
+      correctBlock,
+      correctCode,
+      blockConnected,
+      preConnected,
+      codeConnected,
+      blockOwnsPre,
+      preInsideSurface,
+      codeInsidePre,
+      nativeCollapsed,
+      nativeDirection,
+      anchorLocal,
+      focusLocal,
+      anchorCumulative,
+      focusCumulative,
+      anchorPrefixMatch,
+      focusPrefixMatch,
+      anchorInBody,
+      focusInBody,
+      anchorSourceOffset,
+      focusSourceOffset
+    };
+  };
+}
+
 function shortStageDeletionOracle(mode) {
   const values = new Map();
   const add = (value, rank) => values.set(value, Math.max(values.get(value) ?? -1, rank));
@@ -856,6 +1764,123 @@ function shortStageDeletionOracle(mode) {
   }
   add('', 0);
   return values;
+}
+
+function shortStagePhaseModel(mode) {
+  const initial = shortStageInitial;
+  const positions = [
+    { selector: 'p', index: 0, needle: shortStageBlocks[0].source, offset: 1 },
+    { selector: 'h1', index: 0, needle: 'Heading', offset: 2 },
+    { selector: 'p', index: 1, needle: 'Target paragraph here.', offset: 7 },
+    { selector: 'pre code', index: 0, needle: 'echo hi', offset: 2 },
+    { selector: 'p', index: 2, needle: 'End.', offset: 1 }
+  ].map((position, phaseIndex) => {
+    const sourceOffset = initial.indexOf(position.needle) + position.offset;
+    return {
+      ...position,
+      phaseIndex,
+      sourceOffset,
+      insertedSource: initial.slice(0, sourceOffset) + 'V' + initial.slice(sourceOffset)
+    };
+  });
+  const oracle = shortStageDeletionOracle(mode);
+  const sourcesByRank = new Map();
+  for (const [source, rank] of oracle) {
+    if (!sourcesByRank.has(rank)) sourcesByRank.set(rank, []);
+    sourcesByRank.get(rank).push(source);
+  }
+  const descendingRanks = [...sourcesByRank.keys()].sort((left, right) => right - left);
+  const ascendingRanks = [...descendingRanks].reverse();
+  const deletionForwardGroups = descendingRanks.map((rank) => [...sourcesByRank.get(rank)]);
+  const deletionReverseGroups = ascendingRanks.map((rank) => [...sourcesByRank.get(rank)]);
+  const entered = mode === 'full' ? 'Z\n\n  ' : 'Z\n';
+  const continued = mode === 'full' ? 'Z\n\nXY' : 'Z\nXY';
+  const shortened = mode === 'full' ? 'Z\n\nX' : 'Z\nX';
+  const branchBase = 'Z';
+  const branch = 'ZB';
+  const reentrySources = ['', branchBase, entered, shortened, continued, shortened];
+  const positionForwardGroups = positions.flatMap((position) => [
+    [position.insertedSource],
+    [initial]
+  ]);
+  const positionReverseGroups = positions.slice().reverse().flatMap((position) => [
+    [initial],
+    [position.insertedSource]
+  ]);
+  const forwardGraphGroups = [
+    [initial],
+    ...positionForwardGroups,
+    ...deletionForwardGroups,
+    ...reentrySources.slice(1).map((source) => [source])
+  ];
+  const fullUndoGroups = forwardGraphGroups.slice().reverse().map((group) => [...group]);
+  const fullRedoGroups = forwardGraphGroups.map((group) => [...group]);
+  const branchToZGroups = [shortened, continued, shortened, entered, branchBase].map((source) => [source]);
+  const restoreInitialGroups = [
+    [branchBase],
+    ...deletionReverseGroups,
+    ...positionReverseGroups,
+    [initial]
+  ];
+  const middleOffset = initial.indexOf('Target paragraph here.') + 1;
+  const middleQSource = initial.slice(0, middleOffset) + 'Q' + initial.slice(middleOffset);
+  const phaseIds = {
+    fixture: 'fixture',
+    positions: positions.map((position) => `position-${position.phaseIndex}`),
+    deletion: 'deletion',
+    emptyExtraBackspace: 'empty-extra-backspace',
+    reentry: 'empty-reentry',
+    fullUndo: 'full-undo',
+    fullRedo: 'full-redo',
+    branchToZ: 'branch-to-z',
+    branchInput: 'branch-input-b',
+    invalidRedo: 'invalid-redo-at-zb',
+    undoBranch: 'undo-b-to-z',
+    redoBranch: 'redo-b-to-zb',
+    undoBranchAgain: 'undo-b-again',
+    restoreInitial: 'restore-initial',
+    middleQ: 'middle-q',
+    middleQUndo: 'middle-q-undo'
+  };
+  const phases = [
+    { id: phaseIds.fixture, groups: [[''], [initial]] },
+    ...positions.map((position) => ({
+      id: phaseIds.positions[position.phaseIndex],
+      groups: [[initial], [position.insertedSource], [initial]]
+    })),
+    { id: phaseIds.deletion, groups: deletionForwardGroups },
+    { id: phaseIds.emptyExtraBackspace, groups: [['']] },
+    { id: phaseIds.reentry, groups: reentrySources.map((source) => [source]) },
+    { id: phaseIds.fullUndo, groups: fullUndoGroups },
+    { id: phaseIds.fullRedo, groups: fullRedoGroups },
+    { id: phaseIds.branchToZ, groups: branchToZGroups },
+    { id: phaseIds.branchInput, groups: [[branchBase], [branch]] },
+    { id: phaseIds.invalidRedo, groups: [[branch]] },
+    { id: phaseIds.undoBranch, groups: [[branch], [branchBase]] },
+    { id: phaseIds.redoBranch, groups: [[branchBase], [branch]] },
+    { id: phaseIds.undoBranchAgain, groups: [[branch], [branchBase]] },
+    { id: phaseIds.restoreInitial, groups: restoreInitialGroups },
+    { id: phaseIds.middleQ, groups: [[initial], [middleQSource]] },
+    { id: phaseIds.middleQUndo, groups: [[middleQSource], [initial]] }
+  ];
+  const allowed = new Set(phases.flatMap((item) => item.groups.flat()));
+  return {
+    allowed,
+    branch,
+    branchBase,
+    continued,
+    deletionForwardGroups,
+    entered,
+    initial,
+    middleOffset,
+    middleQSource,
+    oracle,
+    phaseIds,
+    phases,
+    positions,
+    reentrySources,
+    shortened
+  };
 }
 
 async function openShortStage(page, mode, initial, beforeFixture) {
@@ -1086,54 +2111,192 @@ async function installBackgroundProbe(page) {
   });
 }
 
-async function startShortStageProbe(page, stage, allowedValues, { backgroundObservation = false, allowLocked = false, frames = null } = {}) {
+async function startShortStageProbe(page, stage, allowedValues, {
+  backgroundObservation = false,
+  allowLocked = false,
+  frames = null,
+  codeDescriptorsBySource = null
+} = {}) {
   const healthFailures = [];
   let emptySeen = false;
+  const allowedList = Array.from(allowedValues);
+  const certifyCodeEnabled = stage.mode === 'full' && codeDescriptorsBySource instanceof Map;
+  const codeDescriptors = certifyCodeEnabled
+    ? allowedList.map((source) => codeDescriptorsBySource.get(source) ?? null)
+    : [];
+  let codeCertifierHandle = null;
+  if (certifyCodeEnabled) {
+    codeCertifierHandle = await page.evaluateHandle(createShortStageCodeCertifier);
+    await page.evaluate((certifier) => { window.__shortStageCertifyCode = certifier; }, codeCertifierHandle);
+    await codeCertifierHandle.dispose();
+    codeCertifierHandle = null;
+  }
   await page.exposeFunction('__shortStageSignal', (event) => {
     if (event.kind === 'empty') emptySeen = true;
     else if (event.kind === 'shortcut') console.log(JSON.stringify({ phase: 'short-stage-first-Redo-shortcut', ...event.shortcut }));
     else if (event.kind === 'visual-deviation') frames?.preserveFirstAnomaly(event.code);
     else { frames?.preserveFirstAnomaly(event.code); healthFailures.push(event.code); }
   });
-  await page.evaluate(({ mode, allowed, backgroundObservation, allowLocked }) => {
-    const root = document.querySelector('#easymde-editor-root');
-    const key = Object.getOwnPropertyNames(root).find((name) => name.startsWith('__reactContainer$'));
-    const pending = [root[key]?.stateNode?.current?.child], owners = new Set();
-    while (pending.length) {
-      const fiber = pending.pop();
-      if (!fiber) continue;
-      for (const owner of [fiber.memoizedProps?.documentSession?.document, fiber.memoizedProps?.ordinaryStatus?.document]) {
-        if (owner) owners.add(owner);
-      }
-      pending.push(fiber.child, fiber.sibling);
+  await page.evaluate(({ mode, allowed, backgroundObservation, allowLocked, certifyCodeEnabled, codeDescriptors }) => {
+    const legal = new Set(allowed), rows = [], health = [];
+    const codeDescriptorBySource = new Map();
+    const certifyCode = certifyCodeEnabled ? window.__shortStageCertifyCode : null;
+    if (certifyCodeEnabled && typeof certifyCode !== 'function') {
+      throw new Error('short-stage-code-certifier-missing');
     }
-    if (owners.size !== 1) throw new Error('short-stage-owner-not-unique');
-    const owner = [...owners][0], legal = new Set(allowed), rows = [], health = [];
+    for (let index = 0; index < allowed.length; index += 1) {
+      const descriptor = codeDescriptors[index];
+      if (descriptor && typeof descriptor === 'object') codeDescriptorBySource.set(allowed[index], descriptor);
+    }
     let recording = true, active = true, failure = null, ranks = null, previousRank = Infinity;
+    const surfaceNow = () => mode === 'full'
+      ? document.querySelector(allowLocked ? '[data-easymde-preview-html-sink]' : '[data-easymde-preview-html-sink][role="textbox"]')
+      : document.querySelector('.easymde-source-react .cm-content');
+    const sourceNow = () => document.querySelector('#easymde-source')?.value ?? '';
+    const rect = node => {
+      const box = node?.getBoundingClientRect();
+      return box ? { x: box.x, y: box.y, width: box.width, height: box.height } : null;
+    };
+    const nativeSnapshot = () => {
+      const native = getSelection();
+      const point = (node, offset) => ({
+        connected: !!node?.isConnected, nodeType: node?.nodeType ?? null,
+        parentTag: node?.parentElement?.tagName ?? null, offset,
+        textLength: node instanceof Text ? node.length : null
+      });
+      return { anchor: point(native?.anchorNode, native?.anchorOffset ?? null),
+        focus: point(native?.focusNode, native?.focusOffset ?? null), collapsed: native?.isCollapsed ?? null };
+    };
+    const nativeWitness = () => {
+      const surface = surfaceNow(), native = getSelection();
+      const range = native?.rangeCount === 1 ? native.getRangeAt(0) : null;
+      const sourceSurface = document.querySelector('.easymde-source-react .cm-content');
+      const witnessSurface = mode === 'full' ? surface : sourceSurface;
+      const point = (node, offset) => {
+        if (!witnessSurface || !node?.isConnected || !witnessSurface.contains(node)) {
+          return { kind: 'outside', connected: false, inside: false, blockOrdinal: null,
+            lineIndex: null, column: null, blockLength: null, surfaceOffset: null };
+        }
+        if (node === witnessSurface) {
+          return { kind: 'surface', connected: true, inside: true,
+            blockOrdinal: null, lineIndex: null, column: null, blockLength: null, surfaceOffset: offset };
+        }
+        if (mode !== 'full') {
+          const line = (node instanceof Element ? node : node.parentElement)?.closest('.cm-line');
+          if (!line || !sourceSurface?.contains(line)) {
+            return { kind: 'outside', connected: false, inside: true, blockOrdinal: null,
+              lineIndex: null, column: null, blockLength: null, surfaceOffset: null };
+          }
+          const lines = [...sourceSurface.querySelectorAll('.cm-line')];
+          const prefix = line.ownerDocument.createRange();
+          prefix.selectNodeContents(line);
+          prefix.setEnd(node, offset);
+          return { kind: 'source', connected: line.isConnected, inside: true,
+            blockOrdinal: null, lineIndex: lines.indexOf(line), column: prefix.toString().length,
+            blockLength: line.textContent.length, surfaceOffset: null };
+        }
+        let block = node;
+        while (block && block.parentNode !== witnessSurface) block = block.parentNode;
+        if (!block || block.parentNode !== witnessSurface) {
+          return { kind: 'outside', connected: false, inside: true, blockOrdinal: null,
+            lineIndex: null, column: null, blockLength: null, surfaceOffset: null };
+        }
+        const blocks = [...witnessSurface.children].filter((child) => !child.hasAttribute('data-easymde-preview-window-spacer'));
+        const prefix = block.ownerDocument.createRange();
+        prefix.selectNodeContents(block);
+        prefix.setEnd(node, offset);
+        return { kind: 'visual', connected: block.isConnected, inside: true,
+          blockOrdinal: blocks.indexOf(block), lineIndex: null, column: prefix.toString().length,
+          blockLength: block.textContent.length, surfaceOffset: null };
+      };
+      const backward = !!native && !native.isCollapsed && !!range
+        && !(range.startContainer === native.anchorNode && range.startOffset === native.anchorOffset);
+      return { collapsed: native?.isCollapsed ?? null,
+        direction: native?.isCollapsed ? 'none' : backward ? 'backward' : 'forward',
+        anchor: point(native?.anchorNode, native?.anchorOffset ?? 0),
+        focus: point(native?.focusNode, native?.focusOffset ?? 0) };
+    };
+    const codeCertificateFor = (source) => {
+      if (!certifyCodeEnabled) return null;
+      const surface = surfaceNow(), native = getSelection();
+      const preList = surface ? [...surface.querySelectorAll('pre')] : [];
+      const codePreList = preList.filter((pre) => pre.querySelector(':scope > code') instanceof HTMLElement);
+      const preForNode = (node) => {
+        const element = node instanceof Element ? node : node?.parentElement ?? null;
+        const pre = element?.closest?.('pre') ?? null;
+        return pre && surface?.contains(pre) ? pre : null;
+      };
+      const anchorPre = preForNode(native?.anchorNode);
+      const focusPre = preForNode(native?.focusNode);
+      const selectedPre = anchorPre && anchorPre === focusPre ? anchorPre : null;
+      const descriptor = codeDescriptorBySource.get(source) ?? null;
+      const codeCandidate = !!anchorPre || !!focusPre;
+      if (!codeCandidate) return null;
+      const code = selectedPre?.querySelector(':scope > code') ?? null;
+      let block = selectedPre;
+      while (block && block.parentNode !== surface) block = block.parentNode;
+      if (block?.parentNode !== surface) block = null;
+      const blockChildren = surface ? [...surface.children]
+        .filter((child) => !child.hasAttribute('data-easymde-preview-window-spacer')) : [];
+      const prefixText = (node, offset) => {
+        if (!(code instanceof HTMLElement) || !node || !Number.isSafeInteger(offset)
+          || !(node === code || code.contains(node))) return null;
+        try {
+          const prefix = code.ownerDocument.createRange();
+          prefix.selectNodeContents(code);
+          prefix.setEnd(node, offset);
+          return prefix.toString();
+        } catch { return null; }
+      };
+      const anchorPrefix = prefixText(native?.anchorNode, native?.anchorOffset);
+      const focusPrefix = prefixText(native?.focusNode, native?.focusOffset);
+      const range = native?.rangeCount === 1 ? native.getRangeAt(0) : null;
+      const backward = !!native && !native.isCollapsed && !!range
+        && !(range.startContainer === native.anchorNode && range.startOffset === native.anchorOffset);
+      return certifyCode({
+        source,
+        descriptor,
+        sourceDeclared: !!descriptor,
+        codeCandidate: true,
+        domText: code instanceof HTMLElement && typeof code.textContent === 'string'
+          ? code.textContent : null,
+        prePresent: !!selectedPre,
+        preOrdinal: selectedPre ? preList.indexOf(selectedPre) : null,
+        observedBlockOrdinal: block ? blockChildren.indexOf(block) : null,
+        observedCodeOrdinal: selectedPre ? codePreList.indexOf(selectedPre) : null,
+        preChildCount: selectedPre?.childNodes.length ?? 0,
+        preDirectCode: !!selectedPre && selectedPre.childNodes.length === 1
+          && selectedPre.firstChild === code,
+        codeInsidePre: !!(code instanceof HTMLElement && selectedPre
+          && code.parentElement === selectedPre),
+        blockConnected: !!block?.isConnected,
+        preConnected: !!selectedPre?.isConnected,
+        codeConnected: !!(code instanceof HTMLElement && code.isConnected),
+        blockOwnsPre: !!(block && selectedPre && (block === selectedPre || block.contains(selectedPre))),
+        preInsideSurface: !!(surface && selectedPre && surface.contains(selectedPre)),
+        nativeCollapsed: native?.isCollapsed ?? null,
+        nativeDirection: native?.isCollapsed ? 'none' : backward ? 'backward' : 'forward',
+        anchorLocal: native?.anchorNode instanceof Text ? native.anchorOffset
+          : native?.anchorNode === code ? native.anchorOffset : null,
+        focusLocal: native?.focusNode instanceof Text ? native.focusOffset
+          : native?.focusNode === code ? native.focusOffset : null,
+        anchorPrefix,
+        focusPrefix
+      });
+    };
     const refuse = (code) => {
       if (failure) return;
-      const native = getSelection();
-      failure = { code, sourceLength: owner.getValue().length, revision: owner.getRevision(),
-        history: owner.getHistoryState(), selection: owner.getSelection(),
-        native: { anchorConnected: !!native?.anchorNode?.isConnected, focusConnected: !!native?.focusNode?.isConnected,
-          anchorTag: native?.anchorNode?.nodeName, anchorOffset: native?.anchorOffset,
-          focusTag: native?.focusNode?.nodeName, focusOffset: native?.focusOffset, collapsed: native?.isCollapsed } };
+      failure = { code, sourceLength: sourceNow().length, native: nativeSnapshot(),
+        surfaceConnected: !!surfaceNow()?.isConnected, editable: surfaceNow()?.isContentEditable === true,
+        lock: document.querySelector('.easymde-immersive-preview-lock')?.getAttribute('aria-pressed') ?? null,
+        failure: document.querySelector('[data-easymde-visual-failure]')?.getAttribute('data-easymde-visual-failure') ?? null };
       void window.__shortStageSignal({ kind: 'failure', code });
     };
-    // Source/native baselines stay private. Each of at most 16 quiet periods
-    // retains first-2/last-30 scalar samples; every rAF/document notification is checked.
     let quiet = null, pauseBaseline = null, layoutObserver = null, firstDeviation = null;
     const periods = [];
     const keep = (first, last, value) => {
       if (first.length < 2) first.push(value);
       else { last.push(value); if (last.length > 30) last.shift(); }
-    };
-    const surfaceNow = () => mode === 'full'
-      ? document.querySelector(allowLocked ? '[data-easymde-preview-html-sink]' : '[data-easymde-preview-html-sink][role="textbox"]')
-      : document.querySelector('.easymde-source-react .cm-content');
-    const rect = node => {
-      const box = node?.getBoundingClientRect();
-      return box ? { x: box.x, y: box.y, width: box.width, height: box.height } : null;
     };
     const deviation = (code, sample) => {
       if (firstDeviation) return;
@@ -1142,21 +2305,12 @@ async function startShortStageProbe(page, stage, allowedValues, { backgroundObse
     };
     const sampleQuiet = kind => {
       if (!quiet) {
-        if (pauseBaseline) {
-          const history = owner.getHistoryState();
-          if (owner.getValue() !== pauseBaseline.value || document.querySelector('#easymde-source')?.value !== pauseBaseline.value
-            || owner.getRevision() !== pauseBaseline.revision || history.undoDepth !== pauseBaseline.undoDepth
-            || history.redoDepth !== pauseBaseline.redoDepth) refuse('short-stage-quiet-document-mutated');
-        }
+        if (pauseBaseline && sourceNow() !== pauseBaseline.value) refuse('short-stage-quiet-document-mutated');
         return;
       }
-      const { baseline, report } = quiet, surface = surfaceNow();
-      const history = owner.getHistoryState();
-      const sample = { kind, at: performance.now(), sourceLength: owner.getValue().length,
-        revision: owner.getRevision(), undoDepth: history.undoDepth, redoDepth: history.redoDepth,
-        sourceUnchanged: owner.getValue() === baseline.value && document.querySelector('#easymde-source')?.value === baseline.value,
-        revisionUnchanged: owner.getRevision() === baseline.revision,
-        historyDepthsUnchanged: history.undoDepth === baseline.undoDepth && history.redoDepth === baseline.redoDepth,
+      const { baseline, report } = quiet, surface = surfaceNow(), value = sourceNow();
+      const sample = { kind, at: performance.now(), sourceLength: value.length,
+        sourceUnchanged: value === baseline.value,
         surfaceSame: surface === baseline.surface, phase: surface?.getAttribute('data-easymde-preview-phase') ?? null,
         busy: surface?.getAttribute('aria-busy') ?? null, focused: document.hasFocus(),
         visible: document.visibilityState === 'visible', editable: surface?.isContentEditable === true,
@@ -1173,14 +2327,12 @@ async function startShortStageProbe(page, stage, allowedValues, { backgroundObse
           && baseline.scroll.every(item => item.node.scrollTop === item.top && item.node.scrollLeft === item.left) };
       report.samples++; if (kind === 'raf') report.rafSamples++;
       report.sourceUnchanged &&= sample.sourceUnchanged;
-      report.revisionUnchanged &&= sample.revisionUnchanged;
-      report.historyDepthsUnchanged &&= sample.historyDepthsUnchanged;
       if (!sample.surfaceSame || sample.nodes.some(node => !node.same || !node.connected)) report.identityChangeSamples++;
       if (sample.nodes.some(node => node.delta === null || node.delta > 0)) report.geometryChangeSamples++;
       if (!sample.scrollSame) report.scrollChangeSamples++;
       report.maxGeometryDelta = Math.max(report.maxGeometryDelta, ...sample.nodes.map(node => node.delta ?? 0));
       keep(report.first, report.last, sample);
-      if (!sample.sourceUnchanged || !sample.revisionUnchanged || !sample.historyDepthsUnchanged) refuse('short-stage-quiet-document-mutated');
+      if (!sample.sourceUnchanged) refuse('short-stage-quiet-document-mutated');
       if (!sample.surfaceSame || sample.nodes.some(node => !node.same || !node.connected || node.delta === null || node.delta > 0) || !sample.scrollSame) {
         deviation('short-stage-quiet-visual-change', sample);
       }
@@ -1190,7 +2342,7 @@ async function startShortStageProbe(page, stage, allowedValues, { backgroundObse
       for (const entry of entries) {
         if (entry.startTime < quiet.report.startedAt) continue;
         const sample = { at: entry.startTime, value: entry.value, recentInput: entry.hadRecentInput,
-          editorSourceCount: (entry.sources ?? []).filter(source => source.node && root.contains(source.node)).length };
+          editorSourceCount: (entry.sources ?? []).filter(source => source.node && (surfaceNow()?.contains(source.node) ?? false)).length };
         quiet.report.layoutShiftCount++; quiet.report.layoutShiftValue += entry.value;
         keep(quiet.report.layoutFirst, quiet.report.layoutLast, sample);
         if (sample.editorSourceCount) deviation('short-stage-editor-layout-shift', sample);
@@ -1203,16 +2355,14 @@ async function startShortStageProbe(page, stage, allowedValues, { backgroundObse
     }
     const endQuiet = () => {
       observeLayout(layoutObserver?.takeRecords() ?? []); sampleQuiet('end');
-      if (quiet) {
-        quiet.report.endedAt = performance.now(); quiet = null;
-      }
+      if (quiet) { quiet.report.endedAt = performance.now(); quiet = null; }
       return { failure, firstDeviation, layoutShiftSupported, periods };
     };
     const beginQuiet = label => {
       endQuiet();
       if (periods.length >= 16) return refuse('short-stage-quiet-period-bound');
-      const surface = surfaceNow(), history = owner.getHistoryState();
-      pauseBaseline ??= { value: owner.getValue(), revision: owner.getRevision(), undoDepth: history.undoDepth, redoDepth: history.redoDepth };
+      const surface = surfaceNow(), value = sourceNow();
+      pauseBaseline ??= { value };
       const nodes = ['h1', 'p'].map(selector => ({ selector, node: surface?.querySelector(selector) }))
         .filter(item => item.node && (() => { const box = rect(item.node); return box && box.width > 0 && box.height > 0
           && box.y < innerHeight && box.y + box.height > 0; })())
@@ -1221,43 +2371,70 @@ async function startShortStageProbe(page, stage, allowedValues, { backgroundObse
       let ancestor = surface;
       for (; ancestor && scroll.length < 16; ancestor = ancestor.parentElement) scroll.push({ node: ancestor, top: ancestor.scrollTop, left: ancestor.scrollLeft });
       const report = { label, startedAt: performance.now(), endedAt: null, samples: 0, rafSamples: 0,
-        visibleUntouchedNodeCount: nodes.length, sourceUnchanged: true, revisionUnchanged: true, historyDepthsUnchanged: true,
-        baseline: { sourceLength: pauseBaseline.value.length, revision: pauseBaseline.revision,
-          undoDepth: pauseBaseline.undoDepth, redoDepth: pauseBaseline.redoDepth }, scrollAncestorSamplingComplete: ancestor === null,
+        visibleUntouchedNodeCount: nodes.length, sourceUnchanged: true,
+        baseline: { sourceLength: value.length }, scrollAncestorSamplingComplete: ancestor === null,
         identityChangeSamples: 0, geometryChangeSamples: 0, scrollChangeSamples: 0, maxGeometryDelta: 0,
         layoutShiftCount: 0, layoutShiftValue: 0, first: [], last: [], layoutFirst: [], layoutLast: [] };
       quiet = { baseline: { ...pauseBaseline, surface, nodes, scroll, windowX: window.scrollX, windowY: window.scrollY }, report };
       periods.push(report); sampleQuiet('begin');
     };
+    let lastWitnessKeys = new Set();
+    const witnessConnectedInside = (witness) => witness?.anchor?.connected === true
+      && witness.anchor.inside === true
+      && witness?.focus?.connected === true
+      && witness.focus.inside === true;
     const observe = () => {
       if (!recording || failure) return;
       sampleQuiet('document');
-      const value = owner.getValue();
+      const value = sourceNow();
       if (!legal.has(value)) return refuse('short-stage-independent-source-oracle');
       if (ranks) {
         const rank = ranks.get(value);
         if (rank > previousRank) return refuse('short-stage-independent-deletion-order');
         previousRank = rank;
       }
-      if (rows.length === 1024) return refuse('short-stage-canonical-observation-bound');
-      rows.push({ value, history: owner.getHistoryState(), revision: owner.getRevision() });
+      const witness = nativeWitness();
+      const codeCertificate = codeCertificateFor(value);
+      const entry = { witness, codeCertificate };
+      const key = JSON.stringify(entry);
+      const lastRow = rows.at(-1);
+      if (lastRow?.value !== value) {
+        if (rows.length === 1024) return refuse('short-stage-canonical-observation-bound');
+        lastWitnessKeys = new Set([key]);
+        rows.push({ value, witness, codeCertificate, witnesses: [entry] });
+      } else if (witnessConnectedInside(witness) && !lastWitnessKeys.has(key) && lastRow.witnesses.length < 256) {
+        lastWitnessKeys.add(key);
+        lastRow.witnesses.push(entry);
+      }
       if (value === '') void window.__shortStageSignal({ kind: 'empty' });
     };
-    const unsubscribe = owner.subscribe(observe);
+    document.addEventListener('beforeinput', observe, true);
+    document.addEventListener('input', observe, true);
+    document.addEventListener('selectionchange', observe, true);
     observe();
     const sample = () => {
       if (!active) return;
       const surface = surfaceNow();
       const native = getSelection();
-      const state = { editable: owner.isEditable() && !!surface?.isContentEditable,
+      const repairAttribute = document.querySelector('[data-easymde-visual-deletion-repair]')
+        ?.getAttribute('data-easymde-visual-deletion-repair') ?? null;
+      const repairCount = repairAttribute === null ? 0 : Number(repairAttribute);
+      if (repairAttribute !== null && !/^(?:0|[1-9][0-9]*)$/u.test(repairAttribute)) {
+        refuse('short-stage-visual-deletion-repair-count');
+      }
+      if (!Number.isInteger(repairCount) || repairCount !== 0) {
+        refuse('short-stage-visual-deletion-repair-count');
+      }
+      const state = { editable: surface?.isContentEditable === true,
         lock: mode === 'full' ? document.querySelector('.easymde-immersive-preview-lock')?.getAttribute('aria-pressed') : null,
         nativeConnected: !!native?.anchorNode?.isConnected && !!native?.focusNode?.isConnected,
         nativeInside: !!surface && !!native?.anchorNode && !!native?.focusNode
           && surface.contains(native.anchorNode) && surface.contains(native.focusNode),
-        failure: !!document.querySelector('[data-easymde-visual-failure]') };
+        failure: !!document.querySelector('[data-easymde-visual-failure]'), repairCount };
       const userLocked = allowLocked && state.lock === 'true';
       if ((!state.editable && !userLocked) || state.failure || mode === 'full' && state.lock !== 'false' && !userLocked) refuse('short-stage-lock-or-editability');
       if (!userLocked && (!state.nativeConnected || !state.nativeInside)) refuse('short-stage-native-selection-outside-owner');
+      observe();
       sampleQuiet('raf');
       if (health.length < 128 && JSON.stringify(health.at(-1)) !== JSON.stringify(state)) health.push(state);
       requestAnimationFrame(sample);
@@ -1269,26 +2446,110 @@ async function startShortStageProbe(page, stage, allowedValues, { backgroundObse
       const target = event.target instanceof Element ? event.target : null;
       firstRedo = { key: event.key, code: event.code, ctrl: event.ctrlKey, meta: event.metaKey,
         shift: event.shiftKey, alt: event.altKey, trusted: event.isTrusted,
-        owner: target?.closest('.easymde-source-react .cm-content') ? 'Source'
-          : target?.closest('[data-easymde-preview-html-sink][role="textbox"]') ? 'Visual' : 'outside',
-        history: owner.getHistoryState(), selection: owner.getSelection(), revision: owner.getRevision() };
+        surface: target?.closest('.easymde-source-react .cm-content') ? 'Source'
+          : target?.closest('[data-easymde-preview-html-sink][role="textbox"]') ? 'Visual' : 'outside' };
       void window.__shortStageSignal({ kind: 'shortcut', shortcut: firstRedo });
     };
     document.addEventListener('keydown', onShortcut, true);
+    // Preview-commit epoch. Every keydown opens an operation; when a formal
+    // Preview cycle (non-ready phase, busy, or refreshing) is observed after
+    // it, that operation stays pending until the surface commits a new ready
+    // Preview signature. This closes the window in which Undo/Redo has changed
+    // the source but React has not yet flipped the surface to loading.
+    const previewSignatureNow = () => {
+      const signature = surfaceNow()?.easymdePreviewSignature;
+      return typeof signature === 'string' ? signature : '';
+    };
+    const previewCycleActive = () => {
+      const surface = surfaceNow();
+      return !!surface && (surface.getAttribute('data-easymde-preview-phase') !== 'ready'
+        || surface.getAttribute('aria-busy') === 'true'
+        || surface.getAttribute('data-easymde-preview-refreshing') === '1');
+    };
+    let previewEpoch = { startSignature: previewSignatureNow(), cycleObserved: previewCycleActive() };
+    const notePreviewCycle = () => { if (previewCycleActive()) previewEpoch.cycleObserved = true; };
+    const onOperationKeydown = () => {
+      previewEpoch = { startSignature: previewSignatureNow(), cycleObserved: previewCycleActive() };
+    };
+    document.addEventListener('keydown', onOperationKeydown, true);
+    const previewCycleObserver = new MutationObserver(notePreviewCycle);
+    previewCycleObserver.observe(document, { subtree: true, childList: true, attributes: true,
+      attributeFilter: ['data-easymde-preview-phase', 'aria-busy', 'data-easymde-preview-refreshing'] });
+    const previewCommitPending = () => {
+      const signature = previewSignatureNow();
+      return previewEpoch.cycleObserved && (signature === '' || signature === previewEpoch.startSignature);
+    };
+    const settledSample = () => {
+      const surface = surfaceNow();
+      const native = getSelection();
+      const source = sourceNow();
+      const repairAttribute = document.querySelector('[data-easymde-visual-deletion-repair]')
+        ?.getAttribute('data-easymde-visual-deletion-repair') ?? null;
+      const repairCount = repairAttribute === null
+        ? 0
+        : /^(?:0|[1-9][0-9]*)$/u.test(repairAttribute) ? Number(repairAttribute) : null;
+      return {
+        source,
+        witness: nativeWitness(),
+        codeCertificate: codeCertificateFor(source),
+        phase: surface?.getAttribute('data-easymde-preview-phase') ?? null,
+        accepted: surface?.getAttribute('data-easymde-preview-accepted') ?? null,
+        busy: surface?.getAttribute('aria-busy') ?? null,
+        session: document.querySelector('[data-easymde-session-status]')
+          ?.getAttribute('data-easymde-session-status') ?? null,
+        lock: document.querySelector('.easymde-immersive-preview-lock')
+          ?.getAttribute('aria-pressed') ?? null,
+        editable: surface?.isContentEditable === true,
+        nativeConnected: !!surface && !!native?.anchorNode?.isConnected && !!native?.focusNode?.isConnected
+          && surface.contains(native.anchorNode) && surface.contains(native.focusNode),
+        failureAbsent: !document.querySelector('[data-easymde-visual-failure]')
+          && !surface?.hasAttribute('data-easymde-preview-error'),
+        repairCount,
+        stickyFailure: !!failure,
+        previewSignature: previewSignatureNow(),
+        previewCommitPending: previewCommitPending()
+      };
+    };
+    // A settled read is two complete samples separated by two animation frames;
+    // any source, caret, Preview phase, or signature movement marks it unstable.
+    const settledState = async () => {
+      notePreviewCycle();
+      const first = settledSample();
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      notePreviewCycle();
+      const second = settledSample();
+      return { ...second, stable: JSON.stringify(first) === JSON.stringify(second) };
+    };
     window.__shortStageProbe = {
-      snapshot: () => ({ rows: [...rows], health: [...health], failure, firstRedo }),
+      snapshot: () => ({
+        rows: rows.map((row) => ({ ...row, witnesses: [...row.witnesses] })),
+        health: [...health],
+        failure,
+        firstRedo
+      }),
+      witness: () => nativeWitness(),
+      settledState,
       beginQuiet, endQuiet,
       resumeEditing: () => { const observation = endQuiet(); pauseBaseline = null; return observation; },
       beginDeletion: (entries) => {
         ranks = new Map(entries); previousRank = Infinity;
         legal.clear(); for (const value of ranks.keys()) legal.add(value);
-        rows.length = 0; observe();
+        rows.length = 0; lastWitnessKeys = new Set(); observe();
       },
       allow: (values) => { ranks = null; legal.clear(); for (const value of values) legal.add(value); },
-      stopRecording: () => { recording = false; unsubscribe(); },
-      stop: () => { endQuiet(); layoutObserver?.disconnect(); active = false; recording = false; unsubscribe(); document.removeEventListener('keydown', onShortcut, true); }
+      stopRecording: () => { recording = false; },
+      stop: () => {
+        endQuiet(); layoutObserver?.disconnect(); active = false; recording = false;
+        previewCycleObserver.disconnect();
+        document.removeEventListener('beforeinput', observe, true);
+        document.removeEventListener('input', observe, true);
+        document.removeEventListener('selectionchange', observe, true);
+        document.removeEventListener('keydown', onShortcut, true);
+        document.removeEventListener('keydown', onOperationKeydown, true);
+        delete window.__shortStageCertifyCode;
+      }
     };
-  }, { mode: stage.mode, allowed: [...allowedValues], backgroundObservation, allowLocked });
+  }, { mode: stage.mode, allowed: allowedList, backgroundObservation, allowLocked, certifyCodeEnabled, codeDescriptors });
   const onPopup = () => healthFailures.push('short-stage-popup');
   page.on('popup', onPopup);
   const guard = () => {
@@ -1305,7 +2566,7 @@ async function startShortStageProbe(page, stage, allowedValues, { backgroundObse
     },
     async endQuiet() {
       const observation = await page.evaluate(() => window.__shortStageProbe.endQuiet());
-      expect(observation.failure, 'quiet period preserves source/revision/history depths').toBeNull();
+      expect(observation.failure, 'quiet period preserves source and DOM invariants').toBeNull();
       guard();
     },
     async resumeEditing() {
@@ -1314,11 +2575,23 @@ async function startShortStageProbe(page, stage, allowedValues, { backgroundObse
       guard();
     },
     empty: () => emptySeen,
-    press: async (key) => { guard(); await page.keyboard.press(key); guard(); },
+    press: async (key) => {
+      guard();
+      await page.keyboard.press(key);
+      if (key === 'Backspace' || key === 'Delete') await page.waitForTimeout(100);
+      guard();
+    },
     type: async (text) => {
-      for (const character of text) { guard(); await page.keyboard.type(character); guard(); }
+      for (const character of text) {
+        guard();
+        await page.keyboard.type(character);
+        await page.waitForTimeout(50);
+        guard();
+      }
     },
     snapshot: () => page.evaluate(() => window.__shortStageProbe.snapshot()),
+    witness: () => page.evaluate(() => window.__shortStageProbe.witness()),
+    settledState: () => page.evaluate(() => window.__shortStageProbe.settledState()),
     freeze: () => page.evaluate(() => window.__shortStageProbe.stopRecording()),
     beginDeletion: (oracle) => page.evaluate((entries) => window.__shortStageProbe.beginDeletion(entries), [...oracle]),
     allow: (values) => page.evaluate((allowed) => window.__shortStageProbe.allow(allowed), [...values]),
@@ -1339,7 +2612,6 @@ async function startShortStageProbe(page, stage, allowedValues, { backgroundObse
     }
   };
 }
-
 async function startShortStageFrames(page, surface, { retainStages = false } = {}) {
   const require = createRequire(import.meta.url);
   const { PNG } = require(join(dirname(require.resolve('playwright-core/package.json')), 'lib/utilsBundle.js'));
@@ -1460,70 +2732,282 @@ async function startShortStageFrames(page, surface, { retainStages = false } = {
 }
 
 function shortStageHistoryLedger(rows, initial, allowed) {
-  const ledger = new Map(), baseline = rows[0].history.undoDepth;
+  const states = [];
   for (const row of rows) {
     expect(allowed.has(row.value), 'each historical source was independently declared and verified').toBe(true);
-    expect(row.history.undoDepth).toBeGreaterThanOrEqual(baseline);
-    if (row.history.undoDepth === baseline) {
-      expect(row.value === initial, 'fixture must remain a reachable history boundary').toBe(true);
-    }
-    ledger.set(row.history.undoDepth, row.value);
+    expect(!!row.witness, 'each historical operation retained a public native caret witness').toBe(true);
+    const witnesses = Array.isArray(row.witnesses) && row.witnesses.length > 0
+      ? row.witnesses.map((entry) => ({
+        witness: entry.witness,
+        codeCertificate: entry.codeCertificate ?? null
+      }))
+      : [{ witness: row.witness, codeCertificate: row.codeCertificate ?? null }];
+    expect(witnesses.every((entry) => !!entry.witness),
+      'each historical operation retained a public native caret witness').toBe(true);
+    states.push({
+      value: row.value,
+      witness: row.witness,
+      codeCertificate: row.codeCertificate ?? null,
+      witnesses
+    });
   }
-  return { ledger, baseline, latest: rows.at(-1).history.undoDepth };
+  expect(states[0]?.value === initial, 'the first observed source is the declared initial document').toBe(true);
+  expect(states.length, 'natural editing produced at least one observable history state').toBeGreaterThan(0);
+  return { states, initial, latest: states.at(-1),
+    cursor: { undo: new Set([states.length - 1]), redo: null } };
+}
+function shortStageWitnessMatchesCodeCertificate(witness, certificate) {
+  if (!witness || !certificate?.valid || certificate.codeCandidate !== true) return false;
+  if (typeof certificate.nativeCollapsed !== 'boolean'
+    || !['none', 'forward', 'backward'].includes(certificate.nativeDirection)) return false;
+  const pointMatches = (point, cumulative) => point?.kind === 'visual'
+    && point.connected === true && point.inside === true
+    && point.blockOrdinal === certificate.blockOrdinal
+    && point.column === cumulative
+    && point.blockLength === certificate.domTextLength;
+  return pointMatches(witness.anchor, certificate.anchorCumulative)
+    && pointMatches(witness.focus, certificate.focusCumulative)
+    && witness.collapsed === certificate.nativeCollapsed
+    && witness.direction === certificate.nativeDirection;
 }
 
-async function shortStageReplayHistory(page, stage, probe, history, direction, targetDepth, observationReferences = null, sourceContract = null) {
-  const key = direction === 'undo' ? 'Control+z' : 'Control+Shift+Z';
-  const bound = history.ledger.size * 3 + 16;
-  const sourceUndo = sourceContract?.mode === 'source' && direction === 'undo';
-  const sourceRedo = sourceContract?.mode === 'source' && direction === 'redo';
-  const expectedRedo = sourceContract?.expectedRedo ?? null;
-  for (let step = 0; step < bound; step += 1) {
-    const before = await readCurrentDocumentOwner(page, observationReferences
-      ? { phase: 'history', boundary: direction === 'redo' ? 'before-final-redo' : 'before-history-undo', direction, targetDepth, step, references: observationReferences } : null);
-    if (sourceUndo) {
-      if (before.history.undoDepth === targetDepth) return;
-      const beforeExpected = history.ledger.get(before.history.undoDepth);
-      expect(beforeExpected, 'source undo must begin at a declared fixture state').toBeDefined();
-      await expectSource(stage.source, beforeExpected);
-    } else if (sourceRedo) {
-      if (expectedRedo.length === 0) {
-        expect(before.history.redoDepth, 'source redo must exhaust the real redo stack').toBe(0);
-        return;
+function shortStageCodeCertificateCoreMatches(left, right) {
+  const integerKeys = [
+    'blockOrdinal', 'codeOrdinal', 'bodyStart', 'bodyEnd', 'bodyLength', 'bodyHash',
+    'preOrdinal', 'observedBlockOrdinal', 'observedCodeOrdinal',
+    'anchorCumulative', 'focusCumulative', 'anchorSourceOffset', 'focusSourceOffset'
+  ];
+  const booleanKeys = [
+    'valid', 'descriptorAvailable', 'sourceBodyExact', 'prePresent', 'preOnlyCode',
+    'correctBlock', 'correctCode', 'blockConnected', 'preConnected', 'codeConnected',
+    'blockOwnsPre', 'preInsideSurface', 'codeInsidePre',
+    'anchorPrefixMatch', 'focusPrefixMatch', 'anchorInBody', 'focusInBody'
+  ];
+  if (left?.codeCandidate !== true || right?.codeCandidate !== true) return false;
+  if (typeof left.nativeCollapsed !== 'boolean' || left.nativeCollapsed !== right.nativeCollapsed) return false;
+  if (!['none', 'forward', 'backward'].includes(left.nativeDirection)
+    || left.nativeDirection !== right.nativeDirection) return false;
+  if (!booleanKeys.every((key) => left[key] === true && right[key] === true)) return false;
+  if (!integerKeys.every((key) => Number.isSafeInteger(left[key]) && left[key] === right[key])) return false;
+  return left.nativeCollapsed
+    ? left.nativeDirection === 'none'
+      && left.anchorCumulative === left.focusCumulative && left.anchorSourceOffset === left.focusSourceOffset
+    : (left.nativeDirection === 'forward'
+        && left.anchorCumulative < left.focusCumulative && left.anchorSourceOffset < left.focusSourceOffset)
+      || (left.nativeDirection === 'backward'
+        && left.anchorCumulative > left.focusCumulative && left.anchorSourceOffset > left.focusSourceOffset);
+}
+
+function shortStageWitnessMatches(left, right) {
+  if (!left?.witness || !right?.witness) return false;
+  const leftCertificate = left.codeCertificate;
+  const rightCertificate = right.codeCertificate;
+  if (leftCertificate?.codeCandidate !== true && rightCertificate?.codeCandidate !== true) {
+    return JSON.stringify(left.witness) === JSON.stringify(right.witness);
+  }
+  if (!shortStageCodeCertificateCoreMatches(leftCertificate, rightCertificate)
+    || !shortStageWitnessMatchesCodeCertificate(left.witness, leftCertificate)
+    || !shortStageWitnessMatchesCodeCertificate(right.witness, rightCertificate)) return false;
+  const variants = [leftCertificate.domBodyVariant, rightCertificate.domBodyVariant];
+  if (variants[0] === variants[1]) {
+    return JSON.stringify(left.witness) === JSON.stringify(right.witness);
+  }
+  if (!((variants[0] === 'literal' && variants[1] === 'literal+closing-lf')
+    || (variants[0] === 'literal+closing-lf' && variants[1] === 'literal'))) return false;
+  const literal = leftCertificate.domBodyVariant === 'literal' ? leftCertificate : rightCertificate;
+  const withClosingLf = leftCertificate.domBodyVariant === 'literal+closing-lf'
+    ? leftCertificate : rightCertificate;
+  if (literal.domTextLength !== literal.bodyLength
+    || withClosingLf.domTextLength !== withClosingLf.bodyLength + 1) return false;
+  const withoutBlockLength = (witness) => ({
+    ...witness,
+    anchor: Object.fromEntries(Object.entries(witness.anchor)
+      .filter(([key]) => key !== 'blockLength')),
+    focus: Object.fromEntries(Object.entries(witness.focus)
+      .filter(([key]) => key !== 'blockLength'))
+  });
+  return JSON.stringify(withoutBlockLength(left.witness))
+    === JSON.stringify(withoutBlockLength(right.witness));
+}
+
+function shortStageWitnessEntries(state) {
+  if (!state) return [];
+  if (Array.isArray(state.witnesses)) return state.witnesses;
+  return state.witness ? [{ witness: state.witness, codeCertificate: state.codeCertificate ?? null }] : [];
+}
+
+function shortStageStateMatches(left, right) {
+  if (!left || !right || left.value !== right.value) return false;
+  const leftEntries = shortStageWitnessEntries(left);
+  const rightEntries = shortStageWitnessEntries(right);
+  return leftEntries.some((leftEntry) => rightEntries.some((rightEntry) =>
+    shortStageWitnessMatches(leftEntry, rightEntry)));
+}
+
+function shortStageObservedStateChanged(before, after) {
+  return after?.source !== before?.value || !shortStageWitnessMatches(before, {
+    value: after?.source, witness: after?.witness, codeCertificate: after?.codeCertificate
+  });
+}
+
+function shortStageFullOperationReady(state) {
+  return state?.phase === 'ready'
+    && (state.accepted === '1' || state.source === '')
+    && state.busy === 'false'
+    && state.session === 'ready'
+    && state.lock === 'false'
+    && state.editable === true
+    && state.nativeConnected === true
+    && state.failureAbsent === true
+    && state.stickyFailure === false
+    && state.repairCount === 0
+    && state.stable === true
+    && state.previewCommitPending === false;
+}
+
+function shortStageFullOperationUnsafe(state) {
+  return !state
+    || state.failureAbsent !== true
+    || state.stickyFailure !== false
+    || !Number.isInteger(state.repairCount)
+    || state.repairCount !== 0
+    || state.lock !== 'false'
+    || state.editable !== true
+    || state.nativeConnected !== true;
+}
+
+function shortStageTargetMatches(state, target) {
+  return !!state && !!target && state.value === target.value
+    && (target.witness === null || target.witness === undefined || shortStageStateMatches(state, target));
+}
+
+function shortStageHistoryCursorSnapshot(history) {
+  const cursor = history.cursor.redo ?? history.cursor.undo;
+  if (!cursor?.size) throw new Error('short-stage-history-known-cursor-missing');
+  return new Set(cursor);
+}
+
+function shortStageRestoreHistoryCursor(history, cursor) {
+  history.cursor.undo = new Set(cursor);
+  history.cursor.redo = null;
+}
+
+function shortStageNextHistoryCursor(states, cursor, after, direction) {
+  const nextCursor = new Set();
+  states.forEach((state, stateIndex) => {
+    if (!shortStageStateMatches(state, after)) return;
+    for (const cursorIndex of cursor) {
+      if (direction === 'undo' ? stateIndex < cursorIndex : stateIndex > cursorIndex) {
+        nextCursor.add(stateIndex); break;
       }
-      expect(before.history.redoDepth, 'source redo must not issue an empty Redo').toBeGreaterThan(0);
-    } else if (before.history.undoDepth === targetDepth) return;
-    await probe.press(key);
-    const after = await readCurrentDocumentOwner(page, observationReferences
-      ? { phase: 'history', boundary: direction === 'redo' ? 'after-final-redo' : 'after-history-undo', direction, targetDepth, step } : null);
-    console.log(JSON.stringify({ phase: 'short-stage-history-step', mode: stage.mode, direction, step,
-      before, after }));
-    if (sourceRedo) {
-      expect(after.history.redoDepth).toBeLessThan(before.history.redoDepth);
-      expect(after.history.undoDepth).toBeGreaterThan(before.history.undoDepth);
-      const expectedSource = expectedRedo.pop();
-      expect(expectedSource, 'source redo expectation must be unique').toBeDefined();
-      await expectSource(stage.source, expectedSource);
-    } else if (sourceUndo) {
-      expect(after.history.undoDepth).toBeLessThan(before.history.undoDepth);
-      const afterExpected = history.ledger.get(after.history.undoDepth);
-      expect(afterExpected, 'source undo must land on a declared fixture state').toBeDefined();
-      await expectSource(stage.source, afterExpected);
-      const beforeExpected = history.ledger.get(before.history.undoDepth);
-      if (after.history.redoDepth > before.history.redoDepth) {
-        expectedRedo.push(beforeExpected);
-      } else {
-        expect(afterExpected, 'undo without redo growth must not drop a source mutation')
-          .toBe(beforeExpected);
-      }
-    } else {
-      expect(direction === 'undo' ? after.history.undoDepth <= before.history.undoDepth
-        : after.history.undoDepth >= before.history.undoDepth).toBe(true);
-      expect(history.ledger.has(after.history.undoDepth), 'natural history group must have a verified expected source').toBe(true);
-      await expectSource(stage.source, history.ledger.get(after.history.undoDepth));
     }
-    console.log(JSON.stringify({ phase: 'short-stage-history-exact', mode: stage.mode, direction, step,
-      undoDepth: after.history.undoDepth, exact: true }));
+  });
+  return nextCursor;
+}
+
+function shortStageHistoryExit(states, cursor, target, direction, requireBoundary) {
+  const matchesTarget = !!target && cursor?.size > 0
+    && [...cursor].every((index) => shortStageTargetMatches(states[index], target));
+  if (!matchesTarget) return { exit: false, uncovered: false };
+  if (!requireBoundary) return { exit: true, uncovered: false };
+  const boundary = direction === 'undo' ? 0 : states.length - 1;
+  const targetHasWitness = !!target.witness && typeof target.witness === 'object'
+    && Object.keys(target.witness).length > 0;
+  const proven = targetHasWitness && cursor.has(boundary)
+    && shortStageTargetMatches(states[boundary], target);
+  return proven ? { exit: true, uncovered: false } : { exit: false, uncovered: true };
+}
+
+async function shortStageReplayHistory(page, stage, probe, history, direction, target = null, requireBoundary = target === null) {
+  const key = direction === 'undo' ? 'Control+z' : 'Control+Shift+Z';
+  const expectedTarget = target ?? (direction === 'undo' ? history.states[0] : history.latest);
+  const bound = history.states.length * 3 + 16;
+  let current;
+  if (stage.mode === 'full') {
+    const entry = await probe.settledState();
+    if (shortStageFullOperationUnsafe(entry)) throw new Error('short-stage-history-full-operation-unsafe');
+    current = { value: entry.source, witness: entry.witness,
+      codeCertificate: entry.codeCertificate ?? null };
+  } else {
+    current = { value: await stage.source.inputValue(), witness: await probe.witness() };
+  }
+  let cursor = direction === 'undo' ? history.cursor.undo : history.cursor.redo;
+  if (!cursor?.size) throw new Error('short-stage-history-known-cursor-missing');
+  const currentAtKnownCursor = [...cursor].some((index) => shortStageStateMatches(history.states[index], current));
+  if (!currentAtKnownCursor) throw new Error('short-stage-history-current-state-not-at-known-cursor');
+  const initialExit = shortStageHistoryExit(history.states, cursor, expectedTarget, direction, requireBoundary);
+  if (initialExit.uncovered) throw new Error('short-stage-history-target-occurrence-unproven');
+  if (initialExit.exit) {
+    if (direction === 'undo') history.cursor.redo = new Set(cursor);
+    else history.cursor.undo = new Set(cursor);
+    return new Set(cursor);
+  }
+  for (let step = 0; step < bound; step += 1) {
+    const before = current;
+    await probe.press(key);
+    let after;
+    if (stage.mode === 'full') {
+      let unsafeSnapshot = null;
+      let settledSnapshot = null;
+      let lastSnapshot = null;
+      let predicateError = null;
+      const changed = snapshot => shortStageObservedStateChanged(before, snapshot);
+      try {
+        await expect.poll(async () => {
+          let snapshot;
+          try {
+            snapshot = await probe.settledState();
+          } catch (error) {
+            predicateError = error;
+            throw error;
+          }
+          lastSnapshot = snapshot;
+          if (shortStageFullOperationUnsafe(snapshot)) {
+            unsafeSnapshot = snapshot;
+            return true;
+          }
+          if (!shortStageFullOperationReady(snapshot) || !changed(snapshot)) return false;
+          settledSnapshot = snapshot;
+          return true;
+        }, { message: 'short-stage-history-full-operation-wait' }).toBe(true);
+      } catch (error) {
+        if (predicateError) throw predicateError;
+        if (typeof error?.message !== 'string' || !error.message.includes('short-stage-history-full-operation-wait')) {
+          throw error;
+        }
+        if (unsafeSnapshot) throw new Error('short-stage-history-full-operation-unsafe');
+        if (lastSnapshot && shortStageFullOperationReady(lastSnapshot) && !changed(lastSnapshot)) {
+          throw new Error('short-stage-history-full-operation-nochange');
+        }
+        throw new Error('short-stage-history-full-operation-pending');
+      }
+      if (unsafeSnapshot) throw new Error('short-stage-history-full-operation-unsafe');
+      if (!settledSnapshot) throw new Error('short-stage-history-full-operation-pending');
+      probe.guard();
+      after = { value: settledSnapshot.source, witness: settledSnapshot.witness,
+        codeCertificate: settledSnapshot.codeCertificate ?? null };
+    } else {
+      await expect.poll(async () => {
+        const value = await stage.source.inputValue();
+        const witness = await probe.witness();
+        return value !== before.value || JSON.stringify(witness) !== JSON.stringify(before.witness);
+      }, { message: `${direction} must produce a distinct observed native state` }).toBe(true);
+      after = { value: await stage.source.inputValue(), witness: await probe.witness() };
+    }
+    // A real Undo may group several forward observations. Keep every duplicate
+    // occurrence still reachable from the known cursor set; never infer depth.
+    const nextCursor = shortStageNextHistoryCursor(history.states, cursor, after, direction);
+    if (nextCursor.size === 0) throw new Error('short-stage-history-next-state-unobserved-under-cursor');
+    cursor = nextCursor;
+    current = after;
+    history.cursor[direction] = new Set(cursor);
+    const exit = shortStageHistoryExit(history.states, cursor, expectedTarget, direction, requireBoundary);
+    if (exit.uncovered) throw new Error('short-stage-history-target-occurrence-unproven');
+    if (exit.exit) {
+      if (direction === 'undo') history.cursor.redo = new Set(cursor);
+      else history.cursor.undo = new Set(cursor);
+      return new Set(cursor);
+    }
   }
   throw new Error('short-stage-natural-history-progress-bound');
 }
@@ -1544,33 +3028,32 @@ async function finishShortStageObservation(probe, frames, label, failed) {
 for (const mode of ['ordinary', 'split', 'full']) {
 for (const pacing of ['normal', 'burst']) {
   test(`[short-stage] ${mode} ${pacing} mixed lifecycle reaches source zero and replays natural history`, async ({ page }) => {
-    const stage = await openShortStage(page, mode, shortStageInitial);
-    const diagnosticModule = mode === 'full' && pacing === 'normal' ? process.env.EASYMDE_E2E_BRANCH_DIAGNOSTIC_MODULE : null;
-    const branchDiagnostic = diagnosticModule ? await (await import(diagnosticModule)).start(page, {
-      outputPath: test.info().outputPath('branch-causal-observation-v6.json')
-    }) : null;
-    const positions = [
-      { selector: 'p', index: 0, needle: shortStageBlocks[0].source, offset: 1 },
-      { selector: 'h1', index: 0, needle: 'Heading', offset: 2 },
-      { selector: 'p', index: 1, needle: 'Target paragraph here.', offset: 7 },
-      { selector: 'pre code', index: 0, needle: 'echo hi', offset: 2 },
-      { selector: 'p', index: 2, needle: 'End.', offset: 1 }
-    ];
-    const oracle = shortStageDeletionOracle(mode);
-    const entered = mode === 'full' ? 'Z\n\n  ' : 'Z\n';
-    const continued = mode === 'full' ? 'Z\n\nXY' : 'Z\nXY';
-    const shortened = mode === 'full' ? 'Z\n\nX' : 'Z\nX';
-    const allowed = new Set([...oracle.keys(), 'Z', entered, continued, shortened]);
-    for (const position of positions) {
-      const offset = shortStageInitial.indexOf(position.needle) + position.offset;
-      allowed.add(shortStageInitial.slice(0, offset) + 'V' + shortStageInitial.slice(offset));
-    }
-    const probe = await startShortStageProbe(page, stage, allowed);
+    const phaseModel = shortStagePhaseModel(mode);
+    let previewReadOperationId = null;
+    const stage = await openShortStage(page, mode, shortStageInitial, ({ browserMonitor, postId, renderParams }) => {
+      previewReadOperationId = browserMonitor.beginPhased({
+        postId,
+        renderParams,
+        phases: phaseModel.phases
+      });
+    });
+    expect(Number.isSafeInteger(previewReadOperationId)).toBe(true);
+    const enterPreviewPhase = (phaseId) => {
+      stage.browserMonitor.enterPhase(previewReadOperationId, phaseId);
+    };
+    const {
+      allowed, branch, branchBase, continued, entered, middleOffset, middleQSource,
+      oracle, phaseIds, positions, shortened
+    } = phaseModel;
+    const probe = await startShortStageProbe(page, stage, allowed, {
+      codeDescriptorsBySource: shortStageDeclaredCodeDescriptors
+    });
     const frames = await startShortStageFrames(page, stage.surface);
     let phase = 'whole-document-Backspace', failed = true;
     try {
       phase = 'real-mouse-and-arrow-positions'; frames.stage(phase);
       for (const position of positions) {
+        enterPreviewPhase(phaseIds.positions[position.phaseIndex]);
         const sourceOffset = shortStageInitial.indexOf(position.needle) + position.offset;
         probe.guard();
         if (mode === 'full') {
@@ -1586,6 +3069,7 @@ for (const pacing of ['normal', 'burst']) {
         await probe.press('Backspace'); await expectSource(stage.source, shortStageInitial);
       }
       await stage.surface.click(); await probe.press('Control+End');
+      enterPreviewPhase(phaseIds.deletion);
       await probe.beginDeletion(oracle);
       phase = 'whole-document-Backspace';
       frames.stage(phase);
@@ -1608,15 +3092,21 @@ for (const pacing of ['normal', 'burst']) {
       await expectSource(stage.source, '');
       await checkDeletionRows();
       phase = 'extra-Backspace-at-source-zero'; frames.stage(phase);
-      const zero = await readCurrentDocumentOwner(page);
+      enterPreviewPhase(phaseIds.emptyExtraBackspace);
+      const zero = await readPublicEditorState(page);
       for (let key = 0; key < 3; key += 1) await probe.press('Backspace');
       await expectSource(stage.source, '');
-      const afterExtra = await readCurrentDocumentOwner(page);
-      expect(afterExtra.history).toEqual(zero.history);
-      expect(afterExtra.revision).toBe(zero.revision);
-      expect(afterExtra.selection).toEqual(zero.selection);
+      const afterExtra = await readPublicEditorState(page);
+      expect({ sourceEmpty: afterExtra.source === '', ...safePublicState(afterExtra) }).toMatchObject({
+        sourceEmpty: true, sourceLength: 0, effectiveEditable: true,
+        contenteditable: 'true', lock: mode === 'full' ? 'false' : null, session: 'ready', focused: true });
+      expect(afterExtra.nativeAnchor, 'Backspace at source zero must not move the native anchor')
+        .toEqual(zero.nativeAnchor);
+      expect(afterExtra.nativeFocus, 'Backspace at source zero must not move the native focus')
+        .toEqual(zero.nativeFocus);
       phase = 'empty-input-Enter-immediate-input'; frames.stage(phase);
-      await probe.allow(new Set(['', 'Z', entered, continued, shortened]));
+      enterPreviewPhase(phaseIds.reentry);
+      await probe.allow(new Set(['', branchBase, entered, continued, shortened, branch]));
       await probe.type('Z');
       if (pacing === 'normal') await expectSource(stage.source, 'Z');
       await probe.press('Enter');
@@ -1629,53 +3119,132 @@ for (const pacing of ['normal', 'burst']) {
       const history = shortStageHistoryLedger(forward.rows, shortStageInitial, allowed);
       await probe.freeze();
       phase = 'groupwise-Undo-full-exact'; frames.stage(phase);
-      await shortStageReplayHistory(page, stage, probe, history, 'undo', history.baseline, branchDiagnostic ? {} : null);
+      enterPreviewPhase(phaseIds.fullUndo);
+      await shortStageReplayHistory(page, stage, probe, history, 'undo');
       await expectSource(stage.source, shortStageInitial);
       phase = 'groupwise-Redo-full-exact'; frames.stage(phase);
-      await shortStageReplayHistory(page, stage, probe, history, 'redo', history.latest,
-        branchDiagnostic ? { continued, shortened, branched: continued + 'B' } : null);
+      enterPreviewPhase(phaseIds.fullRedo);
+      await shortStageReplayHistory(page, stage, probe, history, 'redo');
       await expectSource(stage.source, shortened);
       phase = 'history-branch-and-continuation'; frames.stage(phase);
-      await probe.press('Control+z');
-      const branchPoint = await readCurrentDocumentOwner(page, branchDiagnostic ? { phase: 'branch', boundary: 'branch' } : null);
-      expect(history.ledger.has(branchPoint.history.undoDepth)).toBe(true);
-      const branchBefore = history.ledger.get(branchPoint.history.undoDepth);
-      await expectSource(stage.source, branchBefore);
-      const branch = branchBefore.slice(0, branchPoint.selection.start) + 'B' + branchBefore.slice(branchPoint.selection.end);
+      enterPreviewPhase(phaseIds.branchToZ);
+      await shortStageReplayHistory(page, stage, probe, history, 'undo', { value: branchBase, witness: null });
+      const branchCursor = shortStageHistoryCursorSnapshot(history);
+      const branchBefore = await stage.source.inputValue();
+      expect(branchBefore === branchBase, 'branch point must be the independently expected observed source state').toBe(true);
+      const branchPoint = await readPublicEditorState(page);
+      expect(branchPoint.nativeCollapsed, 'branch point keeps a real collapsed native caret').toBe(true);
+      expect(branchPoint.nativeConnected, 'branch point keeps the native caret connected').toBe(true);
+      const branchWitnessBefore = await probe.witness();
+      const branchCaretBeforeExact = branchWitnessBefore.collapsed === true
+        && branchWitnessBefore.anchor?.connected === true && branchWitnessBefore.focus?.connected === true
+        && JSON.stringify(branchWitnessBefore.anchor) === JSON.stringify(branchWitnessBefore.focus)
+        && branchWitnessBefore.anchor?.column === 1
+        && branchWitnessBefore.anchor?.blockLength === 1
+        && (mode === 'full'
+          ? branchWitnessBefore.anchor?.kind === 'visual' && branchWitnessBefore.anchor?.blockOrdinal === 0
+          : branchWitnessBefore.anchor?.kind === 'source' && branchWitnessBefore.anchor?.lineIndex === 0);
+      expect(branchCaretBeforeExact, 'branch input begins at the independently expected native text end').toBe(true);
+      enterPreviewPhase(phaseIds.branchInput);
       await probe.type('B');
       await expectSource(stage.source, branch);
-      expect((await readCurrentDocumentOwner(page)).history.redoDepth).toBe(0);
+      const branchWitnessAfter = await probe.witness();
+      const branchCaretAfterExact = branchWitnessAfter.collapsed === true
+        && branchWitnessAfter.anchor?.connected === true && branchWitnessAfter.focus?.connected === true
+        && JSON.stringify(branchWitnessAfter.anchor) === JSON.stringify(branchWitnessAfter.focus)
+        && branchWitnessAfter.anchor?.column === 2
+        && branchWitnessAfter.anchor?.blockLength === 2
+        && (mode === 'full'
+          ? branchWitnessAfter.anchor?.kind === 'visual' && branchWitnessAfter.anchor?.blockOrdinal === 0
+          : branchWitnessAfter.anchor?.kind === 'source' && branchWitnessAfter.anchor?.lineIndex === 0);
+      expect(branchCaretAfterExact, 'branch input lands at the independently expected native text end').toBe(true);
+      enterPreviewPhase(phaseIds.invalidRedo);
+      await probe.press('Control+Shift+Z');
+      await expectSource(stage.source, branch);
+      enterPreviewPhase(phaseIds.undoBranch);
       await probe.press('Control+z'); await expectSource(stage.source, branchBefore);
+      enterPreviewPhase(phaseIds.redoBranch);
       await probe.press('Control+Shift+Z'); await expectSource(stage.source, branch);
+      enterPreviewPhase(phaseIds.undoBranchAgain);
       await probe.press('Control+z'); await expectSource(stage.source, branchBefore);
-      await shortStageReplayHistory(page, stage, probe, history, 'undo', history.baseline, branchDiagnostic ? {} : null);
+      shortStageRestoreHistoryCursor(history, branchCursor);
+      enterPreviewPhase(phaseIds.restoreInitial);
+      await shortStageReplayHistory(page, stage, probe, history, 'undo');
       await expectSource(stage.source, shortStageInitial);
       phase = 'restored-middle-direct-continuation'; frames.stage(phase);
-      const offset = shortStageInitial.indexOf('Target paragraph here.') + 1;
+      enterPreviewPhase(phaseIds.middleQ);
       if (mode === 'full') {
         await stage.visual.locator('p').nth(1).click({ position: { x: 3, y: 3 } });
         await probe.press('Home'); await probe.press('ArrowRight');
       } else {
         await stage.surface.click(); await probe.press('Control+Home');
-        for (let index = 0; index < offset; index += 1) await probe.press('ArrowRight');
+        for (let index = 0; index < middleOffset; index += 1) await probe.press('ArrowRight');
       }
       await probe.type('Q');
-      await expectSource(stage.source, shortStageInitial.slice(0, offset) + 'Q' + shortStageInitial.slice(offset));
+      await expectSource(stage.source, middleQSource);
+      enterPreviewPhase(phaseIds.middleQUndo);
       await probe.press('Control+z'); await expectSource(stage.source, shortStageInitial);
-      if (mode === 'full') await expect(stage.visual).not.toHaveAttribute('aria-busy', 'true');
       await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       probe.guard();
+      const finalDrain = await stage.browserMonitor.drain({ timeoutMs: 8_000, quietMs: 300 });
+      expect(finalDrain, 'final Preview drain must settle only after all phase actions').toBe(true);
+      probe.guard();
+      const finalState = await readPublicEditorState(page);
+      const finalWitness = await probe.witness();
+      const previewCertificate = await readShortStageFinalPreviewCertificate(page, shortStageInitial);
+      const targetBlockLength = 'Target paragraph here.'.length;
+      const expectedCaret = mode === 'full'
+        ? { kind: 'visual', connected: true, inside: true, blockOrdinal: 2, lineIndex: null,
+          column: 1, blockLength: targetBlockLength, surfaceOffset: null }
+        : { kind: 'source', connected: true, inside: true, blockOrdinal: null, lineIndex: 4,
+          column: 1, blockLength: targetBlockLength, surfaceOffset: null };
+      expect({ sourceExact: finalState.source === shortStageInitial, ...safePublicState(finalState) }).toMatchObject({
+        sourceExact: true, sourceInputConnected: true, effectiveEditable: true,
+        contenteditable: 'true', focused: true,
+        previewPhase: mode === 'full' ? 'ready' : null,
+        busy: mode === 'full' ? 'false' : null,
+        failure: null, session: 'ready', lock: mode === 'full' ? 'false' : null, repairCount: 0,
+        nativeConnected: true, nativeCollapsed: true
+      });
+      expect(finalWitness).toMatchObject({ collapsed: true, direction: 'none',
+        anchor: expectedCaret, focus: expectedCaret });
+      expect(previewCertificate).toEqual({
+        sourceExact: true, sinkCount: 1, sinkConnected: true, blockOrderExact: true,
+        paragraphCount: 3, paragraphTextExact: true, headingCount: 1, headingTextExact: true,
+        preCount: 1, codeCount: 1, codeTextExact: true, phaseReady: true, acceptedOne: true,
+        busyFalse: true, previewErrorAbsent: true, refreshingAbsent: true,
+        globalFailureAbsent: true
+      });
+      const proof = stage.browserMonitor.provePreviewReadOperation(previewReadOperationId, {
+        finalUiVerified: true
+      });
+      const finalMonitor = stage.browserMonitor.summary();
+      expect(proof.approved, 'declared phased Preview reads must prove recoverable cancellation').toBe(true);
+      expect(proof.code).toBe('preview-read-operation-approved');
+      expect(Number.isInteger(proof.approvedAbortCount) && proof.approvedAbortCount >= 0).toBe(true);
+      expect(finalMonitor.issues).toEqual([]);
+      expect(finalMonitor.approved.previewCancellations).toBe(proof.approvedAbortCount);
+      expect(finalMonitor.counts.requestFailures).toBeGreaterThanOrEqual(proof.approvedAbortCount);
       console.log(JSON.stringify({ phase: 'short-stage-lifecycle-complete', mode, pacing,
-        trueSourceZero: true, naturalHistoryGroups: history.ledger.size - 1,
-        final: await readCurrentDocumentOwner(page), health: forward.health, realOSIME: false }));
+        trueSourceZero: true, observedSourceTransitions: Math.max(0, history.states.length - 1),
+        final: { sourceLength: finalState.sourceLength, editable: finalState.effectiveEditable,
+          lock: finalState.lock, session: finalState.session, nativeConnected: finalState.nativeConnected,
+          collapsed: finalState.nativeCollapsed, repairCount: finalState.repairCount },
+        preview: { phaseReady: previewCertificate.phaseReady, acceptedOne: previewCertificate.acceptedOne,
+          busyFalse: previewCertificate.busyFalse, semanticCounts: [previewCertificate.paragraphCount,
+            previewCertificate.headingCount, previewCertificate.preCount, previewCertificate.codeCount] },
+        phasedPreview: { approved: proof.approved, approvedAbortCount: proof.approvedAbortCount,
+          requestFailures: finalMonitor.counts.requestFailures, issueCount: finalMonitor.issues.length },
+        health: forward.health, realOSIME: false }));
       failed = false;
     } catch (error) {
+      const failedState = await readPublicEditorState(page);
       console.log(JSON.stringify({ phase: 'short-stage-lifecycle-first-failure', mode, pacing, operation: phase,
-        owner: await readCurrentDocumentOwner(page), failures: stage.failures,
-        firstObservation: (await probe.snapshot()).failure }));
+        state: { sourceLength: failedState.sourceLength, editable: failedState.effectiveEditable,
+          lock: failedState.lock, nativeConnected: failedState.nativeConnected },
+        failures: stage.failures, firstObservation: (await probe.snapshot()).failure }));
       throw error;
     } finally {
-      if (branchDiagnostic) await branchDiagnostic.stop({ failed });
       await finishShortStageObservation(probe, frames, `short-${mode}-${pacing}`, failed);
     }
   });
@@ -1736,9 +3305,25 @@ test(`first character deletion after empty join ${boundary.paragraphs} reaches c
 
 test('short mixed document can be deleted characterwise and restored by keyboard history', async ({ page }) => {
   const initial = '中文 abc aaa \\*文字\\*\n\n# Heading\n\nTarget paragraph here.\n\n~~~bash\necho hi\n~~~\n\nEnd.';
-  const { failures, source, visual } = await openVisual(page, initial);
+  const phaseModel = shortStagePhaseModel('full');
+  const deletionForward = phaseModel.deletionForwardGroups;
+  const deletionReverse = deletionForward.slice().reverse().map((group) => [...group]);
+  const emptyGroup = ['', ' ', '  ', '\n', '\n\n'];
+  const typedXGroup = ['X', 'X ', 'X  ', 'X\n', 'X\n\n', ' X', '  X', '\nX', '\n\nX'];
+  const middleX = initial.replace('Target paragraph here.', 'XTarget paragraph here.');
+  const previewRead = createPhasedPreviewOperationTracker([
+    { id: 'fixture', groups: [[''], [initial]] },
+    { id: 'delete', groups: deletionForward },
+    { id: 'undo-restore', groups: deletionReverse },
+    { id: 'redo-empty', groups: deletionForward },
+    { id: 'empty-type-x', groups: [emptyGroup, typedXGroup, emptyGroup] },
+    { id: 'undo-restore-2', groups: deletionReverse },
+    { id: 'middle-x', groups: [[initial], [middleX]] }
+  ]);
+  const { failures, source, visual } = await openVisual(page, initial, undefined, previewRead.beforeFixture);
   await visual.locator('p').last().click();
   await page.keyboard.press('Control+End');
+  previewRead.enterPhase('delete');
   for (let step = 0; step < initial.length + 8; step += 1) {
     await page.keyboard.press('Backspace');
     expect(failures, `delete operation ${step}`).toEqual([]);
@@ -1747,6 +3332,7 @@ test('short mixed document can be deleted characterwise and restored by keyboard
   await expect(visual).toHaveText('');
   await expect.poll(async () => (await source.inputValue()).trim().length).toBe(0);
   const emptySource = await source.inputValue();
+  previewRead.enterPhase('undo-restore');
   let restored = false;
   let undoSteps = 0;
   for (let step = 0; step < initial.length + 8; step += 1) {
@@ -1760,46 +3346,67 @@ test('short mixed document can be deleted characterwise and restored by keyboard
     }
   }
   expect(restored).toBe(true);
+  previewRead.enterPhase('redo-empty');
   for (let step = 0; step < undoSteps; step += 1) {
     await page.keyboard.press('Control+Shift+z');
     expect(failures, `redo operation ${step}`).toEqual([]);
     await expectLiveSelection(visual);
   }
   await expectSource(source, emptySource);
+  previewRead.enterPhase('empty-type-x');
   await page.keyboard.type('X');
   await expect.poll(async () => (await source.inputValue()).trim()).toBe('X');
   await page.keyboard.press('Control+z');
   await expectSource(source, emptySource);
+  previewRead.enterPhase('undo-restore-2');
   for (let step = 0; step < undoSteps; step += 1) {
     await page.keyboard.press('Control+z');
     expect(failures, `restoration operation ${step}`).toEqual([]);
     await expectLiveSelection(visual);
   }
   await expectSource(source, initial);
+  previewRead.enterPhase('middle-x');
   await visual.locator('p').filter({ hasText: 'Target paragraph here.' }).click();
   await page.keyboard.press('Home');
   await page.keyboard.type('X');
-  await expectSource(source, initial.replace('Target paragraph here.', 'XTarget paragraph here.'));
+  await expectSource(source, middleX);
   expect(failures).toEqual([]);
+  await previewRead.prove({ visual });
 });
 
 test('deleted-to-empty document accepts Enter continuation and restores exact history', async ({ page }) => {
   const initial = 'abc\n\n';
   const legalEmpty = '\n\n';
-  const { failures, source, visual } = await openVisual(page, initial);
+  const emptyGroup = [legalEmpty, ''];
+  const zGroup = ['Z', `Z${legalEmpty}`];
+  const enterGroup = ['Z\n\n  ', `Z\n\n  ${legalEmpty}`];
+  const xGroup = ['Z\n\nX', `Z\n\nX${legalEmpty}`];
+  const xyGroup = ['Z\n\nXY', `Z\n\nXY${legalEmpty}`];
+  const xybGroup = ['Z\n\nXYB', `Z\n\nXYB${legalEmpty}`];
+  const previewRead = createPhasedPreviewOperationTracker([
+    {
+      id: 'lifecycle',
+      groups: [
+        [''], [initial], ['ab\n\n'], ['a\n\n'], emptyGroup,
+        zGroup, enterGroup, xGroup, xyGroup, xGroup, xyGroup, xGroup, xyGroup, xybGroup,
+        xyGroup, xGroup, enterGroup, zGroup, emptyGroup, ['a\n\n'], ['ab\n\n'], [initial],
+        ['aMbc\n\n']
+      ]
+    }
+  ]);
+  const { failures, source, visual } = await openVisual(page, initial, undefined, previewRead.beforeFixture);
   let operationStage = 'delete-to-empty'; let latestAtom = null;
   const checkpoint = async (expected, caret, paragraphIndex, bodyOffset, bodyLength, ready = false) => {
     expect(failures).toEqual([]); await expectSource(source, expected);
-    const state = await readFullCrossBlockState(visual, { paragraph: true, ownerProof: true,
-      committed: { start: caret, end: caret, direction: 'none' } });
-    latestAtom = { operationStage, expectedLength: expected.length, expectedCaret: caret, state };
+    const state = await readFullCrossBlockState(visual, { paragraph: true, expectedSource: expected });
+    latestAtom = { operationStage, expectedLength: expected.length, expectedCaret: caret,
+      state: safeFullCrossBlockState(state) };
     console.log(JSON.stringify({ phase: 'empty-Enter-first-atom', ...latestAtom }));
-    expect(state).toMatchObject({ nativeConnected: true, focused: true, editable: true, lock: 'false',
-      session: 'ready', expectedDocumentSelection: true });
+    expect(state).toMatchObject({ sourceMatchesExpected: true, nativeConnected: true, focused: true,
+      editable: true, lock: 'false', session: 'ready' });
     if (ready || state.phase === 'ready') expect(state).toMatchObject({ phase: 'ready', collapsed: true,
       nativeParagraph: { index: paragraphIndex, bodyOffset, bodyLength } });
-    else expect(state).toMatchObject({ phase: 'rendering', pendingCount: 1, retainedCurrent: true,
-      nativeMatchesLease: true, canonicalExact: true });
+    else expect(state).toMatchObject({ collapsed: true });
     expect(failures).toEqual([]); return state;
   };
   const acceptedEmptyRepresentation = (value) => value === '' || value === legalEmpty;
@@ -1807,12 +3414,12 @@ test('deleted-to-empty document accepts Enter continuation and restores exact hi
     await expect.poll(async () => acceptedEmptyRepresentation(await source.inputValue())).toBe(true);
     const canonical = await source.inputValue();
     expect(canonical.trim().length, 'Empty representation must contain no document text').toBe(0);
-    const owner = await readCurrentDocumentOwner(page);
-    const state = await readFullCrossBlockState(visual, { paragraph: true, ownerProof: true,
-      committed: { start: 0, end: 0, direction: 'none' } });
-    latestAtom = { operationStage, canonicalLength: canonical.length, state, owner };
-    expect(state).toMatchObject({ nativeConnected: true, collapsed: true, focused: true, editable: true,
-      lock: 'false', session: 'ready', previewPhase: 'ready', busy: 'false', expectedDocumentSelection: true });
+    const owner = await readPublicEditorState(page);
+    const state = await readFullCrossBlockState(visual, { paragraph: true, expectedSource: canonical });
+    latestAtom = { operationStage, canonicalLength: canonical.length,
+      state: safeFullCrossBlockState(state), owner: safePublicState(owner) };
+    expect(state).toMatchObject({ sourceMatchesExpected: true, nativeConnected: true, collapsed: true,
+      focused: true, editable: true, lock: 'false', session: 'ready', previewPhase: 'ready', busy: 'false' });
     expect(state.nativeEndpoints.anchor.nodeType, 'A valid native caret must have a connected anchor').not.toBeNull();
     expect(state.nativeEndpoints.focus.nodeType, 'A valid native caret must have a connected focus').not.toBeNull();
     if (state.nativeParagraph) expect(state.nativeParagraph.bodyOffset).toBe(state.nativeParagraph.bodyLength);
@@ -1828,15 +3435,13 @@ test('deleted-to-empty document accepts Enter continuation and restores exact hi
     }
     operationStage = 'extra-empty-Backspace';
     const beforeExtraCanonical = await source.inputValue();
-    const beforeExtraOwner = await readCurrentDocumentOwner(page);
-    expect(beforeExtraCanonical).toBe(legalEmpty);
+    const beforeExtraOwner = await readPublicEditorState(page);
+    expect(beforeExtraCanonical === legalEmpty).toBe(true);
     await page.keyboard.press('Backspace');
     let acceptedEmpty = await readAcceptedEmpty();
     console.log(JSON.stringify({ phase: 'empty-representation-contract', press: 'first-extra-Backspace',
-      beforeCanonical: beforeExtraCanonical, afterCanonical: acceptedEmpty.canonical,
-      beforeHistory: beforeExtraOwner.history, afterHistory: acceptedEmpty.owner.history,
-      beforeRevision: beforeExtraOwner.revision, afterRevision: acceptedEmpty.owner.revision,
-      state: acceptedEmpty.state }));
+      beforeLength: beforeExtraCanonical.length, afterLength: acceptedEmpty.canonical.length,
+      nativeConnected: acceptedEmpty.owner.nativeConnected, statePhase: acceptedEmpty.state.phase }));
     const zeroLengthBackspaceIssued = acceptedEmpty.canonical === '';
     if (zeroLengthBackspaceIssued) {
       operationStage = 'extra-empty-at-zero-Backspace';
@@ -1851,9 +3456,10 @@ test('deleted-to-empty document accepts Enter continuation and restores exact hi
         await page.keyboard.press('Backspace');
         const afterZero = await readAcceptedEmpty();
         expect(afterZero.canonical, 'Backspace at the zero-length empty representation must be an exact no-op').toBe('');
-        expect(afterZero.owner.history, 'Backspace at zero length must not change history').toEqual(beforeZeroOwner.history);
-        expect(afterZero.owner.revision, 'Backspace at zero length must not change revision').toBe(beforeZeroOwner.revision);
-        expect(afterZero.owner.selection, 'Backspace at zero length must not move the document selection').toEqual(beforeZeroOwner.selection);
+        expect(afterZero.owner.nativeAnchor, 'Backspace at zero length must not move the native anchor')
+          .toEqual(beforeZeroOwner.nativeAnchor);
+        expect(afterZero.owner.nativeFocus, 'Backspace at zero length must not move the native focus')
+          .toEqual(beforeZeroOwner.nativeFocus);
         expect(failures, 'Backspace at zero length must not emit a pageerror').toEqual([]);
         const sameDom = await page.evaluate((before) => {
           const surface = document.querySelector('[data-easymde-preview-html-sink][role="textbox"]');
@@ -1869,10 +3475,8 @@ test('deleted-to-empty document accepts Enter continuation and restores exact hi
           surface: true, children: true, p0Tag: true, p0Children: true
         });
         console.log(JSON.stringify({ phase: 'empty-representation-contract', press: 'zero-length-Backspace',
-          beforeCanonical: acceptedEmpty.canonical, afterCanonical: afterZero.canonical,
-          beforeHistory: beforeZeroOwner.history, afterHistory: afterZero.owner.history,
-          beforeRevision: beforeZeroOwner.revision, afterRevision: afterZero.owner.revision,
-          domIdentity: sameDom, state: afterZero.state }));
+          beforeLength: acceptedEmpty.canonical.length, afterLength: afterZero.canonical.length,
+          domIdentity: sameDom, nativeConnected: afterZero.owner.nativeConnected, statePhase: afterZero.state.phase }));
         acceptedEmpty = afterZero;
       } finally {
         await beforeZeroDom.dispose();
@@ -1889,15 +3493,20 @@ test('deleted-to-empty document accepts Enter continuation and restores exact hi
     operationStage = 'immediate-XY'; await page.keyboard.type('XY'); await checkpoint(continued, 5, 1, 2, 2);
     operationStage = 'Backspace-Y'; await page.keyboard.press('Backspace'); await checkpoint(shortened, 4, 1, 1, 1);
     operationStage = 'EOF-Delete-noop';
-    const beforeNoop = await readCurrentDocumentOwner(page);
+    const beforeNoop = await readPublicEditorState(page);
     await page.keyboard.press('Delete'); await checkpoint(shortened, 4, 1, 1, 1);
-    const afterNoop = await readCurrentDocumentOwner(page);
-    expect(afterNoop.history).toEqual(beforeNoop.history); expect(afterNoop.revision).toBe(beforeNoop.revision);
+    const afterNoop = await readPublicEditorState(page);
+    expect(afterNoop.source === beforeNoop.source, 'EOF Delete must preserve the exact source').toBe(true);
+    expect(afterNoop.nativeAnchor, 'EOF Delete must preserve the native anchor').toEqual(beforeNoop.nativeAnchor);
+    expect(afterNoop.nativeFocus, 'EOF Delete must preserve the native focus').toEqual(beforeNoop.nativeFocus);
     operationStage = 'Undo-Backspace-Y'; await page.keyboard.press('Control+z'); await checkpoint(continued, 5, 1, 2, 2);
     operationStage = 'Redo-Backspace-Y'; await page.keyboard.press('Control+Shift+z'); await checkpoint(shortened, 4, 1, 1, 1);
     operationStage = 'Undo-before-branch'; await page.keyboard.press('Control+z'); await checkpoint(continued, 5, 1, 2, 2);
     operationStage = 'branch-B'; await page.keyboard.type('B');
-    const branched = await checkpoint(branch, 6, 1, 3, 3); expect(branched.documentHistory.redoDepth).toBe(0);
+    await checkpoint(branch, 6, 1, 3, 3);
+    await page.keyboard.press('Control+Shift+z');
+    await expectSource(source, branch);
+    await expectLiveSelection(visual);
     operationStage = 'restore-original-history';
     let restored = false;
     for (let step = 0; step < 20; step += 1) {
@@ -1910,6 +3519,7 @@ test('deleted-to-empty document accepts Enter continuation and restores exact hi
     await page.keyboard.press('Home'); await page.keyboard.press('ArrowRight'); await page.keyboard.type('M');
     await checkpoint('aMbc\n\n', 2, 0, 2, 4);
     await expect(visual).toHaveAttribute('aria-busy', 'false'); await checkpoint('aMbc\n\n', 2, 0, 2, 4, true);
+    await previewRead.prove({ visual });
   } catch (error) {
     console.log(JSON.stringify({ phase: 'empty-Enter-first-failure', operationStage, latestAtom, errors: failures }));
     throw error;
@@ -1920,75 +3530,63 @@ test('explicit Preview lock rejects real keys across formal response and unlock 
   const initial = 'Alpha.\n\nTarget.\n\nAfter.';
   const typed = 'Alpha.V\n\nTarget.\n\nAfter.';
   const resumed = 'Alpha.VX\n\nTarget.\n\nAfter.';
-  const { failures, source, visual } = await openVisual(page, initial);
+  const previewRead = createPhasedPreviewOperationTracker([
+    { id: 'lifecycle', groups: [[''], [initial], [typed], [resumed], [typed], [resumed], [typed]] }
+  ]);
+  const { failures, source, visual } = await openVisual(page, initial, undefined, previewRead.beforeFixture);
   const sink = page.locator('[data-easymde-preview-html-sink]');
   const lock = page.locator('.easymde-immersive-preview-lock');
   let held = null; let operationStage = 'unlocked-input'; let latestAtom = null;
-  const lockedCheckpoint = async (expectedOwner) => {
+  const lockedCheckpoint = async () => {
     const state = await sink.evaluate((surface) => {
-      const root = surface.ownerDocument.querySelector('#easymde-editor-root');
-      const keys = Object.getOwnPropertyNames(root).filter(key => key.startsWith('__reactContainer$'));
-      if (keys.length !== 1) throw new Error('test-locked-preview-root-unavailable');
-      const current = root[keys[0]]?.stateNode?.current;
-      if (current?.tag !== 3) throw new Error('test-locked-preview-current-unavailable');
-      const pending = current.child ? [current.child] : []; let visited = 0; let fullOwners = 0;
-      const presentations = [];
-      while (pending.length) {
-        if (++visited > 8192) throw new Error('test-locked-preview-traversal-bound');
-        const fiber = pending.pop(); const props = fiber.memoizedProps;
-        if (props?.surface === surface && props.documentSession?.document
-          && ['requestPreview','retainCompositionSurface','onReady'].every(key => typeof props[key] === 'function')) fullOwners += 1;
-        if (props?.active === true && typeof props.onToggleEditable === 'function'
-          && typeof props.editable === 'boolean' && typeof props.strings?.previewLockReadOnly === 'string') presentations.push(props.editable);
-        if (fiber.child) pending.push(fiber.child); if (fiber.sibling) pending.push(fiber.sibling);
-      }
       const active = surface.ownerDocument.activeElement;
-      return { fullOwners, presentationCount: presentations.length, presentationEditable: presentations[0] ?? null,
+      return {
         contenteditable: surface.getAttribute('contenteditable'), effectiveEditable: surface.isContentEditable,
         activeElementEditable: !!active?.isContentEditable,
         activeElementIsInput: !!active && ['INPUT','TEXTAREA'].includes(active.tagName),
         lock: surface.ownerDocument.querySelector('.easymde-immersive-preview-lock')?.getAttribute('aria-pressed'),
-        previewPhase: surface.getAttribute('data-easymde-preview-phase'), busy: surface.getAttribute('aria-busy') };
+        previewPhase: surface.getAttribute('data-easymde-preview-phase'), busy: surface.getAttribute('aria-busy')
+      };
     });
-    const owner = await readCurrentDocumentOwner(page);
-    latestAtom = { operationStage, state, owner };
+    const owner = await readPublicEditorState(page);
+    latestAtom = { operationStage, state, owner: { sourceLength: owner.sourceLength,
+      nativeConnected: owner.nativeConnected, effectiveEditable: owner.effectiveEditable } };
     console.log(JSON.stringify({ phase: 'user-lock-first-atom', ...latestAtom }));
-    expect(state).toMatchObject({ fullOwners: 0, presentationCount: 1, presentationEditable: false,
-      effectiveEditable: false, lock: 'true' });
+    expect(state).toMatchObject({ effectiveEditable: false, lock: 'true' });
     expect(state.contenteditable).not.toBe('true');
-    expect(owner.editable, 'Source edit permission remains independent of the user Preview lock').toBe(true);
-    expect(owner.selection).toEqual(expectedOwner.selection); expect(owner.history).toEqual(expectedOwner.history);
-    expect(owner.revision).toBe(expectedOwner.revision);
+    expect(owner.sourceInputConnected, 'Source edit surface remains independently connected').toBe(true);
+    expect(owner.nativeConnected, 'A real native selection remains observable while Preview is locked').toBe(true);
     expect(failures).toEqual([]); await expectSource(source, typed); return state;
   };
   const unlockedCheckpoint = async (expected, caret) => {
     expect(failures).toEqual([]); await expectSource(source, expected);
-    const state = await readFullCrossBlockState(visual, { paragraph: true, ownerProof: true,
-      committed: { start: caret, end: caret, direction: 'none' } });
-    latestAtom = { operationStage, state }; console.log(JSON.stringify({ phase: 'user-unlock-first-atom', ...latestAtom }));
-    expect(state).toMatchObject({ expectedDocumentSelection: true, nativeConnected: true, focused: true,
+    const state = await readFullCrossBlockState(visual, { paragraph: true, expectedSource: expected });
+    latestAtom = { operationStage, state: { sourceLength: state.sourceLength, phase: state.phase,
+      nativeConnected: state.nativeConnected, focused: state.focused, editable: state.editable,
+      lock: state.lock, session: state.session, nativeParagraph: state.nativeParagraph } };
+    console.log(JSON.stringify({ phase: 'user-unlock-first-atom', ...latestAtom }));
+    expect(state).toMatchObject({ sourceMatchesExpected: true, nativeConnected: true, focused: true,
       editable: true, lock: 'false', session: 'ready' });
     if (state.phase === 'ready') expect(state).toMatchObject({ collapsed: true,
       nativeParagraph: { index: 0, bodyOffset: caret, bodyLength: caret } });
-    else expect(state).toMatchObject({ phase: 'rendering', pendingCount: 1, retainedCurrent: true,
-      nativeMatchesLease: true, canonicalExact: true });
+    else expect(state).toMatchObject({ collapsed: true });
     return state;
   };
   try {
     await visual.locator('p').first().click(); await page.keyboard.press('End'); await page.keyboard.type('V');
-    await unlockedCheckpoint(typed, 7); const beforeLock = await readCurrentDocumentOwner(page);
+    await unlockedCheckpoint(typed, 7);
     held = await holdFormalPreview(page); operationStage = 'user-click-lock'; await lock.click();
-    await held.waitFor(typed); await lockedCheckpoint(beforeLock);
+    await held.waitFor(typed); await lockedCheckpoint();
     operationStage = 'readonly-body-click'; await sink.locator('p').first().click();
-    const readonly = await lockedCheckpoint(beforeLock);
+    const readonly = await lockedCheckpoint();
     expect(readonly).toMatchObject({ activeElementEditable: false, activeElementIsInput: false });
     for (const [stage, key] of [['readonly-Q','Q'],['readonly-Backspace','Backspace'],['readonly-Enter','Enter']]) {
       operationStage = stage;
       if (key === 'Q') await page.keyboard.type('Q'); else await page.keyboard.press(key);
-      await lockedCheckpoint(beforeLock);
+      await lockedCheckpoint();
     }
     operationStage = 'formal-response-while-locked'; await held.close(); held = null;
-    await expect(sink).toHaveAttribute('aria-busy', 'false'); await lockedCheckpoint(beforeLock);
+    await expect(sink).toHaveAttribute('aria-busy', 'false'); await lockedCheckpoint();
     operationStage = 'user-unlock-direct-X'; await lock.click(); await expect(visual).toHaveAttribute('contenteditable', 'true');
     await page.keyboard.type('X'); await unlockedCheckpoint(resumed, 8);
     operationStage = 'Backspace-X'; await page.keyboard.press('Backspace'); await unlockedCheckpoint(typed, 7);
@@ -1996,6 +3594,7 @@ test('explicit Preview lock rejects real keys across formal response and unlock 
     operationStage = 'Redo-Backspace-X'; await page.keyboard.press('Control+Shift+z'); await unlockedCheckpoint(typed, 7);
     await expect(visual).toHaveAttribute('aria-busy', 'false');
     const final = await unlockedCheckpoint(typed, 7); expect(final.phase).toBe('ready');
+    await previewRead.prove({ visual });
   } catch (error) {
     console.log(JSON.stringify({ phase: 'user-lock-first-failure', operationStage, latestAtom, errors: failures }));
     throw error;
@@ -2054,7 +3653,10 @@ test('full cross-block forward mouse replacement preserves P-H2-P history and br
   const replaced = 'Before.\n\nalphaMzeta\n\nAfter.';
   const branched = 'Before.\n\nalphaNzeta\n\nAfter.';
   const continued = 'Before.\n\nalphaNQzeta\n\nAfter.';
-  const { failures, source, visual } = await openVisual(page, initial);
+  const previewRead = createPhasedPreviewOperationTracker([
+    { id: 'lifecycle', groups: [[''], [initial], [replaced], [initial], [replaced], [initial], [branched], [continued]] }
+  ]);
+  const { failures, source, visual } = await openVisual(page, initial, undefined, previewRead.beforeFixture);
   let operationStage = 'select-forward-mouse';
   let expectedSource = initial;
   const point = async (index, offset) => visual.locator(':scope > p').nth(index).evaluate((row, position) => {
@@ -2067,29 +3669,24 @@ test('full cross-block forward mouse replacement preserves P-H2-P history and br
   }, offset);
   let latestAtomicState = null;
   let firstAtomicFailure = null;
-  const expectNative = async (rangeSelected, offset = 5, committed = true, requireReady = false) => {
-    const expectedSelection = rangeSelected ? { start: 14, end: 30, direction: 'forward' }
-      : { start: 9 + offset, end: 9 + offset, direction: 'none' };
-    const state = await readFullCrossBlockState(visual, { selected: rangeSelected, offset, direction: 'forward',
-      ownerProof: true, ...(committed ? { committed: expectedSelection } : {}) });
-    latestAtomicState = { operationStage, expectedSelection: committed ? expectedSelection : null, state };
+  const expectNative = async (rangeSelected, offset = 5, requireReady = false) => {
+    const state = await readFullCrossBlockState(visual, { selected: rangeSelected, offset,
+      direction: 'forward', expectedSource });
+    latestAtomicState = { operationStage, state: { sourceLength: state.sourceLength, phase: state.phase,
+      nativeConnected: state.nativeConnected, focused: state.focused, editable: state.editable,
+      lock: state.lock, session: state.session } };
     console.log(JSON.stringify({ phase: 'PH2-assertion-first-atom', ...latestAtomicState }));
     try {
-      expect(state).toMatchObject({ nativeConnected: true, focused: true, editable: true,
-        lock: 'false', session: 'ready', ...(committed ? { expectedDocumentSelection: true } : {}) });
+      expect(state).toMatchObject({ sourceMatchesExpected: true, nativeConnected: true, focused: true,
+        editable: true, lock: 'false', session: 'ready' });
       if (requireReady || state.phase === 'ready') {
         expect(state, 'Ready native endpoints must retain their declared source-side meaning').toMatchObject({
-          phase: 'ready', pendingCount: 0, anchorMatches: true, focusMatches: true,
+          phase: 'ready', anchorMatches: true, focusMatches: true,
           direction: rangeSelected ? 'forward' : 'none', collapsed: !rangeSelected
         });
       } else {
-        // The real held-Redo contract proved this old native range is a valid
-        // presentation only while this exact current lease owns the surface.
-        expect(state, 'Only the current authenticated retained presentation may remain pending').toMatchObject({
-          phase: 'rendering', pendingCount: 1, ownedCount: 1, fullFiberCount: 1,
-          retainedCurrent: true, nativeMatchesLease: true, canonicalExact: true,
-          ownerProof: { retainedPresent: true, retainedOwnedEqCurrent: true,
-            retainedOwnerEqCurrentToken: true, retainedReadOnlyIsArray: true, ownedTopLevelNodesExact: true }
+        expect(state, 'A pending Preview must retain a connected native selection').toMatchObject({
+          nativeConnected: true
         });
       }
       expect(failures).toEqual([]);
@@ -2098,10 +3695,11 @@ test('full cross-block forward mouse replacement preserves P-H2-P history and br
       throw error;
     }
   };
-  const expectCommittedSelection = async (start, end = start, direction = 'none') => {
-    const owner = await readCurrentDocumentOwner(page);
-    expect(owner.selection, 'The active document owner must retain the committed source selection').toEqual({ start, end, direction });
+  const expectCommittedSelection = async () => {
+    const owner = await readPublicEditorState(page);
+    expect(owner.source === expectedSource, 'The source bridge must retain the exact committed Markdown').toBe(true);
     expect(owner.editable).toBe(true);
+    expect(owner.nativeConnected, 'The committed caret stays a real connected native Selection').toBe(true);
     return owner;
   };
   try {
@@ -2111,53 +3709,56 @@ test('full cross-block forward mouse replacement preserves P-H2-P history and br
   await page.mouse.down();
   await page.mouse.move(last.x, last.y, { steps: 8 });
   await page.mouse.up();
-  await expectNative(true, 5, false);
+  await expectNative(true, 5);
   // Selection-only native intent is not a canonical transaction. Read its
   // current owner separately; the first committed insertion is asserted below.
-  const nativeIntentOwner = await readCurrentDocumentOwner(page);
+  const nativeIntentOwner = await readPublicEditorState(page);
   console.log(JSON.stringify({ phase: 'cross-block-native-intent',
-    intendedSelection: { start: 14, end: 30, direction: 'forward' },
-    committedSelection: nativeIntentOwner.selection }));
+    nativeConnected: nativeIntentOwner.nativeConnected,
+    nativeDirection: nativeIntentOwner.nativeDirection,
+    selectionTextLength: nativeIntentOwner.selectionTextLength }));
   operationStage = 'replace-M';
   expectedSource = replaced;
   await page.keyboard.type('M');
   await expectSource(source, replaced);
   await expectNative(false, 6);
-  await expectCommittedSelection(15);
+  await expectCommittedSelection();
   operationStage = 'undo-range';
   expectedSource = initial;
   await page.keyboard.press('Control+z');
   await expectSource(source, initial);
   await expectNative(true);
-  await expectCommittedSelection(14, 30, 'forward');
+  await expectCommittedSelection();
   operationStage = 'redo-M';
   expectedSource = replaced;
   await page.keyboard.press('Control+Shift+z');
   await expectSource(source, replaced);
   await expectNative(false, 6);
-  await expectCommittedSelection(15);
+  await expectCommittedSelection();
   operationStage = 'undo-before-branch';
   expectedSource = initial;
   await page.keyboard.press('Control+z');
   await expectSource(source, initial);
   await expectNative(true);
-  await expectCommittedSelection(14, 30, 'forward');
+  await expectCommittedSelection();
   operationStage = 'branch-N';
   expectedSource = branched;
   await page.keyboard.type('N');
   await expectSource(source, branched);
   await expectNative(false, 6);
-  const branchOwner = await expectCommittedSelection(15);
-  expect(branchOwner.history.redoDepth).toBe(0);
+  await expectCommittedSelection();
+  await page.keyboard.press('Control+Shift+z');
+  await expectSource(source, branched);
   operationStage = 'continue-Q';
   expectedSource = continued;
   await page.keyboard.type('Q');
   await expectSource(source, continued);
   await expectNative(false, 7);
-  await expectCommittedSelection(16);
+  await expectCommittedSelection();
   await expect(visual.locator('h2')).toHaveCount(0);
   await expect(visual.locator(':scope > p').nth(1)).toHaveText('alphaNQzeta');
-  await expectNative(false, 7, true, true);
+  await expectNative(false, 7, true);
+  await previewRead.prove({ visual });
   } catch (error) {
     console.log(JSON.stringify({ phase: 'cross-block-first-failure', operationStage,
       expectedLength: expectedSource.length, firstAtomicFailure, latestAtomicState, errors: failures }));
@@ -2205,27 +3806,35 @@ for (const crossBlock of [
 ]) {
 for (const transferTiming of crossBlock.action === 'reverse-mouse' ? ['normal', 'held-redo'] : ['normal']) {
 test(`full cross-block ${crossBlock.name} preserves exact history and branching${transferTiming === 'held-redo' ? ' with held Redo response' : ''}`, async ({ page }) => {
-  const { failures, source, visual } = await openVisual(page, crossBlock.initial);
+  const heldRedoContinued = 'Before.\n\nalphaMRzeta\n\nAfter.';
+  const previewRead = createPhasedPreviewOperationTracker([
+    {
+      id: 'lifecycle',
+      groups: transferTiming === 'held-redo'
+        ? [[''], [crossBlock.initial], [crossBlock.positionEdited], [crossBlock.initial],
+          [crossBlock.replaced], [crossBlock.initial], [crossBlock.replaced], [heldRedoContinued]]
+        : [[''], [crossBlock.initial], [crossBlock.positionEdited], [crossBlock.initial],
+          [crossBlock.replaced], [crossBlock.initial], [crossBlock.replaced], [crossBlock.initial],
+          [crossBlock.branched], [crossBlock.continued]]
+    }
+  ]);
+  const { failures, source, visual } = await openVisual(page, crossBlock.initial, undefined, previewRead.beforeFixture);
   let operationStage = `position-${crossBlock.position}`;
   let expectedSource = crossBlock.initial;
   let heldRedo;
   const direction = crossBlock.action === 'reverse-mouse' ? 'backward' : 'forward';
-  const expectOwner = async (start, end = start, expectedDirection = 'none') => {
-    const owner = await readCurrentDocumentOwner(page);
-    expect(owner.selection, 'Committed selection must come from the active document owner').toEqual({ start, end, direction: expectedDirection });
+  const expectOwner = async () => {
+    const owner = await readPublicEditorState(page);
+    expect(owner.source === expectedSource, 'The source bridge must retain the exact committed Markdown').toBe(true);
     expect(owner.editable).toBe(true);
+    expect(owner.nativeConnected, 'Committed edits must retain a connected native Selection').toBe(true);
     expect(failures).toEqual([]);
     return owner;
   };
-  const expectNative = async (selected, offset = 5, committed = true, requireReady = false) => {
-    const expectedSelection = selected
-      ? { start: 14, end: crossBlock.selectionEnd, direction }
-      : { start: 9 + offset, end: 9 + offset, direction: 'none' };
-    const state = await readFullCrossBlockState(visual, { selected, offset, direction,
-      ...(committed ? { committed: expectedSelection } : {}) });
+  const expectNative = async (selected, offset = 5, requireReady = false) => {
+    const state = await readFullCrossBlockState(visual, { selected, offset, direction, expectedSource });
     expect(state, `Active owner and native permission at ${operationStage}`).toMatchObject({
-      focused: true, editable: true, lock: 'false', session: 'ready', nativeConnected: true,
-      ...(committed ? { expectedDocumentSelection: true } : {})
+      sourceMatchesExpected: true, focused: true, editable: true, lock: 'false', session: 'ready', nativeConnected: true
     });
     if (requireReady || state.phase === 'ready') {
       expect(state, `Ready native semantic endpoints at ${operationStage}`).toMatchObject({
@@ -2233,10 +3842,10 @@ test(`full cross-block ${crossBlock.name} preserves exact history and branching$
         direction: selected ? direction : 'none', collapsed: !selected
       });
     } else {
-      console.log(JSON.stringify({ phase: 'cross-block-retained-presentation', operationStage, state }));
-      expect(state, `Only an authenticated retained presentation can differ at ${operationStage}`).toMatchObject({
-        phase: 'rendering', pendingCount: 1, retainedCurrent: true,
-        nativeMatchesLease: true, canonicalExact: true
+      console.log(JSON.stringify({ phase: 'cross-block-retained-presentation', operationStage,
+        phase: state.phase, sourceLength: state.sourceLength, nativeConnected: state.nativeConnected }));
+      expect(state, `A pending Preview still requires a connected native selection at ${operationStage}`).toMatchObject({
+        nativeConnected: true
       });
     }
     expect(failures).toEqual([]);
@@ -2261,11 +3870,11 @@ test(`full cross-block ${crossBlock.name} preserves exact history and branching$
     expectedSource = crossBlock.positionEdited;
     await page.keyboard.type('V');
     await expectSource(source, expectedSource);
-    await expectOwner(crossBlock.positionSourceOffset + 1);
+    await expectOwner();
     await page.keyboard.press('Control+z');
     expectedSource = crossBlock.initial;
     await expectSource(source, expectedSource);
-    await expectOwner(crossBlock.positionSourceOffset);
+    await expectOwner();
 
     operationStage = 'select-cross-block';
     const firstRow = visual.locator(':scope > p').filter({ hasText: /^alphaX$/u });
@@ -2286,66 +3895,73 @@ test(`full cross-block ${crossBlock.name} preserves exact history and branching$
       await page.mouse.move(end.x, end.y, { steps: 8 });
       await page.mouse.up();
     }
-    await expectNative(true, 5, false);
-    const nativeIntentOwner = await readCurrentDocumentOwner(page);
+    await expectNative(true, 5);
+    const nativeIntentOwner = await readPublicEditorState(page);
     console.log(JSON.stringify({ phase: 'cross-block-native-intent',
-      intendedSelection: { start: 14, end: crossBlock.selectionEnd, direction },
-      committedSelection: nativeIntentOwner.selection }));
+      nativeConnected: nativeIntentOwner.nativeConnected,
+      nativeDirection: nativeIntentOwner.nativeDirection,
+      selectionTextLength: nativeIntentOwner.selectionTextLength }));
     operationStage = 'replace-M'; expectedSource = crossBlock.replaced;
     await page.keyboard.type('M');
     await expectSource(source, expectedSource);
-    await expectNative(false, 6); await expectOwner(15);
+    await expectNative(false, 6); await expectOwner();
     operationStage = 'undo-range'; expectedSource = crossBlock.initial;
     await page.keyboard.press('Control+z');
     await expectSource(source, expectedSource);
-    await expectNative(true); await expectOwner(14, crossBlock.selectionEnd, direction);
+    await expectNative(true); await expectOwner();
     if (transferTiming === 'held-redo') heldRedo = await holdFormalPreview(page);
     operationStage = 'redo-M'; expectedSource = crossBlock.replaced;
     await page.keyboard.press('Control+Shift+z');
     await expectSource(source, expectedSource);
     if (transferTiming === 'held-redo') {
-      await expectOwner(15);
+      await expectOwner();
       await heldRedo.waitFor(expectedSource);
       const state = await expectNative(false, 6);
-      expect(state).toMatchObject({ phase: 'rendering', retainedCurrent: true, nativeMatchesLease: true, canonicalExact: true });
+      expect(state).toMatchObject({ nativeConnected: true });
       operationStage = 'held-redo-direct-R';
       expectedSource = 'Before.\n\nalphaMRzeta\n\nAfter.';
       await page.keyboard.type('R');
       expect(failures).toEqual([]);
-      await expectSource(source, expectedSource); await expectOwner(16);
+      await expectSource(source, expectedSource); await expectOwner();
       await heldRedo.close(); heldRedo = null;
       await expect(visual).toHaveAttribute('aria-busy', 'false');
       await expect(visual.locator(':scope > p').filter({ hasText: /^alphaMRzeta$/u })).toHaveCount(1);
-      await expectNative(false, 7, true, true);
-      await expectSource(source, expectedSource); await expectOwner(16);
+      await expectNative(false, 7, true);
+      await expectSource(source, expectedSource); await expectOwner();
+      await previewRead.prove({ visual });
       console.log(JSON.stringify({ phase: 'permanent-held-redo-completed', exactSource: true,
-        sourceLength: expectedSource.length, finalNativeOffset: 7, finalDocumentOffset: 16 }));
+        sourceLength: expectedSource.length, finalNativeOffset: 7 }));
       return;
     }
-    await expectNative(false, 6); await expectOwner(15);
+    await expectNative(false, 6); await expectOwner();
     operationStage = 'undo-before-branch'; expectedSource = crossBlock.initial;
     await page.keyboard.press('Control+z');
     await expectSource(source, expectedSource);
-    await expectNative(true); await expectOwner(14, crossBlock.selectionEnd, direction);
+    await expectNative(true); await expectOwner();
     operationStage = 'branch-N'; expectedSource = crossBlock.branched;
     await page.keyboard.type('N');
     await expectSource(source, expectedSource);
     await expectNative(false, 6);
-    expect((await expectOwner(15)).history.redoDepth).toBe(0);
+    await expectOwner();
+    await page.keyboard.press('Control+Shift+z');
+    await expectSource(source, expectedSource);
     operationStage = 'continue-Q'; expectedSource = crossBlock.continued;
     await page.keyboard.type('Q');
     await expectSource(source, expectedSource);
-    await expectNative(false, 7); await expectOwner(16);
+    await expectNative(false, 7); await expectOwner();
     await expect(visual).toHaveAttribute('aria-busy', 'false');
     await expect(visual.locator('h1,h2,h3,pre,blockquote,ul,ol')).toHaveCount(0);
     await expect(visual.locator(':scope > p').filter({ hasText: /^alphaNQz(?:eta)?$/u })).toHaveCount(1);
-    await expectNative(false, 7, true, true);
+    await expectNative(false, 7, true);
+    await previewRead.prove({ visual });
   } catch (error) {
     const actual = await source.inputValue();
     let firstMismatch = 0;
     while (firstMismatch < Math.min(actual.length, expectedSource.length)
       && actual[firstMismatch] === expectedSource[firstMismatch]) firstMismatch += 1;
-    const owner = await readCurrentDocumentOwner(page).catch(() => ({ unavailable: 'test-document-owner-read-failed' }));
+    const owner = await readPublicEditorState(page).then((state) => ({ sourceLength: state.sourceLength,
+      editable: state.effectiveEditable, nativeConnected: state.nativeConnected }))
+      .catch(() => ({ unavailable: 'public-state-read-failed' }));
     console.log(JSON.stringify({ phase: 'cross-block-first-failure', caseName: crossBlock.name, operationStage,
       actualLength: actual.length, expectedLength: expectedSource.length,
       exactSource: actual === expectedSource, firstMismatch: actual === expectedSource ? null : firstMismatch, owner }));
@@ -2357,18 +3973,14 @@ test(`full cross-block ${crossBlock.name} preserves exact history and branching$
 
 for (const listCase of [
   { name: 'star-list', initial: '* a\n* b\n', emptied: '* a\n* \n', removed: '* a\n', continued: '* aZ\n',
-    deleteCharacter: true, itemIndex: 1, itemCount: 2, removedItemCount: 1, precedingItemIndex: 0,
-    bodySourceOffset: 6, removalStart: 4, removalEnd: 7, caret: 3 },
+    deleteCharacter: true, itemIndex: 1, itemCount: 2, removedItemCount: 1, precedingItemIndex: 0 },
   { name: 'dash-list', initial: '- a\n- b\n', emptied: '- a\n- \n', removed: '- a\n', continued: '- aZ\n',
-    deleteCharacter: true, itemIndex: 1, itemCount: 2, removedItemCount: 1, precedingItemIndex: 0,
-    bodySourceOffset: 6, removalStart: 4, removalEnd: 7, caret: 3 },
+    deleteCharacter: true, itemIndex: 1, itemCount: 2, removedItemCount: 1, precedingItemIndex: 0 },
   { name: 'plus-list', initial: '+ a\n+ b\n', emptied: '+ a\n+ \n', removed: '+ a\n', continued: '+ aZ\n',
-    deleteCharacter: true, itemIndex: 1, itemCount: 2, removedItemCount: 1, precedingItemIndex: 0,
-    bodySourceOffset: 6, removalStart: 4, removalEnd: 7, caret: 3 },
+    deleteCharacter: true, itemIndex: 1, itemCount: 2, removedItemCount: 1, precedingItemIndex: 0 },
   { name: 'middle-space-list', initial: '- a\n-   \n- c\n', emptied: '- a\n-   \n- c\n',
     removed: '- a\n- c\n', continued: '- aZ\n- c\n',
-    deleteCharacter: false, itemIndex: 1, itemCount: 3, removedItemCount: 2, precedingItemIndex: 0,
-    bodySourceOffset: 6, removalStart: 4, removalEnd: 9, caret: 3 },
+    deleteCharacter: false, itemIndex: 1, itemCount: 3, removedItemCount: 2, precedingItemIndex: 0 },
   // A CRLF-authored document (Windows line endings) cannot keep its CRLF once it
   // reaches the browser: the HTML input stream and the textarea API value both
   // transform \r\n to \n, and clipboard text/plain is normalised the same way on
@@ -2378,16 +3990,13 @@ for (const listCase of [
   // document it delivers. No user route can leave CRLF in #easymde-source.
   { name: 'pasted-CRLF-middle-space-list', pasteFrom: '- a\r\n-   \r\n- c\r\n',
     initial: '- a\n-   \n- c\n', emptied: '- a\n-   \n- c\n', removed: '- a\n- c\n', continued: '- aZ\n- c\n',
-    deleteCharacter: false, itemIndex: 1, itemCount: 3, removedItemCount: 2, precedingItemIndex: 0,
-    bodySourceOffset: 6, removalStart: 4, removalEnd: 9, caret: 3 },
+    deleteCharacter: false, itemIndex: 1, itemCount: 3, removedItemCount: 2, precedingItemIndex: 0 },
   { name: 'quoted-list', initial: '> - a\n> - b\n', emptied: '> - a\n> - \n',
     removed: '> - a\n', continued: '> - aZ\n',
-    deleteCharacter: true, itemIndex: 1, itemCount: 2, removedItemCount: 1, precedingItemIndex: 0,
-    bodySourceOffset: 10, removalStart: 6, removalEnd: 11, caret: 5 },
+    deleteCharacter: true, itemIndex: 1, itemCount: 2, removedItemCount: 1, precedingItemIndex: 0 },
   { name: 'nested-list', initial: '- outer\n  - a\n  - b\n', emptied: '- outer\n  - a\n  - \n',
     removed: '- outer\n  - a\n', continued: '- outer\n  - aZ\n',
-    deleteCharacter: true, itemIndex: 2, itemCount: 3, removedItemCount: 2, precedingItemIndex: 1,
-    bodySourceOffset: 18, removalStart: 14, removalEnd: 19, caret: 13 }
+    deleteCharacter: true, itemIndex: 2, itemCount: 3, removedItemCount: 2, precedingItemIndex: 1 }
 ]) {
 test(`full ${listCase.name} Backspace preserves its empty body boundary and preceding caret`, async ({ page }) => {
   const { failures, source, visual } = await openVisual(page, listCase.initial, listCase.pasteFrom);
@@ -2405,23 +4014,22 @@ test(`full ${listCase.name} Backspace preserves its empty body boundary and prec
       })]);
     } finally { clearTimeout(timer); }
   };
-  const sample = async (phase, caret = null) => {
-    const state = await boundedRead(() => readFullCrossBlockState(visual, { list: true,
-      ...(caret === null ? {} : { committed: { start: caret, end: caret, direction: 'none' } }) }));
+  const sample = async (phase) => {
+    const state = await boundedRead(() => readFullCrossBlockState(visual, { list: true, expectedSource: expectedSource }));
     console.log(JSON.stringify({ phase, caseName: listCase.name, operationStage,
-      sourceLength: (await source.inputValue()).length, state }));
+      sourceLength: (await source.inputValue()).length, state: safeFullCrossBlockState(state) }));
     return state;
   };
-  const expectListState = async (phase, caret, itemCount, itemIndex, bodyOffset, requireReady = false) => {
-    const state = await sample(phase, caret);
-    expect(state, `List owner and permission at ${operationStage}`).toMatchObject({ expectedDocumentSelection: true,
-      nativeConnected: true, focused: true, editable: true, lock: 'false', session: 'ready' });
+  const expectListState = async (phase, itemCount, itemIndex, bodyOffset, requireReady = false) => {
+    const state = await sample(phase);
+    expect(state, `List permission and native selection at ${operationStage}`).toMatchObject({
+      sourceMatchesExpected: true, nativeConnected: true, focused: true, editable: true, lock: 'false', session: 'ready' });
     if (requireReady || state.phase === 'ready') {
       expect(state, `Ready list body at ${operationStage}`).toMatchObject({ phase: 'ready', collapsed: true,
         nativeList: { itemCount, itemIndex, bodyOffset } });
     } else {
-      expect(state, `Only authenticated retained list presentation is editable at ${operationStage}`).toMatchObject({
-        phase: 'rendering', pendingCount: 1, retainedCurrent: true, nativeMatchesLease: true, canonicalExact: true });
+      expect(state, `A pending list Preview keeps the real native selection at ${operationStage}`).toMatchObject({
+        nativeConnected: true, collapsed: true });
     }
     expect(failures).toEqual([]);
   };
@@ -2445,7 +4053,7 @@ test(`full ${listCase.name} Backspace preserves its empty body boundary and prec
       operationStage = 'delete-list-body-character'; expectedSource = listCase.emptied;
       await page.keyboard.press('Backspace');
       await expectSourceOrRefusal();
-      await expectListState('list-body-emptied', listCase.bodySourceOffset,
+      await expectListState('list-body-emptied',
         listCase.itemCount, listCase.itemIndex, 0);
     } else {
       traceStage('before-empty-native-sample');
@@ -2457,30 +4065,30 @@ test(`full ${listCase.name} Backspace preserves its empty body boundary and prec
       // Selection-only intent does not commit the canonical caret. This source
       // boundary is the declared row the following Backspace must remove.
       console.log(JSON.stringify({ phase: 'list-empty-intended-source-boundary', caseName: listCase.name,
-        bodySourceOffset: listCase.bodySourceOffset, removalStart: listCase.removalStart, removalEnd: listCase.removalEnd }));
+        expectedSourceLength: expectedSource.length }));
     }
     operationStage = 'remove-empty-list-row'; expectedSource = listCase.removed;
     await page.keyboard.press('Backspace');
     await expectSourceOrRefusal();
-    await expectListState('list-empty-row-removed', listCase.caret,
+    await expectListState('list-empty-row-removed',
       listCase.removedItemCount, listCase.precedingItemIndex, 1);
     operationStage = 'undo-empty-row-removal'; expectedSource = listCase.emptied;
     await page.keyboard.press('Control+z');
     await expectSourceOrRefusal();
-    await expectListState('list-empty-row-restored', listCase.bodySourceOffset,
+    await expectListState('list-empty-row-restored',
       listCase.itemCount, listCase.itemIndex, 0);
     operationStage = 'redo-empty-row-removal'; expectedSource = listCase.removed;
     await page.keyboard.press('Control+Shift+z');
     await expectSourceOrRefusal();
-    await expectListState('list-empty-row-removed-again', listCase.caret,
+    await expectListState('list-empty-row-removed-again',
       listCase.removedItemCount, listCase.precedingItemIndex, 1);
     operationStage = 'continue-at-preceding-row'; expectedSource = listCase.continued;
     await page.keyboard.type('Z');
     await expectSourceOrRefusal();
-    await expectListState('list-continued-at-logical-caret', listCase.caret + 1,
+    await expectListState('list-continued-at-logical-caret',
       listCase.removedItemCount, listCase.precedingItemIndex, 2);
     await expect(visual).toHaveAttribute('aria-busy', 'false');
-    await expectListState('list-final-ready-caret', listCase.caret + 1,
+    await expectListState('list-final-ready-caret',
       listCase.removedItemCount, listCase.precedingItemIndex, 2, true);
   } catch (error) {
     console.log(JSON.stringify({ phase: 'list-original-first-error', caseName: listCase.name, operationStage,
@@ -2504,32 +4112,41 @@ test(`full ${listCase.name} Backspace preserves its empty body boundary and prec
 for (const inlineCase of [
   { name: 'single delimiter', initial: 'Before.\n\nLead `\\*` tail.\n\nAfter.',
     inserted: 'Before.\n\nLead `\\X*` tail.\n\nAfter.', deleted: 'Before.\n\nLead `\\` tail.\n\nAfter.',
-    continued: 'Before.\n\nLead `\\Q*` tail.\n\nAfter.', sourcePoint: 16, initialBodyLength: 2 },
+    continued: 'Before.\n\nLead `\\Q*` tail.\n\nAfter.', initialBodyLength: 2 },
   { name: 'double delimiter', initial: 'Before.\n\nLead ``\\`*`` tail.\n\nAfter.',
     inserted: 'Before.\n\nLead ``\\X`*`` tail.\n\nAfter.', deleted: 'Before.\n\nLead ``\\*`` tail.\n\nAfter.',
-    continued: 'Before.\n\nLead ``\\Q`*`` tail.\n\nAfter.', sourcePoint: 17, initialBodyLength: 3 }
+    continued: 'Before.\n\nLead ``\\Q`*`` tail.\n\nAfter.', initialBodyLength: 3 }
 ]) {
 for (const timing of inlineCase.name === 'single delimiter' ? ['held', 'normal'] : ['normal']) {
 test(`full inline literal backslash ${inlineCase.name} preserves body input deletion and history${timing === 'held' ? ' held PHP Undo' : ''}`, async ({ page }) => {
-  const { failures, source, visual } = await openVisual(page, inlineCase.initial);
+  const previewRead = createPhasedPreviewOperationTracker([
+    {
+      id: 'lifecycle',
+      groups: timing === 'normal'
+        ? [[''], [inlineCase.initial], [inlineCase.inserted], [inlineCase.initial],
+          [inlineCase.deleted], [inlineCase.initial], [inlineCase.deleted], [inlineCase.initial], [inlineCase.continued]]
+        : [[''], [inlineCase.initial], [inlineCase.inserted], [inlineCase.initial],
+          [inlineCase.deleted], [inlineCase.initial], [inlineCase.continued]]
+    }
+  ]);
+  const { failures, source, visual } = await openVisual(page, inlineCase.initial, undefined, previewRead.beforeFixture);
   let heldPreview = null;
   let operationStage = 'initial-inline-pointer';
   let expectedSource = inlineCase.initial;
-  const assertPoint = async (bodyOffset, bodyLength, sourcePoint = null, requireReady = false) => {
-    const state = await readFullCrossBlockState(visual, { inlineCode: true,
-      ...(sourcePoint === null ? {} : { committed: { start: sourcePoint, end: sourcePoint, direction: 'none' } }) });
+  const assertPoint = async (bodyOffset, bodyLength, requireReady = false) => {
+    const state = await readFullCrossBlockState(visual, { inlineCode: true, expectedSource });
     if (state.phase !== 'ready') console.log(JSON.stringify({ phase: 'inline-pending-checkpoint',
-      caseName: inlineCase.name, timing, operationStage, state }));
-    expect(state, `Inline owner at ${operationStage}`).toMatchObject({
-      nativeConnected: true, focused: true, editable: true, lock: 'false', session: 'ready',
-      ...(sourcePoint === null ? {} : { expectedDocumentSelection: true })
+      caseName: inlineCase.name, timing, operationStage, state: safeFullCrossBlockState(state) }));
+    expect(state, `Inline permission and native selection at ${operationStage}`).toMatchObject({
+      sourceMatchesExpected: true, nativeConnected: true, focused: true, editable: true,
+      lock: 'false', session: 'ready'
     });
     if (requireReady || state.phase === 'ready') {
       expect(state, `Inline body caret at ${operationStage}`).toMatchObject({ phase: 'ready', collapsed: true,
         nativeInlineCode: { anchor: { codeIndex: 0, bodyOffset, bodyLength }, focus: { codeIndex: 0, bodyOffset, bodyLength } } });
     } else {
-      expect(state, `Only authenticated retained inline presentation is editable at ${operationStage}`).toMatchObject({
-        phase: 'rendering', pendingCount: 1, retainedCurrent: true, nativeMatchesLease: true, canonicalExact: true });
+      expect(state, `A pending inline Preview keeps the real native caret at ${operationStage}`).toMatchObject({
+        nativeConnected: true, collapsed: true });
     }
     expect(failures).toEqual([]);
     return state;
@@ -2545,16 +4162,16 @@ test(`full inline literal backslash ${inlineCase.name} preserves body input dele
     await page.mouse.click(point.x, point.y);
     const intent = await assertPoint(1, inlineCase.initialBodyLength);
     console.log(JSON.stringify({ phase: 'inline-backslash-native-intent', caseName: inlineCase.name,
-      intendedSourceOffset: inlineCase.sourcePoint, documentSelection: intent.documentSelection }));
+      nativeAnchor: intent.nativeAnchor, nativeFocus: intent.nativeFocus }));
     operationStage = 'insert-X'; expectedSource = inlineCase.inserted;
     await page.keyboard.type('X'); await expectSource(source, expectedSource);
-    await assertPoint(2, inlineCase.initialBodyLength + 1, inlineCase.sourcePoint + 1);
+    await assertPoint(2, inlineCase.initialBodyLength + 1);
     operationStage = 'Backspace-X'; expectedSource = inlineCase.initial;
     await page.keyboard.press('Backspace'); await expectSource(source, expectedSource);
-    await assertPoint(1, inlineCase.initialBodyLength, inlineCase.sourcePoint);
+    await assertPoint(1, inlineCase.initialBodyLength);
     operationStage = 'Delete-following-body-character'; expectedSource = inlineCase.deleted;
     await page.keyboard.press('Delete'); await expectSource(source, expectedSource);
-    await assertPoint(1, inlineCase.initialBodyLength - 1, inlineCase.sourcePoint);
+    await assertPoint(1, inlineCase.initialBodyLength - 1);
     if (timing === 'held') heldPreview = await holdFormalPreview(page);
     operationStage = 'undo-Delete'; expectedSource = inlineCase.initial;
     await page.keyboard.press('Control+z'); await expectSource(source, expectedSource);
@@ -2562,24 +4179,25 @@ test(`full inline literal backslash ${inlineCase.name} preserves body input dele
       await heldPreview.waitFor(inlineCase.initial);
       console.log(JSON.stringify({ phase: 'inline-real-php-200-withheld', sourceLength: inlineCase.initial.length }));
     }
-    await assertPoint(1, inlineCase.initialBodyLength, inlineCase.sourcePoint);
+    await assertPoint(1, inlineCase.initialBodyLength);
     if (timing === 'normal') {
     operationStage = 'redo-Delete'; expectedSource = inlineCase.deleted;
     await page.keyboard.press('Control+Shift+z'); await expectSource(source, expectedSource);
-    await assertPoint(1, inlineCase.initialBodyLength - 1, inlineCase.sourcePoint);
+    await assertPoint(1, inlineCase.initialBodyLength - 1);
     operationStage = 'undo-before-continuing'; expectedSource = inlineCase.initial;
     await page.keyboard.press('Control+z'); await expectSource(source, expectedSource);
-    await assertPoint(1, inlineCase.initialBodyLength, inlineCase.sourcePoint);
+    await assertPoint(1, inlineCase.initialBodyLength);
     }
     operationStage = 'continue-Q'; expectedSource = inlineCase.continued;
     await page.keyboard.type('Q'); expect(failures).toEqual([]); await expectSource(source, expectedSource);
-    await assertPoint(2, inlineCase.initialBodyLength + 1, inlineCase.sourcePoint + 1);
+    await assertPoint(2, inlineCase.initialBodyLength + 1);
     if (heldPreview) { await heldPreview.close(); heldPreview = null; }
     await expect(visual).toHaveAttribute('aria-busy', 'false');
-    await assertPoint(2, inlineCase.initialBodyLength + 1, inlineCase.sourcePoint + 1, true);
+    await assertPoint(2, inlineCase.initialBodyLength + 1, true);
     await expectSource(source, expectedSource);
+    await previewRead.prove({ visual });
     console.log(JSON.stringify({ phase: 'inline-final-ready', caseName: inlineCase.name, timing,
-      sourceLength: expectedSource.length, documentOffset: inlineCase.sourcePoint + 1,
+      sourceLength: expectedSource.length,
       codeBodyOffset: 2, codeBodyLength: inlineCase.initialBodyLength + 1, errors: failures.length }));
   } catch (error) {
     if (!page.isClosed()) {
@@ -2587,7 +4205,8 @@ test(`full inline literal backslash ${inlineCase.name} preserves body input dele
         const actual = await source.inputValue({ timeout: 1000 });
         const state = await readFullCrossBlockState(visual, { inlineCode: true });
         console.log(JSON.stringify({ phase: 'inline-backslash-first-failure', caseName: inlineCase.name, operationStage,
-          actualLength: actual.length, expectedLength: expectedSource.length, exactExpected: actual === expectedSource, state }));
+          actualLength: actual.length, expectedLength: expectedSource.length, exactExpected: actual === expectedSource,
+          state: safeFullCrossBlockState(state) }));
       } catch { console.log(JSON.stringify({ phase: 'inline-backslash-observation-unavailable', operationStage })); }
     }
     throw error;
@@ -2608,24 +4227,43 @@ for (const rapidCase of [
     afterB: 'Before.\n\nalphaBzeta\n\nAfter.', afterBC: 'Before.\n\nalphaBCzeta\n\nAfter.' }
 ]) {
 test(`full rapid MQ ${rapidCase.name} preserves pending history and branching`, async ({ page }) => {
-  const { failures, source, visual } = await openVisual(page, rapidCase.initial);
+  const previewRead = createPhasedPreviewOperationTracker([
+    {
+      id: 'lifecycle',
+      groups: [
+        [''], [rapidCase.initial], [rapidCase.afterM], [rapidCase.afterMQ],
+        [rapidCase.afterM], [rapidCase.initial],
+        [rapidCase.afterM], [rapidCase.afterMQ],
+        [rapidCase.afterM], [rapidCase.initial],
+        [rapidCase.afterB], [rapidCase.afterBC]
+      ]
+    }
+  ]);
+  const { failures, source, visual } = await openVisual(page, rapidCase.initial, undefined, previewRead.beforeFixture);
   let operationStage = 'initial-range-pointer';
   let expectedSource = rapidCase.initial;
   let held;
   let eventsActive = false;
-  const assertState = async (kind, committed = true, requireReady = false) => {
+  const sourceForKind = (kind) => {
+    if (kind === 'initial') return rapidCase.initial;
+    if (kind === 'M') return rapidCase.afterM;
+    if (kind === 'MQ') return rapidCase.afterMQ;
+    if (kind === 'B') return rapidCase.afterB;
+    if (kind === 'BC') return rapidCase.afterBC;
+    throw new Error(`rapid-MQ-unknown-kind:${kind}`);
+  };
+  const assertState = async (kind, requireReady = false) => {
     const selected = kind === 'initial';
     const offset = kind === 'M' || kind === 'B' ? 6 : 7;
-    const selection = selected ? { start: 14, end: rapidCase.selectionEnd, direction: rapidCase.direction }
-      : { start: 9 + offset, end: 9 + offset, direction: 'none' };
+    const expected = sourceForKind(kind);
+    expectedSource = expected;
     const state = await readFullCrossBlockState(visual, { selected, offset: selected ? 5 : offset,
-      direction: rapidCase.direction, ...(committed ? { committed: selection } : {}) });
-    expect(state).toMatchObject({ nativeConnected: true, focused: true, editable: true, lock: 'false', session: 'ready',
-      ...(committed ? { expectedDocumentSelection: true } : {}) });
+      direction: rapidCase.direction, expectedSource: expected });
+    expect(state).toMatchObject({ sourceMatchesExpected: true, nativeConnected: true, focused: true,
+      editable: true, lock: 'false', session: 'ready' });
     if (requireReady || state.phase === 'ready') expect(state).toMatchObject({ phase: 'ready',
       anchorMatches: true, focusMatches: true, direction: selected ? rapidCase.direction : 'none', collapsed: !selected });
-    else expect(state).toMatchObject({ phase: 'rendering', pendingCount: 1,
-      retainedCurrent: true, nativeMatchesLease: true, canonicalExact: true });
+    else expect(state).toMatchObject({ nativeConnected: true });
     expect(failures).toEqual([]);
     return state;
   };
@@ -2661,7 +4299,7 @@ test(`full rapid MQ ${rapidCase.name} preserves pending history and branching`, 
     const end = rapidCase.direction === 'backward' ? head : tail;
     await page.mouse.move(start.x, start.y); await page.mouse.down();
     await page.mouse.move(end.x, end.y, { steps: 8 }); await page.mouse.up();
-    await assertState('initial', false);
+    await assertState('initial');
     await visual.evaluate((surface) => {
       const events = [];
       const observe = (event) => {
@@ -2684,7 +4322,7 @@ test(`full rapid MQ ${rapidCase.name} preserves pending history and branching`, 
       { type: 'beforeinput', trusted: true, dataLength: 1 }, { type: 'beforeinput', trusted: true, dataLength: 1 }
     ]);
     console.log(JSON.stringify({ phase: 'rapid-MQ-native-receipt', caseName: rapidCase.name,
-      events, exactSource: true, sourceLength: rapidCase.afterMQ.length, documentOffset: 16 }));
+      events, exactSource: true, sourceLength: rapidCase.afterMQ.length }));
     await page.evaluate(() => { window.__rapidMQEvents.dispose(); delete window.__rapidMQEvents; }); eventsActive = false;
     operationStage = 'undo-MQ';
     const undo = await undoToInitial(); expectedSource = rapidCase.initial;
@@ -2696,23 +4334,27 @@ test(`full rapid MQ ${rapidCase.name} preserves pending history and branching`, 
     }
     await held.waitFor(rapidCase.afterMQ);
     const pendingState = await assertState('MQ');
-    expect(pendingState).toMatchObject({ phase: 'rendering', retainedCurrent: true, nativeMatchesLease: true, canonicalExact: true });
+    expect(pendingState).toMatchObject({ nativeConnected: true });
     console.log(JSON.stringify({ phase: 'rapid-MQ-real-held-history', caseName: rapidCase.name, undoKeys: undo.length, state: pendingState }));
     operationStage = 'undo-before-branch'; await undoToInitial(); expectedSource = rapidCase.initial;
     operationStage = 'branch-B'; expectedSource = rapidCase.afterB;
     await page.keyboard.type('B'); await expectSource(source, expectedSource);
-    const branch = await assertState('B'); expect(branch.documentHistory.redoDepth).toBe(0);
+    await assertState('B');
+    await page.keyboard.press('Control+Shift+z');
+    await expectSource(source, expectedSource);
     operationStage = 'continue-C'; expectedSource = rapidCase.afterBC;
     await page.keyboard.type('C'); await expectSource(source, expectedSource); await assertState('BC');
     await held.close(); held = null;
     await expect(visual).toHaveAttribute('aria-busy', 'false');
-    await assertState('BC', true, true); await expectSource(source, expectedSource);
+    await assertState('BC', true); await expectSource(source, expectedSource);
+    await previewRead.prove({ visual });
   } catch (error) {
     if (!page.isClosed()) {
       try {
         const actual = await source.inputValue({ timeout: 1000 }); const state = await readFullCrossBlockState(visual);
         console.log(JSON.stringify({ phase: 'rapid-MQ-first-failure', caseName: rapidCase.name, operationStage,
-          actualLength: actual.length, expectedLength: expectedSource.length, exactExpected: actual === expectedSource, state }));
+          actualLength: actual.length, expectedLength: expectedSource.length, exactExpected: actual === expectedSource,
+          state: safeFullCrossBlockState(state) }));
       } catch { console.log(JSON.stringify({ phase: 'rapid-MQ-observation-unavailable', operationStage })); }
     }
     throw error;
@@ -2740,7 +4382,11 @@ for (const position of ['end', 'middle']) {
   test(`deleting the final ${wrapper.name} character with ${key} retires only its inline syntax at ${position}`, async ({ page }) => {
     const initial = `Before.\n\n- Head.\n- Tail ${wrapper.source}${position === 'middle' ? '.suffix.' : ''}\n\nAfter.`;
     const expected = initial.replace(wrapper.source, '');
-    const { failures, source, visual } = await openVisual(page, initial);
+    const continued = expected.replace('- Tail ', '- Tail Y');
+    const previewRead = createPhasedPreviewOperationTracker([
+      { id: 'lifecycle', groups: [[''], [initial], [expected], [initial], [expected], [continued]] }
+    ]);
+    const { failures, source, visual } = await openVisual(page, initial, undefined, previewRead.beforeFixture);
     await visual.locator(`li ${wrapper.selector}`).click();
     if (position === 'end') {
       await page.keyboard.press('End');
@@ -2759,9 +4405,10 @@ for (const position of ['end', 'middle']) {
     await page.keyboard.press('Control+Shift+z');
     await expectSource(source, expected);
     await page.keyboard.type('Y');
-    await expectSource(source, expected.replace('- Tail ', '- Tail Y'));
+    await expectSource(source, continued);
     await expectLiveSelection(visual);
     expect(failures).toEqual([]);
+    await previewRead.prove({ visual });
   });
 }
 }
@@ -2769,7 +4416,12 @@ for (const position of ['end', 'middle']) {
 
 test('native keyboard selections edit all-space inline code without changing adjacent text', async ({ page }) => {
   const initial = 'Lead` `tail.\n\nAfter.';
-  const { failures, source, visual } = await openVisual(page, initial);
+  const withoutCode = initial.replace('` `', '');
+  const continued = withoutCode.replace('Leadtail.', 'LeadXtail.');
+  const previewRead = createPhasedPreviewOperationTracker([
+    { id: 'lifecycle', groups: [[''], [initial], [withoutCode], [initial], [withoutCode], [continued]] }
+  ]);
+  const { failures, source, visual } = await openVisual(page, initial, undefined, previewRead.beforeFixture);
   const selectSpaces = async (count) => {
     await visual.locator('p').first().click();
     await page.keyboard.press('Home');
@@ -2788,7 +4440,6 @@ test('native keyboard selections edit all-space inline code without changing adj
   }), 'native keys select exactly the blank code body').toBe(true);
   await page.keyboard.press('Backspace');
   expect(failures).toEqual([]);
-  const withoutCode = initial.replace('` `', '');
   await expectSource(source, withoutCode);
   await expectLiveSelection(visual);
   await page.keyboard.press('Control+z');
@@ -2796,15 +4447,22 @@ test('native keyboard selections edit all-space inline code without changing adj
   await page.keyboard.press('Control+Shift+Z');
   await expectSource(source, withoutCode);
   await page.keyboard.type('X');
-  await expectSource(source, withoutCode.replace('Leadtail.', 'LeadXtail.'));
+  await expectSource(source, continued);
   await expectLiveSelection(visual);
   expect(failures).toEqual([]);
+  await previewRead.prove({ visual });
 });
 
 for (const timing of ['normal', 'held']) {
 test(`context formatting preserves an unrelated terminal source space through undo and immediate input (${timing} Preview)`, async ({ page }) => {
   const initial = 'Para\n\n---\n\nfoo\n';
-  const { failures, source, visual } = await openVisual(page, initial);
+  const withSpace = initial.replace('foo\n', 'foo \n');
+  const bolded = withSpace.replace('Para', 'P**ar**a');
+  const continued = withSpace.replace('Para', 'PZa');
+  const previewRead = createPhasedPreviewOperationTracker([
+    { id: 'lifecycle', groups: [[''], [initial], [withSpace], [bolded], [withSpace], [continued]] }
+  ]);
+  const { failures, source, visual } = await openVisual(page, initial, undefined, previewRead.beforeFixture);
   let release = () => {};
   let fetched = false;
   let first = true;
@@ -2828,7 +4486,6 @@ test(`context formatting preserves an unrelated terminal source space through un
   await visual.locator('p').last().click();
   await page.keyboard.press('End');
   await page.keyboard.type(' ');
-  const withSpace = initial.replace('foo\n', 'foo \n');
   await expectSource(source, withSpace);
   await visual.locator('p').first().click();
   await page.keyboard.press('Home');
@@ -2857,9 +4514,10 @@ test(`context formatting preserves an unrelated terminal source space through un
   await page.keyboard.press('Control+z');
   await expectSource(source, withSpace);
   await page.keyboard.type('Z');
-  await expectSource(source, withSpace.replace('Para', 'PZa'));
+  await expectSource(source, continued);
   await expectLiveSelection(visual);
   expect(failures).toEqual([]);
+  await previewRead.prove({ visual });
   } finally {
     release();
     if (timing === 'held') await page.unrouteAll({ behavior: 'wait' });
@@ -3039,7 +4697,12 @@ for (const timing of ['pending', 'settled']) {
   test(`code menu undo restores the input caret with ${timing} Preview (${command})`, async ({ page }) => {
     const initial = 'Before paragraph.\n\n~~~bash\necho one\n~~~\n\nAfter paragraph.';
     const fence = '~~~bash\necho one\n~~~';
-    const { failures, source, visual } = await openVisual(page, initial);
+    const removed = initial.replace(fence, '');
+    const continued = initial.replace('echo one', 'echo oneX');
+    const previewRead = createPhasedPreviewOperationTracker([
+      { id: 'lifecycle', groups: [[''], [initial], [`${fence}\n`, fence], [removed], [initial], [continued]] }
+    ]);
+    const { failures, source, visual } = await openVisual(page, initial, undefined, previewRead.beforeFixture);
     await visual.locator('pre code').click();
     await page.keyboard.press('End');
     const caret = await page.evaluate(() => {
@@ -3089,10 +4752,11 @@ for (const timing of ['pending', 'settled']) {
       await page.keyboard.type('X');
       expect(failures).toEqual([]);
       release();
-      await expectSource(source, initial.replace('echo one', 'echo oneX'));
+      await expectSource(source, continued);
       await expect(visual).toHaveAttribute('aria-busy', 'false');
       await expectLiveSelection(visual);
       expect(failures).toEqual([]);
+      await previewRead.prove({ visual });
     } finally {
       release();
       await page.unrouteAll({ behavior: 'wait' });
@@ -3176,7 +4840,25 @@ test('plain paragraph middle input undo preserves its original visual caret', as
 
 test('incoming formal Preview preserves newer keyboard input during history transfer', async ({ page }) => {
   const initial = 'Before.\n\n~~~bash\necho one\n~~~\n\nAfter.';
-  const { failures, source, visual } = await openVisual(page, initial);
+  const fence = '~~~bash\necho one\n~~~';
+  const removed = initial.replace(fence, '');
+  const withB = initial.replace('echo one', 'echo oneB');
+  const withBC = initial.replace('echo one', 'echo oneBC');
+  const withBCD = initial.replace('echo one', 'echo oneBCD');
+  const withBCDE = initial.replace('echo one', 'echo oneBCDE');
+  const withBCDEF = initial.replace('echo one', 'echo oneBCDEF');
+  const previewRead = createPhasedPreviewOperationTracker([
+    {
+      id: 'lifecycle',
+      groups: [
+        [''], [initial], [`${fence}\n`, fence], [removed], [initial],
+        [withB], [withBC], [withBCD], [withBCDE], [withBCDEF],
+        [withBCDE], [withBCD], [withBC], [withB], [initial],
+        [withB], [withBC], [withBCD], [withBCDE], [withBCDEF]
+      ]
+    }
+  ]);
+  const { failures, source, visual } = await openVisual(page, initial, undefined, previewRead.beforeFixture);
   await visual.locator('pre code').click();
   await page.keyboard.press('End');
   const caret = await page.evaluate(() => {
@@ -3236,6 +4918,7 @@ test('incoming formal Preview preserves newer keyboard input during history tran
     await expectSource(source, completed);
     await expectLiveSelection(visual);
     expect(failures).toEqual([]);
+    await previewRead.prove({ visual });
   } finally {
     release();
     await page.unrouteAll({ behavior: 'wait' });
@@ -3268,26 +4951,2724 @@ function windowedMarkdown(tail) {
   return `Head.\n\n${filler}\n\n${tail}`;
 }
 
+function createRichFixtureBuilder() {
+  const parts = [];
+  let sourceLength = 0, domIndex = 0;
+  const add = (kind, text, metadata = {}) => {
+    const part = { kind, text, sourceStart: sourceLength, sourceEnd: sourceLength + text.length, ...metadata };
+    sourceLength = part.sourceEnd;
+    parts.push(part);
+    return part;
+  };
+  const separator = (text = '\n\n') => add('separator', text, { dom: null, deletion: 'held-policy' });
+  const block = (kind, text, tag, metadata = {}) => add(kind, text, {
+    contentStart: sourceLength,
+    contentEnd: sourceLength + text.length,
+    dom: { blockId: `b${domIndex++}`, tag },
+    ...metadata
+  });
+  return {
+    add,
+    separator,
+    block,
+    build: (metadata = {}) => ({ initial: parts.map((part) => part.text).join(''), parts, ...metadata })
+  };
+}
+
 function richWindowedFixture(imageKind = 'inline') {
-  const repeated = Array.from({ length: 12 }, () => 'Repeated paragraph.').join('\n\n');
-  const filler = Array.from({ length: 154 }, (_, index) => `Paragraph ${index + 1}.`).join('\n\n');
   const inlineImage = '![dot](/wp-content/plugins/easymde/assets/images/easymde-editor-icon.png)';
   const image = imageKind === 'linked' ? `[${inlineImage}](https://example.com)`
     : imageKind === 'reference' ? '![dot][pic]' : inlineImage;
-  const definition = imageKind === 'reference'
-    ? '[pic]: /wp-content/plugins/easymde/assets/images/easymde-editor-icon.png\n\n' : '';
-  const tail = [
-    '## Tail heading', '', '- outer', '  - inner', '  - inner two', '',
-    '> quoted tail line', '', '```python', 'value = 1', '```', '',
-    '~~~bash', 'echo one', '~~~', '', '| left | right |', '| --- | --- |', '| a | b |', '',
-    'Math $x^2$ and [link](https://example.com).', '', image, '',
-    '```mermaid', 'graph TD', '  A --> B', '```', ''
-  ].join('\n');
-  return { initial: `${definition}# Head\n\n${repeated}\n\n${filler}\n\n${tail}`, image };
+  const { add, separator, block, build } = createRichFixtureBuilder();
+  if (imageKind === 'reference') {
+    const definition = add('definition', '[pic]: /wp-content/plugins/easymde/assets/images/easymde-editor-icon.png', {
+      dom: null, deletion: 'held-policy'
+    });
+    definition.contentStart = definition.sourceStart;
+    definition.contentEnd = definition.sourceEnd;
+    separator();
+  }
+  block('heading', '# Head', 'H1', { deletion: 'known-heading', headingPrefix: '# ' });
+  separator();
+  for (let index = 0; index < 12; index += 1) {
+    block('paragraph', 'Repeated paragraph.', 'P', { deletion: 'ascii-grapheme', plainText: true });
+    separator();
+  }
+  for (let index = 0; index < 154; index += 1) {
+    block('paragraph', `Paragraph ${index + 1}.`, 'P', { deletion: 'ascii-grapheme', plainText: true });
+    separator();
+  }
+  block('heading', '## Tail heading', 'H2', { deletion: 'known-heading', headingPrefix: '## ' });
+  separator();
+  block('list', '- outer\n  - inner\n  - inner two', 'UL', { deletion: 'known-list' });
+  separator();
+  block('quote', '> quoted tail line', 'BLOCKQUOTE', { deletion: 'known-quote', quotePrefix: '> ' });
+  separator();
+  block('code', '```python\nvalue = 1\n```', 'PRE', { deletion: 'known-code-fence' });
+  separator();
+  block('code', '~~~bash\necho one\n~~~', 'PRE', { deletion: 'known-code-fence' });
+  separator();
+  block('table', '| left | right |\n| --- | --- |\n| a | b |', 'TABLE', { deletion: 'known-table-menu' });
+  separator();
+  block('mixed-paragraph', 'Math $x^2$ and [link](https://example.com).', 'P', { deletion: 'known-mixed-paragraph' });
+  separator();
+  block('atom', image, 'P', { deletion: 'known-whole-atom', atom: 'image' });
+  separator();
+  block('atom', '```mermaid\ngraph TD\n  A --> B\n```', 'DIV', { deletion: 'known-whole-atom', atom: 'mermaid' });
+  separator('\n');
+  return build({ image });
 }
 
-async function openWindowedVisual(page, tail) {
-  const opened = await openVisual(page, windowedMarkdown(tail));
+function richPartDeletionStates(part) {
+  if (part.deletion === 'known-whole-atom') {
+    return [[part.text]];
+  }
+  if (part.deletion === 'ascii-grapheme' && part.plainText === true) {
+    const states = [];
+    for (let length = part.text.length; length >= 1; length -= 1) {
+      states.push([part.text.slice(0, length)]);
+    }
+    return states;
+  }
+  if (part.deletion === 'known-heading') {
+    const prefix = part.headingPrefix ?? part.text.match(/^#{1,6}\s+/u)?.[0] ?? '';
+    const body = part.text.slice(prefix.length);
+    const states = [];
+    for (let length = body.length; length >= 1; length -= 1) {
+      states.push([prefix + body.slice(0, length)]);
+    }
+    states.push([prefix, prefix.trimEnd()]);
+    return states;
+  }
+  if (part.deletion === 'known-quote') {
+    const prefix = part.quotePrefix ?? '> ';
+    const body = part.text.slice(prefix.length);
+    const states = [];
+    for (let length = body.length; length >= 1; length -= 1) {
+      states.push([prefix + body.slice(0, length)]);
+    }
+    states.push([prefix, prefix.trimEnd()]);
+    return states;
+  }
+  if (part.deletion === 'known-code-fence') {
+    const firstNewline = part.text.indexOf('\n');
+    const lastNewline = part.text.lastIndexOf('\n');
+    if (firstNewline < 0 || lastNewline <= firstNewline) {
+      throw new Error('rich-deletion-oracle-uncovered:invalid-code-fence');
+    }
+    const opening = part.text.slice(0, firstNewline + 1);
+    const body = part.text.slice(firstNewline + 1, lastNewline);
+    const closing = part.text.slice(lastNewline + 1);
+    const states = [];
+    for (let length = body.length; length >= 1; length -= 1) {
+      states.push([`${opening}${body.slice(0, length)}\n${closing}`]);
+    }
+    states.push([`${opening}\n${closing}`, `${opening}${closing}`]);
+    return states;
+  }
+  if (part.deletion === 'known-list') {
+    const lines = part.text.split('\n');
+    const states = [];
+    for (let lineIndex = lines.length - 1; lineIndex >= 0; lineIndex -= 1) {
+      const match = lines[lineIndex].match(/^(\s*[-*+]\s+)(.*)$/u);
+      if (!match) throw new Error('rich-deletion-oracle-uncovered:invalid-list-line');
+      const [, marker, body] = match;
+      const linePrefix = lines.slice(0, lineIndex).join('\n') + (lineIndex > 0 ? '\n' : '');
+      for (let length = body.length; length >= 1; length -= 1) {
+        states.push([`${linePrefix}${marker}${body.slice(0, length)}`]);
+      }
+      states.push([`${linePrefix}${marker}`, `${linePrefix}${marker.trimEnd()}`]);
+    }
+    return states;
+  }
+  if (part.deletion === 'known-mixed-paragraph') {
+    const text = part.text;
+    const tokens = [];
+    let index = 0;
+    while (index < text.length) {
+      const rest = text.slice(index);
+      const imageMatch = rest.match(/^!\[[^\]]*\]\([^)]*\)/u);
+      if (imageMatch) {
+        tokens.push({ kind: 'atom', text: imageMatch[0] });
+        index += imageMatch[0].length;
+        continue;
+      }
+      const mathMatch = rest.match(/^\$[^$]+\$/u);
+      if (mathMatch) {
+        tokens.push({ kind: 'atom', text: mathMatch[0] });
+        index += mathMatch[0].length;
+        continue;
+      }
+      const linkMatch = rest.match(/^\[([^\]]+)\]\(([^)]+)\)/u);
+      if (linkMatch) {
+        tokens.push({ kind: 'link', label: linkMatch[1], url: linkMatch[2], text: linkMatch[0] });
+        index += linkMatch[0].length;
+        continue;
+      }
+      tokens.push({ kind: 'char', text: text[index] });
+      index += 1;
+    }
+    const states = [];
+    for (let tokenIndex = tokens.length - 1; tokenIndex >= 0; tokenIndex -= 1) {
+      const prefix = tokens.slice(0, tokenIndex).map((token) => token.text).join('');
+      const token = tokens[tokenIndex];
+      if (token.kind === 'link') {
+        for (let length = token.label.length; length >= 1; length -= 1) {
+          states.push([`${prefix}[${token.label.slice(0, length)}](${token.url})`]);
+        }
+      } else {
+        states.push([prefix + token.text]);
+      }
+    }
+    return states;
+  }
+  if (part.deletion === 'known-table-menu') {
+    const lines = part.text.split('\n');
+    if (lines.length !== 3) throw new Error('rich-deletion-oracle-uncovered:invalid-table');
+    const parseRow = (line) => line.trim().slice(1, -1).split('|').map((cell) => cell.trim());
+    const [h0, h1] = parseRow(lines[0]);
+    const divider = lines[1];
+    const [b0, b1] = parseRow(lines[2]);
+    const cellVariants = (value) => (value === '' ? ['  ', ' ', ''] : [` ${value} `]);
+    const rowVariants = (left, right) => {
+      const rows = [];
+      for (const l of cellVariants(left)) {
+        for (const r of cellVariants(right)) rows.push(`|${l}|${r}|`);
+      }
+      return rows;
+    };
+    const tableVariants = (ch0, ch1, cb0, cb1) => {
+      const variants = [];
+      for (const head of rowVariants(ch0, ch1)) {
+        for (const body of rowVariants(cb0, cb1)) variants.push(`${head}\n${divider}\n${body}`);
+      }
+      return variants;
+    };
+    const states = [tableVariants(h0, h1, b0, b1)];
+    for (let length = b1.length - 1; length >= 0; length -= 1) {
+      states.push(tableVariants(h0, h1, b0, b1.slice(0, length)));
+    }
+    for (let length = b0.length - 1; length >= 0; length -= 1) {
+      states.push(tableVariants(h0, h1, b0.slice(0, length), ''));
+    }
+    for (let length = h1.length - 1; length >= 0; length -= 1) {
+      states.push(tableVariants(h0, h1.slice(0, length), '', ''));
+    }
+    for (let length = h0.length - 1; length >= 0; length -= 1) {
+      states.push(tableVariants(h0.slice(0, length), '', '', ''));
+    }
+    return states;
+  }
+  throw new Error(`rich-deletion-oracle-uncovered:${part.deletion ?? part.kind}`);
+}
+
+const RICH_STRUCTURED_DELETION_POLICIES = new Set([
+  'known-whole-atom',
+  'known-mixed-paragraph',
+  'known-table-menu',
+  'known-code-fence',
+  'known-quote',
+  'known-list',
+  'known-heading'
+]);
+
+const RICH_TRAILING_ENDINGS = ['', '\n', '\n\n', '\n\n\n', '\n\n\n\n'];
+const RICH_EMPTY_ROWS = ['', ' ', '  ', '\n', '\n\n'];
+
+function richPreviousBlockPartIndex(parts, partIndex) {
+  for (let index = partIndex - 1; index >= 0; index -= 1) {
+    if (parts[index]?.dom) return index;
+  }
+  return -1;
+}
+
+function richFixturePrefix(parts, partIndex) {
+  return parts.slice(0, partIndex).map((part) => part.text).join('');
+}
+
+function richWindowedForwardGroups(fixture) {
+  const groups = [];
+  const blockIndexes = fixture.parts
+    .map((part, index) => (part.dom ? index : -1))
+    .filter((index) => index >= 0);
+  for (let position = blockIndexes.length - 1; position >= 0; position -= 1) {
+    const partIndex = blockIndexes[position];
+    const part = fixture.parts[partIndex];
+    const prefix = fixture.initial.slice(0, part.sourceStart);
+    for (const variants of richPartDeletionStates(part)) {
+      const group = [];
+      for (const variant of variants) {
+        for (const ending of RICH_TRAILING_ENDINGS) group.push(prefix + variant + ending);
+      }
+      groups.push(group);
+    }
+    groups.push(RICH_EMPTY_ROWS.map((empty) => prefix + empty));
+  }
+  groups.push([...RICH_EMPTY_ROWS]);
+  return groups;
+}
+
+function createRichDeletionModel(fixture) {
+  const cursorPartIndex = fixture.parts.findLastIndex((part) => part.dom
+    || part.deletion === 'known-empty-structure' || part.deletion === 'known-whole-unit');
+  const part = fixture.parts[cursorPartIndex];
+  if (!part) throw new Error('rich-deletion-oracle-uncovered:empty-fixture');
+  return {
+    source: fixture.initial,
+    parts: fixture.parts,
+    cursor: { partIndex: cursorPartIndex,
+      offset: part.dom ? part.contentEnd - part.contentStart : 0 }
+  };
+}
+
+// The selected fixture unit, never the observed diff, owns the exact removal range.
+// Ambiguous, distant-atom, and unresolved special-character cases remain uncovered.
+function richCaretDescriptorMatches(actual, expected) {
+  if (!actual || !expected) return false;
+  if (expected.liveOnly === true) {
+    return actual.connected === true && actual.collapsed === true
+      && actual.focused === true && actual.editable === true;
+  }
+  return actual.connected === true && actual.collapsed === true && actual.focused === true
+    && actual?.editable === true && actual?.blockId === expected.blockId
+    && actual?.blockTag === expected.blockTag && actual?.textOffset === expected.textOffset
+    && actual?.blockLength === expected.blockLength;
+}
+
+function richDeletionObservationMatches(step, observation, phase) {
+  const before = phase === 'before';
+  if (typeof step?.matchesSource === 'function') {
+    return {
+      sourceExact: !!observation && step.matchesSource(observation.source, phase),
+      caretExact: richCaretDescriptorMatches(observation?.caret, before ? step?.beforeCaret : step?.afterCaret)
+    };
+  }
+  return {
+    sourceExact: !!observation && observation.source === (before ? step?.beforeSource : step?.afterSource),
+    caretExact: richCaretDescriptorMatches(observation?.caret, before ? step?.beforeCaret : step?.afterCaret)
+  };
+}
+
+function buildRichStructuredStep(model, part) {
+  const partIndex = model.cursor.partIndex;
+  const prefix = richFixturePrefix(model.parts, partIndex);
+  const prevBlockIndex = richPreviousBlockPartIndex(model.parts, partIndex);
+  const prevEndPrefix = prevBlockIndex >= 0 ? richFixturePrefix(model.parts, prevBlockIndex + 1) : '';
+  const ranked = new Map();
+  const addRank = (source, rank) => ranked.set(source, Math.max(ranked.get(source) ?? -1, rank));
+  const states = richPartDeletionStates(part);
+  for (let stateIndex = 0; stateIndex < states.length; stateIndex += 1) {
+    const rank = (states.length - stateIndex) * 10 + 10;
+    for (const variant of states[stateIndex]) {
+      for (const ending of RICH_TRAILING_ENDINGS) addRank(prefix + variant + ending, rank);
+    }
+  }
+  for (const empty of RICH_EMPTY_ROWS) addRank(prefix + empty, 5);
+  const retiredSources = new Set();
+  for (const ending of RICH_TRAILING_ENDINGS) {
+    const retired = prevEndPrefix + ending;
+    retiredSources.add(retired);
+    addRank(retired, 1);
+  }
+  if (prevBlockIndex >= 0) {
+    const prevPart = model.parts[prevBlockIndex];
+    const prevPrefix = richFixturePrefix(model.parts, prevBlockIndex);
+    const prevStates = richPartDeletionStates(prevPart);
+    if (prevStates.length > 1) {
+      for (const variant of prevStates[1]) {
+        for (const ending of RICH_TRAILING_ENDINGS) {
+          const nextInPrev = prevPrefix + variant + ending;
+          retiredSources.add(nextInPrev);
+          addRank(nextInPrev, 0);
+        }
+      }
+    }
+  }
+  const beforeRank = ranked.get(model.source) ?? -1;
+  return {
+    policy: part.deletion,
+    removeStart: part.sourceStart,
+    removeEnd: part.sourceEnd,
+    beforeSource: model.source,
+    afterSource: prevEndPrefix,
+    beforeCaret: { liveOnly: true },
+    afterCaret: { liveOnly: true },
+    nextCursor: prevBlockIndex >= 0
+      ? { partIndex: prevBlockIndex, offset: model.parts[prevBlockIndex].contentEnd - model.parts[prevBlockIndex].contentStart }
+      : { partIndex: 0, offset: 0 },
+    matchesSource: (observed, phase) => {
+      if (typeof observed !== 'string') return false;
+      if (phase === 'before') return observed === model.source && beforeRank >= 0;
+      const afterRank = ranked.get(observed);
+      return afterRank !== undefined && afterRank <= beforeRank;
+    },
+    resolveNextCursor: (observedAfterSource) => {
+      if (prevBlockIndex >= 0 && retiredSources.has(observedAfterSource)) {
+        const prevPart = model.parts[prevBlockIndex];
+        const prevPrefix = richFixturePrefix(model.parts, prevBlockIndex);
+        if (prevPart.deletion === 'ascii-grapheme' && prevPart.plainText === true) {
+          const remainder = observedAfterSource.startsWith(prevPrefix)
+            ? observedAfterSource.slice(prevPrefix.length).replace(/\n+$/u, '')
+            : prevPart.text;
+          return { partIndex: prevBlockIndex, offset: Math.min(remainder.length, prevPart.text.length) };
+        }
+        return { partIndex: prevBlockIndex, offset: prevPart.contentEnd - prevPart.contentStart };
+      }
+      return { partIndex, offset: model.cursor.offset };
+    }
+  };
+}
+
+function expectedRichDeletionStep(model) {
+  const part = model.parts[model.cursor.partIndex];
+  if (!part || part.sourceStart === undefined || part.sourceEnd === undefined) {
+    throw new Error('rich-deletion-oracle-uncovered:missing-unit');
+  }
+  const beforeCaret = {
+    blockId: part.dom?.blockId ?? null,
+    blockTag: part.dom?.tag ?? null,
+    textOffset: model.cursor.offset,
+    blockLength: part.plainText ? model.cursor.offset : part.dom ? part.contentEnd - part.contentStart : null
+  };
+  if (part.deletion === 'ascii-grapheme' && part.plainText === true) {
+    const prefix = richFixturePrefix(model.parts, model.cursor.partIndex);
+    const exactNoTrailing = model.source === prefix + part.text.slice(0, model.cursor.offset);
+    if (model.cursor.offset > 0 && exactNoTrailing && (model.cursor.offset > 1 || model.parts.length === 1)) {
+      // The construction cursor fixes the removable byte range. For "aba" at
+      // offset 3 it removes [2,3), producing "ab"; an observed "ba" cannot pass.
+      const content = model.source.slice(part.contentStart, part.contentEnd);
+      const textPrefix = content.slice(0, model.cursor.offset);
+      const last = [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(textPrefix)].at(-1)?.segment;
+      if (!last || last.length !== 1 || last.codePointAt(0) > 0x7f) {
+        throw new Error('rich-deletion-oracle-uncovered:special-character-policy');
+      }
+      const removeStart = part.contentStart + model.cursor.offset - last.length;
+      const nextOffset = model.cursor.offset - last.length;
+      return {
+        removeStart,
+        removeEnd: part.contentStart + model.cursor.offset,
+        beforeSource: model.source,
+        afterSource: model.source.slice(0, removeStart) + model.source.slice(part.contentStart + model.cursor.offset),
+        beforeCaret,
+        afterCaret: { ...beforeCaret, textOffset: nextOffset, blockLength: nextOffset },
+        nextCursor: { partIndex: model.cursor.partIndex, offset: nextOffset }
+      };
+    }
+    const structured = buildRichStructuredStep(model, part);
+    return {
+      ...structured,
+      resolveNextCursor: (observedAfterSource) => {
+        const next = structured.resolveNextCursor(observedAfterSource);
+        if (next.partIndex !== model.cursor.partIndex) return next;
+        if (observedAfterSource.startsWith(prefix)) {
+          const tail = observedAfterSource.slice(prefix.length).replace(/\n+$/u, '');
+          if (part.text.startsWith(tail)) return { partIndex: model.cursor.partIndex, offset: tail.length };
+          return { partIndex: model.cursor.partIndex, offset: 0 };
+        }
+        return next;
+      }
+    };
+  }
+  if (part.deletion === 'known-whole-unit' || part.deletion === 'known-empty-structure') {
+    return {
+      removeStart: part.sourceStart,
+      removeEnd: part.sourceEnd,
+      beforeSource: model.source,
+      afterSource: model.source.slice(0, part.sourceStart) + model.source.slice(part.sourceEnd),
+      beforeCaret,
+      afterCaret: part.afterCaret ?? null,
+      nextCursor: part.nextCursor ?? null
+    };
+  }
+  if (RICH_STRUCTURED_DELETION_POLICIES.has(part.deletion)) {
+    return buildRichStructuredStep(model, part);
+  }
+  throw new Error(`rich-deletion-oracle-uncovered:${part.deletion ?? part.kind}`);
+}
+
+function commitRichDeletion(model, step, observedSource = null) {
+  const nextSource = typeof observedSource === 'string' ? observedSource : step.afterSource;
+  model.source = nextSource;
+  const nextCursor = typeof step.resolveNextCursor === 'function'
+    ? step.resolveNextCursor(nextSource)
+    : step.nextCursor;
+  if (!nextCursor) throw new Error('rich-deletion-oracle-uncovered:missing-next-caret');
+  model.cursor = nextCursor;
+}
+
+function commitRichTableDeletion(model, afterTableSource) {
+  const prevBlockIndex = richPreviousBlockPartIndex(model.parts, model.cursor.partIndex);
+  model.source = afterTableSource;
+  if (prevBlockIndex >= 0) {
+    const prevPart = model.parts[prevBlockIndex];
+    model.cursor = {
+      partIndex: prevBlockIndex,
+      offset: prevPart.contentEnd - prevPart.contentStart
+    };
+  }
+}
+
+function richCaretContractObservation(part, offset, blockLength = offset, overrides = {}) {
+  return { connected: true, collapsed: true, focused: true, editable: true,
+    blockId: part.dom.blockId, blockTag: part.dom.tag, textOffset: offset,
+    blockLength, ...overrides };
+}
+
+test('[oracle-contract] rich fixture construction keeps inline and reference ranges declared', () => {
+  for (const imageKind of ['inline', 'reference']) {
+    const fixture = richWindowedFixture(imageKind);
+    const contiguous = fixture.parts.every((part, index) => part.sourceStart === (fixture.parts[index - 1]?.sourceEnd ?? 0)
+      && part.sourceEnd === part.sourceStart + part.text.length
+      && fixture.initial.slice(part.sourceStart, part.sourceEnd) === part.text);
+    expect(contiguous, `fixture parts must be contiguous for ${imageKind}`).toBe(true);
+    if (imageKind === 'reference') {
+      const definition = fixture.parts.find((part) => part.kind === 'definition');
+      expect(definition?.contentStart === definition?.sourceStart
+        && definition?.contentEnd === definition?.sourceEnd).toBe(true);
+    }
+  }
+});
+
+test('[oracle-contract] rich ASCII tail fixes the final byte and rejects a same-glyph wrong occurrence', () => {
+  const fixtureBuilder = createRichFixtureBuilder();
+  fixtureBuilder.block('paragraph', 'aba', 'P', { deletion: 'ascii-grapheme', plainText: true });
+  const fixture = fixtureBuilder.build();
+  const model = createRichDeletionModel(fixture);
+  const step = expectedRichDeletionStep(model);
+  expect(step.afterSource === 'ab').toBe(true);
+  expect(step.afterCaret?.textOffset === 2).toBe(true);
+  const correct = richDeletionObservationMatches(step,
+    { source: step.afterSource, caret: richCaretContractObservation(fixture.parts[0], 2) }, 'after');
+  expect(correct).toEqual({ sourceExact: true, caretExact: true });
+  const wrongOccurrence = richDeletionObservationMatches(step,
+    { source: 'ba', caret: richCaretContractObservation(fixture.parts[0], 2) }, 'after');
+  expect(wrongOccurrence).toEqual({ sourceExact: false, caretExact: true });
+});
+
+test('[oracle-contract] rich native proof rejects a wrong block, tag, length, or offset', () => {
+  const fixtureBuilder = createRichFixtureBuilder();
+  fixtureBuilder.block('paragraph', 'ab', 'P', { deletion: 'ascii-grapheme', plainText: true });
+  const fixture = fixtureBuilder.build(), part = fixture.parts[0];
+  const step = expectedRichDeletionStep(createRichDeletionModel(fixture));
+  const correct = richDeletionObservationMatches(step,
+    { source: step.afterSource, caret: richCaretContractObservation(part, 1) }, 'after');
+  expect(correct).toEqual({ sourceExact: true, caretExact: true });
+  const wrongBlock = richDeletionObservationMatches(step,
+    { source: step.afterSource, caret: richCaretContractObservation(part, 1, 1, { blockId: 'b-other' }) }, 'after');
+  const wrongOffset = richDeletionObservationMatches(step,
+    { source: step.afterSource, caret: richCaretContractObservation(part, 0, 1) }, 'after');
+  const wrongTag = richDeletionObservationMatches(step,
+    { source: step.afterSource, caret: richCaretContractObservation(part, 1, 1, { blockTag: 'DIV' }) }, 'after');
+  const wrongLength = richDeletionObservationMatches(step,
+    { source: step.afterSource, caret: richCaretContractObservation(part, 1, 2) }, 'after');
+  expect({ wrongBlock, wrongOffset, wrongTag, wrongLength }).toEqual({
+    wrongBlock: { sourceExact: true, caretExact: false },
+    wrongOffset: { sourceExact: true, caretExact: false },
+    wrongTag: { sourceExact: true, caretExact: false },
+    wrongLength: { sourceExact: true, caretExact: false }
+  });
+});
+
+test('[oracle-contract] rich undeclared remote atom, earlier punctuation, and missing proof are rejected', () => {
+  const fixtureBuilder = createRichFixtureBuilder();
+  const remoteAtom = fixtureBuilder.block('atom', '![dot](/remote.png)', 'P', { deletion: 'held-policy', atom: 'image' });
+  const remoteMermaid = fixtureBuilder.block('atom', '```mermaid\ngraph TD\nA --> B\n```', 'DIV', {
+    deletion: 'held-policy', atom: 'mermaid'
+  });
+  const earlierBlank = fixtureBuilder.separator('\n');
+  const earlierPunctuation = fixtureBuilder.separator('!!');
+  fixtureBuilder.block('paragraph', 'ab', 'P', { deletion: 'ascii-grapheme', plainText: true });
+  const fixture = fixtureBuilder.build(), tail = fixture.parts.at(-1);
+  const step = expectedRichDeletionStep(createRichDeletionModel(fixture));
+  const selectedTailRange = step.removeStart === tail.contentStart + 1 && step.removeEnd === tail.contentEnd;
+  const remoteRangeRejected = remoteAtom.sourceEnd <= step.removeStart
+    && remoteMermaid.sourceEnd <= step.removeStart
+    && earlierBlank.sourceEnd <= step.removeStart
+    && earlierPunctuation.sourceEnd <= step.removeStart
+    && !(step.removeStart === remoteAtom.sourceStart && step.removeEnd === remoteAtom.sourceEnd);
+  const correctCaret = richCaretContractObservation(tail, 1);
+  const sourceWithoutRange = (range) => fixture.initial.slice(0, range.sourceStart) + fixture.initial.slice(range.sourceEnd);
+  const wrongSourceResults = [earlierBlank, earlierPunctuation, remoteAtom, remoteMermaid].map((range) =>
+    richDeletionObservationMatches(step, { source: sourceWithoutRange(range), caret: correctCaret }, 'after').sourceExact);
+  const missingCaret = richDeletionObservationMatches(step, { source: step.afterSource, caret: null }, 'after');
+  expect({ selectedTailRange, remoteRangeRejected,
+    wrongSourcesRejected: wrongSourceResults.every((value) => value === false),
+    missingCaretRejected: missingCaret.sourceExact === true && missingCaret.caretExact === false }).toEqual({
+    selectedTailRange: true, remoteRangeRejected: true, wrongSourcesRejected: true, missingCaretRejected: true });
+
+  const missingBuilder = createRichFixtureBuilder();
+  missingBuilder.block('paragraph', 'ab', 'P', { plainText: true });
+  let missingCode = null;
+  try { expectedRichDeletionStep(createRichDeletionModel(missingBuilder.build())); }
+  catch (error) { missingCode = error.message; }
+  expect(missingCode?.startsWith('rich-deletion-oracle-uncovered:') === true).toBe(true);
+
+  const missingRangeBuilder = createRichFixtureBuilder();
+  missingRangeBuilder.block('paragraph', 'ab', 'P', { deletion: 'ascii-grapheme', plainText: true });
+  const missingRangeFixture = missingRangeBuilder.build();
+  missingRangeFixture.parts[0].sourceStart = undefined;
+  let missingRangeCode = null;
+  try { expectedRichDeletionStep(createRichDeletionModel(missingRangeFixture)); }
+  catch (error) { missingRangeCode = error.message; }
+  expect(missingRangeCode?.startsWith('rich-deletion-oracle-uncovered:') === true).toBe(true);
+
+  const atomBuilder = createRichFixtureBuilder();
+  atomBuilder.block('atom', '![dot](/remote.png)', 'P', { deletion: 'held-policy', atom: 'image' });
+  let atomCode = null;
+  try { expectedRichDeletionStep(createRichDeletionModel(atomBuilder.build())); }
+  catch (error) { atomCode = error.message; }
+  expect(atomCode?.startsWith('rich-deletion-oracle-uncovered:') === true).toBe(true);
+});
+
+test('[oracle-contract] history cursor and exit predicate handle duplicate grouping without inventing depth', async () => {
+  const witnessA = { collapsed: true, direction: 'none', anchor: { column: 1 }, focus: { column: 1 } };
+  const witnessB = { collapsed: true, direction: 'none', anchor: { column: 2 }, focus: { column: 2 } };
+  const witnessC = { collapsed: true, direction: 'none', anchor: { column: 3 }, focus: { column: 3 } };
+  const states = [{ value: 'A', witness: witnessA }, { value: 'B', witness: witnessB },
+    { value: 'A', witness: witnessA }, { value: 'C', witness: witnessC }];
+  const first = shortStageNextHistoryCursor(states, new Set([3]), states[2], 'undo');
+  const second = shortStageNextHistoryCursor(states, first, states[1], 'undo');
+  const redoToDuplicate = shortStageNextHistoryCursor(states, new Set([1]), states[2], 'redo');
+  const redoFinal = shortStageNextHistoryCursor(states, redoToDuplicate, states[3], 'redo');
+  const unknownSource = shortStageNextHistoryCursor(states, new Set([3]), { value: 'X', witness: witnessA }, 'undo');
+  const wrongWitness = shortStageNextHistoryCursor(states, new Set([3]), { value: 'A', witness: witnessC }, 'undo');
+  const wrongDirection = shortStageNextHistoryCursor(states, new Set([3]), states[3], 'redo');
+  const duplicateUndoCursor = new Set([0, 2]);
+  const duplicateUndoCursorBefore = [...duplicateUndoCursor];
+  const duplicateInitialExit = shortStageHistoryExit(states, duplicateUndoCursor, states[0], 'undo', true);
+  const groupedIntermediateExit = shortStageHistoryExit(states, first, states[0], 'undo', false);
+  const finalRedoExit = shortStageHistoryExit(states, redoFinal, states[3], 'redo', true);
+  const redoAfterDuplicateUndo = shortStageNextHistoryCursor(states, duplicateUndoCursor, states[1], 'redo');
+  const redoAfterDuplicateUndoFinal = shortStageNextHistoryCursor(states, redoAfterDuplicateUndo, states[3], 'redo');
+  const redoDuplicateStates = [
+    { value: 'A', witness: witnessA }, { value: 'B', witness: witnessB },
+    { value: 'C', witness: witnessC }, { value: 'B', witness: witnessB }
+  ];
+  const redoDuplicateCursor = shortStageNextHistoryCursor(redoDuplicateStates, new Set([0]), redoDuplicateStates[3], 'redo');
+  const redoDuplicateExit = shortStageHistoryExit(
+    redoDuplicateStates, redoDuplicateCursor, redoDuplicateStates[3], 'redo', true
+  );
+  const missingBoundaryExit = shortStageHistoryExit(states, new Set([2]), states[0], 'undo', true);
+  const mixedCursorExit = shortStageHistoryExit(states, new Set([0, 1]), states[0], 'undo', true);
+  const wrongWitnessBoundaryExit = shortStageHistoryExit(
+    states, new Set([0, 2]), { value: 'A', witness: witnessB }, 'undo', true
+  );
+  const unknownTargetExit = shortStageHistoryExit(
+    states, duplicateUndoCursor, { value: 'X', witness: witnessA }, 'undo', true
+  );
+  const emptyCursorExit = shortStageHistoryExit(states, new Set(), states[0], 'undo', true);
+  const outOfBoundsCursorExit = shortStageHistoryExit(states, new Set([4]), states[0], 'undo', true);
+  const wrongDirectionExit = shortStageHistoryExit(states, new Set([3]), states[3], 'undo', true);
+  const missingBoundaryWitnessExit = shortStageHistoryExit(
+    states, new Set([0]), { value: 'A', witness: null }, 'undo', true
+  );
+  const phaseModel = shortStagePhaseModel('ordinary');
+  const phaseSamples = new Map([[phaseModel.phaseIds.fixture, [phaseModel.initial]]]);
+  phaseModel.positions.forEach((position, index) => phaseSamples.set(
+    phaseModel.phaseIds.positions[index],
+    [phaseModel.initial, position.insertedSource, phaseModel.initial]
+  ));
+  phaseSamples.set(phaseModel.phaseIds.deletion, [phaseModel.initial]);
+  phaseSamples.set(phaseModel.phaseIds.emptyExtraBackspace, ['']);
+  phaseSamples.set(phaseModel.phaseIds.reentry, [
+    phaseModel.branchBase, phaseModel.entered, phaseModel.shortened,
+    phaseModel.continued, phaseModel.shortened
+  ]);
+  phaseSamples.set(phaseModel.phaseIds.fullUndo, [phaseModel.initial, phaseModel.positions[0].insertedSource]);
+  phaseSamples.set(phaseModel.phaseIds.fullRedo, [phaseModel.positions[0].insertedSource, phaseModel.initial]);
+  phaseSamples.set(phaseModel.phaseIds.branchToZ, [phaseModel.branchBase]);
+  phaseSamples.set(phaseModel.phaseIds.branchInput, [phaseModel.branchBase, phaseModel.branch]);
+  phaseSamples.set(phaseModel.phaseIds.invalidRedo, [phaseModel.branch]);
+  phaseSamples.set(phaseModel.phaseIds.undoBranch, [phaseModel.branch, phaseModel.branchBase]);
+  phaseSamples.set(phaseModel.phaseIds.redoBranch, [phaseModel.branchBase, phaseModel.branch]);
+  phaseSamples.set(phaseModel.phaseIds.undoBranchAgain, [phaseModel.branch, phaseModel.branchBase]);
+  phaseSamples.set(phaseModel.phaseIds.restoreInitial, [
+    phaseModel.branchBase, phaseModel.positions[0].insertedSource, phaseModel.initial
+  ]);
+  phaseSamples.set(phaseModel.phaseIds.middleQ, [phaseModel.initial, phaseModel.middleQSource]);
+  phaseSamples.set(phaseModel.phaseIds.middleQUndo, [phaseModel.middleQSource, phaseModel.initial]);
+  const runPhasedModel = (overrides = {}) => {
+    const harness = createPreviewLedgerHarness();
+    const operationId = harness.ledger.beginPhased({
+      postId: PREVIEW_LEDGER_POST_ID,
+      renderParams: PREVIEW_LEDGER_RENDER_PARAMS,
+      phases: phaseModel.phases
+    });
+    phaseModel.phases.forEach((phase, index) => {
+      if (index > 0) harness.ledger.enterPhase(operationId, phase.id);
+      for (const source of overrides[phase.id] ?? phaseSamples.get(phase.id)) {
+        observePreviewLedgerSuccess(harness.ledger, previewLedgerRequest({
+          source,
+          renderParams: PREVIEW_LEDGER_RENDER_PARAMS
+        }));
+      }
+    });
+    return { harness, proof: harness.ledger.prove(operationId, { finalUiVerified: true }) };
+  };
+  const phasedValid = runPhasedModel();
+  const phasedUndoToEmpty = runPhasedModel({ [phaseModel.phaseIds.fullUndo]: [phaseModel.initial, ''] });
+  const phasedForeignPosition = runPhasedModel({
+    [phaseModel.phaseIds.middleQ]: [phaseModel.positions[0].insertedSource]
+  });
+  const phasedBackwardRestore = runPhasedModel({
+    [phaseModel.phaseIds.restoreInitial]: [
+      phaseModel.branchBase,
+      phaseModel.positions[0].insertedSource,
+      phaseModel.positions[1].insertedSource
+    ]
+  });
+  const replayWitness = (column) => ({
+    collapsed: true,
+    direction: 'none',
+    anchor: { kind: 'visual', connected: true, blockOrdinal: 0, column, blockLength: 1 },
+    focus: { kind: 'visual', connected: true, blockOrdinal: 0, column, blockLength: 1 }
+  });
+  const replayA = { value: 'history A', witness: replayWitness(1) };
+  const replayB = { value: 'history B', witness: replayWitness(2) };
+  const replayC = { value: 'history C', witness: replayWitness(3) };
+  const replayState = (model, {
+    accepted = '1', busy = 'false', editable = true, failureAbsent = true, lock = 'false',
+    nativeConnected = true, phase = 'ready', repairCount = 0, session = 'ready', stickyFailure = false,
+    codeCertificate = model.codeCertificate ?? null, previewCommitPending = false, stable = true
+  } = {}) => ({
+    source: model.value,
+    witness: model.witness,
+    codeCertificate,
+    accepted,
+    busy,
+    editable,
+    failureAbsent,
+    lock,
+    nativeConnected,
+    phase,
+    repairCount,
+    session,
+    stickyFailure,
+    previewCommitPending,
+    stable
+  });
+  const pendingReplayState = replayState({
+    value: replayA.value,
+    witness: replayWitness(0)
+  }, { accepted: null, busy: 'true', phase: 'loading' });
+  const pendingSafeEntryState = replayState(replayB, {
+    accepted: null, busy: 'true', phase: 'loading'
+  });
+  const cancelledReplayState = replayState(replayA, {
+    accepted: null, failureAbsent: false, phase: 'error', stickyFailure: true
+  });
+  const corruptReplayState = replayState({ value: 'history corrupt', witness: replayWitness(8) });
+  const stickyFailureReplayState = replayState(replayA, { stickyFailure: true });
+  const runReplayContract = async ({
+    completionStates,
+    cursor = { undo: new Set([1]), redo: null },
+    direction = 'undo',
+    historyStates = [replayA, replayB],
+    unexpectedSettledError = null,
+    entryState = null,
+    trace = null
+  }) => {
+    const history = {
+      states: historyStates.map((state) => ({ ...state })),
+      initial: historyStates[0].value,
+      latest: historyStates.at(-1),
+      cursor: { undo: new Set(cursor.undo), redo: cursor.redo === null ? null : new Set(cursor.redo) }
+    };
+    const initialIndex = direction === 'undo' ? [...history.cursor.undo][0] : [...history.cursor.redo][0];
+    let current = { value: historyStates[initialIndex].value, witness: historyStates[initialIndex].witness,
+      codeCertificate: historyStates[initialIndex].codeCertificate ?? null };
+    let pressCount = 0;
+    let entryReads = 0;
+    let postKeyReads = 0;
+    let sourceReads = 0;
+    let witnessReads = 0;
+    let settledIndex = 0;
+    const updateTrace = () => {
+      if (trace) Object.assign(trace, { pressCount, entryReads, postKeyReads, sourceReads, witnessReads });
+    };
+    const stage = { mode: 'full', source: { inputValue: async () => {
+      sourceReads += 1; updateTrace(); return current.value;
+    } } };
+    const probe = {
+      guard: () => {},
+      press: async () => {
+        pressCount += 1;
+        updateTrace();
+        current = { value: completionStates[0].source, witness: completionStates[0].witness,
+          codeCertificate: completionStates[0].codeCertificate ?? null };
+      },
+      settledState: async () => {
+        if (pressCount === 0) {
+          entryReads += 1;
+          updateTrace();
+          return entryState ?? replayState(current);
+        }
+        postKeyReads += 1;
+        updateTrace();
+        if (unexpectedSettledError) throw unexpectedSettledError;
+        const state = completionStates[Math.min(settledIndex, completionStates.length - 1)];
+        settledIndex += 1;
+        current = { value: state.source, witness: state.witness,
+          codeCertificate: state.codeCertificate ?? null };
+        return state;
+      },
+      witness: async () => { witnessReads += 1; updateTrace(); return current.witness; }
+    };
+    try {
+      const next = await shortStageReplayHistory({}, stage, probe, history, direction);
+      return { cursor: [...next], resolved: true, pressCount, entryReads, postKeyReads, sourceReads, witnessReads };
+    } catch (error) {
+      if (typeof error?.message !== 'string' || !/^short-stage-[a-z-]+$/u.test(error.message)) throw error;
+      return { code: error.message, resolved: false, pressCount, entryReads, postKeyReads, sourceReads, witnessReads };
+    }
+  };
+  const replayPendingCorrect = await runReplayContract({
+    completionStates: [pendingReplayState, replayState(replayA), corruptReplayState]
+  });
+  const replayPendingSafeEntry = await runReplayContract({
+    completionStates: [pendingReplayState, replayState(replayA), corruptReplayState],
+    entryState: pendingSafeEntryState
+  });
+  const replayCancelled = await runReplayContract({
+    completionStates: [pendingReplayState, cancelledReplayState]
+  });
+  const replayPendingNeverCompletes = await runReplayContract({
+    completionStates: [pendingReplayState]
+  });
+  const replayStaleReady = await runReplayContract({
+    completionStates: [pendingReplayState, replayState(replayB), replayState(replayB)]
+  });
+  const replayWrongSource = await runReplayContract({
+    completionStates: [
+      pendingReplayState,
+      replayState({ value: 'history X', witness: replayWitness(1) }),
+      corruptReplayState
+    ]
+  });
+  const replayWrongWitness = await runReplayContract({
+    completionStates: [
+      pendingReplayState,
+      replayState({ value: replayA.value, witness: replayWitness(9) }),
+      corruptReplayState
+    ]
+  });
+  const replayWrongDirection = await runReplayContract({
+    completionStates: [pendingReplayState, replayState(replayA), corruptReplayState],
+    cursor: { undo: new Set([2]), redo: new Set([1]) },
+    direction: 'redo',
+    historyStates: [replayA, replayB, replayC]
+  });
+  const replayFailureRecovery = await runReplayContract({
+    completionStates: [
+      replayState(replayA, { accepted: null, failureAbsent: false, phase: 'error', stickyFailure: true }),
+      replayState(replayA),
+      replayState(replayA)
+    ]
+  });
+  const replayStickyFailure = await runReplayContract({
+    completionStates: [stickyFailureReplayState, replayState(replayA)]
+  });
+  // A ready-looking read taken before the formal Preview commit (or while the
+  // surface is still moving between frames) is pending, never a history step.
+  const replayPreviewCommitPending = await runReplayContract({
+    completionStates: [replayState(replayA, { previewCommitPending: true }), replayState(replayA), corruptReplayState]
+  });
+  const replayUnstableRead = await runReplayContract({
+    completionStates: [replayState(replayA, { stable: false }), replayState(replayA), corruptReplayState]
+  });
+  const replayPreviewCommitNeverCompletes = await runReplayContract({
+    completionStates: [replayState(replayA, { previewCommitPending: true })]
+  });
+  const unexpectedSettledError = new TypeError('synthetic replay fixture error');
+  const unexpectedTrace = {};
+  let unexpectedRethrown = false;
+  let unexpectedIdentityPreserved = false;
+  try {
+    await runReplayContract({
+      completionStates: [replayState(replayA), replayState(replayA)],
+      unexpectedSettledError,
+      trace: unexpectedTrace
+    });
+  } catch (error) {
+    unexpectedRethrown = error instanceof TypeError;
+    unexpectedIdentityPreserved = error === unexpectedSettledError;
+  }
+  const sameSet = (left, right) => left.size === right.size && [...left].every((value) => right.has(value));
+  expect({
+    firstExact: sameSet(first, new Set([0, 2])),
+    secondExact: sameSet(second, new Set([1])),
+    redoDuplicateExact: sameSet(redoToDuplicate, new Set([2])),
+    redoFinalExact: sameSet(redoFinal, new Set([3])),
+    unknownSourceEmpty: unknownSource.size === 0,
+    wrongWitnessEmpty: wrongWitness.size === 0,
+    wrongDirectionEmpty: wrongDirection.size === 0,
+    duplicateInitialAccepted: duplicateInitialExit.exit === true && duplicateInitialExit.uncovered === false,
+    duplicateCursorPreserved: sameSet(duplicateUndoCursor, new Set([0, 2]))
+      && JSON.stringify([...duplicateUndoCursor]) === JSON.stringify(duplicateUndoCursorBefore),
+    redoAfterDuplicateUndoExact: sameSet(redoAfterDuplicateUndo, new Set([1])),
+    redoAfterDuplicateUndoFinalExact: sameSet(redoAfterDuplicateUndoFinal, new Set([3])),
+    redoDuplicateCursorExact: sameSet(redoDuplicateCursor, new Set([1, 3])),
+    redoDuplicateAccepted: redoDuplicateExit.exit === true && redoDuplicateExit.uncovered === false,
+    missingBoundaryUncovered: missingBoundaryExit.exit === false && missingBoundaryExit.uncovered === true,
+    mixedCursorRejected: mixedCursorExit.exit === false,
+    wrongWitnessBoundaryRejected: wrongWitnessBoundaryExit.exit === false,
+    unknownTargetRejected: unknownTargetExit.exit === false,
+    emptyCursorRejected: emptyCursorExit.exit === false,
+    outOfBoundsCursorRejected: outOfBoundsCursorExit.exit === false,
+    wrongDirectionUncovered: wrongDirectionExit.exit === false && wrongDirectionExit.uncovered === true,
+    missingBoundaryWitnessRejected: missingBoundaryWitnessExit.exit === false,
+    groupedIntermediateAccepted: groupedIntermediateExit.exit === true && groupedIntermediateExit.uncovered === false,
+    finalRedoAccepted: finalRedoExit.exit === true && finalRedoExit.uncovered === false,
+    phasedValidApproved: phasedValid.proof.approved,
+    phasedValidCount: phasedValid.proof.approvedAbortCount,
+    phasedValidIssues: phasedValid.harness.issues,
+    positionSelectorIndexPairs: phaseModel.positions.map((position) => [position.selector, position.index]),
+    positionPhaseIndexes: phaseModel.positions.map((position) => position.phaseIndex),
+    phaseIdsUnique: new Set(phaseModel.phases.map((phase) => phase.id)).size === phaseModel.phases.length,
+    phasedUndoToEmptyRejected: phasedUndoToEmpty.proof.approved === false
+      && phasedUndoToEmpty.proof.code === 'preview-read-operation-group-order-invalid',
+    phasedForeignPositionRejected: phasedForeignPosition.proof.approved === false
+      && phasedForeignPosition.proof.code === 'preview-read-operation-other-source',
+    phasedBackwardRestoreRejected: phasedBackwardRestore.proof.approved === false
+      && phasedBackwardRestore.proof.code === 'preview-read-operation-group-order-invalid',
+    replayPendingCorrectResolved: replayPendingCorrect.resolved,
+    replayPendingCorrectCursor: replayPendingCorrect.cursor,
+    replayPendingCorrectPresses: replayPendingCorrect.pressCount,
+    replayPendingCorrectEntryReads: replayPendingCorrect.entryReads,
+    replayPendingCorrectPostKeyReads: replayPendingCorrect.postKeyReads,
+    replayPendingCorrectAtomicEntry: replayPendingCorrect.sourceReads === 0 && replayPendingCorrect.witnessReads === 0,
+    replayPendingSafeEntry: replayPendingSafeEntry.resolved === true
+      && JSON.stringify(replayPendingSafeEntry.cursor) === JSON.stringify([0])
+      && replayPendingSafeEntry.pressCount === 1 && replayPendingSafeEntry.entryReads === 1
+      && replayPendingSafeEntry.postKeyReads === 2,
+    replayCancelledUnsafe: replayCancelled.resolved === false
+      && replayCancelled.code === 'short-stage-history-full-operation-unsafe' && replayCancelled.pressCount === 1,
+    replayPendingNeverCompletesPending: replayPendingNeverCompletes.resolved === false
+      && replayPendingNeverCompletes.code === 'short-stage-history-full-operation-pending'
+      && replayPendingNeverCompletes.pressCount === 1,
+    replayStaleReadyNoChange: replayStaleReady.resolved === false
+      && replayStaleReady.code === 'short-stage-history-full-operation-nochange'
+      && replayStaleReady.pressCount === 1,
+    replayWrongSourceUnobserved: replayWrongSource.resolved === false
+      && replayWrongSource.code === 'short-stage-history-next-state-unobserved-under-cursor'
+      && replayWrongSource.pressCount === 1
+      && replayWrongSource.postKeyReads === 2,
+    replayWrongWitnessUnobserved: replayWrongWitness.resolved === false
+      && replayWrongWitness.code === 'short-stage-history-next-state-unobserved-under-cursor'
+      && replayWrongWitness.pressCount === 1
+      && replayWrongWitness.postKeyReads === 2,
+    replayWrongDirectionUnobserved: replayWrongDirection.resolved === false
+      && replayWrongDirection.code === 'short-stage-history-next-state-unobserved-under-cursor'
+      && replayWrongDirection.pressCount === 1
+      && replayWrongDirection.postKeyReads === 2,
+    replayFailureRecoveryUnsafe: replayFailureRecovery.resolved === false
+      && replayFailureRecovery.code === 'short-stage-history-full-operation-unsafe'
+      && replayFailureRecovery.pressCount === 1,
+    replayStickyFailureUnsafe: replayStickyFailure.resolved === false
+      && replayStickyFailure.code === 'short-stage-history-full-operation-unsafe'
+      && replayStickyFailure.pressCount === 1 && replayStickyFailure.postKeyReads === 1,
+    replayPreviewCommitPendingWaits: replayPreviewCommitPending.resolved === true
+      && JSON.stringify(replayPreviewCommitPending.cursor) === JSON.stringify([0])
+      && replayPreviewCommitPending.pressCount === 1 && replayPreviewCommitPending.postKeyReads === 2,
+    replayUnstableReadWaits: replayUnstableRead.resolved === true
+      && JSON.stringify(replayUnstableRead.cursor) === JSON.stringify([0])
+      && replayUnstableRead.pressCount === 1 && replayUnstableRead.postKeyReads === 2,
+    replayPreviewCommitNeverCompletesPending: replayPreviewCommitNeverCompletes.resolved === false
+      && replayPreviewCommitNeverCompletes.code === 'short-stage-history-full-operation-pending'
+      && replayPreviewCommitNeverCompletes.pressCount === 1,
+    replayUnexpectedRethrown: unexpectedRethrown,
+    replayUnexpectedIdentityPreserved: unexpectedIdentityPreserved,
+    replayUnexpectedSingleRead: unexpectedTrace.pressCount === 1 && unexpectedTrace.entryReads === 1
+      && unexpectedTrace.postKeyReads === 1 && unexpectedTrace.sourceReads === 0 && unexpectedTrace.witnessReads === 0
+  }).toEqual({
+    firstExact: true, secondExact: true, redoDuplicateExact: true, redoFinalExact: true,
+    unknownSourceEmpty: true, wrongWitnessEmpty: true, wrongDirectionEmpty: true,
+    duplicateInitialAccepted: true, duplicateCursorPreserved: true,
+    redoAfterDuplicateUndoExact: true, redoAfterDuplicateUndoFinalExact: true,
+    redoDuplicateCursorExact: true, redoDuplicateAccepted: true,
+    missingBoundaryUncovered: true, mixedCursorRejected: true, wrongWitnessBoundaryRejected: true,
+    unknownTargetRejected: true, emptyCursorRejected: true, outOfBoundsCursorRejected: true,
+    wrongDirectionUncovered: true, missingBoundaryWitnessRejected: true,
+    groupedIntermediateAccepted: true, finalRedoAccepted: true,
+    phasedValidApproved: true, phasedValidCount: 0, phasedValidIssues: [],
+    positionSelectorIndexPairs: [['p', 0], ['h1', 0], ['p', 1], ['pre code', 0], ['p', 2]],
+    positionPhaseIndexes: [0, 1, 2, 3, 4], phaseIdsUnique: true,
+    phasedUndoToEmptyRejected: true, phasedForeignPositionRejected: true,
+    phasedBackwardRestoreRejected: true,
+    replayPendingCorrectResolved: true, replayPendingCorrectCursor: [0], replayPendingCorrectPresses: 1,
+    replayPendingCorrectEntryReads: 1, replayPendingCorrectPostKeyReads: 2,
+    replayPendingCorrectAtomicEntry: true, replayPendingSafeEntry: true, replayCancelledUnsafe: true,
+    replayPendingNeverCompletesPending: true, replayStaleReadyNoChange: true,
+    replayWrongSourceUnobserved: true, replayWrongWitnessUnobserved: true,
+    replayWrongDirectionUnobserved: true, replayFailureRecoveryUnsafe: true,
+    replayStickyFailureUnsafe: true, replayPreviewCommitPendingWaits: true, replayUnstableReadWaits: true,
+    replayPreviewCommitNeverCompletesPending: true, replayUnexpectedRethrown: true,
+    replayUnexpectedIdentityPreserved: true, replayUnexpectedSingleRead: true
+  });
+});
+
+test('[oracle-contract] certified code history treats only the closing renderer LF as representation-only', () => {
+  const codeBlockOrdinal = shortStageBlocks.findIndex((block) => block.kind === 'code');
+  expect(codeBlockOrdinal, 'the declared fixture owns one code block').toBeGreaterThanOrEqual(0);
+  const codeBlock = shortStageBlocks[codeBlockOrdinal];
+  const body = codeBlock.body.join('');
+  const prefix = shortStageBlocks.slice(0, codeBlockOrdinal)
+    .map((block) => block.source).join('\n\n') + '\n\n';
+  const source = `${prefix}${codeBlock.source}\n`;
+  const descriptor = shortStageDeclaredCodeDescriptors.get(source);
+  expect(descriptor?.body, 'the exact source has one declared code body').toBe(body);
+  const point = (blockLength, column = body.length) => ({
+    kind: 'visual', connected: true, inside: true, lineIndex: null,
+    blockOrdinal: codeBlockOrdinal, column,
+    blockLength, surfaceOffset: null
+  });
+  const witness = (blockLength, {
+    collapsed = true, direction = 'none', anchorColumn = body.length, focusColumn = body.length
+  } = {}) => ({
+    collapsed, direction, anchor: point(blockLength, anchorColumn), focus: point(blockLength, focusColumn)
+  });
+  const certifyCode = createShortStageCodeCertifier();
+  const certificate = (domText, overrides = {}) => certifyCode({
+    source, descriptor, sourceDeclared: true, codeCandidate: true, domText,
+    prePresent: true, preOrdinal: 0,
+    observedBlockOrdinal: descriptor.blockOrdinal, observedCodeOrdinal: descriptor.codeOrdinal,
+    preChildCount: 1, preDirectCode: true, codeInsidePre: true,
+    blockConnected: true, preConnected: true, codeConnected: true,
+    blockOwnsPre: true, preInsideSurface: true,
+    nativeCollapsed: true, nativeDirection: 'none',
+    anchorLocal: body.length, focusLocal: body.length,
+    anchorPrefix: body, focusPrefix: body,
+    ...overrides
+  });
+  const literalState = { value: source, witness: witness(body.length),
+    codeCertificate: certificate(body) };
+  const closingLfState = { value: source, witness: witness(body.length + 1),
+    codeCertificate: certificate(`${body}\n`) };
+  expect(literalState.codeCertificate?.valid, 'literal code representation is certified').toBe(true);
+  expect(closingLfState.codeCertificate?.valid, 'literal plus the declared closing LF is certified').toBe(true);
+  expect(JSON.stringify(literalState.witness) === JSON.stringify(closingLfState.witness)).toBe(false);
+  expect(shortStageStateMatches(literalState, closingLfState)).toBe(true);
+  expect(shortStageObservedStateChanged(literalState, {
+    source: closingLfState.value, witness: closingLfState.witness,
+    codeCertificate: closingLfState.codeCertificate
+  }), 'representation-only LF is not source progress').toBe(false);
+  const backwardOverrides = {
+    nativeCollapsed: false, nativeDirection: 'backward',
+    anchorLocal: body.length, focusLocal: 0,
+    anchorPrefix: body, focusPrefix: ''
+  };
+  const backwardLiteralState = {
+    value: source,
+    witness: witness(body.length, { collapsed: false, direction: 'backward', anchorColumn: body.length, focusColumn: 0 }),
+    codeCertificate: certificate(body, backwardOverrides)
+  };
+  const backwardClosingLfState = {
+    value: source,
+    witness: witness(body.length + 1, { collapsed: false, direction: 'backward', anchorColumn: body.length, focusColumn: 0 }),
+    codeCertificate: certificate(`${body}\n`, backwardOverrides)
+  };
+  expect(backwardLiteralState.codeCertificate?.valid, 'backward range in literal code is certified').toBe(true);
+  expect(backwardClosingLfState.codeCertificate?.valid, 'backward range in closing-LF code is certified').toBe(true);
+  expect(shortStageStateMatches(backwardLiteralState, backwardClosingLfState),
+    'identical backward range matches across literal and closing-LF representations').toBe(true);
+  expect(shortStageObservedStateChanged(backwardLiteralState, {
+    source: backwardClosingLfState.value, witness: backwardClosingLfState.witness,
+    codeCertificate: backwardClosingLfState.codeCertificate
+  }), 'representation-only LF under a backward range is not source progress').toBe(false);
+  const forwardOverrides = {
+    nativeCollapsed: false, nativeDirection: 'forward',
+    anchorLocal: 0, focusLocal: body.length,
+    anchorPrefix: '', focusPrefix: body
+  };
+  const forwardLiteralState = {
+    value: source,
+    witness: witness(body.length, { collapsed: false, direction: 'forward', anchorColumn: 0, focusColumn: body.length }),
+    codeCertificate: certificate(body, forwardOverrides)
+  };
+  const forwardClosingLfState = {
+    value: source,
+    witness: witness(body.length + 1, { collapsed: false, direction: 'forward', anchorColumn: 0, focusColumn: body.length }),
+    codeCertificate: certificate(`${body}\n`, forwardOverrides)
+  };
+  expect(forwardLiteralState.codeCertificate?.valid, 'forward range in literal code is certified').toBe(true);
+  expect(forwardClosingLfState.codeCertificate?.valid, 'forward range in closing-LF code is certified').toBe(true);
+  expect(shortStageStateMatches(forwardLiteralState, forwardClosingLfState),
+    'identical forward range matches across literal and closing-LF representations').toBe(true);
+  expect(shortStageStateMatches(backwardLiteralState, forwardClosingLfState),
+    'backward and forward ranges cannot match').toBe(false);
+  expect(shortStageStateMatches(backwardLiteralState, literalState),
+    'ranged selection cannot match collapsed caret').toBe(false);
+});
+
+test('[oracle-contract] certified code observer rejects forged body, caret, structure, and provenance', () => {
+  const certifyCode = createShortStageCodeCertifier();
+  const descriptorFixture = (blocks) => {
+    const blockOrdinal = blocks.findIndex((block) => block.kind === 'code');
+    expect(blockOrdinal, 'declared model owns a code block').toBeGreaterThanOrEqual(0);
+    const codeBlock = blocks[blockOrdinal];
+    const prefix = blocks.slice(0, blockOrdinal).map((block) => block.source).join('\n\n')
+      + (blockOrdinal ? '\n\n' : '');
+    const source = `${prefix}${codeBlock.source}\n`;
+    return { source, descriptor: shortStageBuildCodeDescriptors(blocks).get(source) };
+  };
+  const fixture = descriptorFixture(shortStageBlocks);
+  const body = fixture.descriptor?.body;
+  expect(typeof body, 'fixture code body is declared').toBe('string');
+  const evidence = (overrides = {}) => ({
+    source: fixture.source, descriptor: fixture.descriptor, sourceDeclared: true,
+    codeCandidate: true, domText: body,
+    prePresent: true, preOrdinal: 0,
+    observedBlockOrdinal: fixture.descriptor.blockOrdinal,
+    observedCodeOrdinal: fixture.descriptor.codeOrdinal,
+    preChildCount: 1, preDirectCode: true, codeInsidePre: true,
+    blockConnected: true, preConnected: true, codeConnected: true,
+    blockOwnsPre: true, preInsideSurface: true,
+    nativeCollapsed: true, nativeDirection: 'none',
+    anchorLocal: body.length, focusLocal: body.length,
+    anchorPrefix: body, focusPrefix: body,
+    ...overrides
+  });
+  const validCertificate = certifyCode(evidence());
+  expect(validCertificate?.valid, 'declared closed-code observation is certified').toBe(true);
+  const replacement = `${body.slice(0, -1)}${body.at(-1) === 'x' ? 'y' : 'x'}`;
+  const rawPoint = (blockLength = body.length) => ({
+    kind: 'visual', connected: true, inside: true, lineIndex: null,
+    blockOrdinal: fixture.descriptor.blockOrdinal, column: body.length,
+    blockLength, surfaceOffset: null
+  });
+  const rawWitness = (blockLength = body.length) => ({
+    collapsed: true, direction: 'none', anchor: rawPoint(blockLength), focus: rawPoint(blockLength)
+  });
+  const forgedReplacement = certifyCode(evidence({ domText: replacement, anchorPrefix: replacement,
+    focusPrefix: replacement }));
+  expect(forgedReplacement?.valid, 'same-length replacement is rejected').toBe(false);
+  expect(shortStageStateMatches(
+    { value: fixture.source, witness: rawWitness(), codeCertificate: validCertificate },
+    { value: fixture.source, witness: rawWitness(), codeCertificate: forgedReplacement }
+  ), 'invalid same-length code evidence cannot pass through equal raw lengths').toBe(false);
+  const missingBody = certifyCode(evidence({ domText: body.slice(0, -1),
+    anchorPrefix: body.slice(0, -1), focusPrefix: body.slice(0, -1) }));
+  expect(missingBody?.valid, 'missing body byte is rejected').toBe(false);
+  const twoLfs = certifyCode(evidence({ domText: `${body}\n\n` }));
+  expect(twoLfs?.valid, 'two renderer LFs are rejected').toBe(false);
+  const trailingSpace = certifyCode(evidence({ domText: `${body} ` }));
+  expect(trailingSpace?.valid, 'arbitrary trailing whitespace is rejected').toBe(false);
+  const afterRendererLf = certifyCode(evidence({ domText: `${body}\n`,
+    anchorPrefix: `${body}\n`, focusPrefix: `${body}\n`, anchorLocal: body.length + 1,
+    focusLocal: body.length + 1 }));
+  expect(afterRendererLf?.valid, 'caret after the closing renderer LF is rejected').toBe(false);
+  const reverse = certifyCode(evidence({ nativeCollapsed: false, nativeDirection: 'backward',
+    anchorPrefix: body.slice(0, -1), focusPrefix: body }));
+  expect(reverse?.valid, 'contradictory backward range order is rejected').toBe(false);
+  const contradictoryForward = certifyCode(evidence({ nativeCollapsed: false, nativeDirection: 'forward',
+    anchorPrefix: body, focusPrefix: body.slice(0, -1) }));
+  expect(contradictoryForward?.valid, 'contradictory forward range order is rejected').toBe(false);
+  const emptyUncollapsed = certifyCode(evidence({ nativeCollapsed: false, nativeDirection: 'forward',
+    anchorPrefix: body, focusPrefix: body }));
+  expect(emptyUncollapsed?.valid, 'non-collapsed empty range is rejected').toBe(false);
+  const collapsedWrongDirection = certifyCode(evidence({ nativeCollapsed: true, nativeDirection: 'backward',
+    anchorPrefix: body, focusPrefix: body }));
+  expect(collapsedWrongDirection?.valid, 'collapsed selection with non-none direction is rejected').toBe(false);
+  const rangeAfterRendererLf = certifyCode(evidence({ domText: `${body}\n`,
+    nativeCollapsed: false, nativeDirection: 'backward',
+    anchorPrefix: `${body}\n`, focusPrefix: '', anchorLocal: body.length + 1, focusLocal: 0 }));
+  expect(rangeAfterRendererLf?.valid, 'ranged endpoint after the closing renderer LF is rejected').toBe(false);
+  const crossBlock = certifyCode(evidence({ prePresent: false, preChildCount: 0,
+    preDirectCode: false, codeInsidePre: false, observedBlockOrdinal: null,
+    observedCodeOrdinal: null, anchorPrefix: null, focusPrefix: null }));
+  expect(crossBlock?.valid, 'cross-block or missing PRE evidence is rejected').toBe(false);
+  const wrongBlock = certifyCode(evidence({
+    observedBlockOrdinal: fixture.descriptor.blockOrdinal + 1
+  }));
+  expect(wrongBlock?.valid, 'same-text wrong block is rejected').toBe(false);
+  const extraPreText = certifyCode(evidence({ preChildCount: 2, preDirectCode: false }));
+  expect(extraPreText?.valid, 'extra PRE text or wrong tag is rejected').toBe(false);
+  const differentSource = certifyCode(evidence({
+    source: `${fixture.source.slice(0, -1)}${fixture.source.at(-1) === 'x' ? 'y' : 'x'}`,
+    sourceDeclared: false
+  }));
+  expect(differentSource?.valid, 'non-declared source is rejected').toBe(false);
+  const missingProof = certifyCode(evidence({ descriptor: null, sourceDeclared: false }));
+  expect(missingProof?.valid, 'missing descriptor proof is rejected').toBe(false);
+  const internalBlocks = [{
+    kind: 'code', source: '~~~\nab\ncd\n~~~', body: [...'ab', '\n', ...'cd']
+  }];
+  const internalFixture = descriptorFixture(internalBlocks);
+  const internalBody = internalFixture.descriptor?.body;
+  expect(typeof internalBody, 'internal-LF fixture body is declared').toBe('string');
+  const internalLoss = certifyCode({
+    ...evidence({
+      source: internalFixture.source, descriptor: internalFixture.descriptor,
+      observedBlockOrdinal: internalFixture.descriptor.blockOrdinal,
+      observedCodeOrdinal: internalFixture.descriptor.codeOrdinal
+    }),
+    domText: internalBody.replace('\n', ''), anchorPrefix: internalBody.replace('\n', ''),
+    focusPrefix: internalBody.replace('\n', '')
+  });
+  expect(internalLoss?.valid, 'internal body LF loss is rejected').toBe(false);
+  const terminalBodyLfBlocks = [{
+    kind: 'code', source: '~~~\nline\n\n~~~', body: [...'line', '\n']
+  }];
+  const terminalBodyLfFixture = descriptorFixture(terminalBodyLfBlocks);
+  expect(typeof terminalBodyLfFixture.descriptor?.body, 'terminal-LF fixture body is declared').toBe('string');
+  const terminalBodyLfLoss = certifyCode({
+    ...evidence({
+      source: terminalBodyLfFixture.source, descriptor: terminalBodyLfFixture.descriptor,
+      observedBlockOrdinal: terminalBodyLfFixture.descriptor.blockOrdinal,
+      observedCodeOrdinal: terminalBodyLfFixture.descriptor.codeOrdinal
+    }),
+    domText: terminalBodyLfFixture.descriptor.body.slice(0, -1),
+    anchorPrefix: terminalBodyLfFixture.descriptor.body.slice(0, -1),
+    focusPrefix: terminalBodyLfFixture.descriptor.body.slice(0, -1)
+  });
+  expect(terminalBodyLfLoss?.valid, 'real terminal body LF loss is rejected').toBe(false);
+  const ambiguous = shortStageUniqueCodeDeclarations([
+    { source: 'ambiguous-source', descriptor: { body: 'one' } },
+    { source: 'ambiguous-source', descriptor: { body: 'two' } }
+  ]);
+  expect(ambiguous.has('ambiguous-source'), 'ambiguous source declaration is not certifiable').toBe(false);
+});
+
+const MONITOR_CONTRACT_ORIGIN = 'http://monitor.synthetic.invalid';
+const MONITOR_CONTRACT_HTML = '<!doctype html><html><body data-monitor-contract="synthetic">synthetic</body></html>';
+const PREVIEW_LEDGER_POST_ID = 9717;
+const PREVIEW_LEDGER_RENDER_PARAMS = Object.freeze({
+  markdown_theme: 'monitor-contract-markdown-theme',
+  code_theme: 'monitor-contract-code-theme',
+  custom_css_id: ''
+});
+
+function previewLedgerRequest({
+  source,
+  postId = PREVIEW_LEDGER_POST_ID,
+  method = 'POST',
+  path = '/wp-json/easymde/v1/preview',
+  failureText = null,
+  renderParams = null,
+  extraBody = {}
+}) {
+  const body = {
+    post_id: postId,
+    markdown: source,
+    ...(renderParams ?? {}),
+    ...extraBody
+  };
+  return {
+    failure: () => failureText === null ? null : { errorText: failureText },
+    method: () => method,
+    postData: () => JSON.stringify(body),
+    postDataJSON: () => ({ ...body }),
+    resourceType: () => 'fetch',
+    url: () => `${MONITOR_CONTRACT_ORIGIN}${path}`
+  };
+}
+
+function createPreviewLedgerHarness() {
+  const issues = [];
+  const approvedAbortCounts = [];
+  const ledger = createPreviewReadOperationLedger({
+    origin: MONITOR_CONTRACT_ORIGIN,
+    record: (code) => issues.push(code),
+    deferredAbortCode: () => 'preview-request-cancellation-unapproved',
+    onApprovedAborts: (count) => approvedAbortCounts.push(count)
+  });
+  return { approvedAbortCounts, issues, ledger };
+}
+
+function observePreviewLedgerAbort(ledger, request) {
+  ledger.observeRequest(request);
+  return ledger.observeFailure(request);
+}
+
+function observePreviewLedgerSuccess(ledger, request, status = 200) {
+  ledger.observeRequest(request);
+  ledger.observeResponse(request, status);
+  ledger.observeFinished(request);
+}
+
+test('[monitor-contract] preview-read ledger follows ordered abort chains and permits local completion', () => {
+  const abortHarness = createPreviewLedgerHarness();
+  const abortSources = ['draft a', 'draft ab', 'draft abc'];
+  const abortOperation = abortHarness.ledger.begin({ postId: PREVIEW_LEDGER_POST_ID, sources: abortSources });
+  const requestA = previewLedgerRequest({ source: abortSources[0], failureText: 'net::ERR_ABORTED' });
+  const requestAB = previewLedgerRequest({ source: abortSources[1], failureText: 'net::ERR_ABORTED' });
+  const requestABC = previewLedgerRequest({ source: abortSources[2] });
+  const deferredA = observePreviewLedgerAbort(abortHarness.ledger, requestA);
+  const deferredAB = observePreviewLedgerAbort(abortHarness.ledger, requestAB);
+  observePreviewLedgerSuccess(abortHarness.ledger, requestABC);
+  const abortProof = abortHarness.ledger.prove(abortOperation, { finalUiVerified: true });
+  const repeatedProof = abortHarness.ledger.prove(abortOperation, { finalUiVerified: true });
+  abortHarness.ledger.finalize();
+  abortHarness.ledger.finalize();
+
+  const finishedHarness = createPreviewLedgerHarness();
+  const finishedSources = ['draft finished', 'draft finished ab', 'draft local only'];
+  const finishedOperation = finishedHarness.ledger.begin({ postId: PREVIEW_LEDGER_POST_ID, sources: finishedSources });
+  observePreviewLedgerSuccess(finishedHarness.ledger, previewLedgerRequest({ source: finishedSources[0] }));
+  observePreviewLedgerSuccess(finishedHarness.ledger, previewLedgerRequest({ source: finishedSources[1] }));
+  const finishedProof = finishedHarness.ledger.prove(finishedOperation, { finalUiVerified: true });
+  finishedHarness.ledger.finalize();
+
+  const localHarness = createPreviewLedgerHarness();
+  const localOperation = localHarness.ledger.begin({
+    postId: PREVIEW_LEDGER_POST_ID,
+    sources: ['local only', 'later local only']
+  });
+  const localProof = localHarness.ledger.prove(localOperation, { finalUiVerified: true });
+  localHarness.ledger.finalize();
+
+  const phasedHarness = createPreviewLedgerHarness();
+  const phasedRenderParams = { ...PREVIEW_LEDGER_RENDER_PARAMS };
+  const phasedDeclaration = [
+    { id: 'phase-a', groups: [['A'], ['B'], ['A']] },
+    { id: 'phase-b', groups: [['A'], ['V'], ['A']] }
+  ];
+  const phasedOperation = phasedHarness.ledger.beginPhased({
+    postId: PREVIEW_LEDGER_POST_ID,
+    renderParams: phasedRenderParams,
+    phases: phasedDeclaration
+  });
+  phasedRenderParams.code_theme = 'mutated-after-begin';
+  phasedDeclaration[0].groups[0][0] = 'mutated-after-begin';
+  phasedDeclaration[1].id = 'mutated-phase-b';
+  phasedDeclaration[1].groups[0][0] = 'mutated-after-begin';
+  const phasedRequestA1 = previewLedgerRequest({
+    source: 'A', renderParams: PREVIEW_LEDGER_RENDER_PARAMS, failureText: 'net::ERR_ABORTED'
+  });
+  const phasedRequestA2 = previewLedgerRequest({
+    source: 'A', renderParams: PREVIEW_LEDGER_RENDER_PARAMS, failureText: 'net::ERR_ABORTED'
+  });
+  const phasedRequestB = previewLedgerRequest({ source: 'B', renderParams: PREVIEW_LEDGER_RENDER_PARAMS });
+  const phasedRequestA3 = previewLedgerRequest({ source: 'A', renderParams: PREVIEW_LEDGER_RENDER_PARAMS });
+  const phasedDeferredA1 = observePreviewLedgerAbort(phasedHarness.ledger, phasedRequestA1);
+  const phasedDeferredA2 = observePreviewLedgerAbort(phasedHarness.ledger, phasedRequestA2);
+  observePreviewLedgerSuccess(phasedHarness.ledger, phasedRequestB);
+  const phaseEntered = phasedHarness.ledger.enterPhase(phasedOperation, 'phase-b');
+  observePreviewLedgerSuccess(phasedHarness.ledger, phasedRequestA3);
+  const phasedProof = phasedHarness.ledger.prove(phasedOperation, { finalUiVerified: true });
+  const phasedRepeatedProof = phasedHarness.ledger.prove(phasedOperation, { finalUiVerified: true });
+  phasedHarness.ledger.finalize();
+  phasedHarness.ledger.finalize();
+
+  const crossPhaseHarness = createPreviewLedgerHarness();
+  const crossPhaseOperation = crossPhaseHarness.ledger.beginPhased({
+    postId: PREVIEW_LEDGER_POST_ID,
+    renderParams: PREVIEW_LEDGER_RENDER_PARAMS,
+    phases: [
+      { id: 'before', groups: [['A']] },
+      { id: 'after', groups: [['B']] }
+    ]
+  });
+  const crossPhaseRequestA = previewLedgerRequest({
+    source: 'A', renderParams: PREVIEW_LEDGER_RENDER_PARAMS, failureText: 'net::ERR_ABORTED'
+  });
+  crossPhaseHarness.ledger.observeRequest(crossPhaseRequestA);
+  crossPhaseHarness.ledger.enterPhase(crossPhaseOperation, 'after');
+  observePreviewLedgerSuccess(crossPhaseHarness.ledger, previewLedgerRequest({
+    source: 'B', renderParams: PREVIEW_LEDGER_RENDER_PARAMS
+  }));
+  const crossPhaseDeferredA = crossPhaseHarness.ledger.observeFailure(crossPhaseRequestA);
+  const crossPhaseProof = crossPhaseHarness.ledger.prove(crossPhaseOperation, { finalUiVerified: true });
+  crossPhaseHarness.ledger.finalize();
+
+  const zeroPhasedHarness = createPreviewLedgerHarness();
+  const zeroPhasedOperation = zeroPhasedHarness.ledger.beginPhased({
+    postId: PREVIEW_LEDGER_POST_ID,
+    renderParams: PREVIEW_LEDGER_RENDER_PARAMS,
+    phases: [
+      { id: 'zero-before', groups: [['A']] },
+      { id: 'zero-after', groups: [['B']] }
+    ]
+  });
+  zeroPhasedHarness.ledger.enterPhase(zeroPhasedOperation, 'zero-after');
+  const zeroPhasedProof = zeroPhasedHarness.ledger.prove(zeroPhasedOperation, { finalUiVerified: true });
+  zeroPhasedHarness.ledger.finalize();
+
+  expect({
+    deferredA,
+    deferredAB,
+    abortApproved: abortProof.approved,
+    abortCode: abortProof.code,
+    abortCount: abortProof.approvedAbortCount,
+    repeatedApproved: repeatedProof.approved,
+    repeatedCode: repeatedProof.code,
+    repeatedCount: repeatedProof.approvedAbortCount,
+    abortIssues: abortHarness.issues,
+    approvedCalls: abortHarness.approvedAbortCounts,
+    finishedApproved: finishedProof.approved,
+    finishedCount: finishedProof.approvedAbortCount,
+    finishedIssues: finishedHarness.issues,
+    localApproved: localProof.approved,
+    localCount: localProof.approvedAbortCount,
+    localIssues: localHarness.issues,
+    phasedDeferredA1,
+    phasedDeferredA2,
+    phaseEntered,
+    phasedApproved: phasedProof.approved,
+    phasedCount: phasedProof.approvedAbortCount,
+    phasedRepeatedApproved: phasedRepeatedProof.approved,
+    phasedRepeatedCount: phasedRepeatedProof.approvedAbortCount,
+    phasedApprovedCalls: phasedHarness.approvedAbortCounts,
+    phasedIssues: phasedHarness.issues,
+    crossPhaseDeferredA,
+    crossPhaseApproved: crossPhaseProof.approved,
+    crossPhaseCount: crossPhaseProof.approvedAbortCount,
+    crossPhaseIssues: crossPhaseHarness.issues,
+    zeroPhasedApproved: zeroPhasedProof.approved,
+    zeroPhasedCount: zeroPhasedProof.approvedAbortCount,
+    zeroPhasedIssues: zeroPhasedHarness.issues
+  }).toEqual({
+    deferredA: true,
+    deferredAB: true,
+    abortApproved: true,
+    abortCode: 'preview-read-operation-approved',
+    abortCount: 2,
+    repeatedApproved: true,
+    repeatedCode: 'preview-read-operation-approved',
+    repeatedCount: 2,
+    abortIssues: [],
+    approvedCalls: [2],
+    finishedApproved: true,
+    finishedCount: 0,
+    finishedIssues: [],
+    localApproved: true,
+    localCount: 0,
+    localIssues: [],
+    phasedDeferredA1: true,
+    phasedDeferredA2: true,
+    phaseEntered: true,
+    phasedApproved: true,
+    phasedCount: 2,
+    phasedRepeatedApproved: true,
+    phasedRepeatedCount: 2,
+    phasedApprovedCalls: [2],
+    phasedIssues: [],
+    crossPhaseDeferredA: true,
+    crossPhaseApproved: true,
+    crossPhaseCount: 1,
+    crossPhaseIssues: [],
+    zeroPhasedApproved: true,
+    zeroPhasedCount: 0,
+    zeroPhasedIssues: []
+  });
+});
+
+test('[monitor-contract] preview-read ledger rejects actual order inversion and unverified latest reads', () => {
+  const inversionHarness = createPreviewLedgerHarness();
+  const inversionSources = ['order a', 'order ab'];
+  const inversionOperation = inversionHarness.ledger.begin({
+    postId: PREVIEW_LEDGER_POST_ID,
+    sources: inversionSources
+  });
+  observePreviewLedgerSuccess(inversionHarness.ledger, previewLedgerRequest({ source: inversionSources[1] }));
+  observePreviewLedgerSuccess(inversionHarness.ledger, previewLedgerRequest({ source: inversionSources[0] }));
+  const inversionProof = inversionHarness.ledger.prove(inversionOperation, { finalUiVerified: true });
+
+  const pendingHarness = createPreviewLedgerHarness();
+  const pendingSources = ['pending a', 'pending ab'];
+  const pendingOperation = pendingHarness.ledger.begin({ postId: PREVIEW_LEDGER_POST_ID, sources: pendingSources });
+  observePreviewLedgerSuccess(pendingHarness.ledger, previewLedgerRequest({ source: pendingSources[0] }));
+  const pendingRequest = previewLedgerRequest({ source: pendingSources[1] });
+  pendingHarness.ledger.observeRequest(pendingRequest);
+  pendingHarness.ledger.observeResponse(pendingRequest, 200);
+  const pendingProof = pendingHarness.ledger.prove(pendingOperation, { finalUiVerified: true });
+
+  const latestAbortHarness = createPreviewLedgerHarness();
+  const latestAbortSources = ['latest a', 'latest ab'];
+  const latestAbortOperation = latestAbortHarness.ledger.begin({
+    postId: PREVIEW_LEDGER_POST_ID,
+    sources: latestAbortSources
+  });
+  observePreviewLedgerSuccess(latestAbortHarness.ledger, previewLedgerRequest({ source: latestAbortSources[0] }));
+  observePreviewLedgerAbort(latestAbortHarness.ledger, previewLedgerRequest({
+    source: latestAbortSources[1],
+    failureText: 'net::ERR_ABORTED'
+  }));
+  const latestAbortProof = latestAbortHarness.ledger.prove(latestAbortOperation, { finalUiVerified: true });
+
+  const failedHarness = createPreviewLedgerHarness();
+  const failedSources = ['failed a', 'failed ab'];
+  const failedOperation = failedHarness.ledger.begin({ postId: PREVIEW_LEDGER_POST_ID, sources: failedSources });
+  observePreviewLedgerSuccess(failedHarness.ledger, previewLedgerRequest({ source: failedSources[0] }));
+  observePreviewLedgerAbort(failedHarness.ledger, previewLedgerRequest({
+    source: failedSources[1],
+    failureText: 'net::ERR_FAILED'
+  }));
+  const failedProof = failedHarness.ledger.prove(failedOperation, { finalUiVerified: true });
+
+  const declarationHarness = createPreviewLedgerHarness();
+  const safeErrorCode = (operation) => {
+    try {
+      operation();
+      return null;
+    } catch (error) {
+      return typeof error?.message === 'string' ? error.message : 'unknown-error';
+    }
+  };
+  const missingGroupsCode = safeErrorCode(() => declarationHarness.ledger.beginPhased({
+    postId: PREVIEW_LEDGER_POST_ID,
+    renderParams: PREVIEW_LEDGER_RENDER_PARAMS,
+    phases: [{ id: 'missing-groups' }]
+  }));
+  const missingRenderParamCode = safeErrorCode(() => declarationHarness.ledger.beginPhased({
+    postId: PREVIEW_LEDGER_POST_ID,
+    renderParams: {
+      markdown_theme: PREVIEW_LEDGER_RENDER_PARAMS.markdown_theme,
+      code_theme: PREVIEW_LEDGER_RENDER_PARAMS.code_theme
+    },
+    phases: [{ id: 'missing-param', groups: [['A']] }]
+  }));
+  const extraRenderParamCode = safeErrorCode(() => declarationHarness.ledger.beginPhased({
+    postId: PREVIEW_LEDGER_POST_ID,
+    renderParams: { ...PREVIEW_LEDGER_RENDER_PARAMS, unexpected_param: 'ignored' },
+    phases: [{ id: 'extra-param', groups: [['A']] }]
+  }));
+  const invalidPostIdCode = safeErrorCode(() => declarationHarness.ledger.beginPhased({
+    postId: 0,
+    renderParams: PREVIEW_LEDGER_RENDER_PARAMS,
+    phases: [{ id: 'invalid-post', groups: [['A']] }]
+  }));
+
+  const unknownSourceHarness = createPreviewLedgerHarness();
+  const unknownSourceOperation = unknownSourceHarness.ledger.beginPhased({
+    postId: PREVIEW_LEDGER_POST_ID,
+    renderParams: PREVIEW_LEDGER_RENDER_PARAMS,
+    phases: [{ id: 'known-source', groups: [['known']] }]
+  });
+  observePreviewLedgerSuccess(unknownSourceHarness.ledger, previewLedgerRequest({
+    source: 'unknown', renderParams: PREVIEW_LEDGER_RENDER_PARAMS
+  }));
+  const unknownSourceProof = unknownSourceHarness.ledger.prove(unknownSourceOperation, { finalUiVerified: true });
+
+  const unknownPostHarness = createPreviewLedgerHarness();
+  const unknownPostOperation = unknownPostHarness.ledger.beginPhased({
+    postId: PREVIEW_LEDGER_POST_ID,
+    renderParams: PREVIEW_LEDGER_RENDER_PARAMS,
+    phases: [{ id: 'known-post', groups: [['known']] }]
+  });
+  observePreviewLedgerSuccess(unknownPostHarness.ledger, previewLedgerRequest({
+    source: 'known', postId: PREVIEW_LEDGER_POST_ID + 1, renderParams: PREVIEW_LEDGER_RENDER_PARAMS
+  }));
+  const unknownPostProof = unknownPostHarness.ledger.prove(unknownPostOperation, { finalUiVerified: true });
+
+  const unknownFieldHarness = createPreviewLedgerHarness();
+  const unknownFieldOperation = unknownFieldHarness.ledger.beginPhased({
+    postId: PREVIEW_LEDGER_POST_ID,
+    renderParams: PREVIEW_LEDGER_RENDER_PARAMS,
+    phases: [{ id: 'known-fields', groups: [['known']] }]
+  });
+  observePreviewLedgerSuccess(unknownFieldHarness.ledger, previewLedgerRequest({
+    source: 'known', renderParams: PREVIEW_LEDGER_RENDER_PARAMS, extraBody: { unexpected_field: 'ignored' }
+  }));
+  const unknownFieldProof = unknownFieldHarness.ledger.prove(unknownFieldOperation, { finalUiVerified: true });
+
+  const changedParamsHarness = createPreviewLedgerHarness();
+  const changedParamsOperation = changedParamsHarness.ledger.beginPhased({
+    postId: PREVIEW_LEDGER_POST_ID,
+    renderParams: PREVIEW_LEDGER_RENDER_PARAMS,
+    phases: [{ id: 'known-params', groups: [['known']] }]
+  });
+  observePreviewLedgerSuccess(changedParamsHarness.ledger, previewLedgerRequest({
+    source: 'known',
+    renderParams: { ...PREVIEW_LEDGER_RENDER_PARAMS, code_theme: 'wrong-code-theme' }
+  }));
+  const changedParamsProof = changedParamsHarness.ledger.prove(changedParamsOperation, { finalUiVerified: true });
+
+  const missingBodyParamHarness = createPreviewLedgerHarness();
+  const missingBodyParamOperation = missingBodyParamHarness.ledger.beginPhased({
+    postId: PREVIEW_LEDGER_POST_ID,
+    renderParams: PREVIEW_LEDGER_RENDER_PARAMS,
+    phases: [{ id: 'missing-body-param', groups: [['known']] }]
+  });
+  observePreviewLedgerSuccess(missingBodyParamHarness.ledger, previewLedgerRequest({
+    source: 'known',
+    renderParams: {
+      markdown_theme: PREVIEW_LEDGER_RENDER_PARAMS.markdown_theme,
+      code_theme: PREVIEW_LEDGER_RENDER_PARAMS.code_theme
+    }
+  }));
+  const missingBodyParamProof = missingBodyParamHarness.ledger.prove(
+    missingBodyParamOperation,
+    { finalUiVerified: true }
+  );
+
+  const skipPhaseHarness = createPreviewLedgerHarness();
+  const skipPhaseOperation = skipPhaseHarness.ledger.beginPhased({
+    postId: PREVIEW_LEDGER_POST_ID,
+    renderParams: PREVIEW_LEDGER_RENDER_PARAMS,
+    phases: [
+      { id: 'skip-0', groups: [['A']] },
+      { id: 'skip-1', groups: [['B']] },
+      { id: 'skip-2', groups: [['C']] }
+    ]
+  });
+  const skippedPhaseCode = safeErrorCode(() => skipPhaseHarness.ledger.enterPhase(skipPhaseOperation, 'skip-2'));
+  const skipPhaseProof = skipPhaseHarness.ledger.prove(skipPhaseOperation, { finalUiVerified: true });
+
+  const backPhaseHarness = createPreviewLedgerHarness();
+  const backPhaseOperation = backPhaseHarness.ledger.beginPhased({
+    postId: PREVIEW_LEDGER_POST_ID,
+    renderParams: PREVIEW_LEDGER_RENDER_PARAMS,
+    phases: [
+      { id: 'back-0', groups: [['A']] },
+      { id: 'back-1', groups: [['B']] }
+    ]
+  });
+  backPhaseHarness.ledger.enterPhase(backPhaseOperation, 'back-1');
+  const backwardPhaseCode = safeErrorCode(() => backPhaseHarness.ledger.enterPhase(backPhaseOperation, 'back-0'));
+  const backPhaseProof = backPhaseHarness.ledger.prove(backPhaseOperation, { finalUiVerified: true });
+
+  const incompletePhaseHarness = createPreviewLedgerHarness();
+  const incompletePhaseOperation = incompletePhaseHarness.ledger.beginPhased({
+    postId: PREVIEW_LEDGER_POST_ID,
+    renderParams: PREVIEW_LEDGER_RENDER_PARAMS,
+    phases: [
+      { id: 'incomplete-0', groups: [['A']] },
+      { id: 'incomplete-1', groups: [['B']] }
+    ]
+  });
+  const incompletePhaseProof = incompletePhaseHarness.ledger.prove(incompletePhaseOperation, { finalUiVerified: true });
+
+  const backwardGroupHarness = createPreviewLedgerHarness();
+  const backwardGroupOperation = backwardGroupHarness.ledger.beginPhased({
+    postId: PREVIEW_LEDGER_POST_ID,
+    renderParams: PREVIEW_LEDGER_RENDER_PARAMS,
+    phases: [{ id: 'groups', groups: [['first'], ['second']] }]
+  });
+  observePreviewLedgerSuccess(backwardGroupHarness.ledger, previewLedgerRequest({
+    source: 'second', renderParams: PREVIEW_LEDGER_RENDER_PARAMS
+  }));
+  observePreviewLedgerSuccess(backwardGroupHarness.ledger, previewLedgerRequest({
+    source: 'first', renderParams: PREVIEW_LEDGER_RENDER_PARAMS
+  }));
+  const backwardGroupProof = backwardGroupHarness.ledger.prove(backwardGroupOperation, { finalUiVerified: true });
+
+  const lastAbortHarness = createPreviewLedgerHarness();
+  const lastAbortOperation = lastAbortHarness.ledger.beginPhased({
+    postId: PREVIEW_LEDGER_POST_ID,
+    renderParams: PREVIEW_LEDGER_RENDER_PARAMS,
+    phases: [{ id: 'last-abort', groups: [['A']] }]
+  });
+  observePreviewLedgerAbort(lastAbortHarness.ledger, previewLedgerRequest({
+    source: 'A', renderParams: PREVIEW_LEDGER_RENDER_PARAMS, failureText: 'net::ERR_ABORTED'
+  }));
+  const lastAbortProof = lastAbortHarness.ledger.prove(lastAbortOperation, { finalUiVerified: true });
+
+  const phasedPendingHarness = createPreviewLedgerHarness();
+  const phasedPendingOperation = phasedPendingHarness.ledger.beginPhased({
+    postId: PREVIEW_LEDGER_POST_ID,
+    renderParams: PREVIEW_LEDGER_RENDER_PARAMS,
+    phases: [{ id: 'phased-pending', groups: [['A']] }]
+  });
+  const phasedPendingRequest = previewLedgerRequest({ source: 'A', renderParams: PREVIEW_LEDGER_RENDER_PARAMS });
+  phasedPendingHarness.ledger.observeRequest(phasedPendingRequest);
+  phasedPendingHarness.ledger.observeResponse(phasedPendingRequest, 200);
+  const phasedPendingProof = phasedPendingHarness.ledger.prove(phasedPendingOperation, { finalUiVerified: true });
+
+  const phasedFailedHarness = createPreviewLedgerHarness();
+  const phasedFailedOperation = phasedFailedHarness.ledger.beginPhased({
+    postId: PREVIEW_LEDGER_POST_ID,
+    renderParams: PREVIEW_LEDGER_RENDER_PARAMS,
+    phases: [{ id: 'phased-failed', groups: [['A']] }]
+  });
+  observePreviewLedgerAbort(phasedFailedHarness.ledger, previewLedgerRequest({
+    source: 'A', renderParams: PREVIEW_LEDGER_RENDER_PARAMS, failureText: 'net::ERR_FAILED'
+  }));
+  const phasedFailedProof = phasedFailedHarness.ledger.prove(phasedFailedOperation, { finalUiVerified: true });
+
+  const phasedHttpHarness = createPreviewLedgerHarness();
+  const phasedHttpOperation = phasedHttpHarness.ledger.beginPhased({
+    postId: PREVIEW_LEDGER_POST_ID,
+    renderParams: PREVIEW_LEDGER_RENDER_PARAMS,
+    phases: [{ id: 'phased-http', groups: [['A']] }]
+  });
+  const phasedHttpRequest = previewLedgerRequest({ source: 'A', renderParams: PREVIEW_LEDGER_RENDER_PARAMS });
+  phasedHttpHarness.ledger.observeRequest(phasedHttpRequest);
+  phasedHttpHarness.ledger.observeResponse(phasedHttpRequest, 503);
+  phasedHttpHarness.ledger.observeFinished(phasedHttpRequest);
+  const phasedHttpProof = phasedHttpHarness.ledger.prove(phasedHttpOperation, { finalUiVerified: true });
+
+  const phasedFinalUiHarness = createPreviewLedgerHarness();
+  const phasedFinalUiOperation = phasedFinalUiHarness.ledger.beginPhased({
+    postId: PREVIEW_LEDGER_POST_ID,
+    renderParams: PREVIEW_LEDGER_RENDER_PARAMS,
+    phases: [{ id: 'phased-final-ui', groups: [['A']] }]
+  });
+  observePreviewLedgerSuccess(phasedFinalUiHarness.ledger, previewLedgerRequest({
+    source: 'A', renderParams: PREVIEW_LEDGER_RENDER_PARAMS
+  }));
+  const phasedFinalUiProof = phasedFinalUiHarness.ledger.prove(phasedFinalUiOperation, { finalUiVerified: false });
+
+  expect({
+    inversion: [inversionProof.approved, inversionProof.code, inversionProof.approvedAbortCount],
+    pending: [pendingProof.approved, pendingProof.code, pendingProof.approvedAbortCount],
+    latestAbort: [latestAbortProof.approved, latestAbortProof.code, latestAbortProof.approvedAbortCount],
+    failed: [failedProof.approved, failedProof.code, failedProof.approvedAbortCount],
+    missingGroupsCode,
+    missingRenderParamCode,
+    extraRenderParamCode,
+    invalidPostIdCode,
+    unknownSource: [unknownSourceProof.approved, unknownSourceProof.code, unknownSourceProof.approvedAbortCount],
+    unknownPost: [unknownPostProof.approved, unknownPostProof.code, unknownPostProof.approvedAbortCount],
+    unknownField: [unknownFieldProof.approved, unknownFieldProof.code, unknownFieldProof.approvedAbortCount],
+    changedParams: [changedParamsProof.approved, changedParamsProof.code, changedParamsProof.approvedAbortCount],
+    missingBodyParam: [missingBodyParamProof.approved, missingBodyParamProof.code, missingBodyParamProof.approvedAbortCount],
+    skippedPhaseCode,
+    skipPhase: [skipPhaseProof.approved, skipPhaseProof.code, skipPhaseProof.approvedAbortCount],
+    backwardPhaseCode,
+    backPhase: [backPhaseProof.approved, backPhaseProof.code, backPhaseProof.approvedAbortCount],
+    incompletePhase: [incompletePhaseProof.approved, incompletePhaseProof.code, incompletePhaseProof.approvedAbortCount],
+    backwardGroup: [backwardGroupProof.approved, backwardGroupProof.code, backwardGroupProof.approvedAbortCount],
+    lastAbort: [lastAbortProof.approved, lastAbortProof.code, lastAbortProof.approvedAbortCount],
+    phasedPending: [phasedPendingProof.approved, phasedPendingProof.code, phasedPendingProof.approvedAbortCount],
+    phasedFailed: [phasedFailedProof.approved, phasedFailedProof.code, phasedFailedProof.approvedAbortCount],
+    phasedHttp: [phasedHttpProof.approved, phasedHttpProof.code, phasedHttpProof.approvedAbortCount],
+    phasedFinalUi: [phasedFinalUiProof.approved, phasedFinalUiProof.code, phasedFinalUiProof.approvedAbortCount]
+  }).toEqual({
+    inversion: [false, 'preview-read-operation-order-invalid', 0],
+    pending: [false, 'preview-read-operation-successor-unverified', 0],
+    latestAbort: [false, 'preview-read-operation-successor-missing', 0],
+    failed: [false, 'preview-read-operation-invalid', 0],
+    missingGroupsCode: 'preview-read-operation-invalid-declaration',
+    missingRenderParamCode: 'preview-read-operation-invalid-declaration',
+    extraRenderParamCode: 'preview-read-operation-invalid-declaration',
+    invalidPostIdCode: 'preview-read-operation-invalid-declaration',
+    unknownSource: [false, 'preview-read-operation-other-source', 0],
+    unknownPost: [false, 'preview-read-operation-other-post', 0],
+    unknownField: [false, 'preview-read-operation-request-fields-invalid', 0],
+    changedParams: [false, 'preview-read-operation-request-params-invalid', 0],
+    missingBodyParam: [false, 'preview-read-operation-request-fields-invalid', 0],
+    skippedPhaseCode: 'preview-read-operation-phase-transition-invalid',
+    skipPhase: [false, 'preview-read-operation-phase-transition-invalid', 0],
+    backwardPhaseCode: 'preview-read-operation-phase-transition-invalid',
+    backPhase: [false, 'preview-read-operation-phase-transition-invalid', 0],
+    incompletePhase: [false, 'preview-read-operation-phases-incomplete', 0],
+    backwardGroup: [false, 'preview-read-operation-group-order-invalid', 0],
+    lastAbort: [false, 'preview-read-operation-successor-missing', 0],
+    phasedPending: [false, 'preview-read-operation-successor-unverified', 0],
+    phasedFailed: [false, 'preview-read-operation-invalid', 0],
+    phasedHttp: [false, 'preview-read-operation-http-failed', 0],
+    phasedFinalUi: [false, 'preview-read-operation-final-ui-unverified', 0]
+  });
+});
+
+test('[monitor-contract] preview-read ledger settles operations and counts approved aborts once', () => {
+  const harness = createPreviewLedgerHarness();
+  const failedSources = ['operation a', 'operation ab'];
+  const failedOperation = harness.ledger.begin({ postId: PREVIEW_LEDGER_POST_ID, sources: failedSources });
+  observePreviewLedgerAbort(harness.ledger, previewLedgerRequest({
+    source: failedSources[0],
+    failureText: 'net::ERR_ABORTED'
+  }));
+  const failedProof = harness.ledger.prove(failedOperation, { finalUiVerified: true });
+
+  const finishedOperation = harness.ledger.begin({ postId: PREVIEW_LEDGER_POST_ID, sources: failedSources });
+  observePreviewLedgerSuccess(harness.ledger, previewLedgerRequest({ source: failedSources[0] }));
+  const finishedProof = harness.ledger.prove(finishedOperation, { finalUiVerified: true });
+
+  const approvedSources = ['approved a', 'approved ab', 'approved abc'];
+  const approvedOperation = harness.ledger.begin({ postId: PREVIEW_LEDGER_POST_ID, sources: approvedSources });
+  observePreviewLedgerAbort(harness.ledger, previewLedgerRequest({
+    source: approvedSources[0],
+    failureText: 'net::ERR_ABORTED'
+  }));
+  observePreviewLedgerAbort(harness.ledger, previewLedgerRequest({
+    source: approvedSources[1],
+    failureText: 'net::ERR_ABORTED'
+  }));
+  observePreviewLedgerSuccess(harness.ledger, previewLedgerRequest({ source: approvedSources[2] }));
+  const approvedProof = harness.ledger.prove(approvedOperation, { finalUiVerified: true });
+  const repeatedApprovedProof = harness.ledger.prove(approvedOperation, { finalUiVerified: true });
+  harness.ledger.finalize();
+  harness.ledger.finalize();
+  const failedIssues = [...harness.issues];
+
+  const phasedCountHarness = createPreviewLedgerHarness();
+  const phasedCountOperation = phasedCountHarness.ledger.beginPhased({
+    postId: PREVIEW_LEDGER_POST_ID,
+    renderParams: PREVIEW_LEDGER_RENDER_PARAMS,
+    phases: [{ id: 'count-phase', groups: [['repeat'], ['complete']] }]
+  });
+  observePreviewLedgerAbort(phasedCountHarness.ledger, previewLedgerRequest({
+    source: 'repeat', renderParams: PREVIEW_LEDGER_RENDER_PARAMS, failureText: 'net::ERR_ABORTED'
+  }));
+  observePreviewLedgerAbort(phasedCountHarness.ledger, previewLedgerRequest({
+    source: 'repeat', renderParams: PREVIEW_LEDGER_RENDER_PARAMS, failureText: 'net::ERR_ABORTED'
+  }));
+  observePreviewLedgerSuccess(phasedCountHarness.ledger, previewLedgerRequest({
+    source: 'complete', renderParams: PREVIEW_LEDGER_RENDER_PARAMS
+  }));
+  const phasedCountProof = phasedCountHarness.ledger.prove(phasedCountOperation, { finalUiVerified: true });
+  const phasedCountRepeatedProof = phasedCountHarness.ledger.prove(phasedCountOperation, { finalUiVerified: true });
+  phasedCountHarness.ledger.finalize();
+  phasedCountHarness.ledger.finalize();
+
+  expect({
+    failedApproved: failedProof.approved,
+    failedCode: failedProof.code,
+    failedIssuesRetained: failedIssues.includes('preview-request-cancellation-unapproved'),
+    finishedApproved: finishedProof.approved,
+    finishedCount: finishedProof.approvedAbortCount,
+    approved: approvedProof.approved,
+    approvedCount: approvedProof.approvedAbortCount,
+    repeatedApproved: repeatedApprovedProof.approved,
+    repeatedCount: repeatedApprovedProof.approvedAbortCount,
+    approvedCalls: harness.approvedAbortCounts,
+    finalDeferredCount: harness.issues.filter((code) => code === 'preview-request-cancellation-unapproved').length,
+    phasedCountApproved: phasedCountProof.approved,
+    phasedCount: phasedCountProof.approvedAbortCount,
+    phasedCountRepeatedApproved: phasedCountRepeatedProof.approved,
+    phasedCountRepeated: phasedCountRepeatedProof.approvedAbortCount,
+    phasedCountCalls: phasedCountHarness.approvedAbortCounts,
+    phasedCountIssues: phasedCountHarness.issues
+  }).toEqual({
+    failedApproved: false,
+    failedCode: 'preview-read-operation-successor-missing',
+    failedIssuesRetained: true,
+    finishedApproved: true,
+    finishedCount: 0,
+    approved: true,
+    approvedCount: 2,
+    repeatedApproved: true,
+    repeatedCount: 2,
+    approvedCalls: [2],
+    finalDeferredCount: 1,
+    phasedCountApproved: true,
+    phasedCount: 2,
+    phasedCountRepeatedApproved: true,
+    phasedCountRepeated: 2,
+    phasedCountCalls: [2],
+    phasedCountIssues: []
+  });
+});
+
+async function finishSyntheticMonitor(monitor) {
+  return finalizeBasicMonitor(monitor);
+}
+
+async function withSyntheticContext(browser, operation, { heldPath = null } = {}) {
+  const context = await browser.newContext({
+    baseURL: MONITOR_CONTRACT_ORIGIN,
+    serviceWorkers: 'block'
+  });
+  let syntheticRequests = 0;
+  let escapedRequests = 0;
+  let releaseHeld;
+  let markHeldStarted;
+  const heldGate = new Promise((resolve) => { releaseHeld = resolve; });
+  const heldStarted = new Promise((resolve) => { markHeldStarted = resolve; });
+  await context.route('**/*', async (route) => {
+    syntheticRequests += 1;
+    if (!route.request().url().startsWith(`${MONITOR_CONTRACT_ORIGIN}/`)) {
+      escapedRequests += 1;
+      await route.abort('blockedbyclient');
+      return;
+    }
+    if (heldPath && new URL(route.request().url()).pathname === heldPath) {
+      markHeldStarted();
+      await heldGate;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json; charset=utf-8',
+        body: '{"held":true}'
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/html; charset=utf-8',
+      body: MONITOR_CONTRACT_HTML
+    });
+  });
+  const page = await context.newPage();
+  try {
+    const result = await operation({
+      origin: MONITOR_CONTRACT_ORIGIN,
+      page,
+      waitForHeldRequest: () => heldStarted,
+      releaseHeldRequest: () => releaseHeld()
+    });
+    if (escapedRequests !== 0 || syntheticRequests === 0) {
+      throw new Error('monitor-contract-synthetic-transport-invalid');
+    }
+    return result;
+  } finally {
+    releaseHeld();
+    await context.close();
+  }
+}
+
+async function withSyntheticMonitorPage(browser, operation, options = {}) {
+  return withSyntheticContext(browser, async ({ page }) => {
+    const monitor = await installBrowserMonitor(page);
+    await installMonitorRejectionBridge(page, monitor);
+    try {
+      return await operation({ page, monitor, baseURL: MONITOR_CONTRACT_ORIGIN });
+    } finally {
+      await monitor.detach();
+    }
+  }, options);
+}
+
+async function gotoSyntheticMonitorPath(page, path) {
+  try {
+    await page.goto(path, { waitUntil: 'domcontentloaded' });
+  } catch {
+    throw new Error('monitor-contract-navigation-failed');
+  }
+}
+
+async function openSyntheticMonitorPage(page, monitor, baseURL) {
+  monitor.expectNavigation('/', 'open-synthetic', baseURL);
+  await monitor.flushHistory();
+  await monitor.flushRejections();
+  await gotoSyntheticMonitorPath(page, '/');
+}
+
+async function dispatchMonitorContractRejection(page) {
+  await page.evaluate(() => {
+    const reason = new Error('synthetic-monitor-contract-rejection');
+    const promise = Promise.reject(reason);
+    promise.catch(() => {});
+    window.dispatchEvent(new PromiseRejectionEvent('unhandledrejection', { promise, reason }));
+  });
+}
+
+async function withSyntheticSharedMonitorPage(browser, operation, options = {}) {
+  return withSyntheticContext(browser, async ({ page }) => {
+    const monitor = await installSharedVisualBrowserMonitor(page, { baseURL: MONITOR_CONTRACT_ORIGIN });
+    try {
+      return await operation({ page, monitor, baseURL: MONITOR_CONTRACT_ORIGIN });
+    } finally {
+      await monitor.detach();
+    }
+  }, options);
+}
+
+async function openContractHistoryPage(kind, page, monitor, baseURL) {
+  if (kind === 'basic') return openSyntheticMonitorPage(page, monitor, baseURL);
+  monitor.expectNavigation('/', 'open-synthetic');
+  await gotoSyntheticMonitorPath(page, '/');
+}
+
+async function finishContractHistoryMonitor(kind, page, monitor) {
+  if (kind === 'basic') return finishSyntheticMonitor(monitor);
+  return finishSharedVisualBrowserMonitor(page, { timeoutMs: 2_000, quietMs: 50 });
+}
+
+async function flushContractNotifications(kind, monitor) {
+  await monitor.flushHistory();
+  if (kind === 'basic') await monitor.flushRejections();
+}
+
+function contractMonitorSnapshot(kind, monitor) {
+  return kind === 'basic' ? monitor.summary() : monitor.snapshot();
+}
+
+async function expectAndNavigateContract(kind, page, monitor, baseURL, path, action) {
+  if (kind === 'basic') monitor.expectNavigation(path, action, baseURL);
+  else monitor.expectNavigation(path, action);
+  await flushContractNotifications(kind, monitor);
+  await gotoSyntheticMonitorPath(page, path);
+}
+
+async function withContractHistoryMonitor(browser, kind, operation) {
+  if (kind === 'basic') return withSyntheticMonitorPage(browser, operation);
+  return withSyntheticSharedMonitorPage(browser, operation);
+}
+
+async function installContractMonitor(page, kind, baseURL = MONITOR_CONTRACT_ORIGIN) {
+  if (kind === 'basic') {
+    const monitor = await installBrowserMonitor(page, { baseURL });
+    await installMonitorRejectionBridge(page, monitor);
+    return monitor;
+  }
+  return installSharedVisualBrowserMonitor(page, { baseURL });
+}
+
+async function runPreviewReadOperationCase(browser, kind, variant, {
+  finalUiVerified = true
+} = {}) {
+  const run = async ({ page, origin }) => {
+    const monitor = await installContractMonitor(page, kind, origin);
+    const oldSource = 'Old preview source.';
+    const middleSource = 'Middle preview source.';
+    const newSource = 'New preview source.';
+    const operationId = monitor.beginPreviewReadOperation({
+      postId: 9717,
+      sources: variant === 'positive-two-aborts'
+        ? [oldSource, middleSource, newSource]
+        : [oldSource, newSource]
+    });
+    let requestOrdinal = 0;
+    await page.route('**/wp-json/easymde/v1/**', async (route) => {
+      requestOrdinal += 1;
+      if (((requestOrdinal === 1 && ['positive-abort', 'successor-failed', 'no-successor', 'ambiguous']
+        .includes(variant)) || (variant === 'positive-two-aborts' && requestOrdinal <= 2))) {
+        await route.abort('aborted');
+        return;
+      }
+      if (requestOrdinal === 2 && variant === 'successor-failed') {
+        await route.abort('failed');
+        return;
+      }
+      if (requestOrdinal === 2 && variant === 'latest-abort') {
+        await route.abort('aborted');
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json; charset=utf-8',
+        body: '{"preview":true}'
+      });
+    });
+    try {
+      await openContractHistoryPage(kind, page, monitor, origin);
+      const send = async ({ postId = 9717, source = oldSource, method = 'POST', path = '/wp-json/easymde/v1/preview' } = {}) => {
+        await page.evaluate(async ({ requestPath, requestMethod, requestPostId, requestSource }) => {
+          try {
+            const response = await fetch(requestPath, {
+              method: requestMethod,
+              headers: requestMethod === 'POST' ? { 'content-type': 'application/json' } : undefined,
+              body: requestMethod === 'POST'
+                ? JSON.stringify({ post_id: requestPostId, markdown: requestSource })
+                : undefined
+            });
+            await response.text();
+          } catch {
+            // The monitor is the owner of the synthetic request outcome.
+          }
+        }, { requestPath: path, requestMethod: method, requestPostId: postId, requestSource: source });
+      };
+
+      if (variant === 'other-endpoint') {
+        await send({ path: '/wp-json/easymde/v1/not-preview' });
+      } else if (variant === 'other-method') {
+        await send({ method: 'GET' });
+      } else {
+        await send({ source: oldSource });
+        if (variant === 'positive-two-aborts') {
+          await send({ source: middleSource });
+          await send({ source: newSource });
+        } else if (variant !== 'no-successor') {
+          if (variant === 'ambiguous') {
+            await send({ source: oldSource });
+          } else if (variant === 'other-post') {
+            await send({ postId: 9718, source: newSource });
+          } else if (variant === 'undeclared-source') {
+            await send({ source: 'Undeclared preview source.' });
+          } else {
+            await send({ source: newSource });
+          }
+        }
+      }
+      await monitor.drain({ timeoutMs: 2_000, quietMs: 50 });
+      const proof = monitor.provePreviewReadOperation(operationId, { finalUiVerified });
+      const summary = await finishContractHistoryMonitor(kind, page, monitor);
+      return { proof, summary };
+    } finally {
+      await monitor.detach().catch(() => {});
+    }
+  };
+  return withSyntheticContext(browser, run);
+}
+
+async function installLifecycleRejectionProbe(page) {
+  await page.evaluate(() => {
+    const bridge = window.__easymdeHistoryObserverBridge;
+    if (!bridge || typeof bridge.stop !== 'function') {
+      throw new Error('monitor-contract-history-bridge-missing');
+    }
+    const originalStop = bridge.stop.bind(bridge);
+    window.__monitorContractHistoryStopStarted = false;
+    window.__monitorContractHistoryStopRelease = null;
+    window.__monitorContractRejectionSeen = 0;
+    bridge.stop = () => {
+      window.__monitorContractHistoryStopStarted = true;
+      return new Promise((resolve, reject) => {
+        window.__monitorContractHistoryStopRelease = () => Promise.resolve(originalStop()).then(resolve, reject);
+      });
+    };
+    window.addEventListener('unhandledrejection', (event) => {
+      event.preventDefault();
+      window.__monitorContractRejectionSeen += 1;
+    }, { once: true });
+  });
+}
+
+async function releaseLifecycleHistoryStop(page) {
+  await page.evaluate(async () => {
+    const release = window.__monitorContractHistoryStopRelease;
+    if (typeof release !== 'function') {
+      throw new Error('monitor-contract-history-stop-release-missing');
+    }
+    window.__monitorContractHistoryStopRelease = null;
+    await release();
+  });
+}
+
+async function triggerLifecycleRejection(page) {
+  await page.evaluate(() => {
+    void Promise.reject(new Error('monitor-contract-lifecycle-rejection'));
+  });
+  await page.waitForFunction(() => window.__monitorContractRejectionSeen >= 1, null, { timeout: 5_000 });
+}
+
+const MONITOR_CONTRACT_SCHEMA = 'easymde-monitor-contract-v1';
+const REAL_MONITOR_CONTRACT_SCHEMA = 'easymde-monitor-real-dtos-v1';
+const REAL_MONITOR_CONTRACT_PATH = '/tmp/easymde-monitor-real-dtos.json';
+const MONITOR_COUNT_KEYS = [
+  'consoleWarnings', 'consoleErrors', 'pageErrors', 'unhandledRejections', 'dialogs',
+  'popups', 'navigations', 'requestFailures', 'httpErrors'
+];
+const MONITOR_APPROVED_KEYS = [
+  'previewCancellations', 'setupNavigations', 'navigations', 'dialogs', 'popups',
+  'requestCancellations'
+];
+const HISTORY_COUNT_KEYS = [
+  'documents', 'replaceState', 'pushState', 'methodThrows', 'replaceStateSameUrlStableLength',
+  'canonicalNullToNull', 'routerInitNullToIdx0', 'withinHistoryApi', 'withinOther',
+  'pairedObservations'
+];
+const SAFE_MONITOR_CODE = /^[a-z0-9][a-z0-9:-]{0,127}$/u;
+
+function readMonitorScalars(value, keys, { required = false } = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('monitor-contract-dto-summary-invalid');
+  }
+  if (Object.keys(value).some((key) => !keys.includes(key))) {
+    throw new Error('monitor-contract-dto-summary-invalid');
+  }
+  const result = {};
+  for (const key of keys) {
+    if (!Object.hasOwn(value, key)) {
+      if (required) throw new Error('monitor-contract-dto-summary-invalid');
+      continue;
+    }
+    const scalar = value[key];
+    if (!Number.isSafeInteger(scalar) || scalar < 0) {
+      throw new Error('monitor-contract-dto-summary-invalid');
+    }
+    result[key] = scalar;
+  }
+  if (Object.keys(result).length === 0) throw new Error('monitor-contract-dto-summary-invalid');
+  return result;
+}
+
+function readMonitorCodes(value) {
+  if (!Array.isArray(value) || value.some((code) => typeof code !== 'string' || !SAFE_MONITOR_CODE.test(code))) {
+    throw new Error('monitor-contract-dto-summary-invalid');
+  }
+  return [...value];
+}
+
+function completeMonitorSummary(summary) {
+  if (!summary || typeof summary !== 'object' || Array.isArray(summary)) {
+    throw new Error('monitor-contract-dto-summary-invalid');
+  }
+  const keys = Object.keys(summary);
+  if (keys.some((key) => !['counts', 'approved', 'issues', 'history'].includes(key))) {
+    throw new Error('monitor-contract-dto-summary-invalid');
+  }
+  if (!['counts', 'approved', 'issues', 'history'].every((key) => Object.hasOwn(summary, key))) {
+    throw new Error('monitor-contract-dto-summary-invalid');
+  }
+  let history = null;
+  if (summary.history !== null) {
+    if (!summary.history || typeof summary.history !== 'object' || Array.isArray(summary.history)) {
+      throw new Error('monitor-contract-dto-summary-invalid');
+    }
+    if (Object.keys(summary.history).some((key) => !['counts', 'issues'].includes(key))
+      || !Object.hasOwn(summary.history, 'counts')
+      || !Object.hasOwn(summary.history, 'issues')) {
+      throw new Error('monitor-contract-dto-summary-invalid');
+    }
+    history = {
+      counts: readMonitorScalars(summary.history.counts, HISTORY_COUNT_KEYS, { required: true }),
+      issues: readMonitorCodes(summary.history.issues)
+    };
+  }
+  return {
+    counts: readMonitorScalars(summary.counts, MONITOR_COUNT_KEYS, { required: true }),
+    approved: readMonitorScalars(summary.approved, MONITOR_APPROVED_KEYS),
+    issues: readMonitorCodes(summary.issues),
+    history
+  };
+}
+
+function safeLifecycleDto(windowName, cases) {
+  return {
+    schema: MONITOR_CONTRACT_SCHEMA,
+    window: windowName,
+    cases: cases.map(({ kind, rejectionSeen, summary }) => {
+      const complete = completeMonitorSummary(summary);
+      return {
+        window: windowName,
+        kind,
+        rejectionSeen: rejectionSeen === true,
+        clean: complete.issues.length === 0,
+        unhandledRejections: complete.counts.unhandledRejections,
+        pageErrors: complete.counts.pageErrors,
+        issueCount: complete.issues.length,
+        issueCodes: complete.issues.slice(0, 16),
+        summary: complete
+      };
+    })
+  };
+}
+
+async function readRealDtoCases() {
+  try {
+    const parsed = JSON.parse(await readFile(REAL_MONITOR_CONTRACT_PATH, 'utf8'));
+    if (parsed?.schema !== REAL_MONITOR_CONTRACT_SCHEMA || !Array.isArray(parsed.cases)) return [];
+    return parsed.cases.map((entry) => {
+      if (!entry || !['basic', 'shared'].includes(entry.kind)
+        || typeof entry.window !== 'string' || !/^[a-z0-9-]+$/u.test(entry.window)
+        || typeof entry.rejectionSeen !== 'boolean') {
+        throw new Error('monitor-contract-dto-summary-invalid');
+      }
+      const summary = completeMonitorSummary(entry.summary);
+      return {
+        window: entry.window,
+        kind: entry.kind,
+        rejectionSeen: entry.rejectionSeen,
+        clean: summary.issues.length === 0,
+        summary
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+async function publishLifecycleDto(windowName, cases) {
+  const dto = safeLifecycleDto(windowName, cases);
+  await test.info().attach(`monitor-contract-${windowName}-dto`, {
+    body: JSON.stringify(dto),
+    contentType: 'application/json'
+  });
+  await writeFile(`/tmp/easymde-monitor-contract-${windowName}-dto.json`, `${JSON.stringify(dto)}\n`, { mode: 0o600 });
+  const existing = (await readRealDtoCases()).filter((entry) => entry.window !== windowName);
+  const realDto = {
+    schema: REAL_MONITOR_CONTRACT_SCHEMA,
+    cases: [...existing, ...dto.cases.map((entry) => ({
+      window: entry.window,
+      kind: entry.kind,
+      rejectionSeen: entry.rejectionSeen,
+      clean: entry.clean,
+      summary: entry.summary
+    }))]
+  };
+  await writeFile(REAL_MONITOR_CONTRACT_PATH, `${JSON.stringify(realDto)}\n`, { mode: 0o600 });
+  console.log(JSON.stringify({
+    phase: 'monitor-contract-dto',
+    schema: dto.schema,
+    window: dto.window,
+    caseCount: dto.cases.length,
+    cleanCount: dto.cases.filter((entry) => entry.clean).length,
+    noncleanCount: dto.cases.filter((entry) => !entry.clean).length
+  }));
+}
+
+test('[monitor-contract] preview read proof accepts old abort or old normal finish with a later 2xx request', async ({ browser }) => {
+  for (const kind of ['basic', 'shared']) {
+    for (const variant of ['positive-abort', 'positive-two-aborts', 'positive-finished']) {
+      const result = await runPreviewReadOperationCase(browser, kind, variant);
+      const expectedAborts = variant === 'positive-two-aborts' ? 2 : variant === 'positive-abort' ? 1 : 0;
+      const approvedCancellations = kind === 'basic'
+        ? result.summary.approved.previewCancellations
+        : result.summary.approved.requestCancellations;
+      expect({
+        kind,
+        variant,
+        approved: result.proof?.approved,
+        code: result.proof?.code,
+        approvedAbortCount: result.proof?.approvedAbortCount,
+        requestFailures: result.summary.counts.requestFailures,
+        approvedCancellations,
+        issues: result.summary.issues,
+        unhandledRejections: result.summary.counts.unhandledRejections
+      }).toEqual({
+        kind,
+        variant,
+        approved: true,
+        code: 'preview-read-operation-approved',
+        approvedAbortCount: expectedAborts,
+        requestFailures: expectedAborts,
+        approvedCancellations: expectedAborts,
+        issues: [],
+        unhandledRejections: 0
+      });
+    }
+  }
+});
+
+test('[monitor-contract] preview read proof rejects incomplete, mismatched, duplicate, and unverified outcomes', async ({ browser }) => {
+  const expectedCodes = {
+    'no-successor': 'preview-read-operation-successor-missing',
+    'latest-abort': 'preview-read-operation-successor-missing',
+    'successor-failed': 'preview-read-operation-invalid',
+    'other-post': 'preview-read-operation-other-post',
+    'undeclared-source': 'preview-read-operation-other-source',
+    ambiguous: 'preview-read-operation-duplicate-stage',
+    'other-endpoint': 'preview-read-operation-unexpected-endpoint',
+    'other-method': 'preview-read-operation-unexpected-endpoint'
+  };
+  for (const kind of ['basic', 'shared']) {
+    for (const variant of ['no-successor', 'latest-abort', 'successor-failed',
+      'other-post', 'undeclared-source', 'ambiguous', 'other-endpoint', 'other-method']) {
+      const result = await runPreviewReadOperationCase(browser, kind, variant);
+      expect({
+        kind,
+        variant,
+        approved: result.proof?.approved,
+        code: result.proof?.code,
+        nonclean: result.summary.issues.length > 0
+      }).toEqual({
+        kind, variant, approved: false, code: expectedCodes[variant], nonclean: true
+      });
+    }
+    const unverified = await runPreviewReadOperationCase(browser, kind, 'positive-abort', { finalUiVerified: false });
+    expect({
+      kind,
+      approved: unverified.proof?.approved,
+      code: unverified.proof?.code,
+      nonclean: unverified.summary.issues.length > 0
+    }).toEqual({
+      kind, approved: false, code: 'preview-read-operation-final-ui-unverified', nonclean: true
+    });
+  }
+});
+
+test('[monitor-contract] canonical and router history notifications are paired for basic and shared monitors', async ({ browser }) => {
+  const cases = [];
+  for (const kind of ['basic', 'shared']) {
+    const summary = await withContractHistoryMonitor(browser, kind, async ({ page, monitor, baseURL }) => {
+      await openContractHistoryPage(kind, page, monitor, baseURL);
+      await page.evaluate(() => history.replaceState(null, '', location.href));
+      await page.evaluate(() => history.replaceState({ idx: 0 }, '', location.href));
+      const flushed = await monitor.flushHistory();
+      if (!flushed) throw new Error(`history-contract-flush-failed:${kind}`);
+      return finishContractHistoryMonitor(kind, page, monitor);
+    });
+    cases.push({ kind, rejectionSeen: false, summary });
+    expect({ kind, issues: summary.issues, navigations: summary.counts?.navigations,
+      canonical: summary.history?.counts?.canonicalNullToNull,
+      router: summary.history?.counts?.routerInitNullToIdx0,
+      within: summary.history?.counts?.withinHistoryApi,
+      paired: summary.history?.counts?.pairedObservations }).toEqual({
+      kind, issues: [], navigations: 1, canonical: 1, router: 1, within: 2, paired: 2
+    });
+  }
+  await publishLifecycleDto('canonical-router', cases);
+});
+
+test('[monitor-contract] same-URL pushState is a nonclean history event', async ({ browser }) => {
+  const summary = await withSyntheticMonitorPage(browser, async ({ page, monitor, baseURL }) => {
+    await openSyntheticMonitorPage(page, monitor, baseURL);
+    await page.evaluate(() => history.pushState(null, '', location.href));
+    await monitor.flushHistory();
+    return finishSyntheticMonitor(monitor);
+  });
+  expect({ nonclean: summary.issues.length > 0, push: summary.history?.counts?.pushState,
+    approved: summary.approved.setupNavigations }).toEqual({ nonclean: true, push: 1, approved: 1 });
+});
+
+test('[monitor-contract] wrong history state and changed URL are nonclean', async ({ browser }) => {
+  const summary = await withSyntheticMonitorPage(browser, async ({ page, monitor, baseURL }) => {
+    await openSyntheticMonitorPage(page, monitor, baseURL);
+    await page.evaluate(() => history.replaceState({ other: 1 }, '', location.href));
+    await monitor.flushHistory();
+    await page.evaluate(() => history.replaceState(null, '', '/changed'));
+    await monitor.flushHistory();
+    return finishSyntheticMonitor(monitor);
+  });
+  expect({ wrongState: summary.issues.includes('history-observation-unapproved'),
+    changedUrl: summary.issues.includes('history-url-changed'),
+    replaceCount: summary.history?.counts?.replaceState }).toEqual({
+    wrongState: true, changedUrl: true, replaceCount: 2
+  });
+});
+
+test('[monitor-contract] declared same-URL reload passes once and unregistered repeat fails for basic and shared monitors', async ({ browser }) => {
+  for (const kind of ['basic', 'shared']) {
+    const result = await withContractHistoryMonitor(browser, kind, async ({ page, monitor, baseURL }) => {
+      await openContractHistoryPage(kind, page, monitor, baseURL);
+      await expectAndNavigateContract(kind, page, monitor, baseURL, '/reload.html', 'reload-initial');
+      await flushContractNotifications(kind, monitor);
+      const first = contractMonitorSnapshot(kind, monitor);
+      await expectAndNavigateContract(kind, page, monitor, baseURL, '/reload.html', 'reload-declared');
+      await flushContractNotifications(kind, monitor);
+      const declared = contractMonitorSnapshot(kind, monitor);
+      await flushContractNotifications(kind, monitor);
+      await gotoSyntheticMonitorPath(page, '/reload.html');
+      return { first, declared, summary: await finishContractHistoryMonitor(kind, page, monitor) };
+    });
+    const approvedCount = (snapshot) => kind === 'basic'
+      ? snapshot.approved.setupNavigations
+      : snapshot.approved.navigations;
+    expect({
+      kind,
+      firstIssues: result.first.issues,
+      firstDocuments: result.first.history?.counts?.documents,
+      firstApproved: approvedCount(result.first),
+      declaredIssues: result.declared.issues,
+      declaredDocuments: result.declared.history?.counts?.documents,
+      declaredApproved: approvedCount(result.declared),
+      duplicate: result.summary.issues.includes('history-duplicate-document-navigation'),
+      unregistered: result.summary.issues.includes('main-frame-navigation:other'),
+      finalDocuments: result.summary.history?.counts?.documents,
+      finalApproved: approvedCount(result.summary),
+      nonclean: result.summary.issues.length > 0
+    }).toEqual({
+      kind,
+      firstIssues: [],
+      firstDocuments: 2,
+      firstApproved: 2,
+      declaredIssues: [],
+      declaredDocuments: 3,
+      declaredApproved: 3,
+      duplicate: true,
+      unregistered: true,
+      finalDocuments: 4,
+      finalApproved: 3,
+      nonclean: true
+    });
+  }
+});
+
+test('[monitor-contract] original history method throw propagates and is nonclean', async ({ browser }) => {
+  const result = await withSyntheticMonitorPage(browser, async ({ page, monitor, baseURL }) => {
+    await openSyntheticMonitorPage(page, monitor, baseURL);
+    const thrown = await page.evaluate(() => {
+      try {
+        history.replaceState(null, '', 'http://other.synthetic.invalid/');
+        return 'none';
+      } catch (error) {
+        return error?.name === 'SecurityError' ? 'SecurityError' : 'other';
+      }
+    });
+    await monitor.flushHistory();
+    return { thrown, summary: await finishSyntheticMonitor(monitor) };
+  });
+  expect({ thrown: result.thrown, methodThrow: result.summary.issues.includes('history-method-threw:replaceState'),
+    nonclean: result.summary.issues.length > 0 }).toEqual({
+    thrown: 'SecurityError', methodThrow: true, nonclean: true
+  });
+});
+
+test('[monitor-contract] lost or rejected history notifications cannot clean', async ({ browser }) => {
+  const delayed = await withSyntheticMonitorPage(browser, async ({ page, monitor, baseURL }) => {
+    await openSyntheticMonitorPage(page, monitor, baseURL);
+    await page.evaluate(() => {
+      const original = window.__easymdeHistoryObservation;
+      window.__easymdeHistoryObservation = () => new Promise(() => {
+        void original;
+      });
+      history.replaceState(null, '', location.href);
+    });
+    const flushed = await monitor.flushHistory();
+    return { flushed, summary: await finishSyntheticMonitor(monitor) };
+  });
+  const rejected = await withSyntheticMonitorPage(browser, async ({ page, monitor, baseURL }) => {
+    await openSyntheticMonitorPage(page, monitor, baseURL);
+    await page.evaluate(() => {
+      window.__easymdeHistoryObservation = () => Promise.reject(new Error('synthetic-history-transport'));
+      history.replaceState(null, '', location.href);
+    });
+    const flushed = await monitor.flushHistory();
+    return { flushed, summary: await finishSyntheticMonitor(monitor) };
+  });
+  expect({ delayedClean: delayed.flushed, delayedNonclean: delayed.summary.issues.length > 0,
+    rejectedClean: rejected.flushed, rejectedNonclean: rejected.summary.issues.length > 0,
+    transport: rejected.summary.issues.includes('history-observation-transport-failed') }).toEqual({
+    delayedClean: false, delayedNonclean: true, rejectedClean: false, rejectedNonclean: true, transport: true
+  });
+});
+
+test('[monitor-contract] exact synthetic setup chain finalizes clean', async ({ browser }) => {
+  const summary = await withSyntheticMonitorPage(browser, async ({ page, monitor, baseURL }) => {
+    for (const [path, action] of [['/wp-login.php', 'open-login'], ['/wp-admin/', 'login-submit'],
+      ['/wp-admin/post-new.php', 'open-editor']]) {
+      monitor.expectNavigation(path, action, baseURL);
+      await monitor.flushHistory();
+      await monitor.flushRejections();
+      await gotoSyntheticMonitorPath(page, path);
+    }
+    return finishSyntheticMonitor(monitor);
+  });
+  expect(summary.issues).toEqual([]);
+  expect(summary.approved.setupNavigations).toBe(3);
+});
+
+test('[monitor-contract] wrong same-category setup navigation cannot consume an exact declaration', async ({ browser }) => {
+  const summary = await withSyntheticMonitorPage(browser, async ({ page, monitor, baseURL }) => {
+    monitor.expectNavigation('/wp-admin/allowed.php', 'login-submit', baseURL);
+    await monitor.flushHistory();
+    await monitor.flushRejections();
+    await gotoSyntheticMonitorPath(page, '/wp-admin/wrong.php');
+    return finishSyntheticMonitor(monitor);
+  });
+  expect(summary.approved.setupNavigations).toBe(0);
+  expect(summary.issues).toContain('main-frame-navigation:wp-admin');
+  expect(summary.issues).toContain('navigation-expected-missing:wp-admin:login-submit');
+});
+
+test('[monitor-contract] native rejection immediately before finish is never clean', async ({ browser }) => {
+  const summary = await withSyntheticMonitorPage(browser, async ({ page, monitor, baseURL }) => {
+    await openSyntheticMonitorPage(page, monitor, baseURL);
+    await page.evaluate(() => { Promise.reject(new Error('synthetic-native-monitor-rejection')); });
+    return finishSyntheticMonitor(monitor);
+  });
+  expect(summary.issues.length).toBeGreaterThan(0);
+  expect(summary.counts.unhandledRejections).toBeGreaterThanOrEqual(1);
+});
+
+test('[monitor-contract] delayed notification is awaited beyond the former quiet window', async ({ browser }) => {
+  const summary = await withSyntheticMonitorPage(browser, async ({ page, monitor, baseURL }) => {
+    await openSyntheticMonitorPage(page, monitor, baseURL);
+    await page.evaluate(() => {
+      const original = window.__easymdeReportRejection;
+      window.__easymdeMonitorRelease = null;
+      window.__easymdeReportRejection = (id) => new Promise((resolve, reject) => {
+        window.__easymdeMonitorRelease = () => Promise.resolve(original(id)).then(resolve, reject);
+      });
+    });
+    await dispatchMonitorContractRejection(page);
+    await page.waitForFunction(() => typeof window.__easymdeMonitorRelease === 'function');
+    let finished = false;
+    const finishing = finishSyntheticMonitor(monitor).then((result) => {
+      finished = true;
+      return result;
+    });
+    await page.waitForTimeout(120);
+    expect(finished).toBe(false);
+    await page.evaluate(() => window.__easymdeMonitorRelease());
+    return finishing;
+  });
+  expect(summary.counts.unhandledRejections).toBe(1);
+});
+
+test('[monitor-contract] rejected notification transport is reported and never clean', async ({ browser }) => {
+  const summary = await withSyntheticMonitorPage(browser, async ({ page, monitor, baseURL }) => {
+    await openSyntheticMonitorPage(page, monitor, baseURL);
+    await page.evaluate(() => {
+      window.__easymdeReportRejection = () => Promise.reject(new Error('synthetic-transport-rejection'));
+    });
+    await dispatchMonitorContractRejection(page);
+    await page.waitForFunction(() => window.__easymdeRejectionBridge.failed === 1);
+    return finishSyntheticMonitor(monitor);
+  });
+  expect(summary.issues).toContain('rejection-notification-transport-failed');
+  expect(summary.issues).not.toEqual([]);
+});
+
+async function runHeldFetchFinishRegression({
+  browser,
+  installMonitor,
+  finishMonitor
+}) {
+  return withSyntheticContext(browser, async ({
+    page,
+    waitForHeldRequest,
+    releaseHeldRequest
+  }) => {
+    const monitor = await installMonitor(page);
+    monitor.expectNavigation('/', 'open-synthetic', MONITOR_CONTRACT_ORIGIN);
+    await monitor.flushRejections?.();
+    await gotoSyntheticMonitorPath(page, '/');
+    await page.evaluate(() => {
+      const originalRemove = window.removeEventListener.bind(window);
+      window.__monitorContractListenerRemoved = false;
+      window.removeEventListener = (type, listener, options) => {
+        const result = originalRemove(type, listener, options);
+        if (type === 'unhandledrejection') window.__monitorContractListenerRemoved = true;
+        return result;
+      };
+      window.__monitorContractCallbackRan = false;
+      void fetch('/held.json').then(() => {
+        window.__monitorContractCallbackRan = true;
+        throw new Error('synthetic-held-fetch-callback');
+      });
+    });
+    await waitForHeldRequest();
+    const finishing = finishMonitor(page, monitor);
+    await Promise.race([
+      page.waitForFunction(() => window.__monitorContractListenerRemoved === true, { timeout: 250 }).catch(() => false),
+      new Promise((resolve) => setTimeout(resolve, 250))
+    ]);
+    releaseHeldRequest();
+    const summary = await finishing;
+    const callbackRan = await page.evaluate(() => window.__monitorContractCallbackRan === true);
+    const unavailable = summary.issues.some((code) => (
+      /(?:monitor-rejection|rejection)-barrier-(?:unavailable|timeout|page-closed)/u.test(code)
+      || code === 'rejection-notification-transport-failed'
+      || code === 'unhandled-rejection-bridge-failed'
+    ));
+    return { callbackRan, summary, unhandled: summary.counts.unhandledRejections >= 1, unavailable };
+  }, { heldPath: '/held.json' });
+}
+
+test('[monitor-contract] basic monitor keeps rejection collection through held-fetch drain', async ({ browser }) => {
+  const result = await runHeldFetchFinishRegression({
+    browser,
+    installMonitor: async (page) => {
+      const monitor = await installBrowserMonitor(page);
+      await installMonitorRejectionBridge(page, monitor);
+      return monitor;
+    },
+    finishMonitor: (_page, monitor) => finishSyntheticMonitor(monitor)
+  });
+  expect({
+    callbackRan: result.callbackRan,
+    rejectionObserved: result.unhandled || result.unavailable
+  }).toEqual({ callbackRan: true, rejectionObserved: true });
+});
+
+test('[monitor-contract] shared monitor keeps rejection collection through held-fetch drain', async ({ browser }) => {
+  const result = await runHeldFetchFinishRegression({
+    browser,
+    installMonitor: (page) => installSharedVisualBrowserMonitor(page, {
+      baseURL: MONITOR_CONTRACT_ORIGIN
+    }),
+    finishMonitor: (page) => finishSharedVisualBrowserMonitor(page, {
+      timeoutMs: 2_000,
+      quietMs: 50
+    })
+  });
+  expect({
+    callbackRan: result.callbackRan,
+    rejectionObserved: result.unhandled || result.unavailable
+  }).toEqual({ callbackRan: true, rejectionObserved: true });
+});
+
+
+test('[monitor-contract] rejection during async history-stop survives for basic and shared monitors', async ({ browser }) => {
+  const cases = [];
+  for (const kind of ['basic', 'shared']) {
+    const result = await withSyntheticContext(browser, async ({ page }) => {
+      const monitor = await installContractMonitor(page, kind);
+      try {
+        await openContractHistoryPage(kind, page, monitor, MONITOR_CONTRACT_ORIGIN);
+        await installLifecycleRejectionProbe(page);
+        const finishing = finishContractHistoryMonitor(kind, page, monitor);
+        await page.waitForFunction(() => window.__monitorContractHistoryStopStarted === true, null, { timeout: 5_000 });
+        await triggerLifecycleRejection(page);
+        await releaseLifecycleHistoryStop(page);
+        const summary = await finishing;
+        const rejectionSeen = await page.evaluate(() => window.__monitorContractRejectionSeen === 1);
+        return { kind, rejectionSeen, summary };
+      } finally {
+        await monitor.detach().catch(() => {});
+      }
+    });
+    cases.push(result);
+  }
+  await publishLifecycleDto('history-stop', cases);
+  expect(cases.map(({ kind, rejectionSeen, summary }) => ({
+    kind,
+    rejectionSeen,
+    unhandledRejections: summary.counts.unhandledRejections,
+    pageErrors: summary.counts.pageErrors
+  }))).toEqual([
+    { kind: 'basic', rejectionSeen: true, unhandledRejections: 1, pageErrors: 0 },
+    { kind: 'shared', rejectionSeen: true, unhandledRejections: 1, pageErrors: 0 }
+  ]);
+});
+
+test('[monitor-contract] rejection during final drain survives for basic and shared monitors', async ({ browser }) => {
+  const cases = [];
+  for (const kind of ['basic', 'shared']) {
+    const result = await withSyntheticContext(browser, async ({
+      page,
+      waitForHeldRequest,
+      releaseHeldRequest
+    }) => {
+      const monitor = await installContractMonitor(page, kind);
+      try {
+        await openContractHistoryPage(kind, page, monitor, MONITOR_CONTRACT_ORIGIN);
+        await installLifecycleRejectionProbe(page);
+        const finishing = finishContractHistoryMonitor(kind, page, monitor);
+        await page.waitForFunction(() => window.__monitorContractHistoryStopStarted === true, null, { timeout: 5_000 });
+        await page.evaluate(() => {
+          void fetch('/held.json').then(() => {
+            window.__monitorContractFetchCallbackRan = true;
+            void Promise.reject(new Error('monitor-contract-final-drain-rejection'));
+          });
+        });
+        await waitForHeldRequest();
+        await releaseLifecycleHistoryStop(page);
+        releaseHeldRequest();
+        await page.waitForFunction(() => window.__monitorContractFetchCallbackRan === true
+          && window.__monitorContractRejectionSeen === 1, null, { timeout: 5_000 });
+        const summary = await finishing;
+        const rejectionSeen = await page.evaluate(() => window.__monitorContractRejectionSeen === 1);
+        return { kind, rejectionSeen, summary };
+      } finally {
+        await monitor.detach().catch(() => {});
+      }
+    }, { heldPath: '/held.json' });
+    cases.push(result);
+  }
+  await publishLifecycleDto('final-drain', cases);
+  expect(cases.map(({ kind, rejectionSeen, summary }) => ({
+    kind,
+    rejectionSeen,
+    unhandledRejections: summary.counts.unhandledRejections,
+    pageErrors: summary.counts.pageErrors
+  }))).toEqual([
+    { kind: 'basic', rejectionSeen: true, unhandledRejections: 1, pageErrors: 0 },
+    { kind: 'shared', rejectionSeen: true, unhandledRejections: 1, pageErrors: 0 }
+  ]);
+});
+
+test('[monitor-contract] delayed old-document notification is preserved across an approved navigation boundary', async ({ browser }) => {
+  const result = await withSyntheticMonitorPage(browser, async ({ page, monitor, baseURL }) => {
+    await openSyntheticMonitorPage(page, monitor, baseURL);
+    await page.evaluate(() => {
+      const original = window.__easymdeReportRejection;
+      window.__easymdeOldDocumentRelease = null;
+      window.__easymdeOldDocumentFlushStarted = false;
+      window.__easymdeReportRejection = (id) => new Promise((resolve, reject) => {
+        window.__easymdeOldDocumentRelease = () => Promise.resolve(original(id)).then(resolve, reject);
+      });
+      const bridge = window.__easymdeRejectionBridge;
+      const originalFlush = bridge.flush.bind(bridge);
+      bridge.flush = () => {
+        window.__easymdeOldDocumentFlushStarted = true;
+        return originalFlush();
+      };
+    });
+    await dispatchMonitorContractRejection(page);
+    await page.waitForFunction(() => typeof window.__easymdeOldDocumentRelease === 'function');
+    const flushing = monitor.flushRejections();
+    await page.waitForFunction(() => window.__easymdeOldDocumentFlushStarted === true);
+    await page.evaluate(() => window.__easymdeOldDocumentRelease());
+    await flushing;
+    const confirmedBeforeNavigation = await page.evaluate(() => window.__easymdeRejectionBridge.confirmed === 1);
+    monitor.expectNavigation('/next.html', 'approved-navigation', baseURL);
+    await monitor.flushHistory();
+    await monitor.flushRejections();
+    await gotoSyntheticMonitorPath(page, '/next.html');
+    const summary = await finishSyntheticMonitor(monitor);
+    const unavailable = summary.issues.some((code) => (
+      /(?:monitor-rejection|rejection)-barrier-(?:unavailable|timeout|page-closed|pending)/u.test(code)
+      || code === 'rejection-notification-transport-failed'
+    ));
+    return {
+      confirmedBeforeNavigation,
+      rejectionObserved: summary.counts.unhandledRejections >= 1 || unavailable,
+      summary
+    };
+  });
+  expect({
+    confirmedBeforeNavigation: result.confirmedBeforeNavigation,
+    rejectionObserved: result.rejectionObserved
+  }).toEqual({ confirmedBeforeNavigation: true, rejectionObserved: true });
+});
+
+async function openWindowedVisual(page, tail, beforeFixture) {
+  const opened = await openVisual(page, windowedMarkdown(tail), undefined, beforeFixture);
   // More than 160 blocks: the editor mounts a windowed surface with spacers.
   await expect(opened.visual.locator('[data-easymde-preview-window-spacer]').first()).toBeAttached();
   return opened;
@@ -3297,7 +7678,12 @@ for (const key of ['Backspace', 'Delete']) {
 test(`windowed inline code retirement keeps source and history usable with ${key}`, async ({ page }) => {
   const initial = 'Before.\n\nTail `x`.suffix.\n\nAfter.\n\n'
     + Array.from({ length: 170 }, (_, index) => `Filler ${index}.`).join('\n\n');
-  const { failures, source, visual } = await openVisual(page, initial);
+  const withoutCode = initial.replace('`x`', '');
+  const continued = withoutCode.replace('Tail ', 'Tail Y');
+  const previewRead = createPhasedPreviewOperationTracker([
+    { id: 'lifecycle', groups: [[''], [initial], [withoutCode], [initial], [withoutCode], [continued]] }
+  ]);
+  const { failures, source, visual } = await openVisual(page, initial, undefined, previewRead.beforeFixture);
   expect(await visual.locator('[data-easymde-preview-window-spacer]').count()).toBeGreaterThan(0);
   await visual.locator('p code').click();
   await page.keyboard.press('Home');
@@ -3306,36 +7692,36 @@ test(`windowed inline code retirement keeps source and history usable with ${key
   if (key === 'Delete') {
     // This exact keyboard navigation reaches the Text outside the opening
     // code mark, as the independent beforeinput/Undo contract probe proved.
-    const outside = await expectWindowedSmokeCheckpoint(visual, failures, 'inline-Delete-outside-initial-intent', null,
+    const outside = await expectWindowedSmokeCheckpoint(visual, failures, 'inline-Delete-outside-initial-intent',
       { selector: ':scope > p', index: 1, codeBoundary: true }, 5);
-    expect(outside).toMatchObject({ runtimePending: false,
+    expect(outside).toMatchObject({ previewLoading: false,
       nativeAnchor: { inlineCode: { codePresent: true, insideCode: false, isBeforeCodeText: true, beforeCodeTextOffset: 5 } },
       nativeFocus: { inlineCode: { codePresent: true, insideCode: false, isBeforeCodeText: true, beforeCodeTextOffset: 5 } } });
   }
   await page.keyboard.press(key);
   expect(failures).toEqual([]);
-  const withoutCode = initial.replace('`x`', '');
   await expectSource(source, withoutCode);
-  await expectWindowedSmokeCheckpoint(visual, failures, `inline-${key}-retired`, { start: 14, end: 14, direction: 'none' },
+  await expectWindowedSmokeCheckpoint(visual, failures, `inline-${key}-retired`,
     { selector: ':scope > p', index: 1 }, 5);
   await page.keyboard.press('Control+z');
   await expectSource(source, initial);
   const originalCaret = key === 'Backspace' ? 16 : 14;
-  const undone = await expectWindowedSmokeCheckpoint(visual, failures, `inline-${key}-Undo`, { start: originalCaret, end: originalCaret, direction: 'none' },
+  const undone = await expectWindowedSmokeCheckpoint(visual, failures, `inline-${key}-Undo`,
     key === 'Backspace' ? { selector: 'p code' } : { selector: ':scope > p', index: 1, codeBoundary: true },
     key === 'Backspace' ? 1 : 5);
-  if (key === 'Delete' && !undone.runtimePending) expect(undone).toMatchObject({
+  if (key === 'Delete' && !undone.previewLoading) expect(undone).toMatchObject({
     nativeAnchor: { inlineCode: { insideCode: false, isBeforeCodeText: true, beforeCodeTextOffset: 5 } },
     nativeFocus: { inlineCode: { insideCode: false, isBeforeCodeText: true, beforeCodeTextOffset: 5 } } });
   await page.keyboard.press('Control+Shift+Z');
   await expectSource(source, withoutCode);
-  await expectWindowedSmokeCheckpoint(visual, failures, `inline-${key}-Redo`, { start: 14, end: 14, direction: 'none' },
+  await expectWindowedSmokeCheckpoint(visual, failures, `inline-${key}-Redo`,
     { selector: ':scope > p', index: 1 }, 5);
   await page.keyboard.type('Y');
-  await expectSource(source, withoutCode.replace('Tail ', 'Tail Y'));
-  await expectWindowedSmokeCheckpoint(visual, failures, `inline-${key}-continue-Y`, { start: 15, end: 15, direction: 'none' },
+  await expectSource(source, continued);
+  await expectWindowedSmokeCheckpoint(visual, failures, `inline-${key}-continue-Y`,
     { selector: ':scope > p', index: 1 }, 6);
   expect(failures).toEqual([]);
+  await previewRead.prove({ visual });
 });
 }
 
@@ -3351,65 +7737,74 @@ test('windowed inside CODE body-zero Delete restores its history and immediate c
     + Array.from({ length: 170 }, (_, index) => `Filler ${index}.`).join('\n\n');
   const retired = initial.replace('`x`', '');
   const continued = initial.replace('`x`', '`Yx`');
-  const { failures, source, visual } = await openVisual(page, initial);
+  const previewRead = createPhasedPreviewOperationTracker([
+    { id: 'lifecycle', groups: [[''], [initial], [retired], [initial], [continued]] }
+  ]);
+  const { failures, source, visual } = await openVisual(page, initial, undefined, previewRead.beforeFixture);
   const code = visual.locator('p code');
   const originalText = await code.evaluateHandle(element => {
     if (!(element.firstChild instanceof Text) || element.firstChild.length !== 1) throw new Error('test-windowed-code-zero-original-text-missing');
     return element.firstChild;
   });
-  const beforeNavigation = await readCurrentDocumentOwner(page);
+  const beforeNavigation = await readPublicEditorState(page);
   const target = { selector: 'p code', codeBoundary: true, originalCodeText: originalText, expectedSource: initial };
   const unchangedSetup = state => {
-    expect(state.sourceLength).toBe(initial.length); expect(state.revision).toBe(beforeNavigation.revision);
-    expect(state.documentHistory).toEqual(beforeNavigation.history);
-    expect(state).toMatchObject({ runtimePending: false,
+    expect(state.sourceLength).toBe(initial.length);
+    expect(state).toMatchObject({ sourceMatchesExpected: true,
       nativeAnchor: { inlineCode: { codePresent: true, insideCode: true, sameOriginalCodeText: true } },
       nativeFocus: { inlineCode: { codePresent: true, insideCode: true, sameOriginalCodeText: true } } });
+    expect(beforeNavigation.nativeConnected).toBe(true);
   };
   try {
   // Home from inside a paragraph-initial code lands inside the code body at
   // offset 0; one ArrowRight steps to offset 1 (body-one) so the selection stage
   // below still starts inside the code.
   await code.click(); await page.keyboard.press('Home'); await page.keyboard.press('ArrowRight');
-  const atOne = await expectWindowedSmokeCheckpoint(visual, failures, 'inside-code-keyboard-body-one', null, target, 1);
+  const atOne = await expectWindowedSmokeCheckpoint(visual, failures, 'inside-code-keyboard-body-one', target, 1);
   unchangedSetup(atOne);
   await page.keyboard.press('Shift+ArrowLeft');
-  const selected = await expectWindowedSmokeCheckpoint(visual, failures, 'inside-code-keyboard-selected-x', null,
+  const selected = await expectWindowedSmokeCheckpoint(visual, failures, 'inside-code-keyboard-selected-x',
     { ...target, focusOffset: 0 }, 1, 'backward');
   unchangedSetup(selected);
   await page.keyboard.press('ArrowLeft');
-  const initialNative = await expectWindowedSmokeCheckpoint(visual, failures, 'inside-code-keyboard-collapse-zero', null, target, 0);
+  const initialNative = await expectWindowedSmokeCheckpoint(visual, failures, 'inside-code-keyboard-collapse-zero', target, 0);
   unchangedSetup(initialNative);
-  // Pure navigation never synchronises the canonical document selection: it
-  // stays where the document load parked it, so Delete must be gated on the
-  // observed inside source position rather than on an internally synced caret.
-  expect(initialNative.documentSelection, 'Navigation must not synchronize the canonical document selection')
-    .toEqual(beforeNavigation.selection);
+  // Pure navigation keeps the exact source and the real native caret inside
+  // the code; Delete is gated on that observed DOM position.
+  expect(initialNative.sourceMatchesExpected).toBe(true);
   await page.keyboard.press('Delete'); expect(failures).toEqual([]); await expectSource(source, retired);
-  await expectWindowedSmokeCheckpoint(visual, failures, 'inside-code-zero-retired', { start: 9, end: 9, direction: 'none' },
+  await expectWindowedSmokeCheckpoint(visual, failures, 'inside-code-zero-retired',
     { selector: ':scope > p', index: 1 }, 0);
   await page.keyboard.press('Control+z'); expect(failures).toEqual([]); await expectSource(source, initial);
-  await expectWindowedSmokeCheckpoint(visual, failures, 'inside-code-zero-Undo', { start: 10, end: 10, direction: 'none' },
+  await expectWindowedSmokeCheckpoint(visual, failures, 'inside-code-zero-Undo',
     { selector: 'p code', codeBoundary: true }, 0);
   // No click, selection assignment or Preview wait follows Undo.
   await page.keyboard.type('Y'); expect(failures).toEqual([]); await expectSource(source, continued);
-  const typed = await expectWindowedSmokeCheckpoint(visual, failures, 'inside-code-zero-immediate-Y', { start: 11, end: 11, direction: 'none' },
+  const typed = await expectWindowedSmokeCheckpoint(visual, failures, 'inside-code-zero-immediate-Y',
     { selector: 'p code', codeBoundary: true }, 1);
-  expect(typed.documentHistory.redoDepth).toBe(0);
+  await page.keyboard.press('Control+Shift+z');
+  await expectSource(source, continued);
   await expect(visual).toHaveAttribute('aria-busy', 'false'); await expectSource(source, continued);
-  const ready = await expectWindowedSmokeCheckpoint(visual, failures, 'inside-code-zero-final-ready', { start: 11, end: 11, direction: 'none' },
+  const ready = await expectWindowedSmokeCheckpoint(visual, failures, 'inside-code-zero-final-ready',
     { selector: 'p code', codeBoundary: true }, 1);
-  expect(ready).toMatchObject({ runtimePending: false,
+  expect(ready).toMatchObject({ previewLoading: false,
     nativeAnchor: { bodyLength: 2, inlineCode: { codePresent: true, insideCode: true, codeBodyOffset: 1 } },
     nativeFocus: { bodyLength: 2, inlineCode: { codePresent: true, insideCode: true, codeBodyOffset: 1 } } });
   expect(await code.evaluate(element => element.textContent === 'Yx')).toBe(true);
+  await previewRead.prove({ visual });
   } finally { await originalText.dispose(); }
 });
 
 test('windowed cross-row replacement keeps history and immediate pending input usable', async ({ page }) => {
   const initial = 'Alpha.\n\nBeta.\n\n~~~js\nvalue = 1;\n~~~\n\n'
     + Array.from({ length: 170 }, (_, index) => `Filler ${index + 1}.`).join('\n\n');
-  const { failures, source, visual } = await openVisual(page, initial);
+  const edited = initial.replace('Alpha.\n\nBeta.', 'AlQta.');
+  const continued = edited.replace('AlQta.', 'AlQZta.');
+  const continuedCode = continued.replace('value = 1;', 'vXalue = 1;');
+  const previewRead = createPhasedPreviewOperationTracker([
+    { id: 'lifecycle', groups: [[''], [initial], [edited], [initial], [edited], [continued], [continuedCode]] }
+  ]);
+  const { failures, source, visual } = await openVisual(page, initial, undefined, previewRead.beforeFixture);
   await expect.poll(() => visual.locator('[data-easymde-preview-window-spacer]').count()).toBeGreaterThan(0);
   let release;
   let fetched = 0;
@@ -3448,24 +7843,22 @@ test('windowed cross-row replacement keeps history and immediate pending input u
     await page.mouse.down();
     await page.mouse.move(last.x, last.y, { steps: 8 });
     await page.mouse.up();
-    await expectWindowedSmokeCheckpoint(visual, failures, 'cross-row-forward-native-intent', null,
+    await expectWindowedSmokeCheckpoint(visual, failures, 'cross-row-forward-native-intent',
       { selector: 'p', index: 0, focusIndex: 1, focusOffset: 2 }, 2, 'forward');
     await page.keyboard.type('Q');
-    const edited = initial.replace('Alpha.\n\nBeta.', 'AlQta.');
     await expectSource(source, edited);
-    await expectWindowedSmokeCheckpoint(visual, failures, 'cross-row-Q', { start: 3, end: 3, direction: 'none' }, { selector: 'p' }, 3);
+    await expectWindowedSmokeCheckpoint(visual, failures, 'cross-row-Q', { selector: 'p' }, 3);
     await page.keyboard.press('Control+z');
     await expectSource(source, initial);
-    await expectWindowedSmokeCheckpoint(visual, failures, 'cross-row-Undo', { start: 2, end: 10, direction: 'forward' },
+    await expectWindowedSmokeCheckpoint(visual, failures, 'cross-row-Undo',
       { selector: 'p', index: 0, focusIndex: 1, focusOffset: 2 }, 2, 'forward');
     await page.keyboard.press('Control+Shift+z');
     await expectSource(source, edited);
-    await expectWindowedSmokeCheckpoint(visual, failures, 'cross-row-Redo', { start: 3, end: 3, direction: 'none' }, { selector: 'p' }, 3);
+    await expectWindowedSmokeCheckpoint(visual, failures, 'cross-row-Redo', { selector: 'p' }, 3);
     await page.keyboard.type('Z');
     expect(failures, 'immediate input after cross-row redo').toEqual([]);
-    const continued = edited.replace('AlQta.', 'AlQZta.');
     await expectSource(source, continued);
-    await expectWindowedSmokeCheckpoint(visual, failures, 'cross-row-direct-Z', { start: 4, end: 4, direction: 'none' }, { selector: 'p' }, 4);
+    await expectWindowedSmokeCheckpoint(visual, failures, 'cross-row-direct-Z', { selector: 'p' }, 4);
     await expect.poll(() => fetched).toBeGreaterThan(0);
     release();
     await expect(visual).toHaveAttribute('aria-busy', 'false');
@@ -3473,12 +7866,12 @@ test('windowed cross-row replacement keeps history and immediate pending input u
     await page.keyboard.press('Home');
     await page.keyboard.press('ArrowRight');
     await page.keyboard.type('X');
-    const continuedCode = continued.replace('value = 1;', 'vXalue = 1;');
     await expectSource(source, continuedCode);
     const codeCaret = continuedCode.indexOf('vXalue = 1;') + 2;
-    await expectWindowedSmokeCheckpoint(visual, failures, 'cross-row-code-direct-X', { start: codeCaret, end: codeCaret, direction: 'none' },
+    await expectWindowedSmokeCheckpoint(visual, failures, 'cross-row-code-direct-X',
       { selector: 'pre code' }, 2);
     expect(failures).toEqual([]);
+    await previewRead.prove({ visual });
   } finally {
     release();
     await Promise.all(responsesSettled);
@@ -3494,7 +7887,10 @@ test('windowed held PHP history keeps complete math range through release and re
   const typed = initial.replace(tail, '\n\nTarget.V\n\nAfter.');
   const selection = { start: 1, end: 14, direction: 'forward' };
   const replaced = initial.slice(0, selection.start) + 'X' + initial.slice(selection.end);
-  const { failures, source, visual } = await openVisual(page, initial);
+  const previewRead = createPhasedPreviewOperationTracker([
+    { id: 'lifecycle', groups: [[''], [initial], [typed], [initial], [replaced], [initial]] }
+  ]);
+  const { failures, source, visual } = await openVisual(page, initial, undefined, previewRead.beforeFixture);
   await expect(visual.locator('[data-easymde-preview-window-spacer]').first()).toBeAttached();
   const sink = page.locator('[data-easymde-preview-html-sink]');
   const lock = page.locator('.easymde-immersive-preview-lock');
@@ -3502,20 +7898,29 @@ test('windowed held PHP history keeps complete math range through release and re
   const checkpoint = async (expected, pending = false) => {
     await expectSource(source, expected);
     await expect.poll(async () => {
-      lastAtom = await readWindowedSmokeState(visual, { expectedSource: expected, previewEvidence: true });
-      return lastAtom.sourceMatchesExpected && lastAtom.runtimePending === pending
-        && (pending || lastAtom.phase === 'ready' && lastAtom.previewEvidence.formalCurrent);
+      lastAtom = await readWindowedSmokeState(visual, { expectedSource: expected });
+      return lastAtom.sourceMatchesExpected && lastAtom.previewLoading === pending
+        && (pending || lastAtom.phase === 'ready');
     }).toBe(true);
     expect(failures).toEqual([]);
     expect(lastAtom).toMatchObject({ runtimeEditable: true, documentEditable: true, effectiveEditable: true,
-      contenteditable: 'true', lock: 'false', session: 'ready', windowedControllerCount: 1, runtimeCount: 1 });
+      contenteditable: 'true', lock: 'false', session: 'ready' });
     expect(lastAtom.spacers).toBeGreaterThan(0);
-    expect(lastAtom.previewEvidence.mapBlocks).toBeGreaterThan(160);
     return lastAtom;
   };
-  const unchangedOwner = async (before) => {
-    const after = await readCurrentDocumentOwner(page);
-    expect(after).toMatchObject({ revision: before.revision, history: before.history, selection: before.selection, editable: true });
+  const unchangedOwner = async (before, { locked = false } = {}) => {
+    const after = await readPublicEditorState(page);
+    expect({
+      sourceExact: after.source === before.source,
+      sourceEditable: after.sourceEditable,
+      visualEditable: after.visualEditable,
+      nativeConnected: after.nativeConnected
+    }).toEqual({
+      sourceExact: true,
+      sourceEditable: true,
+      visualEditable: !locked,
+      nativeConnected: true
+    });
   };
   const nativeRange = async (measure = false) => visual.evaluate((surface, measure) => {
     const paragraphs = [...surface.querySelectorAll('p')].filter((p) => p.textContent.includes('Before') && p.textContent.includes('After'));
@@ -3562,9 +7967,8 @@ test('windowed held PHP history keeps complete math range through release and re
     phase = 'real-V-input'; await visual.locator('p').filter({ hasText: 'Target.' }).first().click();
     await page.keyboard.press('End'); await page.keyboard.type('V'); await expectSource(source, typed);
     expect(failures).toEqual([]);
-    const beforeLock = await readCurrentDocumentOwner(page);
-    expect(beforeLock.revision).toBe(baseline.revision + 1);
-    expect(beforeLock.history).toEqual({ undoDepth: baseline.documentHistory.undoDepth + 1, redoDepth: 0 });
+    const beforeLock = await readPublicEditorState(page);
+    expect(beforeLock.source === typed).toBe(true);
     // Explicit user preparation: a newly accepted V Preview makes the later
     // real Undo use a formal history transfer, not an ordinary input debounce.
     const formalV = page.waitForResponse((response) => {
@@ -3575,50 +7979,44 @@ test('windowed held PHP history keeps complete math range through release and re
     phase = 'explicit-user-lock-and-formal-V'; await lock.click();
     await expect(lock).toHaveAttribute('aria-pressed', 'true');
     expect(await sink.evaluate((surface) => surface.isContentEditable)).toBe(false);
-    await unchangedOwner(beforeLock); await expectSource(source, typed); expect(failures).toEqual([]);
+    await unchangedOwner(beforeLock, { locked: true }); await expectSource(source, typed); expect(failures).toEqual([]);
     const response = await formalV; expect(response, 'The explicit lock must receive the real V PHP response').not.toBeNull();
     expect(response.status()).toBe(200); expect(await response.finished()).toBeNull();
     await expect(sink).toHaveAttribute('aria-busy', 'false');
-    await unchangedOwner(beforeLock); await expectSource(source, typed);
+    await unchangedOwner(beforeLock, { locked: true }); await expectSource(source, typed);
     phase = 'explicit-user-unlock'; await lock.click(); await expect(lock).toHaveAttribute('aria-pressed', 'false');
-    const acceptedV = await checkpoint(typed); await unchangedOwner(beforeLock);
-    expect(acceptedV.previewEvidence.publisherGeneration).toBeGreaterThan(baseline.previewEvidence.publisherGeneration);
+    await checkpoint(typed); await unchangedOwner(beforeLock);
     phase = 'real-Undo-base-held-PHP'; held = await holdFormalPreview(page);
     await visual.locator('p').filter({ hasText: 'Target.V' }).first().click(); await page.keyboard.press('End');
     await page.keyboard.press('Control+z'); await expectSource(source, initial);
     await held.waitFor(initial); // Exact request, real PHP200 fetched, fulfillment still gated.
     const beforeDrag = await checkpoint(initial, true);
-    expect(beforeDrag.revision).toBe(beforeLock.revision + 1);
-    expect(beforeDrag.documentHistory).toEqual({ undoDepth: baseline.documentHistory.undoDepth, redoDepth: 1 });
+    expect(beforeDrag.sourceMatchesExpected).toBe(true);
     phase = 'real-complete-math-pointer-drag'; const { points } = await nativeRange(true);
     await page.mouse.move(points.start.x, points.start.y); await page.mouse.down();
     try { await page.mouse.move(points.end.x, points.end.y, { steps: 16 }); } finally { await page.mouse.up(); }
     expect(failures).toEqual([]); await expectNativeRange();
     const dragged = await checkpoint(initial, true);
-    expect(dragged.revision).toBe(beforeDrag.revision); expect(dragged.documentHistory).toEqual(beforeDrag.documentHistory);
+    expect(dragged.sourceMatchesExpected).toBe(true);
     // Pending canonical publication is observed, not forced. The completed
     // accepted tree must preserve the original fixed native/source range.
     phase = 'release-real-PHP-and-preserve-range'; await held.close(); held = null;
     const accepted = await checkpoint(initial); await expectNativeRange();
-    expect(accepted.revision).toBe(beforeDrag.revision); expect(accepted.documentHistory).toEqual(beforeDrag.documentHistory);
-    expect(accepted.documentSelection).toEqual(selection);
-    expect(accepted.previewEvidence.publisherGeneration).toBeGreaterThan(acceptedV.previewEvidence.publisherGeneration);
-    expect(accepted.previewEvidence.windowKey).not.toBe(acceptedV.previewEvidence.windowKey);
+    expect(accepted.sourceMatchesExpected).toBe(true);
     phase = 'real-X-replacement'; await page.keyboard.type('X');
     const changed = await checkpoint(replaced);
-    expect(changed.revision).toBe(accepted.revision + 1);
-    expect(changed.documentHistory).toEqual({ undoDepth: accepted.documentHistory.undoDepth + 1, redoDepth: 0 });
-    expect(changed.documentSelection).toEqual({ start: 2, end: 2, direction: 'none' });
+    expect(changed.sourceMatchesExpected).toBe(true);
     expect(changed).toMatchObject({ nativeCollapsed: true, nativeAnchor: { connected: true, inside: true, parentTag: 'P', offset: 2 },
       nativeFocus: { connected: true, inside: true, parentTag: 'P', offset: 2 } });
     phase = 'real-Undo-replacement'; await page.keyboard.press('Control+z');
     const restored = await checkpoint(initial); await expectNativeRange();
-    expect(restored.revision).toBe(changed.revision + 1);
-    expect(restored.documentHistory).toEqual({ undoDepth: accepted.documentHistory.undoDepth, redoDepth: 1 });
-    expect(restored.documentSelection).toEqual(selection);
+    expect(restored.sourceMatchesExpected).toBe(true);
     expect(failures).toEqual([]);
+    await previewRead.prove({ visual });
   } catch (error) {
-    console.log(JSON.stringify({ phase: 'windowed-held-math-first-failure', operation: phase, state: lastAtom, failures }));
+    console.log(JSON.stringify({ phase: 'windowed-held-math-first-failure', operation: phase,
+      state: lastAtom ? { sourceLength: lastAtom.sourceLength, phase: lastAtom.phase,
+        nativeCollapsed: lastAtom.nativeCollapsed } : null, failures }));
     throw error;
   } finally { if (held) await held.close(); }
 });
@@ -3634,16 +8032,23 @@ test(`windowed nested table ${timing} PHP history keeps Enter and atomic Backspa
   // Independent source fixtures, never derived from the current document or an edit map.
   const SourceFixture = { baseline: baselineHead + plainTable, replaced: replacedHead + plainTable,
     withBreak: replacedHead + breakTable };
-  const cellCaret = (replacedHead + tableHead + '>   | A').length;
-  const crossSelection = { start: '> - B'.length, end: baselineHead.indexOf('>   After.') + '>   A'.length, direction: 'forward' };
-  const { failures, source, visual } = await openVisual(page, SourceFixture.baseline);
+  const previewRead = createPhasedPreviewOperationTracker([
+    {
+      id: 'lifecycle',
+      groups: [
+        [''], [SourceFixture.baseline], [SourceFixture.replaced], [SourceFixture.baseline],
+        [SourceFixture.replaced], [SourceFixture.withBreak], [SourceFixture.replaced],
+        [SourceFixture.withBreak], [SourceFixture.replaced]
+      ]
+    }
+  ]);
+  const { failures, source, visual } = await openVisual(page, SourceFixture.baseline, undefined, previewRead.beforeFixture);
   const lock = page.locator('.easymde-immersive-preview-lock');
   const sink = page.locator('[data-easymde-preview-html-sink]');
   const cell = visual.locator('blockquote li table tbody td').first();
   let held = null, retainedNodes = null, receipts = null, phase = 'formal-code-baseline', lastAtom = null;
   let expectedSource = SourceFixture.baseline;
   let firstMergeDiagnostic = null;
-  let coldMergeDebug = null;
   let firstCaseError = null;
   const cleanupResults = [];
   const tableDiagnostics = { pendingInput: null, sourceNavigation: null, tableNative: null, tableAdmission: null };
@@ -3787,12 +8192,12 @@ test(`windowed nested table ${timing} PHP history keeps Enter and atomic Backspa
     expectedSource = expected;
     await expectSource(source, expected);
     await expect.poll(async () => {
-      lastAtom = await readWindowedSmokeState(visual, { expectedSource: expected, previewEvidence: formal });
-      return lastAtom.sourceMatchesExpected && (pending === undefined || lastAtom.runtimePending === pending)
-        && (!formal || lastAtom.phase === 'ready' && lastAtom.previewEvidence.formalCurrent);
+      lastAtom = await readWindowedSmokeState(visual, { expectedSource: expected });
+      return lastAtom.sourceMatchesExpected && (pending === undefined || lastAtom.previewLoading === pending)
+        && (!formal || lastAtom.phase === 'ready');
     }).toBe(true);
     expect(lastAtom).toMatchObject({ runtimeEditable: true, documentEditable: true, effectiveEditable: true,
-      contenteditable: 'true', lock: 'false', session: 'ready', windowedControllerCount: 1, runtimeCount: 1 });
+      contenteditable: 'true', lock: 'false', session: 'ready' });
     expect(lastAtom.spacers).toBeGreaterThan(0);
     expect(failures).toEqual([]);
     return lastAtom;
@@ -3817,7 +8222,7 @@ test(`windowed nested table ${timing} PHP history keeps Enter and atomic Backspa
         && native.anchorNode.data === 'B' && native.anchorOffset === 0 && native.focusNode === native.anchorNode && native.focusOffset === 0 };
   });
   const acceptThroughUserLock = async (expected) => {
-    const before = await readCurrentDocumentOwner(page);
+    const before = await readPublicEditorState(page);
     const responsePromise = page.waitForResponse((response) => {
       const url = new URL(response.url());
       if (!(url.pathname.endsWith('/easymde/v1/preview') || url.searchParams.get('rest_route') === '/easymde/v1/preview')) return false;
@@ -3829,15 +8234,15 @@ test(`windowed nested table ${timing} PHP history keeps Enter and atomic Backspa
     await expect(sink).toHaveAttribute('aria-busy', 'false');
     await lock.click(); await expect(lock).toHaveAttribute('aria-pressed', 'false');
     await checkpoint(expected, false, true);
-    const after = await readCurrentDocumentOwner(page);
-    expect(after).toMatchObject({ revision: before.revision, history: before.history });
+    const after = await readPublicEditorState(page);
+    expect({ sourceExact: after.source === before.source, nativeConnected: after.nativeConnected,
+      effectiveEditable: after.effectiveEditable }).toEqual({
+      sourceExact: true, nativeConnected: true, effectiveEditable: true });
     await expectSource(source, expected);
   };
-  const expectEdit = async (expected, revision, undoDepth, redoDepth, caret) => {
+  const expectEdit = async (expected) => {
     const state = await checkpoint(expected, timing === 'held' ? true : undefined);
-    expect(state.revision).toBe(revision);
-    expect(state.documentHistory).toEqual({ undoDepth, redoDepth });
-    expect(state.documentSelection).toEqual({ start: caret, end: caret, direction: 'none' });
+    expect(await nativeCell()).toMatchObject({ inside: true, collapsed: true });
     return state;
   };
   // The shared observer retains refusal codes only; keep the first scalar payload locally, never raw console text.
@@ -3856,31 +8261,25 @@ test(`windowed nested table ${timing} PHP history keeps Enter and atomic Backspa
     const intent = await readWindowedSmokeState(visual, { selector: 'blockquote li p', index: 0, focusIndex: 1 });
     expect(intent).toMatchObject({ nativeCollapsed: false, nativeDirection: 'forward',
       nativeAnchor: { targetContains: true, bodyOffset: 1 }, nativeFocus: { targetContains: true, bodyOffset: 1 } });
-    const debugModule = timing === 'held' ? process.env.EASYMDE_E2E_COLD_MERGE_DEBUG_MODULE : null;
-    if (debugModule) coldMergeDebug = await (await import(debugModule)).start(page, {
-      expectedBundle: process.env.EASYMDE_E2E_EXPECT_EDITOR_BUILD
-    });
     phase = 'real-R-cross-replacement';
-    try { await page.keyboard.type('R'); } finally { if (coldMergeDebug) await coldMergeDebug.close(); }
-    if (coldMergeDebug) console.log(JSON.stringify({ phase: 'cold-merge-private-sample', state: coldMergeDebug.snapshot() }));
+    await page.keyboard.type('R');
     await expectSource(source, SourceFixture.replaced);
-    const replacement = await readCurrentDocumentOwner(page);
-    expect(replacement.selection).toEqual({ start: 6, end: 6, direction: 'none' });
+    const replacement = await readPublicEditorState(page);
+    expect({ sourceExact: replacement.source === SourceFixture.replaced, nativeConnected: replacement.nativeConnected,
+      nativeCollapsed: replacement.nativeCollapsed, editable: replacement.editable }).toEqual({
+      sourceExact: true, nativeConnected: true, nativeCollapsed: true, editable: true });
     phase = 'formal-R-user-lock'; await acceptThroughUserLock(SourceFixture.replaced);
     await expect(visual.locator('blockquote li pre code')).toHaveCount(0);
     phase = 'real-Undo-formal-code-baseline'; await page.keyboard.press('Control+z');
-    const baseline = await checkpoint(SourceFixture.baseline, false, true);
-    expect(baseline.revision).toBe(replacement.revision + 1);
-    expect(baseline.documentHistory).toEqual({ undoDepth: replacement.history.undoDepth - 1, redoDepth: 1 });
-    expect(baseline.documentSelection).toEqual(crossSelection);
+    await checkpoint(SourceFixture.baseline, false, true);
+    expect(await source.inputValue() === SourceFixture.baseline).toBe(true);
     await expect(visual.locator('blockquote li pre code')).toHaveCount(1);
     retainedNodes = await visual.evaluateHandle((surface) => [...surface.childNodes]);
     held = await holdFormalPreview(page);
     phase = 'real-Redo-R-held-PHP'; await page.keyboard.press('Control+Shift+z');
     await expectSource(source, SourceFixture.replaced); await held.waitFor(SourceFixture.replaced);
     const pending = await checkpoint(SourceFixture.replaced, true);
-    expect(pending.revision).toBe(baseline.revision + 1);
-    expect(pending.documentHistory).toEqual({ undoDepth: baseline.documentHistory.undoDepth + 1, redoDepth: 0 });
+    expect(pending.sourceMatchesExpected).toBe(true);
     expect(await visual.evaluate((surface, nodes) => nodes.length === surface.childNodes.length
       && nodes.every((node, index) => node === surface.childNodes[index]), retainedNodes)).toBe(true);
     await expect(visual.locator('blockquote li pre code')).toHaveCount(1);
@@ -3904,7 +8303,7 @@ test(`windowed nested table ${timing} PHP history keeps Enter and atomic Backspa
     await page.mouse.click(tdPoint.x, tdPoint.y);
     expect(await nativeCell()).toMatchObject({ connected: true, inside: true, collapsed: true, prefixText: 'A', prefixBreaks: 0, breaks: 0 });
     phase = 'real-table-Enter'; await page.keyboard.press('Enter');
-    await expectEdit(SourceFixture.withBreak, baseline.revision + 2, baseline.documentHistory.undoDepth + 2, 0, cellCaret + 4);
+    await expectEdit(SourceFixture.withBreak);
     expect(await receipts.evaluate((observer) => observer.events.find((event) => event.inputType === 'insertParagraph')))
       .toEqual({ trusted: true, inputType: 'insertParagraph', collapsed: true, row: 1, column: 0, offset: 1, ranges: 1 });
     if (timing === 'held') {
@@ -3921,22 +8320,23 @@ test(`windowed nested table ${timing} PHP history keeps Enter and atomic Backspa
     expect(await nativeCell()).toMatchObject({ connected: true, inside: true, collapsed: true,
       prefixText: 'A', prefixBreaks: 1, breaks: 1 });
     phase = 'real-atomic-marker-Backspace'; await page.keyboard.press('Backspace');
-    await expectEdit(SourceFixture.replaced, baseline.revision + 3, baseline.documentHistory.undoDepth + 3, 0, cellCaret);
+    await expectEdit(SourceFixture.replaced);
     expect(await nativeCell()).toMatchObject({ connected: true, inside: true, collapsed: true,
       prefixText: 'A', prefixBreaks: 0, breaks: 0 });
     phase = 'real-Undo-marker-Backspace'; await page.keyboard.press('Control+z');
-    await expectEdit(SourceFixture.withBreak, baseline.revision + 4, baseline.documentHistory.undoDepth + 2, 1, cellCaret + 4);
+    await expectEdit(SourceFixture.withBreak);
     phase = 'real-Redo-marker-Backspace'; await page.keyboard.press('Control+Shift+z');
-    await expectEdit(SourceFixture.replaced, baseline.revision + 5, baseline.documentHistory.undoDepth + 3, 0, cellCaret);
+    await expectEdit(SourceFixture.replaced);
     if (held) { phase = 'release-final-table-PHP'; await held.close(); held = null; }
     await checkpoint(SourceFixture.replaced, false, true);
     expect(await nativeCell()).toMatchObject({ connected: true, inside: true, collapsed: true, prefixText: 'A', prefixBreaks: 0, breaks: 0 });
     expect(failures).toEqual([]);
+    await previewRead.prove({ visual });
   } catch (error) {
     firstCaseError = error;
     // Direct page/owner reads never wait for a visual locator that failure teardown removed.
-    const documentOwner = await readCurrentDocumentOwner(page)
-      .then((owner) => ({ available: true, ...owner }), () => ({ available: false }));
+    const documentOwner = await readPublicEditorState(page)
+      .then((owner) => ({ available: true, ...safePublicState(owner) }), () => ({ available: false }));
     const snapshot = await page.evaluate((expected) => {
       const surface = document.querySelector('[data-easymde-preview-html-sink][role="textbox"]');
       const field = document.querySelector('#easymde-source');
@@ -3975,8 +8375,7 @@ test(`windowed nested table ${timing} PHP history keeps Enter and atomic Backspa
       state: { observedAfterFailure: true, documentOwner, snapshot }, preErrorCheckpoint: lastAtom,
       failures, mergeDiagnostic: firstMergeDiagnostic, pendingInputDiagnostic: tableDiagnostics.pendingInput,
       sourceNavigationDiagnostic: tableDiagnostics.sourceNavigation, tableNativeDiagnostic: tableDiagnostics.tableNative,
-      tableAdmissionDiagnostic: tableDiagnostics.tableAdmission, failureScreenshot: screenshot,
-      coldMergeDebug: coldMergeDebug?.snapshot() ?? null }));
+      tableAdmissionDiagnostic: tableDiagnostics.tableAdmission, failureScreenshot: screenshot }));
     throw error;
   } finally {
     const cleanup = async (step, operation) => {
@@ -3986,11 +8385,6 @@ test(`windowed nested table ${timing} PHP history keeps Enter and atomic Backspa
     // Release real withheld responses before any receipt/DOM-handle operation can fail.
     if (held) await cleanup('held-preview-close', () => held.close());
     await cleanup('console-listener-remove', () => page.off('console', captureTableDiagnostic));
-    if (coldMergeDebug) await cleanup('cold-debugger-close', async () => {
-      await coldMergeDebug.close();
-      const state = coldMergeDebug.snapshot();
-      if (!state.detached || (state.targetPauses > 0 && !state.resumed)) throw new Error('cold-merge-debug-cleanup-incomplete');
-    });
     if (receipts) {
       await cleanup('receipt-observer-remove', () => receipts.evaluate((observer) => observer.dispose()));
       await cleanup('receipt-handle-dispose', () => receipts.dispose());
@@ -4019,8 +8413,6 @@ test(`[rich-table-code] windowed ${timing} fixed CODE Enter Backspace history an
   // Independent diagnostic candidates only; none can replace an edit oracle.
   const sourceCandidates = { joinedS0: 'L `AB` R', adjacentOriginalCodeSpansWithoutBR: 'L `A``B` R',
     sameGlyphWiderDelimiter: 'L ``AB`` R', spacedSpans: 'L `A` `B` R' };
-  const caret = { S0: (prefix + 'L `A').length, S1: (prefix + 'L `A`<br>`').length,
-    S1T: (prefix + 'L `A`<br>`T').length, ST: (prefix + 'L `AT').length };
   const { failures, source, visual } = await openVisual(page, SourceFixture.S0);
   const surface = await visual.elementHandle();
   if (!surface) throw new Error('rich-code-surface-unavailable');
@@ -4112,24 +8504,25 @@ test(`[rich-table-code] windowed ${timing} fixed CODE Enter Backspace history an
     if (Object.hasOwn(data, 'errorCode')) observation.errorCode = ['visual-editor-selection-map-failed', 'visual-editor-markdown-merge-ambiguous', 'other'].includes(data.errorCode) ? data.errorCode : 'unrecognized';
   };
   page.on('console', observeDiagnostic);
-  const runtimeState = (key, formal = false) => readWindowedSmokeState(surface, { expectedSource: SourceFixture[key], previewEvidence: formal });
+  const runtimeState = (key) => readWindowedSmokeState(surface, { expectedSource: SourceFixture[key] });
   const checkpoint = async (stage, key, pending, formal = false, point = null, renderRequired = true) => {
     phase = stage; expectedKey = key;
     await expectSource(source, SourceFixture[key]);
     await expect.poll(async () => {
       expect(failures).toEqual([]);
-      const state = await runtimeState(key, formal);
-      return state.sourceMatchesExpected && (pending === undefined || state.runtimePending === pending)
-        && (!formal || state.phase === 'ready' && state.previewEvidence.formalCurrent);
+      const state = await runtimeState(key);
+      return state.sourceMatchesExpected && (pending === undefined || state.previewLoading === pending)
+        && (!formal || state.phase === 'ready');
     }).toBe(true);
-    const state = await runtimeState(key, formal), owner = await readCurrentDocumentOwner(page);
+    const state = await runtimeState(key), owner = await readPublicEditorState(page);
     const render = receipts ? await receipts.evaluate((observer, kind) => observer.safe(kind), key === 'SV' ? 'S0' : key) : null;
     lastObservation = { stage, fixedOracle: key, expectedLength: SourceFixture[key].length, sourceDocLength: state.sourceLength,
-      owner, runtimePending: state.runtimePending, phase: state.phase, render,
+      owner: { sourceLength: owner.sourceLength, editable: owner.effectiveEditable, nativeConnected: owner.nativeConnected },
+      previewLoading: state.previewLoading, phase: state.phase, render,
       presentation: renderRequired ? 'render-checked' : 'history-presentation-observed-not-oracled' };
     console.log(JSON.stringify({ event: 'rich-code-checkpoint', timing, ...lastObservation }));
     expect(state).toMatchObject({ runtimeEditable: true, documentEditable: true, effectiveEditable: true,
-      contenteditable: 'true', lock: 'false', session: 'ready', windowedControllerCount: 1, runtimeCount: 1 });
+      contenteditable: 'true', lock: 'false', session: 'ready' });
     expect(state.spacers).toBeGreaterThan(0);
     if (render) {
       expect(render.current.guardCellsExact).toBe(true);
@@ -4146,7 +8539,7 @@ test(`[rich-table-code] windowed ${timing} fixed CODE Enter Backspace history an
     return { state, owner, render };
   };
   const acceptFixed = async (key) => {
-    const before = await readCurrentDocumentOwner(page);
+    const before = await readPublicEditorState(page);
     await expectSource(source, SourceFixture[key]);
     const responsePromise = page.waitForResponse((response) => {
       const url = new URL(response.url());
@@ -4158,7 +8551,10 @@ test(`[rich-table-code] windowed ${timing} fixed CODE Enter Backspace history an
     await expect(page.locator('[data-easymde-preview-html-sink]')).toHaveAttribute('aria-busy', 'false');
     await lock.click(); await expect(lock).toHaveAttribute('aria-pressed', 'false');
     await checkpoint('formal-' + key, key, false, true);
-    expect(await readCurrentDocumentOwner(page)).toMatchObject({ revision: before.revision, history: before.history });
+    const after = await readPublicEditorState(page);
+    expect({ sourceExact: after.source === before.source, nativeConnected: after.nativeConnected,
+      effectiveEditable: after.effectiveEditable }).toEqual({
+      sourceExact: true, nativeConnected: true, effectiveEditable: true });
   };
   const clickCode = async (text, offset) => {
     const code = cell.locator('code').filter({ hasText: new RegExp('^' + text + '$', 'u') });
@@ -4319,58 +8715,54 @@ test(`[rich-table-code] windowed ${timing} fixed CODE Enter Backspace history an
             anchor: anchorProof, focus: focusProof }, events: events.slice() };
       }, dispose: () => { document.removeEventListener('beforeinput', observe, true); document.removeEventListener('input', observe, true); } };
     });
-    const base = await checkpoint('before-CODE-Enter', 'S0', timing === 'held');
+    await checkpoint('before-CODE-Enter', 'S0', timing === 'held');
     await clickCode('AB', 1);
     expect(await receipts.evaluate((observer) => observer.safe('S0'))).toMatchObject({ nativeConnected: true,
       nativeInsideCell: true, nativeCollapsed: true, nativeInsideCode: true, codeGlyphOffset: 1, prefixBreaks: 0 });
-    const edit = async (stage, key, step, undoDelta, redoDepth, pending, formal = false, point = null, renderRequired = true) => {
-      const state = await checkpoint(stage, key, pending, formal, point, renderRequired);
-      expect(state.owner.revision).toBe(base.owner.revision + step);
-      expect(state.owner.history).toEqual({ undoDepth: base.owner.history.undoDepth + undoDelta, redoDepth });
-      expect(state.owner.selection).toEqual({ start: caret[key], end: caret[key], direction: 'none' });
-      return state;
-    };
+    const edit = async (stage, key, pending, formal = false, point = null, renderRequired = true) =>
+      checkpoint(stage, key, pending, formal, point, renderRequired);
     phase = 'real-CODE-Enter'; await page.keyboard.press('Enter');
-    const entered = await edit('CODE-Enter', 'S1', 1, 1, 0, timing === 'held' ? true : undefined, false, 'right');
+    const entered = await edit('CODE-Enter', 'S1', timing === 'held' ? true : undefined, false, 'right', true);
     expect(entered.render.nativeEnter).toMatchObject({ trusted: true, matchesExpectedText: true,
       matchesExpectedCodeGlyphs: true, expectedBreakCount: true, literalBrVisible: false });
     if (timing === 'held') {
       await held.waitFor(SourceFixture.S1); await checkpoint('real-S1-PHP200-still-withheld', 'S1', true, false, 'right');
     } else {
       await acceptFixed('S1'); await clickCode('B', 0);
-      await edit('formal-S1-real-B0', 'S1', 1, 1, 0, false, true, 'right');
+      await edit('formal-S1-real-B0', 'S1', false, true, 'right', true);
     }
     phase = 'real-CODE-immediate-Backspace'; await page.keyboard.press('Backspace');
-    await edit('CODE-Backspace-fixed-S0', 'S0', 2, 2, 0, timing === 'held' ? true : undefined, false, 'middle');
+    await edit('CODE-Backspace-fixed-S0', 'S0', timing === 'held' ? true : undefined, false, 'middle', true);
     phase = 'real-Undo-CODE-Backspace'; await page.keyboard.press('Control+z');
-    await edit('Undo-CODE-Backspace-fixed-S1', 'S1', 3, 1, 1, timing === 'held' ? true : undefined, false, null, false);
+    await edit('Undo-CODE-Backspace-fixed-S1', 'S1', timing === 'held' ? true : undefined, false, null, false);
     phase = 'real-Redo-CODE-Backspace'; await page.keyboard.press('Control+Shift+z');
-    await edit('Redo-CODE-Backspace-fixed-S0', 'S0', 4, 2, 0, timing === 'held' ? true : undefined, false, null, false);
+    await edit('Redo-CODE-Backspace-fixed-S0', 'S0', timing === 'held' ? true : undefined, false, null, false);
     if (held) { await held.close(); held = null; }
-    await edit('released-formal-S0', 'S0', 4, 2, 0, false, true, 'middle');
+    await edit('released-formal-S0', 'S0', false, true, 'middle', true);
     phase = 'real-Undo-BS-to-S1'; await page.keyboard.press('Control+z');
-    await edit('Undo-BS-formal-S1-right-point', 'S1', 5, 1, 1, false, true, 'right');
+    await edit('Undo-BS-formal-S1-right-point', 'S1', false, true, 'right', true);
     phase = 'real-Undo-CODE-Enter'; await page.keyboard.press('Control+z');
-    await edit('Undo-Enter-formal-S0', 'S0', 6, 0, 2, false, true, 'middle');
+    await edit('Undo-Enter-formal-S0', 'S0', false, true, 'middle', true);
     phase = 'real-Redo-CODE-Enter'; await page.keyboard.press('Control+Shift+z');
     // No click/selection repair here: exercise the previously unverified Redo S1 native CODE boundary.
-    await edit('Redo-Enter-formal-S1-right-point', 'S1', 7, 1, 1, false, true, 'right');
+    await edit('Redo-Enter-formal-S1-right-point', 'S1', false, true, 'right', true);
     phase = 'real-right-span-T'; await page.keyboard.type('T');
-    await edit('right-span-fixed-S1T', 'S1T', 8, 2, 0, undefined, false, 'right-T');
+    await edit('right-span-fixed-S1T', 'S1T', undefined, false, 'right-T', true);
     await acceptFixed('S1T'); await clickCode('TB', 1);
-    await edit('formal-S1T-real-TB-point', 'S1T', 8, 2, 0, false, true, 'right-T');
+    await edit('formal-S1T-real-TB-point', 'S1T', false, true, 'right-T', true);
     phase = 'real-Undo-right-span-T'; await page.keyboard.press('Control+z');
-    await edit('Undo-right-T-formal-S1', 'S1', 9, 1, 1, false, true, 'right');
+    await edit('Undo-right-T-formal-S1', 'S1', false, true, 'right', true);
     phase = 'real-Undo-Enter-for-ST'; await page.keyboard.press('Control+z');
-    await edit('restored-formal-S0-for-ST', 'S0', 10, 0, 2, false, true, 'middle');
+    await edit('restored-formal-S0-for-ST', 'S0', false, true, 'middle', true);
     phase = 'real-original-span-T'; await page.keyboard.type('T');
-    await edit('original-span-fixed-ST', 'ST', 11, 1, 0, undefined, false, 'middle-T');
+    await edit('original-span-fixed-ST', 'ST', undefined, false, 'middle-T', true);
     phase = 'real-Undo-original-span-T'; await page.keyboard.press('Control+z');
-    await edit('final-formal-S0', 'S0', 12, 0, 1, false, true, 'middle');
+    await edit('final-formal-S0', 'S0', false, true, 'middle', true);
     expect(failures).toEqual([]);
   } catch (error) {
     primaryError = error;
-    const owner = await readCurrentDocumentOwner(page).then((value) => ({ available: true, ...value }), () => ({ available: false }));
+    const owner = await readPublicEditorState(page)
+      .then((value) => ({ available: true, ...safePublicState(value) }), () => ({ available: false }));
     const current = await page.evaluate(({ expected, prefix, suffix, candidates }) => {
       const field = document.querySelector('#easymde-source'), active = document.querySelector('[data-easymde-preview-html-sink][role="textbox"]');
       // Actual strings stay private in this evaluation; emit exact-match booleans and a bounded enum only.
@@ -4389,13 +8781,9 @@ test(`[rich-table-code] windowed ${timing} fixed CODE Enter Backspace history an
     const native = receipts ? await receipts.evaluate((observer, kind) => observer.safe(kind), expectedKey)
       .then((value) => ({ available: true, ...value }), () => ({ available: false })) : { available: false };
     // Read once at failure: do not wait for Preview publication or repair the native caret.
-    const finalFormal = await runtimeState(expectedKey, true).then((state) => ({ available: true,
-      phase: state.phase, runtimePending: state.runtimePending, revision: state.revision, sourceLength: state.sourceLength,
-      sourceMatchesFixedOracle: state.sourceMatchesExpected, formalCurrent: state.previewEvidence.formalCurrent,
-      nodesCurrent: state.previewEvidence.nodesCurrent, publisherGeneration: state.previewEvidence.publisherGeneration,
-      publisherSourceRevision: state.previewEvidence.publisherSourceRevision,
-      windowGeneration: state.previewEvidence.windowGeneration, windowSourceRevision: state.previewEvidence.windowSourceRevision }),
-    () => ({ available: false }));
+    const finalFormal = await runtimeState(expectedKey).then((state) => ({ available: true,
+      phase: state.phase, previewLoading: state.previewLoading, sourceLength: state.sourceLength,
+      sourceMatchesFixedOracle: state.sourceMatchesExpected }), () => ({ available: false }));
     console.log(JSON.stringify({ event: 'rich-code-first-failure', timing, operation: phase, fixedOracle: expectedKey,
       owner, current, native, finalFormal, preErrorCheckpoint: lastObservation, failures, diagnostics }));
     throw error;
@@ -4442,8 +8830,6 @@ test(`[rich-table-inline] windowed ${timing} fixed ${inline.kind} Enter Backspac
   const targetSource = Object.fromEntries(Object.entries(bodies).map(([key, body]) => [key, inline.before + body + inline.after]));
   const SourceFixture = Object.fromEntries(Object.entries(targetSource).map(([key, value]) => [key, prefix + value + suffix]));
   SourceFixture.SV = prefix.replace(/^Lead\./u, 'Lead.V') + targetSource.S0 + suffix;
-  const sourceMiddle = prefix.length + inline.before.length + 1;
-  const caret = { S0: sourceMiddle, S1: sourceMiddle + 4, S1T: sourceMiddle + 5, ST: sourceMiddle + 1 };
   const { failures, source, visual } = await openVisual(page, SourceFixture.S0);
   const surface = await visual.elementHandle();
   if (!surface) throw new Error('rich-inline-surface-unavailable');
@@ -4457,26 +8843,24 @@ test(`[rich-table-inline] windowed ${timing} fixed ${inline.kind} Enter Backspac
   let phase = 'initial-formal-S0', expectedKey = 'S0', held = null, retainedNodes = null, receipts = null;
   let primaryError = null, lastObservation = null;
   const healthy = () => { expect(failures).toEqual([]); expect(browserErrors).toEqual({ pageErrors: 0, popups: 0, dialogs: 0 }); };
-  const runtimeState = (key, formal = false) => readWindowedSmokeState(surface, { expectedSource: SourceFixture[key], previewEvidence: formal });
+  const runtimeState = (key) => readWindowedSmokeState(surface, { expectedSource: SourceFixture[key] });
   const checkpoint = async (stage, key, pending, formal = false, point = false, renderRequired = true) => {
     phase = stage; expectedKey = key; healthy();
     await expectSource(source, SourceFixture[key]);
     await expect.poll(async () => {
-      healthy(); const state = await runtimeState(key, formal);
-      return state.sourceMatchesExpected && (pending === undefined || state.runtimePending === pending)
-        && (!formal || state.phase === 'ready' && state.previewEvidence.formalCurrent);
+      healthy(); const state = await runtimeState(key);
+      return state.sourceMatchesExpected && (pending === undefined || state.previewLoading === pending)
+        && (!formal || state.phase === 'ready');
     }).toBe(true);
-    const state = await runtimeState(key, formal), owner = await readCurrentDocumentOwner(page);
+    const state = await runtimeState(key), owner = await readPublicEditorState(page);
     const render = receipts ? await receipts.evaluate((observer, kind) => observer.safe(kind), key === 'SV' ? 'S0' : key) : null;
     lastObservation = { stage, fixedOracle: key, sourceExact: state.sourceMatchesExpected, sourceLength: state.sourceLength,
-      owner, phase: state.phase, runtimePending: state.runtimePending,
-      formal: formal ? { formalCurrent: state.previewEvidence.formalCurrent, nodesCurrent: state.previewEvidence.nodesCurrent,
-        publisherGeneration: state.previewEvidence.publisherGeneration, publisherSourceRevision: state.previewEvidence.publisherSourceRevision,
-        windowGeneration: state.previewEvidence.windowGeneration, windowSourceRevision: state.previewEvidence.windowSourceRevision } : null,
+      owner: { sourceLength: owner.sourceLength, editable: owner.effectiveEditable, nativeConnected: owner.nativeConnected },
+      phase: state.phase, previewLoading: state.previewLoading,
       presentation: renderRequired ? 'render-checked' : 'history-presentation-observed-not-oracled', render, browserErrors: { ...browserErrors } };
     console.log(JSON.stringify({ event: 'rich-inline-checkpoint', kind: inline.kind, timing, ...lastObservation }));
     expect(state).toMatchObject({ runtimeEditable: true, documentEditable: true, effectiveEditable: true, contenteditable: 'true',
-      lock: 'false', session: 'ready', windowedControllerCount: 1, runtimeCount: 1 });
+      lock: 'false', session: 'ready' });
     expect(state.spacers).toBeGreaterThan(0);
     if (render) {
       expect(render.current).toMatchObject({ available: true, tableUnique: true, targetUnique: true, headersExact: true,
@@ -4491,7 +8875,7 @@ test(`[rich-table-inline] windowed ${timing} fixed ${inline.kind} Enter Backspac
     healthy(); return { state, owner, render };
   };
   const acceptFixed = async (key) => {
-    const before = await readCurrentDocumentOwner(page); await expectSource(source, SourceFixture[key]);
+    const before = await readPublicEditorState(page); await expectSource(source, SourceFixture[key]);
     const responsePromise = page.waitForResponse((response) => {
       const url = new URL(response.url());
       if (!(url.pathname.endsWith('/easymde/v1/preview') || url.searchParams.get('rest_route') === '/easymde/v1/preview')) return false;
@@ -4502,7 +8886,10 @@ test(`[rich-table-inline] windowed ${timing} fixed ${inline.kind} Enter Backspac
     await expect(page.locator('[data-easymde-preview-html-sink]')).toHaveAttribute('aria-busy', 'false');
     await lock.click(); await expect(lock).toHaveAttribute('aria-pressed', 'false');
     await checkpoint('formal-' + key, key, false, true);
-    expect(await readCurrentDocumentOwner(page)).toMatchObject({ revision: before.revision, history: before.history });
+    const after = await readPublicEditorState(page);
+    expect({ sourceExact: after.source === before.source, nativeConnected: after.nativeConnected,
+      effectiveEditable: after.effectiveEditable }).toEqual({
+      sourceExact: true, nativeConnected: true, effectiveEditable: true });
   };
   const clickBeforeB = async () => {
     const point = await cell.evaluate((target, selector) => {
@@ -4531,59 +8918,25 @@ test(`[rich-table-inline] windowed ${timing} fixed ${inline.kind} Enter Backspac
       let readyNavigationBaseline = null, rootInputEvents = 0, rootHistoryKeys = 0;
       const readReadyIdentity = () => {
         const container = document.querySelector('#easymde-editor-root');
-        const keys = container ? Object.getOwnPropertyNames(container).filter((key) => key.startsWith('__reactContainer$')) : [];
-        const current = keys.length === 1 ? container[keys[0]]?.stateNode?.current : null;
-        if (current?.tag !== 3) throw new Error('rich-inline-ready-root-unavailable');
-        const fibers = [], owners = new Set(), pending = current.child ? [current.child] : [];
-        while (pending.length) {
-          if (fibers.length >= 8192) throw new Error('rich-inline-ready-fiber-bound');
-          const fiber = pending.pop(); fibers.push(fiber);
-          for (const owner of [fiber.memoizedProps?.documentSession?.document, fiber.memoizedProps?.ordinaryStatus?.document]) if (owner) owners.add(owner);
-          if (fiber.child) pending.push(fiber.child); if (fiber.sibling) pending.push(fiber.sibling);
-        }
-        if (owners.size !== 1) throw new Error('rich-inline-ready-owner-not-unique');
-        const owner = owners.values().next().value;
-        const controllers = fibers.filter(({ memoizedProps: props }) => props?.surface === root && props.documentSession?.document === owner
-          && props.editMap?.version === 1 && ['getAcceptedWindowSnapshot', 'getAcceptedWindowRow', 'requestPreviewAtDocumentEnd',
-            'prepareWindowBlockAdoption'].every((key) => typeof props[key] === 'function'));
-        if (controllers.length !== 1) throw new Error('rich-inline-ready-controller-not-unique');
-        const controller = controllers[0], props = controller.memoizedProps, sourceField = document.querySelector('#easymde-source');
-        const editorRoots = fibers.filter(({ memoizedProps: entry }) => entry?.submissionField === sourceField
-          && typeof entry.nativePublishPort?.read === 'function' && typeof entry.immersiveStrings?.previewEditorLabel === 'string');
-        if (editorRoots.length !== 1) throw new Error('rich-inline-ready-editor-root-not-unique');
-        const runtimes = new Set(); let hooks = 0;
-        for (let hook = editorRoots[0].memoizedState; hook; hook = hook.next) {
-          if (++hooks > 512) throw new Error('rich-inline-ready-hook-bound');
-          const ref = hook.memoizedState, value = ref && Object.hasOwn(ref, 'current') ? ref.current : null;
-          if (value?.surface === root && ['isEditable', 'isTransferPending', 'executeCommand', 'prepareContextMenuDemand']
-            .every((key) => typeof value[key] === 'function')) runtimes.add(value);
-        }
-        if (runtimes.size !== 1) throw new Error('rich-inline-ready-runtime-not-unique');
-        // The pinned Windowed owner declares these as its first two useRef slots; retain their identities too.
-        const transferRef = controller.memoizedState?.memoizedState, leaseRef = controller.memoizedState?.next?.memoizedState;
-        if (!transferRef || !leaseRef || !Object.hasOwn(transferRef, 'current') || !Object.hasOwn(leaseRef, 'current')) {
-          throw new Error('rich-inline-ready-transfer-slots-unavailable');
-        }
-        const runtime = runtimes.values().next().value, value = owner.getValue(), revision = owner.getRevision();
-        const selection = owner.getSelection(), history = owner.getHistoryState(), generated = props.getGeneratedPreviewIdentity();
-        const accepted = props.getAcceptedWindowSnapshot(), nodes = [...root.childNodes];
-        const nodesCurrent = !!accepted && accepted.nodes.length === nodes.length && accepted.nodes.every((node, index) => node === nodes[index]);
-        const formalCurrent = !!generated && !!accepted && nodesCurrent && generated.sourceRevision === revision
-          && accepted.sourceRevision === revision && accepted.revision === generated.revision && accepted.signature === generated.signature
-          && props.previewSnapshot.signature === generated.signature && props.editMap.signature === generated.signature
-          && generated.editMap === props.editMap && accepted.editMap === props.editMap;
-        return { container, controller, owner, session: props.documentSession, runtime, surface: root, transferRef, leaseRef,
-          transfer: transferRef.current, lease: leaseRef.current, value, revision, selectionJSON: JSON.stringify(selection),
-          historyJSON: JSON.stringify(history), selection: { start: selection.start, end: selection.end, direction: selection.direction },
-          history: { undoDepth: history.undoDepth, redoDepth: history.redoDepth }, nodes, nodesCurrent, formalCurrent,
-          fieldMatchesOwner: sourceField instanceof HTMLTextAreaElement && sourceField.value === value,
-          ready: root.getAttribute('data-easymde-preview-phase') === 'ready' && !runtime.isTransferPending()
+        const field = document.querySelector('#easymde-source');
+        const native = getSelection();
+        const point = (node, offset) => ({
+          connected: !!node?.isConnected,
+          nodeType: node?.nodeType ?? null,
+          parentTag: node?.parentElement?.tagName ?? null,
+          offset
+        });
+        const value = field instanceof HTMLTextAreaElement ? field.value : null;
+        return { container, surface: root, field, value, nodes: [...root.childNodes],
+          ready: root.getAttribute('data-easymde-preview-phase') === 'ready'
             && document.querySelector('[data-easymde-session-status]')?.getAttribute('data-easymde-session-status') === 'ready'
-            && root.isConnected && root.isContentEditable && runtime.isEditable() && owner.isEditable(),
-          editMap: props.editMap, generatedRevision: generated?.revision, generatedSourceRevision: generated?.sourceRevision,
-          generatedSignature: generated?.signature, generatedMap: generated?.editMap,
-          acceptedKey: accepted?.key, acceptedRevision: accepted?.revision, acceptedSourceRevision: accepted?.sourceRevision,
-          acceptedSignature: accepted?.signature, acceptedMap: accepted?.editMap, rootInputEvents, rootHistoryKeys };
+            && root.isConnected && root.isContentEditable,
+          nativeConnected: !!native?.anchorNode?.isConnected && !!native?.focusNode?.isConnected
+            && root.contains(native.anchorNode) && root.contains(native.focusNode),
+          nativeCollapsed: native?.isCollapsed === true,
+          selectionJSON: JSON.stringify({ anchor: point(native?.anchorNode, native?.anchorOffset ?? 0),
+            focus: point(native?.focusNode, native?.focusOffset ?? 0) }),
+          rootInputEvents, rootHistoryKeys };
       };
       const target = () => root.querySelector('blockquote li table tbody')?.rows[1]?.cells[1] ?? null;
       const shape = () => {
@@ -4626,35 +8979,21 @@ test(`[rich-table-inline] windowed ${timing} fixed ${inline.kind} Enter Backspac
       return {
         captureReadyNavigation: (expectedSource) => {
           const before = readReadyIdentity(); readyNavigationBaseline = { ...before, expectedSource };
-          return { ready: before.ready, sourceExact: before.value === expectedSource && before.fieldMatchesOwner,
-            noTransfer: before.transfer === null, noLease: before.lease === null,
-            formalCurrent: before.formalCurrent, nodesCurrent: before.nodesCurrent, revision: before.revision,
-            selection: before.selection, history: before.history };
+          return { ready: before.ready, sourceExact: before.value === expectedSource,
+            nativeConnected: before.nativeConnected, nativeCollapsed: before.nativeCollapsed,
+            nodesCurrent: before.nodes.every((node) => node.isConnected) };
         },
-        checkReadyNavigation: (targetCaret) => {
+        checkReadyNavigation: () => {
           if (!readyNavigationBaseline) throw new Error('rich-inline-ready-baseline-unavailable');
           const before = readyNavigationBaseline, after = readReadyIdentity();
-          const retained = after.selectionJSON === before.selectionJSON;
-          const alreadyTarget = after.selection.start === targetCaret && after.selection.end === targetCaret && after.selection.direction === 'none';
           return { readyBeforeAndAfter: before.ready && after.ready,
-            sameOwner: after.owner === before.owner, sameSession: after.session === before.session,
-            sameRuntime: after.runtime === before.runtime, sameSurface: after.surface === before.surface && after.container === before.container,
-            sameWindowedOwner: after.controller === before.controller || after.controller === before.controller.alternate,
-            sameTransferRef: after.transferRef === before.transferRef, sameLeaseRef: after.leaseRef === before.leaseRef,
-            noTransfer: before.transfer === null && after.transfer === null, noLease: before.lease === null && after.lease === null,
+            sameSurface: after.surface === before.surface && after.container === before.container,
             sourceExact: before.value === before.expectedSource && after.value === before.expectedSource,
-            fieldMatchesOwner: before.fieldMatchesOwner && after.fieldMatchesOwner,
-            revisionUnchanged: after.revision === before.revision, fullHistoryUnchanged: after.historyJSON === before.historyJSON,
-            canonicalSelectionAllowed: alreadyTarget || retained,
-            canonicalMode: alreadyTarget ? 'already-target' : retained ? 'retained-pre-navigation' : 'unproved',
-            baselineCanonical: before.selection, currentCanonical: after.selection,
-            formalCurrent: before.formalCurrent && after.formalCurrent, nodesCurrent: before.nodesCurrent && after.nodesCurrent,
+            fieldMatchesOwner: after.field === before.field && after.value === before.value,
+            nativeConnected: before.nativeConnected && after.nativeConnected,
+            nativeCollapsed: before.nativeCollapsed && after.nativeCollapsed,
+            selectionRetained: after.selectionJSON === before.selectionJSON,
             nodesUnchanged: after.nodes.length === before.nodes.length && after.nodes.every((node, index) => node === before.nodes[index]),
-            formalIdentityUnchanged: after.editMap === before.editMap && after.generatedRevision === before.generatedRevision
-              && after.generatedSourceRevision === before.generatedSourceRevision && after.generatedSignature === before.generatedSignature
-              && after.generatedMap === before.generatedMap && after.acceptedKey === before.acceptedKey
-              && after.acceptedRevision === before.acceptedRevision && after.acceptedSourceRevision === before.acceptedSourceRevision
-              && after.acceptedSignature === before.acceptedSignature && after.acceptedMap === before.acceptedMap,
             noInputEvents: after.rootInputEvents === before.rootInputEvents, noHistoryKeys: after.rootHistoryKeys === before.rootHistoryKeys };
         },
         safe: (kind) => {
@@ -4741,80 +9080,81 @@ test(`[rich-table-inline] windowed ${timing} fixed ${inline.kind} Enter Backspac
     expect(await surface.evaluate((root, nodes) => root.childNodes.length === nodes.length
       && nodes.every((node, index) => root.childNodes[index] === node), retainedNodes)).toBe(true);
     if (timing === 'ready') { await held.close(); held = null; await checkpoint('released-formal-S0', 'S0', false, true); }
-    const base = await checkpoint('before-rich-Enter', 'S0', timing === 'held');
+    await checkpoint('before-rich-Enter', 'S0', timing === 'held');
     if (timing === 'ready') {
       phase = 'capture-ready-pre-navigation';
       const before = await receipts.evaluate((observer, expected) => observer.captureReadyNavigation(expected), SourceFixture.S0);
       console.log(JSON.stringify({ event: 'rich-inline-ready-pre-navigation', kind: inline.kind, timing, before }));
-      expect(before).toMatchObject({ ready: true, sourceExact: true, noTransfer: true, noLease: true, formalCurrent: true, nodesCurrent: true });
+      expect(before).toMatchObject({ ready: true, sourceExact: true, nativeConnected: true,
+        nativeCollapsed: true, nodesCurrent: true });
     }
     await clickBeforeB();
     await checkpoint('real-initial-before-B', 'S0', timing === 'held', timing === 'ready', true);
-    expect(await readCurrentDocumentOwner(page)).toMatchObject({ revision: base.owner.revision, history: base.owner.history });
+    const beforeB = await readPublicEditorState(page);
+    expect({ sourceExact: beforeB.source === SourceFixture.S0, nativeConnected: beforeB.nativeConnected,
+      nativeCollapsed: beforeB.nativeCollapsed, effectiveEditable: beforeB.effectiveEditable }).toEqual({
+      sourceExact: true, nativeConnected: true, nativeCollapsed: true, effectiveEditable: true });
     if (timing === 'ready') {
-      const evidence = await receipts.evaluate((observer, targetCaret) => ({ certificate: observer.checkReadyNavigation(targetCaret),
-        native: observer.safe('S0') }), caret.S0);
+      const evidence = await receipts.evaluate((observer) => ({ certificate: observer.checkReadyNavigation(),
+        native: observer.safe('S0') }));
       console.log(JSON.stringify({ event: 'rich-inline-ready-native-first', kind: inline.kind, timing, ...evidence }));
-      expect(evidence.certificate).toMatchObject({ readyBeforeAndAfter: true, sameOwner: true, sameSession: true,
-        sameRuntime: true, sameSurface: true, sameWindowedOwner: true, sameTransferRef: true, sameLeaseRef: true,
-        noTransfer: true, noLease: true, sourceExact: true, fieldMatchesOwner: true, revisionUnchanged: true,
-        fullHistoryUnchanged: true, canonicalSelectionAllowed: true, formalCurrent: true, nodesCurrent: true,
-        nodesUnchanged: true, formalIdentityUnchanged: true, noInputEvents: true, noHistoryKeys: true });
+      expect(evidence.certificate).toMatchObject({ readyBeforeAndAfter: true, sameSurface: true,
+        sourceExact: true, fieldMatchesOwner: true, nativeConnected: true, nativeCollapsed: true,
+        selectionRetained: true, nodesUnchanged: true, noInputEvents: true, noHistoryKeys: true });
       expect(evidence.native).toMatchObject({ nativeConnected: true, nativeInsideCell: true, nativeInsideLeaf: true,
         nativeCollapsed: true, semanticBeforeB: true, bodyGlyphPrefix: 1, prefixBreaks: 0,
         current: { tableUnique: true, targetUnique: true, leafCount: 1, chainExact: true, linkAttributesExact: true,
           leafEditable: true, textExact: true, glyphsExact: true, breakCountExact: true, guardCellsExact: true } });
     } else {
-      // Pending navigation retains its separate strict canonical target requirement.
-      expect(await readCurrentDocumentOwner(page)).toMatchObject({ selection: { start: caret.S0, end: caret.S0, direction: 'none' } });
+      const heldBeforeB = await readPublicEditorState(page);
+      expect({ sourceExact: heldBeforeB.source === SourceFixture.S0, nativeConnected: heldBeforeB.nativeConnected,
+        nativeCollapsed: heldBeforeB.nativeCollapsed }).toEqual({
+        sourceExact: true, nativeConnected: true, nativeCollapsed: true });
     }
-    const edit = async (stage, key, step, undoDelta, redoDepth, pending, formal = false, point = true, renderRequired = true) => {
-      const state = await checkpoint(stage, key, pending, formal, point, renderRequired);
-      expect(state.owner.revision).toBe(base.owner.revision + step);
-      expect(state.owner.history).toEqual({ undoDepth: base.owner.history.undoDepth + undoDelta, redoDepth });
-      expect(state.owner.selection).toEqual({ start: caret[key], end: caret[key], direction: 'none' }); return state;
-    };
+    const edit = async (stage, key, pending, formal = false, point = true, renderRequired = true) =>
+      checkpoint(stage, key, pending, formal, point, renderRequired);
     phase = 'real-rich-Enter'; await page.keyboard.press('Enter');
-    const entered = await edit('rich-Enter-fixed-S1', 'S1', 1, 1, 0, timing === 'held' ? true : undefined);
+    const entered = await edit('rich-Enter-fixed-S1', 'S1', timing === 'held' ? true : undefined);
     expect(entered.render.nativeEnter).toMatchObject({ trusted: true, textExact: true, glyphsExact: true, breakCountExact: true,
       breakInsideLeaf: true, chainExact: true, linkAttributesExact: true });
     if (timing === 'held') { await held.waitFor(SourceFixture.S1); await checkpoint('real-S1-PHP200-still-withheld', 'S1', true, false, true); }
-    else { await acceptFixed('S1'); await clickBeforeB(); await edit('formal-S1-real-before-B', 'S1', 1, 1, 0, false, true); }
+    else { await acceptFixed('S1'); await clickBeforeB(); await edit('formal-S1-real-before-B', 'S1', false, true); }
     phase = 'real-rich-Backspace'; await page.keyboard.press('Backspace');
-    const deleted = await edit('rich-Backspace-fixed-S0', 'S0', 2, 2, 0, timing === 'held' ? true : undefined);
+    const deleted = await edit('rich-Backspace-fixed-S0', 'S0', timing === 'held' ? true : undefined);
     expect(deleted.render.nativeBackspace).toMatchObject({ trusted: true, textExact: true, glyphsExact: true,
       breakCountExact: true, chainExact: true, linkAttributesExact: true });
     phase = 'real-Undo-rich-Backspace'; await page.keyboard.press('Control+z');
-    await edit('Undo-rich-Backspace-fixed-S1', 'S1', 3, 1, 1, timing === 'held' ? true : undefined, false, false, false);
+    await edit('Undo-rich-Backspace-fixed-S1', 'S1', timing === 'held' ? true : undefined, false, false, false);
     phase = 'real-Redo-rich-Backspace'; await page.keyboard.press('Control+Shift+z');
-    await edit('Redo-rich-Backspace-fixed-S0', 'S0', 4, 2, 0, timing === 'held' ? true : undefined, false, false, false);
+    await edit('Redo-rich-Backspace-fixed-S0', 'S0', timing === 'held' ? true : undefined, false, false, false);
     if (held) { await held.close(); held = null; }
-    await edit('released-formal-S0', 'S0', 4, 2, 0, false, true);
+    await edit('released-formal-S0', 'S0', false, true);
     phase = 'real-Undo-BS-to-S1'; await page.keyboard.press('Control+z');
-    await edit('Undo-BS-formal-S1-before-B', 'S1', 5, 1, 1, false, true);
+    await edit('Undo-BS-formal-S1-before-B', 'S1', false, true);
     phase = 'real-Undo-rich-Enter'; await page.keyboard.press('Control+z');
-    await edit('Undo-Enter-formal-S0', 'S0', 6, 0, 2, false, true);
+    await edit('Undo-Enter-formal-S0', 'S0', false, true);
     phase = 'real-Redo-rich-Enter'; await page.keyboard.press('Control+Shift+z');
-    await edit('Redo-Enter-formal-S1-before-B', 'S1', 7, 1, 1, false, true);
+    await edit('Redo-Enter-formal-S1-before-B', 'S1', false, true);
     // No pointer/selection repair between the proven history-restored point and this real input.
     phase = 'real-right-span-T'; await page.keyboard.type('T');
-    const rightTyped = await edit('right-span-fixed-S1T', 'S1T', 8, 2, 0, undefined);
+    const rightTyped = await edit('right-span-fixed-S1T', 'S1T', undefined);
     expect(rightTyped.render.nativeText).toMatchObject({ trusted: true, textExact: true, glyphsExact: true,
       chainExact: true, linkAttributesExact: true });
-    await acceptFixed('S1T'); await clickBeforeB(); await edit('formal-S1T-real-before-B', 'S1T', 8, 2, 0, false, true);
+    await acceptFixed('S1T'); await clickBeforeB(); await edit('formal-S1T-real-before-B', 'S1T', false, true);
     phase = 'real-Undo-right-span-T'; await page.keyboard.press('Control+z');
-    await edit('Undo-right-T-formal-S1', 'S1', 9, 1, 1, false, true);
+    await edit('Undo-right-T-formal-S1', 'S1', false, true);
     phase = 'real-Undo-Enter-for-ST'; await page.keyboard.press('Control+z');
-    await edit('restored-formal-S0-for-ST', 'S0', 10, 0, 2, false, true);
+    await edit('restored-formal-S0-for-ST', 'S0', false, true);
     phase = 'real-original-span-T'; await page.keyboard.type('T');
-    const originalTyped = await edit('original-span-fixed-ST', 'ST', 11, 1, 0, undefined);
+    const originalTyped = await edit('original-span-fixed-ST', 'ST', undefined);
     expect(originalTyped.render.nativeText).toMatchObject({ trusted: true, textExact: true, glyphsExact: true,
       chainExact: true, linkAttributesExact: true });
     phase = 'real-Undo-original-span-T'; await page.keyboard.press('Control+z');
-    await edit('final-formal-S0', 'S0', 12, 0, 1, false, true); healthy();
+    await edit('final-formal-S0', 'S0', false, true); healthy();
   } catch (error) {
     primaryError = error;
-    const owner = await readCurrentDocumentOwner(page).then((value) => ({ available: true, ...value }), () => ({ available: false }));
+    const owner = await readPublicEditorState(page)
+      .then((value) => ({ available: true, ...safePublicState(value) }), () => ({ available: false }));
     const current = await page.evaluate(({ prefix, suffix, expected, variants }) => {
       const field = document.querySelector('#easymde-source'), value = field instanceof HTMLTextAreaElement ? field.value : null;
       const outsideCellExact = value !== null && value.length >= prefix.length + suffix.length && value.startsWith(prefix) && value.endsWith(suffix);
@@ -4823,11 +9163,9 @@ test(`[rich-table-inline] windowed ${timing} fixed ${inline.kind} Enter Backspac
         targetMatchesDeclared: Object.fromEntries(Object.entries(variants).map(([key, candidate]) => [key, target !== null && target === candidate])) };
     }, { prefix, suffix, expected: SourceFixture[expectedKey], variants: targetSource }).catch(() => ({ available: false }));
     const native = receipts ? await receipts.evaluate((observer, key) => observer.safe(key), expectedKey).catch(() => ({ available: false })) : null;
-    const finalFormal = await runtimeState(expectedKey, true).then((state) => ({ available: true, phase: state.phase,
-      runtimePending: state.runtimePending, revision: state.revision, sourceLength: state.sourceLength,
-      formalCurrent: state.previewEvidence.formalCurrent, nodesCurrent: state.previewEvidence.nodesCurrent,
-      publisherGeneration: state.previewEvidence.publisherGeneration, publisherSourceRevision: state.previewEvidence.publisherSourceRevision,
-      windowGeneration: state.previewEvidence.windowGeneration, windowSourceRevision: state.previewEvidence.windowSourceRevision }), () => ({ available: false }));
+    const finalFormal = await runtimeState(expectedKey).then((state) => ({ available: true, phase: state.phase,
+      previewLoading: state.previewLoading, sourceLength: state.sourceLength, sourceMatchesExpected: state.sourceMatchesExpected }),
+      () => ({ available: false }));
     console.log(JSON.stringify({ event: 'rich-inline-first-failure', kind: inline.kind, timing, operation: phase, fixedOracle: expectedKey,
       owner, current, native, finalFormal, preErrorCheckpoint: lastObservation, failures, browserErrors }));
     throw error;
@@ -4858,13 +9196,28 @@ test('windowed rich starting blocks retain exact source through mixed position h
     '~~~python', 'value = 123', '~~~', ''
   ].join('\n');
   const initial = blocks + '\n' + Array.from({ length: 170 }, (_, index) => `Filler ${index + 1}.`).join('\n\n');
-  const { failures, source, visual } = await openVisual(page, initial);
-  await expect.poll(async () => await visual.locator('[data-easymde-preview-window-spacer]').count()).toBeGreaterThan(0);
-  for (const { selector, needle } of [
+  const targets = [
     { selector: 'h1', needle: 'Heading' }, { selector: 'p', needle: 'Opening paragraph.' },
     { selector: 'ul > li', needle: 'outer item' }, { selector: 'blockquote p', needle: 'quoted paragraph' },
     { selector: 'a', needle: 'linked words' }, { selector: 'td', needle: 'cell' }, { selector: 'pre code', needle: 'value = 123' }
-  ]) {
+  ];
+  const previewRead = createPhasedPreviewOperationTracker([
+    {
+      id: 'lifecycle',
+      groups: [
+        [''],
+        [initial],
+        ...targets.flatMap(({ needle }) => {
+          const sourcePoint = initial.indexOf(needle) + 1;
+          const edited = initial.slice(0, sourcePoint) + 'X' + initial.slice(sourcePoint);
+          return [[edited], [initial], [edited], [initial]];
+        })
+      ]
+    }
+  ]);
+  const { failures, source, visual } = await openVisual(page, initial, undefined, previewRead.beforeFixture);
+  await expect.poll(async () => await visual.locator('[data-easymde-preview-window-spacer]').count()).toBeGreaterThan(0);
+  for (const { selector, needle } of targets) {
     const target = visual.locator(selector).first();
     await target.scrollIntoViewIfNeeded();
     const point = await target.evaluate(element => {
@@ -4886,46 +9239,313 @@ test('windowed rich starting blocks retain exact source through mixed position h
     await page.keyboard.type('X');
     expect(failures, `first input ${selector}`).toEqual([]);
     await expectSource(source, edited);
-    await expectWindowedSmokeCheckpoint(visual, failures, `rich-${selector}-X`,
-      { start: sourcePoint + 1, end: sourcePoint + 1, direction: 'none' }, { selector }, 2);
+    await expectWindowedSmokeCheckpoint(visual, failures, `rich-${selector}-X`, { selector }, 2);
     await page.keyboard.press('Control+z');
     expect(failures, `undo ${selector}`).toEqual([]);
     await expectSource(source, initial);
-    await expectWindowedSmokeCheckpoint(visual, failures, `rich-${selector}-Undo`,
-      { start: sourcePoint, end: sourcePoint, direction: 'none' }, { selector }, 1);
+    await expectWindowedSmokeCheckpoint(visual, failures, `rich-${selector}-Undo`, { selector }, 1);
     await page.keyboard.press('Control+Shift+z');
     expect(failures, `redo ${selector}`).toEqual([]);
     await expectSource(source, edited);
-    await expectWindowedSmokeCheckpoint(visual, failures, `rich-${selector}-Redo`,
-      { start: sourcePoint + 1, end: sourcePoint + 1, direction: 'none' }, { selector }, 2);
+    await expectWindowedSmokeCheckpoint(visual, failures, `rich-${selector}-Redo`, { selector }, 2);
     await page.keyboard.press('Backspace');
+    await page.waitForTimeout(100);
     expect(failures, `backspace ${selector}`).toEqual([]);
     await expectSource(source, initial);
-    await expectWindowedSmokeCheckpoint(visual, failures, `rich-${selector}-Backspace`,
-      { start: sourcePoint, end: sourcePoint, direction: 'none' }, { selector }, 1);
+    await expectWindowedSmokeCheckpoint(visual, failures, `rich-${selector}-Backspace`, { selector }, 1);
     expect(failures, `mixed history ${selector}`).toEqual([]);
   }
+  await previewRead.prove({ visual });
 });
 
 test('rich windowed document crosses the rendering threshold, empties and restores exactly', async ({ page }) => {
   test.setTimeout(600_000);
-  const { initial } = richWindowedFixture();
-  const { failures, source, visual } = await openVisual(page, initial);
+  const fixture = richWindowedFixture();
+  const { initial } = fixture;
+  const deletionModel = createRichDeletionModel(fixture);
+  const deletionForward = richWindowedForwardGroups(fixture);
+  const deletionReverse = deletionForward.slice().reverse().map((group) => [...group]);
+  const emptyGroup = [...RICH_EMPTY_ROWS];
+  const typedXGroup = ['X', 'X ', 'X  ', 'X\n', 'X\n\n', ' X', '  X', '\nX', '\n\nX'];
+  const previewRead = createPhasedPreviewOperationTracker([
+    { id: 'fixture', groups: [[''], [initial]] },
+    { id: 'delete', groups: deletionForward },
+    { id: 'empty-continuation', groups: [emptyGroup, typedXGroup, emptyGroup] },
+    { id: 'undo-restore', groups: deletionReverse }
+  ]);
+  const { failures, source, visual, browserMonitor } = await openVisual(page, initial, undefined, previewRead.beforeFixture);
   await expect(visual.locator('[data-easymde-preview-window-spacer]').first()).toBeAttached();
   await visual.locator('p').first().click();
   await page.keyboard.press('Control+End');
   await expect(visual.locator('.easymde-mermaid')).toBeVisible();
+  previewRead.enterPhase('delete');
+  // Fail fast: a blocked Backspace must not spin the bounded loop for minutes.
+  // Only classified monitor codes are reported; no console text or content.
+  const RICH_ZERO_PROGRESS_BACKSPACE_LIMIT = 3;
+  let consecutiveZeroProgressBackspaces = 0;
+  const expectNoUnapprovedBrowserErrors = (label) => {
+    const browserErrors = browserMonitor.summary().issues
+      .filter((issue) => /^(?:console-error:|page-error$|unhandled-rejection$)/u.test(issue));
+    if (browserErrors.length !== 0) {
+      expect(browserErrors, `${label} must not record an unapproved console, page, or rejection error`).toEqual([]);
+    }
+  };
   let emptied = false;
   let deletionKeys = 0;
+  let tableDeleted = false;
   let noSpacerObserved = false;
   let firstNoSpacerAt = null;
   let lastSpacerAt = null;
-  for (; deletionKeys < initial.length * 2 + 200; deletionKeys += 1) {
+  let headerCellsEmptied = false;
+  let emptyHeaderCellsObserved = false;
+  let firstEmptyHeaderAt = null;
+  const RICH_BACKSPACE_PACING_MS = 110;
+  const pressBackspacePaced = async () => {
     await page.keyboard.press('Backspace');
-    expect(failures, `rich deletion ${deletionKeys}`).toEqual([]);
-    await expectLiveSelection(visual);
-    if (deletionKeys % 16 === 0) {
-      const spacerCount = await visual.locator('[data-easymde-preview-window-spacer]').count();
+    await page.waitForTimeout(RICH_BACKSPACE_PACING_MS);
+  };
+  const readRichStepSnapshot = (checkSpacers, includeTable) => page.evaluate(({ checkSpacers: wantSpacers, includeTable: wantTable }) => {
+    const surface = document.querySelector('[data-easymde-preview-html-sink][role="textbox"]');
+    const field = document.querySelector('#easymde-source');
+    const value = field instanceof HTMLTextAreaElement ? field.value : null;
+    const native = getSelection();
+    const range = native?.rangeCount === 1 ? native.getRangeAt(0) : null;
+    const liveSelection = !!surface
+      && !!native?.anchorNode?.isConnected
+      && !!native.focusNode?.isConnected
+      && surface.contains(native.anchorNode)
+      && surface.contains(native.focusNode);
+    const contenteditable = surface?.getAttribute('contenteditable') ?? null;
+    let position = null;
+    if (surface && native && range) {
+      let block = native.anchorNode;
+      while (block && block.parentNode !== surface) block = block.parentNode;
+      if (block && block.parentNode !== surface) block = null;
+      let textOffset = native.anchorNode === surface ? 0 : null;
+      if (block && native.anchorNode && block.contains(native.anchorNode)) {
+        const prefix = surface.ownerDocument.createRange();
+        prefix.selectNodeContents(block);
+        prefix.setEnd(native.anchorNode, native.anchorOffset);
+        textOffset = prefix.toString().length;
+      }
+      position = {
+        connected: liveSelection,
+        collapsed: native.isCollapsed === true,
+        focused: surface.ownerDocument.activeElement === surface,
+        editable: surface.isContentEditable,
+        blockId: block?.getAttribute('data-easymde-visual-block-id') ?? null,
+        blockTag: block?.tagName ?? null,
+        blockLength: block?.textContent.length ?? null,
+        textOffset
+      };
+    }
+    let table = null;
+    if (wantTable && value !== null) {
+      const tables = surface?.querySelectorAll('table') ?? [];
+      if (tables.length === 1) {
+        const tableNode = tables[0];
+        const lines = [];
+        let offset = 0;
+        while (offset <= value.length) {
+          const next = value.indexOf('\n', offset);
+          const end = next < 0 ? value.length : next;
+          lines.push({ start: offset, end, text: value.slice(offset, end).replace(/\r$/u, '') });
+          if (next < 0) break;
+          offset = next + 1;
+        }
+        const isTableLine = (line) => /^ {0,3}\|/u.test(line.text);
+        const cells = (line) => {
+          const text = line.text.trim();
+          if (!text.startsWith('|') || !text.endsWith('|')) return null;
+          return text.slice(1, -1).split('|').map((cell) => cell.trim());
+        };
+        const blocks = [];
+        for (let index = 0; index < lines.length;) {
+          if (!isTableLine(lines[index])) { index += 1; continue; }
+          let end = index + 1;
+          while (end < lines.length && isTableLine(lines[end])) end += 1;
+          blocks.push(lines.slice(index, end)); index = end;
+        }
+        const valid = blocks.filter((block) => block.length >= 3
+          && cells(block[0]) && cells(block[1])?.every((cell) => /^:?-+:?$/u.test(cell))
+          && block.slice(2).every((line) => cells(line)));
+        if (valid.length === 1) {
+          const block = valid[0], header = cells(block[0]), dataRows = block.slice(2).map(cells);
+          const sourceColumnCount = header.length;
+          const sourceRowsValid = block.slice(2).every((line) => cells(line)?.length === sourceColumnCount);
+          const sourceCellsAllEmpty = header.every((cell) => cell === '')
+            && dataRows.every((row) => row.every((cell) => cell === ''));
+          const rows = [...tableNode.rows];
+          const headerRows = tableNode.tHead
+            ? [...tableNode.tHead.rows]
+            : rows.filter((row) => row.cells.length && row.cells[0] instanceof HTMLTableCellElement && row.cells[0].tagName === 'TH');
+          const bodyRows = tableNode.tBodies.length
+            ? [...tableNode.tBodies].flatMap((body) => [...body.rows])
+            : rows.slice(headerRows.length);
+          const headerCells = headerRows.flatMap((row) => [...row.cells]);
+          const bodyCells = bodyRows.flatMap((row) => [...row.cells]);
+          const rowCellCounts = rows.map((row) => row.cells.length);
+          const domColumnCount = headerCells.length / Math.max(1, headerRows.length);
+          const caretInsideTable = !!range && native?.isCollapsed === true && !!native.anchorNode
+            && tableNode.contains(native.anchorNode) && tableNode.contains(native.focusNode);
+          const emptyCell = (cell) => cell.textContent.trim() === '';
+          table = {
+            tableCount: tables.length,
+            sourceStart: block[0].start,
+            sourceEnd: block.at(-1).end,
+            sourceRowCount: block.length,
+            sourceColumnCount,
+            sourceRowsValid,
+            sourceCellsAllEmpty,
+            domRowCount: headerRows.length + bodyRows.length,
+            domColumnCount,
+            domRowCellCounts: rowCellCounts,
+            domShapeMatchesSource: headerRows.length === 1 && bodyRows.length === dataRows.length
+              && Number.isSafeInteger(domColumnCount)
+              && domColumnCount === sourceColumnCount && rowCellCounts.every((count) => count === sourceColumnCount),
+            headerCellCount: headerCells.length,
+            dataCellCount: bodyCells.length,
+            emptyHeaderCellCount: headerCells.filter(emptyCell).length,
+            emptyDataCellCount: bodyCells.filter(emptyCell).length,
+            emptyHeaderCells: headerCells.length > 0 && headerCells.every(emptyCell),
+            emptyDataCells: bodyCells.length > 0 && bodyCells.every(emptyCell),
+            cellsAllEmpty: headerCells.length > 0 && bodyCells.length > 0
+              && headerCells.every(emptyCell) && bodyCells.every(emptyCell),
+            caretInsideTable
+          };
+        }
+      }
+    }
+    const spacerCount = wantSpacers
+      ? (surface?.querySelectorAll('[data-easymde-preview-window-spacer]').length ?? 0)
+      : null;
+    return { value, position, contenteditable, liveSelection, spacerCount, table };
+  }, { checkSpacers, includeTable });
+  let currentSnapshot = null;
+  for (; deletionKeys < initial.length * 2 + 200; deletionKeys += 1) {
+    const beforeSnapshot = currentSnapshot
+      ?? await readRichStepSnapshot(false, !tableDeleted);
+    const tableBefore = tableDeleted ? null : beforeSnapshot.table;
+    if (tableBefore && !tableBefore.sourceRowsValid) throw new Error(`rich-deletion-table-source-invalid:${deletionKeys}`);
+    if (tableBefore?.cellsAllEmpty) {
+      expect({ sourceCellsAllEmpty: tableBefore.sourceCellsAllEmpty,
+        domShapeMatchesSource: tableBefore.domShapeMatchesSource,
+        emptyHeaderCells: tableBefore.emptyHeaderCells, emptyDataCells: tableBefore.emptyDataCells,
+        caretInsideTable: tableBefore.caretInsideTable }).toEqual({ sourceCellsAllEmpty: true,
+        domShapeMatchesSource: true, emptyHeaderCells: true, emptyDataCells: true, caretInsideTable: true });
+      const beforeTableDelete = await source.inputValue();
+      const tableLocator = visual.locator('table').first();
+      await tableLocator.scrollIntoViewIfNeeded();
+      await tableLocator.click({ button: 'right' });
+      expect((await source.inputValue()) === beforeTableDelete,
+        'opening the real table context menu must not change source').toBe(true);
+      const tableSubmenu = page.locator('[data-easymde-context-menu-item="table"]').last();
+      await expect(tableSubmenu).toBeVisible();
+      await tableSubmenu.click();
+      const deleteTable = page.locator('[data-easymde-context-menu-item="delete-table"]').last();
+      await expect(deleteTable).toBeEnabled();
+      await deleteTable.click();
+      await page.waitForTimeout(RICH_BACKSPACE_PACING_MS);
+      expect(failures, `rich deletion ${deletionKeys} table menu`).toEqual([]);
+      expectNoUnapprovedBrowserErrors(`rich deletion ${deletionKeys} table menu`);
+      consecutiveZeroProgressBackspaces = 0;
+      const afterTableDelete = await source.inputValue();
+      const expectedTableDelete = beforeTableDelete.slice(0, tableBefore.sourceStart)
+        + beforeTableDelete.slice(tableBefore.sourceEnd);
+      expect(afterTableDelete === expectedTableDelete,
+        'delete-table must remove exactly the independently identified table interval').toBe(true);
+      expect(beforeTableDelete.slice(0, tableBefore.sourceStart)
+        === expectedTableDelete.slice(0, tableBefore.sourceStart),
+      'delete-table must preserve every byte before the table').toBe(true);
+      expect(beforeTableDelete.slice(tableBefore.sourceEnd)
+        === expectedTableDelete.slice(tableBefore.sourceStart),
+      'delete-table must preserve every byte after the table').toBe(true);
+      expect(await visual.locator('table').count()).toBe(0);
+      await expectLiveSelection(visual);
+      commitRichTableDeletion(deletionModel, afterTableDelete);
+      tableDeleted = true;
+      currentSnapshot = null;
+      continue;
+    }
+    const step = expectedRichDeletionStep(deletionModel);
+    const before = beforeSnapshot.value ?? await source.inputValue();
+    const beforePosition = beforeSnapshot.position;
+    const beforeMatch = richDeletionObservationMatches(step, { source: before, caret: beforePosition }, 'before');
+    if (!beforeMatch.sourceExact || !beforeMatch.caretExact) {
+      expect(beforeMatch).toEqual({ sourceExact: true, caretExact: true });
+    }
+    await pressBackspacePaced();
+    if (failures.length !== 0) {
+      expect(failures, `rich deletion ${deletionKeys}`).toEqual([]);
+    }
+    expectNoUnapprovedBrowserErrors(`rich deletion ${deletionKeys}`);
+    const checkSpacers = deletionKeys % 16 === 0;
+    const afterSnapshot = await readRichStepSnapshot(checkSpacers, !tableDeleted);
+    currentSnapshot = afterSnapshot;
+    if (afterSnapshot.contenteditable !== 'true' || !afterSnapshot.liveSelection) {
+      await expectLiveSelection(visual);
+    }
+    const value = afterSnapshot.value ?? await source.inputValue();
+    const afterPosition = afterSnapshot.position;
+    if (value === before) {
+      consecutiveZeroProgressBackspaces += 1;
+      if (consecutiveZeroProgressBackspaces >= RICH_ZERO_PROGRESS_BACKSPACE_LIMIT) {
+        const caretMoved = JSON.stringify(afterPosition) !== JSON.stringify(beforePosition);
+        throw new Error(`rich-deletion-zero-progress-backspace-bound:key=${deletionKeys}`
+          + `:consecutive=${consecutiveZeroProgressBackspaces}:sourceLength=${value.length}`
+          + `:caretMoved=${caretMoved}:blockTag=${afterPosition?.blockTag ?? 'none'}`);
+      }
+    } else {
+      consecutiveZeroProgressBackspaces = 0;
+    }
+    const afterMatch = richDeletionObservationMatches(step, { source: value, caret: afterPosition }, 'after');
+    if (!afterMatch.sourceExact || !afterMatch.caretExact) {
+      expect(afterMatch).toEqual({ sourceExact: true, caretExact: true });
+    }
+    commitRichDeletion(deletionModel, step, value);
+    const tableAfter = tableDeleted ? null : afterSnapshot.table;
+    if (tableBefore) {
+      if (tableAfter === null) {
+        expect(tableAfter !== null, `rich deletion ${deletionKeys} must retain the translated table structure`).toBe(true);
+      }
+      if (tableAfter) {
+        const rowsOk = tableAfter.domRowCount === tableBefore.domRowCount;
+        const columnsOk = tableAfter.domColumnCount === tableBefore.domColumnCount;
+        const rowCellsOk = tableAfter.domRowCellCounts.length === tableBefore.domRowCellCounts.length
+          && tableAfter.domRowCellCounts.every((count, index) => count === tableBefore.domRowCellCounts[index]);
+        const headerCellsOk = tableAfter.headerCellCount === tableBefore.headerCellCount;
+        const dataCellsOk = tableAfter.dataCellCount === tableBefore.dataCellCount;
+        const headerEmptinessMonotonic = tableAfter.emptyHeaderCellCount >= tableBefore.emptyHeaderCellCount;
+        const dataEmptinessMonotonic = tableAfter.emptyDataCellCount >= tableBefore.emptyDataCellCount;
+        const sourceShapeMatches = tableAfter.domShapeMatchesSource && tableAfter.sourceRowsValid;
+        if (
+          !rowsOk || !columnsOk || !rowCellsOk || !headerCellsOk || !dataCellsOk
+          || !headerEmptinessMonotonic || !dataEmptinessMonotonic || !sourceShapeMatches
+        ) {
+          expect({
+            rows: rowsOk, columns: columnsOk, rowCells: rowCellsOk,
+            headerCells: headerCellsOk, dataCells: dataCellsOk,
+            headerEmptinessMonotonic, dataEmptinessMonotonic, sourceShapeMatches
+          }).toEqual({
+            rows: true, columns: true, rowCells: true, headerCells: true, dataCells: true,
+            headerEmptinessMonotonic: true, dataEmptinessMonotonic: true, sourceShapeMatches: true
+          });
+        }
+        if ((tableBefore.caretInsideTable || tableAfter.cellsAllEmpty) && !tableAfter.caretInsideTable) {
+          expect(tableAfter.caretInsideTable,
+            `rich deletion ${deletionKeys} must keep the native caret inside the table until whole-table deletion`).toBe(true);
+        }
+        if (tableAfter.emptyHeaderCellCount > 0) {
+          emptyHeaderCellsObserved = true;
+          firstEmptyHeaderAt ??= deletionKeys;
+        }
+        if (tableAfter.emptyHeaderCells) {
+          headerCellsEmptied = true;
+        }
+      }
+    }
+    if (checkSpacers) {
+      const spacerCount = afterSnapshot.spacerCount ?? 0;
       if (spacerCount === 0) {
         noSpacerObserved = true;
         firstNoSpacerAt ??= deletionKeys;
@@ -4933,21 +9553,25 @@ test('rich windowed document crosses the rendering threshold, empties and restor
         lastSpacerAt = deletionKeys;
       }
     }
-    const value = await source.inputValue();
-    expect(/^[^\S\r\n]*\.[^\S\r\n]*$/mu.test(value),
-      `rich deletion ${deletionKeys} must not leave an invisible punctuation row`).toBe(false);
-    if (value.trimEnd().length > 9) expect(value.startsWith('# Head')).toBe(true);
+    if (/^[^\S\r\n]*\.[^\S\r\n]*$/mu.test(value)) {
+      expect(/^[^\S\r\n]*\.[^\S\r\n]*$/mu.test(value),
+        `rich deletion ${deletionKeys} must not leave an invisible punctuation row`).toBe(false);
+    }
+    if (value.trimEnd().length > 9 && !value.startsWith('# Head')) {
+      expect(value.startsWith('# Head')).toBe(true);
+    }
     if (value.trim() === '') {
       emptied = true;
       deletionKeys += 1;
       break;
     }
   }
+  expect(tableDeleted, 'The terminal table is deleted through the real context-menu owner').toBe(true);
   expect(emptied, 'actual Backspace reaches empty document').toBe(true);
   await expect(visual.locator('[data-easymde-preview-window-spacer]')).toHaveCount(0);
   const beforeExtraEmptySource = await source.inputValue();
   expect(beforeExtraEmptySource.trim(), 'Deletion must stop at a whitespace-empty representation').toBe('');
-  const beforeExtraOwner = await readCurrentDocumentOwner(page);
+  const beforeExtraOwner = await readPublicEditorState(page);
   const beforeExtraEmptyDom = await page.evaluateHandle(() => {
     const surface = document.querySelector('[data-easymde-preview-html-sink][role="textbox"]');
     const p0 = surface?.firstElementChild ?? null;
@@ -4958,28 +9582,27 @@ test('rich windowed document crosses the rendering threshold, empties and restor
   let afterExtraEmptySource;
   let emptyTransition = null;
   try {
-    await page.keyboard.press('Backspace');
+    await pressBackspacePaced();
     afterExtraEmptySource = await source.inputValue();
     expect(afterExtraEmptySource.trim(), 'The extra Backspace must leave an empty representation').toBe('');
     expect(failures, 'The extra Backspace must not emit a pageerror').toEqual([]);
-    const afterExtraOwner = await readCurrentDocumentOwner(page);
+    const afterExtraOwner = await readPublicEditorState(page);
     const sourceChangingClear = beforeExtraEmptySource !== afterExtraEmptySource;
     if (sourceChangingClear) {
-      expect(beforeExtraEmptySource, 'A source-changing empty clear must start from a non-empty representation').not.toBe('');
-      expect(afterExtraEmptySource, 'A source-changing empty clear must finish at the canonical empty string').toBe('');
-      expect(afterExtraOwner.history).toEqual({
-        undoDepth: beforeExtraOwner.history.undoDepth + 1,
-        redoDepth: beforeExtraOwner.history.redoDepth
-      });
-      expect(afterExtraOwner.revision).toBe(beforeExtraOwner.revision + 1);
+      expect(beforeExtraEmptySource !== '', 'A source-changing empty clear must start from a non-empty representation').toBe(true);
+      expect(afterExtraEmptySource === '', 'A source-changing empty clear must finish at the canonical empty string').toBe(true);
     } else {
-      expect(beforeExtraEmptySource, 'A source-neutral Backspace must be a true source-zero no-op').toBe('');
-      expect(afterExtraEmptySource).toBe('');
-      expect(afterExtraOwner.history).toEqual(beforeExtraOwner.history);
-      expect(afterExtraOwner.revision).toBe(beforeExtraOwner.revision);
+      expect(beforeExtraEmptySource === '', 'A source-neutral Backspace must be a true source-zero no-op').toBe(true);
+      expect(afterExtraEmptySource === '').toBe(true);
+      expect(afterExtraOwner.nativeAnchor, 'A source-zero no-op must not move the native anchor')
+        .toEqual(beforeExtraOwner.nativeAnchor);
+      expect(afterExtraOwner.nativeFocus, 'A source-zero no-op must not move the native focus')
+        .toEqual(beforeExtraOwner.nativeFocus);
     }
-    expect(afterExtraOwner.selection).toEqual({ start: 0, end: 0, direction: 'none' });
-    expect(afterExtraOwner.editable).toBe(true);
+    expect({ effectiveEditable: afterExtraOwner.effectiveEditable, nativeConnected: afterExtraOwner.nativeConnected,
+      nativeCollapsed: afterExtraOwner.nativeCollapsed, lock: afterExtraOwner.lock,
+      session: afterExtraOwner.session }).toMatchObject({ effectiveEditable: true, nativeConnected: true,
+      nativeCollapsed: true, lock: 'false', session: 'ready' });
     const emptyState = await visual.evaluate((surface, before) => {
       const native = surface.ownerDocument.getSelection();
       const directChildren = Array.from(surface.childNodes);
@@ -5024,9 +9647,8 @@ test('rich windowed document crosses the rendering threshold, empties and restor
       p0IdentityPreserved: emptyState.p0Same, brIdentityPreserved: emptyState.brSame,
       directPCount: emptyState.directPCount, directBrCount: emptyState.directBrCount,
       solePBr: emptyState.solePBr, extraNodeCount: emptyState.extraNodeCount, spacerCount: emptyState.spacerCount,
-      historyUndoDelta: afterExtraOwner.history.undoDepth - beforeExtraOwner.history.undoDepth,
-      historyRedoDelta: afterExtraOwner.history.redoDepth - beforeExtraOwner.history.redoDepth,
-      revisionDelta: afterExtraOwner.revision - beforeExtraOwner.revision };
+      nativeConnected: afterExtraOwner.nativeConnected, nativeCollapsed: afterExtraOwner.nativeCollapsed };
+    previewRead.enterPhase('empty-continuation');
     await page.keyboard.type('X');
     await expect.poll(async () => (await source.inputValue()).trim()).toBe('X');
     await page.keyboard.press('Control+z');
@@ -5036,21 +9658,45 @@ test('rich windowed document crosses the rendering threshold, empties and restor
   } finally {
     await beforeExtraEmptyDom.dispose();
   }
+  previewRead.enterPhase('undo-restore');
   let restored = false;
   let undoKeys = 0;
+  const readRichUndoSnapshot = () => page.evaluate(() => {
+    const field = document.querySelector('#easymde-source');
+    const surface = document.querySelector('[data-easymde-preview-html-sink][role="textbox"]');
+    const native = surface?.ownerDocument.getSelection();
+    const liveSelection = !!surface
+      && !!native?.anchorNode?.isConnected
+      && !!native.focusNode?.isConnected
+      && surface.contains(native.anchorNode)
+      && surface.contains(native.focusNode);
+    return {
+      value: field instanceof HTMLTextAreaElement ? field.value : null,
+      editable: surface?.getAttribute('contenteditable') === 'true',
+      liveSelection
+    };
+  });
   for (; undoKeys < initial.length * 2 + 200; undoKeys += 1) {
     await page.keyboard.press('Control+z');
-    expect(failures, `rich restoration ${undoKeys}`).toEqual([]);
-    await expectLiveSelection(visual);
-    if (await source.inputValue() === initial) {
+    if (failures.length !== 0) {
+      expect(failures, `rich restoration ${undoKeys}`).toEqual([]);
+    }
+    const undoSnapshot = await readRichUndoSnapshot();
+    if (!undoSnapshot.editable || !undoSnapshot.liveSelection) {
+      await expectLiveSelection(visual);
+    }
+    const undoValue = undoSnapshot.value ?? await source.inputValue();
+    if (undoValue === initial) {
       restored = true;
       undoKeys += 1;
       break;
     }
   }
   expect(restored, 'all Markdown is restored without source assignment').toBe(true);
+  await previewRead.prove({ visual });
   await test.info().attach('windowed-threshold-history', {
     body: JSON.stringify({ deletionKeys, undoKeys, noSpacerObserved, firstNoSpacerAt, lastSpacerAt,
+      emptyHeaderCellsObserved, headerCellsEmptied, firstEmptyHeaderAt,
       emptyTransition, postExtraUndoExact: true, exactRestoration: restored }),
     contentType: 'application/json'
   });
@@ -5074,6 +9720,7 @@ test(`windowed ${imageKind} image deletion after a terminal diagram preserves st
   const onRequestFailed = (request) => {
     const entry = held.find((candidate) => candidate.request === request);
     if (entry && request.failure()?.errorText === 'net::ERR_ABORTED') {
+      browserMonitors.get(page)?.expectPreviewCancellation(request, 'supersede');
       entry.aborted = true;
       entry.release();
     }
@@ -5171,10 +9818,24 @@ test(`${size} reference image preserves its source while neighboring text is edi
   const paragraph = 'Opening ![dot][pic] tail.';
   const initial = definition + paragraph + '\n\n'
     + Array.from({ length: size === 'windowed' ? 170 : 0 }, (_, index) => `Filler ${index + 1}.`).join('\n\n');
-  const { failures, source, visual } = await openVisual(page, initial);
+  const withX = initial.replace(paragraph, `${paragraph}X`);
+  const minus1 = initial.replace(paragraph, paragraph.slice(0, -1));
+  const minus2 = initial.replace(paragraph, paragraph.slice(0, -2));
+  const continued = initial.replace(paragraph, `${paragraph.slice(0, -2)}Q`);
+  const previewRead = createPhasedPreviewOperationTracker([
+    {
+      id: 'lifecycle',
+      groups: [
+        [''], [initial], [withX], [initial], [withX], [initial],
+        [minus1], [minus2], [continued], [minus2], [continued]
+      ]
+    }
+  ]);
+  const { failures, source, visual } = await openVisual(page, initial, undefined, previewRead.beforeFixture);
   if (size === 'windowed') await expect(visual.locator('[data-easymde-preview-window-spacer]').first()).toBeAttached();
   else await expect(visual.locator('[data-easymde-preview-window-spacer]')).toHaveCount(0);
   const previewGate = timing === 'held' ? await holdFormalPreview(page) : null;
+  let previewGateClosed = false;
   try {
   const row = visual.locator('p').filter({ has: page.locator('img[alt="dot"]') });
   await row.click();
@@ -5217,16 +9878,17 @@ test(`${size} reference image preserves its source while neighboring text is edi
     await expectSource(source, initial.replace(paragraph, paragraph.slice(0, -removed)));
     await expectNativeTail(row, ' tail.'.slice(0, -removed));
   }
-  const continued = initial.replace(paragraph, `${paragraph.slice(0, -2)}Q`);
   await page.keyboard.type('Q');
   await expectSource(source, continued);
   await page.keyboard.press('Control+z');
-  await expectSource(source, initial.replace(paragraph, paragraph.slice(0, -2)));
+  await expectSource(source, minus2);
   await page.keyboard.press('Control+Shift+z');
   await expectSource(source, continued);
   await expectLiveSelection(visual);
   expect(failures).toEqual([]);
-  } finally { await previewGate?.close(); }
+  if (previewGate) { await previewGate.close(); previewGateClosed = true; }
+  await previewRead.prove({ visual });
+  } finally { if (previewGate && !previewGateClosed) await previewGate.close(); }
 });
 }
 }
@@ -5237,7 +9899,12 @@ test(`${size} Unicode reference resolution deletes only the formally rendered im
   const image = '![y][Stra\u00dfe]';
   const initial = `[a\u00a0b]: ${asset}#ghost\n\n[STRASSE]: ${asset}\n\n![x][a b] ${image}\n\n`
     + Array.from({ length: size === 'windowed' ? 170 : 0 }, (_, index) => `Filler ${index + 1}.`).join('\n\n');
-  const { failures, source, visual } = await openVisual(page, initial);
+  const removed = initial.replace(image, '');
+  const expected = initial.replace(image, `${image}X`);
+  const previewRead = createPhasedPreviewOperationTracker([
+    { id: 'lifecycle', groups: [[''], [initial], [removed], [initial], [expected]] }
+  ]);
+  const { failures, source, visual } = await openVisual(page, initial, undefined, previewRead.beforeFixture);
   await expect(visual.locator('img')).toHaveCount(1);
   if (size === 'windowed') await expect(visual.locator('[data-easymde-preview-window-spacer]').first()).toBeAttached();
   else await expect(visual.locator('[data-easymde-preview-window-spacer]')).toHaveCount(0);
@@ -5256,7 +9923,6 @@ test(`${size} Unicode reference resolution deletes only the formally rendered im
   // the pending Preview, so its caret proof is the immediate key's exact offset.
   if (size === 'full') await expectCaretAfterImage(visual, 'y');
   await page.keyboard.type('X');
-  const expected = initial.replace(image, `${image}X`);
   try { await expectSource(source, expected); }
   catch (error) {
     const actual = await source.inputValue();
@@ -5271,6 +9937,7 @@ test(`${size} Unicode reference resolution deletes only the formally rendered im
   await expect(visual.locator('p').filter({ has: page.locator('img[alt="y"]') })).toContainText('X');
   await expectLiveSelection(visual);
   expect(failures).toEqual([]);
+  await previewRead.prove({ visual });
 });
 }
 
@@ -5280,7 +9947,12 @@ test(`${size} repeated rendered images delete the native target reference rather
   const target = '![dot][second]';
   const initial = `[first]: ${asset}\n\n[second]: ${asset}\n\n![dot][first] ${target}\n\n`
     + Array.from({ length: size === 'windowed' ? 170 : 0 }, (_, index) => `Filler ${index + 1}.`).join('\n\n');
-  const { failures, source, visual } = await openVisual(page, initial);
+  const removed = initial.replace(target, '');
+  const continued = initial.replace(target, `${target}X`);
+  const previewRead = createPhasedPreviewOperationTracker([
+    { id: 'lifecycle', groups: [[''], [initial], [removed], [initial], [continued]] }
+  ]);
+  const { failures, source, visual } = await openVisual(page, initial, undefined, previewRead.beforeFixture);
   await expect(visual.locator('img')).toHaveCount(2);
   if (size === 'windowed') await expect(visual.locator('[data-easymde-preview-window-spacer]').first()).toBeAttached();
   else await expect(visual.locator('[data-easymde-preview-window-spacer]')).toHaveCount(0);
@@ -5298,25 +9970,61 @@ test(`${size} repeated rendered images delete the native target reference rather
   // Do not click after Undo. The exact insertion proves history restored the
   // second reference's caret, including when its Windowed DOM is still pending.
   await page.keyboard.type('X');
-  await expectSource(source, initial.replace(target, `${target}X`));
+  await expectSource(source, continued);
   await expect(visual.locator('img')).toHaveCount(2);
   await expect(visual.locator('p').filter({ has: page.locator('img') })).toContainText('X');
   await expectLiveSelection(visual);
   expect(failures).toEqual([]);
+  await previewRead.prove({ visual });
 });
 }
 
 test('windowed document deletes rapidly at its end and keeps editing', async ({ page }) => {
   test.setTimeout(300_000);
-  const initial = windowedMarkdown('Tail one.\n\nTail two.\n\nTail three.\n\n');
+  const tail = 'Tail one.\n\nTail two.\n\nTail three.\n\n';
+  const initial = windowedMarkdown(tail);
+  const rapidBuilder = createRichFixtureBuilder();
+  rapidBuilder.block('paragraph', 'Head.', 'P', { deletion: 'ascii-grapheme', plainText: true });
+  rapidBuilder.separator();
+  for (let index = 0; index < 170; index += 1) {
+    rapidBuilder.block('paragraph', `Filler ${index + 1}.`, 'P', { deletion: 'ascii-grapheme', plainText: true });
+    rapidBuilder.separator();
+  }
+  rapidBuilder.block('paragraph', 'Tail one.', 'P', { deletion: 'ascii-grapheme', plainText: true });
+  rapidBuilder.separator();
+  rapidBuilder.block('paragraph', 'Tail two.', 'P', { deletion: 'ascii-grapheme', plainText: true });
+  rapidBuilder.separator();
+  rapidBuilder.block('paragraph', 'Tail three.', 'P', { deletion: 'ascii-grapheme', plainText: true });
+  rapidBuilder.separator();
+  const rapidFixture = rapidBuilder.build();
+  const rapidForward = richWindowedForwardGroups(rapidFixture);
+  const rapidReverse = rapidForward.slice().reverse().map((group) => [...group]);
+  const rapidAllDeleteStates = [...new Set(rapidForward.flat())];
+  const rapidWithZStates = [...new Set(rapidAllDeleteStates.flatMap((candidate) => {
+    const trimmed = candidate.trimEnd();
+    const withoutTrailingNewlines = candidate.replace(/\n+$/u, '');
+    return [
+      candidate + 'Z',
+      ...RICH_TRAILING_ENDINGS.map((ending) => `${trimmed}Z${ending}`),
+      ...RICH_TRAILING_ENDINGS.map((ending) => `${withoutTrailingNewlines}Z${ending}`)
+    ];
+  }))];
+  const previewRead = createPhasedPreviewOperationTracker([
+    { id: 'fixture', groups: [[''], [initial]] },
+    { id: 'rapid-delete', groups: rapidForward },
+    { id: 'type-z-and-undo', groups: [rapidAllDeleteStates, rapidWithZStates, rapidAllDeleteStates] },
+    { id: 'undo-restore', groups: [rapidWithZStates, ...rapidReverse] }
+  ]);
   const { failures, source, visual } = await openWindowedVisual(
     page,
-    'Tail one.\n\nTail two.\n\nTail three.\n\n'
+    tail,
+    previewRead.beforeFixture
   );
   await visual.locator('p').first().click();
   await page.keyboard.press('Control+End');
   // Real state, not a timeout: the document end is now the mounted window.
   await expect(visual.locator('p').filter({ hasText: 'Tail three.' })).toBeVisible();
+  previewRead.enterPhase('rapid-delete');
   for (let step = 0; step < 100; step += 1) {
     await page.keyboard.press('Backspace');
     expect(failures, `rapid deletion ${step}`).toEqual([]);
@@ -5330,12 +10038,14 @@ test('windowed document deletes rapidly at its end and keeps editing', async ({ 
   const deleted = initial.trimEnd().length - after.trimEnd().length;
   expect(deleted).toBeGreaterThanOrEqual(90);
   await expectLiveSelection(visual);
+  previewRead.enterPhase('type-z-and-undo');
   await page.keyboard.type('Z');
   await expect.poll(async () => (await source.inputValue()).trimEnd())
     .toBe(`${after.trimEnd()}Z`);
   await page.keyboard.press('Control+z');
   await expect.poll(async () => await source.inputValue()).toBe(after);
   await expectLiveSelection(visual);
+  previewRead.enterPhase('undo-restore');
   let restored = false;
   for (let step = 0; step < 140; step += 1) {
     await page.keyboard.press('Control+z');
@@ -5348,6 +10058,7 @@ test('windowed document deletes rapidly at its end and keeps editing', async ({ 
   }
   expect(restored, 'rapid windowed deletion restores exact source').toBe(true);
   expect(failures).toEqual([]);
+  await previewRead.prove({ visual });
 });
 
 test('windowed document deletes stepwise at its end with undo restoring it', async ({ page }) => {
@@ -5448,6 +10159,30 @@ test('windowed document deletes a trailing code fence and stays editable', async
 
 test('windowed mixed document crosses block boundaries while deleting and stays editable', async ({ page }) => {
   test.setTimeout(300_000);
+  const mixedBuilder = createRichFixtureBuilder();
+  mixedBuilder.block('paragraph', 'Head.', 'P', { deletion: 'ascii-grapheme', plainText: true });
+  mixedBuilder.separator();
+  for (let index = 0; index < 170; index += 1) {
+    mixedBuilder.block('paragraph', `Filler ${index + 1}.`, 'P', { deletion: 'ascii-grapheme', plainText: true });
+    mixedBuilder.separator();
+  }
+  mixedBuilder.block('heading', '## Tail heading', 'H2', { deletion: 'known-heading', headingPrefix: '## ' });
+  mixedBuilder.separator();
+  mixedBuilder.block('list', '- outer\n  - inner\n  - inner two', 'UL', { deletion: 'known-list' });
+  mixedBuilder.separator();
+  mixedBuilder.block('quote', '> quoted tail line', 'BLOCKQUOTE', { deletion: 'known-quote', quotePrefix: '> ' });
+  mixedBuilder.separator();
+  mixedBuilder.block('code', '```js\nconst tailValue = 1;\n```', 'PRE', { deletion: 'known-code-fence' });
+  mixedBuilder.separator();
+  mixedBuilder.block('table', '| left | right |\n| --- | --- |\n| a | b |', 'TABLE', { deletion: 'known-table-menu' });
+  mixedBuilder.separator();
+  mixedBuilder.block('mixed-paragraph',
+    'MATHMIX $x^2$ [link](https://example.com) ![dot](/wp-content/plugins/easymde/assets/images/easymde-editor-icon.png).',
+    'P', { deletion: 'known-mixed-paragraph' });
+  mixedBuilder.separator();
+  mixedBuilder.block('atom', '~~~mermaid\ngraph TD\n  A --> B\n~~~', 'DIV', { deletion: 'known-whole-atom', atom: 'mermaid' });
+  mixedBuilder.separator('\n');
+  const mixedFixture = mixedBuilder.build();
   const tail = [
     '## Tail heading',
     '',
@@ -5474,7 +10209,81 @@ test('windowed mixed document crosses block boundaries while deleting and stays 
     ''
   ].join('\n');
   const initial = windowedMarkdown(tail);
-  const { failures, source, visual } = await openWindowedVisual(page, tail);
+  expect(mixedFixture.initial === initial).toBe(true);
+  const mixedGroupsByLength = new Map();
+  const addMixedState = (candidate) => {
+    const key = candidate.trimEnd().length;
+    let bucket = mixedGroupsByLength.get(key);
+    if (!bucket) {
+      bucket = new Set();
+      mixedGroupsByLength.set(key, bucket);
+    }
+    bucket.add(candidate);
+  };
+  for (const group of richWindowedForwardGroups(mixedFixture)) {
+    for (const candidate of group) addMixedState(candidate);
+  }
+  for (let length = initial.length; length >= 0; length -= 1) {
+    const raw = initial.slice(0, length);
+    for (const ending of RICH_TRAILING_ENDINGS) addMixedState(raw + ending);
+  }
+  const mixedForward = [...mixedGroupsByLength.entries()]
+    .sort((left, right) => right[0] - left[0])
+    .map(([, bucket]) => [...bucket]);
+  const mixedReverse = mixedForward.slice().reverse().map((group) => [...group]);
+  const mixedDeleteStates = [...new Set(mixedForward.flat())];
+  const mixedWithZStates = [...new Set(mixedDeleteStates.flatMap((candidate) => {
+    const trimmed = candidate.trimEnd();
+    const variants = [
+      candidate + 'Z',
+      ...RICH_TRAILING_ENDINGS.map((ending) => `${trimmed}Z${ending}`)
+    ];
+    const tableMatch = trimmed.match(/(\|[^\n]*\|\n\| --- \| --- \|\n\|[^\n]*\|)$/u);
+    if (tableMatch) {
+      const tablePrefix = trimmed.slice(0, trimmed.length - tableMatch[1].length);
+      const [headLine, dividerLine, bodyLine] = tableMatch[1].split('\n');
+      const withCellZ = (line) => {
+        const cells = line.slice(1, -1).split('|');
+        const nextLines = [];
+        for (let cellIndex = 0; cellIndex < cells.length; cellIndex += 1) {
+          const value = cells[cellIndex].trim();
+          const replacements = value === '' ? [' Z ', ' Z', 'Z ', 'Z'] : [` ${value}Z `];
+          for (const replacement of replacements) {
+            const updated = [...cells];
+            updated[cellIndex] = replacement;
+            nextLines.push(`|${updated.join('|')}|`);
+          }
+        }
+        return nextLines;
+      };
+      for (const nextHead of withCellZ(headLine)) {
+        for (const ending of RICH_TRAILING_ENDINGS) {
+          variants.push(`${tablePrefix}${nextHead}\n${dividerLine}\n${bodyLine}${ending}`);
+        }
+      }
+      for (const nextBody of withCellZ(bodyLine)) {
+        for (const ending of RICH_TRAILING_ENDINGS) {
+          variants.push(`${tablePrefix}${headLine}\n${dividerLine}\n${nextBody}${ending}`);
+        }
+      }
+    }
+    if (trimmed.endsWith('\n```')) {
+      const bodyPrefix = trimmed.slice(0, -4);
+      for (const ending of RICH_TRAILING_ENDINGS) {
+        variants.push(`${bodyPrefix}Z\n\`\`\`${ending}`);
+      }
+    }
+    return variants;
+  }))];
+  const headingQ = initial.replace('## Tail heading', '## Tail headingQ');
+  const previewRead = createPhasedPreviewOperationTracker([
+    { id: 'fixture', groups: [[''], [initial]] },
+    { id: 'mixed-delete', groups: mixedForward },
+    { id: 'type-z', groups: [mixedDeleteStates, mixedWithZStates] },
+    { id: 'undo-restore', groups: [mixedWithZStates, ...mixedReverse] },
+    { id: 'heading-q', groups: [[initial], [headingQ]] }
+  ]);
+  const { failures, source, visual } = await openWindowedVisual(page, tail, previewRead.beforeFixture);
   await visual.locator('p').first().click();
   await page.keyboard.press('Control+End');
   // Real state, not a timeout: the document end is now the mounted window and
@@ -5486,6 +10295,7 @@ test('windowed mixed document crosses block boundaries while deleting and stays 
       && selection?.anchorNode === surface.lastElementChild;
   })).toBe(true);
   expect(failures, 'mixed document opened').toEqual([]);
+  previewRead.enterPhase('mixed-delete');
   for (let step = 0; step < 150; step += 1) {
     await page.keyboard.press('Backspace');
     expect(failures, `mixed delete ${step}`).toEqual([]);
@@ -5499,6 +10309,7 @@ test('windowed mixed document crosses block boundaries while deleting and stays 
   expect(after.includes('A --> B')).toBe(false);
   expect(after.includes('MATHMIX')).toBe(false);
   await expectLiveSelection(visual);
+  previewRead.enterPhase('type-z');
   await page.keyboard.type('Z');
   await expect.poll(async () => {
     const current = (await source.inputValue()).trimEnd();
@@ -5509,6 +10320,7 @@ test('windowed mixed document crosses block boundaries while deleting and stays 
       && isSubsequence(current.replace('Z', ''), before);
   }, { timeout: 15_000 }).toBe(true);
   expect(failures, 'mixed typing').toEqual([]);
+  previewRead.enterPhase('undo-restore');
   let restored = false;
   for (let step = 0; step < 200; step += 1) {
     await page.keyboard.press('Control+z');
@@ -5519,12 +10331,14 @@ test('windowed mixed document crosses block boundaries while deleting and stays 
     }
   }
   expect(restored).toBe(true);
+  previewRead.enterPhase('heading-q');
   await visual.locator('h2').filter({ hasText: 'Tail heading' }).click();
   await page.keyboard.press('End');
   await page.keyboard.type('Q');
   await expect.poll(async () => (await source.inputValue()).includes('## Tail headingQ'),
     { timeout: 15_000 }).toBe(true);
   expect(failures).toEqual([]);
+  await previewRead.prove({ visual });
 });
 
 for (const shortcut of [
@@ -5656,7 +10470,16 @@ test('held same-source formal Preview preserves active Chromium composition and 
   const definition = '[pic]: /wp-content/plugins/easymde/assets/images/easymde-editor-icon.png\n\n';
   const paragraph = 'Opening ![dot][pic] tail.';
   const initial = definition + paragraph + '\n\n';
-  const { failures, source, visual } = await openVisual(page, initial);
+  const withX = initial.replace(paragraph, paragraph + 'X');
+  const committed = initial.replace(paragraph, paragraph + '你');
+  const withQ = initial.replace(paragraph, paragraph + 'Q');
+  const previewRead = createPhasedPreviewOperationTracker([
+    {
+      id: 'lifecycle',
+      groups: [[''], [initial], [withX], [initial], [withX], [initial], [committed], [initial], [withQ]]
+    }
+  ]);
+  const { failures, source, visual } = await openVisual(page, initial, undefined, previewRead.beforeFixture);
   const gate = await holdFormalPreview(page);
   const input = await context.newCDPSession(page);
   let gateClosed = false;
@@ -5706,14 +10529,14 @@ test('held same-source formal Preview preserves active Chromium composition and 
       });
       expect(failures).toEqual([]);
       await input.send('Input.insertText', { text: '你' });
-      const committed = initial.replace(paragraph, paragraph + '你');
       await expectSource(source, committed);
       await page.keyboard.press('Control+z');
       await expectSource(source, initial);
       await page.keyboard.type('Q');
-      await expectSource(source, initial.replace(paragraph, paragraph + 'Q'));
+      await expectSource(source, withQ);
       await expectLiveSelection(visual);
       expect(failures).toEqual([]);
+      await previewRead.prove({ visual });
     } finally { await draft.dispose(); }
   } finally {
     if (!gateClosed) await gate.close();
@@ -5745,12 +10568,10 @@ function shortFenceFixture(position) {
 for (const fence of shortFenceRepresentatives) {
   test(`[short-stage] full ${fence.pacing} ${fence.position} fence ${fence.marker}${fence.language || '(no-language)'} lifecycle`, async ({ page }) => {
     const initial = shortFenceFixture(fence.position), opener = fence.marker + fence.language;
-    const stage = await openShortStage(page, 'full', initial);
     const emptySlot = initial.replace('Slot', '');
     const literal = (text) => initial.replace('Slot', text.replace(/[`~]/gu, '\\$&'));
-    // Full's existing shortcut contract canonicalises the visual fence family
-    // to backticks. Source-owner cases below instead retain literal markers.
-    const marker = '`'.repeat(fence.marker.length);
+    // Full's shortcut contract preserves the typed fence marker family (backticks or tildes).
+    const marker = fence.marker;
     const code = (body) => initial.replace('Slot', `${marker}${fence.language}\n${body}\n${marker}`);
     // At absolute start, the new fence's row domain and its following two-LF
     // separator occupy this fixed fixture slot. Preserve the following source
@@ -5763,51 +10584,93 @@ for (const fence of shortFenceRepresentatives) {
         ? initial.slice(0, initial.indexOf('Slot'))
         : initial.replace('Slot', '  ');
     const continued = initial.replace('Slot', 'Z');
-    const continuedCaret = initial.indexOf('Slot') + 'Z'.length;
     const branched = initial.replace('Slot', 'ZB');
+    const openerForward = Array.from({ length: opener.length }, (_, index) => [literal(opener.slice(0, index + 1))]);
+    const openerReverse = openerForward.slice().reverse().map((group) => [...group]);
+    const fenceForwardGroups = [
+      [initial],
+      [emptySlot],
+      ...openerForward,
+      ...openerReverse,
+      [emptySlot],
+      ...openerForward,
+      [code('')], [code('a')], [code('ab')], [code('a')], [code('a\n')], [code('a\nx')],
+      [code('a\nxy')], [code('a\nQ')], [code('')], [exited], [continued]
+    ];
+    const fenceReverseGroups = fenceForwardGroups.slice().reverse().map((group) => [...group]);
+    const previewRead = createPhasedPreviewOperationTracker([
+      { id: 'fixture', groups: [[''], [initial]] },
+      { id: 'forward', groups: fenceForwardGroups },
+      { id: 'undo-initial', groups: fenceReverseGroups },
+      { id: 'redo-continued', groups: fenceForwardGroups },
+      { id: 'branch-b', groups: [[continued], [branched], [continued]] },
+      { id: 'final-undo', groups: fenceReverseGroups }
+    ]);
+    const stage = await openShortStage(page, 'full', initial, previewRead.beforeFixture);
     const allowed = new Set([initial, emptySlot, exited, continued]);
     for (let end = 1; end <= opener.length; end += 1) allowed.add(literal(opener.slice(0, end)));
-    for (const body of ['', 'a', 'ab', 'a\n', 'a\nx', 'a\nxy', 'a\nQ']) allowed.add(code(body));
-    const probe = await startShortStageProbe(page, stage, allowed);
+    const codeBodies = ['', 'a', 'ab', 'a\n', 'a\nx', 'a\nxy', 'a\nQ'];
+    for (const body of codeBodies) allowed.add(code(body));
+    const slotStart = initial.indexOf('Slot');
+    const codeBlockOrdinal = fence.position === 'start' ? 0 : fence.position === 'middle' ? 1 : 3;
+    const openingFence = `${marker}${fence.language}\n`;
+    const codeDescriptorsBySource = shortStageUniqueCodeDeclarations(codeBodies.map((body) => {
+      const bodyStart = slotStart + openingFence.length;
+      const bodyEnd = bodyStart + body.length;
+      return {
+        source: code(body),
+        descriptor: Object.freeze({
+          blockOrdinal: codeBlockOrdinal,
+          codeOrdinal: 0,
+          body,
+          bodyStart,
+          bodyEnd,
+          closingFenceLfStart: bodyEnd,
+          closingFenceLfEnd: bodyEnd + 1,
+          sourceBlockStart: slotStart,
+          sourceBlockEnd: bodyEnd + 1 + marker.length
+        })
+      };
+    }));
+    const probe = await startShortStageProbe(page, stage, allowed, { codeDescriptorsBySource });
     const frames = await startShortStageFrames(page, stage.surface);
     let phase = 'real-slot-selection', failed = true;
     let exitOwnership = null;
-    const assertContinuedCaret = (point, owner) => {
-      expect(owner.selection, `${point}: document caret must follow the fixed fixture Z, not a paragraph separator`).toEqual({
-        start: continuedCaret, end: continuedCaret, direction: 'none'
-      });
-      if (point === 'after-final-Redo-before-B' && owner.fenceSnapshot?.pendingProof?.transferPending === true) {
-        // The proven pre-B shape: the history transfer is still rendering over
-        // the retained owned presentation, its canonical expectation names the
-        // current revision and source, and the native presentation is exactly
-        // the range that transfer recorded (collapsed or ranged). The retained
-        // DOM is the old presentation, so the accepted Z Text is not required
-        // until the transfer settles.
-        const pendingProof = { ...owner.fenceSnapshot.pendingProof };
-        delete pendingProof.presentationCurrent;
-        expect(pendingProof, `${point}: pending history transfer must retain its own proved presentation and current canonical lease`).toEqual({
-          transferPending: true,
-          runtimeEditable: false,
-          transferKind: 'history',
-          transferPhase: 'rendering',
-          expectationRevisionCurrent: true,
-          expectationValueCurrent: true,
-          retainedOwnedSameLedger: true,
-          retainedOwnerSameToken: true,
-          nativeMatchesLease: true
-        });
-        return;
+    const readZState = async (text) => stage.visual.evaluate((surface, expected) => {
+      const paragraphs = [...surface.querySelectorAll(':scope > p')].filter((p) => p.textContent === expected);
+      const paragraph = paragraphs.length === 1 ? paragraphs[0] : null;
+      const native = surface.ownerDocument.getSelection();
+      let caretOffset = null;
+      if (paragraph && native?.anchorNode && paragraph.contains(native.anchorNode)) {
+        const prefix = surface.ownerDocument.createRange();
+        prefix.selectNodeContents(paragraph);
+        prefix.setEnd(native.anchorNode, native.anchorOffset);
+        caretOffset = prefix.toString().length;
       }
-      expect(owner.fenceSnapshot.nativeState, `${point}: native caret must remain usable at the current Z paragraph Text1`).toEqual({
-        paragraphCount: 1, paragraphConnected: true, surfaceConnected: true, editable: true,
-        singleZText: true, collapsed: true, anchorIsCurrentZText: true, focusIsCurrentZText: true,
-        anchorConnectedInside: true, focusConnectedInside: true, anchorOffset: 1, focusOffset: 1
-      });
+      return { paragraphCount: paragraphs.length, paragraphConnected: !!paragraph?.isConnected,
+        paragraphDirect: !!paragraph && paragraph.parentNode === surface,
+        paragraphEditable: !!paragraph && paragraph.isContentEditable,
+        bodyLength: paragraph?.textContent.length ?? null, caretOffset,
+        collapsed: native?.isCollapsed === true,
+        connected: !!native?.anchorNode?.isConnected && !!native?.focusNode?.isConnected
+          && !!surface.contains(native.anchorNode) && !!surface.contains(native.focusNode),
+        focused: surface.ownerDocument.activeElement === surface,
+        surfaceConnected: surface.isConnected, editable: surface.isContentEditable,
+        lock: surface.ownerDocument.querySelector('.easymde-immersive-preview-lock')?.getAttribute('aria-pressed') };
+    }, text);
+    const assertContinuedCaret = async (point, expectedText) => {
+      const state = await readZState(expectedText);
+      expect(state, `${point}: native caret must follow the fixed fixture text`).toMatchObject({
+        paragraphCount: 1, paragraphConnected: true, paragraphDirect: true, paragraphEditable: true,
+        bodyLength: expectedText.length, caretOffset: expectedText.length, collapsed: true, connected: true,
+        focused: true, surfaceConnected: true, editable: true, lock: 'false' });
+      return state;
     };
     try {
       frames.stage(phase);
       await stage.visual.locator('p').filter({ hasText: /^Slot$/u }).click({ position: { x: 3, y: 3 } });
       await probe.press('Home'); await probe.press('Shift+End');
+      previewRead.enterPhase('forward');
       phase = 'unfinished-opener-and-characterwise-clear'; frames.stage(phase);
       await probe.type(opener);
       if (fence.pacing === 'normal') await expectSource(stage.source, literal(opener));
@@ -5883,10 +10746,21 @@ for (const fence of shortFenceRepresentatives) {
           followingIntact: true, followingTailIntact: true });
       }
       await probe.type('Z'); await expectSource(stage.source, continued);
-      const continuedSnapshot = await readCurrentDocumentOwner(page, null, { ownership: exitOwnership });
-      assertContinuedCaret('after-Z', continuedSnapshot);
+      await assertContinuedCaret('after-Z', 'Z');
       if (exitOwnership) {
-        const continuedState = continuedSnapshot.fenceSnapshot.continuedState;
+        const continuedState = await exitOwnership.evaluate((owned) => {
+          const children = Array.from(owned.surface.childNodes);
+          const indexes = owned.following.map((node) => children.indexOf(node));
+          const p = owned.paragraph, native = owned.surface.ownerDocument.getSelection();
+          return { sameParagraph: !!p && p.isConnected && p.parentNode === owned.surface,
+            independentZParagraph: !!p && p.childNodes.length === 1 && p.firstChild instanceof Text
+              && p.firstChild.data === 'Z',
+            nativeTextEnd: !!p && native?.isCollapsed === true && native.anchorNode === p.firstChild
+              && native.focusNode === p.firstChild && native.anchorOffset === 1 && native.focusOffset === 1,
+            followingIntact: owned.following.every((node) => node.isConnected && node.parentNode === owned.surface)
+              && indexes.every((index, at) => index >= 0 && (at === 0 || index > indexes[at - 1])),
+            followingTailIntact: owned.following.length > 0 && children.at(-1) === owned.following.at(-1) };
+        });
         expect(continuedState).toEqual({ sameParagraph: true, independentZParagraph: true, nativeTextEnd: true,
           followingIntact: true, followingTailIntact: true });
       }
@@ -5895,76 +10769,48 @@ for (const fence of shortFenceRepresentatives) {
       const history = shortStageHistoryLedger(observation.rows, initial, allowed);
       await probe.freeze();
       phase = 'natural-group-Undo-Redo-and-continued-editing'; frames.stage(phase);
-      await shortStageReplayHistory(page, stage, probe, history, 'undo', history.baseline);
+      previewRead.enterPhase('undo-initial');
+      await shortStageReplayHistory(page, stage, probe, history, 'undo');
       await expectSource(stage.source, initial);
-      await shortStageReplayHistory(page, stage, probe, history, 'redo', history.latest);
+      previewRead.enterPhase('redo-continued');
+      await shortStageReplayHistory(page, stage, probe, history, 'redo');
       await expectSource(stage.source, continued);
-      // Continue directly at the native caret returned by the final history
-      // group; do not click, focus or replace its selection from JavaScript.
-      const caret = await readCurrentDocumentOwner(page, null, { ownership: exitOwnership, pendingProof: true });
-      assertContinuedCaret('after-final-Redo-before-B', caret);
+      const forwardBranchCursor = shortStageHistoryCursorSnapshot(history);
+      await assertContinuedCaret('after-final-Redo-before-B', 'Z');
+      previewRead.enterPhase('branch-b');
       await probe.type('B'); await expectSource(stage.source, branched);
-      const committed = await readCurrentDocumentOwner(page, null,
-        { ownership: exitOwnership, pendingProof: true, nativeBranch: true });
-      expect(committed.selection, 'after-B-source-commit: canonical caret must follow the committed ZB').toEqual({
-        start: continuedCaret + 1, end: continuedCaret + 1, direction: 'none'
-      });
-      const branchEndForm = (branch, side) => {
-        if (!branch || branch.singleZBText !== true || branch.collapsed !== true) return null;
-        if (branch[`${side}IsCurrentZBText`] === true && branch[`${side}Offset`] === 2) return 'text';
-        if (branch[`${side}IsCurrentZBParagraph`] === true && branch[`${side}Offset`] === 1) return 'element';
-        return null;
-      };
       await expect.poll(async () => {
-        const settling = await readCurrentDocumentOwner(page, null,
-          { ownership: exitOwnership, pendingProof: true, nativeBranch: true });
-        const branch = settling.fenceSnapshot.branchState;
-        return settling.selection.start === continuedCaret + 1
-          && settling.selection.end === continuedCaret + 1
-          && settling.selection.direction === 'none'
-          && branch.paragraphCount === 1 && branch.paragraphConnected === true
+        const branch = await readZState('ZB');
+        return branch.paragraphCount === 1 && branch.paragraphConnected === true
           && branch.paragraphDirect === true && branch.paragraphEditable === true
-          && branch.surfaceConnected === true && branch.editable === true
-          && branch.anchorConnectedInside === true && branch.focusConnectedInside === true
-          && branchEndForm(branch, 'anchor') !== null
-          && branchEndForm(branch, 'focus') !== null
-          && settling.fenceSnapshot.pendingProof?.transferPending === false
-          && settling.fenceSnapshot.pendingProof?.presentationCurrent === true;
-      }, { message: 'B must commit and naturally settle into the current accepted ZB Text2', timeout: 15000 }).toBe(true);
-      const accepted = await readCurrentDocumentOwner(page, null,
-        { ownership: exitOwnership, pendingProof: true, nativeBranch: true });
-      expect(accepted.selection, 'after-B-accepted: canonical caret must remain on the accepted ZB').toEqual({
-        start: continuedCaret + 1, end: continuedCaret + 1, direction: 'none'
-      });
-      expect(accepted.fenceSnapshot.pendingProof?.transferPending,
-        'after-B-accepted: the accepted read must not carry a pending transfer').toBe(false);
-      expect(accepted.fenceSnapshot.pendingProof?.presentationCurrent,
-        'after-B-accepted: the accepted presentation must be the current source').toBe(true);
-      const acceptedBranch = accepted.fenceSnapshot.branchState;
-      expect(acceptedBranch, `after-B-accepted: raw native/branch snapshot ${JSON.stringify(acceptedBranch)}`).toMatchObject({
+          && branch.bodyLength === 2 && branch.caretOffset === 2 && branch.collapsed === true
+          && branch.connected === true && branch.focused === true && branch.editable === true && branch.lock === 'false';
+      }, { message: 'B must commit and settle at the exact native ZB caret', timeout: 15000 }).toBe(true);
+      const accepted = await readZState('ZB');
+      expect(accepted, 'after-B-accepted: the current DOM must be exactly one editable ZB paragraph').toMatchObject({
         paragraphCount: 1, paragraphConnected: true, paragraphDirect: true, paragraphEditable: true,
-        surfaceConnected: true, editable: true, singleZBText: true, collapsed: true,
-        anchorConnectedInside: true, focusConnectedInside: true
+        bodyLength: 2, caretOffset: 2, collapsed: true, connected: true, focused: true,
+        surfaceConnected: true, editable: true, lock: 'false'
       });
-      expect(branchEndForm(acceptedBranch, 'anchor'),
-        `after-B-accepted anchor: ${JSON.stringify(acceptedBranch)}`).not.toBeNull();
-      expect(branchEndForm(acceptedBranch, 'focus'),
-        `after-B-accepted focus: ${JSON.stringify(acceptedBranch)}`).not.toBeNull();
       await probe.press('Control+z'); await expectSource(stage.source, continued);
-      await shortStageReplayHistory(page, stage, probe, history, 'undo', history.baseline);
+      shortStageRestoreHistoryCursor(history, forwardBranchCursor);
+      previewRead.enterPhase('final-undo');
+      await shortStageReplayHistory(page, stage, probe, history, 'undo');
       await expectSource(stage.source, initial);
       await expect(stage.visual).not.toHaveAttribute('aria-busy', 'true');
       await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       probe.guard();
+      await previewRead.prove({ visual: stage.visual });
       console.log(JSON.stringify({ phase: 'short-stage-fence-complete', position: fence.position,
         pacing: fence.pacing, family: fence.marker[0] === '~' ? 'tilde' : 'backtick', markerLength: fence.marker.length,
-        language: fence.language, naturalHistoryGroups: history.ledger.size - 1, sourceExact: true, realOSIME: false }));
+        language: fence.language, observedSourceTransitions: Math.max(0, history.states.length - 1), sourceExact: true, realOSIME: false }));
       failed = false;
     } catch (error) {
       console.log(JSON.stringify({ phase: 'short-stage-fence-first-failure', operation: phase,
         position: fence.position, pacing: fence.pacing, markerLength: fence.marker.length,
-        owner: await readCurrentDocumentOwner(page), failures: stage.failures,
-        firstObservation: (await probe.snapshot()).failure }));
+        state: await readPublicEditorState(page).then((state) => ({ sourceLength: state.sourceLength,
+          editable: state.effectiveEditable, nativeConnected: state.nativeConnected, lock: state.lock })),
+        failures: stage.failures, firstObservation: (await probe.snapshot()).failure }));
       throw error;
     } finally {
       try { await exitOwnership?.dispose(); } finally {
@@ -5998,19 +10844,25 @@ for (const sourceCase of [
       frames.stage(phase);
       await stage.surface.click(); await probe.press('Control+Home');
       await probe.press('ArrowDown'); await probe.press('Home');
-      const beforeX = await readCurrentDocumentOwner(page);
-      expect(beforeX.selection, 'X: real keyboard caret must be the fixed body point').toEqual({
-        start: point, end: point, direction: 'none'
+      const beforeX = await readPublicEditorState(page);
+      expect({ nativeConnected: beforeX.nativeConnected, nativeCollapsed: beforeX.nativeCollapsed,
+        effectiveEditable: beforeX.effectiveEditable }).toMatchObject({
+        nativeConnected: true, nativeCollapsed: true, effectiveEditable: true });
+      expect(beforeX.nativeAnchor, 'X: real keyboard caret must be the fixed source-body point').toMatchObject({
+        connected: true, lineText: '  value = 1  ', linePrefix: '  '
       });
       await probe.type('X'); await expectSource(stage.source, typed);
       await probe.press('Backspace'); await expectSource(stage.source, initial);
       phase = 'literal-closing-marker-delete-and-retype'; frames.stage(phase);
       await probe.press('Control+Home'); await probe.press('ArrowDown'); await probe.press('ArrowDown');
       await probe.press('Home');
-      const beforeClosingDelete = await readCurrentDocumentOwner(page);
-      expect(beforeClosingDelete.selection,
-        'closing marker: real keyboard caret must be the fixed marker start').toEqual({
-        start: closing, end: closing, direction: 'none'
+      const beforeClosingDelete = await readPublicEditorState(page);
+      expect({ nativeConnected: beforeClosingDelete.nativeConnected, nativeCollapsed: beforeClosingDelete.nativeCollapsed,
+        effectiveEditable: beforeClosingDelete.effectiveEditable }).toMatchObject({
+        nativeConnected: true, nativeCollapsed: true, effectiveEditable: true });
+      expect(beforeClosingDelete.nativeAnchor,
+        'closing marker: real keyboard caret must be the fixed source-marker start').toMatchObject({
+        connected: true, lineText: `  ${marker}`, linePrefix: '  '
       });
       await probe.press('Delete'); await expectSource(stage.source, shorterMarker);
       await probe.type(marker[0]); await expectSource(stage.source, initial);
@@ -6023,10 +10875,9 @@ for (const sourceCase of [
       const history = shortStageHistoryLedger(observation.rows, initial, allowed);
       await probe.freeze();
       phase = 'source-natural-group-Undo-Redo'; frames.stage(phase);
-      const sourceHistory = { mode: 'source', expectedRedo: [] };
-      await shortStageReplayHistory(page, stage, probe, history, 'undo', history.baseline, null, sourceHistory);
+      await shortStageReplayHistory(page, stage, probe, history, 'undo');
       await expectSource(stage.source, initial);
-      await shortStageReplayHistory(page, stage, probe, history, 'redo', null, null, sourceHistory);
+      await shortStageReplayHistory(page, stage, probe, history, 'redo');
       await expectSource(stage.source, newline);
       await probe.type('Q'); await expectSource(stage.source, newline + 'Q');
       await probe.press('Control+z'); await expectSource(stage.source, newline);
@@ -6038,8 +10889,9 @@ for (const sourceCase of [
       failed = false;
     } catch (error) {
       console.log(JSON.stringify({ phase: 'short-stage-literal-fence-first-failure', mode, operation: phase,
-        owner: await readCurrentDocumentOwner(page), failures: stage.failures,
-        firstObservation: (await probe.snapshot()).failure }));
+        state: await readPublicEditorState(page).then((state) => ({ sourceLength: state.sourceLength,
+          editable: state.effectiveEditable, nativeConnected: state.nativeConnected })),
+        failures: stage.failures, firstObservation: (await probe.snapshot()).failure }));
       throw error;
     } finally {
       await finishShortStageObservation(probe, frames, `short-source-${mode}-${marker[0] === '~' ? 'tilde' : 'backtick'}`, failed);
@@ -6051,7 +10903,10 @@ test('[short-stage] full reverse P-H2-P mouse range keeps unselected ends and na
   const initial = 'Before.\n\nalphaX\n\n## Heading\n\nYzeta\n\nAfter.';
   const replaced = 'Before.\n\nalphaMzeta\n\nAfter.';
   const continued = 'Before.\n\nalphaMQzeta\n\nAfter.';
-  const stage = await openShortStage(page, 'full', initial);
+  const previewRead = createPhasedPreviewOperationTracker([
+    { id: 'lifecycle', groups: [[''], [initial], [replaced], [continued], [replaced], [initial], [replaced], [continued]] }
+  ]);
+  const stage = await openShortStage(page, 'full', initial, previewRead.beforeFixture);
   const allowed = new Set([initial, replaced, continued]);
   const probe = await startShortStageProbe(page, stage, allowed);
   const frames = await startShortStageFrames(page, stage.surface);
@@ -6093,19 +10948,23 @@ test('[short-stage] full reverse P-H2-P mouse range keeps unselected ends and na
     const history = shortStageHistoryLedger(observation.rows, initial, allowed);
     await probe.freeze();
     phase = 'cross-block-natural-Undo-Redo'; frames.stage(phase);
-    await shortStageReplayHistory(page, stage, probe, history, 'undo', history.baseline);
+    await shortStageReplayHistory(page, stage, probe, history, 'undo');
     await expectSource(stage.source, initial);
-    await shortStageReplayHistory(page, stage, probe, history, 'redo', history.latest);
+    await shortStageReplayHistory(page, stage, probe, history, 'redo');
     await expectSource(stage.source, continued);
     await expect(stage.visual).not.toHaveAttribute('aria-busy', 'true');
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     probe.guard();
+    await previewRead.prove({ visual: stage.visual });
     console.log(JSON.stringify({ phase: 'short-stage-backward-cross-block-complete', native,
-      sourceExact: true, owner: await readCurrentDocumentOwner(page) }));
+      sourceExact: true, state: await readPublicEditorState(page).then((state) => ({ sourceLength: state.sourceLength,
+        editable: state.effectiveEditable, nativeConnected: state.nativeConnected })) }));
     failed = false;
   } catch (error) {
     console.log(JSON.stringify({ phase: 'short-stage-backward-cross-block-first-failure', operation: phase,
-      owner: await readCurrentDocumentOwner(page), firstObservation: (await probe.snapshot()).failure }));
+      state: await readPublicEditorState(page).then((state) => ({ sourceLength: state.sourceLength,
+        editable: state.effectiveEditable, nativeConnected: state.nativeConnected })),
+      firstObservation: (await probe.snapshot()).failure }));
     throw error;
   } finally {
     await finishShortStageObservation(probe, frames, 'short-backward-cross-block', failed);
@@ -6115,9 +10974,19 @@ test('[short-stage] full reverse P-H2-P mouse range keeps unselected ends and na
 test('[short-stage-background] dirty article survives focus loss and natural autosave', async ({ page }) => {
   test.setTimeout(780_000);
   const initial = '# 背景\n\nAlpha 开始。\n\nBeta 结束。';
+  const afterJia = initial + '甲';
   const afterForeground = initial + '甲A';
   const afterReturn = afterForeground + '乙B';
   const afterDelete = afterForeground + '乙';
+  const previewRead = createPhasedPreviewOperationTracker([
+    {
+      id: 'lifecycle',
+      groups: [
+        [''], [initial], [afterJia], [afterForeground],
+        [afterDelete], [afterReturn], [afterDelete], [afterReturn], [afterDelete]
+      ]
+    }
+  ]);
   const caseDeadline = Date.now() + 720_000;
   const boundedTimeout = (desired) => {
     const remaining = caseDeadline - Date.now();
@@ -6173,7 +11042,10 @@ test('[short-stage-background] dirty article survives focus loss and natural aut
   try {
     await page.bringToFront();
     focusOverrideSessions.push(await disableFocusOverride(page));
-    stage = await openShortStage(page, 'full', initial, () => installBackgroundProbe(page));
+    stage = await openShortStage(page, 'full', initial, async (context) => {
+      previewRead.beforeFixture(context);
+      await installBackgroundProbe(page);
+    });
     frames = await startShortStageFrames(page, stage.surface, { retainStages: true });
     stageProbe = await startShortStageProbe(page, stage,
       [initial, initial + '甲', afterForeground, afterReturn, afterDelete], { backgroundObservation: true, frames });
@@ -6363,6 +11235,7 @@ test('[short-stage-background] dirty article survives focus loss and natural aut
     await guard();
     await expectSource(stage.source, afterDelete);
     expect(stage.failures).toEqual([]);
+    await previewRead.prove({ visual: stage.visual });
     finalProbe = await readProbe();
     coverage.sessionReady = finalProbe.sessionStatus === 'ready';
     const unmet = [];
@@ -6411,6 +11284,9 @@ test('[short-stage-lock] active Preview lock survives natural cycles and resumes
   const initial = '# 锁\n\nAlpha 开始。\n\nBeta 结束。';
   const typed = initial + 'V';
   const resumed = typed + 'X';
+  const previewRead = createPhasedPreviewOperationTracker([
+    { id: 'lifecycle', groups: [[''], [initial], [typed], [resumed], [typed], [resumed]] }
+  ]);
   const sink = page.locator('[data-easymde-preview-html-sink]');
   const lock = page.locator('.easymde-immersive-preview-lock');
   const caseDeadline = Date.now() + 480_000;
@@ -6501,7 +11377,10 @@ test('[short-stage-lock] active Preview lock survives natural cycles and resumes
   };
   try {
     await page.bringToFront();
-    stage = await openShortStage(page, 'full', initial, () => installBackgroundProbe(page));
+    stage = await openShortStage(page, 'full', initial, async (context) => {
+      previewRead.beforeFixture(context);
+      await installBackgroundProbe(page);
+    });
     frames = await startShortStageFrames(page, stage.surface, { retainStages: true });
     stageProbe = await startShortStageProbe(page, stage, [initial, typed, resumed],
       { backgroundObservation: true, allowLocked: true, frames });
@@ -6515,7 +11394,7 @@ test('[short-stage-lock] active Preview lock survives natural cycles and resumes
     await waitForAutosave(dirtyAt);
     await waitForCycle('pre-lock', false);
     await expectSource(stage.source, typed);
-    const beforeLock = await readCurrentDocumentOwner(page);
+    const beforeLock = await readPublicEditorState(page);
     await guard();
     await stageProbe.beginQuiet('user-lock-toggle');
     await lock.click();
@@ -6537,9 +11416,16 @@ test('[short-stage-lock] active Preview lock survives natural cycles and resumes
       contenteditable: surface.getAttribute('contenteditable')
     }));
     expect(afterCycleSink.effectiveEditable, 'lock must survive a natural cycle').toBe(false);
-    const afterCycle = await readCurrentDocumentOwner(page);
-    expect(afterCycle.revision, 'natural cycle must not change revision while locked').toBe(beforeLock.revision);
-    expect(afterCycle.history, 'natural cycle must not change history while locked').toEqual(beforeLock.history);
+    const afterCycle = await readPublicEditorState(page);
+    expect(afterCycle.source === typed, 'natural cycle must not change the exact source while locked').toBe(true);
+    expect({
+      sourceInputConnected: afterCycle.sourceInputConnected,
+      sourceEditable: afterCycle.sourceEditable,
+      visualEditable: afterCycle.visualEditable,
+      nativeConnected: afterCycle.nativeConnected
+    }, 'natural cycle must retain a connected editable source owner').toMatchObject({
+      sourceInputConnected: true, sourceEditable: true, visualEditable: false, nativeConnected: true
+    });
     await expectSource(stage.source, typed);
     await stageProbe.beginQuiet('locked-negative-inputs');
     for (const key of ['Q', 'Backspace', 'Enter']) {
@@ -6547,9 +11433,9 @@ test('[short-stage-lock] active Preview lock survives natural cycles and resumes
       if (key === 'Q') await page.keyboard.type('Q');
       else await page.keyboard.press(key);
       await expectSource(stage.source, typed);
-      const lockedOwner = await readCurrentDocumentOwner(page);
-      expect(lockedOwner.revision, `${key}: locked revision must not change`).toBe(beforeLock.revision);
-      expect(lockedOwner.history, `${key}: locked history must not change`).toEqual(beforeLock.history);
+      const lockedOwner = await readPublicEditorState(page);
+      expect(lockedOwner.source === typed, `${key}: locked source must not change`).toBe(true);
+      expect(lockedOwner.nativeConnected, `${key}: locked keys must not strand the native Selection`).toBe(true);
       await guard({ locked: true });
     }
     await stageProbe.endQuiet();
@@ -6574,6 +11460,7 @@ test('[short-stage-lock] active Preview lock survives natural cycles and resumes
     await expectSource(stage.source, resumed);
     await guard();
     expect(stage.failures).toEqual([]);
+    await previewRead.prove({ visual: stage.visual });
   } catch (error) {
     primaryError = error;
     throw error;

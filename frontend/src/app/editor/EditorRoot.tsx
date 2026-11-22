@@ -265,6 +265,21 @@ function isSupersededVisualTransferFailure(code: string): boolean {
   ].includes(code);
 }
 
+/**
+ * Preview-render failures where canonical Markdown edits remain intact and the
+ * formal server Preview request failed (for example HTTP 500 or a network
+ * outage). Keeping visual editing unlocked with a visible privacy-safe alert
+ * and without scheduling an automatic retry lets the user continue editing or
+ * undo without losing input.
+ */
+function isPreviewRenderFailureCode(code: string): boolean {
+  return [
+    'visual-editor-markdown-paste-render-failed',
+    'visual-editor-native-preview-failed',
+    'visual-editor-history-preview-failed'
+  ].includes(code);
+}
+
 type VisualCanonicalChangeContext = Readonly<{
   revision?: number;
   selection: EditorContextSnapshot['selection'];
@@ -852,7 +867,8 @@ export function schedulePreviewWithDocumentEndPin(
   request: PreviewRequest,
   onHistoryPendingChange?: (pending: boolean) => void,
   onHistorySelectionRestored?: () => void,
-  sourceSelection?: PreviewSourceSelection
+  sourceSelection?: PreviewSourceSelection,
+  immediate = true
 ): Readonly<{
   onSelectionRestored: () => void;
   release: () => void;
@@ -867,7 +883,7 @@ export function schedulePreviewWithDocumentEndPin(
       request.signature,
       sourceSelection
     );
-    runtime.session.schedule(request, true);
+    runtime.session.schedule(request, immediate);
   } catch (error) {
     try {
       lease?.release();
@@ -1495,17 +1511,6 @@ export function EditorRoot(props: EditorRootProps) {
     null
   );
   const lastVisualFailureRef = useRef<string | null>(null);
-  /**
-   * Bounded proof that the next transfer failure may belong to a native
-   * history navigation. Keydown/beforeinput for Ctrl/Cmd+Z stamps the value
-   * the history operation starts from; any non-history input clears it again.
-   * A history failure is answered by Root without leaving Visual editing,
-   * while ordinary input and paste failures keep the existing exit path.
-   */
-  const visualHistoryNavigationRef = useRef<{
-    at: number;
-    valueBefore: string | null;
-  } | null>(null);
   const applyVisualCanonicalChangeRef =
     useRef<ApplyVisualCanonicalChange | null>(null);
   const acceptedWindowSnapshotKeyRef = useRef<number | null>(null);
@@ -1515,6 +1520,10 @@ export function EditorRoot(props: EditorRootProps) {
     controller: AbortController;
   } | null>(null);
   const previewRevisionRef = useRef(0);
+  const latestPreviewRequestRef = useRef<Readonly<{
+    markdown: string;
+    signature: string;
+  }> | null>(null);
   const previewAppearanceRef = useRef(props.appearance.state);
   const previewRefreshPendingRef = useRef(false);
   const codeThemePreparationRef = useRef<{
@@ -2210,6 +2219,37 @@ export function EditorRoot(props: EditorRootProps) {
     codeThemePreparationRef.current = null;
     if (rootActiveRef.current) setVisualPreviewUnlocking(false);
   }, []);
+  const reportVisualTransferFailure = useCallback(
+    (code: string | null) => {
+      if (!code || isCancelledVisualTransferFailure(code)) return;
+      const message =
+        props.contextMenuStrings?.statusActionFailed
+        ?? (isPreviewRenderFailureCode(code)
+          ? props.preview.messages.error
+          : undefined);
+      if (!message) return;
+      publishEditorStatus({
+        id: 'visual-transfer-failed',
+        message,
+        owner: 'editor',
+        type: 'error'
+      });
+    },
+    [
+      props.contextMenuStrings?.statusActionFailed,
+      props.preview.messages.error,
+      publishEditorStatus
+    ]
+  );
+  const clearVisualFailureState = useCallback(() => {
+    lastVisualFailureRef.current = null;
+    rootRef.current?.removeAttribute('data-easymde-visual-failure');
+    setEditorStatusState((currentState) =>
+      'visual-transfer-failed' === currentState.status?.id
+        ? { focused: false, status: null }
+        : currentState
+    );
+  }, []);
   const handlePreviewSnapshotReady = useCallback(
     (
       html: SafePreviewHtml,
@@ -2218,6 +2258,16 @@ export function EditorRoot(props: EditorRootProps) {
     ) => {
       cancelVisualPreviewWindowUnlock();
       cancelVisualUnlockPreparation();
+      const latestRequest = latestPreviewRequestRef.current;
+      const currentMarkdown =
+        documentSession?.document.getValue() ?? props.submissionField.value;
+      if (
+        null !== latestRequest
+        && latestRequest.signature === signature
+        && latestRequest.markdown === currentMarkdown
+      ) {
+        clearVisualFailureState();
+      }
       setVisualPreviewSnapshot((current) => ({
         editMap,
         html,
@@ -2233,7 +2283,10 @@ export function EditorRoot(props: EditorRootProps) {
     [
       cancelVisualPreviewWindowUnlock,
       cancelVisualUnlockPreparation,
+      clearVisualFailureState,
+      documentSession,
       notifyContextMenuReadiness,
+      props.submissionField,
       scheduleCurrentWechatPreviewPreparation
     ]
   );
@@ -2316,6 +2369,10 @@ export function EditorRoot(props: EditorRootProps) {
         previewAppearanceRef.current,
         revision
       );
+      latestPreviewRequestRef.current = {
+        markdown,
+        signature: request.signature
+      };
       runtime.session.schedule(request, immediate);
       return request.signature;
     },
@@ -2345,16 +2402,11 @@ export function EditorRoot(props: EditorRootProps) {
   >(() => false);
   const handleVisualFailure = useCallback(
     (code: string) => {
-      const historyNavigation = visualHistoryNavigationRef.current;
-      const historyAcceptedFailure =
-        'visual-editor-selection-map-failed' === code
-        && null !== historyNavigation
-        && Date.now() - historyNavigation.at < 10_000
-        && visualPreviewEditingRef.current;
       lastVisualFailureRef.current = code;
-      if (!historyAcceptedFailure) {
-        rootRef.current?.setAttribute('data-easymde-visual-failure', code);
-        reportFailure(code);
+      rootRef.current?.setAttribute('data-easymde-visual-failure', code);
+      reportFailure(code);
+      if (isPreviewRenderFailureCode(code)) {
+        reportVisualTransferFailure(code);
       }
       if (isAcceptedDomInvalidatingFailure(code)) {
         // Leaving because the accepted DOM is gone must not schedule a refresh
@@ -2363,11 +2415,18 @@ export function EditorRoot(props: EditorRootProps) {
         leaveVisualPreviewRef.current({ suppressRefresh: true });
       }
     },
-    [reportFailure]
+    [reportFailure, reportVisualTransferFailure]
   );
   const handleVisualMarkdownChange = useCallback(() => {
-    lastVisualFailureRef.current = null;
-    rootRef.current?.removeAttribute('data-easymde-visual-failure');
+    clearVisualFailureState();
+    if (
+      rootActiveRef.current
+      && 'error' === previewSurfaceStatusRef.current
+      && !previewRefreshPendingRef.current
+    ) {
+      previewSurfaceStatusRef.current = 'ready';
+      setPreviewSurfaceStatus('ready');
+    }
     if (
       rootActiveRef.current
       && !visualDocumentEndHistoryPendingRef.current
@@ -2400,7 +2459,7 @@ export function EditorRoot(props: EditorRootProps) {
       }
     }
     setVisualPreviewChanged(true);
-  }, [documentSession, props.enhancementPort, reportFailure]);
+  }, [clearVisualFailureState, documentSession, props.enhancementPort, reportFailure]);
   const handleVisualPendingChange = useCallback(
     (pending: boolean) => {
       if (!rootActiveRef.current) return;
@@ -2421,11 +2480,16 @@ export function EditorRoot(props: EditorRootProps) {
     [documentSession, notifyContextMenuReadiness]
   );
   const handleVisualPreviewRequest = useCallback(
-    (markdown: string) => schedulePreviewMarkdown(markdown, true),
+    (markdown: string, options?: Readonly<{ immediate?: boolean }>) =>
+      schedulePreviewMarkdown(markdown, options?.immediate ?? true),
     [schedulePreviewMarkdown]
   );
   const handleVisualPreviewAtDocumentEnd = useCallback(
-    (markdown: string, sourceSelection?: PreviewSourceSelection) => {
+    (
+      markdown: string,
+      sourceSelection?: PreviewSourceSelection,
+      options?: Readonly<{ immediate?: boolean }>
+    ) => {
       const runtime = previewRuntimeRef.current;
       if (!runtime) {
         throw new Error('preview-runtime-unavailable');
@@ -2440,6 +2504,10 @@ export function EditorRoot(props: EditorRootProps) {
         previewAppearanceRef.current,
         revision
       );
+      latestPreviewRequestRef.current = {
+        markdown,
+        signature: request.signature
+      };
       return schedulePreviewWithDocumentEndPin(
         runtime,
         request,
@@ -2456,7 +2524,8 @@ export function EditorRoot(props: EditorRootProps) {
             );
           }
         },
-        sourceSelection
+        sourceSelection,
+        options?.immediate ?? true
       );
     },
     [documentSession, props.preview]
@@ -3505,135 +3574,9 @@ export function EditorRoot(props: EditorRootProps) {
       type: 'error'
     });
   }, [props.contextMenuStrings?.statusActionFailed, publishEditorStatus]);
-  const reportVisualTransferFailure = useCallback(
-    (code: string | null) => {
-      if (!code || isCancelledVisualTransferFailure(code)) return;
-      const message = props.contextMenuStrings?.statusActionFailed;
-      if (!message) return;
-      publishEditorStatus({
-        id: 'visual-transfer-failed',
-        message,
-        owner: 'editor',
-        type: 'error'
-      });
-    },
-    [props.contextMenuStrings?.statusActionFailed, publishEditorStatus]
-  );
-  useEffect(() => {
-    const ownerDocument = rootRef.current?.ownerDocument;
-    if (!ownerDocument) return undefined;
-    const markHistoryNavigation = (event: Event): void => {
-      const surface = visualEditorRuntimeRef.current?.surface;
-      if (
-        !surface?.isConnected
-        || !(event.target instanceof Node)
-        || !surface.contains(event.target)
-      ) return;
-      if (event instanceof KeyboardEvent) {
-        if (
-          (event.ctrlKey || event.metaKey)
-          && !event.altKey
-          && 'z' === event.key.toLowerCase()
-          && !visualHistoryNavigationRef.current
-        ) {
-          visualHistoryNavigationRef.current = {
-            at: Date.now(),
-            valueBefore: documentSession?.document.getValue() ?? null
-          };
-        }
-        return;
-      }
-      const inputType = 'inputType' in event
-        ? String((event as InputEvent).inputType)
-        : '';
-      if ('historyUndo' === inputType || 'historyRedo' === inputType) {
-        if (!visualHistoryNavigationRef.current) {
-          visualHistoryNavigationRef.current = { at: Date.now(), valueBefore: null };
-        }
-      } else if ('' !== inputType) {
-        visualHistoryNavigationRef.current = null;
-      }
-    };
-    ownerDocument.addEventListener('keydown', markHistoryNavigation, true);
-    ownerDocument.addEventListener('beforeinput', markHistoryNavigation, true);
-    ownerDocument.addEventListener('input', markHistoryNavigation, true);
-    return () => {
-      ownerDocument.removeEventListener('keydown', markHistoryNavigation, true);
-      ownerDocument.removeEventListener('beforeinput', markHistoryNavigation, true);
-      ownerDocument.removeEventListener('input', markHistoryNavigation, true);
-    };
-  }, [documentSession]);
   const handleVisualTransferFailure = useCallback(() => {
     const code = lastVisualFailureRef.current;
     lastVisualFailureRef.current = null;
-    const historyNavigation = visualHistoryNavigationRef.current;
-    const currentValue = documentSession?.document.getValue() ?? null;
-    const historySourceRestored =
-      null !== historyNavigation
-      && null !== currentValue
-      && (
-        null === historyNavigation.valueBefore
-        || currentValue !== historyNavigation.valueBefore
-      );
-    if (
-      'visual-editor-selection-map-failed' === code
-      && historySourceRestored
-      && visualPreviewEditingRef.current
-    ) {
-      visualHistoryNavigationRef.current = null;
-      rootRef.current?.removeAttribute('data-easymde-visual-failure');
-      setEditorStatusState((current) =>
-        'visual-transfer-failed' === current.status?.id
-          ? { ...current, status: null }
-          : current
-      );
-      visualPreviewEditingRef.current = true;
-      setVisualPreviewEditing(true);
-      setVisualPreviewPending(false);
-      const surface = visualEditorRuntimeRef.current?.surface;
-      if (surface?.isConnected) {
-        const selection = surface.ownerDocument.getSelection();
-        const hasSelection = Boolean(
-          selection
-          && selection.rangeCount > 0
-          && selection.anchorNode
-          && surface.contains(selection.anchorNode)
-        );
-        if (!hasSelection) {
-          // Place the caret on the nearest visible equivalent boundary: after
-          // the last visible link when the snapshot has one, else at the end
-          // of the last editable top-level block. This is a DOM-only fallback;
-          // it does not invent a source range.
-          const link = surface.querySelector('a[href]');
-          let container: Node = surface;
-          let offset = surface.childNodes.length;
-          const blocks = Array.from(surface.children).filter(
-            (child): child is HTMLElement => child instanceof HTMLElement
-          );
-          const lastBlock = blocks[blocks.length - 1];
-          if (lastBlock) {
-            container = lastBlock;
-            offset = lastBlock.childNodes.length;
-          }
-          if (link && link.isConnected && link.parentNode) {
-            const next = link.nextSibling;
-            container = link.parentNode;
-            offset = next
-              ? Array.prototype.indexOf.call(container.childNodes, next)
-              : container.childNodes.length;
-          }
-          if (offset >= 0 && offset <= container.childNodes.length) {
-            const range = surface.ownerDocument.createRange();
-            range.setStart(container, offset);
-            range.collapse(true);
-            selection?.removeAllRanges();
-            selection?.addRange(range);
-          }
-        }
-        surface.focus({ preventScroll: true });
-      }
-      return;
-    }
     // The canonical write and the visual transaction that turns it into a
     // stable accepted Preview are different completion owners. A transferred
     // value that already equals the document says nothing about the transfer
@@ -3649,20 +3592,18 @@ export function EditorRoot(props: EditorRootProps) {
       }
       return;
     }
+    if (null !== code && isPreviewRenderFailureCode(code)) {
+      // A formal Preview request failure keeps canonical Markdown intact and
+      // visual editing unlocked with a visible privacy-safe alert (already
+      // reported by handleVisualFailure), and must not schedule an automatic
+      // retry request.
+      return;
+    }
     reportVisualTransferFailure(code);
-    // A terminal transfer failure normally must not schedule a refresh of the
-    // same source: that would be an automatic retry of a protected mutation.
-    // One class is different - a paste whose Preview render failed. Its
-    // canonical write ALREADY landed, so the locked Preview is still showing
-    // the pre-paste document and must be allowed to catch up with exactly one
-    // leave-time render. Nothing here retries the failed request itself.
-    const needsCatchUpRender =
-      'visual-editor-markdown-paste-render-failed' === code;
-    leaveVisualPreview(
-      needsCatchUpRender ? {} : { suppressRefresh: true }
-    );
+    // A terminal transfer failure must not schedule a refresh of the same
+    // source: that would be an automatic retry of a protected mutation.
+    leaveVisualPreview({ suppressRefresh: true });
   }, [
-    documentSession,
     leaveVisualPreview,
     reportVisualTransferFailure
   ]);

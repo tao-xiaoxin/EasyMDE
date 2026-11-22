@@ -1,8 +1,0 @@
-{
-  "frontend/src/entrypoints/admin-editor-loader.ts": {
-    "file": "assets/admin-editor-loader-BanDoQqu.js",
-    "name": "loader",
-    "src": "frontend/src/entrypoints/admin-editor-loader.ts",
-    "isEntry": true
-  }
-}

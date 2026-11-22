@@ -4,7 +4,11 @@ import type { ErrorInfo, ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SafePreviewHtml } from '../../../contracts/ports/preview-request';
-import { SafePreviewHtmlSink, type SafePreviewHtmlSinkWindowController } from './SafePreviewHtmlSink';
+import {
+  consumeDeferredWindowRootEndAtomicTail,
+  SafePreviewHtmlSink,
+  type SafePreviewHtmlSinkWindowController
+} from './SafePreviewHtmlSink';
 
 type TestErrorBoundaryProps = Readonly<{
   children: ReactNode;
@@ -449,6 +453,110 @@ describe('SafePreviewHtmlSink window commits', () => {
     expect(selection?.anchorOffset).toBe(surface.childNodes.length);
     expect(selection?.focusNode).toBe(surface);
     expect(selection?.focusOffset).toBe(surface.childNodes.length);
+  });
+
+  it('avoids collapsing a root-end caret to block 0 when committing a contenteditable=false .easymde-mermaid tail', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const first = document.createElement('h1');
+    const spacer = document.createElement('div');
+    const mermaid = document.createElement('div');
+    first.textContent = 'Head';
+    spacer.setAttribute('data-easymde-preview-window-spacer', '1');
+    spacer.setAttribute('contenteditable', 'false');
+    mermaid.className = 'easymde-mermaid';
+    mermaid.setAttribute('data-easymde-visual-block-id', 'b2');
+    mermaid.setAttribute('contenteditable', 'false');
+    mermaid.textContent = 'diagram';
+    const props = {
+      contentEditable: true,
+      html: '' as SafePreviewHtml,
+      htmlRevision: 1,
+      surfaceRef
+    } as const;
+    const view = render(
+      <SafePreviewHtmlSink
+        {...props}
+        windowedCommit={{ key: 1, nodes: [first, spacer], revision: 1 }}
+      />
+    );
+    const surface = surfaceRef.current;
+    if (!surface) throw new Error('test-mermaid-tail-surface-missing');
+    surface.tabIndex = 0;
+    surface.focus();
+    const range = document.createRange();
+    range.setStart(surface, surface.childNodes.length);
+    range.collapse(true);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        {...props}
+        windowedCommit={{ key: 2, nodes: [spacer, mermaid], revision: 1 }}
+      />
+    );
+
+    const selection = window.getSelection();
+    expect(surface.lastChild).toBe(mermaid);
+    const collapsedToStart = selection?.anchorNode === surface
+      && selection.anchorOffset === 0;
+    expect(collapsedToStart).toBe(false);
+    expect(selection?.rangeCount).toBe(0);
+    expect(consumeDeferredWindowRootEndAtomicTail(surface)).toBe(true);
+    expect(consumeDeferredWindowRootEndAtomicTail(surface)).toBe(false);
+    view.unmount();
+  });
+
+  it('hands a root-end caret into a document-end editable sink mounted after .easymde-mermaid', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const first = document.createElement('h1');
+    const spacer = document.createElement('div');
+    const mermaid = document.createElement('div');
+    const sink = document.createElement('p');
+    first.textContent = 'Head';
+    spacer.setAttribute('data-easymde-preview-window-spacer', '1');
+    spacer.setAttribute('contenteditable', 'false');
+    mermaid.className = 'easymde-mermaid';
+    mermaid.setAttribute('data-easymde-visual-block-id', 'b2');
+    mermaid.setAttribute('contenteditable', 'false');
+    mermaid.textContent = 'diagram';
+    sink.append(document.createElement('br'));
+    const props = {
+      contentEditable: true,
+      html: '' as SafePreviewHtml,
+      htmlRevision: 1,
+      surfaceRef
+    } as const;
+    const view = render(
+      <SafePreviewHtmlSink
+        {...props}
+        windowedCommit={{ key: 1, nodes: [first, spacer], revision: 1 }}
+      />
+    );
+    const surface = surfaceRef.current;
+    if (!surface) throw new Error('test-mermaid-sink-surface-missing');
+    surface.tabIndex = 0;
+    surface.focus();
+    const range = document.createRange();
+    range.setStart(surface, surface.childNodes.length);
+    range.collapse(true);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        {...props}
+        windowedCommit={{ key: 2, nodes: [spacer, mermaid, sink], revision: 1 }}
+      />
+    );
+
+    const selection = window.getSelection();
+    expect(surface.lastChild).toBe(sink);
+    expect(selection?.isCollapsed).toBe(true);
+    expect(selection?.anchorNode).toBe(sink);
+    expect(selection?.anchorOffset).toBe(0);
+    expect(consumeDeferredWindowRootEndAtomicTail(surface)).toBe(false);
+    view.unmount();
   });
 
   it.each([
@@ -1577,6 +1685,261 @@ describe('SafePreviewHtmlSink editable surfaces', () => {
       })
     );
     expect(surfaceRef.current?.innerHTML).toBe('');
+    view.unmount();
+  });
+
+  it('synchronously clears stale windowed blocks and spacers on an accepted empty ready state', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const first = document.createElement('p');
+    const spacer = document.createElement('div');
+    const last = document.createElement('p');
+    first.setAttribute('data-easymde-visual-block-id', 'b0');
+    first.textContent = 'first';
+    spacer.setAttribute('data-easymde-preview-window-spacer', '1');
+    last.setAttribute('data-easymde-visual-block-id', 'b165');
+    last.textContent = 'last';
+    const view = render(
+      createElement(SafePreviewHtmlSink, {
+        contentEditable: true,
+        html: '<p>first</p><p>last</p>' as SafePreviewHtml,
+        htmlRevision: 1,
+        phase: 'ready',
+        surfaceRef,
+        windowedCommit: { key: 1, nodes: [first, spacer, last], revision: 1 }
+      })
+    );
+    const surface = surfaceRef.current;
+    if (!surface) throw new Error('test-accepted-empty-surface-missing');
+    expect(surface.childNodes).toHaveLength(3);
+    expect(surface.querySelector('[data-easymde-preview-window-spacer]')).toBe(spacer);
+
+    view.rerender(
+      createElement(SafePreviewHtmlSink, {
+        acceptedEmpty: true,
+        contentEditable: true,
+        html: '' as SafePreviewHtml,
+        htmlRevision: 2,
+        phase: 'ready',
+        surfaceRef,
+        windowedCommit: null
+      })
+    );
+    expect(surface.childNodes).toHaveLength(0);
+    expect(surface.innerHTML).toBe('');
+    expect(surface.querySelector('[data-easymde-preview-window-spacer]')).toBeNull();
+
+    // Subsequent props-only rerenders at the same revision must not discard
+    // fresh input typed into the accepted empty paper surface.
+    surface.innerHTML = '<p>typed</p>';
+    view.rerender(
+      createElement(SafePreviewHtmlSink, {
+        acceptedEmpty: true,
+        className: 'props-only-rerender',
+        contentEditable: true,
+        html: '' as SafePreviewHtml,
+        htmlRevision: 2,
+        phase: 'ready',
+        surfaceRef,
+        windowedCommit: null
+      })
+    );
+    expect(surface.innerHTML).toBe('<p>typed</p>');
+    view.unmount();
+  });
+
+  it('keeps editable content when empty HTML arrives during loading or without acceptedEmpty', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const view = render(
+      createElement(SafePreviewHtmlSink, {
+        contentEditable: true,
+        html: '<p>alpha</p>' as SafePreviewHtml,
+        htmlRevision: 1,
+        phase: 'ready',
+        surfaceRef
+      })
+    );
+    expect(surfaceRef.current?.innerHTML).toBe('<p>alpha</p>');
+
+    view.rerender(
+      createElement(SafePreviewHtmlSink, {
+        acceptedEmpty: true,
+        contentEditable: true,
+        html: '' as SafePreviewHtml,
+        htmlRevision: 2,
+        phase: 'loading',
+        surfaceRef
+      })
+    );
+    expect(surfaceRef.current?.innerHTML).toBe('<p>alpha</p>');
+
+    view.rerender(
+      createElement(SafePreviewHtmlSink, {
+        acceptedEmpty: false,
+        contentEditable: true,
+        html: '' as SafePreviewHtml,
+        htmlRevision: 2,
+        phase: 'ready',
+        surfaceRef
+      })
+    );
+    expect(surfaceRef.current?.innerHTML).toBe('<p>alpha</p>');
+    view.unmount();
+  });
+
+  it('preserves local edits after unlocking an accepted-empty preview-only blank post on the same revision', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const gate = (held: boolean, version: number) => ({
+      isHeld: () => held,
+      version
+    });
+    const view = render(
+      createElement(SafePreviewHtmlSink, {
+        acceptedEmpty: true,
+        compositionGate: gate(false, 0),
+        contentEditable: false,
+        html: '' as SafePreviewHtml,
+        htmlRevision: 1,
+        phase: 'ready',
+        surfaceRef
+      })
+    );
+    const surface = surfaceRef.current;
+    if (!surface) throw new Error('test-blank-unlock-surface-missing');
+    expect(surface.innerHTML).toBe('');
+
+    // Unlocking flips contentEditable false -> true on the same empty revision.
+    view.rerender(
+      createElement(SafePreviewHtmlSink, {
+        acceptedEmpty: true,
+        compositionGate: gate(false, 0),
+        contentEditable: true,
+        html: '' as SafePreviewHtml,
+        htmlRevision: 1,
+        phase: 'ready',
+        surfaceRef
+      })
+    );
+
+    // Local typing mutates the blank DOM and bumps compositionGate on the same
+    // empty revision before any newer Preview revision arrives.
+    surface.innerHTML = '<p>可视化首字</p>';
+    view.rerender(
+      createElement(SafePreviewHtmlSink, {
+        acceptedEmpty: true,
+        compositionGate: gate(true, 1),
+        contentEditable: true,
+        html: '' as SafePreviewHtml,
+        htmlRevision: 1,
+        phase: 'ready',
+        surfaceRef
+      })
+    );
+    view.rerender(
+      createElement(SafePreviewHtmlSink, {
+        acceptedEmpty: true,
+        compositionGate: gate(false, 2),
+        contentEditable: true,
+        html: '' as SafePreviewHtml,
+        htmlRevision: 1,
+        phase: 'ready',
+        surfaceRef
+      })
+    );
+    expect(surface.innerHTML).toBe('<p>可视化首字</p>');
+
+    // Even if a non-HTML prop changes on the same already-applied empty
+    // revision, clearsAcceptedEmpty must not wipe the local editable DOM.
+    view.rerender(
+      createElement(SafePreviewHtmlSink, {
+        acceptedEmpty: true,
+        compositionGate: gate(false, 3),
+        contentEditable: true,
+        html: '' as SafePreviewHtml,
+        htmlRevision: 1,
+        phase: 'ready',
+        statusClassName: 'status-rerender',
+        surfaceRef
+      })
+    );
+    expect(surface.innerHTML).toBe('<p>可视化首字</p>');
+    view.unmount();
+  });
+
+  it('clears a windowed surface on accepted-empty transition then preserves subsequent local edits on the same revision', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const gate = (held: boolean, version: number) => ({
+      isHeld: () => held,
+      version
+    });
+    const first = document.createElement('p');
+    const spacer = document.createElement('div');
+    const last = document.createElement('p');
+    first.setAttribute('data-easymde-visual-block-id', 'b0');
+    first.textContent = 'first';
+    spacer.setAttribute('data-easymde-preview-window-spacer', '1');
+    last.setAttribute('data-easymde-visual-block-id', 'b165');
+    last.textContent = 'last';
+
+    const view = render(
+      createElement(SafePreviewHtmlSink, {
+        compositionGate: gate(false, 0),
+        contentEditable: true,
+        html: '<p>first</p><p>last</p>' as SafePreviewHtml,
+        htmlRevision: 1,
+        phase: 'ready',
+        surfaceRef,
+        windowedCommit: { key: 1, nodes: [first, spacer, last], revision: 1 }
+      })
+    );
+    const surface = surfaceRef.current;
+    if (!surface) throw new Error('test-windowed-clear-then-type-surface-missing');
+    expect(surface.childNodes).toHaveLength(3);
+    expect(surface.querySelector('[data-easymde-preview-window-spacer]')).toBe(spacer);
+
+    // Transition R1 -> R2 accepted-empty synchronously clears stale windowed nodes and spacer.
+    view.rerender(
+      createElement(SafePreviewHtmlSink, {
+        acceptedEmpty: true,
+        compositionGate: gate(false, 0),
+        contentEditable: true,
+        html: '' as SafePreviewHtml,
+        htmlRevision: 2,
+        phase: 'ready',
+        surfaceRef,
+        windowedCommit: null
+      })
+    );
+    expect(surface.childNodes).toHaveLength(0);
+    expect(surface.innerHTML).toBe('');
+    expect(surface.querySelector('[data-easymde-preview-window-spacer]')).toBeNull();
+
+    // Immediately typing on R2 and bumping compositionGate must preserve the new local DOM.
+    surface.innerHTML = '<p>新字</p>';
+    view.rerender(
+      createElement(SafePreviewHtmlSink, {
+        acceptedEmpty: true,
+        compositionGate: gate(true, 1),
+        contentEditable: true,
+        html: '' as SafePreviewHtml,
+        htmlRevision: 2,
+        phase: 'ready',
+        surfaceRef,
+        windowedCommit: null
+      })
+    );
+    view.rerender(
+      createElement(SafePreviewHtmlSink, {
+        acceptedEmpty: true,
+        compositionGate: gate(false, 2),
+        contentEditable: true,
+        html: '' as SafePreviewHtml,
+        htmlRevision: 2,
+        phase: 'ready',
+        surfaceRef,
+        windowedCommit: null
+      })
+    );
+    expect(surface.innerHTML).toBe('<p>新字</p>');
     view.unmount();
   });
 });

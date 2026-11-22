@@ -15,7 +15,49 @@ import type {
 } from 'react';
 
 import type { SafePreviewHtml } from '../../../contracts/ports/preview-request';
+import { VISUAL_MARKDOWN_READ_ONLY_SELECTOR } from '../../../contracts/visual-markdown-read-only';
 import { prepareVisualProtectedNodeAdoption } from '../../../shared/dom/visual-protected-node-adoption';
+
+const deferredRootEndAtomicSurfaces = new WeakSet<HTMLElement>();
+
+export function consumeDeferredWindowRootEndAtomicTail(
+  surface: HTMLElement
+): boolean {
+  if (!deferredRootEndAtomicSurfaces.has(surface)) return false;
+  deferredRootEndAtomicSurfaces.delete(surface);
+  return true;
+}
+
+function trailingSignificantChild(surface: HTMLElement): Node | null {
+  let node: Node | null = surface.lastChild;
+  while (
+    node
+    && node.nodeType === Node.TEXT_NODE
+    && /^[ \t\r\n]*$/u.test(node.nodeValue ?? '')
+  ) {
+    node = node.previousSibling;
+  }
+  return node;
+}
+
+function isDocumentEndEditableSink(node: Node | null): node is HTMLElement {
+  if (!(node instanceof HTMLElement)) return false;
+  if ('P' !== node.tagName) return false;
+  if ('false' === node.getAttribute('contenteditable')) return false;
+  if (node.hasAttribute('data-easymde-visual-block-id')) return false;
+  if (node.hasAttribute('data-easymde-preview-window-spacer')) return false;
+  if ('' !== (node.textContent ?? '')) return false;
+  return 0 === node.childNodes.length
+    || (1 === node.childNodes.length && 'BR' === node.firstChild?.nodeName);
+}
+
+function isNonEditableAtomicTail(node: Node | null): boolean {
+  if (!(node instanceof HTMLElement)) return false;
+  if (node.hasAttribute('data-easymde-preview-window-spacer')) return false;
+  return 'false' === node.getAttribute('contenteditable')
+    || 'HR' === node.tagName
+    || node.matches(VISUAL_MARKDOWN_READ_ONLY_SELECTOR);
+}
 
 export type SafePreviewHtmlSinkCommit = Readonly<{
   nodes: ReadonlyArray<Node>;
@@ -60,6 +102,7 @@ export type SafePreviewHtmlSinkCompositionGate = Readonly<{
 }>;
 
 type SafePreviewHtmlSinkProps = Readonly<{
+  acceptedEmpty?: boolean;
   ariaBusy?: boolean;
   acceptedHtml?: boolean;
   className?: string;
@@ -341,6 +384,7 @@ function startWindowChildrenCommit(
     && desiredNodes.some((node) => node === selectionHandoff.next.node || node.contains(selectionHandoff.next.node))
     && selectionHandoff.isCurrent());
   if (!hasExactChildren(surface, desiredNodes)) {
+    deferredRootEndAtomicSurfaces.delete(surface);
     const selection = surface.ownerDocument.defaultView?.getSelection();
 		const directRootSelection = (() => {
 			if (
@@ -479,14 +523,46 @@ function startWindowChildrenCommit(
 			}
 		}
     if (rootBoundary && selection) {
-      const range = surface.ownerDocument.createRange();
-      range.setStart(
-        surface,
-        'start' === rootBoundary ? 0 : surface.childNodes.length
-      );
-      range.collapse(true);
-      selection.removeAllRanges();
-      selection.addRange(range);
+      if ('start' === rootBoundary) {
+        const range = surface.ownerDocument.createRange();
+        range.setStart(surface, 0);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      } else {
+        const editableHost = 'true' === surface.getAttribute('contenteditable');
+        const tail = editableHost ? trailingSignificantChild(surface) : null;
+        if (editableHost && isDocumentEndEditableSink(tail)) {
+          const range = surface.ownerDocument.createRange();
+          range.setStart(tail, 0);
+          range.collapse(true);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        } else if (editableHost && isNonEditableAtomicTail(tail)) {
+          // Chromium collapses a host-end range directly after a non-editable
+          // atomic tail back to `(surface, 0)`, which pins block 0 and breaks
+          // document-end editing. Clear the drifted range and signal the visual
+          // editor's window-ready owner to mount the editable document-end sink.
+          selection.removeAllRanges();
+          deferredRootEndAtomicSurfaces.add(surface);
+        } else {
+          const range = surface.ownerDocument.createRange();
+          range.setStart(surface, surface.childNodes.length);
+          range.collapse(true);
+          selection.removeAllRanges();
+          selection.addRange(range);
+          if (
+            editableHost
+            && surface.childNodes.length > 0
+            && selection.isCollapsed
+            && selection.anchorNode === surface
+            && 0 === selection.anchorOffset
+          ) {
+            selection.removeAllRanges();
+            deferredRootEndAtomicSurfaces.add(surface);
+          }
+        }
+      }
     }
   }
   if (restoreSemanticCaret && selectionHandoff
@@ -499,6 +575,7 @@ function startWindowChildrenCommit(
 }
 
 export function SafePreviewHtmlSink({
+  acceptedEmpty = false,
   acceptedHtml = false,
   ariaBusy = false,
   className,
@@ -534,8 +611,12 @@ export function SafePreviewHtmlSink({
   const htmlSurfaceRef = useRef<HTMLElement | null>(null);
   const appliedSurfaceStateRef = useRef<AppliedSurfaceState | null>(null);
   const deferredByHoldRef = useRef(false);
-  useEffect(() => () => {
-    deferredByHoldRef.current = false;
+  useEffect(() => {
+    const surface = htmlSurfaceRef.current;
+    return () => {
+      deferredByHoldRef.current = false;
+      if (surface) deferredRootEndAtomicSurfaces.delete(surface);
+    };
   }, []);
   useImperativeHandle(surfaceRef, () => {
     if (!htmlSurfaceRef.current) throw new Error('preview-surface-missing');
@@ -634,8 +715,7 @@ export function SafePreviewHtmlSink({
     }
     if (
       !windowCommit
-      &&
-      !commit
+      && !commit
       && !activeMaterializeCommit
       && appliedSurfaceState
       && appliedSurfaceState.revision === htmlRevision
@@ -655,6 +735,18 @@ export function SafePreviewHtmlSink({
         || appliedSurfaceState.renderedHtml === surface.innerHTML
       )
     ) {
+      if (
+        contentEditable
+        && acceptedEmpty
+        && '' === html
+        && 'ready' === phase
+        && null !== appliedSurfaceState.renderedHtml
+      ) {
+        appliedSurfaceStateRef.current = {
+          ...appliedSurfaceState,
+          renderedHtml: null
+        };
+      }
       return;
     }
 
@@ -670,6 +762,7 @@ export function SafePreviewHtmlSink({
       ) {
         return undefined;
       }
+      deferredRootEndAtomicSurfaces.delete(surface);
       const cancelMaterialize = startMaterializeChildrenCommit(
         surface,
         activeMaterializeCommit.nodes,
@@ -768,6 +861,7 @@ export function SafePreviewHtmlSink({
     }
 
     if (commit) {
+      deferredRootEndAtomicSurfaces.delete(surface);
       const protectedReuse = prepareVisualProtectedNodeAdoption(
         Array.from(surface.childNodes),
         commit.nodes,
@@ -812,22 +906,52 @@ export function SafePreviewHtmlSink({
       // commit arrives. Failed/ordinary paths never reach this branch.
       return undefined;
     }
+    const alreadyAppliedAcceptedEmpty = Boolean(
+      appliedSurfaceState
+      && appliedSurfaceState.revision === htmlRevision
+      && '' === appliedSurfaceState.html
+      && null === appliedSurfaceState.windowedCommitKey
+      && null === appliedSurfaceState.materializeCommitKey
+      && !appliedSurfaceState.stagedCommit
+    );
+    const clearsAcceptedEmpty = Boolean(
+      acceptedEmpty
+      && '' === html
+      && 'ready' === phase
+      && (
+        !alreadyAppliedAcceptedEmpty
+        || null !== surface.querySelector('[data-easymde-preview-window-spacer]')
+      )
+    );
     if (null !== html) {
       // An empty Preview frame cannot describe an editable surface that already
-      // holds content: an unsaved Post whose first render has not landed yet
-      // would otherwise lose the text the Editor owns. The Editor's own commit
+      // holds content unless the Preview owner explicitly accepted a new empty
+      // ready document: an unsaved Post whose first render has not landed yet,
+      // or fresh local input typed on an already-applied empty revision, would
+      // otherwise lose the text the Editor owns. The Editor's own commit
       // publishes the next frame for the source it wrote.
-      if (contentEditable && '' === html && surface.hasChildNodes()) {
+      if (
+        contentEditable
+        && '' === html
+        && !clearsAcceptedEmpty
+        && surface.hasChildNodes()
+      ) {
         return undefined;
       }
       // This is the sole sink for PHP-rendered, server-sanitized Preview HTML.
+      deferredRootEndAtomicSurfaces.delete(surface);
       deferredByHoldRef.current = false;
-      surface.innerHTML = html;
+      if ('' === html) {
+        surface.replaceChildren();
+      } else {
+        surface.innerHTML = html;
+      }
     } else {
       // The Editor owns this surface while it is editable. A Preview state with
       // no HTML - an unsaved Post whose first render has not landed yet - is a
       // missing render, not permission to discard the content being edited.
       if (contentEditable && surface.hasChildNodes()) return undefined;
+      deferredRootEndAtomicSurfaces.delete(surface);
       surface.replaceChildren();
       if (!statusMessage) {
         appliedSurfaceStateRef.current = {
@@ -850,7 +974,13 @@ export function SafePreviewHtmlSink({
       // Read back what the browser actually installed: attribute quoting and
       // entity spelling are the browser's, and a later identical request must
       // compare against this exact serialization, not the request string.
-      renderedHtml: surface.innerHTML,
+      // For an accepted empty surface, leave `renderedHtml` null regardless of
+      // whether `contentEditable` is currently enabled so unlocking and typing
+      // into the empty paper on the same revision is not overwritten before a
+      // newer Preview revision arrives.
+      renderedHtml: clearsAcceptedEmpty
+        ? null
+        : surface.innerHTML,
       revision: htmlRevision,
       statusClassName,
       statusMessage,
@@ -859,6 +989,7 @@ export function SafePreviewHtmlSink({
     };
     return undefined;
   }, [
+    acceptedEmpty,
     contentEditable,
     html,
     htmlRevision,

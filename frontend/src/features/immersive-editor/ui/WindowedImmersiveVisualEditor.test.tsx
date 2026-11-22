@@ -1,8 +1,17 @@
 import { act, render } from "@testing-library/react";
-import { createElement } from "@wordpress/element";
+import { createElement, createRef } from "@wordpress/element";
 import { describe, expect, it, vi } from "vitest";
 
-import type { PreviewAcceptedWindowRow, PreviewAcceptedWindowRowRequest, PreviewEditMap } from "../../../contracts/ports/preview-request";
+import type {
+	PreviewAcceptedWindowRow,
+	PreviewAcceptedWindowRowRequest,
+	PreviewEditMap,
+	SafePreviewHtml,
+} from "../../../contracts/ports/preview-request";
+import {
+	SafePreviewHtmlSink,
+	type SafePreviewHtmlSinkWindowController,
+} from "../../live-preview/ui/SafePreviewHtmlSink";
 import type {
 	DocumentHistoryState,
 	DocumentSelection,
@@ -2301,15 +2310,17 @@ it.each([
 			? { root: rowRoot.cloneNode(true) as HTMLElement, source: original,
 					sourceRange: { start: rowStart, end: imageStart + image.length + 1 }, sourceRevision: "tamper" in scenario && scenario.tamper === "witness" ? 1 : 0 }
 			: null);
-	const revealAcceptedWindowRow = vi.fn((request: PreviewAcceptedWindowRowRequest & { gap: HTMLElement; source: string; sourceRevision: number }): ImmersiveWindowAcceptedSnapshot | null => {
+	const revealAcceptedWindowRow = vi.fn((request: PreviewAcceptedWindowRowRequest & { gap: HTMLElement; source: string; sourceRevision: number; retainGap?: boolean }): ImmersiveWindowAcceptedSnapshot | null => {
 		if (!getAcceptedWindowRow(request) || request.source !== original || request.sourceRevision !== 0) return null;
 		const atomic = current.surface.querySelector('[data-easymde-visual-block-id="b174"]');
 		if (!atomic || request.gap.parentNode !== current.surface) return null;
 		current.surface.insertBefore(rowRoot, atomic);
+		if (false === request.retainGap) request.gap.remove();
 		return { blocks: Array.from(current.surface.children).flatMap((node) => {
 			if (!(node instanceof HTMLElement) || !node.hasAttribute("data-easymde-visual-block-id")) return [];
 			return [{ id: node.getAttribute("data-easymde-visual-block-id") ?? "", innerHTML: node.innerHTML, node }];
-		}), key: 2, nodes: Array.from(current.surface.childNodes), ownedGap: request.gap,
+		}), key: 2, nodes: Array.from(current.surface.childNodes),
+			...(false === request.retainGap ? {} : { ownedGap: request.gap }),
 			revision: request.revision, signature: request.signature };
 	});
 	const diagnosticSpy = vi.fn();
@@ -2392,7 +2403,11 @@ it.each([
 		}
 		expect(rendered.onDiagnostic).not.toHaveBeenCalled();
 		expect(rendered.onFailure).not.toHaveBeenCalled();
-		expect(documentSession.document.getValue()).toBe(afterDiagram.replace(image, ""));
+		const expectedAfterImage =
+			"shape" in scenario && scenario.shape === "placeholder"
+				? afterDiagram.slice(0, imageStart)
+				: afterDiagram.replace(image, "");
+		expect(documentSession.document.getValue()).toBe(expectedAfterImage);
 		if (originalBreak) expect(imageRow.querySelector("br")).toBe(originalBreak);
 		if ("shape" in scenario && scenario.shape === "placeholder") expect(imageRow.firstChild).toBeInstanceOf(HTMLBRElement);
 		const afterImage = documentSession.document.getValue();
@@ -2429,13 +2444,16 @@ it("restores the unmounted text row caret after deleting a terminal diagram", ()
 	const rowStart = original.indexOf(text);
 	const getAcceptedWindowRow = (request: PreviewAcceptedWindowRowRequest): PreviewAcceptedWindowRow | null => request.id === "b173" && request.index === 173
 		? { root: row.cloneNode(true) as HTMLElement, source: original, sourceRevision: 0, sourceRange: { start: rowStart, end: rowStart + text.length + 1 } } : null;
-	const revealAcceptedWindowRow = (request: PreviewAcceptedWindowRowRequest & { gap: HTMLElement; source: string; sourceRevision: number }): ImmersiveWindowAcceptedSnapshot | null => {
+	const revealAcceptedWindowRow = (request: PreviewAcceptedWindowRowRequest & { gap: HTMLElement; source: string; sourceRevision: number; retainGap?: boolean }): ImmersiveWindowAcceptedSnapshot | null => {
 		const atomic = current.surface.querySelector('[data-easymde-visual-block-id="b174"]');
 		if (!atomic || !getAcceptedWindowRow(request) || request.source !== original || request.sourceRevision !== 0) return null;
 		current.surface.insertBefore(row, atomic);
+		if (false === request.retainGap) request.gap.remove();
 		return { blocks: Array.from(current.surface.children).flatMap((node) => node instanceof HTMLElement && node.hasAttribute("data-easymde-visual-block-id")
 			? [{ id: node.getAttribute("data-easymde-visual-block-id") ?? "", innerHTML: node.innerHTML, node }] : []),
-			key: 2, nodes: Array.from(current.surface.childNodes), ownedGap: request.gap, revision: request.revision, signature: request.signature };
+			key: 2, nodes: Array.from(current.surface.childNodes),
+			...(false === request.retainGap ? {} : { ownedGap: request.gap }),
+			revision: request.revision, signature: request.signature };
 	};
 	const rendered = renderWindowEditor(current, { documentSession: session, getAcceptedWindowSnapshot, getAcceptedWindowRow, revealAcceptedWindowRow });
 	try {
@@ -3194,7 +3212,7 @@ function renderWindowEditor(
 		getAcceptedWindowSnapshot?: () => ImmersiveWindowAcceptedSnapshot | null;
 		getAcceptedReferenceSource?: (request: Readonly<{ revision: number; signature: string }>) => string | null;
 		getAcceptedWindowRow?: (request: PreviewAcceptedWindowRowRequest) => PreviewAcceptedWindowRow | null;
-		revealAcceptedWindowRow?: (request: PreviewAcceptedWindowRowRequest & { gap: HTMLElement; source: string; sourceRevision: number }) => ImmersiveWindowAcceptedSnapshot | null;
+		revealAcceptedWindowRow?: (request: PreviewAcceptedWindowRowRequest & { gap: HTMLElement; source: string; sourceRevision: number; retainGap?: boolean }) => ImmersiveWindowAcceptedSnapshot | null;
 		getGeneratedPreviewIdentity?: ImmersiveVisualEditorRuntime["getGeneratedPreviewIdentity"];
 		prepareGeneratedContentTarget?: ImmersiveVisualEditorRuntime["prepareGeneratedContentTarget"];
 		prepareGeneratedContentTargetForSelection?: ImmersiveVisualEditorRuntime["prepareGeneratedContentTargetForSelection"];
@@ -3372,6 +3390,106 @@ function acceptedWindowSnapshotForMountedBlock(
 		nodes: Array.from(current.surface.childNodes),
 		revision: 1,
 		signature: "windowed",
+	};
+}
+
+function acceptedWindowSnapshotForSurface(
+	current: ReturnType<typeof fixture>,
+	key = 1,
+	excluded?: Node,
+	ownedGap?: HTMLElement,
+): ImmersiveWindowAcceptedSnapshot {
+	const blocks = Array.from(current.surface.children)
+		.filter(
+			(child): child is HTMLElement =>
+				child instanceof HTMLElement &&
+				child !== excluded &&
+				child !== ownedGap &&
+				!child.hasAttribute("data-easymde-preview-window-spacer"),
+		)
+		.map((node) => {
+			const id = node.getAttribute("data-easymde-visual-block-id");
+			if (!id) throw new Error("windowed-surface-certificate-block-id-missing");
+			return { id, innerHTML: node.innerHTML, node };
+		});
+	return {
+		blocks,
+		key,
+		nodes: Array.from(current.surface.childNodes).filter((node) => node !== excluded),
+		revision: 1,
+		signature: "windowed",
+	};
+}
+
+function renderUnmountedDocumentEndRow(
+	current: ReturnType<typeof fixture>,
+	terminalIndex: number,
+	terminalMarkup: string,
+) {
+	const terminalBlock = current.editMap.blocks[terminalIndex];
+	if (!terminalBlock) throw new Error("windowed-unmounted-document-end-block-missing");
+	const source = current.canonical();
+	const sourceRevision = current.documentSession.document.getRevision?.() ?? -1;
+	const sourceRange = createVisualMarkdownSourceRangeFromPreviewEditMap(
+		source,
+		current.editMap,
+		{ end: terminalIndex + 1, start: terminalIndex },
+	);
+	let accepted = acceptedWindowSnapshotForSurface(current);
+	const row = (): HTMLElement => {
+		const template = document.createElement("template");
+		template.innerHTML = terminalMarkup;
+		const element = template.content.firstElementChild;
+		if (!(element instanceof HTMLElement)) {
+			throw new Error("windowed-unmounted-document-end-row-missing");
+		}
+		element.setAttribute("data-easymde-visual-block-id", terminalBlock.id);
+		visualMarkdown.projectVisualCodeFenceMetadata(
+			source,
+			template.content,
+			(root) => root.getAttribute("data-easymde-visual-block-id") === terminalBlock.id
+				? sourceRange
+				: null,
+		);
+		return element;
+	};
+	const getAcceptedWindowSnapshot = vi.fn(() => accepted);
+	const getAcceptedWindowRow = vi.fn(
+		(request: PreviewAcceptedWindowRowRequest): PreviewAcceptedWindowRow | null =>
+			request.id === terminalBlock.id && request.index === terminalIndex
+				? {
+						root: row(),
+						source,
+						sourceRange,
+						sourceRevision,
+					}
+				: null,
+	);
+	const revealAcceptedWindowRow = vi.fn((request: PreviewAcceptedWindowRowRequest & {
+		gap: HTMLElement;
+		source: string;
+		sourceRevision: number;
+		retainGap?: boolean;
+	}): ImmersiveWindowAcceptedSnapshot | null => {
+		if (request.id !== terminalBlock.id || request.index !== terminalIndex) return null;
+		request.gap.parentNode?.insertBefore(row(), request.gap);
+		if (false === request.retainGap) {
+			request.gap.remove();
+			accepted = acceptedWindowSnapshotForSurface(current, 2, request.gap);
+		} else {
+			accepted = {
+				...acceptedWindowSnapshotForSurface(current, 2, undefined, request.gap),
+				ownedGap: request.gap,
+			};
+		}
+		return accepted;
+	});
+	return {
+		accepted: () => accepted,
+		getAcceptedWindowRow,
+		getAcceptedWindowSnapshot,
+		revealAcceptedWindowRow,
+		sourceRange,
 	};
 }
 
@@ -3775,14 +3893,14 @@ describe("WindowedImmersiveVisualEditor", () => {
 				'[data-easymde-visual-block-id="b0"]',
 			);
 			expect(pre?.tagName).toBe("PRE");
-			expect(pre?.getAttribute("data-easymde-visual-fence")).toBe("```");
+			expect(pre?.getAttribute("data-easymde-visual-fence")).toBe(opener);
 			expect(pre?.getAttribute("data-easymde-visual-fence-info")).toBe(info);
-			const frame = "```" + info + "\n\n```";
+			const frame = opener + info + "\n\n" + opener;
 			expect(documentSession.document.getValue()).toBe(original.replace(source, frame));
 			expect(documentSession.document.getSelection()).toEqual({
 				direction: "none",
-				start: ("```" + info + "\n").length,
-				end: ("```" + info + "\n").length,
+				start: (opener + info + "\n").length,
+				end: (opener + info + "\n").length,
 			});
 			expect(current.surface.querySelector(
 				`[data-easymde-visual-block-id="b1"]`,
@@ -3809,7 +3927,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 				inputType: "insertText",
 			}));
 			const withBody = documentSession.document.getValue();
-			expect(withBody).toBe(original.replace(source, "```" + info + "\nx\n```"));
+			expect(withBody).toBe(original.replace(source, opener + info + "\nx\n" + opener));
 			// Real canonical history restores the frame and its body exactly.
 			expect(documentSession.document.undo()).toBe(true);
 			expect(documentSession.document.getValue()).toBe(original.replace(source, frame));
@@ -4004,14 +4122,15 @@ describe("WindowedImmersiveVisualEditor", () => {
 			const pre = current.surface.querySelector<HTMLElement>("pre");
 			const code = pre?.querySelector<HTMLElement>(":scope > code");
 			if (!pre || !code) throw new Error("windowed-eof-tick-pre-missing");
-			expect(pre.getAttribute("data-easymde-visual-fence")).toBe("````");
+			const expectedFence = family.repeat(4);
+			expect(pre.getAttribute("data-easymde-visual-fence")).toBe(expectedFence);
 			expect(pre.getAttribute("data-easymde-visual-fence-info")).toBe("bash");
-			const frame = "````bash\n\n````";
+			const frame = `${expectedFence}bash\n\n${expectedFence}`;
 			expect(documentSession.document.getValue()).toBe(head + frame);
 			expect(documentSession.document.getSelection()).toEqual({
 				direction: "none",
-				start: head.length + "````bash\n".length,
-				end: head.length + "````bash\n".length,
+				start: head.length + `${expectedFence}bash\n`.length,
+				end: head.length + `${expectedFence}bash\n`.length,
 			});
 			const bodyText = code.querySelector("span")?.firstChild;
 			if (!(bodyText instanceof Text)) throw new Error("windowed-eof-tick-body-missing");
@@ -4031,7 +4150,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 			current.surface.dispatchEvent(bodyBeforeInput);
 			expect(bodyBeforeInput.defaultPrevented).toBe(true);
 			const withBody = documentSession.document.getValue();
-			expect(withBody).toBe(head + "````bash\nx\n````");
+			expect(withBody).toBe(head + `${expectedFence}bash\nx\n${expectedFence}`);
 			expect(documentSession.document.undo()).toBe(true);
 			expect(documentSession.document.getValue()).toBe(head + frame);
 			expect(documentSession.document.redo()).toBe(true);
@@ -4215,7 +4334,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 					throw new Error("windowed-pending-eof-pre-missing");
 				}
 
-				const canonicalFence = "```";
+				const canonicalFence = family.repeat(3);
 				const expectedAfterFence =
 					`Topic\n\n${canonicalFence}\n\n${canonicalFence}`;
 				expect(current.canonical()).toBe(expectedAfterFence);
@@ -4422,7 +4541,9 @@ describe("WindowedImmersiveVisualEditor", () => {
 				placeCaret(placeholder, 0);
 				dispatchPendingText("```");
 				expect(code.textContent).toBe("```");
-				expect(current.canonical()).toBe("Topic\n\n````\n```\n````");
+				expect(current.canonical()).toBe(
+					family === "`" ? "Topic\n\n````\n```\n````" : "Topic\n\n~~~\n```\n~~~",
+				);
 				expect(rendered.onFailure).not.toHaveBeenCalled();
 			} finally {
 				rendered.view.unmount();
@@ -4554,7 +4675,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 			dispatchPendingText("A");
 			dispatchPendingText("B");
 			expect(documentSession.document.getValue()).toContain(
-				`${initialMarkdown}\n\n\`\`\`\nAB\n\`\`\``,
+				`${initialMarkdown}\n\n~~~\nAB\n~~~`,
 			);
 			expect(documentSession.document.getSelection().end).toBeLessThanOrEqual(
 				documentSession.document.getValue().length,
@@ -4720,7 +4841,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 				expect(deletion.defaultPrevented).toBe(true);
 				if (body) {
 					expect(code.textContent).toBe("A\n");
-					const canonicalFence = "```";
+					const canonicalFence = family.repeat(3);
 					expect(history.getValue()).toBe(`Topic\n\n${canonicalFence}\nA\n${canonicalFence}`);
 					const bodyStart = history.getValue().indexOf(`${canonicalFence}\n`) + canonicalFence.length + 1;
 				expect(history.getSelection()).toEqual({
@@ -4846,9 +4967,12 @@ describe("WindowedImmersiveVisualEditor", () => {
 			const headingTail = afterExit.indexOf("### Before") + "### Before".length;
 			const emptyPoint = owner.getSelection().start;
 			expect(afterExit.slice(headingTail, emptyPoint)).toMatch(/^\n+$/);
-			// The serializer omits an empty P; removing its native boundary does
-			// not normalize the canonical owner's pre-existing hidden blank lines.
-			const afterExtraDelete = afterExit;
+			// Retiring an emptied terminal <p><br></p> at EOF collapses its
+			// orphaned trailing blank-line run so consecutive EOF deletions
+			// cannot accumulate unbounded newlines; mid-document keeps its
+			// surrounding separator.
+			const afterExtraDelete =
+				blockIndex === 319 ? afterExit.slice(0, headingTail) : afterExit;
 			act(() => {
 				const key = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Backspace" });
 				current.surface.dispatchEvent(key);
@@ -8086,7 +8210,8 @@ describe("WindowedImmersiveVisualEditor", () => {
 		expect(requestPreview).not.toHaveBeenCalled();
 		expect(onPendingChange).not.toHaveBeenCalledWith(true);
 		expect(prepareWindowBlockAdoption).toHaveBeenCalledWith(code.parentElement);
-		expect(current.canonical()).toContain("```bash\n\n```");
+		const fence = opener.slice(0, 3);
+		expect(current.canonical()).toContain(`${fence}bash\n\n${fence}`);
 
 		const input = new InputEvent("beforeinput", {
 			bubbles: true,
@@ -8107,7 +8232,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 				inputType: "insertText",
 			}),
 		);
-		expect(current.canonical()).toContain("```bash\necho ready\n```");
+		expect(current.canonical()).toContain(`${fence}bash\necho ready\n${fence}`);
 		expect(code.textContent).toBe("echo ready");
 		expect(window.getSelection()?.anchorNode).toBe(codeText);
 		expect(window.getSelection()?.anchorOffset).toBe(codeText.length);
@@ -8132,7 +8257,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 			}),
 		);
 		expect(onFailure).not.toHaveBeenCalled();
-		expect(current.canonical()).toContain("```bash\necho read\n```");
+		expect(current.canonical()).toContain(`${fence}bash\necho read\n${fence}`);
 
 		placeCaret(codeText, 0);
 		const beforeForwardDelete = new InputEvent("beforeinput", {
@@ -8153,7 +8278,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 				inputType: "deleteContentForward",
 			}),
 		);
-		expect(current.canonical()).toContain("```bash\ncho read\n```");
+		expect(current.canonical()).toContain(`${fence}bash\ncho read\n${fence}`);
 
 		placeCaret(codeText, 0);
 		const beforeEmptyDelete = new InputEvent("beforeinput", {
@@ -8177,7 +8302,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 			"",
 		);
 		expect(restored?.textContent).toBe("");
-		expect(current.canonical()).toContain("```bash\n\n```");
+		expect(current.canonical()).toContain(`${fence}bash\n\n${fence}`);
 
 		const restoredText = restored?.firstChild;
 		if (!(restoredText instanceof Text))
@@ -8201,7 +8326,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 		expect(restored?.hasAttribute("data-easymde-visual-code-placeholder")).toBe(
 			false,
 		);
-		expect(current.canonical()).toContain("```bash\ny\n```");
+		expect(current.canonical()).toContain(`${fence}bash\ny\n${fence}`);
 		expect(requestPreview).not.toHaveBeenCalled();
 		expect(onPendingChange).not.toHaveBeenCalledWith(true);
 		view.unmount();
@@ -8213,9 +8338,9 @@ describe("WindowedImmersiveVisualEditor", () => {
 		const fenceStart = initialMarkdown.indexOf("~~~bash");
 		if (fenceStart < 0)
 			throw new Error("windowed-transparent-span-fence-missing");
-		const afterFence = initialMarkdown.replace("~~~bash", "```bash\n\n```");
-		const afterA = initialMarkdown.replace("~~~bash", "```bash\nA\n```");
-		const afterAl = initialMarkdown.replace("~~~bash", "```bash\nAl\n```");
+		const afterFence = initialMarkdown.replace("~~~bash", "~~~bash\n\n~~~");
+		const afterA = initialMarkdown.replace("~~~bash", "~~~bash\nA\n~~~");
+		const afterAl = initialMarkdown.replace("~~~bash", "~~~bash\nAl\n~~~");
 		const bodyStart = fenceStart + "~~~bash\n".length;
 		const submissionField = document.createElement("textarea");
 		submissionField.value = initialMarkdown;
@@ -9494,6 +9619,512 @@ describe("WindowedImmersiveVisualEditor", () => {
 		view.unmount();
 	});
 
+	it.each([
+		{
+			kind: "Mermaid",
+			markup: '<div class="easymde-mermaid" data-easymde-visual-markdown-source="graph TD&#10;  A --> B" contenteditable="false">diagram</div>',
+			ownership: "sink",
+			source: "```mermaid\ngraph TD\n  A --> B\n```\n",
+		},
+		{
+			kind: "math",
+			markup: '<div class="easymde-math easymde-math-block" data-easymde-rendered="true" data-easymde-visual-markdown-source="x" contenteditable="false">x</div>',
+			ownership: "sink",
+			source: "$$\nx\n$$\n",
+		},
+		{
+			kind: "thematic break",
+			markup: "<hr>",
+			ownership: "sink",
+			source: "---\n",
+		},
+		{
+			kind: "table",
+			markup: '<section class="easymde-table-container"><table><tbody><tr><td>cell</td></tr></tbody></table></section>',
+			ownership: "sink",
+			source: "| cell |\n| --- |\n",
+		},
+		{
+			kind: "code",
+			markup: "<pre><code>value = 1\n</code></pre>",
+			ownership: "row",
+			source: "```python\nvalue = 1\n```\n",
+		},
+		{
+			kind: "image",
+			markup: '<p><img alt="dot" src="/wp-content/plugins/easymde/assets/images/easymde-editor-icon.png"></p>',
+			ownership: "row",
+			source: "![dot](/wp-content/plugins/easymde/assets/images/easymde-editor-icon.png)\n",
+		},
+		{
+			kind: "text",
+			markup: "<p>Terminal text</p>",
+			ownership: "direct",
+			source: "Terminal text\n",
+		},
+	] as const)(
+		"materializes an accepted unmounted $kind document-end owner before the first key",
+		({ kind, markup, ownership, source: terminalSource }) => {
+			const terminalIndex = 161;
+			const current = fixture({
+				blockOverrides: { [terminalIndex]: terminalSource },
+				mounted: [159, 160],
+				paragraphBlocks: true,
+				sourceBlockCount: terminalIndex + 1,
+			});
+			const initial = current.canonical();
+			current.applyTextChange({
+				selection: { direction: "none", end: initial.length, start: initial.length },
+				value: initial,
+			});
+			const owner = renderUnmountedDocumentEndRow(current, terminalIndex, markup);
+			const onFailure = vi.fn();
+			const rendered = renderWindowEditor(current, {
+				getAcceptedWindowSnapshot: owner.getAcceptedWindowSnapshot,
+				getAcceptedWindowRow: owner.getAcceptedWindowRow,
+				onFailure,
+				revealAcceptedWindowRow: owner.revealAcceptedWindowRow,
+			});
+			try {
+				current.surface.tabIndex = 0;
+				current.surface.setAttribute("contenteditable", "true");
+				current.surface.focus();
+				window.getSelection()?.collapse(current.surface, current.surface.childNodes.length);
+				expect(onFailure).not.toHaveBeenCalled();
+				const keydown = new KeyboardEvent("keydown", {
+					bubbles: true,
+					cancelable: true,
+					key: "Backspace",
+				});
+				act(() => { current.surface.dispatchEvent(keydown); });
+				expect(onFailure).not.toHaveBeenCalled();
+				if ("direct" === ownership) {
+					expect(keydown.defaultPrevented).toBe(true);
+					expect(owner.revealAcceptedWindowRow).not.toHaveBeenCalled();
+					expect(current.canonical().length).toBe(initial.length - 1);
+					expect(current.canonical().slice(0, -1)).toBe(initial.slice(0, -2));
+					return;
+				}
+				expect(keydown.defaultPrevented).toBe(false);
+				expect(owner.revealAcceptedWindowRow).toHaveBeenCalledOnce();
+				const accepted = owner.accepted();
+				if ("row" === ownership) {
+					expect(accepted.ownedGap).toBeUndefined();
+				} else {
+					expect(accepted.ownedGap).toBeInstanceOf(HTMLElement);
+				}
+				const selection = window.getSelection();
+				const row = current.surface.querySelector<HTMLElement>(
+					`[data-easymde-visual-block-id="b${terminalIndex}"]`,
+				);
+				if (!(row instanceof HTMLElement) || !selection?.anchorNode) {
+					throw new Error("windowed-document-end-owner-missing");
+				}
+				if ("row" === ownership) {
+					expect(row === selection.anchorNode || row.contains(selection.anchorNode)).toBe(true);
+					const next = new KeyboardEvent("keydown", {
+						bubbles: true,
+						cancelable: true,
+						key: "Backspace",
+					});
+					act(() => { current.surface.dispatchEvent(next); });
+					expect(onFailure).not.toHaveBeenCalled();
+					expect(owner.revealAcceptedWindowRow).toHaveBeenCalledOnce();
+					expect(owner.accepted().ownedGap).toBeUndefined();
+					return;
+				}
+				expect(row.contains(selection.anchorNode)).toBe(false);
+				const beforeInput = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "deleteContentBackward",
+				});
+				act(() => { current.surface.dispatchEvent(beforeInput); });
+				expect(beforeInput.defaultPrevented).toBe(true);
+				expect(onFailure).not.toHaveBeenCalled();
+				if ("table" === kind) {
+					expect(current.canonical()).toBe(initial);
+					expect(current.surface.querySelector("td")?.contains(window.getSelection()?.anchorNode ?? null)).toBe(true);
+				} else {
+					expect(current.canonical().length).toBeLessThan(initial.length);
+				}
+			} finally {
+				rendered.view.unmount();
+				current.surface.remove();
+			}
+		},
+	);
+
+	it("refuses code-fence delimiter mapping when row family or info metadata is missing or wrong", () => {
+		const source = "```python\nvalue = 1\n```\n";
+		const template = document.createElement("template");
+		template.innerHTML = "<pre><code>value = 1\n</code></pre>";
+		const root = template.content.firstElementChild;
+		if (!(root instanceof HTMLElement)) throw new Error("code-fence-negative-root-missing");
+		root.setAttribute("data-easymde-visual-block-id", "b0");
+		const matches = visualMarkdown.projectVisualCodeFenceMetadata(
+			source,
+			template.content,
+			(candidate) => candidate === root
+				? { end: source.length, start: 0 }
+				: null,
+		);
+		expect(matches).toHaveLength(1);
+		const baseline = serializeVisualMarkdownBlockFragment([root]);
+		for (const mutation of ["missing", "wrong family", "wrong info"] as const) {
+			const probe = root.cloneNode(true) as HTMLElement;
+			if ("missing" === mutation) {
+				probe.removeAttribute(visualMarkdown.VISUAL_FENCE_ATTRIBUTE);
+				probe.removeAttribute(visualMarkdown.VISUAL_FENCE_INFO_ATTRIBUTE);
+			} else if ("wrong family" === mutation) {
+				probe.setAttribute(visualMarkdown.VISUAL_FENCE_ATTRIBUTE, "~~~");
+			} else {
+				probe.setAttribute(visualMarkdown.VISUAL_FENCE_INFO_ATTRIBUTE, "javascript");
+			}
+			expect(
+				() => visualMarkdown.visualCaretBoundaryFromSourceOffset(
+					probe,
+					source,
+					baseline,
+					source.length - 1,
+				),
+				mutation,
+			).toThrow("visual-editor-selection-map-failed");
+		}
+	});
+
+	it("keeps the exact retained document-end mock gap in nodes not blocks", () => {
+		const terminalIndex = 161;
+		const current = fixture({
+			blockOverrides: { [terminalIndex]: "Terminal\n" },
+			mounted: [159, 160],
+			paragraphBlocks: true,
+			sourceBlockCount: terminalIndex + 1,
+		});
+		const source = current.canonical();
+		const sourceRevision = current.documentSession.document.getRevision?.() ?? -1;
+		const terminalBlock = current.editMap.blocks[terminalIndex];
+		if (!terminalBlock) throw new Error("windowed-owned-gap-block-missing");
+		const owner = renderUnmountedDocumentEndRow(
+			current,
+			terminalIndex,
+			"<p>Terminal</p>",
+		);
+		const gap = document.createElement("p");
+		gap.append(document.createElement("br"));
+		current.surface.append(gap);
+		try {
+			const accepted = owner.revealAcceptedWindowRow({
+				gap,
+				id: terminalBlock.id,
+				index: terminalIndex,
+				revision: 1,
+				signature: "windowed",
+				source,
+				sourceRevision,
+				retainGap: true,
+			});
+			expect(accepted?.ownedGap).toBe(gap);
+			expect(accepted?.nodes.includes(gap)).toBe(true);
+			expect(accepted?.blocks.some((block) => block.node === gap)).toBe(false);
+		} finally {
+			current.surface.remove();
+		}
+	});
+
+	it("rejects a foreign untagged mock certificate node beside an owned document-end gap", () => {
+		const terminalIndex = 161;
+		const current = fixture({
+			blockOverrides: { [terminalIndex]: "Terminal\n" },
+			mounted: [159, 160],
+			paragraphBlocks: true,
+			sourceBlockCount: terminalIndex + 1,
+		});
+		const source = current.canonical();
+		const sourceRevision = current.documentSession.document.getRevision?.() ?? -1;
+		const terminalBlock = current.editMap.blocks[terminalIndex];
+		if (!terminalBlock) throw new Error("windowed-foreign-gap-block-missing");
+		const owner = renderUnmountedDocumentEndRow(
+			current,
+			terminalIndex,
+			"<p>Terminal</p>",
+		);
+		const gap = document.createElement("p");
+		gap.append(document.createElement("br"));
+		current.surface.append(gap);
+		current.surface.append(document.createElement("span"));
+		try {
+			expect(() => owner.revealAcceptedWindowRow({
+				gap,
+				id: terminalBlock.id,
+				index: terminalIndex,
+				revision: 1,
+				signature: "windowed",
+				source,
+				sourceRevision,
+				retainGap: true,
+			})).toThrow("windowed-surface-certificate-block-id-missing");
+		} finally {
+			current.surface.remove();
+		}
+	});
+
+	it("rejects an unmappable terminal witness before mounting or committing the document-end owner", () => {
+		const terminalIndex = 161;
+		const current = fixture({
+			blockOverrides: { [terminalIndex]: "![missing][id]\n" },
+			mounted: [159, 160],
+			paragraphBlocks: true,
+			sourceBlockCount: terminalIndex + 1,
+		});
+		const initial = current.canonical();
+		const owner = renderUnmountedDocumentEndRow(current, terminalIndex, "<p></p>");
+		const onFailure = vi.fn();
+		const onDiagnostic = vi.fn();
+		const rendered = renderWindowEditor(current, {
+			getAcceptedWindowSnapshot: owner.getAcceptedWindowSnapshot,
+			getAcceptedWindowRow: owner.getAcceptedWindowRow,
+			onDiagnostic,
+			onFailure,
+			revealAcceptedWindowRow: owner.revealAcceptedWindowRow,
+		});
+		try {
+			current.surface.tabIndex = 0;
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.focus();
+			window.getSelection()?.collapse(current.surface, current.surface.childNodes.length);
+			const beforeNodes = Array.from(current.surface.childNodes);
+			const beforeSnapshot = owner.accepted();
+			const canonicalSelectionBefore = current.documentSession.document.getSelection();
+			const historyBefore = current.documentSession.document.getHistoryState();
+			const selectionBefore = window.getSelection();
+			const nativeBefore = {
+				anchorNode: selectionBefore?.anchorNode ?? null,
+				anchorOffset: selectionBefore?.anchorOffset ?? -1,
+				focusNode: selectionBefore?.focusNode ?? null,
+				focusOffset: selectionBefore?.focusOffset ?? -1,
+			};
+			const keydown = new KeyboardEvent("keydown", {
+				bubbles: true,
+				cancelable: true,
+				key: "Backspace",
+			});
+			act(() => { current.surface.dispatchEvent(keydown); });
+			expect(keydown.defaultPrevented).toBe(true);
+			// The pure mapper throws before document-end-row-caret can wrap it;
+			// no WindowedRowRevealError stage is a supported oracle here.
+			expect(onFailure).toHaveBeenCalledOnce();
+			expect(onFailure).toHaveBeenCalledWith("visual-editor-selection-map-failed");
+			expect(onDiagnostic).not.toHaveBeenCalledWith(
+				expect.stringContaining("visual-editor-window-row-reveal:stage="),
+			);
+			expect(owner.getAcceptedWindowRow).toHaveBeenCalledOnce();
+			expect(owner.getAcceptedWindowRow).toHaveBeenCalledWith({
+				id: beforeSnapshot.editMap?.blocks[terminalIndex]?.id ?? `b${terminalIndex}`,
+				index: terminalIndex,
+				revision: beforeSnapshot.revision,
+				signature: beforeSnapshot.signature,
+			});
+			expect(owner.revealAcceptedWindowRow).not.toHaveBeenCalled();
+			expect(current.canonical()).toBe(initial);
+			expect(current.documentSession.document.getSelection()).toEqual(canonicalSelectionBefore);
+			expect(current.documentSession.document.getHistoryState()).toEqual(historyBefore);
+			expect(owner.accepted()).toBe(beforeSnapshot);
+			expect(Array.from(current.surface.childNodes)).toEqual(beforeNodes);
+			expect(current.surface.querySelectorAll("p > br")).toHaveLength(0);
+			const nativeAfter = window.getSelection();
+			expect(nativeAfter?.anchorNode).toBe(nativeBefore.anchorNode);
+			expect(nativeAfter?.anchorOffset).toBe(nativeBefore.anchorOffset);
+			expect(nativeAfter?.focusNode).toBe(nativeBefore.focusNode);
+			expect(nativeAfter?.focusOffset).toBe(nativeBefore.focusOffset);
+		} finally {
+			rendered.view.unmount();
+			current.surface.remove();
+		}
+	});
+
+	it("removes the temporary document-end gap after a confirmed reveal refusal", () => {
+		const terminalIndex = 161;
+		const current = fixture({
+			blockOverrides: { [terminalIndex]: "```mermaid\ngraph TD\n  A --> B\n```\n" },
+			mounted: [159, 160],
+			paragraphBlocks: true,
+			sourceBlockCount: terminalIndex + 1,
+		});
+		const initial = current.canonical();
+		const owner = renderUnmountedDocumentEndRow(
+			current,
+			terminalIndex,
+			'<div class="easymde-mermaid" data-easymde-visual-markdown-source="graph TD&#10;  A --> B" contenteditable="false">diagram</div>',
+		);
+		const onDiagnostic = vi.fn();
+		const onFailure = vi.fn();
+		const rendered = renderWindowEditor(current, {
+			getAcceptedWindowSnapshot: owner.getAcceptedWindowSnapshot,
+			getAcceptedWindowRow: owner.getAcceptedWindowRow,
+			onDiagnostic,
+			onFailure,
+			revealAcceptedWindowRow: (request) => {
+				request.onRefusal?.("sink-commit", {});
+				return null;
+			},
+		});
+		try {
+			current.surface.tabIndex = 0;
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.focus();
+			const beforeNodes = Array.from(current.surface.childNodes);
+			const rootOffset = beforeNodes.length;
+			window.getSelection()?.collapse(current.surface, rootOffset);
+			const keydown = new KeyboardEvent("keydown", {
+				bubbles: true,
+				cancelable: true,
+				key: "Backspace",
+			});
+			act(() => { current.surface.dispatchEvent(keydown); });
+			expect(keydown.defaultPrevented).toBe(true);
+			expect(onFailure).toHaveBeenCalledOnce();
+			expect(onFailure).toHaveBeenCalledWith("visual-editor-window-selection-map-failed");
+			expect(current.canonical()).toBe(initial);
+			expect(onDiagnostic.mock.calls.some(([code]) =>
+				code.includes("stage=document-end-row-reveal")
+				&& code.includes("previewReason")
+			)).toBe(true);
+			expect(Array.from(current.surface.childNodes)).toEqual(beforeNodes);
+			expect(window.getSelection()?.anchorNode).toBe(current.surface);
+			expect(window.getSelection()?.anchorOffset).toBe(rootOffset);
+		} finally {
+			rendered.view.unmount();
+			current.surface.remove();
+		}
+	});
+
+	it("retains the document-end gap after an untyped reveal failure", () => {
+		const terminalIndex = 161;
+		const current = fixture({
+			blockOverrides: { [terminalIndex]: "```mermaid\ngraph TD\n  A --> B\n```\n" },
+			mounted: [159, 160],
+			paragraphBlocks: true,
+			sourceBlockCount: terminalIndex + 1,
+		});
+		const initial = current.canonical();
+		const owner = renderUnmountedDocumentEndRow(
+			current,
+			terminalIndex,
+			'<div class="easymde-mermaid" data-easymde-visual-markdown-source="graph TD&#10;  A --> B" contenteditable="false">diagram</div>',
+		);
+		const onDiagnostic = vi.fn();
+		const onFailure = vi.fn();
+		const rendered = renderWindowEditor(current, {
+			getAcceptedWindowSnapshot: owner.getAcceptedWindowSnapshot,
+			getAcceptedWindowRow: owner.getAcceptedWindowRow,
+			onDiagnostic,
+			onFailure,
+			revealAcceptedWindowRow: () => {
+				throw new Error("private-untyped-reveal-failure");
+			},
+		});
+		try {
+			current.surface.tabIndex = 0;
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.focus();
+			const rootOffset = current.surface.childNodes.length;
+			window.getSelection()?.collapse(current.surface, rootOffset);
+			const keydown = new KeyboardEvent("keydown", {
+				bubbles: true,
+				cancelable: true,
+				key: "Backspace",
+			});
+			act(() => { current.surface.dispatchEvent(keydown); });
+			expect(keydown.defaultPrevented).toBe(true);
+			expect(onFailure).toHaveBeenCalledOnce();
+			expect(onFailure).toHaveBeenCalledWith("visual-editor-window-selection-map-failed");
+			expect(current.canonical()).toBe(initial);
+			expect(onDiagnostic.mock.calls.some(([code]) =>
+				code.includes("stage=document-end-row-reveal-unclassified")
+			)).toBe(true);
+			const nodes = Array.from(current.surface.childNodes);
+			const gap = nodes.at(-1);
+			if (!(gap instanceof HTMLElement)) throw new Error("untyped-reveal-gap-missing");
+			expect(gap.tagName).toBe("P");
+			expect(gap.hasAttribute("data-easymde-visual-block-id")).toBe(false);
+			expect(gap.firstElementChild?.tagName).toBe("BR");
+			expect(gap.parentNode).toBe(current.surface);
+			const selection = window.getSelection();
+			expect(Boolean(selection?.anchorNode && gap.contains(selection.anchorNode))).toBe(true);
+			expect(
+				Boolean(
+					selection
+					&& selection.anchorNode === current.surface
+					&& selection.anchorOffset === rootOffset,
+				),
+			).toBe(false);
+		} finally {
+			rendered.view.unmount();
+			current.surface.remove();
+		}
+	});
+
+	it.each(["document start", "stale owner generation", "stale source", "stale selection"] as const)(
+		"rejects %s without materializing a document-end owner",
+		(scenario) => {
+			const terminalIndex = 161;
+			const current = fixture({
+				blockOverrides: { [terminalIndex]: "```mermaid\ngraph TD\n  A --> B\n```\n" },
+				mounted: [159, 160],
+				paragraphBlocks: true,
+				sourceBlockCount: terminalIndex + 1,
+			});
+			const initial = current.canonical();
+			const owner = renderUnmountedDocumentEndRow(
+				current,
+				terminalIndex,
+				'<div class="easymde-mermaid" data-easymde-visual-markdown-source="graph TD&#10;  A --> B" contenteditable="false">diagram</div>',
+			);
+			const onFailure = vi.fn();
+			const rendered = renderWindowEditor(current, {
+				getAcceptedWindowSnapshot: "stale owner generation" === scenario
+					? () => ({ ...owner.accepted(), signature: "stale" })
+					: owner.getAcceptedWindowSnapshot,
+				getAcceptedWindowRow: owner.getAcceptedWindowRow,
+				onFailure,
+				revealAcceptedWindowRow: owner.revealAcceptedWindowRow,
+			});
+			try {
+				current.surface.tabIndex = 0;
+				current.surface.setAttribute("contenteditable", "true");
+				current.surface.focus();
+				const trailingSpacer = Array.from(current.surface.children).find((child) =>
+					child.hasAttribute("data-easymde-preview-window-spacer"));
+				if ("document start" === scenario) {
+					window.getSelection()?.collapse(current.surface, 0);
+				} else if ("stale selection" === scenario) {
+					window.getSelection()?.collapse(document.createTextNode(""), 0);
+				} else {
+					window.getSelection()?.collapse(current.surface, current.surface.childNodes.length);
+				}
+				if ("stale source" === scenario) current.setCanonical(`${initial}x`, false);
+				const keydown = new KeyboardEvent("keydown", {
+					bubbles: true,
+					cancelable: true,
+					key: "Backspace",
+				});
+				act(() => { current.surface.dispatchEvent(keydown); });
+				expect(keydown.defaultPrevented).toBe(true);
+				expect(onFailure).toHaveBeenCalledWith(
+					"stale source" === scenario
+						? "visual-editor-window-stale"
+						: "visual-editor-selection-map-failed",
+				);
+				expect(owner.revealAcceptedWindowRow).not.toHaveBeenCalled();
+				expect(current.canonical()).toBe("stale source" === scenario ? `${initial}x` : initial);
+			} finally {
+				rendered.view.unmount();
+				current.surface.remove();
+			}
+		},
+	);
+
 	it("restores the document-end history caret after a lone-CR omitted whitespace line", () => {
 		const current = fixture({
 			lineOverrides: { 0: "Before" },
@@ -9665,7 +10296,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 				inputType: "insertText",
 			}),
 		);
-		expect(current.canonical()).toContain("```bash\necho hi\n```");
+		expect(current.canonical()).toContain("~~~bash\necho hi\n~~~");
 
 		const selectedCode = document.createRange();
 		selectedCode.selectNodeContents(code);
@@ -9708,7 +10339,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 			"",
 		);
 		expect(restored?.textContent).toBe("");
-		expect(current.canonical()).toContain("```bash\n\n```");
+		expect(current.canonical()).toContain("~~~bash\n\n~~~");
 		expect(requestPreview).not.toHaveBeenCalled();
 
 		if (
@@ -9738,7 +10369,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 		expect(restored.hasAttribute("data-easymde-visual-code-placeholder")).toBe(
 			false,
 		);
-		expect(current.canonical()).toContain("```bash\ny\n```");
+		expect(current.canonical()).toContain("~~~bash\ny\n~~~");
 		expect(requestPreview).not.toHaveBeenCalled();
 		view.unmount();
 	});
@@ -12261,11 +12892,9 @@ describe("WindowedImmersiveVisualEditor", () => {
 			expect(requestPreview).not.toHaveBeenCalled();
 			const family = fence.match(/^(`{3,}|~{3,})/)?.[1];
 			if (!family) throw new Error("windowed-canonical-fence-family-missing");
-			const canonicalFamily =
-				"~" === family[0] ? "`".repeat(family.length) : family;
 			const info = fence.slice(family.length);
 			expect(current.canonical()).toContain(
-				`${canonicalFamily}${info}\n\n${canonicalFamily}`,
+				`${family}${info}\n\n${family}`,
 			);
 			view.unmount();
 		},
@@ -14193,8 +14822,9 @@ describe("WindowedImmersiveVisualEditor", () => {
 					key: "Enter",
 				}));
 				expect(onFailure).not.toHaveBeenCalled();
+				const expectedFence = family.repeat(3);
 				const framed = value();
-				expect(framed).toBe(`${base}\`\`\`bash\n\n\`\`\``);
+				expect(framed).toBe(`${base}${expectedFence}bash\n\n${expectedFence}`);
 				const pre = current.surface.querySelector<HTMLElement>("pre");
 				const code = pre?.querySelector<HTMLElement>(":scope > code");
 				if (!(pre instanceof HTMLElement) || !(code instanceof HTMLElement)) {
@@ -14212,7 +14842,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 
 				// The canonical history owner still round-trips this run.
 				const beforeUndo = value();
-				expect(beforeUndo.endsWith("\nAB\n```")).toBe(true);
+				expect(beforeUndo.endsWith(`\nAB\n${expectedFence}`)).toBe(true);
 				current.surface.dispatchEvent(new InputEvent("beforeinput", {
 					bubbles: true,
 					cancelable: true,
@@ -15510,12 +16140,18 @@ describe("WindowedImmersiveVisualEditor", () => {
 					`[data-easymde-visual-block-id="b${tableIndex}"]`,
 				),
 			).toBe(tableBlock);
-			// The press stops at the table's own start, exactly as the Full
-			// surface's table-edge owner answers it: the caret enters the first
-			// cell of the first row and no byte of either block is removed.
-			const firstCell = tableBlock.querySelector("table")?.rows[0]?.cells[0];
-			expect(window.getSelection()?.anchorNode).toBe(firstCell?.firstChild);
-			expect(window.getSelection()?.anchorOffset).toBe(0);
+			// The press stops at the table's outer end, matching the Full
+			// surface's table-edge owner: Backspace from after the table enters
+			// the last cell of the last row at its end and removes no byte.
+			const tableRows = tableBlock.querySelector("table")?.rows;
+			const lastRow = tableRows?.[tableRows.length - 1];
+			const lastCell = lastRow?.cells[lastRow.cells.length - 1];
+			const lastText = lastCell?.lastChild;
+			expect(lastText).toBeInstanceOf(Text);
+			expect(window.getSelection()?.anchorNode).toBe(lastText);
+			expect(window.getSelection()?.anchorOffset).toBe(
+				lastText instanceof Text ? lastText.data.length : -1,
+			);
 			view.unmount();
 		},
 	);
@@ -15562,8 +16198,10 @@ describe("WindowedImmersiveVisualEditor", () => {
 		current.surface.dispatchEvent(beforeInput);
 
 		// The press is not answered as a table edge: the caret is never placed
-		// in the bare table's first cell.
-		expect(window.getSelection()?.anchorNode).not.toBe(firstCell.firstChild);
+		// inside the bare table.
+		expect(
+			bareTable.contains(window.getSelection()?.anchorNode ?? null),
+		).toBe(false);
 		expect(current.canonical()).toBe(original);
 		expect(current.surface.querySelector("table")).toBe(bareTable);
 		view.unmount();
@@ -15947,9 +16585,15 @@ describe("WindowedImmersiveVisualEditor", () => {
 
 			expect(beforeInput.defaultPrevented).toBe(true);
 			expect(session.document.getValue()).toBe(original);
-			const firstCell = tableRoot.querySelector("th, td");
-			expect(window.getSelection()?.anchorNode).toBe(firstCell?.firstChild);
-			expect(window.getSelection()?.anchorOffset).toBe(0);
+			const rows = tableRoot.querySelector("table")?.rows;
+			const lastRow = rows?.[rows.length - 1];
+			const lastCell = lastRow?.cells[lastRow.cells.length - 1];
+			const lastText = lastCell?.lastChild;
+			expect(lastText).toBeInstanceOf(Text);
+			expect(window.getSelection()?.anchorNode).toBe(lastText);
+			expect(window.getSelection()?.anchorOffset).toBe(
+				lastText instanceof Text ? lastText.data.length : -1,
+			);
 			expect(
 				session.document
 					.getValue()
@@ -15971,16 +16615,14 @@ describe("WindowedImmersiveVisualEditor", () => {
 
 	/**
 	 * The consumer's trailing-table shape: filler blocks, a `Head.` paragraph
-	 * and a 2x2 table at the document end, with the caret in the certified
-	 * sink. The first Backspace answers the table's outer edge by placing the
-	 * caret in the first cell; the second press is the in-table walk's own
-	 * `boundary` and must stay a consumed no-op. If it is released to the
-	 * browser, the native join pulls the table wrapper out of the surface - the
-	 * `tables: 0` regression - while the canonical source still spells every
-	 * table byte, and both the window and markdown merge owners report a
-	 * failure. No byte, row or column may change, and the caret stays put.
+	 * and a 2x2 table at the document end, with the caret parked on the table
+	 * wrapper's end boundary. The first Backspace answers the table's outer end
+	 * by placing the caret at the end of the last cell of the last row; a
+	 * Backspace at the first cell's absolute start is the in-table walk's own
+	 * `boundary` and must stay a consumed no-op without detaching the table
+	 * wrapper or mutating any byte, row or column.
 	 */
-	it("keeps a trailing table byte-identical across a second Backspace from its first cell", () => {
+	it("enters a trailing table's last cell from wrapper end and keeps the table byte-identical at first-cell start", () => {
 		const headIndex = 170;
 		const tableIndex = 171;
 		const current = fixture({
@@ -16065,9 +16707,15 @@ describe("WindowedImmersiveVisualEditor", () => {
 			const revision = session.document.getRevision?.();
 			const firstCell = tableRoot.querySelector("th, td");
 			const firstCellText = firstCell?.firstChild;
+			const tableRows = tableRoot.querySelector("table")?.rows;
+			const lastRow = tableRows?.[tableRows.length - 1];
+			const lastCell = lastRow?.cells[lastRow.cells.length - 1];
+			const lastCellText = lastCell?.lastChild;
 			if (
 				!(firstCell instanceof HTMLTableCellElement) ||
-				!(firstCellText instanceof Text)
+				!(firstCellText instanceof Text) ||
+				!(lastCell instanceof HTMLTableCellElement) ||
+				!(lastCellText instanceof Text)
 			) {
 				throw new Error("windowed-table-sink-cell-invalid");
 			}
@@ -16080,11 +16728,12 @@ describe("WindowedImmersiveVisualEditor", () => {
 			act(() => current.surface.dispatchEvent(first));
 
 			expect(first.defaultPrevented).toBe(true);
-			expect(window.getSelection()?.anchorNode).toBe(firstCellText);
-			expect(window.getSelection()?.anchorOffset).toBe(0);
+			expect(window.getSelection()?.anchorNode).toBe(lastCellText);
+			expect(window.getSelection()?.anchorOffset).toBe(lastCellText.data.length);
 			expect(tableRoot.isConnected).toBe(true);
 			expect(sink?.isConnected).toBe(true);
 
+			placeCaret(firstCellText, 0);
 			const second = new InputEvent("beforeinput", {
 				bubbles: true,
 				cancelable: true,
@@ -16255,6 +16904,216 @@ describe("WindowedImmersiveVisualEditor", () => {
 		}
 	});
 
+	it.each([
+		"plain", "emoji", "combined grapheme", "entity", "escape", "format wrapper", "inline code",
+		"half surrogate target", "combining target", "half surrogate caret", "combining caret", "unpaired canonical", "unpaired target",
+		"nonadjacent insertion", "multiple source changes", "wrong cell", "moved caret", "cross cell target", "live focus in cell", "captured focus in cell",
+		"unfacing target", "multiple targets", "stale lease", "stale source", "stale DOM", "foreign TD",
+		"foreign child", "readonly", "not editable", "forward", "composing", "preview failure",
+	] as const)("proves one unrendered pending Redo table cell grapheme before cancelling Backspace: %s", (scenario) => {
+		const cellSource = scenario === "entity" ? "c&ampell" : scenario === "escape" ? "c\\ell"
+			: scenario === "format wrapper" ? "c*eell" : scenario === "inline code" ? "c`eell"
+			: scenario === "half surrogate target" ? "c\u{1F600}ell" : scenario === "combining target" ? "céll"
+			: scenario === "half surrogate caret" ? "c\uDE00ell" : scenario === "unpaired target" ? "c\uD800ell" : scenario === "combining caret" ? "ćell" : "cell";
+		const offset = scenario === "entity" ? 5 : scenario === "escape" || scenario === "half surrogate target" || scenario === "combining target" || scenario === "unpaired target" ? 2
+			: scenario === "format wrapper" || scenario === "inline code" ? 3 : 1;
+		const insert = scenario === "emoji" ? "\u{1F469}‍\u{1F4BB}" : scenario === "combined grapheme" ? "é"
+			: scenario === "entity" ? ";" : scenario === "escape" || scenario === "format wrapper" ? "*"
+			: scenario === "inline code" ? "`" : scenario === "half surrogate caret" || scenario === "unpaired canonical" ? "\uD83D" : scenario === "combining caret" ? "e" : "X";
+		const tableMarkdown = `| Head | Tail |\n| --- | --- |\n| ${cellSource} | other |`;
+		const current = fixture({
+			blockOverrides: { 160: tableMarkdown },
+			markupOverrides: { 160: '<section class="table-container easymde-table-container" data-easymde-visual-block-id="b160"><table><thead><tr><th>Head</th><th>Tail</th></tr></thead><tbody><tr><td></td><td>other</td></tr></tbody></table></section>' },
+			mounted: [159, 160, 161], paragraphBlocks: true,
+		});
+		current.surface.setAttribute("contenteditable", "true"); current.surface.tabIndex = 0;
+		const tableRoot = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b160"]');
+		const cell = tableRoot?.querySelector("td"); const other = tableRoot?.querySelectorAll("td")[1]?.firstChild;
+		const outside = current.surface.querySelector('[data-easymde-visual-block-id="b159"]')?.firstChild;
+		if (!(tableRoot instanceof HTMLElement) || !(cell instanceof HTMLTableCellElement) || !(other instanceof Text) || !(outside instanceof Text)) throw new Error("pending-unrendered-cell-fixture-invalid");
+		cell.textContent = cellSource;
+		const text = cell.firstChild;
+		if (!(text instanceof Text)) throw new Error("pending-unrendered-cell-text-missing");
+		const original = current.canonical();
+		const sourceStart = original.indexOf(tableMarkdown) + tableMarkdown.indexOf(`| ${cellSource} | other |`) + 2;
+		const insertFrom = sourceStart + (scenario === "nonadjacent insertion" ? offset + 1 : offset);
+		const baseSelection = { direction: "none" as const, start: sourceStart + offset, end: sourceStart + offset };
+		const caret = insertFrom + insert.length;
+		let typed = original.slice(0, insertFrom) + insert + original.slice(insertFrom);
+		let changes = { from: insertFrom, insert, to: insertFrom };
+		if (scenario === "multiple source changes") {
+			const secondFrom = original.indexOf("other") + 1;
+			typed = typed.slice(0, secondFrom + insert.length) + "Y" + typed.slice(secondFrom + insert.length);
+			changes = { from: insertFrom, insert: typed.slice(insertFrom, secondFrom + insert.length + 1), to: secondFrom };
+		}
+		const field = document.createElement("textarea"); field.value = field.defaultValue = original;
+		const container = document.createElement("div"); document.body.append(container, field);
+		const session = createEditorDocumentSession(createCodeMirrorDocumentSession({ container, label: "Markdown source", submissionField: field }), createNativeTitleSession(null));
+		session.document.setVisualEditingActive(true);
+		const accepted = acceptedWindowSnapshotForMountedBlock(current, tableRoot);
+		let failPreview = false;
+		const onDiagnostic = vi.fn(); const onTransferFailure = vi.fn();
+		const requestPreview = vi.fn(() => { if (failPreview) throw new Error("windowed-test-preview-failed"); return "next"; });
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const rendered = renderWindowEditor(current, { documentSession: session, getAcceptedWindowSnapshot: () => accepted, onDiagnostic, onTransferFailure, requestPreview,
+			onReady: (nextRuntime) => { runtime = nextRuntime; } });
+		let editableSpy: ReturnType<typeof vi.spyOn> | null = null;
+		try {
+			current.surface.focus();
+			const focusOnly = scenario === "live focus in cell" || scenario === "captured focus in cell";
+			if (scenario === "captured focus in cell") window.getSelection()?.setBaseAndExtent(outside, offset, text, offset);
+			else placeCaret(focusOnly ? outside : scenario === "wrong cell" ? other : text, offset);
+			session.document.applyTextChange({ selection: baseSelection, value: original });
+			if (!runtime) throw new Error("pending-unrendered-cell-runtime-missing");
+			act(() => {
+				expect((runtime as ImmersiveVisualEditorRuntime).applyCanonicalChange({
+					change: { changes, selection: { direction: "none", start: caret, end: caret }, value: typed },
+					expected: { revision: session.document.getRevision?.() ?? 0, selection: baseSelection, value: original },
+				})).toBe("handled");
+				current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "historyUndo" }));
+				current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "historyRedo" }));
+			});
+			expect(session.document.getValue()).toBe(typed);
+			expect(session.document.getSelection()).toEqual({ direction: "none", start: caret, end: caret });
+			expect(text.data).toBe(cellSource);
+			expect(window.getSelection()?.anchorNode).toBe(focusOnly ? outside : scenario === "wrong cell" ? other : text);
+			expect(window.getSelection()?.anchorOffset).toBe(offset);
+			if (scenario === "live focus in cell") window.getSelection()?.setBaseAndExtent(outside, offset + 1, text, offset);
+			else if (scenario === "captured focus in cell") placeCaret(outside, offset + 1);
+			else if (scenario === "moved caret") placeCaret(text, offset + 1);
+			else if (scenario === "stale lease") session.document.applyTextChange({ selection: { direction: "none", start: caret + 1, end: caret + 1 }, value: typed });
+			else if (scenario === "stale source") act(() => session.document.applyTextChange({ selection: session.document.getSelection(), value: typed + "!" }));
+			else if (scenario === "stale DOM") text.appendData("foreign");
+			else if (scenario === "foreign TD") { const clone = cell.cloneNode(true); cell.replaceWith(clone); if (clone.firstChild instanceof Text) placeCaret(clone.firstChild, offset); }
+			else if (scenario === "foreign child") current.surface.append(document.createElement("p"));
+			else if (scenario === "readonly") cell.setAttribute("contenteditable", "false");
+			else if (scenario === "not editable") editableSpy = vi.spyOn(session.document, "isEditable").mockReturnValue(false);
+			const native = window.getSelection(); const targetText = native?.anchorNode; const anchor = native?.anchorOffset ?? -1;
+			if (!(targetText instanceof Text)) throw new Error("pending-unrendered-cell-target-missing");
+			const target = document.createRange();
+			target.setStart(targetText, scenario === "unfacing target" ? anchor : previousGraphemeBoundary(targetText.data, anchor));
+			target.setEnd(scenario === "cross cell target" ? other : targetText, scenario === "cross cell target" ? 1 : scenario === "unfacing target" ? anchor + 1 : anchor);
+			const inputType = scenario === "forward" ? "deleteContentForward" : "deleteContentBackward";
+			const deletion = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType, isComposing: scenario === "composing" });
+			Object.defineProperty(deletion, "getTargetRanges", { value: () => scenario === "multiple targets" ? [target, target] : [target] });
+			const beforeValue = session.document.getValue(); const beforeHistory = session.document.getHistoryState(); const beforeRevision = session.document.getRevision?.();
+			const beforeSelection = session.document.getSelection(); const beforeHTML = current.surface.innerHTML; const beforeNodes = Array.from(current.surface.childNodes);
+			const previewCount = requestPreview.mock.calls.length;
+			failPreview = scenario === "preview failure";
+			act(() => current.surface.dispatchEvent(deletion));
+			expect(deletion.defaultPrevented).toBe(true);
+			expect(current.surface.innerHTML).toBe(beforeHTML);
+			expect(Array.from(current.surface.childNodes)).toEqual(beforeNodes);
+			expect(targetText.data).toBe(focusOnly ? outside.data : scenario === "stale DOM" ? cellSource + "foreign" : scenario === "wrong cell" ? "other" : cellSource);
+			if (!["plain", "emoji", "combined grapheme", "preview failure"].includes(scenario)) {
+				expect(session.document.getValue()).toBe(beforeValue);
+				expect(session.document.getSelection()).toEqual(beforeSelection);
+				expect(session.document.getHistoryState()).toEqual(beforeHistory);
+				expect(session.document.getRevision?.()).toBe(beforeRevision);
+				expect(requestPreview).toHaveBeenCalledTimes(previewCount);
+				if (focusOnly) expect(onDiagnostic).toHaveBeenCalledWith(expect.stringContaining("reason=pending-table-cell-unproved"));
+				return;
+			}
+			expect(session.document.getValue()).toBe(original);
+			expect(session.document.getSelection()).toEqual(baseSelection);
+			expect(session.document.getRevision?.()).toBe((beforeRevision ?? 0) + 1);
+			expect(session.document.getHistoryState()).toEqual({ undoDepth: beforeHistory.undoDepth + 1, redoDepth: 0 });
+			expect(requestPreview).toHaveBeenLastCalledWith(original, { immediate: false });
+			expect(requestPreview).toHaveBeenCalledTimes(previewCount + 1);
+			if (scenario === "preview failure") {
+				expect(rendered.onFailure).toHaveBeenCalledWith("windowed-test-preview-failed");
+				expect(onTransferFailure).toHaveBeenCalledOnce();
+				return;
+			}
+			act(() => current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "historyUndo" })));
+			expect(session.document.getValue()).toBe(typed);
+			expect(session.document.getSelection()).toEqual({ direction: "none", start: caret, end: caret });
+			act(() => current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "historyRedo" })));
+			expect(session.document.getValue()).toBe(original); expect(session.document.getSelection()).toEqual(baseSelection);
+			expect(text.data).toBe(cellSource); expect(cell.firstChild).toBe(text);
+			act(() => rendered.rerenderPreview({ ...current.editMap, signature: "next" }, { revision: 2, signature: "next" }));
+			expect(session.document.getValue()).toBe(original); expect(session.document.getSelection()).toEqual(baseSelection);
+			expect(window.getSelection()?.anchorNode).toBe(text); expect(window.getSelection()?.anchorOffset).toBe(offset);
+			expect(rendered.onFailure).not.toHaveBeenCalled(); expect(onDiagnostic).not.toHaveBeenCalled(); expect(onTransferFailure).not.toHaveBeenCalled();
+		} finally { editableSpy?.mockRestore(); rendered.view.unmount(); session.destroy(); container.remove(); field.remove(); current.surface.remove(); }
+	});
+
+	it.each(["backward", "forward", "cross cell", "unfacing target"] as const)("proves pending Redo table cell interior native text deletion: %s", (scenario) => {
+		const tableMarkdown = "| Head | Tail |\n| --- | --- |\n| cell | other |";
+		const current = fixture({
+			blockOverrides: { 160: tableMarkdown },
+			markupOverrides: { 160: '<section class="table-container easymde-table-container" data-easymde-visual-block-id="b160"><table><thead><tr><th>Head</th><th>Tail</th></tr></thead><tbody><tr><td>cell</td><td>other</td></tr></tbody></table></section>' },
+			mounted: [159, 160, 161], paragraphBlocks: true,
+		});
+		current.surface.setAttribute("contenteditable", "true"); current.surface.tabIndex = 0;
+		const original = current.canonical();
+		const field = document.createElement("textarea"); field.value = field.defaultValue = original;
+		const container = document.createElement("div"); document.body.append(container, field);
+		const session = createEditorDocumentSession(createCodeMirrorDocumentSession({ container, label: "Markdown source", submissionField: field }), createNativeTitleSession(null));
+		session.document.setVisualEditingActive(true);
+		const tableRoot = current.surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b160"]');
+		const cellText = tableRoot?.querySelector("td")?.firstChild;
+		if (!(tableRoot instanceof HTMLElement) || !(cellText instanceof Text)) throw new Error("pending-cell-text-fixture-invalid");
+		const accepted = acceptedWindowSnapshotForMountedBlock(current, tableRoot);
+		const onDiagnostic = vi.fn(); const onTransferFailure = vi.fn();
+		const rendered = renderWindowEditor(current, { documentSession: session, getAcceptedWindowSnapshot: () => accepted, onDiagnostic, onTransferFailure });
+		try {
+			current.surface.focus(); placeCaret(cellText, 1);
+			const insert = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: "X" });
+			act(() => {
+				current.surface.dispatchEvent(insert);
+				if (!insert.defaultPrevented) {
+					cellText.insertData(1, "X"); placeCaret(cellText, 2);
+					current.surface.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "X" }));
+				}
+				current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "historyUndo" }));
+				current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "historyRedo" }));
+			});
+			const typed = original.replace("| cell | other |", "| cXell | other |");
+			const caret = typed.indexOf("cXell") + 2;
+			expect(session.document.getValue()).toBe(typed);
+			expect(session.document.getSelection()).toEqual({ direction: "none", start: caret, end: caret });
+			const native = window.getSelection(); const text = native?.anchorNode;
+			if (!(text instanceof Text)) throw new Error("pending-cell-redo-caret-invalid");
+			expect(text.data).toBe("cXell"); expect(native?.anchorOffset).toBe(2);
+			const beforeHistory = session.document.getHistoryState(); const beforeRevision = session.document.getRevision?.();
+			const forward = scenario === "forward";
+			const target = document.createRange();
+			target.setStart(text, forward ? 2 : scenario === "unfacing target" ? 0 : 1);
+			if (scenario === "cross cell") {
+				const other = tableRoot.querySelectorAll("td")[1]?.firstChild;
+				if (!(other instanceof Text)) throw new Error("pending-cell-other-text-invalid");
+				target.setEnd(other, 1);
+			} else target.setEnd(text, forward ? 3 : scenario === "unfacing target" ? 1 : 2);
+			const inputType = forward ? "deleteContentForward" : "deleteContentBackward";
+			const deletion = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType });
+			Object.defineProperty(deletion, "getTargetRanges", { value: () => [target] });
+			act(() => current.surface.dispatchEvent(deletion));
+			const negative = scenario === "cross cell" || scenario === "unfacing target";
+			expect(deletion.defaultPrevented).toBe(negative);
+			// beforeinput only stages the native edit; it never publishes source.
+			expect(session.document.getValue()).toBe(typed);
+			expect(session.document.getRevision?.()).toBe(beforeRevision);
+			expect(session.document.getHistoryState()).toEqual(beforeHistory);
+			if (negative) {
+				expect(text.data).toBe("cXell");
+				expect(session.document.getSelection()).toEqual({ direction: "none", start: caret, end: caret });
+				return;
+			}
+			act(() => {
+				text.deleteData(forward ? 2 : 1, 1); placeCaret(text, forward ? 2 : 1);
+				current.surface.dispatchEvent(new InputEvent("input", { bubbles: true, inputType }));
+			});
+			const result = forward ? typed.replace("cXell", "cXll") : original;
+			const postCaret = forward ? caret : caret - 1;
+			expect(session.document.getValue()).toBe(result);
+			expect(session.document.getSelection()).toEqual({ direction: "none", start: postCaret, end: postCaret });
+			expect(session.document.getRevision?.()).toBe((beforeRevision ?? 0) + 1);
+			expect(session.document.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: beforeHistory.undoDepth + 1 });
+			expect(rendered.onFailure).not.toHaveBeenCalled(); expect(onDiagnostic).not.toHaveBeenCalled(); expect(onTransferFailure).not.toHaveBeenCalled();
+		} finally { rendered.view.unmount(); session.destroy(); container.remove(); field.remove(); current.surface.remove(); }
+	});
+
 	it.each(["protected", "foreign", "cell-readonly", "changed-serialization", "stale-revision"] as const)("does not project table history selection through %s DOM", (scenario) => {
 		const tableIndex = 160;
 		const rows = [
@@ -16421,11 +17280,11 @@ describe("WindowedImmersiveVisualEditor", () => {
 
 	/**
 	 * The same wrapper boundary in the forward direction: a caret parked on the
-	 * table wrapper's element start answers Delete by entering the last cell of
-	 * the last row, not by joining the next block through the table. No byte,
-	 * row or column changes.
+	 * table wrapper's element start answers Delete by entering the first cell
+	 * of the first row at offset 0, not by joining the next block through the
+	 * table. No byte, row or column changes.
 	 */
-	it("places Delete at a table wrapper's start in its last cell", () => {
+	it("places Delete at a table wrapper's start in its first cell", () => {
 		const tableIndex = 160;
 		const current = fixture({
 			blockOverrides: { [tableIndex]: windowedTableMarkdown },
@@ -16448,13 +17307,12 @@ describe("WindowedImmersiveVisualEditor", () => {
 		) {
 			throw new Error("windowed-table-wrapper-fixture-invalid");
 		}
-		const rows = tableRoot.querySelectorAll("tr");
-		const lastRow = rows[rows.length - 1];
-		const lastCell = lastRow?.cells[lastRow.cells.length - 1];
-		const lastText = lastCell?.lastChild;
+		const firstRow = tableRoot.querySelector("table")?.rows[0];
+		const firstCell = firstRow?.cells[0];
+		const firstText = firstCell?.firstChild;
 		if (
-			!(lastCell instanceof HTMLTableCellElement) ||
-			!(lastText instanceof Text)
+			!(firstCell instanceof HTMLTableCellElement) ||
+			!(firstText instanceof Text)
 		) {
 			throw new Error("windowed-table-wrapper-cell-invalid");
 		}
@@ -16473,8 +17331,8 @@ describe("WindowedImmersiveVisualEditor", () => {
 
 		expect(beforeInput.defaultPrevented).toBe(true);
 		expect(current.canonical()).toBe(original);
-		expect(window.getSelection()?.anchorNode).toBe(lastText);
-		expect(window.getSelection()?.anchorOffset).toBe(lastText.data.length);
+		expect(window.getSelection()?.anchorNode).toBe(firstText);
+		expect(window.getSelection()?.anchorOffset).toBe(0);
 		expect(tableRoot.isConnected).toBe(true);
 		expect(tableRoot.querySelector("table")?.rows.length).toBe(3);
 		expect(onFailure).not.toHaveBeenCalled();
@@ -24591,4 +25449,5147 @@ it("never retires the neighbour row when the accepted map's startLine lags by on
 		field.remove();
 		current.surface.remove();
 	}
+});
+
+it("settles Control+End over a trailing spacer into the document-end sink for an atomic .easymde-mermaid tail and handles Backspace cleanly", () => {
+	const terminalIndex = 161;
+	const imageIndex = 160;
+	const imageMarkdown = "![dot](/wp-content/plugins/easymde/assets/images/easymde-editor-icon.png)";
+	const mermaidMarkdown = "```mermaid\ngraph TD\n  A --> B\n```\n";
+	const current = fixture({
+		blockOverrides: {
+			0: "# Head",
+			[imageIndex]: imageMarkdown,
+			[terminalIndex]: mermaidMarkdown,
+		},
+		markupOverrides: {
+			0: '<h1 data-easymde-visual-block-id="b0">Head</h1>',
+		},
+		mounted: [0, 1],
+		paragraphBlocks: true,
+		sourceBlockCount: terminalIndex + 1,
+	});
+	const initial = current.canonical();
+	const owner = renderUnmountedDocumentEndRow(
+		current,
+		terminalIndex,
+		'<div class="easymde-mermaid" data-easymde-visual-markdown-source="graph TD&#10;  A --> B" contenteditable="false">diagram</div>',
+	);
+	const imageBlock = current.editMap.blocks[imageIndex];
+	if (!imageBlock) throw new Error("windowed-mermaid-image-block-missing");
+	const imageRange = createVisualMarkdownSourceRangeFromPreviewEditMap(
+		initial,
+		current.editMap,
+		{ end: imageIndex + 1, start: imageIndex },
+	);
+	const imageRowNode = (): HTMLElement => {
+		const p = document.createElement("p");
+		p.setAttribute("data-easymde-visual-block-id", imageBlock.id);
+		const img = document.createElement("img");
+		img.alt = "dot";
+		img.src = "/wp-content/plugins/easymde/assets/images/easymde-editor-icon.png";
+		p.append(img);
+		return p;
+	};
+	const getAcceptedWindowRow = vi.fn((request: PreviewAcceptedWindowRowRequest) => {
+		if (request.index === imageIndex && request.id === imageBlock.id) {
+			return {
+				root: imageRowNode(),
+				source: initial,
+				sourceRange: imageRange,
+				sourceRevision: current.documentSession.document.getRevision?.() ?? -1,
+			};
+		}
+		return owner.getAcceptedWindowRow(request);
+	});
+	const revealAcceptedWindowRow = vi.fn((request: Parameters<typeof owner.revealAcceptedWindowRow>[0]) => {
+		if (request.index === imageIndex && request.id === imageBlock.id) {
+			const row = imageRowNode();
+			const mermaid = current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${terminalIndex}"]`,
+			);
+			if (!mermaid) throw new Error("windowed-mermaid-missing-before-image-reveal");
+			mermaid.before(row);
+			if (request.retainGap === false) request.gap.remove();
+			const ownedGap = request.retainGap === false ? undefined : request.gap;
+			const nextSnapshot = {
+				...acceptedWindowSnapshotForSurface(
+					current,
+					owner.accepted().key + 1,
+					undefined,
+					ownedGap,
+				),
+				...(ownedGap ? { ownedGap } : {}),
+			};
+			return nextSnapshot;
+		}
+		return owner.revealAcceptedWindowRow(request);
+	});
+	const onFailure = vi.fn();
+	const rendered = renderWindowEditor(current, {
+		getAcceptedWindowRow,
+		getAcceptedWindowSnapshot: owner.getAcceptedWindowSnapshot,
+		onFailure,
+		revealAcceptedWindowRow,
+	});
+	try {
+		current.surface.tabIndex = 0;
+		current.surface.setAttribute("contenteditable", "true");
+		current.surface.focus();
+		const headingText = current.surface.querySelector("h1")?.firstChild;
+		if (!(headingText instanceof Text)) throw new Error("windowed-head-text-missing");
+		window.getSelection()?.collapse(headingText, 0);
+
+		const ctrlEnd = new KeyboardEvent("keydown", {
+			bubbles: true,
+			cancelable: true,
+			ctrlKey: true,
+			key: "End",
+		});
+		act(() => {
+			current.surface.dispatchEvent(ctrlEnd);
+		});
+
+		expect(ctrlEnd.defaultPrevented).toBe(true);
+		expect(onFailure).not.toHaveBeenCalled();
+		const mermaid = current.surface.querySelector<HTMLElement>(".easymde-mermaid");
+		const sink = current.surface.lastElementChild;
+		expect(mermaid).not.toBeNull();
+		expect(sink?.tagName).toBe("P");
+		expect(sink?.hasAttribute("data-easymde-visual-block-id")).toBe(false);
+		const selection = window.getSelection();
+		expect(selection?.isCollapsed).toBe(true);
+		expect(selection?.anchorNode).toBe(sink);
+		expect(selection?.anchorOffset).toBe(0);
+
+		const backspaceKey = new KeyboardEvent("keydown", {
+			bubbles: true,
+			cancelable: true,
+			key: "Backspace",
+		});
+		const backspaceInput = new InputEvent("beforeinput", {
+			bubbles: true,
+			cancelable: true,
+			inputType: "deleteContentBackward",
+		});
+		act(() => {
+			current.surface.dispatchEvent(backspaceKey);
+			current.surface.dispatchEvent(backspaceInput);
+		});
+		expect(onFailure).not.toHaveBeenCalled();
+		expect(backspaceInput.defaultPrevented).toBe(true);
+		expect(current.canonical().includes("```mermaid")).toBe(false);
+		expect(current.canonical().includes(imageMarkdown)).toBe(true);
+	} finally {
+		rendered.view.unmount();
+		current.surface.remove();
+	}
+});
+
+it("mounts the document-end sink on onWindowReady when commitWindow mounts a contenteditable=false .easymde-mermaid tail from a host-end caret", () => {
+	const terminalIndex = 161;
+	const imageIndex = 160;
+	const imageMarkdown = "![dot](/wp-content/plugins/easymde/assets/images/easymde-editor-icon.png)";
+	const mermaidMarkdown = "```mermaid\ngraph TD\n  A --> B\n```\n";
+	const current = fixture({
+		blockOverrides: {
+			0: "# Head",
+			[imageIndex]: imageMarkdown,
+			[terminalIndex]: mermaidMarkdown,
+		},
+		markupOverrides: {
+			0: '<h1 data-easymde-visual-block-id="b0">Head</h1>',
+		},
+		mounted: [0, 1],
+		paragraphBlocks: true,
+		sourceBlockCount: terminalIndex + 1,
+	});
+	const initial = current.canonical();
+	const surfaceRef = createRef<HTMLElement>();
+	const controllerRef = createRef<SafePreviewHtmlSinkWindowController>();
+	const initialNodes = Array.from(current.surface.childNodes);
+	const initialCommit = { key: 1, nodes: initialNodes, revision: 1 };
+	const sinkView = render(
+		<SafePreviewHtmlSink
+			contentEditable
+			html={"" as SafePreviewHtml}
+			htmlRevision={1}
+			surfaceRef={surfaceRef}
+			windowControllerRef={controllerRef}
+			windowedCommit={initialCommit}
+		/>,
+	);
+	const sinkSurface = surfaceRef.current;
+	if (!sinkSurface || !controllerRef.current) {
+		throw new Error("windowed-mermaid-sink-surface-missing");
+	}
+	current.surface.remove();
+	current.surface = sinkSurface;
+	let snapshot = acceptedWindowSnapshotForSurface(current, 1);
+	const onFailure = vi.fn();
+	const rendered = renderWindowEditor(current, {
+		acceptedWindowSnapshotGeneration: 0,
+		getAcceptedWindowSnapshot: () => snapshot,
+		onFailure,
+	});
+	try {
+		sinkSurface.tabIndex = 0;
+		sinkSurface.focus();
+		const hostEndRange = document.createRange();
+		hostEndRange.setStart(sinkSurface, sinkSurface.childNodes.length);
+		hostEndRange.collapse(true);
+		window.getSelection()?.removeAllRanges();
+		window.getSelection()?.addRange(hostEndRange);
+
+		// Simulate commitWindow() mounting the bottom window with an atomic
+		// contenteditable="false" .easymde-mermaid tail BEFORE
+		// revealDocumentEndRootOwnership() runs.
+		const topSpacer = document.createElement("div");
+		topSpacer.setAttribute("data-easymde-preview-window-spacer", "1");
+		topSpacer.setAttribute("contenteditable", "false");
+		const imageRow = document.createElement("p");
+		imageRow.setAttribute("data-easymde-visual-block-id", `b${imageIndex}`);
+		const img = document.createElement("img");
+		img.alt = "dot";
+		img.src = "/wp-content/plugins/easymde/assets/images/easymde-editor-icon.png";
+		imageRow.append(img);
+		const mermaidRow = document.createElement("div");
+		mermaidRow.className = "easymde-mermaid";
+		mermaidRow.setAttribute("data-easymde-visual-block-id", `b${terminalIndex}`);
+		mermaidRow.setAttribute("data-easymde-visual-markdown-source", "graph TD\n  A --> B");
+		mermaidRow.setAttribute("contenteditable", "false");
+		mermaidRow.textContent = "diagram";
+
+		const nextCommit = {
+			key: 2,
+			nodes: [topSpacer, imageRow, mermaidRow],
+			revision: 1,
+		};
+		expect(controllerRef.current.commit(initialCommit, nextCommit)).toBe(true);
+		const selectionBeforeReady = window.getSelection();
+		expect(
+			selectionBeforeReady?.anchorNode === sinkSurface &&
+				selectionBeforeReady.anchorOffset === 0,
+		).toBe(false);
+
+		// Now deliver onWindowReady (acceptedWindowSnapshotGeneration increment).
+		snapshot = acceptedWindowSnapshotForSurface(current, 2);
+		rendered.rerenderAcceptedWindow(1);
+
+		const sink = sinkSurface.lastElementChild;
+		expect(sink?.tagName).toBe("P");
+		expect(sink?.hasAttribute("data-easymde-visual-block-id")).toBe(false);
+		const selectionAfterReady = window.getSelection();
+		expect(selectionAfterReady?.isCollapsed).toBe(true);
+		expect(selectionAfterReady?.anchorNode).toBe(sink);
+		expect(selectionAfterReady?.anchorOffset).toBe(0);
+		expect(onFailure).not.toHaveBeenCalled();
+
+		const backspaceKey = new KeyboardEvent("keydown", {
+			bubbles: true,
+			cancelable: true,
+			key: "Backspace",
+		});
+		const backspaceInput = new InputEvent("beforeinput", {
+			bubbles: true,
+			cancelable: true,
+			inputType: "deleteContentBackward",
+		});
+		act(() => {
+			sinkSurface.dispatchEvent(backspaceKey);
+			sinkSurface.dispatchEvent(backspaceInput);
+		});
+		expect(onFailure).not.toHaveBeenCalled();
+		expect(backspaceInput.defaultPrevented).toBe(true);
+		expect(current.canonical().includes("```mermaid")).toBe(false);
+		expect(current.canonical().includes(imageMarkdown)).toBe(true);
+		expect(current.canonical().startsWith(initial.slice(0, current.canonical().length))).toBe(true);
+	} finally {
+		rendered.view.unmount();
+		sinkView.unmount();
+	}
+});
+
+it("deletes an inline protected math atom cleanly on Backspace, continues deleting preceding text monotonically, and restores byte-for-byte on Undo", () => {
+	const blockIndex = 160;
+	const mathParagraph = "Formula $x^2$";
+	const mathMarkup =
+		`<p data-easymde-visual-block-id="b${blockIndex}">Formula ` +
+		`<span class="easymde-math easymde-math-inline" data-easymde-rendered="1" contenteditable="false" data-easymde-visual-markdown-source="$x^2$"><span class="katex">x2</span></span>` +
+		"</p>";
+	const current = fixture({
+		blockOverrides: { [blockIndex]: mathParagraph },
+		markupOverrides: { [blockIndex]: mathMarkup },
+		mounted: [159, blockIndex, 161],
+		paragraphBlocks: true,
+	});
+	current.surface.setAttribute("contenteditable", "true");
+	current.surface.tabIndex = 0;
+	const original = current.canonical();
+	const field = document.createElement("textarea");
+	field.value = field.defaultValue = original;
+	const container = document.createElement("div");
+	document.body.append(container, field);
+	const documentSession = createEditorDocumentSession(
+		createCodeMirrorDocumentSession({
+			container,
+			label: "Markdown source",
+			submissionField: field,
+		}),
+		createNativeTitleSession(null),
+	);
+	documentSession.document.setVisualEditingActive(true);
+	const onFailure = vi.fn();
+	const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+	const rendered = renderWindowEditor(current, { documentSession, onFailure });
+	try {
+		current.surface.focus();
+		const paragraph = current.surface.querySelector<HTMLParagraphElement>(
+			`[data-easymde-visual-block-id="b${blockIndex}"]`,
+		);
+		if (!paragraph) throw new Error("windowed-inline-math-paragraph-missing");
+		// Caret directly after the inline math span (same boundary visualEditableBoundaryAtEdge places).
+		window.getSelection()?.collapse(paragraph, paragraph.childNodes.length);
+
+		const backspaceKey = new KeyboardEvent("keydown", {
+			bubbles: true,
+			cancelable: true,
+			key: "Backspace",
+		});
+		const backspaceBeforeInput = new InputEvent("beforeinput", {
+			bubbles: true,
+			cancelable: true,
+			inputType: "deleteContentBackward",
+		});
+		act(() => {
+			current.surface.dispatchEvent(backspaceKey);
+			current.surface.dispatchEvent(backspaceBeforeInput);
+		});
+
+		expect(backspaceBeforeInput.defaultPrevented).toBe(true);
+		expect(onFailure).not.toHaveBeenCalled();
+		expect(consoleError).not.toHaveBeenCalled();
+		expect(paragraph.querySelector(".easymde-math-inline")).toBeNull();
+		const afterAtomDelete = original.replace(mathParagraph, "Formula");
+		expect(documentSession.document.getValue()).toBe(afterAtomDelete);
+
+		// Caret is placed cleanly at the end of the preceding text ("Formula").
+		const selection = window.getSelection();
+		expect(selection?.isCollapsed).toBe(true);
+		const textNode = paragraph.firstChild;
+		if (!(textNode instanceof Text)) {
+			throw new Error("windowed-inline-math-preceding-text-missing");
+		}
+		expect(textNode.data).toBe("Formula");
+		expect(selection?.anchorNode).toBe(textNode);
+		expect(selection?.anchorOffset).toBe("Formula".length);
+
+		// Next Backspace deletes preceding text monotonically without any read-only error.
+		const nextBackspaceBefore = new InputEvent("beforeinput", {
+			bubbles: true,
+			cancelable: true,
+			inputType: "deleteContentBackward",
+		});
+		const deleteRange = document.createRange();
+		deleteRange.setStart(textNode, textNode.length - 1);
+		deleteRange.setEnd(textNode, textNode.length);
+		Object.defineProperty(nextBackspaceBefore, "getTargetRanges", {
+			value: () => [deleteRange],
+		});
+		act(() => {
+			current.surface.dispatchEvent(nextBackspaceBefore);
+			if (!nextBackspaceBefore.defaultPrevented) {
+				textNode.deleteData(textNode.length - 1, 1);
+				placeCaret(textNode, textNode.length);
+				current.surface.dispatchEvent(
+					new InputEvent("input", {
+						bubbles: true,
+						inputType: "deleteContentBackward",
+					}),
+				);
+			}
+		});
+
+		expect(onFailure).not.toHaveBeenCalled();
+		expect(consoleError).not.toHaveBeenCalled();
+		expect(documentSession.document.getValue()).toBe(
+			original.replace(mathParagraph, "Formul"),
+		);
+
+		// Undo steps restore the preceding character and then the exact inline math Markdown byte-for-byte.
+		act(() => {
+			current.surface.dispatchEvent(
+				new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "historyUndo",
+				}),
+			);
+		});
+		expect(documentSession.document.getValue()).toBe(afterAtomDelete);
+		act(() => {
+			current.surface.dispatchEvent(
+				new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "historyUndo",
+				}),
+			);
+		});
+		expect(documentSession.document.getValue()).toBe(original);
+		expect(onFailure).not.toHaveBeenCalled();
+		expect(consoleError).not.toHaveBeenCalled();
+	} finally {
+		consoleError.mockRestore();
+		rendered.view.unmount();
+		documentSession.destroy();
+		container.remove();
+		field.remove();
+		current.surface.remove();
+	}
+});
+
+it("deletes an inline protected math atom cleanly on Delete when caret is directly before it", () => {
+	const blockIndex = 160;
+	const mathParagraph = "Formula $x^2$";
+	const mathMarkup =
+		`<p data-easymde-visual-block-id="b${blockIndex}">Formula ` +
+		`<span class="easymde-math easymde-math-inline" data-easymde-rendered="1" contenteditable="false" data-easymde-visual-markdown-source="$x^2$"><span class="katex">x2</span></span>` +
+		"</p>";
+	const current = fixture({
+		blockOverrides: { [blockIndex]: mathParagraph },
+		markupOverrides: { [blockIndex]: mathMarkup },
+		mounted: [159, blockIndex, 161],
+		paragraphBlocks: true,
+	});
+	current.surface.setAttribute("contenteditable", "true");
+	current.surface.tabIndex = 0;
+	const original = current.canonical();
+	const field = document.createElement("textarea");
+	field.value = field.defaultValue = original;
+	const container = document.createElement("div");
+	document.body.append(container, field);
+	const documentSession = createEditorDocumentSession(
+		createCodeMirrorDocumentSession({
+			container,
+			label: "Markdown source",
+			submissionField: field,
+		}),
+		createNativeTitleSession(null),
+	);
+	documentSession.document.setVisualEditingActive(true);
+	const onFailure = vi.fn();
+	const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+	const rendered = renderWindowEditor(current, { documentSession, onFailure });
+	try {
+		current.surface.focus();
+		const paragraph = current.surface.querySelector<HTMLParagraphElement>(
+			`[data-easymde-visual-block-id="b${blockIndex}"]`,
+		);
+		const textNode = paragraph?.firstChild;
+		if (!paragraph || !(textNode instanceof Text)) {
+			throw new Error("windowed-inline-math-delete-fixture-missing");
+		}
+		// Caret at end of preceding text directly before the inline math span.
+		placeCaret(textNode, textNode.length);
+
+		const deleteKey = new KeyboardEvent("keydown", {
+			bubbles: true,
+			cancelable: true,
+			key: "Delete",
+		});
+		const deleteBeforeInput = new InputEvent("beforeinput", {
+			bubbles: true,
+			cancelable: true,
+			inputType: "deleteContentForward",
+		});
+		act(() => {
+			current.surface.dispatchEvent(deleteKey);
+			current.surface.dispatchEvent(deleteBeforeInput);
+		});
+
+		expect(deleteBeforeInput.defaultPrevented).toBe(true);
+		expect(onFailure).not.toHaveBeenCalled();
+		expect(consoleError).not.toHaveBeenCalled();
+		expect(paragraph.querySelector(".easymde-math-inline")).toBeNull();
+		expect(documentSession.document.getValue()).toBe(
+			original.replace(mathParagraph, "Formula"),
+		);
+
+		act(() => {
+			current.surface.dispatchEvent(
+				new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "historyUndo",
+				}),
+			);
+		});
+		expect(documentSession.document.getValue()).toBe(original);
+		expect(onFailure).not.toHaveBeenCalled();
+		expect(consoleError).not.toHaveBeenCalled();
+	} finally {
+		consoleError.mockRestore();
+		rendered.view.unmount();
+		documentSession.destroy();
+		container.remove();
+		field.remove();
+		current.surface.remove();
+	}
+});
+
+describe("Windowed inline atomic removal trailing-break trimming", () => {
+	it("trims orphaned trailing space before a Chromium placeholder <br> at block end and preserves real <br> breaks", () => {
+		const blockIndex = 160;
+		const mathParagraph = "Math $x^2$";
+		const mathMarkup =
+			`<p data-easymde-visual-block-id="b${blockIndex}">Math ` +
+			`<span class="easymde-math easymde-math-inline" data-easymde-rendered="1" contenteditable="false" data-easymde-visual-markdown-source="$x^2$"><span class="katex">x2</span></span>` +
+			"<br></p>";
+		const current = fixture({
+			blockOverrides: { [blockIndex]: mathParagraph },
+			markupOverrides: { [blockIndex]: mathMarkup },
+			mounted: [159, blockIndex, 161],
+			paragraphBlocks: true,
+		});
+		current.surface.setAttribute("contenteditable", "true");
+		current.surface.tabIndex = 0;
+		const original = current.canonical();
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = original;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const documentSession = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container,
+				label: "Markdown source",
+				submissionField: field,
+			}),
+			createNativeTitleSession(null),
+		);
+		documentSession.document.setVisualEditingActive(true);
+		const onFailure = vi.fn();
+		const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+		const rendered = renderWindowEditor(current, { documentSession, onFailure });
+		try {
+			current.surface.focus();
+			const paragraph = current.surface.querySelector<HTMLParagraphElement>(
+				`[data-easymde-visual-block-id="b${blockIndex}"]`,
+			);
+			if (!paragraph) throw new Error("windowed-trailing-br-paragraph-missing");
+			// Chromium places the caret right after the inline math atom and before the trailing placeholder <br>.
+			window.getSelection()?.collapse(paragraph, 2);
+
+			const backspaceBeforeInput = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				inputType: "deleteContentBackward",
+			});
+			act(() => {
+				current.surface.dispatchEvent(
+					new KeyboardEvent("keydown", {
+						bubbles: true,
+						cancelable: true,
+						key: "Backspace",
+					}),
+				);
+				current.surface.dispatchEvent(backspaceBeforeInput);
+			});
+
+			expect(backspaceBeforeInput.defaultPrevented).toBe(true);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(consoleError).not.toHaveBeenCalled();
+			expect(paragraph.querySelector(".easymde-math-inline")).toBeNull();
+			const expectedAfterAtom = original.replace(mathParagraph, "Math");
+			expect(documentSession.document.getValue()).toBe(expectedAfterAtom);
+			expect(paragraph.querySelector("br")).toBeNull();
+
+			const textNode = paragraph.firstChild;
+			if (!(textNode instanceof Text)) {
+				throw new Error("windowed-trailing-br-text-missing");
+			}
+			expect(textNode.data).toBe("Math");
+			expect(window.getSelection()?.isCollapsed).toBe(true);
+			expect(window.getSelection()?.anchorNode).toBe(textNode);
+			expect(window.getSelection()?.anchorOffset).toBe("Math".length);
+
+			// Undo restores the original inline math Markdown byte-for-byte.
+			act(() => {
+				current.surface.dispatchEvent(
+					new InputEvent("beforeinput", {
+						bubbles: true,
+						cancelable: true,
+						inputType: "historyUndo",
+					}),
+				);
+			});
+			expect(documentSession.document.getValue()).toBe(original);
+			expect(onFailure).not.toHaveBeenCalled();
+		} finally {
+			consoleError.mockRestore();
+			rendered.view.unmount();
+			documentSession.destroy();
+			container.remove();
+			field.remove();
+			current.surface.remove();
+		}
+	});
+
+	it.each([
+		{
+			expected: "Math   \nNext",
+			label: "explicit hard break followed by text",
+			markup: (id: string) =>
+				`<p data-easymde-visual-block-id="${id}">Math ` +
+				`<span class="easymde-math easymde-math-inline" data-easymde-rendered="1" contenteditable="false" data-easymde-visual-markdown-source="$x^2$"><span class="katex">x2</span></span>` +
+				"<br>Next</p>",
+			parentSelector: (id: string) => `[data-easymde-visual-block-id="${id}"]`,
+			source: "Math $x^2$  \nNext",
+		},
+		{
+			expected: "Math  \n",
+			label: "double trailing <br><br>",
+			markup: (id: string) =>
+				`<p data-easymde-visual-block-id="${id}">Math ` +
+				`<span class="easymde-math easymde-math-inline" data-easymde-rendered="1" contenteditable="false" data-easymde-visual-markdown-source="$x^2$"><span class="katex">x2</span></span>` +
+				"<br><br></p>",
+			parentSelector: (id: string) => `[data-easymde-visual-block-id="${id}"]`,
+			source: "Math $x^2$ \n",
+		},
+		{
+			expected: "| Col |\n| --- |\n| Math <br> |",
+			label: "explicit <br> inside a table cell",
+			markup: (id: string) =>
+				`<table data-easymde-visual-block-id="${id}"><thead><tr><th>Col</th></tr></thead><tbody><tr><td>Math ` +
+				`<span class="easymde-math easymde-math-inline" data-easymde-rendered="1" contenteditable="false" data-easymde-visual-markdown-source="$x^2$"><span class="katex">x2</span></span>` +
+				"<br></td></tr></tbody></table>",
+			parentSelector: (id: string) => `[data-easymde-visual-block-id="${id}"] td`,
+			source: "| Col |\n| --- |\n| Math $x^2$<br> |",
+		},
+	])(
+		"does not mis-trim preceding space or remove <br> for $label",
+		({ expected, markup, parentSelector, source: blockSource }) => {
+			const blockIndex = 160;
+			const blockId = `b${blockIndex}`;
+			const current = fixture({
+				blockOverrides: { [blockIndex]: blockSource },
+				markupOverrides: { [blockIndex]: markup(blockId) },
+				mounted: [159, blockIndex, 161],
+				paragraphBlocks: true,
+			});
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.tabIndex = 0;
+			const original = current.canonical();
+			const onFailure = vi.fn();
+			const rendered = renderWindowEditor(current, { onFailure });
+			try {
+				current.surface.focus();
+				const containerEl = current.surface.querySelector<HTMLElement>(
+					parentSelector(blockId),
+				);
+				if (!containerEl) throw new Error("windowed-explicit-br-container-missing");
+				window.getSelection()?.collapse(containerEl, 2);
+
+				const backspaceBeforeInput = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "deleteContentBackward",
+				});
+				act(() => {
+					current.surface.dispatchEvent(
+						new KeyboardEvent("keydown", {
+							bubbles: true,
+							cancelable: true,
+							key: "Backspace",
+						}),
+					);
+					current.surface.dispatchEvent(backspaceBeforeInput);
+				});
+
+				expect(backspaceBeforeInput.defaultPrevented).toBe(true);
+				expect(onFailure).not.toHaveBeenCalled();
+				expect(containerEl.querySelector(".easymde-math-inline")).toBeNull();
+				expect(containerEl.querySelector("br")).not.toBeNull();
+				const textNode = containerEl.firstChild;
+				if (!(textNode instanceof Text)) {
+					throw new Error("windowed-explicit-br-text-missing");
+				}
+				expect(textNode.data).toBe("Math ");
+				expect(current.canonical()).toBe(original.replace(blockSource, expected));
+			} finally {
+				rendered.view.unmount();
+				current.surface.remove();
+			}
+		},
+	);
+});
+
+it("restores the window region and resyncs readOnlySnapshotRef when commit rejects an unexpected protected DOM mutation with unchanged canonical source", () => {
+	const blockIndex = 160;
+	const mathParagraph = "Before $x^2$ after";
+	const mathMarkup =
+		`<p data-easymde-visual-block-id="b${blockIndex}">Before ` +
+		`<span class="easymde-math easymde-math-inline" data-easymde-rendered="1" contenteditable="false" data-easymde-visual-markdown-source="$x^2$"><span class="katex">x2</span></span>` +
+		" after</p>";
+	const current = fixture({
+		blockOverrides: { [blockIndex]: mathParagraph },
+		markupOverrides: { [blockIndex]: mathMarkup },
+		mounted: [159, blockIndex, 161],
+		paragraphBlocks: true,
+	});
+	current.surface.setAttribute("contenteditable", "true");
+	current.surface.tabIndex = 0;
+	const original = current.canonical();
+	const onFailure = vi.fn();
+	const rendered = renderWindowEditor(current, { onFailure });
+	try {
+		current.surface.focus();
+		const paragraph = current.surface.querySelector<HTMLParagraphElement>(
+			`[data-easymde-visual-block-id="b${blockIndex}"]`,
+		);
+		const mathSpan = paragraph?.querySelector<HTMLElement>(".easymde-math-inline");
+		const tailText = paragraph?.lastChild;
+		if (!paragraph || !mathSpan || !(tailText instanceof Text)) {
+			throw new Error("windowed-readonly-recovery-fixture-missing");
+		}
+		placeCaret(tailText, tailText.length);
+
+		// Simulate an unexpected native DOM mutation removing the protected atom during an input cycle.
+		act(() => {
+			current.surface.dispatchEvent(
+				new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					data: "!",
+					inputType: "insertText",
+				}),
+			);
+			mathSpan.remove();
+			tailText.appendData("!");
+			current.surface.dispatchEvent(
+				new InputEvent("input", {
+					bubbles: true,
+					data: "!",
+					inputType: "insertText",
+				}),
+			);
+		});
+
+		expect(onFailure).toHaveBeenCalledWith(
+			"visual-editor-read-only-region-mutated",
+		);
+		expect(onFailure).toHaveBeenCalledOnce();
+		expect(current.canonical()).toBe(original);
+		expect(current.documentChanges).not.toHaveBeenCalled();
+
+		// The window region must be restored with its protected math span intact.
+		const restoredMath = paragraph.querySelector<HTMLElement>(".easymde-math-inline");
+		expect(restoredMath).not.toBeNull();
+		expect(restoredMath?.getAttribute("contenteditable")).toBe("false");
+		const restoredTail = paragraph.lastChild;
+		if (!(restoredTail instanceof Text)) {
+			throw new Error("windowed-readonly-recovery-tail-missing");
+		}
+		expect(restoredTail.data).toBe(" after");
+
+		// Subsequent normal typing and Backspace must still succeed cleanly without poisoning assertReadySourceAndDom().
+		onFailure.mockClear();
+		placeCaret(restoredTail, restoredTail.length);
+		const typeBefore = new InputEvent("beforeinput", {
+			bubbles: true,
+			cancelable: true,
+			data: "Z",
+			inputType: "insertText",
+		});
+		act(() => {
+			current.surface.dispatchEvent(typeBefore);
+			if (!typeBefore.defaultPrevented) {
+				restoredTail.appendData("Z");
+				placeCaret(restoredTail, restoredTail.length);
+				current.surface.dispatchEvent(
+					new InputEvent("input", {
+						bubbles: true,
+						data: "Z",
+						inputType: "insertText",
+					}),
+				);
+			}
+		});
+		expect(onFailure).not.toHaveBeenCalled();
+		expect(current.canonical()).toBe(
+			original.replace(mathParagraph, "Before $x^2$ afterZ"),
+		);
+
+		const backspaceBefore = new InputEvent("beforeinput", {
+			bubbles: true,
+			cancelable: true,
+			inputType: "deleteContentBackward",
+		});
+		act(() => {
+			current.surface.dispatchEvent(backspaceBefore);
+			if (!backspaceBefore.defaultPrevented) {
+				restoredTail.deleteData(restoredTail.length - 1, 1);
+				placeCaret(restoredTail, restoredTail.length);
+				current.surface.dispatchEvent(
+					new InputEvent("input", {
+						bubbles: true,
+						inputType: "deleteContentBackward",
+					}),
+				);
+			}
+		});
+		expect(onFailure).not.toHaveBeenCalled();
+		expect(current.canonical()).toBe(original);
+	} finally {
+		rendered.view.unmount();
+		current.surface.remove();
+	}
+});
+
+describe("Prod Fix 11 windowed whole-surface and document-start owners", () => {
+	const selectBlinkCanonicalWindow = (
+		surface: HTMLElement,
+		spelling: "texts" | "paragraph",
+	): Range => {
+		const paragraphs = Array.from(surface.querySelectorAll("p"));
+		const first = paragraphs[0];
+		const last = paragraphs[paragraphs.length - 1];
+		const firstText = first?.firstChild;
+		const lastText = last?.firstChild;
+		if (!first || !last || !(firstText instanceof Text) || !(lastText instanceof Text)) {
+			throw new Error("prod-fix-11-window-select-all-missing");
+		}
+		const range = document.createRange();
+		if ("texts" === spelling) {
+			range.setStart(firstText, 0);
+			range.setEnd(lastText, lastText.length);
+		} else {
+			range.setStart(first, 0);
+			range.setEnd(last, last.childNodes.length);
+		}
+		const selection = window.getSelection();
+		selection?.removeAllRanges();
+		selection?.addRange(range);
+		return range;
+	};
+
+	it.each([
+		{ blocks: 3, inputType: "deleteContentBackward", pending: false, spelling: "texts" },
+		{ blocks: 3, inputType: "deleteContentBackward", pending: true, spelling: "texts" },
+		{ blocks: 1, inputType: "deleteContentBackward", pending: false, spelling: "paragraph" },
+		{ blocks: 1, inputType: "deleteContentBackward", pending: true, spelling: "paragraph" },
+		{ blocks: 3, inputType: "insertText", pending: false, spelling: "texts" },
+		{ blocks: 3, inputType: "insertText", pending: true, spelling: "texts" },
+		{ blocks: 1, inputType: "insertText", pending: false, spelling: "paragraph" },
+		{ blocks: 1, inputType: "insertText", pending: true, spelling: "paragraph" },
+	] as const)(
+		"owns a Blink-canonical $spelling select-all $inputType over $blocks block(s) (pending: $pending)",
+		({ blocks, inputType, pending, spelling }) => {
+			const current = fixture({
+				mounted: Array.from({ length: blocks }, (_, index) => index),
+				sourceBlockCount: blocks,
+			});
+			const onFailure = vi.fn();
+			const requestPreview = vi.fn(() => "prod-fix-11-window-select-all");
+			const { view } = renderWindowEditor(current, { onFailure, pending, requestPreview });
+			try {
+				current.surface.tabIndex = 0;
+				current.surface.setAttribute("contenteditable", "true");
+				current.surface.focus();
+				const target = selectBlinkCanonicalWindow(current.surface, spelling);
+				const data = "insertText" === inputType ? "Q" : null;
+				const beforeInput = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					data,
+					inputType,
+				});
+				Object.defineProperty(beforeInput, "getTargetRanges", {
+					value: () => [target.cloneRange()],
+				});
+				act(() => {
+					current.surface.dispatchEvent(beforeInput);
+				});
+				expect(beforeInput.defaultPrevented).toBe(true);
+				const expected = data ?? "";
+				expect(current.canonical()).toBe(expected);
+				expect(requestPreview).toHaveBeenCalledWith(expected);
+				expect(onFailure).not.toHaveBeenCalled();
+			} finally {
+				view.unmount();
+				current.surface.remove();
+			}
+		},
+	);
+
+	it.each(["text", "element"] as const)(
+		"keeps a document-start non-empty heading Backspace a silent no-op (%s target)",
+		(spelling) => {
+			const current = fixture({
+				blockOverrides: { 0: "## Title" },
+				markupOverrides: { 0: '<h2 data-easymde-visual-block-id="b0">Title</h2>' },
+				mounted: [0, 1],
+				paragraphBlocks: true,
+				sourceBlockCount: 2,
+			});
+			const original = current.canonical();
+			const onFailure = vi.fn();
+			const onDiagnostic = vi.fn();
+			const onTransferFailure = vi.fn();
+			const { view } = renderWindowEditor(current, { onDiagnostic, onFailure, onTransferFailure });
+			try {
+				current.surface.tabIndex = 0;
+				current.surface.setAttribute("contenteditable", "true");
+				current.surface.focus();
+				const heading = current.surface.querySelector("h2");
+				const text = heading?.firstChild;
+				if (!(heading instanceof HTMLHeadingElement) || !(text instanceof Text)) {
+					throw new Error("prod-fix-11-window-heading-missing");
+				}
+				const initialHtml = current.surface.innerHTML;
+				placeCaret(text, 0);
+				const target = document.createRange();
+				if ("text" === spelling) {
+					target.setStart(text, 0);
+				} else {
+					target.setStart(heading, 0);
+				}
+				target.setEnd(text, 0);
+				const keydown = new KeyboardEvent("keydown", {
+					bubbles: true,
+					cancelable: true,
+					key: "Backspace",
+				});
+				const beforeInput = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "deleteContentBackward",
+				});
+				Object.defineProperty(beforeInput, "getTargetRanges", { value: () => [target] });
+				act(() => {
+					current.surface.dispatchEvent(keydown);
+					current.surface.dispatchEvent(beforeInput);
+				});
+				expect(beforeInput.defaultPrevented, "the press is consumed").toBe(true);
+				expect(current.canonical(), "no byte is written").toBe(original);
+				expect(current.documentChanges).not.toHaveBeenCalled();
+				expect(current.surface.innerHTML, "the surface is untouched").toBe(initialHtml);
+				expect(window.getSelection()?.anchorNode).toBe(text);
+				expect(window.getSelection()?.anchorOffset).toBe(0);
+				expect(onFailure).not.toHaveBeenCalled();
+				expect(onTransferFailure).not.toHaveBeenCalled();
+				expect(
+					onDiagnostic.mock.calls.filter(([code]) =>
+						typeof code === "string" && code.includes("adjacent-block-unavailable")),
+				).toHaveLength(0);
+			} finally {
+				view.unmount();
+				current.surface.remove();
+			}
+		},
+	);
+
+	it("collapses orphaned trailing newlines when emptying and retiring consecutive EOF paragraphs", () => {
+		const current = fixture({
+			blockOverrides: {
+				0: "Tail one.",
+				1: "Tail two.",
+				2: "Tail three.\n\n",
+			},
+			markupOverrides: {
+				0: '<p data-easymde-visual-block-id="b0">Tail one.</p>',
+				1: '<p data-easymde-visual-block-id="b1">Tail two.</p>',
+				2: '<p data-easymde-visual-block-id="b2">Tail three.</p>',
+			},
+			mounted: [0, 1, 2],
+			paragraphBlocks: true,
+			sourceBlockCount: 3,
+		});
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		const rendered = renderWindowEditor(current, {
+			onFailure,
+			onTransferFailure,
+		});
+		try {
+			current.surface.tabIndex = 0;
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.focus();
+			const deleteAllCharsAndRetire = (
+				blockId: string,
+				previousBlockId: string,
+			): void => {
+				const paragraph = current.surface.querySelector<HTMLParagraphElement>(
+					`[data-easymde-visual-block-id="${blockId}"]`,
+				);
+				const previousParagraph =
+					current.surface.querySelector<HTMLParagraphElement>(
+						`[data-easymde-visual-block-id="${previousBlockId}"]`,
+					);
+				const text = paragraph?.firstChild;
+				const previousText = previousParagraph?.firstChild;
+				if (
+					!(paragraph instanceof HTMLParagraphElement) ||
+					!(previousParagraph instanceof HTMLParagraphElement) ||
+					!(text instanceof Text) ||
+					!(previousText instanceof Text)
+				) {
+					throw new Error(`eof-retire-fixture-missing:${blockId}`);
+				}
+				const totalChars = text.data.length;
+				for (let step = 0; step < totalChars; step += 1) {
+					const offset = text.data.length;
+					placeCaret(text, offset);
+					const target = document.createRange();
+					target.setStart(text, offset - 1);
+					target.setEnd(text, offset);
+					const beforeInput = new InputEvent("beforeinput", {
+						bubbles: true,
+						cancelable: true,
+						inputType: "deleteContentBackward",
+					});
+					Object.defineProperty(beforeInput, "getTargetRanges", {
+						value: () => [target],
+					});
+					act(() => {
+						current.surface.dispatchEvent(beforeInput);
+						expect(beforeInput.defaultPrevented).toBe(false);
+						if (offset === 1) {
+							text.remove();
+							paragraph.append(document.createElement("br"));
+							window.getSelection()?.collapse(paragraph, 0);
+						} else {
+							text.deleteData(offset - 1, 1);
+							placeCaret(text, offset - 1);
+						}
+						current.surface.dispatchEvent(
+							new InputEvent("input", {
+								bubbles: true,
+								inputType: "deleteContentBackward",
+							}),
+						);
+					});
+					const trailingNewlines =
+						current.canonical().match(/(?:\r\n|\r|\n)+$/u)?.[0].length ?? 0;
+					expect(trailingNewlines).toBeLessThanOrEqual(4);
+				}
+				expect(paragraph.firstChild).toBeInstanceOf(HTMLBRElement);
+				// Retire the emptied terminal <p><br></p> via 2-block structural commit.
+				const retireTarget = document.createRange();
+				retireTarget.setStart(previousText, previousText.length);
+				retireTarget.setEnd(paragraph, 0);
+				const retireBefore = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "deleteContentBackward",
+				});
+				Object.defineProperty(retireBefore, "getTargetRanges", {
+					value: () => [retireTarget],
+				});
+				act(() => {
+					current.surface.dispatchEvent(retireBefore);
+					if (!retireBefore.defaultPrevented) {
+						paragraph.remove();
+						placeCaret(previousText, previousText.length);
+						current.surface.dispatchEvent(
+							new InputEvent("input", {
+								bubbles: true,
+								inputType: "deleteContentBackward",
+							}),
+						);
+					}
+				});
+				const trailingAfterRetire =
+					current.canonical().match(/(?:\r\n|\r|\n)+$/u)?.[0].length ?? 0;
+				expect(trailingAfterRetire).toBe(0);
+			};
+
+			deleteAllCharsAndRetire("b2", "b1");
+			expect(current.canonical()).toBe("Tail one.\n\nTail two.");
+			act(() => {
+				rendered.rerenderPreview(
+					{
+						blocks: [
+							{ editable: true, endLine: 1, id: "b0", startLine: 0 },
+							{ editable: true, endLine: 3, id: "b1", startLine: 2 },
+						],
+						coordinate: "line",
+						signature: "next",
+						version: 1,
+					},
+					{ revision: 2, signature: "next" },
+				);
+			});
+
+			deleteAllCharsAndRetire("b1", "b0");
+			expect(current.canonical()).toBe("Tail one.");
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+		} finally {
+			rendered.view.unmount();
+			current.surface.remove();
+		}
+	});
+
+	it("trims the trailing line ending when deleting a standalone trailing image paragraph (leaves \\n\\n not \\n\\n\\n)", () => {
+		const image = "![alt](https://example.test/tail.png)";
+		const diagram = "```mermaid\ngraph TD\n  A --> B\n```";
+		const current = fixture({
+			blockOverrides: {
+				0: "Mixed paragraph",
+				1: image,
+				2: `${diagram}\n`,
+			},
+			markupOverrides: {
+				0: '<p data-easymde-visual-block-id="b0">Mixed paragraph</p>',
+				1: `<p data-easymde-visual-block-id="b1"><img alt="alt" src="https://example.test/tail.png"></p>`,
+				2: '<div data-easymde-visual-block-id="b2" class="easymde-mermaid" data-easymde-visual-markdown-source="graph TD\n  A --&gt; B">Rendered</div>',
+			},
+			mounted: [0, 1, 2],
+			paragraphBlocks: true,
+			sourceBlockCount: 3,
+		});
+		const original = current.canonical();
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = original;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const session = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container,
+				label: "Markdown source",
+				submissionField: field,
+			}),
+			createNativeTitleSession(null),
+		);
+		session.document.setVisualEditingActive(true);
+		const onFailure = vi.fn();
+		const rendered = renderWindowEditor(current, {
+			documentSession: session,
+			onFailure,
+		});
+		try {
+			current.surface.tabIndex = 0;
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.focus();
+			window.getSelection()?.collapse(
+				current.surface,
+				current.surface.childNodes.length,
+			);
+			act(() => document.dispatchEvent(new Event("selectionchange")));
+			// First Backspace removes trailing mermaid block, leaving `Mixed paragraph\n\n![alt](...)\n`.
+			act(() => {
+				current.surface.dispatchEvent(
+					new InputEvent("beforeinput", {
+						bubbles: true,
+						cancelable: true,
+						inputType: "deleteContentBackward",
+					}),
+				);
+			});
+			expect(session.document.getValue()).toBe(
+				`Mixed paragraph\n\n${image}\n`,
+			);
+			const imageRow = current.surface.querySelector<HTMLParagraphElement>(
+				'[data-easymde-visual-block-id="b1"]',
+			);
+			if (!imageRow) throw new Error("standalone-image-row-missing");
+			const imageTarget = document.createRange();
+			imageTarget.setStart(imageRow, 0);
+			imageTarget.setEnd(imageRow, 1);
+			const deleteImage = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				inputType: "deleteContentBackward",
+			});
+			Object.defineProperty(deleteImage, "getTargetRanges", {
+				value: () => [imageTarget],
+			});
+			act(() => {
+				current.surface.dispatchEvent(deleteImage);
+				if (!deleteImage.defaultPrevented) {
+					imageTarget.deleteContents();
+					imageRow.append(document.createElement("br"));
+					window.getSelection()?.collapse(imageRow, 0);
+					current.surface.dispatchEvent(
+						new InputEvent("input", {
+							bubbles: true,
+							inputType: "deleteContentBackward",
+						}),
+					);
+				}
+			});
+			expect(session.document.getValue()).toBe("Mixed paragraph\n\n");
+			expect(session.document.getValue()).not.toBe("Mixed paragraph\n\n\n");
+			expect(onFailure).not.toHaveBeenCalled();
+		} finally {
+			rendered.view.unmount();
+			session.destroy();
+			container.remove();
+			field.remove();
+			current.surface.remove();
+		}
+	});
+
+	it("trims a Chromium NBSP before a removed inline math atom against an ASCII space in source", () => {
+		const blockIndex = 160;
+		const current = fixture({
+			blockOverrides: { [blockIndex]: "Math $x^2$" },
+			markupOverrides: {
+				[blockIndex]:
+					`<p data-easymde-visual-block-id="b${blockIndex}">Math\u00a0` +
+					`<span class="easymde-math easymde-math-inline" data-easymde-rendered="1" contenteditable="false" data-easymde-visual-markdown-source="$x^2$"><span class="katex">x2</span></span>` +
+					"</p>",
+			},
+			mounted: [159, blockIndex, 161],
+			paragraphBlocks: true,
+		});
+		const original = current.canonical();
+		const onFailure = vi.fn();
+		const rendered = renderWindowEditor(current, { onFailure });
+		try {
+			current.surface.tabIndex = 0;
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.focus();
+			const paragraph = current.surface.querySelector<HTMLParagraphElement>(
+				`[data-easymde-visual-block-id="b${blockIndex}"]`,
+			);
+			if (!paragraph) throw new Error("nbsp-inline-math-paragraph-missing");
+			window.getSelection()?.collapse(paragraph, paragraph.childNodes.length);
+			const beforeInput = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				inputType: "deleteContentBackward",
+			});
+			act(() => current.surface.dispatchEvent(beforeInput));
+
+			expect(beforeInput.defaultPrevented).toBe(true);
+			expect(paragraph.querySelector(".easymde-math-inline")).toBeNull();
+			expect(paragraph.textContent).toBe("Math");
+			expect(current.canonical()).toBe(
+				original.replace("Math $x^2$", "Math"),
+			);
+			expect(onFailure).not.toHaveBeenCalled();
+		} finally {
+			rendered.view.unmount();
+			current.surface.remove();
+		}
+	});
+
+	it("moves the caret into an adjacent table on pending outer-edge Backspace without mutating or failing", () => {
+		const tableMarkdown = "| Col A | Col B |\n| --- | --- |\n| one | two |";
+		// Build a 3-block fixture: Table (b0) -> Paragraph (b1) -> Mermaid (b2) at EOF.
+		// Deleting Mermaid starts a real pending formal preview transfer; then Backspace at
+		// start of b1 (adjacent to Table b0) MUST enter the Table's edge cell cleanly.
+		const diagram = "```mermaid\ngraph TD\n  A --> B\n```";
+		const pendingFixture = fixture({
+			blockOverrides: {
+				0: tableMarkdown,
+				1: "Tail",
+				2: `${diagram}\n`,
+			},
+			markupOverrides: {
+				0:
+					'<section class="table-container easymde-table-container" data-easymde-visual-block-id="b0">' +
+					"<table><thead><tr><th>Col A</th><th>Col B</th></tr></thead>" +
+					"<tbody><tr><td>one</td><td>two</td></tr></tbody></table></section>",
+				1: '<p data-easymde-visual-block-id="b1">Tail</p>',
+				2: '<div data-easymde-visual-block-id="b2" class="easymde-mermaid" data-easymde-visual-markdown-source="graph TD\n  A --&gt; B">Rendered</div>',
+			},
+			mounted: [0, 1, 2],
+			paragraphBlocks: true,
+			sourceBlockCount: 3,
+		});
+		const initial = pendingFixture.canonical();
+		const pendingField = document.createElement("textarea");
+		pendingField.value = pendingField.defaultValue = initial;
+		const pendingContainer = document.createElement("div");
+		document.body.append(pendingContainer, pendingField);
+		const pendingSession = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container: pendingContainer,
+				label: "Markdown source",
+				submissionField: pendingField,
+			}),
+			createNativeTitleSession(null),
+		);
+		pendingSession.document.setVisualEditingActive(true);
+		const pendingFailure = vi.fn();
+		const pendingTransferFailure = vi.fn();
+		const pendingRendered = renderWindowEditor(pendingFixture, {
+			documentSession: pendingSession,
+			onFailure: pendingFailure,
+			onTransferFailure: pendingTransferFailure,
+		});
+		try {
+			pendingFixture.surface.tabIndex = 0;
+			pendingFixture.surface.setAttribute("contenteditable", "true");
+			pendingFixture.surface.focus();
+			const tailParagraph =
+				pendingFixture.surface.querySelector<HTMLParagraphElement>(
+					'[data-easymde-visual-block-id="b1"]',
+				);
+			const tableSection = pendingFixture.surface.querySelector<HTMLElement>(
+				'[data-easymde-visual-block-id="b0"]',
+			);
+			const tailText = tailParagraph?.firstChild;
+			if (!tailParagraph || !tableSection || !(tailText instanceof Text)) {
+				throw new Error("pending-table-edge-elements-missing");
+			}
+			// Delete trailing mermaid from document-end sink -> enters pending transfer with caret at end of b1 ("Tail").
+			window.getSelection()?.collapse(
+				pendingFixture.surface,
+				pendingFixture.surface.childNodes.length,
+			);
+			act(() => document.dispatchEvent(new Event("selectionchange")));
+			act(() => {
+				pendingFixture.surface.dispatchEvent(
+					new InputEvent("beforeinput", {
+						bubbles: true,
+						cancelable: true,
+						inputType: "deleteContentBackward",
+					}),
+				);
+			});
+			const sourceAfterDiagram = pendingSession.document.getValue();
+			expect(sourceAfterDiagram).toBe(`${tableMarkdown}\n\nTail\n`);
+			// Move caret to start of b1 ("Tail") via pending navigation gesture while transfer is still pending,
+			// so b1 is synced and atStart=true with adjacent === tableSection (hitting pendingDeletionApplies :11044).
+			act(() => {
+				pendingFixture.surface.dispatchEvent(
+					new MouseEvent("pointerdown", { bubbles: true, button: 0 }),
+				);
+				placeCaret(tailText, 0);
+				pendingFixture.surface.dispatchEvent(
+					new KeyboardEvent("keydown", { bubbles: true, key: "Home" }),
+				);
+				placeCaret(tailText, 0);
+			});
+			const edgeTarget = document.createRange();
+			edgeTarget.setStart(tailText, 0);
+			edgeTarget.collapse(true);
+			const edgeBackspace = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				inputType: "deleteContentBackward",
+			});
+			Object.defineProperty(edgeBackspace, "getTargetRanges", {
+				value: () => [edgeTarget],
+			});
+			act(() => {
+				pendingFixture.surface.dispatchEvent(edgeBackspace);
+			});
+			expect(edgeBackspace.defaultPrevented).toBe(true);
+			expect(pendingSession.document.getValue()).toBe(sourceAfterDiagram);
+			const liveSelection = window.getSelection();
+			expect(liveSelection?.isCollapsed).toBe(true);
+			expect(
+				liveSelection?.anchorNode &&
+					tableSection.contains(liveSelection.anchorNode),
+			).toBe(true);
+			const edgeCell = tableSection.querySelector("tbody tr:last-child td:last-child");
+			expect(
+				edgeCell &&
+					liveSelection?.anchorNode &&
+					edgeCell.contains(liveSelection.anchorNode),
+			).toBe(true);
+			expect(liveSelection?.anchorOffset).toBe(
+				liveSelection?.anchorNode instanceof Text
+					? liveSelection.anchorNode.data.length
+					: edgeCell?.childNodes.length,
+			);
+			expect(pendingFailure).not.toHaveBeenCalled();
+			expect(pendingTransferFailure).not.toHaveBeenCalled();
+		} finally {
+			pendingRendered.view.unmount();
+			pendingSession.destroy();
+			pendingContainer.remove();
+			pendingField.remove();
+			pendingFixture.surface.remove();
+		}
+	});
+
+	it("mounts an owned <p><br></p> with caret at (p, 0) for canonical insert-paragraph-above-table and accepts typing", () => {
+		const tableMarkdown = "| Col A | Col B |\n| --- | --- |\n| one | two |";
+		const current = fixture({
+			blockOverrides: {
+				159: "Before table",
+				160: tableMarkdown,
+				161: "After table",
+			},
+			markupOverrides: {
+				159: '<p data-easymde-visual-block-id="b159">Before table</p>',
+				160:
+					'<section class="table-container easymde-table-container" data-easymde-visual-block-id="b160">' +
+					"<table><thead><tr><th>Col A</th><th>Col B</th></tr></thead>" +
+					"<tbody><tr><td>one</td><td>two</td></tr></tbody></table></section>",
+				161: '<p data-easymde-visual-block-id="b161">After table</p>',
+			},
+			mounted: [159, 160, 161],
+			paragraphBlocks: true,
+		});
+		const source = current.canonical();
+		const tableStart = source.indexOf("| Col A |");
+		if (tableStart < 0) throw new Error("insert-above-table-source-missing");
+		const nextValue = `${source.slice(0, tableStart)}\n${source.slice(tableStart)}`;
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = source;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const session = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container,
+				label: "Markdown source",
+				submissionField: field,
+			}),
+			createNativeTitleSession(null),
+		);
+		session.document.setVisualEditingActive(true);
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		const rendered = renderWindowEditor(current, {
+			documentSession: session,
+			onFailure,
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+			onTransferFailure,
+		});
+		try {
+			current.surface.tabIndex = 0;
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.focus();
+			if (!runtime) throw new Error("insert-above-table-runtime-missing");
+			const readyRuntime = runtime as ImmersiveVisualEditorRuntime;
+			let outcome: string | undefined;
+			act(() => {
+				outcome = readyRuntime.applyCanonicalChange({
+					change: {
+						changes: { from: tableStart, insert: "\n", to: tableStart },
+						selection: {
+							direction: "none",
+							end: tableStart,
+							start: tableStart,
+						},
+						value: nextValue,
+					},
+					expected: {
+						revision: session.document.getRevision?.() ?? 0,
+						selection: session.document.getSelection(),
+						value: source,
+					},
+				});
+			});
+			expect(outcome).toBe("handled");
+			expect(session.document.getValue()).toBe(nextValue);
+
+			const tableSection = current.surface.querySelector<HTMLElement>(
+				'[data-easymde-visual-block-id="b160"]',
+			);
+			const mountedGap = tableSection?.previousElementSibling;
+			expect(mountedGap).toBeInstanceOf(HTMLParagraphElement);
+			expect(mountedGap?.firstChild).toBeInstanceOf(HTMLBRElement);
+			expect(window.getSelection()?.isCollapsed).toBe(true);
+			expect(window.getSelection()?.anchorNode).toBe(mountedGap);
+			expect(window.getSelection()?.anchorOffset).toBe(0);
+
+			// Simulate formal preview replacing the surface without retaining the gap node:
+			// adoption MUST still mount <p><br></p> right above the table with caret at (p, 0).
+			mountedGap?.remove();
+			const updatedBlocks = current.editMap.blocks.map((block, index) =>
+				index >= 160
+					? {
+							...block,
+							endLine: block.endLine + 1,
+							startLine: block.startLine + 1,
+						}
+					: block,
+			);
+			act(() => {
+				rendered.rerenderPreview(
+					{
+						...current.editMap,
+						blocks: updatedBlocks,
+						signature: "next",
+					},
+					{ revision: 2, signature: "next" },
+				);
+			});
+			const settledTable = current.surface.querySelector<HTMLElement>(
+				'[data-easymde-visual-block-id="b160"]',
+			);
+			const settledGap = settledTable?.previousElementSibling;
+			expect(settledGap).toBeInstanceOf(HTMLParagraphElement);
+			expect(settledGap?.firstChild).toBeInstanceOf(HTMLBRElement);
+			expect(window.getSelection()?.isCollapsed).toBe(true);
+			expect(window.getSelection()?.anchorNode).toBe(settledGap);
+			expect(window.getSelection()?.anchorOffset).toBe(0);
+
+			// Typing immediately into the mounted <p><br></p> inserts text above the table.
+			const typeEvent = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				data: "H",
+				inputType: "insertText",
+			});
+			act(() => current.surface.dispatchEvent(typeEvent));
+			expect(typeEvent.defaultPrevented).toBe(true);
+			expect(session.document.getValue()).toBe(
+				`${source.slice(0, tableStart)}H\n${source.slice(tableStart)}`,
+			);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+		} finally {
+			rendered.view.unmount();
+			session.destroy();
+			container.remove();
+			field.remove();
+			current.surface.remove();
+		}
+	});
+
+	it.each(["deleteContentBackward", "deleteContentForward"] as const)(
+		"refuses non-collapsed cross-cell %s with zero mutation and zero failure",
+		(inputType) => {
+			const tableIndex = 160;
+			const tableMarkdown = "| Head | Tail |\n| --- | --- |\n| one | two |";
+			const current = fixture({
+				blockOverrides: { [tableIndex]: tableMarkdown },
+				markupOverrides: {
+					[tableIndex]:
+						`<section class="table-container easymde-table-container" data-easymde-visual-block-id="b${tableIndex}">` +
+						"<table><thead><tr><th>Head</th><th>Tail</th></tr></thead>" +
+						"<tbody><tr><td>one</td><td>two</td></tr></tbody></table></section>",
+				},
+				mounted: [tableIndex],
+				paragraphBlocks: true,
+			});
+			const original = current.canonical();
+			const onFailure = vi.fn();
+			const onTransferFailure = vi.fn();
+			const { view } = renderWindowEditor(current, {
+				onFailure,
+				onTransferFailure,
+			});
+			try {
+				current.surface.tabIndex = 0;
+				current.surface.setAttribute("contenteditable", "true");
+				current.surface.focus();
+				const cells = current.surface.querySelectorAll("tbody td");
+				const firstText = cells[0]?.firstChild;
+				const secondText = cells[1]?.firstChild;
+				if (!(firstText instanceof Text) || !(secondText instanceof Text)) {
+					throw new Error("cross-cell-deletion-fixture-missing");
+				}
+				const initialHtml = current.surface.innerHTML;
+				window.getSelection()?.setBaseAndExtent(firstText, 1, secondText, 2);
+				const beforeInput = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType,
+				});
+				act(() => current.surface.dispatchEvent(beforeInput));
+
+				expect(beforeInput.defaultPrevented).toBe(true);
+				expect(current.canonical()).toBe(original);
+				expect(current.documentChanges).not.toHaveBeenCalled();
+				expect(current.surface.innerHTML).toBe(initialHtml);
+				expect(onFailure).not.toHaveBeenCalled();
+				expect(onTransferFailure).not.toHaveBeenCalled();
+			} finally {
+				view.unmount();
+				current.surface.remove();
+			}
+		},
+	);
+
+	it("avoids re-reading innerHTML on untouched mounted sibling blocks and untouched Mermaid/KaTeX nodes during a single-block edit", () => {
+		const current = fixture({
+			blockOverrides: {
+				159: "Untouched sibling",
+				160: "Editable target",
+				161: "```mermaid\ngraph TD\n  A --> B\n```",
+				162: "Math $x^2$ sibling",
+			},
+			markupOverrides: {
+				159: '<p data-easymde-visual-block-id="b159">Untouched sibling</p>',
+				160: '<p data-easymde-visual-block-id="b160">Editable target</p>',
+				161: '<div data-easymde-visual-block-id="b161" class="easymde-mermaid" data-easymde-rendered="1" data-easymde-visual-markdown-source="graph TD\n  A --&gt; B"><svg><g><text>A</text></g></svg></div>',
+				162: '<p data-easymde-visual-block-id="b162">Math <span class="easymde-math" data-easymde-rendered="1" data-easymde-visual-markdown-source="$x^2$"><span class="katex">x2</span></span> sibling</p>',
+			},
+			mounted: [159, 160, 161, 162],
+			paragraphBlocks: true,
+		});
+		const original = current.canonical();
+		const onFailure = vi.fn();
+		const rendered = renderWindowEditor(current, { onFailure });
+		try {
+			current.surface.tabIndex = 0;
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.focus();
+			const untouchedParagraph =
+				current.surface.querySelector<HTMLElement>(
+					'[data-easymde-visual-block-id="b159"]',
+				);
+			const editedParagraph = current.surface.querySelector<HTMLElement>(
+				'[data-easymde-visual-block-id="b160"]',
+			);
+			const mermaidNode = current.surface.querySelector<HTMLElement>(
+				'[data-easymde-visual-block-id="b161"]',
+			);
+			const mathNode = current.surface.querySelector<HTMLElement>(
+				'[data-easymde-visual-block-id="b162"] .easymde-math',
+			);
+			const editedText = editedParagraph?.firstChild;
+			if (
+				!untouchedParagraph ||
+				!editedParagraph ||
+				!mermaidNode ||
+				!mathNode ||
+				!(editedText instanceof Text)
+			) {
+				throw new Error("perf-a1-4-fixture-missing");
+			}
+			const innerHtmlDescriptor = Object.getOwnPropertyDescriptor(
+				Element.prototype,
+				"innerHTML",
+			);
+			if (!innerHtmlDescriptor?.get) {
+				throw new Error("perf-a1-4-innerhtml-descriptor-missing");
+			}
+			const getter = innerHtmlDescriptor.get;
+			let untouchedInnerHtmlReads = 0;
+			const spyInnerHtml = (node: HTMLElement): void => {
+				Object.defineProperty(node, "innerHTML", {
+					configurable: true,
+					get() {
+						untouchedInnerHtmlReads += 1;
+						return getter.call(this);
+					},
+				});
+			};
+			spyInnerHtml(untouchedParagraph);
+			spyInnerHtml(mermaidNode);
+			spyInnerHtml(mathNode);
+
+			placeCaret(editedText, editedText.length);
+			const beforeInput = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				data: "!",
+				inputType: "insertText",
+			});
+			act(() => {
+				current.surface.dispatchEvent(beforeInput);
+				if (!beforeInput.defaultPrevented) {
+					editedText.appendData("!");
+					placeCaret(editedText, editedText.length);
+					current.surface.dispatchEvent(
+						new InputEvent("input", {
+							bubbles: true,
+							data: "!",
+							inputType: "insertText",
+						}),
+					);
+				}
+			});
+
+			expect(current.canonical()).toBe(
+				original.replace("Editable target", "Editable target!"),
+			);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(untouchedInnerHtmlReads).toBe(0);
+		} finally {
+			rendered.view.unmount();
+			current.surface.remove();
+		}
+	});
+
+	it("enters last cell end on Backspace after a table and first cell start on Delete before a table (P1)", () => {
+		const tableIndex = 160;
+		const tableMarkdown = [
+			"| Left | Right |",
+			"| --- | --- |",
+			"| alpha | beta |",
+		].join("\n");
+		const tableHtml =
+			`<section class="table-container easymde-table-container" data-easymde-visual-block-id="b${tableIndex}">` +
+			"<table><thead><tr><th>Left</th><th>Right</th></tr></thead>" +
+			"<tbody><tr><td>alpha</td><td>beta</td></tr></tbody></table>" +
+			"</section>";
+		const current = fixture({
+			blockOverrides: {
+				[tableIndex - 1]: "Before table",
+				[tableIndex]: tableMarkdown,
+				[tableIndex + 1]: "After table",
+			},
+			markupOverrides: {
+				[tableIndex - 1]: `<p data-easymde-visual-block-id="b${tableIndex - 1}">Before table</p>`,
+				[tableIndex]: tableHtml,
+				[tableIndex + 1]: `<p data-easymde-visual-block-id="b${tableIndex + 1}">After table</p>`,
+			},
+			mounted: [tableIndex - 1, tableIndex, tableIndex + 1],
+			paragraphBlocks: true,
+		});
+		const original = current.canonical();
+		const onFailure = vi.fn();
+		const onDiagnostic = vi.fn();
+		const { view } = renderWindowEditor(current, { onDiagnostic, onFailure });
+		try {
+			const beforeText = current.surface.querySelector(
+				`[data-easymde-visual-block-id="b${tableIndex - 1}"]`,
+			)?.firstChild;
+			const afterText = current.surface.querySelector(
+				`[data-easymde-visual-block-id="b${tableIndex + 1}"]`,
+			)?.firstChild;
+			const table = current.surface.querySelector("table");
+			const firstText = table?.rows[0]?.cells[0]?.firstChild;
+			const lastText = table?.rows[1]?.cells[1]?.lastChild;
+			if (
+				!(beforeText instanceof Text) ||
+				!(afterText instanceof Text) ||
+				!(firstText instanceof Text) ||
+				!(lastText instanceof Text)
+			) {
+				throw new Error("p1-table-edge-fixture-invalid");
+			}
+
+			placeCaret(afterText, 0);
+			const backspace = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				inputType: "deleteContentBackward",
+			});
+			current.surface.dispatchEvent(backspace);
+			expect(backspace.defaultPrevented).toBe(true);
+			expect(window.getSelection()?.anchorNode).toBe(lastText);
+			expect(window.getSelection()?.anchorOffset).toBe(lastText.data.length);
+			expect(current.canonical()).toBe(original);
+
+			placeCaret(beforeText, beforeText.data.length);
+			const forwardDelete = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				inputType: "deleteContentForward",
+			});
+			current.surface.dispatchEvent(forwardDelete);
+			expect(forwardDelete.defaultPrevented).toBe(true);
+			expect(window.getSelection()?.anchorNode).toBe(firstText);
+			expect(window.getSelection()?.anchorOffset).toBe(0);
+			expect(current.canonical()).toBe(original);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onDiagnostic).not.toHaveBeenCalled();
+		} finally {
+			view.unmount();
+			current.surface.remove();
+		}
+	});
+
+	it("enters preceding table last cell after pending atomic removal and reports explicit refusal when table edge placement fails (P2)", () => {
+		const tableIndex = 160;
+		const hrIndex = 161;
+		const afterIndex = 162;
+		const tableMarkdown = [
+			"| Head | Tail |",
+			"| --- | --- |",
+			"| one | two |",
+		].join("\n");
+		const tableHtml =
+			`<section class="table-container easymde-table-container" data-easymde-visual-block-id="b${tableIndex}">` +
+			"<table><thead><tr><th>Head</th><th>Tail</th></tr></thead>" +
+			"<tbody><tr><td>one</td><td>two</td></tr></tbody></table>" +
+			"</section>";
+		const current = fixture({
+			blockOverrides: {
+				[tableIndex]: tableMarkdown,
+				[hrIndex]: "---",
+				[afterIndex]: "After hr",
+			},
+			markupOverrides: {
+				[tableIndex]: tableHtml,
+				[hrIndex]: `<hr data-easymde-visual-block-id="b${hrIndex}">`,
+				[afterIndex]: `<p data-easymde-visual-block-id="b${afterIndex}">After hr</p>`,
+			},
+			mounted: [tableIndex, hrIndex, afterIndex],
+			paragraphBlocks: true,
+		});
+		const onFailure = vi.fn();
+		const requestPreview = vi.fn(() => "p2-pending-sig");
+		const { view } = renderWindowEditor(current, {
+			onFailure,
+			requestPreview,
+		});
+		try {
+			current.surface.tabIndex = 0;
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.focus();
+			const afterParagraph = current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${afterIndex}"]`,
+			);
+			const afterText = afterParagraph?.firstChild;
+			const tableRoot = current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${tableIndex}"]`,
+			);
+			const lastText =
+				tableRoot?.querySelector("table")?.rows[1]?.cells[1]?.lastChild;
+			if (
+				!(afterParagraph instanceof HTMLParagraphElement) ||
+				!(afterText instanceof Text) ||
+				!(tableRoot instanceof HTMLElement) ||
+				!(lastText instanceof Text)
+			) {
+				throw new Error("p2-pending-atomic-fixture-invalid");
+			}
+			// Enter at end of `afterParagraph` puts the editor into a pending lease.
+			placeCaret(afterText, afterText.data.length);
+			act(() => {
+				current.surface.dispatchEvent(
+					new KeyboardEvent("keydown", {
+						bubbles: true,
+						cancelable: true,
+						key: "Enter",
+					}),
+				);
+			});
+			expect(requestPreview).toHaveBeenCalled();
+
+			// Move back to start of `afterParagraph` and Backspace across the `<hr>`
+			// while pending: caret must land in the preceding table's last cell end,
+			// NOT on the `<section>` wrapper.
+			current.surface.dispatchEvent(
+				new MouseEvent("pointerdown", { bubbles: true, button: 0 }),
+			);
+			const liveAfterText = current.surface.querySelector(
+				`[data-easymde-visual-block-id="b${afterIndex}"]`,
+			)?.firstChild;
+			if (!(liveAfterText instanceof Text)) {
+				throw new Error("p2-live-after-missing");
+			}
+			placeCaret(liveAfterText, 0);
+			const removeHrTarget = document.createRange();
+			removeHrTarget.setStart(liveAfterText, 0);
+			removeHrTarget.collapse(true);
+			const removeHr = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				inputType: "deleteContentBackward",
+			});
+			Object.defineProperty(removeHr, "getTargetRanges", {
+				value: () => [removeHrTarget],
+			});
+			act(() => current.surface.dispatchEvent(removeHr));
+			expect(removeHr.defaultPrevented).toBe(true);
+			expect(window.getSelection()?.anchorNode).toBe(lastText);
+			expect(window.getSelection()?.anchorOffset).toBe(lastText.data.length);
+			expect(onFailure).not.toHaveBeenCalled();
+
+			// If the caret is parked on the table wrapper itself while its table has
+			// no rows/cells, `placeWindowedTableEdge` returns `false` and the caller
+			// must report an explicit refusal rather than silently swallowing Backspace.
+			const tableEl = tableRoot.querySelector("table");
+			if (!tableEl) throw new Error("p2-table-el-missing");
+			tableEl.replaceChildren();
+			const wrapperEnd = document.createRange();
+			wrapperEnd.setStart(tableRoot, tableRoot.childNodes.length);
+			wrapperEnd.collapse(true);
+			const selection = window.getSelection();
+			selection?.removeAllRanges();
+			selection?.addRange(wrapperEnd);
+			const brokenWrapperBackspace = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				inputType: "deleteContentBackward",
+			});
+			act(() => current.surface.dispatchEvent(brokenWrapperBackspace));
+			expect(brokenWrapperBackspace.defaultPrevented).toBe(true);
+			expect(onFailure).toHaveBeenCalled();
+		} finally {
+			view.unmount();
+			current.surface.remove();
+		}
+	});
+
+	it("skips keydown boundary capture inside tables and reveals unmounted non-atomic terminal rows on Control+End (P3)", () => {
+		const tableIndex = 160;
+		const terminalIndex = 162;
+		const tableMarkdown = [
+			"| Head | Tail |",
+			"| --- | --- |",
+			"| one | two |",
+		].join("\n");
+		const tableHtml =
+			`<section class="table-container easymde-table-container" data-easymde-visual-block-id="b${tableIndex}">` +
+			"<table><thead><tr><th>Head</th><th>Tail</th></tr></thead>" +
+			"<tbody><tr><td>one</td><td>two</td></tr></tbody></table>" +
+			"</section>";
+		const current = fixture({
+			blockOverrides: {
+				[tableIndex]: tableMarkdown,
+				[terminalIndex]: "Terminal paragraph.\n",
+			},
+			markupOverrides: {
+				[tableIndex]: tableHtml,
+			},
+			mounted: [tableIndex],
+			paragraphBlocks: true,
+			sourceBlockCount: terminalIndex + 1,
+		});
+		const owner = renderUnmountedDocumentEndRow(
+			current,
+			terminalIndex,
+			"<p>Terminal paragraph.</p>",
+		);
+		const onFailure = vi.fn();
+		const onDiagnostic = vi.fn();
+		const rendered = renderWindowEditor(current, {
+			getAcceptedWindowRow: owner.getAcceptedWindowRow,
+			getAcceptedWindowSnapshot: owner.getAcceptedWindowSnapshot,
+			onDiagnostic,
+			onFailure,
+			revealAcceptedWindowRow: owner.revealAcceptedWindowRow,
+		});
+		try {
+			current.surface.tabIndex = 0;
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.focus();
+			const tableRoot = current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${tableIndex}"]`,
+			);
+			const firstCellText = tableRoot?.querySelector("th")?.firstChild;
+			if (!(tableRoot instanceof HTMLElement) || !(firstCellText instanceof Text)) {
+				throw new Error("p3-table-fixture-invalid");
+			}
+
+			// Repeated Backspace keydowns on the table wrapper <section> and inside
+			// <th> must never trigger keydown boundary/capture error spam.
+			for (let i = 0; i < 5; i += 1) {
+				window.getSelection()?.collapse(tableRoot, tableRoot.childNodes.length);
+				act(() => {
+					current.surface.dispatchEvent(
+						new KeyboardEvent("keydown", {
+							bubbles: true,
+							cancelable: true,
+							key: "Backspace",
+						}),
+					);
+				});
+				placeCaret(firstCellText, 0);
+				act(() => {
+					current.surface.dispatchEvent(
+						new KeyboardEvent("keydown", {
+							bubbles: true,
+							cancelable: true,
+							key: "Backspace",
+						}),
+					);
+				});
+			}
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onDiagnostic).not.toHaveBeenCalled();
+
+			// Control+End while the terminal non-atomic <p> is unmounted behind a
+			// trailing spacer reveals the terminal row and places the caret inside it.
+			const ctrlEnd = new KeyboardEvent("keydown", {
+				bubbles: true,
+				cancelable: true,
+				ctrlKey: true,
+				key: "End",
+			});
+			act(() => current.surface.dispatchEvent(ctrlEnd));
+			expect(ctrlEnd.defaultPrevented).toBe(true);
+			expect(owner.revealAcceptedWindowRow).toHaveBeenCalledOnce();
+			const revealedTerminal = current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${terminalIndex}"]`,
+			);
+			expect(revealedTerminal).not.toBeNull();
+			expect(
+				revealedTerminal?.contains(window.getSelection()?.anchorNode ?? null),
+			).toBe(true);
+			expect(onFailure).not.toHaveBeenCalled();
+		} finally {
+			rendered.view.unmount();
+			current.surface.remove();
+		}
+	});
+
+	it("never throws uncaught from useLayoutEffect on mismatched rapid-undo editMap or stale mounted DOM (P5)", () => {
+		const current = fixture({
+			blockOverrides: {
+				0: "Line one",
+				1: "Line two",
+				2: "Line three",
+			},
+			markupOverrides: {
+				0: '<p data-easymde-visual-block-id="b0">Line one</p>',
+				1: '<p data-easymde-visual-block-id="b1">Line two</p>',
+				2: '<p data-easymde-visual-block-id="b2">Line three</p>',
+			},
+			mounted: [0, 1, 2],
+			paragraphBlocks: true,
+			sourceBlockCount: 3,
+		});
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		const rendered = renderWindowEditor(current, {
+			onFailure,
+			onTransferFailure,
+		});
+		try {
+			// Case 1: documentSession moved to a shorter source before React runs
+			// useLayoutEffect for an older editMap whose endLine exceeds line count.
+			current.applyTextChange({
+				selection: { direction: "none", end: 4, start: 4 },
+				value: "Line",
+			});
+			expect(() => {
+				act(() => {
+					rendered.rerenderPreview(
+						{
+							blocks: [
+								{ editable: true, endLine: 2, id: "b0", startLine: 0 },
+								{ editable: true, endLine: 5, id: "b1", startLine: 2 },
+							],
+							coordinate: "line",
+							signature: "p5-mismatched-source",
+							version: 1,
+						},
+						{ revision: 2, signature: "p5-mismatched-source" },
+					);
+				});
+			}).not.toThrow();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+
+			// Case 2: surface carries an unmapped block id while editMap arrives,
+			// so ledgerDescribesMountedBlocks returns false for both nextRanges and
+			// rangesRef.current — must never throw capture-missing-row uncaught.
+			const foreign = document.createElement("p");
+			foreign.setAttribute("data-easymde-visual-block-id", "b-foreign-999");
+			foreign.textContent = "Foreign";
+			current.surface.replaceChildren(foreign);
+			expect(() => {
+				act(() => {
+					rendered.rerenderPreview(
+						{
+							blocks: [{ editable: true, endLine: 1, id: "b0", startLine: 0 }],
+							coordinate: "line",
+							signature: "p5-stale-dom",
+							version: 1,
+						},
+						{ revision: 3, signature: "p5-stale-dom" },
+					);
+				});
+			}).not.toThrow();
+		} finally {
+			rendered.view.unmount();
+			current.surface.remove();
+		}
+	});
+
+	it("never stacks >= 5 trailing newlines across 8 consecutive pending/settled EOF paragraph deletions and undoes byte-exact (2b)", () => {
+		const paragraphCount = 9;
+		const blockOverrides: Record<number, string> = {};
+		const markupOverrides: Record<number, string> = {};
+		const mounted: number[] = [];
+		for (let i = 0; i < paragraphCount; i += 1) {
+			const text = `Tail${i}.`;
+			blockOverrides[i] = i === paragraphCount - 1 ? `${text}\n\n` : text;
+			markupOverrides[i] =
+				`<p data-easymde-visual-block-id="b${i}">${text}</p>`;
+			mounted.push(i);
+		}
+		const current = fixture({
+			blockOverrides,
+			markupOverrides,
+			mounted,
+			paragraphBlocks: true,
+			sourceBlockCount: paragraphCount,
+		});
+		const initial = current.canonical();
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = initial;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const session = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container,
+				label: "Markdown source",
+				submissionField: field,
+			}),
+			createNativeTitleSession(null),
+		);
+		session.document.setVisualEditingActive(true);
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		let latestSig = "";
+		let nextSig = 0;
+		const requestPreview = vi.fn(() => {
+			latestSig = `eof-2b-sig-${(nextSig += 1)}`;
+			return latestSig;
+		});
+		const rendered = renderWindowEditor(current, {
+			documentSession: session,
+			onFailure,
+			onTransferFailure,
+			requestPreview,
+		});
+		try {
+			current.surface.tabIndex = 0;
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.focus();
+			let maxTrailingNewlines = 0;
+			const assertBoundedTail = (): void => {
+				const value = session.document.getValue();
+				const trailing = value.match(/(?:\r\n|\r|\n)+$/u)?.[0].length ?? 0;
+				if (trailing > maxTrailingNewlines) maxTrailingNewlines = trailing;
+				expect(trailing).toBeLessThanOrEqual(4);
+			};
+
+			// Delete 8 consecutive trailing paragraphs (b8 down to b1). Every
+			// even index settles formal Preview before deleting; every odd index
+			// runs while formal Preview is still pending (exercising
+			// publishPendingNativeMerge + pendingDeletionApplies).
+			for (let idx = paragraphCount - 1; idx >= 1; idx -= 1) {
+				const paragraph = current.surface.querySelector<HTMLParagraphElement>(
+					`[data-easymde-visual-block-id="b${idx}"]`,
+				);
+				const previousParagraph =
+					current.surface.querySelector<HTMLParagraphElement>(
+						`[data-easymde-visual-block-id="b${idx - 1}"]`,
+					);
+				const text = paragraph?.firstChild;
+				const previousText = previousParagraph?.firstChild;
+				if (
+					!(paragraph instanceof HTMLParagraphElement) ||
+					!(previousParagraph instanceof HTMLParagraphElement) ||
+					!(text instanceof Text) ||
+					!(previousText instanceof Text)
+				) {
+					throw new Error(`2b-eof-paragraph-missing:${idx}`);
+				}
+				const charCount = text.data.length;
+				for (let step = 0; step < charCount; step += 1) {
+					const offset = text.data.length;
+					placeCaret(text, offset);
+					const target = document.createRange();
+					target.setStart(text, offset - 1);
+					target.setEnd(text, offset);
+					const beforeInput = new InputEvent("beforeinput", {
+						bubbles: true,
+						cancelable: true,
+						inputType: "deleteContentBackward",
+					});
+					Object.defineProperty(beforeInput, "getTargetRanges", {
+						value: () => [target],
+					});
+					act(() => {
+						current.surface.dispatchEvent(beforeInput);
+						if (!beforeInput.defaultPrevented) {
+							if (offset === 1) {
+								text.remove();
+								paragraph.append(document.createElement("br"));
+								window.getSelection()?.collapse(paragraph, 0);
+							} else {
+								text.deleteData(offset - 1, 1);
+								placeCaret(text, offset - 1);
+							}
+							current.surface.dispatchEvent(
+								new InputEvent("input", {
+									bubbles: true,
+									inputType: "deleteContentBackward",
+								}),
+							);
+						}
+					});
+					assertBoundedTail();
+				}
+				// Retire the emptied terminal paragraph into the preceding paragraph.
+				const retireTarget = document.createRange();
+				retireTarget.setStart(previousText, previousText.data.length);
+				retireTarget.setEnd(paragraph, 0);
+				const retireBefore = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "deleteContentBackward",
+				});
+				Object.defineProperty(retireBefore, "getTargetRanges", {
+					value: () => [retireTarget],
+				});
+				act(() => {
+					current.surface.dispatchEvent(retireBefore);
+					if (!retireBefore.defaultPrevented) {
+						paragraph.remove();
+						placeCaret(previousText, previousText.data.length);
+						current.surface.dispatchEvent(
+							new InputEvent("input", {
+								bubbles: true,
+								inputType: "deleteContentBackward",
+							}),
+						);
+					}
+				});
+				assertBoundedTail();
+				// On even indices (when settled commit retired `paragraph` into a
+				// pending preview), keep the next odd index (`idx - 1`) running
+				// directly on that pending lease; after the odd index completes,
+				// settle formal Preview for the remaining blocks.
+				if (idx % 2 === 1) {
+					paragraph.remove();
+					const remainingCount = idx;
+					const blocks = Array.from({ length: remainingCount }, (_, b) => ({
+						editable: true,
+						endLine: b === remainingCount - 1 ? remainingCount * 2 - 1 : b * 2 + 2,
+						id: `b${b}`,
+						startLine: b * 2,
+					}));
+					const sig = latestSig || `eof-2b-settle-${idx}`;
+					act(() => {
+						rendered.rerenderPreview(
+							{
+								blocks,
+								coordinate: "line",
+								signature: sig,
+								version: 1,
+							},
+							{ revision: nextSig + 1, signature: sig },
+						);
+					});
+				}
+			}
+
+			expect(session.document.getValue()).toBe("Tail0.");
+			expect(maxTrailingNewlines).toBeLessThanOrEqual(4);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+
+			// Full Undo must restore the initial document 100% byte-exact.
+			for (let u = 0; u < 120 && session.document.getHistoryState().undoDepth > 0; u += 1) {
+				act(() => {
+					current.surface.dispatchEvent(
+						new KeyboardEvent("keydown", {
+							bubbles: true,
+							cancelable: true,
+							ctrlKey: true,
+							key: "z",
+						}),
+					);
+				});
+			}
+			expect(session.document.getValue()).toBe(initial);
+		} finally {
+			rendered.view.unmount();
+			session.destroy();
+			container.remove();
+			field.remove();
+			current.surface.remove();
+		}
+	});
+});
+
+describe("Prod Fix 14-Windowed regressions", () => {
+	it("promotes cross-boundary EOF trim to structural formal preview instead of throwing witness-stale and keeps rapid pending Backspaces deleting cleanly (Fix 1)", () => {
+		const base = fixture({
+			blockOverrides: {
+				0: "Tail one.",
+				1: "Tail two.",
+				2: "Tail three.\n\n",
+			},
+			markupOverrides: {
+				0: '<p data-easymde-visual-block-id="b0">Tail one.</p>',
+				1: '<p data-easymde-visual-block-id="b1">Tail two.</p>',
+				2: '<p data-easymde-visual-block-id="b2">Tail three.</p>',
+			},
+			mounted: [0, 1, 2],
+			paragraphBlocks: true,
+			sourceBlockCount: 3,
+		});
+		const surface = base.surface;
+		surface.setAttribute("contenteditable", "true");
+		surface.tabIndex = 0;
+		const p2 = surface.querySelector<HTMLParagraphElement>(
+			'[data-easymde-visual-block-id="b2"]',
+		);
+		if (!p2) throw new Error("fix14-p2-missing");
+		const initial = base.canonical();
+		// `b2` covers only `"Tail three.\n"` (lines 4..5), leaving a trailing
+		// `\n` past `region.sourceEnd` at EOF (line 5..6), matching CommonMark's
+		// editMap for `"Tail one.\n\nTail two.\n\nTail three.\n\n"`.
+		const editMap: PreviewEditMap = {
+			...base.editMap,
+			blocks: [
+				{ editable: true, endLine: 2, id: "b0", startLine: 0 },
+				{ editable: true, endLine: 4, id: "b1", startLine: 2 },
+				{ editable: true, endLine: 5, id: "b2", startLine: 4 },
+			],
+		};
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = initial;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const session = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container,
+				label: "Markdown source",
+				submissionField: field,
+			}),
+			createNativeTitleSession(null),
+		);
+		session.document.setVisualEditingActive(true);
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		const pinCalls: Array<string> = [];
+		const requestPreviewAtDocumentEnd = vi.fn((markdown: string) => {
+			pinCalls.push(markdown);
+			return {
+				release: vi.fn(),
+				signature: `fix14-eof-pin-${pinCalls.length}`,
+			};
+		});
+		// Strict witness mirroring PreviewSurfaceOwner.extendAcceptedWindowBaseline:
+		// fails if local single-block adoption is ever attempted when bytes past
+		// `b2`'s accepted slice were trimmed.
+		let acceptedSource = initial;
+		let b2End = initial.indexOf("Tail three.") + "Tail three.\n".length;
+		const b2Start = initial.indexOf("Tail three.");
+		const prepareWindowBlockAdoption = vi.fn((block: HTMLElement) => {
+			const before = acceptedSource;
+			const previousEnd = b2End;
+			return () => {
+				const after = session.document.getValue();
+				const delta = after.length - before.length;
+				const nextEnd = previousEnd + delta;
+				if (
+					block === p2 &&
+					(nextEnd < b2Start ||
+						after.slice(0, b2Start) !== before.slice(0, b2Start) ||
+						after.slice(nextEnd) !== before.slice(previousEnd))
+				) {
+					throw new Error("preview-window-local-source-witness-stale");
+				}
+				acceptedSource = after;
+				if (block === p2) b2End = nextEnd;
+				return true;
+			};
+		});
+		const current: ReturnType<typeof fixture> = { ...base, editMap };
+		const rendered = renderWindowEditor(current, {
+			documentSession: session,
+			onFailure,
+			onTransferFailure,
+			prepareWindowBlockAdoption,
+			requestPreviewAtDocumentEnd,
+		});
+		try {
+			surface.focus();
+			const text2 = p2.firstChild;
+			if (!(text2 instanceof Text)) throw new Error("fix14-p2-text-missing");
+			// Delete all 11 characters of "Tail three." one Backspace at a time.
+			for (let step = 0; step < 11; step += 1) {
+				const offset = text2.data.length;
+				placeCaret(text2, offset);
+				const target = document.createRange();
+				target.setStart(text2, offset - 1);
+				target.setEnd(text2, offset);
+				const before = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "deleteContentBackward",
+				});
+				Object.defineProperty(before, "getTargetRanges", {
+					value: () => [target],
+				});
+				act(() => {
+					surface.dispatchEvent(before);
+					if (!before.defaultPrevented) {
+						if (offset === 1) {
+							text2.remove();
+							p2.append(document.createElement("br"));
+							window.getSelection()?.collapse(p2, 0);
+						} else {
+							text2.deleteData(offset - 1, 1);
+							placeCaret(text2, offset - 1);
+						}
+						surface.dispatchEvent(
+							new InputEvent("input", {
+								bubbles: true,
+								inputType: "deleteContentBackward",
+							}),
+						);
+					}
+				});
+			}
+			// Backspace 11 emptied `p2` and trimmed `\n\n` past `region.sourceEnd`.
+			// It must promote to structural formal preview instead of throwing
+			// `preview-window-local-source-witness-stale` or locking the surface.
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+			expect(requestPreviewAtDocumentEnd).toHaveBeenCalledTimes(1);
+			expect(session.document.getValue()).toBe("Tail one.\n\nTail two.\n\n");
+
+			// Subsequent rapid Backspaces while formal preview is pending must
+			// continue deleting `\n\n` and `"Tail two."` cleanly without stalling.
+			for (let step = 0; step < 12; step += 1) {
+				const live = window.getSelection();
+				let anchorNode = live?.anchorNode ?? null;
+				let anchorOffset = live?.anchorOffset ?? 0;
+				if (
+					anchorNode instanceof HTMLParagraphElement &&
+					anchorOffset > 0 &&
+					anchorNode.firstChild instanceof Text
+				) {
+					const firstText = anchorNode.firstChild;
+					anchorNode = firstText;
+					anchorOffset = firstText.data.length;
+					placeCaret(firstText, anchorOffset);
+				}
+				const target = document.createRange();
+				if (anchorNode instanceof Text && anchorOffset > 0) {
+					target.setStart(anchorNode, anchorOffset - 1);
+					target.setEnd(anchorNode, anchorOffset);
+				} else if (anchorNode) {
+					target.setStart(anchorNode, anchorOffset);
+					target.collapse(true);
+				}
+				const before = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "deleteContentBackward",
+				});
+				Object.defineProperty(before, "getTargetRanges", {
+					value: () => [target],
+				});
+				act(() => {
+					surface.dispatchEvent(before);
+					if (!before.defaultPrevented && anchorNode instanceof Text && anchorOffset > 0) {
+						if (anchorNode.data.length === 1) {
+							const parent = anchorNode.parentElement;
+							anchorNode.remove();
+							if (parent) {
+								parent.append(document.createElement("br"));
+								window.getSelection()?.collapse(parent, 0);
+							}
+						} else {
+							anchorNode.deleteData(anchorOffset - 1, 1);
+							placeCaret(anchorNode, anchorOffset - 1);
+						}
+						surface.dispatchEvent(
+							new InputEvent("input", {
+								bubbles: true,
+								inputType: "deleteContentBackward",
+							}),
+						);
+					}
+				});
+			}
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+			expect(session.document.getValue().length).toBeLessThan(
+				"Tail one.\n\nTail two.\n\n".length - 10,
+			);
+		} finally {
+			rendered.view.unmount();
+			session.destroy();
+			container.remove();
+			field.remove();
+			surface.remove();
+		}
+	});
+
+	it("clips deleted atomic rows in SourceRangeLedger without overlapping earlier table/math rows and never places the DOM caret inside contenteditable=false (Fix 2)", () => {
+		const tableMd = "| A | B |\n| --- | --- |\n| 1 | 2 |";
+		const mathMd = "$$\nx+1\n$$";
+		const mermaidMd = "```mermaid\ngraph LR\n  A --> B\n```";
+		const tailMd = "End";
+		const current = fixture({
+			blockOverrides: {
+				0: "Top paragraph",
+				1: tableMd,
+				2: mathMd,
+				3: mermaidMd,
+				4: tailMd,
+			},
+			markupOverrides: {
+				0: '<p data-easymde-visual-block-id="b0">Top paragraph</p>',
+				1: '<section class="table-container" data-easymde-visual-block-id="b1"><table><thead><tr><th>A</th><th>B</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table></section>',
+				2: '<div class="easymde-math easymde-math-block" data-easymde-rendered="true" data-easymde-visual-markdown-source="x+1" contenteditable="false" data-easymde-visual-block-id="b2">x+1</div>',
+				3: '<div class="easymde-mermaid" data-easymde-visual-markdown-source="graph LR&#10;  A --> B" contenteditable="false" data-easymde-visual-block-id="b3">diagram</div>',
+				4: '<p data-easymde-visual-block-id="b4">End</p>',
+			},
+			mounted: [0, 1, 2, 3, 4],
+			sourceBlockCount: 5,
+		});
+		current.surface.setAttribute("contenteditable", "true");
+		current.surface.tabIndex = 0;
+		const initial = current.canonical();
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = initial;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const session = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container,
+				label: "Markdown source",
+				submissionField: field,
+			}),
+			createNativeTitleSession(null),
+		);
+		session.document.setVisualEditingActive(true);
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		let previewSeq = 0;
+		const requestPreview = vi.fn(() => `fix14-atomic-${++previewSeq}`);
+		const requestPreviewAtDocumentEnd = vi.fn(() => ({
+			release: vi.fn(),
+			signature: `fix14-atomic-pin-${++previewSeq}`,
+		}));
+		const rendered = renderWindowEditor(current, {
+			documentSession: session,
+			onFailure,
+			onTransferFailure,
+			requestPreview,
+			requestPreviewAtDocumentEnd,
+		});
+		try {
+			current.surface.focus();
+			const tailP = current.surface.querySelector<HTMLParagraphElement>(
+				'[data-easymde-visual-block-id="b4"]',
+			);
+			const mathDiv = current.surface.querySelector<HTMLElement>(
+				'[data-easymde-visual-block-id="b2"]',
+			);
+			const mermaidDiv = current.surface.querySelector<HTMLElement>(
+				'[data-easymde-visual-block-id="b3"]',
+			);
+			const tailText = tailP?.firstChild;
+			if (!tailP || !mathDiv || !mermaidDiv || !(tailText instanceof Text)) {
+				throw new Error("fix14-atomic-fixture-missing");
+			}
+			// Empty `tailP` ("End" -> "<br>").
+			for (let step = 0; step < 3; step += 1) {
+				const offset = tailText.data.length;
+				placeCaret(tailText, offset);
+				const target = document.createRange();
+				target.setStart(tailText, offset - 1);
+				target.setEnd(tailText, offset);
+				const before = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "deleteContentBackward",
+				});
+				Object.defineProperty(before, "getTargetRanges", {
+					value: () => [target],
+				});
+				act(() => {
+					current.surface.dispatchEvent(before);
+					if (!before.defaultPrevented) {
+						if (offset === 1) {
+							tailText.remove();
+							tailP.append(document.createElement("br"));
+							window.getSelection()?.collapse(tailP, 0);
+						} else {
+							tailText.deleteData(offset - 1, 1);
+							placeCaret(tailText, offset - 1);
+						}
+						current.surface.dispatchEvent(
+							new InputEvent("input", {
+								bubbles: true,
+								inputType: "deleteContentBackward",
+							}),
+						);
+					}
+				});
+			}
+
+			// Step A (ready-mode): Backspace at start of empty `tailP` deletes
+			// `mermaidDiv` (`b3`) and enters pending formal preview.
+			const dispatchBoundaryBackspace = () => {
+				const target = document.createRange();
+				target.setStart(tailP, 0);
+				target.collapse(true);
+				const before = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "deleteContentBackward",
+				});
+				Object.defineProperty(before, "getTargetRanges", {
+					value: () => [target],
+				});
+				act(() => {
+					current.surface.dispatchEvent(before);
+				});
+				return before;
+			};
+			dispatchBoundaryBackspace();
+			expect(session.document.getValue()).not.toContain("```mermaid");
+			expect(session.document.getValue()).toContain(mathMd);
+			expect(session.document.getValue()).toContain(tableMd);
+			// Caret must remain editable (never inside contenteditable="false").
+			const caretAfterMermaid = window.getSelection()?.anchorNode;
+			const caretElAfterMermaid =
+				caretAfterMermaid instanceof Element
+					? caretAfterMermaid
+					: caretAfterMermaid?.parentElement ?? null;
+			expect(caretElAfterMermaid?.closest('[contenteditable="false"]')).toBeNull();
+
+			// Step B (pending-mode): Next Backspace while preview is still pending
+			// must skip the already-collapsed `mermaidDiv` and delete `mathDiv`
+			// cleanly without touching or corrupting the table above it!
+			dispatchBoundaryBackspace();
+			expect(session.document.getValue()).not.toContain("x+1");
+			expect(session.document.getValue()).toContain(tableMd);
+			const caretAfterMath = window.getSelection()?.anchorNode;
+			const caretElAfterMath =
+				caretAfterMath instanceof Element
+					? caretAfterMath
+					: caretAfterMath?.parentElement ?? null;
+			expect(caretElAfterMath?.closest('[contenteditable="false"]')).toBeNull();
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+		} finally {
+			rendered.view.unmount();
+			session.destroy();
+			container.remove();
+			field.remove();
+			current.surface.remove();
+		}
+	});
+
+	it("keeps DOM caret editable (never inside preceding math/mermaid contenteditable=false) during pending atomic deletion (Fix 2b)", () => {
+		const math1 = "$$\na+b\n$$";
+		const math2 = "$$\nc+d\n$$";
+		const mermaidMd = "```mermaid\ngraph LR\n  X --> Y\n```";
+		const current = fixture({
+			blockOverrides: {
+				0: "Lead paragraph",
+				1: math1,
+				2: math2,
+				3: mermaidMd,
+				4: "T",
+			},
+			markupOverrides: {
+				0: '<p data-easymde-visual-block-id="b0">Lead paragraph</p>',
+				1: '<div class="easymde-math easymde-math-block" data-easymde-rendered="true" data-easymde-visual-markdown-source="a+b" contenteditable="false" data-easymde-visual-block-id="b1">a+b</div>',
+				2: '<div class="easymde-math easymde-math-block" data-easymde-rendered="true" data-easymde-visual-markdown-source="c+d" contenteditable="false" data-easymde-visual-block-id="b2">c+d</div>',
+				3: '<div class="easymde-mermaid" data-easymde-visual-markdown-source="graph LR&#10;  X --> Y" contenteditable="false" data-easymde-visual-block-id="b3">diagram</div>',
+				4: '<p data-easymde-visual-block-id="b4">T</p>',
+			},
+			mounted: [0, 1, 2, 3, 4],
+			sourceBlockCount: 5,
+		});
+		current.surface.setAttribute("contenteditable", "true");
+		current.surface.tabIndex = 0;
+		const initial = current.canonical();
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = initial;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const session = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container,
+				label: "Markdown source",
+				submissionField: field,
+			}),
+			createNativeTitleSession(null),
+		);
+		session.document.setVisualEditingActive(true);
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		let seq = 0;
+		const rendered = renderWindowEditor(current, {
+			documentSession: session,
+			onFailure,
+			onTransferFailure,
+			requestPreview: vi.fn(() => `fix14-chain-${++seq}`),
+			requestPreviewAtDocumentEnd: vi.fn(() => ({
+				release: vi.fn(),
+				signature: `fix14-chain-pin-${++seq}`,
+			})),
+		});
+		try {
+			current.surface.focus();
+			const tailP = current.surface.querySelector<HTMLParagraphElement>(
+				'[data-easymde-visual-block-id="b4"]',
+			);
+			const tailText = tailP?.firstChild;
+			if (!tailP || !(tailText instanceof Text)) {
+				throw new Error("fix14-chain-tail-missing");
+			}
+			// Empty `tailP` ("T" -> "<br>").
+			placeCaret(tailText, 1);
+			const t0 = document.createRange();
+			t0.setStart(tailText, 0);
+			t0.setEnd(tailText, 1);
+			const b0 = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				inputType: "deleteContentBackward",
+			});
+			Object.defineProperty(b0, "getTargetRanges", { value: () => [t0] });
+			act(() => {
+				current.surface.dispatchEvent(b0);
+				tailText.remove();
+				tailP.append(document.createElement("br"));
+				window.getSelection()?.collapse(tailP, 0);
+				current.surface.dispatchEvent(
+					new InputEvent("input", {
+						bubbles: true,
+						inputType: "deleteContentBackward",
+					}),
+				);
+			});
+			const sendBackspace = () => {
+				const live = window.getSelection();
+				const target = document.createRange();
+				if (live?.anchorNode) {
+					target.setStart(live.anchorNode, live.anchorOffset);
+					target.collapse(true);
+				}
+				const ev = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "deleteContentBackward",
+				});
+				Object.defineProperty(ev, "getTargetRanges", { value: () => [target] });
+				act(() => {
+					current.surface.dispatchEvent(ev);
+				});
+			};
+			// 1: removes mermaidDiv (ready-mode -> pending)
+			sendBackspace();
+			expect(session.document.getValue()).not.toContain("```mermaid");
+			// 2: pending removes math2 (`previous = math1` which is contenteditable="false"!)
+			//    DOM caret MUST NOT be placed inside `math1`!
+			sendBackspace();
+			expect(session.document.getValue()).not.toContain("c+d");
+			expect(session.document.getValue()).toContain("a+b");
+			const afterMath2Node = window.getSelection()?.anchorNode;
+			const afterMath2El =
+				afterMath2Node instanceof Element
+					? afterMath2Node
+					: afterMath2Node?.parentElement ?? null;
+			expect(afterMath2El?.closest('[contenteditable="false"]')).toBeNull();
+			// 3: pending removes math1 and moves caret cleanly to editable `b0`!
+			sendBackspace();
+			expect(session.document.getValue()).not.toContain("a+b");
+			expect(session.document.getValue()).toContain("Lead paragraph");
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+		} finally {
+			rendered.view.unmount();
+			session.destroy();
+			container.remove();
+			field.remove();
+			current.surface.remove();
+		}
+	});
+
+	it("avoids full-window assertReadySourceAndDom scans and redundant keydown capture on plain paragraph Backspace (Fix 3)", () => {
+		const current = fixture({
+			blockOverrides: {
+				0: "First paragraph",
+				1: "```mermaid\ngraph LR\n  A --> B\n```",
+				2: "Editable paragraph",
+			},
+			markupOverrides: {
+				0: '<p data-easymde-visual-block-id="b0">First paragraph</p>',
+				1: '<div class="easymde-mermaid" data-easymde-visual-markdown-source="graph LR&#10;  A --> B" contenteditable="false" data-easymde-visual-block-id="b1"><svg></svg></div>',
+				2: '<p data-easymde-visual-block-id="b2">Editable paragraph</p>',
+			},
+			mounted: [0, 1, 2],
+			paragraphBlocks: true,
+			sourceBlockCount: 3,
+		});
+		current.surface.setAttribute("contenteditable", "true");
+		current.surface.tabIndex = 0;
+		const initial = current.canonical();
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = initial;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const session = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container,
+				label: "Markdown source",
+				submissionField: field,
+			}),
+			createNativeTitleSession(null),
+		);
+		session.document.setVisualEditingActive(true);
+		const onFailure = vi.fn();
+		const rendered = renderWindowEditor(current, {
+			documentSession: session,
+			onFailure,
+		});
+		const siblingP = current.surface.querySelector<HTMLElement>(
+			'[data-easymde-visual-block-id="b0"]',
+		);
+		const mermaidDiv = current.surface.querySelector<HTMLElement>(
+			'[data-easymde-visual-block-id="b1"]',
+		);
+		const editP = current.surface.querySelector<HTMLParagraphElement>(
+			'[data-easymde-visual-block-id="b2"]',
+		);
+		const editText = editP?.firstChild;
+		if (!siblingP || !mermaidDiv || !editP || !(editText instanceof Text)) {
+			throw new Error("fix14-perf-blocks-missing");
+		}
+		const cloneSpy = vi.spyOn(siblingP, "cloneNode");
+		const innerHtmlDescriptor = Object.getOwnPropertyDescriptor(
+			Element.prototype,
+			"innerHTML",
+		);
+		let mermaidInnerHtmlReads = 0;
+		if (innerHtmlDescriptor?.get) {
+			Object.defineProperty(mermaidDiv, "innerHTML", {
+				configurable: true,
+				get() {
+					mermaidInnerHtmlReads += 1;
+					return innerHtmlDescriptor.get?.call(this);
+				},
+			});
+		}
+		try {
+			current.surface.focus();
+			placeCaret(editText, editText.data.length);
+			cloneSpy.mockClear();
+			mermaidInnerHtmlReads = 0;
+
+			const keydown = new KeyboardEvent("keydown", {
+				bubbles: true,
+				cancelable: true,
+				key: "Backspace",
+			});
+			const target = document.createRange();
+			target.setStart(editText, editText.data.length - 1);
+			target.setEnd(editText, editText.data.length);
+			const beforeInput = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				inputType: "deleteContentBackward",
+			});
+			Object.defineProperty(beforeInput, "getTargetRanges", {
+				value: () => [target],
+			});
+			act(() => {
+				current.surface.dispatchEvent(keydown);
+				current.surface.dispatchEvent(beforeInput);
+				editText.deleteData(editText.data.length - 1, 1);
+				placeCaret(editText, editText.data.length);
+				current.surface.dispatchEvent(
+					new InputEvent("input", {
+						bubbles: true,
+						inputType: "deleteContentBackward",
+					}),
+				);
+			});
+
+			expect(session.document.getValue()).toBe(
+				initial.replace("Editable paragraph", "Editable paragrap"),
+			);
+			expect(onFailure).not.toHaveBeenCalled();
+			// Untouched sibling block must NOT be cloned, and untouched Mermaid
+			// read-only node must NOT have its innerHTML scanned on plain Backspace.
+			expect(cloneSpy).not.toHaveBeenCalled();
+			expect(mermaidInnerHtmlReads).toBe(0);
+		} finally {
+			cloneSpy.mockRestore();
+			delete (mermaidDiv as unknown as { innerHTML?: string }).innerHTML;
+			rendered.view.unmount();
+			session.destroy();
+			container.remove();
+			field.remove();
+			current.surface.remove();
+		}
+	});
+
+	it("restores whole-document canonical selection directly on owner transfer without firing a redundant formal preview, even while pending prop is settling (Fix 4a)", () => {
+		const current = fixture({ mounted: [0, 1, 2], sourceBlockCount: 166 });
+		current.surface.tabIndex = 0;
+		current.surface.setAttribute("contenteditable", "true");
+		const source = current.canonical();
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = source;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const session = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container,
+				label: "Markdown source",
+				submissionField: field,
+			}),
+			createNativeTitleSession(null),
+		);
+		const selection: DocumentSelection = {
+			direction: "forward",
+			end: source.length,
+			start: 0,
+		};
+		session.document.applyTextChange({ selection, value: source });
+		current.surface.focus();
+		const requestPreview = vi.fn(() => "fix14-redundant-preview");
+		const requestPreviewAtDocumentEnd = vi.fn(
+			testDocumentEndPreviewRequest("fix14-redundant-pin"),
+		);
+		const onFailure = vi.fn();
+		const rendered = renderWindowEditor(current, {
+			documentSession: session,
+			onFailure,
+			pending: true,
+			requestPreview,
+			requestPreviewAtDocumentEnd,
+			resumeCanonicalSelectionOnOwnerTransfer: true,
+			resumeCanonicalSelectionToken: 1,
+		});
+		try {
+			expect(requestPreview).not.toHaveBeenCalled();
+			expect(requestPreviewAtDocumentEnd).not.toHaveBeenCalled();
+			expect(onFailure).not.toHaveBeenCalled();
+			const native = window.getSelection();
+			expect(native?.anchorNode).toBe(current.surface);
+			expect(native?.focusNode).toBe(current.surface);
+			expect(native?.anchorOffset).toBe(0);
+			expect(native?.focusOffset).toBe(current.surface.childNodes.length);
+		} finally {
+			rendered.view.unmount();
+			session.destroy();
+			container.remove();
+			field.remove();
+			current.surface.remove();
+		}
+	});
+
+	it("applies pending insertText canonically during an unmounted owner-transfer pin without reporting visual-editor-window-pending-selection-stale (Fix 4b)", () => {
+		const current = fixture({ mounted: [0], sourceBlockCount: 3 });
+		current.surface.tabIndex = 0;
+		current.surface.setAttribute("contenteditable", "true");
+		const source = current.canonical();
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = source;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const session = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container,
+				label: "Markdown source",
+				submissionField: field,
+			}),
+			createNativeTitleSession(null),
+		);
+		const caret = source.indexOf("Line 2") + "Line 2".length;
+		const selection: DocumentSelection = {
+			direction: "none",
+			end: caret,
+			start: caret,
+		};
+		session.document.applyTextChange({ selection, value: source });
+		current.surface.focus();
+		window.getSelection()?.removeAllRanges();
+		const pin = vi.fn(testDocumentEndPreviewRequest("fix14-pin-unmounted"));
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		const rendered = renderWindowEditor(current, {
+			documentSession: session,
+			onFailure,
+			onTransferFailure,
+			requestPreviewAtDocumentEnd: pin,
+			resumeCanonicalSelectionOnOwnerTransfer: true,
+			resumeCanonicalSelectionToken: 1,
+		});
+		try {
+			expect(pin).toHaveBeenCalledTimes(1);
+			// Typing while the owner-transfer pin is pending and has no mapped
+			// visualSelection must apply canonically without stale-selection error.
+			const before = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				data: "a",
+				inputType: "insertText",
+			});
+			act(() => {
+				current.surface.dispatchEvent(before);
+			});
+			expect(before.defaultPrevented).toBe(true);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+			expect(session.document.getValue()).toBe(
+				`${source.slice(0, caret)}a${source.slice(caret)}`,
+			);
+		} finally {
+			rendered.view.unmount();
+			session.destroy();
+			container.remove();
+			field.remove();
+			current.surface.remove();
+		}
+	});
+});
+
+describe("Prod Fix 15-Windowed regressions", () => {
+	const fix15TableMarkdown = [
+		"| Head | Tail |",
+		"| --- | --- |",
+		"| one | two |",
+		"| three | four |",
+	].join("\n");
+	const fix15TableSectionHtml = (id: string): string =>
+		`<section class="table-container easymde-table-container" data-easymde-visual-block-id="${id}">` +
+		"<table><thead><tr><th>Head</th><th>Tail</th></tr></thead>" +
+		"<tbody><tr><td>one</td><td>two</td></tr>" +
+		"<tr><td>three</td><td>four</td></tr></tbody></table>" +
+		"</section>";
+
+	it("prepareContextMenuDemand synchronously retires a detached documentEndSink when selection moves onto a table cell (Fix 15-Windowed)", () => {
+		const tableIndex = 174;
+		const current = fixture({
+			blockOverrides: { [tableIndex]: `${fix15TableMarkdown}\n` },
+			markupOverrides: {
+				[tableIndex]: fix15TableSectionHtml(`b${tableIndex}`),
+			},
+			mounted: [tableIndex - 1, tableIndex],
+			paragraphBlocks: true,
+			sourceBlockCount: tableIndex + 1,
+		});
+		const original = current.canonical();
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = original;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const session = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container,
+				label: "Markdown source",
+				submissionField: field,
+			}),
+			createNativeTitleSession(null),
+		);
+		const tableRoot = current.surface.querySelector<HTMLElement>(
+			`[data-easymde-visual-block-id="b${tableIndex}"]`,
+		);
+		if (!(tableRoot instanceof HTMLElement)) {
+			throw new Error("windowed-fix15-table-missing");
+		}
+		const acceptedSnapshot = {
+			...acceptedWindowSnapshotForMountedBlock(current, tableRoot),
+			revision: 7,
+			sourceRevision: 0,
+		};
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const onFailure = vi.fn();
+		const rendered = renderWindowEditor(current, {
+			documentSession: session,
+			getAcceptedWindowSnapshot: () => acceptedSnapshot,
+			onFailure,
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+		});
+		try {
+			if (!runtime) throw new Error("windowed-fix15-runtime-missing");
+			const root = runtime as ImmersiveVisualEditorRuntime;
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.tabIndex = 0;
+			current.surface.focus();
+			window.getSelection()?.collapse(
+				current.surface,
+				current.surface.childNodes.length,
+			);
+			act(() => document.dispatchEvent(new Event("selectionchange")));
+			const sink = current.surface.lastElementChild;
+			expect(sink?.tagName).toBe("P");
+			expect(sink?.hasAttribute("data-easymde-visual-block-id")).toBe(false);
+			expect(window.getSelection()?.anchorNode).toBe(sink);
+
+			// While the native caret is still inside the sink, demand preparation
+			// preserves the sink.
+			expect(root.prepareContextMenuDemand()).toBe(true);
+			expect(sink?.parentNode).toBe(current.surface);
+
+			// Mirror Chromium right-click: native selection moves into a table cell
+			// BEFORE `selectionchange` dispatches. `prepareContextMenuDemand` must
+			// retire the detached sink synchronously so scroll clamping settles
+			// before the menu captures its scroll baseline.
+			const lastCell = tableRoot.querySelector("tbody tr:last-child td:last-child");
+			if (!(lastCell instanceof HTMLTableCellElement)) {
+				throw new Error("windowed-fix15-cell-missing");
+			}
+			const cellText = lastCell.firstChild;
+			if (!(cellText instanceof Text)) {
+				throw new Error("windowed-fix15-cell-text-missing");
+			}
+			window.getSelection()?.collapse(cellText, cellText.data.length);
+			expect(root.prepareContextMenuDemand()).toBe(true);
+			expect(sink?.isConnected).toBe(false);
+			expect(current.surface.lastElementChild).toBe(tableRoot);
+			expect(onFailure).not.toHaveBeenCalled();
+		} finally {
+			rendered.view.unmount();
+			session.destroy();
+			container.remove();
+			field.remove();
+			current.surface.remove();
+		}
+	});
+
+	it("deleting a trailing atomic block preceded by a rendered table aligns canonical caret inside the table last cell instead of mounting documentEndSink (Fix 15-Windowed)", () => {
+		const tableIndex = 171;
+		const mathIndex = 172;
+		const mermaidIndex = 173;
+		const tailIndex = 174;
+		const mathMarkdown = "$$\nx\n$$";
+		const mermaidMarkdown = "```mermaid\ngraph LR\n  A --> B\n```";
+		const mathMarkup =
+			`<div class="easymde-math easymde-math-block" data-easymde-visual-block-id="b${mathIndex}" ` +
+			'data-easymde-rendered="true" data-easymde-visual-markdown-source="x" contenteditable="false">x</div>';
+		const mermaidMarkup =
+			`<div class="easymde-mermaid" data-easymde-visual-block-id="b${mermaidIndex}" ` +
+			'data-easymde-visual-markdown-source="graph LR&#10;  A --> B" contenteditable="false">diagram</div>';
+		const current = fixture({
+			blockOverrides: {
+				[tableIndex]: fix15TableMarkdown,
+				[mathIndex]: mathMarkdown,
+				[mermaidIndex]: mermaidMarkdown,
+				[tailIndex]: "End",
+			},
+			markupOverrides: {
+				[tableIndex]: fix15TableSectionHtml(`b${tableIndex}`),
+				[mathIndex]: mathMarkup,
+				[mermaidIndex]: mermaidMarkup,
+				[tailIndex]: `<p data-easymde-visual-block-id="b${tailIndex}">End</p>`,
+			},
+			mounted: [tableIndex - 1, tableIndex, mathIndex, mermaidIndex, tailIndex],
+			paragraphBlocks: true,
+			sourceBlockCount: tailIndex + 1,
+		});
+		const original = current.canonical();
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = original;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const session = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container,
+				label: "Markdown source",
+				submissionField: field,
+			}),
+			createNativeTitleSession(null),
+		);
+		session.document.setVisualEditingActive(true);
+		let previewSeq = 0;
+		const requestPreview = vi.fn(() => `fix15-table-atomic-${++previewSeq}`);
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		const rendered = renderWindowEditor(current, {
+			documentSession: session,
+			onFailure,
+			onTransferFailure,
+			requestPreview,
+		});
+		try {
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.tabIndex = 0;
+			current.surface.focus();
+			const tailBlock = current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${tailIndex}"]`,
+			);
+			const tailText = tailBlock?.firstChild;
+			const tableRoot = current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${tableIndex}"]`,
+			);
+			if (
+				!(tailBlock instanceof HTMLParagraphElement) ||
+				!(tailText instanceof Text) ||
+				!(tableRoot instanceof HTMLElement)
+			) {
+				throw new Error("windowed-fix15-atomic-fixture-missing");
+			}
+			// Empty the trailing paragraph ("End" -> "<br>").
+			act(() => {
+				window.getSelection()?.collapse(tailText, tailText.data.length);
+				const range = document.createRange();
+				range.setStart(tailText, 0);
+				range.setEnd(tailText, tailText.data.length);
+				const before = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "deleteContentBackward",
+				});
+				Object.defineProperty(before, "getTargetRanges", {
+					value: () => [range],
+				});
+				current.surface.dispatchEvent(before);
+				expect(before.defaultPrevented).toBe(false);
+				tailText.remove();
+				tailBlock.append(document.createElement("br"));
+				window.getSelection()?.collapse(tailBlock, 0);
+				current.surface.dispatchEvent(
+					new InputEvent("input", {
+						bubbles: true,
+						inputType: "deleteContentBackward",
+					}),
+				);
+			});
+
+			const dispatchBoundaryBackspace = (): InputEvent => {
+				const collapseRange = document.createRange();
+				collapseRange.setStart(tailBlock, 0);
+				collapseRange.setEnd(tailBlock, 0);
+				const ev = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "deleteContentBackward",
+				});
+				Object.defineProperty(ev, "getTargetRanges", {
+					value: () => [collapseRange],
+				});
+				act(() => {
+					current.surface.dispatchEvent(ev);
+				});
+				return ev;
+			};
+
+			// Step 1 (ready-mode): Backspace removes the Mermaid atomic block and
+			// enters pending formal preview (mirroring Stage 4 Step 9).
+			const deleteMermaid = dispatchBoundaryBackspace();
+			expect(deleteMermaid.defaultPrevented).toBe(true);
+			expect(requestPreview).toHaveBeenCalledTimes(1);
+			expect(session.document.getValue()).not.toContain("```mermaid");
+
+			// Step 2 (pending-mode): Next Backspace skips the collapsed Mermaid
+			// block, removes the $$x$$ atomic block, and must align BOTH DOM caret
+			// and canonical caret inside the table's last cell ("four") rather than
+			// value.length after trailing newlines (mirroring Stage 4 Step 10).
+			const deleteMath = dispatchBoundaryBackspace();
+			expect(deleteMath.defaultPrevented).toBe(true);
+			expect(requestPreview).toHaveBeenCalledTimes(2);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+
+			const postValue = session.document.getValue();
+			expect(postValue).not.toContain("$$");
+			const postSelection = session.document.getSelection();
+			const lastCellValueIndex = postValue.lastIndexOf("four");
+			expect(lastCellValueIndex).toBeGreaterThan(0);
+			const expectedTableCaret = lastCellValueIndex + "four".length;
+			expect(postSelection).toEqual({
+				direction: "none",
+				end: expectedTableCaret,
+				start: expectedTableCaret,
+			});
+			expect(postSelection.start).toBeLessThan(postValue.length);
+
+			const lastCell = tableRoot.querySelector("tbody tr:last-child td:last-child");
+			expect(lastCell?.contains(window.getSelection()?.anchorNode ?? null)).toBe(true);
+
+			// Settle the formal preview with the table as the last block: the
+			// aligned canonical caret must restore directly inside the table cell
+			// without mounting a trailing documentEndSink.
+			const settledSignature = `fix15-table-atomic-${previewSeq}`;
+			const settledEditMap: PreviewEditMap = {
+				blocks: current.editMap.blocks.slice(0, tableIndex + 1),
+				coordinate: "line",
+				signature: settledSignature,
+				version: 1,
+			};
+			current.surface.innerHTML = [
+				'<div data-easymde-preview-window-spacer="1"></div>',
+				`<p data-easymde-visual-block-id="b${tableIndex - 1}">Line ${tableIndex - 1}</p>`,
+				fix15TableSectionHtml(`b${tableIndex}`),
+			].join("");
+			rendered.rerenderPreview(settledEditMap, {
+				revision: 2,
+				signature: settledSignature,
+			});
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+			const settledTable = current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${tableIndex}"]`,
+			);
+			expect(current.surface.lastElementChild).toBe(settledTable);
+			const settledCell = settledTable?.querySelector(
+				"tbody tr:last-child td:last-child",
+			);
+			expect(
+				settledCell?.contains(window.getSelection()?.anchorNode ?? null),
+			).toBe(true);
+		} finally {
+			rendered.view.unmount();
+			session.destroy();
+			container.remove();
+			field.remove();
+			current.surface.remove();
+		}
+	});
+
+	it('rapid pending Backspaces across "Tail one.\\n\\nTail two.\\n\\nTail three.\\n\\n" preserve trailing space/NBSP parity without stripping 2 bytes or locking (Fix 15-Windowed)', () => {
+		const blockOne = 171;
+		const blockTwo = 172;
+		const blockThree = 173;
+		const current = fixture({
+			blockOverrides: {
+				[blockOne]: "Tail one.",
+				[blockTwo]: "Tail two.",
+				[blockThree]: "Tail three.",
+			},
+			markupOverrides: {
+				[blockOne]: `<p data-easymde-visual-block-id="b${blockOne}">Tail one.</p>`,
+				[blockTwo]: `<p data-easymde-visual-block-id="b${blockTwo}">Tail two.</p>`,
+				[blockThree]: `<p data-easymde-visual-block-id="b${blockThree}">Tail three.</p>`,
+			},
+			mounted: [blockOne, blockTwo, blockThree],
+			paragraphBlocks: true,
+			sourceBlockCount: blockThree + 1,
+		});
+		const initial = current.canonical();
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = initial;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const session = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container,
+				label: "Markdown source",
+				submissionField: field,
+			}),
+			createNativeTitleSession(null),
+		);
+		session.document.setVisualEditingActive(true);
+		let previewSeq = 0;
+		const requestPreview = vi.fn(() => `fix15-rapid-tail-${++previewSeq}`);
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		const rendered = renderWindowEditor(current, {
+			documentSession: session,
+			onFailure,
+			onTransferFailure,
+			requestPreview,
+		});
+		try {
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.tabIndex = 0;
+			current.surface.focus();
+			const pThree = current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${blockThree}"]`,
+			);
+			const textThree = pThree?.firstChild;
+			if (!(pThree instanceof HTMLParagraphElement) || !(textThree instanceof Text)) {
+				throw new Error("windowed-fix15-tail-fixture-missing");
+			}
+			window.getSelection()?.collapse(textThree, textThree.data.length);
+
+			const pressChromiumBackspace = (): void => {
+				const native = window.getSelection();
+				if (!native?.isCollapsed || !native.anchorNode) {
+					throw new Error("windowed-fix15-caret-lost");
+				}
+				const anchorNode = native.anchorNode;
+				const anchorOffset = native.anchorOffset;
+				// Mirror Chromium: when caret sits at element end (p, 1) after a
+				// boundary join, getTargetRanges targets the last char of the Text child.
+				const textTarget =
+					anchorNode instanceof Text && anchorOffset > 0
+						? { node: anchorNode, offset: anchorOffset }
+						: anchorNode instanceof HTMLParagraphElement &&
+								anchorOffset === anchorNode.childNodes.length &&
+								anchorNode.childNodes.length === 1 &&
+								anchorNode.firstChild instanceof Text &&
+								anchorNode.firstChild.data.length > 0
+							? {
+									node: anchorNode.firstChild,
+									offset: anchorNode.firstChild.data.length,
+								}
+							: null;
+				const emptyJoinTarget =
+					!textTarget &&
+					anchorNode instanceof HTMLParagraphElement &&
+					anchorOffset === 0 &&
+					anchorNode.previousElementSibling instanceof HTMLParagraphElement
+						? {
+								currentBlock: anchorNode,
+								previousBlock: anchorNode.previousElementSibling,
+							}
+						: null;
+				const target = document.createRange();
+				if (textTarget) {
+					target.setStart(textTarget.node, textTarget.offset - 1);
+					target.setEnd(textTarget.node, textTarget.offset);
+				} else if (emptyJoinTarget) {
+					const prevText = emptyJoinTarget.previousBlock.firstChild;
+					if (prevText instanceof Text) {
+						target.setStart(prevText, prevText.data.length);
+					} else {
+						target.setStart(
+							emptyJoinTarget.previousBlock,
+							emptyJoinTarget.previousBlock.childNodes.length,
+						);
+					}
+					target.setEnd(emptyJoinTarget.currentBlock, 0);
+				} else {
+					target.setStart(anchorNode, anchorOffset);
+					target.setEnd(anchorNode, anchorOffset);
+				}
+				const before = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "deleteContentBackward",
+				});
+				Object.defineProperty(before, "getTargetRanges", {
+					value: () => [target],
+				});
+				act(() => {
+					current.surface.dispatchEvent(before);
+					if (before.defaultPrevented) return;
+					if (textTarget) {
+						const parent = textTarget.node.parentElement;
+						const nextData =
+							textTarget.node.data.slice(0, textTarget.offset - 1) +
+							textTarget.node.data.slice(textTarget.offset);
+						if (nextData === "" && parent instanceof HTMLParagraphElement) {
+							textTarget.node.remove();
+							parent.append(document.createElement("br"));
+							window.getSelection()?.collapse(parent, 0);
+						} else {
+							// Mirror Chromium: a newly exposed trailing ASCII space
+							// in contenteditable becomes NBSP (\u00A0).
+							const chromiumData = nextData.endsWith(" ")
+								? `${nextData.slice(0, -1)}\u00a0`
+								: nextData;
+							textTarget.node.data = chromiumData;
+							window.getSelection()?.collapse(
+								textTarget.node,
+								textTarget.offset - 1,
+							);
+						}
+						current.surface.dispatchEvent(
+							new InputEvent("input", {
+								bubbles: true,
+								inputType: "deleteContentBackward",
+							}),
+						);
+					} else if (emptyJoinTarget) {
+						// Mirror Chromium: in settled mode, Backspace at start of an
+						// emptied trailing <p><br></p> removes it and places caret at
+						// end of the preceding paragraph, triggering structural retirement.
+						emptyJoinTarget.currentBlock.remove();
+						const prevText = emptyJoinTarget.previousBlock.firstChild;
+						if (prevText instanceof Text) {
+							window.getSelection()?.collapse(prevText, prevText.data.length);
+						} else {
+							window.getSelection()?.collapse(
+								emptyJoinTarget.previousBlock,
+								emptyJoinTarget.previousBlock.childNodes.length,
+							);
+						}
+						current.surface.dispatchEvent(
+							new InputEvent("input", {
+								bubbles: true,
+								inputType: "deleteContentBackward",
+							}),
+						);
+					}
+				});
+			};
+
+			// Drive 29 Backspaces while formal previews never settle yet:
+			// 11 to empty "Tail three.", 1 to retire "\n\n" (entering pending mode!),
+			// 9 to empty "Tail two.", 1 to retire "\n\n", and 7 into "Tail one."
+			// (crossing "Tail " -> "Tail" -> "Ta").
+			const tailTwoStart = initial.indexOf("Tail two.");
+			const tailOneStart = initial.indexOf("Tail one.");
+			let sawPendingTailTwoSpace = false;
+			let sawPendingTailOneSpace = false;
+			for (let step = 1; step <= 29; step += 1) {
+				const beforeValue = session.document.getValue();
+				pressChromiumBackspace();
+				expect(onFailure, `step ${step}`).not.toHaveBeenCalled();
+				expect(onTransferFailure, `step ${step}`).not.toHaveBeenCalled();
+				const afterValue = session.document.getValue();
+				const afterSelection = session.document.getSelection();
+				expect(afterSelection.start).toBe(afterSelection.end);
+				expect(afterSelection.end).toBeLessThanOrEqual(afterValue.length);
+				expect(afterSelection.start).toBe(afterValue.length);
+				if (beforeValue.endsWith("Tail t") || beforeValue.endsWith("Tail o")) {
+					// Must delete ONLY the single char (1 byte), NOT ' t'/' o' (2 bytes)!
+					expect(afterValue.endsWith("Tail ")).toBe(true);
+					expect(afterValue.length).toBe(beforeValue.length - 1);
+					if (afterSelection.start === tailTwoStart + "Tail ".length) {
+						expect(requestPreview).toHaveBeenCalled();
+						sawPendingTailTwoSpace = true;
+					}
+					if (afterSelection.start === tailOneStart + "Tail ".length) {
+						sawPendingTailOneSpace = true;
+					}
+				} else if (beforeValue.endsWith("Tail ")) {
+					// Next Backspace deletes ONLY ' ' (1 byte), preserving parity!
+					expect(afterValue.endsWith("Tail")).toBe(true);
+					expect(afterValue.length).toBe(beforeValue.length - 1);
+				}
+			}
+			expect(sawPendingTailTwoSpace).toBe(true);
+			expect(sawPendingTailOneSpace).toBe(true);
+
+			const finalValue = session.document.getValue();
+			expect(finalValue.slice(tailOneStart)).toBe("Ta");
+			expect(session.document.getSelection()).toEqual({
+				direction: "none",
+				end: finalValue.length,
+				start: finalValue.length,
+			});
+
+			// Settle the latest formal preview: must NOT throw
+			// visual-editor-window-history-selection-stale or lock the surface.
+			const finalSignature = `fix15-rapid-tail-${previewSeq}`;
+			const settledEditMap: PreviewEditMap = {
+				blocks: current.editMap.blocks.slice(0, blockOne + 1),
+				coordinate: "line",
+				signature: finalSignature,
+				version: 1,
+			};
+			current.surface.innerHTML = [
+				'<div data-easymde-preview-window-spacer="1"></div>',
+				`<p data-easymde-visual-block-id="b${blockOne}">Ta</p>`,
+			].join("");
+			rendered.rerenderPreview(settledEditMap, {
+				revision: 2,
+				signature: finalSignature,
+			});
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+			expect(current.surface.getAttribute("contenteditable")).toBe("true");
+		} finally {
+			rendered.view.unmount();
+			session.destroy();
+			container.remove();
+			field.remove();
+			current.surface.remove();
+		}
+	});
+});
+
+describe("Prod Fix 16-Windowed regressions", () => {
+	it("restores terminal document-end selection inside a trailing blockquote instead of on the container (Fix 16-Windowed, L9259)", () => {
+		const quoteIndex = 160;
+		const codeIndex = 161;
+		const current = fixture({
+			blockOverrides: {
+				[quoteIndex]: "> quoted tail line",
+				[codeIndex]: "```python\n\n```",
+			},
+			markupOverrides: {
+				[quoteIndex]:
+					`<blockquote data-easymde-visual-block-id="b${quoteIndex}">\n<p>quoted tail line</p>\n</blockquote>`,
+				[codeIndex]:
+					`<pre data-easymde-visual-block-id="b${codeIndex}"><code class="language-python">\n</code></pre>`,
+			},
+			mounted: [quoteIndex, codeIndex],
+			paragraphBlocks: true,
+			sourceBlockCount: 162,
+		});
+		const initial = `${current.canonical()}\n\n`;
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = initial;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const session = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container,
+				label: "Markdown source",
+				submissionField: field,
+			}),
+			createNativeTitleSession(null),
+		);
+		session.document.setVisualEditingActive(true);
+		const requestPreview = vi.fn(() => "fix16-quote-tail-1");
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		const rendered = renderWindowEditor(current, {
+			documentSession: session,
+			onFailure,
+			onTransferFailure,
+			requestPreview,
+		});
+		try {
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.tabIndex = 0;
+			current.surface.focus();
+			const code = current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${codeIndex}"] code`,
+			);
+			const codeText = code?.firstChild;
+			if (!(code instanceof HTMLElement) || !(codeText instanceof Text)) {
+				throw new Error("fix16-l9259-code-missing");
+			}
+			window.getSelection()?.collapse(codeText, 0);
+			act(() => {
+				current.surface.dispatchEvent(
+					new KeyboardEvent("keydown", {
+						bubbles: true,
+						cancelable: true,
+						key: "Backspace",
+					}),
+				);
+			});
+			expect(onFailure).not.toHaveBeenCalled();
+			const afterRetire = session.document.getValue();
+			expect(afterRetire.endsWith("> quoted tail line\n\n")).toBe(true);
+			expect(session.document.getSelection()).toEqual({
+				direction: "none",
+				end: afterRetire.length,
+				start: afterRetire.length,
+			});
+
+			// Settle the formal preview onto PHP-formatted <blockquote>\n<p>...</p>\n</blockquote>.
+			const settledEditMap: PreviewEditMap = {
+				blocks: current.editMap.blocks.slice(0, quoteIndex + 1),
+				coordinate: "line",
+				signature: "fix16-quote-tail-1",
+				version: 1,
+			};
+			current.surface.innerHTML = [
+				'<div data-easymde-preview-window-spacer="1"></div>',
+				`<blockquote data-easymde-visual-block-id="b${quoteIndex}">\n<p>quoted tail line</p>\n</blockquote>`,
+			].join("");
+			rendered.rerenderPreview(settledEditMap, {
+				revision: 2,
+				signature: "fix16-quote-tail-1",
+			});
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+
+			const blockquote = current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${quoteIndex}"]`,
+			);
+			const quoteText = blockquote?.querySelector("p")?.firstChild;
+			if (!(blockquote instanceof HTMLElement) || !(quoteText instanceof Text)) {
+				throw new Error("fix16-l9259-blockquote-missing");
+			}
+			const selection = window.getSelection();
+			expect(selection?.isCollapsed).toBe(true);
+			expect(selection?.anchorNode).toBe(quoteText);
+			expect(selection?.anchorOffset).toBe("quoted tail line".length);
+
+			// Dispatch settled Backspace on the restored caret.
+			const target = document.createRange();
+			target.setStart(quoteText, quoteText.data.length - 1);
+			target.setEnd(quoteText, quoteText.data.length);
+			const before = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				inputType: "deleteContentBackward",
+			});
+			Object.defineProperty(before, "getTargetRanges", {
+				value: () => [target],
+			});
+			act(() => {
+				current.surface.dispatchEvent(before);
+				if (!before.defaultPrevented) {
+					quoteText.data = quoteText.data.slice(0, -1);
+					window.getSelection()?.collapse(quoteText, quoteText.data.length);
+					current.surface.dispatchEvent(
+						new InputEvent("input", {
+							bubbles: true,
+							inputType: "deleteContentBackward",
+						}),
+					);
+				}
+			});
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+			expect(session.document.getValue().endsWith("> quoted tail lin\n\n")).toBe(
+				true,
+			);
+		} finally {
+			rendered.view.unmount();
+			session.destroy();
+			container.remove();
+			field.remove();
+			current.surface.remove();
+		}
+	});
+
+	it("restores terminal document-end selection cleanly onto nested blockquote, list, and empty quoted paragraph (Fix 16-Windowed)", () => {
+		const runCase = (scenario: "nested-quote" | "list" | "empty-quote"): void => {
+			const tailIndex = 160;
+			const codeIndex = 161;
+			const tailSource =
+				scenario === "nested-quote"
+					? "> 引用块 42\n> > 嵌套引用"
+					: scenario === "list"
+						? "- one\n- two"
+						: "> ";
+			const tailMarkup =
+				scenario === "nested-quote"
+					? `<blockquote data-easymde-visual-block-id="b${tailIndex}">\n<p>引用块 42</p>\n<blockquote>\n<p>嵌套引用</p>\n</blockquote>\n</blockquote>`
+					: scenario === "list"
+						? `<ul data-easymde-visual-block-id="b${tailIndex}">\n<li>one</li>\n<li>two</li>\n</ul>`
+						: `<blockquote data-easymde-visual-block-id="b${tailIndex}">\n<p><br></p>\n</blockquote>`;
+			const current = fixture({
+				blockOverrides: {
+					[tailIndex]: tailSource,
+					[codeIndex]: "```javascript\n\n```",
+				},
+				markupOverrides: {
+					[tailIndex]: tailMarkup,
+					[codeIndex]:
+						`<pre data-easymde-visual-block-id="b${codeIndex}"><code class="language-javascript">\n</code></pre>`,
+				},
+				mounted: [tailIndex, codeIndex],
+				paragraphBlocks: true,
+				sourceBlockCount: 162,
+			});
+			const initial = `${current.canonical()}\n\n`;
+			const field = document.createElement("textarea");
+			field.value = field.defaultValue = initial;
+			const container = document.createElement("div");
+			document.body.append(container, field);
+			const session = createEditorDocumentSession(
+				createCodeMirrorDocumentSession({
+					container,
+					label: "Markdown source",
+					submissionField: field,
+				}),
+				createNativeTitleSession(null),
+			);
+			session.document.setVisualEditingActive(true);
+			const sig = `fix16-terminal-${scenario}`;
+			const requestPreview = vi.fn(() => sig);
+			const onFailure = vi.fn();
+			const onTransferFailure = vi.fn();
+			const rendered = renderWindowEditor(current, {
+				documentSession: session,
+				onFailure,
+				onTransferFailure,
+				requestPreview,
+			});
+			try {
+				current.surface.setAttribute("contenteditable", "true");
+				current.surface.tabIndex = 0;
+				current.surface.focus();
+				const codeText = current.surface.querySelector<HTMLElement>(
+					`[data-easymde-visual-block-id="b${codeIndex}"] code`,
+				)?.firstChild;
+				if (!(codeText instanceof Text)) {
+					throw new Error(`fix16-code-missing:${scenario}`);
+				}
+				window.getSelection()?.collapse(codeText, 0);
+				act(() => {
+					current.surface.dispatchEvent(
+						new KeyboardEvent("keydown", {
+							bubbles: true,
+							cancelable: true,
+							key: "Backspace",
+						}),
+					);
+				});
+				expect(onFailure).not.toHaveBeenCalled();
+
+				const settledEditMap: PreviewEditMap = {
+					blocks: current.editMap.blocks.slice(0, tailIndex + 1),
+					coordinate: "line",
+					signature: sig,
+					version: 1,
+				};
+				current.surface.innerHTML = [
+					'<div data-easymde-preview-window-spacer="1"></div>',
+					tailMarkup,
+				].join("");
+				rendered.rerenderPreview(settledEditMap, {
+					revision: 2,
+					signature: sig,
+				});
+				expect(onFailure).not.toHaveBeenCalled();
+				expect(onTransferFailure).not.toHaveBeenCalled();
+
+				const tailBlock = current.surface.querySelector<HTMLElement>(
+					`[data-easymde-visual-block-id="b${tailIndex}"]`,
+				);
+				if (!tailBlock) throw new Error(`fix16-tail-missing:${scenario}`);
+				const selection = window.getSelection();
+				expect(selection?.isCollapsed).toBe(true);
+
+				if (scenario === "empty-quote") {
+					const emptyP = tailBlock.querySelector("p");
+					if (!(emptyP instanceof HTMLParagraphElement)) {
+						throw new Error("fix16-empty-quote-p-missing");
+					}
+					expect(selection?.anchorNode).toBe(emptyP);
+					expect(selection?.anchorOffset).toBe(0);
+					const baseline = serializeVisualMarkdownBlockFragment([tailBlock]);
+					expect(() =>
+						visualSelectionSourceRangeForBlocks(
+							[tailBlock],
+							tailSource,
+							baseline,
+						),
+					).not.toThrow();
+					return;
+				}
+
+				const expectedText =
+					scenario === "nested-quote"
+						? tailBlock.querySelector(":scope > blockquote > p")?.firstChild
+						: tailBlock.querySelectorAll("li")[1]?.firstChild;
+				if (!(expectedText instanceof Text)) {
+					throw new Error(`fix16-expected-text-missing:${scenario}`);
+				}
+				expect(selection?.anchorNode).toBe(expectedText);
+				expect(selection?.anchorOffset).toBe(expectedText.data.length);
+
+				const target = document.createRange();
+				target.setStart(expectedText, expectedText.data.length - 1);
+				target.setEnd(expectedText, expectedText.data.length);
+				const before = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "deleteContentBackward",
+				});
+				Object.defineProperty(before, "getTargetRanges", {
+					value: () => [target],
+				});
+				act(() => {
+					current.surface.dispatchEvent(before);
+					if (!before.defaultPrevented) {
+						expectedText.data = expectedText.data.slice(0, -1);
+						window
+							.getSelection()
+							?.collapse(expectedText, expectedText.data.length);
+						current.surface.dispatchEvent(
+							new InputEvent("input", {
+								bubbles: true,
+								inputType: "deleteContentBackward",
+							}),
+						);
+					}
+				});
+				expect(onFailure).not.toHaveBeenCalled();
+				expect(onTransferFailure).not.toHaveBeenCalled();
+				const expectedSuffix =
+					scenario === "nested-quote"
+						? "> 引用块 42\n> > 嵌套引\n\n"
+						: "- one\n- tw\n\n";
+				expect(session.document.getValue().endsWith(expectedSuffix)).toBe(true);
+			} finally {
+				rendered.view.unmount();
+				session.destroy();
+				container.remove();
+				field.remove();
+				current.surface.remove();
+			}
+		};
+
+		runCase("nested-quote");
+		runCase("list");
+		runCase("empty-quote");
+	});
+
+	it("handles rapid pending Backspace after retiring an emptied terminal code fence with trailing blank lines and rejects surrounding tamper (Fix 16-Windowed)", () => {
+		const quoteIndex = 160;
+		const codeIndex = 161;
+		const makeSetup = () => {
+			const current = fixture({
+				blockOverrides: {
+					[quoteIndex]: "> 引用块 42\n> > 嵌套引用",
+					[codeIndex]: "```javascript\n\n```",
+				},
+				markupOverrides: {
+					[quoteIndex]:
+						`<blockquote data-easymde-visual-block-id="b${quoteIndex}">\n<p>引用块 42</p>\n<blockquote>\n<p>嵌套引用</p>\n</blockquote>\n</blockquote>`,
+					[codeIndex]:
+						`<pre data-easymde-visual-block-id="b${codeIndex}"><code class="language-javascript">\n</code></pre>`,
+				},
+				mounted: [quoteIndex, codeIndex],
+				paragraphBlocks: true,
+				sourceBlockCount: 162,
+			});
+			const initial = `${current.canonical()}\n\n`;
+			const field = document.createElement("textarea");
+			field.value = field.defaultValue = initial;
+			const container = document.createElement("div");
+			document.body.append(container, field);
+			const session = createEditorDocumentSession(
+				createCodeMirrorDocumentSession({
+					container,
+					label: "Markdown source",
+					submissionField: field,
+				}),
+				createNativeTitleSession(null),
+			);
+			session.document.setVisualEditingActive(true);
+			let previewSeq = 0;
+			const requestPreview = vi.fn(() => `fix16-pending-pre-${++previewSeq}`);
+			const onFailure = vi.fn();
+			const onDiagnostic = vi.fn();
+			const onTransferFailure = vi.fn();
+			const rendered = renderWindowEditor(current, {
+				documentSession: session,
+				onDiagnostic,
+				onFailure,
+				onTransferFailure,
+				requestPreview,
+			});
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.tabIndex = 0;
+			current.surface.focus();
+			return {
+				container,
+				current,
+				field,
+				initial,
+				onDiagnostic,
+				onFailure,
+				onTransferFailure,
+				rendered,
+				requestPreview,
+				session,
+			};
+		};
+
+		// Positive path: retire terminal <pre> with trailing \n\n, then immediately
+		// press Backspace while the formal preview is still pending.
+		const positive = makeSetup();
+		try {
+			const codeText = positive.current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${codeIndex}"] code`,
+			)?.firstChild;
+			if (!(codeText instanceof Text)) {
+				throw new Error("fix16-pending-pre-code-missing");
+			}
+			window.getSelection()?.collapse(codeText, 0);
+			act(() => {
+				positive.current.surface.dispatchEvent(
+					new KeyboardEvent("keydown", {
+						bubbles: true,
+						cancelable: true,
+						key: "Backspace",
+					}),
+				);
+			});
+			expect(positive.onFailure).not.toHaveBeenCalled();
+			expect(positive.requestPreview).toHaveBeenCalledTimes(1);
+			expect(
+				positive.session.document.getValue().endsWith("> 引用块 42\n> > 嵌套引用\n\n"),
+			).toBe(true);
+
+			// Before settling the formal preview, dispatch Backspace on the replaced <p><br></p>.
+			const replacedP = positive.current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${codeIndex}"]`,
+			);
+			const nestedText = positive.current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${quoteIndex}"] blockquote p`,
+			)?.firstChild;
+			if (!(replacedP instanceof HTMLParagraphElement) || !(nestedText instanceof Text)) {
+				throw new Error("fix16-pending-pre-replaced-p-missing");
+			}
+			const pendingTarget = document.createRange();
+			pendingTarget.setStart(nestedText, nestedText.data.length);
+			pendingTarget.setEnd(replacedP, 0);
+			const pendingBefore = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				inputType: "deleteContentBackward",
+			});
+			Object.defineProperty(pendingBefore, "getTargetRanges", {
+				value: () => [pendingTarget],
+			});
+			act(() => {
+				positive.current.surface.dispatchEvent(pendingBefore);
+			});
+			expect(pendingBefore.defaultPrevented).toBe(true);
+			expect(positive.onFailure).not.toHaveBeenCalled();
+			expect(positive.onTransferFailure).not.toHaveBeenCalled();
+			expect(
+				positive.onDiagnostic.mock.calls.some(([code]) =>
+					String(code).includes("lease-dom-mount-child-identity"),
+				),
+			).toBe(false);
+			expect(
+				positive.session.document.getValue().endsWith("> 引用块 42\n> > 嵌套引用"),
+			).toBe(true);
+			const liveSelection = window.getSelection();
+			expect(liveSelection?.isCollapsed).toBe(true);
+			expect(liveSelection?.anchorNode).toBe(nestedText);
+			expect(liveSelection?.anchorOffset).toBe("嵌套引用".length);
+		} finally {
+			positive.rendered.view.unmount();
+			positive.session.destroy();
+			positive.container.remove();
+			positive.field.remove();
+			positive.current.surface.remove();
+		}
+
+		// Negative tamper check: mutating a sibling block before the promoted
+		// single-block replacement commit must still fail closed with
+		// commit-surrounding-block-stale.
+		const tampered = makeSetup();
+		try {
+			const pre = tampered.current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${codeIndex}"]`,
+			);
+			const codeText = pre?.querySelector("code")?.firstChild;
+			const siblingText = tampered.current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${quoteIndex}"] blockquote p`,
+			)?.firstChild;
+			if (
+				!(pre instanceof HTMLElement) ||
+				!(codeText instanceof Text) ||
+				!(siblingText instanceof Text)
+			) {
+				throw new Error("fix16-tamper-setup-missing");
+			}
+			const originalReplaceWith = pre.replaceWith.bind(pre);
+			pre.replaceWith = (...nodes) => {
+				originalReplaceWith(...nodes);
+				siblingText.data = "tampered";
+			};
+			window.getSelection()?.collapse(codeText, 0);
+			act(() => {
+				tampered.current.surface.dispatchEvent(
+					new KeyboardEvent("keydown", {
+						bubbles: true,
+						cancelable: true,
+						key: "Backspace",
+					}),
+				);
+			});
+			expect(tampered.onFailure).toHaveBeenCalledWith(
+				"visual-editor-window-source-navigation-dom-stale",
+			);
+			expect(tampered.onDiagnostic).toHaveBeenCalledWith(
+				"visual-editor-window-source-navigation-dom-stale:commit-surrounding-block-stale",
+			);
+			expect(tampered.session.document.getValue()).toBe(tampered.initial);
+			expect(tampered.requestPreview).not.toHaveBeenCalled();
+		} finally {
+			tampered.rendered.view.unmount();
+			tampered.session.destroy();
+			tampered.container.remove();
+			tampered.field.remove();
+			tampered.current.surface.remove();
+		}
+	});
+
+	it("retires an emptied nested blockquote row on settled Backspace and handles immediate pending Backspace cleanly (Fix 16-Windowed)", () => {
+		const quoteIndex = 160;
+		const current = fixture({
+			blockOverrides: {
+				[quoteIndex]: "> 引用块 42\n> >",
+			},
+			markupOverrides: {
+				[quoteIndex]:
+					`<blockquote data-easymde-visual-block-id="b${quoteIndex}">\n<p>引用块 42</p>\n<blockquote>\n<p><br></p>\n</blockquote>\n</blockquote>`,
+			},
+			mounted: [quoteIndex],
+			paragraphBlocks: true,
+			sourceBlockCount: 161,
+		});
+		const initial = `${current.canonical()}\n\n`;
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = initial;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const session = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container,
+				label: "Markdown source",
+				submissionField: field,
+			}),
+			createNativeTitleSession(null),
+		);
+		session.document.setVisualEditingActive(true);
+		let previewSeq = 0;
+		const requestPreview = vi.fn(() => `fix16-nested-retire-${++previewSeq}`);
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		const rendered = renderWindowEditor(current, {
+			documentSession: session,
+			onFailure,
+			onTransferFailure,
+			requestPreview,
+		});
+		try {
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.tabIndex = 0;
+			current.surface.focus();
+			const innerP = current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${quoteIndex}"] blockquote p`,
+			);
+			if (!(innerP instanceof HTMLParagraphElement)) {
+				throw new Error("fix16-nested-retire-inner-p-missing");
+			}
+			window.getSelection()?.collapse(innerP, 0);
+			const before = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				inputType: "deleteContentBackward",
+			});
+			act(() => {
+				current.surface.dispatchEvent(before);
+			});
+			expect(before.defaultPrevented).toBe(true);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+			const afterRetire = session.document.getValue();
+			expect(afterRetire.endsWith("> 引用块 42\n\n")).toBe(true);
+			expect(requestPreview).toHaveBeenCalledWith(afterRetire);
+
+			// Immediate pending Backspace before the formal preview settles must
+			// delete canonically instead of letting native mutation run on the
+			// already-retired nested blockquote row.
+			const outerText = current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${quoteIndex}"] > p`,
+			)?.firstChild;
+			if (!(outerText instanceof Text)) {
+				throw new Error("fix16-nested-retire-outer-text-missing");
+			}
+			const pendingTarget = document.createRange();
+			pendingTarget.setStart(outerText, outerText.data.length);
+			pendingTarget.setEnd(innerP, 0);
+			const pendingBefore = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				inputType: "deleteContentBackward",
+			});
+			Object.defineProperty(pendingBefore, "getTargetRanges", {
+				value: () => [pendingTarget],
+			});
+			act(() => {
+				current.surface.dispatchEvent(pendingBefore);
+			});
+			expect(pendingBefore.defaultPrevented).toBe(true);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+			expect(session.document.getValue().endsWith("> 引用块 4\n\n")).toBe(true);
+		} finally {
+			rendered.view.unmount();
+			session.destroy();
+			container.remove();
+			field.remove();
+			current.surface.remove();
+		}
+	});
+
+	it("deletes through a list-nested Setext heading (Steps 57->61) on settled and rapid pending Backspaces without failure (Fix 17-Windowed)", () => {
+		const prevIndex = 159;
+		const ulIndex = 160;
+		const current = fixture({
+			blockOverrides: {
+				[prevIndex]: "段落重复内容 C42：测试。 ",
+				[ulIndex]: "- 列表项一\n- 列表项二\n  -",
+			},
+			markupOverrides: {
+				[prevIndex]: `<p data-easymde-visual-block-id="b${prevIndex}">段落重复内容 C42：测试。 </p>`,
+				[ulIndex]:
+					`<ul data-easymde-visual-block-id="b${ulIndex}"><li>列表项一</li><li><h2>列表项二</h2></li></ul>`,
+			},
+			mounted: [prevIndex, ulIndex],
+			paragraphBlocks: true,
+			sourceBlockCount: 161,
+		});
+		const initial = current.canonical();
+		const prefix = initial.slice(0, initial.length - "- 列表项一\n- 列表项二\n  -".length);
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = initial;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const session = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container,
+				label: "Markdown source",
+				submissionField: field,
+			}),
+			createNativeTitleSession(null),
+		);
+		session.document.setVisualEditingActive(true);
+		let previewSeq = 0;
+		const requestPreview = vi.fn(() => `fix17-setext-${++previewSeq}`);
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		const rendered = renderWindowEditor(current, {
+			documentSession: session,
+			onFailure,
+			onTransferFailure,
+			requestPreview,
+		});
+		try {
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.tabIndex = 0;
+			current.surface.focus();
+			const h2 = current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${ulIndex}"] h2`,
+			);
+			const headingText = h2?.firstChild;
+			if (!(h2 instanceof HTMLHeadingElement) || !(headingText instanceof Text)) {
+				throw new Error("fix17-setext-h2-missing");
+			}
+			placeCaret(headingText, headingText.data.length);
+
+			// Steps 57, 58, 59: delete '二', '项', '表' in-place on settled Setext H2.
+			for (const [expectedText, expectedSuffix] of [
+				["列表项", "- 列表项一\n- 列表项\n  -"],
+				["列表", "- 列表项一\n- 列表\n  -"],
+				["列", "- 列表项一\n- 列\n  -"],
+			] as const) {
+				act(() => {
+					const key = new KeyboardEvent("keydown", {
+						bubbles: true,
+						cancelable: true,
+						key: "Backspace",
+					});
+					current.surface.dispatchEvent(key);
+					expect(key.defaultPrevented).toBe(false);
+					const target = document.createRange();
+					target.setStart(headingText, headingText.data.length - 1);
+					target.setEnd(headingText, headingText.data.length);
+					const before = new InputEvent("beforeinput", {
+						bubbles: true,
+						cancelable: true,
+						inputType: "deleteContentBackward",
+					});
+					Object.defineProperty(before, "getTargetRanges", {
+						value: () => [target],
+					});
+					current.surface.dispatchEvent(before);
+					expect(before.defaultPrevented).toBe(false);
+					headingText.deleteData(headingText.data.length - 1, 1);
+					placeCaret(headingText, headingText.data.length);
+					current.surface.dispatchEvent(
+						new InputEvent("input", {
+							bubbles: true,
+							inputType: "deleteContentBackward",
+						}),
+					);
+				});
+				expect(headingText.data).toBe(expectedText);
+				expect(session.document.getValue()).toBe(prefix + expectedSuffix);
+				expect(onFailure).not.toHaveBeenCalled();
+				expect(onTransferFailure).not.toHaveBeenCalled();
+				expect(requestPreview).not.toHaveBeenCalled();
+			}
+
+			// Step 60: deleting final char '列' empties <h2> to <br> and rewrites Setext to ATX `- ##`.
+			act(() => {
+				const key = new KeyboardEvent("keydown", {
+					bubbles: true,
+					cancelable: true,
+					key: "Backspace",
+				});
+				current.surface.dispatchEvent(key);
+				expect(key.defaultPrevented).toBe(false);
+				const target = document.createRange();
+				target.setStart(headingText, 0);
+				target.setEnd(headingText, 1);
+				const before = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "deleteContentBackward",
+				});
+				Object.defineProperty(before, "getTargetRanges", {
+					value: () => [target],
+				});
+				current.surface.dispatchEvent(before);
+				expect(before.defaultPrevented).toBe(false);
+				h2.innerHTML = "<br>";
+				window.getSelection()?.collapse(h2, 0);
+				current.surface.dispatchEvent(
+					new InputEvent("input", {
+						bubbles: true,
+						inputType: "deleteContentBackward",
+					}),
+				);
+			});
+			expect(session.document.getValue()).toBe(`${prefix}- 列表项一\n- ##`);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+			expect(requestPreview).not.toHaveBeenCalled();
+
+			// Step 61: Backspace on emptied <li><h2><br></h2></li> retires `- ##` via
+			// retireWindowedEmptiedStructuralRow, leaving `- 列表项一\n` with caret
+			// right after `一` (before the preserved line terminator).
+			act(() => {
+				const key = new KeyboardEvent("keydown", {
+					bubbles: true,
+					cancelable: true,
+					key: "Backspace",
+				});
+				current.surface.dispatchEvent(key);
+				expect(key.defaultPrevented).toBe(false);
+				const before = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "deleteContentBackward",
+				});
+				current.surface.dispatchEvent(before);
+				expect(before.defaultPrevented).toBe(true);
+			});
+			expect(session.document.getValue()).toBe(`${prefix}- 列表项一\n`);
+			expect(session.document.getSelection()).toEqual({
+				direction: "none",
+				end: `${prefix}- 列表项一`.length,
+				start: `${prefix}- 列表项一`.length,
+			});
+			expect(requestPreview).toHaveBeenCalledWith(`${prefix}- 列表项一\n`);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+
+			// Immediate rapid pending Backspaces while formal preview from Step 61 is still
+			// in flight continue deleting `- 列表项一` down through `-` cleanly.
+			for (const expectedSuffix of [
+				"- 列表项",
+				"- 列表",
+				"- 列",
+				"- ",
+				"-",
+				"",
+			] as const) {
+				act(() => {
+					const key = new KeyboardEvent("keydown", {
+						bubbles: true,
+						cancelable: true,
+						key: "Backspace",
+					});
+					current.surface.dispatchEvent(key);
+					const before = new InputEvent("beforeinput", {
+						bubbles: true,
+						cancelable: true,
+						inputType: "deleteContentBackward",
+					});
+					current.surface.dispatchEvent(before);
+					expect(before.defaultPrevented).toBe(true);
+				});
+				expect(session.document.getValue()).toBe(`${prefix}${expectedSuffix}\n`);
+				expect(session.document.getSelection()).toEqual({
+					direction: "none",
+					end: `${prefix}${expectedSuffix}`.length,
+					start: `${prefix}${expectedSuffix}`.length,
+				});
+				expect(onFailure).not.toHaveBeenCalled();
+				expect(onTransferFailure).not.toHaveBeenCalled();
+			}
+		} finally {
+			rendered.view.unmount();
+			session.destroy();
+			container.remove();
+			field.remove();
+			current.surface.remove();
+		}
+	});
+
+	it("handles rapid pending Backspaces directly inside a Setext heading while formal preview is in flight (Fix 17-Windowed)", () => {
+		const ulIndex = 160;
+		const trailingIndex = 161;
+		const current = fixture({
+			blockOverrides: {
+				[ulIndex]: "- 列表项一\n- 列表项二\n  -",
+				[trailingIndex]: "## ",
+			},
+			markupOverrides: {
+				[ulIndex]:
+					`<ul data-easymde-visual-block-id="b${ulIndex}"><li>列表项一</li><li><h2>列表项二</h2></li></ul>`,
+				[trailingIndex]: `<h2 data-easymde-visual-block-id="b${trailingIndex}"><br></h2>`,
+			},
+			mounted: [ulIndex, trailingIndex],
+			paragraphBlocks: true,
+			sourceBlockCount: 162,
+		});
+		const initial = current.canonical();
+		const prefix = initial.slice(
+			0,
+			initial.length - "- 列表项一\n- 列表项二\n  -\n\n## ".length,
+		);
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = initial;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const session = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container,
+				label: "Markdown source",
+				submissionField: field,
+			}),
+			createNativeTitleSession(null),
+		);
+		session.document.setVisualEditingActive(true);
+		let previewSeq = 0;
+		const requestPreview = vi.fn(() => `fix17-pending-setext-${++previewSeq}`);
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		const rendered = renderWindowEditor(current, {
+			documentSession: session,
+			onFailure,
+			onTransferFailure,
+			requestPreview,
+		});
+		try {
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.tabIndex = 0;
+			current.surface.focus();
+			// First trigger a pending formal preview by retiring the trailing emptied <h2> via beforeinput.
+			const trailingH2 = current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${trailingIndex}"]`,
+			);
+			const setextText = current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${ulIndex}"] h2`,
+			)?.firstChild;
+			if (!(trailingH2 instanceof HTMLHeadingElement) || !(setextText instanceof Text)) {
+				throw new Error("fix17-pending-setext-nodes-missing");
+			}
+			window.getSelection()?.collapse(trailingH2, 0);
+			act(() => {
+				const before = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "deleteContentBackward",
+				});
+				current.surface.dispatchEvent(before);
+				expect(before.defaultPrevented).toBe(true);
+			});
+			expect(session.document.getValue()).toBe(`${prefix}- 列表项一\n- 列表项二\n  -\n`);
+			expect(session.document.getSelection()).toEqual({
+				direction: "none",
+				end: `${prefix}- 列表项一\n- 列表项二\n  -`.length,
+				start: `${prefix}- 列表项一\n- 列表项二\n  -`.length,
+			});
+			expect(requestPreview).toHaveBeenCalledTimes(1);
+
+			// While formal preview is still pending, rapid Backspaces delete through
+			// `  -` and `列表项二` canonically with zero failures.
+			for (const expectedSuffix of [
+				"- 列表项一\n- 列表项二\n  ",
+				"- 列表项一\n- 列表项二\n ",
+				"- 列表项一\n- 列表项二\n",
+				"- 列表项一\n- 列表项二",
+				"- 列表项一\n- 列表项",
+			] as const) {
+				act(() => {
+					const before = new InputEvent("beforeinput", {
+						bubbles: true,
+						cancelable: true,
+						inputType: "deleteContentBackward",
+					});
+					current.surface.dispatchEvent(before);
+					expect(before.defaultPrevented).toBe(true);
+				});
+				expect(session.document.getValue()).toBe(`${prefix}${expectedSuffix}\n`);
+				expect(session.document.getSelection()).toEqual({
+					direction: "none",
+					end: `${prefix}${expectedSuffix}`.length,
+					start: `${prefix}${expectedSuffix}`.length,
+				});
+				expect(onFailure).not.toHaveBeenCalled();
+				expect(onTransferFailure).not.toHaveBeenCalled();
+			}
+		} finally {
+			rendered.view.unmount();
+			session.destroy();
+			container.remove();
+			field.remove();
+			current.surface.remove();
+		}
+	});
+
+	it.each([
+		{
+			caretSelector: "li",
+			label: "asterisk UL (* )",
+			markdown: "* ",
+			markup: "<ul><li><br></li></ul>",
+		},
+		{
+			caretSelector: "li",
+			label: "plus UL (+ )",
+			markdown: "+ ",
+			markup: "<ul><li><br></li></ul>",
+		},
+		{
+			caretSelector: "li",
+			label: "paren OL (1) )",
+			markdown: "1) ",
+			markup: "<ol><li><br></li></ol>",
+		},
+		{
+			caretSelector: "p",
+			label: "blockquote (> )",
+			markdown: "> ",
+			markup: "<blockquote><p><br></p></blockquote>",
+		},
+		{
+			caretSelector: "blockquote p",
+			label: "nested blockquote (> > )",
+			markdown: "> > ",
+			markup: "<blockquote><blockquote><p><br></p></blockquote></blockquote>",
+		},
+		{
+			caretSelector: "h2",
+			label: "quoted heading (> ## )",
+			markdown: "> ## ",
+			markup: "<blockquote><h2><br></h2></blockquote>",
+		},
+		{
+			caretSelector: null,
+			label: "heading (## )",
+			markdown: "## ",
+			markup: "<h2><br></h2>",
+		},
+	])(
+		"yields non-terminal sole-empty $label from handleKeyDown and retires cleanly via retireWindowedEmptiedStructuralRow (Fix 17-Windowed)",
+		({ caretSelector, markdown, markup }) => {
+			const blockIndex = 160;
+			const blockMarkup = markup.replace(
+				/^<([a-z0-9]+)/u,
+				`<$1 data-easymde-visual-block-id="b${blockIndex}"`,
+			);
+			const current = fixture({
+				blockOverrides: {
+					[blockIndex - 1]: "Lead paragraph",
+					[blockIndex]: markdown,
+					[blockIndex + 1]: "Tail paragraph",
+				},
+				markupOverrides: {
+					[blockIndex - 1]: `<p data-easymde-visual-block-id="b${blockIndex - 1}">Lead paragraph</p>`,
+					[blockIndex]: blockMarkup,
+					[blockIndex + 1]: `<p data-easymde-visual-block-id="b${blockIndex + 1}">Tail paragraph</p>`,
+				},
+				mounted: [blockIndex - 1, blockIndex, blockIndex + 1],
+				paragraphBlocks: true,
+				sourceBlockCount: 320,
+			});
+			const initial = current.canonical();
+			const expectedAfterRetire = initial.replace(
+				`Lead paragraph\n\n${markdown}\n\nTail paragraph`,
+				"Lead paragraph\n\nTail paragraph",
+			);
+			expect(expectedAfterRetire).not.toBe(initial);
+			const field = document.createElement("textarea");
+			field.value = field.defaultValue = initial;
+			const container = document.createElement("div");
+			document.body.append(container, field);
+			const session = createEditorDocumentSession(
+				createCodeMirrorDocumentSession({
+					container,
+					label: "Markdown source",
+					submissionField: field,
+				}),
+				createNativeTitleSession(null),
+			);
+			session.document.setVisualEditingActive(true);
+			let previewSeq = 0;
+			const requestPreview = vi.fn(() => `fix17-yield-${++previewSeq}`);
+			const onFailure = vi.fn();
+			const onTransferFailure = vi.fn();
+			const rendered = renderWindowEditor(current, {
+				documentSession: session,
+				onFailure,
+				onTransferFailure,
+				requestPreview,
+			});
+			try {
+				current.surface.setAttribute("contenteditable", "true");
+				current.surface.tabIndex = 0;
+				current.surface.focus();
+				const outerBlock = current.surface.querySelector<HTMLElement>(
+					`[data-easymde-visual-block-id="b${blockIndex}"]`,
+				);
+				if (!outerBlock) throw new Error("fix17-yield-outer-missing");
+				const caretTarget = caretSelector
+					? outerBlock.querySelector<HTMLElement>(caretSelector)
+					: outerBlock;
+				if (!caretTarget) throw new Error("fix17-yield-caret-target-missing");
+				window.getSelection()?.collapse(caretTarget, 0);
+
+				const key = new KeyboardEvent("keydown", {
+					bubbles: true,
+					cancelable: true,
+					key: "Backspace",
+				});
+				act(() => {
+					current.surface.dispatchEvent(key);
+				});
+				// Non-terminal sole-empty structural block yields to beforeinput instead of
+				// rewriting the block into <p><br></p> via applyVisualBlockShortcut.
+				expect(key.defaultPrevented).toBe(false);
+				expect(outerBlock.isConnected).toBe(true);
+				expect(session.document.getValue()).toBe(initial);
+				expect(onFailure).not.toHaveBeenCalled();
+
+				const before = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "deleteContentBackward",
+				});
+				act(() => {
+					current.surface.dispatchEvent(before);
+				});
+				expect(before.defaultPrevented).toBe(true);
+				expect(session.document.getValue()).toBe(expectedAfterRetire);
+				expect(requestPreview).toHaveBeenCalledWith(expectedAfterRetire);
+				expect(onFailure).not.toHaveBeenCalled();
+				expect(onTransferFailure).not.toHaveBeenCalled();
+			} finally {
+				rendered.view.unmount();
+				session.destroy();
+				container.remove();
+				field.remove();
+				current.surface.remove();
+			}
+		},
+	);
+
+	it("preserves terminal EOF shortcut behavior for sole-empty UL and BLOCKQUOTE (Fix 17-Windowed)", () => {
+		for (const { caretSelector, markdown, markup } of [
+			{
+				caretSelector: "li",
+				markdown: "- ",
+				markup: "<ul><li><br></li></ul>",
+			},
+			{
+				caretSelector: "p",
+				markdown: "> ",
+				markup: "<blockquote><p><br></p></blockquote>",
+			},
+		] as const) {
+			const lastIndex = 160;
+			const blockMarkup = markup.replace(
+				/^<([a-z0-9]+)/u,
+				`<$1 data-easymde-visual-block-id="b${lastIndex}"`,
+			);
+			const current = fixture({
+				blockOverrides: {
+					[lastIndex - 1]: "Lead paragraph",
+					[lastIndex]: markdown,
+				},
+				markupOverrides: {
+					[lastIndex - 1]: `<p data-easymde-visual-block-id="b${lastIndex - 1}">Lead paragraph</p>`,
+					[lastIndex]: blockMarkup,
+				},
+				mounted: [lastIndex - 1, lastIndex],
+				paragraphBlocks: true,
+				sourceBlockCount: 161,
+			});
+			const initial = current.canonical();
+			const field = document.createElement("textarea");
+			field.value = field.defaultValue = initial;
+			const container = document.createElement("div");
+			document.body.append(container, field);
+			const session = createEditorDocumentSession(
+				createCodeMirrorDocumentSession({
+					container,
+					label: "Markdown source",
+					submissionField: field,
+				}),
+				createNativeTitleSession(null),
+			);
+			session.document.setVisualEditingActive(true);
+			const onFailure = vi.fn();
+			const onTransferFailure = vi.fn();
+			const rendered = renderWindowEditor(current, {
+				documentSession: session,
+				onFailure,
+				onTransferFailure,
+			});
+			try {
+				current.surface.setAttribute("contenteditable", "true");
+				current.surface.tabIndex = 0;
+				current.surface.focus();
+				const outerBlock = current.surface.querySelector<HTMLElement>(
+					`[data-easymde-visual-block-id="b${lastIndex}"]`,
+				);
+				const caretTarget = outerBlock?.querySelector<HTMLElement>(caretSelector);
+				if (!outerBlock || !caretTarget) {
+					throw new Error("fix17-eof-shortcut-target-missing");
+				}
+				window.getSelection()?.collapse(caretTarget, 0);
+				const key = new KeyboardEvent("keydown", {
+					bubbles: true,
+					cancelable: true,
+					key: "Backspace",
+				});
+				act(() => {
+					current.surface.dispatchEvent(key);
+				});
+				expect(key.defaultPrevented).toBe(true);
+				expect(
+					current.surface.querySelector(
+						`[data-easymde-visual-block-id="b${lastIndex}"]`,
+					)?.tagName,
+				).toBe("P");
+				expect(onFailure).not.toHaveBeenCalled();
+				expect(onTransferFailure).not.toHaveBeenCalled();
+			} finally {
+				rendered.view.unmount();
+				session.destroy();
+				container.remove();
+				field.remove();
+				current.surface.remove();
+			}
+		}
+	});
+
+	it("does not emit visual-editor-markdown-paste-superseded when previewStatus returns to ready with the same previousPreview snapshot", () => {
+		const lastIndex = 160;
+		const current = fixture({
+			blockOverrides: {
+				[lastIndex - 1]: "Lead paragraph",
+				[lastIndex]: "Tail paragraph",
+			},
+			markupOverrides: {
+				[lastIndex - 1]: `<p data-easymde-visual-block-id="b${lastIndex - 1}">Lead paragraph</p>`,
+				[lastIndex]: `<p data-easymde-visual-block-id="b${lastIndex}">Tail paragraph</p>`,
+			},
+			mounted: [lastIndex - 1, lastIndex],
+			paragraphBlocks: true,
+			sourceBlockCount: 161,
+		});
+		const initial = current.canonical();
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = initial;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const session = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container,
+				label: "Markdown source",
+				submissionField: field,
+			}),
+			createNativeTitleSession(null),
+		);
+		session.document.setVisualEditingActive(true);
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		const onPendingChange = vi.fn();
+		const requestPreview = vi.fn(() => "next-after-error");
+		const requestPreviewAtDocumentEnd = vi.fn(() => ({
+			release: vi.fn(),
+			signature: "next-after-error",
+		}));
+		const baseProps = {
+			documentSession: session,
+			editMap: current.editMap,
+			imagePasteUploadEnabled: false,
+			imageUploadEnabled: false,
+			onCanonicalDocumentChange: vi.fn(),
+			onDiagnostic: vi.fn(),
+			onDispose: vi.fn(),
+			onFailure,
+			onMarkdownChange: vi.fn(),
+			onPendingChange,
+			onReady: vi.fn(),
+			onTransferFailure,
+			pending: false,
+			prepareWindowBlockAdoption: () => () => true,
+			previewSnapshot: { revision: 1, signature: "windowed" },
+			previewStatus: "ready" as "ready" | "loading" | "error",
+			referenceLabelCaseFoldProfile: 14 as const,
+			requestPreview,
+			requestPreviewAtDocumentEnd,
+			retainCompositionSurface: testRetainCompositionSurface,
+			surface: current.surface,
+		};
+		const view = render(<WindowedImmersiveVisualEditor {...baseProps} />);
+		try {
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.tabIndex = 0;
+			current.surface.focus();
+			const tail = current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${lastIndex}"]`,
+			);
+			const tailText = tail?.firstChild;
+			if (!tail || !(tailText instanceof Text)) {
+				throw new Error("previous-preview-guard-target-missing");
+			}
+			window.getSelection()?.collapse(tailText, tailText.data.length);
+			// Edit a character so there is an undoable history step, then put previewStatus into "error".
+			const before = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				data: "!",
+				inputType: "insertText",
+			});
+			act(() => {
+				current.surface.dispatchEvent(before);
+				tailText.insertData(tailText.data.length, "!");
+				window.getSelection()?.collapse(tailText, tailText.data.length);
+				current.surface.dispatchEvent(
+					new InputEvent("input", {
+						bubbles: true,
+						data: "!",
+						inputType: "insertText",
+					}),
+				);
+			});
+			expect(session.document.getValue()).toBe(`${initial}!`);
+
+			// Transition status to "error" while keeping the previous snapshot (revision 1, signature "windowed").
+			view.rerender(
+				<WindowedImmersiveVisualEditor {...baseProps} previewStatus="error" />,
+			);
+
+			// Trigger formal preview via Ctrl+Z while previewStatus is "error".
+			act(() => {
+				current.surface.dispatchEvent(
+					new KeyboardEvent("keydown", {
+						bubbles: true,
+						cancelable: true,
+						ctrlKey: true,
+						key: "z",
+					}),
+				);
+			});
+			expect(requestPreviewAtDocumentEnd).toHaveBeenCalledOnce();
+			expect(onPendingChange).toHaveBeenLastCalledWith(true);
+
+			// Simulate EditorRoot resetting previewStatus "error" -> "ready" with the UNCHANGED previousPreview snapshot.
+			view.rerender(
+				<WindowedImmersiveVisualEditor
+					{...baseProps}
+					pending={true}
+					previewSnapshot={{ revision: 1, signature: "windowed" }}
+					previewStatus="ready"
+				/>,
+			);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+
+			// Now deliver the real matching preview snapshot -> accepts cleanly.
+			const acceptedEditMap: PreviewEditMap = {
+				...current.editMap,
+				signature: "next-after-error",
+			};
+			tailText.data = "Tail paragraph";
+			view.rerender(
+				<WindowedImmersiveVisualEditor
+					{...baseProps}
+					editMap={acceptedEditMap}
+					pending={true}
+					previewSnapshot={{ revision: 2, signature: "next-after-error" }}
+					previewStatus="ready"
+				/>,
+			);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+			expect(onPendingChange).toHaveBeenLastCalledWith(false);
+		} finally {
+			view.unmount();
+			session.destroy();
+			container.remove();
+			field.remove();
+			current.surface.remove();
+		}
+	});
+
+	it("pendingDeletionApplies removes trailing Mermaid/Math/HR blocks atomically and refuses raw pipe chewing on GFM tables", () => {
+		const base = 155;
+		const tableMd = "| Col A | Col B |\n| --- | --- |\n| A1 | B1 |";
+		const mathMd = "$$\n\\sum_{k=1}^{1} k\n$$";
+		const mermaidMd = "```mermaid\ngraph LR\n  N1 --> M1\n```";
+		const hrMd = "---";
+		const fenceMd = "```javascript\n\n```";
+		const tailMd = "End";
+		const current = fixture({
+			blockOverrides: {
+				[base]: tableMd,
+				[base + 1]: mathMd,
+				[base + 2]: mermaidMd,
+				[base + 3]: hrMd,
+				[base + 4]: fenceMd,
+				[base + 5]: tailMd,
+			},
+			markupOverrides: {
+				[base]: `<section class="easymde-table-container" data-easymde-visual-block-id="b${base}"><table><thead><tr><th>Col A</th><th>Col B</th></tr></thead><tbody><tr><td>A1</td><td>B1</td></tr></tbody></table></section>`,
+				[base + 1]: `<div class="easymde-math easymde-math-block" data-easymde-visual-block-id="b${base + 1}" contenteditable="false" data-easymde-visual-markdown-source="$$\\sum_{k=1}^{1} k$$"><span>math</span></div>`,
+				[base + 2]: `<div class="easymde-mermaid" data-easymde-visual-block-id="b${base + 2}" contenteditable="false" data-easymde-visual-markdown-source="graph LR&#10;  N1 --&gt; M1"><svg></svg></div>`,
+				[base + 3]: `<hr data-easymde-visual-block-id="b${base + 3}">`,
+				[base + 4]: `<pre data-easymde-visual-block-id="b${base + 4}" data-easymde-visual-fence="\`\`\`" data-easymde-visual-fence-info="javascript"><code class="language-javascript">\n</code></pre>`,
+				[base + 5]: `<p data-easymde-visual-block-id="b${base + 5}">${tailMd}</p>`,
+			},
+			mounted: [base, base + 1, base + 2, base + 3, base + 4, base + 5],
+			paragraphBlocks: true,
+			sourceBlockCount: base + 6,
+		});
+		const initial = current.canonical();
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = initial;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const session = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container,
+				label: "Markdown source",
+				submissionField: field,
+			}),
+			createNativeTitleSession(null),
+		);
+		session.document.setVisualEditingActive(true);
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		let previewSeq = 0;
+		const previewCalls: Array<{
+			markdown: string;
+			options?: Readonly<{ immediate?: boolean }> | undefined;
+		}> = [];
+		const requestPreview = vi.fn(
+			(markdown: string, options?: Readonly<{ immediate?: boolean }>) => {
+				previewCalls.push({ markdown, options });
+				return `pending-del-${++previewSeq}`;
+			},
+		);
+		const requestPreviewAtDocumentEnd = vi.fn(
+			(
+				markdown: string,
+				_selection?: Readonly<{ end: number; start: number }>,
+				options?: Readonly<{ immediate?: boolean }>,
+			) => {
+				previewCalls.push({ markdown, options });
+				return {
+					release: vi.fn(),
+					signature: `pending-del-${++previewSeq}`,
+				};
+			},
+		);
+		const rendered = renderWindowEditor(current, {
+			documentSession: session,
+			onFailure,
+			onTransferFailure,
+			requestPreview,
+			requestPreviewAtDocumentEnd,
+		});
+		try {
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.tabIndex = 0;
+			current.surface.focus();
+			// Make an edit and undo it so pendingRef.current stays active with caret at EOF
+			// (leaving the mounted DOM frozen while rapid pending Backspaces arrive).
+			const tailBlock = current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${base + 5}"]`,
+			);
+			const tailText = tailBlock?.firstChild;
+			if (!tailBlock || !(tailText instanceof Text)) {
+				throw new Error("pending-del-tail-missing");
+			}
+			window.getSelection()?.collapse(tailText, tailText.data.length);
+			act(() => {
+				const ins = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					data: "!",
+					inputType: "insertText",
+				});
+				current.surface.dispatchEvent(ins);
+				tailText.insertData(tailText.data.length, "!");
+				window.getSelection()?.collapse(tailText, tailText.data.length);
+				current.surface.dispatchEvent(
+					new InputEvent("input", {
+						bubbles: true,
+						data: "!",
+						inputType: "insertText",
+					}),
+				);
+			});
+			// Undo enters pending state with canonical caret at EOF (end of "End").
+			act(() => {
+				current.surface.dispatchEvent(
+					new KeyboardEvent("keydown", {
+						bubbles: true,
+						cancelable: true,
+						ctrlKey: true,
+						key: "z",
+					}),
+				);
+			});
+			expect(session.document.getValue()).toBe(initial);
+
+			const pressPendingBackspace = () => {
+				const event = new InputEvent("beforeinput", {
+					bubbles: true,
+					cancelable: true,
+					inputType: "deleteContentBackward",
+				});
+				act(() => {
+					current.surface.dispatchEvent(event);
+				});
+				return event;
+			};
+
+			// Delete "End" (3 chars) + separator, then retire emptied code fence, HR, Mermaid, Math — each in 1 atomic step.
+			for (let i = 0; i < 3; i += 1) {
+				pressPendingBackspace();
+			}
+			// Now caret is right after "\n\n" following the emptied code fence -> 1 Backspace retires the entire emptied code fence cleanly.
+			pressPendingBackspace();
+			expect(session.document.getValue()).not.toContain("```javascript");
+			expect(session.document.getValue().endsWith(hrMd)).toBe(true);
+
+			// 1 Backspace removes HR atomically.
+			pressPendingBackspace();
+			expect(session.document.getValue().endsWith(mermaidMd)).toBe(true);
+
+			// 1 Backspace removes entire Mermaid block atomically (never slicing closing ```!).
+			pressPendingBackspace();
+			expect(session.document.getValue()).not.toContain("```mermaid");
+			expect(session.document.getValue().endsWith(mathMd)).toBe(true);
+
+			// 1 Backspace removes entire Display Math block atomically (never slicing $$!).
+			pressPendingBackspace();
+			expect(session.document.getValue()).not.toContain("\\sum_{k=1}^{1}");
+			expect(session.document.getValue().endsWith(tableMd)).toBe(true);
+
+			// 1 Backspace at the GFM table enters the mounted table cell with ZERO pipe characters chewed!
+			const beforeTableSource = session.document.getValue();
+			const tablePress = pressPendingBackspace();
+			expect(tablePress.defaultPrevented).toBe(true);
+			expect(session.document.getValue()).toBe(beforeTableSource);
+			const activeSelection = window.getSelection();
+			const anchorElement =
+				activeSelection?.anchorNode instanceof Element
+					? activeSelection.anchorNode
+					: activeSelection?.anchorNode?.parentElement;
+			expect(anchorElement?.closest("td")?.textContent).toBe("B1");
+
+			// Overlapping pending deletions coalesce with immediate: false instead of abort-starving.
+			expect(
+				previewCalls.slice(1).some((call) => call.options?.immediate === false),
+			).toBe(true);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+		} finally {
+			rendered.view.unmount();
+			session.destroy();
+			container.remove();
+			field.remove();
+			current.surface.remove();
+		}
+	});
+
+	it("runHistory skips full-window Turndown serialization when selection is outside mounted tables", () => {
+		const base = 158;
+		const tableMd = "| Col A | Col B |\n| --- | --- |\n| A1 | B1 |";
+		const mermaidMd = "```mermaid\ngraph LR\n  N1 --> M1\n```";
+		const current = fixture({
+			blockOverrides: {
+				[base]: "Plain paragraph",
+				[base + 1]: tableMd,
+				[base + 2]: mermaidMd,
+			},
+			markupOverrides: {
+				[base]: `<p data-easymde-visual-block-id="b${base}">Plain paragraph</p>`,
+				[base + 1]: `<section class="easymde-table-container" data-easymde-visual-block-id="b${base + 1}"><table><thead><tr><th>Col A</th><th>Col B</th></tr></thead><tbody><tr><td>A1</td><td>B1</td></tr></tbody></table></section>`,
+				[base + 2]: `<div class="easymde-mermaid" data-easymde-visual-block-id="b${base + 2}" contenteditable="false" data-easymde-visual-markdown-source="graph LR&#10;  N1 --&gt; M1"><svg></svg></div>`,
+			},
+			mounted: [base, base + 1, base + 2],
+			paragraphBlocks: true,
+			sourceBlockCount: base + 3,
+		});
+		const initial = current.canonical();
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = initial;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const session = createEditorDocumentSession(
+			createCodeMirrorDocumentSession({
+				container,
+				label: "Markdown source",
+				submissionField: field,
+			}),
+			createNativeTitleSession(null),
+		);
+		session.document.setVisualEditingActive(true);
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		const previewOptions: Array<Readonly<{ immediate?: boolean }> | undefined> = [];
+		const requestPreviewAtDocumentEnd = vi.fn(
+			(
+				_markdown: string,
+				_selection?: Readonly<{ end: number; start: number }>,
+				options?: Readonly<{ immediate?: boolean }>,
+			) => {
+				previewOptions.push(options);
+				return {
+					release: vi.fn(),
+					signature: `history-perf-${previewOptions.length}`,
+				};
+			},
+		);
+		const rendered = renderWindowEditor(current, {
+			documentSession: session,
+			onFailure,
+			onTransferFailure,
+			requestPreviewAtDocumentEnd,
+		});
+		const serializeSpy = vi.spyOn(
+			visualMarkdown,
+			"serializeVisualMarkdownBlockFragment",
+		);
+		try {
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.tabIndex = 0;
+			current.surface.focus();
+			const paragraph = current.surface.querySelector<HTMLElement>(
+				`[data-easymde-visual-block-id="b${base}"]`,
+			);
+			const text = paragraph?.firstChild;
+			if (!paragraph || !(text instanceof Text)) {
+				throw new Error("history-perf-paragraph-missing");
+			}
+			window.getSelection()?.collapse(text, text.data.length);
+			// Type 2 characters inside the plain paragraph (outside the mounted table).
+			for (const ch of ["a", "b"]) {
+				act(() => {
+					const before = new InputEvent("beforeinput", {
+						bubbles: true,
+						cancelable: true,
+						data: ch,
+						inputType: "insertText",
+					});
+					current.surface.dispatchEvent(before);
+					text.insertData(text.data.length, ch);
+					window.getSelection()?.collapse(text, text.data.length);
+					current.surface.dispatchEvent(
+						new InputEvent("input", {
+							bubbles: true,
+							data: ch,
+							inputType: "insertText",
+						}),
+					);
+				});
+			}
+
+			serializeSpy.mockClear();
+			// Press Ctrl+Z twice back-to-back while selection is inside the plain paragraph.
+			act(() => {
+				current.surface.dispatchEvent(
+					new KeyboardEvent("keydown", {
+						bubbles: true,
+						cancelable: true,
+						ctrlKey: true,
+						key: "z",
+					}),
+				);
+			});
+			expect(serializeSpy).not.toHaveBeenCalled();
+
+			act(() => {
+				current.surface.dispatchEvent(
+					new KeyboardEvent("keydown", {
+						bubbles: true,
+						cancelable: true,
+						ctrlKey: true,
+						key: "z",
+					}),
+				);
+			});
+			expect(serializeSpy).not.toHaveBeenCalled();
+			// First history request runs immediately (omitted options); second overlapping request coalesces with immediate: false.
+			expect(previewOptions[0]).toBeUndefined();
+			if (previewOptions.length > 1) {
+				expect(previewOptions[1]).toEqual({ immediate: false });
+			}
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+		} finally {
+			serializeSpy.mockRestore();
+			rendered.view.unmount();
+			session.destroy();
+			container.remove();
+			field.remove();
+			current.surface.remove();
+		}
+	});
 });

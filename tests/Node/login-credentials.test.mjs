@@ -1,12 +1,25 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import test from 'node:test';
 
 const repoRoot = new URL('../..', import.meta.url).pathname;
 
 function source(path) {
   return readFileSync(join(repoRoot, path), 'utf8');
+}
+
+function collectMjsFiles(dirPath) {
+  const files = [];
+  for (const entry of readdirSync(dirPath, { withFileTypes: true })) {
+    const fullPath = join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...collectMjsFiles(fullPath));
+    } else if (entry.isFile() && entry.name.endsWith('.mjs')) {
+      files.push(fullPath);
+    }
+  }
+  return files.sort();
 }
 
 function workflowJob(sourceText, jobName, nextJobName) {
@@ -24,8 +37,10 @@ test('local WordPress login credentials have one ignored environment owner', () 
   const example = source('.env.example');
   const compose = source('docker-compose.yml');
   const playwrightConfig = source('playwright.config.mjs');
-  const e2e = source('tests/e2e/easymde.spec.mjs');
+  const editorE2eHelpers = source('tests/e2e/helpers/editor-e2e-helpers.mjs');
+  const contextMenuHelpers = source('tests/e2e/helpers/context-menu-helpers.mjs');
   const inkwellE2e = source('tests/e2e/inkwell.spec.mjs');
+  const allE2eFiles = collectMjsFiles(join(repoRoot, 'tests/e2e'));
   const releaseSetup = source('scripts/setup-wordpress-release.sh');
   const workflow = source('.github/workflows/ci.yml');
   const pluginCheckJob = workflowJob(workflow, 'plugin-check', 'e2e');
@@ -44,13 +59,20 @@ test('local WordPress login credentials have one ignored environment owner', () 
 
   assert.match(playwrightConfig, /new URL\('\.env', import\.meta\.url\)/);
   assert.match(playwrightConfig, /loadEnvFile\(localEnv\)/);
-  assert.match(e2e, /requiredEnvironment\('WORDPRESS_ADMIN_USER'\)/);
-  assert.match(e2e, /requiredEnvironment\('WORDPRESS_ADMIN_PASSWORD'\)/);
-  assert.doesNotMatch(e2e, /adminPassword\s*=\s*['"]/);
+  assert.match(editorE2eHelpers, /requiredEnvironment\('WORDPRESS_ADMIN_USER'\)/);
+  assert.match(editorE2eHelpers, /requiredEnvironment\('WORDPRESS_ADMIN_PASSWORD'\)/);
+  assert.match(contextMenuHelpers, /requiredEnvironment\('WORDPRESS_ADMIN_USER'\)/);
+  assert.match(contextMenuHelpers, /requiredEnvironment\('WORDPRESS_ADMIN_PASSWORD'\)/);
   assert.match(inkwellE2e, /requiredEnvironment\('WORDPRESS_ADMIN_USER'\)/);
   assert.match(inkwellE2e, /requiredEnvironment\('WORDPRESS_ADMIN_PASSWORD'\)/);
-  assert.doesNotMatch(inkwellE2e, /WORDPRESS_ADMIN_(?:USER|PASSWORD)\s*\|\|/);
-  assert.doesNotMatch(inkwellE2e, /admin(?:User|Password)\s*=\s*['"]/);
+  assert.ok(allE2eFiles.length > 0, 'Expected E2E files under tests/e2e.');
+  for (const filePath of allE2eFiles) {
+    const label = relative(repoRoot, filePath);
+    const contents = readFileSync(filePath, 'utf8');
+    assert.doesNotMatch(contents, /WORDPRESS_ADMIN_(?:USER|PASSWORD)\s*\|\|/, label);
+    assert.doesNotMatch(contents, /admin(?:User|Password)\s*=\s*['"]/, label);
+    assert.doesNotMatch(contents, /EASYMDE_WP_ADMIN_(?:USER|PASSWORD)/, label);
+  }
 
   assert.match(releaseSetup, /WORDPRESS_ADMIN_USER:\?Set WORDPRESS_ADMIN_USER in \.env/);
   assert.match(releaseSetup, /WORDPRESS_ADMIN_PASSWORD:\?Set WORDPRESS_ADMIN_PASSWORD in \.env/);

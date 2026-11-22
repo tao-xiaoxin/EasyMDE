@@ -1,7 +1,12 @@
 import { act, render } from "@testing-library/react";
 import { createElement } from "@wordpress/element";
 import { history } from "prosemirror-history";
-import { EditorState, NodeSelection, Plugin, TextSelection } from "prosemirror-state";
+import {
+	EditorState,
+	NodeSelection,
+	Plugin,
+	TextSelection,
+} from "prosemirror-state";
 import { EditorView } from "prosemirror-view";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ToolbarCommand } from "../../contracts/bootstrap/toolbar-bootstrap";
@@ -42,16 +47,25 @@ import {
 
 type MockDocumentHarness = Readonly<{
 	applyTextChangeSpy: ReturnType<typeof vi.fn>;
-	emitExternalChange: (nextValue: string, nextSelection?: VisualEditorSelection) => void;
+	emitExternalChange: (
+		nextValue: string,
+		nextSelection?: VisualEditorSelection,
+	) => void;
 	session: EditorDocumentSession;
 	setEditable: (editable: boolean) => void;
 }>;
 
-function createMockDocumentSession(initialMarkdown: string): MockDocumentHarness {
+function createMockDocumentSession(
+	initialMarkdown: string,
+): MockDocumentHarness {
 	let value = initialMarkdown;
 	let revision = 0;
 	let editable = true;
-	let selection: VisualEditorSelection = { direction: "none", end: 0, start: 0 };
+	let selection: VisualEditorSelection = {
+		direction: "none",
+		end: 0,
+		start: 0,
+	};
 	const listeners = new Set<() => void>();
 	const selectionListeners = new Set<() => void>();
 
@@ -64,11 +78,14 @@ function createMockDocumentSession(initialMarkdown: string): MockDocumentHarness
 			for (const listener of Array.from(listeners)) listener();
 		}
 		for (const listener of Array.from(selectionListeners)) listener();
-		return changed ? (change.changes ?? { from: 0, insert: value, to: value.length }) : null;
+		return changed
+			? (change.changes ?? { from: 0, insert: value, to: value.length })
+			: null;
 	});
 
 	const documentMock: CodeMirrorDocumentSession = {
-		applyTextChange: applyTextChangeSpy as CodeMirrorDocumentSession["applyTextChange"],
+		applyTextChange:
+			applyTextChangeSpy as CodeMirrorDocumentSession["applyTextChange"],
 		canRedo: () => false,
 		canUndo: () => false,
 		captureLayoutScrollRestore: () => null,
@@ -127,7 +144,10 @@ function createMockDocumentSession(initialMarkdown: string): MockDocumentHarness
 
 	return {
 		applyTextChangeSpy,
-		emitExternalChange(nextValue: string, nextSelection?: VisualEditorSelection) {
+		emitExternalChange(
+			nextValue: string,
+			nextSelection?: VisualEditorSelection,
+		) {
 			value = nextValue;
 			revision += 1;
 			selection = nextSelection ?? { direction: "none", end: 0, start: 0 };
@@ -167,7 +187,13 @@ function createViewCapturePlugin(): Readonly<{
 function makeToolbarCommand(
 	overrides: Partial<ToolbarCommand> & Pick<ToolbarCommand, "id" | "action">,
 ): ToolbarCommand {
-	return { group: "format", icon: "editor-code", label: overrides.id, surface: "main", ...overrides };
+	return {
+		group: "format",
+		icon: "editor-code",
+		label: overrides.id,
+		surface: "main",
+		...overrides,
+	};
 }
 
 function buildSingleImageIndex(
@@ -210,19 +236,35 @@ function buildSingleImageIndex(
 
 function createFakeTransferEvent(
 	type: "paste" | "drop",
-	payload: Readonly<{ files?: ReadonlyArray<File>; html?: string; text?: string }>,
+	payload: Readonly<{
+		files?: ReadonlyArray<File>;
+		html?: string;
+		text?: string;
+	}>,
 ): Event {
 	const files = payload.files ?? [];
 	const dataTransfer = {
 		files,
 		getData: (mime: string) =>
-			mime === "text/plain" ? (payload.text ?? "") : mime === "text/html" ? (payload.html ?? "") : "",
-		items: files.map((file) => ({ getAsFile: () => file, kind: "file", type: file.type })),
+			mime === "text/plain"
+				? (payload.text ?? "")
+				: mime === "text/html"
+					? (payload.html ?? "")
+					: "",
+		items: files.map((file) => ({
+			getAsFile: () => file,
+			kind: "file",
+			type: file.type,
+		})),
 	};
 	const event = new Event(type, { bubbles: true, cancelable: true });
-	Object.defineProperty(event, type === "paste" ? "clipboardData" : "dataTransfer", {
-		value: dataTransfer,
-	});
+	Object.defineProperty(
+		event,
+		type === "paste" ? "clipboardData" : "dataTransfer",
+		{
+			value: dataTransfer,
+		},
+	);
 	return event;
 }
 
@@ -243,7 +285,11 @@ function createStandaloneTableView(markdown: string): EditorView {
 	document.body.appendChild(host);
 	const state = EditorState.create({
 		doc: parseMarkdownToVisualDoc(markdown),
-		plugins: [history(), createVisualTablePlugin(), ...createVisualKeymapPlugins()],
+		plugins: [
+			history(),
+			createVisualTablePlugin(),
+			...createVisualKeymapPlugins(),
+		],
 		schema: visualEditorSchema,
 	});
 	const view = new EditorView(host, { state });
@@ -252,7 +298,11 @@ function createStandaloneTableView(markdown: string): EditorView {
 }
 
 function dispatchKeyDown(view: EditorView, key: string): boolean {
-	const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key });
+	const event = new KeyboardEvent("keydown", {
+		bubbles: true,
+		cancelable: true,
+		key,
+	});
 	let handled = false;
 	view.someProp("handleKeyDown", (handler) => {
 		if (handler(view, event)) {
@@ -267,7 +317,9 @@ function dispatchKeyDown(view: EditorView, key: string): boolean {
 describe("ProseMirrorVisualEditor host component", () => {
 	it("mounts inside EasyMDE themed classes, accepts nodeViews/extraPlugins, and toggles editable", () => {
 		const harness = createMockDocumentSession("# Welcome\n\nParagraph text.");
-		const runtimeRef: { current: ImmersiveVisualEditorRuntime | null } = { current: null };
+		const runtimeRef: { current: ImmersiveVisualEditorRuntime | null } = {
+			current: null,
+		};
 		const onDispose = vi.fn();
 		const extraPluginInit = vi.fn();
 		const extraPlugins = [
@@ -314,9 +366,9 @@ describe("ProseMirrorVisualEditor host component", () => {
 		const rt = runtimeRef.current as ImmersiveVisualEditorRuntime;
 		expect(rt.isEditable()).toBe(true);
 		expect(rt.surface.querySelector("h1")?.textContent).toBe("Welcome");
-		expect(rt.surface.querySelector('p[data-custom-node-view="1"]')?.textContent).toBe(
-			"Paragraph text.",
-		);
+		expect(
+			rt.surface.querySelector('p[data-custom-node-view="1"]')?.textContent,
+		).toBe("Paragraph text.");
 		expect(extraPluginInit).toHaveBeenCalledTimes(1);
 
 		rerender(
@@ -346,7 +398,9 @@ describe("ProseMirrorVisualEditor host component", () => {
 		const onMarkdownChange = vi.fn();
 		const onCanonicalDocumentChange = vi.fn();
 		const capture = createViewCapturePlugin();
-		const runtimeRef: { current: ImmersiveVisualEditorRuntime | null } = { current: null };
+		const runtimeRef: { current: ImmersiveVisualEditorRuntime | null } = {
+			current: null,
+		};
 
 		const { unmount } = render(
 			<ProseMirrorVisualEditor
@@ -364,7 +418,9 @@ describe("ProseMirrorVisualEditor host component", () => {
 		const view = capture.getView();
 		rt.surface.focus();
 		rt.surface.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-		view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 3, 10)));
+		view.dispatch(
+			view.state.tr.setSelection(TextSelection.create(view.state.doc, 3, 10)),
+		);
 		expect(rt.prepareContextMenuDemand()).toBe(true);
 		unmount();
 
@@ -379,7 +435,9 @@ describe("ProseMirrorVisualEditor host component", () => {
 		const harness = createMockDocumentSession("Hello world");
 		const onMarkdownChange = vi.fn();
 		const capture = createViewCapturePlugin();
-		const runtimeRef: { current: ImmersiveVisualEditorRuntime | null } = { current: null };
+		const runtimeRef: { current: ImmersiveVisualEditorRuntime | null } = {
+			current: null,
+		};
 
 		render(
 			<ProseMirrorVisualEditor
@@ -395,27 +453,37 @@ describe("ProseMirrorVisualEditor host component", () => {
 		const rt = runtimeRef.current as ImmersiveVisualEditorRuntime;
 		const view = capture.getView();
 
-		view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 7, 12)));
-		expect(rt.executeCommand(makeToolbarCommand({ action: "bold", id: "bold" }))).toBe("handled");
+		view.dispatch(
+			view.state.tr.setSelection(TextSelection.create(view.state.doc, 7, 12)),
+		);
+		expect(
+			rt.executeCommand(makeToolbarCommand({ action: "bold", id: "bold" })),
+		).toBe("handled");
 		expect(harness.session.document.getValue()).toBe("Hello **world**");
 		expect(onMarkdownChange).toHaveBeenCalledWith("Hello **world**");
 
-		view.dispatch(view.state.tr.insertText("!", view.state.doc.content.size - 1));
+		view.dispatch(
+			view.state.tr.insertText("!", view.state.doc.content.size - 1),
+		);
 		expect(harness.session.document.getValue()).toBe("Hello **world!**");
 
-		expect(rt.executeCommand(makeToolbarCommand({ action: "copyWechat", id: "wechat" }))).toBe(
-			"unsupported",
-		);
+		expect(
+			rt.executeCommand(
+				makeToolbarCommand({ action: "copyWechat", id: "wechat" }),
+			),
+		).toBe("unsupported");
 		harness.setEditable(false);
-		expect(rt.executeCommand(makeToolbarCommand({ action: "italic", id: "italic" }))).toBe(
-			"blocked",
-		);
+		expect(
+			rt.executeCommand(makeToolbarCommand({ action: "italic", id: "italic" })),
+		).toBe("blocked");
 	});
 
 	it("updates ProseMirror DOM on external documentSession changes without echo loops", () => {
 		const harness = createMockDocumentSession("Initial text");
 		const onMarkdownChange = vi.fn();
-		const runtimeRef: { current: ImmersiveVisualEditorRuntime | null } = { current: null };
+		const runtimeRef: { current: ImmersiveVisualEditorRuntime | null } = {
+			current: null,
+		};
 
 		render(
 			<ProseMirrorVisualEditor
@@ -439,7 +507,9 @@ describe("ProseMirrorVisualEditor host component", () => {
 		});
 
 		expect(rt.surface.querySelector("h2")?.textContent).toBe("Updated Heading");
-		expect(rt.surface.querySelector("p")?.textContent).toBe("New body paragraph");
+		expect(rt.surface.querySelector("p")?.textContent).toBe(
+			"New body paragraph",
+		);
 		expect(harness.applyTextChangeSpy).toHaveBeenCalledTimes(callsBefore);
 		expect(onMarkdownChange).not.toHaveBeenCalled();
 	});
@@ -448,7 +518,9 @@ describe("ProseMirrorVisualEditor host component", () => {
 		const harness = createMockDocumentSession("Hello");
 		const onMarkdownChange = vi.fn();
 		const capture = createViewCapturePlugin();
-		const runtimeRef: { current: ImmersiveVisualEditorRuntime | null } = { current: null };
+		const runtimeRef: { current: ImmersiveVisualEditorRuntime | null } = {
+			current: null,
+		};
 
 		render(
 			<ProseMirrorVisualEditor
@@ -467,7 +539,13 @@ describe("ProseMirrorVisualEditor host component", () => {
 
 		rt.surface.dispatchEvent(new Event("compositionstart", { bubbles: true }));
 		view.dispatch(view.state.tr.insertText(" ni", endPos));
-		view.dispatch(view.state.tr.replaceWith(endPos, endPos + 3, visualEditorSchema.text(" 你好")));
+		view.dispatch(
+			view.state.tr.replaceWith(
+				endPos,
+				endPos + 3,
+				visualEditorSchema.text(" 你好"),
+			),
+		);
 
 		expect(harness.applyTextChangeSpy).not.toHaveBeenCalled();
 		expect(onMarkdownChange).not.toHaveBeenCalled();
@@ -481,7 +559,9 @@ describe("ProseMirrorVisualEditor host component", () => {
 	it("handles a 220-block large document in one unified ProseMirror editor without window splitting", () => {
 		const blocks: string[] = [];
 		for (let i = 1; i <= 220; i += 1) {
-			blocks.push(i % 20 === 1 ? `## Section ${i}` : `Paragraph block number ${i}.`);
+			blocks.push(
+				i % 20 === 1 ? `## Section ${i}` : `Paragraph block number ${i}.`,
+			);
 		}
 		const harness = createMockDocumentSession(blocks.join("\n\n"));
 		const capture = createViewCapturePlugin();
@@ -497,11 +577,17 @@ describe("ProseMirrorVisualEditor host component", () => {
 		expect(view.state.doc.childCount).toBe(220);
 
 		let blockPos = 0;
-		for (let i = 0; i < 199; i += 1) blockPos += view.state.doc.child(i).nodeSize;
+		for (let i = 0; i < 199; i += 1)
+			blockPos += view.state.doc.child(i).nodeSize;
 		const targetBlock = view.state.doc.child(199);
 		expect(targetBlock.textContent).toBe("Paragraph block number 200.");
 
-		view.dispatch(view.state.tr.insertText(" [edited]", blockPos + targetBlock.nodeSize - 1));
+		view.dispatch(
+			view.state.tr.insertText(
+				" [edited]",
+				blockPos + targetBlock.nodeSize - 1,
+			),
+		);
 		const updatedBlocks = harness.session.document.getValue().split("\n\n");
 		expect(updatedBlocks.length).toBe(220);
 		expect(updatedBlocks[0]).toBe("## Section 1");
@@ -512,10 +598,16 @@ describe("ProseMirrorVisualEditor host component", () => {
 
 describe("visual-table-operations", () => {
 	it("supports cell info, row/column mutations, alignment scopes, and cell Backspace/Enter guards", () => {
-		const view = createStandaloneTableView("| Name | Score |\n| :--- | ---: |\n| Alice | 95 |");
+		const view = createStandaloneTableView(
+			"| Name | Score |\n| :--- | ---: |\n| Alice | 95 |",
+		);
 		const row0Size = view.state.doc.firstChild?.child(0).nodeSize ?? 0;
 		const bodyFirstCellPos = 1 + row0Size + 1 + 1 + 1;
-		view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, bodyFirstCellPos)));
+		view.dispatch(
+			view.state.tr.setSelection(
+				TextSelection.create(view.state.doc, bodyFirstCellPos),
+			),
+		);
 
 		expect(isSelectionInTable(view.state)).toBe(true);
 		expect(getCurrentTableCellInfo(view.state)).toEqual({
@@ -544,16 +636,28 @@ describe("visual-table-operations", () => {
 		expect(deleteCurrentTableColumn(view.state, view.dispatch)).toBe(true);
 		expect(view.state.doc.firstChild?.child(0).childCount).toBe(3);
 
-		expect(setTableCellAlignment(view.state, view.dispatch, "center", "column")).toBe(true);
+		expect(
+			setTableCellAlignment(view.state, view.dispatch, "center", "column"),
+		).toBe(true);
 		expect(getCurrentTableCellInfo(view.state)?.alignment).toBe("center");
 
-		expect(setTableCellAlignment(view.state, view.dispatch, "right", "cell")).toBe(true);
-		expect(serializeVisualDocToMarkdown(view.state.doc)).toContain("<!-- easymde-table-align:v1 ");
+		expect(
+			setTableCellAlignment(view.state, view.dispatch, "right", "cell"),
+		).toBe(true);
+		expect(serializeVisualDocToMarkdown(view.state.doc)).toContain(
+			"<!-- easymde-table-align:v1 ",
+		);
 
-		expect(setTableCellAlignment(view.state, view.dispatch, "right", "row")).toBe(true);
-		expect(serializeVisualDocToMarkdown(view.state.doc)).toContain("<!-- easymde-table-align:v1 ");
+		expect(
+			setTableCellAlignment(view.state, view.dispatch, "right", "row"),
+		).toBe(true);
+		expect(serializeVisualDocToMarkdown(view.state.doc)).toContain(
+			"<!-- easymde-table-align:v1 ",
+		);
 
-		expect(setTableCellAlignment(view.state, view.dispatch, "left", "table")).toBe(true);
+		expect(
+			setTableCellAlignment(view.state, view.dispatch, "left", "table"),
+		).toBe(true);
 		const tableAlignedMd = serializeVisualDocToMarkdown(view.state.doc);
 		expect(tableAlignedMd).not.toContain("<!-- easymde-table-align:v1 ");
 		expect(tableAlignedMd).toContain("| :--- | :--- | :--- |");
@@ -565,13 +669,22 @@ describe("visual-table-operations", () => {
 
 describe("ImmersiveVisualEditorRuntime context-menu, selection mapping, and paste/drop", () => {
 	it("maps selections bidirectionally and enforces strict canonical change preconditions", () => {
-		const markdown = "# Heading\n\nParagraph with ![Alt](https://example.com/a.png)\n\n```ts\nconst x = 1;\n```\n\n$$\nx^2\n$$";
+		const markdown =
+			"# Heading\n\nParagraph with ![Alt](https://example.com/a.png)\n\n```ts\nconst x = 1;\n```\n\n$$\nx^2\n$$";
 		const doc = parseMarkdownToVisualDoc(markdown);
 
-		const mdSel = computeVisualSelectionToMarkdownSelection(doc, TextSelection.create(doc, 8, 1), markdown);
+		const mdSel = computeVisualSelectionToMarkdownSelection(
+			doc,
+			TextSelection.create(doc, 8, 1),
+			markdown,
+		);
 		expect(mdSel.direction).toBe("backward");
 		expect(markdown.slice(mdSel.start, mdSel.end)).toBe("Heading");
-		const restored = resolveMarkdownSelectionToVisualSelection(doc, markdown, mdSel);
+		const restored = resolveMarkdownSelectionToVisualSelection(
+			doc,
+			markdown,
+			mdSel,
+		);
 		expect(doc.textBetween(restored.from, restored.to)).toBe("Heading");
 		expect(restored.anchor).toBeGreaterThan(restored.head);
 
@@ -588,7 +701,9 @@ describe("ImmersiveVisualEditorRuntime context-menu, selection mapping, and past
 			NodeSelection.create(doc, imagePos),
 			markdown,
 		);
-		expect(markdown.slice(imgMdSel.start, imgMdSel.end)).toBe("![Alt](https://example.com/a.png)");
+		expect(markdown.slice(imgMdSel.start, imgMdSel.end)).toBe(
+			"![Alt](https://example.com/a.png)",
+		);
 
 		const mathIdx = markdown.indexOf("$$");
 		const mathSel = resolveMarkdownSelectionToVisualSelection(doc, markdown, {
@@ -598,7 +713,11 @@ describe("ImmersiveVisualEditorRuntime context-menu, selection mapping, and past
 		});
 		expect(mathSel).toBeInstanceOf(NodeSelection);
 
-		const zeroSel: VisualEditorSelection = { direction: "none", end: 0, start: 0 };
+		const zeroSel: VisualEditorSelection = {
+			direction: "none",
+			end: 0,
+			start: 0,
+		};
 		const baseChange = {
 			changes: { from: 0, insert: "## ", to: 2 },
 			selection: { direction: "none" as const, end: 3, start: 3 },
@@ -606,7 +725,10 @@ describe("ImmersiveVisualEditorRuntime context-menu, selection mapping, and past
 		};
 		expect(
 			assertCanonicalChangePrecondition(
-				{ change: baseChange, expected: { revision: 1, selection: zeroSel, value: markdown } },
+				{
+					change: baseChange,
+					expected: { revision: 1, selection: zeroSel, value: markdown },
+				},
 				2,
 				markdown,
 				zeroSel,
@@ -614,7 +736,10 @@ describe("ImmersiveVisualEditorRuntime context-menu, selection mapping, and past
 		).toEqual({ code: "canonical-change-revision-mismatch", ok: false });
 		expect(
 			assertCanonicalChangePrecondition(
-				{ change: baseChange, expected: { revision: 2, selection: zeroSel, value: "stale" } },
+				{
+					change: baseChange,
+					expected: { revision: 2, selection: zeroSel, value: "stale" },
+				},
 				2,
 				markdown,
 				zeroSel,
@@ -624,7 +749,11 @@ describe("ImmersiveVisualEditorRuntime context-menu, selection mapping, and past
 			assertCanonicalChangePrecondition(
 				{
 					change: baseChange,
-					expected: { revision: 2, selection: { direction: "none", end: 1, start: 1 }, value: markdown },
+					expected: {
+						revision: 2,
+						selection: { direction: "none", end: 1, start: 1 },
+						value: markdown,
+					},
 				},
 				2,
 				markdown,
@@ -634,10 +763,18 @@ describe("ImmersiveVisualEditorRuntime context-menu, selection mapping, and past
 	});
 
 	it("implements context menu leases, selection prep, applyCanonicalChange, and target leases", () => {
-		const initialMd = "Intro\n\n![Photo](https://example.com/p.png)\n\n$$\na + b\n$$\n\n```mermaid\ngraph TD\nA-->B\n```";
+		const initialMd =
+			"Intro\n\n![Photo](https://example.com/p.png)\n\n$$\na + b\n$$\n\n```mermaid\ngraph TD\nA-->B\n```";
 		const harness = createMockDocumentSession(initialMd);
-		const runtimeRef: { current: ImmersiveVisualEditorRuntime | null } = { current: null };
-		const previewIdentity = { editMap: null, revision: 5, signature: "sig-5", sourceRevision: 0 };
+		const runtimeRef: { current: ImmersiveVisualEditorRuntime | null } = {
+			current: null,
+		};
+		const previewIdentity = {
+			editMap: null,
+			revision: 5,
+			signature: "sig-5",
+			sourceRevision: 0,
+		};
 
 		const { unmount } = render(
 			<ProseMirrorVisualEditor
@@ -664,23 +801,40 @@ describe("ImmersiveVisualEditorRuntime context-menu, selection mapping, and past
 		expect(leaseUntilDispose?.resolve()).toBe(paragraphEl);
 
 		const imgEl = rt.surface.querySelector("img") as HTMLImageElement;
-		expect(rt.prepareContextMenuSelection?.(imgEl, undefined, "pointer")).toBe(true);
+		expect(rt.prepareContextMenuSelection?.(imgEl, undefined, "pointer")).toBe(
+			true,
+		);
 		const imgSel = harness.session.document.getSelection();
-		expect(initialMd.slice(imgSel.start, imgSel.end)).toBe("![Photo](https://example.com/p.png)");
+		expect(initialMd.slice(imgSel.start, imgSel.end)).toBe(
+			"![Photo](https://example.com/p.png)",
+		);
 		expect(harness.session.document.getRevision()).toBe(0);
 
-		const imageIndex = buildSingleImageIndex(initialMd, "Photo", "https://example.com/p.png");
+		const imageIndex = buildSingleImageIndex(
+			initialMd,
+			"Photo",
+			"https://example.com/p.png",
+		);
 		const imgRange = {
 			end: imageIndex.images[0]?.end ?? 0,
 			start: imageIndex.images[0]?.start ?? 0,
 		};
-		const imgLease = rt.prepareImageTarget({ element: imgEl, index: imageIndex, selection: imgRange });
+		const imgLease = rt.prepareImageTarget({
+			element: imgEl,
+			index: imageIndex,
+			selection: imgRange,
+		});
 		expect(imgLease?.isCurrent()).toBe(true);
-		expect(imgLease?.target.original.destination).toBe("https://example.com/p.png");
+		expect(imgLease?.target.original.destination).toBe(
+			"https://example.com/p.png",
+		);
 		imgLease?.release();
 		expect(imgLease?.isCurrent()).toBe(false);
 
-		const imgPin = rt.prepareImageTargetBySelection({ index: imageIndex, selection: imgRange });
+		const imgPin = rt.prepareImageTargetBySelection({
+			index: imageIndex,
+			selection: imgRange,
+		});
 		expect(imgPin?.isCurrent()).toBe(true);
 		expect(imgPin?.getLease()?.root).toBe(imgEl);
 		imgPin?.release();
@@ -692,11 +846,24 @@ describe("ImmersiveVisualEditorRuntime context-menu, selection mapping, and past
 		const mermaidStart = initialMd.indexOf("```mermaid");
 		const generatedIndex: VisualEditorGeneratedContentTargetIndex = {
 			blocks: [
-				{ editable: false, from: mermaidStart, kind: "code", lineEnd: 10, lineStart: 8, to: initialMd.length },
+				{
+					editable: false,
+					from: mermaidStart,
+					kind: "code",
+					lineEnd: 10,
+					lineStart: 8,
+					to: initialMd.length,
+				},
 			],
 			length: initialMd.length,
 			mathSpans: [
-				{ bodyFrom: mathStart + 3, bodyTo: mathEnd - 3, displayMode: true, from: mathStart, to: mathEnd },
+				{
+					bodyFrom: mathStart + 3,
+					bodyTo: mathEnd - 3,
+					displayMode: true,
+					from: mathStart,
+					to: mathEnd,
+				},
 			],
 			revision: 0,
 			source: initialMd,
@@ -753,7 +920,9 @@ describe("ImmersiveVisualEditorRuntime context-menu, selection mapping, and past
 				value: harness.session.document.getValue(),
 			}),
 		).toBe(true);
-		expect(rt.prepareSourceNavigation({ revision: 999, value: "stale" })).toBe(false);
+		expect(rt.prepareSourceNavigation({ revision: 999, value: "stale" })).toBe(
+			false,
+		);
 		unmount();
 	});
 
@@ -762,7 +931,9 @@ describe("ImmersiveVisualEditorRuntime context-menu, selection mapping, and past
 		const onImagePaste = vi.fn();
 		const onImageDrop = vi.fn();
 		const capture = createViewCapturePlugin();
-		const runtimeRef: { current: ImmersiveVisualEditorRuntime | null } = { current: null };
+		const runtimeRef: { current: ImmersiveVisualEditorRuntime | null } = {
+			current: null,
+		};
 
 		render(
 			<ProseMirrorVisualEditor
@@ -793,21 +964,37 @@ describe("ImmersiveVisualEditorRuntime context-menu, selection mapping, and past
 			return handled;
 		};
 
-		expect(triggerPaste(createFakeTransferEvent("paste", { text: "# Pasted Title\n\n- Alpha\n- Beta" }))).toBe(true);
+		expect(
+			triggerPaste(
+				createFakeTransferEvent("paste", {
+					text: "# Pasted Title\n\n- Alpha\n- Beta",
+				}),
+			),
+		).toBe(true);
 		expect(rt.surface.querySelector("h1")?.textContent).toBe("Pasted Title");
 		expect(rt.surface.querySelectorAll("ul li").length).toBe(2);
-		expect(harness.session.document.getValue()).toBe("# Pasted Title\n\n- Alpha\n- Beta");
+		expect(harness.session.document.getValue()).toBe(
+			"# Pasted Title\n\n- Alpha\n- Beta",
+		);
 
-		const pngFile = new File([new Uint8Array([1, 2, 3])], "shot.png", { type: "image/png" });
-		expect(triggerPaste(createFakeTransferEvent("paste", { files: [pngFile] }))).toBe(true);
+		const pngFile = new File([new Uint8Array([1, 2, 3])], "shot.png", {
+			type: "image/png",
+		});
+		expect(
+			triggerPaste(createFakeTransferEvent("paste", { files: [pngFile] })),
+		).toBe(true);
 		expect(onImagePaste).toHaveBeenCalledTimes(1);
 		expect(onImagePaste.mock.calls[0]?.[0]).toEqual([pngFile]);
 
-		const dropFile = new File([new Uint8Array([4, 5, 6])], "drop.jpg", { type: "image/jpeg" });
+		const dropFile = new File([new Uint8Array([4, 5, 6])], "drop.jpg", {
+			type: "image/jpeg",
+		});
 		const dropEvent = createFakeTransferEvent("drop", { files: [dropFile] });
 		let dropHandled = false;
 		view.someProp("handleDrop", (fn) => {
-			if (fn(view, dropEvent as DragEvent, view.state.selection.content(), false)) {
+			if (
+				fn(view, dropEvent as DragEvent, view.state.selection.content(), false)
+			) {
 				dropHandled = true;
 				return true;
 			}
@@ -818,10 +1005,20 @@ describe("ImmersiveVisualEditorRuntime context-menu, selection mapping, and past
 		expect(onImageDrop.mock.calls[0]?.[0]).toEqual([dropFile]);
 
 		act(() => {
-			harness.emitExternalChange("```ts\nconst a = 1;\n```", { direction: "none", end: 18, start: 18 });
+			harness.emitExternalChange("```ts\nconst a = 1;\n```", {
+				direction: "none",
+				end: 18,
+				start: 18,
+			});
 		});
-		expect(triggerPaste(createFakeTransferEvent("paste", { text: "\n# Not a heading" }))).toBe(true);
+		expect(
+			triggerPaste(
+				createFakeTransferEvent("paste", { text: "\n# Not a heading" }),
+			),
+		).toBe(true);
 		expect(rt.surface.querySelector("h1")).toBeNull();
-		expect(rt.surface.querySelector("pre code")?.textContent).toContain("# Not a heading");
+		expect(rt.surface.querySelector("pre code")?.textContent).toContain(
+			"# Not a heading",
+		);
 	});
 });

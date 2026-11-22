@@ -17,7 +17,7 @@ import type {
 	VisualEditorSelection,
 } from "../../contracts/visual-editor";
 import type { EditorDocumentSession } from "../document-source/editor-document-session";
-import { parseMarkdownToVisualDoc } from "./markdown-parser";
+import { parseMarkdownWithBlockSources } from "./markdown-parser";
 import {
 	createMarkdownRoundTripGuard,
 	type MarkdownRoundTripGuard,
@@ -128,7 +128,8 @@ export function ProseMirrorVisualEditor(props: ProseMirrorVisualEditorProps) {
 		const disposeAbortController = new AbortController();
 		const initialMarkdown = documentSession.document.getValue();
 		const initialRevision = documentSession.document.getRevision();
-		const initialDoc = parseMarkdownToVisualDoc(initialMarkdown);
+		const initialParsed = parseMarkdownWithBlockSources(initialMarkdown);
+		const initialDoc = initialParsed.doc;
 		const initialSelection = resolveMarkdownSelectionToVisualSelection(
 			initialDoc,
 			initialMarkdown,
@@ -137,8 +138,9 @@ export function ProseMirrorVisualEditor(props: ProseMirrorVisualEditorProps) {
 
 		let roundTripGuard: MarkdownRoundTripGuard = createMarkdownRoundTripGuard(
 			initialMarkdown,
-			initialDoc,
+			initialParsed,
 		);
+		let lastSyncedDoc = initialDoc;
 		let lastSyncedMarkdown = initialMarkdown;
 		let lastSyncedRevision = initialRevision;
 
@@ -188,7 +190,10 @@ export function ProseMirrorVisualEditor(props: ProseMirrorVisualEditorProps) {
 				return;
 			}
 			// Zero-write-on-read invariant: untouched documents never write back.
-			if (roundTripGuard.isUnmodified(activeView.state.doc)) {
+			if (
+				activeView.state.doc === lastSyncedDoc ||
+				activeView.state.doc.eq(lastSyncedDoc)
+			) {
 				return;
 			}
 			try {
@@ -198,10 +203,7 @@ export function ProseMirrorVisualEditor(props: ProseMirrorVisualEditorProps) {
 					nextMarkdown === lastSyncedMarkdown &&
 					nextMarkdown === currentCanonical
 				) {
-					roundTripGuard = createMarkdownRoundTripGuard(
-						nextMarkdown,
-						activeView.state.doc,
-					);
+					lastSyncedDoc = activeView.state.doc;
 					return;
 				}
 
@@ -216,12 +218,9 @@ export function ProseMirrorVisualEditor(props: ProseMirrorVisualEditorProps) {
 						selection: nextSelection,
 						value: nextMarkdown,
 					});
+					lastSyncedDoc = activeView.state.doc;
 					lastSyncedMarkdown = documentSession.document.getValue();
 					lastSyncedRevision = documentSession.document.getRevision();
-					roundTripGuard = createMarkdownRoundTripGuard(
-						lastSyncedMarkdown,
-						activeView.state.doc,
-					);
 				});
 
 				latestPropsRef.current.onMarkdownChange?.(lastSyncedMarkdown);
@@ -282,8 +281,10 @@ export function ProseMirrorVisualEditor(props: ProseMirrorVisualEditorProps) {
 			const wasFocused =
 				view.hasFocus() || (activeEl !== null && view.dom.contains(activeEl));
 
-			const nextDoc = parseMarkdownToVisualDoc(nextMarkdown);
-			roundTripGuard = createMarkdownRoundTripGuard(nextMarkdown, nextDoc);
+			const nextParsed = parseMarkdownWithBlockSources(nextMarkdown);
+			const nextDoc = nextParsed.doc;
+			roundTripGuard = createMarkdownRoundTripGuard(nextMarkdown, nextParsed);
+			lastSyncedDoc = nextDoc;
 			lastSyncedMarkdown = nextMarkdown;
 			lastSyncedRevision = nextRevision;
 			pendingCompositionSync = false;

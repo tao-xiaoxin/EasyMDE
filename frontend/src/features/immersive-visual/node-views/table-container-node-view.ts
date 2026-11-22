@@ -82,7 +82,8 @@ export class TableContainerNodeView implements NodeView {
 		view?: EditorView,
 	) {
 		this.node = node;
-		this.defaultCellMinWidth = normalizeDefaultCellMinWidth(defaultCellMinWidth);
+		this.defaultCellMinWidth =
+			normalizeDefaultCellMinWidth(defaultCellMinWidth);
 
 		const doc = view?.dom.ownerDocument ?? document;
 		this.dom = doc.createElement("section");
@@ -122,7 +123,12 @@ export class TableContainerNodeView implements NodeView {
 		}
 		this.node = nextNode;
 		this.syncAnnotation(nextNode);
-		syncTableColumns(nextNode, this.colgroup, this.table, this.defaultCellMinWidth);
+		syncTableColumns(
+			nextNode,
+			this.colgroup,
+			this.table,
+			this.defaultCellMinWidth,
+		);
 		return true;
 	}
 

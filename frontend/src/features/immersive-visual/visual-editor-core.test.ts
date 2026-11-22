@@ -3,11 +3,7 @@ import path from "node:path";
 import { history } from "prosemirror-history";
 import { DOMSerializer, type Node as ProseMirrorNode } from "prosemirror-model";
 import { EditorState, NodeSelection, TextSelection } from "prosemirror-state";
-import {
-	addColumnAfter,
-	addRowAfter,
-	tableEditing,
-} from "prosemirror-tables";
+import { addColumnAfter, addRowAfter, tableEditing } from "prosemirror-tables";
 import { EditorView } from "prosemirror-view";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ToolbarCommand } from "../../contracts/bootstrap/toolbar-bootstrap";
@@ -109,7 +105,11 @@ function typeText(view: EditorView, text: string): void {
 		const { from, to } = view.state.selection;
 		let handledByInputRule = false;
 		view.someProp("handleTextInput", (handler) => {
-			if (handler(view, from, to, ch, () => view.state.tr.insertText(ch, from, to))) {
+			if (
+				handler(view, from, to, ch, () =>
+					view.state.tr.insertText(ch, from, to),
+				)
+			) {
 				handledByInputRule = true;
 				return true;
 			}
@@ -134,7 +134,7 @@ describe("visualEditorSchema DOM contract", () => {
 		const markdown = [
 			"# Heading 1",
 			"###### Heading 6",
-			"Paragraph with **bold**, *italic*, ~~strike~~, `code`, and [link](https://example.com \"Example\").",
+			'Paragraph with **bold**, *italic*, ~~strike~~, `code`, and [link](https://example.com "Example").',
 			"> Quoted text",
 			"- Bullet item",
 			"3. Ordered item",
@@ -161,9 +161,9 @@ describe("visualEditorSchema DOM contract", () => {
 		expect(anchor?.getAttribute("title")).toBe("Example");
 
 		expect(dom.querySelector("blockquote p")?.textContent).toBe("Quoted text");
-		expect(dom.querySelector("ul:not(.contains-task-list) li")?.textContent).toBe(
-			"Bullet item",
-		);
+		expect(
+			dom.querySelector("ul:not(.contains-task-list) li")?.textContent,
+		).toBe("Bullet item");
 		expect(dom.querySelector("ol")?.getAttribute("start")).toBe("3");
 
 		const taskList = dom.querySelector("ul.contains-task-list");
@@ -424,14 +424,13 @@ describe("Markdown parser and serializer round-trip", () => {
 		expect(serialized).toContain("```mermaid\nflowchart TD");
 		expect(serialized).toContain("```mermaid\nxychart-beta");
 		expect(serialized).toContain("[^1]: 这是一个简单脚注。");
-		expect(serialized).toContain(
-			'[github-link]: https://github.com "GitHub"',
-		);
+		expect(serialized).toContain('[github-link]: https://github.com "GitHub"');
 		expect(serialized).toContain("<summary>点击展开查看隐藏内容</summary>");
 	});
 
 	it("enforces zero-write-on-read via createMarkdownRoundTripGuard", () => {
-		const quirkyOriginal = "  # Heading with extra spacing   \r\n\r\n*  Item 1\r\n*  Item 2\r\n";
+		const quirkyOriginal =
+			"  # Heading with extra spacing   \r\n\r\n*  Item 1\r\n*  Item 2\r\n";
 		const guard = createMarkdownRoundTripGuard(quirkyOriginal);
 
 		expect(guard.isUnmodified(guard.initialDoc)).toBe(true);
@@ -694,7 +693,9 @@ describe("Toolbar commands and keyboard interactions", () => {
 		expect(view.state.doc.firstChild?.attrs.fenceChar).toBe("`");
 
 		// 4. Delete at end of code_block does NOT swallow the next block
-		const codeAndNextView = createEditorView("```ts\nconst x = 1;\n```\n\nNext paragraph");
+		const codeAndNextView = createEditorView(
+			"```ts\nconst x = 1;\n```\n\nNext paragraph",
+		);
 		const codeBlock = codeAndNextView.state.doc.child(0);
 		const endOfCodePos = 1 + codeBlock.content.size;
 		codeAndNextView.dispatch(
@@ -723,14 +724,18 @@ describe("Toolbar commands and keyboard interactions", () => {
 			}
 		});
 		expect(protectedInlineCount).toBe(0);
-		expect(serializeVisualDocToMarkdown(literalCodeDoc)).toContain("`$E = mc^2$`");
+		expect(serializeVisualDocToMarkdown(literalCodeDoc)).toContain(
+			"`$E = mc^2$`",
+		);
 		expect(serializeVisualDocToMarkdown(literalCodeDoc)).toContain("`[^1]`");
 
 		// Splitting a checked task item creates a new unchecked task item below it.
 		const taskView = createEditorView("- [x] First task");
 		// task_list (+1) -> task_item (+1) -> paragraph (+1) + "First task" (10) = 13
 		taskView.dispatch(
-			taskView.state.tr.setSelection(TextSelection.create(taskView.state.doc, 13)),
+			taskView.state.tr.setSelection(
+				TextSelection.create(taskView.state.doc, 13),
+			),
 		);
 		expect(dispatchKey(taskView, "Enter")).toBe(true);
 		const taskList = taskView.state.doc.firstChild;
@@ -742,7 +747,9 @@ describe("Toolbar commands and keyboard interactions", () => {
 		// Backspace at start of a heading converts it back to a paragraph.
 		const headingView = createEditorView("## Title");
 		headingView.dispatch(
-			headingView.state.tr.setSelection(TextSelection.create(headingView.state.doc, 1)),
+			headingView.state.tr.setSelection(
+				TextSelection.create(headingView.state.doc, 1),
+			),
 		);
 		expect(dispatchKey(headingView, "Backspace")).toBe(true);
 		expect(headingView.state.doc.firstChild?.type.name).toBe("paragraph");
@@ -750,7 +757,9 @@ describe("Toolbar commands and keyboard interactions", () => {
 		// Direct heading1..heading6, link, image, and read-only blocked state.
 		const cmdView = createEditorView("Text");
 		cmdView.dispatch(
-			cmdView.state.tr.setSelection(TextSelection.create(cmdView.state.doc, 1, 5)),
+			cmdView.state.tr.setSelection(
+				TextSelection.create(cmdView.state.doc, 1, 5),
+			),
 		);
 		expect(
 			executeVisualToolbarCommand(
@@ -766,15 +775,23 @@ describe("Toolbar commands and keyboard interactions", () => {
 				makeToolbarCommand({ id: "link", action: "link" }),
 			),
 		).toBe("handled");
-		expect(serializeVisualDocToMarkdown(cmdView.state.doc)).toBe("### [Text](https://)");
+		expect(serializeVisualDocToMarkdown(cmdView.state.doc)).toBe(
+			"### [Text](https://)",
+		);
 
 		expect(
 			executeVisualToolbarCommand(
 				cmdView,
-				makeToolbarCommand({ id: "image", action: "image", prefix: "https://example.com/x.png" }),
+				makeToolbarCommand({
+					id: "image",
+					action: "image",
+					prefix: "https://example.com/x.png",
+				}),
 			),
 		).toBe("handled");
-		expect(serializeVisualDocToMarkdown(cmdView.state.doc)).toContain("![Text](https://example.com/x.png)");
+		expect(serializeVisualDocToMarkdown(cmdView.state.doc)).toContain(
+			"![Text](https://example.com/x.png)",
+		);
 
 		cmdView.setProps({ editable: () => false });
 		expect(
@@ -802,14 +819,17 @@ describe("Toolbar commands and keyboard interactions", () => {
 		expect(atomicView.state.doc.firstChild?.textContent).toBe("After");
 
 		// Tab inside table moves to next cell; Shift-Tab moves back.
-		const tableView = createEditorView("| One | Two |\n| --- | --- |\n| 1 | 2 |");
+		const tableView = createEditorView(
+			"| One | Two |\n| --- | --- |\n| 1 | 2 |",
+		);
 		tableView.dispatch(
 			tableView.state.tr.setSelection(
 				TextSelection.create(tableView.state.doc, 4),
 			),
 		);
 		expect(dispatchKey(tableView, "Tab")).toBe(true);
-		const afterTabParentText = tableView.state.selection.$from.parent.textContent;
+		const afterTabParentText =
+			tableView.state.selection.$from.parent.textContent;
 		expect(afterTabParentText).toBe("Two");
 		expect(dispatchKey(tableView, "Tab", { shiftKey: true })).toBe(true);
 		expect(tableView.state.selection.$from.parent.textContent).toBe("One");
@@ -835,5 +855,43 @@ describe("Toolbar commands and keyboard interactions", () => {
 		expect(paraView.state.doc.firstChild?.lastChild?.type.name).toBe(
 			"hard_break",
 		);
+	});
+
+	it("preserves untouched original blocks, tables, reference links, and trailing newlines on localized edits", () => {
+		const original = [
+			"# Heading",
+			"",
+			"* Bullet A",
+			"* Bullet B",
+			"",
+			"| Name     | Score |",
+			"| :------- | ----: |",
+			"| Alice    |   100 |",
+			"",
+			"Reference [GitHub][gh] link.",
+			"",
+			'[gh]: https://github.com "GitHub"',
+			"",
+			"Final paragraph.",
+			"",
+		].join("\n");
+
+		const guard = createMarkdownRoundTripGuard(original);
+		const state = EditorState.create({
+			doc: guard.initialDoc,
+			schema: visualEditorSchema,
+		});
+		// Edit only the final paragraph ("Final paragraph." -> "Final paragraph!").
+		const endOfLastParagraph = state.doc.content.size - 1;
+		const editedDoc = state.tr.insertText("!", endOfLastParagraph).doc;
+		const serialized = guard.serialize(editedDoc);
+
+		expect(serialized).toContain("* Bullet A\n* Bullet B");
+		expect(serialized).toContain("| Name     | Score |");
+		expect(serialized).toContain("Reference [GitHub][gh] link.");
+		expect(serialized).toContain("Final paragraph.!");
+		expect(serialized.endsWith("\n")).toBe(true);
+		// Restoring the baseline doc returns byte-identical original Markdown.
+		expect(guard.serialize(guard.initialDoc)).toBe(original);
 	});
 });

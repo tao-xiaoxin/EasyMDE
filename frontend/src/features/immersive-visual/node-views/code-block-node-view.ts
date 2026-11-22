@@ -1,5 +1,10 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
-import { type EditorState, Plugin, PluginKey, type Transaction } from "prosemirror-state";
+import {
+	type EditorState,
+	Plugin,
+	PluginKey,
+	type Transaction,
+} from "prosemirror-state";
 import {
 	Decoration,
 	DecorationSet,
@@ -19,7 +24,9 @@ export type HighlightJsRuntime = Readonly<{
 	) => HighlightJsResult;
 }>;
 
-export type CodeBlockNodeViewOptions = Readonly<{ syncFrameBackground?: boolean }>;
+export type CodeBlockNodeViewOptions = Readonly<{
+	syncFrameBackground?: boolean;
+}>;
 
 export type CodeHighlightPluginOptions = Readonly<{
 	getHljs?: () => HighlightJsRuntime | null | undefined;
@@ -31,7 +38,11 @@ type CodeHighlightPluginState = Readonly<{
 	decorations: DecorationSet;
 	hljsRef: HighlightJsRuntime | null;
 }>;
-type HighlightTokenRange = Readonly<{ className: string; from: number; to: number }>;
+type HighlightTokenRange = Readonly<{
+	className: string;
+	from: number;
+	to: number;
+}>;
 type DocumentRange = Readonly<{ from: number; to: number }>;
 type HighlightWindow = Window & { hljs?: HighlightJsRuntime };
 
@@ -47,17 +58,24 @@ function normalizeCodeLanguage(value: unknown): string {
 }
 
 function buildCodeClassName(language: string): string {
-	const token = (language.split(/\s+/)[0] ?? "").replace(/[^a-zA-Z0-9_+#.-]/g, "");
+	const token = (language.split(/\s+/)[0] ?? "").replace(
+		/[^a-zA-Z0-9_+#.-]/g,
+		"",
+	);
 	return token.length > 0 ? `hljs language-${token}` : "hljs";
 }
 
-function resolveHljs(options?: CodeHighlightPluginOptions): HighlightJsRuntime | null {
+function resolveHljs(
+	options?: CodeHighlightPluginOptions,
+): HighlightJsRuntime | null {
 	const candidate = options?.getHljs
 		? options.getHljs()
 		: typeof window !== "undefined"
 			? (window as HighlightWindow).hljs
 			: null;
-	return candidate && typeof candidate.highlight === "function" ? candidate : null;
+	return candidate && typeof candidate.highlight === "function"
+		? candidate
+		: null;
 }
 
 function mergeTokenClasses(
@@ -69,7 +87,11 @@ function mergeTokenClasses(
 	}
 	const merged = [...inherited];
 	for (const part of rawClassAttr.split(/\s+/)) {
-		if (part.length > 0 && SAFE_CLASS_TOKEN_PATTERN.test(part) && merged.indexOf(part) < 0) {
+		if (
+			part.length > 0 &&
+			SAFE_CLASS_TOKEN_PATTERN.test(part) &&
+			merged.indexOf(part) < 0
+		) {
 			merged.push(part);
 		}
 	}
@@ -99,8 +121,15 @@ function walkHighlightedTree(
 		return;
 	}
 	const element = node as Element;
-	const nextClasses = mergeTokenClasses(activeClasses, element.getAttribute("class"));
-	for (let child = element.firstChild; child !== null; child = child.nextSibling) {
+	const nextClasses = mergeTokenClasses(
+		activeClasses,
+		element.getAttribute("class"),
+	);
+	for (
+		let child = element.firstChild;
+		child !== null;
+		child = child.nextSibling
+	) {
 		walkHighlightedTree(child, cursor, maxLength, nextClasses, output);
 	}
 }
@@ -109,10 +138,17 @@ export function parseHighlightedHtmlToTokenRanges(
 	highlightedHtml: string,
 	codeLength: number,
 ): ReadonlyArray<HighlightTokenRange> {
-	if (highlightedHtml.length === 0 || codeLength <= 0 || typeof DOMParser === "undefined") {
+	if (
+		highlightedHtml.length === 0 ||
+		codeLength <= 0 ||
+		typeof DOMParser === "undefined"
+	) {
 		return [];
 	}
-	const parsed = new DOMParser().parseFromString(`<body>${highlightedHtml}</body>`, "text/html");
+	const parsed = new DOMParser().parseFromString(
+		`<body>${highlightedHtml}</body>`,
+		"text/html",
+	);
 	const ranges: HighlightTokenRange[] = [];
 	walkHighlightedTree(parsed.body, { offset: 0 }, codeLength, [], ranges);
 	return ranges;
@@ -145,7 +181,10 @@ function buildCodeBlockDecorations(
 	}
 
 	const contentStart = blockPos + 1;
-	return parseHighlightedHtmlToTokenRanges(highlightedHtml, codeText.length).map((range) =>
+	return parseHighlightedHtmlToTokenRanges(
+		highlightedHtml,
+		codeText.length,
+	).map((range) =>
 		Decoration.inline(contentStart + range.from, contentStart + range.to, {
 			class: range.className,
 		}),
@@ -160,12 +199,16 @@ function buildAllCodeBlockDecorations(
 	const decorations: Decoration[] = [];
 	doc.descendants((node, pos) => {
 		if (node.type.name === "code_block") {
-			decorations.push(...buildCodeBlockDecorations(node, pos, hljs, maxCodeLength));
+			decorations.push(
+				...buildCodeBlockDecorations(node, pos, hljs, maxCodeLength),
+			);
 			return false;
 		}
 		return true;
 	});
-	return decorations.length > 0 ? DecorationSet.create(doc, decorations) : DecorationSet.empty;
+	return decorations.length > 0
+		? DecorationSet.create(doc, decorations)
+		: DecorationSet.empty;
 }
 
 function collectChangedRanges(tr: Transaction): DocumentRange[] {
@@ -179,12 +222,18 @@ function collectChangedRanges(tr: Transaction): DocumentRange[] {
 		const tailMapping = tr.mapping.slice(stepIndex + 1);
 		stepMap?.forEach((_oldStart, _oldEnd, newStart, newEnd) => {
 			const from = clamp(tailMapping.map(newStart, -1));
-			ranges.push({ from, to: Math.max(from, clamp(tailMapping.map(newEnd, 1))) });
+			ranges.push({
+				from,
+				to: Math.max(from, clamp(tailMapping.map(newEnd, 1))),
+			});
 		});
 		// Attribute-only steps (e.g. AttrStep for language change) emit an empty StepMap.
 		if (step && "pos" in step && typeof step.pos === "number") {
 			const from = clamp(tailMapping.map(step.pos, -1));
-			ranges.push({ from, to: Math.max(from, clamp(tailMapping.map(step.pos + 1, 1))) });
+			ranges.push({
+				from,
+				to: Math.max(from, clamp(tailMapping.map(step.pos + 1, 1))),
+			});
 		}
 	}
 	return ranges;
@@ -241,7 +290,8 @@ function updateDecorationsIncrementally(
 export function createCodeHighlightPlugin(
 	options: CodeHighlightPluginOptions = {},
 ): Plugin<CodeHighlightPluginState> {
-	const maxCodeLength = options.maxCodeLength ?? DEFAULT_MAX_HIGHLIGHT_CODE_LENGTH;
+	const maxCodeLength =
+		options.maxCodeLength ?? DEFAULT_MAX_HIGHLIGHT_CODE_LENGTH;
 
 	return new Plugin<CodeHighlightPluginState>({
 		key: codeHighlightPluginKey,
@@ -250,22 +300,33 @@ export function createCodeHighlightPlugin(
 				const hljs = resolveHljs(options);
 				return hljs
 					? {
-							decorations: buildAllCodeBlockDecorations(state.doc, hljs, maxCodeLength),
+							decorations: buildAllCodeBlockDecorations(
+								state.doc,
+								hljs,
+								maxCodeLength,
+							),
 							hljsRef: hljs,
 						}
 					: { decorations: DecorationSet.empty, hljsRef: null };
 			},
 			apply(tr, prev, _oldState, newState): CodeHighlightPluginState {
 				const hljs = resolveHljs(options);
-				const meta = tr.getMeta(codeHighlightPluginKey) as CodeHighlightPluginMeta | undefined;
+				const meta = tr.getMeta(codeHighlightPluginKey) as
+					| CodeHighlightPluginMeta
+					| undefined;
 				if (!hljs) {
-					return prev.decorations === DecorationSet.empty && prev.hljsRef === null
+					return prev.decorations === DecorationSet.empty &&
+						prev.hljsRef === null
 						? prev
 						: { decorations: DecorationSet.empty, hljsRef: null };
 				}
 				if (hljs !== prev.hljsRef || meta?.refresh === true) {
 					return {
-						decorations: buildAllCodeBlockDecorations(newState.doc, hljs, maxCodeLength),
+						decorations: buildAllCodeBlockDecorations(
+							newState.doc,
+							hljs,
+							maxCodeLength,
+						),
 						hljsRef: hljs,
 					};
 				}
@@ -286,7 +347,10 @@ export function createCodeHighlightPlugin(
 		},
 		props: {
 			decorations(state: EditorState): DecorationSet {
-				return codeHighlightPluginKey.getState(state)?.decorations ?? DecorationSet.empty;
+				return (
+					codeHighlightPluginKey.getState(state)?.decorations ??
+					DecorationSet.empty
+				);
 			},
 		},
 	});
@@ -319,7 +383,11 @@ class CodeBlockNodeView implements NodeView {
 	private frameSyncRafId: number | null = null;
 	private readonly syncFrameBackground: boolean;
 
-	constructor(node: ProseMirrorNode, view: EditorView, options: CodeBlockNodeViewOptions) {
+	constructor(
+		node: ProseMirrorNode,
+		view: EditorView,
+		options: CodeBlockNodeViewOptions,
+	) {
 		this.node = node;
 		this.syncFrameBackground = options.syncFrameBackground ?? true;
 		const doc = view.dom.ownerDocument;
@@ -350,11 +418,20 @@ class CodeBlockNodeView implements NodeView {
 	}
 
 	private scheduleFrameBackgroundSync(): void {
-		const win = this.syncFrameBackground ? this.dom.ownerDocument.defaultView : null;
-		if (!win || typeof win.requestAnimationFrame !== "function" || typeof win.getComputedStyle !== "function") {
+		const win = this.syncFrameBackground
+			? this.dom.ownerDocument.defaultView
+			: null;
+		if (
+			!win ||
+			typeof win.requestAnimationFrame !== "function" ||
+			typeof win.getComputedStyle !== "function"
+		) {
 			return;
 		}
-		if (this.frameSyncRafId !== null && typeof win.cancelAnimationFrame === "function") {
+		if (
+			this.frameSyncRafId !== null &&
+			typeof win.cancelAnimationFrame === "function"
+		) {
 			win.cancelAnimationFrame(this.frameSyncRafId);
 		}
 		this.frameSyncRafId = win.requestAnimationFrame(() => {
@@ -389,10 +466,15 @@ class CodeBlockNodeView implements NodeView {
 		if (mutation.target === this.dom) {
 			return true;
 		}
-		if (this.badge && (mutation.target === this.badge || this.badge.contains(mutation.target))) {
+		if (
+			this.badge &&
+			(mutation.target === this.badge || this.badge.contains(mutation.target))
+		) {
 			return true;
 		}
-		return mutation.type === "attributes" && mutation.target === this.contentDOM;
+		return (
+			mutation.type === "attributes" && mutation.target === this.contentDOM
+		);
 	}
 
 	destroy(): void {

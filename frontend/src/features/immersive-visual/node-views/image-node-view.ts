@@ -158,7 +158,11 @@ class ImageNodeView implements NodeView {
 	}
 
 	private selectInEditor(): void {
-		const pos = resolveImagePosition(this.getPos, this.view, this.node.type.name);
+		const pos = resolveImagePosition(
+			this.getPos,
+			this.view,
+			this.node.type.name,
+		);
 		if (pos === null) {
 			return;
 		}

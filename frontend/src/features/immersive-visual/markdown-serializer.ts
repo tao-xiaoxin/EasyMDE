@@ -1,5 +1,9 @@
 import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
-import { parseMarkdownToVisualDoc } from "./markdown-parser";
+import {
+	type ParsedVisualBlockSource,
+	type ParsedVisualDocument,
+	parseMarkdownWithBlockSources,
+} from "./markdown-parser";
 import {
 	isValidTableTextAlign,
 	isValidVisualImageScale,
@@ -59,7 +63,9 @@ function formatCodeSpan(content: string, inTableCell: boolean): string {
 		body.startsWith("`") ||
 		body.endsWith("`") ||
 		(body.startsWith(" ") && body.endsWith(" ") && body.trim().length > 0);
-	return needsSpacePadding ? `${fence} ${body} ${fence}` : `${fence}${body}${fence}`;
+	return needsSpacePadding
+		? `${fence} ${body} ${fence}`
+		: `${fence}${body}${fence}`;
 }
 
 function escapeQuotedTitle(title: string): string {
@@ -109,8 +115,7 @@ function markCloseSyntax(mark: Mark): string {
 		case "strike":
 			return "~~";
 		case "link": {
-			const href =
-				typeof mark.attrs.href === "string" ? mark.attrs.href : "";
+			const href = typeof mark.attrs.href === "string" ? mark.attrs.href : "";
 			const title =
 				typeof mark.attrs.title === "string" && mark.attrs.title.length > 0
 					? mark.attrs.title
@@ -234,12 +239,13 @@ function serializeInlineContent(
 				const formattedText = inTableCell ? escapeTableCellText(text) : text;
 				const leadingSpace =
 					sortedMarks.length > 0 && activeMarks.length === 0
-						? /^([ \t]+)/.exec(formattedText)?.[1] ?? ""
+						? (/^([ \t]+)/.exec(formattedText)?.[1] ?? "")
 						: "";
 				const trailingSpace =
 					sortedMarks.length > 0 && i === parent.childCount - 1
-						? /([ \t]+)$/.exec(formattedText.slice(leadingSpace.length))?.[1] ??
-							""
+						? (/([ \t]+)$/.exec(
+								formattedText.slice(leadingSpace.length),
+							)?.[1] ?? "")
 						: "";
 				const coreText = formattedText.slice(
 					leadingSpace.length,
@@ -430,7 +436,9 @@ function serializeTable(tableNode: ProseMirrorNode): string {
 			columnAlignments.push(isValidTableTextAlign(saved) ? saved : null);
 		} else if (c < headerRow.childCount) {
 			const cellAlign = headerRow.child(c).attrs.textAlign;
-			columnAlignments.push(isValidTableTextAlign(cellAlign) ? cellAlign : null);
+			columnAlignments.push(
+				isValidTableTextAlign(cellAlign) ? cellAlign : null,
+			);
 		} else {
 			columnAlignments.push(null);
 		}
@@ -519,11 +527,123 @@ export function serializeVisualDocToMarkdown(doc: ProseMirrorNode): string {
 	return blocks.join("\n\n");
 }
 
+function serializeDocPreservingUntouchedBlocks(
+	doc: ProseMirrorNode,
+	parsed: ParsedVisualDocument,
+): string {
+	if (
+		doc.childCount === 1 &&
+		doc.firstChild?.type.name === "paragraph" &&
+		doc.firstChild.childCount === 0
+	) {
+		return "";
+	}
+
+	const baselineBlocks = parsed.blocks;
+	if (baselineBlocks.length === 0) {
+		return serializeVisualDocToMarkdown(doc);
+	}
+
+	const newChildren: ProseMirrorNode[] = [];
+	for (let i = 0; i < doc.childCount; i += 1) {
+		newChildren.push(doc.child(i));
+	}
+
+	const newLen = newChildren.length;
+	const origLen = baselineBlocks.length;
+	const matchedOrigIndex = new Array<number>(newLen).fill(-1);
+
+	let prefix = 0;
+	while (prefix < newLen && prefix < origLen) {
+		const origBlock = baselineBlocks[prefix];
+		const nextChild = newChildren[prefix];
+		if (!origBlock || !nextChild?.eq(origBlock.node)) {
+			break;
+		}
+		matchedOrigIndex[prefix] = prefix;
+		prefix += 1;
+	}
+
+	let suffix = 0;
+	while (suffix < newLen - prefix && suffix < origLen - prefix) {
+		const origIdx = origLen - 1 - suffix;
+		const newIdx = newLen - 1 - suffix;
+		const origBlock = baselineBlocks[origIdx];
+		const nextChild = newChildren[newIdx];
+		if (!origBlock || !nextChild?.eq(origBlock.node)) {
+			break;
+		}
+		matchedOrigIndex[newIdx] = origIdx;
+		suffix += 1;
+	}
+
+	// Greedily match unchanged interior blocks in forward order so multi-spot
+	// edits still preserve every untouched block's original Markdown formatting.
+	const newMiddleEnd = newLen - suffix;
+	const origMiddleEnd = origLen - suffix;
+	let origCursor = prefix;
+	for (let newIdx = prefix; newIdx < newMiddleEnd; newIdx += 1) {
+		const candidate = newChildren[newIdx];
+		if (!candidate) {
+			continue;
+		}
+		for (let origIdx = origCursor; origIdx < origMiddleEnd; origIdx += 1) {
+			const origBlock = baselineBlocks[origIdx];
+			if (origBlock && candidate.eq(origBlock.node)) {
+				matchedOrigIndex[newIdx] = origIdx;
+				origCursor = origIdx + 1;
+				break;
+			}
+		}
+	}
+
+	const matchedAny = matchedOrigIndex.some((origIdx) => origIdx >= 0);
+	const keepLeadingPrefix = matchedOrigIndex[0] === 0;
+	let output = keepLeadingPrefix ? parsed.leadingPrefix : "";
+	for (let idx = 0; idx < newLen; idx += 1) {
+		const child = newChildren[idx];
+		if (!child) {
+			continue;
+		}
+		const origIdx = matchedOrigIndex[idx] ?? -1;
+		const origBlock: ParsedVisualBlockSource | undefined =
+			origIdx >= 0 ? baselineBlocks[origIdx] : undefined;
+		if (idx > 0) {
+			const prevOrigIdx = matchedOrigIndex[idx - 1] ?? -1;
+			const preserveExactSep =
+				origBlock !== undefined &&
+				prevOrigIdx >= 0 &&
+				origIdx === prevOrigIdx + 1;
+			output += preserveExactSep ? origBlock.separatorBefore : "\n\n";
+		}
+		output +=
+			origBlock && origBlock.raw !== null
+				? origBlock.raw
+				: serializeBlockNode(child);
+	}
+	if (matchedAny) {
+		output += parsed.trailingSuffix;
+	}
+	return output;
+}
+
 export function createMarkdownRoundTripGuard(
 	initialMarkdown: string,
-	initialDoc?: ProseMirrorNode,
+	initialDocOrParsed?: ProseMirrorNode | ParsedVisualDocument,
 ): MarkdownRoundTripGuard {
-	const baselineDoc = initialDoc ?? parseMarkdownToVisualDoc(initialMarkdown);
+	let parsed: ParsedVisualDocument | null = null;
+	let baselineDoc: ProseMirrorNode;
+
+	if (initialDocOrParsed && "blocks" in initialDocOrParsed) {
+		parsed = initialDocOrParsed;
+		baselineDoc = initialDocOrParsed.doc;
+	} else {
+		const computed = parseMarkdownWithBlockSources(initialMarkdown);
+		baselineDoc = initialDocOrParsed ?? computed.doc;
+		if (baselineDoc === computed.doc || baselineDoc.eq(computed.doc)) {
+			parsed = computed;
+		}
+	}
 
 	const isUnmodified = (doc: ProseMirrorNode): boolean =>
 		doc === baselineDoc || doc.eq(baselineDoc);
@@ -535,6 +655,9 @@ export function createMarkdownRoundTripGuard(
 		serialize(doc: ProseMirrorNode): string {
 			if (isUnmodified(doc)) {
 				return initialMarkdown;
+			}
+			if (parsed) {
+				return serializeDocPreservingUntouchedBlocks(doc, parsed);
 			}
 			return serializeVisualDocToMarkdown(doc);
 		},

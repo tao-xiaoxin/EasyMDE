@@ -1,5 +1,9 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
-import type { EditorView, NodeView, NodeViewConstructor } from "prosemirror-view";
+import type {
+	EditorView,
+	NodeView,
+	NodeViewConstructor,
+} from "prosemirror-view";
 import {
 	normalizeProtectedBlockKind,
 	normalizeProtectedInlineKind,
@@ -14,12 +18,19 @@ export type KatexRenderOptions = Readonly<{
 	throwOnError: boolean;
 }>;
 export type KatexRuntime = Readonly<{
-	render: (tex: string, element: HTMLElement, options: KatexRenderOptions) => void;
+	render: (
+		tex: string,
+		element: HTMLElement,
+		options: KatexRenderOptions,
+	) => void;
 }>;
 export type MermaidRenderResult = Readonly<{ svg: string }>;
 export type MermaidRuntime = Readonly<{
 	initialize?: (options: Record<string, unknown>) => void;
-	render: (id: string, source: string) => Promise<MermaidRenderResult> | MermaidRenderResult;
+	render: (
+		id: string,
+		source: string,
+	) => Promise<MermaidRenderResult> | MermaidRenderResult;
 }>;
 export type ProtectedAtomLabels = Readonly<{
 	cancel?: string;
@@ -36,7 +47,10 @@ export type ProtectedAtomNodeViewOptions = Readonly<{
 	labels?: ProtectedAtomLabels;
 }>;
 
-type ProtectedEnhancementWindow = Window & { katex?: KatexRuntime; mermaid?: MermaidRuntime };
+type ProtectedEnhancementWindow = Window & {
+	katex?: KatexRuntime;
+	mermaid?: MermaidRuntime;
+};
 type ProtectedAtomKind = ProtectedBlockKind | ProtectedInlineKind;
 
 const DEFAULT_LABELS: Required<ProtectedAtomLabels> = {
@@ -69,11 +83,29 @@ const KIND_LABEL_KEY: Record<ProtectedAtomKind, keyof ProtectedAtomLabels> = {
 	"raw-inline": "raw",
 };
 const FORBIDDEN_SVG_TAGS = new Set([
-	"applet", "base", "embed", "form", "frame", "frameset", "iframe",
-	"link", "meta", "noscript", "object", "portal", "script", "template",
+	"applet",
+	"base",
+	"embed",
+	"form",
+	"frame",
+	"frameset",
+	"iframe",
+	"link",
+	"meta",
+	"noscript",
+	"object",
+	"portal",
+	"script",
+	"template",
 ]);
 const URL_BEARING_ATTRS = new Set([
-	"action", "data", "formaction", "href", "poster", "src", "xlink:href",
+	"action",
+	"data",
+	"formaction",
+	"href",
+	"poster",
+	"src",
+	"xlink:href",
 ]);
 const UNSAFE_STYLE_PATTERN =
 	/(?:javascript\s*:|vbscript\s*:|expression\s*\(|@import\b|behavior\s*:|-moz-binding\s*:)/i;
@@ -96,10 +128,19 @@ export function extractBlockMathTex(rawMarkdown: string): string {
 
 export function extractInlineMathTex(rawMarkdown: string): string {
 	const trimmed = rawMarkdown.trim();
-	if (trimmed.startsWith("\\(") && trimmed.endsWith("\\)") && trimmed.length >= 4) {
+	if (
+		trimmed.startsWith("\\(") &&
+		trimmed.endsWith("\\)") &&
+		trimmed.length >= 4
+	) {
 		return trimmed.slice(2, -2).trim();
 	}
-	if (trimmed.startsWith("$") && trimmed.endsWith("$") && !trimmed.startsWith("$$") && trimmed.length >= 2) {
+	if (
+		trimmed.startsWith("$") &&
+		trimmed.endsWith("$") &&
+		!trimmed.startsWith("$$") &&
+		trimmed.length >= 2
+	) {
 		return trimmed.slice(1, -1).trim();
 	}
 	return trimmed;
@@ -111,10 +152,17 @@ export function extractMermaidSource(rawMarkdown: string): string {
 	const lines = normalized.split("\n");
 	const opener = /^ {0,3}(`{3,}|~{3,})[ \t]*mermaid\b.*$/i.exec(lines[0] ?? "");
 	if (!opener?.[1]) return normalized;
-	const closerPattern = opener[1][0] === "~" ? /^ {0,3}(~{3,})[ \t]*$/ : /^ {0,3}(`{3,})[ \t]*$/;
-	const closer = lines.length > 1 ? closerPattern.exec(lines[lines.length - 1] ?? "") : null;
-	const hasCloser = Boolean(closer?.[1] && closer[1].length >= opener[1].length);
-	return lines.slice(1, hasCloser ? lines.length - 1 : lines.length).join("\n").trim();
+	const closerPattern =
+		opener[1][0] === "~" ? /^ {0,3}(~{3,})[ \t]*$/ : /^ {0,3}(`{3,})[ \t]*$/;
+	const closer =
+		lines.length > 1 ? closerPattern.exec(lines[lines.length - 1] ?? "") : null;
+	const hasCloser = Boolean(
+		closer?.[1] && closer[1].length >= opener[1].length,
+	);
+	return lines
+		.slice(1, hasCloser ? lines.length - 1 : lines.length)
+		.join("\n")
+		.trim();
 }
 
 function isSafeSvgHref(rawValue: string): boolean {
@@ -124,15 +172,21 @@ function isSafeSvgHref(rawValue: string): boolean {
 	}
 	if (compact.length === 0) return false;
 	if (compact.startsWith("#")) return true;
-	return !/^(?:javascript|vbscript|data):/i.test(compact) && sanitizeDomUrl(rawValue) !== null;
+	return (
+		!/^(?:javascript|vbscript|data):/i.test(compact) &&
+		sanitizeDomUrl(rawValue) !== null
+	);
 }
 
 function sanitizeInlineCssText(cssText: string): string {
-	return UNSAFE_STYLE_PATTERN.test(cssText) ? "" : cssText.replace(UNSAFE_CSS_URL_PATTERN, "");
+	return UNSAFE_STYLE_PATTERN.test(cssText)
+		? ""
+		: cssText.replace(UNSAFE_CSS_URL_PATTERN, "");
 }
 
 function removeAttr(element: Element, attr: Attr): void {
-	if (attr.namespaceURI) element.removeAttributeNS(attr.namespaceURI, attr.localName);
+	if (attr.namespaceURI)
+		element.removeAttributeNS(attr.namespaceURI, attr.localName);
 	element.removeAttribute(attr.name);
 }
 
@@ -148,12 +202,16 @@ function sanitizeSvgTree(root: Element): void {
 		}
 		for (const attr of Array.from(element.attributes)) {
 			const name = attr.name.toLowerCase();
-			if (name.startsWith("on") || (URL_BEARING_ATTRS.has(name) && !isSafeSvgHref(attr.value))) {
+			if (
+				name.startsWith("on") ||
+				(URL_BEARING_ATTRS.has(name) && !isSafeSvgHref(attr.value))
+			) {
 				removeAttr(element, attr);
 			} else if (name === "style") {
 				const safeStyle = sanitizeInlineCssText(attr.value);
 				if (safeStyle.length === 0) removeAttr(element, attr);
-				else if (safeStyle !== attr.value) element.setAttribute(attr.name, safeStyle);
+				else if (safeStyle !== attr.value)
+					element.setAttribute(attr.name, safeStyle);
 			}
 		}
 		if (tagName === "style") {
@@ -166,7 +224,10 @@ function sanitizeSvgTree(root: Element): void {
 	}
 }
 
-export function sanitizeMermaidSvg(svgMarkup: string, targetDocument: Document): SVGElement | null {
+export function sanitizeMermaidSvg(
+	svgMarkup: string,
+	targetDocument: Document,
+): SVGElement | null {
 	const trimmed = svgMarkup.trim();
 	if (trimmed.length === 0 || typeof DOMParser === "undefined") return null;
 	const parser = new DOMParser();
@@ -179,7 +240,9 @@ export function sanitizeMermaidSvg(svgMarkup: string, targetDocument: Document):
 	if (!svgElement) return null;
 	sanitizeSvgTree(svgElement);
 	const adopted = targetDocument.importNode(svgElement, true);
-	return adopted.localName.toLowerCase() === "svg" ? (adopted as SVGElement) : null;
+	return adopted.localName.toLowerCase() === "svg"
+		? (adopted as SVGElement)
+		: null;
 }
 
 function resolveRuntime<K extends "katex" | "mermaid">(
@@ -214,7 +277,9 @@ function ensureMermaidInitialized(mermaid: MermaidRuntime): void {
 }
 
 function readRawMarkdown(node: ProseMirrorNode): string {
-	return typeof node.attrs.rawMarkdown === "string" ? node.attrs.rawMarkdown : "";
+	return typeof node.attrs.rawMarkdown === "string"
+		? node.attrs.rawMarkdown
+		: "";
 }
 
 function resolveAtomPosition(
@@ -228,7 +293,12 @@ function resolveAtomPosition(
 	} catch {
 		return null;
 	}
-	if (typeof pos !== "number" || !Number.isInteger(pos) || pos < 0 || pos >= view.state.doc.content.size) {
+	if (
+		typeof pos !== "number" ||
+		!Number.isInteger(pos) ||
+		pos < 0 ||
+		pos >= view.state.doc.content.size
+	) {
 		return null;
 	}
 	const current = view.state.doc.nodeAt(pos);
@@ -247,7 +317,11 @@ function createEl<K extends keyof HTMLElementTagNameMap>(
 	return element;
 }
 
-function makeButton(doc: Document, className: string, label: string): HTMLButtonElement {
+function makeButton(
+	doc: Document,
+	className: string,
+	label: string,
+): HTMLButtonElement {
 	const button = createEl(doc, "button", className, label);
 	button.type = "button";
 	return button;
@@ -287,9 +361,18 @@ class ProtectedAtomNodeView implements NodeView {
 		const doc = view.dom.ownerDocument;
 		this.dom = doc.createElement(isBlock ? "div" : "span");
 		this.dom.setAttribute("contenteditable", "false");
-		this.dom.setAttribute(isBlock ? "data-easymde-protected-block" : "data-easymde-protected-inline", "1");
+		this.dom.setAttribute(
+			isBlock
+				? "data-easymde-protected-block"
+				: "data-easymde-protected-inline",
+			"1",
+		);
 
-		this.previewContainer = createEl(doc, isBlock ? "div" : "span", "easymde-protected-preview");
+		this.previewContainer = createEl(
+			doc,
+			isBlock ? "div" : "span",
+			"easymde-protected-preview",
+		);
 		this.dom.appendChild(this.previewContainer);
 
 		this.onDoubleClick = (event: MouseEvent) => {
@@ -313,7 +396,10 @@ class ProtectedAtomNodeView implements NodeView {
 		const kind = this.currentKind();
 		this.dom.className = KIND_CLASSES[kind];
 		this.dom.setAttribute("data-easymde-protected-kind", kind);
-		this.dom.setAttribute("data-easymde-visual-markdown-source", readRawMarkdown(this.node));
+		this.dom.setAttribute(
+			"data-easymde-visual-markdown-source",
+			readRawMarkdown(this.node),
+		);
 		if (this.editing) {
 			this.dom.classList.add("easymde-protected-editing");
 			this.dom.setAttribute("data-easymde-protected-editing", "1");
@@ -325,7 +411,10 @@ class ProtectedAtomNodeView implements NodeView {
 
 	private applySelectionVisuals(): void {
 		if (this.selected) {
-			this.dom.classList.add("easymde-protected-selected", "ProseMirror-selectednode");
+			this.dom.classList.add(
+				"easymde-protected-selected",
+				"ProseMirror-selectednode",
+			);
 			this.dom.setAttribute("data-easymde-protected-selected", "1");
 			Object.assign(this.dom.style, {
 				outline: "2px solid rgba(34, 113, 177, 0.45)",
@@ -333,7 +422,10 @@ class ProtectedAtomNodeView implements NodeView {
 			});
 			return;
 		}
-		this.dom.classList.remove("easymde-protected-selected", "ProseMirror-selectednode");
+		this.dom.classList.remove(
+			"easymde-protected-selected",
+			"ProseMirror-selectednode",
+		);
 		this.dom.removeAttribute("data-easymde-protected-selected");
 		this.dom.style.removeProperty("outline");
 		this.dom.style.removeProperty("outline-offset");
@@ -353,7 +445,10 @@ class ProtectedAtomNodeView implements NodeView {
 		this.previewContainer.replaceChildren(pre);
 	}
 
-	private renderCardPreview(kind: ProtectedAtomKind, rawMarkdown: string): void {
+	private renderCardPreview(
+		kind: ProtectedAtomKind,
+		rawMarkdown: string,
+	): void {
 		const doc = this.dom.ownerDocument;
 		if (!this.isBlock) {
 			this.previewContainer.replaceChildren(
@@ -362,23 +457,43 @@ class ProtectedAtomNodeView implements NodeView {
 			return;
 		}
 		const card = createEl(doc, "div", "easymde-protected-card");
-		const badge = createEl(doc, "span", "easymde-protected-card-label", this.labels[KIND_LABEL_KEY[kind]]);
-		const body = createEl(doc, "pre", "easymde-protected-card-source", rawMarkdown);
+		const badge = createEl(
+			doc,
+			"span",
+			"easymde-protected-card-label",
+			this.labels[KIND_LABEL_KEY[kind]],
+		);
+		const body = createEl(
+			doc,
+			"pre",
+			"easymde-protected-card-source",
+			rawMarkdown,
+		);
 		Object.assign(body.style, { margin: "4px 0 0", whiteSpace: "pre-wrap" });
 		card.append(badge, body);
 		this.previewContainer.replaceChildren(card);
 	}
 
 	private renderMathPreview(displayMode: boolean, rawMarkdown: string): void {
-		const tex = displayMode ? extractBlockMathTex(rawMarkdown) : extractInlineMathTex(rawMarkdown);
+		const tex = displayMode
+			? extractBlockMathTex(rawMarkdown)
+			: extractInlineMathTex(rawMarkdown);
 		const katex = resolveRuntime("katex", this.options.getKatex);
 		if (!katex || tex.length === 0) {
 			this.renderMonospaceFallback(rawMarkdown);
 			return;
 		}
-		const target = createEl(this.dom.ownerDocument, displayMode ? "div" : "span", "easymde-protected-math-rendered");
+		const target = createEl(
+			this.dom.ownerDocument,
+			displayMode ? "div" : "span",
+			"easymde-protected-math-rendered",
+		);
 		try {
-			katex.render(tex, target, { displayMode, throwOnError: false, strict: "ignore" });
+			katex.render(tex, target, {
+				displayMode,
+				throwOnError: false,
+				strict: "ignore",
+			});
 			this.previewContainer.replaceChildren(target);
 			this.dom.setAttribute("data-easymde-rendered", "1");
 		} catch {
@@ -399,7 +514,12 @@ class ProtectedAtomNodeView implements NodeView {
 		Promise.resolve()
 			.then(() => mermaid.render(renderId, source))
 			.then((result) => {
-				if (this.destroyed || this.editing || this.renderGeneration !== generation) return;
+				if (
+					this.destroyed ||
+					this.editing ||
+					this.renderGeneration !== generation
+				)
+					return;
 				const safeSvg = sanitizeMermaidSvg(
 					typeof result?.svg === "string" ? result.svg : "",
 					this.dom.ownerDocument,
@@ -413,7 +533,11 @@ class ProtectedAtomNodeView implements NodeView {
 				this.previewContainer.replaceChildren(safeSvg);
 			})
 			.catch(() => {
-				if (!this.destroyed && !this.editing && this.renderGeneration === generation) {
+				if (
+					!this.destroyed &&
+					!this.editing &&
+					this.renderGeneration === generation
+				) {
 					this.dom.classList.add("easymde-render-error");
 				}
 			});
@@ -453,9 +577,17 @@ class ProtectedAtomNodeView implements NodeView {
 		const doc = this.dom.ownerDocument;
 		const rawMarkdown = readRawMarkdown(this.node);
 		const kindLabel = this.labels[KIND_LABEL_KEY[this.currentKind()]];
-		const container = createEl(doc, this.isBlock ? "div" : "span", "easymde-protected-editor");
+		const container = createEl(
+			doc,
+			this.isBlock ? "div" : "span",
+			"easymde-protected-editor",
+		);
 
-		const field = createEl(doc, this.isBlock ? "textarea" : "input", "easymde-protected-source-input");
+		const field = createEl(
+			doc,
+			this.isBlock ? "textarea" : "input",
+			"easymde-protected-source-input",
+		);
 		if (field instanceof HTMLTextAreaElement) {
 			field.rows = Math.min(12, Math.max(2, rawMarkdown.split("\n").length));
 			Object.assign(field.style, { width: "100%", boxSizing: "border-box" });
@@ -467,9 +599,21 @@ class ProtectedAtomNodeView implements NodeView {
 		field.value = rawMarkdown;
 		field.setAttribute("aria-label", `${kindLabel} source`);
 
-		const actions = createEl(doc, this.isBlock ? "div" : "span", "easymde-protected-editor-actions");
-		const saveButton = makeButton(doc, "easymde-protected-save-btn", this.labels.save);
-		const cancelButton = makeButton(doc, "easymde-protected-cancel-btn", this.labels.cancel);
+		const actions = createEl(
+			doc,
+			this.isBlock ? "div" : "span",
+			"easymde-protected-editor-actions",
+		);
+		const saveButton = makeButton(
+			doc,
+			"easymde-protected-save-btn",
+			this.labels.save,
+		);
+		const cancelButton = makeButton(
+			doc,
+			"easymde-protected-cancel-btn",
+			this.labels.cancel,
+		);
 		actions.append(saveButton, cancelButton);
 		container.append(field, actions);
 
@@ -483,11 +627,13 @@ class ProtectedAtomNodeView implements NodeView {
 				this.commitRawEditor(field.value);
 			}
 		};
-		const onButton = (action: () => void) => (event: MouseEvent): void => {
-			event.preventDefault();
-			event.stopPropagation();
-			action();
-		};
+		const onButton =
+			(action: () => void) =>
+			(event: MouseEvent): void => {
+				event.preventDefault();
+				event.stopPropagation();
+				action();
+			};
 		const onSave = onButton(() => this.commitRawEditor(field.value));
 		const onCancel = onButton(() => this.cancelRawEditor());
 
@@ -583,10 +729,16 @@ class ProtectedAtomNodeView implements NodeView {
 	}
 }
 
-export function createProtectedBlockNodeView(options: ProtectedAtomNodeViewOptions = {}): NodeViewConstructor {
-	return (node, view, getPos) => new ProtectedAtomNodeView(node, view, getPos, true, options);
+export function createProtectedBlockNodeView(
+	options: ProtectedAtomNodeViewOptions = {},
+): NodeViewConstructor {
+	return (node, view, getPos) =>
+		new ProtectedAtomNodeView(node, view, getPos, true, options);
 }
 
-export function createProtectedInlineNodeView(options: ProtectedAtomNodeViewOptions = {}): NodeViewConstructor {
-	return (node, view, getPos) => new ProtectedAtomNodeView(node, view, getPos, false, options);
+export function createProtectedInlineNodeView(
+	options: ProtectedAtomNodeViewOptions = {},
+): NodeViewConstructor {
+	return (node, view, getPos) =>
+		new ProtectedAtomNodeView(node, view, getPos, false, options);
 }

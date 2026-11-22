@@ -39,7 +39,9 @@ function resolveTaskItemPosition(
 		return null;
 	}
 	const resolvedNode = view.state.doc.nodeAt(pos);
-	return resolvedNode && resolvedNode.type.name === expectedTypeName ? pos : null;
+	return resolvedNode && resolvedNode.type.name === expectedTypeName
+		? pos
+		: null;
 }
 
 class TaskItemNodeView implements NodeView {
@@ -135,7 +137,11 @@ class TaskItemNodeView implements NodeView {
 			this.syncCheckedState(readCheckedAttr(this.node));
 			return;
 		}
-		const pos = resolveTaskItemPosition(this.getPos, this.view, this.node.type.name);
+		const pos = resolveTaskItemPosition(
+			this.getPos,
+			this.view,
+			this.node.type.name,
+		);
 		if (pos === null) {
 			this.syncCheckedState(readCheckedAttr(this.node));
 			return;
@@ -188,5 +194,6 @@ class TaskItemNodeView implements NodeView {
 export function createTaskItemNodeView(
 	options: TaskItemNodeViewOptions = {},
 ): NodeViewConstructor {
-	return (node, view, getPos) => new TaskItemNodeView(node, view, getPos, options);
+	return (node, view, getPos) =>
+		new TaskItemNodeView(node, view, getPos, options);
 }

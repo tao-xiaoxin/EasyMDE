@@ -22,11 +22,30 @@ export type ParsedImageScaleTitle = Readonly<{
 	title: string | null;
 }>;
 
-const markdownItParser = new MarkdownIt({ html: false, linkify: false, breaks: false });
+export type ParsedVisualBlockSource = Readonly<{
+	node: ProseMirrorNode;
+	raw: string | null;
+	separatorBefore: string;
+}>;
+
+export type ParsedVisualDocument = Readonly<{
+	blocks: ReadonlyArray<ParsedVisualBlockSource>;
+	doc: ProseMirrorNode;
+	leadingPrefix: string;
+	trailingSuffix: string;
+}>;
+
+const markdownItParser = new MarkdownIt({
+	html: false,
+	linkify: false,
+	breaks: false,
+});
 
 type MarkdownToken = ReturnType<typeof markdownItParser.parse>[number];
 
-export function parseImageScaleTitle(rawTitle: string | null | undefined): ParsedImageScaleTitle {
+export function parseImageScaleTitle(
+	rawTitle: string | null | undefined,
+): ParsedImageScaleTitle {
 	if (typeof rawTitle !== "string" || rawTitle.length === 0) {
 		return { scale: null, title: null };
 	}
@@ -34,7 +53,9 @@ export function parseImageScaleTitle(rawTitle: string | null | undefined): Parse
 	if (markerStart < 0 || rawTitle.indexOf("{width=", markerStart + 1) >= 0) {
 		return { scale: null, title: rawTitle };
 	}
-	const match = /^\{width=(25|33|50|67|100|150|200)%\}$/.exec(rawTitle.slice(markerStart));
+	const match = /^\{width=(25|33|50|67|100|150|200)%\}$/.exec(
+		rawTitle.slice(markerStart),
+	);
 	const parsedScale = match?.[1] ? Number(match[1]) : null;
 	if (!isValidVisualImageScale(parsedScale)) {
 		return { scale: null, title: rawTitle };
@@ -75,7 +96,10 @@ function applyTableAlignmentAnnotation(
 	let decoded: unknown;
 	try {
 		decoded = JSON.parse(
-			annotationComment.slice(TABLE_ALIGN_PREFIX.length, -TABLE_ALIGN_SUFFIX.length),
+			annotationComment.slice(
+				TABLE_ALIGN_PREFIX.length,
+				-TABLE_ALIGN_SUFFIX.length,
+			),
 		) as unknown;
 	} catch {
 		return rows;
@@ -90,7 +114,11 @@ function applyTableAlignmentAnnotation(
 		if (!Array.isArray(entry)) {
 			continue;
 		}
-		if (entry.length === 2 && typeof entry[0] === "number" && isValidTableTextAlign(entry[1])) {
+		if (
+			entry.length === 2 &&
+			typeof entry[0] === "number" &&
+			isValidTableTextAlign(entry[1])
+		) {
 			rowOverrides.set(entry[0], entry[1]);
 		} else if (
 			entry.length === 3 &&
@@ -109,10 +137,15 @@ function applyTableAlignmentAnnotation(
 		const updatedCells: ProseMirrorNode[] = [];
 		for (let colIndex = 0; colIndex < rowNode.childCount; colIndex += 1) {
 			const cell = rowNode.child(colIndex);
-			const override = cellOverrides.get(`${rowIndex}:${colIndex}`) ?? rowOverrides.get(rowIndex);
+			const override =
+				cellOverrides.get(`${rowIndex}:${colIndex}`) ??
+				rowOverrides.get(rowIndex);
 			updatedCells.push(
 				override !== undefined
-					? cell.type.create({ ...cell.attrs, textAlign: override }, cell.content)
+					? cell.type.create(
+							{ ...cell.attrs, textAlign: override },
+							cell.content,
+						)
 					: cell,
 			);
 		}
@@ -146,7 +179,12 @@ function splitTextWithProtectedInlines(
 		let match = tokenPattern.exec(segment);
 		while (match !== null) {
 			if (match.index > lastPos) {
-				result.push(visualEditorSchema.text(segment.slice(lastPos, match.index), activeMarks));
+				result.push(
+					visualEditorSchema.text(
+						segment.slice(lastPos, match.index),
+						activeMarks,
+					),
+				);
 			}
 			const entry = preScan.protectedInlines.get(match[0]);
 			result.push(
@@ -195,12 +233,19 @@ function mapInlineTokens(
 		switch (token.type) {
 			case "text":
 				output.push(
-					...splitTextWithProtectedInlines(token.content, currentMarkSet(), preScan, inTableCell),
+					...splitTextWithProtectedInlines(
+						token.content,
+						currentMarkSet(),
+						preScan,
+						inTableCell,
+					),
 				);
 				break;
 			case "code_inline":
 				if (token.content.length > 0) {
-					const codeMarks = visualEditorSchema.marks.code.create().addToSet(currentMarkSet());
+					const codeMarks = visualEditorSchema.marks.code
+						.create()
+						.addToSet(currentMarkSet());
 					output.push(visualEditorSchema.text(token.content, codeMarks));
 				}
 				break;
@@ -243,7 +288,9 @@ function mapInlineTokens(
 				break;
 			case "image": {
 				const parsed = parseImageScaleTitle(tokenAttrString(token, "title"));
-				const alt = token.children ? token.children.map((c) => c.content).join("") : token.content;
+				const alt = token.children
+					? token.children.map((c) => c.content).join("")
+					: token.content;
 				output.push(
 					visualEditorSchema.nodes.image.create(
 						{
@@ -261,7 +308,12 @@ function mapInlineTokens(
 			default:
 				if (token.content.length > 0) {
 					output.push(
-						...splitTextWithProtectedInlines(token.content, currentMarkSet(), preScan, inTableCell),
+						...splitTextWithProtectedInlines(
+							token.content,
+							currentMarkSet(),
+							preScan,
+							inTableCell,
+						),
 					);
 				}
 				break;
@@ -288,17 +340,23 @@ function stripTaskPrefix(
 		return null;
 	}
 	const remaining = text.slice(match[0].length);
-	const inlines: ProseMirrorNode[] = remaining.length > 0 ? [visualEditorSchema.text(remaining)] : [];
+	const inlines: ProseMirrorNode[] =
+		remaining.length > 0 ? [visualEditorSchema.text(remaining)] : [];
 	for (let i = 1; i < firstBlock.childCount; i += 1) {
 		inlines.push(firstBlock.child(i));
 	}
 	return {
 		checked: match[1].toLowerCase() === "x",
-		children: [visualEditorSchema.nodes.paragraph.create(null, inlines), ...itemChildren.slice(1)],
+		children: [
+			visualEditorSchema.nodes.paragraph.create(null, inlines),
+			...itemChildren.slice(1),
+		],
 	};
 }
 
-function ensureListItemChildren(blocks: ReadonlyArray<ProseMirrorNode>): ProseMirrorNode[] {
+function ensureListItemChildren(
+	blocks: ReadonlyArray<ProseMirrorNode>,
+): ProseMirrorNode[] {
 	const first = blocks[0];
 	if (!first || first.type !== visualEditorSchema.nodes.paragraph) {
 		return [visualEditorSchema.nodes.paragraph.create(), ...blocks];
@@ -355,7 +413,9 @@ function mapTableTokens(
 			);
 			const inlineToken = tokens[j + 1];
 			const inlineNodes =
-				inlineToken?.type === "inline" ? mapInlineTokens(inlineToken.children, preScan, true) : [];
+				inlineToken?.type === "inline"
+					? mapInlineTokens(inlineToken.children, preScan, true)
+					: [];
 			const cellType = isHeader
 				? visualEditorSchema.nodes.table_header
 				: visualEditorSchema.nodes.table_cell;
@@ -376,7 +436,10 @@ function mapTableTokens(
 	if (rows.length === 0) {
 		rows.push(
 			visualEditorSchema.nodes.table_row.create(null, [
-				visualEditorSchema.nodes.table_header.create(null, visualEditorSchema.nodes.paragraph.create()),
+				visualEditorSchema.nodes.table_header.create(
+					null,
+					visualEditorSchema.nodes.paragraph.create(),
+				),
 			]),
 		);
 	}
@@ -390,9 +453,14 @@ function mapTableTokens(
 		}
 	}
 
-	const finalRows = alignAnnotation ? applyTableAlignmentAnnotation(rows, alignAnnotation) : rows;
+	const finalRows = alignAnnotation
+		? applyTableAlignmentAnnotation(rows, alignAnnotation)
+		: rows;
 	return visualEditorSchema.nodes.table.create(
-		{ alignAnnotation, columnAlignments: alignAnnotation ? baseColumnAlignments : null },
+		{
+			alignAnnotation,
+			columnAlignments: alignAnnotation ? baseColumnAlignments : null,
+		},
 		finalRows,
 	);
 }
@@ -408,8 +476,15 @@ function collectListItems(
 		if (tokens[i]?.type !== "list_item_open") {
 			continue;
 		}
-		const itemClose = findMatchingCloseIndex(tokens, i, "list_item_open", "list_item_close");
-		items.push(ensureListItemChildren(mapBlockTokens(tokens, i + 1, itemClose, preScan)));
+		const itemClose = findMatchingCloseIndex(
+			tokens,
+			i,
+			"list_item_open",
+			"list_item_close",
+		);
+		items.push(
+			ensureListItemChildren(mapBlockTokens(tokens, i + 1, itemClose, preScan)),
+		);
 		i = itemClose;
 	}
 	return items;
@@ -450,7 +525,10 @@ function mapBulletListTokens(
 		currentIsTask = isTask;
 		currentGroup.push(
 			task
-				? visualEditorSchema.nodes.task_item.create({ checked: task.checked }, task.children)
+				? visualEditorSchema.nodes.task_item.create(
+						{ checked: task.checked },
+						task.children,
+					)
 				: visualEditorSchema.nodes.list_item.create(null, children),
 		);
 	}
@@ -461,16 +539,24 @@ function mapBulletListTokens(
 function mapCodeToken(token: MarkdownToken): ProseMirrorNode {
 	const isFence = token.type === "fence";
 	const fenceChar = isFence && token.markup.startsWith("~") ? "~" : "`";
-	const fenceLength = isFence && token.markup.length >= 3 ? token.markup.length : 3;
+	const fenceLength =
+		isFence && token.markup.length >= 3 ? token.markup.length : 3;
 	const info = isFence ? token.info.trim() : "";
 	const language = info ? (info.split(/\s+/)[0] ?? "") : "";
-	const rawContent = token.content.endsWith("\n") ? token.content.slice(0, -1) : token.content;
+	const rawContent = token.content.endsWith("\n")
+		? token.content.slice(0, -1)
+		: token.content;
 
 	if (language.toLowerCase() === "mermaid") {
 		const fence = fenceChar.repeat(fenceLength);
 		const rawMarkdown =
-			rawContent.length > 0 ? `${fence}${info}\n${rawContent}\n${fence}` : `${fence}${info}\n${fence}`;
-		return visualEditorSchema.nodes.protected_block.create({ kind: "mermaid", rawMarkdown });
+			rawContent.length > 0
+				? `${fence}${info}\n${rawContent}\n${fence}`
+				: `${fence}${info}\n${fence}`;
+		return visualEditorSchema.nodes.protected_block.create({
+			kind: "mermaid",
+			rawMarkdown,
+		});
 	}
 	return visualEditorSchema.nodes.code_block.create(
 		{ language, info, fenceChar, fenceLength },
@@ -478,20 +564,77 @@ function mapCodeToken(token: MarkdownToken): ProseMirrorNode {
 	);
 }
 
-function mapBlockTokens(
+type MappedBlockEntry = Readonly<{
+	node: ProseMirrorNode;
+	origRange: Readonly<{ end: number; start: number }> | null;
+}>;
+
+function resolveOriginalRangeFromTokenMap(
+	map: [number, number] | null | undefined,
+	preScan: PreScanResult,
+): Readonly<{ end: number; start: number }> | null {
+	if (!map || map.length < 2) {
+		return null;
+	}
+	const startLine = map[0];
+	const endLine = map[1];
+	if (
+		!Number.isInteger(startLine) ||
+		!Number.isInteger(endLine) ||
+		startLine < 0 ||
+		endLine <= startLine
+	) {
+		return null;
+	}
+	let origStart = Number.POSITIVE_INFINITY;
+	let origEnd = -1;
+	for (let lineIdx = startLine; lineIdx < endLine; lineIdx += 1) {
+		const range = preScan.outputLineRanges[lineIdx];
+		if (!range) {
+			continue;
+		}
+		if (range.start < origStart) {
+			origStart = range.start;
+		}
+		if (range.end > origEnd) {
+			origEnd = range.end;
+		}
+	}
+	if (!Number.isFinite(origStart) || origEnd <= origStart) {
+		return null;
+	}
+	// markdown-it can include trailing blank lines in list/blockquote token maps;
+	// trim trailing blank lines so the exact inter-block separator stays outside the block.
+	while (
+		origEnd > origStart &&
+		(preScan.rawLines[origEnd - 1] ?? "").trim().length === 0
+	) {
+		origEnd -= 1;
+	}
+	return origEnd > origStart ? { start: origStart, end: origEnd } : null;
+}
+
+function mapBlockTokensWithRanges(
 	tokens: ReadonlyArray<MarkdownToken>,
 	startIndex: number,
 	endIndex: number,
 	preScan: PreScanResult,
-): ProseMirrorNode[] {
-	const blocks: ProseMirrorNode[] = [];
-	let pendingTableAlign: string | null = null;
+): MappedBlockEntry[] {
+	const entries: MappedBlockEntry[] = [];
+	let pendingTableAlign: Readonly<{
+		marker: string;
+		origRange: Readonly<{ end: number; start: number }> | null;
+	}> | null = null;
 
 	const flushOrphanTableAlign = (): void => {
 		if (pendingTableAlign !== null) {
-			blocks.push(
-				visualEditorSchema.nodes.protected_block.create({ kind: "raw", rawMarkdown: pendingTableAlign }),
-			);
+			entries.push({
+				node: visualEditorSchema.nodes.protected_block.create({
+					kind: "raw",
+					rawMarkdown: pendingTableAlign.marker,
+				}),
+				origRange: pendingTableAlign.origRange,
+			});
 			pendingTableAlign = null;
 		}
 	};
@@ -503,14 +646,21 @@ function mapBlockTokens(
 		}
 
 		if (token.type === "paragraph_open") {
-			const closeIdx = findMatchingCloseIndex(tokens, i, "paragraph_open", "paragraph_close");
+			const closeIdx = findMatchingCloseIndex(
+				tokens,
+				i,
+				"paragraph_open",
+				"paragraph_close",
+			);
 			const inlineToken = tokens[i + 1];
-			const trimmed = inlineToken?.type === "inline" ? inlineToken.content.trim() : "";
+			const trimmed =
+				inlineToken?.type === "inline" ? inlineToken.content.trim() : "";
+			const origRange = resolveOriginalRangeFromTokenMap(token.map, preScan);
 
 			const tableAlign = preScan.tableAlignMarkers.get(trimmed);
 			if (tableAlign !== undefined) {
 				flushOrphanTableAlign();
-				pendingTableAlign = tableAlign;
+				pendingTableAlign = { marker: tableAlign, origRange };
 				i = closeIdx;
 				continue;
 			}
@@ -518,86 +668,246 @@ function mapBlockTokens(
 
 			const protectedEntry = preScan.protectedBlocks.get(trimmed);
 			if (protectedEntry) {
-				blocks.push(visualEditorSchema.nodes.protected_block.create(protectedEntry));
+				entries.push({
+					node: visualEditorSchema.nodes.protected_block.create(protectedEntry),
+					origRange,
+				});
 			} else if (/^\[TOC\]$/i.test(trimmed)) {
-				blocks.push(
-					visualEditorSchema.nodes.protected_block.create({ kind: "toc", rawMarkdown: trimmed }),
-				);
+				entries.push({
+					node: visualEditorSchema.nodes.protected_block.create({
+						kind: "toc",
+						rawMarkdown: trimmed,
+					}),
+					origRange,
+				});
 			} else {
 				const inlines =
-					inlineToken?.type === "inline" ? mapInlineTokens(inlineToken.children, preScan, false) : [];
-				blocks.push(visualEditorSchema.nodes.paragraph.create(null, inlines));
+					inlineToken?.type === "inline"
+						? mapInlineTokens(inlineToken.children, preScan, false)
+						: [];
+				entries.push({
+					node: visualEditorSchema.nodes.paragraph.create(null, inlines),
+					origRange,
+				});
 			}
 			i = closeIdx;
 			continue;
 		}
 
 		if (token.type === "table_open") {
-			const closeIdx = findMatchingCloseIndex(tokens, i, "table_open", "table_close");
+			const closeIdx = findMatchingCloseIndex(
+				tokens,
+				i,
+				"table_open",
+				"table_close",
+			);
 			const annotation = pendingTableAlign;
 			pendingTableAlign = null;
-			blocks.push(mapTableTokens(tokens, i, closeIdx, preScan, annotation));
+			const tableRange = resolveOriginalRangeFromTokenMap(token.map, preScan);
+			const combinedRange =
+				tableRange && annotation?.origRange
+					? {
+							start: Math.min(annotation.origRange.start, tableRange.start),
+							end: Math.max(annotation.origRange.end, tableRange.end),
+						}
+					: tableRange;
+			entries.push({
+				node: mapTableTokens(
+					tokens,
+					i,
+					closeIdx,
+					preScan,
+					annotation?.marker ?? null,
+				),
+				origRange: combinedRange,
+			});
 			i = closeIdx;
 			continue;
 		}
 
 		flushOrphanTableAlign();
+		const origRange = resolveOriginalRangeFromTokenMap(token.map, preScan);
 
 		if (token.type === "heading_open") {
-			const closeIdx = findMatchingCloseIndex(tokens, i, "heading_open", "heading_close");
-			const level = normalizeHeadingLevel(Number.parseInt(token.tag.slice(1), 10));
+			const closeIdx = findMatchingCloseIndex(
+				tokens,
+				i,
+				"heading_open",
+				"heading_close",
+			);
+			const level = normalizeHeadingLevel(
+				Number.parseInt(token.tag.slice(1), 10),
+			);
 			const inlineToken = tokens[i + 1];
 			const inlines =
-				inlineToken?.type === "inline" ? mapInlineTokens(inlineToken.children, preScan, false) : [];
-			blocks.push(visualEditorSchema.nodes.heading.create({ level }, inlines));
+				inlineToken?.type === "inline"
+					? mapInlineTokens(inlineToken.children, preScan, false)
+					: [];
+			entries.push({
+				node: visualEditorSchema.nodes.heading.create({ level }, inlines),
+				origRange,
+			});
 			i = closeIdx;
 		} else if (token.type === "blockquote_open") {
-			const closeIdx = findMatchingCloseIndex(tokens, i, "blockquote_open", "blockquote_close");
-			const inner = mapBlockTokens(tokens, i + 1, closeIdx, preScan);
-			blocks.push(
-				visualEditorSchema.nodes.blockquote.create(
-					null,
-					inner.length > 0 ? inner : [visualEditorSchema.nodes.paragraph.create()],
-				),
+			const closeIdx = findMatchingCloseIndex(
+				tokens,
+				i,
+				"blockquote_open",
+				"blockquote_close",
 			);
+			const inner = mapBlockTokens(tokens, i + 1, closeIdx, preScan);
+			entries.push({
+				node: visualEditorSchema.nodes.blockquote.create(
+					null,
+					inner.length > 0
+						? inner
+						: [visualEditorSchema.nodes.paragraph.create()],
+				),
+				origRange,
+			});
 			i = closeIdx;
 		} else if (token.type === "bullet_list_open") {
-			const closeIdx = findMatchingCloseIndex(tokens, i, "bullet_list_open", "bullet_list_close");
-			blocks.push(...mapBulletListTokens(tokens, i, closeIdx, preScan));
+			const closeIdx = findMatchingCloseIndex(
+				tokens,
+				i,
+				"bullet_list_open",
+				"bullet_list_close",
+			);
+			const listNodes = mapBulletListTokens(tokens, i, closeIdx, preScan);
+			if (listNodes.length === 1 && listNodes[0]) {
+				entries.push({ node: listNodes[0], origRange });
+			} else {
+				for (const listNode of listNodes) {
+					entries.push({ node: listNode, origRange: null });
+				}
+			}
 			i = closeIdx;
 		} else if (token.type === "ordered_list_open") {
-			const closeIdx = findMatchingCloseIndex(tokens, i, "ordered_list_open", "ordered_list_close");
-			const parsedOrder = Number.parseInt(tokenAttrString(token, "start") ?? "1", 10);
-			const order = Number.isInteger(parsedOrder) && parsedOrder > 0 ? parsedOrder : 1;
-			const items = collectListItems(tokens, i, closeIdx, preScan).map((children) =>
-				visualEditorSchema.nodes.list_item.create(null, children),
+			const closeIdx = findMatchingCloseIndex(
+				tokens,
+				i,
+				"ordered_list_open",
+				"ordered_list_close",
+			);
+			const parsedOrder = Number.parseInt(
+				tokenAttrString(token, "start") ?? "1",
+				10,
+			);
+			const order =
+				Number.isInteger(parsedOrder) && parsedOrder > 0 ? parsedOrder : 1;
+			const items = collectListItems(tokens, i, closeIdx, preScan).map(
+				(children) => visualEditorSchema.nodes.list_item.create(null, children),
 			);
 			if (items.length > 0) {
-				blocks.push(visualEditorSchema.nodes.ordered_list.create({ order }, items));
+				entries.push({
+					node: visualEditorSchema.nodes.ordered_list.create({ order }, items),
+					origRange,
+				});
 			}
 			i = closeIdx;
 		} else if (token.type === "fence" || token.type === "code_block") {
-			blocks.push(mapCodeToken(token));
+			entries.push({ node: mapCodeToken(token), origRange });
 		} else if (token.type === "hr") {
-			blocks.push(visualEditorSchema.nodes.horizontal_rule.create());
+			entries.push({
+				node: visualEditorSchema.nodes.horizontal_rule.create(),
+				origRange,
+			});
 		}
 	}
 
 	flushOrphanTableAlign();
-	return blocks;
+	return entries;
 }
 
-export function parseMarkdownToVisualDoc(markdown: string): ProseMirrorNode {
+function mapBlockTokens(
+	tokens: ReadonlyArray<MarkdownToken>,
+	startIndex: number,
+	endIndex: number,
+	preScan: PreScanResult,
+): ProseMirrorNode[] {
+	return mapBlockTokensWithRanges(tokens, startIndex, endIndex, preScan).map(
+		(entry) => entry.node,
+	);
+}
+
+export function parseMarkdownWithBlockSources(
+	markdown: string,
+): ParsedVisualDocument {
 	if (markdown.trim().length === 0) {
-		return visualEditorSchema.nodes.doc.create(null, [visualEditorSchema.nodes.paragraph.create()]);
+		return {
+			blocks: [],
+			doc: visualEditorSchema.nodes.doc.create(null, [
+				visualEditorSchema.nodes.paragraph.create(),
+			]),
+			leadingPrefix: "",
+			trailingSuffix: "",
+		};
 	}
 	const preScan = prescanMarkdown(markdown);
 	const env: Record<string, unknown> =
-		Object.keys(preScan.references).length > 0 ? { references: { ...preScan.references } } : {};
+		Object.keys(preScan.references).length > 0
+			? { references: { ...preScan.references } }
+			: {};
 	const tokens = markdownItParser.parse(preScan.markdown, env);
-	const blocks = mapBlockTokens(tokens, 0, tokens.length, preScan);
-	return visualEditorSchema.nodes.doc.create(
+	const mapped = mapBlockTokensWithRanges(tokens, 0, tokens.length, preScan);
+	const doc = visualEditorSchema.nodes.doc.create(
 		null,
-		blocks.length > 0 ? blocks : [visualEditorSchema.nodes.paragraph.create()],
+		mapped.length > 0
+			? mapped.map((entry) => entry.node)
+			: [visualEditorSchema.nodes.paragraph.create()],
 	);
+
+	const rawLines = preScan.rawLines;
+	const firstRange = mapped[0]?.origRange ?? null;
+	const leadingPrefix =
+		firstRange && firstRange.start > 0
+			? `${rawLines.slice(0, firstRange.start).join("\n")}\n`
+			: "";
+
+	let lastKnownEnd = 0;
+	let hasMonotonicRanges = mapped.length > 0;
+	const blocks: ParsedVisualBlockSource[] = [];
+
+	for (let idx = 0; idx < mapped.length; idx += 1) {
+		const entry = mapped[idx];
+		if (!entry) {
+			continue;
+		}
+		const range = entry.origRange;
+		if (range && range.start >= lastKnownEnd && range.end <= rawLines.length) {
+			const raw = rawLines.slice(range.start, range.end).join("\n");
+			const separatorBefore =
+				idx === 0
+					? ""
+					: range.start > lastKnownEnd
+						? `\n${rawLines.slice(lastKnownEnd, range.start).join("\n")}\n`
+						: "\n";
+			blocks.push({ node: entry.node, raw, separatorBefore });
+			lastKnownEnd = range.end;
+		} else {
+			hasMonotonicRanges = false;
+			blocks.push({
+				node: entry.node,
+				raw: null,
+				separatorBefore: idx === 0 ? "" : "\n\n",
+			});
+		}
+	}
+
+	const lastRange = mapped[mapped.length - 1]?.origRange ?? null;
+	const trailingSuffix =
+		hasMonotonicRanges && lastRange && lastRange.end < rawLines.length
+			? `\n${rawLines.slice(lastRange.end).join("\n")}`
+			: "";
+
+	return {
+		blocks,
+		doc,
+		leadingPrefix: hasMonotonicRanges ? leadingPrefix : "",
+		trailingSuffix,
+	};
+}
+
+export function parseMarkdownToVisualDoc(markdown: string): ProseMirrorNode {
+	return parseMarkdownWithBlockSources(markdown).doc;
 }

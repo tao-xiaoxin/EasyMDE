@@ -15,10 +15,17 @@ export type ReferenceDefinition = Readonly<{
 	title: string;
 }>;
 
+export type PrescannedLineRange = Readonly<{
+	end: number;
+	start: number;
+}>;
+
 export type PreScanResult = Readonly<{
 	markdown: string;
+	outputLineRanges: ReadonlyArray<PrescannedLineRange | null>;
 	protectedBlocks: ReadonlyMap<string, ProtectedBlockEntry>;
 	protectedInlines: ReadonlyMap<string, ProtectedInlineEntry>;
+	rawLines: ReadonlyArray<string>;
 	references: Record<string, ReferenceDefinition>;
 	sentinel: string;
 	tableAlignMarkers: ReadonlyMap<string, string>;
@@ -65,9 +72,11 @@ function createCollisionFreeSentinel(source: string): string {
 	return sentinel;
 }
 
-function matchFenceOpener(
-	line: string,
-): Readonly<{ fenceChar: "`" | "~"; fenceLength: number; info: string }> | null {
+function matchFenceOpener(line: string): Readonly<{
+	fenceChar: "`" | "~";
+	fenceLength: number;
+	info: string;
+}> | null {
 	const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
 	if (!match?.[1]) {
 		return null;
@@ -80,22 +89,34 @@ function matchFenceOpener(
 	return { fenceChar, fenceLength: match[1].length, info };
 }
 
-function isFenceCloser(line: string, fenceChar: "`" | "~", fenceLength: number): boolean {
+function isFenceCloser(
+	line: string,
+	fenceChar: "`" | "~",
+	fenceLength: number,
+): boolean {
 	const match =
-		fenceChar === "`" ? /^ {0,3}(`{3,})[ \t]*$/.exec(line) : /^ {0,3}(~{3,})[ \t]*$/.exec(line);
+		fenceChar === "`"
+			? /^ {0,3}(`{3,})[ \t]*$/.exec(line)
+			: /^ {0,3}(~{3,})[ \t]*$/.exec(line);
 	return Boolean(match?.[1] && match[1].length >= fenceLength);
 }
 
 function isGfmTableStart(lines: ReadonlyArray<string>, index: number): boolean {
 	const headerLine = lines[index];
 	const delimiterLine = lines[index + 1];
-	if (headerLine === undefined || delimiterLine === undefined || !headerLine.includes("|")) {
+	if (
+		headerLine === undefined ||
+		delimiterLine === undefined ||
+		!headerLine.includes("|")
+	) {
 		return false;
 	}
 	const trimmedDelim = delimiterLine.trim();
 	return (
 		trimmedDelim.includes("-") &&
-		(/^\|?[ \t]*:?-{1,}:?[ \t]*(?:\|[ \t]*:?-{1,}:?[ \t]*)+\|?$/.test(trimmedDelim) ||
+		(/^\|?[ \t]*:?-{1,}:?[ \t]*(?:\|[ \t]*:?-{1,}:?[ \t]*)+\|?$/.test(
+			trimmedDelim,
+		) ||
 			/^\|[ \t]*:?-{1,}:?[ \t]*\|$/.test(trimmedDelim))
 	);
 }
@@ -136,11 +157,18 @@ function matchHtmlBlockOpener(
 	return { tagName, selfClosing: match[0].endsWith("/>") || tagName === "hr" };
 }
 
-function findHtmlBlockEnd(lines: ReadonlyArray<string>, startIndex: number, tagName: string): number {
+function findHtmlBlockEnd(
+	lines: ReadonlyArray<string>,
+	startIndex: number,
+	tagName: string,
+): number {
 	const openPattern = new RegExp(`<${tagName}(?=[\\s>/])[^>]*>`, "gi");
 	const closePattern = new RegExp(`</${tagName}\\s*>`, "gi");
 	let depth = 0;
-	let activeFence: Readonly<{ fenceChar: "`" | "~"; fenceLength: number }> | null = null;
+	let activeFence: Readonly<{
+		fenceChar: "`" | "~";
+		fenceLength: number;
+	}> | null = null;
 
 	for (let i = startIndex; i < lines.length; i += 1) {
 		const line = lines[i] ?? "";
@@ -153,7 +181,10 @@ function findHtmlBlockEnd(lines: ReadonlyArray<string>, startIndex: number, tagN
 		if (i > startIndex) {
 			const fence = matchFenceOpener(line);
 			if (fence) {
-				activeFence = { fenceChar: fence.fenceChar, fenceLength: fence.fenceLength };
+				activeFence = {
+					fenceChar: fence.fenceChar,
+					fenceLength: fence.fenceLength,
+				};
 				continue;
 			}
 		}
@@ -188,7 +219,10 @@ function extractInlineProtectedSyntax(
 	let index = 0;
 	const length = line.length;
 
-	const allocateToken = (kind: ProtectedInlineKind, rawMarkdown: string): string => {
+	const allocateToken = (
+		kind: ProtectedInlineKind,
+		rawMarkdown: string,
+	): string => {
 		const token = `${sentinel}INL${protectedInlines.size}END`;
 		protectedInlines.set(token, { kind, rawMarkdown });
 		return token;
@@ -213,7 +247,8 @@ function extractInlineProtectedSyntax(
 					break;
 				}
 				const beforeIsTick = found > 0 && line[found - 1] === "`";
-				const afterIsTick = found + tickLen < length && line[found + tickLen] === "`";
+				const afterIsTick =
+					found + tickLen < length && line[found + tickLen] === "`";
 				if (!beforeIsTick && !afterIsTick) {
 					closePos = found;
 					break;
@@ -287,7 +322,10 @@ function extractInlineProtectedSyntax(
 		if (ch === "<" && line.startsWith("<!--", index)) {
 			const closeComment = line.indexOf("-->", index + 4);
 			if (closeComment >= 0) {
-				result += allocateToken("raw-inline", line.slice(index, closeComment + 3));
+				result += allocateToken(
+					"raw-inline",
+					line.slice(index, closeComment + 3),
+				);
 				index = closeComment + 3;
 				continue;
 			}
@@ -305,19 +343,34 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 	const sentinel = createCollisionFreeSentinel(normalized);
 	const lines = normalized.split("\n");
 	const outputLines: string[] = [];
+	const outputLineRanges: Array<PrescannedLineRange | null> = [];
 	const protectedBlocks = new Map<string, ProtectedBlockEntry>();
 	const protectedInlines = new Map<string, ProtectedInlineEntry>();
 	const tableAlignMarkers = new Map<string, string>();
 	const references: Record<string, ReferenceDefinition> = {};
 
-	const pushProtectedBlock = (kind: ProtectedBlockKind, blockRaw: string): void => {
+	const pushOutputLine = (
+		text: string,
+		range: PrescannedLineRange | null,
+	): void => {
+		outputLines.push(text);
+		outputLineRanges.push(range);
+	};
+
+	const pushProtectedBlock = (
+		kind: ProtectedBlockKind,
+		blockRaw: string,
+		origStart: number,
+		origEnd: number,
+	): void => {
 		const token = `${sentinel}BLK${protectedBlocks.size}END`;
 		protectedBlocks.set(token, { kind, rawMarkdown: blockRaw });
 		const prevLine = outputLines[outputLines.length - 1];
 		if (prevLine !== undefined && prevLine.trim().length > 0) {
-			outputLines.push("");
+			pushOutputLine("", null);
 		}
-		outputLines.push(token, "");
+		pushOutputLine(token, { start: origStart, end: origEnd });
+		pushOutputLine("", null);
 	};
 
 	let i = 0;
@@ -331,7 +384,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 
 		if ((prevWasBlank || inIndentedCode) && /^(?: {4}|\t)/.test(line)) {
 			inIndentedCode = true;
-			outputLines.push(line);
+			pushOutputLine(line, { start: i, end: i + 1 });
 			i += 1;
 			continue;
 		}
@@ -343,16 +396,24 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		const fence = matchFenceOpener(line);
 		if (fence) {
 			let end = i + 1;
-			while (end < lines.length && !isFenceCloser(lines[end] ?? "", fence.fenceChar, fence.fenceLength)) {
+			while (
+				end < lines.length &&
+				!isFenceCloser(lines[end] ?? "", fence.fenceChar, fence.fenceLength)
+			) {
 				end += 1;
 			}
 			const blockEnd = end < lines.length ? end : lines.length - 1;
 			const lang = (fence.info.trim().split(/\s+/)[0] ?? "").toLowerCase();
 			if (lang === "mermaid") {
-				pushProtectedBlock("mermaid", lines.slice(i, blockEnd + 1).join("\n"));
+				pushProtectedBlock(
+					"mermaid",
+					lines.slice(i, blockEnd + 1).join("\n"),
+					i,
+					blockEnd + 1,
+				);
 			} else {
 				for (let k = i; k <= blockEnd; k += 1) {
-					outputLines.push(lines[k] ?? "");
+					pushOutputLine(lines[k] ?? "", { start: k, end: k + 1 });
 				}
 			}
 			i = blockEnd + 1;
@@ -367,7 +428,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		) {
 			const markerToken = `${sentinel}TBLALIGN${tableAlignMarkers.size}END`;
 			tableAlignMarkers.set(markerToken, trimmed);
-			outputLines.push(markerToken);
+			pushOutputLine(markerToken, { start: i, end: i + 1 });
 			i += 1;
 			continue;
 		}
@@ -375,7 +436,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		// 3. Block math: $$...$$ and \[...\] (single-line or multi-line).
 		if (/^ {0,3}\$\$/.test(line)) {
 			if (/^ {0,3}\$\$[^\n]+?\$\$[ \t]*$/.test(line)) {
-				pushProtectedBlock("math", line);
+				pushProtectedBlock("math", line, i, i + 1);
 				i += 1;
 				continue;
 			}
@@ -384,7 +445,12 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 				end += 1;
 			}
 			if (end < lines.length) {
-				pushProtectedBlock("math", lines.slice(i, end + 1).join("\n"));
+				pushProtectedBlock(
+					"math",
+					lines.slice(i, end + 1).join("\n"),
+					i,
+					end + 1,
+				);
 				i = end + 1;
 				continue;
 			}
@@ -392,7 +458,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 
 		if (!/^ {0,3}\\\\\[/.test(line) && /^ {0,3}\\\[/.test(line)) {
 			if (/^ {0,3}\\\[[^\n]+?\\\][ \t]*$/.test(line)) {
-				pushProtectedBlock("math", line);
+				pushProtectedBlock("math", line, i, i + 1);
 				i += 1;
 				continue;
 			}
@@ -401,7 +467,12 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 				end += 1;
 			}
 			if (end < lines.length) {
-				pushProtectedBlock("math", lines.slice(i, end + 1).join("\n"));
+				pushProtectedBlock(
+					"math",
+					lines.slice(i, end + 1).join("\n"),
+					i,
+					end + 1,
+				);
 				i = end + 1;
 				continue;
 			}
@@ -412,7 +483,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			const prevRaw = i === 0 ? "" : (lines[i - 1] ?? "");
 			const nextRaw = i + 1 >= lines.length ? "" : (lines[i + 1] ?? "");
 			if (prevRaw.trim().length === 0 && nextRaw.trim().length === 0) {
-				pushProtectedBlock("toc", line);
+				pushProtectedBlock("toc", line, i, i + 1);
 				i += 1;
 				continue;
 			}
@@ -423,7 +494,10 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			let end = i;
 			while (end + 1 < lines.length) {
 				const next = lines[end + 1] ?? "";
-				if (/^(?: {2,}|\t)/.test(next) || /^ {0,3}\[\^([^\s\]]+)\]:(?:[ \t]|$)/.test(next)) {
+				if (
+					/^(?: {2,}|\t)/.test(next) ||
+					/^ {0,3}\[\^([^\s\]]+)\]:(?:[ \t]|$)/.test(next)
+				) {
 					end += 1;
 					continue;
 				}
@@ -437,7 +511,12 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 				}
 				break;
 			}
-			pushProtectedBlock("footnotes", lines.slice(i, end + 1).join("\n"));
+			pushProtectedBlock(
+				"footnotes",
+				lines.slice(i, end + 1).join("\n"),
+				i,
+				end + 1,
+			);
 			i = end + 1;
 			continue;
 		}
@@ -455,7 +534,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 				references[nextRef.key] = { href: nextRef.href, title: nextRef.title };
 				end += 1;
 			}
-			pushProtectedBlock("raw", lines.slice(i, end + 1).join("\n"));
+			pushProtectedBlock("raw", lines.slice(i, end + 1).join("\n"), i, end + 1);
 			i = end + 1;
 			continue;
 		}
@@ -467,7 +546,12 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 				end += 1;
 			}
 			if (end < lines.length) {
-				pushProtectedBlock("raw", lines.slice(i, end + 1).join("\n"));
+				pushProtectedBlock(
+					"raw",
+					lines.slice(i, end + 1).join("\n"),
+					i,
+					end + 1,
+				);
 				i = end + 1;
 				continue;
 			}
@@ -475,24 +559,39 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 
 		const htmlOpener = matchHtmlBlockOpener(line);
 		if (htmlOpener) {
-			const end = htmlOpener.selfClosing ? i : findHtmlBlockEnd(lines, i, htmlOpener.tagName);
+			const end = htmlOpener.selfClosing
+				? i
+				: findHtmlBlockEnd(lines, i, htmlOpener.tagName);
 			if (end >= i) {
-				pushProtectedBlock("raw", lines.slice(i, end + 1).join("\n"));
+				pushProtectedBlock(
+					"raw",
+					lines.slice(i, end + 1).join("\n"),
+					i,
+					end + 1,
+				);
 				i = end + 1;
 				continue;
 			}
 		}
 
-		outputLines.push(
-			extractInlineProtectedSyntax(line, sentinel, protectedInlines, trimmed.includes("|")),
+		pushOutputLine(
+			extractInlineProtectedSyntax(
+				line,
+				sentinel,
+				protectedInlines,
+				trimmed.includes("|"),
+			),
+			{ start: i, end: i + 1 },
 		);
 		i += 1;
 	}
 
 	return {
 		markdown: outputLines.join("\n"),
+		outputLineRanges,
 		protectedBlocks,
 		protectedInlines,
+		rawLines: lines,
 		references,
 		sentinel,
 		tableAlignMarkers,

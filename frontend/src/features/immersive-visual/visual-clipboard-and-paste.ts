@@ -1,4 +1,8 @@
-import { Fragment, type Node as ProseMirrorNode, Slice } from "prosemirror-model";
+import {
+	Fragment,
+	type Node as ProseMirrorNode,
+	Slice,
+} from "prosemirror-model";
 import { Plugin, PluginKey, Selection, TextSelection } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import { parseMarkdownToVisualDoc } from "./markdown-parser";
@@ -81,7 +85,8 @@ export function extractImageFilesFromDataTransfer(
 
 function isSelectionInCodeBlock(view: EditorView): boolean {
 	return (
-		view.state.selection.$from.parent.type === visualEditorSchema.nodes.code_block
+		view.state.selection.$from.parent.type ===
+		visualEditorSchema.nodes.code_block
 	);
 }
 
@@ -145,9 +150,9 @@ function insertParsedMarkdownDoc(
 			leadingSpace.length > 0 &&
 			!parsedDoc.firstChild.textContent.startsWith(leadingSpace)
 		) {
-			inlineContent = Fragment.from(visualEditorSchema.text(leadingSpace)).append(
-				inlineContent,
-			);
+			inlineContent = Fragment.from(
+				visualEditorSchema.text(leadingSpace),
+			).append(inlineContent);
 		}
 		if (
 			trailingSpace.length > 0 &&
@@ -414,7 +419,9 @@ export function createVisualClipboardPlugin(
 				if (!view.editable) {
 					return false;
 				}
-				const imageFiles = extractImageFilesFromDataTransfer(event.dataTransfer);
+				const imageFiles = extractImageFilesFromDataTransfer(
+					event.dataTransfer,
+				);
 				if (imageFiles.length === 0) {
 					return false;
 				}
@@ -432,7 +439,11 @@ export function createVisualClipboardPlugin(
 						left: event.clientX,
 						top: event.clientY,
 					});
-					if (coords && coords.pos >= 0 && coords.pos <= view.state.doc.content.size) {
+					if (
+						coords &&
+						coords.pos >= 0 &&
+						coords.pos <= view.state.doc.content.size
+					) {
 						const dropSelection = Selection.near(
 							view.state.doc.resolve(coords.pos),
 						);

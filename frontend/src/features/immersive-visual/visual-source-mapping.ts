@@ -41,10 +41,14 @@ function clampNumber(value: number, min: number, max: number): number {
 
 function serializeSingleBlock(node: ProseMirrorNode): string {
 	if (node.type.name === "protected_block") {
-		return typeof node.attrs.rawMarkdown === "string" ? node.attrs.rawMarkdown : "";
+		return typeof node.attrs.rawMarkdown === "string"
+			? node.attrs.rawMarkdown
+			: "";
 	}
 	if (node.type.name === "paragraph" && node.childCount === 0) return "";
-	return serializeVisualDocToMarkdown(visualEditorSchema.nodes.doc.create(null, [node]));
+	return serializeVisualDocToMarkdown(
+		visualEditorSchema.nodes.doc.create(null, [node]),
+	);
 }
 
 function findBlockEndFromAnchor(
@@ -55,7 +59,10 @@ function findBlockEndFromAnchor(
 	if (node.type.name === "code_block") {
 		const firstLineEnd = markdown.indexOf("\n", startPos);
 		if (firstLineEnd >= 0) {
-			const afterBody = Math.min(markdown.length, firstLineEnd + 1 + node.textContent.length);
+			const afterBody = Math.min(
+				markdown.length,
+				firstLineEnd + 1 + node.textContent.length,
+			);
 			const closeStart = markdown.indexOf("\n", afterBody);
 			if (closeStart >= 0) {
 				const closeEnd = markdown.indexOf("\n", closeStart + 1);
@@ -103,18 +110,27 @@ function findTopLevelBlockSpan(
 				lineStart -= 1;
 			}
 			const blockEnd = findBlockEndFromAnchor(markdown, lineStart, node);
-			return { start: lineStart, end: Math.max(anchorIdx + textAnchor.length, blockEnd) };
+			return {
+				start: lineStart,
+				end: Math.max(anchorIdx + textAnchor.length, blockEnd),
+			};
 		}
 	}
 
 	let fallbackStart = safeFrom;
-	while (fallbackStart < markdown.length && /[\s\r\n]/.test(markdown[fallbackStart] ?? "")) {
+	while (
+		fallbackStart < markdown.length &&
+		/[\s\r\n]/.test(markdown[fallbackStart] ?? "")
+	) {
 		fallbackStart += 1;
 	}
 	if (fallbackStart >= markdown.length) {
 		return { start: markdown.length, end: markdown.length };
 	}
-	return { start: fallbackStart, end: findBlockEndFromAnchor(markdown, fallbackStart, node) };
+	return {
+		start: fallbackStart,
+		end: findBlockEndFromAnchor(markdown, fallbackStart, node),
+	};
 }
 
 export function buildTopLevelBlockSourceMap(
@@ -128,7 +144,12 @@ export function buildTopLevelBlockSourceMap(
 	for (let i = 0; i < doc.childCount; i += 1) {
 		const child = doc.child(i);
 		const pmEnd = pmPos + child.nodeSize;
-		const range = findTopLevelBlockSpan(markdown, child, serializeSingleBlock(child), searchCursor);
+		const range = findTopLevelBlockSpan(
+			markdown,
+			child,
+			serializeSingleBlock(child),
+			searchCursor,
+		);
 		entries.push({
 			index: i,
 			mdEnd: range.end,
@@ -173,7 +194,10 @@ function findBlockEntryForMdOffset(
 	return preceding ?? blocks[blocks.length - 1] ?? null;
 }
 
-function advanceThroughSourceForText(sourceSlice: string, plainText: string): number {
+function advanceThroughSourceForText(
+	sourceSlice: string,
+	plainText: string,
+): number {
 	if (plainText.length === 0) {
 		const leadingMatch = LEADING_BLOCK_SYNTAX_PATTERN.exec(sourceSlice);
 		return leadingMatch ? leadingMatch[0].length : 0;
@@ -201,10 +225,18 @@ function mapCodeBlockPmPosToMdOffset(
 	const slice = markdown.slice(entry.mdStart, entry.mdEnd);
 	const firstNewline = slice.indexOf("\n");
 	if (firstNewline < 0) {
-		return clampNumber(entry.mdStart + Math.max(0, pmPos - entry.pmPos - 1), entry.mdStart, entry.mdEnd);
+		return clampNumber(
+			entry.mdStart + Math.max(0, pmPos - entry.pmPos - 1),
+			entry.mdStart,
+			entry.mdEnd,
+		);
 	}
 	const bodyStart = entry.mdStart + firstNewline + 1;
-	const codeOffset = clampNumber(pmPos - (entry.pmPos + 1), 0, entry.node.textContent.length);
+	const codeOffset = clampNumber(
+		pmPos - (entry.pmPos + 1),
+		0,
+		entry.node.textContent.length,
+	);
 	return clampNumber(bodyStart + codeOffset, entry.mdStart, entry.mdEnd);
 }
 
@@ -217,7 +249,10 @@ function mapInlineAtomRangeInBlock(
 	const slice = markdown.slice(entry.mdStart, entry.mdEnd);
 
 	if (targetNode.type.name === "protected_inline") {
-		const raw = typeof targetNode.attrs.rawMarkdown === "string" ? targetNode.attrs.rawMarkdown : "";
+		const raw =
+			typeof targetNode.attrs.rawMarkdown === "string"
+				? targetNode.attrs.rawMarkdown
+				: "";
 		if (raw.length > 0) {
 			let ordinal = 0;
 			entry.node.descendants((child, relPos) => {
@@ -237,7 +272,10 @@ function mapInlineAtomRangeInBlock(
 				searchFrom = matchIdx + raw.length;
 			}
 			if (matchIdx >= 0) {
-				return { start: entry.mdStart + matchIdx, end: entry.mdStart + matchIdx + raw.length };
+				return {
+					start: entry.mdStart + matchIdx,
+					end: entry.mdStart + matchIdx + raw.length,
+				};
 			}
 		}
 	}
@@ -254,7 +292,10 @@ function mapInlineAtomRangeInBlock(
 		let match = MARKDOWN_IMAGE_SYNTAX_PATTERN.exec(slice);
 		while (match !== null) {
 			if (seen === imageOrdinal) {
-				return { start: entry.mdStart + match.index, end: entry.mdStart + match.index + match[0].length };
+				return {
+					start: entry.mdStart + match.index,
+					end: entry.mdStart + match.index + match[0].length,
+				};
 			}
 			seen += 1;
 			match = MARKDOWN_IMAGE_SYNTAX_PATTERN.exec(slice);
@@ -276,7 +317,10 @@ function mapPmPosToMdOffset(
 	const clampedPos = clampNumber(pmPos, 0, doc.content.size);
 	const entry = findBlockEntryForPmPos(blocks, clampedPos);
 	if (!entry) return 0;
-	if (entry.node.type.name === "protected_block" || entry.node.type.name === "horizontal_rule") {
+	if (
+		entry.node.type.name === "protected_block" ||
+		entry.node.type.name === "horizontal_rule"
+	) {
 		return clampedPos <= entry.pmPos ? entry.mdStart : entry.mdEnd;
 	}
 	if (entry.node.type.name === "code_block") {
@@ -285,16 +329,26 @@ function mapPmPosToMdOffset(
 	const slice = markdown.slice(entry.mdStart, entry.mdEnd);
 	const textBefore = doc.textBetween(entry.pmPos, clampedPos, "\n", "\uFFFC");
 	let relativeOffset = advanceThroughSourceForText(slice, textBefore);
-	if (firstSelectedChar && firstSelectedChar.length === 1 && firstSelectedChar !== "\uFFFC") {
+	if (
+		firstSelectedChar &&
+		firstSelectedChar.length === 1 &&
+		firstSelectedChar !== "\uFFFC"
+	) {
 		const nextCharIdx = slice.indexOf(firstSelectedChar, relativeOffset);
 		if (
 			nextCharIdx > relativeOffset &&
-			INLINE_MARK_OPEN_GAP_PATTERN.test(slice.slice(relativeOffset, nextCharIdx))
+			INLINE_MARK_OPEN_GAP_PATTERN.test(
+				slice.slice(relativeOffset, nextCharIdx),
+			)
 		) {
 			relativeOffset = nextCharIdx;
 		}
 	}
-	return clampNumber(entry.mdStart + relativeOffset, entry.mdStart, entry.mdEnd);
+	return clampNumber(
+		entry.mdStart + relativeOffset,
+		entry.mdStart,
+		entry.mdEnd,
+	);
 }
 
 export function computeVisualSelectionToMarkdownSelection(
@@ -310,19 +364,38 @@ export function computeVisualSelectionToMarkdownSelection(
 	if (selection instanceof NodeSelection) {
 		const entry = findBlockEntryForPmPos(blocks, selection.from);
 		if (!entry) return { direction: "none", end: 0, start: 0 };
-		if (selection.node.type.name === "image" || selection.node.type.name === "protected_inline") {
-			const range = mapInlineAtomRangeInBlock(entry, selection.node, selection.from, markdown);
+		if (
+			selection.node.type.name === "image" ||
+			selection.node.type.name === "protected_inline"
+		) {
+			const range = mapInlineAtomRangeInBlock(
+				entry,
+				selection.node,
+				selection.from,
+				markdown,
+			);
 			return { direction: "none", end: range.end, start: range.start };
 		}
 		return { direction: "none", end: entry.mdEnd, start: entry.mdStart };
 	}
 
 	if (selection.empty) {
-		const fromOffset = mapPmPosToMdOffset(doc, blocks, markdown, selection.from);
+		const fromOffset = mapPmPosToMdOffset(
+			doc,
+			blocks,
+			markdown,
+			selection.from,
+		);
 		return { direction: "none", end: fromOffset, start: fromOffset };
 	}
-	const selectedText = doc.textBetween(selection.from, selection.to, "\n", "\uFFFC");
-	const firstSelectedChar = selectedText.length > 0 ? selectedText[0] : undefined;
+	const selectedText = doc.textBetween(
+		selection.from,
+		selection.to,
+		"\n",
+		"\uFFFC",
+	);
+	const firstSelectedChar =
+		selectedText.length > 0 ? selectedText[0] : undefined;
 	const fromOffset = mapPmPosToMdOffset(
 		doc,
 		blocks,
@@ -334,7 +407,11 @@ export function computeVisualSelectionToMarkdownSelection(
 	const start = Math.min(fromOffset, toOffset);
 	const end = Math.max(fromOffset, toOffset);
 	const direction: VisualEditorSelectionDirection =
-		start === end ? "none" : selection.anchor > selection.head ? "backward" : "forward";
+		start === end
+			? "none"
+			: selection.anchor > selection.head
+				? "backward"
+				: "forward";
 	return { direction, end, start };
 }
 
@@ -344,7 +421,10 @@ function mapMdOffsetToPmPosInBlock(
 	mdOffset: number,
 ): number {
 	const boundedOffset = clampNumber(mdOffset, entry.mdStart, entry.mdEnd);
-	if (entry.node.type.name === "protected_block" || entry.node.type.name === "horizontal_rule") {
+	if (
+		entry.node.type.name === "protected_block" ||
+		entry.node.type.name === "horizontal_rule"
+	) {
 		return entry.pmPos;
 	}
 	const slice = markdown.slice(entry.mdStart, entry.mdEnd);
@@ -353,7 +433,11 @@ function mapMdOffsetToPmPosInBlock(
 	if (entry.node.type.name === "code_block") {
 		const firstNewline = slice.indexOf("\n");
 		const bodyRelStart = firstNewline >= 0 ? firstNewline + 1 : 0;
-		const codeRel = clampNumber(targetRelOffset - bodyRelStart, 0, entry.node.textContent.length);
+		const codeRel = clampNumber(
+			targetRelOffset - bodyRelStart,
+			0,
+			entry.node.textContent.length,
+		);
 		return entry.pmPos + 1 + codeRel;
 	}
 
@@ -416,12 +500,22 @@ export function resolveMarkdownSelectionToVisualSelection(
 		try {
 			return NodeSelection.create(doc, startEntry.pmPos);
 		} catch {
-			return Selection.near(doc.resolve(clampNumber(startEntry.pmPos, 0, doc.content.size)));
+			return Selection.near(
+				doc.resolve(clampNumber(startEntry.pmPos, 0, doc.content.size)),
+			);
 		}
 	}
 
-	const fromPos = clampNumber(mapMdOffsetToPmPosInBlock(startEntry, markdown, start), 0, doc.content.size);
-	const toPos = clampNumber(mapMdOffsetToPmPosInBlock(endEntry, markdown, end), 0, doc.content.size);
+	const fromPos = clampNumber(
+		mapMdOffsetToPmPosInBlock(startEntry, markdown, start),
+		0,
+		doc.content.size,
+	);
+	const toPos = clampNumber(
+		mapMdOffsetToPmPosInBlock(endEntry, markdown, end),
+		0,
+		doc.content.size,
+	);
 	const $from = doc.resolve(fromPos);
 	const $to = doc.resolve(toPos);
 
@@ -438,7 +532,10 @@ export function assertCanonicalChangePrecondition(
 	currentSelection: VisualEditorSelection,
 ): CanonicalChangePreconditionResult {
 	const { change, expected } = request;
-	if (!Number.isSafeInteger(expected.revision) || expected.revision !== currentRevision) {
+	if (
+		!Number.isSafeInteger(expected.revision) ||
+		expected.revision !== currentRevision
+	) {
 		return { code: "canonical-change-revision-mismatch", ok: false };
 	}
 	if (expected.value !== currentValue) {
@@ -452,14 +549,29 @@ export function assertCanonicalChangePrecondition(
 		return { code: "canonical-change-selection-mismatch", ok: false };
 	}
 	const { from, insert, to } = change.changes;
-	if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < from || to > currentValue.length) {
+	if (
+		!Number.isSafeInteger(from) ||
+		!Number.isSafeInteger(to) ||
+		from < 0 ||
+		to < from ||
+		to > currentValue.length
+	) {
 		return { code: "canonical-change-range-invalid", ok: false };
 	}
-	if (currentValue.slice(0, from) + insert + currentValue.slice(to) !== change.value) {
+	if (
+		currentValue.slice(0, from) + insert + currentValue.slice(to) !==
+		change.value
+	) {
 		return { code: "canonical-change-value-result-mismatch", ok: false };
 	}
 	const { end: nextEnd, start: nextStart } = change.selection;
-	if (!Number.isSafeInteger(nextStart) || !Number.isSafeInteger(nextEnd) || nextStart < 0 || nextEnd < nextStart || nextEnd > change.value.length) {
+	if (
+		!Number.isSafeInteger(nextStart) ||
+		!Number.isSafeInteger(nextEnd) ||
+		nextStart < 0 ||
+		nextEnd < nextStart ||
+		nextEnd > change.value.length
+	) {
 		return { code: "canonical-change-selection-invalid", ok: false };
 	}
 	return { ok: true };

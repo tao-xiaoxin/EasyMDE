@@ -273,7 +273,12 @@ export function setTableCellAlignment(
 				? { left: rect.left, top: 0, right: rect.right, bottom: map.height }
 				: scope === "row"
 					? { left: 0, top: rect.top, right: map.width, bottom: rect.bottom }
-					: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+					: {
+							left: rect.left,
+							top: rect.top,
+							right: rect.right,
+							bottom: rect.bottom,
+						};
 
 	const cellOffsets = map.cellsInRect(targetRect);
 	if (cellOffsets.length === 0) return false;
@@ -354,7 +359,9 @@ function insertTableCellHardBreak(
 	if (!isInTable(state)) return false;
 	const { $from } = state.selection;
 	const hardBreakType = visualEditorSchema.nodes.hard_break;
-	if (!$from.parent.canReplaceWith($from.index(), $from.index(), hardBreakType)) {
+	if (
+		!$from.parent.canReplaceWith($from.index(), $from.index(), hardBreakType)
+	) {
 		return false;
 	}
 	if (dispatch) {

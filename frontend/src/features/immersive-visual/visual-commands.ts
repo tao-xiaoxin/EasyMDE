@@ -19,7 +19,11 @@ import {
 } from "prosemirror-commands";
 import { redo, undo } from "prosemirror-history";
 import { keymap } from "prosemirror-keymap";
-import type { MarkType, Node as ProseMirrorNode, NodeType } from "prosemirror-model";
+import type {
+	MarkType,
+	NodeType,
+	Node as ProseMirrorNode,
+} from "prosemirror-model";
 import {
 	liftListItem,
 	sinkListItem,
@@ -45,7 +49,10 @@ const LIST_ITEM_TYPES: ReadonlyArray<NodeType> = [
 	visualEditorSchema.nodes.task_item,
 ];
 
-function findAncestorDepth(state: EditorState, nodeType: NodeType): number | null {
+function findAncestorDepth(
+	state: EditorState,
+	nodeType: NodeType,
+): number | null {
 	const { $from } = state.selection;
 	for (let depth = $from.depth; depth > 0; depth -= 1) {
 		if ($from.node(depth).type === nodeType) {
@@ -56,20 +63,33 @@ function findAncestorDepth(state: EditorState, nodeType: NodeType): number | nul
 }
 
 function isSelectionInCodeBlock(state: EditorState): boolean {
-	return state.selection.$from.parent.type === visualEditorSchema.nodes.code_block;
+	return (
+		state.selection.$from.parent.type === visualEditorSchema.nodes.code_block
+	);
 }
 
-function insertHardBreakCommand(state: EditorState, dispatch?: (tr: Transaction) => void): boolean {
+function insertHardBreakCommand(
+	state: EditorState,
+	dispatch?: (tr: Transaction) => void,
+): boolean {
 	if (isSelectionInCodeBlock(state)) {
 		return newlineInCode(state, dispatch);
 	}
 	const { $from } = state.selection;
-	if (!$from.parent.canReplaceWith($from.index(), $from.index(), visualEditorSchema.nodes.hard_break)) {
+	if (
+		!$from.parent.canReplaceWith(
+			$from.index(),
+			$from.index(),
+			visualEditorSchema.nodes.hard_break,
+		)
+	) {
 		return false;
 	}
 	if (dispatch) {
 		dispatch(
-			state.tr.replaceSelectionWith(visualEditorSchema.nodes.hard_break.create()).scrollIntoView(),
+			state.tr
+				.replaceSelectionWith(visualEditorSchema.nodes.hard_break.create())
+				.scrollIntoView(),
 		);
 	}
 	return true;
@@ -80,10 +100,15 @@ function convertFenceLineOnEnter(
 	dispatch?: (tr: Transaction) => void,
 ): boolean {
 	const { selection } = state;
-	if (!selection.empty || selection.$from.parent.type !== visualEditorSchema.nodes.paragraph) {
+	if (
+		!selection.empty ||
+		selection.$from.parent.type !== visualEditorSchema.nodes.paragraph
+	) {
 		return false;
 	}
-	const match = /^(```|~~~)([a-zA-Z0-9_+#.-]*)[ \t]*$/.exec(selection.$from.parent.textContent);
+	const match = /^(```|~~~)([a-zA-Z0-9_+#.-]*)[ \t]*$/.exec(
+		selection.$from.parent.textContent,
+	);
 	if (!match) {
 		return false;
 	}
@@ -112,7 +137,10 @@ function insertHardBreakInTableOnEnter(
 	return isInTable(state) ? insertHardBreakCommand(state, dispatch) : false;
 }
 
-function exitHeadingOnEnter(state: EditorState, dispatch?: (tr: Transaction) => void): boolean {
+function exitHeadingOnEnter(
+	state: EditorState,
+	dispatch?: (tr: Transaction) => void,
+): boolean {
 	const { $from, $to } = state.selection;
 	if ($from.parent.type !== visualEditorSchema.nodes.heading) {
 		return false;
@@ -120,7 +148,10 @@ function exitHeadingOnEnter(state: EditorState, dispatch?: (tr: Transaction) => 
 	if ($from.sameParent($to) && $to.parentOffset === $from.parent.content.size) {
 		if (dispatch) {
 			const afterHeading = $from.after($from.depth);
-			const tr = state.tr.insert(afterHeading, visualEditorSchema.nodes.paragraph.create());
+			const tr = state.tr.insert(
+				afterHeading,
+				visualEditorSchema.nodes.paragraph.create(),
+			);
 			tr.setSelection(TextSelection.create(tr.doc, afterHeading + 1));
 			dispatch(tr.scrollIntoView());
 		}
@@ -176,8 +207,15 @@ function liftEmptyListOrQuoteOnBackspace(
 	if (itemDepth !== null && $from.index(itemDepth) === 0) {
 		return liftListItem(LIST_ITEM_TYPES)(state, dispatch);
 	}
-	const quoteDepth = findAncestorDepth(state, visualEditorSchema.nodes.blockquote);
-	if (quoteDepth !== null && $from.index(quoteDepth) === 0 && $from.parent.content.size === 0) {
+	const quoteDepth = findAncestorDepth(
+		state,
+		visualEditorSchema.nodes.blockquote,
+	);
+	if (
+		quoteDepth !== null &&
+		$from.index(quoteDepth) === 0 &&
+		$from.parent.content.size === 0
+	) {
 		return lift(state, dispatch);
 	}
 	return false;
@@ -203,7 +241,11 @@ function selectAtomicBlockBackward(
 	}
 	if (dispatch) {
 		const prevStart = blockBeforePos - prevNode.nodeSize;
-		dispatch(state.tr.setSelection(NodeSelection.create(state.doc, prevStart)).scrollIntoView());
+		dispatch(
+			state.tr
+				.setSelection(NodeSelection.create(state.doc, prevStart))
+				.scrollIntoView(),
+		);
 	}
 	return true;
 }
@@ -230,15 +272,21 @@ function insertSpacesInCodeBlockOnTab(
 	return true;
 }
 
-function toggleInlineMark(view: EditorView, markType: MarkType): VisualToolbarCommandResult {
+function toggleInlineMark(
+	view: EditorView,
+	markType: MarkType,
+): VisualToolbarCommandResult {
 	if (isSelectionInCodeBlock(view.state)) {
 		return "blocked";
 	}
-	return toggleMark(markType)(view.state, view.dispatch) ? "handled" : "blocked";
+	return toggleMark(markType)(view.state, view.dispatch)
+		? "handled"
+		: "blocked";
 }
 
 function toggleBlockquoteCommand(view: EditorView): VisualToolbarCommandResult {
-	const isQuoted = findAncestorDepth(view.state, visualEditorSchema.nodes.blockquote) !== null;
+	const isQuoted =
+		findAncestorDepth(view.state, visualEditorSchema.nodes.blockquote) !== null;
 	const applied = isQuoted
 		? lift(view.state, view.dispatch)
 		: wrapIn(visualEditorSchema.nodes.blockquote)(view.state, view.dispatch);
@@ -271,14 +319,23 @@ function convertListType(
 				: null;
 		newItems.push(targetItemType.create(attrs, item.content));
 	}
-	dispatch(state.tr.replaceWith(listPos, listEnd, targetListType.create(null, newItems)).scrollIntoView());
+	dispatch(
+		state.tr
+			.replaceWith(listPos, listEnd, targetListType.create(null, newItems))
+			.scrollIntoView(),
+	);
 	return true;
 }
 
-function toggleListCommand(view: EditorView, targetListType: NodeType): VisualToolbarCommandResult {
+function toggleListCommand(
+	view: EditorView,
+	targetListType: NodeType,
+): VisualToolbarCommandResult {
 	const { state } = view;
 	if (findAncestorDepth(state, targetListType) !== null) {
-		return liftListItem(LIST_ITEM_TYPES)(state, view.dispatch) ? "handled" : "blocked";
+		return liftListItem(LIST_ITEM_TYPES)(state, view.dispatch)
+			? "handled"
+			: "blocked";
 	}
 
 	const listTypes: ReadonlyArray<NodeType> = [
@@ -289,7 +346,9 @@ function toggleListCommand(view: EditorView, targetListType: NodeType): VisualTo
 	for (const existingType of listTypes) {
 		const depth = findAncestorDepth(state, existingType);
 		if (depth !== null) {
-			return convertListType(state, depth, targetListType, view.dispatch) ? "handled" : "blocked";
+			return convertListType(state, depth, targetListType, view.dispatch)
+				? "handled"
+				: "blocked";
 		}
 	}
 
@@ -314,7 +373,9 @@ function toggleListCommand(view: EditorView, targetListType: NodeType): VisualTo
 		return "handled";
 	}
 
-	return wrapInList(targetListType)(state, view.dispatch) ? "handled" : "blocked";
+	return wrapInList(targetListType)(state, view.dispatch)
+		? "handled"
+		: "blocked";
 }
 
 function insertBlockAtSelection(
@@ -348,9 +409,17 @@ function insertCodeBlockCommand(view: EditorView): VisualToolbarCommandResult {
 		selectedText.length > 0 ? visualEditorSchema.text(selectedText) : null,
 	);
 
-	if (empty && $from.parent.type === visualEditorSchema.nodes.paragraph && $from.parent.content.size === 0) {
+	if (
+		empty &&
+		$from.parent.type === visualEditorSchema.nodes.paragraph &&
+		$from.parent.content.size === 0
+	) {
 		const blockFrom = $from.before($from.depth);
-		const tr = state.tr.replaceWith(blockFrom, $from.after($from.depth), codeBlock);
+		const tr = state.tr.replaceWith(
+			blockFrom,
+			$from.after($from.depth),
+			codeBlock,
+		);
 		tr.setSelection(TextSelection.create(tr.doc, blockFrom + 1));
 		view.dispatch(tr.scrollIntoView());
 		return "handled";
@@ -367,7 +436,9 @@ function insertCodeBlockCommand(view: EditorView): VisualToolbarCommandResult {
 
 function insertMathBlockCommand(view: EditorView): VisualToolbarCommandResult {
 	const { from, to, empty } = view.state.selection;
-	const formula = empty ? "E = mc^2" : view.state.doc.textBetween(from, to, "\n").trim() || "E = mc^2";
+	const formula = empty
+		? "E = mc^2"
+		: view.state.doc.textBetween(from, to, "\n").trim() || "E = mc^2";
 	const mathNode = visualEditorSchema.nodes.protected_block.create({
 		kind: "math",
 		rawMarkdown: `$$\n${formula}\n$$`,
@@ -379,15 +450,25 @@ function insertMathBlockCommand(view: EditorView): VisualToolbarCommandResult {
 	);
 }
 
-function insertLinkCommand(view: EditorView, command: ToolbarCommand): VisualToolbarCommandResult {
+function insertLinkCommand(
+	view: EditorView,
+	command: ToolbarCommand,
+): VisualToolbarCommandResult {
 	const { state } = view;
 	if (isSelectionInCodeBlock(state)) {
 		return "blocked";
 	}
 	const { from, to, empty } = state.selection;
-	const linkMark = visualEditorSchema.marks.link.create({ href: "https://", title: null });
+	const linkMark = visualEditorSchema.marks.link.create({
+		href: "https://",
+		title: null,
+	});
 	if (!empty) {
-		const hasLink = state.doc.rangeHasMark(from, to, visualEditorSchema.marks.link);
+		const hasLink = state.doc.rangeHasMark(
+			from,
+			to,
+			visualEditorSchema.marks.link,
+		);
 		const tr = hasLink
 			? state.tr.removeMark(from, to, visualEditorSchema.marks.link)
 			: state.tr.addMark(from, to, linkMark);
@@ -395,19 +476,27 @@ function insertLinkCommand(view: EditorView, command: ToolbarCommand): VisualToo
 		return "handled";
 	}
 	const label = command.placeholder?.trim() || "link";
-	const tr = state.tr.replaceSelectionWith(visualEditorSchema.text(label, [linkMark]), false);
+	const tr = state.tr.replaceSelectionWith(
+		visualEditorSchema.text(label, [linkMark]),
+		false,
+	);
 	tr.setSelection(TextSelection.create(tr.doc, from, from + label.length));
 	view.dispatch(tr.scrollIntoView());
 	return "handled";
 }
 
-function insertImageCommand(view: EditorView, command: ToolbarCommand): VisualToolbarCommandResult {
+function insertImageCommand(
+	view: EditorView,
+	command: ToolbarCommand,
+): VisualToolbarCommandResult {
 	const { state } = view;
 	if (isSelectionInCodeBlock(state)) {
 		return "blocked";
 	}
 	const { from, to, empty } = state.selection;
-	const alt = empty ? command.placeholder?.trim() || "image" : state.doc.textBetween(from, to, " ");
+	const alt = empty
+		? command.placeholder?.trim() || "image"
+		: state.doc.textBetween(from, to, " ");
 	const imageNode = visualEditorSchema.nodes.image.create({
 		src: command.prefix?.trim() || "https://",
 		alt,
@@ -420,10 +509,16 @@ function insertImageCommand(view: EditorView, command: ToolbarCommand): VisualTo
 
 function insertTableCommand(view: EditorView): VisualToolbarCommandResult {
 	const headerCells = [0, 1, 2].map(() =>
-		visualEditorSchema.nodes.table_header.create(null, visualEditorSchema.nodes.paragraph.create()),
+		visualEditorSchema.nodes.table_header.create(
+			null,
+			visualEditorSchema.nodes.paragraph.create(),
+		),
 	);
 	const bodyCells = [0, 1, 2].map(() =>
-		visualEditorSchema.nodes.table_cell.create(null, visualEditorSchema.nodes.paragraph.create()),
+		visualEditorSchema.nodes.table_cell.create(
+			null,
+			visualEditorSchema.nodes.paragraph.create(),
+		),
 	);
 	const tableNode = visualEditorSchema.nodes.table.create(null, [
 		visualEditorSchema.nodes.table_row.create(null, headerCells),
@@ -433,7 +528,9 @@ function insertTableCommand(view: EditorView): VisualToolbarCommandResult {
 	return insertBlockAtSelection(view, [tableNode], 4);
 }
 
-function insertHorizontalRuleCommand(view: EditorView): VisualToolbarCommandResult {
+function insertHorizontalRuleCommand(
+	view: EditorView,
+): VisualToolbarCommandResult {
 	const hrNode = visualEditorSchema.nodes.horizontal_rule.create();
 	return insertBlockAtSelection(
 		view,
@@ -449,13 +546,25 @@ function resolveWrapMark(command: ToolbarCommand): MarkType | null {
 	if (id === "bold" || (prefix === "**" && suffix === "**")) {
 		return visualEditorSchema.marks.strong;
 	}
-	if (id === "italic" || (prefix === "*" && suffix === "*") || (prefix === "_" && suffix === "_")) {
+	if (
+		id === "italic" ||
+		(prefix === "*" && suffix === "*") ||
+		(prefix === "_" && suffix === "_")
+	) {
 		return visualEditorSchema.marks.em;
 	}
-	if (id === "strike" || id === "strikethrough" || (prefix === "~~" && suffix === "~~")) {
+	if (
+		id === "strike" ||
+		id === "strikethrough" ||
+		(prefix === "~~" && suffix === "~~")
+	) {
 		return visualEditorSchema.marks.strike;
 	}
-	if (id === "inlinecode" || id === "inline-code" || (prefix === "`" && suffix === "`")) {
+	if (
+		id === "inlinecode" ||
+		id === "inline-code" ||
+		(prefix === "`" && suffix === "`")
+	) {
 		return visualEditorSchema.marks.code;
 	}
 	return null;
@@ -477,8 +586,13 @@ export function executeVisualToolbarCommand(
 
 	const headingActionMatch = /^heading([1-6])$/.exec(action);
 	if (headingActionMatch?.[1]) {
-		const level = normalizeHeadingLevel(Number.parseInt(headingActionMatch[1], 10));
-		return setBlockType(visualEditorSchema.nodes.heading, { level })(view.state, view.dispatch)
+		const level = normalizeHeadingLevel(
+			Number.parseInt(headingActionMatch[1], 10),
+		);
+		return setBlockType(visualEditorSchema.nodes.heading, { level })(
+			view.state,
+			view.dispatch,
+		)
 			? "handled"
 			: "blocked";
 	}
@@ -495,12 +609,18 @@ export function executeVisualToolbarCommand(
 			return toggleInlineMark(view, visualEditorSchema.marks.code);
 		case "heading": {
 			const level = normalizeHeadingLevel(command.level ?? 2);
-			return setBlockType(visualEditorSchema.nodes.heading, { level })(view.state, view.dispatch)
+			return setBlockType(visualEditorSchema.nodes.heading, { level })(
+				view.state,
+				view.dispatch,
+			)
 				? "handled"
 				: "blocked";
 		}
 		case "paragraph":
-			return setBlockType(visualEditorSchema.nodes.paragraph)(view.state, view.dispatch)
+			return setBlockType(visualEditorSchema.nodes.paragraph)(
+				view.state,
+				view.dispatch,
+			)
 				? "handled"
 				: "blocked";
 		case "quote":
@@ -576,7 +696,11 @@ export function createVisualKeymapPlugins(): ReadonlyArray<Plugin> {
 		Backspace: backspaceCommand,
 		Delete: deleteCommand,
 		"Mod-Delete": deleteCommand,
-		Tab: chainCommands(goToNextCell(1), insertSpacesInCodeBlockOnTab, sinkListItem(LIST_ITEM_TYPES)),
+		Tab: chainCommands(
+			goToNextCell(1),
+			insertSpacesInCodeBlockOnTab,
+			sinkListItem(LIST_ITEM_TYPES),
+		),
 		"Shift-Tab": chainCommands(goToNextCell(-1), liftListItem(LIST_ITEM_TYPES)),
 	};
 

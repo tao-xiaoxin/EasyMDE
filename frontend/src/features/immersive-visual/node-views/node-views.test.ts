@@ -118,17 +118,19 @@ afterEach(() => {
 describe("CodeBlockNodeView and createCodeHighlightPlugin", () => {
 	it("renders Mac 3-dot code frame DOM with language badge and hljs decorations without mutating text nodes", () => {
 		const highlightElement = vi.fn();
-		const highlight = vi.fn((code: string, opts: Readonly<{ language: string }>) => {
-			if (opts.language === "ts") {
-				const html = code
-					.replace(/</g, "&lt;")
-					.replace(/>/g, "&gt;")
-					.replace(/\bconst\b/g, '<span class="hljs-keyword">const</span>')
-					.replace(/\b42\b/g, '<span class="hljs-number">42</span>');
-				return { value: html };
-			}
-			return { value: code };
-		});
+		const highlight = vi.fn(
+			(code: string, opts: Readonly<{ language: string }>) => {
+				if (opts.language === "ts") {
+					const html = code
+						.replace(/</g, "&lt;")
+						.replace(/>/g, "&gt;")
+						.replace(/\bconst\b/g, '<span class="hljs-keyword">const</span>')
+						.replace(/\b42\b/g, '<span class="hljs-number">42</span>');
+					return { value: html };
+				}
+				return { value: code };
+			},
+		);
 		const win = window as TestEnhancementWindow;
 		win.hljs = {
 			getLanguage: (lang) => (lang === "ts" || lang === "js" ? {} : undefined),
@@ -158,14 +160,22 @@ describe("CodeBlockNodeView and createCodeHighlightPlugin", () => {
 		// Typing inside the code block preserves ProseMirror document text and updates decorations.
 		const codeBlockEnd = 1 + "const x = 42 < 100;".length;
 		view.dispatch(view.state.tr.insertText(" // ok", codeBlockEnd));
-		expect(view.state.doc.firstChild?.textContent).toBe("const x = 42 < 100; // ok");
+		expect(view.state.doc.firstChild?.textContent).toBe(
+			"const x = 42 < 100; // ok",
+		);
 		expect(code?.textContent).toBe("const x = 42 < 100; // ok");
 	});
 
 	it("recomputes decorations incrementally only for touched code blocks and language updates", () => {
 		const highlight = vi.fn(
-			(code: string, _opts: Readonly<{ ignoreIllegals?: boolean; language: string }>) => ({
-				value: code.replace(/\blet\b/g, '<span class="hljs-keyword">let</span>'),
+			(
+				code: string,
+				_opts: Readonly<{ ignoreIllegals?: boolean; language: string }>,
+			) => ({
+				value: code.replace(
+					/\blet\b/g,
+					'<span class="hljs-keyword">let</span>',
+				),
 			}),
 		);
 		const win = window as TestEnhancementWindow;
@@ -174,7 +184,9 @@ describe("CodeBlockNodeView and createCodeHighlightPlugin", () => {
 			highlight,
 		};
 
-		const view = mountVisualEditor("```ts\nlet a = 1;\n```\n\n```js\nlet b = 2;\n```");
+		const view = mountVisualEditor(
+			"```ts\nlet a = 1;\n```\n\n```js\nlet b = 2;\n```",
+		);
 		expect(highlight).toHaveBeenCalledTimes(2);
 		highlight.mockClear();
 
@@ -205,8 +217,12 @@ describe("CodeBlockNodeView and createCodeHighlightPlugin", () => {
 
 		const pre = view.dom.querySelector("pre.easymde-code-block");
 		expect(pre?.getAttribute("data-language")).toBe("js");
-		expect(pre?.querySelector("code")?.classList.contains("language-js")).toBe(true);
-		expect(pre?.querySelector("span.easymde-visual-code-lang")?.textContent).toBe("js");
+		expect(pre?.querySelector("code")?.classList.contains("language-js")).toBe(
+			true,
+		);
+		expect(
+			pre?.querySelector("span.easymde-visual-code-lang")?.textContent,
+		).toBe("js");
 
 		// Clearing language removes badge and data-language cleanly.
 		view.dispatch(
@@ -227,7 +243,9 @@ describe("CodeBlockNodeView and createCodeHighlightPlugin", () => {
 		const win = window as TestEnhancementWindow;
 		win.hljs = {
 			getLanguage: () => undefined,
-			highlight: vi.fn(() => ({ value: '<span class="hljs-keyword">x</span>' })),
+			highlight: vi.fn(() => ({
+				value: '<span class="hljs-keyword">x</span>',
+			})),
 		};
 		const viewUnknownLang = mountVisualEditor("```unknownlang\nfoo bar\n```");
 		const stateUnknown = codeHighlightPluginKey.getState(viewUnknownLang.state);
@@ -271,10 +289,16 @@ describe("ImageNodeView", () => {
 		expect(evilImg.getAttribute("src")).toBeNull();
 
 		// Clicking the image selects it as a ProseMirror NodeSelection and toggles blue ring.
-		safeImg.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+		safeImg.dispatchEvent(
+			new MouseEvent("click", { bubbles: true, button: 0 }),
+		);
 		expect(view.state.selection).toBeInstanceOf(NodeSelection);
-		expect(safeImg.classList.contains("easymde-visual-image-selected")).toBe(true);
-		expect(safeImg.getAttribute("data-easymde-visual-image-selected")).toBe("1");
+		expect(safeImg.classList.contains("easymde-visual-image-selected")).toBe(
+			true,
+		);
+		expect(safeImg.getAttribute("data-easymde-visual-image-selected")).toBe(
+			"1",
+		);
 		expect(safeImg.style.boxShadow).toContain("rgba(34, 113, 177, 0.28)");
 
 		// Updating scale via setNodeAttribute while selected preserves NodeSelection and blue ring.
@@ -282,14 +306,20 @@ describe("ImageNodeView", () => {
 		view.dispatch(view.state.tr.setNodeAttribute(selectedPos, "scale", 100));
 		expect(safeImg.getAttribute("data-easymde-image-scale")).toBe("100");
 		expect(safeImg.style.width).toBe("100%");
-		expect(safeImg.classList.contains("easymde-visual-image-selected")).toBe(true);
+		expect(safeImg.classList.contains("easymde-visual-image-selected")).toBe(
+			true,
+		);
 
 		// Moving selection away calls deselectNode() and removes selection feedback.
 		view.dispatch(
 			view.state.tr.setSelection(TextSelection.create(view.state.doc, 1)),
 		);
-		expect(safeImg.classList.contains("easymde-visual-image-selected")).toBe(false);
-		expect(safeImg.getAttribute("data-easymde-visual-image-selected")).toBeNull();
+		expect(safeImg.classList.contains("easymde-visual-image-selected")).toBe(
+			false,
+		);
+		expect(
+			safeImg.getAttribute("data-easymde-visual-image-selected"),
+		).toBeNull();
 		expect(safeImg.style.boxShadow).toBe("");
 	});
 });
@@ -305,16 +335,24 @@ describe("ProtectedAtomNodeView (math, mermaid, cards, raw-source editor)", () =
 		const win = window as TestEnhancementWindow;
 		win.katex = { render: katexRender };
 
-		const view = mountVisualEditor("$$\nE = mc^2\n$$\n\nInline $a^2 + b^2 = c^2$ text.");
-		const mathBlock = view.dom.querySelector("div.easymde-math.easymde-math-block");
-		const mathInline = view.dom.querySelector("span.easymde-math.easymde-math-inline");
+		const view = mountVisualEditor(
+			"$$\nE = mc^2\n$$\n\nInline $a^2 + b^2 = c^2$ text.",
+		);
+		const mathBlock = view.dom.querySelector(
+			"div.easymde-math.easymde-math-block",
+		);
+		const mathInline = view.dom.querySelector(
+			"span.easymde-math.easymde-math-inline",
+		);
 
 		expect(mathBlock?.getAttribute("contenteditable")).toBe("false");
 		expect(mathBlock?.getAttribute("data-easymde-visual-markdown-source")).toBe(
 			"$$\nE = mc^2\n$$",
 		);
 		expect(mathBlock?.querySelector(".katex")?.textContent).toBe("E = mc^2");
-		expect(mathInline?.querySelector(".katex")?.textContent).toBe("a^2 + b^2 = c^2");
+		expect(mathInline?.querySelector(".katex")?.textContent).toBe(
+			"a^2 + b^2 = c^2",
+		);
 
 		expect(katexRender).toHaveBeenCalledWith(
 			"E = mc^2",
@@ -330,10 +368,13 @@ describe("ProtectedAtomNodeView (math, mermaid, cards, raw-source editor)", () =
 		// Without katex, renders clean monospace fallback.
 		delete win.katex;
 		const fallbackView = mountVisualEditor("\\[\nx + y\n\\]");
-		const fallbackBlock = fallbackView.dom.querySelector("div.easymde-math-block");
-		expect(fallbackBlock?.querySelector("code.easymde-protected-fallback")?.textContent).toBe(
-			"\\[\nx + y\n\\]",
+		const fallbackBlock = fallbackView.dom.querySelector(
+			"div.easymde-math-block",
 		);
+		expect(
+			fallbackBlock?.querySelector("code.easymde-protected-fallback")
+				?.textContent,
+		).toBe("\\[\nx + y\n\\]");
 	});
 
 	it("renders Mermaid asynchronously, sanitizes unsafe SVG, and guards against stale/destroyed resolutions", async () => {
@@ -381,7 +422,9 @@ describe("ProtectedAtomNodeView (math, mermaid, cards, raw-source editor)", () =
 		expect(svg?.querySelector("script")).toBeNull();
 		expect(svg?.querySelector("g")?.getAttribute("onclick")).toBeNull();
 		expect(svg?.querySelector("a")?.getAttribute("href")).toBeNull();
-		expect(svg?.querySelector("foreignObject span")?.textContent).toBe("Safe Label");
+		expect(svg?.querySelector("foreignObject span")?.textContent).toBe(
+			"Safe Label",
+		);
 		expect(svg?.textContent).toContain("Current Diagram");
 
 		// Now resolve stale firstRender: it must NOT overwrite the current diagram!
@@ -389,13 +432,19 @@ describe("ProtectedAtomNodeView (math, mermaid, cards, raw-source editor)", () =
 			svg: "<svg><text>Stale Diagram</text></svg>",
 		});
 		await flushMicrotasks();
-		expect(mermaidEl?.querySelector("svg")?.textContent).toContain("Current Diagram");
-		expect(mermaidEl?.querySelector("svg")?.textContent).not.toContain("Stale Diagram");
+		expect(mermaidEl?.querySelector("svg")?.textContent).toContain(
+			"Current Diagram",
+		);
+		expect(mermaidEl?.querySelector("svg")?.textContent).not.toContain(
+			"Stale Diagram",
+		);
 
 		// Verify destroy cancellation guard prevents late async mutation.
 		const destroyDeferred = createDeferred<MermaidRenderResult>();
 		win.mermaid = { render: vi.fn(() => destroyDeferred.promise) };
-		const doomedView = mountVisualEditor("```mermaid\ngraph TD\n  P --> Q\n```");
+		const doomedView = mountVisualEditor(
+			"```mermaid\ngraph TD\n  P --> Q\n```",
+		);
 		await flushMicrotasks();
 		const doomedCard = doomedView.dom.querySelector("div.easymde-mermaid");
 		doomedView.destroy();
@@ -412,7 +461,9 @@ describe("ProtectedAtomNodeView (math, mermaid, cards, raw-source editor)", () =
 		expect(sanitized).not.toBeNull();
 		const anchor = sanitized?.querySelector("a");
 		expect(anchor?.getAttribute("xlink:href")).toBeNull();
-		expect(anchor?.getAttributeNS("http://www.w3.org/1999/xlink", "href")).toBeNull();
+		expect(
+			anchor?.getAttributeNS("http://www.w3.org/1999/xlink", "href"),
+		).toBeNull();
 		expect(anchor?.getAttribute("style")).toBeNull();
 		const useEl = sanitized?.querySelector("use");
 		expect(useEl?.getAttribute("xlink:href")).toBe("#arrow-head");
@@ -428,72 +479,116 @@ describe("ProtectedAtomNodeView (math, mermaid, cards, raw-source editor)", () =
 		const view = mountVisualEditor(markdown);
 
 		const toc = view.dom.querySelector('[data-easymde-protected-kind="toc"]');
-		const footnotes = view.dom.querySelector('[data-easymde-protected-kind="footnotes"]');
-		const rawBlock = view.dom.querySelector('[data-easymde-protected-kind="raw"]');
-		const footnoteRef = view.dom.querySelector('[data-easymde-protected-kind="footnote-ref"]');
-		const rawInline = view.dom.querySelector('[data-easymde-protected-kind="raw-inline"]');
+		const footnotes = view.dom.querySelector(
+			'[data-easymde-protected-kind="footnotes"]',
+		);
+		const rawBlock = view.dom.querySelector(
+			'[data-easymde-protected-kind="raw"]',
+		);
+		const footnoteRef = view.dom.querySelector(
+			'[data-easymde-protected-kind="footnote-ref"]',
+		);
+		const rawInline = view.dom.querySelector(
+			'[data-easymde-protected-kind="raw-inline"]',
+		);
 
-		expect(toc?.getAttribute("data-easymde-visual-markdown-source")).toBe("[TOC]");
+		expect(toc?.getAttribute("data-easymde-visual-markdown-source")).toBe(
+			"[TOC]",
+		);
 		expect(footnotes?.getAttribute("data-easymde-visual-markdown-source")).toBe(
 			"[^1]: Footnote body",
 		);
 		expect(rawBlock?.querySelector("script")).toBeNull();
 		expect(rawBlock?.textContent).toContain("<script>alert(1)</script>");
-		expect(footnoteRef?.getAttribute("data-easymde-visual-markdown-source")).toBe("[^1]");
-		expect(rawInline?.getAttribute("data-easymde-visual-markdown-source")).toBe("<!-- note -->");
+		expect(
+			footnoteRef?.getAttribute("data-easymde-visual-markdown-source"),
+		).toBe("[^1]");
+		expect(rawInline?.getAttribute("data-easymde-visual-markdown-source")).toBe(
+			"<!-- note -->",
+		);
 	});
 
 	it("supports double-click raw-source editing with Enter/Save commit, Undo, and Escape zero-mutation cancel", () => {
 		const view = mountVisualEditor("$$\nE = mc^2\n$$\n\nInline $x + 1$ end.");
 
 		// Block protected card: double-click -> Escape cancels with zero doc change.
-		const mathBlock = view.dom.querySelector("div.easymde-math-block") as HTMLElement;
+		const mathBlock = view.dom.querySelector(
+			"div.easymde-math-block",
+		) as HTMLElement;
 		mathBlock.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-		const textarea = mathBlock.querySelector("textarea.easymde-protected-source-input") as HTMLTextAreaElement;
+		const textarea = mathBlock.querySelector(
+			"textarea.easymde-protected-source-input",
+		) as HTMLTextAreaElement;
 		expect(textarea).not.toBeNull();
 		expect(textarea.value).toBe("$$\nE = mc^2\n$$");
 
 		textarea.value = "$$\na^2 + b^2 = c^2\n$$";
 		textarea.dispatchEvent(
-			new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+			new KeyboardEvent("keydown", {
+				key: "Escape",
+				bubbles: true,
+				cancelable: true,
+			}),
 		);
 		expect(mathBlock.querySelector("textarea")).toBeNull();
-		expect(view.state.doc.firstChild?.attrs.rawMarkdown).toBe("$$\nE = mc^2\n$$");
+		expect(view.state.doc.firstChild?.attrs.rawMarkdown).toBe(
+			"$$\nE = mc^2\n$$",
+		);
 
 		// Double-click again -> modify -> Enter commits real ProseMirror transaction.
 		mathBlock.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-		const textarea2 = mathBlock.querySelector("textarea.easymde-protected-source-input") as HTMLTextAreaElement;
+		const textarea2 = mathBlock.querySelector(
+			"textarea.easymde-protected-source-input",
+		) as HTMLTextAreaElement;
 		textarea2.value = "$$\na^2 + b^2 = c^2\n$$";
 		textarea2.dispatchEvent(
-			new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+			new KeyboardEvent("keydown", {
+				key: "Enter",
+				bubbles: true,
+				cancelable: true,
+			}),
 		);
 
-		expect(view.state.doc.firstChild?.attrs.rawMarkdown).toBe("$$\na^2 + b^2 = c^2\n$$");
+		expect(view.state.doc.firstChild?.attrs.rawMarkdown).toBe(
+			"$$\na^2 + b^2 = c^2\n$$",
+		);
 		expect(mathBlock.getAttribute("data-easymde-visual-markdown-source")).toBe(
 			"$$\na^2 + b^2 = c^2\n$$",
 		);
 
 		// Undo restores the previous rawMarkdown seamlessly.
 		expect(undo(view.state, view.dispatch)).toBe(true);
-		expect(view.state.doc.firstChild?.attrs.rawMarkdown).toBe("$$\nE = mc^2\n$$");
+		expect(view.state.doc.firstChild?.attrs.rawMarkdown).toBe(
+			"$$\nE = mc^2\n$$",
+		);
 		expect(mathBlock.getAttribute("data-easymde-visual-markdown-source")).toBe(
 			"$$\nE = mc^2\n$$",
 		);
 
 		// Inline protected card: double-click -> edit -> Save button commits.
-		const mathInline = view.dom.querySelector("span.easymde-math-inline") as HTMLElement;
+		const mathInline = view.dom.querySelector(
+			"span.easymde-math-inline",
+		) as HTMLElement;
 		mathInline.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-		const input = mathInline.querySelector("input.easymde-protected-source-input") as HTMLInputElement;
+		const input = mathInline.querySelector(
+			"input.easymde-protected-source-input",
+		) as HTMLInputElement;
 		expect(input).not.toBeNull();
 		input.value = "$y = 2x$";
-		const saveButton = mathInline.querySelector("button.easymde-protected-save-btn") as HTMLButtonElement;
+		const saveButton = mathInline.querySelector(
+			"button.easymde-protected-save-btn",
+		) as HTMLButtonElement;
 		saveButton.click();
-		expect(serializeVisualDocToMarkdown(view.state.doc)).toContain("Inline $y = 2x$ end.");
+		expect(serializeVisualDocToMarkdown(view.state.doc)).toContain(
+			"Inline $y = 2x$ end.",
+		);
 	});
 
 	it("does not open raw-source editor when editor is read-only", () => {
 		const view = mountVisualEditor("$$\nE = mc^2\n$$", { editable: false });
-		const mathBlock = view.dom.querySelector("div.easymde-math-block") as HTMLElement;
+		const mathBlock = view.dom.querySelector(
+			"div.easymde-math-block",
+		) as HTMLElement;
 		mathBlock.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
 		expect(mathBlock.querySelector("textarea")).toBeNull();
 	});
@@ -509,7 +604,9 @@ describe("TaskItemNodeView", () => {
 		const firstCheckbox = firstItem.querySelector(
 			'input[type="checkbox"].task-list-item-checkbox',
 		) as HTMLInputElement;
-		const firstContent = firstItem.querySelector("div.easymde-task-item-content");
+		const firstContent = firstItem.querySelector(
+			"div.easymde-task-item-content",
+		);
 
 		expect(firstItem.getAttribute("data-checked")).toBe("false");
 		expect(firstCheckbox.checked).toBe(false);
@@ -540,21 +637,25 @@ describe("TaskItemNodeView", () => {
 		) as HTMLInputElement;
 		expect(checkbox.disabled).toBe(true);
 		checkbox.click();
-		expect(serializeVisualDocToMarkdown(view.state.doc)).toBe("- [ ] Locked task");
+		expect(serializeVisualDocToMarkdown(view.state.doc)).toBe(
+			"- [ ] Locked task",
+		);
 	});
 });
 
 describe("TableContainerNodeView", () => {
 	it("wraps table in .easymde-table-container and supports prosemirror-tables operations and colgroup widths", () => {
 		const markdown = [
-			"<!-- easymde-table-align:v1 [[1,\"center\"]] -->",
+			'<!-- easymde-table-align:v1 [[1,"center"]] -->',
 			"| Left | Right |",
 			"| :--- | ---: |",
 			"| A | B |",
 		].join("\n");
 
 		const view = mountVisualEditor(markdown, { withColumnResizing: true });
-		const section = view.dom.querySelector("section.table-container.easymde-table-container");
+		const section = view.dom.querySelector(
+			"section.table-container.easymde-table-container",
+		);
 		expect(section).not.toBeNull();
 		expect(section?.getAttribute("data-easymde-table-align-annotation")).toBe(
 			'<!-- easymde-table-align:v1 [[1,"center"]] -->',
@@ -568,7 +669,9 @@ describe("TableContainerNodeView", () => {
 		expect(tbody?.querySelectorAll("tr").length).toBe(2);
 
 		// prosemirror-tables commands add rows and columns seamlessly inside our NodeView.
-		view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 4)));
+		view.dispatch(
+			view.state.tr.setSelection(TextSelection.create(view.state.doc, 4)),
+		);
 		expect(addRowAfter(view.state, view.dispatch)).toBe(true);
 		expect(addColumnAfter(view.state, view.dispatch)).toBe(true);
 		expect(tbody?.querySelectorAll("tr").length).toBe(3);
@@ -583,7 +686,9 @@ describe("TableContainerNodeView", () => {
 				colwidth: [180],
 			}),
 		);
-		const firstCol = colgroup?.querySelector("col") as HTMLTableColElement | null;
+		const firstCol = colgroup?.querySelector(
+			"col",
+		) as HTMLTableColElement | null;
 		expect(firstCol?.style.width).toBe("180px");
 	});
 });

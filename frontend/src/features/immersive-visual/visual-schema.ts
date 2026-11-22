@@ -14,7 +14,12 @@ export const VISUAL_IMAGE_SCALES: ReadonlyArray<VisualImageScale> = [
 ];
 
 export type TableTextAlign = "left" | "center" | "right" | null;
-export type ProtectedBlockKind = "math" | "mermaid" | "toc" | "footnotes" | "raw";
+export type ProtectedBlockKind =
+	| "math"
+	| "mermaid"
+	| "toc"
+	| "footnotes"
+	| "raw";
 export type ProtectedInlineKind = "math-inline" | "footnote-ref" | "raw-inline";
 
 export type VisualNodeName =
@@ -58,22 +63,38 @@ const PROTECTED_INLINE_KINDS: ReadonlyArray<ProtectedInlineKind> = [
 const UNSAFE_URL_PROTOCOL_PATTERN =
 	/^\s*(?:javascript|vbscript|data\s*:\s*text\/html)\s*:/i;
 
-export function isValidVisualImageScale(value: unknown): value is VisualImageScale {
-	return typeof value === "number" && VISUAL_IMAGE_SCALES.includes(value as VisualImageScale);
+export function isValidVisualImageScale(
+	value: unknown,
+): value is VisualImageScale {
+	return (
+		typeof value === "number" &&
+		VISUAL_IMAGE_SCALES.includes(value as VisualImageScale)
+	);
 }
 
 export function isValidTableTextAlign(value: unknown): value is TableTextAlign {
-	return value === null || value === "left" || value === "center" || value === "right";
+	return (
+		value === null ||
+		value === "left" ||
+		value === "center" ||
+		value === "right"
+	);
 }
 
-export function normalizeProtectedBlockKind(value: unknown): ProtectedBlockKind {
-	return typeof value === "string" && PROTECTED_BLOCK_KINDS.includes(value as ProtectedBlockKind)
+export function normalizeProtectedBlockKind(
+	value: unknown,
+): ProtectedBlockKind {
+	return typeof value === "string" &&
+		PROTECTED_BLOCK_KINDS.includes(value as ProtectedBlockKind)
 		? (value as ProtectedBlockKind)
 		: "raw";
 }
 
-export function normalizeProtectedInlineKind(value: unknown): ProtectedInlineKind {
-	return typeof value === "string" && PROTECTED_INLINE_KINDS.includes(value as ProtectedInlineKind)
+export function normalizeProtectedInlineKind(
+	value: unknown,
+): ProtectedInlineKind {
+	return typeof value === "string" &&
+		PROTECTED_INLINE_KINDS.includes(value as ProtectedInlineKind)
 		? (value as ProtectedInlineKind)
 		: "raw-inline";
 }
@@ -89,7 +110,9 @@ export function sanitizeFenceChar(value: unknown): "`" | "~" {
 }
 
 export function sanitizeFenceLength(value: unknown): number {
-	return typeof value === "number" && Number.isInteger(value) && value >= 3 ? value : 3;
+	return typeof value === "number" && Number.isInteger(value) && value >= 3
+		? value
+		: 3;
 }
 
 export function sanitizeDomUrl(rawUrl: string): string | null {
@@ -109,7 +132,10 @@ function readTableAlignFromDom(dom: HTMLElement): TableTextAlign {
 	return isValidTableTextAlign(styleAlign) ? styleAlign : null;
 }
 
-function writeTableAlignToDom(value: unknown, attrs: Record<string, unknown>): void {
+function writeTableAlignToDom(
+	value: unknown,
+	attrs: Record<string, unknown>,
+): void {
 	if (!isValidTableTextAlign(value) || value === null) {
 		return;
 	}
@@ -123,8 +149,13 @@ function validateColumnAlignments(value: unknown): void {
 	if (value === null) {
 		return;
 	}
-	if (!Array.isArray(value) || value.some((entry) => !isValidTableTextAlign(entry))) {
-		throw new TypeError("columnAlignments must be null or an array of TableTextAlign values");
+	if (
+		!Array.isArray(value) ||
+		value.some((entry) => !isValidTableTextAlign(entry))
+	) {
+		throw new TypeError(
+			"columnAlignments must be null or an array of TableTextAlign values",
+		);
 	}
 }
 
@@ -207,16 +238,23 @@ const tableNodeSpec: NodeSpec = {
 					container?.getAttribute("data-easymde-table-align-annotation") ??
 					"";
 				const trimmed = rawAnnotation.trim();
-				return { alignAnnotation: trimmed.length > 0 ? trimmed : null, columnAlignments: null };
+				return {
+					alignAnnotation: trimmed.length > 0 ? trimmed : null,
+					columnAlignments: null,
+				};
 			},
 		},
 	],
 	toDOM(node): DOMOutputSpec {
 		const rawAnnotation =
-			typeof node.attrs.alignAnnotation === "string" ? node.attrs.alignAnnotation.trim() : "";
+			typeof node.attrs.alignAnnotation === "string"
+				? node.attrs.alignAnnotation.trim()
+				: "";
 		const sectionAttrs: Record<string, string> = {
 			class: "table-container easymde-table-container",
-			...(rawAnnotation.length > 0 ? { "data-easymde-table-align-annotation": rawAnnotation } : {}),
+			...(rawAnnotation.length > 0
+				? { "data-easymde-table-align-annotation": rawAnnotation }
+				: {}),
 		};
 		return ["section", sectionAttrs, ["table", ["tbody", 0]]];
 	},
@@ -237,8 +275,14 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 		content: "inline*",
 		group: "block",
 		defining: true,
-		parseDOM: [1, 2, 3, 4, 5, 6].map((level) => ({ tag: `h${level}`, attrs: { level } })),
-		toDOM: (node): DOMOutputSpec => [`h${normalizeHeadingLevel(node.attrs.level)}`, 0],
+		parseDOM: [1, 2, 3, 4, 5, 6].map((level) => ({
+			tag: `h${level}`,
+			attrs: { level },
+		})),
+		toDOM: (node): DOMOutputSpec => [
+			`h${normalizeHeadingLevel(node.attrs.level)}`,
+			0,
+		],
 	},
 
 	blockquote: {
@@ -313,13 +357,19 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 						return { checked: dataChecked === "true" };
 					}
 					const checkbox = dom.querySelector('input[type="checkbox"]');
-					return { checked: checkbox instanceof HTMLInputElement ? checkbox.checked : false };
+					return {
+						checked:
+							checkbox instanceof HTMLInputElement ? checkbox.checked : false,
+					};
 				},
 			},
 		],
 		toDOM: (node): DOMOutputSpec => [
 			"li",
-			{ class: "task-list-item", "data-checked": node.attrs.checked ? "true" : "false" },
+			{
+				class: "task-list-item",
+				"data-checked": node.attrs.checked ? "true" : "false",
+			},
 			0,
 		],
 	},
@@ -341,13 +391,19 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 				tag: "pre",
 				preserveWhitespace: "full",
 				getAttrs(dom) {
-					const language = dom instanceof HTMLElement ? parseCodeBlockLanguageFromDom(dom) : "";
+					const language =
+						dom instanceof HTMLElement
+							? parseCodeBlockLanguageFromDom(dom)
+							: "";
 					return { language, info: language, fenceChar: "`", fenceLength: 3 };
 				},
 			},
 		],
 		toDOM(node): DOMOutputSpec {
-			const language = typeof node.attrs.language === "string" ? node.attrs.language.trim() : "";
+			const language =
+				typeof node.attrs.language === "string"
+					? node.attrs.language.trim()
+					: "";
 			const preAttrs: Record<string, string> = {
 				class: "easymde-code-block",
 				...(language.length > 0 ? { "data-language": language } : {}),
@@ -385,16 +441,23 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 						return { kind: "raw", rawMarkdown: "" };
 					}
 					return {
-						kind: normalizeProtectedBlockKind(dom.getAttribute("data-easymde-protected-kind")),
+						kind: normalizeProtectedBlockKind(
+							dom.getAttribute("data-easymde-protected-kind"),
+						),
 						rawMarkdown:
-							dom.getAttribute("data-easymde-visual-markdown-source") ?? dom.textContent ?? "",
+							dom.getAttribute("data-easymde-visual-markdown-source") ??
+							dom.textContent ??
+							"",
 					};
 				},
 			},
 		],
 		toDOM(node): DOMOutputSpec {
 			const kind = normalizeProtectedBlockKind(node.attrs.kind);
-			const rawMarkdown = typeof node.attrs.rawMarkdown === "string" ? node.attrs.rawMarkdown : "";
+			const rawMarkdown =
+				typeof node.attrs.rawMarkdown === "string"
+					? node.attrs.rawMarkdown
+					: "";
 			return [
 				"div",
 				{
@@ -449,11 +512,18 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 			},
 		],
 		toDOM(node): DOMOutputSpec {
-			const safeSrc = sanitizeDomUrl(typeof node.attrs.src === "string" ? node.attrs.src : "") ?? "";
+			const safeSrc =
+				sanitizeDomUrl(
+					typeof node.attrs.src === "string" ? node.attrs.src : "",
+				) ?? "";
 			const alt = typeof node.attrs.alt === "string" ? node.attrs.alt : "";
 			const title =
-				typeof node.attrs.title === "string" && node.attrs.title.length > 0 ? node.attrs.title : null;
-			const scale = isValidVisualImageScale(node.attrs.scale) ? node.attrs.scale : null;
+				typeof node.attrs.title === "string" && node.attrs.title.length > 0
+					? node.attrs.title
+					: null;
+			const scale = isValidVisualImageScale(node.attrs.scale)
+				? node.attrs.scale
+				: null;
 			const attrs: Record<string, string> = {
 				src: safeSrc,
 				alt,
@@ -484,16 +554,23 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 						return { kind: "raw-inline", rawMarkdown: "" };
 					}
 					return {
-						kind: normalizeProtectedInlineKind(dom.getAttribute("data-easymde-protected-kind")),
+						kind: normalizeProtectedInlineKind(
+							dom.getAttribute("data-easymde-protected-kind"),
+						),
 						rawMarkdown:
-							dom.getAttribute("data-easymde-visual-markdown-source") ?? dom.textContent ?? "",
+							dom.getAttribute("data-easymde-visual-markdown-source") ??
+							dom.textContent ??
+							"",
 					};
 				},
 			},
 		],
 		toDOM(node): DOMOutputSpec {
 			const kind = normalizeProtectedInlineKind(node.attrs.kind);
-			const rawMarkdown = typeof node.attrs.rawMarkdown === "string" ? node.attrs.rawMarkdown : "";
+			const rawMarkdown =
+				typeof node.attrs.rawMarkdown === "string"
+					? node.attrs.rawMarkdown
+					: "";
 			return [
 				"span",
 				{
@@ -529,9 +606,13 @@ const marks: Record<VisualMarkName, MarkSpec> = {
 			},
 		],
 		toDOM(mark): DOMOutputSpec {
-			const safeHref = sanitizeDomUrl(typeof mark.attrs.href === "string" ? mark.attrs.href : "");
+			const safeHref = sanitizeDomUrl(
+				typeof mark.attrs.href === "string" ? mark.attrs.href : "",
+			);
 			const title =
-				typeof mark.attrs.title === "string" && mark.attrs.title.length > 0 ? mark.attrs.title : null;
+				typeof mark.attrs.title === "string" && mark.attrs.title.length > 0
+					? mark.attrs.title
+					: null;
 			const attrs: Record<string, string> = {
 				...(safeHref !== null ? { href: safeHref } : {}),
 				...(title !== null ? { title } : {}),
@@ -544,7 +625,10 @@ const marks: Record<VisualMarkName, MarkSpec> = {
 		parseDOM: [
 			{ tag: "i" },
 			{ tag: "em" },
-			{ style: "font-style", getAttrs: (value) => (value === "italic" ? null : false) },
+			{
+				style: "font-style",
+				getAttrs: (value) => (value === "italic" ? null : false),
+			},
 		],
 		toDOM: (): DOMOutputSpec => ["em", 0],
 	},
@@ -555,12 +639,17 @@ const marks: Record<VisualMarkName, MarkSpec> = {
 			{
 				tag: "b",
 				getAttrs: (dom) =>
-					dom instanceof HTMLElement && dom.style.fontWeight !== "normal" ? null : false,
+					dom instanceof HTMLElement && dom.style.fontWeight !== "normal"
+						? null
+						: false,
 			},
 			{
 				style: "font-weight",
 				getAttrs: (value) =>
-					typeof value === "string" && /^(?:bold(?:er)?|[5-9]\d{2})$/.test(value) ? null : false,
+					typeof value === "string" &&
+					/^(?:bold(?:er)?|[5-9]\d{2})$/.test(value)
+						? null
+						: false,
 			},
 		],
 		toDOM: (): DOMOutputSpec => ["strong", 0],
@@ -574,7 +663,9 @@ const marks: Record<VisualMarkName, MarkSpec> = {
 			{
 				style: "text-decoration",
 				getAttrs: (value) =>
-					typeof value === "string" && value.includes("line-through") ? null : false,
+					typeof value === "string" && value.includes("line-through")
+						? null
+						: false,
 			},
 		],
 		toDOM: (): DOMOutputSpec => ["del", 0],
@@ -588,4 +679,7 @@ const marks: Record<VisualMarkName, MarkSpec> = {
 	},
 };
 
-export const visualEditorSchema = new Schema<VisualNodeName, VisualMarkName>({ nodes, marks });
+export const visualEditorSchema = new Schema<VisualNodeName, VisualMarkName>({
+	nodes,
+	marks,
+});

@@ -5,7 +5,11 @@ import {
 	wrappingInputRule,
 } from "prosemirror-inputrules";
 import type { MarkType, Node as ProseMirrorNode } from "prosemirror-model";
-import { type EditorState, type Plugin, TextSelection } from "prosemirror-state";
+import {
+	type EditorState,
+	type Plugin,
+	TextSelection,
+} from "prosemirror-state";
 import { visualEditorSchema } from "./visual-schema";
 
 function createHeadingRule(): InputRule {
@@ -42,7 +46,12 @@ function createOrderedListRule(): InputRule {
 function createDirectTaskListRule(): InputRule {
 	return new InputRule(
 		/^\s*[-+*]\s\[([ xX])\]\s$/,
-		(state: EditorState, match: RegExpMatchArray, start: number, end: number) => {
+		(
+			state: EditorState,
+			match: RegExpMatchArray,
+			start: number,
+			end: number,
+		) => {
 			const $start = state.doc.resolve(start);
 			if ($start.parent.type !== visualEditorSchema.nodes.paragraph) {
 				return null;
@@ -61,7 +70,10 @@ function createDirectTaskListRule(): InputRule {
 				{ checked },
 				paragraph,
 			);
-			const taskList = visualEditorSchema.nodes.task_list.create(null, taskItem);
+			const taskList = visualEditorSchema.nodes.task_list.create(
+				null,
+				taskItem,
+			);
 
 			const tr = state.tr.replaceWith(blockFrom, blockTo, taskList);
 			// Position inside task_list (+1) -> task_item (+1) -> paragraph (+1)
@@ -75,7 +87,12 @@ function createDirectTaskListRule(): InputRule {
 function createBulletItemToTaskListRule(): InputRule {
 	return new InputRule(
 		/^\[([ xX])\]\s$/,
-		(state: EditorState, match: RegExpMatchArray, start: number, end: number) => {
+		(
+			state: EditorState,
+			match: RegExpMatchArray,
+			start: number,
+			end: number,
+		) => {
 			const $start = state.doc.resolve(start);
 			if (
 				$start.depth < 3 ||
@@ -211,7 +228,12 @@ function createInlineMarkRule(
 ): InputRule {
 	return new InputRule(
 		pattern,
-		(state: EditorState, match: RegExpMatchArray, start: number, end: number) => {
+		(
+			state: EditorState,
+			match: RegExpMatchArray,
+			start: number,
+			end: number,
+		) => {
 			const fullMatch = match[0];
 			const innerText = match[1];
 			if (!fullMatch || !innerText || innerText.length === 0) {

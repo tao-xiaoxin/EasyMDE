@@ -11,6 +11,10 @@ import type { PreviewRequest } from "../../contracts/ports/preview-request";
 import type { EditorDocumentSession } from "../../features/document-source/ui/EditorDocumentSource";
 import type { EditorTextEdit } from "../../features/editor-context-menu/editor-context-menu-text-edit";
 import type { ImmersiveViewMode } from "../../features/immersive-editor/immersive-editor";
+import {
+	type PreviewEnhancementPort,
+	previewEnhancementFailureCode,
+} from "../../features/live-preview/ports/preview-enhancement-port";
 import type {
 	ApplyVisualCanonicalChange,
 	ImmersiveVisualEditorRuntime,
@@ -74,6 +78,46 @@ export function isAcceptedDomInvalidatingFailure(code: string): boolean {
 		"visual-editor-code-body-map-stale" === code ||
 		"visual-editor-canonical-change-map-stale" === code
 	);
+}
+
+/**
+ * Visual editor runtime failures that must surface a visible, privacy-safe
+ * alert: the lazy chunk failed to load, or a ProseMirror edit could not be
+ * serialized back to canonical Markdown.
+ */
+export function isVisualEditorRuntimeFailureCode(code: string): boolean {
+	return (
+		"visual-editor-load-failed" === code ||
+		"visual-editor-sync-failed" === code
+	);
+}
+
+/**
+ * Synchronize code-frame backgrounds without reporting the optional shared
+ * enhancement runtime as missing where no consumer needs it: a surface with no
+ * code frame, or (with `ignoreUnavailable`) a ProseMirror surface whose code
+ * NodeViews already own their frame background locally.
+ */
+export function syncCodeFrameBackgroundsSafely(
+	port: Pick<PreviewEnhancementPort, "syncCodeFrameBackgrounds">,
+	surface: HTMLElement,
+	report: (code: string) => void,
+	ignoreUnavailable = false,
+): boolean {
+	try {
+		port.syncCodeFrameBackgrounds(surface);
+		return true;
+	} catch (error) {
+		const code = previewEnhancementFailureCode(error);
+		if (
+			"preview-enhancement-runtime-unavailable" === code &&
+			(ignoreUnavailable || !surface.querySelector("pre > code"))
+		) {
+			return false;
+		}
+		report(code);
+		return false;
+	}
 }
 
 export function focusVisualPreviewRuntime(

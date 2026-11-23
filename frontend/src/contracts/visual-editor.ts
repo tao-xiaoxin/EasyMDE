@@ -300,6 +300,12 @@ export type ImmersiveVisualEditorRuntime = Readonly<{
 		expected: Readonly<{ revision: number; value: string }>,
 	) => boolean;
 	prepareToolbarFallback: () => boolean;
+	/**
+	 * Settles any pending visual edit (including an IME composition whose DOM
+	 * flush has not landed yet) into the canonical document. Resolves false
+	 * when the edit could not be committed truthfully.
+	 */
+	settlePendingEdits?: () => Promise<boolean>;
 	focus?: () => void;
 	surface: HTMLElement;
 }>;

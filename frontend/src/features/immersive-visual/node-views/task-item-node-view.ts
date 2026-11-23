@@ -5,6 +5,7 @@ import type {
 	NodeViewConstructor,
 	ViewMutationRecord,
 } from "prosemirror-view";
+import { subscribeVisualEditableState } from "./protected-atom-card-editor";
 
 export type TaskItemNodeViewOptions = Readonly<{
 	checkboxAriaLabel?: string;
@@ -54,6 +55,8 @@ class TaskItemNodeView implements NodeView {
 	private readonly onMouseDown: (event: MouseEvent) => void;
 	private readonly onClick: (event: MouseEvent) => void;
 	private readonly onChange: () => void;
+	private readonly unsubscribeEditable: () => void;
+	private destroyed = false;
 
 	constructor(
 		node: ProseMirrorNode,
@@ -75,7 +78,9 @@ class TaskItemNodeView implements NodeView {
 		this.checkbox.setAttribute("contenteditable", "false");
 		this.checkbox.setAttribute(
 			"aria-label",
-			options.checkboxAriaLabel ?? DEFAULT_CHECKBOX_ARIA_LABEL,
+			options.checkboxAriaLabel && options.checkboxAriaLabel.length > 0
+				? options.checkboxAriaLabel
+				: DEFAULT_CHECKBOX_ARIA_LABEL,
 		);
 
 		this.contentDOM = doc.createElement("div");
@@ -117,6 +122,10 @@ class TaskItemNodeView implements NodeView {
 		this.checkbox.addEventListener("mousedown", this.onMouseDown);
 		this.checkbox.addEventListener("click", this.onClick);
 		this.checkbox.addEventListener("change", this.onChange);
+		this.unsubscribeEditable = subscribeVisualEditableState(view, () => {
+			if (this.destroyed) return;
+			this.syncCheckedState(readCheckedAttr(this.node));
+		});
 	}
 
 	private syncCheckedState(checked: boolean): void {
@@ -185,6 +194,8 @@ class TaskItemNodeView implements NodeView {
 	}
 
 	destroy(): void {
+		this.destroyed = true;
+		this.unsubscribeEditable();
 		this.checkbox.removeEventListener("mousedown", this.onMouseDown);
 		this.checkbox.removeEventListener("click", this.onClick);
 		this.checkbox.removeEventListener("change", this.onChange);

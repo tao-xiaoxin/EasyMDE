@@ -42,6 +42,18 @@ type FormalPreviewWaiter = Readonly<{
   resolve: (surface: HTMLElement | null) => void;
 }>;
 
+type FormalPreviewRequest = Readonly<{
+  appearance: AppearanceState;
+  markdown: string;
+  signature: string;
+}>;
+
+/** Markdown and appearance a formal Preview accepted while visual editing. */
+type FormalPreviewFreshness = Readonly<{
+  appearance: AppearanceState;
+  markdown: string;
+}>;
+
 export type UseEditorVisualPreviewBridgeOptions = Readonly<{
   cancelVisualUnlockPreparationRef: SharedRef<() => void>;
   closeForToolbar: (focusTarget?: HTMLElement) => void;
@@ -114,13 +126,10 @@ export function useEditorVisualPreviewBridge({
   const lastVisualFailureRef = useRef<string | null>(null);
   const scheduledPreviewRuntimeRef = useRef<PreviewSurfaceRuntime | null>(null);
   const previewRevisionRef = useRef(0);
-  const latestPreviewRequestRef = useRef<Readonly<{
-    markdown: string;
-    signature: string;
-  }> | null>(null);
+  const latestPreviewRequestRef = useRef<FormalPreviewRequest | null>(null);
   const acceptedPreviewMarkdownRef = useRef<string | null>(null);
+  const formalPreviewFreshnessRef = useRef<FormalPreviewFreshness | null>(null);
   const formalPreviewWaitersRef = useRef<Set<FormalPreviewWaiter>>(new Set());
-  const syncedVisualCodeFramesRef = useRef<WeakSet<HTMLElement>>(new WeakSet());
   const layoutScrollRestoreRef = useRef<LayoutScrollRestoreEntry | null>(null);
   const leaveVisualPreviewRef = useRef<
     (options?: Readonly<{ suppressRefresh?: boolean }>) => boolean
@@ -175,6 +184,18 @@ export function useEditorVisualPreviewBridge({
     []
   );
 
+  // A newer formal render request for different Markdown supersedes every
+  // pending waiter for the old target; its render will never be accepted, so
+  // settle it explicitly instead of letting a Copy hang.
+  const settleSupersededFormalPreviewWaiters = useCallback((markdown: string) => {
+    for (const waiter of Array.from(formalPreviewWaitersRef.current)) {
+      if (waiter.markdown !== markdown) {
+        formalPreviewWaitersRef.current.delete(waiter);
+        waiter.resolve(null);
+      }
+    }
+  }, []);
+
   useEffect(
     () => () => {
       settleFormalPreviewWaiters(null, null);
@@ -212,6 +233,16 @@ export function useEditorVisualPreviewBridge({
     wechatExportEnabled: wechatExport.enabled
   });
 
+  // The visual failure owner is composed after the unlock owner; a stable ref
+  // lets an unlock-time chunk failure reach the visible alert and rollback.
+  const unlockVisualFailureRef = useRef<((code: string) => void) | null>(null);
+  const handleUnlockVisualFailure = useCallback(
+    (code: string) => {
+      (unlockVisualFailureRef.current ?? reportFailure)(code);
+    },
+    [reportFailure]
+  );
+
   const {
     cancelVisualUnlockPreparation,
     leaveVisualPreview,
@@ -232,6 +263,7 @@ export function useEditorVisualPreviewBridge({
     lastVisualFailureRef,
     layoutScrollRestoreRef,
     leaveVisualPreviewRef,
+    onVisualFailure: handleUnlockVisualFailure,
     previewAppearanceRef,
     previewRefreshPendingRef,
     previewSurfaceStatusRef,
@@ -264,7 +296,6 @@ export function useEditorVisualPreviewBridge({
     notifyContextMenuReadiness,
     preview,
     previewRefreshPendingRef,
-    previewRuntimeRef,
     previewSurfaceStatusRef,
     publishEditorStatus,
     reportFailure,
@@ -276,9 +307,9 @@ export function useEditorVisualPreviewBridge({
     setVisualEditorSurface,
     setVisualPreviewChanged,
     setVisualPreviewPending,
-    syncedVisualCodeFramesRef,
     visualEditorRuntimeRef
   });
+  unlockVisualFailureRef.current = visualHandlers.handleVisualFailure;
 
   const {
     changeImmersiveMode,
@@ -339,6 +370,7 @@ export function useEditorVisualPreviewBridge({
       if (previewRuntimeRef.current === runtime) {
         previewRuntimeRef.current = null;
         acceptedPreviewMarkdownRef.current = null;
+        formalPreviewFreshnessRef.current = null;
         setPreviewRuntimeGeneration((generation) => generation + 1);
       }
       if (scheduledPreviewRuntimeRef.current === runtime) {
@@ -363,12 +395,16 @@ export function useEditorVisualPreviewBridge({
       const latestRequest = latestPreviewRequestRef.current;
       const currentMarkdown =
         documentSession?.document.getValue() ?? submissionField.value;
-      if (
-        null !== latestRequest
-        && latestRequest.signature === signature
-        && latestRequest.markdown === currentMarkdown
-      ) {
+      const latestCommitted =
+        null !== latestRequest && latestRequest.signature === signature;
+      if (latestCommitted && latestRequest.markdown === currentMarkdown) {
         acceptedPreviewMarkdownRef.current = latestRequest.markdown;
+        formalPreviewFreshnessRef.current = visualPreviewEditingRef.current
+          ? {
+              appearance: latestRequest.appearance,
+              markdown: latestRequest.markdown
+            }
+          : null;
         visualHandlers.clearVisualFailureState();
       } else if (null === latestRequest && signature === preview.signature) {
         acceptedPreviewMarkdownRef.current = currentMarkdown;
@@ -379,9 +415,13 @@ export function useEditorVisualPreviewBridge({
         revision: (current?.revision ?? 0) + 1,
         signature
       }));
-      if (acceptedPreviewMarkdownRef.current !== null) {
+      if (latestCommitted) {
+        // The committed surface renders exactly the Markdown and appearance a
+        // waiter requested at Copy time, even when the canonical source has
+        // moved on since. Only the latest request may settle waiters, so an
+        // older in-flight render can never hand out stale theme markup.
         settleFormalPreviewWaiters(
-          acceptedPreviewMarkdownRef.current,
+          latestRequest.markdown,
           previewRuntimeRef.current?.surface ?? null
         );
       }
@@ -396,7 +436,8 @@ export function useEditorVisualPreviewBridge({
       scheduleCurrentWechatPreviewPreparation,
       settleFormalPreviewWaiters,
       submissionField,
-      visualHandlers.clearVisualFailureState
+      visualHandlers.clearVisualFailureState,
+      visualPreviewEditingRef
     ]
   );
 
@@ -413,6 +454,7 @@ export function useEditorVisualPreviewBridge({
       if ('ready' === status) previewRefreshPendingRef.current = false;
       if ('empty' === status || 'error' === status) {
         acceptedPreviewMarkdownRef.current = null;
+        formalPreviewFreshnessRef.current = null;
         settleFormalPreviewWaiters(null, null);
       }
       if ('empty' === status) setVisualPreviewSnapshot(null);
@@ -439,20 +481,23 @@ export function useEditorVisualPreviewBridge({
         throw new Error('preview-runtime-unavailable');
       }
       const revision = ++previewRevisionRef.current;
-      const request = previewRequest(
-        markdown,
-        preview,
-        previewAppearanceRef.current,
-        revision
-      );
+      const appearance = previewAppearanceRef.current;
+      const request = previewRequest(markdown, preview, appearance, revision);
+      settleSupersededFormalPreviewWaiters(markdown);
       latestPreviewRequestRef.current = {
+        appearance,
         markdown,
         signature: request.signature
       };
       runtime.session.schedule(request, immediate);
       return request.signature;
     },
-    [preview, previewAppearanceRef, previewRuntimeRef]
+    [
+      preview,
+      previewAppearanceRef,
+      previewRuntimeRef,
+      settleSupersededFormalPreviewWaiters
+    ]
   );
 
   const schedulePreview = useCallback(
@@ -465,34 +510,90 @@ export function useEditorVisualPreviewBridge({
     [documentSession, schedulePreviewMarkdown, submissionField]
   );
 
-  const waitForFreshFormalPreview = useCallback((): Promise<HTMLElement | null> => {
+  const waitForFreshFormalPreview = useCallback((
+    signal?: AbortSignal
+  ): Promise<HTMLElement | null> => {
     const runtime = previewRuntimeRef.current;
-    if (!runtime || !rootActiveRef.current) {
+    if (!runtime || !rootActiveRef.current || signal?.aborted) {
       return Promise.resolve(null);
     }
     const targetMarkdown =
       documentSession?.document.getValue() ?? submissionField.value;
+    const freshness = formalPreviewFreshnessRef.current;
+    // Appearance, Code Theme, and Custom CSS changes made while unlocked mark
+    // the visual Preview changed without changing Markdown. The accepted
+    // formal Preview is reusable only when nothing changed since unlock, or
+    // when a formal render already accepted this Markdown and appearance.
     if (
       'ready' === previewSurfaceStatusRef.current
       && acceptedPreviewMarkdownRef.current === targetMarkdown
+      && (
+        !hasUnsyncedVisualChanges()
+        || (
+          null !== freshness
+          && freshness.markdown === targetMarkdown
+          && freshness.appearance === previewAppearanceRef.current
+        )
+      )
     ) {
       return Promise.resolve(runtime.surface);
     }
+    const sourceDocument = documentSession?.document ?? null;
+    const readCanonicalMarkdown = (): string =>
+      sourceDocument?.getValue() ?? submissionField.value;
     return new Promise<HTMLElement | null>((resolve) => {
+      let settled = false;
+      let unsubscribeDocument: (() => void) | null = null;
+      // Every terminal path (completion, abort, supersede, status failure,
+      // canonical divergence, schedule failure, and unmount) funnels through
+      // `settle`, which releases the waiter and both listeners exactly once.
+      const settle = (surface: HTMLElement | null) => {
+        if (settled) return;
+        settled = true;
+        formalPreviewWaitersRef.current.delete(waiter);
+        signal?.removeEventListener('abort', abort);
+        const unsubscribe = unsubscribeDocument;
+        unsubscribeDocument = null;
+        unsubscribe?.();
+        resolve(surface);
+      };
+      const abort = () => {
+        settle(null);
+      };
       const waiter: FormalPreviewWaiter = {
         markdown: targetMarkdown,
-        resolve
+        resolve: settle
+      };
+      // While unlocked, ordinary Preview scheduling is parked, so a canonical
+      // edit made after Copy starts never issues a new formal request. The
+      // Preview sink then rejects the stale candidate without a snapshot or a
+      // terminal status, so the waiter must observe the divergence itself.
+      const settleIfDiverged = () => {
+        if (readCanonicalMarkdown() !== targetMarkdown) settle(null);
       };
       formalPreviewWaitersRef.current.add(waiter);
+      signal?.addEventListener('abort', abort, { once: true });
+      if (sourceDocument) {
+        unsubscribeDocument = sourceDocument.subscribe(settleIfDiverged);
+        if (settled) {
+          const unsubscribe = unsubscribeDocument;
+          unsubscribeDocument = null;
+          unsubscribe();
+          return;
+        }
+      }
+      settleIfDiverged();
+      if (settled) return;
       try {
         schedulePreviewMarkdown(targetMarkdown, true);
       } catch {
-        formalPreviewWaitersRef.current.delete(waiter);
-        resolve(null);
+        settle(null);
       }
     });
   }, [
     documentSession,
+    hasUnsyncedVisualChanges,
+    previewAppearanceRef,
     previewRuntimeRef,
     rootActiveRef,
     schedulePreviewMarkdown,
@@ -539,10 +640,29 @@ export function useEditorVisualPreviewBridge({
     visualPreviewEditing
   ]);
 
-  const getVisualGeneratedPreviewIdentity = useCallback(
-    () => previewRuntimeRef.current?.getGeneratedPreviewIdentity() ?? null,
-    [previewRuntimeRef]
-  );
+  const getVisualGeneratedPreviewIdentity = useCallback(() => {
+    // While visual editing, the hidden formal Preview owner is frozen at the
+    // unlock revision, so its identity goes stale after the first edit. The
+    // ProseMirror projection describes the current canonical revision itself.
+    if (visualPreviewEditingRef.current && documentSession) {
+      const revision = documentSession.document.getRevision?.();
+      if (undefined !== revision) {
+        const value = documentSession.document.getValue();
+        return {
+          editMap: null,
+          revision,
+          signature: `prosemirror:${revision}:${value.length}`,
+          sourceRevision: revision
+        };
+      }
+    }
+    return previewRuntimeRef.current?.getGeneratedPreviewIdentity() ?? null;
+  }, [documentSession, previewRuntimeRef, visualPreviewEditingRef]);
+
+  const markVisualPreviewChanged = useCallback(() => {
+    visualPreviewChangedRef.current = true;
+    setVisualPreviewChanged(true);
+  }, []);
 
   return {
     applyVisualCanonicalChange: visualHandlers.applyVisualCanonicalChange,
@@ -570,7 +690,9 @@ export function useEditorVisualPreviewBridge({
     immersiveMode,
     immersivePreferences,
     immersiveToggleRef,
+    insertVisualTable: visualHandlers.insertVisualTable,
     leaveVisualPreview,
+    markVisualPreviewChanged,
     prepareGeneratedSourceNavigation,
     prepareSourceMutation,
     prepareSourceMutationWithPreview,
@@ -579,6 +701,7 @@ export function useEditorVisualPreviewBridge({
     previewSurfaceStatus,
     previewSurfaceStatusRef,
     requestVisualPreviewUnlock,
+    revealVisualHeading: visualHandlers.revealVisualHeading,
     scheduleCurrentWechatPreviewPreparation,
     schedulePreview,
     scheduleWechatPreviewPreparation,

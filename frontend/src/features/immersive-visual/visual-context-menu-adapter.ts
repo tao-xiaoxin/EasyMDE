@@ -1,4 +1,8 @@
-import { NodeSelection, Selection, TextSelection } from "prosemirror-state";
+import {
+	NodeSelection,
+	type Selection,
+	TextSelection,
+} from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import type { ToolbarCommand } from "../../contracts/bootstrap/toolbar-bootstrap";
 import type {
@@ -7,317 +11,71 @@ import type {
 	VisualEditorAcceptedPreview,
 	VisualEditorContextMenuTargetLease,
 	VisualEditorGeneratedContentKind,
-	VisualEditorGeneratedContentOriginal,
 	VisualEditorGeneratedContentTarget,
 	VisualEditorGeneratedContentTargetIndex,
 	VisualEditorGeneratedImageTarget,
 	VisualEditorGeneratedPreviewIdentity,
 	VisualEditorImageTargetIndex,
-	VisualEditorMarkdownImageScaleMatch,
-	VisualEditorSelection,
-	VisualEditorSourceRange,
 	VisualToolbarCommandOptions,
 	VisualToolbarCommandResult,
 } from "../../contracts/visual-editor";
 import type { EditorDocumentSession } from "../document-source/editor-document-session";
-import { executeVisualToolbarCommand } from "./visual-commands";
+import type { VisualCanonicalSync } from "./visual-canonical-sync";
 import {
-	assertCanonicalChangePrecondition,
-	computeVisualSelectionToMarkdownSelection,
-} from "./visual-source-mapping";
+	executeVisualToolbarCommand,
+	type VisualHistoryCommands,
+} from "./visual-commands";
+import {
+	collectMermaidBlocks,
+	contentImages,
+	findGeneratedContentOriginal,
+	findImageMatchInIndex,
+	type GeneratedContentResolution,
+	type ImageMatchResolution,
+	imageSlotIdentity,
+	resolveSelectionForPointerTarget,
+	selectionMatchesRange,
+} from "./visual-context-menu-target-resolution";
 
 export type ProseMirrorVisualRuntimeOptions = Readonly<{
-	applyExternalCanonicalUpdate: (
-		nextMarkdown: string,
-		nextRevision: number,
-		nextSelection: VisualEditorSelection,
-	) => void;
 	disposeSignal?: AbortSignal;
 	documentSession: EditorDocumentSession;
-	flushPendingSync: () => void;
 	getGeneratedPreviewIdentity?: () => VisualEditorGeneratedPreviewIdentity | null;
+	historyCommands?: VisualHistoryCommands;
 	isEditable: () => boolean;
-	onCanonicalDocumentChange?: (markdown: string) => void;
-	onMarkdownChange?: (markdown: string) => void;
-	runWithEchoSuppressed: <T>(fn: () => T) => T;
+	/** Settles composition first, then the canonical sync. */
+	settlePendingEdits: () => Promise<boolean>;
+	sync: VisualCanonicalSync;
 	view: EditorView;
 }>;
-
-type ImageMatchResolution = Readonly<{
-	blockId: string;
-	match: VisualEditorMarkdownImageScaleMatch;
-	ordinal: number;
-}>;
-
-type GeneratedContentResolution = Readonly<{
-	blockId: string;
-	ordinal: number;
-	original: VisualEditorGeneratedContentOriginal;
-}>;
-
 type TrackedHandle = Readonly<{
 	isCurrent: () => boolean;
 	release: () => void;
 }>;
-
-const ATOMIC_NODE_NAMES = new Set([
-	"horizontal_rule",
-	"image",
-	"protected_block",
-	"protected_inline",
-]);
-
-const MERMAID_FENCE_HEADER_PATTERN =
-	/^ {0,3}(?:`{3,}|~{3,})\s*mermaid(?:\s|$)/i;
-
-function sameSelection(
-	left: VisualEditorSelection,
-	right: VisualEditorSelection,
-): boolean {
-	return (
-		left.start === right.start &&
-		left.end === right.end &&
-		left.direction === right.direction
-	);
-}
-
-function syncCanonicalSelectionOnly(
-	documentSession: EditorDocumentSession,
-	nextSelection: VisualEditorSelection,
-	runWithEchoSuppressed: <T>(fn: () => T) => T,
-): void {
-	const doc = documentSession.document;
-	if (sameSelection(doc.getSelection(), nextSelection)) return;
-	const docWithOptionalSet = doc as typeof doc & {
-		setSelection?: (selection: VisualEditorSelection) => void;
-	};
-	runWithEchoSuppressed(() => {
-		if (typeof docWithOptionalSet.setSelection === "function") {
-			docWithOptionalSet.setSelection(nextSelection);
-			return;
-		}
-		doc.applyTextChange({ selection: nextSelection, value: doc.getValue() });
-	});
-}
-
-function resolvePosForDomElement(
-	view: EditorView,
-	element: Element,
-): number | null {
-	try {
-		const pos = view.posAtDOM(element, 0);
-		return pos >= 0 && pos <= view.state.doc.content.size ? pos : null;
-	} catch {
-		return null;
-	}
-}
-
-function resolveAtomicNodeSelection(
-	view: EditorView,
-	element: Element,
+/**
+ * The NodeSelection for a non-empty `anchor`/`head` extent that spans exactly
+ * one top-level selectable atom block, or `null` for any other extent.
+ */
+function topLevelAtomSelectionBetween(
+	doc: EditorView["state"]["doc"],
+	anchor: number,
+	head: number,
 ): NodeSelection | null {
-	const pos = resolvePosForDomElement(view, element);
-	if (pos === null) return null;
-	for (const candidatePos of [pos, pos - 1]) {
-		if (candidatePos < 0 || candidatePos >= view.state.doc.content.size)
-			continue;
-		const node = view.state.doc.nodeAt(candidatePos);
-		if (node && ATOMIC_NODE_NAMES.has(node.type.name)) {
-			try {
-				return NodeSelection.create(view.state.doc, candidatePos);
-			} catch {
-				// Try next candidate position.
-			}
-		}
+	if (anchor === head) return null;
+	const from = Math.min(anchor, head);
+	const to = Math.max(anchor, head);
+	const node = doc.nodeAt(from);
+	if (
+		node &&
+		from + node.nodeSize === to &&
+		doc.resolve(from).depth === 0 &&
+		node.isBlock &&
+		node.isAtom &&
+		NodeSelection.isSelectable(node)
+	) {
+		return NodeSelection.create(doc, from);
 	}
 	return null;
-}
-
-function resolveSelectionForPointerTarget(
-	view: EditorView,
-	target: Element | null | undefined,
-	point: Readonly<{ x: number; y: number }> | undefined,
-	activation: "keyboard" | "pointer" | undefined,
-): Selection {
-	const currentSelection = view.state.selection;
-	if (activation === "keyboard") return currentSelection;
-
-	if (target && view.dom.contains(target)) {
-		const atomicTarget =
-			(target instanceof HTMLImageElement ? target : target.closest("img")) ??
-			target.closest(
-				"[data-easymde-protected-block], [data-easymde-protected-inline]",
-			) ??
-			target.closest("hr");
-		if (atomicTarget && view.dom.contains(atomicTarget)) {
-			const atomicSel = resolveAtomicNodeSelection(view, atomicTarget);
-			if (atomicSel) return atomicSel;
-		}
-	}
-
-	if (!currentSelection.empty) return currentSelection;
-
-	if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
-		const coords = view.posAtCoords({ left: point.x, top: point.y });
-		if (
-			coords &&
-			coords.pos >= 0 &&
-			coords.pos <= view.state.doc.content.size
-		) {
-			if (coords.inside >= 0) {
-				const insideNode = view.state.doc.nodeAt(coords.inside);
-				if (insideNode && ATOMIC_NODE_NAMES.has(insideNode.type.name)) {
-					try {
-						return NodeSelection.create(view.state.doc, coords.inside);
-					} catch {
-						// Fall through to nearest selection.
-					}
-				}
-			}
-			return Selection.near(view.state.doc.resolve(coords.pos));
-		}
-	}
-
-	if (target && view.dom.contains(target)) {
-		const domPos = resolvePosForDomElement(view, target);
-		if (domPos !== null) return Selection.near(view.state.doc.resolve(domPos));
-	}
-	return currentSelection;
-}
-
-function selectionMatchesRange(
-	selection: VisualEditorSourceRange,
-	rangeStart: number,
-	rangeEnd: number,
-): boolean {
-	return selection.start === selection.end
-		? selection.start >= rangeStart && selection.start <= rangeEnd
-		: selection.start >= rangeStart && selection.end <= rangeEnd;
-}
-
-function findImageMatchInIndex(
-	index: VisualEditorImageTargetIndex,
-	selection: VisualEditorSourceRange,
-	elementOrdinal?: number,
-): ImageMatchResolution | null {
-	let globalOrdinal = 0;
-	for (let blockIdx = 0; blockIdx < index.blockImages.length; blockIdx += 1) {
-		const blockEntry = index.blockImages[blockIdx];
-		if (blockEntry?.status !== "ready") continue;
-		for (let imgIdx = 0; imgIdx < blockEntry.images.length; imgIdx += 1) {
-			const match = blockEntry.images[imgIdx];
-			if (!match) continue;
-			if (
-				selectionMatchesRange(selection, match.start, match.end) &&
-				(elementOrdinal === undefined || globalOrdinal === elementOrdinal)
-			) {
-				return { blockId: `pm-block-${blockIdx}`, match, ordinal: imgIdx };
-			}
-			globalOrdinal += 1;
-		}
-	}
-	for (let i = 0; i < index.images.length; i += 1) {
-		const match = index.images[i];
-		if (match && selectionMatchesRange(selection, match.start, match.end)) {
-			return { blockId: "pm-block-0", match, ordinal: i };
-		}
-	}
-	return null;
-}
-
-function collectMermaidBlocks(
-	index: VisualEditorGeneratedContentTargetIndex,
-): ReadonlyArray<Readonly<{ blockIdx: number; from: number; to: number }>> {
-	const results: Array<
-		Readonly<{ blockIdx: number; from: number; to: number }>
-	> = [];
-	for (let i = 0; i < index.blocks.length; i += 1) {
-		const block = index.blocks[i];
-		if (block?.kind !== "code") continue;
-		if (
-			MERMAID_FENCE_HEADER_PATTERN.test(
-				index.source.slice(block.from, block.to),
-			)
-		) {
-			results.push({ blockIdx: i, from: block.from, to: block.to });
-		}
-	}
-	return results;
-}
-
-function extractMermaidOriginal(
-	source: string,
-	from: number,
-	to: number,
-): VisualEditorGeneratedContentOriginal | null {
-	if (from < 0 || to > source.length || from >= to) return null;
-	const full = source.slice(from, to);
-	const firstNl = full.indexOf("\n");
-	const lastNl = full.lastIndexOf("\n");
-	if (firstNl < 0 || lastNl <= firstNl) {
-		return {
-			body: full,
-			bodyRange: { from, to },
-			full,
-			fullRange: { from, to },
-		};
-	}
-	const bodyFrom = from + firstNl + 1;
-	const bodyTo = from + lastNl;
-	return {
-		body: source.slice(bodyFrom, bodyTo),
-		bodyRange: { from: bodyFrom, to: bodyTo },
-		full,
-		fullRange: { from, to },
-	};
-}
-
-function findGeneratedContentOriginal(
-	index: VisualEditorGeneratedContentTargetIndex,
-	kind: VisualEditorGeneratedContentKind,
-	ordinal: number,
-	element: Element | null,
-): GeneratedContentResolution | null {
-	const source = index.source;
-	const domRaw =
-		element?.getAttribute("data-easymde-visual-markdown-source") ?? null;
-
-	if (kind === "math") {
-		const matchedIdx =
-			domRaw !== null
-				? index.mathSpans.findIndex(
-						(span) => source.slice(span.from, span.to) === domRaw,
-					)
-				: -1;
-		const resolvedIdx = matchedIdx >= 0 ? matchedIdx : ordinal;
-		const span = index.mathSpans[resolvedIdx];
-		if (!span) return null;
-		return {
-			blockId: `pm-math-${resolvedIdx}`,
-			ordinal: resolvedIdx,
-			original: {
-				body: source.slice(span.bodyFrom, span.bodyTo),
-				bodyRange: { from: span.bodyFrom, to: span.bodyTo },
-				full: source.slice(span.from, span.to),
-				fullRange: { from: span.from, to: span.to },
-			},
-		};
-	}
-
-	const mermaidBlocks = collectMermaidBlocks(index);
-	const matchedIdx =
-		domRaw !== null
-			? mermaidBlocks.findIndex(
-					(entry) => source.slice(entry.from, entry.to) === domRaw,
-				)
-			: -1;
-	const resolvedIdx = matchedIdx >= 0 ? matchedIdx : ordinal;
-	const entry = mermaidBlocks[resolvedIdx];
-	if (!entry) return null;
-	const original = extractMermaidOriginal(source, entry.from, entry.to);
-	return original
-		? { blockId: `pm-block-${entry.blockIdx}`, ordinal: resolvedIdx, original }
-		: null;
 }
 
 function createPinLease<TRoot extends Element, TTarget>(
@@ -354,15 +112,13 @@ export function createProseMirrorVisualRuntime(
 	options: ProseMirrorVisualRuntimeOptions,
 ): ImmersiveVisualEditorRuntime {
 	const {
-		applyExternalCanonicalUpdate,
 		disposeSignal,
 		documentSession,
-		flushPendingSync,
 		getGeneratedPreviewIdentity,
+		historyCommands,
 		isEditable: isEditableProp,
-		onCanonicalDocumentChange,
-		onMarkdownChange,
-		runWithEchoSuppressed,
+		settlePendingEdits,
+		sync,
 		view,
 	} = options;
 
@@ -413,37 +169,41 @@ export function createProseMirrorVisualRuntime(
 		return { isCurrent: () => !released && predicate(), release };
 	};
 
-	const syncSelectionFromView = (selection: Selection): void => {
-		const mapped = computeVisualSelectionToMarkdownSelection(
-			view.state.doc,
-			selection,
-			documentSession.document.getValue(),
-		);
-		syncCanonicalSelectionOnly(documentSession, mapped, runWithEchoSuppressed);
-	};
-
 	const syncDomSelectionToView = (): Selection => {
+		// A NodeSelection (image, protected atom, rule) has no faithful DOM range.
+		if (view.state.selection instanceof NodeSelection) {
+			return view.state.selection;
+		}
 		const domSelection = view.dom.ownerDocument.defaultView?.getSelection();
-		if (domSelection && domSelection.rangeCount > 0) {
-			const range = domSelection.getRangeAt(0);
-			if (
-				view.dom.contains(range.startContainer) &&
-				view.dom.contains(range.endContainer)
-			) {
+		const anchorNode = domSelection?.anchorNode ?? null;
+		const focusNode = domSelection?.focusNode ?? null;
+		if (
+			domSelection &&
+			domSelection.rangeCount > 0 &&
+			anchorNode &&
+			focusNode
+		) {
+			// Map anchor/focus (not the forward-normalized Range) so a backward
+			// selection keeps its direction.
+			if (view.dom.contains(anchorNode) && view.dom.contains(focusNode)) {
 				try {
-					const from = view.posAtDOM(range.startContainer, range.startOffset);
-					const to = view.posAtDOM(range.endContainer, range.endOffset);
+					const anchor = view.posAtDOM(anchorNode, domSelection.anchorOffset);
+					const head = view.posAtDOM(focusNode, domSelection.focusOffset);
 					if (
-						from >= 0 &&
-						to >= 0 &&
-						from <= view.state.doc.content.size &&
-						to <= view.state.doc.content.size
+						anchor >= 0 &&
+						head >= 0 &&
+						anchor <= view.state.doc.content.size &&
+						head <= view.state.doc.content.size
 					) {
-						const nextSelection = TextSelection.create(
-							view.state.doc,
-							from,
-							to,
-						);
+						// A DOM range spanning exactly one top-level selectable atom
+						// block (rule, protected card) maps to that atom's
+						// NodeSelection, matching keyboard selection parity.
+						const nextSelection =
+							topLevelAtomSelectionBetween(view.state.doc, anchor, head) ??
+							TextSelection.between(
+								view.state.doc.resolve(anchor),
+								view.state.doc.resolve(head),
+							);
 						if (!nextSelection.eq(view.state.selection)) {
 							view.dispatch(view.state.tr.setSelection(nextSelection));
 						}
@@ -458,10 +218,8 @@ export function createProseMirrorVisualRuntime(
 	};
 
 	const syncCurrentEditableSelection = (): boolean => {
-		if (!isLiveEditable()) return false;
-		flushPendingSync();
-		const activeSelection = syncDomSelectionToView();
-		syncSelectionFromView(activeSelection);
+		if (!isLiveEditable() || !sync.settleNow()) return false;
+		sync.syncSelection(syncDomSelectionToView());
 		return true;
 	};
 
@@ -470,14 +228,13 @@ export function createProseMirrorVisualRuntime(
 		element: HTMLImageElement,
 		index: VisualEditorImageTargetIndex,
 	): VisualEditorGeneratedImageTarget => {
-		const domBlockId = element
-			.closest("[data-easymde-visual-block-id]")
-			?.getAttribute("data-easymde-visual-block-id");
+		// The rendered slot is the identity the context menu compares against
+		// the pointer image (`visualImageSlotIdentity`).
+		const slot = imageSlotIdentity(view.dom, element);
 		return {
 			acceptedPreview: acceptedPreviewFor(index.revision, index.source.length),
-			blockId:
-				domBlockId && domBlockId.length > 0 ? domBlockId : matchInfo.blockId,
-			ordinal: matchInfo.ordinal,
+			blockId: slot?.blockId ?? matchInfo.blockId,
+			ordinal: slot?.ordinal ?? matchInfo.ordinal,
 			original: {
 				alt: matchInfo.match.alt,
 				destination: matchInfo.match.destination,
@@ -509,8 +266,16 @@ export function createProseMirrorVisualRuntime(
 			_options?: VisualToolbarCommandOptions,
 		): VisualToolbarCommandResult {
 			if (!isLiveEditable()) return "blocked";
-			const result = executeVisualToolbarCommand(view, command);
-			if (result === "handled") flushPendingSync();
+			if (command.action === "undo" || command.action === "redo") {
+				return sync.history(command.action);
+			}
+			if (!sync.settleNow()) return "failed";
+			const result = executeVisualToolbarCommand(
+				view,
+				command,
+				historyCommands,
+			);
+			if (result === "handled" && !sync.settleNow()) return "failed";
 			return result;
 		},
 
@@ -518,36 +283,7 @@ export function createProseMirrorVisualRuntime(
 			request: VisualCanonicalChangeRequest,
 		): VisualToolbarCommandResult {
 			if (!isLiveEditable()) return "blocked";
-			flushPendingSync();
-			const doc = documentSession.document;
-			const precondition = assertCanonicalChangePrecondition(
-				request,
-				doc.getRevision(),
-				doc.getValue(),
-				doc.getSelection(),
-			);
-			if (!precondition.ok) return "blocked";
-
-			try {
-				runWithEchoSuppressed(() => {
-					doc.applyTextChange({
-						changes: request.change.changes,
-						selection: request.change.selection,
-						value: request.change.value,
-					});
-				});
-				const nextValue = doc.getValue();
-				applyExternalCanonicalUpdate(
-					nextValue,
-					doc.getRevision(),
-					request.change.selection,
-				);
-				onMarkdownChange?.(nextValue);
-				onCanonicalDocumentChange?.(nextValue);
-				return "handled";
-			} catch {
-				return "failed";
-			}
+			return sync.applyCanonicalChange(request);
 		},
 
 		getGeneratedPreviewIdentity: () =>
@@ -559,8 +295,7 @@ export function createProseMirrorVisualRuntime(
 
 		prepareContextMenuDemand(): boolean {
 			if (disposed) return false;
-			flushPendingSync();
-			return isLiveEditable();
+			return sync.settleNow() && isLiveEditable();
 		},
 
 		captureContextMenuTarget(
@@ -590,13 +325,22 @@ export function createProseMirrorVisualRuntime(
 		},
 
 		prepareContextMenuSelection(target, point, activation): boolean {
-			if (!isLiveEditable()) return false;
-			flushPendingSync();
-			syncSelectionFromView(
-				resolveSelectionForPointerTarget(view, target, point, activation),
+			if (!isLiveEditable() || !sync.settleNow()) return false;
+			const nextSelection = resolveSelectionForPointerTarget(
+				view,
+				target,
+				point,
+				activation,
 			);
+			if (!nextSelection.eq(view.state.selection)) {
+				view.dispatch(view.state.tr.setSelection(nextSelection));
+			}
+			sync.syncSelection(view.state.selection);
 			return true;
 		},
+
+		settlePendingEdits: () =>
+			disposed ? Promise.resolve(false) : settlePendingEdits(),
 
 		prepareMediaSelection: syncCurrentEditableSelection,
 		prepareToolbarFallback: syncCurrentEditableSelection,
@@ -609,15 +353,15 @@ export function createProseMirrorVisualRuntime(
 			) {
 				return null;
 			}
-			const elementOrdinal = Array.from(
-				view.dom.querySelectorAll("img"),
-			).indexOf(request.element);
-			const matchInfo =
-				findImageMatchInIndex(
-					request.index,
-					request.selection,
-					elementOrdinal >= 0 ? elementOrdinal : undefined,
-				) ?? findImageMatchInIndex(request.index, request.selection);
+			// The element's own slot must match the selection; never borrow a
+			// sibling image's source range for this root.
+			const elementOrdinal = contentImages(view).indexOf(request.element);
+			if (elementOrdinal < 0) return null;
+			const matchInfo = findImageMatchInIndex(
+				request.index,
+				request.selection,
+				elementOrdinal,
+			);
 			if (!matchInfo) return null;
 			const target = buildImageTarget(
 				matchInfo,
@@ -639,9 +383,8 @@ export function createProseMirrorVisualRuntime(
 			const matchInfo = findImageMatchInIndex(request.index, request.selection);
 			if (!matchInfo) return null;
 			const imageIndex = request.index.images.indexOf(matchInfo.match);
-			const rootImage = Array.from(view.dom.querySelectorAll("img"))[
-				imageIndex >= 0 ? imageIndex : matchInfo.ordinal
-			];
+			const rootImage =
+				contentImages(view)[imageIndex >= 0 ? imageIndex : matchInfo.ordinal];
 			if (!rootImage?.isConnected) return null;
 			const target = buildImageTarget(matchInfo, rootImage, request.index);
 			const handle = createTrackedHandle(
@@ -719,12 +462,16 @@ export function createProseMirrorVisualRuntime(
 					kind === "math" ? ".easymde-math" : ".easymde-mermaid",
 				),
 			);
+			const sourceOf = (el: Element | undefined) =>
+				el?.getAttribute("data-easymde-visual-markdown-source") ?? null;
+			const atOrdinal = elements[resolved.ordinal];
 			const rootElement =
-				elements.find(
-					(el) =>
-						el.getAttribute("data-easymde-visual-markdown-source") ===
-						resolved.original.full,
-				) ?? elements[resolved.ordinal];
+				atOrdinal &&
+				(sourceOf(atOrdinal) === null ||
+					sourceOf(atOrdinal) === resolved.original.full)
+					? atOrdinal
+					: (elements.find((el) => sourceOf(el) === resolved.original.full) ??
+						atOrdinal);
 			if (!rootElement?.isConnected) return null;
 			const target = buildGeneratedTarget(kind, resolved, request.index);
 			const handle = createTrackedHandle(
@@ -737,8 +484,7 @@ export function createProseMirrorVisualRuntime(
 		},
 
 		prepareSourceNavigation(expected): boolean {
-			if (disposed) return false;
-			flushPendingSync();
+			if (disposed || !sync.settleNow()) return false;
 			const doc = documentSession.document;
 			if (
 				doc.getRevision() !== expected.revision ||
@@ -746,7 +492,7 @@ export function createProseMirrorVisualRuntime(
 			) {
 				return false;
 			}
-			syncSelectionFromView(view.state.selection);
+			sync.syncSelection(view.state.selection);
 			return true;
 		},
 

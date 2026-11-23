@@ -2,11 +2,8 @@ import { useCallback } from "@wordpress/element";
 
 import type { ToolbarCommand } from "../../contracts/bootstrap/toolbar-bootstrap";
 import type { EditorDocumentSession } from "../../features/document-source/ui/EditorDocumentSource";
-import { previewEnhancementFailureCode } from "../../features/live-preview/ports/preview-enhancement-port";
-import type {
-	PreviewSurfaceRuntime,
-	PreviewSurfaceStatus,
-} from "../../features/live-preview/ui/PreviewSurfaceOwner";
+import { separatedTableInsertion } from "../../features/immersive-editor/immersive-editor";
+import type { PreviewSurfaceStatus } from "../../features/live-preview/ui/PreviewSurfaceOwner";
 import type { ToolbarCommandPlan } from "../../features/toolbar/toolbar-command-session";
 import {
 	focusVisualPreviewRuntime,
@@ -14,6 +11,8 @@ import {
 	isCancelledVisualTransferFailure,
 	isPreviewRenderFailureCode,
 	isSupersededVisualTransferFailure,
+	isVisualEditorRuntimeFailureCode,
+	syncCodeFrameBackgroundsSafely,
 } from "./editor-root-helpers";
 import type {
 	EditorRootProps,
@@ -42,7 +41,6 @@ export type UseEditorVisualEditingHandlersOptions = Readonly<{
 	notifyContextMenuReadiness: () => void;
 	preview: EditorRootProps["preview"];
 	previewRefreshPendingRef: SharedRef<boolean>;
-	previewRuntimeRef: SharedRef<PreviewSurfaceRuntime | null>;
 	previewSurfaceStatusRef: SharedRef<PreviewSurfaceStatus>;
 	publishEditorStatus: (status: EditorStatus) => void;
 	reportFailure: (code: string) => void;
@@ -56,7 +54,6 @@ export type UseEditorVisualEditingHandlersOptions = Readonly<{
 	setVisualEditorSurface: (surface: HTMLElement | null) => void;
 	setVisualPreviewChanged: (changed: boolean) => void;
 	setVisualPreviewPending: (pending: boolean) => void;
-	syncedVisualCodeFramesRef: SharedRef<WeakSet<HTMLElement>>;
 	visualEditorRuntimeRef: SharedRef<ImmersiveVisualEditorRuntime | null>;
 }>;
 
@@ -72,7 +69,6 @@ export function useEditorVisualEditingHandlers({
 	notifyContextMenuReadiness,
 	preview,
 	previewRefreshPendingRef,
-	previewRuntimeRef,
 	previewSurfaceStatusRef,
 	publishEditorStatus,
 	reportFailure,
@@ -84,7 +80,6 @@ export function useEditorVisualEditingHandlers({
 	setVisualEditorSurface,
 	setVisualPreviewChanged,
 	setVisualPreviewPending,
-	syncedVisualCodeFramesRef,
 	visualEditorRuntimeRef,
 }: UseEditorVisualEditingHandlersOptions) {
 	const reportVisualTransferFailure = useCallback(
@@ -92,7 +87,10 @@ export function useEditorVisualEditingHandlers({
 			if (!code || isCancelledVisualTransferFailure(code)) return;
 			const message =
 				contextMenuStrings?.statusActionFailed ??
-				(isPreviewRenderFailureCode(code) ? preview.messages.error : undefined);
+				(isPreviewRenderFailureCode(code) ||
+				isVisualEditorRuntimeFailureCode(code)
+					? preview.messages.error
+					: undefined);
 			if (!message) return;
 			publishEditorStatus({
 				id: "visual-transfer-failed",
@@ -136,10 +134,20 @@ export function useEditorVisualEditingHandlers({
 					runtime.surface.focus({ preventScroll: true });
 				}
 			}
+			// One guarded code-frame synchronization per mounted surface. The
+			// optional shared runtime may be absent on code-free posts.
+			syncCodeFrameBackgroundsSafely(
+				enhancementPort,
+				runtime.surface,
+				reportFailure,
+				true,
+			);
 		},
 		[
 			cancelWechatBackgroundPreparation,
+			enhancementPort,
 			immersiveEnvironment,
+			reportFailure,
 			rootRef,
 			setVisualEditorGeneration,
 			setVisualEditorSurface,
@@ -180,13 +188,20 @@ export function useEditorVisualEditingHandlers({
 			lastVisualFailureRef.current = code;
 			rootRef.current?.setAttribute("data-easymde-visual-failure", code);
 			reportFailure(code);
-			if (isPreviewRenderFailureCode(code)) {
+			if (
+				isPreviewRenderFailureCode(code) ||
+				isVisualEditorRuntimeFailureCode(code)
+			) {
 				reportVisualTransferFailure(code);
 			}
-			if (isAcceptedDomInvalidatingFailure(code)) {
-				// Leaving because the accepted DOM is gone must not schedule a refresh
-				// of the source the user was editing. The leave owner is reached
-				// through the stable ref.
+			if (
+				isAcceptedDomInvalidatingFailure(code) ||
+				"visual-editor-load-failed" === code
+			) {
+				// Leaving because the accepted DOM is gone - or never loaded - must
+				// not schedule a refresh of the source the user was editing. The
+				// leave owner is reached through the stable ref, and it also clears
+				// the unlocking state so the user can retry the unlock cleanly.
 				leaveVisualPreviewRef.current({ suppressRefresh: true });
 			}
 		},
@@ -209,39 +224,18 @@ export function useEditorVisualEditingHandlers({
 			previewSurfaceStatusRef.current = "ready";
 			setPreviewSurfaceStatus("ready");
 		}
-		const surface =
-			visualEditorRuntimeRef.current?.surface ??
-			previewRuntimeRef.current?.surface;
-		if (surface) {
-			const codeFrames = Array.from(
-				surface.querySelectorAll<HTMLElement>("pre > code.hljs"),
-			);
-			if (
-				codeFrames.some((code) => !syncedVisualCodeFramesRef.current.has(code))
-			) {
-				try {
-					enhancementPort.syncCodeFrameBackgrounds(surface);
-					for (const code of codeFrames) {
-						syncedVisualCodeFramesRef.current.add(code);
-					}
-				} catch (error) {
-					reportFailure(previewEnhancementFailureCode(error));
-				}
-			}
-		}
+		// Code-frame backgrounds are owned locally by the ProseMirror code
+		// NodeViews; synchronizing them per keystroke would rescan the surface
+		// and report the optional shared runtime as unavailable on code-free
+		// posts. Readiness and code-theme commits own that synchronization.
 		setVisualPreviewChanged(true);
 	}, [
 		clearVisualFailureState,
-		enhancementPort,
 		previewRefreshPendingRef,
-		previewRuntimeRef,
 		previewSurfaceStatusRef,
-		reportFailure,
 		rootActiveRef,
 		setPreviewSurfaceStatus,
 		setVisualPreviewChanged,
-		syncedVisualCodeFramesRef,
-		visualEditorRuntimeRef,
 	]);
 
 	const handleVisualPendingChange = useCallback(
@@ -411,6 +405,115 @@ export function useEditorVisualEditingHandlers({
 		],
 	);
 
+	/**
+	 * Insert an Immersive toolbar table into the mounted visual editor without
+	 * leaving visual mode. `null` means no visual owner is mounted, so the
+	 * caller keeps its Source-mode insertion path.
+	 */
+	const insertVisualTable = useCallback(
+		(rows: number, columns: number): boolean | null => {
+			const runtime = visualEditorRuntimeRef.current;
+			if (!runtime || !documentSession) return null;
+			if (!runtime.prepareMediaSelection()) {
+				reportVisualToolbarFailure();
+				return false;
+			}
+			const document = documentSession.document;
+			const revision = document.getRevision?.();
+			const value = document.getValue();
+			const selection = document.getSelection();
+			if (undefined === revision) {
+				reportVisualToolbarFailure();
+				return false;
+			}
+			let insertion: ReturnType<typeof separatedTableInsertion>;
+			try {
+				insertion = separatedTableInsertion(
+					value,
+					selection.start,
+					selection.end,
+					rows,
+					columns,
+				);
+			} catch {
+				reportVisualToolbarFailure();
+				return false;
+			}
+			const result = runtime.applyCanonicalChange({
+				change: {
+					changes: {
+						from: insertion.from,
+						insert: insertion.insert,
+						to: insertion.to,
+					},
+					selection: {
+						direction: "none",
+						end: insertion.caret,
+						start: insertion.caret,
+					},
+					value:
+						value.slice(0, insertion.from) +
+						insertion.insert +
+						value.slice(insertion.to),
+				},
+				expected: { revision, selection, value },
+			});
+			if ("handled" !== result) {
+				reportVisualToolbarFailure();
+				return false;
+			}
+			if (runtime.surface.isConnected) {
+				if (runtime.focus) runtime.focus();
+				else runtime.surface.focus({ preventScroll: true });
+			}
+			return true;
+		},
+		[documentSession, reportVisualToolbarFailure, visualEditorRuntimeRef],
+	);
+
+	/**
+	 * Outline navigation inside the mounted visual editor: scroll the heading
+	 * into view, focus the editable surface, and place the caret at the start of
+	 * the heading. `null` means no visual owner is mounted.
+	 */
+	const revealVisualHeading = useCallback(
+		(index: number, text: string): boolean | null => {
+			const runtime = visualEditorRuntimeRef.current;
+			if (!runtime) return null;
+			const surface = runtime.surface;
+			if (!surface.isConnected) return false;
+			const normalize = (value: string) => value.replace(/\s+/g, " ").trim();
+			const wanted = normalize(text);
+			const headings = Array.from(
+				surface.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6"),
+			);
+			const indexed = headings[index];
+			const heading =
+				indexed && normalize(indexed.textContent ?? "") === wanted
+					? indexed
+					: (headings.find(
+							(candidate) => normalize(candidate.textContent ?? "") === wanted,
+						) ?? indexed);
+			if (!heading) return false;
+			if (runtime.focus) runtime.focus();
+			else surface.focus({ preventScroll: true });
+			const ownerDocument = surface.ownerDocument;
+			const selection = ownerDocument.defaultView?.getSelection();
+			if (selection) {
+				const range = ownerDocument.createRange();
+				range.setStart(heading, 0);
+				range.collapse(true);
+				selection.removeAllRanges();
+				selection.addRange(range);
+			}
+			if ("function" === typeof heading.scrollIntoView) {
+				heading.scrollIntoView({ block: "nearest" });
+			}
+			return true;
+		},
+		[visualEditorRuntimeRef],
+	);
+
 	return {
 		applyVisualCanonicalChange,
 		clearVisualFailureState,
@@ -423,5 +526,7 @@ export function useEditorVisualEditingHandlers({
 		handleVisualMarkdownChange,
 		handleVisualPendingChange,
 		handleVisualTransferFailure,
+		insertVisualTable,
+		revealVisualHeading,
 	};
 }

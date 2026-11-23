@@ -1,5 +1,4 @@
 import {
-  flushSync,
   useCallback,
   useEffect,
   useMemo,
@@ -48,9 +47,6 @@ export type UseEditorMediaUploadBridgeOptions = Readonly<{
   imageUpload: EditorRootProps['imageUpload'];
   imageUploadPort: ImageUploadPort;
   immersiveStrings: EditorRootProps['immersiveStrings'];
-  leaveVisualPreview: (
-    options?: Readonly<{ suppressRefresh?: boolean }>
-  ) => boolean;
   mediaPicker: EditorRootProps['mediaPicker'];
   mediaPickerFailureMessage: string;
   mediaPickerFrame: EditorRootProps['mediaPickerFrame'];
@@ -67,7 +63,7 @@ export type UseEditorMediaUploadBridgeOptions = Readonly<{
   visualEditorSurface: HTMLElement | null;
   visualPreviewEditing: boolean;
   visualPreviewEditingRef: SharedRef<boolean>;
-  waitForFreshFormalPreview: () => Promise<HTMLElement | null>;
+  waitForFreshFormalPreview: (signal?: AbortSignal) => Promise<HTMLElement | null>;
   wechatClipboard: EditorRootProps['wechatClipboard'];
   wechatExport: EditorRootProps['wechatExport'];
   wechatVisualRasterizationPort: EditorRootProps['wechatVisualRasterizationPort'];
@@ -80,7 +76,6 @@ export function useEditorMediaUploadBridge({
   imageUpload,
   imageUploadPort: rawImageUploadPort,
   immersiveStrings,
-  leaveVisualPreview,
   mediaPicker,
   mediaPickerFailureMessage,
   mediaPickerFrame,
@@ -246,13 +241,19 @@ export function useEditorMediaUploadBridge({
       maxBytes: imageUpload.maxBytes,
       pngConversionEnabled: wechatExport.pngConversionEnabled,
       postId: imageUpload.postId,
-      resolvePreview: async () => {
+      resolvePreview: async (signal?: AbortSignal) => {
         if (visualPreviewEditingRef.current) {
-          if (!prepareVisualSource()) return null;
-          flushSync(() => {
-            leaveVisualPreview({ suppressRefresh: true });
-          });
-          return waitForFreshFormalPreview();
+          // Settle pending visual edits (including an active IME composition)
+          // first, then flush the visual source and refresh the hidden
+          // read-only formal Preview in place. Visual editing stays unlocked
+          // throughout, so a failed formal render reports an explicit Copy
+          // failure instead of locking the user out of the document.
+          const settled = await (
+            visualEditorRuntimeRef.current?.settlePendingEdits?.()
+            ?? Promise.resolve(true)
+          );
+          if (!settled || signal?.aborted || !prepareVisualSource()) return null;
+          return waitForFreshFormalPreview(signal);
         }
         return previewRuntimeRef.current?.surface ?? null;
       }
@@ -270,11 +271,11 @@ export function useEditorMediaUploadBridge({
     imageUpload.maxBytes,
     imageUpload.postId,
     imageUploadPort,
-    leaveVisualPreview,
     prepareVisualSource,
     previewRuntimeRef,
     reportFailure,
     setWechatStatus,
+    visualEditorRuntimeRef,
     visualPreviewEditingRef,
     waitForFreshFormalPreview,
     wechatClipboard,

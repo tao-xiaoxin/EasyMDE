@@ -115,12 +115,12 @@ export function createVisualContextMenuSurface(
     // its own eligibility checks; it maps no target, requests no render, and
     // inserts nothing.
     prepareDemand: () => runtime.prepareContextMenuDemand(),
-    // A demand outlives the element it was anchored to: an accepted Preview
-    // render replaces the block DOM while the demand still waits for
-    // readiness. The runtime issues a lease bound to its own current
-    // accepted source and ledger, so a replayed demand rebinds to the same
-    // authenticated block - not to a reused ordinal, a coordinate, or the
-    // retired element.
+    // A demand can outlive the element it was anchored to: a ProseMirror
+    // transaction may redraw or replace the unified visual surface's node
+    // view DOM while the demand still waits for readiness. The runtime issues
+    // a lease bound to the captured element and the document revision at
+    // capture, so a replayed demand resolves only that same connected element
+    // - never a reused ordinal, a coordinate, or a retired element.
     captureTarget: (target) => runtime.captureContextMenuTarget(target),
     getActionContext: (target, snapshot, blockIndex) => {
       const revision = documentSession.document.getRevision?.();
@@ -159,8 +159,12 @@ export function createVisualContextMenuSurface(
           ? { href: link.href }
           : null;
       let imageContext: EditorContextMenuActionContext['image'] | null = null;
-      const imageElement =
+      const hitImage =
         target instanceof HTMLImageElement ? target : target?.closest('img');
+      // A ProseMirror separator hack is not an article image target.
+      const imageElement = hitImage?.classList.contains('ProseMirror-separator')
+        ? null
+        : hitImage;
       let imageTargetProvenDifferent = false;
       // Image actions belong to the pointer target alone. A selection left
       // behind by an earlier image interaction must never turn another block,
@@ -193,8 +197,9 @@ export function createVisualContextMenuSurface(
             prepared.image
           );
         } else if (prepared) {
-          // An accepted Preview re-render can leave the hit image element
-          // unmappable while its source range is unchanged. The pinned
+          // A ProseMirror node-view redraw on the unified visual surface can
+          // leave the hit image element unmappable while its source range is
+          // unchanged. The pinned
           // selection-derived target is a recovery for that same source
           // image only: the hit element must occupy the same visual block
           // and image slot as the mounted lease. A different slot means the
@@ -259,12 +264,13 @@ export function createVisualContextMenuSurface(
           }
         }
         if (!imageContext && prepared) {
-          // A Windowed Preview may have accepted the canonical image range
-          // while retiring the lease that belonged to the previous DOM
-          // image. Rebuild a selection pin against the current runtime and
-          // accept it only when its mounted slot is the pointer slot. This
-          // keeps repeated scale actions and a second image after a window
-          // rebuild actionable without borrowing a sibling image lease.
+          // The unified ProseMirror visual surface may have redrawn the image
+          // node view, retiring the lease that belonged to the previous DOM
+          // image while the canonical image range is unchanged. Rebuild a
+          // selection pin against the current runtime and accept it only
+          // when its mounted slot is the pointer slot. This keeps repeated
+          // scale actions and a second image after a node-view redraw
+          // actionable without borrowing a sibling image lease.
           let pin: PreviewImageTargetPinLease | null = null;
           try {
             pin = runtime.prepareImageTargetBySelection({

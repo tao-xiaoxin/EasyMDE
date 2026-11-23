@@ -1,4 +1,5 @@
-import { history, undo } from "prosemirror-history";
+import { history, undo, undoDepth } from "prosemirror-history";
+import type { Transaction } from "prosemirror-state";
 import { EditorState, NodeSelection, TextSelection } from "prosemirror-state";
 import {
 	addColumnAfter,
@@ -19,6 +20,8 @@ import {
 	type KatexRuntime,
 	type MermaidRenderResult,
 	type MermaidRuntime,
+	PREVIEW_RUNTIME_READY_EVENT,
+	PROTECTED_CARD_COMMIT_META,
 	sanitizeMermaidSvg,
 	TableContainerNodeView,
 	type VisualNodeViewsOptions,
@@ -67,6 +70,7 @@ function mountVisualEditor(
 	options: Readonly<{
 		editable?: boolean;
 		nodeViewsOptions?: VisualNodeViewsOptions;
+		onTransaction?: (transaction: Transaction) => void;
 		withColumnResizing?: boolean;
 		withHighlightPlugin?: boolean;
 	}> = {},
@@ -91,11 +95,19 @@ function mountVisualEditor(
 	});
 
 	const isEditable = options.editable ?? true;
+	const viewRef: { current: EditorView | null } = { current: null };
 	const view = new EditorView(host, {
 		state,
 		editable: () => isEditable,
 		nodeViews: createVisualNodeViews(options.nodeViewsOptions),
+		dispatchTransaction(transaction) {
+			options.onTransaction?.(transaction);
+			const activeView = viewRef.current;
+			if (!activeView) return;
+			activeView.updateState(activeView.state.apply(transaction));
+		},
 	});
+	viewRef.current = view;
 	mountedViews.push(view);
 	return view;
 }
@@ -281,6 +293,7 @@ describe("ImageNodeView", () => {
 		expect(safeImg.getAttribute("src")).toBe("https://example.com/banner.png");
 		expect(safeImg.getAttribute("alt")).toBe("Banner");
 		expect(safeImg.getAttribute("title")).toBe("Hero");
+		expect(safeImg.getAttribute("data-easymde-visual-image")).toBe("1");
 		expect(safeImg.getAttribute("data-easymde-image-scale")).toBe("50");
 		expect(safeImg.style.width).toBe("50%");
 		expect(safeImg.style.height).toBe("auto");
@@ -339,11 +352,13 @@ describe("ProtectedAtomNodeView (math, mermaid, cards, raw-source editor)", () =
 			"$$\nE = mc^2\n$$\n\nInline $a^2 + b^2 = c^2$ text.",
 		);
 		const mathBlock = view.dom.querySelector(
-			"div.easymde-math.easymde-math-block",
+			'div[data-easymde-protected-block][data-easymde-protected-kind="math"]',
 		);
 		const mathInline = view.dom.querySelector(
-			"span.easymde-math.easymde-math-inline",
+			'span[data-easymde-protected-inline][data-easymde-protected-kind="math-inline"]',
 		);
+		const mathBlockPreview = mathBlock?.querySelector(".easymde-math");
+		const mathInlinePreview = mathInline?.querySelector(".easymde-math");
 
 		expect(mathBlock?.getAttribute("contenteditable")).toBe("false");
 		expect(mathBlock?.getAttribute("data-easymde-visual-markdown-source")).toBe(
@@ -353,6 +368,11 @@ describe("ProtectedAtomNodeView (math, mermaid, cards, raw-source editor)", () =
 		expect(mathInline?.querySelector(".katex")?.textContent).toBe(
 			"a^2 + b^2 = c^2",
 		);
+		expect(
+			mathBlockPreview?.getAttribute("data-easymde-visual-markdown-source"),
+		).toBe("$$\nE = mc^2\n$$");
+		expect(mathBlockPreview?.querySelector(":scope > .katex")).not.toBeNull();
+		expect(mathInlinePreview?.querySelector(":scope > .katex")).not.toBeNull();
 
 		expect(katexRender).toHaveBeenCalledWith(
 			"E = mc^2",
@@ -513,7 +533,7 @@ describe("ProtectedAtomNodeView (math, mermaid, cards, raw-source editor)", () =
 
 		// Block protected card: double-click -> Escape cancels with zero doc change.
 		const mathBlock = view.dom.querySelector(
-			"div.easymde-math-block",
+			'div[data-easymde-protected-block][data-easymde-protected-kind="math"]',
 		) as HTMLElement;
 		mathBlock.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
 		const textarea = mathBlock.querySelector(
@@ -535,7 +555,7 @@ describe("ProtectedAtomNodeView (math, mermaid, cards, raw-source editor)", () =
 			"$$\nE = mc^2\n$$",
 		);
 
-		// Double-click again -> modify -> Enter commits real ProseMirror transaction.
+		// Double-click again -> modify -> Ctrl+Enter commits real ProseMirror transaction.
 		mathBlock.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
 		const textarea2 = mathBlock.querySelector(
 			"textarea.easymde-protected-source-input",
@@ -544,6 +564,7 @@ describe("ProtectedAtomNodeView (math, mermaid, cards, raw-source editor)", () =
 		textarea2.dispatchEvent(
 			new KeyboardEvent("keydown", {
 				key: "Enter",
+				ctrlKey: true,
 				bubbles: true,
 				cancelable: true,
 			}),
@@ -567,7 +588,7 @@ describe("ProtectedAtomNodeView (math, mermaid, cards, raw-source editor)", () =
 
 		// Inline protected card: double-click -> edit -> Save button commits.
 		const mathInline = view.dom.querySelector(
-			"span.easymde-math-inline",
+			'span[data-easymde-protected-inline][data-easymde-protected-kind="math-inline"]',
 		) as HTMLElement;
 		mathInline.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
 		const input = mathInline.querySelector(
@@ -587,7 +608,7 @@ describe("ProtectedAtomNodeView (math, mermaid, cards, raw-source editor)", () =
 	it("does not open raw-source editor when editor is read-only", () => {
 		const view = mountVisualEditor("$$\nE = mc^2\n$$", { editable: false });
 		const mathBlock = view.dom.querySelector(
-			"div.easymde-math-block",
+			'div[data-easymde-protected-block][data-easymde-protected-kind="math"]',
 		) as HTMLElement;
 		mathBlock.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
 		expect(mathBlock.querySelector("textarea")).toBeNull();
@@ -615,10 +636,10 @@ describe("ProtectedAtomNodeView (math, mermaid, cards, raw-source editor)", () =
 		try {
 			const view = mountVisualEditor("$$\nE = mc^2\n$$\n\nInline $x + 1$ end.");
 			const mathBlock = view.dom.querySelector(
-				"div.easymde-math-block",
+				'div[data-easymde-protected-block][data-easymde-protected-kind="math"]',
 			) as HTMLElement;
 			const mathInline = view.dom.querySelector(
-				"span.easymde-math-inline",
+				'span[data-easymde-protected-inline][data-easymde-protected-kind="math-inline"]',
 			) as HTMLElement;
 
 			// Block cards have non-editable actions; inline atoms do not.
@@ -855,5 +876,526 @@ describe("TableContainerNodeView", () => {
 			"col",
 		) as HTMLTableColElement | null;
 		expect(firstCol?.style.width).toBe("180px");
+	});
+});
+
+function openProtectedBlockCard(
+	view: EditorView,
+	kind: string,
+): Readonly<{ root: HTMLElement; textarea: HTMLTextAreaElement }> {
+	const root = view.dom.querySelector(
+		`div[data-easymde-protected-block][data-easymde-protected-kind="${kind}"]`,
+	) as HTMLElement | null;
+	expect(root).not.toBeNull();
+	const element = root as HTMLElement;
+	element.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+	const textarea = element.querySelector(
+		"textarea.easymde-protected-source-input",
+	) as HTMLTextAreaElement | null;
+	expect(textarea).not.toBeNull();
+	return { root: element, textarea: textarea as HTMLTextAreaElement };
+}
+
+describe("ProtectedAtomNodeView commit boundaries and IME isolation", () => {
+	it("keeps plain Enter as a newline in block cards and commits on Mod+Enter with discrete undo boundaries", () => {
+		const transactions: Transaction[] = [];
+		const view = mountVisualEditor("$$\nE = mc^2\n$$", {
+			onTransaction: (transaction) => transactions.push(transaction),
+		});
+		const { textarea } = openProtectedBlockCard(view, "math");
+
+		textarea.value = "$$\nline 1\nline 2\n$$";
+		const plainEnter = new KeyboardEvent("keydown", {
+			key: "Enter",
+			bubbles: true,
+			cancelable: true,
+		});
+		textarea.dispatchEvent(plainEnter);
+		expect(plainEnter.defaultPrevented).toBe(false);
+		expect(view.state.doc.firstChild?.attrs.rawMarkdown).toBe(
+			"$$\nE = mc^2\n$$",
+		);
+		expect(textarea.isConnected).toBe(true);
+
+		const depthBefore = undoDepth(view.state);
+		const ctrlEnter = new KeyboardEvent("keydown", {
+			key: "Enter",
+			ctrlKey: true,
+			bubbles: true,
+			cancelable: true,
+		});
+		textarea.dispatchEvent(ctrlEnter);
+		expect(ctrlEnter.defaultPrevented).toBe(true);
+		expect(view.state.doc.firstChild?.attrs.rawMarkdown).toBe(
+			"$$\nline 1\nline 2\n$$",
+		);
+		expect(
+			transactions.some(
+				(transaction) =>
+					transaction.getMeta(PROTECTED_CARD_COMMIT_META) === true,
+			),
+		).toBe(true);
+		const depthAfterFirst = undoDepth(view.state);
+		expect(depthAfterFirst).toBeGreaterThan(depthBefore);
+
+		// A second rapid commit must remain its own undo step (closeHistory).
+		const editButton = view.dom.querySelector(
+			"button.easymde-protected-edit-btn",
+		) as HTMLButtonElement;
+		editButton.click();
+		const textarea2 = view.dom.querySelector(
+			"textarea.easymde-protected-source-input",
+		) as HTMLTextAreaElement;
+		textarea2.value = "$$\nthird line\n$$";
+		textarea2.dispatchEvent(
+			new KeyboardEvent("keydown", {
+				key: "Enter",
+				metaKey: true,
+				bubbles: true,
+				cancelable: true,
+			}),
+		);
+		expect(view.state.doc.firstChild?.attrs.rawMarkdown).toBe(
+			"$$\nthird line\n$$",
+		);
+		expect(undoDepth(view.state)).toBeGreaterThan(depthAfterFirst);
+		expect(undo(view.state, view.dispatch)).toBe(true);
+		expect(view.state.doc.firstChild?.attrs.rawMarkdown).toBe(
+			"$$\nline 1\nline 2\n$$",
+		);
+	});
+
+	it("deletes block and inline atoms on an empty commit instead of leaving ghost cards", () => {
+		const blockTransactions: Transaction[] = [];
+		const blockView = mountVisualEditor("$$\nE = mc^2\n$$", {
+			onTransaction: (transaction) => blockTransactions.push(transaction),
+		});
+		const { textarea } = openProtectedBlockCard(blockView, "math");
+		textarea.value = "   \n  ";
+		textarea.dispatchEvent(
+			new KeyboardEvent("keydown", {
+				key: "Enter",
+				ctrlKey: true,
+				bubbles: true,
+				cancelable: true,
+			}),
+		);
+		expect(
+			blockTransactions.some(
+				(transaction) =>
+					transaction.getMeta(PROTECTED_CARD_COMMIT_META) === true,
+			),
+		).toBe(true);
+		expect(
+			blockView.dom.querySelector('[data-easymde-protected-kind="math"]'),
+		).toBeNull();
+		expect(blockView.state.doc.childCount).toBe(1);
+		expect(blockView.state.doc.firstChild?.type.name).toBe("paragraph");
+
+		const inlineView = mountVisualEditor("Text $x$ end.");
+		const inlineRoot = inlineView.dom.querySelector(
+			'span[data-easymde-protected-inline][data-easymde-protected-kind="math-inline"]',
+		) as HTMLElement;
+		inlineRoot.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+		const input = inlineRoot.querySelector(
+			"input.easymde-protected-source-input",
+		) as HTMLInputElement;
+		input.value = " ";
+		input.dispatchEvent(
+			new KeyboardEvent("keydown", {
+				key: "Enter",
+				bubbles: true,
+				cancelable: true,
+			}),
+		);
+		expect(
+			inlineView.dom.querySelector("[data-easymde-protected-inline]"),
+		).toBeNull();
+		expect(serializeVisualDocToMarkdown(inlineView.state.doc)).toBe(
+			"Text  end.",
+		);
+	});
+
+	it("stops card composition events at the card boundary and defers Save until compositionend", () => {
+		const view = mountVisualEditor("$$\nE = mc^2\n$$");
+		const outerCompositionStart = vi.fn();
+		const outerCompositionEnd = vi.fn();
+		view.dom.addEventListener(
+			"compositionstart",
+			outerCompositionStart as EventListener,
+		);
+		view.dom.addEventListener(
+			"compositionend",
+			outerCompositionEnd as EventListener,
+		);
+		const { root, textarea } = openProtectedBlockCard(view, "math");
+
+		textarea.dispatchEvent(
+			new CompositionEvent("compositionstart", { bubbles: true }),
+		);
+		expect(outerCompositionStart).not.toHaveBeenCalled();
+
+		textarea.value = "$$\n中文\n$$";
+		const saveButton = root.querySelector(
+			"button.easymde-protected-save-btn",
+		) as HTMLButtonElement;
+		saveButton.click();
+		expect(view.state.doc.firstChild?.attrs.rawMarkdown).toBe(
+			"$$\nE = mc^2\n$$",
+		);
+		expect(textarea.isConnected).toBe(true);
+
+		textarea.dispatchEvent(
+			new CompositionEvent("compositionend", { bubbles: true }),
+		);
+		expect(outerCompositionEnd).not.toHaveBeenCalled();
+		expect(view.state.doc.firstChild?.attrs.rawMarkdown).toBe("$$\n中文\n$$");
+
+		view.dom.removeEventListener(
+			"compositionstart",
+			outerCompositionStart as EventListener,
+		);
+		view.dom.removeEventListener(
+			"compositionend",
+			outerCompositionEnd as EventListener,
+		);
+
+		// Cancel discards the local draft without mutating the document.
+		const editButton = view.dom.querySelector(
+			"button.easymde-protected-edit-btn",
+		) as HTMLButtonElement;
+		editButton.click();
+		const textarea2 = view.dom.querySelector(
+			"textarea.easymde-protected-source-input",
+		) as HTMLTextAreaElement;
+		textarea2.value = "$$\ndiscarded\n$$";
+		(
+			view.dom.querySelector(
+				"button.easymde-protected-cancel-btn",
+			) as HTMLButtonElement
+		).click();
+		expect(view.state.doc.firstChild?.attrs.rawMarkdown).toBe("$$\n中文\n$$");
+	});
+
+	it("uses injected localized labels and aria templates", () => {
+		const view = mountVisualEditor("$$\nE = mc^2\n$$", {
+			nodeViewsOptions: {
+				protectedAtom: {
+					labels: {
+						cancel: "Abbrechen",
+						copy: "Kopieren",
+						edit: "Bearbeiten",
+						math: "Formel",
+						save: "Speichern",
+					},
+					labelTemplates: {
+						copy: "{kind} kopieren",
+						edit: "{kind} bearbeiten",
+						source: "{kind}-Quelltext",
+					},
+				},
+			},
+		});
+		const editButton = view.dom.querySelector(
+			"button.easymde-protected-edit-btn",
+		) as HTMLButtonElement;
+		expect(editButton.getAttribute("aria-label")).toBe("Formel bearbeiten");
+		expect(editButton.textContent).toBe("Bearbeiten");
+		editButton.click();
+		const textarea = view.dom.querySelector(
+			"textarea.easymde-protected-source-input",
+		) as HTMLTextAreaElement;
+		expect(textarea.getAttribute("aria-label")).toBe("Formel-Quelltext");
+		expect(
+			(
+				view.dom.querySelector(
+					"button.easymde-protected-save-btn",
+				) as HTMLButtonElement
+			).textContent,
+		).toBe("Speichern");
+	});
+});
+
+describe("ProtectedAtomNodeView generated-content DOM and runtime parity", () => {
+	it("exposes direct .katex children for MathML parity while keeping PNG clones free of card chrome", () => {
+		const katexRender = vi.fn(
+			(
+				tex: string,
+				target: HTMLElement,
+				options: Readonly<{ displayMode: boolean }>,
+			) => {
+				const doc = target.ownerDocument;
+				const katex = doc.createElement("span");
+				katex.className = "katex";
+				const mathml = doc.createElement("span");
+				mathml.className = "katex-mathml";
+				const math = doc.createElementNS(
+					"http://www.w3.org/1998/Math/MathML",
+					"math",
+				);
+				math.textContent = tex;
+				mathml.appendChild(math);
+				katex.appendChild(mathml);
+				if (options.displayMode) {
+					const display = doc.createElement("span");
+					display.className = "katex-display";
+					display.appendChild(katex);
+					target.replaceChildren(display);
+					return;
+				}
+				target.replaceChildren(katex);
+			},
+		);
+		const win = window as TestEnhancementWindow;
+		win.katex = { render: katexRender };
+
+		const view = mountVisualEditor("$$\nE = mc^2\n$$\n\nInline $a + b$ end.");
+		expect(view.dom.querySelectorAll(".easymde-math")).toHaveLength(2);
+
+		const blockMath = view.dom.querySelector(
+			'div[data-easymde-protected-block][data-easymde-protected-kind="math"] .easymde-math',
+		) as HTMLElement;
+		expect(blockMath).not.toBeNull();
+		expect(
+			blockMath.querySelector(
+				":scope > .katex, :scope > .katex-display > .katex",
+			),
+		).not.toBeNull();
+		const mathMl = blockMath.querySelector(
+			":scope > .katex, :scope > .katex-display > .katex",
+		);
+		expect(
+			mathMl?.querySelector(":scope > .katex-mathml > math"),
+		).not.toBeNull();
+		expect(blockMath.getAttribute("data-easymde-visual-markdown-source")).toBe(
+			"$$\nE = mc^2\n$$",
+		);
+
+		const inlineMath = view.dom.querySelector(
+			'span[data-easymde-protected-inline][data-easymde-protected-kind="math-inline"] .easymde-math',
+		) as HTMLElement;
+		expect(inlineMath.querySelector(":scope > .katex")).not.toBeNull();
+
+		for (const root of [blockMath, inlineMath]) {
+			expect(
+				root.querySelectorAll(".easymde-protected-card-actions"),
+			).toHaveLength(0);
+			const clone = root.cloneNode(true) as HTMLElement;
+			expect(
+				clone.querySelectorAll(
+					".easymde-protected-card-actions, .easymde-protected-edit-btn, .easymde-protected-copy-btn",
+				),
+			).toHaveLength(0);
+			expect(clone.querySelectorAll("button")).toHaveLength(0);
+			expect(clone.querySelectorAll(".katex").length).toBeGreaterThan(0);
+		}
+
+		const actions = view.dom.querySelector(
+			"div.easymde-protected-card-actions",
+		) as HTMLElement;
+		expect(actions.getAttribute("data-easymde-protected-ui")).toBe("1");
+		expect(actions.getAttribute("aria-hidden")).toBe("false");
+		expect(blockMath.contains(actions)).toBe(false);
+	});
+
+	it("re-renders mounted atoms when readiness is announced on the window", () => {
+		const view = mountVisualEditor("$$\ny = 1\n$$");
+		expect(view.dom.querySelector(".easymde-math .katex")).toBeNull();
+		const render = vi.fn((tex: string, target: HTMLElement) => {
+			const span = target.ownerDocument.createElement("span");
+			span.className = "katex";
+			span.textContent = tex;
+			target.replaceChildren(span);
+		});
+		const win = window as TestEnhancementWindow;
+		win.katex = { render };
+		window.dispatchEvent(new Event(PREVIEW_RUNTIME_READY_EVENT));
+		expect(render).toHaveBeenCalledTimes(1);
+		expect(view.dom.querySelector(".easymde-math .katex")?.textContent).toBe(
+			"y = 1",
+		);
+	});
+
+	it("mirrors the shared Mermaid initialization and re-renders atoms when the runtime becomes ready", async () => {
+		const initialize = vi.fn();
+		const render = vi.fn(async () => ({
+			svg: '<svg viewBox="0 0 10 10"><text>Diagram</text></svg>',
+		}));
+		const win = window as TestEnhancementWindow;
+		win.mermaid = { initialize, render };
+
+		const view = mountVisualEditor(
+			"```mermaid\ngraph TD\n  A --> B\n```\n\n```mermaid\ngraph LR\n  X --> Y\n```",
+		);
+		await flushMicrotasks();
+		expect(initialize).toHaveBeenCalledTimes(1);
+		const config = initialize.mock.calls[0]?.[0] as Record<string, unknown>;
+		expect(config.startOnLoad).toBe(false);
+		expect(config.securityLevel).toBe("strict");
+		expect(config.flowchart).toEqual({ diagramPadding: 12 });
+		expect(String(config.themeCSS)).toContain(
+			'font-family: "trebuchet ms", verdana, arial, sans-serif !important',
+		);
+		expect(render).toHaveBeenCalledTimes(2);
+		expect(
+			view.dom.querySelector(".easymde-mermaid svg")?.textContent,
+		).toContain("Diagram");
+
+		// Late runtime availability re-renders already mounted atoms without reload.
+		delete win.mermaid;
+		const lateView = mountVisualEditor(
+			"$$\nE = mc^2\n$$\n\n```mermaid\ngraph TD\n  P --> Q\n```",
+		);
+		expect(lateView.dom.querySelector(".easymde-math .katex")).toBeNull();
+		const lateKatex = vi.fn((tex: string, target: HTMLElement) => {
+			const span = target.ownerDocument.createElement("span");
+			span.className = "katex";
+			span.textContent = tex;
+			target.replaceChildren(span);
+		});
+		const lateRender = vi.fn(async () => ({
+			svg: '<svg viewBox="0 0 10 10"><text>Late</text></svg>',
+		}));
+		win.katex = { render: lateKatex };
+		win.mermaid = { initialize: vi.fn(), render: lateRender };
+		// Bubbling document events also reach the window listener: render once.
+		document.dispatchEvent(
+			new Event(PREVIEW_RUNTIME_READY_EVENT, { bubbles: true }),
+		);
+		await flushMicrotasks();
+		expect(lateKatex).toHaveBeenCalledTimes(1);
+		expect(
+			lateView.dom.querySelector(".easymde-math .katex")?.textContent,
+		).toBe("E = mc^2");
+		expect(lateRender).toHaveBeenCalledTimes(1);
+		expect(
+			lateView.dom.querySelector(".easymde-mermaid svg")?.textContent,
+		).toContain("Late");
+	});
+});
+
+describe("Reactive editable state and localized task labels", () => {
+	it("keeps task checkboxes and card edit buttons disabled in sync with view.editable", () => {
+		const view = mountVisualEditor("- [ ] Task\n\n$$\nE = mc^2\n$$");
+		const checkbox = view.dom.querySelector(
+			"input.task-list-item-checkbox",
+		) as HTMLInputElement;
+		const editButton = view.dom.querySelector(
+			"button.easymde-protected-edit-btn",
+		) as HTMLButtonElement;
+		expect(checkbox.disabled).toBe(false);
+		expect(editButton.disabled).toBe(false);
+
+		view.setProps({ editable: () => false });
+		expect(checkbox.disabled).toBe(true);
+		expect(editButton.disabled).toBe(true);
+
+		view.setProps({ editable: () => true });
+		expect(checkbox.disabled).toBe(false);
+		expect(editButton.disabled).toBe(false);
+	});
+
+	it("applies a localized task checkbox aria-label", () => {
+		const view = mountVisualEditor("- [ ] Aufgabe", {
+			nodeViewsOptions: {
+				taskItem: { checkboxAriaLabel: "Aufgabe umschalten" },
+			},
+		});
+		const checkbox = view.dom.querySelector(
+			"input.task-list-item-checkbox",
+		) as HTMLInputElement;
+		expect(checkbox.getAttribute("aria-label")).toBe("Aufgabe umschalten");
+	});
+});
+
+describe("code highlight caching and runtime-ready refresh", () => {
+	it("caches token spans and skips hljs/DOMParser work for unrelated paragraph edits", () => {
+		const highlight = vi.fn((code: string) => ({
+			value: code.replace(
+				/\bconst\b/g,
+				'<span class="hljs-keyword">const</span>',
+			),
+		}));
+		const win = window as TestEnhancementWindow;
+		win.hljs = {
+			getLanguage: () => ({}),
+			highlight,
+		};
+		const parseSpy = vi.spyOn(DOMParser.prototype, "parseFromString");
+
+		const view = mountVisualEditor(
+			"Paragraph\n\n```ts\nconst a = 1;\n```\n\n```ts\nconst a = 1;\n```",
+		);
+		// Identical language + text hits the bounded token-range cache.
+		expect(highlight).toHaveBeenCalledTimes(1);
+		const parseCallsAfterMount = parseSpy.mock.calls.length;
+
+		highlight.mockClear();
+		parseSpy.mockClear();
+		view.dispatch(view.state.tr.insertText("x", 1));
+		expect(highlight).not.toHaveBeenCalled();
+		expect(parseSpy).not.toHaveBeenCalled();
+
+		// Editing one code block re-highlights only that block.
+		let secondBlockPos = 0;
+		view.state.doc.descendants((node, pos) => {
+			if (node.type.name === "code_block" && pos > 0) {
+				if (secondBlockPos === 0) secondBlockPos = pos;
+			}
+			return true;
+		});
+		expect(secondBlockPos).toBeGreaterThan(0);
+		view.dispatch(view.state.tr.insertText(" ", secondBlockPos + 1));
+		expect(highlight).toHaveBeenCalledTimes(1);
+		expect(parseSpy.mock.calls.length).toBeGreaterThan(0);
+		expect(parseCallsAfterMount).toBeGreaterThan(0);
+	});
+
+	it("auto-detects language-free code blocks and renders clean unhighlighted fallbacks", () => {
+		const highlightAuto = vi.fn((code: string) => ({
+			language: "javascript",
+			value: `<span class="hljs-keyword">${code}</span>`,
+		}));
+		const win = window as TestEnhancementWindow;
+		win.hljs = { highlightAuto };
+
+		const view = mountVisualEditor("```\nconst x = 1;\n```");
+		expect(highlightAuto).toHaveBeenCalledTimes(1);
+		expect(view.dom.querySelector("code.hljs .hljs-keyword")).not.toBeNull();
+		expect(
+			view.dom.querySelector("pre")?.getAttribute("data-language"),
+		).toBeNull();
+
+		// Runtime without auto-detection degrades to clean, unhighlighted output.
+		win.hljs = { highlight: vi.fn(() => ({ value: "" })) };
+		const plainView = mountVisualEditor("```\nplain text\n```");
+		expect(
+			codeHighlightPluginKey.getState(plainView.state)?.decorations.find()
+				.length,
+		).toBe(0);
+		expect(plainView.dom.querySelector("pre code")?.textContent).toBe(
+			"plain text",
+		);
+	});
+
+	it("refreshes mounted code blocks once when the highlight runtime becomes ready", () => {
+		const view = mountVisualEditor("```ts\nconst x = 1;\n```");
+		expect(
+			codeHighlightPluginKey.getState(view.state)?.decorations.find().length,
+		).toBe(0);
+
+		const highlight = vi.fn(() => ({
+			value: '<span class="hljs-keyword">const</span> x = 1;',
+		}));
+		const win = window as TestEnhancementWindow;
+		win.hljs = { getLanguage: () => ({}), highlight };
+		document.dispatchEvent(new Event(PREVIEW_RUNTIME_READY_EVENT));
+		expect(highlight).toHaveBeenCalledTimes(1);
+		expect(
+			codeHighlightPluginKey.getState(view.state)?.decorations.find().length,
+		).toBeGreaterThan(0);
+		expect(view.dom.querySelector("code.hljs .hljs-keyword")?.textContent).toBe(
+			"const",
+		);
 	});
 });

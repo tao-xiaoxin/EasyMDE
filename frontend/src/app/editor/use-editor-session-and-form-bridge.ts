@@ -295,7 +295,11 @@ export function useEditorSessionAndFormBridge({
       if (codeThemePreparationRef.current) return 'blocked';
       if (visualPreviewEditingRef.current) {
         const runtime = visualEditorRuntimeRef.current;
-        if (!runtime) throw new Error('visual-editor-runtime-unavailable');
+        // Unlock publishes visual editing before the lazily mounted visual
+        // editor reports its runtime. Until then the canonical source cannot
+        // be proven current, so skip this autosave instead of throwing out of
+        // the WordPress Heartbeat send hook.
+        if (!runtime) return 'blocked';
         if (!runtime.prepareToolbarFallback()) return 'blocked';
       }
       documentSession.document.flush();

@@ -1,4 +1,6 @@
+import { closeHistory } from "prosemirror-history";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
+import { NodeSelection } from "prosemirror-state";
 import type {
 	EditorView,
 	NodeView,
@@ -9,8 +11,25 @@ import {
 	normalizeProtectedInlineKind,
 	type ProtectedBlockKind,
 	type ProtectedInlineKind,
-	sanitizeDomUrl,
 } from "../visual-schema";
+import {
+	copyTextToClipboard,
+	createAtomButton,
+	createAtomElement,
+	ensureMermaidInitialized,
+	MONOSPACE_FONT,
+	ProtectedCardEditor,
+	sanitizeMermaidSvg,
+	subscribePreviewRuntimeReady,
+	subscribeVisualEditableState,
+} from "./protected-atom-card-editor";
+
+export {
+	PREVIEW_RUNTIME_READY_EVENT,
+	type RuntimeReadySubscription,
+	sanitizeMermaidSvg,
+	subscribePreviewRuntimeReady,
+} from "./protected-atom-card-editor";
 
 export type KatexRenderOptions = Readonly<{
 	displayMode: boolean;
@@ -44,11 +63,21 @@ export type ProtectedAtomLabels = Readonly<{
 	save?: string;
 	toc?: string;
 }>;
+/** Localized format templates; `{kind}` expands to the localized kind label. */
+export type ProtectedAtomLabelTemplates = Readonly<{
+	copy?: string;
+	edit?: string;
+	source?: string;
+}>;
 export type ProtectedAtomNodeViewOptions = Readonly<{
 	getKatex?: () => KatexRuntime | null | undefined;
 	getMermaid?: () => MermaidRuntime | null | undefined;
+	labelTemplates?: ProtectedAtomLabelTemplates;
 	labels?: ProtectedAtomLabels;
 }>;
+
+/** Transaction meta marking a discrete protected-card commit boundary. */
+export const PROTECTED_CARD_COMMIT_META = "easymdeProtectedCardCommit";
 
 type ProtectedEnhancementWindow = Window & {
 	katex?: KatexRuntime;
@@ -68,17 +97,42 @@ const DEFAULT_LABELS: Required<ProtectedAtomLabels> = {
 	save: "Save",
 	toc: "TOC",
 };
+const DEFAULT_LABEL_TEMPLATES: Required<ProtectedAtomLabelTemplates> = {
+	copy: "Copy {kind}",
+	edit: "Edit {kind}",
+	source: "{kind} source",
+};
 const COPY_FEEDBACK_DURATION_MS = 1600;
-const KIND_CLASSES: Record<ProtectedAtomKind, string> = {
-	math: "easymde-protected-block easymde-math easymde-math-block",
-	mermaid: "easymde-protected-block easymde-mermaid",
+const ROOT_KIND_CLASSES: Record<ProtectedAtomKind, string> = {
+	math: "easymde-protected-block",
+	mermaid: "easymde-protected-block",
 	toc: "easymde-protected-block easymde-toc",
 	footnotes: "easymde-protected-block easymde-footnotes",
 	raw: "easymde-protected-block",
-	"math-inline": "easymde-protected-inline easymde-math easymde-math-inline",
+	"math-inline": "easymde-protected-inline",
 	"footnote-ref": "easymde-protected-inline easymde-footnote-ref",
 	"raw-inline": "easymde-protected-inline",
 };
+/**
+ * Generated-content marker classes live on the clean preview element so
+ * `.easymde-math > .katex | .katex-display > .katex` parity holds for MathML
+ * extraction and PNG clones never capture card chrome.
+ */
+const PREVIEW_KIND_CLASSES: Record<ProtectedAtomKind, string> = {
+	math: " easymde-math easymde-math-block",
+	mermaid: " easymde-mermaid",
+	toc: "",
+	footnotes: "",
+	raw: "",
+	"math-inline": " easymde-math easymde-math-inline",
+	"footnote-ref": "",
+	"raw-inline": "",
+};
+const GENERATED_MARKER_KINDS = new Set<ProtectedAtomKind>([
+	"math",
+	"mermaid",
+	"math-inline",
+]);
 const KIND_LABEL_KEY: Record<ProtectedAtomKind, keyof ProtectedAtomLabels> = {
 	math: "math",
 	"math-inline": "math",
@@ -89,39 +143,6 @@ const KIND_LABEL_KEY: Record<ProtectedAtomKind, keyof ProtectedAtomLabels> = {
 	raw: "raw",
 	"raw-inline": "raw",
 };
-const FORBIDDEN_SVG_TAGS = new Set([
-	"applet",
-	"base",
-	"embed",
-	"form",
-	"frame",
-	"frameset",
-	"iframe",
-	"link",
-	"meta",
-	"noscript",
-	"object",
-	"portal",
-	"script",
-	"template",
-]);
-const URL_BEARING_ATTRS = new Set([
-	"action",
-	"data",
-	"formaction",
-	"href",
-	"poster",
-	"src",
-	"xlink:href",
-]);
-const UNSAFE_STYLE_PATTERN =
-	/(?:javascript\s*:|vbscript\s*:|expression\s*\(|@import\b|behavior\s*:|-moz-binding\s*:)/i;
-const UNSAFE_CSS_URL_PATTERN = /url\(\s*['"]?\s*(?!#)[^)]+\)/gi;
-const MONOSPACE_FONT =
-	'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace';
-const MERMAID_LABEL_FONT_FAMILY = '"trebuchet ms", verdana, arial, sans-serif';
-
-const initializedMermaidRuntimes = new WeakSet<object>();
 let mermaidRenderSequence = 0;
 
 export function extractBlockMathTex(rawMarkdown: string): string {
@@ -172,86 +193,6 @@ export function extractMermaidSource(rawMarkdown: string): string {
 		.trim();
 }
 
-function isSafeSvgHref(rawValue: string): boolean {
-	let compact = "";
-	for (let i = 0; i < rawValue.length; i += 1) {
-		if (rawValue.charCodeAt(i) > 32) compact += rawValue[i];
-	}
-	if (compact.length === 0) return false;
-	if (compact.startsWith("#")) return true;
-	return (
-		!/^(?:javascript|vbscript|data):/i.test(compact) &&
-		sanitizeDomUrl(rawValue) !== null
-	);
-}
-
-function sanitizeInlineCssText(cssText: string): string {
-	return UNSAFE_STYLE_PATTERN.test(cssText)
-		? ""
-		: cssText.replace(UNSAFE_CSS_URL_PATTERN, "");
-}
-
-function removeAttr(element: Element, attr: Attr): void {
-	if (attr.namespaceURI)
-		element.removeAttributeNS(attr.namespaceURI, attr.localName);
-	element.removeAttribute(attr.name);
-}
-
-function sanitizeSvgTree(root: Element): void {
-	const stack: Element[] = [root];
-	while (stack.length > 0) {
-		const element = stack.pop();
-		if (!element) continue;
-		const tagName = (element.localName || element.tagName).toLowerCase();
-		if (FORBIDDEN_SVG_TAGS.has(tagName)) {
-			element.remove();
-			continue;
-		}
-		for (const attr of Array.from(element.attributes)) {
-			const name = attr.name.toLowerCase();
-			if (
-				name.startsWith("on") ||
-				(URL_BEARING_ATTRS.has(name) && !isSafeSvgHref(attr.value))
-			) {
-				removeAttr(element, attr);
-			} else if (name === "style") {
-				const safeStyle = sanitizeInlineCssText(attr.value);
-				if (safeStyle.length === 0) removeAttr(element, attr);
-				else if (safeStyle !== attr.value)
-					element.setAttribute(attr.name, safeStyle);
-			}
-		}
-		if (tagName === "style") {
-			element.textContent = sanitizeInlineCssText(element.textContent ?? "");
-		}
-		for (let i = element.children.length - 1; i >= 0; i -= 1) {
-			const child = element.children[i];
-			if (child) stack.push(child);
-		}
-	}
-}
-
-export function sanitizeMermaidSvg(
-	svgMarkup: string,
-	targetDocument: Document,
-): SVGElement | null {
-	const trimmed = svgMarkup.trim();
-	if (trimmed.length === 0 || typeof DOMParser === "undefined") return null;
-	const parser = new DOMParser();
-	const xmlDoc = parser.parseFromString(trimmed, "image/svg+xml");
-	const svgElement =
-		xmlDoc.querySelector("parsererror") === null &&
-		xmlDoc.documentElement?.localName.toLowerCase() === "svg"
-			? xmlDoc.documentElement
-			: parser.parseFromString(trimmed, "text/html").querySelector("svg");
-	if (!svgElement) return null;
-	sanitizeSvgTree(svgElement);
-	const adopted = targetDocument.importNode(svgElement, true);
-	return adopted.localName.toLowerCase() === "svg"
-		? (adopted as SVGElement)
-		: null;
-}
-
 function resolveRuntime<K extends "katex" | "mermaid">(
 	key: K,
 	getter?: () => ProtectedEnhancementWindow[K] | null | undefined,
@@ -266,27 +207,14 @@ function resolveRuntime<K extends "katex" | "mermaid">(
 		: null;
 }
 
-function ensureMermaidInitialized(mermaid: MermaidRuntime): void {
-	if (initializedMermaidRuntimes.has(mermaid)) return;
-	initializedMermaidRuntimes.add(mermaid);
-	if (typeof mermaid.initialize !== "function") return;
-	try {
-		mermaid.initialize({
-			startOnLoad: false,
-			securityLevel: "strict",
-			theme: "default",
-			fontFamily: MERMAID_LABEL_FONT_FAMILY,
-			fontSize: 16,
-		});
-	} catch {
-		// Minimal runtimes or test mocks may reject re-initialization.
-	}
-}
-
 function readRawMarkdown(node: ProseMirrorNode): string {
 	return typeof node.attrs.rawMarkdown === "string"
 		? node.attrs.rawMarkdown
 		: "";
+}
+
+function formatLabel(template: string, kindLabel: string): string {
+	return template.split("{kind}").join(kindLabel);
 }
 
 function resolveAtomPosition(
@@ -312,74 +240,6 @@ function resolveAtomPosition(
 	return current && current.type.name === expectedTypeName ? pos : null;
 }
 
-function createEl<K extends keyof HTMLElementTagNameMap>(
-	doc: Document,
-	tag: K,
-	className: string,
-	text?: string,
-): HTMLElementTagNameMap[K] {
-	const element = doc.createElement(tag);
-	element.className = className;
-	if (text !== undefined) element.textContent = text;
-	return element;
-}
-
-function makeButton(
-	doc: Document,
-	className: string,
-	label: string,
-): HTMLButtonElement {
-	const button = createEl(doc, "button", className, label);
-	button.type = "button";
-	return button;
-}
-
-async function copyTextToClipboard(
-	text: string,
-	doc: Document,
-): Promise<boolean> {
-	const clipboard =
-		typeof navigator !== "undefined" ? navigator.clipboard : undefined;
-	if (clipboard && typeof clipboard.writeText === "function") {
-		try {
-			await clipboard.writeText(text);
-			return true;
-		} catch {
-			// Fall through to legacy execCommand copy fallback when available.
-		}
-	}
-	if (typeof doc.execCommand !== "function" || !doc.body) {
-		return false;
-	}
-	const helper = doc.createElement("textarea");
-	helper.value = text;
-	helper.setAttribute("readonly", "");
-	helper.setAttribute("aria-hidden", "true");
-	helper.tabIndex = -1;
-	Object.assign(helper.style, {
-		position: "fixed",
-		top: "-9999px",
-		left: "-9999px",
-		opacity: "0",
-		pointerEvents: "none",
-	});
-	const previousFocus =
-		doc.activeElement instanceof HTMLElement ? doc.activeElement : null;
-	doc.body.appendChild(helper);
-	try {
-		helper.focus();
-		helper.select();
-		return Boolean(doc.execCommand("copy"));
-	} catch {
-		return false;
-	} finally {
-		helper.remove();
-		if (previousFocus?.isConnected) {
-			previousFocus.focus();
-		}
-	}
-}
-
 class ProtectedAtomNodeView implements NodeView {
 	readonly dom: HTMLElement;
 	private readonly isBlock: boolean;
@@ -388,20 +248,23 @@ class ProtectedAtomNodeView implements NodeView {
 	private readonly getPos: () => number | undefined;
 	private readonly options: ProtectedAtomNodeViewOptions;
 	private readonly labels: Required<ProtectedAtomLabels>;
+	private readonly templates: Required<ProtectedAtomLabelTemplates>;
 	private readonly previewContainer: HTMLElement;
 	private readonly cardActions: HTMLDivElement | null = null;
 	private readonly editButton: HTMLButtonElement | null = null;
 	private readonly copyButton: HTMLButtonElement | null = null;
 	private readonly cardActionsCleanup: (() => void) | null = null;
-	private editorContainer: HTMLElement | null = null;
-	private editorCleanup: (() => void) | null = null;
+	private cardEditor: ProtectedCardEditor | null = null;
 	private editing = false;
 	private selected = false;
 	private destroyed = false;
 	private renderGeneration = 0;
 	private copyGeneration = 0;
 	private copyResetTimer: ReturnType<typeof setTimeout> | null = null;
+	private runtimeReadyUnsubscribe: (() => void) | null = null;
+	private readonly unsubscribeEditable: () => void;
 	private readonly onDoubleClick: (event: MouseEvent) => void;
+	private readonly onMouseDown: (event: MouseEvent) => void;
 
 	constructor(
 		node: ProseMirrorNode,
@@ -416,6 +279,10 @@ class ProtectedAtomNodeView implements NodeView {
 		this.isBlock = isBlock;
 		this.options = options;
 		this.labels = { ...DEFAULT_LABELS, ...(options.labels ?? {}) };
+		this.templates = {
+			...DEFAULT_LABEL_TEMPLATES,
+			...(options.labelTemplates ?? {}),
+		};
 
 		const doc = view.dom.ownerDocument;
 		this.dom = doc.createElement(isBlock ? "div" : "span");
@@ -428,18 +295,20 @@ class ProtectedAtomNodeView implements NodeView {
 		);
 
 		if (isBlock) {
-			const cardActions = createEl(
+			const cardActions = createAtomElement(
 				doc,
 				"div",
 				"easymde-protected-card-actions",
 			);
 			cardActions.setAttribute("contenteditable", "false");
-			const editButton = makeButton(
+			cardActions.setAttribute("data-easymde-protected-ui", "1");
+			cardActions.setAttribute("aria-hidden", "false");
+			const editButton = createAtomButton(
 				doc,
 				"easymde-protected-edit-btn",
 				this.labels.edit,
 			);
-			const copyButton = makeButton(
+			const copyButton = createAtomButton(
 				doc,
 				"easymde-protected-copy-btn",
 				this.labels.copy,
@@ -476,11 +345,12 @@ class ProtectedAtomNodeView implements NodeView {
 			};
 		}
 
-		this.previewContainer = createEl(
+		this.previewContainer = createAtomElement(
 			doc,
 			isBlock ? "div" : "span",
 			"easymde-protected-preview",
 		);
+		this.previewContainer.setAttribute("contenteditable", "false");
 		this.dom.appendChild(this.previewContainer);
 
 		this.onDoubleClick = (event: MouseEvent) => {
@@ -499,8 +369,53 @@ class ProtectedAtomNodeView implements NodeView {
 			this.openRawEditor();
 		};
 		this.dom.addEventListener("dblclick", this.onDoubleClick);
+		this.onMouseDown = (event: MouseEvent) => {
+			if (!this.isPreviewPointerEvent(event)) return;
+			event.preventDefault();
+			this.selectInEditor();
+		};
+		if (isBlock) this.dom.addEventListener("mousedown", this.onMouseDown);
+		this.unsubscribeEditable = subscribeVisualEditableState(view, () => {
+			if (!this.destroyed) this.syncRootAttributes();
+		});
 		this.syncRootAttributes();
 		this.renderPreview();
+	}
+
+	/**
+	 * Left-button pointer events on a block card's non-editing preview
+	 * surface (outside its action buttons and raw editor).
+	 */
+	private isPreviewPointerEvent(event: Event): boolean {
+		if (!this.isBlock || this.destroyed || this.editing) return false;
+		if (!(event instanceof MouseEvent) || event.button !== 0) return false;
+		const target = event.target instanceof Node ? event.target : null;
+		return !(
+			(target && this.cardActions?.contains(target)) ||
+			(target && this.cardEditor?.element.contains(target))
+		);
+	}
+
+	/**
+	 * Selects the card explicitly as a NodeSelection (matching ImageNodeView)
+	 * instead of relying on native click resolution around uneditable DOM.
+	 */
+	private selectInEditor(): void {
+		const pos = resolveAtomPosition(
+			this.getPos,
+			this.view,
+			this.node.type.name,
+		);
+		if (pos === null) return;
+		const current = this.view.state.selection;
+		if (!(current instanceof NodeSelection && current.from === pos)) {
+			this.view.dispatch(
+				this.view.state.tr.setSelection(
+					NodeSelection.create(this.view.state.doc, pos),
+				),
+			);
+		}
+		if (this.view.editable && !this.view.hasFocus()) this.view.focus();
 	}
 
 	private currentKind(): ProtectedAtomKind {
@@ -575,16 +490,28 @@ class ProtectedAtomNodeView implements NodeView {
 	private syncRootAttributes(): void {
 		const kind = this.currentKind();
 		const kindLabel = this.labels[KIND_LABEL_KEY[kind]];
-		this.dom.className = KIND_CLASSES[kind];
+		this.dom.className = ROOT_KIND_CLASSES[kind];
 		this.dom.setAttribute("data-easymde-protected-kind", kind);
 		this.dom.setAttribute(
 			"data-easymde-visual-markdown-source",
 			readRawMarkdown(this.node),
 		);
+		this.previewContainer.className = `easymde-protected-preview${PREVIEW_KIND_CLASSES[kind]}`;
+		if (GENERATED_MARKER_KINDS.has(kind)) {
+			this.previewContainer.setAttribute(
+				"data-easymde-visual-markdown-source",
+				readRawMarkdown(this.node),
+			);
+		} else {
+			this.previewContainer.removeAttribute(
+				"data-easymde-visual-markdown-source",
+			);
+		}
 		if (this.editing) {
 			this.dom.classList.add("easymde-protected-editing");
 			this.dom.setAttribute("data-easymde-protected-editing", "1");
 		} else {
+			this.dom.classList.remove("easymde-protected-editing");
 			this.dom.removeAttribute("data-easymde-protected-editing");
 		}
 		if (this.cardActions) {
@@ -596,13 +523,13 @@ class ProtectedAtomNodeView implements NodeView {
 			}
 		}
 		if (this.editButton) {
-			const editLabel = `${this.labels.edit} ${kindLabel}`;
+			const editLabel = formatLabel(this.templates.edit, kindLabel);
 			this.editButton.setAttribute("aria-label", editLabel);
 			this.editButton.title = editLabel;
-			this.editButton.disabled = !this.view.editable;
+			this.editButton.disabled = this.destroyed || !this.view.editable;
 		}
 		if (this.copyButton) {
-			const copyLabel = `${this.labels.copy} ${kindLabel}`;
+			const copyLabel = formatLabel(this.templates.copy, kindLabel);
 			this.copyButton.setAttribute("aria-label", copyLabel);
 			this.copyButton.title = copyLabel;
 		}
@@ -633,13 +560,18 @@ class ProtectedAtomNodeView implements NodeView {
 
 	private renderMonospaceFallback(text: string): void {
 		const doc = this.dom.ownerDocument;
-		const code = createEl(doc, "code", "easymde-protected-fallback", text);
+		const code = createAtomElement(
+			doc,
+			"code",
+			"easymde-protected-fallback",
+			text,
+		);
 		code.style.fontFamily = MONOSPACE_FONT;
 		if (!this.isBlock) {
 			this.previewContainer.replaceChildren(code);
 			return;
 		}
-		const pre = createEl(doc, "pre", "easymde-protected-fallback-pre");
+		const pre = createAtomElement(doc, "pre", "easymde-protected-fallback-pre");
 		Object.assign(pre.style, { margin: "0", whiteSpace: "pre-wrap" });
 		pre.appendChild(code);
 		this.previewContainer.replaceChildren(pre);
@@ -652,18 +584,23 @@ class ProtectedAtomNodeView implements NodeView {
 		const doc = this.dom.ownerDocument;
 		if (!this.isBlock) {
 			this.previewContainer.replaceChildren(
-				createEl(doc, "span", "easymde-protected-inline-card", rawMarkdown),
+				createAtomElement(
+					doc,
+					"span",
+					"easymde-protected-inline-card",
+					rawMarkdown,
+				),
 			);
 			return;
 		}
-		const card = createEl(doc, "div", "easymde-protected-card");
-		const badge = createEl(
+		const card = createAtomElement(doc, "div", "easymde-protected-card");
+		const badge = createAtomElement(
 			doc,
 			"span",
 			"easymde-protected-card-label",
 			this.labels[KIND_LABEL_KEY[kind]],
 		);
-		const body = createEl(
+		const body = createAtomElement(
 			doc,
 			"pre",
 			"easymde-protected-card-source",
@@ -681,21 +618,21 @@ class ProtectedAtomNodeView implements NodeView {
 		const katex = resolveRuntime("katex", this.options.getKatex);
 		if (!katex || tex.length === 0) {
 			this.renderMonospaceFallback(rawMarkdown);
+			if (!katex) this.subscribeRuntimeReady();
 			return;
 		}
-		const target = createEl(
-			this.dom.ownerDocument,
-			displayMode ? "div" : "span",
-			"easymde-protected-math-rendered",
-		);
+		this.previewContainer.replaceChildren();
 		try {
-			katex.render(tex, target, {
+			// Render into the `.easymde-math` element itself so `.katex`
+			// (inline) or `.katex-display > .katex` (block) is a direct child,
+			// matching the formal Preview DOM and MathML/PNG export contracts.
+			katex.render(tex, this.previewContainer, {
 				displayMode,
 				throwOnError: false,
 				strict: "ignore",
 			});
-			this.previewContainer.replaceChildren(target);
 			this.dom.setAttribute("data-easymde-rendered", "1");
+			this.unsubscribeRuntimeReady();
 		} catch {
 			this.dom.classList.add("easymde-render-error");
 			this.renderMonospaceFallback(rawMarkdown);
@@ -706,7 +643,11 @@ class ProtectedAtomNodeView implements NodeView {
 		const source = extractMermaidSource(rawMarkdown);
 		const mermaid = resolveRuntime("mermaid", this.options.getMermaid);
 		this.renderMonospaceFallback(source.length > 0 ? source : rawMarkdown);
-		if (!mermaid || source.length === 0) return;
+		if (!mermaid || source.length === 0) {
+			if (!mermaid) this.subscribeRuntimeReady();
+			return;
+		}
+		this.unsubscribeRuntimeReady();
 		ensureMermaidInitialized(mermaid);
 		mermaidRenderSequence += 1;
 		const renderId = `easymde-visual-mermaid-${mermaidRenderSequence}`;
@@ -759,11 +700,26 @@ class ProtectedAtomNodeView implements NodeView {
 		}
 	}
 
+	private subscribeRuntimeReady(): void {
+		if (this.destroyed || this.runtimeReadyUnsubscribe) return;
+		this.runtimeReadyUnsubscribe = subscribePreviewRuntimeReady(
+			this.dom.ownerDocument,
+			() => {
+				if (this.destroyed || this.editing) return;
+				this.renderPreview();
+			},
+		);
+	}
+
+	private unsubscribeRuntimeReady(): void {
+		this.runtimeReadyUnsubscribe?.();
+		this.runtimeReadyUnsubscribe = null;
+	}
+
 	private teardownRawEditor(): void {
-		this.editorCleanup?.();
-		this.editorCleanup = null;
-		this.editorContainer?.remove();
-		this.editorContainer = null;
+		const editor = this.cardEditor;
+		this.cardEditor = null;
+		editor?.destroy();
 		this.editing = false;
 		this.previewContainer.style.removeProperty("display");
 		this.syncRootAttributes();
@@ -774,104 +730,22 @@ class ProtectedAtomNodeView implements NodeView {
 		this.resetCopyFeedback();
 		this.editing = true;
 		this.previewContainer.style.display = "none";
-
-		const doc = this.dom.ownerDocument;
-		const rawMarkdown = readRawMarkdown(this.node);
-		const kindLabel = this.labels[KIND_LABEL_KEY[this.currentKind()]];
-		const container = createEl(
-			doc,
-			this.isBlock ? "div" : "span",
-			"easymde-protected-editor",
-		);
-
-		const field = createEl(
-			doc,
-			this.isBlock ? "textarea" : "input",
-			"easymde-protected-source-input",
-		);
-		if (field instanceof HTMLTextAreaElement) {
-			field.rows = Math.min(12, Math.max(2, rawMarkdown.split("\n").length));
-			Object.assign(field.style, { width: "100%", boxSizing: "border-box" });
-		} else {
-			field.type = "text";
-			field.size = Math.min(60, Math.max(12, rawMarkdown.length + 2));
-		}
-		field.style.fontFamily = MONOSPACE_FONT;
-		field.value = rawMarkdown;
-		field.setAttribute("aria-label", `${kindLabel} source`);
-
-		const actions = createEl(
-			doc,
-			this.isBlock ? "div" : "span",
-			"easymde-protected-editor-actions",
-		);
-		const saveButton = makeButton(
-			doc,
-			"easymde-protected-save-btn",
-			this.labels.save,
-		);
-		saveButton.setAttribute("aria-keyshortcuts", "Control+Enter Meta+Enter");
-		const cancelButton = makeButton(
-			doc,
-			"easymde-protected-cancel-btn",
-			this.labels.cancel,
-		);
-		cancelButton.setAttribute("aria-keyshortcuts", "Escape");
-		actions.append(saveButton, cancelButton);
-		container.append(field, actions);
-
-		const onFieldKeyDown = (event: KeyboardEvent): void => {
-			event.stopPropagation();
-			if (event.isComposing) return;
-			if (event.key === "Escape") {
-				event.preventDefault();
-				this.cancelRawEditor();
-			} else if (
-				event.key === "Enter" &&
-				(event.ctrlKey || event.metaKey || !event.shiftKey)
-			) {
-				event.preventDefault();
-				this.commitRawEditor(field.value);
-			}
-		};
-		const onContainerKeyDown = (event: KeyboardEvent): void => {
-			event.stopPropagation();
-			if (event.isComposing) return;
-			if (event.key === "Escape") {
-				event.preventDefault();
-				this.cancelRawEditor();
-			} else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-				event.preventDefault();
-				this.commitRawEditor(field.value);
-			}
-		};
-		const onButton =
-			(action: () => void) =>
-			(event: MouseEvent): void => {
-				event.preventDefault();
-				event.stopPropagation();
-				action();
-			};
-		const onSave = onButton(() => this.commitRawEditor(field.value));
-		const onCancel = onButton(() => this.cancelRawEditor());
-
-		field.addEventListener("keydown", onFieldKeyDown as EventListener);
-		container.addEventListener("keydown", onContainerKeyDown as EventListener);
-		saveButton.addEventListener("click", onSave);
-		cancelButton.addEventListener("click", onCancel);
-		this.editorContainer = container;
-		this.editorCleanup = () => {
-			field.removeEventListener("keydown", onFieldKeyDown as EventListener);
-			container.removeEventListener(
-				"keydown",
-				onContainerKeyDown as EventListener,
-			);
-			saveButton.removeEventListener("click", onSave);
-			cancelButton.removeEventListener("click", onCancel);
-		};
-		this.dom.appendChild(container);
 		this.syncRootAttributes();
-		field.focus();
+
+		const kindLabel = this.labels[KIND_LABEL_KEY[this.currentKind()]];
+		const editor = new ProtectedCardEditor(this.dom.ownerDocument, {
+			cancelLabel: this.labels.cancel,
+			fieldAriaLabel: formatLabel(this.templates.source, kindLabel),
+			initialValue: readRawMarkdown(this.node),
+			isBlock: this.isBlock,
+			onCancel: () => this.cancelRawEditor(),
+			onCommit: (nextRawMarkdown) => this.commitRawEditor(nextRawMarkdown),
+			saveLabel: this.labels.save,
+		});
+		this.cardEditor = editor;
+		this.dom.appendChild(editor.element);
+		this.syncRootAttributes();
+		editor.focus();
 	}
 
 	private cancelRawEditor(): void {
@@ -886,7 +760,7 @@ class ProtectedAtomNodeView implements NodeView {
 		const previousRaw = readRawMarkdown(this.node);
 		this.teardownRawEditor();
 		const pos =
-			nextRawMarkdown !== previousRaw && this.view.editable
+			nextRawMarkdown !== previousRaw && this.view.editable && !this.destroyed
 				? resolveAtomPosition(this.getPos, this.view, this.node.type.name)
 				: null;
 		const currentNode = pos !== null ? this.view.state.doc.nodeAt(pos) : null;
@@ -895,12 +769,22 @@ class ProtectedAtomNodeView implements NodeView {
 			this.view.focus();
 			return;
 		}
-		this.view.dispatch(
-			this.view.state.tr.setNodeMarkup(pos, undefined, {
+		const tr = this.view.state.tr;
+		if (nextRawMarkdown.trim().length === 0) {
+			// Empty card content deletes the atom instead of leaving a ghost.
+			tr.delete(pos, pos + currentNode.nodeSize);
+			if (tr.doc.childCount === 0) {
+				const paragraphType = this.view.state.schema.nodes.paragraph;
+				if (paragraphType) tr.insert(0, paragraphType.create());
+			}
+		} else {
+			tr.setNodeMarkup(pos, undefined, {
 				...currentNode.attrs,
 				rawMarkdown: nextRawMarkdown,
-			}),
-		);
+			});
+		}
+		tr.setMeta(PROTECTED_CARD_COMMIT_META, true);
+		this.view.dispatch(closeHistory(tr));
 		this.view.focus();
 	}
 
@@ -931,8 +815,12 @@ class ProtectedAtomNodeView implements NodeView {
 		const target = event.target instanceof Node ? event.target : null;
 		return (
 			event.type === "dblclick" ||
+			((event.type === "mousedown" || event.type === "click") &&
+				this.isPreviewPointerEvent(event)) ||
 			Boolean(target && this.cardActions?.contains(target)) ||
-			Boolean(this.editing && target && this.editorContainer?.contains(target))
+			Boolean(
+				this.cardEditor && target && this.cardEditor.element.contains(target),
+			)
 		);
 	}
 
@@ -944,11 +832,14 @@ class ProtectedAtomNodeView implements NodeView {
 		this.destroyed = true;
 		this.renderGeneration += 1;
 		this.resetCopyFeedback();
+		this.unsubscribeEditable();
+		this.unsubscribeRuntimeReady();
 		this.dom.removeEventListener("dblclick", this.onDoubleClick);
+		this.dom.removeEventListener("mousedown", this.onMouseDown);
 		this.cardActionsCleanup?.();
-		this.editorCleanup?.();
-		this.editorCleanup = null;
-		this.editorContainer = null;
+		const editor = this.cardEditor;
+		this.cardEditor = null;
+		editor?.destroy();
 	}
 }
 

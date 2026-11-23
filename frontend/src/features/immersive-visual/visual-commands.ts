@@ -2,16 +2,11 @@ import {
 	baseKeymap,
 	chainCommands,
 	createParagraphNear,
-	deleteSelection,
 	exitCode,
-	joinBackward,
-	joinForward,
 	lift,
 	liftEmptyBlock,
 	newlineInCode,
 	selectAll,
-	selectNodeBackward,
-	selectNodeForward,
 	setBlockType,
 	splitBlock,
 	toggleMark,
@@ -19,10 +14,11 @@ import {
 } from "prosemirror-commands";
 import { redo, undo } from "prosemirror-history";
 import { keymap } from "prosemirror-keymap";
-import type {
-	MarkType,
-	NodeType,
-	Node as ProseMirrorNode,
+import {
+	Fragment,
+	type MarkType,
+	type NodeType,
+	type Node as ProseMirrorNode,
 } from "prosemirror-model";
 import {
 	liftListItem,
@@ -33,7 +29,6 @@ import {
 import {
 	type Command,
 	type EditorState,
-	NodeSelection,
 	type Plugin,
 	TextSelection,
 	type Transaction,
@@ -43,71 +38,72 @@ import type { EditorView } from "prosemirror-view";
 import type { ToolbarCommand } from "../../contracts/bootstrap/toolbar-bootstrap";
 import type { VisualToolbarCommandResult } from "../../contracts/visual-editor";
 import {
+	createBoundaryKeyBindings,
+	findInnermostDepth,
+	indentInCodeBlockOnTab,
+	isSelectionInCodeBlock,
+	LIST_ITEM_TYPES,
+	LIST_TYPES,
+	outdentInCodeBlockOnShiftTab,
+} from "./visual-boundary-commands";
+import {
 	normalizeHeadingLevel,
 	sanitizeBulletMarker,
 	visualEditorSchema,
 } from "./visual-schema";
 
-const LIST_ITEM_TYPES: ReadonlyArray<NodeType> = [
-	visualEditorSchema.nodes.list_item,
-	visualEditorSchema.nodes.task_item,
-];
+const NODES = visualEditorSchema.nodes;
+const MARKS = visualEditorSchema.marks;
 
-function findAncestorDepth(
+const HORIZONTAL_RULE_LINE_PATTERN =
+	/^[ \t]*(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
+
+/**
+ * History commands injected by the host. The production visual editor binds
+ * these to the canonical document's single history owner; standalone callers
+ * fall back to `prosemirror-history`.
+ */
+export type VisualHistoryCommands = Readonly<{ redo: Command; undo: Command }>;
+
+const DEFAULT_HISTORY_COMMANDS: VisualHistoryCommands = { redo, undo };
+
+function canReplaceBlock(
 	state: EditorState,
-	nodeType: NodeType,
-): number | null {
+	nodes: ReadonlyArray<ProseMirrorNode>,
+): boolean {
 	const { $from } = state.selection;
-	for (let depth = $from.depth; depth > 0; depth -= 1) {
-		if ($from.node(depth).type === nodeType) {
-			return depth;
-		}
-	}
-	return null;
-}
-
-function isSelectionInCodeBlock(state: EditorState): boolean {
-	return (
-		state.selection.$from.parent.type === visualEditorSchema.nodes.code_block
+	if ($from.depth < 1) return false;
+	const parent = $from.node($from.depth - 1);
+	const index = $from.index($from.depth - 1);
+	return parent.canReplace(
+		index,
+		index + 1,
+		Fragment.from(nodes as ProseMirrorNode[]),
 	);
 }
 
-function insertHardBreakCommand(
-	state: EditorState,
-	dispatch?: (tr: Transaction) => void,
-): boolean {
+const insertHardBreakCommand: Command = (state, dispatch) => {
 	if (isSelectionInCodeBlock(state)) {
 		return newlineInCode(state, dispatch);
 	}
 	const { $from } = state.selection;
 	if (
-		!$from.parent.canReplaceWith(
-			$from.index(),
-			$from.index(),
-			visualEditorSchema.nodes.hard_break,
-		)
+		$from.parent.type === NODES.heading ||
+		!$from.parent.canReplaceWith($from.index(), $from.index(), NODES.hard_break)
 	) {
 		return false;
 	}
 	if (dispatch) {
 		dispatch(
-			state.tr
-				.replaceSelectionWith(visualEditorSchema.nodes.hard_break.create())
-				.scrollIntoView(),
+			state.tr.replaceSelectionWith(NODES.hard_break.create()).scrollIntoView(),
 		);
 	}
 	return true;
-}
+};
 
-function convertFenceLineOnEnter(
-	state: EditorState,
-	dispatch?: (tr: Transaction) => void,
-): boolean {
+const convertFenceLineOnEnter: Command = (state, dispatch) => {
 	const { selection } = state;
-	if (
-		!selection.empty ||
-		selection.$from.parent.type !== visualEditorSchema.nodes.paragraph
-	) {
+	if (!selection.empty || selection.$from.parent.type !== NODES.paragraph) {
 		return false;
 	}
 	const match = /^(```|~~~)([a-zA-Z0-9_+#.-]*)[ \t]*$/.exec(
@@ -117,164 +113,72 @@ function convertFenceLineOnEnter(
 		return false;
 	}
 	const language = (match[2] ?? "").trim();
+	// The typed fence character is preserved (`~~~` stays a tilde fence).
+	const codeBlock = NODES.code_block.create({
+		language,
+		info: language,
+		fenceChar: match[1] === "~~~" ? "~" : "`",
+		fenceLength: 3,
+	});
+	if (!canReplaceBlock(state, [codeBlock])) return false;
 	if (dispatch) {
 		const blockFrom = selection.$from.before(selection.$from.depth);
 		const blockTo = selection.$from.after(selection.$from.depth);
-		// Typed `~~~` shortcuts normalize to backtick fences matching EasyMDE's rule.
-		const codeBlock = visualEditorSchema.nodes.code_block.create({
-			language,
-			info: language,
-			fenceChar: "`",
-			fenceLength: 3,
-		});
 		const tr = state.tr.replaceWith(blockFrom, blockTo, codeBlock);
 		tr.setSelection(TextSelection.create(tr.doc, blockFrom + 1));
 		dispatch(tr.scrollIntoView());
 	}
 	return true;
-}
+};
 
-function insertHardBreakInTableOnEnter(
-	state: EditorState,
-	dispatch?: (tr: Transaction) => void,
-): boolean {
+const convertHorizontalRuleOnEnter: Command = (state, dispatch) => {
+	const { selection } = state;
+	const { $from } = selection;
+	if (
+		!selection.empty ||
+		$from.parent.type !== NODES.paragraph ||
+		isInTable(state) ||
+		$from.parent.childCount !== 1 ||
+		!$from.parent.firstChild?.isText ||
+		!HORIZONTAL_RULE_LINE_PATTERN.test($from.parent.textContent)
+	) {
+		return false;
+	}
+	const hr = NODES.horizontal_rule.create();
+	const paragraph = NODES.paragraph.create();
+	if (!canReplaceBlock(state, [hr, paragraph])) return false;
+	if (dispatch) {
+		const blockFrom = $from.before($from.depth);
+		const tr = state.tr.replaceWith(blockFrom, $from.after($from.depth), [
+			hr,
+			paragraph,
+		]);
+		tr.setSelection(TextSelection.create(tr.doc, blockFrom + hr.nodeSize + 1));
+		dispatch(tr.scrollIntoView());
+	}
+	return true;
+};
+
+const insertHardBreakInTableOnEnter: Command = (state, dispatch) => {
 	return isInTable(state) ? insertHardBreakCommand(state, dispatch) : false;
-}
+};
 
-function exitHeadingOnEnter(
-	state: EditorState,
-	dispatch?: (tr: Transaction) => void,
-): boolean {
+const exitHeadingOnEnter: Command = (state, dispatch) => {
 	const { $from, $to } = state.selection;
-	if ($from.parent.type !== visualEditorSchema.nodes.heading) {
+	if ($from.parent.type !== NODES.heading) {
 		return false;
 	}
 	if ($from.sameParent($to) && $to.parentOffset === $from.parent.content.size) {
 		if (dispatch) {
 			const afterHeading = $from.after($from.depth);
-			const tr = state.tr.insert(
-				afterHeading,
-				visualEditorSchema.nodes.paragraph.create(),
-			);
+			const tr = state.tr.insert(afterHeading, NODES.paragraph.create());
 			tr.setSelection(TextSelection.create(tr.doc, afterHeading + 1));
 			dispatch(tr.scrollIntoView());
 		}
 		return true;
 	}
 	return splitBlock(state, dispatch);
-}
-
-function convertEmptyCodeBlockOnBackspace(
-	state: EditorState,
-	dispatch?: (tr: Transaction) => void,
-): boolean {
-	const { selection } = state;
-	const { $from } = selection;
-	if (
-		!selection.empty ||
-		$from.parent.type !== visualEditorSchema.nodes.code_block ||
-		$from.parent.content.size > 0 ||
-		$from.parentOffset !== 0
-	) {
-		return false;
-	}
-	return setBlockType(visualEditorSchema.nodes.paragraph)(state, dispatch);
-}
-
-function convertHeadingToParagraphOnBackspace(
-	state: EditorState,
-	dispatch?: (tr: Transaction) => void,
-): boolean {
-	const { selection } = state;
-	if (
-		!selection.empty ||
-		selection.$from.parent.type !== visualEditorSchema.nodes.heading ||
-		selection.$from.parentOffset !== 0
-	) {
-		return false;
-	}
-	return setBlockType(visualEditorSchema.nodes.paragraph)(state, dispatch);
-}
-
-function liftEmptyListOrQuoteOnBackspace(
-	state: EditorState,
-	dispatch?: (tr: Transaction) => void,
-): boolean {
-	const { selection } = state;
-	const { $from } = selection;
-	if (!selection.empty || $from.parentOffset !== 0) {
-		return false;
-	}
-	const itemDepth =
-		findAncestorDepth(state, visualEditorSchema.nodes.task_item) ??
-		findAncestorDepth(state, visualEditorSchema.nodes.list_item);
-	if (itemDepth !== null && $from.index(itemDepth) === 0) {
-		return liftListItem(LIST_ITEM_TYPES)(state, dispatch);
-	}
-	const quoteDepth = findAncestorDepth(
-		state,
-		visualEditorSchema.nodes.blockquote,
-	);
-	if (
-		quoteDepth !== null &&
-		$from.index(quoteDepth) === 0 &&
-		$from.parent.content.size === 0
-	) {
-		return lift(state, dispatch);
-	}
-	return false;
-}
-
-function selectAtomicBlockBackward(
-	state: EditorState,
-	dispatch?: (tr: Transaction) => void,
-): boolean {
-	const { selection } = state;
-	const { $from } = selection;
-	if (!selection.empty || $from.parentOffset !== 0 || $from.depth < 1) {
-		return false;
-	}
-	const blockBeforePos = $from.before($from.depth);
-	const prevNode = state.doc.resolve(blockBeforePos).nodeBefore;
-	if (
-		!prevNode ||
-		(prevNode.type !== visualEditorSchema.nodes.horizontal_rule &&
-			prevNode.type !== visualEditorSchema.nodes.protected_block)
-	) {
-		return false;
-	}
-	if (dispatch) {
-		const prevStart = blockBeforePos - prevNode.nodeSize;
-		dispatch(
-			state.tr
-				.setSelection(NodeSelection.create(state.doc, prevStart))
-				.scrollIntoView(),
-		);
-	}
-	return true;
-}
-
-function preventDeleteAtEndOfCodeBlock(state: EditorState): boolean {
-	const { selection } = state;
-	return (
-		selection.empty &&
-		selection.$from.parent.type === visualEditorSchema.nodes.code_block &&
-		selection.$from.parentOffset === selection.$from.parent.content.size
-	);
-}
-
-function insertSpacesInCodeBlockOnTab(
-	state: EditorState,
-	dispatch?: (tr: Transaction) => void,
-): boolean {
-	if (!isSelectionInCodeBlock(state)) {
-		return false;
-	}
-	if (dispatch) {
-		dispatch(state.tr.insertText("  ").scrollIntoView());
-	}
-	return true;
-}
+};
 
 function toggleInlineMark(
 	view: EditorView,
@@ -289,11 +193,10 @@ function toggleInlineMark(
 }
 
 function toggleBlockquoteCommand(view: EditorView): VisualToolbarCommandResult {
-	const isQuoted =
-		findAncestorDepth(view.state, visualEditorSchema.nodes.blockquote) !== null;
+	const isQuoted = findInnermostDepth(view.state, [NODES.blockquote]) !== null;
 	const applied = isQuoted
 		? lift(view.state, view.dispatch)
-		: wrapIn(visualEditorSchema.nodes.blockquote)(view.state, view.dispatch);
+		: wrapIn(NODES.blockquote)(view.state, view.dispatch);
 	return applied ? "handled" : "blocked";
 }
 
@@ -310,12 +213,9 @@ function convertListType(
 		return false;
 	}
 	const targetItemType =
-		targetListType === visualEditorSchema.nodes.task_list
-			? visualEditorSchema.nodes.task_item
-			: visualEditorSchema.nodes.list_item;
+		targetListType === NODES.task_list ? NODES.task_item : NODES.list_item;
 	const targetListAttrs =
-		targetListType === visualEditorSchema.nodes.bullet_list ||
-		targetListType === visualEditorSchema.nodes.task_list
+		targetListType === NODES.bullet_list || targetListType === NODES.task_list
 			? { marker: sanitizeBulletMarker(listNode.attrs.marker) }
 			: null;
 
@@ -323,20 +223,25 @@ function convertListType(
 	for (let i = 0; i < listNode.childCount; i += 1) {
 		const item = listNode.child(i);
 		const attrs =
-			targetItemType === visualEditorSchema.nodes.task_item
+			targetItemType === NODES.task_item
 				? { checked: Boolean(item.attrs.checked) }
 				: null;
 		newItems.push(targetItemType.create(attrs, item.content));
 	}
-	dispatch(
-		state.tr
-			.replaceWith(
-				listPos,
-				listEnd,
-				targetListType.create(targetListAttrs, newItems),
-			)
-			.scrollIntoView(),
+	const { from, to } = state.selection;
+	const tr = state.tr.replaceWith(
+		listPos,
+		listEnd,
+		targetListType.create(targetListAttrs, newItems),
 	);
+	try {
+		tr.setSelection(
+			TextSelection.between(tr.doc.resolve(from), tr.doc.resolve(to)),
+		);
+	} catch {
+		// Keep ProseMirror's mapped selection.
+	}
+	dispatch(tr.scrollIntoView());
 	return true;
 }
 
@@ -345,41 +250,35 @@ function toggleListCommand(
 	targetListType: NodeType,
 ): VisualToolbarCommandResult {
 	const { state } = view;
-	if (findAncestorDepth(state, targetListType) !== null) {
-		return liftListItem(LIST_ITEM_TYPES)(state, view.dispatch)
+	if (isInTable(state)) return "blocked";
+	const listDepth = findInnermostDepth(state, LIST_TYPES);
+	if (listDepth !== null) {
+		if (state.selection.$from.node(listDepth).type === targetListType) {
+			return liftListItem(LIST_ITEM_TYPES)(state, view.dispatch)
+				? "handled"
+				: "blocked";
+		}
+		return convertListType(state, listDepth, targetListType, view.dispatch)
 			? "handled"
 			: "blocked";
 	}
 
-	const listTypes: ReadonlyArray<NodeType> = [
-		visualEditorSchema.nodes.bullet_list,
-		visualEditorSchema.nodes.ordered_list,
-		visualEditorSchema.nodes.task_list,
-	];
-	for (const existingType of listTypes) {
-		const depth = findAncestorDepth(state, existingType);
-		if (depth !== null) {
-			return convertListType(state, depth, targetListType, view.dispatch)
-				? "handled"
-				: "blocked";
-		}
-	}
-
-	if (targetListType === visualEditorSchema.nodes.task_list) {
+	if (targetListType === NODES.task_list) {
 		const { $from } = state.selection;
-		if ($from.depth < 1) {
+		if ($from.depth < 1 || !$from.parent.isTextblock) {
 			return "blocked";
 		}
 		const blockFrom = $from.before($from.depth);
 		const blockTo = $from.after($from.depth);
-		const paragraph = visualEditorSchema.nodes.paragraph.create(
+		const paragraph = NODES.paragraph.create(
 			null,
 			$from.parent.isTextblock ? $from.parent.content : undefined,
 		);
-		const taskList = visualEditorSchema.nodes.task_list.create(
+		const taskList = NODES.task_list.create(
 			null,
-			visualEditorSchema.nodes.task_item.create({ checked: false }, paragraph),
+			NODES.task_item.create({ checked: false }, paragraph),
 		);
+		if (!canReplaceBlock(state, [taskList])) return "blocked";
 		const tr = state.tr.replaceWith(blockFrom, blockTo, taskList);
 		tr.setSelection(TextSelection.create(tr.doc, blockFrom + 3));
 		view.dispatch(tr.scrollIntoView());
@@ -397,14 +296,32 @@ function insertBlockAtSelection(
 	cursorOffset: number,
 ): VisualToolbarCommandResult {
 	const { state } = view;
+	if (isInTable(state)) return "blocked";
 	const { $from, empty } = state.selection;
 	const isEmptyTopParagraph =
 		empty &&
 		$from.depth === 1 &&
-		$from.parent.type === visualEditorSchema.nodes.paragraph &&
+		$from.parent.type === NODES.paragraph &&
 		$from.parent.content.size === 0;
 
-	const insertPos = isEmptyTopParagraph ? $from.before(1) : $from.after(1);
+	const insertPos =
+		$from.depth === 0
+			? $from.pos
+			: isEmptyTopParagraph
+				? $from.before(1)
+				: $from.after(1);
+	const $insert = state.doc.resolve(insertPos);
+	const fragment = Fragment.from(nodes as ProseMirrorNode[]);
+	const index = $insert.index(0);
+	if (
+		!state.doc.canReplace(
+			index,
+			isEmptyTopParagraph ? index + 1 : index,
+			fragment,
+		)
+	) {
+		return "blocked";
+	}
 	const tr = isEmptyTopParagraph
 		? state.tr.replaceWith($from.before(1), $from.after(1), nodes)
 		: state.tr.insert(insertPos, nodes);
@@ -415,18 +332,20 @@ function insertBlockAtSelection(
 
 function insertCodeBlockCommand(view: EditorView): VisualToolbarCommandResult {
 	const { state } = view;
+	if (isInTable(state)) return "blocked";
 	const { from, to, empty, $from } = state.selection;
 	const selectedText = empty ? "" : state.doc.textBetween(from, to, "\n");
-	const codeBlock = visualEditorSchema.nodes.code_block.create(
+	const codeBlock = NODES.code_block.create(
 		{ language: "", info: "", fenceChar: "`", fenceLength: 3 },
 		selectedText.length > 0 ? visualEditorSchema.text(selectedText) : null,
 	);
 
 	if (
 		empty &&
-		$from.parent.type === visualEditorSchema.nodes.paragraph &&
+		$from.parent.type === NODES.paragraph &&
 		$from.parent.content.size === 0
 	) {
+		if (!canReplaceBlock(state, [codeBlock])) return "blocked";
 		const blockFrom = $from.before($from.depth);
 		const tr = state.tr.replaceWith(
 			blockFrom,
@@ -438,6 +357,7 @@ function insertCodeBlockCommand(view: EditorView): VisualToolbarCommandResult {
 		return "handled";
 	}
 
+	if ($from.depth < 1) return "blocked";
 	const tr = state.tr.replaceSelectionWith(codeBlock);
 	const cursorPos = Math.max(1, tr.selection.from - codeBlock.nodeSize + 1);
 	if (cursorPos < tr.doc.content.size) {
@@ -452,13 +372,13 @@ function insertMathBlockCommand(view: EditorView): VisualToolbarCommandResult {
 	const formula = empty
 		? "E = mc^2"
 		: view.state.doc.textBetween(from, to, "\n").trim() || "E = mc^2";
-	const mathNode = visualEditorSchema.nodes.protected_block.create({
+	const mathNode = NODES.protected_block.create({
 		kind: "math",
 		rawMarkdown: `$$\n${formula}\n$$`,
 	});
 	return insertBlockAtSelection(
 		view,
-		[mathNode, visualEditorSchema.nodes.paragraph.create()],
+		[mathNode, NODES.paragraph.create()],
 		mathNode.nodeSize + 1,
 	);
 }
@@ -472,18 +392,14 @@ function insertLinkCommand(
 		return "blocked";
 	}
 	const { from, to, empty } = state.selection;
-	const linkMark = visualEditorSchema.marks.link.create({
+	const linkMark = MARKS.link.create({
 		href: "https://",
 		title: null,
 	});
 	if (!empty) {
-		const hasLink = state.doc.rangeHasMark(
-			from,
-			to,
-			visualEditorSchema.marks.link,
-		);
+		const hasLink = state.doc.rangeHasMark(from, to, MARKS.link);
 		const tr = hasLink
-			? state.tr.removeMark(from, to, visualEditorSchema.marks.link)
+			? state.tr.removeMark(from, to, MARKS.link)
 			: state.tr.addMark(from, to, linkMark);
 		view.dispatch(tr.scrollIntoView());
 		return "handled";
@@ -493,7 +409,11 @@ function insertLinkCommand(
 		visualEditorSchema.text(label, [linkMark]),
 		false,
 	);
-	tr.setSelection(TextSelection.create(tr.doc, from, from + label.length));
+	// Derive the label range from the mapped caret: from a GapCursor at pos 0
+	// the inserted text lands inside a new paragraph, not at `from`.
+	const labelEnd = tr.selection.from;
+	const labelStart = Math.max(1, labelEnd - label.length);
+	tr.setSelection(TextSelection.create(tr.doc, labelStart, labelEnd));
 	view.dispatch(tr.scrollIntoView());
 	return "handled";
 }
@@ -510,7 +430,7 @@ function insertImageCommand(
 	const alt = empty
 		? command.placeholder?.trim() || "image"
 		: state.doc.textBetween(from, to, " ");
-	const imageNode = visualEditorSchema.nodes.image.create({
+	const imageNode = NODES.image.create({
 		src: command.prefix?.trim() || "https://",
 		alt,
 		title: null,
@@ -522,20 +442,14 @@ function insertImageCommand(
 
 function insertTableCommand(view: EditorView): VisualToolbarCommandResult {
 	const headerCells = [0, 1, 2].map(() =>
-		visualEditorSchema.nodes.table_header.create(
-			null,
-			visualEditorSchema.nodes.paragraph.create(),
-		),
+		NODES.table_header.create(null, NODES.paragraph.create()),
 	);
 	const bodyCells = [0, 1, 2].map(() =>
-		visualEditorSchema.nodes.table_cell.create(
-			null,
-			visualEditorSchema.nodes.paragraph.create(),
-		),
+		NODES.table_cell.create(null, NODES.paragraph.create()),
 	);
-	const tableNode = visualEditorSchema.nodes.table.create(null, [
-		visualEditorSchema.nodes.table_row.create(null, headerCells),
-		visualEditorSchema.nodes.table_row.create(null, bodyCells),
+	const tableNode = NODES.table.create(null, [
+		NODES.table_row.create(null, headerCells),
+		NODES.table_row.create(null, bodyCells),
 	]);
 	// table (+1) -> row (+1) -> header (+1) -> paragraph (+1) = 4
 	return insertBlockAtSelection(view, [tableNode], 4);
@@ -544,10 +458,10 @@ function insertTableCommand(view: EditorView): VisualToolbarCommandResult {
 function insertHorizontalRuleCommand(
 	view: EditorView,
 ): VisualToolbarCommandResult {
-	const hrNode = visualEditorSchema.nodes.horizontal_rule.create();
+	const hrNode = NODES.horizontal_rule.create();
 	return insertBlockAtSelection(
 		view,
-		[hrNode, visualEditorSchema.nodes.paragraph.create()],
+		[hrNode, NODES.paragraph.create()],
 		hrNode.nodeSize + 1,
 	);
 }
@@ -557,35 +471,52 @@ function resolveWrapMark(command: ToolbarCommand): MarkType | null {
 	const prefix = command.prefix ?? "";
 	const suffix = command.suffix ?? "";
 	if (id === "bold" || (prefix === "**" && suffix === "**")) {
-		return visualEditorSchema.marks.strong;
+		return MARKS.strong;
 	}
 	if (
 		id === "italic" ||
 		(prefix === "*" && suffix === "*") ||
 		(prefix === "_" && suffix === "_")
 	) {
-		return visualEditorSchema.marks.em;
+		return MARKS.em;
 	}
 	if (
 		id === "strike" ||
 		id === "strikethrough" ||
 		(prefix === "~~" && suffix === "~~")
 	) {
-		return visualEditorSchema.marks.strike;
+		return MARKS.strike;
 	}
 	if (
 		id === "inlinecode" ||
 		id === "inline-code" ||
 		(prefix === "`" && suffix === "`")
 	) {
-		return visualEditorSchema.marks.code;
+		return MARKS.code;
 	}
 	return null;
+}
+
+function setTextblockType(
+	view: EditorView,
+	nodeType: NodeType,
+	attrs?: Record<string, unknown>,
+): VisualToolbarCommandResult {
+	if (setBlockType(nodeType, attrs)(view.state, view.dispatch))
+		return "handled";
+	const { $from, $to } = view.state.selection;
+	const parent = $from.parent;
+	return $from.sameParent($to) &&
+		parent.isTextblock &&
+		parent.hasMarkup(nodeType, attrs ?? parent.attrs)
+		? "handled"
+		: "blocked";
 }
 
 export function executeVisualToolbarCommand(
 	view: EditorView,
 	command: ToolbarCommand,
+	history: VisualHistoryCommands = DEFAULT_HISTORY_COMMANDS,
 ): VisualToolbarCommandResult {
 	if (!view.editable) {
 		return "blocked";
@@ -602,48 +533,35 @@ export function executeVisualToolbarCommand(
 		const level = normalizeHeadingLevel(
 			Number.parseInt(headingActionMatch[1], 10),
 		);
-		return setBlockType(visualEditorSchema.nodes.heading, { level })(
-			view.state,
-			view.dispatch,
-		)
-			? "handled"
-			: "blocked";
+		return setTextblockType(view, NODES.heading, { level });
 	}
 
 	switch (action) {
 		case "bold":
-			return toggleInlineMark(view, visualEditorSchema.marks.strong);
+			return toggleInlineMark(view, MARKS.strong);
 		case "italic":
-			return toggleInlineMark(view, visualEditorSchema.marks.em);
+			return toggleInlineMark(view, MARKS.em);
 		case "strikethrough":
 		case "strike":
-			return toggleInlineMark(view, visualEditorSchema.marks.strike);
+			return toggleInlineMark(view, MARKS.strike);
 		case "inlineCode":
-			return toggleInlineMark(view, visualEditorSchema.marks.code);
+			return toggleInlineMark(view, MARKS.code);
 		case "heading": {
 			const level = normalizeHeadingLevel(command.level ?? 2);
-			return setBlockType(visualEditorSchema.nodes.heading, { level })(
-				view.state,
-				view.dispatch,
-			)
-				? "handled"
-				: "blocked";
+			return setTextblockType(view, NODES.heading, {
+				level,
+			});
 		}
 		case "paragraph":
-			return setBlockType(visualEditorSchema.nodes.paragraph)(
-				view.state,
-				view.dispatch,
-			)
-				? "handled"
-				: "blocked";
+			return setTextblockType(view, NODES.paragraph);
 		case "quote":
 			return toggleBlockquoteCommand(view);
 		case "unorderedList":
-			return toggleListCommand(view, visualEditorSchema.nodes.bullet_list);
+			return toggleListCommand(view, NODES.bullet_list);
 		case "orderedList":
-			return toggleListCommand(view, visualEditorSchema.nodes.ordered_list);
+			return toggleListCommand(view, NODES.ordered_list);
 		case "taskList":
-			return toggleListCommand(view, visualEditorSchema.nodes.task_list);
+			return toggleListCommand(view, NODES.task_list);
 		case "codeFence":
 		case "codeBlock":
 			return insertCodeBlockCommand(view);
@@ -658,63 +576,57 @@ export function executeVisualToolbarCommand(
 		case "horizontalRule":
 			return insertHorizontalRuleCommand(view);
 		case "undo":
-			return undo(view.state, view.dispatch) ? "handled" : "blocked";
+			return history.undo(view.state, view.dispatch, view)
+				? "handled"
+				: "blocked";
 		case "redo":
-			return redo(view.state, view.dispatch) ? "handled" : "blocked";
+			return history.redo(view.state, view.dispatch, view)
+				? "handled"
+				: "blocked";
 		default:
 			return "unsupported";
 	}
 }
 
-export function createVisualKeymapPlugins(): ReadonlyArray<Plugin> {
+export function createVisualKeymapPlugins(
+	history: VisualHistoryCommands = DEFAULT_HISTORY_COMMANDS,
+): ReadonlyArray<Plugin> {
 	const enterCommand: Command = chainCommands(
 		convertFenceLineOnEnter,
+		convertHorizontalRuleOnEnter,
 		newlineInCode,
 		insertHardBreakInTableOnEnter,
-		splitListItem(visualEditorSchema.nodes.task_item, { checked: false }),
-		splitListItem(visualEditorSchema.nodes.list_item),
+		splitListItem(NODES.task_item, { checked: false }),
+		splitListItem(NODES.list_item),
 		exitHeadingOnEnter,
 		createParagraphNear,
 		liftEmptyBlock,
 		splitBlock,
 	);
 
-	const backspaceCommand: Command = chainCommands(
-		deleteSelection,
-		convertEmptyCodeBlockOnBackspace,
-		convertHeadingToParagraphOnBackspace,
-		liftEmptyListOrQuoteOnBackspace,
-		selectAtomicBlockBackward,
-		joinBackward,
-		selectNodeBackward,
-	);
-
-	const deleteCommand: Command = chainCommands(
-		deleteSelection,
-		preventDeleteAtEndOfCodeBlock,
-		joinForward,
-		selectNodeForward,
-	);
-
 	const customBindings: Record<string, Command> = {
-		"Mod-z": undo,
-		"Mod-Shift-z": redo,
-		"Mod-y": redo,
-		"Mod-b": toggleMark(visualEditorSchema.marks.strong),
-		"Mod-i": toggleMark(visualEditorSchema.marks.em),
+		"Mod-z": history.undo,
+		"Mod-Shift-z": history.redo,
+		"Mod-y": history.redo,
+		"Mod-b": toggleMark(MARKS.strong),
+		"Mod-i": toggleMark(MARKS.em),
+		"Mod-`": (state, dispatch) =>
+			!isSelectionInCodeBlock(state) && toggleMark(MARKS.code)(state, dispatch),
 		"Mod-a": selectAll,
 		"Mod-Enter": exitCode,
-		"Shift-Enter": insertHardBreakCommand,
+		"Shift-Enter": chainCommands(insertHardBreakCommand, exitHeadingOnEnter),
 		Enter: enterCommand,
-		Backspace: backspaceCommand,
-		Delete: deleteCommand,
-		"Mod-Delete": deleteCommand,
+		...createBoundaryKeyBindings(),
 		Tab: chainCommands(
 			goToNextCell(1),
-			insertSpacesInCodeBlockOnTab,
+			indentInCodeBlockOnTab,
 			sinkListItem(LIST_ITEM_TYPES),
 		),
-		"Shift-Tab": chainCommands(goToNextCell(-1), liftListItem(LIST_ITEM_TYPES)),
+		"Shift-Tab": chainCommands(
+			goToNextCell(-1),
+			outdentInCodeBlockOnShiftTab,
+			liftListItem(LIST_ITEM_TYPES),
+		),
 	};
 
 	return [keymap(customBindings), keymap(baseKeymap)];

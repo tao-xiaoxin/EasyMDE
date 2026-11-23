@@ -3,6 +3,7 @@ import {
 	type EditorState,
 	Plugin,
 	PluginKey,
+	type PluginView,
 	type Transaction,
 } from "prosemirror-state";
 import {
@@ -13,6 +14,10 @@ import {
 	type NodeViewConstructor,
 	type ViewMutationRecord,
 } from "prosemirror-view";
+import {
+	publishVisualEditableState,
+	subscribePreviewRuntimeReady,
+} from "./protected-atom-card-editor";
 
 export type HighlightJsResult = Readonly<{ value: string }>;
 
@@ -22,6 +27,10 @@ export type HighlightJsRuntime = Readonly<{
 		code: string,
 		options: Readonly<{ ignoreIllegals?: boolean; language: string }>,
 	) => HighlightJsResult;
+	highlightAuto?: (
+		code: string,
+		languageSubset?: ReadonlyArray<string>,
+	) => HighlightJsResult & Readonly<{ language?: string }>;
 }>;
 
 export type CodeBlockNodeViewOptions = Readonly<{
@@ -29,6 +38,7 @@ export type CodeBlockNodeViewOptions = Readonly<{
 }>;
 
 export type CodeHighlightPluginOptions = Readonly<{
+	cacheLimit?: number;
 	getHljs?: () => HighlightJsRuntime | null | undefined;
 	maxCodeLength?: number;
 }>;
@@ -45,13 +55,74 @@ type HighlightTokenRange = Readonly<{
 }>;
 type DocumentRange = Readonly<{ from: number; to: number }>;
 type HighlightWindow = Window & { hljs?: HighlightJsRuntime };
+type HighlightCacheEntry = Readonly<{
+	ranges: ReadonlyArray<HighlightTokenRange>;
+	weight: number;
+}>;
 
 const DEFAULT_MAX_HIGHLIGHT_CODE_LENGTH = 64 * 1024;
+const DEFAULT_HIGHLIGHT_CACHE_LIMIT = 256;
+const HIGHLIGHT_CACHE_CHAR_LIMIT = 2 * 1024 * 1024;
+// Auto-detection is materially more expensive than explicit-language
+// highlighting, so bound it to short snippets that stay interactive while typing.
+const AUTO_DETECT_MAX_CODE_LENGTH = 2 * 1024;
 const SAFE_CLASS_TOKEN_PATTERN = /^[a-zA-Z_-][a-zA-Z0-9_-]*$/;
+
+const highlightTokenCache = new Map<string, HighlightCacheEntry>();
+const runtimeIds = new WeakMap<object, number>();
+let highlightTokenCacheWeight = 0;
+let runtimeIdSequence = 0;
 
 export const codeHighlightPluginKey = new PluginKey<CodeHighlightPluginState>(
 	"easymdeVisualCodeHighlight",
 );
+
+function resolveRuntimeId(runtime: HighlightJsRuntime): number {
+	let id = runtimeIds.get(runtime);
+	if (id === undefined) {
+		runtimeIdSequence += 1;
+		id = runtimeIdSequence;
+		runtimeIds.set(runtime, id);
+	}
+	return id;
+}
+
+function readTokenCache(
+	key: string,
+): ReadonlyArray<HighlightTokenRange> | null {
+	const entry = highlightTokenCache.get(key);
+	if (!entry) return null;
+	// Refresh recency for the bounded insertion-order cache.
+	highlightTokenCache.delete(key);
+	highlightTokenCache.set(key, entry);
+	return entry.ranges;
+}
+
+function writeTokenCache(
+	key: string,
+	ranges: ReadonlyArray<HighlightTokenRange>,
+	cacheLimit: number,
+): void {
+	const existing = highlightTokenCache.get(key);
+	if (existing) {
+		highlightTokenCacheWeight -= existing.weight;
+		highlightTokenCache.delete(key);
+	}
+	highlightTokenCache.set(key, { ranges, weight: key.length + 1 });
+	highlightTokenCacheWeight += key.length + 1;
+	while (
+		highlightTokenCache.size > cacheLimit ||
+		highlightTokenCacheWeight > HIGHLIGHT_CACHE_CHAR_LIMIT
+	) {
+		const oldestKey = highlightTokenCache.keys().next().value as
+			| string
+			| undefined;
+		if (oldestKey === undefined) break;
+		const oldest = highlightTokenCache.get(oldestKey);
+		if (oldest) highlightTokenCacheWeight -= oldest.weight;
+		highlightTokenCache.delete(oldestKey);
+	}
+}
 
 function normalizeCodeLanguage(value: unknown): string {
 	return typeof value === "string" ? value.trim() : "";
@@ -73,7 +144,9 @@ function resolveHljs(
 		: typeof window !== "undefined"
 			? (window as HighlightWindow).hljs
 			: null;
-	return candidate && typeof candidate.highlight === "function"
+	return candidate &&
+		(typeof candidate.highlight === "function" ||
+			typeof candidate.highlightAuto === "function")
 		? candidate
 		: null;
 }
@@ -154,40 +227,82 @@ export function parseHighlightedHtmlToTokenRanges(
 	return ranges;
 }
 
+function computeHighlightTokenRanges(
+	codeText: string,
+	language: string,
+	hljs: HighlightJsRuntime,
+	cacheLimit: number,
+): ReadonlyArray<HighlightTokenRange> {
+	const cacheKey = `${resolveRuntimeId(hljs)}\u0000${language}\u0000${codeText}`;
+	const cached = readTokenCache(cacheKey);
+	if (cached) return cached;
+
+	let highlightedHtml = "";
+	if (language.length === 0) {
+		if (
+			typeof hljs.highlightAuto !== "function" ||
+			codeText.length > AUTO_DETECT_MAX_CODE_LENGTH
+		) {
+			return [];
+		}
+		try {
+			const auto = hljs.highlightAuto(codeText);
+			highlightedHtml = typeof auto?.value === "string" ? auto.value : "";
+		} catch {
+			return [];
+		}
+	} else {
+		if (typeof hljs.highlight !== "function") return [];
+		if (typeof hljs.getLanguage === "function" && !hljs.getLanguage(language)) {
+			return [];
+		}
+		try {
+			const result = hljs.highlight(codeText, {
+				language,
+				ignoreIllegals: true,
+			});
+			highlightedHtml = typeof result?.value === "string" ? result.value : "";
+		} catch {
+			return [];
+		}
+	}
+
+	const ranges = parseHighlightedHtmlToTokenRanges(
+		highlightedHtml,
+		codeText.length,
+	);
+	if (ranges.length > 0) {
+		writeTokenCache(cacheKey, ranges, cacheLimit);
+	}
+	return ranges;
+}
+
 function buildCodeBlockDecorations(
 	node: ProseMirrorNode,
 	blockPos: number,
 	hljs: HighlightJsRuntime,
 	maxCodeLength: number,
+	cacheLimit: number,
 ): Decoration[] {
 	const language = normalizeCodeLanguage(node.attrs.language);
 	const codeText = node.textContent;
 	if (
-		typeof hljs.highlight !== "function" ||
-		language.length === 0 ||
 		codeText.length === 0 ||
 		codeText.length > maxCodeLength ||
-		(typeof hljs.getLanguage === "function" && !hljs.getLanguage(language))
+		(language.length > 0 &&
+			typeof hljs.highlight === "function" &&
+			typeof hljs.getLanguage === "function" &&
+			!hljs.getLanguage(language))
 	) {
 		return [];
 	}
 
-	let highlightedHtml = "";
-	try {
-		const result = hljs.highlight(codeText, { language, ignoreIllegals: true });
-		highlightedHtml = typeof result?.value === "string" ? result.value : "";
-	} catch {
-		return [];
-	}
-
 	const contentStart = blockPos + 1;
-	return parseHighlightedHtmlToTokenRanges(
-		highlightedHtml,
-		codeText.length,
-	).map((range) =>
-		Decoration.inline(contentStart + range.from, contentStart + range.to, {
-			class: range.className,
-		}),
+	return computeHighlightTokenRanges(codeText, language, hljs, cacheLimit).map(
+		(range) =>
+			Decoration.inline(contentStart + range.from, contentStart + range.to, {
+				class: range.className,
+			}),
 	);
 }
 
@@ -195,12 +310,19 @@ function buildAllCodeBlockDecorations(
 	doc: ProseMirrorNode,
 	hljs: HighlightJsRuntime,
 	maxCodeLength: number,
+	cacheLimit: number,
 ): DecorationSet {
 	const decorations: Decoration[] = [];
 	doc.descendants((node, pos) => {
 		if (node.type.name === "code_block") {
 			decorations.push(
-				...buildCodeBlockDecorations(node, pos, hljs, maxCodeLength),
+				...buildCodeBlockDecorations(
+					node,
+					pos,
+					hljs,
+					maxCodeLength,
+					cacheLimit,
+				),
 			);
 			return false;
 		}
@@ -262,6 +384,7 @@ function updateDecorationsIncrementally(
 	newDoc: ProseMirrorNode,
 	hljs: HighlightJsRuntime,
 	maxCodeLength: number,
+	cacheLimit: number,
 ): DecorationSet {
 	let decorations = prevDecorations.map(tr.mapping, newDoc);
 	const changedRanges = collectChangedRanges(tr);
@@ -280,11 +403,60 @@ function updateDecorationsIncrementally(
 			if (stale.length > 0) {
 				decorations = decorations.remove(stale);
 			}
-			added.push(...buildCodeBlockDecorations(node, pos, hljs, maxCodeLength));
+			added.push(
+				...buildCodeBlockDecorations(
+					node,
+					pos,
+					hljs,
+					maxCodeLength,
+					cacheLimit,
+				),
+			);
 		}
 		return false;
 	});
 	return added.length > 0 ? decorations.add(newDoc, added) : decorations;
+}
+
+/**
+ * Force a full decoration rebuild, e.g. after the highlight.js runtime
+ * finishes lazy-loading. Tagged as a non-history metadata-only transaction.
+ */
+export function refreshCodeHighlightDecorations(view: EditorView): void {
+	if (view.isDestroyed) return;
+	view.dispatch(
+		view.state.tr
+			.setMeta(codeHighlightPluginKey, { refresh: true })
+			.setMeta("addToHistory", false),
+	);
+}
+
+function createCodeHighlightPluginView(
+	editorView: EditorView,
+	options: CodeHighlightPluginOptions,
+): PluginView {
+	publishVisualEditableState(editorView);
+	const doc = editorView.dom.ownerDocument;
+	const refreshOnRuntimeReady = (): void => {
+		if (editorView.isDestroyed || editorView.composing) return;
+		const runtime = resolveHljs(options);
+		if (!runtime) return;
+		if (runtime === codeHighlightPluginKey.getState(editorView.state)?.hljsRef)
+			return;
+		refreshCodeHighlightDecorations(editorView);
+	};
+	const unsubscribeRuntimeReady = subscribePreviewRuntimeReady(
+		doc,
+		refreshOnRuntimeReady,
+	);
+	return {
+		update(view: EditorView): void {
+			publishVisualEditableState(view);
+		},
+		destroy(): void {
+			unsubscribeRuntimeReady();
+		},
+	};
 }
 
 export function createCodeHighlightPlugin(
@@ -292,6 +464,7 @@ export function createCodeHighlightPlugin(
 ): Plugin<CodeHighlightPluginState> {
 	const maxCodeLength =
 		options.maxCodeLength ?? DEFAULT_MAX_HIGHLIGHT_CODE_LENGTH;
+	const cacheLimit = options.cacheLimit ?? DEFAULT_HIGHLIGHT_CACHE_LIMIT;
 
 	return new Plugin<CodeHighlightPluginState>({
 		key: codeHighlightPluginKey,
@@ -304,6 +477,7 @@ export function createCodeHighlightPlugin(
 								state.doc,
 								hljs,
 								maxCodeLength,
+								cacheLimit,
 							),
 							hljsRef: hljs,
 						}
@@ -326,6 +500,7 @@ export function createCodeHighlightPlugin(
 							newState.doc,
 							hljs,
 							maxCodeLength,
+							cacheLimit,
 						),
 						hljsRef: hljs,
 					};
@@ -340,6 +515,7 @@ export function createCodeHighlightPlugin(
 						newState.doc,
 						hljs,
 						maxCodeLength,
+						cacheLimit,
 					),
 					hljsRef: hljs,
 				};
@@ -353,6 +529,7 @@ export function createCodeHighlightPlugin(
 				);
 			},
 		},
+		view: (editorView) => createCodeHighlightPluginView(editorView, options),
 	});
 }
 
@@ -364,7 +541,7 @@ function createLanguageBadgeElement(doc: Document): HTMLSpanElement {
 	Object.assign(badge.style, {
 		position: "absolute",
 		top: "8px",
-		right: "14px",
+		insetInlineEnd: "14px",
 		fontSize: "11px",
 		lineHeight: "18px",
 		opacity: "0.72",

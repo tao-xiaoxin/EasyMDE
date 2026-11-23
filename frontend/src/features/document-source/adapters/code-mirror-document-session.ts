@@ -12,6 +12,7 @@ import {
   Compartment,
   EditorSelection,
   EditorState,
+  Prec,
   Transaction
 } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
@@ -203,6 +204,28 @@ export function createCodeMirrorDocumentSession({
     canonicalHistorySelectionField,
     invertedEffects.of(invertCanonicalHistorySelection),
     markdownSyntax.of(markdownSyntaxExtensions),
+    // CodeMirror's keymap resolves a character key with Shift stripped first,
+    // so a lowercase `key: "z"` with Shift (CapsLock on, or a synthetic
+    // Ctrl+Shift+z) would match `Mod-z` Undo before `Mod-Shift-z` Redo. Route
+    // every Mod+Shift+Z to Redo ahead of the keymap. The physical `KeyZ`
+    // fallback only covers non-ASCII-letter keys (IME, non-Latin layouts), so
+    // AZERTY `w` and QWERTZ `y` shortcuts on that key are not hijacked.
+    Prec.highest(EditorView.domEventHandlers({
+      keydown(event, view) {
+        const key = event.key.toLowerCase();
+        if (
+          !(event.ctrlKey || event.metaKey)
+          || !event.shiftKey
+          || event.altKey
+          || ('z' !== key && ('KeyZ' !== event.code || /^[a-z]$/u.test(key)))
+        ) {
+          return false;
+        }
+        event.preventDefault();
+        redoCommand(view);
+        return true;
+      }
+    })),
     EditorView.domEventHandlers({
       drop(event) {
         return hasImageFileTransfer(event.dataTransfer);

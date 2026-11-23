@@ -239,7 +239,7 @@ describe('EditorRoot core and lifecycle', () => {
     ).toHaveLength(1);
   });
 
-  it('leaves visual Preview before a table mutates the Markdown owner', async () => {
+  it('inserts a toolbar table through the unlocked visual owner with blank-line separation', async () => {
     const props = fixture();
     props.submissionField.value = 'Choose **this** text';
     props.submissionField.defaultValue = 'Choose **this** text';
@@ -272,13 +272,18 @@ describe('EditorRoot core and lifecycle', () => {
     selection?.addRange(range);
 
     fireEvent.click(view.getByRole('button', { name: '表格' }));
-    expect(
-      view.queryByRole('textbox', { name: '可视化文章编辑器' })
-    ).toBeNull();
+    expect(view.getByRole('textbox', { name: '可视化文章编辑器' })).toBe(
+      visualEditor
+    );
     fireEvent.click(view.getByRole('button', { name: '2 × 2' }));
 
-    expect(props.submissionField.value).toBe(
-      'Choose **this** text\n|  |  |\n| --- | --- |\n|  |  |\n'
+    await waitFor(() =>
+      expect(props.submissionField.value).toBe(
+        'Choose **this** text\n\n|  |  |\n| --- | --- |\n|  |  |\n'
+      )
+    );
+    expect(view.getByRole('textbox', { name: '可视化文章编辑器' })).toBe(
+      visualEditor
     );
   });
 
@@ -1486,6 +1491,18 @@ describe('EditorRoot core and lifecycle', () => {
     fireEvent.click(view.getByRole('button', { name: '主题' }));
     fireEvent.click(view.getByRole('button', { name: 'Article theme' }));
     fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+    await waitFor(() =>
+      expect(props.appearancePort.applyState).toHaveBeenCalledWith(
+        expect.objectContaining({ markdownTheme: 'newsprint' }),
+        false
+      )
+    );
+    // The theme applies live to the unlocked visual editor; locking it again
+    // owns the formal Preview refresh.
+    expect(
+      view.getByRole('textbox', { name: '可视化文章编辑器' })
+    ).not.toBeNull();
+    fireEvent.click(view.getByRole('button', { name: '锁定为只读' }));
 
     await act(async () => {
       await Promise.resolve();
@@ -1576,6 +1593,14 @@ describe('EditorRoot core and lifecycle', () => {
     await waitFor(() =>
       expect(appearancePort.saveCustomCss).toHaveBeenCalled()
     );
+    await waitFor(() =>
+      expect(props.appearancePort.applyState).toHaveBeenCalledWith(
+        expect.objectContaining({ customCssId: 'writer-css' }),
+        expect.any(Boolean)
+      )
+    );
+    // Custom CSS applies live while unlocked; locking refreshes the Preview.
+    fireEvent.click(view.getByRole('button', { name: '锁定为只读' }));
     await act(async () => {
       await Promise.resolve();
     });

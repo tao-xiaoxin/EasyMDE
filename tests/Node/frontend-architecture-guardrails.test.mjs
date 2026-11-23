@@ -187,6 +187,39 @@ function extractRelativeImportTargets(relFile, source) {
 	return targets;
 }
 
+function extractRelativeRuntimeImportTargets(relFile, source) {
+	const code = stripCommentsOnly(source);
+	const targets = [];
+	// Match static value-bearing import/export statements, excluding `import type`
+	// and `export type` declarations (which erase at runtime) and dynamic imports.
+	const statementPattern =
+		/(?:^|[;\n])\s*(import|export)\s+(?!type\b)([^;"']*?)\bfrom\s+["']([^"']+)["']|(?:^|[;\n])\s*import\s+["']([^"']+)["']/gu;
+	for (const match of code.matchAll(statementPattern)) {
+		const specifier = match[3] ?? match[4];
+		if (!specifier || !specifier.startsWith(".")) continue;
+		const clause = (match[2] ?? "").trim();
+		// Skip named-only clauses where every binding is explicitly `type Foo`.
+		if (clause.startsWith("{") && clause.endsWith("}")) {
+			const bindings = clause
+				.slice(1, -1)
+				.split(",")
+				.map((part) => part.trim())
+				.filter(Boolean);
+			if (
+				bindings.length > 0 &&
+				bindings.every((part) => /^type\s+/u.test(part))
+			) {
+				continue;
+			}
+		}
+		const resolved = path.posix.normalize(
+			path.posix.join(path.posix.dirname(relFile), specifier),
+		);
+		targets.push({ resolved, specifier });
+	}
+	return targets;
+}
+
 function hasJsxOrCreateElement(rawSource) {
 	const stripped = stripCommentsAndStrings(rawSource);
 	const hasBareCreateElement = /(?<!\.)\bcreateElement\s*\(/.test(stripped);
@@ -363,5 +396,63 @@ test("no new .tsx file over 400 lines is a zero-JSX controller", () => {
 		violations,
 		[],
 		`Zero-JSX large .tsx controller violations:\n${violations.join("\n")}`,
+	);
+});
+
+test("production frontend modules contain zero runtime circular dependencies", () => {
+	const knownKeys = new Set(
+		productionFiles.map((filePath) =>
+			toPosixRepoPath(filePath).replace(/\.(ts|tsx)$/u, ""),
+		),
+	);
+	const adjacency = new Map();
+
+	for (const filePath of productionFiles) {
+		const relPath = toPosixRepoPath(filePath);
+		const key = relPath.replace(/\.(ts|tsx)$/u, "");
+		const source = readFileSync(filePath, "utf8");
+		const edges = [];
+		for (const { resolved } of extractRelativeRuntimeImportTargets(
+			relPath,
+			source,
+		)) {
+			let target = resolved.replace(/\.(ts|tsx)$/u, "");
+			if (!knownKeys.has(target) && knownKeys.has(`${target}/index`)) {
+				target = `${target}/index`;
+			}
+			if (knownKeys.has(target)) {
+				edges.push(target);
+			}
+		}
+		adjacency.set(key, [...new Set(edges)]);
+	}
+
+	const visited = new Set();
+	const active = new Set();
+	const cycles = [];
+
+	function visit(node, trail) {
+		visited.add(node);
+		active.add(node);
+		for (const next of adjacency.get(node) ?? []) {
+			if (active.has(next)) {
+				cycles.push([...trail.slice(trail.indexOf(next)), next].join(" -> "));
+			} else if (!visited.has(next)) {
+				visit(next, [...trail, next]);
+			}
+		}
+		active.delete(node);
+	}
+
+	for (const key of adjacency.keys()) {
+		if (!visited.has(key)) {
+			visit(key, [key]);
+		}
+	}
+
+	assert.deepEqual(
+		cycles,
+		[],
+		`Runtime circular import cycles detected:\n${cycles.join("\n")}`,
 	);
 });

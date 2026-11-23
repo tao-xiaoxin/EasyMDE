@@ -664,6 +664,87 @@ describe('createCodeMirrorDocumentSession', () => {
     submissionField.remove();
   });
 
+  it.each([
+    { code: 'KeyZ', ctrlKey: true, key: 'z', metaKey: false },
+    { code: 'KeyZ', ctrlKey: true, key: 'Z', metaKey: false },
+    { code: 'KeyZ', ctrlKey: false, key: 'z', metaKey: true },
+    { code: 'KeyZ', ctrlKey: true, key: 'Я', metaKey: false },
+    { code: 'KeyW', ctrlKey: true, key: 'Z', metaKey: false }
+  ])('routes Mod+Shift+Z ($key, ctrl=$ctrlKey) to Redo instead of Undo', (keys) => {
+    const { container, submissionField } = createFixture('alpha');
+    submissionField.setSelectionRange(5, 5);
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    try {
+      session.applyTextChange({
+        isolateHistoryBefore: true,
+        selection: { direction: 'none', start: 7, end: 7 },
+        value: 'alpha b'
+      });
+      session.applyTextChange({
+        isolateHistoryBefore: true,
+        selection: { direction: 'none', start: 8, end: 8 },
+        value: 'alpha bc'
+      });
+      expect(session.undo()).toBe(true);
+      expect(session.getValue()).toBe('alpha b');
+      const event = new KeyboardEvent('keydown', {
+        ...keys,
+        bubbles: true,
+        cancelable: true,
+        shiftKey: true
+      });
+      session.getInputElement().dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      expect(session.getValue()).toBe('alpha bc');
+      expect(session.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: 2 });
+    } finally {
+      session.destroy();
+      container.remove();
+      submissionField.remove();
+    }
+  });
+
+  it.each([
+    { code: 'KeyZ', key: 'W', layout: 'AZERTY' },
+    { code: 'KeyZ', key: 'Y', layout: 'QWERTZ' }
+  ])('does not hijack $layout Ctrl+Shift+$key on the physical KeyZ', (keys) => {
+    const { container, submissionField } = createFixture('alpha');
+    submissionField.setSelectionRange(5, 5);
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    try {
+      session.applyTextChange({
+        isolateHistoryBefore: true,
+        selection: { direction: 'none', start: 7, end: 7 },
+        value: 'alpha b'
+      });
+      expect(session.undo()).toBe(true);
+      const event = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        code: keys.code,
+        ctrlKey: true,
+        key: keys.key,
+        shiftKey: true
+      });
+      session.getInputElement().dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(session.getValue()).toBe('alpha');
+      expect(session.getHistoryState()).toEqual({ redoDepth: 1, undoDepth: 0 });
+    } finally {
+      session.destroy();
+      container.remove();
+      submissionField.remove();
+    }
+  });
+
   it('keeps heading markers regular and colors quote content as one block', () => {
     const { container, submissionField } = createFixture('# Title\n> Quote');
     const session = createCodeMirrorDocumentSession({

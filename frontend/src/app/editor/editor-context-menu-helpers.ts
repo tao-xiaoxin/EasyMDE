@@ -264,23 +264,49 @@ export function generatedRootAtTarget(
 export function visualImageSlotIdentity(
   image: HTMLImageElement
 ): Readonly<{ blockId: string; ordinal: number }> | null {
+  // ProseMirror inserts `img.ProseMirror-separator` hacks around inline atoms;
+  // they are not article images and must never occupy an image slot.
+  if (image.classList.contains('ProseMirror-separator')) return null;
   const block = image.closest<HTMLElement>('[data-easymde-visual-block-id]');
   const blockId = block?.getAttribute('data-easymde-visual-block-id');
   if (block && blockId) {
-    const images = Array.from(block.querySelectorAll('img')).filter(
+    const images = Array.from(
+      block.querySelectorAll('img:not(.ProseMirror-separator)')
+    ).filter(
       (candidate) => candidate.closest('[data-easymde-visual-block-id]') === block
     );
     const ordinal = images.indexOf(image);
     return ordinal < 0 ? null : { blockId, ordinal };
   }
+  // MUST match `imageSlotIdentity` in the ProseMirror context-menu adapter:
+  // `pm-block-N` (N = top-level ProseMirror block, ignoring transient
+  // gap-cursor/widget DOM) plus the image ordinal inside that block.
   const proseMirrorSurface = image.closest<HTMLElement>(
     '.easymde-prosemirror-editor'
   );
   if (!proseMirrorSurface) return null;
-  const ordinal = Array.from(proseMirrorSurface.querySelectorAll('img')).indexOf(
-    image
-  );
-  return ordinal < 0 ? null : { blockId: 'pm-block-0', ordinal };
+  let topLevel: Element = image;
+  while (
+    topLevel.parentElement
+    && topLevel.parentElement !== proseMirrorSurface
+  ) {
+    topLevel = topLevel.parentElement;
+  }
+  if (topLevel.parentElement !== proseMirrorSurface) return null;
+  const blockIndex = Array.from(proseMirrorSurface.children)
+    .filter(
+      (child) => !child.matches('.ProseMirror-gapcursor, .ProseMirror-widget')
+    )
+    .indexOf(topLevel);
+  const ordinal =
+    topLevel === image
+      ? 0
+      : Array.from(
+          topLevel.querySelectorAll('img:not(.ProseMirror-separator)')
+        ).indexOf(image);
+  return blockIndex < 0 || ordinal < 0
+    ? null
+    : { blockId: `pm-block-${blockIndex}`, ordinal };
 }
 
 export function generatedMathMlAvailable(root: Element): boolean {

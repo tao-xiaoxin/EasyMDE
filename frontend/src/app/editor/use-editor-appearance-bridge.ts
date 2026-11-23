@@ -30,12 +30,16 @@ import {
 } from '../../features/live-preview/ports/preview-enhancement-port';
 import type { PreviewSurfaceRuntime } from '../../features/live-preview/ui/PreviewSurfaceOwner';
 import type { EditorToolbarSession } from '../../features/toolbar/ui/EditorToolbar';
-import { articleMarkupProfile } from './editor-root-helpers';
+import {
+  articleMarkupProfile,
+  syncCodeFrameBackgroundsSafely
+} from './editor-root-helpers';
 import type {
   CodeThemePreparation,
   EditorStatus,
   EditorStatusState,
   EditorSubmissionState,
+  ImmersiveVisualEditorRuntime,
   SharedRef
 } from './editor-root-types';
 
@@ -52,13 +56,7 @@ export type UseEditorAppearanceBridgeOptions = Readonly<{
   fontControlsSessionRef: SharedRef<FontControlsSession | null>;
   fonts: FontControlsBootstrap;
   ordinarySettingsSessionRef: SharedRef<OrdinaryEditorSettingsSession | null>;
-  prepareSourceMutationWithPreview: (
-    options?: Readonly<{
-      requireSync?: boolean;
-      suppressRefresh?: boolean;
-      isCurrent?: () => boolean;
-    }>
-  ) => Promise<boolean>;
+  markVisualPreviewChanged: () => void;
   previewAppearanceRef: SharedRef<AppearanceState>;
   previewRefreshPendingRef: SharedRef<boolean>;
   previewRuntimeRef: SharedRef<PreviewSurfaceRuntime | null>;
@@ -74,6 +72,7 @@ export type UseEditorAppearanceBridgeOptions = Readonly<{
   ) => void;
   submissionStateRef: SharedRef<EditorSubmissionState>;
   toolbarSessionRef: SharedRef<EditorToolbarSession | null>;
+  visualEditorRuntimeRef: SharedRef<ImmersiveVisualEditorRuntime | null>;
   visualPreviewEditingRef: SharedRef<boolean>;
 }>;
 
@@ -89,8 +88,8 @@ export function useEditorAppearanceBridge({
   fontControlsPort: rawFontControlsPort,
   fontControlsSessionRef,
   fonts,
+  markVisualPreviewChanged,
   ordinarySettingsSessionRef,
-  prepareSourceMutationWithPreview,
   previewAppearanceRef,
   previewRefreshPendingRef,
   previewRuntimeRef,
@@ -104,6 +103,7 @@ export function useEditorAppearanceBridge({
   setEditorStatusState,
   submissionStateRef,
   toolbarSessionRef,
+  visualEditorRuntimeRef,
   visualPreviewEditingRef
 }: UseEditorAppearanceBridgeOptions) {
   const codeThemeFrameSyncPendingRef = useRef<string | null>(null);
@@ -174,13 +174,10 @@ export function useEditorAppearanceBridge({
         const markupChanged =
           articleMarkupProfile(appearance, previousState)
           !== articleMarkupProfile(appearance, state);
+        // Theme, code-theme, and Custom CSS switches apply live to an unlocked
+        // visual editor: its host receives the new theme classes in place, and
+        // the formal Preview refreshes when the user locks it again.
         const visualPreviewWasEditing = visualPreviewEditingRef.current;
-        if (
-          visualPreviewWasEditing
-          && !(await prepareSourceMutationWithPreview())
-        ) {
-          throw new Error('visual-editor-source-sync-failed');
-        }
         cancelVisualUnlockPreparation();
         codeThemePreparationRef.current?.controller.abort();
         codeThemePreparationRef.current?.prepared?.cancel();
@@ -282,7 +279,13 @@ export function useEditorAppearanceBridge({
           previousState.customCssId !== state.customCssId
           || ('custom' === state.markdownTheme
             && 'custom' !== previousState.markdownTheme);
-        if (markupChanged || visualPreviewWasEditing || customCssChanged) {
+        if (visualPreviewEditingRef.current) {
+          markVisualPreviewChanged();
+        } else if (
+          markupChanged
+          || visualPreviewWasEditing
+          || customCssChanged
+        ) {
           previewRefreshPendingRef.current = true;
           schedulePreview(true);
         } else {
@@ -309,13 +312,6 @@ export function useEditorAppearanceBridge({
       saveCustomCss: async (input) => {
         const sessionError = protectedOperationError('authenticated');
         if (sessionError) throw sessionError;
-        const visualPreviewWasEditing = visualPreviewEditingRef.current;
-        if (
-          visualPreviewWasEditing
-          && !(await prepareSourceMutationWithPreview())
-        ) {
-          throw new Error('visual-editor-source-sync-failed');
-        }
         const result = await rawAppearancePort.saveCustomCss(input);
         if ('saved' === result.status) {
           // The server mutation and local theme activation are separate
@@ -348,8 +344,8 @@ export function useEditorAppearanceBridge({
       documentSession,
       enhancementPort,
       fontControlsSessionRef,
+      markVisualPreviewChanged,
       ordinarySettingsSessionRef,
-      prepareSourceMutationWithPreview,
       previewAppearanceRef,
       previewRefreshPendingRef,
       protectedOperationError,
@@ -401,22 +397,36 @@ export function useEditorAppearanceBridge({
     if (codeThemeFrameSyncPendingRef.current !== renderedCodeTheme) return;
     codeThemeFrameSyncPendingRef.current = null;
     const surface = previewRuntimeRef.current?.surface;
+    const visualSurface = visualPreviewEditingRef.current
+      ? visualEditorRuntimeRef.current?.surface
+      : null;
+    if (visualSurface?.isConnected) {
+      syncCodeFrameBackgroundsSafely(
+        enhancementPort,
+        visualSurface,
+        reportFailure,
+        true
+      );
+    }
     if (!surface) {
-      reportFailure('preview-enhancement-runtime-unavailable');
+      if (!visualSurface) {
+        reportFailure('preview-enhancement-runtime-unavailable');
+      }
       return;
     }
-    try {
-      enhancementPort.syncCodeFrameBackgrounds(surface);
+    if (
+      syncCodeFrameBackgroundsSafely(enhancementPort, surface, reportFailure)
+    ) {
       scheduleCurrentWechatPreviewPreparation();
-    } catch (error) {
-      reportFailure(previewEnhancementFailureCode(error));
     }
   }, [
     enhancementPort,
     previewRuntimeRef,
     renderedCodeTheme,
     reportFailure,
-    scheduleCurrentWechatPreviewPreparation
+    scheduleCurrentWechatPreviewPreparation,
+    visualEditorRuntimeRef,
+    visualPreviewEditingRef
   ]);
 
   const activeArticleTheme = appearance.articleThemes.find(

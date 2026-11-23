@@ -1,4 +1,4 @@
-import { flushSync, useCallback, useEffect } from '@wordpress/element';
+import { flushSync, useCallback, useEffect, useRef } from '@wordpress/element';
 
 import type { AppearanceState } from '../../contracts/bootstrap/appearance-bootstrap';
 import type { EditorDocumentSession } from '../../features/document-source/ui/EditorDocumentSource';
@@ -9,13 +9,24 @@ import {
   previewEnhancementFailureCode
 } from '../../features/live-preview/ports/preview-enhancement-port';
 import type { PreviewSurfaceStatus } from '../../features/live-preview/ui/PreviewSurfaceOwner';
-import { preloadImmersiveVisualEditor } from './ImmersiveVisualEditorHost';
 import type {
   CodeThemePreparation,
   ImmersiveVisualEditorRuntime,
   LayoutScrollRestoreEntry,
   SharedRef
 } from './editor-root-types';
+import { preloadImmersiveVisualEditor } from './ImmersiveVisualEditorHost';
+
+/** Matches the visual node views' runtime-readiness re-render signal. */
+const PREVIEW_RUNTIME_READY_EVENT = 'easymde:preview-runtime-ready';
+const MATH_SOURCE_PATTERN =
+  /\$\$[\s\S]+?\$\$|\\\(|\\\[|^\s*(?:```|~~~)\s*math\b|(?:^|[^\\$])\$(?![\s$])[^$\n]+?\$/mu;
+const MERMAID_SOURCE_PATTERN = /^\s*(?:```|~~~)\s*mermaid\b/mu;
+
+type GeneratedRuntimeWindow = Window & {
+  katex?: unknown;
+  mermaid?: unknown;
+};
 
 export type UseEditorVisualUnlockOptions = Readonly<{
   cancelWechatBackgroundPreparation: () => void;
@@ -31,6 +42,11 @@ export type UseEditorVisualUnlockOptions = Readonly<{
   leaveVisualPreviewRef: SharedRef<
     (options?: Readonly<{ suppressRefresh?: boolean }>) => boolean
   >;
+  /**
+   * Visible, privacy-safe visual failure owner for a lazy visual editor chunk
+   * that fails during unlock. Falls back to `reportFailure` when absent.
+   */
+  onVisualFailure?: (code: string) => void;
   previewAppearanceRef: SharedRef<AppearanceState>;
   previewRefreshPendingRef: SharedRef<boolean>;
   previewSurfaceStatusRef: SharedRef<PreviewSurfaceStatus>;
@@ -60,6 +76,7 @@ export function useEditorVisualUnlock({
   lastVisualFailureRef,
   layoutScrollRestoreRef,
   leaveVisualPreviewRef,
+  onVisualFailure,
   previewAppearanceRef,
   previewRefreshPendingRef,
   previewSurfaceStatusRef,
@@ -76,6 +93,67 @@ export function useEditorVisualUnlock({
   visualPreviewEditingRef,
   visualPreviewLockingRef
 }: UseEditorVisualUnlockOptions) {
+  const runtimeWarmupRef = useRef<AbortController | null>(null);
+
+  /**
+   * Non-blocking local KaTeX / Mermaid loading for an unlocked document that
+   * contains generated content the formal Preview has not enhanced yet. The
+   * visual node views re-render on the readiness event; a missing optional
+   * runtime never fails or delays the unlock itself.
+   */
+  const warmGeneratedRuntimes = useCallback(
+    (markdown: string) => {
+      if (!documentSession || 'function' !== typeof enhancementPort.enhance) {
+        return;
+      }
+      let ownerDocument: Document;
+      try {
+        ownerDocument =
+          documentSession.document.getInputElement().ownerDocument;
+      } catch {
+        return;
+      }
+      const view = ownerDocument.defaultView as GeneratedRuntimeWindow | null;
+      const features = {
+        math: !view?.katex && MATH_SOURCE_PATTERN.test(markdown),
+        mermaid: !view?.mermaid && MERMAID_SOURCE_PATTERN.test(markdown)
+      };
+      if (!features.math && !features.mermaid) return;
+      runtimeWarmupRef.current?.abort();
+      const controller = new AbortController();
+      runtimeWarmupRef.current = controller;
+      const isCurrent = () =>
+        rootActiveRef.current && !controller.signal.aborted;
+      void Promise.resolve()
+        .then(() =>
+          enhancementPort.enhance(
+            ownerDocument.createElement('div'),
+            features,
+            isCurrent,
+            {
+              codeTheme: previewAppearanceRef.current.codeTheme,
+              signal: controller.signal
+            }
+          )
+        )
+        .then(
+          () => {
+            if (!isCurrent()) return;
+            ownerDocument.dispatchEvent(
+              new CustomEvent(PREVIEW_RUNTIME_READY_EVENT)
+            );
+          },
+          () => undefined
+        )
+        .finally(() => {
+          if (runtimeWarmupRef.current === controller) {
+            runtimeWarmupRef.current = null;
+          }
+        });
+    },
+    [documentSession, enhancementPort, previewAppearanceRef, rootActiveRef]
+  );
+
   const cancelVisualUnlockPreparation = useCallback(() => {
     const preparation = codeThemePreparationRef.current;
     if ('visual-unlock' !== preparation?.owner) return;
@@ -213,12 +291,14 @@ export function useEditorVisualUnlock({
         clearPreparation();
         if (current) {
           setVisualPreviewUnlocking(false);
-          reportFailure(
+          if (
             error instanceof Error
-              && 'visual-editor-load-failed' === error.message
-              ? 'visual-editor-load-failed'
-              : previewEnhancementFailureCode(error)
-          );
+            && 'visual-editor-load-failed' === error.message
+          ) {
+            (onVisualFailure ?? reportFailure)('visual-editor-load-failed');
+          } else {
+            reportFailure(previewEnhancementFailureCode(error));
+          }
         }
         return;
       }
@@ -255,6 +335,7 @@ export function useEditorVisualUnlock({
       }
       clearPreparation();
       enableVisualPreview();
+      warmGeneratedRuntimes(sourceMarkdown);
     })();
   }, [
     cancelWechatBackgroundPreparation,
@@ -264,6 +345,7 @@ export function useEditorVisualUnlock({
     enhancementPort,
     immersiveModeRef,
     immersiveRef,
+    onVisualFailure,
     previewAppearanceRef,
     previewSurfaceStatusRef,
     reportFailure,
@@ -273,7 +355,8 @@ export function useEditorVisualUnlock({
     setVisualPreviewPending,
     setVisualPreviewUnlocking,
     visualPreviewChangedRef,
-    visualPreviewEditingRef
+    visualPreviewEditingRef,
+    warmGeneratedRuntimes
   ]);
 
   const prepareVisualSource = useCallback(() => {
@@ -339,6 +422,13 @@ export function useEditorVisualUnlock({
       if (!visualPreviewEditingRef.current) {
         return true;
       }
+      // Settle pending visual edits (including a just-committed IME
+      // composition) before flushing the visual source.
+      const settled = await (
+        visualEditorRuntimeRef.current?.settlePendingEdits?.()
+        ?? Promise.resolve(true)
+      );
+      if (!settled) return false;
       if (false !== options.requireSync || visualPreviewChangedRef.current) {
         if (!prepareVisualSource()) return false;
       }
@@ -354,6 +444,7 @@ export function useEditorVisualUnlock({
     [
       leaveVisualPreview,
       prepareVisualSource,
+      visualEditorRuntimeRef,
       visualPreviewChangedRef,
       visualPreviewEditingRef,
       visualPreviewLockingRef
@@ -363,6 +454,8 @@ export function useEditorVisualUnlock({
   useEffect(
     () => () => {
       visualPreviewLockingRef.current = false;
+      runtimeWarmupRef.current?.abort();
+      runtimeWarmupRef.current = null;
     },
     [visualPreviewLockingRef]
   );

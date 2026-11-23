@@ -85,6 +85,7 @@ class ImageNodeView implements NodeView {
 		this.dom.draggable = true;
 
 		this.syncAttributes(node);
+		this.dom.setAttribute("data-easymde-visual-image", "1");
 
 		this.onMouseDown = (event: MouseEvent) => {
 			if (event.button !== 0) {

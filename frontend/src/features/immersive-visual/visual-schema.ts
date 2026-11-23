@@ -61,8 +61,64 @@ const PROTECTED_INLINE_KINDS: ReadonlyArray<ProtectedInlineKind> = [
 	"raw-inline",
 ];
 
-const UNSAFE_URL_PROTOCOL_PATTERN =
-	/^\s*(?:javascript|vbscript|data\s*:\s*text\/html)\s*:/i;
+const SAFE_URL_SCHEMES: ReadonlySet<string> = new Set([
+	"http",
+	"https",
+	"mailto",
+	"tel",
+]);
+const SAFE_IMAGE_DATA_URL_PATTERN =
+	/^data:image\/(?:png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=\s]+$/i;
+const INTERNAL_SENTINEL_TOKEN_PATTERN =
+	/EASYMDEPH[A-Z]*(?:INL|BLK|TBLALIGN|BR)\d*END/g;
+
+export type SanitizeDomUrlOptions = Readonly<{
+	allowImageDataUrl?: boolean;
+}>;
+
+type ControlCharacterOptions = Readonly<{
+	keepTabNewlineCarriageReturn?: boolean;
+}>;
+
+function isControlCharacter(
+	code: number,
+	options: ControlCharacterOptions,
+): boolean {
+	if (options.keepTabNewlineCarriageReturn === true) {
+		return (
+			code <= 8 ||
+			code === 11 ||
+			code === 12 ||
+			(code >= 14 && code <= 31) ||
+			code === 127
+		);
+	}
+	return code <= 31 || code === 127;
+}
+
+export function containsAsciiControlCharacter(value: string): boolean {
+	for (let index = 0; index < value.length; index += 1) {
+		const code = value.charCodeAt(index);
+		if (code <= 31 || code === 127) {
+			return true;
+		}
+	}
+	return false;
+}
+
+export function stripAsciiControlCharacters(
+	value: string,
+	options: ControlCharacterOptions = {},
+): string {
+	let cleaned = "";
+	for (let index = 0; index < value.length; index += 1) {
+		const code = value.charCodeAt(index);
+		if (!isControlCharacter(code, options)) {
+			cleaned += value[index];
+		}
+	}
+	return cleaned;
+}
 
 export function isValidVisualImageScale(
 	value: unknown,
@@ -120,12 +176,52 @@ export function sanitizeFenceLength(value: unknown): number {
 		: 3;
 }
 
-export function sanitizeDomUrl(rawUrl: string): string | null {
-	const trimmed = rawUrl.trim();
-	if (trimmed.length === 0 || UNSAFE_URL_PROTOCOL_PATTERN.test(trimmed)) {
+/**
+ * Strict WordPress-style protocol allowlist for every URL written to the admin
+ * DOM. ASCII controls are rejected outright and the scheme probe ignores all
+ * ASCII whitespace, so `java\tscript:`, `\u0001javascript:` and similar
+ * obfuscations can never reach `<a href>` or `<img src>`.
+ */
+export function sanitizeDomUrl(
+	rawUrl: string,
+	options: SanitizeDomUrlOptions = {},
+): string | null {
+	if (typeof rawUrl !== "string") {
 		return null;
 	}
-	return trimmed;
+	const trimmed = rawUrl.trim();
+	if (trimmed.length === 0 || containsAsciiControlCharacter(trimmed)) {
+		return null;
+	}
+	const probe = trimmed.replace(/\s/g, "");
+	const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(probe)?.[1]?.toLowerCase();
+	if (scheme === undefined) {
+		// Relative URL, fragment, query or protocol-relative URL.
+		return trimmed;
+	}
+	if (SAFE_URL_SCHEMES.has(scheme)) {
+		return trimmed;
+	}
+	if (scheme === "data" && options.allowImageDataUrl === true) {
+		return SAFE_IMAGE_DATA_URL_PATTERN.test(trimmed) ? trimmed : null;
+	}
+	return null;
+}
+
+function sanitizeDomAttributeText(value: string | null | undefined): string {
+	return typeof value === "string"
+		? stripAsciiControlCharacters(value, { keepTabNewlineCarriageReturn: true })
+		: "";
+}
+
+/**
+ * Attributes of a protected atom read from pasted HTML are untrusted input:
+ * drop disallowed controls, internal prescanner sentinels and unbounded size.
+ */
+function sanitizePastedProtectedRaw(value: string | null | undefined): string {
+	return sanitizeDomAttributeText(value)
+		.replace(INTERNAL_SENTINEL_TOKEN_PATTERN, "")
+		.slice(0, 200000);
 }
 
 function readTableAlignFromDom(dom: HTMLElement): TableTextAlign {
@@ -299,15 +395,41 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 	},
 
 	bullet_list: {
-		attrs: { marker: { default: "-" } },
+		attrs: {
+			marker: { default: "-" },
+			tight: { default: true },
+		},
 		content: "list_item+",
 		group: "block",
-		parseDOM: [{ tag: "ul:not(.contains-task-list):not(.task-list)" }],
-		toDOM: (): DOMOutputSpec => ["ul", 0],
+		parseDOM: [
+			{
+				tag: "ul:not(.contains-task-list):not(.task-list)",
+				getAttrs(dom) {
+					if (!(dom instanceof HTMLElement)) {
+						return { marker: "-", tight: true };
+					}
+					return {
+						marker: sanitizeBulletMarker(
+							dom.getAttribute("data-easymde-marker"),
+						),
+						tight: dom.getAttribute("data-easymde-tight") !== "false",
+					};
+				},
+			},
+		],
+		toDOM(node): DOMOutputSpec {
+			return node.attrs.tight === false
+				? ["ul", { "data-easymde-tight": "false" }, 0]
+				: ["ul", 0];
+		},
 	},
 
 	ordered_list: {
-		attrs: { order: { default: 1 } },
+		attrs: {
+			order: { default: 1 },
+			delimiter: { default: "." },
+			tight: { default: true },
+		},
 		content: "list_item+",
 		group: "block",
 		parseDOM: [
@@ -315,10 +437,15 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 				tag: "ol",
 				getAttrs(dom) {
 					if (!(dom instanceof HTMLElement)) {
-						return { order: 1 };
+						return { order: 1, delimiter: ".", tight: true };
 					}
 					const parsed = Number.parseInt(dom.getAttribute("start") ?? "1", 10);
-					return { order: Number.isInteger(parsed) && parsed > 0 ? parsed : 1 };
+					return {
+						order: Number.isInteger(parsed) && parsed >= 0 ? parsed : 1,
+						delimiter:
+							dom.getAttribute("data-easymde-delimiter") === ")" ? ")" : ".",
+						tight: dom.getAttribute("data-easymde-tight") !== "false",
+					};
 				},
 			},
 		],
@@ -326,19 +453,53 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 			const order =
 				typeof node.attrs.order === "number" &&
 				Number.isInteger(node.attrs.order) &&
-				node.attrs.order > 0
+				node.attrs.order >= 0
 					? node.attrs.order
 					: 1;
-			return order === 1 ? ["ol", 0] : ["ol", { start: String(order) }, 0];
+			const attrs: Record<string, string> = {};
+			if (order !== 1) {
+				attrs.start = String(order);
+			}
+			if (node.attrs.tight === false) {
+				attrs["data-easymde-tight"] = "false";
+			}
+			return ["ol", attrs, 0];
 		},
 	},
 
 	task_list: {
-		attrs: { marker: { default: "-" } },
+		attrs: {
+			marker: { default: "-" },
+			tight: { default: true },
+		},
 		content: "task_item+",
 		group: "block",
-		parseDOM: [{ tag: "ul.contains-task-list" }, { tag: "ul.task-list" }],
-		toDOM: (): DOMOutputSpec => ["ul", { class: "contains-task-list" }, 0],
+		parseDOM: [
+			{
+				tag: "ul.contains-task-list",
+				getAttrs(dom) {
+					if (!(dom instanceof HTMLElement)) {
+						return { marker: "-", tight: true };
+					}
+					return {
+						marker: sanitizeBulletMarker(
+							dom.getAttribute("data-easymde-marker"),
+						),
+						tight: dom.getAttribute("data-easymde-tight") !== "false",
+					};
+				},
+			},
+			{ tag: "ul.task-list" },
+		],
+		toDOM(node): DOMOutputSpec {
+			return node.attrs.tight === false
+				? [
+						"ul",
+						{ class: "contains-task-list", "data-easymde-tight": "false" },
+						0,
+					]
+				: ["ul", { class: "contains-task-list" }, 0];
+		},
 	},
 
 	list_item: {
@@ -451,10 +612,10 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 						kind: normalizeProtectedBlockKind(
 							dom.getAttribute("data-easymde-protected-kind"),
 						),
-						rawMarkdown:
+						rawMarkdown: sanitizePastedProtectedRaw(
 							dom.getAttribute("data-easymde-visual-markdown-source") ??
-							dom.textContent ??
-							"",
+								dom.textContent,
+						),
 					};
 				},
 			},
@@ -510,9 +671,15 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 					const parsedScale = rawScale ? Number.parseInt(rawScale, 10) : null;
 					const rawTitle = dom.getAttribute("title");
 					return {
-						src: dom.getAttribute("src") ?? "",
-						alt: dom.getAttribute("alt") ?? "",
-						title: rawTitle && rawTitle.length > 0 ? rawTitle : null,
+						src:
+							sanitizeDomUrl(dom.getAttribute("src") ?? "", {
+								allowImageDataUrl: true,
+							}) ?? "",
+						alt: sanitizeDomAttributeText(dom.getAttribute("alt")),
+						title:
+							typeof rawTitle === "string" && rawTitle.length > 0
+								? sanitizeDomAttributeText(rawTitle)
+								: null,
 						scale: isValidVisualImageScale(parsedScale) ? parsedScale : null,
 					};
 				},
@@ -522,6 +689,7 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 			const safeSrc =
 				sanitizeDomUrl(
 					typeof node.attrs.src === "string" ? node.attrs.src : "",
+					{ allowImageDataUrl: true },
 				) ?? "";
 			const alt = typeof node.attrs.alt === "string" ? node.attrs.alt : "";
 			const title =
@@ -564,10 +732,10 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 						kind: normalizeProtectedInlineKind(
 							dom.getAttribute("data-easymde-protected-kind"),
 						),
-						rawMarkdown:
+						rawMarkdown: sanitizePastedProtectedRaw(
 							dom.getAttribute("data-easymde-visual-markdown-source") ??
-							dom.textContent ??
-							"",
+								dom.textContent,
+						),
 					};
 				},
 			},
@@ -606,8 +774,11 @@ const marks: Record<VisualMarkName, MarkSpec> = {
 					}
 					const title = dom.getAttribute("title");
 					return {
-						href: dom.getAttribute("href") ?? "",
-						title: title && title.length > 0 ? title : null,
+						href: sanitizeDomUrl(dom.getAttribute("href") ?? "") ?? "",
+						title:
+							typeof title === "string" && title.length > 0
+								? sanitizeDomAttributeText(title)
+								: null,
 					};
 				},
 			},
@@ -680,7 +851,9 @@ const marks: Record<VisualMarkName, MarkSpec> = {
 
 	code: {
 		code: true,
-		excludes: "_",
+		// `code` composes with link/strong/em/strike (CommonMark and PHP
+		// render `<a href><code>`); only itself is exclusive.
+		excludes: "code",
 		parseDOM: [{ tag: "code" }],
 		toDOM: (): DOMOutputSpec => ["code", 0],
 	},

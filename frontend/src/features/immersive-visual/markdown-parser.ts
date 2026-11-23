@@ -1,27 +1,34 @@
 import MarkdownIt from "markdown-it";
-import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
+import type { Node as ProseMirrorNode } from "prosemirror-model";
+import {
+	type MarkdownToken,
+	mapInlineTokens,
+	tokenAttrString,
+} from "./markdown-parser-inline";
 import {
 	type PreScanResult,
 	prescanMarkdown,
-	TABLE_ALIGN_PREFIX,
-	TABLE_ALIGN_SUFFIX,
+	restoreProtectedInlineSentinels,
 } from "./markdown-prescanner";
 import {
+	parseTableAlignComment,
+	resolveTableAlignments,
+	type TableAlignSnapshot,
+	validateTableAlignEntries,
+} from "./table-alignment-codec";
+import {
 	isValidTableTextAlign,
-	isValidVisualImageScale,
 	normalizeHeadingLevel,
 	sanitizeBulletMarker,
 	type TableTextAlign,
-	type VisualImageScale,
 	visualEditorSchema,
 } from "./visual-schema";
 
+export {
+	type ParsedImageScaleTitle,
+	parseImageScaleTitle,
+} from "./markdown-parser-inline";
 export { type PreScanResult, prescanMarkdown } from "./markdown-prescanner";
-
-export type ParsedImageScaleTitle = Readonly<{
-	scale: VisualImageScale | null;
-	title: string | null;
-}>;
 
 export type ParsedVisualBlockSource = Readonly<{
 	node: ProseMirrorNode;
@@ -33,6 +40,7 @@ export type ParsedVisualDocument = Readonly<{
 	blocks: ReadonlyArray<ParsedVisualBlockSource>;
 	doc: ProseMirrorNode;
 	leadingPrefix: string;
+	lineEnding: "\n" | "\r\n";
 	trailingSuffix: string;
 }>;
 
@@ -42,40 +50,6 @@ const markdownItParser = new MarkdownIt({
 	breaks: false,
 });
 
-type MarkdownToken = ReturnType<typeof markdownItParser.parse>[number];
-
-export function parseImageScaleTitle(
-	rawTitle: string | null | undefined,
-): ParsedImageScaleTitle {
-	if (typeof rawTitle !== "string" || rawTitle.length === 0) {
-		return { scale: null, title: null };
-	}
-	const markerStart = rawTitle.indexOf("{width=");
-	if (markerStart < 0 || rawTitle.indexOf("{width=", markerStart + 1) >= 0) {
-		return { scale: null, title: rawTitle };
-	}
-	const match = /^\{width=(25|33|50|67|100|150|200)%\}$/.exec(
-		rawTitle.slice(markerStart),
-	);
-	const parsedScale = match?.[1] ? Number(match[1]) : null;
-	if (!isValidVisualImageScale(parsedScale)) {
-		return { scale: null, title: rawTitle };
-	}
-	if (markerStart === 0) {
-		return { scale: parsedScale, title: null };
-	}
-	if (rawTitle[markerStart - 1] !== " ") {
-		return { scale: null, title: rawTitle };
-	}
-	const baseTitle = rawTitle.slice(0, markerStart - 1);
-	return { scale: parsedScale, title: baseTitle.length > 0 ? baseTitle : null };
-}
-
-function tokenAttrString(token: MarkdownToken, name: string): string | null {
-	const value = token.attrGet(name);
-	return value === null ? null : String(value);
-}
-
 function parseCellAlignmentFromToken(token: MarkdownToken): TableTextAlign {
 	const match = /text-align\s*:\s*(left|center|right)/i.exec(
 		tokenAttrString(token, "style") ?? "",
@@ -84,244 +58,9 @@ function parseCellAlignmentFromToken(token: MarkdownToken): TableTextAlign {
 	return isValidTableTextAlign(normalized) ? normalized : null;
 }
 
-function applyTableAlignmentAnnotation(
-	rows: ProseMirrorNode[],
-	annotationComment: string,
-): ProseMirrorNode[] {
-	if (
-		!annotationComment.startsWith(TABLE_ALIGN_PREFIX) ||
-		!annotationComment.endsWith(TABLE_ALIGN_SUFFIX)
-	) {
-		return rows;
-	}
-	let decoded: unknown;
-	try {
-		decoded = JSON.parse(
-			annotationComment.slice(
-				TABLE_ALIGN_PREFIX.length,
-				-TABLE_ALIGN_SUFFIX.length,
-			),
-		) as unknown;
-	} catch {
-		return rows;
-	}
-	if (!Array.isArray(decoded)) {
-		return rows;
-	}
-
-	const rowOverrides = new Map<number, TableTextAlign>();
-	const cellOverrides = new Map<string, TableTextAlign>();
-	for (const entry of decoded) {
-		if (!Array.isArray(entry)) {
-			continue;
-		}
-		if (
-			entry.length === 2 &&
-			typeof entry[0] === "number" &&
-			isValidTableTextAlign(entry[1])
-		) {
-			rowOverrides.set(entry[0], entry[1]);
-		} else if (
-			entry.length === 3 &&
-			typeof entry[0] === "number" &&
-			typeof entry[1] === "number" &&
-			isValidTableTextAlign(entry[2])
-		) {
-			cellOverrides.set(`${entry[0]}:${entry[1]}`, entry[2]);
-		}
-	}
-	if (rowOverrides.size === 0 && cellOverrides.size === 0) {
-		return rows;
-	}
-
-	return rows.map((rowNode, rowIndex) => {
-		const updatedCells: ProseMirrorNode[] = [];
-		for (let colIndex = 0; colIndex < rowNode.childCount; colIndex += 1) {
-			const cell = rowNode.child(colIndex);
-			const override =
-				cellOverrides.get(`${rowIndex}:${colIndex}`) ??
-				rowOverrides.get(rowIndex);
-			updatedCells.push(
-				override !== undefined
-					? cell.type.create(
-							{ ...cell.attrs, textAlign: override },
-							cell.content,
-						)
-					: cell,
-			);
-		}
-		return rowNode.type.create(rowNode.attrs, updatedCells);
-	});
-}
-
-function splitTextWithProtectedInlines(
-	text: string,
-	activeMarks: readonly Mark[],
-	preScan: PreScanResult,
-	inTableCell: boolean,
-): ProseMirrorNode[] {
-	if (text.length === 0) {
-		return [];
-	}
-	const result: ProseMirrorNode[] = [];
-	const segments = inTableCell ? text.split("<br>") : [text];
-	const tokenPattern = new RegExp(`${preScan.sentinel}INL(\\d+)END`, "g");
-
-	for (let segIdx = 0; segIdx < segments.length; segIdx += 1) {
-		if (segIdx > 0) {
-			result.push(visualEditorSchema.nodes.hard_break.create());
-		}
-		const segment = segments[segIdx] ?? "";
-		if (segment.length === 0) {
-			continue;
-		}
-		tokenPattern.lastIndex = 0;
-		let lastPos = 0;
-		let match = tokenPattern.exec(segment);
-		while (match !== null) {
-			if (match.index > lastPos) {
-				result.push(
-					visualEditorSchema.text(
-						segment.slice(lastPos, match.index),
-						activeMarks,
-					),
-				);
-			}
-			const entry = preScan.protectedInlines.get(match[0]);
-			result.push(
-				entry
-					? visualEditorSchema.nodes.protected_inline.create({
-							kind: entry.kind,
-							rawMarkdown: entry.rawMarkdown,
-						})
-					: visualEditorSchema.text(match[0], activeMarks),
-			);
-			lastPos = match.index + match[0].length;
-			match = tokenPattern.exec(segment);
-		}
-		if (lastPos < segment.length) {
-			result.push(visualEditorSchema.text(segment.slice(lastPos), activeMarks));
-		}
-	}
-
-	return result;
-}
-
-function mapInlineTokens(
-	tokens: ReadonlyArray<MarkdownToken> | null,
-	preScan: PreScanResult,
-	inTableCell: boolean,
-): ProseMirrorNode[] {
-	if (!tokens || tokens.length === 0) {
-		return [];
-	}
-	const output: ProseMirrorNode[] = [];
-	const markStack: Mark[] = [];
-
-	const currentMarkSet = (): readonly Mark[] =>
-		markStack.reduce<readonly Mark[]>((set, mark) => mark.addToSet(set), []);
-
-	const popMark = (markName: string): void => {
-		for (let i = markStack.length - 1; i >= 0; i -= 1) {
-			if (markStack[i]?.type.name === markName) {
-				markStack.splice(i, 1);
-				return;
-			}
-		}
-	};
-
-	for (const token of tokens) {
-		switch (token.type) {
-			case "text":
-				output.push(
-					...splitTextWithProtectedInlines(
-						token.content,
-						currentMarkSet(),
-						preScan,
-						inTableCell,
-					),
-				);
-				break;
-			case "code_inline":
-				if (token.content.length > 0) {
-					const codeMarks = visualEditorSchema.marks.code
-						.create()
-						.addToSet(currentMarkSet());
-					output.push(visualEditorSchema.text(token.content, codeMarks));
-				}
-				break;
-			case "softbreak":
-				output.push(visualEditorSchema.text("\n", currentMarkSet()));
-				break;
-			case "hardbreak":
-				output.push(visualEditorSchema.nodes.hard_break.create());
-				break;
-			case "strong_open":
-				markStack.push(visualEditorSchema.marks.strong.create());
-				break;
-			case "strong_close":
-				popMark("strong");
-				break;
-			case "em_open":
-				markStack.push(visualEditorSchema.marks.em.create());
-				break;
-			case "em_close":
-				popMark("em");
-				break;
-			case "s_open":
-				markStack.push(visualEditorSchema.marks.strike.create());
-				break;
-			case "s_close":
-				popMark("strike");
-				break;
-			case "link_open": {
-				const rawTitle = tokenAttrString(token, "title");
-				markStack.push(
-					visualEditorSchema.marks.link.create({
-						href: tokenAttrString(token, "href") ?? "",
-						title: rawTitle && rawTitle.length > 0 ? rawTitle : null,
-					}),
-				);
-				break;
-			}
-			case "link_close":
-				popMark("link");
-				break;
-			case "image": {
-				const parsed = parseImageScaleTitle(tokenAttrString(token, "title"));
-				const alt = token.children
-					? token.children.map((c) => c.content).join("")
-					: token.content;
-				output.push(
-					visualEditorSchema.nodes.image.create(
-						{
-							src: tokenAttrString(token, "src") ?? "",
-							alt,
-							title: parsed.title,
-							scale: parsed.scale,
-						},
-						null,
-						currentMarkSet(),
-					),
-				);
-				break;
-			}
-			default:
-				if (token.content.length > 0) {
-					output.push(
-						...splitTextWithProtectedInlines(
-							token.content,
-							currentMarkSet(),
-							preScan,
-							inTableCell,
-						),
-					);
-				}
-				break;
-		}
-	}
-
-	return output;
+function readCellAlignment(node: ProseMirrorNode | undefined): TableTextAlign {
+	const align = node?.attrs.textAlign;
+	return isValidTableTextAlign(align) ? align : null;
 }
 
 function stripTaskPrefix(
@@ -393,7 +132,7 @@ function mapTableTokens(
 	preScan: PreScanResult,
 	alignAnnotation: string | null,
 ): ProseMirrorNode {
-	const rows: ProseMirrorNode[] = [];
+	const rawRows: ProseMirrorNode[] = [];
 	for (let i = startIndex + 1; i < endIndex; i += 1) {
 		if (tokens[i]?.type !== "tr_open") {
 			continue;
@@ -429,13 +168,13 @@ function mapTableTokens(
 			j = cellClose;
 		}
 		if (cells.length > 0) {
-			rows.push(visualEditorSchema.nodes.table_row.create(null, cells));
+			rawRows.push(visualEditorSchema.nodes.table_row.create(null, cells));
 		}
 		i = rowClose;
 	}
 
-	if (rows.length === 0) {
-		rows.push(
+	if (rawRows.length === 0) {
+		rawRows.push(
 			visualEditorSchema.nodes.table_row.create(null, [
 				visualEditorSchema.nodes.table_header.create(
 					null,
@@ -445,34 +184,82 @@ function mapTableTokens(
 		);
 	}
 
-	const headerRow = rows[0];
+	let columnCount = 0;
+	for (const rowNode of rawRows) {
+		columnCount = Math.max(columnCount, rowNode.childCount);
+	}
+	const headerRow = rawRows[0];
 	const baseColumnAlignments: TableTextAlign[] = [];
-	if (headerRow) {
-		for (let c = 0; c < headerRow.childCount; c += 1) {
-			const align = headerRow.child(c).attrs.textAlign;
-			baseColumnAlignments.push(isValidTableTextAlign(align) ? align : null);
-		}
+	for (let column = 0; column < columnCount; column += 1) {
+		baseColumnAlignments.push(
+			readCellAlignment(headerRow?.child(column) ?? undefined),
+		);
 	}
 
-	const finalRows = alignAnnotation
-		? applyTableAlignmentAnnotation(rows, alignAnnotation)
-		: rows;
+	const snapshot: TableAlignSnapshot = {
+		baseAlignments: baseColumnAlignments,
+		cellAlignments: rawRows.map((rowNode) => {
+			const cells: TableTextAlign[] = [];
+			for (let column = 0; column < columnCount; column += 1) {
+				cells.push(readCellAlignment(rowNode.child(column)));
+			}
+			return cells;
+		}),
+		columnCount,
+		rowCount: rawRows.length,
+	};
+	const entries = parseTableAlignComment(alignAnnotation);
+	const validAnnotation =
+		entries !== null && validateTableAlignEntries(entries, snapshot);
+	const resolved = validAnnotation
+		? resolveTableAlignments(entries, snapshot)
+		: null;
+
+	const finalRows = resolved
+		? rawRows.map((rowNode, rowIndex) => {
+				const cells: ProseMirrorNode[] = [];
+				for (let column = 0; column < rowNode.childCount; column += 1) {
+					const cell = rowNode.child(column);
+					cells.push(
+						cell.type.create(
+							{
+								...cell.attrs,
+								textAlign: resolved[rowIndex]?.[column] ?? cell.attrs.textAlign,
+							},
+							cell.content,
+						),
+					);
+				}
+				return rowNode.type.create(rowNode.attrs, cells);
+			})
+		: rawRows;
+
 	return visualEditorSchema.nodes.table.create(
 		{
-			alignAnnotation,
-			columnAlignments: alignAnnotation ? baseColumnAlignments : null,
+			alignAnnotation: validAnnotation ? alignAnnotation : null,
+			columnAlignments: baseColumnAlignments,
 		},
 		finalRows,
 	);
 }
+
+type CollectedListItem = Readonly<{
+	children: ProseMirrorNode[];
+	range: Readonly<{ end: number; start: number }> | null;
+}>;
+
+type MappedListEntry = Readonly<{
+	node: ProseMirrorNode;
+	origRange: Readonly<{ end: number; start: number }> | null;
+}>;
 
 function collectListItems(
 	tokens: ReadonlyArray<MarkdownToken>,
 	startIndex: number,
 	endIndex: number,
 	preScan: PreScanResult,
-): ProseMirrorNode[][] {
-	const items: ProseMirrorNode[][] = [];
+): CollectedListItem[] {
+	const items: CollectedListItem[] = [];
 	for (let i = startIndex + 1; i < endIndex; i += 1) {
 		if (tokens[i]?.type !== "list_item_open") {
 			continue;
@@ -483,12 +270,45 @@ function collectListItems(
 			"list_item_open",
 			"list_item_close",
 		);
-		items.push(
-			ensureListItemChildren(mapBlockTokens(tokens, i + 1, itemClose, preScan)),
-		);
+		items.push({
+			children: ensureListItemChildren(
+				mapBlockTokens(tokens, i + 1, itemClose, preScan),
+			),
+			range: resolveOriginalRangeFromTokenMap(tokens[i]?.map, preScan),
+		});
 		i = itemClose;
 	}
 	return items;
+}
+
+/** markdown-it hides tight-list paragraphs (`token.hidden === true`). */
+function isTightListRange(
+	tokens: ReadonlyArray<MarkdownToken>,
+	startIndex: number,
+	endIndex: number,
+): boolean {
+	for (let i = startIndex + 1; i < endIndex; i += 1) {
+		const token = tokens[i];
+		if (token?.type === "paragraph_open" && token.hidden !== true) {
+			return false;
+		}
+	}
+	return true;
+}
+
+function combineItemRanges(
+	items: ReadonlyArray<CollectedListItem>,
+): Readonly<{ end: number; start: number }> | null {
+	let start = Number.POSITIVE_INFINITY;
+	let end = -1;
+	for (const item of items) {
+		if (!item.range) {
+			continue;
+		}
+		start = Math.min(start, item.range.start);
+		end = Math.max(end, item.range.end);
+	}
+	return Number.isFinite(start) && end > start ? { end, start } : null;
 }
 
 function mapBulletListTokens(
@@ -496,15 +316,16 @@ function mapBulletListTokens(
 	startIndex: number,
 	endIndex: number,
 	preScan: PreScanResult,
-): ProseMirrorNode[] {
-	const itemBlocks = collectListItems(tokens, startIndex, endIndex, preScan);
-	if (itemBlocks.length === 0) {
+): MappedListEntry[] {
+	const items = collectListItems(tokens, startIndex, endIndex, preScan);
+	if (items.length === 0) {
 		return [];
 	}
 
 	const marker = sanitizeBulletMarker(tokens[startIndex]?.markup);
-	const lists: ProseMirrorNode[] = [];
-	let currentGroup: ProseMirrorNode[] = [];
+	const tight = isTightListRange(tokens, startIndex, endIndex);
+	const lists: MappedListEntry[] = [];
+	let currentGroup: CollectedListItem[] = [];
 	let currentIsTask: boolean | null = null;
 
 	const flush = (): void => {
@@ -514,47 +335,65 @@ function mapBulletListTokens(
 		const listType = currentIsTask
 			? visualEditorSchema.nodes.task_list
 			: visualEditorSchema.nodes.bullet_list;
-		lists.push(listType.create({ marker }, currentGroup));
-		currentGroup = [];
-	};
-
-	for (const children of itemBlocks) {
-		const task = stripTaskPrefix(children);
-		const isTask = task !== null;
-		if (currentIsTask !== null && isTask !== currentIsTask) {
-			flush();
-		}
-		currentIsTask = isTask;
-		currentGroup.push(
-			task
+		const itemNodes = currentGroup.map((entry) => {
+			const task = stripTaskPrefix(entry.children);
+			return task
 				? visualEditorSchema.nodes.task_item.create(
 						{ checked: task.checked },
 						task.children,
 					)
-				: visualEditorSchema.nodes.list_item.create(null, children),
-		);
+				: visualEditorSchema.nodes.list_item.create(null, entry.children);
+		});
+		lists.push({
+			node: listType.create({ marker, tight }, itemNodes),
+			origRange: combineItemRanges(currentGroup),
+		});
+		currentGroup = [];
+	};
+
+	for (const entry of items) {
+		const isTask = stripTaskPrefix(entry.children) !== null;
+		if (currentIsTask !== null && isTask !== currentIsTask) {
+			flush();
+		}
+		currentIsTask = isTask;
+		currentGroup.push(entry);
 	}
 	flush();
 	return lists;
 }
 
-function mapCodeToken(token: MarkdownToken): ProseMirrorNode {
+function mapCodeToken(
+	token: MarkdownToken,
+	preScan: PreScanResult,
+): ProseMirrorNode {
 	const isFence = token.type === "fence";
 	const fenceChar = isFence && token.markup.startsWith("~") ? "~" : "`";
 	const fenceLength =
 		isFence && token.markup.length >= 3 ? token.markup.length : 3;
-	const info = isFence ? token.info.trim() : "";
+	const info = isFence
+		? restoreProtectedInlineSentinels(token.info.trim(), preScan)
+		: "";
 	const language = info ? (info.split(/\s+/)[0] ?? "") : "";
-	const rawContent = token.content.endsWith("\n")
-		? token.content.slice(0, -1)
-		: token.content;
+	const content = restoreProtectedInlineSentinels(token.content, preScan);
+	// Bijection with `serializeCodeBlock`: a body of only blank lines
+	// (`"\n".repeat(k)`) is kept verbatim; any other body drops exactly the one
+	// line terminator before the closing fence, so trailing blank lines survive.
+	const pureNewlines = /^\n+$/.test(content);
+	const rawContent = pureNewlines
+		? content
+		: content.endsWith("\n")
+			? content.slice(0, -1)
+			: content;
 
 	if (language.toLowerCase() === "mermaid") {
 		const fence = fenceChar.repeat(fenceLength);
 		const rawMarkdown =
-			rawContent.length > 0
-				? `${fence}${info}\n${rawContent}\n${fence}`
-				: `${fence}${info}\n${fence}`;
+			rawContent.length === 0
+				? `${fence}${info}\n${fence}`
+				: pureNewlines
+					? `${fence}${info}\n${rawContent}${fence}`
+					: `${fence}${info}\n${rawContent}\n${fence}`;
 		return visualEditorSchema.nodes.protected_block.create({
 			kind: "mermaid",
 			rawMarkdown,
@@ -775,13 +614,11 @@ function mapBlockTokensWithRanges(
 				"bullet_list_open",
 				"bullet_list_close",
 			);
-			const listNodes = mapBulletListTokens(tokens, i, closeIdx, preScan);
-			if (listNodes.length === 1 && listNodes[0]) {
-				entries.push({ node: listNodes[0], origRange });
-			} else {
-				for (const listNode of listNodes) {
-					entries.push({ node: listNode, origRange: null });
-				}
+			const listEntries = mapBulletListTokens(tokens, i, closeIdx, preScan);
+			// A mixed task/bullet list splits into several nodes; each keeps its
+			// exact monotonic source range so an unrelated edit cannot duplicate it.
+			for (const listEntry of listEntries) {
+				entries.push(listEntry);
 			}
 			i = closeIdx;
 		} else if (token.type === "ordered_list_open") {
@@ -796,19 +633,25 @@ function mapBlockTokensWithRanges(
 				10,
 			);
 			const order =
-				Number.isInteger(parsedOrder) && parsedOrder > 0 ? parsedOrder : 1;
-			const items = collectListItems(tokens, i, closeIdx, preScan).map(
-				(children) => visualEditorSchema.nodes.list_item.create(null, children),
+				Number.isInteger(parsedOrder) && parsedOrder >= 0 ? parsedOrder : 1;
+			const delimiter = token.markup === ")" ? ")" : ".";
+			const tight = isTightListRange(tokens, i, closeIdx);
+			const collected = collectListItems(tokens, i, closeIdx, preScan);
+			const items = collected.map((item) =>
+				visualEditorSchema.nodes.list_item.create(null, item.children),
 			);
 			if (items.length > 0) {
 				entries.push({
-					node: visualEditorSchema.nodes.ordered_list.create({ order }, items),
-					origRange,
+					node: visualEditorSchema.nodes.ordered_list.create(
+						{ delimiter, order, tight },
+						items,
+					),
+					origRange: origRange ?? combineItemRanges(collected),
 				});
 			}
 			i = closeIdx;
 		} else if (token.type === "fence" || token.type === "code_block") {
-			entries.push({ node: mapCodeToken(token), origRange });
+			entries.push({ node: mapCodeToken(token, preScan), origRange });
 		} else if (token.type === "hr") {
 			entries.push({
 				node: visualEditorSchema.nodes.horizontal_rule.create(),
@@ -842,6 +685,7 @@ export function parseMarkdownWithBlockSources(
 				visualEditorSchema.nodes.paragraph.create(),
 			]),
 			leadingPrefix: "",
+			lineEnding: "\n",
 			trailingSuffix: "",
 		};
 	}
@@ -906,6 +750,7 @@ export function parseMarkdownWithBlockSources(
 		blocks,
 		doc,
 		leadingPrefix: hasMonotonicRanges ? leadingPrefix : "",
+		lineEnding: preScan.lineEnding,
 		trailingSuffix,
 	};
 }

@@ -6,34 +6,32 @@ import {
 } from "@wordpress/element";
 import { dropCursor } from "prosemirror-dropcursor";
 import { gapCursor } from "prosemirror-gapcursor";
-import { history } from "prosemirror-history";
-import { Slice } from "prosemirror-model";
 import { EditorState, type Plugin } from "prosemirror-state";
 import { type EditorProps, EditorView } from "prosemirror-view";
 import type { CSSProperties } from "react";
 import type {
 	ImmersiveVisualEditorRuntime,
 	VisualEditorGeneratedPreviewIdentity,
-	VisualEditorSelection,
 } from "../../contracts/visual-editor";
 import type { EditorDocumentSession } from "../document-source/editor-document-session";
-import { parseMarkdownWithBlockSources } from "./markdown-parser";
+import { createAtomicSelectionAnchorPlugin } from "./visual-boundary-commands";
 import {
-	createMarkdownRoundTripGuard,
-	type MarkdownRoundTripGuard,
-} from "./markdown-serializer";
+	CANONICAL_SYNC_TRANSACTION_META,
+	createVisualCanonicalSync,
+} from "./visual-canonical-sync";
 import { createVisualClipboardPlugin } from "./visual-clipboard-and-paste";
-import { createVisualKeymapPlugins } from "./visual-commands";
+import {
+	createVisualKeymapPlugins,
+	type VisualHistoryCommands,
+} from "./visual-commands";
+import {
+	createVisualCompositionSession,
+	type VisualCompositionSession,
+} from "./visual-composition-session";
 import { createProseMirrorVisualRuntime } from "./visual-context-menu-adapter";
 import { createVisualInputRulesPlugin } from "./visual-input-rules";
 import { visualEditorSchema } from "./visual-schema";
-import {
-	computeVisualSelectionToMarkdownSelection,
-	resolveMarkdownSelectionToVisualSelection,
-} from "./visual-source-mapping";
 import { createVisualTablePlugin } from "./visual-table-operations";
-
-const CANONICAL_SYNC_TRANSACTION_META = "easymdeCanonicalSync";
 
 export type ProseMirrorVisualEditorProps = Readonly<{
 	articleThemeClass?: string;
@@ -121,37 +119,37 @@ export function ProseMirrorVisualEditor(props: ProseMirrorVisualEditorProps) {
 		}
 
 		let disposed = false;
-		let isSelfWriting = false;
-		let isComposing = false;
-		let pendingCompositionSync = false;
-
+		let composition: VisualCompositionSession | null = null;
 		const disposeAbortController = new AbortController();
-		const initialMarkdown = documentSession.document.getValue();
-		const initialRevision = documentSession.document.getRevision();
-		const initialParsed = parseMarkdownWithBlockSources(initialMarkdown);
-		const initialDoc = initialParsed.doc;
-		const initialSelection = resolveMarkdownSelectionToVisualSelection(
-			initialDoc,
-			initialMarkdown,
-			documentSession.document.getSelection(),
-		);
 
-		let roundTripGuard: MarkdownRoundTripGuard = createMarkdownRoundTripGuard(
-			initialMarkdown,
-			initialParsed,
-		);
-		let lastSyncedDoc = initialDoc;
-		let lastSyncedMarkdown = initialMarkdown;
-		let lastSyncedRevision = initialRevision;
+		// The canonical CodeMirror document is the single history owner; the
+		// projection keeps no ProseMirror history of its own.
+		const sync = createVisualCanonicalSync({
+			documentSession,
+			isCompositionBusy: () => composition?.isBusy() ?? false,
+			onCanonicalChange: (markdown) => {
+				latestPropsRef.current.onMarkdownChange?.(markdown);
+				latestPropsRef.current.onCanonicalDocumentChange?.(markdown);
+			},
+			onFailure: (code) => {
+				latestPropsRef.current.onFailure?.(code);
+			},
+			onReconciled: () => {
+				composition?.reset();
+			},
+		});
 
-		const runWithEchoSuppressed = <T,>(fn: () => T): T => {
-			const previous = isSelfWriting;
-			isSelfWriting = true;
-			try {
-				return fn();
-			} finally {
-				isSelfWriting = previous;
-			}
+		// Undo/redo always consume the shortcut so browser-native history can
+		// never mutate the ProseMirror DOM behind the canonical owner.
+		const historyCommands: VisualHistoryCommands = {
+			redo: () => {
+				if (!disposed) sync.history("redo");
+				return true;
+			},
+			undo: () => {
+				if (!disposed) sync.history("undo");
+				return true;
+			},
 		};
 
 		const clipboardPlugin = createVisualClipboardPlugin({
@@ -167,68 +165,26 @@ export function ProseMirrorVisualEditor(props: ProseMirrorVisualEditorProps) {
 			},
 		});
 
+		// Gap cursor and the atomic selection anchor precede the table plugin
+		// (prosemirror-tables ordering contract) so atom-boundary navigation
+		// gets its turn before broad table key/mouse handling.
 		const plugins: Plugin[] = [
-			history(),
 			createVisualInputRulesPlugin(),
+			gapCursor(),
+			createAtomicSelectionAnchorPlugin(),
+			createVisualTablePlugin(),
 			clipboardPlugin,
 			dropCursor(),
-			gapCursor(),
-			createVisualTablePlugin(),
-			...createVisualKeymapPlugins(),
+			...createVisualKeymapPlugins(historyCommands),
 			...(extraPlugins ?? []),
 		];
 
 		const initialState = EditorState.create({
-			doc: initialDoc,
+			doc: sync.getAcceptedDoc(),
 			plugins,
 			schema: visualEditorSchema,
-			selection: initialSelection,
+			selection: sync.getInitialSelection(),
 		});
-
-		const commitProseMirrorDocToCanonical = (activeView: EditorView): void => {
-			if (disposed) {
-				return;
-			}
-			// Zero-write-on-read invariant: untouched documents never write back.
-			if (
-				activeView.state.doc === lastSyncedDoc ||
-				activeView.state.doc.eq(lastSyncedDoc)
-			) {
-				return;
-			}
-			try {
-				const nextMarkdown = roundTripGuard.serialize(activeView.state.doc);
-				const currentCanonical = documentSession.document.getValue();
-				if (
-					nextMarkdown === lastSyncedMarkdown &&
-					nextMarkdown === currentCanonical
-				) {
-					lastSyncedDoc = activeView.state.doc;
-					return;
-				}
-
-				const nextSelection = computeVisualSelectionToMarkdownSelection(
-					activeView.state.doc,
-					activeView.state.selection,
-					nextMarkdown,
-				);
-
-				runWithEchoSuppressed(() => {
-					documentSession.document.applyTextChange({
-						selection: nextSelection,
-						value: nextMarkdown,
-					});
-					lastSyncedDoc = activeView.state.doc;
-					lastSyncedMarkdown = documentSession.document.getValue();
-					lastSyncedRevision = documentSession.document.getRevision();
-				});
-
-				latestPropsRef.current.onMarkdownChange?.(lastSyncedMarkdown);
-				latestPropsRef.current.onCanonicalDocumentChange?.(lastSyncedMarkdown);
-			} catch {
-				latestPropsRef.current.onFailure?.("visual-editor-sync-failed");
-			}
-		};
 
 		const view = new EditorView(
 			{ mount: container },
@@ -243,150 +199,101 @@ export function ProseMirrorVisualEditor(props: ProseMirrorVisualEditorProps) {
 					if (disposed) {
 						return;
 					}
-					const nextState = view.state.apply(transaction);
-					view.updateState(nextState);
-
-					if (!transaction.docChanged) {
-						return;
-					}
+					const previousState = view.state;
+					view.updateState(previousState.apply(transaction));
 					if (transaction.getMeta(CANONICAL_SYNC_TRANSACTION_META) === true) {
 						return;
 					}
-					if (isComposing || view.composing) {
-						pendingCompositionSync = true;
+					if (!transaction.docChanged) {
+						// A caret move or stored-mark toggle ends any typing run.
+						if (
+							transaction.storedMarksSet ||
+							(transaction.selectionSet &&
+								!transaction.selection.eq(previousState.selection))
+						) {
+							sync.breakHistoryGroup();
+						}
 						return;
 					}
-					pendingCompositionSync = false;
-					commitProseMirrorDocToCanonical(view);
+					sync.notePendingBase(previousState);
+					if (composition?.phase() === "settling") {
+						composition.noteSettlingTransaction();
+						return;
+					}
+					if (composition?.isBusy()) {
+						return;
+					}
+					sync.commitPending(transaction);
 				},
 				editable: () =>
 					(latestPropsRef.current.editable ?? true) &&
 					documentSession.document.isEditable(),
+				handleDOMEvents: {
+					beforeinput(_view, event) {
+						const inputType = (event as InputEvent).inputType;
+						if (inputType !== "historyUndo" && inputType !== "historyRedo") {
+							return false;
+						}
+						event.preventDefault();
+						if (!disposed) {
+							sync.history(inputType === "historyUndo" ? "undo" : "redo");
+						}
+						return true;
+					},
+				},
 				...(nodeViews !== undefined ? { nodeViews } : {}),
 				state: initialState,
 			},
 		);
 
 		viewRef.current = view;
+		sync.attach(view);
+		const activeComposition = createVisualCompositionSession({
+			commit: () => sync.commitPending(),
+			view,
+		});
+		composition = activeComposition;
 
-		const applyExternalCanonicalUpdate = (
-			nextMarkdown: string,
-			nextRevision: number,
-			targetSelection: VisualEditorSelection,
-		): void => {
-			if (disposed) {
-				return;
-			}
-			const activeEl = view.dom.ownerDocument.activeElement;
-			const wasFocused =
-				view.hasFocus() || (activeEl !== null && view.dom.contains(activeEl));
-
-			const nextParsed = parseMarkdownWithBlockSources(nextMarkdown);
-			const nextDoc = nextParsed.doc;
-			roundTripGuard = createMarkdownRoundTripGuard(nextMarkdown, nextParsed);
-			lastSyncedDoc = nextDoc;
-			lastSyncedMarkdown = nextMarkdown;
-			lastSyncedRevision = nextRevision;
-			pendingCompositionSync = false;
-
-			const tr = view.state.tr
-				.replace(
-					0,
-					view.state.doc.content.size,
-					new Slice(nextDoc.content, 0, 0),
-				)
-				.setMeta(CANONICAL_SYNC_TRANSACTION_META, true)
-				.setMeta("addToHistory", false);
-
-			const mappedSelection = resolveMarkdownSelectionToVisualSelection(
-				tr.doc,
-				nextMarkdown,
-				targetSelection,
-			);
-			tr.setSelection(mappedSelection);
-			view.dispatch(tr);
-
-			if (wasFocused && view.dom.isConnected) {
-				view.focus();
-			}
+		const settlePendingEdits = async (): Promise<boolean> => {
+			if (disposed) return false;
+			const settled = await activeComposition.settle();
+			return settled && !disposed && sync.settleNow();
 		};
-
-		const flushPendingSync = (): void => {
-			if (disposed || isComposing || view.composing) {
-				return;
-			}
-			if (pendingCompositionSync) {
-				pendingCompositionSync = false;
-				commitProseMirrorDocToCanonical(view);
-				return;
-			}
-			commitProseMirrorDocToCanonical(view);
-		};
-
-		const handleCompositionStart = (): void => {
-			isComposing = true;
-		};
-
-		const handleCompositionEnd = (): void => {
-			isComposing = false;
-			if (!disposed && pendingCompositionSync) {
-				pendingCompositionSync = false;
-				commitProseMirrorDocToCanonical(view);
-			}
-		};
-
-		view.dom.addEventListener("compositionstart", handleCompositionStart);
-		view.dom.addEventListener("compositionend", handleCompositionEnd);
 
 		const unsubscribeDocument = documentSession.document.subscribe(() => {
-			if (disposed || isSelfWriting) {
-				return;
-			}
-			const nextRevision = documentSession.document.getRevision();
-			const nextValue = documentSession.document.getValue();
-			if (
-				nextRevision === lastSyncedRevision &&
-				nextValue === lastSyncedMarkdown
-			) {
-				return;
-			}
-			applyExternalCanonicalUpdate(
-				nextValue,
-				nextRevision,
-				documentSession.document.getSelection(),
-			);
+			if (!disposed) sync.handleCanonicalNotification();
 		});
 
 		const runtime = createProseMirrorVisualRuntime({
-			applyExternalCanonicalUpdate,
 			disposeSignal: disposeAbortController.signal,
 			documentSession,
-			flushPendingSync,
 			getGeneratedPreviewIdentity: () =>
 				latestPropsRef.current.getGeneratedPreviewIdentity?.() ?? null,
+			historyCommands,
 			isEditable: () => latestPropsRef.current.editable ?? true,
-			onCanonicalDocumentChange: (markdown) => {
-				latestPropsRef.current.onCanonicalDocumentChange?.(markdown);
-			},
-			onMarkdownChange: (markdown) => {
-				latestPropsRef.current.onMarkdownChange?.(markdown);
-			},
-			runWithEchoSuppressed,
+			settlePendingEdits,
+			sync,
 			view,
 		});
+
+		const release = (): void => {
+			disposed = true;
+			disposeAbortController.abort();
+			unsubscribeDocument();
+			activeComposition.dispose();
+			sync.dispose();
+			if (viewRef.current === view) {
+				viewRef.current = null;
+			}
+		};
 
 		const teardown = (): void => {
 			if (disposed) {
 				return;
 			}
-			disposed = true;
-			disposeAbortController.abort();
-			unsubscribeDocument();
-			view.dom.removeEventListener("compositionstart", handleCompositionStart);
-			view.dom.removeEventListener("compositionend", handleCompositionEnd);
-			if (viewRef.current === view) {
-				viewRef.current = null;
-			}
+			// Settle a committed-but-unsynced edit before the projection goes away.
+			if (!activeComposition.isBusy()) sync.commitPending();
+			release();
 			try {
 				latestPropsRef.current.onDispose?.(runtime);
 			} finally {
@@ -397,14 +304,7 @@ export function ProseMirrorVisualEditor(props: ProseMirrorVisualEditorProps) {
 		try {
 			latestPropsRef.current.onReady?.(runtime);
 		} catch (error) {
-			disposed = true;
-			disposeAbortController.abort();
-			unsubscribeDocument();
-			view.dom.removeEventListener("compositionstart", handleCompositionStart);
-			view.dom.removeEventListener("compositionend", handleCompositionEnd);
-			if (viewRef.current === view) {
-				viewRef.current = null;
-			}
+			release();
 			view.destroy();
 			throw error;
 		}

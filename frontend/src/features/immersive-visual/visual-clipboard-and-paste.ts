@@ -3,9 +3,16 @@ import {
 	type Node as ProseMirrorNode,
 	Slice,
 } from "prosemirror-model";
-import { Plugin, PluginKey, Selection, TextSelection } from "prosemirror-state";
+import {
+	NodeSelection,
+	Plugin,
+	PluginKey,
+	Selection,
+	TextSelection,
+} from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import { parseMarkdownToVisualDoc } from "./markdown-parser";
+import { serializeVisualDocToMarkdown } from "./markdown-serializer";
 import { visualEditorSchema } from "./visual-schema";
 
 export type VisualClipboardPluginOptions = Readonly<{
@@ -42,7 +49,7 @@ function isImageFile(file: File): boolean {
 	return file.type.length === 0 && IMAGE_FILE_EXTENSION_PATTERN.test(file.name);
 }
 
-export function extractImageFilesFromDataTransfer(
+function extractImageFilesFromDataTransfer(
 	dataTransfer: DataTransfer | null,
 ): File[] {
 	if (!dataTransfer) {
@@ -90,6 +97,24 @@ function isSelectionInCodeBlock(view: EditorView): boolean {
 	);
 }
 
+/**
+ * Image files must never be spliced into code blocks or over a selected
+ * protected block or inline atom: the upload owner is bypassed and the native
+ * handler runs instead so no Markdown is corrupted. Paste evaluates the
+ * current selection; drop evaluates the selection resolved at the pointer.
+ */
+function isBlockedVisualImageSelection(selection: Selection): boolean {
+	if (selection.$from.parent.type === visualEditorSchema.nodes.code_block) {
+		return true;
+	}
+	if (!(selection instanceof NodeSelection)) return false;
+	const nodeType = selection.node.type;
+	return (
+		nodeType === visualEditorSchema.nodes.protected_block ||
+		nodeType === visualEditorSchema.nodes.protected_inline
+	);
+}
+
 function isSelectionInsideTableCell(view: EditorView): boolean {
 	const { $from } = view.state.selection;
 	for (let depth = $from.depth; depth > 0; depth -= 1) {
@@ -103,26 +128,91 @@ function isSelectionInsideTableCell(view: EditorView): boolean {
 
 function flattenDocToTableCellFragment(parsedDoc: ProseMirrorNode): Fragment {
 	const inlineNodes: ProseMirrorNode[] = [];
-	const hardBreakType = visualEditorSchema.nodes.hard_break;
-
-	for (let i = 0; i < parsedDoc.childCount; i += 1) {
-		if (i > 0) {
-			inlineNodes.push(hardBreakType.create());
-		}
-		const block = parsedDoc.child(i);
-		if (block.isTextblock) {
-			block.content.forEach((child) => {
-				inlineNodes.push(child);
-			});
-		} else {
-			const fallbackText = block.textContent;
-			if (fallbackText.length > 0) {
-				inlineNodes.push(visualEditorSchema.text(fallbackText));
-			}
-		}
-	}
-
+	appendTextblockInlineNodes(parsedDoc, inlineNodes);
 	return Fragment.from(inlineNodes);
+}
+
+/**
+ * Flattens every nested textblock into inline content separated by hard breaks.
+ * Nested lists and tables pasted into a cell keep their readable text instead of
+ * being concatenated into a single run of characters.
+ */
+function appendTextblockInlineNodes(
+	node: ProseMirrorNode,
+	out: ProseMirrorNode[],
+): void {
+	if (node.isTextblock) {
+		if (out.length > 0) {
+			out.push(visualEditorSchema.nodes.hard_break.create());
+		}
+		node.content.forEach((child) => {
+			out.push(child);
+		});
+		return;
+	}
+	node.forEach((child) => {
+		appendTextblockInlineNodes(child, out);
+	});
+}
+
+function isInlineOnly(nodes: ReadonlyArray<ProseMirrorNode>): boolean {
+	return nodes.every((node) => node.isInline);
+}
+
+function wrapClipboardBlocks(
+	nodes: ReadonlyArray<ProseMirrorNode>,
+): ProseMirrorNode | null {
+	if (nodes.length === 0) return null;
+	if (isInlineOnly(nodes)) {
+		return visualEditorSchema.nodes.doc.create(null, [
+			visualEditorSchema.nodes.paragraph.create(null, [...nodes]),
+		]);
+	}
+	// The serializer iterates the wrapper's children, so table slices must be
+	// wrapped in `doc` (not a bare `table`) to emit GFM table syntax.
+	// `prosemirror-tables` assigns `header_cell` to `table_header`.
+	if (nodes.every((node) => node.type.spec.tableRole === "row")) {
+		return visualEditorSchema.nodes.doc.create(null, [
+			visualEditorSchema.nodes.table.create(null, [...nodes]),
+		]);
+	}
+	if (
+		nodes.every((node) => {
+			const role = node.type.spec.tableRole;
+			return role === "cell" || role === "header_cell";
+		})
+	) {
+		return visualEditorSchema.nodes.doc.create(null, [
+			visualEditorSchema.nodes.table.create(null, [
+				visualEditorSchema.nodes.table_row.create(null, [...nodes]),
+			]),
+		]);
+	}
+	// Whole-table `CellSelection` slices carry the `table` node itself.
+	if (
+		nodes.every((node) => {
+			const role = node.type.spec.tableRole;
+			return node.isBlock && (!role || role === "table");
+		})
+	) {
+		return visualEditorSchema.nodes.doc.create(null, [...nodes]);
+	}
+	return null;
+}
+
+/**
+ * Plain-text Copy/Cut uses the canonical Markdown serializer so protected math,
+ * Mermaid, TOC, footnote, and image atoms keep their Markdown syntax instead of
+ * being erased from `text/plain`.
+ */
+function serializeClipboardSliceToText(slice: Slice): string {
+	const nodes: ProseMirrorNode[] = [];
+	slice.content.forEach((node) => {
+		nodes.push(node);
+	});
+	const wrapper = wrapClipboardBlocks(nodes);
+	if (wrapper) return serializeVisualDocToMarkdown(wrapper);
+	return slice.content.textBetween(0, slice.content.size, "\n\n", "\uFFFC");
 }
 
 function insertParsedMarkdownDoc(
@@ -130,6 +220,16 @@ function insertParsedMarkdownDoc(
 	markdownText: string,
 ): boolean {
 	const normalized = markdownText.replace(/\r\n?/g, "\n");
+	if (normalized.includes("\n") && normalized.trim().length === 0) {
+		// A newline-only paste must not delete the selection without inserting
+		// anything: commit a hard break through the normal editing path.
+		view.dispatch(
+			view.state.tr
+				.replaceSelectionWith(visualEditorSchema.nodes.hard_break.create())
+				.scrollIntoView(),
+		);
+		return true;
+	}
 	const parsedDoc = parseMarkdownToVisualDoc(normalized);
 
 	if (isSelectionInsideTableCell(view)) {
@@ -208,17 +308,18 @@ function shouldTreatAsPlainMarkdownPaste(
 	);
 }
 
-function syncDomSelectionIntoView(view: EditorView): void {
+/** Maps the DOM selection to a ProseMirror selection without dispatching it. */
+function readDomSelection(view: EditorView): Selection | null {
 	const domSelection = view.dom.ownerDocument.defaultView?.getSelection();
 	if (!domSelection || domSelection.rangeCount === 0) {
-		return;
+		return null;
 	}
 	const range = domSelection.getRangeAt(0);
 	if (
 		!view.dom.contains(range.startContainer) ||
 		!view.dom.contains(range.endContainer)
 	) {
-		return;
+		return null;
 	}
 	try {
 		const from = view.posAtDOM(range.startContainer, range.startOffset);
@@ -229,13 +330,18 @@ function syncDomSelectionIntoView(view: EditorView): void {
 			from <= view.state.doc.content.size &&
 			to <= view.state.doc.content.size
 		) {
-			const nextSelection = TextSelection.create(view.state.doc, from, to);
-			if (!nextSelection.eq(view.state.selection)) {
-				view.dispatch(view.state.tr.setSelection(nextSelection));
-			}
+			return TextSelection.create(view.state.doc, from, to);
 		}
 	} catch {
 		// Keep current ProseMirror selection when DOM range cannot be mapped.
+	}
+	return null;
+}
+
+function syncDomSelectionIntoView(view: EditorView): void {
+	const nextSelection = readDomSelection(view);
+	if (nextSelection && !nextSelection.eq(view.state.selection)) {
+		view.dispatch(view.state.tr.setSelection(nextSelection));
 	}
 }
 
@@ -251,12 +357,152 @@ function readTransferData(
 
 const IMAGE_TAG_PATTERN = /<img\b/i;
 
+type ImageDropTarget =
+	| Readonly<{ kind: "blocked" }>
+	| Readonly<{ kind: "ready"; selection: Selection }>
+	| Readonly<{ kind: "none" }>;
+
+const PROTECTED_DROP_TARGET_SELECTOR =
+	"[data-easymde-protected-kind], [data-easymde-protected-block], [data-easymde-protected-inline], .easymde-code-block";
+
+function isDropBlockedNode(node: ProseMirrorNode | null | undefined): boolean {
+	if (!node) return false;
+	const type = node.type;
+	return (
+		type === visualEditorSchema.nodes.code_block ||
+		type === visualEditorSchema.nodes.protected_block ||
+		type === visualEditorSchema.nodes.protected_inline
+	);
+}
+
+/** Whether the node actually hit by the pointer (or an ancestor) is protected. */
+function isProtectedHit(doc: ProseMirrorNode, inside: number): boolean {
+	if (inside < 0 || inside > doc.content.size) return false;
+	if (isDropBlockedNode(doc.nodeAt(inside))) return true;
+	const $inside = doc.resolve(inside);
+	for (let depth = $inside.depth; depth >= 1; depth -= 1) {
+		if (isDropBlockedNode($inside.node(depth))) return true;
+	}
+	return false;
+}
+
+function readDropCoords(
+	view: EditorView,
+	event: DragEvent,
+): ReturnType<EditorView["posAtCoords"]> {
+	if (!Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) {
+		return null;
+	}
+	try {
+		return view.posAtCoords({ left: event.clientX, top: event.clientY });
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Resolves where a drop lands without mutating editor state. Priority: a DOM
+ * target inside protected content, the node actually hit by the pointer
+ * (`coords.inside`), the pointer insertion position, and only without pointer
+ * coordinates the DOM or current selection. The eligibility check evaluates
+ * this target, never the pre-drop caret.
+ */
+function resolveImageDropSelection(
+	view: EditorView,
+	event: DragEvent,
+): ImageDropTarget {
+	const target = event.target;
+	const protectedTarget =
+		typeof Element !== "undefined" && target instanceof Element
+			? target.closest(PROTECTED_DROP_TARGET_SELECTOR)
+			: null;
+	if (protectedTarget !== null && view.dom.contains(protectedTarget)) {
+		return { kind: "blocked" };
+	}
+	const doc = view.state.doc;
+	const coords = readDropCoords(view, event);
+	if (coords) {
+		if (isProtectedHit(doc, coords.inside)) {
+			return { kind: "blocked" };
+		}
+		if (coords.pos < 0 || coords.pos > doc.content.size) {
+			return { kind: "none" };
+		}
+		const selection = Selection.near(doc.resolve(coords.pos));
+		return isBlockedVisualImageSelection(selection)
+			? { kind: "blocked" }
+			: { kind: "ready", selection };
+	}
+	const fallback = readDomSelection(view) ?? view.state.selection;
+	return isBlockedVisualImageSelection(fallback)
+		? { kind: "blocked" }
+		: { kind: "ready", selection: fallback };
+}
+
+function applyImageDropSelection(view: EditorView, target: Selection): void {
+	if (!target.eq(view.state.selection)) {
+		view.dispatch(view.state.tr.setSelection(target));
+	}
+	// Focus only after the drop selection exists: the upload owner reads the DOM
+	// selection, and focusing first would commit a stale one over it.
+	view.focus();
+}
+
 export function createVisualClipboardPlugin(
 	options: VisualClipboardPluginOptions = {},
 ): Plugin {
+	const handleImageFilesPaste = (
+		view: EditorView,
+		event: ClipboardEvent,
+		data: DataTransfer,
+	): boolean | null => {
+		const imageFiles = extractImageFilesFromDataTransfer(data);
+		if (imageFiles.length === 0) return null;
+		if (isBlockedVisualImageSelection(view.state.selection)) return false;
+		const uploadEnabled = resolveBooleanOption(
+			options.imageUploadEnabled,
+			false,
+		);
+		const pasteUploadEnabled = resolveBooleanOption(
+			options.imagePasteUploadEnabled,
+			false,
+		);
+		if (!uploadEnabled || !pasteUploadEnabled || !options.onImagePaste) {
+			return false;
+		}
+		syncDomSelectionIntoView(view);
+		event.preventDefault();
+		options.onImagePaste(imageFiles, event);
+		return true;
+	};
+
+	const handleImageFilesDrop = (
+		view: EditorView,
+		event: DragEvent,
+		data: DataTransfer | null,
+	): boolean | null => {
+		const imageFiles = extractImageFilesFromDataTransfer(data);
+		if (imageFiles.length === 0) return null;
+		const uploadEnabled = resolveBooleanOption(
+			options.imageUploadEnabled,
+			false,
+		);
+		if (!uploadEnabled || !options.onImageDrop) return false;
+		const resolved = resolveImageDropSelection(view, event);
+		if (resolved.kind !== "ready") return false;
+		event.preventDefault();
+		applyImageDropSelection(view, resolved.selection);
+		options.onImageDrop(imageFiles, event);
+		return true;
+	};
+
 	return new Plugin({
 		key: VISUAL_CLIPBOARD_PLUGIN_KEY,
 		props: {
+			clipboardTextSerializer(slice) {
+				return serializeClipboardSliceToText(slice);
+			},
+
 			handleDOMEvents: {
 				paste(view, event) {
 					if (!view.editable) {
@@ -266,23 +512,9 @@ export function createVisualClipboardPlugin(
 					if (!clipboardData) {
 						return false;
 					}
-					const imageFiles = extractImageFilesFromDataTransfer(clipboardData);
-					if (imageFiles.length > 0) {
-						const uploadEnabled = resolveBooleanOption(
-							options.imageUploadEnabled,
-							false,
-						);
-						const pasteUploadEnabled = resolveBooleanOption(
-							options.imagePasteUploadEnabled,
-							false,
-						);
-						if (uploadEnabled && pasteUploadEnabled && options.onImagePaste) {
-							syncDomSelectionIntoView(view);
-							event.preventDefault();
-							options.onImagePaste(imageFiles, event);
-							return true;
-						}
-						return false;
+					const pasteResult = handleImageFilesPaste(view, event, clipboardData);
+					if (pasteResult !== null) {
+						return pasteResult;
 					}
 
 					const plainText = readTransferData(clipboardData, "text/plain");
@@ -294,7 +526,8 @@ export function createVisualClipboardPlugin(
 					if (
 						!uploadEnabled &&
 						plainText.length > 0 &&
-						IMAGE_TAG_PATTERN.test(htmlData)
+						IMAGE_TAG_PATTERN.test(htmlData) &&
+						!isSelectionInCodeBlock(view)
 					) {
 						syncDomSelectionIntoView(view);
 						event.preventDefault();
@@ -311,50 +544,22 @@ export function createVisualClipboardPlugin(
 					if (!dataTransfer) {
 						return false;
 					}
-					const imageFiles = extractImageFilesFromDataTransfer(dataTransfer);
-					const uploadEnabled = resolveBooleanOption(
-						options.imageUploadEnabled,
-						true,
-					);
-					if (imageFiles.length > 0) {
-						if (!uploadEnabled || !options.onImageDrop) {
-							return false;
-						}
-						event.preventDefault();
-						let positioned = false;
-						if (
-							Number.isFinite(event.clientX) &&
-							Number.isFinite(event.clientY)
-						) {
-							const coords = view.posAtCoords({
-								left: event.clientX,
-								top: event.clientY,
-							});
-							if (
-								coords &&
-								coords.pos >= 0 &&
-								coords.pos <= view.state.doc.content.size
-							) {
-								const dropSelection = Selection.near(
-									view.state.doc.resolve(coords.pos),
-								);
-								view.dispatch(view.state.tr.setSelection(dropSelection));
-								positioned = true;
-							}
-						}
-						if (!positioned) {
-							syncDomSelectionIntoView(view);
-						}
-						options.onImageDrop(imageFiles, event);
-						return true;
+					const dropResult = handleImageFilesDrop(view, event, dataTransfer);
+					if (dropResult !== null) {
+						return dropResult;
 					}
 
 					const plainText = readTransferData(dataTransfer, "text/plain");
 					const htmlData = readTransferData(dataTransfer, "text/html");
+					const uploadEnabled = resolveBooleanOption(
+						options.imageUploadEnabled,
+						false,
+					);
 					if (
 						!uploadEnabled &&
 						plainText.length > 0 &&
-						IMAGE_TAG_PATTERN.test(htmlData)
+						IMAGE_TAG_PATTERN.test(htmlData) &&
+						!isSelectionInCodeBlock(view)
 					) {
 						syncDomSelectionIntoView(view);
 						event.preventDefault();
@@ -373,22 +578,9 @@ export function createVisualClipboardPlugin(
 					return false;
 				}
 
-				const imageFiles = extractImageFilesFromDataTransfer(clipboardData);
-				if (imageFiles.length > 0) {
-					const uploadEnabled = resolveBooleanOption(
-						options.imageUploadEnabled,
-						false,
-					);
-					const pasteUploadEnabled = resolveBooleanOption(
-						options.imagePasteUploadEnabled,
-						false,
-					);
-					if (uploadEnabled && pasteUploadEnabled && options.onImagePaste) {
-						syncDomSelectionIntoView(view);
-						event.preventDefault();
-						options.onImagePaste(imageFiles, event);
-						return true;
-					}
+				const pasteResult = handleImageFilesPaste(view, event, clipboardData);
+				if (pasteResult !== null) {
+					return pasteResult;
 				}
 
 				const plainText = readTransferData(clipboardData, "text/plain");
@@ -419,39 +611,12 @@ export function createVisualClipboardPlugin(
 				if (!view.editable) {
 					return false;
 				}
-				const imageFiles = extractImageFilesFromDataTransfer(
+				const dropResult = handleImageFilesDrop(
+					view,
+					event,
 					event.dataTransfer,
 				);
-				if (imageFiles.length === 0) {
-					return false;
-				}
-				const uploadEnabled = resolveBooleanOption(
-					options.imageUploadEnabled,
-					true,
-				);
-				if (!uploadEnabled || !options.onImageDrop) {
-					return false;
-				}
-
-				event.preventDefault();
-				if (Number.isFinite(event.clientX) && Number.isFinite(event.clientY)) {
-					const coords = view.posAtCoords({
-						left: event.clientX,
-						top: event.clientY,
-					});
-					if (
-						coords &&
-						coords.pos >= 0 &&
-						coords.pos <= view.state.doc.content.size
-					) {
-						const dropSelection = Selection.near(
-							view.state.doc.resolve(coords.pos),
-						);
-						view.dispatch(view.state.tr.setSelection(dropSelection));
-					}
-				}
-				options.onImageDrop(imageFiles, event);
-				return true;
+				return dropResult === true;
 			},
 		},
 	});

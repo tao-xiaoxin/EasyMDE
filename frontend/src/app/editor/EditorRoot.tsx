@@ -212,8 +212,8 @@ export function EditorRoot(props: EditorRootProps) {
     fontControlsPort: props.fontControlsPort,
     fontControlsSessionRef,
     fonts: props.fonts,
+    markVisualPreviewChanged: visual.markVisualPreviewChanged,
     ordinarySettingsSessionRef,
-    prepareSourceMutationWithPreview: visual.prepareSourceMutationWithPreview,
     previewAppearanceRef,
     previewRefreshPendingRef,
     previewRuntimeRef,
@@ -228,6 +228,7 @@ export function EditorRoot(props: EditorRootProps) {
     setEditorStatusState: session.setEditorStatusState,
     submissionStateRef: session.submissionStateRef,
     toolbarSessionRef,
+    visualEditorRuntimeRef,
     visualPreviewEditingRef
   });
 
@@ -238,7 +239,6 @@ export function EditorRoot(props: EditorRootProps) {
     imageUpload: props.imageUpload,
     imageUploadPort: props.imageUploadPort,
     immersiveStrings: props.immersiveStrings,
-    leaveVisualPreview: visual.leaveVisualPreview,
     mediaPicker: props.mediaPicker,
     mediaPickerFailureMessage: props.mediaPickerFailureMessage,
     mediaPickerFrame: props.mediaPickerFrame,
@@ -332,6 +332,8 @@ export function EditorRoot(props: EditorRootProps) {
           onExit={visual.exitImmersive}
           onFailure={reportFailure}
           onBeforeSourceMutation={visual.prepareSourceMutation}
+          onInsertVisualTable={visual.insertVisualTable}
+          onRevealVisualHeading={visual.revealVisualHeading}
           onConfirmPublish={session.publish}
           onSelectFeaturedImage={media.selectFeaturedImage}
           readPublishSnapshot={props.nativePublishPort.read}

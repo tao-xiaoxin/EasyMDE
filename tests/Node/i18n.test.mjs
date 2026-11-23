@@ -283,7 +283,10 @@ test("PHP translation domain check matches real gettext calls", () => {
 
 test("PHP-injected string config covers JavaScript user-facing string reads", () => {
 	const adminKeys = phpStringKeys(
-		sourceSlice("src/Admin/AdminAssets.php", "private function get_strings"),
+		sourceSlice(
+			"src/Admin/AdminEditorStrings.php",
+			"public static function get_strings",
+		),
 	);
 	const frontendKeys = phpStringKeys(
 		sourceSlice("src/Frontend/FrontendAssets.php", "'strings'"),

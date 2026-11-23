@@ -1177,103 +1177,21 @@ attributes and markup, connected Selection, canonical source, and no Preview
 request for the local Undo, including snapshots taken after an empty structural
 body. Missing or non-equivalent protected output remains fresh; blank or
 whitespace-only root `style` is the sole ignored layout artifact.
-For windowed EOF frame removal, verify the complete two-step Undo/Redo sequence,
-the document-end pin before formal Preview, the mounted final editable block
-and exact canonical/visible caret after the final Redo. A mapped range may omit
-terminal line endings; non-line-ending gaps must remain explicit failures.
-Exercise the actual SafePreviewHtmlSink child replacement and first window
-commit: a root-end Selection can collapse to root offset zero while the leased
-target must remain mounted. Keep the 160-block cap while the EOF lease is
-active, and the exact full-document window/spacer partition. Releasing the
-lease restores the existing ordinary pinned-window limit. Acquire it before scheduling
-the request; verify cancellation, signature mismatch, supersession, rendering
-or scheduling error and teardown release, and that an older release cannot
-clear a newer token. Ordinary Preview requests acquire no lease unless an
-explicit focused structural/history selection transfer owns one.
-Also exercise a native EOF edit that expands a small document beyond the
-Windowed threshold, Undo to the accepted small target, and Redo to the large
-target. The small commit must mount every block without spacers, remain
-editable, and restore its connected collapsed EOF caret; Redo must restore the
-bounded Windowed partition and the same canonical EOF ownership.
-Run that transition with a real Theme-generated footnote tail. Verify the REST
-map contains trailing non-editable zero-width roots, the final editable source
-root remains the EOF owner, the generated DOM roots are protected, and Redo
-restores the connected caret without source-to-transformed-DOM guesswork.
-Also cover a generated zero-width root before an unrelated fenced block so its
-code-body ordinal remains mappable.
-Verify a complete active fence run in the body followed immediately by another
-character widens the outer fence and preserves source, caret, Undo, and Redo.
-Use a noncancelable rejected composition mutation to prove accepted DOM/source
-restoration and a subsequent valid edit. The shifted windowed b160 case also
-checks native Enter followed by text, separate Undo/Redo steps, restored stale
-block identity, and the bounded mount count. Verify history Preview restores
-scroll only after its bounded DOM commit, keeping the selected block mounted.
-Ordinary paragraph history beyond the first windowed block also checks exact
-source, DOM/native caret, adjacent-block boundary ownership, and final EOF.
-Verify pre-edit visible-selection synchronization restores paragraph and IME
-carets on Undo/Redo, and stale PRE replacement after noncancelable text input
-restores the accepted DOM and caret without publishing a source change.
-The canonical adapter's post-edit selection option must preserve ordinary
-document Undo/Redo step counts and same-value updates.
-The real CodeMirror regression `pins a focused non-EOF native Redo caret at the
-unmounted HR source boundary (focused=%s)` reproduces canonical offset 3525 at
-the editable `b69` thematic break while only `b0`–`b40` are mounted. It preserves
-the 36979 → 36809 source-length transition, revision 3 and native history depth
-1/0, then requires the existing Preview pin to mount the HR and restore its
-collapsed native boundary without a diagnostic. Its outside-focus control
-requires no pin or stolen focus. Hidden/unmappable source refusals remain.
 
-The focused regression names for this windowed-selection contract are
-`pins the accepted Preview block for a non-document-end source selection`,
-`restores a noncollapsed selection after an accepted middle code-fence Preview`,
-`rejects an accepted source selection outside the request Markdown`,
-`does not apply a cancelled source-selection pin to a later matching request`,
-`owns Ctrl+A Backspace as a canonical full-document deletion`,
-`does not delete unmounted source on a whole-surface cut`,
-`clears canonical source when the root includes a generated read-only block`,
-`rejects a destructive selection that crosses an unmounted spacer`,
-`does not let a stale Ctrl+A selection clear a later collapsed deletion`,
-`clears a root selection spanning a mounted code block`,
-`keeps a selected mapped code block local to code`, and
-`keeps a generic tilde in an Enter-created paragraph`. Chromium coverage adds
-`preserves a windowed paragraph caret after structural Enter and formal
-Preview`, `keeps a long cleared document editable before and after immersive
-re-entry`, `commits immediate input after a long full clear and preserves
-Undo/Redo caret state`, and `keeps a partially deleted paragraph mapped after
-Enter and tilde input`. The Safe HTML sink cases are
-`preserves a focused full-root $direction selection during replacement`,
-`does not expand a partial root selection during replacement`, `does not
-restore a full-root range after focus leaves the surface`, and `restores spacer
-range and geometry after cancelling a partial materialization`. The Preview
-owner cases also cover `materializes the complete Preview asynchronously for a
-same-activation consumer`, `cancels stale window materialization when an
-authoritative empty Preview replaces it`, `does not report materialization
-success while a newer Preview is loading`, and `rejects materialization while
-an accepted window commit is still committing`.
-The empty-surface unit cases are named `owns native whole-root $name Backspace
-and Delete with immediate re-entry`, `creates an editable paragraph after
-clearing an empty-root topology %s`, `normalizes the empty root after
-incremental native Backspace before the next tilde ($markdown)`, and `clears a
-formatted empty $name block before immediate tilde input`. Serialization and
-source-boundary coverage also includes `reports empty structural serialization
-shapes`, `preserves a literal space inside a list item as content`, `preserves
-direct quote content beside an empty structural paragraph`, and `preserves
-terminal spaces and newlines when inserting at their visual boundary`.
-Parser-backed separator coverage is named `maps an empty structural body after
-its parser-owned separator`, `does not classify a code-body separator as a
-structural body boundary`, `retains hidden reference definitions after empty
-structural insertion`, and `preserves reference definitions when a visible
-structural marker is removed`. These cases consume one parser-owned separator
-and preserve additional separator or tail bytes; they do not widen the
-ordinary input path or its existing performance budget.
-The browser cases add `clears a nonwindowed Mermaid and math document with
-${deletionKey} and preserves immediate visual input` for Backspace and Delete,
-`preserves first input after incremental ${fixture.label} Backspace clear` for
-the `plain`, `trailing-space`, `trailing-newlines`, `two-paragraphs`, `heading`,
-`list`, `blockquote`, and `code` fixtures, `preserves ${fixture.label} wrapper
-before structural Backspace input` for `list-fast`, `list-paused`, `quote-fast`,
-and `quote-paused`, plus `clears a trailing-tail document through the full root
-range before immediate input`.
+The retired windowed EOF-lease, 160-block window/spacer partition, and legacy
+`contentEditable` full/windowed selection-pinning test suites were removed when
+immersive visual editing unified on ProseMirror. Current visual-editing
+regression coverage lives in:
+- Unit & integration suites: `frontend/src/features/immersive-visual/prosemirror-visual-editor.test.tsx`
+  (real CodeMirror canonical history ownership, `setVisualEditingActive(true/false)`
+  mount/unmount/failure lifecycle, boundary Backspace/Delete, protected atom
+  cards, and table Tab/alignment commands), `visual-editor-core.test.ts`
+  (round-trip block/list preservation and per-node `WeakMap` serialization
+  caching), `visual-editing-contracts.test.ts`, `visual-atom-selection.test.ts`,
+  `node-views/node-views.test.ts`, and `frontend/src/app/editor/EditorRoot.immersive-visual.test.tsx`.
+- Chromium E2E suites: `tests/e2e/visual/prosemirror-core-editing.spec.mjs`,
+  `tests/e2e/context-menu/visual-menu-and-thematic-breaks.spec.mjs`, and the
+  modernized `@performance` suite below.
 The named cases define the regression contract and do not replace the exact
 runtime evidence required by the browser gate.
 The `@performance` suite in `tests/e2e/ordinary/performance-budgets.spec.mjs` is aligned with the unified ProseMirror visual editor and keeps four tests:

@@ -293,7 +293,10 @@ themes applies identically to formal Preview.
 - **Zero-write on read & surgical block preservation**: Opening or unlocking a
   document performs zero canonical writes (`createMarkdownRoundTripGuard` in
   `markdown-serializer.ts` backed by `markdown-block-preservation.ts`, keeping
-  the dependency direction strictly one-way from serializer to preservation).
+  the dependency direction strictly one-way from serializer to preservation, and
+  memoizing serialized strings per immutable `ProseMirrorNode` in a `WeakMap`
+  so untouched pasted or newly created blocks are not re-serialized on every
+  keystroke).
   Localized edits preserve every untouched top-level block and untouched list
   item's original raw Markdown (including `*`/`+`/`-` bullet/task list markers,
   padded table columns, reference links, inter-block spacing, and trailing
@@ -306,7 +309,8 @@ themes applies identically to formal Preview.
   definitions, and raw HTML blocks as non-corrupting atomic cards (with
   hover/focus Edit and Copy-raw quick actions, double-click editing,
   `Ctrl/Cmd+Enter` commit, and non-propagating `Escape` cancel), renders Mac
-  3-dot code frames with incremental `Decoration.inline` Highlight.js tokens,
+  3-dot code frames with incremental `Decoration.inline` Highlight.js tokens
+  (scoped to changed document ranges via `nodesBetween`),
   supports interactive task-list checkboxes that preserve original list markers,
   and provides click-to-select image blue rings and 7-value width scaling
   (`{width=25%..200%}`). `visual-boundary-commands.ts` owns atom/container
@@ -316,7 +320,11 @@ themes applies identically to formal Preview.
   is the single authoritative bridge between the ProseMirror projection and
   `EditorDocumentSession` (CodeMirror + native form bridge), handling bounded
   text diffs, contiguous typing history grouping, echo suppression, and
-  incremental canonical Undo/Redo reconciliation. `visual-composition-session.ts`
+  incremental canonical Undo/Redo reconciliation. While mounted,
+  `ProseMirrorVisualEditor` activates `documentSession.document.setVisualEditingActive(true)`
+  (and restores `false` on unmount or startup error) so hidden CodeMirror parks
+  its DOM and disables live Lezer Markdown syntax re-parsing during visual
+  editing while remaining the sole canonical state and history owner. `visual-composition-session.ts`
   tracks IME `composing`/`settling` phases so canonical commits wait until
   composition ends and ProseMirror's DOM flush lands. `visual-source-index.ts`
   and `visual-source-inner-maps.ts` maintain the parser-backed bidirectional
@@ -1551,38 +1559,17 @@ Accepted indented-body selection endpoints, including Undo, resolve through
 that row's own PRE ordinal and code-body source offsets before generic marker
 mapping. The projected code text and source endpoint must agree exactly, and
 the boundary's editable ancestry remains required.
-A Windowed pending deletion consumes that edit's `from`, `to`, `insert` and
-`sourceCaret` directly and preserves the same prefix and Undo/Redo semantics;
-it does not rebuild a raw offset range.
-That
-interval owns blank-line and
-line-ending semantics for both ordinary and windowed immersive editing;
-browser-created code DOM nodes are reconciled to the source interval without
-using their child count as a Markdown line index. Terminal and pending-window
-deletions resolve the same authenticated interval - derived from the accepted
-ledger row, never from document order, language or body-text matching: a
-forward Delete past the body's last character is recognized as a terminal
-target and consumed as a structural no-op that keeps the caret in the code,
-while an invalid or stale target keeps its explicit rejection, and a deletion
-between a history transfer and its formal Preview re-proves its block before
-any canonical write. The document session remains
-the canonical value and history owner. Non-windowed visual history slots follow
-CodeMirror's actual Undo/Redo depths, including grouped events, history pruning
-and replacement of a Redo branch. A slot retains an exact DOM snapshot or marks
-an accepted source state for formal Preview rematerialization. Ordinary exact
-text input does not serialize the whole DOM or reuse stale accepted HTML to
-manufacture a snapshot. Exact snapshots restore code DOM and caret after
-browser-created formatting or a scripted terminal newline is normalized.
 
-Windowed pending fenced-body text splices use that raw interval, which already
-contains any existing container prefix. `applyPendingCanonicalText` prepends the
-prefix only when the original raw body is empty and computes the caret from the
-prefix actually inserted; literal prefix text and untouched source are preserved.
-This path prevents native insertion and updates canonical source/lease selection
-before requesting formal PHP Preview, retaining the old code DOM/native point
-only as an identity witness. New code presentation belongs to formal acceptance;
-a ready native-owned local text commit need not request PHP Preview, so ready
-state alone does not certify a current PHP source/map.
+In the current unified ProseMirror visual editor (see
+`Unified ProseMirror Immersive Visual Editor` above), the former windowed
+pending-deletion, pending fenced-body splice (`applyPendingCanonicalText`), and
+DOM-snapshot history-slot layers are retired. `EditorDocumentSession`
+(CodeMirror) remains the single canonical value and history owner;
+`ProseMirrorVisualEditor` parks CodeMirror's DOM/syntax parser via
+`setVisualEditingActive(true/false)` while mounted, and `visual-canonical-sync.ts`
+reconciles code-block edits and canonical Undo/Redo incrementally against the
+in-memory ProseMirror projection without window spacers, 160-block caps, or
+per-keystroke formal PHP Preview requests.
 
 Full paragraph topology fallback serializes and indexes element roots, while
 retaining renderer whitespace Text nodes in the exact owned child-node ledger.

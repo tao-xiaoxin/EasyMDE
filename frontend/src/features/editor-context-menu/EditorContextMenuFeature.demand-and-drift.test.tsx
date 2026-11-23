@@ -222,7 +222,7 @@ describe('EditorContextMenuFeature', () => {
     }
   );
 
-  it('cancels a pending visual demand for an external scroll target', async () => {
+  it('keeps a pending demand when a non-ancestor sibling pane scrolls', async () => {
     const canvas = document.createElement('div');
     const visual = document.createElement('div');
     visual.contentEditable = 'true';
@@ -272,6 +272,13 @@ describe('EditorContextMenuFeature', () => {
       fireEvent.scroll(external);
       ready = true;
       for (const listener of readinessListeners) listener();
+      // A synchronized sibling pane outside the surface's ancestor chain
+      // cannot move the anchor, so the demand still opens its menu.
+      expect(await screen.findByRole('menu')).not.toBeNull();
+      expect(onFailure).not.toHaveBeenCalled();
+      // A real scroll of the surface's own ancestor still dismisses it.
+      canvas.scrollTop = 20;
+      fireEvent.scroll(canvas);
       await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
       expect(onFailure).not.toHaveBeenCalled();
     } finally {

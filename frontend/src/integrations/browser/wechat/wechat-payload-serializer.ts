@@ -52,6 +52,113 @@ import {
   inlineStylesSynchronously
 } from './wechat-style-inliner';
 
+const HIDDEN_PREVIEW_SURFACE_CLASS = 'easymde-preview-surface-hidden';
+const PROSEMIRROR_SURFACE_SELECTORS = [
+  '[data-easymde-prosemirror-host="1"] .easymde-prosemirror-surface',
+  '[data-easymde-prosemirror-host="1"]'
+] as const;
+
+type LayoutMeasurement = Readonly<{
+  dispose: () => void;
+  root: HTMLElement;
+}>;
+
+function displayNone(
+  element: Element,
+  runtime: BrowserWechatClipboardRuntime
+): boolean {
+  return 'none' === runtime.getComputedStyle(element).display;
+}
+
+function measurementTargetWidth(preview: HTMLElement): number {
+  const parent = preview.parentElement;
+  if (parent && parent.getBoundingClientRect().width > 0) {
+    for (const selector of PROSEMIRROR_SURFACE_SELECTORS) {
+      const surfaceWidth = parent.querySelector(selector)?.getBoundingClientRect().width ?? 0;
+      if (surfaceWidth > 0) return surfaceWidth;
+    }
+    if (parent.clientWidth > 0) return parent.clientWidth;
+  }
+  return previewMeasurementWidth(preview) ?? 1;
+}
+
+/**
+ * The unlocked visual editor (`easymde-preview-surface-hidden`) and both
+ * source modes (hidden `.easymde-pane-preview`) keep the formal Preview owner
+ * under `display:none`, where every rect is 0x0 and computed layout values are
+ * unresolved. Serialize from a temporary, layout-participating clone instead:
+ * it is mounted beside the hidden subtree's nearest rendered ancestor so the
+ * article theme variables and Custom CSS scope still match, positioned off
+ * screen with inline styles only, and removed by the caller's `dispose()`.
+ * The live Preview owner is never touched. `visibility:hidden` is avoided on
+ * purpose because it inherits into exported styles; `opacity` does not.
+ */
+function mountLayoutMeasurement(
+  preview: HTMLElement,
+  runtime: BrowserWechatClipboardRuntime
+): LayoutMeasurement | null {
+  if (!preview.isConnected || preview.getBoundingClientRect().width > 0) {
+    return null;
+  }
+  const documentRef = preview.ownerDocument;
+  const body = documentRef.body;
+  if (!body) return null;
+  let hiddenTop: Element | null = displayNone(preview, runtime) ? preview : null;
+  for (
+    let element = preview.parentElement;
+    element && element !== body && element !== documentRef.documentElement;
+    element = element.parentElement
+  ) {
+    if (displayNone(element, runtime)) hiddenTop = element;
+  }
+  if (!hiddenTop) return null;
+  const mountParent = hiddenTop.parentElement ?? body;
+  const width = Math.max(1, measurementTargetWidth(preview));
+  const host = documentRef.createElement('div');
+  host.setAttribute('aria-hidden', 'true');
+  host.setAttribute('inert', '');
+  host.dataset.easymdeWechatMeasureHost = '1';
+  host.style.cssText = [
+    'position:fixed',
+    'inset-inline-start:-100000px',
+    'top:0',
+    'opacity:0',
+    'pointer-events:none',
+    'contain:layout style',
+    `width:${width}px`,
+    `max-width:${width}px`
+  ].join(';');
+  const root = preview.cloneNode(true) as HTMLElement;
+  root.classList.remove(HIDDEN_PREVIEW_SURFACE_CLASS);
+  host.append(root);
+  mountParent.append(host);
+  return {
+    dispose: () => {
+      host.remove();
+    },
+    root
+  };
+}
+
+/**
+ * Runs `callback` against a layout-participating Preview: the live Preview
+ * itself when it is rendered, otherwise a connected off-screen measurement
+ * clone that stays mounted until the callback (including PNG conversion of
+ * its visual candidates) has settled.
+ */
+async function withLayoutParticipatingPreview<T>(
+  preview: HTMLElement,
+  runtime: BrowserWechatClipboardRuntime,
+  callback: (source: HTMLElement) => Promise<T>
+): Promise<T> {
+  const measurement = mountLayoutMeasurement(preview, runtime);
+  try {
+    return await callback(measurement?.root ?? preview);
+  } finally {
+    measurement?.dispose();
+  }
+}
+
 function finalizeMarkup(
   clone: HTMLElement,
   fragmentIds: Set<string>,
@@ -261,6 +368,26 @@ async function createMarkup(
 ): Promise<HTMLElement> {
   throwIfBackgroundPreparationAborted(signal);
   if (conversion) assertPngConversionCurrent(conversion);
+  return withLayoutParticipatingPreview(preview, runtime, (source) =>
+    createMarkupFromSource(
+      source,
+      runtime,
+      cache,
+      yieldToBrowser,
+      conversion,
+      signal
+    )
+  );
+}
+
+async function createMarkupFromSource(
+  preview: HTMLElement,
+  runtime: BrowserWechatClipboardRuntime,
+  cache: BackgroundAssetCache,
+  yieldToBrowser: SerializationYield | null,
+  conversion: WechatPngConversionContext | undefined,
+  signal: AbortSignal | undefined
+): Promise<HTMLElement> {
   const clone = preview.cloneNode(true) as HTMLElement;
   const fragmentIds = referencedFragmentIds(preview);
   const mathMlNodes = findKaTeXMathMl(clone);
@@ -299,6 +426,18 @@ async function createMarkup(
 }
 
 function createMarkupSynchronously(
+  preview: HTMLElement,
+  runtime: BrowserWechatClipboardRuntime
+): HTMLElement | null {
+  const measurement = mountLayoutMeasurement(preview, runtime);
+  try {
+    return createMarkupSynchronouslyFromSource(measurement?.root ?? preview, runtime);
+  } finally {
+    measurement?.dispose();
+  }
+}
+
+function createMarkupSynchronouslyFromSource(
   preview: HTMLElement,
   runtime: BrowserWechatClipboardRuntime
 ): HTMLElement | null {

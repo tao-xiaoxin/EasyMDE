@@ -530,7 +530,9 @@ export function EditorContextMenu({
     // Preview acceptance can restore an ancestor's scroll position before this
     // menu mounts, while its queued native scroll event arrives afterwards.
     // Only movement relative to this listener's opening snapshot dismisses a
-    // known container; unrelated external scroll targets still close the menu.
+    // known container. When a surface ancestor chain was captured, scroll
+    // events from unrelated external elements (for example a synchronized
+    // sibling Preview pane) are ignored so they cannot dismiss the menu.
     const scrollBaseline = captureEditorContextMenuScrollBaseline(
       surfaceElement,
       windowRef

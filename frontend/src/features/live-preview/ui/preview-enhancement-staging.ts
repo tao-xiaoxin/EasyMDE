@@ -66,6 +66,14 @@ function validatePreviewBlockMarkup(
 	});
 }
 
+function stagingFallbackWidth(activeSurface: HTMLElement): number {
+	try {
+		return previewScrollCanvas(activeSurface).clientWidth;
+	} catch {
+		return 0;
+	}
+}
+
 export function createEnhancementCandidate(
 	activeSurface: HTMLElement,
 	html: SafePreviewHtml,
@@ -83,6 +91,9 @@ export function createEnhancementCandidate(
 	}
 	const candidate = documentRef.createElement("div");
 	candidate.className = activeSurface.className;
+	// The unlocked visual editor hides the formal Preview owner with
+	// `display:none`; staging must still lay out so enhancements measure.
+	candidate.classList.remove("easymde-preview-surface-hidden");
 	candidate.style.cssText = activeSurface.style.cssText;
 	candidate.setAttribute("aria-hidden", "true");
 	candidate.setAttribute("inert", "");
@@ -90,10 +101,10 @@ export function createEnhancementCandidate(
 	candidate.style.position = "fixed";
 	candidate.style.insetInlineStart = "-100000px";
 	candidate.style.top = "0";
-	candidate.style.width = `${Math.max(
-		1,
-		activeSurface.getBoundingClientRect().width,
-	)}px`;
+	const activeWidth = activeSurface.getBoundingClientRect().width;
+	const stagingWidth =
+		activeWidth > 0 ? activeWidth : stagingFallbackWidth(activeSurface);
+	candidate.style.width = `${Math.max(1, stagingWidth)}px`;
 	candidate.style.maxWidth = "none";
 	candidate.style.visibility = "hidden";
 	candidate.style.pointerEvents = "none";

@@ -1201,3 +1201,16 @@ test('immersive Preview header owns the reference typography and divider', () =>
     /\.easymde-editor\.is-immersive-preview \.easymde-immersive-preview-canvas\s*\{[^}]*scrollbar-width:/s
   );
 });
+
+test('ProseMirror visual surface preserves read-only Preview first-child and last-child margins', () => {
+  assert.doesNotMatch(
+    css,
+    /\.easymde-prosemirror-surface\.ProseMirror\s*>\s*:first-child\s*\{[^}]*margin-top\s*:/s,
+    'ProseMirror surface must not zero out first-child margin-top (causes vertical jump on unlock)'
+  );
+  assert.doesNotMatch(
+    css,
+    /\.easymde-prosemirror-surface\.ProseMirror\s*>\s*:last-child\s*\{[^}]*margin-bottom\s*:/s,
+    'ProseMirror surface must not zero out last-child margin-bottom (causes bottom height/scroll jump on unlock)'
+  );
+});

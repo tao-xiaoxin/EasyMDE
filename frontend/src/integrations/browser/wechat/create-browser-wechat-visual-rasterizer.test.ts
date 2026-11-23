@@ -240,6 +240,38 @@ describe('createBrowserWechatVisualRasterizer', () => {
     stylesheet.remove();
   });
 
+  it('never bakes protected-card action controls into a math or Mermaid PNG', async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) => {
+      callback(new Blob(['png'], { type: 'image/png' }));
+    });
+    const controls =
+      '<div class="easymde-protected-card-actions"><button>Edit</button></div>'
+      + '<span data-easymde-protected-ui="1">Copy</span>';
+    const math = document.createElement('div');
+    math.className = 'easymde-math';
+    math.innerHTML = `<span class="katex"><span class="katex-html">x</span></span>${controls}`;
+    const mermaid = document.createElement('div');
+    mermaid.className = 'easymde-mermaid';
+    mermaid.innerHTML =
+      `<svg width="20" height="10"><path d="M0 0"></path><g data-easymde-protected-ui="1"><text>Edit</text></g></svg>${controls}`;
+
+    for (const [source, kind] of [[math, 'math'], [mermaid, 'mermaid']] as const) {
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(source, kind, 1, 20, 10),
+      );
+      const serialized = decodeURIComponent(
+        ImageStub.last?.source.split(',').slice(1).join(',') ?? '',
+      );
+      expect(serialized).not.toContain('easymde-protected-card-actions');
+      expect(serialized).not.toContain('data-easymde-protected-ui');
+      expect(serialized).not.toContain('Edit');
+      // The live source keeps its interactive controls untouched.
+      expect(source.querySelector('.easymde-protected-card-actions')).not.toBeNull();
+    }
+  });
+
   it('rejects dimensions and output pixels outside the bounded contract', async () => {
     const source = document.createElement('div');
     const rasterizer = createBrowserWechatVisualRasterizer(runtime());

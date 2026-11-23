@@ -33,7 +33,10 @@ export function captureEditorContextMenuScrollBaseline(
 /**
  * True only when this scroll event moves a target away from the baseline.
  * A known ancestor/window at its captured position is a queued event and is
- * ignored; an unknown external target is never admitted.
+ * ignored. An element outside the surface's ancestor chain (for example a
+ * synchronized sibling Preview pane) cannot move the surface anchor, so its
+ * scroll is ignored when a surface chain was captured; a non-element target
+ * that is not the document or window is never admitted.
  */
 export function editorContextMenuScrollMoved(
 	event: Event,
@@ -52,10 +55,10 @@ export function editorContextMenuScrollMoved(
 			|| windowRef.scrollY !== baseline.viewport.top
 		);
 	}
-	const initial = target instanceof Element
-		? baseline.positions.get(target)
-		: undefined;
-	if (!initial || !(target instanceof Element)) return true;
+	if (!(target instanceof Element)) return true;
+	const initial = baseline.positions.get(target);
+	// Without a known surface chain no element can be proved unrelated.
+	if (!initial) return baseline.positions.size === 0;
 	return (
 		target.scrollLeft !== initial.left
 		|| target.scrollTop !== initial.top

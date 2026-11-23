@@ -172,16 +172,6 @@ export function createBrowserWechatClipboard(
       }
 
       if (runtime.write && runtime.clipboardItem) {
-        const readyPreview = requiresPreviewResolution
-          ? Promise.resolve().then(() => options.resolvePreview?.()).then(
-              (resolved) => {
-                if (!resolved || !previewReady(resolved)) {
-                  throw new Error('wechat-preview-unavailable');
-                }
-                return resolved;
-              }
-            )
-          : Promise.resolve(preview);
         const prepared = pngConversionEnabled || requiresPreviewResolution
           ? null
           : preparedClipboardPayload(
@@ -214,6 +204,19 @@ export function createBrowserWechatClipboard(
         const conversionSignal = conversionController?.signal
           ?? options.signal
           ?? new AbortController().signal;
+        // The resolver receives the active Copy signal so a cancelled or
+        // timed-out Copy releases any pending formal Preview wait instead of
+        // leaving it parked until the next render.
+        const readyPreview = requiresPreviewResolution
+          ? Promise.resolve().then(() => options.resolvePreview?.(conversionSignal)).then(
+              (resolved) => {
+                if (!resolved || !previewReady(resolved)) {
+                  throw new Error('wechat-preview-unavailable');
+                }
+                return resolved;
+              }
+            )
+          : Promise.resolve(preview);
         const conversionRasterizationPort = options.visualRasterizationPort as WechatVisualRasterizationPort | undefined;
         const conversionImageUploadPort = options.imageUploadPort as ImageUploadPort | undefined;
         let startConversion: () => void = () => undefined;

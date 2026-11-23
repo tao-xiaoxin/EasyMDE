@@ -3016,14 +3016,6 @@ body:has(.easymde-editor.is-immersive) .wrap {
     font-feature-settings: "liga" 0;
 }
 
-.easymde-prosemirror-surface.ProseMirror > :first-child {
-    margin-top: 0;
-}
-
-.easymde-prosemirror-surface.ProseMirror > :last-child {
-    margin-bottom: 0;
-}
-
 .easymde-prosemirror-surface.ProseMirror img.ProseMirror-separator {
     display: inline !important;
     width: 0 !important;

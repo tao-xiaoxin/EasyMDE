@@ -147,7 +147,13 @@ export async function replaceVisualObjects(
           maxPixels: MAX_WECHAT_PNG_PIXELS,
           scale: context.scale,
           signal: context.signal,
-          source: candidate.element,
+          // Rasterize the connected, class-bearing source element (inside
+          // the live Preview or its layout-participating measurement clone),
+          // never the detached export clone whose classes the style inliner
+          // already stripped: the rasterizer needs the stylesheet cascade,
+          // the themed ancestor chain, and `.katex-mathml` to stay matchable.
+          // The rasterizer clones this node and never mutates it.
+          source: candidate.source,
           width: sourceRect.width
         }),
         WECHAT_PNG_RASTERIZATION_TIMEOUT_MS,

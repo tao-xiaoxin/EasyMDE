@@ -29,6 +29,7 @@ import {
   ensureWindowedVisualTargetMounted,
   enterFullVisual,
   enterImmersive,
+  expectUnifiedVisualSurface,
   openVisualMenu,
   prepareVisualTarget,
   readVisualEscapeSelectionState,
@@ -74,13 +75,10 @@ test.describe('Editor context menu production surfaces', () => {
     await login(page);
     await openNewPost(page);
     const { markdown, source } = await loadCanonicalFixture(page, 2);
-    // Two canonical fixtures are what the real document uses to reach the
-    // Windowed owner; no threshold or fixture flag is forced here.
+    // Two canonical fixtures are the long document that used to reach the
+    // retired Windowed owner; ADR-002 keeps it one unified, fully live surface.
     const { visualEditor } = await enterFullVisual(page);
-    await expect.poll(
-      () => visualEditor.locator('[data-easymde-preview-window-spacer]').count(),
-      { message: 'two canonical fixtures should activate the Windowed Visual owner' }
-    ).toBeGreaterThan(0);
+    await expectUnifiedVisualSurface(visualEditor, 160);
     const selectedText = '前端开发';
     const expected = replaceVisualSourceOccurrence(markdown, selectedText, '');
     const target = visualEditor.locator('li').filter({ hasText: selectedText }).first();
@@ -89,14 +87,9 @@ test.describe('Editor context menu production surfaces', () => {
     // The selected text has to exist in the mounted surface before the
     // gesture, otherwise the range below would be satisfied by unrelated DOM.
     await expect(target).toContainText(selectedText);
-    const mountedBefore = await visualEditor.evaluate((surface) =>
-      Array.from(surface.querySelectorAll('[data-easymde-visual-block-id]'))
-        .map((element) => element.getAttribute('data-easymde-visual-block-id'))
-    );
-    if (mountedBefore.length === 0 || new Set(mountedBefore).size !== mountedBefore.length) {
-      throw new Error(
-        `focused-windowed-list-cut-mounted-identities-invalid:${JSON.stringify(mountedBefore)}`
-      );
+    const blocksBefore = await visualEditor.evaluate((surface) => surface.children.length);
+    if (blocksBefore <= 160) {
+      throw new Error(`focused-windowed-list-cut-live-blocks-invalid:${blocksBefore}`);
     }
 
     await runVisualMutationAction(page, visualEditor, source, markdown, {
@@ -114,23 +107,16 @@ test.describe('Editor context menu production surfaces', () => {
       'focused-windowed-list-cut'
     );
     await assertSourceExactValue(source, markdown, 'focused-windowed-list-cut-reset');
-    await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
-    await expect.poll(
-      () => visualEditor.locator('[data-easymde-preview-window-spacer]').count(),
-      { message: 'the Windowed owner keeps real spacers after Cut and history' }
-    ).toBeGreaterThan(0);
-    const mountedAfter = await visualEditor.evaluate((surface) =>
-      Array.from(surface.querySelectorAll('[data-easymde-visual-block-id]'))
-        .map((element) => element.getAttribute('data-easymde-visual-block-id'))
-    );
-    if (mountedAfter.length === 0
-      || new Set(mountedAfter).size !== mountedAfter.length
-      || mountedAfter.length > 160) {
+    // After Cut and history the unified surface stays editable, the target
+    // stays live and interactive, and the same top-level block structure is
+    // restored.
+    await expectUnifiedVisualSurface(visualEditor, 160);
+    await expect(target).toBeVisible();
+    await expect(target).toContainText(selectedText);
+    const blocksAfter = await visualEditor.evaluate((surface) => surface.children.length);
+    if (blocksAfter !== blocksBefore) {
       throw new Error(
-        `focused-windowed-list-cut-mounted-window-invalid:${JSON.stringify({
-          cap: 160,
-          mountedAfter
-        })}`
+        `focused-windowed-list-cut-live-blocks-drift:${JSON.stringify({ blocksAfter, blocksBefore })}`
       );
     }
   });
@@ -159,15 +145,13 @@ test.describe('Editor context menu production surfaces', () => {
           if (expectedBuild) {
             await expect.poll(() => page.evaluate(() => [...new Set(performance.getEntriesByType('resource')
               .map((entry) => new URL(entry.name).pathname.split('/').pop())
-              .filter((name) => /^admin-editor-[A-Za-z0-9_-]+\.js$/u.test(name ?? '') && !name.includes('loader-')))]))
+              .filter((name) => /^admin-editor-[A-Za-z0-9_-]+\.js$/u.test(name ?? '') && !name.includes('loader-') && !name.startsWith('admin-editor-chunk-')))]))
               .toEqual([expectedBuild]);
           }
           const { markdown, source } = await loadCanonicalFixture(page, owner === 'full' ? 1 : 2);
           const { visualEditor } = await enterFullVisual(page);
           await waitForVisualPreviewAccepted(visualEditor, `${owner}-escape-before`);
-          const spacers = visualEditor.locator('[data-easymde-preview-window-spacer]');
-          if (owner === 'windowed') await expect.poll(() => spacers.count()).toBeGreaterThan(0);
-          else await expect(spacers).toHaveCount(0);
+          await expectUnifiedVisualSurface(visualEditor, owner === 'windowed' ? 160 : 0);
           const paragraph = visualEditor.locator('p').filter({ hasText: '普通文本' }).first();
           if (owner === 'windowed') await ensureWindowedVisualTargetMounted(page, paragraph, 0);
           await prepareVisualTarget(visualEditor, paragraph);
@@ -254,13 +238,7 @@ test.describe('Editor context menu production surfaces', () => {
         await openNewPost(page);
         const { markdown, source } = await loadCanonicalFixture(page, 'full' === owner ? 1 : 2);
         const full = await enterFullVisual(page);
-        if ('windowed' === owner) {
-          await expect.poll(
-            () => full.visualEditor.locator('[data-easymde-preview-window-spacer]').count()
-          ).toBeGreaterThan(0);
-        } else {
-          await expect(full.visualEditor.locator('[data-easymde-preview-window-spacer]')).toHaveCount(0);
-        }
+        await expectUnifiedVisualSurface(full.visualEditor, 'windowed' === owner ? 160 : 0);
         await runVisualActionMatrix(page, full.visualEditor, source, markdown, 0, owner, group);
         await repeatAfterFormalPreview(page, full.strings, source, markdown, 0);
         await assertSourceExactValue(source, markdown, `${owner}-${group}-actions-complete`);
@@ -286,9 +264,7 @@ test.describe('Editor context menu production surfaces', () => {
       await replaceSourceWithNativeInput(page, sourceEditor, source, windowedMarkdown, 'windowed-fixture-applied');
       await waitForSourcePreviewAccepted(preview, 'full-to-windowed-preview');
       const windowed = await enterFullVisual(page);
-      await expect.poll(
-        () => windowed.visualEditor.locator('[data-easymde-preview-window-spacer]').count()
-      ).toBeGreaterThan(0);
+      await expectUnifiedVisualSurface(windowed.visualEditor, 160);
       await repeatAfterFormalPreview(page, windowed.strings, source, windowedMarkdown, 0);
       await page.getByRole('button', { name: windowed.strings.exit, exact: true }).click();
       await expect(page.locator('.easymde-editor.is-immersive')).toHaveCount(0);
@@ -371,13 +347,8 @@ test.describe('Editor context menu production surfaces', () => {
     const { markdown, source } = await loadCanonicalFixture(page, 2);
     const { visualEditor } = await enterFullVisual(page);
     await expect(source).toHaveValue(markdown);
-    await expect.poll(
-      () => visualEditor.locator('[data-easymde-preview-window-spacer]').count(),
-      { message: 'two canonical fixtures should activate the Windowed Visual owner' }
-    ).toBeGreaterThan(0);
-    await expect.poll(
-      () => visualEditor.locator('[data-easymde-visual-block-id]').count()
-    ).toBeLessThanOrEqual(160);
+    // ADR-002: two canonical fixtures stay one unified, fully live surface.
+    await expectUnifiedVisualSurface(visualEditor, 160);
 
     const canvas = page.locator('.easymde-immersive-preview-canvas');
     await canvas.evaluate((element) => {
@@ -403,9 +374,7 @@ test.describe('Editor context menu production surfaces', () => {
       source,
       target: bottomMermaid
     });
-    await expect.poll(
-      () => visualEditor.locator('[data-easymde-visual-block-id]').count()
-    ).toBeLessThanOrEqual(160);
+    await expectUnifiedVisualSurface(visualEditor, 160);
     await expect(source).toHaveValue(markdown);
   });
 
@@ -561,10 +530,8 @@ test.describe('Editor context menu production surfaces', () => {
     await replaceSourceWithNativeInput(page, sourceEditor, source, markdown, 'windowed-thematic-break-input');
     await waitForSourceExactValue(source, markdown, 'windowed-thematic-break-before');
     const full = await enterFullVisual(page);
-    await expect.poll(
-      () => full.visualEditor.locator('[data-easymde-preview-window-spacer]').count(),
-      { message: 'synthetic long source should activate the Windowed Visual owner' }
-    ).toBeGreaterThan(0);
+    // ADR-002: the synthetic long source stays one unified, fully live surface.
+    await expectUnifiedVisualSurface(full.visualEditor, 160);
     const canvas = page.locator('.easymde-immersive-preview-canvas');
     await canvas.evaluate((element) => {
       element.scrollTop = element.scrollHeight;
@@ -604,9 +571,7 @@ test.describe('Editor context menu production surfaces', () => {
 
     const visual = await enterFullVisual(page);
     await waitForVisualPreviewAccepted(visual.visualEditor, 'windowed-hr-before');
-    await expect.poll(
-      () => visual.visualEditor.locator('[data-easymde-preview-window-spacer]').count()
-    ).toBeGreaterThan(0);
+    await expectUnifiedVisualSurface(visual.visualEditor, 160);
     await visual.visualEditor.evaluate((surface) => {
       for (let node = surface; node instanceof HTMLElement; node = node.parentElement) {
         node.scrollTop = 0;
@@ -618,8 +583,22 @@ test.describe('Editor context menu production surfaces', () => {
     await expect(thematicBreak).toBeVisible();
     const markerStart = occurrenceOffset(windowedMarkdown, '\n---\n') + 1;
     if (markerStart < 1) throw new Error('windowed-hr-source-marker-missing');
+    // Native Backspace removes the whole `horizontal_rule` node in ProseMirror
+    // (unlike the canonical `delete-thematic-break` command, which removes only
+    // the marker bytes). The two surviving untouched blocks keep their raw
+    // source and are re-joined by one standard block separator, so the blank
+    // lines on both sides of the marker collapse into a single `\n\n`.
+    let separatorStart = markerStart;
+    while (separatorStart > 0 && /[\r\n]/u.test(windowedMarkdown[separatorStart - 1])) {
+      separatorStart -= 1;
+    }
+    let separatorEnd = markerStart + 3;
+    while (separatorEnd < windowedMarkdown.length && /[\r\n]/u.test(windowedMarkdown[separatorEnd])) {
+      separatorEnd += 1;
+    }
+    const blockSeparator = windowedMarkdown.includes('\r\n') ? '\r\n\r\n' : '\n\n';
     const deletedMarkdown =
-      windowedMarkdown.slice(0, markerStart) + windowedMarkdown.slice(markerStart + 3);
+      `${windowedMarkdown.slice(0, separatorStart)}${blockSeparator}${windowedMarkdown.slice(separatorEnd)}`;
 
     await thematicBreak.evaluate((element) => {
       const surface = element.parentElement;

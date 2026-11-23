@@ -36,6 +36,7 @@ import {
   assertVisualActionState,
   enterFullVisual,
   enterImmersive,
+  expectUnifiedVisualSurface,
   openVisualCodeActionMenu,
   openVisualMenu,
   readSourceSelectionRange,
@@ -734,10 +735,8 @@ test.describe('Editor context menu production surfaces', () => {
     await replaceSourceWithNativeInput(page, sourceEditor, source, markdown, 'windowed-code-recovery-input');
     await waitForSourceExactValue(source, markdown, 'windowed-code-recovery-before');
     const full = await enterFullVisual(page);
-    await expect.poll(
-      () => full.visualEditor.locator('[data-easymde-preview-window-spacer]').count(),
-      { message: 'synthetic long source should activate the Windowed Visual owner' }
-    ).toBeGreaterThan(0);
+    // ADR-002: the synthetic long source stays one unified, fully live surface.
+    await expectUnifiedVisualSurface(full.visualEditor, 160);
     const canvas = page.locator('.easymde-immersive-preview-canvas');
     await canvas.evaluate((element) => {
       element.scrollTop = element.scrollHeight;
@@ -800,31 +799,22 @@ test.describe('Editor context menu production surfaces', () => {
       'windowed-code-recovery-undo',
       after.domHash
     );
-    // Recovery post-conditions: the owner stays editable, the mounted window
-    // stays bounded, every visual block id stays unique, and the menu opens on
-    // both the restored area and an unaffected surviving code block.
-    const recovery = await full.visualEditor.evaluate((editor) => {
-      const blocks = Array.from(
-        editor.querySelectorAll('[data-easymde-visual-block-id]')
-      );
-      const ids = blocks.map((block) => block.getAttribute('data-easymde-visual-block-id'));
-      const surface = 'true' === editor.getAttribute('contenteditable')
-        ? editor
-        : editor.querySelector('[contenteditable="true"]');
-      return {
-        blockCount: blocks.length,
-        contentEditable: surface?.getAttribute('contenteditable') ?? null,
-        idCount: ids.length,
-        uniqueIds: new Set(ids).size,
-        windowSpacers: editor.querySelectorAll(
-          '[data-easymde-preview-window-spacer]'
-        ).length
-      };
-    });
+    // Recovery post-conditions: the unified surface stays editable, every
+    // top-level block of the long document stays live (ADR-002 retired the
+    // Windowed spacers and mount cap), and the menu opens on both the
+    // restored area and an unaffected surviving code block.
+    const recovery = await full.visualEditor.evaluate((editor) => ({
+      blockCount: editor.children.length,
+      contentEditable: editor.getAttribute('contenteditable'),
+      prosemirrorHost: editor.getAttribute('data-easymde-prosemirror-host'),
+      windowSpacers: editor.querySelectorAll(
+        '[data-easymde-preview-window-spacer]'
+      ).length
+    }));
     expect(recovery.contentEditable).toBe('true');
-    expect(recovery.uniqueIds).toBe(recovery.idCount);
-    expect(recovery.blockCount).toBeGreaterThan(1);
-    expect(recovery.windowSpacers).toBeGreaterThan(0);
+    expect(recovery.prosemirrorHost).toBe('1');
+    expect(recovery.blockCount).toBeGreaterThan(160);
+    expect(recovery.windowSpacers).toBe(0);
     const restoredFence = full.visualEditor.locator('pre').first();
     await expect(restoredFence).toBeVisible();
     await startContextMenuDiagnostics(page, 'windowed-code-recovery-restored');

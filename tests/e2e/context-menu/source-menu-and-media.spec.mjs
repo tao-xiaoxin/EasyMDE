@@ -340,7 +340,7 @@ test.describe('Editor context menu production surfaces', () => {
       await loss.prepared.selectButton.click();
       await expect(loss.picker.dialog).toBeHidden();
       const failureMessage = await page.evaluate(() => (
-        window.EasyMDEEditorRootBootstrap?.labels?.mediaPickerFailure ?? ''
+        window.EasyMDEEditorRootBootstrap?.strings?.mediaPickerFailure ?? ''
       ));
       if (!failureMessage) {
         throw new Error(`editor-context-menu-source-media-failure-label-missing:${flag}`);
@@ -448,7 +448,7 @@ test.describe('Editor context menu production surfaces', () => {
       await loss.prepared.selectButton.click();
       await expect(loss.picker.dialog).toBeHidden();
       const failureMessage = await page.evaluate(() => (
-        window.EasyMDEEditorRootBootstrap?.labels?.mediaPickerFailure ?? ''
+        window.EasyMDEEditorRootBootstrap?.strings?.mediaPickerFailure ?? ''
       ));
       if (!failureMessage) {
         throw new Error(`editor-context-menu-source-media-failure-label-missing:${flag}`);
@@ -699,6 +699,7 @@ test.describe('Editor context menu production surfaces', () => {
       const fullConsoleProbe = startSourceMediaConsoleProbe(page);
       const fullFormatBoldProbe = await startSettingsFormatBoldProbe(page);
       let keyActionPreview;
+      let menuPreviewBefore;
       let fullOldKeyBeforeState;
       let fullOldKeyState;
       let fullCustomBeforeState;
@@ -763,7 +764,9 @@ test.describe('Editor context menu production surfaces', () => {
         );
         await full.visualEditor.press('ControlOrMeta+z');
         await waitForSourceExactValue(source, markdown, 'settings-bold-custom-full-key-undo');
-        await waitForVisualPreviewAccepted(
+        // The post-Undo (unbolded) DOM is the baseline the later menu Bold
+        // must advance from; the pre-Undo bolded hash would equal it again.
+        menuPreviewBefore = await waitForVisualPreviewAccepted(
           full.visualEditor,
           'settings-bold-custom-full-key-undo',
           keyActionPreview.domHash
@@ -799,7 +802,7 @@ test.describe('Editor context menu production surfaces', () => {
       const menuActionPreview = await waitForVisualPreviewAccepted(
         full.visualEditor,
         'settings-bold-full-menu',
-        keyActionPreview.domHash
+        menuPreviewBefore.domHash
       );
       await full.visualEditor.press('ControlOrMeta+z');
       await waitForSourceExactValue(source, markdown, 'settings-bold-full-menu-undo');

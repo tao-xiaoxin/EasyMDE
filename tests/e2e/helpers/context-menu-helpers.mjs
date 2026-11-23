@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { expect } from '@playwright/test';
 
@@ -30,9 +31,17 @@ const sourceDocumentStartKey = process.platform === 'darwin'
   ? 'Meta+ArrowUp'
   : 'Control+Home';
 
+const sourceDocumentEndKey = process.platform === 'darwin'
+  ? 'Meta+ArrowDown'
+  : 'Control+End';
+
 export const sourceLineEndKey = process.platform === 'darwin'
   ? 'Meta+ArrowRight'
   : 'End';
+
+const sourceLineStartKey = process.platform === 'darwin'
+  ? 'Meta+ArrowLeft'
+  : 'Home';
 
 export const contextMenuDiagnosticKey = '__easymdeContextMenuDiagnostic';
 
@@ -101,6 +110,73 @@ export async function login(page) {
     form.requestSubmit(submit);
   }, { password: adminPassword, username: adminUser });
   await expect(page.locator('#wpadminbar')).toBeVisible();
+}
+
+/**
+ * WordPress Core renders `#post-lock-dialog` (and so sends real
+ * `data[wp-refresh-post-lock]` heartbeats) only when the site has more than
+ * one user. On a single-user test site this provisions one disposable
+ * subscriber through the authenticated Core REST API of the logged-in
+ * administrator; `remove()` deletes it again. Never weakens the lock owner.
+ */
+export async function ensureSecondWordPressUser(page) {
+  // A REST nonce is bound to the current login session. Teardown may run after
+  // the test re-authenticated or rotated its session, so every protected phase
+  // reads a fresh nonce from the live session instead of reusing a stale one.
+  async function fetchRestHeaders() {
+    const nonceResponse = await page.request.get('/wp-admin/admin-ajax.php?action=rest-nonce');
+    if (!nonceResponse.ok()) {
+      throw new Error(`wordpress-rest-nonce-unavailable:${nonceResponse.status()}`);
+    }
+    return { 'X-WP-Nonce': (await nonceResponse.text()).trim() };
+  }
+  const headers = await fetchRestHeaders();
+  const restUrl = (route, query = '') => `/?rest_route=${encodeURIComponent(route)}${query}`;
+  const readJson = async (response, code) => {
+    if (!response.ok()) throw new Error(`${code}:${response.status()}`);
+    return response.json();
+  };
+  const users = await readJson(
+    await page.request.get(restUrl('/wp/v2/users', '&context=edit&per_page=2'), { headers }),
+    'wordpress-user-list-failed'
+  );
+  if (Array.isArray(users) && users.length >= 2) {
+    return { created: false, userCount: users.length, remove: async () => {} };
+  }
+  const current = await readJson(
+    await page.request.get(restUrl('/wp/v2/users/me'), { headers }),
+    'wordpress-current-user-failed'
+  );
+  const suffix = randomUUID().slice(0, 8);
+  const created = await readJson(
+    await page.request.post(restUrl('/wp/v2/users'), {
+      data: {
+        email: `easymde-e2e-lock-${suffix}@example.test`,
+        password: `${randomUUID()}Aa1!`,
+        roles: ['subscriber'],
+        username: `easymde-e2e-lock-${suffix}`
+      },
+      headers
+    }),
+    'wordpress-second-user-create-failed'
+  );
+  let removed = false;
+  return {
+    created: true,
+    userCount: 2,
+    async remove() {
+      if (removed) return;
+      removed = true;
+      const deleteHeaders = await fetchRestHeaders();
+      await readJson(
+        await page.request.delete(
+          restUrl(`/wp/v2/users/${created.id}`, `&force=true&reassign=${current.id}`),
+          { headers: deleteHeaders }
+        ),
+        'wordpress-second-user-delete-failed'
+      );
+    }
+  };
 }
 
 export async function openNewPost(page) {
@@ -286,6 +362,137 @@ function graphemeCount(text) {
   return [...text].length;
 }
 
+/**
+ * The original exhaustive native walk: from the document start, press the
+ * logical line end and one ArrowRight per line. Exact but linear in the line
+ * count, so it is kept only as the fallback when native vertical navigation
+ * cannot make progress.
+ */
+async function walkSourceCaretToLineStart(page, source, markdown, line) {
+  await source.press(sourceDocumentStartKey);
+  await expectSourceSelection(page, 0, 0);
+  let lineStart = 0;
+  for (let index = 0; index < line; index += 1) {
+    const boundary = sourceLineBoundary(markdown, lineStart);
+    await moveToSourceLineEnd(page, source, boundary.end);
+    await page.keyboard.press('ArrowRight');
+    lineStart = boundary.nextStart;
+    await expectSourceSelection(page, lineStart, lineStart);
+  }
+  return lineStart;
+}
+
+/**
+ * Converges the native caret onto the target logical line with genuine
+ * vertical keyboard navigation: PageUp/PageDown for large distances and
+ * ArrowUp/ArrowDown for the remainder. Every step reads the real native
+ * selection back, so soft-wrapped visual lines and real page sizes are
+ * observed rather than assumed. Returns `false` when the native caret stalls,
+ * so the caller can take the exhaustive walk instead.
+ */
+async function moveSourceCaretToLine(
+  page,
+  source,
+  markdown,
+  state,
+  sameDocument,
+  line,
+  targetLineStart,
+  targetLineEnd
+) {
+  const lastLine = sourceLineMetrics(markdown, markdown.length).line;
+  const collapsed = state.start === state.end;
+  const currentLine = sameDocument ? sourceLineMetrics(markdown, state.start).line : null;
+  const toEnd = targetLineStart > markdown.length / 2;
+  const boundaryDistance = toEnd ? lastLine - line : line;
+  const currentDistance = null === currentLine ? Infinity : Math.abs(line - currentLine);
+  if (!sameDocument || currentDistance > boundaryDistance) {
+    await source.press(toEnd ? sourceDocumentEndKey : sourceDocumentStartKey);
+    if (!toEnd) {
+      await expectSourceSelection(page, 0, 0);
+    } else if (sameDocument) {
+      await expectSourceSelection(page, markdown.length, markdown.length);
+    }
+  } else if (!collapsed) {
+    // Collapse a non-collapsed selection at its start, near the current line.
+    await page.keyboard.press('ArrowLeft');
+    await expectSourceSelection(page, state.start, state.start);
+  }
+
+  const maxSteps = markdown.split('\n').length + 64;
+  // Paging is used only while the remaining distance exceeds the largest page
+  // observed so far, so a page larger than the remaining distance cannot make
+  // the convergence oscillate.
+  let pageThreshold = 12;
+  let pos = await sourceSelectionStart(page);
+  for (let steps = 0; pos < targetLineStart || pos > targetLineEnd; steps += 1) {
+    if (steps >= maxSteps) {
+      throw new Error(
+        `source-vertical-navigation-exhausted:${JSON.stringify({ line, pos, steps })}`
+      );
+    }
+    const curLine = sourceLineMetrics(markdown, pos).line;
+    const delta = line - curLine;
+    if (0 === delta) return false;
+    const arrowKey = delta > 0 ? 'ArrowDown' : 'ArrowUp';
+    let nextPos;
+    if (Math.abs(delta) >= pageThreshold) {
+      await page.keyboard.press(delta > 0 ? 'PageDown' : 'PageUp');
+      nextPos = await sourceSelectionStart(page);
+      if (nextPos === pos) {
+        // Paging is unavailable here (short viewport or boundary).
+        pageThreshold = Infinity;
+        await page.keyboard.press(arrowKey);
+        nextPos = await sourceSelectionStart(page);
+      } else {
+        const moved = Math.abs(sourceLineMetrics(markdown, nextPos).line - curLine);
+        pageThreshold = Math.max(pageThreshold, moved);
+      }
+    } else {
+      await page.keyboard.press(arrowKey);
+      nextPos = await sourceSelectionStart(page);
+    }
+    if (nextPos === pos) return false;
+    pos = nextPos;
+  }
+  return true;
+}
+
+/**
+ * Moves the native caret from inside the target logical line to its start
+ * with the native line-start key, repeating it for soft-wrapped visual lines
+ * and indentation-aware Home semantics (mirrors `moveToSourceLineEnd`).
+ */
+async function moveSourceCaretToLineStart(page, source, markdown, targetLineStart) {
+  let current = await sourceSelectionStart(page);
+  for (let guard = 0; current > targetLineStart; guard += 1) {
+    if (guard >= 64) {
+      throw new Error('source-logical-line-start-navigation-exhausted');
+    }
+    await source.press(sourceLineStartKey);
+    const next = await sourceSelectionStart(page);
+    if (next >= current) {
+      // The native line-start key made no progress: step back one grapheme
+      // cluster per press instead.
+      const steps = graphemeCount(markdown.slice(targetLineStart, current));
+      for (let index = 0; index < steps; index += 1) {
+        await page.keyboard.press('ArrowLeft');
+      }
+      current = await sourceSelectionStart(page);
+      break;
+    }
+    current = next;
+  }
+  if (current !== targetLineStart) {
+    throw new Error(
+      `source-logical-line-start-navigation-missed:${JSON.stringify({
+        current,
+        expected: targetLineStart
+      })}`
+    );
+  }
+}
+
 export async function moveSourceCaret(page, source, markdown, offset) {
   const state = await readSourceSelection(page);
   // Identity, not just length: a same-length replacement document must still
@@ -317,21 +524,29 @@ export async function moveSourceCaret(page, source, markdown, offset) {
     await expectSourceSelection(page, offset, offset);
     return;
   }
+  const targetLineStart = offset - column;
+  const targetLineEnd = sourceLineBoundary(markdown, targetLineStart).end;
   await source.focus();
-  await source.press(sourceDocumentStartKey);
-  await expectSourceSelection(page, 0, 0);
-  let lineStart = 0;
-  for (let index = 0; index < line; index += 1) {
-    const boundary = sourceLineBoundary(markdown, lineStart);
-    await moveToSourceLineEnd(page, source, boundary.end);
-    await page.keyboard.press('ArrowRight');
-    lineStart = boundary.nextStart;
-    await expectSourceSelection(page, lineStart, lineStart);
+  const reachedTargetLine = await moveSourceCaretToLine(
+    page,
+    source,
+    markdown,
+    state,
+    sameDocument,
+    line,
+    targetLineStart,
+    targetLineEnd
+  );
+  if (reachedTargetLine) {
+    await moveSourceCaretToLineStart(page, source, markdown, targetLineStart);
+  } else {
+    await walkSourceCaretToLineStart(page, source, markdown, line);
   }
+  await expectSourceSelection(page, targetLineStart, targetLineStart);
   // Column steps are grapheme clusters, not UTF-16 units: an arrow key moves
   // one cluster, so a surrogate pair inside the target line prefix must not
   // cost two presses.
-  const columnSteps = graphemeCount(markdown.slice(lineStart, offset));
+  const columnSteps = graphemeCount(markdown.slice(targetLineStart, offset));
   for (let index = 0; index < columnSteps; index += 1) {
     await page.keyboard.press('ArrowRight');
   }
@@ -383,7 +598,8 @@ export async function replaceSourceWithNativeInput(page, sourceEditor, source, v
   await sourceEditor.focus();
   await sourceEditor.press('ControlOrMeta+a');
   // Let CodeMirror replace its complete selection in one native transaction.
-  // Mutating the virtualized contenteditable DOM only replaces mounted text.
+  // CodeMirror renders only its viewport, so mutating its mounted DOM directly
+  // would not replace the complete document.
   await page.keyboard.insertText(value);
   await waitForSourceExactValue(source, value, phase);
 }
@@ -550,7 +766,7 @@ export async function startSettingsShortcutProbe(page) {
       const selection = target?.ownerDocument.defaultView?.getSelection();
       const source = document.querySelector('#easymde-source');
       const visual = document.querySelector(
-        '[data-easymde-preview-html-sink="1"][contenteditable="true"]'
+        'article[data-easymde-prosemirror-host="1"][contenteditable="true"], [data-easymde-preview-html-sink="1"][contenteditable="true"]'
       );
       const sourceValue = source instanceof HTMLTextAreaElement ? source.value : '';
       events.push({
@@ -658,7 +874,7 @@ export async function startContextMenuDiagnostics(page, categoryId, targetMetada
     const startedAt = performance.now();
     const sourceField = document.querySelector('#easymde-source');
     const visualSurface = document.querySelector(
-      '[data-easymde-preview-html-sink="1"][contenteditable="true"]'
+      'article[data-easymde-prosemirror-host="1"][contenteditable="true"], [data-easymde-preview-html-sink="1"][contenteditable="true"]'
     );
     const describeTarget = (target) => {
       if (target === globalThis) return { className: '', tag: 'WINDOW' };
@@ -758,7 +974,10 @@ export async function startContextMenuDiagnostics(page, categoryId, targetMetada
       const canvas = document.querySelector('.easymde-immersive-preview-canvas');
       if (!canvas) return null;
       const scrollTop = canvas.scrollTop;
-      const blocks = Array.from(canvas.querySelectorAll('[data-easymde-visual-block-id]'));
+      // ADR-002: every top-level ProseMirror block is live; the retired
+      // Windowed spacers are reported only to prove they stay absent.
+      const host = canvas.querySelector('[data-easymde-prosemirror-host="1"]');
+      const blocks = host ? Array.from(host.children) : [];
       const spacers = Array.from(canvas.querySelectorAll('[data-easymde-preview-window-spacer]'));
       const table = canvas.querySelector('table');
       return {
@@ -767,8 +986,8 @@ export async function startContextMenuDiagnostics(page, categoryId, targetMetada
         lastMounted: geometryState(blocks[blocks.length - 1] ?? null),
         mountedBlockRange: {
           count: blocks.length,
-          first: blocks[0]?.getAttribute('data-easymde-visual-block-id') ?? null,
-          last: blocks[blocks.length - 1]?.getAttribute('data-easymde-visual-block-id') ?? null
+          first: blocks.length > 0 ? 'pm-block-0' : null,
+          last: blocks.length > 0 ? `pm-block-${blocks.length - 1}` : null
         },
         spacers: spacers.map((spacer) => ({
           bounds: geometryState(spacer)?.bounds ?? null,
@@ -1229,7 +1448,7 @@ export async function readContextMenuDiagnostics(
           '[data-easymde-react-preview-session="ready"]'
         ).length,
         sessionStatus: editorRoot?.getAttribute('data-easymde-session-status') ?? null,
-        visualBlockCount: document.querySelectorAll('[data-easymde-visual-block-id]').length,
+        visualBlockCount: document.querySelector('[data-easymde-prosemirror-host="1"]')?.children.length ?? 0,
         windowSpacerCount: document.querySelectorAll('[data-easymde-preview-window-spacer]').length
       },
       rootAttachCount: state?.rootAttachCount ?? 0,

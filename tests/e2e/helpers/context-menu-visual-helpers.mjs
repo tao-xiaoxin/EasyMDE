@@ -117,6 +117,24 @@ export async function enterFullVisual(page) {
   return { strings, visualEditor };
 }
 
+/**
+ * ADR-002 retired the Windowed Visual owner, its spacers, and its 160-block
+ * mount cap: one ProseMirror host keeps every top-level block of a long
+ * document live and editable. `minimumBlocks` proves the document really is
+ * long (the size that used to engage windowing).
+ */
+export async function expectUnifiedVisualSurface(visualEditor, minimumBlocks = 0) {
+  await expect(visualEditor).toHaveAttribute('data-easymde-prosemirror-host', '1');
+  await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
+  await expect(visualEditor.locator('[data-easymde-preview-window-spacer]')).toHaveCount(0);
+  if (minimumBlocks > 0) {
+    await expect.poll(
+      () => visualEditor.locator(':scope > *').count(),
+      { message: 'the long document should keep every top-level block live' }
+    ).toBeGreaterThan(minimumBlocks);
+  }
+}
+
 export async function selectVisualText(visualEditor, value, occurrence = 0) {
   await visualEditor.evaluate((surface, selectionTarget) => {
     const walker = surface.ownerDocument.createTreeWalker(surface, NodeFilter.SHOW_TEXT);
@@ -312,7 +330,9 @@ export function assertVisualActionState(state, phase) {
 
 export async function readVisualEscapeSelectionState(target, expectedSource) {
   return target.evaluate((paragraph, expected) => {
-    const surface = paragraph.closest('[data-easymde-preview-html-sink][role="textbox"]');
+    const surface = paragraph.closest(
+      'article[data-easymde-prosemirror-host="1"][contenteditable="true"], [data-easymde-preview-html-sink][role="textbox"]'
+    );
     if (!surface) throw new Error('visual-escape-surface-missing');
     const native = surface.ownerDocument.defaultView?.getSelection();
     const range = native?.rangeCount === 1 ? native.getRangeAt(0) : null;
@@ -400,6 +420,28 @@ export async function readVisualPreviewAcceptanceState(visualEditor) {
       hash ^= html.charCodeAt(index);
       hash = Math.imul(hash, 16777619);
     }
+    if (surface.matches('[data-easymde-prosemirror-host="1"]')) {
+      // ADR-002: the unlocked ProseMirror surface projects the canonical
+      // document synchronously and never carries the formal Preview sink's
+      // acceptance attributes. Its readiness is the live, connected, editable
+      // host with rendered content and no reported visual failure.
+      const failure = surface.ownerDocument
+        .querySelector('[data-easymde-visual-failure]')
+        ?.getAttribute('data-easymde-visual-failure') ?? null;
+      const ready = surface.isConnected
+        && 'true' === surface.getAttribute('contenteditable')
+        && html.length > 0
+        && null === failure;
+      return {
+        accepted: ready ? '1' : null,
+        ariaBusy: ready ? 'false' : 'true',
+        domHash: (hash >>> 0).toString(16),
+        domLength: html.length,
+        error: failure,
+        phase: ready ? 'prosemirror-ready' : 'prosemirror-pending',
+        refreshing: null
+      };
+    }
     return {
       accepted: surface.getAttribute('data-easymde-preview-accepted'),
       ariaBusy: surface.getAttribute('aria-busy'),
@@ -463,8 +505,9 @@ export async function waitForVisualPreviewAccepted(
     ).toMatchObject({ accepted: '1', ariaBusy: 'false', error: null, refreshing: null });
   } catch (error) {
     const state = await readVisualPreviewAcceptanceState(visualEditor);
-    const visualFailure = diagnosticsPage
-      ? await diagnosticsPage.locator('[data-easymde-visual-failure]').getAttribute('data-easymde-visual-failure')
+    const failureLocator = diagnosticsPage?.locator('[data-easymde-visual-failure]') ?? null;
+    const visualFailure = failureLocator && await failureLocator.count() > 0
+      ? await failureLocator.first().getAttribute('data-easymde-visual-failure')
       : null;
     throw new Error(
       `${error instanceof Error ? error.message : String(error)}\n` +
@@ -621,7 +664,7 @@ async function startVisualHistoryDiagnostics(page) {
     };
     const previewState = () => {
       const preview = document.querySelector(
-        '[data-easymde-preview-html-sink="1"][contenteditable="true"]'
+        'article[data-easymde-prosemirror-host="1"][contenteditable="true"], [data-easymde-preview-html-sink="1"][contenteditable="true"]'
       ) ?? document.querySelector('[data-easymde-preview-html-sink="1"]');
       if (!(preview instanceof Element)) return null;
       return {
@@ -673,14 +716,18 @@ async function startVisualHistoryDiagnostics(page) {
     globalThis[key] = {
       snapshot() {
         const source = document.querySelector('#easymde-source');
-        const visual = document.querySelector('[data-easymde-preview-html-sink="1"][contenteditable="true"]');
+        const visual = document.querySelector(
+          'article[data-easymde-prosemirror-host="1"][contenteditable="true"], [data-easymde-preview-html-sink="1"][contenteditable="true"]'
+        );
         const selection = visual?.ownerDocument.defaultView?.getSelection() ?? null;
         const range = selection?.rangeCount === 1 ? selection.getRangeAt(0) : null;
         const selectionNode = (node) => {
           const element = node instanceof Element ? node : node?.parentElement;
-          const block = element?.closest('[data-easymde-visual-block-id]');
+          let block = element ?? null;
+          while (block && visual && block.parentElement !== visual) block = block.parentElement;
+          const index = block && visual ? Array.prototype.indexOf.call(visual.children, block) : -1;
           return {
-            blockId: block?.getAttribute('data-easymde-visual-block-id') ?? null,
+            blockId: index >= 0 ? `pm-block-${index}` : null,
             connected: Boolean(node?.isConnected),
             tag: element?.tagName ?? null
           };
@@ -1275,7 +1322,13 @@ async function readVisualTargetMetadata(target) {
             ? element.className.slice(0, 160)
             : '',
           connected: element.isConnected,
-          blockId: element.getAttribute('data-easymde-visual-block-id'),
+          blockId: (() => {
+            const surface = element.closest('[data-easymde-prosemirror-host="1"]');
+            let block = element;
+            while (block && surface && block.parentElement !== surface) block = block.parentElement;
+            const index = block && surface ? Array.prototype.indexOf.call(surface.children, block) : -1;
+            return index >= 0 ? `pm-block-${index}` : null;
+          })(),
           tag: element.tagName,
           text: (element.textContent ?? '').slice(0, 120)
         };
@@ -1301,15 +1354,15 @@ export async function scrollWindowedVisualToTop(page, visualEditor) {
   await expect.poll(
     () => canvas.evaluate((element) => element.scrollTop)
   ).toBe(0);
-  // The Windowed owner remounts its window asynchronously after a scroll, so
-  // wait until the document head — and with it the first fixture image pair —
-  // is the mounted window before a test addresses those images.
+  // ADR-002: the unified ProseMirror surface keeps every block live, so the
+  // document head — and with it the first fixture image pair — is mounted;
+  // ProseMirror's zero-size cursor separators are not content images.
   await expect.poll(
-    () => visualEditor.evaluate((surface) =>
-      Array.from(surface.querySelectorAll('img'))
+    () => visualEditor.evaluate((surface, selector) =>
+      Array.from(surface.querySelectorAll(selector))
         .slice(0, 2)
-        .map((image) => image.getAttribute('alt'))
-    ),
+        .map((image) => image.getAttribute('alt')),
+    visualContentImageSelector),
     { message: 'the fixture head should be the mounted window' }
   ).toEqual(['占位测试图片', '风景占位图']);
 }
@@ -1341,11 +1394,12 @@ export async function visualImagePoint(image) {
       // would retarget the wrong element, so only a point whose topmost hit is
       // the image itself is usable.
       if (target.ownerDocument.elementFromPoint(x, y) !== target) continue;
+      const surface = target.closest('[data-easymde-prosemirror-host="1"]');
+      let block = target;
+      while (block && surface && block.parentElement !== surface) block = block.parentElement;
+      const blockIndex = block && surface ? Array.prototype.indexOf.call(surface.children, block) : -1;
       return {
-        block:
-          target
-            .closest('[data-easymde-visual-block-id]')
-            ?.getAttribute('data-easymde-visual-block-id') ?? null,
+        block: blockIndex >= 0 ? `pm-block-${blockIndex}` : null,
         label: target.getAttribute('alt'),
         x,
         y
@@ -1360,7 +1414,7 @@ async function readVisualTextPoint(visualEditor) {
     const view = surface.ownerDocument.defaultView;
     const paragraphs = Array.from(surface.querySelectorAll('p')).filter(
       (paragraph) =>
-        !paragraph.querySelector('img')
+        !paragraph.querySelector('img:not(.ProseMirror-separator)')
         && (paragraph.textContent ?? '').trim().length > 8
     );
     for (const paragraph of paragraphs) {
@@ -1375,11 +1429,11 @@ async function readVisualTextPoint(visualEditor) {
         for (let x = rect.left + 24; x < rect.right - 24; x += 40) {
           const hit = surface.ownerDocument.elementFromPoint(x, y);
           if (!hit || !surface.contains(hit) || hit.closest('img')) continue;
+          let block = hit;
+          while (block && block.parentElement !== surface) block = block.parentElement;
+          const blockIndex = block ? Array.prototype.indexOf.call(surface.children, block) : -1;
           return {
-            block:
-              hit
-                .closest('[data-easymde-visual-block-id]')
-                ?.getAttribute('data-easymde-visual-block-id') ?? null,
+            block: blockIndex >= 0 ? `pm-block-${blockIndex}` : null,
             x,
             y
           };
@@ -1421,60 +1475,102 @@ export async function readVisibleBand(page) {
     });
 }
 
+/**
+ * Real content images on the unified ProseMirror surface. ProseMirror's
+ * zero-size `img.ProseMirror-separator` cursor hacks are never content.
+ */
+export const visualContentImageSelector = 'img:not(.ProseMirror-separator)';
+
+/**
+ * ADR-002 retired the Windowed `[data-easymde-visual-block-id]` identities.
+ * A block is addressed by its top-level position on the ProseMirror host,
+ * `pm-block-<index>`, which is stable while the document structure is.
+ */
+export function visualBlockLocator(visualEditor, blockId) {
+  const match = /^pm-block-(\d+)$/u.exec(blockId ?? '');
+  if (!match) throw new Error(`visual-block-id-invalid:${blockId}`);
+  return visualEditor.locator(':scope > *').nth(Number(match[1]));
+}
+
+export function visualBlockImage(visualEditor, blockId) {
+  return visualBlockLocator(visualEditor, blockId).locator(visualContentImageSelector);
+}
+
 export async function readMountedVisualImages(visualEditor) {
-  return visualEditor.evaluate((surface) =>
-    Array.from(surface.querySelectorAll('img')).map((image) => ({
-      alt: image.getAttribute('alt'),
-      block:
-        image
-          .closest('[data-easymde-visual-block-id]')
-          ?.getAttribute('data-easymde-visual-block-id') ?? null
-    }))
-  );
+  return visualEditor.evaluate((surface, selector) =>
+    Array.from(surface.querySelectorAll(selector)).map((image) => {
+      let block = image;
+      while (block && block.parentElement !== surface) block = block.parentElement;
+      const index = block ? Array.prototype.indexOf.call(surface.children, block) : -1;
+      return {
+        alt: image.getAttribute('alt'),
+        block: index >= 0 ? `pm-block-${index}` : null
+      };
+    }),
+  visualContentImageSelector);
 }
 
 export async function readVisualImageTargetState(visualEditor) {
-  return visualEditor.evaluate((surface) => {
+  return visualEditor.evaluate((surface, selector) => {
     const selection = surface.ownerDocument.defaultView?.getSelection();
     const range = selection?.rangeCount === 1 ? selection.getRangeAt(0) : null;
-    const images = Array.from(surface.querySelectorAll('img'));
+    const images = Array.from(surface.querySelectorAll(selector));
     const blockOf = (node) => {
-      const element = node instanceof Element
+      let block = node instanceof Element
         ? node
         : node?.parentElement ?? null;
-      return element
-        ?.closest('[data-easymde-visual-block-id]')
-        ?.getAttribute('data-easymde-visual-block-id') ?? null;
+      while (block && block.parentElement !== surface) block = block.parentElement;
+      const index = block ? Array.prototype.indexOf.call(surface.children, block) : -1;
+      return index >= 0 ? `pm-block-${index}` : null;
     };
-    const marker = surface.ownerDocument.querySelector(
-      '.easymde-visual-image-selection-feedback'
+    // ADR-002: the selected image itself carries the visible target ring
+    // (ImageNodeView box-shadow), replacing the retired feedback overlay. The
+    // painted ring is clipped by every overflow-clipping ancestor (the
+    // immersive canvas) and the viewport, so report that visible box.
+    const marker = surface.querySelector(
+      'img[data-easymde-visual-image-selected="1"].easymde-visual-image-selected'
     );
-    const markerRect = marker?.getBoundingClientRect() ?? null;
-    const markerHit = markerRect
-      ? surface.ownerDocument.elementFromPoint(
-          markerRect.left + markerRect.width / 2,
-          markerRect.top + markerRect.height / 2
-        )
-      : null;
+    const view = surface.ownerDocument.defaultView;
+    let markerRect = null;
+    if (marker && 'none' !== view?.getComputedStyle(marker).boxShadow) {
+      const rect = marker.getBoundingClientRect();
+      let clipTop = 0;
+      let clipBottom = view.innerHeight;
+      let clipLeft = 0;
+      let clipRight = view.innerWidth;
+      for (let node = marker.parentElement; node; node = node.parentElement) {
+        const style = view.getComputedStyle(node);
+        if ('visible' === style.overflowY && 'visible' === style.overflowX) continue;
+        const clip = node.getBoundingClientRect();
+        clipTop = Math.max(clipTop, clip.top);
+        clipBottom = Math.min(clipBottom, clip.bottom);
+        clipLeft = Math.max(clipLeft, clip.left);
+        clipRight = Math.min(clipRight, clip.right);
+      }
+      // A ring scrolled fully out of the band paints nothing; it collapses to
+      // an empty box at the band edge instead of escaping over page chrome.
+      const top = Math.min(Math.max(rect.top, clipTop), clipBottom);
+      const bottom = Math.max(Math.min(rect.bottom, clipBottom), top);
+      const left = Math.min(Math.max(rect.left, clipLeft), clipRight);
+      const right = Math.max(Math.min(rect.right, clipRight), left);
+      markerRect = {
+        height: Math.round(bottom - top),
+        left: Math.round(left),
+        top: Math.round(top),
+        width: Math.round(right - left)
+      };
+    }
     return {
       anchorBlock: blockOf(selection?.anchorNode ?? null),
       collapsed: Boolean(selection?.isCollapsed),
       imageBlocks: images.map((image) => blockOf(image)),
-      markerBlock: markerHit?.closest?.('[data-easymde-visual-block-id]')
-        ?.getAttribute('data-easymde-visual-block-id') ?? null,
-      markerRect: markerRect
-        ? {
-            height: Math.round(markerRect.height),
-            left: Math.round(markerRect.left),
-            top: Math.round(markerRect.top),
-            width: Math.round(markerRect.width)
-          }
-        : null,
-      markerTop: markerRect ? Math.round(markerRect.top) : null,
+      markerBlock: marker && markerRect ? blockOf(marker) : null,
+      markerRect,
+      markerTop: markerRect ? markerRect.top : null,
       overlaps: range ? images.map((image) => range.intersectsNode(image)) : [],
       rangeCount: selection?.rangeCount ?? 0
     };
-  });
+  }, visualContentImageSelector);
 }
 
 export async function readMenuRect(page) {
@@ -1492,27 +1588,28 @@ export async function readMenuRect(page) {
 }
 
 export async function revealWindowedVisualBlock(page, blockId) {
+  const match = /^pm-block-(\d+)$/u.exec(blockId ?? '');
+  if (!match) throw new Error(`visual-block-id-invalid:${blockId}`);
   await page
     .locator('.easymde-immersive-preview-canvas')
-    .evaluate((canvas, id) => {
-      const block = canvas.querySelector(
-        `[data-easymde-visual-block-id="${id}"]`
-      );
+    .evaluate((canvas, index) => {
+      const surface = canvas.querySelector('[data-easymde-prosemirror-host="1"]');
+      const block = surface?.children[index];
       if (!(block instanceof HTMLElement)) {
-        throw new Error(`windowed-visual-block-unmounted:${id}`);
+        throw new Error(`visual-block-unavailable:${index}`);
       }
       const offset =
         block.getBoundingClientRect().top - canvas.getBoundingClientRect().top;
       canvas.scrollTop += offset - 12;
       canvas.dispatchEvent(new Event('scroll', { bubbles: true }));
-    }, blockId);
+    }, Number(match[1]));
 }
 
 export async function openVisualImageMenu(page, image) {
   // The point is computed immediately before the click and never scrolls the
-  // surface: an intervening scroll would dismiss an open menu, and a window
-  // commit would move the image out from under stored coordinates while the
-  // click stays where it was.
+  // unified ProseMirror visual surface: an intervening scroll would dismiss an
+  // open menu and move the image out from under the stored coordinates while
+  // the click stays where it was.
   const point = await visualImagePoint(image);
   await page.mouse.click(point.x, point.y, { button: 'right' });
   await expect(page.locator(menuSelector)).toHaveCount(1);
@@ -1626,9 +1723,7 @@ export async function assertVisualCategory(page, visualEditor, category) {
         ? () => placeVisualCaret(category.target)
         : () => selectVisualElement(category.target);
     phase = 'open';
-    if (await visualEditor.locator('[data-easymde-preview-window-spacer]').count() > 0) {
-      await ensureWindowedVisualTargetMounted(page, category.target, category.occurrence ?? 0);
-    }
+    await ensureWindowedVisualTargetMounted(page, category.target, category.occurrence ?? 0);
     await openVisualMenu(
       page,
       visualEditor,
@@ -1749,7 +1844,7 @@ function visualCategoryMatrix(visualEditor, occurrence = 'first') {
       },
       items: { 'delete-image': 'enabled' },
       submenu: 'image-scale',
-      targetFactory: target('img')
+      targetFactory: target(visualContentImageSelector)
     },
     {
       id: 'table',

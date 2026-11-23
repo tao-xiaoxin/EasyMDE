@@ -4,6 +4,7 @@ import {
   assertSourceExactValue,
   closeMenu,
   createImageRequestGate,
+  ensureSecondWordPressUser,
   expectMenuItemState,
   expectSourceSelection,
   imageScaleSource,
@@ -50,10 +51,12 @@ import {
   openVisualImageMenu,
   openVisualMenu,
   readMenuRect,
+  expectUnifiedVisualSurface,
   readMountedVisualImages,
   readVisibleBand,
   readVisualImageTargetState,
   revealWindowedVisualBlock,
+  visualBlockImage,
   scrollWindowedVisualToTop,
   visualImagePoint
 } from '../helpers/context-menu-visual-helpers.mjs';
@@ -62,6 +65,21 @@ test.use({
   permissions: ['clipboard-read', 'clipboard-write'],
   trace: 'off',
   video: 'off'
+});
+
+// Core renders `#post-lock-dialog`, and so sends real lock-refresh heartbeats,
+// only on a multi-user site; guarantee one disposable second user with
+// teardown deletion for the heartbeat classifier test.
+const testWithSecondUser = test.extend({
+  secondWordPressUser: async ({ page }, use) => {
+    await login(page);
+    const user = await ensureSecondWordPressUser(page);
+    try {
+      await use(user);
+    } finally {
+      await user.remove();
+    }
+  }
 });
 
 test.describe('Editor context menu production surfaces', () => {
@@ -350,8 +368,9 @@ test.describe('Editor context menu production surfaces', () => {
     }
   });
 
-  test('classifies real Core heartbeat reads and denies real autosave, unknown owners, and foreign posts', async ({ page }) => {
-    await login(page);
+  testWithSecondUser('classifies real Core heartbeat reads and denies real autosave, unknown owners, and foreign posts', async ({ page, secondWordPressUser }) => {
+    expect(secondWordPressUser.userCount).toBeGreaterThanOrEqual(2);
+    // The `secondWordPressUser` fixture already authenticated this page.
     await openNewPost(page);
     const { markdown, source, sourceEditor } = await loadCanonicalFixture(page);
     // Persist the disposable draft once through the real native save so the
@@ -363,6 +382,7 @@ test.describe('Editor context menu production surfaces', () => {
     await savePost.click();
     await savedNavigation;
     await expect(page.locator('#easymde-editor')).toBeVisible();
+    await expect(page.locator('#post-lock-dialog')).toHaveCount(1);
     await assertSourceExactValue(source, markdown, 'native-read-probe-saved');
     const identity = await readNativeWordPressIdentity(page);
     if (!identity.postId || '0' === identity.postId) {
@@ -902,13 +922,10 @@ test.describe('Editor context menu production surfaces', () => {
     await openNewPost(page);
     const { markdown, source } = await loadCanonicalFixture(page, 2);
     const { visualEditor } = await enterFullVisual(page);
-    await expect.poll(
-      () => visualEditor.locator('[data-easymde-preview-window-spacer]').count(),
-      { message: 'two canonical fixtures should activate the Windowed Visual owner' }
-    ).toBeGreaterThan(0);
-    // The Windowed owner mounts the window that surrounds the caret, and the
-    // fixture editor leaves its caret at the document end. Scroll to the top
-    // so both fixture images of the first copy are mounted and clickable.
+    // ADR-002: two canonical fixtures stay one unified, fully live surface.
+    await expectUnifiedVisualSurface(visualEditor, 160);
+    // The fixture editor leaves its caret at the document end. Scroll to the
+    // top so both fixture images of the first copy are visible and clickable.
     await scrollWindowedVisualToTop(page, visualEditor);
     const mounted = await readMountedVisualImages(visualEditor);
     const firstBlock = mounted[0]?.block ?? null;
@@ -921,12 +938,8 @@ test.describe('Editor context menu production surfaces', () => {
     // Every demand below addresses its image by block identity, and both images
     // stay mounted and visible so no gesture has to scroll the surface.
     await revealWindowedVisualBlock(page, firstBlock);
-    const first = visualEditor.locator(
-      `[data-easymde-visual-block-id="${firstBlock}"] img`
-    );
-    const second = visualEditor.locator(
-      `[data-easymde-visual-block-id="${secondBlock}"] img`
-    );
+    const first = visualBlockImage(visualEditor, firstBlock);
+    const second = visualBlockImage(visualEditor, secondBlock);
     await expect(first).toHaveCount(1);
     await expect(second).toHaveCount(1);
     await assertSourceExactValue(source, markdown, 'image-pointer-before');
@@ -995,10 +1008,8 @@ test.describe('Editor context menu production surfaces', () => {
     await openNewPost(page);
     const { markdown, source } = await loadCanonicalFixture(page, 2);
     const { visualEditor } = await enterFullVisual(page);
-    await expect.poll(
-      () => visualEditor.locator('[data-easymde-preview-window-spacer]').count(),
-      { message: 'two canonical fixtures should activate the Windowed Visual owner' }
-    ).toBeGreaterThan(0);
+    // ADR-002: two canonical fixtures stay one unified, fully live surface.
+    await expectUnifiedVisualSurface(visualEditor, 160);
     await scrollWindowedVisualToTop(page, visualEditor);
     const mounted = await readMountedVisualImages(visualEditor);
     const firstBlock = mounted[0]?.block ?? null;
@@ -1015,12 +1026,8 @@ test.describe('Editor context menu production surfaces', () => {
       );
     }
     await revealWindowedVisualBlock(page, firstBlock);
-    const first = visualEditor.locator(
-      `[data-easymde-visual-block-id="${firstBlock}"] img`
-    );
-    const second = visualEditor.locator(
-      `[data-easymde-visual-block-id="${secondBlock}"] img`
-    );
+    const first = visualBlockImage(visualEditor, firstBlock);
+    const second = visualBlockImage(visualEditor, secondBlock);
     await expect(first).toHaveCount(1);
     await expect(second).toHaveCount(1);
     const firstMarkdown = markdown.match(/!\[占位测试图片\]\([^\r\n]+\)/u)?.[0];
@@ -1080,10 +1087,8 @@ test.describe('Editor context menu production surfaces', () => {
     await openNewPost(page);
     const { markdown, source } = await loadCanonicalFixture(page, 2);
     const { visualEditor } = await enterFullVisual(page);
-    await expect.poll(
-      () => visualEditor.locator('[data-easymde-preview-window-spacer]').count(),
-      { message: 'two canonical fixtures should activate the Windowed Visual owner' }
-    ).toBeGreaterThan(0);
+    // ADR-002: two canonical fixtures stay one unified, fully live surface.
+    await expectUnifiedVisualSurface(visualEditor, 160);
     await scrollWindowedVisualToTop(page, visualEditor);
     const mounted = await readMountedVisualImages(visualEditor);
     const firstBlock = mounted[0]?.block ?? null;
@@ -1096,12 +1101,8 @@ test.describe('Editor context menu production surfaces', () => {
     // Both images stay mounted and visible, so no gesture has to scroll the
     // surface while it interacts with them.
     await revealWindowedVisualBlock(page, firstBlock);
-    const first = visualEditor.locator(
-      `[data-easymde-visual-block-id="${firstBlock}"] img`
-    );
-    const second = visualEditor.locator(
-      `[data-easymde-visual-block-id="${secondBlock}"] img`
-    );
+    const first = visualBlockImage(visualEditor, firstBlock);
+    const second = visualBlockImage(visualEditor, secondBlock);
     await expect(first).toHaveCount(1);
     await expect(second).toHaveCount(1);
     await assertSourceExactValue(source, markdown, 'image-activation-before');

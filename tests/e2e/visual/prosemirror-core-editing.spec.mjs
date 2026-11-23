@@ -16,21 +16,44 @@ import {
 const PREVIEW_SINK_SELECTOR = '.easymde-pane-preview [data-easymde-preview-html-sink="1"]';
 const PREVIEW_POST_PATTERN = /\/wp-json\/easymde\/v1\/preview\/?$/u;
 
-function attachRuntimeErrorTracker(page) {
+function consoleErrorLocationPath(message) {
+  try {
+    const url = message.location()?.url;
+    return url ? new URL(url).pathname || 'unknown' : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
+ * Collects runtime errors once attached. Tests attach it only after login so
+ * asynchronous wp-admin Dashboard noise from the login redirect cannot leak
+ * into the editor assertions. Console errors keep a bounded, single-line
+ * excerpt plus the emitting path so a failure names its real cause.
+ */
+function createRuntimeErrorTracker(page) {
   const errors = [];
+  let attached = false;
   const onConsole = (message) => {
     if (message.type() === 'error') {
-      errors.push('console-error');
+      const text = String(message.text() ?? '').replace(/\s+/gu, ' ').trim().slice(0, 140);
+      errors.push(`console-error:${text}@${consoleErrorLocationPath(message)}`);
     }
   };
   const onPageError = (error) => {
     errors.push(`pageerror:${error?.name || 'Error'}`);
   };
-  page.on('console', onConsole);
-  page.on('pageerror', onPageError);
   return {
     errors,
+    attach() {
+      if (attached) return;
+      attached = true;
+      page.on('console', onConsole);
+      page.on('pageerror', onPageError);
+    },
     dispose() {
+      if (!attached) return;
+      attached = false;
       page.off('console', onConsole);
       page.off('pageerror', onPageError);
     }
@@ -85,7 +108,7 @@ test.describe('Unified ProseMirror visual editor core editing', () => {
   registerEditorWorkflowHooks();
 
   test('mounts directly for CSS parity, auto-focuses on unlock, and locks back with zero writes when unedited', async ({ page }, testInfo) => {
-    const tracker = attachRuntimeErrorTracker(page);
+    const tracker = createRuntimeErrorTracker(page);
     const previewPostsAfterUnlock = [];
     const onRequest = (request) => {
       if (isPreviewPostRequest(request)) {
@@ -101,6 +124,7 @@ test.describe('Unified ProseMirror visual editor core editing', () => {
       ].join('\n\n');
 
       await login(page, testInfo.easymdeUser);
+      tracker.attach();
       await openEasyMdeNewPost(page);
       await fillMarkdownAndWaitForPreview(page, markdown, 'Visual Direct Mount Title');
 
@@ -118,6 +142,18 @@ test.describe('Unified ProseMirror visual editor core editing', () => {
       const directFirstHeading = visualEditor.locator(':scope > h1:first-child');
       await expect(directFirstHeading).toHaveCount(1);
       await expect(directFirstHeading).toHaveText('Visual Direct Mount Title');
+
+      const unlockedGeometry = await visualEditor.evaluate((surface) => {
+        const first = surface.firstElementChild;
+        const last = surface.lastElementChild;
+        const rect = first?.getBoundingClientRect();
+        return {
+          firstTop: rect ? Math.round(rect.top * 100) / 100 : null,
+          firstLeft: rect ? Math.round(rect.left * 100) / 100 : null,
+          firstMarginTop: first ? getComputedStyle(first).marginTop : null,
+          lastMarginBottom: last ? getComputedStyle(last).marginBottom : null
+        };
+      });
 
       // Read-only formal Preview sink remains non-editable and hidden while unlocked.
       const previewSink = page.locator(PREVIEW_SINK_SELECTOR);
@@ -140,6 +176,23 @@ test.describe('Unified ProseMirror visual editor core editing', () => {
       await expect(previewSink).toHaveAttribute('aria-busy', 'false');
       await expect(page.getByRole('button', { name: labels.previewUnlockEdit })).toBeEnabled();
       await expect(source).toHaveValue(markdown);
+
+      const lockedGeometry = await previewSink.evaluate((surface) => {
+        const first = surface.firstElementChild;
+        const last = surface.lastElementChild;
+        const rect = first?.getBoundingClientRect();
+        return {
+          firstTop: rect ? Math.round(rect.top * 100) / 100 : null,
+          firstLeft: rect ? Math.round(rect.left * 100) / 100 : null,
+          firstMarginTop: first ? getComputedStyle(first).marginTop : null,
+          lastMarginBottom: last ? getComputedStyle(last).marginBottom : null
+        };
+      });
+      expect(unlockedGeometry.firstMarginTop).toBe(lockedGeometry.firstMarginTop);
+      expect(unlockedGeometry.lastMarginBottom).toBe(lockedGeometry.lastMarginBottom);
+      expect(Math.abs(unlockedGeometry.firstTop - lockedGeometry.firstTop)).toBeLessThanOrEqual(1);
+      expect(Math.abs(unlockedGeometry.firstLeft - lockedGeometry.firstLeft)).toBeLessThanOrEqual(1);
+
       expect(previewPostsAfterUnlock).toEqual([]);
       expect(tracker.errors).toEqual([]);
     } finally {
@@ -149,7 +202,7 @@ test.describe('Unified ProseMirror visual editor core editing', () => {
   });
 
   test('edits paragraphs, splits with Enter, joins with Backspace, formats inline bold and code, and round-trips Undo/Redo', async ({ page }, testInfo) => {
-    const tracker = attachRuntimeErrorTracker(page);
+    const tracker = createRuntimeErrorTracker(page);
     try {
       const initialMarkdown = [
         '# Editing Core',
@@ -158,6 +211,7 @@ test.describe('Unified ProseMirror visual editor core editing', () => {
       ].join('\n\n');
 
       await login(page, testInfo.easymdeUser);
+      tracker.attach();
       await openEasyMdeNewPost(page);
       await fillMarkdownAndWaitForPreview(page, initialMarkdown, 'First paragraph alpha.');
 
@@ -226,7 +280,7 @@ test.describe('Unified ProseMirror visual editor core editing', () => {
   });
 
   test('preserves untouched asterisk lists, padded GFM tables, and reference links byte-identically during surgical edits', async ({ page }, testInfo) => {
-    const tracker = attachRuntimeErrorTracker(page);
+    const tracker = createRuntimeErrorTracker(page);
     try {
       const initialMarkdown = [
         '# Surgical Preservation',
@@ -238,6 +292,7 @@ test.describe('Unified ProseMirror visual editor core editing', () => {
       ].join('\n\n');
 
       await login(page, testInfo.easymdeUser);
+      tracker.attach();
       await openEasyMdeNewPost(page);
       await fillMarkdownAndWaitForPreview(page, initialMarkdown, 'Editable intro paragraph.');
 
@@ -260,7 +315,7 @@ test.describe('Unified ProseMirror visual editor core editing', () => {
   });
 
   test('preserves asterisk and plus list markers across visual edits and task list checkbox toggles', async ({ page }, testInfo) => {
-    const tracker = attachRuntimeErrorTracker(page);
+    const tracker = createRuntimeErrorTracker(page);
     try {
       const initialMarkdown = [
         '* Star bullet one\n* Star bullet two',
@@ -270,6 +325,7 @@ test.describe('Unified ProseMirror visual editor core editing', () => {
       ].join('\n\n');
 
       await login(page, testInfo.easymdeUser);
+      tracker.attach();
       await openEasyMdeNewPost(page);
       await fillMarkdownAndWaitForPreview(page, initialMarkdown, 'Pending plus task');
 
@@ -325,7 +381,7 @@ test.describe('Unified ProseMirror visual editor core editing', () => {
   });
 
   test('refreshes the formal PHP Preview sink on lock after a ProseMirror edit and keeps source synchronized', async ({ page }, testInfo) => {
-    const tracker = attachRuntimeErrorTracker(page);
+    const tracker = createRuntimeErrorTracker(page);
     try {
       const initialMarkdown = [
         '# Lock Handoff Title',
@@ -333,6 +389,7 @@ test.describe('Unified ProseMirror visual editor core editing', () => {
       ].join('\n\n');
 
       await login(page, testInfo.easymdeUser);
+      tracker.attach();
       await openEasyMdeNewPost(page);
       await fillMarkdownAndWaitForPreview(page, initialMarkdown, 'Original paragraph before visual edit.');
 

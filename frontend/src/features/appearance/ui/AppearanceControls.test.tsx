@@ -205,7 +205,7 @@ describe('AppearanceControls', () => {
     await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
 
     expect(
-      screen.getByRole('dialog', { name: 'Custom CSS theme' })
+      (await screen.findByRole('dialog', { name: 'Custom CSS theme' }))
       .getAttribute('aria-modal')
     ).toBe('true');
     expect(
@@ -247,7 +247,7 @@ describe('AppearanceControls', () => {
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
     await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
 
-    const articleName = screen.getByRole('textbox', {
+    const articleName = await screen.findByRole('textbox', {
       name: 'Article theme name'
     });
     const codeName = screen.getByRole('textbox', { name: 'Code theme name' });
@@ -354,7 +354,7 @@ describe('AppearanceControls', () => {
 
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
     await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
-    const articleName = screen.getByRole('textbox', {
+    const articleName = await screen.findByRole('textbox', {
       name: 'Article theme name'
     });
     const codeName = screen.getByRole('textbox', { name: 'Code theme name' });
@@ -441,7 +441,7 @@ describe('AppearanceControls', () => {
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
     await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
 
-    const dialog = screen.getByRole('dialog', { name: 'Custom CSS theme' });
+    const dialog = await screen.findByRole('dialog', { name: 'Custom CSS theme' });
     expect(
       within(dialog).getByRole('heading', {
         level: 1,
@@ -515,7 +515,7 @@ describe('AppearanceControls', () => {
     await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
 
     const categoryTabs = within(
-      screen.getByRole('tablist', { name: 'Theme variable categories' })
+      await screen.findByRole('tablist', { name: 'Theme variable categories' })
     );
     const foundationTab = categoryTabs.getByRole('tab', {
       name: 'Foundation'
@@ -626,7 +626,7 @@ describe('AppearanceControls', () => {
 
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
     await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
-    await user.click(screen.getByRole('button', { name: 'Apply theme' }));
+    await user.click(await screen.findByRole('button', { name: 'Apply theme' }));
 
     expect(saveCustomCss).toHaveBeenCalledTimes(1);
     expect(saveCustomCss).toHaveBeenCalledWith(expect.objectContaining({
@@ -664,7 +664,7 @@ describe('AppearanceControls', () => {
 
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
     await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
-    const articleName = screen.getByRole('textbox', { name: 'Article theme name' });
+    const articleName = await screen.findByRole('textbox', { name: 'Article theme name' });
     const codeName = screen.getByRole('textbox', { name: 'Code theme name' });
 
     fireEvent.change(articleName, { target: { value: symbol.repeat(20) } });
@@ -712,7 +712,7 @@ describe('AppearanceControls', () => {
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
     await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
     await user.click(
-      screen.getByRole('button', { name: /Custom CSS code/ })
+      await screen.findByRole('button', { name: /Custom CSS code/ })
     );
     const editor = screen.getByRole('textbox', { name: 'Custom CSS code' });
     fireEvent.change(editor, { target: { value: authoredCss } });
@@ -813,7 +813,7 @@ describe('AppearanceControls', () => {
 
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
     await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
-    const primaryColor = screen.getByRole('textbox', { name: 'Primary color' });
+    const primaryColor = await screen.findByRole('textbox', { name: 'Primary color' });
     await user.clear(primaryColor);
     await user.type(primaryColor, '#12ab34');
     await user.click(screen.getByRole('button', { name: 'Apply theme' }));
@@ -856,7 +856,7 @@ describe('AppearanceControls', () => {
 
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
     await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
-    await user.click(screen.getByRole('button', { name: 'Apply theme' }));
+    await user.click(await screen.findByRole('button', { name: 'Apply theme' }));
 
     const input = saveCustomCss.mock.calls[0]?.[0];
     expect(input).toEqual(expect.objectContaining({
@@ -893,7 +893,7 @@ describe('AppearanceControls', () => {
 
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
     await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
-    const codeName = screen.getByRole('textbox', { name: 'Code theme name' });
+    const codeName = await screen.findByRole('textbox', { name: 'Code theme name' });
     await user.clear(codeName);
     await user.type(codeName, 'Midnight Code');
     await user.click(screen.getByRole('button', { name: 'Apply theme' }));
@@ -927,7 +927,7 @@ describe('AppearanceControls', () => {
 
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
     await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
-    await user.click(screen.getByRole('button', { name: 'Apply theme' }));
+    await user.click(await screen.findByRole('button', { name: 'Apply theme' }));
     await user.keyboard('{Escape}');
 
     expect(
@@ -985,6 +985,7 @@ describe('AppearanceControls', () => {
 
     await user.click(trigger);
     await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
+    await screen.findByRole('dialog', { name: 'Custom CSS theme' });
     await user.keyboard('{Escape}');
 
     expect(
@@ -1368,7 +1369,7 @@ describe('AppearanceControls', () => {
 
       expect(trigger.getAttribute('aria-expanded')).toBe('false');
       expect(
-        screen.getByRole('dialog', { name: 'Custom CSS theme' })
+        await screen.findByRole('dialog', { name: 'Custom CSS theme' })
       ).not.toBeNull();
     } finally {
       document.removeEventListener('click', closeForLegacyDocumentClick);
@@ -1612,7 +1613,7 @@ describe('AppearanceControls', () => {
 
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
     await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
-    await user.click(screen.getByRole('button', { name: 'Apply theme' }));
+    await user.click(await screen.findByRole('button', { name: 'Apply theme' }));
 
     await waitFor(() => {
       expect(applyState).toHaveBeenLastCalledWith({
@@ -1661,7 +1662,7 @@ describe('AppearanceControls', () => {
 
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
     await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
-    await user.click(screen.getByRole('button', { name: 'Apply theme' }));
+    await user.click(await screen.findByRole('button', { name: 'Apply theme' }));
 
     await waitFor(() => expect(onNotification).toHaveBeenCalledWith({
       id: 'appearance-custom-css',
@@ -1753,7 +1754,7 @@ describe('AppearanceControls', () => {
 
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
     await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
-    const articleName = screen.getByRole('textbox', {
+    const articleName = await screen.findByRole('textbox', {
       name: 'Article theme name'
     });
     await user.clear(articleName);
@@ -1786,7 +1787,7 @@ describe('AppearanceControls', () => {
 
     await user.click(screen.getByRole('button', { name: 'Appearance' }));
     await user.click(screen.getByRole('button', { name: 'Custom CSS theme' }));
-    await user.click(screen.getByRole('button', { name: 'Apply theme' }));
+    await user.click(await screen.findByRole('button', { name: 'Apply theme' }));
 
     await screen.findByText('CSS save failed.');
     expect(onFailure).toHaveBeenCalledOnce();

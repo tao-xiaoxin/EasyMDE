@@ -44,7 +44,7 @@ import {
 } from '../immersive-editor';
 import { ImmersiveHeader } from './ImmersiveHeader';
 import { ImmersiveOutline } from './ImmersiveOutline';
-import { ImmersivePublishDialog } from './ImmersivePublishDialog';
+import { LazyImmersivePublishDialog } from './LazyImmersivePublishDialog';
 import { ImmersiveToolbar } from './ImmersiveToolbar';
 import { EditorTableDialog, trapFocus } from '../../editor-context-menu/ui/EditorTableDialog';
 import type {
@@ -750,6 +750,13 @@ export function ImmersiveEditor({
     setMarkdown(documentSession.document.getValue());
     setPublishSnapshot(readPublishSnapshot());
   };
+  const handlePublishDialogLoadFailure = useCallback(
+    (code: string) => {
+      setPublishSnapshot(null);
+      onFailure(code);
+    },
+    [onFailure]
+  );
 
   return (
     <section
@@ -777,7 +784,7 @@ export function ImmersiveEditor({
         />
       ) : null}
       {publishSnapshot ? (
-        <ImmersivePublishDialog
+        <LazyImmersivePublishDialog
           defaults={generalSettings}
           environment={environment}
           markdown={markdown}
@@ -785,6 +792,7 @@ export function ImmersiveEditor({
           strings={strings}
           onClose={() => setPublishSnapshot(null)}
           onConfirm={onConfirmPublish}
+          onLoadFailure={handlePublishDialogLoadFailure}
           onSelectFeaturedImage={onSelectFeaturedImage}
         />
       ) : null}

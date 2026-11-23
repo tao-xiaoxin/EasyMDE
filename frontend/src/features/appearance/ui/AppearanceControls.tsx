@@ -15,7 +15,7 @@ import type {
 } from '../../../contracts/bootstrap/appearance-bootstrap';
 import type { AppearancePort } from '../../../contracts/ports/appearance-port';
 import type { ImmersiveEnvironmentPort } from '../../../contracts/ports/immersive-environment-port';
-import { ImmersiveCustomCssDialog } from './ImmersiveCustomCssDialog';
+import { LazyImmersiveCustomCssDialog } from './LazyImmersiveCustomCssDialog';
 import {
   Check,
   ChevronDown,
@@ -984,7 +984,7 @@ export function AppearanceControls({
       {'immersive' === variant &&
       bootstrap.canManageCustomCss &&
       isCustomOpen ? (
-        <ImmersiveCustomCssDialog
+        <LazyImmersiveCustomCssDialog
           initialCss={customCode}
           initialArticleThemeName={customArticleThemeName}
           initialCodeThemeName={customCodeThemeName}
@@ -993,6 +993,21 @@ export function AppearanceControls({
           onClose={() => {
             setIsCustomOpen(false);
             triggerRef.current?.focus();
+          }}
+          onLoadFailure={() => {
+            if (!activeRef.current) return;
+            setIsCustomOpen(false);
+            const doc = triggerRef.current?.ownerDocument;
+            const active = doc?.activeElement;
+            if (
+              !active ||
+              active === doc?.body ||
+              active === doc?.documentElement ||
+              panelRef.current?.contains(active)
+            ) {
+              triggerRef.current?.focus();
+            }
+            onFailure();
           }}
           onPreview={port.previewCustomCss}
           strings={bootstrap.strings.customCssDialog}

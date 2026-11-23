@@ -1,82 +1,15 @@
 {
-  "_admin-editor-chunk-BGvhwLwQ.js": {
-    "file": "assets/admin-editor-chunk-BGvhwLwQ.js",
-    "name": "wechat-visual-rasterization-port",
-    "imports": [
-      "_admin-editor-chunk-BbfpZ9Tg.js"
-    ]
-  },
-  "_admin-editor-chunk-BOAvb0qz.js": {
-    "file": "assets/admin-editor-chunk-BOAvb0qz.js",
-    "name": "w3c-keyname"
-  },
-  "_admin-editor-chunk-BbfpZ9Tg.js": {
-    "file": "assets/admin-editor-chunk-BbfpZ9Tg.js",
-    "name": "defineProperty"
-  },
-  "_admin-editor-chunk-C0PLaoQr.js": {
-    "file": "assets/admin-editor-chunk-C0PLaoQr.js",
-    "name": "dist",
-    "imports": [
-      "_admin-editor-chunk-D70Jb6Ea.js"
-    ]
-  },
-  "_admin-editor-chunk-CDqWNwqB.js": {
-    "file": "assets/admin-editor-chunk-CDqWNwqB.js",
-    "name": "dist",
-    "imports": [
-      "_admin-editor-chunk-D70Jb6Ea.js"
-    ]
-  },
-  "_admin-editor-chunk-CRy4yvLp.js": {
-    "file": "assets/admin-editor-chunk-CRy4yvLp.js",
-    "name": "lucide-icons",
-    "imports": [
-      "_admin-editor-chunk-CmaNYmcq.js"
-    ]
-  },
-  "_admin-editor-chunk-CfU1VpaK.js": {
-    "file": "assets/admin-editor-chunk-CfU1VpaK.js",
-    "name": "dist",
-    "imports": [
-      "_admin-editor-chunk-D70Jb6Ea.js"
-    ]
-  },
-  "_admin-editor-chunk-CmaNYmcq.js": {
-    "file": "assets/admin-editor-chunk-CmaNYmcq.js",
-    "name": "_easymde-wordpress-esm_element"
-  },
-  "_admin-editor-chunk-D70Jb6Ea.js": {
-    "file": "assets/admin-editor-chunk-D70Jb6Ea.js",
-    "name": "dist",
-    "imports": [
-      "_admin-editor-chunk-BOAvb0qz.js"
-    ]
-  },
-  "_admin-editor-chunk-DqMK8LaI.js": {
-    "file": "assets/admin-editor-chunk-DqMK8LaI.js",
-    "name": "appearance-bootstrap",
-    "imports": [
-      "_admin-editor-chunk-CmaNYmcq.js",
-      "_admin-editor-chunk-CRy4yvLp.js",
-      "_admin-editor-chunk-BbfpZ9Tg.js"
-    ]
+  "_admin-editor-chunk-CxmAbEL3.js": {
+    "file": "assets/admin-editor-chunk-CxmAbEL3.js",
+    "name": "shared"
   },
   "frontend/src/entrypoints/admin-editor.tsx": {
-    "file": "assets/admin-editor-qfyrVRiM.js",
+    "file": "assets/admin-editor-DM13kiZy.js",
     "name": "editor",
     "src": "frontend/src/entrypoints/admin-editor.tsx",
     "isEntry": true,
     "imports": [
-      "_admin-editor-chunk-CmaNYmcq.js",
-      "_admin-editor-chunk-CRy4yvLp.js",
-      "_admin-editor-chunk-D70Jb6Ea.js",
-      "_admin-editor-chunk-C0PLaoQr.js",
-      "_admin-editor-chunk-CDqWNwqB.js",
-      "_admin-editor-chunk-CfU1VpaK.js",
-      "_admin-editor-chunk-BbfpZ9Tg.js",
-      "_admin-editor-chunk-DqMK8LaI.js",
-      "_admin-editor-chunk-BGvhwLwQ.js"
+      "_admin-editor-chunk-CxmAbEL3.js"
     ],
     "dynamicImports": [
       "frontend/src/features/appearance/ui/ImmersiveCustomCssDialog.tsx",
@@ -91,97 +24,84 @@
     ]
   },
   "frontend/src/features/appearance/ui/ImmersiveCustomCssDialog.tsx": {
-    "file": "assets/admin-editor-chunk-BCSt3JRQ.js",
+    "file": "assets/admin-editor-chunk-Br5nUNIU.js",
     "name": "ImmersiveCustomCssDialog",
     "src": "frontend/src/features/appearance/ui/ImmersiveCustomCssDialog.tsx",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-CmaNYmcq.js",
-      "_admin-editor-chunk-CRy4yvLp.js",
-      "_admin-editor-chunk-DqMK8LaI.js"
+      "_admin-editor-chunk-CxmAbEL3.js"
     ]
   },
   "frontend/src/features/immersive-editor/ui/ImmersivePublishDialog.tsx": {
-    "file": "assets/admin-editor-chunk-CXW8-nAS.js",
+    "file": "assets/admin-editor-chunk-BS5AzMJg.js",
     "name": "ImmersivePublishDialog",
     "src": "frontend/src/features/immersive-editor/ui/ImmersivePublishDialog.tsx",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-CmaNYmcq.js",
-      "_admin-editor-chunk-CRy4yvLp.js",
-      "_admin-editor-chunk-CDqWNwqB.js",
-      "_admin-editor-chunk-BbfpZ9Tg.js"
+      "_admin-editor-chunk-CxmAbEL3.js"
     ]
   },
   "frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx": {
-    "file": "assets/admin-editor-chunk-TICBec2x.js",
+    "file": "assets/admin-editor-chunk--dY3QDHK.js",
     "name": "MountedProseMirrorVisualEditor",
     "src": "frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-CmaNYmcq.js",
-      "_admin-editor-chunk-BOAvb0qz.js",
-      "_admin-editor-chunk-BbfpZ9Tg.js"
+      "_admin-editor-chunk-CxmAbEL3.js"
     ]
   },
   "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts": {
-    "file": "assets/admin-editor-chunk-Bc7AV2_w.js",
+    "file": "assets/admin-editor-chunk-DlyVS0T8.js",
     "name": "create-browser-wechat-clipboard",
     "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-BbfpZ9Tg.js"
+      "_admin-editor-chunk-CxmAbEL3.js"
     ]
   },
   "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts": {
-    "file": "assets/admin-editor-chunk-DohX8orP.js",
+    "file": "assets/admin-editor-chunk-Dk-U64iI.js",
     "name": "create-browser-wechat-visual-rasterizer",
     "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-BGvhwLwQ.js"
+      "_admin-editor-chunk-CxmAbEL3.js"
     ]
   },
   "node_modules/@codemirror/lang-json/dist/index.js": {
-    "file": "assets/admin-editor-chunk-BOu5GcJ6.js",
+    "file": "assets/admin-editor-chunk-BF7Li0xl.js",
     "name": "dist",
     "src": "node_modules/@codemirror/lang-json/dist/index.js",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-D70Jb6Ea.js",
-      "_admin-editor-chunk-CfU1VpaK.js"
+      "_admin-editor-chunk-CxmAbEL3.js"
     ]
   },
   "node_modules/@codemirror/lang-python/dist/index.js": {
-    "file": "assets/admin-editor-chunk-D11Wc7wh.js",
+    "file": "assets/admin-editor-chunk-CgXwW-3d.js",
     "name": "dist",
     "src": "node_modules/@codemirror/lang-python/dist/index.js",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-D70Jb6Ea.js",
-      "_admin-editor-chunk-C0PLaoQr.js",
-      "_admin-editor-chunk-CfU1VpaK.js"
+      "_admin-editor-chunk-CxmAbEL3.js"
     ]
   },
   "node_modules/@codemirror/lang-sql/dist/index.js": {
-    "file": "assets/admin-editor-chunk-LxV_RydK.js",
+    "file": "assets/admin-editor-chunk-B15qTCiO.js",
     "name": "dist",
     "src": "node_modules/@codemirror/lang-sql/dist/index.js",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-D70Jb6Ea.js",
-      "_admin-editor-chunk-C0PLaoQr.js",
-      "_admin-editor-chunk-CfU1VpaK.js"
+      "_admin-editor-chunk-CxmAbEL3.js"
     ]
   },
   "node_modules/@codemirror/lang-yaml/dist/index.js": {
-    "file": "assets/admin-editor-chunk-CKJGado5.js",
+    "file": "assets/admin-editor-chunk-y3sMC2-n.js",
     "name": "dist",
     "src": "node_modules/@codemirror/lang-yaml/dist/index.js",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-D70Jb6Ea.js",
-      "_admin-editor-chunk-CfU1VpaK.js"
+      "_admin-editor-chunk-CxmAbEL3.js"
     ]
   }
 }

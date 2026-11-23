@@ -194,6 +194,50 @@ msgstr "解除锁定并编辑"
 msgid "Preview mode"
 msgstr "预览模式"
 
+#. translators: %s: Protected block type label, such as Math or Mermaid.
+#: src/Admin/AdminEditorStrings.php:314
+#, php-format
+msgctxt "protected block card"
+msgid "Edit %s"
+msgstr "编辑 %s"
+
+#: src/Admin/AdminEditorStrings.php:315
+msgctxt "protected block card"
+msgid "Footnotes"
+msgstr "脚注"
+
+#: src/Admin/AdminEditorStrings.php:316
+msgctxt "protected block card"
+msgid "Math"
+msgstr "公式"
+
+#: src/Admin/AdminEditorStrings.php:317
+msgctxt "protected block card"
+msgid "Mermaid"
+msgstr "Mermaid"
+
+#: src/Admin/AdminEditorStrings.php:318
+msgctxt "protected block card"
+msgid "Raw"
+msgstr "原始块"
+
+#: src/Admin/AdminEditorStrings.php:319
+msgctxt "protected block card"
+msgid "Save"
+msgstr "保存"
+
+#. translators: %s: Protected block type label, such as Math or Mermaid.
+#: src/Admin/AdminEditorStrings.php:321
+#, php-format
+msgctxt "protected block card"
+msgid "%s source"
+msgstr "%s 源码"
+
+#: src/Admin/AdminEditorStrings.php:322
+msgctxt "protected block card"
+msgid "TOC"
+msgstr "目录"
+
 #: src/Admin/AdminAssets.php:506
 msgid "Publish article"
 msgstr "发布文章"

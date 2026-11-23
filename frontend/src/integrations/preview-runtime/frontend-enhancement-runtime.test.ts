@@ -636,6 +636,70 @@ describe('frontend enhancement runtime', () => {
     }
   });
 
+  it('updates visual code-language badge foregrounds across a code-theme switch in batched read-then-write order', () => {
+    const root = document.createElement('article');
+    root.innerHTML = [
+      '<pre class="easymde-code-block"><code class="hljs language-js">const a = 1;</code><span class="easymde-visual-code-lang">js</span></pre>',
+      '<pre class="easymde-code-block"><code class="language-text">plain</code><span class="easymde-visual-code-lang">text</span></pre>',
+      '<pre><code class="hljs language-css">a {}</code><span class="easymde-visual-code-lang">css</span></pre>'
+    ].join('');
+    let theme: 'light' | 'dark' = 'light';
+    const events: string[] = [];
+    const windowRef = runtime();
+    Object.defineProperty(windowRef, 'getComputedStyle', {
+      configurable: true,
+      value: vi.fn(() => {
+        events.push('read');
+        return (
+          'light' === theme
+            ? { backgroundColor: 'rgb(250, 250, 250)', color: 'rgb(56, 58, 66)' }
+            : { backgroundColor: 'rgb(40, 44, 52)', color: 'rgb(171, 178, 191)' }
+        ) as CSSStyleDeclaration;
+      })
+    });
+    const originalSetProperty = CSSStyleDeclaration.prototype.setProperty;
+    const trackedSetProperty = vi.spyOn(CSSStyleDeclaration.prototype, 'setProperty')
+      .mockImplementation(function (
+        this: CSSStyleDeclaration,
+        property: string,
+        value: string | null,
+        priority?: string
+      ) {
+        events.push(`write:${property}`);
+        originalSetProperty.call(this, property, value, priority);
+      });
+    const badges = [...root.querySelectorAll<HTMLElement>('.easymde-visual-code-lang')];
+
+    try {
+      syncCodeFrameBackgrounds(root, windowRef);
+      expect(badges.map((badge) => badge.style.color)).toEqual([
+        'rgb(56, 58, 66)',
+        'rgb(56, 58, 66)',
+        'rgb(56, 58, 66)'
+      ]);
+
+      theme = 'dark';
+      events.length = 0;
+      syncCodeFrameBackgrounds(root, windowRef);
+
+      expect(events.filter((event) => 'read' === event)).toHaveLength(3);
+      expect(events.findIndex((event) => event.startsWith('write:')))
+        .toBeGreaterThan(events.lastIndexOf('read'));
+      expect(events.filter((event) => 'write:color' === event)).toHaveLength(3);
+      expect(badges.map((badge) => badge.style.color)).toEqual([
+        'rgb(171, 178, 191)',
+        'rgb(171, 178, 191)',
+        'rgb(171, 178, 191)'
+      ]);
+      for (const pre of root.querySelectorAll('pre')) {
+        expect(pre.style.getPropertyValue('--easymde-code-frame-background'))
+          .toBe('rgb(40, 44, 52)');
+      }
+    } finally {
+      trackedSetProperty.mockRestore();
+    }
+  });
+
   it('batches getComputedStyle reads before gutter and code-frame writes during highlightCode', async () => {
     const root = document.createElement('article');
     root.className = 'easymde-code-line-numbers';

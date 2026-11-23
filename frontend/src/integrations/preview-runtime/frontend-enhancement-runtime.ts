@@ -370,9 +370,13 @@ type CodeComputedStyles = Readonly<{
 type CodeFrameBackgroundEntry = Readonly<{
   backgroundColor: string;
   isMermaid: boolean;
+  languageBadges: ReadonlyArray<HTMLElement>;
   lineNumberColor: string;
   parent: HTMLElement;
 }>;
+
+const CODE_FRAME_SELECTOR = 'pre > code.hljs, pre.easymde-code-block > code';
+const VISUAL_CODE_LANGUAGE_BADGE_CLASS = 'easymde-visual-code-lang';
 
 function readCodeFrameBackgroundEntry(
   element: Element,
@@ -382,11 +386,17 @@ function readCodeFrameBackgroundEntry(
     throw new Error('easymde-code-frame-parent-missing');
   }
   const computed = windowRef.getComputedStyle(element);
+  const parent = element.parentElement;
   return {
     backgroundColor: computed.backgroundColor,
     isMermaid: isMermaidCode(element),
+    languageBadges: [...parent.children].filter(
+      (child): child is HTMLElement =>
+        child instanceof HTMLElement
+        && child.classList.contains(VISUAL_CODE_LANGUAGE_BADGE_CLASS)
+    ),
     lineNumberColor: computed.color,
-    parent: element.parentElement
+    parent
   };
 }
 
@@ -398,14 +408,19 @@ function writeCodeFrameBackgroundEntry(entry: CodeFrameBackgroundEntry): void {
     '--easymde-code-frame-background',
     entry.backgroundColor
   );
-  if (
-    entry.parent.classList.contains('easymde-code-with-line-numbers')
-    && entry.lineNumberColor
-  ) {
+  if (!entry.lineNumberColor) {
+    return;
+  }
+  if (entry.parent.classList.contains('easymde-code-with-line-numbers')) {
     entry.parent.style.setProperty(
       '--easymde-code-line-number-color',
       entry.lineNumberColor
     );
+  }
+  // Visual-editor language badges follow the live code-theme foreground so a
+  // code-theme switch never leaves stale badge text on the new frame.
+  for (const badge of entry.languageBadges) {
+    badge.style.setProperty('color', entry.lineNumberColor);
   }
 }
 
@@ -416,7 +431,7 @@ export function syncCodeFrameBackgrounds(
   // Pass 1 (read-only): read all computed styles before mutating any attribute
   // or inline custom property so the browser never thrashes style recalculation
   // across multiple code frames.
-  const entries = [...root.querySelectorAll('pre > code.hljs')].map(
+  const entries = [...root.querySelectorAll(CODE_FRAME_SELECTOR)].map(
     (element) => readCodeFrameBackgroundEntry(element, windowRef)
   );
   // Pass 2 (write-only): apply all frame attributes and custom properties.

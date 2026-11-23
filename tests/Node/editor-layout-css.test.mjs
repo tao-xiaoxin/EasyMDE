@@ -1202,15 +1202,62 @@ test('immersive Preview header owns the reference typography and divider', () =>
   );
 });
 
-test('ProseMirror visual surface preserves read-only Preview first-child and last-child margins', () => {
+test('Preview and ProseMirror share a compact first-child top margin with zero unlock jump', () => {
+  assert.match(
+    css,
+    /\.easymde-editor \.easymde-preview > :where\(:not\(pre\)\):first-child\s*\{[^}]*margin-top:\s*0;/s,
+    'shared preview root should keep the first non-code block flush with paper padding in both locked and unlocked states'
+  );
   assert.doesNotMatch(
     css,
     /\.easymde-prosemirror-surface\.ProseMirror\s*>\s*:first-child\s*\{[^}]*margin-top\s*:/s,
-    'ProseMirror surface must not zero out first-child margin-top (causes vertical jump on unlock)'
+    'ProseMirror surface must not define a ProseMirror-only first-child margin-top override'
   );
   assert.doesNotMatch(
     css,
     /\.easymde-prosemirror-surface\.ProseMirror\s*>\s*:last-child\s*\{[^}]*margin-bottom\s*:/s,
     'ProseMirror surface must not zero out last-child margin-bottom (causes bottom height/scroll jump on unlock)'
+  );
+  assert.match(
+    css,
+    /\.easymde-editor \.easymde-prosemirror-surface :is\(td, th\) > p,\s*\.easymde-editor \.easymde-prosemirror-surface :is\(ul, ol\):not\(\[data-easymde-tight="false"\]\) > li > p,\s*\.easymde-editor \.easymde-prosemirror-surface ul:not\(\[data-easymde-tight="false"\]\) > li > \.easymde-task-item-content > p\s*\{[^}]*font-size:\s*inherit;[^}]*line-height:\s*inherit;[^}]*color:\s*inherit;/s,
+    'ProseMirror synthetic wrapper paragraphs inside table cells and tight list items should inherit parent typography instead of WordPress admin common.css 13px p defaults'
+  );
+  assert.match(
+    css,
+    /\.easymde-prosemirror-surface :is\(td, th\) > p:first-child,\s*\.easymde-prosemirror-surface :is\(ul, ol\):not\(\[data-easymde-tight="false"\]\) > li > p:first-child\s*\{[^}]*margin-top:\s*0;/s,
+    'ProseMirror table cells and tight list items should zero first paragraph top margin to match locked Preview bare-text rows'
+  );
+  assert.match(
+    css,
+    /\.easymde-prosemirror-surface :is\(td, th\) > p:last-child,\s*\.easymde-prosemirror-surface :is\(ul, ol\):not\(\[data-easymde-tight="false"\]\) > li > p:last-child\s*\{[^}]*margin-bottom:\s*0;/s,
+    'ProseMirror table cells and tight list items should zero last paragraph bottom margin to match locked Preview bare-text rows'
+  );
+  assert.match(
+    css,
+    /\.easymde-prosemirror-surface ul:not\(\[data-easymde-tight="false"\]\) > li > \.easymde-task-item-content > p:first-child\s*\{[^}]*margin-top:\s*0;/s,
+    'ProseMirror tight task items should zero first paragraph top margin'
+  );
+  assert.match(
+    css,
+    /\.easymde-prosemirror-surface ul:not\(\[data-easymde-tight="false"\]\) > li > \.easymde-task-item-content > p:last-child\s*\{[^}]*margin-bottom:\s*0;/s,
+    'ProseMirror tight task items should zero last paragraph bottom margin'
+  );
+  // Loose lists render <li><p> in formal Preview with article-theme paragraph
+  // styling, so no ProseMirror rule may reset unscoped list or task paragraphs.
+  assert.doesNotMatch(
+    css,
+    /\.easymde-prosemirror-surface :is\([^)]*\bli\b[^)]*\) > p/,
+    'ProseMirror paragraph reset must not match every list item, including loose lists'
+  );
+  assert.doesNotMatch(
+    css,
+    /\.easymde-prosemirror-surface \.easymde-task-item-content > p/,
+    'ProseMirror task paragraph reset must be scoped to tight task lists'
+  );
+  assert.doesNotMatch(
+    css,
+    /\.easymde-prosemirror-surface :is\(ul, ol\) > li > p/,
+    'ProseMirror list paragraph reset must exclude loose lists marked data-easymde-tight="false"'
   );
 });

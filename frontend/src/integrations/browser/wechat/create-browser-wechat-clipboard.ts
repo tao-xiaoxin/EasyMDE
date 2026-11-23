@@ -142,13 +142,7 @@ export function createBrowserWechatClipboard(
       }
 
       const pngConversionEnabled = true === options.pngConversionEnabled;
-      const requiresPreviewResolution = Boolean(
-        hiddenFormalPreview
-        || (
-          options.resolvePreview
-          && preview.querySelector('[data-easymde-preview-window-spacer]')
-        )
-      );
+      const requiresPreviewResolution = hiddenFormalPreview;
       if (pngConversionEnabled && (!runtime.write || !runtime.clipboardItem)) {
         return {
           code: 'wechat-png-clipboard-failed',

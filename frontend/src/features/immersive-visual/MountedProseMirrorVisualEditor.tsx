@@ -8,6 +8,9 @@ import type { EditorDocumentSession } from "../document-source/editor-document-s
 import {
 	createCodeHighlightPlugin,
 	createVisualNodeViews,
+	type ProtectedAtomLabels,
+	type ProtectedAtomLabelTemplates,
+	type ProtectedAtomNodeViewOptions,
 } from "./node-views/index";
 import { ProseMirrorVisualEditor } from "./ProseMirrorVisualEditor";
 
@@ -29,6 +32,8 @@ export type MountedProseMirrorVisualEditorProps = Readonly<{
 	) => void;
 	onMarkdownChange?: (markdown: string) => void;
 	onReady?: (runtime: ImmersiveVisualEditorRuntime) => void;
+	protectedAtomLabels?: ProtectedAtomLabels;
+	protectedAtomLabelTemplates?: ProtectedAtomLabelTemplates;
 	style?: CSSProperties;
 }>;
 
@@ -54,9 +59,25 @@ export function MountedProseMirrorVisualEditor({
 	onImagePasteFiles,
 	onMarkdownChange,
 	onReady,
+	protectedAtomLabels,
+	protectedAtomLabelTemplates,
 	style,
 }: MountedProseMirrorVisualEditorProps) {
-	const nodeViews = useMemo(() => createVisualNodeViews(), []);
+	// Key NodeViews on label values, not object identity, so unrelated renders
+	// never tear down and rebuild the ProseMirror view.
+	const protectedAtomLabelKey = JSON.stringify({
+		labelTemplates: protectedAtomLabelTemplates ?? {},
+		labels: protectedAtomLabels ?? {},
+	});
+	const nodeViews = useMemo(
+		() =>
+			createVisualNodeViews({
+				protectedAtom: JSON.parse(
+					protectedAtomLabelKey,
+				) as ProtectedAtomNodeViewOptions,
+			}),
+		[protectedAtomLabelKey],
+	);
 	const extraPlugins = useMemo(() => [createCodeHighlightPlugin()], []);
 
 	return (

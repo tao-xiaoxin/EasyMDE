@@ -201,6 +201,14 @@ export type EditorRootBootstrap = Readonly<{
     previewReadOnly: string;
     previewUnlockEdit: string;
     previewMode: string;
+    protectedCardEditFormat: string;
+    protectedCardFootnotes: string;
+    protectedCardMath: string;
+    protectedCardMermaid: string;
+    protectedCardRaw: string;
+    protectedCardSave: string;
+    protectedCardSourceFormat: string;
+    protectedCardToc: string;
     publish: string;
     restore: string;
     restoreConfirm: string;
@@ -754,6 +762,14 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         'previewReadOnly',
         'previewUnlockEdit',
         'previewMode',
+        'protectedCardEditFormat',
+        'protectedCardFootnotes',
+        'protectedCardMath',
+        'protectedCardMermaid',
+        'protectedCardRaw',
+        'protectedCardSave',
+        'protectedCardSourceFormat',
+        'protectedCardToc',
         'publish',
         'restore',
         'restoreConfirm',

@@ -132,11 +132,7 @@ export function appendDeclarations(element: Element, declarations: string[], imp
 export function previewReady(preview: HTMLElement): boolean {
   const refreshing = '1' === preview.getAttribute('data-easymde-preview-refreshing')
     || 'true' === preview.getAttribute('aria-busy');
-  const hasWindowSpacer = Boolean(
-    preview.querySelector('[data-easymde-preview-window-spacer]')
-  );
   const acceptedDuringRefresh = refreshing
-    && !hasWindowSpacer
     && '1' === preview.getAttribute('data-easymde-preview-accepted');
   return '' !== preview.innerHTML.trim()
     && !preview.querySelector(

@@ -362,7 +362,13 @@ export function createVisualCanonicalSync(
 				"addToHistory",
 				false,
 			);
-			roundTripGuard = createMarkdownRoundTripGuard(markdown, parsed);
+			// Bind the guard to the live reconciled doc: surviving child nodes
+			// keep their identity, so later edits anchor them exactly.
+			roundTripGuard = createMarkdownRoundTripGuard(
+				markdown,
+				parsed,
+				reconciledDoc,
+			);
 			acceptedDoc = reconciledDoc;
 			acceptedMarkdown = markdown;
 			acceptedRevision = revision;
@@ -532,6 +538,7 @@ export function createVisualCanonicalSync(
 				roundTripGuard = createMarkdownRoundTripGuard(
 					nextMarkdown,
 					parseMarkdownWithBlockSources(nextMarkdown),
+					nextState.doc,
 				);
 			}
 			acceptedDoc = nextState.doc;

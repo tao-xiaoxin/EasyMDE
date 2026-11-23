@@ -97,7 +97,7 @@ describe('createBrowserWechatClipboard', () => {
     expect(preview.querySelector('svg')).not.toBeNull();
   });
 
-  it('starts modern Clipboard write before resolving a complete windowed Preview', async () => {
+  it('starts modern Clipboard write before resolving a hidden formal Preview', async () => {
     const writes: unknown[] = [];
     const ready = deferred<HTMLElement | null>();
     class ClipboardItemStub {
@@ -105,10 +105,8 @@ describe('createBrowserWechatClipboard', () => {
     }
     const preview = document.createElement('article');
     preview.setAttribute('data-easymde-preview-html-sink', '1');
-    preview.innerHTML = [
-      '<p>Visible window</p>',
-      '<div data-easymde-preview-window-spacer="1"></div>'
-    ].join('');
+    preview.classList.add('easymde-preview-surface-hidden');
+    preview.innerHTML = '<p>Visible window</p>';
     Object.defineProperty(preview, 'innerText', {
       configurable: true,
       value: 'Visible window'
@@ -148,9 +146,7 @@ describe('createBrowserWechatClipboard', () => {
     const htmlBlob = await item?.payload['text/html'];
     if (!htmlBlob) throw new Error('clipboard html missing');
     expect(await blobText(htmlBlob)).toContain('Complete Preview');
-    expect(await blobText(htmlBlob)).not.toContain(
-      'data-easymde-preview-window-spacer'
-    );
+    expect(await blobText(htmlBlob)).not.toContain('Visible window');
   });
 
   it('fails explicitly without modern Clipboard support and never enters legacy copy', async () => {
@@ -889,38 +885,6 @@ describe('createBrowserWechatClipboard', () => {
       status: 'failed'
     });
     expect(execCommand).not.toHaveBeenCalled();
-  });
-
-  it('rejects an accepted windowed Preview during refresh before resolving materialization', async () => {
-    const write = vi.fn();
-    const resolvePreview = vi.fn(async () => null);
-    class ClipboardItemStub {
-      constructor(public payload: Record<string, Blob>) {}
-    }
-    const clipboard = createBrowserWechatClipboard({
-      blob: Blob,
-      clipboardItem: ClipboardItemStub,
-      document,
-      getComputedStyle: computedStyle,
-      getSelection: window.getSelection.bind(window),
-      pageOffset: () => ({ x: 0, y: 0 }),
-      scrollTo: vi.fn(),
-      write
-    });
-    const preview = readyPreview();
-    preview.setAttribute('aria-busy', 'true');
-    preview.setAttribute('data-easymde-preview-refreshing', '1');
-    preview.setAttribute('data-easymde-preview-accepted', '1');
-    const spacer = document.createElement('div');
-    spacer.setAttribute('data-easymde-preview-window-spacer', '1');
-    preview.append(spacer);
-
-    await expect(clipboard.copy(preview, { resolvePreview })).resolves.toEqual({
-      code: 'wechat-preview-unavailable',
-      status: 'failed'
-    });
-    expect(resolvePreview).not.toHaveBeenCalled();
-    expect(write).not.toHaveBeenCalled();
   });
 
   it('uses the synchronous compatibility copy only when modern write is unavailable', async () => {

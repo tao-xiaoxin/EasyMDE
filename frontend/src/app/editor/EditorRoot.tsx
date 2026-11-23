@@ -3,6 +3,7 @@ import {
   createElement,
   useCallback,
   useEffect,
+  useMemo,
   useRef
 } from '@wordpress/element';
 
@@ -231,6 +232,28 @@ export function EditorRoot(props: EditorRootProps) {
     visualEditorRuntimeRef,
     visualPreviewEditingRef
   });
+
+  const immersiveStrings = props.immersiveStrings;
+  const protectedAtomLabels = useMemo(
+    () => ({
+      cancel: immersiveStrings.cancel,
+      edit: immersiveStrings.edit,
+      footnotes: immersiveStrings.protectedCardFootnotes,
+      math: immersiveStrings.protectedCardMath,
+      mermaid: immersiveStrings.protectedCardMermaid,
+      raw: immersiveStrings.protectedCardRaw,
+      save: immersiveStrings.protectedCardSave,
+      toc: immersiveStrings.protectedCardToc
+    }),
+    [immersiveStrings]
+  );
+  const protectedAtomLabelTemplates = useMemo(
+    () => ({
+      edit: immersiveStrings.protectedCardEditFormat,
+      source: immersiveStrings.protectedCardSourceFormat
+    }),
+    [immersiveStrings]
+  );
 
   const media = useEditorMediaUploadBridge({
     applyVisualCanonicalChange: visual.applyVisualCanonicalChange,
@@ -673,6 +696,8 @@ export function EditorRoot(props: EditorRootProps) {
                 onImagePasteFiles={media.handleVisualImagePasteFiles}
                 onMarkdownChange={visual.handleVisualMarkdownChange}
                 onReady={visual.handleVisualEditorReady}
+                protectedAtomLabels={protectedAtomLabels}
+                protectedAtomLabelTemplates={protectedAtomLabelTemplates}
                 style={appearance.previewStyle}
               />
             ) : null}

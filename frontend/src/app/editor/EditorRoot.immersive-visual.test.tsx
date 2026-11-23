@@ -16,6 +16,7 @@ import type {
 } from '../../contracts/ports/preview-request';
 import type { RemoteImageImportResult } from '../../contracts/ports/remote-image-import-port';
 import type { ImmersiveVisualEditorRuntime } from '../../contracts/visual-editor';
+import { syncCodeFrameBackgrounds } from '../../integrations/preview-runtime/frontend-enhancement-runtime';
 import { EditorRoot, focusVisualPreviewRuntime } from './EditorRoot';
 import {
   cleanupEditorRootTestHarness,
@@ -1347,6 +1348,79 @@ describe('EditorRoot immersive and visual editing', () => {
       visualEditor
     );
     expect(props.submissionField.value).toBe('Rendered');
+  });
+
+  it('applies the new code theme class before the visual frame sync so existing badges update without remount', async () => {
+    const props = fixture();
+    const markdown = '```js\nconst a = 1;\n```';
+    props.submissionField.value = markdown;
+    props.submissionField.defaultValue = markdown;
+    const prepared = { cancel: vi.fn(), commit: vi.fn() };
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    const unlock = view.getByRole('button', { name: '解除锁定并编辑' });
+    await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+    vi.mocked(props.enhancementPort.prepareCodeTheme).mockResolvedValue(
+      prepared
+    );
+    fireEvent.click(unlock);
+    const visualEditor = await view.findByRole(
+      'textbox',
+      { name: '可视化文章编辑器' },
+      { timeout: 5000 }
+    );
+    const badge = visualEditor.querySelector<HTMLElement>(
+      'pre.easymde-code-block > .easymde-visual-code-lang'
+    );
+    if (!badge) throw new Error('missing visual code badge');
+    expect(badge.textContent).toBe('js');
+    const codeWindow = Object.create(window) as Window;
+    Object.defineProperty(codeWindow, 'getComputedStyle', {
+      value: (element: Element) =>
+        ({
+          backgroundColor: 'rgb(1, 2, 3)',
+          color: element.closest('.easymde-code-theme-github')
+            ? 'rgb(36, 41, 46)'
+            : 'rgb(171, 178, 191)'
+        }) as CSSStyleDeclaration
+    });
+    // Let the NodeView's initial mount frame sync settle first.
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          window.requestAnimationFrame(() => resolve());
+        })
+    );
+    const themeClassAtVisualSync: boolean[] = [];
+    const sync = vi.mocked(props.enhancementPort.syncCodeFrameBackgrounds);
+    sync.mockClear();
+    sync.mockImplementation((root) => {
+      if (root !== visualEditor) return;
+      themeClassAtVisualSync.push(
+        visualEditor.classList.contains('easymde-code-theme-github')
+      );
+      syncCodeFrameBackgrounds(root, codeWindow);
+    });
+
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+    fireEvent.click(
+      view.queryByRole('combobox', { name: 'Code theme' })
+        ?? view.getByRole('button', { name: 'Code theme' })
+    );
+    fireEvent.click(view.getByRole('option', { name: 'GitHub' }));
+
+    await waitFor(() => expect(themeClassAtVisualSync).toEqual([true]));
+    expect(badge.style.color).toBe('rgb(36, 41, 46)');
+    expect(badge.isConnected).toBe(true);
+    expect(badge.textContent).toBe('js');
+    expect(
+      visualEditor.querySelector('pre.easymde-code-block > .easymde-visual-code-lang')
+    ).toBe(badge);
+    expect(view.getByRole('textbox', { name: '可视化文章编辑器' })).toBe(
+      visualEditor
+    );
+    expect(props.submissionField.value).toBe(markdown);
   });
 
   it('keeps the visible article theme unchanged until its stylesheet is ready', async () => {

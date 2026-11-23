@@ -167,7 +167,7 @@ test.describe('Unified ProseMirror visual editor rich blocks and long documents'
     }
   });
 
-  test('preserves protected KaTeX math and Mermaid cards during neighbor edits and supports Escape cancel, Control+Enter commit, and non-mutating Copy-raw', async ({ page }, testInfo) => {
+  test('preserves protected KaTeX math and Mermaid cards during neighbor edits and supports Escape cancel, Control+Enter commit, and exposes only the Edit action', async ({ page }, testInfo) => {
     const tracker = attachRuntimeErrorTracker(page);
     try {
       const initialMathBlock = '$$\nE = mc^2\n$$';
@@ -249,14 +249,12 @@ test.describe('Unified ProseMirror visual editor rich blocks and long documents'
       ].join('\n\n');
       await expect(source).toHaveValue(afterMathCommit);
 
-      // Copy-raw on the Mermaid card must never mutate canonical Markdown.
+      // Protected card action bar exposes only Edit (no Copy button).
       await mermaidBlock.hover();
-      await mermaidBlock.locator('.easymde-protected-card-actions button.easymde-protected-copy-btn').click();
-      await waitForBrowserPaint(page);
-      await expect(source).toHaveValue(afterMathCommit);
+      await expect(mermaidBlock.locator('.easymde-protected-card-actions button.easymde-protected-copy-btn')).toHaveCount(0);
+      await expect(mermaidBlock.locator('.easymde-protected-card-actions button')).toHaveCount(1);
 
       // Inline raw-source edit and Control+Enter commit on the Mermaid card, followed by Undo.
-      await mermaidBlock.hover();
       await mermaidBlock.locator('.easymde-protected-card-actions button.easymde-protected-edit-btn').click();
       const mermaidTextarea = mermaidBlock.locator('textarea.easymde-protected-source-input');
       await expect(mermaidTextarea).toBeVisible();

@@ -1,9 +1,4 @@
-import {
-	createElement,
-	useEffect,
-	useLayoutEffect,
-	useRef,
-} from "@wordpress/element";
+import { createElement, useLayoutEffect, useRef } from "@wordpress/element";
 import { dropCursor } from "prosemirror-dropcursor";
 import { gapCursor } from "prosemirror-gapcursor";
 import { EditorState, type Plugin } from "prosemirror-state";
@@ -326,7 +321,9 @@ export function ProseMirrorVisualEditor(props: ProseMirrorVisualEditorProps) {
 		return teardown;
 	}, [documentSession, extraPlugins, nodeViews]);
 
-	useEffect(() => {
+	// Layout timing: theme classes reach the editor DOM during the commit, before
+	// ancestor layout effects (code-theme frame sync) read computed styles.
+	useLayoutEffect(() => {
 		const activeView = viewRef.current;
 		if (!activeView) {
 			return;

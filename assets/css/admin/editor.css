@@ -2601,6 +2601,10 @@ body:has(.easymde-editor.is-immersive) .wrap {
     margin: 0 0 1em;
 }
 
+.easymde-editor .easymde-preview > :where(:not(pre)):first-child {
+    margin-top: 0;
+}
+
 .easymde-preview blockquote {
     padding: 0 0 0 14px;
     border-left: 4px solid #dcdcde;
@@ -3081,6 +3085,24 @@ body:has(.easymde-editor.is-immersive) .wrap {
     pointer-events: none;
 }
 
+.easymde-editor .easymde-prosemirror-surface :is(td, th) > p,
+.easymde-editor .easymde-prosemirror-surface :is(ul, ol):not([data-easymde-tight="false"]) > li > p,
+.easymde-editor .easymde-prosemirror-surface ul:not([data-easymde-tight="false"]) > li > .easymde-task-item-content > p {
+    font-size: inherit;
+    line-height: inherit;
+    color: inherit;
+}
+
+.easymde-prosemirror-surface :is(td, th) > p:first-child,
+.easymde-prosemirror-surface :is(ul, ol):not([data-easymde-tight="false"]) > li > p:first-child {
+    margin-top: 0;
+}
+
+.easymde-prosemirror-surface :is(td, th) > p:last-child,
+.easymde-prosemirror-surface :is(ul, ol):not([data-easymde-tight="false"]) > li > p:last-child {
+    margin-bottom: 0;
+}
+
 .easymde-prosemirror-surface .easymde-visual-code-lang {
     font-family: "EasyMDE Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     letter-spacing: 0.02em;
@@ -3105,11 +3127,11 @@ body:has(.easymde-editor.is-immersive) .wrap {
     min-width: 0;
 }
 
-.easymde-prosemirror-surface .easymde-task-item-content > p:first-child {
+.easymde-prosemirror-surface ul:not([data-easymde-tight="false"]) > li > .easymde-task-item-content > p:first-child {
     margin-top: 0;
 }
 
-.easymde-prosemirror-surface .easymde-task-item-content > p:last-child {
+.easymde-prosemirror-surface ul:not([data-easymde-tight="false"]) > li > .easymde-task-item-content > p:last-child {
     margin-bottom: 0;
 }
 
@@ -3122,6 +3144,11 @@ body:has(.easymde-editor.is-immersive) .wrap {
     position: relative;
     margin: 1em 0;
     border-radius: 6px;
+}
+
+.easymde-prosemirror-surface .easymde-protected-block > .easymde-math-block,
+.easymde-prosemirror-surface .easymde-protected-block > .easymde-mermaid {
+    margin-block: 0;
 }
 
 .easymde-prosemirror-surface .easymde-protected-card-actions {
@@ -3154,8 +3181,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     display: none;
 }
 
-.easymde-prosemirror-surface .easymde-protected-edit-btn,
-.easymde-prosemirror-surface .easymde-protected-copy-btn {
+.easymde-prosemirror-surface .easymde-protected-edit-btn {
     padding: 2px 8px;
     border: 1px solid transparent;
     border-radius: 4px;
@@ -3169,8 +3195,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
 
-.easymde-prosemirror-surface .easymde-protected-edit-btn:hover,
-.easymde-prosemirror-surface .easymde-protected-copy-btn:hover {
+.easymde-prosemirror-surface .easymde-protected-edit-btn:hover {
     border-color: #cbd5e1;
     background: #f1f5f9;
     color: #0f172a;
@@ -3179,12 +3204,6 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-prosemirror-surface .easymde-protected-edit-btn:disabled {
     opacity: 0.45;
     cursor: not-allowed;
-}
-
-.easymde-prosemirror-surface .easymde-protected-copy-btn.is-copied {
-    border-color: #86efac;
-    background: #f0fdf4;
-    color: #166534;
 }
 
 .easymde-prosemirror-surface .easymde-protected-card {
@@ -3209,8 +3228,20 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-prosemirror-surface .easymde-protected-card-source,
 .easymde-prosemirror-surface .easymde-protected-fallback-pre {
     overflow-x: auto;
+    margin: 6px 0 0;
+    padding: 0;
+    background: transparent;
+    color: #1e293b;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     font-size: 13px;
-    line-height: 1.5;
+    line-height: 1.55;
+    white-space: pre-wrap;
+}
+
+.easymde-prosemirror-surface .easymde-protected-fallback {
+    padding: 0;
+    background: transparent;
+    color: #1e293b;
 }
 
 .easymde-prosemirror-surface .easymde-protected-inline-card {
@@ -3277,10 +3308,8 @@ body:has(.easymde-editor.is-immersive) .wrap {
 }
 
 .easymde-prosemirror-surface .easymde-protected-edit-btn:focus-visible,
-.easymde-prosemirror-surface .easymde-protected-copy-btn:focus-visible,
 .easymde-prosemirror-surface .easymde-protected-save-btn:focus-visible,
 .easymde-prosemirror-surface .easymde-protected-cancel-btn:focus-visible {
     outline: 2px solid #2271b1;
     outline-offset: 1px;
 }
-

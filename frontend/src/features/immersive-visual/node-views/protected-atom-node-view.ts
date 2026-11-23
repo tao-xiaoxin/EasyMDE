@@ -13,7 +13,6 @@ import {
 	type ProtectedInlineKind,
 } from "../visual-schema";
 import {
-	copyTextToClipboard,
 	createAtomButton,
 	createAtomElement,
 	ensureMermaidInitialized,
@@ -53,8 +52,6 @@ export type MermaidRuntime = Readonly<{
 }>;
 export type ProtectedAtomLabels = Readonly<{
 	cancel?: string;
-	copied?: string;
-	copy?: string;
 	edit?: string;
 	footnotes?: string;
 	math?: string;
@@ -63,9 +60,8 @@ export type ProtectedAtomLabels = Readonly<{
 	save?: string;
 	toc?: string;
 }>;
-/** Localized format templates; `{kind}` expands to the localized kind label. */
+/** Localized format templates; `%s` (or legacy `{kind}`) expands to the localized kind label. */
 export type ProtectedAtomLabelTemplates = Readonly<{
-	copy?: string;
 	edit?: string;
 	source?: string;
 }>;
@@ -87,8 +83,6 @@ type ProtectedAtomKind = ProtectedBlockKind | ProtectedInlineKind;
 
 const DEFAULT_LABELS: Required<ProtectedAtomLabels> = {
 	cancel: "Cancel",
-	copied: "Copied",
-	copy: "Copy",
 	edit: "Edit",
 	footnotes: "Footnotes",
 	math: "Math",
@@ -98,11 +92,9 @@ const DEFAULT_LABELS: Required<ProtectedAtomLabels> = {
 	toc: "TOC",
 };
 const DEFAULT_LABEL_TEMPLATES: Required<ProtectedAtomLabelTemplates> = {
-	copy: "Copy {kind}",
 	edit: "Edit {kind}",
 	source: "{kind} source",
 };
-const COPY_FEEDBACK_DURATION_MS = 1600;
 const ROOT_KIND_CLASSES: Record<ProtectedAtomKind, string> = {
 	math: "easymde-protected-block",
 	mermaid: "easymde-protected-block",
@@ -213,8 +205,12 @@ function readRawMarkdown(node: ProseMirrorNode): string {
 		: "";
 }
 
+/**
+ * Expand the kind placeholder: WordPress Gettext `%s` / `%1$s` (PHP-owned
+ * localized templates) and the legacy `{kind}` token.
+ */
 function formatLabel(template: string, kindLabel: string): string {
-	return template.split("{kind}").join(kindLabel);
+	return template.replace(/%(?:1\$)?s|\{kind\}/g, () => kindLabel);
 }
 
 function resolveAtomPosition(
@@ -252,15 +248,12 @@ class ProtectedAtomNodeView implements NodeView {
 	private readonly previewContainer: HTMLElement;
 	private readonly cardActions: HTMLDivElement | null = null;
 	private readonly editButton: HTMLButtonElement | null = null;
-	private readonly copyButton: HTMLButtonElement | null = null;
 	private readonly cardActionsCleanup: (() => void) | null = null;
 	private cardEditor: ProtectedCardEditor | null = null;
 	private editing = false;
 	private selected = false;
 	private destroyed = false;
 	private renderGeneration = 0;
-	private copyGeneration = 0;
-	private copyResetTimer: ReturnType<typeof setTimeout> | null = null;
 	private runtimeReadyUnsubscribe: (() => void) | null = null;
 	private readonly unsubscribeEditable: () => void;
 	private readonly onDoubleClick: (event: MouseEvent) => void;
@@ -308,40 +301,24 @@ class ProtectedAtomNodeView implements NodeView {
 				"easymde-protected-edit-btn",
 				this.labels.edit,
 			);
-			const copyButton = createAtomButton(
-				doc,
-				"easymde-protected-copy-btn",
-				this.labels.copy,
-			);
 			const onEditClick = (event: MouseEvent): void => {
 				event.preventDefault();
 				event.stopPropagation();
 				if (this.destroyed || this.editing || !this.view.editable) return;
 				this.openRawEditor();
 			};
-			const onCopyClick = (event: MouseEvent): void => {
-				event.preventDefault();
-				event.stopPropagation();
-				if (this.destroyed) return;
-				this.copyRawMarkdown();
-			};
 			const stopActionMouseDown = (event: MouseEvent): void => {
 				event.stopPropagation();
 			};
 			editButton.addEventListener("mousedown", stopActionMouseDown);
-			copyButton.addEventListener("mousedown", stopActionMouseDown);
 			editButton.addEventListener("click", onEditClick);
-			copyButton.addEventListener("click", onCopyClick);
-			cardActions.append(editButton, copyButton);
+			cardActions.append(editButton);
 			this.dom.appendChild(cardActions);
 			this.cardActions = cardActions;
 			this.editButton = editButton;
-			this.copyButton = copyButton;
 			this.cardActionsCleanup = () => {
 				editButton.removeEventListener("mousedown", stopActionMouseDown);
-				copyButton.removeEventListener("mousedown", stopActionMouseDown);
 				editButton.removeEventListener("click", onEditClick);
-				copyButton.removeEventListener("click", onCopyClick);
 			};
 		}
 
@@ -424,69 +401,6 @@ class ProtectedAtomNodeView implements NodeView {
 			: normalizeProtectedInlineKind(this.node.attrs.kind);
 	}
 
-	private readLiveRawMarkdown(): string {
-		const pos = resolveAtomPosition(
-			this.getPos,
-			this.view,
-			this.node.type.name,
-		);
-		const liveNode = pos !== null ? this.view.state.doc.nodeAt(pos) : null;
-		return liveNode && liveNode.type === this.node.type
-			? readRawMarkdown(liveNode)
-			: readRawMarkdown(this.node);
-	}
-
-	private resetCopyFeedback(): void {
-		this.copyGeneration += 1;
-		if (this.copyResetTimer !== null) {
-			clearTimeout(this.copyResetTimer);
-			this.copyResetTimer = null;
-		}
-		if (this.copyButton) {
-			this.copyButton.textContent = this.labels.copy;
-			this.copyButton.classList.remove("is-copied");
-			this.copyButton.removeAttribute("data-easymde-copied");
-		}
-	}
-
-	private showCopiedFeedback(): void {
-		if (!this.copyButton) return;
-		if (this.copyResetTimer !== null) {
-			clearTimeout(this.copyResetTimer);
-			this.copyResetTimer = null;
-		}
-		this.copyButton.textContent = this.labels.copied;
-		this.copyButton.classList.add("is-copied");
-		this.copyButton.setAttribute("data-easymde-copied", "1");
-		this.copyResetTimer = setTimeout(() => {
-			this.copyResetTimer = null;
-			if (this.destroyed || !this.copyButton) return;
-			this.copyButton.textContent = this.labels.copy;
-			this.copyButton.classList.remove("is-copied");
-			this.copyButton.removeAttribute("data-easymde-copied");
-		}, COPY_FEEDBACK_DURATION_MS);
-	}
-
-	private copyRawMarkdown(): void {
-		const rawMarkdown = this.readLiveRawMarkdown();
-		this.copyGeneration += 1;
-		const generation = this.copyGeneration;
-		void copyTextToClipboard(rawMarkdown, this.dom.ownerDocument).then(
-			(copied) => {
-				if (
-					!copied ||
-					this.destroyed ||
-					this.editing ||
-					this.copyGeneration !== generation ||
-					!this.copyButton
-				) {
-					return;
-				}
-				this.showCopiedFeedback();
-			},
-		);
-	}
-
 	private syncRootAttributes(): void {
 		const kind = this.currentKind();
 		const kindLabel = this.labels[KIND_LABEL_KEY[kind]];
@@ -528,11 +442,6 @@ class ProtectedAtomNodeView implements NodeView {
 			this.editButton.title = editLabel;
 			this.editButton.disabled = this.destroyed || !this.view.editable;
 		}
-		if (this.copyButton) {
-			const copyLabel = formatLabel(this.templates.copy, kindLabel);
-			this.copyButton.setAttribute("aria-label", copyLabel);
-			this.copyButton.title = copyLabel;
-		}
 		this.applySelectionVisuals();
 	}
 
@@ -571,10 +480,16 @@ class ProtectedAtomNodeView implements NodeView {
 			this.previewContainer.replaceChildren(code);
 			return;
 		}
-		const pre = createAtomElement(doc, "pre", "easymde-protected-fallback-pre");
-		Object.assign(pre.style, { margin: "0", whiteSpace: "pre-wrap" });
-		pre.appendChild(code);
-		this.previewContainer.replaceChildren(pre);
+		// A `<div>`, never `<pre>`: `code-frame.css` styles every
+		// `.easymde-code-mac pre` as a dark Mac terminal frame.
+		const block = createAtomElement(
+			doc,
+			"div",
+			"easymde-protected-fallback-pre",
+		);
+		Object.assign(block.style, { margin: "0", whiteSpace: "pre-wrap" });
+		block.appendChild(code);
+		this.previewContainer.replaceChildren(block);
 	}
 
 	private renderCardPreview(
@@ -602,11 +517,15 @@ class ProtectedAtomNodeView implements NodeView {
 		);
 		const body = createAtomElement(
 			doc,
-			"pre",
+			"div",
 			"easymde-protected-card-source",
 			rawMarkdown,
 		);
-		Object.assign(body.style, { margin: "4px 0 0", whiteSpace: "pre-wrap" });
+		Object.assign(body.style, {
+			margin: "4px 0 0",
+			whiteSpace: "pre-wrap",
+			fontFamily: MONOSPACE_FONT,
+		});
 		card.append(badge, body);
 		this.previewContainer.replaceChildren(card);
 	}
@@ -664,6 +583,7 @@ class ProtectedAtomNodeView implements NodeView {
 				const safeSvg = sanitizeMermaidSvg(
 					typeof result?.svg === "string" ? result.svg : "",
 					this.dom.ownerDocument,
+					renderId,
 				);
 				if (!safeSvg) {
 					this.dom.classList.add("easymde-render-error");
@@ -727,7 +647,6 @@ class ProtectedAtomNodeView implements NodeView {
 
 	private openRawEditor(): void {
 		this.renderGeneration += 1;
-		this.resetCopyFeedback();
 		this.editing = true;
 		this.previewContainer.style.display = "none";
 		this.syncRootAttributes();
@@ -804,7 +723,6 @@ class ProtectedAtomNodeView implements NodeView {
 			this.node.attrs.kind !== nextNode.attrs.kind ||
 			readRawMarkdown(this.node) !== readRawMarkdown(nextNode);
 		this.node = nextNode;
-		if (changed) this.resetCopyFeedback();
 		if (this.editing && changed) this.teardownRawEditor();
 		else this.syncRootAttributes();
 		if (!this.editing && changed) this.renderPreview();
@@ -831,7 +749,6 @@ class ProtectedAtomNodeView implements NodeView {
 	destroy(): void {
 		this.destroyed = true;
 		this.renderGeneration += 1;
-		this.resetCopyFeedback();
 		this.unsubscribeEditable();
 		this.unsubscribeRuntimeReady();
 		this.dom.removeEventListener("dblclick", this.onDoubleClick);

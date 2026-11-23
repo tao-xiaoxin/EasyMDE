@@ -291,7 +291,7 @@ function serializedSvg(
     foreignObject.appendChild(container);
     svg.appendChild(foreignObject);
   }
-  // Protected-card hover controls (Edit / Copy) are editor chrome, never part
+  // Protected-card hover controls (Edit) are editor chrome, never part
   // of the generated content, so they must not bake into an exported PNG.
   svg.querySelectorAll(
     'script, style, .easymde-protected-card-actions, [data-easymde-protected-ui]'

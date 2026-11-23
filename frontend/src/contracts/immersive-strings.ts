@@ -37,6 +37,14 @@ export type ImmersiveStrings = Readonly<{
 	previewReadOnly: string;
 	previewUnlockEdit: string;
 	previewMode: string;
+	protectedCardEditFormat: string;
+	protectedCardFootnotes: string;
+	protectedCardMath: string;
+	protectedCardMermaid: string;
+	protectedCardRaw: string;
+	protectedCardSave: string;
+	protectedCardSourceFormat: string;
+	protectedCardToc: string;
 	publish: string;
 	resizeOutline: string;
 	resizeSplit: string;

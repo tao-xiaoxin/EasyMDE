@@ -47,7 +47,7 @@ test.use({
 });
 
 test.describe('Editor context menu production surfaces', () => {
-  test('accepts Full Visual list Cut through accepted Preview and native Undo', async ({ page }) => {
+  test('accepts short-document Visual list Cut through accepted Preview and native Undo', async ({ page }) => {
     await login(page);
     await openNewPost(page);
     const { markdown, source } = await loadCanonicalFixture(page);
@@ -71,12 +71,12 @@ test.describe('Editor context menu production surfaces', () => {
     await assertSourceExactValue(source, markdown, 'focused-full-list-cut-reset');
   });
 
-  test('accepts Windowed Visual list Cut through accepted Preview and native Undo', async ({ page }) => {
+  test('accepts long-document (>160-block) Visual list Cut through accepted Preview and native Undo', async ({ page }) => {
     await login(page);
     await openNewPost(page);
     const { markdown, source } = await loadCanonicalFixture(page, 2);
-    // Two canonical fixtures are the long document that used to reach the
-    // retired Windowed owner; ADR-002 keeps it one unified, fully live surface.
+    // Two canonical fixtures form a long (>160-block) document; ADR-002 keeps
+    // it one unified, fully live ProseMirror surface.
     const { visualEditor } = await enterFullVisual(page);
     await expectUnifiedVisualSurface(visualEditor, 160);
     const selectedText = '前端开发';
@@ -89,13 +89,13 @@ test.describe('Editor context menu production surfaces', () => {
     await expect(target).toContainText(selectedText);
     const blocksBefore = await visualEditor.evaluate((surface) => surface.children.length);
     if (blocksBefore <= 160) {
-      throw new Error(`focused-windowed-list-cut-live-blocks-invalid:${blocksBefore}`);
+      throw new Error(`focused-long-list-cut-live-blocks-invalid:${blocksBefore}`);
     }
 
     await runVisualMutationAction(page, visualEditor, source, markdown, {
       action: 'cut',
       expected,
-      label: 'focused-windowed-list-cut',
+      label: 'focused-long-list-cut',
       target,
       selectText: selectedText
     });
@@ -104,9 +104,9 @@ test.describe('Editor context menu production surfaces', () => {
     assertClipboardTextExact(
       await readNativeClipboardText(page),
       selectedText,
-      'focused-windowed-list-cut'
+      'focused-long-list-cut'
     );
-    await assertSourceExactValue(source, markdown, 'focused-windowed-list-cut-reset');
+    await assertSourceExactValue(source, markdown, 'focused-long-list-cut-reset');
     // After Cut and history the unified surface stays editable, the target
     // stays live and interactive, and the same top-level block structure is
     // restored.
@@ -116,14 +116,14 @@ test.describe('Editor context menu production surfaces', () => {
     const blocksAfter = await visualEditor.evaluate((surface) => surface.children.length);
     if (blocksAfter !== blocksBefore) {
       throw new Error(
-        `focused-windowed-list-cut-live-blocks-drift:${JSON.stringify({ blocksAfter, blocksBefore })}`
+        `focused-long-list-cut-live-blocks-drift:${JSON.stringify({ blocksAfter, blocksBefore })}`
       );
     }
   });
 
   test.describe('native backward-selection Escape return', () => {
-    for (const owner of ['full', 'windowed']) {
-      test(`preserves ${owner} Visual backward selection after focused menu Escape and continues input Undo`, async ({ page }) => {
+    for (const size of ['short', 'long']) {
+      test(`preserves ${size}-document Visual backward selection after focused menu Escape and continues input Undo`, async ({ page }) => {
         const consoleProbe = startSourceMediaConsoleProbe(page);
         const failures = [];
         const onPageError = () => failures.push('page-error');
@@ -148,12 +148,12 @@ test.describe('Editor context menu production surfaces', () => {
               .filter((name) => /^admin-editor-[A-Za-z0-9_-]+\.js$/u.test(name ?? '') && !name.includes('loader-') && !name.startsWith('admin-editor-chunk-')))]))
               .toEqual([expectedBuild]);
           }
-          const { markdown, source } = await loadCanonicalFixture(page, owner === 'full' ? 1 : 2);
+          const { markdown, source } = await loadCanonicalFixture(page, size === 'short' ? 1 : 2);
           const { visualEditor } = await enterFullVisual(page);
-          await waitForVisualPreviewAccepted(visualEditor, `${owner}-escape-before`);
-          await expectUnifiedVisualSurface(visualEditor, owner === 'windowed' ? 160 : 0);
+          await waitForVisualPreviewAccepted(visualEditor, `${size}-escape-before`);
+          await expectUnifiedVisualSurface(visualEditor, size === 'long' ? 160 : 0);
           const paragraph = visualEditor.locator('p').filter({ hasText: '普通文本' }).first();
-          if (owner === 'windowed') await ensureWindowedVisualTargetMounted(page, paragraph, 0);
+          if (size === 'long') await ensureWindowedVisualTargetMounted(page, paragraph, 0);
           await prepareVisualTarget(visualEditor, paragraph);
           phase = 'real-backward-selection';
           await paragraph.click({ position: { x: 3, y: 3 } });
@@ -193,7 +193,7 @@ test.describe('Editor context menu production surfaces', () => {
           expect(after).toMatchObject({ activeSurface: true, activeMenuItem: false, contentEditable: 'true', lock: 'false', error: null });
           expect(after.canonical).toMatchObject({ ownerCount: 1, sourceExact: true, revision: before.canonical.revision });
           expect(after.canonical.history).toEqual(before.canonical.history);
-          await assertSourceExactValue(source, markdown, `${owner}-Escape-source-unchanged`);
+          await assertSourceExactValue(source, markdown, `${size}-Escape-source-unchanged`);
           expect(consoleProbe.codes()).toEqual([]);
           expect(failures).toEqual([]);
           phase = 'direct-replacement';
@@ -201,11 +201,11 @@ test.describe('Editor context menu production surfaces', () => {
           const replacement = `${markdown.slice(0, start)}X${markdown.slice(start + 3)}`;
           // No intervening focus or caret repair: replace the returned range.
           await page.keyboard.type('X');
-          await waitForSourceExactValue(source, replacement, `${owner}-Escape-direct-input`);
+          await waitForSourceExactValue(source, replacement, `${size}-Escape-direct-input`);
           phase = 'replacement-Undo';
           await page.keyboard.press('ControlOrMeta+z');
-          await waitForSourceExactValue(source, markdown, `${owner}-Escape-input-Undo`);
-          await waitForVisualPreviewAccepted(visualEditor, `${owner}-Escape-input-Undo`);
+          await waitForSourceExactValue(source, markdown, `${size}-Escape-input-Undo`);
+          await waitForVisualPreviewAccepted(visualEditor, `${size}-Escape-input-Undo`);
           observations.afterUndo = await readVisualEscapeSelectionState(paragraph, markdown);
           expect(observations.afterUndo.canonical).toMatchObject({ ownerCount: 1, sourceExact: true });
           expect(observations.afterUndo.canonical.history).toEqual({ undoDepth: before.canonical.history.undoDepth, redoDepth: 1 });
@@ -213,9 +213,9 @@ test.describe('Editor context menu production surfaces', () => {
           expect(observations.afterUndo).toMatchObject({ activeSurface: true, contentEditable: 'true', lock: 'false', error: null });
           expect(consoleProbe.codes()).toEqual([]);
           expect(failures).toEqual([]);
-          console.log(JSON.stringify({ phase: 'visual-Escape-backward-complete', owner, observations }));
+          console.log(JSON.stringify({ phase: 'visual-Escape-backward-complete', size, observations }));
         } catch (error) {
-          console.log(JSON.stringify({ phase: 'visual-Escape-backward-first-failure', owner, operation: phase,
+          console.log(JSON.stringify({ phase: 'visual-Escape-backward-first-failure', size, operation: phase,
             observations, consoleCodes: consoleProbe.codes(), failures }));
           throw error;
         } finally {
@@ -229,24 +229,27 @@ test.describe('Editor context menu production surfaces', () => {
   });
 
   // Each real action/history group gets the unchanged case budget. Keep the
-  // same-document owner transition separately rather than making the final
+  // short-to-long document growth case separately rather than making the final
   // render inherit every preceding group's elapsed time.
-  for (const owner of ['full', 'windowed']) {
+  for (const size of ['short', 'long']) {
+    // `runVisualActionMatrix` keys its long-document action set on the shared
+    // helper's historical 'windowed' suffix; it is not a separate owner.
+    const matrixSuffix = 'short' === size ? 'full' : 'windowed';
     for (const group of ['text', 'list', 'link', 'cross-heading', 'image', 'table']) {
-      test(`accepts ${owner} Visual ${group} actions and history through formal Preview re-entry`, async ({ page }) => {
+      test(`accepts ${size}-document Visual ${group} actions and history through formal Preview re-entry`, async ({ page }) => {
         await login(page);
         await openNewPost(page);
-        const { markdown, source } = await loadCanonicalFixture(page, 'full' === owner ? 1 : 2);
-        const full = await enterFullVisual(page);
-        await expectUnifiedVisualSurface(full.visualEditor, 'windowed' === owner ? 160 : 0);
-        await runVisualActionMatrix(page, full.visualEditor, source, markdown, 0, owner, group);
-        await repeatAfterFormalPreview(page, full.strings, source, markdown, 0);
-        await assertSourceExactValue(source, markdown, `${owner}-${group}-actions-complete`);
+        const { markdown, source } = await loadCanonicalFixture(page, 'short' === size ? 1 : 2);
+        const visual = await enterFullVisual(page);
+        await expectUnifiedVisualSurface(visual.visualEditor, 'long' === size ? 160 : 0);
+        await runVisualActionMatrix(page, visual.visualEditor, source, markdown, 0, matrixSuffix, group);
+        await repeatAfterFormalPreview(page, visual.strings, source, markdown, 0);
+        await assertSourceExactValue(source, markdown, `${size}-${group}-actions-complete`);
       });
     }
   }
 
-  test('retains the same document and root through Full-to-Windowed Visual transition and formal Preview re-entry', async ({ page }) => {
+  test('retains the same document and root when a short document grows past 160 blocks in the unified Visual editor and through formal Preview re-entry', async ({ page }) => {
     await login(page);
     await openNewPost(page);
     const { markdown, preview, source, sourceEditor } = await loadCanonicalFixture(page);
@@ -254,21 +257,21 @@ test.describe('Editor context menu production surfaces', () => {
     let nativeSource;
     try {
       nativeSource = await source.elementHandle();
-      const full = await enterFullVisual(page);
-      await expect(full.visualEditor.locator('[data-easymde-preview-window-spacer]')).toHaveCount(0);
-      await repeatAfterFormalPreview(page, full.strings, source, markdown, 0);
-      await assertSourceExactValue(source, markdown, 'full-visual-actions-complete');
-      await page.getByRole('button', { name: full.strings.exit, exact: true }).click();
+      const short = await enterFullVisual(page);
+      await expect(short.visualEditor.locator('[data-easymde-preview-window-spacer]')).toHaveCount(0);
+      await repeatAfterFormalPreview(page, short.strings, source, markdown, 0);
+      await assertSourceExactValue(source, markdown, 'short-visual-actions-complete');
+      await page.getByRole('button', { name: short.strings.exit, exact: true }).click();
       await expect(page.locator('.easymde-editor.is-immersive')).toHaveCount(0);
-      const windowedMarkdown = `${markdown}\n${markdown}`;
-      await replaceSourceWithNativeInput(page, sourceEditor, source, windowedMarkdown, 'windowed-fixture-applied');
-      await waitForSourcePreviewAccepted(preview, 'full-to-windowed-preview');
-      const windowed = await enterFullVisual(page);
-      await expectUnifiedVisualSurface(windowed.visualEditor, 160);
-      await repeatAfterFormalPreview(page, windowed.strings, source, windowedMarkdown, 0);
-      await page.getByRole('button', { name: windowed.strings.exit, exact: true }).click();
+      const longMarkdown = `${markdown}\n${markdown}`;
+      await replaceSourceWithNativeInput(page, sourceEditor, source, longMarkdown, 'long-fixture-applied');
+      await waitForSourcePreviewAccepted(preview, 'short-to-long-preview');
+      const long = await enterFullVisual(page);
+      await expectUnifiedVisualSurface(long.visualEditor, 160);
+      await repeatAfterFormalPreview(page, long.strings, source, longMarkdown, 0);
+      await page.getByRole('button', { name: long.strings.exit, exact: true }).click();
       await expect(page.locator('.easymde-editor.is-immersive')).toHaveCount(0);
-      await assertSourceExactValue(source, windowedMarkdown, 'windowed-visual-actions-complete');
+      await assertSourceExactValue(source, longMarkdown, 'long-visual-actions-complete');
       expect(await root.evaluate((element) => element === document.querySelector('#easymde-editor-root'))).toBe(true);
       expect(await nativeSource.evaluate((element) => element === document.querySelector('#easymde-source'))).toBe(true);
     } finally {
@@ -341,7 +344,7 @@ test.describe('Editor context menu production surfaces', () => {
     await expect(source).toHaveValue(markdown);
   });
 
-  test('keeps the context menu usable on the Windowed Visual surface after two canonical fixtures', async ({ page }) => {
+  test('keeps the context menu usable on a long-document (>160-block) Visual surface after two canonical fixtures', async ({ page }) => {
     await login(page);
     await openNewPost(page);
     const { markdown, source } = await loadCanonicalFixture(page, 2);
@@ -509,26 +512,26 @@ test.describe('Editor context menu production surfaces', () => {
     });
   });
 
-  test('deletes a standalone thematic break from Windowed Visual with Undo', async ({ page }) => {
+  test('deletes a standalone thematic break from a long-document (>160-block) Visual surface with Undo', async ({ page }) => {
     await login(page);
     await openNewPost(page);
     const leading = Array.from(
       { length: 220 },
-      (_, index) => `windowed paragraph ${index}`
+      (_, index) => `long paragraph ${index}`
     ).join('\n\n');
-    const markdown = `${leading}\n\n  ---  \n\nwindowed tail`;
+    const markdown = `${leading}\n\n  ---  \n\nlong tail`;
     const marker = '  ---  ';
     const markerStart = markdown.indexOf(marker);
     if (markerStart < 0 || markdown.indexOf(marker, markerStart + marker.length) >= 0) {
-      throw new Error('windowed-thematic-break-marker-offset-unavailable');
+      throw new Error('long-thematic-break-marker-offset-unavailable');
     }
     // The parser-owned thematic-break range is the marker line's content only;
     // the structural owner never consumes the blank-line separators on either side.
     const expected = `${markdown.slice(0, markerStart)}${markdown.slice(markerStart + marker.length)}`;
     const source = page.locator('#easymde-source');
     const sourceEditor = page.locator('.easymde-source-react .cm-content');
-    await replaceSourceWithNativeInput(page, sourceEditor, source, markdown, 'windowed-thematic-break-input');
-    await waitForSourceExactValue(source, markdown, 'windowed-thematic-break-before');
+    await replaceSourceWithNativeInput(page, sourceEditor, source, markdown, 'long-thematic-break-input');
+    await waitForSourceExactValue(source, markdown, 'long-thematic-break-before');
     const full = await enterFullVisual(page);
     // ADR-002: the synthetic long source stays one unified, fully live surface.
     await expectUnifiedVisualSurface(full.visualEditor, 160);
@@ -541,17 +544,17 @@ test.describe('Editor context menu production surfaces', () => {
     await expect(thematicBreak).toBeVisible();
     await runVisualThematicBreakDelete(page, {
       expected,
-      label: 'windowed-visual-thematic-break',
+      label: 'long-visual-thematic-break',
       markdown,
       source,
       target: thematicBreak,
       select: () => thematicBreak.evaluate((element) => {
         const surface = element.parentElement;
-        if (!surface) throw new Error('windowed-hr-surface-unavailable');
+        if (!surface) throw new Error('long-hr-surface-unavailable');
         const selection = surface.ownerDocument.defaultView?.getSelection();
-        if (!selection) throw new Error('windowed-hr-selection-unavailable');
+        if (!selection) throw new Error('long-hr-selection-unavailable');
         const index = Array.prototype.indexOf.call(surface.children, element);
-        if (index < 0) throw new Error('windowed-hr-index-unavailable');
+        if (index < 0) throw new Error('long-hr-index-unavailable');
         surface.focus();
         selection.removeAllRanges();
         selection.setBaseAndExtent(surface, index, surface, index + 1);
@@ -560,17 +563,17 @@ test.describe('Editor context menu production surfaces', () => {
     });
   });
 
-  test('deletes a Windowed Visual thematic break through native Backspace and restores Undo/Redo selection', async ({ page }) => {
+  test('deletes a long-document (>160-block) Visual thematic break through native Backspace and restores Undo/Redo selection', async ({ page }) => {
     await login(page);
     await openNewPost(page);
     const { markdown, preview, source, sourceEditor } = await loadCanonicalFixture(page);
-    const windowedMarkdown = `${markdown}\n${markdown}`;
-    await replaceSourceWithNativeInput(page, sourceEditor, source, windowedMarkdown, 'windowed-hr-fixture-input');
-    await waitForSourceExactValue(source, windowedMarkdown, 'windowed-hr-fixture-applied');
+    const longMarkdown = `${markdown}\n${markdown}`;
+    await replaceSourceWithNativeInput(page, sourceEditor, source, longMarkdown, 'long-hr-fixture-input');
+    await waitForSourceExactValue(source, longMarkdown, 'long-hr-fixture-applied');
     await expect(preview).toHaveAttribute('aria-busy', 'false');
 
     const visual = await enterFullVisual(page);
-    await waitForVisualPreviewAccepted(visual.visualEditor, 'windowed-hr-before');
+    await waitForVisualPreviewAccepted(visual.visualEditor, 'long-hr-before');
     await expectUnifiedVisualSurface(visual.visualEditor, 160);
     await visual.visualEditor.evaluate((surface) => {
       for (let node = surface; node instanceof HTMLElement; node = node.parentElement) {
@@ -581,55 +584,55 @@ test.describe('Editor context menu production surfaces', () => {
     await page.waitForTimeout(700);
     const thematicBreak = visual.visualEditor.locator(':scope > hr').first();
     await expect(thematicBreak).toBeVisible();
-    const markerStart = occurrenceOffset(windowedMarkdown, '\n---\n') + 1;
-    if (markerStart < 1) throw new Error('windowed-hr-source-marker-missing');
+    const markerStart = occurrenceOffset(longMarkdown, '\n---\n') + 1;
+    if (markerStart < 1) throw new Error('long-hr-source-marker-missing');
     // Native Backspace removes the whole `horizontal_rule` node in ProseMirror
     // (unlike the canonical `delete-thematic-break` command, which removes only
     // the marker bytes). The two surviving untouched blocks keep their raw
     // source and are re-joined by one standard block separator, so the blank
     // lines on both sides of the marker collapse into a single `\n\n`.
     let separatorStart = markerStart;
-    while (separatorStart > 0 && /[\r\n]/u.test(windowedMarkdown[separatorStart - 1])) {
+    while (separatorStart > 0 && /[\r\n]/u.test(longMarkdown[separatorStart - 1])) {
       separatorStart -= 1;
     }
     let separatorEnd = markerStart + 3;
-    while (separatorEnd < windowedMarkdown.length && /[\r\n]/u.test(windowedMarkdown[separatorEnd])) {
+    while (separatorEnd < longMarkdown.length && /[\r\n]/u.test(longMarkdown[separatorEnd])) {
       separatorEnd += 1;
     }
-    const blockSeparator = windowedMarkdown.includes('\r\n') ? '\r\n\r\n' : '\n\n';
+    const blockSeparator = longMarkdown.includes('\r\n') ? '\r\n\r\n' : '\n\n';
     const deletedMarkdown =
-      `${windowedMarkdown.slice(0, separatorStart)}${blockSeparator}${windowedMarkdown.slice(separatorEnd)}`;
+      `${longMarkdown.slice(0, separatorStart)}${blockSeparator}${longMarkdown.slice(separatorEnd)}`;
 
     await thematicBreak.evaluate((element) => {
       const surface = element.parentElement;
-      if (!surface) throw new Error('windowed-hr-surface-unavailable');
+      if (!surface) throw new Error('long-hr-surface-unavailable');
       const selection = surface.ownerDocument.defaultView?.getSelection();
-      if (!selection) throw new Error('windowed-hr-selection-unavailable');
+      if (!selection) throw new Error('long-hr-selection-unavailable');
       const index = Array.prototype.indexOf.call(surface.children, element);
-      if (index < 0) throw new Error('windowed-hr-index-unavailable');
+      if (index < 0) throw new Error('long-hr-index-unavailable');
       surface.focus();
       selection.removeAllRanges();
       selection.setBaseAndExtent(surface, index, surface, index + 1);
     });
     await page.keyboard.press('Backspace');
-    await waitForSourceExactValue(source, deletedMarkdown, 'windowed-hr-delete');
+    await waitForSourceExactValue(source, deletedMarkdown, 'long-hr-delete');
     const deletePreview = await waitForVisualPreviewAccepted(
       visual.visualEditor,
-      'windowed-hr-delete'
+      'long-hr-delete'
     );
 
     await visual.visualEditor.press('ControlOrMeta+z');
-    await waitForSourceExactValue(source, windowedMarkdown, 'windowed-hr-undo');
+    await waitForSourceExactValue(source, longMarkdown, 'long-hr-undo');
     const undoPreview = await waitForVisualPreviewAccepted(
       visual.visualEditor,
-      'windowed-hr-undo',
+      'long-hr-undo',
       deletePreview.domHash
     );
     await visual.visualEditor.press('ControlOrMeta+Shift+z');
-    await waitForSourceExactValue(source, deletedMarkdown, 'windowed-hr-redo');
+    await waitForSourceExactValue(source, deletedMarkdown, 'long-hr-redo');
     await waitForVisualPreviewAccepted(
       visual.visualEditor,
-      'windowed-hr-redo',
+      'long-hr-redo',
       undoPreview.domHash
     );
   });

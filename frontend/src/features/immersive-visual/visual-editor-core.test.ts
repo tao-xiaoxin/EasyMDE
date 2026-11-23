@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { history } from "prosemirror-history";
-import { DOMSerializer, type Node as ProseMirrorNode } from "prosemirror-model";
+import { history, redo, undo } from "prosemirror-history";
+import { DOMSerializer, Node as ProseMirrorNode } from "prosemirror-model";
 import { EditorState, NodeSelection, TextSelection } from "prosemirror-state";
 import { addColumnAfter, addRowAfter, tableEditing } from "prosemirror-tables";
 import { EditorView } from "prosemirror-view";
@@ -2257,7 +2257,9 @@ describe("Wave 6F container reference definitions and ordered first-item deletio
 
 	it("caches untouched pasted block serializations across subsequent edits", () => {
 		const serializeBlock = vi.fn((node: ProseMirrorNode) =>
-			serializeVisualDocToMarkdown(visualEditorSchema.nodes.doc.create(null, [node])),
+			serializeVisualDocToMarkdown(
+				visualEditorSchema.nodes.doc.create(null, [node]),
+			),
 		);
 		const guard = createPreservingRoundTripGuard("Before", undefined, {
 			serializeBlock,
@@ -2278,7 +2280,8 @@ describe("Wave 6F container reference definitions and ordered first-item deletio
 			schema: visualEditorSchema,
 		});
 		// Edit only block 1 ("Pasted one" -> "Pasted one!").
-		const block1End = pastedDoc.child(0).nodeSize + pastedDoc.child(1).nodeSize - 1;
+		const block1End =
+			pastedDoc.child(0).nodeSize + pastedDoc.child(1).nodeSize - 1;
 		const editedDoc = state.tr.insertText("!", block1End).doc;
 		expect(guard.serialize(editedDoc)).toBe(
 			"Before\n\nPasted one!\n\nPasted two\n\nPasted three",
@@ -2301,5 +2304,176 @@ describe("Wave 6F container reference definitions and ordered first-item deletio
 			"Before\n\nPasted one!\n\nPasted two\n\nPasted three",
 		);
 		expect(serializeBlock).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("identity-first block alignment and bounded large-span matching", () => {
+	function historyState(
+		guard: ReturnType<typeof createMarkdownRoundTripGuard>,
+	) {
+		return EditorState.create({
+			doc: guard.initialDoc,
+			schema: visualEditorSchema,
+			plugins: [history()],
+		});
+	}
+
+	function deleteChild(state: EditorState, index: number): EditorState {
+		let from = 0;
+		for (let i = 0; i < index; i += 1) from += state.doc.child(i).nodeSize;
+		return state.apply(
+			state.tr.delete(from, from + state.doc.child(index).nodeSize),
+		);
+	}
+
+	function runHistory(state: EditorState, command: typeof undo): EditorState {
+		let next = state;
+		command(state, (tr) => {
+			next = state.apply(tr);
+		});
+		return next;
+	}
+
+	it("keeps the surviving block's raw spelling when one of two identical paragraphs is deleted", () => {
+		const original = "*same*\n\n_same_\n\nEnd";
+		const guard = createMarkdownRoundTripGuard(original);
+		expect(guard.initialDoc.child(0).eq(guard.initialDoc.child(1))).toBe(true);
+		const base = historyState(guard);
+
+		const firstDeleted = deleteChild(base, 0);
+		expect(firstDeleted.doc.child(0)).toBe(base.doc.child(1));
+		expect(guard.serialize(firstDeleted.doc)).toBe("_same_\n\nEnd");
+		const undoneFirst = runHistory(firstDeleted, undo);
+		expect(guard.serialize(undoneFirst.doc)).toBe(original);
+		const redoneFirst = runHistory(undoneFirst, redo);
+		expect(guard.serialize(redoneFirst.doc)).toBe("_same_\n\nEnd");
+
+		const secondDeleted = deleteChild(base, 1);
+		expect(guard.serialize(secondDeleted.doc)).toBe("*same*\n\nEnd");
+		const undoneSecond = runHistory(secondDeleted, undo);
+		expect(guard.serialize(undoneSecond.doc)).toBe(original);
+		const redoneSecond = runHistory(undoneSecond, redo);
+		expect(guard.serialize(redoneSecond.doc)).toBe("*same*\n\nEnd");
+	});
+
+	it("keeps the surviving list item's raw spelling when one of two identical items is deleted", () => {
+		const original = "- *same*\n- _same_\n- End\n\nTail";
+		const guard = createMarkdownRoundTripGuard(original);
+		const list = guard.initialDoc.child(0);
+		expect(list.child(0).eq(list.child(1))).toBe(true);
+		const base = historyState(guard);
+		const deleteItem = (index: number): EditorState => {
+			let from = 1;
+			for (let i = 0; i < index; i += 1) from += list.child(i).nodeSize;
+			return base.apply(
+				base.tr.delete(from, from + list.child(index).nodeSize),
+			);
+		};
+
+		const firstDeleted = deleteItem(0);
+		expect(firstDeleted.doc.child(0).child(0)).toBe(list.child(1));
+		expect(guard.serialize(firstDeleted.doc)).toBe("- _same_\n- End\n\nTail");
+		const undone = runHistory(firstDeleted, undo);
+		expect(guard.serialize(undone.doc)).toBe(original);
+		expect(guard.serialize(runHistory(undone, redo).doc)).toBe(
+			"- _same_\n- End\n\nTail",
+		);
+
+		const secondDeleted = deleteItem(1);
+		expect(guard.serialize(secondDeleted.doc)).toBe("- *same*\n- End\n\nTail");
+		const undoneSecond = runHistory(secondDeleted, undo);
+		expect(guard.serialize(undoneSecond.doc)).toBe(original);
+		expect(guard.serialize(runHistory(undoneSecond, redo).doc)).toBe(
+			"- *same*\n- End\n\nTail",
+		);
+	});
+
+	it("aligns large disjoint spans with near-linear comparisons and preserves surviving raw slices", () => {
+		const count = 4000;
+		const span = (prefix: string, from: number, to: number): string[] => {
+			const blocks: string[] = [];
+			for (let i = from; i < to; i += 1) {
+				blocks.push(`${prefix}${String(i).padStart(5, "0")}`);
+			}
+			return blocks;
+		};
+		const half = count / 2;
+		const originalBlocks = [
+			...span("a", 0, half),
+			"*keep one*",
+			"Keep two\n========",
+			...span("a", half, count),
+		];
+		const nextBlocks = [
+			...span("b", 0, half),
+			"_keep one_",
+			"# Keep two",
+			...span("b", half, count),
+		];
+		const original = originalBlocks.join("\n\n");
+		const guard = createMarkdownRoundTripGuard(original);
+		// Freshly parsed: no object identity is shared with the baseline.
+		const nextDoc = parseMarkdownToVisualDoc(nextBlocks.join("\n\n"));
+		expect(nextDoc.childCount).toBe(count + 2);
+
+		const eqSpy = vi.spyOn(ProseMirrorNode.prototype, "eq");
+		const started = performance.now();
+		let serialized = "";
+		try {
+			serialized = guard.serialize(nextDoc);
+		} finally {
+			expect(eqSpy.mock.calls.length).toBeLessThan(100000);
+			eqSpy.mockRestore();
+		}
+		expect(performance.now() - started).toBeLessThan(5000);
+		const lines = serialized.split("\n\n");
+		expect(lines[half]).toBe("*keep one*");
+		expect(lines[half + 1]).toBe("Keep two\n========");
+		expect(lines[0]).toBe("b00000");
+		expect(lines[lines.length - 1]).toBe(
+			`b${String(count - 1).padStart(5, "0")}`,
+		);
+	});
+
+	it("keeps exact link slices past same-text bucket collisions on large gaps", () => {
+		const link = (i: number): string =>
+			`[Open](https://x.test/${i} '${i === 105 ? "Keep me" : `t${i}`}')`;
+		const originalBlocks = ["Start"];
+		for (let i = 1; i <= 208; i += 1) originalBlocks.push(link(i));
+		originalBlocks.push("Finish");
+		expect(originalBlocks).toHaveLength(210);
+		// Edited ends defeat prefix/suffix trimming; five deleted same-text
+		// links right before the middle push it past any small probe window.
+		const nextBlocks = ["Start edited"];
+		for (let i = 1; i <= 208; i += 1) {
+			if (i < 100 || i > 104) nextBlocks.push(link(i));
+		}
+		nextBlocks.push("Finish edited");
+		expect(nextBlocks.length * originalBlocks.length).toBeGreaterThan(40000);
+
+		const guard = createMarkdownRoundTripGuard(originalBlocks.join("\n\n"));
+		const nextDoc = parseMarkdownToVisualDoc(nextBlocks.join("\n\n"));
+		const middle = link(105);
+		// Regeneration would not keep the single-quoted title spelling.
+		expect(
+			serializeVisualDocToMarkdown(parseMarkdownToVisualDoc(middle)),
+		).not.toBe(middle);
+
+		const eqSpy = vi.spyOn(ProseMirrorNode.prototype, "eq");
+		let serialized = "";
+		try {
+			serialized = guard.serialize(nextDoc);
+		} finally {
+			expect(eqSpy.mock.calls.length).toBeLessThanOrEqual(
+				4 * originalBlocks.length,
+			);
+			eqSpy.mockRestore();
+		}
+		expect(serialized).toBe(
+			["Start edited", ...nextBlocks.slice(1, -1), "Finish edited"].join(
+				"\n\n",
+			),
+		);
+		expect(serialized.split("\n\n")).toContain(middle);
 	});
 });

@@ -12,6 +12,7 @@ import {
   waitForBrowserPaint,
   waitForPreviewRefresh
 } from '../helpers/editor-e2e-helpers.mjs';
+import { selectOrdinaryOption } from '../helpers/ordinary-select.mjs';
 
 const PREVIEW_SINK_SELECTOR = '.easymde-pane-preview [data-easymde-preview-html-sink="1"]';
 const PREVIEW_POST_PATTERN = /\/wp-json\/easymde\/v1\/preview\/?$/u;
@@ -188,6 +189,7 @@ test.describe('Unified ProseMirror visual editor core editing', () => {
           lastMarginBottom: last ? getComputedStyle(last).marginBottom : null
         };
       });
+      expect(unlockedGeometry.firstMarginTop).toBe('0px');
       expect(unlockedGeometry.firstMarginTop).toBe(lockedGeometry.firstMarginTop);
       expect(unlockedGeometry.lastMarginBottom).toBe(lockedGeometry.lastMarginBottom);
       expect(Math.abs(unlockedGeometry.firstTop - lockedGeometry.firstTop)).toBeLessThanOrEqual(1);
@@ -425,6 +427,65 @@ test.describe('Unified ProseMirror visual editor core editing', () => {
       expect(await previewSink.getAttribute('contenteditable')).toBeNull();
       await expect(previewSink).toContainText('Original paragraph before visual edit synced.');
       await expect(source).toHaveValue(updatedMarkdown);
+      expect(tracker.errors).toEqual([]);
+    } finally {
+      tracker.dispose();
+    }
+  });
+
+  test('keeps loose-list paragraph line height and bottom margin identical across lock and unlock under Inkwell', async ({ page }, testInfo) => {
+    const tracker = createRuntimeErrorTracker(page);
+    try {
+      const markdown = '# Loose List Parity\n\n- Loose alpha\n\n- Loose beta\n\n- Loose gamma';
+
+      await login(page, testInfo.easymdeUser);
+      tracker.attach();
+      await openEasyMdeNewPost(page);
+      await fillMarkdownAndWaitForPreview(page, markdown, 'Loose gamma');
+
+      const strings = await page.evaluate(() => ({
+        articleTheme: window.EasyMDEEditorRootBootstrap.appearance.strings.articleTheme,
+        editorSettings: window.EasyMDEEditorRootBootstrap.strings.immersive.editorSettings,
+        inkwellLabel: window.EasyMDEEditorRootBootstrap.appearance.articleThemes
+          .find(({ id }) => id === 'inkwell')?.label ?? null
+      }));
+      expect(strings.inkwellLabel).not.toBeNull();
+      const previewSink = page.locator(PREVIEW_SINK_SELECTOR);
+      await page.locator('.easymde-toolbar-section-secondary')
+        .getByRole('button', { name: strings.editorSettings, exact: true })
+        .click();
+      const dialog = page.getByRole('dialog', { name: strings.editorSettings });
+      await selectOrdinaryOption(
+        page,
+        dialog.getByRole('combobox', { name: strings.articleTheme, exact: true }),
+        strings.inkwellLabel
+      );
+      await expect(previewSink).toHaveClass(/\beasymde-markdown-theme-inkwell\b/u);
+      await page.keyboard.press('Escape');
+      await expect(dialog).toHaveCount(0);
+
+      const readLooseParagraph = (root) => {
+        const paragraph = root.querySelector('ul > li > p');
+        if (!paragraph) return null;
+        const style = getComputedStyle(paragraph);
+        return { lineHeight: style.lineHeight, marginBottom: style.marginBottom };
+      };
+
+      const { labels, visualEditor } = await enterImmersivePreviewAndUnlock(page);
+      await expectUnlockedVisualArticle(visualEditor);
+      await expect(visualEditor).toHaveClass(/\beasymde-markdown-theme-inkwell\b/u);
+      await expect(visualEditor.locator('ul[data-easymde-tight="false"] > li > p')).toHaveCount(3);
+      const unlocked = await visualEditor.evaluate(readLooseParagraph);
+
+      await page.getByRole('button', { name: labels.previewLockReadOnly }).click();
+      await expect(page.getByRole('textbox', { name: labels.previewEditorLabel })).toHaveCount(0);
+      await expect(previewSink).not.toHaveClass(/\beasymde-preview-surface-hidden\b/u);
+      await expect(previewSink).toHaveAttribute('aria-busy', 'false');
+      await expect(previewSink.locator('ul > li > p')).toHaveCount(3);
+      const locked = await previewSink.evaluate(readLooseParagraph);
+
+      expect(locked).not.toBeNull();
+      expect(unlocked).toEqual(locked);
       expect(tracker.errors).toEqual([]);
     } finally {
       tracker.dispose();

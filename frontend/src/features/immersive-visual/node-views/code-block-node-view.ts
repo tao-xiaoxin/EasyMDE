@@ -603,9 +603,16 @@ class CodeBlockNodeView implements NodeView {
 			if (!this.dom.isConnected) {
 				return;
 			}
-			const bg = win.getComputedStyle(this.contentDOM).backgroundColor;
+			const computed = win.getComputedStyle(this.contentDOM);
+			const bg = computed.backgroundColor;
 			if (bg && bg !== "transparent" && bg !== "rgba(0, 0, 0, 0)") {
 				this.dom.style.setProperty("--easymde-code-frame-background", bg);
+			}
+			// Match the badge to the code theme foreground so it never inherits
+			// dark article body text onto a dark code frame.
+			const fg = computed.color;
+			if (this.badge && fg) {
+				this.badge.style.color = fg;
 			}
 		});
 	}

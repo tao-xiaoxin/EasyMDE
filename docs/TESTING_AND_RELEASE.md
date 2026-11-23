@@ -296,7 +296,7 @@ The focused context-menu checks are:
 
 ```bash
 npm run test:frontend -- frontend/src/features/editor-context-menu
-npm run test:frontend -- frontend/src/contracts/bootstrap/editor-root-bootstrap.test.ts frontend/src/entrypoints/admin-editor.test.tsx frontend/src/app/editor/EditorRoot.test.tsx
+npm run test:frontend -- frontend/src/contracts/bootstrap/editor-root-bootstrap.test.ts frontend/src/entrypoints/admin-editor.test.tsx frontend/src/app/editor/EditorRoot.context-menu.test.tsx frontend/src/app/editor/EditorRoot.immersive-visual.test.tsx
 npm run typecheck:frontend
 ```
 
@@ -340,7 +340,7 @@ under `tests/e2e/context-menu/` and rebuild the runtime before this bounded
 browser check:
 
 ```bash
-EASYMDE_E2E_BASE_URL=http://localhost:8094 npx playwright test tests/e2e/context-menu/ --project=chromium --workers=1 --trace=off --grep 'copies canonical Bash code content without fences in Source and Full Visual|accepts Full Visual list Cut through accepted Preview and native Undo'
+EASYMDE_E2E_BASE_URL=http://localhost:8094 npx playwright test tests/e2e/context-menu/ --project=chromium --workers=1 --trace=off --grep 'copies canonical Bash code content without fences in Source and Full Visual|accepts short-document Visual list Cut through accepted Preview and native Undo'
 ```
 
 Code-copy verification must reach the formal PHP `codeMap`, not a synthetic
@@ -372,7 +372,7 @@ npm run test:frontend -- frontend/src/features/immersive-visual
   NodeViews with click blue-ring selection, protected KaTeX/Mermaid/TOC/footnote
   atom cards with inline raw-source editing, interactive task-list checkboxes,
   and theme-compatible table containers.
-- `frontend/src/app/editor/EditorRoot.test.tsx` covers the `EditorRoot`
+- `frontend/src/app/editor/EditorRoot.immersive-visual.test.tsx` covers the `EditorRoot`
   switchover to ProseMirror on unlock, keeping `PreviewSurfaceOwner` hidden and
   strictly read-only during visual editing, refreshing formal PHP Preview on
   lock and WeChat Copy, and unlocking >160-block documents in one unified
@@ -381,298 +381,60 @@ npm run test:frontend -- frontend/src/features/immersive-visual
 These are unit and component evidence only; they do not substitute for real
 Chromium E2E verification in an authorized WordPress environment.
 
-The edit map is line indexed, so the accepted Preview source may advance with a
-local commit only when that commit leaves every block line range in place. The
-owner derives the committed canonical delta from the pre-commit and post-commit
-documents rather than from the last input event, because one debounced burst can
-coalesce several events and the pending record keeps only the latest. The delta
-must stay inside one line (no line break in the inserted or replaced text), and
-the one line it touches must keep the same fence role. A stable total line count
-is not a coordinate proof: a burst that inserts a line inside the code body
-followed by a plain character leaves the latest event looking newline-free while
-the committed document gained a line.
-`keeps the accepted source current through a plain multi-character native burst`
-is the positive control, and the burst negative is
-`re-authenticates the accepted Preview after an owner burst inserted a code line`.
+Live Root context-menu and visual-editor integration coverage is split across
+`EditorRoot.context-menu.test.tsx` (Source right-click context capture,
+heading-level submenus, certified formula/image/thematic-break deletion,
+deferred image and HTML Clipboard copy, table dialog/formatting/column
+alignment, parser-proven code copy/indentation, and ABA revision guards) and
+`EditorRoot.immersive-visual.test.tsx` (ProseMirror mount on unlock, hidden
+read-only `PreviewSurfaceOwner`, live article/code theme switching and
+code-badge color sync without remount, generated-content identity binding to
+the current canonical revision after visual edits, and formal PHP Preview
+refresh on lock and WeChat Copy).
 
-When the accepted map does stop describing the current document, the repair is
-re-authentication, never a refusal. A demand asks the owner for a fresh render of
-the committed source through the existing Preview request and remains parked on
-the readiness subscription; the same gesture then completes against the new map.
-The owner exposes this as `needsAcceptedPreviewRefresh`/`refreshAcceptedPreview`,
-and the decision is made from the committed canonical delta between the accepted
-source and the current document: a delta that contains no line break cannot move
-a block line range, so the menu opens with no render, while a delta that does
-contain one forces exactly one re-authentication. A total line count or a
-code-only coordinate signature is not that proof, because a burst can insert a
-line inside a code body and still end with a newline-free input event.
-Three `EditorRoot.test.tsx` rows drive that through Root with real native
-beforeinput and caret events in a code body. Each holds the re-authentication the
-demand itself requested through the external Preview port, requires no menu, no
-stale-map failure, and no canonical or history change while it is held, requires
-that single held request to name the committed source, and then accepts it and
-requires the retired PRE to be disconnected with a different PRE mounted in its
-place before one menu appears for the same gesture.
-`keeps one pointer demand alive through the refresh it requested and copies the
-whole fence` performs the exact current-fence Copy.
-`cuts the whole refreshed fence from the first gesture with exact native history`
-performs the real Clipboard write of the exact current fence, asserts the exact
-canonical removal with one history entry, and drives native Undo/Redo/Undo back
-through the typed document. Each native transition carries its own barrier rather
-than a phase string that may already be `ready` from the previous state: the Cut
-must leave the accepted DOM with no PRE, the first Undo must restore a PRE
-containing the typed character at the typed depth with one redo available, the
-Redo must remove the PRE again with the Cut's depth restored, and the final Undo
-must bring back that same PRE with the typed depth and one redo. Every step also
-requires the accepted surface to be `ready` and editable, so a later step is
-never credited with a state it never left. `completes the same first pointer gesture when it arrives inside the
-input debounce` issues the pointer gesture immediately after the input events,
-with no wait for the committed document: the owner's preflight must settle that
-input so the demand captures the post-burst source, and the row requires the
-committed bytes, one request for them, one menu, and a fence Copy that contains
-the new line. `reports one terminal failure and makes no second
-request when the refresh render fails` uses the same committed burst and requires
-exactly one request for the committed source, exactly one failure, the visual
-surface to be left, no menu, no further request after the terminal state, and an
-unchanged canonical history and revision - the typed burst stays the last
-documented entry. A foreign DOM change or an unknown canonical revision is not
-refreshable and still fails explicitly.
+Visual table coverage spans the browser and component suites:
+`tests/e2e/context-menu/visual-menu-and-thematic-breaks.spec.mjs` runs short-
+and long-document Visual table alignment actions with Undo/Redo (followed by
+formal Preview re-entry formatting checks),
+`tests/e2e/visual/prosemirror-rich-blocks.spec.mjs` exercises table Tab
+navigation and alignment preservation in the unlocked ProseMirror editor, and
+`EditorRoot.context-menu.test.tsx` covers Source table formatting, column
+alignment, and `TableDialog` insertion. Formal PHP Preview acceptance checks
+remain scoped to the read-only Preview sink (including locking back from visual
+editing).
 
-A table promotion is a one-gesture change of accepted shape: native deletion
-inside a delimiter turns a paragraph into a table while preserving exact source
-bytes. `EditorRoot.test.tsx` registers separate `$columns $region $scope`
-operation cases. The isolated and held-neighbor controls share the four exact
-bases: equal/unequal columns, with deletion at interior offset 9 or at the end
-of the delimiter (15/21 after deletion). A held neighbor appends exactly
-`\n\nTrailing native neighbor.`; its delimiter-end control is not relabelled as
-document EOF. The malformed two-line paragraph and trailing paragraph have
-separate accepted map blocks before promotion and remain separate after it.
+Interior paragraph splits, multi-step Undo/Redo, and deleting the first of two
+visually identical blocks after Undo under the real CodeMirror
+`EditorDocumentSession` (with CodeMirror's DOM parked via
+`setVisualEditingActive(true/false)`) are verified against ProseMirror
+reconciliation (`visual-canonical-sync.ts`) and identity-first block
+preservation (`markdown-block-preservation.ts`) in
+`prosemirror-visual-editor.test.tsx`, while `visual-editor-core.test.ts`
+verifies deleting either duplicate block under ProseMirror history: unlocked
+edits and Undo/Redo reconcile canonical Markdown and mapped selections in
+memory without waiting for a new formal Preview generation and preserve
+untouched raw Markdown spellings. Separately,
+`prosemirror-visual-editor.test.tsx` uses a mock document session to verify
+that visual image paste and drop events delegate to their upload callbacks.
 
-Each actual Copy, generic Cut, and equal-column `Delete table` owns a fresh Root,
-document session, first menu and gesture. Its formal Preview response and genuine
-block-index producer result are held independently. Preview arrives first:
-the table must be installed, but the menu stays absent until the genuine index
-arrives. No second gesture repairs a demand. The accepted table's exact header
-cells and the unchanged trailing paragraph identify the target; generic commands
-operate on the table bytes only, never the neighbor. Unequal columns remain a
-formal table with a padded third header cell, while the stricter table-command
-grammar refuses only the `Table` submenu. Generic Copy/Cut still execute.
+Unified ProseMirror code-block and thematic-break boundaries are covered by
+focused component tests in `frontend/src/features/immersive-visual/`:
+`prosemirror-visual-editor.test.tsx` exercises moving out of a code block on
+Delete, Shift+Tab outdent, `~~~` fence preservation, code-block source mapping
+by opener/body/closer, and `---` + Enter rule creation with Undo;
+`visual-atom-selection.test.ts` covers exact `horizontal_rule` source-line
+mapping and Backspace/Delete selection and removal around rules and protected
+cards. These component contracts do not claim real-browser release acceptance.
 
-The Root probes retain the real immutable lease identity. A synchronous,
-definition-time recorder observes only `consumeAcceptedSelectionTransition`,
-delegates the original method with unchanged receiver and arguments, preserves
-descriptor flags, and restores `Object.defineProperty` before capture returns.
-The intercepted object must be the returned real lease, with exactly one
-definition when the optional method exists. Only calls from the real Feature
-consumer are counted. Both interior and delimiter-end controls require one actual
-successful receipt: the changed-kind mapper admits the exact extent's end
-inclusively and publishes its first editable header Text boundary at `0`.
-Each successful call records the exact canonical deletion caret (`9`, `15`, or
-`21`) before normalization and the canonical/native header caret at `0` after
-it, with promoted source, numeric revision and both CodeMirror history depths
-unchanged. Cancellation still requires zero successful receipts. A separately
-recorded probe replays the exact consumed call while its publication is still
-synchronous/live and requires `false`; it is not counted as a Feature invocation.
-
-Copy changes neither bytes, revision nor history; its native Undo restores the
-malformed source and Redo restores the exact promoted table. Cut and Delete
-table each add one actual mutation history entry; Undo restores the promoted
-table, and Redo removes it again. Every transition awaits its own accepted DOM,
-ready phase and editable surface, with exact numeric history/revision assertions.
-With a neighbor, the exact removal remainder is
-`\n\nTrailing native neighbor.` and its paragraph survives each round trip.
-
-Full's known-history table presentation coverage is distinct from the pending
-menu receipt proof. Real Copy must complete its Clipboard operation and dismiss
-the menu before native Undo/Redo; the released target must remain unresolved and
-its old receipt must remain false throughout history completion. Undo restores
-the exact malformed paragraph, and Redo accepts the real target Preview with a
-connected editable table and paired native/canonical first-header caret at `0`.
-The source-owned known target slot supplies its previously accepted exact-row
-anchor; the pre-history origin must still truthfully name the source/revision
-being left. Tests must not repair that origin by assigning target metadata,
-bypass pending transfer, or substitute a phase string for a usable owner.
-
-The Full matrix also exercises all twelve Cut/Delete cases through
-Undo-mutation → Undo-deletion → Redo-deletion → Redo-mutation, for equal/unequal
-columns and interior/delimiter-end controls, isolated and with the exact trailing
-neighbor (Delete-table remains equal-column only). Undo-mutation restores the
-ordinary noncollapsed table row range without moving it. Fresh accepted history
-placement must revalidate and retain the existing known anchor, including after
-ranged placement, so that the deeper Undo-deletion restores the malformed
-paragraph and Redo-deletion can still place the proved first-header caret. Each
-step requires exact source, numeric revision and both history depths, live
-editable/connected surface, native/canonical selection correspondence, unchanged
-neighbor bytes and continued refusal of the retired menu lease. Retention does
-not create a new anchor, collapse a range or publish a menu receipt.
-
-The Full fixture suspends CodeMirror's Source view using the same visual-editing
-lifecycle as Root. Native promotion tests intentionally begin with a stale Source
-caret, require the real mapped native pre-key caret on Undo and the committed
-caret on Redo, and continue typing into the reaccepted first header after Copy.
-The adapter regression requires one atomic edit notification, exact inverse and
-post-selections, and unchanged single-entry history depth. Isolated Cut/Delete
-must rebuild the mapped table after an empty Preview instead of treating absence
-of the current map as authority to restore stale mapped HTML in place.
-
-
-Known-history refusal cases retain revision-ABA, wrong depth/source/extent,
-foreign same-ID clone, reordered roots, protected header mutation, noncollapsed
-normalization targets, row-end-plus-one and superseded-response rejection.
-Additional source-only and unknown-slot controls must not acquire accepted table
-provenance. Pre-command and inside-command clone/reorder/descendant mutations
-must also reject instead of authorizing a target from stale DOM ownership.
-Current source, slot identity and protected accepted-row proofs remain mandatory;
-fresh formal block IDs are allowed only when the current map proves the exact
-recorded source extent. These are implementation and executable acceptance
-contracts, not a claim that the revised runtime or current test suite has passed.
-
-The Full split consumer covers both inherited paragraph roots with the PHP
-renderer-style trailing/inter-block LF retained. The same lease must survive
-formal readiness, resolve the intended new root, and support an actual mutation
-and native history. Clone, changed-whitespace and foreign-root-text controls
-remain refused. Held-paste consumers cover owned prefix `Echo` → `MoreEcho` and
-suffix insertion through accepted Preview, actual deletion and Undo. Boundary
-arithmetic additionally distinguishes owned/unowned start/end and empty extents;
-it does not replace the real consumer's source/DOM/history authentication.
-A Full-owner document-end history case reuses the real CodeMirror session and
-the owner's canonical commit entry point: after a document-end insertion, Undo,
-Redo and a second Undo each accept their own new Preview generation. Undo
-restores the canonical EOF selection after the retained final LF, while Redo
-restores the typed caret at the visible paragraph end before that LF, so each
-rebuild is checked against the selection that history actually restores. The
-second Undo's accepted rebuild must place the caret on the accepted terminal
-row and keep the canonical source, selection and Undo depth unchanged instead
-of reporting a selection-map failure. A cold-session case keeps the canonical selection at the document start, as a
-preview-only surface does, uses a real matching edit map, and types the same
-edit natively. Its Undo stays in place (no new Preview request) and must restore
-the authored paragraph end in the canonical session and on the surface, not the
-untouched mount-time selection. A second cold-session control places the caret
-at an interior paragraph point far from the document end, so no end
-normalization can make wrong ownership look right, and requires that exact
-interior offset back after the in-place Undo.
-A separate case produces the same edit
-through the surface's own beforeinput/input/flush path, so the single canonical
-entry is real native input rather than a canonical API call; its Undo restores
-the EOF selection after the final LF, its Redo restores the typed caret before
-that LF, and every accepted rebuild keeps a collapsed caret at the owned terminal
-row's logical content end (the text between the caret and that end is empty),
-not merely somewhere inside it. A control publishes the same accepted
-map with a same-id terminal row whose text no longer projects onto its source
-slice; that row must still fail with the original selection-map error rather
-than being placed at the document end.
-
-The Windowed middle-fence consumer starts at a real CodeMirror-backed heading /
-fenced-code / heading boundary, deletes the code body, exits the empty fence and
-accepts a formal render that omits its empty paragraph. Canonical selection must
-remain at the original blank-source gap, not the spacer or following heading.
-Continuation cases exercise text, another Enter, a native IME draft and its
-single committed insertion, accepted native Undo/Redo, a plain-text Paste at the
-certified caret, and an IME that starts while the Enter response is still
-pending.
-The native order also retains renderer LF siblings, issues the actual Enter
-keydown at the local `P > BR` caret, and immediately types while the Enter
-response is pending. It checks normalized placeholder target ranges, exact
-newline/text bytes, accepted paragraph selection and further native typing.
-The real Preview/Windowed/CodeMirror cadence consumer also flushes the actual
-loading sink between Enter and text, asserts identical mounted nodes and native
-caret while busy, then accepts the superseding response and continues typing.
-This prevents a component-only held lease from masking an old sink child list.
-Outside-focus and real source-ABA controls retain the focus and owner-invalidation
-boundaries without writing continuation text. These component contracts do not
-claim real-browser selection normalization or release acceptance.
-
-
-
-The two cancellation groups also cover all four bases in both isolated and
-held-neighbor scope. Retained-focus cases must keep the same connected editable
-surface through Escape and late acceptance, without a missing-surface return,
-refocus, or caret repair. The accepted first header's native caret and canonical
-selection must already be collapsed at zero; typing there adds exactly one
-history entry, preserves the neighbor, and supports accepted native Undo/Redo.
-The outside-focus cases establish a real external editable host and selection
-before cancellation, then compare copied Node identities and scalar offsets,
-not the mutable Selection object. A deliberate later mutation must disagree
-with that immutable baseline. Both groups forbid reopen, action, Clipboard
-write, failure, revision/history mutation or another demand request on late
-delivery. Feature tests additionally require consumed pending Escape, ordinary
-Escape delegation, composition/keyCode-229/already-prevented ownership, and no
-trapping of a subsequent ordinary Escape. These are executable assertions, not
-a claim that the current source has passed the integration or real-browser run.
-
-`completes a real operation on the held paste bytes after the accepted transfer`
-drives the real paste owner event with its formal transfer held. The paste is a
-real user write, so the row's baseline is the POST-paste source, revision and
-history rather than the pre-paste one. It points the gesture at the RETAINED
-paragraph element rather than the surface root, proves the accepted DOM still
-shows the pre-paste text while held, and requires exactly one matching request,
-no menu, and no further mutation of any kind from the demand on top of the user's
-own paste. When the transfer settles, the ORIGINAL resumed demand opens its menu
-and performs its action directly - no replacement second gesture - and the row
-checks that the published operation is the whole pasted block with no source,
-revision or history write of its own.
-
-`acts on the surviving second HR after the first is deleted under a held
-transfer` deletes the FIRST HR through the editor's own HR command (an actual
-canonical deletion of the addressed three-dash range `[8,11)`; the surrounding
-separators stay in place), holds that transfer, then points at the still mounted
-SECOND HR; after acceptance the survivor is the block id the fresh map assigns to
-the current source (`b2`, because the preserved blank gap is not a rendered
-block), and its own HR deletion at its current offsets `[15,18)` produces the
-exact remaining bytes. The row also pins the lifecycle around that survivor:
-exactly one formal request for the first-deletion source while its transfer is
-held, the canonical selection the owner published for the deletion (`8`, the
-start of the removed range), no menu, no second request and no write while the
-survivor gesture waits, and exactly one further canonical history entry for the
-survivor removal. The held transfer is disarmed before any further traffic, so
-the survivor removal and every history refresh receive a fresh response for their
-own request rather than the obsolete one. The survivor removal must also reach its
-ACCEPTED presentation - no HR left in the accepted DOM, the surface ready and
-editable - before native Undo/Redo run, and each of those transitions carries its
-own readiness/editability barrier; a canonical-only change is not accepted as
-success.
-
-The gesture in that row is a direct pointer/`contextmenu` activation on the
-addressed HR itself, so what it proves is the ADDRESSED-HR pending capture: the
-owner captures the HR the pointer names, parks while the transfer is held, and
-resolves that same HR after acceptance. It is not a keyboard activation and not a
-certified-gap keyboard capture; no gap support is claimed by this row, and
-keyboard activation in the certified parent gap remains dependent on the
-companion runtime work (A1) rather than being established here.
-
-A protected generated identity is covered by the same one-gesture discipline.
-`keeps a stale protected generated identity through one refresh and deletes the
-current formula` starts from `Before\n\n$x$\n\nAfter`, whose formula occupies
-`[8,11)`, and performs a real native character edit at the end of the BEFORE
-paragraph. The committed source is `Beforeq\n\n$x$\n\nAfter`, so the formula
-moves to `[9,12)` and the trailing `After` paragraph sits on source line 4 - the
-edit location is what makes the prior accepted preview identity stale, not the
-formula offsets. One gesture then lands on the retired formula element. The
-refresh and the current worker/index result are held separately: no menu, no
-`Formula` submenu, no Clipboard or canonical write may appear while either is
-outstanding, and the menu may only open once the Preview has really replaced the
-protected identity AND the worker has produced its genuine result for exactly the
-demanded source. The action is then the real generated `Formula -> Delete`
-handler, removing exactly the current `[9,12)` bytes
-(`Beforeq\n\n\n\nAfter`), with one canonical history entry. The deletion must
-first reach its ACCEPTED presentation - no formula left in the accepted DOM, the
-surface ready and editable - and only then do native Undo/Redo restore the typed
-formula and complete the deletion again, each behind its own
-readiness/editability barrier. No canonical-only success is accepted. The
-builders are truthful for every state the row can request, including the deleted
-source that no longer contains a formula at all. Nothing reads a getter or writes
-canonical state directly, and the demand itself adds neither revision nor
-history. `retires a stale protected identity that the user changes again, and a
-later gesture still acts` is the delayed/stale negative: the later menu is read
-with an explicit count wait and then `getByRole`, the held request is observed
-before any response is delivered, the user then types once more while that
-refresh is outstanding, and the obsolete response must retire the demand with no
-menu, no action, no Clipboard write and no history change - after which a later
-truthful gesture on the current accepted formula still performs the real
-generated Delete.
+Pending-demand cancellation, scroll/focus drift, target-lease invalidation,
+and mixed text/image selection filtering are covered in
+`EditorContextMenuFeature.actions-and-leases.test.tsx` and
+`EditorContextMenuFeature.demand-and-drift.test.tsx` (including Escape
+cancellation, stale-lease refusal, providerless mixed text copyability, and
+omitting text-formatting groups for resolved image contexts).
 
 The accepted-selection receipt has its own matrix in
-`EditorContextMenuFeature.test.tsx`: `keeps the first pending gesture when the
+`EditorContextMenuFeature.preflight-and-retention.test.tsx`: `keeps the first pending gesture when the
 owner publishes its accepted selection`, `retires the pending gesture when no
 receipt is available for the moved selection`, `does not consume a receipt whose
 before or after side does not match the demand`, `does not consume a second or
@@ -702,20 +464,14 @@ capture precedes the first document read, and later readiness, index, and
 snapshot publications add neither a settlement nor a capture. Those are owner
 contracts, not browser evidence.
 
-That lease is what the code-block gesture consumes when it publishes the
-canonical range for the generic Copy and Cut. It re-authenticates before
-publishing when the accepted map no longer describes the current source, so a
-burst that moved fence content cannot produce a range that omits the closing
-ticks for Copy or turns them into a new opener for Cut.
-
-`opens the generic menu for a deliberate mixed text and image range over the
-pointed image` (`EditorRoot.test.tsx`) spans text on both sides of an image so no
-single image range contains the selection, and requires the generic menu, no
-image mutation items, the unchanged native extent, and no
-`editor-context-menu-image-stale`; `fails the image context explicitly when the
-accepted Preview no longer owns the hit image` keeps the retired-image failure,
-because an image-node selection carries no selected text and a genuine mixed
-range always does.
+In the unlocked ProseMirror visual editor, `captureContextMenuTarget`
+(`visual-context-menu-adapter.ts`) returns a target lease bound to the live DOM
+element and current canonical revision whose `resolve()` returns `null` if the
+element disconnects or the revision changes. `prosemirror-visual-editor.test.tsx`
+verifies explicit lease release and invalidation after a canonical edit, while
+`EditorContextMenuFeature.actions-and-leases.test.tsx` separately verifies
+providerless mixed-text copyability and omitting text-formatting groups for
+resolved image contexts without re-authenticating a retired HTML preview map.
 
 For Source link-resolution wiring, the bounded partial-caption/reference
 browser check is:
@@ -774,7 +530,7 @@ npm run test:frontend -- frontend/src/features/immersive-visual
 The focused browser-Adapter test is:
 
 ```bash
-npm run test:frontend -- frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.test.ts
+npm run test:frontend -- frontend/src/integrations/browser/wechat
 ```
 
 The session boundary has a separate focused command:
@@ -1035,8 +791,8 @@ delay from the trusted click; the raw rAF timestamp remains diagnostic. The
 used to accept the new algorithm. `MutationObserver` `pendingAt` is only
 observation time, not the instant of the DOM mutation. They also check
 repeated pointer, Enter, and Space activation, focus retained on the pending
-control, focus handed to the ready editor, cancellation, bounded window
-mounting, and absence of Preview or document writes. A private maintainer
+control, focus handed to the ready editor, cancellation, and absence of
+Preview or document writes. A private maintainer
 document is tested locally by native paste and exact source comparison; its
 content is not part of the public fixtures or test artifacts.
 
@@ -1059,124 +815,40 @@ requests, and HTTP failures remain failures. Raw request failures remain
 visible, with approved supersession counts reported separately. Explicit
 cancellation expectations remain strict.
 
-For code-map changes, test a locally typed fence without a Preview block ID,
-an accepted mapped empty fence, and a mapped block whose ID order or fence
-topology becomes stale. The stale input must be blocked without changing the
-canonical source or a different code block. A non-windowed synthetic document
-near the 160-block boundary must retain exact source under rapid and spaced
-code-body typing, keep the first visible frame responsive, and meet the
-full-sequence Long Task budget defined below; windowed b160 coverage is
-separate.
-Also exercise Enter followed by a code character inside the debounce window,
-pending exact input followed by composition, rejected blank-code composition,
-and editing an older mapped block after creating a local fence. Code DOM may add
-or omit exactly one renderer-only terminal LF under the projection contract;
-verify native next input, caret, Undo, Redo, and exact canonical Markdown while
-rejecting multiple line-ending or content differences.
-For the certified empty-gap composition retention case, the focused suites bind
-the real CodeMirror document, Preview request owner, sink, and Windowed
-consumer. A response resolving while the draft is live must install no
-certificate and leave canonical value, selection, history, and native nodes
-unchanged; compositionend must publish the data exactly once at the captured
-range; and cancellation, source revision ABA, outside focus, Windowed-only
-unmount, whole-owner teardown, and a late superseded response must leave
-canonical value and history exact. The same run covers two concurrent leases,
-repeated and late releases, activation disposal, refusal while a materialization
-is running, and the sink gate at the raw, staged, window, and materialize write
-routes. The isolated native browser case must still prove a genuine IME session
-across a held formal acceptance with continuous console/CDP/window monitoring; a
-synthetic input dispatch is not that proof.
-Exercise an ordinary list-item split followed immediately by text before the
-debounce expires. Verify the first item remains canonical, the new text stays
-in the second item, the source and visual caret agree, and ordinary rapid text
-still uses the grouped exact-input path.
-For an unchanged source and visual baseline, cover the neutral selection path
-with a collapsed caret in a sole-`BR` `P`/`LI` body. Require unchanged-neighbor
-or validated-source-end bounds, parser-ordered blockquote/list ancestry, and
-exactly one owned separator. Code/protected content, missing ownership, and
-ambiguous candidates must not claim a source range; a valid case must project a
-zero-width boundary before the existing merge checks. Confirm ordinary content
-keeps its cached unique-text hot-path eligibility before this structural scan.
-Typed `beforeinput` coverage must capture the exact collapsed target range and
-body path before browser mutation, then verify that the pre-mutation canonical
-Selection update changes neither source bytes nor history depth. After native
-mutation, require the same target/body boundary, the expected empty-placeholder
-to Text transition, unchanged outside-body DOM, and the protected snapshot;
-serialize the actual surface and continue through the existing edit-intent and
-history owners. Include normalized-to-canonical CRLF offsets, immediate and
-delayed next input, and Undo/Redo native/canonical Selection points. Stale or
-mismatched evidence must fail explicitly.
-Unit coverage must pair the empty quote and list cases with source, history,
-native Selection, and protected-node assertions. It must also cover the owner
-handoff when pending code input crosses into an empty structural body: the code
-intent is flushed before the selection-only canonical update, while input that
-remains in the same code body stays in the pending burst. Empty-body capture
-must prove that the canonical source equals the committed source before and
-after that update and reports the existing
-`visual-editor-history-document-stale` error on mismatch.
-Browser coverage for this handoff must execute a CDP `insertText` code input,
-then a native mouse move/click into an empty quote or list body, then a second
-native insertion. CDP `insertText` is trusted non-keyboard input for the first
-step; the contract does not require a physical key, and another legitimate
-native browser input method is valid when it provides the same evidence. The
-second `beforeinput` must observe the canonical pre-code value, proving that
-the pending code intent was still present at event entry; that observation
-alone does not prove the subsequent flush or structural acceptance. Final
-source, history, native Selection, and protected-node results must prove the
-flush and accepted structural edit.
-Exercise one zero-delay rapid word kept in the same pending burst in an empty
-structural body: pre-commit input must leave canonical bytes and history
-unchanged, then produce one canonical content transaction and one Undo step back
-to empty. Require the post-input caret to follow actual serialization and
-marker mapping. Real Media-selection
-preparation must preserve canonical Selection, source, protected-node identity,
-and the no-rematerialization path for escaped `~`, `*`, `_`, and `\` input.
-Exercise the exact accepted native-paste snapshot for both fence families and
-unterminated, LF and CRLF openers, alongside mount-time normalized snapshots.
-Verify neutral native spans retain Text identity, caret and exact code body;
-attributed or malformed spans must still fail explicitly.
-Exercise initial empty frames and code emptied one character at a time, then
-Backspace at the empty start followed by Undo and Redo. Cover both fence
-families, closed and open-EOF fences, bare pasted openers and pending input
-followed immediately by structural deletion. Include an open-EOF body with
-three blank lines and last-line text, then use trusted repeated Backspace
-keydowns without source reads, paint waits, or settle delays between keys; the
-frame must be absent immediately and through eight frames, 80 ms, and 250 ms.
-A single terminal LF is empty;
-additional blank lines and spaces remain content. Verify exact source, frame
-and connected caret restoration, preserved code-tail whitespace, and windowed
-source-range metadata when local and global code-block ordinals differ.
-After Undo restores an empty frame, type the first character through native
-beforeinput and verify exact source and no projection failure. Exercise the
-innerHTML round-trip that removes a placeholder's zero-length Text node.
-Use the real CodeMirror adapter for more than 120 visual edits, actual history
-pruning, all retained Undo/Redo targets, grouped input, Redo-branch replacement
-and Undo across the initial visual baseline. Verify same-value selection writes
-add no document history and native contenteditable history never takes over.
-Include ordinary paragraph and mixed paragraph/code history whose exact-source
-input records a rematerialization slot without an innerHTML getter. Preserve
-the existing zero-getter hot-path checks. Formal Preview acceptance must reject
-stale slot identity, source, signature, history depths or selection, and report
-render failure or teardown through the existing owner without fabricated HTML.
-For an empty list or blockquote body produced by pending visual input, verify
-that the already materialized accepted HTML, source map, and visual baseline
-are recorded as the current local snapshot. Immediate next native input and
-the wrapper's Undo/Redo must preserve the connected caret and canonical source;
-when that snapshot is valid, they must make no formal Preview request.
-For non-windowed rematerialization, exercise the real Preview owner and Safe
-HTML sink with TOC, footnote, rendered math, and Mermaid nodes. Exact equivalent
-protected output must retain node identity through the first staged commit, a
-same-commit rerender, and a later equivalent Preview. Attribute, child markup,
-path, or order changes must keep the fresh accepted node; cross-document staged
-nodes and replacement failure must preserve the sink's validation and rollback
-contracts.
-Local snapshot Cut, Undo, and Redo coverage must also preserve equivalent
-protected nodes when restoring an editable sibling shifts their absolute DOM
-path. Require equal protected-region count and order, exact meaningful
-attributes and markup, connected Selection, canonical source, and no Preview
-request for the local Undo, including snapshots taken after an empty structural
-body. Missing or non-equivalent protected output remains fresh; blank or
-whitespace-only root `style` is the sole ignored layout artifact.
+Near-threshold rapid and spaced code-body typing in the unified ProseMirror
+visual editor is covered by the `@performance` suite below, which checks exact
+canonical source convergence, first-frame responsiveness, and the Long Task
+budget with no separate windowed path. Code-fence creation, `~~~` and backtick
+preservation, empty-code Backspace conversion to a paragraph, and Undo/Redo are
+covered in `prosemirror-visual-editor.test.tsx`, `visual-editor-core.test.ts`,
+and `tests/e2e/visual/prosemirror-rich-blocks.spec.mjs`.
+IME composition in the unified ProseMirror visual editor is covered by
+`frontend/src/features/immersive-visual/prosemirror-visual-editor.test.tsx`
+and `visual-editing-contracts.test.ts`: canonical commits wait until
+`visual-composition-session.ts` reports that composition has ended and the
+ProseMirror DOM flush has landed, and a composing session never writes a
+partial draft to canonical Markdown. The retired Windowed surface-lease
+composition-retention cases and HTML-backed `beforeinput`/edit-intent
+empty-body checks were removed with that owner. A genuine native OS IME
+session still requires real browser/OS evidence; a synthetic input dispatch is
+not that proof.
+Use the real CodeMirror adapter for sustained visual edits, history pruning,
+Undo/Redo targets, grouped input, Redo-branch replacement, and Undo across the
+initial visual baseline, including reconciling surviving ProseMirror nodes after
+Undo so subsequent deletions of visually identical blocks preserve untouched
+original Markdown spellings. Verify same-value selection writes add no document
+history and native `contenteditable` history never takes over. When unlocked,
+ProseMirror reconciles edits and canonical Undo/Redo in memory without
+per-keystroke formal Preview requests or a retired local DOM-snapshot history
+layer; locking back to read-only Preview refreshes the formal Preview sink and
+rejects stale or failed renders through the existing owner without fabricated
+HTML.
+For formal Preview staging and `SafePreviewHtmlSink`, exercise
+`PreviewSurfaceOwner.test.tsx` with connected staging for normal documents,
+detached staging for large (>160-block) documents, atomic installation of
+validated unique staged children across revisions, exact child-identity
+preservation on same-commit rerenders (`hasExactChildren`), and explicit
+failure reporting when staged-commit nodes drift or are incomplete.
 
 The retired windowed EOF-lease, 160-block window/spacer partition, and legacy
 `contentEditable` full/windowed selection-pinning test suites were removed when
@@ -1248,27 +920,19 @@ to verify the single formal PHP Preview POST response returns all 2,301
 `editMap.blocks` and at least 150 `<pre` elements with zero browser errors. Fresh bare `~~~`
 and triple-backtick cases verify the first Mac-framed code block, fence-family
 preservation, mobile geometry, and a warm PHP-rendered Preview.
-The Chromium test `parses the exact full-capability fixture after immersive
-unlock at empty and prefixed document ends` reads the unchanged
-`docs/examples/markdown-full-capability-test.md` file directly, verifies the
-canonical field byte-for-byte for an empty document and an existing prefix,
-asserts one Preview request per paste, exact source preservation including the
-fixture's footnote syntax, and the rendered heading/table/code, Mermaid, math,
-and task-list semantics, then checks follow-up input, lock, mode changes, and
-immersive teardown without browser errors.
-The companion destructive-edit test uses the same tracked fixture for real
-Backspace, Delete, replacement, Cut, Undo, and Redo operations. It verifies the
-canonical field after every operation, keeps generated math and Mermaid nodes
-read-only and structurally stable, and confirms a responsive `390x844` Preview
-has no page-level horizontal overflow while tables and code retain local
-scrolling. It then locks the paper again without converting a local editing
-failure into a formal Preview failure. Private maintainer documents may be used
-only for local timing and digest-equivalence probes; their path, title, content,
-or screenshots must not enter tracked tests or public evidence.
-The destructive-edit browser cases are parameterized for first input `~`, `*`,
-`_`, and `\`. Each case must locate the nested-quote source point through an
-independent Markdown AST lookup, then verify the escaped source/caret result,
-Undo/Redo, protected node identity, and no formal Preview rematerialization.
+The unified ProseMirror visual E2E suites in
+`tests/e2e/visual/prosemirror-core-editing.spec.mjs` and
+`tests/e2e/visual/prosemirror-rich-blocks.spec.mjs` cover unlock/lock parity
+(including zero-write read, shared compact first-child top margin, and Inkwell
+loose-list line-height/margin parity), paragraph splitting and Backspace
+joining, inline formatting with Undo/Redo, surgical preservation of untouched
+raw Markdown (`*` and `+` list markers, task checkboxes, GFM tables, and
+reference links), live code-block creation (` ```js ` + Enter), table Tab
+navigation, protected KaTeX math and Mermaid cards (Edit-only action bar,
+Escape cancel, `Control+Enter` commit), and >160-block unified editing with
+zero windowed spacers. Private maintainer documents may be used only for local
+timing and digest-equivalence probes; their path, title, content, or
+screenshots must not enter tracked tests or public evidence.
 
 The installed-ZIP Settings Center workflow also saves synthetic Storage Path,
 suffix-free File Name Rule, and six-format selections while Image Hosting is

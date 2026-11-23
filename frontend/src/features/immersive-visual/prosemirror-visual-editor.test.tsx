@@ -23,6 +23,7 @@ import type {
 } from "../document-source/adapters/code-mirror-document-session";
 import { createCodeMirrorDocumentSession } from "../document-source/adapters/code-mirror-document-session";
 import type { EditorDocumentSession } from "../document-source/editor-document-session";
+import { MountedProseMirrorVisualEditor } from "./MountedProseMirrorVisualEditor";
 import { parseMarkdownToVisualDoc } from "./markdown-parser";
 import { serializeVisualDocToMarkdown } from "./markdown-serializer";
 import { createProtectedBlockNodeView } from "./node-views/protected-atom-node-view";
@@ -1247,6 +1248,31 @@ describe("single canonical history owner (real CodeMirror session)", () => {
 		expect(session.document.getValue()).toBe(original);
 	});
 
+	it("rebinds the round-trip guard to the live reconciled doc after Undo so surviving identical blocks keep their spelling", () => {
+		const original = "*same*\n\n_same_\n\nEnd";
+		const { field, session } = createRealSession(original);
+		const { rt, view } = mountVisual(session);
+
+		view.dispatch(view.state.tr.insertText("!", textEndOfBlock(view, 2)));
+		expect(session.document.getValue()).toBe("*same*\n\n_same_\n\nEnd!");
+		expect(rt.executeCommand(undoCommand)).toBe("handled");
+		expect(session.document.getValue()).toBe(original);
+
+		// The reconcile kept the surviving paragraph instances alive.
+		const survivor = view.state.doc.child(1);
+		view.dispatch(view.state.tr.delete(0, view.state.doc.child(0).nodeSize));
+		expect(view.state.doc.child(0)).toBe(survivor);
+		expect(session.document.getValue()).toBe("_same_\n\nEnd");
+		expect(field.value).toBe("_same_\n\nEnd");
+
+		expect(rt.executeCommand(undoCommand)).toBe("handled");
+		expect(session.document.getValue()).toBe(original);
+		expect(rt.executeCommand(redoCommand)).toBe("handled");
+		expect(session.document.getValue()).toBe("_same_\n\nEnd");
+		expect(rt.executeCommand(undoCommand)).toBe("handled");
+		expect(session.document.getValue()).toBe(original);
+	});
+
 	it("keeps two rapid protected-card commits (D5) as two steps: one undo reverts only the last", () => {
 		const original = "Intro\n\n$$\na + b\n$$\n\nEnd";
 		const { session } = createRealSession(original);
@@ -1935,5 +1961,69 @@ describe("Wave 5 fixes: block-boundary keyboard and atom selection (R2, R3)", ()
 		}
 		expect(setVisualEditingActive).toHaveBeenNthCalledWith(1, true);
 		expect(setVisualEditingActive).toHaveBeenNthCalledWith(2, false);
+	});
+});
+
+describe("MountedProseMirrorVisualEditor localized protected-card labels", () => {
+	const zhLabels = () => ({
+		cancel: "取消",
+		edit: "编辑",
+		footnotes: "脚注",
+		math: "公式",
+		mermaid: "Mermaid",
+		raw: "原始块",
+		save: "保存",
+		toc: "目录",
+	});
+	const zhTemplates = () => ({ edit: "编辑 %s", source: "%s 源码" });
+
+	it("renders PHP-owned zh_CN labels and %s templates without remounting on equal rerenders", () => {
+		const harness = createMockDocumentSession("$$\nE = mc^2\n$$");
+		const onDispose = vi.fn();
+		const { container, rerender, unmount } = render(
+			<MountedProseMirrorVisualEditor
+				documentSession={harness.session}
+				onDispose={onDispose}
+				protectedAtomLabels={zhLabels()}
+				protectedAtomLabelTemplates={zhTemplates()}
+			/>,
+		);
+		const editButton = container.querySelector<HTMLButtonElement>(
+			"button.easymde-protected-edit-btn",
+		);
+		if (!editButton) throw new Error("missing protected edit button");
+		expect(editButton.textContent).toBe("编辑");
+		expect(editButton.getAttribute("aria-label")).toBe("编辑 公式");
+
+		// Fresh but equal label objects must keep the same ProseMirror view.
+		rerender(
+			<MountedProseMirrorVisualEditor
+				documentSession={harness.session}
+				onDispose={onDispose}
+				protectedAtomLabels={zhLabels()}
+				protectedAtomLabelTemplates={zhTemplates()}
+			/>,
+		);
+		expect(onDispose).not.toHaveBeenCalled();
+		expect(container.querySelector("button.easymde-protected-edit-btn")).toBe(
+			editButton,
+		);
+
+		act(() => {
+			editButton.click();
+		});
+		const textarea = container.querySelector(
+			"textarea.easymde-protected-source-input",
+		);
+		expect(textarea?.getAttribute("aria-label")).toBe("公式 源码");
+		expect(
+			container.querySelector("button.easymde-protected-save-btn")?.textContent,
+		).toBe("保存");
+		expect(
+			container.querySelector("button.easymde-protected-cancel-btn")
+				?.textContent,
+		).toBe("取消");
+		unmount();
+		expect(onDispose).toHaveBeenCalledTimes(1);
 	});
 });

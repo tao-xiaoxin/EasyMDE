@@ -67,6 +67,8 @@ export type ImmersiveVisualEditorHostProps = Readonly<{
   ) => void;
   onMarkdownChange: (markdown: string) => void;
   onReady: (runtime: ImmersiveVisualEditorRuntime) => void;
+  protectedAtomLabels?: MountedProseMirrorVisualEditorProps['protectedAtomLabels'];
+  protectedAtomLabelTemplates?: MountedProseMirrorVisualEditorProps['protectedAtomLabelTemplates'];
   style?: CSSProperties;
 }>;
 
@@ -90,6 +92,8 @@ export function ImmersiveVisualEditorHost({
   onImagePasteFiles,
   onMarkdownChange,
   onReady,
+  protectedAtomLabels,
+  protectedAtomLabelTemplates,
   style
 }: ImmersiveVisualEditorHostProps) {
   const [LoadedComponent, setLoadedComponent] =
@@ -149,6 +153,10 @@ export function ImmersiveVisualEditorHost({
         : {})}
       {...(onImageDropFiles !== undefined ? { onImageDropFiles } : {})}
       {...(onImagePasteFiles !== undefined ? { onImagePasteFiles } : {})}
+      {...(protectedAtomLabels !== undefined ? { protectedAtomLabels } : {})}
+      {...(protectedAtomLabelTemplates !== undefined
+        ? { protectedAtomLabelTemplates }
+        : {})}
       {...(style !== undefined ? { style } : {})}
     />
   );

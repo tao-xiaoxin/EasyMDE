@@ -653,10 +653,12 @@ const MARKDOWN_SERIALIZERS: MarkdownSerializers = {
 export function createMarkdownRoundTripGuard(
 	initialMarkdown: string,
 	initialDocOrParsed?: ProseMirrorNode | ParsedVisualDocument,
+	liveDoc?: ProseMirrorNode,
 ): MarkdownRoundTripGuard {
 	return createPreservingRoundTripGuard(
 		initialMarkdown,
 		initialDocOrParsed,
 		MARKDOWN_SERIALIZERS,
+		liveDoc,
 	);
 }

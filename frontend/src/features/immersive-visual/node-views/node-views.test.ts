@@ -622,161 +622,120 @@ describe("ProtectedAtomNodeView (math, mermaid, cards, raw-source editor)", () =
 		expect(mathBlock.querySelector("textarea")).toBeNull();
 	});
 
-	it("provides Edit/Copy quick actions on block protected cards with Mod+Enter save and non-propagating Escape", async () => {
-		const writeText = vi.fn(async (_text: string) => undefined);
-		const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(
-			navigator,
-			"clipboard",
+	it("provides only an Edit quick action on block protected cards with Mod+Enter save and non-propagating Escape", () => {
+		const view = mountVisualEditor("$$\nE = mc^2\n$$\n\nInline $x + 1$ end.");
+		const mathBlock = view.dom.querySelector(
+			'div[data-easymde-protected-block][data-easymde-protected-kind="math"]',
+		) as HTMLElement;
+		const mathInline = view.dom.querySelector(
+			'span[data-easymde-protected-inline][data-easymde-protected-kind="math-inline"]',
+		) as HTMLElement;
+
+		// Block cards have non-editable actions; inline atoms do not.
+		const actionsBar = mathBlock.querySelector(
+			"div.easymde-protected-card-actions",
+		) as HTMLElement | null;
+		expect(actionsBar).not.toBeNull();
+		expect(actionsBar?.getAttribute("contenteditable")).toBe("false");
+		expect(
+			mathInline.querySelector(".easymde-protected-card-actions"),
+		).toBeNull();
+
+		// ProseMirror serialization stays untouched by card action chrome.
+		expect(serializeVisualDocToMarkdown(view.state.doc)).toBe(
+			"$$\nE = mc^2\n$$\n\nInline $x + 1$ end.",
 		);
-		Object.defineProperty(navigator, "clipboard", {
-			configurable: true,
-			value: { writeText },
-		});
 
+		// Only the Edit action is rendered; there is no Copy action.
+		expect(
+			actionsBar?.querySelector("button.easymde-protected-copy-btn"),
+		).toBeNull();
+		expect(actionsBar?.querySelectorAll("button")).toHaveLength(1);
+
+		// Edit button opens raw-source editor and hides action chrome while editing.
+		const editButton = actionsBar?.querySelector(
+			"button.easymde-protected-edit-btn",
+		) as HTMLButtonElement;
+		editButton.click();
+		expect(actionsBar?.hidden).toBe(true);
+		const textarea = mathBlock.querySelector(
+			"textarea.easymde-protected-source-input",
+		) as HTMLTextAreaElement;
+		expect(textarea).not.toBeNull();
+
+		// Escape cancels without propagating to outer view/document listeners.
+		const outerEscapeSpy = vi.fn();
+		document.addEventListener("keydown", outerEscapeSpy);
 		try {
-			const view = mountVisualEditor("$$\nE = mc^2\n$$\n\nInline $x + 1$ end.");
-			const mathBlock = view.dom.querySelector(
-				'div[data-easymde-protected-block][data-easymde-protected-kind="math"]',
-			) as HTMLElement;
-			const mathInline = view.dom.querySelector(
-				'span[data-easymde-protected-inline][data-easymde-protected-kind="math-inline"]',
-			) as HTMLElement;
-
-			// Block cards have non-editable actions; inline atoms do not.
-			const actionsBar = mathBlock.querySelector(
-				"div.easymde-protected-card-actions",
-			) as HTMLElement | null;
-			expect(actionsBar).not.toBeNull();
-			expect(actionsBar?.getAttribute("contenteditable")).toBe("false");
-			expect(
-				mathInline.querySelector(".easymde-protected-card-actions"),
-			).toBeNull();
-
-			// ProseMirror serialization stays untouched by card action chrome.
-			expect(serializeVisualDocToMarkdown(view.state.doc)).toBe(
-				"$$\nE = mc^2\n$$\n\nInline $x + 1$ end.",
+			textarea.value = "$$\nunsaved\n$$";
+			const escapeEvent = new KeyboardEvent("keydown", {
+				key: "Escape",
+				bubbles: true,
+				cancelable: true,
+			});
+			textarea.dispatchEvent(escapeEvent);
+			expect(escapeEvent.defaultPrevented).toBe(true);
+			expect(outerEscapeSpy).not.toHaveBeenCalled();
+			expect(mathBlock.querySelector("textarea")).toBeNull();
+			expect(view.state.doc.firstChild?.attrs.rawMarkdown).toBe(
+				"$$\nE = mc^2\n$$",
 			);
 
-			// Copy-raw button copies currentNode.attrs.rawMarkdown and shows visual copied state.
-			const copyButton = actionsBar?.querySelector(
-				"button.easymde-protected-copy-btn",
-			) as HTMLButtonElement;
-			expect(copyButton).not.toBeNull();
-			copyButton.click();
-			await flushMicrotasks();
-			expect(writeText).toHaveBeenCalledTimes(1);
-			expect(writeText).toHaveBeenCalledWith("$$\nE = mc^2\n$$");
-			expect(copyButton.classList.contains("is-copied")).toBe(true);
-			expect(copyButton.getAttribute("data-easymde-copied")).toBe("1");
-
-			// Edit button opens raw-source editor and hides action chrome while editing.
-			const editButton = actionsBar?.querySelector(
-				"button.easymde-protected-edit-btn",
-			) as HTMLButtonElement;
+			// Ctrl+Enter saves immediately; Shift+Enter stays in editor.
 			editButton.click();
-			expect(actionsBar?.hidden).toBe(true);
-			const textarea = mathBlock.querySelector(
+			const textarea2 = mathBlock.querySelector(
 				"textarea.easymde-protected-source-input",
 			) as HTMLTextAreaElement;
-			expect(textarea).not.toBeNull();
-
-			// Escape cancels without propagating to outer view/document listeners.
-			const outerEscapeSpy = vi.fn();
-			document.addEventListener("keydown", outerEscapeSpy);
-			try {
-				textarea.value = "$$\nunsaved\n$$";
-				const escapeEvent = new KeyboardEvent("keydown", {
-					key: "Escape",
-					bubbles: true,
-					cancelable: true,
-				});
-				textarea.dispatchEvent(escapeEvent);
-				expect(escapeEvent.defaultPrevented).toBe(true);
-				expect(outerEscapeSpy).not.toHaveBeenCalled();
-				expect(mathBlock.querySelector("textarea")).toBeNull();
-				expect(view.state.doc.firstChild?.attrs.rawMarkdown).toBe(
-					"$$\nE = mc^2\n$$",
-				);
-
-				// Ctrl+Enter saves immediately; Shift+Enter stays in editor.
-				editButton.click();
-				const textarea2 = mathBlock.querySelector(
-					"textarea.easymde-protected-source-input",
-				) as HTMLTextAreaElement;
-				const shiftEnterEvent = new KeyboardEvent("keydown", {
-					key: "Enter",
-					shiftKey: true,
-					bubbles: true,
-					cancelable: true,
-				});
-				textarea2.dispatchEvent(shiftEnterEvent);
-				expect(shiftEnterEvent.defaultPrevented).toBe(false);
-				expect(mathBlock.querySelector("textarea")).not.toBeNull();
-
-				textarea2.value = "$$\na^2 + b^2 = c^2\n$$";
-				const ctrlEnterEvent = new KeyboardEvent("keydown", {
-					key: "Enter",
-					ctrlKey: true,
-					bubbles: true,
-					cancelable: true,
-				});
-				textarea2.dispatchEvent(ctrlEnterEvent);
-				expect(ctrlEnterEvent.defaultPrevented).toBe(true);
-				expect(outerEscapeSpy).not.toHaveBeenCalled();
-				expect(view.state.doc.firstChild?.attrs.rawMarkdown).toBe(
-					"$$\na^2 + b^2 = c^2\n$$",
-				);
-
-				// Cmd+Enter (metaKey) also saves immediately.
-				editButton.click();
-				const textarea3 = mathBlock.querySelector(
-					"textarea.easymde-protected-source-input",
-				) as HTMLTextAreaElement;
-				textarea3.value = "$$\nF = ma\n$$";
-				textarea3.dispatchEvent(
-					new KeyboardEvent("keydown", {
-						key: "Enter",
-						metaKey: true,
-						bubbles: true,
-						cancelable: true,
-					}),
-				);
-				expect(view.state.doc.firstChild?.attrs.rawMarkdown).toBe(
-					"$$\nF = ma\n$$",
-				);
-			} finally {
-				document.removeEventListener("keydown", outerEscapeSpy);
-			}
-
-			// Copy after edit copies the updated rawMarkdown.
-			writeText.mockClear();
-			copyButton.click();
-			await flushMicrotasks();
-			expect(writeText).toHaveBeenCalledWith("$$\nF = ma\n$$");
-
-			// Graceful no-throw behavior when clipboard is unavailable.
-			Object.defineProperty(navigator, "clipboard", {
-				configurable: true,
-				value: undefined,
+			const shiftEnterEvent = new KeyboardEvent("keydown", {
+				key: "Enter",
+				shiftKey: true,
+				bubbles: true,
+				cancelable: true,
 			});
-			const viewWithoutClipboard = mountVisualEditor("[TOC]");
-			const tocCopyBtn = viewWithoutClipboard.dom.querySelector(
-				"button.easymde-protected-copy-btn",
-			) as HTMLButtonElement;
-			expect(() => tocCopyBtn.click()).not.toThrow();
-			await flushMicrotasks();
-			expect(tocCopyBtn.classList.contains("is-copied")).toBe(false);
+			textarea2.dispatchEvent(shiftEnterEvent);
+			expect(shiftEnterEvent.defaultPrevented).toBe(false);
+			expect(mathBlock.querySelector("textarea")).not.toBeNull();
+
+			textarea2.value = "$$\na^2 + b^2 = c^2\n$$";
+			const ctrlEnterEvent = new KeyboardEvent("keydown", {
+				key: "Enter",
+				ctrlKey: true,
+				bubbles: true,
+				cancelable: true,
+			});
+			textarea2.dispatchEvent(ctrlEnterEvent);
+			expect(ctrlEnterEvent.defaultPrevented).toBe(true);
+			expect(outerEscapeSpy).not.toHaveBeenCalled();
+			expect(view.state.doc.firstChild?.attrs.rawMarkdown).toBe(
+				"$$\na^2 + b^2 = c^2\n$$",
+			);
+
+			// Cmd+Enter (metaKey) also saves immediately.
+			editButton.click();
+			const textarea3 = mathBlock.querySelector(
+				"textarea.easymde-protected-source-input",
+			) as HTMLTextAreaElement;
+			textarea3.value = "$$\nF = ma\n$$";
+			textarea3.dispatchEvent(
+				new KeyboardEvent("keydown", {
+					key: "Enter",
+					metaKey: true,
+					bubbles: true,
+					cancelable: true,
+				}),
+			);
+			expect(view.state.doc.firstChild?.attrs.rawMarkdown).toBe(
+				"$$\nF = ma\n$$",
+			);
 		} finally {
-			if (originalClipboardDescriptor) {
-				Object.defineProperty(
-					navigator,
-					"clipboard",
-					originalClipboardDescriptor,
-				);
-			} else {
-				delete (navigator as unknown as Record<string, unknown>).clipboard;
-			}
+			document.removeEventListener("keydown", outerEscapeSpy);
 		}
+
+		// Action bar is visible again after saving.
+		expect(actionsBar?.hidden).toBe(false);
+		expect(serializeVisualDocToMarkdown(view.state.doc)).toBe(
+			"$$\nF = ma\n$$\n\nInline $x + 1$ end.",
+		);
 	});
 });
 
@@ -1083,13 +1042,11 @@ describe("ProtectedAtomNodeView commit boundaries and IME isolation", () => {
 				protectedAtom: {
 					labels: {
 						cancel: "Abbrechen",
-						copy: "Kopieren",
 						edit: "Bearbeiten",
 						math: "Formel",
 						save: "Speichern",
 					},
 					labelTemplates: {
-						copy: "{kind} kopieren",
 						edit: "{kind} bearbeiten",
 						source: "{kind}-Quelltext",
 					},
@@ -1397,5 +1354,290 @@ describe("code highlight caching and runtime-ready refresh", () => {
 		expect(view.dom.querySelector("code.hljs .hljs-keyword")?.textContent).toBe(
 			"const",
 		);
+	});
+});
+
+describe("Visual NodeView rendering fidelity regressions", () => {
+	it("scopes descendant Mermaid SVG IDs and their references while keeping root id and hex colors", () => {
+		const svgMarkup = [
+			'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" id="root-svg" aria-labelledby="chart-title">',
+			'<title id="chart-title">Diagram</title>',
+			"<style>#root-svg .line{stroke:#333333;fill:url(#grad1);}</style>",
+			'<defs><marker id="arrowhead"><path d="M0,0" fill="#ffffff"/></marker>',
+			'<marker id="ONLY_ONE_START"><path d="M0,0"/></marker>',
+			'<marker id="ZERO_OR_MORE_END"><path d="M0,0"/></marker>',
+			'<linearGradient id="grad1"><stop offset="0" stop-color="#333333"/></linearGradient>',
+			'<clipPath id="clip1"><rect width="1" height="1"/></clipPath>',
+			'<marker id="scope-1_flowchart-pointEnd"><path d="M0,0"/></marker></defs>',
+			'<line marker-end="url(#arrowhead)" stroke="#333333"/>',
+			'<path marker-start="url(\'#ONLY_ONE_START\')" marker-end=\'url("#ZERO_OR_MORE_END")\' clip-path="url(#clip1)" fill="url(#grad1)"/>',
+			'<path marker-end="url(#scope-1_flowchart-pointEnd)" style="fill:url(#grad1);stroke:#ffffff"/>',
+			'<use xlink:href="#arrowhead"/><use href="#clip1"/>',
+			"</svg>",
+		].join("");
+		const sanitized = sanitizeMermaidSvg(svgMarkup, document, "scope-1");
+		expect(sanitized).not.toBeNull();
+		if (!sanitized) return;
+		expect(sanitized.getAttribute("id")).toBe("root-svg");
+		expect(sanitized.getAttribute("aria-labelledby")).toBe(
+			"scope-1__chart-title",
+		);
+		for (const id of [
+			"arrowhead",
+			"ONLY_ONE_START",
+			"ZERO_OR_MORE_END",
+			"grad1",
+			"clip1",
+		]) {
+			expect(sanitized.querySelector(`[id="${id}"]`)).toBeNull();
+			expect(sanitized.querySelector(`[id="scope-1__${id}"]`)).not.toBeNull();
+		}
+		// Already-prefixed IDs are left alone.
+		expect(
+			sanitized.querySelector('[id="scope-1_flowchart-pointEnd"]'),
+		).not.toBeNull();
+
+		const line = sanitized.querySelector("line");
+		expect(line?.getAttribute("marker-end")).toBe("url(#scope-1__arrowhead)");
+		expect(line?.getAttribute("stroke")).toBe("#333333");
+		const paths = sanitized.querySelectorAll(":scope > path");
+		expect(paths[0]?.getAttribute("marker-start")).toBe(
+			"url('#scope-1__ONLY_ONE_START')",
+		);
+		expect(paths[0]?.getAttribute("marker-end")).toBe(
+			'url("#scope-1__ZERO_OR_MORE_END")',
+		);
+		expect(paths[0]?.getAttribute("clip-path")).toBe("url(#scope-1__clip1)");
+		expect(paths[0]?.getAttribute("fill")).toBe("url(#scope-1__grad1)");
+		expect(paths[1]?.getAttribute("marker-end")).toBe(
+			"url(#scope-1_flowchart-pointEnd)",
+		);
+		expect(paths[1]?.getAttribute("style")).toBe(
+			"fill:url(#scope-1__grad1);stroke:#ffffff",
+		);
+		const uses = sanitized.querySelectorAll("use");
+		expect(
+			uses[0]?.getAttributeNS("http://www.w3.org/1999/xlink", "href"),
+		).toBe("#scope-1__arrowhead");
+		expect(uses[1]?.getAttribute("href")).toBe("#scope-1__clip1");
+		const style = sanitized.querySelector("style")?.textContent ?? "";
+		expect(style).toContain("#root-svg .line");
+		expect(style).toContain("stroke:#333333");
+		expect(style).toContain("url(#scope-1__grad1)");
+		expect(sanitized.querySelector("marker path")?.getAttribute("fill")).toBe(
+			"#ffffff",
+		);
+
+		// Without an explicit prefix the root <svg id> becomes the scope.
+		const fallback = sanitizeMermaidSvg(
+			'<svg xmlns="http://www.w3.org/2000/svg" id="m1"><defs><marker id="arrowhead"/></defs><line marker-end="url(#arrowhead)"/></svg>',
+			document,
+		);
+		expect(fallback?.getAttribute("id")).toBe("m1");
+		expect(fallback?.querySelector("marker")?.getAttribute("id")).toBe(
+			"m1__arrowhead",
+		);
+		expect(fallback?.querySelector("line")?.getAttribute("marker-end")).toBe(
+			"url(#m1__arrowhead)",
+		);
+	});
+
+	it("rewrites Mermaid #id CSS selectors in selector context only, keeping hex colors and strings", () => {
+		const svgMarkup = [
+			'<svg xmlns="http://www.w3.org/2000/svg" id="m-root">',
+			"<style>",
+			"#m-root #arrowhead path { fill: #333333; stroke: #333; }",
+			"@media (min-width: 1px) { #arrowhead path { fill: #abcdef; } }",
+			'#arrowheadx, [data-x="#arrowhead"] { color: #arrowhead; }',
+			"/* #arrowhead */ .c { content: '#arrowhead'; }",
+			"</style>",
+			'<defs><marker id="arrowhead"><path d="M0,0"/></marker>',
+			'<marker id="arrowheadx"><path d="M0,0"/></marker></defs>',
+			"</svg>",
+		].join("");
+		const sanitized = sanitizeMermaidSvg(svgMarkup, document, "scope");
+		expect(sanitized).not.toBeNull();
+		if (!sanitized) return;
+		const css = sanitized.querySelector("style")?.textContent ?? "";
+		const firstSelector = css.split("{")[0]?.trim() ?? "";
+		expect(firstSelector).toBe("#m-root #scope__arrowhead path");
+		const marker = sanitized.querySelector('[id="scope__arrowhead"]');
+		document.body.appendChild(sanitized);
+		try {
+			expect(document.querySelector(firstSelector)).toBe(
+				marker?.querySelector("path"),
+			);
+		} finally {
+			sanitized.remove();
+		}
+		expect(css).toContain("fill: #333333; stroke: #333;");
+		expect(css).toContain(
+			"@media (min-width: 1px) { #scope__arrowhead path { fill: #abcdef; } }",
+		);
+		// Whole identifiers only; strings, comments, and values stay untouched.
+		expect(css).toContain(
+			'#scope__arrowheadx, [data-x="#arrowhead"] { color: #arrowhead; }',
+		);
+		expect(css).toContain("/* #arrowhead */ .c { content: '#arrowhead'; }");
+	});
+
+	it("keeps and scopes quoted or uppercase local url() references while stripping external ones", () => {
+		const svgMarkup = [
+			'<svg xmlns="http://www.w3.org/2000/svg" id="m-root">',
+			"<style>",
+			".a { fill: URL(#grad1); }",
+			".b { fill: url(https://evil.example/x.svg#a); stroke: #333333; }",
+			".c { marker-end: Url( '#arrowhead' ); }",
+			"</style>",
+			'<defs><marker id="arrowhead"><path d="M0,0"/></marker>',
+			'<linearGradient id="grad1"><stop offset="0"/></linearGradient></defs>',
+			"<path id=\"p1\" style=\"marker-end: url('#arrowhead'); fill: url(&quot;#grad1&quot;)\"/>",
+			'<path id="p2" fill="URL(#grad1)" stroke="url(https://evil.example/x.svg#a)"/>',
+			'<path id="p3" style="fill: url(https://evil.example/x.svg#a); stroke: #ffffff"/>',
+			'<path id="p4" style="fill: url(//evil.example/a#b); stroke: url(data:image/svg+xml;base64,AA==)"/>',
+			"</svg>",
+		].join("");
+		const sanitized = sanitizeMermaidSvg(svgMarkup, document, "scope");
+		expect(sanitized).not.toBeNull();
+		if (!sanitized) return;
+		const byId = (id: string) => sanitized.querySelector(`[id="scope__${id}"]`);
+		expect(byId("p1")?.getAttribute("style")).toBe(
+			"marker-end: url('#scope__arrowhead'); fill: url(\"#scope__grad1\")",
+		);
+		expect(byId("p2")?.getAttribute("fill")).toBe("url(#scope__grad1)");
+		expect(byId("p2")?.hasAttribute("stroke")).toBe(false);
+		expect(byId("p3")?.getAttribute("style")).toBe("fill: ; stroke: #ffffff");
+		expect(byId("p4")?.getAttribute("style")).toBe("fill: ; stroke: ");
+		const css = sanitized.querySelector("style")?.textContent ?? "";
+		expect(css).toContain(".a { fill: url(#scope__grad1); }");
+		expect(css).toContain(".c { marker-end: url('#scope__arrowhead'); }");
+		expect(css).toContain("stroke: #333333;");
+		expect(css).not.toMatch(/evil|https:|data:/i);
+	});
+
+	it("still blocks javascript: and escaped url() payloads in <style> and inline style", () => {
+		const sanitized = sanitizeMermaidSvg(
+			[
+				'<svg xmlns="http://www.w3.org/2000/svg" id="m-root">',
+				"<style>.x { fill: url(javascript:alert(1)); }</style>",
+				'<path id="a" style="fill: url(javascript:alert(1))"/>',
+				'<path id="b" style="fill: \\75rl(https://evil.example/a); stroke: red"/>',
+				'<path id="c" style="background: image-set(&quot;https://evil.example/a&quot; 1x)"/>',
+				"</svg>",
+			].join(""),
+			document,
+			"scope",
+		);
+		expect(sanitized).not.toBeNull();
+		if (!sanitized) return;
+		expect(sanitized.querySelector("style")?.textContent).toBe("");
+		expect(
+			sanitized.querySelector('[id="scope__a"]')?.hasAttribute("style"),
+		).toBe(false);
+		expect(sanitized.querySelector('[id="scope__b"]')?.getAttribute("style")).toBe(
+			"; stroke: red",
+		);
+		expect(
+			sanitized.querySelector('[id="scope__c"]')?.hasAttribute("style"),
+		).toBe(false);
+	});
+
+	it("passes the Mermaid render id as the SVG ID scope", async () => {
+		const win = window as TestEnhancementWindow;
+		win.mermaid = {
+			render: vi.fn(async (id: string) => ({
+				svg: `<svg xmlns="http://www.w3.org/2000/svg" id="${id}"><defs><marker id="arrowhead"/></defs><line marker-end="url(#arrowhead)"/></svg>`,
+			})),
+		};
+		const view = mountVisualEditor(
+			"```mermaid\nsequenceDiagram\n  A->>B: hi\n```",
+		);
+		await flushMicrotasks();
+		await flushMicrotasks();
+		const svg = view.dom.querySelector("div.easymde-mermaid svg");
+		const renderId = svg?.getAttribute("id") ?? "";
+		expect(renderId).toMatch(/^easymde-visual-mermaid-\d+$/);
+		expect(svg?.querySelector("marker")?.getAttribute("id")).toBe(
+			`${renderId}__arrowhead`,
+		);
+		expect(svg?.querySelector("line")?.getAttribute("marker-end")).toBe(
+			`url(#${renderId}__arrowhead)`,
+		);
+	});
+
+	it("renders protected raw, footnotes, toc cards and monospace fallbacks without <pre>", () => {
+		const markdown = [
+			"[TOC]",
+			"[^1]: Footnote body",
+			'<div class="custom">raw</div>',
+			"$$\nx + y\n$$",
+			"```mermaid\ngraph TD\n  A --> B\n```",
+		].join("\n\n");
+		const view = mountVisualEditor(markdown);
+		for (const kind of ["toc", "footnotes", "raw"]) {
+			const card = view.dom.querySelector(
+				`[data-easymde-protected-kind="${kind}"]`,
+			);
+			expect(card).not.toBeNull();
+			expect(card?.querySelector("pre")).toBeNull();
+			const source = card?.querySelector(".easymde-protected-card-source");
+			expect(source?.tagName).toBe("DIV");
+			expect((source as HTMLElement | null)?.style.whiteSpace).toBe("pre-wrap");
+		}
+		for (const kind of ["math", "mermaid"]) {
+			const block = view.dom.querySelector(
+				`[data-easymde-protected-kind="${kind}"]`,
+			);
+			expect(block?.querySelector("pre")).toBeNull();
+			const fallback = block?.querySelector(".easymde-protected-fallback-pre");
+			expect(fallback?.tagName).toBe("DIV");
+			expect(
+				fallback?.querySelector("code.easymde-protected-fallback"),
+			).not.toBeNull();
+		}
+		// The only <pre> elements left are real fenced code blocks.
+		expect(view.dom.querySelectorAll("pre").length).toBe(0);
+	});
+
+	it("syncs the code language badge color from the code element computed color", () => {
+		const callbacks: FrameRequestCallback[] = [];
+		const rafSpy = vi.fn((callback: FrameRequestCallback) => {
+			callbacks.push(callback);
+			return callbacks.length;
+		});
+		const originalRaf = window.requestAnimationFrame;
+		const originalCancel = window.cancelAnimationFrame;
+		window.requestAnimationFrame = rafSpy;
+		window.cancelAnimationFrame = vi.fn();
+		const originalGetComputedStyle = window.getComputedStyle.bind(window);
+		vi.spyOn(window, "getComputedStyle").mockImplementation(
+			(element: Element, pseudo?: string | null) => {
+				const real = originalGetComputedStyle(element, pseudo);
+				if (element.tagName !== "CODE") return real;
+				return {
+					...real,
+					backgroundColor: "rgb(40, 44, 52)",
+					color: "rgb(171, 178, 191)",
+				} as CSSStyleDeclaration;
+			},
+		);
+		try {
+			const view = mountVisualEditor("```ts\nconst x = 1;\n```");
+			while (callbacks.length > 0) callbacks.shift()?.(0);
+			const pre = view.dom.querySelector(
+				"pre.easymde-code-block",
+			) as HTMLElement | null;
+			const badge = pre?.querySelector(
+				"span.easymde-visual-code-lang",
+			) as HTMLElement | null;
+			expect(rafSpy).toHaveBeenCalled();
+			expect(
+				pre?.style.getPropertyValue("--easymde-code-frame-background"),
+			).toBe("rgb(40, 44, 52)");
+			expect(badge?.style.color).toBe("rgb(171, 178, 191)");
+		} finally {
+			window.requestAnimationFrame = originalRaf;
+			window.cancelAnimationFrame = originalCancel;
+		}
 	});
 });

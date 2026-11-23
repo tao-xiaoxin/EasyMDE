@@ -181,15 +181,11 @@ paragraph insertion actions as other editable blocks. Inserting above a rule
 keeps a blank line so later text remains a paragraph instead of becoming a
 Setext heading. Marker spelling, whitespace, line endings and surrounding
 source remain unchanged. Nested or fenced rule text is owned by its enclosing
-list, quote or code block. Full and Windowed Visual map an exact native
-`selectNode(hr)` selection through accepted source provenance; stale or mixed
-selections are rejected without whole-surface fallback. In Windowed Visual,
-Delete/Backspace removes only the HR marker bytes, keeps the original line
-ending, records one Undo/Redo entry, and restores the accepted HR or blank-gap
-selection. Non-cancelable, stale, read-only, mixed and spacer input is rejected
-without a Markdown write. The local browser check covers Windowed native source
-deletion and accepted Undo/Redo Preview; exact DOM selection restoration is
-covered by the focused editor tests.
+list, quote or code block. In the immersive visual editor a rule is a single non-editable block: clicking
+it or moving onto it with Backspace or Delete from a neighboring block selects
+the whole rule, and pressing Backspace or Delete again removes it as one
+Undo/Redo step. Untouched rules keep their original marker spelling and line
+endings in the Markdown source.
 
 Source link commands work with a caret or a selection inside the link caption,
 including reference-style links. **Copy Link Address** copies the formal

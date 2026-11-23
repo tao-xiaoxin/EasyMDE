@@ -310,6 +310,16 @@ final class AdminEditorStrings {
 			'previewReadOnly'             => __( 'Read only', 'easymde' ),
 			'previewUnlockEdit'           => __( 'Unlock and edit', 'easymde' ),
 			'previewMode'                 => __( 'Preview mode', 'easymde' ),
+			/* translators: %s: Protected block type label, such as Math or Mermaid. */
+			'protectedCardEditFormat'     => _x( 'Edit %s', 'protected block card', 'easymde' ),
+			'protectedCardFootnotes'      => _x( 'Footnotes', 'protected block card', 'easymde' ),
+			'protectedCardMath'           => _x( 'Math', 'protected block card', 'easymde' ),
+			'protectedCardMermaid'        => _x( 'Mermaid', 'protected block card', 'easymde' ),
+			'protectedCardRaw'            => _x( 'Raw', 'protected block card', 'easymde' ),
+			'protectedCardSave'           => _x( 'Save', 'protected block card', 'easymde' ),
+			/* translators: %s: Protected block type label, such as Math or Mermaid. */
+			'protectedCardSourceFormat'   => _x( '%s source', 'protected block card', 'easymde' ),
+			'protectedCardToc'            => _x( 'TOC', 'protected block card', 'easymde' ),
 			'publish'                     => __( 'Publish article', 'easymde' ),
 			'restore'                     => __( 'Restore revision', 'easymde' ),
 			'restoreConfirm'              => __( 'Unsaved changes will be lost when WordPress restores this revision. Continue?', 'easymde' ),

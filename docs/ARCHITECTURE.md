@@ -258,14 +258,12 @@ before and after are exactly equal across the complete analysis.
 The entrypoint parses external data before mounting, constructs focused
 WordPress and browser Adapters, mounts one modular `EditorRoot` (`frontend/src/app/editor/EditorRoot.tsx` composed from focused feature-bridge hooks and `ImmersiveVisualEditorHost.tsx`), and owns idempotent
 teardown. The Root composes Toolbar/commands, CodeMirror document and title
-sessions, the modular read-only `PreviewSurfaceOwner` (`frontend/src/features/live-preview/ui/`) and local post-response enhancements, Appearance and
-Custom CSS, Fonts, Media and image upload, Local Drafts, the modular WeChat export pipeline (`frontend/src/integrations/browser/wechat/`),
+sessions, the modular read-only `PreviewSurfaceOwner` (`frontend/src/features/live-preview/ui/`, with dormant windowed/editable-adoption layers retired) and local post-response enhancements, Appearance and
+Custom CSS (with `ImmersiveCustomCssDialog` and `ImmersivePublishDialog` lazily loaded as separate ESM chunks), Fonts, Media and image upload, Local Drafts, the modular WeChat export pipeline (`frontend/src/integrations/browser/wechat/`),
 the fixed Source/Preview layout, and WordPress session state. The independent
 Settings Center Root (`frontend/src/app/settings/`) is similarly decomposed into
-focused section pages and controls. All production frontend modules follow
-automated architecture guardrails in `tests/Node/frontend-architecture-guardrails.test.mjs`
-(unidirectional layering, a strict 1,200-line ceiling with zero legacy exceptions,
-and a 400-line ceiling on zero-JSX `.tsx` controllers).
+focused section pages and controls. Both admin stylesheets (`assets/css/admin/editor.css` and `assets/css/admin/settings-center.css`) are organized with structured tables of contents and numbered section banners. All production modules across both frontend and PHP follow automated architecture guardrails in `tests/Node/frontend-architecture-guardrails.test.mjs` and `tests/Node/php-architecture-guardrails.test.mjs`
+(unidirectional layering, a strict 1,000-line ceiling with zero legacy exceptions across all `frontend/src/` and `src/` production files, a 400-line ceiling on zero-JSX `.tsx` controllers, and PHP PSR-4/`ABSPATH`/`Support`+`Frontend` isolation).
 Ordinary Editor Components depend on typed Ports; WordPress DOM, `wp.media`,
 REST, Storage, and Clipboard access for the ordinary document and protected
 operations remain in focused Integration Adapters. The independent Settings
@@ -283,8 +281,8 @@ When the user unlocks immersive Preview, `ImmersiveVisualEditorHost` dynamically
 imports `MountedProseMirrorVisualEditor` (`frontend/src/features/immersive-visual/`)
 while keeping `PreviewSurfaceOwner` strictly read-only and hidden (retaining it as
 the formal PHP `SafePreviewHtmlSink` owner for WeChat Clipboard export and lock-back
-refreshes). `ProseMirrorVisualEditor` mounts `EditorView` directly onto the themed
-`.easymde-preview.easymde-rendered-content` surface via `{ mount: container }` so
+refreshes). `ProseMirrorVisualEditor` mounts `EditorView` directly onto its semantic
+`<article data-easymde-prosemirror-host="1">` `.easymde-preview.easymde-rendered-content` surface via `{ mount: container }` so
 every descendant and direct-child CSS selector across all 46 registered article
 themes applies identically to formal Preview.
 
@@ -295,15 +293,17 @@ themes applies identically to formal Preview.
 - **Zero-write on read & surgical block preservation**: Opening or unlocking a
   document performs zero canonical writes (`createMarkdownRoundTripGuard`).
   Localized edits preserve every untouched top-level block's original raw
-  Markdown (bullet style, padded table columns, reference links, inter-block
-  spacing, and trailing newlines), and undoing back to the initial state restores
-  byte-identical source.
+  Markdown (including `*`/`+`/`-` bullet/task list markers, padded table columns,
+  reference links, inter-block spacing, and trailing newlines), and undoing back
+  to the initial state restores byte-identical source.
 - **Protected atoms & custom NodeViews**: `node-views/` preserves KaTeX math,
   Mermaid diagrams, `[TOC]`, footnotes, reference definitions, and raw HTML blocks
-  as non-corrupting atomic cards (with double-click raw-source editing), renders
-  Mac 3-dot code frames with incremental `Decoration.inline` Highlight.js tokens,
-  supports interactive task-list checkboxes, and provides click-to-select image
-  blue rings and 7-value width scaling (`{width=25%..200%}`).
+  as non-corrupting atomic cards (with hover/focus Edit and Copy-raw quick actions,
+  double-click editing, `Ctrl/Cmd+Enter` commit, and non-propagating `Escape`
+  cancel), renders Mac 3-dot code frames with incremental `Decoration.inline`
+  Highlight.js tokens, supports interactive task-list checkboxes that preserve
+  original list markers, and provides click-to-select image blue rings and 7-value
+  width scaling (`{width=25%..200%}`).
 - **Canonical synchronization**: Legitimate edits synchronize back to
   `EditorDocumentSession` (CodeMirror + native form bridge) after IME composition
   ends; locking back to read-only or invoking WeChat Copy refreshes the formal

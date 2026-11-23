@@ -244,7 +244,7 @@ npm run notices:check
 npm test
 ```
 
-`npm run frontend:check` verifies the locked generated Lucide nodes, runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and read-only production comparisons for all nine manifest-backed Vite entries (including the local ESM `format: "es"` + dynamic code-splitting chunks of `admin-editor.tsx`). `npm test` runs all Node tests including `tests/Node/frontend-architecture-guardrails.test.mjs`, which enforces unidirectional frontend layering, a strict 1,200-line production file ceiling with zero legacy exceptions, and a 400-line zero-JSX `.tsx` controller ceiling. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, CodeMirror 6, ProseMirror core (`prosemirror-*`) + `markdown-it`, and development-only `lucide-react@0.487.0` on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
+`npm run frontend:check` verifies the locked generated Lucide nodes, runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and read-only production comparisons for all nine manifest-backed Vite entries (including the local ESM `format: "es"` + dynamic code-splitting chunks of `admin-editor.tsx` for ProseMirror visual editing, WeChat export, optional CodeMirror indentation parsers, `ImmersivePublishDialog`, and `ImmersiveCustomCssDialog`). `npm test` runs all Node tests including `tests/Node/frontend-architecture-guardrails.test.mjs` and `tests/Node/php-architecture-guardrails.test.mjs`, which enforce unidirectional frontend layering, a strict 1,000-line production file ceiling with zero legacy exceptions across both `frontend/src/` and `src/`, a 400-line zero-JSX `.tsx` controller ceiling, and PHP PSR-4/`ABSPATH`/`Support`+`Frontend` isolation. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, CodeMirror 6, ProseMirror core (`prosemirror-*`) + `markdown-it`, and development-only `lucide-react@0.487.0` on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
 
 The test-only build writes to `.cache/easymde-frontend-contract/`. `npm run build:frontend` writes the committed outputs for the nine Vite configs below, while `npm run check:frontend-production` writes temporary outputs, validates each output, and compares each complete file set and its bytes with the committed runtimes without rewriting them. The validators fail on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps.
 
@@ -993,34 +993,34 @@ The Playwright E2E suites are organized into domain-focused directories under
 `tests/e2e/`:
 
 - `tests/e2e/ordinary/`: ordinary split editor, toolbar/bridge, themes and
-  appearance, publishing/revisions/WeChat export, code fences, immersive
-  editing, and performance budgets (formerly `tests/e2e/easymde.spec.mjs`).
-- `tests/e2e/visual/`: immersive visual editing suites covering typing and
-  paragraphs, short-stage and fences, monitor/oracle contracts, and long-doc
-  workflows (formerly `tests/e2e/visual-basic-editing.spec.mjs`).
+  appearance, publishing/revisions/WeChat export, and performance budgets.
+- `tests/e2e/visual/`: unified ProseMirror immersive visual editing suites
+  (`prosemirror-core-editing.spec.mjs`, `prosemirror-rich-blocks.spec.mjs`) and
+  preview-monitor contract checks (`monitor-contracts.spec.mjs`).
+- `tests/e2e/settings-center/`: Settings Center domain suites
+  (`first-paint-and-resilience.spec.mjs`, `navigation-and-search.spec.mjs`,
+  `layout-and-sections.spec.mjs`, `image-hosting-and-uploads.spec.mjs`, and
+  `shortcuts-and-remote-import.spec.mjs`).
 - `tests/e2e/context-menu/`: shared context-menu suites across Source and
-  immersive visual surfaces (formerly `tests/e2e/editor-context-menu.spec.mjs`).
+  immersive visual surfaces.
 - Standalone suites: `tests/e2e/inkwell.spec.mjs`,
-  `tests/e2e/settings-center.spec.mjs`, `tests/e2e/theme-layout-audit.spec.mjs`,
-  `tests/e2e/immersive-unlock-latency.spec.mjs`, and
-  `tests/e2e/visual-windowed-document-end.spec.mjs`.
-
-The two `[oracle-contract]` checks in `tests/e2e/visual/oracle-contracts.spec.mjs`
-cover the short-stage code certificate without a browser. The opt-in rich-cell
-keyboard cases live in `tests/e2e/visual/windowed-tables-and-inline.spec.mjs`,
-and the four native-paste code-fence deletion cases live in
-`tests/e2e/ordinary/immersive-code-fence-deletion.spec.mjs`.
+  `tests/e2e/theme-layout-audit.spec.mjs`, and
+  `tests/e2e/immersive-unlock-latency.spec.mjs`.
 
 With the cutover to the unified ProseMirror immersive visual editor
-([ADR-002](decisions/ADR-002-visual-editor-and-esm-architecture.md)), the former
-`ImmersiveVisualEditor.tsx`, `WindowedImmersiveVisualEditor.tsx`, and
-`visual-markdown.ts` controllers and their legacy `contentEditable`-adoption
-unit suites were physically removed. Read-only Preview surface stability,
-windowed commit staging, and `SafePreviewHtmlSink` contracts remain covered by
-the modular `PreviewSurfaceOwner.test.tsx` (130 tests) and
-`SafePreviewHtmlSink.test.tsx` (38 tests) suites under
-`frontend/src/features/live-preview/ui/`, while unified immersive visual editing
-is verified by `frontend/src/features/immersive-visual/` and `EditorRoot.test.tsx`.
+([ADR-002](decisions/ADR-002-visual-editor-and-esm-architecture.md)) and the
+retirement of dormant windowed-preview code, the former
+`ImmersiveVisualEditor.tsx`, `WindowedImmersiveVisualEditor.tsx`,
+`visual-markdown.ts`, legacy `contentEditable`-adoption/windowed unit suites,
+and obsolete windowed/contentEditable-internals E2E specs were physically
+removed. Read-only Preview surface stability, staged commits, and
+`SafePreviewHtmlSink` contracts remain covered by `PreviewSurfaceOwner.test.tsx`
+and `SafePreviewHtmlSink.test.tsx` under `frontend/src/features/live-preview/ui/`,
+unified immersive visual editing is verified by
+`frontend/src/features/immersive-visual/` and the domain-split
+`EditorRoot.*.test.tsx` suites under `frontend/src/app/editor/`, and the
+formerly monolithic context-menu, WeChat clipboard, and Settings Center suites
+are split by domain alongside shared test harnesses.
 The dedicated immersive unlock browser cases measure in-page click-to-pending,
 the first rAF observation of a pending control that meets the existing
 visibility conditions (not a pixel-presentation claim),
@@ -1427,7 +1427,7 @@ Run the default full-matrix smoke and at least one filtered two-run smoke:
 EASYMDE_E2E_BASE_URL="<wordpress_test_url>" \
 EASYMDE_E2E_WP_PATH="<wordpress_test_path>" \
 EASYMDE_E2E_WP_CLI="<wp_cli_path>" \
-npm run test:e2e -- tests/e2e/settings-center.spec.mjs \
+npm run test:e2e -- tests/e2e/settings-center/first-paint-and-resilience.spec.mjs \
   -g "desktop/mobile, cold/warm, normal/hard, and baseline/throttled"
 
 EASYMDE_FIRST_PAINT_RUNS=2 \
@@ -1435,7 +1435,7 @@ EASYMDE_FIRST_PAINT_CASE=desktop-cold-normal-baseline \
 EASYMDE_E2E_BASE_URL="<wordpress_test_url>" \
 EASYMDE_E2E_WP_PATH="<wordpress_test_path>" \
 EASYMDE_E2E_WP_CLI="<wp_cli_path>" \
-npm run test:e2e -- tests/e2e/settings-center.spec.mjs \
+npm run test:e2e -- tests/e2e/settings-center/first-paint-and-resilience.spec.mjs \
   -g "desktop/mobile, cold/warm, normal/hard, and baseline/throttled"
 ```
 
@@ -1468,7 +1468,7 @@ for case_name in \
   mobile-warm-hard-throttled; do
   EASYMDE_FIRST_PAINT_RUNS=50 \
   EASYMDE_FIRST_PAINT_CASE="$case_name" \
-  npm run test:e2e -- tests/e2e/settings-center.spec.mjs \
+  npm run test:e2e -- tests/e2e/settings-center/first-paint-and-resilience.spec.mjs \
     -g "desktop/mobile, cold/warm, normal/hard, and baseline/throttled" \
     2>&1 | tee "$EVIDENCE_DIR/$case_name.log"
 done

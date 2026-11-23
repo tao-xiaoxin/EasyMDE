@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const firstPaintSource = readFileSync(
-	join(repoRoot, "tests/e2e/settings-center.spec.mjs"),
+	join(repoRoot, "tests/e2e/helpers/settings-center-first-paint-helpers.mjs"),
 	"utf8",
 );
 

@@ -39,6 +39,7 @@ test('local WordPress login credentials have one ignored environment owner', () 
   const playwrightConfig = source('playwright.config.mjs');
   const editorE2eHelpers = source('tests/e2e/helpers/editor-e2e-helpers.mjs');
   const contextMenuHelpers = source('tests/e2e/helpers/context-menu-helpers.mjs');
+  const settingsCenterHelpers = source('tests/e2e/helpers/settings-center-helpers.mjs');
   const inkwellE2e = source('tests/e2e/inkwell.spec.mjs');
   const allE2eFiles = collectMjsFiles(join(repoRoot, 'tests/e2e'));
   const releaseSetup = source('scripts/setup-wordpress-release.sh');
@@ -63,6 +64,8 @@ test('local WordPress login credentials have one ignored environment owner', () 
   assert.match(editorE2eHelpers, /requiredEnvironment\('WORDPRESS_ADMIN_PASSWORD'\)/);
   assert.match(contextMenuHelpers, /requiredEnvironment\('WORDPRESS_ADMIN_USER'\)/);
   assert.match(contextMenuHelpers, /requiredEnvironment\('WORDPRESS_ADMIN_PASSWORD'\)/);
+  assert.match(settingsCenterHelpers, /requiredEnvironment\(["']WORDPRESS_ADMIN_USER["']\)/);
+  assert.match(settingsCenterHelpers, /requiredEnvironment\(["']WORDPRESS_ADMIN_PASSWORD["']\)/);
   assert.match(inkwellE2e, /requiredEnvironment\('WORDPRESS_ADMIN_USER'\)/);
   assert.match(inkwellE2e, /requiredEnvironment\('WORDPRESS_ADMIN_PASSWORD'\)/);
   assert.ok(allE2eFiles.length > 0, 'Expected E2E files under tests/e2e.');

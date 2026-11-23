@@ -623,9 +623,38 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
 		}
 	};
 	assertSafeBuiltScript(script, "Built script");
+	const chunkScriptsByFile = new Map();
 	for (const chunk of wordpressChunks) {
 		const chunkScript = readFileSync(join(root, chunk), "utf8");
 		assertSafeBuiltScript(chunkScript, `Built chunk ${chunk}`);
+		chunkScriptsByFile.set(chunk, chunkScript);
+	}
+	const entryStaticSources = [script];
+	if (spec.allowDynamicChunks && Array.isArray(viteEntry.imports)) {
+		const visitedImportKeys = new Set();
+		const pendingImportKeys = [...viteEntry.imports];
+		while (pendingImportKeys.length > 0) {
+			const importKey = pendingImportKeys.pop();
+			if ("string" !== typeof importKey || visitedImportKeys.has(importKey)) {
+				continue;
+			}
+			visitedImportKeys.add(importKey);
+			const importedRecord = manifest[importKey];
+			if (!importedRecord || "object" !== typeof importedRecord) {
+				continue;
+			}
+			if ("string" === typeof importedRecord.file) {
+				const chunkScript = chunkScriptsByFile.get(importedRecord.file);
+				if ("string" === typeof chunkScript) {
+					entryStaticSources.push(chunkScript);
+				}
+			}
+			if (Array.isArray(importedRecord.imports)) {
+				for (const nestedImportKey of importedRecord.imports) {
+					pendingImportKeys.push(nestedImportKey);
+				}
+			}
+		}
 	}
 	const requiredRuntimePatterns =
 		spec.requiredRuntimePatterns ??
@@ -638,7 +667,9 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
 				]
 			: []);
 	for (const requiredRuntime of requiredRuntimePatterns) {
-		if (!requiredRuntime.pattern.test(script)) {
+		if (
+			!entryStaticSources.some((source) => requiredRuntime.pattern.test(source))
+		) {
 			throw new Error(
 				`Built script does not reference the ${requiredRuntime.label}.`,
 			);

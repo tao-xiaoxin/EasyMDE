@@ -232,6 +232,16 @@ test('production build emits an ESM WordPress editor React entry with dynamic ch
       'frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts'
     )
   );
+  assert.ok(
+    viteEntry.dynamicImports.includes(
+      'frontend/src/features/immersive-editor/ui/ImmersivePublishDialog.tsx'
+    )
+  );
+  assert.ok(
+    viteEntry.dynamicImports.includes(
+      'frontend/src/features/appearance/ui/ImmersiveCustomCssDialog.tsx'
+    )
+  );
   assert.ok(Array.isArray(wordpressEntry.chunks) && wordpressEntry.chunks.length > 0);
   for (const chunk of wordpressEntry.chunks) {
     assert.match(chunk, /^assets\/admin-editor-chunk-[a-zA-Z0-9_-]+\.js$/);
@@ -239,15 +249,22 @@ test('production build emits an ESM WordPress editor React entry with dynamic ch
   }
 
   const script = readFileSync(join(outputRoot, viteEntry.file), 'utf8');
+  const entryStaticCode = [
+    script,
+    ...(viteEntry.imports ?? [])
+      .map((key) => viteManifest[key]?.file)
+      .filter((file) => typeof file === 'string')
+      .map((file) => readFileSync(join(outputRoot, file), 'utf8'))
+  ].join('\n');
   const css = readFileSync(join(repoRoot, 'assets/css/admin/toolbar.css'), 'utf8');
   const metadata = readFileSync(join(outputRoot, wordpressEntry.asset), 'utf8');
 
-  assert.match(script, /wp\.element/);
-  assert.match(script, /wp\.i18n/);
-  assert.doesNotMatch(script, /tannin|pluralForms|setLocaleData/);
+  assert.match(entryStaticCode, /wp\.element/);
+  assert.match(entryStaticCode, /wp\.i18n/);
+  assert.doesNotMatch(entryStaticCode, /tannin|pluralForms|setLocaleData/);
   assert.match(script, /EasyMDEAdminEditorStart/);
-  assert.doesNotMatch(script, /EasyMDEReactToolbar|EasyMDEReactDocumentSource/);
-  assert.match(script, /cm-editor/);
+  assert.doesNotMatch(entryStaticCode, /EasyMDEReactToolbar|EasyMDEReactDocumentSource/);
+  assert.match(entryStaticCode, /cm-editor/);
   assert.match(script, /import\(\s*[`"']\.\/admin-editor-chunk-/);
   for (const file of [viteEntry.file, ...wordpressEntry.chunks]) {
     const code = readFileSync(join(outputRoot, file), 'utf8');

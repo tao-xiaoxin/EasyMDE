@@ -10,6 +10,7 @@ import {
 	isValidTableTextAlign,
 	isValidVisualImageScale,
 	normalizeHeadingLevel,
+	sanitizeBulletMarker,
 	type TableTextAlign,
 	type VisualImageScale,
 	visualEditorSchema,
@@ -501,6 +502,7 @@ function mapBulletListTokens(
 		return [];
 	}
 
+	const marker = sanitizeBulletMarker(tokens[startIndex]?.markup);
 	const lists: ProseMirrorNode[] = [];
 	let currentGroup: ProseMirrorNode[] = [];
 	let currentIsTask: boolean | null = null;
@@ -512,7 +514,7 @@ function mapBulletListTokens(
 		const listType = currentIsTask
 			? visualEditorSchema.nodes.task_list
 			: visualEditorSchema.nodes.bullet_list;
-		lists.push(listType.create(null, currentGroup));
+		lists.push(listType.create({ marker }, currentGroup));
 		currentGroup = [];
 	};
 

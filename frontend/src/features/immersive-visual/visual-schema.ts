@@ -14,6 +14,7 @@ export const VISUAL_IMAGE_SCALES: ReadonlyArray<VisualImageScale> = [
 ];
 
 export type TableTextAlign = "left" | "center" | "right" | null;
+export type BulletListMarker = "-" | "*" | "+";
 export type ProtectedBlockKind =
 	| "math"
 	| "mermaid"
@@ -103,6 +104,10 @@ export function normalizeHeadingLevel(value: unknown): number {
 	return typeof value === "number" && Number.isInteger(value)
 		? Math.min(6, Math.max(1, value))
 		: 1;
+}
+
+export function sanitizeBulletMarker(value: unknown): BulletListMarker {
+	return value === "*" || value === "+" ? value : "-";
 }
 
 export function sanitizeFenceChar(value: unknown): "`" | "~" {
@@ -294,6 +299,7 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 	},
 
 	bullet_list: {
+		attrs: { marker: { default: "-" } },
 		content: "list_item+",
 		group: "block",
 		parseDOM: [{ tag: "ul:not(.contains-task-list):not(.task-list)" }],
@@ -328,6 +334,7 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 	},
 
 	task_list: {
+		attrs: { marker: { default: "-" } },
 		content: "task_item+",
 		group: "block",
 		parseDOM: [{ tag: "ul.contains-task-list" }, { tag: "ul.task-list" }],

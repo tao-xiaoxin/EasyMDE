@@ -34,6 +34,9 @@ export type MermaidRuntime = Readonly<{
 }>;
 export type ProtectedAtomLabels = Readonly<{
 	cancel?: string;
+	copied?: string;
+	copy?: string;
+	edit?: string;
 	footnotes?: string;
 	math?: string;
 	mermaid?: string;
@@ -55,6 +58,9 @@ type ProtectedAtomKind = ProtectedBlockKind | ProtectedInlineKind;
 
 const DEFAULT_LABELS: Required<ProtectedAtomLabels> = {
 	cancel: "Cancel",
+	copied: "Copied",
+	copy: "Copy",
+	edit: "Edit",
 	footnotes: "Footnotes",
 	math: "Math",
 	mermaid: "Mermaid",
@@ -62,6 +68,7 @@ const DEFAULT_LABELS: Required<ProtectedAtomLabels> = {
 	save: "Save",
 	toc: "TOC",
 };
+const COPY_FEEDBACK_DURATION_MS = 1600;
 const KIND_CLASSES: Record<ProtectedAtomKind, string> = {
 	math: "easymde-protected-block easymde-math easymde-math-block",
 	mermaid: "easymde-protected-block easymde-mermaid",
@@ -327,6 +334,52 @@ function makeButton(
 	return button;
 }
 
+async function copyTextToClipboard(
+	text: string,
+	doc: Document,
+): Promise<boolean> {
+	const clipboard =
+		typeof navigator !== "undefined" ? navigator.clipboard : undefined;
+	if (clipboard && typeof clipboard.writeText === "function") {
+		try {
+			await clipboard.writeText(text);
+			return true;
+		} catch {
+			// Fall through to legacy execCommand copy fallback when available.
+		}
+	}
+	if (typeof doc.execCommand !== "function" || !doc.body) {
+		return false;
+	}
+	const helper = doc.createElement("textarea");
+	helper.value = text;
+	helper.setAttribute("readonly", "");
+	helper.setAttribute("aria-hidden", "true");
+	helper.tabIndex = -1;
+	Object.assign(helper.style, {
+		position: "fixed",
+		top: "-9999px",
+		left: "-9999px",
+		opacity: "0",
+		pointerEvents: "none",
+	});
+	const previousFocus =
+		doc.activeElement instanceof HTMLElement ? doc.activeElement : null;
+	doc.body.appendChild(helper);
+	try {
+		helper.focus();
+		helper.select();
+		return Boolean(doc.execCommand("copy"));
+	} catch {
+		return false;
+	} finally {
+		helper.remove();
+		if (previousFocus?.isConnected) {
+			previousFocus.focus();
+		}
+	}
+}
+
 class ProtectedAtomNodeView implements NodeView {
 	readonly dom: HTMLElement;
 	private readonly isBlock: boolean;
@@ -336,12 +389,18 @@ class ProtectedAtomNodeView implements NodeView {
 	private readonly options: ProtectedAtomNodeViewOptions;
 	private readonly labels: Required<ProtectedAtomLabels>;
 	private readonly previewContainer: HTMLElement;
+	private readonly cardActions: HTMLDivElement | null = null;
+	private readonly editButton: HTMLButtonElement | null = null;
+	private readonly copyButton: HTMLButtonElement | null = null;
+	private readonly cardActionsCleanup: (() => void) | null = null;
 	private editorContainer: HTMLElement | null = null;
 	private editorCleanup: (() => void) | null = null;
 	private editing = false;
 	private selected = false;
 	private destroyed = false;
 	private renderGeneration = 0;
+	private copyGeneration = 0;
+	private copyResetTimer: ReturnType<typeof setTimeout> | null = null;
 	private readonly onDoubleClick: (event: MouseEvent) => void;
 
 	constructor(
@@ -368,6 +427,55 @@ class ProtectedAtomNodeView implements NodeView {
 			"1",
 		);
 
+		if (isBlock) {
+			const cardActions = createEl(
+				doc,
+				"div",
+				"easymde-protected-card-actions",
+			);
+			cardActions.setAttribute("contenteditable", "false");
+			const editButton = makeButton(
+				doc,
+				"easymde-protected-edit-btn",
+				this.labels.edit,
+			);
+			const copyButton = makeButton(
+				doc,
+				"easymde-protected-copy-btn",
+				this.labels.copy,
+			);
+			const onEditClick = (event: MouseEvent): void => {
+				event.preventDefault();
+				event.stopPropagation();
+				if (this.destroyed || this.editing || !this.view.editable) return;
+				this.openRawEditor();
+			};
+			const onCopyClick = (event: MouseEvent): void => {
+				event.preventDefault();
+				event.stopPropagation();
+				if (this.destroyed) return;
+				this.copyRawMarkdown();
+			};
+			const stopActionMouseDown = (event: MouseEvent): void => {
+				event.stopPropagation();
+			};
+			editButton.addEventListener("mousedown", stopActionMouseDown);
+			copyButton.addEventListener("mousedown", stopActionMouseDown);
+			editButton.addEventListener("click", onEditClick);
+			copyButton.addEventListener("click", onCopyClick);
+			cardActions.append(editButton, copyButton);
+			this.dom.appendChild(cardActions);
+			this.cardActions = cardActions;
+			this.editButton = editButton;
+			this.copyButton = copyButton;
+			this.cardActionsCleanup = () => {
+				editButton.removeEventListener("mousedown", stopActionMouseDown);
+				copyButton.removeEventListener("mousedown", stopActionMouseDown);
+				editButton.removeEventListener("click", onEditClick);
+				copyButton.removeEventListener("click", onCopyClick);
+			};
+		}
+
 		this.previewContainer = createEl(
 			doc,
 			isBlock ? "div" : "span",
@@ -376,7 +484,16 @@ class ProtectedAtomNodeView implements NodeView {
 		this.dom.appendChild(this.previewContainer);
 
 		this.onDoubleClick = (event: MouseEvent) => {
-			if (this.destroyed || this.editing || !this.view.editable) return;
+			if (
+				this.destroyed ||
+				this.editing ||
+				!this.view.editable ||
+				(this.cardActions &&
+					event.target instanceof Node &&
+					this.cardActions.contains(event.target))
+			) {
+				return;
+			}
 			event.preventDefault();
 			event.stopPropagation();
 			this.openRawEditor();
@@ -392,8 +509,72 @@ class ProtectedAtomNodeView implements NodeView {
 			: normalizeProtectedInlineKind(this.node.attrs.kind);
 	}
 
+	private readLiveRawMarkdown(): string {
+		const pos = resolveAtomPosition(
+			this.getPos,
+			this.view,
+			this.node.type.name,
+		);
+		const liveNode = pos !== null ? this.view.state.doc.nodeAt(pos) : null;
+		return liveNode && liveNode.type === this.node.type
+			? readRawMarkdown(liveNode)
+			: readRawMarkdown(this.node);
+	}
+
+	private resetCopyFeedback(): void {
+		this.copyGeneration += 1;
+		if (this.copyResetTimer !== null) {
+			clearTimeout(this.copyResetTimer);
+			this.copyResetTimer = null;
+		}
+		if (this.copyButton) {
+			this.copyButton.textContent = this.labels.copy;
+			this.copyButton.classList.remove("is-copied");
+			this.copyButton.removeAttribute("data-easymde-copied");
+		}
+	}
+
+	private showCopiedFeedback(): void {
+		if (!this.copyButton) return;
+		if (this.copyResetTimer !== null) {
+			clearTimeout(this.copyResetTimer);
+			this.copyResetTimer = null;
+		}
+		this.copyButton.textContent = this.labels.copied;
+		this.copyButton.classList.add("is-copied");
+		this.copyButton.setAttribute("data-easymde-copied", "1");
+		this.copyResetTimer = setTimeout(() => {
+			this.copyResetTimer = null;
+			if (this.destroyed || !this.copyButton) return;
+			this.copyButton.textContent = this.labels.copy;
+			this.copyButton.classList.remove("is-copied");
+			this.copyButton.removeAttribute("data-easymde-copied");
+		}, COPY_FEEDBACK_DURATION_MS);
+	}
+
+	private copyRawMarkdown(): void {
+		const rawMarkdown = this.readLiveRawMarkdown();
+		this.copyGeneration += 1;
+		const generation = this.copyGeneration;
+		void copyTextToClipboard(rawMarkdown, this.dom.ownerDocument).then(
+			(copied) => {
+				if (
+					!copied ||
+					this.destroyed ||
+					this.editing ||
+					this.copyGeneration !== generation ||
+					!this.copyButton
+				) {
+					return;
+				}
+				this.showCopiedFeedback();
+			},
+		);
+	}
+
 	private syncRootAttributes(): void {
 		const kind = this.currentKind();
+		const kindLabel = this.labels[KIND_LABEL_KEY[kind]];
 		this.dom.className = KIND_CLASSES[kind];
 		this.dom.setAttribute("data-easymde-protected-kind", kind);
 		this.dom.setAttribute(
@@ -405,6 +586,25 @@ class ProtectedAtomNodeView implements NodeView {
 			this.dom.setAttribute("data-easymde-protected-editing", "1");
 		} else {
 			this.dom.removeAttribute("data-easymde-protected-editing");
+		}
+		if (this.cardActions) {
+			this.cardActions.hidden = this.editing;
+			if (this.editing) {
+				this.cardActions.style.display = "none";
+			} else {
+				this.cardActions.style.removeProperty("display");
+			}
+		}
+		if (this.editButton) {
+			const editLabel = `${this.labels.edit} ${kindLabel}`;
+			this.editButton.setAttribute("aria-label", editLabel);
+			this.editButton.title = editLabel;
+			this.editButton.disabled = !this.view.editable;
+		}
+		if (this.copyButton) {
+			const copyLabel = `${this.labels.copy} ${kindLabel}`;
+			this.copyButton.setAttribute("aria-label", copyLabel);
+			this.copyButton.title = copyLabel;
 		}
 		this.applySelectionVisuals();
 	}
@@ -571,6 +771,7 @@ class ProtectedAtomNodeView implements NodeView {
 
 	private openRawEditor(): void {
 		this.renderGeneration += 1;
+		this.resetCopyFeedback();
 		this.editing = true;
 		this.previewContainer.style.display = "none";
 
@@ -609,20 +810,37 @@ class ProtectedAtomNodeView implements NodeView {
 			"easymde-protected-save-btn",
 			this.labels.save,
 		);
+		saveButton.setAttribute("aria-keyshortcuts", "Control+Enter Meta+Enter");
 		const cancelButton = makeButton(
 			doc,
 			"easymde-protected-cancel-btn",
 			this.labels.cancel,
 		);
+		cancelButton.setAttribute("aria-keyshortcuts", "Escape");
 		actions.append(saveButton, cancelButton);
 		container.append(field, actions);
 
-		const onKeyDown = (event: KeyboardEvent): void => {
+		const onFieldKeyDown = (event: KeyboardEvent): void => {
 			event.stopPropagation();
+			if (event.isComposing) return;
 			if (event.key === "Escape") {
 				event.preventDefault();
 				this.cancelRawEditor();
-			} else if (event.key === "Enter" && !event.shiftKey) {
+			} else if (
+				event.key === "Enter" &&
+				(event.ctrlKey || event.metaKey || !event.shiftKey)
+			) {
+				event.preventDefault();
+				this.commitRawEditor(field.value);
+			}
+		};
+		const onContainerKeyDown = (event: KeyboardEvent): void => {
+			event.stopPropagation();
+			if (event.isComposing) return;
+			if (event.key === "Escape") {
+				event.preventDefault();
+				this.cancelRawEditor();
+			} else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
 				event.preventDefault();
 				this.commitRawEditor(field.value);
 			}
@@ -637,12 +855,17 @@ class ProtectedAtomNodeView implements NodeView {
 		const onSave = onButton(() => this.commitRawEditor(field.value));
 		const onCancel = onButton(() => this.cancelRawEditor());
 
-		field.addEventListener("keydown", onKeyDown as EventListener);
+		field.addEventListener("keydown", onFieldKeyDown as EventListener);
+		container.addEventListener("keydown", onContainerKeyDown as EventListener);
 		saveButton.addEventListener("click", onSave);
 		cancelButton.addEventListener("click", onCancel);
 		this.editorContainer = container;
 		this.editorCleanup = () => {
-			field.removeEventListener("keydown", onKeyDown as EventListener);
+			field.removeEventListener("keydown", onFieldKeyDown as EventListener);
+			container.removeEventListener(
+				"keydown",
+				onContainerKeyDown as EventListener,
+			);
 			saveButton.removeEventListener("click", onSave);
 			cancelButton.removeEventListener("click", onCancel);
 		};
@@ -697,6 +920,7 @@ class ProtectedAtomNodeView implements NodeView {
 			this.node.attrs.kind !== nextNode.attrs.kind ||
 			readRawMarkdown(this.node) !== readRawMarkdown(nextNode);
 		this.node = nextNode;
+		if (changed) this.resetCopyFeedback();
 		if (this.editing && changed) this.teardownRawEditor();
 		else this.syncRootAttributes();
 		if (!this.editing && changed) this.renderPreview();
@@ -704,14 +928,11 @@ class ProtectedAtomNodeView implements NodeView {
 	}
 
 	stopEvent(event: Event): boolean {
+		const target = event.target instanceof Node ? event.target : null;
 		return (
 			event.type === "dblclick" ||
-			Boolean(
-				this.editing &&
-					this.editorContainer &&
-					event.target instanceof Node &&
-					this.editorContainer.contains(event.target),
-			)
+			Boolean(target && this.cardActions?.contains(target)) ||
+			Boolean(this.editing && target && this.editorContainer?.contains(target))
 		);
 	}
 
@@ -722,7 +943,9 @@ class ProtectedAtomNodeView implements NodeView {
 	destroy(): void {
 		this.destroyed = true;
 		this.renderGeneration += 1;
+		this.resetCopyFeedback();
 		this.dom.removeEventListener("dblclick", this.onDoubleClick);
+		this.cardActionsCleanup?.();
 		this.editorCleanup?.();
 		this.editorCleanup = null;
 		this.editorContainer = null;

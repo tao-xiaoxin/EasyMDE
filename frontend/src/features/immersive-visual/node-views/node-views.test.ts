@@ -591,6 +591,171 @@ describe("ProtectedAtomNodeView (math, mermaid, cards, raw-source editor)", () =
 		) as HTMLElement;
 		mathBlock.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
 		expect(mathBlock.querySelector("textarea")).toBeNull();
+
+		const editButton = mathBlock.querySelector(
+			"button.easymde-protected-edit-btn",
+		) as HTMLButtonElement | null;
+		expect(editButton).not.toBeNull();
+		expect(editButton?.disabled).toBe(true);
+		editButton?.click();
+		expect(mathBlock.querySelector("textarea")).toBeNull();
+	});
+
+	it("provides Edit/Copy quick actions on block protected cards with Mod+Enter save and non-propagating Escape", async () => {
+		const writeText = vi.fn(async (_text: string) => undefined);
+		const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(
+			navigator,
+			"clipboard",
+		);
+		Object.defineProperty(navigator, "clipboard", {
+			configurable: true,
+			value: { writeText },
+		});
+
+		try {
+			const view = mountVisualEditor("$$\nE = mc^2\n$$\n\nInline $x + 1$ end.");
+			const mathBlock = view.dom.querySelector(
+				"div.easymde-math-block",
+			) as HTMLElement;
+			const mathInline = view.dom.querySelector(
+				"span.easymde-math-inline",
+			) as HTMLElement;
+
+			// Block cards have non-editable actions; inline atoms do not.
+			const actionsBar = mathBlock.querySelector(
+				"div.easymde-protected-card-actions",
+			) as HTMLElement | null;
+			expect(actionsBar).not.toBeNull();
+			expect(actionsBar?.getAttribute("contenteditable")).toBe("false");
+			expect(
+				mathInline.querySelector(".easymde-protected-card-actions"),
+			).toBeNull();
+
+			// ProseMirror serialization stays untouched by card action chrome.
+			expect(serializeVisualDocToMarkdown(view.state.doc)).toBe(
+				"$$\nE = mc^2\n$$\n\nInline $x + 1$ end.",
+			);
+
+			// Copy-raw button copies currentNode.attrs.rawMarkdown and shows visual copied state.
+			const copyButton = actionsBar?.querySelector(
+				"button.easymde-protected-copy-btn",
+			) as HTMLButtonElement;
+			expect(copyButton).not.toBeNull();
+			copyButton.click();
+			await flushMicrotasks();
+			expect(writeText).toHaveBeenCalledTimes(1);
+			expect(writeText).toHaveBeenCalledWith("$$\nE = mc^2\n$$");
+			expect(copyButton.classList.contains("is-copied")).toBe(true);
+			expect(copyButton.getAttribute("data-easymde-copied")).toBe("1");
+
+			// Edit button opens raw-source editor and hides action chrome while editing.
+			const editButton = actionsBar?.querySelector(
+				"button.easymde-protected-edit-btn",
+			) as HTMLButtonElement;
+			editButton.click();
+			expect(actionsBar?.hidden).toBe(true);
+			const textarea = mathBlock.querySelector(
+				"textarea.easymde-protected-source-input",
+			) as HTMLTextAreaElement;
+			expect(textarea).not.toBeNull();
+
+			// Escape cancels without propagating to outer view/document listeners.
+			const outerEscapeSpy = vi.fn();
+			document.addEventListener("keydown", outerEscapeSpy);
+			try {
+				textarea.value = "$$\nunsaved\n$$";
+				const escapeEvent = new KeyboardEvent("keydown", {
+					key: "Escape",
+					bubbles: true,
+					cancelable: true,
+				});
+				textarea.dispatchEvent(escapeEvent);
+				expect(escapeEvent.defaultPrevented).toBe(true);
+				expect(outerEscapeSpy).not.toHaveBeenCalled();
+				expect(mathBlock.querySelector("textarea")).toBeNull();
+				expect(view.state.doc.firstChild?.attrs.rawMarkdown).toBe(
+					"$$\nE = mc^2\n$$",
+				);
+
+				// Ctrl+Enter saves immediately; Shift+Enter stays in editor.
+				editButton.click();
+				const textarea2 = mathBlock.querySelector(
+					"textarea.easymde-protected-source-input",
+				) as HTMLTextAreaElement;
+				const shiftEnterEvent = new KeyboardEvent("keydown", {
+					key: "Enter",
+					shiftKey: true,
+					bubbles: true,
+					cancelable: true,
+				});
+				textarea2.dispatchEvent(shiftEnterEvent);
+				expect(shiftEnterEvent.defaultPrevented).toBe(false);
+				expect(mathBlock.querySelector("textarea")).not.toBeNull();
+
+				textarea2.value = "$$\na^2 + b^2 = c^2\n$$";
+				const ctrlEnterEvent = new KeyboardEvent("keydown", {
+					key: "Enter",
+					ctrlKey: true,
+					bubbles: true,
+					cancelable: true,
+				});
+				textarea2.dispatchEvent(ctrlEnterEvent);
+				expect(ctrlEnterEvent.defaultPrevented).toBe(true);
+				expect(outerEscapeSpy).not.toHaveBeenCalled();
+				expect(view.state.doc.firstChild?.attrs.rawMarkdown).toBe(
+					"$$\na^2 + b^2 = c^2\n$$",
+				);
+
+				// Cmd+Enter (metaKey) also saves immediately.
+				editButton.click();
+				const textarea3 = mathBlock.querySelector(
+					"textarea.easymde-protected-source-input",
+				) as HTMLTextAreaElement;
+				textarea3.value = "$$\nF = ma\n$$";
+				textarea3.dispatchEvent(
+					new KeyboardEvent("keydown", {
+						key: "Enter",
+						metaKey: true,
+						bubbles: true,
+						cancelable: true,
+					}),
+				);
+				expect(view.state.doc.firstChild?.attrs.rawMarkdown).toBe(
+					"$$\nF = ma\n$$",
+				);
+			} finally {
+				document.removeEventListener("keydown", outerEscapeSpy);
+			}
+
+			// Copy after edit copies the updated rawMarkdown.
+			writeText.mockClear();
+			copyButton.click();
+			await flushMicrotasks();
+			expect(writeText).toHaveBeenCalledWith("$$\nF = ma\n$$");
+
+			// Graceful no-throw behavior when clipboard is unavailable.
+			Object.defineProperty(navigator, "clipboard", {
+				configurable: true,
+				value: undefined,
+			});
+			const viewWithoutClipboard = mountVisualEditor("[TOC]");
+			const tocCopyBtn = viewWithoutClipboard.dom.querySelector(
+				"button.easymde-protected-copy-btn",
+			) as HTMLButtonElement;
+			expect(() => tocCopyBtn.click()).not.toThrow();
+			await flushMicrotasks();
+			expect(tocCopyBtn.classList.contains("is-copied")).toBe(false);
+		} finally {
+			if (originalClipboardDescriptor) {
+				Object.defineProperty(
+					navigator,
+					"clipboard",
+					originalClipboardDescriptor,
+				);
+			} else {
+				delete (navigator as unknown as Record<string, unknown>).clipboard;
+			}
+		}
 	});
 });
 

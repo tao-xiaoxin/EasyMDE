@@ -20,7 +20,11 @@ import {
 	executeVisualToolbarCommand,
 } from "./visual-commands";
 import { createVisualInputRulesPlugin } from "./visual-input-rules";
-import { isValidVisualImageScale, visualEditorSchema } from "./visual-schema";
+import {
+	isValidVisualImageScale,
+	sanitizeBulletMarker,
+	visualEditorSchema,
+} from "./visual-schema";
 
 const mountedViews: EditorView[] = [];
 
@@ -893,5 +897,119 @@ describe("Toolbar commands and keyboard interactions", () => {
 		expect(serialized.endsWith("\n")).toBe(true);
 		// Restoring the baseline doc returns byte-identical original Markdown.
 		expect(guard.serialize(guard.initialDoc)).toBe(original);
+	});
+
+	it("preserves original *, +, and - markers on bullet lists and task lists when edited", () => {
+		expect(sanitizeBulletMarker("*")).toBe("*");
+		expect(sanitizeBulletMarker("+")).toBe("+");
+		expect(sanitizeBulletMarker("-")).toBe("-");
+		expect(sanitizeBulletMarker("•")).toBe("-");
+		expect(sanitizeBulletMarker(null)).toBe("-");
+
+		// 1. Toggling a task checkbox inside a `* [ ]` task list preserves `* [x]`.
+		const taskSource = [
+			"* [x] Done task",
+			"* [ ] Pending task",
+			"* [ ] Third task",
+		].join("\n");
+		const taskGuard = createMarkdownRoundTripGuard(taskSource);
+		const taskState = EditorState.create({
+			doc: taskGuard.initialDoc,
+			schema: visualEditorSchema,
+		});
+		const taskListNode = taskState.doc.firstChild;
+		expect(taskListNode?.type.name).toBe("task_list");
+		expect(taskListNode?.attrs.marker).toBe("*");
+
+		// Second task item position: task_list (+1) + first task_item nodeSize.
+		const secondTaskItemPos = 1 + (taskListNode?.child(0).nodeSize ?? 0);
+		const toggledDoc = taskState.tr.setNodeMarkup(
+			secondTaskItemPos,
+			undefined,
+			{ checked: true },
+		).doc;
+		expect(taskGuard.serialize(toggledDoc)).toBe(
+			["* [x] Done task", "* [x] Pending task", "* [ ] Third task"].join("\n"),
+		);
+
+		// 2. Editing a `* ` or `+ ` bullet list preserves its original marker,
+		//    while toolbar-created lists default to `-` and DOM HTML stays clean.
+		const starView = createEditorView("* Alpha\n* Beta");
+		expect(starView.state.doc.firstChild?.attrs.marker).toBe("*");
+		// bullet_list (+1) -> list_item (+1) -> paragraph (+1) + "Alpha" (5) = 8
+		starView.dispatch(starView.state.tr.insertText("!", 8));
+		expect(serializeVisualDocToMarkdown(starView.state.doc)).toBe(
+			"* Alpha!\n* Beta",
+		);
+		expect(serializeDomHtml(starView.state.doc).innerHTML).toBe(
+			"<ul><li><p>Alpha!</p></li><li><p>Beta</p></li></ul>",
+		);
+
+		// Converting `* ` bullet list to task list via toolbar keeps `*`.
+		starView.dispatch(
+			starView.state.tr.setSelection(
+				TextSelection.create(starView.state.doc, 3),
+			),
+		);
+		expect(
+			executeVisualToolbarCommand(
+				starView,
+				makeToolbarCommand({ id: "tasklist", action: "taskList" }),
+			),
+		).toBe("handled");
+		expect(serializeVisualDocToMarkdown(starView.state.doc)).toBe(
+			"* [ ] Alpha!\n* [ ] Beta",
+		);
+
+		const plusView = createEditorView("+ First\n+ Second");
+		expect(plusView.state.doc.firstChild?.attrs.marker).toBe("+");
+		plusView.dispatch(plusView.state.tr.insertText(" edited", 8));
+		expect(serializeVisualDocToMarkdown(plusView.state.doc)).toBe(
+			"+ First edited\n+ Second",
+		);
+
+		const toolbarListView = createEditorView("Fresh item");
+		toolbarListView.dispatch(
+			toolbarListView.state.tr.setSelection(
+				TextSelection.create(toolbarListView.state.doc, 1),
+			),
+		);
+		expect(
+			executeVisualToolbarCommand(
+				toolbarListView,
+				makeToolbarCommand({ id: "unorderedlist", action: "unorderedList" }),
+			),
+		).toBe("handled");
+		expect(toolbarListView.state.doc.firstChild?.attrs.marker).toBe("-");
+		expect(serializeVisualDocToMarkdown(toolbarListView.state.doc)).toBe(
+			"- Fresh item",
+		);
+	});
+
+	it("captures exact typed *, +, and - list markers in input rules", () => {
+		const starInputView = createEditorView("");
+		typeText(starInputView, "* item");
+		expect(starInputView.state.doc.firstChild?.type.name).toBe("bullet_list");
+		expect(starInputView.state.doc.firstChild?.attrs.marker).toBe("*");
+		expect(serializeVisualDocToMarkdown(starInputView.state.doc)).toBe(
+			"* item",
+		);
+
+		const plusInputView = createEditorView("");
+		typeText(plusInputView, "+ item");
+		expect(plusInputView.state.doc.firstChild?.type.name).toBe("bullet_list");
+		expect(plusInputView.state.doc.firstChild?.attrs.marker).toBe("+");
+		expect(serializeVisualDocToMarkdown(plusInputView.state.doc)).toBe(
+			"+ item",
+		);
+
+		// Typing `* ` then `[x] ` upgrades to a `*` task list preserving `*`.
+		const starTaskInputView = createEditorView("");
+		typeText(starTaskInputView, "* [x] Shipped");
+		expect(starTaskInputView.state.doc.firstChild?.type.name).toBe("task_list");
+		expect(starTaskInputView.state.doc.firstChild?.attrs.marker).toBe("*");
+		expect(serializeVisualDocToMarkdown(starTaskInputView.state.doc)).toBe(
+			"* [x] Shipped",
+		);
 	});
 });

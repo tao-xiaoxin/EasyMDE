@@ -8,6 +8,7 @@ import {
 	isValidTableTextAlign,
 	isValidVisualImageScale,
 	normalizeHeadingLevel,
+	sanitizeBulletMarker,
 	sanitizeFenceChar,
 	sanitizeFenceLength,
 	type TableTextAlign,
@@ -346,6 +347,7 @@ function serializeList(listNode: ProseMirrorNode): string {
 	const loose = isLooseList(listNode);
 	const separator = loose ? "\n\n" : "\n";
 	const items: string[] = [];
+	const bulletMarker = sanitizeBulletMarker(listNode.attrs.marker);
 	const startOrder =
 		listNode.type.name === "ordered_list" &&
 		typeof listNode.attrs.order === "number" &&
@@ -357,13 +359,15 @@ function serializeList(listNode: ProseMirrorNode): string {
 	for (let i = 0; i < listNode.childCount; i += 1) {
 		const item = listNode.child(i);
 		const body = serializeListItemBody(item);
-		let prefix = "- ";
+		let prefix = `${bulletMarker} `;
 		let indent = "  ";
 		if (listNode.type.name === "ordered_list") {
 			prefix = `${startOrder + i}. `;
 			indent = " ".repeat(prefix.length);
 		} else if (listNode.type.name === "task_list") {
-			prefix = item.attrs.checked ? "- [x] " : "- [ ] ";
+			prefix = item.attrs.checked
+				? `${bulletMarker} [x] `
+				: `${bulletMarker} [ ] `;
 			indent = "  ";
 		}
 		items.push(prefixMultiline(body, prefix, indent));

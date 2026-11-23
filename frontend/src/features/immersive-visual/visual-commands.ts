@@ -42,7 +42,11 @@ import { goToNextCell, isInTable } from "prosemirror-tables";
 import type { EditorView } from "prosemirror-view";
 import type { ToolbarCommand } from "../../contracts/bootstrap/toolbar-bootstrap";
 import type { VisualToolbarCommandResult } from "../../contracts/visual-editor";
-import { normalizeHeadingLevel, visualEditorSchema } from "./visual-schema";
+import {
+	normalizeHeadingLevel,
+	sanitizeBulletMarker,
+	visualEditorSchema,
+} from "./visual-schema";
 
 const LIST_ITEM_TYPES: ReadonlyArray<NodeType> = [
 	visualEditorSchema.nodes.list_item,
@@ -309,6 +313,11 @@ function convertListType(
 		targetListType === visualEditorSchema.nodes.task_list
 			? visualEditorSchema.nodes.task_item
 			: visualEditorSchema.nodes.list_item;
+	const targetListAttrs =
+		targetListType === visualEditorSchema.nodes.bullet_list ||
+		targetListType === visualEditorSchema.nodes.task_list
+			? { marker: sanitizeBulletMarker(listNode.attrs.marker) }
+			: null;
 
 	const newItems: ProseMirrorNode[] = [];
 	for (let i = 0; i < listNode.childCount; i += 1) {
@@ -321,7 +330,11 @@ function convertListType(
 	}
 	dispatch(
 		state.tr
-			.replaceWith(listPos, listEnd, targetListType.create(null, newItems))
+			.replaceWith(
+				listPos,
+				listEnd,
+				targetListType.create(targetListAttrs, newItems),
+			)
 			.scrollIntoView(),
 	);
 	return true;

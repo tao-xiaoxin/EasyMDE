@@ -10,7 +10,7 @@ import {
 	type Plugin,
 	TextSelection,
 } from "prosemirror-state";
-import { visualEditorSchema } from "./visual-schema";
+import { sanitizeBulletMarker, visualEditorSchema } from "./visual-schema";
 
 function createHeadingRule(): InputRule {
 	return textblockTypeInputRule(
@@ -28,6 +28,10 @@ function createBulletListRule(): InputRule {
 	return wrappingInputRule(
 		/^\s*([-+*])\s$/,
 		visualEditorSchema.nodes.bullet_list,
+		(match) => ({ marker: sanitizeBulletMarker(match[1]) }),
+		(match, node) =>
+			sanitizeBulletMarker(node.attrs.marker) ===
+			sanitizeBulletMarker(match[1]),
 	);
 }
 
@@ -45,7 +49,7 @@ function createOrderedListRule(): InputRule {
 
 function createDirectTaskListRule(): InputRule {
 	return new InputRule(
-		/^\s*[-+*]\s\[([ xX])\]\s$/,
+		/^\s*([-+*])\s\[([ xX])\]\s$/,
 		(
 			state: EditorState,
 			match: RegExpMatchArray,
@@ -56,7 +60,8 @@ function createDirectTaskListRule(): InputRule {
 			if ($start.parent.type !== visualEditorSchema.nodes.paragraph) {
 				return null;
 			}
-			const checked = (match[1] ?? " ").toLowerCase() === "x";
+			const marker = sanitizeBulletMarker(match[1]);
+			const checked = (match[2] ?? " ").toLowerCase() === "x";
 			const blockFrom = $start.before($start.depth);
 			const blockTo = $start.after($start.depth);
 			const remainingContent = $start.parent.content.cut(
@@ -71,7 +76,7 @@ function createDirectTaskListRule(): InputRule {
 				paragraph,
 			);
 			const taskList = visualEditorSchema.nodes.task_list.create(
-				null,
+				{ marker },
 				taskItem,
 			);
 
@@ -142,21 +147,25 @@ function createBulletItemToTaskListRule(): InputRule {
 				}
 			}
 
+			const marker = sanitizeBulletMarker(bulletListNode.attrs.marker);
 			let cursorOffset = bulletListPos;
 			if (beforeItems.length > 0) {
 				const beforeList = visualEditorSchema.nodes.bullet_list.create(
-					null,
+					{ marker },
 					beforeItems,
 				);
 				replacementBlocks.push(beforeList);
 				cursorOffset += beforeList.nodeSize;
 			}
 			replacementBlocks.push(
-				visualEditorSchema.nodes.task_list.create(null, convertedTaskItem),
+				visualEditorSchema.nodes.task_list.create(
+					{ marker },
+					convertedTaskItem,
+				),
 			);
 			if (afterItems.length > 0) {
 				replacementBlocks.push(
-					visualEditorSchema.nodes.bullet_list.create(null, afterItems),
+					visualEditorSchema.nodes.bullet_list.create({ marker }, afterItems),
 				);
 			}
 

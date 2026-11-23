@@ -721,6 +721,124 @@ final class MarkdownRendererTest extends WP_UnitTestCase
 		$this->assertSame( true, $blocks[1]['editable'] );
 	}
 
+	public function test_preview_repairs_a_paragraph_that_commonmark_merges_into_an_adjacent_table() {
+		$markdown = "Before.\n| a | b |\n| --- | --- |\n| 1 | 2 |\n";
+		$preview  = MarkdownRenderer::render_preview( $markdown, 'default' );
+		$blocks   = $preview['editMap']['blocks'];
+
+		$this->assertSame( array( 'b0', 'b1' ), array_column( $blocks, 'id' ) );
+		$this->assertSame( array( 'startLine' => 0, 'endLine' => 1 ), self::block_range( $blocks[0] ) );
+		$this->assertSame( array( 'startLine' => 1, 'endLine' => 4 ), self::block_range( $blocks[1] ) );
+		$this->assertGreaterThanOrEqual( $blocks[0]['endLine'], $blocks[1]['startLine'] );
+		$this->assertTrue( $blocks[0]['editable'] );
+		$this->assertTrue( $blocks[1]['editable'] );
+		$this->assertStringContainsString( '<p data-easymde-visual-block-id="b0">Before.</p>', $preview['html'] );
+		$this->assertStringContainsString( '<section class="table-container easymde-table-container" data-easymde-visual-block-id="b1">', $preview['html'] );
+		$this->assertStringNotContainsString( 'data-easymde-visual-source-id', $preview['html'] );
+		$this->assertStringContainsString( '<p>Before.</p>', MarkdownRenderer::render( $markdown, 'default' ) );
+	}
+
+	public function test_preview_repairs_a_multi_line_paragraph_that_commonmark_merges_into_an_adjacent_table() {
+		$markdown = "Line 1\nLine 2\n| a | b |\n| --- | --- |\n| 1 | 2 |\n";
+		$preview  = MarkdownRenderer::render_preview( $markdown, 'default' );
+		$blocks   = $preview['editMap']['blocks'];
+
+		$this->assertCount( 2, $blocks );
+		$this->assertSame( array( 'startLine' => 0, 'endLine' => 2 ), self::block_range( $blocks[0] ) );
+		$this->assertSame( array( 'startLine' => 2, 'endLine' => 5 ), self::block_range( $blocks[1] ) );
+		$this->assertGreaterThanOrEqual( $blocks[0]['endLine'], $blocks[1]['startLine'] );
+		$this->assertStringContainsString( "<p data-easymde-visual-block-id=\"b0\">Line 1\nLine 2</p>", $preview['html'] );
+	}
+
+	public function test_preview_repairs_paragraph_adjacent_table_source_ranges_without_overlap_or_gaps() {
+		$cases = array(
+			'three body rows'          => array(
+				'markdown' => "Line 1\nLine 2\n| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n| 5 | 6 |\n",
+				'ranges'   => array( array( 0, 2 ), array( 2, 7 ) ),
+			),
+			'table without body'       => array(
+				'markdown' => "Before.\n| a | b |\n| --- | --- |\n",
+				'ranges'   => array( array( 0, 1 ), array( 1, 3 ) ),
+			),
+			'table then paragraph'     => array(
+				'markdown' => "Before.\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\nAfter.\n",
+				'ranges'   => array( array( 0, 1 ), array( 1, 4 ), array( 5, 6 ) ),
+			),
+			'crlf line endings'        => array(
+				'markdown' => "Before.\r\n| a | b |\r\n| --- | --- |\r\n| 1 | 2 |\r\n",
+				'ranges'   => array( array( 0, 1 ), array( 1, 4 ) ),
+			),
+			'paragraph delimiter look' => array(
+				'markdown' => "Line A\nLine B\n--- | ---\n| a | b |\n| --- | --- |\n| 1 | 2 |\n",
+				'ranges'   => array( array( 0, 3 ), array( 3, 6 ) ),
+			),
+		);
+
+		foreach ( $cases as $case_id => $case ) {
+			$preview      = MarkdownRenderer::render_preview( $case['markdown'], 'default' );
+			$blocks       = $preview['editMap']['blocks'];
+			$ranges       = array();
+			$lines        = preg_split( '/\r\n|\r|\n/', $case['markdown'] );
+			$source_lines = count( $lines ) - ( '' === $lines[ count( $lines ) - 1 ] ? 1 : 0 );
+
+			foreach ( $blocks as $index => $block ) {
+				$ranges[] = array( $block['startLine'], $block['endLine'] );
+				$this->assertGreaterThanOrEqual( $block['startLine'], $block['endLine'], $case_id );
+				$this->assertLessThanOrEqual( count( $lines ), $block['endLine'], $case_id );
+				if ( 0 < $index ) {
+					$this->assertGreaterThanOrEqual( $blocks[ $index - 1 ]['endLine'], $block['startLine'], $case_id );
+				}
+			}
+
+			$this->assertSame( $case['ranges'], $ranges, $case_id );
+			$this->assertSame( $source_lines, end( $ranges )[1], $case_id );
+		}
+	}
+
+	public function test_preview_keeps_a_table_alignment_marker_above_an_adjacent_table_editable() {
+		$markdown = "<!-- easymde-table-align:v1 [[1,\"center\"]] -->\n| a | b |\n| --- | --- |\n| 1 | 2 |\n";
+		$preview  = MarkdownRenderer::render_preview( $markdown, 'default' );
+
+		$this->assertCount( 1, $preview['editMap']['blocks'] );
+		$this->assertSame( array( 'startLine' => 0, 'endLine' => 4 ), self::block_range( $preview['editMap']['blocks'][0] ) );
+		$this->assertTrue( $preview['editMap']['blocks'][0]['editable'] );
+		$this->assertStringContainsString( 'text-align:center', $preview['html'] );
+	}
+
+	public function test_preview_rejects_an_invalid_block_source_range() {
+		$method     = new ReflectionMethod( MarkdownRenderer::class, 'create_converter' );
+		$method->setAccessible( true );
+		$converter  = $method->invoke( null, true );
+		$document   = ( new MarkdownParser( $converter->getEnvironment() ) )->parse( "Body\n" );
+		$paragraph  = $document->firstChild();
+		$this->assertNotNull( $paragraph );
+		$paragraph->setEndLine( 0 );
+
+		$this->expectException( RuntimeException::class );
+		$this->expectExceptionMessage( 'CommonMark did not provide a valid source range for a Preview block.' );
+		VisualPreviewBlockAnnotator::describe_source_blocks( $document, array(), "Body\n" );
+	}
+
+	public function test_preview_rejects_a_repaired_delimiter_line_that_is_not_a_table_delimiter() {
+		$method    = new ReflectionMethod( MarkdownRenderer::class, 'create_converter' );
+		$method->setAccessible( true );
+		$converter = $method->invoke( null, true );
+		$markdown  = "Before.\n| a | b |\n| --- | --- |\n| 1 | 2 |\n";
+		$document  = ( new MarkdownParser( $converter->getEnvironment() ) )->parse( $markdown );
+
+		$this->assertSame(
+			array(
+				array( 'source_id' => 's0', 'startLine' => 0, 'endLine' => 1, 'editable' => true ),
+				array( 'source_id' => 's1', 'startLine' => 1, 'endLine' => 4, 'editable' => true ),
+			),
+			VisualPreviewBlockAnnotator::describe_source_blocks( $document, array(), $markdown )
+		);
+
+		$this->expectException( RuntimeException::class );
+		$this->expectExceptionMessage( 'CommonMark did not provide a valid source range for a Preview block.' );
+		VisualPreviewBlockAnnotator::describe_source_blocks( $document, array(), "Before.\n| a | b |\n| no | no |\n| 1 | 2 |\n" );
+	}
+
     public function test_renders_basic_markdown_with_commonmark()
     {
         $html = MarkdownRenderer::render("# Hello\n\n**World**");
@@ -1263,4 +1381,15 @@ MD;
         $quoted = $renderers['render_preview']( "> | A<br>B |\n> | --- |\n" );
         $this->assertNotFalse( $assert_break( $quoted ) );
     }
+
+	/**
+	 * @param array<string,mixed> $block
+	 * @return array{startLine:int,endLine:int}
+	 */
+	private static function block_range( array $block ) {
+		return array(
+			'startLine' => $block['startLine'],
+			'endLine'   => $block['endLine'],
+		);
+	}
 }

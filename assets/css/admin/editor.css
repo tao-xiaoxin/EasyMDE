@@ -1,3 +1,33 @@
+/* ==========================================================================
+   EasyMDE Admin Editor Stylesheet
+   ==========================================================================
+   Table of Contents
+   --------------------------------------------------------------------------
+   1.  Embedded Web Fonts (@font-face)
+   2.  Editor Container & Immersive Mode Shell
+   3.  Immersive Header, Title Field, Stats & Publish Action
+   4.  Immersive Toolbar Row, Heading Menu & Secondary Actions
+   5.  Immersive Appearance & Font Popovers
+   6.  Immersive Custom CSS Dialog & Live Theme Preview
+   7.  Unified Editor Context Menu & Submenu Pointer
+   8.  Immersive Font Selector Controls
+   9.  Immersive Outline Sidebar, Resizer & Split Pane Divider
+   10. Immersive Source Pane, Status Bar & Pure Preview Header
+   11. Immersive Settings Popover
+   12. Immersive Modals: Table Picker & Revision History Dialog
+   13. Immersive Publish Dialog & Narrow-Viewport Immersive Overrides
+   14. Custom CSS Dialog Compact Alert Overrides
+   15. Ordinary Workspace, Status Bar, CodeMirror Source & Preview Base
+   16. Shared Preview Scroll Canvas, Article Elements & Visual Feedback
+   17. Ordinary Editor & Shared Responsive Breakpoints
+   18. WordPress Media Picker Dialog
+   19. Immersive Mode Responsive Breakpoints
+   20. Unified ProseMirror Immersive Visual Editor Surface
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Embedded Web Fonts (@font-face)
+   -------------------------------------------------------------------------- */
 @font-face {
     font-family: "EasyMDE Inter";
     font-style: normal;
@@ -54,6 +84,9 @@
     src: url("../../vendor/fonts/lora/lora-latin-600-normal.woff2") format("woff2");
 }
 
+/* --------------------------------------------------------------------------
+   2. Editor Container & Immersive Mode Shell
+   -------------------------------------------------------------------------- */
 .easymde-native-editor-hidden {
     display: none;
 }
@@ -103,6 +136,9 @@ body:has(.easymde-editor.is-immersive) .wrap {
     font-family: "EasyMDE Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
+/* --------------------------------------------------------------------------
+   3. Immersive Header, Title Field, Stats & Publish Action
+   -------------------------------------------------------------------------- */
 .easymde-immersive-header {
     position: relative;
     grid-column: 1 / -1;
@@ -226,6 +262,10 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-publish:hover { background: #1d4ed8; box-shadow: 0 5px 13px rgba(37, 99, 235, .38); transform: translateY(-1px); }
 .easymde-immersive-publish-shine { position: absolute; top: 0; inset-inline: 0; height: 1px; background: rgba(255, 255, 255, .2); }
 .easymde-immersive-publish-icon { position: relative; display: grid; box-sizing: border-box; width: 18px; height: 18px; place-items: center; border: 1px solid rgba(255, 255, 255, .15); border-radius: 5px; background: rgba(255, 255, 255, .1); }
+
+/* --------------------------------------------------------------------------
+   4. Immersive Toolbar Row, Heading Menu & Secondary Actions
+   -------------------------------------------------------------------------- */
 .easymde-immersive-toolbar-row {
     grid-column: 1 / -1;
     grid-row: 2;
@@ -378,6 +418,10 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-secondary-actions .easymde-toolbar-popover-anchor > .easymde-toolbar-button:focus { border-color: #e2e8f0; background: rgba(0, 0, 0, .045); color: #0f172a; box-shadow: none; transform: none; }
 .easymde-immersive-control-label { font-size: 12.5px; font-weight: 500; line-height: 18.75px; white-space: nowrap; }
 .easymde-immersive-theme-accent { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: #dc2626; }
+
+/* --------------------------------------------------------------------------
+   5. Immersive Appearance & Font Popovers
+   -------------------------------------------------------------------------- */
 .easymde-toolbar-popover.is-immersive-panel { position: fixed; right: auto; z-index: 100200; border-color: #e4e9f0; background: #fff; color: #0f172a; font-size: 15px; box-shadow: 0 18px 44px rgba(37, 49, 72, .17), 0 2px 8px rgba(37, 49, 72, .06); }
 .easymde-toolbar-popover-appearance-panel.is-immersive-panel { box-sizing: border-box; width: 248px; padding: 0; overflow: visible; border-radius: 20px; }
 .easymde-toolbar-popover-font-panel.is-immersive-panel { width: min(360px, calc(100vw - 24px)); padding: 20px; border-color: #e5e7eb; border-radius: 16px; box-shadow: 0 24px 48px rgba(15, 23, 42, .2); }
@@ -427,6 +471,10 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-custom-css-action { display: flex; height: 46px; margin-top: 22px; align-items: center; justify-content: center; }
 .easymde-immersive-secondary-actions .easymde-immersive-custom-css-trigger { display: flex; width: calc(100% - 20px); height: 42px; margin: 0 auto; align-items: center; justify-content: center; gap: 10px; border: 1px solid #c8d7ff; border-radius: 8px; background: #fafbff; box-shadow: inset 0 0 0 1px rgba(52, 120, 245, .04); color: #3478f5; font-size: 13px; font-weight: 600; line-height: 16px; }
 .easymde-immersive-secondary-actions .easymde-immersive-custom-css-trigger:hover { border-color: #afc5ff; background: #f5f8ff; }
+
+/* --------------------------------------------------------------------------
+   6. Immersive Custom CSS Dialog & Live Theme Preview
+   -------------------------------------------------------------------------- */
 .easymde-immersive-custom-css-backdrop {
     position: fixed;
     z-index: 100300;
@@ -1323,6 +1371,9 @@ body:has(.easymde-editor.is-immersive) .wrap {
     .easymde-immersive-custom-css-actions button { min-width: 0; flex: 1; padding: 0 8px; font-size: 14px; }
 }
 
+/* --------------------------------------------------------------------------
+   7. Unified Editor Context Menu & Submenu Pointer
+   -------------------------------------------------------------------------- */
 /* Editor Context Menu: the one ordinary/immersive menu owner. */
 .easymde-editor-context-menu__viewport {
     --easymde-context-menu-background: #fff;
@@ -1597,6 +1648,10 @@ body:has(.easymde-editor.is-immersive) .wrap {
         background: #fff;
     }
 }
+
+/* --------------------------------------------------------------------------
+   8. Immersive Font Selector Controls
+   -------------------------------------------------------------------------- */
 .easymde-immersive-font-field { display: flex; align-items: center; gap: 12px; margin-bottom: 11.25px; }
 .easymde-immersive-font-field > span { width: 80px; flex: 0 0 auto; color: #334155; font-size: 13px; font-weight: 600; line-height: 19.5px; }
 .easymde-immersive-font-select { position: relative; min-width: 0; flex: 1; }
@@ -1609,6 +1664,10 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-secondary-actions .easymde-immersive-font-options > button:focus { background: #f2f5f9; }
 .easymde-immersive-secondary-actions .easymde-immersive-font-options > button.is-active { background: #f7f9fc; color: #46546b; }
 .easymde-immersive-font-options > button > span:first-child { display: flex; width: 12px; flex: 0 0 auto; justify-content: center; color: #7d8aa4; }
+
+/* --------------------------------------------------------------------------
+   9. Immersive Outline Sidebar, Resizer & Split Pane Divider
+   -------------------------------------------------------------------------- */
 .easymde-immersive-outline {
     grid-column: 1;
     grid-row: 3;
@@ -1673,6 +1732,10 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-editor.is-immersive .easymde-immersive-pane-divider:focus-visible { outline: 0; background: linear-gradient(90deg, transparent 6.5px, #dde1e8 6.5px, #dde1e8 7.5px, transparent 7.5px); }
 .easymde-editor.is-immersive .easymde-immersive-pane-divider:active { background: linear-gradient(90deg, transparent 6.5px, #c8ced8 6.5px, #c8ced8 7.5px, transparent 7.5px); }
 [dir="rtl"] .easymde-immersive-outline { margin: 11.25px 11.25px 11.25px 2.75px; }
+
+/* --------------------------------------------------------------------------
+   10. Immersive Source Pane, Status Bar & Pure Preview Header
+   -------------------------------------------------------------------------- */
 .easymde-editor.is-immersive .easymde-pane { border: 1px solid #e8ebef; border-radius: 16px; background: #fff; box-shadow: 0 1px 2px rgba(15, 23, 42, .03); }
 .easymde-editor.is-immersive .easymde-pane-source { border-inline-end: 1px solid #e8ebef; }
 .easymde-editor.is-immersive .easymde-pane-header { display: flex; box-sizing: border-box; height: 40.5px; align-items: center; justify-content: space-between; padding: 10px 15px; border-bottom: 1px solid #e8ebef; background: #fafbfc; color: #3d4350; font-family: "EasyMDE Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 15px; font-weight: 400; letter-spacing: 0; line-height: 22.5px; }
@@ -1692,7 +1755,6 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-statusbar { display: flex; box-sizing: border-box; min-height: 34px; flex: 0 0 auto; align-items: center; justify-content: space-between; padding: 0 15px; border-top: 1px solid #e8ebef; background: #fff; color: #b0b4bc; font-size: 12px; }
 .easymde-immersive-statusbar > span:last-child,
 .easymde-immersive-autosave-state { display: flex; align-items: center; gap: 5px; }
-.easymde-immersive-statusbar .easymde-immersive-status-error { min-width: 0; overflow: hidden; color: #b32d2e; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .easymde-immersive-autosave-state > span { width: 6px; height: 6px; border-radius: 50%; background: #10b981; }
 .easymde-editor.is-immersive-source .easymde-workspace { grid-template-columns: 1fr; grid-template-areas: "source"; }
 .easymde-editor.is-immersive-source .easymde-pane-preview { display: none; }
@@ -1821,28 +1883,11 @@ body:has(.easymde-editor.is-immersive) .wrap {
     background: rgba(76, 110, 245, .16);
 }
 .easymde-editor.is-immersive-preview .easymde-immersive-visual-editor:focus-visible { outline: 0; }
-.easymde-editor.is-immersive-preview .easymde-immersive-visual-editor .markdown-block-applied {
-    animation: easymde-markdown-block-applied 140ms ease-out;
-}
-.easymde-editor.is-immersive-preview .easymde-immersive-visual-editor .markdown-inline-applied {
-    animation: easymde-markdown-inline-applied 120ms ease-out;
-}
-@keyframes easymde-markdown-block-applied {
-    from { opacity: .72; }
-    to { opacity: 1; }
-}
-@keyframes easymde-markdown-inline-applied {
-    from { background-color: rgba(76, 110, 245, .12); }
-    to { background-color: transparent; }
-}
-@media (prefers-reduced-motion: reduce) {
-    .easymde-editor.is-immersive-preview .easymde-immersive-visual-editor .markdown-block-applied,
-    .easymde-editor.is-immersive-preview .easymde-immersive-visual-editor .markdown-inline-applied {
-        animation: none;
-    }
-}
 .easymde-editor.is-immersive:not(.is-immersive-source):not(.is-immersive-preview) > .easymde-workspace { gap: 14px; }
 
+/* --------------------------------------------------------------------------
+   11. Immersive Settings Popover
+   -------------------------------------------------------------------------- */
 .easymde-immersive-settings-catcher { position: fixed; z-index: 100180; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; }
 .easymde-immersive-settings-popover { position: fixed; z-index: 100190; box-sizing: border-box; width: 300px; max-width: 88vw; max-height: 70vh; overflow-y: auto; border: 1px solid #ecedf0; border-radius: 14px; background: #fff; box-shadow: 0 16px 40px rgba(20, 20, 40, .18); color: #0f172a; font-family: "EasyMDE Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 15px; }
 .easymde-immersive-settings-tail { position: absolute; top: -6px; box-sizing: border-box; width: 12px; height: 12px; border-top: 1px solid #ecedf0; border-inline-start: 1px solid #ecedf0; border-radius: 2px 0 0; background: #fff; transform: rotate(45deg); }
@@ -1860,6 +1905,9 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-settings-list strong { font-size: 13.5px; font-weight: 700; line-height: 20.25px; }
 .easymde-immersive-settings-list small { color: #9ca0a8; font-size: 11.5px; line-height: 1.4; }
 
+/* --------------------------------------------------------------------------
+   12. Immersive Modals: Table Picker & Revision History Dialog
+   -------------------------------------------------------------------------- */
 .easymde-immersive-modal-backdrop {
     position: fixed;
     z-index: 100200;
@@ -1937,16 +1985,8 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-modal-actions button.is-primary { background: #2563eb; color: #fff; }
 .easymde-immersive-modal-actions button:disabled { opacity: .45; cursor: not-allowed; }
 
-.easymde-immersive-history-body { display: grid; grid-template-columns: 240px minmax(0, 1fr); height: min(650px, calc(100vh - 176px)); }
-.easymde-immersive-history-body + .easymde-immersive-modal-actions { border-top-color: #e3e7ee; }
-.easymde-immersive-history-list { overflow-y: auto; border-inline-end: 1px solid #e3e7ee; background: #f7f9fc; }
-.easymde-immersive-history-list p { padding: 12px 20px; color: #7d8aa4; font-size: 12px; }
-.easymde-immersive-history-list button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 52px; padding: 10px 20px; border: 0; border-bottom: 1px solid #e7ebf1; border-inline-start: 2px solid transparent; background: transparent; color: #28364a; text-align: start; cursor: pointer; }
-.easymde-immersive-history-list button.is-selected { border-inline-start-color: #e11d2e; background: #fdf1f0; color: #e11d2e; }
 .easymde-immersive-history-preview { min-width: 0; overflow: auto; padding: 28px 40px; background: #fff; }
 .easymde-immersive-revision-preview { max-width: 640px; padding: 0; background: #fff; }
-.easymde-immersive-history-body .easymde-preview-react-root { min-height: 100%; }
-.easymde-immersive-modal:has(.easymde-immersive-history-body) { width: min(1024px, 100%); }
 
 .easymde-history-backdrop { position: fixed; z-index: 100210; inset: 0; display: flex; align-items: stretch; padding: 30px; background: rgba(17, 24, 39, .35); backdrop-filter: blur(2px); }
 .easymde-history-backdrop-dismiss { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; }
@@ -1984,6 +2024,9 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-history-confirm { margin: 0; padding: 8px 28px; border-bottom: 1px solid #fecdd3; background: #fff1f2; color: #be123c; font-size: 12px; }
 .easymde-history-content .easymde-immersive-history-preview { flex: 1; padding: 32px 40px; overflow-y: auto; }
 
+/* --------------------------------------------------------------------------
+   13. Immersive Publish Dialog & Narrow-Viewport Immersive Overrides
+   -------------------------------------------------------------------------- */
 .easymde-publish-backdrop {
     position: fixed;
     z-index: 100220;
@@ -2168,8 +2211,6 @@ body:has(.easymde-editor.is-immersive) .wrap {
     .easymde-immersive-formatting > .easymde-toolbar { width: max-content; }
     .easymde-immersive-secondary-actions .easymde-toolbar-popover-anchor { flex: 0 0 auto; }
     .easymde-immersive-modal-backdrop { padding: 12px; }
-    .easymde-immersive-history-body { grid-template-columns: 1fr; height: calc(100vh - 160px); }
-    .easymde-immersive-history-list { max-height: 180px; border-inline-end: 0; border-bottom: 1px solid #e3e7ee; }
     .easymde-publish-dialog-header { padding-inline: 20px; }
     .easymde-publish-dialog-body { padding: 18px 20px 8px; }
     .easymde-publish-dialog-footer { height: auto; grid-template-columns: 1fr; align-items: stretch; padding: 14px 20px; }
@@ -2177,6 +2218,9 @@ body:has(.easymde-editor.is-immersive) .wrap {
     .easymde-publish-dialog-footer > div { width: 100%; }
 }
 
+/* --------------------------------------------------------------------------
+   14. Custom CSS Dialog Compact Alert Overrides
+   -------------------------------------------------------------------------- */
 .easymde-immersive-custom-css-dialog > header > .easymde-editor-message-alert-host.is-dialog-compact {
     position: static;
     z-index: auto;
@@ -2224,6 +2268,9 @@ body:has(.easymde-editor.is-immersive) .wrap {
     }
 }
 
+/* --------------------------------------------------------------------------
+   15. Ordinary Workspace, Status Bar, CodeMirror Source & Preview Base
+   -------------------------------------------------------------------------- */
 .easymde-draft-notice {
     display: flex;
     align-items: center;
@@ -2441,6 +2488,9 @@ body:has(.easymde-editor.is-immersive) .wrap {
     background-color: #fff;
 }
 
+/* --------------------------------------------------------------------------
+   16. Shared Preview Scroll Canvas, Article Elements & Visual Feedback
+   -------------------------------------------------------------------------- */
 /* The preview pane owns one structural scroll canvas in every editor mode.
  * Only pure Preview paints that canvas as a frame around an inset paper. */
 .easymde-editor .easymde-pane-preview > .easymde-immersive-preview-canvas {
@@ -2609,6 +2659,9 @@ body:has(.easymde-editor.is-immersive) .wrap {
     color: #b32d2e;
 }
 
+/* --------------------------------------------------------------------------
+   17. Ordinary Editor & Shared Responsive Breakpoints
+   -------------------------------------------------------------------------- */
 @media (max-width: 1080px) {
     .easymde-workspace {
         grid-template-columns: 1fr;
@@ -2722,6 +2775,9 @@ body:has(.easymde-editor.is-immersive) .wrap {
 
 }
 
+/* --------------------------------------------------------------------------
+   18. WordPress Media Picker Dialog
+   -------------------------------------------------------------------------- */
 .easymde-media-picker-backdrop {
     position: fixed;
     z-index: 100400;
@@ -2838,6 +2894,9 @@ body:has(.easymde-editor.is-immersive) .wrap {
     }
 }
 
+/* --------------------------------------------------------------------------
+   19. Immersive Mode Responsive Breakpoints
+   -------------------------------------------------------------------------- */
 @media (max-width: 760px) {
     .easymde-editor.is-immersive-preview .easymde-pane-preview > .easymde-immersive-preview-canvas > .easymde-preview {
         min-height: 520px;
@@ -2933,6 +2992,9 @@ body:has(.easymde-editor.is-immersive) .wrap {
     }
 }
 
+/* --------------------------------------------------------------------------
+   20. Unified ProseMirror Immersive Visual Editor Surface
+   -------------------------------------------------------------------------- */
 /* Unified ProseMirror immersive live-visual editor surface */
 .easymde-preview-surface-hidden {
     display: none !important;
@@ -3133,7 +3195,6 @@ body:has(.easymde-editor.is-immersive) .wrap {
     color: #166534;
 }
 
-.easymde-prosemirror-surface .easymde-protected-block-card,
 .easymde-prosemirror-surface .easymde-protected-card {
     padding: 10px 14px;
     border: 1px solid #dcdcde;

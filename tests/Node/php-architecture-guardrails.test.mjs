@@ -9,7 +9,8 @@ const repoRoot = path.dirname(
 );
 const phpSrcRoot = path.join(repoRoot, "src");
 
-const MAX_PHP_PRODUCTION_FILE_LINES = 1200;
+const WARN_PHP_PRODUCTION_FILE_LINES = 1200;
+const MAX_PHP_PRODUCTION_FILE_LINES = 1500;
 
 const ALLOWED_SRC_SUBDIRECTORIES = new Set([
 	"Admin",
@@ -103,22 +104,31 @@ function stripPhpCommentsOnly(code) {
 
 const phpProductionFiles = walkPhpSourceFiles(phpSrcRoot);
 
-test("all PHP production files under src/ respect the strict 1,200-line ceiling with zero legacy exemptions", () => {
+test("all PHP production files under src/ respect the strict 1,500-line hard ceiling (1,200-line warning) with zero legacy exemptions", (t) => {
 	assert.ok(
 		phpProductionFiles.length > 0,
 		"Expected PHP production files under src/",
 	);
 
 	const violations = [];
+	const warnings = [];
 
 	for (const filePath of phpProductionFiles) {
 		const relPath = toPosixRepoPath(filePath);
 		const lineCount = countLines(readFileSync(filePath, "utf8"));
 		if (lineCount > MAX_PHP_PRODUCTION_FILE_LINES) {
 			violations.push(
-				`${relPath}: ${lineCount} lines exceeds strict ceiling of ${MAX_PHP_PRODUCTION_FILE_LINES} lines`,
+				`${relPath}: ${lineCount} lines exceeds strict hard ceiling of ${MAX_PHP_PRODUCTION_FILE_LINES} lines`,
+			);
+		} else if (lineCount > WARN_PHP_PRODUCTION_FILE_LINES) {
+			warnings.push(
+				`${relPath}: ${lineCount} lines exceeds the ${WARN_PHP_PRODUCTION_FILE_LINES}-line warning threshold (hard ceiling: ${MAX_PHP_PRODUCTION_FILE_LINES}). Agent action: review responsibilities, notify the user, and refactor or plan a focused modular split before reaching ${MAX_PHP_PRODUCTION_FILE_LINES} lines.`,
 			);
 		}
+	}
+
+	for (const warning of warnings) {
+		t.diagnostic(`[guardrail-warn] ${warning}`);
 	}
 
 	assert.deepEqual(

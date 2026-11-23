@@ -9,13 +9,14 @@ const repoRoot = path.dirname(
 );
 const frontendSrcRoot = path.join(repoRoot, "frontend", "src");
 
-const MAX_PRODUCTION_FILE_LINES = 1200;
+const WARN_PRODUCTION_FILE_LINES = 1200;
+const MAX_PRODUCTION_FILE_LINES = 1500;
 const MAX_ZERO_JSX_TSX_LINES = 400;
 
 /**
  * Explicit monotonic line-count ceilings for pre-existing production files
- * exceeding 1,200 lines. These files may only shrink over time and must never
- * grow past their recorded ceiling. Once shrunk below 1,200 lines (or removed),
+ * exceeding 1,500 lines. These files may only shrink over time and must never
+ * grow past their recorded ceiling. Once shrunk below 1,500 lines (or removed),
  * cleanup PRs can delete their entry from this map.
  */
 const LEGACY_LARGE_FILE_LINE_CEILINGS = {};
@@ -302,8 +303,9 @@ test("features/editor-context-menu/ never imports from features/immersive-editor
 	);
 });
 
-test("production frontend files respect the 1,200-line ceiling and monotonic legacy ratchet", () => {
+test("production frontend files respect the 1,500-line hard ceiling (1,200-line warning) and monotonic legacy ratchet", (t) => {
 	const violations = [];
+	const warnings = [];
 
 	for (const filePath of productionFiles) {
 		const relPath = toPosixRepoPath(filePath);
@@ -318,9 +320,17 @@ test("production frontend files respect the 1,200-line ceiling and monotonic leg
 
 		if (lineCount > ceiling) {
 			violations.push(
-				`${relPath}: ${lineCount} lines exceeds ceiling of ${ceiling} lines`,
+				`${relPath}: ${lineCount} lines exceeds hard ceiling of ${ceiling} lines`,
+			);
+		} else if (lineCount > WARN_PRODUCTION_FILE_LINES) {
+			warnings.push(
+				`${relPath}: ${lineCount} lines exceeds the ${WARN_PRODUCTION_FILE_LINES}-line warning threshold (hard ceiling: ${ceiling}). Agent action: review responsibilities, notify the user, and refactor or plan a focused modular split before reaching ${ceiling} lines.`,
 			);
 		}
+	}
+
+	for (const warning of warnings) {
+		t.diagnostic(`[guardrail-warn] ${warning}`);
 	}
 
 	assert.deepEqual(

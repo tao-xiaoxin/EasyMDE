@@ -263,7 +263,7 @@ Custom CSS (with `ImmersiveCustomCssDialog` and `ImmersivePublishDialog` lazily 
 the fixed Source/Preview layout, and WordPress session state. The independent
 Settings Center Root (`frontend/src/app/settings/`) is similarly decomposed into
 focused section pages and controls. Both admin stylesheets (`assets/css/admin/editor.css` and `assets/css/admin/settings-center.css`) are organized with structured tables of contents and numbered section banners. All production modules across both frontend and PHP follow automated architecture guardrails in `tests/Node/frontend-architecture-guardrails.test.mjs` and `tests/Node/php-architecture-guardrails.test.mjs`
-(unidirectional layering, a strict 1,200-line ceiling with zero legacy exceptions across all `frontend/src/` and `src/` production files, a 400-line ceiling on zero-JSX `.tsx` controllers, and PHP PSR-4/`ABSPATH`/`Support`+`Frontend` isolation).
+(unidirectional layering, a 1,200-line warning threshold and strict 1,500-line hard ceiling with zero legacy exceptions across all `frontend/src/` and `src/` production files, a 400-line ceiling on zero-JSX `.tsx` controllers, and PHP PSR-4/`ABSPATH`/`Support`+`Frontend` isolation).
 Ordinary Editor Components depend on typed Ports; WordPress DOM, `wp.media`,
 REST, Storage, and Clipboard access for the ordinary document and protected
 operations remain in focused Integration Adapters. The independent Settings

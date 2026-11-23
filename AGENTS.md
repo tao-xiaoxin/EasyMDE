@@ -243,6 +243,13 @@ src/
   do not own business rules.
 - Do not create empty abstraction layers, placeholder modules, or one-method
   classes without a real boundary and current consumer.
+- Production source files under `frontend/src/` and `src/` follow a two-tier
+  size guardrail (`tests/Node/frontend-architecture-guardrails.test.mjs` and
+  `tests/Node/php-architecture-guardrails.test.mjs`): exceeding **1,200 lines**
+  emits a `[guardrail-warn]` diagnostic prompting the Agent to inspect module
+  cohesion, surface the warning to the user, and refactor or schedule a focused
+  modular split; exceeding **1,500 lines** hard-fails CI with zero legacy
+  exemptions.
 - `docs/ARCHITECTURE.md` describes current implementation.
   `docs/DESIGN.md` owns durable target rationale.
   `.agents/skills/easymde/SKILL.md` owns executable React architecture,

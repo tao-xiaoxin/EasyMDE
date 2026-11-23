@@ -1,6 +1,3 @@
-import { css } from "@codemirror/lang-css";
-import { html } from "@codemirror/lang-html";
-import { javascript } from "@codemirror/lang-javascript";
 import {
 	ensureSyntaxTree,
 	indentRange,
@@ -135,15 +132,26 @@ function languageAlias(token: string): LanguageAlias | null {
 		: null;
 }
 
-async function loadLanguageSupport(
+const languageSupportCache = new Map<string, Promise<ResolvedLanguage>>();
+
+function languageCacheKey(alias: LanguageAlias): string {
+	return alias.variant ? `${alias.family}:${alias.variant}` : alias.family;
+}
+
+async function importLanguageSupport(
 	alias: LanguageAlias,
 ): Promise<ResolvedLanguage> {
 	switch (alias.family) {
-		case "css":
+		case "css": {
+			const { css } = await import("@codemirror/lang-css");
 			return { support: css() };
-		case "html":
+		}
+		case "html": {
+			const { html } = await import("@codemirror/lang-html");
 			return { support: html() };
-		case "javascript":
+		}
+		case "javascript": {
+			const { javascript } = await import("@codemirror/lang-javascript");
 			switch (alias.variant) {
 				case "jsx":
 					return { support: javascript({ jsx: true }) };
@@ -156,6 +164,7 @@ async function loadLanguageSupport(
 				default:
 					return { support: javascript() };
 			}
+		}
 		case "json": {
 			const { json } = await import("@codemirror/lang-json");
 			return { support: json() };
@@ -173,6 +182,22 @@ async function loadLanguageSupport(
 			return { support: yaml() };
 		}
 	}
+}
+
+function loadLanguageSupport(alias: LanguageAlias): Promise<ResolvedLanguage> {
+	const key = languageCacheKey(alias);
+	const cached = languageSupportCache.get(key);
+	if (cached) {
+		return cached;
+	}
+	const pending = importLanguageSupport(alias).catch((error: unknown) => {
+		if (languageSupportCache.get(key) === pending) {
+			languageSupportCache.delete(key);
+		}
+		throw error;
+	});
+	languageSupportCache.set(key, pending);
+	return pending;
 }
 
 export function canIndentEditorCode(language: string, info?: string): boolean {

@@ -95,24 +95,26 @@ vi.mock("@codemirror/language", async (importOriginal) => {
 					}
 					try {
 						process.stdout.write(
-							`editor-code-indentation-ensure-syntax-tree-receipt ${JSON.stringify({
-								call: indentationProbe.calls,
-								docLength: state.doc.length,
-								errorName,
-								hasLanguage: initialHasLanguage,
-								initialTreeLength,
-								returnHasLanguage: result !== null,
-								returnTreeLength: result?.length ?? null,
-								returned: result !== null,
-								timeout: timeout ?? null,
-								upto,
-								wallMs: performance.now() - started,
-								workerProcessCPU: {
-									after: cpuAfter,
-									before: cpuBefore,
-									delta: cpuDelta(cpuBefore, cpuAfter),
+							`editor-code-indentation-ensure-syntax-tree-receipt ${JSON.stringify(
+								{
+									call: indentationProbe.calls,
+									docLength: state.doc.length,
+									errorName,
+									hasLanguage: initialHasLanguage,
+									initialTreeLength,
+									returnHasLanguage: result !== null,
+									returnTreeLength: result?.length ?? null,
+									returned: result !== null,
+									timeout: timeout ?? null,
+									upto,
+									wallMs: performance.now() - started,
+									workerProcessCPU: {
+										after: cpuAfter,
+										before: cpuBefore,
+										delta: cpuDelta(cpuBefore, cpuAfter),
+									},
 								},
-							})}\n`,
+							)}\n`,
 						);
 					} catch {
 						// Observation must not replace the original result.
@@ -329,5 +331,48 @@ describe("indentEditorCode", () => {
 		});
 
 		expect(result).toEqual({ content: source, status: "unchanged" });
+	});
+
+	it("lazy-loads and indents CSS, HTML, and TypeScript/JSX/TSX fences", async () => {
+		const cssResult = await indentEditorCode({
+			content: ".card {\ncolor: red;\n}\n",
+			language: "css",
+		});
+		expect(contentOf(cssResult)).toBe(".card {\n  color: red;\n}\n");
+
+		const htmlResult = await indentEditorCode({
+			content: "<div>\n<p>Hello</p>\n</div>\n",
+			language: "html",
+		});
+		expect(contentOf(htmlResult)).toBe("<div>\n  <p>Hello</p>\n</div>\n");
+
+		const tsResult = await indentEditorCode({
+			content: "interface Item {\nid: number;\n}\n",
+			language: "ts",
+		});
+		expect(contentOf(tsResult)).toBe("interface Item {\n  id: number;\n}\n");
+
+		const jsxResult = await indentEditorCode({
+			content: "function App() {\nreturn <div />;\n}\n",
+			language: "jsx",
+		});
+		expect(contentOf(jsxResult)).toBe(
+			"function App() {\n  return <div />;\n}\n",
+		);
+
+		const tsxResult = await indentEditorCode({
+			content: "function App(props: { ok: boolean }) {\nreturn <div />;\n}\n",
+			language: "tsx",
+		});
+		expect(contentOf(tsxResult)).toBe(
+			"function App(props: { ok: boolean }) {\n  return <div />;\n}\n",
+		);
+
+		// Repeated call hits the cached lazy language support.
+		const cachedCssResult = await indentEditorCode({
+			content: "a {\ncolor: blue;\n}\n",
+			language: "css",
+		});
+		expect(contentOf(cachedCssResult)).toBe("a {\n  color: blue;\n}\n");
 	});
 });

@@ -27,13 +27,11 @@ const LEGACY_LARGE_FILE_LINE_CEILINGS = {};
 const LEGACY_ZERO_JSX_LARGE_TSX_ALLOWLIST = new Set();
 
 /**
- * Single pre-existing type-only import of `ImmersiveStrings` from
- * `immersive-editor-ui-types.ts` pending extraction into `contracts/`.
- * No component or runtime import from `immersive-editor/ui/` is permitted.
+ * Pre-existing cross-feature UI import exemptions from `editor-context-menu/`
+ * into `immersive-editor/ui/`. Cleared to zero; no runtime or type import from
+ * `immersive-editor/ui/` is permitted.
  */
-const LEGACY_EDITOR_CONTEXT_MENU_IMMERSIVE_UI_IMPORTS = new Set([
-	"frontend/src/features/editor-context-menu/ui/EditorTableDialog.tsx -> frontend/src/features/immersive-editor/ui/immersive-editor-ui-types",
-]);
+const LEGACY_EDITOR_CONTEXT_MENU_IMMERSIVE_UI_IMPORTS = new Set();
 
 function toPosixRepoPath(absolutePath) {
 	return path.relative(repoRoot, absolutePath).split(path.sep).join("/");

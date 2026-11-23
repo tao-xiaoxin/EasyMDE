@@ -1,0 +1,1 @@
+import{t as e}from"./admin-editor-chunk-BbfpZ9Tg.js";var t=class extends Error{constructor(t){super(t),e(this,`code`,void 0),this.name=`WechatVisualRasterizationError`,this.code=t}};export{t};

@@ -109,7 +109,7 @@ export function ProseMirrorVisualEditor(props: ProseMirrorVisualEditorProps) {
 		style,
 	} = props;
 
-	const hostRef = useRef<HTMLDivElement | null>(null);
+	const hostRef = useRef<HTMLElement | null>(null);
 	const viewRef = useRef<EditorView | null>(null);
 	const latestPropsRef = useRef<ProseMirrorVisualEditorProps>(props);
 	latestPropsRef.current = props;
@@ -425,7 +425,7 @@ export function ProseMirrorVisualEditor(props: ProseMirrorVisualEditorProps) {
 	}, [articleThemeClass, className, documentSession, editable, label]);
 
 	return (
-		<div
+		<article
 			ref={hostRef}
 			data-easymde-prosemirror-host="1"
 			{...(style !== undefined ? { style } : {})}

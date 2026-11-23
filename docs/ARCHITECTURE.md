@@ -258,12 +258,12 @@ before and after are exactly equal across the complete analysis.
 The entrypoint parses external data before mounting, constructs focused
 WordPress and browser Adapters, mounts one modular `EditorRoot` (`frontend/src/app/editor/EditorRoot.tsx` composed from focused feature-bridge hooks and `ImmersiveVisualEditorHost.tsx`), and owns idempotent
 teardown. The Root composes Toolbar/commands, CodeMirror document and title
-sessions, the modular read-only `PreviewSurfaceOwner` (`frontend/src/features/live-preview/ui/`, with dormant windowed/editable-adoption layers retired) and local post-response enhancements, Appearance and
-Custom CSS (with `ImmersiveCustomCssDialog` and `ImmersivePublishDialog` lazily loaded as separate ESM chunks), Fonts, Media and image upload, Local Drafts, the modular WeChat export pipeline (`frontend/src/integrations/browser/wechat/`),
+sessions, the modular read-only `PreviewSurfaceOwner` (`frontend/src/features/live-preview/ui/`, with dormant windowed/editable-adoption layers retired) and local post-response enhancements, the modular immersive editor (`frontend/src/features/immersive-editor/`: `immersive-document-derivations.ts` for bounded streaming document statistics and heading-outline scanning, `immersive-publish-excerpt.ts` for Lezer-tree plain-text publish-excerpt derivation, `ui/use-immersive-document-derivations.ts` for debounced/sliced React outline and stats scheduling, `ui/ImmersiveHistoryDialog.tsx` for the revision history modal delegating restore to WordPress, plus `ImmersiveCustomCssDialog` and `ImmersivePublishDialog` lazily loaded as separate ESM chunks), Appearance and
+Custom CSS, Fonts, Media and image upload, Local Drafts, the modular WeChat export pipeline (`frontend/src/integrations/browser/wechat/`),
 the fixed Source/Preview layout, and WordPress session state. The independent
 Settings Center Root (`frontend/src/app/settings/`) is similarly decomposed into
 focused section pages and controls. Both admin stylesheets (`assets/css/admin/editor.css` and `assets/css/admin/settings-center.css`) are organized with structured tables of contents and numbered section banners. All production modules across both frontend and PHP follow automated architecture guardrails in `tests/Node/frontend-architecture-guardrails.test.mjs` and `tests/Node/php-architecture-guardrails.test.mjs`
-(unidirectional layering, a 1,200-line warning threshold and strict 1,500-line hard ceiling with zero legacy exceptions across all `frontend/src/` and `src/` production files, a 400-line ceiling on zero-JSX `.tsx` controllers, and PHP PSR-4/`ABSPATH`/`Support`+`Frontend` isolation).
+(unidirectional layering, zero runtime circular dependencies across production frontend modules, a 1,200-line warning threshold and strict 1,500-line hard ceiling with zero legacy exceptions across all `frontend/src/` and `src/` production files, a 400-line ceiling on zero-JSX `.tsx` controllers, and PHP PSR-4/`ABSPATH`/`Support`+`Frontend` isolation).
 Ordinary Editor Components depend on typed Ports; WordPress DOM, `wp.media`,
 REST, Storage, and Clipboard access for the ordinary document and protected
 operations remain in focused Integration Adapters. The independent Settings
@@ -291,24 +291,46 @@ themes applies identically to formal Preview.
   or DOM spacers (rationale in
   [ADR-002](decisions/ADR-002-visual-editor-and-esm-architecture.md)).
 - **Zero-write on read & surgical block preservation**: Opening or unlocking a
-  document performs zero canonical writes (`createMarkdownRoundTripGuard`).
-  Localized edits preserve every untouched top-level block's original raw
-  Markdown (including `*`/`+`/`-` bullet/task list markers, padded table columns,
-  reference links, inter-block spacing, and trailing newlines), and undoing back
-  to the initial state restores byte-identical source.
-- **Protected atoms & custom NodeViews**: `node-views/` preserves KaTeX math,
-  Mermaid diagrams, `[TOC]`, footnotes, reference definitions, and raw HTML blocks
-  as non-corrupting atomic cards (with hover/focus Edit and Copy-raw quick actions,
-  double-click editing, `Ctrl/Cmd+Enter` commit, and non-propagating `Escape`
-  cancel), renders Mac 3-dot code frames with incremental `Decoration.inline`
-  Highlight.js tokens, supports interactive task-list checkboxes that preserve
-  original list markers, and provides click-to-select image blue rings and 7-value
-  width scaling (`{width=25%..200%}`).
-- **Canonical synchronization**: Legitimate edits synchronize back to
-  `EditorDocumentSession` (CodeMirror + native form bridge) after IME composition
-  ends; locking back to read-only or invoking WeChat Copy refreshes the formal
-  PHP `MarkdownRenderer` Preview without making ProseMirror a persistence or
-  formal rendering authority.
+  document performs zero canonical writes (`createMarkdownRoundTripGuard` in
+  `markdown-serializer.ts` backed by `markdown-block-preservation.ts`, keeping
+  the dependency direction strictly one-way from serializer to preservation).
+  Localized edits preserve every untouched top-level block and untouched list
+  item's original raw Markdown (including `*`/`+`/`-` bullet/task list markers,
+  padded table columns, reference links, inter-block spacing, and trailing
+  newlines), and undoing back to the initial state restores byte-identical
+  source. `table-alignment-codec.ts` owns the TypeScript
+  `<!-- easymde-table-align:v1 [...] -->` parser/reconciler mirroring
+  `src/Content/TableAlignmentAnnotation.php`.
+- **Protected atoms, custom NodeViews & boundary commands**: `node-views/`
+  preserves KaTeX math, Mermaid diagrams, `[TOC]`, footnotes, reference
+  definitions, and raw HTML blocks as non-corrupting atomic cards (with
+  hover/focus Edit and Copy-raw quick actions, double-click editing,
+  `Ctrl/Cmd+Enter` commit, and non-propagating `Escape` cancel), renders Mac
+  3-dot code frames with incremental `Decoration.inline` Highlight.js tokens,
+  supports interactive task-list checkboxes that preserve original list markers,
+  and provides click-to-select image blue rings and 7-value width scaling
+  (`{width=25%..200%}`). `visual-boundary-commands.ts` owns atom/container
+  boundary keybindings (`Backspace`/`Delete`/`Mod-Home`/`Mod-End`/edge-arrow
+  guards) and the Chromium atomic-selection anchor widget plugin.
+- **Canonical synchronization, IME & source indexing**: `visual-canonical-sync.ts`
+  is the single authoritative bridge between the ProseMirror projection and
+  `EditorDocumentSession` (CodeMirror + native form bridge), handling bounded
+  text diffs, contiguous typing history grouping, echo suppression, and
+  incremental canonical Undo/Redo reconciliation. `visual-composition-session.ts`
+  tracks IME `composing`/`settling` phases so canonical commits wait until
+  composition ends and ProseMirror's DOM flush lands. `visual-source-index.ts`
+  and `visual-source-inner-maps.ts` maintain the parser-backed bidirectional
+  index between ProseMirror positions and LF-normalized UTF-16 Markdown offsets
+  with lazy per-block inner maps (keeping shared segment/block types in
+  `visual-source-inner-maps.ts` to avoid import cycles). Locking back to
+  read-only or invoking WeChat Copy refreshes the formal PHP `MarkdownRenderer`
+  Preview without making ProseMirror a persistence or formal rendering
+  authority. When the formal Preview sink is hidden (`easymde-preview-surface-hidden`
+  while unlocked, or hidden `.easymde-pane-preview` in source modes),
+  `frontend/src/integrations/browser/wechat/wechat-payload-serializer.ts`
+  serializes and measures from a temporary off-screen layout-participating clone
+  of the formal Preview sink (reading only container width, never ProseMirror
+  DOM) and removes it in `finally`.
 React neither submits a closed field allowlist nor treats synchronization as a
 successful Save, so unknown WordPress and extension fields remain intact.
 
@@ -2362,7 +2384,7 @@ current exception; Verify Upload remains single-attempt.
 
 Local Draft recovery uses the versioned `easymde:draft:v1:<site>:<user>:<post-or-new>` identity, a 1 MiB limit, a 500-millisecond latest-write scheduler, explicit read/write/discard failures, and cross-tab conflict handling. New-post identity comes from the stable PHP Bootstrap contract rather than WordPress's temporary auto-draft ID.
 
-WeChat export is user-initiated compatibility output from the current stable, sanitized, locally enhanced Preview. `createWechatExportSession` owns the ordinary and immersive surfaces, and `createBrowserWechatClipboard` owns the browser Clipboard adapter and its single clone-and-serialize pipeline; the data flow is Preview sink -> session -> adapter -> browser Clipboard path. Copy never writes Markdown, `post_content`, metadata, revisions, or publication state.
+WeChat export is user-initiated compatibility output from the current stable, sanitized, locally enhanced Preview. `createWechatExportSession` owns the ordinary and immersive surfaces, and `createBrowserWechatClipboard` owns the browser Clipboard adapter and its single clone-and-serialize pipeline; the data flow is Preview sink -> session -> adapter -> browser Clipboard path. When the formal Preview sink is under `display:none` (hidden by `easymde-preview-surface-hidden` during unlocked visual editing or by source-only modes), `wechat-payload-serializer.ts` mounts an off-screen, layout-participating clone of that formal Preview sink beside the nearest rendered ancestor—reading only container width (never ProseMirror DOM)—and disposes it in `finally`. Copy never writes Markdown, `post_content`, metadata, revisions, or publication state.
 
 The strict-boolean `images.wechatPngExportEnabled` setting defaults to `false`,
 and Editor bootstrap projects it as `wechatExport.pngConversionEnabled`. When
@@ -2525,6 +2547,7 @@ Rendering behavior:
 - math placeholders are extracted and restored as EasyMDE math nodes;
 - `TocGenerator` owns heading IDs and `[TOC]` replacement;
 - `ThemeMarkupTransformer` owns article-theme-specific DOM transforms and MDNice container normalization;
+- `VisualPreviewBlockAnnotator` (`src/Content/VisualPreviewBlockAnnotator.php`) carries CommonMark block provenance through Preview HTML transforms and emits the privacy-safe `editMap` sidecar, while `VisualPreviewCodeProjectionBuilder` (`src/Content/VisualPreviewCodeProjectionBuilder.php`) builds the source-backed fenced/indented code-body map and UTF-16 tab-expanded code cursor projection from the same parsed CommonMark AST (exposed through `VisualPreviewBlockAnnotator` without rendering Markdown or owning persistence);
 - final rendered HTML is passed through `wp_kses_post()`.
 
 If Composer dependencies are missing, EasyMDE shows an admin notice, preview requests return a REST error, and save/frontend paths avoid generating fallback HTML.

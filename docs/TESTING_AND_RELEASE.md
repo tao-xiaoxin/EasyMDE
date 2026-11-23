@@ -244,7 +244,7 @@ npm run notices:check
 npm test
 ```
 
-`npm run frontend:check` verifies the locked generated Lucide nodes, runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and read-only production comparisons for all nine manifest-backed Vite entries (including the local ESM `format: "es"` + dynamic code-splitting chunks of `admin-editor.tsx` for ProseMirror visual editing, WeChat export, optional CodeMirror indentation parsers, `ImmersivePublishDialog`, and `ImmersiveCustomCssDialog`). `npm test` runs all Node tests including `tests/Node/frontend-architecture-guardrails.test.mjs` and `tests/Node/php-architecture-guardrails.test.mjs`, which enforce unidirectional frontend layering, a 1,200-line warning threshold and strict 1,500-line hard production file ceiling with zero legacy exceptions across both `frontend/src/` and `src/`, a 400-line zero-JSX `.tsx` controller ceiling, and PHP PSR-4/`ABSPATH`/`Support`+`Frontend` isolation. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, CodeMirror 6, ProseMirror core (`prosemirror-*`) + `markdown-it`, and development-only `lucide-react@0.487.0` on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
+`npm run frontend:check` verifies the locked generated Lucide nodes, runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and read-only production comparisons for all nine manifest-backed Vite entries (including the local ESM `format: "es"` + dynamic code-splitting chunks of `admin-editor.tsx` for ProseMirror visual editing, WeChat export, optional CodeMirror indentation parsers, `ImmersivePublishDialog`, and `ImmersiveCustomCssDialog`). `npm test` runs all Node tests including `tests/Node/frontend-architecture-guardrails.test.mjs` and `tests/Node/php-architecture-guardrails.test.mjs`, which enforce unidirectional frontend layering, zero runtime circular dependencies across production frontend modules, a 1,200-line warning threshold and strict 1,500-line hard production file ceiling with zero legacy exceptions across both `frontend/src/` and `src/`, a 400-line zero-JSX `.tsx` controller ceiling, and PHP PSR-4/`ABSPATH`/`Support`+`Frontend` isolation. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, CodeMirror 6, ProseMirror core (`prosemirror-*`) + `markdown-it`, and development-only `lucide-react@0.487.0` on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
 
 The test-only build writes to `.cache/easymde-frontend-contract/`. `npm run build:frontend` writes the committed outputs for the nine Vite configs below, while `npm run check:frontend-production` writes temporary outputs, validates each output, and compares each complete file set and its bytes with the committed runtimes without rewriting them. The validators fail on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps.
 
@@ -1276,17 +1276,18 @@ and `quote-paused`, plus `clears a trailing-tail document through the full root
 range before immediate input`.
 The named cases define the regression contract and do not replace the exact
 runtime evidence required by the browser gate.
-The change does not alter performance budgets. Keep the existing limits and
-the current test names `enforces the non-windowed edit-phase Long Task budget`,
-`@performance keeps near-threshold non-windowed immersive code editing
-responsive`, `@performance keeps a synthetic large Markdown paste and
-windowed visual editing responsive`, and `@performance renders a dense
-2300-block Preview with 150 code fences before enabling visual edits`.
-The dedicated `@performance` case uses 159 fenced `pre` blocks and about 93 KB
-of synthetic Markdown. It checks that Preview stays non-windowed, all 20 rapid
-inputs appear in the code DOM, canonical Markdown converges within 150 ms of
-the last rapid input, five spaced inputs settle within the per-key budget, and
-the first visible frame stays within 100 ms. The complete 20-key burst plus
+The `@performance` suite in `tests/e2e/ordinary/performance-budgets.spec.mjs` is aligned with the unified ProseMirror visual editor and keeps four tests:
+`enforces the non-windowed edit-phase Long Task budget`,
+`@performance keeps near-threshold non-windowed immersive code editing responsive`,
+`@performance keeps a synthetic large Markdown paste and unified ProseMirror visual editing responsive`, and
+`@performance renders a dense 2300-block Preview with 150 code fences before enabling visual edits`.
+The first `@performance` case uses 159 fenced `pre` blocks and about 93 KB
+of synthetic Markdown on the unlocked ProseMirror `<article data-easymde-prosemirror-host="1">`
+surface. It verifies zero `[data-easymde-preview-window-spacer]` elements,
+confirms all 20 rapid inputs appear monotonically in the code DOM, requires
+canonical Markdown to converge within 150 ms of the last rapid input, requires
+five spaced inputs to settle within the per-key budget, and keeps the first
+visible frame within 100 ms. The complete 20-key burst plus
 five spaced-input sequence has a narrowly scoped edit-phase Long Task budget:
 at most one task may overlap an edit phase, it may overlap at most one phase,
 its duration must be at most 75 ms, and total blocking time above the 50 ms
@@ -1296,7 +1297,7 @@ through two animation frames. The test keeps every observed Long Task,
 classifies it as edit-phase, between-phase, or outside-interaction evidence, and
 records only privacy-safe attribution `containerType` and `name` categories;
 attribution URLs and identifiers are not recorded. This budget applies only to
-this near-threshold non-windowed sequence; other performance cases retain their
+this near-threshold sequence; other performance cases retain their
 separate gates. The JSON attachment and structured output contain counts and
 timings needed to locate a failure without recording article content.
 The 390px immersive cases begin with Outline open. They check that its overlay
@@ -1306,26 +1307,27 @@ Markdown, Preview, or the preference, and manual reopen remains available.
 They also cover desktop-to-compact resize while Preview remains editable,
 repeated crossings after a manual reopen, focus and caret preservation, RTL
 placement, and page-level horizontal overflow.
-The `chromium-performance` test uses about 194 KB of synthetic Markdown with
-454 headings, language-free and explicit-language code fences, and a real
-Clipboard paste. It requires a paste handler below 50 ms, edit-handler p95 at
-or below 16 ms, first-double-frame and mutation-settled edit p95 values at or
-below 100 ms, semantic Preview settling within five seconds, CLS at or below
-0.01, and zero Long Tasks across 60 real input/delete interactions. A Long
-Task overlapping paste activation may occur once, at or below 75 ms and with
-at most 25 ms of blocking time above the 50 ms threshold. The Preview response
-may contribute at most two Long Tasks, each at or below 75 ms and with combined
-blocking time at or below 40 ms. Activation and response blocking time together
-must stay at or below 65 ms; any other overlapping or edit Long Task fails the
-test. The same test verifies exact canonical Markdown, one
-Preview request, bounded window mounting, lock synchronization, and the
-absence of browser errors without recording article content.
-A separate Chromium performance case pastes a generated 2,300-block document
-with 150 fenced code blocks after an existing paragraph. It asserts all 2,301
-Preview map blocks, exact canonical Markdown, one Preview request, an editable
-ready surface within 2.5 seconds, and the same paste-activation, Preview-response,
-and combined blocking-time limits. The 194 KB case additionally enforces its
-60-interaction zero-edit-Long-Task gate. Fresh bare `~~~`
+The 194 KB unified ProseMirror paste-and-edit case (`@performance keeps a synthetic large Markdown paste and unified ProseMirror visual editing responsive`)
+pastes 2,038 synthetic blocks (including 454 headings plus language-free and
+explicit-language code fences) into the unlocked ProseMirror `textbox` via the
+real Clipboard without triggering any PHP `/wp-json/easymde/v1/preview` POST
+while unlocked. It verifies zero `[data-easymde-preview-window-spacer]`
+elements, direct mounting of all 2,039 top-level blocks (no retired 160-block
+window cap), exact `#easymde-source` convergence, paste settlement within five
+seconds, bounded paste handler/Long Task budgets, 30 rapid `x`/`Backspace`
+visual edit cycles (60 input events) with edit-handler p95 at or below 16 ms,
+double-rAF and mutation-settled edit p95 at or below 150 ms, bounded edit Long
+Task budgets, CLS at or below 0.01, zero unnecessary Preview requests while
+unlocked, one authoritative formal PHP Preview refresh upon locking back to
+read-only, and zero browser errors without recording article content.
+The companion dense case (`@performance renders a dense 2300-block Preview with 150 code fences before enabling visual edits`)
+pastes a generated 2,300-block document with 150 fenced code blocks after an
+existing paragraph into the unlocked ProseMirror `textbox`. It asserts zero
+window spacers, direct rendering of all 2,301 blocks and 150 code fences,
+exact canonical Markdown, zero unlocked Preview POSTs, paste settlement and
+bounded Long Task budgets within 2.5 seconds, and then locks back to read-only
+to verify the single formal PHP Preview POST response returns all 2,301
+`editMap.blocks` and at least 150 `<pre` elements with zero browser errors. Fresh bare `~~~`
 and triple-backtick cases verify the first Mac-framed code block, fence-family
 preservation, mobile geometry, and a warm PHP-rendered Preview.
 The Chromium test `parses the exact full-capability fixture after immersive

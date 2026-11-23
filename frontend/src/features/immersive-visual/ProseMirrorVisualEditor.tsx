@@ -276,6 +276,8 @@ export function ProseMirrorVisualEditor(props: ProseMirrorVisualEditorProps) {
 			view,
 		});
 
+		let visualEditingActivated = false;
+
 		const release = (): void => {
 			disposed = true;
 			disposeAbortController.abort();
@@ -285,6 +287,10 @@ export function ProseMirrorVisualEditor(props: ProseMirrorVisualEditorProps) {
 			if (viewRef.current === view) {
 				viewRef.current = null;
 			}
+			if (visualEditingActivated) {
+				visualEditingActivated = false;
+				documentSession.document.setVisualEditingActive?.(false);
+			}
 		};
 
 		const teardown = (): void => {
@@ -293,19 +299,27 @@ export function ProseMirrorVisualEditor(props: ProseMirrorVisualEditorProps) {
 			}
 			// Settle a committed-but-unsynced edit before the projection goes away.
 			if (!activeComposition.isBusy()) sync.commitPending();
-			release();
 			try {
-				latestPropsRef.current.onDispose?.(runtime);
+				release();
 			} finally {
-				view.destroy();
+				try {
+					latestPropsRef.current.onDispose?.(runtime);
+				} finally {
+					view.destroy();
+				}
 			}
 		};
 
 		try {
+			documentSession.document.setVisualEditingActive?.(true);
+			visualEditingActivated = true;
 			latestPropsRef.current.onReady?.(runtime);
 		} catch (error) {
-			release();
-			view.destroy();
+			try {
+				release();
+			} finally {
+				view.destroy();
+			}
 			throw error;
 		}
 

@@ -1901,4 +1901,39 @@ describe("Wave 5 fixes: block-boundary keyboard and atom selection (R2, R3)", ()
 		// Text before, rule after: Blink holds this selection, so no anchor.
 		expect(anchorCount(view)).toBe(0);
 	});
+
+	it("parks and restores CodeMirror visual-editing mode across mount, unmount, and onReady failure", () => {
+		const { session } = createRealSession("Alpha\n\nBeta");
+		const setVisualEditingActive = vi.spyOn(
+			session.document,
+			"setVisualEditingActive",
+		);
+		const { unmount } = mountVisual(session);
+		expect(setVisualEditingActive).toHaveBeenCalledTimes(1);
+		expect(setVisualEditingActive).toHaveBeenLastCalledWith(true);
+		unmount();
+		expect(setVisualEditingActive).toHaveBeenCalledTimes(2);
+		expect(setVisualEditingActive).toHaveBeenLastCalledWith(false);
+
+		setVisualEditingActive.mockClear();
+		const consoleError = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => undefined);
+		try {
+			expect(() =>
+				render(
+					<ProseMirrorVisualEditor
+						documentSession={session}
+						onReady={() => {
+							throw new Error("ready-failed");
+						}}
+					/>,
+				),
+			).toThrow("ready-failed");
+		} finally {
+			consoleError.mockRestore();
+		}
+		expect(setVisualEditingActive).toHaveBeenNthCalledWith(1, true);
+		expect(setVisualEditingActive).toHaveBeenNthCalledWith(2, false);
+	});
 });

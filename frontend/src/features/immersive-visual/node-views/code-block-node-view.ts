@@ -361,23 +361,6 @@ function collectChangedRanges(tr: Transaction): DocumentRange[] {
 	return ranges;
 }
 
-function rangesTouchCodeBlock(
-	blockFrom: number,
-	blockEnd: number,
-	changedRanges: ReadonlyArray<DocumentRange>,
-): boolean {
-	for (const range of changedRanges) {
-		if (range.from < range.to) {
-			if (range.from < blockEnd && range.to > blockFrom) {
-				return true;
-			}
-		} else if (range.from > blockFrom && range.from < blockEnd) {
-			return true;
-		}
-	}
-	return false;
-}
-
 function updateDecorationsIncrementally(
 	tr: Transaction,
 	prevDecorations: DecorationSet,
@@ -392,29 +375,33 @@ function updateDecorationsIncrementally(
 		return decorations;
 	}
 
+	const visitedCodeBlocks = new Set<number>();
 	const added: Decoration[] = [];
-	newDoc.descendants((node, pos) => {
-		if (node.type.name !== "code_block") {
-			return true;
-		}
-		const blockEnd = pos + node.nodeSize;
-		if (rangesTouchCodeBlock(pos, blockEnd, changedRanges)) {
-			const stale = decorations.find(pos, blockEnd);
-			if (stale.length > 0) {
-				decorations = decorations.remove(stale);
+	for (const range of changedRanges) {
+		newDoc.nodesBetween(range.from, range.to, (node, pos) => {
+			if (node.type.name !== "code_block") {
+				return true;
 			}
-			added.push(
-				...buildCodeBlockDecorations(
-					node,
-					pos,
-					hljs,
-					maxCodeLength,
-					cacheLimit,
-				),
-			);
-		}
-		return false;
-	});
+			if (!visitedCodeBlocks.has(pos)) {
+				visitedCodeBlocks.add(pos);
+				const blockEnd = pos + node.nodeSize;
+				const stale = decorations.find(pos, blockEnd);
+				if (stale.length > 0) {
+					decorations = decorations.remove(stale);
+				}
+				added.push(
+					...buildCodeBlockDecorations(
+						node,
+						pos,
+						hljs,
+						maxCodeLength,
+						cacheLimit,
+					),
+				);
+			}
+			return false;
+		});
+	}
 	return added.length > 0 ? decorations.add(newDoc, added) : decorations;
 }
 

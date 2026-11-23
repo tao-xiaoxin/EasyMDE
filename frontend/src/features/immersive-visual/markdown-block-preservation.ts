@@ -619,14 +619,24 @@ function serializeDocPreservingUntouchedBlocks(
 	const origLen = baselineBlocks.length;
 	const matchedOrigIndex = alignSequences(newLen, origLen, (n, o) => {
 		const origBlock = baselineBlocks[o];
-		return origBlock !== undefined && doc.child(n).eq(origBlock.node);
+		if (!origBlock) return false;
+		const child = doc.child(n);
+		return (
+			child === origBlock.node ||
+			(child.type === origBlock.node.type &&
+				child.nodeSize === origBlock.node.nodeSize &&
+				child.eq(origBlock.node))
+		);
 	});
 	const pairedOrigIndex = pairUnmatched(matchedOrigIndex, origLen);
 	// Original index whose separator semantics this output block inherits.
 	const effectiveOrigIndex = new Array<number>(newLen).fill(-1);
 
 	const keepLeadingPrefix = matchedOrigIndex[0] === 0;
-	let output = keepLeadingPrefix ? parsed.leadingPrefix : "";
+	const parts: string[] = [];
+	if (keepLeadingPrefix && parsed.leadingPrefix.length > 0) {
+		parts.push(parsed.leadingPrefix);
+	}
 	for (let idx = 0; idx < newLen; idx += 1) {
 		const child = doc.child(idx);
 		const origIdx = matchedOrigIndex[idx] ?? -1;
@@ -655,10 +665,11 @@ function serializeDocPreservingUntouchedBlocks(
 				effIdx >= 0 && prevEffIdx >= 0 && effIdx === prevEffIdx + 1
 					? baselineBlocks[effIdx]
 					: undefined;
-			output += effBlock ? effBlock.separatorBefore : "\n\n";
+			parts.push(effBlock ? effBlock.separatorBefore : "\n\n");
 		}
-		output += serialized ?? serializers.serializeBlock(child);
+		parts.push(serialized ?? serializers.serializeBlock(child));
 	}
+	let output = parts.join("");
 	// A multi-block document replaced without any surviving baseline block must
 	// not re-attach the stale trailing newlines; an in-place single-block edit
 	// (`"Hello\n"` -> `"Hello!\n"`) still keeps its suffix.
@@ -692,6 +703,33 @@ export function createPreservingRoundTripGuard(
 		}
 	}
 
+	// ProseMirror nodes are immutable; caching serialized strings per node
+	// avoids re-serializing untouched pasted or newly created blocks on every
+	// subsequent keystroke without weakening baseline raw-slice preservation.
+	const blockSerializationCache = new WeakMap<ProseMirrorNode, string>();
+	const serializeBlockCached: BlockSerializer = (node) => {
+		const cached = blockSerializationCache.get(node);
+		if (cached !== undefined) {
+			return cached;
+		}
+		const serialized = serializers.serializeBlock(node);
+		blockSerializationCache.set(node, serialized);
+		return serialized;
+	};
+	const cachedSerializers: MarkdownSerializers = {
+		serializeBlock: serializeBlockCached,
+		serializeDoc(doc) {
+			if (isEmptyDoc(doc)) {
+				return "";
+			}
+			const blocks: string[] = [];
+			for (let i = 0; i < doc.childCount; i += 1) {
+				blocks.push(serializeBlockCached(doc.child(i)));
+			}
+			return blocks.join("\n\n");
+		},
+	};
+
 	const isUnmodified = (doc: ProseMirrorNode): boolean =>
 		doc === baselineDoc || doc.eq(baselineDoc);
 
@@ -704,9 +742,13 @@ export function createPreservingRoundTripGuard(
 				return initialMarkdown;
 			}
 			if (parsed) {
-				return serializeDocPreservingUntouchedBlocks(doc, parsed, serializers);
+				return serializeDocPreservingUntouchedBlocks(
+					doc,
+					parsed,
+					cachedSerializers,
+				);
 			}
-			return serializers.serializeDoc(doc);
+			return cachedSerializers.serializeDoc(doc);
 		},
 	};
 }

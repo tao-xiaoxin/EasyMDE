@@ -2322,8 +2322,9 @@ describe('Immersive visual editor bridges', () => {
         true
       );
       expect(
-        view.container.querySelector('.cm-content')?.contains(active)
+        view.container.querySelector('.cm-content')?.contains(active) ?? false
       ).toBe(false);
+      expect(view.container.querySelector('.cm-content')).toBeNull();
       const anchor = window.getSelection()?.anchorNode ?? null;
       const anchorElement =
         anchor instanceof Element ? anchor : (anchor?.parentElement ?? null);

@@ -5,8 +5,9 @@ import { DOMSerializer, type Node as ProseMirrorNode } from "prosemirror-model";
 import { EditorState, NodeSelection, TextSelection } from "prosemirror-state";
 import { addColumnAfter, addRowAfter, tableEditing } from "prosemirror-tables";
 import { EditorView } from "prosemirror-view";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ToolbarCommand } from "../../contracts/bootstrap/toolbar-bootstrap";
+import { createPreservingRoundTripGuard } from "./markdown-block-preservation";
 import {
 	parseImageScaleTitle,
 	parseMarkdownToVisualDoc,
@@ -2252,5 +2253,53 @@ describe("Wave 6F container reference definitions and ordered first-item deletio
 		expect(widened.reparsed.firstChild?.firstChild?.lastChild?.type.name).toBe(
 			"bullet_list",
 		);
+	});
+
+	it("caches untouched pasted block serializations across subsequent edits", () => {
+		const serializeBlock = vi.fn((node: ProseMirrorNode) =>
+			serializeVisualDocToMarkdown(visualEditorSchema.nodes.doc.create(null, [node])),
+		);
+		const guard = createPreservingRoundTripGuard("Before", undefined, {
+			serializeBlock,
+			serializeDoc: serializeVisualDocToMarkdown,
+		});
+		const pastedDoc = parseMarkdownToVisualDoc(
+			"Before\n\nPasted one\n\nPasted two\n\nPasted three",
+		);
+		expect(guard.serialize(pastedDoc)).toBe(
+			"Before\n\nPasted one\n\nPasted two\n\nPasted three",
+		);
+		// Block 0 matches baseline "Before"; the 3 pasted blocks are serialized once.
+		expect(serializeBlock).toHaveBeenCalledTimes(3);
+
+		serializeBlock.mockClear();
+		const state = EditorState.create({
+			doc: pastedDoc,
+			schema: visualEditorSchema,
+		});
+		// Edit only block 1 ("Pasted one" -> "Pasted one!").
+		const block1End = pastedDoc.child(0).nodeSize + pastedDoc.child(1).nodeSize - 1;
+		const editedDoc = state.tr.insertText("!", block1End).doc;
+		expect(guard.serialize(editedDoc)).toBe(
+			"Before\n\nPasted one!\n\nPasted two\n\nPasted three",
+		);
+		// Only the newly edited block 1 is re-serialized; untouched blocks 2 & 3 hit cache.
+		expect(serializeBlock).toHaveBeenCalledTimes(1);
+
+		// Empty baseline also uses the per-node cache.
+		serializeBlock.mockClear();
+		const emptyGuard = createPreservingRoundTripGuard("", undefined, {
+			serializeBlock,
+			serializeDoc: serializeVisualDocToMarkdown,
+		});
+		expect(emptyGuard.serialize(pastedDoc)).toBe(
+			"Before\n\nPasted one\n\nPasted two\n\nPasted three",
+		);
+		expect(serializeBlock).toHaveBeenCalledTimes(4);
+		serializeBlock.mockClear();
+		expect(emptyGuard.serialize(editedDoc)).toBe(
+			"Before\n\nPasted one!\n\nPasted two\n\nPasted three",
+		);
+		expect(serializeBlock).toHaveBeenCalledTimes(1);
 	});
 });

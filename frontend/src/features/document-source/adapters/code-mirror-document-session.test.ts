@@ -63,7 +63,7 @@ describe('createCodeMirrorDocumentSession', () => {
         }
         expect(session.undo()).toBe(true);
         expect(session.getSelection()).toEqual(before);
-        const branch = initial.slice(0, before.start) + 'Q' + initial.slice(before.end);
+        const branch = `${initial.slice(0, before.start)}Q${initial.slice(before.end)}`;
         session.applyTextChange({
           changes: { from: before.start, insert: 'Q', to: before.end },
           historySelectionBefore: before,
@@ -111,7 +111,7 @@ describe('createCodeMirrorDocumentSession', () => {
       let value = 'abcdefghij';
       for (let index = 0; index < 2; index += 1) {
         const from = 2 + index;
-        value = value.slice(0, from) + 'X' + value.slice(from);
+        value = `${value.slice(0, from)}X${value.slice(from)}`;
         session.applyTextChange({
           carryHistorySelectionWithoutEvent: true,
           changes: { from, insert: 'X', to: from },
@@ -145,7 +145,7 @@ describe('createCodeMirrorDocumentSession', () => {
       // The visual owner aggregates its rapid native burst before handing one
       // canonical transaction to this adapter; distinct flushed transactions
       // are not required to merge across canonical selection-history events.
-      const value = initial.slice(0, caret) + 'abc' + initial.slice(caret);
+      const value = `${initial.slice(0, caret)}abc${initial.slice(caret)}`;
       session.applyTextChange({
         changes: { from: caret, insert: 'abc', to: caret },
         historySelectionBefore: { direction: 'none', end: caret, start: caret },

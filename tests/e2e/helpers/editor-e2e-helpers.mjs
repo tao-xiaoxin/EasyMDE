@@ -52,18 +52,6 @@ export const syntheticLargeEditSettledLimitMs = 100;
 
 export const syntheticLargePasteSettledLimitMs = 5_000;
 
-export const syntheticLargePasteActivationTaskCountLimit = 1;
-
-export const syntheticLargePasteActivationTotalBlockingTimeLimitMs = 25;
-
-export const syntheticLargePreviewLayoutTaskLimitMs = 75;
-
-export const syntheticLargePreviewLayoutTaskCountLimit = 2;
-
-export const syntheticLargePreviewTotalBlockingTimeLimitMs = 40;
-
-export const syntheticLargePasteTotalBlockingTimeLimitMs = 65;
-
 export const syntheticDensePasteSettledLimitMs = 2_500;
 
 const WORDPRESS_SESSION_REFRESH_INTERVAL_MS = 60_000;

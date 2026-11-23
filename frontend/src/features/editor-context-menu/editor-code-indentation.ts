@@ -1,3 +1,6 @@
+import { css } from "@codemirror/lang-css";
+import { html } from "@codemirror/lang-html";
+import { javascript } from "@codemirror/lang-javascript";
 import {
 	ensureSyntaxTree,
 	indentRange,
@@ -142,16 +145,11 @@ async function importLanguageSupport(
 	alias: LanguageAlias,
 ): Promise<ResolvedLanguage> {
 	switch (alias.family) {
-		case "css": {
-			const { css } = await import("@codemirror/lang-css");
+		case "css":
 			return { support: css() };
-		}
-		case "html": {
-			const { html } = await import("@codemirror/lang-html");
+		case "html":
 			return { support: html() };
-		}
 		case "javascript": {
-			const { javascript } = await import("@codemirror/lang-javascript");
 			switch (alias.variant) {
 				case "jsx":
 					return { support: javascript({ jsx: true }) };

@@ -3,8 +3,8 @@
   "entries": {
     "frontend/src/entrypoints/admin-editor.tsx": {
       "handle": "easymde-admin-editor-toolbar",
-      "file": "assets/admin-editor-VhZh-2YP.js",
-      "asset": "assets/admin-editor-VhZh-2YP.asset.php",
+      "file": "assets/admin-editor-CDgbaCIN.js",
+      "asset": "assets/admin-editor-CDgbaCIN.asset.php",
       "moduleFormat": "esm",
       "dependencies": [
         "wp-api-fetch",
@@ -14,13 +14,13 @@
       ],
       "resources": [],
       "chunks": [
-        "assets/admin-editor-chunk-4eXTp5ns.js",
-        "assets/admin-editor-chunk-Bg3MTYzf.js",
-        "assets/admin-editor-chunk-CMMDz1BK.js",
-        "assets/admin-editor-chunk-CZxQhbGZ.js",
-        "assets/admin-editor-chunk-DNb4ZFGd.js",
-        "assets/admin-editor-chunk-DQr2jjoK.js",
-        "assets/admin-editor-chunk-DRhJ0DoD.js"
+        "assets/admin-editor-chunk-B4iRndGx.js",
+        "assets/admin-editor-chunk-BjvtLE7i.js",
+        "assets/admin-editor-chunk-DF6NUJLX.js",
+        "assets/admin-editor-chunk-DW6akR5M.js",
+        "assets/admin-editor-chunk-cb_Evu8Q.js",
+        "assets/admin-editor-chunk-zw6Z1l5A.js",
+        "assets/admin-editor-chunk-zyypDN9B.js"
       ]
     }
   }

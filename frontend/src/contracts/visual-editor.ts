@@ -303,22 +303,3 @@ export type ImmersiveVisualEditorRuntime = Readonly<{
 	focus?: () => void;
 	surface: HTMLElement;
 }>;
-
-export type ImmersiveWindowAcceptedSnapshot = Readonly<{
-	blocks: ReadonlyArray<
-		Readonly<{
-			id: string;
-			innerHTML: string;
-			node: HTMLElement;
-		}>
-	>;
-	/** Formal ledger and canonical revision published with these exact nodes. */
-	editMap?: PreviewEditMap;
-	sourceRevision?: number;
-	key: number;
-	nodes: ReadonlyArray<Node>;
-	/** Owner-certified physical gap; never a formal edit-map row. */
-	ownedGap?: HTMLElement;
-	revision: number;
-	signature: string;
-}>;

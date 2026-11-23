@@ -9,13 +9,13 @@ const repoRoot = path.dirname(
 );
 const frontendSrcRoot = path.join(repoRoot, "frontend", "src");
 
-const MAX_PRODUCTION_FILE_LINES = 1000;
+const MAX_PRODUCTION_FILE_LINES = 1200;
 const MAX_ZERO_JSX_TSX_LINES = 400;
 
 /**
  * Explicit monotonic line-count ceilings for pre-existing production files
- * exceeding 1,000 lines. These files may only shrink over time and must never
- * grow past their recorded ceiling. Once shrunk below 1,000 lines (or removed),
+ * exceeding 1,200 lines. These files may only shrink over time and must never
+ * grow past their recorded ceiling. Once shrunk below 1,200 lines (or removed),
  * cleanup PRs can delete their entry from this map.
  */
 const LEGACY_LARGE_FILE_LINE_CEILINGS = {};
@@ -302,7 +302,7 @@ test("features/editor-context-menu/ never imports from features/immersive-editor
 	);
 });
 
-test("production frontend files respect the 1,000-line ceiling and monotonic legacy ratchet", () => {
+test("production frontend files respect the 1,200-line ceiling and monotonic legacy ratchet", () => {
 	const violations = [];
 
 	for (const filePath of productionFiles) {

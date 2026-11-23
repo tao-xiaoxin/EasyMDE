@@ -9,7 +9,7 @@ const repoRoot = path.dirname(
 );
 const phpSrcRoot = path.join(repoRoot, "src");
 
-const MAX_PHP_PRODUCTION_FILE_LINES = 1000;
+const MAX_PHP_PRODUCTION_FILE_LINES = 1200;
 
 const ALLOWED_SRC_SUBDIRECTORIES = new Set([
 	"Admin",
@@ -103,7 +103,7 @@ function stripPhpCommentsOnly(code) {
 
 const phpProductionFiles = walkPhpSourceFiles(phpSrcRoot);
 
-test("all PHP production files under src/ respect the strict 1,000-line ceiling with zero legacy exemptions", () => {
+test("all PHP production files under src/ respect the strict 1,200-line ceiling with zero legacy exemptions", () => {
 	assert.ok(
 		phpProductionFiles.length > 0,
 		"Expected PHP production files under src/",

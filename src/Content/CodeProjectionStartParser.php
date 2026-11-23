@@ -37,7 +37,10 @@ final class CodeProjectionStartParser implements BlockStartParserInterface {
 			return null;
 		}
 
-		$parsers = iterator_to_array( $result->getBlockParsers() );
+		$block_parsers = $result->getBlockParsers();
+		$parsers       = is_array( $block_parsers )
+			? array_values( $block_parsers )
+			: iterator_to_array( $block_parsers, false );
 		if ( 1 !== count( $parsers ) ) {
 			return $result;
 		}

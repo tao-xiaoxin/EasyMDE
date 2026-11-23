@@ -62,7 +62,7 @@ export default defineConfig(({ mode }) => {
 			modulePreload: false,
 			sourcemap: false,
 			assetsInlineLimit: 0,
-			rollupOptions: {
+			rolldownOptions: {
 				input: { editor: resolve(repositoryRoot, sourceEntry) },
 				preserveEntrySignatures: "allow-extension",
 				output: {
@@ -70,6 +70,17 @@ export default defineConfig(({ mode }) => {
 					entryFileNames: "assets/admin-editor-[hash].js",
 					chunkFileNames: "assets/admin-editor-chunk-[hash].js",
 					assetFileNames: "assets/admin-editor-[hash][extname]",
+					codeSplitting: {
+						groups: [
+							{
+								// Consolidate statically-booted modules shared with lazy chunks
+								// into one static chunk while keeping dynamic-only chunks deferred.
+								name: "shared",
+								tags: ["$initial"],
+								minShareCount: 2,
+							},
+						],
+					},
 				},
 			},
 		},

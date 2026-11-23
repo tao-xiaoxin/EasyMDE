@@ -247,6 +247,28 @@ test('production build emits an ESM WordPress editor React entry with dynamic ch
     assert.match(chunk, /^assets\/admin-editor-chunk-[a-zA-Z0-9_-]+\.js$/);
     assert.equal(existsSync(join(outputRoot, chunk)), true);
   }
+  const directStaticImports = viteEntry.imports ?? [];
+  assert.ok(
+    directStaticImports.length <= 3,
+    `Expected admin-editor entry to statically import at most 3 chunks, got ${directStaticImports.length}.`
+  );
+  const staticImportKeys = new Set();
+  const pendingStaticImports = [...directStaticImports];
+  while (pendingStaticImports.length > 0) {
+    const importKey = pendingStaticImports.pop();
+    if (typeof importKey !== 'string' || staticImportKeys.has(importKey)) {
+      continue;
+    }
+    staticImportKeys.add(importKey);
+    const importedRecord = viteManifest[importKey];
+    if (Array.isArray(importedRecord?.imports)) {
+      pendingStaticImports.push(...importedRecord.imports);
+    }
+  }
+  assert.ok(
+    staticImportKeys.size <= 3,
+    `Expected admin-editor initial static chunk graph to load at most 3 shared chunks, got ${staticImportKeys.size}.`
+  );
 
   const script = readFileSync(join(outputRoot, viteEntry.file), 'utf8');
   const entryStaticCode = [

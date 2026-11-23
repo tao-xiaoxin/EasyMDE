@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { spawnSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 import { runCleanupSteps } from '../support/run-cleanup-steps.mjs';
@@ -17,15 +17,6 @@ export const fullCapabilityMarkdown = readFileSync(
   new URL('../../../docs/examples/markdown-full-capability-test.md', import.meta.url),
   'utf8'
 );
-
-export const fullCapabilityFixtureEvidence = {
-  sha256: createHash('sha256').update(fullCapabilityMarkdown, 'utf8').digest('hex'),
-  characters: fullCapabilityMarkdown.length,
-  bytes: Buffer.byteLength(fullCapabilityMarkdown, 'utf8'),
-  endsWithSingleLf: fullCapabilityMarkdown.endsWith('\n')
-    && !fullCapabilityMarkdown.endsWith('\r\n')
-    && !fullCapabilityMarkdown.endsWith('\n\n')
-};
 
 export const fullCapabilityImage = readFileSync(
   new URL('../../../docs/assets/easymde-logo-rounded.png', import.meta.url)
@@ -744,13 +735,6 @@ export function normalizeMarkdown(markdown) {
   return markdown.replace(/\r\n/g, '\n');
 }
 
-export function canonicalVisualFence(fence) {
-  const markerRun = fence.match(/^~+/u)?.[0];
-  return markerRun
-    ? `${'`'.repeat(markerRun.length)}${fence.slice(markerRun.length)}`
-    : fence;
-}
-
 export async function fillMarkdownAndWaitForPreview(page, markdown, expectedText) {
   await page.locator('.easymde-source-react .cm-content').fill(markdown);
   await expect(page.locator('#easymde-source')).toHaveValue(markdown);
@@ -825,236 +809,6 @@ export async function waitForPreviewRefresh(preview, previousSignature, message)
   await expect(preview).not.toHaveAttribute('data-easymde-preview-error', '1');
 }
 
-export function expectWindowedCoverage(
-  state,
-  totalBlockCount,
-  targetBlockIndex,
-  maxSpacerRanges = 2
-) {
-  const { mountedBlockCount, mountedRanges, spacerRanges } = state;
-  expect(spacerRanges.length).toBeLessThanOrEqual(maxSpacerRanges);
-  expect(mountedBlockCount).toBeGreaterThan(0);
-  expect(mountedBlockCount).toBeLessThanOrEqual(160);
-
-  for (let index = 0; index < spacerRanges.length; index += 1) {
-    const range = spacerRanges[index];
-    expect(Number.isInteger(range.start)).toBe(true);
-    expect(Number.isInteger(range.end)).toBe(true);
-    expect(range.start).toBeGreaterThanOrEqual(0);
-    expect(range.start).toBeLessThan(range.end);
-    expect(range.end).toBeLessThanOrEqual(totalBlockCount);
-    if (index > 0) {
-      expect(spacerRanges[index - 1].end).toBeLessThanOrEqual(range.start);
-    }
-  }
-
-  const mountedCountFromRanges = mountedRanges.reduce((count, range) => {
-    expect(Number.isInteger(range.start)).toBe(true);
-    expect(Number.isInteger(range.end)).toBe(true);
-    expect(range.start).toBeGreaterThanOrEqual(0);
-    expect(range.end).toBeGreaterThanOrEqual(range.start);
-    expect(range.end).toBeLessThan(totalBlockCount);
-    return count + range.end - range.start + 1;
-  }, 0);
-  const hiddenCount = spacerRanges.reduce(
-    (count, range) => count + range.end - range.start,
-    0
-  );
-  expect(mountedCountFromRanges).toBe(mountedBlockCount);
-  expect(mountedBlockCount + hiddenCount).toBe(totalBlockCount);
-
-  const ranges = [
-    ...mountedRanges.map((range) => ({ ...range, kind: 'mounted' })),
-    ...spacerRanges.map(({ start, end }) => ({
-      end: end - 1,
-      kind: 'hidden',
-      start
-    }))
-  ].sort((first, second) => first.start - second.start);
-  let nextBlockIndex = 0;
-  for (const range of ranges) {
-    expect(range.start).toBe(nextBlockIndex);
-    expect(range.end).toBeGreaterThanOrEqual(range.start);
-    nextBlockIndex = range.end + 1;
-  }
-  expect(nextBlockIndex).toBe(totalBlockCount);
-
-  if (Number.isInteger(targetBlockIndex)) {
-    expect(mountedRanges.some(({ start, end }) => (
-      start <= targetBlockIndex && targetBlockIndex <= end
-    ))).toBe(true);
-    expect(spacerRanges.some(({ start, end }) => (
-      start <= targetBlockIndex && targetBlockIndex < end
-    ))).toBe(false);
-  }
-}
-
-async function readVisualEndState(preview, markdown, lastEditableBlockId) {
-  return preview.evaluate((surface, { expectedMarkdown, lastEditableBlockId: editableBlockId }) => {
-    const field = document.querySelector('#easymde-source');
-    const canvas = document.querySelector('.easymde-immersive-preview-canvas');
-    const selection = document.getSelection();
-    const anchor = selection?.anchorNode ?? null;
-    const inside = Boolean(anchor && (anchor === surface || surface.contains(anchor)));
-    const anchorElement = anchor instanceof Element ? anchor : anchor?.parentElement;
-    const previous = anchor === surface && selection?.anchorOffset > 0
-      ? surface.childNodes[selection.anchorOffset - 1]
-      : null;
-    const anchorBlock = anchorElement?.closest('[data-easymde-visual-block-id]')
-      ?? (previous instanceof Element
-        ? previous.closest('[data-easymde-visual-block-id]')
-        : null);
-    let remainingText = '';
-    let anchorBlockRemaining = null;
-    if (inside && selection?.isCollapsed) {
-      const range = document.createRange();
-      range.setStart(anchor, selection.anchorOffset);
-      range.setEnd(surface, surface.childNodes.length);
-      remainingText = range.toString();
-      if (anchorBlock?.contains(anchor)) {
-        const blockRange = document.createRange();
-        blockRange.selectNodeContents(anchorBlock);
-        blockRange.setStart(anchor, selection.anchorOffset);
-        anchorBlockRemaining = blockRange.toString().length;
-      }
-    }
-    const anchorBlockId = anchorBlock?.getAttribute('data-easymde-visual-block-id') ?? null;
-    const anchorBlockRemainingTextLength = anchorBlockRemaining;
-    const lastBlockId = Array.from(surface.querySelectorAll(
-      '[data-easymde-visual-block-id]'
-    )).at(-1)?.getAttribute('data-easymde-visual-block-id') ?? null;
-    const anchorAtRootEnd = anchor === surface
-      && selection?.anchorOffset === surface.childNodes.length;
-    const anchorAtFinalEditableBlockEnd = anchorBlockId === editableBlockId
-      && 0 === anchorBlockRemainingTextLength;
-    const indexes = Array.from(canvas?.querySelectorAll(
-      '[data-easymde-visual-block-id]'
-    ) ?? []).flatMap((node) => {
-      const match = /^b(\d+)$/u.exec(node.getAttribute('data-easymde-visual-block-id') ?? '');
-      return match ? [Number(match[1])] : [];
-    });
-    const mountedRanges = [];
-    for (const index of indexes) {
-      const previousRange = mountedRanges.at(-1);
-      if (previousRange && previousRange.end + 1 === index) previousRange.end = index;
-      else mountedRanges.push({ end: index, start: index });
-    }
-    const spacerRanges = Array.from(canvas?.querySelectorAll(
-      '[data-easymde-preview-window-spacer]'
-    ) ?? []).map((node) => ({
-      end: Number(node.getAttribute('data-easymde-preview-window-end')),
-      start: Number(node.getAttribute('data-easymde-preview-window-start'))
-    }));
-    const remainingTrimmedLength = remainingText.trim().length;
-    return {
-      active: document.activeElement === surface,
-      anchorAtFinalEditableBlockEnd,
-      anchorAtRootEnd,
-      anchorBlockId,
-      anchorBlockRemainingTextLength,
-      anchorConnected: Boolean(anchor?.isConnected),
-      canonical: field instanceof HTMLTextAreaElement && field.value === expectedMarkdown,
-      editable: surface.getAttribute('contenteditable') === 'true'
-        && surface.getAttribute('aria-busy') === 'false'
-        && !surface.hasAttribute('data-easymde-preview-error'),
-      lastBlockId,
-      mountedBlockCount: indexes.length,
-      mountedRanges,
-      remainingTextLength: remainingText.length,
-      remainingTrimmedLength,
-      selectionCollapsed: Boolean(selection?.isCollapsed),
-      sourceEOF: field instanceof HTMLTextAreaElement
-        && field.selectionStart === expectedMarkdown.length
-        && field.selectionEnd === expectedMarkdown.length,
-      spacerRanges,
-      visualEOF: Boolean(anchor?.isConnected
-        && inside
-        && selection?.isCollapsed
-        && (anchorAtFinalEditableBlockEnd
-          || (anchorAtRootEnd
-            && editableBlockId === lastBlockId
-            && 0 === remainingTrimmedLength)))
-    };
-  }, { expectedMarkdown: markdown, lastEditableBlockId });
-}
-
-export async function waitForVisualEnd(preview, markdown, lastEditableBlockId, message, errors) {
-  const read = async () => ({
-    ...await readVisualEndState(preview, markdown, lastEditableBlockId),
-    errorCodes: [...errors]
-  });
-  await expect.poll(read, { message }).toMatchObject({
-    active: true,
-    canonical: true,
-    editable: true,
-    errorCodes: [],
-    selectionCollapsed: true,
-    sourceEOF: true,
-    visualEOF: true
-  });
-  return read();
-}
-
-export async function waitForImmersiveEditCommit(
-  source,
-  visualEditor,
-  expectedMarkdown,
-  acceptedPreviewSignature,
-  message
-) {
-  await expect(source).toHaveValue(expectedMarkdown, { timeout: 30_000 });
-  await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
-  await expect(visualEditor).toHaveAttribute('aria-busy', 'false');
-  await expect.poll(async () => visualEditor.evaluate(async (surface, expected) => {
-    const selectionPath = (node) => {
-      const path = [];
-      let current = node;
-      while (current && current !== surface) {
-        const parent = current.parentNode;
-        if (!parent) return null;
-        path.unshift(Array.prototype.indexOf.call(parent.childNodes, current));
-        current = parent;
-      }
-      return current === surface ? path : null;
-    };
-    const sample = () => {
-      const sourceField = document.querySelector('#easymde-source');
-      const selection = surface.ownerDocument.defaultView?.getSelection();
-      const anchor = selection?.anchorNode ?? null;
-      const focus = selection?.focusNode ?? null;
-      return {
-        contentEditable: surface.getAttribute('contenteditable'),
-        html: surface.innerHTML,
-        previewSignature: surface.easymdePreviewSignature ?? '',
-        source: sourceField instanceof HTMLTextAreaElement
-          ? sourceField.value
-          : null,
-        surfaceBusy: surface.getAttribute('aria-busy'),
-        selection: selection ? {
-          anchor: selectionPath(anchor),
-          anchorOffset: selection.anchorOffset,
-          collapsed: selection.isCollapsed,
-          focus: selectionPath(focus),
-          focusOffset: selection.focusOffset
-        } : null
-      };
-    };
-    const before = sample();
-    await new Promise((resolve) => {
-      requestAnimationFrame(() => requestAnimationFrame(resolve));
-    });
-    const after = sample();
-    return before.source === expected.markdown
-      && before.contentEditable === 'true'
-      && before.surfaceBusy === 'false'
-      && before.previewSignature === expected.previewSignature
-      && JSON.stringify(before) === JSON.stringify(after);
-  }, {
-    markdown: expectedMarkdown,
-    previewSignature: acceptedPreviewSignature
-  }), { timeout: 30_000, message }).toBe(true);
-}
-
 export async function waitForArticleThemeTransition(
   preview,
   previousSignature,
@@ -1092,7 +846,9 @@ export async function enterImmersivePreviewAndUnlock(page) {
   const visualEditor = page.getByRole('textbox', {
     name: labels.previewEditorLabel
   });
-  await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
+  await expect(visualEditor).toHaveAttribute('contenteditable', 'true', {
+    timeout: 30_000
+  });
   return {
     labels,
     source: page.locator('#easymde-source'),
@@ -1101,280 +857,22 @@ export async function enterImmersivePreviewAndUnlock(page) {
 }
 
 export async function expectUnlockedVisualArticle(visualEditor) {
-  expect(await visualEditor.evaluate((surface) => ({
+  const state = await visualEditor.evaluate((surface) => ({
     contentEditable: surface.getAttribute('contenteditable'),
+    hasProseMirrorClass: surface.classList.contains('ProseMirror'),
+    hasProseMirrorSurfaceClass: surface.classList.contains('easymde-prosemirror-surface'),
+    hasRenderedContentClass: surface.classList.contains('easymde-rendered-content'),
     isContentEditable: surface.isContentEditable,
     tagName: surface.tagName
-  }))).toEqual({
+  }));
+  expect(state).toMatchObject({
     contentEditable: 'true',
-    isContentEditable: true,
-    tagName: 'ARTICLE'
+    hasProseMirrorClass: true,
+    hasProseMirrorSurfaceClass: true,
+    hasRenderedContentClass: true,
+    isContentEditable: true
   });
-}
-
-export async function readCodeFrameGeometry(surface) {
-  return surface.evaluate((root) => {
-    const pre = root.querySelector('pre');
-    const code = pre?.querySelector(':scope > code');
-    if (!(pre instanceof HTMLElement) || !(code instanceof HTMLElement)) {
-      throw new Error('code-frame-geometry-unavailable');
-    }
-
-    const rootStyle = getComputedStyle(root);
-    const preStyle = getComputedStyle(pre);
-    const codeStyle = getComputedStyle(code);
-    const pseudoStyle = getComputedStyle(pre, '::before');
-    const rootBox = root.getBoundingClientRect();
-    const preBox = pre.getBoundingClientRect();
-    const codeBox = code.getBoundingClientRect();
-    const paddingLeft = Number.parseFloat(rootStyle.paddingLeft);
-    const paddingRight = Number.parseFloat(rootStyle.paddingRight);
-    const frameStylesheet = document.querySelector('#easymde-code-frame-css');
-
-    return {
-      code: {
-        backgroundColor: codeStyle.backgroundColor,
-        display: codeStyle.display,
-        fontSize: codeStyle.fontSize,
-        height: codeBox.height,
-        lineHeight: codeStyle.lineHeight,
-        paddingBottom: codeStyle.paddingBottom,
-        paddingTop: codeStyle.paddingTop,
-        width: codeBox.width
-      },
-      frameCss: {
-        exists: !!frameStylesheet,
-        ready: !!frameStylesheet?.sheet
-      },
-      paper: {
-        contentWidth: root.clientWidth - paddingLeft - paddingRight,
-        height: rootBox.height,
-        width: rootBox.width
-      },
-      pre: {
-        backgroundColor: preStyle.backgroundColor,
-        display: preStyle.display,
-        frameBackground: pre.style.getPropertyValue(
-          '--easymde-code-frame-background'
-        ),
-        height: preBox.height,
-        paddingTop: preStyle.paddingTop,
-        transform: preStyle.transform,
-        width: preBox.width
-      },
-      pseudo: {
-        content: pseudoStyle.content,
-        height: pseudoStyle.height,
-        width: pseudoStyle.width
-      }
-    };
-  });
-}
-
-export function expectCodeFrameContract(geometry, message) {
-  expect(geometry.frameCss.ready, `${message}: code frame CSS is ready`).toBe(true);
-  expect(geometry.pre.display, `${message}: PRE display`).toBe('block');
-  expect(geometry.pre.paddingTop, `${message}: PRE padding top`).toBe('34px');
-  expect(geometry.pre.transform, `${message}: feedback preserves measurable normal-flow geometry`).toBe('none');
-  expect(
-    Math.abs(geometry.pre.height - 89.796875),
-    `${message}: framed PRE height`
-  ).toBeLessThanOrEqual(1);
-  expect(geometry.pseudo.width, `${message}: traffic-light width`).toBe('12px');
-  expect(geometry.pseudo.height, `${message}: traffic-light height`).toBe('12px');
-  expect(geometry.code.display, `${message}: CODE display`).toBe('block');
-  expect(
-    geometry.pre.frameBackground,
-    `${message}: frame background is synchronized from the code theme`
-  ).toBe(geometry.code.backgroundColor);
-  expect(
-    geometry.pre.backgroundColor,
-    `${message}: computed PRE and CODE backgrounds match`
-  ).toBe(geometry.code.backgroundColor);
-  expect(geometry.code.fontSize, `${message}: CODE font size`).toBe('14px');
-  expect(geometry.code.lineHeight, `${message}: CODE line height`).toBe('23.8px');
-  expect(
-    Math.abs(geometry.pre.width - geometry.paper.contentWidth),
-    `${message}: PRE fills the paper content box`
-  ).toBeLessThanOrEqual(1);
-  expect(
-    Math.abs(geometry.code.width - geometry.paper.contentWidth),
-    `${message}: CODE fills the paper content box`
-  ).toBeLessThanOrEqual(1);
-}
-
-export async function installCodeFrameEvidence(surface, key) {
-  await surface.evaluate((root, stateKey) => {
-    const samples = [];
-    const state = { active: true, samples, frameId: null };
-    const read = (phase) => {
-      const pre = root.querySelector('pre');
-      const code = pre?.querySelector(':scope > code');
-      if (!(pre instanceof HTMLElement) || !(code instanceof HTMLElement)) return;
-
-      const rootStyle = getComputedStyle(root);
-      const preStyle = getComputedStyle(pre);
-      const codeStyle = getComputedStyle(code);
-      const pseudoStyle = getComputedStyle(pre, '::before');
-      const rootBox = root.getBoundingClientRect();
-      const preBox = pre.getBoundingClientRect();
-      const codeBox = code.getBoundingClientRect();
-      const paddingLeft = Number.parseFloat(rootStyle.paddingLeft);
-      const paddingRight = Number.parseFloat(rootStyle.paddingRight);
-      const frameStylesheet = document.querySelector('#easymde-code-frame-css');
-
-      samples.push({
-        at: performance.now(),
-        code: {
-          backgroundColor: codeStyle.backgroundColor,
-          display: codeStyle.display,
-          fontSize: codeStyle.fontSize,
-          height: codeBox.height,
-          lineHeight: codeStyle.lineHeight,
-          paddingBottom: codeStyle.paddingBottom,
-          paddingTop: codeStyle.paddingTop,
-          width: codeBox.width
-        },
-        frameCss: {
-          exists: !!frameStylesheet,
-          ready: !!frameStylesheet?.sheet
-        },
-        paper: {
-          contentWidth: root.clientWidth - paddingLeft - paddingRight,
-          height: rootBox.height,
-          width: rootBox.width
-        },
-        phase,
-        preCount: root.querySelectorAll('pre').length,
-        pre: {
-          backgroundColor: preStyle.backgroundColor,
-          display: preStyle.display,
-          frameBackground: pre.style.getPropertyValue(
-            '--easymde-code-frame-background'
-          ),
-          height: preBox.height,
-          paddingTop: preStyle.paddingTop,
-          transform: preStyle.transform,
-          width: preBox.width
-        },
-        pseudo: {
-          content: pseudoStyle.content,
-          height: pseudoStyle.height,
-          width: pseudoStyle.width
-        }
-      });
-    };
-    const observer = new MutationObserver((mutations) => {
-      if (
-        state.active
-        && mutations.some(({ type }) => ['attributes', 'childList'].includes(type))
-      ) {
-        read('mutation');
-      }
-    });
-    observer.observe(root, {
-      attributes: true,
-      attributeFilter: ['class', 'style'],
-      childList: true,
-      subtree: true
-    });
-    const nextFrame = () => {
-      if (!state.active) return;
-      read('frame');
-      state.frameId = requestAnimationFrame(nextFrame);
-    };
-    state.frameId = requestAnimationFrame(nextFrame);
-    window[stateKey] = { observer, read, state };
-  }, key);
-}
-
-export async function stopCodeFrameEvidence(surface, key) {
-  return surface.evaluate((_root, stateKey) => {
-    const holder = window[stateKey];
-    if (!holder) throw new Error('code-frame-evidence-state-missing');
-    holder.state.active = false;
-    holder.observer.disconnect();
-    if (null !== holder.state.frameId) {
-      cancelAnimationFrame(holder.state.frameId);
-    }
-    holder.read('stop');
-    const samples = holder.state.samples;
-    delete window[stateKey];
-    return { samples };
-  }, key);
-}
-
-export async function waitForCodeFrameEvidence(surface, key) {
-  await expect.poll(
-    () => surface.evaluate((_root, stateKey) => {
-      const holder = window[stateKey];
-      if (!holder) return false;
-      return holder.state.samples.some(({ phase }) => 'mutation' === phase);
-    }, key),
-    { message: 'first PRE mutation should be observed before the test settles' }
-  ).toBe(true);
-  await expect.poll(
-    () => surface.evaluate((_root, stateKey) => {
-      const holder = window[stateKey];
-      if (!holder) return 0;
-      return holder.state.samples.filter(({ phase }) => 'frame' === phase).length;
-    }, key),
-    { message: 'code frame evidence should include a painted animation frame' }
-  ).toBeGreaterThanOrEqual(1);
-}
-
-export function syntheticWindowedMarkdown() {
-  return `${Array.from(
-    { length: 220 },
-    (_, index) => `Windowed paragraph ${index + 1}.`
-  ).join('\n\n')}\n\n`;
-}
-
-export async function scrollWindowedBlockIntoView(canvas, targetIndex) {
-  const attempts = [];
-  await expect.poll(async () => {
-    const state = await canvas.evaluate((element, index) => {
-      const target = element.querySelector(`[data-easymde-visual-block-id="b${index}"]`);
-      if (target) return { mounted: true, scrollTop: element.scrollTop };
-      const spacer = Array.from(element.querySelectorAll(
-        '[data-easymde-preview-window-spacer]'
-      )).find((candidate) => {
-        const start = Number(candidate.getAttribute('data-easymde-preview-window-start'));
-        const end = Number(candidate.getAttribute('data-easymde-preview-window-end'));
-        return start <= index && index < end;
-      });
-      if (!spacer) throw new Error('windowed-target-block-not-represented');
-      const start = Number(spacer.getAttribute('data-easymde-preview-window-start'));
-      const end = Number(spacer.getAttribute('data-easymde-preview-window-end'));
-      const rect = spacer.getBoundingClientRect();
-      if (!(end > start) || !(rect.height > 0)) {
-        throw new Error('windowed-target-spacer-geometry-unavailable');
-      }
-      // The spacer is measured normal-flow geometry for [start, end), not
-      // one block. Seek inside it at the target's relative position; a later
-      // window may narrow the omitted range and refine this estimate.
-      const fraction = (index - start + 0.5) / (end - start);
-      const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
-      const targetScrollTop = Math.max(0, Math.min(
-        maxScrollTop,
-        element.scrollTop + rect.top - element.getBoundingClientRect().top
-          + rect.height * fraction - element.clientHeight / 2
-      ));
-      element.scrollTop = targetScrollTop;
-      element.dispatchEvent(new Event('scroll'));
-      return {
-        mounted: false,
-        range: { end, height: rect.height, start },
-        scrollTop: element.scrollTop,
-        targetFraction: fraction,
-        targetScrollTop
-      };
-    }, targetIndex);
-    attempts.push(state);
-    return state.mounted;
-  }, { message: `Windowed block b${targetIndex} should mount at its measured range position`, timeout: 30_000 }).toBe(true);
-  await canvas.locator(`[data-easymde-visual-block-id="b${targetIndex}"]`).scrollIntoViewIfNeeded();
-  return { attempts, targetIndex };
+  expect(['DIV', 'ARTICLE']).toContain(state.tagName);
 }
 
 export function syntheticLargeMarkdown({

@@ -15,8 +15,7 @@ import {
   installMonitorRejectionBridge,
   observePreviewLedgerAbort,
   observePreviewLedgerSuccess,
-  previewLedgerRequest,
-  registerVisualEditingHooks
+  previewLedgerRequest
 } from '../helpers/visual-editing-helpers.mjs';
 
 // Installed Playwright otherwise captures the article's ARIA text on failure.
@@ -25,8 +24,6 @@ process.env.PLAYWRIGHT_NO_COPY_PROMPT = '1';
 // Credentials are supplied by the existing local Playwright environment.
 // Do not record login fields, network payloads, or unsanitized diagnostics.
 test.use({ trace: 'off', video: 'off', screenshot: 'off', permissions: ['clipboard-read', 'clipboard-write'] });
-
-registerVisualEditingHooks();
 
 test('[monitor-contract] preview-read ledger follows ordered abort chains and permits local completion', () => {
   const abortHarness = createPreviewLedgerHarness();

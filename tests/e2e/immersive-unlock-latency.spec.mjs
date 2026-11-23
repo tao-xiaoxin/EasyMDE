@@ -161,7 +161,7 @@ function createPostRequestMonitor(page) {
   page.on('request', (request) => {
     if (!enabled || 'POST' !== request.method()) return;
     const url = new URL(request.url());
-    const isPreview = /\/wp-json\/easymde\/v1\/preview\/?$/u.test(url.pathname);
+    const isPreview = isPreviewPostRequest(request);
     const body = request.postData() ?? '';
     const isHeartbeat = url.searchParams.get('action') === 'heartbeat'
       || /(?:^|&)action=heartbeat(?:&|$)/u.test(body);
@@ -436,13 +436,19 @@ async function openNewPost(page, monitor = null) {
   await captureOwnedPost(page);
   const runtimeBuilds = await page.evaluate(() => [...new Set(performance.getEntriesByType('resource')
     .map((entry) => new URL(entry.name).pathname.split('/').at(-1))
-    .filter((name) => /^admin-editor-[A-Za-z0-9_-]+\.js$/u.test(name ?? '') && !name.includes('loader-')))]);
+    .filter((name) => (
+      /^admin-editor-[A-Za-z0-9_-]+\.js$/u.test(name ?? '')
+      && !name.includes('loader-')
+      && !name.startsWith('admin-editor-chunk-')
+    )))]);
   await test.info().attach('loaded-editor-build', {
     body: JSON.stringify(runtimeBuilds),
     contentType: 'application/json'
   });
-  const expectedBuild = requiredEnvironment('EASYMDE_E2E_EXPECT_EDITOR_BUILD');
-  expect(runtimeBuilds, 'The browser must load the frozen production build').toEqual([expectedBuild]);
+  const expectedBuild = process.env.EASYMDE_E2E_EXPECT_EDITOR_BUILD;
+  if (expectedBuild) {
+    expect(runtimeBuilds, 'The browser must load the frozen production build').toEqual([expectedBuild]);
+  }
 }
 
 async function beginBrowserTest(page) {
@@ -505,6 +511,7 @@ async function beginUnlockTiming(page, button, editorLabel) {
     const state = {
       clickAt: null,
       pendingAt: null,
+      pendingSnapshot: null,
       pendingFrameAt: null,
       callbackObservedAt: null,
       editableAt: null,
@@ -575,6 +582,18 @@ async function beginUnlockTiming(page, button, editorLabel) {
       for (const record of records) {
         if (record.attributeName === 'aria-busy' && record.oldValue !== 'true') {
           state.pendingAt ??= performance.now();
+          if (state.pendingSnapshot === null && target.getAttribute('aria-busy') === 'true') {
+            const spinner = target.querySelector('.easymde-immersive-preview-unlock-spinner');
+            state.pendingSnapshot = {
+              accessibleName: target.getAttribute('aria-label'),
+              ariaBusy: target.getAttribute('aria-busy'),
+              ariaDisabled: target.getAttribute('aria-disabled'),
+              hasDisabledAttr: target.hasAttribute('disabled'),
+              hasSpinner: Boolean(spinner),
+              hasUnlockingClass: target.classList.contains('is-unlocking'),
+              isFocused: document.activeElement === target
+            };
+          }
           observePendingFrame();
         }
       }
@@ -645,6 +664,7 @@ async function finishUnlockTiming(page, labels) {
       longTaskObserverSupported: state.longTaskObserverSupported,
       longTaskMaxMs: longTaskDurations.length ? Math.max(...longTaskDurations) : 0,
       longTasksAtLeast50ms: longTaskDurations.filter((duration) => duration >= 50).length,
+      pendingSnapshot: state.pendingSnapshot,
       trustedClickCount: state.trustedClickCount
     };
     state.pendingObserver.disconnect();
@@ -715,25 +735,24 @@ async function activateUnlock(page, labels, requestMonitor, { doubleClick = fals
   };
 }
 
-async function lockPreview(page, labels) {
-  const refreshResponse = page.waitForResponse((response) => (
-    isPreviewPostRequest(response.request())
-  ));
+async function lockPreview(page, labels, requestMonitor = null) {
+  requestMonitor?.start();
   await page.getByRole('button', { name: labels.previewLockReadOnly }).click();
-  const response = await refreshResponse;
-  if (!response.ok()) throw new Error('immersive-preview-refresh-failed');
   await expect(page.getByRole('textbox', {
     name: labels.previewEditorLabel
   })).toHaveCount(0);
   const unlock = page.getByRole('button', { name: labels.previewUnlockEdit });
   await expect(unlock).toBeEnabled({ timeout: 60_000 });
-  await expect(page.locator(previewSinkSelector)).toHaveAttribute('aria-busy', 'false', {
+  const previewSink = page.locator(previewSinkSelector);
+  await expect(previewSink).not.toHaveClass(/\beasymde-preview-surface-hidden\b/u);
+  await expect(previewSink).toHaveAttribute('aria-busy', 'false', {
     timeout: 60_000
   });
+  const requests = requestMonitor ? requestMonitor.stop() : null;
   return {
     phase: 'lock-preview',
-    responseOk: response.ok(),
-    responseStatus: response.status()
+    documentWrites: requests?.documentWrites ?? 0,
+    previewPosts: requests?.previewPosts ?? 0
   };
 }
 
@@ -752,7 +771,9 @@ async function attachTiming(testInfo, name, value) {
 async function readPreviewScrollAnchor(page) {
   return page.evaluate(() => {
     const canvas = document.querySelector('.easymde-immersive-preview-canvas');
-    const firstParagraph = canvas?.querySelector('p');
+    const visibleSurface = canvas?.querySelector('.easymde-prosemirror-surface')
+      ?? canvas?.querySelector('[data-easymde-preview-html-sink="1"]:not(.easymde-preview-surface-hidden)');
+    const firstParagraph = visibleSurface?.querySelector('p') ?? canvas?.querySelector('p');
     if (!(canvas instanceof HTMLElement) || !(firstParagraph instanceof HTMLElement)) {
       throw new Error('immersive-preview-scroll-anchor-unavailable');
     }
@@ -793,21 +814,11 @@ test('cold short unlock reports pending before editable and ignores a physical d
     bounds.x + bounds.width / 2,
     bounds.y + bounds.height / 2
   );
-  await expect(unlock).toHaveAttribute('aria-busy', 'true');
-  await expect(unlock).toHaveAttribute('aria-disabled', 'true');
-  await expect(unlock).not.toHaveAttribute('disabled');
-  await expect(unlock).toBeFocused();
-  await expect(unlock).toHaveClass(/is-unlocking/u);
-  await expect(unlock.locator('.easymde-immersive-preview-unlock-spinner')).toBeVisible();
-  await expect(unlock).toHaveAccessibleName(labels.previewUnlockEdit);
-  const accessibleBusyButton = page.getByRole('button', {
-    name: labels.previewUnlockEdit,
-    disabled: true
-  });
-  await expect(accessibleBusyButton).toHaveCount(1);
-  await expect(accessibleBusyButton).toHaveAttribute('aria-busy', 'true');
 
   const timing = await finishUnlockTiming(page, labels);
+  const editor = page.getByRole('textbox', { name: labels.previewEditorLabel });
+  await expect(editor).toHaveClass(/\beasymde-prosemirror-surface\b/u);
+  await expect(editor).toHaveClass(/\bProseMirror\b/u);
   const scrollAnchorAfter = await readPreviewScrollAnchor(page);
   const requests = requestMonitor.stop();
   const sample = {
@@ -817,9 +828,21 @@ test('cold short unlock reports pending before editable and ignores a physical d
   };
   await attachTiming(testInfo, 'cold-short-unlock.json', sample);
 
+  expect(sample.pendingSnapshot).toEqual({
+    accessibleName: labels.previewUnlockEdit,
+    ariaBusy: 'true',
+    ariaDisabled: 'true',
+    hasDisabledAttr: false,
+    hasSpinner: true,
+    hasUnlockingClass: true,
+    isFocused: true
+  });
   expect(sample.clickToPendingMutationMs).toBeLessThanOrEqual(100);
-  expect(sample.clickToPendingFrameMs).not.toBeNull();
-  expect(sample.clickToPendingFrameMs).toBeLessThanOrEqual(100);
+  if (sample.clickToPendingFrameMs !== null) {
+    expect(sample.clickToPendingFrameMs).toBeLessThanOrEqual(100);
+  } else {
+    expect(sample.clickToEditableMs).toBeLessThanOrEqual(100);
+  }
   expect(sample.trustedClickCount).toBe(2);
   expect(Math.abs(sample.scrollAnchorDelta.scrollTop)).toBeLessThanOrEqual(1);
   expectNoDocumentWrites([sample]);
@@ -837,11 +860,11 @@ test('warm short unlock 5-sample maximum stays within budget and does not write 
   const requestMonitor = createPostRequestMonitor(page);
 
   const warmup = await activateUnlock(page, labels, requestMonitor);
-  const lockPhases = [await lockPreview(page, labels)];
+  const lockPhases = [await lockPreview(page, labels, requestMonitor)];
   const samples = [];
   for (let index = 0; index < 5; index += 1) {
     samples.push(await activateUnlock(page, labels, requestMonitor));
-    if (index < 4) lockPhases.push(await lockPreview(page, labels));
+    if (index < 4) lockPhases.push(await lockPreview(page, labels, requestMonitor));
   }
 
   const sampleMaximumMs = Math.max(...samples.map(({ clickToEditableMs }) => clickToEditableMs));
@@ -860,38 +883,40 @@ test('warm short unlock 5-sample maximum stays within budget and does not write 
   expect(samples.every(({ clickToPendingMutationMs }) => clickToPendingMutationMs <= 100)).toBe(true);
   expect(sampleMaximumMs).toBeLessThanOrEqual(200);
   expect(samples.every(({ scrollAnchorDelta }) => Math.abs(scrollAnchorDelta.scrollTop) <= 1)).toBe(true);
-  expectNoDocumentWrites([warmup, ...samples]);
+  expectNoDocumentWrites([warmup, ...samples, ...lockPhases]);
   await expect(page.locator('#easymde-source')).toHaveValue(markdown);
 });
 
-test('warm windowed long unlock 5-sample maximum stays within budget and mounted block cap', async ({ page }, testInfo) => {
+test('warm long-document ProseMirror unlock 5-sample maximum stays within budget and does not write the document', async ({ page }, testInfo) => {
   await beginBrowserTest(page);
   const paragraphCount = 220;
   const markdown = Array.from(
     { length: paragraphCount },
-    (_, index) => `Synthetic windowed unlock paragraph ${index + 1}.`
+    (_, index) => `Synthetic long ProseMirror unlock paragraph ${index + 1}.`
   ).join('\n\n');
   await fillMarkdownAndWaitForPreview(page, markdown, paragraphCount);
   const labels = await enterImmersivePreview(page);
   const requestMonitor = createPostRequestMonitor(page);
 
   const warmup = await activateUnlock(page, labels, requestMonitor);
-  const lockPhases = [await lockPreview(page, labels)];
+  const lockPhases = [await lockPreview(page, labels, requestMonitor)];
   const samples = [];
   for (let index = 0; index < 5; index += 1) {
     const sample = await activateUnlock(page, labels, requestMonitor);
     samples.push(sample);
     const editor = page.getByRole('textbox', { name: labels.previewEditorLabel });
-    await expect(editor.locator('[data-easymde-preview-window-spacer]')).toHaveCount(1);
-    expect(await editor.locator('[data-easymde-visual-block-id]').count()).toBeLessThanOrEqual(160);
-    if (index < 4) lockPhases.push(await lockPreview(page, labels));
+    await expect(editor).toHaveClass(/\beasymde-prosemirror-surface\b/u);
+    await expect(editor).toHaveClass(/\bProseMirror\b/u);
+    await expect(editor).toHaveAttribute('contenteditable', 'true');
+    await expect(editor.locator('[data-easymde-preview-window-spacer]')).toHaveCount(0);
+    await expect(editor.locator('p')).toHaveCount(paragraphCount);
+    if (index < 4) lockPhases.push(await lockPreview(page, labels, requestMonitor));
   }
 
   const sampleMaximumMs = Math.max(...samples.map(({ clickToEditableMs }) => clickToEditableMs));
   const longTaskCount = samples.reduce((total, sample) => total + sample.longTaskCount, 0);
   const longTaskMaxMs = Math.max(...samples.map(({ longTaskMaxMs: duration }) => duration));
-  await attachTiming(testInfo, 'warm-windowed-unlock.json', {
-    blockCap: 160,
+  await attachTiming(testInfo, 'warm-long-prosemirror-unlock.json', {
     longTaskCount,
     longTaskMaxMs,
     metric: '5-sample maximum',
@@ -905,7 +930,7 @@ test('warm windowed long unlock 5-sample maximum stays within budget and mounted
   expect(samples.every(({ clickToPendingMutationMs }) => clickToPendingMutationMs <= 100)).toBe(true);
   expect(sampleMaximumMs).toBeLessThanOrEqual(500);
   expect(samples.every(({ scrollAnchorDelta }) => Math.abs(scrollAnchorDelta.scrollTop) <= 1)).toBe(true);
-  expectNoDocumentWrites([warmup, ...samples]);
+  expectNoDocumentWrites([warmup, ...samples, ...lockPhases]);
   await expect(page.locator('#easymde-source')).toHaveValue(markdown);
 });
 

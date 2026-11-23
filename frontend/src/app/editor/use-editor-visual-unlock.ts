@@ -8,10 +8,7 @@ import {
   type PreviewEnhancementPort,
   previewEnhancementFailureCode
 } from '../../features/live-preview/ports/preview-enhancement-port';
-import type {
-  PreviewSurfaceRuntime,
-  PreviewSurfaceStatus
-} from '../../features/live-preview/ui/PreviewSurfaceOwner';
+import type { PreviewSurfaceStatus } from '../../features/live-preview/ui/PreviewSurfaceOwner';
 import { preloadImmersiveVisualEditor } from './ImmersiveVisualEditorHost';
 import type {
   CodeThemePreparation,
@@ -34,10 +31,8 @@ export type UseEditorVisualUnlockOptions = Readonly<{
   leaveVisualPreviewRef: SharedRef<
     (options?: Readonly<{ suppressRefresh?: boolean }>) => boolean
   >;
-  notifyContextMenuReadiness: () => void;
   previewAppearanceRef: SharedRef<AppearanceState>;
   previewRefreshPendingRef: SharedRef<boolean>;
-  previewRuntimeRef: SharedRef<PreviewSurfaceRuntime | null>;
   previewSurfaceStatusRef: SharedRef<PreviewSurfaceStatus>;
   reportFailure: (code: string) => void;
   rootActiveRef: SharedRef<boolean>;
@@ -51,7 +46,6 @@ export type UseEditorVisualUnlockOptions = Readonly<{
   visualPreviewChangedRef: SharedRef<boolean>;
   visualPreviewEditingRef: SharedRef<boolean>;
   visualPreviewLockingRef: SharedRef<boolean>;
-  visualPreviewWindowRequestedRef: SharedRef<boolean>;
 }>;
 
 export function useEditorVisualUnlock({
@@ -66,10 +60,8 @@ export function useEditorVisualUnlock({
   lastVisualFailureRef,
   layoutScrollRestoreRef,
   leaveVisualPreviewRef,
-  notifyContextMenuReadiness,
   previewAppearanceRef,
   previewRefreshPendingRef,
-  previewRuntimeRef,
   previewSurfaceStatusRef,
   reportFailure,
   rootActiveRef,
@@ -82,13 +74,8 @@ export function useEditorVisualUnlock({
   visualEditorRuntimeRef,
   visualPreviewChangedRef,
   visualPreviewEditingRef,
-  visualPreviewLockingRef,
-  visualPreviewWindowRequestedRef
+  visualPreviewLockingRef
 }: UseEditorVisualUnlockOptions) {
-  const cancelVisualPreviewWindowUnlock = useCallback(() => {
-    visualPreviewWindowRequestedRef.current = false;
-  }, [visualPreviewWindowRequestedRef]);
-
   const cancelVisualUnlockPreparation = useCallback(() => {
     const preparation = codeThemePreparationRef.current;
     if ('visual-unlock' !== preparation?.owner) return;
@@ -104,16 +91,12 @@ export function useEditorVisualUnlock({
         suppressRefresh?: boolean;
       }> = {}
     ) => {
-      if (
-        !visualPreviewEditingRef.current
-        && !visualPreviewWindowRequestedRef.current
-      ) {
+      if (!visualPreviewEditingRef.current) {
         return false;
       }
       const needsRefresh =
         !options.suppressRefresh && hasUnsyncedVisualChanges();
       lastVisualFailureRef.current = null;
-      visualPreviewWindowRequestedRef.current = false;
       visualPreviewEditingRef.current = false;
       visualPreviewChangedRef.current = false;
       setVisualPreviewEditing(false);
@@ -136,15 +119,10 @@ export function useEditorVisualUnlock({
       setVisualPreviewPending,
       setVisualPreviewUnlocking,
       visualPreviewChangedRef,
-      visualPreviewEditingRef,
-      visualPreviewWindowRequestedRef
+      visualPreviewEditingRef
     ]
   );
   leaveVisualPreviewRef.current = leaveVisualPreview;
-
-  const handlePreviewWindowReady = useCallback(() => {
-    notifyContextMenuReadiness();
-  }, [notifyContextMenuReadiness]);
 
   const requestVisualPreviewUnlock = useCallback(() => {
     if (
@@ -299,22 +277,17 @@ export function useEditorVisualUnlock({
   ]);
 
   const prepareVisualSource = useCallback(() => {
-    if (
-      !visualPreviewEditingRef.current
-      && !visualPreviewWindowRequestedRef.current
-    ) {
+    if (!visualPreviewEditingRef.current) {
       cancelVisualUnlockPreparation();
       return true;
     }
-    if (!visualPreviewEditingRef.current) return true;
     const runtime = visualEditorRuntimeRef.current;
     if (!runtime) return true;
     return runtime.prepareToolbarFallback();
   }, [
     cancelVisualUnlockPreparation,
     visualEditorRuntimeRef,
-    visualPreviewEditingRef,
-    visualPreviewWindowRequestedRef
+    visualPreviewEditingRef
   ]);
 
   const prepareSourceMutation = useCallback(() => {
@@ -358,39 +331,22 @@ export function useEditorVisualUnlock({
   const prepareSourceMutationWithPreview = useCallback(
     async (
       options: Readonly<{
-        materialize?: boolean;
+        requireSync?: boolean;
         suppressRefresh?: boolean;
         isCurrent?: () => boolean;
       }> = {}
     ) => {
-      if (
-        !visualPreviewEditingRef.current
-        && !visualPreviewWindowRequestedRef.current
-      ) {
+      if (!visualPreviewEditingRef.current) {
         return true;
       }
-      if (false !== options.materialize || visualPreviewChangedRef.current) {
+      if (false !== options.requireSync || visualPreviewChangedRef.current) {
         if (!prepareVisualSource()) return false;
       }
-      const isCurrent = options.isCurrent;
-      const leaveOptions: Readonly<{ suppressRefresh?: boolean }> =
-        true === options.suppressRefresh ? { suppressRefresh: true } : {};
-      if (false !== options.materialize) {
-        const previewRuntime = previewRuntimeRef.current;
-        if (!previewRuntime) throw new Error('preview-runtime-unavailable');
-        const materialized = await previewRuntime.materialize();
-        if (isCurrent && !isCurrent()) {
-          return false;
-        }
-        if (!materialized) {
-          visualPreviewLockingRef.current = false;
-          leaveVisualPreview(leaveOptions);
-          return false;
-        }
-      }
-      if (isCurrent && !isCurrent()) {
+      if (options.isCurrent && !options.isCurrent()) {
         return false;
       }
+      const leaveOptions: Readonly<{ suppressRefresh?: boolean }> =
+        true === options.suppressRefresh ? { suppressRefresh: true } : {};
       visualPreviewLockingRef.current = false;
       leaveVisualPreview(leaveOptions);
       return true;
@@ -398,10 +354,9 @@ export function useEditorVisualUnlock({
     [
       leaveVisualPreview,
       prepareVisualSource,
-      previewRuntimeRef,
+      visualPreviewChangedRef,
       visualPreviewEditingRef,
-      visualPreviewLockingRef,
-      visualPreviewWindowRequestedRef
+      visualPreviewLockingRef
     ]
   );
 
@@ -413,9 +368,7 @@ export function useEditorVisualUnlock({
   );
 
   return {
-    cancelVisualPreviewWindowUnlock,
     cancelVisualUnlockPreparation,
-    handlePreviewWindowReady,
     leaveVisualPreview,
     prepareGeneratedSourceNavigation,
     prepareSourceMutation,

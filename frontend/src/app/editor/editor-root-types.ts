@@ -50,7 +50,6 @@ import type { WechatClipboardPort } from '../../contracts/ports/wechat-clipboard
 import type { WechatVisualRasterizationPort } from '../../contracts/ports/wechat-visual-rasterization-port';
 import type {
   ImmersiveVisualEditorRuntime,
-  ImmersiveWindowAcceptedSnapshot,
   VisualCanonicalChangeRequest,
   VisualToolbarCommandResult
 } from '../../contracts/visual-editor';
@@ -80,7 +79,6 @@ import type { EditorMessageAlertType } from '../../shared/ui/EditorMessageAlert'
 
 export type {
   ImmersiveVisualEditorRuntime,
-  ImmersiveWindowAcceptedSnapshot,
   VisualCanonicalChangeRequest,
   VisualToolbarCommandResult
 };
@@ -256,20 +254,9 @@ export type PendingImageTargetPin = {
   source: string;
 };
 
-export type VisualPreviewWindowRequest = Readonly<{
-  revision: number;
-  signature: string;
-}>;
-
 export type EditorVisualPreviewSnapshot = Readonly<{
   editMap: PreviewEditMap | null;
   html: SafePreviewHtml;
-  revision: number;
-  signature: string;
-}>;
-
-export type EditorVisualPreviewSnapshotLike = Readonly<{
-  editMap?: PreviewEditMap | null;
   revision: number;
   signature: string;
 }>;

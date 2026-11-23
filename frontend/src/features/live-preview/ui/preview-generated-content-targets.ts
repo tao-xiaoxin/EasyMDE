@@ -10,16 +10,11 @@ import {
 	lowerBoundByFrom,
 	mermaidOriginalForCodeBlock,
 	previewImageSelectionBlockIndices,
-	previewSourceSelectionBlockIndices,
 	sourceSelectionMatchesGeneratedRanges,
 } from "./preview-selection-block-map";
-import {
-	clearDocumentEndPin,
-	isCurrentAcceptedGeneratedPreview,
-} from "./preview-surface-runtime-helpers";
+import { isCurrentAcceptedGeneratedPreview } from "./preview-surface-runtime-helpers";
 import type {
 	AcceptedGeneratedPreview,
-	MutablePreviewDocumentEndPin,
 	PreviewGeneratedContentTargetForSelectionRequest,
 	PreviewGeneratedContentTargetIndex,
 	PreviewGeneratedContentTargetLease,
@@ -46,8 +41,9 @@ function mintGeneratedContentTargetForBlock(
 		!blockId ||
 		!accepted.editMap ||
 		accepted.editMap.signature !== accepted.signature
-	)
+	) {
 		return null;
+	}
 	const blockIndex = accepted.editMap.blocks.findIndex(
 		(block) => block.id === blockId,
 	);
@@ -151,8 +147,9 @@ function currentGeneratedContentTarget(
 		request.element.ownerDocument !== surface.ownerDocument ||
 		!surface.contains(request.element) ||
 		!request.element.isConnected
-	)
+	) {
 		return false;
+	}
 	if (!accepted.editMap || accepted.editMap.signature !== accepted.signature) {
 		return false;
 	}
@@ -172,36 +169,26 @@ function currentGeneratedContentTarget(
 			target.original.bodyRange.from,
 			target.original.bodyRange.to,
 		) !== target.original.body
-	)
+	) {
 		return false;
+	}
 	const visualBlock = request.element.closest("[data-easymde-visual-block-id]");
 	if (
 		!(visualBlock instanceof HTMLElement) ||
 		visualBlock.getAttribute("data-easymde-visual-block-id") !== target.blockId
-	)
+	) {
 		return false;
+	}
 	if ("math" === target.kind) {
-		if (
-			!request.element.matches(".easymde-math") ||
-			1 !== request.element.querySelectorAll(".katex-mathml > math").length
-		)
-			return false;
-	} else if (
-		!request.element.matches(".easymde-mermaid") ||
-		1 !== request.element.querySelectorAll("svg").length
-	)
-		return false;
-	if (!refs.windowedRef.current) return true;
-	const repository = refs.previewWindowRepositoryRef.current;
-	if (
-		!repository ||
-		repository.context.revision !== accepted.generation ||
-		repository.context.signature !== accepted.signature ||
-		repository.indexById.get(target.blockId) !== blockIndex ||
-		repository.nodes[blockIndex] !== visualBlock
-	)
-		return false;
-	return true;
+		return (
+			request.element.matches(".easymde-math") &&
+			1 === request.element.querySelectorAll(".katex-mathml > math").length
+		);
+	}
+	return (
+		request.element.matches(".easymde-mermaid") &&
+		1 === request.element.querySelectorAll("svg").length
+	);
 }
 
 function generatedRootForTarget(
@@ -212,15 +199,13 @@ function generatedRootForTarget(
 	const accepted = refs.acceptedGeneratedPreviewRef.current;
 	const blockRange = accepted?.blockRanges.get(target.blockId);
 	if (!accepted || !blockRange) return null;
-	const repository = refs.previewWindowRepositoryRef.current;
-	const block = refs.windowedRef.current
-		? repository?.nodes[blockRange.index]
-		: surface.children[blockRange.index];
+	const block = surface.children[blockRange.index];
 	if (
 		!(block instanceof HTMLElement) ||
 		block.getAttribute("data-easymde-visual-block-id") !== target.blockId
-	)
+	) {
 		return null;
+	}
 	return generatedRootsForBlock(block, target.kind)[target.ordinal] ?? null;
 }
 
@@ -351,8 +336,9 @@ function generatedContentTargetForSelection(
 			"code" !== sourceBlock?.kind ||
 			(sourceBlock?.from ?? 0) < blockRange.start ||
 			(sourceBlock?.to ?? 0) > blockRange.end
-		)
+		) {
 			continue;
+		}
 		const original = mermaidOriginalForCodeBlock(
 			request.index.source,
 			sourceBlock,
@@ -364,8 +350,9 @@ function generatedContentTargetForSelection(
 				original.fullRange,
 				original.bodyRange,
 			)
-		)
+		) {
 			matchingMermaidCandidates.push({ index, original });
+		}
 	}
 	if (matchingMermaidCandidates.length > 1) return null;
 	const mermaidCandidate = matchingMermaidCandidates[0];
@@ -383,8 +370,9 @@ function generatedContentTargetForSelection(
 				sourceBlock.from >= blockRange.start &&
 				sourceBlock.to <= blockRange.end &&
 				mermaidOriginalForCodeBlock(request.index.source, sourceBlock)
-			)
+			) {
 				ordinal += 1;
+			}
 		}
 		candidates.push({
 			kind: "mermaid",
@@ -418,8 +406,9 @@ function generatedContentTargetForSelection(
 	if (
 		"associated" !== associated.status ||
 		!generatedTargetMatchesSourceSelection(associated.target, request.selection)
-	)
+	) {
 		return null;
+	}
 	return {
 		kind: candidate.kind,
 		ordinal: candidate.ordinal,
@@ -437,8 +426,9 @@ export function assignGeneratedContentTargetHandlers(
 			!accepted ||
 			!surface ||
 			!isCurrentAcceptedGeneratedPreview(refs, accepted, surface, true)
-		)
+		) {
 			return null;
+		}
 		return {
 			editMap: accepted.editMap,
 			revision: accepted.generation,
@@ -462,86 +452,6 @@ export function assignGeneratedContentTargetHandlers(
 		);
 	};
 
-	refs.prepareGeneratedContentTargetBySelectionRef.current = (request) => {
-		const accepted = refs.acceptedGeneratedPreviewRef.current;
-		const surface = refs.surfaceRef.current;
-		if (
-			!accepted ||
-			!surface ||
-			!accepted.editMap ||
-			!refs.windowedRef.current ||
-			null === accepted.requestRevision
-		)
-			return null;
-		const targetIndices = previewSourceSelectionBlockIndices(
-			accepted.markdown,
-			accepted.editMap,
-			accepted.signature,
-			request.selection,
-		);
-		if (1 !== targetIndices.length) return null;
-		const blockIndex = targetIndices[0];
-		if (undefined === blockIndex) return null;
-		const block = accepted.editMap.blocks[blockIndex];
-		if (!block?.editable) return null;
-		const target = mintGeneratedContentTargetForBlock(
-			request,
-			accepted,
-			block.id,
-		);
-		if (
-			!target ||
-			!generatedTargetMatchesSourceSelection(target, request.selection)
-		)
-			return null;
-		if (refs.documentEndPinRef.current) {
-			throw new Error("preview-window-generated-target-pin-already-active");
-		}
-		const pin: MutablePreviewDocumentEndPin = {
-			generation: accepted.generation,
-			requestRevision: accepted.requestRevision,
-			signature: accepted.signature,
-			sourceSelection: request.selection,
-			targetIndices,
-		};
-		refs.documentEndPinRef.current = pin;
-		let released = false;
-		const release = () => {
-			if (released) return;
-			released = true;
-			clearDocumentEndPin(refs, pin, true);
-		};
-		const getLease = (): PreviewGeneratedContentTargetLease | null => {
-			if (
-				released ||
-				refs.documentEndPinRef.current !== pin ||
-				!isCurrentAcceptedGeneratedPreview(refs, accepted, surface, true)
-			)
-				return null;
-			const element = generatedRootForTarget(refs, target, surface);
-			if (!element) return null;
-			return createGeneratedContentTargetLease(
-				refs,
-				target,
-				element,
-				accepted,
-				surface,
-				release,
-				() => !released && refs.documentEndPinRef.current === pin,
-			);
-		};
-		refs.scheduleWindowRef.current();
-		return {
-			getLease,
-			isCurrent: () =>
-				!released &&
-				refs.documentEndPinRef.current === pin &&
-				isCurrentAcceptedGeneratedPreview(refs, accepted, surface),
-			release,
-			target,
-		};
-	};
-
 	refs.prepareGeneratedContentTargetForSelectionRef.current = (request) => {
 		const accepted = refs.acceptedGeneratedPreviewRef.current;
 		const surface = refs.surfaceRef.current;
@@ -553,8 +463,9 @@ export function assignGeneratedContentTargetHandlers(
 			request.index.revision !== accepted.sourceRevision ||
 			request.index.length !== request.index.source.length ||
 			!isCurrentAcceptedGeneratedPreview(refs, accepted, surface, true)
-		)
+		) {
 			return null;
+		}
 		const targetIndices = previewImageSelectionBlockIndices(
 			accepted.markdown,
 			accepted.editMap,
@@ -576,9 +487,6 @@ export function assignGeneratedContentTargetHandlers(
 			block.id,
 		);
 		if (!candidate) return null;
-		if (refs.documentEndPinRef.current) {
-			throw new Error("preview-window-generated-target-pin-already-active");
-		}
 		const getMountedLease = (
 			parentIsCurrent?: () => boolean,
 		): PreviewGeneratedContentTargetLease | null => {
@@ -594,57 +502,19 @@ export function assignGeneratedContentTargetHandlers(
 				parentIsCurrent,
 			);
 		};
-		if (!refs.windowedRef.current) {
-			let released = false;
-			return {
-				getLease: () =>
-					released ||
-					!isCurrentAcceptedGeneratedPreview(refs, accepted, surface, true)
-						? null
-						: getMountedLease(() => !released),
-				isCurrent: () =>
-					!released &&
-					isCurrentAcceptedGeneratedPreview(refs, accepted, surface, true),
-				release: () => {
-					released = true;
-				},
-				target: candidate.target,
-			};
-		}
-		if (null === accepted.requestRevision) return null;
-		const pin: MutablePreviewDocumentEndPin = {
-			generation: accepted.generation,
-			requestRevision: accepted.requestRevision,
-			signature: accepted.signature,
-			sourceSelection: request.selection,
-			targetIndices,
-		};
-		refs.documentEndPinRef.current = pin;
 		let released = false;
-		const release = () => {
-			if (released) return;
-			released = true;
-			clearDocumentEndPin(refs, pin, true);
-		};
-		const getLease = (): PreviewGeneratedContentTargetLease | null => {
-			if (
-				released ||
-				refs.documentEndPinRef.current !== pin ||
-				!isCurrentAcceptedGeneratedPreview(refs, accepted, surface, true)
-			)
-				return null;
-			return getMountedLease(
-				() => !released && refs.documentEndPinRef.current === pin,
-			);
-		};
-		refs.scheduleWindowRef.current();
 		return {
-			getLease,
+			getLease: () =>
+				released ||
+				!isCurrentAcceptedGeneratedPreview(refs, accepted, surface, true)
+					? null
+					: getMountedLease(() => !released),
 			isCurrent: () =>
 				!released &&
-				refs.documentEndPinRef.current === pin &&
 				isCurrentAcceptedGeneratedPreview(refs, accepted, surface, true),
-			release,
+			release: () => {
+				released = true;
+			},
 			target: candidate.target,
 		};
 	};

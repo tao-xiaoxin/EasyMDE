@@ -67,7 +67,6 @@ export type UseEditorMediaUploadBridgeOptions = Readonly<{
   visualEditorSurface: HTMLElement | null;
   visualPreviewEditing: boolean;
   visualPreviewEditingRef: SharedRef<boolean>;
-  visualPreviewWindowRequestedRef: SharedRef<boolean>;
   waitForFreshFormalPreview: () => Promise<HTMLElement | null>;
   wechatClipboard: EditorRootProps['wechatClipboard'];
   wechatExport: EditorRootProps['wechatExport'];
@@ -98,7 +97,6 @@ export function useEditorMediaUploadBridge({
   visualEditorSurface,
   visualPreviewEditing,
   visualPreviewEditingRef,
-  visualPreviewWindowRequestedRef,
   waitForFreshFormalPreview,
   wechatClipboard,
   wechatExport,
@@ -249,24 +247,14 @@ export function useEditorMediaUploadBridge({
       pngConversionEnabled: wechatExport.pngConversionEnabled,
       postId: imageUpload.postId,
       resolvePreview: async () => {
-        if (
-          visualPreviewEditingRef.current
-          || visualPreviewWindowRequestedRef.current
-        ) {
+        if (visualPreviewEditingRef.current) {
           if (!prepareVisualSource()) return null;
           flushSync(() => {
             leaveVisualPreview({ suppressRefresh: true });
           });
-          const freshSurface = await waitForFreshFormalPreview();
-          if (!freshSurface) return null;
-          return freshSurface.querySelector('[data-easymde-preview-window-spacer]')
-            ? null
-            : freshSurface;
+          return waitForFreshFormalPreview();
         }
-        const surface = previewRuntimeRef.current?.surface ?? null;
-        return surface?.querySelector('[data-easymde-preview-window-spacer]')
-          ? null
-          : surface;
+        return previewRuntimeRef.current?.surface ?? null;
       }
     };
     return createWechatExportSession({
@@ -288,7 +276,6 @@ export function useEditorMediaUploadBridge({
     reportFailure,
     setWechatStatus,
     visualPreviewEditingRef,
-    visualPreviewWindowRequestedRef,
     waitForFreshFormalPreview,
     wechatClipboard,
     wechatExport,

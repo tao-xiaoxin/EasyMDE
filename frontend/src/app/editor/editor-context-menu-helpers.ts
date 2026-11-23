@@ -20,8 +20,10 @@ import {
   hydrateGeneratedImageTargetIndex
 } from '../../features/generated-content-export/generated-image-target';
 import type { MarkdownImageScaleMatch } from '../../features/image-scale/image-scale-contract';
-import type { PreviewImageTargetLease } from '../../features/live-preview/ui/PreviewSurfaceOwner';
-import { PreviewWindowDomError } from '../../features/live-preview/ui/preview-window-dom';
+import {
+  type PreviewImageTargetLease,
+  PreviewSurfaceDomError
+} from '../../features/live-preview/ui/PreviewSurfaceOwner';
 import { markdownLineStarts } from '../../shared/markdown/markdown-line-model';
 import type {
   EditorMarkdownBlockIndexWithImages,
@@ -429,7 +431,7 @@ export function imageActionContext(
 
 export function isPreviewSelectionUnavailable(error: unknown): boolean {
   return (
-    error instanceof PreviewWindowDomError
+    error instanceof PreviewSurfaceDomError
     && (error.message === 'preview-window-selection-block-unavailable'
       || error.message === 'preview-window-selection-map-invalid'
       || error.message === 'preview-window-selection-range-invalid')

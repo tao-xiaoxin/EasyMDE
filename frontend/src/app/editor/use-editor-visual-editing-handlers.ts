@@ -14,7 +14,6 @@ import {
 	isCancelledVisualTransferFailure,
 	isPreviewRenderFailureCode,
 	isSupersededVisualTransferFailure,
-	scheduleVisualWindowedHistoryBranchRelease,
 } from "./editor-root-helpers";
 import type {
 	EditorRootProps,
@@ -57,9 +56,7 @@ export type UseEditorVisualEditingHandlersOptions = Readonly<{
 	setVisualEditorSurface: (surface: HTMLElement | null) => void;
 	setVisualPreviewChanged: (changed: boolean) => void;
 	setVisualPreviewPending: (pending: boolean) => void;
-	setVisualWindowedHistoryBranchHeld: (held: boolean) => void;
 	syncedVisualCodeFramesRef: SharedRef<WeakSet<HTMLElement>>;
-	visualDocumentEndHistoryPendingRef: SharedRef<boolean>;
 	visualEditorRuntimeRef: SharedRef<ImmersiveVisualEditorRuntime | null>;
 }>;
 
@@ -87,9 +84,7 @@ export function useEditorVisualEditingHandlers({
 	setVisualEditorSurface,
 	setVisualPreviewChanged,
 	setVisualPreviewPending,
-	setVisualWindowedHistoryBranchHeld,
 	syncedVisualCodeFramesRef,
-	visualDocumentEndHistoryPendingRef,
 	visualEditorRuntimeRef,
 }: UseEditorVisualEditingHandlersOptions) {
 	const reportVisualTransferFailure = useCallback(
@@ -214,19 +209,6 @@ export function useEditorVisualEditingHandlers({
 			previewSurfaceStatusRef.current = "ready";
 			setPreviewSurfaceStatus("ready");
 		}
-		if (
-			rootActiveRef.current &&
-			!visualDocumentEndHistoryPendingRef.current &&
-			documentSession?.document.getHistoryState().redoDepth === 0
-		) {
-			scheduleVisualWindowedHistoryBranchRelease(
-				() => visualDocumentEndHistoryPendingRef.current,
-				() => (documentSession?.document.getHistoryState().redoDepth ?? 0) > 0,
-				() => {
-					if (rootActiveRef.current) setVisualWindowedHistoryBranchHeld(false);
-				},
-			);
-		}
 		const surface =
 			visualEditorRuntimeRef.current?.surface ??
 			previewRuntimeRef.current?.surface;
@@ -250,7 +232,6 @@ export function useEditorVisualEditingHandlers({
 		setVisualPreviewChanged(true);
 	}, [
 		clearVisualFailureState,
-		documentSession,
 		enhancementPort,
 		previewRefreshPendingRef,
 		previewRuntimeRef,
@@ -259,9 +240,7 @@ export function useEditorVisualEditingHandlers({
 		rootActiveRef,
 		setPreviewSurfaceStatus,
 		setVisualPreviewChanged,
-		setVisualWindowedHistoryBranchHeld,
 		syncedVisualCodeFramesRef,
-		visualDocumentEndHistoryPendingRef,
 		visualEditorRuntimeRef,
 	]);
 
@@ -269,27 +248,13 @@ export function useEditorVisualEditingHandlers({
 		(pending: boolean) => {
 			if (!rootActiveRef.current) return;
 			setVisualPreviewPending(pending);
-			if (
-				!pending &&
-				!visualDocumentEndHistoryPendingRef.current &&
-				documentSession?.document.getHistoryState().redoDepth === 0
-			) {
-				setVisualWindowedHistoryBranchHeld(false);
-			}
 			// A demand that arrived during the transfer is parked on readiness. The
 			// accept effect clears the transfer without a Preview status or snapshot
 			// change, so this settle notification is the only wake-up that rebuilds
 			// the parked demand against the newly accepted edit map.
 			if (!pending) notifyContextMenuReadiness();
 		},
-		[
-			documentSession,
-			notifyContextMenuReadiness,
-			rootActiveRef,
-			setVisualPreviewPending,
-			setVisualWindowedHistoryBranchHeld,
-			visualDocumentEndHistoryPendingRef,
-		],
+		[notifyContextMenuReadiness, rootActiveRef, setVisualPreviewPending],
 	);
 
 	const handleVisualCanonicalDocumentChange = useCallback(() => {

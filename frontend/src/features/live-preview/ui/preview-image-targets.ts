@@ -4,13 +4,9 @@ import {
 	generatedImageTargetCount,
 } from "../../generated-content-export/generated-image-target";
 import { previewImageSelectionBlockIndices } from "./preview-selection-block-map";
-import {
-	clearDocumentEndPin,
-	isCurrentAcceptedGeneratedPreview,
-} from "./preview-surface-runtime-helpers";
+import { isCurrentAcceptedGeneratedPreview } from "./preview-surface-runtime-helpers";
 import type {
 	AcceptedGeneratedPreview,
-	MutablePreviewDocumentEndPin,
 	PreviewImageTargetLease,
 	PreviewImageTargetRequest,
 	PreviewImageTargetSelectionRequest,
@@ -83,16 +79,17 @@ function prepareImageTargetLease(
 		!stagedImages ||
 		stagedImages.generation !== accepted.generation ||
 		stagedImages.byBlock.get(blockId)?.[ordinal] !== element
-	)
+	) {
 		return null;
+	}
 	const capturedAttributes = {
 		alt: element.getAttribute("alt"),
 		currentSrc: element.currentSrc,
 		naturalHeight: element.naturalHeight,
 		naturalWidth: element.naturalWidth,
+		sizes: element.getAttribute("sizes"),
 		src: element.getAttribute("src"),
 		srcset: element.getAttribute("srcset"),
-		sizes: element.getAttribute("sizes"),
 		title: element.getAttribute("title"),
 	};
 	const target = associated.target;
@@ -155,8 +152,7 @@ function imageTargetDomIdentityCurrent(
 	const expected = refs.stagedPreviewImageElementsRef.current?.byBlock.get(
 		target.blockId,
 	)?.[target.ordinal];
-	if (!expected) return false;
-	if (!expected.isConnected) return refs.windowedRef.current;
+	if (!expected?.isConnected) return false;
 	const visualBlock = expected.closest("[data-easymde-visual-block-id]");
 	if (!(visualBlock instanceof HTMLElement) || !surface.contains(visualBlock)) {
 		return false;
@@ -184,8 +180,9 @@ function imageTargetForSelection(
 			!sourceBlock.editable ||
 			"code" === sourceBlock.kind ||
 			"unavailable" === sourceBlock.kind
-		)
+		) {
 			continue;
+		}
 		const associated = associateGeneratedImageTargetBySelection({
 			acceptedPreview: {
 				revision: accepted.generation,
@@ -217,8 +214,9 @@ export function assignImageTargetHandlers(refs: PreviewSurfaceRefs): void {
 			request.index.source !== accepted.markdown ||
 			request.index.revision !== accepted.sourceRevision ||
 			request.index.length !== request.index.source.length
-		)
+		) {
 			return null;
+		}
 		return prepareImageTargetLease(refs, request, accepted, surface);
 	};
 
@@ -239,8 +237,9 @@ export function assignImageTargetHandlers(refs: PreviewSurfaceRefs): void {
 			request.selection.start < 0 ||
 			request.selection.end < request.selection.start ||
 			request.selection.end > request.index.source.length
-		)
+		) {
 			return null;
+		}
 		const targetIndices = previewImageSelectionBlockIndices(
 			accepted.markdown,
 			accepted.editMap,
@@ -264,9 +263,6 @@ export function assignImageTargetHandlers(refs: PreviewSurfaceRefs): void {
 			block.id,
 		);
 		if (!target) return null;
-		if (refs.documentEndPinRef.current) {
-			throw new Error("preview-window-generated-target-pin-already-active");
-		}
 		const getMountedLease = (
 			parentIsCurrent?: () => boolean,
 		): PreviewImageTargetLease | null => {
@@ -291,59 +287,20 @@ export function assignImageTargetHandlers(refs: PreviewSurfaceRefs): void {
 			}
 			return lease;
 		};
-		if (!refs.windowedRef.current) {
-			let released = false;
-			return {
-				getLease: () =>
-					released ||
-					!isCurrentAcceptedGeneratedPreview(refs, accepted, surface, true)
-						? null
-						: getMountedLease(() => !released),
-				isCurrent: () =>
-					!released &&
-					isCurrentAcceptedGeneratedPreview(refs, accepted, surface, true) &&
-					imageTargetDomIdentityCurrent(refs, target, surface),
-				release: () => {
-					released = true;
-				},
-				target,
-			};
-		}
-		if (null === accepted.requestRevision) return null;
-		const pin: MutablePreviewDocumentEndPin = {
-			generation: accepted.generation,
-			requestRevision: accepted.requestRevision,
-			signature: accepted.signature,
-			sourceSelection: request.selection,
-			targetIndices: [blockIndex],
-		};
-		refs.documentEndPinRef.current = pin;
 		let released = false;
-		const release = () => {
-			if (released) return;
-			released = true;
-			clearDocumentEndPin(refs, pin, true);
-		};
-		const getLease = (): PreviewImageTargetLease | null => {
-			if (
-				released ||
-				refs.documentEndPinRef.current !== pin ||
-				!isCurrentAcceptedGeneratedPreview(refs, accepted, surface, true)
-			)
-				return null;
-			return getMountedLease(
-				() => !released && refs.documentEndPinRef.current === pin,
-			);
-		};
-		refs.scheduleWindowRef.current();
 		return {
-			getLease,
+			getLease: () =>
+				released ||
+				!isCurrentAcceptedGeneratedPreview(refs, accepted, surface, true)
+					? null
+					: getMountedLease(() => !released),
 			isCurrent: () =>
 				!released &&
-				refs.documentEndPinRef.current === pin &&
 				isCurrentAcceptedGeneratedPreview(refs, accepted, surface, true) &&
 				imageTargetDomIdentityCurrent(refs, target, surface),
-			release,
+			release: () => {
+				released = true;
+			},
 			target,
 		};
 	};

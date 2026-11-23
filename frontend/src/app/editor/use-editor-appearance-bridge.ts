@@ -43,7 +43,6 @@ export type UseEditorAppearanceBridgeOptions = Readonly<{
   appearance: AppearanceBootstrap;
   appearancePort: AppearancePort;
   appearanceSessionRef: SharedRef<AppearanceControlsSession | null>;
-  cancelVisualPreviewWindowUnlock: () => void;
   cancelVisualUnlockPreparation: () => void;
   codeThemePreparationGenerationRef: SharedRef<number>;
   codeThemePreparationRef: SharedRef<CodeThemePreparation | null>;
@@ -55,7 +54,7 @@ export type UseEditorAppearanceBridgeOptions = Readonly<{
   ordinarySettingsSessionRef: SharedRef<OrdinaryEditorSettingsSession | null>;
   prepareSourceMutationWithPreview: (
     options?: Readonly<{
-      materialize?: boolean;
+      requireSync?: boolean;
       suppressRefresh?: boolean;
       isCurrent?: () => boolean;
     }>
@@ -82,7 +81,6 @@ export function useEditorAppearanceBridge({
   appearance,
   appearancePort: rawAppearancePort,
   appearanceSessionRef,
-  cancelVisualPreviewWindowUnlock,
   cancelVisualUnlockPreparation,
   codeThemePreparationGenerationRef,
   codeThemePreparationRef,
@@ -182,9 +180,6 @@ export function useEditorAppearanceBridge({
           && !(await prepareSourceMutationWithPreview())
         ) {
           throw new Error('visual-editor-source-sync-failed');
-        }
-        if (codeThemeChanged) {
-          cancelVisualPreviewWindowUnlock();
         }
         cancelVisualUnlockPreparation();
         codeThemePreparationRef.current?.controller.abort();
@@ -296,7 +291,6 @@ export function useEditorAppearanceBridge({
         return true;
       },
       cancelPendingApply: () => {
-        cancelVisualPreviewWindowUnlock();
         cancelVisualUnlockPreparation();
         codeThemePreparationRef.current?.controller.abort();
         codeThemePreparationRef.current?.prepared?.cancel();
@@ -348,7 +342,6 @@ export function useEditorAppearanceBridge({
     [
       appearance,
       appearanceSessionRef,
-      cancelVisualPreviewWindowUnlock,
       cancelVisualUnlockPreparation,
       codeThemePreparationGenerationRef,
       codeThemePreparationRef,

@@ -5,21 +5,66 @@ import type {
 import {
 	PREVIEW_STAGING_DOM_APPEND_MAX_NODES,
 	PREVIEW_STAGING_SLICE_BUDGET_MS,
-	PREVIEW_WINDOW_GEOMETRY_SLICE_BUDGET_MS,
 	type PreviewEnhancementCandidate,
+	PreviewSurfaceDomError,
 	type PreviewSurfaceStagingScheduler,
 	previewScrollCanvas,
+	VISUAL_BLOCK_ATTRIBUTE,
 	VISUAL_MARKDOWN_SOURCE_ATTRIBUTE,
 	type VisualBlockMarker,
 	type VisualMarkdownSourceMarker,
 } from "./preview-surface-types";
-import {
-	measurePreviewWindowBlockGeometry,
-	type PreviewWindowNodeRepository,
-	publishPreviewWindowMeasuredBlock,
-	VISUAL_BLOCK_ATTRIBUTE,
-	validatePreviewWindowMarkup,
-} from "./preview-window-dom";
+
+function failBlockMarkup(code: string): never {
+	throw new PreviewSurfaceDomError(code);
+}
+
+function previewRootElements(surface: HTMLElement): HTMLElement[] {
+	const roots: HTMLElement[] = [];
+	for (const node of Array.from(surface.childNodes)) {
+		if (node instanceof HTMLElement) {
+			roots.push(node);
+			continue;
+		}
+		if ("#text" === node.nodeName && (node.textContent ?? "").trim()) {
+			failBlockMarkup("preview-window-root-text-invalid");
+		}
+		if (
+			node.nodeType !== Node.COMMENT_NODE &&
+			node.nodeType !== Node.TEXT_NODE
+		) {
+			failBlockMarkup("preview-window-root-node-invalid");
+		}
+	}
+	return roots;
+}
+
+function validatePreviewBlockMarkup(
+	surface: HTMLElement,
+	editMap: PreviewEditMap,
+): void {
+	if (1 !== editMap.version || "line" !== editMap.coordinate) {
+		failBlockMarkup("preview-window-edit-map-invalid");
+	}
+	const roots = previewRootElements(surface);
+	if (roots.length !== editMap.blocks.length) {
+		failBlockMarkup("preview-window-block-map-count-mismatch");
+	}
+	const ids = new Set<string>();
+	roots.forEach((root, index) => {
+		const expected = editMap.blocks[index];
+		if (
+			!expected ||
+			root.getAttribute(VISUAL_BLOCK_ATTRIBUTE) !== expected.id
+		) {
+			failBlockMarkup("preview-window-block-map-marker-mismatch");
+		}
+		if (ids.has(expected.id)) {
+			failBlockMarkup("preview-window-block-map-duplicate");
+		}
+		ids.add(expected.id);
+	});
+}
 
 export function createEnhancementCandidate(
 	activeSurface: HTMLElement,
@@ -61,50 +106,6 @@ export function createEnhancementCandidate(
 		sourceNodes: parsedSourceNodes,
 		surface: candidate,
 	};
-}
-
-export async function measurePreviewWindowCandidateGeometry(
-	repository: PreviewWindowNodeRepository,
-	surface: HTMLElement,
-	scheduler: PreviewSurfaceStagingScheduler,
-	isCurrent: () => boolean,
-	signal: AbortSignal,
-): Promise<boolean> {
-	let sliceStartedAt = stagingTime(scheduler, surface.ownerDocument);
-	for (let index = 0; index < repository.nodes.length; index += 1) {
-		if (signal.aborted || !isCurrent()) return false;
-		const node = repository.nodes[index];
-		if (!node?.isConnected || node.parentNode !== surface) continue;
-		const rect = node.getBoundingClientRect();
-		if (!Number.isFinite(rect.height) || rect.height <= 0) continue;
-		const previousGeometry = repository.flowGeometry[index];
-		if (!previousGeometry) continue;
-		const measurement = measurePreviewWindowBlockGeometry(
-			node,
-			repository.nodes[index + 1] ?? null,
-			previousGeometry,
-			repository.ownedGap?.node,
-			rect,
-		);
-		if (!measurement) continue;
-		publishPreviewWindowMeasuredBlock(
-			repository,
-			surface,
-			index,
-			measurement,
-			0,
-			rect,
-		);
-		if (
-			stagingTime(scheduler, surface.ownerDocument) - sliceStartedAt >=
-			PREVIEW_WINDOW_GEOMETRY_SLICE_BUDGET_MS
-		) {
-			await scheduler.yield();
-			if (signal.aborted || !isCurrent()) return false;
-			sliceStartedAt = stagingTime(scheduler, surface.ownerDocument);
-		}
-	}
-	return true;
 }
 
 export function defaultPreviewSurfaceStagingScheduler(
@@ -194,7 +195,7 @@ export function capturePreviewBlockMarkers(
 	| ReadonlyArray<VisualBlockMarker>
 	| null
 	| Promise<ReadonlyArray<VisualBlockMarker> | null> {
-	validatePreviewWindowMarkup(surface, editMap);
+	validatePreviewBlockMarkup(surface, editMap);
 	const markers: VisualBlockMarker[] = [];
 	const documentRef = surface.ownerDocument;
 	const stale = (): null => {
@@ -214,7 +215,9 @@ export function capturePreviewBlockMarkers(
 					const block = editMap.blocks[blockIndex];
 					const root = surface.children[blockIndex];
 					if (!block || !(root instanceof HTMLElement)) {
-						throw new Error("preview-window-block-map-marker-mismatch");
+						throw new PreviewSurfaceDomError(
+							"preview-window-block-map-marker-mismatch",
+						);
 					}
 					const marker = documentRef.createComment(
 						`easymde-visual-block:${block.id}`,
@@ -265,7 +268,9 @@ export function annotateEnhancedPreviewBlocks(
 				const entry = markers[index];
 				const target = entry?.marker.nextElementSibling;
 				if (!entry || !(target instanceof HTMLElement)) {
-					throw new Error("preview-window-block-map-marker-mismatch");
+					throw new PreviewSurfaceDomError(
+						"preview-window-block-map-marker-mismatch",
+					);
 				}
 				target.setAttribute(VISUAL_BLOCK_ATTRIBUTE, entry.id);
 				if (

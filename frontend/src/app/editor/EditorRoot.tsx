@@ -50,16 +50,7 @@ import { useEditorMediaUploadBridge } from './use-editor-media-upload-bridge';
 import { useEditorSessionAndFormBridge } from './use-editor-session-and-form-bridge';
 import { useEditorVisualPreviewBridge } from './use-editor-visual-preview-bridge';
 
-export {
-  focusVisualPreviewRuntime,
-  isVisualPreviewWindowRequestCurrent,
-  schedulePreviewWithDocumentEndPin,
-  scheduleVisualWindowedHistoryBranchRelease,
-  visualPreviewSourceHasEditableMap,
-  visualPreviewSurfaceUsesWindowedOwner,
-  visualPreviewSurfaceWindowedForVisibility,
-  visualPreviewUsesWindowedOwner
-} from './editor-root-helpers';
+export { focusVisualPreviewRuntime } from './editor-root-helpers';
 export type { EditorRootProps } from './editor-root-types';
 
 export function EditorRoot(props: EditorRootProps) {
@@ -85,7 +76,6 @@ export function EditorRoot(props: EditorRootProps) {
     null
   );
   const visualPreviewEditingRef = useRef(false);
-  const visualPreviewWindowRequestedRef = useRef(false);
   const previewAppearanceRef = useRef(props.appearance.state);
   const previewRefreshPendingRef = useRef(false);
   const codeThemePreparationRef = useRef<CodeThemePreparation | null>(null);
@@ -206,7 +196,6 @@ export function EditorRoot(props: EditorRootProps) {
     toolbarSessionRef,
     visualEditorRuntimeRef,
     visualPreviewEditingRef,
-    visualPreviewWindowRequestedRef,
     wechatClipboard: props.wechatClipboard,
     wechatExport: props.wechatExport
   });
@@ -215,7 +204,6 @@ export function EditorRoot(props: EditorRootProps) {
     appearance: props.appearance,
     appearancePort: props.appearancePort,
     appearanceSessionRef,
-    cancelVisualPreviewWindowUnlock: visual.cancelVisualPreviewWindowUnlock,
     cancelVisualUnlockPreparation: visual.cancelVisualUnlockPreparation,
     codeThemePreparationGenerationRef,
     codeThemePreparationRef,
@@ -267,7 +255,6 @@ export function EditorRoot(props: EditorRootProps) {
     visualEditorSurface: visual.visualEditorSurface,
     visualPreviewEditing: visual.visualPreviewEditing,
     visualPreviewEditingRef,
-    visualPreviewWindowRequestedRef,
     waitForFreshFormalPreview: visual.waitForFreshFormalPreview,
     wechatClipboard: props.wechatClipboard,
     wechatExport: props.wechatExport,
@@ -309,8 +296,7 @@ export function EditorRoot(props: EditorRootProps) {
     visualEditorGeneration: visual.visualEditorGeneration,
     visualEditorRuntimeRef,
     visualEditorSurface: visual.visualEditorSurface,
-    visualPreviewEditing: visual.visualPreviewEditing,
-    visualPreviewWindowed: visual.visualPreviewWindowed
+    visualPreviewEditing: visual.visualPreviewEditing
   });
 
   const documentSession = session.documentSession;
@@ -609,7 +595,7 @@ export function EditorRoot(props: EditorRootProps) {
             onToggleEditable={() => {
               if (visual.visualPreviewEditing) {
                 void visual.prepareSourceMutationWithPreview({
-                  materialize: false
+                  requireSync: false
                 });
                 return;
               }
@@ -649,7 +635,6 @@ export function EditorRoot(props: EditorRootProps) {
               onReady={visual.handlePreviewReady}
               onSnapshotReady={visual.handlePreviewSnapshotReady}
               onStatusChange={visual.handlePreviewStatusChange}
-              onWindowReady={visual.handlePreviewWindowReady}
               port={session.previewPort}
               currentSourceSnapshot={() => {
                 if (!documentSession) return null;
@@ -664,7 +649,6 @@ export function EditorRoot(props: EditorRootProps) {
               scrollPort={props.scrollPort}
               sourceRevision={documentSession?.document.getRevision?.() ?? 0}
               style={appearance.previewStyle}
-              windowed={false}
             />
             {visual.visualPreviewEditing && documentSession ? (
               <ImmersiveVisualEditorHost

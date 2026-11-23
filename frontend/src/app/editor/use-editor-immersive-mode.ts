@@ -41,7 +41,7 @@ export type UseEditorImmersiveModeOptions = Readonly<{
   notifyContextMenuReadiness: () => void;
   prepareSourceMutationWithPreview: (
     options?: Readonly<{
-      materialize?: boolean;
+      requireSync?: boolean;
       suppressRefresh?: boolean;
       isCurrent?: () => boolean;
     }>
@@ -62,7 +62,6 @@ export type UseEditorImmersiveModeOptions = Readonly<{
   visualPreviewEditingRef: SharedRef<boolean>;
   visualPreviewPending: boolean;
   visualPreviewPendingRef: SharedRef<boolean>;
-  visualPreviewWindowRequestedRef: SharedRef<boolean>;
 }>;
 
 export function useEditorImmersiveMode({
@@ -92,8 +91,7 @@ export function useEditorImmersiveMode({
   toolbarSessionRef,
   visualPreviewEditingRef,
   visualPreviewPending,
-  visualPreviewPendingRef,
-  visualPreviewWindowRequestedRef
+  visualPreviewPendingRef
 }: UseEditorImmersiveModeOptions) {
   const immersiveToggleRef = useRef<HTMLButtonElement>(null);
   const restoreImmersiveFocusRef = useRef(false);
@@ -197,10 +195,7 @@ export function useEditorImmersiveMode({
     const generation = ++immersiveModeRequestRef.current;
     deferredImmersiveModeRef.current = null;
     cancelVisualUnlockPreparation();
-    if (
-      !visualPreviewEditingRef.current
-      && !visualPreviewWindowRequestedRef.current
-    ) {
+    if (!visualPreviewEditingRef.current) {
       captureLayoutScrollRestore();
       immersiveRef.current = false;
       setImmersive(false);
@@ -215,7 +210,7 @@ export function useEditorImmersiveMode({
         generation === immersiveModeRequestRef.current
         && rootActiveRef.current
         && immersiveRef.current,
-      materialize: false,
+      requireSync: false,
       suppressRefresh: !hasUnsyncedVisualChanges()
     }).then((prepared) => {
       const current =
@@ -246,8 +241,7 @@ export function useEditorImmersiveMode({
     rootActiveRef,
     setImmersive,
     visualPreviewEditingRef,
-    visualPreviewPendingRef,
-    visualPreviewWindowRequestedRef
+    visualPreviewPendingRef
   ]);
 
   const changeImmersiveMode = useCallback(
@@ -259,10 +253,7 @@ export function useEditorImmersiveMode({
       deferredImmersiveModeRef.current = null;
       if (mode === immersiveModeRef.current) return;
       cancelVisualUnlockPreparation();
-      if (
-        !visualPreviewEditingRef.current
-        && !visualPreviewWindowRequestedRef.current
-      ) {
+      if (!visualPreviewEditingRef.current) {
         captureLayoutScrollRestore();
         setImmersiveMode(mode);
         return;
@@ -298,8 +289,7 @@ export function useEditorImmersiveMode({
       rootActiveRef,
       setImmersiveMode,
       visualPreviewEditingRef,
-      visualPreviewPendingRef,
-      visualPreviewWindowRequestedRef
+      visualPreviewPendingRef
     ]
   );
 
@@ -316,10 +306,7 @@ export function useEditorImmersiveMode({
     if (null !== request.mode && request.mode === immersiveModeRef.current)
       return;
     cancelVisualUnlockPreparation();
-    if (
-      !visualPreviewEditingRef.current
-      && !visualPreviewWindowRequestedRef.current
-    ) {
+    if (!visualPreviewEditingRef.current) {
       captureLayoutScrollRestore();
       if (null === request.mode) {
         immersiveRef.current = false;
@@ -331,7 +318,7 @@ export function useEditorImmersiveMode({
     }
     void prepareSourceMutationWithPreview({
       ...(null === request.mode
-        ? { materialize: false, suppressRefresh: !hasUnsyncedVisualChanges() }
+        ? { requireSync: false, suppressRefresh: !hasUnsyncedVisualChanges() }
         : {}),
       isCurrent: () =>
         request.generation === immersiveModeRequestRef.current
@@ -378,8 +365,7 @@ export function useEditorImmersiveMode({
     setImmersiveMode,
     visualPreviewEditingRef,
     visualPreviewPending,
-    visualPreviewPendingRef,
-    visualPreviewWindowRequestedRef
+    visualPreviewPendingRef
   ]);
 
   useEffect(() => {

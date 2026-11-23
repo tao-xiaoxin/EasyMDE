@@ -75,7 +75,6 @@ export type UseEditorVisualPreviewBridgeOptions = Readonly<{
   toolbarSessionRef: SharedRef<EditorToolbarSession | null>;
   visualEditorRuntimeRef: SharedRef<ImmersiveVisualEditorRuntime | null>;
   visualPreviewEditingRef: SharedRef<boolean>;
-  visualPreviewWindowRequestedRef: SharedRef<boolean>;
   wechatClipboard: EditorRootProps['wechatClipboard'];
   wechatExport: EditorRootProps['wechatExport'];
 }>;
@@ -109,7 +108,6 @@ export function useEditorVisualPreviewBridge({
   toolbarSessionRef,
   visualEditorRuntimeRef,
   visualPreviewEditingRef,
-  visualPreviewWindowRequestedRef,
   wechatClipboard,
   wechatExport
 }: UseEditorVisualPreviewBridgeOptions) {
@@ -157,8 +155,6 @@ export function useEditorVisualPreviewBridge({
   const [visualPreviewPending, setVisualPreviewPending] = useState(false);
   const visualPreviewPendingRef = useRef(visualPreviewPending);
   visualPreviewPendingRef.current = visualPreviewPending;
-  const visualDocumentEndHistoryPendingRef = useRef(false);
-  const [, setVisualWindowedHistoryBranchHeld] = useState(false);
   const [visualEditorSurface, setVisualEditorSurface] =
     useState<HTMLElement | null>(null);
   const [visualEditorGeneration, setVisualEditorGeneration] = useState(0);
@@ -212,15 +208,12 @@ export function useEditorVisualPreviewBridge({
     visualPreviewEditingRef,
     visualPreviewLockingRef,
     visualPreviewUnlockingRef,
-    visualPreviewWindowRequestedRef,
     wechatClipboard,
     wechatExportEnabled: wechatExport.enabled
   });
 
   const {
-    cancelVisualPreviewWindowUnlock,
     cancelVisualUnlockPreparation,
-    handlePreviewWindowReady,
     leaveVisualPreview,
     prepareGeneratedSourceNavigation,
     prepareSourceMutation,
@@ -239,10 +232,8 @@ export function useEditorVisualPreviewBridge({
     lastVisualFailureRef,
     layoutScrollRestoreRef,
     leaveVisualPreviewRef,
-    notifyContextMenuReadiness,
     previewAppearanceRef,
     previewRefreshPendingRef,
-    previewRuntimeRef,
     previewSurfaceStatusRef,
     reportFailure,
     rootActiveRef,
@@ -255,8 +246,7 @@ export function useEditorVisualPreviewBridge({
     visualEditorRuntimeRef,
     visualPreviewChangedRef,
     visualPreviewEditingRef,
-    visualPreviewLockingRef,
-    visualPreviewWindowRequestedRef
+    visualPreviewLockingRef
   });
 
   prepareSourceMutationRef.current = prepareSourceMutation;
@@ -286,9 +276,7 @@ export function useEditorVisualPreviewBridge({
     setVisualEditorSurface,
     setVisualPreviewChanged,
     setVisualPreviewPending,
-    setVisualWindowedHistoryBranchHeld,
     syncedVisualCodeFramesRef,
-    visualDocumentEndHistoryPendingRef,
     visualEditorRuntimeRef
   });
 
@@ -326,8 +314,7 @@ export function useEditorVisualPreviewBridge({
     toolbarSessionRef,
     visualPreviewEditingRef,
     visualPreviewPending,
-    visualPreviewPendingRef,
-    visualPreviewWindowRequestedRef
+    visualPreviewPendingRef
   });
 
   const handlePreviewReady = useCallback(
@@ -346,7 +333,6 @@ export function useEditorVisualPreviewBridge({
   const handlePreviewDispose = useCallback(
     (runtime: PreviewSurfaceRuntime) => {
       cancelWechatBackgroundPreparation();
-      cancelVisualPreviewWindowUnlock();
       releasePendingContextResourcesRef.current();
       settleFormalPreviewWaiters(null, null);
       notifyContextMenuReadiness();
@@ -360,7 +346,6 @@ export function useEditorVisualPreviewBridge({
       }
     },
     [
-      cancelVisualPreviewWindowUnlock,
       cancelWechatBackgroundPreparation,
       notifyContextMenuReadiness,
       previewRuntimeRef,
@@ -561,7 +546,6 @@ export function useEditorVisualPreviewBridge({
 
   return {
     applyVisualCanonicalChange: visualHandlers.applyVisualCanonicalChange,
-    cancelVisualPreviewWindowUnlock,
     cancelVisualUnlockPreparation,
     changeImmersiveMode,
     enterImmersive,
@@ -575,7 +559,6 @@ export function useEditorVisualPreviewBridge({
     handlePreviewReady,
     handlePreviewSnapshotReady,
     handlePreviewStatusChange,
-    handlePreviewWindowReady,
     handleVisualCanonicalDocumentChange:
       visualHandlers.handleVisualCanonicalDocumentChange,
     handleVisualEditorDispose: visualHandlers.handleVisualEditorDispose,
@@ -605,7 +588,6 @@ export function useEditorVisualPreviewBridge({
     visualPreviewEditing,
     visualPreviewSnapshot,
     visualPreviewUnlocking,
-    visualPreviewWindowed: false,
     waitForFreshFormalPreview
   };
 }

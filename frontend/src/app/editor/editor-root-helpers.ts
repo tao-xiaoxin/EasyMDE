@@ -12,17 +12,9 @@ import type { EditorDocumentSession } from "../../features/document-source/ui/Ed
 import type { EditorTextEdit } from "../../features/editor-context-menu/editor-context-menu-text-edit";
 import type { ImmersiveViewMode } from "../../features/immersive-editor/immersive-editor";
 import type {
-	PreviewSourceSelection,
-	PreviewSurfaceRuntime,
-	PreviewSurfaceStatus,
-} from "../../features/live-preview/ui/PreviewSurfaceOwner";
-import { isMarkdownTerminalWhitespaceSuffix } from "../../shared/markdown/markdown-line-model";
-import type {
 	ApplyVisualCanonicalChange,
-	EditorVisualPreviewSnapshotLike,
 	ImmersiveVisualEditorRuntime,
 	VisualCanonicalChangeContext,
-	VisualPreviewWindowRequest,
 } from "./editor-root-types";
 
 export const WECHAT_PREPARATION_DEBOUNCE_MS = 180;
@@ -81,36 +73,6 @@ export function isAcceptedDomInvalidatingFailure(code: string): boolean {
 	return (
 		"visual-editor-code-body-map-stale" === code ||
 		"visual-editor-canonical-change-map-stale" === code
-	);
-}
-
-export function isVisualPreviewWindowRequestCurrent(
-	request: VisualPreviewWindowRequest | null,
-	snapshot: Pick<
-		EditorVisualPreviewSnapshotLike,
-		"revision" | "signature"
-	> | null,
-	status: PreviewSurfaceStatus,
-	active: boolean,
-): boolean {
-	return Boolean(
-		active &&
-			request &&
-			snapshot &&
-			"ready" === status &&
-			snapshot.revision === request.revision &&
-			snapshot.signature === request.signature,
-	);
-}
-
-export function visualPreviewSourceHasEditableMap(
-	snapshot: Pick<EditorVisualPreviewSnapshotLike, "editMap"> | null,
-	sourceMarkdown: string | null,
-): boolean {
-	return Boolean(
-		snapshot?.editMap ||
-			(null !== sourceMarkdown &&
-				isMarkdownTerminalWhitespaceSuffix(sourceMarkdown)),
 	);
 }
 
@@ -178,102 +140,6 @@ export function previewRequest(
 		customCssId: appearance.customCssId,
 		signature: `${revision}:${markdown.length}`,
 	};
-}
-
-export function schedulePreviewWithDocumentEndPin(
-	runtime: Pick<
-		PreviewSurfaceRuntime,
-		"prepareDocumentEndWindowPin" | "session"
-	>,
-	request: PreviewRequest,
-	onHistoryPendingChange?: (pending: boolean) => void,
-	onHistorySelectionRestored?: () => void,
-	sourceSelection?: PreviewSourceSelection,
-	immediate = true,
-): Readonly<{
-	onSelectionRestored: () => void;
-	release: () => void;
-	signature: string;
-}> {
-	onHistoryPendingChange?.(true);
-	let lease: ReturnType<
-		PreviewSurfaceRuntime["prepareDocumentEndWindowPin"]
-	> | null = null;
-	try {
-		lease = runtime.prepareDocumentEndWindowPin(
-			request.signature,
-			sourceSelection,
-		);
-		runtime.session.schedule(request, immediate);
-	} catch (error) {
-		try {
-			lease?.release();
-		} finally {
-			onHistoryPendingChange?.(false);
-		}
-		throw error;
-	}
-	if (!lease) throw new Error("preview-document-end-pin-not-prepared");
-	let released = false;
-	let selectionRestored = false;
-	return {
-		onSelectionRestored: () => {
-			if (released || selectionRestored) return;
-			selectionRestored = true;
-			onHistorySelectionRestored?.();
-		},
-		release: () => {
-			if (released) return;
-			released = true;
-			try {
-				lease?.release();
-			} finally {
-				onHistoryPendingChange?.(false);
-			}
-		},
-		signature: request.signature,
-	};
-}
-
-export function visualPreviewUsesWindowedOwner(
-	needsWindow: boolean,
-	historyOwnerPending: boolean,
-	editing: boolean,
-	requested: boolean,
-): boolean {
-	return (needsWindow || historyOwnerPending) && (editing || requested);
-}
-
-export function visualPreviewSurfaceUsesWindowedOwner(
-	needsWindow: boolean,
-	historyOwnerPending: boolean,
-	previewPending: boolean,
-	editing: boolean,
-	requested: boolean,
-): boolean {
-	return (
-		(needsWindow || historyOwnerPending || previewPending) &&
-		(editing || requested)
-	);
-}
-
-export function visualPreviewSurfaceWindowedForVisibility(
-	currentWindowed: boolean,
-	previewVisible: boolean,
-	needsWindow: boolean,
-): boolean {
-	return currentWindowed || (!previewVisible && needsWindow);
-}
-
-export function scheduleVisualWindowedHistoryBranchRelease(
-	isDocumentEndHistoryPending: () => boolean,
-	hasRedo: () => boolean,
-	release: () => void,
-	enqueue: (callback: () => void) => void = queueMicrotask,
-): void {
-	enqueue(() => {
-		if (!isDocumentEndHistoryPending() && !hasRedo()) release();
-	});
 }
 
 export function previewScrollCanvas(surface: HTMLElement): HTMLElement {

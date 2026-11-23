@@ -107,7 +107,6 @@ export type UseEditorContextMenuBridgeOptions = Readonly<{
   visualEditorRuntimeRef: SharedRef<ImmersiveVisualEditorRuntime | null>;
   visualEditorSurface: HTMLElement | null;
   visualPreviewEditing: boolean;
-  visualPreviewWindowed: boolean;
 }>;
 
 export function useEditorContextMenuBridge({
@@ -145,8 +144,7 @@ export function useEditorContextMenuBridge({
   visualEditorGeneration,
   visualEditorRuntimeRef,
   visualEditorSurface,
-  visualPreviewEditing,
-  visualPreviewWindowed
+  visualPreviewEditing
 }: UseEditorContextMenuBridgeOptions) {
   const contextMenuPortalOwnerRef = useRef<HTMLElement | null>(null);
   const registerContextMenuPortalOwner = useCallback(
@@ -733,7 +731,6 @@ export function useEditorContextMenuBridge({
 
   const contextMenuVisual = useMemo<EditorContextMenuSurface | null>(() => {
     void previewRuntimeGeneration;
-    void visualPreviewWindowed;
     if (!documentSession || !visualPreviewEditing || !visualEditorSurface)
       return null;
     const runtime = visualEditorRuntimeRef.current;
@@ -776,8 +773,7 @@ export function useEditorContextMenuBridge({
     visualEditorGeneration,
     visualEditorRuntimeRef,
     visualEditorSurface,
-    visualPreviewEditing,
-    visualPreviewWindowed
+    visualPreviewEditing
   ]);
 
   return {

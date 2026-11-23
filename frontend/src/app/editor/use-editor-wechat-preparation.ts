@@ -21,7 +21,6 @@ export type UseEditorWechatPreparationOptions = Readonly<{
   visualPreviewEditingRef: SharedRef<boolean>;
   visualPreviewLockingRef: SharedRef<boolean>;
   visualPreviewUnlockingRef: SharedRef<boolean>;
-  visualPreviewWindowRequestedRef: SharedRef<boolean>;
   wechatClipboard: WechatClipboardPort;
   wechatExportEnabled: boolean;
 }>;
@@ -37,7 +36,6 @@ export function useEditorWechatPreparation({
   visualPreviewEditingRef,
   visualPreviewLockingRef,
   visualPreviewUnlockingRef,
-  visualPreviewWindowRequestedRef,
   wechatClipboard,
   wechatExportEnabled
 }: UseEditorWechatPreparationOptions) {
@@ -65,7 +63,6 @@ export function useEditorWechatPreparation({
       if (
         !rootActiveRef.current
         || visualPreviewEditingRef.current
-        || visualPreviewWindowRequestedRef.current
         || visualPreviewUnlockingRef.current
         || visualPreviewLockingRef.current
         || 'ready' !== previewSurfaceStatusRef.current
@@ -101,7 +98,6 @@ export function useEditorWechatPreparation({
       visualPreviewEditingRef,
       visualPreviewLockingRef,
       visualPreviewUnlockingRef,
-      visualPreviewWindowRequestedRef,
       wechatClipboard,
       wechatExportEnabled
     ]

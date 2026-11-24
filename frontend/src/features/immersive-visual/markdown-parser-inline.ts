@@ -1,6 +1,10 @@
 import type MarkdownIt from "markdown-it";
 import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
 import {
+	normalizeHtmlAttributeTitle,
+	parseImageScaleTitleContract,
+} from "../../shared/image-scale-title";
+import {
 	type PreScanResult,
 	restoreProtectedInlineSentinels,
 } from "./markdown-prescanner";
@@ -20,37 +24,23 @@ export type ParsedImageScaleTitle = Readonly<{
 	title: string | null;
 }>;
 
-const TERMINAL_IMAGE_SCALE_MARKER = /\{width=[^{}]*\}$/u;
-const VALID_IMAGE_SCALE_MARKER = /^\{width=(25|33|50|67|100|150|200)%\}$/u;
-const REPEATED_TERMINAL_IMAGE_SCALE_MARKER = /\{width=[^{}]*\}[ \t]*$/u;
-
 export function parseImageScaleTitle(
 	rawTitle: string | null | undefined,
 ): ParsedImageScaleTitle {
 	if (typeof rawTitle !== "string" || rawTitle.length === 0) {
 		return { scale: null, title: null };
 	}
-	const tailMatch = TERMINAL_IMAGE_SCALE_MARKER.exec(rawTitle);
-	if (!tailMatch) {
+	const parsed = parseImageScaleTitleContract(
+		normalizeHtmlAttributeTitle(rawTitle),
+	);
+	if (parsed.status !== "valid" || !isValidVisualImageScale(parsed.scale)) {
 		return { scale: null, title: rawTitle };
 	}
-	const markerStart = tailMatch.index;
-	const match = VALID_IMAGE_SCALE_MARKER.exec(tailMatch[0]);
-	const parsedScale = match?.[1] ? Number(match[1]) : null;
-	if (!isValidVisualImageScale(parsedScale)) {
-		return { scale: null, title: rawTitle };
-	}
-	if (markerStart === 0) {
-		return { scale: parsedScale, title: null };
-	}
-	if (rawTitle[markerStart - 1] !== " ") {
-		return { scale: null, title: rawTitle };
-	}
-	const baseTitle = rawTitle.slice(0, markerStart - 1);
-	if (REPEATED_TERMINAL_IMAGE_SCALE_MARKER.test(baseTitle)) {
-		return { scale: null, title: rawTitle };
-	}
-	return { scale: parsedScale, title: baseTitle.length > 0 ? baseTitle : null };
+	return {
+		scale: parsed.scale,
+		title:
+			parsed.title !== null && parsed.title.length > 0 ? parsed.title : null,
+	};
 }
 
 export function tokenAttrString(

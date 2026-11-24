@@ -1,5 +1,12 @@
 import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
 import {
+	decodeCommonMarkTitle,
+	type ImageScalePercentage,
+	normalizeHtmlAttributeTitle,
+	parseEffectiveImageScaleTitle,
+	stripTrailingReservedScaleMarkers,
+} from "../../shared/image-scale-title";
+import {
 	createPreservingRoundTripGuard,
 	type MarkdownRoundTripGuard,
 	type MarkdownSerializers,
@@ -168,38 +175,40 @@ function formatImageAlt(alt: string, inTableCell: boolean): string {
 	return inTableCell ? escapeTablePipes(escaped) : escaped;
 }
 
-/**
- * A title's trailing `{width=N%}` suffix is a reserved scale slot. Strip only
- * trailing/terminal markers so literal nonterminal `{width=...}` text stays
- * intact while PHP never sees repeated or invalid terminal markers.
- */
-function stripReservedScaleMarkers(title: string): string {
-	let end = title.trimEnd().length;
-	while (end > 0) {
-		let cursor = end;
-		while (
-			cursor > 0 &&
-			(title[cursor - 1] === " " || title[cursor - 1] === "\t")
-		) {
-			cursor -= 1;
-		}
-		if (cursor < 8 || title[cursor - 1] !== "}") {
-			break;
-		}
-		const openBrace = title.lastIndexOf("{", cursor - 2);
-		if (
-			openBrace < 0 ||
-			!title.startsWith("{width=", openBrace) ||
-			title.indexOf("}", openBrace + 7) !== cursor - 1
-		) {
-			break;
-		}
-		end = openBrace;
-		while (end > 0 && /\s/u.test(title[end - 1] ?? "")) {
-			end -= 1;
+function serializeScaledImageTitle(
+	baseTitle: string,
+	scale: ImageScalePercentage,
+	inTableCell: boolean,
+): string {
+	const marker = `{width=${scale}%}`;
+	const formatQuoted = (titleValue: string): string => {
+		const escaped = escapeQuotedTitle(titleValue);
+		return inTableCell ? escapeTablePipes(escaped) : escaped;
+	};
+	if (baseTitle.length === 0) {
+		return formatQuoted(marker);
+	}
+	const primaryCandidate = formatQuoted(`${baseTitle} ${marker}`);
+	const primaryParsed = parseEffectiveImageScaleTitle(primaryCandidate);
+	if (primaryParsed.status === "valid" && primaryParsed.scale === scale) {
+		return primaryCandidate;
+	}
+	// Programmatic or entity-bearing titles (such as `"Caption {width=33%}&#32;"`)
+	// can still decode to a conflicting marker in PHP; decode and strip before
+	// falling back to scale-only so Visual serialization never emits PHP-invalid
+	// Markdown.
+	const decodedStripped = stripTrailingReservedScaleMarkers(
+		normalizeHtmlAttributeTitle(decodeCommonMarkTitle(baseTitle)),
+		true,
+	);
+	if (decodedStripped.length > 0) {
+		const fallbackCandidate = formatQuoted(`${decodedStripped} ${marker}`);
+		const fallbackParsed = parseEffectiveImageScaleTitle(fallbackCandidate);
+		if (fallbackParsed.status === "valid" && fallbackParsed.scale === scale) {
+			return fallbackCandidate;
 		}
 	}
-	return title.slice(0, end);
+	return formatQuoted(marker);
 }
 
 function serializeImageNode(
@@ -208,27 +217,21 @@ function serializeImageNode(
 ): string {
 	const src = typeof node.attrs.src === "string" ? node.attrs.src : "";
 	const alt = typeof node.attrs.alt === "string" ? node.attrs.alt : "";
-	const baseTitle =
-		typeof node.attrs.title === "string" && node.attrs.title.length > 0
-			? stripReservedScaleMarkers(node.attrs.title)
-			: "";
 	const scale = isValidVisualImageScale(node.attrs.scale)
 		? node.attrs.scale
 		: null;
-
-	let effectiveTitle: string | null = baseTitle.length > 0 ? baseTitle : null;
-	if (scale !== null) {
-		effectiveTitle =
-			effectiveTitle !== null
-				? `${effectiveTitle} {width=${scale}%}`
-				: `{width=${scale}%}`;
-	}
+	const baseTitle =
+		typeof node.attrs.title === "string" && node.attrs.title.length > 0
+			? stripTrailingReservedScaleMarkers(node.attrs.title, scale !== null)
+			: "";
 
 	const altText = formatImageAlt(alt, inTableCell);
 	const destination = formatLinkDestination(src, inTableCell);
 	let titleSegment = "";
-	if (effectiveTitle !== null) {
-		const escapedTitle = escapeQuotedTitle(effectiveTitle);
+	if (scale !== null) {
+		titleSegment = ` "${serializeScaledImageTitle(baseTitle, scale, inTableCell)}"`;
+	} else if (baseTitle.length > 0) {
+		const escapedTitle = escapeQuotedTitle(baseTitle);
 		titleSegment = inTableCell
 			? ` "${escapeTablePipes(escapedTitle)}"`
 			: ` "${escapedTitle}"`;

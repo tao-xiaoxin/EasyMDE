@@ -40,39 +40,50 @@ export async function runImageContextMenuAction(
 
 	if (/^image-scale-(25|33|50|67|100|150|200)$/u.test(id)) {
 		if (!session.ensureCurrent()) return;
-		const image = findMarkdownImageAt(
-			captured.value,
-			captured.selection.start,
-			captured.selection.end
-		);
-		if (!image) {
+		let replacement: ReturnType<typeof createImageScaleReplacement>;
+		let nextValue: string;
+		let selection: ReturnType<typeof imageTargetSelectionAfterEdit>;
+		try {
+			const image = findMarkdownImageAt(
+				captured.value,
+				captured.selection.start,
+				captured.selection.end
+			);
+			if (!image) {
+				report(
+					"editor-context-menu-image-unavailable",
+					strings?.unsupported
+				);
+				return;
+			}
+			replacement = createImageScaleReplacement(
+				captured.value,
+				image,
+				Number(id.slice("image-scale-".length)) as
+					| 25
+					| 33
+					| 50
+					| 67
+					| 100
+					| 150
+					| 200
+			);
+			const value = session.readValue();
+			nextValue =
+				value.slice(0, replacement.from)
+				+ replacement.insert
+				+ value.slice(replacement.to);
+			selection = imageTargetSelectionAfterEdit(
+				nextValue,
+				image.start
+			);
+		} catch (error) {
 			report(
-				"editor-context-menu-image-unavailable",
-				strings?.unsupported
+				contextMenuActionErrorCode(error, "editor-context-menu-image-stale"),
+				strings?.statusActionFailed
 			);
 			return;
 		}
-		const replacement = createImageScaleReplacement(
-			captured.value,
-			image,
-			Number(id.slice("image-scale-".length)) as
-				| 25
-				| 33
-				| 50
-				| 67
-				| 100
-				| 150
-				| 200
-		);
-		const value = session.readValue();
-		const nextValue =
-			value.slice(0, replacement.from)
-			+ replacement.insert
-			+ value.slice(replacement.to);
-		const selection = imageTargetSelectionAfterEdit(
-			nextValue,
-			image.start
-		);
 		if (!selection) {
 			report(
 				"editor-context-menu-image-stale",

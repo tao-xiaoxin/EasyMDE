@@ -1869,6 +1869,109 @@ describe("visual editor codec regressions", () => {
 		expect(serializeVisualDocToMarkdown(nonterminalWithInvalidScale)).toBe(
 			nonterminalLiteral,
 		);
+
+		// Track A #2 / Track B #2: trailing whitespace or newlines after a literal
+		// `{width=...}` fragment keep the title verbatim when `scale === null`,
+		// including during round-trip edits to sibling text in the same paragraph.
+		const paddedLiteralMd = '![A](/image.png "Caption {width=33%} ") text';
+		const paddedGuard = createMarkdownRoundTripGuard(paddedLiteralMd);
+		const paddedView = createEditorView(paddedLiteralMd);
+		paddedView.dispatch(
+			paddedView.state.tr.insertText(
+				"!",
+				paddedView.state.doc.content.size - 1,
+			),
+		);
+		expect(paddedGuard.serialize(paddedView.state.doc)).toBe(
+			'![A](/image.png "Caption {width=33%} ") text!',
+		);
+
+		const newlineLiteralDoc = parseMarkdownToVisualDoc(
+			'![A](/image.png "Caption {width=33%}\n")',
+		);
+		expect(newlineLiteralDoc.firstChild?.firstChild?.attrs).toMatchObject({
+			title: "Caption {width=33%}\n",
+			scale: null,
+		});
+		expect(serializeVisualDocToMarkdown(newlineLiteralDoc)).toBe(
+			'![A](/image.png "Caption {width=33%}\n")',
+		);
+
+		const trailingSpacesUnscaledDoc = parseMarkdownToVisualDoc(
+			'![A](/image.png "Caption   ")',
+		);
+		expect(serializeVisualDocToMarkdown(trailingSpacesUnscaledDoc)).toBe(
+			'![A](/image.png "Caption   ")',
+		);
+
+		const trailingSpacesScaledDoc = visualEditorSchema.nodes.doc.create(null, [
+			visualEditorSchema.nodes.paragraph.create(null, [
+				visualEditorSchema.nodes.image.create({
+					src: "/image.png",
+					alt: "A",
+					title: "Caption   ",
+					scale: 50,
+				}),
+			]),
+		]);
+		const trailingSpacesScaledMd = serializeVisualDocToMarkdown(
+			trailingSpacesScaledDoc,
+		);
+		expect(trailingSpacesScaledMd).toBe(
+			'![A](/image.png "Caption    {width=50%}")',
+		);
+		expect(
+			parseMarkdownToVisualDoc(trailingSpacesScaledMd).firstChild?.firstChild
+				?.attrs,
+		).toMatchObject({
+			title: "Caption   ",
+			scale: 50,
+		});
+
+		const paddedMarkerScaledDoc = visualEditorSchema.nodes.doc.create(null, [
+			visualEditorSchema.nodes.paragraph.create(null, [
+				visualEditorSchema.nodes.image.create({
+					src: "/image.png",
+					alt: "A",
+					title: "Caption {width=33%} ",
+					scale: 50,
+				}),
+			]),
+		]);
+		expect(serializeVisualDocToMarkdown(paddedMarkerScaledDoc)).toBe(
+			'![A](/image.png "Caption {width=50%}")',
+		);
+
+		const newlineMarkerScaledDoc = visualEditorSchema.nodes.doc.create(null, [
+			visualEditorSchema.nodes.paragraph.create(null, [
+				visualEditorSchema.nodes.image.create({
+					src: "/image.png",
+					alt: "A",
+					title: "Caption {width=33%}\n",
+					scale: 50,
+				}),
+			]),
+		]);
+		expect(serializeVisualDocToMarkdown(newlineMarkerScaledDoc)).toBe(
+			'![A](/image.png "Caption {width=50%}")',
+		);
+
+		const entityPaddedMarkerScaledDoc = visualEditorSchema.nodes.doc.create(
+			null,
+			[
+				visualEditorSchema.nodes.paragraph.create(null, [
+					visualEditorSchema.nodes.image.create({
+						src: "/image.png",
+						alt: "A",
+						title: "Caption {width=33%}&#32;",
+						scale: 50,
+					}),
+				]),
+			],
+		);
+		expect(serializeVisualDocToMarkdown(entityPaddedMarkerScaledDoc)).toBe(
+			'![A](/image.png "Caption {width=50%}")',
+		);
 	});
 
 	it("P2-01 preserves CRLF, trailing newlines, and reordered untouched blocks", () => {

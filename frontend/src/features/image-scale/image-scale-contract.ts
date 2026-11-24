@@ -1,14 +1,11 @@
-export const IMAGE_SCALE_PERCENTAGES = [
-  25,
-  33,
-  50,
-  67,
-  100,
-  150,
-  200
-] as const;
+import {
+  IMAGE_SCALE_PERCENTAGES,
+  type ImageScalePercentage,
+  parseEffectiveImageScaleTitle,
+  parseImageScaleTitleContract
+} from '../../shared/image-scale-title';
 
-export type ImageScalePercentage = (typeof IMAGE_SCALE_PERCENTAGES)[number];
+export { IMAGE_SCALE_PERCENTAGES, type ImageScalePercentage };
 
 export type MarkdownImageScaleMatch = Readonly<{
   alt: string;
@@ -47,9 +44,6 @@ export type MarkdownImageSerialization = Readonly<{
   title: string | null;
 }>;
 
-const TERMINAL_IMAGE_SCALE_MARKER = /\{width=[^{}]*\}$/u;
-const VALID_IMAGE_SCALE_MARKER = /^\{width=(25|33|50|67|100|150|200)%\}$/u;
-const REPEATED_TERMINAL_IMAGE_SCALE_MARKER = /\{width=[^{}]*\}[ \t]*$/u;
 const ESCAPABLE_MARKDOWN_CHARACTERS = new Set(
   Array.from('\\`*{}[]()#+-.!_>~|')
 );
@@ -308,7 +302,7 @@ function hasAmbiguousBareDestinationContinuation(
 }
 
 function parseScaleMarker(
-  title: string | null,
+  rawTitle: string | null,
   titleStart: number | null
 ): Readonly<{
   scale: ImageScalePercentage | null;
@@ -316,39 +310,48 @@ function parseScaleMarker(
   titleMarkerEnd: number | null;
   titleMarkerStart: number | null;
 }> {
-  if (null === title || null === titleStart) {
+  if (null === rawTitle || null === titleStart) {
     return {
       scale: null,
-      title,
+      title: rawTitle,
       titleMarkerEnd: null,
       titleMarkerStart: null
     };
   }
-  const tailMatch = TERMINAL_IMAGE_SCALE_MARKER.exec(title);
-  if (!tailMatch) {
-    return {
-      scale: null,
-      title,
-      titleMarkerEnd: null,
-      titleMarkerStart: null
-    };
-  }
-  const marker = tailMatch[0];
-  const markerOffset = tailMatch.index;
-  const validMatch = VALID_IMAGE_SCALE_MARKER.exec(marker);
-  if (!validMatch?.[1]) syntaxError();
-  const scale = Number(validMatch[1]) as ImageScalePercentage;
-  if (0 !== markerOffset && ' ' !== title[markerOffset - 1]) syntaxError();
-  const remainingTitle = 0 === markerOffset ? null : title.slice(0, markerOffset - 1);
-  if (null !== remainingTitle && REPEATED_TERMINAL_IMAGE_SCALE_MARKER.test(remainingTitle)) {
+  const rawParsed = parseImageScaleTitleContract(rawTitle);
+  const effectiveParsed = parseEffectiveImageScaleTitle(rawTitle);
+  if ('invalid' === effectiveParsed.status) {
     syntaxError();
   }
-  const markerStart = titleStart + 1 + markerOffset;
+  if ('valid' === effectiveParsed.status) {
+    if (
+      'valid' === rawParsed.status
+      && rawParsed.scale === effectiveParsed.scale
+    ) {
+      const markerStart = titleStart + 1 + rawParsed.markerOffset;
+      return {
+        scale: rawParsed.scale,
+        title: rawParsed.title,
+        titleMarkerEnd: markerStart + rawParsed.markerLength,
+        titleMarkerStart: markerStart
+      };
+    }
+    // PHP parses an escaped or entity-encoded terminal marker (for example
+    // `"Caption \{width=50%\}"` or `"Caption &#123;width=50%&#125;"`). Report
+    // the true PHP scale while keeping raw marker offsets null so edits reject
+    // cleanly instead of mutating through escapes or entities.
+    return {
+      scale: effectiveParsed.scale,
+      title: effectiveParsed.title,
+      titleMarkerEnd: null,
+      titleMarkerStart: null
+    };
+  }
   return {
-    scale,
-    title: remainingTitle,
-    titleMarkerEnd: markerStart + marker.length,
-    titleMarkerStart: markerStart
+    scale: null,
+    title: rawTitle,
+    titleMarkerEnd: null,
+    titleMarkerStart: null
   };
 }
 
@@ -544,7 +547,7 @@ export function createImageScaleReplacement(
     if (
       null === parsed.titleMarkerStart
       || null === parsed.titleMarkerEnd
-    ) throw new Error('image-scale-image-stale');
+    ) syntaxError();
     return {
       from: parsed.titleMarkerStart,
       insert: marker,
@@ -552,6 +555,21 @@ export function createImageScaleReplacement(
     };
   }
   if (null !== parsed.titleEnd) {
+    if ('' === parsed.title) {
+      return {
+        from: parsed.titleEnd,
+        insert: marker,
+        to: parsed.titleEnd
+      };
+    }
+    const candidateRawTitle = `${parsed.title ?? ''} ${marker}`;
+    const candidateEffective = parseEffectiveImageScaleTitle(candidateRawTitle);
+    if (
+      'valid' !== candidateEffective.status
+      || candidateEffective.scale !== percentage
+    ) {
+      syntaxError();
+    }
     return {
       from: parsed.titleEnd,
       insert: ` ${marker}`,
@@ -631,10 +649,17 @@ export function serializeMarkdownImage({
     : null === title || '' === title
       ? marker
       : `${title} ${marker}`;
-  const titleSuffix = null === titleValue || '' === titleValue
-    ? ''
-    : ` "${escapedMarkdown(titleValue, '\\"')}"`;
-  return `![${escapedAlt}](${destinationText}${titleSuffix})`;
+  if (null === titleValue || '' === titleValue) {
+    return `![${escapedAlt}](${destinationText})`;
+  }
+  const escapedTitle = escapedMarkdown(titleValue, '\\"');
+  if (null !== scale && null !== title && '' !== title) {
+    const parsedTitle = parseEffectiveImageScaleTitle(escapedTitle);
+    if ('valid' !== parsedTitle.status || parsedTitle.scale !== scale) {
+      syntaxError();
+    }
+  }
+  return `![${escapedAlt}](${destinationText} "${escapedTitle}")`;
 }
 
 export function serializeLegacyMarkdownImageWidth(

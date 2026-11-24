@@ -364,4 +364,122 @@ describe('image scale contract', () => {
     expect(large).toBeLessThan(1_500);
     expect(large).toBeLessThan(medium * 20 + 200);
   });
+
+  it('rejects scaling titles whose trailing whitespace, entities, or newlines would create PHP-invalid repeated markers', () => {
+    for (const rawTitle of [
+      'Caption {width=33%} ',
+      'Caption {width=33%}\t',
+      'Caption {width=33%}&#32;',
+      'Caption {width=33%}&Tab;',
+      'Caption {width=33%}\n',
+      'Caption {width=bad} '
+    ]) {
+      const source = `![Alt](https://example.test/image.png "${rawTitle}")`;
+      const parsed = parseMarkdownImageScale(source);
+      expect(parsed, rawTitle).toMatchObject({
+        scale: null,
+        title: rawTitle,
+        titleMarkerEnd: null,
+        titleMarkerStart: null
+      });
+      if (!parsed) throw new Error('image-scale-test-image-missing');
+      expect(() => createImageScaleReplacement(source, parsed, 50), rawTitle).toThrow(
+        'image-scale-syntax-invalid'
+      );
+    }
+  });
+
+  it('reports PHP scale for escaped or entity-encoded markers while rejecting edits and invalid decoded markers', () => {
+    for (const rawTitle of [
+      String.raw`Caption \{width=33%\}`,
+      'Caption &#123;width=33%&#125;'
+    ]) {
+      const source = `![Alt](https://example.test/image.png "${rawTitle}")`;
+      const parsed = parseMarkdownImageScale(source);
+      expect(parsed, rawTitle).toMatchObject({
+        scale: 33,
+        title: 'Caption',
+        titleMarkerEnd: null,
+        titleMarkerStart: null
+      });
+      if (!parsed) throw new Error('image-scale-test-image-missing');
+      expect(() => createImageScaleReplacement(source, parsed, 50), rawTitle).toThrow(
+        'image-scale-syntax-invalid'
+      );
+    }
+
+    for (const source of [
+      String.raw`![Alt](https://example.test/image.png "Caption \{width=51%\}")`,
+      '![Alt](https://example.test/image.png "Caption &#123;width=51%&#125;")',
+      String.raw`![Alt](https://example.test/image.png "Caption \{width=33%\} {width=50%}")`,
+      '![Alt](https://example.test/image.png "Caption {width=33%}&#32; {width=50%}")',
+      '![Alt](https://example.test/image.png "Caption {width=33%}&Tab; {width=50%}")',
+      '![Alt](https://example.test/image.png "Caption {width=33%}\n {width=50%}")'
+    ]) {
+      expect(() => parseMarkdownImageScale(source), source).toThrow(
+        'image-scale-syntax-invalid'
+      );
+    }
+  });
+
+  it('scales an empty quoted title without inserting a leading space', () => {
+    const source = '![alt](https://example.test/image.png "")';
+    const image = parseMarkdownImageScale(source);
+    expect(image).toMatchObject({
+      scale: null,
+      title: '',
+      titleMarkerEnd: null,
+      titleMarkerStart: null
+    });
+    if (!image) throw new Error('image-scale-test-image-missing');
+
+    const replacement = createImageScaleReplacement(source, image, 67);
+    const updated =
+      source.slice(0, replacement.from)
+      + replacement.insert
+      + source.slice(replacement.to);
+    expect(updated).toBe('![alt](https://example.test/image.png "{width=67%}")');
+    expect(parseMarkdownImageScale(updated)).toMatchObject({
+      scale: 67,
+      title: null
+    });
+  });
+
+  it('rejects serializeMarkdownImage titles that would emit PHP-invalid scale syntax while allowing nonterminal examples', () => {
+    for (const title of [
+      'Caption {width=33%} ',
+      'Caption {width=33%}\t',
+      'Caption {width=33%}&#32;',
+      'Caption {width=33%}&Tab;',
+      'Caption {width=33%}\n',
+      'Caption {width=33%}',
+      'Caption {width=bad} ',
+      'Caption\n'
+    ]) {
+      expect(
+        () =>
+          serializeMarkdownImage({
+            alt: 'Alt',
+            destination: 'https://example.test/image.png',
+            scale: 50,
+            title
+          }),
+        title
+      ).toThrow('image-scale-syntax-invalid');
+    }
+
+    const literal = serializeMarkdownImage({
+      alt: 'Alt',
+      destination: 'https://example.test/image.png',
+      scale: 50,
+      title: 'Syntax {width=33%} example'
+    });
+    expect(literal).toBe(
+      '![Alt](https://example.test/image.png "Syntax {width=33%} example {width=50%}")'
+    );
+    expect(parseMarkdownImageScale(literal)).toMatchObject({
+      scale: 50,
+      title: 'Syntax {width=33%} example'
+    });
+  });
 });

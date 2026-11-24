@@ -9,13 +9,84 @@ import {
 	parseMarkdownImageScale
 } from "../image-scale/image-scale-contract";
 
+function verifyConfirmedImageMatch(
+	value: string,
+	match: MarkdownImageScaleMatch
+): MarkdownImageScaleMatch | null {
+	if (
+		!Number.isInteger(match.start)
+		|| !Number.isInteger(match.end)
+		|| match.start < 0
+		|| match.end <= match.start
+		|| match.end > value.length
+		|| value.slice(match.start, match.end) !== match.raw
+	) {
+		return null;
+	}
+	const parsed = parseMarkdownImageScale(value, match.start);
+	if (
+		!parsed
+		|| parsed.start !== match.start
+		|| parsed.end !== match.end
+		|| parsed.raw !== match.raw
+		|| parsed.destination !== match.destination
+		|| parsed.destinationAngle !== match.destinationAngle
+		|| parsed.destinationStart !== match.destinationStart
+		|| parsed.destinationEnd !== match.destinationEnd
+		|| parsed.scale !== match.scale
+	) {
+		return null;
+	}
+	return parsed;
+}
+
+function isStaleImageContractError(error: unknown): boolean {
+	return error instanceof Error
+		&& (
+			"image-scale-image-stale" === error.message
+			|| "image-scale-range-invalid" === error.message
+			|| "image-scale-syntax-invalid" === error.message
+			|| "image-scale-invalid-width" === error.message
+		);
+}
+
 function findImageOrReport(
 	session: EditorContextMenuActionSession,
 	unavailableCode: string,
 	invalidFallbackCode: string
 ): MarkdownImageScaleMatch | null {
-	const { capabilities, captured, report } = session;
+	const { actionContext, capabilities, captured, report } = session;
 	const strings = capabilities.contextMenuStrings;
+	const confirmedMatch = actionContext?.image?.match;
+	if (confirmedMatch) {
+		try {
+			const capturedImage = verifyConfirmedImageMatch(
+				captured.value,
+				confirmedMatch
+			);
+			const currentValue = session.readValue();
+			const currentImage =
+				capturedImage && currentValue === captured.value
+					? capturedImage
+					: capturedImage
+						? verifyConfirmedImageMatch(currentValue, confirmedMatch)
+						: null;
+			if (!currentImage) {
+				report(
+					"editor-context-menu-image-stale",
+					strings?.statusActionFailed
+				);
+				return null;
+			}
+			return currentImage;
+		} catch (error) {
+			report(
+				contextMenuActionErrorCode(error, invalidFallbackCode),
+				strings?.statusActionFailed
+			);
+			return null;
+		}
+	}
 	let image: MarkdownImageScaleMatch | null;
 	try {
 		image = findMarkdownImageAt(
@@ -63,7 +134,7 @@ export async function runImageContextMenuAction(
 	id: string,
 	session: EditorContextMenuActionSession
 ): Promise<void> {
-	const { actionContext, capabilities, captured, report } = session;
+	const { actionContext, capabilities, report } = session;
 	const strings = capabilities.contextMenuStrings;
 	const clipboard = session.clipboard;
 
@@ -75,12 +146,24 @@ export async function runImageContextMenuAction(
 			"editor-context-menu-image-stale"
 		);
 		if (!image) return;
+		const value = session.readValue();
+		if (
+			image.start < 0
+			|| image.end > value.length
+			|| value.slice(image.start, image.end) !== image.raw
+		) {
+			report(
+				"editor-context-menu-image-stale",
+				strings?.statusActionFailed
+			);
+			return;
+		}
 		let replacement: ReturnType<typeof createImageScaleReplacement>;
 		let nextValue: string;
 		let selection: ReturnType<typeof imageTargetSelectionAfterEdit>;
 		try {
 			replacement = createImageScaleReplacement(
-				captured.value,
+				value,
 				image,
 				Number(id.slice("image-scale-".length)) as
 					| 25
@@ -91,7 +174,6 @@ export async function runImageContextMenuAction(
 					| 150
 					| 200
 			);
-			const value = session.readValue();
 			nextValue =
 				value.slice(0, replacement.from)
 				+ replacement.insert
@@ -210,7 +292,7 @@ export async function runImageContextMenuAction(
 		const value = session.readValue();
 		let current: MarkdownImageScaleMatch | null;
 		try {
-			current = parseMarkdownImageScale(value, image.start);
+			current = verifyConfirmedImageMatch(value, image);
 		} catch (error) {
 			report(
 				contextMenuActionErrorCode(error, "editor-context-menu-image-stale"),
@@ -218,7 +300,7 @@ export async function runImageContextMenuAction(
 			);
 			return;
 		}
-		if (!current || current.raw !== image.raw) {
+		if (!current) {
 			report(
 				"editor-context-menu-image-stale",
 				strings?.statusActionFailed
@@ -257,6 +339,24 @@ export async function runImageContextMenuAction(
 			);
 			return;
 		}
+		const liveValue = session.readValue();
+		let liveImage: MarkdownImageScaleMatch | null;
+		try {
+			liveImage = verifyConfirmedImageMatch(liveValue, image);
+		} catch (error) {
+			report(
+				contextMenuActionErrorCode(error, "editor-context-menu-image-stale"),
+				strings?.statusActionFailed
+			);
+			return;
+		}
+		if (!liveImage) {
+			report(
+				"editor-context-menu-image-stale",
+				strings?.statusActionFailed
+			);
+			return;
+		}
 		const operation = session.beginOperation();
 		const controller = operation.controller;
 		try {
@@ -272,13 +372,25 @@ export async function runImageContextMenuAction(
 			}
 			if (controller.signal.aborted || !session.ensureCurrent()) return;
 			const current = session.readValue();
-			const parsed = parseMarkdownImageScale(current, image.start);
-			if (!parsed) throw new Error("editor-context-menu-image-stale");
-			const replacement = createMarkdownImageDestinationReplacement(
-				current,
-				parsed,
-				result.url
-			);
+			let replacement: ReturnType<
+				typeof createMarkdownImageDestinationReplacement
+			>;
+			try {
+				replacement = createMarkdownImageDestinationReplacement(
+					current,
+					image,
+					result.url
+				);
+			} catch (error) {
+				if (isStaleImageContractError(error)) {
+					report(
+						"editor-context-menu-image-stale",
+						strings?.statusActionFailed
+					);
+					return;
+				}
+				throw error;
+			}
 			if (!replacement) return;
 			const nextValue =
 				current.slice(0, replacement.from)
@@ -295,6 +407,7 @@ export async function runImageContextMenuAction(
 				);
 				return;
 			}
+			if (controller.signal.aborted || !session.ensureCurrent()) return;
 			session.applyEdit({
 				changes: replacement,
 				selection,

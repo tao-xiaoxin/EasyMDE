@@ -641,6 +641,103 @@ describe("createEditorMarkdownBlockIndex", () => {
 		);
 		expect(block?.kind).toBe("unavailable");
 	});
+
+	it("computes exact non-overlapping lineStart and lineEnd when splitting blocks around adjacent display math", () => {
+		const tableBeforeMath = "| A | B |\n| --- | --- |\n| 1 | 2 |\n$$x$$";
+		expect(createEditorMarkdownBlockIndex(tableBeforeMath).blocks).toEqual([
+			{
+				editable: true,
+				from: 0,
+				kind: "table",
+				lineEnd: 2,
+				lineStart: 0,
+				to: tableBeforeMath.indexOf("\n$$x$$"),
+			},
+			{
+				editable: true,
+				from: tableBeforeMath.indexOf("$$x$$"),
+				kind: "math",
+				lineEnd: 3,
+				lineStart: 3,
+				to: tableBeforeMath.length,
+			},
+		]);
+
+		for (const newline of ["\n", "\r\n"] as const) {
+			const surrounded = `Line 0${newline}$$x$$${newline}Line 2`;
+			const blocks = createEditorMarkdownBlockIndex(surrounded).blocks;
+			expect(blocks, JSON.stringify(newline)).toEqual([
+				{
+					editable: true,
+					from: 0,
+					kind: "paragraph",
+					lineEnd: 0,
+					lineStart: 0,
+					to: "Line 0".length,
+				},
+				{
+					editable: true,
+					from: surrounded.indexOf("$$x$$"),
+					kind: "math",
+					lineEnd: 1,
+					lineStart: 1,
+					to: surrounded.indexOf("$$x$$") + "$$x$$".length,
+				},
+				{
+					editable: true,
+					from: surrounded.indexOf("Line 2"),
+					kind: "paragraph",
+					lineEnd: 2,
+					lineStart: 2,
+					to: surrounded.length,
+				},
+			]);
+		}
+
+		const multipleMath = "Line 0\n$$a$$\nLine 2\n\\[b\\]\nLine 4";
+		expect(createEditorMarkdownBlockIndex(multipleMath).blocks).toEqual([
+			{
+				editable: true,
+				from: 0,
+				kind: "paragraph",
+				lineEnd: 0,
+				lineStart: 0,
+				to: "Line 0".length,
+			},
+			{
+				editable: true,
+				from: multipleMath.indexOf("$$a$$"),
+				kind: "math",
+				lineEnd: 1,
+				lineStart: 1,
+				to: multipleMath.indexOf("$$a$$") + "$$a$$".length,
+			},
+			{
+				editable: true,
+				from: multipleMath.indexOf("Line 2"),
+				kind: "paragraph",
+				lineEnd: 2,
+				lineStart: 2,
+				to: multipleMath.indexOf("Line 2") + "Line 2".length,
+			},
+			{
+				editable: true,
+				from: multipleMath.indexOf("\\[b\\]"),
+				kind: "math",
+				lineEnd: 3,
+				lineStart: 3,
+				to: multipleMath.indexOf("\\[b\\]") + "\\[b\\]".length,
+			},
+			{
+				editable: true,
+				from: multipleMath.indexOf("Line 4"),
+				kind: "paragraph",
+				lineEnd: 4,
+				lineStart: 4,
+				to: multipleMath.length,
+			},
+		]);
+	});
 });
 
 describe("readEditorCodeContent", () => {

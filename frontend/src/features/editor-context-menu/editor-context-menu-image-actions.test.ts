@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { RemoteImageUploadMode } from "../../contracts/bootstrap/image-upload-bootstrap";
 import type { EditorClipboardPort } from "../../contracts/ports/editor-clipboard-port";
+import type { RemoteImageImportResult } from "../../contracts/ports/remote-image-import-port";
+import { parseMarkdownImageScale } from "../image-scale/image-scale-contract";
 import type { EditorContextMenuActionSession } from "./editor-context-menu-action-coordinator";
 import { runImageContextMenuAction } from "./editor-context-menu-image-actions";
 
@@ -9,6 +11,9 @@ function createImageScaleSession(
 	selectionStart = 2,
 	selectionEnd = 2,
 	options?: Readonly<{
+		actionContext?: EditorContextMenuActionSession["actionContext"];
+		ensureCurrent?: () => boolean;
+		importImage?: () => Promise<RemoteImageImportResult>;
 		readValue?: () => string;
 		remoteImageUploadMode?: RemoteImageUploadMode;
 	}>,
@@ -20,11 +25,15 @@ function createImageScaleSession(
 }> {
 	const applyEdit = vi.fn(() => true);
 	const report = vi.fn();
-	const importImage = vi.fn(async () => ({
-		code: "remote-image-import-unsupported",
-		status: "failed" as const,
-	}));
+	const importImage = vi.fn(
+		options?.importImage
+		?? (async (): Promise<RemoteImageImportResult> => ({
+			code: "remote-image-import-unsupported",
+			status: "failed",
+		})),
+	);
 	const readCurrentValue = options?.readValue ?? (() => value);
+	const ensureCurrent = options?.ensureCurrent ?? (() => true);
 	const selection = {
 		direction: "none" as const,
 		end: selectionEnd,
@@ -100,23 +109,24 @@ function createImageScaleSession(
 		},
 	};
 	const session: EditorContextMenuActionSession = {
+		...(options?.actionContext ? { actionContext: options.actionContext } : {}),
 		applyEdit,
 		beginOperation: () => ({
 			captured,
 			cleanup: () => undefined,
 			controller: new AbortController(),
-			isCurrent: () => true,
+			isCurrent: ensureCurrent,
 		}),
 		capabilities,
 		captured,
 		clipboard,
 		currentBlockIndex: () => null,
 		document: documentPort,
-		ensureCurrent: () => true,
+		ensureCurrent,
 		ensureSelectionFitsTarget: () => true,
 		ensureSourceEditable: () => true,
 		finishOperation: vi.fn(),
-		isCurrent: () => true,
+		isCurrent: ensureCurrent,
 		readValue: readCurrentValue,
 		report,
 	};
@@ -299,6 +309,276 @@ describe("editor-context-menu-image-actions", () => {
 			expect.objectContaining({
 				value: "before  after",
 			}),
+		);
+	});
+
+	it("uses menu-confirmed actionContext.image.match instead of rescanning nested title syntax or indented list items", async () => {
+		const nestedTitle =
+			'![outer](https://example.com/demo.png "contains ![inner](https://example.com/other.png) here")';
+		const outerMatch = parseMarkdownImageScale(nestedTitle, 0);
+		expect(outerMatch).not.toBeNull();
+		if (!outerMatch) return;
+		const caretInsideInner = nestedTitle.indexOf("inner") + 2;
+
+		const deleteOuter = createImageScaleSession(
+			nestedTitle,
+			caretInsideInner,
+			caretInsideInner,
+			{
+				actionContext: {
+					image: { canCopyImage: false, match: outerMatch },
+				},
+			},
+		);
+		await runImageContextMenuAction("delete-image", deleteOuter.session);
+		expect(deleteOuter.report).not.toHaveBeenCalled();
+		expect(deleteOuter.applyEdit).toHaveBeenCalledWith(
+			expect.objectContaining({
+				changes: { from: 0, insert: "", to: nestedTitle.length },
+				value: "",
+			}),
+		);
+
+		const scaleOuter = createImageScaleSession(
+			nestedTitle,
+			caretInsideInner,
+			caretInsideInner,
+			{
+				actionContext: {
+					image: { canCopyImage: false, match: outerMatch },
+				},
+			},
+		);
+		await runImageContextMenuAction("image-scale-50", scaleOuter.session);
+		expect(scaleOuter.report).not.toHaveBeenCalled();
+		expect(scaleOuter.applyEdit).toHaveBeenCalledWith(
+			expect.objectContaining({
+				value:
+					'![outer](https://example.com/demo.png "contains ![inner](https://example.com/other.png) here {width=50%}")',
+			}),
+		);
+
+		const uploadOuter = createImageScaleSession(
+			nestedTitle,
+			caretInsideInner,
+			caretInsideInner,
+			{
+				actionContext: {
+					image: { canCopyImage: false, match: outerMatch },
+				},
+				importImage: async () => ({
+					alt: "outer",
+					backup: { status: "disabled" },
+					status: "imported",
+					title: "",
+					url: "https://cdn.example/demo.png",
+				}),
+				remoteImageUploadMode: "source",
+			},
+		);
+		await runImageContextMenuAction("upload-image", uploadOuter.session);
+		expect(uploadOuter.report).not.toHaveBeenCalled();
+		expect(uploadOuter.importImage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				altText: "outer",
+				url: "https://example.com/demo.png",
+			}),
+		);
+		expect(uploadOuter.applyEdit).toHaveBeenCalledWith(
+			expect.objectContaining({
+				value:
+					'![outer](https://cdn.example/demo.png "contains ![inner](https://example.com/other.png) here")',
+			}),
+		);
+
+		const listIndented = "- item\n\n    ![x](https://example.com/demo.png)";
+		const indentedStart = listIndented.indexOf("![x]");
+		const indentedMatch = parseMarkdownImageScale(listIndented, indentedStart);
+		expect(indentedMatch).not.toBeNull();
+		if (!indentedMatch) return;
+
+		const scaleIndented = createImageScaleSession(
+			listIndented,
+			indentedStart + 2,
+			indentedStart + 2,
+			{
+				actionContext: {
+					image: { canCopyImage: false, match: indentedMatch },
+				},
+			},
+		);
+		await runImageContextMenuAction("image-scale-50", scaleIndented.session);
+		expect(scaleIndented.report).not.toHaveBeenCalled();
+		expect(scaleIndented.applyEdit).toHaveBeenCalledWith(
+			expect.objectContaining({
+				value: '- item\n\n    ![x](https://example.com/demo.png "{width=50%}")',
+			}),
+		);
+
+		const deleteIndented = createImageScaleSession(
+			listIndented,
+			indentedStart + 2,
+			indentedStart + 2,
+			{
+				actionContext: {
+					image: { canCopyImage: false, match: indentedMatch },
+				},
+			},
+		);
+		await runImageContextMenuAction("delete-image", deleteIndented.session);
+		expect(deleteIndented.report).not.toHaveBeenCalled();
+		expect(deleteIndented.applyEdit).toHaveBeenCalledWith(
+			expect.objectContaining({
+				value: "- item\n\n    ",
+			}),
+		);
+
+		const uploadIndented = createImageScaleSession(
+			listIndented,
+			indentedStart + 2,
+			indentedStart + 2,
+			{
+				actionContext: {
+					image: { canCopyImage: false, match: indentedMatch },
+				},
+				importImage: async () => ({
+					alt: "x",
+					backup: { status: "disabled" },
+					status: "imported",
+					title: "",
+					url: "https://cdn.example/indented.png",
+				}),
+				remoteImageUploadMode: "source",
+			},
+		);
+		await runImageContextMenuAction("upload-image", uploadIndented.session);
+		expect(uploadIndented.report).not.toHaveBeenCalled();
+		expect(uploadIndented.applyEdit).toHaveBeenCalledWith(
+			expect.objectContaining({
+				value: "- item\n\n    ![x](https://cdn.example/indented.png)",
+			}),
+		);
+	});
+
+	it("reports stale without mutating when menu-confirmed match or live value drifts before scale, delete, or upload", async () => {
+		const original = "![A](https://example.com/a.png)";
+		const match = parseMarkdownImageScale(original, 0);
+		expect(match).not.toBeNull();
+		if (!match) return;
+
+		for (const actionId of [
+			"image-scale-50",
+			"delete-image",
+			"upload-image",
+		] as const) {
+			const drifted = createImageScaleSession(original, 2, 2, {
+				actionContext: { image: { canCopyImage: false, match } },
+				importImage: async () => ({
+					alt: "A",
+					backup: { status: "disabled" },
+					status: "imported",
+					title: "",
+					url: "https://cdn.example/a.png",
+				}),
+				readValue: () => "![B](https://example.com/b.png)",
+				remoteImageUploadMode: "source",
+			});
+			await runImageContextMenuAction(actionId, drifted.session);
+			expect(drifted.report, actionId).toHaveBeenCalledWith(
+				"editor-context-menu-image-stale",
+				"Action failed",
+			);
+			expect(drifted.applyEdit, actionId).not.toHaveBeenCalled();
+			expect(drifted.importImage, actionId).not.toHaveBeenCalled();
+		}
+
+		// Programmatic caller without actionContext still checks live value before scaling.
+		const scaleDriftWithoutContext = createImageScaleSession(original, 2, 2, {
+			readValue: () => "![B](https://example.com/b.png)",
+		});
+		await runImageContextMenuAction(
+			"image-scale-50",
+			scaleDriftWithoutContext.session,
+		);
+		expect(scaleDriftWithoutContext.report).toHaveBeenCalledWith(
+			"editor-context-menu-image-stale",
+			"Action failed",
+		);
+		expect(scaleDriftWithoutContext.applyEdit).not.toHaveBeenCalled();
+	});
+
+	it("rejects upload-image when an unrelated image replaces the captured image during upload", async () => {
+		const original = "![A](https://example.com/a.png)";
+		const match = parseMarkdownImageScale(original, 0);
+		expect(match).not.toBeNull();
+		if (!match) return;
+
+		for (const [label, replacementLiveValue, withActionContext] of [
+			[
+				"unrelated image at same offset with confirmed match",
+				"![B](https://example.com/b.png)",
+				true,
+			],
+			[
+				"unrelated image at same offset without actionContext",
+				"![B](https://example.com/b.png)",
+				false,
+			],
+			[
+				"invalid width marker written at same offset during upload",
+				'![A](https://example.com/a.png "{width=51%}")',
+				true,
+			],
+			["truncated document during upload", "short", true],
+		] as const) {
+			let liveValue = original;
+			const uploadCase = createImageScaleSession(original, 2, 2, {
+				...(withActionContext
+					? { actionContext: { image: { canCopyImage: false, match } } }
+					: {}),
+				importImage: async () => {
+					liveValue = replacementLiveValue;
+					return {
+						alt: "A",
+						backup: { status: "disabled" },
+						status: "imported",
+						title: "",
+						url: "https://cdn.example/a-imported.png",
+					};
+				},
+				readValue: () => liveValue,
+				remoteImageUploadMode: "source",
+			});
+			await runImageContextMenuAction("upload-image", uploadCase.session);
+			expect(uploadCase.importImage, label).toHaveBeenCalledTimes(1);
+			expect(uploadCase.applyEdit, label).not.toHaveBeenCalled();
+			expect(uploadCase.report, label).toHaveBeenCalledTimes(1);
+			expect(uploadCase.report, label).toHaveBeenCalledWith(
+				"editor-context-menu-image-stale",
+				"Action failed",
+			);
+		}
+
+		// Invalid returned destination URL still reports upload failure, not staleness.
+		const invalidDestination = createImageScaleSession(original, 2, 2, {
+			actionContext: { image: { canCopyImage: false, match } },
+			importImage: async () => ({
+				alt: "A",
+				backup: { status: "disabled" },
+				status: "imported",
+				title: "",
+				url: "https://cdn.example/bad\nurl.png",
+			}),
+			remoteImageUploadMode: "source",
+		});
+		await runImageContextMenuAction(
+			"upload-image",
+			invalidDestination.session,
+		);
+		expect(invalidDestination.applyEdit).not.toHaveBeenCalled();
+		expect(invalidDestination.report).toHaveBeenCalledWith(
+			"editor-context-menu-image-upload-failed",
+			"Action failed",
 		);
 	});
 });

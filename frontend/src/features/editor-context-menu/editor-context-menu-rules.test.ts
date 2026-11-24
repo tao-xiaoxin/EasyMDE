@@ -3485,6 +3485,58 @@ describe("editor context menu rules", () => {
 				probes: ["1", "3"],
 				source: "foo\\|bar\n| - | - |\n| 1 | 2 |\n| - | - |\n| 3 | 4 |",
 			},
+			{
+				name: "paragraph with prior pipe opens PHP table on pipe-less header before 2-column delimiter",
+				probes: ["foo", "bar", "X", "1"],
+				source: "foo|\nbar\n| - | - |\n| X | Y |\n| - | - |\n| 1 | 2 |",
+			},
+			{
+				name: "paragraph with prior pipe opens 1-column PHP table on pipe-less header before 2-column table",
+				probes: ["intro", "no pipe", "A", "1"],
+				source:
+					"intro | pipe\nno pipe\n| --- |\n| A | B |\n| --- | --- |\n| 1 | 2 |",
+			},
+			{
+				name: "standalone single-pipe 0-column PHP table absorbs later 2-column table",
+				probes: ["A", "1"],
+				source: "|\n| - |\n| A | B |\n| - | - |\n| 1 | 2 |",
+			},
+			{
+				name: "whitespace-padded single-pipe 0-column PHP table absorbs later 2-column table",
+				probes: ["A", "1"],
+				source: " | \n| - |\n| A | B |\n| - | - |\n| 1 | 2 |",
+			},
+			{
+				name: "4-space-indented single-pipe continuation after paragraph opens 0-column PHP table",
+				probes: ["A", "1"],
+				source: "intro\n    |\n| - |\n| A | B |\n| - | - |\n| 1 | 2 |",
+			},
+			{
+				name: "4-space-indented pipe-less continuation after paragraph with pipe opens PHP table",
+				probes: ["X", "1"],
+				source: "foo|\n    bar\n| - | - |\n| X | Y |\n| - | - |\n| 1 | 2 |",
+			},
+			{
+				name: "heading-looking line with pipe continues declined paragraph-embedded PHP table",
+				probes: ["X", "1"],
+				source: "foo|\nbar\n| - | - |\n# H | pipe\n| X | Y |\n| - | - |\n| 1 | 2 |",
+			},
+			{
+				name: "non-empty ordered list item interrupting asymmetric PHP table absorbs following pipe lines",
+				probes: ["1", "3"],
+				source:
+					"intro\n| A |\n| - | - |\n2. item\n| 1 | 2 |\n| - | - |\n| 3 | 4 |",
+			},
+			{
+				name: "pipe-less header opening PHP table before duplicate delimiter rows",
+				probes: ["1"],
+				source: "foo|\nbar\n| - | - |\n| - | - |\n| 1 | 2 |",
+			},
+			{
+				name: "single-pipe header opening 0-column PHP table before duplicate delimiter rows",
+				probes: ["1"],
+				source: "|\n| - |\n| - |\n| 1 |",
+			},
 		] as const;
 
 		for (const testCase of declinedCases) {
@@ -3555,6 +3607,104 @@ describe("editor context menu rules", () => {
 			context: { columnCount: 2, rowCount: 2 },
 			table: { endLine: 6, separatorLine: 5, startLine: 4 },
 		});
+
+		// 5. Indented code interrupts paragraph-embedded pipe-less and single-pipe PHP tables.
+		const pipeLessCodeInterrupted =
+			"foo|\nbar\n| - | - |\n    code\n| X | Y |\n| - | - |\n| 1 | 2 |";
+		expect(
+			prepareMarkdownTable(
+				pipeLessCodeInterrupted,
+				pipeLessCodeInterrupted.indexOf("1"),
+			),
+		).toMatchObject({
+			context: { columnCount: 2, rowCount: 2 },
+			table: { endLine: 6, separatorLine: 5, startLine: 4 },
+		});
+
+		const singlePipeCodeInterrupted =
+			"|\n| - |\n    code\n| A | B |\n| - | - |\n| 1 | 2 |";
+		expect(
+			prepareMarkdownTable(
+				singlePipeCodeInterrupted,
+				singlePipeCodeInterrupted.indexOf("1"),
+			),
+		).toMatchObject({
+			context: { columnCount: 2, rowCount: 2 },
+			table: { endLine: 5, separatorLine: 4, startLine: 3 },
+		});
+
+		// 6. Standalone 4-space indented pipe is an indented code block, not a PHP table header.
+		const indentedCodePipe = "    |\n| - |\n| A | B |\n| - | - |\n| 1 | 2 |";
+		expect(
+			prepareMarkdownTable(indentedCodePipe, indentedCodePipe.indexOf("1")),
+		).toMatchObject({
+			context: { columnCount: 2, rowCount: 2 },
+			table: { endLine: 4, separatorLine: 3, startLine: 2 },
+		});
+
+		// 7. Paragraph with no pipe before a pipe-less line does NOT open a PHP table.
+		const noPriorPipe = "foo\nbar\n| - | - |\n| X | Y |\n| - | - |\n| 1 | 2 |";
+		expect(
+			prepareMarkdownTable(noPriorPipe, noPriorPipe.indexOf("1")),
+		).toMatchObject({
+			context: { columnCount: 2, rowCount: 2 },
+			table: { endLine: 5, separatorLine: 4, startLine: 3 },
+		});
+
+		// 8. Preceding pipe paragraph directly above a valid same-width table stays editable.
+		const pipeParaThenValidTable =
+			"intro | pipe\n| A | B |\n| --- | --- |\n| 1 | 2 |";
+		expect(
+			prepareMarkdownTable(
+				pipeParaThenValidTable,
+				pipeParaThenValidTable.indexOf("1"),
+			),
+		).toMatchObject({
+			context: { columnCount: 2, rowCount: 2 },
+			table: { endLine: 3, separatorLine: 2, startLine: 1 },
+		});
+
+		// 9. Heading with a pipe does NOT open a PHP table when no table is active above it.
+		const headingWithPipeBeforeTable =
+			"foo|\n# H | pipe\n| X | Y |\n| - | - |\n| 1 | 2 |";
+		expect(
+			prepareMarkdownTable(
+				headingWithPipeBeforeTable,
+				headingWithPipeBeforeTable.indexOf("1"),
+			),
+		).toMatchObject({
+			context: { columnCount: 2, rowCount: 2 },
+			table: { endLine: 4, separatorLine: 3, startLine: 2 },
+		});
+	});
+
+	it("keeps tables directly followed by display math editable while declining inline or mixed-line math", () => {
+		for (const validSource of [
+			"| A | B |\n| --- | --- |\n| 1 | 2 |\n$$x$$",
+			"| A | B |\n| --- | --- |\n| 1 | 2 |\n  $$x$$",
+			"| A | B |\n| --- | --- |\n| 1 | 2 |\n$$a | b$$",
+			"| A | B |\n| --- | --- |\n| 1 | 2 |\n\\[x\\]",
+		]) {
+			const position = validSource.indexOf("1");
+			expect(
+				prepareMarkdownTable(validSource, position),
+				validSource,
+			).toMatchObject({
+				context: { columnCount: 2, rowCount: 2 },
+				table: { endLine: 2, separatorLine: 1, startLine: 0 },
+			});
+		}
+
+		for (const declinedSource of [
+			"| A | B |\n| --- | --- |\n| 1 | 2 |\nfoo $$x$$",
+			"| A | B |\n| --- | --- |\n| 1 | 2 |\n$x$",
+		]) {
+			const position = declinedSource.indexOf("1");
+			expect(
+				prepareMarkdownTable(declinedSource, position),
+				declinedSource,
+			).toBeNull();
+		}
 	});
 
 	it("copies and deletes the annotation together with its table", () => {

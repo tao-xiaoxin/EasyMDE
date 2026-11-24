@@ -178,6 +178,61 @@ function mathBlock(
 	};
 }
 
+function sliceNonMathBlock(
+	block: EditorMarkdownSourceBlock,
+	source: string,
+	starts: ReadonlyArray<number>,
+	sliceFrom: number,
+	sliceTo: number,
+): EditorMarkdownSourceBlock | null {
+	let from = sliceFrom;
+	let to = sliceTo;
+	while (from < to) {
+		let probe = from;
+		while (probe < to && (" " === source[probe] || "\t" === source[probe])) {
+			probe += 1;
+		}
+		if (probe < to && ("\r" === source[probe] || "\n" === source[probe])) {
+			from =
+				"\r" === source[probe] && "\n" === source[probe + 1]
+					? probe + 2
+					: probe + 1;
+			continue;
+		}
+		break;
+	}
+	while (to > from) {
+		let probe = to;
+		while (
+			probe > from &&
+			(" " === source[probe - 1] || "\t" === source[probe - 1])
+		) {
+			probe -= 1;
+		}
+		if (
+			probe > from &&
+			("\r" === source[probe - 1] || "\n" === source[probe - 1])
+		) {
+			to =
+				"\n" === source[probe - 1] &&
+				probe - 2 >= from &&
+				"\r" === source[probe - 2]
+					? probe - 2
+					: probe - 1;
+			continue;
+		}
+		break;
+	}
+	if (from >= to || !source.slice(from, to).trim()) return null;
+	return {
+		...block,
+		from,
+		lineEnd: lineIndexAtOffsets(starts, Math.max(from, to - 1)),
+		lineStart: lineIndexAtOffsets(starts, from),
+		to,
+	};
+}
+
 export function overlayMath(
 	source: string,
 	blocks: ReadonlyArray<EditorMarkdownSourceBlock>,
@@ -232,13 +287,15 @@ export function overlayMath(
 			if (!range || range.from >= block.to) break;
 			const rangeFrom = Math.max(cursor, block.from, range.from);
 			const rangeTo = Math.min(block.to, range.to);
-			if (cursor < rangeFrom && source.slice(cursor, rangeFrom).trim()) {
-				result.push({
-					...block,
-					from: cursor,
-					lineStart: lineIndexAtOffsets(starts, cursor),
-					to: rangeFrom,
-				});
+			if (cursor < rangeFrom) {
+				const leadingSlice = sliceNonMathBlock(
+					block,
+					source,
+					starts,
+					cursor,
+					rangeFrom,
+				);
+				if (leadingSlice) result.push(leadingSlice);
 			}
 			if (rangeFrom < rangeTo && "unavailable" === range.kind) {
 				result.push({
@@ -246,6 +303,7 @@ export function overlayMath(
 					editable: false,
 					from: rangeFrom,
 					kind: "unavailable",
+					lineEnd: lineIndexAtOffsets(starts, Math.max(rangeFrom, rangeTo - 1)),
 					lineStart: lineIndexAtOffsets(starts, rangeFrom),
 					to: rangeTo,
 				});
@@ -254,13 +312,15 @@ export function overlayMath(
 			if (range.to <= block.to) candidateIndex += 1;
 			else break;
 		}
-		if (cursor < block.to && source.slice(cursor, block.to).trim()) {
-			result.push({
-				...block,
-				from: cursor,
-				lineStart: lineIndexAtOffsets(starts, cursor),
-				to: block.to,
-			});
+		if (cursor < block.to) {
+			const trailingSlice = sliceNonMathBlock(
+				block,
+				source,
+				starts,
+				cursor,
+				block.to,
+			);
+			if (trailingSlice) result.push(trailingSlice);
 		}
 		if (candidateIndex > rangeIndex) rangeIndex = candidateIndex;
 	}

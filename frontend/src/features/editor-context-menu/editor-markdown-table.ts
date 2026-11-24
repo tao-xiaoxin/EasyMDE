@@ -12,6 +12,19 @@ import {
 	linesOf,
 	type MarkdownLine,
 } from "./editor-markdown-lines";
+import {
+	advancePhpTableScanLine,
+	collectPrecedingPhpTableBlocks,
+	createPhpTableScanState,
+	isBlankLineText,
+	lineInterruptsCommonMarkTable,
+	lineStartsWithBlockMath,
+	phpTableHeaderCellCount,
+	resetPhpTableScanState,
+	rowIndentationIsCode,
+} from "./editor-markdown-php-table-scan";
+
+export { lineInterruptsCommonMarkTable };
 import type {
 	EditorSelection,
 	MarkdownBlock,
@@ -162,73 +175,6 @@ function leadingPipePrefix(text: string, firstPipe: number): string | null {
 	return /^ {0,3}$/u.test(prefix) ? prefix : null;
 }
 
-/**
- * Four spaces or a tab of leading indentation introduce indented code, so a
- * line indented that far is never a table header - with or without a leading
- * pipe. Rejecting it here keeps the paragraph-to-table promotion from treating
- * code bytes as cells; a table header still needs its own 0-3 space
- * indentation.
- */
-function rowIndentationIsCode(text: string): boolean {
-	const indentation = text.match(/^[ \t]*/u)?.[0] ?? "";
-	return indentation.includes("\t") || indentation.length > 3;
-}
-
-const COMMONMARK_ATX_HEADING_OPEN = /^#{1,6}(?:[ \t]+|$)/u;
-const COMMONMARK_FENCED_CODE_OPEN = /^(?:`{3,}[^`]*$|~{3,})/u;
-const COMMONMARK_THEMATIC_BREAK_LINE =
-	/^(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})$/u;
-const COMMONMARK_LIST_ITEM_OPEN = /^(?:[*+-]|\d{1,9}[.)])(?:[ \t]|$)/u;
-const COMMONMARK_HTML_BLOCK_TYPE_1_OPEN =
-	/^<(?:script|pre|textarea|style)(?:[ \t\v\f]|>|$)/u;
-// Exact Type 6 block tag list from installed `league/commonmark`
-// `RegexHelper::getHtmlBlockOpenRegex(HtmlBlock::TYPE_6_BLOCK_ELEMENT)`.
-const COMMONMARK_HTML_BLOCK_TYPE_6_OPEN =
-	/^<\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|section|source|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \t\v\f]|\/?>|$)/u;
-
-function asciiLowerCase(value: string): string {
-	return value.replace(/[A-Z]/gu, (character) => character.toLowerCase());
-}
-
-/**
- * Reports whether a non-blank line immediately following a GFM table starts a
- * CommonMark block construct that terminates `League\CommonMark`'s active
- * `TableParser`.
- *
- * `TableParser::tryContinue()` absorbs any line containing `|` before block
- * starts run, and `TableParser::canHaveLazyContinuationLines()` returns
- * `true`, so any other non-blank line that fails to open a block is absorbed
- * as a lazy continuation row of the same table. Because the last matched
- * container is the parent document (not `Paragraph`), `IndentedCodeStartParser`
- * and `ListBlockStartParser` match without paragraph-interruption restrictions,
- * while HTML Type 7 and Setext underlines cannot interrupt.
- */
-export function lineInterruptsCommonMarkTable(text: string): boolean {
-	if (text.includes("|") || /^[ \t]*$/u.test(text)) return false;
-	if (rowIndentationIsCode(text)) return true;
-
-	const rest = text.replace(/^ {0,3}/u, "");
-	const firstChar = rest[0];
-	if (!firstChar) return false;
-	if (">" === firstChar) return true;
-	if ("#" === firstChar) return COMMONMARK_ATX_HEADING_OPEN.test(rest);
-	if ("`" === firstChar || "~" === firstChar) {
-		return COMMONMARK_FENCED_CODE_OPEN.test(rest);
-	}
-	if ("<" === firstChar) {
-		if (rest.startsWith("<!--") || rest.startsWith("<?")) return true;
-		const lowered = asciiLowerCase(rest);
-		return (
-			COMMONMARK_HTML_BLOCK_TYPE_1_OPEN.test(lowered) ||
-			/^<![a-z]/u.test(lowered) ||
-			lowered.startsWith("<![cdata[") ||
-			COMMONMARK_HTML_BLOCK_TYPE_6_OPEN.test(lowered)
-		);
-	}
-	if (COMMONMARK_THEMATIC_BREAK_LINE.test(rest)) return true;
-	return COMMONMARK_LIST_ITEM_OPEN.test(rest);
-}
-
 function parseTableRow(
 	line: MarkdownLine,
 	lineIndex: number,
@@ -268,6 +214,7 @@ function tableAtLine(
 	lines: ReadonlyArray<MarkdownLine>,
 	targetLine: number,
 	range?: TableLineRange,
+	blockIndex?: EditorMarkdownBlockIndex,
 ): ParsedMarkdownTable | null {
 	const searchStartLine = Math.max(0, range?.startLine ?? 0);
 	const searchEndLine = Math.min(
@@ -308,31 +255,49 @@ function tableAtLine(
 				: lineIndex + 1;
 	}
 
+	const scanState = createPhpTableScanState();
+
 	for (
 		let startLine = searchStartLine;
 		startLine <= targetLine;
 		startLine += 1
 	) {
-		const header = parsedRows[startLine];
-		const separator = parsedRows[startLine + 1];
-		if (!header || !separator) continue;
-		// A candidate whose header line is indented four spaces or a tab is
-		// indented code, not a table. The parser already reports that shape as
-		// code, but a preceding paragraph reaches the promotion below instead,
-		// so the code indent is rejected here where the candidate is chosen.
-		// Rows and separators keep `league/commonmark`'s own admission: once
-		// the header opens a paragraph, indented separators and body rows still
-		// parse as table rows.
 		const headerLine = lines[startLine];
-		if (headerLine && rowIndentationIsCode(headerLine.text)) continue;
-		if (!separator.cells.every(isTableDelimiter)) continue;
-		// PHP `League\CommonMark`'s `TableStartParser::tryStart()` still opens
-		// a table whenever `header.cells.length < separator.cells.length` and
-		// absorbs all subsequent pipe rows as body rows. Decline the entire
-		// asymmetric PHP table instead of continuing into its body and matching
-		// a later delimiter row as a separate table.
-		if (header.cells.length < separator.cells.length) return null;
-		if (header.cells.length > separator.cells.length) continue;
+		if (
+			!advancePhpTableScanLine(scanState, headerLine, startLine, blockIndex) ||
+			!headerLine
+		) {
+			continue;
+		}
+		const separator = parsedRows[startLine + 1];
+		if (!separator?.cells.every(isTableDelimiter)) continue;
+
+		const header = parsedRows[startLine];
+		const phpHeaderCells = phpTableHeaderCellCount(
+			headerLine.text,
+			header?.cells.length ?? null,
+		);
+		if (phpHeaderCells > separator.cells.length) continue;
+
+		// PHP `League\CommonMark`'s `TableStartParser::tryStart()` opens a
+		// table whenever the active paragraph contains `|` and
+		// `phpHeaderCells <= separator.cells.length`. Any non-editable PHP
+		// table shape (asymmetric narrow header, standalone single-pipe
+		// 0-column header, pipe-less paragraph continuation header, or
+		// 4-space/tab-indented header after a paragraph) absorbs following
+		// non-interrupting lines as body rows until interrupted, so track that
+		// active PHP table instead of matching a later delimiter inside it.
+		if (
+			!header ||
+			rowIndentationIsCode(headerLine.text) ||
+			header.cells.length < separator.cells.length
+		) {
+			scanState.inPhpTable = true;
+			scanState.inParagraph = false;
+			scanState.paragraphHasPipe = false;
+			startLine += 1;
+			continue;
+		}
 
 		let endLine = startLine + 2;
 		const firstBody = parsedRows[endLine];
@@ -342,7 +307,9 @@ function tableAtLine(
 		const malformedBody = parsedRows[endLine];
 		const trailingLine = lines[endLine];
 		const hasNonBlankTrailingLine =
-			undefined !== trailingLine && !/^[ \t]*$/u.test(trailingLine.text);
+			undefined !== trailingLine &&
+			!isBlankLineText(trailingLine.text) &&
+			!lineStartsWithBlockMath(trailingLine, endLine, blockIndex);
 		// Decline whenever the parser-owned block extends past the last
 		// same-width pipe row (including lazy continuation rows or Lezer/PHP
 		// boundary disagreements such as indented code or `2. ordered`), when a
@@ -358,7 +325,11 @@ function tableAtLine(
 					!lineInterruptsCommonMarkTable(trailingLine.text)))
 		)
 			return null;
-		if (targetLine >= endLine) continue;
+		if (targetLine >= endLine) {
+			resetPhpTableScanState(scanState);
+			startLine = endLine - 1;
+			continue;
+		}
 
 		const tableRows = [header, separator];
 		for (let bodyLine = startLine + 2; bodyLine < endLine; bodyLine += 1) {
@@ -501,11 +472,9 @@ function markdownTableBlock(
 }
 
 /**
- * When Lezer splits a `Table` immediately after a `Paragraph` with no blank
- * line, PHP `League\CommonMark`'s `TableStartParser` may already have opened an
- * asymmetric or differently shaped table inside that preceding paragraph (for
- * example `intro\n| A |\n| - | - |\n| 1 | 2 |\n| - | - |\n| 3 | 4 |`),
- * absorbing the following pipe lines as body rows of the earlier table.
+ * Checks whether contiguous preceding blocks (with no blank line or interrupting
+ * block closing the PHP table) already opened a `League\CommonMark` table or
+ * list container that absorbs `blockStartLine` as continuation lines.
  */
 function precedingParagraphOpensPhpTable(
 	lines: ReadonlyArray<MarkdownLine>,
@@ -513,34 +482,45 @@ function precedingParagraphOpensPhpTable(
 	blockFrom: number,
 	blockStartLine: number,
 ): boolean {
-	const previous = findEditorMarkdownPreviousBlock(blockIndex, blockFrom);
-	if (
-		"paragraph" !== previous?.kind ||
-		previous.lineEnd + 1 !== blockStartLine
-	) {
-		return false;
-	}
-	let inPhpTable = false;
-	let paragraphHasPipe = false;
+	const precedingBlocks = collectPrecedingPhpTableBlocks(
+		lines,
+		blockIndex,
+		blockFrom,
+		blockStartLine,
+	);
+	if (!precedingBlocks) return false;
+	const earliestBlock = precedingBlocks[precedingBlocks.length - 1];
+	if (!earliestBlock) return false;
+
+	const scanState = createPhpTableScanState();
+	let blockPos = precedingBlocks.length - 1;
 	for (
-		let lineIndex = previous.lineStart;
-		lineIndex <= previous.lineEnd;
+		let lineIndex = earliestBlock.lineStart;
+		lineIndex < blockStartLine;
 		lineIndex += 1
 	) {
+		while (
+			blockPos > 0 &&
+			(precedingBlocks[blockPos]?.lineEnd ?? -1) < lineIndex
+		) {
+			blockPos -= 1;
+		}
+		const block = precedingBlocks[blockPos];
 		const line = lines[lineIndex];
-		if (!line) continue;
-		if (inPhpTable) {
-			if (lineInterruptsCommonMarkTable(line.text)) {
-				inPhpTable = false;
-				paragraphHasPipe = false;
-			}
+		if (
+			"paragraph" !== block?.kind &&
+			!scanState.inPhpTable &&
+			!scanState.inPhpList
+		) {
+			resetPhpTableScanState(scanState);
 			continue;
 		}
-		if (!paragraphHasPipe && rowIndentationIsCode(line.text)) continue;
-		if (line.text.includes("|")) {
-			paragraphHasPipe = true;
+		if (
+			!advancePhpTableScanLine(scanState, line, lineIndex, blockIndex) ||
+			!line
+		) {
+			continue;
 		}
-		if (!paragraphHasPipe || lineIndex >= previous.lineEnd) continue;
 		const nextLine = lines[lineIndex + 1];
 		if (!nextLine) break;
 		const separator = parseTableRow(nextLine, lineIndex + 1, {
@@ -550,14 +530,17 @@ function precedingParagraphOpensPhpTable(
 		const header = parseTableRow(line, lineIndex, {
 			allowIndentedLeadingPipe: true,
 		});
-		const headerCells = header ? header.cells.length : 1;
-		if (headerCells <= separator.cells.length) {
-			inPhpTable = true;
-			paragraphHasPipe = false;
+		if (
+			phpTableHeaderCellCount(line.text, header?.cells.length ?? null) <=
+			separator.cells.length
+		) {
+			scanState.inPhpTable = true;
+			scanState.inParagraph = false;
+			scanState.paragraphHasPipe = false;
 			lineIndex += 1;
 		}
 	}
-	return inPhpTable;
+	return scanState.inPhpTable || scanState.inPhpList;
 }
 
 function preparedMarkdownTable(
@@ -573,7 +556,6 @@ function preparedMarkdownTable(
 		return null;
 	const lines = linesOf(value);
 	if (
-		"table" === indexed.kind &&
 		precedingParagraphOpensPhpTable(
 			lines,
 			blockIndex,
@@ -584,10 +566,15 @@ function preparedMarkdownTable(
 		return null;
 	}
 	const targetLine = lineIndexAt(lines, position);
-	const table = tableAtLine(lines, targetLine, {
-		endLine: indexed.lineEnd,
-		startLine: indexed.lineStart,
-	});
+	const table = tableAtLine(
+		lines,
+		targetLine,
+		{
+			endLine: indexed.lineEnd,
+			startLine: indexed.lineStart,
+		},
+		blockIndex,
+	);
 	if (!table) return null;
 	const metadata = tableAlignmentMetadata(value, lines, table, blockIndex);
 	const tableBlock = markdownTableBlock(value, lines, table, blockIndex);
@@ -841,9 +828,14 @@ export function findMarkdownTableBlock(
 		return null;
 	}
 	const targetLine = lineIndexAt(lines, position);
-	const table = tableAtLine(lines, targetLine, {
-		endLine: lineEnd,
-		startLine: lineStart,
-	});
+	const table = tableAtLine(
+		lines,
+		targetLine,
+		{
+			endLine: lineEnd,
+			startLine: lineStart,
+		},
+		blockIndex,
+	);
 	return table ? markdownTableBlock(value, lines, table, blockIndex) : null;
 }

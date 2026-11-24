@@ -453,12 +453,13 @@ function annotationActionForTableOperation(
 		"insert-row-above" === operation.type ||
 		"insert-row-below" === operation.type
 	) {
-		const logicalRow = row < 2 ? 1 : row - 1;
-		const insertionRow =
-			"insert-row-above" === operation.type
-				? logicalRow - (row < 2 ? 0 : 1)
-				: logicalRow;
-		return { row: Math.max(1, insertionRow), type: "insert-row" };
+		if (row < 2) {
+			return { row: 1, type: "insert-row" };
+		}
+		return {
+			row: "insert-row-above" === operation.type ? row - 1 : row,
+			type: "insert-row",
+		};
 	}
 	return null;
 }

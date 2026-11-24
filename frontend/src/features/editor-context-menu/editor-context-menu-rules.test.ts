@@ -3324,6 +3324,239 @@ describe("editor context menu rules", () => {
 		).toBe(true);
 	});
 
+	it("shifts annotation row indices accurately for every insert-row-above and insert-row-below position", () => {
+		const source = [
+			'<!-- easymde-table-align:v1 [[1,"center"],[2,"right"]] -->',
+			"| H1 | H2 |",
+			"| --- | --- |",
+			"| R1A | R1B |",
+			"| R2A | R2B |",
+		].join("\n");
+
+		const aboveR2 = editMarkdownTable(source, source.indexOf("R2A"), {
+			type: "insert-row-above",
+		});
+		expect(aboveR2?.value).toBe(
+			[
+				'<!-- easymde-table-align:v1 [[1,"center"],[3,"right"]] -->',
+				"| H1 | H2 |",
+				"| --- | --- |",
+				"| R1A | R1B |",
+				"|  |  |",
+				"| R2A | R2B |",
+			].join("\n"),
+		);
+
+		const belowR1 = editMarkdownTable(source, source.indexOf("R1A"), {
+			type: "insert-row-below",
+		});
+		expect(belowR1?.value).toBe(
+			[
+				'<!-- easymde-table-align:v1 [[1,"center"],[3,"right"]] -->',
+				"| H1 | H2 |",
+				"| --- | --- |",
+				"| R1A | R1B |",
+				"|  |  |",
+				"| R2A | R2B |",
+			].join("\n"),
+		);
+
+		const belowR2 = editMarkdownTable(source, source.indexOf("R2A"), {
+			type: "insert-row-below",
+		});
+		expect(belowR2?.value).toBe(
+			[
+				'<!-- easymde-table-align:v1 [[1,"center"],[2,"right"]] -->',
+				"| H1 | H2 |",
+				"| --- | --- |",
+				"| R1A | R1B |",
+				"| R2A | R2B |",
+				"|  |  |",
+			].join("\n"),
+		);
+
+		const aboveR1 = editMarkdownTable(source, source.indexOf("R1A"), {
+			type: "insert-row-above",
+		});
+		expect(aboveR1?.value).toBe(
+			[
+				'<!-- easymde-table-align:v1 [[2,"center"],[3,"right"]] -->',
+				"| H1 | H2 |",
+				"| --- | --- |",
+				"|  |  |",
+				"| R1A | R1B |",
+				"| R2A | R2B |",
+			].join("\n"),
+		);
+
+		for (const [probe, type] of [
+			["H1", "insert-row-above"],
+			["H1", "insert-row-below"],
+			["---", "insert-row-above"],
+			["---", "insert-row-below"],
+		] as const) {
+			const headerOrSeparatorEdit = editMarkdownTable(
+				source,
+				source.indexOf(probe),
+				{ type },
+			);
+			expect(headerOrSeparatorEdit?.value, `${probe}:${type}`).toBe(
+				[
+					'<!-- easymde-table-align:v1 [[2,"center"],[3,"right"]] -->',
+					"| H1 | H2 |",
+					"| --- | --- |",
+					"|  |  |",
+					"| R1A | R1B |",
+					"| R2A | R2B |",
+				].join("\n"),
+			);
+		}
+
+		// Header row 0 stays anchored at 0 while body row & cell entries shift.
+		const withHeaderAndCell = [
+			'<!-- easymde-table-align:v1 [[0,"left"],[1,"center"],[2,"right"],[2,1,"left"]] -->',
+			"| H1 | H2 |",
+			"| --- | --- |",
+			"| R1A | R1B |",
+			"| R2A | R2B |",
+		].join("\n");
+		expect(
+			editMarkdownTable(
+				withHeaderAndCell,
+				withHeaderAndCell.indexOf("R2A"),
+				{ type: "insert-row-above" },
+			)?.value.startsWith(
+				'<!-- easymde-table-align:v1 [[0,"left"],[1,"center"],[3,"right"],[3,1,"left"]] -->',
+			),
+		).toBe(true);
+		expect(
+			editMarkdownTable(
+				withHeaderAndCell,
+				withHeaderAndCell.indexOf("R1A"),
+				{ type: "insert-row-below" },
+			)?.value.startsWith(
+				'<!-- easymde-table-align:v1 [[0,"left"],[1,"center"],[3,"right"],[3,1,"left"]] -->',
+			),
+		).toBe(true);
+		expect(
+			editMarkdownTable(
+				withHeaderAndCell,
+				withHeaderAndCell.indexOf("R2A"),
+				{ type: "insert-row-below" },
+			)?.value.startsWith(
+				'<!-- easymde-table-align:v1 [[0,"left"],[1,"center"],[2,"right"],[2,1,"left"]] -->',
+			),
+		).toBe(true);
+		expect(
+			editMarkdownTable(
+				withHeaderAndCell,
+				withHeaderAndCell.indexOf("H1"),
+				{ type: "insert-row-below" },
+			)?.value.startsWith(
+				'<!-- easymde-table-align:v1 [[0,"left"],[2,"center"],[3,"right"],[3,1,"left"]] -->',
+			),
+		).toBe(true);
+	});
+
+	it("declines asymmetric PHP tables instead of matching a later delimiter inside their body", () => {
+		const declinedCases = [
+			{
+				name: "asymmetric narrow header opens 1-column PHP table absorbing later 2-column delimiter",
+				probes: ["A", "1", "3"],
+				source: "| A |\n| - | - |\n| 1 | 2 |\n| - | - |\n| 3 | 4 |",
+			},
+			{
+				name: "asymmetric narrow header with tab-indented separator",
+				probes: ["A", "1", "3"],
+				source: "| A |\n\t| - | - |\n| 1 | 2 |\n| - | - |\n| 3 | 4 |",
+			},
+			{
+				name: "preceding paragraph opening asymmetric PHP table directly before Lezer Table",
+				probes: ["1", "3"],
+				source: "intro\n| A |\n| - | - |\n| 1 | 2 |\n| - | - |\n| 3 | 4 |",
+			},
+			{
+				name: "preceding paragraph asymmetric PHP table continued by lazy plain line before Lezer Table",
+				probes: ["1", "3"],
+				source: "intro\n| A |\n| - | - |\nplain\n| 1 | 2 |\n| - | - |\n| 3 | 4 |",
+			},
+			{
+				name: "preceding paragraph with escaped-pipe header opening 1-column PHP table",
+				probes: ["1", "3"],
+				source: "foo\\|bar\n| - | - |\n| 1 | 2 |\n| - | - |\n| 3 | 4 |",
+			},
+		] as const;
+
+		for (const testCase of declinedCases) {
+			for (const probe of testCase.probes) {
+				const position = testCase.source.indexOf(probe);
+				expect(position, `${testCase.name} (${probe})`).toBeGreaterThanOrEqual(
+					0,
+				);
+				expect(
+					findMarkdownTable(testCase.source, position),
+					`${testCase.name} findMarkdownTable (${probe})`,
+				).toBeNull();
+				expect(
+					prepareMarkdownTable(testCase.source, position),
+					`${testCase.name} prepareMarkdownTable (${probe})`,
+				).toBeNull();
+				expect(
+					editMarkdownTable(testCase.source, position, { type: "copy-table" }),
+					`${testCase.name} copy-table (${probe})`,
+				).toBeNull();
+				expect(
+					formatMarkdownTableSource(testCase.source, {
+						direction: "none",
+						end: position,
+						start: position,
+					}),
+					`${testCase.name} formatMarkdownTableSource (${probe})`,
+				).toBeNull();
+			}
+		}
+
+		// Positive controls matching PHP `League\CommonMark`:
+		// 1. Header wider than separator does NOT open a PHP table, so a later
+		//    symmetric table still matches.
+		const widerHeader = "| A | B |\n| - |\n| 1 | 2 |\n| - | - |\n| 3 | 4 |";
+		expect(
+			prepareMarkdownTable(widerHeader, widerHeader.indexOf("3")),
+		).toMatchObject({
+			context: { columnCount: 2, rowCount: 2 },
+			table: { endLine: 4, separatorLine: 3, startLine: 2 },
+		});
+
+		// 2. Non-delimiter wider row does NOT open a PHP table.
+		const nonDelimiter = "| A |\n| x | y |\n| 1 | 2 |\n| - | - |\n| 3 | 4 |";
+		expect(
+			prepareMarkdownTable(nonDelimiter, nonDelimiter.indexOf("3")),
+		).toMatchObject({
+			context: { columnCount: 2, rowCount: 2 },
+			table: { endLine: 4, separatorLine: 3, startLine: 2 },
+		});
+
+		// 3. Blank line closes the asymmetric PHP table cleanly before the next table.
+		const blankSeparated =
+			"| A |\n| - | - |\n\n| 1 | 2 |\n| - | - |\n| 3 | 4 |";
+		expect(
+			prepareMarkdownTable(blankSeparated, blankSeparated.indexOf("3")),
+		).toMatchObject({
+			context: { columnCount: 2, rowCount: 2 },
+			table: { endLine: 5, separatorLine: 4, startLine: 3 },
+		});
+
+		// 4. Indented code interrupts the preceding paragraph's asymmetric PHP table.
+		const codeInterrupted =
+			"intro\n| A |\n| - | - |\n    code\n| 1 | 2 |\n| - | - |\n| 3 | 4 |";
+		expect(
+			prepareMarkdownTable(codeInterrupted, codeInterrupted.indexOf("3")),
+		).toMatchObject({
+			context: { columnCount: 2, rowCount: 2 },
+			table: { endLine: 6, separatorLine: 5, startLine: 4 },
+		});
+	});
+
 	it("copies and deletes the annotation together with its table", () => {
 		const source =
 			'before\n<!-- easymde-table-align:v1 [[1,"center"]] -->\n| A |\n| --- |\n| 1 |\n\nafter';

@@ -5,8 +5,37 @@ import {
 	createImageScaleReplacement,
 	createMarkdownImageDestinationReplacement,
 	findMarkdownImageAt,
+	type MarkdownImageScaleMatch,
 	parseMarkdownImageScale
 } from "../image-scale/image-scale-contract";
+
+function findImageOrReport(
+	session: EditorContextMenuActionSession,
+	unavailableCode: string,
+	invalidFallbackCode: string
+): MarkdownImageScaleMatch | null {
+	const { capabilities, captured, report } = session;
+	const strings = capabilities.contextMenuStrings;
+	let image: MarkdownImageScaleMatch | null;
+	try {
+		image = findMarkdownImageAt(
+			captured.value,
+			captured.selection.start,
+			captured.selection.end
+		);
+	} catch (error) {
+		report(
+			contextMenuActionErrorCode(error, invalidFallbackCode),
+			strings?.statusActionFailed
+		);
+		return null;
+	}
+	if (!image) {
+		report(unavailableCode, strings?.unsupported);
+		return null;
+	}
+	return image;
+}
 
 /**
  * Image actions keep the whole updated image selected. A caret placed inside
@@ -40,22 +69,16 @@ export async function runImageContextMenuAction(
 
 	if (/^image-scale-(25|33|50|67|100|150|200)$/u.test(id)) {
 		if (!session.ensureCurrent()) return;
+		const image = findImageOrReport(
+			session,
+			"editor-context-menu-image-unavailable",
+			"editor-context-menu-image-stale"
+		);
+		if (!image) return;
 		let replacement: ReturnType<typeof createImageScaleReplacement>;
 		let nextValue: string;
 		let selection: ReturnType<typeof imageTargetSelectionAfterEdit>;
 		try {
-			const image = findMarkdownImageAt(
-				captured.value,
-				captured.selection.start,
-				captured.selection.end
-			);
-			if (!image) {
-				report(
-					"editor-context-menu-image-unavailable",
-					strings?.unsupported
-				);
-				return;
-			}
 			replacement = createImageScaleReplacement(
 				captured.value,
 				image,
@@ -178,20 +201,23 @@ export async function runImageContextMenuAction(
 
 	if ("delete-image" === id) {
 		if (!session.ensureCurrent()) return;
-		const image = findMarkdownImageAt(
-			captured.value,
-			captured.selection.start,
-			captured.selection.end
+		const image = findImageOrReport(
+			session,
+			"editor-context-menu-image-unavailable",
+			"editor-context-menu-image-stale"
 		);
-		if (!image) {
+		if (!image) return;
+		const value = session.readValue();
+		let current: MarkdownImageScaleMatch | null;
+		try {
+			current = parseMarkdownImageScale(value, image.start);
+		} catch (error) {
 			report(
-				"editor-context-menu-image-unavailable",
-				strings?.unsupported
+				contextMenuActionErrorCode(error, "editor-context-menu-image-stale"),
+				strings?.statusActionFailed
 			);
 			return;
 		}
-		const value = session.readValue();
-		const current = parseMarkdownImageScale(value, image.start);
 		if (!current || current.raw !== image.raw) {
 			report(
 				"editor-context-menu-image-stale",
@@ -215,14 +241,14 @@ export async function runImageContextMenuAction(
 
 	if ("upload-image" === id) {
 		if (!session.ensureCurrent()) return;
-		const image = findMarkdownImageAt(
-			captured.value,
-			captured.selection.start,
-			captured.selection.end
+		const image = findImageOrReport(
+			session,
+			"editor-context-menu-image-upload-unsupported",
+			"editor-context-menu-image-upload-failed"
 		);
+		if (!image) return;
 		if (
-			!image
-			|| !/^https?:\/\//iu.test(image.destination)
+			!/^https?:\/\//iu.test(image.destination)
 			|| "off" === capabilities.media.imageUpload.remoteImageUploadMode
 		) {
 			report(

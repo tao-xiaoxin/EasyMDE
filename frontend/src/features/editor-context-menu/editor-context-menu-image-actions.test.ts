@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { RemoteImageUploadMode } from "../../contracts/bootstrap/image-upload-bootstrap";
 import type { EditorClipboardPort } from "../../contracts/ports/editor-clipboard-port";
 import type { EditorContextMenuActionSession } from "./editor-context-menu-action-coordinator";
 import { runImageContextMenuAction } from "./editor-context-menu-image-actions";
@@ -7,13 +8,23 @@ function createImageScaleSession(
 	value: string,
 	selectionStart = 2,
 	selectionEnd = 2,
+	options?: Readonly<{
+		readValue?: () => string;
+		remoteImageUploadMode?: RemoteImageUploadMode;
+	}>,
 ): Readonly<{
 	applyEdit: ReturnType<typeof vi.fn>;
+	importImage: ReturnType<typeof vi.fn>;
 	report: ReturnType<typeof vi.fn>;
 	session: EditorContextMenuActionSession;
 }> {
 	const applyEdit = vi.fn(() => true);
 	const report = vi.fn();
+	const importImage = vi.fn(async () => ({
+		code: "remote-image-import-unsupported",
+		status: "failed" as const,
+	}));
+	const readCurrentValue = options?.readValue ?? (() => value);
 	const selection = {
 		direction: "none" as const,
 		end: selectionEnd,
@@ -40,10 +51,10 @@ function createImageScaleSession(
 		getCurrentContext: () => ({
 			selection,
 			surface: "source",
-			value,
+			value: readCurrentValue(),
 		}),
 		getSelection: () => selection,
-		getValue: () => value,
+		getValue: readCurrentValue,
 		isEditable: () => true,
 		revealPosition: vi.fn(),
 		subscribe: () => () => undefined,
@@ -65,14 +76,11 @@ function createImageScaleSession(
 		media: {
 			imageUpload: {
 				postId: 1,
-				remoteImageUploadMode: "off",
+				remoteImageUploadMode: options?.remoteImageUploadMode ?? "off",
 			},
 			openInsertion: vi.fn(),
 			remoteImageImport: {
-				import: vi.fn(async () => ({
-					code: "remote-image-import-unsupported",
-					status: "failed" as const,
-				})),
+				import: importImage,
 			},
 			requestTableInsertion: vi.fn(),
 		},
@@ -109,10 +117,10 @@ function createImageScaleSession(
 		ensureSourceEditable: () => true,
 		finishOperation: vi.fn(),
 		isCurrent: () => true,
-		readValue: () => value,
+		readValue: readCurrentValue,
 		report,
 	};
-	return { applyEdit, report, session };
+	return { applyEdit, importImage, report, session };
 }
 
 describe("editor-context-menu-image-actions", () => {
@@ -180,6 +188,116 @@ describe("editor-context-menu-image-actions", () => {
 		expect(emptyQuoted.applyEdit).toHaveBeenCalledWith(
 			expect.objectContaining({
 				value: '![A](/image.png "{width=50%}")',
+			}),
+		);
+	});
+
+	it("reports cleanly without rejecting for delete-image and upload-image on invalid width markers", async () => {
+		const invalidImage = '![A](https://example.com/x.png "{width=51%}")';
+
+		const deleteCase = createImageScaleSession(invalidImage, 2, 2);
+		await expect(
+			runImageContextMenuAction("delete-image", deleteCase.session),
+		).resolves.toBeUndefined();
+		expect(deleteCase.report).toHaveBeenCalledTimes(1);
+		expect(deleteCase.report).toHaveBeenCalledWith(
+			"editor-context-menu-image-stale",
+			"Action failed",
+		);
+		expect(deleteCase.applyEdit).not.toHaveBeenCalled();
+
+		for (const remoteImageUploadMode of ["off", "source", "both"] as const) {
+			const uploadCase = createImageScaleSession(invalidImage, 2, 2, {
+				remoteImageUploadMode,
+			});
+			await expect(
+				runImageContextMenuAction("upload-image", uploadCase.session),
+			).resolves.toBeUndefined();
+			expect(uploadCase.report).toHaveBeenCalledTimes(1);
+			expect(uploadCase.report).toHaveBeenCalledWith(
+				"editor-context-menu-image-upload-failed",
+				"Action failed",
+			);
+			expect(uploadCase.importImage).not.toHaveBeenCalled();
+			expect(uploadCase.applyEdit).not.toHaveBeenCalled();
+		}
+	});
+
+	it("handles parseMarkdownImageScale exceptions safely when live value drifts during delete-image", async () => {
+		const captured = 'prefix ![A](https://example.com/x.png "{width=50%}")';
+		const selectionStart = captured.indexOf("![") + 2;
+
+		const driftedInvalid = createImageScaleSession(
+			captured,
+			selectionStart,
+			selectionStart,
+			{
+				readValue: () => 'prefix ![A](https://example.com/x.png "{width=51%}")',
+			},
+		);
+		await expect(
+			runImageContextMenuAction("delete-image", driftedInvalid.session),
+		).resolves.toBeUndefined();
+		expect(driftedInvalid.report).toHaveBeenCalledTimes(1);
+		expect(driftedInvalid.report).toHaveBeenCalledWith(
+			"editor-context-menu-image-stale",
+			"Action failed",
+		);
+		expect(driftedInvalid.applyEdit).not.toHaveBeenCalled();
+
+		const driftedTruncated = createImageScaleSession(
+			captured,
+			selectionStart,
+			selectionStart,
+			{
+				readValue: () => "short",
+			},
+		);
+		await expect(
+			runImageContextMenuAction("delete-image", driftedTruncated.session),
+		).resolves.toBeUndefined();
+		expect(driftedTruncated.report).toHaveBeenCalledTimes(1);
+		expect(driftedTruncated.report).toHaveBeenCalledWith(
+			"editor-context-menu-image-stale",
+			"Action failed",
+		);
+		expect(driftedTruncated.applyEdit).not.toHaveBeenCalled();
+	});
+
+	it("reports unavailable codes when no image exists at the selection and still deletes valid images", async () => {
+		const scaleMissing = createImageScaleSession("plain text", 2, 2);
+		await runImageContextMenuAction("image-scale-50", scaleMissing.session);
+		expect(scaleMissing.report).toHaveBeenCalledWith(
+			"editor-context-menu-image-unavailable",
+			"Unsupported",
+		);
+
+		const deleteMissing = createImageScaleSession("plain text", 2, 2);
+		await runImageContextMenuAction("delete-image", deleteMissing.session);
+		expect(deleteMissing.report).toHaveBeenCalledWith(
+			"editor-context-menu-image-unavailable",
+			"Unsupported",
+		);
+
+		const uploadMissing = createImageScaleSession("plain text", 2, 2, {
+			remoteImageUploadMode: "source",
+		});
+		await runImageContextMenuAction("upload-image", uploadMissing.session);
+		expect(uploadMissing.report).toHaveBeenCalledWith(
+			"editor-context-menu-image-upload-unsupported",
+			"Unsupported",
+		);
+
+		const validDelete = createImageScaleSession(
+			'before ![A](https://example.com/x.png "{width=50%}") after',
+			10,
+			10,
+		);
+		await runImageContextMenuAction("delete-image", validDelete.session);
+		expect(validDelete.report).not.toHaveBeenCalled();
+		expect(validDelete.applyEdit).toHaveBeenCalledWith(
+			expect.objectContaining({
+				value: "before  after",
 			}),
 		);
 	});

@@ -325,8 +325,14 @@ function tableAtLine(
 		// parse as table rows.
 		const headerLine = lines[startLine];
 		if (headerLine && rowIndentationIsCode(headerLine.text)) continue;
-		if (header.cells.length !== separator.cells.length) continue;
 		if (!separator.cells.every(isTableDelimiter)) continue;
+		// PHP `League\CommonMark`'s `TableStartParser::tryStart()` still opens
+		// a table whenever `header.cells.length < separator.cells.length` and
+		// absorbs all subsequent pipe rows as body rows. Decline the entire
+		// asymmetric PHP table instead of continuing into its body and matching
+		// a later delimiter row as a separate table.
+		if (header.cells.length < separator.cells.length) return null;
+		if (header.cells.length > separator.cells.length) continue;
 
 		let endLine = startLine + 2;
 		const firstBody = parsedRows[endLine];
@@ -494,6 +500,66 @@ function markdownTableBlock(
 	};
 }
 
+/**
+ * When Lezer splits a `Table` immediately after a `Paragraph` with no blank
+ * line, PHP `League\CommonMark`'s `TableStartParser` may already have opened an
+ * asymmetric or differently shaped table inside that preceding paragraph (for
+ * example `intro\n| A |\n| - | - |\n| 1 | 2 |\n| - | - |\n| 3 | 4 |`),
+ * absorbing the following pipe lines as body rows of the earlier table.
+ */
+function precedingParagraphOpensPhpTable(
+	lines: ReadonlyArray<MarkdownLine>,
+	blockIndex: EditorMarkdownBlockIndex,
+	blockFrom: number,
+	blockStartLine: number,
+): boolean {
+	const previous = findEditorMarkdownPreviousBlock(blockIndex, blockFrom);
+	if (
+		"paragraph" !== previous?.kind ||
+		previous.lineEnd + 1 !== blockStartLine
+	) {
+		return false;
+	}
+	let inPhpTable = false;
+	let paragraphHasPipe = false;
+	for (
+		let lineIndex = previous.lineStart;
+		lineIndex <= previous.lineEnd;
+		lineIndex += 1
+	) {
+		const line = lines[lineIndex];
+		if (!line) continue;
+		if (inPhpTable) {
+			if (lineInterruptsCommonMarkTable(line.text)) {
+				inPhpTable = false;
+				paragraphHasPipe = false;
+			}
+			continue;
+		}
+		if (!paragraphHasPipe && rowIndentationIsCode(line.text)) continue;
+		if (line.text.includes("|")) {
+			paragraphHasPipe = true;
+		}
+		if (!paragraphHasPipe || lineIndex >= previous.lineEnd) continue;
+		const nextLine = lines[lineIndex + 1];
+		if (!nextLine) break;
+		const separator = parseTableRow(nextLine, lineIndex + 1, {
+			allowIndentedLeadingPipe: true,
+		});
+		if (!separator?.cells.every(isTableDelimiter)) continue;
+		const header = parseTableRow(line, lineIndex, {
+			allowIndentedLeadingPipe: true,
+		});
+		const headerCells = header ? header.cells.length : 1;
+		if (headerCells <= separator.cells.length) {
+			inPhpTable = true;
+			paragraphHasPipe = false;
+			lineIndex += 1;
+		}
+	}
+	return inPhpTable;
+}
+
 function preparedMarkdownTable(
 	value: string,
 	position: number,
@@ -506,6 +572,17 @@ function preparedMarkdownTable(
 	)
 		return null;
 	const lines = linesOf(value);
+	if (
+		"table" === indexed.kind &&
+		precedingParagraphOpensPhpTable(
+			lines,
+			blockIndex,
+			indexed.from,
+			indexed.lineStart,
+		)
+	) {
+		return null;
+	}
 	const targetLine = lineIndexAt(lines, position);
 	const table = tableAtLine(lines, targetLine, {
 		endLine: indexed.lineEnd,
@@ -751,6 +828,18 @@ export function findMarkdownTableBlock(
 	lineEnd: number,
 	lines: ReadonlyArray<MarkdownLine> = linesOf(value),
 ): MarkdownBlock | null {
+	const startLine = lines[lineStart];
+	if (
+		startLine &&
+		precedingParagraphOpensPhpTable(
+			lines,
+			blockIndex,
+			startLine.start,
+			lineStart,
+		)
+	) {
+		return null;
+	}
 	const targetLine = lineIndexAt(lines, position);
 	const table = tableAtLine(lines, targetLine, {
 		endLine: lineEnd,

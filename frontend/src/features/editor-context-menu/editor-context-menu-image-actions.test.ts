@@ -12,19 +12,29 @@ function createImageScaleSession(
 	selectionEnd = 2,
 	options?: Readonly<{
 		actionContext?: EditorContextMenuActionSession["actionContext"];
+		controller?: AbortController;
 		ensureCurrent?: () => boolean;
-		importImage?: () => Promise<RemoteImageImportResult>;
+		importImage?: (
+			request: Readonly<{
+				altText?: string;
+				postId: number;
+				signal: AbortSignal;
+				url: string;
+			}>,
+		) => Promise<RemoteImageImportResult>;
 		readValue?: () => string;
 		remoteImageUploadMode?: RemoteImageUploadMode;
 	}>,
 ): Readonly<{
 	applyEdit: ReturnType<typeof vi.fn>;
+	controller: AbortController;
 	importImage: ReturnType<typeof vi.fn>;
 	report: ReturnType<typeof vi.fn>;
 	session: EditorContextMenuActionSession;
 }> {
 	const applyEdit = vi.fn(() => true);
 	const report = vi.fn();
+	const controller = options?.controller ?? new AbortController();
 	const importImage = vi.fn(
 		options?.importImage
 		?? (async (): Promise<RemoteImageImportResult> => ({
@@ -114,7 +124,7 @@ function createImageScaleSession(
 		beginOperation: () => ({
 			captured,
 			cleanup: () => undefined,
-			controller: new AbortController(),
+			controller,
 			isCurrent: ensureCurrent,
 		}),
 		capabilities,
@@ -130,7 +140,7 @@ function createImageScaleSession(
 		readValue: readCurrentValue,
 		report,
 	};
-	return { applyEdit, importImage, report, session };
+	return { applyEdit, controller, importImage, report, session };
 }
 
 describe("editor-context-menu-image-actions", () => {
@@ -578,6 +588,70 @@ describe("editor-context-menu-image-actions", () => {
 		expect(invalidDestination.applyEdit).not.toHaveBeenCalled();
 		expect(invalidDestination.report).toHaveBeenCalledWith(
 			"editor-context-menu-image-upload-failed",
+			"Action failed",
+		);
+	});
+
+	it("suppresses failure reporting when upload-image is aborted or becomes stale while still reporting real current failures", async () => {
+		const original = "![A](https://example.com/a.png)";
+		const match = parseMarkdownImageScale(original, 0);
+		expect(match).not.toBeNull();
+		if (!match) return;
+
+		// 1. Aborted in-flight request resolving with cancelled failed result.
+		const abortedController = new AbortController();
+		const abortedCase = createImageScaleSession(original, 2, 2, {
+			actionContext: { image: { canCopyImage: false, match } },
+			controller: abortedController,
+			importImage: async ({ signal }) => {
+				abortedController.abort();
+				expect(signal.aborted).toBe(true);
+				return {
+					code: "remote-image-import-cancelled",
+					status: "failed",
+				};
+			},
+			remoteImageUploadMode: "source",
+		});
+		await runImageContextMenuAction("upload-image", abortedCase.session);
+		expect(abortedCase.importImage).toHaveBeenCalledTimes(1);
+		expect(abortedCase.report).not.toHaveBeenCalled();
+		expect(abortedCase.applyEdit).not.toHaveBeenCalled();
+
+		// 2. Session becomes stale while request is in flight (even without abort).
+		let current = true;
+		const staleCase = createImageScaleSession(original, 2, 2, {
+			actionContext: { image: { canCopyImage: false, match } },
+			ensureCurrent: () => current,
+			importImage: async () => {
+				current = false;
+				return {
+					code: "remote-image-import-cancelled",
+					status: "failed",
+				};
+			},
+			remoteImageUploadMode: "source",
+		});
+		await runImageContextMenuAction("upload-image", staleCase.session);
+		expect(staleCase.importImage).toHaveBeenCalledTimes(1);
+		expect(staleCase.report).not.toHaveBeenCalled();
+		expect(staleCase.applyEdit).not.toHaveBeenCalled();
+
+		// 3. Real non-aborted failure on a still-current session still reports.
+		const realFailureCase = createImageScaleSession(original, 2, 2, {
+			actionContext: { image: { canCopyImage: false, match } },
+			importImage: async () => ({
+				code: "remote-image-import-request-failed",
+				status: "failed",
+			}),
+			remoteImageUploadMode: "source",
+		});
+		await runImageContextMenuAction("upload-image", realFailureCase.session);
+		expect(realFailureCase.importImage).toHaveBeenCalledTimes(1);
+		expect(realFailureCase.applyEdit).not.toHaveBeenCalled();
+		expect(realFailureCase.report).toHaveBeenCalledTimes(1);
+		expect(realFailureCase.report).toHaveBeenCalledWith(
+			"remote-image-import-request-failed",
 			"Action failed",
 		);
 	});

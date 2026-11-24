@@ -7,20 +7,22 @@ import {
 	findEditorMarkdownPreviousBlock,
 } from "./editor-markdown-block-index";
 import type { MarkdownLine } from "./editor-markdown-lines";
+import {
+	advancePhpBlockStackLine,
+	asciiLowerCase,
+	COMMONMARK_ATX_HEADING_OPEN,
+	COMMONMARK_FENCED_CODE_OPEN,
+	COMMONMARK_HTML_BLOCK_TYPE_1_OPEN,
+	COMMONMARK_HTML_BLOCK_TYPE_6_OPEN,
+	COMMONMARK_THEMATIC_BREAK_LINE,
+	type PhpOpenBlock,
+} from "./editor-markdown-php-block-stack";
 
-const COMMONMARK_ATX_HEADING_OPEN = /^#{1,6}(?:[ \t]+|$)/u;
-const COMMONMARK_FENCED_CODE_OPEN = /^(?:`{3,}[^`]*$|~{3,})/u;
-const COMMONMARK_THEMATIC_BREAK_LINE =
-	/^(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})$/u;
 const COMMONMARK_LIST_ITEM_OPEN = /^(?:[*+-]|\d{1,9}[.)])(?:[ \t]|$)/u;
 const COMMONMARK_NON_EMPTY_LIST_ITEM_OPEN =
 	/^ {0,3}(?:[*+-]|\d{1,9}[.)])[ \t]+\S/u;
-const COMMONMARK_HTML_BLOCK_TYPE_1_OPEN =
-	/^<(?:script|pre|textarea|style)(?:[ \t\v\f]|>|$)/u;
-// Exact Type 6 block tag list from installed `league/commonmark`
-// `RegexHelper::getHtmlBlockOpenRegex(HtmlBlock::TYPE_6_BLOCK_ELEMENT)`.
-const COMMONMARK_HTML_BLOCK_TYPE_6_OPEN =
-	/^<\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|section|source|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \t\v\f]|\/?>|$)/u;
+const COMMONMARK_PARAGRAPH_INTERRUPTING_LIST_OPEN =
+	/^(?:[*+-]|1[.)])[ \t]+\S/u;
 
 export type PhpTableScanState = {
 	inParagraph: boolean;
@@ -28,10 +30,6 @@ export type PhpTableScanState = {
 	inPhpTable: boolean;
 	paragraphHasPipe: boolean;
 };
-
-function asciiLowerCase(value: string): string {
-	return value.replace(/[A-Z]/gu, (character) => character.toLowerCase());
-}
 
 /**
  * Four spaces or a tab of leading indentation introduce indented code, so a
@@ -177,34 +175,37 @@ export function advancePhpTableScanLine(
 	return state.paragraphHasPipe;
 }
 
-function blockCanContinuePhpTable(
+/**
+ * Reports whether `block`'s first line unconditionally closes any earlier PHP
+ * paragraph, table, list, or blockquote and starts a fresh top-level block.
+ */
+function blockStartsFreshInPhp(
 	lines: ReadonlyArray<MarkdownLine>,
 	block: EditorMarkdownSourceBlock,
+	blockIndex: EditorMarkdownBlockIndex,
 ): boolean {
-	if ("math" === block.kind) return false;
-	for (
-		let lineIndex = block.lineStart;
-		lineIndex <= block.lineEnd;
-		lineIndex += 1
-	) {
-		const line = lines[lineIndex];
-		if (!line || isBlankLineText(line.text)) return false;
-		if (
-			!line.text.includes("|") &&
-			lineInterruptsCommonMarkTable(line.text) &&
-			!COMMONMARK_NON_EMPTY_LIST_ITEM_OPEN.test(line.text)
-		) {
-			return false;
-		}
+	const firstLine = lines[block.lineStart];
+	if (!firstLine || isBlankLineText(firstLine.text)) return true;
+	if (lineStartsWithBlockMath(firstLine, block.lineStart, blockIndex)) {
+		return true;
 	}
-	return true;
+	if (firstLine.text.includes("|") || rowIndentationIsCode(firstLine.text)) {
+		return false;
+	}
+	const trimmed = firstLine.text.replace(/^ {0,3}/u, "");
+	if (trimmed.startsWith(">")) return true;
+	if (COMMONMARK_ATX_HEADING_OPEN.test(trimmed)) return true;
+	if (COMMONMARK_FENCED_CODE_OPEN.test(trimmed)) return true;
+	if (COMMONMARK_THEMATIC_BREAK_LINE.test(trimmed)) return true;
+	return COMMONMARK_PARAGRAPH_INTERRUPTING_LIST_OPEN.test(trimmed);
 }
 
 /**
  * Walks backwards over contiguous preceding blocks that have no blank line or
- * table-terminating block separating them from `blockStartLine`. Returns the
+ * display-math block separating them from `blockStartLine`, stopping once a
+ * collected block unconditionally starts fresh in PHP CommonMark. Returns the
  * collected blocks in reverse order (nearest first), or `null` when no
- * preceding paragraph exists in that contiguous run.
+ * immediately adjacent preceding block exists.
  */
 export function collectPrecedingPhpTableBlocks(
 	lines: ReadonlyArray<MarkdownLine>,
@@ -215,7 +216,6 @@ export function collectPrecedingPhpTableBlocks(
 	const precedingBlocks: EditorMarkdownSourceBlock[] = [];
 	let cursorFrom = blockFrom;
 	let cursorLine = blockStartLine;
-	let hasParagraph = false;
 	while (cursorLine > 0) {
 		const previous = findEditorMarkdownPreviousBlock(blockIndex, cursorFrom);
 		if (
@@ -225,17 +225,142 @@ export function collectPrecedingPhpTableBlocks(
 		) {
 			break;
 		}
-		const canContinue = blockCanContinuePhpTable(lines, previous);
-		if ("paragraph" === previous.kind) {
-			hasParagraph = true;
-			precedingBlocks.push(previous);
-			if (!canContinue) break;
-		} else {
-			if (!canContinue) break;
-			precedingBlocks.push(previous);
-		}
+		precedingBlocks.push(previous);
+		if (blockStartsFreshInPhp(lines, previous, blockIndex)) break;
 		cursorFrom = previous.from;
 		cursorLine = previous.lineStart;
 	}
-	return hasParagraph ? precedingBlocks : null;
+	return precedingBlocks.length > 0 ? precedingBlocks : null;
+}
+
+/**
+ * Feeds source lines `startLine..endLine` into `stack`, reproducing PHP
+ * `MarkdownRenderer::extract_math()` for any display math span (`$$...$$` or
+ * `\[...\]`) contained inside a preceding container block.
+ */
+function scanPhpBlockLines(
+	stack: PhpOpenBlock[],
+	lines: ReadonlyArray<MarkdownLine>,
+	startLine: number,
+	endLine: number,
+	blockIndex: EditorMarkdownBlockIndex,
+): void {
+	const firstLine = lines[startLine];
+	const lastLine = lines[endLine];
+	if (!firstLine || !lastLine) return;
+	const rangeStart = firstLine.start;
+	const rangeEnd = lastLine.end;
+	const displayMath = blockIndex.mathSpans.filter(
+		(span) => span.displayMode && span.to > rangeStart && span.from < rangeEnd,
+	);
+	if (0 === displayMath.length) {
+		for (let lineIndex = startLine; lineIndex <= endLine; lineIndex += 1) {
+			const line = lines[lineIndex];
+			if (line) advancePhpBlockStackLine(stack, line.text);
+		}
+		return;
+	}
+	let expanded = "";
+	let cursor = rangeStart;
+	for (const span of displayMath) {
+		const spanStart = Math.max(cursor, span.from);
+		const spanEnd = Math.min(rangeEnd, span.to);
+		if (spanStart > cursor) {
+			expanded += blockIndex.source.slice(cursor, spanStart);
+		}
+		expanded += "\n\nEASYMDE_MATH_TOKEN\n\n";
+		cursor = Math.max(cursor, spanEnd);
+	}
+	if (cursor < rangeEnd) {
+		expanded += blockIndex.source.slice(cursor, rangeEnd);
+	}
+	for (const virtualLine of expanded.split(/\r\n|\r|\n/u)) {
+		advancePhpBlockStackLine(stack, virtualLine);
+	}
+}
+
+function scanPrecedingStackThroughTargetLine(
+	lines: ReadonlyArray<MarkdownLine>,
+	blockIndex: EditorMarkdownBlockIndex,
+	blockFrom: number,
+	blockStartLine: number,
+): ReadonlyArray<PhpOpenBlock> | null {
+	const precedingBlocks = collectPrecedingPhpTableBlocks(
+		lines,
+		blockIndex,
+		blockFrom,
+		blockStartLine,
+	);
+	if (!precedingBlocks) return null;
+	const earliestBlock = precedingBlocks[precedingBlocks.length - 1];
+	const targetLine = lines[blockStartLine];
+	if (
+		!earliestBlock ||
+		!targetLine ||
+		isBlankLineText(targetLine.text) ||
+		lineStartsWithBlockMath(targetLine, blockStartLine, blockIndex)
+	) {
+		return null;
+	}
+	const stack: PhpOpenBlock[] = [{ kind: "document" }];
+	scanPhpBlockLines(
+		stack,
+		lines,
+		earliestBlock.lineStart,
+		blockStartLine - 1,
+		blockIndex,
+	);
+	advancePhpBlockStackLine(stack, targetLine.text);
+	return stack;
+}
+
+/**
+ * Reports whether an immediately adjacent preceding `"list"` or `"quote"`
+ * block leaves an open container paragraph or table (or indented list item)
+ * that absorbs `blockStartLine` in PHP `League\CommonMark`, including when a
+ * `"table"` preceded the `"list"` or `"quote"` block.
+ */
+export function precedingContainerLeavesParagraphOpen(
+	lines: ReadonlyArray<MarkdownLine>,
+	blockIndex: EditorMarkdownBlockIndex,
+	blockFrom: number,
+	blockStartLine: number,
+): boolean {
+	const previous = findEditorMarkdownPreviousBlock(blockIndex, blockFrom);
+	if (
+		!previous ||
+		previous.lineEnd + 1 !== blockStartLine ||
+		("list" !== previous.kind && "quote" !== previous.kind)
+	) {
+		return false;
+	}
+	const stack = scanPrecedingStackThroughTargetLine(
+		lines,
+		blockIndex,
+		blockFrom,
+		blockStartLine,
+	);
+	return null !== stack && stack.length > 2;
+}
+
+/**
+ * Reports whether contiguous preceding blocks before `blockStartLine` cause
+ * PHP `League\CommonMark` to absorb `blockStartLine` into an already-open
+ * top-level table or container (`list` / `quote`) instead of letting it begin
+ * a standalone top-level table.
+ */
+export function precedingPhpBlocksAbsorbTableStart(
+	lines: ReadonlyArray<MarkdownLine>,
+	blockIndex: EditorMarkdownBlockIndex,
+	blockFrom: number,
+	blockStartLine: number,
+): boolean {
+	const stack = scanPrecedingStackThroughTargetLine(
+		lines,
+		blockIndex,
+		blockFrom,
+		blockStartLine,
+	);
+	if (!stack) return false;
+	return 2 !== stack.length || "paragraph" !== stack[1]?.kind;
 }

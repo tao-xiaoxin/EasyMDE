@@ -14,12 +14,12 @@ import {
 } from "./editor-markdown-lines";
 import {
 	advancePhpTableScanLine,
-	collectPrecedingPhpTableBlocks,
 	createPhpTableScanState,
 	isBlankLineText,
 	lineInterruptsCommonMarkTable,
 	lineStartsWithBlockMath,
 	phpTableHeaderCellCount,
+	precedingPhpBlocksAbsorbTableStart,
 	resetPhpTableScanState,
 	rowIndentationIsCode,
 } from "./editor-markdown-php-table-scan";
@@ -473,8 +473,9 @@ function markdownTableBlock(
 
 /**
  * Checks whether contiguous preceding blocks (with no blank line or interrupting
- * block closing the PHP table) already opened a `League\CommonMark` table or
- * list container that absorbs `blockStartLine` as continuation lines.
+ * block closing the PHP construct) leave an active `League\CommonMark` table
+ * or `list`/`quote` container that absorbs `blockStartLine` instead of letting
+ * it start a standalone top-level table.
  */
 function precedingParagraphOpensPhpTable(
 	lines: ReadonlyArray<MarkdownLine>,
@@ -482,65 +483,12 @@ function precedingParagraphOpensPhpTable(
 	blockFrom: number,
 	blockStartLine: number,
 ): boolean {
-	const precedingBlocks = collectPrecedingPhpTableBlocks(
+	return precedingPhpBlocksAbsorbTableStart(
 		lines,
 		blockIndex,
 		blockFrom,
 		blockStartLine,
 	);
-	if (!precedingBlocks) return false;
-	const earliestBlock = precedingBlocks[precedingBlocks.length - 1];
-	if (!earliestBlock) return false;
-
-	const scanState = createPhpTableScanState();
-	let blockPos = precedingBlocks.length - 1;
-	for (
-		let lineIndex = earliestBlock.lineStart;
-		lineIndex < blockStartLine;
-		lineIndex += 1
-	) {
-		while (
-			blockPos > 0 &&
-			(precedingBlocks[blockPos]?.lineEnd ?? -1) < lineIndex
-		) {
-			blockPos -= 1;
-		}
-		const block = precedingBlocks[blockPos];
-		const line = lines[lineIndex];
-		if (
-			"paragraph" !== block?.kind &&
-			!scanState.inPhpTable &&
-			!scanState.inPhpList
-		) {
-			resetPhpTableScanState(scanState);
-			continue;
-		}
-		if (
-			!advancePhpTableScanLine(scanState, line, lineIndex, blockIndex) ||
-			!line
-		) {
-			continue;
-		}
-		const nextLine = lines[lineIndex + 1];
-		if (!nextLine) break;
-		const separator = parseTableRow(nextLine, lineIndex + 1, {
-			allowIndentedLeadingPipe: true,
-		});
-		if (!separator?.cells.every(isTableDelimiter)) continue;
-		const header = parseTableRow(line, lineIndex, {
-			allowIndentedLeadingPipe: true,
-		});
-		if (
-			phpTableHeaderCellCount(line.text, header?.cells.length ?? null) <=
-			separator.cells.length
-		) {
-			scanState.inPhpTable = true;
-			scanState.inParagraph = false;
-			scanState.paragraphHasPipe = false;
-			lineIndex += 1;
-		}
-	}
-	return scanState.inPhpTable || scanState.inPhpList;
 }
 
 function preparedMarkdownTable(

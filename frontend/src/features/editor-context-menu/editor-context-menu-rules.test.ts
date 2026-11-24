@@ -3678,6 +3678,375 @@ describe("editor context menu rules", () => {
 		});
 	});
 
+	it("declines non-table lazy continuations after list, quote, and table+container blocks while keeping closed-container positive controls editable", () => {
+		const declinedCases = [
+			{
+				name: "bullet list item with open paragraph",
+				source: "- item\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "ordered list item (1.) with open paragraph",
+				source: "1. item\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "ordered list item (2.) with open paragraph",
+				source: "2. item\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "ordered paren list item (1)) with open paragraph",
+				source: "1) item\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "asterisk and plus bullet list items with open paragraph",
+				source: "* item\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "plus bullet list item with open paragraph",
+				source: "+ item\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "3-space indented list item with open paragraph",
+				source: "   - item\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "blockquote with open paragraph",
+				source: "> quote\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "table followed by bullet list item absorbing second candidate table",
+				source:
+					"| a | b |\n| --- | --- |\n| 1 | 2 |\n- item\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "table followed by blockquote paragraph absorbing second candidate table",
+				source:
+					"| a | b |\n| --- | --- |\n| 1 | 2 |\n> quote\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "table followed by pipe-containing blockquote heading continues first table",
+				source:
+					"| a | b |\n| --- | --- |\n| 1 | 2 |\n> # H | pipe\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "table followed by pipe-containing list heading continues first table",
+				source:
+					"| a | b |\n| --- | --- |\n| 1 | 2 |\n- # H | pipe\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "nested list inside blockquote with open paragraph",
+				source: "> - item\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "nested blockquote inside list item with open paragraph",
+				source: "- > quote\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "nested table inside blockquote absorbs lazy continuation lines",
+				source:
+					"> | a | b |\n> | --- | --- |\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "nested table inside list item absorbs lazy continuation lines",
+				source:
+					"- | a | b |\n  | --- | --- |\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "link reference definition inside blockquote keeps paragraph open",
+				source: "> [a]: /url\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "link reference definition inside list item keeps paragraph open",
+				source: "- [a]: /url\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "link reference definition inside blockquote prevents Setext heading",
+				source: "> [a]: /url\n> ===\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "lazy equals line after blockquote paragraph cannot form Setext heading",
+				source: "> Heading\n===\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "inline HTML span with content inside list item opens paragraph (not Type 7)",
+				source: "- <span>x</span>\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "HTML Type 7 cannot interrupt open paragraph inside blockquote",
+				source: "> para\n> <span>\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "loose list item ending in indented paragraph",
+				source: "- item\n\n  para2\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "blockquote paragraph followed by 4-space continuation line stays paragraph",
+				source: "> quote\n>     still para\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "blockquote space+tab is only 2 columns of indent so opens paragraph",
+				source: "> \tcode\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "single tab after bullet marker opens paragraph",
+				source: "-\titem\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "backtick fence with backtick in info string inside blockquote opens paragraph",
+				source: "> ```a`b\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "closed HTML block followed by paragraph inside blockquote",
+				source: "> <pre>x</pre>\n> para\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "blockquote closed by 2-ordered list item with open paragraph",
+				source: "> quote\n2. item\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "single-pipe paragraph line opens PHP table on first delimiter of double-delimiter table",
+				source: "foo\n|\n| --- | --- |\n| --- | --- |\n| 3 | 4 |",
+			},
+		] as const;
+
+		for (const testCase of declinedCases) {
+			const probe = testCase.source.indexOf("3");
+			expect(probe, testCase.name).toBeGreaterThanOrEqual(0);
+			expect(
+				prepareMarkdownTable(testCase.source, probe),
+				`${testCase.name} prepareMarkdownTable`,
+			).toBeNull();
+			expect(
+				findMarkdownTable(testCase.source, probe),
+				`${testCase.name} findMarkdownTable`,
+			).toBeNull();
+			expect(
+				editMarkdownTable(testCase.source, probe, { type: "copy-table" }),
+				`${testCase.name} copy-table`,
+			).toBeNull();
+			expect(
+				formatMarkdownTableSource(testCase.source, {
+					direction: "none",
+					end: probe,
+					start: probe,
+				}),
+				`${testCase.name} formatMarkdownTableSource`,
+			).toBeNull();
+		}
+
+		// In `table + list + fake table`, the first table remains editable.
+		const tableThenListThenFake =
+			"| a | b |\n| --- | --- |\n| 1 | 2 |\n- item\n| c | d |\n| --- | --- |\n| 3 | 4 |";
+		expect(
+			prepareMarkdownTable(
+				tableThenListThenFake,
+				tableThenListThenFake.indexOf("1"),
+			),
+		).toMatchObject({
+			context: { columnCount: 2, rowCount: 2 },
+			table: { endLine: 2, separatorLine: 1, startLine: 0 },
+		});
+
+		const validCases = [
+			{
+				name: "empty blockquote",
+				source: ">\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 1,
+			},
+			{
+				name: "empty bullet list item",
+				source: "-\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 1,
+			},
+			{
+				name: "empty ordered list item",
+				source: "1.\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 1,
+			},
+			{
+				name: "blockquote ending in ATX heading",
+				source: "> # Heading\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 1,
+			},
+			{
+				name: "list item ending in ATX heading",
+				source: "- # Heading\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 1,
+			},
+			{
+				name: "blockquote ending in closed fenced code",
+				source: "> ```\n> code\n> ```\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 3,
+			},
+			{
+				name: "blockquote ending in unclosed fenced code (no lazy continuation)",
+				source: "> ```\n> code\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 2,
+			},
+			{
+				name: "list item ending in closed fenced code",
+				source: "- ```\n  code\n  ```\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 3,
+			},
+			{
+				name: "list item ending in unclosed fenced code",
+				source: "- ```\n  code\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 2,
+			},
+			{
+				name: "blockquote ending in thematic break",
+				source: "> ---\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 1,
+			},
+			{
+				name: "list thematic break",
+				source: "- ---\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 1,
+			},
+			{
+				name: "blank line separator after list item",
+				source: "- item\n\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 2,
+			},
+			{
+				name: "list item ending in indented code block",
+				source: "- item\n\n      code\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 3,
+			},
+			{
+				name: "blockquote ending in indented code block",
+				source: ">     code\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 1,
+			},
+			{
+				name: "list item with two tabs (indented code block)",
+				source: "-\t\tcode\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 1,
+			},
+			{
+				name: "blockquote with two tabs (indented code block)",
+				source: ">\t\tcode\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 1,
+			},
+			{
+				name: "blockquote ending in Type 6 HTML block",
+				source: "> <div>x</div>\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 1,
+			},
+			{
+				name: "list item ending in Type 7 HTML block",
+				source: "- <span>\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 1,
+			},
+			{
+				name: "blockquote Type 7 HTML block absorbing pipe line without opening paragraph",
+				source: "> <span>\n> | a | b |\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 2,
+			},
+			{
+				name: "blockquote ending in open Type 1 HTML block",
+				source: "> <pre>\n> not closed\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 2,
+			},
+			{
+				name: "blockquote ending in Setext heading",
+				source: "> Heading\n> ===\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 2,
+			},
+			{
+				name: "list item ending in Setext heading",
+				source: "- Heading\n  ===\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 2,
+			},
+			{
+				name: "list item paragraph closed by indented Setext single-dash underline",
+				source: "- item\n  -\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 2,
+			},
+			{
+				name: "nested empty list item inside blockquote",
+				source: "> -\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 1,
+			},
+			{
+				name: "nested empty blockquote inside list item",
+				source: "- >\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 1,
+			},
+			{
+				name: "blank blockquote line closes open paragraph",
+				source: "> quote\n>\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 2,
+			},
+			{
+				name: "empty list item closes preceding blockquote",
+				source: "> quote\n-\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 2,
+			},
+			{
+				name: "ATX heading closes nested table inside blockquote",
+				source:
+					"> | a | b |\n> | --- | --- |\n> # H\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 3,
+			},
+			{
+				name: "blank blockquote line closes nested table inside blockquote",
+				source:
+					"> | a | b |\n> | --- | --- |\n>\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 3,
+			},
+			{
+				name: "table + empty list item + valid second table",
+				source:
+					"| a | b |\n| --- | --- |\n| 1 | 2 |\n-\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 4,
+			},
+			{
+				name: "table + blockquote heading + valid second table",
+				source:
+					"| a | b |\n| --- | --- |\n| 1 | 2 |\n> # H\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 4,
+			},
+			{
+				name: "asymmetric table interrupted by 2-ordered heading item + valid table",
+				source:
+					"intro\n| A |\n| - | - |\n2. # H\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 4,
+			},
+			{
+				name: "pipe list line absorbed into table then blank line then top-level paragraph + valid table",
+				source:
+					"| a | b |\n| --- | --- |\n- item | pipe\n\n  para\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 5,
+			},
+			{
+				name: "display math inside blockquote breaks container before table",
+				source: "> quote\n> $$x$$\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 2,
+			},
+			{
+				name: "link reference definition clears paragraph so empty list item starts cleanly",
+				source: "> [a]: /url\n> -\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 2,
+			},
+		] as const;
+
+		for (const testCase of validCases) {
+			const probe = testCase.source.indexOf("3");
+			expect(probe, testCase.name).toBeGreaterThanOrEqual(0);
+			expect(
+				prepareMarkdownTable(testCase.source, probe),
+				`${testCase.name} prepareMarkdownTable`,
+			).toMatchObject({
+				context: { columnCount: 2, rowCount: 2 },
+				table: {
+					endLine: testCase.startLine + 2,
+					separatorLine: testCase.startLine + 1,
+					startLine: testCase.startLine,
+				},
+			});
+		}
+	});
+
 	it("keeps tables directly followed by display math editable while declining inline or mixed-line math", () => {
 		for (const validSource of [
 			"| A | B |\n| --- | --- |\n| 1 | 2 |\n$$x$$",

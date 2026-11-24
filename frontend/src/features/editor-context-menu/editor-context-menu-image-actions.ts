@@ -366,11 +366,11 @@ export async function runImageContextMenuAction(
 				signal: controller.signal,
 				url: image.destination
 			});
+			if (controller.signal.aborted || !session.ensureCurrent()) return;
 			if ("failed" === result.status) {
 				report(result.code, strings?.statusActionFailed);
 				return;
 			}
-			if (controller.signal.aborted || !session.ensureCurrent()) return;
 			const current = session.readValue();
 			let replacement: ReturnType<
 				typeof createMarkdownImageDestinationReplacement

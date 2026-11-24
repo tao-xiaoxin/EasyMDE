@@ -121,8 +121,12 @@ function stripTaskPrefix(
 		}
 	} else {
 		// PHP TaskListItemMarkerParser (priority 35) consumes `[x]` before link
-		// parsing (e.g. `- [x](url)` or `- [x][ref]`), so re-parse the tail.
-		const afterMarker = rawContent.slice(3).replace(/^(?:[ \t]?\n|[ \t]+)/, "");
+		// parsing (e.g. `- [x](url)` or `- [x][ref]`), so re-parse the tail while
+		// preserving 2+ trailing spaces before `\n` as a CommonMark hard break.
+		const rest = rawContent.slice(3);
+		const afterMarker = /^[ \t]* {2}\n/.test(rest)
+			? rest.replace(/^[ \t]* {2}\n/, "  \n")
+			: rest.replace(/^(?:[ \t]*\n|[ \t]+)/, "");
 		const reparsedTokens = visualMarkdownItParser.parseInline(
 			afterMarker,
 			context.env,
@@ -141,6 +145,29 @@ function stripTaskPrefix(
 			...itemChildren.slice(firstContentIndex + 1),
 		],
 	};
+}
+
+function markPreservedTaskParagraphs(
+	children: ReadonlyArray<ProseMirrorNode>,
+	context: BlockMapContext,
+): ProseMirrorNode[] {
+	return children.map((child) => {
+		if (
+			child.type !== visualEditorSchema.nodes.paragraph ||
+			child.attrs.preserveRawTaskPrefix === true
+		) {
+			return child;
+		}
+		const rawContent = context.paragraphRawContents.get(child) ?? "";
+		if (!TASK_LIST_MARKER_PATTERN.test(rawContent)) {
+			return child;
+		}
+		return visualEditorSchema.nodes.paragraph.create(
+			{ preserveRawTaskPrefix: true },
+			child.content,
+			child.marks,
+		);
+	});
 }
 
 function ensureListItemChildren(
@@ -412,11 +439,15 @@ function mapBulletListTokens(
 			task
 				? visualEditorSchema.nodes.task_item.create(
 						{ checked: task.checked },
-						ensureListItemChildren(task.children),
+						ensureListItemChildren(
+							markPreservedTaskParagraphs(task.children, context),
+						),
 					)
 				: visualEditorSchema.nodes.list_item.create(
 						null,
-						ensureListItemChildren(entry.children),
+						ensureListItemChildren(
+							markPreservedTaskParagraphs(entry.children, context),
+						),
 					),
 		);
 		lists.push({
@@ -736,7 +767,9 @@ function mapBlockTokensWithRanges(
 			const items = collected.map((item) =>
 				visualEditorSchema.nodes.list_item.create(
 					null,
-					ensureListItemChildren(item.children),
+					ensureListItemChildren(
+						markPreservedTaskParagraphs(item.children, context),
+					),
 				),
 			);
 			if (items.length > 0) {

@@ -3998,20 +3998,36 @@ describe("PR-R18-A WP KSES visual title parity, refdef task items, tight-list pr
 		expect(htmlDoc.child(0).textContent).toBe("Para\n\nhello\n");
 		expect(collectProtectedInlineRaws(htmlDoc)).toEqual(["<div>", "</div>"]);
 
-		// 5. Reference definition followed by 4-space-indented HTML + more code stays one uncorrupted code_block.
-		const refCodeMd =
+		// 5. Reference definition followed by 4-space-indented HTML stays a paragraph
+		//    continuation (matching PHP ParagraphParser), while a blank line before
+		//    4-space-indented HTML produces a real indented code_block.
+		const refContinuationMd =
 			"[ref]: https://example.com\n    <div>\n    hello\n    </div>\n    more code";
-		const refCodeScan = prescanMarkdown(refCodeMd);
-		expect(refCodeScan.protectedBlocks.size).toBe(0);
-		expect(refCodeScan.markdown).toBe(refCodeMd);
-		const refCodeDoc = parseMarkdownToVisualDoc(refCodeMd);
-		expect(refCodeDoc.childCount).toBe(2);
-		expect(refCodeDoc.child(0).type.name).toBe("protected_block");
-		expect(refCodeDoc.child(0).attrs.rawMarkdown).toBe(
+		const refContinuationDoc = parseMarkdownToVisualDoc(refContinuationMd);
+		expect(refContinuationDoc.childCount).toBe(2);
+		expect(refContinuationDoc.child(0).type.name).toBe("protected_block");
+		expect(refContinuationDoc.child(0).attrs.rawMarkdown).toBe(
 			"[ref]: https://example.com",
 		);
-		expect(refCodeDoc.child(1).type.name).toBe("code_block");
-		expect(refCodeDoc.child(1).textContent).toBe(
+		expect(refContinuationDoc.child(1).type.name).toBe("paragraph");
+		expect(refContinuationDoc.child(1).textContent).toBe(
+			"\nhello\n\nmore code",
+		);
+		expect(collectProtectedInlineRaws(refContinuationDoc)).toEqual([
+			"<div>",
+			"</div>",
+		]);
+
+		const refBlankCodeMd =
+			"[ref]: https://example.com\n\n    <div>\n    hello\n    </div>\n    more code";
+		const refBlankCodeScan = prescanMarkdown(refBlankCodeMd);
+		expect(refBlankCodeScan.protectedBlocks.size).toBe(0);
+		expect(refBlankCodeScan.markdown).toBe(refBlankCodeMd);
+		const refBlankCodeDoc = parseMarkdownToVisualDoc(refBlankCodeMd);
+		expect(refBlankCodeDoc.childCount).toBe(2);
+		expect(refBlankCodeDoc.child(0).type.name).toBe("protected_block");
+		expect(refBlankCodeDoc.child(1).type.name).toBe("code_block");
+		expect(refBlankCodeDoc.child(1).textContent).toBe(
 			"<div>\nhello\n</div>\nmore code",
 		);
 	});
@@ -4391,6 +4407,410 @@ describe("PR-R19-A raw NUL image titles, PHP task-list parity, tight-list preser
 		);
 		expect(escapedGuard.serialize(insertAt(escapedGuard.initialDoc, 2, "!"))).toBe(
 			"P!ara\n\\<div>text\\</div>",
+		);
+	});
+});
+
+describe("PR-R20-A PHP-aligned reference title absorption, list task preservation, link encoding, refdef continuations, blockquote HTML blocks, and shortcut task hard breaks", () => {
+	const findTextEndPos = (doc: ProseMirrorNode, needle: string): number => {
+		let found = -1;
+		doc.descendants((node, pos) => {
+			if (found < 0 && node.isText && node.text === needle) {
+				found = pos + node.text.length;
+			}
+			return found < 0;
+		});
+		return found;
+	};
+
+	const insertAt = (
+		doc: ProseMirrorNode,
+		pos: number,
+		text: string,
+	): ProseMirrorNode =>
+		EditorState.create({ doc, schema: visualEditorSchema }).tr.insertText(
+			text,
+			pos,
+		).doc;
+
+	it("uses PHP-aligned ParagraphReferenceParser in wouldReferenceDefinitionAbsorbFollowingBlock (Track A #1)", () => {
+		// PHP accepts nested unescaped `(` inside parenthesized reference titles,
+		// unlike markdown-it; editing body to `(nested (title)` must insert a blank line.
+		const initialMd = "- [r]: /r\n  (old) prose\n- Next";
+		const guard = createMarkdownRoundTripGuard(initialMd);
+		const bodyText = "(old) prose";
+		const bodyStart = findTextEndPos(guard.initialDoc, bodyText) - bodyText.length;
+		const nestedTitleDoc = EditorState.create({
+			doc: guard.initialDoc,
+			schema: visualEditorSchema,
+		}).tr.replaceWith(
+			bodyStart,
+			bodyStart + bodyText.length,
+			visualEditorSchema.text("(nested (title)"),
+		).doc;
+		const nestedTitleMd = guard.serialize(nestedTitleDoc);
+		expect(nestedTitleMd).toBe("- [r]: /r\n\n  (nested (title)\n- Next");
+		expect(
+			parseMarkdownToVisualDoc(nestedTitleMd).firstChild?.child(0).child(2)
+				.textContent,
+		).toBe("(nested (title)");
+
+		// Multi-line nested paren title is also absorbed by PHP, so a blank line is inserted.
+		const multiLineDoc = EditorState.create({
+			doc: guard.initialDoc,
+			schema: visualEditorSchema,
+		}).tr.replaceWith(
+			bodyStart,
+			bodyStart + bodyText.length,
+			visualEditorSchema.text("(line 1\n(line 2)"),
+		).doc;
+		expect(guard.serialize(multiLineDoc)).toBe(
+			"- [r]: /r\n\n  (line 1\n  (line 2)\n- Next",
+		);
+
+		// Non-title `(phrase) continues` still preserves tight single-line separation.
+		const tightDoc = EditorState.create({
+			doc: guard.initialDoc,
+			schema: visualEditorSchema,
+		}).tr.replaceWith(
+			bodyStart,
+			bodyStart + bodyText.length,
+			visualEditorSchema.text("(phrase) continues"),
+		).doc;
+		expect(guard.serialize(tightDoc)).toBe(
+			"- [r]: /r\n  (phrase) continues\n- Next",
+		);
+	});
+
+	it("preserves active PHP task checkboxes in ordered lists and subsequent list-item paragraphs while keeping escaped literals escaped (Track A #2 + Track B #10)", () => {
+		// 1. Ordered list task items preserve unescaped `[x]` / `[ ]` on edit.
+		const orderedMd = "1. [x] done\n2. [ ] todo";
+		const orderedGuard = createMarkdownRoundTripGuard(orderedMd);
+		expect(orderedGuard.serialize(orderedGuard.initialDoc)).toBe(orderedMd);
+		const orderedEdited = insertAt(
+			orderedGuard.initialDoc,
+			findTextEndPos(orderedGuard.initialDoc, "[ ] todo"),
+			"!",
+		);
+		const orderedEditedMd = orderedGuard.serialize(orderedEdited);
+		expect(orderedEditedMd).toBe("1. [x] done\n2. [ ] todo!");
+		expect(parseMarkdownToVisualDoc(orderedEditedMd).eq(orderedEdited)).toBe(
+			true,
+		);
+
+		// Deleting the `[x] ` marker leaves clean prose without stray markers.
+		const markerStart =
+			findTextEndPos(orderedGuard.initialDoc, "[x] done") - "[x] done".length;
+		const markerDeleted = EditorState.create({
+			doc: orderedGuard.initialDoc,
+			schema: visualEditorSchema,
+		}).tr.delete(markerStart, markerStart + 4).doc;
+		expect(orderedGuard.serialize(markerDeleted)).toBe("1. done\n2. [ ] todo");
+
+		// 2. Second-paragraph task in a bullet item preserves `[x]` across edits to either paragraph.
+		const secondParaMd = "- para1\n\n  [x] second para";
+		const secondParaGuard = createMarkdownRoundTripGuard(secondParaMd);
+		expect(secondParaGuard.serialize(secondParaGuard.initialDoc)).toBe(
+			secondParaMd,
+		);
+		const editFirstPara = insertAt(
+			secondParaGuard.initialDoc,
+			findTextEndPos(secondParaGuard.initialDoc, "para1"),
+			"!",
+		);
+		const editFirstParaMd = secondParaGuard.serialize(editFirstPara);
+		expect(editFirstParaMd).toBe("- para1!\n\n  [x] second para");
+		expect(parseMarkdownToVisualDoc(editFirstParaMd).eq(editFirstPara)).toBe(
+			true,
+		);
+
+		const editSecondPara = insertAt(
+			secondParaGuard.initialDoc,
+			findTextEndPos(secondParaGuard.initialDoc, "[x] second para"),
+			"!",
+		);
+		const editSecondParaMd = secondParaGuard.serialize(editSecondPara);
+		expect(editSecondParaMd).toBe("- para1\n\n  [x] second para!");
+		expect(parseMarkdownToVisualDoc(editSecondParaMd).eq(editSecondPara)).toBe(
+			true,
+		);
+
+		// 3. Second-paragraph task inside a task_item also preserves its checkbox.
+		const nestedTaskParaMd = "- [x] first\n\n  [ ] second";
+		const nestedTaskGuard = createMarkdownRoundTripGuard(nestedTaskParaMd);
+		const editedNestedTask = insertAt(
+			nestedTaskGuard.initialDoc,
+			findTextEndPos(nestedTaskGuard.initialDoc, "[ ] second"),
+			"!",
+		);
+		expect(nestedTaskGuard.serialize(editedNestedTask)).toBe(
+			"- [x] first\n\n  [ ] second!",
+		);
+
+		// 4. Escaped literal `\[x]` stays escaped on edit in both refdef bullet and ordered lists.
+		const escapedRefMd = "- [r]: /r\n  \\[x] literal";
+		const escapedRefGuard = createMarkdownRoundTripGuard(escapedRefMd);
+		const editedEscapedRef = insertAt(
+			escapedRefGuard.initialDoc,
+			findTextEndPos(escapedRefGuard.initialDoc, "[x] literal"),
+			"!",
+		);
+		expect(escapedRefGuard.serialize(editedEscapedRef)).toBe(
+			"- [r]: /r\n  \\[x] literal!",
+		);
+
+		const escapedOrdMd = "1. \\[x] literal";
+		const escapedOrdGuard = createMarkdownRoundTripGuard(escapedOrdMd);
+		const editedEscapedOrd = insertAt(
+			escapedOrdGuard.initialDoc,
+			findTextEndPos(escapedOrdGuard.initialDoc, "[x] literal"),
+			"!",
+		);
+		expect(escapedOrdGuard.serialize(editedEscapedOrd)).toBe(
+			"1. \\[x] literal!",
+		);
+
+		// 5. Newly typed literal `[x] foo` inside an ordinary list item is escaped.
+		const ordinaryGuard = createMarkdownRoundTripGuard("- bar");
+		const barEnd = findTextEndPos(ordinaryGuard.initialDoc, "bar");
+		const typedLiteralDoc = EditorState.create({
+			doc: ordinaryGuard.initialDoc,
+			schema: visualEditorSchema,
+		}).tr.replaceWith(
+			barEnd - 3,
+			barEnd,
+			visualEditorSchema.text("[x] foo"),
+		).doc;
+		expect(ordinaryGuard.serialize(typedLiteralDoc)).toBe("- \\[x] foo");
+	});
+
+	it("encodes [x](url), [X](url), and [ ](url) links at start of list items as numeric entities (Track B #4)", () => {
+		const linkMark = visualEditorSchema.marks.link.create({
+			href: "https://example.com",
+		});
+		for (const linkCase of [
+			{ expected: "- [&#120;](https://example.com)", label: "x" },
+			{ expected: "- [&#88;](https://example.com)", label: "X" },
+			{ expected: "- [&#32;](https://example.com)", label: " " },
+		]) {
+			const doc = visualEditorSchema.nodes.doc.create(null, [
+				visualEditorSchema.nodes.bullet_list.create(null, [
+					visualEditorSchema.nodes.list_item.create(null, [
+						visualEditorSchema.nodes.paragraph.create(null, [
+							visualEditorSchema.text(linkCase.label, [linkMark]),
+						]),
+					]),
+				]),
+			]);
+			const serialized = serializeVisualDocToMarkdown(doc);
+			expect(serialized, linkCase.label).toBe(linkCase.expected);
+
+			const reparsed = parseMarkdownToVisualDoc(serialized);
+			expect(reparsed.firstChild?.type.name, linkCase.label).toBe("bullet_list");
+			expect(reparsed.firstChild?.firstChild?.type.name, linkCase.label).toBe(
+				"list_item",
+			);
+			expect(reparsed.eq(doc), linkCase.label).toBe(true);
+		}
+
+		// Also covers ordered lists and subsequent list-item paragraphs.
+		const orderedLinkMd = "1. [&#120;](https://example.com) tail";
+		const orderedLinkGuard = createMarkdownRoundTripGuard(orderedLinkMd);
+		const editedOrderedLink = insertAt(
+			orderedLinkGuard.initialDoc,
+			findTextEndPos(orderedLinkGuard.initialDoc, " tail"),
+			"!",
+		);
+		expect(orderedLinkGuard.serialize(editedOrderedLink)).toBe(
+			"1. [&#120;](https://example.com) tail!",
+		);
+	});
+
+	it("keeps paragraphOpen across refdefs so 4-space math/HTML continuations match PHP (Track A #3 + Track B #5)", () => {
+		// 1. `[ref]: /target\n    $$x$$` (no blank line) -> protected math block, NOT code_block.
+		const refMathMd = "[ref]: /target\n    $$x$$";
+		const refMathGuard = createMarkdownRoundTripGuard(refMathMd);
+		expect(refMathGuard.initialDoc.childCount).toBe(2);
+		expect(refMathGuard.initialDoc.child(0).type.name).toBe("protected_block");
+		expect(refMathGuard.initialDoc.child(0).attrs.rawMarkdown).toBe(
+			"[ref]: /target",
+		);
+		expect(refMathGuard.initialDoc.child(1).type.name).toBe("protected_block");
+		expect(refMathGuard.initialDoc.child(1).attrs.kind).toBe("math");
+		expect(refMathGuard.initialDoc.child(1).attrs.rawMarkdown).toBe("$$x$$");
+		expect(refMathGuard.serialize(refMathGuard.initialDoc)).toBe(refMathMd);
+
+		const mathPos = refMathGuard.initialDoc.child(0).nodeSize;
+		const editedMathDoc = EditorState.create({
+			doc: refMathGuard.initialDoc,
+			schema: visualEditorSchema,
+		}).tr.setNodeMarkup(mathPos, undefined, {
+			kind: "math",
+			rawMarkdown: "$$x + 1$$",
+		}).doc;
+		expect(refMathGuard.serialize(editedMathDoc)).toBe(
+			"[ref]: /target\n\n$$x + 1$$",
+		);
+
+		// 2. `[ref]: /target\n\n    $$x$$` (with blank line) -> real indented code_block.
+		const refBlankMathDoc = parseMarkdownToVisualDoc(
+			"[ref]: /target\n\n    $$x$$",
+		);
+		expect(refBlankMathDoc.childCount).toBe(2);
+		expect(refBlankMathDoc.child(0).type.name).toBe("protected_block");
+		expect(refBlankMathDoc.child(1).type.name).toBe("code_block");
+		expect(refBlankMathDoc.child(1).textContent).toBe("$$x$$");
+
+		// 3. `[ref]: https://example.com\n    <div>\n    hello\n    </div>\n    more code`
+		//    stays a paragraph continuation and round-trips safely on edit.
+		const refDivMd =
+			"[ref]: https://example.com\n    <div>\n    hello\n    </div>\n    more code";
+		const refDivGuard = createMarkdownRoundTripGuard(refDivMd);
+		expect(refDivGuard.initialDoc.childCount).toBe(2);
+		expect(refDivGuard.initialDoc.child(1).type.name).toBe("paragraph");
+		expect(refDivGuard.serialize(refDivGuard.initialDoc)).toBe(refDivMd);
+
+		const editedRefDiv = insertAt(
+			refDivGuard.initialDoc,
+			findTextEndPos(refDivGuard.initialDoc, "\nmore code"),
+			"!",
+		);
+		const editedRefDivMd = refDivGuard.serialize(editedRefDiv);
+		expect(editedRefDivMd).toBe(
+			"[ref]: https://example.com\n    <div>\nhello\n    </div>\nmore code!",
+		);
+		expect(parseMarkdownToVisualDoc(editedRefDivMd).eq(editedRefDiv)).toBe(
+			true,
+		);
+	});
+
+	it("protects blockquote-prefixed CommonMark HTML blocks and avoids leaking hidden content on edit (Track B #8)", () => {
+		// 1. Blockquote Type 6 `<div>` block stays protected so `world` never leaks on edit.
+		const bqDivMd = "> Hello\n> <div>\n> world\n> </div>";
+		const bqDivGuard = createMarkdownRoundTripGuard(bqDivMd);
+		expect(bqDivGuard.initialDoc.childCount).toBe(1);
+		const bqNode = bqDivGuard.initialDoc.firstChild;
+		expect(bqNode?.type.name).toBe("blockquote");
+		expect(bqNode?.childCount).toBe(2);
+		expect(bqNode?.child(0).type.name).toBe("paragraph");
+		expect(bqNode?.child(0).textContent).toBe("Hello");
+		expect(bqNode?.child(1).type.name).toBe("protected_block");
+		expect(bqNode?.child(1).attrs.kind).toBe("raw");
+		expect(bqNode?.child(1).attrs.rawMarkdown).toBe("<div>\nworld\n</div>");
+		expect(bqDivGuard.serialize(bqDivGuard.initialDoc)).toBe(bqDivMd);
+
+		const bqDivEdited = insertAt(
+			bqDivGuard.initialDoc,
+			findTextEndPos(bqDivGuard.initialDoc, "Hello"),
+			"!",
+		);
+		const bqDivEditedMd = bqDivGuard.serialize(bqDivEdited);
+		expect(bqDivEditedMd).toBe("> Hello!\n>\n> <div>\n> world\n> </div>");
+		expect(bqDivEditedMd).not.toContain(">     <div>");
+		expect(parseMarkdownToVisualDoc(bqDivEditedMd).eq(bqDivEdited)).toBe(true);
+
+		// 2. Blockquote Type 1 cross-tag close, Type 2 comment, and Type 7 standalone vs interrupting.
+		const bqCommentDoc = parseMarkdownToVisualDoc(
+			"> Hello\n> <!-- hidden\n> secret -->\n> visible",
+		);
+		expect(bqCommentDoc.firstChild?.childCount).toBe(3);
+		expect(bqCommentDoc.firstChild?.child(1).type.name).toBe("protected_block");
+		expect(bqCommentDoc.firstChild?.child(2).textContent).toBe("visible");
+
+		const bqType1Doc = parseMarkdownToVisualDoc(
+			"> Hello\n> <pre>\n> code\n> </script>\n> after",
+		);
+		expect(bqType1Doc.firstChild?.childCount).toBe(3);
+		expect(bqType1Doc.firstChild?.child(1).attrs.rawMarkdown).toBe(
+			"<pre>\ncode\n</script>",
+		);
+		expect(bqType1Doc.firstChild?.child(2).textContent).toBe("after");
+
+		// `<search>` is NOT a PHP Type 6 block tag and does not interrupt a paragraph.
+		const bqSearchGuard = createMarkdownRoundTripGuard(
+			"> Hello\n> <search>\n> world\n> </search>",
+		);
+		expect(bqSearchGuard.initialDoc.firstChild?.childCount).toBe(1);
+		const bqSearchEdited = insertAt(
+			bqSearchGuard.initialDoc,
+			findTextEndPos(bqSearchGuard.initialDoc, "Hello\n") - 1,
+			"!",
+		);
+		expect(bqSearchGuard.serialize(bqSearchEdited)).toBe(
+			"> Hello!\n> <search>\n> world\n> </search>",
+		);
+
+		// 3. Genuine 4-space continuation `Para\n    <div>text</div>` still pads 4 spaces on edit.
+		const paraContGuard = createMarkdownRoundTripGuard(
+			"Para\n    <div>text</div>",
+		);
+		const paraContEdited = insertAt(paraContGuard.initialDoc, 2, "!");
+		expect(paraContGuard.serialize(paraContEdited)).toBe(
+			"P!ara\n    <div>text</div>",
+		);
+
+		// Genuine 4-space continuation inside a blockquote also keeps its 4-space pad.
+		const bqContGuard = createMarkdownRoundTripGuard(
+			"> Hello\n>     <div>text</div>",
+		);
+		const bqContEdited = insertAt(
+			bqContGuard.initialDoc,
+			findTextEndPos(bqContGuard.initialDoc, "Hello\n") - 1,
+			"!",
+		);
+		expect(bqContGuard.serialize(bqContEdited)).toBe(
+			"> Hello!\n>     <div>text</div>",
+		);
+	});
+
+	it("preserves 2-space hard breaks and strips non-hardbreak whitespace before newline in shortcut-refdef [x] task items (Track B #9)", () => {
+		// 1. Two trailing spaces before `\n` become a `hard_break` matching PHP `<br>`.
+		const hardBreakMd = "[x]: https://example.com\n\n- [x]  \n  text";
+		const hardBreakGuard = createMarkdownRoundTripGuard(hardBreakMd);
+		expect(hardBreakGuard.initialDoc.childCount).toBe(2);
+		const hbList = hardBreakGuard.initialDoc.child(1);
+		expect(hbList.type.name).toBe("task_list");
+		const hbPara = hbList.firstChild?.firstChild;
+		expect(hbPara?.childCount).toBe(2);
+		expect(hbPara?.child(0).type.name).toBe("hard_break");
+		expect(hbPara?.child(1).textContent).toBe("text");
+		expect(hardBreakGuard.serialize(hardBreakGuard.initialDoc)).toBe(
+			hardBreakMd,
+		);
+
+		const editedHb = insertAt(
+			hardBreakGuard.initialDoc,
+			findTextEndPos(hardBreakGuard.initialDoc, "text"),
+			"!",
+		);
+		expect(hardBreakGuard.serialize(editedHb)).toBe(
+			"[x]: https://example.com\n\n- [x] \\\n  text!",
+		);
+
+		// Tab + 2 spaces before `\n` also emits a clean `[hard_break, text("text")]`.
+		const tabHardBreakDoc = parseMarkdownToVisualDoc(
+			"[x]: https://example.com\n\n- [x]\t  \n  text",
+		);
+		const tabHbPara = tabHardBreakDoc.child(1).firstChild?.firstChild;
+		expect(tabHbPara?.childCount).toBe(2);
+		expect(tabHbPara?.child(0).type.name).toBe("hard_break");
+		expect(tabHbPara?.child(1).textContent).toBe("text");
+
+		// 2. Space + tab before `\n` is NOT a hard break and leaves clean `text("text")`.
+		const softBreakMd = "[x]: https://example.com\n\n- [x] \t\n  text";
+		const softBreakGuard = createMarkdownRoundTripGuard(softBreakMd);
+		const sbPara = softBreakGuard.initialDoc.child(1).firstChild?.firstChild;
+		expect(sbPara?.childCount).toBe(1);
+		expect(sbPara?.child(0).isText).toBe(true);
+		expect(sbPara?.child(0).textContent).toBe("text");
+
+		const editedSb = insertAt(
+			softBreakGuard.initialDoc,
+			findTextEndPos(softBreakGuard.initialDoc, "text"),
+			"!",
+		);
+		expect(softBreakGuard.serialize(editedSb)).toBe(
+			"[x]: https://example.com\n\n- [x] text!",
 		);
 	});
 });

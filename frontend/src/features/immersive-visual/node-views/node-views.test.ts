@@ -2335,4 +2335,21 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 		expect(chips[0]).toContain("[img-title]");
 		expect(chips[1]).toContain("[img-dest]");
 	});
+
+	it("aligns stripCommonMarkHtmlForPreview Type 1 cross-tag closing and Type 6 tag list with PHP (Track B #11)", () => {
+		// Type 1 closes on any of </pre>, </script>, </style>, </textarea> (without space before >).
+		expect(stripCommonMarkHtmlForPreview("<pre>\n</script>\npara")).toBe("para");
+		expect(stripCommonMarkHtmlForPreview("<style>\n</pre>\npara")).toBe("para");
+		expect(stripCommonMarkHtmlForPreview("<textarea>\n</style>\npara")).toBe(
+			"para",
+		);
+		expect(stripCommonMarkHtmlForPreview("<pre>\n</script >\npara")).toBe("");
+
+		// `<search>` is NOT a PHP CommonMark Type 6 block tag and does not interrupt a paragraph.
+		expect(stripCommonMarkHtmlForPreview("para\n<search>\nfoo")).toBe(
+			"para\nfoo",
+		);
+		// Standalone `<search>` outside a paragraph is still a Type 7 HTML block.
+		expect(stripCommonMarkHtmlForPreview("<search>\nfoo")).toBe("");
+	});
 });

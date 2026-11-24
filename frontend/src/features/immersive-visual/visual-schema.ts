@@ -365,6 +365,7 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 	doc: { content: "block+" },
 
 	paragraph: {
+		attrs: { preserveRawTaskPrefix: { default: false } },
 		content: "inline*",
 		group: "block",
 		parseDOM: [{ tag: "p" }],
@@ -720,13 +721,21 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 		group: "inline",
 		atom: true,
 		selectable: true,
-		attrs: { kind: { default: "math-inline" }, rawMarkdown: { default: "" } },
+		attrs: {
+			kind: { default: "math-inline" },
+			rawMarkdown: { default: "" },
+			continuationIndent: { default: false },
+		},
 		parseDOM: [
 			{
 				tag: "span[data-easymde-protected-inline]",
 				getAttrs(dom) {
 					if (!(dom instanceof HTMLElement)) {
-						return { kind: "raw-inline", rawMarkdown: "" };
+						return {
+							kind: "raw-inline",
+							rawMarkdown: "",
+							continuationIndent: false,
+						};
 					}
 					return {
 						kind: normalizeProtectedInlineKind(
@@ -736,6 +745,7 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 							dom.getAttribute("data-easymde-visual-markdown-source") ??
 								dom.textContent,
 						),
+						continuationIndent: false,
 					};
 				},
 			},

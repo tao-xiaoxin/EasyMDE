@@ -3,6 +3,7 @@ import {
 	type BlockSerializer,
 	isLooseList,
 	isNestedList,
+	needsTightRefDefContinuation,
 	serializeListItemAt,
 } from "./markdown-list-serialization";
 import {
@@ -11,7 +12,11 @@ import {
 	parseMarkdownWithBlockSources,
 } from "./markdown-parser";
 
-export { type BlockSerializer, serializeList } from "./markdown-list-serialization";
+export {
+	type BlockSerializer,
+	needsTightRefDefContinuation,
+	serializeList,
+} from "./markdown-list-serialization";
 
 /**
  * Untouched-source preservation for the immersive visual editor.
@@ -720,6 +725,9 @@ function serializeDocPreservingUntouchedBlocks(
 				if (serialized !== null) effectiveOrigIndex[idx] = pairedIdx;
 			}
 		}
+		const tightRefDefContinuation =
+			idx > 0 && needsTightRefDefContinuation(doc.child(idx - 1), child);
+		let separator = "";
 		if (idx > 0) {
 			const effIdx = effectiveOrigIndex[idx] ?? -1;
 			const prevEffIdx = effectiveOrigIndex[idx - 1] ?? -1;
@@ -727,9 +735,27 @@ function serializeDocPreservingUntouchedBlocks(
 				effIdx >= 0 && prevEffIdx >= 0 && effIdx === prevEffIdx + 1
 					? baselineBlocks[effIdx]
 					: undefined;
-			parts.push(effBlock ? effBlock.separatorBefore : "\n\n");
+			separator = tightRefDefContinuation
+				? "\n"
+				: effBlock
+					? effBlock.separatorBefore
+					: "\n\n";
+			parts.push(separator);
 		}
-		parts.push(serialized ?? serializers.serializeBlock(child));
+		const reusedIndentedParagraphAfterBlank =
+			serialized !== null &&
+			child.type.name === "paragraph" &&
+			separator !== "\n" &&
+			/^(?: {4}|\t)/.test(serialized);
+		const blockText =
+			serialized !== null && !reusedIndentedParagraphAfterBlank
+				? serialized
+				: serializers.serializeBlock(child);
+		parts.push(
+			tightRefDefContinuation && !/^ {4}/.test(blockText)
+				? `    ${blockText}`
+				: blockText,
+		);
 	}
 	let output = parts.join("");
 	// A multi-block document replaced without any surviving baseline block must

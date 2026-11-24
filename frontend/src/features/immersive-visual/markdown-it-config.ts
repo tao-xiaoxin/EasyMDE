@@ -1,6 +1,12 @@
 import MarkdownIt from "markdown-it";
 import { decodeCommonMarkTitle } from "../../shared/image-scale-title";
 import {
+	advanceParagraphReferenceParser,
+	createParagraphReferenceParser,
+	type ParagraphReferenceParser,
+	type ReferenceDefinitionState,
+} from "../../shared/markdown/php-commonmark-reference-def";
+import {
 	RAW_IMAGE_TITLE_META_KEY,
 	RAW_LINK_TITLE_META_KEY,
 	readRawMetaString,
@@ -433,6 +439,35 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 		parser.block.ruler.disable("reference");
 	}
 
+	const originalCodeRuleEntry = (
+		parser.block.ruler as unknown as InternalRuler<BlockRuleFn>
+	).__rules__?.find((rule) => rule.name === "code");
+
+	if (originalCodeRuleEntry) {
+		const originalCodeRule = originalCodeRuleEntry.fn;
+		parser.block.ruler.before(
+			"code",
+			"easymde_code",
+			(state, startLine, endLine, silent) => {
+				// PHP League\CommonMark keeps ParagraphParser open across link
+				// reference definitions until a blank line or interrupting
+				// block, so a 4-space continuation right after a refdef stays
+				// a paragraph instead of becoming an indented code block.
+				const prevToken = state.tokens[state.tokens.length - 1];
+				if (
+					prevToken?.type === "reference_definition" &&
+					prevToken.level === state.level &&
+					prevToken.map?.[1] === startLine
+				) {
+					return false;
+				}
+				return originalCodeRule(state, startLine, endLine, silent);
+			},
+			{ alt: [...originalCodeRuleEntry.alt] },
+		);
+		parser.block.ruler.disable("code");
+	}
+
 	parser.block.ruler.before(
 		"paragraph",
 		"easymde_table_align",
@@ -528,18 +563,28 @@ export function inspectReferenceDefinitionBlock(
 		? (readRawMetaString(lastToken, RAW_REFERENCE_SOURCE_META_KEY) ??
 			rawMarkdown)
 		: rawMarkdown;
-	const probeTokens = visualMarkdownItParser.parse(`${lastRaw}\n"t"`, {});
-	const absorbedTitle =
-		probeTokens.length === 1 &&
-		probeTokens[0]?.type === "reference_definition";
-	return { isRefDef: true, lastHasTitle: !absorbedTitle, lastRaw };
+	const refParser = createParagraphReferenceParser();
+	for (const line of lastRaw.split("\n")) {
+		advanceParagraphReferenceParser(refParser, line);
+	}
+	return {
+		isRefDef: true,
+		lastHasTitle: refParser.state !== "start-title",
+		lastRaw,
+	};
+}
+
+function readReferenceParserState(
+	parser: ParagraphReferenceParser,
+): ReferenceDefinitionState {
+	return parser.state;
 }
 
 /**
  * Reports whether placing `followingMarkdown` directly on the next line after
  * a title-less CommonMark §4.7 reference definition (`lastRaw`) would cause
- * the reference parser to absorb one or more lines of `followingMarkdown` as
- * the definition's title.
+ * PHP `League\CommonMark`'s `ReferenceParser` to absorb one or more lines of
+ * `followingMarkdown` as the definition's title.
  */
 export function wouldReferenceDefinitionAbsorbFollowingBlock(
 	lastRaw: string,
@@ -554,17 +599,26 @@ export function wouldReferenceDefinitionAbsorbFollowingBlock(
 	if (!/^[ \t]*["'(]/.test(firstLine)) {
 		return false;
 	}
-	const baseLineCount = lastRaw.split("\n").length;
-	const combinedTokens = visualMarkdownItParser.parse(
-		`${lastRaw}\n${followingMarkdown}`,
-		{},
-	);
-	const firstToken = combinedTokens[0];
-	if (firstToken?.type !== "reference_definition") {
-		return true;
+	const refParser = createParagraphReferenceParser();
+	for (const line of lastRaw.split("\n")) {
+		advanceParagraphReferenceParser(refParser, line);
 	}
-	const endLine = firstToken.map?.[1];
-	return typeof endLine !== "number" || endLine > baseLineCount;
+	if (readReferenceParserState(refParser) !== "start-title") {
+		return false;
+	}
+	for (const line of followingMarkdown.split("\n")) {
+		if (line.trim().length === 0) {
+			break;
+		}
+		if (advanceParagraphReferenceParser(refParser, line)) {
+			return true;
+		}
+		const nextState = readReferenceParserState(refParser);
+		if (nextState === "paragraph" || nextState === "start-definition") {
+			break;
+		}
+	}
+	return false;
 }
 
 /**

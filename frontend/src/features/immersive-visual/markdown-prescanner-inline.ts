@@ -1,6 +1,7 @@
 import type { ProtectedInlineKind } from "./visual-schema";
 
 export type ProtectedInlineEntry = Readonly<{
+	continuationIndent?: boolean;
 	kind: ProtectedInlineKind;
 	rawMarkdown: string;
 }>;
@@ -35,12 +36,12 @@ const TABLE_BR_STICKY = /<br[ \t]*\/?>/iy;
 const FOOTNOTE_REF_STICKY = /\[\^([^\s\]]+)\]/y;
 
 /**
- * CommonMark §4.6 Types 1–6 (plus prescanner `audio`/`video`/`search` block
+ * CommonMark §4.6 Types 1–6 (plus prescanner `audio`/`video` paired block
  * tags) that would interrupt an open paragraph if serialized at 0–3 spaces on
  * a continuation line instead of staying inline HTML.
  */
 const HTML_BLOCK_INTERRUPTING_PATTERN =
-	/^(?:<!--|<\?|<!\[CDATA\[|<![A-Za-z]|<(?:script|pre|textarea|style)(?:[\s>]|$)|<\/?(?:address|article|aside|audio|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|source|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul|video)(?:[\s>]|\/?>|$))/i;
+	/^(?:<!--|<\?|<!\[CDATA\[|<![A-Za-z]|<(?:script|pre|textarea|style)(?:[\s>]|$)|<\/?(?:address|article|aside|audio|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|section|source|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul|video)(?:[\s>]|\/?>|$))/i;
 
 export type InlineHtmlScanState = {
 	noAngleClose: boolean;
@@ -286,6 +287,7 @@ export function extractInlineProtectedSyntax(
 	protectedInlines: Map<string, ProtectedInlineEntry>,
 	isTableRow: boolean,
 	allowRefDefDest = false,
+	indentedContinuationStart = -1,
 ): string {
 	let result = "";
 	let index = 0;
@@ -296,9 +298,15 @@ export function extractInlineProtectedSyntax(
 	const allocateToken = (
 		kind: ProtectedInlineKind,
 		rawMarkdown: string,
+		continuationIndent = false,
 	): string => {
 		const token = `${sentinel}INL${protectedInlines.size}END`;
-		protectedInlines.set(token, { kind, rawMarkdown });
+		protectedInlines.set(
+			token,
+			continuationIndent
+				? { continuationIndent: true, kind, rawMarkdown }
+				: { kind, rawMarkdown },
+		);
 		return token;
 	};
 
@@ -495,6 +503,8 @@ export function extractInlineProtectedSyntax(
 		// PIs, CDATA): preserve verbatim as protected inline atoms without crossing
 		// table cell pipes or escaping `<` on edits.
 		if (ch === "<" && !isEscapedAt(line, index)) {
+			const fromContinuationIndent =
+				indentedContinuationStart >= 0 && index === indentedContinuationStart;
 			const matchedPairedHtml = matchAllowedInlineHtml(
 				line,
 				index,
@@ -502,7 +512,11 @@ export function extractInlineProtectedSyntax(
 				unclosedTagBoundary,
 			);
 			if (matchedPairedHtml !== null) {
-				result += allocateToken("raw-inline", matchedPairedHtml);
+				result += allocateToken(
+					"raw-inline",
+					matchedPairedHtml,
+					fromContinuationIndent,
+				);
 				index += matchedPairedHtml.length;
 				continue;
 			}
@@ -515,7 +529,11 @@ export function extractInlineProtectedSyntax(
 				matchedRawHtml !== null &&
 				!(isTableRow && hasUnescapedPipe(matchedRawHtml))
 			) {
-				result += allocateToken("raw-inline", matchedRawHtml);
+				result += allocateToken(
+					"raw-inline",
+					matchedRawHtml,
+					fromContinuationIndent,
+				);
 				index += matchedRawHtml.length;
 				continue;
 			}

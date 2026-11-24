@@ -10,6 +10,7 @@ import {
 	createPreservingRoundTripGuard,
 	type MarkdownRoundTripGuard,
 	type MarkdownSerializers,
+	needsTightRefDefContinuation,
 	serializeList,
 } from "./markdown-block-preservation";
 import {
@@ -458,6 +459,7 @@ function serializeInlineContent(
 				const continuationMatch =
 					!inHeading &&
 					child.attrs.kind === "raw-inline" &&
+					child.attrs.continuationIndent === true &&
 					wouldRawHtmlInterruptParagraph(raw)
 						? /\n( {0,3})$/.exec(output)
 						: null;
@@ -731,11 +733,20 @@ function serializeBlockNode(node: ProseMirrorNode): string {
 				: "#".repeat(level);
 		}
 		case "blockquote": {
-			const innerBlocks: string[] = [];
+			const parts: string[] = [];
 			for (let i = 0; i < node.childCount; i += 1) {
-				innerBlocks.push(serializeBlockNode(node.child(i)));
+				const child = node.child(i);
+				const prev = i > 0 ? node.child(i - 1) : null;
+				const serialized = serializeBlockNode(child);
+				if (prev !== null && needsTightRefDefContinuation(prev, child)) {
+					parts.push(`\n    ${serialized}`);
+				} else if (i > 0) {
+					parts.push(`\n\n${serialized}`);
+				} else {
+					parts.push(serialized);
+				}
 			}
-			return prefixBlockquote(innerBlocks.join("\n\n"));
+			return prefixBlockquote(parts.join(""));
 		}
 		case "bullet_list":
 		case "ordered_list":
@@ -765,11 +776,20 @@ export function serializeVisualDocToMarkdown(doc: ProseMirrorNode): string {
 		return "";
 	}
 
-	const blocks: string[] = [];
+	const parts: string[] = [];
 	for (let i = 0; i < doc.childCount; i += 1) {
-		blocks.push(serializeBlockNode(doc.child(i)));
+		const child = doc.child(i);
+		const prev = i > 0 ? doc.child(i - 1) : null;
+		const serialized = serializeBlockNode(child);
+		if (prev !== null && needsTightRefDefContinuation(prev, child)) {
+			parts.push(`\n    ${serialized}`);
+		} else if (i > 0) {
+			parts.push(`\n\n${serialized}`);
+		} else {
+			parts.push(serialized);
+		}
 	}
-	return blocks.join("\n\n");
+	return parts.join("");
 }
 
 const MARKDOWN_SERIALIZERS: MarkdownSerializers = {

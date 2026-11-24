@@ -100,7 +100,13 @@ function splitTextWithProtectedInlines(
 			result.push(
 				entry
 					? visualEditorSchema.nodes.protected_inline.create(
-							{ kind: entry.kind, rawMarkdown: entry.rawMarkdown },
+							{
+								kind: entry.kind,
+								rawMarkdown: entry.rawMarkdown,
+								...(entry.continuationIndent === true
+									? { continuationIndent: true }
+									: {}),
+							},
 							null,
 							activeMarks,
 						)

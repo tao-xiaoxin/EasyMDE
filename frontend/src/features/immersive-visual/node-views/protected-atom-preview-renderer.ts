@@ -36,11 +36,12 @@ import { subscribeVisualDocumentUpdate } from "./visual-view-events";
 
 /** CommonMark §4.6 Type-6 block-level HTML tags (interrupt paragraphs). */
 const COMMONMARK_HTML_BLOCK_TAGS: ReadonlySet<string> = new Set(
-	"address article aside base basefont blockquote body caption center col colgroup dd details dialog dir div dl dt fieldset figcaption figure footer form frame frameset h1 h2 h3 h4 h5 h6 head header hr html iframe legend li link main menu menuitem nav noframes ol optgroup option p param search section summary table tbody td tfoot th thead title tr track ul".split(
+	"address article aside base basefont blockquote body caption center col colgroup dd details dialog dir div dl dt fieldset figcaption figure footer form frame frameset h1 h2 h3 h4 h5 h6 head header hr html iframe legend li link main menu menuitem nav noframes ol optgroup option p param section source summary table tbody td tfoot th thead title tr track ul".split(
 		" ",
 	),
 );
 const HTML_TYPE1_OPEN = /^ {0,3}<(script|pre|style|textarea)(?=[\s>]|$)/i;
+const HTML_TYPE1_CLOSE = /<\/(?:pre|script|style|textarea)>/i;
 const HTML_BLOCK_TAG_OPEN = /^ {0,3}<\/?([a-zA-Z][a-zA-Z0-9-]*)(?=[\s>/]|$)/;
 const INLINE_MARKDOWN_SPECIAL = /[*_`[\]!~\\$<&\r\n]/;
 const RAW_BLOCK_HEADINGS_CACHE_MAX = 64;
@@ -174,9 +175,8 @@ export function stripCommonMarkHtmlForPreview(rawMarkdown: string): string {
 
 		const type1 = HTML_TYPE1_OPEN.exec(line);
 		if (type1?.[1]) {
-			const closePattern = new RegExp(`</${type1[1]}\\s*>`, "i");
-			if (!closePattern.test(line)) {
-				htmlBlockEnd = { type: "tag", closePattern };
+			if (!HTML_TYPE1_CLOSE.test(line)) {
+				htmlBlockEnd = { type: "tag", closePattern: HTML_TYPE1_CLOSE };
 			}
 			inParagraph = false;
 			continue;

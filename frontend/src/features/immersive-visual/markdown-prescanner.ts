@@ -1,3 +1,12 @@
+import {
+	htmlBlockLineCloses,
+	matchHtmlBlockOpen,
+} from "../../shared/markdown/php-commonmark-block-helpers";
+import {
+	advanceParagraphReferenceParser,
+	createParagraphReferenceParser,
+	type ParagraphReferenceParser,
+} from "../../shared/markdown/php-commonmark-reference-def";
 import { parseReservedTableAlignmentMarkerLine } from "../../shared/table-alignment-marker";
 import {
 	extractInlineProtectedSyntax,
@@ -36,7 +45,7 @@ import {
 export { TABLE_ALIGN_PREFIX, TABLE_ALIGN_SUFFIX };
 
 const HTML_BLOCK_TAGS: ReadonlySet<string> = new Set(
-	"article aside audio blockquote center details div dl fieldset figure footer form header hr iframe main nav ol p pre script section style summary table ul video".split(
+	"article aside audio blockquote center details div dl fieldset figure footer form header hr iframe main nav ol p section summary table ul video".split(
 		" ",
 	),
 );
@@ -367,89 +376,60 @@ function findGfmTableEnd(
 }
 export const FOOTNOTE_DEF_LINE = /^ {0,3}\[\^([^\s\]]+)\]:(?:[ \t]|$)/;
 
-/**
- * Reports whether a single line (stripped of container indentation) is a
- * complete CommonMark §4.7 link reference definition so the prescanner keeps
- * `paragraphOpen = false` and never injects inline sentinels into it or treats
- * a following 4-space-indented code block as a paragraph continuation.
- */
-function isValidSingleLineRefDef(text: string): boolean {
-	if (!text.startsWith("[")) {
-		return false;
+function stripBlockquoteDepth(line: string, depth: number): string | null {
+	let rest = line;
+	for (let d = 0; d < depth; d += 1) {
+		const match = /^ {0,3}>[ \t]?/.exec(rest);
+		if (!match) {
+			return null;
+		}
+		rest = rest.slice(match[0].length);
 	}
-	const length = text.length;
-	let pos = 1;
-	let hasNonSpace = false;
-	while (pos < length) {
-		const ch = text[pos] ?? "";
-		if (ch === "[") return false;
-		if (ch === "]") break;
-		if (ch === "\\" && pos + 1 < length) {
-			hasNonSpace = true;
-			pos += 2;
+	return rest;
+}
+
+function findCommonMarkHtmlBlockEnd(
+	lines: ReadonlyArray<string>,
+	startIndex: number,
+	htmlType: 1 | 2 | 3 | 4 | 5 | 6 | 7,
+	quoteDepth: number,
+	containerIndent: number,
+	startContent: string,
+): number {
+	if (
+		htmlType <= 5 &&
+		htmlBlockLineCloses(htmlType as 1 | 2 | 3 | 4 | 5, startContent)
+	) {
+		return startIndex;
+	}
+	let end = startIndex;
+	for (let k = startIndex + 1; k < lines.length; k += 1) {
+		const rawLine = lines[k] ?? "";
+		const afterQuote =
+			quoteDepth > 0 ? stripBlockquoteDepth(rawLine, quoteDepth) : rawLine;
+		if (afterQuote === null) {
+			break;
+		}
+		const afterContainer =
+			containerIndent > 0 && afterQuote.trim().length > 0
+				? stripContainerIndent(afterQuote, containerIndent)
+				: afterQuote;
+		if (afterContainer === null) {
+			break;
+		}
+		if (htmlType === 6 || htmlType === 7) {
+			if (afterContainer.trim().length === 0) {
+				break;
+			}
+			end = k;
 			continue;
 		}
-		if (ch !== " " && ch !== "\t") hasNonSpace = true;
-		pos += 1;
-	}
-	if (
-		!hasNonSpace ||
-		pos >= length ||
-		text[pos] !== "]" ||
-		text[pos + 1] !== ":"
-	) {
-		return false;
-	}
-	pos += 2;
-	while (pos < length && (text[pos] === " " || text[pos] === "\t")) pos += 1;
-	if (pos >= length) return false;
-	if (text[pos] === "<") {
-		pos += 1;
-		while (pos < length && text[pos] !== ">") {
-			if (text[pos] === "<") return false;
-			pos += text[pos] === "\\" && pos + 1 < length ? 2 : 1;
+		end = k;
+		if (htmlBlockLineCloses(htmlType as 1 | 2 | 3 | 4 | 5, afterContainer)) {
+			return end;
 		}
-		if (pos >= length || text[pos] !== ">") return false;
-		pos += 1;
-	} else {
-		let parenDepth = 0;
-		const destStart = pos;
-		while (pos < length && text[pos] !== " " && text[pos] !== "\t") {
-			const ch = text[pos] ?? "";
-			const code = ch.charCodeAt(0);
-			if (code < 0x20 || code === 0x7f) return false;
-			if (ch === "\\" && pos + 1 < length) {
-				pos += 2;
-				continue;
-			}
-			if (ch === "(") {
-				parenDepth += 1;
-				if (parenDepth > 32) return false;
-			} else if (ch === ")") {
-				parenDepth -= 1;
-				if (parenDepth < 0) return false;
-			}
-			pos += 1;
-		}
-		if (pos === destStart || parenDepth !== 0) return false;
 	}
-	const afterDest = pos;
-	while (pos < length && (text[pos] === " " || text[pos] === "\t")) pos += 1;
-	if (pos === length) return true;
-	if (pos === afterDest) return false;
-	const opener = text[pos];
-	const closer =
-		opener === "(" ? ")" : opener === '"' || opener === "'" ? opener : "";
-	if (closer.length === 0) return false;
-	pos += 1;
-	while (pos < length && text[pos] !== closer) {
-		if (opener === "(" && text[pos] === "(") return false;
-		pos += text[pos] === "\\" && pos + 1 < length ? 2 : 1;
-	}
-	if (pos >= length || text[pos] !== closer) return false;
-	pos += 1;
-	while (pos < length && (text[pos] === " " || text[pos] === "\t")) pos += 1;
-	return pos === length;
+	return end;
 }
 function matchHtmlBlockOpener(
 	line: string,
@@ -602,7 +582,9 @@ function stripBlockContainerPrefix(
 		} else if (result.trimEnd() === prefix.trimEnd()) {
 			return "";
 		} else {
-			result = readBlockquotePrefix(result).rest;
+			result =
+				stripBlockquoteDepth(result, blockquoteDepth(prefix)) ??
+				readBlockquotePrefix(result).rest;
 		}
 	}
 	const leading = /^[ \t]*/.exec(result)?.[0] ?? "";
@@ -663,8 +645,14 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 	let listContentIndent: number | null = null;
 	let paragraphOpen = false;
 	let paragraphQuoteDepth = 0;
+	let paragraphRefParser: ParagraphReferenceParser | null = null;
 	let tableRowStart = -1;
 	let tableRowEnd = -1;
+
+	const closeParagraph = (): void => {
+		paragraphOpen = false;
+		paragraphRefParser = null;
+	};
 
 	while (i < lines.length) {
 		const line = lines[i] ?? "";
@@ -687,7 +675,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 
 		if (isBlank) {
 			pushOutputLine(line, { end: i + 1, start: i });
-			paragraphOpen = false;
+			closeParagraph();
 			inIndentedCode = false;
 			i += 1;
 			continue;
@@ -696,7 +684,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		// A deeper blockquote marker opens a quote that interrupts a paragraph.
 		const lineQuoteDepth = (analysis.prefix.match(/>/g) ?? []).length;
 		if (paragraphOpen && lineQuoteDepth > paragraphQuoteDepth) {
-			paragraphOpen = false;
+			closeParagraph();
 		}
 
 		if (analysis.listMarker) {
@@ -737,7 +725,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 					pushOutputLine(lines[k] ?? "", { end: k + 1, start: k });
 				}
 			}
-			paragraphOpen = false;
+			closeParagraph();
 			i = blockEnd + 1;
 			continue;
 		}
@@ -765,7 +753,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 				`${analysis.prefix}${" ".repeat(analysis.indent)}${markerToken}`,
 				{ end: i + 1, start: i },
 			);
-			paragraphOpen = false;
+			closeParagraph();
 			i += 1;
 			continue;
 		}
@@ -796,7 +784,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			const mathSentinelIndent =
 				relativeIndent >= 4 ? effectiveContainer : analysis.indent;
 			pushProtectedBlock("math", analysis, i, blockMathEnd, mathSentinelIndent);
-			paragraphOpen = false;
+			closeParagraph();
 			i = blockMathEnd + 1;
 			continue;
 		}
@@ -808,7 +796,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			(i + 1 >= lines.length || (lines[i + 1] ?? "").trim().length === 0)
 		) {
 			pushProtectedBlock("toc", analysis, i, i);
-			paragraphOpen = false;
+			closeParagraph();
 			i += 1;
 			continue;
 		}
@@ -847,12 +835,13 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 				break;
 			}
 			pushProtectedBlock("footnotes", analysis, i, end);
-			paragraphOpen = false;
+			closeParagraph();
 			i = end + 1;
 			continue;
 		}
 
-		// 7. Raw HTML comments and paired HTML block containers.
+		// 7. Raw HTML comments, paired HTML block containers, and CommonMark
+		//    Types 1-7 HTML blocks (including blockquote-prefixed blocks).
 		if (
 			analysis.prefix.length === 0 &&
 			relativeIndent >= 0 &&
@@ -865,7 +854,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			}
 			if (end < lines.length) {
 				pushProtectedBlock("raw", analysis, i, end);
-				paragraphOpen = false;
+				closeParagraph();
 				i = end + 1;
 				continue;
 			}
@@ -883,26 +872,47 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 					: findHtmlBlockEnd(lines, i, htmlOpener.tagName);
 				if (end >= i) {
 					pushProtectedBlock("raw", analysis, i, end);
-					paragraphOpen = false;
+					closeParagraph();
 					i = end + 1;
 					continue;
 				}
 			}
 		}
 
-		// 8. Standalone single-line link reference definitions do not open a
-		// paragraph, so a following 4-space-indented code block stays code.
 		if (
-			!paragraphOpen &&
 			relativeIndent >= 0 &&
 			relativeIndent <= 3 &&
-			isValidSingleLineRefDef(analysis.content)
+			analysis.content.startsWith("<")
 		) {
-			pushOutputLine(line, { end: i + 1, start: i });
-			paragraphOpen = false;
-			i += 1;
-			continue;
+			const htmlType = matchHtmlBlockOpen(analysis.content, !paragraphOpen);
+			if (htmlType !== null) {
+				const end = findCommonMarkHtmlBlockEnd(
+					lines,
+					i,
+					htmlType,
+					lineQuoteDepth,
+					effectiveContainer,
+					analysis.content,
+				);
+				pushProtectedBlock("raw", analysis, i, end);
+				closeParagraph();
+				i = end + 1;
+				continue;
+			}
 		}
+
+		// Keep `paragraphOpen = true` across link reference definitions (matching
+		// PHP ParagraphParser), while tracking ReferenceParser state so consecutive
+		// angle-bracketed destinations keep their `<...>` intact.
+		const startsNewParagraph = !paragraphOpen || analysis.listMarker !== null;
+		const activeRefParser: ParagraphReferenceParser = startsNewParagraph
+			? createParagraphReferenceParser()
+			: (paragraphRefParser ?? createParagraphReferenceParser());
+		const allowRefDefDest = activeRefParser.state !== "paragraph";
+		const indentedContinuationStart =
+			paragraphOpen && relativeIndent >= 4
+				? line.length - analysis.content.length
+				: -1;
 
 		pushOutputLine(
 			extractInlineProtectedSyntax(
@@ -910,7 +920,8 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 				sentinel,
 				protectedInlines,
 				isTableRow,
-				!paragraphOpen,
+				allowRefDefDest,
+				indentedContinuationStart,
 			),
 			{ end: i + 1, start: i },
 		);
@@ -924,6 +935,15 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			paragraphQuoteDepth = lineQuoteDepth + lineState.nestedQuotes;
 		}
 		paragraphOpen = lineState.open;
+		if (paragraphOpen) {
+			const refLine = analysis.listMarker
+				? analysis.rest.slice(analysis.listMarker.contentIndent)
+				: analysis.content;
+			advanceParagraphReferenceParser(activeRefParser, refLine);
+			paragraphRefParser = activeRefParser;
+		} else {
+			paragraphRefParser = null;
+		}
 		i += 1;
 	}
 

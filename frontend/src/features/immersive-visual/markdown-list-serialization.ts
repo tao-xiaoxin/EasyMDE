@@ -5,6 +5,7 @@ import {
 	TASK_LIST_MARKER_PATTERN,
 	wouldReferenceDefinitionAbsorbFollowingBlock,
 } from "./markdown-it-config";
+import { wouldRawHtmlInterruptParagraph } from "./markdown-prescanner-inline";
 import { sanitizeBulletMarker } from "./visual-schema";
 
 /**
@@ -135,16 +136,42 @@ function canInterruptPreviousInTightList(
 	);
 }
 
+export function needsTightRefDefContinuation(
+	prev: ProseMirrorNode,
+	next: ProseMirrorNode,
+): boolean {
+	if (next.type.name !== "paragraph") {
+		return false;
+	}
+	const first = next.firstChild;
+	if (
+		first?.type.name !== "protected_inline" ||
+		first.attrs.kind !== "raw-inline" ||
+		first.attrs.continuationIndent !== true
+	) {
+		return false;
+	}
+	const raw =
+		typeof first.attrs.rawMarkdown === "string" ? first.attrs.rawMarkdown : "";
+	if (!wouldRawHtmlInterruptParagraph(raw)) {
+		return false;
+	}
+	return inspectProtectedReferenceBlock(prev).isRefDef;
+}
+
 function escapeLiteralTaskPrefix(
 	child: ProseMirrorNode,
 	serialized: string,
 ): string {
 	if (
 		child.type.name !== "paragraph" ||
-		child.firstChild?.marks.some((mark) => mark.type.name === "link") ||
+		child.attrs.preserveRawTaskPrefix === true ||
 		!TASK_LIST_MARKER_PATTERN.test(serialized)
 	) {
 		return serialized;
+	}
+	if (child.firstChild?.marks.some((mark) => mark.type.name === "link")) {
+		return `[&#${serialized.charCodeAt(1)};]${serialized.slice(3)}`;
 	}
 	return `\\${serialized}`;
 }
@@ -221,6 +248,8 @@ function serializeListItemBody(
 			parts.push(
 				blankBeforeNestedList ? `\n\n${serialized}` : `\n${serialized}`,
 			);
+		} else if (prev !== null && needsTightRefDefContinuation(prev, child)) {
+			parts.push(`\n    ${serialized}`);
 		} else if (
 			!loose &&
 			prev !== null &&

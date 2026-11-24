@@ -594,6 +594,152 @@ describe("associateGeneratedImageTarget", () => {
 			),
 		).toBe(true);
 	});
+
+	it("hydrates multiline blockquote and list-nested blockquote images by preserving container prefixes", async () => {
+		for (const [label, source] of [
+			["blockquote multiline image", '> ![alt](/x.png\n> "Caption {width=50%}")'],
+			[
+				"nested list-blockquote multiline image",
+				'- > ![alt](/x.png\n  > "Caption {width=50%}")',
+			],
+			[
+				"offset blockquote multiline image",
+				'Intro paragraph\n\n> ![alt](/x.png\n> "Caption {width=50%}")',
+			],
+			[
+				"offset nested list-blockquote multiline image",
+				'Intro paragraph\n\n- > ![alt](/x.png\n  > "Caption {width=50%}")',
+			],
+		] as const) {
+			const expectedStart = source.indexOf("![alt]");
+			const expectedEnd = source.length;
+			const expectedRaw = source.slice(expectedStart, expectedEnd);
+			const parsed = createEditorMarkdownBlockIndex(source);
+			const result = await hydrateGeneratedImageTargetIndex({
+				...hydration,
+				blocks: parsed.blocks,
+				imageIndex: {
+					blocks: parsed.blocks,
+					imageBlocks: parsed.imageBlocks ?? [],
+					imageRanges: parsed.imageRanges ?? [],
+					length: parsed.length,
+					mathSpans: parsed.mathSpans,
+				},
+				revision: 21,
+				source,
+			});
+			const containerBlockIdx = parsed.blocks.length - 1;
+			const containerBlock = parsed.blocks[containerBlockIdx];
+			expect(result.blockImages[containerBlockIdx]?.status, label).toBe(
+				"ready",
+			);
+			expect(result.images, label).toHaveLength(1);
+			const hydrated = result.images[0];
+			expect(hydrated, label).toMatchObject({
+				alt: "alt",
+				destination: "/x.png",
+				end: expectedEnd,
+				raw: expectedRaw,
+				scale: 50,
+				start: expectedStart,
+				title: "Caption",
+			});
+			expect(
+				source.slice(
+					hydrated?.destinationStart ?? -1,
+					hydrated?.destinationEnd ?? -1,
+				),
+				label,
+			).toBe("/x.png");
+			expect(
+				source.slice(
+					hydrated?.titleMarkerStart ?? -1,
+					hydrated?.titleMarkerEnd ?? -1,
+				),
+				label,
+			).toBe("{width=50%}");
+
+			if (!containerBlock) throw new Error("container-block-missing");
+			const associated = associateGeneratedImageTarget({
+				acceptedPreview: { revision: 2, signature: label },
+				block: {
+					editable: containerBlock.editable,
+					end: containerBlock.to,
+					id: "b-container",
+					kind: containerBlock.kind,
+					start: containerBlock.from,
+				},
+				index: result,
+				ordinal: 0,
+				sourceRevision: 21,
+			});
+			expect(associated.status, label).toBe("associated");
+			if ("associated" === associated.status) {
+				expect(associated.target.original, label).toEqual({
+					alt: "alt",
+					destination: "/x.png",
+					end: expectedEnd,
+					raw: expectedRaw,
+					start: expectedStart,
+					title: "Caption",
+				});
+			}
+		}
+
+		// Blockquote multiline title with `>` inside title keeps PHP scale=50 and null raw marker offsets.
+		const titleContinuationSource = '> ![alt](/x.png "Line1\n> Line2 {width=50%}")';
+		const titleContParsed = createEditorMarkdownBlockIndex(
+			titleContinuationSource,
+		);
+		const titleContResult = await hydrateGeneratedImageTargetIndex({
+			...hydration,
+			blocks: titleContParsed.blocks,
+			imageIndex: {
+				blocks: titleContParsed.blocks,
+				imageBlocks: titleContParsed.imageBlocks ?? [],
+				imageRanges: titleContParsed.imageRanges ?? [],
+				length: titleContParsed.length,
+				mathSpans: titleContParsed.mathSpans,
+			},
+			revision: 22,
+			source: titleContinuationSource,
+		});
+		expect(titleContResult.blockImages[0]?.status).toBe("ready");
+		expect(titleContResult.images[0]).toMatchObject({
+			end: titleContinuationSource.length,
+			raw: titleContinuationSource.slice(2),
+			scale: 50,
+			start: 2,
+			title: "Line1\nLine2",
+			titleMarkerEnd: null,
+			titleMarkerStart: null,
+		});
+
+		// Invalid scale markers inside multiline container images stay block-scoped unavailable.
+		for (const invalidContainer of [
+			'> ![alt](/x.png\n> "Caption {width=51%}")',
+			'> ![alt](/x.png "Line1\n> {width=50%}")',
+		]) {
+			const invalidParsed = createEditorMarkdownBlockIndex(invalidContainer);
+			const invalidResult = await hydrateGeneratedImageTargetIndex({
+				...hydration,
+				blocks: invalidParsed.blocks,
+				imageIndex: {
+					blocks: invalidParsed.blocks,
+					imageBlocks: invalidParsed.imageBlocks ?? [],
+					imageRanges: invalidParsed.imageRanges ?? [],
+					length: invalidParsed.length,
+					mathSpans: invalidParsed.mathSpans,
+				},
+				revision: 23,
+				source: invalidContainer,
+			});
+			expect(invalidResult.blockImages[0]?.status, invalidContainer).toBe(
+				"unavailable",
+			);
+			expect(invalidResult.images, invalidContainer).toHaveLength(0);
+		}
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

@@ -92,6 +92,18 @@ function safeNonNegativeInteger(value: unknown): value is number {
 	return "number" === typeof value && Number.isSafeInteger(value) && value >= 0;
 }
 
+function lineStartOffset(source: string, offset: number): number {
+	let cursor = Math.max(0, Math.min(source.length, offset));
+	while (
+		cursor > 0 &&
+		"\n" !== source[cursor - 1] &&
+		"\r" !== source[cursor - 1]
+	) {
+		cursor -= 1;
+	}
+	return cursor;
+}
+
 function shiftedImage(
 	image: MarkdownImageScaleMatch,
 	offset: number,
@@ -288,6 +300,10 @@ export async function hydrateGeneratedImageTargetIndex(
 		} else {
 			const prepared: MarkdownImageScaleMatch[] = [];
 			let blockUnavailable = false;
+			let multilineContext: Readonly<{
+				slice: string;
+				start: number;
+			}> | null = null;
 			for (
 				let imageOffset = 0;
 				imageOffset < metadata.count;
@@ -309,18 +325,40 @@ export async function hydrateGeneratedImageTargetIndex(
 				}
 				if (!blockUnavailable) {
 					try {
-						const parsed = parseMarkdownImageScale(
-							input.source.slice(range.from, range.to),
-						);
-						if (!parsed || parsed.end !== range.to - range.from) {
+						const rawSlice = input.source.slice(range.from, range.to);
+						const isMultiline =
+							rawSlice.includes("\n") || rawSlice.includes("\r");
+						let image: MarkdownImageScaleMatch | null = null;
+						if (!isMultiline) {
+							const parsed = parseMarkdownImageScale(rawSlice);
+							if (parsed && parsed.end === range.to - range.from) {
+								image = shiftedImage(parsed, range.from);
+							}
+						} else {
+							if (null === multilineContext) {
+								const contextStart = lineStartOffset(input.source, block.from);
+								multilineContext = {
+									slice: input.source.slice(contextStart, block.to),
+									start: contextStart,
+								};
+							}
+							const parsed = parseMarkdownImageScale(
+								multilineContext.slice,
+								range.from - multilineContext.start,
+							);
+							if (parsed) {
+								image = shiftedImage(parsed, multilineContext.start);
+							}
+						}
+						if (
+							!image ||
+							image.start !== range.from ||
+							image.end !== range.to ||
+							image.raw !== rawSlice
+						) {
 							blockUnavailable = true;
 						} else {
-							const image = shiftedImage(parsed, range.from);
-							if (image.raw !== input.source.slice(range.from, range.to)) {
-								blockUnavailable = true;
-							} else {
-								prepared.push(image);
-							}
+							prepared.push(image);
 						}
 					} catch (error) {
 						if (

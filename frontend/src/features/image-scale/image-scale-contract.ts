@@ -1,25 +1,15 @@
 import {
-  COMMONMARK_ESCAPABLE_PUNCTUATION,
   hasMarkdownTitleBlankLine,
   IMAGE_SCALE_PERCENTAGES,
   type ImageScalePercentage,
   parseEffectiveImageScaleTitle,
-  parseImageScaleTitleContract,
-  unescapeCommonMarkAsciiPunctuation
+  parseImageScaleTitleContract
 } from '../../shared/image-scale-title';
 import {
-  allLinesShareInlineBlock,
-  findLineAtOffset,
-  findLineIndexAtOffset,
-  inCodeRange,
-  isEscaped,
-  normalizeTitleContainerContinuations,
-  type ScannedMarkdownBlocks,
-  type ScannedMarkdownLine,
-  scanInlineCodeRangesForBlock,
-  scanMarkdownBlocks,
-  skipSingleLineBreakWhitespace
-} from './image-scale-markdown-scan';
+  findMarkdownImageCoreAt,
+  type ParsedImageCore,
+  parseImageCore
+} from './image-scale-syntax';
 
 export { IMAGE_SCALE_PERCENTAGES, type ImageScalePercentage };
 
@@ -68,10 +58,6 @@ function invalidWidth(): never {
   throw new Error('image-scale-invalid-width');
 }
 
-function isWhitespace(character: string | undefined): boolean {
-  return undefined !== character && /[ \t\r\n]/u.test(character);
-}
-
 function escapedMarkdown(value: string, characters: string): string {
   let output = '';
   for (const character of value) {
@@ -95,277 +81,6 @@ export function imageScaleFromAttribute(
 ): ImageScalePercentage | null {
   if (null === value || undefined === value || '' === value) return null;
   return scaleValue(value);
-}
-
-function findUnescaped(source: string, start: number, closing: string): number {
-  let slashCount = 0;
-  for (let index = start; index < source.length; index += 1) {
-    const character = source[index];
-    if ('\\' === character) {
-      slashCount += 1;
-      continue;
-    }
-    const escaped = 1 === slashCount % 2;
-    slashCount = 0;
-    if (closing === character && !escaped) return index;
-  }
-  return -1;
-}
-
-type ParsedImageCore = Readonly<{
-  alt: string;
-  destinationAngle: boolean;
-  destination: string;
-  destinationEnd: number;
-  destinationStart: number;
-  effectiveTitle: string | null;
-  hasContainerPrefix: boolean;
-  imageEnd: number;
-  title: string | null;
-  titleEnd: number | null;
-  titleStart: number | null;
-}>;
-
-function resolveMultilineScan(
-  source: string,
-  start: number,
-  precomputedBlocks?: ScannedMarkdownBlocks
-): Readonly<{ blocks: ScannedMarkdownBlocks | null; startLine: ScannedMarkdownLine | null }> {
-  if (precomputedBlocks) {
-    return {
-      blocks: precomputedBlocks,
-      startLine: findLineAtOffset(precomputedBlocks.lines, start)
-    };
-  }
-  if (!source.includes('\n') && !source.includes('\r')) {
-    return { blocks: null, startLine: null };
-  }
-  const blocks = scanMarkdownBlocks(source);
-  return { blocks, startLine: findLineAtOffset(blocks.lines, start) };
-}
-
-function parseImageCore(
-  source: string,
-  start: number,
-  precomputedBlocks?: ScannedMarkdownBlocks
-): ParsedImageCore | null {
-  if (
-    '!' !== source[start]
-    || '[' !== source[start + 1]
-    || (start > 0 && isEscaped(source, start))
-  ) return null;
-
-  const altEnd = findUnescaped(source, start + 2, ']');
-  if (altEnd < 0 || '(' !== source[altEnd + 1]) return null;
-
-  const { blocks, startLine } = resolveMultilineScan(source, start, precomputedBlocks);
-  const altText = source.slice(start + 2, altEnd);
-  if (
-    (altText.includes('\n') || altText.includes('\r'))
-    && (!blocks || !allLinesShareInlineBlock(blocks.lines, start, altEnd))
-  ) {
-    return null;
-  }
-
-  const open = altEnd + 2;
-  const destStart = skipSingleLineBreakWhitespace(source, open, blocks, startLine);
-  if (destStart < 0) return null;
-  let cursor = destStart;
-  let destination = '';
-  if ('<' === source[cursor]) {
-    let destinationEnd = -1;
-    let slashCount = 0;
-    for (let index = cursor + 1; index < source.length; index += 1) {
-      const character = source[index];
-      if ('\\' === character) {
-        slashCount += 1;
-        continue;
-      }
-      const escaped = 1 === slashCount % 2;
-      slashCount = 0;
-      if ('\r' === character || '\n' === character || '\u0000' === character) {
-        return null;
-      }
-      if ('<' === character && !escaped) {
-        return null;
-      }
-      if ('>' === character && !escaped) {
-        destinationEnd = index;
-        break;
-      }
-    }
-    if (destinationEnd < 0) return null;
-    destination = unescapeCommonMarkAsciiPunctuation(
-      source.slice(cursor + 1, destinationEnd)
-    );
-    return parseImageCoreTail(
-      source,
-      start,
-      altEnd,
-      destinationEnd + 1,
-      destination,
-      destinationEnd,
-      cursor + 1,
-      true,
-      blocks,
-      startLine
-    );
-  } else {
-    let parentheses = 0;
-    let inEscape = false;
-    while (cursor < source.length) {
-      const character = source[cursor];
-      if (inEscape) {
-        inEscape = false;
-        cursor += 1;
-        continue;
-      }
-      if (
-        '\\' === character
-        && undefined !== source[cursor + 1]
-        && COMMONMARK_ESCAPABLE_PUNCTUATION.test(source[cursor + 1] ?? '')
-      ) {
-        inEscape = true;
-        cursor += 1;
-        continue;
-      }
-      const code = source.charCodeAt(cursor);
-      if (code <= 0x20 || 0x7f === code) {
-        if (0 === parentheses && isWhitespace(character)) break;
-        return null;
-      }
-      if (')' === character && 0 === parentheses) break;
-      if ('(' === character) {
-        parentheses += 1;
-        if (parentheses > 32) return null;
-      }
-      if (')' === character && parentheses > 0) parentheses -= 1;
-      cursor += 1;
-    }
-    if (0 !== parentheses) return null;
-    destination = unescapeCommonMarkAsciiPunctuation(source.slice(destStart, cursor));
-  }
-
-  return parseImageCoreTail(
-    source,
-    start,
-    altEnd,
-    cursor,
-    destination,
-    cursor,
-    destStart,
-    false,
-    blocks,
-    startLine
-  );
-}
-
-function parseImageCoreTail(
-  source: string,
-  start: number,
-  altEnd: number,
-  destinationCursor: number,
-  destination: string,
-  destinationEnd: number,
-  destinationStart: number,
-  destinationAngle: boolean,
-  blocks: ScannedMarkdownBlocks | null,
-  startLine: ScannedMarkdownLine | null
-): ParsedImageCore | null {
-  let cursor = skipSingleLineBreakWhitespace(source, destinationCursor, blocks, startLine);
-  if (cursor < 0) return null;
-  if (')' === source[cursor]) {
-    if (hasAmbiguousBareDestinationContinuation(source, cursor + 1, destinationAngle)) {
-      return null;
-    }
-    return {
-      alt: source.slice(start + 2, altEnd),
-      destination,
-      destinationAngle,
-      destinationEnd,
-      destinationStart,
-      effectiveTitle: null,
-      hasContainerPrefix: false,
-      imageEnd: cursor + 1,
-      title: null,
-      titleEnd: null,
-      titleStart: null
-    };
-  }
-  if (cursor === destinationCursor) return null;
-
-  const titleStart = cursor;
-  const titleOpening = source[cursor];
-  let titleEnd = -1;
-  if ('"' === titleOpening || "'" === titleOpening) {
-    titleEnd = findUnescaped(source, cursor + 1, titleOpening);
-    if (titleEnd < 0) return null;
-    cursor = titleEnd + 1;
-  } else if ('(' === titleOpening) {
-    let slashCount = 0;
-    cursor += 1;
-    while (cursor < source.length) {
-      const character = source[cursor];
-      if ('\\' === character) {
-        slashCount += 1;
-        cursor += 1;
-        continue;
-      }
-      const escaped = 1 === slashCount % 2;
-      slashCount = 0;
-      if (!escaped) {
-        if ('(' === character) return null;
-        if (')' === character) {
-          titleEnd = cursor;
-          cursor += 1;
-          break;
-        }
-      }
-      cursor += 1;
-    }
-    if (titleEnd < 0) return null;
-  } else {
-    return null;
-  }
-
-  cursor = skipSingleLineBreakWhitespace(source, cursor, blocks, startLine);
-  if (cursor < 0 || ')' !== source[cursor]) return null;
-  const rawTitle = source.slice(titleStart + 1, titleEnd);
-  if (hasMarkdownTitleBlankLine(rawTitle)) return null;
-  const normalizedTitle = normalizeTitleContainerContinuations(
-    source,
-    titleStart,
-    titleEnd,
-    blocks,
-    startLine
-  );
-  if (!normalizedTitle) return null;
-  return {
-    alt: source.slice(start + 2, altEnd),
-    destination,
-    destinationAngle,
-    destinationEnd,
-    destinationStart,
-    effectiveTitle: normalizedTitle.stripped,
-    hasContainerPrefix: normalizedTitle.hasContainerPrefix,
-    imageEnd: cursor + 1,
-    title: rawTitle,
-    titleEnd,
-    titleStart
-  };
-}
-
-function hasAmbiguousBareDestinationContinuation(
-  source: string,
-  start: number,
-  destinationAngle: boolean
-): boolean {
-  if (destinationAngle) return false;
-  let cursor = start;
-  while (cursor < source.length && /[.,!?;:]/u.test(source[cursor] ?? '')) {
-    cursor += 1;
-  }
-  return cursor < source.length && !isWhitespace(source[cursor]);
 }
 
 function parseScaleMarker(
@@ -437,7 +152,7 @@ function buildMatchFromCore(
     core.titleStart
   );
   return {
-    alt: core.alt,
+    alt: source.slice(start + 2, core.altEnd),
     destination: core.destination,
     destinationAngle: core.destinationAngle,
     destinationEnd: core.destinationEnd,
@@ -467,24 +182,6 @@ export function parseMarkdownImageScale(
   return buildMatchFromCore(source, start, core);
 }
 
-function lastUnescapedImageStart(source: string, from: number): number {
-  const limit = Math.min(from, source.length - 2);
-  let slashCount = 0;
-  let result = -1;
-  for (let index = 0; index <= limit; index += 1) {
-    const character = source[index];
-    if ('\\' === character) {
-      slashCount += 1;
-      continue;
-    }
-    if ('!' === character && '[' === source[index + 1] && 0 === slashCount % 2) {
-      result = index;
-    }
-    slashCount = 0;
-  }
-  return result;
-}
-
 export function findMarkdownImageAt(
   source: string,
   selectionStart: number,
@@ -499,25 +196,9 @@ export function findMarkdownImageAt(
   ) {
     throw new Error('image-scale-range-invalid');
   }
-  const imageStart = lastUnescapedImageStart(source, selectionStart);
-  if (imageStart < 0) return null;
-  const blocks = scanMarkdownBlocks(source);
-  const startLineIdx = findLineIndexAtOffset(blocks.lines, imageStart);
-  const startLine = startLineIdx >= 0 ? (blocks.lines[startLineIdx] ?? null) : null;
-  if (!startLine || startLine.inlineBlockId < 0) return null;
-  const core = parseImageCore(source, imageStart, blocks);
-  if (!core) return null;
-  if (inCodeRange(blocks.blockCodeRanges, imageStart, core.imageEnd)) return null;
-  const inlineCodeRanges = scanInlineCodeRangesForBlock(source, blocks.lines, startLineIdx);
-  if (inCodeRange(inlineCodeRanges, imageStart, core.imageEnd)) return null;
-  const collapsedHit = selectionStart === selectionEnd
-    && selectionStart > imageStart
-    && selectionStart < core.imageEnd;
-  const rangeHit = selectionStart !== selectionEnd
-    && imageStart <= selectionStart
-    && core.imageEnd >= selectionEnd;
-  if (!collapsedHit && !rangeHit) return null;
-  return buildMatchFromCore(source, imageStart, core);
+  const located = findMarkdownImageCoreAt(source, selectionStart, selectionEnd);
+  if (!located) return null;
+  return buildMatchFromCore(source, located.start, located.core);
 }
 
 export function createImageScaleReplacement(

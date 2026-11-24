@@ -10,6 +10,7 @@ import {
   serializeLegacyMarkdownImageWidth,
   serializeMarkdownImage
 } from './image-scale-contract';
+import { getCachedMarkdownBlockScan } from './image-scale-markdown-scan';
 
 describe('image scale contract', () => {
   it('accepts only the seven measured percentages, including explicit 100%', () => {
@@ -1179,5 +1180,412 @@ describe('image scale contract', () => {
         'image-scale-syntax-invalid'
       );
     }
+  });
+
+  it('excludes CommonMark §4.7 link reference definition titles while preserving trailing paragraph images', () => {
+    for (const refDefSource of [
+      '[ref]: https://example.test/a.png "![alt](https://example.test/b.png) "',
+      "[ref]: https://example.test/a.png '![alt](https://example.test/b.png) '",
+      '[ref]: https://example.test/a.png (![alt](https://example.test/b.png)',
+      String.raw`[ref]: https://example.test/a.png (![alt]\(https://example.test/b.png\))`,
+      '[ref]:\nhttps://example.test/a.png\n"![alt](https://example.test/b.png) "',
+      '[foo\nbar]: https://example.test/a.png "![alt](https://example.test/b.png)"',
+      '[ref]: https://example.test/a.png\n"line1\n![alt](https://example.test/b.png)"',
+      '[ref]: <> "![alt](https://example.test/b.png)"',
+      '> [ref]: https://example.test/a.png\n> "![alt](https://example.test/b.png) "',
+      '- [ref]: https://example.test/a.png\n  "![alt](https://example.test/b.png) "',
+      '[a]: /a\n    [b]: /b "![alt](https://example.test/b.png)"',
+      '[a]: /url [b]: /url2 "![alt](https://example.test/b.png)"'
+    ]) {
+      const start = refDefSource.indexOf('![');
+      expect(findMarkdownImageAt(refDefSource, start + 3), refDefSource).toBeNull();
+    }
+
+    // Positive controls: live images immediately after valid refdefs or inside failed refdefs.
+    for (const [label, source, expectedDest, expectedScale] of [
+      [
+        'real image on paragraph line after destination-only refdef',
+        '[ref]: https://example.test/a.png\n![real](https://example.test/b.png "{width=50%}")',
+        'https://example.test/b.png',
+        50
+      ],
+      [
+        'real image after titled refdef',
+        '[ref]: https://example.test/a.png "title"\n![real](https://example.test/b.png "{width=67%}")',
+        'https://example.test/b.png',
+        67
+      ],
+      [
+        'real image after blockquote refdef',
+        '> [ref]: https://example.test/a.png\n> ![real](https://example.test/b.png "{width=50%}")',
+        'https://example.test/b.png',
+        50
+      ],
+      [
+        'backtracked next-line title with trailing text stays live paragraph',
+        '[ref]: https://example.test/a.png\n"![alt](https://example.test/b.png) " trailing',
+        'https://example.test/b.png',
+        null
+      ],
+      [
+        'backtracked next-line title with angle destination stays live paragraph',
+        '[ref]: https://example.test/a.png\n"![alt](<https://example.test/b.png>)" trailing',
+        'https://example.test/b.png',
+        null
+      ],
+      [
+        'backtracked multiline title with trailing text stays live paragraph',
+        '[ref]: https://example.test/a.png\n"line1\n![alt](https://example.test/b.png) " trailing',
+        'https://example.test/b.png',
+        null
+      ],
+      [
+        'same-line title with trailing text fails refdef and stays live',
+        '[ref]: https://example.test/a.png "![alt](https://example.test/b.png) " trailing',
+        'https://example.test/b.png',
+        null
+      ],
+      [
+        'parenthesized refdef with trailing paren fails refdef and stays live (PHP parity)',
+        '[ref]: https://example.test/a.png (![alt](https://example.test/b.png) )',
+        'https://example.test/b.png',
+        null
+      ],
+      [
+        'refdef cannot interrupt open paragraph',
+        'intro\n[ref]: https://example.test/a.png "![live](https://example.test/b.png) "',
+        'https://example.test/b.png',
+        null
+      ],
+      [
+        'refdef followed by real table keeps table cell image live',
+        '[ref]: https://example.test/a.png\na | b\n--- | ---\n![cell](https://example.test/b.png "{width=33%}") | 2',
+        'https://example.test/b.png',
+        33
+      ]
+    ] as const) {
+      const start = source.indexOf('![');
+      const found = findMarkdownImageAt(source, start + 3);
+      expect(found, label).toMatchObject({
+        destination: expectedDest,
+        scale: expectedScale,
+        start
+      });
+    }
+
+    // Completed refdef with pipe in title does not start a GFM table on the next line.
+    const refDefPipeThenNonTable =
+      '[ref]: https://example.test/a.png "a | b"\n--- | ---\n![live](https://example.test/b.png "{width=50%}")';
+    expect(
+      findMarkdownImageAt(refDefPipeThenNonTable, refDefPipeThenNonTable.indexOf('![live]') + 3)
+    ).toMatchObject({
+      destination: 'https://example.test/b.png',
+      scale: 50
+    });
+  });
+
+  it('splits paragraph-preceding GFM table headers across inline blocks matching PHP TableStartParser', () => {
+    for (const splitTableSource of [
+      '![alt](https://example.test/a.png\n"caption | col2")\n| --- | --- |\n| c1 | c2 |',
+      '![a | b](https://example.test/a.png\n"caption")\n--- | ---\n1 | 2',
+      '> ![alt](https://example.test/a.png\n> "caption | col2")\n> | --- | --- |\n> | c1 | c2 |',
+      'a | b\n![x](https://example.test/a.png\n"z")\n--- | ---\n1 | 2',
+      'a \\| b\n![x](https://example.test/a.png\n"z")\n--- | ---\n1 | 2'
+    ]) {
+      const start = splitTableSource.indexOf('![');
+      expect(parseMarkdownImageScale(splitTableSource, start), splitTableSource).toBeNull();
+      expect(findMarkdownImageAt(splitTableSource, start + 3), splitTableSource).toBeNull();
+    }
+
+    // Complete image on paragraph line before split table header stays live.
+    const liveBeforeHeader =
+      '![live](https://example.test/a.png "{width=50%}")\nheader | col2\n--- | ---\n1 | 2';
+    expect(findMarkdownImageAt(liveBeforeHeader, 3)).toMatchObject({
+      destination: 'https://example.test/a.png',
+      scale: 50
+    });
+
+    // Complete image inside split table header cell stays live.
+    const liveInHeader =
+      'para line\n![hdr](https://example.test/a.png "{width=67%}") | col2\n--- | ---\n1 | 2';
+    const hdrStart = liveInHeader.indexOf('![hdr]');
+    expect(findMarkdownImageAt(liveInHeader, hdrStart + 3)).toMatchObject({
+      destination: 'https://example.test/a.png',
+      scale: 67,
+      start: hdrStart
+    });
+
+    // When header row has more cells than separator columns, no table starts and multiline image stays live.
+    const tooManyHeaderCols =
+      '![alt](https://example.test/a.png\n"a | b | c {width=50%}")\n--- | ---\n1 | 2';
+    expect(parseMarkdownImageScale(tooManyHeaderCols, 0)).toMatchObject({
+      destination: 'https://example.test/a.png',
+      scale: 50,
+      title: 'a | b | c'
+    });
+    expect(findMarkdownImageAt(tooManyHeaderCols, 3)).toMatchObject({
+      destination: 'https://example.test/a.png',
+      scale: 50,
+      title: 'a | b | c'
+    });
+  });
+
+  it('supports balanced brackets, inline backtick code spans in alt text, and outermost image selection', () => {
+    for (const [label, source, expectedAlt, expectedDest, expectedScale, expectedTitle] of [
+      [
+        'balanced brackets in alt text',
+        '![a [b] c](https://example.test/a.png "t {width=50%}")',
+        'a [b] c',
+        'https://example.test/a.png',
+        50,
+        't'
+      ],
+      [
+        'inline backtick code span containing ] in alt text',
+        '![a `]` c](https://example.test/a.png "t {width=50%}")',
+        'a `]` c',
+        'https://example.test/a.png',
+        50,
+        't'
+      ],
+      [
+        'inline backtick code span containing [ in alt text',
+        '![a `[` c](https://example.test/a.png "t {width=50%}")',
+        'a `[` c',
+        'https://example.test/a.png',
+        50,
+        't'
+      ],
+      [
+        'double-backtick code span in alt text',
+        '![a `` `]` `` c](https://example.test/a.png "t {width=50%}")',
+        'a `` `]` `` c',
+        'https://example.test/a.png',
+        50,
+        't'
+      ],
+      [
+        'deeply nested balanced brackets in alt text',
+        '![a [b [c] d] e](https://example.test/e.png "t {width=50%}")',
+        'a [b [c] d] e',
+        'https://example.test/e.png',
+        50,
+        't'
+      ],
+      [
+        'nested link whose title contains ] in alt text',
+        '![a [b](/x "has ] bracket") c](https://example.test/y.png "t {width=50%}")',
+        'a [b](/x "has ] bracket") c',
+        'https://example.test/y.png',
+        50,
+        't'
+      ],
+      [
+        'multiline balanced brackets in blockquote alt text',
+        '> ![a [b\n> c] d](https://example.test/i.png "t {width=50%}")',
+        'a [b\n> c] d',
+        'https://example.test/i.png',
+        50,
+        't'
+      ],
+      [
+        'multiline code span containing ] in blockquote alt text',
+        '> ![a `\n> ]` d](https://example.test/i.png "t {width=50%}")',
+        'a `\n> ]` d',
+        'https://example.test/i.png',
+        50,
+        't'
+      ],
+      [
+        'unclosed backtick in alt text does not cross blank line',
+        '![a `b](https://example.test/x.png "t {width=50%}")\n\n`',
+        'a `b',
+        'https://example.test/x.png',
+        50,
+        't'
+      ],
+      [
+        'code span bridging two image-like fragments matches PHP outer image',
+        '![a `b](/x.png) ![c`](https://example.test/y.png "t {width=50%}")',
+        'a `b](/x.png) ![c`',
+        'https://example.test/y.png',
+        50,
+        't'
+      ],
+      [
+        'backtick code span inside image title stays live',
+        '![alt](https://example.test/x.png "see `code` here {width=50%}")',
+        'alt',
+        'https://example.test/x.png',
+        50,
+        'see `code` here'
+      ]
+    ] as const) {
+      const start = source.indexOf('![');
+      const parsed = parseMarkdownImageScale(source, start);
+      expect(parsed, `parse:${label}`).toMatchObject({
+        alt: expectedAlt,
+        destination: expectedDest,
+        scale: expectedScale,
+        start,
+        title: expectedTitle
+      });
+      const found = findMarkdownImageAt(source, start + 5);
+      expect(found, `find:${label}`).toMatchObject({
+        alt: expectedAlt,
+        destination: expectedDest,
+        scale: expectedScale,
+        start,
+        title: expectedTitle
+      });
+    }
+
+    // Caret directly inside `` `]` `` in alt text or `` `code` `` in title still hits the image.
+    const tickAlt = '![a `]` c](https://example.test/a.png "t {width=50%}")';
+    const tickAltMatch = findMarkdownImageAt(tickAlt, tickAlt.indexOf(']') + 1);
+    expect(tickAltMatch).toMatchObject({
+      alt: 'a `]` c',
+      scale: 50
+    });
+    if (!tickAltMatch) throw new Error('tick-alt-match-missing');
+    const tickAltRepl = createImageScaleReplacement(tickAlt, tickAltMatch, 100);
+    expect(
+      tickAlt.slice(0, tickAltRepl.from) + tickAltRepl.insert + tickAlt.slice(tickAltRepl.to)
+    ).toBe('![a `]` c](https://example.test/a.png "t {width=100%}")');
+
+    const bracketAlt = '![a [b] c](https://example.test/a.png "t {width=50%}")';
+    const bracketAltMatch = findMarkdownImageAt(bracketAlt, bracketAlt.indexOf('b'));
+    expect(bracketAltMatch).toMatchObject({
+      alt: 'a [b] c',
+      scale: 50
+    });
+    if (!bracketAltMatch) throw new Error('bracket-alt-match-missing');
+    const bracketAltRepl = createImageScaleReplacement(bracketAlt, bracketAltMatch, 67);
+    expect(
+      bracketAlt.slice(0, bracketAltRepl.from)
+      + bracketAltRepl.insert
+      + bracketAlt.slice(bracketAltRepl.to)
+    ).toBe('![a [b] c](https://example.test/a.png "t {width=67%}")');
+
+    const tickTitle = '![alt](https://example.test/x.png "see `code` here {width=50%}")';
+    expect(findMarkdownImageAt(tickTitle, tickTitle.indexOf('code') + 2)).toMatchObject({
+      destination: 'https://example.test/x.png',
+      scale: 50
+    });
+
+    // Reject unbalanced brackets and code spans swallowing closing `]`.
+    for (const rejected of [
+      '![a [b c](https://example.test/a.png "t {width=50%}")',
+      '![a `b](/x.png) `',
+      '![a `b](/x.png)\n`',
+      '![a \\`]` c](/x.png)',
+      '![a `\\`]` c](/x.png)'
+    ]) {
+      expect(parseMarkdownImageScale(rejected, 0), `parse-reject:${rejected}`).toBeNull();
+      expect(findMarkdownImageAt(rejected, 3), `find-reject:${rejected}`).toBeNull();
+    }
+
+    // Outermost enclosing image wins over nested `![inner]` in alt text or title.
+    const nestedInAlt =
+      '![outer ![inner](https://example.test/a.png) tail](https://example.test/b.png "t {width=50%}")';
+    for (const probe of ['outer', 'inner', 'a.png', 'tail']) {
+      expect(
+        findMarkdownImageAt(nestedInAlt, nestedInAlt.indexOf(probe) + 1),
+        `nestedInAlt:${probe}`
+      ).toMatchObject({
+        destination: 'https://example.test/b.png',
+        end: nestedInAlt.length,
+        scale: 50,
+        start: 0
+      });
+    }
+
+    // Invalid marker inside an enclosed inner alt image does not poison the valid outer image.
+    const invalidInnerAlt =
+      '![outer ![bad](/in.png "{width=51%}") tail](/out.png "t {width=50%}")';
+    expect(
+      findMarkdownImageAt(invalidInnerAlt, invalidInnerAlt.indexOf('bad') + 1)
+    ).toMatchObject({
+      destination: '/out.png',
+      scale: 50,
+      start: 0
+    });
+
+    // Literal `![inner](...)` inside an outer image's title resolves to the outer image.
+    const nestedInTitle =
+      '![outer](https://example.test/demo.png "contains ![inner](https://example.test/other.png) here")';
+    for (const probe of ['outer', 'inner', 'other.png', 'here']) {
+      expect(
+        findMarkdownImageAt(nestedInTitle, nestedInTitle.indexOf(probe) + 1),
+        `nestedInTitle:${probe}`
+      ).toMatchObject({
+        destination: 'https://example.test/demo.png',
+        end: nestedInTitle.length,
+        start: 0
+      });
+    }
+
+    // Unclosed outer `![` falls through to a valid inner image, matching PHP.
+    const unclosedOuter = '![unclosed ![inner](https://example.test/a.png "t {width=67%}")';
+    const innerStart = unclosedOuter.indexOf('![inner]');
+    expect(findMarkdownImageAt(unclosedOuter, innerStart + 3)).toMatchObject({
+      destination: 'https://example.test/a.png',
+      scale: 67,
+      start: innerStart
+    });
+
+    // Literal `![fake]` inside a link title is never mistaken for a live image.
+    const inLinkTitle = '[link](https://example.test/l "contains ![fake](https://example.test/f.png)")';
+    expect(findMarkdownImageAt(inLinkTitle, inLinkTitle.indexOf('fake') + 1)).toBeNull();
+  });
+
+  it('fast-paths single-line images on huge documents and caches repeated block scans', () => {
+    const hugeDoc = `![a](/x.png)\n${'plain paragraph line\n'.repeat(55_000)}`;
+    const started = performance.now();
+    const confirmed = parseMarkdownImageScale(hugeDoc, 0);
+    expect(confirmed).toMatchObject({
+      alt: 'a',
+      destination: '/x.png',
+      end: 12,
+      scale: null,
+      start: 0
+    });
+    if (!confirmed) throw new Error('huge-doc-image-missing');
+    const replacement = createImageScaleReplacement(hugeDoc, confirmed, 67);
+    const nextValue =
+      hugeDoc.slice(0, replacement.from)
+      + replacement.insert
+      + hugeDoc.slice(replacement.to);
+    const reparsed = parseMarkdownImageScale(nextValue, 0);
+    const elapsedMs = performance.now() - started;
+    expect(reparsed).toMatchObject({
+      destination: '/x.png',
+      scale: 67,
+      start: 0
+    });
+    expect(elapsedMs).toBeLessThan(100);
+
+    // Consecutive calls to getCachedMarkdownBlockScan on the same string reuse one scan object.
+    const multiDoc = '> ![a](/x.png\n> "Caption {width=50%}")\n\nSecond paragraph';
+    const firstScan = getCachedMarkdownBlockScan(multiDoc);
+    const secondScan = getCachedMarkdownBlockScan(multiDoc);
+    expect(secondScan).toBe(firstScan);
+    const otherScan = getCachedMarkdownBlockScan(`${multiDoc}\n`);
+    expect(otherScan).not.toBe(firstScan);
+
+    // Pathological nested brackets and link deactivation stay linear.
+    const deepLinks = `${'['.repeat(4_000)}${'[a](b)'.repeat(2_000)}`;
+    const deepStart = performance.now();
+    expect(findMarkdownImageAt(deepLinks, deepLinks.length - 2)).toBeNull();
+    expect(performance.now() - deepStart).toBeLessThan(1_000);
+
+    const deepImages = `${'![ '.repeat(2_000)}x${'](a)'.repeat(2_000)}`;
+    const deepImgStart = performance.now();
+    expect(findMarkdownImageAt(deepImages, deepImages.indexOf('x'))).toMatchObject({
+      destination: 'a',
+      end: deepImages.length,
+      start: 0
+    });
+    expect(performance.now() - deepImgStart).toBeLessThan(1_000);
   });
 });

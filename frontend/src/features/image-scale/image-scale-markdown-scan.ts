@@ -1,4 +1,9 @@
 import { hasMarkdownTitleBlankLine } from '../../shared/image-scale-title';
+import {
+  advanceParagraphReferenceParser,
+  createParagraphReferenceParser,
+  type ParagraphReferenceParser
+} from './image-scale-reference-def';
 
 /**
  * Pure CommonMark / GFM block-structure, container-prefix, and code-range
@@ -18,6 +23,16 @@ export type ScannedMarkdownLine = Readonly<{
   virtualSpaces: number;
 }>;
 
+type MutableScannedMarkdownLine = {
+  consumedBlockquote: boolean;
+  contentOffset: number;
+  inlineBlockId: number;
+  lineEnd: number;
+  lineStart: number;
+  nextLineStart: number;
+  virtualSpaces: number;
+};
+
 export type ScannedMarkdownBlocks = Readonly<{
   blockCodeRanges: ReadonlyArray<ScannedCodeRange>;
   lines: ReadonlyArray<ScannedMarkdownLine>;
@@ -34,8 +49,17 @@ type ActiveContainer =
   | { kind: 'blockquote' }
   | { hasContent: boolean; indent: number; kind: 'list' };
 
+type ActiveParagraphLeaf = {
+  hasPipe: boolean;
+  inlineBlockId: number;
+  kind: 'paragraph';
+  lastLineText: string;
+  paragraphLineIndices: number[];
+  refParser: ParagraphReferenceParser;
+};
+
 type ActiveLeaf =
-  | { inlineBlockId: number; kind: 'paragraph'; lastLineText: string }
+  | ActiveParagraphLeaf
   | { char: '`' | '~'; kind: 'fenced-code'; length: number }
   | { kind: 'indented-code' }
   | { finished: boolean; htmlType: 1 | 2 | 3 | 4 | 5 | 6 | 7; kind: 'html-block' }
@@ -318,13 +342,36 @@ function pushMergedBlockCodeRange(
   }
 }
 
+function appendParagraphLine(
+  lines: MutableScannedMarkdownLine[],
+  leaf: ActiveParagraphLeaf,
+  lineIdx: number,
+  remainder: string
+): void {
+  leaf.paragraphLineIndices.push(lineIdx);
+  leaf.lastLineText = remainder;
+  if (!leaf.hasPipe && remainder.includes('|')) {
+    leaf.hasPipe = true;
+  }
+  if (advanceParagraphReferenceParser(leaf.refParser, remainder)) {
+    for (let i = 0; i < leaf.paragraphLineIndices.length; i += 1) {
+      const consumedIdx = leaf.paragraphLineIndices[i];
+      const consumedLine = undefined !== consumedIdx ? lines[consumedIdx] : undefined;
+      if (consumedLine) consumedLine.inlineBlockId = -1;
+    }
+    leaf.paragraphLineIndices.length = 0;
+    leaf.hasPipe = false;
+    leaf.lastLineText = '';
+  }
+}
+
 /**
  * Scans `source` line-by-line following CommonMark / GFM block continuation
  * and interruption rules, recording per-line container prefixes, shared
  * `inlineBlockId` groups, and block-level code ranges.
  */
 export function scanMarkdownBlocks(source: string): ScannedMarkdownBlocks {
-  const lines: ScannedMarkdownLine[] = [];
+  const lines: MutableScannedMarkdownLine[] = [];
   const blockCodeRanges: Array<{ end: number; start: number }> = [];
   const containers: ActiveContainer[] = [];
   let leaf: ActiveLeaf | null = null;
@@ -342,7 +389,8 @@ export function scanMarkdownBlocks(source: string): ScannedMarkdownBlocks {
     let matchedContainers = 0;
     let consumedBlockquote = false;
     let lineEmitted = false;
-    const emitLine = (inlineBlockId: number): void => {
+    const emitLine = (inlineBlockId: number): number => {
+      const idx = lines.length;
       lines.push({
         consumedBlockquote,
         contentOffset: lineStart + cursor.index,
@@ -353,6 +401,7 @@ export function scanMarkdownBlocks(source: string): ScannedMarkdownBlocks {
         virtualSpaces: cursor.virtualSpaces
       });
       lineEmitted = true;
+      return idx;
     };
 
     // 1. Continue already-open container blocks.
@@ -417,6 +466,10 @@ export function scanMarkdownBlocks(source: string): ScannedMarkdownBlocks {
       let startedNewBlock = false;
       let lastMatchedIsParagraph =
         0 === unmatchedContainers && leafMatched && 'paragraph' === leaf?.kind;
+      const hasParagraphContent = (): boolean =>
+        lastMatchedIsParagraph
+        && 'paragraph' === leaf?.kind
+        && leaf.paragraphLineIndices.length > 0;
       const closeUnmatched = (): void => {
         if (unmatchedLeaf) {
           leaf = null;
@@ -453,7 +506,7 @@ export function scanMarkdownBlocks(source: string): ScannedMarkdownBlocks {
           emitLine(nextInlineBlockId);
           break;
         }
-        if (leadCols < 4 && lastMatchedIsParagraph && SETEXT_HEADING_UNDERLINE.test(nonSpaceRest)) {
+        if (leadCols < 4 && hasParagraphContent() && SETEXT_HEADING_UNDERLINE.test(nonSpaceRest)) {
           leaf = null;
           startedNewBlock = true;
           emitLine(-1);
@@ -496,7 +549,7 @@ export function scanMarkdownBlocks(source: string): ScannedMarkdownBlocks {
           break;
         }
         if (leadCols < 4) {
-          const markerLength = matchListMarkerLength(nonSpaceRest, lastMatchedIsParagraph);
+          const markerLength = matchListMarkerLength(nonSpaceRest, hasParagraphContent());
           if (markerLength > 0) {
             closeUnmatched();
             leaf = null;
@@ -514,9 +567,15 @@ export function scanMarkdownBlocks(source: string): ScannedMarkdownBlocks {
             continue;
           }
         }
-        if (lastMatchedIsParagraph && 'paragraph' === leaf?.kind && leaf.lastLineText.includes('|')) {
+        if (hasParagraphContent() && 'paragraph' === leaf?.kind && leaf.hasPipe) {
           const tableCols = parseGfmTableSeparatorColumns(cursorRemainder(cursor));
           if (tableCols > 0 && countTableRowCells(leaf.lastLineText) <= tableCols) {
+            const headerLineIdx = leaf.paragraphLineIndices[leaf.paragraphLineIndices.length - 1];
+            const headerLine = undefined !== headerLineIdx ? lines[headerLineIdx] : undefined;
+            if (headerLine) {
+              nextInlineBlockId += 1;
+              headerLine.inlineBlockId = nextInlineBlockId;
+            }
             leaf = { kind: 'table' };
             startedNewBlock = true;
             emitLine(-1);
@@ -539,22 +598,30 @@ export function scanMarkdownBlocks(source: string): ScannedMarkdownBlocks {
       // 4. Handle remaining line text (lazy continuation, paragraph text, or blank line).
       if (!lineEmitted) {
         if (!startedNewBlock && !isCursorBlank(cursor) && 'paragraph' === leaf?.kind) {
-          leaf.lastLineText = cursorRemainder(cursor);
-          emitLine(leaf.inlineBlockId);
+          const remainder = cursorRemainder(cursor);
+          const emittedIdx = emitLine(leaf.inlineBlockId);
+          appendParagraphLine(lines, leaf, emittedIdx, remainder);
         } else if (!startedNewBlock && !isCursorBlank(cursor) && 'table' === leaf?.kind) {
           nextInlineBlockId += 1;
           emitLine(nextInlineBlockId);
         } else {
           closeUnmatched();
           if (!isCursorBlank(cursor)) {
+            const remainder = cursorRemainder(cursor);
             if ('paragraph' !== leaf?.kind) {
               markInnermostListHasContent(containers);
               nextInlineBlockId += 1;
-              leaf = { inlineBlockId: nextInlineBlockId, kind: 'paragraph', lastLineText: cursorRemainder(cursor) };
-            } else {
-              leaf.lastLineText = cursorRemainder(cursor);
+              leaf = {
+                hasPipe: false,
+                inlineBlockId: nextInlineBlockId,
+                kind: 'paragraph',
+                lastLineText: '',
+                paragraphLineIndices: [],
+                refParser: createParagraphReferenceParser()
+              };
             }
-            emitLine(leaf.inlineBlockId);
+            const emittedIdx = emitLine(leaf.inlineBlockId);
+            appendParagraphLine(lines, leaf, emittedIdx, remainder);
           } else {
             emitLine(-1);
           }
@@ -567,6 +634,21 @@ export function scanMarkdownBlocks(source: string): ScannedMarkdownBlocks {
   }
 
   return { blockCodeRanges, lines };
+}
+
+let lastBlockScan: Readonly<{ scan: ScannedMarkdownBlocks; source: string }> | null = null;
+
+/**
+ * Returns the CommonMark/GFM block scan for `source`, reusing the single most
+ * recent scan when consecutive calls inspect the exact same string.
+ */
+export function getCachedMarkdownBlockScan(source: string): ScannedMarkdownBlocks {
+  if (null !== lastBlockScan && lastBlockScan.source === source) {
+    return lastBlockScan.scan;
+  }
+  const scan = scanMarkdownBlocks(source);
+  lastBlockScan = { scan, source };
+  return scan;
 }
 
 export function findLineIndexAtOffset(
@@ -664,70 +746,70 @@ export function normalizeTitleContainerContinuations(
   return hasMarkdownTitleBlankLine(stripped) ? null : { hasContainerPrefix, stripped };
 }
 
-export function scanInlineCodeRangesForBlock(
+export type BlockBacktickRunMap = ReadonlyMap<number, ReadonlyArray<number>>;
+
+/**
+ * Indexes all raw backtick runs within one inline block `[groupStart..groupEnd]`
+ * by exact run length so code-span matching runs in linear time without crossing
+ * block boundaries or container prefixes.
+ */
+export function collectBlockBacktickRuns(
   source: string,
   lines: ReadonlyArray<ScannedMarkdownLine>,
-  targetLineIdx: number
-): ReadonlyArray<ScannedCodeRange> {
-  const targetId = lines[targetLineIdx]?.inlineBlockId ?? -1;
-  if (targetId < 0) return [];
-  let groupStart = targetLineIdx;
-  while (groupStart > 0 && lines[groupStart - 1]?.inlineBlockId === targetId) groupStart -= 1;
-  let groupEnd = targetLineIdx;
-  while (groupEnd + 1 < lines.length && lines[groupEnd + 1]?.inlineBlockId === targetId) {
-    groupEnd += 1;
-  }
-
-  const out: Array<ScannedCodeRange> = [];
-  const unmatchedLengths = new Set<number>();
-  let segIdx = groupStart;
-  let pos = lines[groupStart]?.contentOffset ?? 0;
-
-  while (segIdx <= groupEnd) {
+  groupStart: number,
+  groupEnd: number
+): BlockBacktickRunMap | null {
+  let byLength: Map<number, number[]> | null = null;
+  for (let segIdx = groupStart; segIdx <= groupEnd; segIdx += 1) {
     const seg = lines[segIdx];
-    if (!seg || pos >= seg.lineEnd) {
-      segIdx += 1;
-      pos = lines[segIdx]?.contentOffset ?? 0;
-      continue;
-    }
-    if ('`' !== source[pos] || isEscaped(source, pos, seg.contentOffset)) {
-      pos += 1;
-      continue;
-    }
-    const runStart = pos;
-    while (pos < seg.lineEnd && '`' === source[pos]) pos += 1;
-    const length = pos - runStart;
-    if (unmatchedLengths.has(length)) continue;
-
-    // CommonMark §6.1: backslashes inside code spans are literal, never escapes;
-    // code spans cannot cross out of their inline block (paragraph/heading).
-    let closed = false;
-    let searchSeg = segIdx;
-    let searchPos = pos;
-    while (searchSeg <= groupEnd) {
-      const candidate = lines[searchSeg];
-      if (!candidate || searchPos >= candidate.lineEnd) {
-        searchSeg += 1;
-        searchPos = lines[searchSeg]?.contentOffset ?? 0;
-        continue;
+    if (!seg) continue;
+    let pos = seg.contentOffset;
+    while (pos < seg.lineEnd) {
+      const tickPos = source.indexOf('`', pos);
+      if (tickPos < 0 || tickPos >= seg.lineEnd) break;
+      let end = tickPos + 1;
+      while (end < seg.lineEnd && '`' === source[end]) end += 1;
+      const runLength = end - tickPos;
+      if (!byLength) byLength = new Map<number, number[]>();
+      let list = byLength.get(runLength);
+      if (!list) {
+        list = [];
+        byLength.set(runLength, list);
       }
-      if ('`' !== source[searchPos]) {
-        searchPos += 1;
-        continue;
-      }
-      const closeStart = searchPos;
-      while (searchPos < candidate.lineEnd && '`' === source[searchPos]) searchPos += 1;
-      if (searchPos - closeStart === length) {
-        out.push({ end: searchPos, start: runStart });
-        segIdx = searchSeg;
-        pos = searchPos;
-        closed = true;
-        break;
-      }
+      list.push(tickPos);
+      pos = end;
     }
-    if (!closed) unmatchedLengths.add(length);
   }
-  return out;
+  return byLength;
+}
+
+/**
+ * Finds the first backtick run of exact length `runLength` starting at or after
+ * `minOffset`, or `-1` when none exists in the inline block.
+ */
+export function findNextBacktickRun(
+  runs: BlockBacktickRunMap | null,
+  runLength: number,
+  minOffset: number
+): number {
+  if (!runs) return -1;
+  const list = runs.get(runLength);
+  if (!list || 0 === list.length) return -1;
+  let low = 0;
+  let high = list.length - 1;
+  let result = -1;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const candidate = list[middle];
+    if (undefined === candidate) break;
+    if (candidate < minOffset) {
+      low = middle + 1;
+    } else {
+      result = candidate;
+      high = middle - 1;
+    }
+  }
+  return result;
 }
 
 export function inCodeRange(

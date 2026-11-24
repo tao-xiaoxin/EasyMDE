@@ -22,326 +22,10 @@ import {
 } from '../helpers/editor-e2e-helpers.mjs';
 import { selectOrdinaryOption } from '../helpers/ordinary-select.mjs';
 import { collectPreviewRequestOutcomes } from '../helpers/preview-request-evidence.mjs';
-
-const SAFE_BROWSER_ERROR_NAMES = new Set([
-  'AggregateError',
-  'AssertionError',
-  'DOMException',
-  'Error',
-  'EvalError',
-  'RangeError',
-  'ReferenceError',
-  'SyntaxError',
-  'TimeoutError',
-  'TypeError',
-  'URIError'
-]);
-
-const SAFE_BROWSER_RESOURCE_TYPES = new Set([
-  'document',
-  'stylesheet',
-  'image',
-  'media',
-  'font',
-  'script',
-  'texttrack',
-  'xhr',
-  'fetch',
-  'prefetch',
-  'eventsource',
-  'manifest',
-  'signedexchange',
-  'ping',
-  'cspviolationreport',
-  'preflight',
-  'fedcm',
-  'other'
-]);
-
-function normalizeRestRouteParam(searchParams) {
-  const raw = searchParams.get('rest_route');
-  if ('string' !== typeof raw) return null;
-  return raw.trim().replace(/^\/+|\/+$/gu, '');
-}
-
-function isWpAdminPathname(pathname) {
-  return /(?:^|\/)wp-admin(?:\/|$)/u.test(pathname);
-}
-
-function isPreviewRestEndpoint(pathname, searchParams) {
-  if (/(?:^|\/)wp-json\/easymde\/v1\/preview\/?$/u.test(pathname)) {
-    return true;
-  }
-  return !isWpAdminPathname(pathname)
-    && 'easymde/v1/preview' === normalizeRestRouteParam(searchParams);
-}
-
-function isEasyMdeRestEndpoint(pathname, searchParams) {
-  if (/(?:^|\/)wp-json\/easymde\/v1(?:\/|$)/u.test(pathname)) {
-    return true;
-  }
-  if (isWpAdminPathname(pathname)) return false;
-  const route = normalizeRestRouteParam(searchParams);
-  return null !== route && ('easymde/v1' === route || route.startsWith('easymde/v1/'));
-}
-
-function isAnyWordPressRestEndpoint(pathname, searchParams) {
-  if (/(?:^|\/)wp-json(?:\/|$)/u.test(pathname)) {
-    return true;
-  }
-  return !isWpAdminPathname(pathname) && searchParams.has('rest_route');
-}
-
-function classifyBrowserUrlCategory(rawUrl, baseOrigin) {
-  if (!rawUrl) return 'unknown';
-  let url;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    return 'invalid';
-  }
-  if (isPreviewRestEndpoint(url.pathname, url.searchParams)) return 'preview-rest';
-  if (isEasyMdeRestEndpoint(url.pathname, url.searchParams)) return 'easymde-api';
-  if (/(?:^|\/)wp-content\/plugins\//u.test(url.pathname)) return 'plugin-asset';
-  if (/(?:^|\/)wp-admin\/admin-ajax\.php$/u.test(url.pathname)) return 'admin-ajax';
-  if (isWpAdminPathname(url.pathname)) return 'wp-admin';
-  if (isAnyWordPressRestEndpoint(url.pathname, url.searchParams)) return 'wp-rest';
-  if (baseOrigin && url.origin === baseOrigin) return 'same-origin';
-  return 'external';
-}
-
-function safeBrowserFailureClass(errorText) {
-  const code = 'string' === typeof errorText
-    ? errorText.match(/(?:^|::)(ERR_[A-Z0-9_]+)$/u)?.[1]
-    : null;
-  if ('ERR_ABORTED' === code) return 'aborted';
-  if (code?.startsWith('ERR_CONNECTION_')) return 'connection';
-  if ('ERR_NAME_NOT_RESOLVED' === code) return 'dns';
-  if (code?.includes('TIMED_OUT')) return 'timeout';
-  if (code?.startsWith('ERR_CERT_')) return 'tls';
-  if ('ERR_FAILED' === code) return 'failed';
-  return 'other';
-}
-
-function attachPrivacySafeBrowserMonitor(page, { baseURL } = {}) {
-  let baseOrigin = null;
-  if ('string' === typeof baseURL && baseURL.length > 0) {
-    try {
-      baseOrigin = new URL(baseURL).origin;
-    } catch {
-      baseOrigin = null;
-    }
-  }
-  const failures = [];
-  const counts = {
-    abortedAdminAjax: 0,
-    cancelledPreview: 0,
-    consoleErrors: 0,
-    httpErrors: 0,
-    pageErrors: 0,
-    requestFailures: 0
-  };
-  const record = (code) => {
-    if (failures.length < 128 && !failures.includes(code)) {
-      failures.push(code);
-    }
-  };
-  const onPageError = (error) => {
-    counts.pageErrors += 1;
-    const errorName = error && SAFE_BROWSER_ERROR_NAMES.has(error.name)
-      ? error.name
-      : 'Error';
-    record(`pageerror:${errorName}`);
-  };
-  const onConsole = (message) => {
-    if ('error' !== message.type()) return;
-    counts.consoleErrors += 1;
-    const easyMdeCode = message.text().match(/\[EasyMDE\]\s+([a-z0-9-]+)/u)?.[1];
-    if (easyMdeCode) {
-      record(`console-error:${easyMdeCode}`);
-      return;
-    }
-    const category = classifyBrowserUrlCategory(message.location()?.url ?? '', baseOrigin);
-    record(`console-error:${category}`);
-  };
-  const onRequestFailed = (request) => {
-    const category = classifyBrowserUrlCategory(request.url(), baseOrigin);
-    if ('external' === category) return;
-    const failureClass = safeBrowserFailureClass(request.failure()?.errorText);
-    const rawResourceType = request.resourceType();
-    const resourceType = SAFE_BROWSER_RESOURCE_TYPES.has(rawResourceType)
-      ? rawResourceType
-      : 'other';
-    if ('aborted' === failureClass && 'preview-rest' === category && 'POST' === request.method()) {
-      counts.cancelledPreview += 1;
-      return;
-    }
-    if (
-      'aborted' === failureClass
-      && 'admin-ajax' === category
-      && ('xhr' === resourceType || 'fetch' === resourceType)
-    ) {
-      counts.abortedAdminAjax += 1;
-      return;
-    }
-    counts.requestFailures += 1;
-    record(`request-failed:${failureClass}:${category}:${resourceType}`);
-  };
-  const onResponse = (response) => {
-    if (response.status() < 400) return;
-    const category = classifyBrowserUrlCategory(response.url(), baseOrigin);
-    if ('external' === category) return;
-    const rawResourceType = response.request().resourceType();
-    const resourceType = SAFE_BROWSER_RESOURCE_TYPES.has(rawResourceType)
-      ? rawResourceType
-      : 'other';
-    counts.httpErrors += 1;
-    record(`http-${response.status()}:${category}:${resourceType}`);
-  };
-  page.on('pageerror', onPageError);
-  page.on('console', onConsole);
-  page.on('requestfailed', onRequestFailed);
-  page.on('response', onResponse);
-  let disposed = false;
-  return {
-    counts,
-    failures,
-    assertClean() {
-      expect(
-        failures,
-        `unexpected browser failures observed; pageErrors=${counts.pageErrors}; consoleErrors=${counts.consoleErrors}; requestFailures=${counts.requestFailures}; httpErrors=${counts.httpErrors}`
-      ).toEqual([]);
-    },
-    dispose() {
-      if (disposed) return;
-      disposed = true;
-      page.off('pageerror', onPageError);
-      page.off('console', onConsole);
-      page.off('requestfailed', onRequestFailed);
-      page.off('response', onResponse);
-    }
-  };
-}
-
-function classifyReadonlyPostRequest({ pathname = '', search = '', contentType = '', postData = '' }) {
-  const queryParams = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
-  if (isPreviewRestEndpoint(pathname, queryParams)) {
-    return {
-      category: 'preview-rest',
-      classification: 'preview-readonly'
-    };
-  }
-  if (!/(?:^|\/)wp-admin\/admin-ajax\.php$/u.test(pathname)) {
-    return {
-      category: isAnyWordPressRestEndpoint(pathname, queryParams)
-        ? 'other-rest'
-        : 'other-post',
-      classification: 'unexpected-write'
-    };
-  }
-  const knownDataKeys = new Set([
-    'nonces_expired',
-    'rest_nonce',
-    'wp-auth-check',
-    'wp-refresh-post-lock'
-  ]);
-  const isRecord = (value) => (
-    !!value && 'object' === typeof value && !Array.isArray(value)
-  );
-  const contentTypeValue = contentType.toLowerCase();
-  const isJson = contentTypeValue.includes('application/json');
-  const isForm = contentTypeValue.includes('application/x-www-form-urlencoded')
-    || (!contentTypeValue && postData.includes('='));
-  const parameters = isForm ? new URLSearchParams(postData) : new URLSearchParams();
-  const parameterKeys = [...parameters.keys()];
-  let action = queryParams.get('action') ?? parameters.get('action');
-  const bracketDataKeys = [];
-  parameterKeys.forEach((key) => {
-    if (!key.startsWith('data[')) return;
-    const end = key.indexOf(']', 5);
-    bracketDataKeys.push(end > 5 ? key.slice(5, end) : '');
-  });
-  const bracketDataUnknown = bracketDataKeys.some(
-    (key) => !knownDataKeys.has(key) && key !== 'wp_autosave'
-  );
-  let dataState = bracketDataKeys.length > 0
-    ? bracketDataUnknown ? 'unknown' : 'known'
-    : 'absent';
-  let wpAutosave = parameterKeys.some((key) => key.includes('wp_autosave'));
-  const applyDataRecord = (record) => {
-    const parsedKeys = Object.keys(record);
-    wpAutosave = wpAutosave || parsedKeys.includes('wp_autosave');
-    if (wpAutosave) {
-      dataState = 'autosave';
-    } else if (parsedKeys.every((key) => knownDataKeys.has(key))) {
-      dataState = 'known';
-    } else {
-      dataState = 'unknown';
-    }
-  };
-  const dataValue = parameters.get('data');
-  if (dataValue !== null) {
-    dataState = 'invalid';
-    try {
-      const parsed = JSON.parse(dataValue);
-      if (isRecord(parsed)) applyDataRecord(parsed);
-    } catch {
-      // Keep invalid dataState without echoing request metadata.
-    }
-  }
-  if (isJson) {
-    try {
-      const body = JSON.parse(postData);
-      if (isRecord(body)) {
-        if (null === action && 'string' === typeof body.action) action = body.action;
-        if (Object.prototype.hasOwnProperty.call(body, 'wp_autosave')) {
-          wpAutosave = true;
-          dataState = 'autosave';
-        }
-        if (Object.prototype.hasOwnProperty.call(body, 'data')) {
-          if (isRecord(body.data)) {
-            applyDataRecord(body.data);
-          } else if ('string' === typeof body.data) {
-            dataState = 'invalid';
-            try {
-              const parsedData = JSON.parse(body.data);
-              if (isRecord(parsedData)) applyDataRecord(parsedData);
-            } catch {
-              // Keep invalid dataState without echoing request metadata.
-            }
-          } else {
-            dataState = 'invalid';
-          }
-        }
-      } else {
-        dataState = 'invalid';
-      }
-    } catch {
-      dataState = 'invalid';
-    }
-  }
-  if ('get-community-events' === action) {
-    return {
-      category: 'community-events',
-      classification: 'community-events-readonly'
-    };
-  }
-  if (
-    'heartbeat' === action
-    && (isJson || '' === postData || postData.includes('='))
-    && ['absent', 'known'].includes(dataState)
-    && !wpAutosave
-  ) {
-    return {
-      category: 'heartbeat',
-      classification: 'heartbeat-readonly'
-    };
-  }
-  return {
-    category: 'other-admin-ajax',
-    classification: 'unexpected-write'
-  };
-}
+import {
+  attachPrivacySafeBrowserMonitor,
+  classifyReadonlyPostRequest
+} from '../helpers/privacy-safe-browser-monitor.mjs';
 
 test.describe('EasyMDE editor workflows', () => {
   registerEditorWorkflowHooks();
@@ -2288,106 +1972,120 @@ test.describe('EasyMDE editor workflows', () => {
     const recordUnexpectedPostCategory = (category) => {
       unexpectedPostCategoryCounts[category] = (unexpectedPostCategoryCounts[category] ?? 0) + 1;
     };
+    const sampleBaseURL = 'http://127.0.0.1:8089';
+    const sampleSubdirBaseURL = 'http://127.0.0.1:8089/subdir';
     const heartbeatSample = classifyReadonlyPostRequest({
-      pathname: '/wp-admin/admin-ajax.php',
+      url: `${sampleBaseURL}/wp-admin/admin-ajax.php`,
       contentType: 'application/x-www-form-urlencoded',
       postData: 'action=heartbeat'
-    });
+    }, { baseURL: sampleBaseURL });
     expect(heartbeatSample).toEqual({
       category: 'heartbeat',
       classification: 'heartbeat-readonly'
     });
     expect(Object.keys(heartbeatSample).sort()).toEqual(['category', 'classification']);
     expect(classifyReadonlyPostRequest({
-      pathname: '/wp-admin/admin-ajax.php',
+      url: `${sampleBaseURL}/wp-admin/admin-ajax.php`,
       contentType: 'application/x-www-form-urlencoded',
       postData: 'action=get-community-events'
-    })).toEqual({
+    }, { baseURL: sampleBaseURL })).toEqual({
       category: 'community-events',
       classification: 'community-events-readonly'
     });
     expect(classifyReadonlyPostRequest({
-      pathname: '/wp-admin/admin-ajax.php',
+      url: `${sampleBaseURL}/wp-admin/admin-ajax.php`,
       contentType: 'application/x-www-form-urlencoded',
       postData: 'action=heartbeat&data%5Bwp_autosave%5D='
-    })).toEqual({
+    }, { baseURL: sampleBaseURL })).toEqual({
       category: 'other-admin-ajax',
       classification: 'unexpected-write'
     });
     expect(classifyReadonlyPostRequest({
-      pathname: '/wp-admin/admin-ajax.php',
+      url: `${sampleBaseURL}/wp-admin/admin-ajax.php`,
       contentType: 'application/json',
       postData: '{"action":"heartbeat","data":{"wp_autosave":{}}}'
-    })).toEqual({
+    }, { baseURL: sampleBaseURL })).toEqual({
       category: 'other-admin-ajax',
       classification: 'unexpected-write'
     });
     expect(classifyReadonlyPostRequest({
-      pathname: '/wp-admin/admin-ajax.php',
+      url: `${sampleBaseURL}/wp-admin/admin-ajax.php`,
       contentType: 'application/json',
       postData: '{"action":"heartbeat","data":{"unknown":{}}}'
-    })).toEqual({
+    }, { baseURL: sampleBaseURL })).toEqual({
       category: 'other-admin-ajax',
       classification: 'unexpected-write'
     });
     expect(classifyReadonlyPostRequest({
-      pathname: '/wp-json/easymde/v1/preview',
+      url: `${sampleBaseURL}/wp-json/easymde/v1/preview`,
       contentType: 'application/json',
       postData: '{"markdown":"alpha"}'
-    })).toEqual({
+    }, { baseURL: sampleBaseURL })).toEqual({
       category: 'preview-rest',
       classification: 'preview-readonly'
     });
     expect(classifyReadonlyPostRequest({
-      pathname: '/subdir/wp-json/easymde/v1/preview/',
+      url: `${sampleSubdirBaseURL}/wp-json/easymde/v1/preview/`,
       contentType: 'application/json',
       postData: '{"markdown":"alpha"}'
-    })).toEqual({
+    }, { baseURL: sampleSubdirBaseURL })).toEqual({
       category: 'preview-rest',
       classification: 'preview-readonly'
     });
     expect(classifyReadonlyPostRequest({
-      pathname: '/',
-      search: '?rest_route=/easymde/v1/preview',
+      url: `${sampleBaseURL}/?rest_route=/easymde/v1/preview`,
       contentType: 'application/json',
       postData: '{"markdown":"alpha"}'
-    })).toEqual({
+    }, { baseURL: sampleBaseURL })).toEqual({
       category: 'preview-rest',
       classification: 'preview-readonly'
     });
     expect(classifyReadonlyPostRequest({
-      pathname: '/subdir/index.php',
-      search: '?rest_route=%20%2Feasymde%2Fv1%2Fpreview%2F%20',
+      url: `${sampleSubdirBaseURL}/index.php?rest_route=%20%2Feasymde%2Fv1%2Fpreview%2F%20`,
       contentType: 'application/json',
       postData: '{"markdown":"alpha"}'
-    })).toEqual({
+    }, { baseURL: sampleSubdirBaseURL })).toEqual({
       category: 'preview-rest',
       classification: 'preview-readonly'
     });
     expect(classifyReadonlyPostRequest({
-      pathname: '/wp-json/wp/v2/posts',
+      url: `${sampleBaseURL}/wp-json/wp/v2/posts`,
       contentType: 'application/json',
       postData: '{"secret_field":"value"}'
-    })).toEqual({
+    }, { baseURL: sampleBaseURL })).toEqual({
       category: 'other-rest',
       classification: 'unexpected-write'
     });
     expect(classifyReadonlyPostRequest({
-      pathname: '/',
-      search: '?rest_route=/easymde/v1/media',
+      url: `${sampleBaseURL}/?rest_route=/easymde/v1/media`,
       contentType: 'application/json',
       postData: '{"secret_field":"value"}'
-    })).toEqual({
+    }, { baseURL: sampleBaseURL })).toEqual({
       category: 'other-rest',
       classification: 'unexpected-write'
     });
     expect(classifyReadonlyPostRequest({
-      pathname: '/wp-admin/post.php',
-      search: '?rest_route=/easymde/v1/preview',
+      url: `${sampleBaseURL}/wp-admin/post.php?rest_route=/easymde/v1/preview`,
       contentType: 'application/x-www-form-urlencoded',
       postData: 'action=secret_custom_action&custom_key=1'
-    })).toEqual({
+    }, { baseURL: sampleBaseURL })).toEqual({
       category: 'other-post',
+      classification: 'unexpected-write'
+    });
+    expect(classifyReadonlyPostRequest({
+      url: `${sampleBaseURL}/wp-login.php?rest_route=/easymde/v1/preview`,
+      contentType: 'application/x-www-form-urlencoded',
+      postData: 'log=user&pwd=secret'
+    }, { baseURL: sampleBaseURL })).toEqual({
+      category: 'other-post',
+      classification: 'unexpected-write'
+    });
+    expect(classifyReadonlyPostRequest({
+      url: 'https://other.example/wp-json/easymde/v1/preview',
+      contentType: 'application/json',
+      postData: '{"markdown":"alpha"}'
+    }, { baseURL: sampleBaseURL })).toEqual({
+      category: 'external-post',
       classification: 'unexpected-write'
     });
 
@@ -2396,18 +2094,8 @@ test.describe('EasyMDE editor workflows', () => {
     });
     const onPostRequest = (request) => {
       if ('POST' !== request.method()) return;
-      let url;
-      try {
-        url = new URL(request.url());
-      } catch {
-        recordUnexpectedPostCategory('invalid-url');
-        return;
-      }
-      const classified = classifyReadonlyPostRequest({
-        pathname: url.pathname,
-        search: url.search,
-        contentType: request.headers()['content-type'] ?? '',
-        postData: request.postData() ?? ''
+      const classified = classifyReadonlyPostRequest(request, {
+        baseURL: testInfo.project.use.baseURL
       });
       if ('preview-readonly' === classified.classification) {
         previewPostCount += 1;

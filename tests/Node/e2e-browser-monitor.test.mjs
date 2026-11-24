@@ -1947,3 +1947,229 @@ test('preview REST POST body override and non-JSON shapes fail closed in classif
     }
   }
 });
+
+test('preview REST POST requires a valid JSON object body with a string markdown field', () => {
+  const validPreviewBodies = [
+    { label: 'non-empty markdown string', postData: '{"markdown":"alpha"}' },
+    { label: 'empty-document markdown string', postData: '{"markdown":""}' },
+    {
+      label: 'full preview payload with optional metadata',
+      postData: '{"markdown":"# Heading","post_id":42,"markdown_theme":"default","code_theme":"github","custom_css_id":""}'
+    }
+  ];
+
+  for (const url of [
+    `${BASE_URL}/wp-json/easymde/v1/preview`,
+    `${BASE_URL}/?rest_route=/easymde/v1/preview`
+  ]) {
+    for (const { label, postData } of validPreviewBodies) {
+      assert.deepEqual(
+        classifyReadonlyPostRequest(
+          stubRequest({
+            url,
+            headers: { 'content-type': 'application/json' },
+            postData
+          }),
+          { baseURL: BASE_URL }
+        ),
+        { category: 'preview-rest', classification: 'preview-readonly' },
+        `${url} (${label})`
+      );
+
+      for (const errorText of ['net::ERR_ABORTED', 'NS_BINDING_ABORTED']) {
+        const page = createStubPage();
+        const monitor = attachPrivacySafeBrowserMonitor(page, { baseURL: BASE_URL });
+
+        page.emit('requestfailed', stubRequest({
+          url,
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          postData,
+          resourceType: 'fetch',
+          errorText
+        }));
+
+        monitor.assertClean();
+        assert.equal(monitor.counts.cancelledPreview, 1, `${url} (${label}, ${errorText})`);
+        assert.equal(monitor.counts.requestFailures, 0, `${url} (${label}, ${errorText})`);
+        monitor.dispose();
+      }
+    }
+  }
+
+  const invalidPreviewJsonCases = [
+    {
+      label: 'empty string body',
+      url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+      postData: '',
+      resourceType: 'fetch'
+    },
+    {
+      label: 'null postData from empty POST body',
+      url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+      postData: null,
+      resourceType: 'fetch'
+    },
+    {
+      label: 'whitespace-only body',
+      url: `${BASE_URL}/?rest_route=/easymde/v1/preview`,
+      postData: '   ',
+      resourceType: 'xhr'
+    },
+    {
+      label: 'malformed JSON body',
+      url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+      postData: '{"markdown":"secret-truncated-preview',
+      resourceType: 'fetch'
+    },
+    {
+      label: 'empty JSON array',
+      url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+      postData: '[]',
+      resourceType: 'fetch'
+    },
+    {
+      label: 'non-empty JSON array',
+      url: `${BASE_URL}/?rest_route=/easymde/v1/preview`,
+      postData: '["secret-array-payload"]',
+      resourceType: 'xhr'
+    },
+    {
+      label: 'JSON null primitive',
+      url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+      postData: 'null',
+      resourceType: 'fetch'
+    },
+    {
+      label: 'JSON number primitive',
+      url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+      postData: '123',
+      resourceType: 'fetch'
+    },
+    {
+      label: 'JSON string primitive',
+      url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+      postData: '"markdown"',
+      resourceType: 'fetch'
+    },
+    {
+      label: 'JSON string primitive with secret token',
+      url: `${BASE_URL}/?rest_route=/easymde/v1/preview`,
+      postData: '"secret-string-payload"',
+      resourceType: 'fetch'
+    },
+    {
+      label: 'JSON object missing markdown key (empty object)',
+      url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+      postData: '{}',
+      resourceType: 'fetch'
+    },
+    {
+      label: 'JSON object missing markdown key (other keys only)',
+      url: `${BASE_URL}/?rest_route=/easymde/v1/preview`,
+      postData: '{"secret_field":"secret-object-value"}',
+      resourceType: 'xhr'
+    },
+    {
+      label: 'JSON object with numeric markdown field',
+      url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+      postData: '{"markdown":123}',
+      resourceType: 'fetch'
+    },
+    {
+      label: 'JSON object with null markdown field',
+      url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+      postData: '{"markdown":null}',
+      resourceType: 'fetch'
+    },
+    {
+      label: 'JSON object with array markdown field',
+      url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+      postData: '{"markdown":["secret-array-markdown"]}',
+      resourceType: 'fetch'
+    },
+    {
+      label: 'JSON object with nested object markdown field',
+      url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+      postData: '{"markdown":{"nested":"secret-nested-markdown"}}',
+      resourceType: 'xhr'
+    }
+  ];
+
+  const leakedBodyPattern = /secret-truncated-preview|secret-array-payload|secret-string-payload|secret_field|secret-object-value|secret-array-markdown|secret-nested-markdown|Unexpected token|JSON/u;
+
+  for (const { label, url, postData, resourceType } of invalidPreviewJsonCases) {
+    assert.deepEqual(
+      classifyReadonlyPostRequest(
+        stubRequest({
+          url,
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          postData,
+          resourceType
+        }),
+        { baseURL: BASE_URL }
+      ),
+      { category: 'other-rest', classification: 'unexpected-write' },
+      label
+    );
+
+    const expectedCode = `request-failed:aborted:wp-rest:${resourceType}`;
+    for (const errorText of ['net::ERR_ABORTED', 'NS_BINDING_ABORTED']) {
+      const page = createStubPage();
+      const monitor = attachPrivacySafeBrowserMonitor(page, { baseURL: BASE_URL });
+
+      page.emit('requestfailed', stubRequest({
+        url,
+        method: 'POST',
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+        postData,
+        resourceType,
+        errorText
+      }));
+
+      const snap = monitor.snapshot();
+      assert.equal(snap.counts.cancelledPreview, 0, `${label} (${errorText})`);
+      assert.equal(snap.counts.requestFailures, 1, `${label} (${errorText})`);
+      assert.deepEqual(
+        snap.requestFailures,
+        [{ category: 'wp-rest', resourceType, failureClass: 'aborted' }],
+        `${label} (${errorText})`
+      );
+      assert.deepEqual(snap.failures, [expectedCode], `${label} (${errorText})`);
+      assert.doesNotMatch(JSON.stringify(snap), leakedBodyPattern, `${label} (${errorText})`);
+      assert.throws(
+        () => monitor.assertClean(),
+        (error) => {
+          assert.ok(error instanceof Error);
+          assert.match(error.message, new RegExp(expectedCode, 'u'));
+          assert.doesNotMatch(error.message, leakedBodyPattern);
+          return true;
+        },
+        `${label} (${errorText})`
+      );
+      monitor.dispose();
+    }
+  }
+
+  // Plain-object inputs also require a valid JSON object with a string markdown field.
+  for (const postData of ['', '{"markdown":', '[]', 'null', '123', '"markdown"', '{}', '{"markdown":123}', '{"markdown":null}']) {
+    assert.deepEqual(
+      classifyReadonlyPostRequest({
+        url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+        contentType: 'application/json',
+        postData
+      }, { baseURL: BASE_URL }),
+      { category: 'other-rest', classification: 'unexpected-write' },
+      `plain-object postData=${postData}`
+    );
+  }
+  assert.deepEqual(
+    classifyReadonlyPostRequest({
+      url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+      contentType: 'application/json',
+      postData: '{"markdown":""}'
+    }, { baseURL: BASE_URL }),
+    { category: 'preview-rest', classification: 'preview-readonly' }
+  );
+});

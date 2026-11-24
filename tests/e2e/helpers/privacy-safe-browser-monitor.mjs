@@ -458,8 +458,30 @@ export function classifyReadonlyPostRequest(requestOrInput, options = {}) {
   const { basePath } = baseContext;
   const queryParams = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
   const mediaType = contentType.split(';')[0].trim().toLowerCase();
+  const isRecord = (value) => (
+    !!value && 'object' === typeof value && !Array.isArray(value)
+  );
   if (isPreviewRestEndpoint(pathname, queryParams, basePath)) {
-    if (normalized.unreadableBody || 'application/json' !== mediaType) {
+    if (normalized.unreadableBody || 'application/json' !== mediaType || '' === postData) {
+      return {
+        category: 'other-rest',
+        classification: 'unexpected-write'
+      };
+    }
+    let parsedBody = null;
+    try {
+      parsedBody = JSON.parse(postData);
+    } catch {
+      return {
+        category: 'other-rest',
+        classification: 'unexpected-write'
+      };
+    }
+    if (
+      !isRecord(parsedBody)
+      || !Object.prototype.hasOwnProperty.call(parsedBody, 'markdown')
+      || 'string' !== typeof parsedBody.markdown
+    ) {
       return {
         category: 'other-rest',
         classification: 'unexpected-write'
@@ -478,9 +500,6 @@ export function classifyReadonlyPostRequest(requestOrInput, options = {}) {
       classification: 'unexpected-write'
     };
   }
-  const isRecord = (value) => (
-    !!value && 'object' === typeof value && !Array.isArray(value)
-  );
   if (
     normalized.unreadableBody
     || 'application/x-www-form-urlencoded' !== mediaType

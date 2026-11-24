@@ -25,6 +25,7 @@ import {
 import {
 	findMarkdownTable,
 	pipePositions,
+	prepareMarkdownTable,
 	tableSelectionAt,
 } from "./editor-markdown-table";
 import {
@@ -1817,6 +1818,152 @@ describe("editor context menu rules", () => {
 				start: ambiguous.indexOf("1"),
 			}),
 		).toBeNull();
+	});
+
+	it("matches CommonMark indented leading-pipe body and separator parsing without phantom cells", () => {
+		// CommonMark `TableParser::split(\trim($line))` strips the leading `|`
+		// after 4+ spaces, leaving only 2 explicit cells for a 3-column header;
+		// source table actions must decline instead of inventing a phantom cell 0.
+		const shortIndentedBody = "a | b | c\n--- | --- | ---\n    | x\\|z | y";
+		const shortPos = shortIndentedBody.indexOf("x\\|z");
+		expect(findMarkdownTable(shortIndentedBody, shortPos)).toBeNull();
+		expect(
+			editMarkdownTable(shortIndentedBody, shortPos, {
+				type: "delete-column",
+			}),
+		).toBeNull();
+		expect(
+			formatMarkdownTableSource(shortIndentedBody, {
+				direction: "none",
+				end: shortPos,
+				start: shortPos,
+			}),
+		).toBeNull();
+
+		// Valid 3-cell indented body rows (4 spaces or tab before leading `|`)
+		// preserve their leading indentation/pipe across column deletion,
+		// left-column insertion, and table formatting.
+		const fourSpaceBody = "a | b | c\n--- | --- | ---\n    | x\\|z | y | w";
+		const fourSpacePos = fourSpaceBody.indexOf("x\\|z");
+		expect(
+			editMarkdownTable(fourSpaceBody, fourSpacePos, {
+				type: "delete-column",
+			})?.value,
+		).toBe("| b | c\n| --- | ---\n    | y | w");
+		expect(
+			editMarkdownTable(fourSpaceBody, fourSpacePos, {
+				type: "insert-column-left",
+			})?.value,
+		).toBe("|  |a | b | c\n| --- |--- | --- | ---\n    |  | x\\|z | y | w");
+		const fourSpaceFormatted = formatMarkdownTableSource(fourSpaceBody, {
+			direction: "forward",
+			end: fourSpacePos + 4,
+			start: fourSpacePos,
+		});
+		expect(fourSpaceFormatted?.value).toBe(
+			"a    | b   | c  \n---  | --- | ---\n    | x\\|z | y   | w  ",
+		);
+		expect(
+			fourSpaceFormatted?.value.slice(
+				fourSpaceFormatted.selection.start,
+				fourSpaceFormatted.selection.end,
+			),
+		).toBe("x\\|z");
+
+		const tabBody = "a | b | c\n--- | --- | ---\n\t| x | y | z";
+		const tabPos = tabBody.indexOf("x");
+		expect(
+			editMarkdownTable(tabBody, tabPos, { type: "delete-column" })?.value,
+		).toBe("| b | c\n| --- | ---\n\t| y | z");
+		expect(
+			formatMarkdownTableSource(tabBody, {
+				direction: "none",
+				end: tabPos,
+				start: tabPos,
+			})?.value,
+		).toBe("a   | b   | c  \n--- | --- | ---\n\t| x   | y   | z  ");
+
+		// PHP `League\CommonMark` `TableStartParser::parseSeparator()` admits
+		// 4-space/tab-indented separator rows once a 0-3 space header opens a
+		// paragraph, while rejecting code-indented headers and NBSP delimiters.
+		const indentedOuterlessSep = "a | b\n    --- | ---\n    1 | 2";
+		expect(findMarkdownTable(indentedOuterlessSep, 0)).toMatchObject({
+			columnCount: 2,
+			rowCount: 2,
+		});
+		expect(
+			editMarkdownTable(indentedOuterlessSep, 0, {
+				type: "delete-column",
+			})?.value,
+		).toBe("| b\n    | ---\n    | 2");
+
+		const indentedPipedSep = "| a | b |\n    | --- | --- |\n    | 1 | 2 |";
+		expect(findMarkdownTable(indentedPipedSep, 2)).toMatchObject({
+			columnCount: 2,
+			rowCount: 2,
+		});
+		expect(
+			editMarkdownTable(indentedPipedSep, 2, {
+				type: "delete-column",
+			})?.value,
+		).toBe("| b |\n    | --- |\n    | 2 |");
+		expect(
+			formatMarkdownTableSource(indentedPipedSep, {
+				direction: "none",
+				end: 2,
+				start: 2,
+			})?.value,
+		).toBe("| a   | b   |\n    | --- | --- |\n    | 1   | 2   |");
+
+		const tabPipedSep = "| a | b |\n\t| --- | --- |\n\t| 1 | 2 |";
+		expect(findMarkdownTable(tabPipedSep, 2)).toMatchObject({
+			columnCount: 2,
+			rowCount: 2,
+		});
+
+		for (const nonTable of [
+			"    a | b\n--- | ---",
+			"\ta | b\n--- | ---",
+			"a | b\n\u00a0--- | ---",
+		]) {
+			expect(findMarkdownTable(nonTable, 0), nonTable).toBeNull();
+		}
+	});
+
+	it("keeps NBSP-prefixed comments absent and flags whitespace-blank-separated markers as orphan", () => {
+		const nbspBefore =
+			'\u00a0<!-- easymde-table-align:v1 [[0,"center"]] -->\n| A | B |\n| - | - |';
+		const nbspPrepared = prepareMarkdownTable(
+			nbspBefore,
+			nbspBefore.indexOf("| A"),
+		);
+		expect(nbspPrepared?.context.annotationRead).toEqual({
+			annotation: null,
+			status: "absent",
+		});
+		expect(nbspPrepared?.context.annotation.ownedPrefixRange).toBeUndefined();
+
+		for (const blankLine of ["    ", "\t", "  \t  "]) {
+			const orphan = `<!-- easymde-table-align:v1 [[0,"center"]] -->\n${blankLine}\n| A | B |\n| - | - |`;
+			const tablePos = orphan.indexOf("| A");
+			expect(
+				prepareMarkdownTable(orphan, tablePos)?.context.annotationRead,
+				JSON.stringify(blankLine),
+			).toEqual({
+				code: "table-alignment-annotation-marker-orphan",
+				status: "invalid",
+			});
+			expect(
+				setMarkdownTableAlignment(orphan, tablePos, {
+					alignment: "right",
+					selection: { column: 0, kind: "column" },
+				}),
+				JSON.stringify(blankLine),
+			).toEqual({
+				code: "table-alignment-annotation-marker-orphan",
+				status: "unsupported",
+			});
+		}
 	});
 
 	it("falls back to compact formatting when aligned padding would exceed the 1 MiB preview UTF-8 budget", () => {

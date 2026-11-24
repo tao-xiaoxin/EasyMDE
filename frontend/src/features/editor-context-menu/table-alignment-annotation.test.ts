@@ -529,4 +529,76 @@ describe('table alignment annotation', () => {
       value: columnSource
     });
   });
+
+  it('keeps NBSP-prefixed markers absent, rejects trailing NBSP, and flags 4-space/tab blank-line orphans', () => {
+    const simpleTable = '| A | B |\n| - | - |';
+    const nbspLeadingMarker = '\u00a0<!-- easymde-table-align:v1 [[0,"center"]] -->';
+    const nbspLeadingSource = `${nbspLeadingMarker}\n${simpleTable}`;
+    expect(
+      parseTableAlignmentAnnotation(
+        context(nbspLeadingSource, {
+          baseAlignments: [null, null],
+          rowCount: 1
+        })
+      )
+    ).toEqual({
+      annotation: null,
+      status: 'absent'
+    });
+    expect(
+      parseTableAlignmentAnnotation(
+        context(nbspLeadingSource, {
+          baseAlignments: [null, null],
+          ownedPrefixRange: { from: 0, to: nbspLeadingMarker.length },
+          rowCount: 1
+        })
+      )
+    ).toEqual({
+      annotation: null,
+      status: 'absent'
+    });
+
+    const nbspTrailingMarker = '<!-- easymde-table-align:v1 [[0,"center"]] -->\u00a0';
+    const nbspTrailingSource = `${nbspTrailingMarker}\n${simpleTable}`;
+    expect(
+      parseTableAlignmentAnnotation(
+        context(nbspTrailingSource, {
+          baseAlignments: [null, null],
+          rowCount: 1
+        })
+      )
+    ).toEqual({
+      code: 'table-alignment-annotation-marker-invalid',
+      status: 'invalid'
+    });
+
+    for (const blankLine of ['    ', '\t', ' \t ']) {
+      const orphanSource = `<!-- easymde-table-align:v1 [[0,"center"]] -->\n${blankLine}\n${simpleTable}`;
+      expect(
+        parseTableAlignmentAnnotation(
+          context(orphanSource, {
+            baseAlignments: [null, null],
+            rowCount: 1
+          })
+        ),
+        JSON.stringify(blankLine)
+      ).toEqual({
+        code: 'table-alignment-annotation-marker-orphan',
+        status: 'invalid'
+      });
+    }
+
+    const unsafeIntSource = `<!-- easymde-table-align:v1 [[9007199254740992,"center"]] -->\n${simpleTable}`;
+    expect(
+      parseTableAlignmentAnnotation(
+        context(unsafeIntSource, {
+          baseAlignments: [null, null],
+          rowCount: 1
+        })
+      )
+    ).toEqual({
+      code: 'table-alignment-annotation-entry-invalid',
+      status: 'invalid'
+    });
+  });
 });

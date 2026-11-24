@@ -1,3 +1,4 @@
+import { isReservedTableAlignmentMarkerPrefix } from "../../shared/table-alignment-marker";
 import type {
 	EditorMarkdownBlockIndex,
 } from "./editor-markdown-block-index";
@@ -91,6 +92,7 @@ export type ParsedTableCell = Readonly<{
 
 export type ParsedTableRow = Readonly<{
 	cells: ReadonlyArray<ParsedTableCell>;
+	leadingPipe: boolean;
 	lineIndex: number;
 	parsed: boolean;
 }>;
@@ -151,8 +153,8 @@ export function pipePositions(text: string): number[] {
 }
 
 /**
- * Table syntax allows at most three spaces before a leading pipe. Four spaces
- * or a tab introduce indented code instead, so that prefix is not table
+ * Table headers allow at most three spaces before a leading pipe. Four spaces
+ * or a tab introduce indented code instead, so that prefix is not header table
  * syntax and its bytes stay inside the following cell.
  */
 function leadingPipePrefix(text: string, firstPipe: number): string | null {
@@ -160,16 +162,12 @@ function leadingPipePrefix(text: string, firstPipe: number): string | null {
 	return /^ {0,3}$/u.test(prefix) ? prefix : null;
 }
 
-export function hasLeadingPipe(text: string): boolean {
-	const first = pipePositions(text)[0];
-	return undefined !== first && null !== leadingPipePrefix(text, first);
-}
-
 /**
  * Four spaces or a tab of leading indentation introduce indented code, so a
- * line indented that far is never table syntax - with or without a leading
+ * line indented that far is never a table header - with or without a leading
  * pipe. Rejecting it here keeps the paragraph-to-table promotion from treating
- * code bytes as cells; a table still needs its own 0-3 space indentation.
+ * code bytes as cells; a table header still needs its own 0-3 space
+ * indentation.
  */
 function rowIndentationIsCode(text: string): boolean {
 	const indentation = text.match(/^[ \t]*/u)?.[0] ?? "";
@@ -179,10 +177,14 @@ function rowIndentationIsCode(text: string): boolean {
 function parseTableRow(
 	line: MarkdownLine,
 	lineIndex: number,
+	options?: Readonly<{ allowIndentedLeadingPipe?: boolean }>,
 ): ParsedTableRow | null {
 	const positions = pipePositions(line.text);
 	if (0 === positions.length) return null;
-	const leading = null !== leadingPipePrefix(line.text, positions[0] ?? 0);
+	const firstPipe = positions[0] ?? 0;
+	const leading = options?.allowIndentedLeadingPipe
+		? /^[ \t]*$/u.test(line.text.slice(0, firstPipe))
+		: null !== leadingPipePrefix(line.text, firstPipe);
 	const lastPipe = positions[positions.length - 1];
 	const trailing =
 		undefined !== lastPipe && /^[ \t]*$/u.test(line.text.slice(lastPipe + 1));
@@ -200,11 +202,11 @@ function parseTableRow(
 		cells.push({ end, raw: line.text.slice(start, end), start });
 	}
 
-	return { cells, lineIndex, parsed: true };
+	return { cells, leadingPipe: leading, lineIndex, parsed: true };
 }
 
 function isTableDelimiter(cell: ParsedTableCell): boolean {
-	return /^\s*:?-{1,}:?\s*$/u.test(cell.raw);
+	return /^[ \t]*:?-{1,}:?[ \t]*$/u.test(cell.raw);
 }
 
 function tableAtLine(
@@ -227,6 +229,10 @@ function tableAtLine(
 	// Cache each candidate row once. In a document made of delimiter-looking
 	// rows, every pair can look like a table header and separator. Re-parsing
 	// the complete suffix for each candidate makes the old lookup quadratic.
+	// CommonMark `TableStartParser::parseSeparator()` and `TableParser::split()`
+	// both skip arbitrary leading ASCII spaces/tabs before a leading pipe on
+	// separator and body rows, while any valid header line has at most 3 spaces
+	// (so `allowIndentedLeadingPipe: true` is identical to `false` on headers).
 	const parsedRows = new Array<ParsedTableRow | null>(lines.length).fill(null);
 	const sameWidthRunEnd = new Array<number | undefined>(lines.length);
 	for (
@@ -235,7 +241,9 @@ function tableAtLine(
 		lineIndex -= 1
 	) {
 		const line = lines[lineIndex];
-		const row = line ? parseTableRow(line, lineIndex) : null;
+		const row = line
+			? parseTableRow(line, lineIndex, { allowIndentedLeadingPipe: true })
+			: null;
 		parsedRows[lineIndex] = row;
 		if (!row) continue;
 		const nextRow = parsedRows[lineIndex + 1];
@@ -257,8 +265,9 @@ function tableAtLine(
 		// indented code, not a table. The parser already reports that shape as
 		// code, but a preceding paragraph reaches the promotion below instead,
 		// so the code indent is rejected here where the candidate is chosen.
-		// Rows and separators keep the parser's own admission: only the header
-		// decides whether this candidate is a table at all.
+		// Rows and separators keep `league/commonmark`'s own admission: once
+		// the header opens a paragraph, indented separators and body rows still
+		// parse as table rows.
 		const headerLine = lines[startLine];
 		if (headerLine && rowIndentationIsCode(headerLine.text)) continue;
 		if (header.cells.length !== separator.cells.length) continue;
@@ -309,7 +318,7 @@ function trustedAnnotationPrefixRange(
 	const between = value.slice(previous.to, lineContentEnd);
 	if (!/^[ \t\r\n]*$/u.test(between)) return undefined;
 	const text = value.slice(previous.from, previous.to);
-	if (!text.trimStart().startsWith("<!-- easymde-table-align:"))
+	if (null === isReservedTableAlignmentMarkerPrefix(text))
 		return undefined;
 	return {
 		from: previous.from,

@@ -1,18 +1,27 @@
 /**
- * Single TypeScript owner of the `<!-- easymde-table-align:v1 [...] -->`
- * grammar. Mirrors `src/Content/TableAlignmentAnnotation.php` exactly:
- * bounded payload, strictly ordered row/cell entries, an explicit row override
- * for every cell override, and no redundant row override.
+ * Visual-editor adapter over the shared canonical
+ * `<!-- easymde-table-align:v1 [...] -->` grammar in
+ * `shared/table-alignment-marker.ts` (mirroring PHP
+ * `src/Content/TableAlignmentAnnotation.php`).
  */
+import {
+	isTableAlignmentMarkerValue,
+	parseReservedTableAlignmentMarkerLine,
+	parseTableAlignmentEntryList,
+	serializeTableAlignmentMarker,
+	TABLE_ALIGNMENT_MARKER_PREFIX,
+	TABLE_ALIGNMENT_MARKER_SUFFIX,
+	type TableAlignmentMarkerEntry,
+	type TableAlignmentMarkerValue,
+	validateTableAlignmentEntries,
+} from "../../shared/table-alignment-marker";
 import type { TableTextAlign } from "./visual-schema";
 
-export const TABLE_ALIGN_PREFIX = "<!-- easymde-table-align:v1 ";
-export const TABLE_ALIGN_SUFFIX = " -->";
+export const TABLE_ALIGN_PREFIX = TABLE_ALIGNMENT_MARKER_PREFIX;
+export const TABLE_ALIGN_SUFFIX = TABLE_ALIGNMENT_MARKER_SUFFIX;
 
-export type TableAlignAlignment = Exclude<TableTextAlign, null>;
-export type TableAlignEntry =
-	| readonly [number, TableAlignAlignment]
-	| readonly [number, number, TableAlignAlignment];
+export type TableAlignAlignment = TableAlignmentMarkerValue;
+export type TableAlignEntry = TableAlignmentMarkerEntry;
 
 export type TableAlignSnapshot = Readonly<{
 	rowCount: number;
@@ -21,145 +30,24 @@ export type TableAlignSnapshot = Readonly<{
 	cellAlignments: ReadonlyArray<ReadonlyArray<TableTextAlign>>;
 }>;
 
-const MAX_MARKER_LENGTH = 4096;
-const MAX_ENTRIES = 1000;
-
-function isAlignment(value: unknown): value is TableAlignAlignment {
-	return value === "left" || value === "center" || value === "right";
-}
-
-function isSafeIndex(value: unknown): value is number {
-	return typeof value === "number" && Number.isInteger(value) && value >= 0;
-}
-
-function isEntry(value: unknown): value is TableAlignEntry {
-	if (!Array.isArray(value)) {
-		return false;
-	}
-	if (value.length === 2) {
-		return isSafeIndex(value[0]) && isAlignment(value[1]);
-	}
-	if (value.length === 3) {
-		return (
-			isSafeIndex(value[0]) && isSafeIndex(value[1]) && isAlignment(value[2])
-		);
-	}
-	return false;
-}
-
 export function parseTableAlignComment(
 	comment: string | null | undefined,
 ): TableAlignEntry[] | null {
 	if (typeof comment !== "string") {
 		return null;
 	}
-	if (
-		comment.includes("\n") ||
-		comment.includes("\r") ||
-		comment.includes("\t")
-	) {
+	const parsed = parseReservedTableAlignmentMarkerLine(comment);
+	if (null === parsed || "code" in parsed) {
 		return null;
 	}
-	const trimmed = comment.trim();
-	if (trimmed.length > MAX_MARKER_LENGTH) {
-		return null;
-	}
-	if (
-		!trimmed.startsWith(TABLE_ALIGN_PREFIX) ||
-		!trimmed.endsWith(TABLE_ALIGN_SUFFIX)
-	) {
-		return null;
-	}
-	const payload = trimmed.slice(
-		TABLE_ALIGN_PREFIX.length,
-		trimmed.length - TABLE_ALIGN_SUFFIX.length,
-	);
-	let decoded: unknown;
-	try {
-		decoded = JSON.parse(payload) as unknown;
-	} catch {
-		return null;
-	}
-	if (!Array.isArray(decoded) || decoded.length > MAX_ENTRIES) {
-		return null;
-	}
-	if (!decoded.every((entry) => isEntry(entry))) {
-		return null;
-	}
-	return decoded as TableAlignEntry[];
-}
-
-function buildTableAlignComment(
-	entries: ReadonlyArray<TableAlignEntry>,
-): string | null {
-	if (entries.length === 0 || entries.length > MAX_ENTRIES) {
-		return null;
-	}
-	const comment = `${TABLE_ALIGN_PREFIX}${JSON.stringify(entries)}${TABLE_ALIGN_SUFFIX}`;
-	return comment.length > MAX_MARKER_LENGTH ? null : comment;
-}
-
-function entryOrder(entry: TableAlignEntry): readonly [number, number] {
-	return entry.length === 2 ? [entry[0], -1] : [entry[0], entry[1]];
-}
-
-function rowOverrideFor(
-	entries: ReadonlyArray<TableAlignEntry>,
-	row: number,
-): TableAlignAlignment | null {
-	for (const entry of entries) {
-		if (entry.length === 2 && entry[0] === row) {
-			return entry[1];
-		}
-	}
-	return null;
+	return parseTableAlignmentEntryList(parsed.rawEntries);
 }
 
 export function validateTableAlignEntries(
 	entries: ReadonlyArray<TableAlignEntry>,
 	snapshot: TableAlignSnapshot,
 ): boolean {
-	let previous: readonly [number, number] | null = null;
-	for (const entry of entries) {
-		const order = entryOrder(entry);
-		if (order[0] >= snapshot.rowCount) {
-			return false;
-		}
-		if (entry.length === 3 && entry[1] >= snapshot.columnCount) {
-			return false;
-		}
-		if (
-			previous !== null &&
-			(order[0] < previous[0] ||
-				(order[0] === previous[0] && order[1] <= previous[1]))
-		) {
-			return false;
-		}
-		previous = order;
-	}
-
-	for (const entry of entries) {
-		const row = entry[0];
-		const align = entry.length === 2 ? entry[1] : entry[2];
-		if (entry.length === 2) {
-			const hasDifferentBase = snapshot.baseAlignments.some(
-				(base) => base !== align,
-			);
-			const hasCellException = entries.some(
-				(candidate) => candidate.length === 3 && candidate[0] === row,
-			);
-			if (!hasDifferentBase && !hasCellException) {
-				return false;
-			}
-			continue;
-		}
-		const rowAlignment = rowOverrideFor(entries, row);
-		if (rowAlignment === null || rowAlignment === align) {
-			return false;
-		}
-	}
-
-	return true;
+	return "entries" in validateTableAlignmentEntries(entries, snapshot);
 }
 
 export function resolveTableAlignments(
@@ -255,7 +143,7 @@ function deriveTableAlignEntries(
 			(align, column) => align !== (snapshot.baseAlignments[column] ?? null),
 		);
 		const rowAlign = desired[candidateIndex];
-		if (!isAlignment(rowAlign)) {
+		if (!isTableAlignmentMarkerValue(rowAlign)) {
 			return null;
 		}
 		entries.push([row, rowAlign]);
@@ -264,7 +152,7 @@ function deriveTableAlignEntries(
 		}
 		for (let column = 0; column < desired.length; column += 1) {
 			const cellAlign = desired[column];
-			if (cellAlign !== rowAlign && isAlignment(cellAlign)) {
+			if (cellAlign !== rowAlign && isTableAlignmentMarkerValue(cellAlign)) {
 				entries.push([row, column, cellAlign]);
 			}
 		}
@@ -287,11 +175,11 @@ export function reconcileTableAlignComment(
 		validateTableAlignEntries(storedEntries, snapshot) &&
 		matchesSnapshot(resolveTableAlignments(storedEntries, snapshot), snapshot)
 	) {
-		const preserved = buildTableAlignComment(storedEntries);
+		const preserved = serializeTableAlignmentMarker(storedEntries);
 		if (preserved !== null) {
 			return preserved;
 		}
 	}
 	const derived = deriveTableAlignEntries(snapshot);
-	return derived === null ? null : buildTableAlignComment(derived);
+	return derived === null ? null : serializeTableAlignmentMarker(derived);
 }

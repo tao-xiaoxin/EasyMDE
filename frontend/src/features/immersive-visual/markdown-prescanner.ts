@@ -1,3 +1,4 @@
+import { parseReservedTableAlignmentMarkerLine } from "../../shared/table-alignment-marker";
 import {
 	extractInlineProtectedSyntax,
 	type ProtectedInlineEntry,
@@ -619,13 +620,14 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		}
 
 		// 3. EasyMDE table alignment annotation directly preceding a GFM table.
-		if (
-			analysis.content.startsWith(TABLE_ALIGN_PREFIX) &&
-			analysis.content.trim().endsWith(TABLE_ALIGN_SUFFIX) &&
+		const parsedTableAlign =
+			analysis.indent <= 3 &&
 			isGfmTableStartAt(lines[i + 1] ?? "", lines[i + 2] ?? "")
-		) {
+				? parseReservedTableAlignmentMarkerLine(analysis.rest)
+				: null;
+		if (null !== parsedTableAlign && !("code" in parsedTableAlign)) {
 			const markerToken = `${sentinel}TBLALIGN${tableAlignMarkers.size}END`;
-			tableAlignMarkers.set(markerToken, analysis.content.trim());
+			tableAlignMarkers.set(markerToken, parsedTableAlign.text);
 			pushOutputLine(
 				`${analysis.prefix}${" ".repeat(analysis.indent)}${markerToken}`,
 				{ end: i + 1, start: i },

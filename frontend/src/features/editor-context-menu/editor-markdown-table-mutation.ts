@@ -7,7 +7,6 @@ import {
 	type EditorTextEdit,
 } from "./editor-context-menu-text-edit";
 import {
-	hasLeadingPipe,
 	type MarkdownTableOperation,
 	type ParsedTableRow,
 	type PreparedMarkdownTable,
@@ -44,8 +43,8 @@ function cellInsertPosition(
 	const nextCell = row.cells[column + 1];
 	const newCell = delimiterRow ? " --- " : "  ";
 	if ("left" === side) {
-		if (0 === column && !hasLeadingPipe(text)) {
-			const leadingIndent = text.match(/^ {0,3}/u)?.[0].length ?? 0;
+		if (0 === column && !row.leadingPipe) {
+			const leadingIndent = text.match(/^[ \t]*/u)?.[0].length ?? 0;
 			return {
 				caretOffset: 2,
 				insert: `|${newCell}|`,
@@ -156,17 +155,16 @@ function deleteTableColumn(
 		if (!line || !cell)
 			throw new Error("editor-context-menu-table-column-missing");
 		const nextCell = row.cells[column + 1];
-		const preserveLeadingSeparatorPipe =
-			0 === column && !hasLeadingPipe(line.text);
+		const preserveLeadingSeparatorPipe = 0 === column && !row.leadingPipe;
 		const preserveTrailingSeparatorPipe =
 			1 === column &&
 			2 === row.cells.length &&
-			!hasLeadingPipe(line.text) &&
+			!row.leadingPipe &&
 			!hasTrailingDelimiterPipe(row, line.text);
 		let from: number;
 		let to: number;
 		if (preserveLeadingSeparatorPipe) {
-			const leadingIndent = line.text.match(/^ {0,3}/u)?.[0].length ?? 0;
+			const leadingIndent = line.text.match(/^[ \t]*/u)?.[0].length ?? 0;
 			from = cell.start + leadingIndent;
 			to = nextCell ? nextCell.start - 1 : cell.end;
 		} else if (preserveTrailingSeparatorPipe) {

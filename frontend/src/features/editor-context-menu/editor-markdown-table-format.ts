@@ -11,7 +11,6 @@ import {
 import type { EditorMarkdownBlockIndex } from "./editor-markdown-block-index";
 import type { MarkdownLine } from "./editor-markdown-lines";
 import {
-	hasLeadingPipe,
 	type ParsedTableRow,
 	type PreparedMarkdownTable,
 	pipePositions,
@@ -113,7 +112,7 @@ function formatTableRow(
 	const positions = pipePositions(line.text);
 	const lastPipe = positions[positions.length - 1];
 	if (undefined === lastPipe) return null;
-	const leadingPipe = hasLeadingPipe(line.text);
+	const leadingPipe = row.leadingPipe;
 	const indentationLength = leadingPipe
 		? 0
 		: leadingHorizontalPaddingLength(line.text);

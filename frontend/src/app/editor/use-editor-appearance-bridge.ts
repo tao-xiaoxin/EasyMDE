@@ -45,6 +45,32 @@ import type {
 } from './editor-root-types';
 import type { WechatCopyStatusStore } from '../../features/wechat-export/wechat-copy-status';
 
+const STYLESHEET_FAILURE_CODES: ReadonlySet<string> = new Set([
+  'editor-stylesheet-apply-failed',
+  'editor-stylesheet-import-unavailable',
+  'editor-stylesheet-nested-rule-invalid',
+  'editor-stylesheet-read-failed',
+  'editor-stylesheet-rollback-failed',
+  'editor-stylesheet-rule-invalid',
+  'editor-stylesheet-scope-conflict',
+  'editor-stylesheet-scope-empty',
+  'editor-stylesheet-scope-invalid',
+  'editor-stylesheet-scope-stale',
+  'editor-stylesheet-selector-invalid',
+  'editor-stylesheet-unavailable',
+  'preview-enhancement-style-scope-failed'
+]);
+
+function codeThemeFailureCode(error: unknown): string {
+  if (
+    error instanceof Error
+    && STYLESHEET_FAILURE_CODES.has(error.message)
+  ) {
+    return error.message;
+  }
+  return previewEnhancementFailureCode(error);
+}
+
 export type UseEditorAppearanceBridgeOptions = Readonly<{
   appearance: AppearanceBootstrap;
   appearancePort: AppearancePort;
@@ -183,6 +209,7 @@ export function useEditorAppearanceBridge({
     () => ({
       applyState: async (state, nextCodeThemeExplicit) => {
         const previousState = previewAppearanceRef.current;
+        const previousCodeThemeExplicit = codeThemeExplicitRef.current;
         const codeThemeChanged = previousState.codeTheme !== state.codeTheme;
         const appearanceChanged =
           previousState.markdownTheme !== state.markdownTheme
@@ -238,7 +265,7 @@ export function useEditorAppearanceBridge({
               && codeThemePreparationRef.current?.generation === generation
               && rootActiveRef.current
             ) {
-              reportFailure(previewEnhancementFailureCode(error));
+              reportFailure(codeThemeFailureCode(error));
             }
             if (codeThemePreparationRef.current?.generation === generation) {
               codeThemePreparationRef.current = null;
@@ -286,9 +313,35 @@ export function useEditorAppearanceBridge({
           clearAppearanceTransition();
           return false;
         }
+        try {
+          preparation.prepared?.commit();
+        } catch (error: unknown) {
+          preparation.prepared?.cancel();
+          const shouldRollbackAndReport =
+            !controller.signal.aborted
+            && codeThemePreparationGenerationRef.current === generation
+            && rootActiveRef.current;
+          if (codeThemePreparationRef.current?.generation === generation) {
+            codeThemePreparationRef.current = null;
+          }
+          if (shouldRollbackAndReport) {
+            try {
+              await rawAppearancePort.applyState(
+                previousState,
+                previousCodeThemeExplicit
+              );
+            } catch {
+              // Best-effort rollback of native fields and article theme; preserve primary commit error.
+            }
+          }
+          clearAppearanceTransition();
+          if (shouldRollbackAndReport && rootActiveRef.current) {
+            reportFailure(codeThemeFailureCode(error));
+          }
+          return false;
+        }
         if (appearanceChanged) cancelWechatCopyForThemeChange();
         clearAppearanceTransition();
-        preparation.prepared?.commit();
         codeThemePreparationRef.current = null;
         if (codeThemeChanged) {
           codeThemeFrameSyncPendingRef.current = state.codeTheme;

@@ -1425,6 +1425,107 @@ describe('EditorRoot publish and appearance', () => {
     expect(view.getByText('未保存')).not.toBeNull();
   });
 
+  it('keeps previous code theme, rolls back raw appearance, and clears copy lock when prepared commit throws', async () => {
+    const props = fixture();
+    const nativeFields = {
+      codeTheme: 'atom-one-dark',
+      codeThemeExplicit: '0',
+      customCssId: '',
+      markdownTheme: 'default'
+    };
+    vi.mocked(props.appearancePort.applyState).mockImplementation(
+      async (state, explicit) => {
+        nativeFields.codeTheme = state.codeTheme;
+        nativeFields.codeThemeExplicit = explicit ? '1' : '0';
+        nativeFields.customCssId = state.customCssId;
+        nativeFields.markdownTheme = state.markdownTheme;
+        return true;
+      }
+    );
+    const failingPrepared = {
+      cancel: vi.fn(),
+      commit: vi.fn(() => {
+        throw new Error('editor-stylesheet-rollback-failed');
+      })
+    };
+    vi.mocked(props.enhancementPort.prepareCodeTheme).mockResolvedValueOnce(
+      failingPrepared
+    );
+    const view = render(<EditorRoot {...props} />);
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenCalledTimes(1)
+    );
+
+    const copyButton = view.getByRole('button', { name: 'Copy to WeChat' });
+    expect(copyButton.getAttribute('aria-disabled')).toBeNull();
+
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Code theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'GitHub' }));
+
+    await waitFor(() =>
+      expect(props.onFailure).toHaveBeenCalledWith(
+        'editor-stylesheet-rollback-failed'
+      )
+    );
+
+    expect(failingPrepared.commit).toHaveBeenCalledTimes(1);
+    expect(failingPrepared.cancel).toHaveBeenCalledTimes(1);
+    expect(props.appearancePort.applyState).toHaveBeenCalledTimes(2);
+    expect(props.appearancePort.applyState).toHaveBeenNthCalledWith(
+      1,
+      {
+        codeTheme: 'github',
+        customCssId: '',
+        markdownTheme: 'default'
+      },
+      true
+    );
+    expect(props.appearancePort.applyState).toHaveBeenNthCalledWith(
+      2,
+      {
+        codeTheme: 'atom-one-dark',
+        customCssId: '',
+        markdownTheme: 'default'
+      },
+      false
+    );
+    expect(nativeFields).toEqual({
+      codeTheme: 'atom-one-dark',
+      codeThemeExplicit: '0',
+      customCssId: '',
+      markdownTheme: 'default'
+    });
+
+    const sink = view.container.querySelector(
+      '[data-easymde-preview-html-sink]'
+    );
+    expect(sink?.classList.contains('easymde-code-theme-atom-one-dark')).toBe(
+      true
+    );
+    expect(sink?.classList.contains('easymde-code-theme-github')).toBe(false);
+    expect(
+      props.enhancementPort.syncCodeFrameBackgrounds
+    ).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(
+        view.getByRole('combobox', { name: 'Code theme' }).textContent
+      ).toContain('Atom One Dark')
+    );
+
+    // WeChat Copy unavailable transition must be cleared so Copy to WeChat works again.
+    expect(copyButton.getAttribute('aria-disabled')).toBeNull();
+    fireEvent.click(copyButton);
+    await waitFor(() =>
+      expect(props.wechatClipboard.copy).toHaveBeenCalledOnce()
+    );
+
+    // submissionState must remain on the previous saved state (never dirtied to 'github').
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    expect(view.getByText('已保存')).not.toBeNull();
+  });
+
   it('cancels superseded code CSS preparation and commits only the latest theme', async () => {
     const props = fixture();
     const github =

@@ -86,7 +86,7 @@ function createStyleLoadWait(
 export type PreparedStyleOwner = 'activation' | 'enhancement';
 
 export type PreparedStyleLoad = Readonly<{
-  attemptCommit: () => void;
+  attemptCommit: () => Error | null;
   cancel: () => void;
   owner: PreparedStyleOwner;
   promise: Promise<PreparedCodeTheme>;
@@ -102,6 +102,7 @@ type PreparedStyleSlot = {
   enhancementBarriers: Map<number, Set<number>>;
   loads: Set<PreparedStyleLoad>;
   nextSequence: number;
+  reconcilePending: boolean;
   reconciling: boolean;
   suppressReconcile: boolean;
 };
@@ -149,6 +150,7 @@ export function createPreviewStylesheetLoader(
     const existing = documentRef.getElementById(id);
     if (
       cached?.url === url
+      && existing === cached.link
       && cached.link.isConnected
       && cached.link.getAttribute('href') === url
     ) {
@@ -165,6 +167,7 @@ export function createPreviewStylesheetLoader(
     const restored = styleLoads.get(id);
     if (
       restored?.url === url
+      && documentRef.getElementById(id) === restored.link
       && restored.link.isConnected
       && restored.link.getAttribute('href') === url
     ) {
@@ -218,12 +221,18 @@ export function createPreviewStylesheetLoader(
           try {
             orphanScopeLease.dispose();
           } catch (error) {
+            if (styleLoads.get(id) === orphanLoad) {
+              styleLoads.delete(id);
+            }
             disposeScopeLeaseSafely(acquiredScopeLease);
             return Promise.reject(toStyleScopeError(error));
           }
         }
       }
       if (isReuseInvalidated()) {
+        if (orphanLoad && styleLoads.get(id) === orphanLoad) {
+          styleLoads.delete(id);
+        }
         disposeScopeLeaseSafely(acquiredScopeLease);
         return Promise.reject(
           resourceError(
@@ -298,12 +307,19 @@ export function createPreviewStylesheetLoader(
       const isCurrentLoad = styleLoads.get(id) === load;
       if (isCurrentLoad && previous?.isConnected) {
         previous.id = id;
-        if (previousLoad) {
+        if (previousLoad && null !== previousLoad.scopeLease) {
           styleLoads.set(id, previousLoad);
         } else {
           styleLoads.delete(id);
         }
         return;
+      }
+      if (
+        previousLoad
+        && null === previousLoad.scopeLease
+        && styleLoads.get(id) === previousLoad
+      ) {
+        styleLoads.delete(id);
       }
       if (previousLoad && styleLoads.get(id) !== previousLoad) {
         disposeScopeLeaseSafely(previousLoad.scopeLease);
@@ -453,7 +469,7 @@ export function createPreviewStylesheetLoader(
   ): PreparedStyleLoad {
     if (isLoaderDisposed()) {
       return {
-        attemptCommit: () => undefined,
+        attemptCommit: () => null,
         cancel: () => undefined,
         owner,
         promise: Promise.reject(resourceError('preview-enhancement-runtime-unavailable')),
@@ -462,7 +478,7 @@ export function createPreviewStylesheetLoader(
     }
     if (signal.aborted) {
       return {
-        attemptCommit: () => undefined,
+        attemptCommit: () => null,
         cancel: () => undefined,
         owner,
         promise: Promise.reject(resourceError('preview-enhancement-resource-stale')),
@@ -480,6 +496,7 @@ export function createPreviewStylesheetLoader(
         enhancementBarriers: new Map(),
         loads: new Set(),
         nextSequence: 0,
+        reconcilePending: false,
         reconciling: false,
         suppressReconcile: false
       };
@@ -489,7 +506,7 @@ export function createPreviewStylesheetLoader(
     const existing = documentRef.getElementById(id);
     if (existing && !(existing instanceof HTMLLinkElement)) {
       return {
-        attemptCommit: () => undefined,
+        attemptCommit: () => null,
         cancel: () => undefined,
         owner,
         promise: Promise.reject(resourceError('preview-enhancement-resource-conflict')),
@@ -511,6 +528,7 @@ export function createPreviewStylesheetLoader(
     let settled = false;
     let scopeLease: EditorStylesheetScopeLease | null = null;
     let commitRequested = false;
+    let commitError: Error | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let resolveLoad!: (prepared: PreparedCodeTheme) => void;
     let rejectLoad!: (error: Error) => void;
@@ -567,17 +585,25 @@ export function createPreviewStylesheetLoader(
       }
     };
     const reconcile = () => {
-      if (slot.reconciling || slot.suppressReconcile) return;
+      if (slot.suppressReconcile) return;
+      if (slot.reconciling) {
+        slot.reconcilePending = true;
+        return;
+      }
       slot.reconciling = true;
       try {
-        for (const candidate of [...slot.loads].sort((left, right) => {
-          if (left.owner !== right.owner) return 'activation' === left.owner ? -1 : 1;
-          return right.sequence - left.sequence;
-        })) {
-          candidate.attemptCommit();
-        }
+        do {
+          slot.reconcilePending = false;
+          for (const candidate of [...slot.loads].sort((left, right) => {
+            if (left.owner !== right.owner) return 'activation' === left.owner ? -1 : 1;
+            return right.sequence - left.sequence;
+          })) {
+            candidate.attemptCommit();
+          }
+        } while (slot.reconcilePending && !slot.suppressReconcile);
       } finally {
         slot.reconciling = false;
+        slot.reconcilePending = false;
       }
     };
     let load!: PreparedStyleLoad;
@@ -611,93 +637,98 @@ export function createPreviewStylesheetLoader(
       reconcile();
       pruneActivationOutcomes();
     };
-    const applyCommit = () => {
-      if ('ready' !== state || !commitRequested || isLoaderDisposed()) return;
+    const applyCommit = (): Error | null => {
+      if ('ready' !== state || !commitRequested || isLoaderDisposed()) return null;
       if ('activation' === owner) {
         if (sequence < slot.committedActivationSequence) {
           finish();
-          return;
+          return null;
         }
       } else {
-        if (activationBlocksEnhancement()) return;
+        if (activationBlocksEnhancement()) return null;
         const overlappingActivationUrl = latestSuccessfulOverlappingActivation();
         if (overlappingActivationUrl && overlappingActivationUrl !== url) {
           finish();
-          return;
+          return null;
         }
         if (slot.authoritativeActivationUrl && slot.authoritativeActivationUrl !== url) {
           finish();
-          return;
+          return null;
         }
         if (sequence < slot.committedEnhancementSequence) {
           finish();
-          return;
+          return null;
         }
       }
 
+      let previousLoadToEvict: StyleLoad | null = null;
+      const failCommit = (error: Error): Error => {
+        if (
+          previousLoadToEvict
+          && styleLoads.get(id) === previousLoadToEvict
+        ) {
+          styleLoads.delete(id);
+        }
+        commitError = error;
+        finish(error);
+        return error;
+      };
+
       if (link && !link.isConnected) {
-        finish();
-        return;
+        return failCommit(resourceError('preview-enhancement-resource-stale'));
       }
       const existingBeforeCancel = documentRef.getElementById(id);
       if (existingBeforeCancel && !(existingBeforeCancel instanceof HTMLLinkElement)) {
-        finish();
-        return;
+        return failCommit(resourceError('preview-enhancement-resource-conflict'));
       }
       const activeLoad = styleLoads.get(id);
       if (activeLoad && !activeLoad.loaded()) {
         activeLoad.cancel();
       }
       if ('ready' !== state || !commitRequested || isLoaderDisposed()) {
-        finish(
+        return failCommit(
           resourceError(
             isLoaderDisposed()
               ? 'preview-enhancement-runtime-unavailable'
               : 'preview-enhancement-resource-stale'
           )
         );
-        return;
       }
       const current = documentRef.getElementById(id);
       if (current && !(current instanceof HTMLLinkElement)) {
-        finish();
-        return;
+        return failCommit(resourceError('preview-enhancement-resource-conflict'));
       }
       if (!link && (!(existing instanceof HTMLLinkElement) || current !== existing)) {
-        finish();
-        return;
+        return failCommit(resourceError('preview-enhancement-resource-stale'));
       }
       const previousLoad = styleLoads.get(id);
       if (previousLoad) {
         const previousScopeLease = previousLoad.scopeLease;
         previousLoad.scopeLease = null;
+        previousLoadToEvict = previousLoad;
         if (previousScopeLease) {
           try {
             previousScopeLease.dispose();
           } catch (error) {
-            finish(toStyleScopeError(error));
-            return;
+            return failCommit(toStyleScopeError(error));
           }
         }
       }
       if ('ready' !== state || !commitRequested || isLoaderDisposed()) {
-        finish(
+        return failCommit(
           resourceError(
             isLoaderDisposed()
               ? 'preview-enhancement-runtime-unavailable'
               : 'preview-enhancement-resource-stale'
           )
         );
-        return;
       }
       if (link && !link.isConnected) {
-        finish();
-        return;
+        return failCommit(resourceError('preview-enhancement-resource-stale'));
       }
       const currentAfterDispose = documentRef.getElementById(id);
       if (currentAfterDispose && !(currentAfterDispose instanceof HTMLLinkElement)) {
-        finish();
-        return;
+        return failCommit(resourceError('preview-enhancement-resource-conflict'));
       }
       let activeLink: HTMLLinkElement;
       if (link) {
@@ -708,8 +739,7 @@ export function createPreviewStylesheetLoader(
         activeLink = link;
       } else {
         if (!(existing instanceof HTMLLinkElement) || currentAfterDispose !== existing) {
-          finish();
-          return;
+          return failCommit(resourceError('preview-enhancement-resource-stale'));
         }
         activeLink = existing;
       }
@@ -734,6 +764,7 @@ export function createPreviewStylesheetLoader(
         wait: (waitSignal) => waitForResource(ready, waitSignal)
       });
       finish(undefined, 'activation' === owner ? url : undefined, true);
+      return null;
     };
     const cancel = () => finish(resourceError('preview-enhancement-resource-stale'));
     const commit = () => {
@@ -741,8 +772,14 @@ export function createPreviewStylesheetLoader(
         cancel();
         return;
       }
+      commitError = null;
       commitRequested = true;
       reconcile();
+      if (commitError) {
+        const error = commitError;
+        commitError = null;
+        throw error;
+      }
     };
     const promise = new Promise<PreparedCodeTheme>((resolve, reject) => {
       resolveLoad = resolve;

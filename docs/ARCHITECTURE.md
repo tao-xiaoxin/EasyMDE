@@ -785,7 +785,10 @@ encode (with `create-browser-wechat-png-encoder.ts`,
 factory. The browser-facing responsibilities live in modular private families
 beside them:
 
-- clone metadata (`wechat-clone-metadata.ts`) and source freshness
+- clone metadata (`wechat-clone-metadata.ts`), lightweight shared copy
+  preconditions (`wechat-copy-preconditions.ts`, shared with
+  `admin-editor-lazy-wechat-ports.ts`, `wechat-source-freshness.ts`, and
+  `create-browser-wechat-clipboard.ts`), and source freshness
   (`wechat-source-freshness.ts`);
 - style policy (`wechat-style-policy.ts`, `wechat-style-policy-catalog.ts`,
   `wechat-style-policy-content-box.ts`, `wechat-style-policy-semantics.ts`) and

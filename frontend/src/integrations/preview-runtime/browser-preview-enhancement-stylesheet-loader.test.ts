@@ -7,6 +7,7 @@ const LINK_ID = 'easymde-test-css';
 const URL_V1 = 'https://example.test/assets/v1.css';
 const URL_V2 = 'https://example.test/assets/v2.css';
 const URL_V3 = 'https://example.test/assets/v3.css';
+const URL_V4 = 'https://example.test/assets/v4.css';
 
 const appended: Element[] = [];
 const linkSheets = new WeakMap<HTMLLinkElement, CSSStyleSheet | null>();
@@ -661,5 +662,194 @@ describe('createPreviewStylesheetLoader loadStylesheet rollback and scope preser
 
     loader.dispose();
     expect(scopedRuleCount(allowedV3Sheet)).toBe(0);
+  });
+
+  it('suppresses prepared-slot reconciliation during loadStylesheet cancellation sweep so failed direct load rolls back to active stylesheet A, not blocked enhancement B', async () => {
+    const loader = createPreviewStylesheetLoader(
+      document,
+      () => false,
+      ROOT_SELECTOR
+    );
+
+    // 1. Load active stylesheet A (URL_V1) on LINK_ID.
+    const loadA = loader.loadStylesheet(
+      LINK_ID,
+      URL_V1,
+      new AbortController().signal
+    );
+    const linkA = document.getElementById(LINK_ID) as HTMLLinkElement;
+    expect(linkA).not.toBeNull();
+    const sheetA = attachStyleSheet(linkA, '.v1 { color: red; }');
+    linkA.dispatchEvent(new Event('load'));
+    await loadA;
+    expect(document.getElementById(LINK_ID)).toBe(linkA);
+    expect(linkA.getAttribute('href')).toBe(URL_V1);
+    expect(scopedRuleCount(sheetA)).toBe(1);
+
+    // 2. Start a pending activation (URL_V4) that stays in-flight and blocks enhancements.
+    const pendingActivation = loader.prepareStylesheet(
+      LINK_ID,
+      URL_V4,
+      new AbortController().signal,
+      'activation'
+    );
+    const activationLink = Array.from(
+      document.querySelectorAll<HTMLLinkElement>(
+        `link[data-easymde-stylesheet-owner="${LINK_ID}"]`
+      )
+    ).find((candidate) => candidate !== linkA);
+    if (!activationLink) throw new Error('pending activation link missing');
+
+    // 3. Start enhancement B (URL_V2), complete its load, and request commit while still blocked.
+    const preparedB = loader.prepareStylesheet(
+      LINK_ID,
+      URL_V2,
+      new AbortController().signal,
+      'enhancement'
+    );
+    const linkB = Array.from(
+      document.querySelectorAll<HTMLLinkElement>(
+        `link[data-easymde-stylesheet-owner="${LINK_ID}"]`
+      )
+    ).find((candidate) => candidate !== linkA && candidate !== activationLink);
+    if (!linkB) throw new Error('enhancement B link missing');
+    const sheetB = attachStyleSheet(linkB, '.v2 { color: blue; }');
+    linkB.dispatchEvent(new Event('load'));
+    const readyB = await preparedB.promise;
+    readyB.commit();
+
+    // B must remain queued/uncommitted behind the pending activation; A remains active.
+    expect(document.getElementById(LINK_ID)).toBe(linkA);
+    expect(linkB.isConnected).toBe(true);
+    expect(linkB.id).toBe('');
+    expect(linkB.media).toBe('not all');
+    expect(scopedRuleCount(sheetA)).toBe(1);
+    expect(scopedRuleCount(sheetB)).toBe(1);
+
+    // 4. Start a direct loadStylesheet for C (URL_V3). Its cancellation sweep must NOT
+    // reconcile/commit B when cancelling the pending activation first.
+    const loadC = loader.loadStylesheet(
+      LINK_ID,
+      URL_V3,
+      new AbortController().signal
+    );
+    await expect(pendingActivation.promise).rejects.toThrowError(
+      'preview-enhancement-resource-stale'
+    );
+
+    expect(activationLink.isConnected).toBe(false);
+    expect(linkB.isConnected).toBe(false);
+    expect(linkB.id).toBe('');
+    expect(linkB.media).toBe('not all');
+    expect(scopedRuleCount(sheetB)).toBe(0);
+
+    // A must remain preserved as the rollback target with its scopeLease still active.
+    expect(linkA.isConnected).toBe(true);
+    expect(linkA.id).toBe(`${LINK_ID}-previous`);
+    expect(linkA.getAttribute('href')).toBe(URL_V1);
+    expect(scopedRuleCount(sheetA)).toBe(1);
+
+    const linkC = document.getElementById(LINK_ID) as HTMLLinkElement;
+    expect(linkC).not.toBeNull();
+    expect(linkC).not.toBe(linkA);
+    expect(linkC).not.toBe(linkB);
+    expect(linkC).not.toBe(activationLink);
+    expect(linkC.getAttribute('href')).toBe(URL_V3);
+
+    // 5. Fail direct load C: rollback must restore A (NOT B) with id, href, and scopeLease intact.
+    linkC.dispatchEvent(new Event('error'));
+    await expect(loadC).rejects.toThrowError(
+      'preview-enhancement-resource-load-failed'
+    );
+
+    expect(linkC.isConnected).toBe(false);
+    expect(linkB.isConnected).toBe(false);
+    expect(document.getElementById(LINK_ID)).toBe(linkA);
+    expect(linkA.id).toBe(LINK_ID);
+    expect(linkA.getAttribute('href')).toBe(URL_V1);
+    expect(scopedRuleCount(sheetA)).toBe(1);
+    expect(scopedRuleCount(sheetB)).toBe(0);
+    expect(
+      document.querySelectorAll(
+        `link[data-easymde-stylesheet-owner="${LINK_ID}"]`
+      )
+    ).toHaveLength(1);
+
+    // Late commit call on cancelled B must remain inert.
+    readyB.commit();
+    expect(document.getElementById(LINK_ID)).toBe(linkA);
+    expect(linkB.isConnected).toBe(false);
+    expect(scopedRuleCount(sheetA)).toBe(1);
+
+    // styleLoads must still point to restored A (reused without re-append or double scoping).
+    const appendSpy = vi.spyOn(document.head, 'appendChild');
+    await expect(
+      loader.loadStylesheet(LINK_ID, URL_V1, new AbortController().signal)
+    ).resolves.toBeUndefined();
+    expect(appendSpy).not.toHaveBeenCalled();
+    expect(scopedRuleCount(sheetA)).toBe(1);
+
+    loader.dispose();
+    expect(scopedRuleCount(sheetA)).toBe(0);
+  });
+
+  it('suppresses prepared-slot reconciliation during dispose() so blocked enhancement B is not committed during teardown', async () => {
+    const loader = createPreviewStylesheetLoader(
+      document,
+      () => false,
+      ROOT_SELECTOR
+    );
+
+    const loadA = loader.loadStylesheet(
+      LINK_ID,
+      URL_V1,
+      new AbortController().signal
+    );
+    const linkA = document.getElementById(LINK_ID) as HTMLLinkElement;
+    const sheetA = attachStyleSheet(linkA, '.v1 { color: red; }');
+    linkA.dispatchEvent(new Event('load'));
+    await loadA;
+
+    const pendingActivation = loader.prepareStylesheet(
+      LINK_ID,
+      URL_V4,
+      new AbortController().signal,
+      'activation'
+    );
+    const activationLink = Array.from(
+      document.querySelectorAll<HTMLLinkElement>(
+        `link[data-easymde-stylesheet-owner="${LINK_ID}"]`
+      )
+    ).find((candidate) => candidate !== linkA);
+    if (!activationLink) throw new Error('pending activation link missing');
+
+    const preparedB = loader.prepareStylesheet(
+      LINK_ID,
+      URL_V2,
+      new AbortController().signal,
+      'enhancement'
+    );
+    const linkB = Array.from(
+      document.querySelectorAll<HTMLLinkElement>(
+        `link[data-easymde-stylesheet-owner="${LINK_ID}"]`
+      )
+    ).find((candidate) => candidate !== linkA && candidate !== activationLink);
+    if (!linkB) throw new Error('enhancement B link missing');
+    const sheetB = attachStyleSheet(linkB, '.v2 { color: blue; }');
+    linkB.dispatchEvent(new Event('load'));
+    const readyB = await preparedB.promise;
+    readyB.commit();
+
+    loader.dispose();
+    await expect(pendingActivation.promise).rejects.toThrowError(
+      'preview-enhancement-resource-stale'
+    );
+
+    expect(activationLink.isConnected).toBe(false);
+    expect(linkB.isConnected).toBe(false);
+    expect(linkB.id).toBe('');
+    expect(linkB.media).toBe('not all');
+    expect(scopedRuleCount(sheetA)).toBe(0);
+    expect(scopedRuleCount(sheetB)).toBe(0);
   });
 });

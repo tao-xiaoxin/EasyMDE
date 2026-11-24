@@ -86,6 +86,7 @@ type PreparedStyleSlot = {
   loads: Set<PreparedStyleLoad>;
   nextSequence: number;
   reconciling: boolean;
+  suppressReconcile: boolean;
 };
 
 export function createPreviewStylesheetLoader(
@@ -96,6 +97,17 @@ export function createPreviewStylesheetLoader(
   const styleLoads = new Map<string, StyleLoad>();
   const preparedStyleSlots = new Map<string, PreparedStyleSlot>();
 
+  function cancelPreparedSlotLoads(slot: PreparedStyleSlot): void {
+    const loadsToCancel = [...slot.loads];
+    const previousSuppressReconcile = slot.suppressReconcile;
+    slot.suppressReconcile = true;
+    try {
+      for (const load of loadsToCancel) load.cancel();
+    } finally {
+      slot.suppressReconcile = previousSuppressReconcile;
+    }
+  }
+
   function loadStylesheet(id: string, url: string, signal: AbortSignal): Promise<void> {
     if (isDisposed()) {
       return Promise.reject(resourceError('preview-enhancement-runtime-unavailable'));
@@ -105,7 +117,7 @@ export function createPreviewStylesheetLoader(
     }
     const preparedSlot = preparedStyleSlots.get(id);
     if (preparedSlot) {
-      for (const load of [...preparedSlot.loads]) load.cancel();
+      cancelPreparedSlotLoads(preparedSlot);
     }
     const cached = styleLoads.get(id);
     const existing = documentRef.getElementById(id);
@@ -352,7 +364,8 @@ export function createPreviewStylesheetLoader(
         enhancementBarriers: new Map(),
         loads: new Set(),
         nextSequence: 0,
-        reconciling: false
+        reconciling: false,
+        suppressReconcile: false
       };
       preparedStyleSlots.set(id, slot);
     }
@@ -427,7 +440,7 @@ export function createPreviewStylesheetLoader(
       }
     };
     const reconcile = () => {
-      if (slot.reconciling) return;
+      if (slot.reconciling || slot.suppressReconcile) return;
       slot.reconciling = true;
       try {
         for (const candidate of [...slot.loads].sort((left, right) => {
@@ -632,7 +645,7 @@ export function createPreviewStylesheetLoader(
       load.scopeLease = null;
     }
     for (const slot of preparedStyleSlots.values()) {
-      for (const load of [...slot.loads]) load.cancel();
+      cancelPreparedSlotLoads(slot);
     }
     styleLoads.clear();
     preparedStyleSlots.clear();

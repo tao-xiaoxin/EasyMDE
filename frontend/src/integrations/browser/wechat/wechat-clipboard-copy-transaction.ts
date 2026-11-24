@@ -217,14 +217,11 @@ export async function executeModernCopyTransaction(
 		),
 	);
 	const observeBlobRejections = (): void => {
-		if (htmlBlob instanceof Promise) void htmlBlob.catch(() => undefined);
-		if (textBlob instanceof Promise) void textBlob.catch(() => undefined);
+		void htmlBlob.catch(() => undefined);
+		void textBlob.catch(() => undefined);
 	};
 	const rejectDeferred = (error: unknown): void => {
-		const rejectPayload = rejectDeferredPayload as
-			| ((reason: unknown) => void)
-			| null;
-		rejectPayload?.(error);
+		rejectDeferredPayload?.(error);
 	};
 	let writePromise: Promise<void>;
 	if (prestartedWrite) {

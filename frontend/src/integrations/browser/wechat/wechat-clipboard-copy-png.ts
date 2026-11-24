@@ -186,29 +186,7 @@ export function createPngCopyTransaction(
 	};
 
 	const finalizeTransaction = (): void => {
-		assertCopyPreviewCurrent(payloadPreview, copyGuard);
-		if (contentBoxes && !contentBoxes.isCurrent()) {
-			throw new Error("wechat-copy-stale");
-		}
-		if (!conversionSourceFreshness?.finalize()) {
-			throw new Error("wechat-copy-stale");
-		}
-		if (null === conversionFidelitySignature) {
-			throw new Error("wechat-copy-stale");
-		}
-		if (
-			preparedLayoutSignature(
-				payloadPreview,
-				runtime,
-				tableNativeGridMeasurement?.root ?? payloadPreview,
-				null,
-				undefined,
-				true,
-			) !== conversionFidelitySignature
-		) {
-			throw new Error("wechat-copy-stale");
-		}
-		tableNativeGridGuard?.assertCurrent();
+		assertBlobCurrent();
 		if (
 			tableNativeGridMeasurement &&
 			(!tableNativeGridMeasurement.isReady() ||

@@ -670,6 +670,73 @@ describe('createBrowserWechatVisualRasterizer', () => {
     }
   });
 
+  it('strips stylesheet-overridden inline border-radius and composites translucent direct SVG and nested group opacity', async () => {
+    stubCanvas();
+    const stylesheet = document.createElement('style');
+    stylesheet.textContent = [
+      '.square-override-root { border-radius: 0 !important; }',
+    ].join('\n');
+    document.head.appendChild(stylesheet);
+
+    const whiteCanvas = document.createElement('div');
+    whiteCanvas.className = 'easymde-immersive-preview-canvas';
+    whiteCanvas.style.backgroundColor = 'rgb(255, 255, 255)';
+    const halfOpacityGroup = document.createElement('div');
+    halfOpacityGroup.style.opacity = '0.5';
+    const opaqueRedInner = document.createElement('div');
+    opaqueRedInner.style.backgroundColor = 'rgb(255, 0, 0)';
+    const squareOverriddenRoot = document.createElement('div');
+    squareOverriddenRoot.className = 'easymde-mermaid square-override-root';
+    squareOverriddenRoot.style.borderRadius = '16px';
+    squareOverriddenRoot.innerHTML = '<svg width="20" height="10" viewBox="0 0 20 10"><path d="M0 0"></path></svg>';
+    opaqueRedInner.appendChild(squareOverriddenRoot);
+    halfOpacityGroup.appendChild(opaqueRedInner);
+    whiteCanvas.appendChild(halfOpacityGroup);
+    document.body.appendChild(whiteCanvas);
+
+    const darkCanvas = document.createElement('div');
+    darkCanvas.className = 'easymde-immersive-preview-canvas';
+    darkCanvas.style.backgroundColor = 'rgb(30, 30, 46)';
+    const translucentDirectSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    translucentDirectSvg.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
+    translucentDirectSvg.setAttribute('width', '20');
+    translucentDirectSvg.setAttribute('height', '10');
+    translucentDirectSvg.setAttribute('viewBox', '0 0 20 10');
+    translucentDirectSvg.innerHTML = '<path d="M0 0"></path>';
+    darkCanvas.appendChild(translucentDirectSvg);
+    document.body.appendChild(darkCanvas);
+
+    try {
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(squareOverriddenRoot, 'mermaid', 1, 20, 10),
+      );
+      const squareSerialized = decodeURIComponent(
+        imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? '',
+      );
+      const squareDoc = new DOMParser().parseFromString(squareSerialized, 'text/html');
+      const squareOuterStyle = squareDoc.querySelector('svg')?.getAttribute('style') ?? '';
+      const squareCloneStyle = squareDoc.querySelector('.easymde-mermaid')?.getAttribute('style') ?? '';
+      expect(squareOuterStyle).toContain('background-color: rgb(255, 128, 128)');
+      expect(squareCloneStyle).not.toContain('border-radius');
+      expect(squareCloneStyle).not.toContain('16px');
+
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(translucentDirectSvg, 'mermaid', 1, 20, 10),
+      );
+      const translucentSvgSerialized = decodeURIComponent(
+        imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? '',
+      );
+      const translucentSvgDoc = new DOMParser().parseFromString(translucentSvgSerialized, 'text/html');
+      const translucentSvgStyle = translucentSvgDoc.querySelector('svg')?.getAttribute('style') ?? '';
+      expect(translucentSvgStyle).toContain('background-color: rgb(48, 48, 63)');
+      expect(translucentSvgStyle).not.toContain('rgba(255, 255, 255, 0.08)');
+    } finally {
+      whiteCanvas.remove();
+      darkCanvas.remove();
+      stylesheet.remove();
+    }
+  });
+
   it('drops the KaTeX MathML fallback and carries stylesheet-derived math geometry', async () => {
     const canvasContext = { drawImage: vi.fn() };
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext')

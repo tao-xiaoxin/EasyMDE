@@ -74,13 +74,18 @@ const NAMED_CSS_COLOR_HEX: ReadonlyMap<string, string> = new Map([
   ['yellow', '#ffff00'],
 ]);
 
-const STRIPPED_INLINE_BACKGROUND_PROPERTIES = [
+const STRIPPED_INLINE_ROOT_PAINT_PROPERTIES = [
   'background',
   'background-image',
   'background-color',
   'background-position',
   'background-size',
   'background-repeat',
+  'border-radius',
+  'border-top-left-radius',
+  'border-top-right-radius',
+  'border-bottom-right-radius',
+  'border-bottom-left-radius',
 ] as const;
 
 type ReadableStyleProperty =
@@ -404,35 +409,6 @@ function formatCompositedColor(color: RgbaColor): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-function resolveCompositedAncestorColor(
-  opaqueColor: string,
-  opaqueBackingRgba: RgbaColor | null,
-  translucentLayers: readonly RgbaColor[],
-  translucentFallbackColor: string,
-): string {
-  if (opaqueColor) {
-    if (!translucentLayers.length || !opaqueBackingRgba) {
-      return opaqueColor;
-    }
-    let acc: RgbaColor = opaqueBackingRgba;
-    for (let index = translucentLayers.length - 1; index >= 0; index -= 1) {
-      const layer = translucentLayers[index];
-      if (layer) acc = compositeSourceOver(layer, acc);
-    }
-    return formatCompositedColor(acc);
-  }
-  if (translucentLayers.length) {
-    let acc: RgbaColor =
-      translucentLayers[translucentLayers.length - 1] ?? { a: 0, b: 0, g: 0, r: 0 };
-    for (let index = translucentLayers.length - 2; index >= 0; index -= 1) {
-      const layer = translucentLayers[index];
-      if (layer) acc = compositeSourceOver(layer, acc);
-    }
-    return formatCompositedColor(acc);
-  }
-  return translucentFallbackColor;
-}
-
 export function hasVisibleBackgroundColor(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   if (!normalized || NON_COLOR_KEYWORDS.has(normalized)) {
@@ -552,106 +528,215 @@ function buildMermaidBackground(
   return background.color || background.image ? background : null;
 }
 
-type AncestorWalkInitialImage = Readonly<{
-  blocked: boolean;
+type BackgroundImageLayer = Readonly<{
   image: string;
   position: string;
   repeat: string;
   size: string;
 }>;
 
+type MermaidBackgroundFoldState = {
+  blockedImageEncountered: boolean;
+  imageLayers: BackgroundImageLayer[];
+  solidRgba: RgbaColor | null;
+  unparseableFallbackColor: string;
+  unparseableOpaqueColor: string;
+};
+
+function createEmptyBackgroundFoldState(): MermaidBackgroundFoldState {
+  return {
+    blockedImageEncountered: false,
+    imageLayers: [],
+    solidRgba: null,
+    unparseableFallbackColor: '',
+    unparseableOpaqueColor: '',
+  };
+}
+
+function isFoldBottomOccluded(state: MermaidBackgroundFoldState): boolean {
+  return (
+    (state.solidRgba !== null && state.solidRgba.a >= 1 - 1e-6)
+    || Boolean(state.unparseableOpaqueColor)
+  );
+}
+
+function expandLayerPropertyList(rawValue: string, count: number, fallback: string): string[] {
+  const tokens = rawValue
+    ? splitTopLevelCommas(rawValue)
+        .map((part) => part.trim())
+        .filter(Boolean)
+    : [];
+  const sourceTokens = tokens.length > 0 ? tokens : [fallback];
+  const expanded: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    expanded.push(sourceTokens[index % sourceTokens.length] ?? fallback);
+  }
+  return expanded;
+}
+
+function mergeBackgroundImageLayers(
+  layers: readonly BackgroundImageLayer[],
+): BackgroundImageLayer {
+  if (0 === layers.length) {
+    return { image: '', position: '', repeat: '', size: '' };
+  }
+  if (1 === layers.length) {
+    return layers[0] ?? { image: '', position: '', repeat: '', size: '' };
+  }
+  const images: string[] = [];
+  const positions: string[] = [];
+  const repeats: string[] = [];
+  const sizes: string[] = [];
+  for (const layer of layers) {
+    const subLayerCount = Math.max(1, splitTopLevelCommas(layer.image).length);
+    images.push(layer.image);
+    positions.push(...expandLayerPropertyList(layer.position, subLayerCount, '0% 0%'));
+    sizes.push(...expandLayerPropertyList(layer.size, subLayerCount, 'auto'));
+    repeats.push(...expandLayerPropertyList(layer.repeat, subLayerCount, 'repeat'));
+  }
+  return {
+    image: images.join(', '),
+    position: positions.join(', '),
+    repeat: repeats.join(', '),
+    size: sizes.join(', '),
+  };
+}
+
+function finalizeMermaidBackground(
+  state: MermaidBackgroundFoldState,
+): WechatVisualMermaidBackground | null {
+  const color = state.solidRgba
+    ? formatCompositedColor(state.solidRgba)
+    : state.unparseableOpaqueColor || state.unparseableFallbackColor;
+  const merged = mergeBackgroundImageLayers(state.imageLayers);
+  return buildMermaidBackground(color, merged.image, merged.position, merged.size, merged.repeat);
+}
+
+function foldElementBackground(
+  state: MermaidBackgroundFoldState,
+  element: Element,
+  computed: CSSStyleDeclaration,
+): void {
+  const opacity = readElementOpacity(computed, element);
+  if (opacity <= 0) {
+    state.blockedImageEncountered = false;
+    state.imageLayers.length = 0;
+    state.solidRgba = null;
+    state.unparseableFallbackColor = '';
+    state.unparseableOpaqueColor = '';
+    return;
+  }
+
+  const image = readEffectiveStyleProperty(computed, element, 'background-image', 'backgroundImage');
+  const hasImage = hasBackgroundImage(image);
+  const safeImage = hasImage && isSafeBackgroundImage(image);
+  if (hasImage && !isFoldBottomOccluded(state)) {
+    if (!safeImage) {
+      state.blockedImageEncountered = true;
+    } else if (opacity >= 1 && !state.blockedImageEncountered) {
+      if (state.solidRgba && state.solidRgba.a > 0) {
+        const tintColor = formatCompositedColor(state.solidRgba);
+        if (tintColor) {
+          state.imageLayers.push({
+            image: `linear-gradient(${tintColor}, ${tintColor})`,
+            position: '0% 0%',
+            repeat: 'repeat',
+            size: 'auto',
+          });
+        }
+        state.solidRgba = null;
+        state.unparseableFallbackColor = '';
+      } else if (state.unparseableFallbackColor) {
+        const tintImage = `linear-gradient(${state.unparseableFallbackColor}, ${state.unparseableFallbackColor})`;
+        if (isSafeBackgroundImage(tintImage)) {
+          state.imageLayers.push({
+            image: tintImage,
+            position: '0% 0%',
+            repeat: 'repeat',
+            size: 'auto',
+          });
+        }
+        state.unparseableFallbackColor = '';
+      }
+      state.imageLayers.push({
+        image,
+        position: readEffectiveStyleProperty(computed, element, 'background-position', 'backgroundPosition'),
+        repeat: readEffectiveStyleProperty(computed, element, 'background-repeat', 'backgroundRepeat'),
+        size: readEffectiveStyleProperty(computed, element, 'background-size', 'backgroundSize'),
+      });
+    }
+  }
+
+  const color = readEffectiveStyleProperty(computed, element, 'background-color', 'backgroundColor');
+  if (hasVisibleBackgroundColor(color) && !isFoldBottomOccluded(state)) {
+    const parsedColor = parseCssSolidColor(color);
+    if (parsedColor) {
+      if (parsedColor.a > 0) {
+        state.solidRgba = state.solidRgba
+          ? compositeSourceOver(state.solidRgba, parsedColor)
+          : { ...parsedColor };
+      }
+    } else if (opacity >= 1) {
+      if (isOpaqueBackgroundColor(color)) {
+        state.unparseableOpaqueColor = color;
+        state.solidRgba = null;
+      } else if (!state.unparseableFallbackColor) {
+        state.unparseableFallbackColor = color;
+      }
+    }
+  }
+
+  if (opacity < 1) {
+    // CSS group opacity dims the entire subtree (descendants + element paint).
+    // Gradients and unparseable colors cannot be accurately attenuated here, so
+    // clear them rather than promoting them at full opacity 1.
+    state.imageLayers.length = 0;
+    state.unparseableOpaqueColor = '';
+    state.unparseableFallbackColor = '';
+    if (state.solidRgba) {
+      const scaledAlpha = state.solidRgba.a * opacity;
+      state.solidRgba = scaledAlpha > 0 ? { ...state.solidRgba, a: scaledAlpha } : null;
+    }
+  }
+}
+
+function isRetainedParentBackgroundTranslucent(
+  parent: Element | null,
+  doc: Document,
+  readComputedStyle: MermaidComputedStyleReader,
+): boolean {
+  if (!parent || isMermaidBackgroundWalkStopBefore(parent, doc)) return false;
+  const parentStyle = readComputedStyle(parent);
+  const parentColor = readEffectiveStyleProperty(
+    parentStyle,
+    parent,
+    'background-color',
+    'backgroundColor',
+  );
+  const parentOpacity = readElementOpacity(parentStyle, parent);
+  const parentVisibleColor = hasVisibleBackgroundColor(parentColor);
+  const parentOpaqueColor = isOpaqueBackgroundColor(parentColor);
+  return (
+    parentOpacity > 0
+    && (
+      (parentVisibleColor && !parentOpaqueColor)
+      || (parentOpaqueColor && parentOpacity < 1)
+    )
+  );
+}
+
 function walkMermaidAncestorBackground(
   startElement: Element | null,
   doc: Document,
   readComputedStyle: MermaidComputedStyleReader,
-  initial: AncestorWalkInitialImage,
+  state: MermaidBackgroundFoldState,
 ): WechatVisualMermaidBackground | null {
-  let opaqueColor = '';
-  let opaqueBackingRgba: RgbaColor | null = null;
-  const translucentLayers: RgbaColor[] = [];
-  let translucentFallbackColor = '';
-  let resolvedImage = initial.image;
-  let resolvedPosition = initial.position;
-  let resolvedSize = initial.size;
-  let resolvedRepeat = initial.repeat;
-  let blockedImageEncountered = initial.blocked;
-
   for (let element: Element | null = startElement; element; element = element.parentElement) {
     if (isMermaidBackgroundWalkStopBefore(element, doc)) break;
-    const computed = readComputedStyle(element);
-    const opacity = readElementOpacity(computed, element);
-    if (opacity > 0) {
-      const color = readEffectiveStyleProperty(computed, element, 'background-color', 'backgroundColor');
-      const image = readEffectiveStyleProperty(computed, element, 'background-image', 'backgroundImage');
-      const hasColor = hasVisibleBackgroundColor(color);
-      const hasImage = hasBackgroundImage(image);
-      const safeImage = hasImage && isSafeBackgroundImage(image);
-
-      if (!resolvedImage && !blockedImageEncountered) {
-        if (safeImage && opacity >= 1) {
-          resolvedImage = image;
-          resolvedPosition = readEffectiveStyleProperty(
-            computed,
-            element,
-            'background-position',
-            'backgroundPosition',
-          );
-          resolvedSize = readEffectiveStyleProperty(computed, element, 'background-size', 'backgroundSize');
-          resolvedRepeat = readEffectiveStyleProperty(
-            computed,
-            element,
-            'background-repeat',
-            'backgroundRepeat',
-          );
-        } else if (hasImage && !safeImage) {
-          blockedImageEncountered = true;
-        }
-      }
-
-      if (hasColor) {
-        const parsedColor = parseCssSolidColor(color);
-        if (parsedColor) {
-          const effectiveAlpha = parsedColor.a * opacity;
-          if (effectiveAlpha >= 1) {
-            opaqueColor = color;
-            opaqueBackingRgba = { a: 1, b: parsedColor.b, g: parsedColor.g, r: parsedColor.r };
-            break;
-          }
-          if (effectiveAlpha > 0) {
-            translucentLayers.push({
-              a: effectiveAlpha,
-              b: parsedColor.b,
-              g: parsedColor.g,
-              r: parsedColor.r,
-            });
-          }
-        } else {
-          const opaqueColorMatch = isOpaqueBackgroundColor(color);
-          if (opaqueColorMatch && opacity >= 1) {
-            opaqueColor = color;
-            break;
-          }
-          if (opacity >= 1 && !translucentFallbackColor) {
-            translucentFallbackColor = color;
-          }
-        }
-      }
-    }
+    foldElementBackground(state, element, readComputedStyle(element));
     if (shouldStopAfterMermaidBackgroundElement(element)) break;
   }
-
-  return buildMermaidBackground(
-    resolveCompositedAncestorColor(
-      opaqueColor,
-      opaqueBackingRgba,
-      translucentLayers,
-      translucentFallbackColor,
-    ),
-    resolvedImage,
-    resolvedPosition,
-    resolvedSize,
-    resolvedRepeat,
-  );
+  return finalizeMermaidBackground(state);
 }
 
 /**
@@ -667,93 +752,50 @@ export function resolveMermaidInheritedBackground(
   const doc = source.ownerDocument;
   const directSvgCapture = options.directSvgCapture ?? source.matches('svg');
   const retainedParentWrapper = Boolean(options.retainedParentWrapper);
-
   const sourceStyle = readComputedStyle(source);
+
+  if (directSvgCapture) {
+    const initialState = createEmptyBackgroundFoldState();
+    foldElementBackground(initialState, source, sourceStyle);
+    if (
+      retainedParentWrapper
+      && isRetainedParentBackgroundTranslucent(source.parentElement, doc, readComputedStyle)
+    ) {
+      return finalizeMermaidBackground(initialState);
+    }
+    return walkMermaidAncestorBackground(
+      source.parentElement,
+      doc,
+      readComputedStyle,
+      initialState,
+    );
+  }
+
   const sourceColor = readEffectiveStyleProperty(
     sourceStyle,
     source,
     'background-color',
     'backgroundColor',
   );
-  const sourceImage = readEffectiveStyleProperty(
-    sourceStyle,
-    source,
-    'background-image',
-    'backgroundImage',
-  );
   const sourceOpacity = readElementOpacity(sourceStyle, source);
   const sourceOpaqueColor = isOpaqueBackgroundColor(sourceColor);
-  const sourceVisibleColor = hasVisibleBackgroundColor(sourceColor);
-  const sourceHasImage = hasBackgroundImage(sourceImage);
-  const sourceSafeImage = sourceHasImage && isSafeBackgroundImage(sourceImage);
   const sourceHasRadius = hasNonZeroBorderRadius(sourceStyle, source);
-
-  if (directSvgCapture) {
-    if (sourceOpacity > 0 && sourceVisibleColor) {
-      return buildMermaidBackground(
-        sourceColor,
-        sourceSafeImage ? sourceImage : '',
-        sourceSafeImage
-          ? readEffectiveStyleProperty(sourceStyle, source, 'background-position', 'backgroundPosition')
-          : '',
-        sourceSafeImage
-          ? readEffectiveStyleProperty(sourceStyle, source, 'background-size', 'backgroundSize')
-          : '',
-        sourceSafeImage
-          ? readEffectiveStyleProperty(sourceStyle, source, 'background-repeat', 'backgroundRepeat')
-          : '',
-      );
-    }
-    if (retainedParentWrapper && source.parentElement) {
-      const parent = source.parentElement;
-      if (!isMermaidBackgroundWalkStopBefore(parent, doc)) {
-        const parentStyle = readComputedStyle(parent);
-        const parentColor = readEffectiveStyleProperty(
-          parentStyle,
-          parent,
-          'background-color',
-          'backgroundColor',
-        );
-        const parentOpacity = readElementOpacity(parentStyle, parent);
-        const parentVisibleColor = hasVisibleBackgroundColor(parentColor);
-        const parentOpaqueColor = isOpaqueBackgroundColor(parentColor);
-        if (
-          parentOpacity > 0
-          && (
-            (parentVisibleColor && !parentOpaqueColor)
-            || (parentOpaqueColor && parentOpacity < 1)
-          )
-        ) {
-          return null;
-        }
-      }
-    }
-  } else if (sourceOpaqueColor && !sourceHasRadius && sourceOpacity >= 1) {
+  if (sourceOpaqueColor && !sourceHasRadius && sourceOpacity >= 1) {
     return null;
   }
 
-  return walkMermaidAncestorBackground(source.parentElement, doc, readComputedStyle, {
-    blocked: directSvgCapture && sourceOpacity > 0 && sourceHasImage && !sourceSafeImage,
-    image: directSvgCapture && sourceOpacity > 0 && sourceSafeImage ? sourceImage : '',
-    position:
-      directSvgCapture && sourceOpacity > 0 && sourceSafeImage
-        ? readEffectiveStyleProperty(sourceStyle, source, 'background-position', 'backgroundPosition')
-        : '',
-    repeat:
-      directSvgCapture && sourceOpacity > 0 && sourceSafeImage
-        ? readEffectiveStyleProperty(sourceStyle, source, 'background-repeat', 'backgroundRepeat')
-        : '',
-    size:
-      directSvgCapture && sourceOpacity > 0 && sourceSafeImage
-        ? readEffectiveStyleProperty(sourceStyle, source, 'background-size', 'backgroundSize')
-        : '',
-  });
+  return walkMermaidAncestorBackground(
+    source.parentElement,
+    doc,
+    readComputedStyle,
+    createEmptyBackgroundFoldState(),
+  );
 }
 
 /**
  * Inlines a connected Mermaid root's own stylesheet-derived background and
  * corner radii onto its capture clone so single-layer root paint is preserved
- * without leaking stale or unsafe inline background declarations.
+ * without leaking stale or unsafe inline background or border-radius declarations.
  */
 export function inlineConnectedMermaidRootPaint(
   source: Element,
@@ -762,7 +804,7 @@ export function inlineConnectedMermaidRootPaint(
 ): void {
   if (!source.isConnected) return;
   if (!(rootClone instanceof HTMLElement) && !(rootClone instanceof SVGElement)) return;
-  for (const property of STRIPPED_INLINE_BACKGROUND_PROPERTIES) {
+  for (const property of STRIPPED_INLINE_ROOT_PAINT_PROPERTIES) {
     rootClone.style.removeProperty(property);
   }
   const computed = readComputedStyle(source);

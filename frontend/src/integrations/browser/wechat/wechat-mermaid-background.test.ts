@@ -461,6 +461,198 @@ describe('wechat-mermaid-background', () => {
       expect(resolveMermaidInheritedBackground(source, unparseableLowOpacityReader)).toBeNull();
     });
 
+    it('folds nested CSS group opacity bottom-up, clears inner layers on opacity 0, and preserves tint-over-gradient paint order', () => {
+      const canvas = document.createElement('div');
+      canvas.className = 'easymde-immersive-preview-canvas';
+      const outerLayer = document.createElement('div');
+      const innerLayer = document.createElement('div');
+      const source = document.createElement('div');
+      source.className = 'easymde-mermaid';
+      innerLayer.append(source);
+      outerLayer.append(innerLayer);
+      canvas.append(outerLayer);
+      document.body.append(canvas);
+
+      // 1. 50% red inner tint over outer black gradient stacks tint ABOVE gradient in background-image.
+      const tintOverGradientReader = makeReader(
+        new Map([
+          [source, { 'background-color': 'transparent', 'background-image': 'none' }],
+          [innerLayer, { 'background-color': 'rgba(255, 0, 0, 0.5)', 'background-image': 'none' }],
+          [
+            outerLayer,
+            {
+              'background-color': 'transparent',
+              'background-image': 'linear-gradient(black, black)',
+              'background-position': '50% 50%',
+              'background-repeat': 'no-repeat',
+              'background-size': 'cover',
+            },
+          ],
+          [canvas, { 'background-color': 'transparent', 'background-image': 'none' }],
+        ]),
+      );
+      expect(resolveMermaidInheritedBackground(source, tintOverGradientReader)).toEqual({
+        image: 'linear-gradient(rgba(255, 0, 0, 0.5), rgba(255, 0, 0, 0.5)), linear-gradient(black, black)',
+        position: '0% 0%, 50% 50%',
+        repeat: 'repeat, no-repeat',
+        size: 'auto, cover',
+      });
+
+      // Multi-layer outer gradient with implicit position/size/repeat and solid backdrop beneath keeps all lists aligned.
+      const tintOverMultiGradientReader = makeReader(
+        new Map([
+          [source, { 'background-color': 'transparent', 'background-image': 'none' }],
+          [innerLayer, { 'background-color': 'rgba(255, 0, 0, 0.5)', 'background-image': 'none' }],
+          [
+            outerLayer,
+            {
+              'background-color': 'rgb(0, 0, 0)',
+              'background-image': 'linear-gradient(black, black), linear-gradient(blue, green)',
+              'background-repeat': 'no-repeat',
+            },
+          ],
+          [canvas, { 'background-color': 'transparent', 'background-image': 'none' }],
+        ]),
+      );
+      expect(resolveMermaidInheritedBackground(source, tintOverMultiGradientReader)).toEqual({
+        color: 'rgb(0, 0, 0)',
+        image:
+          'linear-gradient(rgba(255, 0, 0, 0.5), rgba(255, 0, 0, 0.5)), linear-gradient(black, black), linear-gradient(blue, green)',
+        position: '0% 0%, 0% 0%, 0% 0%',
+        repeat: 'repeat, no-repeat, no-repeat',
+        size: 'auto, auto, auto',
+      });
+
+      // An inner unparseable translucent color does not leak into background-color beneath an outer gradient.
+      const unparseableAboveTintOverGradientReader = makeReader(
+        new Map([
+          [source, { 'background-color': 'transparent', 'background-image': 'none' }],
+          [innerLayer, { 'background-color': 'oklch(0.7 0.1 200 / 0.4)', 'background-image': 'none' }],
+          [outerLayer, { 'background-color': 'rgba(255, 0, 0, 0.5)', 'background-image': 'none' }],
+          [
+            canvas,
+            {
+              'background-color': 'transparent',
+              'background-image': 'linear-gradient(black, black)',
+            },
+          ],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(source, unparseableAboveTintOverGradientReader),
+      ).toEqual({
+        image: 'linear-gradient(rgba(255, 0, 0, 0.5), rgba(255, 0, 0, 0.5)), linear-gradient(black, black)',
+        position: '0% 0%, 0% 0%',
+        repeat: 'repeat, repeat',
+        size: 'auto, auto',
+      });
+
+      // 2. Opaque red inner inside opacity: 0.5 outer over white canvas -> pink rgb(255, 128, 128).
+      const opaqueInnerUnderHalfOpacityReader = makeReader(
+        new Map([
+          [source, { 'background-color': 'transparent', 'background-image': 'none' }],
+          [innerLayer, { 'background-color': 'rgb(255, 0, 0)', 'background-image': 'none', opacity: '1' }],
+          [outerLayer, { 'background-color': 'transparent', 'background-image': 'none', opacity: '0.5' }],
+          [canvas, { 'background-color': 'rgb(255, 255, 255)', 'background-image': 'none', opacity: '1' }],
+        ]),
+      );
+      expect(resolveMermaidInheritedBackground(source, opaqueInnerUnderHalfOpacityReader)).toEqual({
+        color: 'rgb(255, 128, 128)',
+      });
+
+      // 3. Inner rgba(255, 255, 255, 0.5) inside outer rgb(255, 0, 0) + opacity: 0.5 over black -> rgb(128, 64, 64).
+      const nestedGroupOpacityReader = makeReader(
+        new Map([
+          [source, { 'background-color': 'transparent', 'background-image': 'none' }],
+          [innerLayer, { 'background-color': 'rgba(255, 255, 255, 0.5)', 'background-image': 'none', opacity: '1' }],
+          [outerLayer, { 'background-color': 'rgb(255, 0, 0)', 'background-image': 'none', opacity: '0.5' }],
+          [canvas, { 'background-color': 'rgb(0, 0, 0)', 'background-image': 'none', opacity: '1' }],
+        ]),
+      );
+      expect(resolveMermaidInheritedBackground(source, nestedGroupOpacityReader)).toEqual({
+        color: 'rgb(128, 64, 64)',
+      });
+
+      // 4. Inner linear-gradient inside outer opacity: 0.5 is cleared rather than promoted at opacity 1.
+      const innerGradientDimmedTransparentCanvasReader = makeReader(
+        new Map([
+          [source, { 'background-color': 'transparent', 'background-image': 'none' }],
+          [
+            innerLayer,
+            {
+              'background-color': 'transparent',
+              'background-image': 'linear-gradient(90deg, red, blue)',
+              opacity: '1',
+            },
+          ],
+          [outerLayer, { 'background-color': 'transparent', 'background-image': 'none', opacity: '0.5' }],
+          [canvas, { 'background-color': 'transparent', 'background-image': 'none', opacity: '1' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(source, innerGradientDimmedTransparentCanvasReader),
+      ).toBeNull();
+
+      const innerGradientDimmedOpaqueCanvasReader = makeReader(
+        new Map([
+          [source, { 'background-color': 'transparent', 'background-image': 'none' }],
+          [
+            innerLayer,
+            {
+              'background-color': 'transparent',
+              'background-image': 'linear-gradient(90deg, red, blue)',
+              opacity: '1',
+            },
+          ],
+          [outerLayer, { 'background-color': 'transparent', 'background-image': 'none', opacity: '0.5' }],
+          [canvas, { 'background-color': 'rgb(0, 0, 0)', 'background-image': 'none', opacity: '1' }],
+        ]),
+      );
+      expect(resolveMermaidInheritedBackground(source, innerGradientDimmedOpaqueCanvasReader)).toEqual({
+        color: 'rgb(0, 0, 0)',
+      });
+
+      // 5. Outer opacity: 0 clears already-collected inner color, gradient, and blocked url() layers.
+      const outerZeroOpacityOverCanvasReader = makeReader(
+        new Map([
+          [source, { 'background-color': 'transparent', 'background-image': 'none' }],
+          [
+            innerLayer,
+            {
+              'background-color': 'rgb(255, 0, 0)',
+              'background-image': 'url("https://blocked.example/hidden.png")',
+              opacity: '1',
+            },
+          ],
+          [outerLayer, { 'background-color': 'rgb(0, 255, 0)', 'background-image': 'none', opacity: '0' }],
+          [
+            canvas,
+            {
+              'background-color': 'rgb(30, 30, 46)',
+              'background-image': 'linear-gradient(90deg, rgb(30, 30, 46), rgb(45, 45, 65))',
+              opacity: '1',
+            },
+          ],
+        ]),
+      );
+      expect(resolveMermaidInheritedBackground(source, outerZeroOpacityOverCanvasReader)).toEqual({
+        color: 'rgb(30, 30, 46)',
+        image: 'linear-gradient(90deg, rgb(30, 30, 46), rgb(45, 45, 65))',
+      });
+
+      const outerZeroOpacityTransparentCanvasReader = makeReader(
+        new Map([
+          [source, { 'background-color': 'transparent', 'background-image': 'none' }],
+          [innerLayer, { 'background-color': 'rgb(255, 0, 0)', 'background-image': 'linear-gradient(red, blue)' }],
+          [outerLayer, { 'background-color': 'rgb(0, 255, 0)', 'background-image': 'none', opacity: '0' }],
+          [canvas, { 'background-color': 'transparent', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(source, outerZeroOpacityTransparentCanvasReader),
+      ).toBeNull();
+    });
+
     it('preserves a direct SVG own background even with border-radius and guards direct SVG by opacity > 0', () => {
       const canvas = document.createElement('div');
       canvas.className = 'easymde-immersive-preview-canvas';
@@ -510,6 +702,69 @@ describe('wechat-mermaid-background', () => {
       ).toEqual({
         color: 'rgb(30, 30, 46)',
       });
+
+      // Translucent direct <svg> background-color composites over the dark ancestor canvas.
+      const translucentSvgReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            svg,
+            {
+              'background-color': 'rgba(255, 255, 255, 0.08)',
+              'background-image': 'none',
+              opacity: '1',
+            },
+          ],
+          [canvas, { 'background-color': 'rgb(30, 30, 46)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(svg, translucentSvgReader, {
+          directSvgCapture: true,
+        }),
+      ).toEqual({
+        color: 'rgb(48, 48, 63)',
+      });
+
+      // Reduced-opacity direct <svg> never promotes its background-image gradient at opacity 1.
+      const reducedOpacitySvgGradientReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            svg,
+            {
+              'background-color': 'transparent',
+              'background-image': 'linear-gradient(90deg, red, blue)',
+              opacity: '0.5',
+            },
+          ],
+          [canvas, { 'background-color': 'rgb(30, 30, 46)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(svg, reducedOpacitySvgGradientReader, {
+          directSvgCapture: true,
+        }),
+      ).toEqual({
+        color: 'rgb(30, 30, 46)',
+      });
+
+      const reducedOpacitySvgGradientOnlyReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            svg,
+            {
+              'background-color': 'transparent',
+              'background-image': 'linear-gradient(90deg, red, blue)',
+              opacity: '0.5',
+            },
+          ],
+          [canvas, { 'background-color': 'transparent', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(svg, reducedOpacitySvgGradientOnlyReader, {
+          directSvgCapture: true,
+        }),
+      ).toBeNull();
     });
 
     it('handles mermaid-responsive direct SVG across transparent, opaque, and semi-transparent wrappers', () => {
@@ -615,6 +870,37 @@ describe('wechat-mermaid-background', () => {
           retainedParentWrapper: true,
         }),
       ).toBeNull();
+
+      // Translucent direct <svg> inside a retained translucent parent keeps its own tint without double-compositing the wrapper.
+      const translucentSvgInTranslucentWrapperReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            svg,
+            {
+              'background-color': 'rgba(255, 255, 255, 0.08)',
+              'background-image': 'none',
+              opacity: '1',
+            },
+          ],
+          [
+            wrapper,
+            {
+              'background-color': 'rgba(255, 255, 255, 0.06)',
+              'background-image': 'none',
+              opacity: '1',
+            },
+          ],
+          [canvas, { 'background-color': 'rgb(30, 30, 46)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(svg, translucentSvgInTranslucentWrapperReader, {
+          directSvgCapture: true,
+          retainedParentWrapper: true,
+        }),
+      ).toEqual({
+        color: 'rgba(255, 255, 255, 0.08)',
+      });
     });
 
     it('stops before measure-host and wp-admin containers and drops unsafe url() images', () => {
@@ -720,6 +1006,43 @@ describe('wechat-mermaid-background', () => {
       expect(clone.style.getPropertyValue('background-repeat')).toBe('');
       expect(clone.getAttribute('style') ?? '').not.toContain('evil.example');
       expect(clone.getAttribute('style') ?? '').not.toContain('red');
+    });
+
+    it('strips stale inline border-radius and corner longhands overridden to 0 by stylesheet', () => {
+      const source = document.createElement('div');
+      source.className = 'easymde-mermaid';
+      source.setAttribute(
+        'style',
+        'border-radius: 16px; border-top-left-radius: 16px; border-top-right-radius: 12px; border-bottom-right-radius: 8px; border-bottom-left-radius: 4px;',
+      );
+      document.body.append(source);
+      const clone = source.cloneNode(true) as HTMLDivElement;
+
+      const reader = makeReader(
+        new Map([
+          [
+            source,
+            {
+              'background-color': 'rgba(0, 0, 0, 0)',
+              'background-image': 'none',
+              'border-bottom-left-radius': '0px',
+              'border-bottom-right-radius': '0px',
+              'border-radius': '0px',
+              'border-top-left-radius': '0px',
+              'border-top-right-radius': '0px',
+            },
+          ],
+        ]),
+      );
+
+      inlineConnectedMermaidRootPaint(source, clone, reader);
+
+      expect(clone.style.getPropertyValue('border-radius')).toBe('');
+      expect(clone.style.getPropertyValue('border-top-left-radius')).toBe('');
+      expect(clone.style.getPropertyValue('border-top-right-radius')).toBe('');
+      expect(clone.style.getPropertyValue('border-bottom-right-radius')).toBe('');
+      expect(clone.style.getPropertyValue('border-bottom-left-radius')).toBe('');
+      expect(clone.getAttribute('style') ?? '').not.toContain('border-');
     });
   });
 

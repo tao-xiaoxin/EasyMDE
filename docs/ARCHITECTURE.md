@@ -86,7 +86,12 @@ canonical ID and media before the React Root and Appearance ports are
 constructed, and removes the old link only after the mount succeeds. Cancel,
 load/error failure, teardown, and mount failure remove candidates, dispose
 leases, and restore the old link before `onStartupFailure` reports the stable
-failure code.
+failure code. Alongside `admin-editor-stylesheets.ts`, `admin-editor.tsx`
+delegates DOM field discovery, native WordPress bridges, and browser adapter
+helpers to `frontend/src/entrypoints/admin-editor-browser-adapters.ts`, and
+lazy WeChat clipboard/rasterizer port loading, cold-copy freshness guarding,
+and prestarted modern clipboard write handoff to
+`frontend/src/entrypoints/admin-editor-lazy-wechat-ports.ts`.
 
 `createWordPressAppearancePort` owns the runtime appearance transaction after
 startup. It scopes article and Custom CSS styles through
@@ -286,10 +291,13 @@ before and after are exactly equal across the complete analysis.
 
 The `frontend/src/entrypoints/admin-editor.tsx` entrypoint parses external data
 before mounting, delegates startup stylesheet transactions to
-`frontend/src/entrypoints/admin-editor-stylesheets.ts` and DOM field discovery,
+`frontend/src/entrypoints/admin-editor-stylesheets.ts`, DOM field discovery,
 native Save/Publish/Revision bridges, clipboard and PNG-encoder runtime helpers,
 and simplified formatting parsing to
-`frontend/src/entrypoints/admin-editor-browser-adapters.ts`, constructs focused
+`frontend/src/entrypoints/admin-editor-browser-adapters.ts`, and lazy WeChat
+clipboard/rasterizer port loading, cold-copy freshness guarding, and prestarted
+modern clipboard write handoff to
+`frontend/src/entrypoints/admin-editor-lazy-wechat-ports.ts`, constructs focused
 WordPress and browser Adapters (reading cached Preview widths directly from
 `frontend/src/integrations/browser/wechat/wechat-preview-width-store.ts` so the
 WeChat export chunk remains dynamically code-split), mounts one modular

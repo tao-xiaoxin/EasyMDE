@@ -454,4 +454,212 @@ describe('createPreviewStylesheetLoader loadStylesheet rollback and scope preser
     loader.dispose();
     expect(scopedRuleCount(thirdSheet)).toBe(0);
   });
+
+  it('clears authoritativeActivationUrl when loadStylesheet commits so subsequent enhancement prepares commit cleanly', async () => {
+    const loader = createPreviewStylesheetLoader(
+      document,
+      () => false,
+      ROOT_SELECTOR
+    );
+
+    // 1. Activation commits URL_V1, setting authoritativeActivationUrl = URL_V1.
+    const activation = loader.prepareStylesheet(
+      LINK_ID,
+      URL_V1,
+      new AbortController().signal,
+      'activation'
+    );
+    const v1Link = document.querySelector<HTMLLinkElement>(
+      `link[data-easymde-stylesheet-owner="${LINK_ID}"]`
+    );
+    if (!v1Link) throw new Error('activation link missing');
+    const v1Sheet = attachStyleSheet(v1Link, '.v1 { color: red; }');
+    v1Link.dispatchEvent(new Event('load'));
+    const readyActivation = await activation.promise;
+    readyActivation.commit();
+
+    expect(document.getElementById(LINK_ID)).toBe(v1Link);
+    expect(scopedRuleCount(v1Sheet)).toBe(1);
+
+    // 2. loadStylesheet commits URL_V2 via handleLoad, clearing authoritativeActivationUrl.
+    const loadV2 = loader.loadStylesheet(
+      LINK_ID,
+      URL_V2,
+      new AbortController().signal
+    );
+    const v2Link = document.getElementById(LINK_ID) as HTMLLinkElement;
+    expect(v2Link).not.toBe(v1Link);
+    const v2Sheet = attachStyleSheet(v2Link, '.v2 { color: blue; }');
+    v2Link.dispatchEvent(new Event('load'));
+    await loadV2;
+
+    expect(v1Link.isConnected).toBe(false);
+    expect(scopedRuleCount(v1Sheet)).toBe(0);
+    expect(document.getElementById(LINK_ID)).toBe(v2Link);
+    expect(scopedRuleCount(v2Sheet)).toBe(1);
+
+    // 3. Start an earlier pending enhancement for URL_V1, then commit a newer enhancement
+    // for URL_V2. If URL_V2 genuinely commits (advancing committedEnhancementSequence),
+    // the older URL_V1 enhancement must later be rejected as stale instead of winning via
+    // a stale authoritativeActivationUrl === URL_V1.
+    const staleEnhancementV1 = loader.prepareStylesheet(
+      LINK_ID,
+      URL_V1,
+      new AbortController().signal,
+      'enhancement'
+    );
+    const staleV1Link = Array.from(
+      document.querySelectorAll<HTMLLinkElement>(
+        `link[data-easymde-stylesheet-owner="${LINK_ID}"]`
+      )
+    ).find((candidate) => candidate !== v2Link);
+    if (!staleV1Link) throw new Error('stale enhancement v1 link missing');
+    const staleV1Sheet = attachStyleSheet(staleV1Link, '.v1-stale { color: gray; }');
+
+    const enhancementV2 = loader.prepareStylesheet(
+      LINK_ID,
+      URL_V2,
+      new AbortController().signal,
+      'enhancement'
+    );
+    const readyEnhancementV2 = await enhancementV2.promise;
+    readyEnhancementV2.commit();
+
+    staleV1Link.dispatchEvent(new Event('load'));
+    const readyStaleV1 = await staleEnhancementV1.promise;
+    readyStaleV1.commit();
+
+    expect(staleV1Link.isConnected).toBe(false);
+    expect(scopedRuleCount(staleV1Sheet)).toBe(0);
+    expect(document.getElementById(LINK_ID)).toBe(v2Link);
+    expect(v2Link.getAttribute('href')).toBe(URL_V2);
+    expect(scopedRuleCount(v2Sheet)).toBe(1);
+
+    // 4. A fresh enhancement for URL_V3 also commits cleanly without being discarded.
+    const enhancementV3 = loader.prepareStylesheet(
+      LINK_ID,
+      URL_V3,
+      new AbortController().signal,
+      'enhancement'
+    );
+    const v3Link = Array.from(
+      document.querySelectorAll<HTMLLinkElement>(
+        `link[data-easymde-stylesheet-owner="${LINK_ID}"]`
+      )
+    ).find((candidate) => candidate !== v2Link);
+    if (!v3Link) throw new Error('enhancement v3 link missing');
+    const v3Sheet = attachStyleSheet(v3Link, '.v3 { color: green; }');
+    v3Link.dispatchEvent(new Event('load'));
+    const readyEnhancementV3 = await enhancementV3.promise;
+    readyEnhancementV3.commit();
+
+    expect(v2Link.isConnected).toBe(false);
+    expect(scopedRuleCount(v2Sheet)).toBe(0);
+    expect(document.getElementById(LINK_ID)).toBe(v3Link);
+    expect(v3Link.getAttribute('href')).toBe(URL_V3);
+    expect(scopedRuleCount(v3Sheet)).toBe(1);
+
+    loader.dispose();
+    expect(scopedRuleCount(v3Sheet)).toBe(0);
+  });
+
+  it('clears authoritativeActivationUrl in the loadStylesheet reuse branch while preserving it on failed rollback', async () => {
+    const loader = createPreviewStylesheetLoader(
+      document,
+      () => false,
+      ROOT_SELECTOR
+    );
+
+    // 1. Activation commits URL_V1.
+    const activation = loader.prepareStylesheet(
+      LINK_ID,
+      URL_V1,
+      new AbortController().signal,
+      'activation'
+    );
+    const v1Link = document.querySelector<HTMLLinkElement>(
+      `link[data-easymde-stylesheet-owner="${LINK_ID}"]`
+    );
+    if (!v1Link) throw new Error('activation link missing');
+    const v1Sheet = attachStyleSheet(v1Link, '.v1 { color: red; }');
+    v1Link.dispatchEvent(new Event('load'));
+    const readyActivation = await activation.promise;
+    readyActivation.commit();
+
+    // 2. A failed loadStylesheet(URL_V2) rolls back to URL_V1 and must NOT clear
+    // authoritativeActivationUrl, so a non-matching enhancement for URL_V3 is discarded.
+    const failedLoad = loader.loadStylesheet(
+      LINK_ID,
+      URL_V2,
+      new AbortController().signal
+    );
+    const failedV2Link = document.getElementById(LINK_ID) as HTMLLinkElement;
+    failedV2Link.dispatchEvent(new Event('error'));
+    await expect(failedLoad).rejects.toThrowError(
+      'preview-enhancement-resource-load-failed'
+    );
+
+    const blockedEnhancement = loader.prepareStylesheet(
+      LINK_ID,
+      URL_V3,
+      new AbortController().signal,
+      'enhancement'
+    );
+    const blockedV3Link = Array.from(
+      document.querySelectorAll<HTMLLinkElement>(
+        `link[data-easymde-stylesheet-owner="${LINK_ID}"]`
+      )
+    ).find((candidate) => candidate !== v1Link);
+    if (!blockedV3Link) throw new Error('blocked enhancement link missing');
+    const blockedV3Sheet = attachStyleSheet(blockedV3Link, '.v3 { color: purple; }');
+    blockedV3Link.dispatchEvent(new Event('load'));
+    const readyBlocked = await blockedEnhancement.promise;
+    readyBlocked.commit();
+
+    expect(blockedV3Link.isConnected).toBe(false);
+    expect(scopedRuleCount(blockedV3Sheet)).toBe(0);
+    expect(document.getElementById(LINK_ID)).toBe(v1Link);
+    expect(scopedRuleCount(v1Sheet)).toBe(1);
+
+    // 3. Reusing an already-loaded DOM link for URL_V2 in loadStylesheet commits URL_V2
+    // via the reuse branch and clears authoritativeActivationUrl.
+    v1Link.remove();
+    const reusedV2Link = document.createElement('link');
+    reusedV2Link.id = LINK_ID;
+    reusedV2Link.rel = 'stylesheet';
+    reusedV2Link.href = URL_V2;
+    reusedV2Link.dataset.easymdeStylesheetOwner = LINK_ID;
+    reusedV2Link.dataset.easymdeLoadedHref = URL_V2;
+    document.head.append(reusedV2Link);
+    const reusedV2Sheet = attachStyleSheet(reusedV2Link, '.v2-reused { color: teal; }');
+
+    await loader.loadStylesheet(LINK_ID, URL_V2, new AbortController().signal);
+    expect(scopedRuleCount(reusedV2Sheet)).toBe(1);
+
+    // 4. Subsequent enhancement for URL_V3 now commits cleanly.
+    const allowedEnhancement = loader.prepareStylesheet(
+      LINK_ID,
+      URL_V3,
+      new AbortController().signal,
+      'enhancement'
+    );
+    const allowedV3Link = Array.from(
+      document.querySelectorAll<HTMLLinkElement>(
+        `link[data-easymde-stylesheet-owner="${LINK_ID}"]`
+      )
+    ).find((candidate) => candidate !== reusedV2Link);
+    if (!allowedV3Link) throw new Error('allowed enhancement link missing');
+    const allowedV3Sheet = attachStyleSheet(allowedV3Link, '.v3-allowed { color: olive; }');
+    allowedV3Link.dispatchEvent(new Event('load'));
+    const readyAllowed = await allowedEnhancement.promise;
+    readyAllowed.commit();
+
+    expect(reusedV2Link.isConnected).toBe(false);
+    expect(scopedRuleCount(reusedV2Sheet)).toBe(0);
+    expect(document.getElementById(LINK_ID)).toBe(allowedV3Link);
+    expect(scopedRuleCount(allowedV3Sheet)).toBe(1);
+
+    loader.dispose();
+    expect(scopedRuleCount(allowedV3Sheet)).toBe(0);
+  });
 });

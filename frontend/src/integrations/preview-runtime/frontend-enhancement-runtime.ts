@@ -638,6 +638,17 @@ export function renderMathContent(
   ).then(() => undefined);
 }
 
+function markMermaidRenderError(
+  pre: HTMLElement,
+  config: FrontendEnhancementConfig
+): void {
+  pre.classList.add('easymde-render-error');
+  pre.setAttribute(
+    'data-easymde-error',
+    stringValue(config, 'renderingFailed', '')
+  );
+}
+
 async function renderUncachedMermaidDiagram(
   mermaid: MermaidRuntime,
   cache: Map<string, CachedMermaidSvg>,
@@ -671,11 +682,7 @@ async function renderUncachedMermaidDiagram(
     pre.parentNode.replaceChild(container, pre);
   } catch {
     if (!enhancementIsCurrent(control)) return 1;
-    pre.classList.add('easymde-render-error');
-    pre.setAttribute(
-      'data-easymde-error',
-      stringValue(config, 'renderingFailed', '')
-    );
+    markMermaidRenderError(pre, config);
   }
   return 1;
 }
@@ -740,8 +747,8 @@ export function renderMermaidContent(
   if (0 === mermaidNodes.length) {
     return Promise.resolve();
   }
-  initializeMermaidRuntime(mermaid);
   const cache = mermaidSvgCache(mermaid);
+  let mermaidInitFailed = false;
 
   return runScheduled(
     mermaidNodes,
@@ -755,11 +762,11 @@ export function renderMermaidContent(
       const renderId = `easymde-mermaid-${Date.now()}-${++mermaidRenderIndex}`;
 
       container.className = 'easymde-mermaid';
-      element.dataset.easymdeRendered = '1';
 
       const cacheKey = mermaidCacheKey(source);
       const cached = cacheKey.length > 0 ? readLruCache(cache, cacheKey) : undefined;
       if (cached) {
+        element.dataset.easymdeRendered = '1';
         if (!pre.parentNode) return 0;
         container.innerHTML = cached.svg.split(cached.renderId).join(renderId);
         markIntrinsicMermaidLayout(container);
@@ -767,6 +774,20 @@ export function renderMermaidContent(
         return 0;
       }
 
+      if (!mermaidInitFailed) {
+        try {
+          initializeMermaidRuntime(mermaid);
+        } catch {
+          mermaidInitFailed = true;
+        }
+      }
+      if (!enhancementIsCurrent(control)) return 0;
+      if (mermaidInitFailed) {
+        markMermaidRenderError(pre, config);
+        return 0;
+      }
+
+      element.dataset.easymdeRendered = '1';
       return renderUncachedMermaidDiagram(
         mermaid,
         cache,

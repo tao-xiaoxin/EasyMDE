@@ -174,6 +174,10 @@ export function createPreviewStylesheetLoader(
         url,
         wait: (waitSignal) => waitForResource(loaded, waitSignal)
       });
+      const activePreparedSlot = preparedStyleSlots.get(id);
+      if (activePreparedSlot) {
+        activePreparedSlot.authoritativeActivationUrl = null;
+      }
       return waitForResource(loaded, signal);
     }
 
@@ -249,6 +253,10 @@ export function createPreviewStylesheetLoader(
           if (load) load.scopeLease = scopeLease;
           loaded = true;
           link.dataset.easymdeLoadedHref = url;
+          const activePreparedSlot = preparedStyleSlots.get(id);
+          if (activePreparedSlot) {
+            activePreparedSlot.authoritativeActivationUrl = null;
+          }
           resolve();
         } catch (error) {
           scopeLease?.dispose();

@@ -1370,4 +1370,114 @@ describe('frontend enhancement runtime', () => {
     expect(root.querySelector('.easymde-mermaid')?.getAttribute('data-easymde-mermaid-layout'))
       .toBe('gantt');
   });
+
+  it('catches synchronous mermaid.initialize() failures without throwing or poisoning retries', async () => {
+    const windowRef = runtime();
+    let shouldFailInit = true;
+    const initialize = vi.fn(() => {
+      if (shouldFailInit) {
+        shouldFailInit = false;
+        throw new Error('transient-mermaid-init-error');
+      }
+    });
+    const render = vi.fn(async (id: string, source: string) => ({
+      svg: `<svg id="${id}">${source}</svg>`
+    }));
+    windowRef.mermaid = { initialize, render };
+    windowRef.EasyMDEMermaidRenderer = {
+      render: (targetRoot, config, control) =>
+        renderMermaidContent(
+          targetRoot,
+          config,
+          windowRef,
+          control ? { control } : {}
+        )
+    };
+
+    // Prime one cached diagram before initialize() ever succeeds to prove cached
+    // diagrams still render while uncached diagrams enter the error state cleanly.
+    writeCachedMermaidSvg(
+      'graph TD; Cached-->Ok;',
+      'cached-mermaid-seed',
+      '<svg id="cached-mermaid-seed"><g>cached</g></svg>',
+      windowRef
+    );
+
+    const root = document.createElement('article');
+    root.innerHTML = [
+      '<pre><code class="language-mermaid">graph TD; A--&gt;B;</code></pre>',
+      '<pre><code class="language-mermaid">graph TD; Cached--&gt;Ok;</code></pre>',
+      '<pre><code class="language-mermaid">graph TD; C--&gt;D;</code></pre>'
+    ].join('');
+    const config = {
+      features: { mermaid: true },
+      strings: { renderingFailed: 'Rendering failed.' }
+    };
+
+    let renderPromise: Promise<void> | undefined;
+    expect(() => {
+      renderPromise = enhanceFrontendContent(root, config, windowRef);
+    }).not.toThrow();
+    await expect(renderPromise).resolves.toBeUndefined();
+
+    expect(initialize).toHaveBeenCalledTimes(1);
+    expect(render).not.toHaveBeenCalled();
+    expect(root.querySelectorAll('.easymde-mermaid svg')).toHaveLength(1);
+    const failedPres = [...root.querySelectorAll('pre')];
+    expect(failedPres).toHaveLength(2);
+    for (const pre of failedPres) {
+      expect(pre.classList.contains('easymde-render-error')).toBe(true);
+      expect(pre.getAttribute('data-easymde-error')).toBe('Rendering failed.');
+    }
+
+    // Retrying once initialize() succeeds recovers both previously failed nodes
+    // on the same root without leaving initializedMermaidRuntimes poisoned.
+    await expect(renderMermaidContent(root, config, windowRef)).resolves.toBeUndefined();
+
+    expect(initialize).toHaveBeenCalledTimes(2);
+    expect(render).toHaveBeenCalledTimes(2);
+    expect(root.querySelectorAll('pre')).toHaveLength(0);
+    expect(root.querySelectorAll('.easymde-render-error')).toHaveLength(0);
+    expect(root.querySelectorAll('.easymde-mermaid svg')).toHaveLength(3);
+
+    // A later render on a fresh root reuses the latched initialized runtime.
+    const freshRoot = document.createElement('article');
+    freshRoot.innerHTML = '<pre><code class="language-mermaid">graph TD; E--&gt;F;</code></pre>';
+    await expect(enhanceFrontendContent(freshRoot, config, windowRef)).resolves.toBeUndefined();
+
+    expect(initialize).toHaveBeenCalledTimes(2);
+    expect(render).toHaveBeenCalledTimes(3);
+    expect(freshRoot.querySelectorAll('.easymde-mermaid svg')).toHaveLength(1);
+  });
+
+  it('skips Mermaid error DOM mutations when control becomes stale during a throwing initialize()', async () => {
+    const windowRef = runtime();
+    let current = true;
+    const initialize = vi.fn(() => {
+      current = false;
+      throw new Error('stale-init-error');
+    });
+    const render = vi.fn();
+    windowRef.mermaid = { initialize, render };
+
+    const root = document.createElement('article');
+    root.innerHTML = '<pre><code class="language-mermaid">graph TD; A--&gt;B;</code></pre>';
+
+    let renderPromise: Promise<void> | undefined;
+    expect(() => {
+      renderPromise = renderMermaidContent(
+        root,
+        { features: { mermaid: true }, strings: { renderingFailed: 'Rendering failed.' } },
+        windowRef,
+        { control: { isCurrent: () => current } }
+      );
+    }).not.toThrow();
+    await expect(renderPromise).resolves.toBeUndefined();
+
+    expect(initialize).toHaveBeenCalledTimes(1);
+    expect(render).not.toHaveBeenCalled();
+    const pre = root.querySelector('pre');
+    expect(pre?.classList.contains('easymde-render-error')).toBe(false);
+    expect(pre?.hasAttribute('data-easymde-error')).toBe(false);
+  });
 });

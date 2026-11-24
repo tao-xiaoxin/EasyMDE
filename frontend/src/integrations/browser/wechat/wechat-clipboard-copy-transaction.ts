@@ -75,40 +75,102 @@ export function isModernClipboardRuntime(
 	return Boolean(runtime.write && runtime.clipboardItem);
 }
 
+export type ReadyPreviewResolution = Readonly<{
+	abort: () => void;
+	promise: Promise<HTMLElement>;
+	start: () => void;
+}>;
+
 export function resolveReadyPreview(
 	preview: HTMLElement,
 	options: WechatClipboardCopyOptions,
 	requiresPreviewResolution: boolean,
-): Promise<HTMLElement> {
-	const resolveController = requiresPreviewResolution
-		? new AbortController()
-		: null;
-	const propagateResolveAbort = () => resolveController?.abort();
-	if (resolveController && options.signal) {
+): ReadyPreviewResolution {
+	if (!requiresPreviewResolution) {
+		return {
+			abort: () => undefined,
+			promise: Promise.resolve(preview),
+			start: () => undefined,
+		};
+	}
+	const resolveController = new AbortController();
+	let settled = false;
+	let started = false;
+	let resolveReady!: (element: HTMLElement) => void;
+	let rejectReady!: (error: unknown) => void;
+	const promise = new Promise<HTMLElement>((resolve, reject) => {
+		resolveReady = resolve;
+		rejectReady = reject;
+	});
+	// Attach a passive observer immediately so early exits before start()
+	// (e.g. synchronous ClipboardItem failure) never leak unhandled rejections.
+	void promise.catch(() => undefined);
+
+	const detachResolveAbort = (): void => {
+		options.signal?.removeEventListener("abort", abort);
+	};
+	const finishResolve = (element: HTMLElement): void => {
+		if (settled) return;
+		settled = true;
+		detachResolveAbort();
+		resolveReady(element);
+	};
+	const finishReject = (error: unknown): void => {
+		if (settled) return;
+		settled = true;
+		detachResolveAbort();
+		rejectReady(error);
+	};
+	const abort = (): void => {
+		if (!settled && !resolveController.signal.aborted) {
+			resolveController.abort();
+		}
+		finishReject(new Error("wechat-copy-cancelled"));
+	};
+
+	if (options.signal) {
 		if (options.signal.aborted) {
 			resolveController.abort();
 		} else {
-			options.signal.addEventListener("abort", propagateResolveAbort, {
+			options.signal.addEventListener("abort", abort, {
 				once: true,
 			});
 		}
 	}
-	const detachResolveAbort = (): void => {
-		if (options.signal) {
-			options.signal.removeEventListener("abort", propagateResolveAbort);
+
+	const start = (): void => {
+		if (started) return;
+		started = true;
+		if (settled || resolveController.signal.aborted) {
+			abort();
+			return;
 		}
+		Promise.resolve()
+			.then(() => {
+				if (settled || resolveController.signal.aborted) {
+					throw new Error("wechat-copy-cancelled");
+				}
+				return options.resolvePreview?.(resolveController.signal);
+			})
+			.then((resolved) => {
+				if (settled || resolveController.signal.aborted) {
+					throw new Error("wechat-copy-cancelled");
+				}
+				if (!resolved || !previewReady(resolved)) {
+					throw new Error("wechat-preview-unavailable");
+				}
+				finishResolve(resolved);
+			})
+			.catch((error: unknown) => {
+				finishReject(error);
+			});
 	};
-	return requiresPreviewResolution
-		? Promise.resolve()
-				.then(() => options.resolvePreview?.(resolveController?.signal))
-				.then((resolved) => {
-					if (!resolved || !previewReady(resolved)) {
-						throw new Error("wechat-preview-unavailable");
-					}
-					return resolved;
-				})
-				.finally(detachResolveAbort)
-		: Promise.resolve(preview);
+
+	return {
+		abort,
+		promise,
+		start,
+	};
 }
 
 export async function executeModernCopyTransaction(

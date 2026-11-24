@@ -6,7 +6,9 @@ import {
 	mermaidResponsiveSnapshotIsCurrent,
 } from "./wechat-capture-plan";
 import {
+	CLIPBOARD_COMMIT_TIMEOUT_MS,
 	type ModernCopyTransaction,
+	type ReadyPreviewResolution,
 	remainingTransactionTimeoutMs,
 	type WechatClipboardCopySharedState,
 } from "./wechat-clipboard-copy-transaction";
@@ -79,7 +81,7 @@ export function createPngCopyTransaction(
 		isColdSourceFresh?: (() => boolean) | undefined;
 		options: WechatClipboardCopyOptions;
 		preview: HTMLElement;
-		readyPreview: Promise<HTMLElement>;
+		readyPreview: ReadyPreviewResolution;
 		shared: WechatClipboardCopySharedState;
 	}>,
 ): ModernCopyTransaction {
@@ -191,14 +193,23 @@ export function createPngCopyTransaction(
 		if (remainingTimeoutMs <= 0) {
 			throw new Error("wechat-png-transaction-timeout");
 		}
-		const completion = Promise.all([payload, htmlBlob, textBlob, writeResult]);
-		const completed = await withTimeout(
-			Promise.race([completion, writeFailure, cancellationFailure]),
+		const payloadReady = withTimeout(
+			Promise.all([payload, htmlBlob, textBlob]),
 			remainingTimeoutMs,
 			"wechat-png-transaction-timeout",
 		);
-		const { error } = completed[3];
-		if (null !== error) throw error;
+		await Promise.race([
+			payloadReady.then(async () => {
+				const { error } = await withTimeout(
+					writeResult,
+					CLIPBOARD_COMMIT_TIMEOUT_MS,
+					"wechat-png-transaction-timeout",
+				);
+				if (null !== error) throw error;
+			}),
+			writeFailure,
+			cancellationFailure,
+		]);
 	};
 
 	const finalizeTransaction = (): void => {
@@ -250,6 +261,7 @@ export function createPngCopyTransaction(
 	) => {
 		finishCopyTotal("error");
 		conversionController.abort();
+		readyPreview.abort();
 		contentBoxes?.cleanup();
 		contentBoxes = null;
 		if (error instanceof WechatPngConversionError) {
@@ -277,6 +289,7 @@ export function createPngCopyTransaction(
 		// Abort before releasing the hidden root so any late continuation
 		// observes cancellation before it can read released geometry.
 		conversionController.abort();
+		readyPreview.abort();
 		finishCopyTotal("error");
 		readinessTiming?.fail();
 		disposeColdSourceFreshness?.();
@@ -296,7 +309,8 @@ export function createPngCopyTransaction(
 
 	const payload = new Promise<SerializedClipboardPayload>((resolve, reject) => {
 		startTransaction = () => {
-			void readyPreview
+			readyPreview.start();
+			void readyPreview.promise
 				.then((resolvedPreview) => {
 					if (
 						conversionSignal.aborted ||

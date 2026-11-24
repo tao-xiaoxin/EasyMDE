@@ -403,4 +403,92 @@ describe('createBrowserWechatClipboard', () => {
     expect(execCommand).not.toHaveBeenCalled();
   });
 
+  it('never invokes resolvePreview or leaks unhandled rejections when portable ClipboardItem throws synchronously', async () => {
+    class ThrowingClipboardItem {
+      constructor() {
+        throw new Error('clipboard-item-sync-throw');
+      }
+    }
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown): void => {
+      unhandledRejections.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandledRejection);
+    const resolvePreview = vi.fn(async () => null);
+    const preview = readyPreview();
+    preview.classList.add('easymde-preview-surface-hidden');
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ThrowingClipboardItem,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn()
+    });
+
+    try {
+      await expect(clipboard.copy(preview, { resolvePreview })).resolves.toEqual({
+        code: 'wechat-copy-failed',
+        status: 'failed'
+      });
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      expect(resolvePreview).not.toHaveBeenCalled();
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
+  });
+
+  it('aborts pending resolvePreview signal when portable modern write rejects asynchronously', async () => {
+    const pendingPreview = deferred<HTMLElement | null>();
+    const pendingWrite = deferred<void>();
+    let resolverSignal: AbortSignal | undefined;
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown): void => {
+      unhandledRejections.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandledRejection);
+    const resolvePreview = vi.fn((signal?: AbortSignal) => {
+      resolverSignal = signal;
+      return pendingPreview.promise;
+    });
+    const preview = readyPreview();
+    preview.classList.add('easymde-preview-surface-hidden');
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class {
+        constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+      },
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn(() => pendingWrite.promise.then(() => {
+        throw new Error('NotAllowedError');
+      }))
+    });
+
+    try {
+      const copy = clipboard.copy(preview, { resolvePreview });
+      await vi.waitFor(() => expect(resolvePreview).toHaveBeenCalledOnce());
+      expect(resolverSignal?.aborted).toBe(false);
+
+      pendingWrite.resolve();
+      await expect(copy).resolves.toEqual({
+        code: 'wechat-copy-failed',
+        status: 'failed'
+      });
+      expect(resolverSignal?.aborted).toBe(true);
+
+      pendingPreview.resolve(null);
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
+  });
+
 });

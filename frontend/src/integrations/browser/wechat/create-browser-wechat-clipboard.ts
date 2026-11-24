@@ -12,6 +12,7 @@ import {
 	executeModernCopyTransaction,
 	isModernClipboardRuntime,
 	type PrestartedModernClipboardWrite,
+	type ReadyPreviewResolution,
 	resolveReadyPreview,
 	type WechatClipboardCopySharedState,
 } from "./wechat-clipboard-copy-transaction";
@@ -170,6 +171,7 @@ export function createBrowserWechatClipboard(
 		}
 
 		if (isModernClipboardRuntime(runtime)) {
+			let readyPreview: ReadyPreviewResolution | null = null;
 			try {
 				// Claim a matching hidden geometry lease synchronously with the user
 				// activation. Theme/mode layout work may make the Preview visible
@@ -182,7 +184,7 @@ export function createBrowserWechatClipboard(
 							geometryMeasurements,
 						)
 					: null;
-				const readyPreview = resolveReadyPreview(
+				readyPreview = resolveReadyPreview(
 					preview,
 					options,
 					requiresPreviewResolution,
@@ -221,6 +223,7 @@ export function createBrowserWechatClipboard(
 					prestartedWrite,
 				);
 			} catch (error: unknown) {
+				readyPreview?.abort();
 				prestartedWrite?.disposeColdSourceFreshness?.();
 				prestartedWrite?.reject(error);
 				throw error;

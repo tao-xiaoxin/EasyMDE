@@ -4,6 +4,7 @@ import type {
 } from '../../../contracts/ports/wechat-visual-rasterization-port';
 
 import {
+  CLIPBOARD_COMMIT_TIMEOUT_MS,
   createBrowserWechatClipboard,
   MAX_WECHAT_PNG_VISUALS,
   WECHAT_PNG_TRANSACTION_TIMEOUT_MS
@@ -750,6 +751,235 @@ describe('createBrowserWechatClipboard', () => {
         status: 'failed'
       });
       expect(uploadSignals[0]?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never invokes resolvePreview or leaks unhandled rejections when PNG ClipboardItem throws synchronously', async () => {
+    class ThrowingClipboardItem {
+      constructor() {
+        throw new Error('png-clipboard-item-sync-throw');
+      }
+    }
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown): void => {
+      unhandledRejections.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandledRejection);
+    const resolvePreview = vi.fn(async () => null);
+    const rasterize = vi.fn();
+    const upload = vi.fn();
+    const preview = readyPreview();
+    preview.classList.add('easymde-preview-surface-hidden');
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ThrowingClipboardItem,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn()
+    });
+
+    try {
+      await expect(
+        clipboard.copy(preview, pngOptions({ rasterize }, { upload } as never, { resolvePreview }))
+      ).resolves.toEqual({
+        code: 'wechat-png-clipboard-failed',
+        sideEffects: 'none',
+        status: 'failed'
+      });
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      expect(resolvePreview).not.toHaveBeenCalled();
+      expect(rasterize).not.toHaveBeenCalled();
+      expect(upload).not.toHaveBeenCalled();
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
+  });
+
+  it('aborts pending resolvePreview signal when PNG modern write rejects asynchronously', async () => {
+    const pendingPreview = deferred<HTMLElement | null>();
+    const pendingWrite = deferred<void>();
+    let resolverSignal: AbortSignal | undefined;
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown): void => {
+      unhandledRejections.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandledRejection);
+    const resolvePreview = vi.fn((signal?: AbortSignal) => {
+      resolverSignal = signal;
+      return pendingPreview.promise;
+    });
+    const rasterize = vi.fn();
+    const upload = vi.fn();
+    const preview = readyPreview();
+    preview.classList.add('easymde-preview-surface-hidden');
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class {
+        constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+      },
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn(() => pendingWrite.promise.then(() => {
+        throw new Error('NotAllowedError');
+      }))
+    });
+
+    try {
+      const copy = clipboard.copy(preview, pngOptions({ rasterize }, { upload } as never, { resolvePreview }));
+      await vi.waitFor(() => expect(resolvePreview).toHaveBeenCalledOnce());
+      expect(resolverSignal?.aborted).toBe(false);
+
+      pendingWrite.resolve();
+      await expect(copy).resolves.toEqual({
+        code: 'wechat-png-clipboard-failed',
+        sideEffects: 'none',
+        status: 'failed'
+      });
+      expect(resolverSignal?.aborted).toBe(true);
+
+      pendingPreview.resolve(null);
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
+  });
+
+  it('bounds stuck native PNG clipboard commit by CLIPBOARD_COMMIT_TIMEOUT_MS after fast preparation', async () => {
+    vi.useFakeTimers();
+    try {
+      let payloadConsumed = false;
+      let commitStartedAt = 0;
+      class ClipboardItemStub {
+        constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+      }
+      const upload = vi.fn();
+      const clipboard = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: ClipboardItemStub,
+        document,
+        getComputedStyle: computedStyle,
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: vi.fn((items) => {
+          const item = items[0] as ClipboardItemStub;
+          void Promise.all([item.payload['text/html'], item.payload['text/plain']]).then(() => {
+            payloadConsumed = true;
+            commitStartedAt = Date.now();
+          });
+          return new Promise<void>(() => undefined);
+        })
+      });
+      const preview = readyPreview();
+
+      let settled = false;
+      const copy = clipboard.copy(preview, pngOptions({ rasterize: vi.fn() }, { upload } as never)).finally(() => {
+        settled = true;
+      });
+      for (let elapsed = 0; elapsed < 1_000 && !payloadConsumed; elapsed += 1) {
+        await vi.advanceTimersByTimeAsync(1);
+      }
+      expect(payloadConsumed).toBe(true);
+      expect(settled).toBe(false);
+
+      const remainingCommitMs = CLIPBOARD_COMMIT_TIMEOUT_MS - (Date.now() - commitStartedAt);
+      expect(remainingCommitMs).toBeGreaterThan(0);
+      await vi.advanceTimersByTimeAsync(remainingCommitMs - 1);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(copy).resolves.toEqual({
+        code: 'wechat-png-transaction-timeout',
+        sideEffects: 'none',
+        status: 'failed'
+      });
+      expect(Date.now() - commitStartedAt).toBe(CLIPBOARD_COMMIT_TIMEOUT_MS);
+      expect(upload).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('allows native PNG clipboard commit its own CLIPBOARD_COMMIT_TIMEOUT_MS after slow preparation near 60s', async () => {
+    vi.useFakeTimers();
+    try {
+      const pendingUpload = deferred<{ alt: string; status: 'uploaded'; title: string; url: string }>();
+      const pendingWriteCommit = deferred<void>();
+      let payloadConsumed = false;
+      class ClipboardItemStub {
+        constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+      }
+      const rasterize = vi.fn(async () => ({
+        file: new File(['png'], 'slow-upload.png', { type: 'image/png' }),
+        height: 10,
+        pixelCount: 200,
+        width: 20
+      }));
+      const upload = vi.fn(() => pendingUpload.promise);
+      const clipboard = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: ClipboardItemStub,
+        document,
+        getComputedStyle: computedStyle,
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: vi.fn(async (items) => {
+          const item = items[0] as ClipboardItemStub;
+          await Promise.all([item.payload['text/html'], item.payload['text/plain']]);
+          payloadConsumed = true;
+          await pendingWriteCommit.promise;
+        })
+      });
+      const preview = readyPreview();
+      preview.innerHTML = '<div class="easymde-mermaid"><svg width="20" height="10"></svg></div>';
+      const visual = preview.querySelector('.easymde-mermaid');
+      if (!visual) throw new Error('visual missing');
+      Object.defineProperty(visual, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => ({ height: 10, width: 20 })
+      });
+
+      let settled = false;
+      const copy = clipboard.copy(preview, pngOptions({ rasterize }, { upload } as never)).finally(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.waitFor(() => expect(upload).toHaveBeenCalledOnce());
+
+      // Preparation finishes just under the 60s transaction timeout.
+      await vi.advanceTimersByTimeAsync(WECHAT_PNG_TRANSACTION_TIMEOUT_MS - 500);
+      expect(settled).toBe(false);
+      pendingUpload.resolve({
+        alt: '',
+        status: 'uploaded',
+        title: 'slow-upload.png',
+        url: 'https://example.test/slow-upload.png'
+      });
+      for (let elapsed = 0; elapsed < 400 && !payloadConsumed; elapsed += 10) {
+        await vi.advanceTimersByTimeAsync(10);
+      }
+      expect(payloadConsumed).toBe(true);
+      expect(settled).toBe(false);
+
+      // Native write takes 2s (pushing total elapsed past 60s, but well within the 10s commit window).
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(settled).toBe(false);
+      pendingWriteCommit.resolve();
+
+      await expect(copy).resolves.toEqual({ method: 'clipboard', status: 'copied' });
     } finally {
       vi.useRealTimers();
     }

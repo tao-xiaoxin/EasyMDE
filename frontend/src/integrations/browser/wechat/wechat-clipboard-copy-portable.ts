@@ -2,6 +2,7 @@ import { fallbackAfterSynchronousModernFailure } from "./wechat-clipboard-copy-l
 import {
 	CLIPBOARD_COMMIT_TIMEOUT_MS,
 	type ModernCopyTransaction,
+	type ReadyPreviewResolution,
 	remainingTransactionTimeoutMs,
 	type WechatClipboardCopySharedState,
 } from "./wechat-clipboard-copy-transaction";
@@ -36,7 +37,7 @@ export function createPortableCopyTransaction(
 		disposeColdSourceFreshness?: (() => void) | undefined;
 		isColdSourceFresh?: (() => boolean) | undefined;
 		preview: HTMLElement;
-		readyPreview: Promise<HTMLElement>;
+		readyPreview: ReadyPreviewResolution;
 		requiresPreviewResolution: boolean;
 		shared: WechatClipboardCopySharedState;
 	}>,
@@ -212,7 +213,7 @@ export function createPortableCopyTransaction(
 		});
 
 	const payload = requiresPreviewResolution
-		? readyPreview.then((resolvedPreview) => {
+		? readyPreview.promise.then((resolvedPreview) => {
 				payloadPreview = resolvedPreview;
 				return startAfterWrite(resolvedPreview);
 			})
@@ -221,8 +222,10 @@ export function createPortableCopyTransaction(
 
 	const startTransaction = (): void => {
 		if (requiresPreviewResolution) {
-			void readyPreview.then(initializePortableFreshness, (error: unknown) =>
-				rejectPortableFreshness(error),
+			readyPreview.start();
+			void readyPreview.promise.then(
+				initializePortableFreshness,
+				(error: unknown) => rejectPortableFreshness(error),
 			);
 		} else {
 			initializePortableFreshness(preview);
@@ -336,6 +339,7 @@ export function createPortableCopyTransaction(
 		// Reject any later owner registration first, then close Source
 		// freshness, and only then release the accepted active owner.
 		portableTransactionOpen = false;
+		readyPreview.abort();
 		disposeColdSourceFreshness?.();
 		disposePortableFreshness();
 		disposePortablePreparation();

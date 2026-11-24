@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ToolbarCommand } from "../../contracts/bootstrap/toolbar-bootstrap";
 import { createPreservingRoundTripGuard } from "./markdown-block-preservation";
 import {
+	extractReferenceDefinitionLabels,
 	parseImageScaleTitle,
 	parseMarkdownToVisualDoc,
 	parseMarkdownWithBlockSources,
@@ -1962,6 +1963,11 @@ describe("visual editor codec regressions", () => {
 			'![A](/image.png "Caption {width=50%}")',
 		);
 
+		// WordPress `wp_kses_normalize_entities()` turns `&amp;#32;` back into
+		// `&#032;`, which `DOMDocument::loadHTML()` decodes to a space after
+		// `{width=33%}`, causing `MarkdownRenderer::render()` to throw
+		// `easymde_image_scale_syntax_invalid`. Stripping the conflicting marker
+		// guarantees WP-safe serialization.
 		const entityPaddedMarkerScaledDoc = visualEditorSchema.nodes.doc.create(
 			null,
 			[
@@ -1979,13 +1985,15 @@ describe("visual editor codec regressions", () => {
 			entityPaddedMarkerScaledDoc,
 		);
 		expect(entityPaddedSerialized).toBe(
-			'![A](/image.png "Caption {width=33%}&amp;#32; {width=50%}")',
+			'![A](/image.png "Caption {width=50%}")',
 		);
 		expect(
-			parseMarkdownToVisualDoc(entityPaddedSerialized).eq(
-				entityPaddedMarkerScaledDoc,
-			),
-		).toBe(true);
+			parseMarkdownToVisualDoc(entityPaddedSerialized).firstChild?.firstChild
+				?.attrs,
+		).toMatchObject({
+			scale: 50,
+			title: "Caption",
+		});
 
 		// Round 14 Track B #1 / #4: preserve verbatim newlines in entity-newline
 		// titles, reject newline-separated or continuation-indented markers from
@@ -2043,19 +2051,14 @@ describe("visual editor codec regressions", () => {
 			title: "Caption {width=33%}\n",
 		});
 
+		// WordPress `wp_kses_normalize_entities()` un-escapes `&amp;#123;`/`&amp;#125;`
+		// back into `&#123;`/`&#125;`, so unscaled titles whose WP-KSES-rendered
+		// value ends in a `{width=...}` marker strip the conflicting marker instead
+		// of emitting Markdown that breaks `MarkdownRenderer::render()`.
 		for (const [title, expected] of [
-			[
-				"Caption &#123;width=51%&#125;",
-				'![A](/image.png "Caption &amp;#123;width=51%&amp;#125;")',
-			],
-			[
-				"Caption &#123;width=50%&#125;",
-				'![A](/image.png "Caption &amp;#123;width=50%&amp;#125;")',
-			],
-			[
-				"&#123;width=51%&#125;",
-				'![A](/image.png "&amp;#123;width=51%&amp;#125;")',
-			],
+			["Caption &#123;width=51%&#125;", '![A](/image.png "Caption")'],
+			["Caption &#123;width=50%&#125;", '![A](/image.png "Caption")'],
+			["&#123;width=51%&#125;", "![A](/image.png)"],
 			[String.raw`Caption \{width=51%\}`, '![A](/image.png "Caption")'],
 			["Caption {width=33%} ", '![A](/image.png "Caption {width=33%} ")'],
 		] as const) {
@@ -3082,9 +3085,9 @@ describe("PR-R16-A title entity protection, CR/LF encoding, reference precedence
 		// `&` (e.g. `"Tom & Jerry"`) stays unescaped.
 		const literalEntityCases = [
 			{
-				expectedSerialized: '![A](/x.png "Caption&amp;#123;width=50%}")',
-				expectedTitle: "Caption&#123;width=50%}",
-				input: String.raw`![A](/x.png "Caption\&amp;#123;width=50%}")`,
+				expectedSerialized: '![A](/x.png "Caption&amp;#123;note}")',
+				expectedTitle: "Caption&#123;note}",
+				input: String.raw`![A](/x.png "Caption\&amp;#123;note}")`,
 				scale: null,
 			},
 			{
@@ -3240,7 +3243,7 @@ describe("PR-R16-A title entity protection, CR/LF encoding, reference precedence
 		});
 
 		// When an earlier `[r]:` line is not actually a valid reference definition,
-		// the later prescanned definition still resolves via deferredReferences.
+		// the later definition still resolves cleanly through markdown-it.
 		const invalidThenValid = [
 			"![alt][r]",
 			"",
@@ -3274,5 +3277,448 @@ describe("PR-R16-A title entity protection, CR/LF encoding, reference precedence
 		expect(elapsedMs).toBeLessThan(2000);
 		expect(parsed.doc.childCount).toBe(count + 1);
 		expect(firstLinkHref(parsed.doc)).toBe("https://example.com/0.png");
+	});
+});
+
+describe("PR-R17-A reference definition preservation, inline link title parity, WP KSES image-title protection, and tight-list HR separation", () => {
+	const editAt = (
+		doc: ProseMirrorNode,
+		pos: number,
+		text: string,
+	): ProseMirrorNode =>
+		EditorState.create({ doc, schema: visualEditorSchema }).tr.insertText(
+			text,
+			pos,
+		).doc;
+
+	const firstImageAttrs = (doc: ProseMirrorNode) => {
+		let found: Record<string, unknown> | null = null;
+		doc.descendants((node) => {
+			if (found === null && node.type.name === "image") {
+				found = node.attrs as Record<string, unknown>;
+			}
+			return found === null;
+		});
+		return found;
+	};
+
+	const firstLinkAttrs = (doc: ProseMirrorNode) => {
+		let found: Record<string, unknown> | null = null;
+		doc.descendants((node) => {
+			if (found === null && node.isText) {
+				const mark = node.marks.find((m) => m.type.name === "link");
+				if (mark) {
+					found = mark.attrs as Record<string, unknown>;
+				}
+			}
+			return found === null;
+		});
+		return found;
+	};
+
+	it("preserves all CommonMark §4.7 reference definitions across adjacent edits without silent deletion (Track A #1, #5 & Track B #1, #4)", () => {
+		// 1. Bare destination containing `<` (`[r]: /a<b`) stays protected on adjacent edit.
+		const angleDestMd = "Intro\n\n[r]: /a<b\n\n![x][r]";
+		const angleGuard = createMarkdownRoundTripGuard(angleDestMd);
+		expect(firstImageAttrs(angleGuard.initialDoc)).toMatchObject({
+			alt: "x",
+			src: "/a%3Cb",
+		});
+		const angleEdited = angleGuard.serialize(
+			editAt(angleGuard.initialDoc, 6, "!"),
+		);
+		expect(angleEdited).toBe("Intro!\n\n[r]: /a<b\n\n![x][r]");
+		expect(firstImageAttrs(parseMarkdownToVisualDoc(angleEdited))).toMatchObject(
+			{ src: "/a%3Cb" },
+		);
+
+		// 2. Multi-line title on the next line stays protected and resolves verbatim.
+		const multilineTitleMd =
+			'Intro\n\n[img]: https://example.com/a.png\n"line 1\nline 2"\n\n![x][img]';
+		const multilineGuard = createMarkdownRoundTripGuard(multilineTitleMd);
+		expect(firstImageAttrs(multilineGuard.initialDoc)).toMatchObject({
+			src: "https://example.com/a.png",
+			title: "line 1\nline 2",
+		});
+		const multilineEdited = multilineGuard.serialize(
+			editAt(multilineGuard.initialDoc, 6, "!"),
+		);
+		expect(multilineEdited).toBe(
+			'Intro!\n\n[img]: https://example.com/a.png\n"line 1\nline 2"\n\n![x][img]',
+		);
+		expect(
+			extractReferenceDefinitionLabels(
+				'[img]: https://example.com/a.png\n"line 1\nline 2"',
+			),
+		).toEqual(["img"]);
+
+		// 3. Unindented next-line destination with title stays protected.
+		const unindentedDestMd =
+			'Intro\n\n[img]:\nhttps://example.com/a.png "cap"\n\n![x][img]';
+		const unindentedGuard = createMarkdownRoundTripGuard(unindentedDestMd);
+		expect(firstImageAttrs(unindentedGuard.initialDoc)).toMatchObject({
+			src: "https://example.com/a.png",
+			title: "cap",
+		});
+		const unindentedEdited = unindentedGuard.serialize(
+			editAt(unindentedGuard.initialDoc, 6, "!"),
+		);
+		expect(unindentedEdited).toBe(
+			'Intro!\n\n[img]:\nhttps://example.com/a.png "cap"\n\n![x][img]',
+		);
+		expect(
+			extractReferenceDefinitionLabels(
+				'[img]:\nhttps://example.com/a.png "cap"',
+			),
+		).toEqual(["img"]);
+
+		// 4. Destination-only definition followed by `"Quote" said Alice.` keeps both blocks.
+		const quoteAfterDestMd = '[r]: /a\n"Quote" said Alice.\n\n![x][r]';
+		const quoteGuard = createMarkdownRoundTripGuard(quoteAfterDestMd);
+		expect(quoteGuard.initialDoc.childCount).toBe(3);
+		expect(quoteGuard.initialDoc.child(0).type.name).toBe("protected_block");
+		expect(quoteGuard.initialDoc.child(1).type.name).toBe("paragraph");
+		expect(quoteGuard.initialDoc.child(1).textContent).toBe(
+			'"Quote" said Alice.',
+		);
+		expect(firstImageAttrs(quoteGuard.initialDoc)).toMatchObject({
+			src: "/a",
+			title: null,
+		});
+		const quoteParaEnd =
+			quoteGuard.initialDoc.child(0).nodeSize +
+			quoteGuard.initialDoc.child(1).nodeSize -
+			1;
+		const quoteEdited = quoteGuard.serialize(
+			editAt(quoteGuard.initialDoc, quoteParaEnd, "!"),
+		);
+		expect(quoteEdited).toBe('[r]: /a\n\n"Quote" said Alice.!\n\n![x][r]');
+		expect(
+			firstImageAttrs(parseMarkdownToVisualDoc(quoteEdited)),
+		).toMatchObject({ src: "/a", title: null });
+
+		// 5. First-wins precedence when earlier definition is nested in a list item or blockquote.
+		const listFirstMd = "- [r]: /first\n\n[r]: /second\n\n![x][r]";
+		const listFirstGuard = createMarkdownRoundTripGuard(listFirstMd);
+		expect(firstImageAttrs(listFirstGuard.initialDoc)).toMatchObject({
+			src: "/first",
+		});
+		const listFirstEdited = listFirstGuard.serialize(
+			editAt(
+				listFirstGuard.initialDoc,
+				listFirstGuard.initialDoc.content.size - 1,
+				"!",
+			),
+		);
+		expect(listFirstEdited).toBe("- [r]: /first\n\n[r]: /second\n\n![x](/first)!");
+		// Structural serialization of a list item with a ref def never doubles `- `.
+		const listStructural = serializeVisualDocToMarkdown(
+			listFirstGuard.initialDoc,
+		);
+		expect(listStructural).not.toContain("- -");
+		expect(listStructural).not.toContain("  - [r]:");
+		expect(
+			firstImageAttrs(parseMarkdownToVisualDoc(listStructural)),
+		).toMatchObject({ src: "/first" });
+
+		// Multi-item list with ref def in item 1: editing item 2 preserves item 1 verbatim.
+		const multiItemListMd = "- [r]: /first\n- Second item\n\n![x][r]";
+		const multiItemGuard = createMarkdownRoundTripGuard(multiItemListMd);
+		let secondItemPos = -1;
+		multiItemGuard.initialDoc.descendants((node, pos) => {
+			if (secondItemPos < 0 && node.isText && node.text === "Second item") {
+				secondItemPos = pos + node.text.length;
+			}
+			return secondItemPos < 0;
+		});
+		const multiItemEdited = multiItemGuard.serialize(
+			editAt(multiItemGuard.initialDoc, secondItemPos, "!"),
+		);
+		expect(multiItemEdited).toBe("- [r]: /first\n- Second item!\n\n![x][r]");
+
+		// 6. Invalid earlier line (`[r]: /bad(unclosed`) does not poison later valid `[r]: /good`.
+		const invalidFirstMd = "[r]: /bad(unclosed\n\n[r]: /good\n\n![x][r]";
+		const invalidFirstDoc = parseMarkdownToVisualDoc(invalidFirstMd);
+		expect(firstImageAttrs(invalidFirstDoc)).toMatchObject({ src: "/good" });
+		expect(invalidFirstDoc.child(0).type.name).toBe("paragraph");
+		expect(invalidFirstDoc.child(1).type.name).toBe("protected_block");
+		expect(firstLinkHref(invalidFirstDoc)).toBe("/good");
+
+		// 7. Unicode case-folding (`[ẞ]` vs `SS` and `[ß]` vs `SS`) matches PHP CommonMark.
+		for (const sharpMd of [
+			"Intro\n\n[ẞ]: /sharp\n\n![x][SS]",
+			"Intro\n\n[ß]: /sharp\n\n![x][SS]",
+		]) {
+			const sharpGuard = createMarkdownRoundTripGuard(sharpMd);
+			expect(firstImageAttrs(sharpGuard.initialDoc), sharpMd).toMatchObject({
+				src: "/sharp",
+			});
+			const sharpEdited = sharpGuard.serialize(
+				editAt(sharpGuard.initialDoc, 6, "!"),
+			);
+			expect(sharpEdited).toBe(sharpMd.replace("Intro", "Intro!"));
+		}
+
+		// 8. Zero-whitespace `<dest>"title"` is rejected (matching PHP CommonMark).
+		const zeroWsMd = '[r]: </dest>"title"\n\n![x][r]';
+		const zeroWsDoc = parseMarkdownToVisualDoc(zeroWsMd);
+		expect(firstImageAttrs(zeroWsDoc)).toBeNull();
+		expect(zeroWsDoc.child(0).type.name).toBe("paragraph");
+
+		// 9. Unescaped punctuation, HTML entities, and balanced parens in href match PHP.
+		expect(
+			firstLinkHref(parseMarkdownToVisualDoc("[r]: /a\\)b\n\n[x][r]")),
+		).toBe("/a)b");
+		expect(
+			firstLinkHref(parseMarkdownToVisualDoc("[r]: /a&amp;b\n\n[x][r]")),
+		).toBe("/a&b");
+		expect(
+			firstLinkHref(parseMarkdownToVisualDoc("[r]: /a(b)c\n\n[x][r]")),
+		).toBe("/a(b)c");
+
+		// 10. Cross-blockquote grouping keeps `> [a]: /a` inside blockquote and `[b]: /b` outside.
+		const crossBqMd = "> [a]: /a\n[b]: /b\n\n[a] [b]";
+		const crossBqGuard = createMarkdownRoundTripGuard(crossBqMd);
+		expect(crossBqGuard.initialDoc.childCount).toBe(3);
+		expect(crossBqGuard.initialDoc.child(0).type.name).toBe("blockquote");
+		expect(crossBqGuard.initialDoc.child(0).firstChild?.type.name).toBe(
+			"protected_block",
+		);
+		expect(crossBqGuard.initialDoc.child(0).firstChild?.attrs.rawMarkdown).toBe(
+			"[a]: /a",
+		);
+		expect(crossBqGuard.initialDoc.child(1).type.name).toBe("protected_block");
+		expect(crossBqGuard.initialDoc.child(1).attrs.rawMarkdown).toBe("[b]: /b");
+		const crossBqEdited = crossBqGuard.serialize(
+			editAt(
+				crossBqGuard.initialDoc,
+				crossBqGuard.initialDoc.content.size - 1,
+				"!",
+			),
+		);
+		expect(crossBqEdited).toBe("> [a]: /a\n[b]: /b\n\n[a](/a) [b](/b)!");
+		const crossBqStructural = serializeVisualDocToMarkdown(
+			crossBqGuard.initialDoc,
+		);
+		expect(crossBqStructural).toContain("> [a]: /a");
+		expect(crossBqStructural).not.toContain("> >");
+		expect(crossBqStructural).toContain("\n\n[b]: /b");
+
+		// Multi-line reference definition inside blockquote strips `> ` cleanly on edit.
+		const bqMultilineRef =
+			'> # Title\n>\n> [r]: /first\n> "line 1\n> line 2"\n\n![x][r]';
+		const bqMultiGuard = createMarkdownRoundTripGuard(bqMultilineRef);
+		expect(firstImageAttrs(bqMultiGuard.initialDoc)).toMatchObject({
+			src: "/first",
+			title: "line 1\nline 2",
+		});
+		const bqMultiEdited = bqMultiGuard.serialize(
+			editAt(bqMultiGuard.initialDoc, 3, "Z"),
+		);
+		expect(bqMultiEdited).toContain('> [r]: /first\n> "line 1\n> line 2"');
+		expect(bqMultiEdited).not.toContain("> >");
+
+		// 11. Inline sentinel restoration runs BEFORE CommonMark entity decoding (Track B #4.5).
+		const sentinelTitleMd = '[r]: /dest\n"$a &amp; b$"\n\n![x][r]';
+		const sentinelTitleDoc = parseMarkdownToVisualDoc(sentinelTitleMd);
+		expect(firstImageAttrs(sentinelTitleDoc)).toMatchObject({
+			src: "/dest",
+			title: "$a & b$",
+		});
+		expect(sentinelTitleDoc.child(0).attrs.rawMarkdown).toBe(
+			'[r]: /dest\n"$a &amp; b$"',
+		);
+
+		const sentinelHrefMd = "[r]: /dest?x=$a+b$\n\n[x][r]";
+		const sentinelHrefDoc = parseMarkdownToVisualDoc(sentinelHrefMd);
+		expect(firstLinkHref(sentinelHrefDoc)).toBe("/dest?x=$a+b$");
+		expect(sentinelHrefDoc.child(0).attrs.rawMarkdown).toBe(
+			"[r]: /dest?x=$a+b$",
+		);
+
+		const sentinelHrefEntityMd = "[r]: /dest?x=$a&amp;b$\n\n[x][r]";
+		expect(firstLinkHref(parseMarkdownToVisualDoc(sentinelHrefEntityMd))).toBe(
+			"/dest?x=$a&b$",
+		);
+	});
+
+	it("decodes raw inline link titles with PHP Html5EntityDecoder parity without Windows-1252 remapping (Track A #6)", () => {
+		const inlineLinkMd = '[x](/d "&#128;")';
+		const guard = createMarkdownRoundTripGuard(inlineLinkMd);
+		expect(firstLinkAttrs(guard.initialDoc)).toEqual({
+			href: "/d",
+			title: "\u0080",
+		});
+
+		// Editing link text `"x"` -> `"y"` preserves U+0080 (NOT `€` and NOT `&amp;#128;`).
+		const linkMarks = guard.initialDoc.firstChild?.firstChild?.marks ?? [];
+		const editedDoc = EditorState.create({
+			doc: guard.initialDoc,
+			schema: visualEditorSchema,
+		}).tr.replaceWith(1, 2, visualEditorSchema.text("y", linkMarks)).doc;
+		const serialized = guard.serialize(editedDoc);
+		expect(serialized).toBe('[y](/d "\u0080")');
+		expect(serialized).not.toContain("€");
+		expect(serialized).not.toContain("&amp;#128;");
+		expect(firstLinkAttrs(parseMarkdownToVisualDoc(serialized))).toEqual({
+			href: "/d",
+			title: "\u0080",
+		});
+
+		// Single-quoted, parenthesized, out-of-range, two-pass, literal entity, and nested image+link.
+		expect(firstLinkAttrs(parseMarkdownToVisualDoc("[x](/d '&#128;')"))).toEqual(
+			{ href: "/d", title: "\u0080" },
+		);
+		expect(firstLinkAttrs(parseMarkdownToVisualDoc("[x](/d (&#128;))"))).toEqual(
+			{ href: "/d", title: "\u0080" },
+		);
+		expect(
+			firstLinkAttrs(
+				parseMarkdownToVisualDoc(
+					'[x](/d "&#128; &#159; &#x2FFFF; &#x30000; &#xD800; &#0;")',
+				),
+			),
+		).toEqual({
+			href: "/d",
+			title: `\u0080 \u009F ${String.fromCodePoint(0x2ffff)} \uFFFD \uFFFD \uFFFD`,
+		});
+		expect(
+			firstLinkAttrs(parseMarkdownToVisualDoc(String.raw`[x](/d "\&amp;")`)),
+		).toEqual({ href: "/d", title: "&" });
+		expect(
+			firstLinkAttrs(parseMarkdownToVisualDoc('[x](/d "&amp;#128;")')),
+		).toEqual({ href: "/d", title: "&#128;" });
+
+		const nestedDoc = parseMarkdownToVisualDoc(
+			'[![img](/i.png "&#129;")](/d "&#128;")',
+		);
+		expect(firstImageAttrs(nestedDoc)).toMatchObject({
+			src: "/i.png",
+			title: "\u0081",
+		});
+		let imageLinkTitle: unknown = null;
+		nestedDoc.descendants((node) => {
+			if (node.type.name === "image") {
+				imageLinkTitle =
+					node.marks.find((m) => m.type.name === "link")?.attrs.title ?? null;
+			}
+		});
+		expect(imageLinkTitle).toBe("\u0080");
+
+		// Reference links and broken inline links falling back to reference definitions.
+		expect(
+			firstLinkAttrs(
+				parseMarkdownToVisualDoc('[x][r]\n\n[r]: /d "&#128;"'),
+			),
+		).toEqual({ href: "/d", title: "\u0080" });
+		expect(
+			firstLinkAttrs(
+				parseMarkdownToVisualDoc(
+					'[foo](bar "&#128;"\n\n[foo]: /ref "ref &#129;"',
+				),
+			),
+		).toEqual({ href: "/ref", title: "ref \u0081" });
+	});
+
+	it("protects serialized scaled and unscaled image titles against WP Core wp_kses_normalize_entities() double-decoding conflicts (Track A #2)", () => {
+		const serializeImg = (title: string | null, scale: number | null): string =>
+			serializeVisualDocToMarkdown(
+				visualEditorSchema.nodes.doc.create(null, [
+					visualEditorSchema.nodes.paragraph.create(null, [
+						visualEditorSchema.nodes.image.create({
+							src: "/x.png",
+							alt: "A",
+							title,
+							scale,
+						}),
+					]),
+				]),
+			);
+
+		// Scaled images: decimal, hex, leading-zero, tab-padded, C0-control, and marker-only entity conflicts.
+		expect(serializeImg("Caption &#123;width=51%&#125;", 50)).toBe(
+			'![A](/x.png "Caption {width=50%}")',
+		);
+		expect(serializeImg("Caption &#x7b;width=51%&#x7d;", 50)).toBe(
+			'![A](/x.png "Caption {width=50%}")',
+		);
+		expect(serializeImg("Caption &#00000000123;width=51%&#00000000125;", 50)).toBe(
+			'![A](/x.png "Caption {width=50%}")',
+		);
+		expect(serializeImg("&#123;width=51%&#125;", 50)).toBe(
+			'![A](/x.png "{width=50%}")',
+		);
+		expect(serializeImg("Caption {width=51%}\x01", 50)).toBe(
+			'![A](/x.png "Caption {width=50%}")',
+		);
+		expect(serializeImg("Caption {width=51%}&#9;", 50)).toBe(
+			'![A](/x.png "Caption {width=50%}")',
+		);
+
+		// Unscaled images: numeric-entity or C0-control markers that WP KSES would decode into `{width=...}`.
+		expect(serializeImg("Caption &#123;width=51%&#125;", null)).toBe(
+			'![A](/x.png "Caption")',
+		);
+		expect(serializeImg("Caption &#123;width=50%&#125;", null)).toBe(
+			'![A](/x.png "Caption")',
+		);
+		expect(serializeImg("Caption&#123;width=50%}", null)).toBe(
+			'![A](/x.png "Caption")',
+		);
+		expect(serializeImg("&#123;width=51%&#125;", null)).toBe("![A](/x.png)");
+		expect(serializeImg("Caption {width=51%}\x01", null)).toBe(
+			'![A](/x.png "Caption")',
+		);
+
+		// Safe double-encoded `&amp;#123;...` and non-marker `&#123;note&#125;` still preserve verbatim.
+		expect(serializeImg("Caption &amp;#123;width=51%&amp;#125;", 50)).toBe(
+			'![A](/x.png "Caption &amp;amp;#123;width=51%&amp;amp;#125; {width=50%}")',
+		);
+		expect(serializeImg("Caption &#123;note&#125;", 50)).toBe(
+			'![A](/x.png "Caption &amp;#123;note&amp;#125; {width=50%}")',
+		);
+	});
+
+	it("separates horizontal_rule after paragraph inside a tight list with a blank line to prevent Setext H2 corruption (Track B #3)", () => {
+		const tightListDoc = visualEditorSchema.nodes.doc.create(null, [
+			visualEditorSchema.nodes.bullet_list.create({ marker: "-", tight: true }, [
+				visualEditorSchema.nodes.list_item.create(null, [
+					visualEditorSchema.nodes.paragraph.create(null, [
+						visualEditorSchema.text("Hello"),
+					]),
+					visualEditorSchema.nodes.horizontal_rule.create(),
+				]),
+			]),
+		]);
+
+		const serialized = serializeVisualDocToMarkdown(tightListDoc);
+		expect(serialized).toBe("- Hello\n\n  ---");
+
+		const reparsed = parseMarkdownToVisualDoc(serialized);
+		const item = reparsed.firstChild?.firstChild;
+		expect(item?.childCount).toBe(2);
+		expect(item?.child(0).type.name).toBe("paragraph");
+		expect(item?.child(0).textContent).toBe("Hello");
+		expect(item?.child(1).type.name).toBe("horizontal_rule");
+
+		// A horizontal_rule after a non-paragraph block (e.g. heading) still keeps tight separation.
+		const tightAfterHeadingDoc = visualEditorSchema.nodes.doc.create(null, [
+			visualEditorSchema.nodes.bullet_list.create({ marker: "-", tight: true }, [
+				visualEditorSchema.nodes.list_item.create(null, [
+					visualEditorSchema.nodes.paragraph.create(),
+					visualEditorSchema.nodes.heading.create({ level: 2 }, [
+						visualEditorSchema.text("Title"),
+					]),
+					visualEditorSchema.nodes.horizontal_rule.create(),
+				]),
+			]),
+		]);
+		const headingHrSerialized =
+			serializeVisualDocToMarkdown(tightAfterHeadingDoc);
+		expect(headingHrSerialized).toBe("-\n  ## Title\n  ---");
+		const headingHrReparsed = parseMarkdownToVisualDoc(headingHrSerialized);
+		const headingItem = headingHrReparsed.firstChild?.firstChild;
+		expect(headingItem?.child(1).type.name).toBe("heading");
+		expect(headingItem?.child(2).type.name).toBe("horizontal_rule");
 	});
 });

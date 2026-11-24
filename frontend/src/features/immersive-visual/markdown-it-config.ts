@@ -1,6 +1,15 @@
 import MarkdownIt from "markdown-it";
 import { decodeCommonMarkTitle } from "../../shared/image-scale-title";
-import { RAW_IMAGE_TITLE_META_KEY } from "./markdown-parser-inline";
+import {
+	RAW_IMAGE_TITLE_META_KEY,
+	RAW_LINK_TITLE_META_KEY,
+} from "./markdown-parser-inline";
+import {
+	type PreScanResult,
+	restoreProtectedInlineSentinels,
+} from "./markdown-prescanner";
+
+export const RAW_REFERENCE_SOURCE_META_KEY = "easymdeRawReferenceSource";
 
 type InternalRulerEntry<TRule> = Readonly<{
 	alt: string[];
@@ -12,6 +21,14 @@ type InternalRuler<TRule> = Readonly<{
 	__rules__?: ReadonlyArray<InternalRulerEntry<TRule>>;
 }>;
 
+type ReferenceEnv = {
+	preScan?: Pick<
+		PreScanResult,
+		"protectedBlocks" | "protectedInlines" | "sentinel" | "tableAlignMarkers"
+	>;
+	references?: Record<string, { href: string; title: string }>;
+};
+
 function isInlineSpaceOrLf(code: number): boolean {
 	return code === 0x20 || code === 0x09 || code === 0x0a;
 }
@@ -22,20 +39,26 @@ type InlineRuleFn = Parameters<
 type BlockRuleFn = Parameters<
 	InstanceType<typeof MarkdownIt>["block"]["ruler"]["at"]
 >[1];
-type InlineImageRuleState = Parameters<InlineRuleFn>[0];
+type InlineRuleState = Parameters<InlineRuleFn>[0];
 type BlockRuleState = Parameters<BlockRuleFn>[0];
 
 /**
- * Extracts the raw (pre-unescape) inner title slice of a matched inline image
- * token from `state.src` so PHP-equivalent two-pass decoding runs directly on
- * the raw Markdown title without double-decoding `markdown-it`'s output.
+ * Extracts the raw (pre-unescape) inner title slice of a matched inline link
+ * or image token from `state.src` so PHP-equivalent two-pass decoding runs
+ * directly on the raw Markdown title without double-decoding `markdown-it`'s
+ * HTML5/Windows-1252 entity output.
  */
-function extractRawInlineImageTitle(
-	state: InlineImageRuleState,
-	startPos: number,
+function extractRawInlineTitle(
+	state: InlineRuleState,
+	bracketPos: number,
 	endPos: number,
+	disableNested: boolean,
 ): string | null {
-	const labelEnd = state.md.helpers.parseLinkLabel(state, startPos + 1, false);
+	const labelEnd = state.md.helpers.parseLinkLabel(
+		state,
+		bracketPos,
+		disableNested,
+	);
 	if (labelEnd < 0) {
 		return null;
 	}
@@ -64,18 +87,34 @@ function extractRawInlineImageTitle(
 	if (pos >= endPos || pos === afterDest) {
 		return null;
 	}
+	const titleStart = pos;
 	const titleRes = state.md.helpers.parseLinkTitle(state.src, pos, endPos);
-	if (!titleRes.ok || titleRes.pos < pos + 2) {
+	if (!titleRes.ok || titleRes.pos < titleStart + 2) {
 		return null;
 	}
-	return state.src.slice(pos + 1, titleRes.pos - 1);
+	let closePos = titleRes.pos;
+	while (
+		closePos < endPos &&
+		isInlineSpaceOrLf(state.src.charCodeAt(closePos))
+	) {
+		closePos += 1;
+	}
+	if (closePos >= endPos || state.src.charCodeAt(closePos) !== 41) {
+		return null;
+	}
+	return state.src.slice(titleStart + 1, titleRes.pos - 1);
 }
 
-function extractRawReferenceTitle(
+type RawReferenceParts = Readonly<{
+	rawDestination: string | null;
+	rawTitle: string | null;
+}>;
+
+function extractRawReferenceParts(
 	state: BlockRuleState,
 	startLine: number,
 	endLine: number,
-): string | null {
+): RawReferenceParts {
 	const lines: string[] = [];
 	for (let line = startLine; line < endLine; line += 1) {
 		const lineStart = (state.bMarks[line] ?? 0) + (state.tShift[line] ?? 0);
@@ -84,13 +123,13 @@ function extractRawReferenceTitle(
 	}
 	const joined = lines.join("\n");
 	if (joined.charCodeAt(0) !== 91) {
-		return null;
+		return { rawDestination: null, rawTitle: null };
 	}
 	let pos = 1;
 	while (pos < joined.length) {
 		const ch = joined.charCodeAt(pos);
 		if (ch === 91) {
-			return null;
+			return { rawDestination: null, rawTitle: null };
 		}
 		if (ch === 93) {
 			break;
@@ -102,40 +141,84 @@ function extractRawReferenceTitle(
 		pos += 1;
 	}
 	if (pos >= joined.length || joined.charCodeAt(pos + 1) !== 58) {
-		return null;
+		return { rawDestination: null, rawTitle: null };
 	}
 	pos += 2;
 	while (pos < joined.length && isInlineSpaceOrLf(joined.charCodeAt(pos))) {
 		pos += 1;
 	}
+	const destStart = pos;
 	const destRes = state.md.helpers.parseLinkDestination(
 		joined,
 		pos,
 		joined.length,
 	);
 	if (!destRes.ok) {
-		return null;
+		return { rawDestination: null, rawTitle: null };
 	}
+	const rawDestination = joined.slice(destStart, destRes.pos);
 	pos = destRes.pos;
 	const afterDest = pos;
 	while (pos < joined.length && isInlineSpaceOrLf(joined.charCodeAt(pos))) {
 		pos += 1;
 	}
 	if (pos >= joined.length || pos === afterDest) {
-		return null;
+		return { rawDestination, rawTitle: null };
 	}
 	const titleRes = state.md.helpers.parseLinkTitle(joined, pos, joined.length);
 	if (!titleRes.ok || titleRes.pos < pos + 2) {
-		return null;
+		return { rawDestination, rawTitle: null };
 	}
-	return joined.slice(pos + 1, titleRes.pos - 1);
+	return {
+		rawDestination,
+		rawTitle: joined.slice(pos + 1, titleRes.pos - 1),
+	};
+}
+
+/**
+ * Extracts the container-stripped raw source lines of a `reference_definition`
+ * while `markdown-it`'s block state still carries the exact per-line container
+ * offsets (`bMarks`, `tShift`, `sCount`, `bsCount`, `blkIndent`).
+ */
+function extractRawReferenceBlock(
+	state: BlockRuleState,
+	startLine: number,
+	endLine: number,
+): string {
+	const lines: string[] = [];
+	for (let line = startLine; line < endLine; line += 1) {
+		const bMark = state.bMarks[line] ?? 0;
+		const eMark = state.eMarks[line] ?? bMark;
+		if (state.blkIndent === 0 && (state.bsCount[line] ?? 0) === 0) {
+			lines.push(state.src.slice(bMark, eMark));
+			continue;
+		}
+		const contentStart = bMark + (state.tShift[line] ?? 0);
+		const relativeIndent = Math.max(
+			0,
+			(state.sCount[line] ?? 0) - state.blkIndent,
+		);
+		lines.push(
+			`${" ".repeat(relativeIndent)}${state.src.slice(contentStart, eMark)}`,
+		);
+	}
+	return lines.join("\n");
+}
+
+function hasReferenceLabelMeta(meta: unknown): boolean {
+	return (
+		meta !== null &&
+		typeof meta === "object" &&
+		typeof (meta as { label?: unknown }).label === "string"
+	);
 }
 
 /**
  * Configures the feature-private `markdown-it` parser with PHP-parity rules:
- * raw inline/reference image title capture for two-pass decoding, standalone
- * block parsing for prescanned `TBLALIGN` sentinels (preserving tight lists),
- * and CommonMark §4.8 / §4.3 continuation-indent stripping.
+ * raw inline link/image and reference title capture for two-pass decoding,
+ * preservation of `reference_definition` tokens in the block token stream,
+ * standalone block parsing for prescanned `TBLALIGN` sentinels (preserving
+ * tight lists), and CommonMark §4.8 / §4.3 continuation-indent stripping.
  */
 export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> {
 	const parser = new MarkdownIt({
@@ -144,9 +227,18 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 		breaks: false,
 	});
 
-	const originalImageRuleEntry = (
+	// Keep `reference_definition` tokens in the block stream with their exact
+	// `token.map` and container nesting so the parser maps them to protected
+	// blocks without duplicating CommonMark §4.7 parsing in the prescanner.
+	parser.core.ruler.disable("strip_references");
+
+	const inlineRules = (
 		parser.inline.ruler as unknown as InternalRuler<InlineRuleFn>
-	).__rules__?.find((rule) => rule.name === "image");
+	).__rules__;
+
+	const originalImageRuleEntry = inlineRules?.find(
+		(rule) => rule.name === "image",
+	);
 
 	if (originalImageRuleEntry) {
 		const originalImageRule = originalImageRuleEntry.fn;
@@ -161,11 +253,15 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 					return matched;
 				}
 				const imageToken = state.tokens[state.tokens.length - 1];
-				if (imageToken?.type === "image") {
-					const rawTitle = extractRawInlineImageTitle(
+				if (
+					imageToken?.type === "image" &&
+					!hasReferenceLabelMeta(imageToken.meta)
+				) {
+					const rawTitle = extractRawInlineTitle(
 						state,
-						startPos,
+						startPos + 1,
 						state.pos,
+						false,
 					);
 					if (rawTitle !== null) {
 						const meta: Record<string, unknown> =
@@ -181,6 +277,49 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 			{ alt: [...originalImageRuleEntry.alt] },
 		);
 		parser.inline.ruler.disable("image");
+	}
+
+	const originalLinkRuleEntry = inlineRules?.find(
+		(rule) => rule.name === "link",
+	);
+
+	if (originalLinkRuleEntry) {
+		const originalLinkRule = originalLinkRuleEntry.fn;
+		parser.inline.ruler.before(
+			"link",
+			"easymde_link",
+			(state, silent) => {
+				const startPos = state.pos;
+				const tokensBefore = state.tokens.length;
+				const matched = originalLinkRule(state, silent);
+				if (!matched || silent || state.tokens.length <= tokensBefore) {
+					return matched;
+				}
+				const linkOpenToken = state.tokens[tokensBefore];
+				if (
+					linkOpenToken?.type === "link_open" &&
+					!hasReferenceLabelMeta(linkOpenToken.meta)
+				) {
+					const rawTitle = extractRawInlineTitle(
+						state,
+						startPos,
+						state.pos,
+						true,
+					);
+					if (rawTitle !== null) {
+						const meta: Record<string, unknown> =
+							linkOpenToken.meta && typeof linkOpenToken.meta === "object"
+								? (linkOpenToken.meta as Record<string, unknown>)
+								: Object.create(null);
+						meta[RAW_LINK_TITLE_META_KEY] = rawTitle;
+						linkOpenToken.meta = meta;
+					}
+				}
+				return true;
+			},
+			{ alt: [...originalLinkRuleEntry.alt] },
+		);
+		parser.inline.ruler.disable("link");
 	}
 
 	const knownReferenceLabelsByMap = new WeakMap<
@@ -216,9 +355,7 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 				if (state.src.charCodeAt(startPos) !== 0x5b) {
 					return false;
 				}
-				const env = state.env as {
-					references?: Record<string, { href: string; title: string }>;
-				};
+				const env = state.env as ReferenceEnv;
 				const existingRefs = env.references;
 				const knownLabels = existingRefs
 					? getKnownReferenceLabels(existingRefs)
@@ -229,11 +366,22 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 					return matched;
 				}
 				const refToken = state.tokens[state.tokens.length - 1];
+				const preScan = env.preScan;
+				const restoreSentinels = (text: string): string =>
+					preScan ? restoreProtectedInlineSentinels(text, preScan) : text;
+				if (refToken?.type === "reference_definition") {
+					const meta: Record<string, unknown> =
+						refToken.meta && typeof refToken.meta === "object"
+							? (refToken.meta as Record<string, unknown>)
+							: Object.create(null);
+					meta[RAW_REFERENCE_SOURCE_META_KEY] = restoreSentinels(
+						extractRawReferenceBlock(state, startLine, state.line),
+					);
+					refToken.meta = meta;
+				}
 				const label =
 					refToken?.type === "reference_definition" &&
-					refToken.meta &&
-					typeof refToken.meta === "object" &&
-					typeof (refToken.meta as { label?: unknown }).label === "string"
+					hasReferenceLabelMeta(refToken.meta)
 						? (refToken.meta as { label: string }).label
 						: null;
 				const refs = env.references;
@@ -241,18 +389,39 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 					const activeKnown = knownLabels ?? getKnownReferenceLabels(refs);
 					const alreadyExisted = knownLabels !== null && activeKnown.has(label);
 					activeKnown.add(label);
-					if (!alreadyExisted && refs[label] && refs[label].title.length > 0) {
-						const rawTitle = extractRawReferenceTitle(
-							state,
-							startLine,
-							state.line,
-						);
-						if (rawTitle !== null) {
-							refs[label].title = decodeCommonMarkTitle(
-								rawTitle
-									.replace(/\r\n|\r/gu, "\n")
-									.replace(/\n[ \t]+/gu, "\n"),
+					const entry = refs[label];
+					if (!alreadyExisted && entry) {
+						const needsHrefRestore =
+							preScan !== undefined && entry.href.includes(preScan.sentinel);
+						const needsTitleDecode = entry.title.length > 0;
+						if (needsHrefRestore || needsTitleDecode) {
+							const parts = extractRawReferenceParts(
+								state,
+								startLine,
+								state.line,
 							);
+							if (needsHrefRestore && parts.rawDestination !== null) {
+								const restoredDest = restoreSentinels(parts.rawDestination);
+								const unwrappedDest =
+									restoredDest.startsWith("<") &&
+									restoredDest.endsWith(">") &&
+									restoredDest.length >= 2
+										? restoredDest.slice(1, -1)
+										: restoredDest;
+								const normalizedHref = state.md.normalizeLink(
+									decodeCommonMarkTitle(unwrappedDest),
+								);
+								entry.href = state.md.validateLink(normalizedHref)
+									? normalizedHref
+									: "";
+							}
+							if (needsTitleDecode && parts.rawTitle !== null) {
+								entry.title = decodeCommonMarkTitle(
+									restoreSentinels(parts.rawTitle)
+										.replace(/\r\n|\r/gu, "\n")
+										.replace(/\n[ \t]+/gu, "\n"),
+								);
+							}
 						}
 					}
 				}
@@ -295,30 +464,11 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 		{ alt: ["paragraph", "reference", "blockquote", "list"] },
 	);
 
-	// Merge deferred prescanned references only if an earlier definition did not
-	// already define that label during markdown-it block parsing (CommonMark
-	// first-wins), and strip paragraph/Setext continuation indentation per §4.8.
+	// Strip paragraph/Setext continuation indentation per CommonMark §4.8.
 	parser.core.ruler.before(
 		"inline",
 		"easymde_strip_continuation_indent",
 		(state) => {
-			const env = state.env as {
-				deferredReferences?: Record<string, { href: string; title: string }>;
-				references?: Record<string, { href: string; title: string }>;
-			};
-			if (env.deferredReferences) {
-				for (const key of Object.keys(env.deferredReferences)) {
-					if (!env.references) {
-						env.references = Object.create(null);
-					}
-					if (env.references && env.references[key] === undefined) {
-						const entry = env.deferredReferences[key];
-						if (entry) {
-							env.references[key] = entry;
-						}
-					}
-				}
-			}
 			for (let i = 0; i < state.tokens.length; i += 1) {
 				const token = state.tokens[i];
 				if (token?.type !== "inline" || !token.content.includes("\n")) {

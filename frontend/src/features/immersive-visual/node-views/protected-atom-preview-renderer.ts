@@ -5,6 +5,7 @@ import {
 } from "prosemirror-model";
 import type { EditorView } from "prosemirror-view";
 import {
+	extractReferenceDefinitionLabels,
 	parseInlineMarkdownFragment,
 	parseMarkdownToVisualDoc,
 } from "../markdown-parser";
@@ -15,7 +16,6 @@ import {
 	detectFence,
 	FOOTNOTE_DEF_LINE,
 	isFenceCloser,
-	REFERENCE_DEF_LINE,
 	SETEXT_UNDERLINE,
 	THEMATIC_BREAK,
 } from "../markdown-prescanner";
@@ -365,21 +365,7 @@ function createCollapsedMetaChip(
 }
 
 function collectReferenceLabels(rawMarkdown: string): string[] | null {
-	const lines = rawMarkdown.replace(/\r\n?/g, "\n").split("\n");
-	const labels: string[] = [];
-	let sawAny = false;
-	for (const line of lines) {
-		if (line.trim().length === 0) continue;
-		const match = REFERENCE_DEF_LINE.exec(line);
-		if (match?.[1]) {
-			labels.push(match[1].trim());
-			sawAny = true;
-			continue;
-		}
-		if (sawAny && /^[ \t]+/.test(line)) continue;
-		return null;
-	}
-	return labels.length > 0 ? labels : null;
+	return extractReferenceDefinitionLabels(rawMarkdown);
 }
 
 function collectFootnoteLabels(rawMarkdown: string): string[] {

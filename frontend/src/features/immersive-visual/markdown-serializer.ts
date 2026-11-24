@@ -3,6 +3,7 @@ import {
 	decodeCommonMarkTitle,
 	type ImageScalePercentage,
 	parseEffectiveImageScaleTitle,
+	parseImageScaleTitleContract,
 	stripTrailingReservedScaleMarkers,
 } from "../../shared/image-scale-title";
 import {
@@ -196,6 +197,62 @@ function formatQuotedTitle(titleValue: string, inTableCell: boolean): string {
 	return inTableCell ? escapeTablePipes(escaped) : escaped;
 }
 
+function isValidWpKsesUnicode(codePoint: number): boolean {
+	return (
+		codePoint === 0x9 ||
+		codePoint === 0xa ||
+		codePoint === 0xd ||
+		(codePoint >= 0x20 && codePoint <= 0xd7ff) ||
+		(codePoint >= 0xe000 && codePoint <= 0xfffd) ||
+		(codePoint >= 0x10000 && codePoint <= 0x10ffff)
+	);
+}
+
+/**
+ * Projects a CommonMark-decoded image title through WordPress Core's
+ * `wp_kses_no_null(..., ['slash_zero' => 'keep'])` +
+ * `wp_kses_normalize_entities()` + `DOMDocument::loadHTML()` pipeline so
+ * serialized titles never trigger `easymde_image_scale_syntax_invalid` or
+ * spurious scale markers in real WordPress `MarkdownRenderer::render()`.
+ */
+function decodeWpKsesRenderedTitle(commonMarkDecoded: string): string {
+	let rendered = commonMarkDecoded.replace(
+		// biome-ignore lint/suspicious/noControlCharactersInRegex: Mirror WP wp_kses_no_null() control-character stripping.
+		/[\x00-\x08\x0B\x0C\x0E-\x1F]/g,
+		"",
+	);
+	if (!rendered.includes("&#")) {
+		return rendered;
+	}
+	rendered = rendered.replace(
+		/&#(?:([0-9]+)|[xX]([0-9a-fA-F]+));/g,
+		(match, decDigits: string | undefined, hexDigits: string | undefined) => {
+			if (decDigits !== undefined) {
+				const trimmed = decDigits.replace(/^0+/, "");
+				if (trimmed.length === 0 || trimmed.length > 7) {
+					return match;
+				}
+				const codePoint = Number.parseInt(trimmed, 10);
+				return isValidWpKsesUnicode(codePoint)
+					? String.fromCodePoint(codePoint)
+					: match;
+			}
+			if (hexDigits !== undefined) {
+				const trimmed = hexDigits.replace(/^0+/, "");
+				if (trimmed.length === 0 || trimmed.length > 6) {
+					return match;
+				}
+				const codePoint = Number.parseInt(trimmed, 16);
+				return isValidWpKsesUnicode(codePoint)
+					? String.fromCodePoint(codePoint)
+					: match;
+			}
+			return match;
+		},
+	);
+	return rendered;
+}
+
 function serializeScaledImageTitle(
 	baseTitle: string,
 	scale: ImageScalePercentage,
@@ -205,7 +262,13 @@ function serializeScaledImageTitle(
 	const tryCandidate = (value: string): string | null => {
 		const candidate = formatQuotedTitle(`${value} ${marker}`, inTableCell);
 		const parsed = parseEffectiveImageScaleTitle(candidate);
-		return parsed.status === "valid" && parsed.scale === scale
+		if (parsed.status !== "valid" || parsed.scale !== scale) {
+			return null;
+		}
+		const ksesParsed = parseImageScaleTitleContract(
+			decodeWpKsesRenderedTitle(decodeCommonMarkTitle(candidate)),
+		);
+		return ksesParsed.status === "valid" && ksesParsed.scale === scale
 			? candidate
 			: null;
 	};
@@ -217,13 +280,14 @@ function serializeScaledImageTitle(
 		return primary;
 	}
 	// Programmatic titles with backslash-escaped markers (such as
-	// `"Caption \\{width=33%\\}"`) can still decode to a conflicting marker in
-	// PHP; decode and strip before falling back to scale-only so Visual
-	// serialization never emits PHP-invalid Markdown.
+	// `"Caption \\{width=33%\\}"`) or WP KSES double-decoded numeric entities
+	// (such as `"Caption &#123;width=51%&#125;"`) can still decode to a
+	// conflicting marker in PHP; decode and strip before falling back to
+	// scale-only so Visual serialization never emits PHP-invalid Markdown.
 	let current = baseTitle;
 	for (let attempt = 0; attempt < 4; attempt += 1) {
 		const next = stripTrailingReservedScaleMarkers(
-			decodeCommonMarkTitle(current),
+			decodeWpKsesRenderedTitle(decodeCommonMarkTitle(current)),
 			true,
 		);
 		if (next.length === 0) {
@@ -250,9 +314,13 @@ function serializeUnscaledImageTitle(
 	}
 	const tryCandidate = (value: string): string | null => {
 		const candidate = formatQuotedTitle(value, inTableCell);
-		return parseEffectiveImageScaleTitle(candidate).status === "none"
-			? candidate
-			: null;
+		if (parseEffectiveImageScaleTitle(candidate).status !== "none") {
+			return null;
+		}
+		const ksesParsed = parseImageScaleTitleContract(
+			decodeWpKsesRenderedTitle(decodeCommonMarkTitle(candidate)),
+		);
+		return ksesParsed.status === "none" ? candidate : null;
 	};
 	const primary = tryCandidate(rawTitle);
 	if (primary !== null) {
@@ -269,12 +337,13 @@ function serializeUnscaledImageTitle(
 		}
 	}
 	// Programmatic unscaled titles with backslash-escaped markers (such as
-	// `"Caption \\{width=51%\\}"`) can still decode to a PHP-invalid or spurious
-	// scale marker; decode and strip trailing reserved markers before emitting.
+	// `"Caption \\{width=51%\\}"`) or WP KSES double-decoded numeric entities
+	// can still decode to a PHP-invalid or spurious scale marker; decode and
+	// strip trailing reserved markers before emitting.
 	let current = rawTitle;
 	for (let attempt = 0; attempt < 4; attempt += 1) {
 		const next = stripTrailingReservedScaleMarkers(
-			decodeCommonMarkTitle(current),
+			decodeWpKsesRenderedTitle(decodeCommonMarkTitle(current)),
 			false,
 		);
 		if (next.length === 0) {

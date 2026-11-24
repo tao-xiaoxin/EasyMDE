@@ -2319,4 +2319,20 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 		expect(root.textContent).toContain("Safe");
 		expect(root.textContent).toContain("Plain");
 	});
+
+	it("renders multi-line and unindented next-line reference definitions as collapsed meta chips", () => {
+		const markdown = [
+			"![x][img-title] and ![y][img-dest]",
+			'[img-title]: https://example.com/a.png\n"line 1\nline 2"',
+			'[img-dest]:\nhttps://example.com/b.png "cap"',
+		].join("\n\n");
+
+		const view = mountVisualEditor(markdown);
+		const chips = Array.from(
+			view.dom.querySelectorAll(".easymde-protected-meta-chip"),
+		).map((el) => el.textContent);
+		expect(chips).toHaveLength(2);
+		expect(chips[0]).toContain("[img-title]");
+		expect(chips[1]).toContain("[img-dest]");
+	});
 });

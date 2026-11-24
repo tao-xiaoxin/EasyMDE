@@ -15,6 +15,18 @@ import {
 } from "./visual-schema";
 
 export const RAW_IMAGE_TITLE_META_KEY = "easymdeRawTitle";
+export const RAW_LINK_TITLE_META_KEY = "easymdeRawLinkTitle";
+
+export function readRawMetaString(
+	token: MarkdownToken,
+	key: string,
+): string | null {
+	if (!token.meta || typeof token.meta !== "object") {
+		return null;
+	}
+	const value = (token.meta as Record<string, unknown>)[key];
+	return typeof value === "string" ? value : null;
+}
 
 /** Feature-private inline token mapping for the immersive visual parser. */
 export type MarkdownToken = ReturnType<
@@ -203,17 +215,28 @@ export function mapInlineTokens(
 				popMark("strike");
 				break;
 			case "link_open": {
-				const rawTitle = restoreProtectedInlineSentinels(
-					tokenAttrString(token, "title") ?? "",
-					preScan,
+				const rawInlineTitle = readRawMetaString(
+					token,
+					RAW_LINK_TITLE_META_KEY,
 				);
+				const effectiveTitle =
+					rawInlineTitle !== null
+						? decodeCommonMarkTitle(
+								restoreProtectedInlineSentinels(rawInlineTitle, preScan)
+									.replace(/\r\n|\r/gu, "\n")
+									.replace(/\n[ \t]+/gu, "\n"),
+							)
+						: restoreProtectedInlineSentinels(
+								tokenAttrString(token, "title") ?? "",
+								preScan,
+							);
 				markStack.push(
 					visualEditorSchema.marks.link.create({
 						href: restoreProtectedInlineSentinels(
 							tokenAttrString(token, "href") ?? "",
 							preScan,
 						),
-						title: rawTitle.length > 0 ? rawTitle : null,
+						title: effectiveTitle.length > 0 ? effectiveTitle : null,
 					}),
 				);
 				break;
@@ -222,18 +245,10 @@ export function mapInlineTokens(
 				popMark("link");
 				break;
 			case "image": {
-				const rawInlineTitle =
-					token.meta &&
-					typeof token.meta === "object" &&
-					typeof (token.meta as Record<string, unknown>)[
-						RAW_IMAGE_TITLE_META_KEY
-					] === "string"
-						? String(
-								(token.meta as Record<string, unknown>)[
-									RAW_IMAGE_TITLE_META_KEY
-								],
-							)
-						: null;
+				const rawInlineTitle = readRawMetaString(
+					token,
+					RAW_IMAGE_TITLE_META_KEY,
+				);
 				const effectiveTitle =
 					rawInlineTitle !== null
 						? decodeCommonMarkTitle(

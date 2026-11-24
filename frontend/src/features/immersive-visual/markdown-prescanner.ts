@@ -1,4 +1,3 @@
-import { decodeCommonMarkTitle } from "../../shared/image-scale-title";
 import { parseReservedTableAlignmentMarkerLine } from "../../shared/table-alignment-marker";
 import {
 	extractInlineProtectedSyntax,
@@ -13,25 +12,18 @@ export type ProtectedBlockEntry = Readonly<{
 	rawMarkdown: string;
 }>;
 
-export type ReferenceDefinition = Readonly<{
-	href: string;
-	title: string;
-}>;
-
 export type PrescannedLineRange = Readonly<{
 	end: number;
 	start: number;
 }>;
 
 export type PreScanResult = Readonly<{
-	deferredReferences: Record<string, ReferenceDefinition>;
 	lineEnding: "\n" | "\r\n";
 	markdown: string;
 	outputLineRanges: ReadonlyArray<PrescannedLineRange | null>;
 	protectedBlocks: ReadonlyMap<string, ProtectedBlockEntry>;
 	protectedInlines: ReadonlyMap<string, ProtectedInlineEntry>;
 	rawLines: ReadonlyArray<string>;
-	references: Record<string, ReferenceDefinition>;
 	sentinel: string;
 	tableAlignMarkers: ReadonlyMap<string, string>;
 }>;
@@ -373,114 +365,7 @@ function findGfmTableEnd(
 	}
 	return end;
 }
-function normalizeReferenceKey(label: string): string {
-	return label.trim().replace(/\s+/g, " ").toUpperCase();
-}
-function parseReferenceTitle(raw: string): string | null {
-	const trimmed = raw.trim();
-	const quote = trimmed[0];
-	if (quote !== '"' && quote !== "'" && quote !== "(") {
-		return null;
-	}
-	const closing = quote === "(" ? ")" : quote;
-	if (trimmed.length < 2 || !trimmed.endsWith(closing)) {
-		return null;
-	}
-	const inner = trimmed.slice(1, -1);
-	let escaped = false;
-	for (let index = 0; index < inner.length; index += 1) {
-		const ch = inner[index] ?? "";
-		if (escaped) {
-			escaped = false;
-			continue;
-		}
-		if (ch === "\\") {
-			escaped = true;
-			continue;
-		}
-		if (ch === closing || (quote === "(" && ch === "(")) {
-			return null;
-		}
-	}
-	if (escaped) {
-		return null;
-	}
-	return decodeCommonMarkTitle(inner);
-}
-
-type ReferenceDefinitionMatch = Readonly<{
-	end: number;
-	href: string;
-	key: string;
-	title: string;
-}>;
-
-export const REFERENCE_DEF_LINE = /^ {0,3}\[([^\]^][^\]]*)\]:[ \t]*(.*)$/;
 export const FOOTNOTE_DEF_LINE = /^ {0,3}\[\^([^\s\]]+)\]:(?:[ \t]|$)/;
-
-function matchReferenceDefinition(
-	lines: ReadonlyArray<string>,
-	start: number,
-): ReferenceDefinitionMatch | null {
-	const startBq = readBlockquotePrefix(lines[start] ?? "");
-	const startDepth = blockquoteDepth(startBq.prefix);
-	const match = REFERENCE_DEF_LINE.exec(startBq.rest);
-	if (!match?.[1]) {
-		return null;
-	}
-	const key = normalizeReferenceKey(match[1]);
-	if (key.length === 0) {
-		return null;
-	}
-	let remainder = (match[2] ?? "").trim();
-	let end = start;
-	if (remainder.length === 0) {
-		const next = lines[start + 1];
-		if (next === undefined) {
-			return null;
-		}
-		const nextBq = readBlockquotePrefix(next);
-		if (
-			blockquoteDepth(nextBq.prefix) > startDepth ||
-			!/^[ \t]+/.test(nextBq.rest)
-		) {
-			return null;
-		}
-		remainder = nextBq.rest.trim();
-		end = start + 1;
-	}
-	const destinationMatch = /^(<[^<>\n]*>|[^\s<>]+)(.*)$/.exec(remainder);
-	if (!destinationMatch?.[1]) {
-		return null;
-	}
-	let href = destinationMatch[1];
-	if (href.startsWith("<") && href.endsWith(">") && href.length >= 2) {
-		href = href.slice(1, -1);
-	}
-	let titleSource = (destinationMatch[2] ?? "").trim();
-	if (titleSource.length === 0) {
-		const nextLine = lines[end + 1];
-		if (nextLine !== undefined) {
-			const nextBq = readBlockquotePrefix(nextLine);
-			if (
-				blockquoteDepth(nextBq.prefix) <= startDepth &&
-				/^[ \t]*["'(]/.test(nextBq.rest)
-			) {
-				titleSource = nextBq.rest.trim();
-				end += 1;
-			}
-		}
-	}
-	let title = "";
-	if (titleSource.length > 0) {
-		const parsedTitle = parseReferenceTitle(titleSource);
-		if (parsedTitle === null) {
-			return null;
-		}
-		title = parsedTitle;
-	}
-	return { end, href, key, title };
-}
 function matchHtmlBlockOpener(
 	line: string,
 ): Readonly<{ tagName: string; selfClosing: boolean }> | null {
@@ -651,10 +536,6 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 	const protectedBlocks = new Map<string, ProtectedBlockEntry>();
 	const protectedInlines = new Map<string, ProtectedInlineEntry>();
 	const tableAlignMarkers = new Map<string, string>();
-	const references: Record<string, ReferenceDefinition> = Object.create(null);
-	const deferredReferences: Record<string, ReferenceDefinition> =
-		Object.create(null);
-	const seenReferenceLabels = new Set<string>();
 
 	const pushOutputLine = (
 		text: string,
@@ -878,46 +759,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			continue;
 		}
 
-		// 7. Reference link definitions. CommonMark forbids them from
-		// interrupting a paragraph and resolves duplicates first-wins.
-		let reference = paragraphOpen ? null : matchReferenceDefinition(lines, i);
-		if (reference) {
-			let end = i;
-			while (reference) {
-				if (!seenReferenceLabels.has(reference.key)) {
-					seenReferenceLabels.add(reference.key);
-					references[reference.key] = {
-						href: reference.href,
-						title: reference.title,
-					};
-				} else if (
-					references[reference.key] === undefined &&
-					deferredReferences[reference.key] === undefined
-				) {
-					deferredReferences[reference.key] = {
-						href: reference.href,
-						title: reference.title,
-					};
-				}
-				end = reference.end;
-				reference = matchReferenceDefinition(lines, end + 1);
-			}
-			pushProtectedBlock("raw", analysis, i, end);
-			paragraphOpen = false;
-			i = end + 1;
-			continue;
-		}
-		if (!paragraphOpen) {
-			const unmatchedRef = REFERENCE_DEF_LINE.exec(analysis.rest);
-			if (unmatchedRef?.[1]) {
-				const key = normalizeReferenceKey(unmatchedRef[1]);
-				if (key.length > 0) {
-					seenReferenceLabels.add(key);
-				}
-			}
-		}
-
-		// 8. Raw HTML comments and paired HTML block containers.
+		// 7. Raw HTML comments and paired HTML block containers.
 		if (analysis.prefix.length === 0 && analysis.content.startsWith("<!--")) {
 			let end = i;
 			while (end < lines.length && !(lines[end] ?? "").includes("-->")) {
@@ -969,14 +811,12 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 	}
 
 	return {
-		deferredReferences,
 		lineEnding,
 		markdown: outputLines.join("\n"),
 		outputLineRanges,
 		protectedBlocks,
 		protectedInlines,
 		rawLines: lines,
-		references,
 		sentinel,
 		tableAlignMarkers,
 	};

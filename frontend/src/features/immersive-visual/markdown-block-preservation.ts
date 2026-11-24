@@ -90,6 +90,7 @@ function canInterruptPreviousInTightList(
 	serialized: string,
 ): boolean {
 	const name = node.type.name;
+	if (name === "horizontal_rule" && prev.type.name === "paragraph") return false;
 	if (prev.type.name === "table") {
 		const nl = serialized.indexOf("\n");
 		const firstLine = nl === -1 ? serialized : serialized.slice(0, nl);

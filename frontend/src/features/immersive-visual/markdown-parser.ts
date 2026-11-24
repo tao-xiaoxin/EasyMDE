@@ -1,8 +1,12 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
-import { createVisualMarkdownItParser } from "./markdown-it-config";
+import {
+	createVisualMarkdownItParser,
+	RAW_REFERENCE_SOURCE_META_KEY,
+} from "./markdown-it-config";
 import {
 	type MarkdownToken,
 	mapInlineTokens,
+	readRawMetaString,
 	tokenAttrString,
 } from "./markdown-parser-inline";
 import {
@@ -658,6 +662,54 @@ function mapBlockTokensWithRanges(
 				});
 			}
 			i = closeIdx;
+		} else if (token.type === "reference_definition") {
+			const readRefRaw = (
+				refToken: MarkdownToken,
+				refRange: Readonly<{ end: number; start: number }> | null,
+			): string => {
+				const metaRaw = readRawMetaString(
+					refToken,
+					RAW_REFERENCE_SOURCE_META_KEY,
+				);
+				if (metaRaw !== null) {
+					return metaRaw;
+				}
+				return refRange
+					? preScan.rawLines.slice(refRange.start, refRange.end).join("\n")
+					: "";
+			};
+			let groupEndIdx = i;
+			const groupStart = origRange?.start ?? -1;
+			let groupEnd = origRange?.end ?? -1;
+			const rawParts: string[] = [readRefRaw(token, origRange)];
+			while (groupEndIdx + 1 < endIndex) {
+				const nextToken = tokens[groupEndIdx + 1];
+				if (nextToken?.type !== "reference_definition") {
+					break;
+				}
+				const nextRange = resolveOriginalRangeFromTokenMap(
+					nextToken.map,
+					preScan,
+				);
+				if (!nextRange || groupStart < 0 || nextRange.start !== groupEnd) {
+					break;
+				}
+				rawParts.push(readRefRaw(nextToken, nextRange));
+				groupEnd = nextRange.end;
+				groupEndIdx += 1;
+			}
+			const combinedRange =
+				groupStart >= 0 && groupEnd > groupStart
+					? { start: groupStart, end: groupEnd }
+					: origRange;
+			entries.push({
+				node: visualEditorSchema.nodes.protected_block.create({
+					kind: "raw",
+					rawMarkdown: rawParts.join("\n"),
+				}),
+				origRange: combinedRange,
+			});
+			i = groupEndIdx;
 		} else if (token.type === "fence" || token.type === "code_block") {
 			entries.push({ node: mapCodeToken(token, preScan), origRange });
 		} else if (token.type === "hr") {
@@ -683,6 +735,42 @@ function mapBlockTokens(
 	);
 }
 
+/**
+ * Extracts original-cased labels when `rawMarkdown` consists exclusively of
+ * CommonMark §4.7 link reference definitions (including multi-line definitions).
+ */
+export function extractReferenceDefinitionLabels(
+	rawMarkdown: string,
+): string[] | null {
+	if (rawMarkdown.trim().length === 0) {
+		return null;
+	}
+	const tokens = markdownItParser.parse(rawMarkdown, {});
+	if (
+		tokens.length === 0 ||
+		!tokens.every((token) => token.type === "reference_definition")
+	) {
+		return null;
+	}
+	const labels: string[] = [];
+	for (const token of tokens) {
+		const rawSource = readRawMetaString(token, RAW_REFERENCE_SOURCE_META_KEY);
+		const labelMatch =
+			rawSource !== null
+				? /^ {0,3}\[((?:\\.|[^\\\]])+)\]:/u.exec(rawSource)
+				: null;
+		if (labelMatch?.[1]) {
+			labels.push(labelMatch[1].trim().replace(/\s+/gu, " "));
+		} else {
+			const fallbackLabel = readRawMetaString(token, "label");
+			if (fallbackLabel) {
+				labels.push(fallbackLabel);
+			}
+		}
+	}
+	return labels.length > 0 ? labels : null;
+}
+
 export function parseMarkdownWithBlockSources(
 	markdown: string,
 ): ParsedVisualDocument {
@@ -699,14 +787,9 @@ export function parseMarkdownWithBlockSources(
 	}
 	const preScan = prescanMarkdown(markdown);
 	const env: Record<string, unknown> = {
+		preScan,
 		tableAlignMarkers: preScan.tableAlignMarkers,
 	};
-	if (Object.keys(preScan.references).length > 0) {
-		env.references = Object.assign(Object.create(null), preScan.references);
-	}
-	if (Object.keys(preScan.deferredReferences).length > 0) {
-		env.deferredReferences = preScan.deferredReferences;
-	}
 	const tokens = markdownItParser.parse(preScan.markdown, env);
 	const mapped = mapBlockTokensWithRanges(tokens, 0, tokens.length, preScan);
 	const doc = visualEditorSchema.nodes.doc.create(

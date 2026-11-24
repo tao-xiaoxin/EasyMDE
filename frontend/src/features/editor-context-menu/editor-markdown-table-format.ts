@@ -1,11 +1,15 @@
-import type { EditorMarkdownBlockIndex } from "./editor-markdown-block-index";
-import type { MarkdownLine } from "./editor-markdown-lines";
+import {
+	MAX_MARKDOWN_PREVIEW_BYTES,
+	utf8ByteLength,
+} from "../../shared/utf8-byte-length";
 import type { EditorSelection } from "./editor-context-menu-rules";
 import {
 	assertEditorSelection,
 	createTextEdit,
 	type EditorTextEdit,
 } from "./editor-context-menu-text-edit";
+import type { EditorMarkdownBlockIndex } from "./editor-markdown-block-index";
+import type { MarkdownLine } from "./editor-markdown-lines";
 import {
 	hasLeadingPipe,
 	type ParsedTableRow,
@@ -15,8 +19,6 @@ import {
 	preparedMarkdownTableMatches,
 	tableSelectionAt,
 } from "./editor-markdown-table";
-
-const PREVIEW_MAX_MARKDOWN_BYTES = 1_048_576;
 
 type CellCoreRange = Readonly<{
 	end: number;
@@ -35,39 +37,6 @@ type FormatTableRow = Readonly<{
 	leadingPipe: boolean;
 	trailingPipe: boolean;
 }>;
-
-function utf8ByteLength(
-	text: string,
-	start = 0,
-	end = text.length,
-): number {
-	const from = Math.max(0, Math.min(text.length, start));
-	const to = Math.max(from, Math.min(text.length, end));
-	let bytes = 0;
-	for (let index = from; index < to; index += 1) {
-		const codeUnit = text.charCodeAt(index);
-		if (codeUnit < 0x80) {
-			bytes += 1;
-		} else if (codeUnit < 0x800) {
-			bytes += 2;
-		} else if (
-			codeUnit >= 0xd800 &&
-			codeUnit <= 0xdbff &&
-			index + 1 < to
-		) {
-			const nextUnit = text.charCodeAt(index + 1);
-			if (nextUnit >= 0xdc00 && nextUnit <= 0xdfff) {
-				bytes += 4;
-				index += 1;
-			} else {
-				bytes += 3;
-			}
-		} else {
-			bytes += 3;
-		}
-	}
-	return bytes;
-}
 
 function horizontalPadding(character: string | undefined): boolean {
 	return " " === character || "\t" === character;
@@ -367,7 +336,7 @@ export function formatMarkdownTableSource(
 	const surroundingBytes =
 		utf8ByteLength(value, 0, context.context.tableStart) +
 		utf8ByteLength(value, context.context.tableEnd, value.length);
-	if (surroundingBytes >= PREVIEW_MAX_MARKDOWN_BYTES) return null;
+	if (surroundingBytes >= MAX_MARKDOWN_PREVIEW_BYTES) return null;
 
 	const alignedWidths = Array<number>(columnCount).fill(0);
 	for (let rowIndex = 0; rowIndex < rowViews.length; rowIndex += 1) {
@@ -398,7 +367,7 @@ export function formatMarkdownTableSource(
 	if (null === alignedTableBytes) return null;
 
 	let targetWidths: ReadonlyArray<number> = alignedWidths;
-	if (surroundingBytes + alignedTableBytes > PREVIEW_MAX_MARKDOWN_BYTES) {
+	if (surroundingBytes + alignedTableBytes > MAX_MARKDOWN_PREVIEW_BYTES) {
 		const compactWidths = Array<number>(columnCount).fill(0);
 		const compactTableBytes = projectFormattedTableBytes(
 			lines,
@@ -409,7 +378,7 @@ export function formatMarkdownTableSource(
 		);
 		if (
 			null === compactTableBytes ||
-			surroundingBytes + compactTableBytes > PREVIEW_MAX_MARKDOWN_BYTES
+			surroundingBytes + compactTableBytes > MAX_MARKDOWN_PREVIEW_BYTES
 		) {
 			return null;
 		}
@@ -465,7 +434,7 @@ export function formatMarkdownTableSource(
 		value.slice(0, context.context.tableStart) +
 		formattedTable +
 		value.slice(context.context.tableEnd);
-	if (utf8ByteLength(nextValue) > PREVIEW_MAX_MARKDOWN_BYTES) return null;
+	if (utf8ByteLength(nextValue) > MAX_MARKDOWN_PREVIEW_BYTES) return null;
 	if (nextValue === value) {
 		return {
 			selection: {

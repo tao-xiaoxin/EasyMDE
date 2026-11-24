@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-
+import {
+	MAX_MARKDOWN_PREVIEW_BYTES,
+	utf8ByteLength,
+} from "../../shared/utf8-byte-length";
+import {
+	findEditorCodeContentTarget,
+} from "./editor-code-content-target";
 import {
 	captureEditorContext,
 	deleteThematicBreak,
@@ -14,7 +20,11 @@ import {
 	editorContextSelectionFitsRange,
 } from "./editor-context-menu-text-edit";
 import {
+	createEditorMarkdownBlockIndex as createProfiledMarkdownBlockIndex,
+} from "./editor-markdown-block-index";
+import {
 	findMarkdownTable,
+	pipePositions,
 	tableSelectionAt,
 } from "./editor-markdown-table";
 import {
@@ -24,12 +34,6 @@ import {
 	editMarkdownTable,
 	setMarkdownTableAlignment,
 } from "./editor-markdown-table-mutation";
-import {
-	createEditorMarkdownBlockIndex as createProfiledMarkdownBlockIndex,
-} from "./editor-markdown-block-index";
-import {
-	findEditorCodeContentTarget,
-} from "./editor-code-content-target";
 
 describe("editor context menu rules", () => {
 	it("rejects a stale block index for a changed same-length source", () => {
@@ -880,6 +884,191 @@ describe("editor context menu rules", () => {
 		expect(
 			edit?.value.slice(edit?.selection.start ?? 0, edit?.selection.end ?? 0),
 		).toBe("A");
+	});
+
+	it("aligns GFM table pipe escaping with league/commonmark TableParser::split()", () => {
+		expect(pipePositions("|x|\\\\|z|")).toEqual([0, 2, 7]);
+		expect(pipePositions("|x|\\\\|z|w|")).toEqual([0, 2, 7, 9]);
+		expect(pipePositions("|x|\\|z|w|")).toEqual([0, 2, 6, 8]);
+		expect(pipePositions("|x|\\\\ |z|")).toEqual([0, 2, 6, 8]);
+		expect(pipePositions("|x|\\\\\\\\|z|w|")).toEqual([0, 2, 9, 11]);
+		expect(pipePositions("\\|a|b|")).toEqual([3, 5]);
+
+		// Case 1: Under GFM Section 4.10 / TableParser::split(), `\\|` is an
+		// escaped pipe inside cell 1, leaving only 2 body cells for 3 header
+		// columns (`["x", "|z", ""]`). Refusing to format preserves the exact
+		// rendered table instead of turning `\\|` into a column split.
+		const shortDoubleBackslash = "|A|B|C|\n|-|-|-|\n|x|\\\\|z|";
+		for (const probe of ["A", "x", "z"]) {
+			const pos = shortDoubleBackslash.indexOf(probe);
+			expect(findMarkdownTable(shortDoubleBackslash, pos)).toBeNull();
+			expect(
+				formatMarkdownTableSource(shortDoubleBackslash, {
+					direction: "none",
+					end: pos,
+					start: pos,
+				}),
+			).toBeNull();
+		}
+
+		// Case 2: Full 3-cell row containing `\\|` keeps `\\|z` in column 1 and
+		// maps both caret and non-collapsed selection through formatting.
+		const fullDoubleBackslash = "|A|B|C|\n|-|-|-|\n|x|\\\\|z|w|";
+		const zPos = fullDoubleBackslash.indexOf("z");
+		const wPos = fullDoubleBackslash.indexOf("w");
+		const escapedTokenStart = fullDoubleBackslash.indexOf("\\\\|z");
+		const escapedTokenEnd = escapedTokenStart + "\\\\|z".length;
+		expect(findMarkdownTable(fullDoubleBackslash, zPos)).toMatchObject({
+			columnCount: 3,
+			rowCount: 2,
+		});
+		expect(
+			tableSelectionAt(fullDoubleBackslash, {
+				direction: "none",
+				end: zPos,
+				start: zPos,
+			}),
+		).toMatchObject({ column: 1, kind: "column", rowIndex: 2 });
+		expect(
+			tableSelectionAt(fullDoubleBackslash, {
+				direction: "none",
+				end: wPos,
+				start: wPos,
+			}),
+		).toMatchObject({ column: 2, kind: "column", rowIndex: 2 });
+		const fullDoubleEdit = formatMarkdownTableSource(fullDoubleBackslash, {
+			direction: "forward",
+			end: escapedTokenEnd,
+			start: escapedTokenStart,
+		});
+		const expectedFullDouble =
+			"| A | B    | C |\n| - | -    | - |\n| x | \\\\|z | w |";
+		expect(fullDoubleEdit?.value).toBe(expectedFullDouble);
+		expect(
+			fullDoubleEdit?.value.slice(
+				fullDoubleEdit.selection.start,
+				fullDoubleEdit.selection.end,
+			),
+		).toBe("\\\\|z");
+		const fullDoubleCaretEdit = formatMarkdownTableSource(fullDoubleBackslash, {
+			direction: "none",
+			end: zPos,
+			start: zPos,
+		});
+		expect(fullDoubleCaretEdit?.value).toBe(expectedFullDouble);
+		expect(
+			fullDoubleCaretEdit?.value[fullDoubleCaretEdit.selection.start],
+		).toBe("z");
+		if (fullDoubleEdit) {
+			expect(
+				formatMarkdownTableSource(fullDoubleEdit.value, fullDoubleEdit.selection),
+			).toEqual({
+				selection: fullDoubleEdit.selection,
+				value: expectedFullDouble,
+			});
+		}
+
+		// Case 3: Single-backslash control (`\|z`) formats cleanly and preserves
+		// column identity and selection mapping.
+		const singleBackslash = "|A|B|C|\n|-|-|-|\n|x|\\|z|w|";
+		const singleStart = singleBackslash.indexOf("\\|z");
+		const singleEnd = singleStart + "\\|z".length;
+		expect(findMarkdownTable(singleBackslash, singleStart)).toMatchObject({
+			columnCount: 3,
+			rowCount: 2,
+		});
+		const singleEdit = formatMarkdownTableSource(singleBackslash, {
+			direction: "forward",
+			end: singleEnd,
+			start: singleStart,
+		});
+		expect(singleEdit?.value).toBe(
+			"| A | B   | C |\n| - | -   | - |\n| x | \\|z | w |",
+		);
+		expect(
+			singleEdit?.value.slice(
+				singleEdit.selection.start,
+				singleEdit.selection.end,
+			),
+		).toBe("\\|z");
+
+		// Case 4: Spaced double-backslash (`\\ |`) has an unescaped delimiter
+		// pipe and formats to `| x | \\ | z |` with space before `|` preserved.
+		const spacedDoubleBackslash = "|A|B|C|\n|-|-|-|\n|x|\\\\ |z|";
+		const spacedStart = spacedDoubleBackslash.indexOf("\\\\");
+		const spacedEnd = spacedStart + 2;
+		expect(findMarkdownTable(spacedDoubleBackslash, spacedStart)).toMatchObject({
+			columnCount: 3,
+			rowCount: 2,
+		});
+		expect(
+			tableSelectionAt(spacedDoubleBackslash, {
+				direction: "none",
+				end: spacedDoubleBackslash.indexOf("z"),
+				start: spacedDoubleBackslash.indexOf("z"),
+			}),
+		).toMatchObject({ column: 2, kind: "column", rowIndex: 2 });
+		const spacedEdit = formatMarkdownTableSource(spacedDoubleBackslash, {
+			direction: "forward",
+			end: spacedEnd,
+			start: spacedStart,
+		});
+		expect(spacedEdit?.value).toBe(
+			"| A | B  | C |\n| - | -  | - |\n| x | \\\\ | z |",
+		);
+		expect(
+			spacedEdit?.value.slice(
+				spacedEdit.selection.start,
+				spacedEdit.selection.end,
+			),
+		).toBe("\\\\");
+
+		// Trailing `\\|` without a closing delimiter stays cell content rather than
+		// becoming a trailing delimiter pipe.
+		const trailingEscapedPipe = "|A|Header|\n|-|-|\n|x|\\\\|";
+		const trailingPos = trailingEscapedPipe.indexOf("\\\\|");
+		expect(findMarkdownTable(trailingEscapedPipe, trailingPos)).toMatchObject({
+			columnCount: 2,
+			rowCount: 2,
+		});
+		const trailingPipeEdit = formatMarkdownTableSource(trailingEscapedPipe, {
+			direction: "none",
+			end: trailingPos,
+			start: trailingPos,
+		});
+		expect(trailingPipeEdit?.value).toBe(
+			"| A | Header |\n| - | -      |\n| x | \\\\|   ",
+		);
+	});
+
+	it("counts UTF-8 byte lengths consistently with TextEncoder across slices and surrogates", () => {
+		expect(MAX_MARKDOWN_PREVIEW_BYTES).toBe(1_048_576);
+		const encoder = new TextEncoder();
+		const samples = [
+			"",
+			"ascii-123",
+			"café",
+			"中文测试",
+			"😀🎉",
+			"aé中😀",
+			"\ud800",
+			"\udfff",
+			"x\ud800y\udfffz",
+		];
+		for (const sample of samples) {
+			expect(utf8ByteLength(sample)).toBe(encoder.encode(sample).byteLength);
+		}
+		const mixed = "aé中😀b";
+		// Slice bounds including splitting the surrogate pair at index 3..5.
+		for (let start = -2; start <= mixed.length + 2; start += 1) {
+			for (let end = -2; end <= mixed.length + 2; end += 1) {
+				const from = Math.max(0, Math.min(mixed.length, start));
+				const to = Math.max(from, Math.min(mixed.length, end));
+				expect(utf8ByteLength(mixed, start, end)).toBe(
+					encoder.encode(mixed.slice(from, to)).byteLength,
+				);
+			}
+		}
 	});
 
 	it("treats only a 0-3 space indent as table syntax and rejects code-indented rows", () => {

@@ -3,6 +3,10 @@ import type {
 	PreviewRequestPort,
 	PreviewResponse,
 } from "../../contracts/ports/preview-request";
+import {
+	MAX_MARKDOWN_PREVIEW_BYTES,
+	utf8ByteLength,
+} from "../../shared/utf8-byte-length";
 import type { EditorMarkdownBlockIndex } from "./editor-markdown-block-index";
 import type { SimplifiedFormattingDomParser } from "./editor-simplified-formatting";
 import {
@@ -12,7 +16,7 @@ import {
 	findEditorSourceLink,
 } from "./editor-source-link";
 
-export const MAX_EDITOR_SOURCE_LINK_QUERY_BYTES = 1_048_576;
+export const MAX_EDITOR_SOURCE_LINK_QUERY_BYTES = MAX_MARKDOWN_PREVIEW_BYTES;
 export const EDITOR_SOURCE_LINK_QUERY_TIMEOUT_MS = 10_000;
 const VISUAL_BLOCK_ATTRIBUTE = "data-easymde-visual-block-id";
 
@@ -123,23 +127,6 @@ function sameBinding(
 		Object.is(left.menuIdentity, right.menuIdentity) &&
 		sameSelection(left.selection, right.selection)
 	);
-}
-
-function utf8ByteLength(value: string): number {
-	let bytes = 0;
-	for (let index = 0; index < value.length; index += 1) {
-		const codePoint = value.codePointAt(index) ?? 0;
-		if (codePoint > 0xffff) index += 1;
-		bytes +=
-			codePoint <= 0x7f
-				? 1
-				: codePoint <= 0x7ff
-					? 2
-					: codePoint <= 0xffff
-						? 3
-						: 4;
-	}
-	return bytes;
 }
 
 function lineCount(markdown: string): number {

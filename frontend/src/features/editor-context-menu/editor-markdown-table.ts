@@ -133,20 +133,19 @@ export type PreparedMarkdownTable = Readonly<{
 	value: string;
 }>;
 
+/**
+ * Returns column-delimiter pipe indices matching GFM Section 4.10 and
+ * `league/commonmark` `TableParser::split()`: any `|` immediately preceded by
+ * `\` (including `\\|`, `\\\\|`, etc.) is an escaped literal pipe inside the
+ * cell rather than a column delimiter.
+ */
 export function pipePositions(text: string): number[] {
 	const positions: number[] = [];
-	let escaped = false;
 
 	for (let index = 0; index < text.length; index += 1) {
-		const character = text[index];
-		if ("\\" === character && !escaped) {
-			escaped = true;
-			continue;
-		}
-		if ("|" === character && !escaped) {
+		if ("|" === text[index] && (0 === index || "\\" !== text[index - 1])) {
 			positions.push(index);
 		}
-		escaped = false;
 	}
 	return positions;
 }

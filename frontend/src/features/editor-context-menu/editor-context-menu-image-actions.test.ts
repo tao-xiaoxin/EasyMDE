@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { RemoteImageUploadMode } from "../../contracts/bootstrap/image-upload-bootstrap";
 import type { EditorClipboardPort } from "../../contracts/ports/editor-clipboard-port";
+import type { EditorImagePixelsPort } from "../../contracts/ports/editor-image-pixels-port";
 import type { RemoteImageImportResult } from "../../contracts/ports/remote-image-import-port";
 import { parseMarkdownImageScale } from "../image-scale/image-scale-contract";
 import type { EditorContextMenuActionSession } from "./editor-context-menu-action-coordinator";
@@ -14,6 +15,7 @@ function createImageScaleSession(
 		actionContext?: EditorContextMenuActionSession["actionContext"];
 		controller?: AbortController;
 		ensureCurrent?: () => boolean;
+		imagePixels?: EditorImagePixelsPort;
 		importImage?: (
 			request: Readonly<{
 				altText?: string;
@@ -24,15 +26,18 @@ function createImageScaleSession(
 		) => Promise<RemoteImageImportResult>;
 		readValue?: () => string;
 		remoteImageUploadMode?: RemoteImageUploadMode;
+		writeImageDeferred?: EditorClipboardPort["writeImageDeferred"];
 	}>,
 ): Readonly<{
 	applyEdit: ReturnType<typeof vi.fn>;
 	controller: AbortController;
+	finishOperation: ReturnType<typeof vi.fn>;
 	importImage: ReturnType<typeof vi.fn>;
 	report: ReturnType<typeof vi.fn>;
 	session: EditorContextMenuActionSession;
 }> {
 	const applyEdit = vi.fn(() => true);
+	const finishOperation = vi.fn();
 	const report = vi.fn();
 	const controller = options?.controller ?? new AbortController();
 	const importImage = vi.fn(
@@ -63,6 +68,9 @@ function createImageScaleSession(
 		read: vi.fn(async () => ({ status: "empty" as const })),
 		subscribe: () => () => undefined,
 		write: vi.fn(async () => ({ status: "written" as const })),
+		...(options?.writeImageDeferred
+			? { writeImageDeferred: options.writeImageDeferred }
+			: {}),
 	};
 	const documentPort: EditorContextMenuActionSession["document"] = {
 		applyTextChange: vi.fn(),
@@ -83,6 +91,7 @@ function createImageScaleSession(
 		clipboard,
 		contextMenuStrings: {
 			statusActionFailed: "Action failed",
+			statusClipboardUnavailable: "Clipboard unavailable",
 			unsupported: "Unsupported",
 		} as NonNullable<
 			EditorContextMenuActionSession["capabilities"]["contextMenuStrings"]
@@ -93,6 +102,7 @@ function createImageScaleSession(
 		},
 		isActive: () => true,
 		media: {
+			...(options?.imagePixels ? { imagePixels: options.imagePixels } : {}),
 			imageUpload: {
 				postId: 1,
 				remoteImageUploadMode: options?.remoteImageUploadMode ?? "off",
@@ -135,12 +145,19 @@ function createImageScaleSession(
 		ensureCurrent,
 		ensureSelectionFitsTarget: () => true,
 		ensureSourceEditable: () => true,
-		finishOperation: vi.fn(),
+		finishOperation,
 		isCurrent: ensureCurrent,
 		readValue: readCurrentValue,
 		report,
 	};
-	return { applyEdit, controller, importImage, report, session };
+	return {
+		applyEdit,
+		controller,
+		finishOperation,
+		importImage,
+		report,
+		session,
+	};
 }
 
 describe("editor-context-menu-image-actions", () => {
@@ -654,5 +671,171 @@ describe("editor-context-menu-image-actions", () => {
 			"remote-image-import-request-failed",
 			"Action failed",
 		);
+	});
+
+	it("suppresses failure reporting when copy-image is aborted while still reporting real non-aborted failures", async () => {
+		const original = "![A](https://example.com/a.png)";
+		const match = parseMarkdownImageScale(original, 0);
+		expect(match).not.toBeNull();
+		if (!match) return;
+
+		const createImageActionContext = (isLeaseCurrent = () => true) => ({
+			image: {
+				canCopyImage: true,
+				lease: {
+					isCurrent: isLeaseCurrent,
+					root: document.createElement("img"),
+					target: {
+						acceptedPreview: { revision: 1, signature: "sig" },
+						blockId: "block-1",
+						ordinal: 0,
+						original: {
+							alt: "A",
+							destination: "https://example.com/a.png",
+							end: original.length,
+							raw: original,
+							start: 0,
+							title: null,
+						},
+						sourceRevision: 1,
+					},
+				},
+				match,
+			},
+		});
+
+		const createPixelsPort = (
+			extractPng?: EditorImagePixelsPort["extractPng"],
+		): EditorImagePixelsPort => ({
+			canExtract: () => true,
+			dispose: vi.fn(),
+			extractPng:
+				extractPng
+				?? (async () => ({
+					blob: new Blob(["png"], { type: "image/png" }),
+					height: 16,
+					pixelCount: 256,
+					source: "https://example.com/a.png",
+					status: "extracted" as const,
+					width: 16,
+				})),
+			supports: () => true,
+		});
+
+		// 1. Aborted in-flight copy-image resolving { status: "failed" } must neither
+		//    call ensureCurrent() post-abort nor report clipboard failure.
+		const abortedResolveController = new AbortController();
+		let ensureCurrentCalls = 0;
+		const abortedResolveCase = createImageScaleSession(original, 2, 2, {
+			actionContext: createImageActionContext(),
+			controller: abortedResolveController,
+			ensureCurrent: () => {
+				ensureCurrentCalls += 1;
+				if (ensureCurrentCalls > 1) {
+					abortedResolveCase.session.report(
+						"editor-context-menu-context-stale",
+						"Action failed",
+					);
+					return false;
+				}
+				return true;
+			},
+			imagePixels: createPixelsPort(),
+			writeImageDeferred: async (png, opts) => {
+				await png;
+				abortedResolveController.abort();
+				expect(opts?.signal?.aborted).toBe(true);
+				return {
+					code: "editor-clipboard-write-failed",
+					status: "failed",
+				};
+			},
+		});
+		await expect(
+			runImageContextMenuAction("copy-image", abortedResolveCase.session),
+		).resolves.toBeUndefined();
+		expect(ensureCurrentCalls).toBe(1);
+		expect(abortedResolveCase.report).not.toHaveBeenCalled();
+		expect(abortedResolveCase.finishOperation).toHaveBeenCalledTimes(1);
+
+		// 2. Aborted in-flight copy-image rejecting with AbortError must not report.
+		const abortedRejectController = new AbortController();
+		const abortedRejectCase = createImageScaleSession(original, 2, 2, {
+			actionContext: createImageActionContext(),
+			controller: abortedRejectController,
+			imagePixels: createPixelsPort(),
+			writeImageDeferred: async () => {
+				abortedRejectController.abort();
+				throw new DOMException("Aborted", "AbortError");
+			},
+		});
+		await expect(
+			runImageContextMenuAction("copy-image", abortedRejectCase.session),
+		).resolves.toBeUndefined();
+		expect(abortedRejectCase.report).not.toHaveBeenCalled();
+		expect(abortedRejectCase.finishOperation).toHaveBeenCalledTimes(1);
+
+		// 3. Real non-aborted clipboard failure reports normally.
+		const realClipboardFailure = createImageScaleSession(original, 2, 2, {
+			actionContext: createImageActionContext(),
+			imagePixels: createPixelsPort(),
+			writeImageDeferred: async (png) => {
+				await png;
+				return {
+					code: "editor-clipboard-write-failed",
+					status: "failed",
+				};
+			},
+		});
+		await runImageContextMenuAction("copy-image", realClipboardFailure.session);
+		expect(realClipboardFailure.report).toHaveBeenCalledTimes(1);
+		expect(realClipboardFailure.report).toHaveBeenCalledWith(
+			"editor-clipboard-write-failed",
+			"Clipboard unavailable",
+		);
+		expect(realClipboardFailure.finishOperation).toHaveBeenCalledTimes(1);
+
+		// 4. Real non-aborted extraction failure surfaces its image-pixels code.
+		const extractionFailureCase = createImageScaleSession(original, 2, 2, {
+			actionContext: createImageActionContext(),
+			imagePixels: createPixelsPort(async () => ({
+				code: "editor-image-pixels-tainted",
+				status: "failed",
+			})),
+			writeImageDeferred: async (png) => {
+				try {
+					await png;
+				} catch {
+					return {
+						code: "editor-clipboard-image-payload-failed",
+						status: "failed",
+					};
+				}
+				return { status: "written" };
+			},
+		});
+		await runImageContextMenuAction("copy-image", extractionFailureCase.session);
+		expect(extractionFailureCase.report).toHaveBeenCalledTimes(1);
+		expect(extractionFailureCase.report).toHaveBeenCalledWith(
+			"editor-image-pixels-tainted",
+			"Clipboard unavailable",
+		);
+		expect(extractionFailureCase.finishOperation).toHaveBeenCalledTimes(1);
+
+		// 5. Real non-aborted rejection reports the mapped error code.
+		const realRejectCase = createImageScaleSession(original, 2, 2, {
+			actionContext: createImageActionContext(),
+			imagePixels: createPixelsPort(),
+			writeImageDeferred: async () => {
+				throw new Error("editor-image-pixels-draw-failed");
+			},
+		});
+		await runImageContextMenuAction("copy-image", realRejectCase.session);
+		expect(realRejectCase.report).toHaveBeenCalledTimes(1);
+		expect(realRejectCase.report).toHaveBeenCalledWith(
+			"editor-image-pixels-draw-failed",
+			"Action failed",
+		);
+		expect(realRejectCase.finishOperation).toHaveBeenCalledTimes(1);
 	});
 });

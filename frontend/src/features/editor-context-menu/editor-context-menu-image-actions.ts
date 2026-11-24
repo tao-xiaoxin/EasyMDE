@@ -253,7 +253,11 @@ export async function runImageContextMenuAction(
 			const result = await clipboard.writeImageDeferred(png, {
 				signal: controller.signal
 			});
-			if (!session.ensureCurrent() || !imageContext.lease.isCurrent()) return;
+			if (
+				controller.signal.aborted
+				|| !session.ensureCurrent()
+				|| !imageContext.lease.isCurrent()
+			) return;
 			if ("written" !== result.status) {
 				controller.abort();
 				report(

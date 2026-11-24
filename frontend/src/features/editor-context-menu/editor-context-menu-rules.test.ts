@@ -1930,6 +1930,111 @@ describe("editor context menu rules", () => {
 		}
 	});
 
+	it("declines unsafe CommonMark pipe continuation rows instead of truncating the table", () => {
+		const unsafeCases = [
+			{
+				name: "indented separator/body followed by standalone pipe",
+				probes: ["A", "1", "3"],
+				source: "| A | B |\n    | --- | --- |\n    | 1 | 2 |\n|\n| 3 | 4 |",
+			},
+			{
+				name: "non-indented table followed by standalone pipe",
+				probes: ["A", "1", "3"],
+				source: "| A | B |\n| --- | --- |\n| 1 | 2 |\n|\n| 3 | 4 |",
+			},
+			{
+				name: "table followed by whitespace-padded standalone pipe",
+				probes: ["A", "1", "3"],
+				source: "| A | B |\n| --- | --- |\n| 1 | 2 |\n   |   \n| 3 | 4 |",
+			},
+			{
+				name: "table followed by escaped pipe only",
+				probes: ["A", "1", "3"],
+				source: "| A | B |\n| --- | --- |\n| 1 | 2 |\n\\|\n| 3 | 4 |",
+			},
+			{
+				name: "table followed by text with escaped pipe only",
+				probes: ["A", "1", "3"],
+				source: "| A | B |\n| --- | --- |\n| 1 | 2 |\nfoo\\|bar\n| 3 | 4 |",
+			},
+			{
+				name: "bodyless table followed immediately by standalone pipe",
+				probes: ["A", "---"],
+				source: "| A | B |\n| --- | --- |\n|",
+			},
+			{
+				name: "single-column table followed by escaped pipe continuation",
+				probes: ["A", "1"],
+				source: "| A |\n| --- |\n| 1 |\nfoo\\|bar",
+			},
+		] as const;
+
+		for (const testCase of unsafeCases) {
+			for (const probe of testCase.probes) {
+				const position = testCase.source.indexOf(probe);
+				expect(position, `${testCase.name} (${probe})`).toBeGreaterThanOrEqual(
+					0,
+				);
+				expect(
+					prepareMarkdownTable(testCase.source, position),
+					`${testCase.name} prepareMarkdownTable (${probe})`,
+				).toBeNull();
+				expect(
+					editMarkdownTable(testCase.source, position, {
+						type: "delete-table",
+					}),
+					`${testCase.name} delete-table (${probe})`,
+				).toBeNull();
+				expect(
+					editMarkdownTable(testCase.source, position, {
+						type: "copy-table",
+					}),
+					`${testCase.name} copy-table (${probe})`,
+				).toBeNull();
+				expect(
+					editMarkdownTable(testCase.source, position, {
+						type: "insert-column-left",
+					}),
+					`${testCase.name} insert-column-left (${probe})`,
+				).toBeNull();
+				expect(
+					formatMarkdownTableSource(testCase.source, {
+						direction: "none",
+						end: position,
+						start: position,
+					}),
+					`${testCase.name} formatMarkdownTableSource (${probe})`,
+				).toBeNull();
+			}
+		}
+
+		// Control: a blank line terminates the table cleanly in CommonMark even
+		// when the next block contains pipes.
+		const blankSeparated = "| A | B |\n| --- | --- |\n| 1 | 2 |\n\n| 3 | 4 |";
+		const controlPos = blankSeparated.indexOf("1");
+		expect(prepareMarkdownTable(blankSeparated, controlPos)).not.toBeNull();
+		expect(
+			editMarkdownTable(blankSeparated, controlPos, { type: "copy-table" })
+				?.copiedText,
+		).toBe("| A | B |\n| --- | --- |\n| 1 | 2 |");
+		expect(
+			editMarkdownTable(blankSeparated, controlPos, { type: "delete-table" })
+				?.value,
+		).toBe("\n\n| 3 | 4 |");
+		expect(
+			editMarkdownTable(blankSeparated, controlPos, {
+				type: "insert-column-left",
+			})?.value,
+		).toBe("|  | A | B |\n| --- | --- | --- |\n|  | 1 | 2 |\n\n| 3 | 4 |");
+		expect(
+			formatMarkdownTableSource(blankSeparated, {
+				direction: "none",
+				end: controlPos,
+				start: controlPos,
+			})?.value,
+		).toBe("| A   | B   |\n| --- | --- |\n| 1   | 2   |\n\n| 3 | 4 |");
+	});
+
 	it("keeps NBSP-prefixed comments absent and flags whitespace-blank-separated markers as orphan", () => {
 		const nbspBefore =
 			'\u00a0<!-- easymde-table-align:v1 [[0,"center"]] -->\n| A | B |\n| - | - |';

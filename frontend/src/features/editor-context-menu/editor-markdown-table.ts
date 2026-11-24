@@ -279,7 +279,15 @@ function tableAtLine(
 			endLine = sameWidthRunEnd[endLine] ?? endLine + 1;
 		}
 		const malformedBody = parsedRows[endLine];
-		if (malformedBody && malformedBody.cells.length !== header.cells.length)
+		const trailingLine = lines[endLine];
+		// PHP `League\CommonMark` `TableParser::tryContinue()` absorbs ANY
+		// immediately-following line containing a raw `|` (including standalone
+		// `|`, escaped `\|` / `foo\|bar`, or pipe-bearing lines past Lezer's
+		// block end), so decline instead of truncating the real table.
+		if (
+			(malformedBody && malformedBody.cells.length !== header.cells.length) ||
+			(!malformedBody && Boolean(trailingLine?.text.includes("|")))
+		)
 			return null;
 		if (targetLine >= endLine) continue;
 

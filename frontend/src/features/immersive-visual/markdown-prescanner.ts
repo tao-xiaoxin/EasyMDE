@@ -202,10 +202,11 @@ function isGfmTableDelimiter(text: string): boolean {
 	const trimmed = text.trim();
 	return (
 		trimmed.includes("-") &&
-		(/^\|?[ \t]*:?-{1,}:?[ \t]*(?:\|[ \t]*:?-{1,}:?[ \t]*)+\|?$/.test(
+		!/^-[ \t]/u.test(trimmed) &&
+		(/^\|?[ \t]*:?-{1,}:?[ \t]*(?:\|[ \t]*:?-{1,}:?[ \t]*)+\|?$/u.test(
 			trimmed,
 		) ||
-			/^\|[ \t]*:?-{1,}:?[ \t]*\|$/.test(trimmed))
+			/^(?:\|[ \t]*:?-{1,}:?[ \t]*\|?|[ \t]*:?-{1,}:?[ \t]*\|)$/u.test(trimmed))
 	);
 }
 
@@ -628,6 +629,14 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		if (null !== parsedTableAlign && !("code" in parsedTableAlign)) {
 			const markerToken = `${sentinel}TBLALIGN${tableAlignMarkers.size}END`;
 			tableAlignMarkers.set(markerToken, parsedTableAlign.text);
+			const blankLine =
+				analysis.prefix.length === 0
+					? ""
+					: analysis.prefix.replace(/[ \t]+$/, "");
+			const prevLine = outputLines[outputLines.length - 1];
+			if (prevLine !== undefined && prevLine.trim().length > 0) {
+				pushOutputLine(blankLine, null);
+			}
 			pushOutputLine(
 				`${analysis.prefix}${" ".repeat(analysis.indent)}${markerToken}`,
 				{ end: i + 1, start: i },

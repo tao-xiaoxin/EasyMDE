@@ -681,20 +681,112 @@ describe('mermaidAdmissionSignature', () => {
         }),
       ).toBe(1);
 
-      // Succeeds throughout the transformOwner walk, throws on the post-loop getComputedStyle(source) read
+      // Succeeds in computeMermaidLayoutMagnification (1 source read), throws in mermaidSvgRectMagnification
       let sourceReads = 0;
       expect(
         computeMermaidLayoutMagnification(root, svg, viewBox, document, (element) => {
           if (element === root) {
             sourceReads += 1;
             if (sourceReads > 1) {
-              throw new Error('computed-style-post-loop-source-failed');
+              throw new Error('computed-style-rect-magnification-source-failed');
             }
           }
           return declaration({ transform: 'none' });
         }),
       ).toBe(1);
       expect(sourceReads).toBe(2);
+    } finally {
+      preview.remove();
+    }
+  });
+
+  it('fails closed to 1 without throwing when getScreenCTM throws NS_ERROR_FAILURE in computeMermaidLayoutMagnification', () => {
+    const { preview, root, svg, source, svgStyle } = fixture();
+    Object.defineProperty(svg, 'getScreenCTM', {
+      configurable: true,
+      value: () => {
+        throw new Error('NS_ERROR_FAILURE');
+      },
+    });
+    document.body.append(preview);
+    try {
+      const viewBox = { height: 726, minX: 0, minY: 0, width: 350 };
+      let sourceReads = 0;
+      const result = computeMermaidLayoutMagnification(root, svg, viewBox, document, (element) => {
+        if (element === root) {
+          sourceReads += 1;
+          return declaration(source);
+        }
+        if (element === svg) {
+          return declaration(svgStyle);
+        }
+        return declaration({ transform: 'none' });
+      });
+      expect(result).toBe(1);
+      expect(sourceReads).toBe(1);
+    } finally {
+      preview.remove();
+    }
+  });
+
+  it('reads getComputedStyle(source) at most once inside computeMermaidLayoutMagnification and returns 1 when source style is null', () => {
+    const { preview, root, svg, source, svgStyle } = fixture();
+    let ctmCalls = 0;
+    Object.defineProperty(svg, 'getScreenCTM', {
+      configurable: true,
+      value: () => {
+        ctmCalls += 1;
+        return { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+      },
+    });
+    document.body.append(preview);
+    try {
+      const viewBox = { height: 726, minX: 0, minY: 0, width: 350 };
+
+      // Null computed style on source fails closed immediately without reading getScreenCTM
+      let nullSourceReads = 0;
+      expect(
+        computeMermaidLayoutMagnification(root, svg, viewBox, document, (element) => {
+          if (element === root) {
+            nullSourceReads += 1;
+            return null;
+          }
+          return declaration({ transform: 'none' });
+        }),
+      ).toBe(1);
+      expect(nullSourceReads).toBe(1);
+      expect(ctmCalls).toBe(0);
+
+      // Reaches getScreenCTM past the transformOwner walk and overflow checks with only one source style read
+      let identityPathSourceReads = 0;
+      expect(
+        computeMermaidLayoutMagnification(root, svg, viewBox, document, (element) => {
+          if (element === root) {
+            identityPathSourceReads += 1;
+            return declaration(source);
+          }
+          if (element === svg) {
+            return declaration(svgStyle);
+          }
+          return declaration({ transform: 'none' });
+        }),
+      ).toBe(1);
+      expect(identityPathSourceReads).toBe(1);
+      expect(ctmCalls).toBe(1);
+
+      // Overflow clipping bails out after a single source style read without reading getScreenCTM
+      let clippedSourceReads = 0;
+      expect(
+        computeMermaidLayoutMagnification(root, svg, viewBox, document, (element) => {
+          if (element === root) {
+            clippedSourceReads += 1;
+            return declaration({ ...source, overflow: 'hidden' });
+          }
+          return declaration({ transform: 'none' });
+        }),
+      ).toBe(1);
+      expect(clippedSourceReads).toBe(1);
+      expect(ctmCalls).toBe(1);
     } finally {
       preview.remove();
     }

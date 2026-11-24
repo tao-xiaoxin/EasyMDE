@@ -1017,6 +1017,64 @@ final class MarkdownRendererTest extends WP_UnitTestCase
 		VisualPreviewBlockAnnotator::describe_source_blocks( $document, array(), "Before.\n| a | b |\n| no | no |\n| 1 | 2 |\n" );
 	}
 
+	public function test_preview_repairs_indented_paragraph_split_table_delimiters() {
+		$method    = new ReflectionMethod( MarkdownRenderer::class, 'create_converter' );
+		$method->setAccessible( true );
+		$converter = $method->invoke( null, true );
+		$parser    = new MarkdownParser( $converter->getEnvironment() );
+
+		$cases = array(
+			'four spaces before pipe'       => "Intro\n| A | B |\n    | --- | --- |\n| 1 | 2 |\n",
+			'tab before pipe'               => "Intro\n| A | B |\n\t| --- | --- |\n| 1 | 2 |\n",
+			'mixed spaces and tabs'         => "Intro\n| A | B |\n  \t  | --- | --- |\n| 1 | 2 |\n",
+			'four spaces without edge pipe' => "Intro\n| A | B |\n    --- | ---\n| 1 | 2 |\n",
+			'tab without edge pipe'         => "Intro\n| A | B |\n\t--- | ---\n| 1 | 2 |\n",
+		);
+
+		foreach ( $cases as $case_id => $markdown ) {
+			$document = $parser->parse( $markdown );
+
+			$this->assertSame(
+				array(
+					array(
+						'source_id' => 's0',
+						'startLine' => 0,
+						'endLine'   => 1,
+						'editable'  => true,
+					),
+					array(
+						'source_id' => 's1',
+						'startLine' => 1,
+						'endLine'   => 4,
+						'editable'  => true,
+					),
+				),
+				VisualPreviewBlockAnnotator::describe_source_blocks( $document, array(), $markdown ),
+				$case_id
+			);
+
+			$preview = MarkdownRenderer::render_preview( $markdown, 'default' );
+			$blocks  = $preview['editMap']['blocks'];
+			$this->assertCount( 2, $blocks, $case_id );
+			$this->assertSame( array( 'startLine' => 0, 'endLine' => 1 ), self::block_range( $blocks[0] ), $case_id );
+			$this->assertSame( array( 'startLine' => 1, 'endLine' => 4 ), self::block_range( $blocks[1] ), $case_id );
+			$this->assertTrue( $blocks[0]['editable'], $case_id );
+			$this->assertTrue( $blocks[1]['editable'], $case_id );
+		}
+	}
+
+	public function test_preview_rejects_an_indented_non_delimiter_line_for_split_table_repair() {
+		$method    = new ReflectionMethod( MarkdownRenderer::class, 'create_converter' );
+		$method->setAccessible( true );
+		$converter = $method->invoke( null, true );
+		$markdown  = "Intro\n| A | B |\n    | --- | --- |\n| 1 | 2 |\n";
+		$document  = ( new MarkdownParser( $converter->getEnvironment() ) )->parse( $markdown );
+
+		$this->expectException( RuntimeException::class );
+		$this->expectExceptionMessage( 'CommonMark did not provide a valid source range for a Preview block.' );
+		VisualPreviewBlockAnnotator::describe_source_blocks( $document, array(), "Intro\n| A | B |\n    | no | no |\n| 1 | 2 |\n" );
+	}
+
     public function test_renders_basic_markdown_with_commonmark()
     {
         $html = MarkdownRenderer::render("# Hello\n\n**World**");

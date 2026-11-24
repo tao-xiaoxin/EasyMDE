@@ -419,6 +419,7 @@ export function computeMermaidLayoutMagnification(
   if (!source.isConnected) return 1;
   const getScreenCTM = (svg as SVGSVGElement & { getScreenCTM?: () => MermaidScreenCtm | null }).getScreenCTM;
   if ('function' !== typeof getScreenCTM) return 1;
+  let sourceStyle: CSSStyleDeclaration | null = null;
   let transformOwner: Element | null = source;
   while (transformOwner) {
     let computed: CSSStyleDeclaration | null;
@@ -426,6 +427,10 @@ export function computeMermaidLayoutMagnification(
       computed = getComputedStyle(transformOwner) ?? null;
     } catch {
       return 1;
+    }
+    if (transformOwner === source) {
+      if (!computed) return 1;
+      sourceStyle = computed;
     }
     const transform = computed?.getPropertyValue('transform').trim().toLowerCase() ?? '';
     const inlineTransform =
@@ -438,15 +443,10 @@ export function computeMermaidLayoutMagnification(
     }
     transformOwner = transformOwner.parentElement;
   }
-  let sourceStyle: CSSStyleDeclaration | null;
-  try {
-    sourceStyle = getComputedStyle(source) ?? null;
-  } catch {
-    return 1;
-  }
-  const overflow = sourceStyle?.getPropertyValue('overflow').trim().toLowerCase() ?? '';
-  const overflowX = sourceStyle?.getPropertyValue('overflow-x').trim().toLowerCase() ?? '';
-  const overflowY = sourceStyle?.getPropertyValue('overflow-y').trim().toLowerCase() ?? '';
+  if (!sourceStyle) return 1;
+  const overflow = sourceStyle.getPropertyValue('overflow').trim().toLowerCase();
+  const overflowX = sourceStyle.getPropertyValue('overflow-x').trim().toLowerCase();
+  const overflowY = sourceStyle.getPropertyValue('overflow-y').trim().toLowerCase();
   const inlineStyle = (source as Element & { style?: CSSStyleDeclaration }).style;
   const authoredOverflow = inlineStyle?.getPropertyValue('overflow').trim().toLowerCase() ?? '';
   const authoredOverflowX = inlineStyle?.getPropertyValue('overflow-x').trim().toLowerCase() ?? '';
@@ -483,7 +483,12 @@ export function computeMermaidLayoutMagnification(
   ) {
     return 1;
   }
-  const matrix = getScreenCTM.call(svg);
+  let matrix: MermaidScreenCtm | null;
+  try {
+    matrix = getScreenCTM.call(svg);
+  } catch {
+    return 1;
+  }
   if (!matrix) return 1;
   if (
     ![matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f].every(Number.isFinite) ||

@@ -188,7 +188,7 @@ final class VisualPreviewBlockAnnotator {
 			return false;
 		}
 
-		return 1 === preg_match( '/^ {0,3}\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/D', $content );
+		return 1 === preg_match( '/^[ \t]*(?:\|[ \t]*)?:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*(?:\|[ \t]*)?$/D', $content );
 	}
 
 	/**

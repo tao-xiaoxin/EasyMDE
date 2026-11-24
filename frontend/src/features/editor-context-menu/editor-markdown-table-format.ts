@@ -16,6 +16,8 @@ import {
 	tableSelectionAt,
 } from "./editor-markdown-table";
 
+const PREVIEW_MAX_MARKDOWN_BYTES = 1_048_576;
+
 type CellCoreRange = Readonly<{
 	end: number;
 	preserveTrailingWhitespace: boolean;
@@ -29,18 +31,63 @@ type FormattedTableLine = Readonly<{
 
 type FormatTableRow = Readonly<{
 	cells: ParsedTableRow["cells"];
+	indentationLength: number;
+	leadingPipe: boolean;
 	trailingPipe: boolean;
 }>;
+
+function utf8ByteLength(
+	text: string,
+	start = 0,
+	end = text.length,
+): number {
+	const from = Math.max(0, Math.min(text.length, start));
+	const to = Math.max(from, Math.min(text.length, end));
+	let bytes = 0;
+	for (let index = from; index < to; index += 1) {
+		const codeUnit = text.charCodeAt(index);
+		if (codeUnit < 0x80) {
+			bytes += 1;
+		} else if (codeUnit < 0x800) {
+			bytes += 2;
+		} else if (
+			codeUnit >= 0xd800 &&
+			codeUnit <= 0xdbff &&
+			index + 1 < to
+		) {
+			const nextUnit = text.charCodeAt(index + 1);
+			if (nextUnit >= 0xdc00 && nextUnit <= 0xdfff) {
+				bytes += 4;
+				index += 1;
+			} else {
+				bytes += 3;
+			}
+		} else {
+			bytes += 3;
+		}
+	}
+	return bytes;
+}
 
 function horizontalPadding(character: string | undefined): boolean {
 	return " " === character || "\t" === character;
 }
 
-function hasOddBackslashRun(value: string, position: number): boolean {
+function leadingHorizontalPaddingLength(text: string): number {
+	let length = 0;
+	while (length < text.length && horizontalPadding(text[length])) length += 1;
+	return length;
+}
+
+function hasOddBackslashRun(
+	value: string,
+	position: number,
+	minIndex = 0,
+): boolean {
 	let count = 0;
 	for (
 		let index = position - 1;
-		index >= 0 && "\\" === value[index];
+		index >= minIndex && "\\" === value[index];
 		index -= 1
 	) {
 		count += 1;
@@ -48,18 +95,26 @@ function hasOddBackslashRun(value: string, position: number): boolean {
 	return 1 === count % 2;
 }
 
-function cellCoreRange(raw: string): CellCoreRange {
-	let start = 0;
-	while (start < raw.length && horizontalPadding(raw[start])) start += 1;
+function cellCoreRangeInLine(
+	text: string,
+	rawStart: number,
+	rawEnd: number,
+): CellCoreRange {
+	let start = rawStart;
+	while (start < rawEnd && horizontalPadding(text[start])) start += 1;
 
-	let end = raw.length;
-	while (end > start && horizontalPadding(raw[end - 1])) end -= 1;
-	const trailingLength = raw.length - end;
+	let end = rawEnd;
+	while (end > start && horizontalPadding(text[end - 1])) end -= 1;
+	const trailingLength = rawEnd - end;
 	const preserveTrailingWhitespace =
-		trailingLength > 0 && hasOddBackslashRun(raw, end);
-	if (preserveTrailingWhitespace) end = raw.length;
+		trailingLength > 0 && hasOddBackslashRun(text, end, rawStart);
+	if (preserveTrailingWhitespace) end = rawEnd;
 
-	return { end, preserveTrailingWhitespace, start };
+	return {
+		end: end - rawStart,
+		preserveTrailingWhitespace,
+		start: start - rawStart,
+	};
 }
 
 function formatTableRow(
@@ -69,16 +124,109 @@ function formatTableRow(
 	const positions = pipePositions(line.text);
 	const lastPipe = positions[positions.length - 1];
 	if (undefined === lastPipe) return null;
+	const leadingPipe = hasLeadingPipe(line.text);
+	const indentationLength = leadingPipe
+		? 0
+		: leadingHorizontalPaddingLength(line.text);
 	if (lastPipe === line.text.length - 1) {
-		return { cells: row.cells, trailingPipe: true };
+		return {
+			cells: row.cells,
+			indentationLength,
+			leadingPipe,
+			trailingPipe: true,
+		};
 	}
 	const suffix = line.text.slice(lastPipe + 1);
 	if (!/^[ \t]+$/u.test(suffix)) {
-		return { cells: row.cells, trailingPipe: false };
+		return {
+			cells: row.cells,
+			indentationLength,
+			leadingPipe,
+			trailingPipe: false,
+		};
 	}
 	const parsedSuffixCell = row.cells[row.cells.length - 1];
 	if (!parsedSuffixCell || parsedSuffixCell.end !== lastPipe) return null;
-	return { cells: row.cells, trailingPipe: true };
+	return {
+		cells: row.cells,
+		indentationLength,
+		leadingPipe,
+		trailingPipe: true,
+	};
+}
+
+function projectFormattedTableLineBytes(
+	line: MarkdownLine,
+	row: FormatTableRow,
+	widths: ReadonlyArray<number>,
+): number | null {
+	const firstCell = row.cells[0];
+	const lastCell = row.cells[row.cells.length - 1];
+	if (!firstCell || !lastCell || row.cells.length !== widths.length) {
+		return null;
+	}
+
+	const firstRawStart = firstCell.start + row.indentationLength;
+	if (firstRawStart < 0 || firstRawStart > firstCell.end) return null;
+
+	let cursor = firstRawStart;
+	let byteDelta = 0;
+
+	for (let index = 0; index < row.cells.length; index += 1) {
+		const cell = row.cells[index];
+		if (!cell) return null;
+		const rawStart = cell.start + (0 === index ? row.indentationLength : 0);
+		const rawEnd = cell.end;
+		if (rawStart < cursor || rawStart > rawEnd || rawEnd > line.text.length) {
+			return null;
+		}
+
+		const core = cellCoreRangeInLine(line.text, rawStart, rawEnd);
+		const leftPaddingBytes = 0 === index && !row.leadingPipe ? 0 : 1;
+		const lastWithoutPipe =
+			index === row.cells.length - 1 && !row.trailingPipe;
+		const rightPaddingBytes =
+			core.preserveTrailingWhitespace || lastWithoutPipe ? 0 : 1;
+		const widthPadding = core.preserveTrailingWhitespace
+			? 0
+			: Math.max(0, (widths[index] ?? 0) - (core.end - core.start));
+		const removedPaddingBytes = core.start + (rawEnd - rawStart - core.end);
+		byteDelta +=
+			leftPaddingBytes +
+			widthPadding +
+			rightPaddingBytes -
+			removedPaddingBytes;
+		cursor = rawEnd;
+	}
+
+	return utf8ByteLength(line.text) + byteDelta;
+}
+
+function projectFormattedTableBytes(
+	lines: ReadonlyArray<MarkdownLine>,
+	table: PreparedMarkdownTable["table"],
+	rowViews: ReadonlyArray<FormatTableRow>,
+	rowIndexByLine: ReadonlyMap<number, number>,
+	widths: ReadonlyArray<number>,
+): number | null {
+	let totalBytes = 0;
+	for (
+		let lineIndex = table.startLine;
+		lineIndex <= table.endLine;
+		lineIndex += 1
+	) {
+		const line = lines[lineIndex];
+		const rowIndex = rowIndexByLine.get(lineIndex);
+		const rowView = undefined !== rowIndex ? rowViews[rowIndex] : undefined;
+		if (!line || !rowView) return null;
+		const lineBytes = projectFormattedTableLineBytes(line, rowView, widths);
+		if (null === lineBytes) return null;
+		totalBytes += lineBytes;
+		if (lineIndex < table.endLine) {
+			totalBytes += utf8ByteLength(line.separator);
+		}
+	}
+	return totalBytes;
 }
 
 function formatTableLine(
@@ -91,11 +239,7 @@ function formatTableLine(
 	if (!firstCell || !lastCell || row.cells.length !== widths.length)
 		return null;
 
-	const leadingPipe = hasLeadingPipe(line.text);
-	const indentation = leadingPipe
-		? ""
-		: (line.text.match(/^[ \t]*/u)?.[0] ?? "");
-	const firstRawStart = firstCell.start + indentation.length;
+	const firstRawStart = firstCell.start + row.indentationLength;
 	if (firstRawStart > firstCell.end) return null;
 
 	const map = Array<number>(line.text.length + 1).fill(Number.NaN);
@@ -130,17 +274,16 @@ function formatTableLine(
 	for (let index = 0; index < row.cells.length; index += 1) {
 		const cell = row.cells[index];
 		if (!cell) return null;
-		const rawStart = cell.start + (0 === index ? indentation.length : 0);
+		const rawStart = cell.start + (0 === index ? row.indentationLength : 0);
 		const rawEnd = cell.end;
 		if (rawStart < cursor || rawStart > rawEnd || rawEnd > line.text.length)
 			return null;
 		copyRange(cursor, rawStart);
 
-		const raw = line.text.slice(rawStart, rawEnd);
-		const core = cellCoreRange(raw);
+		const core = cellCoreRangeInLine(line.text, rawStart, rawEnd);
 		const coreStart = rawStart + core.start;
 		const coreEnd = rawStart + core.end;
-		const leftPadding = 0 === index && !leadingPipe ? "" : " ";
+		const leftPadding = 0 === index && !row.leadingPipe ? "" : " ";
 		const lastWithoutPipe = index === row.cells.length - 1 && !row.trailingPipe;
 		const rightPadding = lastWithoutPipe ? "" : " ";
 		insert(leftPadding);
@@ -187,16 +330,12 @@ export function formatMarkdownTableSource(
 ): EditorTextEdit | null {
 	assertEditorSelection(selection, value);
 	const context =
-		prepared
-		&& preparedMarkdownTableMatches(
-			prepared,
-			value,
-			selection.start,
-			blockIndex
-		)
+		prepared &&
+		preparedMarkdownTableMatches(prepared, value, selection.start, blockIndex)
 			? prepared
 			: prepareMarkdownTable(value, selection.start, blockIndex);
-	if (!context || "invalid" === context.context.annotationRead.status) return null;
+	if (!context || "invalid" === context.context.annotationRead.status)
+		return null;
 	if (
 		selection.start < context.context.tableStart ||
 		selection.end > context.context.tableEnd ||
@@ -207,12 +346,16 @@ export function formatMarkdownTableSource(
 
 	const { lines, table } = context;
 	const rowViews: FormatTableRow[] = [];
-	for (const row of table.rows) {
+	const rowIndexByLine = new Map<number, number>();
+	for (let rowIndex = 0; rowIndex < table.rows.length; rowIndex += 1) {
+		const row = table.rows[rowIndex];
+		if (!row) return null;
 		const line = lines[row.lineIndex];
 		if (!line) return null;
 		const rowView = formatTableRow(line, row);
 		if (!rowView) return null;
 		rowViews.push(rowView);
+		rowIndexByLine.set(row.lineIndex, rowIndex);
 	}
 	const columnCount = rowViews[0]?.cells.length ?? 0;
 	if (
@@ -220,7 +363,13 @@ export function formatMarkdownTableSource(
 		rowViews.some((row) => row.cells.length !== columnCount)
 	)
 		return null;
-	const widths = Array<number>(columnCount).fill(0);
+
+	const surroundingBytes =
+		utf8ByteLength(value, 0, context.context.tableStart) +
+		utf8ByteLength(value, context.context.tableEnd, value.length);
+	if (surroundingBytes >= PREVIEW_MAX_MARKDOWN_BYTES) return null;
+
+	const alignedWidths = Array<number>(columnCount).fill(0);
 	for (let rowIndex = 0; rowIndex < rowViews.length; rowIndex += 1) {
 		const row = rowViews[rowIndex];
 		const sourceRow = table.rows[rowIndex];
@@ -229,15 +378,42 @@ export function formatMarkdownTableSource(
 		for (let index = 0; index < row.cells.length; index += 1) {
 			const cell = row.cells[index];
 			if (!cell) return null;
-			const rawStart =
-				cell.start +
-				(0 === index && !hasLeadingPipe(line.text)
-					? (line.text.match(/^[ \t]*/u)?.[0].length ?? 0)
-					: 0);
-			const raw = line.text.slice(rawStart, cell.end);
-			const core = cellCoreRange(raw);
-			widths[index] = Math.max(widths[index] ?? 0, core.end - core.start);
+			const rawStart = cell.start + (0 === index ? row.indentationLength : 0);
+			if (rawStart > cell.end || cell.end > line.text.length) return null;
+			const core = cellCoreRangeInLine(line.text, rawStart, cell.end);
+			alignedWidths[index] = Math.max(
+				alignedWidths[index] ?? 0,
+				core.end - core.start,
+			);
 		}
+	}
+
+	const alignedTableBytes = projectFormattedTableBytes(
+		lines,
+		table,
+		rowViews,
+		rowIndexByLine,
+		alignedWidths,
+	);
+	if (null === alignedTableBytes) return null;
+
+	let targetWidths: ReadonlyArray<number> = alignedWidths;
+	if (surroundingBytes + alignedTableBytes > PREVIEW_MAX_MARKDOWN_BYTES) {
+		const compactWidths = Array<number>(columnCount).fill(0);
+		const compactTableBytes = projectFormattedTableBytes(
+			lines,
+			table,
+			rowViews,
+			rowIndexByLine,
+			compactWidths,
+		);
+		if (
+			null === compactTableBytes ||
+			surroundingBytes + compactTableBytes > PREVIEW_MAX_MARKDOWN_BYTES
+		) {
+			return null;
+		}
+		targetWidths = compactWidths;
 	}
 
 	const positionMap = Array<number>(
@@ -250,13 +426,10 @@ export function formatMarkdownTableSource(
 		lineIndex += 1
 	) {
 		const line = lines[lineIndex];
-		const row = table.rows.find(
-			(candidate) => candidate.lineIndex === lineIndex,
-		);
-		const rowIndex = row ? table.rows.indexOf(row) : -1;
-		const rowView = rowIndex >= 0 ? rowViews[rowIndex] : undefined;
-		if (!line || !row || !rowView) return null;
-		const formattedLine = formatTableLine(line, rowView, widths);
+		const rowIndex = rowIndexByLine.get(lineIndex);
+		const rowView = undefined !== rowIndex ? rowViews[rowIndex] : undefined;
+		if (!line || !rowView) return null;
+		const formattedLine = formatTableLine(line, rowView, targetWidths);
 		if (!formattedLine) return null;
 		const originalOffset = line.start - context.context.tableStart;
 		for (let index = 0; index < formattedLine.map.length; index += 1) {
@@ -292,6 +465,7 @@ export function formatMarkdownTableSource(
 		value.slice(0, context.context.tableStart) +
 		formattedTable +
 		value.slice(context.context.tableEnd);
+	if (utf8ByteLength(nextValue) > PREVIEW_MAX_MARKDOWN_BYTES) return null;
 	if (nextValue === value) {
 		return {
 			selection: {

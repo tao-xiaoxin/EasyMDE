@@ -1015,6 +1015,219 @@ describe("editor context menu rules", () => {
 		).toBeNull();
 	});
 
+	it("falls back to compact formatting when aligned padding would exceed the 1 MiB preview UTF-8 budget", () => {
+		const previewMaxBytes = 1_048_576;
+		const encoder = new TextEncoder();
+		const wideHeader = "h".repeat(2048);
+		const bodyRows = Array.from({ length: 600 }, (_, index) =>
+			index === 299 ? "|  target  |  y  |" : "|x|y|",
+		);
+		const source = [`|${wideHeader}|B|`, "|---|---|", ...bodyRows].join("\n");
+		expect(encoder.encode(source).byteLength).toBeLessThan(10_000);
+
+		const selectionStart = source.indexOf("target");
+		const selectionEnd = selectionStart + "target".length;
+		const edit = formatMarkdownTableSource(source, {
+			direction: "backward",
+			end: selectionEnd,
+			start: selectionStart,
+		});
+
+		expect(edit).not.toBeNull();
+		const formatted = edit?.value ?? "";
+		expect(encoder.encode(formatted).byteLength).toBeLessThanOrEqual(
+			previewMaxBytes,
+		);
+		expect(encoder.encode(formatted).byteLength).toBeLessThan(10_000);
+
+		const formattedLines = formatted.split("\n");
+		expect(formattedLines).toHaveLength(602);
+		expect(formattedLines[0]).toBe(`| ${wideHeader} | B |`);
+		expect(formattedLines[1]).toBe("| --- | --- |");
+		expect(formattedLines[2]).toBe("| x | y |");
+		expect(formattedLines[301]).toBe("| target | y |");
+		expect(edit?.selection.direction).toBe("backward");
+		expect(
+			formatted.slice(edit?.selection.start ?? 0, edit?.selection.end ?? 0),
+		).toBe("target");
+		expect(findMarkdownTable(formatted, edit?.selection.start ?? 0)).toMatchObject({
+			columnCount: 2,
+			rowCount: 601,
+		});
+		if (edit) {
+			expect(formatMarkdownTableSource(formatted, edit.selection)).toEqual({
+				selection: edit.selection,
+				value: formatted,
+			});
+		}
+
+		// Compact mode also preserves escaped trailing spaces and omitted outer pipes.
+		const outerlessRows = Array.from({ length: 600 }, (_, index) =>
+			index === 0 ? "  value\\  |  y" : "  x  |  y",
+		);
+		const outerlessSource = [
+			`  ${wideHeader} | B`,
+			"  --- | ---",
+			...outerlessRows,
+		].join("\n");
+		const valuePos = outerlessSource.indexOf("value\\");
+		const outerlessEdit = formatMarkdownTableSource(outerlessSource, {
+			direction: "none",
+			end: valuePos + "value\\".length,
+			start: valuePos,
+		});
+		expect(outerlessEdit).not.toBeNull();
+		const outerlessFormatted = outerlessEdit?.value ?? "";
+		expect(encoder.encode(outerlessFormatted).byteLength).toBeLessThan(12_000);
+		const outerlessLines = outerlessFormatted.split("\n");
+		expect(outerlessLines[0]).toBe(`  ${wideHeader} | B`);
+		expect(outerlessLines[2]).toBe("  value\\  | y");
+		expect(outerlessLines[3]).toBe("  x | y");
+		expect(
+			outerlessFormatted.slice(
+				outerlessEdit?.selection.start ?? 0,
+				outerlessEdit?.selection.end ?? 0,
+			),
+		).toBe("value\\");
+	});
+
+	it("keeps full column-aligned padding for wide-header or long tables within the 1 MiB UTF-8 budget", () => {
+		const previewMaxBytes = 1_048_576;
+		const encoder = new TextEncoder();
+
+		// Control 1: 2,048-character header with 5 body rows fits easily within 1 MiB.
+		const wideHeader = "h".repeat(2048);
+		const shortWideSource = [
+			`| ${wideHeader} | B |`,
+			"| --- | --- |",
+			...Array.from({ length: 5 }, () => "| x | y |"),
+		].join("\n");
+		const shortWidePosition = shortWideSource.lastIndexOf("x");
+		const shortWideEdit = formatMarkdownTableSource(shortWideSource, {
+			direction: "none",
+			end: shortWidePosition,
+			start: shortWidePosition,
+		});
+		expect(shortWideEdit).not.toBeNull();
+		const shortWideLines = (shortWideEdit?.value ?? "").split("\n");
+		expect(
+			encoder.encode(shortWideEdit?.value ?? "").byteLength,
+		).toBeLessThanOrEqual(previewMaxBytes);
+		expect(shortWideLines[2]).toBe(`| x${" ".repeat(2047)} | y   |`);
+
+		// Control 2: 600 body rows with a 32-character header fits easily within 1 MiB.
+		const moderateHeader = "h".repeat(32);
+		const tallModerateSource = [
+			`| ${moderateHeader} | B |`,
+			"| --- | --- |",
+			...Array.from({ length: 600 }, () => "| x | y |"),
+		].join("\n");
+		const tallModeratePosition = tallModerateSource.lastIndexOf("x");
+		const tallModerateEdit = formatMarkdownTableSource(tallModerateSource, {
+			direction: "none",
+			end: tallModeratePosition,
+			start: tallModeratePosition,
+		});
+		expect(tallModerateEdit).not.toBeNull();
+		const tallModerateLines = (tallModerateEdit?.value ?? "").split("\n");
+		expect(
+			encoder.encode(tallModerateEdit?.value ?? "").byteLength,
+		).toBeLessThanOrEqual(previewMaxBytes);
+		expect(tallModerateLines[2]).toBe(`| x${" ".repeat(31)} | y   |`);
+	});
+
+	it("counts multi-byte UTF-8 surrounding CJK and emoji text accurately against the 1 MiB budget", () => {
+		const previewMaxBytes = 1_048_576;
+		const encoder = new TextEncoder();
+		// 348,000 CJK chars (3 UTF-8 bytes each) + 1,000 emoji (4 UTF-8 bytes, 2 UTF-16 units each)
+		// = 1,048,000 UTF-8 bytes while staying at only 350,000 UTF-16 code units.
+		const multibytePrefix = `${"中".repeat(348_000)}${"😀".repeat(1_000)}\n\n`;
+		const wideHeader = "w".repeat(120);
+		const table = [
+			`|${wideHeader}|B|`,
+			"|---|---|",
+			...Array.from({ length: 10 }, () => "|x|y|"),
+		].join("\n");
+		const source = `${multibytePrefix}${table}`;
+
+		const prefixBytes = encoder.encode(multibytePrefix).byteLength;
+		expect(prefixBytes).toBe(1_048_002);
+		// Aligned table alone would be 12 * (120 + 10) + 11 = 1,571 bytes -> 1,049,573 UTF-8 bytes (> 1 MiB),
+		// even though UTF-16 .length stays well below 400,000!
+		const position = source.lastIndexOf("x");
+		const edit = formatMarkdownTableSource(source, {
+			direction: "none",
+			end: position + 1,
+			start: position,
+		});
+
+		expect(edit).not.toBeNull();
+		const formatted = edit?.value ?? "";
+		expect(formatted.length).toBeLessThan(previewMaxBytes);
+		expect(encoder.encode(formatted).byteLength).toBeLessThanOrEqual(
+			previewMaxBytes,
+		);
+		const formattedTable = formatted.slice(multibytePrefix.length);
+		const formattedLines = formattedTable.split("\n");
+		expect(formattedLines[0]).toBe(`| ${wideHeader} | B |`);
+		expect(formattedLines[2]).toBe("| x | y |");
+		expect(
+			formatted.slice(edit?.selection.start ?? 0, edit?.selection.end ?? 0),
+		).toBe("x");
+	});
+
+	it("returns null without mutating Markdown when even compact formatting exceeds the 1 MiB UTF-8 budget", () => {
+		const previewMaxBytes = 1_048_576;
+		const encoder = new TextEncoder();
+		const denseTable = "|a|b|\n|-|-|\n|1|2|";
+		const compactTable = "| a | b |\n| - | - |\n| 1 | 2 |";
+		const denseBytes = encoder.encode(denseTable).byteLength;
+		const compactBytes = encoder.encode(compactTable).byteLength;
+
+		// Input fits within 1 MiB (1,048,576 bytes), but compact normalization adds 12 bytes -> 1,048,588 (> 1 MiB).
+		const overBudgetPrefix = `${"p".repeat(previewMaxBytes - denseBytes - 2)}\n\n`;
+		const overBudgetSource = `${overBudgetPrefix}${denseTable}`;
+		expect(encoder.encode(overBudgetSource).byteLength).toBe(previewMaxBytes);
+		const overBudgetPosition = overBudgetSource.lastIndexOf("1");
+		expect(
+			formatMarkdownTableSource(overBudgetSource, {
+				direction: "none",
+				end: overBudgetPosition,
+				start: overBudgetPosition,
+			}),
+		).toBeNull();
+
+		// Exact 1 MiB boundary succeeds when compact output lands at 1,048,576 UTF-8 bytes.
+		const exactBudgetPrefix = `${"p".repeat(previewMaxBytes - compactBytes - 2)}\n\n`;
+		const exactBudgetSource = `${exactBudgetPrefix}${denseTable}`;
+		const exactPosition = exactBudgetSource.lastIndexOf("1");
+		const exactEdit = formatMarkdownTableSource(exactBudgetSource, {
+			direction: "none",
+			end: exactPosition,
+			start: exactPosition,
+		});
+		expect(exactEdit).not.toBeNull();
+		expect(encoder.encode(exactEdit?.value ?? "").byteLength).toBe(
+			previewMaxBytes,
+		);
+		expect(exactEdit?.value.endsWith(compactTable)).toBe(true);
+
+		// Already over-budget surrounding content also returns null without mutation.
+		const alreadyOverPrefix = `${"中".repeat(349_526)}\n\n`;
+		expect(encoder.encode(alreadyOverPrefix).byteLength).toBeGreaterThan(
+			previewMaxBytes,
+		);
+		const alreadyOverSource = `${alreadyOverPrefix}${denseTable}`;
+		const alreadyOverPosition = alreadyOverSource.lastIndexOf("1");
+		expect(
+			formatMarkdownTableSource(alreadyOverSource, {
+				direction: "none",
+				end: alreadyOverPosition,
+				start: alreadyOverPosition,
+			}),
+		).toBeNull();
+	});
+
 	it("keeps the table delimiter directly after the header for every row insertion context", () => {
 		const source = "| H |\n| --- |\n| D |";
 		const headerBelow = editMarkdownTable(source, source.indexOf("H"), {

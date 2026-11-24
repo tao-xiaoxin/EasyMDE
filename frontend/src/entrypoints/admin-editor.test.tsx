@@ -4,6 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { parseEditorRootBootstrap } from "../contracts/bootstrap/editor-root-bootstrap";
 import type { EditorClipboardPort } from "../contracts/ports/editor-clipboard-port";
 import type { WechatClipboardPort } from "../contracts/ports/wechat-clipboard-port";
+import type {
+	WechatVisualRasterizationPort,
+	WechatVisualRasterizationResult,
+} from "../contracts/ports/wechat-visual-rasterization-port";
 import { createBrowserEditorBlockIndexWorker } from "../integrations/browser/editor-context-menu/create-browser-editor-block-index-worker";
 import { createBrowserLocalDraftStorage } from "../integrations/browser/local-drafts/browser-local-draft-storage";
 import { createBrowserWechatClipboard } from "../integrations/browser/wechat/create-browser-wechat-clipboard";
@@ -1882,6 +1886,856 @@ describe("mountAdminEditor", () => {
 				configurable: true,
 				value: originalExecCommand,
 			});
+			if (clipboardDescriptor) {
+				Object.defineProperty(
+					window.navigator,
+					"clipboard",
+					clipboardDescriptor,
+				);
+			} else {
+				Reflect.deleteProperty(window.navigator, "clipboard");
+			}
+			if (clipboardItemDescriptor) {
+				Object.defineProperty(window, "ClipboardItem", clipboardItemDescriptor);
+			} else {
+				delete (window as Window & { ClipboardItem?: unknown }).ClipboardItem;
+			}
+		}
+	});
+
+	it("rejects stale cold WeChat copy when Preview mutates or disconnects during delayed chunk import and cleans up observers", async () => {
+		const actual = await vi.importActual<
+			typeof import("../integrations/browser/wechat/create-browser-wechat-clipboard")
+		>("../integrations/browser/wechat/create-browser-wechat-clipboard");
+		const render = vi.fn();
+		const unmount = vi.fn();
+		vi.mocked(createRoot).mockReturnValue({ render, unmount } as never);
+		const capturedItems: Array<Record<string, Blob | PromiseLike<Blob>>> = [];
+		const writtenPayloads: Array<{ html: string; text: string }> = [];
+		class ClipboardItemStub {
+			constructor(
+				readonly payload: Record<string, Blob | PromiseLike<Blob>>,
+			) {
+				capturedItems.push(payload);
+			}
+		}
+		const nativeWrite = vi.fn(async (items: ClipboardItems) => {
+			const item = (items as unknown as ClipboardItemStub[])[0];
+			const htmlBlob = await item?.payload["text/html"];
+			const textBlob = await item?.payload["text/plain"];
+			if (!htmlBlob || !textBlob) {
+				throw new Error("clipboard-item-blobs-missing");
+			}
+			writtenPayloads.push({
+				html: await htmlBlob.text(),
+				text: await textBlob.text(),
+			});
+		});
+		const clipboardDescriptor = Object.getOwnPropertyDescriptor(
+			window.navigator,
+			"clipboard",
+		);
+		const clipboardItemDescriptor = Object.getOwnPropertyDescriptor(
+			window,
+			"ClipboardItem",
+		);
+		const mutationObserverDescriptor = Object.getOwnPropertyDescriptor(
+			window,
+			"MutationObserver",
+		);
+		const RealMutationObserver = window.MutationObserver;
+		let activeObservers = 0;
+		class TrackingMutationObserver extends RealMutationObserver {
+			private observing = false;
+
+			override observe(target: Node, options?: MutationObserverInit): void {
+				if (!this.observing) {
+					this.observing = true;
+					activeObservers += 1;
+				}
+				super.observe(target, options);
+			}
+
+			override disconnect(): void {
+				if (this.observing) {
+					this.observing = false;
+					activeObservers -= 1;
+				}
+				super.disconnect();
+			}
+		}
+		Object.defineProperty(window, "MutationObserver", {
+			configurable: true,
+			value: TrackingMutationObserver,
+		});
+		Object.defineProperty(window.navigator, "clipboard", {
+			configurable: true,
+			value: {
+				readText: vi.fn().mockResolvedValue(""),
+				write: nativeWrite,
+				writeText: vi.fn().mockResolvedValue(undefined),
+			} as unknown as Clipboard,
+		});
+		Object.defineProperty(window, "ClipboardItem", {
+			configurable: true,
+			value: ClipboardItemStub,
+		});
+
+		const unhandledRejections: unknown[] = [];
+		const onUnhandledRejection = (reason: unknown): void => {
+			unhandledRejections.push(reason);
+		};
+		process.on("unhandledRejection", onUnhandledRejection);
+
+		const realGetComputedStyle = window.getComputedStyle.bind(window);
+		const getComputedStyleSpy = vi
+			.spyOn(window, "getComputedStyle")
+			.mockImplementation((element, pseudoElement) => {
+				if (pseudoElement) {
+					return {
+						getPropertyValue: (property: string) =>
+							"content" === property ? "none" : "",
+					} as unknown as CSSStyleDeclaration;
+				}
+				return realGetComputedStyle(element);
+			});
+
+		const createPreview = (html: string): HTMLElement => {
+			const element = document.createElement("article");
+			element.setAttribute("data-easymde-preview-html-sink", "1");
+			element.innerHTML = html;
+			Object.defineProperty(element, "innerText", {
+				configurable: true,
+				get: () => element.textContent ?? "",
+			});
+			Object.defineProperty(element, "getBoundingClientRect", {
+				configurable: true,
+				value: () => ({
+					bottom: 240,
+					height: 240,
+					left: 0,
+					right: 640,
+					top: 0,
+					width: 640,
+					x: 0,
+					y: 0,
+				}),
+			});
+			document.body.append(element);
+			return element;
+		};
+
+		try {
+			// 1. Portable cold copy: in-place Preview mutation during delayed chunk load
+			//    (even when resolvePreview is provided for an ordinary visible preview,
+			//    matching production EditorRoot wiring) rejects stale copy cleanly.
+			const portableChunk = deferred<typeof actual>();
+			const teardownPortable = mountAdminEditor(bootstrap, {
+				document,
+				failureMessage: "Editor failed",
+				loadWechatClipboard: vi.fn(() => portableChunk.promise),
+				onStartupFailure: vi.fn(),
+				window,
+				wordpress: {
+					apiFetch: Object.assign(vi.fn(), {
+						nonceMiddleware: { nonce: "nonce" },
+					}),
+					hooks: { addAction: vi.fn(), removeAction: vi.fn() },
+				},
+			});
+			const portableRendered = render.mock.calls[0]?.[0] as {
+				props: { children: { props: { wechatClipboard: WechatClipboardPort } } };
+			};
+			const preview = createPreview("<p>Original preview</p>");
+			const portableCopy = portableRendered.props.children.props.wechatClipboard.copy(
+				preview,
+				{ resolvePreview: vi.fn(async () => preview) },
+			);
+			expect(nativeWrite).toHaveBeenCalledTimes(1);
+			expect(activeObservers).toBe(1);
+
+			preview.innerHTML = "<p>Replacement preview</p>";
+			portableChunk.resolve(actual);
+
+			await expect(portableCopy).resolves.toEqual({
+				code: "wechat-copy-failed",
+				status: "failed",
+			});
+			expect(writtenPayloads).toHaveLength(0);
+			await expect(capturedItems[0]?.["text/html"]).rejects.toThrow(
+				"wechat-copy-stale",
+			);
+			await expect(capturedItems[0]?.["text/plain"]).rejects.toThrow(
+				"wechat-copy-stale",
+			);
+			expect(activeObservers).toBe(0);
+			teardownPortable();
+
+			// 2. PNG cold copy: in-place mutation returns PNG cancellation code and cleans up.
+			render.mockClear();
+			const pngChunk = deferred<typeof actual>();
+			const teardownPng = mountAdminEditor(bootstrap, {
+				document,
+				failureMessage: "Editor failed",
+				loadWechatClipboard: vi.fn(() => pngChunk.promise),
+				onStartupFailure: vi.fn(),
+				window,
+				wordpress: {
+					apiFetch: Object.assign(vi.fn(), {
+						nonceMiddleware: { nonce: "nonce" },
+					}),
+					hooks: { addAction: vi.fn(), removeAction: vi.fn() },
+				},
+			});
+			const pngRendered = render.mock.calls[0]?.[0] as {
+				props: { children: { props: { wechatClipboard: WechatClipboardPort } } };
+			};
+			const pngPreview = createPreview("<p>Original PNG preview</p>");
+			const pngCopy = pngRendered.props.children.props.wechatClipboard.copy(
+				pngPreview,
+				{
+					imageUploadPort: { upload: vi.fn() },
+					maxBytes: 1024 * 1024,
+					pngConversionEnabled: true,
+					postId: 7,
+					visualRasterizationPort: { rasterize: vi.fn() },
+				},
+			);
+			expect(activeObservers).toBe(1);
+			pngPreview.innerHTML = "<p>Replacement PNG preview</p>";
+			pngChunk.resolve(actual);
+			await expect(pngCopy).resolves.toEqual({
+				code: "wechat-png-rasterization-cancelled",
+				sideEffects: "none",
+				status: "failed",
+			});
+			expect(writtenPayloads).toHaveLength(0);
+			await expect(capturedItems[1]?.["text/html"]).rejects.toThrow(
+				"wechat-copy-stale",
+			);
+			await expect(capturedItems[1]?.["text/plain"]).rejects.toThrow(
+				"wechat-copy-stale",
+			);
+			expect(activeObservers).toBe(0);
+			teardownPng();
+
+			// 3. Disconnect during delayed chunk load rejects stale copy cleanly.
+			render.mockClear();
+			const disconnectChunk = deferred<typeof actual>();
+			const teardownDisconnect = mountAdminEditor(bootstrap, {
+				document,
+				failureMessage: "Editor failed",
+				loadWechatClipboard: vi.fn(() => disconnectChunk.promise),
+				onStartupFailure: vi.fn(),
+				window,
+				wordpress: {
+					apiFetch: Object.assign(vi.fn(), {
+						nonceMiddleware: { nonce: "nonce" },
+					}),
+					hooks: { addAction: vi.fn(), removeAction: vi.fn() },
+				},
+			});
+			const disconnectRendered = render.mock.calls[0]?.[0] as {
+				props: { children: { props: { wechatClipboard: WechatClipboardPort } } };
+			};
+			const detachedPreview = createPreview("<p>Connected at click</p>");
+			const disconnectCopy =
+				disconnectRendered.props.children.props.wechatClipboard.copy(
+					detachedPreview,
+				);
+			expect(activeObservers).toBe(1);
+			detachedPreview.remove();
+			disconnectChunk.resolve(actual);
+			await expect(disconnectCopy).resolves.toEqual({
+				code: "wechat-copy-failed",
+				status: "failed",
+			});
+			expect(writtenPayloads).toHaveLength(0);
+			expect(activeObservers).toBe(0);
+			teardownDisconnect();
+
+			// 4. Direct copyWithPrestartedWrite zero-gap handoff: if cold freshness turns
+			//    stale right as the loaded adapter installs its own freshness guard, the
+			//    adapter rejects cleanly and disposes the cold observer.
+			const handoffPreview = createPreview("<p>Handoff content</p>");
+			const directClipboard = actual.createBrowserWechatClipboard({
+				blob: Blob,
+				clipboardItem: ClipboardItemStub,
+				document,
+				getComputedStyle: (element, pseudoElement) =>
+					window.getComputedStyle(element, pseudoElement),
+				getSelection: () => window.getSelection(),
+				pageOffset: () => ({ x: 0, y: 0 }),
+				scrollTo: vi.fn(),
+				write: (items) => nativeWrite(items as ClipboardItems),
+			});
+			let freshnessChecks = 0;
+			const disposeColdSourceFreshness = vi.fn();
+			const prestartedReject = vi.fn();
+			const handoffHtml = deferred<Blob>();
+			const handoffText = deferred<Blob>();
+			void handoffHtml.promise.catch(() => undefined);
+			void handoffText.promise.catch(() => undefined);
+			const handoffWritePromise = Promise.all([
+				handoffHtml.promise,
+				handoffText.promise,
+			]).then(() => undefined);
+			void handoffWritePromise.catch(() => undefined);
+			const handoffResult = await directClipboard.copyWithPrestartedWrite(
+				handoffPreview,
+				{},
+				{
+					bind(sourceHtmlBlob, sourceTextBlob) {
+						void sourceHtmlBlob.then(handoffHtml.resolve, handoffHtml.reject);
+						void sourceTextBlob.then(handoffText.resolve, handoffText.reject);
+					},
+					deadlineMs: Date.now() + 60_000,
+					disposeColdSourceFreshness,
+					isColdSourceFresh: () => {
+						freshnessChecks += 1;
+						return freshnessChecks === 1;
+					},
+					reject: prestartedReject,
+					writePromise: handoffWritePromise,
+				},
+			);
+			expect(handoffResult).toEqual({
+				code: "wechat-copy-failed",
+				status: "failed",
+			});
+			expect(freshnessChecks).toBe(2);
+			expect(disposeColdSourceFreshness).toHaveBeenCalled();
+			expect(activeObservers).toBe(0);
+
+			// 4b. Direct copyWithPrestartedWrite zero-gap handoff for PNG copy too.
+			let pngFreshnessChecks = 0;
+			const disposePngColdFreshness = vi.fn();
+			const pngHandoffHtml = deferred<Blob>();
+			const pngHandoffText = deferred<Blob>();
+			void pngHandoffHtml.promise.catch(() => undefined);
+			void pngHandoffText.promise.catch(() => undefined);
+			const pngHandoffWritePromise = Promise.all([
+				pngHandoffHtml.promise,
+				pngHandoffText.promise,
+			]).then(() => undefined);
+			void pngHandoffWritePromise.catch(() => undefined);
+			const pngHandoffResult = await directClipboard.copyWithPrestartedWrite(
+				handoffPreview,
+				{
+					imageUploadPort: { upload: vi.fn() },
+					maxBytes: 1024 * 1024,
+					pngConversionEnabled: true,
+					postId: 7,
+					visualRasterizationPort: { rasterize: vi.fn() },
+				},
+				{
+					bind(sourceHtmlBlob, sourceTextBlob) {
+						void sourceHtmlBlob.then(
+							pngHandoffHtml.resolve,
+							pngHandoffHtml.reject,
+						);
+						void sourceTextBlob.then(
+							pngHandoffText.resolve,
+							pngHandoffText.reject,
+						);
+					},
+					deadlineMs: Date.now() + 60_000,
+					disposeColdSourceFreshness: disposePngColdFreshness,
+					isColdSourceFresh: () => {
+						pngFreshnessChecks += 1;
+						return pngFreshnessChecks === 1;
+					},
+					reject: vi.fn(),
+					writePromise: pngHandoffWritePromise,
+				},
+			);
+			expect(pngHandoffResult).toEqual({
+				code: "wechat-png-rasterization-cancelled",
+				sideEffects: "none",
+				status: "failed",
+			});
+			expect(pngFreshnessChecks).toBe(2);
+			expect(disposePngColdFreshness).toHaveBeenCalled();
+			expect(activeObservers).toBe(0);
+
+			// 5. Hidden formal Preview with resolvePreview (unlocked visual editing)
+			//    intentionally refreshes the formal Preview and succeeds.
+			render.mockClear();
+			const visualChunk = deferred<typeof actual>();
+			const teardownVisual = mountAdminEditor(bootstrap, {
+				document,
+				failureMessage: "Editor failed",
+				loadWechatClipboard: vi.fn(() => visualChunk.promise),
+				onStartupFailure: vi.fn(),
+				window,
+				wordpress: {
+					apiFetch: Object.assign(vi.fn(), {
+						nonceMiddleware: { nonce: "nonce" },
+					}),
+					hooks: { addAction: vi.fn(), removeAction: vi.fn() },
+				},
+			});
+			const visualRendered = render.mock.calls[0]?.[0] as {
+				props: { children: { props: { wechatClipboard: WechatClipboardPort } } };
+			};
+			const hiddenFormal = createPreview("<p>Stale hidden preview</p>");
+			hiddenFormal.classList.add("easymde-preview-surface-hidden");
+			const freshFormal = createPreview("<p>Refreshed formal preview</p>");
+			const visualCopy =
+				visualRendered.props.children.props.wechatClipboard.copy(hiddenFormal, {
+					resolvePreview: async () => freshFormal,
+				});
+			hiddenFormal.innerHTML = "<p>Mutated while hidden</p>";
+			visualChunk.resolve(actual);
+			await expect(visualCopy).resolves.toEqual({
+				method: "clipboard",
+				status: "copied",
+			});
+			expect(writtenPayloads).toHaveLength(1);
+			expect(writtenPayloads[0]?.html).toContain("Refreshed formal preview");
+			expect(activeObservers).toBe(0);
+			teardownVisual();
+
+			await new Promise((resolve) => window.setTimeout(resolve, 0));
+			expect(unhandledRejections).toEqual([]);
+		} finally {
+			process.off("unhandledRejection", onUnhandledRejection);
+			getComputedStyleSpy.mockRestore();
+			if (mutationObserverDescriptor) {
+				Object.defineProperty(
+					window,
+					"MutationObserver",
+					mutationObserverDescriptor,
+				);
+			} else {
+				delete (window as Window & { MutationObserver?: unknown })
+					.MutationObserver;
+			}
+			if (clipboardDescriptor) {
+				Object.defineProperty(
+					window.navigator,
+					"clipboard",
+					clipboardDescriptor,
+				);
+			} else {
+				Reflect.deleteProperty(window.navigator, "clipboard");
+			}
+			if (clipboardItemDescriptor) {
+				Object.defineProperty(window, "ClipboardItem", clipboardItemDescriptor);
+			} else {
+				delete (window as Window & { ClipboardItem?: unknown }).ClipboardItem;
+			}
+		}
+	});
+
+	it("enforces a single 60-second end-to-end deadline across cold chunk load and preparation and never calls port.copy post-await", async () => {
+		const actual = await vi.importActual<
+			typeof import("../integrations/browser/wechat/create-browser-wechat-clipboard")
+		>("../integrations/browser/wechat/create-browser-wechat-clipboard");
+		vi.useFakeTimers();
+		const render = vi.fn();
+		const unmount = vi.fn();
+		vi.mocked(createRoot).mockReturnValue({ render, unmount } as never);
+		const capturedItems: Array<Record<string, Blob | PromiseLike<Blob>>> = [];
+		class ClipboardItemStub {
+			constructor(
+				readonly payload: Record<string, Blob | PromiseLike<Blob>>,
+			) {
+				capturedItems.push(payload);
+			}
+		}
+		const nativeWrite = vi.fn(async (items: ClipboardItems) => {
+			const item = (items as unknown as ClipboardItemStub[])[0];
+			await Promise.all([
+				item?.payload["text/html"],
+				item?.payload["text/plain"],
+			]);
+		});
+		const clipboardDescriptor = Object.getOwnPropertyDescriptor(
+			window.navigator,
+			"clipboard",
+		);
+		const clipboardItemDescriptor = Object.getOwnPropertyDescriptor(
+			window,
+			"ClipboardItem",
+		);
+		Object.defineProperty(window.navigator, "clipboard", {
+			configurable: true,
+			value: {
+				readText: vi.fn().mockResolvedValue(""),
+				write: nativeWrite,
+				writeText: vi.fn().mockResolvedValue(undefined),
+			} as unknown as Clipboard,
+		});
+		Object.defineProperty(window, "ClipboardItem", {
+			configurable: true,
+			value: ClipboardItemStub,
+		});
+
+		const unhandledRejections: unknown[] = [];
+		const onUnhandledRejection = (reason: unknown): void => {
+			unhandledRejections.push(reason);
+		};
+		process.on("unhandledRejection", onUnhandledRejection);
+
+		try {
+			// 1. Portable cold copy: 50s chunk load leaves only 10s for preparation.
+			const portableChunk = deferred<typeof actual>();
+			const teardownPortable = mountAdminEditor(bootstrap, {
+				document,
+				failureMessage: "Editor failed",
+				loadWechatClipboard: vi.fn(() => portableChunk.promise),
+				onStartupFailure: vi.fn(),
+				window,
+				wordpress: {
+					apiFetch: Object.assign(vi.fn(), {
+						nonceMiddleware: { nonce: "nonce" },
+					}),
+					hooks: { addAction: vi.fn(), removeAction: vi.fn() },
+				},
+			});
+			const portableRendered = render.mock.calls[0]?.[0] as {
+				props: { children: { props: { wechatClipboard: WechatClipboardPort } } };
+			};
+			const hiddenPreview = document.createElement("article");
+			hiddenPreview.setAttribute("data-easymde-preview-html-sink", "1");
+			hiddenPreview.classList.add("easymde-preview-surface-hidden");
+			hiddenPreview.innerHTML = "<p>Deadline test</p>";
+			document.body.append(hiddenPreview);
+
+			const hangingPreviewResolution = deferred<HTMLElement | null>();
+			let portableSettled = false;
+			const portableCopy = portableRendered.props.children.props.wechatClipboard
+				.copy(hiddenPreview, {
+					resolvePreview: () => hangingPreviewResolution.promise,
+				})
+				.finally(() => {
+					portableSettled = true;
+				});
+
+			await vi.advanceTimersByTimeAsync(50_000);
+			expect(portableSettled).toBe(false);
+
+			portableChunk.resolve(actual);
+			await vi.advanceTimersByTimeAsync(9_999);
+			expect(portableSettled).toBe(false);
+
+			await vi.advanceTimersByTimeAsync(1);
+			await expect(portableCopy).resolves.toEqual({
+				code: "wechat-copy-failed",
+				status: "failed",
+			});
+			await expect(capturedItems[0]?.["text/html"]).rejects.toThrow(
+				"wechat-clipboard-preparation-timeout",
+			);
+			await expect(capturedItems[0]?.["text/plain"]).rejects.toThrow(
+				"wechat-clipboard-preparation-timeout",
+			);
+			teardownPortable();
+
+			// 2. PNG cold copy: 50s chunk load leaves only 10s for PNG transaction.
+			render.mockClear();
+			const pngChunk = deferred<typeof actual>();
+			const teardownPng = mountAdminEditor(bootstrap, {
+				document,
+				failureMessage: "Editor failed",
+				loadWechatClipboard: vi.fn(() => pngChunk.promise),
+				onStartupFailure: vi.fn(),
+				window,
+				wordpress: {
+					apiFetch: Object.assign(vi.fn(), {
+						nonceMiddleware: { nonce: "nonce" },
+					}),
+					hooks: { addAction: vi.fn(), removeAction: vi.fn() },
+				},
+			});
+			const pngRendered = render.mock.calls[0]?.[0] as {
+				props: { children: { props: { wechatClipboard: WechatClipboardPort } } };
+			};
+			const hangingPngResolution = deferred<HTMLElement | null>();
+			let pngSettled = false;
+			const pngCopy = pngRendered.props.children.props.wechatClipboard
+				.copy(hiddenPreview, {
+					imageUploadPort: { upload: vi.fn() },
+					maxBytes: 1024 * 1024,
+					pngConversionEnabled: true,
+					postId: 7,
+					resolvePreview: () => hangingPngResolution.promise,
+					visualRasterizationPort: { rasterize: vi.fn() },
+				})
+				.finally(() => {
+					pngSettled = true;
+				});
+
+			await vi.advanceTimersByTimeAsync(50_000);
+			expect(pngSettled).toBe(false);
+
+			pngChunk.resolve(actual);
+			await vi.advanceTimersByTimeAsync(9_999);
+			expect(pngSettled).toBe(false);
+
+			await vi.advanceTimersByTimeAsync(1);
+			await expect(pngCopy).resolves.toEqual({
+				code: "wechat-png-transaction-timeout",
+				sideEffects: "none",
+				status: "failed",
+			});
+			await expect(capturedItems[1]?.["text/html"]).rejects.toThrow(
+				"wechat-png-transaction-timeout",
+			);
+			await expect(capturedItems[1]?.["text/plain"]).rejects.toThrow(
+				"wechat-png-transaction-timeout",
+			);
+			teardownPng();
+
+			// 3. Missing copyWithPrestartedWrite fails truthfully and never invokes port.copy() post-await.
+			render.mockClear();
+			const legacyShapeCopy = vi
+				.fn()
+				.mockResolvedValue({ method: "clipboard", status: "copied" });
+			const teardownNoPrestarted = mountAdminEditor(bootstrap, {
+				document,
+				failureMessage: "Editor failed",
+				loadWechatClipboard: vi.fn(async () => ({
+					createBrowserWechatClipboard: () =>
+						({
+							copy: legacyShapeCopy,
+						}) as never,
+				})),
+				onStartupFailure: vi.fn(),
+				window,
+				wordpress: {
+					apiFetch: Object.assign(vi.fn(), {
+						nonceMiddleware: { nonce: "nonce" },
+					}),
+					hooks: { addAction: vi.fn(), removeAction: vi.fn() },
+				},
+			});
+			const noPrestartedRendered = render.mock.calls[0]?.[0] as {
+				props: { children: { props: { wechatClipboard: WechatClipboardPort } } };
+			};
+			const visiblePreview = document.createElement("article");
+			visiblePreview.setAttribute("data-easymde-preview-html-sink", "1");
+			visiblePreview.innerHTML = "<p>Visible preview</p>";
+			document.body.append(visiblePreview);
+			await expect(
+				noPrestartedRendered.props.children.props.wechatClipboard.copy(
+					visiblePreview,
+				),
+			).resolves.toEqual({
+				code: "wechat-copy-failed",
+				status: "failed",
+			});
+			expect(legacyShapeCopy).not.toHaveBeenCalled();
+			await expect(capturedItems[2]?.["text/html"]).rejects.toThrow(
+				"wechat-copy-prestarted-write-unsupported",
+			);
+			teardownNoPrestarted();
+
+			await vi.advanceTimersByTimeAsync(0);
+			expect(unhandledRejections).toEqual([]);
+		} finally {
+			vi.useRealTimers();
+			process.off("unhandledRejection", onUnhandledRejection);
+			if (clipboardDescriptor) {
+				Object.defineProperty(
+					window.navigator,
+					"clipboard",
+					clipboardDescriptor,
+				);
+			} else {
+				Reflect.deleteProperty(window.navigator, "clipboard");
+			}
+			if (clipboardItemDescriptor) {
+				Object.defineProperty(window, "ClipboardItem", clipboardItemDescriptor);
+			} else {
+				delete (window as Window & { ClipboardItem?: unknown }).ClipboardItem;
+			}
+		}
+	});
+
+	it("clears portPromise after a synchronous factory throw in lazy WeChat clipboard and visual rasterizer loaders so retries succeed", async () => {
+		const actual = await vi.importActual<
+			typeof import("../integrations/browser/wechat/create-browser-wechat-clipboard")
+		>("../integrations/browser/wechat/create-browser-wechat-clipboard");
+		const render = vi.fn();
+		const unmount = vi.fn();
+		vi.mocked(createRoot).mockReturnValue({ render, unmount } as never);
+		const writtenPayloads: Array<{ html: string; text: string }> = [];
+		class ClipboardItemStub {
+			constructor(
+				readonly payload: Record<string, Blob | PromiseLike<Blob>>,
+			) {}
+		}
+		const nativeWrite = vi.fn(async (items: ClipboardItems) => {
+			const item = (items as unknown as ClipboardItemStub[])[0];
+			const htmlBlob = await item?.payload["text/html"];
+			const textBlob = await item?.payload["text/plain"];
+			if (!htmlBlob || !textBlob) {
+				throw new Error("clipboard-item-blobs-missing");
+			}
+			writtenPayloads.push({
+				html: await htmlBlob.text(),
+				text: await textBlob.text(),
+			});
+		});
+		const clipboardDescriptor = Object.getOwnPropertyDescriptor(
+			window.navigator,
+			"clipboard",
+		);
+		const clipboardItemDescriptor = Object.getOwnPropertyDescriptor(
+			window,
+			"ClipboardItem",
+		);
+		Object.defineProperty(window.navigator, "clipboard", {
+			configurable: true,
+			value: {
+				readText: vi.fn().mockResolvedValue(""),
+				write: nativeWrite,
+				writeText: vi.fn().mockResolvedValue(undefined),
+			} as unknown as Clipboard,
+		});
+		Object.defineProperty(window, "ClipboardItem", {
+			configurable: true,
+			value: ClipboardItemStub,
+		});
+
+		const realGetComputedStyle = window.getComputedStyle.bind(window);
+		const getComputedStyleSpy = vi
+			.spyOn(window, "getComputedStyle")
+			.mockImplementation((element, pseudoElement) => {
+				if (pseudoElement) {
+					return {
+						getPropertyValue: (property: string) =>
+							"content" === property ? "none" : "",
+					} as unknown as CSSStyleDeclaration;
+				}
+				return realGetComputedStyle(element);
+			});
+
+		const loadWechatClipboard = vi
+			.fn()
+			.mockResolvedValueOnce({
+				createBrowserWechatClipboard: () => {
+					throw new Error("clipboard-factory-sync-boom");
+				},
+			})
+			.mockResolvedValueOnce(actual);
+
+		const expectedRasterResult: WechatVisualRasterizationResult = {
+			file: new File(["png"], "visual.png", { type: "image/png" }),
+			height: 40,
+			pixelCount: 4000,
+			width: 100,
+		};
+		const rasterizeSpy = vi.fn().mockResolvedValue(expectedRasterResult);
+		const loadWechatVisualRasterizer = vi
+			.fn()
+			.mockResolvedValueOnce({
+				createBrowserWechatVisualRasterizer: () => {
+					throw new Error("rasterizer-factory-sync-boom");
+				},
+			})
+			.mockResolvedValueOnce({
+				createBrowserWechatVisualRasterizer: () => ({
+					rasterize: rasterizeSpy,
+				}),
+			});
+
+		try {
+			const teardown = mountAdminEditor(bootstrap, {
+				document,
+				failureMessage: "Editor failed",
+				loadWechatClipboard,
+				loadWechatVisualRasterizer,
+				onStartupFailure: vi.fn(),
+				window,
+				wordpress: {
+					apiFetch: Object.assign(vi.fn(), {
+						nonceMiddleware: { nonce: "nonce" },
+					}),
+					hooks: { addAction: vi.fn(), removeAction: vi.fn() },
+				},
+			});
+			const rendered = render.mock.calls[0]?.[0] as {
+				props: {
+					children: {
+						props: {
+							wechatClipboard: WechatClipboardPort;
+							wechatVisualRasterizationPort: WechatVisualRasterizationPort;
+						};
+					};
+				};
+			};
+			const { wechatClipboard, wechatVisualRasterizationPort } =
+				rendered.props.children.props;
+
+			// 1. Lazy WeChat clipboard factory throws synchronously -> first call fails,
+			//    portPromise resets, and subsequent retry loads and succeeds.
+			const preview = document.createElement("article");
+			preview.setAttribute("data-easymde-preview-html-sink", "1");
+			preview.innerHTML = "<p>Retry after factory throw</p>";
+			Object.defineProperty(preview, "innerText", {
+				configurable: true,
+				value: "Retry after factory throw",
+			});
+			Object.defineProperty(preview, "getBoundingClientRect", {
+				configurable: true,
+				value: () => ({
+					bottom: 240,
+					height: 240,
+					left: 0,
+					right: 640,
+					top: 0,
+					width: 640,
+					x: 0,
+					y: 0,
+				}),
+			});
+			document.body.append(preview);
+
+			await expect(wechatClipboard.copy(preview)).resolves.toEqual({
+				code: "wechat-copy-failed",
+				status: "failed",
+			});
+			expect(loadWechatClipboard).toHaveBeenCalledTimes(1);
+
+			await expect(wechatClipboard.copy(preview)).resolves.toEqual({
+				method: "clipboard",
+				status: "copied",
+			});
+			expect(loadWechatClipboard).toHaveBeenCalledTimes(2);
+			expect(writtenPayloads).toHaveLength(1);
+			expect(writtenPayloads[0]?.html).toContain("Retry after factory throw");
+
+			// 2. Lazy WeChat visual rasterizer factory throws synchronously -> first call
+			//    rejects with unavailable error, portPromise resets, and retry succeeds.
+			const rasterElement = document.createElement("div");
+			const rasterRequest = {
+				height: 40,
+				kind: "math" as const,
+				mathCapture: "content" as const,
+				maxPixels: 16_777_216,
+				scale: 2,
+				signal: new AbortController().signal,
+				source: rasterElement,
+				width: 100,
+			};
+			await expect(
+				wechatVisualRasterizationPort.rasterize(rasterRequest),
+			).rejects.toMatchObject({
+				code: "wechat-png-rasterization-unavailable",
+			});
+			expect(loadWechatVisualRasterizer).toHaveBeenCalledTimes(1);
+
+			await expect(
+				wechatVisualRasterizationPort.rasterize(rasterRequest),
+			).resolves.toEqual(expectedRasterResult);
+			expect(loadWechatVisualRasterizer).toHaveBeenCalledTimes(2);
+			expect(rasterizeSpy).toHaveBeenCalledOnce();
+			teardown();
+		} finally {
+			getComputedStyleSpy.mockRestore();
 			if (clipboardDescriptor) {
 				Object.defineProperty(
 					window.navigator,

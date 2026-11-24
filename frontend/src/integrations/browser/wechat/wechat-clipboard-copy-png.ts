@@ -5,9 +5,10 @@ import {
 	mermaidCaptureSnapshotIsCurrent,
 	mermaidResponsiveSnapshotIsCurrent,
 } from "./wechat-capture-plan";
-import type {
-	ModernCopyTransaction,
-	WechatClipboardCopySharedState,
+import {
+	type ModernCopyTransaction,
+	remainingTransactionTimeoutMs,
+	type WechatClipboardCopySharedState,
 } from "./wechat-clipboard-copy-transaction";
 import {
 	type BrowserWechatClipboardRuntime,
@@ -70,9 +71,12 @@ export function createPngCopyTransaction(
 	params: Readonly<{
 		copyGuard: WechatClipboardCopyGuard;
 		copyWasCancelled: () => boolean;
+		deadlineMs?: number | undefined;
+		disposeColdSourceFreshness?: (() => void) | undefined;
 		foregroundGeometryMeasurement: ReturnType<
 			typeof cachedPreviewGeometryMeasurement
 		>;
+		isColdSourceFresh?: (() => boolean) | undefined;
 		options: WechatClipboardCopyOptions;
 		preview: HTMLElement;
 		readyPreview: Promise<HTMLElement>;
@@ -82,6 +86,9 @@ export function createPngCopyTransaction(
 	const {
 		copyGuard,
 		copyWasCancelled,
+		deadlineMs,
+		disposeColdSourceFreshness,
+		isColdSourceFresh,
 		options,
 		preview,
 		readyPreview,
@@ -177,10 +184,17 @@ export function createPngCopyTransaction(
 		textBlob,
 		cancellationFailure,
 	) => {
+		const remainingTimeoutMs = remainingTransactionTimeoutMs(
+			deadlineMs,
+			WECHAT_PNG_TRANSACTION_TIMEOUT_MS,
+		);
+		if (remainingTimeoutMs <= 0) {
+			throw new Error("wechat-png-transaction-timeout");
+		}
 		const completion = Promise.all([payload, htmlBlob, textBlob, writeResult]);
 		const completed = await withTimeout(
 			Promise.race([completion, writeFailure, cancellationFailure]),
-			WECHAT_PNG_TRANSACTION_TIMEOUT_MS,
+			remainingTimeoutMs,
 			"wechat-png-transaction-timeout",
 		);
 		const { error } = completed[3];
@@ -265,6 +279,7 @@ export function createPngCopyTransaction(
 		conversionController.abort();
 		finishCopyTotal("error");
 		readinessTiming?.fail();
+		disposeColdSourceFreshness?.();
 		activeForegroundGeometryMeasurement?.cleanup();
 		activeForegroundGeometryMeasurement = null;
 		disposeConversionFreshness?.();
@@ -287,6 +302,7 @@ export function createPngCopyTransaction(
 						conversionSignal.aborted ||
 						(options.isCurrent && !options.isCurrent())
 					) {
+						disposeColdSourceFreshness?.();
 						throw new WechatPngConversionError(
 							"wechat-png-rasterization-cancelled",
 						);
@@ -297,6 +313,13 @@ export function createPngCopyTransaction(
 						createClipboardSourceFreshnessGuard(resolvedPreview);
 					conversionSourceFreshness = sourceFreshness;
 					disposeConversionFreshness = sourceFreshness.dispose;
+					if (isColdSourceFresh && !isColdSourceFresh()) {
+						disposeColdSourceFreshness?.();
+						throw new WechatPngConversionError(
+							"wechat-png-rasterization-cancelled",
+						);
+					}
+					disposeColdSourceFreshness?.();
 					const transferredGeometryMeasurement =
 						activeForegroundGeometryMeasurement &&
 						activeForegroundGeometryMeasurement.lease.sourceRoot ===
@@ -651,6 +674,7 @@ export function createPngCopyTransaction(
 				.then(resolve, reject);
 		};
 	});
+	void payload.catch(() => undefined);
 
 	return {
 		assertBlobCurrent,

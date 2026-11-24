@@ -99,15 +99,32 @@ export function createBrowserWechatClipboard(
 		options: WechatClipboardCopyOptions = {},
 		prestartedWrite?: PrestartedModernClipboardWrite,
 	): Promise<WechatClipboardResult> => {
+		const pngConversionEnabled = true === options.pngConversionEnabled;
+		const staleColdCopyResult = (): WechatClipboardResult =>
+			pngConversionEnabled
+				? {
+						code: "wechat-png-rasterization-cancelled",
+						sideEffects: "none",
+						status: "failed",
+					}
+				: { code: "wechat-copy-failed", status: "failed" };
+		if (
+			prestartedWrite?.isColdSourceFresh &&
+			!prestartedWrite.isColdSourceFresh()
+		) {
+			prestartedWrite.disposeColdSourceFreshness?.();
+			prestartedWrite.reject(new Error("wechat-copy-stale"));
+			return staleColdCopyResult();
+		}
 		const hiddenFormalPreview =
 			Boolean(options.resolvePreview) &&
 			preview.classList.contains("easymde-preview-surface-hidden");
 		if (!hiddenFormalPreview && !previewReady(preview)) {
+			prestartedWrite?.disposeColdSourceFreshness?.();
 			prestartedWrite?.reject(new Error("wechat-preview-unavailable"));
 			return { code: "wechat-preview-unavailable", status: "failed" };
 		}
 
-		const pngConversionEnabled = true === options.pngConversionEnabled;
 		const copyGuard: WechatClipboardCopyGuard = {
 			isCurrent: options.isCurrent,
 			signal: options.signal,
@@ -121,6 +138,7 @@ export function createBrowserWechatClipboard(
 					preview.querySelector("[data-easymde-preview-window-spacer]")),
 		);
 		if (pngConversionEnabled && (!runtime.write || !runtime.clipboardItem)) {
+			prestartedWrite?.disposeColdSourceFreshness?.();
 			prestartedWrite?.reject(new Error("wechat-png-clipboard-failed"));
 			return {
 				code: "wechat-png-clipboard-failed",
@@ -137,6 +155,7 @@ export function createBrowserWechatClipboard(
 				!Number.isSafeInteger(options.maxBytes) ||
 				(options.maxBytes as number) < 1)
 		) {
+			prestartedWrite?.disposeColdSourceFreshness?.();
 			prestartedWrite?.reject(new Error("wechat-png-rasterization-failed"));
 			return {
 				code: "wechat-png-rasterization-failed",
@@ -145,14 +164,9 @@ export function createBrowserWechatClipboard(
 			};
 		}
 		if (copyWasCancelled()) {
+			prestartedWrite?.disposeColdSourceFreshness?.();
 			prestartedWrite?.reject(new Error("wechat-copy-cancelled"));
-			return pngConversionEnabled
-				? {
-						code: "wechat-png-rasterization-cancelled",
-						sideEffects: "none",
-						status: "failed",
-					}
-				: { code: "wechat-copy-failed", status: "failed" };
+			return staleColdCopyResult();
 		}
 
 		if (isModernClipboardRuntime(runtime)) {
@@ -177,7 +191,11 @@ export function createBrowserWechatClipboard(
 					? createPngCopyTransaction({
 							copyGuard,
 							copyWasCancelled,
+							deadlineMs: prestartedWrite?.deadlineMs,
+							disposeColdSourceFreshness:
+								prestartedWrite?.disposeColdSourceFreshness,
 							foregroundGeometryMeasurement,
+							isColdSourceFresh: prestartedWrite?.isColdSourceFresh,
 							options,
 							preview,
 							readyPreview,
@@ -186,12 +204,16 @@ export function createBrowserWechatClipboard(
 					: createPortableCopyTransaction({
 							copyGuard,
 							copyWasCancelled,
+							deadlineMs: prestartedWrite?.deadlineMs,
+							disposeColdSourceFreshness:
+								prestartedWrite?.disposeColdSourceFreshness,
+							isColdSourceFresh: prestartedWrite?.isColdSourceFresh,
 							preview,
 							readyPreview,
 							requiresPreviewResolution,
 							shared,
 						});
-				return executeModernCopyTransaction(
+				return await executeModernCopyTransaction(
 					runtime,
 					options,
 					copyWasCancelled,
@@ -199,11 +221,13 @@ export function createBrowserWechatClipboard(
 					prestartedWrite,
 				);
 			} catch (error: unknown) {
+				prestartedWrite?.disposeColdSourceFreshness?.();
 				prestartedWrite?.reject(error);
 				throw error;
 			}
 		}
 
+		prestartedWrite?.disposeColdSourceFreshness?.();
 		prestartedWrite?.reject(new Error("wechat-clipboard-unsupported"));
 
 		if (pngConversionEnabled) {

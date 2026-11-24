@@ -19,9 +19,22 @@ export type ClipboardWriteResult = Readonly<{ error: unknown | null }>;
 
 export type PrestartedModernClipboardWrite = Readonly<{
 	bind: (htmlBlob: Promise<Blob>, textBlob: Promise<Blob>) => void;
+	deadlineMs?: number;
+	disposeColdSourceFreshness?: () => void;
+	isColdSourceFresh?: () => boolean;
 	reject: (error: unknown) => void;
 	writePromise: Promise<void>;
 }>;
+
+export function remainingTransactionTimeoutMs(
+	deadlineMs: number | undefined,
+	defaultTimeoutMs: number,
+): number {
+	if (undefined === deadlineMs || !Number.isFinite(deadlineMs)) {
+		return defaultTimeoutMs;
+	}
+	return Math.min(defaultTimeoutMs, Math.max(0, deadlineMs - Date.now()));
+}
 
 export type ModernClipboardRuntime = BrowserWechatClipboardRuntime &
 	Readonly<{

@@ -25,19 +25,33 @@ export type WechatMathSourceCaptureResult = Readonly<{
 	rawDimensionGeometrySignature: string;
 }>;
 
+function elementIsMathStaticFlowCandidate(element: Element): boolean {
+	if (!element.hasAttribute("class")) return false;
+	const classList = element.classList;
+	return (
+		classList.contains("katex") ||
+		classList.contains("katex-display") ||
+		classList.contains("katex-html") ||
+		classList.contains("easymde-math-block") ||
+		classList.contains("easymde-math-inline") ||
+		classList.contains("vlist")
+	);
+}
+
 export function hasWechatMathStaticFlowCandidate(
 	sourceRoot: HTMLElement,
 ): boolean {
-	return (
-		sourceRoot.matches(
-			".katex, .katex-display, .katex-html, .easymde-math-block, .easymde-math-inline, .vlist",
-		) ||
-		Boolean(
-			sourceRoot.querySelector(
-				".katex, .katex-display, .katex-html, .easymde-math-block, .easymde-math-inline, .vlist",
-			),
-		)
-	);
+	if (elementIsMathStaticFlowCandidate(sourceRoot)) return true;
+	const stack: Element[] = [sourceRoot];
+	while (stack.length) {
+		const current = stack.pop();
+		if (!current) continue;
+		for (let child = current.firstElementChild; child; child = child.nextElementSibling) {
+			if (elementIsMathStaticFlowCandidate(child)) return true;
+			if (child.firstElementChild) stack.push(child);
+		}
+	}
+	return false;
 }
 
 function animationReaderFor(

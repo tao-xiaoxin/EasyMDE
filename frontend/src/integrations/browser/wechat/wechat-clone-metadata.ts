@@ -357,20 +357,42 @@ export const CODE_FRAME_PSEUDO_CLONES = new WeakSet<Element>();
 export const CODE_FRAME_HEADER_CLONES = new WeakSet<Element>();
 export const INLINE_TEXT_MARKER_CLONES = new WeakSet<Element>();
 
+function hasAncestorWithClass(source: Element, className: string): boolean {
+  let current: Element | null = source;
+  while (current) {
+    if (current.hasAttribute('class') && current.classList.contains(className)) return true;
+    current = current.parentElement;
+  }
+  return false;
+}
+
+function hasAncestorWithLocalName(source: Element, localName: string): boolean {
+  let current: Element | null = source;
+  while (current) {
+    if (localName === current.localName.toLowerCase()) return true;
+    current = current.parentElement;
+  }
+  return false;
+}
+
 export function isKaTeXVisualNode(source: Element): boolean {
   // KaTeX's MathML and visual trees share a `.katex` ancestor. Only the
   // visual root and its descendants need the non-wrapping contract; applying
   // it to `.katex-mathml` would preserve the hidden fallback we remove later.
-  return source.matches('.katex') || Boolean(source.closest('.katex-html'));
+  return (source.hasAttribute('class') && source.classList.contains('katex')) || hasAncestorWithClass(source, 'katex-html');
 }
 
 export function visualRasterizationKind(source: Element): WechatVisualRasterizationKind | null {
-  if (source.matches('.easymde-mermaid') && source.querySelector('svg')) {
+  if (!source.hasAttribute('class')) return null;
+  const classList = source.classList;
+  if (classList.contains('easymde-mermaid') && source.querySelector('svg')) {
     return 'mermaid';
   }
   if (
-    source.matches('.easymde-math, .easymde-math-block, .easymde-math-inline') &&
-    (source.matches('.katex') || Boolean(source.querySelector('.katex')))
+    (classList.contains('easymde-math') ||
+      classList.contains('easymde-math-block') ||
+      classList.contains('easymde-math-inline')) &&
+    (classList.contains('katex') || Boolean(source.querySelector('.katex')))
   ) {
     return 'math';
   }
@@ -412,26 +434,38 @@ export function isBlockMathClone(element: Element): boolean {
 }
 
 export function isSvgElement(source: Element): boolean {
-  return Boolean(source.closest('svg'));
+  return hasAncestorWithLocalName(source, 'svg');
 }
 
 export function isSvgDefinition(source: Element): boolean {
   const localName = source.localName.toLowerCase();
-  return 'defs' === localName || Boolean(source.closest('defs')) || SVG_DEFINITION_TAGS.has(localName);
+  return 'defs' === localName || SVG_DEFINITION_TAGS.has(localName) || hasAncestorWithLocalName(source, 'defs');
 }
 
 export function isMermaidSvgRoot(source: Element): boolean {
-  return 'svg' === source.localName.toLowerCase() && Boolean(source.closest('.easymde-mermaid'));
+  return 'svg' === source.localName.toLowerCase() && hasAncestorWithClass(source, 'easymde-mermaid');
 }
 
 export function isMermaidForeignObject(source: Element): boolean {
-  return 'foreignobject' === source.localName.toLowerCase() && Boolean(source.closest('.easymde-mermaid'));
+  return 'foreignobject' === source.localName.toLowerCase() && hasAncestorWithClass(source, 'easymde-mermaid');
 }
 
 export function isTaskListCheckbox(source: Element): boolean {
-  return (
-    'INPUT' === source.tagName &&
-    'checkbox' === source.getAttribute('type')?.toLowerCase() &&
-    Boolean(source.matches('.easymde-task-checkbox') || source.closest('.task-list-item, .task-list'))
-  );
+  if ('INPUT' !== source.tagName || 'checkbox' !== source.getAttribute('type')?.toLowerCase()) {
+    return false;
+  }
+  if (source.hasAttribute('class') && source.classList.contains('easymde-task-checkbox')) {
+    return true;
+  }
+  let current: Element | null = source;
+  while (current) {
+    if (
+      current.hasAttribute('class') &&
+      (current.classList.contains('task-list-item') || current.classList.contains('task-list'))
+    ) {
+      return true;
+    }
+    current = current.parentElement;
+  }
+  return false;
 }

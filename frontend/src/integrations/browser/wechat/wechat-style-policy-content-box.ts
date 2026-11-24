@@ -26,27 +26,34 @@ export function finitePixelValue(value: string): number | null {
 	return Number.isFinite(parsed) ? parsed : null;
 }
 
+export function isSpecialLayoutElement(element: Element): boolean {
+	const localName = element.localName.toLowerCase();
+	if ("svg" === localName || "math" === localName) return true;
+	if (!element.hasAttribute("class")) return false;
+	const classList = element.classList;
+	return (
+		classList.contains("katex") ||
+		classList.contains("easymde-math-block") ||
+		classList.contains("easymde-math-inline")
+	);
+}
+
 export function hasSpecialLayoutAncestor(source: Element): boolean {
 	let current = source.parentElement;
 	while (current) {
-		if (
-			current.matches(
-				"svg, math, .katex, .easymde-math-block, .easymde-math-inline",
-			)
-		) {
-			return true;
-		}
+		if (isSpecialLayoutElement(current)) return true;
 		current = current.parentElement;
 	}
 	return false;
 }
 
 export function supportsSpecialLayout(source: Element): boolean {
-	return Boolean(
-		source.closest(
-			"svg, math, .katex, .easymde-math-block, .easymde-math-inline",
-		),
-	);
+	let current: Element | null = source;
+	while (current) {
+		if (isSpecialLayoutElement(current)) return true;
+		current = current.parentElement;
+	}
+	return false;
 }
 
 export function cssomProjectedDimensionValue(
@@ -204,22 +211,20 @@ export function isContentBoxPercentageProjectionCandidate(
 	);
 }
 
+const CONTENT_BOX_DIMENSION_PROPERTY_SET: ReadonlySet<string> = new Set(
+	CONTENT_BOX_DIMENSION_PROPERTIES,
+);
+
 export function contentBoxDimensionValue(
 	property: string,
 	value: string,
 	source: Element,
 	computed: CSSStyleDeclaration,
+	specialLayout?: boolean,
 ): string {
 	if (
-		supportsSpecialLayout(source) ||
-		![
-			"width",
-			"min-width",
-			"max-width",
-			"height",
-			"min-height",
-			"max-height",
-		].includes(property) ||
+		(specialLayout ?? supportsSpecialLayout(source)) ||
+		!CONTENT_BOX_DIMENSION_PROPERTY_SET.has(property) ||
 		"content-box" !==
 			computed.getPropertyValue("box-sizing").trim().toLowerCase()
 	)

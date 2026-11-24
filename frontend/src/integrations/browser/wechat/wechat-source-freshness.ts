@@ -103,11 +103,12 @@ export function createClipboardSourceFreshnessGuard(preview: HTMLElement): Clipb
 export function previewReady(preview: HTMLElement): boolean {
   const refreshing =
     '1' === preview.getAttribute('data-easymde-preview-refreshing') || 'true' === preview.getAttribute('aria-busy');
-  const hasWindowSpacer = Boolean(preview.querySelector('[data-easymde-preview-window-spacer]'));
   const acceptedDuringRefresh =
-    refreshing && !hasWindowSpacer && '1' === preview.getAttribute('data-easymde-preview-accepted');
+    refreshing &&
+    '1' === preview.getAttribute('data-easymde-preview-accepted') &&
+    !preview.querySelector('[data-easymde-preview-window-spacer]');
   return (
-    '' !== preview.innerHTML.trim() &&
+    (Boolean(preview.firstElementChild) || '' !== preview.innerHTML.trim()) &&
     !preview.querySelector('.easymde-preview-empty, .easymde-preview-error, .easymde-render-error') &&
     '1' !== preview.getAttribute('data-easymde-preview-error') &&
     (!refreshing || acceptedDuringRefresh)

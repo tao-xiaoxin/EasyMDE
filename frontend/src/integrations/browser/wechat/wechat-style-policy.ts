@@ -12,6 +12,7 @@ import {
 	PRESERVE_INHERITED_DEFAULT_STYLE_PROPERTIES,
 	SAFE_DATA_IMAGE,
 	SAFE_DISPLAY_VALUES,
+	SEMANTIC_MARGIN_PROPERTIES,
 	SPECIAL_LAYOUT_PROPERTIES,
 	SVG_STYLE_PROPERTIES,
 	TASK_LIST_CHECKBOX_STYLE_PROPERTIES,
@@ -104,6 +105,13 @@ export {
 	transportableTransformOriginSemantics,
 } from "./wechat-style-policy-semantics";
 
+const ORDINARY_DIMENSION_PROPERTY_SET: ReadonlySet<string> = new Set(
+	ORDINARY_DIMENSION_PROPERTIES,
+);
+const SEMANTIC_MARGIN_PROPERTY_SET: ReadonlySet<string> = new Set(
+	SEMANTIC_MARGIN_PROPERTIES,
+);
+
 function taskCheckboxPseudoHasTextContent(
 	pseudoElement: boolean,
 	computedContent: string,
@@ -120,6 +128,7 @@ export function portableStyleValue(
 	computed: CSSStyleDeclaration,
 	pseudoElement = false,
 	computedContent = "",
+	specialLayout?: boolean,
 ): string {
 	if ("font" === property)
 		return taskCheckboxFontWithoutZeroLineHeight(
@@ -129,21 +138,18 @@ export function portableStyleValue(
 		);
 	if (
 		"box-sizing" === property &&
-		!supportsSpecialLayout(source) &&
+		!(specialLayout ?? supportsSpecialLayout(source)) &&
 		"content-box" === value.trim().toLowerCase()
 	)
 		return "border-box";
-	if (
-		[
-			"width",
-			"min-width",
-			"max-width",
-			"height",
-			"min-height",
-			"max-height",
-		].includes(property)
-	) {
-		return contentBoxDimensionValue(property, value, source, computed);
+	if (ORDINARY_DIMENSION_PROPERTY_SET.has(property)) {
+		return contentBoxDimensionValue(
+			property,
+			value,
+			source,
+			computed,
+			specialLayout,
+		);
 	}
 	if ("text-align" !== property) return value;
 	const normalized = value.trim().toLowerCase();
@@ -190,14 +196,15 @@ export function keepStyle(
 		!["block", "inline", "table"].includes(value)
 	)
 		return false;
-	const svgFragmentUrl =
-		Boolean(source.closest("svg")) &&
-		/^url\(\s*["']?#[a-z\d:_.-]+["']?\s*\)$/i.test(value);
-	const safeDataImageStyle =
-		["background", "background-image"].includes(property) &&
-		hasOnlySafeDataImageUrls(value);
-	if (UNSAFE_STYLE_VALUE.test(value) && !svgFragmentUrl && !safeDataImageStyle)
-		return false;
+	if (UNSAFE_STYLE_VALUE.test(value)) {
+		const svgFragmentUrl =
+			isSvgElement(source) &&
+			/^url\(\s*["']?#[a-z\d:_.-]+["']?\s*\)$/i.test(value);
+		const safeDataImageStyle =
+			("background" === property || "background-image" === property) &&
+			hasOnlySafeDataImageUrls(value);
+		if (!svgFragmentUrl && !safeDataImageStyle) return false;
+	}
 	if ("display" === property && true !== SAFE_DISPLAY_VALUES[value])
 		return false;
 	if (
@@ -408,11 +415,15 @@ export type PortableStyleDeclarationContext = Readonly<{
 	dimensionSemantics: WechatDimensionSemanticsContext | null;
 	promoteContentBoxBounds: boolean;
 	pseudoElement: boolean;
+	pseudoElementContent: string;
 	pseudoElementName: "::before" | "::after" | undefined;
 	root: boolean;
 	semanticComputed: CSSStyleDeclaration | null;
 	semanticMarginComputed: CSSStyleDeclaration | null;
+	semanticMarginEligible: boolean;
+	semanticPaddingEligible: boolean;
 	source: Element;
+	specialLayout: boolean;
 	style: CSSStyleDeclaration;
 }>;
 
@@ -444,27 +455,37 @@ export function createStyleDeclarationContext(
 	dimensionSemantics?: WechatDimensionSemanticsContext | null,
 	pseudoElementName?: "::before" | "::after",
 ): PortableStyleDeclarationContext {
+	const specialLayout = supportsSpecialLayout(source);
 	const style =
 		root && !pseudoElement
 			? rootExportComputedStyle(source, computed, dimensionSemantics)
 			: computed;
 	const semanticComputed =
-		!pseudoElement && !supportsSpecialLayout(source)
+		!pseudoElement && !specialLayout
 			? root
 				? style
 				: dimensionSemantics?.getComputedStyle(source)
 			: null;
-	const semanticMarginComputed =
+	const semanticMarginEligible = Boolean(
 		dimensionSemantics &&
-		semanticMarginSource(
-			source,
-			computed,
-			pseudoElement ? pseudoElementName : undefined,
-		)
-			? pseudoElement
-				? dimensionSemantics.getComputedStyle(source, pseudoElementName)
-				: (semanticComputed ?? dimensionSemantics.getComputedStyle(source))
-			: null;
+			semanticMarginSource(
+				source,
+				computed,
+				pseudoElement ? pseudoElementName : undefined,
+			),
+	);
+	const semanticMarginComputed = semanticMarginEligible
+		? pseudoElement
+			? (dimensionSemantics?.getComputedStyle(source, pseudoElementName) ??
+				null)
+			: (semanticComputed ??
+				dimensionSemantics?.getComputedStyle(source) ??
+				null)
+		: null;
+	const semanticPaddingEligible = !pseudoElement && semanticMarginEligible;
+	const pseudoElementContent = pseudoElement
+		? computed.getPropertyValue("content")
+		: "";
 	const promoteContentBoxBounds = isContentBoxPercentageProjectionCandidate(
 		source,
 		semanticComputed ?? null,
@@ -477,11 +498,15 @@ export function createStyleDeclarationContext(
 		dimensionSemantics: dimensionSemantics ?? null,
 		promoteContentBoxBounds,
 		pseudoElement,
+		pseudoElementContent,
 		pseudoElementName,
 		root,
 		semanticComputed: semanticComputed ?? null,
 		semanticMarginComputed,
+		semanticMarginEligible,
+		semanticPaddingEligible,
 		source,
+		specialLayout,
 		style,
 	};
 }
@@ -495,29 +520,32 @@ export function appendPortableStyleDeclaration(
 ): void {
 	const semanticCandidate =
 		context.semanticComputed?.getPropertyValue(property).trim() ?? "";
-	const semanticMarginCandidate = semanticMarginValue(
-		property,
-		context.source,
-		context.computed,
-		context.dimensionSemantics,
-		context.pseudoElement ? context.pseudoElementName : undefined,
-		context.semanticMarginComputed,
-	);
-	const semanticPaddingCandidate = context.pseudoElement
-		? null
-		: semanticPaddingValue(
-				property,
-				context.source,
-				context.computed,
-				context.dimensionSemantics,
-				context.semanticComputed,
-			);
+	const semanticMarginCandidate =
+		context.semanticMarginEligible && SEMANTIC_MARGIN_PROPERTY_SET.has(property)
+			? semanticMarginValue(
+					property,
+					context.source,
+					context.computed,
+					context.dimensionSemantics,
+					context.pseudoElement ? context.pseudoElementName : undefined,
+					context.semanticMarginComputed,
+				)
+			: null;
+	const semanticPaddingCandidate =
+		context.semanticPaddingEligible &&
+		("padding-left" === property || "padding-right" === property)
+			? semanticPaddingValue(
+					property,
+					context.source,
+					context.computed,
+					context.dimensionSemantics,
+					context.semanticComputed,
+				)
+			: null;
 	const isOrdinaryDimension =
 		!context.pseudoElement &&
-		!supportsSpecialLayout(context.source) &&
-		ORDINARY_DIMENSION_PROPERTIES.includes(
-			property as (typeof ORDINARY_DIMENSION_PROPERTIES)[number],
-		);
+		!context.specialLayout &&
+		ORDINARY_DIMENSION_PROPERTY_SET.has(property);
 	const preserveRawContentBoxTuple =
 		context.promoteContentBoxBounds &&
 		("box-sizing" === property || isOrdinaryDimension);
@@ -538,9 +566,7 @@ export function appendPortableStyleDeclaration(
 				(isOrdinaryDimension && semanticCandidate
 					? semanticCandidate
 					: materializedValue)));
-	const pseudoElementContent = context.pseudoElement
-		? context.computed.getPropertyValue("content")
-		: "";
+	const pseudoElementContent = context.pseudoElementContent;
 	const normalizedValue = preserveRawContentBoxTuple
 		? sourceValue
 		: portableStyleValue(
@@ -550,6 +576,7 @@ export function appendPortableStyleDeclaration(
 				context.style,
 				context.pseudoElement,
 				pseudoElementContent,
+				context.specialLayout,
 			);
 	if (
 		keepStyle(

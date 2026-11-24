@@ -1002,7 +1002,7 @@ export function mermaidAdmissionSignature(
   runtime: BrowserWechatClipboardRuntime,
   contentBoxInputsOnly = false
 ): string {
-  if (!source.matches('.easymde-mermaid')) return '';
+  if (!source.hasAttribute('class') || !source.classList.contains('easymde-mermaid')) return '';
   const computed = runtime.getComputedStyle(source);
   const svg = mermaidDirectSvg(source);
   if (!svg) {

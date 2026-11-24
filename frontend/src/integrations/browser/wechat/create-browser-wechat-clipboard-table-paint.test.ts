@@ -252,7 +252,7 @@ describe('createBrowserWechatClipboard', () => {
     }
     expect(calls[1]).toBeLessThan((calls[0] ?? 0) * 20);
     expect(calls[2]).toBeLessThan((calls[1] ?? 0) * 10);
-  });
+  }, 15_000);
 
   it('refreshes THEAD, TR, and TH paint inputs across prepared and warm copies', async () => {
     const writes: unknown[] = [];

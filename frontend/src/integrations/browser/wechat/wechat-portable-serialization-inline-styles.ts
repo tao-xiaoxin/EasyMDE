@@ -159,8 +159,11 @@ function applyNodeFidelity(
 		if (markerGutter && direction)
 			applyListMarkerGutter(clone, markerGutter, direction);
 	}
-	if (source.matches(".katex")) KATEX_VISUAL_ROOTS.add(clone);
-	if (source.matches(".easymde-math-block")) MATH_BLOCK_ROOTS.add(clone);
+	if (source.hasAttribute("class")) {
+		if (source.classList.contains("katex")) KATEX_VISUAL_ROOTS.add(clone);
+		if (source.classList.contains("easymde-math-block"))
+			MATH_BLOCK_ROOTS.add(clone);
+	}
 	if (isMermaidSvgRoot(source)) MERMAID_SVG_ROOTS.add(clone);
 	if (isMermaidForeignObject(source)) MERMAID_FOREIGN_OBJECTS.add(clone);
 	if (

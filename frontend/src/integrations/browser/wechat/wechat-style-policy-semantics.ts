@@ -194,6 +194,16 @@ function subtreeAffectsPadding(
 	return false;
 }
 
+function isNestedBlockquoteElement(source: Element): boolean {
+	if ("blockquote" !== source.localName.toLowerCase()) return false;
+	let ancestor = source.parentElement;
+	while (ancestor) {
+		if ("blockquote" === ancestor.localName.toLowerCase()) return true;
+		ancestor = ancestor.parentElement;
+	}
+	return false;
+}
+
 function portablePaddingTransportDecision(
 	source: Element,
 	property: (typeof SEMANTIC_PADDING_PROPERTIES)[number],
@@ -201,7 +211,7 @@ function portablePaddingTransportDecision(
 	token: string,
 ): PortablePaddingTransportDecision {
 	const effective = semanticStyle?.getPropertyValue(property).trim() ?? "";
-	const nestedQuote = source.matches("blockquote blockquote");
+	const nestedQuote = isNestedBlockquoteElement(source);
 	if (!token || "initial" === token) {
 		return {
 			signature: nestedQuote ? `state=none;effective=${effective}` : "",
@@ -442,14 +452,23 @@ function portablePaddingTransportDecision(
 	};
 }
 
+function isSemanticMathNode(source: Element): boolean {
+	if ("math" === source.localName.toLowerCase()) return true;
+	if (!source.hasAttribute("class")) return false;
+	const classList = source.classList;
+	return (
+		classList.contains("katex") ||
+		classList.contains("easymde-math-block") ||
+		classList.contains("easymde-math-inline")
+	);
+}
+
 export function semanticMarginSource(
 	source: Element,
 	computed: CSSStyleDeclaration,
 	pseudoElement?: "::before" | "::after",
 ): boolean {
-	const specialNode = source.matches(
-		"math, .katex, .easymde-math-block, .easymde-math-inline",
-	);
+	const specialNode = isSemanticMathNode(source);
 	if (pseudoElement) {
 		return (
 			!isSvgElement(source) &&
@@ -523,6 +542,21 @@ export function semanticMarginSignature(
 	).join(";");
 }
 
+function semanticPaddingTransportDecisionForStyle(
+	property: (typeof SEMANTIC_PADDING_PROPERTIES)[number],
+	source: Element,
+	semanticStyle: CSSStyleDeclaration | null,
+): PortablePaddingTransportDecision {
+	const tokenName = PORTABLE_PADDING_TOKENS[property];
+	const token = semanticStyle?.getPropertyValue(tokenName).trim() ?? "";
+	return portablePaddingTransportDecision(
+		source,
+		property,
+		semanticStyle,
+		token,
+	);
+}
+
 function semanticPaddingTransportDecision(
 	property: string,
 	source: Element,
@@ -541,16 +575,10 @@ function semanticPaddingTransportDecision(
 		return { signature: "", value: null };
 	const semanticStyle =
 		semanticComputed ?? dimensionSemantics.getComputedStyle(source);
-	const tokenName =
-		PORTABLE_PADDING_TOKENS[
-			property as (typeof SEMANTIC_PADDING_PROPERTIES)[number]
-		];
-	const token = semanticStyle?.getPropertyValue(tokenName).trim() ?? "";
-	return portablePaddingTransportDecision(
-		source,
+	return semanticPaddingTransportDecisionForStyle(
 		property as (typeof SEMANTIC_PADDING_PROPERTIES)[number],
+		source,
 		semanticStyle,
-		token,
 	);
 }
 
@@ -577,13 +605,13 @@ export function semanticPaddingSignature(
 	semanticComputed?: CSSStyleDeclaration | null,
 ): string {
 	if (!dimensionSemantics || !semanticMarginSource(source, computed)) return "";
+	const semanticStyle =
+		semanticComputed ?? dimensionSemantics.getComputedStyle(source);
 	const values = SEMANTIC_PADDING_PROPERTIES.map((property) => {
-		const decision = semanticPaddingTransportDecision(
+		const decision = semanticPaddingTransportDecisionForStyle(
 			property,
 			source,
-			computed,
-			dimensionSemantics,
-			semanticComputed,
+			semanticStyle,
 		);
 		return `${property}=${decision.signature}`;
 	});

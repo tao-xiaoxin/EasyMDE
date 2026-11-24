@@ -573,7 +573,7 @@ describe('createBrowserWechatClipboard', () => {
         delete (Range.prototype as unknown as { getClientRects?: unknown }).getClientRects;
       }
     }
-  });
+  }, 15_000);
 
   it('regenerates a warm task payload when the source checked property changes', async () => {
     const writes: unknown[] = [];

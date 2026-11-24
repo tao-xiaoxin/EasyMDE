@@ -125,7 +125,10 @@ export function createDimensionSemanticsContext(
   const rawMirror = layoutRoot === sourceRoot ? createRawDimensionContextMirror(sourceRoot) : null;
   const rawRoot = rawMirror?.root ?? sourceRoot;
   const contextElements = (root: HTMLElement): Element[] =>
-    [root, ...Array.from(root.querySelectorAll('*'))].filter((element) => !element.matches('script, style'));
+    [root, ...Array.from(root.querySelectorAll('*'))].filter((element) => {
+      const localName = element.localName.toLowerCase();
+      return 'script' !== localName && 'style' !== localName;
+    });
   const layoutElements = contextElements(layoutRoot);
   const rawElements = contextElements(rawRoot);
   const rawElementByLayout = new WeakMap<Element, Element>();

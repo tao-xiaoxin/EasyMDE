@@ -156,21 +156,22 @@ function deleteTableColumn(
 		if (!line || !cell)
 			throw new Error("editor-context-menu-table-column-missing");
 		const nextCell = row.cells[column + 1];
-		const preserveSeparatorPipe =
+		const preserveLeadingSeparatorPipe =
+			0 === column && !hasLeadingPipe(line.text);
+		const preserveTrailingSeparatorPipe =
+			1 === column &&
 			2 === row.cells.length &&
 			!hasLeadingPipe(line.text) &&
 			!hasTrailingDelimiterPipe(row, line.text);
 		let from: number;
 		let to: number;
-		if (preserveSeparatorPipe) {
-			if (0 === column) {
-				const leadingIndent = line.text.match(/^ {0,3}/u)?.[0].length ?? 0;
-				from = cell.start + leadingIndent;
-				to = nextCell ? nextCell.start - 1 : cell.end;
-			} else {
-				from = cell.start;
-				to = cell.end;
-			}
+		if (preserveLeadingSeparatorPipe) {
+			const leadingIndent = line.text.match(/^ {0,3}/u)?.[0].length ?? 0;
+			from = cell.start + leadingIndent;
+			to = nextCell ? nextCell.start - 1 : cell.end;
+		} else if (preserveTrailingSeparatorPipe) {
+			from = cell.start;
+			to = cell.end;
 		} else {
 			from = 0 === column ? cell.start : cell.start - 1;
 			to =
@@ -182,11 +183,11 @@ function deleteTableColumn(
 		const absoluteTo = line.start + to + delta;
 		nextValue = nextValue.slice(0, absoluteFrom) + nextValue.slice(absoluteTo);
 		if (rowIndex === selectedRowIndex) {
-			nextPosition = preserveSeparatorPipe
-				? 0 === column
-					? absoluteFrom + 1
-					: absoluteFrom - 1
-				: absoluteFrom;
+			nextPosition = preserveLeadingSeparatorPipe
+				? absoluteFrom + 1
+				: preserveTrailingSeparatorPipe
+					? absoluteFrom - 1
+					: absoluteFrom;
 		}
 		delta -= absoluteTo - absoluteFrom;
 	}

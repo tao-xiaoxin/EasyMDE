@@ -1208,6 +1208,145 @@ describe("editor context menu rules", () => {
 		).toBeNull();
 	});
 
+	it("suppresses right padding on outerless HTML Type 1 and Type 6 block openers and keeps byte projection exact", () => {
+		const styleWithParagraph = "<style|Header\n---|---\n1|2\n\nAfter";
+		const styleEdit = formatMarkdownTableSource(styleWithParagraph, {
+			direction: "none",
+			end: styleWithParagraph.indexOf("Header"),
+			start: styleWithParagraph.indexOf("Header"),
+		});
+		expect(styleEdit?.value).toBe(
+			"<style| Header\n---    | ---   \n1      | 2     \n\nAfter",
+		);
+		expect(
+			findMarkdownTable(styleEdit?.value ?? "", styleEdit?.selection.start ?? 0),
+		).toMatchObject({ columnCount: 2, rowCount: 2 });
+		if (styleEdit) {
+			expect(
+				formatMarkdownTableSource(styleEdit.value, styleEdit.selection),
+			).toEqual({
+				selection: styleEdit.selection,
+				value: styleEdit.value,
+			});
+		}
+
+		const htmlOpeners = [
+			"<style",
+			"<pre",
+			"<script",
+			"<textarea",
+			"<div",
+			"</div",
+			"<SOURCE",
+			"<search",
+			"<p",
+			"<table",
+			"<hr",
+		];
+		for (const opener of htmlOpeners) {
+			const source = `${opener}|Header\n---|---\n1|2`;
+			const caret = source.indexOf("Header");
+			const edit = formatMarkdownTableSource(source, {
+				direction: "none",
+				end: caret,
+				start: caret,
+			});
+			expect(edit, opener).not.toBeNull();
+			expect((edit?.value ?? "").split("\n")[0], opener).toBe(
+				`${opener}| Header`,
+			);
+			expect(
+				edit?.value.slice(edit.selection.start, edit.selection.start + 6),
+				opener,
+			).toBe("Header");
+			expect(
+				findMarkdownTable(edit?.value ?? "", edit?.selection.start ?? 0),
+				opener,
+			).toMatchObject({ columnCount: 2, rowCount: 2 });
+			if (edit) {
+				expect(
+					formatMarkdownTableSource(edit.value, edit.selection),
+					opener,
+				).toEqual({
+					selection: edit.selection,
+					value: edit.value,
+				});
+			}
+		}
+
+		// Indented outerless header and body row also suppress right padding.
+		const indentedStyle = "  <style|Header\n  ---|---\n  <div|2";
+		const indentedEdit = formatMarkdownTableSource(indentedStyle, {
+			direction: "none",
+			end: indentedStyle.indexOf("Header"),
+			start: indentedStyle.indexOf("Header"),
+		});
+		expect(indentedEdit?.value).toBe(
+			"  <style| Header\n  ---    | ---   \n  <div| 2     ",
+		);
+
+		// Leading-pipe control and non-opener HTML tokens retain normal column padding.
+		const leadingPipeControl = "| <style | Header |\n| --- | --- |\n| 12345678 | 2 |";
+		expect(
+			formatMarkdownTableSource(leadingPipeControl, {
+				direction: "none",
+				end: leadingPipeControl.indexOf("Header"),
+				start: leadingPipeControl.indexOf("Header"),
+			})?.value.split("\n")[0],
+		).toBe("| <style   | Header |");
+
+		for (const nonOpener of ["<span", "</style", "<stylex"]) {
+			const source = `${nonOpener}|b\n---|---\n123456789|2`;
+			const formattedFirstLine = formatMarkdownTableSource(source, {
+				direction: "none",
+				end: source.indexOf("b"),
+				start: source.indexOf("b"),
+			})?.value.split("\n")[0];
+			expect(formattedFirstLine, nonOpener).toBe(
+				`${nonOpener}${" ".repeat(9 - nonOpener.length)} | b  `,
+			);
+		}
+
+		// Byte projection stays exact at the 1 MiB ceiling in aligned and compact modes.
+		const htmlTable = "<style|Header\n---|---\n1|2";
+		const expectedAligned = "<style| Header\n---    | ---   \n1      | 2     ";
+		const expectedCompact = "<style| Header\n--- | ---\n1 | 2";
+		const alignedBytes = utf8ByteLength(expectedAligned);
+		const exactAligned = `${"p".repeat(MAX_MARKDOWN_PREVIEW_BYTES - alignedBytes - 2)}\n\n${htmlTable}`;
+		const exactAlignedEdit = formatMarkdownTableSource(exactAligned, {
+			direction: "none",
+			end: exactAligned.lastIndexOf("Header"),
+			start: exactAligned.lastIndexOf("Header"),
+		});
+		expect(exactAlignedEdit).not.toBeNull();
+		expect(utf8ByteLength(exactAlignedEdit?.value ?? "")).toBe(
+			MAX_MARKDOWN_PREVIEW_BYTES,
+		);
+		expect(exactAlignedEdit?.value.endsWith(expectedAligned)).toBe(true);
+
+		const compactBytes = utf8ByteLength(expectedCompact);
+		const exactCompact = `${"p".repeat(MAX_MARKDOWN_PREVIEW_BYTES - compactBytes - 2)}\n\n${htmlTable}`;
+		const exactCompactEdit = formatMarkdownTableSource(exactCompact, {
+			direction: "none",
+			end: exactCompact.lastIndexOf("Header"),
+			start: exactCompact.lastIndexOf("Header"),
+		});
+		expect(exactCompactEdit).not.toBeNull();
+		expect(utf8ByteLength(exactCompactEdit?.value ?? "")).toBe(
+			MAX_MARKDOWN_PREVIEW_BYTES,
+		);
+		expect(exactCompactEdit?.value.endsWith(expectedCompact)).toBe(true);
+
+		const oneByteOver = `${"p".repeat(MAX_MARKDOWN_PREVIEW_BYTES - compactBytes - 1)}\n\n${htmlTable}`;
+		expect(
+			formatMarkdownTableSource(oneByteOver, {
+				direction: "none",
+				end: oneByteOver.lastIndexOf("Header"),
+				start: oneByteOver.lastIndexOf("Header"),
+			}),
+		).toBeNull();
+	});
+
 	it("preserves table structure when inserting columns right across escaped pipes and trailing spaces", () => {
 		const withNextRow = "|A|Header|\n|-|-|\n|x|\\\\|\n|y|z|";
 		const insertedWithNextRow = editMarkdownTable(
@@ -1381,6 +1520,106 @@ describe("editor context menu rules", () => {
 			editMarkdownTable(mixed, mixed.indexOf("B"), { type: "delete-column" })
 				?.value,
 		).toBe("| A |\n| --- |\n1 |");
+	});
+
+	it("preserves a leading pipe when deleting column 0 on 3+-column outerless and 2-column trailing-pipe tables", () => {
+		const threeColCases = [
+			{
+				expected: "| b | c\n| - | ---\n| 2 | 3",
+				name: "delimiter single dash in col 1",
+				source: "a | b | c\n--- | - | ---\n1 | 2 | 3",
+			},
+			{
+				expected: "| # | c\n| --- | ---\n| - | 3",
+				name: "heading and list openers in col 1",
+				source: "a | # | c\n--- | --- | ---\n1 | - | 3",
+			},
+			{
+				expected: "| > x | c\n| --- | ---\n| <style | 3",
+				name: "blockquote and html opener in col 1",
+				source: "a | > x | c\n--- | --- | ---\n1 | <style | 3",
+			},
+			{
+				expected: "|     x | c\n| --- | ---\n|     y | 3",
+				name: "four-plus spaces in col 1",
+				source: "a |     x | c\n--- | --- | ---\n1 |     y | 3",
+			},
+			{
+				expected: "|\tx | c\n| --- | ---\n|\ty | 3",
+				name: "leading tab in col 1",
+				source: "a |\tx | c\n--- | --- | ---\n1 |\ty | 3",
+			},
+			{
+				expected: "  | # | c\n  | --- | ---\n  | 2 | 3",
+				name: "indented outerless 3-column table",
+				source: "  a | # | c\n  --- | --- | ---\n  1 | 2 | 3",
+			},
+		];
+
+		for (const testCase of threeColCases) {
+			const edit = editMarkdownTable(
+				testCase.source,
+				testCase.source.indexOf("a"),
+				{ type: "delete-column" },
+			);
+			expect(edit?.value, testCase.name).toBe(testCase.expected);
+			expect(
+				tableSelectionAt(
+					edit?.value ?? "",
+					edit?.selection ?? { direction: "none", end: 0, start: 0 },
+				),
+				testCase.name,
+			).toMatchObject({
+				column: 0,
+				columnCount: 2,
+				kind: "column",
+				rowIndex: 0,
+			});
+		}
+
+		const trailingPipeTwoCol = "a | # |\n--- | --- |\n1 | 2 |";
+		const deleteTrailingCol0 = editMarkdownTable(
+			trailingPipeTwoCol,
+			trailingPipeTwoCol.indexOf("a"),
+			{ type: "delete-column" },
+		);
+		expect(deleteTrailingCol0?.value).toBe("| # |\n| --- |\n| 2 |");
+		expect(
+			tableSelectionAt(
+				deleteTrailingCol0?.value ?? "",
+				deleteTrailingCol0?.selection ?? { direction: "none", end: 0, start: 0 },
+			),
+		).toMatchObject({ column: 0, columnCount: 1, kind: "column", rowIndex: 0 });
+
+		const deleteTrailingCol1 = editMarkdownTable(
+			trailingPipeTwoCol,
+			trailingPipeTwoCol.indexOf("#"),
+			{ type: "delete-column" },
+		);
+		expect(deleteTrailingCol1?.value).toBe("a |\n--- |\n1 |");
+		expect(
+			tableSelectionAt(
+				deleteTrailingCol1?.value ?? "",
+				deleteTrailingCol1?.selection ?? { direction: "none", end: 0, start: 0 },
+			),
+		).toMatchObject({ column: 0, columnCount: 1, kind: "column", rowIndex: 0 });
+
+		// Leading-pipe controls stay single-piped when deleting column 0.
+		const leadingPipeThreeCol = "| a | # | c |\n| --- | --- | --- |\n| 1 | 2 | 3 |";
+		expect(
+			editMarkdownTable(
+				leadingPipeThreeCol,
+				leadingPipeThreeCol.indexOf("a"),
+				{ type: "delete-column" },
+			)?.value,
+		).toBe("| # | c |\n| --- | --- |\n| 2 | 3 |");
+
+		const leadingPipeTwoCol = "| a | # |\n| --- | --- |\n| 1 | 2 |";
+		expect(
+			editMarkdownTable(leadingPipeTwoCol, leadingPipeTwoCol.indexOf("a"), {
+				type: "delete-column",
+			})?.value,
+		).toBe("| # |\n| --- |\n| 2 |");
 	});
 
 	it("removes leading indentation when clearing an indented table alignment annotation", () => {
@@ -2281,6 +2520,65 @@ describe("editor context menu rules", () => {
 			code: "table-alignment-annotation-marker-orphan",
 			status: "unsupported",
 		});
+
+		const trailingTabSource = `<!-- easymde-table-align:v1 [[1,"center"]] -->\t\n${table}`;
+		expect(
+			setMarkdownTableAlignment(
+				trailingTabSource,
+				trailingTabSource.lastIndexOf("1"),
+				{
+					alignment: "right",
+					selection: { column: 0, kind: "column" },
+				},
+			),
+		).toEqual({
+			code: "table-alignment-annotation-marker-invalid",
+			status: "unsupported",
+		});
+
+		const oversizedRows: Array<readonly [number, "center" | "left" | "right"]> =
+			Array.from({ length: 280 }, (_, index) => [index, "center"] as const);
+		while (
+			`<!-- easymde-table-align:v1 ${JSON.stringify(oversizedRows)} -->`
+				.length > 4096
+		) {
+			oversizedRows.pop();
+		}
+		oversizedRows.push([oversizedRows.length, "left"]);
+		for (let index = 0; index < oversizedRows.length; index += 1) {
+			const currentLength =
+				`<!-- easymde-table-align:v1 ${JSON.stringify(oversizedRows)} -->`
+					.length;
+			if (currentLength <= 4096) break;
+			const excess = currentLength - 4096;
+			oversizedRows[index] = [index, excess >= 2 ? "left" : "right"];
+		}
+		expect(
+			`<!-- easymde-table-align:v1 ${JSON.stringify(oversizedRows)} -->`.length,
+		).toBe(4096);
+		const tallTableLines = [
+			"| A | B |",
+			"| --- | ---: |",
+			...Array.from({ length: 285 }, (_, index) => `| r${index} | v${index} |`),
+		];
+		const nearLimitSource = `<!-- easymde-table-align:v1 ${JSON.stringify(oversizedRows)} -->\n${tallTableLines.join("\n")}`;
+		const nextRowPos = nearLimitSource.indexOf(`| r${oversizedRows.length} |`);
+		expect(
+			setMarkdownTableAlignment(nearLimitSource, nextRowPos, {
+				alignment: "center",
+				selection: { kind: "row", row: oversizedRows.length + 1 },
+			}),
+		).toEqual({
+			code: "table-alignment-annotation-marker-too-large",
+			status: "unsupported",
+		});
+		expect(
+			editMarkdownTable(
+				nearLimitSource,
+				nearLimitSource.indexOf("| A |"),
+				{ type: "insert-row-above" },
+			),
+		).toBeNull();
 	});
 
 	it("recognizes a table-only whole selection even when its annotation prefix is outside the selection", () => {

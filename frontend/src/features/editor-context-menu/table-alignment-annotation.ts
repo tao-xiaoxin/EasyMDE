@@ -1,3 +1,5 @@
+import { utf8ByteLength } from '../../shared/utf8-byte-length';
+
 export type TableAlignmentAnnotationValue = 'center' | 'left' | 'right';
 export type TableAlignmentAnnotationBaseValue = TableAlignmentAnnotationValue | null;
 
@@ -144,6 +146,31 @@ function lineSeparatorBefore(source: string, position: number): Readonly<{
   return null;
 }
 
+function isReservedMarkerPrefix(rawLine: string): number | null {
+  const indentation = rawLine.match(/^[ \t]*/u)?.[0] ?? '';
+  if (indentation.includes('\t') || indentation.length > 3) return null;
+  const leading = indentation.length;
+  return rawLine.startsWith('<!-- easymde-table-align:', leading) ? leading : null;
+}
+
+function parseReservedMarkerCandidate(
+  rawLine: string,
+  lineStart: number,
+  leading: number
+): Readonly<{ from: number; markerTo: number; text: string }> {
+  if (rawLine.includes('\n') || rawLine.includes('\r') || rawLine.includes('\t')) {
+    throw new Error('table-alignment-annotation-marker-invalid');
+  }
+  const trailing = rawLine.match(/ *$/u)?.[0].length ?? 0;
+  const from = lineStart + leading;
+  const markerTo = lineStart + rawLine.length - trailing;
+  const text = rawLine.slice(leading, rawLine.length - trailing);
+  if (utf8ByteLength(text) > MAX_MARKER_LENGTH) {
+    throw new Error('table-alignment-annotation-marker-too-large');
+  }
+  return { from, markerTo, text };
+}
+
 function markerCandidate(
   source: string,
   tableStart: number
@@ -154,19 +181,10 @@ function markerCandidate(
   while (lineStart > 0 && '\n' !== source[lineStart - 1] && '\r' !== source[lineStart - 1]) {
     lineStart -= 1;
   }
-  const line = source.slice(lineStart, separator.from);
-  const indentation = line.match(/^[ \t]*/u)?.[0] ?? '';
-  if (indentation.includes('\t') || indentation.length > 3) return null;
-  const leading = indentation.length;
-  const trailing = line.match(/[ \t]*$/u)?.[0].length ?? 0;
-  const from = lineStart + leading;
-  const markerTo = separator.from - trailing;
-  const text = source.slice(from, markerTo);
-  if (!text.startsWith('<!-- easymde-table-align:')) return null;
-  if (text.length > MAX_MARKER_LENGTH) {
-    throw new Error('table-alignment-annotation-marker-too-large');
-  }
-  return { from, markerTo, text };
+  const rawLine = source.slice(lineStart, separator.from);
+  const leading = isReservedMarkerPrefix(rawLine);
+  if (null === leading) return null;
+  return parseReservedMarkerCandidate(rawLine, lineStart, leading);
 }
 
 function orphanMarkerBefore(source: string, tableStart: number): boolean {
@@ -192,19 +210,14 @@ function ownedMarkerCandidate(
 ): Readonly<{ from: number; markerTo: number; text: string }> | null {
   const range = input.ownedPrefixRange;
   if (!range) return null;
-  const text = input.source.slice(range.from, range.to);
-  if (!text.trimStart().startsWith('<!-- easymde-table-align:')) return null;
+  const rawText = input.source.slice(range.from, range.to);
+  const leading = isReservedMarkerPrefix(rawText);
+  if (null === leading) return null;
   const separator = lineSeparatorBefore(input.source, input.tableStart);
   if (!separator || separator.from !== range.to) {
     throw new Error('table-alignment-annotation-marker-orphan');
   }
-  const leading = text.match(/^[ \t]*/u)?.[0].length ?? 0;
-  const trailing = text.match(/[ \t]*$/u)?.[0].length ?? 0;
-  return {
-    from: range.from + leading,
-    markerTo: range.to - trailing,
-    text: text.slice(leading, text.length - trailing)
-  };
+  return parseReservedMarkerCandidate(rawText, range.from, leading);
 }
 
 function parseEntries(
@@ -274,11 +287,13 @@ export function parseTableAlignmentAnnotation(
       : markerCandidate(input.source, input.tableStart);
   } catch (error) {
     const code: TableAlignmentAnnotationErrorCode | null = error instanceof Error
-      ? 'table-alignment-annotation-marker-orphan' === error.message
+      ? 'table-alignment-annotation-marker-invalid' === error.message
         ? error.message
-        : 'table-alignment-annotation-marker-too-large' === error.message
+        : 'table-alignment-annotation-marker-orphan' === error.message
           ? error.message
-          : null
+          : 'table-alignment-annotation-marker-too-large' === error.message
+            ? error.message
+            : null
       : null;
     if (code) {
       return { code, status: 'invalid' };
@@ -498,6 +513,14 @@ export function applyTableAlignmentAnnotationAction(
   }
 
   const marker = 0 === next.entries.length ? '' : serializeEntries(next.entries);
+  if (utf8ByteLength(marker) > MAX_MARKER_LENGTH) {
+    return {
+      changes: null,
+      code: 'table-alignment-annotation-marker-too-large',
+      status: 'invalid',
+      value: input.source
+    };
+  }
   let from: number;
   let to: number;
   let insert: string;

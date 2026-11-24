@@ -39,6 +39,10 @@ type FormatTableRow = Readonly<{
 }>;
 
 const SPACE_TRIGGERED_BLOCK_OPENER_CELL = /^(?:[-+*]|#{1,6}|\d{1,9}[.)])$/u;
+const SPACE_TRIGGERED_HTML_TYPE_1_OPENER_CELL =
+	/^<(?:pre|script|style|textarea)$/iu;
+const SPACE_TRIGGERED_HTML_TYPE_6_OPENER_CELL =
+	/^<\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|source|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)$/iu;
 
 function suppressesOuterlessBlockOpenerRightPadding(
 	leadingPipe: boolean,
@@ -48,7 +52,9 @@ function suppressesOuterlessBlockOpenerRightPadding(
 	return (
 		0 === index &&
 		!leadingPipe &&
-		SPACE_TRIGGERED_BLOCK_OPENER_CELL.test(coreText)
+		(SPACE_TRIGGERED_BLOCK_OPENER_CELL.test(coreText) ||
+			SPACE_TRIGGERED_HTML_TYPE_1_OPENER_CELL.test(coreText) ||
+			SPACE_TRIGGERED_HTML_TYPE_6_OPENER_CELL.test(coreText))
 	);
 }
 

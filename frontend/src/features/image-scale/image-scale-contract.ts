@@ -67,22 +67,145 @@ function isEscaped(source: string, index: number): boolean {
   return 1 === slashCount % 2;
 }
 
-function hasBlockquoteContinuationPrefix(rawTitle: string): boolean {
-  return /(?:\r\n|\r|\n) {0,3}>/u.test(rawTitle);
+type LineContainerStep =
+  | Readonly<{ kind: 'blockquote' }>
+  | Readonly<{ indent: number; kind: 'list' }>;
+
+type LineColumnCursor = {
+  column: number;
+  index: number;
+  line: string;
+  virtualSpaces: number;
+};
+
+function measureLeadingColumns(cursor: LineColumnCursor): number {
+  let cols = cursor.virtualSpaces;
+  let col = cursor.column + cols;
+  let idx = cursor.index;
+  while (idx < cursor.line.length) {
+    const ch = cursor.line[idx];
+    if (' ' === ch) {
+      cols += 1;
+      col += 1;
+      idx += 1;
+    } else if ('\t' === ch) {
+      const width = 4 - (col % 4);
+      cols += width;
+      col += width;
+      idx += 1;
+    } else {
+      break;
+    }
+  }
+  return cols;
 }
 
-function countLeadingBlockquoteMarkers(source: string, start: number): number {
+function consumeWhitespaceColumns(
+  cursor: LineColumnCursor,
+  targetColumns: number
+): void {
+  let remaining = targetColumns;
+  if (cursor.virtualSpaces > 0) {
+    const take = Math.min(cursor.virtualSpaces, remaining);
+    cursor.virtualSpaces -= take;
+    cursor.column += take;
+    remaining -= take;
+  }
+  while (remaining > 0 && cursor.index < cursor.line.length) {
+    const ch = cursor.line[cursor.index];
+    if (' ' === ch) {
+      cursor.index += 1;
+      cursor.column += 1;
+      remaining -= 1;
+    } else if ('\t' === ch) {
+      const width = 4 - (cursor.column % 4);
+      cursor.index += 1;
+      if (width <= remaining) {
+        cursor.column += width;
+        remaining -= width;
+      } else {
+        cursor.column += remaining;
+        cursor.virtualSpaces = width - remaining;
+        remaining = 0;
+      }
+    } else {
+      break;
+    }
+  }
+}
+
+function consumeBlockquoteMarker(cursor: LineColumnCursor): boolean {
+  const leadCols = measureLeadingColumns(cursor);
+  if (leadCols >= 4) return false;
+  let probeIdx = cursor.index;
+  while (
+    probeIdx < cursor.line.length
+    && (' ' === cursor.line[probeIdx] || '\t' === cursor.line[probeIdx])
+  ) {
+    probeIdx += 1;
+  }
+  if ('>' !== cursor.line[probeIdx]) return false;
+  consumeWhitespaceColumns(cursor, leadCols);
+  cursor.index += 1;
+  cursor.column += 1;
+  if (
+    cursor.index < cursor.line.length
+    && (' ' === cursor.line[cursor.index] || '\t' === cursor.line[cursor.index])
+  ) {
+    consumeWhitespaceColumns(cursor, 1);
+  }
+  return true;
+}
+
+function parseLeadingContainers(
+  source: string,
+  start: number
+): ReadonlyArray<LineContainerStep> {
   const lineStart = Math.max(
     source.lastIndexOf('\n', start - 1),
     source.lastIndexOf('\r', start - 1)
   ) + 1;
-  const prefix = /^(?: {0,3}>[ \t]?)+/u.exec(source.slice(lineStart, start))?.[0] ?? '';
-  return (prefix.match(/>/gu) ?? []).length;
+  const cursor: LineColumnCursor = {
+    column: 0,
+    index: 0,
+    line: source.slice(lineStart, start),
+    virtualSpaces: 0
+  };
+  const containers: LineContainerStep[] = [];
+  while (containers.length < 32) {
+    const leadCols = measureLeadingColumns(cursor);
+    if (leadCols >= 4) break;
+    let probeIdx = cursor.index;
+    while (
+      probeIdx < cursor.line.length
+      && (' ' === cursor.line[probeIdx] || '\t' === cursor.line[probeIdx])
+    ) {
+      probeIdx += 1;
+    }
+    const rest = cursor.line.slice(probeIdx);
+    if (rest.startsWith('>')) {
+      consumeBlockquoteMarker(cursor);
+      containers.push({ kind: 'blockquote' });
+      continue;
+    }
+    const listMatch = /^([-+*]|\d{1,9}[.)])(?=[ \t]|$)/u.exec(rest);
+    if (!listMatch?.[1]) break;
+    const marker = listMatch[1];
+    consumeWhitespaceColumns(cursor, leadCols);
+    cursor.index += marker.length;
+    cursor.column += marker.length;
+    const spacingCols = measureLeadingColumns(cursor);
+    const hasContentAfter = cursor.index < cursor.line.length && spacingCols > 0;
+    const padding = hasContentAfter && spacingCols <= 4 ? spacingCols : 1;
+    consumeWhitespaceColumns(cursor, Math.min(padding, spacingCols));
+    containers.push({ indent: leadCols + marker.length + padding, kind: 'list' });
+  }
+  return containers;
 }
 
-function normalizeTitleBlockquoteContinuations(
+function normalizeTitleContainerContinuations(
   rawTitle: string,
-  startBlockquoteDepth: number
+  containers: ReadonlyArray<LineContainerStep>
 ): Readonly<{ hasContainerPrefix: boolean; stripped: string }> | null {
   if (!rawTitle.includes('\n') && !rawTitle.includes('\r')) {
     return { hasContainerPrefix: false, stripped: rawTitle };
@@ -90,23 +213,56 @@ function normalizeTitleBlockquoteContinuations(
   const lines = rawTitle.replace(/\r\n|\r/gu, '\n').split('\n');
   let hasContainerPrefix = false;
   for (let index = 1; index < lines.length; index += 1) {
-    let line = lines[index] ?? '';
-    for (let depth = 0; depth < startBlockquoteDepth; depth += 1) {
-      const match = /^ {0,3}>[ \t]?/u.exec(line);
-      if (!match) break;
-      hasContainerPrefix = true;
-      line = line.slice(match[0].length);
+    const cursor: LineColumnCursor = {
+      column: 0,
+      index: 0,
+      line: lines[index] ?? '',
+      virtualSpaces: 0
+    };
+    for (const step of containers) {
+      if ('blockquote' === step.kind) {
+        if (!consumeBlockquoteMarker(cursor)) break;
+        hasContainerPrefix = true;
+      } else {
+        if (measureLeadingColumns(cursor) < step.indent) break;
+        consumeWhitespaceColumns(cursor, step.indent);
+      }
     }
-    if (/^ {0,3}>/u.test(line)) {
+    const remainingLead = measureLeadingColumns(cursor);
+    let probeIdx = cursor.index;
+    while (
+      probeIdx < cursor.line.length
+      && (' ' === cursor.line[probeIdx] || '\t' === cursor.line[probeIdx])
+    ) {
+      probeIdx += 1;
+    }
+    if (remainingLead < 4 && '>' === cursor.line[probeIdx]) {
       return null;
     }
-    lines[index] = line;
+    lines[index] = `${' '.repeat(cursor.virtualSpaces)}${cursor.line.slice(cursor.index)}`;
   }
   const stripped = lines.join('\n');
   if (hasMarkdownTitleBlankLine(stripped)) {
     return null;
   }
   return { hasContainerPrefix, stripped };
+}
+
+function skipSingleLineBreakWhitespace(source: string, start: number): number {
+  let cursor = start;
+  while (' ' === source[cursor] || '\t' === source[cursor]) {
+    cursor += 1;
+  }
+  if ('\r' === source[cursor] || '\n' === source[cursor]) {
+    cursor += '\r' === source[cursor] && '\n' === source[cursor + 1] ? 2 : 1;
+    while (' ' === source[cursor] || '\t' === source[cursor]) {
+      cursor += 1;
+    }
+    if ('\r' === source[cursor] || '\n' === source[cursor]) {
+      return -1;
+    }
+  }
+  return cursor;
 }
 
 function escapedMarkdown(value: string, characters: string): string {
@@ -174,7 +330,9 @@ function parseImageCore(source: string, start: number): ParsedImageCore | null {
   if (altEnd < 0 || '(' !== source[altEnd + 1]) return null;
 
   const open = altEnd + 2;
-  let cursor = open;
+  const destStart = skipSingleLineBreakWhitespace(source, open);
+  if (destStart < 0) return null;
+  let cursor = destStart;
   let destination = '';
   if ('<' === source[cursor]) {
     let destinationEnd = -1;
@@ -245,7 +403,7 @@ function parseImageCore(source: string, start: number): ParsedImageCore | null {
       cursor += 1;
     }
     if (0 !== parentheses) return null;
-    destination = unescapeCommonMarkAsciiPunctuation(source.slice(open, cursor));
+    destination = unescapeCommonMarkAsciiPunctuation(source.slice(destStart, cursor));
   }
 
   return parseImageCoreTail(
@@ -255,7 +413,7 @@ function parseImageCore(source: string, start: number): ParsedImageCore | null {
     cursor,
     destination,
     cursor,
-    open,
+    destStart,
     false
   );
 }
@@ -270,8 +428,8 @@ function parseImageCoreTail(
   destinationStart: number,
   destinationAngle: boolean
 ): ParsedImageCore | null {
-  let cursor = destinationCursor;
-  while (isWhitespace(source[cursor])) cursor += 1;
+  let cursor = skipSingleLineBreakWhitespace(source, destinationCursor);
+  if (cursor < 0) return null;
   if (')' === source[cursor]) {
     if (hasAmbiguousBareDestinationContinuation(source, cursor + 1, destinationAngle)) {
       return null;
@@ -326,16 +484,16 @@ function parseImageCoreTail(
     return null;
   }
 
-  while (isWhitespace(source[cursor])) cursor += 1;
-  if (')' !== source[cursor]) return null;
+  cursor = skipSingleLineBreakWhitespace(source, cursor);
+  if (cursor < 0 || ')' !== source[cursor]) return null;
   const rawTitle = source.slice(
     titleStart + 1,
     titleEnd
   );
   if (hasMarkdownTitleBlankLine(rawTitle)) return null;
-  const normalizedTitle = normalizeTitleBlockquoteContinuations(
+  const normalizedTitle = normalizeTitleContainerContinuations(
     rawTitle,
-    countLeadingBlockquoteMarkers(source, start)
+    parseLeadingContainers(source, start)
   );
   if (!normalizedTitle) return null;
   return {
@@ -457,45 +615,82 @@ export function parseMarkdownImageScale(
   };
 }
 
+function mergeCodeRanges(
+  ranges: Array<{ end: number; start: number }>
+): Array<{ end: number; start: number }> {
+  if (ranges.length <= 1) return ranges;
+  ranges.sort((left, right) => left.start - right.start || left.end - right.end);
+  const first = ranges[0];
+  if (!first) return [];
+  const merged: Array<{ end: number; start: number }> = [
+    { end: first.end, start: first.start }
+  ];
+  for (let i = 1; i < ranges.length; i += 1) {
+    const current = ranges[i];
+    const previous = merged[merged.length - 1];
+    if (!current || !previous) continue;
+    if (current.start <= previous.end) {
+      if (current.end > previous.end) previous.end = current.end;
+    } else {
+      merged.push({ end: current.end, start: current.start });
+    }
+  }
+  return merged;
+}
+
 function markdownCodeRanges(source: string): ReadonlyArray<Readonly<{ end: number; start: number }>> {
-  const ranges: Array<{ end: number; start: number }> = [];
+  const rawBlockRanges: Array<{ end: number; start: number }> = [];
   let lineStart = 0;
   let fence: { character: string; length: number; start: number } | null = null;
+  let canStartIndentedCode = true;
+  let inIndentedCode = false;
   for (let index = 0; index <= source.length; index += 1) {
     if (index !== source.length && '\n' !== source[index] && '\r' !== source[index]) continue;
     const lineEnd = index;
     const line = source.slice(lineStart, lineEnd);
-    if (/^(?: {4}|\t)/u.test(line)) {
-      ranges.push({
-        end: index === source.length ? source.length : index + 1,
-        start: lineStart
-      });
-    }
-    const opening = line.match(/^ {0,3}(`{3,}|~{3,})/u)?.[1];
+    const nextLineStart = index === source.length
+      ? source.length
+      : index + ('\r' === source[index] && '\n' === source[index + 1] ? 2 : 1);
+    const isBlankLine = /^[ \t]*$/u.test(line);
     if (fence) {
       const closing = line.match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/u)?.[1];
       if (closing && closing[0] === fence.character && closing.length >= fence.length) {
-        ranges.push({ end: index === source.length ? source.length : index + 1, start: fence.start });
+        rawBlockRanges.push({ end: nextLineStart, start: fence.start });
         fence = null;
+        canStartIndentedCode = true;
       }
-    } else if (opening) {
-      fence = { character: opening[0] ?? '', length: opening.length, start: lineStart };
+    } else if (isBlankLine) {
+      canStartIndentedCode = true;
+    } else if ((canStartIndentedCode || inIndentedCode) && /^(?: {4}|\t)/u.test(line)) {
+      inIndentedCode = true;
+      rawBlockRanges.push({ end: nextLineStart, start: lineStart });
+    } else {
+      inIndentedCode = false;
+      const openingMatch = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
+      const opening = openingMatch?.[1];
+      if (opening && !('`' === opening[0] && (openingMatch[2] ?? '').includes('`'))) {
+        fence = { character: opening[0] ?? '', length: opening.length, start: lineStart };
+        canStartIndentedCode = false;
+      } else {
+        canStartIndentedCode = /^ {0,3}(?:#{1,6}(?:[ \t]|$)|(?:\*[ \t]*){3,}$|(?:-[ \t]*){3,}$|(?:_[ \t]*){3,}$)/u.test(line);
+      }
     }
-    lineStart = index + (index < source.length && '\r' === source[index] && '\n' === source[index + 1] ? 2 : 1);
+    lineStart = nextLineStart;
     if (index < source.length && '\r' === source[index] && '\n' === source[index + 1]) index += 1;
   }
-  if (fence) ranges.push({ end: source.length, start: fence.start });
+  if (fence) rawBlockRanges.push({ end: source.length, start: fence.start });
 
-  ranges.sort((left, right) => left.start - right.start);
+  const blockRanges = mergeCodeRanges(rawBlockRanges);
+  const inlineRanges: Array<{ end: number; start: number }> = [];
   let index = 0;
   let protectedIndex = 0;
-  const unmatchedLengths = new Set<number>();
+  const unmatchedEndByLength = new Map<number, number>();
   while (index < source.length) {
     while (
-      protectedIndex < ranges.length
-      && index >= (ranges[protectedIndex]?.end ?? source.length)
+      protectedIndex < blockRanges.length
+      && index >= (blockRanges[protectedIndex]?.end ?? source.length)
     ) protectedIndex += 1;
-    const protectedRange = ranges[protectedIndex];
+    const protectedRange = blockRanges[protectedIndex];
     if (protectedRange && index >= protectedRange.start && index < protectedRange.end) {
       index = protectedRange.end;
       continue;
@@ -507,24 +702,60 @@ function markdownCodeRanges(source: string): ReadonlyArray<Readonly<{ end: numbe
     const runStart = index;
     while ('`' === source[index]) index += 1;
     const length = index - runStart;
-    if (unmatchedLengths.has(length)) continue;
+    const unmatchedUntil = unmatchedEndByLength.get(length);
+    if (undefined !== unmatchedUntil && index < unmatchedUntil) continue;
+    let blockIndex = protectedIndex;
     let closed = false;
-    // CommonMark §6.1: backslashes inside code spans are literal, never escapes.
+    let scanLimit = source.length;
+    // CommonMark §6.1: backslashes inside code spans are literal, never escapes;
+    // code spans cannot cross blank lines or enter block-level code ranges.
     for (let close = index; close < source.length; close += 1) {
-      if ('`' !== source[close]) continue;
+      while (
+        blockIndex < blockRanges.length
+        && close >= (blockRanges[blockIndex]?.end ?? source.length)
+      ) blockIndex += 1;
+      const nextBlock = blockRanges[blockIndex];
+      if (nextBlock && close >= nextBlock.start) {
+        scanLimit = nextBlock.start;
+        break;
+      }
+      const ch = source[close];
+      if ('\r' === ch || '\n' === ch) {
+        let probe = close + ('\r' === ch && '\n' === source[close + 1] ? 2 : 1);
+        while (' ' === source[probe] || '\t' === source[probe]) probe += 1;
+        if ('\r' === source[probe] || '\n' === source[probe]) {
+          scanLimit = probe;
+          break;
+        }
+        if ('>' === source[probe]) {
+          let bqProbe = probe;
+          while (bqProbe < source.length) {
+            const match = /^ {0,3}>[ \t]?/u.exec(source.slice(bqProbe, bqProbe + 6));
+            if (!match) break;
+            bqProbe += match[0].length;
+          }
+          while (' ' === source[bqProbe] || '\t' === source[bqProbe]) bqProbe += 1;
+          if ('\r' === source[bqProbe] || '\n' === source[bqProbe] || bqProbe === source.length) {
+            scanLimit = probe;
+            break;
+          }
+        }
+        continue;
+      }
+      if ('`' !== ch) continue;
       let runEnd = close;
       while ('`' === source[runEnd]) runEnd += 1;
       if (runEnd - close === length) {
-        ranges.push({ end: runEnd, start: runStart });
+        inlineRanges.push({ end: runEnd, start: runStart });
         index = runEnd;
         closed = true;
         break;
       }
       close = runEnd - 1;
     }
-    if (!closed) unmatchedLengths.add(length);
+    if (!closed) unmatchedEndByLength.set(length, scanLimit);
   }
-  return ranges.sort((left, right) => left.start - right.start);
+  return mergeCodeRanges([...blockRanges, ...inlineRanges]);
 }
 
 function inCodeRange(
@@ -608,8 +839,9 @@ export function createImageScaleReplacement(
     || image.end <= image.start
     || image.end > source.length
   ) throw new Error('image-scale-range-invalid');
-  const parsed = parseMarkdownImageScale(source, image.start);
-  if (!parsed || parsed.end !== image.end) throw new Error('image-scale-image-stale');
+  const core = parseImageCore(source, image.start);
+  const parsed = core ? parseMarkdownImageScale(source, image.start) : null;
+  if (!core || !parsed || parsed.end !== image.end) throw new Error('image-scale-image-stale');
   const marker = `{width=${percentage}%}`;
   if (null !== parsed.scale) {
     if (
@@ -630,7 +862,7 @@ export function createImageScaleReplacement(
         to: parsed.titleEnd
       };
     }
-    if (null !== parsed.title && hasBlockquoteContinuationPrefix(parsed.title)) {
+    if (core.hasContainerPrefix) {
       syntaxError();
     }
     const candidateRawTitle = `${parsed.title ?? ''} ${marker}`;

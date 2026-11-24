@@ -24,6 +24,7 @@ export type PrescannedLineRange = Readonly<{
 }>;
 
 export type PreScanResult = Readonly<{
+	deferredReferences: Record<string, ReferenceDefinition>;
 	lineEnding: "\n" | "\r\n";
 	markdown: string;
 	outputLineRanges: ReadonlyArray<PrescannedLineRange | null>;
@@ -421,8 +422,9 @@ function matchReferenceDefinition(
 	lines: ReadonlyArray<string>,
 	start: number,
 ): ReferenceDefinitionMatch | null {
-	const line = readBlockquotePrefix(lines[start] ?? "").rest;
-	const match = REFERENCE_DEF_LINE.exec(line);
+	const startBq = readBlockquotePrefix(lines[start] ?? "");
+	const startDepth = blockquoteDepth(startBq.prefix);
+	const match = REFERENCE_DEF_LINE.exec(startBq.rest);
 	if (!match?.[1]) {
 		return null;
 	}
@@ -437,14 +439,17 @@ function matchReferenceDefinition(
 		if (next === undefined) {
 			return null;
 		}
-		const nextRest = readBlockquotePrefix(next).rest;
-		if (!/^[ \t]+/.test(nextRest)) {
+		const nextBq = readBlockquotePrefix(next);
+		if (
+			blockquoteDepth(nextBq.prefix) > startDepth ||
+			!/^[ \t]+/.test(nextBq.rest)
+		) {
 			return null;
 		}
-		remainder = nextRest.trim();
+		remainder = nextBq.rest.trim();
 		end = start + 1;
 	}
-	const destinationMatch = /^(<[^>\n]*>|\S+)(.*)$/.exec(remainder);
+	const destinationMatch = /^(<[^<>\n]*>|[^\s<>]+)(.*)$/.exec(remainder);
 	if (!destinationMatch?.[1]) {
 		return null;
 	}
@@ -456,9 +461,12 @@ function matchReferenceDefinition(
 	if (titleSource.length === 0) {
 		const nextLine = lines[end + 1];
 		if (nextLine !== undefined) {
-			const nextRest = readBlockquotePrefix(nextLine).rest;
-			if (/^[ \t]+["'(]/.test(nextRest)) {
-				titleSource = nextRest.trim();
+			const nextBq = readBlockquotePrefix(nextLine);
+			if (
+				blockquoteDepth(nextBq.prefix) <= startDepth &&
+				/^[ \t]*["'(]/.test(nextBq.rest)
+			) {
+				titleSource = nextBq.rest.trim();
 				end += 1;
 			}
 		}
@@ -643,7 +651,10 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 	const protectedBlocks = new Map<string, ProtectedBlockEntry>();
 	const protectedInlines = new Map<string, ProtectedInlineEntry>();
 	const tableAlignMarkers = new Map<string, string>();
-	const references: Record<string, ReferenceDefinition> = {};
+	const references: Record<string, ReferenceDefinition> = Object.create(null);
+	const deferredReferences: Record<string, ReferenceDefinition> =
+		Object.create(null);
+	const seenReferenceLabels = new Set<string>();
 
 	const pushOutputLine = (
 		text: string,
@@ -873,8 +884,17 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		if (reference) {
 			let end = i;
 			while (reference) {
-				if (references[reference.key] === undefined) {
+				if (!seenReferenceLabels.has(reference.key)) {
+					seenReferenceLabels.add(reference.key);
 					references[reference.key] = {
+						href: reference.href,
+						title: reference.title,
+					};
+				} else if (
+					references[reference.key] === undefined &&
+					deferredReferences[reference.key] === undefined
+				) {
+					deferredReferences[reference.key] = {
 						href: reference.href,
 						title: reference.title,
 					};
@@ -886,6 +906,15 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			paragraphOpen = false;
 			i = end + 1;
 			continue;
+		}
+		if (!paragraphOpen) {
+			const unmatchedRef = REFERENCE_DEF_LINE.exec(analysis.rest);
+			if (unmatchedRef?.[1]) {
+				const key = normalizeReferenceKey(unmatchedRef[1]);
+				if (key.length > 0) {
+					seenReferenceLabels.add(key);
+				}
+			}
 		}
 
 		// 8. Raw HTML comments and paired HTML block containers.
@@ -940,6 +969,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 	}
 
 	return {
+		deferredReferences,
 		lineEnding,
 		markdown: outputLines.join("\n"),
 		outputLineRanges,

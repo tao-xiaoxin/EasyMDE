@@ -183,6 +183,21 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 		parser.inline.ruler.disable("image");
 	}
 
+	const knownReferenceLabelsByMap = new WeakMap<
+		Record<string, { href: string; title: string }>,
+		Set<string>
+	>();
+	const getKnownReferenceLabels = (
+		refs: Record<string, { href: string; title: string }>,
+	): Set<string> => {
+		let known = knownReferenceLabelsByMap.get(refs);
+		if (!known) {
+			known = new Set(Object.keys(refs));
+			knownReferenceLabelsByMap.set(refs, known);
+		}
+		return known;
+	};
+
 	const originalReferenceRuleEntry = (
 		parser.block.ruler as unknown as InternalRuler<BlockRuleFn>
 	).__rules__?.find((rule) => rule.name === "reference");
@@ -193,13 +208,20 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 			"reference",
 			"easymde_reference",
 			(state, startLine, endLine, silent) => {
-				const existingRefs = (
-					state.env as {
-						references?: Record<string, { href: string; title: string }>;
-					}
-				).references;
-				const existingKeys = existingRefs
-					? new Set(Object.keys(existingRefs))
+				if ((state.sCount[startLine] ?? 0) - state.blkIndent >= 4) {
+					return false;
+				}
+				const startPos =
+					(state.bMarks[startLine] ?? 0) + (state.tShift[startLine] ?? 0);
+				if (state.src.charCodeAt(startPos) !== 0x5b) {
+					return false;
+				}
+				const env = state.env as {
+					references?: Record<string, { href: string; title: string }>;
+				};
+				const existingRefs = env.references;
+				const knownLabels = existingRefs
+					? getKnownReferenceLabels(existingRefs)
 					: null;
 				const tokensBefore = state.tokens.length;
 				const matched = originalReferenceRule(state, startLine, endLine, silent);
@@ -214,26 +236,24 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 					typeof (refToken.meta as { label?: unknown }).label === "string"
 						? (refToken.meta as { label: string }).label
 						: null;
-				const refs = (
-					state.env as {
-						references?: Record<string, { href: string; title: string }>;
-					}
-				).references;
-				if (
-					label !== null &&
-					refs?.[label] &&
-					!existingKeys?.has(label) &&
-					refs[label].title.length > 0
-				) {
-					const rawTitle = extractRawReferenceTitle(
-						state,
-						startLine,
-						state.line,
-					);
-					if (rawTitle !== null) {
-						refs[label].title = decodeCommonMarkTitle(
-							rawTitle.replace(/\r\n|\r/gu, "\n").replace(/\n[ \t]+/gu, "\n"),
+				const refs = env.references;
+				if (label !== null && refs) {
+					const activeKnown = knownLabels ?? getKnownReferenceLabels(refs);
+					const alreadyExisted = knownLabels !== null && activeKnown.has(label);
+					activeKnown.add(label);
+					if (!alreadyExisted && refs[label] && refs[label].title.length > 0) {
+						const rawTitle = extractRawReferenceTitle(
+							state,
+							startLine,
+							state.line,
 						);
+						if (rawTitle !== null) {
+							refs[label].title = decodeCommonMarkTitle(
+								rawTitle
+									.replace(/\r\n|\r/gu, "\n")
+									.replace(/\n[ \t]+/gu, "\n"),
+							);
+						}
 					}
 				}
 				return true;
@@ -275,14 +295,30 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 		{ alt: ["paragraph", "reference", "blockquote", "list"] },
 	);
 
-	// CommonMark §4.8 / §4.3 strip leading spaces and tabs from continuation
-	// lines of paragraphs and Setext headings before inline parsing; markdown-it
-	// leaves them intact inside multiline link/image titles (`"Caption\n {width=50%}"`),
-	// while HTML entities (`&#10; ` / `&NewLine; `) decode later during inline parsing.
+	// Merge deferred prescanned references only if an earlier definition did not
+	// already define that label during markdown-it block parsing (CommonMark
+	// first-wins), and strip paragraph/Setext continuation indentation per §4.8.
 	parser.core.ruler.before(
 		"inline",
 		"easymde_strip_continuation_indent",
 		(state) => {
+			const env = state.env as {
+				deferredReferences?: Record<string, { href: string; title: string }>;
+				references?: Record<string, { href: string; title: string }>;
+			};
+			if (env.deferredReferences) {
+				for (const key of Object.keys(env.deferredReferences)) {
+					if (!env.references) {
+						env.references = Object.create(null);
+					}
+					if (env.references && env.references[key] === undefined) {
+						const entry = env.deferredReferences[key];
+						if (entry) {
+							env.references[key] = entry;
+						}
+					}
+				}
+			}
 			for (let i = 0; i < state.tokens.length; i += 1) {
 				const token = state.tokens[i];
 				if (token?.type !== "inline" || !token.content.includes("\n")) {

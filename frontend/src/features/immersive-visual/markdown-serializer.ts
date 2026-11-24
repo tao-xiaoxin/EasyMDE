@@ -1,7 +1,6 @@
 import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
 import {
 	decodeCommonMarkTitle,
-	hasMarkdownTitleBlankLine,
 	type ImageScalePercentage,
 	parseEffectiveImageScaleTitle,
 	stripTrailingReservedScaleMarkers,
@@ -175,77 +174,52 @@ function formatImageAlt(alt: string, inTableCell: boolean): string {
 	return inTableCell ? escapeTablePipes(escaped) : escaped;
 }
 
+const TITLE_ENTITY_TOKEN =
+	/(&(?:#x[a-f0-9]{1,6}|#[0-9]{1,7}|[a-z][a-z0-9]{1,31});)/giu;
+
+function protectTitleEntities(titleValue: string): string {
+	return titleValue.includes("&")
+		? titleValue.replace(
+				TITLE_ENTITY_TOKEN,
+				(_, token: string) => `&amp;${token.slice(1)}`,
+			)
+		: titleValue;
+}
+
 function encodeTitleLineBreaks(titleValue: string): string {
 	return titleValue.replace(/\r/gu, "&#13;").replace(/\n/gu, "&#10;");
 }
 
-function formatQuotedImageTitle(
-	titleValue: string,
-	inTableCell: boolean,
-): string {
-	const escaped = escapeQuotedTitle(titleValue);
+function formatQuotedTitle(titleValue: string, inTableCell: boolean): string {
+	const encoded = encodeTitleLineBreaks(protectTitleEntities(titleValue));
+	const escaped = escapeQuotedTitle(encoded);
 	return inTableCell ? escapeTablePipes(escaped) : escaped;
-}
-
-function isValidSerializedScaledTitle(
-	candidate: string,
-	scale: ImageScalePercentage,
-): boolean {
-	if (hasMarkdownTitleBlankLine(candidate)) {
-		return false;
-	}
-	const parsed = parseEffectiveImageScaleTitle(candidate);
-	return parsed.status === "valid" && parsed.scale === scale;
-}
-
-function isValidSerializedUnscaledTitle(candidate: string): boolean {
-	if (hasMarkdownTitleBlankLine(candidate)) {
-		return false;
-	}
-	return parseEffectiveImageScaleTitle(candidate).status === "none";
 }
 
 function serializeScaledImageTitle(
 	baseTitle: string,
 	scale: ImageScalePercentage,
 	inTableCell: boolean,
-	inHeading: boolean,
 ): string {
 	const marker = `{width=${scale}%}`;
-	const disallowLineBreaks = inTableCell || inHeading;
 	const tryCandidate = (value: string): string | null => {
-		const mustEncodeBreaks = disallowLineBreaks || /[\r\n][ \t]/u.test(value);
-		if (!mustEncodeBreaks) {
-			const rawCandidate = formatQuotedImageTitle(
-				`${value} ${marker}`,
-				inTableCell,
-			);
-			if (isValidSerializedScaledTitle(rawCandidate, scale)) {
-				return rawCandidate;
-			}
-		}
-		if (mustEncodeBreaks || /[\r\n]/u.test(value)) {
-			const encodedCandidate = formatQuotedImageTitle(
-				`${encodeTitleLineBreaks(value)} ${marker}`,
-				inTableCell,
-			);
-			if (isValidSerializedScaledTitle(encodedCandidate, scale)) {
-				return encodedCandidate;
-			}
-		}
-		return null;
+		const candidate = formatQuotedTitle(`${value} ${marker}`, inTableCell);
+		const parsed = parseEffectiveImageScaleTitle(candidate);
+		return parsed.status === "valid" && parsed.scale === scale
+			? candidate
+			: null;
 	};
 	if (baseTitle.length === 0) {
-		return formatQuotedImageTitle(marker, inTableCell);
+		return formatQuotedTitle(marker, inTableCell);
 	}
 	const primary = tryCandidate(baseTitle);
 	if (primary !== null) {
 		return primary;
 	}
-	// Programmatic or entity-bearing titles (such as `"Caption {width=33%}&#32;"`)
-	// can still decode to a conflicting marker in PHP; decode and strip before
-	// falling back to scale-only so Visual serialization never emits PHP-invalid
-	// Markdown.
+	// Programmatic titles with backslash-escaped markers (such as
+	// `"Caption \\{width=33%\\}"`) can still decode to a conflicting marker in
+	// PHP; decode and strip before falling back to scale-only so Visual
+	// serialization never emits PHP-invalid Markdown.
 	let current = baseTitle;
 	for (let attempt = 0; attempt < 4; attempt += 1) {
 		const next = stripTrailingReservedScaleMarkers(
@@ -264,36 +238,21 @@ function serializeScaledImageTitle(
 		}
 		current = next;
 	}
-	return formatQuotedImageTitle(marker, inTableCell);
+	return formatQuotedTitle(marker, inTableCell);
 }
 
 function serializeUnscaledImageTitle(
 	rawTitle: string,
 	inTableCell: boolean,
-	inHeading: boolean,
 ): string {
 	if (rawTitle.length === 0) {
 		return "";
 	}
-	const disallowLineBreaks = inTableCell || inHeading;
 	const tryCandidate = (value: string): string | null => {
-		const mustEncodeBreaks = disallowLineBreaks || /[\r\n][ \t]/u.test(value);
-		if (!mustEncodeBreaks) {
-			const rawCandidate = formatQuotedImageTitle(value, inTableCell);
-			if (isValidSerializedUnscaledTitle(rawCandidate)) {
-				return rawCandidate;
-			}
-		}
-		if (mustEncodeBreaks || hasMarkdownTitleBlankLine(value)) {
-			const encodedCandidate = formatQuotedImageTitle(
-				encodeTitleLineBreaks(value),
-				inTableCell,
-			);
-			if (isValidSerializedUnscaledTitle(encodedCandidate)) {
-				return encodedCandidate;
-			}
-		}
-		return null;
+		const candidate = formatQuotedTitle(value, inTableCell);
+		return parseEffectiveImageScaleTitle(candidate).status === "none"
+			? candidate
+			: null;
 	};
 	const primary = tryCandidate(rawTitle);
 	if (primary !== null) {
@@ -309,11 +268,9 @@ function serializeUnscaledImageTitle(
 			return strippedCandidate;
 		}
 	}
-	// Programmatic or entity-bearing unscaled titles (such as
-	// `"Caption &#123;width=51%&#125;"`, `"Caption &#123;width=50%&#125;"`, or
+	// Programmatic unscaled titles with backslash-escaped markers (such as
 	// `"Caption \\{width=51%\\}"`) can still decode to a PHP-invalid or spurious
-	// scale marker; decode and strip trailing reserved markers before emitting
-	// Markdown.
+	// scale marker; decode and strip trailing reserved markers before emitting.
 	let current = rawTitle;
 	for (let attempt = 0; attempt < 4; attempt += 1) {
 		const next = stripTrailingReservedScaleMarkers(
@@ -338,7 +295,6 @@ function serializeUnscaledImageTitle(
 function serializeImageNode(
 	node: ProseMirrorNode,
 	inTableCell: boolean,
-	inHeading: boolean,
 ): string {
 	const src = typeof node.attrs.src === "string" ? node.attrs.src : "";
 	const alt = typeof node.attrs.alt === "string" ? node.attrs.alt : "";
@@ -359,13 +315,9 @@ function serializeImageNode(
 			rawStripped !== rawTitle && rawStripped.endsWith("\\")
 				? rawTitle
 				: rawStripped;
-		titleSegment = ` "${serializeScaledImageTitle(baseTitle, scale, inTableCell, inHeading)}"`;
+		titleSegment = ` "${serializeScaledImageTitle(baseTitle, scale, inTableCell)}"`;
 	} else if (rawTitle.length > 0) {
-		const serializedTitle = serializeUnscaledImageTitle(
-			rawTitle,
-			inTableCell,
-			inHeading,
-		);
+		const serializedTitle = serializeUnscaledImageTitle(rawTitle, inTableCell);
 		if (serializedTitle.length > 0) {
 			titleSegment = ` "${serializedTitle}"`;
 		}
@@ -388,11 +340,7 @@ function markOpenSyntax(mark: Mark): string {
 	}
 }
 
-function markCloseSyntax(
-	mark: Mark,
-	inTableCell: boolean,
-	inHeading: boolean,
-): string {
+function markCloseSyntax(mark: Mark, inTableCell: boolean): string {
 	switch (mark.type.name) {
 		case "strong":
 			return "**";
@@ -406,24 +354,9 @@ function markCloseSyntax(
 				typeof mark.attrs.title === "string" && mark.attrs.title.length > 0
 					? mark.attrs.title
 					: null;
-			const preparedTitle =
-				rawTitle === null
-					? null
-					: inTableCell ||
-							inHeading ||
-							hasMarkdownTitleBlankLine(rawTitle) ||
-							/[\r\n][ \t]|\r/u.test(rawTitle)
-						? encodeTitleLineBreaks(rawTitle)
-						: rawTitle;
-			const escapedTitle =
-				preparedTitle === null ? null : escapeQuotedTitle(preparedTitle);
 			const destination = formatLinkDestination(href, inTableCell);
 			const safeTitle =
-				escapedTitle === null
-					? null
-					: inTableCell
-						? escapeTablePipes(escapedTitle)
-						: escapedTitle;
+				rawTitle === null ? null : formatQuotedTitle(rawTitle, inTableCell);
 			return safeTitle !== null
 				? `](${destination} "${safeTitle}")`
 				: `](${destination})`;
@@ -461,7 +394,7 @@ function serializeInlineContent(
 		while (activeMarks.length > targetDepth) {
 			const popped = activeMarks.pop();
 			if (popped) {
-				output += markCloseSyntax(popped, inTableCell, inHeading);
+				output += markCloseSyntax(popped, inTableCell);
 			}
 		}
 	};
@@ -521,7 +454,7 @@ function serializeInlineContent(
 
 		if (child.type.name === "image") {
 			syncMarks(sortedMarks.filter((mark) => mark.type.name !== "code"));
-			output += serializeImageNode(child, inTableCell, inHeading);
+			output += serializeImageNode(child, inTableCell);
 			continue;
 		}
 

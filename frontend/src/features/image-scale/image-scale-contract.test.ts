@@ -730,4 +730,241 @@ describe('image scale contract', () => {
       title: 'Caption\n    >'
     });
   });
+
+  it('handles nested fenced+indented code, paragraph-bounded backtick spans, and CommonMark §6.3 whitespace', () => {
+    // Indented lines inside a fenced code block must never break binary search in `inCodeRange()`.
+    const nestedFenceSource = [
+      '```markdown',
+      '    indented line 1',
+      '    indented line 2',
+      '![inside-fence](/fence.png "{width=50%}")',
+      '```',
+      '',
+      '![outside-fence](/real.png "{width=67%}")'
+    ].join('\n');
+    expect(
+      findMarkdownImageAt(nestedFenceSource, nestedFenceSource.indexOf('inside-fence') + 1)
+    ).toBeNull();
+    expect(
+      findMarkdownImageAt(nestedFenceSource, nestedFenceSource.indexOf('outside-fence') + 1)
+    ).toMatchObject({
+      destination: '/real.png',
+      scale: 67
+    });
+
+    const nestedFenceCrlf = [
+      '~~~',
+      '\tindented tab',
+      '![inside-crlf](/fence.png "{width=50%}")',
+      '~~~',
+      '',
+      '![after-crlf](/after.png "{width=100%}")'
+    ].join('\r\n');
+    expect(
+      findMarkdownImageAt(nestedFenceCrlf, nestedFenceCrlf.indexOf('inside-crlf') + 1)
+    ).toBeNull();
+    expect(
+      findMarkdownImageAt(nestedFenceCrlf, nestedFenceCrlf.indexOf('after-crlf') + 1)
+    ).toMatchObject({
+      destination: '/after.png',
+      scale: 100
+    });
+
+    // CommonMark §6.1: inline code spans must NOT cross blank lines.
+    const blankSeparatedTicks = [
+      '`unclosed',
+      '',
+      '![between](/a.png "{width=50%}")',
+      '',
+      '`'
+    ].join('\n');
+    expect(
+      findMarkdownImageAt(blankSeparatedTicks, blankSeparatedTicks.indexOf('between') + 1)
+    ).toMatchObject({
+      destination: '/a.png',
+      scale: 50
+    });
+
+    const crlfBlankTicks = '`unclosed\r\n \t \r\n![crlf-between](/a.png "{width=33%}")\r\n\r\n`';
+    expect(
+      findMarkdownImageAt(crlfBlankTicks, crlfBlankTicks.indexOf('crlf-between') + 1)
+    ).toMatchObject({
+      destination: '/a.png',
+      scale: 33
+    });
+
+    const bqBlankTicks = '> `unclosed\n>\n> ![bq-between](/a.png "{width=50%}")\n>\n> `';
+    expect(
+      findMarkdownImageAt(bqBlankTicks, bqBlankTicks.indexOf('bq-between') + 1)
+    ).toMatchObject({
+      destination: '/a.png',
+      scale: 50
+    });
+
+    // An unclosed backtick in paragraph 1 must not hide a real code span in paragraph 2.
+    const nextParaCodeSpan = [
+      '`unclosed',
+      '',
+      '`![in-code](/code.png "{width=50%}")`',
+      '',
+      '![real](/real.png "{width=67%}")'
+    ].join('\n');
+    expect(
+      findMarkdownImageAt(nextParaCodeSpan, nextParaCodeSpan.indexOf('in-code') + 1)
+    ).toBeNull();
+    expect(
+      findMarkdownImageAt(nextParaCodeSpan, nextParaCodeSpan.indexOf('real') + 1)
+    ).toMatchObject({
+      destination: '/real.png',
+      scale: 67
+    });
+
+    // Backtick span within the same paragraph still protects the image.
+    const sameParaTicks = '`opened\n![same-para](/a.png "{width=50%}")\n`';
+    expect(
+      findMarkdownImageAt(sameParaTicks, sameParaTicks.indexOf('same-para') + 1)
+    ).toBeNull();
+
+    // CommonMark §6.3: optional whitespace (up to one line break) after `(`,
+    // between destination and title, and before `)`, rejecting blank lines.
+    const spaceAfterParen = '![alt]( https://example.com/a.png "{width=50%}")';
+    const parsedSpaceParen = parseMarkdownImageScale(spaceAfterParen);
+    expect(parsedSpaceParen).toMatchObject({
+      alt: 'alt',
+      destination: 'https://example.com/a.png',
+      destinationAngle: false,
+      scale: 50,
+      title: null
+    });
+    if (!parsedSpaceParen) throw new Error('image-scale-test-image-missing');
+    const destRepl = createMarkdownImageDestinationReplacement(
+      spaceAfterParen,
+      parsedSpaceParen,
+      'https://example.com/b.png'
+    );
+    if (!destRepl) throw new Error('image-scale-test-replacement-missing');
+    expect(
+      spaceAfterParen.slice(0, destRepl.from)
+      + destRepl.insert
+      + spaceAfterParen.slice(destRepl.to)
+    ).toBe('![alt]( https://example.com/b.png "{width=50%}")');
+
+    expect(
+      parseMarkdownImageScale('![alt]( <https://example.com/a.png> "{width=50%}")')
+    ).toMatchObject({
+      destination: 'https://example.com/a.png',
+      destinationAngle: true,
+      scale: 50,
+      title: null
+    });
+    expect(
+      parseMarkdownImageScale('![alt](\nhttps://example.com/a.png "{width=50%}")')
+    ).toMatchObject({
+      destination: 'https://example.com/a.png',
+      scale: 50
+    });
+    expect(
+      parseMarkdownImageScale('![alt](https://example.com/a.png\n"{width=50%}")')
+    ).toMatchObject({
+      destination: 'https://example.com/a.png',
+      scale: 50
+    });
+    expect(
+      parseMarkdownImageScale('![alt](https://example.com/a.png "{width=50%}"\n)')
+    ).toMatchObject({
+      destination: 'https://example.com/a.png',
+      scale: 50
+    });
+
+    for (const blankLineImage of [
+      '![alt](\n\nhttps://example.com/a.png "{width=50%}")',
+      '![alt](https://example.com/a.png\n\n"{width=50%}")',
+      '![alt](https://example.com/a.png "{width=50%}"\n\n)',
+      '![alt](https://example.com/a.png\n\n)'
+    ]) {
+      expect(parseMarkdownImageScale(blankLineImage), blankLineImage).toBeNull();
+    }
+  });
+
+  it('supports list-nested blockquote multiline titles while rejecting cross-container prefixes', () => {
+    const listBqUnscaled = '- > ![demo](/img "Caption\n  > continued")';
+    const parsedListBqUnscaled = findMarkdownImageAt(
+      listBqUnscaled,
+      listBqUnscaled.indexOf('![') + 3
+    );
+    expect(parsedListBqUnscaled).toMatchObject({
+      alt: 'demo',
+      destination: '/img',
+      scale: null,
+      title: 'Caption\n  > continued'
+    });
+    if (!parsedListBqUnscaled) throw new Error('image-scale-test-image-missing');
+    expect(() => createImageScaleReplacement(listBqUnscaled, parsedListBqUnscaled, 50)).toThrow(
+      'image-scale-syntax-invalid'
+    );
+
+    const listBqScaled = '- > ![demo](/img "Caption\n  > continued {width=50%}")';
+    const parsedListBqScaled = findMarkdownImageAt(
+      listBqScaled,
+      listBqScaled.indexOf('![') + 3
+    );
+    expect(parsedListBqScaled).toMatchObject({
+      scale: 50,
+      title: 'Caption\ncontinued',
+      titleMarkerEnd: null,
+      titleMarkerStart: null
+    });
+    if (!parsedListBqScaled) throw new Error('image-scale-test-image-missing');
+    expect(() => createImageScaleReplacement(listBqScaled, parsedListBqScaled, 67)).toThrow(
+      'image-scale-syntax-invalid'
+    );
+
+    // Ordered list, nested blockquote-list-blockquote, and tab-indented continuations.
+    for (const nestedValid of [
+      '10. > ![demo](/img "Caption\n    > continued {width=50%}")',
+      '> - > ![demo](/img "Caption\n>   > continued {width=50%}")',
+      '- - > ![demo](/img "Caption\n    > continued {width=50%}")',
+      '- > ![demo](/img "Caption\n\t> continued {width=50%}")'
+    ]) {
+      const parsed = findMarkdownImageAt(nestedValid, nestedValid.indexOf('![') + 3);
+      expect(parsed, nestedValid).toMatchObject({
+        scale: 50,
+        title: 'Caption\ncontinued',
+        titleMarkerEnd: null,
+        titleMarkerStart: null
+      });
+    }
+
+    // 10. > unscaled also blocks raw mutation across container `>`.
+    const orderedBqUnscaled = '10. > ![demo](/img "Caption\n    > continued")';
+    const parsedOrderedUnscaled = findMarkdownImageAt(
+      orderedBqUnscaled,
+      orderedBqUnscaled.indexOf('![') + 3
+    );
+    expect(parsedOrderedUnscaled).toMatchObject({ scale: null });
+    if (!parsedOrderedUnscaled) throw new Error('image-scale-test-image-missing');
+    expect(() => createImageScaleReplacement(orderedBqUnscaled, parsedOrderedUnscaled, 50)).toThrow(
+      'image-scale-syntax-invalid'
+    );
+
+    // Invalid scale marker inside list-nested blockquote throws matching PHP.
+    const listBqInvalidScale = '- > ![demo](/img "Caption\n  > {width=50%}")';
+    expect(() =>
+      findMarkdownImageAt(listBqInvalidScale, listBqInvalidScale.indexOf('![') + 3)
+    ).toThrow('image-scale-syntax-invalid');
+
+    // Cross-container or blank-line continuations are rejected (return null).
+    for (const crossContainer of [
+      '- > ![demo](/img "Caption\n> continued")',
+      '- > ![demo](/img "Caption\n > continued")',
+      '- > ![demo](/img "Caption\n  > > continued")',
+      '- > ![demo](/img "Caption\n  >\n  > continued")',
+      '- ![demo](/img "Caption\n  > not-valid")'
+    ]) {
+      expect(
+        parseMarkdownImageScale(crossContainer, crossContainer.indexOf('![')),
+        crossContainer
+      ).toBeNull();
+    }
+  });
 });

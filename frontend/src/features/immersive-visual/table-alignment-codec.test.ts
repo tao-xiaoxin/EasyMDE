@@ -331,4 +331,109 @@ describe("immersive-visual table alignment codec and prescanner parity", () => {
 			).toBe(0);
 		}
 	});
+
+	it("separates tables in tight lists when a stale alignAnnotation drops or a following block starts with a pipe", () => {
+		const marker = '<!-- easymde-table-align:v1 [[0,"center"]] -->';
+		// 1. Two tables in a tight list where Table 2 has a stale alignAnnotation
+		// that `reconcileTableAlignComment` drops after its cells match base alignment.
+		const twoTablesTight = [
+			"- Para",
+			"  | A | B |",
+			"  | --- | --- |",
+			"  | 1 | 2 |",
+			`  ${marker}`,
+			"  | C | D |",
+			"  | --- | --- |",
+			"  | 3 | 4 |",
+			"- Next",
+		].join("\n");
+		const parsedTwo = parseMarkdownToVisualDoc(twoTablesTight);
+		const list = parsedTwo.firstChild;
+		expect(list?.type.name).toBe("bullet_list");
+		expect(list?.attrs.tight).toBe(true);
+		const firstItem = list?.firstChild;
+		expect(firstItem?.childCount).toBe(3);
+		const table2 = firstItem?.child(2);
+		expect(table2?.type.name).toBe("table");
+		expect(table2?.attrs.alignAnnotation).toBe(marker);
+		if (!list || !firstItem || !table2) {
+			throw new Error("missing expected tight list tables");
+		}
+
+		// Clear Table 2 header cell alignments back to base (null) while leaving
+		// the stale `alignAnnotation` attribute on the table node.
+		const clearedHeaderCells = [];
+		for (let c = 0; c < table2.child(0).childCount; c += 1) {
+			const cell = table2.child(0).child(c);
+			clearedHeaderCells.push(
+				cell.type.create({ ...cell.attrs, textAlign: null }, cell.content),
+			);
+		}
+		const clearedTable2 = table2.type.create(table2.attrs, [
+			table2.child(0).type.create(table2.child(0).attrs, clearedHeaderCells),
+			table2.child(1),
+		]);
+		const updatedItem = firstItem.type.create(firstItem.attrs, [
+			firstItem.child(0),
+			firstItem.child(1),
+			clearedTable2,
+		]);
+		const updatedDoc = parsedTwo.type.create(parsedTwo.attrs, [
+			list.type.create(list.attrs, [updatedItem, list.child(1)]),
+		]);
+		const serializedTwo = serializeVisualDocToMarkdown(updatedDoc);
+		expect(serializedTwo).not.toContain(marker);
+		expect(serializedTwo).toContain("| 1 | 2 |\n\n  | C | D |");
+		const reparsedTwo = parseMarkdownToVisualDoc(serializedTwo);
+		expect(reparsedTwo.firstChild?.firstChild?.childCount).toBe(3);
+		expect(reparsedTwo.firstChild?.firstChild?.child(1).type.name).toBe("table");
+		expect(reparsedTwo.firstChild?.firstChild?.child(2).type.name).toBe("table");
+
+		// 2. Pipe-bearing heading (or blockquote) immediately after a table in a
+		// tight list must be separated by a blank line so PHP TableParser does not
+		// swallow it into the table.
+		const tableThenHeadingPipe = parseMarkdownToVisualDoc(
+			[
+				"- Para",
+				"  | A | B |",
+				"  | --- | --- |",
+				"  | 1 | 2 |",
+				"  # Plain heading",
+			].join("\n"),
+		);
+		const tightList = tableThenHeadingPipe.firstChild;
+		const tightItem = tightList?.firstChild;
+		expect(tightList?.attrs.tight).toBe(true);
+		expect(tightItem?.childCount).toBe(3);
+		// Plain heading without `|` stays tight.
+		expect(serializeVisualDocToMarkdown(tableThenHeadingPipe)).toContain(
+			"| 1 | 2 |\n  # Plain heading",
+		);
+		if (!tightList || !tightItem) {
+			throw new Error("missing tight list");
+		}
+		const headingNode = tightItem.child(2);
+		const pipeHeading = headingNode.type.create(
+			headingNode.attrs,
+			headingNode.type.schema.text("Heading | pipe"),
+		);
+		const pipeHeadingDoc = tableThenHeadingPipe.type.create(null, [
+			tightList.type.create(tightList.attrs, [
+				tightItem.type.create(tightItem.attrs, [
+					tightItem.child(0),
+					tightItem.child(1),
+					pipeHeading,
+				]),
+			]),
+		]);
+		const serializedPipeHeading = serializeVisualDocToMarkdown(pipeHeadingDoc);
+		expect(serializedPipeHeading).toContain("| 1 | 2 |\n\n  # Heading | pipe");
+		const reparsedPipeHeading = parseMarkdownToVisualDoc(serializedPipeHeading);
+		expect(reparsedPipeHeading.firstChild?.firstChild?.child(2).type.name).toBe(
+			"heading",
+		);
+		expect(
+			reparsedPipeHeading.firstChild?.firstChild?.child(2).textContent,
+		).toBe("Heading | pipe");
+	});
 });

@@ -69,6 +69,33 @@ export function hasMarkdownTitleBlankLine(title: string): boolean {
 }
 
 /**
+ * Decodes one CommonMark §6.2 HTML entity matching PHP
+ * `League\CommonMark\Util\Html5EntityDecoder::decode()`.
+ *
+ * Numeric references decode directly as Unicode scalar values in planes 0–2
+ * (`1..0x2FFFF`, excluding surrogates, without browser Windows-1252 remapping
+ * for `0x80..0x9F`); out-of-range, zero, or surrogate code points map to
+ * `U+FFFD`. Named entities use strict HTML5 entity decoding.
+ */
+function decodeCommonMarkHtmlEntity(entity: string): string {
+	if (!entity.startsWith("&#")) {
+		return decodeHTMLStrict(entity);
+	}
+	const isHex = entity[2] === "x" || entity[2] === "X";
+	const rawDigits = entity.slice(isHex ? 3 : 2, -1);
+	const codePoint = Number.parseInt(rawDigits, isHex ? 16 : 10);
+	if (
+		!Number.isInteger(codePoint) ||
+		codePoint <= 0 ||
+		codePoint > 0x2ffff ||
+		(codePoint >= 0xd800 && codePoint <= 0xdfff)
+	) {
+		return "\uFFFD";
+	}
+	return String.fromCodePoint(codePoint);
+}
+
+/**
  * Decodes CommonMark §2.4 backslash-escaped ASCII punctuation and strict HTML5
  * entities in a raw Markdown title body, mirroring PHP
  * `League\CommonMark\Util\RegexHelper::unescape()` 1:1 in two passes.
@@ -78,9 +105,7 @@ export function decodeCommonMarkTitle(rawTitle: string): string {
 	if (!unescaped.includes("&")) {
 		return unescaped;
 	}
-	return unescaped.replace(COMMONMARK_HTML_ENTITY, (entity: string): string =>
-		decodeHTMLStrict(entity),
-	);
+	return unescaped.replace(COMMONMARK_HTML_ENTITY, decodeCommonMarkHtmlEntity);
 }
 
 /**

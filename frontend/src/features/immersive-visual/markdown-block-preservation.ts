@@ -84,15 +84,19 @@ function isLooseList(listNode: ProseMirrorNode): boolean {
 	return false;
 }
 
-function canInterruptParagraphInTightList(
+function canInterruptPreviousInTightList(
 	node: ProseMirrorNode,
 	prev: ProseMirrorNode,
+	serialized: string,
 ): boolean {
 	const name = node.type.name;
-	if (name === "table") {
-		return prev.type.name !== "table" || Boolean(node.attrs.alignAnnotation);
+	if (prev.type.name === "table") {
+		const nl = serialized.indexOf("\n");
+		const firstLine = nl === -1 ? serialized : serialized.slice(0, nl);
+		if (firstLine.includes("|")) return false;
+		if (name === "table") return serialized.startsWith("<!-- ");
 	}
-	return name === "code_block" || name === "blockquote" || name === "heading" || name === "horizontal_rule";
+	return name === "table" || name === "code_block" || name === "blockquote" || name === "heading" || name === "horizontal_rule";
 }
 
 function serializeListItemBody(
@@ -112,21 +116,16 @@ function serializeListItemBody(
 		const child = itemNode.child(i);
 		const serialized = serializeBlock(child);
 		if (i === startIndex) {
-			// A leading non-paragraph block starts on the line after the marker
-			// (`-\n  ```js`), which keeps it inside the list item.
 			parts.push(hasPhantomParagraph ? `\n${serialized}` : serialized);
 		} else if (
 			isNestedList(child) &&
 			itemNode.child(i - 1).type.name === "paragraph"
 		) {
-			// Keep an original blank line before a nested sublist when the
-			// baseline item had one; otherwise the sublist follows directly.
-			parts.push(
-				blankBeforeNestedList ? `\n\n${serialized}` : `\n${serialized}`,
-			);
-		} else if (!loose && canInterruptParagraphInTightList(child, itemNode.child(i - 1))) {
-			// Keep a parsed tight list tight: fences, quotes, headings and rules
-			// may interrupt a paragraph, so no blank line is needed.
+			parts.push(blankBeforeNestedList ? `\n\n${serialized}` : `\n${serialized}`);
+		} else if (
+			!loose &&
+			canInterruptPreviousInTightList(child, itemNode.child(i - 1), serialized)
+		) {
 			parts.push(`\n${serialized}`);
 		} else {
 			parts.push(`\n\n${serialized}`);

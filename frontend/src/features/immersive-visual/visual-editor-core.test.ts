@@ -11,6 +11,7 @@ import { createPreservingRoundTripGuard } from "./markdown-block-preservation";
 import {
 	parseImageScaleTitle,
 	parseMarkdownToVisualDoc,
+	parseMarkdownWithBlockSources,
 } from "./markdown-parser";
 import {
 	createMarkdownRoundTripGuard,
@@ -1894,8 +1895,13 @@ describe("visual editor codec regressions", () => {
 			scale: null,
 		});
 		expect(serializeVisualDocToMarkdown(newlineLiteralDoc)).toBe(
-			'![A](/image.png "Caption {width=33%}\n")',
+			'![A](/image.png "Caption {width=33%}&#10;")',
 		);
+		expect(
+			parseMarkdownToVisualDoc(
+				serializeVisualDocToMarkdown(newlineLiteralDoc),
+			).eq(newlineLiteralDoc),
+		).toBe(true);
 
 		const trailingSpacesUnscaledDoc = parseMarkdownToVisualDoc(
 			'![A](/image.png "Caption   ")',
@@ -1969,9 +1975,17 @@ describe("visual editor codec regressions", () => {
 				]),
 			],
 		);
-		expect(serializeVisualDocToMarkdown(entityPaddedMarkerScaledDoc)).toBe(
-			'![A](/image.png "Caption {width=50%}")',
+		const entityPaddedSerialized = serializeVisualDocToMarkdown(
+			entityPaddedMarkerScaledDoc,
 		);
+		expect(entityPaddedSerialized).toBe(
+			'![A](/image.png "Caption {width=33%}&amp;#32; {width=50%}")',
+		);
+		expect(
+			parseMarkdownToVisualDoc(entityPaddedSerialized).eq(
+				entityPaddedMarkerScaledDoc,
+			),
+		).toBe(true);
 
 		// Round 14 Track B #1 / #4: preserve verbatim newlines in entity-newline
 		// titles, reject newline-separated or continuation-indented markers from
@@ -2030,9 +2044,18 @@ describe("visual editor codec regressions", () => {
 		});
 
 		for (const [title, expected] of [
-			["Caption &#123;width=51%&#125;", '![A](/image.png "Caption")'],
-			["Caption &#123;width=50%&#125;", '![A](/image.png "Caption")'],
-			["&#123;width=51%&#125;", "![A](/image.png)"],
+			[
+				"Caption &#123;width=51%&#125;",
+				'![A](/image.png "Caption &amp;#123;width=51%&amp;#125;")',
+			],
+			[
+				"Caption &#123;width=50%&#125;",
+				'![A](/image.png "Caption &amp;#123;width=50%&amp;#125;")',
+			],
+			[
+				"&#123;width=51%&#125;",
+				'![A](/image.png "&amp;#123;width=51%&amp;#125;")',
+			],
 			[String.raw`Caption \{width=51%\}`, '![A](/image.png "Caption")'],
 			["Caption {width=33%} ", '![A](/image.png "Caption {width=33%} ")'],
 		] as const) {
@@ -3033,5 +3056,223 @@ describe("PR-R15-A title line breaks and PHP two-pass image title decoding", () 
 			scale: null,
 			title: "Caption &#123;width=50%}",
 		});
+	});
+});
+
+describe("PR-R16-A title entity protection, CR/LF encoding, reference precedence, and O(N) scaling", () => {
+	it("protects literal entity-shaped tokens and encodes CR/LF unconditionally in image and link titles", () => {
+		// Editing sibling text beside an entity-newline `# second` title must never
+		// emit a raw newline that interrupts the paragraph as an ATX heading.
+		const hashTitleMd =
+			String.raw`![demo](/img "Caption\&#10;# second {width=50%}") previous`;
+		const hashGuard = createMarkdownRoundTripGuard(hashTitleMd);
+		const hashView = createEditorView(hashTitleMd);
+		hashView.dispatch(
+			hashView.state.tr.insertText("!", hashView.state.doc.content.size - 1),
+		);
+		const hashSerialized = hashGuard.serialize(hashView.state.doc);
+		expect(hashSerialized).toBe(
+			'![demo](/img "Caption&#10;# second {width=50%}") previous!',
+		);
+		expect(parseMarkdownToVisualDoc(hashSerialized).eq(hashView.state.doc)).toBe(
+			true,
+		);
+
+		// Literal entity-shaped `&` tokens survive round-trip verbatim while plain
+		// `&` (e.g. `"Tom & Jerry"`) stays unescaped.
+		const literalEntityCases = [
+			{
+				expectedSerialized: '![A](/x.png "Caption&amp;#123;width=50%}")',
+				expectedTitle: "Caption&#123;width=50%}",
+				input: String.raw`![A](/x.png "Caption\&amp;#123;width=50%}")`,
+				scale: null,
+			},
+			{
+				expectedSerialized: '![A](/x.png "Caption&amp;#10;# second")',
+				expectedTitle: "Caption&#10;# second",
+				input: '![A](/x.png "Caption&amp;#10;# second")',
+				scale: null,
+			},
+			{
+				expectedSerialized: '![A](/x.png "Tom & Jerry {width=50%}")',
+				expectedTitle: "Tom & Jerry",
+				input: '![A](/x.png "Tom & Jerry {width=50%}")',
+				scale: 50,
+			},
+			{
+				expectedSerialized:
+					'![alt](https://example.com/a.png "Line 1&#10;> Foo {width=50%}")',
+				expectedTitle: "Line 1\n> Foo",
+				input: '![alt](https://example.com/a.png "Line 1&#10;> Foo {width=50%}")',
+				scale: 50,
+			},
+			{
+				expectedSerialized:
+					'![alt](https://example.com/a.png "Line 1&#13;Line 2 {width=50%}")',
+				expectedTitle: "Line 1\rLine 2",
+				input:
+					'![alt](https://example.com/a.png "Line 1&#13;Line 2 {width=50%}")',
+				scale: 50,
+			},
+		] as const;
+
+		for (const testCase of literalEntityCases) {
+			const doc = parseMarkdownToVisualDoc(testCase.input);
+			expect(doc.firstChild?.firstChild?.attrs, testCase.input).toMatchObject({
+				scale: testCase.scale,
+				title: testCase.expectedTitle,
+			});
+			const serialized = serializeVisualDocToMarkdown(doc);
+			expect(serialized, testCase.input).toBe(testCase.expectedSerialized);
+			expect(
+				parseMarkdownToVisualDoc(serialized).eq(doc),
+				testCase.input,
+			).toBe(true);
+		}
+
+		// Link titles also protect entity-shaped `&` and encode all CR/LF.
+		for (const linkInput of [
+			'[text](https://example.com "Line 1&#10;> Foo")',
+			'[text](https://example.com "Line 1&#13;Line 2")',
+			'[text](https://example.com "Caption&amp;#10;# second")',
+			'[text](https://example.com "Tom & Jerry")',
+		]) {
+			const doc = parseMarkdownToVisualDoc(linkInput);
+			const serialized = serializeVisualDocToMarkdown(doc);
+			expect(serialized, linkInput).toBe(linkInput);
+			expect(parseMarkdownToVisualDoc(serialized).eq(doc), linkInput).toBe(
+				true,
+			);
+		}
+	});
+
+	it("decodes numeric entities in inline and reference image titles with PHP Html5EntityDecoder parity", () => {
+		const inlineDoc = parseMarkdownToVisualDoc(
+			'![a](/x.png "&#128; &#159; &#x2FFFF; &#x30000; &#xD800; {width=50%}")',
+		);
+		expect(inlineDoc.firstChild?.firstChild?.attrs).toMatchObject({
+			scale: 50,
+			title: `\u0080 \u009F ${String.fromCodePoint(0x2ffff)} \uFFFD \uFFFD`,
+		});
+
+		const refDoc = parseMarkdownToVisualDoc(
+			[
+				"![a][r]",
+				"",
+				'[r]: /x.png "&#128; &#x30000; {width=67%}"',
+			].join("\n"),
+		);
+		expect(refDoc.firstChild?.firstChild?.attrs).toMatchObject({
+			scale: 67,
+			title: "\u0080 \uFFFD",
+		});
+	});
+
+	it("handles 0-3 space next-line reference titles and CommonMark first-wins precedence across multiline fallthrough", () => {
+		// Next-line title starting at column 0 (0 leading spaces) with PHP two-pass unescaping.
+		const nextLineRef = [
+			"![alt][r]",
+			"",
+			"[r]: https://example.com/a.png",
+			String.raw`"\&amp; {width=50%}"`,
+		].join("\n");
+		const nextLineDoc = parseMarkdownToVisualDoc(nextLineRef);
+		expect(nextLineDoc.childCount).toBe(2);
+		expect(nextLineDoc.child(0).firstChild?.attrs).toMatchObject({
+			scale: 50,
+			src: "https://example.com/a.png",
+			title: "&",
+		});
+		expect(nextLineDoc.child(1).type.name).toBe("protected_block");
+
+		// A deeper blockquote line after a reference definition is never stolen as its title.
+		const bqAfterRef = [
+			"![alt][r]",
+			"",
+			"[r]: https://example.com/a.png",
+			'> "quoted paragraph"',
+		].join("\n");
+		const bqAfterRefDoc = parseMarkdownToVisualDoc(bqAfterRef);
+		expect(bqAfterRefDoc.child(0).firstChild?.attrs).toMatchObject({
+			scale: null,
+			src: "https://example.com/a.png",
+			title: null,
+		});
+		const lastBlock = bqAfterRefDoc.child(bqAfterRefDoc.childCount - 1);
+		expect(lastBlock.type.name).toBe("blockquote");
+		expect(lastBlock.textContent).toBe('"quoted paragraph"');
+
+		// First-wins precedence when an earlier multiline reference definition falls
+		// through to markdown-it and a later definition with the same label matches
+		// the prescanner.
+		const firstWinsMultiline = [
+			"![alt][r]",
+			"",
+			'[r]: https://example.com/first.png "line 1',
+			'line 2"',
+			"",
+			'[r]: https://example.com/second.png "other"',
+		].join("\n");
+		const firstWinsDoc = parseMarkdownToVisualDoc(firstWinsMultiline);
+		expect(firstWinsDoc.firstChild?.firstChild?.attrs).toMatchObject({
+			scale: null,
+			src: "https://example.com/first.png",
+			title: "line 1\nline 2",
+		});
+
+		// Same first-wins precedence when the earlier multiline title starts on the next line.
+		const firstWinsNextLineMultiline = [
+			"![alt][r]",
+			"",
+			"[r]: https://example.com/first.png",
+			String.raw`"\&amp; line 1`,
+			'line 2 {width=50%}"',
+			"",
+			'[r]: https://example.com/second.png "other"',
+		].join("\n");
+		const firstWinsNextLineDoc = parseMarkdownToVisualDoc(
+			firstWinsNextLineMultiline,
+		);
+		expect(firstWinsNextLineDoc.firstChild?.firstChild?.attrs).toMatchObject({
+			scale: 50,
+			src: "https://example.com/first.png",
+			title: "& line 1\nline 2",
+		});
+
+		// When an earlier `[r]:` line is not actually a valid reference definition,
+		// the later prescanned definition still resolves via deferredReferences.
+		const invalidThenValid = [
+			"![alt][r]",
+			"",
+			"[r]: <bad",
+			"",
+			'[r]: https://example.com/second.png "other"',
+		].join("\n");
+		const invalidThenValidDoc = parseMarkdownToVisualDoc(invalidThenValid);
+		expect(invalidThenValidDoc.firstChild?.firstChild?.attrs).toMatchObject({
+			scale: null,
+			src: "https://example.com/second.png",
+			title: "other",
+		});
+	});
+
+	it("parses 4,000 reference definitions and 4,000 paragraphs in linear time without O(N^2) overhead", () => {
+		const count = 4000;
+		const defs: string[] = [];
+		const paragraphs: string[] = [];
+		for (let i = 0; i < count; i += 1) {
+			defs.push(`[r${i}]: https://example.com/${i}.png "t${i}"`);
+			paragraphs.push(`Paragraph ${i} with [r${i}][r${i}]`);
+		}
+		const markdown = `${defs.join("\n")}\n\n${paragraphs.join("\n\n")}`;
+		expect(markdown.length).toBeGreaterThan(150_000);
+
+		const started = performance.now();
+		const parsed = parseMarkdownWithBlockSources(markdown);
+		const elapsedMs = performance.now() - started;
+
+		expect(elapsedMs).toBeLessThan(2000);
+		expect(parsed.doc.childCount).toBe(count + 1);
+		expect(firstLinkHref(parsed.doc)).toBe("https://example.com/0.png");
 	});
 });

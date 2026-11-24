@@ -702,7 +702,10 @@ export function parseMarkdownWithBlockSources(
 		tableAlignMarkers: preScan.tableAlignMarkers,
 	};
 	if (Object.keys(preScan.references).length > 0) {
-		env.references = { ...preScan.references };
+		env.references = Object.assign(Object.create(null), preScan.references);
+	}
+	if (Object.keys(preScan.deferredReferences).length > 0) {
+		env.deferredReferences = preScan.deferredReferences;
 	}
 	const tokens = markdownItParser.parse(preScan.markdown, env);
 	const mapped = mapBlockTokensWithRanges(tokens, 0, tokens.length, preScan);

@@ -48,6 +48,46 @@ describe("shared image-scale title grammar", () => {
 		).toBe("Caption {width=33%}\n {width=67%}");
 	});
 
+	it("matches PHP League\\CommonMark\\Util\\Html5EntityDecoder numeric entity decoding rules", () => {
+		// PHP mb_decode_numericentity decodes 0x80..0x9F to literal C1 code points,
+		// NOT Windows-1252 remapped characters like `€` (U+20AC) or `Ÿ` (U+0178).
+		expect(decodeCommonMarkTitle("&#128;")).toBe("\u0080");
+		expect(decodeCommonMarkTitle("&#x80;")).toBe("\u0080");
+		expect(decodeCommonMarkTitle("&#X80;")).toBe("\u0080");
+		expect(decodeCommonMarkTitle("&#159;")).toBe("\u009F");
+		expect(decodeCommonMarkTitle("&#x9f;")).toBe("\u009F");
+		expect(decodeCommonMarkTitle("&#128;")).not.toBe("€");
+		expect(decodeCommonMarkTitle("&#159;")).not.toBe("Ÿ");
+
+		// Plane 0–2 bounds (1..0x2FFFF), zero, >0x2FFFF, and surrogates.
+		expect(decodeCommonMarkTitle("&#0;")).toBe("\uFFFD");
+		expect(decodeCommonMarkTitle("&#x0;")).toBe("\uFFFD");
+		expect(decodeCommonMarkTitle("&#x00;")).toBe("\uFFFD");
+		expect(decodeCommonMarkTitle("&#x2FFFF;")).toBe(
+			String.fromCodePoint(0x2ffff),
+		);
+		expect(decodeCommonMarkTitle("&#x30000;")).toBe("\uFFFD");
+		expect(decodeCommonMarkTitle("&#x10FFFF;")).toBe("\uFFFD");
+		expect(decodeCommonMarkTitle("&#xD7FF;")).toBe("\uD7FF");
+		expect(decodeCommonMarkTitle("&#xD800;")).toBe("\uFFFD");
+		expect(decodeCommonMarkTitle("&#xDFFF;")).toBe("\uFFFD");
+		expect(decodeCommonMarkTitle("&#xE000;")).toBe("\uE000");
+
+		// Standard numeric and named entities continue to match PHP 1:1.
+		expect(decodeCommonMarkTitle("&#32;")).toBe(" ");
+		expect(decodeCommonMarkTitle("&#10;")).toBe("\n");
+		expect(decodeCommonMarkTitle("&#13;")).toBe("\r");
+		expect(decodeCommonMarkTitle("&NewLine;")).toBe("\n");
+		expect(decodeCommonMarkTitle("&amp;")).toBe("&");
+		expect(parseEffectiveImageScaleTitle("&#128; {width=50%}")).toEqual({
+			markerLength: 11,
+			markerOffset: 2,
+			scale: 50,
+			status: "valid",
+			title: "\u0080",
+		});
+	});
+
 	it("unescapes all 32 CommonMark §2.4 ASCII punctuation characters without decoding entities", () => {
 		const punctuation = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 		expect(punctuation).toHaveLength(32);

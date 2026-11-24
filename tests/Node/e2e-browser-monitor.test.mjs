@@ -271,7 +271,7 @@ test('classifyReadonlyPostRequest preserves strict admin-ajax heartbeat and comm
       }),
       { baseURL: BASE_URL }
     ),
-    { category: 'community-events', classification: 'community-events-readonly' }
+    { category: 'community-events', classification: 'community-events-maintenance' }
   );
   assert.deepEqual(
     classifyReadonlyPostRequest(
@@ -377,7 +377,7 @@ test('classifyReadonlyPostRequest preserves strict admin-ajax heartbeat and comm
       }),
       { baseURL: BASE_URL }
     ),
-    { category: 'community-events', classification: 'community-events-readonly' }
+    { category: 'community-events', classification: 'community-events-maintenance' }
   );
   assert.deepEqual(
     classifyReadonlyPostRequest(
@@ -388,7 +388,7 @@ test('classifyReadonlyPostRequest preserves strict admin-ajax heartbeat and comm
       }),
       { baseURL: BASE_URL }
     ),
-    { category: 'community-events', classification: 'community-events-readonly' }
+    { category: 'community-events', classification: 'community-events-maintenance' }
   );
 });
 
@@ -572,6 +572,8 @@ test('attachPrivacySafeBrowserMonitor stays clean on allowed WordPress navigatio
   page.emit('requestfailed', stubRequest({
     url: `${BASE_URL}/wp-json/easymde/v1/preview`,
     method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    postData: '{"markdown":"alpha"}',
     resourceType: 'fetch',
     errorText: 'net::ERR_ABORTED'
   }));
@@ -1230,22 +1232,6 @@ test('attachPrivacySafeBrowserMonitor only exempts positively-identified readonl
     errorText: 'NS_BINDING_ABORTED'
   }));
   readonlyPage.emit('requestfailed', stubRequest({
-    url: `${BASE_URL}/wp-admin/admin-ajax.php`,
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    postData: 'action=get-community-events',
-    resourceType: 'xhr',
-    errorText: 'net::ERR_ABORTED'
-  }));
-  readonlyPage.emit('requestfailed', stubRequest({
-    url: `${BASE_URL}/wp-admin/admin-ajax.php`,
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    postData: 'action=get-community-events&nonce=abc&timezone=UTC',
-    resourceType: 'xhr',
-    errorText: 'NS_BINDING_ABORTED'
-  }));
-  readonlyPage.emit('requestfailed', stubRequest({
     url: `${BASE_URL}/wp-admin/admin-ajax.php?action=dashboard-widgets&widget=dashboard_primary&pagenow=dashboard`,
     method: 'GET',
     headers: {},
@@ -1263,7 +1249,7 @@ test('attachPrivacySafeBrowserMonitor only exempts positively-identified readonl
   }));
 
   readonlyMonitor.assertClean();
-  assert.equal(readonlyMonitor.counts.abortedAdminAjax, 6);
+  assert.equal(readonlyMonitor.counts.abortedAdminAjax, 4);
   assert.equal(readonlyMonitor.counts.requestFailures, 0);
   readonlyMonitor.dispose();
 
@@ -1288,6 +1274,58 @@ test('attachPrivacySafeBrowserMonitor only exempts positively-identified readonl
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
         postData: 'action=heartbeat&data%5Bwp-refresh-post-lock%5D%5Bpost_id%5D=42',
+        resourceType: 'xhr',
+        errorText: 'NS_BINDING_ABORTED'
+      }),
+      expectedCode: 'request-failed:aborted:admin-ajax:xhr',
+      expectedResourceType: 'xhr'
+    },
+    {
+      label: 'aborted (ERR_ABORTED) bare get-community-events maintenance POST',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=get-community-events',
+        resourceType: 'xhr',
+        errorText: 'net::ERR_ABORTED'
+      }),
+      expectedCode: 'request-failed:aborted:admin-ajax:xhr',
+      expectedResourceType: 'xhr'
+    },
+    {
+      label: 'aborted (NS_BINDING_ABORTED) bare get-community-events maintenance POST',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=get-community-events',
+        resourceType: 'xhr',
+        errorText: 'NS_BINDING_ABORTED'
+      }),
+      expectedCode: 'request-failed:aborted:admin-ajax:xhr',
+      expectedResourceType: 'xhr'
+    },
+    {
+      label: 'aborted (ERR_ABORTED) timezone-only get-community-events maintenance POST',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=get-community-events&nonce=abc&timezone=UTC',
+        resourceType: 'xhr',
+        errorText: 'net::ERR_ABORTED'
+      }),
+      expectedCode: 'request-failed:aborted:admin-ajax:xhr',
+      expectedResourceType: 'xhr'
+    },
+    {
+      label: 'aborted (NS_BINDING_ABORTED) timezone-only get-community-events maintenance POST',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=get-community-events&nonce=abc&timezone=UTC',
         resourceType: 'xhr',
         errorText: 'NS_BINDING_ABORTED'
       }),
@@ -1669,6 +1707,7 @@ test('rest_route PHP key spoofing fails closed across URL classification, readon
   benignPage.emit('requestfailed', stubRequest({
     url: benignPreviewUrl,
     method: 'POST',
+    headers: { 'content-type': 'application/json' },
     postData: '{"markdown":"alpha"}',
     resourceType: 'fetch',
     errorText: 'net::ERR_ABORTED'
@@ -1677,4 +1716,234 @@ test('rest_route PHP key spoofing fails closed across URL classification, readon
   assert.equal(benignMonitor.counts.cancelledPreview, 1);
   assert.equal(benignMonitor.counts.requestFailures, 0);
   benignMonitor.dispose();
+});
+
+test('preview REST POST body override and non-JSON shapes fail closed in classification and aborted request monitoring', () => {
+  const rejectedPreviewPostCases = [
+    {
+      label: 'pretty preview POST with urlencoded rest_route body override',
+      buildRequest: (errorText) => stubRequest({
+        url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'rest_route=/wp/v2/posts&title=mutated',
+        resourceType: 'fetch',
+        errorText
+      }),
+      expectedResourceType: 'fetch'
+    },
+    {
+      label: 'pretty preview POST with urlencoded dot-normalized rest.route body override',
+      buildRequest: (errorText) => stubRequest({
+        url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+        postData: 'rest.route=/wp/v2/posts&title=mutated',
+        resourceType: 'xhr',
+        errorText
+      }),
+      expectedResourceType: 'xhr'
+    },
+    {
+      label: 'plain-permalink preview POST with urlencoded rest_route body override',
+      buildRequest: (errorText) => stubRequest({
+        url: `${BASE_URL}/?rest_route=/easymde/v1/preview`,
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'rest_route=/wp/v2/posts&title=mutated',
+        resourceType: 'fetch',
+        errorText
+      }),
+      expectedResourceType: 'fetch'
+    },
+    {
+      label: 'pretty preview POST with multipart/form-data rest_route field',
+      buildRequest: (errorText) => stubRequest({
+        url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+        method: 'POST',
+        headers: { 'content-type': 'multipart/form-data; boundary=----easymde' },
+        postData: '------easymde\r\nContent-Disposition: form-data; name="rest_route"\r\n\r\n/wp/v2/posts\r\n------easymde--',
+        resourceType: 'fetch',
+        errorText
+      }),
+      expectedResourceType: 'fetch'
+    },
+    {
+      label: 'pretty preview POST with multipart boundary spoofing application/json',
+      buildRequest: (errorText) => stubRequest({
+        url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+        method: 'POST',
+        headers: { 'content-type': 'multipart/form-data; boundary=application/json' },
+        postData: '--application/json\r\nContent-Disposition: form-data; name="rest_route"\r\n\r\n/wp/v2/posts',
+        resourceType: 'fetch',
+        errorText
+      }),
+      expectedResourceType: 'fetch'
+    },
+    {
+      label: 'pretty preview POST with text/plain content-type',
+      buildRequest: (errorText) => stubRequest({
+        url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+        method: 'POST',
+        headers: { 'content-type': 'text/plain' },
+        postData: 'rest_route=/wp/v2/posts&title=mutated',
+        resourceType: 'fetch',
+        errorText
+      }),
+      expectedResourceType: 'fetch'
+    },
+    {
+      label: 'pretty preview POST with missing content-type header',
+      buildRequest: (errorText) => stubRequest({
+        url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+        method: 'POST',
+        headers: {},
+        postData: 'rest_route=/wp/v2/posts&title=mutated',
+        resourceType: 'fetch',
+        errorText
+      }),
+      expectedResourceType: 'fetch'
+    },
+    {
+      label: 'pretty preview POST with unreadable binary body despite application/json header',
+      buildRequest: (errorText) => ({
+        ...stubRequest({
+          url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          postData: null,
+          resourceType: 'fetch',
+          errorText
+        }),
+        postDataBuffer: () => Buffer.from([0xff, 0xfe])
+      }),
+      expectedResourceType: 'fetch'
+    },
+    {
+      label: 'pretty preview POST whose postData() throws despite application/json header',
+      buildRequest: (errorText) => ({
+        ...stubRequest({
+          url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          resourceType: 'fetch',
+          errorText
+        }),
+        postData: () => {
+          throw new Error('binary-body');
+        }
+      }),
+      expectedResourceType: 'fetch'
+    },
+    {
+      label: 'pretty preview POST whose headers() throws',
+      buildRequest: (errorText) => ({
+        ...stubRequest({
+          url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+          method: 'POST',
+          postData: '{"markdown":"alpha"}',
+          resourceType: 'fetch',
+          errorText
+        }),
+        headers: () => {
+          throw new Error('headers-unavailable');
+        }
+      }),
+      expectedResourceType: 'fetch'
+    }
+  ];
+
+  for (const { label, buildRequest, expectedResourceType } of rejectedPreviewPostCases) {
+    assert.deepEqual(
+      classifyReadonlyPostRequest(buildRequest(null), { baseURL: BASE_URL }),
+      { category: 'other-rest', classification: 'unexpected-write' },
+      label
+    );
+
+    const expectedCode = `request-failed:aborted:wp-rest:${expectedResourceType}`;
+    for (const errorText of ['net::ERR_ABORTED', 'NS_BINDING_ABORTED']) {
+      const page = createStubPage();
+      const monitor = attachPrivacySafeBrowserMonitor(page, { baseURL: BASE_URL });
+
+      page.emit('requestfailed', buildRequest(errorText));
+
+      const snap = monitor.snapshot();
+      assert.equal(snap.counts.cancelledPreview, 0, `${label} (${errorText})`);
+      assert.equal(snap.counts.requestFailures, 1, `${label} (${errorText})`);
+      assert.deepEqual(
+        snap.requestFailures,
+        [{ category: 'wp-rest', resourceType: expectedResourceType, failureClass: 'aborted' }],
+        `${label} (${errorText})`
+      );
+      assert.deepEqual(snap.failures, [expectedCode], `${label} (${errorText})`);
+      assert.doesNotMatch(
+        JSON.stringify(snap),
+        /mutated|rest_route|rest\.route|v2\/posts|binary-body|headers-unavailable/u,
+        `${label} (${errorText})`
+      );
+      assert.throws(
+        () => monitor.assertClean(),
+        new RegExp(expectedCode, 'u'),
+        `${label} (${errorText})`
+      );
+      monitor.dispose();
+    }
+  }
+
+  // Plain-object inputs also require application/json and a readable body.
+  assert.deepEqual(
+    classifyReadonlyPostRequest({
+      url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+      contentType: 'application/x-www-form-urlencoded',
+      postData: 'rest_route=/wp/v2/posts&title=mutated'
+    }, { baseURL: BASE_URL }),
+    { category: 'other-rest', classification: 'unexpected-write' }
+  );
+  assert.deepEqual(
+    classifyReadonlyPostRequest({
+      url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+      contentType: 'application/json',
+      postData: '',
+      unreadableBody: true
+    }, { baseURL: BASE_URL }),
+    { category: 'other-rest', classification: 'unexpected-write' }
+  );
+
+  // Legitimate JSON preview POST requests (including charset parameters) remain accepted and abort-exempt.
+  for (const url of [
+    `${BASE_URL}/wp-json/easymde/v1/preview`,
+    `${BASE_URL}/?rest_route=/easymde/v1/preview`
+  ]) {
+    assert.deepEqual(
+      classifyReadonlyPostRequest(
+        stubRequest({
+          url,
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          postData: '{"markdown":"alpha"}'
+        }),
+        { baseURL: BASE_URL }
+      ),
+      { category: 'preview-rest', classification: 'preview-readonly' },
+      url
+    );
+
+    for (const errorText of ['net::ERR_ABORTED', 'NS_BINDING_ABORTED']) {
+      const page = createStubPage();
+      const monitor = attachPrivacySafeBrowserMonitor(page, { baseURL: BASE_URL });
+
+      page.emit('requestfailed', stubRequest({
+        url,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        postData: '{"markdown":"alpha"}',
+        resourceType: 'fetch',
+        errorText
+      }));
+
+      monitor.assertClean();
+      assert.equal(monitor.counts.cancelledPreview, 1, `${url} (${errorText})`);
+      assert.equal(monitor.counts.requestFailures, 0, `${url} (${errorText})`);
+      monitor.dispose();
+    }
+  }
 });

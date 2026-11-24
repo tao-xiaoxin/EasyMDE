@@ -2001,7 +2001,7 @@ test.describe('EasyMDE editor workflows', () => {
       postData: 'action=get-community-events'
     }, { baseURL: sampleBaseURL })).toEqual({
       category: 'community-events',
-      classification: 'community-events-readonly'
+      classification: 'community-events-maintenance'
     });
     expect(classifyReadonlyPostRequest({
       url: `${sampleBaseURL}/wp-admin/admin-ajax.php`,
@@ -2120,7 +2120,7 @@ test.describe('EasyMDE editor workflows', () => {
         previewPostCount += 1;
         return;
       }
-      if ('community-events-readonly' === classified.classification) {
+      if ('community-events-maintenance' === classified.classification) {
         communityEventsPostCount += 1;
         return;
       }

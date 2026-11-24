@@ -71,11 +71,10 @@ const READONLY_ADMIN_AJAX_GET_ACTIONS = new Set([
 ]);
 
 const READONLY_ADMIN_AJAX_POST_CLASSIFICATIONS = new Set([
-  'community-events-readonly',
   'heartbeat-readonly'
 ]);
 
-const READONLY_COMMUNITY_EVENTS_PARAM_KEYS = new Set([
+const MAINTENANCE_COMMUNITY_EVENTS_PARAM_KEYS = new Set([
   'action',
   'nonce',
   '_wpnonce',
@@ -310,9 +309,14 @@ function normalizePostRequestInput(requestOrInput) {
     } catch {
       return { invalidUrl: true };
     }
-    const headers = 'function' === typeof requestOrInput.headers
-      ? requestOrInput.headers()
-      : null;
+    let headers = null;
+    if ('function' === typeof requestOrInput.headers) {
+      try {
+        headers = requestOrInput.headers();
+      } catch {
+        headers = null;
+      }
+    }
     let postData = '';
     let unreadableBody = false;
     if ('function' === typeof requestOrInput.postData) {
@@ -355,7 +359,8 @@ function normalizePostRequestInput(requestOrInput) {
       pathname: url.pathname,
       search: url.search,
       contentType: 'string' === typeof requestOrInput.contentType ? requestOrInput.contentType : '',
-      postData: 'string' === typeof requestOrInput.postData ? requestOrInput.postData : ''
+      postData: 'string' === typeof requestOrInput.postData ? requestOrInput.postData : '',
+      unreadableBody: true === requestOrInput.unreadableBody
     };
   }
   return {
@@ -365,7 +370,8 @@ function normalizePostRequestInput(requestOrInput) {
     pathname: 'string' === typeof requestOrInput.pathname ? requestOrInput.pathname : '',
     search: 'string' === typeof requestOrInput.search ? requestOrInput.search : '',
     contentType: 'string' === typeof requestOrInput.contentType ? requestOrInput.contentType : '',
-    postData: 'string' === typeof requestOrInput.postData ? requestOrInput.postData : ''
+    postData: 'string' === typeof requestOrInput.postData ? requestOrInput.postData : '',
+    unreadableBody: true === requestOrInput.unreadableBody
   };
 }
 
@@ -451,7 +457,14 @@ export function classifyReadonlyPostRequest(requestOrInput, options = {}) {
   const { pathname, search, contentType, postData } = normalized;
   const { basePath } = baseContext;
   const queryParams = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
+  const mediaType = contentType.split(';')[0].trim().toLowerCase();
   if (isPreviewRestEndpoint(pathname, queryParams, basePath)) {
+    if (normalized.unreadableBody || 'application/json' !== mediaType) {
+      return {
+        category: 'other-rest',
+        classification: 'unexpected-write'
+      };
+    }
     return {
       category: 'preview-rest',
       classification: 'preview-readonly'
@@ -468,7 +481,6 @@ export function classifyReadonlyPostRequest(requestOrInput, options = {}) {
   const isRecord = (value) => (
     !!value && 'object' === typeof value && !Array.isArray(value)
   );
-  const mediaType = contentType.split(';')[0].trim().toLowerCase();
   if (
     normalized.unreadableBody
     || 'application/x-www-form-urlencoded' !== mediaType
@@ -501,17 +513,17 @@ export function classifyReadonlyPostRequest(requestOrInput, options = {}) {
   }
   const action = allActions[0];
   if ('get-community-events' === action) {
-    const hasOnlyReadonlyCommunityEventsParams = (params) => (
+    const hasOnlyMaintenanceCommunityEventsParams = (params) => (
       !hasAmbiguousParamKey(params, 'location')
-      && [...params.keys()].every((key) => READONLY_COMMUNITY_EVENTS_PARAM_KEYS.has(key))
+      && [...params.keys()].every((key) => MAINTENANCE_COMMUNITY_EVENTS_PARAM_KEYS.has(key))
     );
     if (
-      hasOnlyReadonlyCommunityEventsParams(queryParams)
-      && hasOnlyReadonlyCommunityEventsParams(parameters)
+      hasOnlyMaintenanceCommunityEventsParams(queryParams)
+      && hasOnlyMaintenanceCommunityEventsParams(parameters)
     ) {
       return {
         category: 'community-events',
-        classification: 'community-events-readonly'
+        classification: 'community-events-maintenance'
       };
     }
     return {
@@ -708,7 +720,7 @@ export function attachPrivacySafeBrowserMonitor(
     record(`navigation:${category}`);
   };
   const onRequestFailed = (request) => {
-    const category = classifyBrowserUrlCategory(request.url(), baseContext);
+    let category = classifyBrowserUrlCategory(request.url(), baseContext);
     const failureClass = safeBrowserFailureClass(request.failure()?.errorText);
     const rawResourceType = request.resourceType();
     const resourceType = SAFE_BROWSER_RESOURCE_TYPES.has(rawResourceType)
@@ -718,8 +730,12 @@ export function attachPrivacySafeBrowserMonitor(
       ? String(request.method()).toUpperCase()
       : '';
     if ('aborted' === failureClass && 'preview-rest' === category && 'POST' === method) {
-      counts.cancelledPreview += 1;
-      return;
+      const classified = classifyReadonlyPostRequest(request, baseContext);
+      if ('preview-readonly' === classified.classification) {
+        counts.cancelledPreview += 1;
+        return;
+      }
+      category = 'wp-rest';
     }
     if (
       'aborted' === failureClass

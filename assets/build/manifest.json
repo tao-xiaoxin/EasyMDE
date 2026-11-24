@@ -1,6 +1,6 @@
 {
-  "_admin-editor-chunk-BGT_dGz0.js": {
-    "file": "assets/admin-editor-chunk-BGT_dGz0.js",
+  "_admin-editor-chunk-DLCufj7v.js": {
+    "file": "assets/admin-editor-chunk-DLCufj7v.js",
     "name": "wechat-managed-fonts",
     "imports": [
       "_admin-editor-chunk-XWYEWrNU.js"
@@ -11,7 +11,7 @@
     "name": "shared"
   },
   "frontend/src/entrypoints/admin-editor.tsx": {
-    "file": "assets/admin-editor-ctMyUuL-.js",
+    "file": "assets/admin-editor-BuABLHiB.js",
     "name": "editor",
     "src": "frontend/src/entrypoints/admin-editor.tsx",
     "isEntry": true,
@@ -49,7 +49,7 @@
     ]
   },
   "frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx": {
-    "file": "assets/admin-editor-chunk-CscBNIwT.js",
+    "file": "assets/admin-editor-chunk-CghFs8Fg.js",
     "name": "MountedProseMirrorVisualEditor",
     "src": "frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx",
     "isDynamicEntry": true,
@@ -58,23 +58,23 @@
     ]
   },
   "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts": {
-    "file": "assets/admin-editor-chunk-DanghArK.js",
+    "file": "assets/admin-editor-chunk-Cwjxo9ih.js",
     "name": "create-browser-wechat-clipboard",
     "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts",
     "isDynamicEntry": true,
     "imports": [
       "_admin-editor-chunk-XWYEWrNU.js",
-      "_admin-editor-chunk-BGT_dGz0.js"
+      "_admin-editor-chunk-DLCufj7v.js"
     ]
   },
   "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts": {
-    "file": "assets/admin-editor-chunk-D-xkmfTl.js",
+    "file": "assets/admin-editor-chunk-4zTy5eXG.js",
     "name": "create-browser-wechat-visual-rasterizer",
     "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts",
     "isDynamicEntry": true,
     "imports": [
       "_admin-editor-chunk-XWYEWrNU.js",
-      "_admin-editor-chunk-BGT_dGz0.js"
+      "_admin-editor-chunk-DLCufj7v.js"
     ]
   },
   "node_modules/@codemirror/lang-json/dist/index.js": {

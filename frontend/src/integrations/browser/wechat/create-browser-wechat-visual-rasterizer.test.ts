@@ -446,6 +446,10 @@ describe('createBrowserWechatVisualRasterizer', () => {
     const serialized = decodeURIComponent(
       imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? '',
     );
+    const parsed = new DOMParser().parseFromString(serialized, 'text/html');
+    const outerSvgStyle = parsed.querySelector('svg')?.getAttribute('style') ?? '';
+    expect(outerSvgStyle).not.toContain('background-color');
+    expect(outerSvgStyle).not.toContain('background-image');
     expect(serialized).toContain('background-color: rgb(28, 31, 38)');
     expect(serialized).toContain('fill: rgb(80, 120, 200)');
     expect(serialized).toContain('stroke: rgb(240, 240, 240)');
@@ -454,6 +458,121 @@ describe('createBrowserWechatVisualRasterizer', () => {
     expect(serialized).not.toContain('<style');
     expect(serialized).not.toContain('<script');
     ancestor.remove();
+  });
+
+  it('prevents double-compositing of 50%-opacity Mermaid roots and backs rounded cards with the outer canvas', async () => {
+    stubCanvas();
+    const canvas = document.createElement('div');
+    canvas.className = 'easymde-immersive-preview-canvas';
+    canvas.style.backgroundColor = 'rgb(240, 240, 240)';
+    const translucentRoot = document.createElement('div');
+    translucentRoot.className = 'easymde-mermaid';
+    translucentRoot.style.backgroundColor = 'rgba(10, 20, 30, 0.5)';
+    translucentRoot.innerHTML = '<svg width="20" height="10" viewBox="0 0 20 10"><path d="M0 0"></path></svg>';
+    canvas.appendChild(translucentRoot);
+    document.body.appendChild(canvas);
+
+    const darkCanvas = document.createElement('div');
+    darkCanvas.className = 'easymde-immersive-preview-canvas';
+    darkCanvas.style.backgroundColor = 'rgb(30, 30, 46)';
+    const roundedCard = document.createElement('div');
+    roundedCard.className = 'easymde-mermaid';
+    roundedCard.style.backgroundColor = 'rgb(245, 247, 250)';
+    roundedCard.style.borderRadius = '12px';
+    roundedCard.innerHTML = '<svg width="20" height="10" viewBox="0 0 20 10"><path d="M0 0"></path></svg>';
+    darkCanvas.appendChild(roundedCard);
+    document.body.appendChild(darkCanvas);
+
+    const detachedRoot = document.createElement('div');
+    detachedRoot.className = 'easymde-mermaid';
+    detachedRoot.style.backgroundColor = 'rgba(10, 20, 30, 0.5)';
+    detachedRoot.innerHTML = '<svg width="20" height="10" viewBox="0 0 20 10"><path d="M0 0"></path></svg>';
+
+    try {
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(translucentRoot, 'mermaid', 1, 20, 10),
+      );
+      const translucentSerialized = decodeURIComponent(
+        imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? '',
+      );
+      const translucentDoc = new DOMParser().parseFromString(translucentSerialized, 'text/html');
+      const translucentOuterStyle = translucentDoc.querySelector('svg')?.getAttribute('style') ?? '';
+      const translucentCloneStyle = translucentDoc.querySelector('.easymde-mermaid')?.getAttribute('style') ?? '';
+      expect(translucentOuterStyle).toContain('background-color: rgb(240, 240, 240)');
+      expect(translucentOuterStyle).not.toContain('rgba(10, 20, 30, 0.5)');
+      expect(translucentCloneStyle).toContain('background-color: rgba(10, 20, 30, 0.5)');
+
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(roundedCard, 'mermaid', 1, 20, 10),
+      );
+      const roundedSerialized = decodeURIComponent(
+        imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? '',
+      );
+      const roundedDoc = new DOMParser().parseFromString(roundedSerialized, 'text/html');
+      const roundedOuterStyle = roundedDoc.querySelector('svg')?.getAttribute('style') ?? '';
+      const roundedCloneStyle = roundedDoc.querySelector('.easymde-mermaid')?.getAttribute('style') ?? '';
+      expect(roundedOuterStyle).toContain('background-color: rgb(30, 30, 46)');
+      expect(roundedOuterStyle).not.toContain('rgb(245, 247, 250)');
+      expect(roundedCloneStyle).toContain('background-color: rgb(245, 247, 250)');
+      expect(roundedCloneStyle).toMatch(/border-(?:top-left-)?radius:\s*12px/u);
+
+      // Explicit inheritedBackground: null must not fall back to walking the detached clone.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize({
+        height: 10,
+        inheritedBackground: null,
+        kind: 'mermaid',
+        maxPixels: 16_777_216,
+        scale: 1,
+        signal: new AbortController().signal,
+        source: detachedRoot,
+        width: 20,
+      });
+      const explicitNullSerialized = decodeURIComponent(
+        imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? '',
+      );
+      const explicitNullDoc = new DOMParser().parseFromString(explicitNullSerialized, 'text/html');
+      const explicitNullOuterStyle = explicitNullDoc.querySelector('svg')?.getAttribute('style') ?? '';
+      const explicitNullCloneStyle = explicitNullDoc.querySelector('.easymde-mermaid')?.getAttribute('style') ?? '';
+      expect(explicitNullOuterStyle).not.toContain('background-color');
+      expect(explicitNullOuterStyle).not.toContain('background-image');
+      expect(explicitNullCloneStyle).toContain('background-color: rgba(10, 20, 30, 0.5)');
+
+      // Stylesheet-derived rounded Mermaid cards also keep root paint on rootClone and canvas on outer <svg>.
+      const stylesheet = document.createElement('style');
+      stylesheet.textContent = [
+        '.styled-dark-canvas { background-color: rgb(30, 30, 46); }',
+        '.styled-dark-canvas .easymde-mermaid { background-color: rgb(245, 247, 250); border-radius: 12px; }',
+      ].join('\n');
+      document.head.appendChild(stylesheet);
+      const styledCanvas = document.createElement('div');
+      styledCanvas.className = 'easymde-immersive-preview-canvas styled-dark-canvas';
+      const styledCard = document.createElement('div');
+      styledCard.className = 'easymde-mermaid';
+      styledCard.innerHTML = '<svg width="20" height="10" viewBox="0 0 20 10"><path d="M0 0"></path></svg>';
+      styledCanvas.appendChild(styledCard);
+      document.body.appendChild(styledCanvas);
+      try {
+        await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+          request(styledCard, 'mermaid', 1, 20, 10),
+        );
+        const styledSerialized = decodeURIComponent(
+          imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? '',
+        );
+        const styledDoc = new DOMParser().parseFromString(styledSerialized, 'text/html');
+        const styledOuterStyle = styledDoc.querySelector('svg')?.getAttribute('style') ?? '';
+        const styledCloneStyle = styledDoc.querySelector('.easymde-mermaid')?.getAttribute('style') ?? '';
+        expect(styledOuterStyle).toContain('background-color: rgb(30, 30, 46)');
+        expect(styledOuterStyle).not.toContain('rgb(245, 247, 250)');
+        expect(styledCloneStyle).toContain('background-color: rgb(245, 247, 250)');
+        expect(styledCloneStyle).toMatch(/border-(?:top-left-)?radius:\s*12px/u);
+      } finally {
+        styledCanvas.remove();
+        stylesheet.remove();
+      }
+    } finally {
+      canvas.remove();
+      darkCanvas.remove();
+    }
   });
 
   it('drops the KaTeX MathML fallback and carries stylesheet-derived math geometry', async () => {

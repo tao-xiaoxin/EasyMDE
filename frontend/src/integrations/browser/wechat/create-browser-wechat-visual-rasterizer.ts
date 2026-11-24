@@ -24,6 +24,11 @@ import {
   sizeCaptureRoot,
 } from './wechat-math-capture-geometry';
 import {
+  applyMermaidBackground,
+  inlineConnectedMermaidRootPaint,
+  resolveMermaidInheritedBackground,
+} from './wechat-mermaid-background';
+import {
   assertIntrinsicMermaidCaptureRequest,
   assertResponsiveMermaidCaptureRequest,
   mermaidLayoutMagnification,
@@ -147,187 +152,6 @@ function computedStyle(
   }
 }
 
-const MERMAID_BACKGROUND_CANVAS_SELECTORS =
-  '.easymde-immersive-preview-canvas, .easymde-preview-scroll, .easymde-immersive-surface, .easymde-immersive-preview-surface';
-
-function hasVisibleBackgroundColor(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
-  if (!normalized || 'transparent' === normalized || 'none' === normalized) {
-    return false;
-  }
-  if (/^#[\da-f]{4}$/u.test(normalized)) {
-    return Number.parseInt(normalized.slice(4, 5), 16) > 0;
-  }
-  if (/^#[\da-f]{8}$/u.test(normalized)) {
-    return Number.parseInt(normalized.slice(7, 9), 16) > 0;
-  }
-  const fnMatch =
-    /^(?:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch|color)\((.*)\)$/u.exec(normalized);
-  if (!fnMatch) return true;
-  const body = fnMatch[1]?.trim() ?? '';
-  let alphaToken = '';
-  if (body.includes('/')) {
-    alphaToken = body.slice(body.lastIndexOf('/') + 1).trim();
-  } else if (/^(?:rgba?|hsla?)\(/u.test(normalized)) {
-    const components = body.split(',');
-    if (components.length >= 4) {
-      alphaToken = (components[components.length - 1] ?? '').trim();
-    }
-  }
-  if (!alphaToken) return true;
-  if ('none' === alphaToken) return false;
-  const alphaMatch = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+))(%?)$/u.exec(alphaToken);
-  if (!alphaMatch) return true;
-  const parsed = Number.parseFloat(alphaMatch[1] ?? '');
-  return Number.isFinite(parsed) ? parsed > 0 : true;
-}
-
-function hasBackgroundImage(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
-  return Boolean(
-    normalized
-    && 'none' !== normalized
-    && 'initial' !== normalized
-    && 'inherit' !== normalized
-    && 'unset' !== normalized
-  );
-}
-
-function isSafeBackgroundImage(value: string): boolean {
-  if (!hasBackgroundImage(value)) return false;
-  return !/(?:url\s*\(|image-set\s*\(|(?:^|[\s,(])image\s*\(|src\s*\(|element\s*\()/iu.test(value);
-}
-
-function readStyleProperty(
-  style: CSSStyleDeclaration,
-  property:
-    | 'background-color'
-    | 'background-image'
-    | 'background-position'
-    | 'background-repeat'
-    | 'background-size',
-  camelProperty:
-    | 'backgroundColor'
-    | 'backgroundImage'
-    | 'backgroundPosition'
-    | 'backgroundRepeat'
-    | 'backgroundSize',
-): string {
-  const viaMethod =
-    'function' === typeof style.getPropertyValue
-      ? style.getPropertyValue(property).trim()
-      : '';
-  if (viaMethod) return viaMethod;
-  const viaField = style[camelProperty];
-  return 'string' === typeof viaField ? viaField.trim() : '';
-}
-
-function readDetachedFallbackStyleProperty(
-  element: Element,
-  property:
-    | 'background-color'
-    | 'background-image'
-    | 'background-position'
-    | 'background-repeat'
-    | 'background-size',
-): string {
-  if (element.isConnected) return '';
-  const style = (element as Element & { style?: CSSStyleDeclaration }).style;
-  return style?.getPropertyValue(property).trim() ?? '';
-}
-
-function isMermaidBackgroundWalkStopBefore(element: Element, doc: Document): boolean {
-  if (
-    element === doc.body
-    || element === doc.documentElement
-    || element.hasAttribute('data-easymde-wechat-measure-host')
-  ) {
-    return true;
-  }
-  const id = element.id.trim().toLowerCase();
-  return 'wpbody' === id || 'wpwrap' === id || 'wpcontent' === id || 'wpbody-content' === id;
-}
-
-function shouldStopAfterMermaidBackgroundElement(element: Element): boolean {
-  if (!element.matches(MERMAID_BACKGROUND_CANVAS_SELECTORS)) return false;
-  return !element.parentElement?.matches(MERMAID_BACKGROUND_CANVAS_SELECTORS);
-}
-
-function readElementMermaidBackground(
-  element: Element,
-  document: Document,
-): Readonly<{
-  background: WechatVisualMermaidBackground | null;
-  hasBackground: boolean;
-}> {
-  const style = computedStyle(document, element);
-  const read = (
-    property:
-      | 'background-color'
-      | 'background-image'
-      | 'background-position'
-      | 'background-repeat'
-      | 'background-size',
-    camelProperty:
-      | 'backgroundColor'
-      | 'backgroundImage'
-      | 'backgroundPosition'
-      | 'backgroundRepeat'
-      | 'backgroundSize',
-  ): string => {
-    const computedValue = readStyleProperty(style, property, camelProperty);
-    if (computedValue) return computedValue;
-    return readDetachedFallbackStyleProperty(element, property);
-  };
-  const color = read('background-color', 'backgroundColor');
-  const image = read('background-image', 'backgroundImage');
-  const hasColor = hasVisibleBackgroundColor(color);
-  const hasImage = hasBackgroundImage(image);
-  if (!hasColor && !hasImage) {
-    return { background: null, hasBackground: false };
-  }
-  const safeImage = hasImage && isSafeBackgroundImage(image);
-  const position = safeImage ? read('background-position', 'backgroundPosition') : '';
-  const size = safeImage ? read('background-size', 'backgroundSize') : '';
-  const repeat = safeImage ? read('background-repeat', 'backgroundRepeat') : '';
-  const background: WechatVisualMermaidBackground = {
-    ...(hasColor ? { color } : {}),
-    ...(safeImage ? { image } : {}),
-    ...(safeImage && position ? { position } : {}),
-    ...(safeImage && size ? { size } : {}),
-    ...(safeImage && repeat ? { repeat } : {}),
-  };
-  return {
-    background: background.color || background.image ? background : null,
-    hasBackground: true,
-  };
-}
-
-function applyMermaidBackground(
-  svg: SVGSVGElement,
-  background: WechatVisualMermaidBackground | null | undefined,
-): void {
-  if (!background) return;
-  if ('string' === typeof background.color && hasVisibleBackgroundColor(background.color)) {
-    svg.style.setProperty('background-color', background.color);
-  }
-  // CSS gradients are self-contained and remain safe to serialize. External
-  // URLs are deliberately excluded so a copied image cannot pull in an
-  // untrusted or cross-origin resource and taint the canvas.
-  if ('string' === typeof background.image && isSafeBackgroundImage(background.image)) {
-    svg.style.setProperty('background-image', background.image);
-    if ('string' === typeof background.position && background.position.trim()) {
-      svg.style.setProperty('background-position', background.position.trim());
-    }
-    if ('string' === typeof background.size && background.size.trim()) {
-      svg.style.setProperty('background-size', background.size.trim());
-    }
-    if ('string' === typeof background.repeat && background.repeat.trim()) {
-      svg.style.setProperty('background-repeat', background.repeat.trim());
-    }
-  }
-}
-
 function inlineComputedStyles(
   original: Element,
   clone: Element,
@@ -367,22 +191,16 @@ function inlineMermaidBackground(
   source: Element,
   svg: SVGSVGElement,
   document: Document,
-  inheritedBackground?: WechatVisualMermaidBackground,
+  inheritedBackground?: WechatVisualMermaidBackground | null,
 ): void {
-  if (inheritedBackground) {
+  if (undefined !== inheritedBackground) {
     applyMermaidBackground(svg, inheritedBackground);
     return;
   }
-  let resolved: WechatVisualMermaidBackground | null = null;
-  for (let element: Element | null = source; element; element = element.parentElement) {
-    if (isMermaidBackgroundWalkStopBefore(element, document)) break;
-    const candidate = readElementMermaidBackground(element, document);
-    if (candidate.hasBackground) {
-      resolved = candidate.background;
-      break;
-    }
-    if (shouldStopAfterMermaidBackgroundElement(element)) break;
-  }
+  const resolved = resolveMermaidInheritedBackground(
+    source,
+    (element) => computedStyle(document, element),
+  );
   applyMermaidBackground(svg, resolved);
 }
 
@@ -588,6 +406,11 @@ async function serializedSvg(
       );
     }
     if ('mermaid' === request.kind) {
+      inlineConnectedMermaidRootPaint(
+        request.source,
+        rootClone,
+        (element) => computedStyle(document, element),
+      );
       inlineMermaidBackground(request.source, svg, document, request.inheritedBackground);
     }
     removeMathMlFallback(rootClone);

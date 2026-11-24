@@ -79,129 +79,7 @@ import {
 } from './wechat-capture-plan';
 import { findKaTeXMathMl } from './wechat-portable-content';
 import { replaceCompletedVisuals } from './wechat-png-replacement';
-
-const MERMAID_BACKGROUND_CANVAS_SELECTORS =
-  '.easymde-immersive-preview-canvas, .easymde-preview-scroll, .easymde-immersive-surface, .easymde-immersive-preview-surface';
-
-function hasVisibleBackgroundColor(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
-  if (!normalized || 'transparent' === normalized || 'none' === normalized) {
-    return false;
-  }
-  if (/^#[\da-f]{4}$/u.test(normalized)) {
-    return Number.parseInt(normalized.slice(4, 5), 16) > 0;
-  }
-  if (/^#[\da-f]{8}$/u.test(normalized)) {
-    return Number.parseInt(normalized.slice(7, 9), 16) > 0;
-  }
-  const fnMatch =
-    /^(?:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch|color)\((.*)\)$/u.exec(normalized);
-  if (!fnMatch) return true;
-  const body = fnMatch[1]?.trim() ?? '';
-  let alphaToken = '';
-  if (body.includes('/')) {
-    alphaToken = body.slice(body.lastIndexOf('/') + 1).trim();
-  } else if (/^(?:rgba?|hsla?)\(/u.test(normalized)) {
-    const components = body.split(',');
-    if (components.length >= 4) {
-      alphaToken = (components[components.length - 1] ?? '').trim();
-    }
-  }
-  if (!alphaToken) return true;
-  if ('none' === alphaToken) return false;
-  const alphaMatch = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+))(%?)$/u.exec(alphaToken);
-  if (!alphaMatch) return true;
-  const parsed = Number.parseFloat(alphaMatch[1] ?? '');
-  return Number.isFinite(parsed) ? parsed > 0 : true;
-}
-
-function hasBackgroundImage(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
-  return Boolean(
-    normalized &&
-      'none' !== normalized &&
-      'initial' !== normalized &&
-      'inherit' !== normalized &&
-      'unset' !== normalized
-  );
-}
-
-function isSafeBackgroundImage(value: string): boolean {
-  if (!hasBackgroundImage(value)) return false;
-  return !/(?:url\s*\(|image-set\s*\(|(?:^|[\s,(])image\s*\(|src\s*\(|element\s*\()/iu.test(value);
-}
-
-function readStyleProperty(
-  style: CSSStyleDeclaration,
-  property:
-    | 'background-color'
-    | 'background-image'
-    | 'background-position'
-    | 'background-repeat'
-    | 'background-size',
-  camelProperty:
-    | 'backgroundColor'
-    | 'backgroundImage'
-    | 'backgroundPosition'
-    | 'backgroundRepeat'
-    | 'backgroundSize'
-): string {
-  const viaMethod =
-    'function' === typeof style.getPropertyValue
-      ? style.getPropertyValue(property).trim()
-      : '';
-  if (viaMethod) return viaMethod;
-  const viaField = style[camelProperty];
-  return 'string' === typeof viaField ? viaField.trim() : '';
-}
-
-function isMermaidBackgroundWalkStopBefore(element: Element, doc: Document): boolean {
-  if (
-    element === doc.body ||
-    element === doc.documentElement ||
-    element.hasAttribute('data-easymde-wechat-measure-host')
-  ) {
-    return true;
-  }
-  const id = element.id.trim().toLowerCase();
-  return 'wpbody' === id || 'wpwrap' === id || 'wpcontent' === id || 'wpbody-content' === id;
-}
-
-function shouldStopAfterMermaidBackgroundElement(element: Element): boolean {
-  if (!element.matches(MERMAID_BACKGROUND_CANVAS_SELECTORS)) return false;
-  return !element.parentElement?.matches(MERMAID_BACKGROUND_CANVAS_SELECTORS);
-}
-
-function resolveMermaidInheritedBackground(
-  startElement: Element,
-  runtime: BrowserWechatClipboardRuntime
-): WechatVisualMermaidBackground | null {
-  const doc = startElement.ownerDocument;
-  for (let element: Element | null = startElement; element; element = element.parentElement) {
-    if (isMermaidBackgroundWalkStopBefore(element, doc)) break;
-    const computed = runtime.getComputedStyle(element);
-    const color = readStyleProperty(computed, 'background-color', 'backgroundColor');
-    const image = readStyleProperty(computed, 'background-image', 'backgroundImage');
-    const hasColor = hasVisibleBackgroundColor(color);
-    const hasImage = hasBackgroundImage(image);
-    if (hasColor || hasImage) {
-      const safeImage = hasImage && isSafeBackgroundImage(image);
-      const position = safeImage ? readStyleProperty(computed, 'background-position', 'backgroundPosition') : '';
-      const size = safeImage ? readStyleProperty(computed, 'background-size', 'backgroundSize') : '';
-      const repeat = safeImage ? readStyleProperty(computed, 'background-repeat', 'backgroundRepeat') : '';
-      const background: WechatVisualMermaidBackground = {
-        ...(hasColor ? { color } : {}),
-        ...(safeImage ? { image } : {}),
-        ...(safeImage && position ? { position } : {}),
-        ...(safeImage && size ? { size } : {}),
-        ...(safeImage && repeat ? { repeat } : {})
-      };
-      return background.color || background.image ? background : null;
-    }
-    if (shouldStopAfterMermaidBackgroundElement(element)) break;
-  }
-  return null;
-}
+import { resolveMermaidInheritedBackground } from './wechat-mermaid-background';
 
 export function nativeVisualStyleProperties(source: Element, _computed: CSSStyleDeclaration): readonly string[] {
   const layoutProperties = [
@@ -320,7 +198,6 @@ function createRasterizationRequest(
     width: plan.captureSize.width,
     ...(yieldToBrowser ? { yieldToBrowser } : {})
   };
-  const mermaidBackground = inheritedBackground ? { inheritedBackground } : {};
   switch (plan.mode) {
     case 'math-block':
       return { ...requestBase, kind: 'math', mathCapture: plan.mathCapture };
@@ -332,11 +209,11 @@ function createRasterizationRequest(
         mathCapture: plan.mathCapture,
       };
     case 'mermaid-root':
-      return { ...requestBase, ...mermaidBackground, kind: 'mermaid', layoutMagnification: plan.layoutMagnification };
+      return { ...requestBase, inheritedBackground, kind: 'mermaid', layoutMagnification: plan.layoutMagnification };
     case 'mermaid-intrinsic':
       return {
         ...requestBase,
-        ...mermaidBackground,
+        inheritedBackground,
         kind: 'mermaid',
         layoutMagnification: plan.layoutMagnification,
         mermaidCapture: 'intrinsic-viewport',
@@ -344,7 +221,7 @@ function createRasterizationRequest(
     case 'mermaid-responsive':
       return {
         ...requestBase,
-        ...mermaidBackground,
+        inheritedBackground,
         kind: 'mermaid',
         layoutMagnification: plan.layoutMagnification,
         mermaidCapture: 'responsive-viewport',
@@ -622,7 +499,10 @@ export async function replaceVisualObjects(
                 'mermaid-responsive' === plan.mode
                   ? (mermaidDirectSvg(candidate.source) ?? candidate.source)
                   : candidate.source,
-                runtime
+                (element) => runtime.getComputedStyle(element),
+                'mermaid-responsive' === plan.mode
+                  ? { directSvgCapture: true, retainedParentWrapper: true }
+                  : { directSvgCapture: false }
               )
             : null;
         failureStage = 'rasterization';

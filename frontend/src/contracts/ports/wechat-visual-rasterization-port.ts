@@ -56,8 +56,12 @@ export type WechatVisualRasterizationRequest =
       mathCapture: WechatVisualRasterizationMathCapture;
     }>)
   | (WechatVisualRasterizationRequestBase & Readonly<{
-      /** Pre-resolved ancestor theme background captured from the connected preview tree. */
-      inheritedBackground?: WechatVisualMermaidBackground;
+      /**
+       * Pre-resolved ancestor theme background captured from the connected preview tree.
+       * `null` indicates resolution completed with no outer backdrop needed; `undefined`
+       * lets the rasterizer resolve from `source` itself.
+       */
+      inheritedBackground?: WechatVisualMermaidBackground | null;
       kind: 'mermaid';
       mathCapture?: never;
     }>);

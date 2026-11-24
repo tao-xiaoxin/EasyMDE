@@ -797,6 +797,41 @@ describe("Mermaid background ancestor walk", () => {
 			expect(responsiveSvg).toContain("background-position: 0% 0%");
 			expect(responsiveSvg).toContain("background-size: 100% 100%");
 			expect(responsiveSvg).toContain("background-repeat: no-repeat");
+
+			// Clear canvas theme background inside #wpbody and verify mermaid-responsive
+			// receives explicit inheritedBackground: null without leaking body/#wpbody.
+			ImageStub.sources = [];
+			rasterizeSpy.mockClear();
+			const wpbody = document.createElement("div");
+			wpbody.id = "wpbody";
+			wpbody.style.backgroundColor = "rgb(240, 240, 241)";
+			document.body.style.backgroundColor = "rgb(240, 240, 241)";
+			canvas.style.backgroundColor = "rgba(0, 0, 0, 0)";
+			canvas.style.backgroundImage = "none";
+			wpbody.append(canvas);
+			document.body.append(wpbody);
+
+			await expect(
+				clipboard.copy(preview, pngOptions(rasterizer, uploadPort())),
+			).resolves.toEqual({ method: "clipboard", status: "copied" });
+
+			expect(rasterizeSpy).toHaveBeenCalledOnce();
+			expect(rasterizeSpy.mock.calls[0]?.[0]).toMatchObject({
+				inheritedBackground: null,
+				kind: "mermaid",
+				mermaidCapture: "responsive-viewport",
+			});
+			const noBackdropResponsiveSvg = decodedSvg(ImageStub.sources[0]);
+			expect(noBackdropResponsiveSvg).not.toContain("rgb(240, 240, 241)");
+			const noBackdropResponsiveStyle =
+				new DOMParser()
+					.parseFromString(noBackdropResponsiveSvg, "text/html")
+					.querySelector("svg")
+					?.getAttribute("style") ?? "";
+			expect(noBackdropResponsiveStyle).not.toContain("background-color");
+			expect(noBackdropResponsiveStyle).not.toContain("gradient");
+			expect(noBackdropResponsiveStyle).not.toContain("url(");
+			document.body.style.backgroundColor = "";
 		} finally {
 			if (originalGetAnimations) {
 				Object.defineProperty(document, "getAnimations", originalGetAnimations);
@@ -805,5 +840,140 @@ describe("Mermaid background ancestor walk", () => {
 					.getAnimations;
 			}
 		}
+	});
+
+	it("passes explicit inheritedBackground without double-compositing 50%-opacity or rounded Mermaid cards", async () => {
+		vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+			drawImage: vi.fn(),
+		} as unknown as CanvasRenderingContext2D);
+		vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(
+			(callback) => {
+				callback(new Blob(["png"], { type: "image/png" }));
+			},
+		);
+		const canvas = document.createElement("div");
+		canvas.className = "easymde-immersive-preview-canvas";
+		canvas.style.backgroundColor = "rgb(30, 30, 46)";
+		const translucentWrapper = document.createElement("div");
+		translucentWrapper.style.backgroundColor = "rgba(255, 255, 255, 0.04)";
+		const preview = document.createElement("article");
+		preview.className = "easymde-preview";
+		preview.setAttribute("data-easymde-preview-html-sink", "1");
+		preview.innerHTML = [
+			'<div class="easymde-mermaid" data-case="half-alpha" style="background-color: rgba(10, 20, 30, 0.5);">' +
+				'<svg width="40" height="20" viewBox="0 0 40 20"><rect width="40" height="20"></rect></svg></div>',
+			'<div class="easymde-mermaid" data-case="rounded-card" style="background-color: rgb(245, 247, 250); border-radius: 12px;">' +
+				'<svg width="40" height="20" viewBox="0 0 40 20"><rect width="40" height="20"></rect></svg></div>',
+			'<div class="easymde-mermaid" data-case="square-opaque" style="background-color: rgb(28, 31, 38);">' +
+				'<svg width="40" height="20" viewBox="0 0 40 20"><rect width="40" height="20"></rect></svg></div>',
+		].join("");
+		Object.defineProperty(preview, "innerText", {
+			configurable: true,
+			value: "Diagrams",
+		});
+		translucentWrapper.append(preview);
+		canvas.append(translucentWrapper);
+		document.body.append(canvas);
+		vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+			() =>
+				({
+					bottom: 20,
+					height: 20,
+					left: 0,
+					right: 40,
+					toJSON: () => ({}),
+					top: 0,
+					width: 40,
+					x: 0,
+					y: 0,
+				}) as DOMRect,
+		);
+
+		const rasterizer = createBrowserWechatVisualRasterizer({
+			approvedAssetBaseUrl: APPROVED_ASSET_BASE_URL,
+			approvedKaTeXCssUrl: APPROVED_KATEX_CSS_URL,
+			blob: Blob,
+			document,
+			file: File,
+			image: ImageStub as unknown as typeof Image,
+			xmlSerializer: XMLSerializer,
+		});
+		const rasterizeSpy = vi.spyOn(rasterizer, "rasterize");
+		const clipboard = createBrowserWechatClipboard({
+			approvedAssetBaseUrl: APPROVED_ASSET_BASE_URL,
+			approvedKaTeXCssUrl: APPROVED_KATEX_CSS_URL,
+			blob: Blob,
+			clipboardItem: ClipboardItemStub,
+			document,
+			getComputedStyle: computedStyle,
+			getSelection: window.getSelection.bind(window),
+			pageOffset: () => ({ x: 0, y: 0 }),
+			scrollTo: vi.fn(),
+			write: vi.fn(async () => undefined),
+		});
+
+		await expect(
+			clipboard.copy(preview, pngOptions(rasterizer, uploadPort())),
+		).resolves.toEqual({ method: "clipboard", status: "copied" });
+
+		expect(rasterizeSpy).toHaveBeenCalledTimes(3);
+		expect(rasterizeSpy.mock.calls[0]?.[0]).toMatchObject({
+			inheritedBackground: { color: "rgb(30, 30, 46)" },
+			kind: "mermaid",
+		});
+		expect(rasterizeSpy.mock.calls[1]?.[0]).toMatchObject({
+			inheritedBackground: { color: "rgb(30, 30, 46)" },
+			kind: "mermaid",
+		});
+		expect(rasterizeSpy.mock.calls[2]?.[0]).toMatchObject({
+			inheritedBackground: null,
+			kind: "mermaid",
+		});
+
+		const halfAlphaDoc = new DOMParser().parseFromString(
+			decodedSvg(ImageStub.sources[0]),
+			"text/html",
+		);
+		const halfAlphaOuterStyle =
+			halfAlphaDoc.querySelector("svg")?.getAttribute("style") ?? "";
+		const halfAlphaCloneStyle =
+			halfAlphaDoc.querySelector(".easymde-mermaid")?.getAttribute("style") ??
+			"";
+		expect(halfAlphaOuterStyle).toContain("background-color: rgb(30, 30, 46)");
+		expect(halfAlphaOuterStyle).not.toContain("rgba(10, 20, 30, 0.5)");
+		expect(halfAlphaCloneStyle).toMatch(
+			/background-color:\s*rgba\(10, 20, 30, 0\.5\)/u,
+		);
+
+		const roundedDoc = new DOMParser().parseFromString(
+			decodedSvg(ImageStub.sources[1]),
+			"text/html",
+		);
+		const roundedOuterStyle =
+			roundedDoc.querySelector("svg")?.getAttribute("style") ?? "";
+		const roundedCloneStyle =
+			roundedDoc.querySelector(".easymde-mermaid")?.getAttribute("style") ?? "";
+		expect(roundedOuterStyle).toContain("background-color: rgb(30, 30, 46)");
+		expect(roundedOuterStyle).not.toContain("rgb(245, 247, 250)");
+		expect(roundedCloneStyle).toMatch(
+			/background-color:\s*rgb\(245, 247, 250\)/u,
+		);
+		expect(roundedCloneStyle).toMatch(/border-radius:\s*12px/u);
+
+		const squareOpaqueDoc = new DOMParser().parseFromString(
+			decodedSvg(ImageStub.sources[2]),
+			"text/html",
+		);
+		const squareOpaqueOuterStyle =
+			squareOpaqueDoc.querySelector("svg")?.getAttribute("style") ?? "";
+		const squareOpaqueCloneStyle =
+			squareOpaqueDoc
+				.querySelector(".easymde-mermaid")
+				?.getAttribute("style") ?? "";
+		expect(squareOpaqueOuterStyle).not.toContain("background-color");
+		expect(squareOpaqueOuterStyle).not.toContain("background-image");
+		expect(squareOpaqueCloneStyle).toMatch(
+			/background-color:\s*rgb\(28, 31, 38\)/u,
+		);
 	});
 });

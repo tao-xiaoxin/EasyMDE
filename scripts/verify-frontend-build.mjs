@@ -56,6 +56,7 @@ const productionSpec = {
 		{ pattern: /frontend\/src/, label: "frontend source path" },
 		{ pattern: /\.at\(/, label: "post-ES2020 .at() call" },
 		{ pattern: /Object\.hasOwn\(/, label: "post-ES2020 Object.hasOwn() call" },
+		{ pattern: /\.replaceAll\(/, label: "post-ES2020 .replaceAll() call" },
 	],
 };
 const adminEditorLoaderProductionSpec = {

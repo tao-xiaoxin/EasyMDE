@@ -389,7 +389,7 @@ export function preserveCodeLineWhitespace(root: HTMLElement): void {
       node = walker.nextNode();
     }
     textNodes.forEach((textNode) => {
-      textNode.nodeValue = (textNode.nodeValue ?? '').replaceAll(' ', '\u2060 \u2060');
+      textNode.nodeValue = (textNode.nodeValue ?? '').replace(/ /g, '\u2060 \u2060');
     });
   });
 }

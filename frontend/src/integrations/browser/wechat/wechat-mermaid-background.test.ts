@@ -18,6 +18,7 @@ import {
   hasBackgroundImage,
   hasNonZeroBorderRadius,
   hasRoundedNonOpaqueBackground,
+  hasUnsafeOrImageBackgroundShorthand,
   hasVisibleBackgroundColor,
   inlineConnectedMermaidRootPaint,
   isOpaqueBackgroundColor,
@@ -281,6 +282,45 @@ describe('wechat-mermaid-background', () => {
           safeImage: '',
         }),
       ).toBe(true);
+    });
+
+    it('detects unsafe and image tokens in background shorthand via hasUnsafeOrImageBackgroundShorthand', () => {
+      for (const safe of [
+        '',
+        'none',
+        'transparent',
+        '#f8f6ef',
+        'rgb(255, 255, 255)',
+        'rgba(248, 246, 239, 0.9) none repeat scroll 0% 0%',
+      ]) {
+        expect(hasUnsafeOrImageBackgroundShorthand(safe), safe).toBe(false);
+      }
+
+      for (const unsafe of [
+        'var(--x)',
+        'rgb(255, 0, 0) var(--danger)',
+        'VAR ( --danger )',
+        'env(--x)',
+        'env(safe-area-inset-top)',
+        'u\\72l(https://evil.example/bg.png)',
+        '\\76ar(--danger)',
+        'url(https://evil.example/bg.png)',
+        'url (https://evil.example/bg.png)',
+        'gradient(linear, left top, left bottom, from(#fff), to(#000))',
+        'linear-gradient(red, blue)',
+        'radial-gradient (circle, red, blue)',
+        'repeating-conic-gradient(from 0deg, red, blue)',
+        'cross-fade("https://evil.example/bg.png", red)',
+        '-webkit-cross-fade(url(a), url(b), 50%)',
+        'image-set("a.png" 1x)',
+        'image(red)',
+        'src("https://evil.example/bg.png")',
+        'element(#foo)',
+        'paint(checkerboard)',
+        'red PAINT (worklet)',
+      ]) {
+        expect(hasUnsafeOrImageBackgroundShorthand(unsafe), unsafe).toBe(true);
+      }
     });
   });
 
@@ -1695,19 +1735,25 @@ describe('wechat-mermaid-background', () => {
       });
 
       // Rounded translucent direct <svg> with blocked url(...) still isolates its translucent fill
-      // and returns pure ancestor backdrop instead of folding the translucent fill into a square pink box.
+      // and blocks ancestor gradients, matching square direct <svg> behavior.
       const roundedTranslucentWithBlockedUrlReader = makeReader(
         new Map<Element, Readonly<Record<string, string>>>([
           [
             svg,
             {
               'background-color': 'rgba(255, 0, 0, 0.5)',
-              'background-image': 'url("https://blocked.example/bg.png")',
+              'background-image': 'url("https://evil.example/bg.png")',
               'border-radius': '12px',
               opacity: '1',
             },
           ],
-          [whiteCanvas, { 'background-color': 'rgb(255, 255, 255)', 'background-image': 'none' }],
+          [
+            whiteCanvas,
+            {
+              'background-color': 'rgb(255, 255, 255)',
+              'background-image': 'linear-gradient(green, blue)',
+            },
+          ],
         ]),
       );
       expect(
@@ -1716,6 +1762,65 @@ describe('wechat-mermaid-background', () => {
         }),
       ).toEqual({
         color: 'rgb(255, 255, 255)',
+      });
+
+      // Reduced-opacity direct <svg> carrying a blocked url(...) also blocks ancestor gradients.
+      const reducedOpacityWithBlockedUrlReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            svg,
+            {
+              'background-color': 'rgba(255, 0, 0, 0.5)',
+              'background-image': 'url("https://evil.example/bg.png")',
+              'border-radius': '0px',
+              opacity: '0.5',
+            },
+          ],
+          [
+            whiteCanvas,
+            {
+              'background-color': 'rgb(255, 255, 255)',
+              'background-image': 'linear-gradient(green, blue)',
+            },
+          ],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(svg, reducedOpacityWithBlockedUrlReader, {
+          directSvgCapture: true,
+        }),
+      ).toEqual({
+        color: 'rgb(255, 255, 255)',
+      });
+
+      // Invisible direct <svg> (opacity: 0) does not encounter its blocked url(...), preserving ancestor gradient.
+      const zeroOpacityWithBlockedUrlReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            svg,
+            {
+              'background-color': 'rgba(255, 0, 0, 0.5)',
+              'background-image': 'url("https://evil.example/bg.png")',
+              'border-radius': '12px',
+              opacity: '0',
+            },
+          ],
+          [
+            whiteCanvas,
+            {
+              'background-color': 'rgb(255, 255, 255)',
+              'background-image': 'linear-gradient(green, blue)',
+            },
+          ],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(svg, zeroOpacityWithBlockedUrlReader, {
+          directSvgCapture: true,
+        }),
+      ).toEqual({
+        color: 'rgb(255, 255, 255)',
+        image: 'linear-gradient(green, blue)',
       });
 
       // Rounded opaque direct <svg> with safe background-image still folds its own opaque color + gradient.

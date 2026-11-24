@@ -7,7 +7,10 @@ import {
   WechatPngConversionError,
 } from './wechat-png-conversion-policy';
 import { parseCssOpacity } from './wechat-css-color';
-import { hasBackgroundImage } from './wechat-mermaid-background';
+import {
+  hasBackgroundImage,
+  hasUnsafeOrImageBackgroundShorthand,
+} from './wechat-mermaid-background';
 import {
   MERMAID_RADIUS_PROPERTIES,
   type MermaidRadius,
@@ -400,14 +403,19 @@ export function mermaidRootPaintIsSafe(
   canonicalHeight: number
 ): boolean {
   const computed = runtime.getComputedStyle(source);
-  const background = computed.getPropertyValue('background').trim().toLowerCase();
-  const backgroundImage = computed.getPropertyValue('background-image').trim();
+  const detachedInlineStyle = !source.isConnected
+    ? (source as Element & { style?: CSSStyleDeclaration }).style
+    : undefined;
+  const effectiveProperty = (property: string): string =>
+    computed.getPropertyValue(property).trim() ||
+    (detachedInlineStyle?.getPropertyValue(property).trim() ?? '');
+  const background = effectiveProperty('background');
+  const backgroundImage = effectiveProperty('background-image');
   if (
     hasBackgroundImage(backgroundImage) ||
-    background.includes('\\') ||
-    /(?:url|gradient|image-set|image|src|element|paint|cross-fade)\s*\(/iu.test(background) ||
+    hasUnsafeOrImageBackgroundShorthand(background) ||
     MERMAID_DISALLOWED_PAINT_PROPERTIES.some(
-      (property) => !['', 'none'].includes(computed.getPropertyValue(property).trim().toLowerCase())
+      (property) => !['', 'none'].includes(effectiveProperty(property).toLowerCase())
     ) ||
     mermaidHasUnsafeBorder(computed, true)
   )

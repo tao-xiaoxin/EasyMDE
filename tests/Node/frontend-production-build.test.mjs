@@ -496,6 +496,7 @@ test("production build emits an ESM WordPress editor React entry with dynamic ch
 			`production editor bundle (${file}) must not contain Array.prototype.at`,
 		);
 		assert.doesNotMatch(code, /Object\.hasOwn\(/);
+		assert.doesNotMatch(code, /\.replaceAll\(/);
 	}
 	assert.equal(
 		workerReferenced,
@@ -914,6 +915,10 @@ test("production validation rejects remote URLs and absolute paths but allows si
 		[
 			'const has = Object.hasOwn({}, "a");',
 			/prohibited post-ES2020 Object\.hasOwn\(\) call/,
+		],
+		[
+			'const normalized = "a b".replaceAll(" ", "-");',
+			/prohibited post-ES2020 \.replaceAll\(\) call/,
 		],
 	]) {
 		const generatedRoot = mkdtempSync(

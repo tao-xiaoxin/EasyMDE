@@ -6,7 +6,7 @@ import { previewMeasurementWidth } from "./wechat-preview-measurement";
 import { assertTaskCheckboxCaptionRuns } from "./wechat-task-caption";
 
 export function normalizedPlainText(value: string): string {
-	return value.replaceAll("\u2060", "").replaceAll("\u00a0", " ");
+	return value.replace(/\u2060/g, "").replace(/\u00a0/g, " ");
 }
 
 const PLAIN_TEXT_MEDIA_ATTRIBUTES = ["src", "srcset", "poster"] as const;

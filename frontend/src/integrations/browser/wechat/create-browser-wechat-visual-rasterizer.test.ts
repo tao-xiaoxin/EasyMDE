@@ -11,6 +11,8 @@ import {
 import { WechatVisualRasterizationError } from '../../../contracts/ports/wechat-visual-rasterization-port';
 import { createBrowserWechatVisualRasterizer } from './create-browser-wechat-visual-rasterizer';
 import { inspectDirectSvgCapture } from './wechat-mermaid-direct-svg-backdrop';
+import { mermaidRootPaintIsSafe } from './wechat-mermaid-geometry';
+import { assertResponsiveMermaidCaptureRequest } from './wechat-rasterizer-mermaid';
 import {
   ImageStub,
   imageEvents,
@@ -2825,5 +2827,97 @@ describe('createBrowserWechatVisualRasterizer', () => {
     expect(first.file.name).toMatch(/^easymde-wechat-mermaid-[0-9a-f]{64}\.png$/);
     expect(different.file.name).toMatch(/^easymde-wechat-mermaid-[0-9a-f]{64}\.png$/);
     expect(different.file.name).not.toBe(first.file.name);
+  });
+
+  it('rejects detached SVG background shorthand var/env/escape/paint and box-shadow: transparent consistently across rasterizer and geometry', () => {
+    const detachedSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    detachedSvg.setAttribute('viewBox', '0 0 200 100');
+    detachedSvg.setAttribute('style', 'max-width: 200px; background: var(--danger)');
+    detachedSvg.innerHTML = '<rect width="200" height="100"></rect>';
+
+    const responsiveReq = request(
+      detachedSvg,
+      'mermaid',
+      1,
+      200,
+      100,
+      undefined,
+      1,
+      'responsive-viewport',
+    );
+    expect(() => assertResponsiveMermaidCaptureRequest(responsiveReq, detachedSvg)).toThrow(
+      WechatVisualRasterizationError,
+    );
+    expect(
+      mermaidRootPaintIsSafe(
+        detachedSvg,
+        {
+          blob: Blob,
+          clipboardItem: null,
+          document,
+          getComputedStyle: (element, pseudo) => window.getComputedStyle(element, pseudo ?? undefined),
+          getSelection: window.getSelection.bind(window),
+          pageOffset: () => ({ x: 0, y: 0 }),
+          scrollTo: () => undefined,
+          write: null,
+        },
+        200,
+        100,
+        200,
+        100,
+      ),
+    ).toBe(false);
+
+    // Also reject box-shadow: transparent consistently in both assertResponsiveMermaidCaptureRequest and mermaidRootPaintIsSafe.
+    const shadowSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    shadowSvg.setAttribute('viewBox', '0 0 200 100');
+    shadowSvg.setAttribute('style', 'max-width: 200px;');
+    shadowSvg.innerHTML = '<rect width="200" height="100"></rect>';
+    const originalGetComputedStyle = window.getComputedStyle.bind(window);
+    const getComputedStyleSpy = vi.spyOn(window, 'getComputedStyle').mockImplementation((element, pseudo) => {
+      const base = originalGetComputedStyle(element, pseudo ?? undefined);
+      if (element !== shadowSvg || pseudo) return base;
+      return {
+        getPropertyValue: (property: string) =>
+          'box-shadow' === property ? 'transparent' : base.getPropertyValue(property),
+      } as unknown as CSSStyleDeclaration;
+    });
+
+    try {
+      const shadowReq = request(
+        shadowSvg,
+        'mermaid',
+        1,
+        200,
+        100,
+        undefined,
+        1,
+        'responsive-viewport',
+      );
+      expect(() => assertResponsiveMermaidCaptureRequest(shadowReq, shadowSvg)).toThrow(
+        WechatVisualRasterizationError,
+      );
+      expect(
+        mermaidRootPaintIsSafe(
+          shadowSvg,
+          {
+            blob: Blob,
+            clipboardItem: null,
+            document,
+            getComputedStyle: (element, pseudo) => window.getComputedStyle(element, pseudo ?? undefined),
+            getSelection: window.getSelection.bind(window),
+            pageOffset: () => ({ x: 0, y: 0 }),
+            scrollTo: () => undefined,
+            write: null,
+          },
+          200,
+          100,
+          200,
+          100,
+        ),
+      ).toBe(false);
+    } finally {
+      getComputedStyleSpy.mockRestore();
+    }
   });
 });

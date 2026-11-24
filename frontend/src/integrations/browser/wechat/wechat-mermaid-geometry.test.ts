@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { BrowserWechatClipboardRuntime } from './wechat-clipboard-runtime';
 import { declaration, installClipboardTestEnvironment } from './wechat-clipboard-test-fixtures';
-import { mermaidAdmissionSignature } from './wechat-mermaid-geometry';
+import { mermaidAdmissionSignature, mermaidRootPaintIsSafe } from './wechat-mermaid-geometry';
 
 describe('mermaidAdmissionSignature', () => {
   installClipboardTestEnvironment();
@@ -422,5 +422,59 @@ describe('mermaidAdmissionSignature', () => {
     } finally {
       preview.remove();
     }
+  });
+
+  it('rejects unsafe background shorthands and box-shadow: transparent in mermaidRootPaintIsSafe', () => {
+    const detachedSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    detachedSvg.setAttribute('viewBox', '0 0 200 100');
+    detachedSvg.setAttribute('style', 'max-width: 200px; background: var(--danger)');
+
+    // Even when a browser returns empty computed styles for detached nodes, inline background: var(--danger) is rejected.
+    const emptyDetachedRuntime: BrowserWechatClipboardRuntime = {
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      getComputedStyle: () => declaration({}),
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: () => undefined,
+      write: null,
+    };
+    expect(mermaidRootPaintIsSafe(detachedSvg, emptyDetachedRuntime, 200, 100, 200, 100)).toBe(false);
+
+    const { root, svg, source, svgStyle } = fixture();
+    expect(mermaidRootPaintIsSafe(root, runtime(root, svg, source, svgStyle), 200, 100, 200, 100)).toBe(true);
+
+    for (const unsafeBackground of [
+      'var(--danger)',
+      'env(--danger)',
+      'u\\72l(https://evil.example/bg.png)',
+      'linear-gradient(red, blue)',
+      'cross-fade("a.png", red)',
+      'paint(worklet)',
+    ]) {
+      expect(
+        mermaidRootPaintIsSafe(
+          root,
+          runtime(root, svg, { ...source, background: unsafeBackground }, svgStyle),
+          200,
+          100,
+          200,
+          100,
+        ),
+        unsafeBackground,
+      ).toBe(false);
+    }
+
+    expect(
+      mermaidRootPaintIsSafe(
+        root,
+        runtime(root, svg, { ...source, 'box-shadow': 'transparent' }, svgStyle),
+        200,
+        100,
+        200,
+        100,
+      ),
+    ).toBe(false);
   });
 });

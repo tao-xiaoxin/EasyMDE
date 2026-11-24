@@ -130,7 +130,7 @@ function fontSourceFormat(value: string, url: string): string | null {
 }
 
 function escapeCssString(value: string): string {
-  return value.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
 function fontFamilyDescriptor(value: string): Readonly<{ css: string; key: string }> | null {

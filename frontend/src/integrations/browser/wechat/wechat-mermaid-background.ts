@@ -118,7 +118,9 @@ const BORDER_RADIUS_CORNER_PROPERTIES: ReadonlyArray<
 ];
 
 const UNSAFE_BACKGROUND_IMAGE_TOKEN_PATTERN =
-  /(?:url|image-set|src|element|(?:-webkit-)?cross-fade)\s*\(|(?:^|[^a-z0-9_-])(?:image|var|env)\s*\(/iu;
+  /(?:url|image-set|src|element|paint|(?:-webkit-)?cross-fade)\s*\(|(?:^|[^a-z0-9_-])(?:image|var|env)\s*\(/iu;
+
+const BACKGROUND_GRADIENT_TOKEN_PATTERN = /gradient\s*\(/iu;
 
 const SAFE_GRADIENT_LAYER_PATTERN =
   /^(?:-webkit-)?(?:repeating-)?(?:linear|radial|conic)-gradient\s*\([\s\S]*\)$/iu;
@@ -159,6 +161,15 @@ export function isSafeBackgroundImage(value: string): boolean {
   if (value.includes('\\')) return false;
   if (UNSAFE_BACKGROUND_IMAGE_TOKEN_PATTERN.test(value)) return false;
   return splitTopLevelCommas(value).every(isSafeGradientLayer);
+}
+
+export function hasUnsafeOrImageBackgroundShorthand(value: string): boolean {
+  if (!value) return false;
+  return (
+    value.includes('\\')
+    || UNSAFE_BACKGROUND_IMAGE_TOKEN_PATTERN.test(value)
+    || BACKGROUND_GRADIENT_TOKEN_PATTERN.test(value)
+  );
 }
 
 export type RoundedNonOpaquePaintInput = Readonly<{
@@ -586,6 +597,16 @@ export function resolveMermaidInheritedBackground(
     const initialState = createEmptyBackgroundFoldState();
     if (sourceOpacity >= 1 && !isolateRoundedNonOpaqueOwnPaint) {
       foldElementBackground(initialState, source, sourceStyle);
+    } else if (sourceOpacity > 0) {
+      const sourceImage = readEffectiveStyleProperty(
+        sourceStyle,
+        source,
+        'background-image',
+        'backgroundImage',
+      );
+      if (hasBackgroundImage(sourceImage) && !isSafeBackgroundImage(sourceImage)) {
+        initialState.blockedImageEncountered = true;
+      }
     }
     return walkMermaidAncestorBackground(
       source.parentElement,

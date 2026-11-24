@@ -526,7 +526,9 @@ The session boundary has a separate focused command:
 npm run test:frontend -- frontend/src/features/wechat-export/wechat-export-session.test.ts
 ```
 
-The browser rasterizer and Clipboard owners are partitioned into focused
+The browser Clipboard adapter, copy-orchestration, prepared-payload, portable
+serialization, style-policy, inline pseudo-paint, math static-flow and vector
+capture, visual rasterizer, and PNG encoder owners are partitioned into focused
 suites under `frontend/src/integrations/browser/wechat/`; one command runs
 every owner suite together:
 
@@ -1021,21 +1023,48 @@ and restores the Settings Center editing mode after both normal and CDP hard
 reloads. It loads no Legacy Focus assets and remains zero-write until the user
 invokes a legitimate WordPress mutation.
 
-The Playwright E2E suites are organized into domain-focused directories under
-`tests/e2e/`:
+The Playwright E2E suites are organized into domain-focused directories and
+focused standalone specs under `tests/e2e/`:
 
-- `tests/e2e/ordinary/`: ordinary split editor, toolbar/bridge, themes and
-  appearance, publishing/revisions/WeChat export, and performance budgets.
+- `tests/e2e/ordinary/`:
+  - `tests/e2e/ordinary/editor-core-and-bridge.spec.mjs`: ordinary split
+    editor, toolbar commands, native bridge, local drafts, and the integrated
+    immersive mobile header/toolbar/outline, long-title breakpoint, and
+    intermediate-width split-plus-outline layout regressions;
+  - `tests/e2e/ordinary/themes-and-appearance.spec.mjs`: registered article
+    and code themes, Custom CSS scoping, ordinary settings popover, and the
+    integrated Crimson Focus native task-marker layout regressions;
+  - `tests/e2e/ordinary/publishing-revisions-and-export.spec.mjs`: immersive
+    publishing, excerpts, autosaves, native revisions, local preview
+    enhancements/WeChat export, and the integrated published full-capability
+    Gantt intrinsic local-scroll width regression;
+  - `tests/e2e/ordinary/performance-budgets.spec.mjs`: near-threshold
+    edit-phase Long Task budget and unified ProseMirror large-document
+    `@performance` suites.
 - `tests/e2e/visual/`: unified ProseMirror immersive visual editing suites
-  (`prosemirror-core-editing.spec.mjs`, `prosemirror-rich-blocks.spec.mjs`) and
-  preview-monitor contract checks (`monitor-contracts.spec.mjs`).
+  (`tests/e2e/visual/prosemirror-core-editing.spec.mjs`,
+  `tests/e2e/visual/prosemirror-rich-blocks.spec.mjs`) and preview-monitor
+  contract checks (`tests/e2e/visual/monitor-contracts.spec.mjs`).
 - `tests/e2e/settings-center/`: Settings Center domain suites
-  (`first-paint-and-resilience.spec.mjs`, `navigation-and-search.spec.mjs`,
-  `layout-and-sections.spec.mjs`, `image-hosting-and-uploads.spec.mjs`, and
-  `shortcuts-and-remote-import.spec.mjs`).
+  (`tests/e2e/settings-center/first-paint-and-resilience.spec.mjs`,
+  `tests/e2e/settings-center/navigation-and-search.spec.mjs`,
+  `tests/e2e/settings-center/layout-and-sections.spec.mjs`,
+  `tests/e2e/settings-center/image-hosting-and-uploads.spec.mjs`, and
+  `tests/e2e/settings-center/shortcuts-and-remote-import.spec.mjs`).
 - `tests/e2e/context-menu/`: shared context-menu suites across Source and
-  immersive visual surfaces.
+  immersive visual surfaces
+  (`tests/e2e/context-menu/image-export-and-probes.spec.mjs`,
+  `tests/e2e/context-menu/source-menu-and-media.spec.mjs`,
+  `tests/e2e/context-menu/table-link-and-code-menu.spec.mjs`, and
+  `tests/e2e/context-menu/visual-menu-and-thematic-breaks.spec.mjs`).
+- WeChat export and task-context suites: `tests/e2e/wechat-copy.spec.mjs`,
+  `tests/e2e/wechat-task-marker-pixel.spec.mjs`,
+  `tests/e2e/wechat-task-context.spec.mjs`,
+  `tests/e2e/wechat-task-context/source-only-cdp-cpu-contracts.spec.mjs`, and
+  the opt-in local diagnostic suite
+  `tests/e2e/wechat-copy-performance.spec.mjs`.
 - Standalone suites: `tests/e2e/inkwell.spec.mjs`,
+  `tests/e2e/phycat-task-layout.spec.mjs`,
   `tests/e2e/theme-layout-audit.spec.mjs`, and
   `tests/e2e/immersive-unlock-latency.spec.mjs`.
 

@@ -73,8 +73,11 @@ Legacy admin Browser Runtime files and Focus Mode assets have no ordinary
 Editor consumer and are excluded from the release package. Historical data and
 public PHP compatibility contracts remain preserved as described below.
 
-The ordinary Editor startup stylesheet transaction is owned by
-`frontend/src/entrypoints/admin-editor.tsx`. It waits for the base content
+The ordinary Editor startup stylesheet transaction is coordinated by
+`frontend/src/entrypoints/admin-editor.tsx` via
+`frontend/src/entrypoints/admin-editor-stylesheets.ts`
+(`prepareInitialEditorStylesheets`, `scopeBaseEditorStylesheet`, and
+`disposeStylesheetLeases`). It waits for the base content
 stylesheet and the selected article-theme stylesheet through
 `createEditorStylesheetReadiness`; a changed article theme remains an inactive
 candidate until it is readable and scoped. The preparation lease moves through
@@ -277,8 +280,17 @@ partial, unknown, or later blank frames fail. A reload that emits no
 distinguishable new frame is accepted only when the visible Settings pixels
 before and after are exactly equal across the complete analysis.
 
-The entrypoint parses external data before mounting, constructs focused
-WordPress and browser Adapters, mounts one modular `EditorRoot` (`frontend/src/app/editor/EditorRoot.tsx` composed from focused feature-bridge hooks and `ImmersiveVisualEditorHost.tsx`), and owns idempotent
+The `frontend/src/entrypoints/admin-editor.tsx` entrypoint parses external data
+before mounting, delegates startup stylesheet transactions to
+`frontend/src/entrypoints/admin-editor-stylesheets.ts` and DOM field discovery,
+native Save/Publish/Revision bridges, clipboard and PNG-encoder runtime helpers,
+and simplified formatting parsing to
+`frontend/src/entrypoints/admin-editor-browser-adapters.ts`, constructs focused
+WordPress and browser Adapters (reading cached Preview widths directly from
+`frontend/src/integrations/browser/wechat/wechat-preview-width-store.ts` so the
+WeChat export chunk remains dynamically code-split), mounts one modular
+`EditorRoot` (`frontend/src/app/editor/EditorRoot.tsx` composed from focused
+feature-bridge hooks and `ImmersiveVisualEditorHost.tsx`), and owns idempotent
 teardown. The Root composes Toolbar/commands, CodeMirror document and title
 sessions, the modular read-only `PreviewSurfaceOwner` (`frontend/src/features/live-preview/ui/`, with dormant windowed/editable-adoption layers retired) and local post-response enhancements, the modular immersive editor (`frontend/src/features/immersive-editor/`: `immersive-document-derivations.ts` for bounded streaming document statistics and heading-outline scanning, `immersive-publish-excerpt.ts` for Lezer-tree plain-text publish-excerpt derivation, `ui/use-immersive-document-derivations.ts` for debounced/sliced React outline and stats scheduling, `ui/ImmersiveHistoryDialog.tsx` for the revision history modal delegating restore to WordPress, plus `ImmersiveCustomCssDialog` and `ImmersivePublishDialog` lazily loaded as separate ESM chunks), Appearance and
 Custom CSS, Fonts, Media and image upload, Local Drafts, the modular WeChat export pipeline (`frontend/src/integrations/browser/wechat/`),
@@ -357,10 +369,13 @@ themes applies identically to formal Preview.
   Preview without making ProseMirror a persistence or formal rendering
   authority. When the formal Preview sink is hidden (`easymde-preview-surface-hidden`
   while unlocked, or hidden `.easymde-pane-preview` in source modes),
-  `frontend/src/integrations/browser/wechat/wechat-payload-serializer.ts`
-  serializes and measures from a temporary off-screen layout-participating clone
-  of the formal Preview sink (reading only container width, never ProseMirror
-  DOM) and removes it in `finally`.
+  `frontend/src/integrations/browser/wechat/wechat-preview-measurement.ts`
+  (backed by `frontend/src/integrations/browser/wechat/wechat-preview-width-store.ts`)
+  mounts a temporary off-screen layout-participating clone of the formal Preview
+  sink (reading only container width, never ProseMirror DOM) and removes it in
+  `finally`, while
+  `frontend/src/integrations/browser/wechat/wechat-portable-serialization.ts`
+  serializes the measured clone.
 React neither submits a closed field allowlist nor treats synchronization as a
 successful Save, so unknown WordPress and extension fields remain intact.
 
@@ -744,20 +759,82 @@ Local Draft recovery uses the versioned `easymde:draft:v1:<site>:<user>:<post-or
 
 WeChat export is user-initiated compatibility output from the current stable, sanitized, locally enhanced Preview. `createWechatExportSession` owns the ordinary and immersive surfaces, and `createBrowserWechatClipboard` owns the browser Clipboard adapter and its single clone-and-serialize pipeline; the data flow is Preview sink -> session -> adapter -> browser Clipboard path. When the formal Preview sink is under `display:none` (hidden by `easymde-preview-surface-hidden` during unlocked ProseMirror visual editing or by source-only modes), `wechat-preview-measurement.ts` mounts an off-screen, layout-participating clone of that formal Preview sink with its ancestor chain—reading only container width (from the visible ProseMirror surface or remembered width, never ProseMirror DOM)—and disposes it on transaction cleanup. Copy never writes Markdown, `post_content`, metadata, revisions, or publication state. The session coalesces one active operation, signals cancellation and sequence-invalidates it during disposal or replacement, and suppresses late status. `EditorRoot` projects that operation to both ordinary and immersive controls, which share one pending state and clear it only after the session returns the browser owner's result.
 Under `frontend/src/integrations/browser/wechat/`, both adapters stay
-composition owners: `create-browser-wechat-clipboard.ts` keeps the public
-surface, the activation-sensitive legacy driver, and browser commit, while
+composition owners: `create-browser-wechat-clipboard.ts` owns the public
+`WechatClipboardPort` factory and shared caches while delegating copy
+orchestration to `wechat-clipboard-copy-transaction.ts` (modern deferred-Blob
+browser commit, timeouts, and Preview readiness resolution),
+`wechat-clipboard-copy-portable.ts` (portable Copy transactions),
+`wechat-clipboard-copy-png.ts` (PNG-conversion Copy transactions), and
+`wechat-clipboard-copy-legacy.ts` (the activation-sensitive synchronous legacy
+`execCommand` driver and synchronous modern-failure fallback), while
 `create-browser-wechat-visual-rasterizer.ts` keeps SVG assembly, decode,
-encode, and its factory. The browser-facing responsibilities live in private
-modules beside them: clone metadata and source freshness; style policy and
-portable declaration emission; background theme images; pseudo elements;
-portable content and serialization; task caption, layout policy, geometry,
-paint, and static flow; list and table layout; preview measurement; dimension
-semantics; fidelity signatures; prepared-payload lifecycle; Mermaid geometry,
-capture plans, and the PNG conversion policy, transaction, and replacement;
-managed font discovery and font assets; Mermaid capture validation and math
-capture geometry; atlas-backed math scene capture, portable binding, and scene
-materialization; and the shared CSS-list and CSS-declaration scanner with the
-UserTiming helpers. Their focused suites are partitioned the same way.
+encode (with `create-browser-wechat-png-encoder.ts`,
+`wechat-png-encoder-protocol.ts`, and `wechat-png-encoder.worker.ts`), and its
+factory. The browser-facing responsibilities live in modular private families
+beside them:
+
+- clone metadata (`wechat-clone-metadata.ts`) and source freshness
+  (`wechat-source-freshness.ts`);
+- style policy (`wechat-style-policy.ts`, `wechat-style-policy-catalog.ts`,
+  `wechat-style-policy-content-box.ts`, `wechat-style-policy-semantics.ts`) and
+  portable declaration emission (`wechat-style-declarations.ts`);
+- background theme images (`wechat-background-images.ts`), pseudo-elements and
+  quote pseudo-flow (`wechat-pseudo-content.ts`, `wechat-pseudo-elements.ts`,
+  `wechat-quote-pseudo-flow.ts`), and the inline pseudo-paint pipeline
+  (`wechat-inline-pseudo-paint.ts` over `wechat-inline-pseudo-paint-types.ts`,
+  `wechat-inline-pseudo-paint-core.ts`,
+  `wechat-inline-pseudo-paint-admission.ts`,
+  `wechat-inline-pseudo-paint-source.ts`,
+  `wechat-inline-pseudo-paint-plan.ts`, `wechat-inline-pseudo-paint-bind.ts`,
+  and `wechat-inline-pseudo-paint-apply.ts`);
+- portable content and media (`wechat-portable-content.ts`,
+  `wechat-portable-media.ts`) and portable serialization
+  (`wechat-portable-serialization.ts` composed with
+  `wechat-portable-serialization-inline-styles.ts`,
+  `wechat-portable-serialization-math.ts`,
+  `wechat-portable-serialization-pseudo-paint.ts`,
+  `wechat-portable-serialization-finalize.ts`, and
+  `wechat-portable-serialization-plaintext.ts`);
+- prepared-payload lifecycle (`wechat-prepared-payload.ts` composed with
+  `wechat-prepared-payload-state.ts`, `wechat-prepared-payload-builder.ts`, and
+  `wechat-prepared-payload-background.ts`);
+- preview measurement and geometry caching (`wechat-preview-measurement.ts`,
+  `wechat-preview-geometry-cache.ts`, and the lightweight
+  `wechat-preview-width-store.ts`), dimension semantics
+  (`wechat-dimension-semantics.ts`), and fidelity signatures
+  (`wechat-fidelity-signature.ts`);
+- task caption, checkbox style, layout policy, geometry, paint, list
+  projection, and static flow (`wechat-task-caption.ts`,
+  `wechat-task-checkbox-style.ts`, `wechat-task-layout-policy.ts`,
+  `wechat-task-geometry.ts`, `wechat-task-paint.ts`,
+  `wechat-task-list-projection.ts`, `wechat-task-static-flow.ts`,
+  `wechat-task-static-flow-policy.ts`,
+  `wechat-task-static-flow-projection.ts`), nested lists and native table grids
+  (`wechat-list-table-layout.ts`, `wechat-nested-list-projection.ts`,
+  `wechat-table-native-grid.ts`, `wechat-table-native-grid-integration.ts`), and
+  SVG markers (`wechat-svg-marker-geometry.ts`,
+  `wechat-svg-marker-projection.ts`, `wechat-svg-portable-integration.ts`);
+- math static-flow (`wechat-math-static-flow.ts` composed with
+  `wechat-math-static-flow-model.ts`, `wechat-math-static-flow-admission.ts`,
+  and `wechat-math-static-flow-capture.ts`) and atlas-backed math vector
+  capture, portable binding, and scene materialization
+  (`wechat-math-vector-capture.ts` composed with
+  `wechat-math-vector-capture-primitives.ts`,
+  `wechat-math-vector-capture-fonts.ts`,
+  `wechat-math-vector-capture-graphics.ts`, and
+  `wechat-math-vector-capture-layout.ts`, alongside
+  `wechat-math-vector-portable.ts` and `wechat-math-vector-scene.ts`);
+- Mermaid geometry, content-box, policy, capture plans, and PNG conversion
+  (`wechat-mermaid-geometry.ts`, `wechat-mermaid-content-box.ts`,
+  `wechat-mermaid-policy.ts`, `wechat-capture-plan.ts`,
+  `wechat-png-conversion-policy.ts`, `wechat-png-conversion.ts`,
+  `wechat-png-replacement.ts`, `wechat-rasterizer-mermaid.ts`), managed fonts
+  (`wechat-managed-fonts.ts`, `wechat-font-assets.ts`), math capture geometry
+  (`wechat-math-capture-geometry.ts`), CSS scanning (`wechat-css-list.ts`,
+  `wechat-css-property-reader.ts`), and runtime/UserTiming helpers
+  (`wechat-clipboard-runtime.ts`, `wechat-copy-timing.ts`, `wechat-timing.ts`).
+
+Their focused Vitest suites are partitioned the same way.
 Native table-grid admission and application preserve the existing scroll owner
 while correcting only the final table display. Table inputs also participate in
 prepared fidelity checks and the existing transaction's final Source guard;
@@ -1392,7 +1469,7 @@ formal PHP renderer and serialized by the shared visual/source contract; the
 original alt text, destination, and non-marker title remain part of the same
 image syntax. Unsupported, repeated, or malformed markers fail explicitly.
 The renderer emits `data-easymde-image-scale` only for those validated values.
-Shared `frontend/base.css`, loaded in both editor and public output, applies
+Shared `assets/css/frontend/base.css`, loaded in both editor and public output, applies
 the exact percentage up to 100%, and caps 150% and 200% at `max-width: 100%` so
 rendered output is capped by containing content width with no horizontal overflow,
 while preserving canonical scale markers. Unmarked images retain the theme's
@@ -1412,14 +1489,14 @@ Rendering behavior:
 If Composer dependencies are missing, EasyMDE shows an admin notice, preview requests return a REST error, and save/frontend paths avoid generating fallback HTML.
 
 `frontend/src/features/live-preview/ui/SafePreviewHtmlSink.tsx` is the sole
-client sink for accepted Preview HTML. It applies plain, staged, windowed, and
-materialization commits while preserving protected nodes and the prior verified
-surface snapshot. `PreviewSurfaceOwner` reacquires rendered SVG stylesheet scope
-synchronously after each DOM mutation and releases the previous lease only
-after the replacement lease is ready. A mutation failure restores the prior
-verified view when possible; an unverified rollback clears the sink, discards
-pending enhancement/window/materialization state, and reports the primary and
-rollback failures without publishing `ready`.
+client sink for accepted Preview HTML. It applies plain HTML and staged-node
+commits while preserving the prior verified surface snapshot.
+`PreviewSurfaceOwner` reacquires rendered SVG stylesheet scope synchronously
+after each DOM mutation and releases the previous lease only after the
+replacement lease is ready. A mutation failure restores the prior verified view
+when possible; an unverified rollback clears the sink, discards pending
+enhancement and staged-commit state, and reports the primary and rollback
+failures without publishing `ready`.
 
 ## Revisions
 

@@ -9,6 +9,7 @@ import type {
 import type {
 	EditorContextMenuDemandController
 } from "./editor-context-menu-demand";
+import { editorContextMenuScrollMoved } from "./editor-context-menu-scroll";
 
 function eventTargetInside(event: Event, element: HTMLElement): boolean {
 	return event.target instanceof Node && element.contains(event.target);
@@ -317,7 +318,22 @@ export function useEditorContextMenuActivation(input: Readonly<{
 			}
 			if ("Tab" === event.key) cancelPending();
 		};
-		const handleScroll = (): void => cancelPending();
+		const handleScroll = (event: Event): void => {
+			const pending = readPending();
+			if (!pending) return;
+			const baseline = pending.state.scrollBaseline;
+			const windowRef = pending.surface.element.ownerDocument.defaultView;
+			if (
+				!baseline
+				|| !windowRef
+				|| editorContextMenuScrollMoved(
+					event,
+					baseline,
+					pending.surface.element.ownerDocument,
+					windowRef
+				)
+			) cancelPending();
+		};
 		ownerDocument.addEventListener("pointerdown", handlePointer, true);
 		ownerDocument.addEventListener("pointerdown", handlePointerDown, true);
 		ownerDocument.addEventListener("mousedown", handlePointerDown, true);
@@ -333,4 +349,5 @@ export function useEditorContextMenuActivation(input: Readonly<{
 			windowRef.removeEventListener("scroll", handleScroll, true);
 		};
 	}, [cancelPending, readOpen, readPending, source?.element, visual?.element]);
+
 }

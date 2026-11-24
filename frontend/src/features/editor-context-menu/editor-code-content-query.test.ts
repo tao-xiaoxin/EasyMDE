@@ -6,7 +6,7 @@ import type {
   SafePreviewHtml
 } from '../../contracts/ports/preview-request';
 import {
-  createEditorMarkdownBlockIndex
+  createEditorMarkdownBlockIndex as createProfiledMarkdownBlockIndex
 } from './editor-markdown-block-index';
 import {
   findEditorCodeContentTarget
@@ -271,3 +271,7 @@ describe('createEditorCodeContentQuery', () => {
     session.dispose();
   });
 });
+
+function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {
+  return createProfiledMarkdownBlockIndex(source, options);
+}

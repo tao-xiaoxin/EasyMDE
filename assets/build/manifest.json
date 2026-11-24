@@ -1,8 +1,107 @@
 {
+  "_admin-editor-chunk-CxmAbEL3.js": {
+    "file": "assets/admin-editor-chunk-CxmAbEL3.js",
+    "name": "shared"
+  },
   "frontend/src/entrypoints/admin-editor.tsx": {
-    "file": "assets/admin-editor-CxdyzfXf.js",
+    "file": "assets/admin-editor-BYdNg8QO.js",
     "name": "editor",
     "src": "frontend/src/entrypoints/admin-editor.tsx",
-    "isEntry": true
+    "isEntry": true,
+    "imports": [
+      "_admin-editor-chunk-CxmAbEL3.js"
+    ],
+    "dynamicImports": [
+      "frontend/src/features/appearance/ui/ImmersiveCustomCssDialog.tsx",
+      "frontend/src/features/immersive-editor/ui/ImmersivePublishDialog.tsx",
+      "frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx",
+      "node_modules/@codemirror/lang-json/dist/index.js",
+      "node_modules/@codemirror/lang-python/dist/index.js",
+      "node_modules/@codemirror/lang-sql/dist/index.js",
+      "node_modules/@codemirror/lang-yaml/dist/index.js",
+      "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts",
+      "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts"
+    ]
+  },
+  "frontend/src/features/appearance/ui/ImmersiveCustomCssDialog.tsx": {
+    "file": "assets/admin-editor-chunk-Br5nUNIU.js",
+    "name": "ImmersiveCustomCssDialog",
+    "src": "frontend/src/features/appearance/ui/ImmersiveCustomCssDialog.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_admin-editor-chunk-CxmAbEL3.js"
+    ]
+  },
+  "frontend/src/features/immersive-editor/ui/ImmersivePublishDialog.tsx": {
+    "file": "assets/admin-editor-chunk-BS5AzMJg.js",
+    "name": "ImmersivePublishDialog",
+    "src": "frontend/src/features/immersive-editor/ui/ImmersivePublishDialog.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_admin-editor-chunk-CxmAbEL3.js"
+    ]
+  },
+  "frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx": {
+    "file": "assets/admin-editor-chunk-yyk5sZ9d.js",
+    "name": "MountedProseMirrorVisualEditor",
+    "src": "frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_admin-editor-chunk-CxmAbEL3.js"
+    ]
+  },
+  "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts": {
+    "file": "assets/admin-editor-chunk-D39L3d6L.js",
+    "name": "create-browser-wechat-clipboard",
+    "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_admin-editor-chunk-CxmAbEL3.js"
+    ]
+  },
+  "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts": {
+    "file": "assets/admin-editor-chunk-Dk-U64iI.js",
+    "name": "create-browser-wechat-visual-rasterizer",
+    "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_admin-editor-chunk-CxmAbEL3.js"
+    ]
+  },
+  "node_modules/@codemirror/lang-json/dist/index.js": {
+    "file": "assets/admin-editor-chunk-BF7Li0xl.js",
+    "name": "dist",
+    "src": "node_modules/@codemirror/lang-json/dist/index.js",
+    "isDynamicEntry": true,
+    "imports": [
+      "_admin-editor-chunk-CxmAbEL3.js"
+    ]
+  },
+  "node_modules/@codemirror/lang-python/dist/index.js": {
+    "file": "assets/admin-editor-chunk-CgXwW-3d.js",
+    "name": "dist",
+    "src": "node_modules/@codemirror/lang-python/dist/index.js",
+    "isDynamicEntry": true,
+    "imports": [
+      "_admin-editor-chunk-CxmAbEL3.js"
+    ]
+  },
+  "node_modules/@codemirror/lang-sql/dist/index.js": {
+    "file": "assets/admin-editor-chunk-B15qTCiO.js",
+    "name": "dist",
+    "src": "node_modules/@codemirror/lang-sql/dist/index.js",
+    "isDynamicEntry": true,
+    "imports": [
+      "_admin-editor-chunk-CxmAbEL3.js"
+    ]
+  },
+  "node_modules/@codemirror/lang-yaml/dist/index.js": {
+    "file": "assets/admin-editor-chunk-y3sMC2-n.js",
+    "name": "dist",
+    "src": "node_modules/@codemirror/lang-yaml/dist/index.js",
+    "isDynamicEntry": true,
+    "imports": [
+      "_admin-editor-chunk-CxmAbEL3.js"
+    ]
   }
 }

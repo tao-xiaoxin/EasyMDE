@@ -83,6 +83,26 @@ requirements. Update that manifest and `package-lock.json` together; run
 committing an asset change. Do not add a CDN or remote fallback for these
 redistributable static assets.
 
+The [reference case-fold data](../frontend/src/features/editor-context-menu/reference-case-fold-data.ts)
+is a repository build input compiled into the editor and block-index worker.
+Normal builds use this local data without fetching or regenerating it. For an
+intentional data change, the [generator](../scripts/generate-reference-case-fold.mjs)
+fetches its five exact pinned Unicode Character Database inputs and verifies
+their SHA-256 checksums and mapping counts before writing:
+
+```bash
+node scripts/generate-reference-case-fold.mjs --write
+```
+
+To compare the committed data with those verified upstream inputs without
+writing it, run `node scripts/generate-reference-case-fold.mjs --check`. Both
+commands require network access. The generator owns the input versions and
+checksums; include the regenerated data in the change. The
+[third-party notices](../THIRD-PARTY-NOTICES.md) include the Unicode license
+from its [maintained source](../scripts/vendor-licenses/unicode-LICENSE).
+The reference-label folding profile is a read-only PHP environment capability,
+not a user setting; see [Architecture](ARCHITECTURE.md) for editor architecture.
+
 Do not commit `node_modules/`, `vendor/`, `dist/`, local logs, caches, browser reports, or machine-specific files.
 
 ## Docker Local Site

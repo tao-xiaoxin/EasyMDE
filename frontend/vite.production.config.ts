@@ -3,7 +3,10 @@ import { fileURLToPath } from "node:url";
 
 import { defineConfig, type Plugin } from "vite";
 
-import { wordpressClassicMetadata } from "./wordpress-classic-metadata";
+import {
+	wordpressClassicMetadata,
+	wordpressEsmExternals,
+} from "./wordpress-classic-metadata";
 
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const sourceEntry = "frontend/src/entrypoints/admin-editor.tsx";
@@ -12,13 +15,6 @@ const checkOutputRoot = resolve(
 	repositoryRoot,
 	".cache/easymde-frontend-production-check",
 );
-const wordpressExternals = {
-	"@wordpress/element": "wp.element",
-	"@wordpress/i18n": "wp.i18n",
-	react: "wp.element",
-	"react-dom": "wp.element",
-	"react-dom/client": "wp.element",
-} as const;
 
 function encodeLiteralTabOnlyLines(): Plugin {
 	return {
@@ -38,9 +34,14 @@ export default defineConfig(({ mode }) => {
 
 	return {
 		base: "./",
+		resolve: {
+			preserveSymlinks: true,
+		},
 		plugins: [
+			wordpressEsmExternals(),
 			encodeLiteralTabOnlyLines(),
 			wordpressClassicMetadata({
+				allowDynamicChunks: true,
 				repositoryRoot,
 				sourceEntry,
 				scriptHandle: "easymde-admin-editor-toolbar",
@@ -58,18 +59,28 @@ export default defineConfig(({ mode }) => {
 			outDir: outputRoot,
 			emptyOutDir: true,
 			manifest: "manifest.json",
+			modulePreload: false,
 			sourcemap: false,
 			assetsInlineLimit: 0,
-			rollupOptions: {
+			rolldownOptions: {
 				input: { editor: resolve(repositoryRoot, sourceEntry) },
-				external: Object.keys(wordpressExternals),
+				preserveEntrySignatures: "allow-extension",
 				output: {
-					format: "iife",
-					name: "EasyMDEAdminEditorReact",
+					format: "es",
 					entryFileNames: "assets/admin-editor-[hash].js",
 					chunkFileNames: "assets/admin-editor-chunk-[hash].js",
 					assetFileNames: "assets/admin-editor-[hash][extname]",
-					globals: wordpressExternals,
+					codeSplitting: {
+						groups: [
+							{
+								// Consolidate statically-booted modules shared with lazy chunks
+								// into one static chunk while keeping dynamic-only chunks deferred.
+								name: "shared",
+								tags: ["$initial"],
+								minShareCount: 2,
+							},
+						],
+					},
 				},
 			},
 		},

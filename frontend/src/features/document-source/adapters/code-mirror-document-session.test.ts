@@ -1,6 +1,6 @@
-import { isolateHistory, undo, undoSelection } from '@codemirror/commands';
+import { invertedEffects, isolateHistory, undo, undoSelection } from '@codemirror/commands';
 import { describe, expect, it, vi } from 'vitest';
-import { EditorSelection, Transaction } from '@codemirror/state';
+import { EditorSelection, EditorState, StateEffect, Transaction } from '@codemirror/state';
 import { language } from '@codemirror/language';
 import { markdownLanguage } from '@codemirror/lang-markdown';
 import { EditorView } from '@codemirror/view';
@@ -21,6 +21,117 @@ function createFixture(value = 'alpha beta') {
 }
 
 describe('createCodeMirrorDocumentSession', () => {
+  it.each([2, 3].flatMap((count) =>
+    (['none', 'backward'] as const).flatMap((direction) =>
+      [false, true].map((detached) => ({ count, detached, direction })))))
+  ('restores grouped $count-commit selection history ($direction, detached=$detached)', ({ count, detached, direction }) => {
+      vi.useFakeTimers();
+      const initial = 'abcdefghij';
+      const { container, submissionField } = createFixture(initial);
+      submissionField.setSelectionRange(10, 10);
+      const session = createCodeMirrorDocumentSession({ container, label: 'Markdown source', submissionField });
+      try {
+        session.setVisualEditingActive(detached);
+        const before: DocumentSelection = direction === 'backward'
+          ? { direction, start: 2, end: 5 }
+          : { direction, start: 2, end: 2 };
+        let value = initial;
+        for (let index = 0; index < count; index += 1) {
+          const from = 2 + index;
+          const to = index === 0 ? before.end : from;
+          const insert = String.fromCharCode(88 + index);
+          value = value.slice(0, from) + insert + value.slice(to);
+          session.applyTextChange({
+            carryHistorySelectionWithoutEvent: true,
+            changes: { from, insert, to },
+            historySelectionBefore: index === 0 ? before : { direction: 'none', start: from, end: from },
+            joinPreviousHistory: index > 0,
+            selection: { direction: 'none', start: from + 1, end: from + 1 },
+            value
+          });
+        }
+        expect(session.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: 1 });
+        for (const redo of [false, true, false, true]) {
+          expect(redo ? session.redo() : session.undo()).toBe(true);
+          expect(session.getValue()).toBe(redo ? value : initial);
+          expect(session.getSelection()).toEqual(redo
+            ? { direction: 'none', start: 2 + count, end: 2 + count }
+            : before);
+          expect(session.getHistoryState()).toEqual(redo
+            ? { redoDepth: 0, undoDepth: 1 }
+            : { redoDepth: 1, undoDepth: 0 });
+        }
+        expect(session.undo()).toBe(true);
+        expect(session.getSelection()).toEqual(before);
+        const branch = `${initial.slice(0, before.start)}Q${initial.slice(before.end)}`;
+        session.applyTextChange({
+          changes: { from: before.start, insert: 'Q', to: before.end },
+          historySelectionBefore: before,
+          recordHistorySelection: true,
+          selection: { direction: 'none', start: 3, end: 3 },
+          value: branch
+        });
+        expect(session.getValue()).toBe(branch);
+        expect(session.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: 1 });
+        expect(session.redo()).toBe(false);
+      } finally {
+        session.destroy();
+        container.remove();
+        submissionField.remove();
+        vi.useRealTimers();
+      }
+  });
+
+  it('preserves independent foreign effect order across grouped undo and redo', () => {
+    const { container, submissionField } = createFixture('abcdefghij');
+    const session = createCodeMirrorDocumentSession({ container, label: 'Markdown source', submissionField });
+    const view = EditorView.findFromDOM(session.getInputElement());
+    if (!view) throw new Error('test-editor-view-missing');
+    const foreign = StateEffect.define<number>();
+    const observed: number[][] = [];
+    let sequence = 0;
+    try {
+      view.dispatch({ effects: StateEffect.appendConfig.of([
+        EditorState.transactionExtender.of((transaction) => {
+          if (!transaction.docChanged || !transaction.isUserEvent('input')) return null;
+          return { effects: [foreign.of(++sequence), foreign.of(++sequence)] };
+        }),
+        invertedEffects.of((transaction) => transaction.effects
+          .filter((effect) => effect.is(foreign))
+          .reverse()
+          .map((effect) => foreign.of(-effect.value))),
+        EditorView.updateListener.of((update) => {
+          for (const transaction of update.transactions) {
+            if (transaction.isUserEvent('undo') || transaction.isUserEvent('redo')) {
+              observed.push(transaction.effects.filter((effect) => effect.is(foreign)).map((effect) => effect.value));
+            }
+          }
+        })
+      ]) });
+      let value = 'abcdefghij';
+      for (let index = 0; index < 2; index += 1) {
+        const from = 2 + index;
+        value = `${value.slice(0, from)}X${value.slice(from)}`;
+        session.applyTextChange({
+          carryHistorySelectionWithoutEvent: true,
+          changes: { from, insert: 'X', to: from },
+          historySelectionBefore: { direction: 'none', start: from, end: from },
+          joinPreviousHistory: index > 0,
+          selection: { direction: 'none', start: from + 1, end: from + 1 },
+          value
+        });
+      }
+      expect(session.getHistoryState().undoDepth).toBe(1);
+      expect(session.undo()).toBe(true);
+      expect(session.redo()).toBe(true);
+      expect(observed).toEqual([[-4, -3, -2, -1], [1, 2, 3, 4]]);
+    } finally {
+      session.destroy();
+      container.remove();
+      submissionField.remove();
+    }
+  });
+
   it.each([false, true])('records the earliest interior inverse for an aggregated visual a/b/c burst (detached=%s)', (detached) => {
     vi.useFakeTimers();
     const initial = 'prefix interior target suffix';
@@ -34,7 +145,7 @@ describe('createCodeMirrorDocumentSession', () => {
       // The visual owner aggregates its rapid native burst before handing one
       // canonical transaction to this adapter; distinct flushed transactions
       // are not required to merge across canonical selection-history events.
-      const value = initial.slice(0, caret) + 'abc' + initial.slice(caret);
+      const value = `${initial.slice(0, caret)}abc${initial.slice(caret)}`;
       session.applyTextChange({
         changes: { from: caret, insert: 'abc', to: caret },
         historySelectionBefore: { direction: 'none', end: caret, start: caret },
@@ -193,7 +304,7 @@ describe('createCodeMirrorDocumentSession', () => {
     session.destroy();
   });
 
-  it('reports bounded CodeMirror history depth and restores every retained event', () => {
+  it('retains one undo step per edit beyond the default CodeMirror depth', () => {
     const { container, submissionField } = createFixture('');
     const session = createCodeMirrorDocumentSession({
       container,
@@ -217,38 +328,28 @@ describe('createCodeMirrorDocumentSession', () => {
       value = nextValue;
     }
 
+    // CodeMirror's default would have pruned everything past the first 100
+    // keystrokes, leaving the start of the document unreachable.
     const retainedDepth = session.getHistoryState().undoDepth;
-    expect(retainedDepth).toBeGreaterThan(64);
-    expect(retainedDepth).toBeLessThanOrEqual(eventCount);
-    const prunedValue = `${value}x`;
-    session.applyTextChange({
-      changes: { from: value.length, insert: 'x', to: value.length },
-      selection: {
-        direction: 'none',
-        end: prunedValue.length,
-        start: prunedValue.length
-      },
-      value: prunedValue
-    });
-    value = prunedValue;
-    const prunedDepth = session.getHistoryState().undoDepth;
-    expect(prunedDepth).toBeLessThan(retainedDepth);
-    expect(prunedDepth).toBeGreaterThan(64);
+    expect(retainedDepth).toBe(eventCount);
 
     let undoCount = 0;
     while (session.undo()) undoCount += 1;
-    expect(undoCount).toBe(prunedDepth);
-    expect(session.getHistoryState()).toEqual({ redoDepth: prunedDepth, undoDepth: 0 });
-    expect(session.getValue()).toBe('x'.repeat(value.length - undoCount));
+    expect(undoCount).toBe(eventCount);
+    expect(session.getHistoryState()).toEqual({
+      redoDepth: eventCount,
+      undoDepth: 0
+    });
+    expect(session.getValue()).toBe('');
 
     let redoCount = 0;
     while (session.redo()) redoCount += 1;
-    expect(redoCount).toBe(prunedDepth);
+    expect(redoCount).toBe(eventCount);
     expect(session.getHistoryState()).toEqual({
       redoDepth: 0,
-      undoDepth: prunedDepth
+      undoDepth: eventCount
     });
-    expect(session.getValue()).toBe('x'.repeat(value.length));
+    expect(session.getValue()).toBe('x'.repeat(eventCount));
 
     session.destroy();
   });
@@ -384,25 +485,57 @@ describe('createCodeMirrorDocumentSession', () => {
     });
     session.setVisualEditingActive(true);
     let value = '';
-    const eventCount = 121;
-
-    for (let index = 0; index < eventCount; index += 1) {
-      const nextValue = `${value}x`;
+    const typedCount = 400;
+    const applyEdit = (nextValue: string, changes: {
+      from: number;
+      insert: string;
+      to: number;
+    }) => {
       session.applyTextChange({
-        changes: { from: value.length, insert: 'x', to: value.length },
+        changes,
         isolateHistoryBefore: true,
         recordHistorySelection: true,
-        selection: { direction: 'none', end: nextValue.length, start: nextValue.length },
+        selection: {
+          direction: 'none',
+          end: nextValue.length,
+          start: nextValue.length
+        },
         value: nextValue
       });
       value = nextValue;
+    };
+    for (let index = 0; index < typedCount; index += 1) {
+      applyEdit(`${value}x`, {
+        from: value.length,
+        insert: 'x',
+        to: value.length
+      });
+    }
+    for (let index = typedCount; index > 0; index -= 1) {
+      applyEdit(value.slice(0, -1), {
+        from: value.length - 1,
+        insert: '',
+        to: value.length
+      });
+    }
+    // One pass of typing, deleting and retyping keeps the document at 400
+    // characters while recording 1,200 events, so the retained history is
+    // trimmed and tracked selections have to survive that pruning.
+    for (let index = 0; index < typedCount; index += 1) {
+      applyEdit(`${value}x`, {
+        from: value.length,
+        insert: 'x',
+        to: value.length
+      });
     }
 
-    expect(session.getHistoryState().undoDepth).toBeLessThan(eventCount);
+    const retainedDepth = session.getHistoryState().undoDepth;
+    expect(retainedDepth).toBeGreaterThan(1_000);
+    expect(retainedDepth).toBeLessThan(typedCount * 3);
     expect(session.undo()).toBe(true);
-    expect(session.getSelection().start).toBe(eventCount - 1);
+    expect(session.getSelection().start).toBe(typedCount - 1);
     expect(session.undo()).toBe(true);
-    expect(session.getSelection().start).toBe(eventCount - 2);
+    expect(session.getSelection().start).toBe(typedCount - 2);
 
     session.destroy();
   });
@@ -529,6 +662,87 @@ describe('createCodeMirrorDocumentSession', () => {
     session.destroy();
     container.remove();
     submissionField.remove();
+  });
+
+  it.each([
+    { code: 'KeyZ', ctrlKey: true, key: 'z', metaKey: false },
+    { code: 'KeyZ', ctrlKey: true, key: 'Z', metaKey: false },
+    { code: 'KeyZ', ctrlKey: false, key: 'z', metaKey: true },
+    { code: 'KeyZ', ctrlKey: true, key: 'Я', metaKey: false },
+    { code: 'KeyW', ctrlKey: true, key: 'Z', metaKey: false }
+  ])('routes Mod+Shift+Z ($key, ctrl=$ctrlKey) to Redo instead of Undo', (keys) => {
+    const { container, submissionField } = createFixture('alpha');
+    submissionField.setSelectionRange(5, 5);
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    try {
+      session.applyTextChange({
+        isolateHistoryBefore: true,
+        selection: { direction: 'none', start: 7, end: 7 },
+        value: 'alpha b'
+      });
+      session.applyTextChange({
+        isolateHistoryBefore: true,
+        selection: { direction: 'none', start: 8, end: 8 },
+        value: 'alpha bc'
+      });
+      expect(session.undo()).toBe(true);
+      expect(session.getValue()).toBe('alpha b');
+      const event = new KeyboardEvent('keydown', {
+        ...keys,
+        bubbles: true,
+        cancelable: true,
+        shiftKey: true
+      });
+      session.getInputElement().dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      expect(session.getValue()).toBe('alpha bc');
+      expect(session.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: 2 });
+    } finally {
+      session.destroy();
+      container.remove();
+      submissionField.remove();
+    }
+  });
+
+  it.each([
+    { code: 'KeyZ', key: 'W', layout: 'AZERTY' },
+    { code: 'KeyZ', key: 'Y', layout: 'QWERTZ' }
+  ])('does not hijack $layout Ctrl+Shift+$key on the physical KeyZ', (keys) => {
+    const { container, submissionField } = createFixture('alpha');
+    submissionField.setSelectionRange(5, 5);
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    try {
+      session.applyTextChange({
+        isolateHistoryBefore: true,
+        selection: { direction: 'none', start: 7, end: 7 },
+        value: 'alpha b'
+      });
+      expect(session.undo()).toBe(true);
+      const event = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        code: keys.code,
+        ctrlKey: true,
+        key: keys.key,
+        shiftKey: true
+      });
+      session.getInputElement().dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(session.getValue()).toBe('alpha');
+      expect(session.getHistoryState()).toEqual({ redoDepth: 1, undoDepth: 0 });
+    } finally {
+      session.destroy();
+      container.remove();
+      submissionField.remove();
+    }
   });
 
   it('keeps heading markers regular and colors quote content as one block', () => {
@@ -1030,6 +1244,83 @@ describe('createCodeMirrorDocumentSession', () => {
       expect.not.objectContaining({ changes: expect.anything() })
     );
     expect(session.getValue()).toBe('same value');
+    session.destroy();
+  });
+
+  it('returns the exact resolved range for a source-changing whole-value write', () => {
+    const { container, submissionField } = createFixture('alpha beta');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+
+    expect(session.applyTextChange({
+      selection: { direction: 'none', end: 11, start: 11 },
+      value: 'alpha gamma'
+    })).toEqual({ from: 6, insert: 'gamm', to: 9 });
+    expect(session.getValue()).toBe('alpha gamma');
+    session.destroy();
+  });
+
+  it('returns an exact explicit range or null for an explicit no-op', () => {
+    const { container, submissionField } = createFixture('alpha beta');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+
+    expect(session.applyTextChange({
+      changes: { from: 6, insert: 'beta', to: 10 },
+      selection: { direction: 'none', end: 10, start: 10 },
+      value: 'alpha beta'
+    })).toBeNull();
+    expect(session.applyTextChange({
+      changes: { from: 6, insert: 'gamma', to: 10 },
+      selection: { direction: 'none', end: 11, start: 11 },
+      value: 'alpha gamma'
+    })).toEqual({ from: 6, insert: 'gamma', to: 10 });
+    session.destroy();
+  });
+
+  it('returns null for an unchanged whole value and a destroyed session', () => {
+    const { container, submissionField } = createFixture('alpha beta');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+
+    expect(session.applyTextChange({
+      selection: { direction: 'none', end: 10, start: 10 },
+      value: 'alpha beta'
+    })).toBeNull();
+    session.destroy();
+    expect(session.applyTextChange({
+      selection: { direction: 'none', end: 0, start: 0 },
+      value: 'after destroy'
+    })).toBeNull();
+  });
+
+  it('keeps invalid explicit ranges and mismatched values explicit', () => {
+    const { container, submissionField } = createFixture('alpha beta');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+
+    expect(() => session.applyTextChange({
+      changes: { from: 11, insert: '!', to: 12 },
+      selection: { direction: 'none', end: 0, start: 0 },
+      value: 'alpha beta!'
+    })).toThrow('document-text-change-range-invalid');
+    expect(() => session.applyTextChange({
+      changes: { from: 10, insert: '!', to: 10 },
+      selection: { direction: 'none', end: 0, start: 0 },
+      value: 'wrong length'
+    })).toThrow('document-text-change-value-length-mismatch');
     session.destroy();
   });
 

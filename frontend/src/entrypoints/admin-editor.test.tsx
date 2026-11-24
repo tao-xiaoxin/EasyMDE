@@ -52,7 +52,12 @@ vi.mock(
 );
 vi.mock(
   '../integrations/browser/wechat/create-browser-wechat-clipboard',
-  () => ({ createBrowserWechatClipboard: vi.fn(() => ({})) })
+  () => ({
+    createBrowserWechatClipboard: vi.fn(() => ({
+      copy: vi.fn().mockResolvedValue({ method: 'clipboard', status: 'copied' }),
+      prepare: vi.fn().mockResolvedValue(undefined)
+    }))
+  })
 );
 vi.mock('../integrations/preview-runtime/browser-preview-enhancement', () => ({
   createBrowserPreviewEnhancementPort: vi.fn(() => ({})),
@@ -91,6 +96,7 @@ vi.mock(
 const bootstrap = {
   appearance: {},
   document: {},
+  referenceLabelCaseFoldProfile: 14,
   editorBlockIndexWorkerUrl: 'https://example.test/wp-content/plugins/easymde/assets/build/editor-block-index-worker/assets/editor-block-index-worker-test.js',
   fonts: {},
   imageUpload: {
@@ -142,6 +148,14 @@ const bootstrap = {
     previewReadOnly: 'Read only',
     previewUnlockEdit: 'Unlock and edit',
     previewMode: 'Preview mode',
+    protectedCardEditFormat: 'Edit %s',
+    protectedCardFootnotes: 'Footnotes',
+    protectedCardMath: 'Math',
+    protectedCardMermaid: 'Mermaid',
+    protectedCardRaw: 'Raw',
+    protectedCardSave: 'Save',
+    protectedCardSourceFormat: '%s source',
+    protectedCardToc: 'TOC',
     publish: 'Publish article',
     restore: 'Restore revision',
     restoreConfirm: 'Unsaved changes will be lost',
@@ -305,6 +319,7 @@ describe('mountAdminEditor', () => {
     );
     expect(createBrowserEditorBlockIndexWorker).toHaveBeenCalledWith(
       expect.objectContaining({
+        referenceLabelCaseFoldProfile: bootstrap.referenceLabelCaseFoldProfile,
         workerUrl: bootstrap.editorBlockIndexWorkerUrl
       })
     );
@@ -654,7 +669,7 @@ describe('mountAdminEditor', () => {
     });
 
     try {
-      mountAdminEditor(bootstrap, {
+      const teardown = mountAdminEditor(bootstrap, {
         document,
         failureMessage: 'Editor failed',
         window,
@@ -665,6 +680,23 @@ describe('mountAdminEditor', () => {
           hooks: { addAction: vi.fn(), removeAction: vi.fn() }
         }
       });
+
+      expect(createBrowserWechatClipboard).not.toHaveBeenCalled();
+
+      const rendered = render.mock.calls[0]?.[0] as {
+        props: {
+          children: {
+            props: {
+              wechatClipboard: {
+                prepare?: (preview: HTMLElement) => Promise<void>;
+              };
+            };
+          };
+        };
+      };
+      const preview = document.createElement('div');
+      preview.innerHTML = '<p>Preview</p>';
+      await rendered.props.children.props.wechatClipboard.prepare?.(preview);
 
       const fetchAdapter = vi.mocked(createBrowserWechatClipboard).mock
         .calls[0]?.[0]?.fetch;
@@ -681,6 +713,7 @@ describe('mountAdminEditor', () => {
         '/assets/images/theme.png',
         init
       );
+      teardown();
     } finally {
       Object.defineProperty(window, 'fetch', {
         configurable: true,
@@ -688,6 +721,67 @@ describe('mountAdminEditor', () => {
         value: originalFetch
       });
     }
+  });
+
+  it('aborts lazy WeChat preparation cleanly before loading and respects teardown', async () => {
+    const render = vi.fn();
+    const unmount = vi.fn();
+    vi.mocked(createRoot).mockReturnValue({ render, unmount } as never);
+
+    const teardown = mountAdminEditor(bootstrap, {
+      document,
+      failureMessage: 'Editor failed',
+      window,
+      wordpress: {
+        apiFetch: Object.assign(vi.fn(), {
+          nonceMiddleware: { nonce: 'nonce' }
+        }),
+        hooks: { addAction: vi.fn(), removeAction: vi.fn() }
+      }
+    });
+
+    const rendered = render.mock.calls[0]?.[0] as {
+      props: {
+        children: {
+          props: {
+            wechatClipboard: {
+              copy: (
+                preview: HTMLElement,
+                options?: { pngConversionEnabled?: boolean }
+              ) => Promise<unknown>;
+              prepare?: (
+                preview: HTMLElement,
+                options?: { background?: boolean; signal?: AbortSignal }
+              ) => Promise<void>;
+            };
+          };
+        };
+      };
+    };
+    const preview = document.createElement('div');
+    preview.innerHTML = '<p>Preview</p>';
+    const aborted = new AbortController();
+    aborted.abort();
+
+    await expect(
+      rendered.props.children.props.wechatClipboard.prepare?.(preview, {
+        background: true,
+        signal: aborted.signal
+      })
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(createBrowserWechatClipboard).not.toHaveBeenCalled();
+
+    teardown();
+    await expect(
+      rendered.props.children.props.wechatClipboard.copy(preview, {
+        pngConversionEnabled: true
+      })
+    ).resolves.toEqual({
+      code: 'wechat-png-clipboard-failed',
+      sideEffects: 'none',
+      status: 'failed'
+    });
+    expect(createBrowserWechatClipboard).not.toHaveBeenCalled();
   });
 
   it('reports a prevented native publish as unsuccessful', () => {

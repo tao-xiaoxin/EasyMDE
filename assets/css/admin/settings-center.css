@@ -1,3 +1,28 @@
+/* ==========================================================================
+   EasyMDE Settings Center Stylesheet
+   ==========================================================================
+   Table of Contents
+   --------------------------------------------------------------------------
+   1.  Base Tokens, Box Model & Typography Reset
+   2.  Application Shell, Sidebar, Brand & Help Card
+   3.  Main Area, Sticky Header, Search Bar & Save Bar
+   4.  Content Scale, Unavailable Fieldsets & Search Results
+   5.  Shared Settings Sections, Rows & Controls (Select, Listbox, Switch)
+   6.  Shortcuts Page & Conflict Dialog
+   7.  Images Page: Host Service, Inputs, Steppers & Secret Credentials
+   8.  Images Page: File Name Rule Editor, Presets & Variables
+   9.  Images Page: Upload Verification, Backup Host & Allowed Formats
+   10. Markdown Page
+   11. Transfer Page: Export, Import & Management Actions
+   12. Modal Dialogs: Shared Shell, Upload Verification & Transfer Dialogs
+   13. About Dialogs & About Page
+   14. Shared Focus Rings, Pending State & Legacy Action Bar
+   15. Responsive Breakpoints
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Base Tokens, Box Model & Typography Reset
+   -------------------------------------------------------------------------- */
 :root {
 	--easymde-settings-center-styles-ready: 1;
 }
@@ -67,6 +92,10 @@
 	border: 0 solid rgba(15, 23, 42, .07);
 	background: transparent;
 }
+
+/* --------------------------------------------------------------------------
+   2. Application Shell, Sidebar, Brand & Help Card
+   -------------------------------------------------------------------------- */
 
 .easymde-settings-center__frame {
 	position: relative;
@@ -317,6 +346,10 @@
 	background: #f4f8ff;
 }
 
+/* --------------------------------------------------------------------------
+   3. Main Area, Sticky Header, Search Bar & Save Bar
+   -------------------------------------------------------------------------- */
+
 .easymde-settings-center main {
 	min-width: 0;
 	flex: 1;
@@ -533,6 +566,10 @@
 .easymde-settings-center__save-bar.is-hidden {
 	display: none;
 }
+
+/* --------------------------------------------------------------------------
+   4. Content Scale, Unavailable Fieldsets & Search Results
+   -------------------------------------------------------------------------- */
 
 .easymde-settings-center__content-scale {
 	width: 100%;
@@ -788,6 +825,10 @@
 	font-size: 14px;
 	line-height: 21px;
 }
+
+/* --------------------------------------------------------------------------
+   5. Shared Settings Sections, Rows & Controls (Select, Listbox, Switch)
+   -------------------------------------------------------------------------- */
 
 .easymde-settings-center__section {
 	position: relative;
@@ -1111,6 +1152,10 @@
 	transform: translateX(20px);
 }
 
+/* --------------------------------------------------------------------------
+   6. Shortcuts Page & Conflict Dialog
+   -------------------------------------------------------------------------- */
+
 .easymde-settings-center__shortcut-card {
 	padding: 24px 36px 22px;
 	background: #fefefe;
@@ -1349,6 +1394,10 @@
 	color: #7f1d1d;
 	overflow-wrap: anywhere;
 }
+
+/* --------------------------------------------------------------------------
+   7. Images Page: Host Service, Inputs, Steppers & Secret Credentials
+   -------------------------------------------------------------------------- */
 
 .easymde-settings-center__images-page {
 	background: #fefefe;
@@ -1609,6 +1658,10 @@
 	flex: 0 0 auto;
 }
 
+/* --------------------------------------------------------------------------
+   8. Images Page: File Name Rule Editor, Presets & Variables
+   -------------------------------------------------------------------------- */
+
 .easymde-settings-center .easymde-settings-center__file-name-input {
 	height: 40px;
 	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
@@ -1825,6 +1878,10 @@
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
+
+/* --------------------------------------------------------------------------
+   9. Images Page: Upload Verification, Backup Host & Allowed Formats
+   -------------------------------------------------------------------------- */
 
 .easymde-settings-center__verification-divider {
 	margin-top: 10px;
@@ -2098,6 +2155,10 @@
 	padding-left: 27px;
 }
 
+/* --------------------------------------------------------------------------
+   10. Markdown Page
+   -------------------------------------------------------------------------- */
+
 .easymde-settings-center__markdown-page > .easymde-settings-center__unavailable-fields > .easymde-settings-center__markdown-group:not(:last-child) {
 	border-color: #e5e9ef;
 	border-bottom-width: 1px;
@@ -2131,6 +2192,10 @@
 	width: 300px;
 	max-width: 100%;
 }
+
+/* --------------------------------------------------------------------------
+   11. Transfer Page: Export, Import & Management Actions
+   -------------------------------------------------------------------------- */
 
 .easymde-settings-center__transfer-page > :not(:last-child),
 .easymde-settings-center__transfer-primary-groups > :not(:last-child) {
@@ -2415,6 +2480,10 @@
 	color: #71809f;
 	font-size: 14px;
 }
+
+/* --------------------------------------------------------------------------
+   12. Modal Dialogs: Shared Shell, Upload Verification & Transfer Dialogs
+   -------------------------------------------------------------------------- */
 
 .easymde-settings-center__transfer-dialog-layer {
 	position: fixed;
@@ -2863,6 +2932,10 @@
 	background: #064eb8;
 }
 
+/* --------------------------------------------------------------------------
+   13. About Dialogs & About Page
+   -------------------------------------------------------------------------- */
+
 .easymde-settings-center__about-dialog > footer .is-primary-action {
 	display: inline-flex;
 	height: 38px;
@@ -2992,6 +3065,8 @@
 	border-radius: 50%;
 	background: #0867f4;
 }
+
+/* About Page */
 
 .easymde-settings-center__about-page > :not(:last-child) {
 	border-color: #e5e9ef;
@@ -3212,6 +3287,9 @@
 	font-weight: 500;
 }
 
+/* --------------------------------------------------------------------------
+   14. Shared Focus Rings, Pending State & Legacy Action Bar
+   -------------------------------------------------------------------------- */
 
 .easymde-settings-center__transfer-page button:focus-visible,
 .easymde-settings-center__transfer-dialog button:focus-visible,
@@ -3333,6 +3411,12 @@
 	opacity: .86;
 }
 
+/* --------------------------------------------------------------------------
+   15. Responsive Breakpoints
+   -------------------------------------------------------------------------- */
+
+/* Desktop Sidebar Scroll (>= 841px) */
+
 @media (min-width: 841px) {
 	.easymde-settings-center__sidebar nav {
 		bottom: 136px;
@@ -3348,6 +3432,8 @@
 		flex: 0 0 48px;
 	}
 }
+
+/* Compact Desktop (<= 1099px) */
 
 @media (max-width: 1099px) {
 	.easymde-settings-center {
@@ -3457,6 +3543,8 @@
 		left: 260px;
 	}
 }
+
+/* Mobile & Tablet Stacked Layout (<= 840px) */
 
 @media (max-width: 840px) {
 	[data-settings-overlay-root] .easymde-editor-message-alert-host {
@@ -3835,6 +3923,8 @@
 	}
 }
 
+/* Narrow Mobile (<= 480px) */
+
 @media (max-width: 480px) {
 	.easymde-settings-center__shortcut-conflict-dialog li {
 		grid-template-columns: minmax(0, 1fr);
@@ -3928,6 +4018,8 @@
 		max-width: none;
 	}
 }
+
+/* Short Landscape Viewport (<= 840px wide and <= 500px tall) */
 
 @media (max-width: 840px) and (max-height: 500px) {
 	.easymde-settings-center__sidebar {

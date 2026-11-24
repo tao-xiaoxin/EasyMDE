@@ -75,7 +75,7 @@ final class MarkdownRenderer {
 		$projection_budget = new CodeProjectionBudget();
 		$converter         = self::create_converter( true, $projection_budget );
 		$document          = ( new MarkdownParser( $converter->getEnvironment() ) )->parse( $normalized['markdown'] );
-		$source_blocks     = VisualPreviewBlockAnnotator::describe_source_blocks( $document, $normalized['line_map'] );
+		$source_blocks     = VisualPreviewBlockAnnotator::describe_source_blocks( $document, $normalized['line_map'], $normalized['markdown'] );
 		$code_map          = VisualPreviewBlockAnnotator::describe_source_code_bodies( $document, $normalized['markdown'], $normalized['line_map'], $markdown );
 		$code_projection   = VisualPreviewBlockAnnotator::describe_source_code_projections( $document, $normalized['markdown'], $normalized['line_map'], $markdown, $projection_budget );
 		VisualPreviewBlockAnnotator::mark_document( $document, $source_blocks );
@@ -127,6 +127,7 @@ final class MarkdownRenderer {
 			)
 		);
 		TableAlignmentAnnotation::register( $converter->getEnvironment() );
+		$converter->getEnvironment()->addExtension( new TableCellBreakExtension() );
 		if ( $with_projection ) {
 			if ( ! $projection_budget instanceof CodeProjectionBudget ) {
 				$projection_budget = new CodeProjectionBudget();

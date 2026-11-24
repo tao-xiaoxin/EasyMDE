@@ -71,6 +71,10 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 
 		$this->assertSame( 3, $bootstrap['schemaVersion'] );
 		$this->assertSame(
+			$this->expected_reference_label_case_fold_profile(),
+			$bootstrap['referenceLabelCaseFoldProfile']
+		);
+		$this->assertSame(
 			array(
 				'Copy code',
 				'Copy code block',
@@ -178,6 +182,36 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( rest_url( 'easymde/v1/image-hosting/upload' ), $bootstrap['imageUpload']['endpoint'] );
 		$this->assertNotEmpty( $bootstrap['wordpress']['nonce'] );
 		$this->assertSame( $bootstrap['wordpress']['nonce'], $bootstrap['imageUpload']['nonce'] );
+	}
+
+	private function expected_reference_label_case_fold_profile() {
+		if ( ! extension_loaded( 'mbstring' ) || ! function_exists( 'mb_convert_case' ) || ! defined( 'MB_CASE_FOLD' ) ) {
+			return 'unsupported';
+		}
+		$profiles = array( '7.4' => 11, '8.0' => 13, '8.1' => 14, '8.2' => 14, '8.3' => 14, '8.4' => 16, '8.5' => 17 );
+		$version = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;
+		return isset( $profiles[ $version ] ) ? $profiles[ $version ] : 'unsupported';
+	}
+
+	public function test_reference_label_case_fold_profile_version_boundaries_and_missing_mbstring() {
+		$method = new ReflectionMethod( AdminAssets::class, 'reference_label_case_fold_profile' );
+		$method->setAccessible( true );
+		foreach ( array(
+			array( 70399, true, 'unsupported' ),
+			array( 70400, true, 11 ),
+			array( 70433, true, 11 ),
+			array( 70500, true, 'unsupported' ),
+			array( 80000, true, 13 ),
+			array( 80100, true, 14 ),
+			array( 80399, true, 14 ),
+			array( 80400, true, 16 ),
+			array( 80500, true, 17 ),
+			array( 80600, true, 'unsupported' ),
+			array( 90000, true, 'unsupported' ),
+			array( 80306, false, 'unsupported' ),
+		) as $case ) {
+			$this->assertSame( $case[2], $method->invoke( null, $case[0], $case[1] ) );
+		}
 	}
 
 	public function test_corrupt_canonical_settings_enter_the_accessible_editor_start_failure_path()
@@ -856,8 +890,8 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 			ob_start();
 			$this->admin_assets->render_react_editor_preload();
 			$preload = ob_get_clean();
-			$this->assertMatchesRegularExpression( '#^<link rel="preload" as="script" fetchpriority="high" href="http://example\.org/.*/assets/build/assets/admin-editor-[A-Za-z0-9_-]+\.js">\n$#', $preload );
-			$this->assertSame( 1, substr_count( $preload, 'rel="preload"' ) );
+			$this->assertMatchesRegularExpression( '#^<link rel="modulepreload" fetchpriority="high" href="http://example\.org/.*/assets/build/assets/admin-editor-[A-Za-z0-9_-]+\.js">\n$#', $preload );
+			$this->assertSame( 1, substr_count( $preload, 'rel="modulepreload"' ) );
 
 			ob_start();
 			$this->admin_assets->render_react_editor_preload();

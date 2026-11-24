@@ -25,8 +25,10 @@ import {
 	releaseTargetLeaseUnlessShared,
 	restoreCapturedContextSelection,
 	sharesOwnedLease,
-	surfaceSnapshotStillDescribesPendingDemand
+	surfaceSnapshotStillDescribesPendingDemand,
+	surfaceSnapshotStillDescribesPreparedSelection
 } from "./editor-context-menu-context";
+import { captureEditorContextMenuScrollBaseline } from "./editor-context-menu-scroll";
 
 export type EditorContextMenuDemandController = Readonly<{
 	cancelPending: () => void;
@@ -93,7 +95,8 @@ export function useEditorContextMenuDemand(input: Readonly<{
 		releasePendingUnlessActionOwns(pending.state, actionPromiseRef.current);
 		releaseTargetLeaseUnlessShared(
 			pending.state.targetLease,
-			openRef.current?.targetLease
+			openRef.current?.targetLease,
+			actionPromiseRef.current?.targetLease
 		);
 	}, []);
 
@@ -126,7 +129,7 @@ export function useEditorContextMenuDemand(input: Readonly<{
 			actionPromiseRef.current
 		);
 		releasePendingUnlessActionOwns(current, actionPromiseRef.current);
-		releaseTargetLeaseUnlessShared(current.targetLease, null);
+		releaseTargetLeaseUnlessShared(current.targetLease, actionPromiseRef.current?.targetLease);
 		retireOpenState();
 		current.restoreFocus();
 	}, [retireOpenState]);
@@ -151,16 +154,49 @@ export function useEditorContextMenuDemand(input: Readonly<{
 			retireVisibleDemand(current);
 			if (reportFailure) onFailureRef.current(reportFailure);
 		};
+		const snapshot = surface.getSnapshot();
 		if (
 			!surfaceSnapshotStillDescribesPendingDemand(
 				current,
 				surface,
-				surface.getSnapshot()
+				snapshot
 			)
 		) {
 			retire(null);
 			return;
 		}
+		const ownerDocument = surface.element.ownerDocument;
+		const native = ownerDocument.defaultView?.getSelection();
+		const menuFocused = Boolean(
+			ownerDocument.activeElement?.closest(
+				"[data-easymde-context-menu-layer]"
+			)
+		);
+		const nativeInsideSurface = Boolean(
+			native?.anchorNode
+			&& native.focusNode
+			&& surface.element.contains(native.anchorNode)
+			&& surface.element.contains(native.focusNode)
+		);
+		const capturedRevision = current.captured.revision;
+		const capturedGeneration = current.captured.surfaceGeneration;
+		const preparedSelection =
+			surfaceSnapshotStillDescribesPreparedSelection(
+				current,
+				surface,
+				snapshot
+			)
+			&& undefined !== capturedRevision
+			&& undefined !== capturedGeneration
+			&& menuFocused
+			&& native?.isCollapsed === true
+			&& !nativeInsideSurface
+				? {
+						revision: capturedRevision,
+						selection: current.captured.selection,
+						surfaceGeneration: capturedGeneration
+					}
+				: undefined;
 		let refreshed: OpenState;
 		try {
 			refreshed = {
@@ -174,7 +210,8 @@ export function useEditorContextMenuDemand(input: Readonly<{
 					current.targetElement,
 					current.targetLease,
 					headingRef.current,
-					current.activation
+					current.activation,
+					preparedSelection
 				),
 				generation: current.generation
 			};
@@ -218,7 +255,7 @@ export function useEditorContextMenuDemand(input: Readonly<{
 			) {
 				refreshed.releasePending("unavailable");
 			}
-			releaseTargetLeaseUnlessShared(refreshed.targetLease, null);
+			releaseTargetLeaseUnlessShared(refreshed.targetLease, actionPromiseRef.current?.targetLease);
 			onFailureRef.current(refreshed.readiness.code);
 			return;
 		}
@@ -347,7 +384,10 @@ export function useEditorContextMenuDemand(input: Readonly<{
 						headingRef.current,
 						pending.state.activation
 					),
-					generation: pending.state.generation
+					generation: pending.state.generation,
+					...(pending.state.scrollBaseline
+						? { scrollBaseline: pending.state.scrollBaseline }
+						: {})
 				};
 			} catch (error) {
 				// The owner cannot authenticate this gesture's block any more, so the
@@ -396,7 +436,7 @@ export function useEditorContextMenuDemand(input: Readonly<{
 				) {
 					next.releasePending("unavailable");
 				}
-				releaseTargetLeaseUnlessShared(next.targetLease, null);
+				releaseTargetLeaseUnlessShared(next.targetLease, actionPromiseRef.current?.targetLease);
 				onFailureRef.current(next.readiness.code);
 				return;
 			}
@@ -429,6 +469,10 @@ export function useEditorContextMenuDemand(input: Readonly<{
 		target: Element | null,
 		activation: "keyboard" | "pointer"
 	): void => {
+		const previousAction = actionPromiseRef.current;
+		if (previousAction?.cancel) {
+			previousAction.cancel();
+		}
 		clipboardAbortRef.current?.abort();
 		const clipboardController = new AbortController();
 		clipboardAbortRef.current = clipboardController;
@@ -451,7 +495,7 @@ export function useEditorContextMenuDemand(input: Readonly<{
 			actionPromiseRef.current
 		);
 		releasePendingUnlessActionOwns(previous, actionPromiseRef.current);
-		releaseTargetLeaseUnlessShared(previous?.targetLease, null);
+		releaseTargetLeaseUnlessShared(previous?.targetLease, previousAction?.targetLease);
 		retireOpenState();
 		let next: OpenState;
 		let lease: EditorContextMenuTargetLease | null = null;
@@ -493,6 +537,19 @@ export function useEditorContextMenuDemand(input: Readonly<{
 							: "editor-context-menu-source-read-only")
 				);
 			}
+			// Capture the scroll baseline only after demand and pointer
+			// preparation succeed: synchronous preparation may retire a
+			// trailing presentation (such as a detached document-end sink) and
+			// let the browser clamp scrollTop before the async scroll event
+			// arrives. Recording the post-preparation scroll position keeps that
+			// layout settle from cancelling the menu while real post-gesture
+			// scrolling still dismisses it.
+			const pendingScrollBaseline = surface.element.ownerDocument.defaultView
+				? captureEditorContextMenuScrollBaseline(
+					surface.element,
+					surface.element.ownerDocument.defaultView
+				)
+				: undefined;
 			// Capture the target once, while the element the user pointed at is
 			// still live. Capture is pure: it reads the owner's provenance without
 			// writing the document, moving the selection, or requesting a render.
@@ -510,7 +567,8 @@ export function useEditorContextMenuDemand(input: Readonly<{
 					headingRef.current,
 					activation
 				),
-				generation
+				generation,
+				...(pendingScrollBaseline ? { scrollBaseline: pendingScrollBaseline } : {})
 			};
 		} catch (error) {
 			// Releasing here covers a capture that succeeded before a later
@@ -553,7 +611,7 @@ export function useEditorContextMenuDemand(input: Readonly<{
 			actionPromiseRef.current
 		);
 		releasePendingUnlessActionOwns(current, actionPromiseRef.current);
-		releaseTargetLeaseUnlessShared(current?.targetLease, null);
+		releaseTargetLeaseUnlessShared(current?.targetLease, actionPromiseRef.current?.targetLease);
 		retireOpenState();
 		current?.restoreFocus();
 	}, [retireOpenState]);
@@ -570,9 +628,33 @@ export function useEditorContextMenuDemand(input: Readonly<{
 	const invokeAction = useCallback((id: string): void => {
 		const current = openRef.current;
 		if (!current) return;
-		const actionContext = current.actionContext ?? undefined;
+		const targetLease = current.targetLease ?? undefined;
+		const controller = targetLease ? new AbortController() : null;
+		let targetReleased = false;
+		let contextReleased = false;
+		const releaseTarget = (): void => {
+			if (!targetLease || targetReleased) return;
+			targetReleased = true;
+			targetLease.release();
+		};
+		const releaseContext = (): void => {
+			if (contextReleased) return;
+			contextReleased = true;
+			releaseActionContext(actionContext);
+		};
+		const cancel = (): void => {
+			controller?.abort();
+			releaseTarget();
+			if (
+				(openRef.current === current || !sharesOwnedLease(actionContext, openRef.current?.actionContext))
+				&& !sharesOwnedLease(actionContext, pendingOpenRef.current?.state.actionContext)
+			) releaseContext();
+		};
+		const actionContext = targetLease && controller
+			? { ...current.actionContext, operation: { cancel, signal: controller.signal, targetLease } }
+			: current.actionContext ?? undefined;
 		const actionStart = new Promise<void>(() => undefined);
-		actionPromiseRef.current = { context: actionContext, promise: actionStart };
+		actionPromiseRef.current = { context: actionContext, promise: actionStart, ...(targetLease ? { cancel, targetLease } : {}) };
 		let result: void | Promise<void>;
 		try {
 			result = undefined === actionContext
@@ -581,16 +663,27 @@ export function useEditorContextMenuDemand(input: Readonly<{
 		} catch (error) {
 			if (actionPromiseRef.current?.promise === actionStart)
 				actionPromiseRef.current = null;
-			releaseActionContext(actionContext);
+			cancel();
+			releaseContext();
+			retireOpenState();
+			current.restoreFocus();
 			throw error;
 		}
 		if (result && "function" === typeof result.then) {
 			const pending = Promise.resolve(result);
-			actionPromiseRef.current = { context: actionContext, promise: pending };
+			actionPromiseRef.current = { context: actionContext, promise: pending, ...(targetLease ? { cancel, targetLease } : {}) };
+			const releaseSettledTarget = (): void => {
+				if (
+					targetLease !== openRef.current?.targetLease
+					&& targetLease !== pendingOpenRef.current?.state.targetLease
+					&& targetLease !== actionPromiseRef.current?.targetLease
+				) releaseTarget();
+			};
 			void pending.then(
 				() => {
 					const currentAction = actionPromiseRef.current?.promise === pending;
 					if (currentAction) actionPromiseRef.current = null;
+					releaseSettledTarget();
 					const currentMenu = openRef.current?.actionContext;
 					const pendingMenu = pendingOpenRef.current?.state.actionContext;
 					if (
@@ -598,12 +691,13 @@ export function useEditorContextMenuDemand(input: Readonly<{
 						&& (currentMenu === actionContext
 							|| !sharesOwnedLease(actionContext, currentMenu))
 					) {
-						releaseActionContext(actionContext);
+						releaseContext();
 					}
 				},
 				() => {
 					const currentAction = actionPromiseRef.current?.promise === pending;
 					if (currentAction) actionPromiseRef.current = null;
+					releaseSettledTarget();
 					const currentMenu = openRef.current?.actionContext;
 					const pendingMenu = pendingOpenRef.current?.state.actionContext;
 					if (
@@ -611,16 +705,16 @@ export function useEditorContextMenuDemand(input: Readonly<{
 						&& (currentMenu === actionContext
 							|| !sharesOwnedLease(actionContext, currentMenu))
 					) {
-						releaseActionContext(actionContext);
+						releaseContext();
 					}
 				}
 			);
 		} else {
 			if (actionPromiseRef.current?.promise === actionStart)
 				actionPromiseRef.current = null;
-			releaseActionContext(actionContext);
+			releaseContext();
 		}
-	}, []);
+	}, [retireOpenState]);
 
 	const validateOwners = useCallback((
 		source: EditorContextMenuSurface | null,
@@ -712,13 +806,15 @@ export function useEditorContextMenuDemand(input: Readonly<{
 
 	const dispose = useCallback((): void => {
 		clipboardAbortRef.current?.abort();
+		const pendingAction = actionPromiseRef.current;
+		pendingAction?.cancel?.();
 		cancelPendingOpen();
 		releaseActionUnlessSharedWithPending(
 			openRef.current?.actionContext,
 			actionPromiseRef.current
 		);
 		releasePendingUnlessActionOwns(openRef.current, actionPromiseRef.current);
-		releaseTargetLeaseUnlessShared(openRef.current?.targetLease, null);
+		releaseTargetLeaseUnlessShared(openRef.current?.targetLease, pendingAction?.targetLease);
 		retireOpenState();
 	}, [cancelPendingOpen, retireOpenState]);
 

@@ -9,9 +9,11 @@ import {
 	EDITOR_BLOCK_INDEX_PACKED_LINK_FIELDS,
 	EDITOR_BLOCK_INDEX_PACKED_MATH_FIELDS,
 	EDITOR_MARKDOWN_BLOCK_KIND_ORDER,
+	isReferenceLabelCaseFoldProfile,
 	type EditorBlockIndexWorkerData,
 	type EditorBlockIndexWorkerRequest,
 	type EditorBlockIndexWorkerResponse,
+	type ReferenceLabelCaseFoldProfile,
 	MAX_EDITOR_BLOCK_INDEX_SOURCE_BYTES,
 } from "../contracts/ports/editor-block-index-port";
 import { createEditorMarkdownBlockIndex } from "../features/editor-context-menu/editor-markdown-block-index";
@@ -66,16 +68,17 @@ function isBuildRequest(
 	const request = record(value);
 	return Boolean(
 		request &&
-			4 === Object.keys(request).length &&
+			5 === Object.keys(request).length &&
 			"build" === request.type &&
 			safeInteger(request.generation) &&
 			safeInteger(request.revision) &&
-			"string" === typeof request.source,
+			"string" === typeof request.source &&
+			isReferenceLabelCaseFoldProfile(request.referenceLabelCaseFoldProfile),
 	);
 }
 
-function dataWithoutSource(source: string): EditorBlockIndexWorkerBuildResult {
-	const parsedIndex = createEditorMarkdownBlockIndex(source);
+function dataWithoutSource(source: string, profile: ReferenceLabelCaseFoldProfile): EditorBlockIndexWorkerBuildResult {
+	const parsedIndex = createEditorMarkdownBlockIndex(source, { referenceLabelCaseFoldProfile: profile });
 	const linkCandidates = parsedIndex.linkCandidates;
 	if (!linkCandidates) throw new Error("editor-block-index-link-data-invalid");
 	const blocks = new Int32Array(
@@ -201,6 +204,7 @@ function dataWithoutSource(source: string): EditorBlockIndexWorkerBuildResult {
 
 export type EditorBlockIndexWorkerBuild = (
 	source: string,
+	profile: ReferenceLabelCaseFoldProfile,
 ) => EditorBlockIndexWorkerBuildResult;
 
 export function createEditorBlockIndexWorkerHandler(
@@ -211,32 +215,44 @@ export function createEditorBlockIndexWorkerHandler(
 	build: EditorBlockIndexWorkerBuild = dataWithoutSource,
 ): (event: WorkerMessage) => void {
 	return ({ data }): void => {
-		const candidate = record(data);
-		if (
-			candidate &&
-			"build" === candidate.type &&
-			safeInteger(candidate.generation) &&
-			safeInteger(candidate.revision) &&
-			"string" === typeof candidate.source &&
-			sourceByteLength(candidate.source) > MAX_EDITOR_BLOCK_INDEX_SOURCE_BYTES
-		) {
-			postMessage({
-				code: "editor-block-index-source-too-large",
-				generation: candidate.generation,
-				revision: candidate.revision,
-				type: "error",
-			});
-			return;
-		}
 		if (!isBuildRequest(data)) {
+			const candidate = record(data);
+			const keys = candidate ? Object.keys(candidate) : [];
+			if (
+				candidate &&
+				"build" === candidate.type &&
+				safeInteger(candidate.generation) &&
+				safeInteger(candidate.revision) &&
+				"string" === typeof candidate.source &&
+				["type", "generation", "revision", "source"].every((key) => keys.includes(key)) &&
+				keys.every((key) => ["type", "generation", "revision", "source", "referenceLabelCaseFoldProfile"].includes(key)) &&
+				!isReferenceLabelCaseFoldProfile(candidate.referenceLabelCaseFoldProfile)
+			) {
+				postMessage({
+					code: "editor-block-index-worker-profile-invalid",
+					generation: candidate.generation,
+					revision: candidate.revision,
+					type: "error",
+				});
+				return;
+			}
 			postMessage({
 				code: "editor-block-index-worker-request-invalid",
 				type: "error",
 			});
 			return;
 		}
+		if (sourceByteLength(data.source) > MAX_EDITOR_BLOCK_INDEX_SOURCE_BYTES) {
+			postMessage({
+				code: "editor-block-index-source-too-large",
+				generation: data.generation,
+				revision: data.revision,
+				type: "error",
+			});
+			return;
+		}
 		try {
-			const result = build(data.source);
+			const result = build(data.source, data.referenceLabelCaseFoldProfile);
 			postMessage(
 				{
 					data: result.data,
@@ -246,9 +262,11 @@ export function createEditorBlockIndexWorkerHandler(
 				},
 				result.transfer,
 			);
-		} catch {
+		} catch (error) {
 			postMessage({
-				code: "editor-block-index-build-failed",
+				code: error instanceof Error && error.message === "visual-editor-reference-label-fold-profile-unavailable"
+					? "editor-block-index-reference-profile-unavailable"
+					: "editor-block-index-build-failed",
 				generation: data.generation,
 				revision: data.revision,
 				type: "error",

@@ -1,3 +1,11 @@
+export type ReferenceLabelCaseFoldProfile = 11 | 13 | 14 | 16 | 17 | "unsupported";
+
+export function isReferenceLabelCaseFoldProfile(
+	value: unknown,
+): value is ReferenceLabelCaseFoldProfile {
+	return value === 11 || value === 13 || value === 14 || value === 16 || value === 17 || value === "unsupported";
+}
+
 export type EditorMarkdownBlockKind =
 	| "code"
 	| "heading"
@@ -105,7 +113,7 @@ export type EditorMarkdownBlockIndexBuildInput = Readonly<{
 }>;
 
 export type EditorBlockIndexWorkerRequest = EditorMarkdownBlockIndexBuildInput &
-	Readonly<{ type: "build" }>;
+	Readonly<{ type: "build"; referenceLabelCaseFoldProfile: ReferenceLabelCaseFoldProfile }>;
 
 export type EditorBlockIndexWorkerResponse =
 	| Readonly<{
@@ -125,6 +133,7 @@ export type EditorMarkdownBlockIndexFailureCode =
 	| "editor-block-index-cancelled"
 	| "editor-block-index-disposed"
 	| "editor-block-index-input-invalid"
+	| "editor-block-index-reference-profile-unavailable"
 	| "editor-block-index-result-invalid"
 	| "editor-block-index-result-too-large"
 	| "editor-block-index-source-too-large"
@@ -135,6 +144,7 @@ export type EditorMarkdownBlockIndexFailureCode =
 	| "editor-block-index-worker-failed"
 	| "editor-block-index-worker-message-invalid"
 	| "editor-block-index-worker-post-failed"
+	| "editor-block-index-worker-profile-invalid"
 	| "editor-block-index-worker-request-invalid"
 	| "editor-block-index-worker-timeout"
 	| "editor-block-index-worker-timeout-invalid"

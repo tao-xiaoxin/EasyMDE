@@ -62,6 +62,25 @@
 .entry-content pre,
 .wp-block-post-content pre {
     overflow: auto;
+    scrollbar-width: none;
+}
+
+.easymde-rendered-content pre > code,
+.easymde-preview pre > code,
+.entry-content pre > code,
+.wp-block-post-content pre > code {
+    scrollbar-width: none;
+}
+
+.easymde-rendered-content pre::-webkit-scrollbar,
+.easymde-preview pre::-webkit-scrollbar,
+.entry-content pre::-webkit-scrollbar,
+.wp-block-post-content pre::-webkit-scrollbar,
+.easymde-rendered-content pre > code::-webkit-scrollbar,
+.easymde-preview pre > code::-webkit-scrollbar,
+.entry-content pre > code::-webkit-scrollbar,
+.wp-block-post-content pre > code::-webkit-scrollbar {
+    display: none;
 }
 
 .easymde-rendered-content pre code.hljs,

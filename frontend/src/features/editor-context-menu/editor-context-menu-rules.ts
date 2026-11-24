@@ -144,7 +144,7 @@ function fallbackParagraphBlock(
 export function findMarkdownBlock(
 	value: string,
 	position: number,
-	blockIndex: EditorMarkdownBlockIndex = createEditorMarkdownBlockIndex(value),
+	blockIndex: EditorMarkdownBlockIndex = createEditorMarkdownBlockIndex(value, { referenceLabelCaseFoldProfile: "unsupported" }),
 ): MarkdownBlock | null {
 	if (!Number.isInteger(position) || position < 0 || position > value.length) {
 		throw new Error("editor-context-menu-position-invalid");
@@ -426,7 +426,7 @@ export function insertParagraphRelative(
 		return null;
 	}
 	const structuralIndex =
-		blockIndex ?? createEditorMarkdownBlockIndex(value);
+		blockIndex ?? createEditorMarkdownBlockIndex(value, { referenceLabelCaseFoldProfile: "unsupported" });
 	if (codeTarget) {
 		const codeBlock = findMarkdownBlock(
 			value,
@@ -496,7 +496,7 @@ export function deleteThematicBreak(
 	const block = findMarkdownBlock(
 		value,
 		selection.start,
-		blockIndex ?? createEditorMarkdownBlockIndex(value),
+		blockIndex ?? createEditorMarkdownBlockIndex(value, { referenceLabelCaseFoldProfile: "unsupported" }),
 	);
 	if ("thematic-break" !== block?.kind) return null;
 	if (

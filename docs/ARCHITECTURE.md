@@ -39,10 +39,10 @@ form, Save, Publish, Revision, Media, and security authority. `_easymde_markdown
 remains canonical Markdown and `post_content` remains compatibility HTML.
 
 The shared `EditorContextMenuFeature` is mounted by this Root and binds only to
-the editable CodeMirror source surface and the active immersive visual surface.
-It is reused by ordinary Source, immersive Source, non-windowed Visual, and
-Windowed Visual presentations; title fields, Settings, native WordPress
-controls, and read-only Preview are outside its event boundary. The menu model
+the editable CodeMirror source surface and the active immersive ProseMirror visual
+surface. It is reused by ordinary Source, immersive Source, and unified immersive
+Visual presentations; title fields, Settings, native WordPress controls, and
+read-only Preview are outside its event boundary. The menu model
 delegates Bold to the active toolbar command executor, Clipboard operations to
 the browser Clipboard Port, HTML copy to the formal PHP Preview Port, table and
 paragraph edits to the Markdown context rules, image scale to the seven-value
@@ -194,7 +194,7 @@ menu capture reads prepared structure without synchronously reparsing a document
 
 The Vite entry under `frontend/test/build-contract/` remains test-only. It proves that React, ReactDOM, and `@wordpress/element` resolve to the WordPress-provided `wp-element` runtime, while the configured classic JSX transform emits calls to its public `createElement` API instead of assuming an unavailable automatic JSX-runtime global. It also proves that Vite and WordPress manifests agree on the generated script, dependency metadata, and plugin-relative resource paths. Its output is written to `.cache/easymde-frontend-contract/`, is not enqueued by WordPress, and is excluded from the installable plugin ZIP.
 
-`frontend/src/entrypoints/admin-editor-loader.ts` is the PHP-enqueued production loader for the ordinary Editor. `AdminAssets` validates `assets/build/admin-editor-loader/wordpress-manifest.json` and `assets/build/wordpress-manifest.json`, enqueues the stable `easymde-admin-editor-toolbar` loader handle, and serializes the versioned loader Bootstrap with `mainScriptUrl`. The loader reads and same-origin-validates `mainScriptUrl`, dynamically loads the hashed `frontend/src/entrypoints/admin-editor.tsx` main entry, and starts the same React Editor Root after its DOM gate is ready. `templates/admin/editor-shell.php` provides one empty `#easymde-editor-root` mount and native WordPress submission fields. The Markdown field remains visible until CodeMirror owns a working document session; React then hides both that bridge field and `#postdivrich`, restoring them on teardown or failure; there is no parallel Legacy editor container.
+`frontend/src/entrypoints/admin-editor-loader.ts` is the PHP-enqueued production loader for the ordinary Editor. `AdminAssets` validates `assets/build/admin-editor-loader/wordpress-manifest.json` and `assets/build/wordpress-manifest.json`, enqueues the stable `easymde-admin-editor-toolbar` loader handle, emits `<link rel="modulepreload">` hints for the main entry, and serializes the versioned loader Bootstrap with `mainScriptUrl` and `moduleFormat: "esm"`. The loader reads and same-origin-validates `mainScriptUrl`, dynamically loads the hashed local ES Module entry (`frontend/src/entrypoints/admin-editor.tsx`, compiled with Vite `format: "es"`, target `es2020`, reusing the WordPress 6.7 React 18 `wp.element` global via `wordpressEsmExternals()`), and starts the same React Editor Root after its DOM gate is ready. Heavy on-demand capabilities—specifically the unified ProseMirror + `markdown-it` immersive visual editor (`frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx`), the WeChat Clipboard serializer/rasterizer (`frontend/src/integrations/browser/wechat/`), and secondary CodeMirror indentation language packs—are dynamically code-split into local chunks loaded only when activated. `templates/admin/editor-shell.php` provides one empty `#easymde-editor-root` mount and native WordPress submission fields. The Markdown field remains visible until CodeMirror owns a working document session; React then hides both that bridge field and `#postdivrich`, restoring them on teardown or failure; there is no parallel Legacy editor container.
 
 `frontend/src/entrypoints/frontend-code-copy.ts` is a separate, non-React
 production entry for published EasyMDE content. `FrontendAssets` conditionally
@@ -256,11 +256,14 @@ distinguishable new frame is accepted only when the visible Settings pixels
 before and after are exactly equal across the complete analysis.
 
 The entrypoint parses external data before mounting, constructs focused
-WordPress and browser Adapters, mounts one `EditorRoot`, and owns idempotent
+WordPress and browser Adapters, mounts one modular `EditorRoot` (`frontend/src/app/editor/EditorRoot.tsx` composed from focused feature-bridge hooks and `ImmersiveVisualEditorHost.tsx`), and owns idempotent
 teardown. The Root composes Toolbar/commands, CodeMirror document and title
-sessions, server Preview and local post-response enhancements, Appearance and
-Custom CSS, Fonts, Media and image upload, Local Drafts, WeChat export,
-the fixed Source/Preview layout, and WordPress session state.
+sessions, the modular read-only `PreviewSurfaceOwner` (`frontend/src/features/live-preview/ui/`, with dormant windowed/editable-adoption layers retired) and local post-response enhancements, the modular immersive editor (`frontend/src/features/immersive-editor/`: `immersive-document-derivations.ts` for bounded streaming document statistics and heading-outline scanning, `immersive-publish-excerpt.ts` for Lezer-tree plain-text publish-excerpt derivation, `ui/use-immersive-document-derivations.ts` for debounced/sliced React outline and stats scheduling, `ui/ImmersiveHistoryDialog.tsx` for the revision history modal delegating restore to WordPress, plus `ImmersiveCustomCssDialog` and `ImmersivePublishDialog` lazily loaded as separate ESM chunks), Appearance and
+Custom CSS, Fonts, Media and image upload, Local Drafts, the modular WeChat export pipeline (`frontend/src/integrations/browser/wechat/`),
+the fixed Source/Preview layout, and WordPress session state. The independent
+Settings Center Root (`frontend/src/app/settings/`) is similarly decomposed into
+focused section pages and controls. Both admin stylesheets (`assets/css/admin/editor.css` and `assets/css/admin/settings-center.css`) are organized with structured tables of contents and numbered section banners. All production modules across both frontend and PHP follow automated architecture guardrails in `tests/Node/frontend-architecture-guardrails.test.mjs` and `tests/Node/php-architecture-guardrails.test.mjs`
+(unidirectional layering, zero runtime circular dependencies across production frontend modules, a 1,200-line warning threshold and strict 1,500-line hard ceiling with zero legacy exceptions across all `frontend/src/` and `src/` production files, a 400-line ceiling on zero-JSX `.tsx` controllers, and PHP PSR-4/`ABSPATH`/`Support`+`Frontend` isolation).
 Ordinary Editor Components depend on typed Ports; WordPress DOM, `wp.media`,
 REST, Storage, and Clipboard access for the ordinary document and protected
 operations remain in focused Integration Adapters. The independent Settings
@@ -271,11 +274,71 @@ CodeMirror owns the in-page Markdown value, Selection, Focus, Undo history, and
 source scrolling. The native title and React-owned hidden Markdown fields are
 synchronous submission bridges and are flushed before WordPress serializes the
 open form.
-Windowed visual edits publish their exact CodeMirror state and internal
-subscribers synchronously. Repeated non-structural edits may coalesce the
-native Markdown-field projection into the next browser task; autosave, native
-submission, mode exit, and teardown synchronously flush that projection before
-WordPress or an extension may serialize the form.
+
+### Unified ProseMirror Immersive Visual Editor
+
+When the user unlocks immersive Preview, `ImmersiveVisualEditorHost` dynamically
+imports `MountedProseMirrorVisualEditor` (`frontend/src/features/immersive-visual/`)
+while keeping `PreviewSurfaceOwner` strictly read-only and hidden (retaining it as
+the formal PHP `SafePreviewHtmlSink` owner for WeChat Clipboard export and lock-back
+refreshes). `ProseMirrorVisualEditor` mounts `EditorView` directly onto its semantic
+`<article data-easymde-prosemirror-host="1">` `.easymde-preview.easymde-rendered-content` surface via `{ mount: container }` so
+every descendant and direct-child CSS selector across all 46 registered article
+themes applies identically to formal Preview.
+
+- **Single unified engine**: Handles both short and large (>160-block) documents
+  in one in-memory ProseMirror projection without full/windowed engine splitting
+  or DOM spacers (rationale in
+  [ADR-002](decisions/ADR-002-visual-editor-and-esm-architecture.md)).
+- **Zero-write on read & surgical block preservation**: Opening or unlocking a
+  document performs zero canonical writes (`createMarkdownRoundTripGuard` in
+  `markdown-serializer.ts` backed by `markdown-block-preservation.ts`, keeping
+  the dependency direction strictly one-way from serializer to preservation, and
+  memoizing serialized strings per immutable `ProseMirrorNode` in a `WeakMap`
+  so untouched pasted or newly created blocks are not re-serialized on every
+  keystroke).
+  Localized edits preserve every untouched top-level block and untouched list
+  item's original raw Markdown (including `*`/`+`/`-` bullet/task list markers,
+  padded table columns, reference links, inter-block spacing, and trailing
+  newlines), and undoing back to the initial state restores byte-identical
+  source. `table-alignment-codec.ts` owns the TypeScript
+  `<!-- easymde-table-align:v1 [...] -->` parser/reconciler mirroring
+  `src/Content/TableAlignmentAnnotation.php`.
+- **Protected atoms, custom NodeViews & boundary commands**: `node-views/`
+  preserves KaTeX math, Mermaid diagrams, `[TOC]`, footnotes, reference
+  definitions, and raw HTML blocks as non-corrupting atomic cards (with
+  hover/focus Edit quick action, double-click editing,
+  `Ctrl/Cmd+Enter` commit, and non-propagating `Escape` cancel), renders Mac
+  3-dot code frames with incremental `Decoration.inline` Highlight.js tokens
+  (scoped to changed document ranges via `nodesBetween`),
+  supports interactive task-list checkboxes that preserve original list markers,
+  and provides click-to-select image blue rings and 7-value width scaling
+  (`{width=25%..200%}`). `visual-boundary-commands.ts` owns atom/container
+  boundary keybindings (`Backspace`/`Delete`/`Mod-Home`/`Mod-End`/edge-arrow
+  guards) and the Chromium atomic-selection anchor widget plugin.
+- **Canonical synchronization, IME & source indexing**: `visual-canonical-sync.ts`
+  is the single authoritative bridge between the ProseMirror projection and
+  `EditorDocumentSession` (CodeMirror + native form bridge), handling bounded
+  text diffs, contiguous typing history grouping, echo suppression, and
+  incremental canonical Undo/Redo reconciliation. While mounted,
+  `ProseMirrorVisualEditor` activates `documentSession.document.setVisualEditingActive(true)`
+  (and restores `false` on unmount or startup error) so hidden CodeMirror parks
+  its DOM and disables live Lezer Markdown syntax re-parsing during visual
+  editing while remaining the sole canonical state and history owner. `visual-composition-session.ts`
+  tracks IME `composing`/`settling` phases so canonical commits wait until
+  composition ends and ProseMirror's DOM flush lands. `visual-source-index.ts`
+  and `visual-source-inner-maps.ts` maintain the parser-backed bidirectional
+  index between ProseMirror positions and LF-normalized UTF-16 Markdown offsets
+  with lazy per-block inner maps (keeping shared segment/block types in
+  `visual-source-inner-maps.ts` to avoid import cycles). Locking back to
+  read-only or invoking WeChat Copy refreshes the formal PHP `MarkdownRenderer`
+  Preview without making ProseMirror a persistence or formal rendering
+  authority. When the formal Preview sink is hidden (`easymde-preview-surface-hidden`
+  while unlocked, or hidden `.easymde-pane-preview` in source modes),
+  `frontend/src/integrations/browser/wechat/wechat-payload-serializer.ts`
+  serializes and measures from a temporary off-screen layout-participating clone
+  of the formal Preview sink (reading only container width, never ProseMirror
+  DOM) and removes it in `finally`.
 React neither submits a closed field allowlist nor treats synchronization as a
 successful Save, so unknown WordPress and extension fields remain intact.
 
@@ -302,25 +365,39 @@ activation rather than on a readiness notification. A refused preflight ends the
 gesture before any target is captured, leaving the owner's own failure as the
 single report.
 
-Visual owners return a target lease (`EditorContextMenuTargetLease`,
-`captureTarget`) bound to their own current accepted source, ledger, and runtime
-instance. While readiness is pending - a transfer, an in-flight
-re-authentication, or a still-building inventory - the Feature keeps the parked
-demand and its lease without resolving a DOM node, because the accepted render
-that satisfies readiness may not be installed yet. This holds for every rebuild
-of a demand, including one whose menu is already on screen: a readiness
-notification is not permission to read the element the user originally pointed
-at, so an accepted render that replaces that block while the menu stays open is
-rebound through the same flow. Only a ready rebuild resolves the lease, and the
-owner either names the live element that carries the demanded block or returns
-null. Null retires the demand silently: there is no fallback to the retired
-element, no lookup by reused ordinal block id, no coordinate re-test, and no
-menu for a different block. A changed accepted source is therefore not silently
-rebound; the block must still be provable, and a Full re-authentication that
-renumbers roots still resolves the block the user pointed at. Every terminal path - dismissal, action close, cancellation,
+The ProseMirror visual adapter returns a target lease
+(`VisualEditorContextMenuTargetLease` via `captureContextMenuTarget` in
+`visual-context-menu-adapter.ts`) bound to the original live DOM `Element`
+inside `view.dom` and the captured canonical document revision
+(`documentSession.document.getRevision()`). `resolve()` returns that original
+element only while the runtime is alive, the element remains connected inside
+`view.dom`, and the canonical revision has not changed; if the element
+disconnects or the document revision advances, `resolve()` returns `null`.
+Null retires the demand silently: there is no fallback to a disconnected
+element, no lookup by ordinal block id, no coordinate re-test, and no menu for
+a different block. Every terminal path - dismissal, action close, cancellation,
 owner or surface replacement, readiness failure, and unmount - releases the
 lease idempotently, and a released lease never revives on a later notification,
 so a retired demand cannot reopen or act on stale bytes.
+
+The visible menu and a parked demand share one scroll-baseline judgment. The
+baseline snapshots the surface's ancestor scroll positions
+(`scrollLeft`/`scrollTop`) and the viewport's `scrollX`/`scrollY`. A queued scroll
+event from a known target whose position has not changed since that snapshot is
+ignored; actual movement and an unknown external scroll target still cancel. A
+pending demand captures this baseline once when its user gesture opens it,
+retains that same snapshot across readiness replay, and recaptures it only for a
+new gesture; cancellation and teardown release it. Replay therefore cannot
+re-snapshot after a real displacement and relabel it as a no-op. Menu-owned
+scrolling, Escape, outside dismissal and focus restoration retain their existing
+rules. The snapshot is a demand-lifetime local value, not a document store,
+target lease extension or delayed-dismissal timer. It changes no menu markup or
+styling.
+
+Empty-table context-menu commands work directly from ProseMirror's live table
+node and cell selection through the `EditorContextMenuTargetLease` and
+`visual-source-index.ts` source-range mapping, without depending on nonempty
+cell text nodes or a retired DOM-only `currentEmptyTableTarget` helper.
 
 While a demand is pending without a visible menu, the Feature owns Escape:
 its document-capture listener prevents the default and stops propagation before
@@ -346,8 +423,8 @@ and that the surface still reports the exact snapshot the receipt authenticated
 Everything else stays with the existing matcher: a missing or false receipt is an
 ordinary miss that lets the unchanged comparison retire or keep the demand, and a
 visible menu, an in-flight action, a canceled or replaced demand, or a second
-publication can never be preserved by it. Source and Windowed publish no such
-transition and simply omit the member.
+publication can never be preserved by it. Source publishes no such transition
+and simply omits the member.
 
 Nonempty selections must fit wholly inside an authenticated object's source
 range before object-specific commands become available or execute. Mixed
@@ -359,34 +436,16 @@ These checks reuse the existing visual mapper and canonical selection owner.
 
 Image activation is gesture-owned rather than inferred from menu coordinates. The
 shared Feature decides whether a real pointer gesture preceded the `contextmenu`
-event and passes that activation through the surface preparation hook. One
-per-surface owner (`createVisualImageInteraction` in
-`frontend/src/features/immersive-editor/visual-markdown.ts`) then holds the whole
-image interaction: the gesture policy, the exact image-node range it placed
-itself, the primary-button activation, selection drift, and the visible marker.
-Each visual runtime contributes only its own readiness rule, focus operation,
-canonical selection publication, and failure reporting, so the two runtimes share
-no duplicated image handlers and no cross-owner feedback registry. A pointer
-demand may replace only the exact range that owner placed for an earlier image or
-the selection that same owner placed itself while adopting a render, a keyboard
-activation replaces no selection, and the primary button on the image itself
-replaces whatever the selection was. "Placed itself" is tracked, not inferred: the
-runtime records the native selection at the adoption and history-restore points it
-publishes, drops the record when the selection drifts, and reports that predicate
-to the shared owner. A selection the user made is therefore never discarded, while
-a selection a history restore left behind (for example the code-block range after
-an Undo) no longer blocks image commands for a pointer on an image. A deliberate
-mixed text/object range keeps its extent, and the Root still requires the hit
-image's block-id, image ordinal, source, revision, and live lease to agree before
-image commands are exposed. A range that genuinely spans text on both sides of
-the pointed image contains no single image source range, so it is recognised as
-that deliberate gesture - one non-collapsed range, both endpoints connected
-inside the surface, and non-blank selected text covering the image - and keeps
-the generic text menu; an image-node selection carries no selected text, so a
-retired `<img>` still fails `editor-context-menu-image-stale`. Replacing an
-already-open menu keeps the existing demand lifecycle: the previous demand is
-retired before the next pointer target is published, and a lease owned by an
-asynchronous action is never released early.
+event and passes that activation through the surface preparation hook. Inside
+the unified ProseMirror visual editor, `image-node-view.ts` and
+`visual-context-menu-adapter.ts` (`frontend/src/features/immersive-visual/`)
+coordinate image `NodeSelection`, the transient `.easymde-visual-image-selected`
+blue selection ring (which writes no Markdown, attributes, or export state),
+pointer right-click targeting, and canonical selection synchronization. A pointer
+context menu on an image targets the pointed image cleanly, while a deliberate
+mixed text/object selection keeps generic text commands instead of destructive
+object actions. Replacing an already-open menu retires the previous demand first,
+and leases owned by asynchronous actions remain bound until completion.
 
 A primary-button activation also focuses the visual surface, selects the image
 node, and publishes the corresponding source range through the existing
@@ -394,11 +453,11 @@ same-value canonical selection update, so later commands and keyboard activation
 describe the image the user activated. The visible selected state is a transient
 fixed-position soft blue shadow rendered from the image's own box: it changes no
 Markdown, image attribute, geometry, or Clipboard/export payload, and it leaves
-the accepted-window registration, which compares captured and live surface
-content, untouched. The owner keeps that shadow bound to its box through the
+the ProseMirror document and canonical Markdown untouched. The owner keeps
+that shadow bound to its box through the
 image and surface geometry observers, the surface structure observer, and
-scroll/resize, so a late resource load, a rewritten size attribute, a Windowed
-block replacement, another target, menu focus, lock/exit, drift, and disposal all
+scroll/resize, so a late resource load, a rewritten size attribute, a ProseMirror
+block re-render, another target, menu focus, lock/exit, drift, and disposal all
 rebind or clear it. The shadow is clamped to the preview's visible band, the
 viewport narrowed by the surface's clipping ancestors: while the image sits
 inside the band the shadow is exactly the image's box, the part that scrolled out
@@ -406,153 +465,47 @@ of the pane is never drawn, and a fully scrolled-out image is hidden instead of
 painting over the toolbar, the header, another pane, or outside the viewport.
 
 Pointer activation of a thematic break is distinct from keyboard Context Menu
-activation. A live direct-child `hr` may normalize only an absent, collapsed, or
-wholly foreign native Selection to an exact node range; a deliberate owned,
-mixed, different-object, or straddling range is preserved. Full and Windowed
-owners authenticate source value, accepted signature/revision, edit map or
-mounted ledger, block identity, editability, protection, and direct-child
-ownership before that normalization, then delegate the resulting exact source
-range to the existing thematic-break owner. A stale, detached, protected,
-noneditable, spacer, or unmappable target restores the original Selection and
-fails explicitly without a source/history write; forward and backward HR ranges
-remain directional, and keyboard activation never retargets from its anchor.
-Thematic breaks are parser-owned editable blocks with a packed `thematic-break`
-kind appended to the block-index registry so existing numeric kinds remain
-stable. Source insertion above a rule uses two detected document line endings
-to prevent a following paragraph from becoming a Setext heading. Full and
-Windowed Visual accept an exact direct-child `hr` `Range.selectNode` only after
-matching accepted edit-map or mounted-ledger provenance; the mapper trims one
-terminal line ending and never falls back to whole-surface serialization for a
-stale, noneditable, mixed or spacer selection. Windowed native Delete/Backspace
-uses the same authenticated source range, synchronizes the original canonical
-selection before one history-isolated marker-only change, preserves line endings,
-and restores the blank-gap caret through the accepted Preview. Non-cancelable,
-stale, read-only, mixed and spacer paths fail without a source write. The local
-browser acceptance covers the native Windowed source deletion and accepted
-Undo/Redo Preview flow; exact DOM selection restoration remains covered by the
-focused Windowed and CodeMirror tests.
+activation. In the unified visual editor, a thematic break is a
+`horizontal_rule` atom node in `visual-schema.ts`, rendered as a non-editable
+rule. Pointer and context-menu targets resolve through
+`visual-context-menu-target-resolution.ts` to the exact node; a deliberate mixed
+or straddling text range keeps generic text commands, and keyboard activation
+never retargets from its anchor. A rule `NodeSelection` maps to its exact raw
+source line through `visual-source-mapping.ts`. Delete and Backspace next to a
+rule or protected card are handled by `visual-boundary-commands.ts`: a caret or
+gap cursor beside the atom first selects it, a selected atom is removed in one
+transaction, and an empty paragraph beside it is removed without joining
+neighboring blocks. Every such edit is one ProseMirror transaction synchronized
+to canonical Markdown by `visual-canonical-sync.ts`, sharing the editor's single
+Undo/Redo history, while untouched blocks keep their original marker spelling,
+whitespace, and line endings. Source-mode insertion above a rule keeps two line
+endings so a following paragraph cannot become a Setext heading.
 
-Exiting an empty Windowed code fence between two mounted editable rows records
-the exact canonical blank-gap caret, source/revision/history state, and both
-source-owned neighbor extents. Local acceptance of its exact `P > BR` placeholder
-already owns the gap; either side of that sole BR maps to the same canonical empty
-caret. A sole-BR paragraph carries no content of its own, so its logical content
-end lies before the placeholder and the owner places the native caret at the block
-start (P offset 0); collapsing after the placeholder instead treats renderer
-scaffolding as trailing content, which can lose native composition completion for
-the gap this certificate then relies on.
-Neighbor lookup may cross only retained renderer whitespace, never a spacer or
-foreign root. Enter inserts the detected source line ending once, and text
-arriving before its formal response must authenticate the same pending lease,
-native selection, protected DOM and canonical state, not demand ready state.
-Preview's local replacement adoption advances both the repository node and its
-accepted sink child sequence under the same revision/signature and exact-node
-proof. Loading retains that accepted sequence; retaining only the repository
-would let the sink remount old HTML and destroy the pending native caret.
-Owner-authorized structural mutations remain the editing presentation while a
-replacement response is loading. The matching formal commit replaces that
-presentation atomically; loading neither replays the preceding formal HTML nor
-adopts a transient layout jump as the next scroll baseline.
-A later formal renderer may omit the temporary empty paragraph. Only this
-command-issued proof can restore
-the same source gap at the following accepted row's native boundary; it cannot
-derive a gap from a spacer, a reused block label, or an unrelated row. The
-accepted proof also owns immediate text, Enter and IME insertion at that exact
-caret, rather than serializing the following heading as the insertion target.
-Plain-text Paste and drop at that certified caret consume the same certificate
-instead of remapping the substitute presentation position into the following
-row. An IME that begins while the Enter response is still outstanding keeps the
-pending canonical lease; the ready-only gap path never pre-empts it, so the
-draft is discarded and its committed data is inserted once at the recorded gap.
-A native history command settles the pending edit before it runs: the
-`historyUndo`/`historyRedo` event does not clear or replace that edit's captured
-pre-edit selection witness, so Undo records the user's deleted range instead of
-the transient post-edit caret, and the existing single witness owner is reused
-rather than a second selection authority. Native Undo can recover a matching known gap from bounded owner history; source,
-revision, selection, accepted DOM and history checks still precede reuse.
-Outside focus, source ABA, navigation and pointer movement do not reacquire it.
-The windowed owner issues the same certificate for a text tail, whether the
-block is a heading or an ordinary paragraph, and derives the gap's trailing
-boundary from the accepted source ledger rather than from a mounted node: the
-next accepted editable source row supplies the exact extent even when its DOM
-row is unmounted behind a window spacer, and the document-end form is used only
-when no editable source row follows. A spacer never becomes a gap neighbor and
-no slot is fabricated for it. The owned presentation carries one or more break
-lines, so repeated Enter stays one certified gap: each accepted newline advances
-the canonical source and moves the native caret to the newly created line, and
-the accepted formal commit retains the gap and its caret instead of dropping the
-line. Typing into that gap forms the text's own Markdown block, separated from
-the following row, whose own bytes are never rewritten; a gap at the document
-end, or one whose following row already owns a leading blank line, keeps the
-previous direct splice. A canonical caret at a block's text tail restores to the
-accepted block's visible text end, including when the formal render decodes the
-draft's backslash-escaped tilde or backtick markers; an interior offset whose
-source and visible bytes cannot align keeps the explicit
-`visual-editor-selection-map-failed` rejection instead of guessing a boundary.
-An EOF text-tail gap uses complete line-ending tokens: the producer appends
-only the missing separator before requesting Preview and preserves existing
-suffix bytes. The pin names the resulting canonical source, never a position
-past it. A document-end boundary has no invented edit-map row. Formal adoption
-rebinds the preceding row to its actual rendered source extent and promotes the
-proved gap through one owner, renewing current, physical, pending and bounded
-history references together. Restoring the empty paragraph's caret alone does
-not authorize its next input. Both installed-snapshot adoption paths require
-the same source, revision, history, selection, node identity and ledger proof.
-Undo and Redo restore the authenticated gap's historical DOM before retaining
-it; a live composition's extra line break cannot stand in for the restored state.
-The same owner accepts `insertParagraph` while its own Preview is outstanding,
-so a pending gap continues rather than rejecting the next line.
-A complete fence opening at that draft's caret owns the same Enter command while
-its Preview is outstanding: the shared block shortcut converts the typed tilde
-or backtick opener into the equally wide backtick fence with the typed language
-or info string, the canonical block text is that owner's own block serialization,
-the gap certificate is retired, and the shortcut's formal request supersedes the
-outstanding one. No second canonical projection is introduced for the pending
-case.
+Code blocks are `code_block` nodes rendered by `node-views/code-block-node-view.ts`
+inside the shared Mac frame. Leaving or collapsing a code block uses ordinary
+ProseMirror commands from `visual-commands.ts` and `visual-boundary-commands.ts`
+rather than DOM gap certificates: `Mod-Enter` (`exitCode`) continues in a new
+paragraph after the block, Delete at the end of a code block moves the caret to
+the start of the next block instead of joining it (and is a no-op at document
+end), Backspace in an empty code block converts it to a paragraph, and Backspace
+at the start of a block that follows a non-empty code block or table moves the
+caret into that block without selecting, deleting, or joining it. `Tab` and
+`Shift+Tab` indent and outdent code lines. A collapsed position between blocks
+is a `prosemirror-gapcursor` selection; typing there creates a new paragraph
+that serializes as its own Markdown block while neighboring blocks keep their
+raw source bytes through block preservation. `visual-source-mapping.ts` and
+`visual-source-index.ts` own the mapping between ProseMirror positions and
+canonical Markdown selections, and `visual-composition-session.ts` keeps
+canonical synchronization from interrupting an active IME composition.
 
-Both visual owners distinguish a renderer-only structural transition from a
-foreign DOM change. Full captures a bounded native end-of-block Backspace
-witness at `beforeinput`: the target must run from a code block's terminal
-renderer LF into a following empty paragraph. After the default it admits only
-two terminal shapes: that lone LF text node removed, or a shared final text node
-retained with exactly its trailing line ending trimmed; in both the empty
-paragraph and any whitespace text between the two roots are gone, every
-surviving root must remain the same node object with unchanged frozen metadata,
-and the code root must serialize unchanged - any other inner byte change is
-refused. That serialization proof is captured and compared for both accepted
-shapes, not only when a shared terminal is trimmed, so a removal that also drops
-code bytes or edits an inner character can never be admitted. The verified ledger is published for that commit even when the
-canonical source is unchanged, because the empty paragraph's blank line stays
-source and the visual removal maps to zero source bytes. The same witness gates
-the equal-serialization commit and the selection mapper for that transition; a
-same-id clone or any other node delta still fails as
-`visual-editor-canonical-change-dom-stale`. For an
-ordinary terminal empty paragraph, the one renderer-only trailing spelling
-difference between the serializer and the owned visual is admitted only while the
-DOM is otherwise the retained ledger; the canonical splice removes the trailing
-separator, returns the native caret to the preceding text, and keeps every other
-block. Windowed re-authenticates a real navigation selection - collapsed or
-selected - inside one accepted editable code body during a pending transfer,
-publishing the selection-only canonical caret with its direction preserved; a
-selected deletion's target must equal that authenticated interval exactly for
-both Backspace and Delete, and the post-delete caret is the interval start.
-
-A certified empty-code-gap IME session also retains the Preview surface for its
-own lifetime. The Windowed owner takes one runtime lease, so the sink installs
-no commit and publishes no certificate for the held content, and mounted
-geometry measurement cannot certify preedit height; the last release re-runs
-the sink effect with the current props and restarts geometry setup for the
-current state. Leases are activation-bound: concurrent sessions keep the hold
-until each releases once, repeated or late releases are inert, owner disposal
-invalidates them, and acquisition is refused while a materialization is already
-able to roll back into the surface. `compositionend` publishes the committed
-data at the captured canonical range before releasing; cancellation, both
-history entry points, an external source change (including a revision ABA),
-Windowed unmount, whole-owner teardown, and a late superseded response release
-without serializing the draft or restoring old DOM over newer source. Ordinary
-pending-caret composition acquires no lease and keeps its existing
-accept-while-composing behavior.
-
+Structural edits across headings, paragraphs, lists, blockquotes, inline
+protected atoms, and GFM tables (including cell Tab navigation, outer-edge
+atomic boundaries, and preserving untouched raw Markdown spellings) are owned
+directly by the unified ProseMirror schema, `visual-boundary-commands.ts`,
+`visual-table-operations.ts`, `markdown-block-preservation.ts`, and
+`visual-canonical-sync.ts` (see `Unified ProseMirror Immersive Visual Editor`
+above), replacing the retired `contentEditable` Full/Windowed DOM-projection
+helpers.
 
 Formal Preview may also return a versioned, line-coordinate `codeMap` from the
 same CommonMark Document. It describes fenced and indented code leaves, not a
@@ -657,689 +610,56 @@ already loaded same-origin image without fetching, reloading, changing image
 attributes, or uploading. Source range, ordinal, accepted revision, node order,
 and complete image fingerprint must remain current until output publication.
 
-Immersive visual Preview editing synchronizes the editable surface back to the
-canonical Markdown document. Completed block and inline Markdown shortcuts are
-applied to semantic visual markup before synchronization; pasted plain text is
-inserted as Markdown and rendered only by the authoritative server Preview
-owner. A Preview response is enhanced in one connected, inert staging element
-with the active Preview's theme and width context, then handed to the active
-Safe HTML sink as one revisioned node transaction. React keeps the accepted
-enhanced HTML in state while the sink remains the sole imperative child owner,
-so a later rerender cannot roll the committed subtree back. The accepted
-enhanced subtree remains visible while the request, math, Mermaid, and
-Highlight.js work is pending.
-Plain-text Markdown transfer from Paste or Drop flushes pending visual input,
-maps the current selection, and applies the insertion through the canonical
-document owner before requesting server Preview. It passes the existing
-code-structure validation record for the new Markdown with the `matchesPreview`
-flag false, so transfer does not repeat the full code-topology scan and any prior
-code-body map remains untrusted until the replacement Preview is accepted.
-Per-key visual source, history, and native-field projection owners remain
-unchanged.
-An accepted empty Preview discards the previous window repository, pending
-window commit, and pending materialization work; any superseded materialization
-resolves `false`. `materialize()` reports readiness only for an accepted ready
-Preview. Without a repository it returns success only when no materialization
-is pending, no actual spacer remains, and the accepted state does not still
-require a large window. Non-ready, unavailable-repository, and stale-repository
-paths return `false` with the stable diagnostics
-`preview-window-materialize-not-ready`,
-`preview-window-materialize-repository-unavailable`, and
-`preview-window-materialize-repository-stale`. Ready materialization is
-installed by the Safe HTML sink in bounded batches; completion, failure,
-supersession, empty replacement, and teardown resolve every pending result.
-Immersive teardown waits for an accepted pending transfer but does not require
-full-surface materialization or start an abandoned Preview refresh. Ordinary
-Preview retains ownership of its own materialization and truthful failure
-reporting.
-Full-surface materialization holds the current activation against background
-window commits so mode handoff and export consumers can use the complete DOM.
-The `windowed` false-to-true layout transition releases the previous activation's
-hold before window setup, including an immersive Source/Split/Preview round trip;
-ordinary rerenders, scrolling, and resizing do not release a consumer's hold.
-Repeated full-surface materialization is idempotent for the accepted request: a second unlock does not create another canonical edit, history entry, or duplicate mounted root. The same hold and ledger rules cover an immersive Source-to-Split-to-Preview round trip, preserving the accepted source, selection and renderer whitespace ledger while the complete editable surface is restored.
-This does not bypass an in-flight sink commit: window setup still waits for
-bounded materialization. Completion clears its commit key and reruns setup;
-failure publishes its stable diagnostic and error state, and the Root cancels
-the queued unlock and clears its busy control. Setup, scheduling, and committing
-retain these same hold guards rather than racing the Safe HTML sink. The next
-admitted unlock accepts a measured window before enabling and focusing the
-editable pane. Root snapshot revisions count accepted snapshots, whereas Preview
-window generations advance on each request state (loading and success); those
-clocks are not compared as if they were one revision sequence.
-View changes remain Root-owned. If a formal visual transfer is pending, one
-Source click records the requested mode until that transfer settles, then uses
-the same guarded preparation and materialization path as a direct switch.
-Every explicit Source, Split or Preview choice supersedes older requests,
-including a choice of the current mode. Preparation rechecks that request after
-each asynchronous boundary; cancellation releases only its own window hold and
-restores the still-current editable Preview, never an older mode request.
-Exiting immersive Preview uses that same generation owner: when a formal visual
-transfer is pending, one exit request waits for its authoritative acceptance and
-then runs the guarded source preparation before leaving. A newer explicit mode
-choice supersedes the pending exit, and teardown drops it; neither path creates
-an extra document, selection or history transaction.
-Window spacers are repository-owned declarations of the unmounted range they
-cover. Full-surface materialization consumes a spacer batch by batch, advancing
-its declared start and scaling its block size in place before removing it, so a
-cached spacer can outlive the run it was created for. The repository re-declares
-that range, block size, and margin pair whenever it hands a cached spacer out
-again, which keeps every installed spacer's declaration equal to its mounted
-neighbors; a mismatch fails the window commit with
-`preview-window-flow-spacer-neighbor-invalid` instead of installing an
-inconsistent window.
-Fence shortcuts are a presentation command: a newly formed tilde or backtick
-opener that can be represented as valid backtick syntax is serialized as an
-equally wide backtick fence while its info string is retained. Accepted or
-pasted tilde fences retain their source family. Inline shortcuts skip `CODE`
-and `PRE` content, block shortcuts skip code bodies, and the serializer scopes
-list, image, and caret-marker cleanup outside code.
-Full Visual projects a literal opener from the already authenticated native
-caret. Equal raw spans use linear boundary proof; raw or mixed backslash-escape
-spellings use a bounded Markdown-unit walk in both canonical and visual text,
-not a fresh global text search. An owner-created idless paragraph may become an
-empty code block only through the synchronous command's exact owned-node,
-source/revision, prior-HTML and lexical-span witness, with unchanged neighboring
-source and a validated empty code placeholder. This local command authority does
-not refresh an older formal edit map or admit foreign same-ID replacements.
-A complete opener typed into an ordinary paragraph stays literal until Enter,
-including its info string and at document end. The paragraph-line projection
-escapes the whole marker run without consuming neighboring blocks. Enter uses
-the authenticated literal row's exact source span and the command-created empty
-code block's serialization, not a second merge of escaped paragraph spelling;
-its source revision, owned-node ledger and neighboring source remain guarded.
-Rapid input is identified by its native input type, not insertion length; a
-coalesced burst projects its actual grouped source and selection rather than
-replaying the last key's splice. The caret remains between the newly inserted
-prefix and the pre-existing text, without double-escaping or splitting the
-history group. Verbatim Paste and already established source fences keep their
-existing owners.
-Accepted escaped literal rows use one bounded correspondence for source-to-DOM
-restoration, native-to-source input and unchanged-Source preparation. Each
-endpoint's accepted marker row must match its complete source slice through
-greedily paired Markdown escape units, including escaped backslashes; endpoints
-inside a unit are rejected. A BR represents a newline, protected descendants are
-excluded, and offsets consistently count UTF-16 code units. This paragraph-wide
-proof restores tails, info-string interiors and later-line positions through
-formal Preview rematerialization and native Undo/Redo without adding a history
-event. Native anchor/focus order supplies direction, including backward ranges
-across Text nodes, independently of the sorted source endpoints. Once input and
-its selection are committed, Source preparation preserves canonical Markdown,
-selection, document revision and both history depths; a stale hidden Source
-caret may only be synchronized to the proved current native selection through
-the existing same-value operation. Uncertified or ambiguous merges still fail
-explicitly; this certificate is not a wider serializer or merge fallback.
-Block-shortcut feedback animates opacity only: a newly adopted root must retain
-measurable normal-flow coordinates while the bounded Preview window certifies
-its replacement geometry. The geometry owner still rejects unmeasured transforms;
-it does not delay editing admission or substitute estimated geometry to hide a
-presentation animation failure.
-Preview scroll snapshots belong to their request generation. The existing
-ratio-based restoration runs after that generation's accepted DOM commit reaches
-ready; loading and enhancement do not consume it. Failure, supersession, and
-teardown discard the snapshot. A ratio is never captured while a commit is still
-committing or enhancing, because that state holds the transient DOM and scroll
-restore in flight; and a request that carries a Preview-owned selection pin is a
-current edit whose own anchor owns the viewport, so its ready commit does not
-replay the previous review ratio over the already painted edited row.
-The Windowed Root does not wait for a positive-height layout box. A finite block
-rect with at least one client rect is a valid zero-height presentation (for
-example an empty blockquote); no estimated height or CSS/geometry substitute
-can satisfy readiness. Geometry preparation carries its revision, style and
-width epochs and cursor across bounded work slices, and every resume rechecks
-owner, cancellation, node order and epoch before measuring. Flow-boundary
-capture is strict: the full materialized child sequence must be connected and
-direct, all flow and gap epochs must be current, edge nodes must be free of
-presentation transforms, and surface/edge coordinates must be finite before
-publication.
+A formal PHP Preview response is enhanced in an inert staging element
+(`preview-enhancement-staging.ts`) carrying the active Preview's theme and
+width context — connected offscreen for normal documents so layout-dependent
+enhancements can measure, and detached (`display: none`) for large documents
+above `PREVIEW_LARGE_DOCUMENT_BLOCK_THRESHOLD` (160 blocks) to avoid layout
+thrash — then handed to `SafePreviewHtmlSink` (`PreviewSurfaceOwner`) as one
+revisioned staged commit. React keeps the accepted enhanced state while
+`SafePreviewHtmlSink` remains the sole imperative child owner: on each new
+staged commit it validates unique child nodes and installs the staged children
+atomically (`surface.replaceChildren(...commit.nodes)`), and on same-commit
+rerenders it verifies exact child identity (`hasExactChildren`) so a rerender
+cannot roll the committed subtree back. The previously accepted enhanced
+subtree remains visible while a replacement Preview request or local
+enhancement pass is pending.
 
-Measured window geometry has one publication owner: the repository operation
-records the measured model height, advances the flow boundary, invalidates the
-spacer cache and marks the block and gap epochs with their known ranges. Staged,
-mounted, preparation and adopted-block callers keep their own node and rect
-validation, measurement, scheduling, cancellation and error policy, and consume
-the returned anchor correction; they do not repeat the transaction.
-Large candidate population and visual block marker passes yield when measured
-work reaches an eight-millisecond slice budget, checking cancellation and the
-current Preview owner after each yield. A large final handoff retains one paint
-barrier before the atomic sink commit.
-Layout-dependent code-frame variables are synchronized once against the active
-surface after that commit. Supported `beforeinput` edits use captured source
-and visual ranges to apply one localized canonical transaction. A cached
-interval map is retained across an accepted paste; a unique visible text node
-with an exact one-to-one source range takes the hot path without cloning,
-serializing, diffing, replacing the Preview root, or requesting Preview.
-Ambiguous edits fall back to the strict serializer and merge path. A supplied
-interval map is accepted only for the exact canonical source and visual baseline
-it was built from: equal normalized text does not prove that its recorded hidden
-ranges, original offsets, or escape gaps still describe these bytes, and that
-identity check runs before the unchanged fast path. The only change that may be
-treated as a serializer no-op is one recorded escape gap — a single backslash the
-alignment recorded directly before source-owned escapable punctuation whose two
-endpoints still map to that source offset — and it is proven after, never before,
-the hidden-range overlap and boundary checks, so a new visual slash or an
-unowned gap stays a real edit or an explicit failure. Ordinary
-visual input uses a trailing 80-millisecond debounce, composition cancels an
-older pending timer, and lock, view changes, autosave, publish, toolbar, and
-teardown flush pending input before their owner runs. If the serialized visual
-Markdown is unchanged, the transition flush skips selection mapping and
-document synchronization entirely. A changed transaction requires a current
-or previously accepted visual selection and never silently appends at the end
-when mapping is unavailable. Focus restoration uses `preventScroll`, and a
-pending paste blocks `beforeinput` without toggling the active surface's
-`contenteditable` state. History and composition input never re-enter the
-shortcut parser. Consecutive exact text input may continue through its pending
-source projection. A successful flush re-captures the current connected
-Selection before mapping that same `beforeinput`; failed or stale mapping
-rejects it explicitly. When a prior browser mutation is pending without such a
-projection, the next `beforeinput` first synchronizes that structural DOM
-change. This keeps a rapid list split followed by text in the new item from
-mapping through the pre-split source interval.
-Full composition settlement binds the insertion to its witnessed native origin,
-source and revision. It corrects the insertion-end caret only while the native
-selection still equals the captured completion witness; a newer pointer or
-Ctrl/Cmd+A selection is mapped as the current selection instead. Both visual
-owners invalidate a pending formal transfer's selection/focus restoration on
-new pointer or selection-navigation intent, so later acceptance cannot replay
-the old caret over it. A queued Full composition callback also checks its own
-effect-local lifetime before committing or restoring selection: teardown
-retires that closure even if a new activation makes the shared runtime active.
-An unchanged preparation read preserves a locally owned plain paragraph's
-composition authority only after re-proving its source, revision and retained
-DOM ledger. If serialization changes the visual spelling, the same row's exact
-DOM prefix and whole-unit projection rebase its selection memory; accepted
-renders, history replacement and unproved rows retain their retirement rules.
-For a marked paragraph root, Full composition first asks the accepted formal whole-row mapper for a decoded certificate. Only when that certificate is unavailable may a current Full-owned plain `P`/`Text` root use the existing same-pair local literal certificate, and only when that certificate succeeds; otherwise the formal or interval path remains authoritative. A repeated block ID alone never grants local ownership, and the source, revision, retained DOM ledger and native memory must still match the witnessed composition.
-When the source and visual baseline are unchanged, the neutral structural
-selection exception accepts only a collapsed caret in a sole-`BR` `P` or `LI`
-body. The body must be bounded by unchanged non-structural anchors or validated
-source ends, and its DOM ancestry must match the Markdown parser's ordered
-blockquote/list ancestry with exactly one owned separator. Code or protected
-content, missing ownership, and ambiguous candidates never claim this mapping;
-recognized failures use the existing merge errors. A valid candidate projects a
-zero-width source boundary into the interval map before the existing marker and
-merge checks run. Ordinary content remains eligible for the cached unique-text
-hot path before this structural scan.
-For typed input at that neutral boundary, `beforeinput` must capture the exact
-collapsed target range and body path before the browser transaction. It first
-updates only the canonical Selection through a same-value document operation;
-source bytes and history depth remain unchanged before native mutation. The
-following `input` accepts only the same live target/body path and boundary, the
-expected native empty-placeholder-to-Text transition, unchanged DOM outside the
-body, and an unchanged protected snapshot. It then serializes the actual surface
-as the visual baseline and enters the existing edit-intent and history owners.
-After that serialization, the visual caret offset is recomputed from the actual
-surface through the pure marker mapper rather than from the predicted
-replacement, so selection memory remains correct for escaped `~`, `*`, `_`, and
-`\` input. If another character arrives before the empty-body transaction
-commits, the earliest `historyBefore` and original `baseSourceMarkdown` remain
-authoritative; the existing canonical value diff applies the accumulated source
-once without a full-source scan or global history annotation per key.
-CRLF comparison uses normalized intervals and converts the result back to the
-canonical source UTF-16 offset. Immediate and delayed next input plus Undo/Redo
-must retain paired canonical and native Selection points; stale or mismatched
-evidence fails through the existing explicit synchronization owner.
-If a pending code-body intent is still owned when the Selection leaves its code
-block for an empty structural `P` or `LI`, the existing `beforeinput` owner
-flushes that code intent before dispatching the structural selection-only
-update, then rechecks the current owner. Consecutive input that remains in the
-same code body continues through the existing pending code owner.
-Empty-structural capture verifies that the committed source reference and
-canonical document remain equal before and after that update; a mismatch fails
-with the existing stable `visual-editor-history-document-stale` error before
-native input is accepted.
-When the generic map cannot project a collapsed caret inside CODE, the existing
-code-body projection owns only that caret input; non-collapsed selections retain
-the generic owner.
-For a mapped fenced code block, the visual editor resolves the active Preview
-block to one Markdown source body interval. That interval owns blank-line and
-line-ending semantics for both ordinary and windowed immersive editing;
-browser-created code DOM nodes are reconciled to the source interval without
-using their child count as a Markdown line index. Terminal and pending-window
-deletions resolve the same authenticated interval - derived from the accepted
-ledger row, never from document order, language or body-text matching: a
-forward Delete past the body's last character is recognized as a terminal
-target and consumed as a structural no-op that keeps the caret in the code,
-while an invalid or stale target keeps its explicit rejection, and a deletion
-between a history transfer and its formal Preview re-proves its block before
-any canonical write. The document session remains
-the canonical value and history owner. Non-windowed visual history slots follow
-CodeMirror's actual Undo/Redo depths, including grouped events, history pruning
-and replacement of a Redo branch. A slot retains an exact DOM snapshot or marks
-an accepted source state for formal Preview rematerialization. Ordinary exact
-text input does not serialize the whole DOM or reuse stale accepted HTML to
-manufacture a snapshot. Exact snapshots restore code DOM and caret after
-browser-created formatting or a scripted terminal newline is normalized.
+Preview scroll snapshots belong to their request generation. Ratio-based
+restoration runs after that generation's accepted DOM commit reaches ready;
+loading and enhancement do not consume it, and failure, supersession, or
+teardown discards the snapshot. A ratio is never captured while a commit is
+still committing or enhancing.
 
-Full paragraph topology fallback serializes and indexes element roots, while
-retaining renderer whitespace Text nodes in the exact owned child-node ledger.
-It verifies that ledger before omitting whitespace from block serialization;
-foreign replacements, changed whitespace data and non-whitespace root text do
-not gain authority. A pending pure insertion extends both source-extent edges
-only for its actual insertion-owning root. Prefix and suffix bytes are rebuilt
-from the real operation descriptor; another root's boundary insertion is
-excluded, and an ambiguous unowned empty extent is rejected.
-Full heading-tail Enter and witnessed native paragraph splits preserve the
-canonical bytes outside the exact insertion, including inter-block gaps and the
-terminal LF. A newly empty paragraph has a source-owned two-space body; the
-next native character replaces that body rather than inserting at a neighboring
-code block. When a browser's native insertion leaves the original empty-
-paragraph `BR` after the new Text node, that witnessed Text+`BR` shape remains
-the owned immediate-input presentation; it is not normalized away before the
-pending edit settles. Its operation-issued source/revision and node witness
-also covers a terminal paragraph omitted by serialization. Chromium may instead
-insert a cloned sole-`BR` paragraph immediately before the original paragraph
-while retaining the original suffix `P` and `Text`. The same signed beforeinput
-witness admits that order only when the original node identity, frozen sibling
-ledger, source/revision and both exact fragments agree; a repeated block ID
-alone never grants ownership. Native pre-edit carets enter the same CodeMirror
-history event. A known target history snapshot may restore an omitted empty
-paragraph only at its exact source gap after the accepted renderer proves the
-surrounding rows. When a Full owner is torn down after proving such an
-Enter-created empty-P history target, its successor may receive only a bounded
-source/depth/offset and history-depth continuity descriptor keyed to the same
-document session. The fresh owner still re-proves the current source, canonical
-point, accepted map and neighboring gap before presenting the empty paragraph;
-it retains no DOM or article snapshot and writes no extra history step. Source
-changes, history-depth changes and other document owners retire that descriptor.
-A collapsed caret at a shared boundary belongs to the next paragraph's exact
-source start; noncollapsed ranges and fence endpoints keep their existing
-mapping. Plain heading restoration ignores only trailing line endings, never
-internal lines or offsets beyond its proved text.
-For ordinary Full beforeinput, a direct nonempty plain paragraph's Element caret at its start or end and its equivalent first or last Text boundary are interchangeable only when the same single collapsed native target range proves the same Text node and offset. The owner reuses its existing interval or decoded-block proof; it does not mutate the DOM, guess a neighbor, or relax generic merge guards.
-For an authenticated empty paragraph containing only its renderer BR, native
-`P:0` and Chromium's post-deletion `P:1` identify the same empty insertion point.
-The existing input owner normalizes its captured structural target, preserving
-source/revision, exact ledger and target-range checks; it does not move the live
-caret before the native default or admit an unowned empty paragraph.
-Full table presentation has a separate known-history proof; it is not an ordinary
-edit origin relabelled with the history target's source or revision. Before a real
-CodeMirror Undo/Redo, the owner authenticates the source-owned current DOM and
-protected state and captures a coherent pre-command origin. After the command,
-the actual target source, numeric revision, selection, both history depths and
-exact existing target-slot identity bind that one pending transfer. A previously
-proved paragraph-to-table presentation retains only its owner, exact source-row
-extent, mapped first-header offset and source in the existing history snapshot.
-Unknown or source-only slots cannot mint that capability. A native Undo
-restores the operation's own inverse range; that ordered range is the same
-authenticated pre-command origin as a collapsed caret. The target source,
-revision, both history depths, exact slot identity and presentation still bind
-the one pending transfer, and only that table presentation may normalize the
-target caret to its mapped first header.
+Layout-dependent Mac code-frame variables are synchronized in one batched
+read-then-write pass (`syncCodeFrameBackgrounds`) against the active surface:
+Pass 1 reads computed `backgroundColor` and `color` from every code element
+(`pre > code.hljs, pre.easymde-code-block > code`) before Pass 2 writes
+`--easymde-code-frame-background`, `--easymde-code-line-number-color`, and the
+visual `.easymde-visual-code-lang` badge foreground color. During live code
+theme switches while unlocked, `ProseMirrorVisualEditor` applies updated theme
+classes in `useLayoutEffect` before `use-editor-appearance-bridge.ts` runs its
+`useLayoutEffect` frame sync, so existing code blocks update both frame
+background and badge foreground without remounting.
 
-The formal Preview still supplies a fresh accepted map and protected table root.
-`acceptTablePresentation` revalidates the pending transfer, current owner, exact
-known slot/source/revision/selection/depths, and one editable row matching that
-source extent; old block IDs are not authority. Detached row serialization,
-interval-map endpoint proof and editable ancestry still prove the first nonempty
-header Text boundary. Ordinary-edit normalization additionally requires its
-trusted collapsed paragraph origin; known-history replay instead requires the
-ordered paragraph origin authenticated before that command. Both require an
-eligible collapsed target caret. It places
-the native and canonical point at the positively mapped header offset without
-changing source, document revision or history depths, adding a history entry or
-issuing another render. The exact row end is inclusive; row-end-plus-one is not
-an EOF fallback. Ordinary representable history selections keep their existing
-placement path.
-
-An existing known anchor also survives fresh ordinary or ranged history
-placement: the `retain` path reauthenticates that same anchor against the newly
-accepted protected row and offset, then returns it before reading or changing
-native focus, selection or any receipt. The fresh snapshot explicitly keeps that
-same provenance without reordering the history ledger; retention never creates
-new normalization authority or collapses a deliberate range. Thus Undoing a
-table mutation may restore its ordinary row range, Undoing the earlier deletion
-may restore the malformed paragraph, and Redoing that deletion may still use the
-previously proved table presentation. The context-menu action has already
-dismissed and released its demand before these native history commands: neither
-history placement nor anchor retention rearms that lease or its one-shot
-accepted-selection receipt. CodeMirror, the existing history slots and the
-formal Preview remain the sole document/history/render owners.
-
-Native mapped text intents carry their already-proved pre-key source selection
-into the same canonical transaction as their edit and post-selection. A deletion's
-target range is not its native caret; the existing boundary mapper supplies both
-independently. CodeMirror records the explicit inverse and post-selection without
-a preliminary selection write, DOM serialization or extra document history entry.
-This prevents a stale hidden Source caret at a trailing neighbor from becoming the
-table promotion's Undo/Redo caret.
-
-Full history pairs a native Text path with a captured HTML snapshot only while
-the surface's mutation epoch still matches that snapshot. The existing code-order
-observer owns this epoch as well: its callback and every synchronous record drain
-share one consumer, so Text, attribute and child mutations invalidate pairing
-before a new input can use it. Only a fresh surface HTML capture may stamp the
-epoch; inherited accepted HTML cannot. Token mismatch grants no native-path
-pairing through a serialization fallback. Adjacent-Text normalization keeps its
-separate structural proof, and teardown revokes the epoch and observer.
-
-History snapshots also record whether their accepted Preview was mapped. An empty
-current Preview cannot make a previously mapped snapshot restorable in place:
-Undoing the last table's removal requests a fresh formal map and restores its row
-range there. The existing table anchor's retention proof binds the authenticated
-pre-command source even when that accepted empty origin has no map certificate;
-it cannot borrow a third source's inventory or manufacture a new anchor.
-
-
-For an exact canonical deletion in the Full visual owner, a replacement
-certificate may retain the verified native Range's Text-node path and offsets.
-It never searches for matching text. Removing an empty loose-list paragraph
-certifies its surviving list item, rather than manufacturing a paragraph or
-line break that the formal renderer does not emit. Acceptance checks the actual
-canonical revision, history and selection, source range, serialized fragment
-and mapped caret before restoring native selection. Nonempty Markdown
-insertions and other structural changes use the existing canonical mapper from
-the outset; serialization failures are not converted into fallback success.
-When pending visual input leaves a list or blockquote body empty,
-`commitPendingVisualIntent` has already materialized that body and updated the
-accepted HTML, source map, and visual baseline. The current history slot records
-that existing surface through `recordCurrentVisualHistorySnapshot`; it does not
-replace the valid snapshot with a formal Preview-rematerialization slot. The
-next native character and local Undo/Redo therefore use the snapshot path, and
-protected-order adoption preserves equivalent generated node identity without a
-formal Preview request. A formal Preview request remains required when no valid
-local snapshot exists.
-Targets without a local snapshot, including history before the visual baseline,
-use the formal Preview owner bound to source, signature, history state and
-selection; native contenteditable history never owns Markdown. Restoring an
-empty code block rehydrates its placeholder Text
-before capturing the visual Markdown baseline and restoring the caret. A
-failed snapshot caret restore rolls the canonical history change back.
-Accepted open-EOF fences retain source-derived ending metadata. Serialization
-removes its synthetic closing delimiter after Turndown, preserving code-tail
-whitespace and source-owned line endings. Code-body commits refresh this
-metadata; the windowed source-range adapter restores it for the active region
-through the same proof as setup. That proof parses the full canonical source
-once and takes each fenced leaf's absolute interval, exact family/info, and
-container ancestry from the structural Markdown parser. A mounted PRE is written
-only when its owning root's accepted interval contains the leaf's opening line
-and its own DOM container path matches exactly one leaf path inside that
-interval; an unbound or structurally ambiguous root keeps its current attributes
-and is never cleaned globally. An open-at-EOF claim additionally requires the
-complete canonical interval, so a region that ends before the canonical
-document end can never claim EOF and is rejected explicitly instead.
-An actual empty-code Backspace shortcut flushes pending input before its
-structural change and records the corresponding canonical history transition.
-Focused windowed structural edits prepare a Preview-owned selection pin
-before scheduling its exact formal Preview request. The in-memory lease binds
-the request signature, source selection, and accepted generation. A selected
-source range may be non-collapsed; Preview maps both endpoints to the relevant
-editable block indices before the atomic first window commit and preserves
-those indices in subsequent bounded windows. After the matching commit, the
-windowed owner restores the canonical Selection direction as well as its
-endpoints. A canonical EOF selection still uses the document-end form of the
-same lease. The lease releases after caret restoration or cancellation, error,
-or teardown; invalid range, map, generation, signature, and owner transitions
-remain explicit Preview failures.
-Focused native Windowed Undo/Redo also acquires the existing source-selection
-pin for collapsed non-EOF points, including a thematic-break boundary outside
-the currently mounted window. The matching formal render must mount and restore
-that exact canonical point before releasing the lease. Outside focus acquires
-no ordinary history pin and is never reclaimed. Unmappable source, stale state,
-protected content and failed mounting keep their explicit failure paths; an
-editable surface alone is not evidence that a history selection restored.
-
-A canonical removal that takes whole blocks with it (a context-menu code-block
-or thematic-break deletion) reports its caret where the removed block started.
-An editable block's ledger range ends at the next block's first line, so it
-includes that block's own trailing line terminator while the removal keeps it:
-such a block counts as consumed when nothing but whitespace survives inside its
-range, not only when the removal covers the range end. Both owners commit the
-nearest surviving editable boundary instead of that whitespace, the following
-block while the document still has one and otherwise the preceding block, so
-the canonical history selection, the Preview selection pin or accepted transfer,
-and the native restoration all describe one mountable position. The Full owner
-computes that one committed selection from the accepted edit map through the
-shared `projectVisualMarkdownRemovalSelection` projection, records it in
-canonical history with the write, and binds the same selection into its Preview
-request, so Undo and Redo restore the accepted post-removal position rather than
-a re-mapped or unrepresentable one. Pinning still accepts a collapsed position
-no editable block covers, through the same source-whitespace owner the removal
-projection uses: the following editable block owns the pin, otherwise the
-preceding one, but only while the source between the caret and that block is
-blank. Native restoration stays strict: a selection the accepted window cannot
-mount remains an explicit failure reported once per event, and that recovery
-never applies to a non-collapsed selection, generated or unavailable content, or
-a stale map.
-The visual surface keeps code-fence delimiter lines as `data-easymde-visual-fence`
-metadata instead of DOM text, so a history selection whose endpoint sits on such
-a line has no visual boundary of its own. Source projection maps that endpoint
-to the block's code body instead: its start for an opening delimiter line and
-its last representable offset for a closing one, proven from the source block
-structure together with the live fence metadata. The Windowed owner maps each
-endpoint on a clone of that endpoint block, so the fence metadata may sit on the
-mapped root itself rather than on a descendant. When that root is the fence block
-itself, its boundary space starts at the code body and omits the opening
-delimiter line: `visualCodeFenceRootSourceOffset` translates the source offset
-into that root space before mapping, so an endpoint inside the code body resolves
-to its own boundary instead of an offset the root can never produce. The formal
-renderer publishes fence markup without fence metadata (this owner restores it
-from the source during capture, after the accepted mapping has run), so the
-mapping clone receives the fence metadata its endpoint Markdown proves through
-`applyVisualCodeFenceMetadataFromSource`; the clone then serializes back to that
-Markdown instead of its code body alone. Offsets
-without that proof keep the explicit selection-map failure. A candidate walk that
-exhausts its 32-attempt budget still reaches that proof: the budget error is
-caught at the walk, and the source-proven recovery is applied once. A mapped
-lower neighbour may advance only through a contiguous text run whose normalized
-source bytes equal the requested source slice; otherwise the block-end or
-same-owner upper-boundary proof is used only for a source-only region, and an
-offset no proof owns rethrows the original budget failure unchanged.
-An accepted-source caret can land on a fence's opening delimiter or info line
-after a paste, where the accepted map has no visual boundary for it. The
-accepted-caret recovery then projects that offset to the start of the same
-editable block's code body, proved from the source interval
-(`visualCodeBodyIntervalAtOrdinal`), the accepted ledger row that owns the body,
-and the code DOM's own body text; it never falls back to another block, the old
-Selection, or the document end. The correction is presentation only: the
-accepted source bytes, revision, Undo depth, and Preview request stay exactly as
-accepted, the same value is recorded with the recovered selection so no history
-entry is created, and the recovered position is reported through
-`onDiagnostic` (`visual-editor-selection-restore-projection`) rather than a
-failure. Stale, render, protection, history, and non-collapsed failures keep
-their existing explicit failure path.
-A canonical caret at the document end sits one line terminator past the last
-visible character. When the last accepted block's source range owns that byte,
-the block-local projection has no node that represents it, so that call fails
-its documented mapping check. The accepted placement then uses the accepted
-document-end presentation, and only while the source ends with a line
-terminator, the last accepted block's range ends at the canonical document end,
-no later accepted block is editable, and that terminal row's own serialized
-Markdown equals its source slice with the terminal line terminator removed. A
-same-id row whose text was replaced, or that cannot project onto its slice at
-all, fails that proof and keeps the original mapping failure. The placed caret
-must be the accepted terminal row or inside it; any disagreement with the
-accepted map or ledger rethrows the original mapping failure. The accepted source bytes, revision,
-Undo depth, and Preview request are unchanged, and this branch never applies to
-an empty accepted source or to a fence body, whose own projection resolves
-first.
-A preview-only surface never hands the visual caret to the canonical session,
-so the history slot captured at mount keeps the selection that session happened
-to hold then while the user's caret sits elsewhere. Before the first accepted
-input of a debounce group, the owner captures the operation's own pre-edit
-native caret as a witness together with everything it was read against: the
-canonical source and revision, the history depth, the accepted Preview identity
-and HTML, and the exact slot object whose render is still the live DOM. Nothing
-is written at capture time, so a cancelled input cannot alter history. The
-witness travels with the pending intent and is applied only by the commit that
-retires that slot, and only while every captured fact still holds - a different
-source, revision, history depth, accepted identity, accepted HTML or slot object
-is an ABA, a replacement or a foreign acceptance, and the slot keeps its own
-recorded selection. Later characters of the same group inherit the witness by
-that certified origin, never by the rolling pending source, so the group's
-earliest pre-edit caret is the one kept. The witness is captured for every
-authenticated generic input operation, ranged and structural edits included, so
-the slot records the position the user actually started from rather than a
-per-input-type whitelist. The canonical commit records that same caret as the
-inverse of its history event, so an in-place Undo restores the authored position
-in both owners instead of the untouched mount-time selection.
-When that exact request resolves to a document at or below the Windowed
-threshold, the owner releases the matching lease and continues the normal full
-staged commit because the complete DOM already contains the editable EOF.
-Stale, superseded, or identity-mismatched leases still fail through the
-existing Preview error path.
-The Windowed visual owner and Preview surface remain paired until the restored
-history selection is committed. If the canonical history still has a Redo
-branch, that pair remains active until Redo obtains its next document-end lease
-or a new local edit discards the branch; failure, exit, and teardown clear it.
-Generated Preview roots may carry non-editable zero-width source ranges before
-or after editable roots. Code-body mapping skips those ranges, and document-end
-pinning selects the unique last editable root that reaches canonical EOF.
-For a transformed non-code final root, EOF restoration may collapse at that
-validated live root's DOM end only when every following mounted root is the
-corresponding protected non-editable output; ordinary and PRE mapping remain
-source-projected and fail explicitly on ambiguity.
-Temporary browser Selection is not a pin across Safe HTML child replacement.
-After the final editable block mounts, a collapsed EOF
-caret may project to that block's text end when only source line endings remain
-outside its mapped range; omitted content or an unmounted final block fails.
-Mapped code Enter handles both `insertParagraph` and `insertLineBreak` in the
-existing code node before Chromium can split it into multiple `code` children.
-The projection and reconciliation accept exactly one renderer-only terminal LF
-difference in either direction between editable code DOM and Markdown; multiple
-line-ending differences or changed content remain explicit failures. Markdown
-retains the delimiter line ending. Composition flushes pending exact
-input before it starts, and a rejected code-map composition remains rejected
-through its end. Successful exact code edits retain per-`pre` recovery snapshots
-so failure recovery restores DOM consistent with canonical Markdown without
-serializing the complete document on each keystroke.
-Native neutral code spans are accepted only when each has no attributes and
-exactly one direct Text child. Projection reads this shape without mutation;
-reconciliation unwraps it using the same Text node and preserves Selection.
-Other unsupported markup remains an explicit failure.
-The source reframe path and serializer share outer-fence length selection, so a
-literal complete fence run in the body remains content by widening the outer
-delimiter. The source interval, DOM fence family, caret, and history snapshot
-advance together. Both visual owners restore their accepted DOM or window
-region after rejected noncancelable composition, without writing that mutation
-to Markdown. Windowed code Enter reconciles Chromium's split code nodes through
-the captured body intent; Enter and a following character retain the canonical
-owner's separate history transactions.
-An unclosed fenced block is mappable only when its accepted editable Preview
-range and source interval both reach EOF. Pasting a bare opener preserves its
-bytes; the first body edit supplies a missing line ending without adding a
-closing fence. Literal fence content widens the opener while preserving that
-open state.
-Canonical and visual opener prefixes are computed independently: an accepted
-paste may retain a bare opener while the mounted visual snapshot already has
-its line ending. Each caret offset includes only its own inserted prefix.
-Before a native windowed edit or IME composition changes the DOM, its visible
-selection is synchronized through a same-value canonical update. Code
-selections use the accepted code-body source projection. This gives Undo the
-actual pre-edit caret without adding a document change. Nonempty code edits also validate the
-accepted PRE identity; a stale replacement is rejected and restored before
-source publication.
-Windowed visual document edits opt in to recording their post-edit selection
-through CodeMirror's selection history. This adds no document Undo step and
-keeps Undo/Redo selection with the canonical history owner. After the matching
-Preview is ready, the bounded mounted region receives that source selection;
-absolute offsets are converted once, with explicit adjacent-block and EOF
-ownership. Generic source-to-DOM lookup returns a node and offset without
-mutating Selection on detached clones.
-The accepted Preview source and ordered block IDs seed mapped code intervals.
-A fence created locally by a visual shortcut or toolbar command carries
-runtime-only provenance for its exact `pre` node and canonical body interval
-until a new Preview is accepted. Full transports each retained PRE's interval
-through the actual authenticated canonical change descriptor, then validates
-its fence, body, source revision and retained DOM order. Removing an earlier
-block therefore does not relabel a surviving PRE by a stale ordinal. History
-snapshots retain indexed correspondence and rebind it only to validated
-rematerialized PREs; a missing identity, foreign reorder or unproved topology
-change still fails before another block can be written. The interval inventory
-is parsed once per commit and indexed by its parser-issued ordinal, including
-when unsupported indented leaves leave gaps in that inventory.
-The transported closed-fence syntax excludes its trailing separator line ending.
-Both overlap detection and byte reconstruction use the same half-open interval:
-an adjacent deletion/replacement leaves it intact, while an actual overlap still
-invalidates it and zero-width insertions retain their explicit root ownership.
-Windowed navigation inside an operation-created PRE uses the current gap's
-bounded code-body source range until formal Preview acceptance. It renews the
-canonical selection, gap and restoration lease together without changing source,
-revision, history or the Preview request; a replacement PRE receives that caret
-even when navigation is followed by no text edit.
-Delegated Media insertion uses a separate selection-preparation capability so
-that Media can preserve its insertion range without making transition flushes
-depend on selection state.
-For a signature-matched visual paste accepted at canonical offset `0` or
-`source.length`, the paste transaction owns that known document-edge selection
-and restores it at the first or last safe editable DOM boundary without running
-the generic DOM search. Internal positions still use the bounded mapper and
-fail explicitly when they cannot be mapped, except for a collapsed caret that
-the source proves is on an editable fenced block's opening delimiter/info line:
-that one is presented at the block's code-body start without changing the
-accepted source, so a trusted native input then commits at the code body
-instead of a stale paragraph offset.
-
-`Ctrl/Cmd+A` is owned by the connected visual root in both non-windowed and
-windowed immersive editing. The whole-root deletion owner handles only
-`deleteContentBackward` and `deleteContentForward`; Cut, IME, partial
-selections, and partial CODE selections remain with their existing protected
-owners. In the windowed path, the current root range must cover every
-non-spacer child with a valid range-ledger binding. That binding may identify a
-generated or non-editable root when the whole canonical document is explicitly
-selected. It never expands a partial mounted range to hidden source. Mapped
-source separator ranges and terminal whitespace are handled only when the
-accepted source-range map identifies them; unsupported or unmounted source
-gaps fail explicitly. The connected-root coverage guard is limited to the
-Backspace/Delete whole-document path, including its keydown handoff, so
-ordinary typing retains the cached interval-map fast path without a
-full-document scan.
-
-When the accepted visual boundary hides a parser-recognized Markdown
-`HeaderMark`, `ListMark`, or `QuoteMark` separator, the local Markdown parser
-maps exactly one ASCII space or tab as the structural separator. Additional
-separator or tail bytes remain source content; code-body separators do not use
-this projection. The parser check runs only for that hidden boundary case, so
-ordinary input keeps its existing fast path. An input that leaves a structural
-body empty flushes through the existing pending-intent or visual-input merge
-owner; it does not use the whole-document transaction below. That transaction is
-reserved for Backspace/Delete over a connected full-root selection.
-
-The whole-root deletion transaction resets the visual surface to one empty
-paragraph with a BR and a connected caret in the same input turn before the
-next native character can arrive. Markdown remains canonical: terminal ASCII
-spaces or newlines may use the empty paragraph presentation while their source
-bytes remain intact, and unlock or Read paths preserve those bytes. Insertion
-at the visual boundary preserves the whitespace. Directly formatted list and
-blockquote bodies use the same empty-Backspace presentation rule while
-non-empty LI, P, PRE, and CODE content remains source-owned. An empty
-structural body keeps its accepted local snapshot through immediate next input,
-Undo, and Redo; equivalent protected generated regions retain their node
-identity without a formal Preview request. The accepted render of an empty
-document is the paper placeholder and carries no edit map, so an accepted empty
-source adopts by resetting the same empty paragraph and placing its terminal
-caret; a non-empty accepted source still requires its edit map and fails
-explicitly without one.
-
-During a bounded window child replacement, the Safe HTML sink derives the
-focused full-root Selection from the connected surface and preserves its
-forward or backward direction synchronously after the replacement. It also
-preserves a connected live text selection and root-boundary caret. Partial
-root selections and full-root selections after focus leaves the surface are
-never expanded to the new root; no caller-side shortcut flag grants that
-authority.
-
-Generated TOC, footnote, rendered math, and Mermaid regions remain the same
-read-only DOM nodes while visual editing is active. Their child markup and
-meaningful root attributes are compared exactly before serialization. An empty
-root `style` attribute introduced or removed by responsive browser layout is
-ignored because it has no declaration; non-empty style, content, attribute,
-identity, count, or order changes still fail with the stable visual-editor
-diagnostic. During a new accepted non-windowed Preview commit, the Safe HTML
-sink preserves an existing protected node only at the same child-node path with
-the same tag, namespace, attributes, and child markup. Changed or reordered
-output uses the fresh server-authoritative node. The sink records the adopted
-node sequence as its committed identity, so later reconciliation cannot replace
-an equivalent protected subtree behind the visual editor's owner. Local visual
-synchronization failures do not change the formal server Preview status or
-reuse the Preview failure message.
-Local visual-history snapshot restoration uses the same equivalence owner after
-canonical history and snapshot validation. It matches protected regions by
-their protected-region order, allowing restored editable siblings to shift DOM
-paths without replacing unchanged renderer instances. Protected-region count,
-tag, namespace, meaningful attributes, and child markup must still agree; a
-mismatch keeps the fresh snapshot node. Blank root `style` remains the only
-nonsemantic attribute normalization for both paths.
+While unlocked in immersive Preview, `ProseMirrorVisualEditor` owns all visual
+editing, `Ctrl/Cmd+A`, boundary Backspace/Delete, paste, and empty-document
+states in memory and synchronizes edits through `visual-canonical-sync.ts` and
+`EditorDocumentSession` (CodeMirror), parking CodeMirror's DOM/syntax parser
+via `setVisualEditingActive(true/false)` while mounted. On canonical Undo/Redo
+or external reconciliation, `visual-canonical-sync.ts` (`reconcile`) applies
+CodeMirror's canonical Markdown and mapped selection directly to the live
+ProseMirror document and rebinds the `markdown-block-preservation.ts` guard to
+`reconciledDoc` (and to `nextState.doc` on whole-document resets) so surviving
+blocks and list items retain object identity and untouched raw Markdown bytes
+without per-keystroke formal Preview requests, window spacers, 160-block caps,
+DOM-snapshot history slots, or PRE-rematerialization ledgers. Delegated Media
+insertion uses a separate selection-preparation capability so Media preserves
+its insertion range without coupling transition flushes to selection state.
+Local visual synchronization failures never overwrite formal server Preview
+status or reuse the Preview failure message, and locking back to read-only
+Preview (`leaveVisualPreview`) synchronizes canonical Markdown and reconciles
+against the formal Preview sink.
 
 The Markdown feature detector and renderer share `MarkdownCodeRegionScanner`
 so math delimiters inside fenced, indented, or inline code remain literal and
@@ -1400,7 +720,7 @@ current exception; Verify Upload remains single-attempt.
 
 Local Draft recovery uses the versioned `easymde:draft:v1:<site>:<user>:<post-or-new>` identity, a 1 MiB limit, a 500-millisecond latest-write scheduler, explicit read/write/discard failures, and cross-tab conflict handling. New-post identity comes from the stable PHP Bootstrap contract rather than WordPress's temporary auto-draft ID.
 
-WeChat export is user-initiated compatibility output from the current stable, sanitized, locally enhanced Preview. `createWechatExportSession` owns the ordinary and immersive surfaces, and `createBrowserWechatClipboard` owns the browser Clipboard adapter and its single clone-and-serialize pipeline; the data flow is Preview sink -> session -> adapter -> browser Clipboard path. Copy never writes Markdown, `post_content`, metadata, revisions, or publication state.
+WeChat export is user-initiated compatibility output from the current stable, sanitized, locally enhanced Preview. `createWechatExportSession` owns the ordinary and immersive surfaces, and `createBrowserWechatClipboard` owns the browser Clipboard adapter and its single clone-and-serialize pipeline; the data flow is Preview sink -> session -> adapter -> browser Clipboard path. When the formal Preview sink is under `display:none` (hidden by `easymde-preview-surface-hidden` during unlocked visual editing or by source-only modes), `wechat-payload-serializer.ts` mounts an off-screen, layout-participating clone of that formal Preview sink beside the nearest rendered ancestor—reading only container width (never ProseMirror DOM)—and disposes it in `finally`. Copy never writes Markdown, `post_content`, metadata, revisions, or publication state.
 
 The strict-boolean `images.wechatPngExportEnabled` setting defaults to `false`,
 and Editor bootstrap projects it as `wechatExport.pngConversionEnabled`. When
@@ -1558,11 +878,12 @@ theme image borders remain decoration.
 
 Rendering behavior:
 
-- raw Markdown HTML is stripped;
+- raw Markdown HTML is stripped, except the exact lowercase attribute-free `<br>` token inside a table cell, which the controlled table-break parser represents as a safe AST node and renders as `<br>`; no other raw HTML gains output permission;
 - unsafe links are disabled by the CommonMark configuration;
 - math placeholders are extracted and restored as EasyMDE math nodes;
 - `TocGenerator` owns heading IDs and `[TOC]` replacement;
 - `ThemeMarkupTransformer` owns article-theme-specific DOM transforms and MDNice container normalization;
+- `VisualPreviewBlockAnnotator` (`src/Content/VisualPreviewBlockAnnotator.php`) carries CommonMark block provenance through Preview HTML transforms and emits the privacy-safe `editMap` sidecar, while `VisualPreviewCodeProjectionBuilder` (`src/Content/VisualPreviewCodeProjectionBuilder.php`) builds the source-backed fenced/indented code-body map and UTF-16 tab-expanded code cursor projection from the same parsed CommonMark AST (exposed through `VisualPreviewBlockAnnotator` without rendering Markdown or owning persistence);
 - final rendered HTML is passed through `wp_kses_post()`.
 
 If Composer dependencies are missing, EasyMDE shows an admin notice, preview requests return a REST error, and save/frontend paths avoid generating fallback HTML.

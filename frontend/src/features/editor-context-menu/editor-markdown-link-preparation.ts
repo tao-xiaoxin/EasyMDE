@@ -8,6 +8,10 @@ import {
 	type NewlineProjection,
 	type SourceRange,
 } from "./editor-markdown-source-projection";
+import {
+	normalizeMarkdownReferenceLabel,
+	type ReferenceLabelCaseFoldProfile,
+} from "./reference-label-normalization";
 
 export type MarkdownSyntaxNode = Readonly<{
 	from: number;
@@ -41,11 +45,6 @@ const LINK_BLOCKED_INLINE_ANCESTORS: Readonly<Record<string, true>> = {
 const URL_NODE_NAME_BIT = 1;
 const LINK_TITLE_NODE_NAME_BIT = 2;
 
-/** CommonMark reference labels match after whitespace collapse and case folding. */
-function normalizedLinkLabel(value: string): string {
-	return value.replace(/\s+/gu, " ").trim().toLowerCase();
-}
-
 function bracketLabelContent(value: string): string {
 	return value.startsWith("[") && value.endsWith("]")
 		? value.slice(1, -1)
@@ -64,25 +63,13 @@ function directChildIndex(
 	return null;
 }
 
-/**
- * Derives the link constructs that the formal CommonMark renderer actually
- * creates. Matching the rendered document is the point: the innermost link
- * wins over its enclosing link, an autolink or bare URL inside a created link
- * label stays literal text, and an unresolved reference contributes no link
- * while leaving its inner autolinks active.
- *
- * The caller owns the parser tree; this projection never parses the source a
- * second time.
- */
-export function projectedLinkNodes(
-	text: string,
+function markdownSyntaxStructure(
 	nodes: ReadonlyArray<MarkdownSyntaxNode>,
-): ReadonlyArray<ParserLinkNode> {
+) {
 	const ancestorsAt: string[][] = nodes.map(() => []);
 	const children: number[][] = nodes.map(() => []);
 	const urlDescendants = new Uint8Array(nodes.length);
 	const namesAt = new Map<number, number>();
-	const definedLabels = new Set<string>();
 	const open: number[] = [];
 	for (let index = 0; index < nodes.length; index += 1) {
 		const node = nodes[index];
@@ -110,6 +97,17 @@ export function projectedLinkNodes(
 		}
 		open.push(index);
 	}
+	return { ancestorsAt, children, namesAt, urlDescendants };
+}
+
+function referenceLabelsFromStructure(
+	text: string,
+	nodes: ReadonlyArray<MarkdownSyntaxNode>,
+	structure: ReturnType<typeof markdownSyntaxStructure>,
+	profile: ReferenceLabelCaseFoldProfile,
+): Set<string> {
+	const { ancestorsAt, children } = structure;
+	const definedLabels = new Set<string>();
 	for (let index = 0; index < nodes.length; index += 1) {
 		const node = nodes[index];
 		if ("LinkReference" !== node?.name) continue;
@@ -119,12 +117,114 @@ export function projectedLinkNodes(
 		const label = nodes[labelIndex ?? -1];
 		if (label) {
 			definedLabels.add(
-				normalizedLinkLabel(
+				normalizeMarkdownReferenceLabel(
 					bracketLabelContent(text.slice(label.from, label.to)),
+					profile,
 				),
 			);
 		}
 	}
+	return definedLabels;
+}
+
+/** Collect labels from the caller's existing parser tree. */
+export function markdownReferenceLabels(
+	text: string,
+	nodes: ReadonlyArray<MarkdownSyntaxNode>,
+	profile: ReferenceLabelCaseFoldProfile,
+): ReadonlySet<string> {
+	return referenceLabelsFromStructure(text, nodes, markdownSyntaxStructure(nodes), profile);
+}
+
+export function markdownReferenceLabelQuery(
+	text: string,
+	nodes: ReadonlyArray<MarkdownSyntaxNode>,
+	profile: ReferenceLabelCaseFoldProfile,
+): (label: string) => boolean {
+	const labels = markdownReferenceLabels(text, nodes, profile);
+	return (label) => labels.has(normalizeMarkdownReferenceLabel(label, profile));
+}
+
+export type MarkdownReferenceDefinition = Readonly<{
+	destination: string;
+	title: string | null;
+}>;
+
+/** First active parser-owned definition, retaining its exact source tokens. */
+export function markdownReferenceDefinitionQuery(
+	text: string,
+	nodes: ReadonlyArray<MarkdownSyntaxNode>,
+	profile: ReferenceLabelCaseFoldProfile,
+): (label: string) => MarkdownReferenceDefinition | null {
+	const structure = markdownSyntaxStructure(nodes);
+	let definitions: Map<string, MarkdownReferenceDefinition> | null = null;
+	return (label) => {
+		const normalized = normalizeMarkdownReferenceLabel(label, profile);
+		if (!definitions) {
+			const collected = new Map<string, MarkdownReferenceDefinition>();
+			for (let index = 0; index < nodes.length; index += 1) {
+				const node = nodes[index];
+				if ("LinkReference" !== node?.name
+					|| structure.ancestorsAt[index]?.some((ancestor) => LINK_BLOCKED_ANCESTORS[ancestor])) continue;
+				const labelNode = nodes[directChildIndex(structure.children, nodes, index, "LinkLabel") ?? -1];
+				const url = nodes[directChildIndex(structure.children, nodes, index, "URL") ?? -1];
+				const title = nodes[directChildIndex(structure.children, nodes, index, "LinkTitle") ?? -1];
+				if (!labelNode || !url) throw new Error("visual-editor-reference-definition-map-failed");
+				const key = normalizeMarkdownReferenceLabel(bracketLabelContent(text.slice(labelNode.from, labelNode.to)), profile);
+				if (!collected.has(key)) collected.set(key, {
+					destination: text.slice(url.from, url.to),
+					title: title ? text.slice(title.from, title.to) : null,
+				});
+			}
+			definitions = collected;
+		}
+		return definitions.get(normalized) ?? null;
+	};
+}
+
+/** Bind each queried reference to the definition used by the formal Preview. */
+export function markdownReferenceContextQuery(
+	current: string,
+	currentNodes: ReadonlyArray<MarkdownSyntaxNode>,
+	formal: string,
+	formalNodes: ReadonlyArray<MarkdownSyntaxNode>,
+	profile: ReferenceLabelCaseFoldProfile,
+): (label: string) => boolean {
+	const currentDefinition = markdownReferenceDefinitionQuery(current, currentNodes, profile);
+	const formalDefinition = markdownReferenceDefinitionQuery(formal, formalNodes, profile);
+	return (label) => {
+		const currentValue = currentDefinition(label);
+		const formalValue = formalDefinition(label);
+		if (!currentValue && !formalValue) return false;
+		if (!currentValue || !formalValue || currentValue.destination !== formalValue.destination
+			|| currentValue.title !== formalValue.title) {
+			throw new Error("visual-editor-reference-context-stale");
+		}
+		return true;
+	};
+}
+
+/**
+ * Derives links that the formal CommonMark renderer creates from the caller's
+ * existing parser tree, including the existing nested-link ownership rules.
+ */
+export function projectedLinkNodes(
+	text: string,
+	nodes: ReadonlyArray<MarkdownSyntaxNode>,
+	profile: ReferenceLabelCaseFoldProfile,
+): ReadonlyArray<ParserLinkNode> {
+	return parserProjectedLinkNodes(text, nodes, profile);
+}
+
+function parserProjectedLinkNodes(
+	text: string,
+	nodes: ReadonlyArray<MarkdownSyntaxNode>,
+	profile: ReferenceLabelCaseFoldProfile,
+	referenceDefined?: (label: string) => boolean,
+): ReadonlyArray<ParserLinkNode> {
+	const structure = markdownSyntaxStructure(nodes);
+	const { ancestorsAt, children, namesAt, urlDescendants } = structure;
+	let definition: ReturnType<typeof markdownReferenceDefinitionQuery> | null = null;
 	const created = new Uint8Array(nodes.length);
 	const referenceLinks = new Uint8Array(nodes.length);
 	const frames: Array<{ hasCreatedChild: boolean; index: number }> = [];
@@ -154,7 +254,7 @@ export function projectedLinkNodes(
 			const hasUrl = 1 === urlDescendants[index];
 			if ("[" === text[node.from] && ")" === text[node.to - 1] && hasUrl) {
 				created[index] = 1;
-			} else if (!(!hasUrl && "[^" === text.slice(node.from, node.from + 2))) {
+			} else if (referenceDefined || !(!hasUrl && "[^" === text.slice(node.from, node.from + 2))) {
 				const malformed =
 					0 !== (namesAt.get(node.to) ?? 0) ||
 					"(" === text[node.to] ||
@@ -174,7 +274,8 @@ export function projectedLinkNodes(
 						0 < labelText.length
 							? labelText
 							: text.slice(node.from + 1, (label?.from ?? node.to) - 1);
-					if (definedLabels.has(normalizedLinkLabel(rawLabel))) {
+					definition ??= markdownReferenceDefinitionQuery(text, nodes, profile);
+					if (referenceDefined ? referenceDefined(rawLabel) : definition(rawLabel)) {
 						created[index] = 1;
 						referenceLinks[index] = 1;
 					}
@@ -254,6 +355,29 @@ export function projectedLinkNodes(
 		}
 	}
 	return projected;
+}
+
+/** Render-mapping bindings only; Source command admission above is unchanged. */
+export function renderedReferenceLinkBodies(
+	text: string,
+	nodes: ReadonlyArray<MarkdownSyntaxNode>,
+	profile: ReferenceLabelCaseFoldProfile,
+	referenceDefined: (label: string) => boolean,
+): ReadonlyArray<ParserLinkNode & Readonly<{ bodyStart: number; bodyEnd: number }>> {
+	const projected = parserProjectedLinkNodes(text, nodes, profile, referenceDefined);
+	const structure = markdownSyntaxStructure(nodes);
+	return projected.flatMap((link) => {
+		const index = nodes.findIndex((node) => node.name === 'Link' && node.from === link.from && node.to === link.to);
+		if (index < 0) return [];
+		const marks = (structure.children[index] ?? []).flatMap((child) => {
+			const node = nodes[child];
+			return node?.name === 'LinkMark' ? [node] : [];
+		});
+		const open = marks[0];
+		const close = marks[1];
+		if (!open || !close || text.slice(open.from, open.to) !== '[' || text.slice(close.from, close.to) !== ']') return [];
+		return [{ ...link, bodyStart: open.to, bodyEnd: close.from }];
+	});
 }
 
 /**

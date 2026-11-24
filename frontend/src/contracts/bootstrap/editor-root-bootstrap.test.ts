@@ -44,6 +44,7 @@ function validBootstrap() {
       }
     },
     schemaVersion: 3,
+    referenceLabelCaseFoldProfile: 14,
     editorBlockIndexWorkerUrl:
       'https://example.test/wp-content/plugins/easymde/assets/build/editor-block-index-worker/assets/editor-block-index-worker-test.js',
     document: { strings: { editorLabel: 'Markdown source' } },
@@ -265,6 +266,14 @@ function validBootstrap() {
         previewReadOnly: 'Read only',
         previewUnlockEdit: 'Unlock and edit',
         previewMode: 'Preview mode',
+        protectedCardEditFormat: 'Edit %s',
+        protectedCardFootnotes: 'Footnotes',
+        protectedCardMath: 'Math',
+        protectedCardMermaid: 'Mermaid',
+        protectedCardRaw: 'Raw',
+        protectedCardSave: 'Save',
+        protectedCardSourceFormat: '%s source',
+        protectedCardToc: 'TOC',
         publish: 'Publish article',
         restore: 'Restore revision',
         restoreConfirm: 'Unsaved changes will be lost',
@@ -381,6 +390,22 @@ function validBootstrap() {
 }
 
 describe('parseEditorRootBootstrap', () => {
+  it.each([11, 13, 14, 16, 17, 'unsupported'] as const)(
+    'accepts the explicit reference label case-fold profile %s',
+    (profile) => {
+      expect(parseEditorRootBootstrap({ ...validBootstrap(), referenceLabelCaseFoldProfile: profile }).referenceLabelCaseFoldProfile).toBe(profile);
+    }
+  );
+
+  it.each([undefined, null, 12, 15, 18, '14', true, {}])(
+    'rejects invalid reference label case-fold profile %#',
+    (profile) => {
+      expect(() => parseEditorRootBootstrap({ ...validBootstrap(), referenceLabelCaseFoldProfile: profile })).toThrowError(
+        expect.objectContaining({ code: 'editor-root-reference-fold-profile-invalid' })
+      );
+    }
+  );
+
   it('accepts the five-second auto-save interval', () => {
     const value = validBootstrap();
     value.settings.general.autoSaveInterval = '5';
@@ -409,6 +434,7 @@ describe('parseEditorRootBootstrap', () => {
     expect(parseEditorRootBootstrap(validBootstrap())).toEqual({
       appearance: validBootstrap().appearance,
       schemaVersion: 3,
+      referenceLabelCaseFoldProfile: 14,
       editorBlockIndexWorkerUrl: validBootstrap().editorBlockIndexWorkerUrl,
       document: { editorLabel: 'Markdown source' },
       fonts: validBootstrap().fonts,

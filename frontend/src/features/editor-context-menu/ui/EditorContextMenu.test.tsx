@@ -777,6 +777,77 @@ describe('EditorContextMenu', () => {
     expect(menu.style.left).not.toBe(initialLeft);
   });
 
+  it.each(['scrollTop', 'scrollLeft'] as const)(
+    'keeps the menu for a queued ancestor scroll but dismisses a new %s displacement',
+    (coordinate) => {
+      const canvas = document.createElement('div');
+      const surface = document.createElement('article');
+      canvas.append(surface);
+      document.body.append(canvas);
+      canvas[coordinate] = 240;
+      const onDismiss = vi.fn();
+      const view = render(
+        <EditorContextMenu
+          anchor={{ x: 12, y: 18 }}
+          direction="ltr"
+          model={model}
+          onAction={vi.fn()}
+          onDismiss={onDismiss}
+          open
+          surfaceElement={surface}
+        />
+      );
+
+      try {
+        fireEvent.scroll(canvas);
+        expect(onDismiss).not.toHaveBeenCalled();
+        expect(screen.getByRole('menuitem', { name: 'Insert' })).toBeTruthy();
+
+        canvas[coordinate] += 20;
+        fireEvent.scroll(canvas);
+        expect(onDismiss).toHaveBeenCalledExactlyOnceWith({ restoreFocus: true });
+      } finally {
+        view.unmount();
+        canvas.remove();
+      }
+    }
+  );
+
+  it.each(['document', 'window'] as const)(
+    'ignores queued %s scrolls without suppressing a later viewport displacement',
+    (target) => {
+      const scrollY = Object.getOwnPropertyDescriptor(window, 'scrollY');
+      Object.defineProperty(window, 'scrollY', { configurable: true, value: 120 });
+      const onDismiss = vi.fn();
+      const view = render(
+        <EditorContextMenu
+          anchor={{ x: 12, y: 18 }}
+          direction="ltr"
+          model={model}
+          onAction={vi.fn()}
+          onDismiss={onDismiss}
+          open
+        />
+      );
+      const scrollTarget = target === 'document' ? document : window;
+
+      try {
+        fireEvent.scroll(scrollTarget);
+        expect(onDismiss).not.toHaveBeenCalled();
+
+        Object.defineProperty(window, 'scrollY', { configurable: true, value: 160 });
+        fireEvent.scroll(scrollTarget);
+        expect(onDismiss).toHaveBeenCalledExactlyOnceWith({ restoreFocus: true });
+      } finally {
+        view.unmount();
+        if (scrollY) Object.defineProperty(window, 'scrollY', scrollY);
+      }
+      onDismiss.mockClear();
+      fireEvent.scroll(scrollTarget);
+      expect(onDismiss).not.toHaveBeenCalled();
+    }
+  );
+
   it('keeps menu-owned scrolling active but dismisses an editor/page scroll', () => {
     const onDismiss = vi.fn();
     render(

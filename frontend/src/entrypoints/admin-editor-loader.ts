@@ -340,6 +340,7 @@ export function startAdminEditorLoader(
 		const head = documentRef.head;
 		if (!head) throw new Error("react-editor-loader-head-unavailable");
 		const script = documentRef.createElement("script");
+		script.type = "module";
 		script.async = true;
 		setFetchPriority(script);
 		script.dataset.easymdeAdminEditorLoader = "";

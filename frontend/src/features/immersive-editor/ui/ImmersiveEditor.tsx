@@ -1,303 +1,45 @@
 import {
   createElement,
-  flushSync,
   useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
-  useState,
-  useTransition
+  useState
 } from '@wordpress/element';
 import type { ReactNode } from 'react';
-import type {
-  NativeFeaturedImage,
-  NativePublishDraft,
-  NativePublishSnapshot
-} from '../../../contracts/ports/native-publish-port';
-import {
-  ChevronDown,
-  Clock,
-  Info,
-  RotateCcw,
-  Save,
-  X
-} from '../../../generated/lucide-icons';
-import type {
-  RevisionPort,
-  RevisionPreview,
-  RevisionSummary
-} from '../../../contracts/ports/revision-port';
 import type { ImmersiveEnvironmentPort } from '../../../contracts/ports/immersive-environment-port';
 import type { ImmersiveI18nPort } from '../../../contracts/ports/immersive-i18n-port';
 import type {
   ImmersivePreferences,
   ImmersivePreferencesPort
 } from '../../../contracts/ports/immersive-preferences-port';
-import { SafePreviewHtmlSink } from '../../live-preview/ui/SafePreviewHtmlSink';
+import type {
+  NativeFeaturedImage,
+  NativePublishDraft,
+  NativePublishSnapshot
+} from '../../../contracts/ports/native-publish-port';
+import type { RevisionPort } from '../../../contracts/ports/revision-port';
+import type { GeneralSettings } from '../../../contracts/settings-center-settings';
 import type { EditorDocumentSession } from '../../document-source/editor-document-session';
+import { EditorTableDialog } from '../../editor-context-menu/ui/EditorTableDialog';
 import {
-  createDocumentDerivationScanner,
-  deriveDocumentDerivations,
-  tableMarkdown,
   type ImmersiveOutlineItem,
-  type ImmersiveViewMode
+  type ImmersiveViewMode,
+  separatedTableInsertion
 } from '../immersive-editor';
 import { ImmersiveHeader } from './ImmersiveHeader';
+import { ImmersiveHistoryDialog } from './ImmersiveHistoryDialog';
 import { ImmersiveOutline } from './ImmersiveOutline';
-import { ImmersivePublishDialog } from './ImmersivePublishDialog';
 import { ImmersiveToolbar } from './ImmersiveToolbar';
-import { EditorTableDialog, trapFocus } from '../../editor-context-menu/ui/EditorTableDialog';
 import type {
   ImmersiveSettings,
   ImmersiveStrings
 } from './immersive-editor-ui-types';
-import type { GeneralSettings } from '../../../contracts/settings-center-settings';
+import { LazyImmersivePublishDialog } from './LazyImmersivePublishDialog';
+import { useImmersiveDocumentDerivations } from './use-immersive-document-derivations';
 
 export type { ImmersiveStrings } from './immersive-editor-ui-types';
-
-const IMMERSIVE_DOCUMENT_DERIVATION_DEBOUNCE_MS = 180;
-const IMMERSIVE_DOCUMENT_DERIVATION_SLICE_CHARACTERS = 4 * 1024;
-const IMMERSIVE_DOCUMENT_DERIVATION_INITIAL_SYNC_LIMIT = 16 * 1024;
-const IMMERSIVE_DOCUMENT_OUTLINE_FRAME_SIZE = 16;
-const IMMERSIVE_DOCUMENT_OUTLINE_FRAME_DELAY_MS = 4;
-
-type DerivationScheduler = (
-  callback: () => void,
-  delay: number
-) => () => void;
-
-function sameStats(
-  left: ReturnType<typeof deriveDocumentDerivations>['stats'],
-  right: ReturnType<typeof deriveDocumentDerivations>['stats']
-): boolean {
-  return left.characters === right.characters
-    && left.minutes === right.minutes
-    && left.words === right.words;
-}
-
-function sameOutlinePresentation(
-  left: ReadonlyArray<ImmersiveOutlineItem>,
-  right: ReadonlyArray<ImmersiveOutlineItem>
-): boolean {
-  return left.length === right.length
-    && left.every((item, index) => {
-      const candidate = right[index];
-      return candidate?.index === item.index
-        && candidate.level === item.level
-        && candidate.text === item.text;
-    });
-}
-
-function outlinePresentationDifference(
-  left: ReadonlyArray<ImmersiveOutlineItem>,
-  right: ReadonlyArray<ImmersiveOutlineItem>
-): number {
-  const length = Math.max(left.length, right.length);
-  let difference = 0;
-  for (let index = 0; index < length; index += 1) {
-    const leftItem = left[index];
-    const rightItem = right[index];
-    if (
-      !leftItem
-      || !rightItem
-      || leftItem.index !== rightItem.index
-      || leftItem.level !== rightItem.level
-      || leftItem.text !== rightItem.text
-    ) {
-      difference += 1;
-    }
-  }
-  return difference;
-}
-
-function createInitialDocumentDerivations(
-  markdown: string
-): ReturnType<typeof deriveDocumentDerivations> {
-  if (markdown.length <= IMMERSIVE_DOCUMENT_DERIVATION_INITIAL_SYNC_LIMIT) {
-    return deriveDocumentDerivations(markdown);
-  }
-  return {
-    outline: [],
-    stats: { characters: 0, minutes: 1, words: 0 }
-  };
-}
-
-export function useImmersiveDocumentDerivations(
-  markdown: string,
-  schedule: DerivationScheduler
-) {
-  const [derivations, setDerivations] = useState(() =>
-    createInitialDocumentDerivations(markdown)
-  );
-  const [, startTransition] = useTransition();
-  const previousMarkdownRef = useRef<string | null>(null);
-  const initialLongDerivationPendingRef = useRef(
-    markdown.length > IMMERSIVE_DOCUMENT_DERIVATION_INITIAL_SYNC_LIMIT
-  );
-  const derivationGenerationRef = useRef(0);
-  const mountedRef = useRef(true);
-  const latestOutlineRef = useRef(derivations.outline);
-  const latestDerivationsRef = useRef(derivations);
-  latestDerivationsRef.current = derivations;
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      derivationGenerationRef.current += 1;
-    };
-  }, []);
-
-  useEffect(() => {
-    const previousMarkdown = previousMarkdownRef.current;
-    const markdownChanged = previousMarkdown !== markdown;
-    if (
-      !markdownChanged
-      && !initialLongDerivationPendingRef.current
-    ) return undefined;
-    previousMarkdownRef.current = markdown;
-    if (markdownChanged) {
-      initialLongDerivationPendingRef.current =
-        markdown.length > IMMERSIVE_DOCUMENT_DERIVATION_INITIAL_SYNC_LIMIT;
-    }
-    if (
-      null === previousMarkdown
-      && markdown.length <= IMMERSIVE_DOCUMENT_DERIVATION_INITIAL_SYNC_LIMIT
-    ) {
-      return undefined;
-    }
-    const generation = ++derivationGenerationRef.current;
-    let cancelFrame: (() => void) | null = null;
-    const isCurrent = () =>
-      mountedRef.current && generation === derivationGenerationRef.current;
-    const publish = (
-      nextDerivations: ReturnType<typeof deriveDocumentDerivations>,
-      outline: ImmersiveOutlineItem[],
-      final: boolean,
-      progressive = false
-    ) => {
-      if (!isCurrent()) return;
-      const commit = () => {
-        if (!isCurrent()) return;
-        setDerivations((current) => {
-          if (!isCurrent()) return current;
-          latestOutlineRef.current = final
-            ? nextDerivations.outline
-            : outline;
-          const nextOutline = final
-            ? sameOutlinePresentation(
-                current.outline,
-                nextDerivations.outline
-              )
-              ? current.outline
-              : nextDerivations.outline
-            : outline;
-          const stats = sameStats(current.stats, nextDerivations.stats)
-            ? current.stats
-            : nextDerivations.stats;
-          return nextOutline === current.outline && stats === current.stats
-            ? current
-            : { outline: nextOutline, stats };
-        });
-      };
-      if (progressive) flushSync(commit);
-      else startTransition(commit);
-    };
-    const scheduleOutlineFrame = (
-      nextDerivations: ReturnType<typeof deriveDocumentDerivations>,
-      start: number
-    ) => {
-      if (!isCurrent() || start >= nextDerivations.outline.length) return;
-      cancelFrame = schedule(() => {
-        cancelFrame = null;
-        if (!isCurrent()) return;
-        const end = Math.min(
-          start + IMMERSIVE_DOCUMENT_OUTLINE_FRAME_SIZE,
-          nextDerivations.outline.length
-        );
-        publish(
-          nextDerivations,
-          nextDerivations.outline.slice(0, end),
-          end === nextDerivations.outline.length,
-          true
-        );
-        scheduleOutlineFrame(nextDerivations, end);
-      }, IMMERSIVE_DOCUMENT_OUTLINE_FRAME_DELAY_MS);
-    };
-    const completeDerivation = (
-      nextDerivations: ReturnType<typeof deriveDocumentDerivations>
-    ) => {
-      if (!isCurrent()) return;
-      initialLongDerivationPendingRef.current = false;
-      const current = latestDerivationsRef.current;
-      const difference = outlinePresentationDifference(
-        current.outline,
-        nextDerivations.outline
-      );
-      const progressive =
-        nextDerivations.outline.length > IMMERSIVE_DOCUMENT_OUTLINE_FRAME_SIZE
-        && difference > IMMERSIVE_DOCUMENT_OUTLINE_FRAME_SIZE;
-      if (progressive) {
-        const firstEnd = Math.min(
-          IMMERSIVE_DOCUMENT_OUTLINE_FRAME_SIZE,
-          nextDerivations.outline.length
-        );
-        publish(
-          nextDerivations,
-          nextDerivations.outline.slice(0, firstEnd),
-          firstEnd === nextDerivations.outline.length,
-          true
-        );
-        scheduleOutlineFrame(nextDerivations, firstEnd);
-        return;
-      }
-      publish(
-        nextDerivations,
-        nextDerivations.outline,
-        true
-      );
-    };
-    const scanner = createDocumentDerivationScanner(markdown);
-    const scanNextSlice = () => {
-      cancelFrame = null;
-      if (!isCurrent()) return;
-      if (!scanner.advance(IMMERSIVE_DOCUMENT_DERIVATION_SLICE_CHARACTERS)) {
-        cancelFrame = schedule(scanNextSlice, 0);
-        return;
-      }
-      if (!isCurrent()) return;
-      completeDerivation(scanner.result());
-    };
-    const cancel = schedule(
-      scanNextSlice,
-      IMMERSIVE_DOCUMENT_DERIVATION_DEBOUNCE_MS
-    );
-
-    return () => {
-      cancel();
-      cancelFrame?.();
-      if (generation === derivationGenerationRef.current) {
-        derivationGenerationRef.current += 1;
-      }
-      latestOutlineRef.current = latestDerivationsRef.current.outline;
-    };
-  }, [markdown, schedule, startTransition]);
-
-  const resolveOutlineItem = useCallback((item: ImmersiveOutlineItem) => {
-    const current = latestOutlineRef.current[item.index];
-    if (
-      !current
-      || current.index !== item.index
-      || current.level !== item.level
-      || current.text !== item.text
-    ) {
-      throw new Error('immersive-outline-item-stale');
-    }
-    return current;
-  }, []);
-
-  return { ...derivations, resolveOutlineItem };
-}
+export { useImmersiveDocumentDerivations } from './use-immersive-document-derivations';
 
 type Props = Readonly<{
   direction: 'ltr' | 'rtl';
@@ -315,6 +57,12 @@ type Props = Readonly<{
   toolbar: ReactNode;
   onCopyWechat: () => Promise<boolean>;
   onBeforeSourceMutation: () => boolean;
+  /**
+   * Visual-mode delegates. `null` means no visual owner is mounted, so the
+   * Source-mode path applies; a boolean is the visual owner's own result.
+   */
+  onInsertVisualTable?: (rows: number, columns: number) => boolean | null;
+  onRevealVisualHeading?: (index: number, text: string) => boolean | null;
   onExit: () => void;
   onFailure: (code: string) => void;
   mode: ImmersiveViewMode;
@@ -327,197 +75,6 @@ type Props = Readonly<{
   onViewModeChange: (mode: ImmersiveViewMode) => void;
   strings: ImmersiveStrings;
 }>;
-
-function HistoryDialog({
-  dirty,
-  environment,
-  i18n,
-  onFailure,
-  port,
-  restoreRevision,
-  strings,
-  onClose
-}: Readonly<{
-  dirty: boolean;
-  environment: ImmersiveEnvironmentPort;
-  i18n: ImmersiveI18nPort;
-  onFailure: (code: string) => void;
-  port: RevisionPort;
-  restoreRevision: (url: string) => void;
-  strings: ImmersiveStrings;
-  onClose: () => void;
-}>) {
-  const [items, setItems] = useState<ReadonlyArray<RevisionSummary> | null>(
-    null
-  );
-  const [selected, setSelected] = useState<RevisionSummary | null>(null);
-  const [preview, setPreview] = useState<RevisionPreview | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [restoreFailed, setRestoreFailed] = useState(false);
-  const [filter, setFilter] = useState<'all' | 'auto' | 'manual'>('all');
-  const surfaceRef = useRef<HTMLElement>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const previewRequestRef = useRef(0);
-
-  useEffect(() => {
-    const previous = environment.activeElement();
-    dialogRef.current?.querySelector<HTMLElement>('button')?.focus();
-    return () => previous?.focus();
-  }, [environment]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void port
-      .list(controller.signal)
-      .then((revisions) => {
-        setItems(revisions);
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) {
-          onFailure('revision-list-failed');
-          setFailed(true);
-        }
-      });
-    return () => controller.abort();
-  }, [onFailure, port]);
-
-  useEffect(() => {
-    if (null === items) return;
-
-    const nextItems = items.filter(
-      (item) => 'all' === filter || item.type === filter
-    );
-    setSelected((current) => {
-      const retained = current
-        ? nextItems.find((item) => item.id === current.id)
-        : undefined;
-      return retained ?? nextItems[0] ?? null;
-    });
-  }, [filter, items]);
-
-  useEffect(() => {
-    const requestId = ++previewRequestRef.current;
-    if (!selected) {
-      setPreview(null);
-      return;
-    }
-    const controller = new AbortController();
-    setPreview(null);
-    setConfirming(false);
-    void port
-      .get(selected.id, controller.signal)
-      .then((result) => {
-        if (
-          !controller.signal.aborted &&
-          requestId === previewRequestRef.current
-        ) {
-          setPreview(result);
-        }
-      })
-      .catch(() => {
-        if (
-          !controller.signal.aborted &&
-          requestId === previewRequestRef.current
-        ) {
-          onFailure('revision-preview-failed');
-          setFailed(true);
-        }
-      });
-    return () => controller.abort();
-  }, [onFailure, port, selected]);
-
-  const restore = () => {
-    if (!selected) return;
-    if (dirty && !confirming) {
-      setConfirming(true);
-      return;
-    }
-    try {
-      setRestoreFailed(false);
-      restoreRevision(selected.restoreUrl);
-    } catch {
-      onFailure('revision-restore-failed');
-      setRestoreFailed(true);
-    }
-  };
-
-  const filteredItems = items?.filter(
-    (item) => 'all' === filter || item.type === filter
-  );
-  const changeFilter = (nextFilter: typeof filter) => {
-    setFilter(nextFilter);
-  };
-  const selectedLabel =
-    'manual' === selected?.type ? strings.manualSave : strings.autoSave;
-  const filteredCount = filteredItems?.length ?? 0;
-  const historyCount = i18n.revisions(filteredCount);
-
-  return (
-    <div className="easymde-history-backdrop">
-      <button type="button" className="easymde-history-backdrop-dismiss" tabIndex={-1} aria-label={strings.cancel} onClick={onClose} />
-      <div
-        ref={dialogRef}
-        className="easymde-history-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={strings.historyVersions}
-        onKeyDown={(event) => {
-          trapFocus(event);
-          if ('Escape' === event.key) {
-            event.preventDefault();
-            event.stopPropagation();
-            onClose();
-          }
-        }}
-      >
-        <aside className="easymde-history-sidebar">
-          <header>
-            <span>{strings.historyVersions}<Info size={13} strokeWidth={2} /></span>
-            <button type="button" aria-label={strings.cancel} onClick={onClose}><X size={14} /></button>
-          </header>
-          <div className="easymde-history-filter">
-            <span>{historyCount}</span>
-            <label>
-              <select value={filter} aria-label={strings.historyAll} onChange={(event) => changeFilter(event.currentTarget.value as typeof filter)}>
-                <option value="all">{strings.historyAll}</option>
-                <option value="auto">{strings.autoSave}</option>
-                <option value="manual">{strings.manualSave}</option>
-              </select>
-              <ChevronDown size={10} strokeWidth={2.5} />
-            </label>
-          </div>
-          <div className="easymde-history-rule" />
-          <div className="easymde-history-list">
-            {failed ? <p role="alert">{strings.historyError}</p> : null}
-            {!failed && null === items ? <p role="status">{strings.historyLoading}</p> : null}
-            {items && !items.length ? <p>{strings.historyEmpty}</p> : null}
-            {filteredItems?.map((item) => {
-              const manual = 'manual' === item.type;
-              return (
-                <button key={item.id} type="button" className={selected?.id === item.id ? 'is-selected' : ''} onClick={() => setSelected(item)}>
-                  <span>{manual ? <Save size={11} strokeWidth={2.5} /> : <Clock size={11} strokeWidth={2} />}<strong>{manual ? strings.manualSave : strings.autoSave}</strong></span>
-                  <time dateTime={item.date}>{item.dateLabel}</time>
-                </button>
-              );
-            })}
-          </div>
-        </aside>
-        <section className="easymde-history-content">
-          <header>
-            <div><strong>{selectedLabel}</strong><time dateTime={selected?.date}>{selected?.dateLabel}</time></div>
-            <button type="button" disabled={!selected} onClick={restore}><RotateCcw size={12} strokeWidth={2.5} />{strings.restoreThisVersion}</button>
-          </header>
-          {confirming ? <p className="easymde-history-confirm" role="alert">{strings.restoreConfirm}</p> : null}
-          {restoreFailed ? <p className="easymde-history-confirm" role="alert">{strings.historyError}</p> : null}
-          <div className="easymde-immersive-history-preview">
-            {preview ? <SafePreviewHtmlSink className="easymde-preview easymde-immersive-revision-preview" html={preview.html} surfaceRef={surfaceRef} /> : null}
-          </div>
-        </section>
-      </div>
-    </div>
-  );
-}
 
 export function ImmersiveEditor({
   direction,
@@ -536,6 +93,8 @@ export function ImmersiveEditor({
   mode,
   onCopyWechat,
   onBeforeSourceMutation,
+  onInsertVisualTable,
+  onRevealVisualHeading,
   onExit,
   onFailure,
   readPublishSnapshot,
@@ -697,9 +256,13 @@ export function ImmersiveEditor({
     (item: ImmersiveOutlineItem) => {
       const current = resolveOutlineItem(item);
       setActiveOutline(current.index);
+      // An unlocked visual editor owns navigation: focusing the hidden
+      // CodeMirror source would leave the visible editing surface behind.
+      const visual = onRevealVisualHeading?.(current.index, current.text);
+      if (null !== visual && undefined !== visual) return;
       documentSession.document.revealPosition(current.position);
     },
-    [documentSession, resolveOutlineItem]
+    [documentSession, onRevealVisualHeading, resolveOutlineItem]
   );
   const changeMode = (next: ImmersiveViewMode) => {
     onViewModeChange(next);
@@ -721,18 +284,30 @@ export function ImmersiveEditor({
     documentSession.title.setValue(value);
   };
   const insertTable = (rows: number, columns: number) => {
+    const visual = onInsertVisualTable?.(rows, columns);
+    if (null !== visual && undefined !== visual) {
+      // The unlocked visual editor applied (or explicitly reported) the
+      // bounded canonical change itself and keeps its surface mounted.
+      setTableOpen(false);
+      return;
+    }
+    if (!onBeforeSourceMutation()) return;
     const snapshot = {
       selection: documentSession.document.getSelection(),
       value: documentSession.document.getValue()
     };
-    const markdownTable = tableMarkdown(rows, columns);
-    const start = snapshot.selection.start;
-    const end = snapshot.selection.end;
+    const insertion = separatedTableInsertion(
+      snapshot.value,
+      snapshot.selection.start,
+      snapshot.selection.end,
+      rows,
+      columns
+    );
     const value =
-      snapshot.value.slice(0, start) +
-      markdownTable +
-      snapshot.value.slice(end);
-    const caret = start + markdownTable.length;
+      snapshot.value.slice(0, insertion.from) +
+      insertion.insert +
+      snapshot.value.slice(insertion.to);
+    const caret = insertion.caret;
     documentSession.document.applyTextChange({
       value,
       selection: { direction: 'none', start: caret, end: caret }
@@ -750,6 +325,13 @@ export function ImmersiveEditor({
     setMarkdown(documentSession.document.getValue());
     setPublishSnapshot(readPublishSnapshot());
   };
+  const handlePublishDialogLoadFailure = useCallback(
+    (code: string) => {
+      setPublishSnapshot(null);
+      onFailure(code);
+    },
+    [onFailure]
+  );
 
   return (
     <section
@@ -765,7 +347,7 @@ export function ImmersiveEditor({
         />
       ) : null}
       {historyOpen && revisionPort ? (
-        <HistoryDialog
+        <ImmersiveHistoryDialog
           dirty={dirty}
           environment={environment}
           i18n={i18n}
@@ -777,7 +359,7 @@ export function ImmersiveEditor({
         />
       ) : null}
       {publishSnapshot ? (
-        <ImmersivePublishDialog
+        <LazyImmersivePublishDialog
           defaults={generalSettings}
           environment={environment}
           markdown={markdown}
@@ -785,6 +367,7 @@ export function ImmersiveEditor({
           strings={strings}
           onClose={() => setPublishSnapshot(null)}
           onConfirm={onConfirmPublish}
+          onLoadFailure={handlePublishDialogLoadFailure}
           onSelectFeaturedImage={onSelectFeaturedImage}
         />
       ) : null}
@@ -821,10 +404,7 @@ export function ImmersiveEditor({
         }}
         onModeChange={changeMode}
         onSettingsChange={changeSettings}
-        onTable={() => {
-          if (!onBeforeSourceMutation()) return;
-          setTableOpen(true);
-        }}
+        onTable={() => setTableOpen(true)}
       />
       {settings.outline ? (
         <ImmersiveOutline

@@ -1,10 +1,129 @@
-import { describe, expect, it } from "vitest";
+import type * as CodeMirrorLanguage from "@codemirror/language";
+import type { EditorState } from "@codemirror/state";
+import type { Tree } from "@lezer/common";
+import { describe, expect, it, vi } from "vitest";
 
 import {
 	canIndentEditorCode,
 	type EditorCodeIndentationResult,
 	indentEditorCode,
 } from "./editor-code-indentation";
+
+type CpuSnapshot = Readonly<{
+	scope: "process" | "thread";
+	system: number;
+	user: number;
+}>;
+
+const indentationProbe = vi.hoisted(() => ({
+	active: false,
+	calls: 0,
+}));
+
+vi.mock("@codemirror/language", async (importOriginal) => {
+	const actual = await importOriginal<typeof CodeMirrorLanguage>();
+	const cpuSnapshot = (): CpuSnapshot | null => {
+		// Node 22 exposes threadCpuUsage at runtime; bundled types may omit it.
+		const processWithThreadCpu = process as unknown as {
+			threadCpuUsage?: () => { system: number; user: number };
+		};
+		const threadCpuUsage = processWithThreadCpu.threadCpuUsage;
+		if ("function" === typeof threadCpuUsage) {
+			try {
+				const usage = threadCpuUsage.call(process);
+				return {
+					scope: "thread",
+					system: usage.system / 1000,
+					user: usage.user / 1000,
+				};
+			} catch {
+				// Fall through to the process-wide counter.
+			}
+		}
+		try {
+			const usage = process.cpuUsage();
+			return {
+				scope: "process",
+				system: usage.system / 1000,
+				user: usage.user / 1000,
+			};
+		} catch {
+			return null;
+		}
+	};
+	const cpuDelta = (
+		before: CpuSnapshot | null,
+		after: CpuSnapshot | null,
+	): Readonly<{ system: number; user: number }> | null =>
+		before && after
+			? {
+					system: after.system - before.system,
+					user: after.user - before.user,
+				}
+			: null;
+	return {
+		...actual,
+		ensureSyntaxTree: ((
+			state: EditorState,
+			upto: number,
+			timeout: number | undefined,
+		) => {
+			const started = performance.now();
+			const cpuBefore = cpuSnapshot();
+			let result: Tree | null = null;
+			let errorName: string | null = null;
+			try {
+				result = actual.ensureSyntaxTree(state, upto, timeout);
+				return result;
+			} catch (error) {
+				errorName = error instanceof Error ? error.name : typeof error;
+				throw error;
+			} finally {
+				if (indentationProbe.active) {
+					indentationProbe.calls += 1;
+					const cpuAfter = cpuSnapshot();
+					let initialTreeLength: number | null = null;
+					let initialHasLanguage: boolean | null = null;
+					try {
+						initialTreeLength = actual.syntaxTree(state).length;
+						// `language` is the public facet for the current document language.
+						initialHasLanguage = state.facet(actual.language) !== null;
+					} catch {
+						// The public facet/tree is unavailable; report unobservable, not false.
+						initialTreeLength = null;
+						initialHasLanguage = null;
+					}
+					try {
+						process.stdout.write(
+							`editor-code-indentation-ensure-syntax-tree-receipt ${JSON.stringify(
+								{
+									call: indentationProbe.calls,
+									docLength: state.doc.length,
+									errorName,
+									hasLanguage: initialHasLanguage,
+									initialTreeLength,
+									returnHasLanguage: result !== null,
+									returnTreeLength: result?.length ?? null,
+									returned: result !== null,
+									timeout: timeout ?? null,
+									upto,
+									wallMs: performance.now() - started,
+									workerProcessCPU: {
+										after: cpuAfter,
+										before: cpuBefore,
+										delta: cpuDelta(cpuBefore, cpuAfter),
+									},
+								},
+							)}\n`,
+						);
+					} catch {
+						// Observation must not replace the original result.
+					}
+				}
+			}
+		}) as typeof actual.ensureSyntaxTree,
+	};
+});
 
 function contentOf(result: EditorCodeIndentationResult): string {
 	if ("changed" !== result.status && "unchanged" !== result.status) {
@@ -21,11 +140,30 @@ describe("indentEditorCode", () => {
 		).join("\n");
 		const source = `${prefix}\nfunction tail(value) {\nreturn value + 1;\n}\n`;
 
-		const result = await indentEditorCode({
-			content: source,
-			info: "js",
-			language: "javascript",
-		});
+		const result = await (async () => {
+			indentationProbe.active = true;
+			indentationProbe.calls = 0;
+			try {
+				return await indentEditorCode({
+					content: source,
+					info: "js",
+					language: "javascript",
+				});
+			} finally {
+				indentationProbe.active = false;
+			}
+		})();
+		try {
+			process.stdout.write(
+				`editor-code-indentation-result-receipt ${JSON.stringify({
+					code: "code" in result ? result.code : null,
+					ensureCalls: indentationProbe.calls,
+					status: result.status,
+				})}\n`,
+			);
+		} catch {
+			// Observation must not replace the original result.
+		}
 
 		expect(["changed", "unchanged"]).toContain(result.status);
 		expect(contentOf(result)).toContain("  return value + 1;");
@@ -193,5 +331,48 @@ describe("indentEditorCode", () => {
 		});
 
 		expect(result).toEqual({ content: source, status: "unchanged" });
+	});
+
+	it("lazy-loads and indents CSS, HTML, and TypeScript/JSX/TSX fences", async () => {
+		const cssResult = await indentEditorCode({
+			content: ".card {\ncolor: red;\n}\n",
+			language: "css",
+		});
+		expect(contentOf(cssResult)).toBe(".card {\n  color: red;\n}\n");
+
+		const htmlResult = await indentEditorCode({
+			content: "<div>\n<p>Hello</p>\n</div>\n",
+			language: "html",
+		});
+		expect(contentOf(htmlResult)).toBe("<div>\n  <p>Hello</p>\n</div>\n");
+
+		const tsResult = await indentEditorCode({
+			content: "interface Item {\nid: number;\n}\n",
+			language: "ts",
+		});
+		expect(contentOf(tsResult)).toBe("interface Item {\n  id: number;\n}\n");
+
+		const jsxResult = await indentEditorCode({
+			content: "function App() {\nreturn <div />;\n}\n",
+			language: "jsx",
+		});
+		expect(contentOf(jsxResult)).toBe(
+			"function App() {\n  return <div />;\n}\n",
+		);
+
+		const tsxResult = await indentEditorCode({
+			content: "function App(props: { ok: boolean }) {\nreturn <div />;\n}\n",
+			language: "tsx",
+		});
+		expect(contentOf(tsxResult)).toBe(
+			"function App(props: { ok: boolean }) {\n  return <div />;\n}\n",
+		);
+
+		// Repeated call hits the cached lazy language support.
+		const cachedCssResult = await indentEditorCode({
+			content: "a {\ncolor: blue;\n}\n",
+			language: "css",
+		});
+		expect(contentOf(cachedCssResult)).toBe("a {\n  color: blue;\n}\n");
 	});
 });

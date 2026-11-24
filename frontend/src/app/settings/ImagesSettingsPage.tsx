@@ -11,150 +11,56 @@ import type {
 	SettingsCenterBootstrap,
 	SettingsCenterStringKey,
 } from "../../contracts/bootstrap/settings-center-bootstrap";
-import type {
-	ImageHostingSecretField,
-	ImageHostingSecretRevealPort,
-} from "../../contracts/ports/image-hosting-secret-reveal-port";
+import type { ImageHostingSecretRevealPort } from "../../contracts/ports/image-hosting-secret-reveal-port";
 import type {
 	ImageHostingTarget,
 	ImageUploadVerificationPort,
-	ImageUploadVerificationResult,
 } from "../../contracts/ports/image-hosting-verification-port";
 import type {
 	ImageSettings,
 	ImageUploadFormat,
 } from "../../contracts/settings-center-settings";
 import {
-	buildImageObjectKeyPreview,
 	DEFAULT_IMAGE_FILE_NAME_RULE,
 	DEFAULT_IMAGE_STORAGE_PATH,
 	DEFAULT_IMAGE_UPLOAD_FORMATS,
-	IMAGE_UPLOAD_EXTENSIONS,
 } from "../../contracts/settings-center-settings";
+import { CircleAlert, Copy } from "../../generated/lucide-icons";
+import { ImageFileNameRuleEditor } from "./ImageFileNameRuleEditor";
 import {
-	CircleAlert,
-	CircleCheck,
-	CircleX,
-	Copy,
-	ExternalLink,
-	Eye,
-	FolderOpen,
-	Info,
-	Link2,
-	Minus,
-	Plus,
-	RefreshCcw,
-	X,
-} from "../../generated/lucide-icons";
+	CompactSelect,
+	ImageBehaviorRow,
+	ImageField,
+	ImageHostingProviderFields,
+	ImageNumberInput,
+	type SelectOption,
+} from "./ImageHostingProviderFields";
 import {
-	SettingsRow,
-	SettingsSelect,
-	SettingsToggle,
-} from "./SettingsControls";
+	DEFAULT_VERIFICATION_INVALIDATION_TOKENS,
+	DuplicateImageHostDialog,
+	hasDuplicateImageHostConfiguration,
+	type ImageUploadVerificationStatus,
+	UploadVerificationFeedbackDialog,
+	type VerificationFeedback,
+	type VerificationInvalidationTokens,
+	VerificationRow,
+	type VerificationState,
+	verificationFingerprint,
+} from "./ImageUploadVerification";
+import { SettingsRow, SettingsToggle } from "./SettingsControls";
 import { ImageLibraryIcon, SlidersIcon } from "./settings-center-icons";
-import { useDialogFocusTrap } from "./settings-center-utils";
+
+export {
+	DuplicateImageHostDialog,
+	hasDuplicateImageHostConfiguration,
+	type ImageUploadVerificationStatus,
+};
 
 type ImageSettingsDraft = ImageSettings;
-
-export type ImageUploadVerificationStatus =
-	| "pending"
-	| "verifying"
-	| "verified"
-	| "error"
-	| "stale";
 
 export type ImageRuntimeCapabilities = Readonly<{
 	compressImages: boolean;
 }>;
-
-type VerificationState = Readonly<{
-	status: ImageUploadVerificationStatus;
-	verifiedFingerprint?: string;
-	verifiedInvalidationToken?: number;
-}>;
-
-type VerificationFeedback =
-	| Readonly<{
-			kind: "success";
-			result: ImageUploadVerificationResult;
-			returnFocus: HTMLButtonElement;
-	  }>
-	| Readonly<{
-			kind: "error";
-			returnFocus: HTMLButtonElement;
-	  }>;
-
-type VerificationInvalidationTokens = Readonly<{
-	primary: number;
-	backup: number;
-}>;
-
-const DEFAULT_VERIFICATION_INVALIDATION_TOKENS: VerificationInvalidationTokens =
-	{
-		primary: 0,
-		backup: 0,
-	};
-
-type FileNameRulePair = Readonly<{
-	storagePath: string;
-	fileNameRule: string;
-}>;
-
-const FILE_NAME_RULE_PRESETS: ReadonlyArray<
-	Readonly<
-		FileNameRulePair & {
-			label: SettingsCenterStringKey;
-		}
-	>
-> = [
-	{
-		label: "fileNamePresetDate",
-		storagePath: "{date}",
-		fileNameRule: "{uuid}",
-	},
-	{
-		label: "fileNamePresetMd5",
-		storagePath: "{year}/{month}",
-		fileNameRule: "{md5}",
-	},
-	{
-		label: "fileNamePresetYearMonth",
-		storagePath: "{year}/{month}",
-		fileNameRule: "{uuid}",
-	},
-	{
-		label: "fileNamePresetOriginal",
-		storagePath: "{date}",
-		fileNameRule: "{name}",
-	},
-	{
-		label: "fileNamePresetArticle",
-		storagePath: "{post_id}",
-		fileNameRule: "{name}",
-	},
-	{
-		label: "fileNamePresetTime",
-		storagePath: "{date}",
-		fileNameRule: "{time}",
-	},
-];
-
-const FILE_NAME_RULE_VARIABLES: ReadonlyArray<
-	Readonly<{
-		token: string;
-		label: SettingsCenterStringKey;
-	}>
-> = [
-	{ token: "{year}", label: "yearVariable" },
-	{ token: "{month}", label: "monthVariable" },
-	{ token: "{day}", label: "dayVariable" },
-	{ token: "{date}", label: "fullDateVariable" },
-	{ token: "{time}", label: "uploadTimeVariable" },
-	{ token: "{post_id}", label: "postIdVariable" },
-	{ token: "{md5}", label: "fileMd5Variable" },
-	{ token: "{uuid}", label: "uuidVariable" },
-	{ token: "{name}", label: "originalNameVariable" },
-];
 
 const UPLOAD_FORMAT_OPTIONS: ReadonlyArray<
 	Readonly<{
@@ -182,823 +88,6 @@ const UPLOAD_FORMAT_OPTIONS: ReadonlyArray<
 	},
 	{ key: "gif", label: "uploadFormatGif", accessibleLabel: "allowUploadGif" },
 ];
-type SelectOption = Readonly<{
-	disabled?: boolean;
-	value: string;
-	label: string;
-}>;
-
-const IMAGE_HOST_PROVIDERS = [
-	"cloudflare-r2",
-	"qiniu-kodo",
-	"aliyun-oss",
-	"tencent-cos",
-] as const;
-
-function isImageHostProvider(value: string): value is ImageSettings["service"] {
-	return IMAGE_HOST_PROVIDERS.some((provider) => provider === value);
-}
-
-function normalizedIdentityValue(value: string): string {
-	return value.trim().replace(/\/+$/, "").toLowerCase();
-}
-
-function normalizedEndpointIdentity(
-	service: ImageSettings["service"],
-	value: string,
-): string {
-	const endpoint = normalizedIdentityValue(value);
-	if (service === "aliyun-oss") {
-		const match = endpoint.match(/^https:\/\/oss-([a-z0-9-]+)\.aliyuncs\.com$/);
-		return match?.[1]?.replace(/-internal$/, "") ?? "";
-	}
-	if (service === "tencent-cos") {
-		return (
-			endpoint.match(/^https:\/\/cos\.([a-z0-9-]+)\.myqcloud\.com$/)?.[1] ?? ""
-		);
-	}
-	return endpoint;
-}
-
-export function hasDuplicateImageHostConfiguration(
-	settings: ImageSettings,
-): boolean {
-	if (!settings.backupEnabled || settings.service !== settings.backupService) {
-		return false;
-	}
-	if (!settings.bucket.trim() || !settings.backupBucket.trim()) return false;
-	if (
-		normalizedIdentityValue(settings.bucket) !==
-		normalizedIdentityValue(settings.backupBucket)
-	) {
-		return false;
-	}
-	if (settings.service !== "qiniu-kodo") {
-		if (!settings.endpoint.trim() || !settings.backupEndpoint.trim()) {
-			return false;
-		}
-		const primaryEndpoint = normalizedEndpointIdentity(
-			settings.service,
-			settings.endpoint,
-		);
-		const backupEndpoint = normalizedEndpointIdentity(
-			settings.backupService,
-			settings.backupEndpoint,
-		);
-		return (
-			"" !== primaryEndpoint &&
-			"" !== backupEndpoint &&
-			primaryEndpoint === backupEndpoint
-		);
-	}
-	return true;
-}
-
-export function DuplicateImageHostDialog({
-	onClose,
-	returnFocus,
-	strings,
-}: {
-	onClose: () => void;
-	returnFocus: HTMLElement;
-	strings: SettingsCenterBootstrap["strings"];
-}) {
-	const closeButtonRef = useRef<HTMLButtonElement>(null);
-	const dialogRef = useRef<HTMLDivElement>(null);
-	const onCloseRef = useRef(onClose);
-	onCloseRef.current = onClose;
-	useDialogFocusTrap(dialogRef, closeButtonRef);
-	useEffect(() => {
-		const dialog = dialogRef.current;
-		if (!dialog) throw new Error("settings-center-duplicate-dialog-missing");
-		const ownerDocument = dialog.ownerDocument;
-		const closeOnEscape = (event: KeyboardEvent) => {
-			if (event.key === "Escape") onCloseRef.current();
-		};
-		ownerDocument.addEventListener("keydown", closeOnEscape);
-		return () => {
-			ownerDocument.removeEventListener("keydown", closeOnEscape);
-			if (returnFocus.isConnected) returnFocus.focus();
-		};
-	}, [returnFocus]);
-
-	return (
-		<div
-			className="easymde-settings-center__transfer-dialog-layer"
-			role="presentation"
-		>
-			<button
-				type="button"
-				className="easymde-settings-center__dialog-backdrop"
-				aria-label={strings.cancel}
-				onClick={onClose}
-			/>
-			<div
-				ref={dialogRef}
-				role="alertdialog"
-				aria-modal="true"
-				aria-labelledby="easymde-duplicate-image-host-title"
-				aria-describedby="easymde-duplicate-image-host-description"
-				className="easymde-settings-center__transfer-dialog"
-			>
-				<header>
-					<span>
-						<Info size={20} />
-					</span>
-					<div>
-						<h2 id="easymde-duplicate-image-host-title">
-							{strings.duplicateImageHostTitle}
-						</h2>
-						<p id="easymde-duplicate-image-host-description">
-							{strings.duplicateImageHostDescription}
-						</p>
-					</div>
-					<button
-						ref={closeButtonRef}
-						type="button"
-						aria-label={strings.cancel}
-						onClick={onClose}
-					>
-						<X size={20} />
-					</button>
-				</header>
-			</div>
-		</div>
-	);
-}
-
-function UploadVerificationFeedbackDialog({
-	feedback,
-	onClose,
-	strings,
-}: {
-	feedback: VerificationFeedback;
-	onClose: () => void;
-	strings: SettingsCenterBootstrap["strings"];
-}) {
-	const footerCloseButtonRef = useRef<HTMLButtonElement>(null);
-	const dialogRef = useRef<HTMLDivElement>(null);
-	const onCloseRef = useRef(onClose);
-	onCloseRef.current = onClose;
-	useDialogFocusTrap(dialogRef, footerCloseButtonRef);
-	useEffect(() => {
-		const dialog = dialogRef.current;
-		if (!dialog)
-			throw new Error("settings-center-upload-feedback-dialog-missing");
-		const ownerDocument = dialog.ownerDocument;
-		const closeOnEscape = (event: KeyboardEvent) => {
-			if (event.key === "Escape") onCloseRef.current();
-		};
-		ownerDocument.addEventListener("keydown", closeOnEscape);
-		return () => {
-			ownerDocument.removeEventListener("keydown", closeOnEscape);
-			if (feedback.returnFocus.isConnected) feedback.returnFocus.focus();
-		};
-	}, [feedback.returnFocus]);
-	const success = feedback.kind === "success";
-	const title = success
-		? strings.uploadVerificationSucceeded
-		: strings.uploadVerificationFailed;
-	const description = success
-		? strings.uploadVerificationSuccessDescription
-		: strings.uploadVerificationFailureDescription;
-	const insecureViewingUrl =
-		success && /^http:\/\//i.test(feedback.result.url.trim());
-	const dialogAccessibility: Readonly<{
-		"aria-describedby": string;
-		"aria-labelledby": string;
-		"aria-modal": "true";
-		role: "alertdialog" | "dialog";
-	}> = {
-		"aria-describedby": "easymde-upload-verification-description",
-		"aria-labelledby": "easymde-upload-verification-title",
-		"aria-modal": "true",
-		role: success ? "dialog" : "alertdialog",
-	};
-
-	return (
-		<div
-			className="easymde-settings-center__transfer-dialog-layer"
-			role="presentation"
-		>
-			<button
-				type="button"
-				className="easymde-settings-center__dialog-backdrop"
-				aria-label={strings.closeImageFeedback}
-				onClick={onClose}
-			/>
-			<div
-				ref={dialogRef}
-				{...dialogAccessibility}
-				className="easymde-settings-center__transfer-dialog easymde-settings-center__upload-verification-dialog"
-			>
-				<header>
-					<span className={success ? "is-success" : "is-destructive"}>
-						{success ? <CircleCheck size={22} /> : <CircleX size={22} />}
-					</span>
-					<div>
-						<h2 id="easymde-upload-verification-title">{title}</h2>
-						<p id="easymde-upload-verification-description">{description}</p>
-					</div>
-					<button
-						type="button"
-						aria-label={strings.closeImageFeedback}
-						onClick={onClose}
-					>
-						<X size={20} />
-					</button>
-				</header>
-				{success && feedback.kind === "success" ? (
-					<div className="easymde-settings-center__transfer-dialog-body easymde-settings-center__upload-verification-result">
-						<dl>
-							<div>
-								<dt>
-									<FolderOpen size={17} />
-									<span>{strings.uploadedObjectPath}</span>
-								</dt>
-								<dd>
-									<code>{feedback.result.path}</code>
-								</dd>
-							</div>
-							<div>
-								<dt>
-									<Link2 size={17} />
-									<span>{strings.uploadedImageUrl}</span>
-								</dt>
-								<dd>
-									<a
-										href={feedback.result.url}
-										target="_blank"
-										rel="noopener noreferrer"
-									>
-										<span>{feedback.result.url}</span>
-										<ExternalLink size={15} />
-									</a>
-								</dd>
-							</div>
-						</dl>
-						{insecureViewingUrl ? (
-							<p className="easymde-settings-center__upload-verification-warning">
-								<Info size={17} />
-								<span>{strings.insecureViewingDomainWarning}</span>
-							</p>
-						) : null}
-					</div>
-				) : (
-					<div className="easymde-settings-center__transfer-dialog-body easymde-settings-center__upload-verification-failure">
-						<p>{strings.uploadVerificationFailureHint}</p>
-					</div>
-				)}
-				<footer>
-					<button ref={footerCloseButtonRef} type="button" onClick={onClose}>
-						{strings.closeImageFeedback}
-					</button>
-				</footer>
-			</div>
-		</div>
-	);
-}
-
-function CompactSelect({
-	label,
-	onChange,
-	options,
-	value,
-}: {
-	label: string;
-	onChange: (value: string) => void;
-	options: ReadonlyArray<SelectOption>;
-	value: string;
-}) {
-	return (
-		<SettingsSelect
-			className="easymde-settings-center__compact-select"
-			label={label}
-			value={value}
-			onChange={onChange}
-			options={options}
-		/>
-	);
-}
-
-function ImageTextInput({
-	label,
-	onChange,
-	value,
-}: {
-	label: string;
-	onChange: (value: string) => void;
-	value: string;
-}) {
-	return (
-		<input
-			className="easymde-settings-center__image-input"
-			aria-label={label}
-			value={value}
-			onChange={(event) => onChange(event.target.value)}
-		/>
-	);
-}
-
-function ImageNumberInput({
-	label,
-	max,
-	min,
-	onChange,
-	unit,
-	value,
-}: {
-	label: string;
-	max: number;
-	min: number;
-	onChange: (value: number) => void;
-	unit?: string;
-	value: number;
-}) {
-	return (
-		<div className="easymde-settings-center__image-number-stepper">
-			<button
-				type="button"
-				aria-label={`${label} - 1`}
-				disabled={value === min}
-				onClick={() => onChange(value - 1)}
-			>
-				<Minus size={16} />
-			</button>
-			<span className="easymde-settings-center__image-number-value">
-				<input
-					className="easymde-settings-center__image-number-input"
-					type="number"
-					min={min}
-					max={max}
-					step={1}
-					aria-label={label}
-					value={value}
-					onChange={(event) => {
-						const input = event.currentTarget;
-						const next = input.valueAsNumber;
-						if (Number.isInteger(next) && next >= min && next <= max) {
-							onChange(next);
-							return;
-						}
-						input.value = String(value);
-					}}
-				/>
-				{unit ? <span aria-hidden="true">{unit}</span> : null}
-			</span>
-			<button
-				type="button"
-				aria-label={`${label} + 1`}
-				disabled={value === max}
-				onClick={() => onChange(value + 1)}
-			>
-				<Plus size={16} />
-			</button>
-		</div>
-	);
-}
-
-function SecretInput({
-	configured,
-	field,
-	hideLabel,
-	label,
-	onChange,
-	revealFailedLabel,
-	revealPort,
-	revealingLabel,
-	revision,
-	showLabel,
-	target,
-	value,
-}: {
-	configured: boolean;
-	field: ImageHostingSecretField;
-	hideLabel: string;
-	label: string;
-	onChange: (value: string) => void;
-	revealFailedLabel: string;
-	revealPort: ImageHostingSecretRevealPort | undefined;
-	revealingLabel: string;
-	revision: number;
-	showLabel: string;
-	target: ImageHostingTarget;
-	value: string;
-}) {
-	const [visible, setVisible] = useState(false);
-	const [revealedValue, setRevealedValue] = useState<string | null>(null);
-	const [revealStatus, setRevealStatus] = useState<
-		"idle" | "loading" | "error"
-	>("idle");
-	const revealAbortRef = useRef<AbortController | null>(null);
-	const canReveal = configured && Boolean(revealPort);
-	const displayValue = revealedValue ?? value;
-	useEffect(() => {
-		if (!canReveal) setVisible(false);
-	}, [canReveal]);
-	useEffect(() => {
-		setRevealedValue(null);
-		setVisible(false);
-		setRevealStatus("idle");
-		revealAbortRef.current?.abort();
-	}, [configured, field, revision, target, value]);
-	useEffect(
-		() => () => {
-			revealAbortRef.current?.abort();
-		},
-		[],
-	);
-
-	async function toggleVisibility() {
-		if (revealedValue !== null) {
-			setRevealedValue(null);
-			setVisible(false);
-			return;
-		}
-		if (value) {
-			setVisible((current) => !current);
-			return;
-		}
-		if (!configured || !revealPort || revealStatus === "loading") return;
-		const controller = new AbortController();
-		revealAbortRef.current?.abort();
-		revealAbortRef.current = controller;
-		setRevealStatus("loading");
-		try {
-			const result = await revealPort.revealSecret({
-				field,
-				revision,
-				signal: controller.signal,
-				target,
-			});
-			if (controller.signal.aborted) return;
-			setRevealedValue(result.value);
-			setVisible(true);
-			setRevealStatus("idle");
-		} catch {
-			if (controller.signal.aborted) return;
-			setRevealStatus("error");
-		} finally {
-			if (revealAbortRef.current === controller) revealAbortRef.current = null;
-		}
-	}
-	return (
-		<div className="easymde-settings-center__secret-field">
-			<div className="easymde-settings-center__secret-input">
-				<input
-					aria-label={label}
-					placeholder={configured && !value ? "••••••••••••" : undefined}
-					readOnly={revealedValue !== null}
-					type={displayValue && visible ? "text" : "password"}
-					value={displayValue}
-					onChange={(event) => {
-						setRevealedValue(null);
-						setVisible(false);
-						setRevealStatus("idle");
-						onChange(event.target.value);
-					}}
-				/>
-				{canReveal ? (
-					<button
-						type="button"
-						aria-label={
-							revealStatus === "loading"
-								? revealingLabel
-								: visible
-									? hideLabel
-									: showLabel
-						}
-						disabled={revealStatus === "loading"}
-						onClick={() => void toggleVisibility()}
-					>
-						{revealStatus === "loading" ? (
-							<RefreshCcw
-								size={17}
-								className="easymde-settings-center__verification-spinner"
-							/>
-						) : (
-							<Eye size={18} />
-						)}
-					</button>
-				) : null}
-			</div>
-			{revealStatus === "error" ? (
-				<div className="easymde-settings-center__credential-error" role="alert">
-					<Info size={15} />
-					<span>{revealFailedLabel}</span>
-				</div>
-			) : null}
-		</div>
-	);
-}
-
-function ImageField({
-	children,
-	description,
-	label,
-}: {
-	children: React.ReactNode;
-	description?: string;
-	label: string;
-}) {
-	return (
-		<SettingsRow label={label} {...(description ? { description } : {})}>
-			<div className="easymde-settings-center__image-field-control">
-				{children}
-			</div>
-		</SettingsRow>
-	);
-}
-
-function ImageBehaviorRow({
-	children,
-	description,
-	label,
-}: {
-	children: React.ReactNode;
-	description?: string;
-	label: string;
-}) {
-	return (
-		<SettingsRow
-			label={label}
-			minHeight={65}
-			{...(description ? { description } : {})}
-		>
-			<div className="easymde-settings-center__image-field-control">
-				{children}
-			</div>
-		</SettingsRow>
-	);
-}
-
-function FileNameRuleEditor({
-	fileNameRule,
-	onChange,
-	onPresetChange,
-	storagePath,
-	strings,
-	uploadFormats,
-}: {
-	fileNameRule: string;
-	onChange: (field: "fileNameRule" | "storagePath", value: string) => void;
-	onPresetChange: (pair: FileNameRulePair) => void;
-	storagePath: string;
-	strings: SettingsCenterBootstrap["strings"];
-	uploadFormats: ImageSettings["uploadFormats"];
-}) {
-	const storagePathInputRef = useRef<HTMLInputElement>(null);
-	const fileNameRuleInputRef = useRef<HTMLInputElement>(null);
-	const activeFieldRef = useRef<"fileNameRule" | "storagePath">("fileNameRule");
-	const pendingCursorRef = useRef<{
-		field: "fileNameRule" | "storagePath";
-		position: number;
-	} | null>(null);
-
-	useEffect(() => {
-		const pendingCursor = pendingCursorRef.current;
-		if (pendingCursor === null) return;
-		const input =
-			pendingCursor.field === "storagePath"
-				? storagePathInputRef.current
-				: fileNameRuleInputRef.current;
-		if (!input) throw new Error("settings-center-file-name-rule-input-missing");
-		pendingCursorRef.current = null;
-		input.focus();
-		input.setSelectionRange(pendingCursor.position, pendingCursor.position);
-	}, [fileNameRule, storagePath]);
-
-	const insertVariable = (token: string) => {
-		const field = activeFieldRef.current;
-		const input =
-			field === "storagePath"
-				? storagePathInputRef.current
-				: fileNameRuleInputRef.current;
-		if (!input) throw new Error("settings-center-file-name-rule-input-missing");
-		const start = input.selectionStart;
-		const end = input.selectionEnd;
-		if (start === null || end === null) {
-			throw new Error("settings-center-file-name-rule-selection-unavailable");
-		}
-		const value = field === "storagePath" ? storagePath : fileNameRule;
-		pendingCursorRef.current = { field, position: start + token.length };
-		onChange(field, `${value.slice(0, start)}${token}${value.slice(end)}`);
-	};
-
-	const example = buildImageObjectKeyPreview(
-		storagePath,
-		fileNameRule,
-		uploadFormats,
-	);
-	return (
-		<div className="easymde-settings-center__file-name-editor">
-			<SettingsRow
-				label={strings.storagePath}
-				description={strings.storagePathDescription}
-				minHeight={60}
-			>
-				<div className="easymde-settings-center__image-field-control">
-					<input
-						ref={storagePathInputRef}
-						className="easymde-settings-center__file-name-input"
-						aria-label={strings.storagePath}
-						value={storagePath}
-						onFocus={() => {
-							activeFieldRef.current = "storagePath";
-						}}
-						onChange={(event) => onChange("storagePath", event.target.value)}
-					/>
-				</div>
-			</SettingsRow>
-			<SettingsRow
-				label={strings.fileNameRule}
-				description={strings.fileNameRuleDescription}
-				minHeight={60}
-			>
-				<div className="easymde-settings-center__image-field-control">
-					<input
-						ref={fileNameRuleInputRef}
-						className="easymde-settings-center__file-name-input"
-						aria-label={strings.fileNameRule}
-						value={fileNameRule}
-						onFocus={() => {
-							activeFieldRef.current = "fileNameRule";
-						}}
-						onChange={(event) => onChange("fileNameRule", event.target.value)}
-					/>
-				</div>
-			</SettingsRow>
-			<div className="easymde-settings-center__file-name-details">
-				<div aria-hidden="true" />
-				<div>
-					<div className="easymde-settings-center__file-name-template-heading">
-						<span>{strings.commonFileNameTemplates}</span>
-						<span>{strings.selectTemplateToFillRule}</span>
-					</div>
-					<div className="easymde-settings-center__file-name-presets">
-						{FILE_NAME_RULE_PRESETS.map((preset, index) => {
-							const active =
-								storagePath === preset.storagePath &&
-								fileNameRule === preset.fileNameRule;
-							return (
-								<button
-									key={preset.label}
-									type="button"
-									aria-label={strings[preset.label]}
-									aria-pressed={active}
-									data-preset-index={index}
-									onClick={() =>
-										onPresetChange({
-											storagePath: preset.storagePath,
-											fileNameRule: preset.fileNameRule,
-										})
-									}
-								>
-									<span className="easymde-settings-center__preset-radio">
-										{active ? <span /> : null}
-									</span>
-									<span>
-										<span>{strings[preset.label]}</span>
-										<code>
-											{`${preset.storagePath}/${preset.fileNameRule}`}
-										</code>
-									</span>
-								</button>
-							);
-						})}
-					</div>
-					<div className="easymde-settings-center__file-name-variables">
-						<span>{strings.availableVariables}</span>
-						<div>
-							{FILE_NAME_RULE_VARIABLES.map(({ label, token }) => (
-								<button
-									key={token}
-									type="button"
-									title={strings[label]}
-									aria-label={`${strings.insertFileNameVariable.replace("%s", () => strings[label])} ${token}`}
-									onMouseDown={(event) => event.preventDefault()}
-									onClick={() => insertVariable(token)}
-								>
-									{token}
-								</button>
-							))}
-						</div>
-					</div>
-					<div className="easymde-settings-center__file-name-preview">
-						<span>{strings.examplePreview}</span>
-						<code>{example || strings.enterFileNameRule}</code>
-					</div>
-				</div>
-			</div>
-		</div>
-	);
-}
-
-function verificationFingerprint(
-	settings: ImageSettings,
-	target: ImageHostingTarget,
-): string {
-	const values =
-		target === "primary"
-			? [
-					settings.storagePath,
-					settings.fileNameRule,
-					...IMAGE_UPLOAD_EXTENSIONS.map((extension) =>
-						settings.uploadFormats[extension] ? "enabled" : "disabled",
-					),
-					settings.service,
-					settings.endpoint,
-					settings.bucket,
-					settings.domain,
-					settings.accessKey,
-					settings.secretKey,
-				]
-			: [
-					settings.storagePath,
-					settings.fileNameRule,
-					...IMAGE_UPLOAD_EXTENSIONS.map((extension) =>
-						settings.uploadFormats[extension] ? "enabled" : "disabled",
-					),
-					settings.domain,
-					settings.backupEnabled ? "enabled" : "disabled",
-					settings.backupService,
-					settings.backupEndpoint,
-					settings.backupBucket,
-					settings.backupDomain,
-					settings.backupAccessKey,
-					settings.backupSecretKey,
-				];
-	return JSON.stringify(values);
-}
-
-function VerificationRow({
-	disabled,
-	onVerify,
-	state,
-	strings,
-	target,
-}: {
-	disabled: boolean;
-	onVerify: (trigger: HTMLButtonElement) => void;
-	state: VerificationState;
-	strings: SettingsCenterBootstrap["strings"];
-	target: ImageHostingTarget;
-}) {
-	const labelByStatus: Readonly<Record<ImageUploadVerificationStatus, string>> =
-		{
-			pending: strings.uploadVerificationPending,
-			verifying: strings.verifyingUpload,
-			verified: strings.uploadVerified,
-			error: strings.uploadVerificationFailed,
-			stale: strings.uploadVerificationStale,
-		};
-	const isVerifying = state.status === "verifying";
-	return (
-		<div
-			className={`easymde-settings-center__${target === "backup" ? "backup-" : ""}verification-divider`}
-		>
-			<SettingsRow
-				label={
-					target === "backup"
-						? strings.backupVerificationStatus
-						: strings.uploadVerificationStatus
-				}
-				minHeight={target === "backup" ? 70 : 76}
-			>
-				<div className="easymde-settings-center__verification-row">
-					<div
-						className="easymde-settings-center__verification-status"
-						data-state={state.status}
-						role="status"
-						aria-live="polite"
-					>
-						<span />
-						{labelByStatus[state.status]}
-					</div>
-					<button
-						type="button"
-						disabled={disabled || isVerifying}
-						onClick={(event) => onVerify(event.currentTarget)}
-					>
-						{isVerifying ? (
-							<RefreshCcw
-								size={15}
-								className="easymde-settings-center__verification-spinner"
-							/>
-						) : null}
-						{target === "backup"
-							? isVerifying
-								? strings.verifyingUpload
-								: strings.verifyBackupUpload
-							: isVerifying
-								? strings.verifyingUpload
-								: strings.verifyPrimaryUpload}
-					</button>
-				</div>
-			</SettingsRow>
-		</div>
-	);
-}
 
 export function ImagesSettingsPage({
 	verificationInvalidationTokens = DEFAULT_VERIFICATION_INVALIDATION_TOKENS,
@@ -1297,88 +386,45 @@ export function ImagesSettingsPage({
 						{settings.imageHostingEnabled ? (
 							<div>
 								<div>
-									<ImageField label={strings.selectImageHostService}>
-										<CompactSelect
-											label={strings.selectImageHostService}
-											value={settings.service}
-											options={imageHostOptions}
-											onChange={(value) => {
-												if (!isImageHostProvider(value)) {
-													throw new Error(
-														"settings-center-image-provider-invalid",
-													);
-												}
-												setValues({
-													service: value,
-													endpoint: "",
-												});
-											}}
-										/>
-									</ImageField>
-									{settings.service !== "qiniu-kodo" ? (
-										<ImageField label={strings.customDomain}>
-											<ImageTextInput
-												label={strings.customDomain}
-												value={settings.endpoint}
-												onChange={(value) => setValue("endpoint", value)}
-											/>
-										</ImageField>
-									) : null}
-									<ImageField label={strings.bucket}>
-										<div>
-											<ImageTextInput
-												label={strings.bucket}
-												value={settings.bucket}
-												onChange={(value) => setValue("bucket", value)}
-											/>
-											{settings.service === "tencent-cos" ? (
-												<small>{strings.cosBucketHint}</small>
-											) : null}
-										</div>
-									</ImageField>
-									<ImageField label={strings.imageFallbackDomain}>
-										<ImageTextInput
-											label={strings.imageFallbackDomain}
-											value={settings.domain}
-											onChange={(value) => setValue("domain", value)}
-										/>
-									</ImageField>
-									<ImageField label={strings.accessKey}>
-										<SecretInput
-											configured={draft.primaryCredentialsConfigured}
-											field="accessKey"
-											label={strings.accessKey}
-											value={settings.accessKey}
-											showLabel={strings.showSecret}
-											hideLabel={strings.hideSecret}
-											onChange={(value) => setValue("accessKey", value)}
-											revealFailedLabel={strings.secretRevealFailed}
-											revealPort={secretRevealPort}
-											revealingLabel={strings.revealingSecret}
-											revision={settingsRevision}
-											target="primary"
-										/>
-									</ImageField>
-									<ImageField label={strings.secretKey}>
-										<SecretInput
-											configured={draft.primaryCredentialsConfigured}
-											field="secretKey"
-											label={strings.secretKey}
-											value={settings.secretKey}
-											showLabel={strings.showSecret}
-											hideLabel={strings.hideSecret}
-											onChange={(value) => setValue("secretKey", value)}
-											revealFailedLabel={strings.secretRevealFailed}
-											revealPort={secretRevealPort}
-											revealingLabel={strings.revealingSecret}
-											revision={settingsRevision}
-											target="primary"
-										/>
-									</ImageField>
+									<ImageHostingProviderFields
+										serviceLabel={strings.selectImageHostService}
+										service={settings.service}
+										providerOptions={imageHostOptions}
+										invalidProviderError="settings-center-image-provider-invalid"
+										onServiceChange={(value) =>
+											setValues({
+												service: value,
+												endpoint: "",
+											})
+										}
+										endpoint={settings.endpoint}
+										onEndpointChange={(value) => setValue("endpoint", value)}
+										bucketLabel={strings.bucket}
+										bucket={settings.bucket}
+										onBucketChange={(value) => setValue("bucket", value)}
+										domainLabel={strings.imageFallbackDomain}
+										domain={settings.domain}
+										onDomainChange={(value) => setValue("domain", value)}
+										credentialsConfigured={draft.primaryCredentialsConfigured}
+										accessKeyLabel={strings.accessKey}
+										accessKey={settings.accessKey}
+										accessKeyShowLabel={strings.showSecret}
+										accessKeyHideLabel={strings.hideSecret}
+										onAccessKeyChange={(value) => setValue("accessKey", value)}
+										secretKeyLabel={strings.secretKey}
+										secretKey={settings.secretKey}
+										secretKeyShowLabel={strings.showSecret}
+										secretKeyHideLabel={strings.hideSecret}
+										onSecretKeyChange={(value) => setValue("secretKey", value)}
+										secretRevealPort={secretRevealPort}
+										settingsRevision={settingsRevision}
+										strings={strings}
+										target="primary"
+									/>
 								</div>
 							</div>
 						) : null}
-						<FileNameRuleEditor
+						<ImageFileNameRuleEditor
 							strings={strings}
 							storagePath={settings.storagePath}
 							fileNameRule={settings.fileNameRule}
@@ -1442,84 +488,47 @@ export function ImagesSettingsPage({
 						</ImageBehaviorRow>
 						{settings.backupEnabled ? (
 							<div className="easymde-settings-center__backup-fields">
-								<ImageField label={strings.backupImageHostService}>
-									<CompactSelect
-										label={strings.backupImageHostService}
-										value={settings.backupService}
-										options={backupHostOptions}
-										onChange={(value) => {
-											if (!isImageHostProvider(value)) {
-												throw new Error(
-													"settings-center-backup-image-provider-invalid",
-												);
-											}
-											setValues({
-												backupService: value,
-												backupEndpoint: "",
-											});
-										}}
-									/>
-								</ImageField>
-								{settings.backupService !== "qiniu-kodo" ? (
-									<ImageField label={strings.customDomain}>
-										<ImageTextInput
-											label={strings.customDomain}
-											value={settings.backupEndpoint}
-											onChange={(value) => setValue("backupEndpoint", value)}
-										/>
-									</ImageField>
-								) : null}
-								<ImageField label={strings.backupBucket}>
-									<div>
-										<ImageTextInput
-											label={strings.backupBucket}
-											value={settings.backupBucket}
-											onChange={(value) => setValue("backupBucket", value)}
-										/>
-										{settings.backupService === "tencent-cos" ? (
-											<small>{strings.cosBucketHint}</small>
-										) : null}
-									</div>
-								</ImageField>
-								<ImageField label={strings.backupDomain}>
-									<ImageTextInput
-										label={strings.backupDomain}
-										value={settings.backupDomain}
-										onChange={(value) => setValue("backupDomain", value)}
-									/>
-								</ImageField>
-								<ImageField label={strings.backupAccessKey}>
-									<SecretInput
-										configured={draft.backupCredentialsConfigured}
-										field="accessKey"
-										label={strings.backupAccessKey}
-										value={settings.backupAccessKey}
-										showLabel={strings.showBackupAccessKey}
-										hideLabel={strings.hideBackupAccessKey}
-										onChange={(value) => setValue("backupAccessKey", value)}
-										revealFailedLabel={strings.secretRevealFailed}
-										revealPort={secretRevealPort}
-										revealingLabel={strings.revealingSecret}
-										revision={settingsRevision}
-										target="backup"
-									/>
-								</ImageField>
-								<ImageField label={strings.backupSecretKey}>
-									<SecretInput
-										configured={draft.backupCredentialsConfigured}
-										field="secretKey"
-										label={strings.backupSecretKey}
-										value={settings.backupSecretKey}
-										showLabel={strings.showBackupSecretKey}
-										hideLabel={strings.hideBackupSecretKey}
-										onChange={(value) => setValue("backupSecretKey", value)}
-										revealFailedLabel={strings.secretRevealFailed}
-										revealPort={secretRevealPort}
-										revealingLabel={strings.revealingSecret}
-										revision={settingsRevision}
-										target="backup"
-									/>
-								</ImageField>
+								<ImageHostingProviderFields
+									serviceLabel={strings.backupImageHostService}
+									service={settings.backupService}
+									providerOptions={backupHostOptions}
+									invalidProviderError="settings-center-backup-image-provider-invalid"
+									onServiceChange={(value) =>
+										setValues({
+											backupService: value,
+											backupEndpoint: "",
+										})
+									}
+									endpoint={settings.backupEndpoint}
+									onEndpointChange={(value) =>
+										setValue("backupEndpoint", value)
+									}
+									bucketLabel={strings.backupBucket}
+									bucket={settings.backupBucket}
+									onBucketChange={(value) => setValue("backupBucket", value)}
+									domainLabel={strings.backupDomain}
+									domain={settings.backupDomain}
+									onDomainChange={(value) => setValue("backupDomain", value)}
+									credentialsConfigured={draft.backupCredentialsConfigured}
+									accessKeyLabel={strings.backupAccessKey}
+									accessKey={settings.backupAccessKey}
+									accessKeyShowLabel={strings.showBackupAccessKey}
+									accessKeyHideLabel={strings.hideBackupAccessKey}
+									onAccessKeyChange={(value) =>
+										setValue("backupAccessKey", value)
+									}
+									secretKeyLabel={strings.backupSecretKey}
+									secretKey={settings.backupSecretKey}
+									secretKeyShowLabel={strings.showBackupSecretKey}
+									secretKeyHideLabel={strings.hideBackupSecretKey}
+									onSecretKeyChange={(value) =>
+										setValue("backupSecretKey", value)
+									}
+									secretRevealPort={secretRevealPort}
+									settingsRevision={settingsRevision}
+									strings={strings}
+									target="backup"
+								/>
 								{uploadVerificationPort ? (
 									<VerificationRow
 										disabled={uploadVerificationDisabled}

@@ -1372,3 +1372,83 @@ test('Terminal Noir remains authoritative across every registered article theme'
     }
   });
 });
+
+test('shared code-block CSS preserves horizontal scrolling while hiding bottom scrollbar chrome', () => {
+  const codeFrameCss = readFileSync(join(repoRoot, 'assets/css/frontend/code-frame.css'), 'utf8');
+  const baseCss = readFileSync(join(repoRoot, 'assets/css/frontend/base.css'), 'utf8');
+
+  const macPreSelector = '.easymde-rendered-content.easymde-code-mac pre';
+  const macCodeSelector = '.easymde-rendered-content.easymde-code-mac pre > code:not(.language-mermaid)';
+  const macMermaidFallbackSelector = '.easymde-rendered-content.easymde-code-mac pre[data-easymde-mermaid-fallback] > code.language-mermaid';
+
+  const macPreRule = cssRuleBodyMatching(codeFrameCss, macPreSelector);
+  const macCodeRule = cssRuleBodyMatching(codeFrameCss, macCodeSelector);
+  const macMermaidFallbackRule = cssRuleBodyMatching(codeFrameCss, macMermaidFallbackSelector);
+
+  assert.ok(macPreRule, 'code-frame.css must define the shared Mac pre rule');
+  assert.match(macPreRule, /overflow-x:\s*auto;/);
+  assert.match(macPreRule, /overflow-y:\s*hidden;/);
+  assert.match(macPreRule, /scrollbar-width:\s*none;/);
+
+  for (const [label, rule] of [
+    ['code-frame pre > code', macCodeRule],
+    ['code-frame mermaid fallback code', macMermaidFallbackRule]
+  ]) {
+    assert.ok(rule, `${label} rule must exist`);
+    assert.match(rule, /overflow-x:\s*auto;/);
+    assert.match(rule, /overflow-y:\s*hidden;/);
+    assert.match(rule, /scrollbar-width:\s*none;/);
+    assert.match(rule, /white-space:\s*pre;/);
+  }
+
+  for (const webkitSelector of [
+    `${macPreSelector}::-webkit-scrollbar`,
+    `${macCodeSelector}::-webkit-scrollbar`,
+    `${macMermaidFallbackSelector}::-webkit-scrollbar`
+  ]) {
+    const webkitRule = cssRuleBodyMatching(codeFrameCss, webkitSelector);
+    assert.ok(webkitRule, `code-frame.css must hide WebKit scrollbars for ${webkitSelector}`);
+    assert.match(webkitRule, /display:\s*none;/);
+  }
+
+  for (const root of [
+    '.easymde-rendered-content',
+    '.easymde-preview',
+    '.entry-content',
+    '.wp-block-post-content'
+  ]) {
+    const basePreRule = cssRuleBodyMatching(baseCss, `${root} pre`);
+    const baseCodeRule = cssRuleBodyMatching(baseCss, `${root} pre > code`);
+    const basePreWebkitRule = cssRuleBodyMatching(baseCss, `${root} pre::-webkit-scrollbar`);
+    const baseCodeWebkitRule = cssRuleBodyMatching(baseCss, `${root} pre > code::-webkit-scrollbar`);
+
+    assert.ok(basePreRule, `base.css must define ${root} pre`);
+    assert.match(basePreRule, /overflow:\s*auto;/);
+    assert.match(basePreRule, /scrollbar-width:\s*none;/);
+    assert.ok(baseCodeRule, `base.css must define ${root} pre > code`);
+    assert.match(baseCodeRule, /scrollbar-width:\s*none;/);
+    assert.ok(basePreWebkitRule, `base.css must hide WebKit scrollbars for ${root} pre`);
+    assert.match(basePreWebkitRule, /display:\s*none;/);
+    assert.ok(baseCodeWebkitRule, `base.css must hide WebKit scrollbars for ${root} pre > code`);
+    assert.match(baseCodeWebkitRule, /display:\s*none;/);
+  }
+
+  const dom = new JSDOM(
+    `<style>${baseCss}\n${codeFrameCss}</style>
+    <article class="easymde-rendered-content easymde-code-mac">
+      <pre data-preview-code><code class="hljs language-typescript">const x = "${'a'.repeat(120)}";</code></pre>
+      <pre class="easymde-code-block" data-easymde-code-block="1"><code class="hljs language-javascript">const y = "${'b'.repeat(120)}";</code></pre>
+    </article>`
+  );
+  const { window } = dom;
+  for (const pre of window.document.querySelectorAll('pre')) {
+    const preStyle = window.getComputedStyle(pre);
+    const code = pre.querySelector('code');
+    const codeStyle = window.getComputedStyle(code);
+    assert.equal(preStyle.overflowX, 'auto');
+    assert.equal(preStyle.overflowY, 'hidden');
+    assert.equal(codeStyle.overflowX, 'auto');
+    assert.equal(codeStyle.overflowY, 'hidden');
+    assert.equal(codeStyle.whiteSpace, 'pre');
+  }
+});

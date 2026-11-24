@@ -6,6 +6,7 @@ import {
   deriveDocumentDerivations,
   extractOutline,
   getDocumentStats,
+  separatedTableInsertion,
   tableMarkdown
 } from './immersive-editor';
 
@@ -498,6 +499,34 @@ describe('immersive editor model', () => {
       'immersive-table-dimensions-invalid'
     );
     expect(() => tableMarkdown(2, 21)).toThrow(
+      'immersive-table-dimensions-invalid'
+    );
+  });
+
+  it('separates an inserted table from adjacent blocks by blank lines', () => {
+    const table = '|  |  |\n| --- | --- |\n|  |  |';
+    const apply = (value: string, start: number, end = start) => {
+      const insertion = separatedTableInsertion(value, start, end, 2, 2);
+      return {
+        caret: insertion.caret,
+        value:
+          value.slice(0, insertion.from)
+          + insertion.insert
+          + value.slice(insertion.to)
+      };
+    };
+    expect(apply('', 0).value).toBe(`${table}\n`);
+    expect(apply('Intro', 5).value).toBe(`Intro\n\n${table}\n`);
+    expect(apply('Intro\n', 6).value).toBe(`Intro\n\n${table}\n`);
+    expect(apply('Intro\n\nOutro', 7).value).toBe(
+      `Intro\n\n${table}\n\nOutro`
+    );
+    expect(apply('Intro Outro', 5, 6).value).toBe(
+      `Intro\n\n${table}\n\nOutro`
+    );
+    expect(apply('Outro', 0).value).toBe(`${table}\n\nOutro`);
+    expect(apply('Intro', 5).caret).toBe(`Intro\n\n${table}`.length);
+    expect(() => separatedTableInsertion('', 0, 0, 0, 2)).toThrow(
       'immersive-table-dimensions-invalid'
     );
   });

@@ -15,6 +15,10 @@ import {
   positionEditorContextSubmenu,
   type EditorContextMenuBoundary
 } from './editor-context-menu-position';
+import {
+  captureEditorContextMenuScrollBaseline,
+  editorContextMenuScrollMoved
+} from '../editor-context-menu-scroll';
 import { MenuLayer, firstEnabled } from './EditorContextMenuLayer';
 
 export type EditorContextMenuDirection = 'ltr' | 'rtl';
@@ -523,6 +527,16 @@ export function EditorContextMenu({
     const windowRef = root?.ownerDocument.defaultView;
     const documentRef = root?.ownerDocument;
     if (!root || !windowRef || !documentRef) throw new Error('editor-context-menu-owner-unavailable');
+    // Preview acceptance can restore an ancestor's scroll position before this
+    // menu mounts, while its queued native scroll event arrives afterwards.
+    // Only movement relative to this listener's opening snapshot dismisses a
+    // known container. When a surface ancestor chain was captured, scroll
+    // events from unrelated external elements (for example a synchronized
+    // sibling Preview pane) are ignored so they cannot dismiss the menu.
+    const scrollBaseline = captureEditorContextMenuScrollBaseline(
+      surfaceElement,
+      windowRef
+    );
     const isMenuTarget = (target: EventTarget | null): boolean =>
       target instanceof Element
       && Boolean(target.closest(
@@ -571,6 +585,14 @@ export function EditorContextMenu({
         if (target) positionOpenSubmenus(true);
         return;
       }
+      if (
+        !editorContextMenuScrollMoved(
+          event,
+          scrollBaseline,
+          documentRef,
+          windowRef
+        )
+      ) return;
       onDismiss({ restoreFocus: true });
     };
     windowRef.addEventListener('resize', handleResize);

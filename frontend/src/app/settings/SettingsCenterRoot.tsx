@@ -2,237 +2,37 @@ import {
 	createElement,
 	createPortal,
 	memo,
-	useCallback,
 	useEffect,
 	useMemo,
 	useRef,
 	useState,
 } from "@wordpress/element";
-import type {
-	SettingsCenterBootstrap,
-	SettingsCenterStringKey,
-} from "../../contracts/bootstrap/settings-center-bootstrap";
-import {
-	IMAGE_UPLOAD_EXTENSIONS,
-	type SettingsCenterSettings,
-} from "../../contracts/settings-center-settings";
+import type { SettingsCenterBootstrap } from "../../contracts/bootstrap/settings-center-bootstrap";
 import { ChevronRight, X } from "../../generated/lucide-icons";
-import { createWordPressImageHostingVerificationPort } from "../../integrations/wordpress/settings/create-wordpress-image-hosting-verification-port";
-import { createWordPressImageHostingSecretRevealPort } from "../../integrations/wordpress/settings/create-wordpress-image-hosting-secret-reveal-port";
-import {
-	createWordPressSettingsPort,
-	SettingsShortcutConflictError,
-} from "../../integrations/wordpress/settings/create-wordpress-settings-port";
 import { EditorMessageAlert } from "../../shared/ui/EditorMessageAlert";
 import { AboutDialog, AboutSettingsPage } from "./AboutSettingsPage";
 import { GeneralSettingsPage } from "./GeneralSettingsPage";
 import {
 	DuplicateImageHostDialog,
-	hasDuplicateImageHostConfiguration,
 	ImagesSettingsPage,
 } from "./ImagesSettingsPage";
 import { MarkdownSettingsPage } from "./MarkdownSettingsPage";
 import {
-	findShortcutConflicts,
 	ShortcutConflictDialog,
-	type ShortcutConflict,
 	ShortcutsSettingsPage,
 } from "./ShortcutsSettingsPage";
+import { SearchIcon } from "./settings-center-icons";
 import {
-	AboutIcon,
-	GeneralIcon,
-	ImageLibraryIcon,
-	ImportExportIcon,
-	KeyboardIcon,
-	MarkdownIcon,
-	SearchIcon,
-} from "./settings-center-icons";
+	NAV_ITEMS,
+	type NavId,
+	SettingsSearchResults,
+	useSettingsCenterSearch,
+} from "./settings-center-search";
 import { formatSinglePlaceholder } from "./settings-center-utils";
 import { TransferSettingsPage } from "./TransferSettingsPage";
+import { useSettingsCenterNavigation } from "./use-settings-center-navigation";
+import { useSettingsCenterPersistence } from "./use-settings-center-persistence";
 
-type NavId =
-	| "general"
-	| "shortcuts"
-	| "images"
-	| "markdown"
-	| "transfer"
-	| "about";
-type Icon = typeof GeneralIcon;
-
-type SearchItem = Readonly<{
-	key: string;
-	kind: "group" | "setting";
-	tabId: NavId;
-	tabLabel: string;
-	groupTitle: string;
-	label: string;
-	description: string;
-	searchText: string;
-	targetId: string;
-}>;
-type SearchGroup = Readonly<{
-	title: string;
-	items: ReadonlyArray<SearchItem>;
-}>;
-type SearchSection = Readonly<{
-	tabId: NavId;
-	tabLabel: string;
-	groups: ReadonlyArray<SearchGroup>;
-}>;
-type SaveError = "conflict" | "invalid" | "network" | "rejected" | null;
-type SaveFeedback = Readonly<{
-	id: number;
-	kind: "error" | "success";
-	message: string;
-}>;
-type ImageVerificationInvalidation = Readonly<{
-	primary: boolean;
-	backup: boolean;
-}>;
-function reconcileSavedSettings(
-	requested: SettingsCenterSettings,
-	authoritative: SettingsCenterSettings,
-): SettingsCenterSettings {
-	const unchanged = <Value,>(requestedValue: Value, savedValue: Value) =>
-		JSON.stringify(requestedValue) === JSON.stringify(savedValue);
-	return {
-		revision: authoritative.revision,
-		general: unchanged(requested.general, authoritative.general)
-			? requested.general
-			: authoritative.general,
-		shortcuts: unchanged(requested.shortcuts, authoritative.shortcuts)
-			? requested.shortcuts
-			: authoritative.shortcuts,
-		images: unchanged(requested.images, authoritative.images)
-			? requested.images
-			: authoritative.images,
-		markdown: unchanged(requested.markdown, authoritative.markdown)
-			? requested.markdown
-			: authoritative.markdown,
-	};
-}
-
-function mutationAffectsSettingsSearch(mutation: MutationRecord): boolean {
-	const element =
-		mutation.target instanceof Element
-			? mutation.target
-			: mutation.target.parentElement;
-	if (element?.closest("[data-settings-section]")) return true;
-	if ("childList" !== mutation.type) return false;
-	return [...mutation.addedNodes, ...mutation.removedNodes].some(
-		(node) =>
-			node instanceof Element &&
-			(node.matches("[data-settings-section]") ||
-				Boolean(node.querySelector("[data-settings-section]"))),
-	);
-}
-const PRIMARY_VERIFICATION_SETTING_KEYS = [
-	"storagePath",
-	"fileNameRule",
-	"service",
-	"endpoint",
-	"bucket",
-	"domain",
-	"accessKey",
-	"secretKey",
-] as const;
-const BACKUP_VERIFICATION_SETTING_KEYS = [
-	"storagePath",
-	"fileNameRule",
-	"domain",
-	"backupEnabled",
-	"backupService",
-	"backupEndpoint",
-	"backupBucket",
-	"backupDomain",
-	"backupAccessKey",
-	"backupSecretKey",
-] as const;
-
-function imageVerificationInvalidation(
-	previous: SettingsCenterSettings["images"],
-	requested: SettingsCenterSettings["images"],
-	resetSecrets: boolean,
-): ImageVerificationInvalidation {
-	const uploadFormatsChanged = IMAGE_UPLOAD_EXTENSIONS.some(
-		(extension) =>
-			previous.uploadFormats[extension] !== requested.uploadFormats[extension],
-	);
-	return {
-		primary:
-			resetSecrets ||
-			uploadFormatsChanged ||
-			PRIMARY_VERIFICATION_SETTING_KEYS.some(
-				(key) => previous[key] !== requested[key],
-			),
-		backup:
-			resetSecrets ||
-			uploadFormatsChanged ||
-			BACKUP_VERIFICATION_SETTING_KEYS.some(
-				(key) => previous[key] !== requested[key],
-			),
-	};
-}
-const NAV_ITEMS: ReadonlyArray<
-	Readonly<{
-		id: NavId;
-		label: SettingsCenterStringKey;
-		title?: SettingsCenterStringKey;
-		description: SettingsCenterStringKey;
-		icon: Icon;
-	}>
-> = [
-	{
-		id: "general",
-		label: "general",
-		description: "generalDescription",
-		icon: GeneralIcon,
-	},
-	{
-		id: "shortcuts",
-		label: "shortcuts",
-		description: "shortcutsDescription",
-		icon: KeyboardIcon,
-	},
-	{
-		id: "images",
-		label: "images",
-		description: "imagesDescription",
-		icon: ImageLibraryIcon,
-	},
-	{
-		id: "markdown",
-		label: "markdown",
-		description: "markdownDescription",
-		icon: MarkdownIcon,
-	},
-	{
-		id: "transfer",
-		label: "transfer",
-		title: "transferPageTitle",
-		description: "transferDescription",
-		icon: ImportExportIcon,
-	},
-	{
-		id: "about",
-		label: "about",
-		description: "aboutDescription",
-		icon: AboutIcon,
-	},
-];
-
-const SETTINGS_SAVE_CONFIRMATION_DURATION = 2000;
-const SETTINGS_SECTION_ACTIVATION_OFFSET = 15;
-const SETTINGS_SECTION_ACTIVATION_HYSTERESIS = 18;
-const SETTINGS_SECTION_SCROLL_LEAD = 6;
-const SETTINGS_SEARCH_RESULT_SCROLL_TRAIL = 18;
-const SETTINGS_SEARCH_FOCUSABLE_CONTROL_SELECTOR = [
-	'input:not([type="hidden"]):not(:disabled):not([aria-disabled="true"])',
-	'select:not(:disabled):not([aria-disabled="true"])',
-	'textarea:not(:disabled):not([aria-disabled="true"])',
-	'button:not(:disabled):not([aria-disabled="true"])',
-	'a[href]:not([aria-disabled="true"])',
-].join(", ");
 const SETTINGS_IMAGE_RUNTIME_CAPABILITIES = { compressImages: true } as const;
 const MemoizedGeneralSettingsPage = memo(GeneralSettingsPage);
 const MemoizedShortcutsSettingsPage = memo(ShortcutsSettingsPage);
@@ -248,29 +48,6 @@ export function SettingsCenterRoot({
 	bootstrap: SettingsCenterBootstrap;
 	overlayRoot?: HTMLDivElement;
 }) {
-	const [activeTab, setActiveTab] = useState<NavId>("general");
-	const [settings, setSettings] = useState<SettingsCenterSettings>(
-		bootstrap.settings,
-	);
-	const [imageDraft, setImageDraft] = useState(bootstrap.drafts.images);
-	const [verificationInvalidationTokens, setVerificationInvalidationTokens] =
-		useState({ primary: 0, backup: 0 });
-	const settingsRef = useRef<SettingsCenterSettings>(bootstrap.settings);
-	const resetSecretsRef = useRef(false);
-	const [savedSettings, setSavedSettings] = useState<SettingsCenterSettings>(
-		bootstrap.settings,
-	);
-	const [saveStatus, setSaveStatus] = useState<
-		"idle" | "saving" | "saved" | "error"
-	>("idle");
-	const [saveConflict, setSaveConflict] = useState(false);
-	const [saveFeedback, setSaveFeedback] = useState<SaveFeedback | null>(null);
-	const [saveFeedbackFocused, setSaveFeedbackFocused] = useState(false);
-	const saveFeedbackIdRef = useRef(0);
-	const saveControllerRef = useRef<AbortController | null>(null);
-	const saveInFlightRef = useRef(false);
-	const [query, setQuery] = useState("");
-	const [searchItems, setSearchItems] = useState<ReadonlyArray<SearchItem>>([]);
 	const ownedOverlayRoot = useMemo(() => {
 		if (providedOverlayRoot) return null;
 		const element = document.createElement("div");
@@ -279,13 +56,7 @@ export function SettingsCenterRoot({
 	}, [providedOverlayRoot]);
 	const overlayRoot = providedOverlayRoot ?? ownedOverlayRoot;
 	if (!overlayRoot) throw new Error("settings-center-overlay-root-missing");
-	const [duplicateSaveTrigger, setDuplicateSaveTrigger] =
-		useState<HTMLButtonElement | null>(null);
-	const [shortcutConflictDialog, setShortcutConflictDialog] =
-		useState<Readonly<{
-			conflicts: ReadonlyArray<ShortcutConflict>;
-			returnFocus: HTMLButtonElement;
-		}> | null>(null);
+
 	const [sidebarHelpOpen, setSidebarHelpOpen] = useState(false);
 	const sidebarHelpTriggerRef = useRef<HTMLButtonElement>(null);
 	const sidebarHelpWasOpenRef = useRef(false);
@@ -294,13 +65,6 @@ export function SettingsCenterRoot({
 	const stickyHeaderRef = useRef<HTMLDivElement>(null);
 	const saveBarRef = useRef<HTMLDivElement>(null);
 	const sectionRefs = useRef<Partial<Record<NavId, HTMLElement | null>>>({});
-	const searchIndexSignatureRef = useRef("");
-	const searchIndexDirtyRef = useRef(true);
-	const searchNavigationFrameRef = useRef<number | null>(null);
-	const searchNavigationWindowRef = useRef<Window | null>(null);
-	const scrollSpyFrameRef = useRef<number | null>(null);
-	const scrollSpyWindowRef = useRef<Window | null>(null);
-	const normalizedQueryRef = useRef("");
 
 	useEffect(() => {
 		if (!ownedOverlayRoot) return;
@@ -309,115 +73,76 @@ export function SettingsCenterRoot({
 		owner.append(ownedOverlayRoot);
 		return () => ownedOverlayRoot.remove();
 	}, [ownedOverlayRoot]);
+
 	const strings = bootstrap.strings;
-	const shortcutConflicts = useMemo(
-		() =>
-			findShortcutConflicts(
-				settings.shortcuts.values,
-				bootstrap.reservedShortcuts,
-				strings,
-			),
-		[bootstrap.reservedShortcuts, settings.shortcuts.values, strings],
-	);
-	const showSaveFeedback = (kind: SaveFeedback["kind"], message: string) => {
-		saveFeedbackIdRef.current += 1;
-		setSaveFeedbackFocused(false);
-		setSaveFeedback({ id: saveFeedbackIdRef.current, kind, message });
-	};
+	const {
+		duplicateSaveTrigger,
+		imageDraft,
+		imageHostingSecretRevealPort,
+		imageHostingVerificationPort,
+		reloadLatestSettings,
+		replaceSettingsDraft,
+		resetSettingsDraft,
+		saveBarVisible,
+		saveConflict,
+		saveFeedback,
+		saveSettings,
+		saveStatus,
+		setDuplicateSaveTrigger,
+		setSaveFeedback,
+		setSaveFeedbackFocused,
+		setShortcutConflictDialog,
+		settings,
+		settingsDirty,
+		shortcutConflictDialog,
+		shortcutConflicts,
+		updateApplyEditorThemeToFrontend,
+		updateGeneralSettings,
+		updateImageSettings,
+		updateMarkdownSettings,
+		updateShortcutSettings,
+		verificationInvalidationTokens,
+	} = useSettingsCenterPersistence({
+		bootstrap,
+		overlayRoot,
+		scrollContainerRef,
+	});
+
+	const {
+		ensureSearchIndex,
+		normalizedQuery,
+		normalizedQueryRef,
+		query,
+		searchResultCount,
+		searchSections,
+		setQuery,
+	} = useSettingsCenterSearch({
+		scrollContainerRef,
+		strings,
+	});
+
+	const {
+		current,
+		handleSettingsScroll,
+		highlightedNavId,
+		navigateToSection,
+		openSearchResult,
+	} = useSettingsCenterNavigation({
+		navigationRef,
+		normalizedQuery,
+		normalizedQueryRef,
+		saveBarRef,
+		saveBarVisible,
+		scrollContainerRef,
+		searchSections,
+		sectionRefs,
+		setQuery,
+		stickyHeaderRef,
+	});
+
 	const brandSuffixLength = 3;
 	const brandPrefix = strings.brandName.slice(0, -brandSuffixLength);
 	const brandSuffix = strings.brandName.slice(-brandSuffixLength);
-	const current = NAV_ITEMS.find((item) => item.id === activeTab);
-	if (!current) throw new Error("settings-center-active-tab-invalid");
-	const normalizedQuery = query.trim().toLowerCase();
-	normalizedQueryRef.current = normalizedQuery;
-	const searchSections = useMemo<ReadonlyArray<SearchSection>>(() => {
-		if (!normalizedQuery) return [];
-
-		return NAV_ITEMS.flatMap((navItem) => {
-			const groupMap = new Map<string, SearchItem[]>();
-			for (const item of searchItems.filter(
-				(candidate) => candidate.tabId === navItem.id,
-			)) {
-				const items = groupMap.get(item.groupTitle) ?? [];
-				items.push(item);
-				groupMap.set(item.groupTitle, items);
-			}
-			const groups = Array.from(groupMap, ([title, items]) => {
-				const groupMatches = title.toLowerCase().includes(normalizedQuery);
-				const matches = items.filter(
-					(item) => groupMatches || item.searchText.includes(normalizedQuery),
-				);
-				const hasSetting = matches.some((item) => item.kind === "setting");
-				return {
-					title,
-					items: hasSetting
-						? matches.filter((item) => item.kind === "setting")
-						: matches,
-				};
-			}).filter((group) => group.items.length > 0);
-
-			return groups.length > 0
-				? [{ tabId: navItem.id, tabLabel: strings[navItem.label], groups }]
-				: [];
-		});
-	}, [normalizedQuery, searchItems, strings]);
-	const highlightedNavId =
-		normalizedQuery && searchSections.length === 1
-			? searchSections[0]?.tabId
-			: activeTab;
-
-	useEffect(() => {
-		const navigation = navigationRef.current;
-		if (!navigation)
-			throw new Error("settings-center-navigation-element-missing");
-		if (
-			navigation.scrollWidth <= navigation.clientWidth &&
-			navigation.scrollHeight <= navigation.clientHeight
-		)
-			return;
-		const activeItem = navigation.querySelector<HTMLElement>(
-			`[data-nav-id="${highlightedNavId}"]`,
-		);
-		if (!activeItem)
-			throw new Error("settings-center-active-navigation-item-missing");
-		const navigationRect = navigation.getBoundingClientRect();
-		const activeItemRect = activeItem.getBoundingClientRect();
-		const horizontalScale =
-			navigation.clientWidth > 0 && navigationRect.width > 0
-				? navigationRect.width / navigation.clientWidth
-				: 1;
-		const verticalScale =
-			navigation.clientHeight > 0 && navigationRect.height > 0
-				? navigationRect.height / navigation.clientHeight
-				: 1;
-		const leftDelta =
-			activeItemRect.left < navigationRect.left
-				? activeItemRect.left - navigationRect.left
-				: activeItemRect.right > navigationRect.right
-					? activeItemRect.right - navigationRect.right
-					: 0;
-		const topDelta =
-			activeItemRect.top < navigationRect.top
-				? activeItemRect.top - navigationRect.top
-				: activeItemRect.bottom > navigationRect.bottom
-					? activeItemRect.bottom - navigationRect.bottom
-					: 0;
-		navigation.scrollTo({
-			left: navigation.scrollLeft + leftDelta / horizontalScale,
-			top: navigation.scrollTop + topDelta / verticalScale,
-			behavior: "auto",
-		});
-	}, [highlightedNavId]);
-	const searchResultCount = searchSections.reduce(
-		(total, section) =>
-			total +
-			section.groups.reduce(
-				(groupTotal, group) => groupTotal + group.items.length,
-				0,
-			),
-		0,
-	);
 	const pageTitle = normalizedQuery
 		? strings.searchPageTitle
 		: strings[current.title ?? current.label];
@@ -443,595 +168,6 @@ export function SettingsCenterRoot({
 		sidebarHelpWasOpenRef.current = false;
 		sidebarHelpTriggerRef.current?.focus();
 	}, [sidebarHelpOpen]);
-
-	const rebuildSearchIndex = useCallback(() => {
-		const root = scrollContainerRef.current;
-		if (!root) throw new Error("settings-center-search-root-missing");
-		const indexedItems: SearchItem[] = [];
-		const readHeadingTitle = (heading: HTMLElement) =>
-			heading.dataset.settingsSearchTitle?.trim() ||
-			heading.textContent?.replace(/\s+/g, " ").trim() ||
-			"";
-
-		for (const section of root.querySelectorAll<HTMLElement>(
-			"[data-settings-section]",
-		)) {
-			const tabId = section.dataset.settingsSection as NavId | undefined;
-			const navItem = NAV_ITEMS.find((item) => item.id === tabId);
-			if (!tabId || !navItem) {
-				throw new Error(
-					`settings-center-search-section-${tabId ?? "missing"}-invalid`,
-				);
-			}
-			if (tabId === "about") continue;
-			const headings = Array.from(
-				section.querySelectorAll<HTMLElement>("h2, h3"),
-			);
-			headings.forEach((heading, headingIndex) => {
-				const label = readHeadingTitle(heading);
-				if (!label)
-					throw new Error(
-						`settings-center-search-heading-${tabId}-${headingIndex}-empty`,
-					);
-				const targetId =
-					heading.id || `settings-search-${tabId}-heading-${headingIndex}`;
-				heading.id = targetId;
-				const nextElement = heading.nextElementSibling;
-				const description =
-					nextElement?.tagName === "P"
-						? (nextElement.textContent?.replace(/\s+/g, " ").trim() ?? "")
-						: "";
-				indexedItems.push({
-					key: `${tabId}:group:${headingIndex}`,
-					kind: "group",
-					tabId,
-					tabLabel: strings[navItem.label],
-					groupTitle: label,
-					label,
-					description,
-					searchText: `${label} ${description}`.toLowerCase(),
-					targetId,
-				});
-			});
-
-			Array.from(
-				section.querySelectorAll<HTMLElement>("[data-setting-search]"),
-			).forEach((row, rowIndex) => {
-				const label = row.dataset.settingLabel?.trim();
-				if (!label)
-					throw new Error(
-						`settings-center-search-setting-${tabId}-${rowIndex}-label-missing`,
-					);
-				const targetId =
-					row.id || `settings-search-${tabId}-setting-${rowIndex}`;
-				row.id = targetId;
-				const groupContainer = row.closest<HTMLElement>("section") ?? section;
-				const precedingHeadings = Array.from(
-					groupContainer.querySelectorAll<HTMLElement>("h2, h3"),
-				).filter((heading) =>
-					Boolean(
-						heading.compareDocumentPosition(row) &
-							Node.DOCUMENT_POSITION_FOLLOWING,
-					),
-				);
-				const groupTitle =
-					row.dataset.settingGroup?.trim() ||
-					(precedingHeadings.length
-						? readHeadingTitle(
-								precedingHeadings[precedingHeadings.length - 1] as HTMLElement,
-							)
-						: "") ||
-					strings[navItem.label];
-				const description = row.dataset.settingDescription?.trim() ?? "";
-				indexedItems.push({
-					key: `${tabId}:setting:${rowIndex}`,
-					kind: "setting",
-					tabId,
-					tabLabel: strings[navItem.label],
-					groupTitle,
-					label,
-					description,
-					searchText:
-						`${row.dataset.settingSearch ?? ""} ${groupTitle}`.toLowerCase(),
-					targetId,
-				});
-			});
-		}
-
-		searchIndexDirtyRef.current = false;
-		const signature = JSON.stringify(indexedItems);
-		if (signature === searchIndexSignatureRef.current) return;
-		searchIndexSignatureRef.current = signature;
-		setSearchItems(indexedItems);
-	}, [strings]);
-
-	const ensureSearchIndex = useCallback(() => {
-		if (!searchIndexDirtyRef.current) return;
-		rebuildSearchIndex();
-	}, [rebuildSearchIndex]);
-
-	useEffect(() => {
-		const root = scrollContainerRef.current;
-		if (!root) throw new Error("settings-center-search-root-missing");
-
-		const MutationObserverOwner =
-			root.ownerDocument.defaultView?.MutationObserver;
-		if (!MutationObserverOwner)
-			throw new Error("settings-center-search-observer-missing");
-		const observer = new MutationObserverOwner((mutations) => {
-			if (!mutations.some(mutationAffectsSettingsSearch)) return;
-			searchIndexDirtyRef.current = true;
-			if (normalizedQueryRef.current) rebuildSearchIndex();
-		});
-		observer.observe(root, {
-			subtree: true,
-			childList: true,
-			characterData: true,
-			attributes: true,
-			attributeFilter: [
-				"data-setting-search",
-				"data-setting-label",
-				"data-setting-description",
-				"data-setting-group",
-			],
-		});
-		return () => observer.disconnect();
-	}, [rebuildSearchIndex]);
-
-	useEffect(
-		() => () => {
-			const windowRef = searchNavigationWindowRef.current;
-			if (windowRef && searchNavigationFrameRef.current !== null) {
-				windowRef.cancelAnimationFrame(searchNavigationFrameRef.current);
-			}
-			const scrollWindowRef = scrollSpyWindowRef.current;
-			if (scrollWindowRef && scrollSpyFrameRef.current !== null) {
-				scrollWindowRef.cancelAnimationFrame(scrollSpyFrameRef.current);
-			}
-			saveControllerRef.current?.abort();
-		},
-		[],
-	);
-
-	useEffect(() => {
-		if ("saved" !== saveStatus) return;
-		const windowRef = scrollContainerRef.current?.ownerDocument.defaultView;
-		if (!windowRef)
-			throw new Error("settings-center-save-confirmation-window-missing");
-		const timeout = windowRef.setTimeout(() => {
-			setSaveStatus((status) => ("saved" === status ? "idle" : status));
-		}, SETTINGS_SAVE_CONFIRMATION_DURATION);
-		return () => windowRef.clearTimeout(timeout);
-	}, [saveStatus]);
-
-	useEffect(() => {
-		if ("success" !== saveFeedback?.kind || saveFeedbackFocused) return;
-		const windowRef = scrollContainerRef.current?.ownerDocument.defaultView;
-		if (!windowRef)
-			throw new Error("settings-center-save-feedback-window-missing");
-		const feedbackId = saveFeedback.id;
-		const timeout = windowRef.setTimeout(() => {
-			setSaveFeedback((current) =>
-				current?.id === feedbackId ? null : current,
-			);
-		}, SETTINGS_SAVE_CONFIRMATION_DURATION);
-		return () => windowRef.clearTimeout(timeout);
-	}, [saveFeedback, saveFeedbackFocused]);
-
-	const navigationViewportTop = (container: HTMLDivElement) => {
-		const stickyHeader = stickyHeaderRef.current;
-		if (!stickyHeader)
-			throw new Error("settings-center-navigation-header-missing");
-		let viewportTop = Math.max(
-			container.getBoundingClientRect().top,
-			stickyHeader.getBoundingClientRect().bottom +
-				SETTINGS_SECTION_ACTIVATION_OFFSET,
-		);
-		if (saveBarVisible) {
-			const saveBar = saveBarRef.current;
-			if (!saveBar)
-				throw new Error("settings-center-navigation-save-bar-missing");
-			viewportTop = Math.max(
-				viewportTop,
-				saveBar.getBoundingClientRect().bottom +
-					SETTINGS_SECTION_ACTIVATION_OFFSET,
-			);
-		}
-		return viewportTop;
-	};
-
-	const scrollTargetIntoView = (
-		container: HTMLDivElement,
-		target: HTMLElement,
-		viewportOffset: number,
-	) => {
-		const targetTop =
-			container.scrollTop +
-			target.getBoundingClientRect().top -
-			(navigationViewportTop(container) + viewportOffset);
-		container.scrollTo({ top: Math.max(0, targetTop), behavior: "auto" });
-	};
-
-	const updateActiveTabFromScroll = () => {
-		if (normalizedQueryRef.current) return;
-		const container = scrollContainerRef.current;
-		if (!container) throw new Error("settings-center-scroll-container-missing");
-		const activationLine = navigationViewportTop(container);
-		let visibleTab: NavId = "general";
-		for (const item of NAV_ITEMS) {
-			const section = sectionRefs.current[item.id];
-			if (!section)
-				throw new Error(`settings-center-section-${item.id}-missing`);
-			if (section.getBoundingClientRect().top <= activationLine)
-				visibleTab = item.id;
-		}
-		setActiveTab((currentTab) => {
-			if (currentTab === visibleTab) return currentTab;
-			const currentIndex = NAV_ITEMS.findIndex(
-				(item) => item.id === currentTab,
-			);
-			const visibleIndex = NAV_ITEMS.findIndex(
-				(item) => item.id === visibleTab,
-			);
-			if (Math.abs(currentIndex - visibleIndex) !== 1) return visibleTab;
-			const laterSection =
-				sectionRefs.current[
-					NAV_ITEMS[Math.max(currentIndex, visibleIndex)]?.id ?? visibleTab
-				];
-			if (!laterSection)
-				throw new Error("settings-center-scrollspy-boundary-section-missing");
-			return Math.abs(
-				laterSection.getBoundingClientRect().top - activationLine,
-			) <= SETTINGS_SECTION_ACTIVATION_HYSTERESIS
-				? currentTab
-				: visibleTab;
-		});
-	};
-
-	const handleSettingsScroll = () => {
-		if (normalizedQueryRef.current || scrollSpyFrameRef.current !== null)
-			return;
-		const windowRef = scrollContainerRef.current?.ownerDocument.defaultView;
-		if (!windowRef) throw new Error("settings-center-scrollspy-window-missing");
-		scrollSpyWindowRef.current = windowRef;
-		scrollSpyFrameRef.current = windowRef.requestAnimationFrame(() => {
-			scrollSpyFrameRef.current = null;
-			updateActiveTabFromScroll();
-		});
-	};
-
-	const scheduleScrollToTarget = (
-		tabId: NavId,
-		targetId: string,
-		{
-			focusFirstControl = false,
-			viewportOffset = -SETTINGS_SECTION_SCROLL_LEAD,
-		}: {
-			focusFirstControl?: boolean;
-			viewportOffset?: number;
-		} = {},
-	) => {
-		const windowRef = scrollContainerRef.current?.ownerDocument.defaultView;
-		if (!windowRef)
-			throw new Error("settings-center-navigation-window-missing");
-		if (searchNavigationFrameRef.current !== null) {
-			windowRef.cancelAnimationFrame(searchNavigationFrameRef.current);
-		}
-		searchNavigationWindowRef.current = windowRef;
-		setActiveTab(tabId);
-		searchNavigationFrameRef.current = windowRef.requestAnimationFrame(() => {
-			searchNavigationFrameRef.current = windowRef.requestAnimationFrame(() => {
-				searchNavigationFrameRef.current = null;
-				const container = scrollContainerRef.current;
-				const target = container?.querySelector<HTMLElement>(`#${targetId}`);
-				if (!container || !target)
-					throw new Error(
-						`settings-center-navigation-target-${targetId}-missing`,
-					);
-				scrollTargetIntoView(container, target, viewportOffset);
-				if (focusFirstControl) {
-					const control = target.querySelector<HTMLElement>(
-						SETTINGS_SEARCH_FOCUSABLE_CONTROL_SELECTOR,
-					);
-					const focusTarget = control ?? target;
-					if (!control) target.tabIndex = -1;
-					focusTarget.focus({ preventScroll: true });
-					if (focusTarget.ownerDocument.activeElement !== focusTarget)
-						throw new Error(
-							`settings-center-navigation-focus-target-${targetId}-failed`,
-						);
-				}
-			});
-		});
-	};
-
-	const navigateToSection = (id: NavId) => {
-		if (normalizedQuery) {
-			setQuery("");
-			scheduleScrollToTarget(id, `settings-section-${id}`);
-			return;
-		}
-		setQuery("");
-		const container = scrollContainerRef.current;
-		const section = sectionRefs.current[id];
-		if (!container || !section)
-			throw new Error(`settings-center-section-${id}-unavailable`);
-		scrollTargetIntoView(container, section, -SETTINGS_SECTION_SCROLL_LEAD);
-		setActiveTab(id);
-	};
-
-	const openSearchResult = (item: SearchItem) => {
-		setQuery("");
-		scheduleScrollToTarget(item.tabId, item.targetId, {
-			focusFirstControl: true,
-			viewportOffset: SETTINGS_SEARCH_RESULT_SCROLL_TRAIL,
-		});
-	};
-	const settingsPort = useMemo(
-		() => createWordPressSettingsPort(bootstrap.api),
-		[bootstrap.api],
-	);
-	const imageHostingVerificationPort = useMemo(
-		() => createWordPressImageHostingVerificationPort(bootstrap.api),
-		[bootstrap.api],
-	);
-	const imageHostingSecretRevealPort = useMemo(
-		() => createWordPressImageHostingSecretRevealPort(bootstrap.api),
-		[bootstrap.api],
-	);
-	const settingsDirty =
-		resetSecretsRef.current ||
-		JSON.stringify(settings) !== JSON.stringify(savedSettings);
-	const saveBarVisible =
-		settingsDirty || "saving" === saveStatus || saveConflict;
-	const updateSettingsSection = useCallback(
-		<Key extends keyof SettingsCenterSettings>(
-			key: Key,
-			value: SettingsCenterSettings[Key],
-		) => {
-			const previousSettings = settingsRef.current;
-			const nextSettings: SettingsCenterSettings = {
-				...previousSettings,
-				[key]: value,
-			};
-			settingsRef.current = nextSettings;
-			setSettings(nextSettings);
-			setSaveFeedback(null);
-			setSaveStatus((status) => ("saving" === status ? status : "idle"));
-		},
-		[],
-	);
-	const replaceSettingsDraft = useCallback(
-		(nextSettings: SettingsCenterSettings) => {
-			resetSecretsRef.current = false;
-			setSaveConflict(false);
-			setSaveFeedback(null);
-			settingsRef.current = nextSettings;
-			setSettings(nextSettings);
-			setSaveStatus("idle");
-		},
-		[],
-	);
-	const resetSettingsDraft = useCallback(
-		(nextSettings: SettingsCenterSettings) => {
-			resetSecretsRef.current = true;
-			setSaveConflict(false);
-			setSaveFeedback(null);
-			settingsRef.current = nextSettings;
-			setSettings(nextSettings);
-			setSaveStatus("idle");
-		},
-		[],
-	);
-	const updateGeneralSettings = useCallback(
-		(value: SettingsCenterSettings["general"]) =>
-			updateSettingsSection("general", value),
-		[updateSettingsSection],
-	);
-	const updateShortcutSettings = useCallback(
-		(value: SettingsCenterSettings["shortcuts"]) =>
-			updateSettingsSection("shortcuts", value),
-		[updateSettingsSection],
-	);
-	const updateImageSettings = useCallback(
-		(value: SettingsCenterSettings["images"]) =>
-			updateSettingsSection("images", value),
-		[updateSettingsSection],
-	);
-	const updateMarkdownSettings = useCallback(
-		(value: SettingsCenterSettings["markdown"]) =>
-			updateSettingsSection("markdown", value),
-		[updateSettingsSection],
-	);
-	const updateApplyEditorThemeToFrontend = useCallback(
-		(value: boolean) =>
-			updateSettingsSection("general", {
-				...settingsRef.current.general,
-				applyEditorThemeToFrontend: value,
-			}),
-		[updateSettingsSection],
-	);
-	const saveSettings = async (trigger: HTMLButtonElement) => {
-		if (
-			!settingsDirty ||
-			"saving" === saveStatus ||
-			saveConflict ||
-			saveInFlightRef.current
-		)
-			return;
-		if (shortcutConflicts.length > 0) {
-			setShortcutConflictDialog({
-				conflicts: shortcutConflicts,
-				returnFocus: trigger,
-			});
-			return;
-		}
-		if (hasDuplicateImageHostConfiguration(settings.images)) {
-			if (!overlayRoot) {
-				throw new Error("settings-center-duplicate-dialog-root-missing");
-			}
-			setDuplicateSaveTrigger(trigger);
-			return;
-		}
-		const controller = new AbortController();
-		const requestedSettings = settings;
-		const resetSecrets = resetSecretsRef.current;
-		const verificationInvalidation = imageVerificationInvalidation(
-			savedSettings.images,
-			requestedSettings.images,
-			resetSecrets,
-		);
-		saveInFlightRef.current = true;
-		saveControllerRef.current?.abort();
-		saveControllerRef.current = controller;
-		setSaveFeedback(null);
-		setSaveStatus("saving");
-		try {
-			const result = await settingsPort.save(
-				requestedSettings,
-				controller.signal,
-				{ resetSecrets },
-			);
-			if (controller.signal.aborted) return;
-			const saved = reconcileSavedSettings(requestedSettings, result.settings);
-			setImageDraft((current) => {
-				if (
-					current.primaryCredentialsConfigured ===
-						result.credentialStatus.primaryConfigured &&
-					current.backupCredentialsConfigured ===
-						result.credentialStatus.backupConfigured
-				)
-					return current;
-				return {
-					...current,
-					primaryCredentialsConfigured:
-						result.credentialStatus.primaryConfigured,
-					backupCredentialsConfigured: result.credentialStatus.backupConfigured,
-				};
-			});
-			if (verificationInvalidation.primary || verificationInvalidation.backup) {
-				setVerificationInvalidationTokens((current) => ({
-					primary: current.primary + (verificationInvalidation.primary ? 1 : 0),
-					backup: current.backup + (verificationInvalidation.backup ? 1 : 0),
-				}));
-			}
-			const currentSettingsUnchanged =
-				JSON.stringify(settingsRef.current) ===
-				JSON.stringify(requestedSettings);
-			setSavedSettings(saved);
-			if (currentSettingsUnchanged) {
-				resetSecretsRef.current = false;
-				settingsRef.current = saved;
-				setSettings(saved);
-			} else {
-				const nextSettings = {
-					...settingsRef.current,
-					revision: saved.revision,
-				};
-				settingsRef.current = nextSettings;
-				setSettings(nextSettings);
-			}
-			setSaveConflict(false);
-			setSaveStatus(currentSettingsUnchanged ? "saved" : "idle");
-			if (currentSettingsUnchanged) {
-				showSaveFeedback("success", strings.settingsSaved);
-			}
-		} catch (error) {
-			if (!controller.signal.aborted) {
-				if (error instanceof SettingsShortcutConflictError) {
-					setShortcutConflictDialog({
-						conflicts: [error.conflict],
-						returnFocus: trigger,
-					});
-					showSaveFeedback("error", strings.settingsSaveRejected);
-					setSaveStatus("error");
-					return;
-				}
-				const code =
-					error instanceof Error
-						? error.message
-						: "settings-center-save-rejected";
-				const nextError: SaveError =
-					"settings-center-save-conflict" === code
-						? "conflict"
-						: code.endsWith("-network-failed")
-							? "network"
-							: code.endsWith("-response-invalid")
-								? "invalid"
-								: "rejected";
-				setSaveConflict("conflict" === nextError);
-				setSaveStatus("error");
-				if ("conflict" !== nextError) {
-					showSaveFeedback(
-						"error",
-						"network" === nextError
-							? strings.settingsSaveNetworkFailed
-							: "invalid" === nextError
-								? strings.settingsSaveInvalid
-								: strings.settingsSaveRejected,
-					);
-				}
-			}
-		} finally {
-			if (saveControllerRef.current === controller)
-				saveControllerRef.current = null;
-			saveInFlightRef.current = false;
-		}
-	};
-	const reloadLatestSettings = async () => {
-		if ("saving" === saveStatus) return;
-		saveControllerRef.current?.abort();
-		const controller = new AbortController();
-		saveControllerRef.current = controller;
-		setSaveFeedback(null);
-		setSaveStatus("saving");
-		try {
-			const result = await settingsPort.get(controller.signal);
-			if (controller.signal.aborted) return;
-			const latest = result.settings;
-			setSavedSettings(latest);
-			settingsRef.current = latest;
-			setSettings(latest);
-			setImageDraft((current) => ({
-				...current,
-				primaryCredentialsConfigured: result.credentialStatus.primaryConfigured,
-				backupCredentialsConfigured: result.credentialStatus.backupConfigured,
-			}));
-			setVerificationInvalidationTokens((current) => ({
-				primary: current.primary + 1,
-				backup: current.backup + 1,
-			}));
-			resetSecretsRef.current = false;
-			setSaveConflict(false);
-			setSaveStatus("idle");
-		} catch (error) {
-			if (!controller.signal.aborted) {
-				const code =
-					error instanceof Error
-						? error.message
-						: "settings-center-get-rejected";
-				const nextError: Exclude<SaveError, "conflict" | null> = code.endsWith(
-					"-network-failed",
-				)
-					? "network"
-					: code.endsWith("-response-invalid")
-						? "invalid"
-						: "rejected";
-				showSaveFeedback(
-					"error",
-					"network" === nextError
-						? strings.settingsSaveNetworkFailed
-						: "invalid" === nextError
-							? strings.settingsSaveInvalid
-							: strings.settingsSaveRejected,
-				);
-				setSaveStatus("error");
-			}
-		} finally {
-			if (saveControllerRef.current === controller)
-				saveControllerRef.current = null;
-		}
-	};
 
 	return (
 		<div
@@ -1171,84 +307,16 @@ export function SettingsCenterRoot({
 					<div className="easymde-settings-center__content-scale">
 						<div className="easymde-settings-center__content">
 							{normalizedQuery ? (
-								<div
-									className="easymde-settings-center__search-results"
-									aria-live="polite"
-								>
-									{searchResultCount === 0 ? (
-										<div className="easymde-settings-center__no-results-body">
-											<div aria-hidden="true">
-												<img
-													src={bootstrap.assets.searchEmptyIllustrationUrl}
-													alt=""
-												/>
-											</div>
-											<h2>
-												{formatSinglePlaceholder(
-													strings.noSearchResults,
-													query.trim(),
-												)}
-											</h2>
-											<p>{strings.noSearchResultsDescription}</p>
-										</div>
-									) : (
-										<div>
-											<div className="easymde-settings-center__search-results-summary">
-												<span>{strings.searchResults}</span>
-												<span>
-													{formatSinglePlaceholder(
-														strings.searchResultCount,
-														String(searchResultCount),
-													)}
-												</span>
-											</div>
-											<div className="easymde-settings-center__search-results-sections">
-												{searchSections.map((section) => {
-													const navItem = NAV_ITEMS.find(
-														(item) => item.id === section.tabId,
-													);
-													if (!navItem)
-														throw new Error(
-															`settings-center-search-nav-${section.tabId}-missing`,
-														);
-													const SectionIcon = navItem.icon;
-													return (
-														<section key={section.tabId}>
-															<h2>
-																<SectionIcon size={24} />
-																{section.tabLabel}
-															</h2>
-															<div className="easymde-settings-center__search-result-groups">
-																{section.groups.map((group) => (
-																	<div key={group.title}>
-																		<h3>{group.title}</h3>
-																		<div>
-																			{group.items.map((item) => (
-																				<button
-																					key={item.key}
-																					type="button"
-																					onClick={() => openSearchResult(item)}
-																				>
-																					<span>
-																						<strong>{item.label}</strong>
-																						{item.description ? (
-																							<small>{item.description}</small>
-																						) : null}
-																					</span>
-																					<ChevronRight size={17} />
-																				</button>
-																			))}
-																		</div>
-																	</div>
-																))}
-															</div>
-														</section>
-													);
-												})}
-											</div>
-										</div>
-									)}
-								</div>
+								<SettingsSearchResults
+									onOpenResult={openSearchResult}
+									query={query}
+									searchEmptyIllustrationUrl={
+										bootstrap.assets.searchEmptyIllustrationUrl
+									}
+									searchResultCount={searchResultCount}
+									searchSections={searchSections}
+									strings={strings}
+								/>
 							) : null}
 							<div
 								className={`easymde-settings-center__sections${normalizedQuery ? " is-search-hidden" : ""}`}

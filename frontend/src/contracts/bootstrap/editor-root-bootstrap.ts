@@ -1,4 +1,8 @@
-import { resolveEditorBlockIndexWorkerUrl } from '../ports/editor-block-index-port';
+import {
+  isReferenceLabelCaseFoldProfile,
+  resolveEditorBlockIndexWorkerUrl,
+  type ReferenceLabelCaseFoldProfile
+} from '../ports/editor-block-index-port';
 import {
   isPreviewFeatureKey,
   type PreviewFeatures,
@@ -151,6 +155,7 @@ export type EditorContextMenuBootstrapStrings = Readonly<{
 export type EditorRootBootstrap = Readonly<{
   appearance: AppearanceBootstrap;
   editorBlockIndexWorkerUrl: string;
+  referenceLabelCaseFoldProfile: ReferenceLabelCaseFoldProfile;
   schemaVersion: 3;
   document: DocumentSourceBootstrap;
   fonts: FontControlsBootstrap;
@@ -196,6 +201,14 @@ export type EditorRootBootstrap = Readonly<{
     previewReadOnly: string;
     previewUnlockEdit: string;
     previewMode: string;
+    protectedCardEditFormat: string;
+    protectedCardFootnotes: string;
+    protectedCardMath: string;
+    protectedCardMermaid: string;
+    protectedCardRaw: string;
+    protectedCardSave: string;
+    protectedCardSourceFormat: string;
+    protectedCardToc: string;
     publish: string;
     restore: string;
     restoreConfirm: string;
@@ -523,6 +536,9 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
   if (3 !== bootstrap.schemaVersion) {
     throw new EditorRootBootstrapError('editor-root-schema-unsupported');
   }
+  if (!isReferenceLabelCaseFoldProfile(bootstrap.referenceLabelCaseFoldProfile)) {
+    throw new EditorRootBootstrapError('editor-root-reference-fold-profile-invalid');
+  }
   const labels = objectValue(bootstrap.strings, 'editor-root-label-invalid');
   const immersive = objectValue(
     labels.immersive,
@@ -698,6 +714,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
 
   return {
     appearance,
+    referenceLabelCaseFoldProfile: bootstrap.referenceLabelCaseFoldProfile,
     editorBlockIndexWorkerUrl,
     schemaVersion: 3,
     document,
@@ -745,6 +762,14 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         'previewReadOnly',
         'previewUnlockEdit',
         'previewMode',
+        'protectedCardEditFormat',
+        'protectedCardFootnotes',
+        'protectedCardMath',
+        'protectedCardMermaid',
+        'protectedCardRaw',
+        'protectedCardSave',
+        'protectedCardSourceFormat',
+        'protectedCardToc',
         'publish',
         'restore',
         'restoreConfirm',

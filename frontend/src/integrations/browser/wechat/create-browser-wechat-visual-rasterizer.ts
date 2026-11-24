@@ -151,8 +151,11 @@ function inlineMermaidBackground(
   let background: CSSStyleDeclaration | null = null;
   for (let element: Element | null = source; element; element = element.parentElement) {
     const style = computedStyle(document, element);
+    // A detached or unstyled node reports an empty string; it is not an
+    // opaque color and must not stop the walk before the themed ancestor.
     const hasColor =
-      style.backgroundColor !== 'rgba(0, 0, 0, 0)'
+      Boolean(style.backgroundColor)
+      && style.backgroundColor !== 'rgba(0, 0, 0, 0)'
       && style.backgroundColor !== 'transparent';
     const hasImage = Boolean(style.backgroundImage && style.backgroundImage !== 'none');
     if (hasColor || hasImage) {
@@ -288,7 +291,11 @@ function serializedSvg(
     foreignObject.appendChild(container);
     svg.appendChild(foreignObject);
   }
-  svg.querySelectorAll('script, style').forEach((element) => {
+  // Protected-card hover controls (Edit) are editor chrome, never part
+  // of the generated content, so they must not bake into an exported PNG.
+  svg.querySelectorAll(
+    'script, style, .easymde-protected-card-actions, [data-easymde-protected-ui]'
+  ).forEach((element) => {
     element.remove();
   });
   return new Serializer().serializeToString(svg);

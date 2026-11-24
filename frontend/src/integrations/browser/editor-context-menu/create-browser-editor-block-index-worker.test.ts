@@ -6,6 +6,7 @@ import {
 	type EditorBlockIndexWorkerResponse,
 	type EditorMarkdownBlockIndexDataWithImages,
 	type EditorMarkdownBlockIndexPackedData,
+	type ReferenceLabelCaseFoldProfile,
 	MAX_EDITOR_BLOCK_INDEX_BLOCKS,
 	MAX_EDITOR_BLOCK_INDEX_IMAGES,
 	MAX_EDITOR_BLOCK_INDEX_LINKS,
@@ -66,6 +67,7 @@ function createAdapter() {
 	FakeWorker.instances = [];
 	return createBrowserEditorBlockIndexWorker({
 		assetBaseUrl: "https://example.test/wp-content/plugins/easymde/",
+		referenceLabelCaseFoldProfile: 14,
 		Worker: FakeWorker,
 		location: {
 			href: "https://example.test/wp-admin/post.php",
@@ -204,6 +206,59 @@ function packedImageData(
 }
 
 describe("createBrowserEditorBlockIndexWorker", () => {
+	it("preserves the precise reference-profile-unavailable failure", async () => {
+		const adapter = createAdapter();
+		const pending = adapter.build({ generation: 1, revision: 2, source: "abc" }, signal());
+		const worker = await firstWorker();
+		worker.emit({ type: "error", generation: 1, revision: 2, code: "editor-block-index-reference-profile-unavailable" });
+		await expect(pending).rejects.toThrow("editor-block-index-reference-profile-unavailable");
+		expect(worker.terminated).toBe(true);
+		adapter.dispose();
+	});
+	it("retains the validated profile when the caller mutates its options", async () => {
+		FakeWorker.instances = [];
+		const options = {
+			assetBaseUrl: "https://example.test/wp-content/plugins/easymde/",
+			referenceLabelCaseFoldProfile: 13 as ReferenceLabelCaseFoldProfile,
+			Worker: FakeWorker,
+			location: { href: "https://example.test/editor", origin: "https://example.test" },
+			workerUrl,
+		};
+		const adapter = createBrowserEditorBlockIndexWorker(options);
+		options.referenceLabelCaseFoldProfile = 17;
+		const pending = adapter.build({ generation: 1, revision: 2, source: "abc" }, signal());
+		const worker = await firstWorker();
+		expect(worker.posted[0]?.referenceLabelCaseFoldProfile).toBe(13);
+		worker.emit({ data: packedData(1, 3), generation: 1, revision: 2, type: "result" });
+		await pending;
+		adapter.dispose();
+	});
+	it.each([undefined, null, 12, 18, "14", true])("rejects invalid configured profile %#", (profile) => {
+		expect(() => createBrowserEditorBlockIndexWorker({
+			assetBaseUrl: "https://example.test/wp-content/plugins/easymde/",
+			referenceLabelCaseFoldProfile: profile as ReferenceLabelCaseFoldProfile,
+			Worker: FakeWorker,
+			location: { href: "https://example.test/editor", origin: "https://example.test" },
+			workerUrl,
+		})).toThrow("editor-block-index-worker-profile-invalid");
+	});
+
+	it.each([11, 13, 14, 16, 17, "unsupported"] as const)("transports the configured reference fold profile %s", async (profile) => {
+		FakeWorker.instances = [];
+		const adapter = createBrowserEditorBlockIndexWorker({
+			assetBaseUrl: "https://example.test/wp-content/plugins/easymde/",
+			referenceLabelCaseFoldProfile: profile,
+			Worker: FakeWorker,
+			location: { href: "https://example.test/editor", origin: "https://example.test" },
+			workerUrl,
+		});
+		const pending = adapter.build({ generation: 1, revision: 2, source: "abc" }, signal());
+		const worker = await firstWorker();
+		expect(worker.posted[0]?.referenceLabelCaseFoldProfile).toBe(profile);
+		worker.emit({ data: packedData(1, 3), generation: 1, revision: 2, type: "result" });
+		await pending;
+		adapter.dispose();
+	});
 	it("posts the exact source request and returns data without echoing source", async () => {
 		const adapter = createAdapter();
 		const pending = adapter.build(
@@ -217,7 +272,7 @@ describe("createBrowserEditorBlockIndexWorker", () => {
 		const worker = await firstWorker();
 
 		expect(worker.posted).toEqual([
-			{ generation: 4, revision: 8, source: "abc", type: "build" },
+			{ generation: 4, revision: 8, source: "abc", type: "build", referenceLabelCaseFoldProfile: 14 },
 		]);
 		worker.emit({
 			data: packedData(1, 3),
@@ -254,6 +309,7 @@ describe("createBrowserEditorBlockIndexWorker", () => {
 		const worker = await firstWorker();
 		expect(worker.posted[0]).toEqual({
 			generation: 1,
+			referenceLabelCaseFoldProfile: 14,
 			revision: 1,
 			source,
 			type: "build",
@@ -301,6 +357,7 @@ describe("createBrowserEditorBlockIndexWorker", () => {
 		const worker = await firstWorker();
 		expect(worker.posted[0]).toEqual({
 			generation: 2,
+			referenceLabelCaseFoldProfile: 14,
 			revision: 2,
 			source: "abc",
 			type: "build",
@@ -869,6 +926,7 @@ describe("createBrowserEditorBlockIndexWorker", () => {
 		FakeWorker.instances = [];
 		const adapter = createBrowserEditorBlockIndexWorker({
 			assetBaseUrl: "https://example.test/wp-content/plugins/easymde/",
+			referenceLabelCaseFoldProfile: 14,
 			Worker: FakeWorker,
 			location: {
 				href: "https://example.test/wp-admin/post.php",
@@ -902,6 +960,7 @@ describe("createBrowserEditorBlockIndexWorker", () => {
 		});
 		const invalid = createBrowserEditorBlockIndexWorker({
 			assetBaseUrl: "https://example.test/wp-content/plugins/easymde/",
+			referenceLabelCaseFoldProfile: 14,
 			Worker: Constructor as unknown as typeof FakeWorker,
 			location: {
 				href: "https://example.test/editor",
@@ -943,6 +1002,7 @@ describe("createBrowserEditorBlockIndexWorker", () => {
 	it("accepts a same-origin plugin subdirectory URL with a version query", () => {
 		const adapter = createBrowserEditorBlockIndexWorker({
 			assetBaseUrl: "https://example.test/subdir/wp-content/plugins/easymde/",
+			referenceLabelCaseFoldProfile: 14,
 			location: {
 				href: "https://example.test/subdir/wp-admin/post.php",
 				origin: "https://example.test",
@@ -966,6 +1026,7 @@ describe("createBrowserEditorBlockIndexWorker", () => {
 		expect(() =>
 			createBrowserEditorBlockIndexWorker({
 				assetBaseUrl: "https://example.test/wp-content/plugins/easymde/",
+				referenceLabelCaseFoldProfile: 14,
 				Worker: FakeWorker,
 				location: {
 					href: "https://example.test/editor",
@@ -980,6 +1041,7 @@ describe("createBrowserEditorBlockIndexWorker", () => {
 		expect(() =>
 			createBrowserEditorBlockIndexWorker({
 				assetBaseUrl: "https://cdn.example/easymde/",
+				referenceLabelCaseFoldProfile: 14,
 				Worker: FakeWorker,
 				location: {
 					href: "https://example.test/editor",

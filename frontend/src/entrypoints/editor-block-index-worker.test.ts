@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
 	EDITOR_MARKDOWN_BLOCK_KIND_ORDER,
 	type EditorBlockIndexWorkerResponse,
+	type ReferenceLabelCaseFoldProfile,
 	MAX_EDITOR_BLOCK_INDEX_SOURCE_BYTES,
 } from "../contracts/ports/editor-block-index-port";
 import {
@@ -10,8 +11,9 @@ import {
 	type EditorBlockIndexWorkerBuildResult,
 	registerEditorBlockIndexWorkerScope,
 } from "./editor-block-index-worker";
+import * as blockIndex from "../features/editor-context-menu/editor-markdown-block-index";
 
-function packedBuild(source: string): EditorBlockIndexWorkerBuildResult {
+function packedBuild(source: string, _profile: ReferenceLabelCaseFoldProfile): EditorBlockIndexWorkerBuildResult {
 	const blocks = new Int32Array([0, source.length, 0, 0, 4, 1]);
 	const mathSpans = new Int32Array();
 	const images = new Int32Array([0, 0, 0]);
@@ -34,6 +36,79 @@ function packedBuild(source: string): EditorBlockIndexWorkerBuildResult {
 }
 
 describe("editor block-index worker entry", () => {
+	it.each([
+		["ASCII references", "[label][REF]\n\n[ref]: /target", 1],
+		["ordinary Unicode prose", "Unicode prose: Straße and 汉字.", 0],
+	])("builds %s under an unsupported profile", (_label, source, linkCount) => {
+		const messages: EditorBlockIndexWorkerResponse[] = [];
+		const handler = createEditorBlockIndexWorkerHandler((message) => messages.push(message));
+		handler({ data: { generation: 1, revision: 2, source, type: "build", referenceLabelCaseFoldProfile: "unsupported" } });
+		const result = messages[0];
+		if (result?.type !== "result") throw new Error("result-missing");
+		expect(result.data.linkCount).toBe(linkCount);
+	});
+
+	it("reports unsupported non-ASCII reference folding without a packed result", () => {
+		const messages: EditorBlockIndexWorkerResponse[] = [];
+		const handler = createEditorBlockIndexWorkerHandler((message) => messages.push(message));
+		handler({ data: { generation: 3, revision: 4, source: "[label][Straße]\n\n[STRASSE]: /target", type: "build", referenceLabelCaseFoldProfile: "unsupported" } });
+		expect(messages).toEqual([{ type: "error", generation: 3, revision: 4, code: "editor-block-index-reference-profile-unavailable" }]);
+	});
+
+	it("maps only the exact reference-profile error and redacts other failures", () => {
+		const messages: EditorBlockIndexWorkerResponse[] = [];
+		let detail = "visual-editor-reference-label-fold-profile-unavailable";
+		const handler = createEditorBlockIndexWorkerHandler((message) => messages.push(message), () => { throw new Error(detail); });
+		const request = { generation: 1, revision: 2, source: "abc", type: "build", referenceLabelCaseFoldProfile: "unsupported" };
+		handler({ data: request });
+		detail += "-private-detail";
+		handler({ data: request });
+		expect(messages).toEqual([
+			{ type: "error", generation: 1, revision: 2, code: "editor-block-index-reference-profile-unavailable" },
+			{ type: "error", generation: 1, revision: 2, code: "editor-block-index-build-failed" },
+		]);
+	});
+	it.each([13, "unsupported"] as const)("passes the request profile %s to the production index builder", (profile) => {
+		const build = vi.spyOn(blockIndex, "createEditorMarkdownBlockIndex");
+		try {
+			const messages: EditorBlockIndexWorkerResponse[] = [];
+			const handler = createEditorBlockIndexWorkerHandler((message) => messages.push(message));
+			handler({ data: { generation: 1, revision: 1, source: "abc", type: "build", referenceLabelCaseFoldProfile: profile } });
+			expect(build).toHaveBeenCalledWith("abc", { referenceLabelCaseFoldProfile: profile });
+			expect(messages[0]?.type).toBe("result");
+		} finally {
+			build.mockRestore();
+		}
+	});
+	it.each([11, 13, 14, 16, 17, "unsupported"] as const)(
+		"passes the explicit reference fold profile %s to its build owner",
+		(profile) => {
+			const build = vi.fn(packedBuild);
+			const messages: EditorBlockIndexWorkerResponse[] = [];
+			const handler = createEditorBlockIndexWorkerHandler((message) => messages.push(message), build);
+			handler({ data: { generation: 1, revision: 1, source: "abc", type: "build", referenceLabelCaseFoldProfile: profile } });
+			expect(build).toHaveBeenCalledWith("abc", profile);
+			expect(messages[0]?.type).toBe("result");
+		},
+	);
+
+	it.each([undefined, null, 12, 15, 18, "14", true])(
+		"rejects an invalid reference fold profile %#",
+		(profile) => {
+			const build = vi.fn(packedBuild);
+			const messages: EditorBlockIndexWorkerResponse[] = [];
+			const handler = createEditorBlockIndexWorkerHandler((message) => messages.push(message), build);
+			handler({ data: { generation: 1, revision: 1, source: "abc", type: "build", referenceLabelCaseFoldProfile: profile } });
+			expect(build).not.toHaveBeenCalled();
+			expect(messages).toEqual([{ code: "editor-block-index-worker-profile-invalid", generation: 1, revision: 1, type: "error" }]);
+		},
+	);
+	it("rejects an omitted reference fold profile", () => {
+		const messages: EditorBlockIndexWorkerResponse[] = [];
+		const handler = createEditorBlockIndexWorkerHandler((message) => messages.push(message));
+		handler({ data: { generation: 1, revision: 2, source: "abc", type: "build" } });
+		expect(messages).toEqual([{ code: "editor-block-index-worker-profile-invalid", generation: 1, revision: 2, type: "error" }]);
+	});
 	it("packs a thematic break with the appended kind code without changing existing codes", () => {
 		const source = "before\n  ***  \nafter";
 		const messages: EditorBlockIndexWorkerResponse[] = [];
@@ -42,7 +117,7 @@ describe("editor block-index worker entry", () => {
 		);
 
 		handler({
-			data: { generation: 3, revision: 7, source, type: "build" },
+			data: { generation: 3, revision: 7, source, type: "build", referenceLabelCaseFoldProfile: 14 },
 		});
 
 		const result = messages[0];
@@ -83,7 +158,7 @@ describe("editor block-index worker entry", () => {
 		}, packedBuild);
 
 		handler({
-			data: { generation: 3, revision: 7, source: "abc", type: "build" },
+			data: { generation: 3, revision: 7, source: "abc", type: "build", referenceLabelCaseFoldProfile: 14 },
 		});
 
 		const result = messages[0];
@@ -104,7 +179,7 @@ describe("editor block-index worker entry", () => {
 		);
 
 		handler({
-			data: { generation: 1, revision: 2, source, type: "build" },
+			data: { generation: 1, revision: 2, source, type: "build", referenceLabelCaseFoldProfile: 14 },
 		});
 
 		const result = messages[0];
@@ -146,7 +221,7 @@ describe("editor block-index worker entry", () => {
 		};
 		registerEditorBlockIndexWorkerScope(scope, packedBuild);
 		listener({
-			data: { generation: 3, revision: 7, source: "abc", type: "build" },
+			data: { generation: 3, revision: 7, source: "abc", type: "build", referenceLabelCaseFoldProfile: 14 },
 		});
 
 		if (!sent || !delivered)
@@ -182,7 +257,7 @@ describe("editor block-index worker entry", () => {
 
 		handler({ data: { generation: 1, revision: 1, source: "abc" } });
 		handler({
-			data: { generation: 1, revision: 1, source: "abc", type: "build" },
+			data: { generation: 1, revision: 1, source: "abc", type: "build", referenceLabelCaseFoldProfile: 14 },
 		});
 
 		expect(messages).toEqual([
@@ -205,7 +280,7 @@ describe("editor block-index worker entry", () => {
 			Math.ceil(MAX_EDITOR_BLOCK_INDEX_SOURCE_BYTES / 4) + 1,
 		);
 
-		handler({ data: { generation: 4, revision: 9, source, type: "build" } });
+		handler({ data: { generation: 4, revision: 9, source, type: "build", referenceLabelCaseFoldProfile: 14 } });
 
 		expect(messages).toEqual([
 			{

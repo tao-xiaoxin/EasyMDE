@@ -1041,6 +1041,382 @@ describe("editor context menu rules", () => {
 		);
 	});
 
+	it("suppresses right padding on outerless first cells that would become CommonMark block openers", () => {
+		const headerOpeners = [
+			"-",
+			"+",
+			"*",
+			"#",
+			"######",
+			"1.",
+			"999999999.",
+			"1)",
+			"999999999)",
+		];
+		for (const opener of headerOpeners) {
+			const source = `${opener}|\\\\|z\n|---|---|\n|xx|yy|`;
+			const caret = source.indexOf("z");
+			const edit = formatMarkdownTableSource(source, {
+				direction: "none",
+				end: caret,
+				start: caret,
+			});
+			expect(edit, opener).not.toBeNull();
+			const firstLine = (edit?.value ?? "").split("\n")[0];
+			expect(firstLine, opener).toBe(`${opener}| \\\\|z`);
+			expect(edit?.value[edit.selection.start], opener).toBe("z");
+			expect(
+				findMarkdownTable(edit?.value ?? "", edit?.selection.start ?? 0),
+				opener,
+			).toMatchObject({ columnCount: 2, rowCount: 2 });
+			if (edit) {
+				expect(
+					formatMarkdownTableSource(edit.value, edit.selection),
+					opener,
+				).toEqual({
+					selection: edit.selection,
+					value: edit.value,
+				});
+			}
+		}
+
+		// Indented outerless opener header and exact selection mapping on cell 0.
+		const indented = "  -|\\\\|z\n  |---|---|\n  |xx|yy|";
+		const dashPos = indented.indexOf("-");
+		const indentedEdit = formatMarkdownTableSource(indented, {
+			direction: "forward",
+			end: dashPos + 1,
+			start: dashPos,
+		});
+		expect(indentedEdit?.value).toBe(
+			"  -| \\\\|z\n  | --- | ---  |\n  | xx  | yy   |",
+		);
+		expect(
+			indentedEdit?.value.slice(
+				indentedEdit.selection.start,
+				indentedEdit.selection.end,
+			),
+		).toBe("-");
+
+		// Body rows without a leading pipe also suppress right padding, including
+		// when removing existing trailing spaces before the pipe (rawEnd > coreEnd)
+		// on a non-interrupting ordered-list token like `2.  |yy`.
+		for (const bodyCell of ["-", "+", "*", "#", "1.", "1)"]) {
+			const source = `|A|B|\n|---|---|\n${bodyCell}|yy`;
+			const edit = formatMarkdownTableSource(source, {
+				direction: "none",
+				end: source.indexOf("yy"),
+				start: source.indexOf("yy"),
+			});
+			expect(edit?.value, bodyCell).toBe(
+				`| A   | B   |\n| --- | --- |\n${bodyCell}| yy `,
+			);
+			expect(
+				findMarkdownTable(edit?.value ?? "", edit?.selection.start ?? 0),
+				bodyCell,
+			).toMatchObject({ columnCount: 2, rowCount: 2 });
+		}
+		const spacedBody = "|A|B|\n|---|---|\n2.  |yy";
+		const spacedBodyPos = spacedBody.lastIndexOf("2.");
+		const spacedBodyEdit = formatMarkdownTableSource(spacedBody, {
+			direction: "forward",
+			end: spacedBodyPos + 2,
+			start: spacedBodyPos,
+		});
+		expect(spacedBodyEdit?.value).toBe("| A   | B   |\n| --- | --- |\n2.| yy ");
+		expect(
+			spacedBodyEdit?.value.slice(
+				spacedBodyEdit.selection.start,
+				spacedBodyEdit.selection.end,
+			),
+		).toBe("2.");
+
+		// Non-opener tokens and leading-pipe rows keep normal column-aligned padding.
+		const nonOpeners = [
+			"--|b\n|---|---|\n|xxxx|yy|",
+			"#######|b\n|---|---|\n|xxxxxxxx|yy|",
+			"1000000000.|b\n|---|---|\n|xxxxxxxxxxxx|yy|",
+			"|-|\\\\|z|\n|---|---|\n|xx|yy|",
+		];
+		expect(
+			formatMarkdownTableSource(nonOpeners[0] ?? "", {
+				direction: "none",
+				end: 0,
+				start: 0,
+			})?.value.split("\n")[0],
+		).toBe("--   | b  ");
+		expect(
+			formatMarkdownTableSource(nonOpeners[1] ?? "", {
+				direction: "none",
+				end: 0,
+				start: 0,
+			})?.value.split("\n")[0],
+		).toBe("#######  | b  ");
+		expect(
+			formatMarkdownTableSource(nonOpeners[2] ?? "", {
+				direction: "none",
+				end: 0,
+				start: 0,
+			})?.value.split("\n")[0],
+		).toBe("1000000000.  | b  ");
+		expect(
+			formatMarkdownTableSource(nonOpeners[3] ?? "", {
+				direction: "none",
+				end: 1,
+				start: 1,
+			})?.value.split("\n")[0],
+		).toBe("| -   | \\\\|z |");
+
+		// Byte projection agrees to the exact byte with emitted bytes at the 1 MiB ceiling
+		// in both aligned and compact fallback modes.
+		const openerTable = "-|\\\\|z\n|---|---|\n|xx|yy|";
+		const expectedAligned = "-| \\\\|z\n| --- | ---  |\n| xx  | yy   |";
+		const expectedCompact = "-| \\\\|z\n| --- | --- |\n| xx | yy |";
+		const alignedBytes = utf8ByteLength(expectedAligned);
+		const exactAlignedSource = `${"p".repeat(MAX_MARKDOWN_PREVIEW_BYTES - alignedBytes - 2)}\n\n${openerTable}`;
+		const exactAlignedEdit = formatMarkdownTableSource(exactAlignedSource, {
+			direction: "none",
+			end: exactAlignedSource.lastIndexOf("xx"),
+			start: exactAlignedSource.lastIndexOf("xx"),
+		});
+		expect(exactAlignedEdit).not.toBeNull();
+		expect(utf8ByteLength(exactAlignedEdit?.value ?? "")).toBe(
+			MAX_MARKDOWN_PREVIEW_BYTES,
+		);
+		expect(exactAlignedEdit?.value.endsWith(expectedAligned)).toBe(true);
+
+		const compactBytes = utf8ByteLength(expectedCompact);
+		const exactCompactSource = `${"p".repeat(MAX_MARKDOWN_PREVIEW_BYTES - compactBytes - 2)}\n\n${openerTable}`;
+		const exactCompactEdit = formatMarkdownTableSource(exactCompactSource, {
+			direction: "none",
+			end: exactCompactSource.lastIndexOf("xx"),
+			start: exactCompactSource.lastIndexOf("xx"),
+		});
+		expect(exactCompactEdit).not.toBeNull();
+		expect(utf8ByteLength(exactCompactEdit?.value ?? "")).toBe(
+			MAX_MARKDOWN_PREVIEW_BYTES,
+		);
+		expect(exactCompactEdit?.value.endsWith(expectedCompact)).toBe(true);
+
+		const oneByteOverSource = `${"p".repeat(MAX_MARKDOWN_PREVIEW_BYTES - compactBytes - 1)}\n\n${openerTable}`;
+		expect(
+			formatMarkdownTableSource(oneByteOverSource, {
+				direction: "none",
+				end: oneByteOverSource.lastIndexOf("xx"),
+				start: oneByteOverSource.lastIndexOf("xx"),
+			}),
+		).toBeNull();
+	});
+
+	it("preserves table structure when inserting columns right across escaped pipes and trailing spaces", () => {
+		const withNextRow = "|A|Header|\n|-|-|\n|x|\\\\|\n|y|z|";
+		const insertedWithNextRow = editMarkdownTable(
+			withNextRow,
+			withNextRow.indexOf("Header"),
+			{ type: "insert-column-right" },
+		);
+		expect(insertedWithNextRow?.value).toBe(
+			"|A|Header|  |\n|-|-| --- |\n|x|\\\\| |  |\n|y|z|  |",
+		);
+		expect(
+			findMarkdownTable(
+				insertedWithNextRow?.value ?? "",
+				insertedWithNextRow?.selection.start ?? 0,
+			),
+		).toMatchObject({ columnCount: 3, rowCount: 3 });
+
+		const atEof = "|A|Header|\n|-|-|\n|x|\\\\|";
+		const insertedAtEof = editMarkdownTable(atEof, atEof.indexOf("\\\\|"), {
+			type: "insert-column-right",
+		});
+		expect(insertedAtEof?.value).toBe(
+			"|A|Header|  |\n|-|-| --- |\n|x|\\\\| |  |",
+		);
+		expect(
+			tableSelectionAt(
+				insertedAtEof?.value ?? "",
+				insertedAtEof?.selection ?? { direction: "none", end: 0, start: 0 },
+			),
+		).toMatchObject({ column: 2, columnCount: 3, kind: "column", rowIndex: 2 });
+
+		const trailingSpaces = "| A | B |  \n| - | - |  \n| 1 | 2 |  ";
+		const insertedTrailingSpaces = editMarkdownTable(
+			trailingSpaces,
+			trailingSpaces.indexOf("B"),
+			{ type: "insert-column-right" },
+		);
+		expect(insertedTrailingSpaces?.value).toBe(
+			"| A | B |  |  \n| - | - | --- |  \n| 1 | 2 |  |  ",
+		);
+		expect(
+			findMarkdownTable(
+				insertedTrailingSpaces?.value ?? "",
+				insertedTrailingSpaces?.selection.start ?? 0,
+			),
+		).toMatchObject({ columnCount: 3, rowCount: 2 });
+
+		const trailingBackslash = "|A|B\n|-|-\n|x|foo\\";
+		const insertedTrailingBackslash = editMarkdownTable(
+			trailingBackslash,
+			trailingBackslash.indexOf("foo\\"),
+			{ type: "insert-column-right" },
+		);
+		expect(insertedTrailingBackslash?.value).toBe(
+			"|A|B |  |\n|-|- | --- |\n|x|foo\\ |  |",
+		);
+		expect(
+			findMarkdownTable(
+				insertedTrailingBackslash?.value ?? "",
+				insertedTrailingBackslash?.selection.start ?? 0,
+			),
+		).toMatchObject({ columnCount: 3, rowCount: 2 });
+	});
+
+	it("inserts column 0 left on pipe-less outer-border tables with explicit leading pipes and exact caret placement", () => {
+		const unindented = "A | B\n--- | ---\n1 | 2";
+		const unindentedHeaderEdit = editMarkdownTable(
+			unindented,
+			unindented.indexOf("A"),
+			{ type: "insert-column-left" },
+		);
+		expect(unindentedHeaderEdit?.value).toBe(
+			"|  |A | B\n| --- |--- | ---\n|  |1 | 2",
+		);
+		expect(
+			tableSelectionAt(
+				unindentedHeaderEdit?.value ?? "",
+				unindentedHeaderEdit?.selection ?? {
+					direction: "none",
+					end: 0,
+					start: 0,
+				},
+			),
+		).toMatchObject({ column: 0, columnCount: 3, kind: "column", rowIndex: 0 });
+		expect(unindentedHeaderEdit?.selection.start).toBe(2);
+
+		const indented = "  A | B\n  --- | ---\n  1 | 2";
+		const indentedBodyEdit = editMarkdownTable(
+			indented,
+			indented.indexOf("1"),
+			{ type: "insert-column-left" },
+		);
+		expect(indentedBodyEdit?.value).toBe(
+			"  |  |A | B\n  | --- |--- | ---\n  |  |1 | 2",
+		);
+		expect(
+			tableSelectionAt(
+				indentedBodyEdit?.value ?? "",
+				indentedBodyEdit?.selection ?? { direction: "none", end: 0, start: 0 },
+			),
+		).toMatchObject({ column: 0, columnCount: 3, kind: "column", rowIndex: 2 });
+		const bodyLineStart = (indentedBodyEdit?.value ?? "").lastIndexOf("  |  |1");
+		expect(indentedBodyEdit?.selection.start).toBe(bodyLineStart + 4);
+	});
+
+	it("preserves a separator pipe when deleting a column from a 2-column pipe-less outer-border table", () => {
+		const unindented = "A | B\n--- | ---\n1 | 2";
+		const deleteCol0 = editMarkdownTable(unindented, unindented.indexOf("1"), {
+			type: "delete-column",
+		});
+		expect(deleteCol0?.value).toBe("| B\n| ---\n| 2");
+		expect(
+			tableSelectionAt(
+				deleteCol0?.value ?? "",
+				deleteCol0?.selection ?? { direction: "none", end: 0, start: 0 },
+			),
+		).toMatchObject({ column: 0, columnCount: 1, kind: "column", rowIndex: 2 });
+
+		const deleteCol1 = editMarkdownTable(unindented, unindented.indexOf("2"), {
+			type: "delete-column",
+		});
+		expect(deleteCol1?.value).toBe("A |\n--- |\n1 |");
+		expect(
+			tableSelectionAt(
+				deleteCol1?.value ?? "",
+				deleteCol1?.selection ?? { direction: "none", end: 0, start: 0 },
+			),
+		).toMatchObject({ column: 0, columnCount: 1, kind: "column", rowIndex: 2 });
+
+		const indented = "  A | B\n  --- | ---\n  1 | 2";
+		const deleteIndentedCol0 = editMarkdownTable(
+			indented,
+			indented.indexOf("A"),
+			{ type: "delete-column" },
+		);
+		expect(deleteIndentedCol0?.value).toBe("  | B\n  | ---\n  | 2");
+		expect(
+			tableSelectionAt(
+				deleteIndentedCol0?.value ?? "",
+				deleteIndentedCol0?.selection ?? {
+					direction: "none",
+					end: 0,
+					start: 0,
+				},
+			),
+		).toMatchObject({ column: 0, columnCount: 1, kind: "column", rowIndex: 0 });
+
+		const deleteIndentedCol1 = editMarkdownTable(
+			indented,
+			indented.indexOf("B"),
+			{ type: "delete-column" },
+		);
+		expect(deleteIndentedCol1?.value).toBe("  A |\n  --- |\n  1 |");
+		expect(
+			tableSelectionAt(
+				deleteIndentedCol1?.value ?? "",
+				deleteIndentedCol1?.selection ?? {
+					direction: "none",
+					end: 0,
+					start: 0,
+				},
+			),
+		).toMatchObject({ column: 0, columnCount: 1, kind: "column", rowIndex: 0 });
+
+		const mixed = "| A | B |\n| --- | --- |\n1 | 2";
+		expect(
+			editMarkdownTable(mixed, mixed.indexOf("A"), { type: "delete-column" })
+				?.value,
+		).toBe("| B |\n| --- |\n| 2");
+		expect(
+			editMarkdownTable(mixed, mixed.indexOf("B"), { type: "delete-column" })
+				?.value,
+		).toBe("| A |\n| --- |\n1 |");
+	});
+
+	it("removes leading indentation when clearing an indented table alignment annotation", () => {
+		const source =
+			'  <!-- easymde-table-align:v1 [[1,"center"]] -->\n  | A | B |\n  | --- | --- |\n  | 1 | 2 |';
+		const result = setMarkdownTableAlignment(source, source.indexOf("A"), {
+			alignment: "left",
+			selection: { columnCount: 2, kind: "whole-table" },
+		});
+		expect(result).toMatchObject({
+			value: "  | A | B |\n  | :--- | :--- |\n  | 1 | 2 |",
+		});
+		if ("status" in result) {
+			throw new Error("table-alignment-unexpectedly-unsupported");
+		}
+		expect(findMarkdownTable(result.value, result.value.indexOf("A"))).toMatchObject({
+			baseAlignments: ["left", "left"],
+			columnCount: 2,
+			rowCount: 2,
+		});
+
+		const withPrefixCrlf =
+			'before\r\n  <!-- easymde-table-align:v1 [[1,"center"]] -->  \r\n  | A | B |\r\n  | --- | --- |\r\n  | 1 | 2 |';
+		const crlfResult = setMarkdownTableAlignment(
+			withPrefixCrlf,
+			withPrefixCrlf.indexOf("A"),
+			{
+				alignment: "left",
+				selection: { columnCount: 2, kind: "whole-table" },
+			},
+		);
+		expect(crlfResult).toMatchObject({
+			value: "before\r\n  | A | B |\r\n  | :--- | :--- |\r\n  | 1 | 2 |",
+		});
+	});
+
 	it("counts UTF-8 byte lengths consistently with TextEncoder across slices and surrogates", () => {
 		expect(MAX_MARKDOWN_PREVIEW_BYTES).toBe(1_048_576);
 		const encoder = new TextEncoder();

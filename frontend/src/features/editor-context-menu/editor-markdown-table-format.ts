@@ -38,6 +38,20 @@ type FormatTableRow = Readonly<{
 	trailingPipe: boolean;
 }>;
 
+const SPACE_TRIGGERED_BLOCK_OPENER_CELL = /^(?:[-+*]|#{1,6}|\d{1,9}[.)])$/u;
+
+function suppressesOuterlessBlockOpenerRightPadding(
+	leadingPipe: boolean,
+	index: number,
+	coreText: string,
+): boolean {
+	return (
+		0 === index &&
+		!leadingPipe &&
+		SPACE_TRIGGERED_BLOCK_OPENER_CELL.test(coreText)
+	);
+}
+
 function horizontalPadding(character: string | undefined): boolean {
 	return " " === character || "\t" === character;
 }
@@ -151,12 +165,21 @@ function projectFormattedTableLineBytes(
 		}
 
 		const core = cellCoreRangeInLine(line.text, rawStart, rawEnd);
+		const coreStart = rawStart + core.start;
+		const coreEnd = rawStart + core.end;
+		const suppressRightPadding =
+			core.preserveTrailingWhitespace ||
+			suppressesOuterlessBlockOpenerRightPadding(
+				row.leadingPipe,
+				index,
+				line.text.slice(coreStart, coreEnd),
+			);
 		const leftPaddingBytes = 0 === index && !row.leadingPipe ? 0 : 1;
 		const lastWithoutPipe =
 			index === row.cells.length - 1 && !row.trailingPipe;
 		const rightPaddingBytes =
-			core.preserveTrailingWhitespace || lastWithoutPipe ? 0 : 1;
-		const widthPadding = core.preserveTrailingWhitespace
+			suppressRightPadding || lastWithoutPipe ? 0 : 1;
+		const widthPadding = suppressRightPadding
 			? 0
 			: Math.max(0, (widths[index] ?? 0) - (core.end - core.start));
 		const removedPaddingBytes = core.start + (rawEnd - rawStart - core.end);
@@ -252,22 +275,29 @@ function formatTableLine(
 		const core = cellCoreRangeInLine(line.text, rawStart, rawEnd);
 		const coreStart = rawStart + core.start;
 		const coreEnd = rawStart + core.end;
+		const suppressRightPadding =
+			core.preserveTrailingWhitespace ||
+			suppressesOuterlessBlockOpenerRightPadding(
+				row.leadingPipe,
+				index,
+				line.text.slice(coreStart, coreEnd),
+			);
 		const leftPadding = 0 === index && !row.leadingPipe ? "" : " ";
 		const lastWithoutPipe = index === row.cells.length - 1 && !row.trailingPipe;
-		const rightPadding = lastWithoutPipe ? "" : " ";
+		const rightPadding = suppressRightPadding || lastWithoutPipe ? "" : " ";
 		insert(leftPadding);
 		markRemovedRange(rawStart, coreStart);
 		cursor = coreStart;
 		copyRange(coreStart, coreEnd);
 		const coreBoundary = formatted.length;
-		const widthPadding = core.preserveTrailingWhitespace
+		const widthPadding = suppressRightPadding
 			? 0
 			: Math.max(0, (widths[index] ?? 0) - core.end + core.start);
 		insert(" ".repeat(widthPadding));
 		for (let boundary = coreEnd + 1; boundary <= rawEnd; boundary += 1) {
 			map[boundary] = formatted.length;
 		}
-		insert(core.preserveTrailingWhitespace ? "" : rightPadding);
+		insert(rightPadding);
 		if (rawEnd > coreEnd) map[rawEnd] = formatted.length;
 		else map[rawEnd] = coreBoundary;
 		cursor = rawEnd;

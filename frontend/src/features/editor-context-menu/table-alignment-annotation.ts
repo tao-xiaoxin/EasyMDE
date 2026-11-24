@@ -505,8 +505,10 @@ export function applyTableAlignmentAnnotationAction(
     from = parsed.annotation.from;
     to = parsed.annotation.to;
     if (0 === next.entries.length) {
+      while (from > 0 && (' ' === input.source[from - 1] || '\t' === input.source[from - 1])) {
+        from -= 1;
+      }
       to = input.tableStart;
-      from = parsed.annotation.from;
     }
     insert = marker;
   } else {

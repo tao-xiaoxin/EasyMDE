@@ -344,6 +344,60 @@ describe('table alignment annotation', () => {
     }
   });
 
+  it('removes leading indentation when clearing an indented annotation line across newline styles', () => {
+    for (const newline of ['\n', '\r\n', '\r']) {
+      const indentedTable = ['  | A | B |', '  | --- | --- |', '  | 1 | 2 |'].join(newline);
+      const indentedMarker = `  ${marker([[1, 'center']])}`;
+      const atStart = `${indentedMarker}${newline}${indentedTable}`;
+      const clearedAtStart = applyTableAlignmentAnnotationAction({
+        ...context(atStart, {
+          baseAlignments: [null, null],
+          rowCount: 2,
+          tableEnd: atStart.length,
+          tableStart: atStart.indexOf('  | A |')
+        }),
+        action: { alignment: 'left', type: 'set-whole' }
+      });
+      expect(clearedAtStart).toMatchObject({
+        changes: {
+          from: 0,
+          insert: '',
+          to: atStart.indexOf('  | A |')
+        },
+        entries: [],
+        status: 'changed',
+        value: indentedTable
+      });
+
+      const withPrefix = `before${newline}${indentedMarker}  ${newline}${indentedTable}`;
+      const prefixEnd = `before${newline}`.length;
+      const tableStart = withPrefix.indexOf('  | A |');
+      const clearedWithPrefix = applyTableAlignmentAnnotationAction({
+        ...context(withPrefix, {
+          baseAlignments: [null, null],
+          ownedPrefixRange: {
+            from: prefixEnd,
+            to: tableStart - newline.length
+          },
+          rowCount: 2,
+          tableEnd: withPrefix.length,
+          tableStart
+        }),
+        action: { alignment: 'left', type: 'set-whole' }
+      });
+      expect(clearedWithPrefix).toMatchObject({
+        changes: {
+          from: prefixEnd,
+          insert: '',
+          to: tableStart
+        },
+        entries: [],
+        status: 'changed',
+        value: `before${newline}${indentedTable}`
+      });
+    }
+  });
+
   it('rejects an invalid action without changing the source', () => {
     const source = `${marker([[1, 'center']])}\n${table}`;
     const result = applyTableAlignmentAnnotationAction({

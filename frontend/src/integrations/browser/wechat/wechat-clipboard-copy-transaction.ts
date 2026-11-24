@@ -17,6 +17,12 @@ export const CLIPBOARD_COMMIT_TIMEOUT_MS = 10_000;
 
 export type ClipboardWriteResult = Readonly<{ error: unknown | null }>;
 
+export type PrestartedModernClipboardWrite = Readonly<{
+	bind: (htmlBlob: Promise<Blob>, textBlob: Promise<Blob>) => void;
+	reject: (error: unknown) => void;
+	writePromise: Promise<void>;
+}>;
+
 export type ModernClipboardRuntime = BrowserWechatClipboardRuntime &
 	Readonly<{
 		clipboardItem: ClipboardItemConstructor;
@@ -97,11 +103,13 @@ export async function executeModernCopyTransaction(
 	options: WechatClipboardCopyOptions,
 	copyWasCancelled: () => boolean,
 	transaction: ModernCopyTransaction,
+	prestartedWrite?: PrestartedModernClipboardWrite,
 ): Promise<WechatClipboardResult> {
 	let rejectDeferredPayload: ((error: unknown) => void) | null = null;
 	const deferredPayloadFailure = new Promise<never>((_resolve, reject) => {
 		rejectDeferredPayload = reject;
 	});
+	void deferredPayloadFailure.catch(() => undefined);
 	const abortDeferredPayload = (): void => {
 		rejectDeferredPayload?.(new Error("wechat-copy-cancelled"));
 	};
@@ -140,24 +148,29 @@ export async function executeModernCopyTransaction(
 		if (textBlob instanceof Promise) void textBlob.catch(() => undefined);
 	};
 	let writePromise: Promise<void>;
-	try {
-		const item = new runtime.clipboardItem({
-			// ClipboardItem accepts PromiseLike<Blob> values. Starting the
-			// write before theme-image fetches finish keeps the click's
-			// transient user activation attached to the operation.
-			"text/html": htmlBlob,
-			"text/plain": textBlob,
-		});
-		writePromise = Promise.resolve(runtime.write([item]));
-	} catch {
-		transaction.finishTotal("error");
-		transaction.cleanup();
-		detachCopyAbort();
-		observeBlobRejections();
-		if (copyWasCancelled()) {
-			return transaction.onFailure(new Error("wechat-copy-cancelled"));
+	if (prestartedWrite) {
+		prestartedWrite.bind(htmlBlob, textBlob);
+		writePromise = prestartedWrite.writePromise;
+	} else {
+		try {
+			const item = new runtime.clipboardItem({
+				// ClipboardItem accepts PromiseLike<Blob> values. Starting the
+				// write before theme-image fetches finish keeps the click's
+				// transient user activation attached to the operation.
+				"text/html": htmlBlob,
+				"text/plain": textBlob,
+			});
+			writePromise = Promise.resolve(runtime.write([item]));
+		} catch {
+			transaction.finishTotal("error");
+			transaction.cleanup();
+			detachCopyAbort();
+			observeBlobRejections();
+			if (copyWasCancelled()) {
+				return transaction.onFailure(new Error("wechat-copy-cancelled"));
+			}
+			return transaction.onSynchronousModernFailure();
 		}
-		return transaction.onSynchronousModernFailure();
 	}
 	transaction.start();
 	try {

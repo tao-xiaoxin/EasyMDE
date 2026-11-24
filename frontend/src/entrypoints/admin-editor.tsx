@@ -30,7 +30,11 @@ import {
   type WechatVisualRasterizationPort
 } from '../contracts/ports/wechat-visual-rasterization-port';
 import { createBrowserPreviewScroll } from '../integrations/browser/preview/create-browser-preview-scroll';
-import type { BrowserWechatClipboardRuntime } from '../integrations/browser/wechat/create-browser-wechat-clipboard';
+import type {
+  BrowserWechatClipboardPort,
+  BrowserWechatClipboardRuntime,
+  PrestartedModernClipboardWrite
+} from '../integrations/browser/wechat/create-browser-wechat-clipboard';
 import { createBrowserWechatPngEncoder } from '../integrations/browser/wechat/create-browser-wechat-png-encoder';
 import type { BrowserWechatVisualRasterizerRuntime } from '../integrations/browser/wechat/create-browser-wechat-visual-rasterizer';
 import wechatPngEncoderWorkerUrl from '../integrations/browser/wechat/wechat-png-encoder.worker.ts?worker&url';
@@ -95,9 +99,16 @@ type WordPressEditorRuntime = Readonly<{
   hooks: WordPressHooks;
 }>;
 
+type WechatClipboardModule = Readonly<{
+  createBrowserWechatClipboard: (
+    runtime: BrowserWechatClipboardRuntime
+  ) => BrowserWechatClipboardPort;
+}>;
+
 type AdminEditorBrowserRuntime = Readonly<{
   document: Document;
   failureMessage: string;
+  loadWechatClipboard?: () => Promise<WechatClipboardModule>;
   onStartupFailure: (code: string) => void;
   window: Window;
   wordpress: WordPressEditorRuntime;
@@ -146,18 +157,136 @@ function raceWithAbort<T>(
   });
 }
 
+const WECHAT_CLIPBOARD_CHUNK_LOAD_TIMEOUT_MS = 60_000;
+
+type ModernBrowserWechatClipboardRuntime = BrowserWechatClipboardRuntime &
+  Readonly<{
+    clipboardItem: NonNullable<BrowserWechatClipboardRuntime['clipboardItem']>;
+    write: NonNullable<BrowserWechatClipboardRuntime['write']>;
+  }>;
+
+type ColdWechatChunkWaitResult =
+  | Readonly<{ kind: 'loaded'; port: BrowserWechatClipboardPort }>
+  | Readonly<{ kind: 'aborted' }>
+  | Readonly<{ kind: 'timeout' }>
+  | Readonly<{ kind: 'write-failed'; error: unknown }>
+  | Readonly<{ kind: 'load-failed'; error: unknown }>;
+
+function createPrestartedModernClipboardWrite(
+  runtime: ModernBrowserWechatClipboardRuntime
+): PrestartedModernClipboardWrite {
+  let settled = false;
+  let resolveHtml!: (blob: Blob) => void;
+  let rejectHtml!: (error: unknown) => void;
+  let resolveText!: (blob: Blob) => void;
+  let rejectText!: (error: unknown) => void;
+  const htmlBlob = new Promise<Blob>((resolve, reject) => {
+    resolveHtml = resolve;
+    rejectHtml = reject;
+  });
+  const textBlob = new Promise<Blob>((resolve, reject) => {
+    resolveText = resolve;
+    rejectText = reject;
+  });
+  void htmlBlob.catch(() => undefined);
+  void textBlob.catch(() => undefined);
+
+  const rejectBoth = (error: unknown): void => {
+    if (settled) return;
+    settled = true;
+    rejectHtml(error);
+    rejectText(error);
+  };
+
+  let writePromise: Promise<void>;
+  try {
+    const item = new runtime.clipboardItem({
+      // Start the modern Clipboard write synchronously in the click task so
+      // transient user activation survives a cold dynamic chunk import.
+      'text/html': htmlBlob,
+      'text/plain': textBlob
+    });
+    writePromise = Promise.resolve(runtime.write([item]));
+  } catch (error: unknown) {
+    rejectBoth(error);
+    throw error;
+  }
+  void writePromise.catch(() => undefined);
+
+  return {
+    bind(sourceHtmlBlob, sourceTextBlob): void {
+      if (settled) {
+        void sourceHtmlBlob.catch(() => undefined);
+        void sourceTextBlob.catch(() => undefined);
+        return;
+      }
+      settled = true;
+      void sourceHtmlBlob.then(resolveHtml, rejectHtml);
+      void sourceTextBlob.then(resolveText, rejectText);
+    },
+    reject: rejectBoth,
+    writePromise
+  };
+}
+
+function waitForWechatClipboardChunk(
+  portPromise: Promise<BrowserWechatClipboardPort>,
+  writePromise: Promise<void>,
+  signal: AbortSignal | undefined,
+  timeoutMs: number
+): Promise<ColdWechatChunkWaitResult> {
+  if (signal?.aborted) return Promise.resolve({ kind: 'aborted' });
+  return new Promise<ColdWechatChunkWaitResult>((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onAbort = (): void => {
+      finish({ kind: 'aborted' });
+    };
+    const finish = (result: ColdWechatChunkWaitResult): void => {
+      if (settled) return;
+      settled = true;
+      if (null !== timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      signal?.removeEventListener('abort', onAbort);
+      resolve(result);
+    };
+    if (signal) {
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+    timer = setTimeout(() => {
+      finish({ kind: 'timeout' });
+    }, timeoutMs);
+    void portPromise.then(
+      (port) => finish({ kind: 'loaded', port }),
+      (error: unknown) => finish({ kind: 'load-failed', error })
+    );
+    void writePromise.then(
+      () => undefined,
+      (error: unknown) => finish({ kind: 'write-failed', error })
+    );
+  });
+}
+
 function createLazyBrowserWechatClipboard(
   runtime: BrowserWechatClipboardRuntime,
-  isActive: () => boolean
+  isActive: () => boolean,
+  loadWechatClipboard: () => Promise<WechatClipboardModule> = () =>
+    import('../integrations/browser/wechat/create-browser-wechat-clipboard')
 ): WechatClipboardPort {
-  let resolvedPort: WechatClipboardPort | null = null;
-  let portPromise: Promise<WechatClipboardPort> | null = null;
-  const loadPort = (): Promise<WechatClipboardPort> => {
+  let resolvedPort: BrowserWechatClipboardPort | null = null;
+  let portPromise: Promise<BrowserWechatClipboardPort> | null = null;
+  const loadPort = (): Promise<BrowserWechatClipboardPort> => {
     if (resolvedPort) return Promise.resolve(resolvedPort);
     if (!portPromise) {
-      portPromise = import(
-        '../integrations/browser/wechat/create-browser-wechat-clipboard'
-      ).then(
+      let modulePromise: Promise<WechatClipboardModule>;
+      try {
+        modulePromise = loadWechatClipboard();
+      } catch (error: unknown) {
+        return Promise.reject(error);
+      }
+      portPromise = modulePromise.then(
         ({ createBrowserWechatClipboard }) => {
           const port = createBrowserWechatClipboard(runtime);
           resolvedPort = port;
@@ -204,29 +333,105 @@ function createLazyBrowserWechatClipboard(
       });
     },
     copy(preview, options = {}): Promise<WechatClipboardResult> {
+      const pngConversionEnabled = true === options.pngConversionEnabled;
+      const cancelled = (): WechatClipboardResult =>
+        pngConversionEnabled
+          ? {
+              code: 'wechat-png-rasterization-cancelled',
+              sideEffects: 'none',
+              status: 'failed'
+            }
+          : { code: 'wechat-copy-cancelled', status: 'cancelled' };
       const failure = (): WechatClipboardResult =>
-        true === options.pngConversionEnabled
+        pngConversionEnabled
           ? {
               code: 'wechat-png-clipboard-failed',
               sideEffects: 'none',
               status: 'failed'
             }
           : { code: 'wechat-copy-failed', status: 'failed' };
-      if (!isActive() || options.signal?.aborted) {
+      const staleBeforeLoad = (): WechatClipboardResult =>
+        pngConversionEnabled
+          ? {
+              code: 'wechat-png-rasterization-cancelled',
+              sideEffects: 'none',
+              status: 'failed'
+            }
+          : { code: 'wechat-copy-failed', status: 'failed' };
+
+      if (options.signal?.aborted) {
+        return Promise.resolve(cancelled());
+      }
+      if (!isActive()) {
         return Promise.resolve(failure());
       }
       if (resolvedPort) {
         return resolvedPort.copy(preview, options);
       }
-      return loadPort().then(
-        (port) => {
-          if (!isActive() || options.signal?.aborted) {
-            return failure();
-          }
-          return port.copy(preview, options);
-        },
-        () => failure()
-      );
+      if (options.isCurrent && !options.isCurrent()) {
+        return Promise.resolve(staleBeforeLoad());
+      }
+      if (!runtime.write || !runtime.clipboardItem) {
+        void loadPort().catch(() => undefined);
+        return Promise.resolve(failure());
+      }
+
+      const modernRuntime: ModernBrowserWechatClipboardRuntime = {
+        ...runtime,
+        clipboardItem: runtime.clipboardItem,
+        write: runtime.write
+      };
+      let prestartedWrite: PrestartedModernClipboardWrite;
+      try {
+        prestartedWrite = createPrestartedModernClipboardWrite(modernRuntime);
+      } catch {
+        return Promise.resolve(failure());
+      }
+
+      return waitForWechatClipboardChunk(
+        loadPort(),
+        prestartedWrite.writePromise,
+        options.signal,
+        WECHAT_CLIPBOARD_CHUNK_LOAD_TIMEOUT_MS
+      ).then((outcome) => {
+        if ('aborted' === outcome.kind || options.signal?.aborted) {
+          prestartedWrite.reject(new Error('wechat-copy-cancelled'));
+          return cancelled();
+        }
+        if ('timeout' === outcome.kind) {
+          const timeoutCode = pngConversionEnabled
+            ? 'wechat-png-transaction-timeout'
+            : 'wechat-clipboard-preparation-timeout';
+          prestartedWrite.reject(new Error(timeoutCode));
+          return pngConversionEnabled
+            ? {
+                code: 'wechat-png-transaction-timeout',
+                sideEffects: 'none',
+                status: 'failed'
+              }
+            : { code: 'wechat-copy-failed', status: 'failed' };
+        }
+        if ('loaded' !== outcome.kind) {
+          prestartedWrite.reject(outcome.error);
+          return failure();
+        }
+        if (!isActive()) {
+          prestartedWrite.reject(new Error('wechat-copy-failed'));
+          return failure();
+        }
+        if (options.isCurrent && !options.isCurrent()) {
+          prestartedWrite.reject(new Error('wechat-copy-cancelled'));
+          return staleBeforeLoad();
+        }
+        const port = outcome.port;
+        if ('function' === typeof port.copyWithPrestartedWrite) {
+          return port.copyWithPrestartedWrite(preview, options, prestartedWrite);
+        }
+        prestartedWrite.reject(
+          new Error('wechat-copy-prestarted-write-unsupported')
+        );
+        return port.copy(preview, options);
+      });
     }
   };
 }
@@ -645,7 +850,8 @@ function mountPreparedAdminEditor(
                 windowRef.navigator.clipboard.write(items as ClipboardItems)
             : null
         },
-        () => active
+        () => active,
+        runtime.loadWechatClipboard
       ),
       wechatExport: bootstrap.wechatExport,
       wechatVisualRasterizationPort: wechatVisualRasterizer,

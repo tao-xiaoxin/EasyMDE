@@ -49,6 +49,7 @@ export function useEditorWechatPreparation({
   const scheduledWechatPreparationRef = useRef<(() => void) | null>(null);
   const wechatBackgroundPreparationRef = useRef<{
     controller: AbortController;
+    inFlight: number;
   } | null>(null);
   const previousWechatLayoutRef = useRef({ immersive, mode: immersiveMode });
 
@@ -114,7 +115,7 @@ export function useEditorWechatPreparation({
         return;
       let preparation = wechatBackgroundPreparationRef.current;
       if (!preparation) {
-        preparation = { controller: new AbortController() };
+        preparation = { controller: new AbortController(), inFlight: 0 };
         wechatBackgroundPreparationRef.current = preparation;
       }
       if (preparation.controller.signal.aborted) return;
@@ -123,19 +124,43 @@ export function useEditorWechatPreparation({
       // operation; opening or editing a Preview is not a copy failure.
       const currentPreparation = preparation;
       const geometryOnly = wechatPngConversionEnabled;
-      void prepare(surface, {
-        background: true,
-        ...(geometryOnly ? { geometryOnly: true } : {}),
-        signal: currentPreparation.controller.signal
-      })
+      currentPreparation.inFlight += 1;
+      let task: Promise<void>;
+      try {
+        task = Promise.resolve(
+          prepare(surface, {
+            background: true,
+            ...(geometryOnly ? { geometryOnly: true } : {}),
+            signal: currentPreparation.controller.signal
+          })
+        );
+      } catch {
+        currentPreparation.inFlight = Math.max(
+          0,
+          currentPreparation.inFlight - 1
+        );
+        if (
+          !geometryOnly
+          && wechatBackgroundPreparationRef.current === currentPreparation
+          && 0 === currentPreparation.inFlight
+        ) {
+          wechatBackgroundPreparationRef.current = null;
+        }
+        return;
+      }
+      void task
         .catch(() => undefined)
         .finally(() => {
+          currentPreparation.inFlight = Math.max(
+            0,
+            currentPreparation.inFlight - 1
+          );
           // Geometry-only preparation retains its owner controller so a later
           // theme or Preview disposal can abort and clean the cached lease.
           if (wechatBackgroundPreparationRef.current !== currentPreparation) {
             return;
           }
-          if (!geometryOnly) {
+          if (!geometryOnly && 0 === currentPreparation.inFlight) {
             wechatBackgroundPreparationRef.current = null;
           }
         });

@@ -871,4 +871,68 @@ describe('EditorRoot WeChat copy & preview presentation', () => {
     view.unmount();
     expect(releasePrepared).toHaveBeenCalledWith(preview);
   });
+
+  it('aborts an overlapping non-PNG background preparation on theme change and unmount even after an earlier preparation settles', async () => {
+    const props = fixture();
+    const prepare = props.wechatClipboard.prepare;
+    if (!prepare) throw new Error('wechat preparation is unavailable');
+    const firstPreparation = deferred<void>();
+    const secondPreparation = deferred<void>();
+    const thirdPreparation = deferred<void>();
+    const fourthPreparation = deferred<void>();
+    const pendingPreparations = [
+      firstPreparation.promise,
+      secondPreparation.promise,
+      thirdPreparation.promise,
+      fourthPreparation.promise
+    ];
+    const signals: Array<AbortSignal | undefined> = [];
+    vi.mocked(prepare).mockImplementation((_surface, options) => {
+      signals.push(options?.signal);
+      return pendingPreparations.shift() ?? Promise.resolve();
+    });
+
+    const view = render(<EditorRoot {...props} />);
+    await waitFor(() => expect(signals).toHaveLength(1));
+
+    // Trigger a second overlapping preparation before the first settles.
+    act(() => {
+      props.triggerResize();
+    });
+    await waitFor(() => expect(signals).toHaveLength(2));
+    expect(signals[0]).toBe(signals[1]);
+    expect(signals[1]?.aborted).toBe(false);
+
+    // Completing call #1 must not clear the shared AbortController while call #2 is still in flight.
+    await act(async () => {
+      firstPreparation.resolve(undefined);
+      await Promise.resolve();
+    });
+    expect(signals[1]?.aborted).toBe(false);
+
+    // Switching the article theme cancels background preparation and must still abort call #2.
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+    await waitFor(() => expect(signals[1]?.aborted).toBe(true));
+
+    // Wait for post-theme preparation (call #3), overlap with call #4, settle call #3, and verify unmount aborts call #4.
+    await waitFor(() => expect(signals).toHaveLength(3));
+    expect(signals[2]?.aborted).toBe(false);
+    act(() => {
+      props.triggerPreviewLayout();
+    });
+    await waitFor(() => expect(signals).toHaveLength(4));
+    expect(signals[2]).toBe(signals[3]);
+    expect(signals[3]?.aborted).toBe(false);
+
+    await act(async () => {
+      thirdPreparation.resolve(undefined);
+      await Promise.resolve();
+    });
+    expect(signals[3]?.aborted).toBe(false);
+
+    view.unmount();
+    expect(signals[3]?.aborted).toBe(true);
+  });
 });

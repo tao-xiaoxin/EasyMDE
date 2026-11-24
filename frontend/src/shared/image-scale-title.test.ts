@@ -63,6 +63,20 @@ describe("shared image-scale title grammar", () => {
 		expect(decodeCommonMarkTitle("&#0;")).toBe("\uFFFD");
 		expect(decodeCommonMarkTitle("&#x0;")).toBe("\uFFFD");
 		expect(decodeCommonMarkTitle("&#x00;")).toBe("\uFFFD");
+		expect(decodeCommonMarkTitle("&#x000;")).toBe("\uFFFD");
+		expect(decodeCommonMarkTitle("&#X00;")).toBe("\uFFFD");
+		// Zero-padded decimal zeros (&#00;, &#000;, ... up to 7 digits):
+		// PHP Html5EntityDecoder::fromDecimal() sees empty("00") === false -> NUL,
+		// which WordPress wp_kses_no_null() strips to "" before scale parsing.
+		expect(decodeCommonMarkTitle("&#00;")).toBe("");
+		expect(decodeCommonMarkTitle("&#000;")).toBe("");
+		expect(decodeCommonMarkTitle("&#0000000;")).toBe("");
+		// 8 decimal digits exceed CommonMark §6.2 entity grammar (1..7 digits).
+		expect(decodeCommonMarkTitle("&#00000000;")).toBe("&#00000000;");
+		// Non-zero zero-padded decimal entities still decode normally.
+		expect(decodeCommonMarkTitle("&#01;")).toBe("\u0001");
+		expect(decodeCommonMarkTitle("&#0032;")).toBe(" ");
+		expect(decodeCommonMarkTitle("a&#000;b")).toBe("ab");
 		expect(decodeCommonMarkTitle("&#x2FFFF;")).toBe(
 			String.fromCodePoint(0x2ffff),
 		);
@@ -72,6 +86,71 @@ describe("shared image-scale title grammar", () => {
 		expect(decodeCommonMarkTitle("&#xD800;")).toBe("\uFFFD");
 		expect(decodeCommonMarkTitle("&#xDFFF;")).toBe("\uFFFD");
 		expect(decodeCommonMarkTitle("&#xE000;")).toBe("\uE000");
+
+		// PHP MarkdownRenderer::render() + WordPress wp_kses_no_null() parity for
+		// zero-padded decimal zero vs single-digit and hex zero scale titles.
+		expect(parseEffectiveImageScaleTitle("&#0;{width=50%}")).toEqual({
+			status: "invalid",
+		});
+		expect(parseEffectiveImageScaleTitle("&#x00;{width=50%}")).toEqual({
+			status: "invalid",
+		});
+		expect(parseEffectiveImageScaleTitle("&#x000;{width=50%}")).toEqual({
+			status: "invalid",
+		});
+		expect(parseEffectiveImageScaleTitle("&#00;{width=50%}")).toEqual({
+			markerLength: 11,
+			markerOffset: 0,
+			scale: 50,
+			status: "valid",
+			title: null,
+		});
+		expect(parseEffectiveImageScaleTitle("&#000;{width=50%}")).toEqual({
+			markerLength: 11,
+			markerOffset: 0,
+			scale: 50,
+			status: "valid",
+			title: null,
+		});
+		expect(parseEffectiveImageScaleTitle("&#0000000;{width=50%}")).toEqual({
+			markerLength: 11,
+			markerOffset: 0,
+			scale: 50,
+			status: "valid",
+			title: null,
+		});
+		expect(parseEffectiveImageScaleTitle("&#00000000;{width=50%}")).toEqual({
+			status: "invalid",
+		});
+		expect(parseEffectiveImageScaleTitle("a&#000;b")).toEqual({
+			status: "none",
+		});
+		expect(parseEffectiveImageScaleTitle("Caption&#000;{width=50%}")).toEqual({
+			status: "invalid",
+		});
+		expect(parseEffectiveImageScaleTitle("Caption &#000; {width=50%}")).toEqual(
+			{
+				markerLength: 11,
+				markerOffset: 9,
+				scale: 50,
+				status: "valid",
+				title: "Caption ",
+			},
+		);
+		expect(
+			parseEffectiveImageScaleTitle("Caption {width=33%}&#00; {width=50%}"),
+		).toEqual({
+			status: "invalid",
+		});
+		expect(
+			parseEffectiveImageScaleTitle("Caption {width=33%}&#00;"),
+		).toEqual({
+			markerLength: 11,
+			markerOffset: 8,
+			scale: 33,
+			status: "valid",
+			title: "Caption",
+		});
 
 		// Standard numeric and named entities continue to match PHP 1:1.
 		expect(decodeCommonMarkTitle("&#32;")).toBe(" ");

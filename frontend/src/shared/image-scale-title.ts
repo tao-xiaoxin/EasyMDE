@@ -70,12 +70,17 @@ export function hasMarkdownTitleBlankLine(title: string): boolean {
 
 /**
  * Decodes one CommonMark §6.2 HTML entity matching PHP
- * `League\CommonMark\Util\Html5EntityDecoder::decode()`.
+ * `League\CommonMark\Util\Html5EntityDecoder::decode()` plus WordPress
+ * `wp_kses_no_null()` NUL stripping before `MarkdownRenderer::parse_image_scale_title()`.
  *
  * Numeric references decode directly as Unicode scalar values in planes 0–2
  * (`1..0x2FFFF`, excluding surrogates, without browser Windows-1252 remapping
- * for `0x80..0x9F`); out-of-range, zero, or surrogate code points map to
- * `U+FFFD`. Named entities use strict HTML5 entity decoding.
+ * for `0x80..0x9F`). Out-of-range, surrogate, single-digit `&#0;`, and hex
+ * zero (`&#x0;`, `&#x00;`, ...) references map to `U+FFFD`. Zero-padded decimal
+ * zero references (`&#00;`, `&#000;`, ...) pass PHP `empty($number)` as `false`
+ * in `Html5EntityDecoder::fromDecimal()`, decode to NUL (`"\x00"`), and are
+ * stripped to `""` by WordPress `wp_kses_no_null()`. Named entities use strict
+ * HTML5 entity decoding.
  */
 function decodeCommonMarkHtmlEntity(entity: string): string {
 	if (!entity.startsWith("&#")) {
@@ -84,6 +89,14 @@ function decodeCommonMarkHtmlEntity(entity: string): string {
 	const isHex = entity[2] === "x" || entity[2] === "X";
 	const rawDigits = entity.slice(isHex ? 3 : 2, -1);
 	const codePoint = Number.parseInt(rawDigits, isHex ? 16 : 10);
+	// PHP `Html5EntityDecoder::fromDecimal()` checks `empty($number)`: `empty("0")`
+	// is true (-> U+FFFD), whereas `empty("00")` / `empty("000")` is false, so
+	// `mb_decode_numericentity` emits NUL (`"\x00"`), which WordPress
+	// `wp_kses_no_null()` strips to `""` before `parse_image_scale_title()` runs.
+	// `fromHex()` passes integer `hexdec($hex)` so `empty(0)` is always true.
+	if (!isHex && codePoint === 0 && rawDigits.length >= 2) {
+		return "";
+	}
 	if (
 		!Number.isInteger(codePoint) ||
 		codePoint <= 0 ||

@@ -967,4 +967,217 @@ describe('image scale contract', () => {
       ).toBeNull();
     }
   });
+
+  it('recovers active 4+ column list+blockquote container stacks for multiline images', () => {
+    const invalidNested =
+      '10. > First line\n    > ![alt](https://example.com/a.png "line 1\n    > {width=50%}")';
+    const invalidStart = invalidNested.indexOf('![');
+    expect(() => parseMarkdownImageScale(invalidNested, invalidStart)).toThrow(
+      'image-scale-syntax-invalid'
+    );
+    expect(() => findMarkdownImageAt(invalidNested, invalidStart + 3)).toThrow(
+      'image-scale-syntax-invalid'
+    );
+
+    const invalidAfterBlank =
+      '10. > First line\n\n    > ![alt](https://example.com/a.png "line 1\n    > {width=50%}")';
+    expect(() =>
+      findMarkdownImageAt(invalidAfterBlank, invalidAfterBlank.indexOf('![') + 3)
+    ).toThrow('image-scale-syntax-invalid');
+
+    const validNested =
+      '10. > First line\n    > ![alt](https://example.com/a.png "line 1\n    > line 2 {width=50%}")';
+    const parsedValid = findMarkdownImageAt(validNested, validNested.indexOf('![') + 3);
+    expect(parsedValid).toMatchObject({
+      destination: 'https://example.com/a.png',
+      scale: 50,
+      title: 'line 1\nline 2',
+      titleMarkerEnd: null,
+      titleMarkerStart: null
+    });
+    if (!parsedValid) throw new Error('image-scale-test-image-missing');
+    expect(() => createImageScaleReplacement(validNested, parsedValid, 67)).toThrow(
+      'image-scale-syntax-invalid'
+    );
+
+    // Cross-container `>` under 10. > (fewer than 4 leading spaces) breaks out of list.
+    for (const broken of [
+      '10. > First line\n    > ![alt](https://example.com/a.png "line 1\n> line 2 {width=50%}")',
+      '10. > First line\n    > ![alt](https://example.com/a.png "line 1\n   > line 2 {width=50%}")'
+    ]) {
+      expect(findMarkdownImageAt(broken, broken.indexOf('![') + 3), broken).toBeNull();
+    }
+  });
+
+  it('rejects multiline titles crossing CommonMark paragraph-interrupting blocks while preserving non-interrupting lines', () => {
+    for (const interrupted of [
+      '![alt](https://example.com/a.png "line 1\n# heading {width=50%}")',
+      '![alt](https://example.com/a.png "line 1\n- item {width=50%}")',
+      '![alt](https://example.com/a.png "line 1\n1. item {width=50%}")',
+      '![alt](https://example.com/a.png "line 1\n1) item {width=50%}")',
+      '![alt](https://example.com/a.png "line 1\n***\nline 2 {width=50%}")',
+      '![alt](https://example.com/a.png "line 1\n---\nline 2 {width=50%}")',
+      '![alt](https://example.com/a.png "line 1\n===\nline 2 {width=50%}")',
+      '![alt](https://example.com/a.png "line 1\n-\nline 2 {width=50%}")',
+      '![alt](https://example.com/a.png "line 1\n```js\nline 2 {width=50%}")',
+      '![alt](https://example.com/a.png "line 1\n~~~txt\nline 2 {width=50%}")',
+      '![alt](https://example.com/a.png "line 1\n> quote {width=50%}")',
+      '![alt](https://example.com/a.png "line 1\n<pre>\nline 2 {width=50%}")',
+      '![alt](https://example.com/a.png "line 1\n<!-- comment\nline 2 {width=50%}")',
+      '![alt](https://example.com/a.png "line 1\n<div>\nline 2 {width=50%}")',
+      '![alt](https://example.com/a.png "a | b\n--- | ---\nline 2 {width=50%}")',
+      '![alt\n# heading](https://example.com/a.png "Caption {width=50%}")'
+    ]) {
+      expect(parseMarkdownImageScale(interrupted), interrupted).toBeNull();
+      expect(findMarkdownImageAt(interrupted, 3), interrupted).toBeNull();
+    }
+
+    // Non-interrupting lines per CommonMark §4.6 / §5.2 remain valid multiline titles:
+    // HTML Type 7 (`<span>`), ordered list starting != 1 (`2.`), empty `1.` / `*` / `+`,
+    // and backtick fence with backtick in info string.
+    for (const [source, expectedTitle] of [
+      ['![alt](https://example.com/a.png "line 1\n<span>\nline 2 {width=50%}")', 'line 1\n<span>\nline 2'],
+      ['![alt](https://example.com/a.png "line 1\n2. item {width=50%}")', 'line 1\n2. item'],
+      ['![alt](https://example.com/a.png "line 1\n1.\nline 2 {width=50%}")', 'line 1\n1.\nline 2'],
+      ['![alt](https://example.com/a.png "line 1\n*\nline 2 {width=50%}")', 'line 1\n*\nline 2'],
+      ['![alt](https://example.com/a.png "line 1\n```a`b\nline 2 {width=50%}")', 'line 1\n```a`b\nline 2']
+    ] as const) {
+      expect(findMarkdownImageAt(source, 3), source).toMatchObject({
+        destination: 'https://example.com/a.png',
+        scale: 50,
+        title: expectedTitle
+      });
+    }
+  });
+
+  it('supports container continuations between (, destination, title, and ) while rejecting blank or cross-container breaks', () => {
+    for (const validSource of [
+      '> ![alt](https://example.com/a.png\n> "Caption {width=50%}")',
+      '> ![alt](https://example.com/a.png "Caption {width=50%}"\n> )',
+      '> ![alt](\n> https://example.com/a.png\n> "Caption {width=50%}"\n> )',
+      '- > ![alt](https://example.com/a.png\n  > "Caption {width=50%}")',
+      '> ![alt](https://example.com/a.png\n"Caption {width=50%}")',
+      '10. > First line\n    > ![alt](https://example.com/a.png\n    > "Caption {width=50%}"\n    > )'
+    ]) {
+      const start = validSource.indexOf('![');
+      expect(parseMarkdownImageScale(validSource, start), validSource).toMatchObject({
+        destination: 'https://example.com/a.png',
+        scale: 50,
+        title: 'Caption'
+      });
+      expect(findMarkdownImageAt(validSource, start + 3), validSource).toMatchObject({
+        destination: 'https://example.com/a.png',
+        scale: 50,
+        title: 'Caption'
+      });
+    }
+
+    for (const invalidSource of [
+      '> ![alt](https://example.com/a.png\n>\n> "Caption {width=50%}")',
+      '> ![alt](https://example.com/a.png\n> > "Caption {width=50%}")',
+      '![alt](https://example.com/a.png\n> "Caption {width=50%}")',
+      '> ![alt](https://example.com/a.png\n> # "Caption {width=50%}")',
+      '- > ![alt](https://example.com/a.png\n> "Caption {width=50%}")'
+    ]) {
+      const start = invalidSource.indexOf('![');
+      expect(parseMarkdownImageScale(invalidSource, start), invalidSource).toBeNull();
+      expect(findMarkdownImageAt(invalidSource, start + 3), invalidSource).toBeNull();
+    }
+  });
+
+  it('matches CommonMark/PHP code-block, tab-indent, Setext, paragraph-bounded backtick, and list-indent rules', () => {
+    // Fenced code inside blockquote / list, indented code inside blockquote,
+    // tab-expanded 4-col indent, Setext heading resetting indented code,
+    // 6-space indented code inside `- item`, and 4-space code after empty `-`.
+    for (const protectedSource of [
+      '> ~~~\n> ![alt](https://example.com/a.png "a")\n> ~~~',
+      '> ```\n> ![alt](https://example.com/a.png "a")\n> ```',
+      '- ~~~\n  ![alt](https://example.com/a.png "a")\n  ~~~',
+      '>     ![alt](https://example.com/a.png "a")',
+      '  \t![alt](https://example.com/a.png "a")',
+      'Heading\n===\n    ![alt](https://example.com/a.png "a")',
+      'Heading\n---\n    ![alt](https://example.com/a.png "a")',
+      '> Heading\n> ===\n>     ![alt](https://example.com/a.png "a")',
+      '- item\n\n      ![x](demo)',
+      '-\n\n    ![x](demo)',
+      '10. item\n\n        ![x](demo)',
+      '| a | b |\n| - | - |\n| 1 | 2 |\n    ![alt](https://example.com/a.png "a")',
+      'a `code\n<span>\n![alt](https://example.com/a.png "a") `',
+      '<div>\n![alt](https://example.com/a.png "a")\n</div>'
+    ]) {
+      const start = protectedSource.indexOf('![');
+      expect(findMarkdownImageAt(protectedSource, start + 3), protectedSource).toBeNull();
+    }
+
+    // Live images that MUST still be found:
+    // - unclosed backtick terminated by paragraph-interrupting blocks
+    // - 4-space indented paragraph inside open list items (`- item`, `10. item`)
+    // - unclosed fenced code inside blockquote/list closed when container ends
+    for (const liveSource of [
+      'a `code\n# Heading\n![alt](https://example.com/a.png "a") `',
+      'a `code\n- item\n![alt](https://example.com/a.png "a") `',
+      'a `code\n===\n![alt](https://example.com/a.png "a") `',
+      'a `code\n***\n![alt](https://example.com/a.png "a") `',
+      'a `code\n> quote\n![alt](https://example.com/a.png "a") `',
+      'a `code\n<div>\n\n![alt](https://example.com/a.png "a") `',
+      '- item\n\n    ![x](demo)',
+      '-\titem\n\n    ![x](demo)',
+      '-     code\n\n    ![x](demo)',
+      '10. item\n\n    ![x](demo)',
+      '10. item\n\n       ![x](demo)',
+      '> ```\n> inside\n![alt](https://example.com/a.png "a")',
+      '- ```\n  inside\n![alt](https://example.com/a.png "a")'
+    ]) {
+      const start = liveSource.indexOf('![');
+      const found = findMarkdownImageAt(liveSource, start + 3);
+      expect(found, liveSource).not.toBeNull();
+      expect(found?.start, liveSource).toBe(start);
+    }
+
+    // Zero-padded decimal zero entities in image titles match PHP + WP KSES parity.
+    expect(parseMarkdownImageScale('![x](demo "&#00;{width=50%}")')).toMatchObject({
+      destination: 'demo',
+      scale: 50,
+      title: null,
+      titleMarkerEnd: null,
+      titleMarkerStart: null
+    });
+    expect(parseMarkdownImageScale('![x](demo "&#000;{width=50%}")')).toMatchObject({
+      destination: 'demo',
+      scale: 50,
+      title: null
+    });
+    const zeroPaddedWithSpace = '![x](demo "Caption &#000; {width=50%}")';
+    const parsedZeroPaddedWithSpace = parseMarkdownImageScale(zeroPaddedWithSpace);
+    expect(parsedZeroPaddedWithSpace).toMatchObject({
+      destination: 'demo',
+      scale: 50,
+      title: 'Caption &#000;'
+    });
+    if (!parsedZeroPaddedWithSpace) throw new Error('image-scale-test-image-missing');
+    const updatedZeroPadded = createImageScaleReplacement(
+      zeroPaddedWithSpace,
+      parsedZeroPaddedWithSpace,
+      67
+    );
+    expect(
+      zeroPaddedWithSpace.slice(0, updatedZeroPadded.from)
+      + updatedZeroPadded.insert
+      + zeroPaddedWithSpace.slice(updatedZeroPadded.to)
+    ).toBe('![x](demo "Caption &#000; {width=67%}")');
+    expect(parseMarkdownImageScale('![x](demo "a&#000;b")')).toMatchObject({
+      destination: 'demo',
+      scale: null,
+      title: 'a&#000;b'
+    });
+    for (const invalidZero of [
+      '![x](demo "&#0;{width=50%}")',
+      '![x](demo "&#x00;{width=50%}")',
+      '![x](demo "Caption&#000;{width=50%}")'
+    ]) {
+      expect(() => parseMarkdownImageScale(invalidZero), invalidZero).toThrow(
+        'image-scale-syntax-invalid'
+      );
+    }
+  });
 });

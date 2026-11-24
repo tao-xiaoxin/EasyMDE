@@ -53,16 +53,53 @@ const NAMED_CSS_COLOR_HEX: ReadonlyMap<string, string> = new Map([
   ['yellow', '#ffff00'],
 ]);
 
-function findTopLevelSlashIndex(body: string): number {
+function inspectColorFunctionBody(
+  body: string,
+): Readonly<{ hasTopLevelComma: boolean; slashIndex: number }> | null {
   let depth = 0;
-  let lastSlash = -1;
+  let slashIndex = -1;
+  let hasTopLevelComma = false;
   for (let index = 0; index < body.length; index += 1) {
     const ch = body[index];
-    if ('(' === ch) depth += 1;
-    else if (')' === ch) depth = Math.max(0, depth - 1);
-    else if ('/' === ch && 0 === depth) lastSlash = index;
+    if ('(' === ch) {
+      depth += 1;
+    } else if (')' === ch) {
+      depth -= 1;
+      if (depth < 0) return null;
+    } else if (0 === depth) {
+      if ('/' === ch) {
+        if (slashIndex >= 0) return null;
+        slashIndex = index;
+      } else if (',' === ch) {
+        hasTopLevelComma = true;
+      }
+    }
   }
-  return lastSlash;
+  return 0 === depth ? { hasTopLevelComma, slashIndex } : null;
+}
+
+function countTopLevelWhitespaceTokens(body: string): number {
+  let depth = 0;
+  let count = 0;
+  let inToken = false;
+  for (let index = 0; index < body.length; index += 1) {
+    const ch = body[index] ?? '';
+    if ('(' === ch) {
+      if (!inToken) {
+        count += 1;
+        inToken = true;
+      }
+      depth += 1;
+    } else if (')' === ch) {
+      depth -= 1;
+    } else if (0 === depth && /\s/u.test(ch)) {
+      inToken = false;
+    } else if (!inToken) {
+      count += 1;
+      inToken = true;
+    }
+  }
+  return count;
 }
 
 export function splitTopLevelCommas(body: string): string[] {
@@ -80,6 +117,18 @@ export function splitTopLevelCommas(body: string): string[] {
   }
   parts.push(body.slice(start));
   return parts;
+}
+
+function parseAlphaToken(token: string, allowNone: boolean): number | null {
+  const normalized = token.trim().toLowerCase();
+  if (!normalized) return null;
+  if (allowNone && 'none' === normalized) return 0;
+  const match = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)(%?)$/iu.exec(normalized);
+  if (!match) return null;
+  const parsed = Number.parseFloat(match[1] ?? '');
+  if (!Number.isFinite(parsed)) return null;
+  const scaled = '%' === match[2] ? parsed / 100 : parsed;
+  return Math.min(1, Math.max(0, scaled));
 }
 
 /**
@@ -105,27 +154,36 @@ export function parseCssColorAlpha(value: string): number | null {
     return Number.parseInt(normalized.slice(7, 9), 16) / 255;
   }
   const fnMatch =
-    /^(?:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch|color)\((.*)\)$/u.exec(normalized);
+    /^(rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch|color)\((.*)\)$/u.exec(normalized);
   if (fnMatch) {
-    const body = fnMatch[1]?.trim() ?? '';
-    let alphaToken = '';
-    const slashIndex = findTopLevelSlashIndex(body);
-    if (slashIndex >= 0) {
-      alphaToken = body.slice(slashIndex + 1).trim();
-    } else if (/^(?:rgba?|hsla?)\(/u.test(normalized)) {
-      const components = splitTopLevelCommas(body);
-      if (components.length >= 4) {
-        alphaToken = (components[components.length - 1] ?? '').trim();
-      }
+    const fnName = fnMatch[1] ?? '';
+    const body = (fnMatch[2] ?? '').trim();
+    if (!body) return null;
+    const inspected = inspectColorFunctionBody(body);
+    if (!inspected) return null;
+    if (inspected.slashIndex >= 0) {
+      if (inspected.hasTopLevelComma) return null;
+      const channelPart = body.slice(0, inspected.slashIndex).trim();
+      const alphaToken = body.slice(inspected.slashIndex + 1).trim();
+      if (!channelPart || !alphaToken) return null;
+      return parseAlphaToken(alphaToken, true);
     }
-    if (!alphaToken) return 1;
-    if ('none' === alphaToken) return 0;
-    const alphaMatch = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)(%?)$/iu.exec(alphaToken);
-    if (!alphaMatch) return null;
-    const parsed = Number.parseFloat(alphaMatch[1] ?? '');
-    if (!Number.isFinite(parsed)) return null;
-    const scaled = '%' === alphaMatch[2] ? parsed / 100 : parsed;
-    return Math.min(1, Math.max(0, scaled));
+    if (/^from(?:[\s#]|$)/u.test(body) || /(?:^|[\s,(])var\(/u.test(body)) {
+      return null;
+    }
+    if (inspected.hasTopLevelComma) {
+      const isLegacyCommaFn =
+        'rgb' === fnName || 'rgba' === fnName || 'hsl' === fnName || 'hsla' === fnName;
+      if (!isLegacyCommaFn) return null;
+      const components = splitTopLevelCommas(body).map((part) => part.trim());
+      if (components.some((part) => !part)) return null;
+      if (4 === components.length) {
+        return parseAlphaToken(components[3] ?? '', false);
+      }
+      return 3 === components.length ? 1 : null;
+    }
+    const tokenCount = countTopLevelWhitespaceTokens(body);
+    return ('color' === fnName ? tokenCount >= 2 : 3 === tokenCount) ? 1 : null;
   }
   if ('currentcolor' === normalized) {
     return null;
@@ -134,18 +192,6 @@ export function parseCssColorAlpha(value: string): number | null {
     return 1;
   }
   return null;
-}
-
-function parseAlphaToken(token: string, allowNone: boolean): number | null {
-  const normalized = token.trim().toLowerCase();
-  if (!normalized) return null;
-  if (allowNone && 'none' === normalized) return 0;
-  const match = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)(%?)$/iu.exec(normalized);
-  if (!match) return null;
-  const parsed = Number.parseFloat(match[1] ?? '');
-  if (!Number.isFinite(parsed)) return null;
-  const scaled = '%' === match[2] ? parsed / 100 : parsed;
-  return Math.min(1, Math.max(0, scaled));
 }
 
 function parseRgbChannel(token: string, allowNone: boolean): number | null {
@@ -260,15 +306,17 @@ export function parseCssSolidColor(value: string): RgbaColor | null {
   const body = (fnMatch[2] ?? '').trim();
   if (!body) return null;
 
-  const slashIndex = findTopLevelSlashIndex(body);
+  const inspected = inspectColorFunctionBody(body);
+  if (!inspected) return null;
   let channelTokens: string[];
   let alpha = 1;
   let allowNone = false;
-  if (slashIndex >= 0) {
+  if (inspected.slashIndex >= 0) {
+    if (inspected.hasTopLevelComma) return null;
     allowNone = true;
-    const colorPart = body.slice(0, slashIndex).trim();
-    const alphaPart = body.slice(slashIndex + 1).trim();
-    if (!colorPart || colorPart.includes(',') || !alphaPart) return null;
+    const colorPart = body.slice(0, inspected.slashIndex).trim();
+    const alphaPart = body.slice(inspected.slashIndex + 1).trim();
+    if (!colorPart || !alphaPart) return null;
     channelTokens = colorPart.split(/\s+/u).filter(Boolean);
     const parsedAlpha = parseAlphaToken(alphaPart, true);
     if (parsedAlpha === null) return null;

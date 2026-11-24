@@ -110,8 +110,49 @@ describe('wechat-mermaid-background', () => {
       expect(parseCssColorAlpha('rgb(240 240 240 / 1.5)')).toBe(1);
       expect(parseCssColorAlpha('rgb(calc(100 / 2) 20 30)')).toBe(1);
       expect(parseCssColorAlpha('oklch(0.95 0 0)')).toBe(1);
+      expect(parseCssColorAlpha('oklch(0.7 0.2 30)')).toBe(1);
+      expect(parseCssColorAlpha('color(display-p3 1 0 0)')).toBe(1);
+      expect(parseCssColorAlpha('rgb(255, 0, 0)')).toBe(1);
       expect(parseCssColorAlpha('white')).toBe(1);
       expect(parseCssColorAlpha('rebeccapurple')).toBe(1);
+    });
+
+    it('rejects relative colors without explicit alpha, malformed slashes, unbalanced groups, and invalid legacy/modern syntax', () => {
+      // CSS Color 5 relative colors without top-level / inherit origin alpha and cannot be assumed opaque.
+      expect(parseCssColorAlpha('rgb(from rgba(255, 0, 0, 0.5) r g b)')).toBeNull();
+      expect(isOpaqueBackgroundColor('rgb(from rgba(255, 0, 0, 0.5) r g b)')).toBe(false);
+      expect(parseCssColorAlpha('oklch(from oklch(0.7 0.2 30 / 0.25) l c h)')).toBeNull();
+      expect(isOpaqueBackgroundColor('oklch(from oklch(0.7 0.2 30 / 0.25) l c h)')).toBe(false);
+      expect(parseCssColorAlpha('oklch(from oklch(0.7 0.2 30 / 0.25) l c h / 0.8)')).toBe(0.8);
+      expect(parseCssColorAlpha('rgb(from rgba(255, 0, 0, 0.5) r g b / 0.8)')).toBe(0.8);
+      expect(parseCssColorAlpha('oklch(from oklch(0.7 0.2 30 / 0.25) l c h / alpha)')).toBeNull();
+      expect(parseCssColorAlpha('oklch(from oklch(0.7 0.2 30 / 0.25) l c h / 1)')).toBe(1);
+
+      // Empty/duplicate slashes and unbalanced parentheses across multiple functions.
+      expect(parseCssColorAlpha('rgb(255 0 0 / )')).toBeNull();
+      expect(parseCssColorAlpha('rgb( / 0.5)')).toBeNull();
+      expect(parseCssColorAlpha('rgb(255 0 0 / 0.5 / 0.2)')).toBeNull();
+      expect(parseCssColorAlpha('rgb(255, 0, 0) rgb(0, 0, 0)')).toBeNull();
+      expect(parseCssColorAlpha('rgb(255, 0, 0))')).toBeNull();
+      expect(parseCssColorAlpha('rgb((255, 0, 0)')).toBeNull();
+      expect(parseCssColorAlpha('rgb()')).toBeNull();
+
+      // Legacy comma syntax rejects `none`, mixed slash, wrong arity, and empty arguments; modern space syntax allows `none`.
+      expect(parseCssColorAlpha('rgba(255, 0, 0, none)')).toBeNull();
+      expect(parseCssColorAlpha('rgb(255 0 0 / none)')).toBe(0);
+      expect(parseCssColorAlpha('rgb(255, 0, 0 / 0.5)')).toBeNull();
+      expect(parseCssColorAlpha('rgb(255, 0)')).toBeNull();
+      expect(parseCssColorAlpha('rgba(255, 0, 0, 0.5, 1)')).toBeNull();
+      expect(parseCssColorAlpha('rgba(255, 0, 0, )')).toBeNull();
+      expect(parseCssColorAlpha('oklch(0.7, 0.2, 30)')).toBeNull();
+      expect(parseCssColorAlpha('color(display-p3, 1, 0, 0)')).toBeNull();
+      expect(parseCssColorAlpha('rgb(255 0 0 0.5)')).toBeNull();
+      expect(parseCssColorAlpha('rgb(var(--c))')).toBeNull();
+
+      // Valid opaque modern and legacy colors remain opaque.
+      expect(isOpaqueBackgroundColor('rgb(255, 0, 0)')).toBe(true);
+      expect(isOpaqueBackgroundColor('oklch(0.7 0.2 30)')).toBe(true);
+      expect(isOpaqueBackgroundColor('color(display-p3 1 0 0)')).toBe(true);
     });
 
     it('distinguishes visible vs opaque colors and safe vs blocked images', () => {
@@ -1929,6 +1970,42 @@ describe('wechat-mermaid-background', () => {
       ]);
       expect(parseMermaidRadiusShorthand('50%')).toBeNull();
       expect(parseMermaidRadiusShorthand('calc(10% + 4px)', { height: 60, kind: 'px-or-percent', width: 100 })).toBeNull();
+    });
+
+    it('rejects malformed slash/empty zero-radius values and non-px/percent tokens in px-or-percent mode', () => {
+      const pxOrPercentMode = { height: 80, kind: 'px-or-percent', width: 200 } as const;
+
+      expect(isZeroMermaidRadiusValue('/')).toBe(false);
+      expect(isZeroMermaidRadiusValue('0px / ')).toBe(false);
+      expect(isZeroMermaidRadiusValue(' / 0px')).toBe(false);
+      expect(isZeroMermaidRadiusValue('0px / 0px / 0px')).toBe(false);
+      expect(isZeroMermaidRadiusValue('0px 0px 0px 0px 0px')).toBe(false);
+      expect(isZeroMermaidRadiusValue('0px / 0px')).toBe(true);
+      expect(isZeroMermaidRadiusValue('0px 0px 0px 0px / 0px 0px 0px 0px')).toBe(true);
+
+      expect(parseMermaidRadiusPair('10px inherit', pxOrPercentMode)).toBeNull();
+      expect(parseMermaidRadiusPair('10px 0rem', pxOrPercentMode)).toBeNull();
+      expect(parseMermaidRadiusPair('inherit', pxOrPercentMode)).toBeNull();
+      expect(parseMermaidRadiusPair('none', pxOrPercentMode)).toBeNull();
+      expect(parseMermaidRadiusShorthand('10px none', pxOrPercentMode)).toBeNull();
+      expect(parseMermaidRadiusShorthand('10px 0rem', pxOrPercentMode)).toBeNull();
+
+      expect(parseMermaidRadiusPair('10px 0', pxOrPercentMode)).toEqual({
+        horizontal: 10,
+        vertical: 0,
+      });
+      expect(parseMermaidRadiusPair('10px 0%', pxOrPercentMode)).toEqual({
+        horizontal: 10,
+        vertical: 0,
+      });
+      expect(parseMermaidRadiusPair('10px 0px', pxOrPercentMode)).toEqual({
+        horizontal: 10,
+        vertical: 0,
+      });
+      expect(parseMermaidRadiusPair('.5px 50%', pxOrPercentMode)).toEqual({
+        horizontal: 0.5,
+        vertical: 40,
+      });
     });
   });
 });

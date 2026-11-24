@@ -169,8 +169,18 @@ export function mermaidCssPixelValue(value: string): number | null {
 export function isZeroMermaidRadiusValue(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   if (!normalized || ZERO_RADIUS_KEYWORDS.has(normalized)) return true;
-  const tokens = normalized.split(/[\s/]+/u).filter(Boolean);
-  return tokens.every((token) => /^[+-]?(?:0+(?:\.0*)?|\.0+)(?:[a-z%]+)?$/u.test(token));
+  const groups = normalized.split('/');
+  if (groups.length > 2) return false;
+  return groups.every((group) => {
+    const trimmedGroup = group.trim();
+    if (!trimmedGroup) return false;
+    const tokens = trimmedGroup.split(/\s+/u);
+    return (
+      tokens.length >= 1
+      && tokens.length <= 4
+      && tokens.every((token) => /^(?:0+(?:\.0+)?|\.0+)(?:[a-z%]+)?$/u.test(token))
+    );
+  });
 }
 
 function parseMermaidRadiusToken(token: string, referencePx: number | null): number | null {
@@ -178,11 +188,16 @@ function parseMermaidRadiusToken(token: string, referencePx: number | null): num
     return mermaidCssPixelValue(token);
   }
   const normalized = token.trim().toLowerCase();
-  if (isZeroMermaidRadiusValue(normalized)) return 0;
+  if ('0' === normalized) return 0;
   const match = /^(\d+(?:\.\d+)?|\.\d+)(px|%)$/u.exec(normalized);
-  const parsed = match ? Number(match[1]) : Number.NaN;
+  if (!match) return null;
+  const parsed = Number(match[1]);
   if (!Number.isFinite(parsed) || parsed < 0) return null;
-  return '%' === match?.[2] ? (parsed / 100) * referencePx : parsed;
+  if ('%' === match[2]) {
+    if (!Number.isFinite(referencePx) || referencePx < 0) return null;
+    return (parsed / 100) * referencePx;
+  }
+  return parsed;
 }
 
 function expandMermaidRadiusAxisValues(

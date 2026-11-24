@@ -1,3 +1,5 @@
+import { utf8ByteLength } from "../../shared/utf8-byte-length";
+
 const IMAGE_FILE_NAME_RULE_VARIABLES = new Set([
 	"year",
 	"month",
@@ -16,10 +18,6 @@ const LEGACY_IMAGE_FILE_NAME_RULE_VARIABLES = new Set([
 	...IMAGE_FILE_NAME_RULE_VARIABLES,
 	"ext",
 ]);
-
-function utf8ByteLength(value: string): number {
-	return new TextEncoder().encode(value).length;
-}
 
 function hasExplicitUrlPort(value: string): boolean {
 	const authority =

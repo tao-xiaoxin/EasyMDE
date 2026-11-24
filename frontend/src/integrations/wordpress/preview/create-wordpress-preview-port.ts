@@ -23,6 +23,7 @@ import {
 	MAX_PREVIEW_CODE_PROJECTION_ROWS as MAX_CODE_PROJECTION_ROWS,
 	MAX_PREVIEW_EDIT_MAP_BLOCKS as MAX_EDIT_MAP_BLOCKS,
 } from "../../../contracts/ports/preview-request";
+import { utf8ByteLength } from "../../../shared/utf8-byte-length";
 import { wordpressEndpoint } from "../shared/wordpress-endpoint";
 
 export type WordPressApiFetch = (
@@ -219,10 +220,6 @@ function parseEditMap(
 		},
 		preparedMarkup,
 	};
-}
-
-function utf8ByteLength(value: string): number {
-	return new TextEncoder().encode(value).byteLength;
 }
 
 function parseCodeBodyKind(value: unknown): PreviewCodeBodyKind {

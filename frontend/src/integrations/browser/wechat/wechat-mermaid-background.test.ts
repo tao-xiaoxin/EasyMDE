@@ -1555,7 +1555,8 @@ describe('wechat-mermaid-background', () => {
         color: 'rgb(255, 0, 0)',
       });
 
-      // Rounded translucent direct <svg> with safe background-image keeps existing safe-image folding intact.
+      // Rounded translucent direct <svg> with safe background-image returns ancestor-only backdrop
+      // so <foreignObject> renders the rounded translucent color + gradient once without double-compositing.
       const roundedTranslucentWithGradientReader = makeReader(
         new Map<Element, Readonly<Record<string, string>>>([
           [
@@ -1575,7 +1576,78 @@ describe('wechat-mermaid-background', () => {
           directSvgCapture: true,
         }),
       ).toEqual({
-        color: 'rgb(255, 128, 128)',
+        color: 'rgb(255, 255, 255)',
+      });
+
+      // Rounded transparent direct <svg> with safe background-image returns ancestor-only backdrop
+      // so <foreignObject> renders the rounded gradient once over the square canvas.
+      const roundedTransparentWithGradientReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            svg,
+            {
+              'background-color': 'transparent',
+              'background-image': 'linear-gradient(90deg, rgba(0, 0, 255, 0.4), transparent)',
+              'border-radius': '12px',
+              opacity: '1',
+            },
+          ],
+          [whiteCanvas, { 'background-color': 'rgb(255, 255, 255)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(svg, roundedTransparentWithGradientReader, {
+          directSvgCapture: true,
+        }),
+      ).toEqual({
+        color: 'rgb(255, 255, 255)',
+      });
+
+      // Rounded translucent direct <svg> with blocked url(...) still isolates its translucent fill
+      // and returns pure ancestor backdrop instead of folding the translucent fill into a square pink box.
+      const roundedTranslucentWithBlockedUrlReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            svg,
+            {
+              'background-color': 'rgba(255, 0, 0, 0.5)',
+              'background-image': 'url("https://blocked.example/bg.png")',
+              'border-radius': '12px',
+              opacity: '1',
+            },
+          ],
+          [whiteCanvas, { 'background-color': 'rgb(255, 255, 255)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(svg, roundedTranslucentWithBlockedUrlReader, {
+          directSvgCapture: true,
+        }),
+      ).toEqual({
+        color: 'rgb(255, 255, 255)',
+      });
+
+      // Rounded opaque direct <svg> with safe background-image still folds its own opaque color + gradient.
+      const roundedOpaqueWithGradientReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            svg,
+            {
+              'background-color': 'rgb(255, 0, 0)',
+              'background-image': 'linear-gradient(90deg, rgba(0, 0, 255, 0.2), transparent)',
+              'border-radius': '12px',
+              opacity: '1',
+            },
+          ],
+          [whiteCanvas, { 'background-color': 'rgb(255, 255, 255)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(svg, roundedOpaqueWithGradientReader, {
+          directSvgCapture: true,
+        }),
+      ).toEqual({
+        color: 'rgb(255, 0, 0)',
         image: 'linear-gradient(90deg, rgba(0, 0, 255, 0.2), transparent)',
       });
     });

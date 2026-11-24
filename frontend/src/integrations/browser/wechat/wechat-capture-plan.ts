@@ -13,6 +13,7 @@ import {
   hasNonZeroBorderRadius,
   hasVisibleBackgroundColor,
   isOpaqueBackgroundColor,
+  isSafeBackgroundImage,
   parseCssOpacity,
 } from './wechat-mermaid-background';
 import {
@@ -548,10 +549,12 @@ export function mermaidResponsiveViewportDimensions(
   const preserveAspectRatio = svg.getAttribute('preserveAspectRatio')?.trim().replace(/\s+/gu, ' ').toLowerCase() ?? '';
   const svgBackgroundColor =
     svgComputed.getPropertyValue('background-color').trim() || svgComputed.backgroundColor?.trim() || '';
-  const svgHasRoundedTranslucentBackground =
+  const svgBackgroundImage =
+    svgComputed.getPropertyValue('background-image').trim() || svgComputed.backgroundImage?.trim() || '';
+  const svgHasRoundedNonOpaqueBackground =
     hasNonZeroBorderRadius(svgComputed, svg)
-    && hasVisibleBackgroundColor(svgBackgroundColor)
-    && !isOpaqueBackgroundColor(svgBackgroundColor);
+    && !isOpaqueBackgroundColor(svgBackgroundColor)
+    && (hasVisibleBackgroundColor(svgBackgroundColor) || isSafeBackgroundImage(svgBackgroundImage));
   const expectedHeight = (svgRect.width * viewBox.height) / viewBox.width;
   const freeWidth = sourceContentWidth - svgRect.width;
   const centeredLeft = svgRect.left - sourceContentLeft;
@@ -605,7 +608,7 @@ export function mermaidResponsiveViewportDimensions(
     Math.abs(centeredLeft - freeWidth / 2) > MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
     Math.abs(centeredRight - freeWidth / 2) > MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
     Math.abs(svgRect.top - sourceContentTop) > MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
-    svgHasRoundedTranslucentBackground ||
+    svgHasRoundedNonOpaqueBackground ||
     !mermaidResponsiveOwnerPaintIsSafe(source, runtime, sourceRect.width, sourceRect.height) ||
     !mermaidRootPaintIsSafe(svg, runtime, svgRect.width, svgRect.height, svgRect.width, svgRect.height)
   )

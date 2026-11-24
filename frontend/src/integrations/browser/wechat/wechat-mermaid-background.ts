@@ -532,13 +532,13 @@ export function resolveMermaidInheritedBackground(
       'background-image',
       'backgroundImage',
     );
-    const isolateRoundedTranslucentOwnColor =
+    const sourceHasSafeImage = isSafeBackgroundImage(sourceImage);
+    const isolateRoundedNonOpaqueOwnPaint =
       sourceHasRadius
-      && hasVisibleBackgroundColor(sourceColor)
       && !isOpaqueBackgroundColor(sourceColor)
-      && !hasBackgroundImage(sourceImage);
+      && (hasVisibleBackgroundColor(sourceColor) || sourceHasSafeImage);
     const initialState = createEmptyBackgroundFoldState();
-    if (sourceOpacity >= 1 && !isolateRoundedTranslucentOwnColor) {
+    if (sourceOpacity >= 1 && !isolateRoundedNonOpaqueOwnPaint) {
       foldElementBackground(initialState, source, sourceStyle);
     }
     return walkMermaidAncestorBackground(

@@ -2045,6 +2045,243 @@ describe('createBrowserWechatVisualRasterizer', () => {
     }
   });
 
+  it('routes rounded opacity-1 non-opaque direct SVGs with safe gradients through foreignObject and preserves rounded translucent isolation when url() is blocked', async () => {
+    stubCanvas();
+    const whiteCanvas = document.createElement('div');
+    whiteCanvas.className = 'easymde-immersive-preview-canvas';
+    whiteCanvas.style.backgroundColor = 'rgb(255, 255, 255)';
+
+    const gradientValue = 'linear-gradient(90deg, rgba(0, 0, 255, 0.4), transparent)';
+
+    // 1a. Rounded opacity-1 direct <svg> with transparent background-color + safe linear-gradient + border-radius: 12px.
+    const roundedTransparentGradientSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    roundedTransparentGradientSvg.setAttribute('width', '100');
+    roundedTransparentGradientSvg.setAttribute('height', '60');
+    roundedTransparentGradientSvg.setAttribute('viewBox', '0 0 100 60');
+    roundedTransparentGradientSvg.setAttribute(
+      'style',
+      `background-color: transparent; background-image: ${gradientValue};`
+        + ' background-position: 10% 20%; background-size: 50% 50%; background-repeat: no-repeat;'
+        + ' border-radius: 12px; opacity: 1;',
+    );
+    roundedTransparentGradientSvg.innerHTML = '<circle cx="50" cy="30" r="10"></circle>';
+    whiteCanvas.appendChild(roundedTransparentGradientSvg);
+
+    // 1b. Rounded opacity-1 direct <svg> with translucent background-color + safe linear-gradient + calc() border-radius.
+    const roundedTranslucentCalcGradientSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    roundedTranslucentCalcGradientSvg.setAttribute('width', '100');
+    roundedTranslucentCalcGradientSvg.setAttribute('height', '60');
+    roundedTranslucentCalcGradientSvg.setAttribute('viewBox', '0 0 100 60');
+    roundedTranslucentCalcGradientSvg.setAttribute(
+      'style',
+      `background-color: rgba(255, 0, 0, 0.5); background-image: ${gradientValue};`
+        + ' border-radius: calc(10% + 4px); opacity: 1;',
+    );
+    roundedTranslucentCalcGradientSvg.innerHTML = '<circle cx="50" cy="30" r="10"></circle>';
+    whiteCanvas.appendChild(roundedTranslucentCalcGradientSvg);
+
+    // 2a. Rounded opacity-1 direct <svg> with translucent background-color + blocked url(...) + parseable border-radius: 12px.
+    const roundedBlockedUrlSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    roundedBlockedUrlSvg.setAttribute('width', '100');
+    roundedBlockedUrlSvg.setAttribute('height', '60');
+    roundedBlockedUrlSvg.setAttribute('viewBox', '0 0 100 60');
+    roundedBlockedUrlSvg.setAttribute(
+      'style',
+      'background-color: rgba(255, 0, 0, 0.5); background-image: url("https://blocked.example/bg.png");'
+        + ' border-radius: 12px; opacity: 1;',
+    );
+    roundedBlockedUrlSvg.innerHTML = '<rect x="10" y="10" width="80" height="40"></rect>';
+    whiteCanvas.appendChild(roundedBlockedUrlSvg);
+
+    // 2b. Rounded opacity-1 direct <svg> with translucent background-color + blocked url(...) + unparseable calc() border-radius.
+    const roundedBlockedUrlCalcSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    roundedBlockedUrlCalcSvg.setAttribute('width', '100');
+    roundedBlockedUrlCalcSvg.setAttribute('height', '60');
+    roundedBlockedUrlCalcSvg.setAttribute('viewBox', '0 0 100 60');
+    roundedBlockedUrlCalcSvg.setAttribute(
+      'style',
+      'background-color: rgba(255, 0, 0, 0.5); background-image: url("https://blocked.example/bg.png");'
+        + ' border-radius: calc(10% + 4px); opacity: 1;',
+    );
+    roundedBlockedUrlCalcSvg.innerHTML = '<rect x="10" y="10" width="80" height="40"></rect>';
+    whiteCanvas.appendChild(roundedBlockedUrlCalcSvg);
+
+    // 3. Control: rounded opacity-1 direct <svg> with opaque color + safe linear-gradient stays on direct <svg>.
+    const roundedOpaqueGradientControlSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    roundedOpaqueGradientControlSvg.setAttribute('width', '100');
+    roundedOpaqueGradientControlSvg.setAttribute('height', '60');
+    roundedOpaqueGradientControlSvg.setAttribute('viewBox', '0 0 100 60');
+    roundedOpaqueGradientControlSvg.setAttribute(
+      'style',
+      `background-color: rgb(255, 0, 0); background-image: ${gradientValue}; border-radius: 12px; opacity: 1;`,
+    );
+    roundedOpaqueGradientControlSvg.innerHTML = '<rect x="10" y="10" width="80" height="40"></rect>';
+    whiteCanvas.appendChild(roundedOpaqueGradientControlSvg);
+    document.body.appendChild(whiteCanvas);
+
+    // Detached clones for both counterexamples.
+    const detachedRoundedGradientSvg = roundedTransparentGradientSvg.cloneNode(true) as SVGSVGElement;
+    const detachedRoundedBlockedUrlSvg = roundedBlockedUrlSvg.cloneNode(true) as SVGSVGElement;
+
+    try {
+      // 1a. Connected rounded transparent + safe linear-gradient -> <foreignObject> keeping border-radius on inner <svg>.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(roundedTransparentGradientSvg, 'mermaid', 1, 100, 60, undefined, 1),
+      );
+      const transGradDoc = new DOMParser().parseFromString(
+        decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+        'text/html',
+      );
+      const transGradOuter = transGradDoc.querySelector('svg');
+      const transGradInner = transGradOuter?.querySelector(':scope > foreignObject svg') as SVGSVGElement | null;
+      expect(transGradInner).not.toBeNull();
+      expect(transGradOuter?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      expect(transGradOuter?.style.getPropertyValue('background-image')).toBe('');
+      expect(transGradOuter?.getAttribute('style') ?? '').not.toContain('radius');
+      expect(transGradInner?.style.getPropertyValue('background-image')).toBe(gradientValue);
+      expect(transGradInner?.style.getPropertyValue('background-position')).toBe('10% 20%');
+      expect(transGradInner?.style.getPropertyValue('background-size')).toBe('50% 50%');
+      expect(transGradInner?.style.getPropertyValue('background-repeat')).toBe('no-repeat');
+      expect(transGradInner?.getAttribute('style') ?? '').toMatch(/border-(?:top-left-)?radius:\s*12px/u);
+
+      // 1b. Connected rounded translucent + safe linear-gradient + calc(10% + 4px) -> <foreignObject>.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(roundedTranslucentCalcGradientSvg, 'mermaid', 1, 100, 60, undefined, 1),
+      );
+      const calcGradDoc = new DOMParser().parseFromString(
+        decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+        'text/html',
+      );
+      const calcGradOuter = calcGradDoc.querySelector('svg');
+      const calcGradInner = calcGradOuter?.querySelector(':scope > foreignObject svg') as SVGSVGElement | null;
+      expect(calcGradInner).not.toBeNull();
+      expect(calcGradOuter?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      expect(calcGradOuter?.style.getPropertyValue('background-image')).toBe('');
+      expect(calcGradOuter?.getAttribute('style') ?? '').not.toContain('radius');
+      expect(calcGradInner?.style.getPropertyValue('background-color')).toBe('rgba(255, 0, 0, 0.5)');
+      expect(calcGradInner?.style.getPropertyValue('background-image')).toBe(gradientValue);
+      expect(calcGradInner?.style.getPropertyValue('border-radius')).toBe('calc(10% + 4px)');
+
+      // 1c. Detached rounded transparent + safe linear-gradient with layoutMagnification: 2 -> <foreignObject>.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize({
+        height: 60,
+        inheritedBackground: { color: 'rgb(255, 255, 255)' },
+        kind: 'mermaid',
+        layoutMagnification: 2,
+        maxPixels: 16_777_216,
+        scale: 1,
+        signal: new AbortController().signal,
+        source: detachedRoundedGradientSvg,
+        width: 100,
+      });
+      const detachedGradDoc = new DOMParser().parseFromString(
+        decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+        'text/html',
+      );
+      const detachedGradOuter = detachedGradDoc.querySelector('svg');
+      const detachedGradInner = detachedGradOuter?.querySelector(':scope > foreignObject svg') as SVGSVGElement | null;
+      expect(detachedGradInner).not.toBeNull();
+      expect(detachedGradOuter?.getAttribute('width')).toBe('200');
+      expect(detachedGradOuter?.getAttribute('height')).toBe('120');
+      expect(detachedGradOuter?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      expect(detachedGradOuter?.style.getPropertyValue('background-image')).toBe('');
+      expect(detachedGradOuter?.getAttribute('style') ?? '').not.toContain('radius');
+      expect(detachedGradInner?.style.getPropertyValue('background-image')).toBe(gradientValue);
+      expect(detachedGradInner?.style.getPropertyValue('border-radius')).toBe('12px');
+      expect(detachedGradInner?.style.getPropertyValue('transform')).toBe('scale(2)');
+
+      // 2a. Connected rounded translucent + blocked url(...) drops URL and emits clamped rounded <path> over pure white ancestor.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(roundedBlockedUrlSvg, 'mermaid', 1, 100, 60, undefined, 1),
+      );
+      const blockedUrlSerialized = decodeURIComponent(
+        imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? '',
+      );
+      const blockedUrlOut = new DOMParser().parseFromString(blockedUrlSerialized, 'text/html').querySelector('svg');
+      expect(blockedUrlSerialized).not.toContain('blocked.example');
+      expect(blockedUrlOut?.querySelector('foreignObject')).toBeNull();
+      expect(blockedUrlOut?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      expect(blockedUrlOut?.style.getPropertyValue('background-image')).toBe('');
+      expect(blockedUrlOut?.getAttribute('style') ?? '').not.toContain('radius');
+      expect(Array.from(blockedUrlOut?.children ?? []).map((child) => child.localName.toLowerCase())).toEqual([
+        'path',
+        'rect',
+      ]);
+      expect(blockedUrlOut?.firstElementChild?.getAttribute('fill')).toBe('rgba(255, 0, 0, 0.5)');
+      expect(blockedUrlOut?.firstElementChild?.getAttribute('d')).toBe(
+        'M 12 0 H 88 A 12 12 0 0 1 100 12 V 48 A 12 12 0 0 1 88 60 H 12 A 12 12 0 0 1 0 48 V 12 A 12 12 0 0 1 12 0 Z',
+      );
+
+      // 2b. Detached rounded translucent + blocked url(...) also drops URL and emits clamped rounded <path>.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize({
+        height: 60,
+        inheritedBackground: { color: 'rgb(255, 255, 255)' },
+        kind: 'mermaid',
+        layoutMagnification: 1,
+        maxPixels: 16_777_216,
+        scale: 1,
+        signal: new AbortController().signal,
+        source: detachedRoundedBlockedUrlSvg,
+        width: 100,
+      });
+      const detachedBlockedSerialized = decodeURIComponent(
+        imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? '',
+      );
+      const detachedBlockedOut = new DOMParser()
+        .parseFromString(detachedBlockedSerialized, 'text/html')
+        .querySelector('svg');
+      expect(detachedBlockedSerialized).not.toContain('blocked.example');
+      expect(detachedBlockedOut?.querySelector('foreignObject')).toBeNull();
+      expect(detachedBlockedOut?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      expect(detachedBlockedOut?.style.getPropertyValue('background-image')).toBe('');
+      expect(detachedBlockedOut?.getAttribute('style') ?? '').not.toContain('radius');
+      expect(Array.from(detachedBlockedOut?.children ?? []).map((child) => child.localName.toLowerCase())).toEqual([
+        'path',
+        'rect',
+      ]);
+      expect(detachedBlockedOut?.firstElementChild?.getAttribute('fill')).toBe('rgba(255, 0, 0, 0.5)');
+
+      // 2c. Connected rounded translucent + blocked url(...) + unparseable calc() radius routes through <foreignObject> without URL.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(roundedBlockedUrlCalcSvg, 'mermaid', 1, 100, 60, undefined, 1),
+      );
+      const blockedCalcSerialized = decodeURIComponent(
+        imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? '',
+      );
+      const blockedCalcDoc = new DOMParser().parseFromString(blockedCalcSerialized, 'text/html');
+      const blockedCalcOuter = blockedCalcDoc.querySelector('svg');
+      const blockedCalcInner = blockedCalcOuter?.querySelector(':scope > foreignObject svg') as SVGSVGElement | null;
+      expect(blockedCalcSerialized).not.toContain('blocked.example');
+      expect(blockedCalcInner).not.toBeNull();
+      expect(blockedCalcOuter?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      expect(blockedCalcOuter?.getAttribute('style') ?? '').not.toContain('radius');
+      expect(blockedCalcInner?.style.getPropertyValue('background-color')).toBe('rgba(255, 0, 0, 0.5)');
+      expect(blockedCalcInner?.style.getPropertyValue('background-image')).toBe('');
+      expect(blockedCalcInner?.style.getPropertyValue('border-radius')).toBe('calc(10% + 4px)');
+
+      // 3. Control: opaque rounded direct <svg> with safe linear-gradient stays on direct <svg> with preserved border-radius.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(roundedOpaqueGradientControlSvg, 'mermaid', 1, 100, 60, undefined, 1),
+      );
+      const opaqueControlOut = new DOMParser()
+        .parseFromString(
+          decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+          'text/html',
+        )
+        .querySelector('svg');
+      expect(opaqueControlOut?.querySelector('foreignObject')).toBeNull();
+      expect(opaqueControlOut?.style.getPropertyValue('background-color')).toBe('rgb(255, 0, 0)');
+      expect(opaqueControlOut?.style.getPropertyValue('background-image')).toBe(gradientValue);
+      expect(opaqueControlOut?.getAttribute('style') ?? '').toMatch(/border-(?:top-left-)?radius:\s*12px/u);
+      expect(opaqueControlOut?.querySelector(':scope > path')).toBeNull();
+      expect(Array.from(opaqueControlOut?.children ?? []).map((child) => child.localName.toLowerCase())).toEqual([
+        'rect',
+      ]);
+    } finally {
+      whiteCanvas.remove();
+    }
+  });
+
   it('maps direct SVG background shapes across preserveAspectRatio viewport alignments and meet/slice/none modes', async () => {
     stubCanvas();
     const whiteCanvas = document.createElement('div');

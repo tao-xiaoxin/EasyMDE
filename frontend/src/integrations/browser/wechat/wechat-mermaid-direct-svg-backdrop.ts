@@ -227,17 +227,24 @@ export function inspectDirectSvgCapture(
     !hoistOpacity
     && ownHasNonZeroRadius
     && ownVisibleTranslucentColor
-    && !ownDirectSvgPaint.hasImage;
+    && !ownDirectSvgPaint.safeImage;
+  const isolateRoundedSafeImage =
+    !hoistOpacity
+    && ownHasNonZeroRadius
+    && Boolean(ownDirectSvgPaint.safeImage)
+    && !isOpaqueBackgroundColor(ownDirectSvgPaint.color);
   // Unparseable non-zero border-radius (such as calc(...) or 1rem on detached
   // clones) combined with reduced opacity or a translucent own fill cannot be
-  // approximated by a square <rect>; likewise, a reduced-opacity direct <svg>
-  // with a safe own background-image (such as a CSS gradient) cannot be
-  // expressed as a solid SVG fill while resolveMermaidInheritedBackground omits
-  // source at opacity < 1. Route both through <foreignObject> so the browser
-  // CSS engine renders the inner <svg>'s own paint and opacity over the
-  // unattenuated square ancestor backdrop.
+  // approximated by a square <rect>; likewise, a direct <svg> with a safe own
+  // background-image (such as a CSS gradient) at opacity < 1 or with a non-zero
+  // border-radius and non-opaque background-color cannot be expressed as a
+  // solid SVG fill while resolveMermaidInheritedBackground omits source. Route
+  // these cases through <foreignObject> so the browser CSS engine renders the
+  // inner <svg>'s own paint, border-radius, and opacity over the unattenuated
+  // square ancestor backdrop.
   const needsForeignObject =
     (ownHasNonZeroRadius && !ownDirectSvgRadii && (hoistOpacity || isolateRoundedTranslucentFill))
+    || isolateRoundedSafeImage
     || (hoistOpacity && directSvgOpacity > 0 && Boolean(ownDirectSvgPaint.safeImage));
   return {
     directSvgOpacity,

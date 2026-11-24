@@ -1401,6 +1401,7 @@ describe("Mermaid background ancestor walk", () => {
 				width: "600px",
 			};
 			let svgBgColor = "rgba(255, 0, 0, 0.5)";
+			let svgBgImage = "none";
 			let svgBorderRadius = "12px";
 			const originalGetComputedStyle = window.getComputedStyle.bind(window);
 			const mockStyle = (
@@ -1423,6 +1424,7 @@ describe("Mermaid background ancestor walk", () => {
 					const map: Record<string, string> = {
 						...baseStyleMap,
 						"background-color": svgBgColor,
+						"background-image": svgBgImage,
 						"border-bottom-left-radius": svgBorderRadius,
 						"border-bottom-right-radius": svgBorderRadius,
 						"border-radius": svgBorderRadius,
@@ -1470,9 +1472,89 @@ describe("Mermaid background ancestor walk", () => {
 			).resolves.toEqual({ method: "clipboard", status: "copied" });
 			expect(rasterizeSpy.mock.calls[0]?.[0]?.mermaidCapture).toBeUndefined();
 
-			// 2. Opaque control (rgb(255, 0, 0) + border-radius: 12px) remains admitted in mermaid-responsive.
+			// 2. Transparent background-color + safe linear-gradient + border-radius: 12px rejects mermaid-responsive -> falls back cleanly to mermaid-root/<foreignObject>.
+			rasterizeSpy.mockClear();
+			ImageStub.sources = [];
+			svgBgColor = "rgba(0, 0, 0, 0)";
+			svgBgImage = "linear-gradient(90deg, rgba(0, 0, 255, 0.4), transparent)";
+			svgBorderRadius = "12px";
+			await expect(
+				clipboard.copy(preview, pngOptions(rasterizer, uploadPort())),
+			).resolves.toEqual({ method: "clipboard", status: "copied" });
+			expect(rasterizeSpy.mock.calls[0]?.[0]?.mermaidCapture).toBeUndefined();
+			const roundedTransparentGradientDoc = new DOMParser().parseFromString(
+				decodedSvg(ImageStub.sources[0]),
+				"text/html",
+			);
+			const roundedTransparentGradientOuter =
+				roundedTransparentGradientDoc.querySelector("svg");
+			const roundedTransparentGradientInner =
+				roundedTransparentGradientOuter?.querySelector(
+					":scope > foreignObject svg",
+				);
+			expect(roundedTransparentGradientInner).not.toBeNull();
+			expect(
+				roundedTransparentGradientOuter?.style.getPropertyValue(
+					"background-color",
+				),
+			).toBe("rgb(255, 255, 255)");
+			expect(
+				roundedTransparentGradientOuter?.style.getPropertyValue(
+					"background-image",
+				),
+			).toBe("");
+			expect(
+				roundedTransparentGradientInner?.getAttribute("style") ?? "",
+			).toContain(svgBgImage);
+			expect(
+				roundedTransparentGradientInner?.getAttribute("style") ?? "",
+			).toMatch(/border-(?:top-left-)?radius:\s*12px/u);
+
+			// 3. Translucent background-color + safe linear-gradient + border-radius: 12px also rejects mermaid-responsive -> falls back cleanly to mermaid-root/<foreignObject>.
+			rasterizeSpy.mockClear();
+			ImageStub.sources = [];
+			svgBgColor = "rgba(255, 0, 0, 0.5)";
+			svgBgImage = "linear-gradient(90deg, rgba(0, 0, 255, 0.2), transparent)";
+			svgBorderRadius = "12px";
+			await expect(
+				clipboard.copy(preview, pngOptions(rasterizer, uploadPort())),
+			).resolves.toEqual({ method: "clipboard", status: "copied" });
+			expect(rasterizeSpy.mock.calls[0]?.[0]?.mermaidCapture).toBeUndefined();
+			const roundedTranslucentGradientDoc = new DOMParser().parseFromString(
+				decodedSvg(ImageStub.sources[0]),
+				"text/html",
+			);
+			const roundedTranslucentGradientOuter =
+				roundedTranslucentGradientDoc.querySelector("svg");
+			const roundedTranslucentGradientInner =
+				roundedTranslucentGradientOuter?.querySelector(
+					":scope > foreignObject svg",
+				);
+			expect(roundedTranslucentGradientInner).not.toBeNull();
+			expect(
+				roundedTranslucentGradientOuter?.style.getPropertyValue(
+					"background-color",
+				),
+			).toBe("rgb(255, 255, 255)");
+			expect(
+				roundedTranslucentGradientOuter?.style.getPropertyValue(
+					"background-image",
+				),
+			).toBe("");
+			expect(
+				roundedTranslucentGradientInner?.getAttribute("style") ?? "",
+			).toContain(svgBgImage);
+			expect(
+				roundedTranslucentGradientInner?.getAttribute("style") ?? "",
+			).toContain("rgba(255, 0, 0, 0.5)");
+			expect(
+				roundedTranslucentGradientInner?.getAttribute("style") ?? "",
+			).toMatch(/border-(?:top-left-)?radius:\s*12px/u);
+
+			// 4. Opaque control (rgb(255, 0, 0) + border-radius: 12px, no gradient) remains admitted in mermaid-responsive.
 			rasterizeSpy.mockClear();
 			svgBgColor = "rgb(255, 0, 0)";
+			svgBgImage = "none";
 			svgBorderRadius = "12px";
 			await expect(
 				clipboard.copy(preview, pngOptions(rasterizer, uploadPort())),
@@ -1482,9 +1564,10 @@ describe("Mermaid background ancestor walk", () => {
 				mermaidCapture: "responsive-viewport",
 			});
 
-			// 3. Square translucent (rgba(255, 0, 0, 0.5) + border-radius: 0px) remains admitted in mermaid-responsive.
+			// 5. Square translucent (rgba(255, 0, 0, 0.5) + border-radius: 0px, no gradient) remains admitted in mermaid-responsive.
 			rasterizeSpy.mockClear();
 			svgBgColor = "rgba(255, 0, 0, 0.5)";
+			svgBgImage = "none";
 			svgBorderRadius = "0px";
 			await expect(
 				clipboard.copy(preview, pngOptions(rasterizer, uploadPort())),

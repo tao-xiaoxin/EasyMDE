@@ -172,10 +172,14 @@ async function copyHeading(
 	pseudoOverrides: Record<string, string> = {},
 	typedOverrides: Record<string, unknown> | null = {},
 	sourceOverrides: Record<string, string> = {},
+	parentOverrides: Record<string, string> = {},
+	wrapParentInContents = false,
 ) {
 	const preview = document.createElement("article");
 	preview.setAttribute("data-easymde-preview-html-sink", "1");
-	preview.innerHTML = `<${fixture.tag}>${fixture.markup}</${fixture.tag}><p>Following</p>`;
+	preview.innerHTML = wrapParentInContents
+		? `<div data-contents-wrapper="1"><${fixture.tag}>${fixture.markup}</${fixture.tag}></div><p>Following</p>`
+		: `<${fixture.tag}>${fixture.markup}</${fixture.tag}><p>Following</p>`;
 	const source = preview.querySelector(fixture.tag);
 	if (!source) throw new Error("heading fixture missing");
 	for (const [property, value] of Object.entries(sourceOverrides)) {
@@ -290,6 +294,16 @@ async function copyHeading(
 					visibility: "visible",
 					"writing-mode": "horizontal-tb",
 					...sourceOverrides,
+				});
+			}
+			if (element.hasAttribute("data-contents-wrapper")) {
+				return declaration({ display: "contents", visibility: "visible" });
+			}
+			if (element.tagName === "ARTICLE") {
+				return declaration({
+					display: "block",
+					visibility: "visible",
+					...parentOverrides,
 				});
 			}
 			return declaration({ display: "block", visibility: "visible" });
@@ -517,7 +531,15 @@ describe("empty absolute heading after decoration", () => {
 		},
 	);
 
-	it.each([
+	const nonNaturalBoxCases: ReadonlyArray<
+		Readonly<{
+			name: string;
+			typed: Record<string, unknown> | null;
+			styles: Record<string, string>;
+			parent?: Record<string, string>;
+			wrapParentInContents?: boolean;
+		}>
+	> = [
 		{
 			name: "fixed height",
 			typed: { height: { value: 100, unit: "px" }, "block-size": { value: 100, unit: "px" } },
@@ -543,28 +565,171 @@ describe("empty absolute heading after decoration", () => {
 			typed: null,
 			styles: { "line-height": "20px" },
 		},
-	])("does not project $name without a proven natural horizontal box", async ({ typed, styles }) => {
-		const base = cases[0];
-		if (!base) throw new Error("heading fixture missing");
-		const fixture: HeadingCase = {
-			...base,
-			height: 100,
-			paddingBottom: 0,
-			borderTop: 0,
-			borderBottom: 0,
-			bottom: -10,
-			paintHeight: 3,
-			observedTop: 107,
-		};
-		const { holder } = await copyHeading(fixture, "none", "clipboard", {}, typed, styles);
-		const heading = holder.querySelector("h1");
-		const marker = heading?.querySelector(':scope > span[aria-hidden="true"]');
-		if (!marker) throw new Error("unsupported heading marker missing");
-		expect(declaredStyleValue(marker, "position")).toBe("absolute");
-		expect(marker.textContent).toBe(" ");
-		expect(20 + fixture.paddingBottom - fixture.bottom - fixture.paintHeight).toBe(27);
-		expect(fixture.borderTop + fixture.observedTop).toBe(107);
-	});
+		{
+			name: "explicit CSSOM aspect-ratio",
+			typed: {},
+			styles: { "aspect-ratio": "4 / 1", "line-height": "20px" },
+		},
+		{
+			name: "explicit Typed OM aspect-ratio ratio",
+			typed: { "aspect-ratio": { value: "4 / 1" } },
+			styles: { "line-height": "20px" },
+		},
+		{
+			name: "explicit Typed OM CSSStyleValue aspect-ratio",
+			typed: { "aspect-ratio": { toString: () => "4 / 1" } },
+			styles: { "line-height": "20px" },
+		},
+		{
+			name: "explicit numeric Typed OM aspect-ratio",
+			typed: { "aspect-ratio": { value: 2, unit: "number" } },
+			styles: { "line-height": "20px" },
+		},
+		{
+			name: "size containment",
+			typed: {},
+			styles: { contain: "size", "line-height": "20px" },
+		},
+		{
+			name: "strict containment",
+			typed: {},
+			styles: { contain: "strict", "line-height": "20px" },
+		},
+		{
+			name: "CSS Grid parent",
+			typed: {},
+			styles: { "line-height": "20px" },
+			parent: { display: "grid" },
+		},
+		{
+			name: "CSS inline-grid parent",
+			typed: {},
+			styles: { "line-height": "20px" },
+			parent: { display: "inline-grid" },
+		},
+		{
+			name: "CSS Grid parent through display: contents wrapper",
+			typed: {},
+			styles: { "line-height": "20px" },
+			parent: { display: "grid" },
+			wrapParentInContents: true,
+		},
+		{
+			name: "CSS Flex parent",
+			typed: {},
+			styles: { "line-height": "20px" },
+			parent: { display: "flex" },
+		},
+		{
+			name: "CSS inline-flex parent",
+			typed: {},
+			styles: { "line-height": "20px" },
+			parent: { display: "inline-flex" },
+		},
+		{
+			name: "CSS table-cell parent",
+			typed: {},
+			styles: { "line-height": "20px" },
+			parent: { display: "table-cell" },
+		},
+		{
+			name: "vertical writing-mode parent",
+			typed: {},
+			styles: { "line-height": "20px" },
+			parent: { display: "block", "writing-mode": "vertical-rl" },
+		},
+	];
+
+	it.each(nonNaturalBoxCases)(
+		"does not project $name without a proven natural horizontal box",
+		async ({ typed, styles, parent = {}, wrapParentInContents = false }) => {
+			const base = cases[0];
+			if (!base) throw new Error("heading fixture missing");
+			const fixture: HeadingCase = {
+				...base,
+				height: 100,
+				paddingBottom: 0,
+				borderTop: 0,
+				borderBottom: 0,
+				bottom: -10,
+				paintHeight: 3,
+				observedTop: 107,
+			};
+			const { holder } = await copyHeading(
+				fixture,
+				"none",
+				"clipboard",
+				{},
+				typed,
+				styles,
+				parent,
+				wrapParentInContents,
+			);
+			const heading = holder.querySelector("h1");
+			const marker = heading?.querySelector(':scope > span[aria-hidden="true"]');
+			if (!marker) throw new Error("unsupported heading marker missing");
+			expect(declaredStyleValue(marker, "position")).toBe("absolute");
+			expect(marker.textContent).toBe(" ");
+			expect(20 + fixture.paddingBottom - fixture.bottom - fixture.paintHeight).toBe(27);
+			expect(fixture.borderTop + fixture.observedTop).toBe(107);
+		},
+	);
+
+	const naturalBlockParentCases: ReadonlyArray<
+		Readonly<{
+			name: string;
+			typed: Record<string, unknown>;
+			styles: Record<string, string>;
+			parent: Record<string, string>;
+			wrapParentInContents: boolean;
+		}>
+	> = [
+		{
+			name: "flow-root parent with auto aspect-ratio",
+			typed: { "aspect-ratio": { value: "auto" } },
+			styles: { "aspect-ratio": "auto" },
+			parent: { display: "flow-root", "writing-mode": "horizontal-tb" },
+			wrapParentInContents: false,
+		},
+		{
+			name: "list-item parent with CSSStyleValue auto aspect-ratio",
+			typed: { "aspect-ratio": { toString: () => "auto" } },
+			styles: { "aspect-ratio": "auto" },
+			parent: { display: "list-item", "writing-mode": "horizontal-tb" },
+			wrapParentInContents: false,
+		},
+		{
+			name: "block parent through display: contents wrapper",
+			typed: { "aspect-ratio": { value: "normal" } },
+			styles: { "aspect-ratio": "auto" },
+			parent: { display: "block", "writing-mode": "horizontal-tb" },
+			wrapParentInContents: true,
+		},
+	];
+
+	it.each(naturalBlockParentCases)(
+		"projects headings with a natural horizontal block parent and auto aspect-ratio: $name",
+		async ({ typed, styles, parent, wrapParentInContents }) => {
+			const fixture = cases[0];
+			if (!fixture) throw new Error("heading fixture missing");
+			const { holder } = await copyHeading(
+				fixture,
+				"none",
+				"clipboard",
+				{},
+				typed,
+				styles,
+				parent,
+				wrapParentInContents,
+			);
+			const heading = holder.querySelector(fixture.tag);
+			if (!heading) throw new Error("copied heading missing");
+			const paint = gradientPaint(heading);
+			if (!paint) throw new Error("projected heading paint missing");
+			expect(declaredStyleValue(paint, "position")).toBe("static");
+			expect(paint.textContent).toBe("\u2060");
+		},
+	);
 
 	it.each(cases)(
 		"derives the observed source top without a fixed offset: $name",

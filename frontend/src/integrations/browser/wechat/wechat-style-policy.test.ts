@@ -6,7 +6,9 @@ import type { WechatDimensionSemanticsContext } from "./wechat-dimension-semanti
 import { ordinaryDimensionSemanticsSignature } from "./wechat-fidelity-signature";
 import {
 	appendPortableStyleDeclaration,
+	COPY_STYLE_PROPERTIES,
 	createStyleDeclarationContext,
+	portableStyleProperties,
 	semanticTransformOriginSignature,
 	semanticPaddingValue,
 	transportableTransformOriginSemantics,
@@ -935,6 +937,163 @@ describe("responsive portable padding semantics", () => {
 			).toBeNull();
 		} finally {
 			fixture.cleanup();
+		}
+	});
+});
+
+describe("portable style property catalog deduplication", () => {
+	it("contains zero duplicate properties in COPY_STYLE_PROPERTIES", () => {
+		expect(new Set(COPY_STYLE_PROPERTIES).size).toBe(
+			COPY_STYLE_PROPERTIES.length,
+		);
+		for (const property of [
+			"border-top-width",
+			"border-right-width",
+			"border-bottom-width",
+			"border-left-width",
+			"border-radius",
+		]) {
+			expect(
+				COPY_STYLE_PROPERTIES.filter((entry) => entry === property),
+			).toHaveLength(1);
+		}
+	});
+
+	it("emits zero duplicate properties from portableStyleProperties across all combinations", () => {
+		const ordinary = document.createElement("div");
+
+		const taskItem = document.createElement("li");
+		taskItem.className = "task-list-item";
+		const taskCheckbox = document.createElement("input");
+		taskCheckbox.type = "checkbox";
+		taskItem.append(taskCheckbox);
+
+		const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+		const svgPath = document.createElementNS(
+			"http://www.w3.org/2000/svg",
+			"path",
+		);
+		svg.append(svgPath);
+		const detachedSvgPath = document.createElementNS(
+			"http://www.w3.org/2000/svg",
+			"path",
+		);
+
+		const katex = document.createElement("span");
+		katex.className = "katex";
+		const katexChild = document.createElement("span");
+		katex.append(katexChild);
+
+		const math = document.createElementNS(
+			"http://www.w3.org/1998/Math/MathML",
+			"math",
+		);
+
+		const katexTaskItem = document.createElement("li");
+		katexTaskItem.className = "task-list-item";
+		const katexCheckbox = document.createElement("input");
+		katexCheckbox.type = "checkbox";
+		katexTaskItem.append(katexCheckbox);
+		katex.append(katexTaskItem);
+
+		const samples: ReadonlyArray<
+			Readonly<{ element: Element; label: string }>
+		> = [
+			{ element: ordinary, label: "ordinary" },
+			{ element: taskCheckbox, label: "task-checkbox" },
+			{ element: svg, label: "svg" },
+			{ element: svgPath, label: "svg-child" },
+			{ element: detachedSvgPath, label: "detached-svg-child" },
+			{ element: katex, label: "special-katex" },
+			{ element: katexChild, label: "special-katex-child" },
+			{ element: math, label: "special-math" },
+			{ element: katexCheckbox, label: "special-task-checkbox" },
+		];
+
+		for (const { element, label } of samples) {
+			for (const root of [false, true]) {
+				for (const pseudoElement of [false, true]) {
+					const properties = portableStyleProperties(
+						element,
+						pseudoElement,
+						root,
+					);
+					const unique = new Set(properties);
+					expect(
+						unique.size,
+						`${label} (root=${String(root)}, pseudo=${String(pseudoElement)})`,
+					).toBe(properties.length);
+				}
+			}
+		}
+
+		expect(portableStyleProperties(ordinary, false, true)).not.toContain(
+			"width",
+		);
+		expect(portableStyleProperties(ordinary, false, true)).not.toContain(
+			"height",
+		);
+		expect(
+			portableStyleProperties(ordinary, true, true).filter(
+				(property) => "width" === property || "height" === property,
+			),
+		).toEqual(["width", "height"]);
+		expect(
+			portableStyleProperties(ordinary, true, false).filter(
+				(property) => "width" === property || "height" === property,
+			),
+		).toEqual(["width", "height"]);
+		expect(
+			portableStyleProperties(katex, true, true).filter(
+				(property) => "width" === property || "height" === property,
+			),
+		).toEqual(["width", "height"]);
+	});
+
+	it("emits border and pseudo dimension declarations once in modern and legacy serializers", async () => {
+		const source = document.createElement("h2");
+		const measured = style({
+			"border-top-width": "2px",
+			"border-right-width": "2px",
+			"border-bottom-width": "2px",
+			"border-left-width": "2px",
+			"border-radius": "6px",
+			content: '""',
+			display: "block",
+			height: "4px",
+			width: "40px",
+		});
+		const modern = await styleDeclarations(
+			source,
+			measured,
+			true,
+			false,
+			runtime(measured),
+			new Map(),
+		);
+		const legacy = styleDeclarationsSynchronously(
+			source,
+			measured,
+			true,
+			false,
+			runtime(measured),
+		);
+		if (null === legacy) {
+			throw new Error("synchronous style serialization failed");
+		}
+		expect(legacy).toEqual(modern);
+		for (const property of [
+			"border-top-width",
+			"border-right-width",
+			"border-bottom-width",
+			"border-left-width",
+			"border-radius",
+			"width",
+			"height",
+		]) {
+			expect(
+				modern.filter((entry) => entry.startsWith(`${property}:`)),
+			).toHaveLength(1);
 		}
 	});
 });

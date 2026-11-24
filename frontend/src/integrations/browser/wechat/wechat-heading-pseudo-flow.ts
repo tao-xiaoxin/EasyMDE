@@ -171,9 +171,15 @@ type HeadingComputedStyleMap = Readonly<{
 }>;
 
 const HEADING_NATURAL_MIN_HEIGHT_VALUES = new Set(['auto', '0px']);
+const HEADING_NATURAL_ASPECT_RATIO_VALUES = new Set(['auto', 'normal']);
+const HEADING_NATURAL_PARENT_DISPLAY_VALUES = new Set([
+  'block',
+  'flow-root',
+  'list-item',
+  'inline-block'
+]);
 
-function headingTypedCssValue(styleMap: HeadingComputedStyleMap, property: string): string | null {
-  const candidate = styleMap.get(property);
+function headingTypedCandidateValue(candidate: unknown): string | null {
   if (!candidate || 'object' !== typeof candidate || !('value' in candidate)) return null;
   const value = (candidate as { value?: unknown }).value;
   if ('string' === typeof value) return value.trim().toLowerCase() || null;
@@ -184,18 +190,92 @@ function headingTypedCssValue(styleMap: HeadingComputedStyleMap, property: strin
   return `${value}${unit}`.toLowerCase();
 }
 
+function headingTypedCssValue(styleMap: HeadingComputedStyleMap, property: string): string | null {
+  return headingTypedCandidateValue(styleMap.get(property));
+}
+
+function headingHasNaturalAspectRatio(
+  sourceComputed: CSSStyleDeclaration,
+  styleMap: HeadingComputedStyleMap
+): boolean {
+  const cssAspectRatio = sourceComputed.getPropertyValue('aspect-ratio').trim().toLowerCase();
+  if (cssAspectRatio && !HEADING_NATURAL_ASPECT_RATIO_VALUES.has(cssAspectRatio)) {
+    return false;
+  }
+  const candidate = styleMap.get('aspect-ratio');
+  if (undefined === candidate || null === candidate) {
+    return true;
+  }
+  if ('string' === typeof candidate) {
+    const normalized = candidate.trim().toLowerCase();
+    return '' === normalized || HEADING_NATURAL_ASPECT_RATIO_VALUES.has(normalized);
+  }
+  const typed = headingTypedCandidateValue(candidate);
+  if (null !== typed) {
+    return HEADING_NATURAL_ASPECT_RATIO_VALUES.has(typed);
+  }
+  if ('object' === typeof candidate) {
+    const stringify = (candidate as { toString?: unknown }).toString;
+    if ('function' === typeof stringify && stringify !== Object.prototype.toString) {
+      const text = String(candidate).trim().toLowerCase();
+      return '' === text || HEADING_NATURAL_ASPECT_RATIO_VALUES.has(text);
+    }
+  }
+  return false;
+}
+
+function headingHasNaturalBlockParent(
+  source: Element,
+  getComputedStyle: BrowserWechatClipboardRuntime['getComputedStyle']
+): boolean {
+  let ancestor = source.parentElement;
+  while (ancestor) {
+    const parentComputed = getComputedStyle(ancestor);
+    const parentDisplay = parentComputed.getPropertyValue('display').trim().toLowerCase();
+    if ('contents' === parentDisplay) {
+      ancestor = ancestor.parentElement;
+      continue;
+    }
+    if (!HEADING_NATURAL_PARENT_DISPLAY_VALUES.has(parentDisplay)) {
+      return false;
+    }
+    const parentWritingMode = parentComputed.getPropertyValue('writing-mode').trim().toLowerCase();
+    return !parentWritingMode || 'horizontal-tb' === parentWritingMode;
+  }
+  return false;
+}
+
+function headingHasSizeContainment(sourceComputed: CSSStyleDeclaration): boolean {
+  const contain = sourceComputed.getPropertyValue('contain').trim().toLowerCase();
+  if (contain && 'none' !== contain) {
+    if (contain.split(/\s+/u).some((token) => 'size' === token || 'strict' === token)) {
+      return true;
+    }
+  }
+  const contentVisibility = sourceComputed.getPropertyValue('content-visibility').trim().toLowerCase();
+  return Boolean(contentVisibility && 'visible' !== contentVisibility);
+}
+
 /**
  * Proves that a heading's border-box bottom aligns with the natural end of its
  * in-flow horizontal content plus bottom padding and border. CSSOM alone reports
  * used pixels for `height`, so CSS Typed OM must confirm unconstrained block
- * sizing and `horizontal-tb` writing mode before projecting an absolute
+ * sizing, natural aspect ratio, a non-stretching horizontal block formatting
+ * parent, and `horizontal-tb` writing mode before projecting an absolute
  * `::after` rule into trailing normal flow.
  */
 function headingHasProvenNaturalHorizontalBox(
   source: Element,
-  sourceComputed: CSSStyleDeclaration
+  sourceComputed: CSSStyleDeclaration,
+  getComputedStyle: BrowserWechatClipboardRuntime['getComputedStyle']
 ): boolean {
   if ('horizontal-tb' !== sourceComputed.getPropertyValue('writing-mode').trim().toLowerCase()) {
+    return false;
+  }
+  if (!headingHasNaturalBlockParent(source, getComputedStyle)) {
+    return false;
+  }
+  if (headingHasSizeContainment(sourceComputed)) {
     return false;
   }
   const styleMapFactory = (source as Element & { computedStyleMap?: () => HeadingComputedStyleMap }).computedStyleMap;
@@ -208,6 +288,9 @@ function headingHasProvenNaturalHorizontalBox(
   }
   if (!styleMap || 'function' !== typeof styleMap.get) return false;
   try {
+    if (!headingHasNaturalAspectRatio(sourceComputed, styleMap)) {
+      return false;
+    }
     const height = headingTypedCssValue(styleMap, 'height');
     const blockSize = headingTypedCssValue(styleMap, 'block-size');
     const minHeight = headingTypedCssValue(styleMap, 'min-height');
@@ -400,7 +483,7 @@ export function headingAfterEmptyPseudoFlowFor(
     'visible' !== value(sourceComputed, 'overflow') ||
     'visible' !== value(sourceComputed, 'visibility') ||
     null === sourceOpacity || sourceOpacity <= 0 || sourceOpacity > 1 ||
-    !headingHasProvenNaturalHorizontalBox(source, sourceComputed) ||
+    !headingHasProvenNaturalHorizontalBox(source, sourceComputed, getComputedStyle) ||
     'block' !== value(computed, 'display') ||
     'absolute' !== value(computed, 'position') ||
     'none' !== value(computed, 'float') ||

@@ -20,6 +20,7 @@ import {
 	UNSAFE_STYLE_VALUE,
 	UNSAFE_URL,
 	URL_ATTRIBUTES,
+	uniqueStyleProperties,
 } from "./wechat-style-policy-catalog";
 import {
 	contentBoxDimensionValue,
@@ -427,24 +428,62 @@ export type PortableStyleDeclarationContext = Readonly<{
 	style: CSSStyleDeclaration;
 }>;
 
+const PORTABLE_ORDINARY_ROOT_PROPERTIES = COPY_STYLE_PROPERTIES;
+const PORTABLE_ORDINARY_ROOT_PSEUDO_PROPERTIES = uniqueStyleProperties(
+	COPY_STYLE_PROPERTIES,
+	["width", "height"],
+);
+const PORTABLE_ORDINARY_PROPERTIES = uniqueStyleProperties(
+	COPY_STYLE_PROPERTIES,
+	ORDINARY_LAYOUT_PROPERTIES,
+);
+const PORTABLE_ORDINARY_TASK_CHECKBOX_PROPERTIES = uniqueStyleProperties(
+	COPY_STYLE_PROPERTIES,
+	TASK_LIST_CHECKBOX_STYLE_PROPERTIES,
+	ORDINARY_LAYOUT_PROPERTIES,
+);
+const PORTABLE_SPECIAL_PROPERTIES = uniqueStyleProperties(
+	COPY_STYLE_PROPERTIES,
+	SPECIAL_LAYOUT_PROPERTIES,
+);
+const PORTABLE_SVG_SPECIAL_PROPERTIES = uniqueStyleProperties(
+	COPY_STYLE_PROPERTIES,
+	SVG_STYLE_PROPERTIES,
+	SPECIAL_LAYOUT_PROPERTIES,
+);
+
 export function portableStyleProperties(
 	source: Element,
 	pseudoElement: boolean,
 	root: boolean,
 ): readonly string[] {
-	return [
-		...COPY_STYLE_PROPERTIES,
-		...(isTaskListCheckbox(source) && !pseudoElement
-			? TASK_LIST_CHECKBOX_STYLE_PROPERTIES
-			: []),
-		...(isSvgElement(source) ? SVG_STYLE_PROPERTIES : []),
-		...(supportsSpecialLayout(source)
+	const taskCheckbox = isTaskListCheckbox(source) && !pseudoElement;
+	const svg = isSvgElement(source);
+	const specialLayout = supportsSpecialLayout(source);
+	if (!taskCheckbox && !svg) {
+		if (specialLayout) return PORTABLE_SPECIAL_PROPERTIES;
+		if (!root) return PORTABLE_ORDINARY_PROPERTIES;
+		return pseudoElement
+			? PORTABLE_ORDINARY_ROOT_PSEUDO_PROPERTIES
+			: PORTABLE_ORDINARY_ROOT_PROPERTIES;
+	}
+	if (svg && specialLayout && !taskCheckbox) {
+		return PORTABLE_SVG_SPECIAL_PROPERTIES;
+	}
+	if (taskCheckbox && !svg && !specialLayout && !root) {
+		return PORTABLE_ORDINARY_TASK_CHECKBOX_PROPERTIES;
+	}
+	return uniqueStyleProperties(
+		COPY_STYLE_PROPERTIES,
+		taskCheckbox ? TASK_LIST_CHECKBOX_STYLE_PROPERTIES : [],
+		svg ? SVG_STYLE_PROPERTIES : [],
+		specialLayout
 			? SPECIAL_LAYOUT_PROPERTIES
 			: root
 				? []
-				: ORDINARY_LAYOUT_PROPERTIES),
-		...(pseudoElement ? ["width", "height"] : []),
-	];
+				: ORDINARY_LAYOUT_PROPERTIES,
+		pseudoElement && root && !specialLayout ? ["width", "height"] : [],
+	);
 }
 
 export function createStyleDeclarationContext(

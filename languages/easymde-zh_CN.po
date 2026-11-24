@@ -1491,10 +1491,6 @@ msgstr "在下方插入表格"
 msgid "Formula"
 msgstr "公式"
 
-#: src/Admin/AdminAssets.php:1145
-msgid "Open link"
-msgstr "打开链接"
-
 #: src/Admin/AdminAssets.php:1146
 msgid "Paste"
 msgstr "粘贴"
@@ -1502,10 +1498,6 @@ msgstr "粘贴"
 #: src/Admin/AdminAssets.php:1147
 msgid "Paste as plain text"
 msgstr "粘贴为纯文本"
-
-#: src/Admin/AdminAssets.php:1148
-msgid "Save as image"
-msgstr "保存为图片"
 
 #: src/Admin/AdminAssets.php:1149
 msgid "The editor action could not be completed."

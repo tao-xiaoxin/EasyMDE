@@ -6,9 +6,11 @@ import {
   applyMermaidBackground,
   hasNonZeroBorderRadius,
   hasVisibleBackgroundColor,
+  inlineConnectedMermaidRootPaint,
   isOpaqueBackgroundColor,
   isSafeBackgroundImage,
   parseCssColorAlpha,
+  parseCssSolidColor,
   resolveMermaidInheritedBackground,
 } from './wechat-mermaid-background';
 
@@ -241,7 +243,7 @@ describe('wechat-mermaid-background', () => {
       expect(resolveMermaidInheritedBackground(source, reader)).toBeNull();
     });
 
-    it('continues past translucent intermediate ancestors until reaching an opaque backing canvas', () => {
+    it('composites translucent intermediate ancestors over the opaque backing canvas', () => {
       const canvas = document.createElement('div');
       canvas.className = 'easymde-immersive-preview-canvas';
       const translucentLayer = document.createElement('div');
@@ -269,11 +271,244 @@ describe('wechat-mermaid-background', () => {
       );
 
       expect(resolveMermaidInheritedBackground(source, reader)).toEqual({
-        color: 'rgb(24, 24, 27)',
+        color: 'rgb(33, 33, 36)',
         image: 'linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent)',
         position: '0% 0%',
         repeat: 'no-repeat',
         size: '100% 100%',
+      });
+    });
+
+    it('composites semi-transparent solid ancestor layers over an opaque backing canvas in paint order', () => {
+      const canvas = document.createElement('div');
+      canvas.className = 'easymde-immersive-preview-canvas';
+      const middleLayer = document.createElement('div');
+      const source = document.createElement('div');
+      source.className = 'easymde-mermaid';
+      middleLayer.append(source);
+      canvas.append(middleLayer);
+      document.body.append(canvas);
+
+      const whiteOverBlackReader = makeReader(
+        new Map([
+          [source, { 'background-color': 'rgba(0, 0, 0, 0)', 'background-image': 'none' }],
+          [middleLayer, { 'background-color': 'rgba(255, 255, 255, 0.5)', 'background-image': 'none' }],
+          [canvas, { 'background-color': 'rgb(0, 0, 0)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(resolveMermaidInheritedBackground(source, whiteOverBlackReader)).toEqual({
+        color: 'rgb(128, 128, 128)',
+      });
+
+      const innerLayer = document.createElement('div');
+      innerLayer.append(source);
+      middleLayer.append(innerLayer);
+      const multiLayerReader = makeReader(
+        new Map([
+          [source, { 'background-color': 'transparent', 'background-image': 'none' }],
+          [innerLayer, { 'background-color': 'rgba(255, 0, 0, 0.5)', 'background-image': 'none' }],
+          [middleLayer, { 'background-color': 'rgba(0, 0, 255, 0.5)', 'background-image': 'none' }],
+          [canvas, { 'background-color': 'black', 'background-image': 'none' }],
+        ]),
+      );
+      expect(resolveMermaidInheritedBackground(source, multiLayerReader)).toEqual({
+        color: 'rgb(128, 0, 64)',
+      });
+
+      // Without an opaque backing canvas, composite translucent layers to rgba().
+      const translucentOnlyReader = makeReader(
+        new Map([
+          [source, { 'background-color': 'transparent', 'background-image': 'none' }],
+          [innerLayer, { 'background-color': 'rgba(255, 255, 255, 0.5)', 'background-image': 'none' }],
+          [middleLayer, { 'background-color': 'rgba(0, 0, 0, 0.5)', 'background-image': 'none' }],
+          [canvas, { 'background-color': 'transparent', 'background-image': 'none' }],
+        ]),
+      );
+      expect(resolveMermaidInheritedBackground(source, translucentOnlyReader)).toEqual({
+        color: 'rgba(170, 170, 170, 0.75)',
+      });
+
+      // Unparseable translucent layers gracefully preserve the opaque backing color.
+      const unparseableLayerReader = makeReader(
+        new Map([
+          [source, { 'background-color': 'transparent', 'background-image': 'none' }],
+          [innerLayer, { 'background-color': 'oklch(0.7 0.1 200 / 0.4)', 'background-image': 'none' }],
+          [middleLayer, { 'background-color': 'color-mix(in srgb, white 50%, transparent)', 'background-image': 'none' }],
+          [canvas, { 'background-color': 'rgb(0, 0, 0)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(resolveMermaidInheritedBackground(source, unparseableLayerReader)).toEqual({
+        color: 'rgb(0, 0, 0)',
+      });
+
+      // Unparseable opaque backing is never dropped even if a nearer layer is parseable.
+      const unparseableOpaqueReader = makeReader(
+        new Map([
+          [source, { 'background-color': 'transparent', 'background-image': 'none' }],
+          [innerLayer, { 'background-color': 'rgba(255, 255, 255, 0.5)', 'background-image': 'none' }],
+          [middleLayer, { 'background-color': 'transparent', 'background-image': 'none' }],
+          [canvas, { 'background-color': 'oklch(0.95 0 0)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(resolveMermaidInheritedBackground(source, unparseableOpaqueReader)).toEqual({
+        color: 'oklch(0.95 0 0)',
+      });
+    });
+
+    it('attenuates reduced-opacity ancestor solid colors and never promotes reduced-opacity gradients at opacity 1', () => {
+      const canvas = document.createElement('div');
+      canvas.className = 'easymde-immersive-preview-canvas';
+      const tintedLayer = document.createElement('div');
+      const source = document.createElement('div');
+      source.className = 'easymde-mermaid';
+      tintedLayer.append(source);
+      canvas.append(tintedLayer);
+      document.body.append(canvas);
+
+      const tintedOverWhiteReader = makeReader(
+        new Map([
+          [source, { 'background-color': 'transparent', 'background-image': 'none' }],
+          [
+            tintedLayer,
+            {
+              'background-color': 'rgb(0, 0, 0)',
+              'background-image': 'linear-gradient(90deg, rgb(0, 0, 0), rgb(255, 255, 255))',
+              opacity: '0.1',
+            },
+          ],
+          [canvas, { 'background-color': 'rgb(255, 255, 255)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(resolveMermaidInheritedBackground(source, tintedOverWhiteReader)).toEqual({
+        color: 'rgb(230, 230, 230)',
+      });
+
+      const tintedWithoutCanvasReader = makeReader(
+        new Map([
+          [source, { 'background-color': 'transparent', 'background-image': 'none' }],
+          [
+            tintedLayer,
+            {
+              'background-color': 'rgb(0, 0, 0)',
+              'background-image': 'linear-gradient(90deg, red, blue)',
+              opacity: '0.1',
+            },
+          ],
+          [canvas, { 'background-color': 'transparent', 'background-image': 'none' }],
+        ]),
+      );
+      expect(resolveMermaidInheritedBackground(source, tintedWithoutCanvasReader)).toEqual({
+        color: 'rgba(0, 0, 0, 0.1)',
+      });
+
+      const lowOpacityGradientOnlyReader = makeReader(
+        new Map([
+          [source, { 'background-color': 'transparent', 'background-image': 'none' }],
+          [
+            tintedLayer,
+            {
+              'background-color': 'transparent',
+              'background-image': 'linear-gradient(180deg, rgb(0, 0, 0), rgb(255, 255, 255))',
+              opacity: '0.05',
+            },
+          ],
+          [canvas, { 'background-color': 'transparent', 'background-image': 'none' }],
+        ]),
+      );
+      expect(resolveMermaidInheritedBackground(source, lowOpacityGradientOnlyReader)).toBeNull();
+
+      // Reduced-opacity unsafe url() still blocks outer gradients while keeping outer solid backing.
+      const lowOpacityBlockedUrlReader = makeReader(
+        new Map([
+          [source, { 'background-color': 'transparent', 'background-image': 'none' }],
+          [
+            tintedLayer,
+            {
+              'background-color': 'transparent',
+              'background-image': 'url("https://blocked.example/overlay.png")',
+              opacity: '0.5',
+            },
+          ],
+          [
+            canvas,
+            {
+              'background-color': 'rgb(30, 30, 46)',
+              'background-image': 'linear-gradient(90deg, red, blue)',
+              opacity: '1',
+            },
+          ],
+        ]),
+      );
+      expect(resolveMermaidInheritedBackground(source, lowOpacityBlockedUrlReader)).toEqual({
+        color: 'rgb(30, 30, 46)',
+      });
+
+      // Unparseable reduced-opacity color is never promoted at full opacity 1.
+      const unparseableLowOpacityReader = makeReader(
+        new Map([
+          [source, { 'background-color': 'transparent', 'background-image': 'none' }],
+          [
+            tintedLayer,
+            {
+              'background-color': 'oklch(0.2 0.05 260)',
+              'background-image': 'none',
+              opacity: '0.1',
+            },
+          ],
+          [canvas, { 'background-color': 'transparent', 'background-image': 'none' }],
+        ]),
+      );
+      expect(resolveMermaidInheritedBackground(source, unparseableLowOpacityReader)).toBeNull();
+    });
+
+    it('preserves a direct SVG own background even with border-radius and guards direct SVG by opacity > 0', () => {
+      const canvas = document.createElement('div');
+      canvas.className = 'easymde-immersive-preview-canvas';
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      canvas.append(svg);
+      document.body.append(canvas);
+
+      const roundedSvgReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            svg,
+            {
+              'background-color': 'rgb(245, 247, 250)',
+              'background-image': 'none',
+              'border-radius': '12px',
+              opacity: '1',
+            },
+          ],
+          [canvas, { 'background-color': 'rgb(30, 30, 46)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(svg, roundedSvgReader, {
+          directSvgCapture: true,
+        }),
+      ).toEqual({
+        color: 'rgb(245, 247, 250)',
+      });
+
+      const invisibleSvgReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            svg,
+            {
+              'background-color': 'rgb(245, 247, 250)',
+              'background-image': 'none',
+              opacity: '0',
+            },
+          ],
+          [canvas, { 'background-color': 'rgb(30, 30, 46)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(svg, invisibleSvgReader, {
+          directSvgCapture: true,
+        }),
+      ).toEqual({
+        color: 'rgb(30, 30, 46)',
       });
     });
 
@@ -359,6 +594,27 @@ describe('wechat-mermaid-background', () => {
           retainedParentWrapper: true,
         }),
       ).toBeNull();
+
+      const reducedOpacityCardReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [svg, { 'background-color': 'rgba(0, 0, 0, 0)', 'background-image': 'none' }],
+          [
+            wrapper,
+            {
+              'background-color': 'rgb(255, 255, 255)',
+              'background-image': 'none',
+              opacity: '0.5',
+            },
+          ],
+          [canvas, { 'background-color': 'rgb(0, 0, 0)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(svg, reducedOpacityCardReader, {
+          directSvgCapture: true,
+          retainedParentWrapper: true,
+        }),
+      ).toBeNull();
     });
 
     it('stops before measure-host and wp-admin containers and drops unsafe url() images', () => {
@@ -391,6 +647,79 @@ describe('wechat-mermaid-background', () => {
       );
 
       expect(resolveMermaidInheritedBackground(source, reader)).toBeNull();
+    });
+  });
+
+  describe('parseCssSolidColor', () => {
+    it('parses rgb/rgba, hex, hsl/hsla, transparent, and named colors into RGBA channels', () => {
+      expect(parseCssSolidColor('transparent')).toEqual({ a: 0, b: 0, g: 0, r: 0 });
+      expect(parseCssSolidColor('rgb(10, 20, 30)')).toEqual({ a: 1, b: 30, g: 20, r: 10 });
+      expect(parseCssSolidColor('rgba(255, 255, 255, 0.5)')).toEqual({
+        a: 0.5,
+        b: 255,
+        g: 255,
+        r: 255,
+      });
+      expect(parseCssSolidColor('rgb(10 20 30 / 50%)')).toEqual({ a: 0.5, b: 30, g: 20, r: 10 });
+      expect(parseCssSolidColor('rgb(100%, 50%, 0%)')).toEqual({ a: 1, b: 0, g: 127.5, r: 255 });
+      expect(parseCssSolidColor('#fff')).toEqual({ a: 1, b: 255, g: 255, r: 255 });
+      expect(parseCssSolidColor('#0008')).toEqual({ a: 8 / 15, b: 0, g: 0, r: 0 });
+      expect(parseCssSolidColor('#1e1e2e')).toEqual({ a: 1, b: 46, g: 30, r: 30 });
+      expect(parseCssSolidColor('#11223380')).toEqual({ a: 128 / 255, b: 51, g: 34, r: 17 });
+      expect(parseCssSolidColor('white')).toEqual({ a: 1, b: 255, g: 255, r: 255 });
+      expect(parseCssSolidColor('black')).toEqual({ a: 1, b: 0, g: 0, r: 0 });
+      expect(parseCssSolidColor('rebeccapurple')).toEqual({ a: 1, b: 153, g: 51, r: 102 });
+      expect(parseCssSolidColor('hsla(120, 100%, 50%, 0.25)')).toEqual({
+        a: 0.25,
+        b: 0,
+        g: 255,
+        r: 0,
+      });
+      expect(parseCssSolidColor('oklch(0.7 0.1 200 / 0.4)')).toBeNull();
+      expect(parseCssSolidColor('color-mix(in srgb, red 50%, blue)')).toBeNull();
+      expect(parseCssSolidColor('rgb(calc(100 / 2) 20 30)')).toBeNull();
+      expect(parseCssSolidColor('currentColor')).toBeNull();
+      expect(parseCssSolidColor('none')).toBeNull();
+    });
+  });
+
+  describe('inlineConnectedMermaidRootPaint', () => {
+    it('strips unsafe inline background-image and stale overridden inline background-color before applying computed paint', () => {
+      const source = document.createElement('div');
+      source.className = 'easymde-mermaid';
+      source.setAttribute(
+        'style',
+        'background-image: url("https://evil.example/a.png"); background-color: red; background-position: 10px 20px; background-size: cover; background-repeat: repeat-x;',
+      );
+      document.body.append(source);
+      const clone = source.cloneNode(true) as HTMLDivElement;
+
+      const reader = makeReader(
+        new Map([
+          [
+            source,
+            {
+              'background-color': 'rgba(0, 0, 0, 0)',
+              'background-image': 'url("https://evil.example/a.png")',
+              'background-position': '10px 20px',
+              'background-repeat': 'repeat-x',
+              'background-size': 'cover',
+              'border-radius': '0px',
+            },
+          ],
+        ]),
+      );
+
+      inlineConnectedMermaidRootPaint(source, clone, reader);
+
+      expect(clone.style.getPropertyValue('background')).toBe('');
+      expect(clone.style.getPropertyValue('background-color')).toBe('');
+      expect(clone.style.getPropertyValue('background-image')).toBe('');
+      expect(clone.style.getPropertyValue('background-position')).toBe('');
+      expect(clone.style.getPropertyValue('background-size')).toBe('');
+      expect(clone.style.getPropertyValue('background-repeat')).toBe('');
+      expect(clone.getAttribute('style') ?? '').not.toContain('evil.example');
+      expect(clone.getAttribute('style') ?? '').not.toContain('red');
     });
   });
 

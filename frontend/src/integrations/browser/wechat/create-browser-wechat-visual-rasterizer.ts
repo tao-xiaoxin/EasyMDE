@@ -336,6 +336,11 @@ async function serializedSvg(
   if (source) {
     svg = source.cloneNode(true) as SVGSVGElement;
     inlineComputedStyles(source, svg, document);
+    inlineConnectedMermaidRootPaint(
+      source,
+      svg,
+      (element) => computedStyle(document, element),
+    );
     inlineMermaidBackground(
       request.source,
       svg,

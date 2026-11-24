@@ -918,11 +918,11 @@ describe("Mermaid background ancestor walk", () => {
 
 		expect(rasterizeSpy).toHaveBeenCalledTimes(3);
 		expect(rasterizeSpy.mock.calls[0]?.[0]).toMatchObject({
-			inheritedBackground: { color: "rgb(30, 30, 46)" },
+			inheritedBackground: { color: "rgb(39, 39, 54)" },
 			kind: "mermaid",
 		});
 		expect(rasterizeSpy.mock.calls[1]?.[0]).toMatchObject({
-			inheritedBackground: { color: "rgb(30, 30, 46)" },
+			inheritedBackground: { color: "rgb(39, 39, 54)" },
 			kind: "mermaid",
 		});
 		expect(rasterizeSpy.mock.calls[2]?.[0]).toMatchObject({
@@ -939,7 +939,7 @@ describe("Mermaid background ancestor walk", () => {
 		const halfAlphaCloneStyle =
 			halfAlphaDoc.querySelector(".easymde-mermaid")?.getAttribute("style") ??
 			"";
-		expect(halfAlphaOuterStyle).toContain("background-color: rgb(30, 30, 46)");
+		expect(halfAlphaOuterStyle).toContain("background-color: rgb(39, 39, 54)");
 		expect(halfAlphaOuterStyle).not.toContain("rgba(10, 20, 30, 0.5)");
 		expect(halfAlphaCloneStyle).toMatch(
 			/background-color:\s*rgba\(10, 20, 30, 0\.5\)/u,
@@ -953,7 +953,7 @@ describe("Mermaid background ancestor walk", () => {
 			roundedDoc.querySelector("svg")?.getAttribute("style") ?? "";
 		const roundedCloneStyle =
 			roundedDoc.querySelector(".easymde-mermaid")?.getAttribute("style") ?? "";
-		expect(roundedOuterStyle).toContain("background-color: rgb(30, 30, 46)");
+		expect(roundedOuterStyle).toContain("background-color: rgb(39, 39, 54)");
 		expect(roundedOuterStyle).not.toContain("rgb(245, 247, 250)");
 		expect(roundedCloneStyle).toMatch(
 			/background-color:\s*rgb\(245, 247, 250\)/u,

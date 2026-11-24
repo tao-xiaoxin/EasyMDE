@@ -575,6 +575,101 @@ describe('createBrowserWechatVisualRasterizer', () => {
     }
   });
 
+  it('strips stale or unsafe inline background styles from connected Mermaid roots and preserves direct rounded SVG backgrounds', async () => {
+    stubCanvas();
+    const stylesheet = document.createElement('style');
+    stylesheet.textContent = [
+      '.override-transparent-root { background-color: transparent !important; }',
+      '.rounded-direct-svg { background-color: rgb(245, 247, 250); border-radius: 12px; }',
+    ].join('\n');
+    document.head.appendChild(stylesheet);
+
+    const blackCanvas = document.createElement('div');
+    blackCanvas.className = 'easymde-immersive-preview-canvas';
+    blackCanvas.style.backgroundColor = 'rgb(0, 0, 0)';
+    const halfWhiteLayer = document.createElement('div');
+    halfWhiteLayer.style.backgroundColor = 'rgba(255, 255, 255, 0.5)';
+    const staleInlineRoot = document.createElement('div');
+    staleInlineRoot.className = 'easymde-mermaid override-transparent-root';
+    staleInlineRoot.style.backgroundColor = 'red';
+    staleInlineRoot.style.backgroundImage = 'url("https://evil.example/a.png")';
+    staleInlineRoot.innerHTML = '<svg width="20" height="10" viewBox="0 0 20 10"><path d="M0 0"></path></svg>';
+    halfWhiteLayer.appendChild(staleInlineRoot);
+    blackCanvas.appendChild(halfWhiteLayer);
+    document.body.appendChild(blackCanvas);
+
+    const darkCanvas = document.createElement('div');
+    darkCanvas.className = 'easymde-immersive-preview-canvas';
+    darkCanvas.style.backgroundColor = 'rgb(30, 30, 46)';
+    const directSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    directSvg.setAttribute('class', 'rounded-direct-svg');
+    directSvg.setAttribute('width', '20');
+    directSvg.setAttribute('height', '10');
+    directSvg.setAttribute('viewBox', '0 0 20 10');
+    directSvg.innerHTML = '<path d="M0 0"></path>';
+    darkCanvas.appendChild(directSvg);
+    document.body.appendChild(darkCanvas);
+
+    const whiteCanvas = document.createElement('div');
+    whiteCanvas.className = 'easymde-immersive-preview-canvas';
+    whiteCanvas.style.backgroundColor = 'rgb(255, 255, 255)';
+    const lowOpacityTint = document.createElement('div');
+    lowOpacityTint.style.backgroundColor = 'rgb(0, 0, 0)';
+    lowOpacityTint.style.backgroundImage = 'linear-gradient(90deg, red, blue)';
+    lowOpacityTint.style.opacity = '0.1';
+    const tintedTarget = document.createElement('div');
+    tintedTarget.className = 'easymde-mermaid';
+    tintedTarget.innerHTML = '<svg width="20" height="10" viewBox="0 0 20 10"><path d="M0 0"></path></svg>';
+    lowOpacityTint.appendChild(tintedTarget);
+    whiteCanvas.appendChild(lowOpacityTint);
+    document.body.appendChild(whiteCanvas);
+
+    try {
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(staleInlineRoot, 'mermaid', 1, 20, 10),
+      );
+      const staleSerialized = decodeURIComponent(
+        imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? '',
+      );
+      const staleDoc = new DOMParser().parseFromString(staleSerialized, 'text/html');
+      const staleOuterStyle = staleDoc.querySelector('svg')?.getAttribute('style') ?? '';
+      const staleCloneStyle = staleDoc.querySelector('.easymde-mermaid')?.getAttribute('style') ?? '';
+      expect(staleOuterStyle).toContain('background-color: rgb(128, 128, 128)');
+      expect(staleCloneStyle).not.toContain('red');
+      expect(staleCloneStyle).not.toContain('evil.example');
+      expect(staleCloneStyle).not.toContain('background-image');
+      expect(staleSerialized).not.toContain('evil.example');
+
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(directSvg, 'mermaid', 1, 20, 10),
+      );
+      const directSvgSerialized = decodeURIComponent(
+        imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? '',
+      );
+      const directSvgDoc = new DOMParser().parseFromString(directSvgSerialized, 'text/html');
+      const directSvgStyle = directSvgDoc.querySelector('svg')?.getAttribute('style') ?? '';
+      expect(directSvgStyle).toContain('background-color: rgb(245, 247, 250)');
+      expect(directSvgStyle).not.toContain('rgb(30, 30, 46)');
+      expect(directSvgStyle).toMatch(/border-(?:top-left-)?radius:\s*12px/u);
+
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(tintedTarget, 'mermaid', 1, 20, 10),
+      );
+      const tintedSerialized = decodeURIComponent(
+        imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? '',
+      );
+      const tintedDoc = new DOMParser().parseFromString(tintedSerialized, 'text/html');
+      const tintedOuterStyle = tintedDoc.querySelector('svg')?.getAttribute('style') ?? '';
+      expect(tintedOuterStyle).toContain('background-color: rgb(230, 230, 230)');
+      expect(tintedOuterStyle).not.toContain('linear-gradient');
+    } finally {
+      blackCanvas.remove();
+      darkCanvas.remove();
+      whiteCanvas.remove();
+      stylesheet.remove();
+    }
+  });
+
   it('drops the KaTeX MathML fallback and carries stylesheet-derived math geometry', async () => {
     const canvasContext = { drawImage: vi.fn() };
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext')

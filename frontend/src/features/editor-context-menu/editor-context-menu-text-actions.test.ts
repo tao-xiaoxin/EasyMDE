@@ -1,12 +1,27 @@
 import { describe, expect, it, vi } from "vitest";
-import type { EditorClipboardPort } from "../../contracts/ports/editor-clipboard-port";
+import {
+	DEFAULT_EDITOR_CLIPBOARD_RICH_MAX_BYTES,
+	type EditorClipboardPort,
+	type EditorClipboardRichPayload,
+} from "../../contracts/ports/editor-clipboard-port";
 import type {
 	PreviewResponse,
 	SafePreviewHtml,
 } from "../../contracts/ports/preview-request";
+import { createBrowserEditorClipboard } from "../../integrations/browser/clipboard/create-browser-editor-clipboard";
 import type { EditorContextMenuActionSession } from "./editor-context-menu-action-coordinator";
 import { runTextContextMenuAction } from "./editor-context-menu-text-actions";
 import type { SimplifiedFormattingDomParser } from "./editor-simplified-formatting";
+
+function createDeferred<T>() {
+	let resolve!: (value: T) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+		resolve = resolvePromise;
+		reject = rejectPromise;
+	});
+	return { promise, reject, resolve };
+}
 
 function createPreviewResponse(html: string): PreviewResponse {
 	return {
@@ -31,6 +46,7 @@ function createDomParser(): SimplifiedFormattingDomParser {
 
 function createTextActionSession(
 	options?: Readonly<{
+		clipboard?: EditorClipboardPort;
 		controller?: AbortController;
 		ensureCurrent?: () => boolean;
 		isCurrent?: () => boolean;
@@ -75,7 +91,7 @@ function createTextActionSession(
 		surface: "source" as const,
 		value,
 	};
-	const clipboard: EditorClipboardPort = {
+	const clipboard: EditorClipboardPort = options?.clipboard ?? {
 		check: vi.fn(async () => ({ status: "empty" as const })),
 		dispose: vi.fn(),
 		getState: () => ({ status: "empty" as const }),
@@ -317,6 +333,119 @@ describe("editor-context-menu-text-actions", () => {
 			);
 			expect(syncThrowCase.finishOperation).toHaveBeenCalledTimes(1);
 		});
+
+		it("does not write stale HTML to the OS clipboard when isCurrent flips false before preview resolves with the real clipboard adapter", async () => {
+			const osClipboardWrite = vi.fn();
+			const clipboard = createBrowserEditorClipboard({
+				readText: vi.fn(),
+				writeDeferred: async (textPromise) => {
+					const html = await textPromise;
+					osClipboardWrite(html);
+				},
+				writeText: vi.fn(),
+			});
+			let current = true;
+			const fixture = createTextActionSession({
+				clipboard,
+				ensureCurrent: () => {
+					if (!current) {
+						fixture.session.report(
+							"editor-context-menu-context-stale",
+							"Action failed",
+						);
+						return false;
+					}
+					return true;
+				},
+				isCurrent: () => current,
+				renderPreview: async () => {
+					current = false;
+					return createPreviewResponse("<p>Stale HTML</p>");
+				},
+			});
+
+			await expect(
+				runTextContextMenuAction("copy-as-html", fixture.session),
+			).resolves.toBeUndefined();
+			expect(osClipboardWrite).not.toHaveBeenCalled();
+			expect(fixture.controller.signal.aborted).toBe(true);
+			expect(fixture.report).toHaveBeenCalledTimes(1);
+			expect(fixture.report).toHaveBeenCalledWith(
+				"editor-context-menu-context-stale",
+				"Action failed",
+			);
+			expect(fixture.finishOperation).toHaveBeenCalledTimes(1);
+			clipboard.dispose();
+		});
+
+		it("immediately aborts preview and reports clipboard failure when real writeDeferred fails while preview is still pending", async () => {
+			const pendingPreview = createDeferred<PreviewResponse>();
+			let previewSignal: AbortSignal | null = null;
+			const clipboard = createBrowserEditorClipboard({
+				readText: vi.fn(),
+				writeDeferred: vi.fn(async () => {
+					throw new Error("permission denied");
+				}),
+				writeText: vi.fn(),
+			});
+			const fixture = createTextActionSession({
+				clipboard,
+				renderPreview: (_markdown, signal) => {
+					previewSignal = signal;
+					return pendingPreview.promise;
+				},
+			});
+
+			await expect(
+				runTextContextMenuAction("copy-as-html", fixture.session),
+			).resolves.toBeUndefined();
+			expect(previewSignal).toBe(fixture.controller.signal);
+			expect(fixture.controller.signal.aborted).toBe(true);
+			expect(fixture.report).toHaveBeenCalledTimes(1);
+			expect(fixture.report).toHaveBeenCalledWith(
+				"editor-clipboard-write-failed",
+				"Clipboard unavailable",
+			);
+			expect(fixture.finishOperation).toHaveBeenCalledTimes(1);
+
+			// Late abort rejection after immediate failure produces no unhandled rejection or extra report.
+			pendingPreview.reject(new DOMException("Aborted", "AbortError"));
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(fixture.report).toHaveBeenCalledTimes(1);
+			clipboard.dispose();
+		});
+
+		it("preserves preview error code and action-failed status when real writeDeferred catches preview failure", async () => {
+			const osClipboardWrite = vi.fn();
+			const clipboard = createBrowserEditorClipboard({
+				readText: vi.fn(),
+				writeDeferred: async (textPromise) => {
+					const html = await textPromise;
+					osClipboardWrite(html);
+				},
+				writeText: vi.fn(),
+			});
+			const fixture = createTextActionSession({
+				clipboard,
+				renderPreview: async () => {
+					throw new Error("editor-preview-http-500");
+				},
+			});
+
+			await expect(
+				runTextContextMenuAction("copy-as-html", fixture.session),
+			).resolves.toBeUndefined();
+			expect(osClipboardWrite).not.toHaveBeenCalled();
+			expect(fixture.controller.signal.aborted).toBe(true);
+			expect(fixture.report).toHaveBeenCalledTimes(1);
+			expect(fixture.report).toHaveBeenCalledWith(
+				"editor-preview-http-500",
+				"Action failed",
+			);
+			expect(fixture.finishOperation).toHaveBeenCalledTimes(1);
+			clipboard.dispose();
+		});
 	});
 
 	describe("copy-simplified-formatting", () => {
@@ -536,6 +665,164 @@ describe("editor-context-menu-text-actions", () => {
 				"Action failed",
 			);
 			expect(staleNonAbortedCase.finishOperation).toHaveBeenCalledTimes(1);
+		});
+
+		it("reports preview HTTP 500 with statusActionFailed instead of rich-payload-failed through the real clipboard adapter", async () => {
+			const osClipboardWrite = vi.fn();
+			const clipboard = createBrowserEditorClipboard({
+				readText: vi.fn(),
+				supportsRichWrite: () => true,
+				writeRichDeferred: async (
+					payloadPromise: Promise<EditorClipboardRichPayload>,
+				) => {
+					const payload = await payloadPromise;
+					osClipboardWrite(payload);
+				},
+				writeText: vi.fn(),
+			});
+			const fixture = createTextActionSession({
+				clipboard,
+				renderPreview: async () => {
+					throw new Error("editor-preview-http-500");
+				},
+				simplifiedFormattingParser: createDomParser(),
+			});
+
+			await expect(
+				runTextContextMenuAction("copy-simplified-formatting", fixture.session),
+			).resolves.toBeUndefined();
+			expect(osClipboardWrite).not.toHaveBeenCalled();
+			expect(fixture.controller.signal.aborted).toBe(true);
+			expect(fixture.report).toHaveBeenCalledTimes(1);
+			expect(fixture.report).toHaveBeenCalledWith(
+				"editor-preview-http-500",
+				"Action failed",
+			);
+			expect(fixture.finishOperation).toHaveBeenCalledTimes(1);
+			clipboard.dispose();
+		});
+
+		it("reports editor-simplified-formatting-input-too-large with statusActionFailed for oversized preview HTML through the real clipboard adapter", async () => {
+			const osClipboardWrite = vi.fn();
+			const clipboard = createBrowserEditorClipboard({
+				readText: vi.fn(),
+				supportsRichWrite: () => true,
+				writeRichDeferred: async (
+					payloadPromise: Promise<EditorClipboardRichPayload>,
+				) => {
+					const payload = await payloadPromise;
+					osClipboardWrite(payload);
+				},
+				writeText: vi.fn(),
+			});
+			const oversizedHtml = `<p>${"a".repeat(
+				DEFAULT_EDITOR_CLIPBOARD_RICH_MAX_BYTES + 1,
+			)}</p>`;
+			const fixture = createTextActionSession({
+				clipboard,
+				renderPreview: async () => createPreviewResponse(oversizedHtml),
+				simplifiedFormattingParser: createDomParser(),
+			});
+
+			await expect(
+				runTextContextMenuAction("copy-simplified-formatting", fixture.session),
+			).resolves.toBeUndefined();
+			expect(osClipboardWrite).not.toHaveBeenCalled();
+			expect(fixture.controller.signal.aborted).toBe(true);
+			expect(fixture.report).toHaveBeenCalledTimes(1);
+			expect(fixture.report).toHaveBeenCalledWith(
+				"editor-simplified-formatting-input-too-large",
+				"Action failed",
+			);
+			expect(fixture.finishOperation).toHaveBeenCalledTimes(1);
+			clipboard.dispose();
+		});
+
+		it("does not write stale rich HTML or misreport payload failure when isCurrent flips false with the real clipboard adapter", async () => {
+			const osClipboardWrite = vi.fn();
+			const clipboard = createBrowserEditorClipboard({
+				readText: vi.fn(),
+				supportsRichWrite: () => true,
+				writeRichDeferred: async (
+					payloadPromise: Promise<EditorClipboardRichPayload>,
+				) => {
+					const payload = await payloadPromise;
+					osClipboardWrite(payload);
+				},
+				writeText: vi.fn(),
+			});
+			let current = true;
+			const fixture = createTextActionSession({
+				clipboard,
+				ensureCurrent: () => {
+					if (!current) {
+						fixture.session.report(
+							"editor-context-menu-context-stale",
+							"Action failed",
+						);
+						return false;
+					}
+					return true;
+				},
+				isCurrent: () => current,
+				renderPreview: async () => {
+					current = false;
+					return createPreviewResponse("<p><strong>stale</strong></p>");
+				},
+				simplifiedFormattingParser: createDomParser(),
+			});
+
+			await expect(
+				runTextContextMenuAction("copy-simplified-formatting", fixture.session),
+			).resolves.toBeUndefined();
+			expect(osClipboardWrite).not.toHaveBeenCalled();
+			expect(fixture.controller.signal.aborted).toBe(true);
+			expect(fixture.report).toHaveBeenCalledTimes(1);
+			expect(fixture.report).toHaveBeenCalledWith(
+				"editor-context-menu-context-stale",
+				"Action failed",
+			);
+			expect(fixture.finishOperation).toHaveBeenCalledTimes(1);
+			clipboard.dispose();
+		});
+
+		it("immediately aborts preview and reports clipboard failure when real writeRichDeferred fails while preview is still pending", async () => {
+			const pendingPreview = createDeferred<PreviewResponse>();
+			let previewSignal: AbortSignal | null = null;
+			const clipboard = createBrowserEditorClipboard({
+				readText: vi.fn(),
+				supportsRichWrite: () => true,
+				writeRichDeferred: vi.fn(async () => {
+					throw new Error("permission denied");
+				}),
+				writeText: vi.fn(),
+			});
+			const fixture = createTextActionSession({
+				clipboard,
+				renderPreview: (_markdown, signal) => {
+					previewSignal = signal;
+					return pendingPreview.promise;
+				},
+				simplifiedFormattingParser: createDomParser(),
+			});
+
+			await expect(
+				runTextContextMenuAction("copy-simplified-formatting", fixture.session),
+			).resolves.toBeUndefined();
+			expect(previewSignal).toBe(fixture.controller.signal);
+			expect(fixture.controller.signal.aborted).toBe(true);
+			expect(fixture.report).toHaveBeenCalledTimes(1);
+			expect(fixture.report).toHaveBeenCalledWith(
+				"editor-clipboard-write-failed",
+				"Clipboard unavailable",
+			);
+			expect(fixture.finishOperation).toHaveBeenCalledTimes(1);
+
+			pendingPreview.reject(new DOMException("Aborted", "AbortError"));
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(fixture.report).toHaveBeenCalledTimes(1);
+			clipboard.dispose();
 		});
 	});
 });

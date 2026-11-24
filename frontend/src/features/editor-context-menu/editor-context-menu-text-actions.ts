@@ -10,6 +10,23 @@ import { editorContextSelectionFitsRange } from "./editor-context-menu-text-edit
 import { createSimplifiedFormattingPayload } from "./editor-simplified-formatting";
 
 /**
+ * Privacy-safe error code extraction for preview-backed copy actions. Preserves
+ * stable preview and simplified-formatting owner codes alongside the shared
+ * context-menu owner codes without leaking arbitrary exception messages.
+ */
+function copyPreviewActionErrorCode(error: unknown, fallback: string): string {
+	if (
+		error instanceof Error
+		&& /^editor-(?:preview|simplified-formatting)-[a-z0-9-]+$/u.test(
+			error.message
+		)
+	) {
+		return error.message;
+	}
+	return contextMenuActionErrorCode(error, fallback);
+}
+
+/**
  * Text, Clipboard, and block-insertion actions. The final canonical write stays
  * with the session's Root capability; this module only owns the action policy.
  */
@@ -154,29 +171,70 @@ export async function runTextContextMenuAction(
 		);
 		const operation = session.beginOperation();
 		const controller = operation.controller;
+		let renderFailure: string | null = null;
+		let staleBeforeWrite = false;
 		try {
 			const renderedHtml = capabilities.preview
 				.render(markdown, controller.signal)
-				.then((response) => response.html);
+				.then((response) => {
+					if (controller.signal.aborted || !session.isCurrent(captured)) {
+						staleBeforeWrite = true;
+						throw new Error("editor-context-menu-context-stale");
+					}
+					return response.html;
+				})
+				.catch((error) => {
+					if (
+						!staleBeforeWrite
+						&& !controller.signal.aborted
+						&& session.isCurrent(captured)
+					) {
+						renderFailure = copyPreviewActionErrorCode(
+							error,
+							"editor-context-menu-html-copy-failed"
+						);
+					}
+					throw error;
+				});
 			void renderedHtml.catch(() => undefined);
-			const writePromise = clipboard.writeDeferred(renderedHtml, {
+			const result = await clipboard.writeDeferred(renderedHtml, {
 				signal: controller.signal
 			});
-			const [, result] = await Promise.all([renderedHtml, writePromise]);
-			if (controller.signal.aborted || !ensureCurrent()) return;
+			if (controller.signal.aborted) return;
+			if (!ensureCurrent()) {
+				controller.abort();
+				return;
+			}
 			if ("written" !== result.status) {
-				report(result.code, strings?.statusClipboardUnavailable);
+				controller.abort();
+				if (renderFailure) {
+					report(renderFailure, strings?.statusActionFailed);
+				} else if (staleBeforeWrite) {
+					report(
+						"editor-context-menu-context-stale",
+						strings?.statusActionFailed
+					);
+				} else {
+					report(result.code, strings?.statusClipboardUnavailable);
+				}
 			}
 		} catch (error) {
 			const wasAborted = controller.signal.aborted;
 			controller.abort();
 			if (!wasAborted) {
 				report(
-					contextMenuActionErrorCode(error, "editor-context-menu-html-copy-failed"),
+					renderFailure
+						?? copyPreviewActionErrorCode(
+							error,
+							"editor-context-menu-html-copy-failed"
+						),
 					strings?.statusActionFailed
 				);
 			}
 		} finally {
+			if (controller.signal.aborted || renderFailure) {
+				controller.abort();
+			}
 			session.finishOperation(operation);
 		}
 		return;
@@ -198,38 +256,76 @@ export async function runTextContextMenuAction(
 		const operation = session.beginOperation();
 		const controller = operation.controller;
 		const parser = capabilities.simplifiedFormattingParser;
+		let payloadFailure: string | null = null;
+		let staleBeforeWrite = false;
 		try {
 			const payload = capabilities.preview
 				.render(markdown, controller.signal)
 				.then((response) => {
 					if (controller.signal.aborted || !session.isCurrent(captured)) {
+						staleBeforeWrite = true;
 						throw new Error("editor-context-menu-context-stale");
 					}
 					const converted = createSimplifiedFormattingPayload(response.html, {
 						parser
 					});
-					if ("failed" === converted.status) throw new Error(converted.code);
+					if ("failed" === converted.status) {
+						throw new Error(converted.code);
+					}
 					return converted.payload;
+				})
+				.catch((error) => {
+					if (
+						!staleBeforeWrite
+						&& !controller.signal.aborted
+						&& session.isCurrent(captured)
+					) {
+						payloadFailure = copyPreviewActionErrorCode(
+							error,
+							"editor-context-menu-rich-copy-failed"
+						);
+					}
+					throw error;
 				});
 			void payload.catch(() => undefined);
 			const result = await clipboard.writeRichDeferred(payload, {
 				signal: controller.signal
 			});
-			if (controller.signal.aborted || !ensureCurrent()) return;
+			if (controller.signal.aborted) return;
+			if (!ensureCurrent()) {
+				controller.abort();
+				return;
+			}
 			if ("written" !== result.status) {
 				controller.abort();
-				report(result.code, strings?.statusClipboardUnavailable);
+				if (payloadFailure) {
+					report(payloadFailure, strings?.statusActionFailed);
+				} else if (staleBeforeWrite) {
+					report(
+						"editor-context-menu-context-stale",
+						strings?.statusActionFailed
+					);
+				} else {
+					report(result.code, strings?.statusClipboardUnavailable);
+				}
 			}
 		} catch (error) {
 			const wasAborted = controller.signal.aborted;
 			controller.abort();
 			if (!wasAborted) {
 				report(
-					contextMenuActionErrorCode(error, "editor-context-menu-rich-copy-failed"),
+					payloadFailure
+						?? copyPreviewActionErrorCode(
+							error,
+							"editor-context-menu-rich-copy-failed"
+						),
 					strings?.statusActionFailed
 				);
 			}
 		} finally {
+			if (controller.signal.aborted || payloadFailure) {
+				controller.abort();
+			}
 			session.finishOperation(operation);
 		}
 		return;

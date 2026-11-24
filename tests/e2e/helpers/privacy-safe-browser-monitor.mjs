@@ -63,6 +63,18 @@ export const DEFAULT_ALLOWED_NAVIGATION_CATEGORIES = Object.freeze([
   'wp-admin'
 ]);
 
+const ASCII_CONTROL_CHAR_PATTERN = /[\u0000-\u001f\u007f]/u;
+
+const READONLY_ADMIN_AJAX_GET_ACTIONS = new Set([
+  'dashboard-widgets',
+  'rest-nonce'
+]);
+
+const READONLY_ADMIN_AJAX_POST_CLASSIFICATIONS = new Set([
+  'community-events-readonly',
+  'heartbeat-readonly'
+]);
+
 function normalizeBasePath(rawPath) {
   if ('string' !== typeof rawPath || '' === rawPath) return '';
   const trimmed = rawPath.replace(/\/+$/u, '');
@@ -202,9 +214,9 @@ export function classifyBrowserUrlCategory(rawUrl, baseOriginOrUrl = null) {
 
 export function safeBrowserFailureClass(errorText) {
   const code = 'string' === typeof errorText
-    ? errorText.match(/(?:^|::)(ERR_[A-Z0-9_]+)$/u)?.[1]
+    ? errorText.match(/(?:^|::)(ERR_[A-Z0-9_]+|NS_BINDING_ABORTED)$/u)?.[1]
     : null;
-  if ('ERR_ABORTED' === code) return 'aborted';
+  if ('ERR_ABORTED' === code || 'NS_BINDING_ABORTED' === code) return 'aborted';
   if (code?.startsWith('ERR_CONNECTION_')) return 'connection';
   if ('ERR_NAME_NOT_RESOLVED' === code) return 'dns';
   if (code?.includes('TIMED_OUT')) return 'timeout';
@@ -293,6 +305,71 @@ function normalizePostRequestInput(requestOrInput) {
   };
 }
 
+function hasControlCharacterKey(params) {
+  for (const key of params.keys()) {
+    if (ASCII_CONTROL_CHAR_PATTERN.test(key)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasAmbiguousActionKey(params) {
+  for (const key of params.keys()) {
+    if ('action' === key) continue;
+    const nulTruncated = key.split('\u0000', 1)[0];
+    const trimmedKey = nulTruncated.trim();
+    if ('action' === trimmedKey || trimmedKey.startsWith('action[')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isReadonlyAdminAjaxGetRequest(request, baseContext) {
+  if (!request || 'object' !== typeof request || baseContext.invalidBase) {
+    return false;
+  }
+  const rawUrl = 'function' === typeof request.url ? request.url() : request.url;
+  if ('string' !== typeof rawUrl || '' === rawUrl) {
+    return false;
+  }
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+  if ('http:' !== url.protocol && 'https:' !== url.protocol) {
+    return false;
+  }
+  if (baseContext.baseOrigin && url.origin !== baseContext.baseOrigin) {
+    return false;
+  }
+  if (!isAdminAjaxPathname(url.pathname, baseContext.basePath)) {
+    return false;
+  }
+  if (hasControlCharacterKey(url.searchParams) || hasAmbiguousActionKey(url.searchParams)) {
+    return false;
+  }
+  const actions = url.searchParams.getAll('action');
+  return 1 === actions.length && READONLY_ADMIN_AJAX_GET_ACTIONS.has(actions[0]);
+}
+
+function isExpectedReadonlyAdminAjaxRequest(request, baseContext) {
+  const method = 'function' === typeof request?.method
+    ? String(request.method()).toUpperCase()
+    : '';
+  if ('POST' === method) {
+    const classified = classifyReadonlyPostRequest(request, baseContext);
+    return READONLY_ADMIN_AJAX_POST_CLASSIFICATIONS.has(classified.classification);
+  }
+  if ('GET' === method) {
+    return isReadonlyAdminAjaxGetRequest(request, baseContext);
+  }
+  return false;
+}
+
 export function classifyReadonlyPostRequest(requestOrInput, options = {}) {
   const normalized = normalizePostRequestInput(requestOrInput);
   if (normalized.invalidUrl) {
@@ -365,17 +442,13 @@ export function classifyReadonlyPostRequest(requestOrInput, options = {}) {
       classification: 'unexpected-write'
     };
   }
-  const hasAmbiguousActionKey = (params) => {
-    for (const key of params.keys()) {
-      if ('action' === key) continue;
-      const trimmedKey = key.trim();
-      if ('action' === trimmedKey || trimmedKey.startsWith('action[')) {
-        return true;
-      }
-    }
-    return false;
-  };
   const parameters = new URLSearchParams(postData);
+  if (hasControlCharacterKey(queryParams) || hasControlCharacterKey(parameters)) {
+    return {
+      category: 'other-admin-ajax',
+      classification: 'unexpected-write'
+    };
+  }
   const queryActions = queryParams.getAll('action');
   const bodyActions = parameters.getAll('action');
   const allActions = [...queryActions, ...bodyActions];
@@ -575,7 +648,10 @@ export function attachPrivacySafeBrowserMonitor(
     const resourceType = SAFE_BROWSER_RESOURCE_TYPES.has(rawResourceType)
       ? rawResourceType
       : 'other';
-    if ('aborted' === failureClass && 'preview-rest' === category && 'POST' === request.method()) {
+    const method = 'function' === typeof request?.method
+      ? String(request.method()).toUpperCase()
+      : '';
+    if ('aborted' === failureClass && 'preview-rest' === category && 'POST' === method) {
       counts.cancelledPreview += 1;
       return;
     }
@@ -583,6 +659,7 @@ export function attachPrivacySafeBrowserMonitor(
       'aborted' === failureClass
       && 'admin-ajax' === category
       && ('xhr' === resourceType || 'fetch' === resourceType)
+      && isExpectedReadonlyAdminAjaxRequest(request, baseContext)
     ) {
       counts.abortedAdminAjax += 1;
       return;

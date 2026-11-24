@@ -4,7 +4,8 @@ import test from 'node:test';
 import {
   attachPrivacySafeBrowserMonitor,
   classifyBrowserUrlCategory,
-  classifyReadonlyPostRequest
+  classifyReadonlyPostRequest,
+  safeBrowserFailureClass
 } from '../e2e/helpers/privacy-safe-browser-monitor.mjs';
 
 const BASE_URL = 'http://127.0.0.1:8089';
@@ -489,6 +490,8 @@ test('attachPrivacySafeBrowserMonitor stays clean on allowed WordPress navigatio
   page.emit('requestfailed', stubRequest({
     url: `${BASE_URL}/wp-admin/admin-ajax.php`,
     method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    postData: 'action=heartbeat',
     resourceType: 'xhr',
     errorText: 'net::ERR_ABORTED'
   }));
@@ -1003,4 +1006,308 @@ test('attachPrivacySafeBrowserMonitor ignores allowExpectedFailure when baseURL 
     }
   );
   monitor.dispose();
+});
+
+test('classifyReadonlyPostRequest rejects NUL-truncated and control-character admin-ajax keys in query and body', () => {
+  const controlCharCases = [
+    {
+      label: 'NUL-suffixed duplicate action in POST body',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=heartbeat&action%00x=autosave'
+      })
+    },
+    {
+      label: 'NUL-suffixed action in query with readonly heartbeat POST body',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php?action%00x=autosave`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=heartbeat'
+      })
+    },
+    {
+      label: 'NUL-suffixed action alongside get-community-events in POST body',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=get-community-events&action%00x=autosave'
+      })
+    },
+    {
+      label: 'NUL-suffixed data bracket key carrying wp_autosave',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=heartbeat&data%00x[wp_autosave][post_id]=42'
+      })
+    },
+    {
+      label: 'NUL-suffixed scalar data key carrying JSON wp_autosave',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=heartbeat&data%00x=%7B%22wp_autosave%22%3A%7B%7D%7D'
+      })
+    },
+    {
+      label: 'trailing NUL after known heartbeat data bracket key',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=heartbeat&data%5Bwp-auth-check%5D%00=1'
+      })
+    },
+    {
+      label: 'ASCII BEL control character in body parameter key',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=heartbeat&foo%07bar=1'
+      })
+    },
+    {
+      label: 'ASCII control character in query parameter key',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php?foo%1fbar=1`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=heartbeat'
+      })
+    },
+    {
+      label: 'ASCII DEL control character in body parameter key',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=heartbeat&foo%7fbar=1'
+      })
+    },
+    {
+      label: 'ASCII tab control character prefixing action key',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=heartbeat&%09action=autosave'
+      })
+    }
+  ];
+
+  for (const { label, request } of controlCharCases) {
+    assert.deepEqual(
+      classifyReadonlyPostRequest(request, { baseURL: BASE_URL }),
+      { category: 'other-admin-ajax', classification: 'unexpected-write' },
+      label
+    );
+  }
+
+  // Legitimate readonly heartbeat with normal control-free keys remains accepted.
+  assert.deepEqual(
+    classifyReadonlyPostRequest(
+      stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+        postData: 'interval=60&_nonce=abc123&action=heartbeat&screen_id=post&has_focus=true&data%5Bwp-auth-check%5D=1'
+      }),
+      { baseURL: BASE_URL }
+    ),
+    { category: 'heartbeat', classification: 'heartbeat-readonly' }
+  );
+});
+
+test('safeBrowserFailureClass classifies Chromium ERR_ABORTED and Firefox NS_BINDING_ABORTED as aborted', () => {
+  assert.equal(safeBrowserFailureClass('net::ERR_ABORTED'), 'aborted');
+  assert.equal(safeBrowserFailureClass('ERR_ABORTED'), 'aborted');
+  assert.equal(safeBrowserFailureClass('NS_BINDING_ABORTED'), 'aborted');
+  assert.equal(safeBrowserFailureClass('secret NS_BINDING_ABORTED'), 'other');
+});
+
+test('attachPrivacySafeBrowserMonitor only exempts positively-identified readonly aborted admin-ajax requests', () => {
+  const readonlyPage = createStubPage();
+  const readonlyMonitor = attachPrivacySafeBrowserMonitor(readonlyPage, { baseURL: BASE_URL });
+
+  readonlyPage.emit('requestfailed', stubRequest({
+    url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+    postData: 'action=heartbeat&data%5Bwp-refresh-post-lock%5D%5Bpost_id%5D=42',
+    resourceType: 'xhr',
+    errorText: 'net::ERR_ABORTED'
+  }));
+  readonlyPage.emit('requestfailed', stubRequest({
+    url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    postData: 'action=heartbeat',
+    resourceType: 'fetch',
+    errorText: 'NS_BINDING_ABORTED'
+  }));
+  readonlyPage.emit('requestfailed', stubRequest({
+    url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    postData: 'action=get-community-events',
+    resourceType: 'xhr',
+    errorText: 'net::ERR_ABORTED'
+  }));
+  readonlyPage.emit('requestfailed', stubRequest({
+    url: `${BASE_URL}/wp-admin/admin-ajax.php?action=dashboard-widgets&widget=dashboard_primary&pagenow=dashboard`,
+    method: 'GET',
+    headers: {},
+    postData: '',
+    resourceType: 'xhr',
+    errorText: 'net::ERR_ABORTED'
+  }));
+  readonlyPage.emit('requestfailed', stubRequest({
+    url: `${BASE_URL}/wp-admin/admin-ajax.php?action=rest-nonce`,
+    method: 'GET',
+    headers: {},
+    postData: '',
+    resourceType: 'fetch',
+    errorText: 'NS_BINDING_ABORTED'
+  }));
+
+  readonlyMonitor.assertClean();
+  assert.equal(readonlyMonitor.counts.abortedAdminAjax, 5);
+  assert.equal(readonlyMonitor.counts.requestFailures, 0);
+  readonlyMonitor.dispose();
+
+  const rejectedAbortedAdminAjaxCases = [
+    {
+      label: 'aborted (ERR_ABORTED) heartbeat autosave POST',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+        postData: 'action=heartbeat&data%5Bwp_autosave%5D%5Bpost_id%5D=42&data%5Bwp_autosave%5D%5Bcontent%5D=secret-draft-body',
+        resourceType: 'xhr',
+        errorText: 'net::ERR_ABORTED'
+      }),
+      expectedCode: 'request-failed:aborted:admin-ajax:xhr',
+      expectedResourceType: 'xhr'
+    },
+    {
+      label: 'aborted (NS_BINDING_ABORTED) heartbeat autosave POST',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=heartbeat&data%5Bwp_autosave%5D%5Bpost_id%5D=42',
+        resourceType: 'xhr',
+        errorText: 'NS_BINDING_ABORTED'
+      }),
+      expectedCode: 'request-failed:aborted:admin-ajax:xhr',
+      expectedResourceType: 'xhr'
+    },
+    {
+      label: 'aborted unclassified edit-post admin-ajax POST',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=edit-post&post_id=42',
+        resourceType: 'fetch',
+        errorText: 'net::ERR_ABORTED'
+      }),
+      expectedCode: 'request-failed:aborted:admin-ajax:fetch',
+      expectedResourceType: 'fetch'
+    },
+    {
+      label: 'aborted admin-ajax POST missing action',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: '',
+        resourceType: 'xhr',
+        errorText: 'net::ERR_ABORTED'
+      }),
+      expectedCode: 'request-failed:aborted:admin-ajax:xhr',
+      expectedResourceType: 'xhr'
+    },
+    {
+      label: 'aborted multipart admin-ajax POST',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php?action=heartbeat`,
+        method: 'POST',
+        headers: { 'content-type': 'multipart/form-data; boundary=----easymde' },
+        postData: '------easymde\r\nContent-Disposition: form-data; name="action"\r\n\r\nsave-post\r\n------easymde--',
+        resourceType: 'fetch',
+        errorText: 'net::ERR_ABORTED'
+      }),
+      expectedCode: 'request-failed:aborted:admin-ajax:fetch',
+      expectedResourceType: 'fetch'
+    },
+    {
+      label: 'aborted NUL-spoofed admin-ajax POST',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=heartbeat&action%00x=autosave',
+        resourceType: 'xhr',
+        errorText: 'net::ERR_ABORTED'
+      }),
+      expectedCode: 'request-failed:aborted:admin-ajax:xhr',
+      expectedResourceType: 'xhr'
+    },
+    {
+      label: 'aborted unclassified GET admin-ajax action',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php?action=wp-remove-post-lock`,
+        method: 'GET',
+        headers: {},
+        postData: '',
+        resourceType: 'xhr',
+        errorText: 'net::ERR_ABORTED'
+      }),
+      expectedCode: 'request-failed:aborted:admin-ajax:xhr',
+      expectedResourceType: 'xhr'
+    },
+    {
+      label: 'aborted GET admin-ajax with NUL-spoofed action key',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php?action=dashboard-widgets&action%00x=delete`,
+        method: 'GET',
+        headers: {},
+        postData: '',
+        resourceType: 'xhr',
+        errorText: 'net::ERR_ABORTED'
+      }),
+      expectedCode: 'request-failed:aborted:admin-ajax:xhr',
+      expectedResourceType: 'xhr'
+    }
+  ];
+
+  for (const { label, request, expectedCode, expectedResourceType } of rejectedAbortedAdminAjaxCases) {
+    const page = createStubPage();
+    const monitor = attachPrivacySafeBrowserMonitor(page, { baseURL: BASE_URL });
+
+    page.emit('requestfailed', request);
+
+    const snap = monitor.snapshot();
+    assert.equal(snap.counts.abortedAdminAjax, 0, label);
+    assert.equal(snap.counts.requestFailures, 1, label);
+    assert.deepEqual(
+      snap.requestFailures,
+      [{ category: 'admin-ajax', resourceType: expectedResourceType, failureClass: 'aborted' }],
+      label
+    );
+    assert.deepEqual(snap.failures, [expectedCode], label);
+    assert.doesNotMatch(
+      JSON.stringify(snap),
+      /secret-draft-body|wp_autosave|edit-post|save-post|wp-remove-post-lock/u,
+      label
+    );
+    assert.throws(
+      () => monitor.assertClean(),
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, new RegExp(expectedCode, 'u'));
+        assert.doesNotMatch(error.message, /secret-draft-body|wp_autosave|edit-post|save-post/u);
+        return true;
+      },
+      label
+    );
+    monitor.dispose();
+  }
 });

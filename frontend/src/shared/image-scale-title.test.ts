@@ -1,17 +1,24 @@
 import { describe, expect, it } from "vitest";
 import {
 	decodeCommonMarkTitle,
-	normalizeHtmlAttributeTitle,
+	hasMarkdownTitleBlankLine,
+	parseEffectiveImageScaleTitle,
 	parseImageScaleTitleContract,
 	stripTrailingReservedScaleMarkers,
 } from "./image-scale-title";
 
 describe("shared image-scale title grammar", () => {
-	it("decodes CommonMark escapes and strict HTML5 entities without double-decoding escaped ampersands", () => {
-		expect(decodeCommonMarkTitle(String.raw`\&amp;`)).toBe("&amp;");
+	it("decodes CommonMark escapes then strict HTML5 entities to match PHP RegexHelper::unescape 1:1", () => {
+		expect(decodeCommonMarkTitle(String.raw`\&amp;`)).toBe("&");
 		expect(decodeCommonMarkTitle(String.raw`\\&amp;`)).toBe("\\&");
+		expect(decodeCommonMarkTitle(String.raw`Caption {width=33%}\&#32;`)).toBe(
+			"Caption {width=33%} ",
+		);
 		expect(decodeCommonMarkTitle("&#32;")).toBe(" ");
 		expect(decodeCommonMarkTitle("&Tab;")).toBe("\t");
+		expect(decodeCommonMarkTitle("&NewLine;")).toBe("\n");
+		expect(decodeCommonMarkTitle("&#10;")).toBe("\n");
+		expect(decodeCommonMarkTitle("&#13;")).toBe("\r");
 		expect(decodeCommonMarkTitle("&#123;width=33%&#125;")).toBe("{width=33%}");
 		expect(decodeCommonMarkTitle(String.raw`\{width=33%\}`)).toBe("{width=33%}");
 		expect(decodeCommonMarkTitle(String.raw`Caption \{width=33%\}`)).toBe(
@@ -22,8 +29,71 @@ describe("shared image-scale title grammar", () => {
 		);
 	});
 
-	it("normalizes CRLF, CR, and LF to spaces", () => {
-		expect(normalizeHtmlAttributeTitle("a\r\nb\rc\nd")).toBe("a b c d");
+	it("detects blank lines inside Markdown titles per CommonMark §6.3", () => {
+		expect(hasMarkdownTitleBlankLine("Line1\n\nLine2")).toBe(true);
+		expect(hasMarkdownTitleBlankLine("Line1\r\n \t \r\nLine2")).toBe(true);
+		expect(hasMarkdownTitleBlankLine("Line1\r\rLine2")).toBe(true);
+		expect(hasMarkdownTitleBlankLine("Line1\nLine2")).toBe(false);
+		expect(hasMarkdownTitleBlankLine("Line1\r\nLine2")).toBe(false);
+		expect(hasMarkdownTitleBlankLine("Caption\r\n {width=50%}")).toBe(false);
+		expect(hasMarkdownTitleBlankLine("Line1&#10;&#10;Line2")).toBe(false);
+	});
+
+	it("evaluates effective titles with exact PHP league/commonmark and DOMDocument parity", () => {
+		expect(
+			parseEffectiveImageScaleTitle(String.raw`Caption {width=33%}\&#32;`),
+		).toEqual({ status: "none" });
+		expect(
+			parseEffectiveImageScaleTitle(
+				String.raw`Caption {width=33%}\&#32; {width=100%}`,
+			),
+		).toEqual({ status: "invalid" });
+
+		expect(
+			parseEffectiveImageScaleTitle("Caption {width=33%}&NewLine; {width=67%}"),
+		).toEqual({
+			markerLength: 11,
+			markerOffset: 21,
+			scale: 67,
+			status: "valid",
+			title: "Caption {width=33%}\n",
+		});
+
+		expect(parseEffectiveImageScaleTitle("Caption&#10;{width=50%}")).toEqual({
+			status: "invalid",
+		});
+		expect(
+			parseEffectiveImageScaleTitle("Caption&NewLine;{width=50%}"),
+		).toEqual({
+			status: "invalid",
+		});
+		expect(parseEffectiveImageScaleTitle("Caption&#13;{width=50%}")).toEqual({
+			status: "invalid",
+		});
+
+		expect(parseEffectiveImageScaleTitle("Caption\n {width=50%}")).toEqual({
+			status: "invalid",
+		});
+		expect(parseEffectiveImageScaleTitle("Caption\r\n {width=50%}")).toEqual({
+			status: "invalid",
+		});
+
+		expect(parseEffectiveImageScaleTitle("Caption&#10; {width=50%}")).toEqual({
+			markerLength: 11,
+			markerOffset: 9,
+			scale: 50,
+			status: "valid",
+			title: "Caption\n",
+		});
+		expect(
+			parseEffectiveImageScaleTitle("Caption\n  Line2 {width=50%}"),
+		).toEqual({
+			markerLength: 11,
+			markerOffset: 14,
+			scale: 50,
+			status: "valid",
+			title: "Caption\nLine2",
+		});
 	});
 
 	it("parses terminal image-scale markers with PHP parity", () => {

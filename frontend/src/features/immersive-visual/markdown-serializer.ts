@@ -1,8 +1,8 @@
 import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
 import {
 	decodeCommonMarkTitle,
+	hasMarkdownTitleBlankLine,
 	type ImageScalePercentage,
-	normalizeHtmlAttributeTitle,
 	parseEffectiveImageScaleTitle,
 	stripTrailingReservedScaleMarkers,
 } from "../../shared/image-scale-title";
@@ -175,40 +175,154 @@ function formatImageAlt(alt: string, inTableCell: boolean): string {
 	return inTableCell ? escapeTablePipes(escaped) : escaped;
 }
 
+function encodeTitleLineBreaks(titleValue: string): string {
+	return titleValue.replace(/\r/gu, "&#13;").replace(/\n/gu, "&#10;");
+}
+
+function formatQuotedImageTitle(
+	titleValue: string,
+	inTableCell: boolean,
+): string {
+	const escaped = escapeQuotedTitle(titleValue);
+	return inTableCell ? escapeTablePipes(escaped) : escaped;
+}
+
+function isValidSerializedScaledTitle(
+	candidate: string,
+	scale: ImageScalePercentage,
+): boolean {
+	if (hasMarkdownTitleBlankLine(candidate)) {
+		return false;
+	}
+	const parsed = parseEffectiveImageScaleTitle(candidate);
+	return parsed.status === "valid" && parsed.scale === scale;
+}
+
+function isValidSerializedUnscaledTitle(candidate: string): boolean {
+	if (hasMarkdownTitleBlankLine(candidate)) {
+		return false;
+	}
+	return parseEffectiveImageScaleTitle(candidate).status === "none";
+}
+
 function serializeScaledImageTitle(
 	baseTitle: string,
 	scale: ImageScalePercentage,
 	inTableCell: boolean,
 ): string {
 	const marker = `{width=${scale}%}`;
-	const formatQuoted = (titleValue: string): string => {
-		const escaped = escapeQuotedTitle(titleValue);
-		return inTableCell ? escapeTablePipes(escaped) : escaped;
+	const tryCandidate = (value: string): string | null => {
+		const rawCandidate = formatQuotedImageTitle(
+			`${value} ${marker}`,
+			inTableCell,
+		);
+		if (isValidSerializedScaledTitle(rawCandidate, scale)) {
+			return rawCandidate;
+		}
+		if (/[\r\n]/u.test(value)) {
+			const encodedCandidate = formatQuotedImageTitle(
+				`${encodeTitleLineBreaks(value)} ${marker}`,
+				inTableCell,
+			);
+			if (isValidSerializedScaledTitle(encodedCandidate, scale)) {
+				return encodedCandidate;
+			}
+		}
+		return null;
 	};
 	if (baseTitle.length === 0) {
-		return formatQuoted(marker);
+		return formatQuotedImageTitle(marker, inTableCell);
 	}
-	const primaryCandidate = formatQuoted(`${baseTitle} ${marker}`);
-	const primaryParsed = parseEffectiveImageScaleTitle(primaryCandidate);
-	if (primaryParsed.status === "valid" && primaryParsed.scale === scale) {
-		return primaryCandidate;
+	const primary = tryCandidate(baseTitle);
+	if (primary !== null) {
+		return primary;
 	}
 	// Programmatic or entity-bearing titles (such as `"Caption {width=33%}&#32;"`)
 	// can still decode to a conflicting marker in PHP; decode and strip before
 	// falling back to scale-only so Visual serialization never emits PHP-invalid
 	// Markdown.
-	const decodedStripped = stripTrailingReservedScaleMarkers(
-		normalizeHtmlAttributeTitle(decodeCommonMarkTitle(baseTitle)),
-		true,
-	);
-	if (decodedStripped.length > 0) {
-		const fallbackCandidate = formatQuoted(`${decodedStripped} ${marker}`);
-		const fallbackParsed = parseEffectiveImageScaleTitle(fallbackCandidate);
-		if (fallbackParsed.status === "valid" && fallbackParsed.scale === scale) {
-			return fallbackCandidate;
+	let current = baseTitle;
+	for (let attempt = 0; attempt < 4; attempt += 1) {
+		const next = stripTrailingReservedScaleMarkers(
+			decodeCommonMarkTitle(current),
+			true,
+		);
+		if (next.length === 0) {
+			break;
+		}
+		const fallback = tryCandidate(next);
+		if (fallback !== null) {
+			return fallback;
+		}
+		if (next === current) {
+			break;
+		}
+		current = next;
+	}
+	return formatQuotedImageTitle(marker, inTableCell);
+}
+
+function serializeUnscaledImageTitle(
+	rawTitle: string,
+	inTableCell: boolean,
+): string {
+	if (rawTitle.length === 0) {
+		return "";
+	}
+	const tryCandidate = (value: string): string | null => {
+		const rawCandidate = formatQuotedImageTitle(value, inTableCell);
+		if (isValidSerializedUnscaledTitle(rawCandidate)) {
+			return rawCandidate;
+		}
+		if (hasMarkdownTitleBlankLine(rawCandidate)) {
+			const encodedCandidate = formatQuotedImageTitle(
+				encodeTitleLineBreaks(value),
+				inTableCell,
+			);
+			if (isValidSerializedUnscaledTitle(encodedCandidate)) {
+				return encodedCandidate;
+			}
+		}
+		return null;
+	};
+	const primary = tryCandidate(rawTitle);
+	if (primary !== null) {
+		return primary;
+	}
+	const rawStripped = stripTrailingReservedScaleMarkers(rawTitle, false);
+	if (rawStripped !== rawTitle && !rawStripped.endsWith("\\")) {
+		if (rawStripped.length === 0) {
+			return "";
+		}
+		const strippedCandidate = tryCandidate(rawStripped);
+		if (strippedCandidate !== null) {
+			return strippedCandidate;
 		}
 	}
-	return formatQuoted(marker);
+	// Programmatic or entity-bearing unscaled titles (such as
+	// `"Caption &#123;width=51%&#125;"`, `"Caption &#123;width=50%&#125;"`, or
+	// `"Caption \\{width=51%\\}"`) can still decode to a PHP-invalid or spurious
+	// scale marker; decode and strip trailing reserved markers before emitting
+	// Markdown.
+	let current = rawTitle;
+	for (let attempt = 0; attempt < 4; attempt += 1) {
+		const next = stripTrailingReservedScaleMarkers(
+			decodeCommonMarkTitle(current),
+			false,
+		);
+		if (next.length === 0) {
+			return "";
+		}
+		const fallback = tryCandidate(next);
+		if (fallback !== null) {
+			return fallback;
+		}
+		if (next === current) {
+			break;
+		}
+		current = next;
+	}
+	return "";
 }
 
 function serializeImageNode(
@@ -220,21 +334,26 @@ function serializeImageNode(
 	const scale = isValidVisualImageScale(node.attrs.scale)
 		? node.attrs.scale
 		: null;
-	const baseTitle =
-		typeof node.attrs.title === "string" && node.attrs.title.length > 0
-			? stripTrailingReservedScaleMarkers(node.attrs.title, scale !== null)
-			: "";
+	const rawTitle = typeof node.attrs.title === "string" ? node.attrs.title : "";
 
 	const altText = formatImageAlt(alt, inTableCell);
 	const destination = formatLinkDestination(src, inTableCell);
 	let titleSegment = "";
 	if (scale !== null) {
+		const rawStripped =
+			rawTitle.length > 0
+				? stripTrailingReservedScaleMarkers(rawTitle, true)
+				: "";
+		const baseTitle =
+			rawStripped !== rawTitle && rawStripped.endsWith("\\")
+				? rawTitle
+				: rawStripped;
 		titleSegment = ` "${serializeScaledImageTitle(baseTitle, scale, inTableCell)}"`;
-	} else if (baseTitle.length > 0) {
-		const escapedTitle = escapeQuotedTitle(baseTitle);
-		titleSegment = inTableCell
-			? ` "${escapeTablePipes(escapedTitle)}"`
-			: ` "${escapedTitle}"`;
+	} else if (rawTitle.length > 0) {
+		const serializedTitle = serializeUnscaledImageTitle(rawTitle, inTableCell);
+		if (serializedTitle.length > 0) {
+			titleSegment = ` "${serializedTitle}"`;
+		}
 	}
 	return `![${altText}](${destination}${titleSegment})`;
 }

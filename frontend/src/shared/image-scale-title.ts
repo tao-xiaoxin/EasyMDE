@@ -28,12 +28,13 @@ export type ParsedImageScaleTitleContract =
 			title: string | null;
 	  }>;
 
-// Single-pass CommonMark §2.4 backslash-escaped ASCII punctuation + §6.2
-// strict HTML5 entity scanner. Matching escapes and entities in one pass
-// guarantees backslash-escaped ampersands (such as `\&amp;`) decode to literal
-// `&amp;` rather than undergoing entity decoding.
-const COMMONMARK_TITLE_TOKEN =
-	/\\([!"#$%&'()*+,./:;<=>?@[\\\]^_`{|}~-])|(&(?:#x[a-f0-9]{1,6}|#[0-9]{1,7}|[a-z][a-z0-9]{1,31});)/giu;
+// Two-pass CommonMark §2.4 backslash-escaped ASCII punctuation + §6.2 strict
+// HTML5 entity patterns matching PHP `League\CommonMark\Util\RegexHelper::unescape()`.
+const COMMONMARK_ESCAPED_PUNCTUATION =
+	/\\([!"#$%&'()*+,./:;<=>?@[\\\]^_`{|}~-])/gu;
+const COMMONMARK_HTML_ENTITY =
+	/&(?:#x[a-f0-9]{1,6}|#[0-9]{1,7}|[a-z][a-z0-9]{1,31});/giu;
+const NORMALIZED_TITLE_BLANK_LINE = /\n[ \t]*\n/u;
 
 function isAsciiWhitespace(character: string | undefined): boolean {
 	return (
@@ -45,39 +46,31 @@ function isAsciiWhitespace(character: string | undefined): boolean {
 }
 
 /**
- * Decodes CommonMark §2.4 backslash-escaped ASCII punctuation and strict HTML5
- * entities in a raw Markdown title body without entity-decoding backslash-
- * escaped ampersands.
+ * Reports whether a raw Markdown title body contains a blank line, which
+ * terminates a link/image title under CommonMark §6.3.
  */
-export function decodeCommonMarkTitle(rawTitle: string): string {
-	if (!rawTitle.includes("\\") && !rawTitle.includes("&")) {
-		return rawTitle;
+export function hasMarkdownTitleBlankLine(title: string): boolean {
+	if (!title.includes("\n") && !title.includes("\r")) {
+		return false;
 	}
-	return rawTitle.replace(
-		COMMONMARK_TITLE_TOKEN,
-		(
-			match: string,
-			escapedChar: string | undefined,
-			entity: string | undefined,
-		): string => {
-			if (undefined !== escapedChar) {
-				return escapedChar;
-			}
-			if (undefined !== entity) {
-				return decodeHTMLStrict(entity);
-			}
-			return match;
-		},
-	);
+	return NORMALIZED_TITLE_BLANK_LINE.test(title.replace(/\r\n|\r/gu, "\n"));
 }
 
 /**
- * Normalizes line breaks inside an HTML `title` attribute to single spaces,
- * matching attribute-value normalization when PHP reads
- * `$image->getAttribute('title')` in `MarkdownRenderer::restore_image_scale_markers()`.
+ * Decodes CommonMark §2.4 backslash-escaped ASCII punctuation and strict HTML5
+ * entities in a raw Markdown title body, mirroring PHP
+ * `League\CommonMark\Util\RegexHelper::unescape()` 1:1 in two passes.
  */
-export function normalizeHtmlAttributeTitle(title: string): string {
-	return title.replace(/\r\n|\r|\n/gu, " ");
+export function decodeCommonMarkTitle(rawTitle: string): string {
+	const unescaped = rawTitle.includes("\\")
+		? rawTitle.replace(COMMONMARK_ESCAPED_PUNCTUATION, "$1")
+		: rawTitle;
+	if (!unescaped.includes("&")) {
+		return unescaped;
+	}
+	return unescaped.replace(COMMONMARK_HTML_ENTITY, (entity: string): string =>
+		decodeHTMLStrict(entity),
+	);
 }
 
 /**
@@ -128,32 +121,18 @@ export function parseImageScaleTitleContract(
 
 /**
  * Evaluates a raw Markdown image title as PHP `MarkdownRenderer` will observe
- * it after CommonMark unescaping, HTML5 entity decoding, paragraph continuation
- * line-indent stripping, and HTML attribute newline normalization.
+ * it after CommonMark §2.2 / §4.8 line-ending normalization and continuation
+ * indent stripping, followed by `RegexHelper::unescape()`. HTML5 / libxml
+ * `DOMDocument::loadHTML` preserves `\n` and `\r` verbatim inside `title`.
  */
 export function parseEffectiveImageScaleTitle(
 	rawTitle: string,
 ): ParsedImageScaleTitleContract {
-	const normalizedParsed = parseImageScaleTitleContract(
-		normalizeHtmlAttributeTitle(decodeCommonMarkTitle(rawTitle)),
-	);
-	if ("invalid" === normalizedParsed.status) {
-		return normalizedParsed;
-	}
-	if (/[\r\n]/u.test(rawTitle)) {
-		// CommonMark §4.8 strips leading spaces/tabs on continuation lines of a
-		// paragraph, so `"Caption\n {width=50%}"` arrives at PHP as
-		// `"Caption\n{width=50%}"` (missing the required `' '` separator).
-		const continuationParsed = parseImageScaleTitleContract(
-			decodeCommonMarkTitle(
-				rawTitle.replace(/(?:\r\n|\r|\n)[ \t]+/gu, "\n"),
-			),
-		);
-		if ("invalid" === continuationParsed.status) {
-			return continuationParsed;
-		}
-	}
-	return normalizedParsed;
+	const normalizedSource = rawTitle
+		.replace(/\r\n|\r/gu, "\n")
+		.replace(/\n[ \t]+/gu, "\n");
+	const decodedTitle = decodeCommonMarkTitle(normalizedSource);
+	return parseImageScaleTitleContract(decodedTitle);
 }
 
 /**

@@ -1972,6 +1972,91 @@ describe("visual editor codec regressions", () => {
 		expect(serializeVisualDocToMarkdown(entityPaddedMarkerScaledDoc)).toBe(
 			'![A](/image.png "Caption {width=50%}")',
 		);
+
+		// Round 14 Track B #1 / #4: preserve verbatim newlines in entity-newline
+		// titles, reject newline-separated or continuation-indented markers from
+		// false scaling, and strip entity/escaped markers from unscaled titles.
+		for (const unscaledInput of [
+			'![A](/image.png "Caption&#10;{width=50%}")',
+			'![A](/image.png "Caption&NewLine;{width=50%}")',
+			'![A](/image.png "Caption&#13;{width=50%}")',
+			'![A](/image.png "Caption\n {width=50%}")',
+			'![A](/image.png "Caption\r\n {width=50%}")',
+		]) {
+			const parsedUnscaled = parseMarkdownToVisualDoc(unscaledInput);
+			expect(
+				parsedUnscaled.firstChild?.firstChild?.attrs.scale,
+				unscaledInput,
+			).toBeNull();
+		}
+
+		const entityNewlineScaledDoc = parseMarkdownToVisualDoc(
+			'![A](/image.png "Caption&#10; {width=50%}")',
+		);
+		expect(entityNewlineScaledDoc.firstChild?.firstChild?.attrs).toMatchObject({
+			scale: 50,
+			title: "Caption\n",
+		});
+		const entityNewlineSerialized = serializeVisualDocToMarkdown(
+			entityNewlineScaledDoc,
+		);
+		expect(entityNewlineSerialized).toBe(
+			'![A](/image.png "Caption&#10; {width=50%}")',
+		);
+		expect(
+			parseMarkdownToVisualDoc(entityNewlineSerialized).firstChild?.firstChild
+				?.attrs,
+		).toMatchObject({
+			scale: 50,
+			title: "Caption\n",
+		});
+
+		const multilineContinuedDoc = parseMarkdownToVisualDoc(
+			'![A](/image.png "Caption\n  Line2 {width=50%}")',
+		);
+		expect(multilineContinuedDoc.firstChild?.firstChild?.attrs).toMatchObject({
+			scale: 50,
+			title: "Caption\nLine2",
+		});
+
+		const entityNewlineRepeatedDoc = parseMarkdownToVisualDoc(
+			'![A](/image.png "Caption {width=33%}&NewLine; {width=67%}")',
+		);
+		expect(
+			entityNewlineRepeatedDoc.firstChild?.firstChild?.attrs,
+		).toMatchObject({
+			scale: 67,
+			title: "Caption {width=33%}\n",
+		});
+
+		for (const [title, expected] of [
+			["Caption &#123;width=51%&#125;", '![A](/image.png "Caption")'],
+			["Caption &#123;width=50%&#125;", '![A](/image.png "Caption")'],
+			["&#123;width=51%&#125;", "![A](/image.png)"],
+			[String.raw`Caption \{width=51%\}`, '![A](/image.png "Caption")'],
+			["Caption {width=33%} ", '![A](/image.png "Caption {width=33%} ")'],
+		] as const) {
+			const unscaledEntityDoc = visualEditorSchema.nodes.doc.create(null, [
+				visualEditorSchema.nodes.paragraph.create(null, [
+					visualEditorSchema.nodes.image.create({
+						src: "/image.png",
+						alt: "A",
+						title,
+						scale: null,
+					}),
+				]),
+			]);
+			expect(serializeVisualDocToMarkdown(unscaledEntityDoc), title).toBe(
+				expected,
+			);
+		}
+		expect(
+			serializeVisualDocToMarkdown(
+				parseMarkdownToVisualDoc(
+					String.raw`![A](/image.png "Caption \{width=51%\}")`,
+				),
+			),
+		).toBe('![A](/image.png "Caption")');
 	});
 
 	it("P2-01 preserves CRLF, trailing newlines, and reordered untouched blocks", () => {

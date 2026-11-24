@@ -1,4 +1,5 @@
 import {
+  hasMarkdownTitleBlankLine,
   IMAGE_SCALE_PERCENTAGES,
   type ImageScalePercentage,
   parseEffectiveImageScaleTitle,
@@ -167,26 +168,19 @@ function parseImageCore(source: string, start: number): ParsedImageCore | null {
     );
   } else {
     let parentheses = 0;
-    let slashCount = 0;
+    let inEscape = false;
     while (cursor < source.length) {
       const character = source[cursor];
-      const escaped = 1 === slashCount % 2;
-      if (escaped) {
-        if ('\\' === character) {
-          slashCount += 1;
-          if ('\\' === source[cursor + 1]) slashCount += 1;
-        } else {
-          slashCount = '\\' === source[cursor + 1] ? 1 : 0;
-        }
-        cursor += 2;
-        continue;
-      }
-      if ('\\' === character) {
-        slashCount += 1;
+      if (inEscape) {
+        inEscape = false;
         cursor += 1;
         continue;
       }
-      slashCount = 0;
+      if ('\\' === character && !isWhitespace(source[cursor + 1])) {
+        inEscape = true;
+        cursor += 1;
+        continue;
+      }
       if (')' === character && 0 === parentheses) break;
       if (isWhitespace(character) && 0 === parentheses) break;
       if ('(' === character) parentheses += 1;
@@ -275,6 +269,7 @@ function parseImageCoreTail(
     titleStart + 1,
     titleEnd
   );
+  if (hasMarkdownTitleBlankLine(rawTitle)) return null;
   return {
     alt: source.slice(start + 2, altEnd),
     destination,
@@ -652,12 +647,17 @@ export function serializeMarkdownImage({
   if (null === titleValue || '' === titleValue) {
     return `![${escapedAlt}](${destinationText})`;
   }
+  if (hasMarkdownTitleBlankLine(titleValue)) {
+    syntaxError();
+  }
   const escapedTitle = escapedMarkdown(titleValue, '\\"');
-  if (null !== scale && null !== title && '' !== title) {
-    const parsedTitle = parseEffectiveImageScaleTitle(escapedTitle);
+  const parsedTitle = parseEffectiveImageScaleTitle(escapedTitle);
+  if (null !== scale) {
     if ('valid' !== parsedTitle.status || parsedTitle.scale !== scale) {
       syntaxError();
     }
+  } else if ('none' !== parsedTitle.status) {
+    syntaxError();
   }
   return `![${escapedAlt}](${destinationText} "${escapedTitle}")`;
 }

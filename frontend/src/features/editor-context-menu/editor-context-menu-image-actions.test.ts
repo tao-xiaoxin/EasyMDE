@@ -118,6 +118,10 @@ function createImageScaleSession(
 describe("editor-context-menu-image-actions", () => {
 	it.each([
 		["entity-encoded trailing space", '![A](/image.png "Caption {width=33%}&#32;")'],
+		[
+			"escaped ampersand entity trailing space",
+			String.raw`![A](/image.png "Caption {width=33%}\&#32;")`,
+		],
 		["trailing space", '![A](/image.png "Caption {width=33%} ")'],
 		["trailing newline", '![A](/image.png "Caption {width=33%}\n")'],
 		["escaped valid marker", String.raw`![A](/image.png "Caption \{width=50%\}")`],
@@ -128,7 +132,7 @@ describe("editor-context-menu-image-actions", () => {
 		async (_label, markdown) => {
 			const { applyEdit, report, session } = createImageScaleSession(markdown);
 			await expect(
-				runImageContextMenuAction("image-scale-50", session),
+				runImageContextMenuAction("image-scale-100", session),
 			).resolves.toBeUndefined();
 			expect(report).toHaveBeenCalledTimes(1);
 			expect(report).toHaveBeenCalledWith(
@@ -139,7 +143,7 @@ describe("editor-context-menu-image-actions", () => {
 		},
 	);
 
-	it("scales valid titles and empty quoted titles without reporting an error", async () => {
+	it("scales valid titles, entity-newline repeated titles, and empty quoted titles without reporting an error", async () => {
 		const nonterminal = createImageScaleSession(
 			'![A](/image.png "Syntax {width=33%} example")',
 		);
@@ -148,6 +152,17 @@ describe("editor-context-menu-image-actions", () => {
 		expect(nonterminal.applyEdit).toHaveBeenCalledWith(
 			expect.objectContaining({
 				value: '![A](/image.png "Syntax {width=33%} example {width=50%}")',
+			}),
+		);
+
+		const entityNewline = createImageScaleSession(
+			'![A](/image.png "Caption {width=33%}&NewLine; {width=67%}")',
+		);
+		await runImageContextMenuAction("image-scale-100", entityNewline.session);
+		expect(entityNewline.report).not.toHaveBeenCalled();
+		expect(entityNewline.applyEdit).toHaveBeenCalledWith(
+			expect.objectContaining({
+				value: '![A](/image.png "Caption {width=33%}&NewLine; {width=100%}")',
 			}),
 		);
 

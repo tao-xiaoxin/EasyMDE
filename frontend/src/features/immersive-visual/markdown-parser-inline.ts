@@ -1,9 +1,6 @@
 import type MarkdownIt from "markdown-it";
 import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
-import {
-	normalizeHtmlAttributeTitle,
-	parseImageScaleTitleContract,
-} from "../../shared/image-scale-title";
+import { parseImageScaleTitleContract } from "../../shared/image-scale-title";
 import {
 	type PreScanResult,
 	restoreProtectedInlineSentinels,
@@ -30,9 +27,7 @@ export function parseImageScaleTitle(
 	if (typeof rawTitle !== "string" || rawTitle.length === 0) {
 		return { scale: null, title: null };
 	}
-	const parsed = parseImageScaleTitleContract(
-		normalizeHtmlAttributeTitle(rawTitle),
-	);
+	const parsed = parseImageScaleTitleContract(rawTitle);
 	if (parsed.status !== "valid" || !isValidVisualImageScale(parsed.scale)) {
 		return { scale: null, title: rawTitle };
 	}

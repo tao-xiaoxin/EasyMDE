@@ -50,6 +50,31 @@ const markdownItParser = new MarkdownIt({
 	breaks: false,
 });
 
+// CommonMark §4.8 / §4.3 strip leading spaces and tabs from continuation lines
+// of paragraphs and Setext headings before inline parsing; markdown-it leaves
+// them intact inside multiline link/image titles (`"Caption\n {width=50%}"`),
+// while HTML entities (`&#10; ` / `&NewLine; `) decode later during inline parsing.
+markdownItParser.core.ruler.before(
+	"inline",
+	"easymde_strip_continuation_indent",
+	(state) => {
+		for (let i = 0; i < state.tokens.length; i += 1) {
+			const token = state.tokens[i];
+			if (token?.type !== "inline" || !token.content.includes("\n")) {
+				continue;
+			}
+			const prevType = state.tokens[i - 1]?.type;
+			if (
+				state.inlineMode ||
+				prevType === "paragraph_open" ||
+				prevType === "heading_open"
+			) {
+				token.content = token.content.replace(/\n[ \t]+/g, "\n");
+			}
+		}
+	},
+);
+
 function parseCellAlignmentFromToken(token: MarkdownToken): TableTextAlign {
 	const match = /text-align\s*:\s*(left|center|right)/i.exec(
 		tokenAttrString(token, "style") ?? "",

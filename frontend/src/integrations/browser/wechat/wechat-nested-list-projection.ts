@@ -422,10 +422,10 @@ function directFlowGeometry(
 		"padding-left",
 		computed.getPropertyValue("padding-left"),
 	);
+	const lastChild = children[children.length - 1];
 	return {
 		firstChildTop: children[0]?.getBoundingClientRect().top ?? Number.NaN,
-		lastChildBottom:
-			children.at(-1)?.getBoundingClientRect().bottom ?? Number.NaN,
+		lastChildBottom: lastChild?.getBoundingClientRect().bottom ?? Number.NaN,
 		ownerRect: {
 			bottom: ownerRect.bottom,
 			left: ownerRect.left,

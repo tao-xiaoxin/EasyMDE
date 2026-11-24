@@ -544,6 +544,35 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $this->assertSame($enhancements_metadata['version'], $renderer_query['ver']);
     }
 
+    public function test_editor_block_index_worker_url_uses_the_ninth_manifest_entry_and_integrity_version()
+    {
+        $assets = new FrontendAssets(
+            new PostDocument(),
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy())
+        );
+        $manifest = json_decode(
+            file_get_contents(Asset::path('assets/build/editor-block-index-worker/wordpress-manifest.json')),
+            true
+        );
+        $entry = $manifest['entries']['frontend/src/entrypoints/editor-block-index-worker.ts'];
+        $metadata = require Asset::path(
+            'assets/build/editor-block-index-worker/' . $entry['asset']
+        );
+
+        $url = $assets->get_editor_block_index_worker_url();
+        $query = array();
+        wp_parse_str((string) wp_parse_url($url, PHP_URL_QUERY), $query);
+
+        $this->assertSame(
+            Asset::url('assets/build/editor-block-index-worker/' . $entry['file']),
+            remove_query_arg('ver', $url)
+        );
+        $this->assertSame($metadata['version'], $query['ver']);
+        $this->assertSame('easymde-editor-block-index-worker', $entry['handle']);
+        $this->assertSame(array(), $entry['dependencies']);
+        $this->assertSame(array(), $entry['resources']);
+    }
+
     public function test_combined_render_assets_are_local_and_enqueued_once()
     {
         $assets = new FrontendAssets(

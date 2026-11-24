@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import type { Plugin } from 'vite';
 
 type WordPressClassicMetadataOptions = Readonly<{
+  allowDynamicChunks?: boolean;
   repositoryRoot: string;
   sourceEntry: string;
   scriptHandle: string;
@@ -15,6 +16,114 @@ type WordPressClassicMetadataOptions = Readonly<{
     filePattern: RegExp;
   }>>;
 }>;
+
+const WORDPRESS_ELEMENT_VIRTUAL_ID = '\0easymde-wordpress-esm:element';
+const WORDPRESS_I18N_VIRTUAL_ID = '\0easymde-wordpress-esm:i18n';
+
+const WORDPRESS_ESM_SPECIFIERS: Readonly<Record<string, string>> = {
+  '@wordpress/element': WORDPRESS_ELEMENT_VIRTUAL_ID,
+  '@wordpress/i18n': WORDPRESS_I18N_VIRTUAL_ID,
+  react: WORDPRESS_ELEMENT_VIRTUAL_ID,
+  'react-dom': WORDPRESS_ELEMENT_VIRTUAL_ID,
+  'react-dom/client': WORDPRESS_ELEMENT_VIRTUAL_ID
+};
+
+const WORDPRESS_ELEMENT_EXPORTS = [
+  'Children',
+  'Component',
+  'Fragment',
+  'PureComponent',
+  'RawHTML',
+  'StrictMode',
+  'Suspense',
+  'cloneElement',
+  'concatChildren',
+  'createContext',
+  'createElement',
+  'createInterpolateElement',
+  'createPortal',
+  'createRef',
+  'createRoot',
+  'findDOMNode',
+  'flushSync',
+  'forwardRef',
+  'hydrate',
+  'hydrateRoot',
+  'isEmptyElement',
+  'isValidElement',
+  'lazy',
+  'memo',
+  'render',
+  'renderToString',
+  'startTransition',
+  'switchChildrenNodeName',
+  'unmountComponentAtNode',
+  'useCallback',
+  'useContext',
+  'useDebugValue',
+  'useDeferredValue',
+  'useEffect',
+  'useId',
+  'useImperativeHandle',
+  'useInsertionEffect',
+  'useLayoutEffect',
+  'useMemo',
+  'useReducer',
+  'useRef',
+  'useState',
+  'useSyncExternalStore',
+  'useTransition'
+] as const;
+
+const WORDPRESS_I18N_EXPORTS = [
+  '__',
+  '_n',
+  '_nx',
+  '_x',
+  'hasTranslation',
+  'isRTL',
+  'sprintf'
+] as const;
+
+function createGlobalBridgeModule(
+  globalPath: string,
+  exportNames: ReadonlyArray<string>
+): string {
+  return [
+    `const runtime = ${globalPath};`,
+    'export default runtime;',
+    ...exportNames.map((name) => `export const ${name} = runtime.${name};`),
+    ''
+  ].join('\n');
+}
+
+export function wordpressEsmExternals(): Plugin {
+  return {
+    name: 'easymde-wordpress-esm-externals',
+    enforce: 'pre',
+    resolveId(id) {
+      // biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn is outside the supported browser baseline.
+      return Object.prototype.hasOwnProperty.call(WORDPRESS_ESM_SPECIFIERS, id)
+        ? (WORDPRESS_ESM_SPECIFIERS[id] ?? null)
+        : null;
+    },
+    load(id) {
+      if (WORDPRESS_ELEMENT_VIRTUAL_ID === id) {
+        return createGlobalBridgeModule(
+          'globalThis.wp.element',
+          WORDPRESS_ELEMENT_EXPORTS
+        );
+      }
+      if (WORDPRESS_I18N_VIRTUAL_ID === id) {
+        return createGlobalBridgeModule(
+          'globalThis.wp.i18n',
+          WORDPRESS_I18N_EXPORTS
+        );
+      }
+      return null;
+    }
+  };
+}
 
 function objectValue(value: unknown, label: string): Record<string, unknown> {
   if (!value || 'object' !== typeof value || Array.isArray(value)) {
@@ -54,6 +163,7 @@ function matchingBundleAssets(
 }
 
 export function wordpressClassicMetadata({
+  allowDynamicChunks = false,
   repositoryRoot,
   sourceEntry,
   scriptHandle,
@@ -81,6 +191,22 @@ export function wordpressClassicMetadata({
         throw new Error('The WordPress entry does not match the configured source entry.');
       }
 
+      const chunks = Object.values(bundle)
+        .filter(
+          (output): output is Extract<typeof output, { type: 'chunk' }> =>
+            'chunk' === output.type && !output.isEntry
+        )
+        .map((chunk) => chunk.fileName)
+        .sort();
+      if (!allowDynamicChunks && chunks.length > 0) {
+        throw new Error(
+          `Classic WordPress entries cannot emit additional chunks; received ${chunks.join(', ')}.`
+        );
+      }
+      if (chunks.some((chunk) => !chunk.endsWith('.js'))) {
+        throw new Error('Dynamic WordPress chunks must be JavaScript files.');
+      }
+
       const assetFile = entry.fileName.replace(/\.js$/, '.asset.php');
       if (assetFile === entry.fileName) {
         throw new Error(`The WordPress entry is not a JavaScript file: ${entry.fileName}.`);
@@ -93,7 +219,7 @@ export function wordpressClassicMetadata({
         throw new Error('The completed Vite manifest does not match the built entry.');
       }
       let manifestChanged = false;
-      if (undefined !== manifestEntry.dynamicImports) {
+      if (!allowDynamicChunks && undefined !== manifestEntry.dynamicImports) {
         if (
           !Array.isArray(manifestEntry.dynamicImports)
           || manifestEntry.dynamicImports.some((value) => 'string' !== typeof value)
@@ -152,9 +278,25 @@ export function wordpressClassicMetadata({
           sourceEntry,
           ...manifestResources.map((resource) => resource.sourceEntry)
         ]);
-        const unexpectedManifestKeys = Object.keys(manifest).filter(
-          (key) => !allowedManifestKeys.has(key)
-        );
+        const allowedChunkFiles = new Set(chunks);
+        const unexpectedManifestKeys = Object.keys(manifest).filter((key) => {
+          if (allowedManifestKeys.has(key)) {
+            return false;
+          }
+          if (allowDynamicChunks) {
+            const record = manifest[key];
+            if (
+              record
+              && 'object' === typeof record
+              && !Array.isArray(record)
+              && 'string' === typeof (record as Record<string, unknown>).file
+              && allowedChunkFiles.has((record as Record<string, unknown>).file as string)
+            ) {
+              return false;
+            }
+          }
+          return true;
+        });
         if (unexpectedManifestKeys.length) {
           throw new Error(
             `Vite manifest contains unowned resource records: ${unexpectedManifestKeys.join(', ')}.`
@@ -188,8 +330,10 @@ export function wordpressClassicMetadata({
                 handle: scriptHandle,
                 file: entry.fileName,
                 asset: assetFile,
+                ...(allowDynamicChunks ? { moduleFormat: 'esm' } : {}),
                 dependencies,
-                resources
+                resources,
+                ...(allowDynamicChunks ? { chunks } : {})
               }
             }
           },

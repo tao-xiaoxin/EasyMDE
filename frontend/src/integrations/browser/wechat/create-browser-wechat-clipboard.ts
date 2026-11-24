@@ -366,7 +366,10 @@ export function createBrowserWechatClipboard(
 			preview: HTMLElement,
 			options: WechatClipboardCopyOptions = {},
 		): Promise<WechatClipboardResult> {
-			if (!previewReady(preview)) {
+			const hiddenFormalPreview =
+				Boolean(options.resolvePreview) &&
+				preview.classList.contains("easymde-preview-surface-hidden");
+			if (!hiddenFormalPreview && !previewReady(preview)) {
 				return { code: "wechat-preview-unavailable", status: "failed" };
 			}
 
@@ -380,7 +383,8 @@ export function createBrowserWechatClipboard(
 				Boolean(options.isCurrent && !options.isCurrent());
 			const requiresPreviewResolution = Boolean(
 				options.resolvePreview &&
-					preview.querySelector("[data-easymde-preview-window-spacer]"),
+					(hiddenFormalPreview ||
+						preview.querySelector("[data-easymde-preview-window-spacer]")),
 			);
 			if (pngConversionEnabled && (!runtime.write || !runtime.clipboardItem)) {
 				return {
@@ -426,15 +430,39 @@ export function createBrowserWechatClipboard(
 							geometryMeasurements,
 						)
 					: null;
+				const resolveController = requiresPreviewResolution
+					? new AbortController()
+					: null;
+				const propagateResolveAbort = () => resolveController?.abort();
+				if (resolveController && options.signal) {
+					if (options.signal.aborted) {
+						resolveController.abort();
+					} else {
+						options.signal.addEventListener("abort", propagateResolveAbort, {
+							once: true,
+						});
+					}
+				}
+				const detachResolveAbort = (): void => {
+					if (options.signal) {
+						options.signal.removeEventListener(
+							"abort",
+							propagateResolveAbort,
+						);
+					}
+				};
 				const readyPreview = requiresPreviewResolution
 					? Promise.resolve()
-							.then(() => options.resolvePreview?.())
+							.then(() =>
+								options.resolvePreview?.(resolveController?.signal),
+							)
 							.then((resolved) => {
 								if (!resolved || !previewReady(resolved)) {
 									throw new Error("wechat-preview-unavailable");
 								}
 								return resolved;
 							})
+							.finally(detachResolveAbort)
 					: Promise.resolve(preview);
 				let payloadPreview = preview;
 				let payload!: Promise<SerializedClipboardPayload>;

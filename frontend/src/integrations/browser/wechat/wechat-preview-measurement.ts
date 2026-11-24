@@ -2,8 +2,12 @@ import { type BrowserWechatClipboardRuntime, withTimeout } from './wechat-clipbo
 import { THEME_IMAGE_FETCH_TIMEOUT_MS } from './wechat-background-images';
 import { stripRawDimensionContextIdentityAttributes } from './wechat-dimension-semantics';
 import { clipboardSourceMarkup } from './wechat-source-freshness';
+import {
+  PREVIEW_MEASUREMENT_WIDTHS,
+  rememberPreviewWidthValue
+} from './wechat-preview-width-store';
 
-export const PREVIEW_MEASUREMENT_WIDTHS = new WeakMap<HTMLElement, number>();
+export { PREVIEW_MEASUREMENT_WIDTHS, rememberPreviewWidthValue };
 
 export type WechatPreviewMeasurementLease = Readonly<{
   cleanup: () => void;
@@ -57,13 +61,6 @@ export function previewMeasurementWidth(source: HTMLElement): number | null {
   return fallbackWidth > 0 ? fallbackWidth : null;
 }
 
-export function rememberPreviewWidthValue(source: HTMLElement): void {
-  const width = source.getBoundingClientRect?.()?.width ?? 0;
-  if (Number.isFinite(width) && width > 0) {
-    PREVIEW_MEASUREMENT_WIDTHS.set(source, width);
-  }
-}
-
 export const PREVIEW_MEASUREMENT_INHERITED_PROPERTIES = [
   'color',
   'direction',
@@ -102,7 +99,22 @@ export function finiteCssPixelValue(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+const HIDDEN_PREVIEW_SURFACE_CLASS = 'easymde-preview-surface-hidden';
+const PROSEMIRROR_SURFACE_SELECTORS = [
+  '[data-easymde-prosemirror-host="1"] .easymde-prosemirror-surface',
+  '[data-easymde-prosemirror-host="1"]'
+] as const;
+
 export function previewWorkspaceMeasurementWidth(preview: HTMLElement, runtime: BrowserWechatClipboardRuntime): number | null {
+  if (preview.classList.contains(HIDDEN_PREVIEW_SURFACE_CLASS)) {
+    const parent = preview.parentElement;
+    if (parent && (parent.getBoundingClientRect?.()?.width ?? 0) > 0) {
+      for (const selector of PROSEMIRROR_SURFACE_SELECTORS) {
+        const surfaceWidth = parent.querySelector(selector)?.getBoundingClientRect?.()?.width ?? 0;
+        if (Number.isFinite(surfaceWidth) && surfaceWidth > 0) return surfaceWidth;
+      }
+    }
+  }
   const remembered = PREVIEW_MEASUREMENT_WIDTHS.get(preview);
   if (remembered && remembered > 0) return remembered;
 
@@ -598,6 +610,7 @@ export function createHiddenPreviewGeometryMeasurement(
   if (!document.body) throw new Error('wechat-preview-measurement-document-body-unavailable');
   const host = document.createElement('div');
   host.className = 'easymde-wechat-preview-measurement';
+  host.dataset.easymdeWechatMeasureHost = '1';
   host.setAttribute('aria-hidden', 'true');
   host.setAttribute('inert', '');
   host.style.cssText = [
@@ -652,6 +665,9 @@ export function createHiddenPreviewGeometryMeasurement(
       pathClone.style.setProperty('padding', '0', 'important');
       pathClone.style.setProperty('border', '0', 'important');
       pathClone.style.setProperty('transform', 'none', 'important');
+    }
+    if (pathElement === preview) {
+      pathClone.classList.remove(HIDDEN_PREVIEW_SURFACE_CLASS);
     }
     if ('none' === computed.getPropertyValue('display').trim().toLowerCase()) {
       pathClone.style.setProperty('display', 'block', 'important');

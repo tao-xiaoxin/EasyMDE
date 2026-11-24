@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "markerPrefix": "<!-- easymde-table-align:v1 ",
+  "markerSuffix": " -->",
+  "alignmentValues": ["left", "center", "right"],
+  "rowModel": {
+    "header": 0,
+    "firstBody": 1,
+    "separatorIsNotALogicalRow": true
+  },
+  "cases": [
+    {
+      "id": "lf-bare-header-left-marker",
+      "newline": "\n",
+      "source": "<!-- easymde-table-align:v1 [[0,\"left\"]] -->\n| A | B |\n| --- | --- |\n| 1 | 2 |",
+      "rowCount": 2,
+      "columnCount": 2,
+      "baseAlignments": [null, null],
+      "entries": [[0, "left"]]
+    },
+    {
+      "id": "lf-two-column",
+      "newline": "\n",
+      "source": "<!-- easymde-table-align:v1 [[1,\"center\"],[2,\"center\"],[2,0,\"right\"]] -->\n| A | B |\n| --- | ---: |\n| 1 | 2 |\n| 3 | 4 |",
+      "rowCount": 3,
+      "columnCount": 2,
+      "baseAlignments": ["left", "right"],
+      "entries": [[1, "center"], [2, "center"], [2, 0, "right"]]
+    },
+    {
+      "id": "lf-base-equal-row-cell-exception",
+      "newline": "\n",
+      "source": "<!-- easymde-table-align:v1 [[1,\"left\"],[1,0,\"center\"]] -->\n| A | B |\n| :--- | :--- |\n| 1 | 2 |",
+      "rowCount": 2,
+      "columnCount": 2,
+      "baseAlignments": ["left", "left"],
+      "entries": [[1, "left"], [1, 0, "center"]]
+    },
+    {
+      "id": "crlf-two-column",
+      "newline": "\r\n",
+      "source": "<!-- easymde-table-align:v1 [[1,\"right\"]] -->\r\n| A | B |\r\n| --- | ---: |\r\n| 1 | 2 |\r\n| 3 | 4 |",
+      "rowCount": 3,
+      "columnCount": 2,
+      "baseAlignments": ["left", "right"],
+      "entries": [[1, "right"]]
+    },
+    {
+      "id": "cr-two-column",
+      "newline": "\r",
+      "source": "<!-- easymde-table-align:v1 [[1,\"left\"]] -->\r| A | B |\r| --- | ---: |\r| 1 | 2 |\r| 3 | 4 |",
+      "rowCount": 3,
+      "columnCount": 2,
+      "baseAlignments": ["left", "right"],
+      "entries": [[1, "left"]]
+    },
+    {
+      "id": "integral-float-coordinates",
+      "newline": "\n",
+      "source": "<!-- easymde-table-align:v1 [[1.0,\"left\"],[1,0,\"center\"]] -->\n| A | B |\n| --- | ---: |\n| 1 | 2 |",
+      "rowCount": 2,
+      "columnCount": 2,
+      "baseAlignments": ["left", "right"],
+      "entries": [[1, "left"], [1, 0, "center"]]
+    }
+  ],
+  "invalidPayloads": [
+    {"id": "invalid-version", "marker": "<!-- easymde-table-align:v2 [[1,\"center\"]] -->"},
+    {"id": "orphan-marker", "expectedStatus": "invalid", "expectedCode": "table-alignment-annotation-marker-orphan", "marker": "<!-- easymde-table-align:v1 [[1,\"center\"]] -->"},
+    {"id": "indented-code-marker", "expectedStatus": "absent", "marker": "    <!-- easymde-table-align:v1 [[1,\"center\"]] -->"},
+    {"id": "multiline-marker", "expectedStatus": "invalid", "expectedCode": "table-alignment-annotation-marker-invalid", "ownedPrefix": true, "marker": "<!-- easymde-table-align:v1 [[1,\n\"center\"]] -->"},
+    {"id": "duplicate-row", "entries": [[1, "center"], [1, "right"]]},
+    {"id": "duplicate-cell", "entries": [[1, "center"], [1, 0, "right"], [1, 0, "left"]]},
+    {"id": "out-of-range-row", "entries": [[3, "center"]]},
+    {"id": "out-of-range-column", "entries": [[1, 2, "center"]]},
+    {"id": "unsorted-tuples", "entries": [[1, 1, "right"], [1, "center"]]},
+    {"id": "wrong-shape", "entries": [[1], [1, 0, "center", "extra"]]},
+    {"id": "cell-without-row", "entries": [[1, 0, "center"]]},
+    {"id": "same-value-row", "entries": [[1, "left"]], "baseAlignments": ["left", "left"]},
+    {"id": "same-value-cell", "entries": [[1, "center"], [1, 0, "center"]]},
+    {"id": "json-object", "marker": "<!-- easymde-table-align:v1 {\"0\":[1,\"center\"]} -->"},
+    {"id": "tuple-object", "marker": "<!-- easymde-table-align:v1 [{\"0\":1,\"1\":\"center\"}] -->"}
+  ],
+  "callerScope": {
+    "codeMarker": "A marker-looking comment inside a fenced code block is excluded by the trusted table/code parser caller; this annotation module accepts only the caller-provided table range."
+  },
+  "sequenceAlignments": ["left", "center", "right"]
+}

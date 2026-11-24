@@ -39,15 +39,23 @@ const productionSpec = {
 		"wp-hooks",
 		"wp-i18n",
 	],
+	allowDynamicChunks: true,
+	expectedModuleFormat: "esm",
+	chunkFilePattern: /^assets\/admin-editor-chunk-[A-Za-z0-9_-]+\.js$/,
 	resourceField: null,
 	expectedResourceCount: 1,
 	resourceHasManifestRecord: false,
 	resourceReferencedByScript: true,
 	label: "production build",
-	ignoredOutputPrefixes: ["admin-editor-loader/", "code-copy/", "frontend-enhancements/", "frontend-bootstrap/", "frontend-mermaid/", "media-picker/", "settings-center/"],
+	ignoredOutputPrefixes: ["admin-editor-loader/", "code-copy/", "editor-block-index-worker/", "frontend-enhancements/", "frontend-bootstrap/", "frontend-mermaid/", "media-picker/", "settings-center/"],
 	requiredRuntimePatterns: [
 		{ pattern: /\bwp\.element\b/, label: "WordPress element runtime" },
 		{ pattern: /\bwp\.i18n\b/, label: "WordPress i18n runtime" },
+	],
+	forbiddenScriptPatterns: [
+		{ pattern: /frontend\/src/, label: "frontend source path" },
+		{ pattern: /\.at\(/, label: "post-ES2020 .at() call" },
+		{ pattern: /Object\.hasOwn\(/, label: "post-ES2020 Object.hasOwn() call" },
 	],
 };
 const adminEditorLoaderProductionSpec = {
@@ -66,6 +74,7 @@ const adminEditorLoaderProductionSpec = {
 	resourceReferencedByScript: false,
 	label: "admin editor loader production build",
 	requiredRuntimePatterns: [
+		{ pattern: /\.type=[`"']module[`"']/, label: "ES module script loader" },
 		{ pattern: /fetch[Pp]riority|fetchpriority/, label: "high-priority editor fetch" },
 		{ pattern: /MutationObserver/, label: "editor DOM gate" },
 		{ pattern: /pagehide/, label: "editor loader teardown" },
@@ -191,6 +200,23 @@ const mediaPickerProductionCheckRoot = join(
 	repositoryRoot,
 	".cache/easymde-media-picker-production-check",
 );
+const editorBlockIndexWorkerProductionSpec = {
+	outputRoot: join(repositoryRoot, "assets/build/editor-block-index-worker"),
+	sourceEntry: "frontend/src/entrypoints/editor-block-index-worker.ts",
+	expectedHandle: "easymde-editor-block-index-worker",
+	expectedDependencies: [],
+	resourceField: null,
+	expectedResourceCount: 0,
+	resourceHasManifestRecord: false,
+	resourceReferencedByScript: false,
+	label: "editor block-index worker production build",
+	requiredRuntimePattern: /editor-block-index/,
+	requiredRuntimeLabel: "editor block-index worker protocol",
+};
+const editorBlockIndexWorkerProductionCheckRoot = join(
+	repositoryRoot,
+	".cache/easymde-editor-block-index-worker-production-check",
+);
 const forbiddenContent = [
 	{
 		pattern: /__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED/,
@@ -220,7 +246,10 @@ const nonFetchingXmlNamespaceDeclarations = [
 	/\s+xmlns\s*=\s*(["'])http:\/\/www\.w3\.org\/2000\/svg\1/g,
 	/\s+xmlns:xlink\s*=\s*(["'])http:\/\/www\.w3\.org\/1999\/xlink\1/g,
 ];
-const nonFetchingMarkdownUrlPlaceholders = /\]\(https?:\/\/\)/gi;
+const nonFetchingMarkdownUrlPlaceholders = [
+	/\]\(https?:\/\/\)/gi,
+	/(["'`])https?:\/\/\1/g,
+];
 const nonFetchingSchemaUrlLiterals = [
 	/(["'`])http:\/\/www\.w3\.org\/1999\/xhtml\1/g,
 	/(["'`])http:\/\/www\.w3\.org\/1999\/xlink\1/g,
@@ -232,6 +261,9 @@ const nonFetchingSchemaUrlLiterals = [
 	/(["'`])http:\/\/\/org\/eclipse\/emf\/ecore\/util\/ExtendedMetaData\1/g,
 	/(["'`])http:\/\/www\.eclipse\.org\/emf\/2002\/Ecore\1/g,
 	/(["'`])http:\/\/www\.eclipse\.org\/emf\/2003\/XMLType\1/g,
+	/\(see https:\/\/prosemirror\.net\/docs\/guide\/#generatable\)/g,
+	/\(\?:localhost\|\$\{this\.get_ipv6_url_host\(\)\.source\}/g,
+	/`http:\/\/\$\{[A-Za-z_$][\w$.]*\}`/g,
 ];
 const nonFetchingSvgNamespaceLiteral =
 	/(["'`])http:\/\/www\.w3\.org\/2000\/svg\1/g;
@@ -302,7 +334,9 @@ function assertSafeProductionText(source, label) {
 	for (const declaration of nonFetchingXmlNamespaceDeclarations) {
 		source = source.replace(declaration, "");
 	}
-	source = source.replace(nonFetchingMarkdownUrlPlaceholders, "");
+	for (const placeholder of nonFetchingMarkdownUrlPlaceholders) {
+		source = source.replace(placeholder, "");
+	}
 	source = source.replace(nonFetchingSvgNamespaceLiteral, "");
 	for (const literal of nonFetchingSchemaUrlLiterals) {
 		source = source.replace(literal, "");
@@ -419,6 +453,9 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
 		);
 	}
 
+	const explicitResourceKeys = new Set(
+		(spec.manifestResources ?? []).map((resource) => resource.sourceEntry),
+	);
 	const explicitManifestResources = (spec.manifestResources ?? []).map(
 		(resource) => {
 			assertRelativeAssetPath(resource.sourceEntry, "Vite resource source");
@@ -440,7 +477,10 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
 					`Vite manifest resource ${resource.sourceEntry} must be a non-entry record.`,
 				);
 			}
-			assertRelativeAssetPath(record.file, `Vite resource ${resource.sourceEntry} file`);
+			assertRelativeAssetPath(
+				record.file,
+				`Vite resource ${resource.sourceEntry} file`,
+			);
 			resource.filePattern.lastIndex = 0;
 			if (!resource.filePattern.test(record.file)) {
 				throw new Error(
@@ -450,6 +490,19 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
 			return record.file;
 		},
 	);
+
+	if (spec.expectedModuleFormat) {
+		if (spec.expectedModuleFormat !== wordpressEntry.moduleFormat) {
+			throw new Error(
+				`WordPress entry moduleFormat does not match the configured ${spec.label} contract.`,
+			);
+		}
+	} else if (undefined !== wordpressEntry.moduleFormat) {
+		throw new Error(
+			`Classic ${spec.label} entry must not declare moduleFormat.`,
+		);
+	}
+
 	const viteResources = spec.resourceField
 		? assertAssetList(
 				viteEntry[spec.resourceField],
@@ -467,12 +520,110 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
 			"WordPress resource metadata does not match the Vite entry.",
 		);
 	}
-	if (spec.manifestResources?.length) {
+
+	let wordpressChunks = [];
+	if (spec.allowDynamicChunks) {
+		if (
+			!Array.isArray(wordpressEntry.chunks) ||
+			0 === wordpressEntry.chunks.length ||
+			wordpressEntry.chunks.some((chunk) => "string" !== typeof chunk)
+		) {
+			throw new Error(
+				`WordPress ${spec.label} entry must declare one or more dynamic chunk paths.`,
+			);
+		}
+		for (const chunk of wordpressEntry.chunks) {
+			assertRelativeAssetPath(chunk, "WordPress chunk path");
+			if (spec.chunkFilePattern && !spec.chunkFilePattern.test(chunk)) {
+				throw new Error(
+					`WordPress chunk path has an unexpected filename: ${chunk}.`,
+				);
+			}
+		}
+		const sortedUniqueChunks = [...new Set(wordpressEntry.chunks)].sort();
+		if (
+			JSON.stringify(sortedUniqueChunks) !==
+			JSON.stringify(wordpressEntry.chunks)
+		) {
+			throw new Error(
+				"WordPress manifest chunks must be sorted and contain no duplicates.",
+			);
+		}
+		wordpressChunks = sortedUniqueChunks;
+
+		if (
+			!Array.isArray(viteEntry.dynamicImports) ||
+			0 === viteEntry.dynamicImports.length ||
+			viteEntry.dynamicImports.some((value) => "string" !== typeof value)
+		) {
+			throw new Error(
+				`Vite ${spec.label} entry must declare one or more dynamicImports.`,
+			);
+		}
+		for (const dynamicImportKey of viteEntry.dynamicImports) {
+			assertRelativeAssetPath(dynamicImportKey, "Vite dynamic import source");
+			if (
+				dynamicImportKey === spec.sourceEntry ||
+				explicitResourceKeys.has(dynamicImportKey) ||
+				!Object.hasOwn(manifest, dynamicImportKey)
+			) {
+				throw new Error(
+					`Vite manifest dynamicImport does not reference a built chunk: ${dynamicImportKey}.`,
+				);
+			}
+		}
+
+		const viteChunkRecords = manifestKeys
+			.filter(
+				(key) => key !== spec.sourceEntry && !explicitResourceKeys.has(key),
+			)
+			.map((key) => {
+				assertRelativeAssetPath(key, "Vite chunk source");
+				return assertObject(manifest[key], `Vite chunk ${key}`);
+			});
+		const recordedChunkFiles = [
+			...new Set(
+				viteChunkRecords.map((record) => {
+					if (true === record.isEntry || "string" !== typeof record.file) {
+						throw new Error(
+							"Vite chunk record must identify a non-entry JavaScript chunk.",
+						);
+					}
+					assertRelativeAssetPath(record.file, "Vite chunk file");
+					if (
+						spec.chunkFilePattern &&
+						!spec.chunkFilePattern.test(record.file)
+					) {
+						throw new Error(
+							`Vite chunk file has an unexpected filename: ${record.file}.`,
+						);
+					}
+					return record.file;
+				}),
+			),
+		].sort();
+		if (
+			JSON.stringify(wordpressChunks) !== JSON.stringify(recordedChunkFiles)
+		) {
+			throw new Error(
+				"Vite manifest chunk records do not match the WordPress manifest chunks.",
+			);
+		}
+	} else if (undefined !== wordpressEntry.chunks) {
+		throw new Error(
+			`Classic ${spec.label} entry must not declare dynamic chunks.`,
+		);
+	}
+
+	if (!spec.allowDynamicChunks && spec.manifestResources?.length) {
 		const expectedManifestKeys = [
 			spec.sourceEntry,
 			...spec.manifestResources.map((resource) => resource.sourceEntry),
 		].sort();
-		if (JSON.stringify(manifestKeys.sort()) !== JSON.stringify(expectedManifestKeys)) {
+		if (
+			JSON.stringify([...manifestKeys].sort()) !==
+			JSON.stringify(expectedManifestKeys)
+		) {
 			throw new Error(
 				"Vite manifest contains missing or unowned resource records.",
 			);
@@ -496,7 +647,7 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
 				"Vite manifest resource records do not match the entry resources.",
 			);
 		}
-	} else if (1 !== manifestKeys.length) {
+	} else if (!spec.allowDynamicChunks && 1 !== manifestKeys.length) {
 		throw new Error(
 			"The production Vite manifest contains an unexpected resource entry.",
 		);
@@ -517,10 +668,55 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
 	for (const resource of viteResources) {
 		assertFile(root, resource, "Built resource");
 	}
+	for (const chunk of wordpressChunks) {
+		assertFile(root, chunk, "Built chunk");
+	}
 
 	const script = readFileSync(join(root, viteEntry.file), "utf8");
 	const assetMetadata = readFileSync(join(root, wordpressEntry.asset), "utf8");
-	assertSafeProductionText(script, "Built script");
+	const forbiddenScriptPatterns = spec.forbiddenScriptPatterns ?? [];
+	const assertSafeBuiltScript = (code, label) => {
+		assertSafeProductionText(code, label);
+		for (const forbidden of forbiddenScriptPatterns) {
+			if (forbidden.pattern.test(code)) {
+				throw new Error(`${label} contains a prohibited ${forbidden.label}.`);
+			}
+		}
+	};
+	assertSafeBuiltScript(script, "Built script");
+	const chunkScriptsByFile = new Map();
+	for (const chunk of wordpressChunks) {
+		const chunkScript = readFileSync(join(root, chunk), "utf8");
+		assertSafeBuiltScript(chunkScript, `Built chunk ${chunk}`);
+		chunkScriptsByFile.set(chunk, chunkScript);
+	}
+	const entryStaticSources = [script];
+	if (spec.allowDynamicChunks && Array.isArray(viteEntry.imports)) {
+		const visitedImportKeys = new Set();
+		const pendingImportKeys = [...viteEntry.imports];
+		while (pendingImportKeys.length > 0) {
+			const importKey = pendingImportKeys.pop();
+			if ("string" !== typeof importKey || visitedImportKeys.has(importKey)) {
+				continue;
+			}
+			visitedImportKeys.add(importKey);
+			const importedRecord = manifest[importKey];
+			if (!importedRecord || "object" !== typeof importedRecord) {
+				continue;
+			}
+			if ("string" === typeof importedRecord.file) {
+				const chunkScript = chunkScriptsByFile.get(importedRecord.file);
+				if ("string" === typeof chunkScript) {
+					entryStaticSources.push(chunkScript);
+				}
+			}
+			if (Array.isArray(importedRecord.imports)) {
+				for (const nestedImportKey of importedRecord.imports) {
+					pendingImportKeys.push(nestedImportKey);
+				}
+			}
+		}
+	}
 	const requiredRuntimePatterns =
 		spec.requiredRuntimePatterns ??
 		(spec.requiredRuntimePattern
@@ -532,7 +728,9 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
 				]
 			: []);
 	for (const requiredRuntime of requiredRuntimePatterns) {
-		if (!requiredRuntime.pattern.test(script)) {
+		if (
+			!entryStaticSources.some((source) => requiredRuntime.pattern.test(source))
+		) {
 			throw new Error(
 				`Built script does not reference the ${requiredRuntime.label}.`,
 			);
@@ -558,7 +756,11 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
 	}
 
 	const resourceName = viteResources[0] ? posix.basename(viteResources[0]) : "";
-	if (spec.resourceReferencedByScript && !script.includes(resourceName)) {
+	const allBuiltScripts = [script, ...chunkScriptsByFile.values()];
+	if (
+		spec.resourceReferencedByScript &&
+		!allBuiltScripts.some((source) => source.includes(resourceName))
+	) {
 		throw new Error(
 			"Built script does not resolve the Vite manifest resource.",
 		);
@@ -570,6 +772,7 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
 		viteEntry.file,
 		wordpressEntry.asset,
 		...viteResources,
+		...wordpressChunks,
 	].sort();
 	const actualFiles = collectSpecFiles(root, spec);
 	if (JSON.stringify(expectedFiles) !== JSON.stringify(actualFiles)) {
@@ -587,6 +790,12 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
 		asset: wordpressEntry.asset,
 		handle: spec.expectedHandle,
 		dependencies: spec.expectedDependencies,
+		...(spec.allowDynamicChunks
+			? {
+					chunks: wordpressChunks,
+					moduleFormat: wordpressEntry.moduleFormat,
+				}
+			: {}),
 	};
 }
 
@@ -640,6 +849,12 @@ export function validateMediaPickerProductionBuild(
 	outputRoot = mediaPickerProductionSpec.outputRoot,
 ) {
 	return validateBuild(mediaPickerProductionSpec, outputRoot);
+}
+
+export function validateEditorBlockIndexWorkerProductionBuild(
+	outputRoot = editorBlockIndexWorkerProductionSpec.outputRoot,
+) {
+	return validateBuild(editorBlockIndexWorkerProductionSpec, outputRoot);
 }
 
 export function compareFrontendProductionBuilds(
@@ -761,6 +976,18 @@ export function compareMediaPickerProductionBuilds(
 	);
 }
 
+export function compareEditorBlockIndexWorkerProductionBuilds(
+	generatedRoot = editorBlockIndexWorkerProductionCheckRoot,
+	committedRoot = editorBlockIndexWorkerProductionSpec.outputRoot,
+) {
+	compareProductionBuild(
+		editorBlockIndexWorkerProductionSpec,
+		generatedRoot,
+		committedRoot,
+		"editor block-index worker production build",
+	);
+}
+
 if (
 	process.argv[1] &&
 	import.meta.url === pathToFileURL(resolve(process.argv[1])).href
@@ -773,8 +1000,9 @@ if (
 			compareSettingsProductionBuilds();
 			compareFrontendEnhancementsProductionBuilds();
 			compareFrontendBootstrapProductionBuilds();
-			compareFrontendMermaidProductionBuilds();
-			compareMediaPickerProductionBuilds();
+				compareFrontendMermaidProductionBuilds();
+				compareMediaPickerProductionBuilds();
+				compareEditorBlockIndexWorkerProductionBuilds();
 			console.log(
 				"Committed frontend production build matches the validated source build.",
 			);
@@ -785,8 +1013,9 @@ if (
 			validateCodeCopyProductionBuild();
 			validateFrontendEnhancementsProductionBuild();
 			validateFrontendBootstrapProductionBuild();
-			validateFrontendMermaidProductionBuild();
-			validateMediaPickerProductionBuild();
+				validateFrontendMermaidProductionBuild();
+				validateMediaPickerProductionBuild();
+				validateEditorBlockIndexWorkerProductionBuild();
 			console.log("Frontend production build is valid.");
 		} else {
 			validateFrontendBuild();

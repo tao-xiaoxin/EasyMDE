@@ -13,6 +13,8 @@ const validBootstrap = {
       group: 'format',
       prefix: '**',
       suffix: '**',
+      defaultShortcutWin: 'Ctrl+B',
+      defaultShortcutMac: 'Cmd+B',
       usesLevelLabel: true
     },
     {
@@ -44,6 +46,10 @@ describe('parseToolbarBootstrap', () => {
     expect(parsed.commands.map((command) => command.id)).toEqual(['bold', 'extension-command']);
     expect(parsed.commands.map((command) => command.label)).toEqual(['粗体', '扩展命令']);
     expect(parsed.commands[0]).toEqual(expect.objectContaining({ prefix: '**', suffix: '**' }));
+    expect(parsed.commands[0]).toEqual(expect.objectContaining({
+      defaultShortcutWin: 'Ctrl+B',
+      defaultShortcutMac: 'Cmd+B'
+    }));
     expect(parsed.commands[0]?.usesLevelLabel).toBe(true);
     expect(parsed.headingLabelFormat).toBe('标题 %s');
     expect(parsed.headingLevelLabel).toBe('标题级别');
@@ -91,6 +97,20 @@ describe('parseToolbarBootstrap', () => {
     [
       'invalid-command-prefix',
       { ...validBootstrap, commands: [{ ...validBootstrap.commands[0], prefix: 42 }] }
+    ],
+    [
+      'invalid-command-default-shortcut-win',
+      {
+        ...validBootstrap,
+        commands: [{ ...validBootstrap.commands[0], defaultShortcutWin: 42 }]
+      }
+    ],
+    [
+      'invalid-command-default-shortcut-mac',
+      {
+        ...validBootstrap,
+        commands: [{ ...validBootstrap.commands[0], defaultShortcutMac: 42 }]
+      }
     ],
     [
       'invalid-command-level',

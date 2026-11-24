@@ -25,7 +25,12 @@ export type WechatClipboardCopyOptions = Readonly<{
   maxBytes?: number;
   pngConversionEnabled?: boolean;
   postId?: number;
-  resolvePreview?: () => Promise<HTMLElement | null>;
+  /**
+   * Resolves the current formal Preview for a hidden owner. The signal aborts
+   * when the Copy is cancelled or fails, so a pending resolution must settle
+   * with null instead of waiting for a render that will never be used.
+   */
+  resolvePreview?: (signal?: AbortSignal) => Promise<HTMLElement | null>;
   signal?: AbortSignal;
   visualRasterizationPort?: WechatVisualRasterizationPort;
 }>;

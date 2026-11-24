@@ -33,36 +33,36 @@ Markdown source, and Preview opens the rendered article. The immersive
 It does not save a browser preference or update WordPress settings. Its choice
 survives leaving and re-entering immersive writing in the same page, while a
 normal or hard refresh restores the Settings Center mode. The immersive
-Outline preference is separate and remains browser-persisted.
-In immersive Preview, the unlock control shows a busy state while the editable
-surface is being prepared. It becomes editable and receives focus only when
-preparation and any required long-document window are ready. Leaving Preview
-cancels a pending unlock. The busy control keeps keyboard focus while repeated
-activation is ignored.
-In editable immersive Preview, Backspace at the start of an empty fenced code
-block removes its frame and returns to a paragraph. Undo and Redo restore the
-source, frame and caret, including fences left open at the end of the document.
-Ctrl/Cmd+A selects the connected visual article. Backspace or Delete clears the
-canonical article only for that full visual-root selection. Cut, IME input,
-partial selections, and partial code selections keep their existing editing
-owners. The cleared surface immediately shows one empty paragraph and a usable
-caret, so the next character is accepted without waiting for another Preview.
-Undo and Redo restore the canonical source and connected caret.
-If the source contains only terminal ASCII spaces or newlines, the empty
-paragraph is a visual presentation and those source bytes remain intact.
-Insertion at that boundary preserves them. Directly formatted list and quote
-wrappers follow the same empty-Backspace behavior while non-empty code content
-remains unchanged.
-After a structural Enter in a long windowed document, the accepted formal
-Preview restores the current canonical editing position before following input
-is accepted. The existing Markdown source remains authoritative; a structural
-transition that normalizes to unchanged Markdown does not create new persisted
-article content.
-When a new visual block is created by typing a tilde or backtick fence opener
-that can be represented as valid backtick syntax and pressing Enter, its source
-uses an equally wide backtick fence with the typed language or info string.
-Existing or pasted tilde fences retain their original family; an info string
-containing a backtick remains literal instead of forming an invalid shortcut.
+Outline preference is separate and remains browser-persisted. Entering
+immersive writing and switching between immersive Source, Split and Preview
+preserve the Source editor's viewport, including when it is deliberately
+scrolled away from the caret; the document and selection do not change.
+In immersive Preview, the unlock control shows a brief busy state while the
+on-demand visual editor module and code theme prepare, then switches directly
+into one unified editable article surface and places focus inside it. Both
+short articles and long documents (>160 blocks) edit in the same continuous
+surface without window splitting or spacer placeholders. Opening or unlocking an
+article writes nothing until you make an edit; localized visual edits preserve
+untouched Markdown blocks (list markers, table column padding, reference links,
+and trailing line endings), and Undo/Redo restore exact source history.
+
+Complex blocks—KaTeX display and inline math, Mermaid diagrams, `[TOC]`,
+footnotes, reference definitions, and raw HTML containers—render as protected
+cards inside the visual editor so ordinary typing never corrupts their raw
+Markdown; double-clicking a protected card opens its inline raw-source editor.
+Code blocks keep the shared Mac three-dot frame with live syntax highlighting;
+typing ```` ```lang ```` or `~~~lang` and pressing Enter converts the line into
+a fenced code block, Backspace at the start of an empty code block converts it
+back to a paragraph, and forward Delete at the end of a code body stays inside
+the block without consuming the following block.
+
+Ordinary typing, Enter, Backspace, task-list checkboxes, table editing, and
+IME composition run immediately in memory without waiting on server Preview
+round-trips per keystroke. Leaving visual editing, locking Preview back to
+read-only, switching to Source/Split, or invoking Copy to WeChat synchronizes
+and refreshes the authoritative server-rendered PHP Preview. Leaving Preview
+cancels any in-flight unlock cleanly without adding an edit or history step.
+
 On narrow screens, the Outline opens over the writing area. It closes when
 Preview becomes editable or an editable Preview is resized into a narrow
 screen. Its show control can reopen it without changing the saved Outline
@@ -94,6 +94,156 @@ Chrome and other browsers may reserve exact Typora combinations such as
 Ctrl/Cmd+1 through 6, Ctrl/Cmd+K, or Ctrl+Shift+I before a page receives the
 keyboard event. EasyMDE still displays and restores the exact Typora defaults;
 when a browser reserves one, record a different combination for that command.
+After a binding changes or is cleared, the previous registry default is
+consumed inside the editor, including held-key repeats, so it cannot trigger
+browser-native formatting; only the Settings Center binding can run the
+EasyMDE command.
+
+## Editor Context Menu
+
+Right-click an editable Markdown Source or unlocked visual Preview, or press
+Shift+F10/Context Menu, to open the shared editor menu. It keeps Bold, Cut,
+Copy, Paste, Copy as Markdown/HTML, plain-text paste, paragraph/table actions,
+and the WordPress Media picker on the same document and permission owners as
+the toolbar. Paste is enabled only after the browser reports readable text;
+failed or stale Clipboard operations leave the document unchanged.
+
+The menu describes the element the pointer is on, so a plain right-click does
+not require a preceding left-click. A deliberate text selection keeps its
+extent and direction, and keyboard activation follows the current selection
+instead of the menu anchor. The Source editor establishes the pointed caret
+before the context is read, without writing Markdown and without adding an
+Undo/Redo entry.
+
+The root menu is confined to the current editor workspace. Submenus may cross
+the Source/Preview divider, open on the forward side when space permits, and
+flip and clamp to the viewport when needed; scrolling or right-clicking
+outside the editor dismisses the menu without changing Markdown.
+The menu prepares the selected content before first placement so contextual
+items do not move it afterward. Cancelling or changing the selection during
+preparation prevents a late menu from appearing. An open menu also stays in
+place while a background Preview or block-index refresh is still building; its
+context is replaced once that refreshed inventory is ready, while a real
+document or selection change still dismisses it.
+
+In unlocked Visual editing, Enter may split a paragraph without losing the next
+right-click's target. A menu requested while a text paste is waiting for Preview
+keeps the same paragraph target, including text pasted at its beginning. During
+focused Undo/Redo in a long document, Preview brings the exact history caret's
+block into the mounted window before restoring the caret; it does not take
+focus back from another control.
+
+In a table cell, Backspace protects only the cell's absolute content start, not
+an empty cell as a whole. If Enter creates a line break in an otherwise empty
+cell, Backspace removes that break even though the cell has no text. A single
+renderer placeholder break still represents an empty cell: only the exact
+lowercase, attribute-free `<br>` token in a table cell is a line break, while
+attributes, `<BR>`, `<br/>`, code spans, escapes and entities are not. Other raw
+HTML remains stripped. Enter stays native; the editor adds no table-specific
+Enter command. Typing into a selection that spans two cells, or that mixes a
+cell with the area outside the table, is cancelled before the browser's
+default: the text stays unchanged, nothing is locked, and the table keeps its
+cells.
+
+
+A selection spanning an object and surrounding text keeps text commands;
+it does not expose that object's deletion, alignment or adjacent insertion.
+Selections crossing the editable visual surface boundary are rejected without
+changing Markdown.
+
+Clicking an image in unlocked Visual explicitly selects that image and shows a
+soft blue shadow around it. The shadow hugs the image's own box and follows it
+while the image loads, is resized by the layout, or when the surrounding window
+is rebuilt. Clicking another image moves the shadow; clicking text removes it.
+This selection-only action focuses Visual and updates only the canonical
+selection, so Markdown, image size, source attributes, history, and
+Clipboard/export output do not change. The shadow remains understandable while
+the context menu has focus and disappears when the selection drifts, the Preview
+window is replaced, Visual is locked or exited, or the editor is disposed. The
+shadow is clipped to the visible preview area: the part of the image that has
+scrolled out of the pane is not shadowed, and an image that is fully scrolled out
+shows no shadow at all.
+
+For pointer context menus the image under the pointer is authoritative on every
+right-click. After dismissing an image menu—or while one is open—a right-click on
+another image re-anchors the menu and its selection to that image, including
+duplicate URLs by block and image order. The Context Menu key and Shift+F10 use
+the current selection instead and never re-anchor it. Deliberate mixed text/image
+selections keep their extent and do not gain image mutation commands: a range
+that spans text on both sides of an image still opens the text menu, and it is
+never reported as an unavailable image target. A selection the editor restored
+itself—for example the code-block range left after an undo—is not deliberate: a
+right-click on an image still selects that image and offers its actions, while a
+selection you made keeps its extent even when the pointer is over an image.
+
+Standalone Markdown thematic breaks (`---`, `***`, or `___`) use the same
+paragraph insertion actions as other editable blocks. Inserting above a rule
+keeps a blank line so later text remains a paragraph instead of becoming a
+Setext heading. Marker spelling, whitespace, line endings and surrounding
+source remain unchanged. Nested or fenced rule text is owned by its enclosing
+list, quote or code block. In the immersive visual editor a rule is a single non-editable block: clicking
+it or moving onto it with Backspace or Delete from a neighboring block selects
+the whole rule, and pressing Backspace or Delete again removes it as one
+Undo/Redo step. Untouched rules keep their original marker spelling and line
+endings in the Markdown source.
+
+Source link commands work with a caret or a selection inside the link caption,
+including reference-style links. **Copy Link Address** copies the formal
+renderer's resolved address, not the selected caption or a guessed definition.
+It does not change source, selection or Preview. Unresolved reference links do
+not expose an invented address; preparation failures use the existing error
+message rather than reporting a successful copy.
+
+Code Tools offers whole-block indentation and selected-row indentation for
+code blocks with a supported language service, including blocks nested in
+lists and quotes. Selected-row indentation requires a nonempty selection; a
+selection ending at the start of the next row excludes that row. Unsupported
+languages such as Bash keep these actions visible but disabled. The language
+service may repair invalid indentation, but preserves literal payloads, blank
+rows, surrounding Markdown and line endings. A changed operation creates one
+Undo step only after formal Preview validates it; repeating an unchanged result
+adds no history step.
+
+When the selection is inside a Markdown image, **Image scale** offers 25%, 33%,
+50%, 67%, 100%, 150%, and 200%. **Upload image** is shown for the selected image
+and enabled only for an eligible absolute remote image with a configured
+remote-import owner; the selected image is
+replaced only after the protected WordPress result succeeds. The scale marker
+is stored in the image title as `{width=NN%}` and preserves alt text, URL, and
+the rest of the title. These percentages use the containing content width;
+canonical 150% and 200% markers are preserved, but shared base CSS applies
+`max-width: 100%`, so rendered output is capped by the containing content width
+with no horizontal overflow. Images without a scale marker keep responsive theme
+sizing.
+Image actions keep Markdown image syntax; there is no conversion to raw HTML
+`<img>`. Copy as HTML Code is Clipboard output only, not a source rewrite.
+Image menus intentionally omit Open in Browser and Save as PNG; these are not
+editor image actions. Formula and diagram exports below remain separate.
+
+The table Direction submenu aligns a selected table, row or column to the left,
+center or right. The latest alignment action wins. Column and whole-table actions
+use standard Markdown separators; independent row alignment adds a validated
+table-alignment comment without rewriting the original cells. Row/column edits
+retain the corresponding alignment, and Undo restores the original source.
+**Format Table Source** changes only the selected table's safe outer cell
+padding. Cell Markdown, alignment separators, URLs, line endings and surrounding
+source are retained. Repeating it on an already formatted table is a no-op;
+one Undo restores a changed table.
+Published pages retain the Settings Center's global Table Alignment policy:
+choose Auto to display the document's individual row/column alignment; an
+explicit global Left or Center setting overrides it without rewriting Markdown.
+
+Selected rendered formulas and Mermaid diagrams expose local image copying,
+source copying, editing, deletion, and paragraph insertion before or after the
+target. Formula copying also offers MathML. The editor intentionally does not
+offer browser-download or Save-as-PNG context-menu actions. These local exports
+do not upload images or change Markdown. The accepted Preview must still match
+the current document; unavailable or stale targets cannot be exported.
+
+**Copy image** uses an already loaded, same-origin Preview image at its natural
+pixel size. It does not reload remote images or upload them. Unsupported,
+unloaded, cross-origin, oversized, or stale images are unavailable; browser
+Clipboard or encoding failures are reported rather than treated as success.
 
 ## Media Insertion
 

@@ -81,6 +81,7 @@ describe("startAdminEditorLoader", () => {
 		const teardown = startAdminEditorLoader(bootstrap(), runtime(mainStart));
 		const script = loaderScript();
 
+		expect(script.type).toBe("module");
 		expect(script.async).toBe(true);
 		expect(script.fetchPriority).toBe("high");
 		expect(script.src).toBe(new URL(mainScriptUrl, window.location.href).href);

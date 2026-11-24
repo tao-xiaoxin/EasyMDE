@@ -2,6 +2,8 @@ import { createRoot } from "@wordpress/element";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { parseEditorRootBootstrap } from "../contracts/bootstrap/editor-root-bootstrap";
+import type { EditorClipboardPort } from "../contracts/ports/editor-clipboard-port";
+import { createBrowserEditorBlockIndexWorker } from "../integrations/browser/editor-context-menu/create-browser-editor-block-index-worker";
 import { createBrowserLocalDraftStorage } from "../integrations/browser/local-drafts/browser-local-draft-storage";
 import { createBrowserWechatClipboard } from "../integrations/browser/wechat/create-browser-wechat-clipboard";
 import { createBrowserWechatPngEncoder } from "../integrations/browser/wechat/create-browser-wechat-png-encoder";
@@ -30,6 +32,15 @@ vi.mock(
 	() => ({ createBrowserScrollSync: vi.fn(() => ({})) }),
 );
 vi.mock(
+	"../integrations/browser/editor-context-menu/create-browser-editor-block-index-worker",
+	() => ({
+		createBrowserEditorBlockIndexWorker: vi.fn(() => ({
+			build: vi.fn(),
+			dispose: vi.fn(),
+		})),
+	}),
+);
+vi.mock(
 	"../integrations/browser/keyboard/create-browser-toolbar-shortcuts",
 	() => ({ createBrowserToolbarShortcuts: vi.fn(() => ({})) }),
 );
@@ -47,7 +58,14 @@ vi.mock(
 );
 vi.mock(
 	"../integrations/browser/wechat/create-browser-wechat-clipboard",
-	() => ({ createBrowserWechatClipboard: vi.fn(() => ({})) }),
+	() => ({
+		createBrowserWechatClipboard: vi.fn(() => ({
+			copy: vi.fn().mockResolvedValue({ method: "clipboard", status: "copied" }),
+			prepare: vi.fn().mockResolvedValue(undefined),
+			releasePrepared: vi.fn(),
+			rememberPreviewWidth: vi.fn(),
+		})),
+	}),
 );
 vi.mock(
 	"../integrations/browser/wechat/create-browser-wechat-png-encoder",
@@ -117,6 +135,9 @@ function installEditorStylesheets() {
 const bootstrap = {
 	appearance: {},
 	document: {},
+	referenceLabelCaseFoldProfile: 14,
+	editorBlockIndexWorkerUrl:
+		"https://example.test/wp-content/plugins/easymde/assets/build/editor-block-index-worker/assets/editor-block-index-worker-test.js",
 	fonts: {},
 	imageUpload: {
 		actionNonce: "image-hosting-nonce",
@@ -167,6 +188,14 @@ const bootstrap = {
 		previewReadOnly: "Read only",
 		previewUnlockEdit: "Unlock and edit",
 		previewMode: "Preview mode",
+		protectedCardEditFormat: "Edit %s",
+		protectedCardFootnotes: "Footnotes",
+		protectedCardMath: "Math",
+		protectedCardMermaid: "Mermaid",
+		protectedCardRaw: "Raw",
+		protectedCardSave: "Save",
+		protectedCardSourceFormat: "%s source",
+		protectedCardToc: "TOC",
 		publish: "Publish article",
 		restore: "Restore revision",
 		restoreConfirm: "Unsaved changes will be lost",
@@ -266,6 +295,16 @@ const bootstrap = {
 		revisionsUrl: "/posts/",
 	},
 };
+
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((next, fail) => {
+		resolve = next;
+		reject = fail;
+	});
+	return { promise, reject, resolve };
+}
 
 function realAppearanceBootstrap(markdownTheme: string = "newsprint") {
 	return {
@@ -725,7 +764,7 @@ describe("mountAdminEditor", () => {
 		teardown();
 	});
 
-	it("mounts the production root once and returns idempotent teardown", () => {
+	it("mounts the production root once and returns idempotent teardown", async () => {
 		const render = vi.fn();
 		const unmount = vi.fn();
 		const saveDraft = document.querySelector<HTMLButtonElement>("#save-post");
@@ -771,18 +810,16 @@ describe("mountAdminEditor", () => {
 		expect(createBrowserWechatPngEncoder).toHaveBeenCalledWith(
 			expect.objectContaining({ workerUrl: expect.any(String) }),
 		);
-		expect(createBrowserWechatClipboard).toHaveBeenCalledWith(
-			expect.objectContaining({
-				approvedAssetBaseUrl: bootstrap.previewEnhancement.assetBaseUrl,
-				approvedKaTeXCssUrl: bootstrap.previewEnhancement.assets.katexCssUrl,
-				wechatMathAtlasContentVersion:
-					bootstrap.wechatExport.wechatMathAtlasContentVersion,
-				wechatMathAtlasUrl: bootstrap.wechatExport.wechatMathAtlasUrl,
-			}),
-		);
+		expect(createBrowserWechatClipboard).not.toHaveBeenCalled();
 		expect(createBrowserLocalDraftStorage).toHaveBeenCalledWith(
 			expect.objectContaining({
 				config: { ...bootstrap.localDrafts, postId: 11 },
+			}),
+		);
+		expect(createBrowserEditorBlockIndexWorker).toHaveBeenCalledWith(
+			expect.objectContaining({
+				referenceLabelCaseFoldProfile: bootstrap.referenceLabelCaseFoldProfile,
+				workerUrl: bootstrap.editorBlockIndexWorkerUrl,
 			}),
 		);
 		expect(createWordPressImageUploadPort).toHaveBeenCalledWith(
@@ -803,10 +840,25 @@ describe("mountAdminEditor", () => {
 					props: {
 						onDocumentOwnerChange: (owned: boolean) => void;
 						publishPost: (session: never) => boolean;
+						wechatClipboard: {
+							prepare?: (preview: HTMLElement) => Promise<void>;
+						};
 					};
 				};
 			};
 		};
+		const preview = document.createElement("div");
+		preview.innerHTML = "<p>Preview</p>";
+		await rendered.props.children.props.wechatClipboard.prepare?.(preview);
+		expect(createBrowserWechatClipboard).toHaveBeenCalledWith(
+			expect.objectContaining({
+				approvedAssetBaseUrl: bootstrap.previewEnhancement.assetBaseUrl,
+				approvedKaTeXCssUrl: bootstrap.previewEnhancement.assets.katexCssUrl,
+				wechatMathAtlasContentVersion:
+					bootstrap.wechatExport.wechatMathAtlasContentVersion,
+				wechatMathAtlasUrl: bootstrap.wechatExport.wechatMathAtlasUrl,
+			}),
+		);
 		expect(rendered.props.children.props.publishPost({} as never)).toBe(true);
 		expect(publishClick).toHaveBeenCalledOnce();
 		expect(saveDraftClick).not.toHaveBeenCalled();
@@ -823,9 +875,284 @@ describe("mountAdminEditor", () => {
 			teardown();
 		}).not.toThrow();
 		expect(unmount).toHaveBeenCalledTimes(1);
+		const blockIndexPort = vi.mocked(createBrowserEditorBlockIndexWorker).mock
+			.results[0]?.value as { dispose: ReturnType<typeof vi.fn> };
+		expect(blockIndexPort.dispose).toHaveBeenCalledOnce();
 		expect(
 			nativeEditor?.classList.contains("easymde-native-editor-hidden"),
 		).toBe(false);
+	});
+
+	it("passes the native PNG ClipboardItem capability through the editor runtime", async () => {
+		const render = vi.fn();
+		const unmount = vi.fn();
+		vi.mocked(createRoot).mockReturnValue({ render, unmount } as never);
+		const nativeWrite = vi.fn().mockResolvedValue(undefined);
+		const clipboard = {
+			readText: vi.fn().mockResolvedValue(""),
+			write: nativeWrite,
+			writeText: vi.fn().mockResolvedValue(undefined),
+		} as unknown as Clipboard;
+		const clipboardDescriptor = Object.getOwnPropertyDescriptor(
+			window.navigator,
+			"clipboard",
+		);
+		const clipboardItemDescriptor = Object.getOwnPropertyDescriptor(
+			window,
+			"ClipboardItem",
+		);
+		class ClipboardItemStub {
+			static supports = vi.fn((type: string) => "image/png" === type);
+
+			constructor(readonly payload: Record<string, Blob | PromiseLike<Blob>>) {}
+		}
+		Object.defineProperty(window.navigator, "clipboard", {
+			configurable: true,
+			value: clipboard,
+		});
+		Object.defineProperty(window, "ClipboardItem", {
+			configurable: true,
+			value: ClipboardItemStub,
+		});
+
+		try {
+			const teardown = mountAdminEditor(bootstrap, {
+				document,
+				failureMessage: "Editor failed",
+				onStartupFailure: vi.fn(),
+				window,
+				wordpress: {
+					apiFetch: Object.assign(vi.fn(), {
+						nonceMiddleware: { nonce: "nonce" },
+					}),
+					hooks: { addAction: vi.fn(), removeAction: vi.fn() },
+				},
+			});
+			const rendered = render.mock.calls[0]?.[0] as {
+				props: {
+					children: {
+						props: { editorClipboardPort: EditorClipboardPort };
+					};
+				};
+			};
+			const editorClipboardPort =
+				rendered.props.children.props.editorClipboardPort;
+			if (!editorClipboardPort?.writeImageDeferred) {
+				throw new Error("entrypoint-png-clipboard-port-missing");
+			}
+			expect(editorClipboardPort.supportsPngWrite?.()).toBe(true);
+			let resolvePayload!: (value: Blob) => void;
+			const payload = new Promise<Blob>((resolve) => {
+				resolvePayload = resolve;
+			});
+			const result = editorClipboardPort.writeImageDeferred(payload);
+			expect(nativeWrite).toHaveBeenCalledOnce();
+			expect(ClipboardItemStub.supports).toHaveBeenCalledWith("image/png");
+			resolvePayload(new Blob(["png"], { type: "image/png" }));
+			await expect(result).resolves.toEqual({ status: "written" });
+			ClipboardItemStub.supports.mockReturnValue(false);
+			expect(editorClipboardPort.supportsPngWrite?.()).toBe(false);
+			await expect(
+				editorClipboardPort.writeImageDeferred(
+					Promise.resolve(new Blob(["png"], { type: "image/png" })),
+				),
+			).resolves.toEqual({
+				code: "editor-clipboard-unsupported",
+				status: "failed",
+			});
+			expect(nativeWrite).toHaveBeenCalledOnce();
+			teardown();
+		} finally {
+			if (clipboardDescriptor) {
+				Object.defineProperty(
+					window.navigator,
+					"clipboard",
+					clipboardDescriptor,
+				);
+			} else {
+				Reflect.deleteProperty(window.navigator, "clipboard");
+			}
+			if (clipboardItemDescriptor) {
+				Object.defineProperty(window, "ClipboardItem", clipboardItemDescriptor);
+			} else {
+				delete (window as Window & { ClipboardItem?: unknown }).ClipboardItem;
+			}
+		}
+	});
+
+	it("passes native deferred rich Clipboard support through the editor runtime", async () => {
+		const render = vi.fn();
+		const unmount = vi.fn();
+		vi.mocked(createRoot).mockReturnValue({ render, unmount } as never);
+		const nativeWrite = vi.fn().mockResolvedValue(undefined);
+		const clipboard = {
+			readText: vi.fn().mockResolvedValue(""),
+			write: nativeWrite,
+			writeText: vi.fn().mockResolvedValue(undefined),
+		} as unknown as Clipboard;
+		const clipboardDescriptor = Object.getOwnPropertyDescriptor(
+			window.navigator,
+			"clipboard",
+		);
+		const clipboardItemDescriptor = Object.getOwnPropertyDescriptor(
+			window,
+			"ClipboardItem",
+		);
+		class ClipboardItemStub {
+			static supports = vi.fn((type: string) =>
+				["text/html", "text/plain"].includes(type),
+			);
+
+			constructor(readonly payload: Record<string, Blob | PromiseLike<Blob>>) {}
+		}
+		Object.defineProperty(window.navigator, "clipboard", {
+			configurable: true,
+			value: clipboard,
+		});
+		Object.defineProperty(window, "ClipboardItem", {
+			configurable: true,
+			value: ClipboardItemStub,
+		});
+
+		try {
+			const teardown = mountAdminEditor(bootstrap, {
+				document,
+				failureMessage: "Editor failed",
+				onStartupFailure: vi.fn(),
+				window,
+				wordpress: {
+					apiFetch: Object.assign(vi.fn(), {
+						nonceMiddleware: { nonce: "nonce" },
+					}),
+					hooks: { addAction: vi.fn(), removeAction: vi.fn() },
+				},
+			});
+			const rendered = render.mock.calls[0]?.[0] as {
+				props: {
+					children: {
+						props: { editorClipboardPort: EditorClipboardPort };
+					};
+				};
+			};
+			const editorClipboardPort =
+				rendered.props.children.props.editorClipboardPort;
+			if (!editorClipboardPort?.writeRichDeferred) {
+				throw new Error("entrypoint-rich-clipboard-port-missing");
+			}
+			expect(editorClipboardPort.supportsRichWrite?.()).toBe(true);
+			let resolvePayload!: (value: { html: string; text: string }) => void;
+			const payload = new Promise<{ html: string; text: string }>((resolve) => {
+				resolvePayload = resolve;
+			});
+			const result = editorClipboardPort.writeRichDeferred(payload);
+			expect(nativeWrite).toHaveBeenCalledOnce();
+			expect(ClipboardItemStub.supports).toHaveBeenCalledWith("text/html");
+			expect(ClipboardItemStub.supports).toHaveBeenCalledWith("text/plain");
+			resolvePayload({ html: "<p>Rendered</p>", text: "Rendered" });
+			await expect(result).resolves.toEqual({ status: "written" });
+			teardown();
+		} finally {
+			if (clipboardDescriptor) {
+				Object.defineProperty(
+					window.navigator,
+					"clipboard",
+					clipboardDescriptor,
+				);
+			} else {
+				Reflect.deleteProperty(window.navigator, "clipboard");
+			}
+			if (clipboardItemDescriptor) {
+				Object.defineProperty(window, "ClipboardItem", clipboardItemDescriptor);
+			} else {
+				delete (window as Window & { ClipboardItem?: unknown }).ClipboardItem;
+			}
+		}
+	});
+
+	it("observes a late plain deferred payload rejection after native setup throws", async () => {
+		const render = vi.fn();
+		const unmount = vi.fn();
+		vi.mocked(createRoot).mockReturnValue({ render, unmount } as never);
+		const nativeWrite = vi.fn().mockResolvedValue(undefined);
+		const clipboard = {
+			readText: vi.fn().mockResolvedValue(""),
+			write: nativeWrite,
+			writeText: vi.fn().mockResolvedValue(undefined),
+		} as unknown as Clipboard;
+		const clipboardDescriptor = Object.getOwnPropertyDescriptor(
+			window.navigator,
+			"clipboard",
+		);
+		const clipboardItemDescriptor = Object.getOwnPropertyDescriptor(
+			window,
+			"ClipboardItem",
+		);
+		class ThrowingClipboardItem {
+			static supports = vi.fn(() => true);
+
+			constructor(_payload: Record<string, Blob | PromiseLike<Blob>>) {
+				throw new Error("native setup failed");
+			}
+		}
+		Object.defineProperty(window.navigator, "clipboard", {
+			configurable: true,
+			value: clipboard,
+		});
+		Object.defineProperty(window, "ClipboardItem", {
+			configurable: true,
+			value: ThrowingClipboardItem,
+		});
+
+		try {
+			const teardown = mountAdminEditor(bootstrap, {
+				document,
+				failureMessage: "Editor failed",
+				onStartupFailure: vi.fn(),
+				window,
+				wordpress: {
+					apiFetch: Object.assign(vi.fn(), {
+						nonceMiddleware: { nonce: "nonce" },
+					}),
+					hooks: { addAction: vi.fn(), removeAction: vi.fn() },
+				},
+			});
+			const rendered = render.mock.calls[0]?.[0] as {
+				props: {
+					children: {
+						props: { editorClipboardPort: EditorClipboardPort };
+					};
+				};
+			};
+			const editorClipboardPort =
+				rendered.props.children.props.editorClipboardPort;
+			if (!editorClipboardPort?.writeDeferred) {
+				throw new Error("entrypoint-plain-deferred-clipboard-port-missing");
+			}
+			const payload = deferred<string>();
+			const result = editorClipboardPort.writeDeferred(payload.promise);
+			await expect(result).resolves.toEqual({
+				code: "editor-clipboard-write-failed",
+				status: "failed",
+			});
+			payload.reject(new Error("late renderer failure"));
+			await Promise.resolve();
+			teardown();
+		} finally {
+			if (clipboardDescriptor) {
+				Object.defineProperty(
+					window.navigator,
+					"clipboard",
+					clipboardDescriptor,
+				);
+			} else {
+				Reflect.deleteProperty(window.navigator, "clipboard");
+			}
+			if (clipboardItemDescriptor) {
+				Object.defineProperty(window, "ClipboardItem", clipboardItemDescriptor);
+			} else {
+				delete (window as Window & { ClipboardItem?: unknown }).ClipboardItem;
+			}
+		}
 	});
 
 	it("logs lifecycle diagnostics at info level without downgrading real failures", () => {
@@ -927,7 +1254,7 @@ describe("mountAdminEditor", () => {
 		});
 
 		try {
-			mountAdminEditor(bootstrap, {
+			const teardown = mountAdminEditor(bootstrap, {
 				document,
 				failureMessage: "Editor failed",
 				onStartupFailure: vi.fn(),
@@ -939,6 +1266,23 @@ describe("mountAdminEditor", () => {
 					hooks: { addAction: vi.fn(), removeAction: vi.fn() },
 				},
 			});
+
+			expect(createBrowserWechatClipboard).not.toHaveBeenCalled();
+
+			const rendered = render.mock.calls[0]?.[0] as {
+				props: {
+					children: {
+						props: {
+							wechatClipboard: {
+								prepare?: (preview: HTMLElement) => Promise<void>;
+							};
+						};
+					};
+				};
+			};
+			const preview = document.createElement("div");
+			preview.innerHTML = "<p>Preview</p>";
+			await rendered.props.children.props.wechatClipboard.prepare?.(preview);
 
 			const fetchAdapter = vi.mocked(createBrowserWechatClipboard).mock
 				.calls[0]?.[0]?.fetch;
@@ -955,6 +1299,7 @@ describe("mountAdminEditor", () => {
 				"/assets/images/theme.png",
 				init,
 			);
+			teardown();
 		} finally {
 			Object.defineProperty(window, "fetch", {
 				configurable: true,
@@ -962,6 +1307,68 @@ describe("mountAdminEditor", () => {
 				value: originalFetch,
 			});
 		}
+	});
+
+	it("aborts lazy WeChat preparation cleanly before loading and respects teardown", async () => {
+		const render = vi.fn();
+		const unmount = vi.fn();
+		vi.mocked(createRoot).mockReturnValue({ render, unmount } as never);
+
+		const teardown = mountAdminEditor(bootstrap, {
+			document,
+			failureMessage: "Editor failed",
+			onStartupFailure: vi.fn(),
+			window,
+			wordpress: {
+				apiFetch: Object.assign(vi.fn(), {
+					nonceMiddleware: { nonce: "nonce" },
+				}),
+				hooks: { addAction: vi.fn(), removeAction: vi.fn() },
+			},
+		});
+
+		const rendered = render.mock.calls[0]?.[0] as {
+			props: {
+				children: {
+					props: {
+						wechatClipboard: {
+							copy: (
+								preview: HTMLElement,
+								options?: { pngConversionEnabled?: boolean },
+							) => Promise<unknown>;
+							prepare?: (
+								preview: HTMLElement,
+								options?: { background?: boolean; signal?: AbortSignal },
+							) => Promise<void>;
+						};
+					};
+				};
+			};
+		};
+		const preview = document.createElement("div");
+		preview.innerHTML = "<p>Preview</p>";
+		const aborted = new AbortController();
+		aborted.abort();
+
+		await expect(
+			rendered.props.children.props.wechatClipboard.prepare?.(preview, {
+				background: true,
+				signal: aborted.signal,
+			}),
+		).rejects.toMatchObject({ name: "AbortError" });
+		expect(createBrowserWechatClipboard).not.toHaveBeenCalled();
+
+		teardown();
+		await expect(
+			rendered.props.children.props.wechatClipboard.copy(preview, {
+				pngConversionEnabled: true,
+			}),
+		).resolves.toEqual({
+			code: "wechat-png-clipboard-failed",
+			sideEffects: "none",
+			status: "failed",
+		});
+		expect(createBrowserWechatClipboard).not.toHaveBeenCalled();
 	});
 
 	it("reports a prevented native publish as unsuccessful", () => {

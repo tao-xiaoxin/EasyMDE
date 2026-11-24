@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { startMediaPickerBridge } from "../../../entrypoints/media-picker-bridge";
+import { openMediaPickerSession } from "../../../features/media-picker/media-picker-session";
 import { createWordPressMediaFramePort } from "./wordpress-media-frame";
 
 const EXPECTED_FRAME_URL =
@@ -12,6 +14,8 @@ type FakePort = MessagePort &
 		postMessage: ReturnType<typeof vi.fn>;
 		start: ReturnType<typeof vi.fn>;
 	}>;
+
+type BridgeWindow = Window & { wp?: Readonly<{ media?: unknown }> };
 
 function fakePort(): FakePort {
 	let port: FakePort;
@@ -28,6 +32,26 @@ function fakePort(): FakePort {
 		start: vi.fn(),
 	} as unknown as FakePort;
 	return port;
+}
+
+function linkedPorts() {
+	let first: FakePort;
+	let second: FakePort;
+	const create = () => {
+		const port = {
+			close: vi.fn(),
+			onmessage: null as ((event: MessageEvent<unknown>) => void) | null,
+			postMessage: vi.fn((value: unknown) => {
+				const peer = port === first ? second : first;
+				peer?.onmessage?.(new MessageEvent("message", { data: value }));
+			}),
+			start: vi.fn(),
+		} as unknown as FakePort;
+		return port;
+	};
+	first = create();
+	second = create();
+	return { first, second };
 }
 
 function setup() {
@@ -207,12 +231,170 @@ describe("createWordPressMediaFramePort", () => {
 		};
 		port1.emit({ attachment, operationId: 1, type: "selected" });
 		expect(options.onSelect).toHaveBeenCalledWith(attachment);
-		expect(options.onClose).not.toHaveBeenCalled();
+		expect(options.onClose).toHaveBeenCalledOnce();
 
 		port1.emit({ operationId: 1, type: "cancelled" });
 		expect(options.onClose).toHaveBeenCalledOnce();
 		expect(options.onError).not.toHaveBeenCalled();
 		expect(port1.close).toHaveBeenCalledOnce();
+	});
+
+	it("settles a selected operation with an onSelect failure exactly once", () => {
+		const { adapter, contentDocument, frame, location, options, port1 } =
+			setup();
+		options.onSelect.mockImplementation(() => {
+			throw new Error("media-picker-document-stale");
+		});
+		contentDocument.readyState = "complete";
+		location.href = EXPECTED_FRAME_URL;
+		adapter.open(options);
+		adapter.attachFrame?.(frame);
+		frame.dispatchEvent(new Event("load"));
+
+		const attachment = {
+			alt: "Alternative text",
+			filename: "sample.png",
+			id: 91,
+			title: "Sample",
+			url: "https://cdn.example.test/sample.png",
+		};
+		port1.emit({ attachment, operationId: 1, type: "selected" });
+		port1.emit({ attachment, operationId: 1, type: "selected" });
+		port1.emit({ operationId: 1, type: "cancelled" });
+
+		expect(options.onError.mock.calls[0]?.[0]).toEqual(
+			expect.objectContaining({ message: "media-picker-document-stale" }),
+		);
+		expect(options.onError).toHaveBeenCalledOnce();
+		expect(options.onClose).toHaveBeenCalledOnce();
+		expect(port1.close).toHaveBeenCalledOnce();
+	});
+
+	it("resolves the media session after the native bridge selects and closes", async () => {
+		const handlers = new Map<string, () => void>();
+		const bridgeListeners = new Set<(event: MessageEvent<unknown>) => void>();
+		const bridgeWindow = {
+			addEventListener: (name: string, listener: unknown) => {
+				if ("message" === name && "function" === typeof listener) {
+					bridgeListeners.add(
+						listener as (event: MessageEvent<unknown>) => void,
+					);
+				}
+			},
+			location: { origin: "https://example.test" },
+			parent: null as unknown,
+			removeEventListener: (name: string, listener: unknown) => {
+				if ("message" === name && "function" === typeof listener) {
+					bridgeListeners.delete(
+						listener as (event: MessageEvent<unknown>) => void,
+					);
+				}
+			},
+		} as unknown as BridgeWindow;
+		Object.defineProperty(bridgeWindow, "parent", {
+			configurable: true,
+			value: bridgeWindow,
+		});
+		const nativeClose = vi.fn(() => handlers.get("close")?.());
+		const nativeMedia = vi.fn(() => ({
+			close: nativeClose,
+			on: (name: string, handler: () => void) => handlers.set(name, handler),
+			open: vi.fn(),
+			state: () => ({
+				get: () => ({
+					first: () => ({
+						toJSON: () => ({
+							alt: "Alternative",
+							filename: "sample.png",
+							id: 91,
+							title: "Sample",
+							url: "https://cdn.example.test/sample.png",
+						}),
+					}),
+				}),
+			}),
+		}));
+		bridgeWindow.wp = { media: nativeMedia };
+		const teardownBridge = startMediaPickerBridge(bridgeWindow);
+		const ports = linkedPorts();
+		const contentDocument = { readyState: "complete" };
+		const contentWindow = {
+			location: { href: EXPECTED_FRAME_URL },
+			postMessage: vi.fn(
+				(message: unknown, origin: string, transfer: Transferable[]) => {
+					const event = new MessageEvent("message", {
+						data: message,
+						origin,
+						ports: transfer as MessagePort[],
+						source: bridgeWindow,
+					});
+					for (const listener of bridgeListeners) listener(event);
+				},
+			),
+		};
+		const frame = document.createElement("iframe");
+		Object.defineProperty(frame, "contentDocument", {
+			configurable: true,
+			value: contentDocument,
+		});
+		Object.defineProperty(frame, "contentWindow", {
+			configurable: true,
+			value: contentWindow,
+		});
+		const adapter = createWordPressMediaFramePort({
+			frameUrl:
+				"/wp-admin/admin-post.php?action=easymde_media_picker&post_id=7",
+			runtime: {
+				clearTimeout: vi.fn(),
+				createMessageChannel: vi.fn(() => ({
+					port1: ports.first,
+					port2: ports.second,
+				})),
+				locationHref:
+					"https://example.test/wp-admin/post.php?post=7&action=edit",
+				setTimeout: vi.fn(() => 17),
+			},
+			window,
+		});
+		let currentValue = "before IMAGE after";
+		const documentPort = {
+			applyTextChange: vi.fn((change: { value: string }) => {
+				currentValue = change.value;
+			}),
+			focus: vi.fn(),
+			getSnapshot: () => ({
+				selection: { direction: "backward" as const, end: 12, start: 7 },
+				value: currentValue,
+			}),
+		};
+		const session = openMediaPickerSession({
+			document: documentPort,
+			frame: adapter,
+			strings: {
+				canUseMedia: true,
+				defaultAlt: "image",
+				frameUrl: "https://example.test/media-picker",
+				insertMedia: "Insert Media",
+				insertion: { titleDisplay: "none" },
+				placeholderAlt: "alt text",
+			},
+		});
+		const detach = adapter.attachFrame?.(frame);
+		try {
+			handlers.get("select")?.();
+			await expect(session).resolves.toBe("inserted");
+			expect(currentValue).toBe(
+				"before ![sample](https://cdn.example.test/sample.png) after",
+			);
+			expect(documentPort.applyTextChange).toHaveBeenCalledOnce();
+			expect(documentPort.focus).toHaveBeenCalledOnce();
+			expect(nativeClose).toHaveBeenCalledOnce();
+		} finally {
+			detach?.();
+			adapter.dispose?.();
+			teardownBridge();
+			delete bridgeWindow.wp;
+		}
 	});
 
 	it("fails a duplicate ready message instead of closing silently", () => {

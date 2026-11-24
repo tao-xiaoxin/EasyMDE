@@ -48,6 +48,7 @@ const approvedSharedCodeFrameGeometry = {
 		overflowX: "auto",
 		overflowY: "hidden",
 		padding: "16px",
+		scrollbarWidth: "none",
 		whiteSpace: "pre",
 		wordBreak: "normal",
 		wordSpacing: "0px",
@@ -73,6 +74,7 @@ const approvedSharedCodeFrameGeometry = {
 		overflowY: "hidden",
 		padding: "34px 0px 0px",
 		position: "relative",
+		scrollbarWidth: "none",
 		wordBreak: "normal",
 	},
 };
@@ -1110,6 +1112,7 @@ function codeCaseEvidence(
 			overflowX: codeStyle.overflowX,
 			overflowY: codeStyle.overflowY,
 			padding: codeStyle.padding,
+			scrollbarWidth: codeStyle.scrollbarWidth,
 			whiteSpace: codeStyle.whiteSpace,
 			wordBreak: codeStyle.wordBreak,
 			wordSpacing: codeStyle.wordSpacing,
@@ -1134,6 +1137,7 @@ function codeCaseEvidence(
 			overflowY: frameStyle.overflowY,
 			padding: frameStyle.padding,
 			position: frameStyle.position,
+			scrollbarWidth: frameStyle.scrollbarWidth,
 			wordBreak: frameStyle.wordBreak,
 		},
 	};

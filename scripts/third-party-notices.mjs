@@ -23,33 +23,65 @@ const composerPurposes = {
 };
 
 export const bundledFrontendPackages = {
+  '@codemirror/autocomplete': 'Completion support used by the official CodeMirror language packages for detached code formatting.',
   '@codemirror/commands': 'CodeMirror editing commands, keymaps, and undo history.',
+  '@codemirror/lang-css': 'Official CSS language parsing and indentation for detached code formatting.',
+  '@codemirror/lang-html': 'Official HTML language parsing and indentation for detached code formatting.',
+  '@codemirror/lang-javascript': 'Official JavaScript and TypeScript language parsing and indentation for detached code formatting.',
+  '@codemirror/lang-json': 'Official JSON language parsing and indentation for detached code formatting.',
   '@codemirror/lang-markdown': 'Markdown language parsing and syntax support for CodeMirror.',
+  '@codemirror/lang-python': 'Official Python language parsing and indentation for detached code formatting.',
+  '@codemirror/lang-sql': 'Official SQL language parsing and indentation for detached code formatting.',
+  '@codemirror/lang-yaml': 'Official YAML language parsing and indentation for detached code formatting.',
   '@codemirror/language': 'Language-aware command infrastructure used by CodeMirror commands.',
   '@codemirror/state': 'CodeMirror document, selection, transaction, and editor state.',
   '@codemirror/view': 'CodeMirror browser editor view and input handling.',
   '@lezer/common': 'Shared syntax-tree infrastructure required by CodeMirror.',
+  '@lezer/css': 'CSS parser used by official CSS language support for detached code formatting.',
   '@lezer/highlight': 'Highlighting infrastructure required by CodeMirror language support.',
+  '@lezer/html': 'HTML parser used by official HTML language support for detached code formatting.',
+  '@lezer/javascript': 'JavaScript and TypeScript parser used by official JavaScript language support for detached code formatting.',
+  '@lezer/json': 'JSON parser used by official JSON language support for detached code formatting.',
   '@lezer/lr': 'LR parser infrastructure required by CodeMirror language support.',
   '@lezer/markdown': 'Markdown parser used by CodeMirror language support.',
+  '@lezer/python': 'Python parser used by official Python language support for detached code formatting.',
+  '@lezer/yaml': 'YAML parser used by official YAML language support for detached code formatting.',
   '@marijn/find-cluster-break': 'Unicode grapheme boundary handling used by CodeMirror state.',
   crelt: 'DOM element construction used by CodeMirror view.',
-  diff: 'Character-level change mapping used to preserve canonical Markdown during visual editing.',
-  entities: 'Complete HTML character-reference decoding for Markdown-derived publish excerpts.',
+  entities: 'Complete HTML character-reference decoding for Markdown-derived publish excerpts and Markdown tokenization.',
+  'linkify-it': 'URL detection support used by markdown-it when parsing Markdown into the immersive visual editor.',
   'lucide-react': 'Locked build-time icon nodes used by the ordinary and immersive editor interfaces.',
+  'markdown-it': 'CommonMark and GFM tokenization used to project canonical Markdown into the immersive ProseMirror visual editor.',
+  mdurl: 'URL encoding and parsing helpers used by markdown-it.',
   mermaid: 'Mermaid diagram rendering runtime compiled into the on-demand frontend bundle.',
+  orderedmap: 'Immutable ordered map data structure used by ProseMirror schemas and marks.',
+  'prosemirror-commands': 'Standard editing commands for the immersive visual editor.',
+  'prosemirror-dropcursor': 'Drop-target cursor decoration for drag-and-drop in the immersive visual editor.',
+  'prosemirror-gapcursor': 'Gap cursor navigation around atomic blocks and tables in the immersive visual editor.',
+  'prosemirror-history': 'Structured undo and redo history plugin for the immersive visual editor.',
+  'prosemirror-inputrules': 'Markdown-style typing input rules for the immersive visual editor.',
+  'prosemirror-keymap': 'Keyboard shortcut bindings for the immersive visual editor.',
+  'prosemirror-model': 'Document schema, node, mark, and fragment model for the immersive visual editor.',
+  'prosemirror-schema-list': 'Ordered, unordered, and task list schema commands for the immersive visual editor.',
+  'prosemirror-state': 'Editor state, selection, transaction, and plugin architecture for the immersive visual editor.',
+  'prosemirror-tables': 'Structured table editing, cell selection, and row/column commands for the immersive visual editor.',
+  'prosemirror-transform': 'Immutable document transformation steps used by the immersive visual editor.',
+  'prosemirror-view': 'Browser DOM projection and input view for the immersive visual editor.',
+  'punycode.js': 'Punycode domain encoding helpers used by markdown-it.',
+  'rope-sequence': 'Persistent rope sequence data structure used by ProseMirror history.',
   'style-mod': 'Scoped runtime style modules used by CodeMirror view.',
   'svg-pathdata': 'Complete SVG path syntax validation for source-painted WeChat task markers.',
-  turndown: 'Converts the editable Preview DOM into a visual Markdown change model.',
-  'turndown-plugin-gfm': 'GFM table and task-list conversion for visual Markdown editing.',
-  'w3c-keyname': 'Cross-browser keyboard key normalization used by CodeMirror view.'
+  'uc.micro': 'Unicode character category regex helpers used by markdown-it and linkify-it.',
+  'w3c-keyname': 'Cross-browser keyboard key normalization used by CodeMirror and ProseMirror views.'
 };
 
-const bundledFrontendLicensePaths = {
+export const bundledFrontendLicensePaths = {
   // Mermaid's package metadata declares MIT but does not ship a LICENSE file
   // in the installed distribution. Keep the verified text in the repository
   // so generated notices remain deterministic and fail closed when missing.
-  mermaid: 'scripts/vendor-licenses/mermaid-LICENSE'
+  mermaid: 'scripts/vendor-licenses/mermaid-LICENSE',
+  'punycode.js': 'node_modules/punycode.js/LICENSE-MIT.txt',
+  'uc.micro': 'node_modules/uc.micro/LICENSE.txt'
 };
 
 function readJson(root, path) {
@@ -171,7 +203,7 @@ export function renderNotices(root = defaultRoot) {
   return `${[
     '# Third-Party Notices',
     '',
-    'This file is generated from `composer.lock`, `package-lock.json`, and the EasyMDE copied runtime asset manifest. Run `npm run notices:write` after changing runtime dependencies or copied frontend assets, then verify with `npm run notices:check`.',
+    'This file is generated from `composer.lock`, `package-lock.json`, the EasyMDE copied runtime asset manifest, and committed third-party data licenses. Run `npm run notices:write` after changing these inputs, then verify with `npm run notices:check`.',
     '',
     'Development-only tools such as PHPUnit, PHPCS, WPCS, Playwright, and Node package caches are not bundled in the release ZIP.',
     '',
@@ -193,7 +225,13 @@ export function renderNotices(root = defaultRoot) {
     '',
     'These packages are compiled into production browser bundles. Their required license notices follow.',
     '',
-    bundledFrontendLicenseTexts(root).join('\n\n')
+    bundledFrontendLicenseTexts(root).join('\n\n'),
+    '',
+    '## Unicode Character Database',
+    '',
+    'Versioned Unicode case-folding data is compiled into the editor and its block-index worker. The pinned inputs and checksums are in `scripts/generate-reference-case-fold.mjs`.',
+    '',
+    `\`\`\`text\n${readFileSync(join(root, 'scripts/vendor-licenses/unicode-LICENSE'), 'utf8').trim()}\n\`\`\``
   ].join('\n')}\n`;
 }
 

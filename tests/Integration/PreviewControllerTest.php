@@ -84,6 +84,63 @@ final class PreviewControllerTest extends WP_UnitTestCase
         $this->assertStringNotContainsString('data-easymde-visual-source-id', $data['html']);
     }
 
+	public function test_preview_request_transmits_the_code_body_map()
+	{
+		$controller = $this->controller();
+		$request   = new WP_REST_Request( 'POST', '/easymde/v1/preview' );
+		$request->set_param( 'markdown', "```php\none\n```" );
+
+		$response = $controller->handle_request( $request );
+		$data     = $response->get_data();
+
+		$this->assertSame(
+			array(
+				'version'    => 1,
+				'coordinate' => 'line',
+				'status'     => 'available',
+				'entries'    => array(
+					array(
+						'kind'      => 'fenced',
+						'startLine' => 0,
+						'endLine'   => 3,
+						'status'    => 'available',
+						'content'   => "one\n",
+					),
+				),
+			),
+			$data['codeMap']
+		);
+		$this->assertSame(
+			array(
+				'version'    => 1,
+				'coordinate' => 'line',
+				'offsetUnit' => 'utf16',
+				'status'     => 'available',
+				'entries'    => array(
+					array(
+						'kind'      => 'fenced',
+						'startLine' => 0,
+						'endLine'   => 3,
+						'status'    => 'available',
+						'info'      => 'php',
+						'fenceOffset' => 0,
+						'rows'      => array(
+							array(
+								'sourceLine'          => 1,
+								'contentLine'         => 0,
+								'prefixEnd'           => 0,
+								'prefixTabColumns'    => 0,
+								'literalFrom'         => 0,
+								'literalLeadingSpaces' => 0,
+							),
+						),
+					),
+				),
+			),
+			$data['codeProjection']
+		);
+	}
+
     public function test_preview_request_rejects_oversized_markdown_before_rendering_or_mapping()
     {
         $controller = $this->controller();

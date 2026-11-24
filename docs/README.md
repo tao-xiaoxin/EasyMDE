@@ -2,7 +2,7 @@
 
 This index points to the current technical docs. The root [Simplified Chinese README](../README.md) and [English README](../README.en.md) are GitHub entry points, while this directory is the canonical technical documentation for now.
 
-Each subject has one source-of-truth owner: repository invariants are in [AGENTS.md](../AGENTS.md), contribution and review evidence in [CONTRIBUTING.md](../CONTRIBUTING.md), current implementation in [Architecture](ARCHITECTURE.md), durable rationale in [Design](DESIGN.md), executable browser contracts in the [EasyMDE Skill](../.agents/skills/easymde/SKILL.md) and its [WeChat export reference](../.agents/skills/easymde/references/wechat-export.md), test and release execution in [Testing and Release](TESTING_AND_RELEASE.md), and WeChat decision rationale in [ADR-001](decisions/ADR-001-wechat-clipboard-serialization.md).
+Each subject has one source-of-truth owner: repository invariants are in [AGENTS.md](../AGENTS.md), contribution and review evidence in [CONTRIBUTING.md](../CONTRIBUTING.md), current implementation in [Architecture](ARCHITECTURE.md), durable rationale in [Design](DESIGN.md), executable browser contracts in the [EasyMDE Skill](../.agents/skills/easymde/SKILL.md) and its [WeChat export reference](../.agents/skills/easymde/references/wechat-export.md), test and release execution in [Testing and Release](TESTING_AND_RELEASE.md), WeChat decision rationale in [ADR-001](decisions/ADR-001-wechat-clipboard-serialization.md), and unified ProseMirror visual-editor / local ESM rationale in [ADR-002](decisions/ADR-002-visual-editor-and-esm-architecture.md).
 
 ## Reading Paths
 
@@ -25,8 +25,9 @@ Each subject has one source-of-truth owner: repository invariants are in [AGENTS
 8. [Design](DESIGN.md) for durable React architecture and interface-design decisions.
 9. [WeChat export reference](../.agents/skills/easymde/references/wechat-export.md) for the executable Clipboard serialization and browser integration contract.
 10. [ADR-001: Portable WeChat Clipboard Serialization](decisions/ADR-001-wechat-clipboard-serialization.md) for the copy boundary and rejected alternatives.
-11. [Development](DEVELOPMENT.md) for Composer, npm assets, Docker, `.env`, and WordPress test-suite setup.
-12. [Testing and Release](TESTING_AND_RELEASE.md) for quality gates that apply when code, assets, release scripts, or packaging behavior change.
+11. [ADR-002: Unified ProseMirror Immersive Visual Editor and Local ESM Code Splitting](decisions/ADR-002-visual-editor-and-esm-architecture.md) for the ProseMirror projection and local ESM build boundary.
+12. [Development](DEVELOPMENT.md) for Composer, npm assets, Docker, `.env`, and WordPress test-suite setup.
+13. [Testing and Release](TESTING_AND_RELEASE.md) for quality gates that apply when code, assets, release scripts, or packaging behavior change.
 
 **Maintainers Preparing Releases**
 
@@ -53,5 +54,6 @@ Each subject has one source-of-truth owner: repository invariants are in [AGENTS
 - [Testing and Release](TESTING_AND_RELEASE.md)
 - [Plugin Check Notes](PLUGIN_CHECK.md)
 - [ADR-001: Portable WeChat Clipboard Serialization](decisions/ADR-001-wechat-clipboard-serialization.md)
+- [ADR-002: Unified ProseMirror Immersive Visual Editor and Local ESM Code Splitting](decisions/ADR-002-visual-editor-and-esm-architecture.md)
 - [Security Policy](../SECURITY.md)
 - [Upgrade Notes](../UPGRADING.md)

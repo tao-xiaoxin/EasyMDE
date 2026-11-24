@@ -1,4 +1,5 @@
 import type { PreviewFeatures } from '../../../contracts/ports/preview-request';
+import type { VisualRuntimeFeature } from '../../../contracts/visual-editor';
 
 export type PreviewEnhancementContext = Readonly<{
   codeTheme: string;
@@ -56,8 +57,11 @@ export function previewEnhancementFailureCode(error: unknown): PreviewEnhancemen
   return 'preview-enhancement-failed';
 }
 
+export type PreviewEnhancementRuntimeFeature = VisualRuntimeFeature;
+
 export type PreviewEnhancementPort = Readonly<{
   dispose?: () => void;
+  isFeatureReady?: (feature: PreviewEnhancementRuntimeFeature) => boolean;
   prepareCodeTheme: (
     context: PreviewEnhancementContext
   ) => Promise<PreparedCodeTheme>;

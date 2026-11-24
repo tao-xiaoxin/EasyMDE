@@ -117,7 +117,7 @@ acceptance run:
 EASYMDE_E2E_BASE_URL=<wordpress_test_url> \
 EASYMDE_E2E_WP_PATH=<wordpress_test_path> \
 EASYMDE_E2E_WP_CLI=<wp_cli_path> \
-npm run test:e2e -- tests/e2e/settings-center.spec.mjs \
+npm run test:e2e -- tests/e2e/settings-center/first-paint-and-resilience.spec.mjs \
   -g "desktop/mobile, cold/warm, normal/hard, and baseline/throttled"
 
 EASYMDE_FIRST_PAINT_RUNS=2 \
@@ -125,7 +125,7 @@ EASYMDE_FIRST_PAINT_CASE=desktop-cold-normal-baseline \
 EASYMDE_E2E_BASE_URL=<wordpress_test_url> \
 EASYMDE_E2E_WP_PATH=<wordpress_test_path> \
 EASYMDE_E2E_WP_CLI=<wp_cli_path> \
-npm run test:e2e -- tests/e2e/settings-center.spec.mjs \
+npm run test:e2e -- tests/e2e/settings-center/first-paint-and-resilience.spec.mjs \
   -g "desktop/mobile, cold/warm, normal/hard, and baseline/throttled"
 ```
 

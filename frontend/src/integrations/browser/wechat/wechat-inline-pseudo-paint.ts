@@ -755,7 +755,11 @@ function finiteSourceKey(
 	assertPaint(array.length <= MAX_SOURCE_KEY_NODES, "stale");
 	const output: WechatInlinePseudoPaintSourceKeyValue[] = [];
 	for (let index = 0; index < array.length; index += 1) {
-		assertPaint(Object.hasOwn(array, index), "stale");
+		assertPaint(
+			// biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn is outside the supported browser baseline.
+			Object.prototype.hasOwnProperty.call(array, index),
+			"stale",
+		);
 		output.push(finiteSourceKey(array[index], depth + 1, state));
 	}
 	return frozen(output);

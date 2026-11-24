@@ -144,6 +144,33 @@ export async function createNativeVisualCaptureClone(
   };
 
   await walk(source, clone);
+  if (source.matches('.easymde-mermaid') && clone instanceof HTMLElement) {
+    const sourceComputed = runtime.getComputedStyle(source);
+    const hasOwnBgColor =
+      Boolean(sourceComputed.backgroundColor) &&
+      sourceComputed.backgroundColor !== 'rgba(0, 0, 0, 0)' &&
+      sourceComputed.backgroundColor !== 'transparent';
+    const hasOwnBgImage = Boolean(
+      sourceComputed.backgroundImage && sourceComputed.backgroundImage !== 'none'
+    );
+    if (!hasOwnBgColor && !hasOwnBgImage) {
+      for (
+        let ancestor: Element | null = source.parentElement;
+        ancestor;
+        ancestor = ancestor.parentElement
+      ) {
+        const ancestorComputed = runtime.getComputedStyle(ancestor);
+        const color = ancestorComputed.backgroundColor;
+        if (color && color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') {
+          clone.style.setProperty('background-color', color);
+          break;
+        }
+        if (ancestorComputed.backgroundImage && ancestorComputed.backgroundImage !== 'none') {
+          break;
+        }
+      }
+    }
+  }
   findKaTeXMathMl(clone as HTMLElement).forEach((element) => {
     element.remove();
   });

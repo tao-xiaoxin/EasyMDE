@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import {
 	compareAdminEditorLoaderProductionBuilds,
 	compareCodeCopyProductionBuilds,
+	compareEditorBlockIndexWorkerProductionBuilds,
 	compareFrontendBootstrapProductionBuilds,
 	compareFrontendEnhancementsProductionBuilds,
 	compareFrontendMermaidProductionBuilds,
@@ -26,6 +27,7 @@ import {
 	compareSettingsProductionBuilds,
 	validateAdminEditorLoaderProductionBuild,
 	validateCodeCopyProductionBuild,
+	validateEditorBlockIndexWorkerProductionBuild,
 	validateFrontendBootstrapProductionBuild,
 	validateFrontendEnhancementsProductionBuild,
 	validateFrontendMermaidProductionBuild,
@@ -108,10 +110,27 @@ const committedMediaPickerOutputRoot = join(
 );
 const mediaPickerSourceEntry =
 	"frontend/src/entrypoints/media-picker-bridge.ts";
+const editorBlockIndexWorkerOutputRoot = join(
+	repoRoot,
+	".cache/easymde-editor-block-index-worker-production-check",
+);
+const committedEditorBlockIndexWorkerOutputRoot = join(
+	repoRoot,
+	"assets/build/editor-block-index-worker",
+);
+const editorBlockIndexWorkerSourceEntry =
+	"frontend/src/entrypoints/editor-block-index-worker.ts";
 let buildResult;
 
 function readJson(path) {
 	return JSON.parse(readFileSync(path, "utf8"));
+}
+
+function stripApprovedVendorTokens(source) {
+	return source
+		.replaceAll("(see https://prosemirror.net/docs/guide/#generatable)", "")
+		.replaceAll("(?:localhost|${this.get_ipv6_url_host().source}", "")
+		.replaceAll("`http://${", "`");
 }
 
 function findUnexpectedHttpUrls(source) {
@@ -177,11 +196,11 @@ test("root package exposes the production frontend build and includes it in the 
 
 	assert.equal(
 		packageJson.scripts["build:frontend"],
-		"vite build --config frontend/vite.production.config.ts && vite build --config frontend/vite.admin-editor-loader.config.ts && vite build --config frontend/vite.code-copy.config.ts && vite build --config frontend/vite.enhancements.config.ts && vite build --config frontend/vite.bootstrap.config.ts && vite build --config frontend/vite.mermaid.config.ts && vite build --config frontend/vite.settings.config.ts && vite build --config frontend/vite.media-picker.config.ts && node scripts/verify-frontend-build.mjs --production",
+		"vite build --config frontend/vite.production.config.ts && vite build --config frontend/vite.admin-editor-loader.config.ts && vite build --config frontend/vite.code-copy.config.ts && vite build --config frontend/vite.enhancements.config.ts && vite build --config frontend/vite.bootstrap.config.ts && vite build --config frontend/vite.mermaid.config.ts && vite build --config frontend/vite.settings.config.ts && vite build --config frontend/vite.media-picker.config.ts && vite build --config frontend/vite.editor-block-index-worker.config.ts && node scripts/verify-frontend-build.mjs --production",
 	);
 	assert.equal(
 		packageJson.scripts["check:frontend-production"],
-		"vite build --mode easymde-check --config frontend/vite.production.config.ts && vite build --mode easymde-check --config frontend/vite.admin-editor-loader.config.ts && vite build --mode easymde-check --config frontend/vite.code-copy.config.ts && vite build --mode easymde-check --config frontend/vite.enhancements.config.ts && vite build --mode easymde-check --config frontend/vite.bootstrap.config.ts && vite build --mode easymde-check --config frontend/vite.mermaid.config.ts && vite build --mode easymde-check --config frontend/vite.settings.config.ts && vite build --mode easymde-check --config frontend/vite.media-picker.config.ts && node scripts/verify-frontend-build.mjs --production-check",
+		"vite build --mode easymde-check --config frontend/vite.production.config.ts && vite build --mode easymde-check --config frontend/vite.admin-editor-loader.config.ts && vite build --mode easymde-check --config frontend/vite.code-copy.config.ts && vite build --mode easymde-check --config frontend/vite.enhancements.config.ts && vite build --mode easymde-check --config frontend/vite.bootstrap.config.ts && vite build --mode easymde-check --config frontend/vite.mermaid.config.ts && vite build --mode easymde-check --config frontend/vite.settings.config.ts && vite build --mode easymde-check --config frontend/vite.media-picker.config.ts && vite build --mode easymde-check --config frontend/vite.editor-block-index-worker.config.ts && node scripts/verify-frontend-build.mjs --production-check",
 	);
 	assert.equal(
 		packageJson.scripts["frontend:check"],
@@ -299,7 +318,48 @@ test("production build emits an independent WordPress media picker bridge entry"
 	validateMediaPickerProductionBuild(mediaPickerOutputRoot);
 });
 
-test("production build emits one self-contained WordPress editor React entry", () => {
+test("production build emits one local non-React editor block-index worker entry", () => {
+	assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+	assert.equal(existsSync(editorBlockIndexWorkerOutputRoot), true);
+
+	const viteManifest = readJson(
+		join(editorBlockIndexWorkerOutputRoot, "manifest.json"),
+	);
+	const wordpressManifest = readJson(
+		join(editorBlockIndexWorkerOutputRoot, "wordpress-manifest.json"),
+	);
+	const viteEntry = viteManifest[editorBlockIndexWorkerSourceEntry];
+	const wordpressEntry =
+		wordpressManifest.entries[editorBlockIndexWorkerSourceEntry];
+
+	assert.equal(wordpressManifest.schemaVersion, 1);
+	assert.equal(viteEntry.isEntry, true);
+	assert.match(
+		viteEntry.file,
+		/^assets\/editor-block-index-worker-[a-zA-Z0-9_-]+\.js$/,
+	);
+	assert.equal(wordpressEntry.handle, "easymde-editor-block-index-worker");
+	assert.equal(wordpressEntry.file, viteEntry.file);
+	assert.equal(
+		wordpressEntry.asset,
+		viteEntry.file.replace(/\.js$/, ".asset.php"),
+	);
+	assert.deepEqual(wordpressEntry.dependencies, []);
+	assert.deepEqual(wordpressEntry.resources, []);
+
+	const script = readFileSync(
+		join(editorBlockIndexWorkerOutputRoot, viteEntry.file),
+		"utf8",
+	);
+	assert.match(script, /createEditorMarkdownBlockIndex|editor-block-index/);
+	assert.doesNotMatch(script, /wp\.element|react(?:-dom)?/i);
+	assert.doesNotMatch(script, /frontend\/src|sourceMappingURL=/);
+	validateEditorBlockIndexWorkerProductionBuild(
+		editorBlockIndexWorkerOutputRoot,
+	);
+});
+
+test("production build emits an ESM WordPress editor React entry with dynamic chunks and PNG worker resource", () => {
 	assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
 	assert.equal(existsSync(outputRoot), true);
 
@@ -319,13 +379,13 @@ test("production build emits one self-contained WordPress editor React entry", (
 		wordpressEntry.asset,
 		viteEntry.file.replace(/\.js$/, ".asset.php"),
 	);
+	assert.equal(wordpressEntry.moduleFormat, "esm");
 	assert.deepEqual(wordpressEntry.dependencies, [
 		"wp-api-fetch",
 		"wp-element",
 		"wp-hooks",
 		"wp-i18n",
 	]);
-	assert.equal(Object.keys(viteManifest).length, 2);
 	const workerManifest = viteManifest[wechatPngEncoderWorkerSource];
 	assert.equal(workerManifest.isEntry, false);
 	assert.equal(workerManifest.src, wechatPngEncoderWorkerSource);
@@ -333,39 +393,115 @@ test("production build emits one self-contained WordPress editor React entry", (
 	assert.deepEqual(wordpressEntry.resources, [workerManifest.file]);
 	assert.equal(existsSync(join(outputRoot, workerManifest.file)), true);
 	assert.equal(viteEntry.css, undefined);
+	assert.ok(
+		Array.isArray(viteEntry.dynamicImports) &&
+			viteEntry.dynamicImports.length > 0,
+	);
+	assert.ok(
+		viteEntry.dynamicImports.includes(
+			"frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts",
+		),
+	);
+	assert.ok(
+		viteEntry.dynamicImports.includes(
+			"frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts",
+		),
+	);
+	assert.ok(
+		viteEntry.dynamicImports.includes(
+			"frontend/src/features/immersive-editor/ui/ImmersivePublishDialog.tsx",
+		),
+	);
+	assert.ok(
+		viteEntry.dynamicImports.includes(
+			"frontend/src/features/appearance/ui/ImmersiveCustomCssDialog.tsx",
+		),
+	);
+	assert.ok(
+		Array.isArray(wordpressEntry.chunks) && wordpressEntry.chunks.length > 0,
+	);
+	for (const chunk of wordpressEntry.chunks) {
+		assert.match(chunk, /^assets\/admin-editor-chunk-[a-zA-Z0-9_-]+\.js$/);
+		assert.equal(existsSync(join(outputRoot, chunk)), true);
+	}
+	const directStaticImports = viteEntry.imports ?? [];
+	assert.ok(
+		directStaticImports.length <= 3,
+		`Expected admin-editor entry to statically import at most 3 chunks, got ${directStaticImports.length}.`,
+	);
+	const staticImportKeys = new Set();
+	const pendingStaticImports = [...directStaticImports];
+	while (pendingStaticImports.length > 0) {
+		const importKey = pendingStaticImports.pop();
+		if (typeof importKey !== "string" || staticImportKeys.has(importKey)) {
+			continue;
+		}
+		staticImportKeys.add(importKey);
+		const importedRecord = viteManifest[importKey];
+		if (Array.isArray(importedRecord?.imports)) {
+			pendingStaticImports.push(...importedRecord.imports);
+		}
+	}
+	assert.ok(
+		staticImportKeys.size <= 3,
+		`Expected admin-editor initial static chunk graph to load at most 3 shared chunks, got ${staticImportKeys.size}.`,
+	);
 
 	const script = readFileSync(join(outputRoot, viteEntry.file), "utf8");
+	const entryStaticCode = [
+		script,
+		...(viteEntry.imports ?? [])
+			.map((key) => viteManifest[key]?.file)
+			.filter((file) => typeof file === "string")
+			.map((file) => readFileSync(join(outputRoot, file), "utf8")),
+	].join("\n");
 	const css = readFileSync(
 		join(repoRoot, "assets/css/admin/toolbar.css"),
 		"utf8",
 	);
 	const metadata = readFileSync(join(outputRoot, wordpressEntry.asset), "utf8");
 
-	assert.match(script, /wp\.element/);
-	assert.match(script, /wp\.i18n/);
-	assert.doesNotMatch(script, /tannin|pluralForms|setLocaleData/);
+	assert.match(entryStaticCode, /wp\.element/);
+	assert.match(entryStaticCode, /wp\.i18n/);
+	assert.doesNotMatch(entryStaticCode, /tannin|pluralForms|setLocaleData/);
 	assert.match(script, /EasyMDEAdminEditorStart/);
-	assert.match(
-		script,
-		new RegExp(
-			basename(workerManifest.file).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-		),
-	);
-	assert.doesNotMatch(script, /EasyMDEReactToolbar|EasyMDEReactDocumentSource/);
-	assert.match(script, /cm-editor/);
 	assert.doesNotMatch(
-		script,
-		/__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED/,
+		entryStaticCode,
+		/EasyMDEReactToolbar|EasyMDEReactDocumentSource/,
 	);
-	assert.deepEqual(findUnexpectedHttpUrls(script), []);
-	assert.deepEqual(findUnexpectedLocalDevelopmentTokens(script), []);
-	assert.doesNotMatch(script, /frontend\/src|sourceMappingURL=/);
+	assert.match(entryStaticCode, /cm-editor/);
+	assert.match(script, /import\(\s*[`"']\.\/admin-editor-chunk-/);
+
+	const workerBasenamePattern = new RegExp(
+		basename(workerManifest.file).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+	);
+	let workerReferenced = false;
+	for (const file of [viteEntry.file, ...wordpressEntry.chunks]) {
+		const code = readFileSync(join(outputRoot, file), "utf8");
+		if (workerBasenamePattern.test(code)) {
+			workerReferenced = true;
+		}
+		assert.doesNotMatch(
+			code,
+			/__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED/,
+		);
+		assert.doesNotMatch(code, /\bresolveEditorBlockIndexWorkerUrl\b/);
+		const sanitizedCode = stripApprovedVendorTokens(code);
+		assert.deepEqual(findUnexpectedHttpUrls(sanitizedCode), []);
+		assert.deepEqual(findUnexpectedLocalDevelopmentTokens(sanitizedCode), []);
+		assert.doesNotMatch(code, /frontend\/src|sourceMappingURL=/);
+		assert.equal(
+			code.includes(".at("),
+			false,
+			`production editor bundle (${file}) must not contain Array.prototype.at`,
+		);
+		assert.doesNotMatch(code, /Object\.hasOwn\(/);
+	}
 	assert.equal(
-		script.includes(".at("),
-		false,
-		"production editor bundle must not contain Array.prototype.at",
+		workerReferenced,
+		true,
+		`Expected built admin-editor entry or chunks to reference ${workerManifest.file}.`,
 	);
-	assert.doesNotMatch(script, /Object\.hasOwn\(/);
 	assert.match(
 		css,
 		/\.easymde-react-toolbar-contents\s*\{[^}]*display:\s*contents;/s,
@@ -382,6 +518,13 @@ test("production build emits one self-contained WordPress editor React entry", (
 		readdirSync(outputRoot).some((name) => name.endsWith(".map")),
 		false,
 	);
+	assert.equal(
+		readdirSync(join(outputRoot, "assets")).some((name) =>
+			name.endsWith(".map"),
+		),
+		false,
+	);
+	validateFrontendProductionBuild(outputRoot);
 });
 
 test("production build emits a head loader for the editor entry", () => {
@@ -422,6 +565,7 @@ test("production build emits a head loader for the editor entry", () => {
 		join(adminEditorLoaderOutputRoot, viteEntry.file),
 		"utf8",
 	);
+	assert.match(script, /\.type=[`"']module[`"']/);
 	assert.match(script, /fetch[Pp]riority|fetchpriority/);
 	assert.match(script, /MutationObserver/);
 	assert.match(script, /pagehide/);
@@ -574,6 +718,37 @@ test("production comparison rejects stale or omitted committed runtime artifacts
 			() => compareFrontendProductionBuilds(generatedRoot, committedRoot),
 			/Built script is missing|missing, stale, or unexpected/,
 		);
+
+		rmSync(committedRoot, { recursive: true, force: true });
+		cpSync(outputRoot, committedRoot, { recursive: true });
+		const wordpressManifest = readJson(
+			join(committedRoot, "wordpress-manifest.json"),
+		);
+		const firstChunk = wordpressManifest.entries[sourceEntry].chunks[0];
+		appendFileSync(join(committedRoot, firstChunk), "\nstale chunk\n");
+		assert.throws(
+			() => compareFrontendProductionBuilds(generatedRoot, committedRoot),
+			/Committed production frontend artifact is stale/,
+		);
+
+		rmSync(committedRoot, { recursive: true, force: true });
+		cpSync(outputRoot, committedRoot, { recursive: true });
+		rmSync(join(committedRoot, firstChunk), { force: true });
+		assert.throws(
+			() => compareFrontendProductionBuilds(generatedRoot, committedRoot),
+			/Built chunk is missing|missing, stale, or unexpected/,
+		);
+
+		rmSync(committedRoot, { recursive: true, force: true });
+		cpSync(outputRoot, committedRoot, { recursive: true });
+		writeFileSync(
+			join(committedRoot, "assets/admin-editor-chunk-orphan.js"),
+			"export {};\n",
+		);
+		assert.throws(
+			() => compareFrontendProductionBuilds(generatedRoot, committedRoot),
+			/missing, stale, or unexpected/,
+		);
 	} finally {
 		rmSync(generatedRoot, { recursive: true, force: true });
 		rmSync(committedRoot, { recursive: true, force: true });
@@ -650,6 +825,10 @@ test("enhancement and bootstrap comparisons reject stale committed artifacts", (
 		mediaPickerOutputRoot,
 		committedMediaPickerOutputRoot,
 	);
+	compareEditorBlockIndexWorkerProductionBuilds(
+		editorBlockIndexWorkerOutputRoot,
+		committedEditorBlockIndexWorkerOutputRoot,
+	);
 	compareSettingsProductionBuilds(
 		settingsOutputRoot,
 		committedSettingsOutputRoot,
@@ -718,6 +897,45 @@ test("production validation rejects remote URLs and absolute paths but allows si
 		}
 	}
 
+	for (const [prohibited, expectedError] of [
+		[
+			'const remote = "https://cdn.example.invalid/chunk.js";',
+			/prohibited remote runtime URL/,
+		],
+		[
+			'const internals = "__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED";',
+			/prohibited private React runtime/,
+		],
+		[
+			'const source = "frontend/src/entrypoints/admin-editor.tsx";',
+			/prohibited frontend source path/,
+		],
+		['const item = [1].at(-1);', /prohibited post-ES2020 \.at\(\) call/],
+		[
+			'const has = Object.hasOwn({}, "a");',
+			/prohibited post-ES2020 Object\.hasOwn\(\) call/,
+		],
+	]) {
+		const generatedRoot = mkdtempSync(
+			join(tmpdir(), "easymde-frontend-chunk-unsafe-"),
+		);
+		cpSync(outputRoot, generatedRoot, { recursive: true });
+
+		try {
+			const wordpressManifest = readJson(
+				join(generatedRoot, "wordpress-manifest.json"),
+			);
+			const firstChunk = wordpressManifest.entries[sourceEntry].chunks[0];
+			appendFileSync(join(generatedRoot, firstChunk), `\n${prohibited}\n`);
+			assert.throws(
+				() => validateFrontendProductionBuild(generatedRoot),
+				expectedError,
+			);
+		} finally {
+			rmSync(generatedRoot, { recursive: true, force: true });
+		}
+	}
+
 	const generatedRoot = mkdtempSync(
 		join(tmpdir(), "easymde-frontend-site-relative-"),
 	);
@@ -755,6 +973,7 @@ test("production frontend artifacts are eligible for version control", () => {
 		"assets/build/wordpress-manifest.json",
 		`assets/build/${wordpressEntry.file}`,
 		`assets/build/${wordpressEntry.asset}`,
+		...wordpressEntry.chunks.map((chunk) => `assets/build/${chunk}`),
 		`assets/build/${readJson(join(committedOutputRoot, "manifest.json"))[wechatPngEncoderWorkerSource].file}`,
 		"assets/build/admin-editor-loader/manifest.json",
 		"assets/build/admin-editor-loader/wordpress-manifest.json",
@@ -772,6 +991,10 @@ test("production frontend artifacts are eligible for version control", () => {
 		"assets/build/media-picker/wordpress-manifest.json",
 		`assets/build/media-picker/${readJson(join(committedMediaPickerOutputRoot, "manifest.json"))[mediaPickerSourceEntry].file}`,
 		`assets/build/media-picker/${readJson(join(committedMediaPickerOutputRoot, "wordpress-manifest.json")).entries[mediaPickerSourceEntry].asset}`,
+		"assets/build/editor-block-index-worker/manifest.json",
+		"assets/build/editor-block-index-worker/wordpress-manifest.json",
+		`assets/build/editor-block-index-worker/${readJson(join(committedEditorBlockIndexWorkerOutputRoot, "manifest.json"))[editorBlockIndexWorkerSourceEntry].file}`,
+		`assets/build/editor-block-index-worker/${readJson(join(committedEditorBlockIndexWorkerOutputRoot, "wordpress-manifest.json")).entries[editorBlockIndexWorkerSourceEntry].asset}`,
 	];
 	const result = spawnSync("git", ["check-ignore", "--no-index", ...paths], {
 		cwd: repoRoot,

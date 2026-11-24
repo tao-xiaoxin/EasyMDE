@@ -2,8 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   enhanceFrontendContent,
+  readCachedMermaidSvg,
   renderMathContent,
   renderMermaidContent,
+  syncCodeFrameBackgrounds,
+  writeCachedMermaidSvg,
   type FrontendEnhancementScheduler,
   type FrontendEnhancementWindow
 } from './frontend-enhancement-runtime';
@@ -678,5 +681,670 @@ describe('frontend enhancement runtime', () => {
     const pre = root.querySelector('pre');
     expect(pre?.classList.contains('easymde-render-error')).toBe(true);
     expect(pre?.getAttribute('data-easymde-error')).toBe('Rendering failed.');
+  });
+
+  it('batches all getComputedStyle reads before any DOM writes in syncCodeFrameBackgrounds', () => {
+    const root = document.createElement('article');
+    root.innerHTML = Array.from({ length: 5 }, (_, index) =>
+      `<pre class="easymde-code-with-line-numbers"><code class="hljs language-javascript">const n = ${index};</code></pre>`
+    ).join('');
+    const events: string[] = [];
+    const windowRef = runtime();
+    Object.defineProperty(windowRef, 'getComputedStyle', {
+      configurable: true,
+      value: vi.fn(() => {
+        events.push('read');
+        return {
+          backgroundColor: 'rgb(12, 34, 56)',
+          color: 'rgb(171, 178, 191)'
+        } as CSSStyleDeclaration;
+      })
+    });
+    const originalSetProperty = CSSStyleDeclaration.prototype.setProperty;
+    const trackedSetProperty = vi.spyOn(CSSStyleDeclaration.prototype, 'setProperty')
+      .mockImplementation(function (
+        this: CSSStyleDeclaration,
+        property: string,
+        value: string | null,
+        priority?: string
+      ) {
+        events.push(`write:${property}`);
+        originalSetProperty.call(this, property, value, priority);
+      });
+
+    try {
+      syncCodeFrameBackgrounds(root, windowRef);
+
+      const firstWriteIndex = events.findIndex((event) => event.startsWith('write:'));
+      const lastReadIndex = events.lastIndexOf('read');
+      expect(events.filter((event) => 'read' === event)).toHaveLength(5);
+      expect(firstWriteIndex).toBeGreaterThan(lastReadIndex);
+      for (const pre of root.querySelectorAll('pre')) {
+        expect(pre.style.getPropertyValue('--easymde-code-frame-background'))
+          .toBe('rgb(12, 34, 56)');
+        expect(pre.style.getPropertyValue('--easymde-code-line-number-color'))
+          .toBe('rgb(171, 178, 191)');
+      }
+    } finally {
+      trackedSetProperty.mockRestore();
+    }
+  });
+
+  it('updates visual code-language badge foregrounds across a code-theme switch in batched read-then-write order', () => {
+    const root = document.createElement('article');
+    root.innerHTML = [
+      '<pre class="easymde-code-block"><code class="hljs language-js">const a = 1;</code><span class="easymde-visual-code-lang">js</span></pre>',
+      '<pre class="easymde-code-block"><code class="language-text">plain</code><span class="easymde-visual-code-lang">text</span></pre>',
+      '<pre><code class="hljs language-css">a {}</code><span class="easymde-visual-code-lang">css</span></pre>'
+    ].join('');
+    let theme: 'light' | 'dark' = 'light';
+    const events: string[] = [];
+    const windowRef = runtime();
+    Object.defineProperty(windowRef, 'getComputedStyle', {
+      configurable: true,
+      value: vi.fn(() => {
+        events.push('read');
+        return (
+          'light' === theme
+            ? { backgroundColor: 'rgb(250, 250, 250)', color: 'rgb(56, 58, 66)' }
+            : { backgroundColor: 'rgb(40, 44, 52)', color: 'rgb(171, 178, 191)' }
+        ) as CSSStyleDeclaration;
+      })
+    });
+    const originalSetProperty = CSSStyleDeclaration.prototype.setProperty;
+    const trackedSetProperty = vi.spyOn(CSSStyleDeclaration.prototype, 'setProperty')
+      .mockImplementation(function (
+        this: CSSStyleDeclaration,
+        property: string,
+        value: string | null,
+        priority?: string
+      ) {
+        events.push(`write:${property}`);
+        originalSetProperty.call(this, property, value, priority);
+      });
+    const badges = [...root.querySelectorAll<HTMLElement>('.easymde-visual-code-lang')];
+
+    try {
+      syncCodeFrameBackgrounds(root, windowRef);
+      expect(badges.map((badge) => badge.style.color)).toEqual([
+        'rgb(56, 58, 66)',
+        'rgb(56, 58, 66)',
+        'rgb(56, 58, 66)'
+      ]);
+
+      theme = 'dark';
+      events.length = 0;
+      syncCodeFrameBackgrounds(root, windowRef);
+
+      expect(events.filter((event) => 'read' === event)).toHaveLength(3);
+      expect(events.findIndex((event) => event.startsWith('write:')))
+        .toBeGreaterThan(events.lastIndexOf('read'));
+      expect(events.filter((event) => 'write:color' === event)).toHaveLength(3);
+      expect(badges.map((badge) => badge.style.color)).toEqual([
+        'rgb(171, 178, 191)',
+        'rgb(171, 178, 191)',
+        'rgb(171, 178, 191)'
+      ]);
+      for (const pre of root.querySelectorAll('pre')) {
+        expect(pre.style.getPropertyValue('--easymde-code-frame-background'))
+          .toBe('rgb(40, 44, 52)');
+      }
+    } finally {
+      trackedSetProperty.mockRestore();
+    }
+  });
+
+  it('batches getComputedStyle reads before gutter and code-frame writes during highlightCode', async () => {
+    const root = document.createElement('article');
+    root.className = 'easymde-code-line-numbers';
+    root.innerHTML = Array.from({ length: 4 }, (_, index) =>
+      `<pre><code class="language-javascript">const a = ${index};\nconst b = ${index + 1};</code></pre>`
+    ).join('');
+    const events: string[] = [];
+    const windowRef = runtime();
+    windowRef.hljs = { highlightElement: vi.fn() };
+    Object.defineProperty(windowRef, 'getComputedStyle', {
+      configurable: true,
+      value: vi.fn(() => {
+        events.push('read');
+        return {
+          backgroundColor: 'rgb(12, 34, 56)',
+          color: 'rgb(171, 178, 191)'
+        } as CSSStyleDeclaration;
+      })
+    });
+    const originalSetProperty = CSSStyleDeclaration.prototype.setProperty;
+    const trackedSetProperty = vi.spyOn(CSSStyleDeclaration.prototype, 'setProperty')
+      .mockImplementation(function (
+        this: CSSStyleDeclaration,
+        property: string,
+        value: string | null,
+        priority?: string
+      ) {
+        events.push(`write:${property}`);
+        originalSetProperty.call(this, property, value, priority);
+      });
+
+    try {
+      await enhanceFrontendContent(
+        root,
+        { features: { syntaxHighlight: true } },
+        windowRef
+      );
+
+      const firstWriteIndex = events.findIndex((event) => event.startsWith('write:'));
+      const lastReadIndex = events.lastIndexOf('read');
+      expect(events.filter((event) => 'read' === event)).toHaveLength(4);
+      expect(firstWriteIndex).toBeGreaterThan(lastReadIndex);
+      expect(root.querySelectorAll('.easymde-code-line-number-gutter')).toHaveLength(4);
+    } finally {
+      trackedSetProperty.mockRestore();
+    }
+  });
+
+  it('yields after every Mermaid diagram even when each render stays under 8ms', async () => {
+    const root = document.createElement('article');
+    root.innerHTML = Array.from({ length: 3 }, (_, index) =>
+      `<pre><code class="language-mermaid">graph TD; A${index}--&gt;B${index};</code></pre>`
+    ).join('');
+    const windowRef = runtime();
+    const render = vi.fn().mockResolvedValue({ svg: '<svg></svg>' });
+    windowRef.mermaid = { initialize: vi.fn(), render };
+    const fake = scheduler([0]);
+
+    await renderMermaidContent(
+      root,
+      { features: { mermaid: true } },
+      windowRef,
+      { scheduler: fake.scheduler }
+    );
+
+    expect(render).toHaveBeenCalledTimes(3);
+    expect(root.querySelectorAll('.easymde-mermaid')).toHaveLength(3);
+    expect(fake.yields).toBe(2);
+  });
+
+  it('bounds KaTeX rendering slices on large math batches even under the 8ms clock budget', async () => {
+    const root = document.createElement('article');
+    root.innerHTML = Array.from({ length: 20 }, (_, index) =>
+      `<span class="easymde-math easymde-math-inline">$x_${index}$</span>`
+    ).join('');
+    const windowRef = runtime();
+    const render = vi.fn();
+    windowRef.katex = { render };
+    const fake = scheduler([0]);
+
+    await renderMathContent(
+      root,
+      { features: { math: true } },
+      windowRef,
+      { scheduler: fake.scheduler }
+    );
+
+    expect(render).toHaveBeenCalledTimes(20);
+    expect(fake.yields).toBe(2);
+  });
+
+  it('prefers requestAnimationFrame over a nonzero fallback timer and cancels the fallback when rAF fires', async () => {
+    const root = document.createElement('article');
+    root.innerHTML = [
+      '<pre><code class="language-javascript">const first = 1;</code></pre>',
+      '<pre><code class="language-javascript">const second = 2;</code></pre>'
+    ].join('');
+    const windowRef = runtime();
+    let clock = 0;
+    Object.defineProperty(windowRef, 'performance', {
+      configurable: true,
+      value: { now: () => clock }
+    });
+    const rafCallbacks: FrameRequestCallback[] = [];
+    const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+      rafCallbacks.push(callback);
+      return 7;
+    });
+    const setTimeoutSpy = vi.fn((_handler: TimerHandler, _delay?: number) => 42);
+    const clearTimeoutSpy = vi.fn();
+    Object.defineProperty(windowRef, 'requestAnimationFrame', {
+      configurable: true,
+      value: requestAnimationFrame
+    });
+    Object.defineProperty(windowRef, 'setTimeout', {
+      configurable: true,
+      value: setTimeoutSpy
+    });
+    Object.defineProperty(windowRef, 'clearTimeout', {
+      configurable: true,
+      value: clearTimeoutSpy
+    });
+    windowRef.hljs = {
+      highlightElement: () => {
+        clock += 9;
+      }
+    };
+    Object.defineProperty(windowRef, 'getComputedStyle', {
+      configurable: true,
+      value: vi.fn(() => ({
+        backgroundColor: 'rgb(12, 34, 56)',
+        color: 'rgb(171, 178, 191)'
+      } as CSSStyleDeclaration))
+    });
+
+    const operation = enhanceFrontendContent(
+      root,
+      { features: { syntaxHighlight: true } },
+      windowRef
+    );
+    await Promise.resolve();
+
+    expect(requestAnimationFrame).toHaveBeenCalledOnce();
+    expect(setTimeoutSpy).toHaveBeenCalledOnce();
+    expect(setTimeoutSpy.mock.calls[0]?.[1]).toBeGreaterThanOrEqual(32);
+
+    rafCallbacks.shift()?.(16);
+    await operation;
+
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(42);
+  });
+
+  it('reuses cached Mermaid SVGs with rewritten unique renderIds and skips per-item yields on cache hits', async () => {
+    const windowRef = runtime();
+    const initialize = vi.fn();
+    const render = vi.fn(async (id: string, source: string) => ({
+      svg: `<svg id="${id}" data-source="${source}"><style>#${id} .node{}</style><g id="${id}-node"></g></svg>`
+    }));
+    windowRef.mermaid = { initialize, render };
+
+    const makeRoot = () => {
+      const root = document.createElement('article');
+      root.innerHTML = Array.from({ length: 3 }, (_, index) =>
+        `<pre><code class="language-mermaid">graph TD; A${index}--&gt;B${index};</code></pre>`
+      ).join('');
+      return root;
+    };
+
+    const firstRoot = makeRoot();
+    const coldScheduler = scheduler([0]);
+    await renderMermaidContent(
+      firstRoot,
+      { features: { mermaid: true } },
+      windowRef,
+      { scheduler: coldScheduler.scheduler }
+    );
+
+    expect(initialize).toHaveBeenCalledTimes(1);
+    expect(render).toHaveBeenCalledTimes(3);
+    expect(coldScheduler.yields).toBe(2);
+    const firstPassIds = [...firstRoot.querySelectorAll('.easymde-mermaid svg')]
+      .map((svg) => svg.getAttribute('id'));
+    expect(new Set(firstPassIds).size).toBe(3);
+
+    const secondRoot = makeRoot();
+    const warmScheduler = scheduler([0]);
+    await renderMermaidContent(
+      secondRoot,
+      { features: { mermaid: true } },
+      windowRef,
+      { scheduler: warmScheduler.scheduler }
+    );
+
+    expect(initialize).toHaveBeenCalledTimes(1);
+    expect(render).toHaveBeenCalledTimes(3);
+    expect(warmScheduler.yields).toBe(0);
+
+    const secondPassSvgs = [...secondRoot.querySelectorAll('.easymde-mermaid svg')];
+    expect(secondPassSvgs).toHaveLength(3);
+    const secondPassIds = secondPassSvgs.map((svg) => svg.getAttribute('id'));
+    expect(new Set(secondPassIds).size).toBe(3);
+    for (const [index, svg] of secondPassSvgs.entries()) {
+      const id = secondPassIds[index];
+      expect(id).toBeTruthy();
+      expect(firstPassIds).not.toContain(id);
+      expect(svg.querySelector('style')?.textContent).toContain(`#${id} .node{}`);
+      expect(svg.querySelector('g')?.getAttribute('id')).toBe(`${id}-node`);
+    }
+
+    // Cached hits still yield when the 8ms slice time budget is exceeded.
+    const timedRoot = makeRoot();
+    let clock = 0;
+    let timedYields = 0;
+    const timedScheduler: FrontendEnhancementScheduler = {
+      now: () => {
+        clock += 5;
+        return clock;
+      },
+      yield: async () => {
+        timedYields += 1;
+      }
+    };
+    await renderMermaidContent(
+      timedRoot,
+      { features: { mermaid: true } },
+      windowRef,
+      { scheduler: timedScheduler }
+    );
+    expect(render).toHaveBeenCalledTimes(3);
+    expect(timedYields).toBeGreaterThan(0);
+    expect(timedRoot.querySelectorAll('.easymde-mermaid svg')).toHaveLength(3);
+  });
+
+  it('isolates the Mermaid cache per runtime instance, enforces eligibility guards, and evicts LRU entries past 256', async () => {
+    const createMermaidWindow = () => {
+      const windowRef = runtime();
+      const render = vi.fn(async (id: string, source: string) => ({
+        svg: `<svg id="${id}">${source}</svg>`
+      }));
+      windowRef.mermaid = { initialize: vi.fn(), render };
+      return { render, windowRef };
+    };
+
+    const first = createMermaidWindow();
+    const second = createMermaidWindow();
+    const fake = scheduler([0]);
+
+    const renderSources = async (
+      windowRef: FrontendEnhancementWindow,
+      sources: string[]
+    ) => {
+      const root = document.createElement('article');
+      root.innerHTML = sources
+        .map((source) => `<pre><code class="language-mermaid">${source}</code></pre>`)
+        .join('');
+      await renderMermaidContent(
+        root,
+        { features: { mermaid: true } },
+        windowRef,
+        { scheduler: fake.scheduler }
+      );
+      return root;
+    };
+
+    // Runtime isolation: same source on a distinct mermaid runtime is a miss.
+    await renderSources(first.windowRef, ['graph TD; X-->Y;']);
+    await renderSources(second.windowRef, ['graph TD; X-->Y;']);
+    expect(first.render).toHaveBeenCalledTimes(1);
+    expect(second.render).toHaveBeenCalledTimes(1);
+
+    // LRU eviction past 256 entries on a fresh runtime.
+    const lru = createMermaidWindow();
+    const initial256 = Array.from({ length: 256 }, (_, index) => `graph TD; N${index}-->M${index};`);
+    const diagram0 = 'graph TD; N0-->M0;';
+    const diagram1 = 'graph TD; N1-->M1;';
+    await renderSources(lru.windowRef, initial256);
+    expect(lru.render).toHaveBeenCalledTimes(256);
+
+    // Refresh entry 0 so entry 1 becomes the least-recently-used entry.
+    await renderSources(lru.windowRef, [diagram0]);
+    expect(lru.render).toHaveBeenCalledTimes(256);
+
+    // Insert entry 256 -> evicts entry 1, keeps entry 0.
+    await renderSources(lru.windowRef, ['graph TD; N256-->M256;']);
+    expect(lru.render).toHaveBeenCalledTimes(257);
+
+    await renderSources(lru.windowRef, [diagram0]);
+    expect(lru.render).toHaveBeenCalledTimes(257);
+
+    await renderSources(lru.windowRef, [diagram1]);
+    expect(lru.render).toHaveBeenCalledTimes(258);
+
+    // Eligibility guards: missing renderId in SVG or oversized source/SVG skip caching.
+    const guardedWindow = runtime();
+    const guardedRender = vi.fn(async (id: string, source: string) => {
+      if (source.startsWith('no-id')) return { svg: '<svg></svg>' };
+      if (source.startsWith('huge-svg')) {
+        return { svg: `<svg id="${id}">${'x'.repeat(128 * 1024 + 1)}</svg>` };
+      }
+      return { svg: `<svg id="${id}"></svg>` };
+    });
+    guardedWindow.mermaid = { initialize: vi.fn(), render: guardedRender };
+
+    const hugeSource = `graph TD; ${'A'.repeat(16 * 1024 + 1)}`;
+    await renderSources(guardedWindow, ['no-id', 'huge-svg', hugeSource]);
+    await renderSources(guardedWindow, ['no-id', 'huge-svg', hugeSource]);
+    expect(guardedRender).toHaveBeenCalledTimes(6);
+  });
+
+  it('caches KaTeX HTML per runtime by displayMode and TeX, skips per-item yields on hits, and evicts LRU entries past 128', async () => {
+    const createKatexWindow = () => {
+      const windowRef = runtime();
+      const render = vi.fn(
+        (
+          tex: string,
+          element: HTMLElement,
+          options: Readonly<{ displayMode: boolean; throwOnError: boolean; strict: string }>
+        ) => {
+          if ('throw' === tex) {
+            throw new Error('katex-failed');
+          }
+          if ('empty' === tex) {
+            element.innerHTML = '';
+            return;
+          }
+          if ('huge-html' === tex) {
+            element.innerHTML = `<span>${'y'.repeat(32 * 1024 + 1)}</span>`;
+            return;
+          }
+          element.innerHTML = `<span class="${options.displayMode ? 'katex-display' : 'katex'}">${tex}</span>`;
+        }
+      );
+      windowRef.katex = { render };
+      return { render, windowRef };
+    };
+
+    const first = createKatexWindow();
+    const second = createKatexWindow();
+    const fake = scheduler([0]);
+
+    // Same TeX in inline vs display mode must stay distinct in cache.
+    const mixedRoot = document.createElement('article');
+    mixedRoot.innerHTML = [
+      '<span class="easymde-math easymde-math-inline">\\(x^2\\)</span>',
+      '<span class="easymde-math easymde-math-block">$$x^2$$</span>'
+    ].join('');
+    await renderMathContent(
+      mixedRoot,
+      { features: { math: true } },
+      first.windowRef,
+      { scheduler: fake.scheduler }
+    );
+    expect(first.render).toHaveBeenCalledTimes(2);
+    expect(mixedRoot.querySelector('.easymde-math-inline')?.innerHTML)
+      .toBe('<span class="katex">x^2</span>');
+    expect(mixedRoot.querySelector('.easymde-math-block')?.innerHTML)
+      .toBe('<span class="katex-display">x^2</span>');
+
+    // Runtime isolation: second katex runtime does not share first runtime's cache.
+    const isolatedRoot = document.createElement('article');
+    isolatedRoot.innerHTML = '<span class="easymde-math easymde-math-inline">\\(x^2\\)</span>';
+    await renderMathContent(
+      isolatedRoot,
+      { features: { math: true } },
+      second.windowRef,
+      { scheduler: fake.scheduler }
+    );
+    expect(second.render).toHaveBeenCalledTimes(1);
+
+    // 20 cached math nodes skip per-item slice yields (0 yields under 8ms) and call render 0 times.
+    const cachedBatchRoot = document.createElement('article');
+    cachedBatchRoot.innerHTML = Array.from({ length: 20 }, (_, index) =>
+      0 === index % 2
+        ? '<span class="easymde-math easymde-math-inline">\\(x^2\\)</span>'
+        : '<span class="easymde-math easymde-math-block">$$x^2$$</span>'
+    ).join('');
+    const warmScheduler = scheduler([0]);
+    await renderMathContent(
+      cachedBatchRoot,
+      { features: { math: true } },
+      first.windowRef,
+      { scheduler: warmScheduler.scheduler }
+    );
+    expect(first.render).toHaveBeenCalledTimes(2);
+    expect(warmScheduler.yields).toBe(0);
+    expect(cachedBatchRoot.querySelectorAll('[data-easymde-rendered="1"]')).toHaveLength(20);
+    expect(cachedBatchRoot.querySelector('.easymde-math-inline')?.innerHTML)
+      .toBe('<span class="katex">x^2</span>');
+    expect(cachedBatchRoot.querySelector('.easymde-math-block')?.innerHTML)
+      .toBe('<span class="katex-display">x^2</span>');
+
+    // Cached hits still obey the 8ms clock budget.
+    const timedRoot = document.createElement('article');
+    timedRoot.innerHTML = Array.from({ length: 4 }, () =>
+      '<span class="easymde-math easymde-math-inline">\\(x^2\\)</span>'
+    ).join('');
+    let clock = 0;
+    let timedYields = 0;
+    await renderMathContent(
+      timedRoot,
+      { features: { math: true } },
+      first.windowRef,
+      {
+        scheduler: {
+          now: () => {
+            clock += 5;
+            return clock;
+          },
+          yield: async () => {
+            timedYields += 1;
+          }
+        }
+      }
+    );
+    expect(first.render).toHaveBeenCalledTimes(2);
+    expect(timedYields).toBeGreaterThan(0);
+
+    // LRU eviction past 128 entries.
+    const lru = createKatexWindow();
+    const renderTexBatch = async (expressions: string[]) => {
+      const root = document.createElement('article');
+      root.innerHTML = expressions
+        .map((expr) => `<span class="easymde-math easymde-math-inline">\\(${expr}\\)</span>`)
+        .join('');
+      await renderMathContent(
+        root,
+        { features: { math: true } },
+        lru.windowRef,
+        { scheduler: fake.scheduler }
+      );
+      return root;
+    };
+
+    const initial128 = Array.from({ length: 128 }, (_, index) => `v_${index}`);
+    await renderTexBatch(initial128);
+    expect(lru.render).toHaveBeenCalledTimes(128);
+
+    // Refresh v_0 so v_1 becomes the least-recently-used entry.
+    await renderTexBatch(['v_0']);
+    expect(lru.render).toHaveBeenCalledTimes(128);
+
+    // Insert v_128 -> evicts v_1, retains v_0.
+    await renderTexBatch(['v_128']);
+    expect(lru.render).toHaveBeenCalledTimes(129);
+
+    await renderTexBatch(['v_0']);
+    expect(lru.render).toHaveBeenCalledTimes(129);
+
+    await renderTexBatch(['v_1']);
+    expect(lru.render).toHaveBeenCalledTimes(130);
+
+    // Guarded entries (throw, empty HTML, oversized TeX, oversized HTML) skip caching.
+    const guarded = createKatexWindow();
+    const hugeTex = 'z'.repeat(4 * 1024 + 1);
+    const renderGuarded = async () => {
+      const root = document.createElement('article');
+      root.innerHTML = [
+        '<span class="easymde-math easymde-math-inline">throw</span>',
+        '<span class="easymde-math easymde-math-inline">empty</span>',
+        '<span class="easymde-math easymde-math-inline">huge-html</span>',
+        `<span class="easymde-math easymde-math-inline">${hugeTex}</span>`
+      ].join('');
+      await renderMathContent(
+        root,
+        { features: { math: true } },
+        guarded.windowRef,
+        { scheduler: fake.scheduler }
+      );
+      return root;
+    };
+    const guardedFirst = await renderGuarded();
+    expect(guardedFirst.querySelector('.easymde-render-error')).not.toBeNull();
+    await renderGuarded();
+    expect(guarded.render).toHaveBeenCalledTimes(8);
+  });
+
+  it('caches at least 100 distinct Mermaid diagrams without LRU eviction thrashing', async () => {
+    const windowRef = runtime();
+    const render = vi.fn(async (id: string, source: string) => ({
+      svg: `<svg id="${id}">${source}</svg>`
+    }));
+    windowRef.mermaid = {
+      initialize: vi.fn(),
+      render
+    };
+    const fake = scheduler();
+    const diagrams = Array.from(
+      { length: 100 },
+      (_, index) => `graph LR; N${index + 1}-->M${index + 1};`
+    );
+    const renderPass = async () => {
+      const root = document.createElement('article');
+      root.innerHTML = diagrams
+        .map((diagram) => `<pre><code class="language-mermaid">${diagram}</code></pre>`)
+        .join('');
+      await renderMermaidContent(
+        root,
+        { features: { mermaid: true } },
+        windowRef,
+        { scheduler: fake.scheduler }
+      );
+      expect(root.querySelectorAll('.easymde-mermaid svg')).toHaveLength(100);
+    };
+
+    await renderPass();
+    expect(render).toHaveBeenCalledTimes(100);
+
+    await renderPass();
+    expect(render).toHaveBeenCalledTimes(100);
+  });
+
+  it('reuses cached formal-Preview Mermaid SVGs with rewritten render IDs for trimmed and newline-terminated sources', async () => {
+    const windowRef = runtime();
+    windowRef.mermaid = {
+      initialize: vi.fn(),
+      render: vi.fn(async (id: string) => ({
+        svg: `<svg id="${id}"><style>#${id} .node{fill:#fff;}</style><g><text>Flow</text></g></svg>`
+      }))
+    };
+    const root = document.createElement('article');
+    root.innerHTML = '<pre><code class="language-mermaid">flowchart TD\n  A --&gt; B\n</code></pre>';
+
+    await renderMermaidContent(
+      root,
+      { features: { mermaid: true } },
+      windowRef
+    );
+
+    const reused = readCachedMermaidSvg(
+      'flowchart TD\n  A --> B',
+      'easymde-visual-mermaid-42',
+      windowRef
+    );
+    expect(reused).not.toBeNull();
+    expect(reused).toContain('id="easymde-visual-mermaid-42"');
+    expect(reused).toContain('#easymde-visual-mermaid-42 .node');
+    expect(reused).not.toContain('easymde-mermaid-');
+    expect(readCachedMermaidSvg('graph LR\n  X --> Y', 'easymde-visual-mermaid-43', windowRef)).toBeNull();
+
+    // Visual-side writes populate the same canonical LRU cache with normalized keys.
+    writeCachedMermaidSvg(
+      'graph LR\n  X --> Y\n',
+      'easymde-visual-mermaid-44',
+      '<svg id="easymde-visual-mermaid-44"><text>Visual</text></svg>',
+      windowRef
+    );
+    const written = readCachedMermaidSvg(
+      '  graph LR\n  X --> Y  ',
+      'easymde-visual-mermaid-45',
+      windowRef
+    );
+    expect(written).toBe('<svg id="easymde-visual-mermaid-45"><text>Visual</text></svg>');
   });
 });

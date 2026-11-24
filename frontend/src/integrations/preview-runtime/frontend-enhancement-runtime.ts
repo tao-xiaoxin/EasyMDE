@@ -1,3 +1,5 @@
+import { normalizeMathTex } from '../../shared/markdown/normalize-math-tex';
+
 export type FrontendEnhancementConfig = unknown;
 
 export type FrontendEnhancementScheduler = Readonly<{
@@ -64,11 +66,13 @@ export type FrontendEnhancementWindow = Window & {
     ) => void | Promise<void>;
   }>;
   EasyMDEMermaidRenderer?: Readonly<{
+    readCachedSvg?: (source: string, renderId: string) => string | null;
     render: (
       root: ParentNode,
       config: FrontendEnhancementConfig,
       control?: FrontendEnhancementControl
     ) => Promise<void>;
+    writeCachedSvg?: (source: string, renderId: string, svg: string) => void;
   }>;
   hljs?: HighlightRuntime;
   katex?: KatexRuntime;
@@ -105,19 +109,114 @@ foreignObject > div {
 }`;
 
 const ENHANCEMENT_SLICE_BUDGET_MS = 8;
+const ENHANCEMENT_RAF_FALLBACK_MS = 40;
 // Auto-detection is synchronous per block; keep large immersive previews bounded
 // between paints without dropping language-free code blocks.
 const LARGE_IMMERSIVE_PREVIEW_BYTE_LIMIT = 128 * 1024;
 const LARGE_IMMERSIVE_ITEMS_PER_SLICE = 4;
+const MATH_ITEMS_PER_SLICE = 8;
+const MERMAID_ITEMS_PER_SLICE = 1;
+
+const MERMAID_CACHE_MAX_ENTRIES = 256;
+const MERMAID_CACHE_MAX_SOURCE_LENGTH = 16 * 1024;
+const MERMAID_CACHE_MAX_SVG_LENGTH = 128 * 1024;
+
+const KATEX_CACHE_MAX_ENTRIES = 128;
+const KATEX_CACHE_MAX_TEX_LENGTH = 4 * 1024;
+const KATEX_CACHE_MAX_HTML_LENGTH = 32 * 1024;
+
+type CachedMermaidSvg = Readonly<{
+  renderId: string;
+  svg: string;
+}>;
+
+const mermaidSvgCaches = new WeakMap<MermaidRuntime, Map<string, CachedMermaidSvg>>();
+const initializedMermaidRuntimes = new WeakSet<MermaidRuntime>();
+const katexHtmlCaches = new WeakMap<KatexRuntime, Map<string, string>>();
+
+type ScheduledWorkCost = 0 | 1;
 
 type ScheduledWorkOptions = Readonly<{
   maxItemsPerSlice?: number;
 }>;
 
+function readLruCache<V>(cache: Map<string, V>, key: string): V | undefined {
+  const value = cache.get(key);
+  if (undefined === value) return undefined;
+  cache.delete(key);
+  cache.set(key, value);
+  return value;
+}
+
+function writeLruCache<V>(
+  cache: Map<string, V>,
+  key: string,
+  value: V,
+  maxEntries: number
+): void {
+  if (cache.has(key)) {
+    cache.delete(key);
+  } else if (cache.size >= maxEntries) {
+    const oldestKey = cache.keys().next().value;
+    if (undefined !== oldestKey) {
+      cache.delete(oldestKey);
+    }
+  }
+  cache.set(key, value);
+}
+
+function mermaidCacheKey(source: string): string {
+  return source.trim();
+}
+
+function mermaidSvgCache(mermaid: MermaidRuntime): Map<string, CachedMermaidSvg> {
+  let cache = mermaidSvgCaches.get(mermaid);
+  if (!cache) {
+    cache = new Map<string, CachedMermaidSvg>();
+    mermaidSvgCaches.set(mermaid, cache);
+  }
+  return cache;
+}
+
+function katexHtmlCache(katex: KatexRuntime): Map<string, string> {
+  let cache = katexHtmlCaches.get(katex);
+  if (!cache) {
+    cache = new Map<string, string>();
+    katexHtmlCaches.set(katex, cache);
+  }
+  return cache;
+}
+
 function enhancementIsCurrent(
   control: FrontendEnhancementControl | undefined
 ): boolean {
   return !control?.signal?.aborted && (control?.isCurrent?.() ?? true);
+}
+
+function clearScheduledTimeout(
+  windowRef: FrontendEnhancementWindow,
+  id: number
+): void {
+  if ('function' !== typeof windowRef.clearTimeout) return;
+  try {
+    windowRef.clearTimeout(id);
+  } catch {
+    globalThis.clearTimeout(id);
+  }
+}
+
+function cancelScheduledAnimationFrame(
+  windowRef: FrontendEnhancementWindow,
+  id: number
+): void {
+  if ('function' !== typeof windowRef.cancelAnimationFrame) return;
+  try {
+    windowRef.cancelAnimationFrame(id);
+  } catch {
+    if ('function' === typeof globalThis.cancelAnimationFrame) {
+      globalThis.cancelAnimationFrame(id);
+    }
+  }
 }
 
 function defaultEnhancementScheduler(
@@ -127,19 +226,36 @@ function defaultEnhancementScheduler(
     now: () => windowRef.performance?.now() ?? Date.now(),
     yield: () => new Promise<void>((resolve) => {
       let settled = false;
+      let rafId: number | null = null;
+      let timeoutId: number | null = null;
       const finish = () => {
         if (settled) return;
         settled = true;
+        if (null !== timeoutId) {
+          const pendingTimeout = timeoutId;
+          timeoutId = null;
+          clearScheduledTimeout(windowRef, pendingTimeout);
+        }
+        if (null !== rafId) {
+          const pendingRaf = rafId;
+          rafId = null;
+          cancelScheduledAnimationFrame(windowRef, pendingRaf);
+        }
         resolve();
       };
 
-      // rAF is useful when available, but it is not a completion guarantee for
-      // hidden pages or popup surfaces. The timer keeps enhancement progress
-      // independent of frame delivery.
+      // Prefer requestAnimationFrame so visible tabs actually paint and process
+      // input between slices instead of starving rendering with setTimeout(0).
+      // Keep a bounded fallback timer so hidden tabs or throttled surfaces
+      // still make progress when frame delivery is paused.
       if ('function' === typeof windowRef.requestAnimationFrame) {
-        windowRef.requestAnimationFrame(finish);
+        rafId = windowRef.requestAnimationFrame(finish);
+        if (!settled) {
+          timeoutId = windowRef.setTimeout(finish, ENHANCEMENT_RAF_FALLBACK_MS);
+        }
+        return;
       }
-      windowRef.setTimeout(finish, 0);
+      timeoutId = windowRef.setTimeout(finish, 0);
     })
   };
 }
@@ -163,7 +279,7 @@ function enhancementRuntimeOptions(
 
 async function runScheduled<T>(
   items: ReadonlyArray<T>,
-  work: (item: T) => void | Promise<void>,
+  work: (item: T) => void | ScheduledWorkCost | Promise<ScheduledWorkCost> | Promise<void>,
   scheduler: FrontendEnhancementScheduler,
   control: FrontendEnhancementControl,
   options: ScheduledWorkOptions = {}
@@ -174,8 +290,8 @@ async function runScheduled<T>(
     if (!enhancementIsCurrent(control)) return false;
     const item = items[index];
     if (undefined === item) return false;
-    await work(item);
-    itemsInSlice += 1;
+    const itemCost = await work(item);
+    itemsInSlice += undefined === itemCost ? 1 : itemCost;
     const hasMore = index < items.length - 1;
     const elapsed = scheduler.now() - sliceStartedAt;
     const reachedItemBound = options.maxItemsPerSlice !== undefined
@@ -270,21 +386,6 @@ function stringValue(
   return value ? String(value) : fallback || '';
 }
 
-function normalizeMathTex(tex: string): string {
-  if (!tex) return tex;
-
-  tex = tex
-    .replace(/(^|[^A-Za-z\\])(begin|end)(?=\s*\{)/g, '$1\\$2')
-    .replace(/(^|[^A-Za-z\\])(frac|dfrac|tfrac|binom|sqrt)(?=\s*\{)/g, '$1\\$2')
-    .replace(/(^|[^A-Za-z\\])(left|right)(?=\s*(?:[()[\]{}|.]|\\[{}]))/g, '$1\\$2')
-    .replace(/(^|[^A-Za-z\\])(log|ln|exp|lim|sin|cos|tan|cot|sec|csc|min|max|sup|inf)(?![A-Za-z])/g, '$1\\$2')
-    .replace(/(^|[^A-Za-z\\])(cdots|ldots|dots|vdots|ddots|cdot|times|div|pm|mp|leq|geq|neq|approx|infty)(?![A-Za-z])/g, '$1\\$2');
-
-  return tex.replace(/\\begin\{([A-Za-z]*matrix|array)\}([\s\S]*?)\\end\{\1\}/g, (_match, environment: string, body: string) =>
-    `\\begin{${environment}}${body.replace(/(^|[^\\])\\(?![\\A-Za-z{])/g, '$1\\\\')}\\end{${environment}}`
-  );
-}
-
 function mathText(element: HTMLElement): string {
   const value = (element.textContent || '').trim();
 
@@ -299,34 +400,109 @@ function mathText(element: HTMLElement): string {
   return normalizeMathTex(value);
 }
 
+type CodeComputedStyles = Readonly<{
+  backgroundColor: string;
+  color: string;
+}>;
+
+type CodeFrameBackgroundEntry = Readonly<{
+  backgroundColor: string;
+  isMermaid: boolean;
+  languageBadges: ReadonlyArray<HTMLElement>;
+  lineNumberColor: string;
+  parent: HTMLElement;
+}>;
+
+const CODE_FRAME_SELECTOR = 'pre > code.hljs, pre.easymde-code-block > code';
+const VISUAL_CODE_LANGUAGE_BADGE_CLASS = 'easymde-visual-code-lang';
+
+function readCodeFrameBackgroundEntry(
+  element: Element,
+  windowRef: Pick<Window, 'getComputedStyle'>
+): CodeFrameBackgroundEntry {
+  if (!(element instanceof HTMLElement) || !element.parentElement) {
+    throw new Error('easymde-code-frame-parent-missing');
+  }
+  const computed = windowRef.getComputedStyle(element);
+  const parent = element.parentElement;
+  return {
+    backgroundColor: computed.backgroundColor,
+    isMermaid: isMermaidCode(element),
+    languageBadges: [...parent.children].filter(
+      (child): child is HTMLElement =>
+        child instanceof HTMLElement
+        && child.classList.contains(VISUAL_CODE_LANGUAGE_BADGE_CLASS)
+    ),
+    lineNumberColor: computed.color,
+    parent
+  };
+}
+
+function writeCodeFrameBackgroundEntry(entry: CodeFrameBackgroundEntry): void {
+  if (entry.isMermaid) {
+    entry.parent.setAttribute('data-easymde-mermaid-fallback', '1');
+  }
+  entry.parent.style.setProperty(
+    '--easymde-code-frame-background',
+    entry.backgroundColor
+  );
+  if (!entry.lineNumberColor) {
+    return;
+  }
+  if (entry.parent.classList.contains('easymde-code-with-line-numbers')) {
+    entry.parent.style.setProperty(
+      '--easymde-code-line-number-color',
+      entry.lineNumberColor
+    );
+  }
+  // Visual-editor language badges follow the live code-theme foreground so a
+  // code-theme switch never leaves stale badge text on the new frame.
+  for (const badge of entry.languageBadges) {
+    badge.style.setProperty('color', entry.lineNumberColor);
+  }
+}
+
 export function syncCodeFrameBackgrounds(
   root: ParentNode,
-  windowRef: FrontendEnhancementWindow
+  windowRef: Pick<Window, 'getComputedStyle'>
 ): void {
-  root.querySelectorAll('pre > code.hljs').forEach((element) => {
-    syncCodeFrameBackground(element, windowRef);
-  });
+  // Pass 1 (read-only): read all computed styles before mutating any attribute
+  // or inline custom property so the browser never thrashes style recalculation
+  // across multiple code frames.
+  const entries = [...root.querySelectorAll(CODE_FRAME_SELECTOR)].map(
+    (element) => readCodeFrameBackgroundEntry(element, windowRef)
+  );
+  // Pass 2 (write-only): apply all frame attributes and custom properties.
+  for (const entry of entries) {
+    writeCodeFrameBackgroundEntry(entry);
+  }
 }
 
 function syncCodeFrameBackground(
   element: Element,
-  windowRef: FrontendEnhancementWindow
+  windowRef: Pick<Window, 'getComputedStyle'>,
+  computedStyles?: ReadonlyMap<HTMLElement, CodeComputedStyles>
 ): void {
   if (!(element instanceof HTMLElement) || !element.parentElement) {
     throw new Error('easymde-code-frame-parent-missing');
   }
+  const cached = computedStyles?.get(element);
+  const backgroundColor = cached
+    ? cached.backgroundColor
+    : windowRef.getComputedStyle(element).backgroundColor;
   if (isMermaidCode(element)) {
     element.parentElement.setAttribute('data-easymde-mermaid-fallback', '1');
   }
   element.parentElement.style.setProperty(
     '--easymde-code-frame-background',
-    windowRef.getComputedStyle(element).backgroundColor
+    backgroundColor
   );
 }
 
 function syncCodeLineNumberGutter(
   element: Element,
-  windowRef: FrontendEnhancementWindow
+  windowRef: FrontendEnhancementWindow,
+  computedStyles?: ReadonlyMap<HTMLElement, CodeComputedStyles>
 ): void {
   if (!(element instanceof HTMLElement) || !element.parentElement) {
     throw new Error('easymde-code-line-number-parent-missing');
@@ -349,6 +525,10 @@ function syncCodeLineNumberGutter(
     return;
   }
 
+  const cached = computedStyles?.get(element);
+  const lineNumberColor = cached
+    ? cached.color
+    : windowRef.getComputedStyle(element).color;
   const codeText = element.textContent || '';
   const lineCount = Math.max(
     1,
@@ -372,7 +552,7 @@ function syncCodeLineNumberGutter(
   );
   pre.style.setProperty(
     '--easymde-code-line-number-color',
-    windowRef.getComputedStyle(element).color
+    lineNumberColor
   );
   pre.insertBefore(gutter, element);
 }
@@ -414,16 +594,32 @@ async function highlightCode(
     control,
     scheduleOptions
   )) return false;
+  const allCodeBlocks = [...root.querySelectorAll('pre > code')];
+  // Batch every getComputedStyle read before any gutter or frame DOM writes so
+  // large previews never interleave style mutations with forced style recalcs.
+  const computedStyles = new Map<HTMLElement, CodeComputedStyles>();
+  for (const element of allCodeBlocks) {
+    if (!(element instanceof HTMLElement) || !element.parentElement) continue;
+    const needsColor = !isMermaidCode(element)
+      && Boolean(element.closest('.easymde-code-line-numbers'));
+    const needsBackground = element.classList.contains('hljs');
+    if (!needsColor && !needsBackground) continue;
+    const computed = windowRef.getComputedStyle(element);
+    computedStyles.set(element, {
+      backgroundColor: computed.backgroundColor,
+      color: computed.color
+    });
+  }
   if (!await runScheduled(
-    [...root.querySelectorAll('pre > code')],
-    (element) => syncCodeLineNumberGutter(element, windowRef),
+    allCodeBlocks,
+    (element) => syncCodeLineNumberGutter(element, windowRef, computedStyles),
     scheduler,
     control,
     scheduleOptions
   )) return false;
   return runScheduled(
     [...root.querySelectorAll('pre > code.hljs')],
-    (element) => syncCodeFrameBackground(element, windowRef),
+    (element) => syncCodeFrameBackground(element, windowRef, computedStyles),
     scheduler,
     control,
     scheduleOptions
@@ -467,35 +663,60 @@ export function renderMathContent(
   const mathNodes = [
     ...root.querySelectorAll('.easymde-math:not([data-easymde-rendered])')
   ];
+  if (0 === mathNodes.length) return Promise.resolve();
+  const cache = katexHtmlCache(katex);
+  const scheduleOptions: ScheduledWorkOptions = {
+    maxItemsPerSlice: isLargeImmersivePreviewRoot(root)
+      ? LARGE_IMMERSIVE_ITEMS_PER_SLICE
+      : MATH_ITEMS_PER_SLICE
+  };
   return runScheduled(
     mathNodes,
-    (element) => {
+    (element): ScheduledWorkCost => {
       if (!(element instanceof HTMLElement)) {
         throw new Error('easymde-math-element-invalid');
       }
       const displayMode = element.classList.contains('easymde-math-block');
+      const tex = mathText(element);
+      const cacheKey = `${displayMode ? '1' : '0'}\0${tex}`;
+      const cachedHtml = readLruCache(cache, cacheKey);
+      if (undefined !== cachedHtml) {
+        element.innerHTML = cachedHtml;
+        element.dataset.easymdeRendered = '1';
+        return 0;
+      }
 
       try {
-        katex.render(mathText(element), element, {
+        katex.render(tex, element, {
           displayMode,
           throwOnError: false,
           strict: 'warn'
         });
         element.dataset.easymdeRendered = '1';
+        const renderedHtml = element.innerHTML;
+        if (
+          tex.length <= KATEX_CACHE_MAX_TEX_LENGTH
+          && renderedHtml.length > 0
+          && renderedHtml.length <= KATEX_CACHE_MAX_HTML_LENGTH
+        ) {
+          writeLruCache(cache, cacheKey, renderedHtml, KATEX_CACHE_MAX_ENTRIES);
+        }
       } catch {
         element.classList.add('easymde-render-error');
         element.dataset.easymdeRendered = '1';
       }
+      return 1;
     },
     scheduler,
-    control
+    control,
+    scheduleOptions
   ).then(() => undefined);
 }
 
-function initializeMermaid(windowRef: FrontendEnhancementWindow): boolean {
-  if (!windowRef.mermaid) return false;
+function initializeMermaid(mermaid: MermaidRuntime): void {
+  if (initializedMermaidRuntimes.has(mermaid)) return;
 
-  windowRef.mermaid.initialize({
+  mermaid.initialize({
     startOnLoad: false,
     securityLevel: 'strict',
     theme: 'default',
@@ -510,8 +731,92 @@ function initializeMermaid(windowRef: FrontendEnhancementWindow): boolean {
     },
     themeCSS: MERMAID_LABEL_GEOMETRY_CSS
   });
+  initializedMermaidRuntimes.add(mermaid);
+}
 
-  return true;
+async function renderUncachedMermaidDiagram(
+  mermaid: MermaidRuntime,
+  cache: Map<string, CachedMermaidSvg>,
+  config: FrontendEnhancementConfig,
+  control: FrontendEnhancementControl,
+  pre: HTMLElement,
+  container: HTMLElement,
+  renderId: string,
+  source: string
+): Promise<ScheduledWorkCost> {
+  try {
+    const result = await mermaid.render(renderId, source);
+    if (!enhancementIsCurrent(control) || !pre.parentNode) return 1;
+    const cacheKey = mermaidCacheKey(source);
+    if (
+      cacheKey.length > 0
+      && cacheKey.length <= MERMAID_CACHE_MAX_SOURCE_LENGTH
+      && result.svg.length <= MERMAID_CACHE_MAX_SVG_LENGTH
+      && result.svg.includes(renderId)
+      && !cacheKey.includes(renderId)
+    ) {
+      writeLruCache(
+        cache,
+        cacheKey,
+        { renderId, svg: result.svg },
+        MERMAID_CACHE_MAX_ENTRIES
+      );
+    }
+    container.innerHTML = result.svg;
+    markIntrinsicMermaidLayout(container);
+    pre.parentNode.replaceChild(container, pre);
+  } catch {
+    if (!enhancementIsCurrent(control)) return 1;
+    pre.classList.add('easymde-render-error');
+    pre.setAttribute(
+      'data-easymde-error',
+      stringValue(config, 'renderingFailed', '')
+    );
+  }
+  return 1;
+}
+
+export function readCachedMermaidSvg(
+  source: string,
+  renderId: string,
+  windowRef: FrontendEnhancementWindow
+): string | null {
+  const mermaid = windowRef.mermaid;
+  const cacheKey = mermaidCacheKey(source);
+  if (!mermaid || !cacheKey || !renderId) return null;
+  const cache = mermaidSvgCaches.get(mermaid);
+  if (!cache) return null;
+  const cached = readLruCache(cache, cacheKey);
+  if (!cached) return null;
+  return cached.svg.split(cached.renderId).join(renderId);
+}
+
+export function writeCachedMermaidSvg(
+  source: string,
+  renderId: string,
+  svg: string,
+  windowRef: FrontendEnhancementWindow
+): void {
+  const mermaid = windowRef.mermaid;
+  const cacheKey = mermaidCacheKey(source);
+  if (
+    !mermaid
+    || !renderId
+    || cacheKey.length === 0
+    || cacheKey.length > MERMAID_CACHE_MAX_SOURCE_LENGTH
+    || svg.length === 0
+    || svg.length > MERMAID_CACHE_MAX_SVG_LENGTH
+    || !svg.includes(renderId)
+    || cacheKey.includes(renderId)
+  ) {
+    return;
+  }
+  writeLruCache(
+    mermaidSvgCache(mermaid),
+    cacheKey,
+    { renderId, svg },
+    MERMAID_CACHE_MAX_ENTRIES
+  );
 }
 
 export function renderMermaidContent(
@@ -521,17 +826,22 @@ export function renderMermaidContent(
   options: FrontendEnhancementRuntimeOptions = {}
 ): Promise<void> {
   const mermaid = windowRef.mermaid;
-  if (!featureEnabled(config, 'mermaid') || !mermaid || !initializeMermaid(windowRef)) {
+  if (!featureEnabled(config, 'mermaid') || !mermaid) {
     return Promise.resolve();
   }
   const { control, scheduler } = enhancementRuntimeOptions(windowRef, options);
   const mermaidNodes = [
     ...root.querySelectorAll('pre > code:not([data-easymde-rendered])')
   ].filter((element) => isMermaidCode(element));
+  if (0 === mermaidNodes.length) {
+    return Promise.resolve();
+  }
+  initializeMermaid(mermaid);
+  const cache = mermaidSvgCache(mermaid);
 
   return runScheduled(
     mermaidNodes,
-    async (element) => {
+    (element): ScheduledWorkCost | Promise<ScheduledWorkCost> => {
       if (!(element instanceof HTMLElement) || !element.parentElement) {
         throw new Error('easymde-mermaid-parent-missing');
       }
@@ -543,23 +853,30 @@ export function renderMermaidContent(
       container.className = 'easymde-mermaid';
       element.dataset.easymdeRendered = '1';
 
-      try {
-        const result = await mermaid.render(renderId, source);
-        if (!enhancementIsCurrent(control) || !pre.parentNode) return;
-        container.innerHTML = result.svg;
+      const cacheKey = mermaidCacheKey(source);
+      const cached = cacheKey.length > 0 ? readLruCache(cache, cacheKey) : undefined;
+      if (cached) {
+        if (!pre.parentNode) return 0;
+        container.innerHTML = cached.svg.split(cached.renderId).join(renderId);
         markIntrinsicMermaidLayout(container);
         pre.parentNode.replaceChild(container, pre);
-      } catch {
-        if (!enhancementIsCurrent(control)) return;
-        pre.classList.add('easymde-render-error');
-        pre.setAttribute(
-          'data-easymde-error',
-          stringValue(config, 'renderingFailed', '')
-        );
+        return 0;
       }
+
+      return renderUncachedMermaidDiagram(
+        mermaid,
+        cache,
+        config,
+        control,
+        pre,
+        container,
+        renderId,
+        source
+      );
     },
     scheduler,
-    control
+    control,
+    { maxItemsPerSlice: MERMAID_ITEMS_PER_SLICE }
   ).then(() => undefined);
 }
 

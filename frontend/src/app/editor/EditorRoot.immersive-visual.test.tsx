@@ -1,0 +1,3190 @@
+import { EditorView } from '@codemirror/view';
+import {
+  act,
+  fireEvent,
+  render,
+  waitFor,
+  within
+} from '@testing-library/react';
+import { createElement } from '@wordpress/element';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import type {
+  PreviewRequest,
+  PreviewResponse,
+  SafePreviewHtml
+} from '../../contracts/ports/preview-request';
+import type { RemoteImageImportResult } from '../../contracts/ports/remote-image-import-port';
+import type { ImmersiveVisualEditorRuntime } from '../../contracts/visual-editor';
+import { syncCodeFrameBackgrounds } from '../../integrations/preview-runtime/frontend-enhancement-runtime';
+import { EditorRoot, focusVisualPreviewRuntime } from './EditorRoot';
+import {
+  cleanupEditorRootTestHarness,
+  createPreviewResponse,
+  deferred,
+  fixture,
+  imageTransferEvent
+} from './editor-root-test-harness';
+import type { ImmersiveVisualEditorHostProps } from './ImmersiveVisualEditorHost';
+
+const visualHostProps = vi.hoisted(() => ({
+  current: null as ImmersiveVisualEditorHostProps | null,
+  // The latest runtime the real host reported, so a test can wrap one
+  // runtime capability while keeping every other owner real.
+  runtime: null as ImmersiveVisualEditorRuntime | null,
+  readyWrappers: new WeakMap<
+    (runtime: ImmersiveVisualEditorRuntime) => void,
+    (runtime: ImmersiveVisualEditorRuntime) => void
+  >()
+}));
+
+const visualChunkFailures = vi.hoisted(() => ({ remaining: 0 }));
+
+// Delegates to the real lazy host while recording the props Root wires into
+// it, so bridge contracts (identity, failure routing) stay observable.
+vi.mock('./ImmersiveVisualEditorHost', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('./ImmersiveVisualEditorHost')>();
+  return {
+    ...actual,
+    preloadImmersiveVisualEditor: () => {
+      if (visualChunkFailures.remaining > 0) {
+        visualChunkFailures.remaining -= 1;
+        return Promise.reject(new Error('chunk-load-failed'));
+      }
+      return actual.preloadImmersiveVisualEditor();
+    },
+    ImmersiveVisualEditorHost: (props: ImmersiveVisualEditorHostProps) => {
+      visualHostProps.current = props;
+      let onReady = visualHostProps.readyWrappers.get(props.onReady);
+      if (!onReady) {
+        onReady = (runtime: ImmersiveVisualEditorRuntime) => {
+          visualHostProps.runtime = runtime;
+          props.onReady(runtime);
+        };
+        visualHostProps.readyWrappers.set(props.onReady, onReady);
+      }
+      return actual.ImmersiveVisualEditorHost({ ...props, onReady });
+    }
+  };
+});
+
+afterEach(() => {
+  visualHostProps.current = null;
+  visualHostProps.runtime = null;
+  visualChunkFailures.remaining = 0;
+  cleanupEditorRootTestHarness();
+});
+
+describe('EditorRoot immersive and visual editing', () => {
+  it('focuses only the current visual runtime across disposal and replacement', () => {
+    const createSurface = () => {
+      const surface = document.createElement('div');
+      surface.tabIndex = -1;
+      surface.setAttribute('contenteditable', 'true');
+      Object.defineProperty(surface, 'isContentEditable', { value: true });
+      document.body.append(surface);
+      return surface;
+    };
+    const surfaceA = createSurface();
+    const surfaceB = createSurface();
+    const runtimeA: ImmersiveVisualEditorRuntime = {
+      applyCanonicalChange: () => 'blocked',
+      captureContextMenuTarget: () => null,
+      executeCommand: () => 'blocked',
+      getGeneratedPreviewIdentity: () => null,
+      isEditable: () => true,
+      isTransferPending: () => false,
+      prepareContextMenuDemand: () => true,
+      prepareGeneratedContentTarget: () => null,
+      prepareGeneratedContentTargetForSelection: () => null,
+      prepareImageTarget: () => null,
+      prepareImageTargetBySelection: () => null,
+      prepareMediaSelection: () => false,
+      prepareSourceNavigation: () => false,
+      prepareToolbarFallback: () => false,
+      surface: surfaceA
+    };
+    const runtimeB: ImmersiveVisualEditorRuntime = {
+      applyCanonicalChange: () => 'blocked',
+      captureContextMenuTarget: () => null,
+      executeCommand: () => 'blocked',
+      getGeneratedPreviewIdentity: () => null,
+      isEditable: () => true,
+      isTransferPending: () => false,
+      prepareContextMenuDemand: () => true,
+      prepareGeneratedContentTarget: () => null,
+      prepareGeneratedContentTargetForSelection: () => null,
+      prepareImageTarget: () => null,
+      prepareImageTargetBySelection: () => null,
+      prepareMediaSelection: () => false,
+      prepareSourceNavigation: () => false,
+      prepareToolbarFallback: () => false,
+      surface: surfaceB
+    };
+    const neutralControl = document.createElement('button');
+    document.body.append(neutralControl);
+    const activeElement = () =>
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    const onFailure = vi.fn();
+
+    try {
+      expect(
+        focusVisualPreviewRuntime(runtimeA, activeElement, onFailure)
+      ).toBe(true);
+      expect(document.activeElement).toBe(surfaceA);
+
+      neutralControl.focus();
+      expect(document.activeElement).toBe(neutralControl);
+
+      expect(focusVisualPreviewRuntime(null, activeElement, onFailure)).toBe(
+        false
+      );
+      expect(document.activeElement).toBe(neutralControl);
+      expect(onFailure).toHaveBeenLastCalledWith(
+        'visual-editor-focus-surface-unavailable'
+      );
+
+      expect(
+        focusVisualPreviewRuntime(runtimeB, activeElement, onFailure)
+      ).toBe(true);
+      expect(document.activeElement).toBe(surfaceB);
+      expect(onFailure).toHaveBeenCalledOnce();
+    } finally {
+      neutralControl.remove();
+      surfaceA.remove();
+      surfaceB.remove();
+    }
+  });
+
+  it('recomposes the existing source and preview owners in immersive mode', async () => {
+    const props = fixture();
+    props.submissionField.value = 'Rendered';
+    props.submissionField.defaultValue = 'Rendered';
+    const view = render(<EditorRoot {...props} />);
+    await waitFor(() =>
+      expect(view.getByRole('button', { name: '进入沉浸写作' })).not.toBeNull()
+    );
+    const assertPreviewPaperFrame = (pane: Element | null) => {
+      expect(pane).not.toBeNull();
+      expect(
+        pane?.querySelectorAll(':scope > .easymde-immersive-preview-canvas')
+      ).toHaveLength(1);
+      expect(
+        pane?.querySelectorAll(
+          ':scope > .easymde-immersive-preview-canvas > [data-easymde-preview-html-sink]'
+        )
+      ).toHaveLength(1);
+      expect(
+        pane?.querySelectorAll(
+          ':scope > .easymde-immersive-preview-canvas .easymde-immersive-preview-canvas'
+        )
+      ).toHaveLength(0);
+    };
+    assertPreviewPaperFrame(
+      view.container.querySelector('.easymde-pane-preview')
+    );
+    expect(
+      view.container.querySelector('.easymde-immersive-preview-page')
+    ).toBeNull();
+
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    expect(view.getByRole('region', { name: '沉浸写作' })).not.toBeNull();
+    expect(
+      view.container
+        .querySelector('.easymde-editor')
+        ?.classList.contains('is-immersive-split')
+    ).toBe(true);
+    expect(
+      view.container.querySelectorAll('[data-easymde-document-owner="react"]')
+    ).toHaveLength(1);
+    expect(
+      view.container.querySelectorAll('.easymde-pane-preview')
+    ).toHaveLength(1);
+    expect(
+      view.container.querySelectorAll('.easymde-pane-header')
+    ).toHaveLength(2);
+    expect(
+      view.container.querySelector(
+        '.easymde-pane-preview [data-easymde-preview-html-sink]'
+      )
+    ).not.toBeNull();
+    assertPreviewPaperFrame(
+      view.container.querySelector('.easymde-pane-preview')
+    );
+
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    expect(
+      view.container
+        .querySelector('.easymde-editor')
+        ?.classList.contains('is-immersive-preview')
+    ).toBe(true);
+    const previewPane = view.container.querySelector('.easymde-pane-preview');
+    expect(
+      previewPane?.classList.contains('easymde-immersive-preview-surface')
+    ).toBe(true);
+    assertPreviewPaperFrame(previewPane);
+    expect(
+      previewPane?.querySelector('.easymde-immersive-preview-page')
+    ).toBeNull();
+    const previewSink = previewPane?.querySelector<HTMLElement>(
+      '[data-easymde-preview-html-sink]'
+    );
+    expect(
+      previewSink?.classList.contains('easymde-markdown-theme-default')
+    ).toBe(true);
+    expect(previewSink?.classList.contains('easymde-font-overrides')).toBe(
+      false
+    );
+    expect(
+      previewPane?.querySelector('.easymde-immersive-preview-status')
+    ).not.toBeNull();
+    expect(
+      view.queryByRole('separator', {
+        name: '调整编辑区和预览区宽度'
+      })
+    ).toBeNull();
+    expect(
+      view.queryByRole('complementary', { name: '文章大纲' })
+    ).not.toBeNull();
+    expect(view.getAllByRole('button', { name: '收起大纲' })).toHaveLength(2);
+    expect(
+      view.queryByRole('separator', { name: '调整大纲宽度' })
+    ).not.toBeNull();
+    const previewHideOutline = view.getAllByRole('button', {
+      name: '收起大纲'
+    })[0];
+    if (!previewHideOutline)
+      throw new Error('preview-outline-close-unavailable');
+    fireEvent.click(previewHideOutline);
+    expect(view.queryByRole('complementary', { name: '文章大纲' })).toBeNull();
+    fireEvent.click(view.getByRole('button', { name: '展开大纲' }));
+    expect(
+      view.queryByRole('complementary', { name: '文章大纲' })
+    ).not.toBeNull();
+    expect(
+      view.container.querySelectorAll('[data-easymde-preview-html-sink]')
+    ).toHaveLength(1);
+    await waitFor(() =>
+      expect(
+        previewPane?.querySelector('[data-easymde-preview-html-sink] p')
+          ?.textContent
+      ).toBe('Rendered')
+    );
+    const scrollDisposeCount =
+      props.scrollSyncBinding.dispose.mock.calls.length;
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    expect(props.scrollSyncBinding.dispose).toHaveBeenCalledTimes(
+      scrollDisposeCount
+    );
+    const visualEditor = await view.findByRole(
+      'textbox',
+      {
+        name: '可视化文章编辑器'
+      },
+      { timeout: 5000 }
+    );
+    expect(
+      view.container
+        .querySelector('.easymde-editor')
+        ?.classList.contains('is-immersive-preview')
+    ).toBe(true);
+    expect(visualEditor.getAttribute('contenteditable')).toBe('true');
+    visualEditor.innerHTML = '<p>Changed visually</p><p>Body</p>';
+    fireEvent.input(visualEditor);
+    await waitFor(() =>
+      expect(props.submissionField.value).toBe('Changed visually\n\nBody')
+    );
+    expect(view.getByText('更改已记录')).not.toBeNull();
+    expect(view.getByRole('button', { name: '锁定为只读' })).not.toBeNull();
+    expect(
+      view.container.querySelectorAll('[data-easymde-document-owner="react"]')
+    ).toHaveLength(1);
+    expect(
+      view.container.querySelectorAll('[data-easymde-preview-html-sink]')
+    ).toHaveLength(1);
+    expect(
+      view.queryByRole('complementary', { name: '文章大纲' })
+    ).not.toBeNull();
+    expect(props.enhancementPort.dispose).not.toHaveBeenCalled();
+    fireEvent.click(view.getByRole('button', { name: 'Image' }));
+    expect(props.mediaPickerFrame?.open).toHaveBeenCalledTimes(1);
+    expect(
+      view.queryByRole('textbox', { name: '可视化文章编辑器' })
+    ).not.toBeNull();
+    const mediaFrame = props.mediaPickerFrame;
+    const mediaOpen = mediaFrame
+      ? vi.mocked(mediaFrame.open).mock.calls[0]?.[0]
+      : undefined;
+    mediaOpen?.onClose();
+    fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
+    await waitFor(() =>
+      expect(view.queryByRole('region', { name: '沉浸写作' })).toBeNull()
+    );
+    expect(
+      view.container.querySelector(
+        '.easymde-pane-preview [data-easymde-preview-html-sink]'
+      )
+    ).not.toBeNull();
+  });
+
+  it('keeps the themed paper visible without exposing a rendering placeholder', async () => {
+    const pendingPreview = deferred<PreviewResponse>();
+    const props = fixture();
+    vi.mocked(props.previewPort.render).mockImplementation(
+      () => pendingPreview.promise
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenCalledTimes(1)
+    );
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+
+    expect(props.previewPort.render).toHaveBeenCalledTimes(1);
+    expect(view.queryByText('Rendering')).toBeNull();
+    expect(
+      view.container.querySelector(
+        '.easymde-pane-preview > .easymde-immersive-preview-canvas > [data-easymde-preview-html-sink]'
+      )?.textContent
+    ).toContain('Initial');
+  });
+
+  it('unlocks an empty Markdown document as an editable themed paper', async () => {
+    const baseProps = fixture();
+    baseProps.submissionField.value = '';
+    baseProps.submissionField.defaultValue = '';
+    const props = {
+      ...baseProps,
+      preview: {
+        ...baseProps.preview,
+        html: '' as SafePreviewHtml,
+        signature: ''
+      }
+    };
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+
+    const unlock = view.getByRole('button', {
+      name: '解除锁定并编辑'
+    });
+    await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+    fireEvent.click(unlock);
+
+    const visualEditor = await view.findByRole(
+      'textbox',
+      {
+        name: '可视化文章编辑器'
+      },
+      { timeout: 5000 }
+    );
+    expect(visualEditor.querySelector('p')).not.toBeNull();
+    expect(
+      visualEditor
+        .closest('.easymde-prosemirror-surface')
+        ?.classList.contains('easymde-markdown-theme-default')
+    ).toBe(true);
+
+    visualEditor.innerHTML = '<p>First visual paragraph</p>';
+    fireEvent.input(visualEditor);
+    await waitFor(() =>
+      expect(props.submissionField.value).toBe('First visual paragraph')
+    );
+
+    fireEvent.click(view.getByRole('button', { name: '锁定为只读' }));
+    await waitFor(() =>
+      expect(
+        view
+          .getByRole('button', { name: '解除锁定并编辑' })
+          .hasAttribute('disabled')
+      ).toBe(false)
+    );
+  });
+
+  it('prepares the current code theme before unlocking a fresh visual document', async () => {
+    const baseProps = fixture();
+    baseProps.submissionField.value = '';
+    baseProps.submissionField.defaultValue = '';
+    const props = {
+      ...baseProps,
+      preview: {
+        ...baseProps.preview,
+        html: '' as SafePreviewHtml,
+        signature: ''
+      }
+    };
+    const preparation =
+      deferred<
+        Readonly<{
+          cancel: () => void;
+          commit: () => void;
+        }>
+      >();
+    const prepared = { cancel: vi.fn(), commit: vi.fn() };
+    vi.mocked(props.enhancementPort.prepareCodeTheme).mockReturnValue(
+      preparation.promise
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    const unlock = view.getByRole('button', {
+      name: '解除锁定并编辑'
+    });
+    await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+
+    unlock.focus();
+    expect(document.activeElement).toBe(unlock);
+    fireEvent.click(unlock);
+
+    expect(unlock.getAttribute('aria-label')).toBe('解除锁定并编辑');
+    expect(unlock.getAttribute('aria-busy')).toBe('true');
+    expect(unlock.getAttribute('aria-disabled')).toBe('true');
+    expect(unlock.hasAttribute('disabled')).toBe(false);
+    expect(document.activeElement).toBe(unlock);
+    expect(unlock.classList.contains('is-unlocking')).toBe(true);
+    expect(
+      unlock.querySelector('.easymde-immersive-preview-unlock-spinner')
+    ).not.toBeNull();
+    await waitFor(() =>
+      expect(props.enhancementPort.prepareCodeTheme).toHaveBeenCalledWith(
+        expect.objectContaining({
+          codeTheme: 'atom-one-dark',
+          signal: expect.any(AbortSignal)
+        })
+      )
+    );
+    expect(
+      view.queryByRole('textbox', {
+        name: '可视化文章编辑器'
+      })
+    ).toBeNull();
+    expect(props.submissionField.value).toBe('');
+
+    await act(async () => preparation.resolve(prepared));
+
+    const visualEditor = await view.findByRole(
+      'textbox',
+      {
+        name: '可视化文章编辑器'
+      },
+      { timeout: 5000 }
+    );
+    expect(visualEditor.querySelector('p')).not.toBeNull();
+    const lock = view.getByRole('button', { name: '锁定为只读' });
+    expect(lock.hasAttribute('aria-busy')).toBe(false);
+    expect(lock.hasAttribute('disabled')).toBe(false);
+    expect(prepared.commit).toHaveBeenCalledOnce();
+    expect(props.submissionField.value).toBe('');
+  });
+
+  it('waits for the visual surface before handing compact Outline focus to Preview', async () => {
+    const baseProps = fixture();
+    const markdown = '# Heading';
+    baseProps.submissionField.value = markdown;
+    baseProps.submissionField.defaultValue = markdown;
+    const previewHtml = '<h1>Heading</h1>' as SafePreviewHtml;
+    const props = {
+      ...baseProps,
+      preview: {
+        ...baseProps.preview,
+        html: previewHtml,
+        signature: 'compact-focus'
+      }
+    };
+    const preparation =
+      deferred<
+        Readonly<{
+          cancel: () => void;
+          commit: () => void;
+        }>
+      >();
+    const prepared = { cancel: vi.fn(), commit: vi.fn() };
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(createPreviewResponse(request, previewHtml, {}))
+    );
+    vi.mocked(props.enhancementPort.prepareCodeTheme).mockReturnValue(
+      preparation.promise
+    );
+    vi.spyOn(props.immersiveEnvironment, 'viewportWidth').mockReturnValue(390);
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    const outlineControl = view.container.querySelector<HTMLButtonElement>(
+      '.easymde-immersive-outline button'
+    );
+    if (!outlineControl)
+      throw new Error('compact-test-outline-control-unavailable');
+    outlineControl.focus();
+    expect(document.activeElement).toBe(outlineControl);
+
+    const unlock = view.getByRole('button', { name: '解除锁定并编辑' });
+    await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+    const nativeFocus = HTMLElement.prototype.focus;
+    let visualSurfaceFocusAttempts = 0;
+    const focusSpy = vi
+      .spyOn(HTMLElement.prototype, 'focus')
+      .mockImplementation(function (this: HTMLElement, options?: FocusOptions) {
+        if (this.classList.contains('easymde-immersive-visual-editor')) {
+          visualSurfaceFocusAttempts += 1;
+        }
+        nativeFocus.call(this, options);
+      });
+
+    try {
+      fireEvent.click(unlock);
+      await waitFor(() =>
+        expect(props.enhancementPort.prepareCodeTheme).toHaveBeenCalledOnce()
+      );
+      expect(unlock.getAttribute('aria-busy')).toBe('true');
+      expect(
+        view.container.querySelector('.easymde-immersive-outline')
+      ).not.toBeNull();
+      expect(document.activeElement).toBe(outlineControl);
+
+      await act(async () => preparation.resolve(prepared));
+
+      expect(prepared.commit).toHaveBeenCalledOnce();
+      const visualSurface = view.container.querySelector<HTMLElement>(
+        '.easymde-immersive-visual-editor'
+      );
+      if (!visualSurface)
+        throw new Error('compact-test-visual-surface-unavailable');
+      expect(visualSurface.getAttribute('contenteditable')).toBe('true');
+      expect(visualSurface.getAttribute('role')).toBe('textbox');
+      expect(visualSurface.getAttribute('aria-label')).toBe('可视化文章编辑器');
+      await waitFor(() =>
+        expect(
+          view.container.querySelector('.easymde-immersive-outline')
+        ).toBeNull()
+      );
+      expect(visualSurfaceFocusAttempts).toBe(1);
+      expect(document.activeElement).toBe(visualSurface);
+      expect(props.onFailure).not.toHaveBeenCalledWith(
+        'visual-editor-focus-surface-unavailable'
+      );
+      expect(props.onFailure).not.toHaveBeenCalledWith(
+        'visual-editor-focus-surface-failed'
+      );
+    } finally {
+      focusSpy.mockRestore();
+    }
+  });
+
+  it('prepares code resources for a non-empty visual document and syncs each new code frame once', async () => {
+    const props = fixture();
+    const preparation =
+      deferred<
+        Readonly<{
+          cancel: () => void;
+          commit: () => void;
+        }>
+      >();
+    const prepared = { cancel: vi.fn(), commit: vi.fn() };
+    vi.mocked(props.enhancementPort.prepareCodeTheme).mockReturnValue(
+      preparation.promise
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    const unlock = view.getByRole('button', {
+      name: '解除锁定并编辑'
+    });
+    await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+    fireEvent.click(unlock);
+
+    await waitFor(() =>
+      expect(props.enhancementPort.prepareCodeTheme).toHaveBeenCalledWith(
+        expect.objectContaining({
+          codeTheme: 'atom-one-dark',
+          signal: expect.any(AbortSignal)
+        })
+      )
+    );
+    expect(
+      view.queryByRole('textbox', {
+        name: '可视化文章编辑器'
+      })
+    ).toBeNull();
+
+    await act(async () => preparation.resolve(prepared));
+
+    const visualEditor = await view.findByRole(
+      'textbox',
+      {
+        name: '可视化文章编辑器'
+      },
+      { timeout: 5000 }
+    );
+    expect(prepared.commit).toHaveBeenCalledOnce();
+    const syncBaseline = vi.mocked(
+      props.enhancementPort.syncCodeFrameBackgrounds
+    ).mock.calls.length;
+
+    visualEditor.innerHTML =
+      '<pre data-language="js"><code class="hljs language-js">const x = 1;</code></pre>';
+    fireEvent.input(visualEditor);
+    await waitFor(() =>
+      expect(props.submissionField.value).toContain('const x = 1;')
+    );
+    await waitFor(() =>
+      expect(
+        vi.mocked(props.enhancementPort.syncCodeFrameBackgrounds).mock.calls
+          .length
+      ).toBeGreaterThanOrEqual(syncBaseline)
+    );
+  });
+
+  it('ignores a repeated fresh unlock and abandons it when the code theme changes', async () => {
+    const baseProps = fixture();
+    baseProps.submissionField.value = '';
+    baseProps.submissionField.defaultValue = '';
+    const props = {
+      ...baseProps,
+      preview: {
+        ...baseProps.preview,
+        html: '' as SafePreviewHtml,
+        signature: ''
+      }
+    };
+    const pendingPreparation =
+      deferred<
+        Readonly<{
+          cancel: () => void;
+          commit: () => void;
+        }>
+      >();
+    const prepared = { cancel: vi.fn(), commit: vi.fn() };
+    const githubPrepared = { cancel: vi.fn(), commit: vi.fn() };
+    let unlockSignal: AbortSignal | null = null;
+    vi.mocked(props.enhancementPort.prepareCodeTheme).mockImplementation(
+      ({ codeTheme, signal }) => {
+        if ('atom-one-dark' === codeTheme) {
+          unlockSignal = signal;
+          return pendingPreparation.promise;
+        }
+        return Promise.resolve(githubPrepared);
+      }
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    const unlock = view.getByRole('button', {
+      name: '解除锁定并编辑'
+    });
+    await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+    fireEvent.click(unlock);
+    fireEvent.click(unlock);
+
+    await waitFor(() =>
+      expect(props.enhancementPort.prepareCodeTheme).toHaveBeenCalledTimes(1)
+    );
+    expect(unlock.getAttribute('aria-busy')).toBe('true');
+    expect(unlock.getAttribute('aria-disabled')).toBe('true');
+    expect(unlock.hasAttribute('disabled')).toBe(false);
+    expect(
+      view.queryByRole('textbox', {
+        name: '可视化文章编辑器'
+      })
+    ).toBeNull();
+
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+    fireEvent.click(view.getByRole('button', { name: 'Code theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'GitHub' }));
+    await waitFor(() => expect(unlockSignal?.aborted).toBe(true));
+    expect(unlock.hasAttribute('aria-busy')).toBe(false);
+    expect(unlock.hasAttribute('disabled')).toBe(false);
+    expect(unlock.classList.contains('is-unlocking')).toBe(false);
+
+    await act(async () => pendingPreparation.resolve(prepared));
+    expect(prepared.cancel).toHaveBeenCalledOnce();
+    expect(prepared.commit).not.toHaveBeenCalled();
+    expect(
+      view.queryByRole('textbox', {
+        name: '可视化文章编辑器'
+      })
+    ).toBeNull();
+    await waitFor(() =>
+      expect(props.appearancePort.applyState).toHaveBeenCalledWith(
+        {
+          codeTheme: 'github',
+          customCssId: '',
+          markdownTheme: 'default'
+        },
+        true
+      )
+    );
+  });
+
+  it('reports a fresh unlock preparation failure and allows a later retry', async () => {
+    const baseProps = fixture();
+    baseProps.submissionField.value = '';
+    baseProps.submissionField.defaultValue = '';
+    const props = {
+      ...baseProps,
+      preview: {
+        ...baseProps.preview,
+        html: '' as SafePreviewHtml,
+        signature: ''
+      }
+    };
+    const prepared = { cancel: vi.fn(), commit: vi.fn() };
+    vi.mocked(props.enhancementPort.prepareCodeTheme)
+      .mockRejectedValueOnce(
+        new Error('preview-enhancement-resource-load-failed')
+      )
+      .mockResolvedValueOnce(prepared);
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    const unlock = view.getByRole('button', {
+      name: '解除锁定并编辑'
+    });
+    await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+    fireEvent.click(unlock);
+
+    await waitFor(() =>
+      expect(props.onFailure).toHaveBeenCalledWith(
+        'preview-enhancement-resource-load-failed'
+      )
+    );
+    expect(unlock.hasAttribute('aria-busy')).toBe(false);
+    expect(unlock.hasAttribute('disabled')).toBe(false);
+    expect(unlock.classList.contains('is-unlocking')).toBe(false);
+    expect(
+      view.queryByRole('textbox', {
+        name: '可视化文章编辑器'
+      })
+    ).toBeNull();
+    fireEvent.click(unlock);
+    const visualEditor = await view.findByRole(
+      'textbox',
+      {
+        name: '可视化文章编辑器'
+      },
+      { timeout: 5000 }
+    );
+    expect(visualEditor.getAttribute('contenteditable')).toBe('true');
+    expect(prepared.commit).toHaveBeenCalledOnce();
+  });
+
+  it('shows a visible alert when the visual editor chunk fails during unlock and allows a retry', async () => {
+    const baseProps = fixture();
+    baseProps.submissionField.value = '';
+    baseProps.submissionField.defaultValue = '';
+    const props = {
+      ...baseProps,
+      preview: {
+        ...baseProps.preview,
+        html: '' as SafePreviewHtml,
+        signature: ''
+      }
+    };
+    const prepared = { cancel: vi.fn(), commit: vi.fn() };
+    vi.mocked(props.enhancementPort.prepareCodeTheme).mockResolvedValue(
+      prepared
+    );
+    visualChunkFailures.remaining = 1;
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    const unlock = view.getByRole('button', {
+      name: '解除锁定并编辑'
+    });
+    await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+    fireEvent.click(unlock);
+
+    await waitFor(() =>
+      expect(props.onFailure).toHaveBeenCalledWith('visual-editor-load-failed')
+    );
+    const alert = await view.findByRole('alert');
+    expect(alert.textContent).toBe(
+      'The editor action could not be completed.'
+    );
+    expect(alert.textContent).not.toContain('chunk-load-failed');
+    expect(alert.textContent).not.toContain('visual-editor-load-failed');
+    expect(prepared.cancel).toHaveBeenCalled();
+    expect(prepared.commit).not.toHaveBeenCalled();
+    expect(unlock.hasAttribute('aria-busy')).toBe(false);
+    expect(unlock.hasAttribute('disabled')).toBe(false);
+    expect(unlock.classList.contains('is-unlocking')).toBe(false);
+    expect(
+      view.queryByRole('textbox', { name: '可视化文章编辑器' })
+    ).toBeNull();
+
+    fireEvent.click(unlock);
+    const visualEditor = await view.findByRole(
+      'textbox',
+      {
+        name: '可视化文章编辑器'
+      },
+      { timeout: 5000 }
+    );
+    expect(visualEditor.getAttribute('contenteditable')).toBe('true');
+    expect(prepared.commit).toHaveBeenCalledOnce();
+  });
+
+  it('aborts a pending fresh unlock when immersive mode changes', async () => {
+    const baseProps = fixture();
+    baseProps.submissionField.value = '';
+    baseProps.submissionField.defaultValue = '';
+    const props = {
+      ...baseProps,
+      preview: {
+        ...baseProps.preview,
+        html: '' as SafePreviewHtml,
+        signature: ''
+      }
+    };
+    const pendingPreparation =
+      deferred<
+        Readonly<{
+          cancel: () => void;
+          commit: () => void;
+        }>
+      >();
+    const prepared = { cancel: vi.fn(), commit: vi.fn() };
+    let unlockSignal: AbortSignal | null = null;
+    vi.mocked(props.enhancementPort.prepareCodeTheme).mockImplementation(
+      ({ signal }) => {
+        unlockSignal = signal;
+        return pendingPreparation.promise;
+      }
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    const unlock = view.getByRole('button', {
+      name: '解除锁定并编辑'
+    });
+    await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+    fireEvent.click(unlock);
+    await waitFor(() => expect(unlockSignal).not.toBeNull());
+
+    fireEvent.click(view.getByRole('button', { name: '分屏模式' }));
+    await waitFor(() => expect(unlockSignal?.aborted).toBe(true));
+    await act(async () => pendingPreparation.resolve(prepared));
+
+    expect(prepared.cancel).toHaveBeenCalledOnce();
+    expect(prepared.commit).not.toHaveBeenCalled();
+    expect(
+      view.container
+        .querySelector('.easymde-editor')
+        ?.classList.contains('is-immersive-split')
+    ).toBe(true);
+    expect(
+      view.queryByRole('textbox', {
+        name: '可视化文章编辑器'
+      })
+    ).toBeNull();
+
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    const relockedPreview = view.getByRole('button', {
+      name: '解除锁定并编辑'
+    });
+    expect(relockedPreview.hasAttribute('aria-busy')).toBe(false);
+    expect(relockedPreview.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('does not enable a fresh unlock after its Preview snapshot becomes stale', async () => {
+    const baseProps = fixture();
+    baseProps.submissionField.value = '';
+    baseProps.submissionField.defaultValue = '';
+    const props = {
+      ...baseProps,
+      preview: {
+        ...baseProps.preview,
+        html: '' as SafePreviewHtml,
+        signature: ''
+      }
+    };
+    const pendingPreparation =
+      deferred<
+        Readonly<{
+          cancel: () => void;
+          commit: () => void;
+        }>
+      >();
+    const prepared = { cancel: vi.fn(), commit: vi.fn() };
+    vi.mocked(props.enhancementPort.prepareCodeTheme).mockReturnValue(
+      pendingPreparation.promise
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    const unlock = view.getByRole('button', {
+      name: '解除锁定并编辑'
+    });
+    await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+    fireEvent.click(unlock);
+    await waitFor(() =>
+      expect(props.enhancementPort.prepareCodeTheme).toHaveBeenCalledOnce()
+    );
+
+    const source = view.getByRole('textbox', { name: 'Markdown source' });
+    const sourceView = EditorView.findFromDOM(source);
+    if (!sourceView) throw new Error('markdown-source-view-unavailable');
+    act(() => {
+      sourceView.dispatch({
+        changes: { from: 0, insert: 'Snapshot changed' }
+      });
+    });
+    await waitFor(() =>
+      expect(props.submissionField.value).toBe('Snapshot changed')
+    );
+    expect(unlock.hasAttribute('aria-busy')).toBe(false);
+    expect(unlock.classList.contains('is-unlocking')).toBe(false);
+    expect(
+      vi.mocked(props.enhancementPort.prepareCodeTheme).mock.calls[0]?.[0]
+        .signal.aborted
+    ).toBe(true);
+
+    await act(async () => pendingPreparation.resolve(prepared));
+    expect(prepared.cancel).toHaveBeenCalledOnce();
+    expect(prepared.commit).not.toHaveBeenCalled();
+    expect(
+      view.queryByRole('textbox', {
+        name: '可视化文章编辑器'
+      })
+    ).toBeNull();
+  });
+
+  it('cancels a pending fresh unlock on unmount and ignores its late result', async () => {
+    const baseProps = fixture();
+    baseProps.submissionField.value = '';
+    baseProps.submissionField.defaultValue = '';
+    const props = {
+      ...baseProps,
+      preview: {
+        ...baseProps.preview,
+        html: '' as SafePreviewHtml,
+        signature: ''
+      }
+    };
+    const pendingPreparation =
+      deferred<
+        Readonly<{
+          cancel: () => void;
+          commit: () => void;
+        }>
+      >();
+    const prepared = { cancel: vi.fn(), commit: vi.fn() };
+    let unlockSignal: AbortSignal | null = null;
+    vi.mocked(props.enhancementPort.prepareCodeTheme).mockImplementation(
+      ({ signal }) => {
+        unlockSignal = signal;
+        return pendingPreparation.promise;
+      }
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    const unlock = view.getByRole('button', {
+      name: '解除锁定并编辑'
+    });
+    await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+    fireEvent.click(unlock);
+    await waitFor(() => expect(unlockSignal).not.toBeNull());
+
+    view.unmount();
+    expect((unlockSignal as AbortSignal | null)?.aborted).toBe(true);
+    await act(async () => pendingPreparation.resolve(prepared));
+    expect(prepared.cancel).toHaveBeenCalledOnce();
+    expect(prepared.commit).not.toHaveBeenCalled();
+  });
+
+  it('preserves the plain visual paste path for a remote image when image hosting is disabled', async () => {
+    const baseProps = fixture();
+    const props = {
+      ...baseProps,
+      imageUpload: { ...baseProps.imageUpload, enabled: false }
+    };
+    props.submissionField.value = 'Before';
+    props.submissionField.defaultValue = 'Before';
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          'Before **safe** dropped' === request.markdown
+            ? ('<p>Before <strong>safe</strong> dropped</p>' as SafePreviewHtml)
+            : 'Before **safe**' === request.markdown
+              ? ('<p>Before <strong>safe</strong></p>' as SafePreviewHtml)
+              : ('<p>Before</p>' as SafePreviewHtml),
+          {}
+        )
+      )
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visualEditor = await view.findByRole(
+      'textbox',
+      {
+        name: '可视化文章编辑器'
+      },
+      { timeout: 5000 }
+    );
+    const text = visualEditor.querySelector('p')?.firstChild;
+    if (!text) throw new Error('missing synthetic paste target');
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const accepted = fireEvent.paste(visualEditor, {
+      clipboardData: {
+        getData: (type: string) =>
+          'text/plain' === type
+            ? ' **safe**'
+            : '<img alt="remote" src="https://images.example.test/remote.png">'
+      }
+    });
+
+    expect(accepted).toBe(false);
+    expect(visualEditor.querySelector('img')).toBeNull();
+    await waitFor(() =>
+      expect(props.submissionField.value).toBe('Before **safe**')
+    );
+    expect(props.remoteImageImportPort.import).not.toHaveBeenCalled();
+
+    const paragraph = visualEditor.querySelector('p');
+    if (!paragraph) throw new Error('missing synthetic drop target');
+    range.selectNodeContents(paragraph);
+    range.collapse(false);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    const dropped = fireEvent.drop(visualEditor, {
+      dataTransfer: {
+        getData: (type: string) =>
+          'text/plain' === type
+            ? ' dropped'
+            : '<img src="x" onerror="window.__unsafeDrop = true">'
+      }
+    });
+
+    expect(dropped).toBe(false);
+    expect(visualEditor.querySelector('img')).toBeNull();
+    await waitFor(() =>
+      expect(props.submissionField.value).toBe('Before **safe** dropped')
+    );
+  });
+
+  it.each(['paste', 'drop'] as const)(
+    'routes visual Preview image %s through the WordPress upload owner',
+    async (source) => {
+      const props = fixture();
+      props.submissionField.value = 'Before **selected** after';
+      props.submissionField.defaultValue = 'Before **selected** after';
+      vi.mocked(props.previewPort.render).mockImplementation((request) =>
+        Promise.resolve(
+          createPreviewResponse(
+            request,
+            '<p>Before <strong>selected</strong> after</p>' as SafePreviewHtml,
+            {}
+          )
+        )
+      );
+      const view = render(<EditorRoot {...props} />);
+
+      fireEvent.click(
+        await view.findByRole('button', { name: '进入沉浸写作' })
+      );
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visualEditor = await view.findByRole('textbox', {
+        name: '可视化文章编辑器'
+      });
+      const selectedText = visualEditor.querySelector('strong')?.firstChild;
+      if (!selectedText) {
+        throw new Error('missing synthetic visual image-paste target');
+      }
+      const range = document.createRange();
+      range.selectNodeContents(selectedText);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      const transfer = imageTransferEvent(
+        source,
+        new File(['image'], 'visual.png', { type: 'image/png' })
+      );
+
+      visualEditor.dispatchEvent(transfer);
+
+      expect(transfer.defaultPrevented).toBe(true);
+      await waitFor(() => {
+        expect(props.imageUploadPort.upload).toHaveBeenCalledTimes(1);
+        expect(props.submissionField.value).toBe(
+          'Before **![visual](https://example.test/upload.png)** after'
+        );
+      });
+      expect(
+        view.queryByRole('textbox', { name: '可视化文章编辑器' })
+      ).toBe(visualEditor);
+      expect(
+        visualEditor.querySelector('img[src="https://example.test/upload.png"]')
+      ).not.toBeNull();
+      const messageHost = view.container.querySelector(
+        '.easymde-editor-message-alert-host'
+      );
+      expect(messageHost).not.toBeNull();
+      expect(
+        within(messageHost as HTMLElement).getByRole('status').textContent
+      ).toContain('paste' === source ? 'Paste uploaded' : 'Drop uploaded');
+    }
+  );
+
+  it('completes a deferred remote image import after visual editing switches to read-only', async () => {
+    const props = fixture();
+    props.submissionField.value = 'Before **selected** after';
+    props.submissionField.defaultValue = 'Before **selected** after';
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          '<p>Before <strong>selected</strong> after</p>' as SafePreviewHtml,
+          {}
+        )
+      )
+    );
+    let resolveImport: (result: RemoteImageImportResult) => void = () =>
+      undefined;
+    vi.mocked(props.remoteImageImportPort.import).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveImport = resolve;
+        })
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visualEditor = await view.findByRole(
+      'textbox',
+      {
+        name: '可视化文章编辑器'
+      },
+      { timeout: 5000 }
+    );
+    const selectedText = visualEditor.querySelector('strong')?.firstChild;
+    if (!selectedText) throw new Error('missing remote image paste target');
+    const range = document.createRange();
+    range.selectNodeContents(selectedText);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    const paste = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, 'clipboardData', {
+      value: {
+        files: [],
+        getData: (type: string) =>
+          'text/html' === type
+            ? '<img alt="remote" src="https://images.example.test/remote.png">'
+            : '',
+        items: []
+      }
+    });
+
+    visualEditor.dispatchEvent(paste);
+
+    expect(paste.defaultPrevented).toBe(true);
+    await waitFor(() => {
+      expect(props.remoteImageImportPort.import).toHaveBeenCalledOnce();
+    });
+
+    await waitFor(() => {
+      expect(props.submissionField.value).toBe(
+        'Before **![remote](https://images.example.test/remote.png)** after'
+      );
+    });
+    fireEvent.click(view.getByRole('button', { name: '锁定为只读' }));
+    await waitFor(() =>
+      expect(
+        view.getByRole('button', { name: '解除锁定并编辑' })
+      ).not.toBeNull()
+    );
+    expect(
+      vi.mocked(props.remoteImageImportPort.import).mock.calls[0]?.[0].signal
+        .aborted
+    ).toBe(false);
+    resolveImport({
+      alt: 'remote',
+      backup: { status: 'disabled' },
+      status: 'imported',
+      title: '',
+      url: 'https://example.test/imported.png'
+    });
+    await waitFor(() => {
+      expect(props.submissionField.value).toBe(
+        'Before **![remote](https://example.test/imported.png)** after'
+      );
+    });
+    expect(props.onFailure).not.toHaveBeenCalledWith(
+      'remote-image-import-completed-after-teardown'
+    );
+  });
+
+  it('applies an article theme live to the unlocked visual editor without unmounting it', async () => {
+    const props = fixture();
+    props.submissionField.value = 'Rendered';
+    props.submissionField.defaultValue = 'Rendered';
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visualEditor = await view.findByRole(
+      'textbox',
+      {
+        name: '可视化文章编辑器'
+      },
+      { timeout: 5000 }
+    );
+    const renderPreview = vi.mocked(props.previewPort.render);
+    const renderCount = renderPreview.mock.calls.length;
+
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+    fireEvent.click(view.getByRole('button', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+
+    await waitFor(() => {
+      expect(props.appearancePort.applyState).toHaveBeenCalledWith(
+        expect.objectContaining({ markdownTheme: 'newsprint' }),
+        false
+      );
+      expect(
+        visualEditor.closest('.easymde-markdown-theme-newsprint')
+      ).not.toBeNull();
+    });
+    // The same ProseMirror host stays mounted and editable: zero unmount, zero
+    // canonical write, and no formal Preview request while unlocked.
+    expect(view.getByRole('textbox', { name: '可视化文章编辑器' })).toBe(
+      visualEditor
+    );
+    expect(visualEditor.getAttribute('contenteditable')).toBe('true');
+    expect(props.submissionField.value).toBe('Rendered');
+    expect(renderPreview.mock.calls.length).toBe(renderCount);
+
+    // Locking refreshes the formal Preview with the newly committed theme.
+    fireEvent.click(view.getByRole('button', { name: '锁定为只读' }));
+    await waitFor(() => {
+      expect(renderPreview.mock.calls.length).toBeGreaterThan(renderCount);
+      expect(renderPreview).toHaveBeenLastCalledWith(
+        expect.objectContaining({ markdownTheme: 'newsprint' }),
+        expect.any(AbortSignal)
+      );
+    });
+    expect(
+      view.container
+        .querySelector('[data-easymde-preview-html-sink]')
+        ?.classList.contains('easymde-markdown-theme-newsprint')
+    ).toBe(true);
+    expect(props.submissionField.value).toBe('Rendered');
+  });
+
+  it('commits a code theme live while unlocked and syncs the visual surface once', async () => {
+    const props = fixture();
+    props.submissionField.value = 'Rendered';
+    props.submissionField.defaultValue = 'Rendered';
+    const prepared = { cancel: vi.fn(), commit: vi.fn() };
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visualEditor = await view.findByRole(
+      'textbox',
+      {
+        name: '可视化文章编辑器'
+      },
+      { timeout: 5000 }
+    );
+    vi.mocked(props.enhancementPort.prepareCodeTheme).mockResolvedValue(
+      prepared
+    );
+    const sync = vi.mocked(props.enhancementPort.syncCodeFrameBackgrounds);
+    sync.mockClear();
+    const surface = view.container.querySelector<HTMLElement>(
+      '.easymde-prosemirror-editor'
+    );
+    if (!surface) throw new Error('missing visual surface');
+
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+    fireEvent.click(
+      view.queryByRole('combobox', { name: 'Code theme' })
+        ?? view.getByRole('button', { name: 'Code theme' })
+    );
+    fireEvent.click(view.getByRole('option', { name: 'GitHub' }));
+
+    await waitFor(() => expect(prepared.commit).toHaveBeenCalledOnce());
+    expect(props.enhancementPort.prepareCodeTheme).toHaveBeenCalledWith(
+      expect.objectContaining({ codeTheme: 'github' })
+    );
+    await waitFor(() => {
+      expect(visualEditor.closest('.easymde-code-theme-github')).not.toBeNull();
+      expect(sync).toHaveBeenCalledWith(surface);
+    });
+    expect(view.getByRole('textbox', { name: '可视化文章编辑器' })).toBe(
+      visualEditor
+    );
+    expect(props.submissionField.value).toBe('Rendered');
+  });
+
+  it('applies the new code theme class before the visual frame sync so existing badges update without remount', async () => {
+    const props = fixture();
+    const markdown = '```js\nconst a = 1;\n```';
+    props.submissionField.value = markdown;
+    props.submissionField.defaultValue = markdown;
+    const prepared = { cancel: vi.fn(), commit: vi.fn() };
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    const unlock = view.getByRole('button', { name: '解除锁定并编辑' });
+    await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+    vi.mocked(props.enhancementPort.prepareCodeTheme).mockResolvedValue(
+      prepared
+    );
+    fireEvent.click(unlock);
+    const visualEditor = await view.findByRole(
+      'textbox',
+      { name: '可视化文章编辑器' },
+      { timeout: 5000 }
+    );
+    const badge = visualEditor.querySelector<HTMLElement>(
+      'pre.easymde-code-block > .easymde-visual-code-lang'
+    );
+    if (!badge) throw new Error('missing visual code badge');
+    expect(badge.textContent).toBe('js');
+    const codeWindow = Object.create(window) as Window;
+    Object.defineProperty(codeWindow, 'getComputedStyle', {
+      value: (element: Element) =>
+        ({
+          backgroundColor: 'rgb(1, 2, 3)',
+          color: element.closest('.easymde-code-theme-github')
+            ? 'rgb(36, 41, 46)'
+            : 'rgb(171, 178, 191)'
+        }) as CSSStyleDeclaration
+    });
+    // Let the NodeView's initial mount frame sync settle first.
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          window.requestAnimationFrame(() => resolve());
+        })
+    );
+    const themeClassAtVisualSync: boolean[] = [];
+    const sync = vi.mocked(props.enhancementPort.syncCodeFrameBackgrounds);
+    sync.mockClear();
+    sync.mockImplementation((root) => {
+      if (root !== visualEditor) return;
+      themeClassAtVisualSync.push(
+        visualEditor.classList.contains('easymde-code-theme-github')
+      );
+      syncCodeFrameBackgrounds(root, codeWindow);
+    });
+
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+    fireEvent.click(
+      view.queryByRole('combobox', { name: 'Code theme' })
+        ?? view.getByRole('button', { name: 'Code theme' })
+    );
+    fireEvent.click(view.getByRole('option', { name: 'GitHub' }));
+
+    await waitFor(() => expect(themeClassAtVisualSync).toEqual([true]));
+    expect(badge.style.color).toBe('rgb(36, 41, 46)');
+    expect(badge.isConnected).toBe(true);
+    expect(badge.textContent).toBe('js');
+    expect(
+      visualEditor.querySelector('pre.easymde-code-block > .easymde-visual-code-lang')
+    ).toBe(badge);
+    expect(view.getByRole('textbox', { name: '可视化文章编辑器' })).toBe(
+      visualEditor
+    );
+    expect(props.submissionField.value).toBe(markdown);
+  });
+
+  it('keeps the visible article theme unchanged until its stylesheet is ready', async () => {
+    const props = fixture();
+    const pending = deferred<boolean>();
+    vi.mocked(props.appearancePort.applyState).mockReturnValueOnce(
+      pending.promise
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+
+    expect(
+      view.container
+        .querySelector('[data-easymde-preview-html-sink]')
+        ?.classList.contains('easymde-markdown-theme-default')
+    ).toBe(true);
+    expect(
+      view.container
+        .querySelector('[data-easymde-preview-html-sink]')
+        ?.classList.contains('easymde-markdown-theme-newsprint')
+    ).toBe(false);
+
+    pending.resolve(true);
+
+    await waitFor(() =>
+      expect(
+        view.container
+          .querySelector('[data-easymde-preview-html-sink]')
+          ?.classList.contains('easymde-markdown-theme-newsprint')
+      ).toBe(true)
+    );
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    expect(view.getByText('未保存')).not.toBeNull();
+  });
+
+  it.each([
+    { control: 'Article theme', option: 'Newsprint' },
+    { control: 'Code theme', option: 'GitHub' }
+  ])(
+    'blocks native submission and autosave until the pending $control transaction settles',
+    async ({ control, option }) => {
+      const props = fixture();
+      const pending = deferred<boolean>();
+      vi.mocked(props.appearancePort.applyState).mockReturnValueOnce(
+        pending.promise
+      );
+      const view = render(<EditorRoot {...props} />);
+
+      fireEvent.click(
+        await view.findByRole('button', {
+          name: '编辑器设置'
+        })
+      );
+      fireEvent.click(view.getByRole('combobox', { name: control }));
+      fireEvent.click(view.getByRole('option', { name: option }));
+
+      const pendingSubmit = new SubmitEvent('submit', {
+        bubbles: true,
+        cancelable: true
+      });
+      expect(props.nativeForm.dispatchEvent(pendingSubmit)).toBe(false);
+      expect(props.sessionAutosave()).toBe('blocked');
+      expect(props.onFailure).toHaveBeenCalledWith('editor-appearance-pending');
+
+      pending.resolve(true);
+      await waitFor(() => {
+        expect(props.appearancePort.applyState).toHaveResolvedTimes(1);
+      });
+
+      const settledSubmit = new SubmitEvent('submit', {
+        bubbles: true,
+        cancelable: true
+      });
+      expect(props.nativeForm.dispatchEvent(settledSubmit)).toBe(true);
+      expect(props.sessionAutosave()).toBe('continue');
+    }
+  );
+
+  it('synchronizes a committed pending theme into Appearance after a mode remount', async () => {
+    const props = fixture();
+    const pending = deferred<boolean>();
+    vi.mocked(props.appearancePort.applyState).mockReturnValueOnce(
+      pending.promise
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '主题' }));
+
+    expect(
+      view.getByRole('button', { name: 'Article theme' }).textContent
+    ).toContain('Default');
+
+    pending.resolve(true);
+
+    await waitFor(() =>
+      expect(
+        view.getByRole('button', { name: 'Article theme' }).textContent
+      ).toContain('Newsprint')
+    );
+  });
+
+  it('reports a pending appearance failure after its initiating control remounts', async () => {
+    const props = fixture();
+    const pending = deferred<boolean>();
+    vi.mocked(props.appearancePort.applyState).mockReturnValueOnce(
+      pending.promise
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
+
+    pending.reject(
+      new Error('appearance-article-theme-stylesheet-load-failed')
+    );
+
+    await waitFor(() =>
+      expect(props.onFailure).toHaveBeenCalledWith(
+        'react-editor-appearance-failed'
+      )
+    );
+  });
+
+  it('keeps the Preview owner and paper alive when entering Preview mode', async () => {
+    const firstPreview = deferred<PreviewResponse>();
+    const props = fixture();
+    let firstPreviewRequest: PreviewRequest | null = null;
+    vi.mocked(props.previewPort.render).mockImplementationOnce((request) => {
+      firstPreviewRequest = request;
+      return firstPreview.promise;
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenCalledTimes(1)
+    );
+    const previewOwner = view.container.querySelector(
+      '[data-easymde-preview-html-sink]'
+    );
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+
+    expect(props.previewPort.render).toHaveBeenCalledTimes(1);
+    expect(
+      view.container.querySelector('[data-easymde-preview-html-sink]')
+    ).toBe(previewOwner);
+    await act(async () => {
+      if (!firstPreviewRequest)
+        throw new Error('missing first preview request');
+      firstPreview.resolve(
+        createPreviewResponse(
+          firstPreviewRequest,
+          '<p>Current Preview</p>' as SafePreviewHtml,
+          {}
+        )
+      );
+    });
+    await waitFor(() => {
+      expect(view.getByText('Current Preview')).not.toBeNull();
+      expect(view.getByText('内容已载入')).not.toBeNull();
+    });
+    expect(
+      view
+        .getByRole('button', { name: '解除锁定并编辑' })
+        .hasAttribute('disabled')
+    ).toBe(false);
+
+    expect(view.getByText('Current Preview')).not.toBeNull();
+  });
+
+  it('keeps the selected article theme while Preview is locked and editable', async () => {
+    const baseProps = fixture();
+    const props = {
+      ...baseProps,
+      appearance: {
+        ...baseProps.appearance,
+        state: {
+          ...baseProps.appearance.state,
+          markdownTheme: 'newsprint'
+        }
+      }
+    };
+    const view = render(<EditorRoot {...props} />);
+
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenLastCalledWith(
+        expect.objectContaining({ markdownTheme: 'newsprint' }),
+        expect.any(AbortSignal)
+      )
+    );
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenLastCalledWith(
+        expect.objectContaining({ markdownTheme: 'newsprint' }),
+        expect.any(AbortSignal)
+      )
+    );
+    const lockedPreview = view.container.querySelector(
+      '[data-easymde-preview-html-sink]'
+    );
+    expect(
+      lockedPreview?.classList.contains('easymde-markdown-theme-newsprint')
+    ).toBe(true);
+    expect(
+      lockedPreview?.classList.contains('easymde-immersive-reference-prose')
+    ).toBe(false);
+
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visualEditor = await view.findByRole(
+      'textbox',
+      {
+        name: '可视化文章编辑器'
+      },
+      { timeout: 5000 }
+    );
+    expect(visualEditor).not.toBeNull();
+    expect(
+      visualEditor
+        .closest('.easymde-prosemirror-surface')
+        ?.classList.contains('easymde-markdown-theme-newsprint')
+    ).toBe(true);
+    expect(props.previewPort.render).toHaveBeenLastCalledWith(
+      expect.objectContaining({ markdownTheme: 'newsprint' }),
+      expect.any(AbortSignal)
+    );
+
+    fireEvent.click(view.getByRole('button', { name: '编辑' }));
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenLastCalledWith(
+        expect.objectContaining({ markdownTheme: 'newsprint' }),
+        expect.any(AbortSignal)
+      )
+    );
+  });
+
+  it('keeps enhanced generated blocks visible and lossless while visual text is edited', async () => {
+    const source = [
+      'Editable paragraph',
+      '',
+      '$$',
+      'x^2',
+      '$$',
+      '',
+      '```mermaid',
+      'flowchart TD',
+      'A-->B',
+      '```'
+    ].join('\n');
+    const props = fixture();
+    props.submissionField.value = source;
+    props.submissionField.defaultValue = source;
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          [
+            '<p>Editable paragraph</p>',
+            '<div class="easymde-math easymde-math-block">$$x^2$$</div>',
+            '<pre><code class="language-mermaid">flowchart TD\nA--&gt;B</code></pre>'
+          ].join('') as SafePreviewHtml,
+          { math: true, mermaid: true }
+        )
+      )
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+
+    const visualEditor = await view.findByRole(
+      'textbox',
+      {
+        name: '可视化文章编辑器'
+      },
+      { timeout: 5000 }
+    );
+    const protectedBlocks = visualEditor.querySelectorAll(
+      '[data-easymde-protected-block]'
+    );
+    expect(protectedBlocks.length).toBeGreaterThanOrEqual(2);
+    for (const region of protectedBlocks) {
+      expect(region.getAttribute('contenteditable')).toBe('false');
+    }
+
+    const paragraph = visualEditor.querySelector('p');
+    if (!paragraph) throw new Error('missing synthetic visual paragraph');
+    paragraph.textContent = 'Edited paragraph';
+    fireEvent.input(visualEditor);
+
+    await waitFor(() =>
+      expect(props.submissionField.value).toBe(
+        source.replace('Editable paragraph', 'Edited paragraph')
+      )
+    );
+  });
+
+  it('copies the formal PHP Preview after an unlocked ProseMirror visual edit', async () => {
+    const props = fixture();
+    props.submissionField.value = 'Original paragraph';
+    props.submissionField.defaultValue = 'Original paragraph';
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          `<p>${request.markdown}</p>` as SafePreviewHtml,
+          {}
+        )
+      )
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visualEditor = await view.findByRole(
+      'textbox',
+      {
+        name: '可视化文章编辑器'
+      },
+      { timeout: 5000 }
+    );
+    const paragraph = visualEditor.querySelector('p');
+    if (!paragraph) throw new Error('missing visual copy test paragraph');
+    paragraph.textContent = 'Edited paragraph';
+    const prepare = props.wechatClipboard.prepare;
+    if (!prepare) throw new Error('wechat preparation is unavailable');
+    const preparation = vi.mocked(prepare);
+    const preparationCallsBeforeEdit = preparation.mock.calls.length;
+    fireEvent.input(visualEditor);
+    await waitFor(() =>
+      expect(props.submissionField.value).toBe('Edited paragraph')
+    );
+
+    let resolvedCopySurface: HTMLElement | null = null;
+    vi.mocked(props.wechatClipboard.copy).mockImplementation(
+      async (surface, options) => {
+        resolvedCopySurface = options?.resolvePreview
+          ? await options.resolvePreview()
+          : surface;
+        return { method: 'clipboard', status: 'copied' };
+      }
+    );
+
+    fireEvent.click(view.getByRole('button', { name: '复制到公众号' }));
+
+    const formalPreviewSink = view.container.querySelector(
+      '[data-easymde-preview-html-sink]'
+    );
+    await waitFor(() =>
+      expect(props.wechatClipboard.copy).toHaveBeenCalledOnce()
+    );
+    await waitFor(() => expect(resolvedCopySurface).toBe(formalPreviewSink));
+    expect(props.wechatClipboard.copy).toHaveBeenCalledWith(
+      formalPreviewSink,
+      expect.objectContaining({
+        pngConversionEnabled: false,
+        postId: props.imageUpload.postId,
+        maxBytes: props.imageUpload.maxBytes
+      })
+    );
+    expect(vi.mocked(props.wechatClipboard.copy).mock.calls[0]?.[0]).not.toBe(
+      visualEditor
+    );
+    expect(formalPreviewSink?.textContent).toContain('Edited paragraph');
+    expect(preparation.mock.calls.length).toBeGreaterThanOrEqual(
+      preparationCallsBeforeEdit
+    );
+  });
+
+  it('does not prepare WeChat during an active visual Preview edit', async () => {
+    const props = fixture();
+    props.submissionField.value = 'Original paragraph';
+    props.submissionField.defaultValue = 'Original paragraph';
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          '<p>Original paragraph</p>' as SafePreviewHtml,
+          {}
+        )
+      )
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visualEditor = await view.findByRole(
+      'textbox',
+      {
+        name: '可视化文章编辑器'
+      },
+      { timeout: 5000 }
+    );
+    const prepare = props.wechatClipboard.prepare;
+    if (!prepare) throw new Error('wechat preparation is unavailable');
+    const preparation = vi.mocked(prepare);
+    preparation.mockClear();
+
+    visualEditor.innerHTML = '<p>Rendered visual edit</p>';
+    fireEvent.input(visualEditor);
+
+    expect(preparation).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('cancels a queued WeChat layout preparation when visual editing starts', async () => {
+    const baseProps = fixture();
+    const markdown = Array.from(
+      { length: 200 },
+      (_, index) => `Paragraph ${index}`
+    ).join('\n');
+    const html = Array.from(
+      { length: 200 },
+      (_, index) => `<p>Paragraph ${index}</p>`
+    ).join('') as SafePreviewHtml;
+    const scheduled: Array<{ active: boolean; callback: () => void }> = [];
+    const props = {
+      ...baseProps,
+      immersiveEnvironment: {
+        ...baseProps.immersiveEnvironment,
+        schedule: (callback: () => void) => {
+          const task = { active: true, callback };
+          scheduled.push(task);
+          return () => {
+            task.active = false;
+          };
+        }
+      }
+    };
+    props.submissionField.value = markdown;
+    props.submissionField.defaultValue = markdown;
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(createPreviewResponse(request, html, {}))
+    );
+    const view = render(<EditorRoot {...props} />);
+    const prepare = props.wechatClipboard.prepare;
+    if (!prepare) throw new Error('wechat preparation is unavailable');
+    const preparation = vi.mocked(prepare);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull(), {
+      timeout: 5_000
+    });
+
+    preparation.mockClear();
+    scheduled.length = 0;
+    act(() => props.triggerPreviewLayout());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    act(() => {
+      scheduled
+        .filter(({ active }) => active)
+        .forEach(({ callback }) => {
+          callback();
+        });
+    });
+    expect(preparation).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('cancels an active WeChat background preparation when visual editing starts', async () => {
+    const baseProps = fixture();
+    const pendingPreparation = deferred<void>();
+    const scheduled: Array<{ active: boolean; callback: () => void }> = [];
+    let activeSignal: AbortSignal | null = null;
+    const prepare = vi.fn(
+      (
+        _surface: HTMLElement,
+        options?: { background?: boolean; signal?: AbortSignal }
+      ) => {
+        if (options?.background) {
+          activeSignal = options.signal ?? null;
+          return pendingPreparation.promise;
+        }
+        return Promise.resolve();
+      }
+    );
+    const props = {
+      ...baseProps,
+      immersiveEnvironment: {
+        ...baseProps.immersiveEnvironment,
+        schedule: (callback: () => void) => {
+          const task = { active: true, callback };
+          scheduled.push(task);
+          return () => {
+            task.active = false;
+          };
+        }
+      },
+      wechatClipboard: {
+        ...baseProps.wechatClipboard,
+        prepare
+      }
+    };
+    const view = render(<EditorRoot {...props} />);
+
+    try {
+      fireEvent.click(
+        await view.findByRole('button', { name: '进入沉浸写作' })
+      );
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull(), {
+        timeout: 5_000
+      });
+
+      scheduled.length = 0;
+      act(() => props.triggerPreviewLayout());
+      const task = scheduled.find(({ active }) => active);
+      if (!task) throw new Error('missing WeChat background preparation task');
+      act(() => task.callback());
+      await waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+      expect(prepare.mock.calls[0]?.[1]).toMatchObject({ background: true });
+
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      await view.findByRole('textbox', { name: '可视化文章编辑器' });
+
+      expect(activeSignal).not.toBeNull();
+      expect((activeSignal as AbortSignal | null)?.aborted).toBe(true);
+    } finally {
+      pendingPreparation.resolve();
+      view.unmount();
+    }
+  });
+
+  it('does not schedule WeChat preparation during rapid immersive visual edits', async () => {
+    const props = fixture();
+    props.submissionField.value = 'Original paragraph';
+    props.submissionField.defaultValue = 'Original paragraph';
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          '<p>Original paragraph</p>' as SafePreviewHtml,
+          {}
+        )
+      )
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visualEditor = await view.findByRole(
+      'textbox',
+      {
+        name: '可视化文章编辑器'
+      },
+      { timeout: 5000 }
+    );
+    const prepare = props.wechatClipboard.prepare;
+    if (!prepare) throw new Error('wechat preparation is unavailable');
+    const preparation = vi.mocked(prepare);
+    const preparationCallsBeforeEdit = preparation.mock.calls.length;
+
+    vi.useFakeTimers();
+    try {
+      visualEditor.innerHTML = '<p>Rapid edit 1</p>';
+      fireEvent.input(visualEditor);
+      act(() => vi.advanceTimersByTime(100));
+      visualEditor.innerHTML = '<p>Rapid edit 2</p>';
+      fireEvent.input(visualEditor);
+      act(() => vi.advanceTimersByTime(100));
+      visualEditor.innerHTML = '<p>Rapid edit 3</p>';
+      fireEvent.input(visualEditor);
+
+      expect(preparation.mock.calls.length).toBe(preparationCallsBeforeEdit);
+      act(() => vi.advanceTimersByTime(259));
+      expect(preparation.mock.calls.length).toBe(preparationCallsBeforeEdit);
+      act(() => vi.advanceTimersByTime(1));
+      expect(preparation.mock.calls.length).toBe(preparationCallsBeforeEdit);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps an unchanged visual Preview lock transition independent of selection mapping', async () => {
+    const props = fixture();
+    props.submissionField.value = 'Before **selected** after';
+    props.submissionField.defaultValue = 'Before **selected** after';
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          '<p>Before <strong>selected</strong> after</p>' as SafePreviewHtml,
+          {}
+        )
+      )
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visualEditor = await view.findByRole(
+      'textbox',
+      {
+        name: '可视化文章编辑器'
+      },
+      { timeout: 5000 }
+    );
+    const selectedText = visualEditor.querySelector('strong')?.firstChild;
+    if (!selectedText) {
+      throw new Error('missing synthetic visual mode selection target');
+    }
+    const source = view.container.querySelector<HTMLElement>('.cm-content');
+    const editor = source ? EditorView.findFromDOM(source) : null;
+    const selectionBeforeLock = editor?.state.selection.main;
+    const range = document.createRange();
+    range.selectNodeContents(selectedText);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const lockPreview = view.getByRole('button', { name: '锁定为只读' });
+    expect(fireEvent.mouseDown(lockPreview)).toBe(false);
+    expect(window.getSelection()?.toString()).toBe('selected');
+    fireEvent.click(lockPreview);
+
+    expect(editor?.state.selection.main).toEqual(selectionBeforeLock);
+    await waitFor(() =>
+      expect(
+        view.queryByRole('textbox', { name: '可视化文章编辑器' })
+      ).toBeNull()
+    );
+
+    fireEvent.click(view.getByRole('button', { name: '编辑' }));
+
+    expect(editor?.state.selection.main).toEqual(selectionBeforeLock);
+  });
+});
+
+describe('ProseMirror immersive visual editor switchover', () => {
+  it('mounts ProseMirror on unlock, keeps PreviewSurfaceOwner strictly read-only and hidden, and writes zero changes on read', async () => {
+    const props = fixture();
+    const initial = '# Visual Title\n\nParagraph body';
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          '<h1>Visual Title</h1><p>Paragraph body</p>' as SafePreviewHtml,
+          {}
+        )
+      )
+    );
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+
+      const previewSink = view.container.querySelector<HTMLElement>(
+        '[data-easymde-preview-html-sink]'
+      );
+      expect(previewSink).not.toBeNull();
+      expect(previewSink?.getAttribute('contenteditable')).toBeNull();
+      expect(
+        previewSink?.classList.contains('easymde-preview-surface-hidden')
+      ).toBe(false);
+
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visualEditor = await view.findByRole('textbox', {
+        name: '可视化文章编辑器'
+      });
+
+      // ProseMirror owns editing inside its own scoped surface.
+      expect(visualEditor.classList.contains('easymde-prosemirror-editor')).toBe(
+        true
+      );
+      expect(visualEditor.getAttribute('contenteditable')).toBe('true');
+      expect(
+        visualEditor.closest('.easymde-prosemirror-surface')
+      ).not.toBeNull();
+
+      // PreviewSurfaceOwner stays strictly read-only and hidden while unlocked.
+      expect(previewSink?.getAttribute('contenteditable')).toBeNull();
+      expect(
+        previewSink?.classList.contains('easymde-preview-surface-hidden')
+      ).toBe(true);
+
+      // Zero write-on-read invariant: unlocking and locking without edits leaves canonical Markdown untouched.
+      expect(props.submissionField.value).toBe(initial);
+      const renderCountBeforeLock = vi.mocked(props.previewPort.render).mock
+        .calls.length;
+      fireEvent.click(view.getByRole('button', { name: '锁定为只读' }));
+      await waitFor(() =>
+        expect(
+          view.queryByRole('textbox', { name: '可视化文章编辑器' })
+        ).toBeNull()
+      );
+      expect(
+        previewSink?.classList.contains('easymde-preview-surface-hidden')
+      ).toBe(false);
+      expect(props.submissionField.value).toBe(initial);
+      expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(
+        renderCountBeforeLock
+      );
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('syncs ProseMirror edits to canonical Markdown and refreshes formal PHP Preview on lock', async () => {
+    const props = fixture();
+    props.submissionField.value = 'Before edit';
+    props.submissionField.defaultValue = 'Before edit';
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          `<p>${request.markdown}</p>` as SafePreviewHtml,
+          {}
+        )
+      )
+    );
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visualEditor = await view.findByRole('textbox', {
+        name: '可视化文章编辑器'
+      });
+      const renderCountWhileUnlocked = vi.mocked(props.previewPort.render).mock
+        .calls.length;
+
+      visualEditor.innerHTML = '<p>After ProseMirror edit</p>';
+      fireEvent.input(visualEditor);
+
+      await waitFor(() =>
+        expect(props.submissionField.value).toBe('After ProseMirror edit')
+      );
+      // Keystrokes stay local in ProseMirror without firing preview requests per edit.
+      expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(
+        renderCountWhileUnlocked
+      );
+
+      // Locking refreshes formal PHP Preview with the updated canonical Markdown.
+      fireEvent.click(view.getByRole('button', { name: '锁定为只读' }));
+      await waitFor(() =>
+        expect(props.previewPort.render).toHaveBeenLastCalledWith(
+          expect.objectContaining({ markdown: 'After ProseMirror edit' }),
+          expect.any(AbortSignal)
+        )
+      );
+      const previewSink = view.container.querySelector<HTMLElement>(
+        '[data-easymde-preview-html-sink]'
+      );
+      await waitFor(() =>
+        expect(previewSink?.textContent).toContain('After ProseMirror edit')
+      );
+      expect(
+        previewSink?.classList.contains('easymde-preview-surface-hidden')
+      ).toBe(false);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('unlocks large >160-block documents in one unified ProseMirror surface without requiring an editMap', async () => {
+    const props = fixture();
+    const blocks = Array.from({ length: 180 }, (_, index) => `Block ${index}`);
+    const largeMarkdown = blocks.join('\n\n');
+    props.submissionField.value = largeMarkdown;
+    props.submissionField.defaultValue = largeMarkdown;
+    vi.mocked(props.previewPort.render).mockImplementation(() =>
+      Promise.resolve({
+        features: {},
+        html: blocks.map((line) => `<p>${line}</p>`).join('') as SafePreviewHtml
+      })
+    );
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+
+      const unlock = view.getByRole('button', { name: '解除锁定并编辑' });
+      expect(unlock.hasAttribute('disabled')).toBe(false);
+      fireEvent.click(unlock);
+
+      const visualEditor = await view.findByRole('textbox', {
+        name: '可视化文章编辑器'
+      });
+      expect(visualEditor.querySelectorAll('p').length).toBe(180);
+      expect(
+        view.container.querySelector('[data-easymde-preview-window-spacer]')
+      ).toBeNull();
+    } finally {
+      view.unmount();
+    }
+  });
+});
+
+describe('Immersive visual editor bridges', () => {
+  async function renderUnlocked(
+    markdown: string,
+    html: string,
+    configure?: (props: ReturnType<typeof fixture>) => void
+  ) {
+    const props = fixture();
+    props.submissionField.value = markdown;
+    props.submissionField.defaultValue = markdown;
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(request, html as SafePreviewHtml, {})
+      )
+    );
+    configure?.(props);
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visualEditor = await view.findByRole(
+      'textbox',
+      {
+        name: '可视化文章编辑器'
+      },
+      { timeout: 5000 }
+    );
+    return { props, view, visualEditor };
+  }
+
+  it('inserts an Immersive toolbar table in place without leaving visual editing', async () => {
+    const { props, view, visualEditor } = await renderUnlocked(
+      'Intro paragraph',
+      '<p>Intro paragraph</p>'
+    );
+    try {
+      const renderCount = vi.mocked(props.previewPort.render).mock.calls.length;
+      fireEvent.click(view.getByRole('button', { name: '表格' }));
+      const dialog = await view.findByRole('dialog', { name: '插入表格' });
+      // Opening and cancelling the dialog keeps the ProseMirror host mounted.
+      expect(view.getByRole('textbox', { name: '可视化文章编辑器' })).toBe(
+        visualEditor
+      );
+      fireEvent.click(
+        within(dialog).getAllByRole('button', {
+          name: '取消'
+        })[0] as HTMLElement
+      );
+      await waitFor(() =>
+        expect(view.queryByRole('dialog', { name: '插入表格' })).toBeNull()
+      );
+      expect(view.getByRole('textbox', { name: '可视化文章编辑器' })).toBe(
+        visualEditor
+      );
+      expect(props.submissionField.value).toBe('Intro paragraph');
+
+      fireEvent.click(view.getByRole('button', { name: '表格' }));
+      const reopened = await view.findByRole('dialog', { name: '插入表格' });
+      fireEvent.click(within(reopened).getByRole('button', { name: '2 × 2' }));
+
+      await waitFor(() =>
+        expect(props.submissionField.value).toContain(
+          '|  |  |\n| --- | --- |\n|  |  |'
+        )
+      );
+      const value = props.submissionField.value;
+      expect(value).toContain('Intro paragraph');
+      // Blank-line block separation: the table never glues onto a paragraph.
+      expect(value).not.toMatch(/Intro paragraph\n\|/);
+      expect(value).not.toMatch(/\|\nIntro paragraph/);
+      expect(view.getByRole('textbox', { name: '可视化文章编辑器' })).toBe(
+        visualEditor
+      );
+      expect(visualEditor.getAttribute('contenteditable')).toBe('true');
+      expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(
+        renderCount
+      );
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('binds generated-content identity to the current canonical revision after visual edits', async () => {
+    const { props, view, visualEditor } = await renderUnlocked(
+      'Before edit',
+      '<p>Before edit</p>'
+    );
+    try {
+      visualEditor.innerHTML = '<p>After edit</p>';
+      fireEvent.input(visualEditor);
+      await waitFor(() =>
+        expect(props.submissionField.value).toBe('After edit')
+      );
+      const identity = visualHostProps.current?.getGeneratedPreviewIdentity?.();
+      expect(identity).not.toBeNull();
+      expect(identity?.revision).toBeGreaterThan(0);
+      expect(identity?.sourceRevision).toBe(identity?.revision);
+      expect(identity?.signature).toBe(
+        `prosemirror:${identity?.revision}:${'After edit'.length}`
+      );
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('never synchronizes code frames per keystroke or reports the optional runtime on code-free posts', async () => {
+    const { props, view, visualEditor } = await renderUnlocked(
+      'Plain text',
+      '<p>Plain text</p>'
+    );
+    try {
+      const sync = vi.mocked(props.enhancementPort.syncCodeFrameBackgrounds);
+      sync.mockImplementation(() => {
+        throw new Error('preview-enhancement-runtime-unavailable');
+      });
+      const baseline = sync.mock.calls.length;
+      for (const text of ['One', 'Two', 'Three']) {
+        visualEditor.innerHTML = `<p>${text}</p>`;
+        fireEvent.input(visualEditor);
+      }
+      await waitFor(() => expect(props.submissionField.value).toBe('Three'));
+      expect(sync.mock.calls.length).toBe(baseline);
+      expect(props.onFailure).not.toHaveBeenCalledWith(
+        'preview-enhancement-runtime-unavailable'
+      );
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('navigates an Outline heading inside the unlocked visual editor without focusing hidden CodeMirror', async () => {
+    const { view, visualEditor } = await renderUnlocked(
+      '# Alpha\n\nBody\n\n## Beta\n\nMore',
+      '<h1>Alpha</h1><p>Body</p><h2>Beta</h2><p>More</p>'
+    );
+    try {
+      const outline = view.container.querySelector<HTMLElement>(
+        '.easymde-immersive-outline'
+      );
+      if (!outline) throw new Error('missing immersive outline');
+      const scrollIntoView = vi.fn();
+      const heading = visualEditor.querySelector('h2');
+      if (!heading) throw new Error('missing visual heading');
+      heading.scrollIntoView = scrollIntoView;
+
+      fireEvent.click(within(outline).getByRole('button', { name: /Beta/u }));
+
+      expect(view.getByRole('textbox', { name: '可视化文章编辑器' })).toBe(
+        visualEditor
+      );
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+      const active = document.activeElement;
+      expect(active === visualEditor || visualEditor.contains(active)).toBe(
+        true
+      );
+      expect(
+        view.container.querySelector('.cm-content')?.contains(active) ?? false
+      ).toBe(false);
+      expect(view.container.querySelector('.cm-content')).toBeNull();
+      const anchor = window.getSelection()?.anchorNode ?? null;
+      const anchorElement =
+        anchor instanceof Element ? anchor : (anchor?.parentElement ?? null);
+      expect(anchorElement?.closest('h2')).toBe(heading);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('keeps visual editing unlocked when the formal Preview fails during WeChat Copy', async () => {
+    const { props, view, visualEditor } = await renderUnlocked(
+      'Original paragraph',
+      '<p>Original paragraph</p>'
+    );
+    try {
+      visualEditor.innerHTML = '<p>Edited paragraph</p>';
+      fireEvent.input(visualEditor);
+      await waitFor(() =>
+        expect(props.submissionField.value).toBe('Edited paragraph')
+      );
+      vi.mocked(props.previewPort.render).mockRejectedValue(
+        new Error('preview-http-500')
+      );
+      let resolved: HTMLElement | null | undefined;
+      vi.mocked(props.wechatClipboard.copy).mockImplementation(
+        async (surface, options) => {
+          resolved = options?.resolvePreview
+            ? await options.resolvePreview()
+            : surface;
+          return resolved
+            ? { method: 'clipboard', status: 'copied' }
+            : { code: 'wechat-preview-unavailable', status: 'failed' };
+        }
+      );
+
+      fireEvent.click(view.getByRole('button', { name: '复制到公众号' }));
+
+      await waitFor(() => expect(resolved).toBeNull());
+      expect(view.getByRole('textbox', { name: '可视化文章编辑器' })).toBe(
+        visualEditor
+      );
+      expect(visualEditor.getAttribute('contenteditable')).toBe('true');
+      expect(props.submissionField.value).toBe('Edited paragraph');
+      expect(
+        view
+          .getByRole('button', { name: '锁定为只读' })
+          .hasAttribute('disabled')
+      ).toBe(false);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('alerts and rolls back a visual editor load failure so unlock can be retried', async () => {
+    const { view } = await renderUnlocked('Body', '<p>Body</p>');
+    try {
+      act(() =>
+        visualHostProps.current?.onFailure('visual-editor-load-failed')
+      );
+      await waitFor(() =>
+        expect(
+          view.queryByRole('textbox', { name: '可视化文章编辑器' })
+        ).toBeNull()
+      );
+      expect(
+        await view.findByText('The editor action could not be completed.')
+      ).not.toBeNull();
+      expect(
+        view
+          .getByRole('button', { name: '解除锁定并编辑' })
+          .hasAttribute('disabled')
+      ).toBe(false);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('alerts a visual sync failure while keeping the visual editor mounted', async () => {
+    const { view, visualEditor } = await renderUnlocked('Body', '<p>Body</p>');
+    try {
+      act(() =>
+        visualHostProps.current?.onFailure('visual-editor-sync-failed')
+      );
+      expect(
+        await view.findByText('The editor action could not be completed.')
+      ).not.toBeNull();
+      expect(view.getByRole('textbox', { name: '可视化文章编辑器' })).toBe(
+        visualEditor
+      );
+    } finally {
+      view.unmount();
+    }
+  });
+  describe('WeChat Copy formal Preview resolution while unlocked', () => {
+    function captureResolvePreview(
+      props: ReturnType<typeof fixture>,
+      signal?: AbortSignal
+    ) {
+      const results: Array<HTMLElement | null> = [];
+      vi.mocked(props.wechatClipboard.copy).mockImplementation(
+        async (surface, options) => {
+          const resolved = options?.resolvePreview
+            ? await options.resolvePreview(signal)
+            : surface;
+          results.push(resolved);
+          return resolved
+            ? { method: 'clipboard', status: 'copied' }
+            : { code: 'wechat-preview-unavailable', status: 'failed' };
+        }
+      );
+      return results;
+    }
+
+    function installRuntimeOverride(
+      overrides: Partial<ImmersiveVisualEditorRuntime>
+    ): void {
+      const runtime = visualHostProps.runtime;
+      const host = visualHostProps.current;
+      if (!runtime || !host) throw new Error('missing visual runtime');
+      act(() => host.onReady({ ...runtime, ...overrides }));
+    }
+
+    it('awaits pending visual edit settlement before refreshing the formal Preview', async () => {
+      const { props, view } = await renderUnlocked(
+        'Original paragraph',
+        '<p>Original paragraph</p>'
+      );
+      try {
+        const settlement = deferred<boolean>();
+        const settlePendingEdits = vi.fn(() => settlement.promise);
+        installRuntimeOverride({ settlePendingEdits });
+        const results = captureResolvePreview(props);
+        const renderPreview = vi.mocked(props.previewPort.render);
+        const renderCount = renderPreview.mock.calls.length;
+
+        fireEvent.click(view.getByRole('button', { name: '复制到公众号' }));
+
+        await waitFor(() => expect(settlePendingEdits).toHaveBeenCalledOnce());
+        expect(results).toEqual([]);
+        expect(renderPreview.mock.calls.length).toBe(renderCount);
+
+        await act(async () => {
+          settlement.resolve(true);
+          await settlement.promise;
+        });
+        const sink = view.container.querySelector(
+          '[data-easymde-preview-html-sink]'
+        );
+        await waitFor(() => expect(results).toEqual([sink]));
+      } finally {
+        view.unmount();
+      }
+    });
+
+    it('fails the Copy without a formal render when pending edits cannot settle', async () => {
+      const { props, view } = await renderUnlocked('Body', '<p>Body</p>');
+      try {
+        installRuntimeOverride({
+          settlePendingEdits: vi.fn(async () => false)
+        });
+        const results = captureResolvePreview(props);
+        const renderCount = vi.mocked(props.previewPort.render).mock.calls.length;
+
+        fireEvent.click(view.getByRole('button', { name: '复制到公众号' }));
+
+        await waitFor(() => expect(results).toEqual([null]));
+        expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(
+          renderCount
+        );
+        expect(view.getByRole('textbox', { name: '可视化文章编辑器' })).not.toBeNull();
+      } finally {
+        view.unmount();
+      }
+    });
+
+    it('refreshes the formal Preview after an unlocked appearance change, then reuses it', async () => {
+      const { props, view } = await renderUnlocked('Rendered', '<p>Rendered</p>');
+      try {
+        const renderPreview = vi.mocked(props.previewPort.render);
+        fireEvent.click(view.getByRole('button', { name: '主题' }));
+        fireEvent.click(view.getByRole('button', { name: 'Article theme' }));
+        fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+        await waitFor(() =>
+          expect(props.appearancePort.applyState).toHaveBeenCalledWith(
+            expect.objectContaining({ markdownTheme: 'newsprint' }),
+            false
+          )
+        );
+        fireEvent.click(view.getByRole('button', { name: '主题' }));
+        const renderCount = renderPreview.mock.calls.length;
+        const results = captureResolvePreview(props);
+
+        fireEvent.click(view.getByRole('button', { name: '复制到公众号' }));
+
+        const sink = view.container.querySelector(
+          '[data-easymde-preview-html-sink]'
+        );
+        await waitFor(() => expect(results).toEqual([sink]));
+        expect(renderPreview.mock.calls.length).toBe(renderCount + 1);
+        expect(renderPreview).toHaveBeenLastCalledWith(
+          expect.objectContaining({ markdownTheme: 'newsprint' }),
+          expect.any(AbortSignal)
+        );
+        expect(view.getByRole('textbox', { name: '可视化文章编辑器' })).not.toBeNull();
+
+        // The same button now announces the completed Copy.
+        fireEvent.click(view.getByRole('button', { name: /复制到公众号|已复制/u }));
+
+        await waitFor(() => expect(results).toEqual([sink, sink]));
+        expect(renderPreview.mock.calls.length).toBe(renderCount + 1);
+      } finally {
+        view.unmount();
+      }
+    });
+
+    it('settles a pending formal Preview wait with null when the Copy aborts', async () => {
+      const { props, view, visualEditor } = await renderUnlocked(
+        'Original paragraph',
+        '<p>Original paragraph</p>'
+      );
+      try {
+        visualEditor.innerHTML = '<p>Edited paragraph</p>';
+        fireEvent.input(visualEditor);
+        await waitFor(() =>
+          expect(props.submissionField.value).toBe('Edited paragraph')
+        );
+        const pendingRender = deferred<PreviewResponse>();
+        vi.mocked(props.previewPort.render).mockReturnValue(
+          pendingRender.promise
+        );
+        const controller = new AbortController();
+        const results = captureResolvePreview(props, controller.signal);
+
+        fireEvent.click(view.getByRole('button', { name: '复制到公众号' }));
+        await waitFor(() =>
+          expect(props.previewPort.render).toHaveBeenLastCalledWith(
+            expect.objectContaining({ markdown: 'Edited paragraph' }),
+            expect.any(AbortSignal)
+          )
+        );
+        expect(results).toEqual([]);
+
+        controller.abort();
+
+        await waitFor(() => expect(results).toEqual([null]));
+        expect(view.getByRole('textbox', { name: '可视化文章编辑器' })).toBe(
+          visualEditor
+        );
+      } finally {
+        view.unmount();
+      }
+    });
+
+    it('settles a superseded formal Preview wait with null when a newer render replaces it', async () => {
+      const { props, view, visualEditor } = await renderUnlocked(
+        'Original paragraph',
+        '<p>Original paragraph</p>'
+      );
+      try {
+        visualEditor.innerHTML = '<p>First edit</p>';
+        fireEvent.input(visualEditor);
+        await waitFor(() => expect(props.submissionField.value).toBe('First edit'));
+        const renders: PreviewRequest[] = [];
+        vi.mocked(props.previewPort.render).mockImplementation((request) => {
+          renders.push(request);
+          return deferred<PreviewResponse>().promise;
+        });
+        const results = captureResolvePreview(props);
+
+        fireEvent.click(view.getByRole('button', { name: '复制到公众号' }));
+        await waitFor(() =>
+          expect(renders.map(({ markdown }) => markdown)).toEqual(['First edit'])
+        );
+
+        visualEditor.innerHTML = '<p>Second edit</p>';
+        fireEvent.input(visualEditor);
+        await waitFor(() => expect(props.submissionField.value).toBe('Second edit'));
+        // Locking refreshes the formal Preview for the newer Markdown, which
+        // supersedes the Copy's pending render target.
+        fireEvent.click(view.getByRole('button', { name: '锁定为只读' }));
+
+        await waitFor(() => expect(results).toEqual([null]));
+        await waitFor(() =>
+          expect(renders.map(({ markdown }) => markdown)).toEqual([
+            'First edit',
+            'Second edit'
+          ])
+        );
+      } finally {
+        view.unmount();
+      }
+    });
+
+    it('fails a non-PNG Copy when canonical Markdown changes before its formal Preview commits, then retries freshly', async () => {
+      const { props, view, visualEditor } = await renderUnlocked(
+        'Original paragraph',
+        '<p>Original paragraph</p>'
+      );
+      try {
+        expect(props.wechatExport.pngConversionEnabled).toBe(false);
+        visualEditor.innerHTML = '<p>First edit</p>';
+        fireEvent.input(visualEditor);
+        await waitFor(() => expect(props.submissionField.value).toBe('First edit'));
+        const renders: PreviewRequest[] = [];
+        const staleRender = deferred<PreviewResponse>();
+        vi.mocked(props.previewPort.render).mockImplementation((request) => {
+          renders.push(request);
+          if (1 === renders.length) return staleRender.promise;
+          return Promise.resolve(
+            createPreviewResponse(
+              request,
+              `<p>${request.markdown}</p>` as SafePreviewHtml,
+              {}
+            )
+          );
+        });
+        const results = captureResolvePreview(props);
+        const copyButton = view.getByRole('button', { name: '复制到公众号' });
+
+        fireEvent.click(copyButton);
+        await waitFor(() =>
+          expect(renders.map(({ markdown }) => markdown)).toEqual(['First edit'])
+        );
+        expect(results).toEqual([]);
+
+        // Typing again while unlocked parks ordinary Preview scheduling, so no
+        // newer formal request supersedes the pending Copy target.
+        visualEditor.innerHTML = '<p>Second edit</p>';
+        fireEvent.input(visualEditor);
+        await waitFor(() => expect(props.submissionField.value).toBe('Second edit'));
+
+        await waitFor(() => expect(results).toEqual([null]));
+        expect(renders.map(({ markdown }) => markdown)).toEqual(['First edit']);
+
+        // The stale response arriving late is rejected by the Preview sink and
+        // must not revive the settled Copy.
+        await act(async () => {
+          staleRender.resolve(
+            createPreviewResponse(
+              renders[0] as PreviewRequest,
+              '<p>First edit</p>' as SafePreviewHtml,
+              {}
+            )
+          );
+          await staleRender.promise;
+        });
+        expect(results).toEqual([null]);
+
+        fireEvent.click(copyButton);
+
+        const sink = view.container.querySelector(
+          '[data-easymde-preview-html-sink]'
+        );
+        await waitFor(() => expect(results).toEqual([null, sink]));
+        expect(renders.map(({ markdown }) => markdown)).toEqual([
+          'First edit',
+          'Second edit'
+        ]);
+        expect(props.wechatClipboard.copy).toHaveBeenCalledTimes(2);
+        expect(view.getByRole('textbox', { name: '可视化文章编辑器' })).toBe(
+          visualEditor
+        );
+      } finally {
+        view.unmount();
+      }
+    });
+  });
+
+  it('skips autosave instead of throwing while the unlocked visual runtime is still mounting', async () => {
+    const { props, view } = await renderUnlocked('Body', '<p>Body</p>');
+    try {
+      const runtime = visualHostProps.runtime;
+      const host = visualHostProps.current;
+      if (!runtime || !host) throw new Error('missing visual runtime');
+      act(() => host.onDispose(runtime));
+
+      let result: ReturnType<typeof props.sessionAutosave> | undefined;
+      expect(() => {
+        result = props.sessionAutosave();
+      }).not.toThrow();
+      expect(result).toBe('blocked');
+      expect(props.onFailure).not.toHaveBeenCalledWith(
+        'visual-editor-runtime-unavailable'
+      );
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('warms KaTeX and Mermaid independently on demand when math and Mermaid are pasted into an unlocked blank post', async () => {
+    const win = window as Window & { katex?: unknown; mermaid?: unknown };
+    const prevKatex = win.katex;
+    const prevMermaid = win.mermaid;
+    delete win.katex;
+    delete win.mermaid;
+
+    const mathDeferred = deferred<void>();
+    const mermaidDeferred = deferred<void>();
+    const katexRender = vi.fn((tex: string, target: HTMLElement) => {
+      const span = target.ownerDocument.createElement('span');
+      span.className = 'katex';
+      span.textContent = tex;
+      target.replaceChildren(span);
+    });
+    const mermaidRender = vi.fn(async (id: string) => ({
+      svg: `<svg id="${id}"><g><text>Pasted Flow</text></g></svg>`
+    }));
+
+    const { props, view } = await renderUnlocked('', '');
+    const enhanceMock = vi.mocked(props.enhancementPort.enhance);
+    enhanceMock.mockClear();
+    enhanceMock.mockImplementation((_surface, features) => {
+      if (features.math) {
+        return mathDeferred.promise.then(() => {
+          win.katex = { render: katexRender };
+        });
+      }
+      if (features.mermaid) {
+        return mermaidDeferred.promise.then(() => {
+          win.mermaid = { initialize: vi.fn(), render: mermaidRender };
+        });
+      }
+      return Promise.resolve();
+    });
+
+    try {
+      expect(enhanceMock).not.toHaveBeenCalled();
+
+      // Simulate pasting a full Markdown document with math + Mermaid into the
+      // already-unlocked blank post; mounted protected atoms request runtimes on demand.
+      const pastedMarkdown = [
+        '# Pasted',
+        '',
+        'Inline $E = mc^2$.',
+        '',
+        '$$',
+        '\\int_a^b f(x)\\,dx',
+        '$$',
+        '',
+        '```mermaid',
+        'flowchart TD',
+        '  A --> B',
+        '```'
+      ].join('\n');
+      act(() => {
+        visualHostProps.current?.documentSession.document.applyTextChange({
+          selection: {
+            direction: 'none',
+            end: pastedMarkdown.length,
+            start: pastedMarkdown.length
+          },
+          value: pastedMarkdown
+        });
+      });
+
+      const surface = view.getByRole('textbox', { name: '可视化文章编辑器' });
+      expect(
+        surface.querySelectorAll('.easymde-protected-loading')
+      ).toHaveLength(3);
+      expect(surface.querySelector('.easymde-protected-fallback')).toBeNull();
+
+      await waitFor(() => expect(enhanceMock).toHaveBeenCalledTimes(2));
+      expect(enhanceMock).toHaveBeenCalledWith(
+        expect.any(HTMLElement),
+        { math: true },
+        expect.any(Function),
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
+      expect(enhanceMock).toHaveBeenCalledWith(
+        expect.any(HTMLElement),
+        { mermaid: true },
+        expect.any(Function),
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
+
+      // Additional typing while runtimes download must not abort or duplicate warmup.
+      const mathSignal = enhanceMock.mock.calls.find(
+        ([, features]) => features.math
+      )?.[3]?.signal;
+      const mermaidSignal = enhanceMock.mock.calls.find(
+        ([, features]) => features.mermaid
+      )?.[3]?.signal;
+      const extraMarkdown = `${pastedMarkdown}\n\nExtra line`;
+      act(() => {
+        visualHostProps.current?.documentSession.document.applyTextChange({
+          selection: {
+            direction: 'none',
+            end: extraMarkdown.length,
+            start: extraMarkdown.length
+          },
+          value: extraMarkdown
+        });
+      });
+      expect(mathSignal?.aborted).toBe(false);
+      expect(mermaidSignal?.aborted).toBe(false);
+      expect(enhanceMock).toHaveBeenCalledTimes(2);
+
+      // Resolving math renders both formulas immediately while Mermaid keeps loading.
+      await act(async () => {
+        mathDeferred.resolve();
+        await mathDeferred.promise;
+      });
+      await waitFor(() =>
+        expect(surface.querySelectorAll('.easymde-math .katex')).toHaveLength(2)
+      );
+      expect(
+        surface.querySelectorAll(
+          '[data-easymde-protected-kind="mermaid"] .easymde-protected-loading'
+        )
+      ).toHaveLength(1);
+
+      // Resolving Mermaid renders the diagram cleanly.
+      await act(async () => {
+        mermaidDeferred.resolve();
+        await mermaidDeferred.promise;
+      });
+      await waitFor(() =>
+        expect(surface.querySelector('.easymde-mermaid svg')?.textContent).toContain(
+          'Pasted Flow'
+        )
+      );
+      expect(surface.querySelector('.easymde-protected-loading')).toBeNull();
+    } finally {
+      view.unmount();
+      if (prevKatex === undefined) delete win.katex;
+      else win.katex = prevKatex;
+      if (prevMermaid === undefined) delete win.mermaid;
+      else win.mermaid = prevMermaid;
+    }
+  });
+
+  it('warms Mermaid and TOC on demand across 4-backtick, list-item, NBSP, and lone-CR fences without false positives in code blocks', async () => {
+    const win = window as Window & { katex?: unknown; mermaid?: unknown };
+    const prevMermaid = win.mermaid;
+    delete win.mermaid;
+
+    const { props, view } = await renderUnlocked('', '');
+    const enhanceMock = vi.mocked(props.enhancementPort.enhance);
+    enhanceMock.mockClear();
+    enhanceMock.mockImplementation((_surface, features) => {
+      if (features.mermaid) {
+        win.mermaid = {
+          initialize: vi.fn(),
+          render: vi.fn(async (id: string) => ({ svg: `<svg id="${id}"/>` }))
+        };
+      }
+      return Promise.resolve();
+    });
+
+    try {
+      // Indented or markdown-fenced examples must NOT trigger math or Mermaid warmup.
+      const codeOnly = '````markdown\n```mermaid\nA --> B\n```\n$not math$\n````';
+      act(() => {
+        visualHostProps.current?.documentSession.document.applyTextChange({
+          selection: { direction: 'none', end: codeOnly.length, start: codeOnly.length },
+          value: codeOnly
+        });
+      });
+      expect(enhanceMock).not.toHaveBeenCalled();
+
+      // 4-backtick Mermaid + [TOC] warm on demand when mounted.
+      const pastedFourTick = '[TOC]\n\n````mermaid\nflowchart TD\n  A --> B\n````';
+      act(() => {
+        visualHostProps.current?.documentSession.document.applyTextChange({
+          selection: {
+            direction: 'none',
+            end: pastedFourTick.length,
+            start: pastedFourTick.length
+          },
+          value: pastedFourTick
+        });
+      });
+
+      await waitFor(() =>
+        expect(enhanceMock).toHaveBeenCalledWith(
+          expect.any(HTMLElement),
+          { mermaid: true },
+          expect.any(Function),
+          expect.objectContaining({ signal: expect.any(AbortSignal) })
+        )
+      );
+      expect(enhanceMock).toHaveBeenCalledWith(
+        expect.any(HTMLElement),
+        { toc: true },
+        expect.any(Function),
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
+    } finally {
+      view.unmount();
+      if (prevMermaid === undefined) delete win.mermaid;
+      else win.mermaid = prevMermaid;
+    }
+
+    // Separate cold unlocked posts for list-item and lone-CR Mermaid fences.
+    for (const sample of [
+      '- ```mermaid\n  flowchart TD\n  X --> Y\n  ```',
+      '```mermaid\u00a0foo\rflowchart TD\r  A --> B\r```'
+    ]) {
+      delete win.mermaid;
+      const run = await renderUnlocked('', '');
+      const enhanceRun = vi.mocked(run.props.enhancementPort.enhance);
+      enhanceRun.mockClear();
+      enhanceRun.mockImplementation((_surface, features) => {
+        if (features.mermaid) {
+          win.mermaid = {
+            initialize: vi.fn(),
+            render: vi.fn(async (id: string) => ({ svg: `<svg id="${id}"/>` }))
+          };
+        }
+        return Promise.resolve();
+      });
+      try {
+        act(() => {
+          visualHostProps.current?.documentSession.document.applyTextChange({
+            selection: { direction: 'none', end: sample.length, start: sample.length },
+            value: sample
+          });
+        });
+        await waitFor(() =>
+          expect(enhanceRun).toHaveBeenCalledWith(
+            expect.any(HTMLElement),
+            { mermaid: true },
+            expect.any(Function),
+            expect.objectContaining({ signal: expect.any(AbortSignal) })
+          )
+        );
+      } finally {
+        run.view.unmount();
+        if (prevMermaid === undefined) delete win.mermaid;
+        else win.mermaid = prevMermaid;
+      }
+    }
+  });
+
+  it('keeps math in fallback when KaTeX JS loads but CSS fails, and recovers on relock and unlock', async () => {
+    const win = window as Window & { katex?: unknown };
+    const prevKatex = win.katex;
+    delete win.katex;
+
+    const katexRender = vi.fn((tex: string, target: HTMLElement) => {
+      const span = target.ownerDocument.createElement('span');
+      span.className = 'katex';
+      span.textContent = tex;
+      target.replaceChildren(span);
+    });
+
+    const { props, view } = await renderUnlocked('', '');
+    const enhanceMock = vi.mocked(props.enhancementPort.enhance);
+    enhanceMock.mockClear();
+    let mathAttempts = 0;
+    enhanceMock.mockImplementation((_surface, features) => {
+      if (!features.math) return Promise.resolve();
+      mathAttempts += 1;
+      // Simulate KaTeX JS succeeding while katex.min.css fails on attempt 1.
+      win.katex = { render: katexRender };
+      if (mathAttempts === 1) {
+        return Promise.reject(new Error('preview-enhancement-resource-load-failed'));
+      }
+      return Promise.resolve();
+    });
+
+    try {
+      const mathDoc = '$$\nE = mc^2\n$$';
+      act(() => {
+        visualHostProps.current?.documentSession.document.applyTextChange({
+          selection: { direction: 'none', end: mathDoc.length, start: mathDoc.length },
+          value: mathDoc
+        });
+      });
+
+      const surface = view.getByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() =>
+        expect(surface.querySelector('code.easymde-protected-fallback')).not.toBeNull()
+      );
+      expect(katexRender).not.toHaveBeenCalled();
+      expect(mathAttempts).toBe(1);
+
+      // Lock and re-unlock: even though window.katex already exists, the port
+      // retries math warmup and renders KaTeX only once CSS+JS succeeds.
+      fireEvent.click(view.getByRole('button', { name: '锁定为只读' }));
+      const unlock = await view.findByRole('button', { name: '解除锁定并编辑' });
+      await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+      fireEvent.click(unlock);
+      const unlockedSurface = await view.findByRole(
+        'textbox',
+        { name: '可视化文章编辑器' },
+        { timeout: 5000 }
+      );
+
+      await waitFor(() => expect(mathAttempts).toBe(2));
+      await waitFor(() =>
+        expect(unlockedSurface.querySelector('.easymde-math .katex')?.textContent).toBe(
+          'E = mc^2'
+        )
+      );
+      expect(katexRender).toHaveBeenCalledTimes(1);
+    } finally {
+      view.unmount();
+      if (prevKatex === undefined) delete win.katex;
+      else win.katex = prevKatex;
+    }
+  });
+
+  it('aborts in-flight visual warmups on lock, re-runs math warmup if JS loaded before cancel, and ignores stale completions on re-unlock', async () => {
+    const win = window as Window & { katex?: unknown; mermaid?: unknown };
+    const prevKatex = win.katex;
+    const prevMermaid = win.mermaid;
+    delete win.katex;
+    delete win.mermaid;
+
+    const firstMath = deferred<void>();
+    const secondMath = deferred<void>();
+    const signals: AbortSignal[] = [];
+    const katexRender = vi.fn((tex: string, target: HTMLElement) => {
+      const span = target.ownerDocument.createElement('span');
+      span.className = 'katex';
+      span.textContent = tex;
+      target.replaceChildren(span);
+    });
+
+    const { props, view } = await renderUnlocked('', '');
+    const enhanceMock = vi.mocked(props.enhancementPort.enhance);
+    enhanceMock.mockClear();
+    enhanceMock.mockImplementation((_surface, features, _isCurrent, context) => {
+      if (!features.math) return Promise.resolve();
+      signals.push(context.signal);
+      // Simulate KaTeX JS loading before CSS completes on attempt 1.
+      win.katex = { render: katexRender };
+      return signals.length === 1 ? firstMath.promise : secondMath.promise;
+    });
+
+    try {
+      const mathDoc = '$$\nE = mc^2\n$$';
+      act(() => {
+        visualHostProps.current?.documentSession.document.applyTextChange({
+          selection: { direction: 'none', end: mathDoc.length, start: mathDoc.length },
+          value: mathDoc
+        });
+      });
+
+      const firstSurface = view.getByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() => expect(signals).toHaveLength(1));
+      expect(firstSurface.querySelector('.easymde-protected-loading')).not.toBeNull();
+      expect(katexRender).not.toHaveBeenCalled();
+
+      // Locking aborts the in-flight warmup even though window.katex loaded.
+      fireEvent.click(view.getByRole('button', { name: '锁定为只读' }));
+      await waitFor(() => expect(signals[0]?.aborted).toBe(true));
+
+      // Re-unlock starts a fresh warmup despite window.katex existing; resolving
+      // the stale first promise must NOT prematurely mark math ready.
+      const unlock = await view.findByRole('button', { name: '解除锁定并编辑' });
+      await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+      fireEvent.click(unlock);
+      const secondSurface = await view.findByRole(
+        'textbox',
+        { name: '可视化文章编辑器' },
+        { timeout: 5000 }
+      );
+      await waitFor(() => expect(signals).toHaveLength(2));
+      expect(secondSurface.querySelector('.easymde-protected-loading')).not.toBeNull();
+
+      await act(async () => {
+        firstMath.resolve();
+        await firstMath.promise;
+      });
+      expect(secondSurface.querySelector('.easymde-protected-loading')).not.toBeNull();
+      expect(katexRender).not.toHaveBeenCalled();
+
+      await act(async () => {
+        secondMath.resolve();
+        await secondMath.promise;
+      });
+      await waitFor(() =>
+        expect(secondSurface.querySelector('.easymde-math .katex')?.textContent).toBe(
+          'E = mc^2'
+        )
+      );
+      expect(secondSurface.querySelector('.easymde-protected-loading')).toBeNull();
+      expect(katexRender).toHaveBeenCalledTimes(1);
+    } finally {
+      view.unmount();
+      if (prevKatex === undefined) delete win.katex;
+      else win.katex = prevKatex;
+      if (prevMermaid === undefined) delete win.mermaid;
+      else win.mermaid = prevMermaid;
+    }
+  });
+});

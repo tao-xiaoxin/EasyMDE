@@ -1,4 +1,9 @@
 import { normalizeMathTex } from '../../shared/markdown/normalize-math-tex';
+import {
+  initializeMermaidRuntime,
+  markIntrinsicMermaidLayout,
+  type MermaidInitializationOptions
+} from '../../shared/mermaid/mermaid-runtime-config';
 
 export type FrontendEnhancementConfig = unknown;
 
@@ -31,17 +36,6 @@ type KatexRuntime = Readonly<{
 }>;
 
 type MermaidRenderResult = Readonly<{ svg: string }>;
-
-type MermaidInitializationOptions = Readonly<{
-  startOnLoad: boolean;
-  securityLevel: string;
-  theme: string;
-  fontFamily: string;
-  fontSize: number;
-  flowchart: Readonly<{ diagramPadding: number }>;
-  gantt: Readonly<{ useMaxWidth: boolean; useWidth: number }>;
-  themeCSS: string;
-}>;
 
 type MermaidRuntime = Readonly<{
   initialize: (options: MermaidInitializationOptions) => void;
@@ -81,33 +75,6 @@ export type FrontendEnhancementWindow = Window & {
 
 let mermaidRenderIndex = 0;
 
-const MERMAID_LABEL_FONT_FAMILY = '"trebuchet ms", verdana, arial, sans-serif';
-const MERMAID_LABEL_GEOMETRY_CSS = `
-& {
-  letter-spacing: normal;
-  word-spacing: normal;
-}
-
-.node .label,
-.node .label *,
-.edgeLabel,
-.edgeLabel *,
-foreignObject > div,
-foreignObject > div * {
-  box-sizing: border-box !important;
-  font-family: ${MERMAID_LABEL_FONT_FAMILY} !important;
-  font-size: 16px !important;
-  font-weight: 400 !important;
-  line-height: 20px !important;
-  white-space: nowrap !important;
-  margin: 0 !important;
-  padding: 0 !important;
-}
-
-foreignObject > div {
-  display: table-cell !important;
-}`;
-
 const ENHANCEMENT_SLICE_BUDGET_MS = 8;
 const ENHANCEMENT_RAF_FALLBACK_MS = 40;
 // Auto-detection is synchronous per block; keep large immersive previews bounded
@@ -131,7 +98,6 @@ type CachedMermaidSvg = Readonly<{
 }>;
 
 const mermaidSvgCaches = new WeakMap<MermaidRuntime, Map<string, CachedMermaidSvg>>();
-const initializedMermaidRuntimes = new WeakSet<MermaidRuntime>();
 const katexHtmlCaches = new WeakMap<KatexRuntime, Map<string, string>>();
 
 type ScheduledWorkCost = 0 | 1;
@@ -325,47 +291,6 @@ function isMermaidCode(element: Element): boolean {
   return [...element.classList].some(
     (className) => 'language-mermaid' === className.toLowerCase()
   );
-}
-
-type MermaidLayoutViewBox = Readonly<{
-  height: number;
-  width: number;
-}>;
-
-const INTRINSIC_MERMAID_LAYOUT_ROLES = new Set([
-  'gantt',
-  'sequence',
-  'timeline'
-]);
-
-function mermaidLayoutViewBox(source: SVGSVGElement): MermaidLayoutViewBox | null {
-  const values = source.getAttribute('viewBox')?.trim().split(/[\s,]+/u).map(Number) ?? [];
-  const width = values[2];
-  const height = values[3];
-  if (
-    4 !== values.length
-    || values.some((value) => !Number.isFinite(value))
-    || undefined === width
-    || undefined === height
-    || width <= 0
-    || height <= 0
-  ) return null;
-  return { height, width };
-}
-
-function markIntrinsicMermaidLayout(
-  container: HTMLElement
-): void {
-  delete container.dataset.easymdeMermaidLayout;
-  if (1 !== container.children.length || !(container.children[0] instanceof SVGSVGElement)) return;
-  const svg = container.children[0];
-  const role = svg.getAttribute('aria-roledescription')?.trim().toLowerCase();
-  if (!role || !INTRINSIC_MERMAID_LAYOUT_ROLES.has(role)) return;
-  const viewBox = mermaidLayoutViewBox(svg);
-  if (!viewBox) return;
-  container.dataset.easymdeMermaidLayout = role;
-  svg.style.setProperty('width', `${viewBox.width}px`);
-  svg.style.setProperty('height', 'auto');
 }
 
 function isLargeImmersivePreviewRoot(root: ParentNode): boolean {
@@ -713,27 +638,6 @@ export function renderMathContent(
   ).then(() => undefined);
 }
 
-function initializeMermaid(mermaid: MermaidRuntime): void {
-  if (initializedMermaidRuntimes.has(mermaid)) return;
-
-  mermaid.initialize({
-    startOnLoad: false,
-    securityLevel: 'strict',
-    theme: 'default',
-    fontFamily: MERMAID_LABEL_FONT_FAMILY,
-    fontSize: 16,
-    flowchart: {
-      diagramPadding: 12
-    },
-    gantt: {
-      useMaxWidth: true,
-      useWidth: 1200
-    },
-    themeCSS: MERMAID_LABEL_GEOMETRY_CSS
-  });
-  initializedMermaidRuntimes.add(mermaid);
-}
-
 async function renderUncachedMermaidDiagram(
   mermaid: MermaidRuntime,
   cache: Map<string, CachedMermaidSvg>,
@@ -836,7 +740,7 @@ export function renderMermaidContent(
   if (0 === mermaidNodes.length) {
     return Promise.resolve();
   }
-  initializeMermaid(mermaid);
+  initializeMermaidRuntime(mermaid);
   const cache = mermaidSvgCache(mermaid);
 
   return runScheduled(

@@ -11,6 +11,7 @@ import type {
 	VisualRuntimeFeature,
 	VisualRuntimeState,
 } from "../../../contracts/visual-editor";
+import { markIntrinsicMermaidLayout } from "../../../shared/mermaid/mermaid-runtime-config";
 import {
 	normalizeProtectedBlockKind,
 	normalizeProtectedInlineKind,
@@ -640,6 +641,7 @@ class ProtectedAtomNodeView implements NodeView {
 				this.dom.classList.remove("easymde-render-error");
 				this.dom.setAttribute("data-easymde-rendered", "1");
 				this.previewContainer.replaceChildren(safeCachedSvg);
+				markIntrinsicMermaidLayout(this.previewContainer);
 				return;
 			}
 		}
@@ -675,6 +677,7 @@ class ProtectedAtomNodeView implements NodeView {
 				this.dom.classList.remove("easymde-render-error");
 				this.dom.setAttribute("data-easymde-rendered", "1");
 				this.previewContainer.replaceChildren(safeSvg);
+				markIntrinsicMermaidLayout(this.previewContainer);
 			})
 			.catch(() => {
 				if (
@@ -695,6 +698,7 @@ class ProtectedAtomNodeView implements NodeView {
 		const rawMarkdown = readRawMarkdown(this.node);
 		this.dom.classList.remove("easymde-render-error");
 		this.dom.removeAttribute("data-easymde-rendered");
+		delete this.previewContainer.dataset.easymdeMermaidLayout;
 		this.clearPreviewCleanup();
 		if (kind === "math" || kind === "math-inline") {
 			this.renderMathPreview(kind === "math", rawMarkdown);

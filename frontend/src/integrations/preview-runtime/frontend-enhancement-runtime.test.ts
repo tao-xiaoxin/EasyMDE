@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { initializeMermaidRuntime } from '../../shared/mermaid/mermaid-runtime-config';
 import {
   enhanceFrontendContent,
   readCachedMermaidSvg,
@@ -1346,5 +1347,27 @@ describe('frontend enhancement runtime', () => {
       windowRef
     );
     expect(written).toBe('<svg id="easymde-visual-mermaid-45"><text>Visual</text></svg>');
+  });
+
+  it('shares Mermaid initialization state with the canonical runtime config helper across callers', async () => {
+    const windowRef = runtime();
+    const initialize = vi.fn();
+    const sharedMermaid = {
+      initialize,
+      render: vi.fn(async (id: string) => ({
+        svg: `<svg id="${id}" aria-roledescription="gantt" viewBox="0 0 1200 268"><rect width="1200" height="268"></rect></svg>`
+      }))
+    };
+    windowRef.mermaid = sharedMermaid;
+
+    initializeMermaidRuntime(sharedMermaid);
+
+    const root = document.createElement('article');
+    root.innerHTML = '<pre><code class="language-mermaid">gantt\n  title Shared</code></pre>';
+    await renderMermaidContent(root, { features: { mermaid: true } }, windowRef);
+
+    expect(initialize).toHaveBeenCalledTimes(1);
+    expect(root.querySelector('.easymde-mermaid')?.getAttribute('data-easymde-mermaid-layout'))
+      .toBe('gantt');
   });
 });

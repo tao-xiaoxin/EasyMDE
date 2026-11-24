@@ -844,45 +844,33 @@ test.describe('EasyMDE editor workflows', () => {
     const user = testInfo.easymdeUser;
     const imageUploadRequests = [];
     const imageHostingUploadPath = '/wp-json/easymde/v1/image-hosting/upload';
-    const browserErrors = [];
-    const failedRequests = [];
-    const cancelledPreviewRequests = [];
+    const syntheticUploadedImageUrl = 'https://images.example.test/e2e/synthetic-pixel.png';
+    const syntheticPixelBase64 =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    const syntheticPixelBuffer = Buffer.from(syntheticPixelBase64, 'base64');
+    const isImageHostingUpload = (url) =>
+      new URL(url).pathname.endsWith(imageHostingUploadPath);
 
     testInfo.easymdeOriginalImageHostingEnabled = imageHostingEnabledSetting();
     setImageHostingEnabledSetting(true);
 
-    page.on('console', (message) => {
-      if (['error', 'warning'].includes(message.type())) browserErrors.push(message.text());
+    const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
+      baseURL: testInfo.project.use.baseURL
     });
-    page.on('pageerror', (error) => browserErrors.push(error.message));
-    page.on('requestfailed', (request) => {
-      const pathname = new URL(request.url()).pathname;
-      const isManagedRequest =
-        pathname.includes('/wp-content/plugins/easymde/')
-        || pathname.includes('/wp-json/easymde/');
-      if (!isManagedRequest) {
+    const onImageUploadRequest = (request) => {
+      let pathname = '';
+      try {
+        pathname = new URL(request.url()).pathname;
+      } catch {
         return;
       }
-
-      const errorText = request.failure()?.errorText ?? 'unknown-request-failure';
-      const isPreviewCancellation =
-        'net::ERR_ABORTED' === errorText
-        && 'POST' === request.method()
-        && pathname.endsWith('/wp-json/easymde/v1/preview');
-      if (isPreviewCancellation) {
-        cancelledPreviewRequests.push({ method: request.method(), pathname });
-        return;
-      }
-
-      failedRequests.push({ errorText, method: request.method(), pathname });
-    });
-
-    page.on('request', (request) => {
-      if (new URL(request.url()).pathname.endsWith(imageHostingUploadPath)) {
+      if (pathname.endsWith(imageHostingUploadPath)) {
         imageUploadRequests.push(request);
       }
-    });
+    };
+    page.on('request', onImageUploadRequest);
 
+    try {
     await login(page, user);
     await openEasyMdeNewPost(page);
 
@@ -967,8 +955,7 @@ test.describe('EasyMDE editor workflows', () => {
       canvas.dispatchEvent(new Event('scroll'));
       return sourceScroller.scrollTop;
     })).toBe(0);
-    expect(browserErrors).toEqual([]);
-    expect(failedRequests).toEqual([]);
+    browserMonitor.assertClean();
 
     const beforeRejectedDrop = 'Before rejected image drop.';
     await sourceEditor.fill(beforeRejectedDrop);
@@ -1038,15 +1025,20 @@ test.describe('EasyMDE editor workflows', () => {
     const beforeAcceptedDrop = 'Before accepted image drop.';
     await sourceEditor.fill(beforeAcceptedDrop);
     await sourceEditor.press('End');
-    const isImageHostingUpload = (url) =>
-      new URL(url).pathname.endsWith(imageHostingUploadPath);
+    await page.route(syntheticUploadedImageUrl, async (route) => {
+      await route.fulfill({
+        body: syntheticPixelBuffer,
+        contentType: 'image/png',
+        status: 200
+      });
+    });
     await page.route(isImageHostingUpload, async (route) => {
       await route.fulfill({
         body: JSON.stringify({
           alt: 'synthetic pixel',
           backup: { status: 'disabled' },
           title: '',
-          url: 'https://images.example.test/e2e/synthetic-pixel.png'
+          url: syntheticUploadedImageUrl
         }),
         contentType: 'application/json',
         status: 200
@@ -1055,10 +1047,8 @@ test.describe('EasyMDE editor workflows', () => {
     const acceptedUploadResponse = page.waitForResponse(
       (response) => new URL(response.url()).pathname.endsWith(imageHostingUploadPath)
     );
-    await sourceEditor.evaluate((source) => {
-      const binary = atob(
-        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
-      );
+    await sourceEditor.evaluate((source, base64Pixel) => {
+      const binary = atob(base64Pixel);
       const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
       const transfer = new DataTransfer();
       transfer.items.add(new File([bytes], 'synthetic-pixel.png', { type: 'image/png' }));
@@ -1067,7 +1057,7 @@ test.describe('EasyMDE editor workflows', () => {
         cancelable: true,
         dataTransfer: transfer
       }));
-    });
+    }, syntheticPixelBase64);
     expect((await acceptedUploadResponse).ok()).toBe(true);
     await expect(editorMessageHost.getByRole('status')).toContainText(
       await page.evaluate(() => window.EasyMDEEditorRootBootstrap.imageUpload.strings.dropUploaded)
@@ -1081,14 +1071,26 @@ test.describe('EasyMDE editor workflows', () => {
     expect(await imageUploadRequests[0].headerValue('X-WP-Nonce')).toBeTruthy();
     await page.unroute(isImageHostingUpload);
     expect(await page.evaluate(() => typeof window.EasyMDEImagePaste)).toBe('undefined');
-    if (cancelledPreviewRequests.length) {
+    if (browserMonitor.counts.cancelledPreview > 0) {
       await testInfo.attach('cancelled-preview-requests', {
-        body: JSON.stringify(cancelledPreviewRequests, null, 2),
+        body: JSON.stringify({
+          category: 'preview-rest',
+          count: browserMonitor.counts.cancelledPreview,
+          failureClass: 'aborted',
+          method: 'POST'
+        }, null, 2),
         contentType: 'application/json'
       });
     }
-    expect(browserErrors).toEqual([]);
-    expect(failedRequests).toEqual([]);
+    browserMonitor.assertClean();
+    } finally {
+      page.off('request', onImageUploadRequest);
+      browserMonitor.dispose();
+      if (!page.isClosed()) {
+        await page.unroute(isImageHostingUpload);
+        await page.unroute(syntheticUploadedImageUrl);
+      }
+    }
   });
 
   test('rejects an older normal preview response after a newer React request wins', async ({ page }, testInfo) => {

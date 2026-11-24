@@ -321,18 +321,13 @@ test('attachPrivacySafeBrowserMonitor stays clean on allowed WordPress navigatio
     resourceType: 'xhr',
     errorText: 'net::ERR_ABORTED'
   }));
-  page.emit('requestfailed', stubRequest({
-    url: 'https://external.example/wp-content/plugins/easymde/a.js',
-    method: 'GET',
-    resourceType: 'script',
-    errorText: 'net::ERR_CONNECTION_REFUSED'
-  }));
   page.emit('response', {
-    status: () => 404,
-    url: () => 'https://external.example/wp-json/easymde/v1/preview',
+    status: () => 200,
+    url: () => 'https://external.example/ok-asset.png',
     request: () => stubRequest({
-      url: 'https://external.example/wp-json/easymde/v1/preview',
-      resourceType: 'fetch'
+      url: 'https://external.example/ok-asset.png',
+      method: 'GET',
+      resourceType: 'image'
     })
   });
 
@@ -340,6 +335,23 @@ test('attachPrivacySafeBrowserMonitor stays clean on allowed WordPress navigatio
   assert.equal(monitor.counts.cancelledPreview, 1);
   assert.equal(monitor.counts.abortedAdminAjax, 1);
   assert.equal(monitor.counts.unexpectedNavigations, 0);
+  assert.deepEqual(monitor.snapshot(), {
+    counts: {
+      abortedAdminAjax: 1,
+      cancelledPreview: 1,
+      consoleErrors: 0,
+      consoleWarnings: 0,
+      dialogs: 0,
+      httpErrors: 0,
+      pageErrors: 0,
+      popups: 0,
+      requestFailures: 0,
+      unexpectedNavigations: 0
+    },
+    failures: [],
+    httpErrors: [],
+    requestFailures: []
+  });
   monitor.dispose();
 });
 
@@ -512,4 +524,259 @@ test('attachPrivacySafeBrowserMonitor records dialog dismiss and popup close fai
     'popup-close-failed:about-blank'
   ]);
   monitor.dispose();
+});
+
+test('attachPrivacySafeBrowserMonitor fails closed when baseURL is invalid', () => {
+  assert.equal(
+    classifyBrowserUrlCategory('https://evil.example/wp-admin/post-new.php', {
+      baseOrigin: null,
+      basePath: '',
+      invalidBase: true
+    }),
+    'external'
+  );
+  assert.equal(
+    classifyBrowserUrlCategory('https://evil.example/wp-json/easymde/v1/preview', {
+      baseOrigin: null,
+      basePath: '',
+      invalidBase: true
+    }),
+    'external'
+  );
+  assert.deepEqual(
+    classifyReadonlyPostRequest(
+      stubRequest({
+        url: 'https://evil.example/wp-json/easymde/v1/preview',
+        postData: '{"markdown":"alpha"}'
+      }),
+      { invalidBase: true }
+    ),
+    { category: 'external-post', classification: 'unexpected-write' }
+  );
+
+  const page = createStubPage();
+  const monitor = attachPrivacySafeBrowserMonitor(page, {
+    baseURL: 'not-a-valid-base'
+  });
+
+  page.navigateMainFrame('https://evil.example/wp-admin/post-new.php');
+  page.emit('requestfailed', stubRequest({
+    url: 'https://evil.example/wp-json/easymde/v1/preview',
+    method: 'POST',
+    resourceType: 'fetch',
+    errorText: 'net::ERR_ABORTED'
+  }));
+  page.emit('response', {
+    status: () => 500,
+    url: () => 'https://evil.example/wp-json/easymde/v1/preview',
+    request: () => stubRequest({
+      url: 'https://evil.example/wp-json/easymde/v1/preview',
+      method: 'POST',
+      resourceType: 'fetch'
+    })
+  });
+  page.emit('console', {
+    type: () => 'error',
+    text: () => 'sensitive-console-secret',
+    location: () => ({ url: 'https://evil.example/wp-json/easymde/v1/preview' })
+  });
+
+  const snap = monitor.snapshot();
+  assert.equal(snap.counts.unexpectedNavigations, 1);
+  assert.equal(snap.counts.cancelledPreview, 0);
+  assert.equal(snap.counts.requestFailures, 1);
+  assert.equal(snap.counts.httpErrors, 1);
+  assert.equal(snap.counts.consoleErrors, 1);
+  assert.deepEqual(snap.requestFailures, [
+    { category: 'external', resourceType: 'fetch', failureClass: 'aborted' }
+  ]);
+  assert.deepEqual(snap.httpErrors, [
+    { category: 'external', resourceType: 'fetch', status: 500 }
+  ]);
+  assert.deepEqual(snap.failures, [
+    'navigation:external',
+    'request-failed:aborted:external:fetch',
+    'http-500:external:fetch',
+    'console-error:external'
+  ]);
+  assert.doesNotMatch(JSON.stringify(snap), /evil\.example|wp-admin|wp-json|sensitive-console-secret/u);
+
+  assert.throws(
+    () => monitor.assertClean(),
+    (error) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /navigation:external/u);
+      assert.match(error.message, /request-failed:aborted:external:fetch/u);
+      assert.match(error.message, /http-500:external:fetch/u);
+      assert.doesNotMatch(error.message, /evil\.example|wp-admin|preview-rest/u);
+      return true;
+    }
+  );
+  monitor.dispose();
+});
+
+test('attachPrivacySafeBrowserMonitor records cross-origin requestfailed and HTTP 4xx/5xx responses in snapshot and fails assertClean', () => {
+  const page = createStubPage();
+  const monitor = attachPrivacySafeBrowserMonitor(page, { baseURL: BASE_URL });
+
+  page.emit('requestfailed', stubRequest({
+    url: 'https://external.example/img.png?token=secret-query',
+    method: 'GET',
+    resourceType: 'image',
+    errorText: 'net::ERR_NAME_NOT_RESOLVED'
+  }));
+  page.emit('response', {
+    status: () => 503,
+    url: () => 'https://external.example/upload/endpoint?auth=secret-token',
+    request: () => stubRequest({
+      url: 'https://external.example/upload/endpoint?auth=secret-token',
+      method: 'POST',
+      resourceType: 'fetch'
+    })
+  });
+
+  const snap = monitor.snapshot();
+  assert.equal(snap.counts.requestFailures, 1);
+  assert.equal(snap.counts.httpErrors, 1);
+  assert.deepEqual(snap.requestFailures, [
+    { category: 'external', resourceType: 'image', failureClass: 'dns' }
+  ]);
+  assert.deepEqual(snap.httpErrors, [
+    { category: 'external', resourceType: 'fetch', status: 503 }
+  ]);
+  assert.deepEqual(snap.failures, [
+    'request-failed:dns:external:image',
+    'http-503:external:fetch'
+  ]);
+  assert.doesNotMatch(
+    JSON.stringify(snap),
+    /external\.example|img\.png|secret-query|upload|secret-token/u
+  );
+
+  // Mutating the snapshot copy must not alter internal monitor state.
+  snap.failures.push('mutated');
+  snap.requestFailures[0].category = 'mutated';
+  snap.httpErrors[0].status = 999;
+  assert.deepEqual(monitor.snapshot().requestFailures, [
+    { category: 'external', resourceType: 'image', failureClass: 'dns' }
+  ]);
+  assert.deepEqual(monitor.snapshot().httpErrors, [
+    { category: 'external', resourceType: 'fetch', status: 503 }
+  ]);
+
+  assert.throws(
+    () => monitor.assertClean(),
+    (error) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /requestFailures=1/u);
+      assert.match(error.message, /httpErrors=1/u);
+      assert.match(error.message, /request-failed:dns:external:image/u);
+      assert.match(error.message, /http-503:external:fetch/u);
+      assert.doesNotMatch(
+        error.message,
+        /external\.example|img\.png|secret-query|upload|secret-token/u
+      );
+      return true;
+    }
+  );
+  monitor.dispose();
+});
+
+test('attachPrivacySafeBrowserMonitor supports narrow opt-in allowExpectedFailure for external failures only', () => {
+  const seenEntries = [];
+  const page = createStubPage();
+  const monitor = attachPrivacySafeBrowserMonitor(page, {
+    baseURL: BASE_URL,
+    allowExpectedFailure(entry) {
+      seenEntries.push(entry);
+      return (
+        'requestfailed' === entry.type
+        && 'external' === entry.category
+        && 'image' === entry.resourceType
+        && 'dns' === entry.failureClass
+      ) || (
+        'response' === entry.type
+        && 'external' === entry.category
+        && 'image' === entry.resourceType
+        && 503 === entry.status
+      );
+    }
+  });
+
+  page.emit('requestfailed', stubRequest({
+    url: 'https://external.example/expected-missing.png?k=v',
+    method: 'GET',
+    resourceType: 'image',
+    errorText: 'net::ERR_NAME_NOT_RESOLVED'
+  }));
+  page.emit('response', {
+    status: () => 503,
+    url: () => 'https://external.example/expected-unavailable.png?k=v',
+    request: () => stubRequest({
+      url: 'https://external.example/expected-unavailable.png?k=v',
+      method: 'GET',
+      resourceType: 'image'
+    })
+  });
+  monitor.assertClean();
+  assert.deepEqual(seenEntries, [
+    { type: 'requestfailed', category: 'external', resourceType: 'image', failureClass: 'dns' },
+    { type: 'response', category: 'external', resourceType: 'image', status: 503 }
+  ]);
+
+  // Unmatched external failure and same-origin failures must still fail.
+  page.emit('response', {
+    status: () => 503,
+    url: () => 'https://external.example/unexpected-api',
+    request: () => stubRequest({
+      url: 'https://external.example/unexpected-api',
+      method: 'GET',
+      resourceType: 'fetch'
+    })
+  });
+  assert.deepEqual(monitor.snapshot().httpErrors, [
+    { category: 'external', resourceType: 'fetch', status: 503 }
+  ]);
+  assert.throws(() => monitor.assertClean());
+  monitor.dispose();
+
+  // allowExpectedFailure cannot silence same-origin failures and fails closed on thrown errors.
+  const sameOriginPage = createStubPage();
+  const permissiveMonitor = attachPrivacySafeBrowserMonitor(sameOriginPage, {
+    baseURL: BASE_URL,
+    allowExpectedFailure: () => true
+  });
+  sameOriginPage.emit('response', {
+    status: () => 503,
+    url: () => `${BASE_URL}/wp-json/easymde/v1/preview`,
+    request: () => stubRequest({
+      url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+      method: 'POST',
+      resourceType: 'fetch'
+    })
+  });
+  assert.deepEqual(permissiveMonitor.snapshot().httpErrors, [
+    { category: 'preview-rest', resourceType: 'fetch', status: 503 }
+  ]);
+  assert.throws(() => permissiveMonitor.assertClean());
+  permissiveMonitor.dispose();
+
+  const throwingPage = createStubPage();
+  const throwingMonitor = attachPrivacySafeBrowserMonitor(throwingPage, {
+    baseURL: BASE_URL,
+    allowExpectedFailure() {
+      throw new Error('predicate-error');
+    }
+  });
+  throwingPage.emit('requestfailed', stubRequest({
+    url: 'https://external.example/img.png',
+    method: 'GET',
+    resourceType: 'image',
+    errorText: 'net::ERR_NAME_NOT_RESOLVED'
+  }));
+  assert.deepEqual(throwingMonitor.snapshot().requestFailures, [
+    { category: 'external', resourceType: 'image', failureClass: 'dns' }
+  ]);
+  assert.throws(() => throwingMonitor.assertClean());
+  throwingMonitor.dispose();
 });

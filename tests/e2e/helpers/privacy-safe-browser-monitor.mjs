@@ -75,6 +75,9 @@ function resolveBaseContext(input) {
     return { baseOrigin: null, basePath: '', invalidBase: false };
   }
   if ('object' === typeof input) {
+    if (true === input.invalidBase) {
+      return { baseOrigin: null, basePath: '', invalidBase: true };
+    }
     if ('baseURL' in input && undefined !== input.baseURL && null !== input.baseURL && '' !== input.baseURL) {
       return resolveBaseContext(input.baseURL);
     }
@@ -285,7 +288,7 @@ export function classifyReadonlyPostRequest(requestOrInput, options = {}) {
   }
 
   const hasExplicitOptions = options && 'object' === typeof options
-    && ('baseURL' in options || 'baseOrigin' in options || 'basePath' in options);
+    && ('baseURL' in options || 'baseOrigin' in options || 'basePath' in options || 'invalidBase' in options);
   const baseContext = resolveBaseContext(hasExplicitOptions ? options : requestOrInput);
   if (baseContext.invalidBase) {
     return {
@@ -445,11 +448,13 @@ function resolveAllowedNavigationCategories(allowedNavigationCategories) {
 
 export function attachPrivacySafeBrowserMonitor(
   page,
-  { baseURL, allowedNavigationCategories } = {}
+  { baseURL, allowedNavigationCategories, allowExpectedFailure } = {}
 ) {
   const baseContext = resolveBaseContext(baseURL);
   const allowedNavigations = resolveAllowedNavigationCategories(allowedNavigationCategories);
   const failures = [];
+  const requestFailureSummaries = [];
+  const httpErrorSummaries = [];
   const counts = {
     abortedAdminAjax: 0,
     cancelledPreview: 0,
@@ -461,6 +466,14 @@ export function attachPrivacySafeBrowserMonitor(
     popups: 0,
     requestFailures: 0,
     unexpectedNavigations: 0
+  };
+  const isExpectedFailure = (entry) => {
+    if ('function' !== typeof allowExpectedFailure) return false;
+    try {
+      return true === allowExpectedFailure({ ...entry });
+    } catch {
+      return false;
+    }
   };
   const record = (code) => {
     if (failures.length < 128 && !failures.includes(code)) {
@@ -535,7 +548,6 @@ export function attachPrivacySafeBrowserMonitor(
   };
   const onRequestFailed = (request) => {
     const category = classifyBrowserUrlCategory(request.url(), baseContext);
-    if ('external' === category) return;
     const failureClass = safeBrowserFailureClass(request.failure()?.errorText);
     const rawResourceType = request.resourceType();
     const resourceType = SAFE_BROWSER_RESOURCE_TYPES.has(rawResourceType)
@@ -553,19 +565,40 @@ export function attachPrivacySafeBrowserMonitor(
       counts.abortedAdminAjax += 1;
       return;
     }
+    const summary = {
+      category,
+      resourceType,
+      failureClass
+    };
+    if ('external' === category && isExpectedFailure({ type: 'requestfailed', ...summary })) {
+      return;
+    }
     counts.requestFailures += 1;
+    if (requestFailureSummaries.length < 128) {
+      requestFailureSummaries.push(summary);
+    }
     record(`request-failed:${failureClass}:${category}:${resourceType}`);
   };
   const onResponse = (response) => {
     const status = response.status();
     if (!Number.isInteger(status) || status < 400) return;
     const category = classifyBrowserUrlCategory(response.url(), baseContext);
-    if ('external' === category) return;
     const rawResourceType = response.request?.()?.resourceType?.();
     const resourceType = SAFE_BROWSER_RESOURCE_TYPES.has(rawResourceType)
       ? rawResourceType
       : 'other';
+    const summary = {
+      category,
+      resourceType,
+      status
+    };
+    if ('external' === category && isExpectedFailure({ type: 'response', ...summary })) {
+      return;
+    }
     counts.httpErrors += 1;
+    if (httpErrorSummaries.length < 128) {
+      httpErrorSummaries.push(summary);
+    }
     record(`http-${status}:${category}:${resourceType}`);
   };
   page.on('pageerror', onPageError);
@@ -579,6 +612,14 @@ export function attachPrivacySafeBrowserMonitor(
   return {
     counts,
     failures,
+    snapshot() {
+      return {
+        counts: { ...counts },
+        failures: [...failures],
+        httpErrors: httpErrorSummaries.map((entry) => ({ ...entry })),
+        requestFailures: requestFailureSummaries.map((entry) => ({ ...entry }))
+      };
+    },
     assertClean() {
       assert.deepEqual(
         failures,

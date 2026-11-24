@@ -220,6 +220,12 @@ export async function executeModernCopyTransaction(
 		if (htmlBlob instanceof Promise) void htmlBlob.catch(() => undefined);
 		if (textBlob instanceof Promise) void textBlob.catch(() => undefined);
 	};
+	const rejectDeferred = (error: unknown): void => {
+		const rejectPayload = rejectDeferredPayload as
+			| ((reason: unknown) => void)
+			| null;
+		rejectPayload?.(error);
+	};
 	let writePromise: Promise<void>;
 	if (prestartedWrite) {
 		prestartedWrite.bind(htmlBlob, textBlob);
@@ -234,23 +240,32 @@ export async function executeModernCopyTransaction(
 				"text/plain": textBlob,
 			});
 			writePromise = Promise.resolve(runtime.write([item]));
-		} catch {
+		} catch (error: unknown) {
+			observeBlobRejections();
+			rejectDeferred(error);
 			transaction.finishTotal("error");
 			transaction.cleanup();
 			detachCopyAbort();
-			observeBlobRejections();
 			if (copyWasCancelled()) {
 				return transaction.onFailure(new Error("wechat-copy-cancelled"));
 			}
 			return transaction.onSynchronousModernFailure();
 		}
 	}
+	// Observe writePromise before transaction.start() so an immediate write
+	// rejection cleans up and cancels the transaction before readiness
+	// continuations can run layout walks or schedule deferred browser tasks.
+	const writeResult: Promise<ClipboardWriteResult> = writePromise.then(
+		() => ({ error: null }),
+		(error: unknown) => {
+			observeBlobRejections();
+			rejectDeferred(error);
+			transaction.cleanup();
+			return { error };
+		},
+	);
 	transaction.start();
 	try {
-		const writeResult: Promise<ClipboardWriteResult> = writePromise.then(
-			() => ({ error: null }),
-			(error: unknown) => ({ error }),
-		);
 		const writeFailure = writeResult.then(({ error }) => {
 			if (null !== error) throw error;
 			return new Promise<never>(() => undefined);
@@ -290,10 +305,7 @@ export async function executeModernCopyTransaction(
 		// enter the activation-sensitive legacy path. Report the failure
 		// instead of attempting an asynchronous compatibility fallback.
 		observeBlobRejections();
-		const rejectPayload = rejectDeferredPayload as
-			| ((error: unknown) => void)
-			| null;
-		rejectPayload?.(error);
+		rejectDeferred(error);
 		return transaction.onFailure(error);
 	} finally {
 		transaction.cleanup();

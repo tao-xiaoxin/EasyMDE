@@ -654,4 +654,60 @@ describe('createBrowserWechatClipboard', () => {
     expect(write).not.toHaveBeenCalled();
   });
 
+  it('settles deferred portable Blob promises without unhandled rejections when runtime.write throws synchronously after ClipboardItem creation', async () => {
+    const capturedPayloads: Record<string, Blob | PromiseLike<Blob>>[] = [];
+    class SpyClipboardItem {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {
+        capturedPayloads.push(payload);
+      }
+    }
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown): void => {
+      unhandledRejections.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandledRejection);
+    const resolvePreview = vi.fn(async () => null);
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: SpyClipboardItem,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn(() => {
+        throw new Error('portable-write-sync-throw');
+      })
+    });
+
+    try {
+      const hiddenPreview = readyPreview();
+      hiddenPreview.classList.add('easymde-preview-surface-hidden');
+      await expect(clipboard.copy(hiddenPreview, { resolvePreview })).resolves.toEqual({
+        code: 'wechat-copy-failed',
+        status: 'failed'
+      });
+      expect(resolvePreview).not.toHaveBeenCalled();
+
+      const visiblePreview = readyPreview();
+      await expect(clipboard.copy(visiblePreview)).resolves.toEqual({
+        method: 'legacy',
+        status: 'copied'
+      });
+
+      expect(capturedPayloads).toHaveLength(2);
+      for (const payload of capturedPayloads) {
+        expect(payload['text/html']).toBeInstanceOf(Promise);
+        expect(payload['text/plain']).toBeInstanceOf(Promise);
+        await expect(payload['text/html']).rejects.toThrow('portable-write-sync-throw');
+        await expect(payload['text/plain']).rejects.toThrow('portable-write-sync-throw');
+      }
+
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
+  });
+
 });

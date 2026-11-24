@@ -1,5 +1,7 @@
 import type { WechatVisualRasterizationKind } from '../../../contracts/ports/wechat-visual-rasterization-port';
 
+export { isTaskListCheckbox } from './wechat-copy-preconditions';
+
 export const SVG_DEFINITION_TAGS = new Set([
   'clippath',
   'filter',
@@ -448,24 +450,4 @@ export function isMermaidSvgRoot(source: Element): boolean {
 
 export function isMermaidForeignObject(source: Element): boolean {
   return 'foreignobject' === source.localName.toLowerCase() && hasAncestorWithClass(source, 'easymde-mermaid');
-}
-
-export function isTaskListCheckbox(source: Element): boolean {
-  if ('INPUT' !== source.tagName || 'checkbox' !== source.getAttribute('type')?.toLowerCase()) {
-    return false;
-  }
-  if (source.hasAttribute('class') && source.classList.contains('easymde-task-checkbox')) {
-    return true;
-  }
-  let current: Element | null = source;
-  while (current) {
-    if (
-      current.hasAttribute('class') &&
-      (current.classList.contains('task-list-item') || current.classList.contains('task-list'))
-    ) {
-      return true;
-    }
-    current = current.parentElement;
-  }
-  return false;
 }

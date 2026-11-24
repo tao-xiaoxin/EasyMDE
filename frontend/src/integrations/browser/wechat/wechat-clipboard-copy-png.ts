@@ -133,6 +133,15 @@ export function createPngCopyTransaction(
 		typeof createWechatTableNativeGridGuard
 	> | null = null;
 	let tableNativeGridTransactionOpen = true;
+	const assertTransactionOpen = (): void => {
+		if (
+			conversionSignal.aborted ||
+			!tableNativeGridTransactionOpen ||
+			(options.isCurrent && !options.isCurrent())
+		) {
+			throw new WechatPngConversionError("wechat-png-rasterization-cancelled");
+		}
+	};
 	const closeTableNativeGridTransaction = (): void => {
 		if (!tableNativeGridTransactionOpen) return;
 		tableNativeGridTransactionOpen = false;
@@ -254,6 +263,8 @@ export function createPngCopyTransaction(
 		// observes cancellation before it can read released geometry.
 		conversionController.abort();
 		readyPreview.abort();
+		contentBoxes?.cleanup();
+		contentBoxes = null;
 		finishCopyTotal("error");
 		readinessTiming?.fail();
 		disposeColdSourceFreshness?.();
@@ -278,6 +289,7 @@ export function createPngCopyTransaction(
 				.then((resolvedPreview) => {
 					if (
 						conversionSignal.aborted ||
+						!tableNativeGridTransactionOpen ||
 						(options.isCurrent && !options.isCurrent())
 					) {
 						disposeColdSourceFreshness?.();
@@ -381,6 +393,7 @@ export function createPngCopyTransaction(
 					});
 					return readinessTiming.ready
 						.then(async () => {
+							assertTransactionOpen();
 							if (
 								serializationPreview.matches(
 									".easymde-mermaid[data-easymde-mermaid-layout]",
@@ -389,12 +402,13 @@ export function createPngCopyTransaction(
 									".easymde-mermaid[data-easymde-mermaid-layout]",
 								)
 							) {
-								contentBoxes = createMermaidContentBoxLease(
+								const activeContentBoxes = createMermaidContentBoxLease(
 									serializationPreview,
 									conversionSignal,
 								);
+								contentBoxes = activeContentBoxes;
 								try {
-									await contentBoxes.ready;
+									await activeContentBoxes.ready;
 								} catch {
 									throw new WechatPngConversionError(
 										conversionSignal.aborted
@@ -402,12 +416,16 @@ export function createPngCopyTransaction(
 											: "wechat-png-rasterization-failed",
 									);
 								}
-								if (!contentBoxes.isCurrent()) {
+								assertTransactionOpen();
+								if (!activeContentBoxes.isCurrent()) {
 									throw new WechatPngConversionError(
 										"wechat-png-rasterization-cancelled",
 									);
 								}
-								runtime = { ...runtime, mermaidContentBoxes: contentBoxes };
+								runtime = {
+									...runtime,
+									mermaidContentBoxes: activeContentBoxes,
+								};
 							}
 							const nativeGridMeasurement =
 								cachedGeometryMeasurement?.lease ?? geometryMeasurement;
@@ -423,13 +441,13 @@ export function createPngCopyTransaction(
 									"wechat-png-rasterization-cancelled",
 								);
 							}
-							tableNativeGridMeasurement = nativeGridMeasurement;
-							tableNativeGridGuard = createWechatTableNativeGridGuard(
+							assertTransactionOpen();
+							const nextTableNativeGridGuard = createWechatTableNativeGridGuard(
 								serializationPreview,
 								runtime,
 								true,
 							);
-							conversionFidelitySignature = preparedLayoutSignature(
+							const nextFidelitySignature = preparedLayoutSignature(
 								resolvedPreview,
 								runtime,
 								serializationPreview,
@@ -437,6 +455,10 @@ export function createPngCopyTransaction(
 								undefined,
 								true,
 							);
+							assertTransactionOpen();
+							tableNativeGridMeasurement = nativeGridMeasurement;
+							tableNativeGridGuard = nextTableNativeGridGuard;
+							conversionFidelitySignature = nextFidelitySignature;
 							disposeGeometryMeasurement = undefined;
 							disposeTableNativeGridMeasurement = () => {
 								nativeGridMeasurement?.cleanup();
@@ -448,6 +470,7 @@ export function createPngCopyTransaction(
 							const conversionContext: WechatPngConversionContext = {
 								captureBoundary: serializationPreview,
 								isCurrent: () =>
+									tableNativeGridTransactionOpen &&
 									(!options.isCurrent || options.isCurrent()) &&
 									sourceFreshness.isCurrent() &&
 									(!contentBoxes || contentBoxes.isCurrent()),
@@ -528,8 +551,11 @@ export function createPngCopyTransaction(
 										);
 										assertPngConversionCurrent(conversionContext);
 										await geometryMeasurement?.wait();
+										assertPngConversionCurrent(conversionContext);
 										await transitionReadiness?.wait();
+										assertPngConversionCurrent(conversionContext);
 										await taskGeometryLease?.wait();
+										assertPngConversionCurrent(conversionContext);
 										runWechatSyncTiming(
 											serializationPreview.ownerDocument.defaultView
 												?.performance,

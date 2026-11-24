@@ -1036,4 +1036,243 @@ describe('createBrowserWechatClipboard', () => {
     }
   });
 
+  it('skips post-cleanup layout walks, native-grid guards, and stray timers when PNG write rejects immediately or mid-readiness', async () => {
+    vi.useFakeTimers();
+    try {
+      // Case 1: write() returns an immediately rejected Promise.
+      {
+        const rasterize = vi.fn();
+        const upload = vi.fn();
+        const getComputedStyle = vi.fn((element: Element, pseudoElement?: string) =>
+          computedStyle(element, pseudoElement)
+        );
+        const preview = readyPreview();
+        preview.innerHTML = '<p>Body</p><table><tbody><tr><td>Cell</td></tr></tbody></table>';
+        const clipboard = createBrowserWechatClipboard({
+          blob: Blob,
+          clipboardItem: class {
+            constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+          },
+          document,
+          getComputedStyle,
+          getSelection: window.getSelection.bind(window),
+          pageOffset: () => ({ x: 0, y: 0 }),
+          scrollTo: vi.fn(),
+          write: vi.fn(() => Promise.reject(new Error('NotAllowedError')))
+        });
+
+        await expect(
+          clipboard.copy(preview, pngOptions({ rasterize }, { upload } as never))
+        ).resolves.toEqual({
+          code: 'wechat-png-clipboard-failed',
+          sideEffects: 'none',
+          status: 'failed'
+        });
+
+        const styleCallsAfterCleanup = getComputedStyle.mock.calls.length;
+        for (let tick = 0; tick < 8; tick += 1) {
+          await Promise.resolve();
+        }
+
+        expect(getComputedStyle.mock.calls.length).toBe(styleCallsAfterCleanup);
+        expect(
+          getComputedStyle.mock.calls.some(([element]) => 'TABLE' === element.tagName || 'TD' === element.tagName)
+        ).toBe(false);
+        expect(vi.getTimerCount()).toBe(0);
+        expect(rasterize).not.toHaveBeenCalled();
+        expect(upload).not.toHaveBeenCalled();
+      }
+
+      // Case 2: readinessTiming is already created, then write() rejects before readinessTiming.ready continuation runs.
+      {
+        let rejectWrite!: (error: unknown) => void;
+        const pendingWrite = new Promise<void>((_resolve, reject) => {
+          rejectWrite = reject;
+        });
+        const rasterize = vi.fn();
+        const upload = vi.fn();
+        const getComputedStyle = vi.fn((element: Element, pseudoElement?: string) =>
+          computedStyle(element, pseudoElement)
+        );
+        const preview = readyPreview();
+        preview.innerHTML = '<p>Body</p><table><tbody><tr><td>Cell</td></tr></tbody></table>';
+        const clipboard = createBrowserWechatClipboard({
+          blob: Blob,
+          clipboardItem: class {
+            constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+          },
+          document,
+          getComputedStyle,
+          getSelection: window.getSelection.bind(window),
+          pageOffset: () => ({ x: 0, y: 0 }),
+          scrollTo: vi.fn(),
+          write: vi.fn(() => pendingWrite)
+        });
+
+        const copy = clipboard.copy(preview, pngOptions({ rasterize }, { upload } as never));
+        // Advance one microtask so readyPreview.promise.then creates readinessTiming.
+        await Promise.resolve();
+        const styleCallsBeforeReject = getComputedStyle.mock.calls.length;
+        rejectWrite(new Error('NotAllowedError'));
+
+        await expect(copy).resolves.toEqual({
+          code: 'wechat-png-clipboard-failed',
+          sideEffects: 'none',
+          status: 'failed'
+        });
+        for (let tick = 0; tick < 8; tick += 1) {
+          await Promise.resolve();
+        }
+
+        expect(getComputedStyle.mock.calls.length).toBe(styleCallsBeforeReject);
+        expect(
+          getComputedStyle.mock.calls.some(([element]) => 'TABLE' === element.tagName || 'TD' === element.tagName)
+        ).toBe(false);
+        expect(vi.getTimerCount()).toBe(0);
+        expect(rasterize).not.toHaveBeenCalled();
+        expect(upload).not.toHaveBeenCalled();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('skips post-cleanup layout walks and stray timers when PNG copy aborts right as content-box readiness resolves', async () => {
+    vi.useFakeTimers();
+    const originalResizeObserver = globalThis.ResizeObserver;
+    const deliverers: (() => void)[] = [];
+    class ManualResizeObserver {
+      private target: Element | null = null;
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe(target: Element): void {
+        this.target = target;
+        deliverers.push(() => {
+          if (!this.target) return;
+          this.callback(
+            [{ target: this.target, contentRect: { height: 100, width: 200 } } as ResizeObserverEntry],
+            this as unknown as ResizeObserver
+          );
+        });
+      }
+      disconnect(): void {
+        this.target = null;
+      }
+      unobserve(): void {
+        this.target = null;
+      }
+    }
+    vi.stubGlobal('ResizeObserver', ManualResizeObserver);
+    try {
+      const controller = new AbortController();
+      const rasterize = vi.fn();
+      const upload = vi.fn();
+      const getComputedStyle = vi.fn((element: Element, pseudoElement?: string) =>
+        computedStyle(element, pseudoElement)
+      );
+      const preview = readyPreview();
+      preview.innerHTML = [
+        '<div class="easymde-mermaid" data-easymde-mermaid-layout="gantt"><svg width="200" height="100"></svg></div>',
+        '<table><tbody><tr><td>Cell</td></tr></tbody></table>'
+      ].join('');
+      const clipboard = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: class {
+          constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+        },
+        document,
+        getComputedStyle,
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: vi.fn(() => new Promise<void>(() => undefined))
+      });
+
+      const copy = clipboard.copy(preview, pngOptions({ rasterize }, { upload } as never, { signal: controller.signal }));
+      for (let tick = 0; tick < 8 && 0 === deliverers.length; tick += 1) {
+        await Promise.resolve();
+      }
+      expect(deliverers).toHaveLength(1);
+
+      const styleCallsBeforeAbort = getComputedStyle.mock.calls.length;
+      // Resolve content-box readiness and abort in the same synchronous turn so
+      // the continuation resumes after cancellation/cleanup.
+      deliverers[0]?.();
+      controller.abort();
+
+      await expect(copy).resolves.toEqual({
+        code: 'wechat-png-rasterization-cancelled',
+        sideEffects: 'none',
+        status: 'failed'
+      });
+      for (let tick = 0; tick < 8; tick += 1) {
+        await Promise.resolve();
+      }
+
+      expect(getComputedStyle.mock.calls.length).toBe(styleCallsBeforeAbort);
+      expect(
+        getComputedStyle.mock.calls.some(([element]) => 'TABLE' === element.tagName || 'TD' === element.tagName)
+      ).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(rasterize).not.toHaveBeenCalled();
+      expect(upload).not.toHaveBeenCalled();
+    } finally {
+      vi.stubGlobal('ResizeObserver', originalResizeObserver);
+      vi.useRealTimers();
+    }
+  });
+
+  it('settles deferred PNG Blob promises cleanly when runtime.write throws synchronously after ClipboardItem creation', async () => {
+    const capturedPayloads: Record<string, Blob | PromiseLike<Blob>>[] = [];
+    class SpyClipboardItem {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {
+        capturedPayloads.push(payload);
+      }
+    }
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown): void => {
+      unhandledRejections.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandledRejection);
+    const rasterize = vi.fn();
+    const upload = vi.fn();
+    const preview = readyPreview();
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: SpyClipboardItem,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn(() => {
+        throw new Error('png-write-sync-throw');
+      })
+    });
+
+    try {
+      await expect(
+        clipboard.copy(preview, pngOptions({ rasterize }, { upload } as never))
+      ).resolves.toEqual({
+        code: 'wechat-png-clipboard-failed',
+        sideEffects: 'none',
+        status: 'failed'
+      });
+
+      expect(capturedPayloads).toHaveLength(1);
+      const htmlBlob = capturedPayloads[0]?.['text/html'];
+      const textBlob = capturedPayloads[0]?.['text/plain'];
+      expect(htmlBlob).toBeInstanceOf(Promise);
+      expect(textBlob).toBeInstanceOf(Promise);
+      await expect(htmlBlob).rejects.toThrow('png-write-sync-throw');
+      await expect(textBlob).rejects.toThrow('png-write-sync-throw');
+
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      expect(rasterize).not.toHaveBeenCalled();
+      expect(upload).not.toHaveBeenCalled();
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
+  });
+
 });

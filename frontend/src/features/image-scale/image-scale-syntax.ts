@@ -4,12 +4,20 @@ import {
   unescapeCommonMarkAsciiPunctuation
 } from '../../shared/image-scale-title';
 import {
+  createInlineHtmlScanGuard,
+  type InlineHtmlScanGuard,
+  matchBlockInlineHtmlOrAutolink,
+  matchSingleLineInlineHtmlOrAutolink
+} from '../../shared/markdown/php-commonmark-inline-html';
+import {
   allLinesShareInlineBlock,
   type BlockBacktickRunMap,
-  collectBlockBacktickRuns,
   findLineIndexAtOffset,
   findNextBacktickRun,
+  getCachedBlockBacktickRuns,
+  getCachedInlineHtmlScanGuard,
   getCachedMarkdownBlockScan,
+  getInlineBlockBounds,
   inCodeRange,
   isEscaped,
   normalizeTitleContainerContinuations,
@@ -93,17 +101,16 @@ function findUnescaped(
   return -1;
 }
 
+const AMBIGUOUS_BARE_DEST_CONTINUATION =
+  /^(?:[A-Za-z0-9/=#%&+]|[.~_-][A-Za-z0-9]|\?[A-Za-z0-9_~%+#=&/-])/u;
+
 function hasAmbiguousBareDestinationContinuation(
   source: string,
   start: number,
   destinationAngle: boolean
 ): boolean {
-  if (destinationAngle) return false;
-  let cursor = start;
-  while (cursor < source.length && /[.,!?;:]/u.test(source[cursor] ?? '')) {
-    cursor += 1;
-  }
-  return cursor < source.length && !isWhitespace(source[cursor]);
+  if (destinationAngle || start >= source.length) return false;
+  return AMBIGUOUS_BARE_DEST_CONTINUATION.test(source.slice(start, start + 2));
 }
 
 function parseDestinationRange(
@@ -420,6 +427,7 @@ function findSingleLineImageLabelEnd(
   let pos = start + 2;
   let innerStack: InnerBracketOpener[] | null = null;
   let unmatchedBackticks: Set<number> | null = null;
+  let htmlGuard: InlineHtmlScanGuard | null = null;
   const len = source.length;
 
   while (pos < len) {
@@ -472,6 +480,17 @@ function findSingleLineImageLabelEnd(
       pos = runEnd;
       continue;
     }
+    if ('<' === ch) {
+      if (!htmlGuard) htmlGuard = createInlineHtmlScanGuard();
+      const htmlMatch = matchSingleLineInlineHtmlOrAutolink(source, pos, htmlGuard);
+      if ('needs-multiline' === htmlMatch.status) return { status: 'needs-multiline' };
+      if ('ok' === htmlMatch.status) {
+        pos = htmlMatch.end;
+        continue;
+      }
+      pos += 1;
+      continue;
+    }
     if ('!' === ch && '[' === source[pos + 1]) {
       if (!innerStack) innerStack = [];
       innerStack.push({ active: true, isImage: true });
@@ -513,7 +532,8 @@ function findBlockImageLabelEnd(
   startLineIdx: number,
   groupEnd: number,
   blockEnd: number,
-  backtickRuns: BlockBacktickRunMap | null
+  backtickRuns: BlockBacktickRunMap | null,
+  htmlGuard: InlineHtmlScanGuard
 ): number {
   let segIdx = startLineIdx;
   let pos = start + 2;
@@ -552,6 +572,23 @@ function findBlockImageLabelEnd(
       }
       continue;
     }
+    if ('<' === ch) {
+      const htmlMatch = matchBlockInlineHtmlOrAutolink(
+        source,
+        blocks.lines,
+        segIdx,
+        pos,
+        groupEnd,
+        htmlGuard
+      );
+      if (htmlMatch) {
+        segIdx = htmlMatch.segIdx;
+        pos = htmlMatch.pos;
+        continue;
+      }
+      pos += 1;
+      continue;
+    }
     if ('!' === ch && pos + 1 < seg.lineEnd && '[' === source[pos + 1]) {
       if (!innerStack) innerStack = [];
       innerStack.push({ active: true, isImage: true });
@@ -588,22 +625,6 @@ function findBlockImageLabelEnd(
     pos += 1;
   }
   return -1;
-}
-
-function inlineBlockGroupBounds(
-  lines: ReadonlyArray<ScannedMarkdownLine>,
-  lineIdx: number,
-  targetId: number
-): Readonly<{ groupEnd: number; groupStart: number }> {
-  let groupStart = lineIdx;
-  while (groupStart > 0 && lines[groupStart - 1]?.inlineBlockId === targetId) {
-    groupStart -= 1;
-  }
-  let groupEnd = lineIdx;
-  while (groupEnd + 1 < lines.length && lines[groupEnd + 1]?.inlineBlockId === targetId) {
-    groupEnd += 1;
-  }
-  return { groupEnd, groupStart };
 }
 
 function selectionMatchesImage(
@@ -647,13 +668,20 @@ export function parseImageCore(
   const startLineIdx = findLineIndexAtOffset(blocks.lines, start);
   const startLine = startLineIdx >= 0 ? (blocks.lines[startLineIdx] ?? null) : null;
   if (!startLine || startLine.inlineBlockId < 0) return null;
-  const { groupEnd, groupStart } = inlineBlockGroupBounds(
-    blocks.lines,
+  const { groupEnd, groupStart } = getInlineBlockBounds(
+    blocks,
     startLineIdx,
     startLine.inlineBlockId
   );
   const blockEnd = blocks.lines[groupEnd]?.lineEnd ?? source.length;
-  const backtickRuns = collectBlockBacktickRuns(source, blocks.lines, groupStart, groupEnd);
+  const backtickRuns = getCachedBlockBacktickRuns(
+    source,
+    blocks,
+    startLine.inlineBlockId,
+    groupStart,
+    groupEnd
+  );
+  const htmlGuard = getCachedInlineHtmlScanGuard(blocks, startLine.inlineBlockId);
   const altEnd = findBlockImageLabelEnd(
     source,
     start,
@@ -661,7 +689,8 @@ export function parseImageCore(
     startLineIdx,
     groupEnd,
     blockEnd,
-    backtickRuns
+    backtickRuns,
+    htmlGuard
   );
   if (altEnd < 0) return null;
   return parseBlockDestAndTitle(source, altEnd, blocks, startLine, blockEnd, true);
@@ -690,13 +719,20 @@ export function findMarkdownImageCoreAt(
     return null;
   }
 
-  const { groupEnd, groupStart } = inlineBlockGroupBounds(
-    blocks.lines,
+  const { groupEnd, groupStart } = getInlineBlockBounds(
+    blocks,
     selLineIdx,
     selLine.inlineBlockId
   );
   const blockEnd = blocks.lines[groupEnd]?.lineEnd ?? source.length;
-  const backtickRuns = collectBlockBacktickRuns(source, blocks.lines, groupStart, groupEnd);
+  const backtickRuns = getCachedBlockBacktickRuns(
+    source,
+    blocks,
+    selLine.inlineBlockId,
+    groupStart,
+    groupEnd
+  );
+  const htmlGuard = getCachedInlineHtmlScanGuard(blocks, selLine.inlineBlockId);
 
   const stack: Array<{
     active: boolean;
@@ -743,6 +779,23 @@ export function findMarkdownImageCoreAt(
       }
       continue;
     }
+    if ('<' === ch) {
+      const htmlMatch = matchBlockInlineHtmlOrAutolink(
+        source,
+        blocks.lines,
+        segIdx,
+        pos,
+        groupEnd,
+        htmlGuard
+      );
+      if (htmlMatch) {
+        segIdx = htmlMatch.segIdx;
+        pos = htmlMatch.pos;
+        continue;
+      }
+      pos += 1;
+      continue;
+    }
     if ('!' === ch && pos + 1 < seg.lineEnd && '[' === source[pos + 1]) {
       stack.push({ active: true, isImage: true, line: seg, pos });
       pos += 2;
@@ -776,15 +829,7 @@ export function findMarkdownImageCoreAt(
           ) {
             best = { core, start: opener.pos };
           }
-          if (!opener.isImage) {
-            for (let i = stack.length - 1; i >= 0; i -= 1) {
-              const entry = stack[i];
-              if (entry && !entry.isImage) {
-                if (!entry.active) break;
-                entry.active = false;
-              }
-            }
-          }
+          if (!opener.isImage) deactivateInnerLinks(stack);
           segIdx = findLineIndexAtOffset(blocks.lines, core.imageEnd - 1);
           pos = core.imageEnd;
           continue;

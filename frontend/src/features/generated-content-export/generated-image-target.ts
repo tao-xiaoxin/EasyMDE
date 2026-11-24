@@ -6,6 +6,10 @@ import {
 	type MarkdownImageScaleMatch,
 	parseMarkdownImageScale,
 } from "../image-scale/image-scale-contract";
+import {
+	getCachedMarkdownBlockScan,
+	type ScannedMarkdownBlocks,
+} from "../image-scale/image-scale-markdown-scan";
 
 export type GeneratedImageAcceptedPreview = Readonly<{
 	revision: number;
@@ -301,6 +305,7 @@ export async function hydrateGeneratedImageTargetIndex(
 			const prepared: MarkdownImageScaleMatch[] = [];
 			let blockUnavailable = false;
 			let multilineContext: Readonly<{
+				blocks: ScannedMarkdownBlocks;
 				slice: string;
 				start: number;
 			}> | null = null;
@@ -337,14 +342,17 @@ export async function hydrateGeneratedImageTargetIndex(
 						} else {
 							if (null === multilineContext) {
 								const contextStart = lineStartOffset(input.source, block.from);
+								const slice = input.source.slice(contextStart, block.to);
 								multilineContext = {
-									slice: input.source.slice(contextStart, block.to),
+									blocks: getCachedMarkdownBlockScan(slice),
+									slice,
 									start: contextStart,
 								};
 							}
 							const parsed = parseMarkdownImageScale(
 								multilineContext.slice,
 								range.from - multilineContext.start,
+								multilineContext.blocks,
 							);
 							if (parsed) {
 								image = shiftedImage(parsed, multilineContext.start);

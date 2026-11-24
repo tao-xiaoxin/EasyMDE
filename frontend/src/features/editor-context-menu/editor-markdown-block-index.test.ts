@@ -545,6 +545,40 @@ describe("createEditorMarkdownBlockIndex", () => {
 		expect(nestedIndex.imageBlocks?.[0]?.status).toBe("unavailable");
 	});
 
+	it("preserves inline image ranges whose alt text contains backtick code spans, autolinks, HTML tags/comments, or balanced brackets while rejecting reference-image traps", () => {
+		for (const source of [
+			"![A `]` next](/image.png)",
+			"![A `](` next](/image.png)",
+			"![Alt <https://example.test/a[b>](/image.png)",
+			"![Alt <!-- [ -->](/image.png)",
+			"![Alt <!-- ] -->](/image.png)",
+			'![<span title="](">](https://example.com/a.png "{width=50%}")',
+			'![<https://example.com/?a=]>](https://example.com/a.png "{width=50%}")',
+			"![a [b] c](/image.png)",
+		]) {
+			const index = createEditorMarkdownBlockIndex(source);
+			expect(index.imageBlocks?.[0]?.status, source).toBe("ready");
+			expect(index.imageRanges, source).toEqual([{ from: 0, to: source.length }]);
+		}
+
+		// Inline HTML comments and tag attributes must not produce false-positive image ranges.
+		for (const nonImage of [
+			"hi <!-- ![a](https://example.com/a.png) -->",
+			'<span title="![a](https://example.com/a.png) ">hi</span>',
+			'<span title="![a](<https://example.com/a.png>)">hi</span>',
+			`<span title="![a](https://example.com/a.png 't')">hi</span>`,
+		]) {
+			const index = createEditorMarkdownBlockIndex(nonImage);
+			expect(index.imageRanges, nonImage).toEqual([]);
+		}
+
+		// A reference image whose alt contains `` `](` `` must still stay unavailable.
+		const refTrap = "![A `](` next][ref]\n\n[ref]: /image.png";
+		const refIndex = createEditorMarkdownBlockIndex(refTrap);
+		expect(refIndex.imageRanges).toEqual([]);
+		expect(refIndex.imageBlocks?.[0]?.status).toBe("unavailable");
+	});
+
 	it("excludes image-looking syntax inside accepted math while preserving the adjacent image", () => {
 		const source =
 			"$![math](https://img.test/math.png)$ ![real](https://img.test/real.png)";

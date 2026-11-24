@@ -76,28 +76,51 @@ function nodeKind(name: string): EditorMarkdownBlockKind {
 	return "unavailable";
 }
 
-function imageNodeIsInline(source: string, from: number, to: number): boolean {
+type ImageSyntaxNode = ReturnType<
+	typeof markdownLanguage.parser.parse
+>["topNode"];
+
+function imageNodeIsInline(source: string, node: ImageSyntaxNode): boolean {
 	if (
-		from < 0 ||
-		to <= from ||
-		to > source.length ||
-		"!" !== source[from] ||
-		"[" !== source[from + 1]
+		node.from < 0 ||
+		node.to <= node.from ||
+		node.to > source.length ||
+		"!" !== source[node.from] ||
+		"[" !== source[node.from + 1] ||
+		")" !== source[node.to - 1]
 	) {
 		return false;
 	}
-	let slashRun = 0;
-	for (let index = from + 2; index < to; index += 1) {
-		const character = source[index];
-		if ("\\" === character) {
-			slashRun += 1;
-			continue;
+	const first = node.firstChild;
+	const last = node.lastChild;
+	if (
+		!first ||
+		!last ||
+		"LinkMark" !== first.name ||
+		first.from !== node.from ||
+		first.to !== node.from + 2 ||
+		"LinkMark" !== last.name ||
+		last.from !== node.to - 1 ||
+		last.to !== node.to
+	) {
+		return false;
+	}
+	let previousCloseBracketEnd = -1;
+	for (
+		let child: ImageSyntaxNode | null = first.nextSibling;
+		child;
+		child = child.nextSibling
+	) {
+		if ("LinkMark" === child.name && 1 === child.to - child.from) {
+			if ("]" === source[child.from]) {
+				previousCloseBracketEnd = child.to;
+				continue;
+			}
+			if ("(" === source[child.from] && child.from === previousCloseBracketEnd) {
+				return true;
+			}
 		}
-		const escaped = slashRun % 2 === 1;
-		slashRun = 0;
-		if ("]" === character && !escaped) {
-			return "(" === source[index + 1];
-		}
+		previousCloseBracketEnd = -1;
 	}
 	return false;
 }
@@ -324,7 +347,7 @@ function parserSnapshot(
 		)
 			return;
 		imageNodes.push({
-			available: imageNodeIsInline(projection.text, node.from, node.to),
+			available: imageNodeIsInline(projection.text, node.node),
 			from: originalOffsetAt(projection, node.from),
 			to: originalOffsetAt(projection, node.to),
 		});

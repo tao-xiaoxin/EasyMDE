@@ -1588,4 +1588,237 @@ describe('image scale contract', () => {
     });
     expect(performance.now() - deepImgStart).toBeLessThan(1_000);
   });
+
+  it('supports linked, emphasized, compact-table, and CJK-adjacent bare-destination images while still rejecting truncated URLs', () => {
+    for (const [label, source, expectedDest, expectedRaw] of [
+      [
+        'linked image',
+        '[![Alt](https://img.test/image.png)](https://site.test/page)',
+        'https://img.test/image.png',
+        '![Alt](https://img.test/image.png)'
+      ],
+      [
+        'multiline linked image',
+        '[![Alt\nline2](https://img.test/image.png)](https://site.test/page)',
+        'https://img.test/image.png',
+        '![Alt\nline2](https://img.test/image.png)'
+      ],
+      [
+        'asterisk-emphasized image',
+        '*![alt](https://example.com/a.png)*',
+        'https://example.com/a.png',
+        '![alt](https://example.com/a.png)'
+      ],
+      [
+        'multiline asterisk-emphasized image',
+        '*![alt\nline2](https://example.com/a.png)*',
+        'https://example.com/a.png',
+        '![alt\nline2](https://example.com/a.png)'
+      ],
+      [
+        'underscore-emphasized image',
+        '_![alt](https://example.com/a.png)_',
+        'https://example.com/a.png',
+        '![alt](https://example.com/a.png)'
+      ],
+      [
+        'strikethrough image',
+        '~~![alt](https://example.com/a.png)~~',
+        'https://example.com/a.png',
+        '![alt](https://example.com/a.png)'
+      ],
+      [
+        'compact table cell image',
+        '| Col |\n| --- |\n|![alt](https://example.com/a.png)|',
+        'https://example.com/a.png',
+        '![alt](https://example.com/a.png)'
+      ],
+      [
+        'CJK-adjacent image',
+        '![alt](https://example.com/a.png)中文',
+        'https://example.com/a.png',
+        '![alt](https://example.com/a.png)'
+      ],
+      [
+        'multiline CJK-adjacent image',
+        '![alt\nline2](https://example.com/a.png)中文',
+        'https://example.com/a.png',
+        '![alt\nline2](https://example.com/a.png)'
+      ],
+      [
+        'adjacent images without whitespace',
+        '![a](https://example.com/a.png)![b](https://example.com/b.png)',
+        'https://example.com/a.png',
+        '![a](https://example.com/a.png)'
+      ],
+      [
+        'sentence period after image',
+        '![alt](https://example.com/a.png). Next sentence',
+        'https://example.com/a.png',
+        '![alt](https://example.com/a.png)'
+      ]
+    ] as const) {
+      const start = source.indexOf('![');
+      const parsed = parseMarkdownImageScale(source, start);
+      expect(parsed, `parse:${label}`).toMatchObject({
+        destination: expectedDest,
+        raw: expectedRaw,
+        scale: null,
+        start
+      });
+      const found = findMarkdownImageAt(source, start + 3);
+      expect(found, `find:${label}`).toMatchObject({
+        destination: expectedDest,
+        raw: expectedRaw,
+        scale: null,
+        start
+      });
+      if (!found) throw new Error(`missing-match:${label}`);
+      const scaleRepl = createImageScaleReplacement(source, found, 50);
+      const scaled =
+        source.slice(0, scaleRepl.from) + scaleRepl.insert + source.slice(scaleRepl.to);
+      expect(parseMarkdownImageScale(scaled, start), `scaled:${label}`).toMatchObject({
+        destination: expectedDest,
+        scale: 50,
+        start
+      });
+      const destRepl = createMarkdownImageDestinationReplacement(
+        source,
+        found,
+        'https://example.com/updated.png'
+      );
+      if (!destRepl) throw new Error(`missing-dest-repl:${label}`);
+      const rewritten =
+        source.slice(0, destRepl.from) + destRepl.insert + source.slice(destRepl.to);
+      expect(parseMarkdownImageScale(rewritten, start), `rewritten:${label}`).toMatchObject({
+        destination: 'https://example.com/updated.png',
+        start
+      });
+    }
+
+    // Truncated bare URLs immediately after `)` remain rejected.
+    for (const ambiguous of [
+      '![Alt](https://example.test/a).png',
+      '![Alt](https://example.test/a)b.png',
+      '![Alt](https://example.test/a)/b',
+      '![Alt](https://example.test/a)?q=1',
+      '![Alt](https://example.test/a)#frag',
+      '![Alt](https://example.test/a)_v2.png',
+      '![Alt](https://example.test/a)-v2.png'
+    ]) {
+      expect(parseMarkdownImageScale(ambiguous, 0), `reject-parse:${ambiguous}`).toBeNull();
+      expect(findMarkdownImageAt(ambiguous, 3), `reject-find:${ambiguous}`).toBeNull();
+    }
+  });
+
+  it('skips CommonMark §6.5 autolinks and §6.6 inline raw HTML in image alt text and excludes images inside HTML comments or attributes', () => {
+    for (const [label, source, expectedAlt, expectedDest, expectedScale] of [
+      [
+        'URI autolink containing [ in alt text',
+        '![Alt <https://example.test/a[b>](/image.png)',
+        'Alt <https://example.test/a[b>',
+        '/image.png',
+        null
+      ],
+      [
+        'HTML comment containing [ in alt text',
+        '![Alt <!-- [ -->](/image.png)',
+        'Alt <!-- [ -->',
+        '/image.png',
+        null
+      ],
+      [
+        'HTML comment containing ] in alt text',
+        '![Alt <!-- ] -->](/image.png)',
+        'Alt <!-- ] -->',
+        '/image.png',
+        null
+      ],
+      [
+        'HTML open tag attribute containing ]( in alt text',
+        '![<span title="](">](https://example.com/a.png "{width=50%}")',
+        '<span title="](">',
+        'https://example.com/a.png',
+        50
+      ],
+      [
+        'URI autolink containing ] in alt text',
+        '![<https://example.com/?a=]>](https://example.com/a.png "{width=50%}")',
+        '<https://example.com/?a=]>',
+        'https://example.com/a.png',
+        50
+      ],
+      [
+        'multiline HTML comment containing ] inside blockquote alt text',
+        '> ![Alt <!--\n> ] -->](/image.png "{width=67%}")',
+        'Alt <!--\n> ] -->',
+        '/image.png',
+        67
+      ],
+      [
+        'multiline HTML open tag attribute containing ]( inside blockquote alt text',
+        '> ![<span\n> title="](">](/image.png "{width=33%}")',
+        '<span\n> title="](">',
+        '/image.png',
+        33
+      ],
+      [
+        'HTML PI, declaration, and CDATA containing ] in alt text',
+        '![<? ] ?> <!DOCTYPE ] > <![CDATA[ ] ]]>](/image.png)',
+        '<? ] ?> <!DOCTYPE ] > <![CDATA[ ] ]]>',
+        '/image.png',
+        null
+      ]
+    ] as const) {
+      const start = source.indexOf('![');
+      expect(parseMarkdownImageScale(source, start), `parse:${label}`).toMatchObject({
+        alt: expectedAlt,
+        destination: expectedDest,
+        scale: expectedScale,
+        start
+      });
+      expect(findMarkdownImageAt(source, start + 3), `find:${label}`).toMatchObject({
+        alt: expectedAlt,
+        destination: expectedDest,
+        scale: expectedScale,
+        start
+      });
+    }
+
+    // Non-images inside inline HTML comments and tag attributes MUST NOT match.
+    for (const hidden of [
+      'hi <!-- ![a](https://example.com/a.png) -->',
+      '<span title="![a](https://example.com/a.png) ">hi</span>',
+      '<span title="![a](<https://example.com/a.png>)">hi</span>',
+      `<span title="![a](https://example.com/a.png 't')">hi</span>`,
+      'hi <!--\n![a](https://example.com/a.png)\n-->',
+      'hi <span\ntitle="![a](https://example.com/a.png)">x</span>',
+      '> hi <!--\n> ![a](https://example.com/a.png)\n> -->',
+      'hi <?php ![a](https://example.com/a.png) ?>',
+      'hi <![CDATA[![a](https://example.com/a.png)]]>',
+      'hi <!DOCTYPE ![a](https://example.com/a.png)>'
+    ]) {
+      const fakeStart = hidden.indexOf('![');
+      expect(findMarkdownImageAt(hidden, fakeStart + 3), `hidden:${hidden}`).toBeNull();
+    }
+
+    // Pathological repeated unclosed inline HTML comments/tags stay linear.
+    const adversarialComments = `hi ${'<!-- '.repeat(8_000)}![ok](/ok.png)`;
+    const advStart = performance.now();
+    expect(
+      findMarkdownImageAt(adversarialComments, adversarialComments.indexOf('![ok]') + 3)
+    ).toMatchObject({
+      destination: '/ok.png'
+    });
+    expect(performance.now() - advStart).toBeLessThan(1_000);
+
+    const adversarialTags = `hi ${'<span title="'.repeat(8_000)}![ok](/ok.png)`;
+    const advTagStart = performance.now();
+    expect(
+      findMarkdownImageAt(adversarialTags, adversarialTags.indexOf('![ok]') + 3)
+    ).toMatchObject({
+      destination: '/ok.png'
+    });
+    expect(performance.now() - advTagStart).toBeLessThan(1_000);
+  });
 });

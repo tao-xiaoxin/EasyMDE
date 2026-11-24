@@ -740,6 +740,160 @@ describe("associateGeneratedImageTarget", () => {
 			expect(invalidResult.images, invalidContainer).toHaveLength(0);
 		}
 	});
+
+	it("hydrates images with backtick/autolink/HTML alt text and linked/emphasized/CJK continuations while excluding HTML comments and attributes", async () => {
+		for (const [label, source, expectedRaw, expectedDest, expectedScale] of [
+			[
+				"alt with backtick closing bracket",
+				"![A `]` next](/image.png)",
+				"![A `]` next](/image.png)",
+				"/image.png",
+				null,
+			],
+			[
+				"alt with URI autolink containing [",
+				"![Alt <https://example.test/a[b>](/image.png)",
+				"![Alt <https://example.test/a[b>](/image.png)",
+				"/image.png",
+				null,
+			],
+			[
+				"alt with HTML comment containing [",
+				"![Alt <!-- [ -->](/image.png)",
+				"![Alt <!-- [ -->](/image.png)",
+				"/image.png",
+				null,
+			],
+			[
+				"alt with HTML tag attribute containing ](",
+				'![<span title="](">](https://example.com/a.png "{width=50%}")',
+				'![<span title="](">](https://example.com/a.png "{width=50%}")',
+				"https://example.com/a.png",
+				50,
+			],
+			[
+				"alt with URI autolink containing ]",
+				'![<https://example.com/?a=]>](https://example.com/a.png "{width=50%}")',
+				'![<https://example.com/?a=]>](https://example.com/a.png "{width=50%}")',
+				"https://example.com/a.png",
+				50,
+			],
+			[
+				"multiline linked image",
+				"[![Alt\nline2](https://img.test/image.png)](https://site.test/page)",
+				"![Alt\nline2](https://img.test/image.png)",
+				"https://img.test/image.png",
+				null,
+			],
+			[
+				"multiline emphasized image",
+				"*![alt\nline2](https://example.com/a.png)*",
+				"![alt\nline2](https://example.com/a.png)",
+				"https://example.com/a.png",
+				null,
+			],
+			[
+				"multiline CJK-adjacent image",
+				"![alt\nline2](https://example.com/a.png)中文",
+				"![alt\nline2](https://example.com/a.png)",
+				"https://example.com/a.png",
+				null,
+			],
+			[
+				"compact table image",
+				"| Col |\n| --- |\n|![alt](https://example.com/a.png)|",
+				"![alt](https://example.com/a.png)",
+				"https://example.com/a.png",
+				null,
+			],
+		] as const) {
+			const parsed = createEditorMarkdownBlockIndex(source);
+			const result = await hydrateGeneratedImageTargetIndex({
+				...hydration,
+				blocks: parsed.blocks,
+				imageIndex: {
+					blocks: parsed.blocks,
+					imageBlocks: parsed.imageBlocks ?? [],
+					imageRanges: parsed.imageRanges ?? [],
+					length: parsed.length,
+					mathSpans: parsed.mathSpans,
+				},
+				revision: 31,
+				source,
+			});
+			expect(result.blockImages[0]?.status, label).toBe("ready");
+			expect(result.images, label).toHaveLength(1);
+			expect(result.images[0], label).toMatchObject({
+				destination: expectedDest,
+				raw: expectedRaw,
+				scale: expectedScale,
+			});
+		}
+
+		for (const nonImage of [
+			"hi <!-- ![a](https://example.com/a.png) -->",
+			'<span title="![a](https://example.com/a.png) ">hi</span>',
+			'<span title="![a](<https://example.com/a.png>)">hi</span>',
+			`<span title="![a](https://example.com/a.png 't')">hi</span>`,
+		]) {
+			const parsed = createEditorMarkdownBlockIndex(nonImage);
+			const result = await hydrateGeneratedImageTargetIndex({
+				...hydration,
+				blocks: parsed.blocks,
+				imageIndex: {
+					blocks: parsed.blocks,
+					imageBlocks: parsed.imageBlocks ?? [],
+					imageRanges: parsed.imageRanges ?? [],
+					length: parsed.length,
+					mathSpans: parsed.mathSpans,
+				},
+				revision: 32,
+				source: nonImage,
+			});
+			expect(result.images, nonImage).toHaveLength(0);
+		}
+	});
+
+	it("hydrates 4,000 multiline images inside one paragraph block in linear time without hitting the timeout budget", async () => {
+		const count = 4_000;
+		const source = Array.from(
+			{ length: count },
+			(_, i) => `![Alt](/x${i}.png\n"Caption")`,
+		).join("\n");
+		const started = performance.now();
+		const parsed = createEditorMarkdownBlockIndex(source);
+		const result = await hydrateGeneratedImageTargetIndex({
+			blocks: parsed.blocks,
+			deadline: started + 10_000,
+			imageIndex: {
+				blocks: parsed.blocks,
+				imageBlocks: parsed.imageBlocks ?? [],
+				imageRanges: parsed.imageRanges ?? [],
+				length: parsed.length,
+				mathSpans: parsed.mathSpans,
+			},
+			now: () => performance.now(),
+			revision: 33,
+			signal: new AbortController().signal,
+			source,
+			yield: async () => undefined,
+		});
+		const elapsedMs = performance.now() - started;
+		expect(result.blockImages).toHaveLength(1);
+		expect(result.blockImages[0]?.status).toBe("ready");
+		expect(result.images).toHaveLength(count);
+		expect(result.images[0]).toMatchObject({
+			alt: "Alt",
+			destination: "/x0.png",
+			title: "Caption",
+		});
+		expect(result.images[count - 1]).toMatchObject({
+			alt: "Alt",
+			destination: `/x${count - 1}.png`,
+			title: "Caption",
+		});
+		expect(elapsedMs).toBeLessThan(2_000);
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

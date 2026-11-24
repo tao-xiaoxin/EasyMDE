@@ -1,3 +1,20 @@
+import {
+	advancePhpCommonMarkBlockLine,
+	asciiLowerCase,
+	COMMONMARK_ATX_HEADING_OPEN,
+	COMMONMARK_FENCED_CODE_OPEN,
+	COMMONMARK_HTML_BLOCK_TYPE_1_OPEN,
+	COMMONMARK_HTML_BLOCK_TYPE_6_OPEN,
+	COMMONMARK_THEMATIC_BREAK_LINE,
+	createPhpCommonMarkBlockState,
+	isPhpBlockStateTopLevelParagraph,
+	type PhpCommonMarkBlockState,
+} from "../../shared/markdown/php-commonmark-block-scan";
+import {
+	advanceParagraphReferenceParser,
+	createParagraphReferenceParser,
+	type ParagraphReferenceParser,
+} from "../../shared/markdown/php-commonmark-reference-def";
 import type {
 	EditorMarkdownBlockIndex,
 	EditorMarkdownSourceBlock,
@@ -7,16 +24,6 @@ import {
 	findEditorMarkdownPreviousBlock,
 } from "./editor-markdown-block-index";
 import type { MarkdownLine } from "./editor-markdown-lines";
-import {
-	advancePhpBlockStackLine,
-	asciiLowerCase,
-	COMMONMARK_ATX_HEADING_OPEN,
-	COMMONMARK_FENCED_CODE_OPEN,
-	COMMONMARK_HTML_BLOCK_TYPE_1_OPEN,
-	COMMONMARK_HTML_BLOCK_TYPE_6_OPEN,
-	COMMONMARK_THEMATIC_BREAK_LINE,
-	type PhpOpenBlock,
-} from "./editor-markdown-php-block-stack";
 
 const COMMONMARK_LIST_ITEM_OPEN = /^(?:[*+-]|\d{1,9}[.)])(?:[ \t]|$)/u;
 const COMMONMARK_NON_EMPTY_LIST_ITEM_OPEN =
@@ -29,6 +36,7 @@ export type PhpTableScanState = {
 	inPhpList: boolean;
 	inPhpTable: boolean;
 	paragraphHasPipe: boolean;
+	refParser: ParagraphReferenceParser;
 };
 
 /**
@@ -128,6 +136,7 @@ export function createPhpTableScanState(): PhpTableScanState {
 		inPhpList: false,
 		inPhpTable: false,
 		paragraphHasPipe: false,
+		refParser: createParagraphReferenceParser(),
 	};
 }
 
@@ -136,6 +145,7 @@ export function resetPhpTableScanState(state: PhpTableScanState): void {
 	state.inPhpList = false;
 	state.inPhpTable = false;
 	state.paragraphHasPipe = false;
+	state.refParser = createParagraphReferenceParser();
 }
 
 /**
@@ -168,6 +178,11 @@ export function advancePhpTableScanLine(
 		return false;
 	}
 	if (!state.inParagraph && rowIndentationIsCode(line.text)) return false;
+	if (advanceParagraphReferenceParser(state.refParser, line.text)) {
+		state.inParagraph = false;
+		state.paragraphHasPipe = false;
+		return false;
+	}
 	state.inParagraph = true;
 	if (line.text.includes("|")) {
 		state.paragraphHasPipe = true;
@@ -234,12 +249,12 @@ export function collectPrecedingPhpTableBlocks(
 }
 
 /**
- * Feeds source lines `startLine..endLine` into `stack`, reproducing PHP
+ * Feeds source lines `startLine..endLine` into `state`, reproducing PHP
  * `MarkdownRenderer::extract_math()` for any display math span (`$$...$$` or
  * `\[...\]`) contained inside a preceding container block.
  */
 function scanPhpBlockLines(
-	stack: PhpOpenBlock[],
+	state: PhpCommonMarkBlockState,
 	lines: ReadonlyArray<MarkdownLine>,
 	startLine: number,
 	endLine: number,
@@ -256,7 +271,7 @@ function scanPhpBlockLines(
 	if (0 === displayMath.length) {
 		for (let lineIndex = startLine; lineIndex <= endLine; lineIndex += 1) {
 			const line = lines[lineIndex];
-			if (line) advancePhpBlockStackLine(stack, line.text);
+			if (line) advancePhpCommonMarkBlockLine(state, line.text);
 		}
 		return;
 	}
@@ -275,16 +290,16 @@ function scanPhpBlockLines(
 		expanded += blockIndex.source.slice(cursor, rangeEnd);
 	}
 	for (const virtualLine of expanded.split(/\r\n|\r|\n/u)) {
-		advancePhpBlockStackLine(stack, virtualLine);
+		advancePhpCommonMarkBlockLine(state, virtualLine);
 	}
 }
 
-function scanPrecedingStackThroughTargetLine(
+function scanPrecedingStateThroughTargetLine(
 	lines: ReadonlyArray<MarkdownLine>,
 	blockIndex: EditorMarkdownBlockIndex,
 	blockFrom: number,
 	blockStartLine: number,
-): ReadonlyArray<PhpOpenBlock> | null {
+): PhpCommonMarkBlockState | null {
 	const precedingBlocks = collectPrecedingPhpTableBlocks(
 		lines,
 		blockIndex,
@@ -302,52 +317,23 @@ function scanPrecedingStackThroughTargetLine(
 	) {
 		return null;
 	}
-	const stack: PhpOpenBlock[] = [{ kind: "document" }];
+	const state = createPhpCommonMarkBlockState(false);
 	scanPhpBlockLines(
-		stack,
+		state,
 		lines,
 		earliestBlock.lineStart,
 		blockStartLine - 1,
 		blockIndex,
 	);
-	advancePhpBlockStackLine(stack, targetLine.text);
-	return stack;
-}
-
-/**
- * Reports whether an immediately adjacent preceding `"list"` or `"quote"`
- * block leaves an open container paragraph or table (or indented list item)
- * that absorbs `blockStartLine` in PHP `League\CommonMark`, including when a
- * `"table"` preceded the `"list"` or `"quote"` block.
- */
-export function precedingContainerLeavesParagraphOpen(
-	lines: ReadonlyArray<MarkdownLine>,
-	blockIndex: EditorMarkdownBlockIndex,
-	blockFrom: number,
-	blockStartLine: number,
-): boolean {
-	const previous = findEditorMarkdownPreviousBlock(blockIndex, blockFrom);
-	if (
-		!previous ||
-		previous.lineEnd + 1 !== blockStartLine ||
-		("list" !== previous.kind && "quote" !== previous.kind)
-	) {
-		return false;
-	}
-	const stack = scanPrecedingStackThroughTargetLine(
-		lines,
-		blockIndex,
-		blockFrom,
-		blockStartLine,
-	);
-	return null !== stack && stack.length > 2;
+	advancePhpCommonMarkBlockLine(state, targetLine.text);
+	return state;
 }
 
 /**
  * Reports whether contiguous preceding blocks before `blockStartLine` cause
  * PHP `League\CommonMark` to absorb `blockStartLine` into an already-open
- * top-level table or container (`list` / `quote`) instead of letting it begin
- * a standalone top-level table.
+ * top-level table, link reference definition, or container (`list` / `quote`)
+ * instead of letting it begin a standalone top-level table.
  */
 export function precedingPhpBlocksAbsorbTableStart(
 	lines: ReadonlyArray<MarkdownLine>,
@@ -355,12 +341,12 @@ export function precedingPhpBlocksAbsorbTableStart(
 	blockFrom: number,
 	blockStartLine: number,
 ): boolean {
-	const stack = scanPrecedingStackThroughTargetLine(
+	const state = scanPrecedingStateThroughTargetLine(
 		lines,
 		blockIndex,
 		blockFrom,
 		blockStartLine,
 	);
-	if (!stack) return false;
-	return 2 !== stack.length || "paragraph" !== stack[1]?.kind;
+	if (!state) return false;
+	return !isPhpBlockStateTopLevelParagraph(state);
 }

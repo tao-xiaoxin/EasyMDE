@@ -3806,6 +3806,57 @@ describe("editor context menu rules", () => {
 				name: "single-pipe paragraph line opens PHP table on first delimiter of double-delimiter table",
 				source: "foo\n|\n| --- | --- |\n| --- | --- |\n| 3 | 4 |",
 			},
+			{
+				name: "multiline refdef destination with pipe does not become a table header",
+				source: "[ref]:\nhttps://example.com/a|b\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "multiline refdef title with pipe does not become a table header",
+				source: '[ref]: https://example.com\n"a | b"\n| --- | --- |\n| 3 | 4 |',
+			},
+			{
+				name: "three-line refdef title with pipe does not become a table header",
+				source: '[ref]:\nhttps://example.com\n"a | b"\n| --- | --- |\n| 3 | 4 |',
+			},
+			{
+				name: "multiline refdef spanning title lines with pipe does not become a table header",
+				source:
+					'[ref]: https://example.com\n"line1\nline2 | col2"\n| --- | --- |\n| 3 | 4 |',
+			},
+			{
+				name: "multiline refdef destination inside blockquote prevents Setext heading",
+				source:
+					"> [ref]:\n> https://example.com\n> ===\n| a | b |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "multiline refdef title inside blockquote prevents Setext heading",
+				source:
+					'> [ref]: https://example.com\n> "title"\n> ===\n| a | b |\n| --- | --- |\n| 3 | 4 |',
+			},
+			{
+				name: "multiline refdef destination inside list item prevents Setext heading",
+				source:
+					"- [ref]:\n  https://example.com\n  ===\n| a | b |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "multiline refdef title inside list item prevents Setext heading",
+				source:
+					'- [ref]: https://example.com\n  "title"\n  ===\n| a | b |\n| --- | --- |\n| 3 | 4 |',
+			},
+			{
+				name: "single-line refdef with unescaped ( inside paren title matches PHP ReferenceParser",
+				source: "> [ref]: /u (a (b)\n> ===\n| a | b |\n| --- | --- |\n| 3 | 4 |",
+			},
+			{
+				name: "single-line refdef with escaped quote at EOL matches PHP ReferenceParser unescape",
+				source:
+					'> [ref]: /u "a\\"\n> ===\n| a | b |\n| --- | --- |\n| 3 | 4 |',
+			},
+			{
+				name: "single-line refdef with HTML entity quote at EOL matches PHP ReferenceParser unescape",
+				source:
+					'> [ref]: /u "a&#34;\n> ===\n| a | b |\n| --- | --- |\n| 3 | 4 |',
+			},
 		] as const;
 
 		for (const testCase of declinedCases) {
@@ -4026,6 +4077,24 @@ describe("editor context menu rules", () => {
 			{
 				name: "link reference definition clears paragraph so empty list item starts cleanly",
 				source: "> [a]: /url\n> -\n| c | d |\n| --- | --- |\n| 3 | 4 |",
+				startLine: 2,
+			},
+			{
+				name: "valid table immediately following multiline refdef title stays editable",
+				source:
+					'[ref]: https://example.com\n"title"\n| c | d |\n| --- | --- |\n| 3 | 4 |',
+				startLine: 2,
+			},
+			{
+				name: "failed next-line refdef title with trailing text becomes valid table header",
+				source:
+					'[ref]: https://example.com\n"a | b" extra\n| --- | --- |\n| 3 | 4 |',
+				startLine: 1,
+			},
+			{
+				name: "refdef with trailing spaces after escaped quote fails title so Setext closes blockquote",
+				source:
+					'> [ref]: /u "a\\"  \n> ===\n| c | d |\n| --- | --- |\n| 3 | 4 |',
 				startLine: 2,
 			},
 		] as const;

@@ -5,6 +5,7 @@ import {
   parseEffectiveImageScaleTitle,
   parseImageScaleTitleContract
 } from '../../shared/image-scale-title';
+import type { ScannedMarkdownBlocks } from './image-scale-markdown-scan';
 import {
   findMarkdownImageCoreAt,
   type ParsedImageCore,
@@ -172,12 +173,13 @@ function buildMatchFromCore(
 
 export function parseMarkdownImageScale(
   source: string,
-  start = 0
+  start = 0,
+  precomputedBlocks?: ScannedMarkdownBlocks
 ): MarkdownImageScaleMatch | null {
   if (!Number.isInteger(start) || start < 0 || start > source.length) {
     throw new Error('image-scale-range-invalid');
   }
-  const core = parseImageCore(source, start);
+  const core = parseImageCore(source, start, precomputedBlocks);
   if (!core) return null;
   return buildMatchFromCore(source, start, core);
 }

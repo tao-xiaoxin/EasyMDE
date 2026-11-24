@@ -23,14 +23,222 @@ import {
 import { selectOrdinaryOption } from '../helpers/ordinary-select.mjs';
 import { collectPreviewRequestOutcomes } from '../helpers/preview-request-evidence.mjs';
 
-function classifyReadonlyPostRequest({ pathname, search = '', contentType = '', postData = '' }) {
-  const stableAction = (value) => (
-    'string' === typeof value
-    && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/u.test(value)
-      ? value
-      : 'missing'
-  );
-  const safeKey = (key) => !/(?:content|cookie|nonce|password|token)/iu.test(key);
+const SAFE_BROWSER_ERROR_NAMES = new Set([
+  'AggregateError',
+  'AssertionError',
+  'DOMException',
+  'Error',
+  'EvalError',
+  'RangeError',
+  'ReferenceError',
+  'SyntaxError',
+  'TimeoutError',
+  'TypeError',
+  'URIError'
+]);
+
+const SAFE_BROWSER_RESOURCE_TYPES = new Set([
+  'document',
+  'stylesheet',
+  'image',
+  'media',
+  'font',
+  'script',
+  'texttrack',
+  'xhr',
+  'fetch',
+  'prefetch',
+  'eventsource',
+  'manifest',
+  'signedexchange',
+  'ping',
+  'cspviolationreport',
+  'preflight',
+  'fedcm',
+  'other'
+]);
+
+function normalizeRestRouteParam(searchParams) {
+  const raw = searchParams.get('rest_route');
+  if ('string' !== typeof raw) return null;
+  return raw.trim().replace(/^\/+|\/+$/gu, '');
+}
+
+function isWpAdminPathname(pathname) {
+  return /(?:^|\/)wp-admin(?:\/|$)/u.test(pathname);
+}
+
+function isPreviewRestEndpoint(pathname, searchParams) {
+  if (/(?:^|\/)wp-json\/easymde\/v1\/preview\/?$/u.test(pathname)) {
+    return true;
+  }
+  return !isWpAdminPathname(pathname)
+    && 'easymde/v1/preview' === normalizeRestRouteParam(searchParams);
+}
+
+function isEasyMdeRestEndpoint(pathname, searchParams) {
+  if (/(?:^|\/)wp-json\/easymde\/v1(?:\/|$)/u.test(pathname)) {
+    return true;
+  }
+  if (isWpAdminPathname(pathname)) return false;
+  const route = normalizeRestRouteParam(searchParams);
+  return null !== route && ('easymde/v1' === route || route.startsWith('easymde/v1/'));
+}
+
+function isAnyWordPressRestEndpoint(pathname, searchParams) {
+  if (/(?:^|\/)wp-json(?:\/|$)/u.test(pathname)) {
+    return true;
+  }
+  return !isWpAdminPathname(pathname) && searchParams.has('rest_route');
+}
+
+function classifyBrowserUrlCategory(rawUrl, baseOrigin) {
+  if (!rawUrl) return 'unknown';
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return 'invalid';
+  }
+  if (isPreviewRestEndpoint(url.pathname, url.searchParams)) return 'preview-rest';
+  if (isEasyMdeRestEndpoint(url.pathname, url.searchParams)) return 'easymde-api';
+  if (/(?:^|\/)wp-content\/plugins\//u.test(url.pathname)) return 'plugin-asset';
+  if (/(?:^|\/)wp-admin\/admin-ajax\.php$/u.test(url.pathname)) return 'admin-ajax';
+  if (isWpAdminPathname(url.pathname)) return 'wp-admin';
+  if (isAnyWordPressRestEndpoint(url.pathname, url.searchParams)) return 'wp-rest';
+  if (baseOrigin && url.origin === baseOrigin) return 'same-origin';
+  return 'external';
+}
+
+function safeBrowserFailureClass(errorText) {
+  const code = 'string' === typeof errorText
+    ? errorText.match(/(?:^|::)(ERR_[A-Z0-9_]+)$/u)?.[1]
+    : null;
+  if ('ERR_ABORTED' === code) return 'aborted';
+  if (code?.startsWith('ERR_CONNECTION_')) return 'connection';
+  if ('ERR_NAME_NOT_RESOLVED' === code) return 'dns';
+  if (code?.includes('TIMED_OUT')) return 'timeout';
+  if (code?.startsWith('ERR_CERT_')) return 'tls';
+  if ('ERR_FAILED' === code) return 'failed';
+  return 'other';
+}
+
+function attachPrivacySafeBrowserMonitor(page, { baseURL } = {}) {
+  let baseOrigin = null;
+  if ('string' === typeof baseURL && baseURL.length > 0) {
+    try {
+      baseOrigin = new URL(baseURL).origin;
+    } catch {
+      baseOrigin = null;
+    }
+  }
+  const failures = [];
+  const counts = {
+    abortedAdminAjax: 0,
+    cancelledPreview: 0,
+    consoleErrors: 0,
+    httpErrors: 0,
+    pageErrors: 0,
+    requestFailures: 0
+  };
+  const record = (code) => {
+    if (failures.length < 128 && !failures.includes(code)) {
+      failures.push(code);
+    }
+  };
+  const onPageError = (error) => {
+    counts.pageErrors += 1;
+    const errorName = error && SAFE_BROWSER_ERROR_NAMES.has(error.name)
+      ? error.name
+      : 'Error';
+    record(`pageerror:${errorName}`);
+  };
+  const onConsole = (message) => {
+    if ('error' !== message.type()) return;
+    counts.consoleErrors += 1;
+    const easyMdeCode = message.text().match(/\[EasyMDE\]\s+([a-z0-9-]+)/u)?.[1];
+    if (easyMdeCode) {
+      record(`console-error:${easyMdeCode}`);
+      return;
+    }
+    const category = classifyBrowserUrlCategory(message.location()?.url ?? '', baseOrigin);
+    record(`console-error:${category}`);
+  };
+  const onRequestFailed = (request) => {
+    const category = classifyBrowserUrlCategory(request.url(), baseOrigin);
+    if ('external' === category) return;
+    const failureClass = safeBrowserFailureClass(request.failure()?.errorText);
+    const rawResourceType = request.resourceType();
+    const resourceType = SAFE_BROWSER_RESOURCE_TYPES.has(rawResourceType)
+      ? rawResourceType
+      : 'other';
+    if ('aborted' === failureClass && 'preview-rest' === category && 'POST' === request.method()) {
+      counts.cancelledPreview += 1;
+      return;
+    }
+    if (
+      'aborted' === failureClass
+      && 'admin-ajax' === category
+      && ('xhr' === resourceType || 'fetch' === resourceType)
+    ) {
+      counts.abortedAdminAjax += 1;
+      return;
+    }
+    counts.requestFailures += 1;
+    record(`request-failed:${failureClass}:${category}:${resourceType}`);
+  };
+  const onResponse = (response) => {
+    if (response.status() < 400) return;
+    const category = classifyBrowserUrlCategory(response.url(), baseOrigin);
+    if ('external' === category) return;
+    const rawResourceType = response.request().resourceType();
+    const resourceType = SAFE_BROWSER_RESOURCE_TYPES.has(rawResourceType)
+      ? rawResourceType
+      : 'other';
+    counts.httpErrors += 1;
+    record(`http-${response.status()}:${category}:${resourceType}`);
+  };
+  page.on('pageerror', onPageError);
+  page.on('console', onConsole);
+  page.on('requestfailed', onRequestFailed);
+  page.on('response', onResponse);
+  let disposed = false;
+  return {
+    counts,
+    failures,
+    assertClean() {
+      expect(
+        failures,
+        `unexpected browser failures observed; pageErrors=${counts.pageErrors}; consoleErrors=${counts.consoleErrors}; requestFailures=${counts.requestFailures}; httpErrors=${counts.httpErrors}`
+      ).toEqual([]);
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      page.off('pageerror', onPageError);
+      page.off('console', onConsole);
+      page.off('requestfailed', onRequestFailed);
+      page.off('response', onResponse);
+    }
+  };
+}
+
+function classifyReadonlyPostRequest({ pathname = '', search = '', contentType = '', postData = '' }) {
+  const queryParams = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
+  if (isPreviewRestEndpoint(pathname, queryParams)) {
+    return {
+      category: 'preview-rest',
+      classification: 'preview-readonly'
+    };
+  }
+  if (!/(?:^|\/)wp-admin\/admin-ajax\.php$/u.test(pathname)) {
+    return {
+      category: isAnyWordPressRestEndpoint(pathname, queryParams)
+        ? 'other-rest'
+        : 'other-post',
+      classification: 'unexpected-write'
+    };
+  }
   const knownDataKeys = new Set([
     'nonces_expired',
     'rest_nonce',
@@ -40,15 +248,12 @@ function classifyReadonlyPostRequest({ pathname, search = '', contentType = '', 
   const isRecord = (value) => (
     !!value && 'object' === typeof value && !Array.isArray(value)
   );
-  const queryParams = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
   const contentTypeValue = contentType.toLowerCase();
   const isJson = contentTypeValue.includes('application/json');
   const isForm = contentTypeValue.includes('application/x-www-form-urlencoded')
     || (!contentTypeValue && postData.includes('='));
   const parameters = isForm ? new URLSearchParams(postData) : new URLSearchParams();
-  const keyNames = new Set(queryParams.keys());
   const parameterKeys = [...parameters.keys()];
-  for (const key of parameterKeys) keyNames.add(key);
   let action = queryParams.get('action') ?? parameters.get('action');
   const bracketDataKeys = [];
   parameterKeys.forEach((key) => {
@@ -56,7 +261,6 @@ function classifyReadonlyPostRequest({ pathname, search = '', contentType = '', 
     const end = key.indexOf(']', 5);
     bracketDataKeys.push(end > 5 ? key.slice(5, end) : '');
   });
-  const dataKeys = [];
   const bracketDataUnknown = bracketDataKeys.some(
     (key) => !knownDataKeys.has(key) && key !== 'wp_autosave'
   );
@@ -66,8 +270,7 @@ function classifyReadonlyPostRequest({ pathname, search = '', contentType = '', 
   let wpAutosave = parameterKeys.some((key) => key.includes('wp_autosave'));
   const applyDataRecord = (record) => {
     const parsedKeys = Object.keys(record);
-    dataKeys.push(...parsedKeys.filter(safeKey));
-    wpAutosave ||= parsedKeys.includes('wp_autosave');
+    wpAutosave = wpAutosave || parsedKeys.includes('wp_autosave');
     if (wpAutosave) {
       dataState = 'autosave';
     } else if (parsedKeys.every((key) => knownDataKeys.has(key))) {
@@ -83,15 +286,13 @@ function classifyReadonlyPostRequest({ pathname, search = '', contentType = '', 
       const parsed = JSON.parse(dataValue);
       if (isRecord(parsed)) applyDataRecord(parsed);
     } catch {
-      // Keep diagnostics limited to stable key names when data is not JSON.
+      // Keep invalid dataState without echoing request metadata.
     }
   }
   if (isJson) {
     try {
       const body = JSON.parse(postData);
       if (isRecord(body)) {
-        const parsedKeys = Object.keys(body);
-        for (const key of parsedKeys.filter(safeKey)) keyNames.add(key);
         if (null === action && 'string' === typeof body.action) action = body.action;
         if (Object.prototype.hasOwnProperty.call(body, 'wp_autosave')) {
           wpAutosave = true;
@@ -106,36 +307,40 @@ function classifyReadonlyPostRequest({ pathname, search = '', contentType = '', 
               const parsedData = JSON.parse(body.data);
               if (isRecord(parsedData)) applyDataRecord(parsedData);
             } catch {
-              // Keep diagnostics limited to stable key names when data is not JSON.
+              // Keep invalid dataState without echoing request metadata.
             }
           } else {
             dataState = 'invalid';
           }
         }
+      } else {
+        dataState = 'invalid';
       }
     } catch {
       dataState = 'invalid';
     }
   }
-  for (const key of dataKeys) keyNames.add(key);
-  const metadata = {
-    pathname,
-    action: stableAction(action),
-    keys: [...keyNames].filter(safeKey).sort()
-  };
-  if (pathname.endsWith('/wp-admin/admin-ajax.php') && 'get-community-events' === action) {
-    return { classification: 'community-events-readonly', metadata };
+  if ('get-community-events' === action) {
+    return {
+      category: 'community-events',
+      classification: 'community-events-readonly'
+    };
   }
   if (
-    pathname.endsWith('/wp-admin/admin-ajax.php')
-    && 'heartbeat' === action
+    'heartbeat' === action
     && (isJson || '' === postData || postData.includes('='))
     && ['absent', 'known'].includes(dataState)
     && !wpAutosave
   ) {
-    return { classification: 'heartbeat-readonly', metadata };
+    return {
+      category: 'heartbeat',
+      classification: 'heartbeat-readonly'
+    };
   }
-  return { classification: 'unexpected-write', metadata };
+  return {
+    category: 'other-admin-ajax',
+    classification: 'unexpected-write'
+  };
 }
 
 test.describe('EasyMDE editor workflows', () => {
@@ -1769,6 +1974,10 @@ test.describe('EasyMDE editor workflows', () => {
   });
 
   test('keeps the immersive mobile header, toolbar rows, and outline geometrically usable', async ({ page }, testInfo) => {
+    const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
+      baseURL: testInfo.project.use.baseURL
+    });
+    try {
     await login(page, testInfo.easymdeUser);
     await openEasyMdeNewPost(page);
     const markdown = await canonicalMarkdownForPage(page);
@@ -2065,71 +2274,158 @@ test.describe('EasyMDE editor workflows', () => {
         }
       }
     }
+    browserMonitor.assertClean();
+    } finally {
+      browserMonitor.dispose();
+    }
   });
 
   test('keeps the immersive long title contained across the header breakpoint boundary', async ({ page }, testInfo) => {
-    const unexpectedPostRequests = [];
-    const heartbeatPostRequests = [];
-    const communityEventsPostRequests = [];
-    expect(classifyReadonlyPostRequest({
+    const unexpectedPostCategoryCounts = {};
+    let previewPostCount = 0;
+    let heartbeatPostCount = 0;
+    let communityEventsPostCount = 0;
+    const recordUnexpectedPostCategory = (category) => {
+      unexpectedPostCategoryCounts[category] = (unexpectedPostCategoryCounts[category] ?? 0) + 1;
+    };
+    const heartbeatSample = classifyReadonlyPostRequest({
       pathname: '/wp-admin/admin-ajax.php',
       contentType: 'application/x-www-form-urlencoded',
       postData: 'action=heartbeat'
+    });
+    expect(heartbeatSample).toEqual({
+      category: 'heartbeat',
+      classification: 'heartbeat-readonly'
+    });
+    expect(Object.keys(heartbeatSample).sort()).toEqual(['category', 'classification']);
+    expect(classifyReadonlyPostRequest({
+      pathname: '/wp-admin/admin-ajax.php',
+      contentType: 'application/x-www-form-urlencoded',
+      postData: 'action=get-community-events'
     })).toEqual({
-      classification: 'heartbeat-readonly',
-      metadata: {
-        pathname: '/wp-admin/admin-ajax.php',
-        action: 'heartbeat',
-        keys: ['action']
-      }
+      category: 'community-events',
+      classification: 'community-events-readonly'
     });
     expect(classifyReadonlyPostRequest({
       pathname: '/wp-admin/admin-ajax.php',
       contentType: 'application/x-www-form-urlencoded',
       postData: 'action=heartbeat&data%5Bwp_autosave%5D='
-    }).classification).toBe('unexpected-write');
+    })).toEqual({
+      category: 'other-admin-ajax',
+      classification: 'unexpected-write'
+    });
     expect(classifyReadonlyPostRequest({
       pathname: '/wp-admin/admin-ajax.php',
       contentType: 'application/json',
       postData: '{"action":"heartbeat","data":{"wp_autosave":{}}}'
-    }).classification).toBe('unexpected-write');
+    })).toEqual({
+      category: 'other-admin-ajax',
+      classification: 'unexpected-write'
+    });
     expect(classifyReadonlyPostRequest({
       pathname: '/wp-admin/admin-ajax.php',
       contentType: 'application/json',
       postData: '{"action":"heartbeat","data":{"unknown":{}}}'
-    }).classification).toBe('unexpected-write');
-    await login(page, testInfo.easymdeUser);
-    page.on('request', (request) => {
+    })).toEqual({
+      category: 'other-admin-ajax',
+      classification: 'unexpected-write'
+    });
+    expect(classifyReadonlyPostRequest({
+      pathname: '/wp-json/easymde/v1/preview',
+      contentType: 'application/json',
+      postData: '{"markdown":"alpha"}'
+    })).toEqual({
+      category: 'preview-rest',
+      classification: 'preview-readonly'
+    });
+    expect(classifyReadonlyPostRequest({
+      pathname: '/subdir/wp-json/easymde/v1/preview/',
+      contentType: 'application/json',
+      postData: '{"markdown":"alpha"}'
+    })).toEqual({
+      category: 'preview-rest',
+      classification: 'preview-readonly'
+    });
+    expect(classifyReadonlyPostRequest({
+      pathname: '/',
+      search: '?rest_route=/easymde/v1/preview',
+      contentType: 'application/json',
+      postData: '{"markdown":"alpha"}'
+    })).toEqual({
+      category: 'preview-rest',
+      classification: 'preview-readonly'
+    });
+    expect(classifyReadonlyPostRequest({
+      pathname: '/subdir/index.php',
+      search: '?rest_route=%20%2Feasymde%2Fv1%2Fpreview%2F%20',
+      contentType: 'application/json',
+      postData: '{"markdown":"alpha"}'
+    })).toEqual({
+      category: 'preview-rest',
+      classification: 'preview-readonly'
+    });
+    expect(classifyReadonlyPostRequest({
+      pathname: '/wp-json/wp/v2/posts',
+      contentType: 'application/json',
+      postData: '{"secret_field":"value"}'
+    })).toEqual({
+      category: 'other-rest',
+      classification: 'unexpected-write'
+    });
+    expect(classifyReadonlyPostRequest({
+      pathname: '/',
+      search: '?rest_route=/easymde/v1/media',
+      contentType: 'application/json',
+      postData: '{"secret_field":"value"}'
+    })).toEqual({
+      category: 'other-rest',
+      classification: 'unexpected-write'
+    });
+    expect(classifyReadonlyPostRequest({
+      pathname: '/wp-admin/post.php',
+      search: '?rest_route=/easymde/v1/preview',
+      contentType: 'application/x-www-form-urlencoded',
+      postData: 'action=secret_custom_action&custom_key=1'
+    })).toEqual({
+      category: 'other-post',
+      classification: 'unexpected-write'
+    });
+
+    const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
+      baseURL: testInfo.project.use.baseURL
+    });
+    const onPostRequest = (request) => {
       if ('POST' !== request.method()) return;
       let url;
       try {
         url = new URL(request.url());
       } catch {
-        unexpectedPostRequests.push({ pathname: 'invalid-url', action: 'missing', keys: [] });
+        recordUnexpectedPostCategory('invalid-url');
         return;
       }
-      const pathname = url.pathname;
-      if (pathname.endsWith('/wp-json/easymde/v1/preview')) return;
       const classified = classifyReadonlyPostRequest({
-        pathname,
+        pathname: url.pathname,
         search: url.search,
         contentType: request.headers()['content-type'] ?? '',
         postData: request.postData() ?? ''
       });
+      if ('preview-readonly' === classified.classification) {
+        previewPostCount += 1;
+        return;
+      }
       if ('community-events-readonly' === classified.classification) {
-        communityEventsPostRequests.push(classified.metadata);
+        communityEventsPostCount += 1;
         return;
       }
       if ('heartbeat-readonly' === classified.classification) {
-        heartbeatPostRequests.push(classified.metadata);
+        heartbeatPostCount += 1;
         return;
       }
-      if ('unexpected-write' === classified.classification) {
-        unexpectedPostRequests.push(classified.metadata);
-        return;
-      }
-      unexpectedPostRequests.push(classified.metadata);
-    });
+      recordUnexpectedPostCategory(classified.category);
+    };
+    try {
+    await login(page, testInfo.easymdeUser);
+    page.on('request', onPostRequest);
     await openEasyMdeNewPost(page);
     const markdown = await canonicalMarkdownForPage(page);
     await fillMarkdownAndWaitForPreview(page, markdown, 'Markdown 全量能力测试文档');
@@ -2370,12 +2666,21 @@ test.describe('EasyMDE editor workflows', () => {
       }
     }
     expect(
-      unexpectedPostRequests,
-      `non-readonly POSTs observed; heartbeat-count=${heartbeatPostRequests.length}; community-events-count=${communityEventsPostRequests.length}`
-    ).toEqual([]);
+      unexpectedPostCategoryCounts,
+      `non-readonly POSTs observed; preview-count=${previewPostCount}; heartbeat-count=${heartbeatPostCount}; community-events-count=${communityEventsPostCount}`
+    ).toEqual({});
+    browserMonitor.assertClean();
+    } finally {
+      page.off('request', onPostRequest);
+      browserMonitor.dispose();
+    }
   });
 
   test('keeps split panes usable beside an outline at intermediate widths', async ({ page }, testInfo) => {
+    const browserMonitor = attachPrivacySafeBrowserMonitor(page, {
+      baseURL: testInfo.project.use.baseURL
+    });
+    try {
     await login(page, testInfo.easymdeUser);
     await openEasyMdeNewPost(page);
     const markdown = await canonicalMarkdownForPage(page);
@@ -2604,5 +2909,9 @@ test.describe('EasyMDE editor workflows', () => {
     expect(desktopSplit.source.box.top).toBeLessThanOrEqual(desktopSplit.preview.box.top + 1);
     expect(desktopSplit.source.box.left).toBeLessThan(desktopSplit.preview.box.left);
     assertSharedMobileControls(desktopSplit);
+    browserMonitor.assertClean();
+    } finally {
+      browserMonitor.dispose();
+    }
   });
 });

@@ -4,6 +4,7 @@ import {
 	parseMarkdownWithBlockSources,
 } from "./markdown-parser";
 import { prescanMarkdown } from "./markdown-prescanner";
+import { serializeVisualDocToMarkdown } from "./markdown-serializer";
 import {
 	parseTableAlignComment,
 	reconcileTableAlignComment,
@@ -224,5 +225,110 @@ describe("immersive-visual table alignment codec and prescanner parity", () => {
 		// so it must not be tokenized as a table alignment marker.
 		const listLookalike = `${marker}\nA |\n- |\n1 |`;
 		expect(prescanMarkdown(listLookalike).tableAlignMarkers.size).toBe(0);
+	});
+
+	it("preserves tight lists containing a paragraph followed by an annotated GFM table", () => {
+		const marker = '<!-- easymde-table-align:v1 [[0,"center"]] -->';
+		const tightListSource = [
+			"- Para",
+			`  ${marker}`,
+			"  | A | B |",
+			"  | --- | --- |",
+			"  | 1 | 2 |",
+			"- Next",
+		].join("\n");
+
+		const doc = parseMarkdownToVisualDoc(tightListSource);
+		expect(doc.childCount).toBe(1);
+		const list = doc.child(0);
+		expect(list.type.name).toBe("bullet_list");
+		expect(list.attrs.tight).toBe(true);
+		expect(list.childCount).toBe(2);
+
+		const firstItem = list.child(0);
+		expect(firstItem.childCount).toBe(2);
+		expect(firstItem.child(0).type.name).toBe("paragraph");
+		expect(firstItem.child(0).textContent).toBe("Para");
+		const table = firstItem.child(1);
+		expect(table.type.name).toBe("table");
+		expect(table.attrs.alignAnnotation).toBe(marker);
+		expect(table.child(0).child(0).attrs.textAlign).toBe("center");
+		expect(table.child(0).child(1).attrs.textAlign).toBe("center");
+
+		const serialized = serializeVisualDocToMarkdown(doc);
+		expect(serialized).toBe(tightListSource);
+		expect(parseMarkdownToVisualDoc(serialized).eq(doc)).toBe(true);
+
+		// Also works in an ordered list with a 4-column content indent.
+		const orderedTight = [
+			"10. Para",
+			`    ${marker}`,
+			"    | A | B |",
+			"    | --- | --- |",
+			"    | 1 | 2 |",
+			"11. Next",
+		].join("\n");
+		const orderedDoc = parseMarkdownToVisualDoc(orderedTight);
+		expect(orderedDoc.firstChild?.type.name).toBe("ordered_list");
+		expect(orderedDoc.firstChild?.attrs.tight).toBe(true);
+		expect(orderedDoc.firstChild?.firstChild?.child(1).type.name).toBe("table");
+		expect(
+			orderedDoc.firstChild?.firstChild?.child(1).attrs.alignAnnotation,
+		).toBe(marker);
+	});
+
+	it("rejects indented code blocks, column-count mismatches, and mismatched container prefixes from TBLALIGN", () => {
+		const marker = '<!-- easymde-table-align:v1 [[0,"center"]] -->';
+
+		for (const indentedSource of [
+			`${marker}\n    | A | B |\n    | --- | --- |`,
+			`${marker}\n\t| A | B |\n\t| --- | --- |`,
+		]) {
+			expect(
+				prescanMarkdown(indentedSource).tableAlignMarkers.size,
+				indentedSource,
+			).toBe(0);
+			const doc = parseMarkdownToVisualDoc(indentedSource);
+			expect(doc.childCount, indentedSource).toBe(2);
+			expect(doc.child(0).type.name, indentedSource).toBe("protected_block");
+			expect(doc.child(0).attrs.rawMarkdown, indentedSource).toBe(marker);
+			expect(doc.child(1).type.name, indentedSource).toBe("code_block");
+			expect(doc.child(1).textContent, indentedSource).toBe(
+				"| A | B |\n| --- | --- |",
+			);
+			const serialized = serializeVisualDocToMarkdown(doc);
+			expect(serialized, indentedSource).not.toContain("\\<!--");
+			expect(serialized, indentedSource).toContain(marker);
+		}
+
+		for (const mismatchSource of [
+			`${marker}\n| A | B | C |\n| --- | --- |`,
+			`${marker}\n| A | B |\n| --- | --- | --- |`,
+		]) {
+			expect(
+				prescanMarkdown(mismatchSource).tableAlignMarkers.size,
+				mismatchSource,
+			).toBe(0);
+			const doc = parseMarkdownToVisualDoc(mismatchSource);
+			expect(doc.childCount, mismatchSource).toBe(2);
+			expect(doc.child(0).type.name, mismatchSource).toBe("protected_block");
+			expect(doc.child(0).attrs.rawMarkdown, mismatchSource).toBe(marker);
+			expect(doc.child(1).type.name, mismatchSource).toBe("paragraph");
+			const serialized = serializeVisualDocToMarkdown(doc);
+			expect(serialized, mismatchSource).not.toContain("\\<!--");
+			expect(serialized, mismatchSource).toContain(marker);
+		}
+
+		// Blockquote prefix mismatch or list-item header must not attach TBLALIGN.
+		for (const mismatchedContainer of [
+			`${marker}\n> | A | B |\n> | --- | --- |`,
+			`> ${marker}\n> | A | B |\n| --- | --- |`,
+			`${marker}\n- | A |\n| --- | --- |`,
+		]) {
+			expect(
+				prescanMarkdown(mismatchedContainer).tableAlignMarkers.size,
+				mismatchedContainer,
+			).toBe(0);
+		}
 	});
 });

@@ -1,3 +1,4 @@
+import { decodeCommonMarkTitle } from "../../shared/image-scale-title";
 import { parseReservedTableAlignmentMarkerLine } from "../../shared/table-alignment-marker";
 import {
 	extractInlineProtectedSyntax,
@@ -198,22 +199,160 @@ export function isFenceCloser(line: string, fence: DetectableFence): boolean {
 			: /^(~{3,})[ \t]*$/.exec(content);
 	return Boolean(match?.[1] && match[1].length >= fence.fenceLength);
 }
-function isGfmTableDelimiter(text: string): boolean {
-	const trimmed = text.trim();
-	return (
-		trimmed.includes("-") &&
-		!/^-[ \t]/u.test(trimmed) &&
-		(/^\|?[ \t]*:?-{1,}:?[ \t]*(?:\|[ \t]*:?-{1,}:?[ \t]*)+\|?$/u.test(
-			trimmed,
-		) ||
-			/^(?:\|[ \t]*:?-{1,}:?[ \t]*\|?|[ \t]*:?-{1,}:?[ \t]*\|)$/u.test(trimmed))
-	);
+function blockquoteDepth(prefix: string): number {
+	return (prefix.match(/>/g) ?? []).length;
 }
 
-function isGfmTableStartAt(headerLine: string, delimiterLine: string): boolean {
-	const header = readBlockquotePrefix(headerLine).rest;
-	const delimiter = readBlockquotePrefix(delimiterLine).rest;
-	return header.includes("|") && isGfmTableDelimiter(delimiter);
+function advanceColumns(text: string, startColumn = 0): number {
+	let column = startColumn;
+	for (const ch of text) {
+		column = ch === "\t" ? column + 4 - (column % 4) : column + 1;
+	}
+	return column;
+}
+
+function stripContainerIndent(
+	rest: string,
+	containerIndent: number,
+): string | null {
+	if (containerIndent <= 0) {
+		return rest;
+	}
+	let column = 0;
+	let index = 0;
+	while (index < rest.length && column < containerIndent) {
+		const ch = rest[index];
+		if (ch === " ") {
+			column += 1;
+			index += 1;
+		} else if (ch === "\t") {
+			column += 4 - (column % 4);
+			index += 1;
+		} else {
+			break;
+		}
+	}
+	if (column < containerIndent) {
+		return null;
+	}
+	return `${" ".repeat(column - containerIndent)}${rest.slice(index)}`;
+}
+
+function countGfmTableDelimiterColumns(text: string): number {
+	const trimmed = text.trim();
+	if (
+		!trimmed.includes("-") ||
+		!trimmed.includes("|") ||
+		/^-[ \t]/u.test(trimmed) ||
+		!/^[|\-: \t]+$/u.test(trimmed)
+	) {
+		return 0;
+	}
+	const parts = trimmed.split("|");
+	if (parts[0] === "") {
+		parts.shift();
+	}
+	if (parts.length > 0 && parts[parts.length - 1] === "") {
+		parts.pop();
+	}
+	if (parts.length === 0) {
+		return 0;
+	}
+	for (const part of parts) {
+		if (!/^:?-+:?$/u.test(part.trim())) {
+			return 0;
+		}
+	}
+	return parts.length;
+}
+
+function countGfmTableHeaderColumns(text: string): number {
+	const trimmed = text.trim();
+	if (!trimmed.includes("|")) {
+		return 0;
+	}
+	const cells: string[] = [];
+	let current = "";
+	let index = trimmed[0] === "|" ? 1 : 0;
+	while (index < trimmed.length) {
+		const ch = trimmed[index] ?? "";
+		if (ch === "\\" && trimmed[index + 1] === "|") {
+			current += "|";
+			index += 2;
+			continue;
+		}
+		if (ch === "|") {
+			cells.push(current);
+			current = "";
+			index += 1;
+			continue;
+		}
+		current += ch;
+		index += 1;
+	}
+	if (current.length > 0) {
+		cells.push(current);
+	}
+	return cells.length;
+}
+
+function isGfmTableStartAt(
+	headerLine: string,
+	delimiterLine: string,
+	containerIndent: number,
+	expectedQuoteDepth: number | null,
+	allowLeadingListMarker: boolean,
+): boolean {
+	const headerBq = readBlockquotePrefix(headerLine);
+	const delimiterBq = readBlockquotePrefix(delimiterLine);
+	const headerDepth = blockquoteDepth(headerBq.prefix);
+	const delimiterDepth = blockquoteDepth(delimiterBq.prefix);
+	if (headerDepth !== delimiterDepth) {
+		return false;
+	}
+	if (expectedQuoteDepth !== null && headerDepth !== expectedQuoteDepth) {
+		return false;
+	}
+
+	let effContainer = containerIndent;
+	let headerCandidate = stripContainerIndent(headerBq.rest, effContainer);
+	if (headerCandidate === null) {
+		return false;
+	}
+	const headerLeadMatch = /^[ \t]*/.exec(headerCandidate)?.[0] ?? "";
+	const headerRelIndent =
+		advanceColumns(headerLeadMatch, effContainer) - effContainer;
+	if (headerRelIndent >= 4) {
+		return false;
+	}
+	const headerListMarker = matchListMarker(headerCandidate);
+	if (headerListMarker !== null) {
+		if (!allowLeadingListMarker) {
+			return false;
+		}
+		effContainer += headerListMarker.contentIndent;
+		headerCandidate = headerCandidate.slice(headerListMarker.contentIndent);
+	}
+
+	const delimiterCandidate = stripContainerIndent(
+		delimiterBq.rest,
+		effContainer,
+	);
+	if (delimiterCandidate === null) {
+		return false;
+	}
+	const delimiterLeadMatch = /^[ \t]*/.exec(delimiterCandidate)?.[0] ?? "";
+	const delimiterRelIndent =
+		advanceColumns(delimiterLeadMatch, effContainer) - effContainer;
+	if (delimiterRelIndent >= 4) {
+		return false;
+	}
+
+	const headerColumns = countGfmTableHeaderColumns(headerCandidate);
+	if (headerColumns === 0) {
+		return false;
+	}
+	return headerColumns === countGfmTableDelimiterColumns(delimiterCandidate);
 }
 
 function findGfmTableEnd(
@@ -247,20 +386,25 @@ function parseReferenceTitle(raw: string): string | null {
 		return null;
 	}
 	const inner = trimmed.slice(1, -1);
-	let title = "";
+	let escaped = false;
 	for (let index = 0; index < inner.length; index += 1) {
 		const ch = inner[index] ?? "";
-		if (ch === "\\" && index + 1 < inner.length) {
-			title += inner[index + 1] ?? "";
-			index += 1;
+		if (escaped) {
+			escaped = false;
 			continue;
 		}
-		if (ch === closing) {
+		if (ch === "\\") {
+			escaped = true;
+			continue;
+		}
+		if (ch === closing || (quote === "(" && ch === "(")) {
 			return null;
 		}
-		title += ch;
 	}
-	return title;
+	if (escaped) {
+		return null;
+	}
+	return decodeCommonMarkTitle(inner);
 }
 
 type ReferenceDefinitionMatch = Readonly<{
@@ -621,22 +765,24 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		}
 
 		// 3. EasyMDE table alignment annotation directly preceding a GFM table.
+		const tableAlignCandidate =
+			relativeIndent >= 0 && relativeIndent <= 3
+				? stripContainerIndent(analysis.rest, effectiveContainer)
+				: null;
 		const parsedTableAlign =
-			analysis.indent <= 3 &&
-			isGfmTableStartAt(lines[i + 1] ?? "", lines[i + 2] ?? "")
-				? parseReservedTableAlignmentMarkerLine(analysis.rest)
+			tableAlignCandidate !== null &&
+			isGfmTableStartAt(
+				lines[i + 1] ?? "",
+				lines[i + 2] ?? "",
+				effectiveContainer,
+				lineQuoteDepth,
+				false,
+			)
+				? parseReservedTableAlignmentMarkerLine(tableAlignCandidate)
 				: null;
 		if (null !== parsedTableAlign && !("code" in parsedTableAlign)) {
 			const markerToken = `${sentinel}TBLALIGN${tableAlignMarkers.size}END`;
 			tableAlignMarkers.set(markerToken, parsedTableAlign.text);
-			const blankLine =
-				analysis.prefix.length === 0
-					? ""
-					: analysis.prefix.replace(/[ \t]+$/, "");
-			const prevLine = outputLines[outputLines.length - 1];
-			if (prevLine !== undefined && prevLine.trim().length > 0) {
-				pushOutputLine(blankLine, null);
-			}
 			pushOutputLine(
 				`${analysis.prefix}${" ".repeat(analysis.indent)}${markerToken}`,
 				{ end: i + 1, start: i },
@@ -648,7 +794,13 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 
 		if (
 			i > tableRowEnd &&
-			isGfmTableStartAt(lines[i] ?? "", lines[i + 1] ?? "")
+			isGfmTableStartAt(
+				lines[i] ?? "",
+				lines[i + 1] ?? "",
+				effectiveContainer,
+				lineQuoteDepth,
+				true,
+			)
 		) {
 			tableRowStart = i;
 			tableRowEnd = findGfmTableEnd(lines, i);

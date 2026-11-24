@@ -1,6 +1,9 @@
 import type MarkdownIt from "markdown-it";
 import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
-import { parseImageScaleTitleContract } from "../../shared/image-scale-title";
+import {
+	decodeCommonMarkTitle,
+	parseImageScaleTitleContract,
+} from "../../shared/image-scale-title";
 import {
 	type PreScanResult,
 	restoreProtectedInlineSentinels,
@@ -10,6 +13,8 @@ import {
 	type VisualImageScale,
 	visualEditorSchema,
 } from "./visual-schema";
+
+export const RAW_IMAGE_TITLE_META_KEY = "easymdeRawTitle";
 
 /** Feature-private inline token mapping for the immersive visual parser. */
 export type MarkdownToken = ReturnType<
@@ -217,12 +222,30 @@ export function mapInlineTokens(
 				popMark("link");
 				break;
 			case "image": {
-				const parsed = parseImageScaleTitle(
-					restoreProtectedInlineSentinels(
-						tokenAttrString(token, "title") ?? "",
-						preScan,
-					),
-				);
+				const rawInlineTitle =
+					token.meta &&
+					typeof token.meta === "object" &&
+					typeof (token.meta as Record<string, unknown>)[
+						RAW_IMAGE_TITLE_META_KEY
+					] === "string"
+						? String(
+								(token.meta as Record<string, unknown>)[
+									RAW_IMAGE_TITLE_META_KEY
+								],
+							)
+						: null;
+				const effectiveTitle =
+					rawInlineTitle !== null
+						? decodeCommonMarkTitle(
+								restoreProtectedInlineSentinels(rawInlineTitle, preScan)
+									.replace(/\r\n|\r/gu, "\n")
+									.replace(/\n[ \t]+/gu, "\n"),
+							)
+						: restoreProtectedInlineSentinels(
+								tokenAttrString(token, "title") ?? "",
+								preScan,
+							);
+				const parsed = parseImageScaleTitle(effectiveTitle);
 				const rawAlt = token.children
 					? token.children.map((c) => c.content).join("")
 					: token.content;

@@ -84,14 +84,15 @@ function isLooseList(listNode: ProseMirrorNode): boolean {
 	return false;
 }
 
-function canInterruptParagraphInTightList(node: ProseMirrorNode): boolean {
+function canInterruptParagraphInTightList(
+	node: ProseMirrorNode,
+	prev: ProseMirrorNode,
+): boolean {
 	const name = node.type.name;
-	return (
-		name === "code_block" ||
-		name === "blockquote" ||
-		name === "heading" ||
-		name === "horizontal_rule"
-	);
+	if (name === "table") {
+		return prev.type.name !== "table" || Boolean(node.attrs.alignAnnotation);
+	}
+	return name === "code_block" || name === "blockquote" || name === "heading" || name === "horizontal_rule";
 }
 
 function serializeListItemBody(
@@ -123,7 +124,7 @@ function serializeListItemBody(
 			parts.push(
 				blankBeforeNestedList ? `\n\n${serialized}` : `\n${serialized}`,
 			);
-		} else if (!loose && canInterruptParagraphInTightList(child)) {
+		} else if (!loose && canInterruptParagraphInTightList(child, itemNode.child(i - 1))) {
 			// Keep a parsed tight list tight: fences, quotes, headings and rules
 			// may interrupt a paragraph, so no blank line is needed.
 			parts.push(`\n${serialized}`);

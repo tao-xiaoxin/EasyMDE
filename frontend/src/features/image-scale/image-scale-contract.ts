@@ -1,9 +1,11 @@
 import {
+  COMMONMARK_ESCAPABLE_PUNCTUATION,
   hasMarkdownTitleBlankLine,
   IMAGE_SCALE_PERCENTAGES,
   type ImageScalePercentage,
   parseEffectiveImageScaleTitle,
-  parseImageScaleTitleContract
+  parseImageScaleTitleContract,
+  unescapeCommonMarkAsciiPunctuation
 } from '../../shared/image-scale-title';
 
 export { IMAGE_SCALE_PERCENTAGES, type ImageScalePercentage };
@@ -45,10 +47,6 @@ export type MarkdownImageSerialization = Readonly<{
   title: string | null;
 }>;
 
-const ESCAPABLE_MARKDOWN_CHARACTERS = new Set(
-  Array.from('\\`*{}[]()#+-.!_>~|')
-);
-
 function syntaxError(): never {
   throw new Error('image-scale-syntax-invalid');
 }
@@ -69,22 +67,46 @@ function isEscaped(source: string, index: number): boolean {
   return 1 === slashCount % 2;
 }
 
-function unescapeMarkdown(value: string): string {
-  let output = '';
-  for (let index = 0; index < value.length; index += 1) {
-    const character = value[index];
-    if (
-      '\\' === character
-      && index + 1 < value.length
-      && ESCAPABLE_MARKDOWN_CHARACTERS.has(value[index + 1] ?? '')
-    ) {
-      output += value[index + 1];
-      index += 1;
-      continue;
-    }
-    output += character;
+function hasBlockquoteContinuationPrefix(rawTitle: string): boolean {
+  return /(?:\r\n|\r|\n) {0,3}>/u.test(rawTitle);
+}
+
+function countLeadingBlockquoteMarkers(source: string, start: number): number {
+  const lineStart = Math.max(
+    source.lastIndexOf('\n', start - 1),
+    source.lastIndexOf('\r', start - 1)
+  ) + 1;
+  const prefix = /^(?: {0,3}>[ \t]?)+/u.exec(source.slice(lineStart, start))?.[0] ?? '';
+  return (prefix.match(/>/gu) ?? []).length;
+}
+
+function normalizeTitleBlockquoteContinuations(
+  rawTitle: string,
+  startBlockquoteDepth: number
+): Readonly<{ hasContainerPrefix: boolean; stripped: string }> | null {
+  if (!rawTitle.includes('\n') && !rawTitle.includes('\r')) {
+    return { hasContainerPrefix: false, stripped: rawTitle };
   }
-  return output;
+  const lines = rawTitle.replace(/\r\n|\r/gu, '\n').split('\n');
+  let hasContainerPrefix = false;
+  for (let index = 1; index < lines.length; index += 1) {
+    let line = lines[index] ?? '';
+    for (let depth = 0; depth < startBlockquoteDepth; depth += 1) {
+      const match = /^ {0,3}>[ \t]?/u.exec(line);
+      if (!match) break;
+      hasContainerPrefix = true;
+      line = line.slice(match[0].length);
+    }
+    if (/^ {0,3}>/u.test(line)) {
+      return null;
+    }
+    lines[index] = line;
+  }
+  const stripped = lines.join('\n');
+  if (hasMarkdownTitleBlankLine(stripped)) {
+    return null;
+  }
+  return { hasContainerPrefix, stripped };
 }
 
 function escapedMarkdown(value: string, characters: string): string {
@@ -133,6 +155,8 @@ type ParsedImageCore = Readonly<{
   destination: string;
   destinationEnd: number;
   destinationStart: number;
+  effectiveTitle: string | null;
+  hasContainerPrefix: boolean;
   imageEnd: number;
   title: string | null;
   titleEnd: number | null;
@@ -153,9 +177,31 @@ function parseImageCore(source: string, start: number): ParsedImageCore | null {
   let cursor = open;
   let destination = '';
   if ('<' === source[cursor]) {
-    const destinationEnd = findUnescaped(source, cursor + 1, '>');
+    let destinationEnd = -1;
+    let slashCount = 0;
+    for (let index = cursor + 1; index < source.length; index += 1) {
+      const character = source[index];
+      if ('\\' === character) {
+        slashCount += 1;
+        continue;
+      }
+      const escaped = 1 === slashCount % 2;
+      slashCount = 0;
+      if ('\r' === character || '\n' === character || '\u0000' === character) {
+        return null;
+      }
+      if ('<' === character && !escaped) {
+        return null;
+      }
+      if ('>' === character && !escaped) {
+        destinationEnd = index;
+        break;
+      }
+    }
     if (destinationEnd < 0) return null;
-    destination = unescapeMarkdown(source.slice(cursor + 1, destinationEnd));
+    destination = unescapeCommonMarkAsciiPunctuation(
+      source.slice(cursor + 1, destinationEnd)
+    );
     return parseImageCoreTail(
       source,
       start,
@@ -176,18 +222,30 @@ function parseImageCore(source: string, start: number): ParsedImageCore | null {
         cursor += 1;
         continue;
       }
-      if ('\\' === character && !isWhitespace(source[cursor + 1])) {
+      if (
+        '\\' === character
+        && undefined !== source[cursor + 1]
+        && COMMONMARK_ESCAPABLE_PUNCTUATION.test(source[cursor + 1] ?? '')
+      ) {
         inEscape = true;
         cursor += 1;
         continue;
       }
+      const code = source.charCodeAt(cursor);
+      if (code <= 0x20 || 0x7f === code) {
+        if (0 === parentheses && isWhitespace(character)) break;
+        return null;
+      }
       if (')' === character && 0 === parentheses) break;
-      if (isWhitespace(character) && 0 === parentheses) break;
-      if ('(' === character) parentheses += 1;
+      if ('(' === character) {
+        parentheses += 1;
+        if (parentheses > 32) return null;
+      }
       if (')' === character && parentheses > 0) parentheses -= 1;
       cursor += 1;
     }
-    destination = unescapeMarkdown(source.slice(open, cursor));
+    if (0 !== parentheses) return null;
+    destination = unescapeCommonMarkAsciiPunctuation(source.slice(open, cursor));
   }
 
   return parseImageCoreTail(
@@ -224,12 +282,15 @@ function parseImageCoreTail(
       destinationAngle,
       destinationEnd,
       destinationStart,
+      effectiveTitle: null,
+      hasContainerPrefix: false,
       imageEnd: cursor + 1,
       title: null,
       titleEnd: null,
       titleStart: null
     };
   }
+  if (cursor === destinationCursor) return null;
 
   const titleStart = cursor;
   const titleOpening = source[cursor];
@@ -239,10 +300,9 @@ function parseImageCoreTail(
     if (titleEnd < 0) return null;
     cursor = titleEnd + 1;
   } else if ('(' === titleOpening) {
-    let depth = 1;
     let slashCount = 0;
     cursor += 1;
-    while (cursor < source.length && depth > 0) {
+    while (cursor < source.length) {
       const character = source[cursor];
       if ('\\' === character) {
         slashCount += 1;
@@ -252,13 +312,16 @@ function parseImageCoreTail(
       const escaped = 1 === slashCount % 2;
       slashCount = 0;
       if (!escaped) {
-        if ('(' === character) depth += 1;
-        if (')' === character) depth -= 1;
+        if ('(' === character) return null;
+        if (')' === character) {
+          titleEnd = cursor;
+          cursor += 1;
+          break;
+        }
       }
       cursor += 1;
     }
-    if (0 !== depth) return null;
-    titleEnd = cursor - 1;
+    if (titleEnd < 0) return null;
   } else {
     return null;
   }
@@ -270,12 +333,19 @@ function parseImageCoreTail(
     titleEnd
   );
   if (hasMarkdownTitleBlankLine(rawTitle)) return null;
+  const normalizedTitle = normalizeTitleBlockquoteContinuations(
+    rawTitle,
+    countLeadingBlockquoteMarkers(source, start)
+  );
+  if (!normalizedTitle) return null;
   return {
     alt: source.slice(start + 2, altEnd),
     destination,
     destinationAngle,
     destinationEnd,
     destinationStart,
+    effectiveTitle: normalizedTitle.stripped,
+    hasContainerPrefix: normalizedTitle.hasContainerPrefix,
     imageEnd: cursor + 1,
     title: rawTitle,
     titleEnd,
@@ -298,6 +368,8 @@ function hasAmbiguousBareDestinationContinuation(
 
 function parseScaleMarker(
   rawTitle: string | null,
+  effectiveTitle: string | null,
+  hasContainerPrefix: boolean,
   titleStart: number | null
 ): Readonly<{
   scale: ImageScalePercentage | null;
@@ -305,7 +377,7 @@ function parseScaleMarker(
   titleMarkerEnd: number | null;
   titleMarkerStart: number | null;
 }> {
-  if (null === rawTitle || null === titleStart) {
+  if (null === rawTitle || null === effectiveTitle || null === titleStart) {
     return {
       scale: null,
       title: rawTitle,
@@ -314,13 +386,14 @@ function parseScaleMarker(
     };
   }
   const rawParsed = parseImageScaleTitleContract(rawTitle);
-  const effectiveParsed = parseEffectiveImageScaleTitle(rawTitle);
+  const effectiveParsed = parseEffectiveImageScaleTitle(effectiveTitle);
   if ('invalid' === effectiveParsed.status) {
     syntaxError();
   }
   if ('valid' === effectiveParsed.status) {
     if (
-      'valid' === rawParsed.status
+      !hasContainerPrefix
+      && 'valid' === rawParsed.status
       && rawParsed.scale === effectiveParsed.scale
     ) {
       const markerStart = titleStart + 1 + rawParsed.markerOffset;
@@ -331,10 +404,10 @@ function parseScaleMarker(
         titleMarkerStart: markerStart
       };
     }
-    // PHP parses an escaped or entity-encoded terminal marker (for example
-    // `"Caption \{width=50%\}"` or `"Caption &#123;width=50%&#125;"`). Report
-    // the true PHP scale while keeping raw marker offsets null so edits reject
-    // cleanly instead of mutating through escapes or entities.
+    // PHP parses an escaped, entity-encoded, or blockquote-continued terminal
+    // marker. Report the true PHP scale while keeping raw marker offsets null
+    // so edits reject cleanly instead of mutating through escapes, entities, or
+    // blockquote continuation prefixes.
     return {
       scale: effectiveParsed.scale,
       title: effectiveParsed.title,
@@ -359,7 +432,12 @@ export function parseMarkdownImageScale(
   }
   const core = parseImageCore(source, start);
   if (!core) return null;
-  const marker = parseScaleMarker(core.title, core.titleStart);
+  const marker = parseScaleMarker(
+    core.title,
+    core.effectiveTitle,
+    core.hasContainerPrefix,
+    core.titleStart
+  );
   return {
     alt: core.alt,
     destination: core.destination,
@@ -411,6 +489,7 @@ function markdownCodeRanges(source: string): ReadonlyArray<Readonly<{ end: numbe
   ranges.sort((left, right) => left.start - right.start);
   let index = 0;
   let protectedIndex = 0;
+  const unmatchedLengths = new Set<number>();
   while (index < source.length) {
     while (
       protectedIndex < ranges.length
@@ -421,24 +500,18 @@ function markdownCodeRanges(source: string): ReadonlyArray<Readonly<{ end: numbe
       index = protectedRange.end;
       continue;
     }
-    if ('`' !== source[index]) {
+    if ('`' !== source[index] || isEscaped(source, index)) {
       index += 1;
       continue;
     }
     const runStart = index;
     while ('`' === source[index]) index += 1;
     const length = index - runStart;
+    if (unmatchedLengths.has(length)) continue;
     let closed = false;
-    let slashCount = 0;
+    // CommonMark §6.1: backslashes inside code spans are literal, never escapes.
     for (let close = index; close < source.length; close += 1) {
-      const character = source[close];
-      if ('\\' === character) {
-        slashCount += 1;
-        continue;
-      }
-      const escaped = 1 === slashCount % 2;
-      slashCount = 0;
-      if ('`' !== character || escaped) continue;
+      if ('`' !== source[close]) continue;
       let runEnd = close;
       while ('`' === source[runEnd]) runEnd += 1;
       if (runEnd - close === length) {
@@ -449,7 +522,7 @@ function markdownCodeRanges(source: string): ReadonlyArray<Readonly<{ end: numbe
       }
       close = runEnd - 1;
     }
-    if (!closed) index = source.length;
+    if (!closed) unmatchedLengths.add(length);
   }
   return ranges.sort((left, right) => left.start - right.start);
 }
@@ -556,6 +629,9 @@ export function createImageScaleReplacement(
         insert: marker,
         to: parsed.titleEnd
       };
+    }
+    if (null !== parsed.title && hasBlockquoteContinuationPrefix(parsed.title)) {
+      syntaxError();
     }
     const candidateRawTitle = `${parsed.title ?? ''} ${marker}`;
     const candidateEffective = parseEffectiveImageScaleTitle(candidateRawTitle);

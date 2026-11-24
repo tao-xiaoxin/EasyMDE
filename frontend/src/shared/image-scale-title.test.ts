@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+	COMMONMARK_ESCAPABLE_PUNCTUATION,
 	decodeCommonMarkTitle,
 	hasMarkdownTitleBlankLine,
 	parseEffectiveImageScaleTitle,
 	parseImageScaleTitleContract,
 	stripTrailingReservedScaleMarkers,
+	unescapeCommonMarkAsciiPunctuation,
 } from "./image-scale-title";
 
 describe("shared image-scale title grammar", () => {
@@ -26,6 +28,38 @@ describe("shared image-scale title grammar", () => {
 		);
 		expect(decodeCommonMarkTitle("Caption &notanentity; &amp")).toBe(
 			"Caption &notanentity; &amp",
+		);
+		expect(decodeCommonMarkTitle("Caption &#0; &#x0;")).toBe(
+			"Caption \uFFFD \uFFFD",
+		);
+		expect(decodeCommonMarkTitle(String.raw`Caption\&#32;{width=50%}`)).toBe(
+			"Caption {width=50%}",
+		);
+		expect(
+			decodeCommonMarkTitle(String.raw`Caption \&#123;width=50%&#125;`),
+		).toBe("Caption {width=50%}");
+		expect(decodeCommonMarkTitle("Caption &amp;#123;width=50%&#125;")).toBe(
+			"Caption &#123;width=50%}",
+		);
+		expect(
+			decodeCommonMarkTitle(
+				String.raw`Caption {width=33%}\&NewLine; {width=67%}`,
+			),
+		).toBe("Caption {width=33%}\n {width=67%}");
+	});
+
+	it("unescapes all 32 CommonMark §2.4 ASCII punctuation characters without decoding entities", () => {
+		const punctuation = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
+		expect(punctuation).toHaveLength(32);
+		for (const ch of punctuation) {
+			expect(COMMONMARK_ESCAPABLE_PUNCTUATION.test(ch), ch).toBe(true);
+			expect(unescapeCommonMarkAsciiPunctuation(`\\${ch}`), ch).toBe(ch);
+		}
+		expect(unescapeCommonMarkAsciiPunctuation(String.raw`/foo\/bar\?x\=1&amp;`)).toBe(
+			"/foo/bar?x=1&amp;",
+		);
+		expect(unescapeCommonMarkAsciiPunctuation(String.raw`\a\0\ `)).toBe(
+			String.raw`\a\0\ `,
 		);
 	});
 

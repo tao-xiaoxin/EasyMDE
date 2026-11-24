@@ -2845,3 +2845,193 @@ describe("identity-first block alignment and bounded large-span matching", () =>
 		expect(serialized.split("\n\n")).toContain(middle);
 	});
 });
+
+describe("PR-R15-A title line breaks and PHP two-pass image title decoding", () => {
+	it("never emits raw CR/LF in scaled or unscaled image titles inside table cells or ATX headings", () => {
+		const tableScaledMd = [
+			"| Col1 | Col2 |",
+			"| --- | --- |",
+			'| ![image](pic.png "Caption&#10; second line {width=50%}") | B |',
+		].join("\n");
+		const tableScaledGuard = createMarkdownRoundTripGuard(tableScaledMd);
+		const tableScaledView = createEditorView(tableScaledMd);
+		let col1Pos = -1;
+		tableScaledView.state.doc.descendants((node, pos) => {
+			if (col1Pos < 0 && node.isText && node.text === "Col1") {
+				col1Pos = pos;
+				return false;
+			}
+			return true;
+		});
+		expect(col1Pos).toBeGreaterThan(0);
+		tableScaledView.dispatch(
+			tableScaledView.state.tr.insertText("x", col1Pos + 4),
+		);
+		const serializedScaledTable = tableScaledGuard.serialize(
+			tableScaledView.state.doc,
+		);
+		expect(serializedScaledTable.split("\n")).toHaveLength(3);
+		expect(serializedScaledTable).toBe(
+			[
+				"| Col1x | Col2 |",
+				"| --- | --- |",
+				'| ![image](pic.png "Caption&#10; second line {width=50%}") | B |',
+			].join("\n"),
+		);
+		const reparsedScaledTable = parseMarkdownToVisualDoc(serializedScaledTable);
+		const reparsedTableImg =
+			reparsedScaledTable.firstChild?.child(1).child(0).firstChild?.firstChild;
+		expect(reparsedTableImg?.attrs).toMatchObject({
+			scale: 50,
+			title: "Caption\n second line",
+		});
+
+		const tableUnscaledMd = [
+			"| Col1 | Col2 |",
+			"| --- | --- |",
+			'| ![A](/x.png "Line1&#10;Line2") | B |',
+		].join("\n");
+		const tableUnscaledView = createEditorView(tableUnscaledMd);
+		let unscaledColPos = -1;
+		tableUnscaledView.state.doc.descendants((node, pos) => {
+			if (unscaledColPos < 0 && node.isText && node.text === "Col1") {
+				unscaledColPos = pos;
+				return false;
+			}
+			return true;
+		});
+		tableUnscaledView.dispatch(
+			tableUnscaledView.state.tr.insertText("x", unscaledColPos + 4),
+		);
+		const serializedUnscaledTable = serializeVisualDocToMarkdown(
+			tableUnscaledView.state.doc,
+		);
+		expect(serializedUnscaledTable.split("\n")).toHaveLength(3);
+		expect(serializedUnscaledTable).toBe(
+			[
+				"| Col1x | Col2 |",
+				"| --- | --- |",
+				'| ![A](/x.png "Line1&#10;Line2") | B |',
+			].join("\n"),
+		);
+
+		const headingScaled = '# ![A](/x.png "Line1&#10;Line2 {width=50%}")';
+		const headingScaledDoc = parseMarkdownToVisualDoc(headingScaled);
+		expect(headingScaledDoc.firstChild?.firstChild?.attrs).toMatchObject({
+			scale: 50,
+			title: "Line1\nLine2",
+		});
+		expect(serializeVisualDocToMarkdown(headingScaledDoc)).toBe(headingScaled);
+
+		const headingUnscaled = '# ![A](/x.png "Line1&#10;Line2")';
+		const headingUnscaledDoc = parseMarkdownToVisualDoc(headingUnscaled);
+		expect(headingUnscaledDoc.firstChild?.firstChild?.attrs).toMatchObject({
+			scale: null,
+			title: "Line1\nLine2",
+		});
+		expect(serializeVisualDocToMarkdown(headingUnscaledDoc)).toBe(
+			headingUnscaled,
+		);
+	});
+
+	it("encodes CR/LF in link titles inside table cells, ATX headings, and blank-line link titles", () => {
+		const tableLinkMd = [
+			'| [link](/x "Line1&#10;Line2") |',
+			"| --- |",
+			"| ok |",
+		].join("\n");
+		const tableLinkDoc = parseMarkdownToVisualDoc(tableLinkMd);
+		expect(serializeVisualDocToMarkdown(tableLinkDoc)).toBe(tableLinkMd);
+
+		const tablePipeLinkMd = [
+			'| [link](/x "a\\|b&#10;c") |',
+			"| --- |",
+			"| ok |",
+		].join("\n");
+		const tablePipeLinkDoc = parseMarkdownToVisualDoc(tablePipeLinkMd);
+		expect(serializeVisualDocToMarkdown(tablePipeLinkDoc)).toBe(tablePipeLinkMd);
+
+		const headingLinkMd = '# [link](/x "Line1&#10;Line2")';
+		const headingLinkDoc = parseMarkdownToVisualDoc(headingLinkMd);
+		expect(serializeVisualDocToMarkdown(headingLinkDoc)).toBe(headingLinkMd);
+
+		const blankLineLinkMd = '[link](/x "Line1&#10;&#10;Line2")';
+		const blankLineLinkDoc = parseMarkdownToVisualDoc(blankLineLinkMd);
+		expect(serializeVisualDocToMarkdown(blankLineLinkDoc)).toBe(blankLineLinkMd);
+	});
+
+	it("decodes raw inline and reference image titles with PHP-equivalent two-pass decoding without double-decoding", () => {
+		const escSpaceMd = String.raw`Example ![image](pic.png "Caption\&#32;{width=50%}")`;
+		const escSpaceGuard = createMarkdownRoundTripGuard(escSpaceMd);
+		const escSpaceImg = escSpaceGuard.initialDoc.firstChild?.child(1);
+		expect(escSpaceImg?.attrs).toMatchObject({
+			scale: 50,
+			title: "Caption",
+		});
+		const escSpaceView = createEditorView(escSpaceMd);
+		escSpaceView.dispatch(escSpaceView.state.tr.insertText("!", 8));
+		expect(escSpaceGuard.serialize(escSpaceView.state.doc)).toBe(
+			'Example! ![image](pic.png "Caption {width=50%}")',
+		);
+
+		const escBraceMd = String.raw`![A](/x.png "Caption \&#123;width=50%&#125;")`;
+		const escBraceDoc = parseMarkdownToVisualDoc(escBraceMd);
+		expect(escBraceDoc.firstChild?.firstChild?.attrs).toMatchObject({
+			scale: 50,
+			title: "Caption",
+		});
+		expect(serializeVisualDocToMarkdown(escBraceDoc)).toBe(
+			'![A](/x.png "Caption {width=50%}")',
+		);
+
+		const ampBraceMd = '![A](/x.png "Caption &amp;#123;width=50%&#125;")';
+		const ampBraceGuard = createMarkdownRoundTripGuard(ampBraceMd);
+		expect(ampBraceGuard.initialDoc.firstChild?.firstChild?.attrs).toMatchObject(
+			{
+				scale: null,
+				title: "Caption &#123;width=50%}",
+			},
+		);
+		expect(ampBraceGuard.serialize(ampBraceGuard.initialDoc)).toBe(ampBraceMd);
+
+		const escNewlineMd = String.raw`![A](/x.png "Caption {width=33%}\&NewLine; {width=67%}")`;
+		const escNewlineDoc = parseMarkdownToVisualDoc(escNewlineMd);
+		expect(escNewlineDoc.firstChild?.firstChild?.attrs).toMatchObject({
+			scale: 67,
+			title: "Caption {width=33%}\n",
+		});
+
+		const nullEntityDoc = parseMarkdownToVisualDoc(
+			'![A](/x.png "Caption &#0; {width=50%}")',
+		);
+		expect(nullEntityDoc.firstChild?.firstChild?.attrs).toMatchObject({
+			scale: 50,
+			title: "Caption \uFFFD",
+		});
+
+		// Reference images decode via two-pass without double-decoding.
+		const refEscMd = [
+			"Example ![image][pic]",
+			"",
+			String.raw`[pic]: pic.png "Caption\&#32;{width=50%}"`,
+		].join("\n");
+		expect(
+			parseMarkdownToVisualDoc(refEscMd).firstChild?.child(1)?.attrs,
+		).toMatchObject({
+			scale: 50,
+			title: "Caption",
+		});
+
+		const refAmpMd = [
+			"![A][pic]",
+			"",
+			'[pic]: /x.png "Caption &amp;#123;width=50%&#125;"',
+		].join("\n");
+		expect(
+			parseMarkdownToVisualDoc(refAmpMd).firstChild?.firstChild?.attrs,
+		).toMatchObject({
+			scale: null,
+			title: "Caption &#123;width=50%}",
+		});
+	});
+});

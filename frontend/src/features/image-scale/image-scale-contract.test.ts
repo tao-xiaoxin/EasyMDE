@@ -602,4 +602,132 @@ describe('image scale contract', () => {
       title: 'Syntax {width=33%} example'
     });
   });
+
+  it('matches CommonMark §6.1 / §6.3 punctuation, destination, parenthesized title, and code-span rules', () => {
+    // Full 32-char CommonMark ASCII punctuation unescaping in destinations.
+    expect(parseMarkdownImageScale(String.raw`![A](/foo\/bar.png)`)).toMatchObject({
+      destination: '/foo/bar.png',
+      scale: null,
+      title: null
+    });
+    expect(
+      parseMarkdownImageScale(String.raw`![A](/foo\?a\=1\&b\=2.png)`)
+    ).toMatchObject({
+      destination: '/foo?a=1&b=2.png',
+      scale: null
+    });
+
+    // Reject ASCII whitespace and control chars even inside balanced parentheses.
+    for (const invalidBare of [
+      '![A](foo(bar baz))',
+      '![A](foo(bar\tbaz))',
+      '![A](foo(bar\nbaz))',
+      '![A](foo\x01bar)',
+      '![A](foo\x7fbar)',
+      '![A](foo(bar\x07baz))'
+    ]) {
+      expect(parseMarkdownImageScale(invalidBare), JSON.stringify(invalidBare)).toBeNull();
+    }
+
+    // Reject CR, LF, NUL, and unescaped `<` inside `<...>` destinations.
+    for (const invalidAngle of [
+      '![A](<foo\nbar>)',
+      '![A](<foo\rbar>)',
+      '![A](<foo<bar>)',
+      '![A](<foo\\<bar>'.replace('\\<', '\\\\<')
+    ]) {
+      expect(parseMarkdownImageScale(invalidAngle), JSON.stringify(invalidAngle)).toBeNull();
+    }
+    expect(parseMarkdownImageScale(String.raw`![A](<foo\<bar>)`)).toMatchObject({
+      destination: 'foo<bar',
+      destinationAngle: true
+    });
+
+    // Reject unescaped `(` inside `(...)` titles; allow escaped `\(` / `\)`.
+    expect(parseMarkdownImageScale('![A](/x.png (a (b) c))')).toBeNull();
+    expect(
+      parseMarkdownImageScale(String.raw`![A](/x.png (a \(b\) c {width=50%}))`)
+    ).toMatchObject({
+      scale: 50,
+      title: String.raw`a \(b\) c`
+    });
+
+    // CommonMark §6.1: backslashes inside code spans are literal, never escapes.
+    const backslashCodeSource = '`a\\` ![Good](/x.png "{width=50%}") `b`';
+    const goodStart = backslashCodeSource.indexOf('![Good]');
+    expect(findMarkdownImageAt(backslashCodeSource, goodStart + 3)).toMatchObject({
+      alt: 'Good',
+      destination: '/x.png',
+      scale: 50,
+      title: null
+    });
+    const escapedBacktickSource = '\\` ![Good](/x.png "{width=67%}") \\`';
+    expect(
+      findMarkdownImageAt(escapedBacktickSource, escapedBacktickSource.indexOf('![Good]') + 3)
+    ).toMatchObject({
+      destination: '/x.png',
+      scale: 67
+    });
+  });
+
+  it('matches PHP CommonMark blockquote continuation rules for multiline image titles', () => {
+    for (const invalidBlockquote of [
+      '> ![A](/x.png "Caption\n> {width=50%}")',
+      '> ![A](/x.png "Caption\n>  {width=50%}")',
+      '> ![A](/x.png "Caption\n>   {width=50%}")',
+      '> ![A](/x.png "Caption\n>{width=50%}")',
+      '> ![A](/x.png "Caption\n>\t{width=50%}")',
+      '> > ![A](/x.png "Caption\n> > {width=50%}")'
+    ]) {
+      const start = invalidBlockquote.indexOf('![');
+      expect(() => parseMarkdownImageScale(invalidBlockquote, start), invalidBlockquote).toThrow(
+        'image-scale-syntax-invalid'
+      );
+      expect(() => findMarkdownImageAt(invalidBlockquote, start + 3), invalidBlockquote).toThrow(
+        'image-scale-syntax-invalid'
+      );
+    }
+
+    // Valid scaled blockquote multiline title reports PHP scale but disallows raw mutation across `>`.
+    const validScaledBq = '> ![A](/x.png "Caption\n> Line2 {width=50%}")';
+    const parsedScaledBq = findMarkdownImageAt(validScaledBq, validScaledBq.indexOf('![') + 3);
+    expect(parsedScaledBq).toMatchObject({
+      scale: 50,
+      title: 'Caption\nLine2',
+      titleMarkerEnd: null,
+      titleMarkerStart: null
+    });
+    if (!parsedScaledBq) throw new Error('image-scale-test-image-missing');
+    expect(() => createImageScaleReplacement(validScaledBq, parsedScaledBq, 67)).toThrow(
+      'image-scale-syntax-invalid'
+    );
+
+    // Valid unscaled blockquote multiline title also disallows mutating across `>`.
+    const validUnscaledBq = '> ![A](/x.png "Caption\n> Line2")';
+    const parsedUnscaledBq = findMarkdownImageAt(
+      validUnscaledBq,
+      validUnscaledBq.indexOf('![') + 3
+    );
+    expect(parsedUnscaledBq).toMatchObject({
+      scale: null
+    });
+    if (!parsedUnscaledBq) throw new Error('image-scale-test-image-missing');
+    expect(() => createImageScaleReplacement(validUnscaledBq, parsedUnscaledBq, 50)).toThrow(
+      'image-scale-syntax-invalid'
+    );
+
+    // Blank blockquote line or unquoted `>` continuation breaks the paragraph (not an image).
+    expect(
+      parseMarkdownImageScale('> ![A](/x.png "Line1\n>\n> Line2 {width=50%}")', 2)
+    ).toBeNull();
+    expect(parseMarkdownImageScale('![A](/x.png "Caption\n> {width=50%}")')).toBeNull();
+
+    // 4-space continuation indent before `>` stays literal paragraph text (matching PHP).
+    expect(
+      parseMarkdownImageScale('![A](/x.png "Caption\n    > {width=50%}")')
+    ).toMatchObject({
+      scale: 50,
+      title: 'Caption\n    >'
+    });
+  });
 });

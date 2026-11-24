@@ -127,10 +127,18 @@ describe("editor-context-menu-image-actions", () => {
 		["escaped valid marker", String.raw`![A](/image.png "Caption \{width=50%\}")`],
 		["entity-encoded valid marker", '![A](/image.png "Caption &#123;width=50%&#125;")'],
 		["escaped invalid marker", String.raw`![A](/image.png "Caption \{width=51%\}")`],
+		["blockquote invalid multiline marker", '> ![A](/x.png "Caption\n> {width=50%}")'],
+		["blockquote valid multiline scaled title", '> ![A](/x.png "Caption\n> Line2 {width=50%}")'],
+		["blockquote multiline unscaled title", '> ![A](/x.png "Caption\n> Line2")'],
 	])(
 		"reports cleanly without throwing or mutating on incompatible title (%s)",
 		async (_label, markdown) => {
-			const { applyEdit, report, session } = createImageScaleSession(markdown);
+			const selectionStart = markdown.indexOf("![") + 2;
+			const { applyEdit, report, session } = createImageScaleSession(
+				markdown,
+				selectionStart,
+				selectionStart,
+			);
 			await expect(
 				runImageContextMenuAction("image-scale-100", session),
 			).resolves.toBeUndefined();

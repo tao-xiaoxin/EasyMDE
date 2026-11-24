@@ -1,5 +1,5 @@
-import MarkdownIt from "markdown-it";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
+import { createVisualMarkdownItParser } from "./markdown-it-config";
 import {
 	type MarkdownToken,
 	mapInlineTokens,
@@ -44,36 +44,7 @@ export type ParsedVisualDocument = Readonly<{
 	trailingSuffix: string;
 }>;
 
-const markdownItParser = new MarkdownIt({
-	html: false,
-	linkify: false,
-	breaks: false,
-});
-
-// CommonMark §4.8 / §4.3 strip leading spaces and tabs from continuation lines
-// of paragraphs and Setext headings before inline parsing; markdown-it leaves
-// them intact inside multiline link/image titles (`"Caption\n {width=50%}"`),
-// while HTML entities (`&#10; ` / `&NewLine; `) decode later during inline parsing.
-markdownItParser.core.ruler.before(
-	"inline",
-	"easymde_strip_continuation_indent",
-	(state) => {
-		for (let i = 0; i < state.tokens.length; i += 1) {
-			const token = state.tokens[i];
-			if (token?.type !== "inline" || !token.content.includes("\n")) {
-				continue;
-			}
-			const prevType = state.tokens[i - 1]?.type;
-			if (
-				state.inlineMode ||
-				prevType === "paragraph_open" ||
-				prevType === "heading_open"
-			) {
-				token.content = token.content.replace(/\n[ \t]+/g, "\n");
-			}
-		}
-	},
-);
+const markdownItParser = createVisualMarkdownItParser();
 
 function parseCellAlignmentFromToken(token: MarkdownToken): TableTextAlign {
 	const match = /text-align\s*:\s*(left|center|right)/i.exec(
@@ -511,6 +482,18 @@ function mapBlockTokensWithRanges(
 			continue;
 		}
 
+		if (token.type === "easymde_table_align") {
+			const tableAlign = preScan.tableAlignMarkers.get(token.content);
+			if (tableAlign !== undefined) {
+				flushOrphanTableAlign();
+				pendingTableAlign = {
+					marker: tableAlign,
+					origRange: resolveOriginalRangeFromTokenMap(token.map, preScan),
+				};
+				continue;
+			}
+		}
+
 		if (token.type === "paragraph_open") {
 			const closeIdx = findMatchingCloseIndex(
 				tokens,
@@ -715,10 +698,12 @@ export function parseMarkdownWithBlockSources(
 		};
 	}
 	const preScan = prescanMarkdown(markdown);
-	const env: Record<string, unknown> =
-		Object.keys(preScan.references).length > 0
-			? { references: { ...preScan.references } }
-			: {};
+	const env: Record<string, unknown> = {
+		tableAlignMarkers: preScan.tableAlignMarkers,
+	};
+	if (Object.keys(preScan.references).length > 0) {
+		env.references = { ...preScan.references };
+	}
 	const tokens = markdownItParser.parse(preScan.markdown, env);
 	const mapped = mapBlockTokensWithRanges(tokens, 0, tokens.length, preScan);
 	const doc = visualEditorSchema.nodes.doc.create(

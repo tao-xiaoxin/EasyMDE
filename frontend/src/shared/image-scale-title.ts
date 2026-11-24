@@ -28,13 +28,25 @@ export type ParsedImageScaleTitleContract =
 			title: string | null;
 	  }>;
 
-// Two-pass CommonMark §2.4 backslash-escaped ASCII punctuation + §6.2 strict
-// HTML5 entity patterns matching PHP `League\CommonMark\Util\RegexHelper::unescape()`.
+// CommonMark §2.4 32-character ASCII punctuation class and §6.2 strict HTML5
+// entity pattern matching PHP `League\CommonMark\Util\RegexHelper`.
+export const COMMONMARK_ESCAPABLE_PUNCTUATION =
+	/[!"#$%&'()*+,./:;<=>?@[\\\]^_`{|}~-]/u;
 const COMMONMARK_ESCAPED_PUNCTUATION =
 	/\\([!"#$%&'()*+,./:;<=>?@[\\\]^_`{|}~-])/gu;
 const COMMONMARK_HTML_ENTITY =
 	/&(?:#x[a-f0-9]{1,6}|#[0-9]{1,7}|[a-z][a-z0-9]{1,31});/giu;
 const NORMALIZED_TITLE_BLANK_LINE = /\n[ \t]*\n/u;
+
+/**
+ * Unescapes CommonMark §2.4 backslash-escaped ASCII punctuation without
+ * decoding HTML entities.
+ */
+export function unescapeCommonMarkAsciiPunctuation(value: string): string {
+	return value.includes("\\")
+		? value.replace(COMMONMARK_ESCAPED_PUNCTUATION, "$1")
+		: value;
+}
 
 function isAsciiWhitespace(character: string | undefined): boolean {
 	return (
@@ -62,9 +74,7 @@ export function hasMarkdownTitleBlankLine(title: string): boolean {
  * `League\CommonMark\Util\RegexHelper::unescape()` 1:1 in two passes.
  */
 export function decodeCommonMarkTitle(rawTitle: string): string {
-	const unescaped = rawTitle.includes("\\")
-		? rawTitle.replace(COMMONMARK_ESCAPED_PUNCTUATION, "$1")
-		: rawTitle;
+	const unescaped = unescapeCommonMarkAsciiPunctuation(rawTitle);
 	if (!unescaped.includes("&")) {
 		return unescaped;
 	}

@@ -779,7 +779,8 @@ beside them:
   `wechat-style-policy-content-box.ts`, `wechat-style-policy-semantics.ts`) and
   portable declaration emission (`wechat-style-declarations.ts`);
 - background theme images (`wechat-background-images.ts`), pseudo-elements and
-  quote pseudo-flow (`wechat-pseudo-content.ts`, `wechat-pseudo-elements.ts`,
+  quote/heading pseudo-flow (`wechat-pseudo-content.ts`,
+  `wechat-pseudo-elements.ts`, `wechat-heading-pseudo-flow.ts`,
   `wechat-quote-pseudo-flow.ts`), and the inline pseudo-paint pipeline
   (`wechat-inline-pseudo-paint.ts` over `wechat-inline-pseudo-paint-types.ts`,
   `wechat-inline-pseudo-paint-core.ts`,

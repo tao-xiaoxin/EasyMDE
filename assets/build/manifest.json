@@ -3,15 +3,15 @@
     "file": "assets/admin-editor-chunk-BI0QStqX.js",
     "name": "shared"
   },
-  "_admin-editor-chunk-C7sDCQIi.js": {
-    "file": "assets/admin-editor-chunk-C7sDCQIi.js",
+  "_admin-editor-chunk-k-SG_f71.js": {
+    "file": "assets/admin-editor-chunk-k-SG_f71.js",
     "name": "wechat-managed-fonts",
     "imports": [
       "_admin-editor-chunk-BI0QStqX.js"
     ]
   },
   "frontend/src/entrypoints/admin-editor.tsx": {
-    "file": "assets/admin-editor-6xEvim7J.js",
+    "file": "assets/admin-editor-vKmdHdyB.js",
     "name": "editor",
     "src": "frontend/src/entrypoints/admin-editor.tsx",
     "isEntry": true,
@@ -58,23 +58,23 @@
     ]
   },
   "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts": {
-    "file": "assets/admin-editor-chunk-BOqDTeAE.js",
+    "file": "assets/admin-editor-chunk-CuPpwXN6.js",
     "name": "create-browser-wechat-clipboard",
     "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts",
     "isDynamicEntry": true,
     "imports": [
       "_admin-editor-chunk-BI0QStqX.js",
-      "_admin-editor-chunk-C7sDCQIi.js"
+      "_admin-editor-chunk-k-SG_f71.js"
     ]
   },
   "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts": {
-    "file": "assets/admin-editor-chunk-B7MbYFG8.js",
+    "file": "assets/admin-editor-chunk-lt5RoBoo.js",
     "name": "create-browser-wechat-visual-rasterizer",
     "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts",
     "isDynamicEntry": true,
     "imports": [
       "_admin-editor-chunk-BI0QStqX.js",
-      "_admin-editor-chunk-C7sDCQIi.js"
+      "_admin-editor-chunk-k-SG_f71.js"
     ]
   },
   "node_modules/@codemirror/lang-json/dist/index.js": {

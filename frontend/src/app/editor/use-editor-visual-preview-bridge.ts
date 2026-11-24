@@ -250,7 +250,8 @@ export function useEditorVisualPreviewBridge({
     prepareSourceMutation,
     prepareSourceMutationWithPreview,
     prepareVisualSource,
-    requestVisualPreviewUnlock
+    requestVisualPreviewUnlock,
+    visualRuntimePort
   } = useEditorVisualUnlock({
     cancelWechatBackgroundPreparation,
     codeThemePreparationGenerationRef,
@@ -711,6 +712,7 @@ export function useEditorVisualPreviewBridge({
     visualPreviewEditing,
     visualPreviewSnapshot,
     visualPreviewUnlocking,
+    visualRuntimePort,
     waitForFreshFormalPreview
   };
 }

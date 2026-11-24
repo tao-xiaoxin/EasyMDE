@@ -9,9 +9,18 @@ import {
 } from "prosemirror-tables";
 import { EditorView } from "prosemirror-view";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseMarkdownToVisualDoc } from "../markdown-parser";
+import type {
+	VisualGeneratedRuntimePort,
+	VisualRuntimeFeature,
+	VisualRuntimeState,
+} from "../../../contracts/visual-editor";
+import {
+	parseMarkdownToVisualDoc,
+	prescanMarkdown,
+} from "../markdown-parser";
 import { serializeVisualDocToMarkdown } from "../markdown-serializer";
 import { visualEditorSchema } from "../visual-schema";
+import { stripCommonMarkHtmlForPreview } from "./protected-atom-preview-renderer";
 import {
 	codeHighlightPluginKey,
 	createCodeHighlightPlugin,
@@ -20,7 +29,6 @@ import {
 	type KatexRuntime,
 	type MermaidRenderResult,
 	type MermaidRuntime,
-	PREVIEW_RUNTIME_READY_EVENT,
 	PROTECTED_CARD_COMMIT_META,
 	sanitizeMermaidSvg,
 	TableContainerNodeView,
@@ -28,6 +36,9 @@ import {
 } from "./index";
 
 type TestEnhancementWindow = Window & {
+	EasyMDEMermaidRenderer?: Readonly<{
+		readCachedSvg?: (source: string, renderId: string) => string | null;
+	}>;
 	hljs?: HighlightJsRuntime;
 	katex?: KatexRuntime;
 	mermaid?: MermaidRuntime;
@@ -81,7 +92,12 @@ function mountVisualEditor(
 
 	const plugins = [history()];
 	if (options.withHighlightPlugin !== false) {
-		plugins.push(createCodeHighlightPlugin());
+		const runtimePort = options.nodeViewsOptions?.protectedAtom?.runtimePort;
+		plugins.push(
+			createCodeHighlightPlugin(
+				runtimePort !== undefined ? { runtimePort } : {},
+			),
+		);
 	}
 	if (options.withColumnResizing) {
 		plugins.push(columnResizing({ View: TableContainerNodeView }));
@@ -124,6 +140,10 @@ afterEach(() => {
 	delete win.hljs;
 	delete win.katex;
 	delete win.mermaid;
+	document.documentElement.removeAttribute("data-easymde-visual-math-ready");
+	document.documentElement.removeAttribute(
+		"data-easymde-visual-math-unavailable",
+	);
 	vi.restoreAllMocks();
 });
 
@@ -347,6 +367,10 @@ describe("ProtectedAtomNodeView (math, mermaid, cards, raw-source editor)", () =
 		});
 		const win = window as TestEnhancementWindow;
 		win.katex = { render: katexRender };
+		document.documentElement.setAttribute(
+			"data-easymde-visual-math-ready",
+			"1",
+		);
 
 		const view = mountVisualEditor(
 			"$$\nE = mc^2\n$$\n\nInline $a^2 + b^2 = c^2$ text.",
@@ -489,8 +513,9 @@ describe("ProtectedAtomNodeView (math, mermaid, cards, raw-source editor)", () =
 		expect(useEl?.getAttribute("xlink:href")).toBe("#arrow-head");
 	});
 
-	it("renders toc, footnotes, raw, footnote-ref, and raw-inline cards safely without HTML injection", () => {
+	it("renders toc, footnotes, raw, footnote-ref, and raw-inline cards safely in preview style without HTML injection", () => {
 		const markdown = [
+			"## Section Alpha",
 			"[TOC]",
 			"[^1]: Footnote body",
 			'<div class="custom"><script>alert(1)</script></div>',
@@ -515,17 +540,35 @@ describe("ProtectedAtomNodeView (math, mermaid, cards, raw-source editor)", () =
 		expect(toc?.getAttribute("data-easymde-visual-markdown-source")).toBe(
 			"[TOC]",
 		);
+		expect(
+			toc?.querySelector(".easymde-toc ul li.easymde-toc-level-2 a")
+				?.textContent,
+		).toBe("Section Alpha");
 		expect(footnotes?.getAttribute("data-easymde-visual-markdown-source")).toBe(
 			"[^1]: Footnote body",
 		);
+		expect(
+			footnotes?.querySelector(".easymde-protected-meta-chip")?.textContent,
+		).toContain("^1");
 		expect(rawBlock?.querySelector("script")).toBeNull();
-		expect(rawBlock?.textContent).toContain("<script>alert(1)</script>");
+		expect(rawBlock?.getAttribute("data-easymde-visual-markdown-source")).toBe(
+			'<div class="custom"><script>alert(1)</script></div>',
+		);
+		expect(
+			rawBlock?.querySelector(".easymde-protected-meta-chip")?.textContent,
+		).toBe("Raw <div>");
 		expect(
 			footnoteRef?.getAttribute("data-easymde-visual-markdown-source"),
 		).toBe("[^1]");
+		expect(
+			footnoteRef?.querySelector(".easymde-footnote-ref-link")?.textContent,
+		).toBe("^1");
 		expect(rawInline?.getAttribute("data-easymde-visual-markdown-source")).toBe(
 			"<!-- note -->",
 		);
+		expect(
+			rawInline?.querySelector(".easymde-protected-inline-hidden"),
+		).not.toBeNull();
 	});
 
 	it("supports double-click raw-source editing with Enter/Save commit, Undo, and Escape zero-mutation cancel", () => {
@@ -1105,6 +1148,10 @@ describe("ProtectedAtomNodeView generated-content DOM and runtime parity", () =>
 		);
 		const win = window as TestEnhancementWindow;
 		win.katex = { render: katexRender };
+		document.documentElement.setAttribute(
+			"data-easymde-visual-math-ready",
+			"1",
+		);
 
 		const view = mountVisualEditor("$$\nE = mc^2\n$$\n\nInline $a + b$ end.");
 		expect(view.dom.querySelectorAll(".easymde-math")).toHaveLength(2);
@@ -1155,8 +1202,20 @@ describe("ProtectedAtomNodeView generated-content DOM and runtime parity", () =>
 		expect(blockMath.contains(actions)).toBe(false);
 	});
 
-	it("re-renders mounted atoms when readiness is announced on the window", () => {
-		const view = mountVisualEditor("$$\ny = 1\n$$");
+	it("re-renders mounted atoms when the visual runtime port announces readiness", () => {
+		let mathState: VisualRuntimeState = "idle";
+		const listeners = new Set<() => void>();
+		const runtimePort: VisualGeneratedRuntimePort = {
+			getState: (feature) => (feature === "math" ? mathState : "ready"),
+			request: (feature) => (feature === "math" ? mathState : "ready"),
+			subscribe: (listener) => {
+				listeners.add(listener);
+				return () => listeners.delete(listener);
+			},
+		};
+		const view = mountVisualEditor("$$\ny = 1\n$$", {
+			nodeViewsOptions: { protectedAtom: { runtimePort } },
+		});
 		expect(view.dom.querySelector(".easymde-math .katex")).toBeNull();
 		const render = vi.fn((tex: string, target: HTMLElement) => {
 			const span = target.ownerDocument.createElement("span");
@@ -1166,7 +1225,8 @@ describe("ProtectedAtomNodeView generated-content DOM and runtime parity", () =>
 		});
 		const win = window as TestEnhancementWindow;
 		win.katex = { render };
-		window.dispatchEvent(new Event(PREVIEW_RUNTIME_READY_EVENT));
+		mathState = "ready";
+		for (const listener of Array.from(listeners)) listener();
 		expect(render).toHaveBeenCalledTimes(1);
 		expect(view.dom.querySelector(".easymde-math .katex")?.textContent).toBe(
 			"y = 1",
@@ -1200,8 +1260,23 @@ describe("ProtectedAtomNodeView generated-content DOM and runtime parity", () =>
 
 		// Late runtime availability re-renders already mounted atoms without reload.
 		delete win.mermaid;
+		const lateStates: Record<VisualRuntimeFeature, VisualRuntimeState> = {
+			math: "loading",
+			mermaid: "loading",
+			toc: "ready",
+		};
+		const lateListeners = new Set<() => void>();
+		const latePort: VisualGeneratedRuntimePort = {
+			getState: (feature) => lateStates[feature],
+			request: (feature) => lateStates[feature],
+			subscribe: (listener) => {
+				lateListeners.add(listener);
+				return () => lateListeners.delete(listener);
+			},
+		};
 		const lateView = mountVisualEditor(
 			"$$\nE = mc^2\n$$\n\n```mermaid\ngraph TD\n  P --> Q\n```",
+			{ nodeViewsOptions: { protectedAtom: { runtimePort: latePort } } },
 		);
 		expect(lateView.dom.querySelector(".easymde-math .katex")).toBeNull();
 		const lateKatex = vi.fn((tex: string, target: HTMLElement) => {
@@ -1215,10 +1290,9 @@ describe("ProtectedAtomNodeView generated-content DOM and runtime parity", () =>
 		}));
 		win.katex = { render: lateKatex };
 		win.mermaid = { initialize: vi.fn(), render: lateRender };
-		// Bubbling document events also reach the window listener: render once.
-		document.dispatchEvent(
-			new Event(PREVIEW_RUNTIME_READY_EVENT, { bubbles: true }),
-		);
+		lateStates.math = "ready";
+		lateStates.mermaid = "ready";
+		for (const listener of Array.from(lateListeners)) listener();
 		await flushMicrotasks();
 		expect(lateKatex).toHaveBeenCalledTimes(1);
 		expect(
@@ -1335,8 +1409,19 @@ describe("code highlight caching and runtime-ready refresh", () => {
 		);
 	});
 
-	it("refreshes mounted code blocks once when the highlight runtime becomes ready", () => {
-		const view = mountVisualEditor("```ts\nconst x = 1;\n```");
+	it("refreshes mounted code blocks once when the highlight runtime becomes ready via runtimePort", () => {
+		const listeners = new Set<() => void>();
+		const runtimePort: VisualGeneratedRuntimePort = {
+			getState: () => "ready",
+			request: () => "ready",
+			subscribe: (listener) => {
+				listeners.add(listener);
+				return () => listeners.delete(listener);
+			},
+		};
+		const view = mountVisualEditor("```ts\nconst x = 1;\n```", {
+			nodeViewsOptions: { protectedAtom: { runtimePort } },
+		});
 		expect(
 			codeHighlightPluginKey.getState(view.state)?.decorations.find().length,
 		).toBe(0);
@@ -1346,7 +1431,7 @@ describe("code highlight caching and runtime-ready refresh", () => {
 		}));
 		const win = window as TestEnhancementWindow;
 		win.hljs = { getLanguage: () => ({}), highlight };
-		document.dispatchEvent(new Event(PREVIEW_RUNTIME_READY_EVENT));
+		for (const listener of Array.from(listeners)) listener();
 		expect(highlight).toHaveBeenCalledTimes(1);
 		expect(
 			codeHighlightPluginKey.getState(view.state)?.decorations.find().length,
@@ -1565,7 +1650,7 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 		);
 	});
 
-	it("renders protected raw, footnotes, toc cards and monospace fallbacks without <pre>", () => {
+	it("renders collapsed raw, footnotes, toc chips and monospace fallbacks without <pre>", () => {
 		const markdown = [
 			"[TOC]",
 			"[^1]: Footnote body",
@@ -1580,9 +1665,9 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 			);
 			expect(card).not.toBeNull();
 			expect(card?.querySelector("pre")).toBeNull();
-			const source = card?.querySelector(".easymde-protected-card-source");
-			expect(source?.tagName).toBe("DIV");
-			expect((source as HTMLElement | null)?.style.whiteSpace).toBe("pre-wrap");
+			const chip = card?.querySelector(".easymde-protected-meta-chip");
+			expect(chip?.tagName).toBe("DIV");
+			expect(chip?.getAttribute("data-easymde-protected-collapsed")).toBe("1");
 		}
 		for (const kind of ["math", "mermaid"]) {
 			const block = view.dom.querySelector(
@@ -1639,5 +1724,599 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 			window.requestAnimationFrame = originalRaf;
 			window.cancelAnimationFrame = originalCancel;
 		}
+	});
+
+	it("shows non-source loading placeholders during active warmup or async Mermaid render and transitions to rendered preview", async () => {
+		const states: Record<VisualRuntimeFeature, VisualRuntimeState> = {
+			math: "loading",
+			mermaid: "loading",
+			toc: "ready",
+		};
+		const listeners = new Set<() => void>();
+		const runtimePort: VisualGeneratedRuntimePort = {
+			getState: (feature) => states[feature],
+			request: (feature) => states[feature],
+			subscribe: (listener) => {
+				listeners.add(listener);
+				return () => listeners.delete(listener);
+			},
+		};
+		const notify = () => {
+			for (const listener of Array.from(listeners)) listener();
+		};
+		const win = window as TestEnhancementWindow;
+		try {
+			const view = mountVisualEditor(
+				[
+					"Inline $E = mc^2$.",
+					"$$\n\\begin{bmatrix}\n1 & 2 \\\n3 & 4\n\\end{bmatrix}\n$$",
+					"$$\n\\begin{cases}\nx = 1 \\\ny = 2\n\\end{cases}\n$$",
+					"```mermaid\nflowchart TD\n  A --> B\n```",
+				].join("\n\n"),
+				{ nodeViewsOptions: { protectedAtom: { runtimePort } } },
+			);
+			expect(
+				view.dom.querySelectorAll(".easymde-protected-loading"),
+			).toHaveLength(4);
+			expect(view.dom.querySelector(".easymde-protected-fallback")).toBeNull();
+
+			// Complete math warmup with KaTeX ready; Mermaid stays in loading state.
+			const katexRender = vi.fn((tex: string, target: HTMLElement) => {
+				const span = target.ownerDocument.createElement("span");
+				span.className = "katex";
+				span.textContent = tex;
+				target.replaceChildren(span);
+			});
+			win.katex = { render: katexRender };
+			states.math = "ready";
+			notify();
+
+			expect(view.dom.querySelectorAll(".easymde-math .katex")).toHaveLength(3);
+			// Single trailing backslash inside \begin{bmatrix} is normalized to \\
+			// while \begin{cases} stays untouched — matching formal Preview identically.
+			expect(katexRender).toHaveBeenCalledWith(
+				"\\begin{bmatrix}\n1 & 2 \\\\\n3 & 4\n\\end{bmatrix}",
+				expect.any(HTMLElement),
+				{ displayMode: true, throwOnError: false, strict: "ignore" },
+			);
+			expect(katexRender).toHaveBeenCalledWith(
+				"\\begin{cases}\nx = 1 \\\ny = 2\n\\end{cases}",
+				expect.any(HTMLElement),
+				{ displayMode: true, throwOnError: false, strict: "ignore" },
+			);
+			expect(
+				view.dom.querySelectorAll(
+					'[data-easymde-protected-kind="mermaid"] .easymde-protected-loading',
+				),
+			).toHaveLength(1);
+			expect(view.dom.querySelector(".easymde-protected-fallback")).toBeNull();
+
+			// Complete Mermaid warmup; pending mermaid.render() keeps loading placeholder (never raw source).
+			const pendingMermaid = createDeferred<MermaidRenderResult>();
+			win.mermaid = {
+				initialize: vi.fn(),
+				render: vi.fn(() => pendingMermaid.promise),
+			};
+			states.mermaid = "ready";
+			notify();
+			await flushMicrotasks();
+
+			expect(
+				view.dom.querySelector(
+					'[data-easymde-protected-kind="mermaid"] .easymde-protected-loading',
+				),
+			).not.toBeNull();
+			expect(view.dom.querySelector(".easymde-protected-fallback")).toBeNull();
+
+			pendingMermaid.resolve({
+				svg: '<svg id="easymde-visual-mermaid-test"><g><text>Rendered Flow</text></g></svg>',
+			});
+			await flushMicrotasks();
+			expect(
+				view.dom.querySelector(".easymde-mermaid svg")?.textContent,
+			).toContain("Rendered Flow");
+			expect(view.dom.querySelector(".easymde-protected-loading")).toBeNull();
+		} finally {
+			delete win.katex;
+			delete win.mermaid;
+		}
+	});
+
+	it("renders cached formal-Preview Mermaid SVGs synchronously without redundant mermaid.render calls", () => {
+		const win = window as TestEnhancementWindow;
+		const renderSpy = vi.fn(async () => ({
+			svg: "<svg><text>Should Not Run</text></svg>",
+		}));
+		win.mermaid = { initialize: vi.fn(), render: renderSpy };
+		win.EasyMDEMermaidRenderer = {
+			readCachedSvg: vi.fn((source: string, renderId: string) =>
+				source === "flowchart TD\n  A --> B"
+					? `<svg id="${renderId}"><defs><marker id="arrowhead"><path d="M0,0"/></marker></defs><line marker-end="url(#arrowhead)"/><text>Cached Sync</text></svg>`
+					: null,
+			),
+		};
+		try {
+			const view = mountVisualEditor(
+				"```mermaid\nflowchart TD\n  A --> B\n```",
+			);
+			const svg = view.dom.querySelector(".easymde-mermaid svg");
+			expect(svg).not.toBeNull();
+			expect(svg?.textContent).toContain("Cached Sync");
+			expect(renderSpy).not.toHaveBeenCalled();
+			const renderId = svg?.getAttribute("id") ?? "";
+			expect(svg?.querySelector("marker")?.getAttribute("id")).toBe(
+				`${renderId}__arrowhead`,
+			);
+		} finally {
+			delete win.EasyMDEMermaidRenderer;
+			delete win.mermaid;
+		}
+	});
+
+	it("renders HTML container blocks, inline HTML tags, reference links, and TOC in main-baseline WYSIWYG style while keeping source editable", () => {
+		const markdown = [
+			"## 1. Overview",
+			"[TOC]",
+			"Text <u>underlined</u>, <mark>marked</mark>, H<sub>2</sub>O, x<sup>2</sup>, <kbd>⌘</kbd> + <kbd>K</kbd>.",
+			[
+				"<details>",
+				"<summary>Expand details</summary>",
+				"",
+				"Inside details paragraph.",
+				"",
+				"* Bullet one",
+				"",
+				"```bash",
+				'echo "hi"',
+				"```",
+				"",
+				"</details>",
+			].join("\n"),
+			[
+				'<div align="center">',
+				"",
+				"### Centered Heading",
+				"",
+				"<kbd>Ctrl</kbd> + <kbd>S</kbd> and [Safe](https://example.com) and [Evil](javascript:alert(1)).",
+				"",
+				"</div>",
+			].join("\n"),
+			'[ref-a]: https://example.com "Example"',
+		].join("\n\n");
+
+		const view = mountVisualEditor(markdown);
+
+		// Paired inline HTML tags render their visible text without showing raw tags.
+		const inlineRendered = Array.from(
+			view.dom.querySelectorAll(".easymde-protected-inline-rendered"),
+		).map((el) => el.textContent);
+		expect(inlineRendered).toEqual(["underlined", "marked", "2", "2", "⌘", "K"]);
+		expect(view.dom.textContent).not.toContain("<u>");
+		expect(view.dom.textContent).not.toContain("<kbd>");
+
+		// <details> renders its inner Markdown blocks cleanly (p, ul, Mac pre>code).
+		const rawBlocks = view.dom.querySelectorAll(
+			'[data-easymde-protected-kind="raw"]',
+		);
+		expect(rawBlocks).toHaveLength(3);
+		const detailsPreview = rawBlocks[0]?.querySelector(
+			".easymde-protected-preview",
+		);
+		expect(detailsPreview?.querySelector("p")?.textContent).toBe(
+			"Inside details paragraph.",
+		);
+		expect(detailsPreview?.querySelector("ul li")?.textContent).toBe(
+			"Bullet one",
+		);
+		// Tight list items inside raw blocks match CommonMark (`<li>text</li>`, no extra `<p>`).
+		expect(detailsPreview?.querySelector("ul li p")).toBeNull();
+		expect(
+			detailsPreview?.querySelector("pre.easymde-code-block code.language-bash")
+				?.textContent,
+		).toContain('echo "hi"');
+
+		// <div align="center"> renders inner heading, strips inline <kbd> tags even at line start, and neutralizes javascript: links.
+		const divPreview = rawBlocks[1]?.querySelector(".easymde-protected-preview");
+		expect(divPreview?.querySelector("h3")?.textContent).toBe(
+			"Centered Heading",
+		);
+		expect(divPreview?.querySelector("p")?.textContent).toContain("Ctrl + S");
+		const safeAnchor = divPreview?.querySelector("a");
+		expect(safeAnchor?.getAttribute("href")).toBe("https://example.com");
+		expect(divPreview?.querySelectorAll("a")).toHaveLength(1);
+		expect(divPreview?.querySelector('a[href^="javascript:"]')).toBeNull();
+		// Clicking a rendered anchor inside non-editing preview must not navigate.
+		const anchorClick = new MouseEvent("click", {
+			bubbles: true,
+			cancelable: true,
+		});
+		safeAnchor?.dispatchEvent(anchorClick);
+		expect(anchorClick.defaultPrevented).toBe(true);
+
+		// Reference link definitions collapse into a quiet chip.
+		expect(
+			rawBlocks[2]?.querySelector(".easymde-protected-meta-chip")?.textContent,
+		).toContain("[ref-a]");
+
+		// Clicking Edit on <details> still opens the untouched raw Markdown source.
+		const editBtn = rawBlocks[0]?.querySelector(
+			"button.easymde-protected-edit-btn",
+		) as HTMLButtonElement;
+		editBtn.click();
+		const textarea = rawBlocks[0]?.querySelector(
+			"textarea.easymde-protected-source-input",
+		) as HTMLTextAreaElement;
+		expect(textarea.value).toContain("<summary>Expand details</summary>");
+
+		// Canonical Markdown remains lossless.
+		expect(serializeVisualDocToMarkdown(view.state.doc)).toContain(
+			"<u>underlined</u>",
+		);
+		expect(serializeVisualDocToMarkdown(view.state.doc)).toContain(
+			"## 1. Overview",
+		);
+	});
+
+	it("preserves paragraph text across Type-7 tags, closes paragraph after Setext headings, keeps leading indented code in raw blocks, renders inline emphasis inside tags, and updates live TOC with slug hrefs, inline-atom headings, and raw-card headings", () => {
+		const markdown = [
+			"[TOC]",
+			"## Before",
+			"## Heading with <u>underlined text</u>",
+			"Inline <u>*italic*</u> and <u>nested <mark>inner</mark></u>.",
+			["<div>", "", "Text stays", "<kbd>", "Next line stays", "", "</div>"].join(
+				"\n",
+			),
+			["<div>", "", "Title", "===", "<kbd>", "Stripped after setext", "", "</div>"].join(
+				"\n",
+			),
+			["<div>", "", "    indented code", "", "</div>"].join("\n"),
+			[
+				'<div align="center">',
+				"",
+				"### Centered Raw",
+				"",
+				"</div>",
+			].join("\n"),
+		].join("\n\n");
+
+		const view = mountVisualEditor(markdown);
+
+		// Inline Markdown inside paired HTML tags renders as real emphasis.
+		expect(
+			view.dom.querySelector(".easymde-protected-inline-rendered em")
+				?.textContent,
+		).toBe("italic");
+		expect(view.dom.textContent).not.toContain("*italic*");
+		expect(view.dom.textContent).toContain("nested inner");
+
+		// Type-7 standalone <kbd> inside a paragraph does NOT hide "Next line stays".
+		const rawBlocks = view.dom.querySelectorAll(
+			'[data-easymde-protected-kind="raw"]',
+		);
+		expect(rawBlocks).toHaveLength(4);
+		const type7Text =
+			rawBlocks[0]?.querySelector(".easymde-protected-preview p")
+				?.textContent ?? "";
+		expect(type7Text).toContain("Text stays");
+		expect(type7Text).toContain("Next line stays");
+
+		// After a Setext heading (`===`), standalone `<kbd>` starts a Type-7 HTML block and strips `Stripped after setext`.
+		const setextPreview = rawBlocks[1]?.querySelector(
+			".easymde-protected-preview",
+		);
+		expect(setextPreview?.querySelector("h1")?.textContent).toBe("Title");
+		expect(setextPreview?.textContent).not.toContain("Stripped after setext");
+
+		// Leading 4-space indented code block inside a raw block preserves its indentation.
+		expect(
+			rawBlocks[2]?.querySelector(
+				".easymde-protected-preview pre.easymde-code-block code",
+			)?.textContent,
+		).toContain("indented code");
+
+		// TOC includes normal headings, inline-atom heading text/slugs, and raw-card headings.
+		const readTocLinks = () =>
+			Array.from(
+				view.dom.querySelectorAll(
+					'[data-easymde-protected-kind="toc"] .easymde-toc ul li a',
+				),
+			).map((a) => ({
+				href: a.getAttribute("href"),
+				text: a.textContent,
+			}));
+		expect(readTocLinks()).toEqual([
+			{ href: "#before", text: "Before" },
+			{
+				href: "#heading-with-underlined-text",
+				text: "Heading with underlined text",
+			},
+			{ href: "#centered-raw", text: "Centered Raw" },
+		]);
+
+		// Renaming the heading updates the mounted TOC live.
+		let headingTextPos = -1;
+		view.state.doc.descendants((node, pos) => {
+			if (node.isText && node.text === "Before") {
+				headingTextPos = pos;
+				return false;
+			}
+			return true;
+		});
+		expect(headingTextPos).toBeGreaterThan(0);
+		view.dispatch(
+			view.state.tr.insertText(
+				"After",
+				headingTextPos,
+				headingTextPos + "Before".length,
+			),
+		);
+		expect(readTocLinks()).toEqual([
+			{ href: "#after", text: "After" },
+			{
+				href: "#heading-with-underlined-text",
+				text: "Heading with underlined text",
+			},
+			{ href: "#centered-raw", text: "Centered Raw" },
+		]);
+	});
+
+	it("requires positive runtimePort math readiness before calling katex.render and falls back when idle or unavailable", () => {
+		let mathState: VisualRuntimeState = "idle";
+		const listeners = new Set<() => void>();
+		const runtimePort: VisualGeneratedRuntimePort = {
+			getState: (feature) => (feature === "math" ? mathState : "ready"),
+			request: (feature) => (feature === "math" ? mathState : "ready"),
+			subscribe: (listener) => {
+				listeners.add(listener);
+				return () => listeners.delete(listener);
+			},
+		};
+		const notify = () => {
+			for (const listener of Array.from(listeners)) listener();
+		};
+		const katexRender = vi.fn((tex: string, target: HTMLElement) => {
+			const span = target.ownerDocument.createElement("span");
+			span.className = "katex";
+			span.textContent = tex;
+			target.replaceChildren(span);
+		});
+		const view = mountVisualEditor("$$\nE = mc^2\n$$", {
+			nodeViewsOptions: {
+				protectedAtom: {
+					runtimePort,
+					runtimeProvider: { getKatex: () => ({ render: katexRender }) },
+				},
+			},
+		});
+		// Without positive runtimePort `ready`, katex.render must NOT be called.
+		expect(katexRender).not.toHaveBeenCalled();
+		expect(view.dom.querySelector(".easymde-math .katex")).toBeNull();
+		expect(
+			view.dom.querySelector("code.easymde-protected-fallback")?.textContent,
+		).toBe("$$\nE = mc^2\n$$");
+
+		// Unavailable state also blocks rendering.
+		mathState = "unavailable";
+		notify();
+		expect(katexRender).not.toHaveBeenCalled();
+
+		// Once CSS+JS readiness completes (`ready`), KaTeX renders cleanly.
+		mathState = "ready";
+		notify();
+		expect(katexRender).toHaveBeenCalledTimes(1);
+		expect(view.dom.querySelector(".easymde-math .katex")?.textContent).toBe(
+			"E = mc^2",
+		);
+	});
+
+	it("strips quoted > attributes cleanly in inline and raw HTML previews, renders nested math in details, and stays linear on tag-dense lines", () => {
+		const katexRender = vi.fn((tex: string, target: HTMLElement) => {
+			const span = target.ownerDocument.createElement("span");
+			span.className = "katex";
+			span.textContent = tex;
+			target.replaceChildren(span);
+		});
+		const markdown = [
+			'Inline <span title="a > b">clean text</span> and <span title=\'x > y\'>single</span>.',
+			[
+				"<details>",
+				"<summary>Math & HTML</summary>",
+				"",
+				'<span title="a > b">inside raw</span> with $E = mc^2$.',
+				"",
+				"## Dup",
+				"",
+				"## Dup",
+				"",
+				"</details>",
+			].join("\n"),
+			"[TOC]",
+		].join("\n\n");
+
+		const view = mountVisualEditor(markdown, {
+			nodeViewsOptions: {
+				protectedAtom: {
+					runtimeProvider: { getKatex: () => ({ render: katexRender }) },
+				},
+			},
+		});
+
+		const inlineRendered = Array.from(
+			view.dom.querySelectorAll(".easymde-protected-inline-rendered"),
+		).map((el) => el.textContent);
+		expect(inlineRendered).toEqual(["clean text", "single"]);
+		expect(view.dom.textContent).not.toContain('b">');
+		expect(view.dom.textContent).not.toContain("y'>");
+
+		const rawPreview = view.dom.querySelector(
+			'[data-easymde-protected-kind="raw"] .easymde-protected-preview',
+		);
+		expect(rawPreview?.textContent).toContain("inside raw");
+		expect(rawPreview?.querySelector(".easymde-math .katex")?.textContent).toBe(
+			"E = mc^2",
+		);
+
+		// Duplicate headings inside raw blocks mirror TocGenerator::unique_heading_id (`-2`).
+		const tocHrefs = Array.from(
+			view.dom.querySelectorAll(
+				'[data-easymde-protected-kind="toc"] .easymde-toc ul li a',
+			),
+		).map((a) => a.getAttribute("href"));
+		expect(tocHrefs).toEqual(["#dup", "#dup-2"]);
+
+		// Tag-dense line with 5,000 quoted `>` attributes stays strictly linear in both scanners.
+		const dense = '<span title="a > b">x</span>'.repeat(5000);
+		const scanStart = performance.now();
+		const strippedDense = stripCommonMarkHtmlForPreview(dense);
+		const prescannedDense = prescanMarkdown(dense);
+		expect(performance.now() - scanStart).toBeLessThan(150);
+		expect(strippedDense).toBe("x".repeat(5000));
+		expect(prescannedDense.protectedInlines.size).toBe(5000);
+
+		// Thousands of unmatched open tags stay linear while nested balanced tags still match.
+		const unmatchedStart = performance.now();
+		const unmatchedPrescan = prescanMarkdown("<span>".repeat(3000));
+		expect(performance.now() - unmatchedStart).toBeLessThan(150);
+		expect(unmatchedPrescan.protectedInlines.size).toBe(3000);
+		const nestedBalanced = prescanMarkdown("<span> <span> ok </span>");
+		expect(Array.from(nestedBalanced.protectedInlines.values())).toEqual([
+			{ kind: "raw-inline", rawMarkdown: "<span>" },
+			{ kind: "raw-inline", rawMarkdown: "<span> ok </span>" },
+		]);
+	});
+
+	it("blocks external URL-bearing SVG attributes and SMIL animation tags in Mermaid previews, propagates localized nested labels, and unsubscribes raw blocks after nested math renders", () => {
+		// External href/xlink:href/src/srcset and SMIL <animate>/<set> must be stripped, while #fragment stays intact.
+		const sanitized = sanitizeMermaidSvg(
+			[
+				'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" id="m-sec">',
+				'<defs><marker id="arrow"><path d="M0,0"/></marker></defs>',
+				'<image href="https://tracker.example/x.png" xlink:href="https://tracker.example/y.png" width="10" height="10"/>',
+				'<feImage href="https://tracker.example/filter.png"/>',
+				'<use href="https://tracker.example/defs.svg#a"/>',
+				'<use xlink:href="#arrow"/>',
+				'<foreignObject><img src="https://tracker.example/z.png" srcset="https://tracker.example/2x.png 2x"/><table background="https://tracker.example/bg.png"></table></foreignObject>',
+				'<a href="https://tracker.example/nav"><set attributeName="href" to="javascript:alert(1)"/><animate attributeName="href" values="javascript:alert(1)"/></a>',
+				"</svg>",
+			].join(""),
+			document,
+			"sec",
+		);
+		expect(sanitized).not.toBeNull();
+		expect(sanitized?.querySelector("image")?.getAttribute("href")).toBeNull();
+		expect(
+			sanitized
+				?.querySelector("image")
+				?.getAttributeNS("http://www.w3.org/1999/xlink", "href"),
+		).toBeNull();
+		expect(sanitized?.querySelector("feImage")?.getAttribute("href")).toBeNull();
+		expect(sanitized?.querySelector("img")?.getAttribute("src")).toBeNull();
+		expect(sanitized?.querySelector("img")?.getAttribute("srcset")).toBeNull();
+		expect(
+			sanitized?.querySelector("table")?.getAttribute("background"),
+		).toBeNull();
+		expect(sanitized?.querySelector("a")?.getAttribute("href")).toBeNull();
+		expect(sanitized?.querySelectorAll("set, animate")).toHaveLength(0);
+		const uses = Array.from(sanitized?.querySelectorAll("use") ?? []);
+		expect(uses[0]?.getAttribute("href")).toBeNull();
+		expect(
+			uses[1]?.getAttributeNS("http://www.w3.org/1999/xlink", "href"),
+		).toBe("#sec__arrow");
+
+		// Localized labels flow into nested footnotes/raw chips, inline comments use aria-hidden (no hard-coded English),
+		// and raw blocks unsubscribe from runtimePort once nested math finishes rendering.
+		let mathState: VisualRuntimeState = "loading";
+		const listeners = new Set<() => void>();
+		const runtimePort: VisualGeneratedRuntimePort = {
+			getState: (feature) => (feature === "math" ? mathState : "ready"),
+			request: (feature) => (feature === "math" ? mathState : "ready"),
+			subscribe: (listener) => {
+				listeners.add(listener);
+				return () => listeners.delete(listener);
+			},
+		};
+		const katexRender = vi.fn((tex: string, target: HTMLElement) => {
+			const span = target.ownerDocument.createElement("span");
+			span.className = "katex";
+			span.textContent = tex;
+			target.replaceChildren(span);
+		});
+		const view = mountVisualEditor(
+			[
+				"Inline<!-- secret -->note.",
+				"<details>\n<summary>Nested</summary>\n\n$a + b$\n\n[^1]: Note body\n\n</details>",
+			].join("\n\n"),
+			{
+				nodeViewsOptions: {
+					protectedAtom: {
+						labels: { footnotes: "本地脚注", raw: "本地原始块" },
+						runtimePort,
+						runtimeProvider: { getKatex: () => ({ render: katexRender }) },
+					},
+				},
+			},
+		);
+		const hiddenComment = view.dom.querySelector(
+			".easymde-protected-inline-hidden",
+		);
+		expect(hiddenComment?.getAttribute("aria-hidden")).toBe("true");
+		expect(hiddenComment?.getAttribute("aria-label")).toBeNull();
+		expect(
+			view.dom.querySelector(".easymde-protected-meta-chip")?.textContent,
+		).toContain("本地脚注");
+		// Highlight plugin + raw block subscribed while nested math is loading.
+		expect(listeners.size).toBe(2);
+
+		mathState = "ready";
+		for (const listener of Array.from(listeners)) listener();
+		expect(katexRender).toHaveBeenCalledTimes(1);
+		// Raw block unsubscribed after nested math rendered (only highlight plugin remains).
+		expect(listeners.size).toBe(1);
+		for (const listener of Array.from(listeners)) listener();
+		expect(katexRender).toHaveBeenCalledTimes(1);
+	});
+
+	it("blocks XSS, event handlers, dangerous tags, style injection, and unsafe URLs across HTML blocks and inline HTML tags", () => {
+		const malicious = [
+			'Inline <u onclick="alert(1)" onmouseover="alert(2)">Safe</u> and <span style="background:url(javascript:alert(1))">Plain</span> and <img src=x onerror=alert(1)> and <svg/onload=alert(1)>.',
+			'<iframe src="javascript:alert(1)"></iframe>',
+			"<style>body { display: none !important; }</style>",
+			[
+				'<div onclick="alert(1)">',
+				"",
+				'<img src=x onerror=alert(1)> <svg/onload=alert(1)> <script>alert(1)</script>',
+				"",
+				"[BadLink](javascript:alert(1)) [BadVb](vbscript:msgbox(1)) ![BadImg](javascript:alert(1)) ![DataImg](data:text/html,<script>alert(1)</script>)",
+				"",
+				"</div>",
+			].join("\n"),
+		].join("\n\n");
+
+		const view = mountVisualEditor(malicious);
+		const root = view.dom;
+
+		// Zero dangerous elements can ever be instantiated in the live DOM.
+		expect(
+			root.querySelectorAll(
+				"script, iframe, object, embed, svg, style, form, base, meta, link",
+			),
+		).toHaveLength(0);
+		expect(root.querySelectorAll("img")).toHaveLength(0);
+		expect(root.querySelectorAll("a")).toHaveLength(0);
+
+		// Zero event-handler attributes (`on*`) or inline `style` injection on any element.
+		for (const el of Array.from(root.querySelectorAll("*"))) {
+			for (const attr of Array.from(el.attributes)) {
+				const name = attr.name.toLowerCase();
+				expect(name.startsWith("on")).toBe(false);
+				if (name === "href" || name === "src") {
+					expect(attr.value).not.toMatch(/^\s*(?:javascript|vbscript|data):/i);
+				}
+			}
+		}
+
+		// Safe visible text from allowed inline tags still renders cleanly.
+		expect(root.textContent).toContain("Safe");
+		expect(root.textContent).toContain("Plain");
 	});
 });

@@ -2787,4 +2787,404 @@ describe('Immersive visual editor bridges', () => {
       view.unmount();
     }
   });
+
+  it('warms KaTeX and Mermaid independently on demand when math and Mermaid are pasted into an unlocked blank post', async () => {
+    const win = window as Window & { katex?: unknown; mermaid?: unknown };
+    const prevKatex = win.katex;
+    const prevMermaid = win.mermaid;
+    delete win.katex;
+    delete win.mermaid;
+
+    const mathDeferred = deferred<void>();
+    const mermaidDeferred = deferred<void>();
+    const katexRender = vi.fn((tex: string, target: HTMLElement) => {
+      const span = target.ownerDocument.createElement('span');
+      span.className = 'katex';
+      span.textContent = tex;
+      target.replaceChildren(span);
+    });
+    const mermaidRender = vi.fn(async (id: string) => ({
+      svg: `<svg id="${id}"><g><text>Pasted Flow</text></g></svg>`
+    }));
+
+    const { props, view } = await renderUnlocked('', '');
+    const enhanceMock = vi.mocked(props.enhancementPort.enhance);
+    enhanceMock.mockClear();
+    enhanceMock.mockImplementation((_surface, features) => {
+      if (features.math) {
+        return mathDeferred.promise.then(() => {
+          win.katex = { render: katexRender };
+        });
+      }
+      if (features.mermaid) {
+        return mermaidDeferred.promise.then(() => {
+          win.mermaid = { initialize: vi.fn(), render: mermaidRender };
+        });
+      }
+      return Promise.resolve();
+    });
+
+    try {
+      expect(enhanceMock).not.toHaveBeenCalled();
+
+      // Simulate pasting a full Markdown document with math + Mermaid into the
+      // already-unlocked blank post; mounted protected atoms request runtimes on demand.
+      const pastedMarkdown = [
+        '# Pasted',
+        '',
+        'Inline $E = mc^2$.',
+        '',
+        '$$',
+        '\\int_a^b f(x)\\,dx',
+        '$$',
+        '',
+        '```mermaid',
+        'flowchart TD',
+        '  A --> B',
+        '```'
+      ].join('\n');
+      act(() => {
+        visualHostProps.current?.documentSession.document.applyTextChange({
+          selection: {
+            direction: 'none',
+            end: pastedMarkdown.length,
+            start: pastedMarkdown.length
+          },
+          value: pastedMarkdown
+        });
+      });
+
+      const surface = view.getByRole('textbox', { name: '可视化文章编辑器' });
+      expect(
+        surface.querySelectorAll('.easymde-protected-loading')
+      ).toHaveLength(3);
+      expect(surface.querySelector('.easymde-protected-fallback')).toBeNull();
+
+      await waitFor(() => expect(enhanceMock).toHaveBeenCalledTimes(2));
+      expect(enhanceMock).toHaveBeenCalledWith(
+        expect.any(HTMLElement),
+        { math: true },
+        expect.any(Function),
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
+      expect(enhanceMock).toHaveBeenCalledWith(
+        expect.any(HTMLElement),
+        { mermaid: true },
+        expect.any(Function),
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
+
+      // Additional typing while runtimes download must not abort or duplicate warmup.
+      const mathSignal = enhanceMock.mock.calls.find(
+        ([, features]) => features.math
+      )?.[3]?.signal;
+      const mermaidSignal = enhanceMock.mock.calls.find(
+        ([, features]) => features.mermaid
+      )?.[3]?.signal;
+      const extraMarkdown = `${pastedMarkdown}\n\nExtra line`;
+      act(() => {
+        visualHostProps.current?.documentSession.document.applyTextChange({
+          selection: {
+            direction: 'none',
+            end: extraMarkdown.length,
+            start: extraMarkdown.length
+          },
+          value: extraMarkdown
+        });
+      });
+      expect(mathSignal?.aborted).toBe(false);
+      expect(mermaidSignal?.aborted).toBe(false);
+      expect(enhanceMock).toHaveBeenCalledTimes(2);
+
+      // Resolving math renders both formulas immediately while Mermaid keeps loading.
+      await act(async () => {
+        mathDeferred.resolve();
+        await mathDeferred.promise;
+      });
+      await waitFor(() =>
+        expect(surface.querySelectorAll('.easymde-math .katex')).toHaveLength(2)
+      );
+      expect(
+        surface.querySelectorAll(
+          '[data-easymde-protected-kind="mermaid"] .easymde-protected-loading'
+        )
+      ).toHaveLength(1);
+
+      // Resolving Mermaid renders the diagram cleanly.
+      await act(async () => {
+        mermaidDeferred.resolve();
+        await mermaidDeferred.promise;
+      });
+      await waitFor(() =>
+        expect(surface.querySelector('.easymde-mermaid svg')?.textContent).toContain(
+          'Pasted Flow'
+        )
+      );
+      expect(surface.querySelector('.easymde-protected-loading')).toBeNull();
+    } finally {
+      view.unmount();
+      if (prevKatex === undefined) delete win.katex;
+      else win.katex = prevKatex;
+      if (prevMermaid === undefined) delete win.mermaid;
+      else win.mermaid = prevMermaid;
+    }
+  });
+
+  it('warms Mermaid and TOC on demand across 4-backtick, list-item, NBSP, and lone-CR fences without false positives in code blocks', async () => {
+    const win = window as Window & { katex?: unknown; mermaid?: unknown };
+    const prevMermaid = win.mermaid;
+    delete win.mermaid;
+
+    const { props, view } = await renderUnlocked('', '');
+    const enhanceMock = vi.mocked(props.enhancementPort.enhance);
+    enhanceMock.mockClear();
+    enhanceMock.mockImplementation((_surface, features) => {
+      if (features.mermaid) {
+        win.mermaid = {
+          initialize: vi.fn(),
+          render: vi.fn(async (id: string) => ({ svg: `<svg id="${id}"/>` }))
+        };
+      }
+      return Promise.resolve();
+    });
+
+    try {
+      // Indented or markdown-fenced examples must NOT trigger math or Mermaid warmup.
+      const codeOnly = '````markdown\n```mermaid\nA --> B\n```\n$not math$\n````';
+      act(() => {
+        visualHostProps.current?.documentSession.document.applyTextChange({
+          selection: { direction: 'none', end: codeOnly.length, start: codeOnly.length },
+          value: codeOnly
+        });
+      });
+      expect(enhanceMock).not.toHaveBeenCalled();
+
+      // 4-backtick Mermaid + [TOC] warm on demand when mounted.
+      const pastedFourTick = '[TOC]\n\n````mermaid\nflowchart TD\n  A --> B\n````';
+      act(() => {
+        visualHostProps.current?.documentSession.document.applyTextChange({
+          selection: {
+            direction: 'none',
+            end: pastedFourTick.length,
+            start: pastedFourTick.length
+          },
+          value: pastedFourTick
+        });
+      });
+
+      await waitFor(() =>
+        expect(enhanceMock).toHaveBeenCalledWith(
+          expect.any(HTMLElement),
+          { mermaid: true },
+          expect.any(Function),
+          expect.objectContaining({ signal: expect.any(AbortSignal) })
+        )
+      );
+      expect(enhanceMock).toHaveBeenCalledWith(
+        expect.any(HTMLElement),
+        { toc: true },
+        expect.any(Function),
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
+    } finally {
+      view.unmount();
+      if (prevMermaid === undefined) delete win.mermaid;
+      else win.mermaid = prevMermaid;
+    }
+
+    // Separate cold unlocked posts for list-item and lone-CR Mermaid fences.
+    for (const sample of [
+      '- ```mermaid\n  flowchart TD\n  X --> Y\n  ```',
+      '```mermaid\u00a0foo\rflowchart TD\r  A --> B\r```'
+    ]) {
+      delete win.mermaid;
+      const run = await renderUnlocked('', '');
+      const enhanceRun = vi.mocked(run.props.enhancementPort.enhance);
+      enhanceRun.mockClear();
+      enhanceRun.mockImplementation((_surface, features) => {
+        if (features.mermaid) {
+          win.mermaid = {
+            initialize: vi.fn(),
+            render: vi.fn(async (id: string) => ({ svg: `<svg id="${id}"/>` }))
+          };
+        }
+        return Promise.resolve();
+      });
+      try {
+        act(() => {
+          visualHostProps.current?.documentSession.document.applyTextChange({
+            selection: { direction: 'none', end: sample.length, start: sample.length },
+            value: sample
+          });
+        });
+        await waitFor(() =>
+          expect(enhanceRun).toHaveBeenCalledWith(
+            expect.any(HTMLElement),
+            { mermaid: true },
+            expect.any(Function),
+            expect.objectContaining({ signal: expect.any(AbortSignal) })
+          )
+        );
+      } finally {
+        run.view.unmount();
+        if (prevMermaid === undefined) delete win.mermaid;
+        else win.mermaid = prevMermaid;
+      }
+    }
+  });
+
+  it('keeps math in fallback when KaTeX JS loads but CSS fails, and recovers on relock and unlock', async () => {
+    const win = window as Window & { katex?: unknown };
+    const prevKatex = win.katex;
+    delete win.katex;
+
+    const katexRender = vi.fn((tex: string, target: HTMLElement) => {
+      const span = target.ownerDocument.createElement('span');
+      span.className = 'katex';
+      span.textContent = tex;
+      target.replaceChildren(span);
+    });
+
+    const { props, view } = await renderUnlocked('', '');
+    const enhanceMock = vi.mocked(props.enhancementPort.enhance);
+    enhanceMock.mockClear();
+    let mathAttempts = 0;
+    enhanceMock.mockImplementation((_surface, features) => {
+      if (!features.math) return Promise.resolve();
+      mathAttempts += 1;
+      // Simulate KaTeX JS succeeding while katex.min.css fails on attempt 1.
+      win.katex = { render: katexRender };
+      if (mathAttempts === 1) {
+        return Promise.reject(new Error('preview-enhancement-resource-load-failed'));
+      }
+      return Promise.resolve();
+    });
+
+    try {
+      const mathDoc = '$$\nE = mc^2\n$$';
+      act(() => {
+        visualHostProps.current?.documentSession.document.applyTextChange({
+          selection: { direction: 'none', end: mathDoc.length, start: mathDoc.length },
+          value: mathDoc
+        });
+      });
+
+      const surface = view.getByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() =>
+        expect(surface.querySelector('code.easymde-protected-fallback')).not.toBeNull()
+      );
+      expect(katexRender).not.toHaveBeenCalled();
+      expect(mathAttempts).toBe(1);
+
+      // Lock and re-unlock: even though window.katex already exists, the port
+      // retries math warmup and renders KaTeX only once CSS+JS succeeds.
+      fireEvent.click(view.getByRole('button', { name: '锁定为只读' }));
+      const unlock = await view.findByRole('button', { name: '解除锁定并编辑' });
+      await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+      fireEvent.click(unlock);
+      const unlockedSurface = await view.findByRole(
+        'textbox',
+        { name: '可视化文章编辑器' },
+        { timeout: 5000 }
+      );
+
+      await waitFor(() => expect(mathAttempts).toBe(2));
+      await waitFor(() =>
+        expect(unlockedSurface.querySelector('.easymde-math .katex')?.textContent).toBe(
+          'E = mc^2'
+        )
+      );
+      expect(katexRender).toHaveBeenCalledTimes(1);
+    } finally {
+      view.unmount();
+      if (prevKatex === undefined) delete win.katex;
+      else win.katex = prevKatex;
+    }
+  });
+
+  it('aborts in-flight visual warmups on lock, re-runs math warmup if JS loaded before cancel, and ignores stale completions on re-unlock', async () => {
+    const win = window as Window & { katex?: unknown; mermaid?: unknown };
+    const prevKatex = win.katex;
+    const prevMermaid = win.mermaid;
+    delete win.katex;
+    delete win.mermaid;
+
+    const firstMath = deferred<void>();
+    const secondMath = deferred<void>();
+    const signals: AbortSignal[] = [];
+    const katexRender = vi.fn((tex: string, target: HTMLElement) => {
+      const span = target.ownerDocument.createElement('span');
+      span.className = 'katex';
+      span.textContent = tex;
+      target.replaceChildren(span);
+    });
+
+    const { props, view } = await renderUnlocked('', '');
+    const enhanceMock = vi.mocked(props.enhancementPort.enhance);
+    enhanceMock.mockClear();
+    enhanceMock.mockImplementation((_surface, features, _isCurrent, context) => {
+      if (!features.math) return Promise.resolve();
+      signals.push(context.signal);
+      // Simulate KaTeX JS loading before CSS completes on attempt 1.
+      win.katex = { render: katexRender };
+      return signals.length === 1 ? firstMath.promise : secondMath.promise;
+    });
+
+    try {
+      const mathDoc = '$$\nE = mc^2\n$$';
+      act(() => {
+        visualHostProps.current?.documentSession.document.applyTextChange({
+          selection: { direction: 'none', end: mathDoc.length, start: mathDoc.length },
+          value: mathDoc
+        });
+      });
+
+      const firstSurface = view.getByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() => expect(signals).toHaveLength(1));
+      expect(firstSurface.querySelector('.easymde-protected-loading')).not.toBeNull();
+      expect(katexRender).not.toHaveBeenCalled();
+
+      // Locking aborts the in-flight warmup even though window.katex loaded.
+      fireEvent.click(view.getByRole('button', { name: '锁定为只读' }));
+      await waitFor(() => expect(signals[0]?.aborted).toBe(true));
+
+      // Re-unlock starts a fresh warmup despite window.katex existing; resolving
+      // the stale first promise must NOT prematurely mark math ready.
+      const unlock = await view.findByRole('button', { name: '解除锁定并编辑' });
+      await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+      fireEvent.click(unlock);
+      const secondSurface = await view.findByRole(
+        'textbox',
+        { name: '可视化文章编辑器' },
+        { timeout: 5000 }
+      );
+      await waitFor(() => expect(signals).toHaveLength(2));
+      expect(secondSurface.querySelector('.easymde-protected-loading')).not.toBeNull();
+
+      await act(async () => {
+        firstMath.resolve();
+        await firstMath.promise;
+      });
+      expect(secondSurface.querySelector('.easymde-protected-loading')).not.toBeNull();
+      expect(katexRender).not.toHaveBeenCalled();
+
+      await act(async () => {
+        secondMath.resolve();
+        await secondMath.promise;
+      });
+      await waitFor(() =>
+        expect(secondSurface.querySelector('.easymde-math .katex')?.textContent).toBe(
+          'E = mc^2'
+        )
+      );
+      expect(secondSurface.querySelector('.easymde-protected-loading')).toBeNull();
+      expect(katexRender).toHaveBeenCalledTimes(1);
+    } finally {
+      view.unmount();
+      if (prevKatex === undefined) delete win.katex;
+      else win.katex = prevKatex;
+      if (prevMermaid === undefined) delete win.mermaid;
+      else win.mermaid = prevMermaid;
+    }
+  });
 });

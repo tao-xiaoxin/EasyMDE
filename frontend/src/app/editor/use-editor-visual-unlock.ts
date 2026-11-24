@@ -1,6 +1,17 @@
-import { flushSync, useCallback, useEffect, useRef } from '@wordpress/element';
+import {
+  flushSync,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef
+} from '@wordpress/element';
 
 import type { AppearanceState } from '../../contracts/bootstrap/appearance-bootstrap';
+import type {
+  VisualGeneratedRuntimePort,
+  VisualRuntimeFeature,
+  VisualRuntimeState
+} from '../../contracts/visual-editor';
 import type { EditorDocumentSession } from '../../features/document-source/ui/EditorDocumentSource';
 import type { ImmersiveViewMode } from '../../features/immersive-editor/immersive-editor';
 import {
@@ -17,16 +28,11 @@ import type {
 } from './editor-root-types';
 import { preloadImmersiveVisualEditor } from './ImmersiveVisualEditorHost';
 
-/** Matches the visual node views' runtime-readiness re-render signal. */
-const PREVIEW_RUNTIME_READY_EVENT = 'easymde:preview-runtime-ready';
-const MATH_SOURCE_PATTERN =
-  /\$\$[\s\S]+?\$\$|\\\(|\\\[|^\s*(?:```|~~~)\s*math\b|(?:^|[^\\$])\$(?![\s$])[^$\n]+?\$/mu;
-const MERMAID_SOURCE_PATTERN = /^\s*(?:```|~~~)\s*mermaid\b/mu;
-
-type GeneratedRuntimeWindow = Window & {
-  katex?: unknown;
-  mermaid?: unknown;
-};
+const VISUAL_RUNTIME_FEATURES: ReadonlyArray<VisualRuntimeFeature> = [
+  'math',
+  'mermaid',
+  'toc'
+];
 
 export type UseEditorVisualUnlockOptions = Readonly<{
   cancelWechatBackgroundPreparation: () => void;
@@ -93,42 +99,93 @@ export function useEditorVisualUnlock({
   visualPreviewEditingRef,
   visualPreviewLockingRef
 }: UseEditorVisualUnlockOptions) {
-  const runtimeWarmupRef = useRef<AbortController | null>(null);
+  const documentSessionRef = useRef(documentSession);
+  documentSessionRef.current = documentSession;
+  const enhancementPortRef = useRef(enhancementPort);
+  const runtimeStatesRef = useRef<
+    Record<VisualRuntimeFeature, VisualRuntimeState>
+  >({
+    math: 'idle',
+    mermaid: 'idle',
+    toc: 'idle'
+  });
+  const runtimeAbortRef = useRef<
+    Partial<Record<VisualRuntimeFeature, AbortController>>
+  >({});
+  const runtimeListenersRef = useRef(new Set<() => void>());
+
+  const notifyRuntimeListeners = useCallback(() => {
+    for (const listener of Array.from(runtimeListenersRef.current)) {
+      listener();
+    }
+  }, []);
+
+  useEffect(() => {
+    if (enhancementPortRef.current === enhancementPort) return;
+    enhancementPortRef.current = enhancementPort;
+    for (const feature of VISUAL_RUNTIME_FEATURES) {
+      runtimeAbortRef.current[feature]?.abort();
+      delete runtimeAbortRef.current[feature];
+      runtimeStatesRef.current[feature] = 'idle';
+    }
+    notifyRuntimeListeners();
+  }, [enhancementPort, notifyRuntimeListeners]);
+
+  const cancelGeneratedRuntimeWarmups = useCallback(() => {
+    for (const feature of VISUAL_RUNTIME_FEATURES) {
+      runtimeAbortRef.current[feature]?.abort();
+      delete runtimeAbortRef.current[feature];
+      if (runtimeStatesRef.current[feature] !== 'ready') {
+        runtimeStatesRef.current[feature] = 'idle';
+      }
+    }
+  }, []);
 
   /**
-   * Non-blocking local KaTeX / Mermaid loading for an unlocked document that
-   * contains generated content the formal Preview has not enhanced yet. The
-   * visual node views re-render on the readiness event; a missing optional
-   * runtime never fails or delays the unlock itself.
+   * Demand-driven generated-runtime port consumed directly by mounted visual
+   * atoms (`math`, `mermaid`, `toc`). Keeps one memoized in-flight request per
+   * feature, reuses positive readiness from `PreviewEnhancementPort`, and
+   * stays referentially stable so ProseMirror never tears down on re-renders.
    */
-  const warmGeneratedRuntimes = useCallback(
-    (markdown: string) => {
-      if (!documentSession || 'function' !== typeof enhancementPort.enhance) {
-        return;
+  const visualRuntimePort = useMemo<VisualGeneratedRuntimePort>(() => {
+    const getState = (feature: VisualRuntimeFeature): VisualRuntimeState => {
+      if (enhancementPortRef.current.isFeatureReady?.(feature) === true) {
+        runtimeStatesRef.current[feature] = 'ready';
+        return 'ready';
+      }
+      return runtimeStatesRef.current[feature];
+    };
+
+    const request = (feature: VisualRuntimeFeature): VisualRuntimeState => {
+      const current = getState(feature);
+      if (current !== 'idle') {
+        return current;
+      }
+      const port = enhancementPortRef.current;
+      const session = documentSessionRef.current;
+      if (!session || 'function' !== typeof port.enhance) {
+        runtimeStatesRef.current[feature] = 'unavailable';
+        return 'unavailable';
       }
       let ownerDocument: Document;
       try {
-        ownerDocument =
-          documentSession.document.getInputElement().ownerDocument;
+        ownerDocument = session.document.getInputElement().ownerDocument;
       } catch {
-        return;
+        runtimeStatesRef.current[feature] = 'unavailable';
+        return 'unavailable';
       }
-      const view = ownerDocument.defaultView as GeneratedRuntimeWindow | null;
-      const features = {
-        math: !view?.katex && MATH_SOURCE_PATTERN.test(markdown),
-        mermaid: !view?.mermaid && MERMAID_SOURCE_PATTERN.test(markdown)
-      };
-      if (!features.math && !features.mermaid) return;
-      runtimeWarmupRef.current?.abort();
       const controller = new AbortController();
-      runtimeWarmupRef.current = controller;
+      runtimeAbortRef.current[feature] = controller;
+      runtimeStatesRef.current[feature] = 'loading';
       const isCurrent = () =>
-        rootActiveRef.current && !controller.signal.aborted;
+        rootActiveRef.current
+        && !controller.signal.aborted
+        && runtimeAbortRef.current[feature] === controller;
       void Promise.resolve()
         .then(() =>
-          enhancementPort.enhance(
+          port.enhance(
             ownerDocument.createElement('div'),
-            features,
+            { [feature]: true },
             isCurrent,
             {
               codeTheme: previewAppearanceRef.current.codeTheme,
@@ -136,23 +193,30 @@ export function useEditorVisualUnlock({
             }
           )
         )
-        .then(
-          () => {
-            if (!isCurrent()) return;
-            ownerDocument.dispatchEvent(
-              new CustomEvent(PREVIEW_RUNTIME_READY_EVENT)
-            );
-          },
-          () => undefined
-        )
-        .finally(() => {
-          if (runtimeWarmupRef.current === controller) {
-            runtimeWarmupRef.current = null;
-          }
+        .then(() => {
+          if (!isCurrent()) return;
+          delete runtimeAbortRef.current[feature];
+          runtimeStatesRef.current[feature] = 'ready';
+          notifyRuntimeListeners();
+        })
+        .catch(() => {
+          if (!isCurrent()) return;
+          delete runtimeAbortRef.current[feature];
+          runtimeStatesRef.current[feature] = 'unavailable';
+          notifyRuntimeListeners();
         });
-    },
-    [documentSession, enhancementPort, previewAppearanceRef, rootActiveRef]
-  );
+      return 'loading';
+    };
+
+    const subscribe = (listener: () => void): (() => void) => {
+      runtimeListenersRef.current.add(listener);
+      return () => {
+        runtimeListenersRef.current.delete(listener);
+      };
+    };
+
+    return { getState, request, subscribe };
+  }, [notifyRuntimeListeners, previewAppearanceRef, rootActiveRef]);
 
   const cancelVisualUnlockPreparation = useCallback(() => {
     const preparation = codeThemePreparationRef.current;
@@ -172,6 +236,7 @@ export function useEditorVisualUnlock({
       if (!visualPreviewEditingRef.current) {
         return false;
       }
+      cancelGeneratedRuntimeWarmups();
       const needsRefresh =
         !options.suppressRefresh && hasUnsyncedVisualChanges();
       lastVisualFailureRef.current = null;
@@ -188,6 +253,7 @@ export function useEditorVisualUnlock({
       return true;
     },
     [
+      cancelGeneratedRuntimeWarmups,
       hasUnsyncedVisualChanges,
       lastVisualFailureRef,
       previewRefreshPendingRef,
@@ -217,6 +283,7 @@ export function useEditorVisualUnlock({
     flushSync(() => setVisualPreviewUnlocking(true));
     const sourceMarkdown = documentSession.document.getValue();
     const enableVisualPreview = () => {
+      cancelGeneratedRuntimeWarmups();
       visualPreviewChangedRef.current = false;
       setVisualPreviewChanged(false);
       setVisualPreviewPending(false);
@@ -335,9 +402,9 @@ export function useEditorVisualUnlock({
       }
       clearPreparation();
       enableVisualPreview();
-      warmGeneratedRuntimes(sourceMarkdown);
     })();
   }, [
+    cancelGeneratedRuntimeWarmups,
     cancelWechatBackgroundPreparation,
     codeThemePreparationGenerationRef,
     codeThemePreparationRef,
@@ -355,8 +422,7 @@ export function useEditorVisualUnlock({
     setVisualPreviewPending,
     setVisualPreviewUnlocking,
     visualPreviewChangedRef,
-    visualPreviewEditingRef,
-    warmGeneratedRuntimes
+    visualPreviewEditingRef
   ]);
 
   const prepareVisualSource = useCallback(() => {
@@ -454,10 +520,9 @@ export function useEditorVisualUnlock({
   useEffect(
     () => () => {
       visualPreviewLockingRef.current = false;
-      runtimeWarmupRef.current?.abort();
-      runtimeWarmupRef.current = null;
+      cancelGeneratedRuntimeWarmups();
     },
-    [visualPreviewLockingRef]
+    [cancelGeneratedRuntimeWarmups, visualPreviewLockingRef]
   );
 
   return {
@@ -467,6 +532,7 @@ export function useEditorVisualUnlock({
     prepareSourceMutation,
     prepareSourceMutationWithPreview,
     prepareVisualSource,
-    requestVisualPreviewUnlock
+    requestVisualPreviewUnlock,
+    visualRuntimePort
   };
 }

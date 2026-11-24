@@ -9,6 +9,7 @@
   box-shadow: rgba(0, 0, 0, 0.35) 0 2px 10px;
   overflow-x: auto;
   overflow-y: hidden;
+  scrollbar-width: none;
   overflow-wrap: normal;
   word-break: normal;
 }
@@ -43,9 +44,16 @@
   word-spacing: 0;
   overflow-x: auto;
   overflow-y: hidden;
+  scrollbar-width: none;
   white-space: pre;
   overflow-wrap: normal;
   word-break: normal;
+}
+
+.easymde-rendered-content.easymde-code-mac pre::-webkit-scrollbar,
+.easymde-rendered-content.easymde-code-mac pre > code:not(.language-mermaid)::-webkit-scrollbar,
+.easymde-rendered-content.easymde-code-mac pre[data-easymde-mermaid-fallback] > code.language-mermaid::-webkit-scrollbar {
+  display: none;
 }
 
 .easymde-rendered-content.easymde-code-mac pre.easymde-code-with-line-numbers > code:not(.language-mermaid) {

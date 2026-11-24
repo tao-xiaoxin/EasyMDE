@@ -5,7 +5,7 @@ import type {
 	NodeViewConstructor,
 	ViewMutationRecord,
 } from "prosemirror-view";
-import { subscribeVisualEditableState } from "./protected-atom-card-editor";
+import { subscribeVisualEditableState } from "./visual-view-events";
 
 export type TaskItemNodeViewOptions = Readonly<{
 	checkboxAriaLabel?: string;

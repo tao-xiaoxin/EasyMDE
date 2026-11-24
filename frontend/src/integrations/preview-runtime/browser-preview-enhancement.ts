@@ -3,7 +3,8 @@ import type { PreviewFeatures } from '../../contracts/ports/preview-request';
 import type {
   PreparedCodeTheme,
   PreviewEnhancementContext,
-  PreviewEnhancementPort
+  PreviewEnhancementPort,
+  PreviewEnhancementRuntimeFeature
 } from '../../features/live-preview/ports/preview-enhancement-port';
 import { resourceError } from './browser-preview-enhancement-resource-helpers';
 import { createPreviewScriptLoader } from './browser-preview-enhancement-script-loader';
@@ -80,6 +81,7 @@ export function createBrowserPreviewEnhancementPort(
 ): PreviewEnhancementPort {
   const loader = createResourceLoader(options.documentRef);
   const assets = bootstrap.assets;
+  const readyFeatures = new Set<PreviewEnhancementRuntimeFeature>();
 
   async function prepareCodeThemeForOwner(
     context: PreviewEnhancementContext,
@@ -167,6 +169,7 @@ export function createBrowserPreviewEnhancementPort(
     if (!options.runtime.hasMathRenderer()) {
       throw resourceError('preview-enhancement-runtime-unavailable');
     }
+    readyFeatures.add('math');
   }
 
   async function prepareMermaid(
@@ -185,10 +188,15 @@ export function createBrowserPreviewEnhancementPort(
     if (!options.runtime.hasMermaidRenderer()) {
       throw resourceError('preview-enhancement-runtime-unavailable');
     }
+    readyFeatures.add('mermaid');
   }
 
   return {
-    dispose: loader.dispose,
+    dispose() {
+      readyFeatures.clear();
+      loader.dispose();
+    },
+    isFeatureReady: (feature) => readyFeatures.has(feature),
     prepareCodeTheme,
     syncCodeFrameBackgrounds(surface) {
       const enhancements = options.runtime.getEnhancements();
@@ -260,7 +268,11 @@ export function createBrowserPreviewEnhancementPort(
       }
       if (fallbackFeatures.toc) {
         tasks.push(
-          loader.loadStylesheet(assets.tocCssLinkId, assets.tocCssUrl, context.signal)
+          loader
+            .loadStylesheet(assets.tocCssLinkId, assets.tocCssUrl, context.signal)
+            .then(() => {
+              readyFeatures.add('toc');
+            })
         );
       }
       if (!tasks.length) return;

@@ -110,7 +110,7 @@ function matchListMarker(rest: string): ListMarkerMatch | null {
 	const padding = content.length > 0 && spaces.length > 4 ? 1 : spaces.length;
 	return { contentIndent: indent + match[2].length + Math.max(padding, 1) };
 }
-type LineAnalysis = Readonly<{
+export type LineAnalysis = Readonly<{
 	containerIndent: number;
 	content: string;
 	indent: number;
@@ -119,7 +119,7 @@ type LineAnalysis = Readonly<{
 	rest: string;
 }>;
 
-function analyzeLine(line: string, containerIndent: number): LineAnalysis {
+export function analyzeLine(line: string, containerIndent: number): LineAnalysis {
 	const { prefix, rest } = readBlockquotePrefix(line);
 	const indentText = /^[ \t]*/.exec(rest)?.[0] ?? "";
 	return {
@@ -132,7 +132,7 @@ function analyzeLine(line: string, containerIndent: number): LineAnalysis {
 	};
 }
 
-type DetectableFence = Readonly<{
+export type DetectableFence = Readonly<{
 	containerIndent: number;
 	fenceChar: "`" | "~";
 	fenceLength: number;
@@ -165,7 +165,7 @@ function matchFenceAt(
 	};
 }
 
-function detectFence(analysis: LineAnalysis): DetectableFence | null {
+export function detectFence(analysis: LineAnalysis): DetectableFence | null {
 	const direct = matchFenceAt(
 		analysis.content,
 		analysis.indent,
@@ -182,7 +182,7 @@ function detectFence(analysis: LineAnalysis): DetectableFence | null {
 	);
 }
 
-function isFenceCloser(line: string, fence: DetectableFence): boolean {
+export function isFenceCloser(line: string, fence: DetectableFence): boolean {
 	const { rest } = readBlockquotePrefix(line);
 	const indentText = /^[ \t]*/.exec(rest)?.[0] ?? "";
 	const indent = measureIndent(indentText);
@@ -268,12 +268,15 @@ type ReferenceDefinitionMatch = Readonly<{
 	title: string;
 }>;
 
+export const REFERENCE_DEF_LINE = /^ {0,3}\[([^\]^][^\]]*)\]:[ \t]*(.*)$/;
+export const FOOTNOTE_DEF_LINE = /^ {0,3}\[\^([^\s\]]+)\]:(?:[ \t]|$)/;
+
 function matchReferenceDefinition(
 	lines: ReadonlyArray<string>,
 	start: number,
 ): ReferenceDefinitionMatch | null {
 	const line = readBlockquotePrefix(lines[start] ?? "").rest;
-	const match = /^ {0,3}\[([^\]^][^\]]*)\]:[ \t]*(.*)$/.exec(line);
+	const match = REFERENCE_DEF_LINE.exec(line);
 	if (!match?.[1]) {
 		return null;
 	}
@@ -375,9 +378,10 @@ function findHtmlBlockEnd(
 	return -1;
 }
 
-const ATX_HEADING = /^#{1,6}(?:[ \t]+.*|[ \t]*)$/;
-const THEMATIC_BREAK = /^(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
-const SETEXT_UNDERLINE = /^(?:=+|-+)[ \t]*$/;
+export const ATX_HEADING = /^#{1,6}(?:[ \t]+.*|[ \t]*)$/;
+export const THEMATIC_BREAK =
+	/^(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
+export const SETEXT_UNDERLINE = /^(?:=+|-+)[ \t]*$/;
 const CONTAINER_QUOTE = /^ {0,3}>[ \t]?/;
 const CONTAINER_LIST_MARKER = /^ {0,3}(?:[-+*]|(\d{1,9})[.)])(?=[ \t]|$)/;
 const leadingColumns = (text: string): number =>

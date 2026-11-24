@@ -15,10 +15,6 @@ import {
 	type ImageNodeViewOptions,
 } from "./image-node-view";
 import {
-	publishVisualEditableState,
-	subscribeVisualEditableState,
-} from "./protected-atom-card-editor";
-import {
 	createProtectedBlockNodeView,
 	createProtectedInlineNodeView,
 	extractBlockMathTex,
@@ -28,13 +24,12 @@ import {
 	type KatexRuntime,
 	type MermaidRenderResult,
 	type MermaidRuntime,
-	PREVIEW_RUNTIME_READY_EVENT,
 	PROTECTED_CARD_COMMIT_META,
 	type ProtectedAtomLabels,
 	type ProtectedAtomLabelTemplates,
 	type ProtectedAtomNodeViewOptions,
+	type ProtectedAtomRuntimeProvider,
 	sanitizeMermaidSvg,
-	subscribePreviewRuntimeReady,
 } from "./protected-atom-node-view";
 import {
 	createTableContainerNodeView,
@@ -45,6 +40,10 @@ import {
 	createTaskItemNodeView,
 	type TaskItemNodeViewOptions,
 } from "./task-item-node-view";
+import {
+	publishVisualEditableState,
+	subscribeVisualEditableState,
+} from "./visual-view-events";
 
 export type VisualNodeViewsOptions = Readonly<{
 	codeBlock?: CodeBlockNodeViewOptions;
@@ -90,16 +89,15 @@ export {
 	type KatexRuntime,
 	type MermaidRenderResult,
 	type MermaidRuntime,
-	PREVIEW_RUNTIME_READY_EVENT,
 	PROTECTED_CARD_COMMIT_META,
 	type ProtectedAtomLabels,
 	type ProtectedAtomLabelTemplates,
 	type ProtectedAtomNodeViewOptions,
+	type ProtectedAtomRuntimeProvider,
 	parseHighlightedHtmlToTokenRanges,
 	publishVisualEditableState,
 	refreshCodeHighlightDecorations,
 	sanitizeMermaidSvg,
-	subscribePreviewRuntimeReady,
 	subscribeVisualEditableState,
 	TableContainerNodeView,
 	type TableContainerNodeViewOptions,

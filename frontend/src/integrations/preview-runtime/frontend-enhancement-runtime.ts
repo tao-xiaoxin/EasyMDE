@@ -1,3 +1,5 @@
+import { normalizeMathTex } from '../../shared/markdown/normalize-math-tex';
+
 export type FrontendEnhancementConfig = unknown;
 
 export type FrontendEnhancementScheduler = Readonly<{
@@ -63,11 +65,13 @@ export type FrontendEnhancementWindow = Window & {
     ) => void | Promise<void>;
   }>;
   EasyMDEMermaidRenderer?: Readonly<{
+    readCachedSvg?: (source: string, renderId: string) => string | null;
     render: (
       root: ParentNode,
       config: FrontendEnhancementConfig,
       control?: FrontendEnhancementControl
     ) => Promise<void>;
+    writeCachedSvg?: (source: string, renderId: string, svg: string) => void;
   }>;
   hljs?: HighlightRuntime;
   katex?: KatexRuntime;
@@ -155,6 +159,10 @@ function writeLruCache<V>(
     }
   }
   cache.set(key, value);
+}
+
+function mermaidCacheKey(source: string): string {
+  return source.trim();
 }
 
 function mermaidSvgCache(mermaid: MermaidRuntime): Map<string, CachedMermaidSvg> {
@@ -331,21 +339,6 @@ function stringValue(
   const strings = property(config, 'strings');
   const value = property(strings, key);
   return value ? String(value) : fallback || '';
-}
-
-function normalizeMathTex(tex: string): string {
-  if (!tex) return tex;
-
-  tex = tex
-    .replace(/(^|[^A-Za-z\\])(begin|end)(?=\s*\{)/g, '$1\\$2')
-    .replace(/(^|[^A-Za-z\\])(frac|dfrac|tfrac|binom|sqrt)(?=\s*\{)/g, '$1\\$2')
-    .replace(/(^|[^A-Za-z\\])(left|right)(?=\s*(?:[()[\]{}|.]|\\[{}]))/g, '$1\\$2')
-    .replace(/(^|[^A-Za-z\\])(log|ln|exp|lim|sin|cos|tan|cot|sec|csc|min|max|sup|inf)(?![A-Za-z])/g, '$1\\$2')
-    .replace(/(^|[^A-Za-z\\])(cdots|ldots|dots|vdots|ddots|cdot|times|div|pm|mp|leq|geq|neq|approx|infty)(?![A-Za-z])/g, '$1\\$2');
-
-  return tex.replace(/\\begin\{([A-Za-z]*matrix|array)\}([\s\S]*?)\\end\{\1\}/g, (_match, environment: string, body: string) =>
-    `\\begin{${environment}}${body.replace(/(^|[^\\])\\(?![\\A-Za-z{])/g, '$1\\\\')}\\end{${environment}}`
-  );
 }
 
 function mathText(element: HTMLElement): string {
@@ -705,15 +698,17 @@ async function renderUncachedMermaidDiagram(
   try {
     const result = await mermaid.render(renderId, source);
     if (!enhancementIsCurrent(control) || !pre.parentNode) return 1;
+    const cacheKey = mermaidCacheKey(source);
     if (
-      source.length <= MERMAID_CACHE_MAX_SOURCE_LENGTH
+      cacheKey.length > 0
+      && cacheKey.length <= MERMAID_CACHE_MAX_SOURCE_LENGTH
       && result.svg.length <= MERMAID_CACHE_MAX_SVG_LENGTH
       && result.svg.includes(renderId)
-      && !source.includes(renderId)
+      && !cacheKey.includes(renderId)
     ) {
       writeLruCache(
         cache,
-        source,
+        cacheKey,
         { renderId, svg: result.svg },
         MERMAID_CACHE_MAX_ENTRIES
       );
@@ -729,6 +724,49 @@ async function renderUncachedMermaidDiagram(
     );
   }
   return 1;
+}
+
+export function readCachedMermaidSvg(
+  source: string,
+  renderId: string,
+  windowRef: FrontendEnhancementWindow
+): string | null {
+  const mermaid = windowRef.mermaid;
+  const cacheKey = mermaidCacheKey(source);
+  if (!mermaid || !cacheKey || !renderId) return null;
+  const cache = mermaidSvgCaches.get(mermaid);
+  if (!cache) return null;
+  const cached = readLruCache(cache, cacheKey);
+  if (!cached) return null;
+  return cached.svg.split(cached.renderId).join(renderId);
+}
+
+export function writeCachedMermaidSvg(
+  source: string,
+  renderId: string,
+  svg: string,
+  windowRef: FrontendEnhancementWindow
+): void {
+  const mermaid = windowRef.mermaid;
+  const cacheKey = mermaidCacheKey(source);
+  if (
+    !mermaid
+    || !renderId
+    || cacheKey.length === 0
+    || cacheKey.length > MERMAID_CACHE_MAX_SOURCE_LENGTH
+    || svg.length === 0
+    || svg.length > MERMAID_CACHE_MAX_SVG_LENGTH
+    || !svg.includes(renderId)
+    || cacheKey.includes(renderId)
+  ) {
+    return;
+  }
+  writeLruCache(
+    mermaidSvgCache(mermaid),
+    cacheKey,
+    { renderId, svg },
+    MERMAID_CACHE_MAX_ENTRIES
+  );
 }
 
 export function renderMermaidContent(
@@ -765,7 +803,8 @@ export function renderMermaidContent(
       container.className = 'easymde-mermaid';
       element.dataset.easymdeRendered = '1';
 
-      const cached = readLruCache(cache, source);
+      const cacheKey = mermaidCacheKey(source);
+      const cached = cacheKey.length > 0 ? readLruCache(cache, cacheKey) : undefined;
       if (cached) {
         if (!pre.parentNode) return 0;
         container.innerHTML = cached.svg.split(cached.renderId).join(renderId);

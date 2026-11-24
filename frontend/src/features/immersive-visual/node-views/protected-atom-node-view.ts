@@ -6,6 +6,11 @@ import type {
 	NodeView,
 	NodeViewConstructor,
 } from "prosemirror-view";
+import type {
+	VisualGeneratedRuntimePort,
+	VisualRuntimeFeature,
+	VisualRuntimeState,
+} from "../../../contracts/visual-editor";
 import {
 	normalizeProtectedBlockKind,
 	normalizeProtectedInlineKind,
@@ -13,43 +18,46 @@ import {
 	type ProtectedInlineKind,
 } from "../visual-schema";
 import {
+	ensureMermaidInitialized,
+	sanitizeMermaidSvg,
+} from "./mermaid-svg-sanitizer";
+import {
 	createAtomButton,
 	createAtomElement,
-	ensureMermaidInitialized,
 	MONOSPACE_FONT,
 	ProtectedCardEditor,
-	sanitizeMermaidSvg,
-	subscribePreviewRuntimeReady,
-	subscribeVisualEditableState,
 } from "./protected-atom-card-editor";
+import {
+	mountTocPreview,
+	renderFootnoteRefPreview,
+	renderFootnotesBlockPreview,
+	renderRawBlockPreview,
+	renderRawInlinePreview,
+} from "./protected-atom-preview-renderer";
+import {
+	createRuntimeProvider,
+	createStandaloneRuntimePort,
+	extractMermaidSource,
+	type KatexRuntime,
+	type MermaidRuntime,
+	type ProtectedAtomRuntimeProvider,
+	type ResolvedRuntimeProvider,
+	renderMathWithRuntime,
+} from "./protected-atom-runtime";
+import { subscribeVisualEditableState } from "./visual-view-events";
 
+export { sanitizeMermaidSvg } from "./mermaid-svg-sanitizer";
 export {
-	PREVIEW_RUNTIME_READY_EVENT,
-	type RuntimeReadySubscription,
-	sanitizeMermaidSvg,
-	subscribePreviewRuntimeReady,
-} from "./protected-atom-card-editor";
+	extractBlockMathTex,
+	extractInlineMathTex,
+	extractMermaidSource,
+	type KatexRenderOptions,
+	type KatexRuntime,
+	type MermaidRenderResult,
+	type MermaidRuntime,
+	type ProtectedAtomRuntimeProvider,
+} from "./protected-atom-runtime";
 
-export type KatexRenderOptions = Readonly<{
-	displayMode: boolean;
-	strict: string;
-	throwOnError: boolean;
-}>;
-export type KatexRuntime = Readonly<{
-	render: (
-		tex: string,
-		element: HTMLElement,
-		options: KatexRenderOptions,
-	) => void;
-}>;
-export type MermaidRenderResult = Readonly<{ svg: string }>;
-export type MermaidRuntime = Readonly<{
-	initialize?: (options: Record<string, unknown>) => void;
-	render: (
-		id: string,
-		source: string,
-	) => Promise<MermaidRenderResult> | MermaidRenderResult;
-}>;
 export type ProtectedAtomLabels = Readonly<{
 	cancel?: string;
 	edit?: string;
@@ -70,16 +78,18 @@ export type ProtectedAtomNodeViewOptions = Readonly<{
 	getMermaid?: () => MermaidRuntime | null | undefined;
 	labelTemplates?: ProtectedAtomLabelTemplates;
 	labels?: ProtectedAtomLabels;
+	runtimePort?: VisualGeneratedRuntimePort;
+	runtimeProvider?: ProtectedAtomRuntimeProvider;
 }>;
 
 /** Transaction meta marking a discrete protected-card commit boundary. */
 export const PROTECTED_CARD_COMMIT_META = "easymdeProtectedCardCommit";
 
-type ProtectedEnhancementWindow = Window & {
-	katex?: KatexRuntime;
-	mermaid?: MermaidRuntime;
-};
 type ProtectedAtomKind = ProtectedBlockKind | ProtectedInlineKind;
+type CardAtomKind = Exclude<
+	ProtectedAtomKind,
+	"math" | "math-inline" | "mermaid"
+>;
 
 const DEFAULT_LABELS: Required<ProtectedAtomLabels> = {
 	cancel: "Cancel",
@@ -98,7 +108,7 @@ const DEFAULT_LABEL_TEMPLATES: Required<ProtectedAtomLabelTemplates> = {
 const ROOT_KIND_CLASSES: Record<ProtectedAtomKind, string> = {
 	math: "easymde-protected-block",
 	mermaid: "easymde-protected-block",
-	toc: "easymde-protected-block easymde-toc",
+	toc: "easymde-protected-block",
 	footnotes: "easymde-protected-block easymde-footnotes",
 	raw: "easymde-protected-block",
 	"math-inline": "easymde-protected-inline",
@@ -113,7 +123,7 @@ const ROOT_KIND_CLASSES: Record<ProtectedAtomKind, string> = {
 const PREVIEW_KIND_CLASSES: Record<ProtectedAtomKind, string> = {
 	math: " easymde-math easymde-math-block",
 	mermaid: " easymde-mermaid",
-	toc: "",
+	toc: " easymde-toc",
 	footnotes: "",
 	raw: "",
 	"math-inline": " easymde-math easymde-math-inline",
@@ -136,68 +146,6 @@ const KIND_LABEL_KEY: Record<ProtectedAtomKind, keyof ProtectedAtomLabels> = {
 	"raw-inline": "raw",
 };
 let mermaidRenderSequence = 0;
-
-export function extractBlockMathTex(rawMarkdown: string): string {
-	const trimmed = rawMarkdown.trim();
-	const fenced =
-		trimmed.length >= 4 &&
-		((trimmed.startsWith("$$") && trimmed.endsWith("$$")) ||
-			(trimmed.startsWith("\\[") && trimmed.endsWith("\\]")));
-	return fenced ? trimmed.slice(2, -2).trim() : trimmed;
-}
-
-export function extractInlineMathTex(rawMarkdown: string): string {
-	const trimmed = rawMarkdown.trim();
-	if (
-		trimmed.startsWith("\\(") &&
-		trimmed.endsWith("\\)") &&
-		trimmed.length >= 4
-	) {
-		return trimmed.slice(2, -2).trim();
-	}
-	if (
-		trimmed.startsWith("$") &&
-		trimmed.endsWith("$") &&
-		!trimmed.startsWith("$$") &&
-		trimmed.length >= 2
-	) {
-		return trimmed.slice(1, -1).trim();
-	}
-	return trimmed;
-}
-
-export function extractMermaidSource(rawMarkdown: string): string {
-	const normalized = rawMarkdown.replace(/\r\n?/g, "\n").trim();
-	if (normalized.length === 0) return "";
-	const lines = normalized.split("\n");
-	const opener = /^ {0,3}(`{3,}|~{3,})[ \t]*mermaid\b.*$/i.exec(lines[0] ?? "");
-	if (!opener?.[1]) return normalized;
-	const closerPattern =
-		opener[1][0] === "~" ? /^ {0,3}(~{3,})[ \t]*$/ : /^ {0,3}(`{3,})[ \t]*$/;
-	const closer =
-		lines.length > 1 ? closerPattern.exec(lines[lines.length - 1] ?? "") : null;
-	const hasCloser = Boolean(
-		closer?.[1] && closer[1].length >= opener[1].length,
-	);
-	return lines
-		.slice(1, hasCloser ? lines.length - 1 : lines.length)
-		.join("\n")
-		.trim();
-}
-
-function resolveRuntime<K extends "katex" | "mermaid">(
-	key: K,
-	getter?: () => ProtectedEnhancementWindow[K] | null | undefined,
-): NonNullable<ProtectedEnhancementWindow[K]> | null {
-	const candidate = getter
-		? getter()
-		: typeof window !== "undefined"
-			? (window as ProtectedEnhancementWindow)[key]
-			: null;
-	return candidate && typeof candidate.render === "function"
-		? (candidate as NonNullable<ProtectedEnhancementWindow[K]>)
-		: null;
-}
 
 function readRawMarkdown(node: ProseMirrorNode): string {
 	return typeof node.attrs.rawMarkdown === "string"
@@ -242,9 +190,10 @@ class ProtectedAtomNodeView implements NodeView {
 	private node: ProseMirrorNode;
 	private readonly view: EditorView;
 	private readonly getPos: () => number | undefined;
-	private readonly options: ProtectedAtomNodeViewOptions;
 	private readonly labels: Required<ProtectedAtomLabels>;
 	private readonly templates: Required<ProtectedAtomLabelTemplates>;
+	private readonly runtimeProvider: ResolvedRuntimeProvider;
+	private readonly runtimePort: VisualGeneratedRuntimePort;
 	private readonly previewContainer: HTMLElement;
 	private readonly cardActions: HTMLDivElement | null = null;
 	private readonly editButton: HTMLButtonElement | null = null;
@@ -254,10 +203,75 @@ class ProtectedAtomNodeView implements NodeView {
 	private selected = false;
 	private destroyed = false;
 	private renderGeneration = 0;
-	private runtimeReadyUnsubscribe: (() => void) | null = null;
+	private runtimeUnsubscribe: (() => void) | null = null;
+	private previewCleanup: (() => void) | null = null;
 	private readonly unsubscribeEditable: () => void;
 	private readonly onDoubleClick: (event: MouseEvent) => void;
 	private readonly onMouseDown: (event: MouseEvent) => void;
+	private readonly onPreviewClick: (event: MouseEvent) => void;
+
+	private readonly cardRenderers: Record<
+		CardAtomKind,
+		(doc: Document, rawMarkdown: string) => void
+	> = {
+		"footnote-ref": (doc, rawMarkdown) => {
+			this.unsubscribeRuntime();
+			this.previewContainer.replaceChildren(
+				renderFootnoteRefPreview(doc, rawMarkdown),
+			);
+		},
+		"raw-inline": (doc, rawMarkdown) => {
+			let needsRuntime = false;
+			this.previewContainer.replaceChildren(
+				renderRawInlinePreview(
+					doc,
+					rawMarkdown,
+					{ footnotes: this.labels.footnotes, raw: this.labels.raw },
+					(d, displayMode, raw) => {
+						const result = this.renderNestedMathElement(d, displayMode, raw);
+						if (result.pendingRuntime) needsRuntime = true;
+						return result.element;
+					},
+				),
+			);
+			if (needsRuntime) this.subscribeRuntime();
+			else this.unsubscribeRuntime();
+		},
+		toc: (doc) => {
+			this.unsubscribeRuntime();
+			this.requestRuntimeState("toc");
+			this.previewCleanup = mountTocPreview(
+				doc,
+				this.previewContainer,
+				this.view,
+				this.labels.toc,
+				() => !this.destroyed && !this.editing && this.currentKind() === "toc",
+			);
+		},
+		footnotes: (doc, rawMarkdown) => {
+			this.unsubscribeRuntime();
+			this.previewContainer.replaceChildren(
+				renderFootnotesBlockPreview(doc, rawMarkdown, this.labels.footnotes),
+			);
+		},
+		raw: (doc, rawMarkdown) => {
+			let needsRuntime = false;
+			this.previewContainer.replaceChildren(
+				renderRawBlockPreview(doc, rawMarkdown, {
+					fallbackLabel: this.labels.raw,
+					footnotesLabel: this.labels.footnotes,
+					renderNestedMath: (d, displayMode, raw) => {
+						const result = this.renderNestedMathElement(d, displayMode, raw);
+						if (result.pendingRuntime) needsRuntime = true;
+						return result.element;
+					},
+					viewWindow: doc.defaultView,
+				}),
+			);
+			if (needsRuntime) this.subscribeRuntime();
+			else this.unsubscribeRuntime();
+		},
+	};
 
 	constructor(
 		node: ProseMirrorNode,
@@ -270,7 +284,6 @@ class ProtectedAtomNodeView implements NodeView {
 		this.view = view;
 		this.getPos = getPos;
 		this.isBlock = isBlock;
-		this.options = options;
 		this.labels = { ...DEFAULT_LABELS, ...(options.labels ?? {}) };
 		this.templates = {
 			...DEFAULT_LABEL_TEMPLATES,
@@ -278,6 +291,10 @@ class ProtectedAtomNodeView implements NodeView {
 		};
 
 		const doc = view.dom.ownerDocument;
+		this.runtimeProvider = createRuntimeProvider(doc, options);
+		this.runtimePort =
+			options.runtimePort ?? createStandaloneRuntimePort(this.runtimeProvider);
+
 		this.dom = doc.createElement(isBlock ? "div" : "span");
 		this.dom.setAttribute("contenteditable", "false");
 		this.dom.setAttribute(
@@ -351,7 +368,15 @@ class ProtectedAtomNodeView implements NodeView {
 			event.preventDefault();
 			this.selectInEditor();
 		};
+		this.onPreviewClick = (event: MouseEvent) => {
+			if (this.destroyed || this.editing) return;
+			const target = event.target instanceof Element ? event.target : null;
+			if (target?.closest("a")) {
+				event.preventDefault();
+			}
+		};
 		if (isBlock) this.dom.addEventListener("mousedown", this.onMouseDown);
+		this.previewContainer.addEventListener("click", this.onPreviewClick);
 		this.unsubscribeEditable = subscribeVisualEditableState(view, () => {
 			if (!this.destroyed) this.syncRootAttributes();
 		});
@@ -359,10 +384,6 @@ class ProtectedAtomNodeView implements NodeView {
 		this.renderPreview();
 	}
 
-	/**
-	 * Left-button pointer events on a block card's non-editing preview
-	 * surface (outside its action buttons and raw editor).
-	 */
 	private isPreviewPointerEvent(event: Event): boolean {
 		if (!this.isBlock || this.destroyed || this.editing) return false;
 		if (!(event instanceof MouseEvent) || event.button !== 0) return false;
@@ -373,10 +394,6 @@ class ProtectedAtomNodeView implements NodeView {
 		);
 	}
 
-	/**
-	 * Selects the card explicitly as a NodeSelection (matching ImageNodeView)
-	 * instead of relying on native click resolution around uneditable DOM.
-	 */
 	private selectInEditor(): void {
 		const pos = resolveAtomPosition(
 			this.getPos,
@@ -467,8 +484,11 @@ class ProtectedAtomNodeView implements NodeView {
 		this.dom.style.removeProperty("outline-offset");
 	}
 
-	private renderMonospaceFallback(text: string): void {
-		const doc = this.dom.ownerDocument;
+	private createMonospaceFallbackElement(
+		doc: Document,
+		text: string,
+		isBlock: boolean,
+	): HTMLElement {
 		const code = createAtomElement(
 			doc,
 			"code",
@@ -476,10 +496,7 @@ class ProtectedAtomNodeView implements NodeView {
 			text,
 		);
 		code.style.fontFamily = MONOSPACE_FONT;
-		if (!this.isBlock) {
-			this.previewContainer.replaceChildren(code);
-			return;
-		}
+		if (!isBlock) return code;
 		// A `<div>`, never `<pre>`: `code-frame.css` styles every
 		// `.easymde-code-mac pre` as a dark Mac terminal frame.
 		const block = createAtomElement(
@@ -489,87 +506,149 @@ class ProtectedAtomNodeView implements NodeView {
 		);
 		Object.assign(block.style, { margin: "0", whiteSpace: "pre-wrap" });
 		block.appendChild(code);
-		this.previewContainer.replaceChildren(block);
+		return block;
 	}
 
-	private renderCardPreview(
-		kind: ProtectedAtomKind,
+	private createLoadingPlaceholderElement(
+		doc: Document,
+		isBlock: boolean,
+	): HTMLElement {
+		const placeholder = createAtomElement(
+			doc,
+			isBlock ? "div" : "span",
+			"easymde-protected-loading",
+		);
+		placeholder.setAttribute("aria-busy", "true");
+		placeholder.setAttribute("data-easymde-protected-loading", "1");
+		return placeholder;
+	}
+
+	private renderMonospaceFallback(text: string): void {
+		this.previewContainer.replaceChildren(
+			this.createMonospaceFallbackElement(
+				this.dom.ownerDocument,
+				text,
+				this.isBlock,
+			),
+		);
+	}
+
+	private renderLoadingPlaceholder(): void {
+		this.previewContainer.replaceChildren(
+			this.createLoadingPlaceholderElement(
+				this.dom.ownerDocument,
+				this.isBlock,
+			),
+		);
+	}
+
+	private renderNestedMathElement(
+		doc: Document,
+		displayMode: boolean,
 		rawMarkdown: string,
-	): void {
-		const doc = this.dom.ownerDocument;
-		if (!this.isBlock) {
-			this.previewContainer.replaceChildren(
-				createAtomElement(
-					doc,
-					"span",
-					"easymde-protected-inline-card",
-					rawMarkdown,
-				),
-			);
-			return;
-		}
-		const card = createAtomElement(doc, "div", "easymde-protected-card");
-		const badge = createAtomElement(
+	): Readonly<{ element: HTMLElement; pendingRuntime: boolean }> {
+		const host = createAtomElement(
 			doc,
-			"span",
-			"easymde-protected-card-label",
-			this.labels[KIND_LABEL_KEY[kind]],
+			displayMode ? "div" : "span",
+			displayMode
+				? "easymde-math easymde-math-block"
+				: "easymde-math easymde-math-inline",
 		);
-		const body = createAtomElement(
-			doc,
-			"div",
-			"easymde-protected-card-source",
+		const outcome = renderMathWithRuntime(
+			host,
+			displayMode,
 			rawMarkdown,
+			this.runtimePort,
+			this.runtimeProvider,
 		);
-		Object.assign(body.style, {
-			margin: "4px 0 0",
-			whiteSpace: "pre-wrap",
-			fontFamily: MONOSPACE_FONT,
-		});
-		card.append(badge, body);
-		this.previewContainer.replaceChildren(card);
+		if (outcome === "rendered") {
+			return { element: host, pendingRuntime: false };
+		}
+		if (outcome === "loading") {
+			host.appendChild(this.createLoadingPlaceholderElement(doc, displayMode));
+			return { element: host, pendingRuntime: true };
+		}
+		host.appendChild(
+			this.createMonospaceFallbackElement(doc, rawMarkdown, displayMode),
+		);
+		return { element: host, pendingRuntime: outcome === "unavailable" };
 	}
 
 	private renderMathPreview(displayMode: boolean, rawMarkdown: string): void {
-		const tex = displayMode
-			? extractBlockMathTex(rawMarkdown)
-			: extractInlineMathTex(rawMarkdown);
-		const katex = resolveRuntime("katex", this.options.getKatex);
-		if (!katex || tex.length === 0) {
-			this.renderMonospaceFallback(rawMarkdown);
-			if (!katex) this.subscribeRuntimeReady();
+		// Render into the `.easymde-math` element itself so `.katex`
+		// (inline) or `.katex-display > .katex` (block) is a direct child,
+		// matching the formal Preview DOM and MathML/PNG export contracts.
+		const outcome = renderMathWithRuntime(
+			this.previewContainer,
+			displayMode,
+			rawMarkdown,
+			this.runtimePort,
+			this.runtimeProvider,
+		);
+		if (outcome === "rendered") {
+			this.dom.setAttribute("data-easymde-rendered", "1");
+			this.unsubscribeRuntime();
 			return;
 		}
-		this.previewContainer.replaceChildren();
-		try {
-			// Render into the `.easymde-math` element itself so `.katex`
-			// (inline) or `.katex-display > .katex` (block) is a direct child,
-			// matching the formal Preview DOM and MathML/PNG export contracts.
-			katex.render(tex, this.previewContainer, {
-				displayMode,
-				throwOnError: false,
-				strict: "ignore",
-			});
-			this.dom.setAttribute("data-easymde-rendered", "1");
-			this.unsubscribeRuntimeReady();
-		} catch {
-			this.dom.classList.add("easymde-render-error");
-			this.renderMonospaceFallback(rawMarkdown);
+		if (outcome === "loading") {
+			this.renderLoadingPlaceholder();
+			this.subscribeRuntime();
+			return;
 		}
+		if (outcome === "error") {
+			this.dom.classList.add("easymde-render-error");
+		} else if (outcome === "unavailable") {
+			this.subscribeRuntime();
+		}
+		this.renderMonospaceFallback(rawMarkdown);
 	}
 
 	private renderMermaidPreview(rawMarkdown: string, generation: number): void {
 		const source = extractMermaidSource(rawMarkdown);
-		const mermaid = resolveRuntime("mermaid", this.options.getMermaid);
-		this.renderMonospaceFallback(source.length > 0 ? source : rawMarkdown);
-		if (!mermaid || source.length === 0) {
-			if (!mermaid) this.subscribeRuntimeReady();
+		if (source.length === 0) {
+			this.renderMonospaceFallback(rawMarkdown);
 			return;
 		}
-		this.unsubscribeRuntimeReady();
-		ensureMermaidInitialized(mermaid);
+		const state = this.requestRuntimeState("mermaid");
+		if (state === "loading") {
+			this.renderLoadingPlaceholder();
+			this.subscribeRuntime();
+			return;
+		}
+		const mermaid =
+			state === "ready" ? this.runtimeProvider.getMermaid() : null;
+		if (!mermaid) {
+			this.renderMonospaceFallback(source);
+			this.subscribeRuntime();
+			return;
+		}
+		this.unsubscribeRuntime();
 		mermaidRenderSequence += 1;
 		const renderId = `easymde-visual-mermaid-${mermaidRenderSequence}`;
+
+		const cachedSvg = this.runtimeProvider.readCachedMermaidSvg(
+			source,
+			renderId,
+		);
+		if (cachedSvg !== null) {
+			const safeCachedSvg = sanitizeMermaidSvg(
+				cachedSvg,
+				this.dom.ownerDocument,
+				renderId,
+			);
+			if (safeCachedSvg) {
+				this.dom.classList.remove("easymde-render-error");
+				this.dom.setAttribute("data-easymde-rendered", "1");
+				this.previewContainer.replaceChildren(safeCachedSvg);
+				return;
+			}
+		}
+
+		// Keep a non-source loading placeholder while Mermaid renders
+		// asynchronously so users never see raw diagram source unless they
+		// explicitly open the source editor or rendering actually fails.
+		this.renderLoadingPlaceholder();
+		ensureMermaidInitialized(mermaid);
 
 		Promise.resolve()
 			.then(() => mermaid.render(renderId, source))
@@ -578,17 +657,21 @@ class ProtectedAtomNodeView implements NodeView {
 					this.destroyed ||
 					this.editing ||
 					this.renderGeneration !== generation
-				)
+				) {
 					return;
+				}
+				const svgMarkup = typeof result?.svg === "string" ? result.svg : "";
 				const safeSvg = sanitizeMermaidSvg(
-					typeof result?.svg === "string" ? result.svg : "",
+					svgMarkup,
 					this.dom.ownerDocument,
 					renderId,
 				);
 				if (!safeSvg) {
 					this.dom.classList.add("easymde-render-error");
+					this.renderMonospaceFallback(source);
 					return;
 				}
+				this.runtimeProvider.writeCachedMermaidSvg(source, renderId, svgMarkup);
 				this.dom.classList.remove("easymde-render-error");
 				this.dom.setAttribute("data-easymde-rendered", "1");
 				this.previewContainer.replaceChildren(safeSvg);
@@ -600,6 +683,7 @@ class ProtectedAtomNodeView implements NodeView {
 					this.renderGeneration === generation
 				) {
 					this.dom.classList.add("easymde-render-error");
+					this.renderMonospaceFallback(source);
 				}
 			});
 	}
@@ -611,29 +695,38 @@ class ProtectedAtomNodeView implements NodeView {
 		const rawMarkdown = readRawMarkdown(this.node);
 		this.dom.classList.remove("easymde-render-error");
 		this.dom.removeAttribute("data-easymde-rendered");
+		this.clearPreviewCleanup();
 		if (kind === "math" || kind === "math-inline") {
 			this.renderMathPreview(kind === "math", rawMarkdown);
 		} else if (kind === "mermaid") {
 			this.renderMermaidPreview(rawMarkdown, generation);
 		} else {
-			this.renderCardPreview(kind, rawMarkdown);
+			this.cardRenderers[kind](this.dom.ownerDocument, rawMarkdown);
 		}
 	}
 
-	private subscribeRuntimeReady(): void {
-		if (this.destroyed || this.runtimeReadyUnsubscribe) return;
-		this.runtimeReadyUnsubscribe = subscribePreviewRuntimeReady(
-			this.dom.ownerDocument,
-			() => {
-				if (this.destroyed || this.editing) return;
-				this.renderPreview();
-			},
-		);
+	private requestRuntimeState(
+		feature: VisualRuntimeFeature,
+	): VisualRuntimeState {
+		return this.runtimePort.request(feature);
 	}
 
-	private unsubscribeRuntimeReady(): void {
-		this.runtimeReadyUnsubscribe?.();
-		this.runtimeReadyUnsubscribe = null;
+	private subscribeRuntime(): void {
+		if (this.destroyed || this.runtimeUnsubscribe) return;
+		this.runtimeUnsubscribe = this.runtimePort.subscribe(() => {
+			if (this.destroyed || this.editing) return;
+			this.renderPreview();
+		});
+	}
+
+	private unsubscribeRuntime(): void {
+		this.runtimeUnsubscribe?.();
+		this.runtimeUnsubscribe = null;
+	}
+
+	private clearPreviewCleanup(): void {
+		this.previewCleanup?.();
+		this.previewCleanup = null;
 	}
 
 	private teardownRawEditor(): void {
@@ -647,6 +740,7 @@ class ProtectedAtomNodeView implements NodeView {
 
 	private openRawEditor(): void {
 		this.renderGeneration += 1;
+		this.clearPreviewCleanup();
 		this.editing = true;
 		this.previewContainer.style.display = "none";
 		this.syncRootAttributes();
@@ -750,9 +844,11 @@ class ProtectedAtomNodeView implements NodeView {
 		this.destroyed = true;
 		this.renderGeneration += 1;
 		this.unsubscribeEditable();
-		this.unsubscribeRuntimeReady();
+		this.unsubscribeRuntime();
+		this.clearPreviewCleanup();
 		this.dom.removeEventListener("dblclick", this.onDoubleClick);
 		this.dom.removeEventListener("mousedown", this.onMouseDown);
+		this.previewContainer.removeEventListener("click", this.onPreviewClick);
 		this.cardActionsCleanup?.();
 		const editor = this.cardEditor;
 		this.cardEditor = null;

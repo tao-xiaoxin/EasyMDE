@@ -435,8 +435,121 @@ describe("Markdown parser and serializer round-trip", () => {
 		expect(serialized).toContain("```mermaid\nflowchart TD");
 		expect(serialized).toContain("```mermaid\nxychart-beta");
 		expect(serialized).toContain("[^1]: 这是一个简单脚注。");
-		expect(serialized).toContain('[github-link]: https://github.com "GitHub"');
+		expect(serialized).toContain("[github-link]: https://github.com \"GitHub\"");
 		expect(serialized).toContain("<summary>点击展开查看隐藏内容</summary>");
+	});
+
+	it("preserves paired inline HTML tags and numbered headings verbatim on round-trip", () => {
+		const markdown = [
+			"## 1. 标题层级",
+			"## 2. 文本样式",
+			"~~删除线~~、`行内代码`、<u>下划线文本</u>、<mark>高亮文本</mark>。",
+			"H<sub>2</sub>O、x<sup>2</sup>、<kbd>⌘</kbd> + <kbd>K</kbd>。",
+		].join("\n\n");
+
+		const doc = parseMarkdownToVisualDoc(markdown);
+		const serialized = serializeVisualDocToMarkdown(doc);
+		expect(serialized).toBe(markdown);
+		expect(serialized).not.toContain("1\\.");
+		expect(serialized).not.toContain("\\<u>");
+		expect(parseMarkdownToVisualDoc(serialized).eq(doc)).toBe(true);
+	});
+
+	it("preserves table cells across split inline HTML tags and nested inline HTML tags during edits", () => {
+		const tableMd = [
+			"| A | B | C |",
+			"| --- | --- | --- |",
+			"| <u>one | two</u> | end |",
+		].join("\n");
+		const tableGuard = createMarkdownRoundTripGuard(tableMd);
+		const tableNode = tableGuard.initialDoc.firstChild;
+		expect(tableNode?.type.name).toBe("table");
+		const bodyRow = tableNode?.child(1);
+		expect(bodyRow?.childCount).toBe(3);
+		expect(bodyRow?.child(0).textContent).toBe("one");
+		expect(bodyRow?.child(1).textContent).toBe("two");
+		expect(bodyRow?.child(2).textContent).toBe("end");
+
+		const tableView = createEditorView(tableMd);
+		let endPos = -1;
+		tableView.state.doc.descendants((node, pos) => {
+			if (node.isText && node.text === "end") {
+				endPos = pos;
+				return false;
+			}
+			return true;
+		});
+		expect(endPos).toBeGreaterThan(0);
+		tableView.dispatch(
+			tableView.state.tr.insertText("ed", endPos + "end".length),
+		);
+		const editedTableMd = tableGuard.serialize(tableView.state.doc);
+		expect(editedTableMd).toBe(
+			["| A | B | C |", "| --- | --- | --- |", "| <u>one | two</u> | ended |"].join(
+				"\n",
+			),
+		);
+
+		// Nested inline HTML tags stay protected verbatim when editing the same paragraph.
+		const nestedMd = "<u>nested <mark>inner</mark></u> tail";
+		const nestedGuard = createMarkdownRoundTripGuard(nestedMd);
+		const nestedView = createEditorView(nestedMd);
+		nestedView.dispatch(
+			nestedView.state.tr.insertText(
+				"!",
+				nestedView.state.doc.content.size - 1,
+			),
+		);
+		expect(nestedGuard.serialize(nestedView.state.doc)).toBe(
+			"<u>nested <mark>inner</mark></u> tail!",
+		);
+
+		// Pipes inside inline code spans or quoted HTML tag attributes inside a GFM
+		// table row still split table cells (matching PHP GFM) and keep edits lossless.
+		const codePipeTableMd = [
+			"| A | B | C |",
+			"| --- | --- | --- |",
+			"| <u>`one | two`</u> | end |",
+		].join("\n");
+		const codePipeGuard = createMarkdownRoundTripGuard(codePipeTableMd);
+		const codePipeRow = codePipeGuard.initialDoc.firstChild?.child(1);
+		expect(codePipeRow?.childCount).toBe(3);
+		expect(codePipeRow?.child(2).textContent).toBe("end");
+		const codePipeView = createEditorView(codePipeTableMd);
+		let codePipeEndPos = -1;
+		codePipeView.state.doc.descendants((node, pos) => {
+			if (node.isText && node.text === "end") {
+				codePipeEndPos = pos;
+				return false;
+			}
+			return true;
+		});
+		expect(codePipeEndPos).toBeGreaterThan(0);
+		codePipeView.dispatch(
+			codePipeView.state.tr.insertText("ed", codePipeEndPos + "end".length),
+		);
+		const serializedCodePipe = codePipeGuard.serialize(codePipeView.state.doc);
+		expect(serializedCodePipe).toBe(
+			[
+				"| A | B | C |",
+				"| --- | --- | --- |",
+				"| <u>\\`one | two\\`</u> | ended |",
+			].join("\n"),
+		);
+		expect(serializedCodePipe).not.toContain("\\|");
+		expect(parseMarkdownToVisualDoc(serializedCodePipe).eq(codePipeView.state.doc)).toBe(
+			true,
+		);
+
+		const attrPipeTableMd = [
+			"| A | B | C |",
+			"| --- | --- | --- |",
+			'| <span title="a | b">text</span> | end |',
+		].join("\n");
+		const attrPipeGuard = createMarkdownRoundTripGuard(attrPipeTableMd);
+		const attrPipeRow = attrPipeGuard.initialDoc.firstChild?.child(1);
+		expect(attrPipeRow?.childCount).toBe(3);
+		expect(attrPipeRow?.child(2).textContent).toBe("end");
 	});
 
 	it("enforces zero-write-on-read via createMarkdownRoundTripGuard", () => {

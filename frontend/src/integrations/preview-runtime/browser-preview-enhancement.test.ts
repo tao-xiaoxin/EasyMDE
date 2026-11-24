@@ -2266,4 +2266,86 @@ describe('createBrowserPreviewEnhancementPort', () => {
       }
     }
   });
+
+  it('requires positive math CSS+JS completion before marking math ready across abort, failure, and recovery', async () => {
+    let katexLoaded = false;
+    let cssMode: 'hang' | 'error' | 'load' = 'hang';
+    const pendingCssLinks: HTMLLinkElement[] = [];
+    const append = document.head.appendChild.bind(document.head);
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+      const result = append(node);
+      if (node instanceof Element) appended.push(node);
+      if (node instanceof HTMLScriptElement && 'easymde-katex-js' === node.id) {
+        queueMicrotask(() => {
+          katexLoaded = true;
+          node.dispatchEvent(new Event('load'));
+        });
+      }
+      if (node instanceof HTMLLinkElement && ['easymde-katex-css', 'easymde-math-css'].includes(node.id)) {
+        if ('hang' === cssMode) {
+          pendingCssLinks.push(node);
+        } else if ('error' === cssMode) {
+          queueMicrotask(() => node.dispatchEvent(new Event('error')));
+        } else if ('load' === cssMode) {
+          queueMicrotask(() => node.dispatchEvent(new Event('load')));
+        }
+      }
+      return result;
+    });
+
+    const enhance = vi.fn().mockResolvedValue(undefined);
+    const port = createBrowserPreviewEnhancementPort(
+      previewEnhancementBootstrapFixture,
+      {
+        documentRef: document,
+        runtime: {
+          ...runtime(enhance),
+          hasKatex: () => katexLoaded
+        }
+      }
+    );
+
+    // 1. KaTeX JS loads, then caller aborts while CSS is still pending.
+    const abortController = new AbortController();
+    const first = port.enhance(
+      document.createElement('div'),
+      { math: true },
+      () => !abortController.signal.aborted,
+      { codeTheme: 'github', signal: abortController.signal }
+    );
+    await vi.waitFor(() => expect(katexLoaded).toBe(true));
+    abortController.abort();
+    await expect(first).rejects.toThrow();
+    expect(port.isFeatureReady?.('math')).toBe(false);
+
+    // Original CSS links then fail in the background (matching real network failure).
+    for (const link of pendingCssLinks.splice(0)) {
+      link.dispatchEvent(new Event('error'));
+    }
+
+    // 2. Subsequent attempt fails CSS: positive readiness remains false.
+    cssMode = 'error';
+    await expect(port.enhance(
+      document.createElement('div'),
+      { math: true },
+      () => true,
+      context('github')
+    )).rejects.toThrowError('preview-enhancement-resource-load-failed');
+    expect(port.isFeatureReady?.('math')).toBe(false);
+
+    // 3. Recovery attempt loads CSS: positive readiness is set cleanly and clears on dispose.
+    cssMode = 'load';
+    await expect(port.enhance(
+      document.createElement('div'),
+      { math: true },
+      () => true,
+      context('github')
+    )).resolves.toBeUndefined();
+    expect(port.isFeatureReady?.('math')).toBe(true);
+    expect(
+      document.documentElement.getAttribute('data-easymde-visual-math-ready')
+    ).toBeNull();
+    port.dispose?.();
+    expect(port.isFeatureReady?.('math')).toBe(false);
+  });
 });

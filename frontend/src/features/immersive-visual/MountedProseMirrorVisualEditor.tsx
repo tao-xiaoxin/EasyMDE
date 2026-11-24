@@ -3,6 +3,7 @@ import type { CSSProperties } from "react";
 import type {
 	ImmersiveVisualEditorRuntime,
 	VisualEditorGeneratedPreviewIdentity,
+	VisualGeneratedRuntimePort,
 } from "../../contracts/visual-editor";
 import type { EditorDocumentSession } from "../document-source/editor-document-session";
 import {
@@ -35,6 +36,7 @@ export type MountedProseMirrorVisualEditorProps = Readonly<{
 	protectedAtomLabels?: ProtectedAtomLabels;
 	protectedAtomLabelTemplates?: ProtectedAtomLabelTemplates;
 	style?: CSSProperties;
+	visualRuntimePort?: VisualGeneratedRuntimePort;
 }>;
 
 /**
@@ -62,6 +64,7 @@ export function MountedProseMirrorVisualEditor({
 	protectedAtomLabels,
 	protectedAtomLabelTemplates,
 	style,
+	visualRuntimePort,
 }: MountedProseMirrorVisualEditorProps) {
 	// Key NodeViews on label values, not object identity, so unrelated renders
 	// never tear down and rebuild the ProseMirror view.
@@ -72,13 +75,25 @@ export function MountedProseMirrorVisualEditor({
 	const nodeViews = useMemo(
 		() =>
 			createVisualNodeViews({
-				protectedAtom: JSON.parse(
-					protectedAtomLabelKey,
-				) as ProtectedAtomNodeViewOptions,
+				protectedAtom: {
+					...(JSON.parse(protectedAtomLabelKey) as ProtectedAtomNodeViewOptions),
+					...(visualRuntimePort !== undefined
+						? { runtimePort: visualRuntimePort }
+						: {}),
+				},
 			}),
-		[protectedAtomLabelKey],
+		[protectedAtomLabelKey, visualRuntimePort],
 	);
-	const extraPlugins = useMemo(() => [createCodeHighlightPlugin()], []);
+	const extraPlugins = useMemo(
+		() => [
+			createCodeHighlightPlugin(
+				visualRuntimePort !== undefined
+					? { runtimePort: visualRuntimePort }
+					: {},
+			),
+		],
+		[visualRuntimePort],
+	);
 
 	return (
 		<ProseMirrorVisualEditor

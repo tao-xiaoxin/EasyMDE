@@ -758,3 +758,14 @@ export function parseMarkdownWithBlockSources(
 export function parseMarkdownToVisualDoc(markdown: string): ProseMirrorNode {
 	return parseMarkdownWithBlockSources(markdown).doc;
 }
+
+export function parseInlineMarkdownFragment(
+	markdown: string,
+): ProseMirrorNode[] {
+	if (markdown.length === 0) {
+		return [];
+	}
+	const preScan = prescanMarkdown(markdown);
+	const tokens = markdownItParser.parseInline(preScan.markdown, {});
+	return mapInlineTokens(tokens[0]?.children ?? null, preScan, false);
+}

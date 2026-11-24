@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   enhanceFrontendContent,
+  readCachedMermaidSvg,
   renderMathContent,
   renderMermaidContent,
   syncCodeFrameBackgrounds,
+  writeCachedMermaidSvg,
   type FrontendEnhancementScheduler,
   type FrontendEnhancementWindow
 } from './frontend-enhancement-runtime';
@@ -1209,5 +1211,48 @@ describe('frontend enhancement runtime', () => {
 
     await renderPass();
     expect(render).toHaveBeenCalledTimes(100);
+  });
+
+  it('reuses cached formal-Preview Mermaid SVGs with rewritten render IDs for trimmed and newline-terminated sources', async () => {
+    const windowRef = runtime();
+    windowRef.mermaid = {
+      initialize: vi.fn(),
+      render: vi.fn(async (id: string) => ({
+        svg: `<svg id="${id}"><style>#${id} .node{fill:#fff;}</style><g><text>Flow</text></g></svg>`
+      }))
+    };
+    const root = document.createElement('article');
+    root.innerHTML = '<pre><code class="language-mermaid">flowchart TD\n  A --&gt; B\n</code></pre>';
+
+    await renderMermaidContent(
+      root,
+      { features: { mermaid: true } },
+      windowRef
+    );
+
+    const reused = readCachedMermaidSvg(
+      'flowchart TD\n  A --> B',
+      'easymde-visual-mermaid-42',
+      windowRef
+    );
+    expect(reused).not.toBeNull();
+    expect(reused).toContain('id="easymde-visual-mermaid-42"');
+    expect(reused).toContain('#easymde-visual-mermaid-42 .node');
+    expect(reused).not.toContain('easymde-mermaid-');
+    expect(readCachedMermaidSvg('graph LR\n  X --> Y', 'easymde-visual-mermaid-43', windowRef)).toBeNull();
+
+    // Visual-side writes populate the same canonical LRU cache with normalized keys.
+    writeCachedMermaidSvg(
+      'graph LR\n  X --> Y\n',
+      'easymde-visual-mermaid-44',
+      '<svg id="easymde-visual-mermaid-44"><text>Visual</text></svg>',
+      windowRef
+    );
+    const written = readCachedMermaidSvg(
+      '  graph LR\n  X --> Y  ',
+      'easymde-visual-mermaid-45',
+      windowRef
+    );
+    expect(written).toBe('<svg id="easymde-visual-mermaid-45"><text>Visual</text></svg>');
   });
 });

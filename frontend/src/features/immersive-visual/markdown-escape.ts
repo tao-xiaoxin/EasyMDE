@@ -126,7 +126,7 @@ export function escapeInlineMarkdownText(
 	const escapedLines = lines.map((line, index) =>
 		escapeInlineLine(
 			line,
-			index > 0 || (options.atLineStart ?? false),
+			!inHeading && (index > 0 || (options.atLineStart ?? false)),
 			inTableCell,
 			inLinkLabel,
 		),

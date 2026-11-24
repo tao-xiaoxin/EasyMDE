@@ -3,7 +3,8 @@ import type { CSSProperties, ComponentType } from 'react';
 
 import type {
   ImmersiveVisualEditorRuntime,
-  VisualEditorGeneratedPreviewIdentity
+  VisualEditorGeneratedPreviewIdentity,
+  VisualGeneratedRuntimePort
 } from '../../contracts/visual-editor';
 import type { EditorDocumentSession } from '../../features/document-source/ui/EditorDocumentSource';
 import type { MountedProseMirrorVisualEditorProps } from '../../features/immersive-visual/MountedProseMirrorVisualEditor';
@@ -70,6 +71,7 @@ export type ImmersiveVisualEditorHostProps = Readonly<{
   protectedAtomLabels?: MountedProseMirrorVisualEditorProps['protectedAtomLabels'];
   protectedAtomLabelTemplates?: MountedProseMirrorVisualEditorProps['protectedAtomLabelTemplates'];
   style?: CSSProperties;
+  visualRuntimePort?: VisualGeneratedRuntimePort;
 }>;
 
 /**
@@ -94,7 +96,8 @@ export function ImmersiveVisualEditorHost({
   onReady,
   protectedAtomLabels,
   protectedAtomLabelTemplates,
-  style
+  style,
+  visualRuntimePort
 }: ImmersiveVisualEditorHostProps) {
   const [LoadedComponent, setLoadedComponent] =
     useState<VisualEditorComponent | null>(() => cachedComponent);
@@ -158,6 +161,7 @@ export function ImmersiveVisualEditorHost({
         ? { protectedAtomLabelTemplates }
         : {})}
       {...(style !== undefined ? { style } : {})}
+      {...(visualRuntimePort !== undefined ? { visualRuntimePort } : {})}
     />
   );
 }

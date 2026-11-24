@@ -14,10 +14,11 @@ import {
 	type NodeViewConstructor,
 	type ViewMutationRecord,
 } from "prosemirror-view";
+import type { VisualGeneratedRuntimePort } from "../../../contracts/visual-editor";
 import {
+	publishVisualDocumentUpdate,
 	publishVisualEditableState,
-	subscribePreviewRuntimeReady,
-} from "./protected-atom-card-editor";
+} from "./visual-view-events";
 
 export type HighlightJsResult = Readonly<{ value: string }>;
 
@@ -41,6 +42,7 @@ export type CodeHighlightPluginOptions = Readonly<{
 	cacheLimit?: number;
 	getHljs?: () => HighlightJsRuntime | null | undefined;
 	maxCodeLength?: number;
+	runtimePort?: VisualGeneratedRuntimePort;
 }>;
 
 type CodeHighlightPluginMeta = Readonly<{ refresh?: boolean }>;
@@ -277,6 +279,102 @@ function computeHighlightTokenRanges(
 	return ranges;
 }
 
+/**
+ * Render syntax-highlighted code into a standalone `<code>` element (e.g.
+ * inside a protected HTML block preview) reusing the shared hljs runtime,
+ * token-range LRU cache, and safe class allowlist.
+ */
+export function highlightCodeIntoElement(
+	doc: Document,
+	codeEl: HTMLElement,
+	source: string,
+	language: string,
+	viewWindow: Window | null,
+): void {
+	const normalizedLang = normalizeCodeLanguage(language);
+	codeEl.className = buildCodeClassName(normalizedLang);
+	const candidate = (viewWindow as HighlightWindow | null)?.hljs;
+	const hljs =
+		candidate &&
+		(typeof candidate.highlight === "function" ||
+			typeof candidate.highlightAuto === "function")
+			? candidate
+			: null;
+	if (
+		!hljs ||
+		source.length === 0 ||
+		source.length > DEFAULT_MAX_HIGHLIGHT_CODE_LENGTH
+	) {
+		codeEl.textContent = source;
+		return;
+	}
+	const ranges = computeHighlightTokenRanges(
+		source,
+		normalizedLang,
+		hljs,
+		DEFAULT_HIGHLIGHT_CACHE_LIMIT,
+	);
+	if (ranges.length === 0) {
+		codeEl.textContent = source;
+		return;
+	}
+	const fragment = doc.createDocumentFragment();
+	let cursor = 0;
+	for (const range of ranges) {
+		if (range.from > cursor) {
+			fragment.appendChild(
+				doc.createTextNode(source.slice(cursor, range.from)),
+			);
+		}
+		if (range.to > range.from) {
+			const span = doc.createElement("span");
+			span.className = range.className;
+			span.textContent = source.slice(range.from, range.to);
+			fragment.appendChild(span);
+		}
+		cursor = Math.max(cursor, range.to);
+	}
+	if (cursor < source.length) {
+		fragment.appendChild(doc.createTextNode(source.slice(cursor)));
+	}
+	codeEl.replaceChildren(fragment);
+}
+
+/**
+ * Sync the Mac code-frame background variable (and optional language badge
+ * foreground) from the rendered `<code>` element's computed code-theme styles.
+ */
+export function scheduleCodeFrameBackgroundSync(
+	pre: HTMLElement,
+	code: HTMLElement,
+	viewWindow: Window | null,
+	badge?: HTMLElement | null,
+): number | null {
+	if (
+		!viewWindow ||
+		typeof viewWindow.requestAnimationFrame !== "function" ||
+		typeof viewWindow.getComputedStyle !== "function"
+	) {
+		return null;
+	}
+	return viewWindow.requestAnimationFrame(() => {
+		if (!pre.isConnected || !code.isConnected) return;
+		try {
+			const computed = viewWindow.getComputedStyle(code);
+			const bg = computed.backgroundColor;
+			if (bg && bg !== "transparent" && bg !== "rgba(0, 0, 0, 0)") {
+				pre.style.setProperty("--easymde-code-frame-background", bg);
+			}
+			const fg = computed.color;
+			if (badge && fg) {
+				badge.style.color = fg;
+			}
+		} catch {
+			// Ignore detached or non-browser environments.
+		}
+	});
+}
+
 function buildCodeBlockDecorations(
 	node: ProseMirrorNode,
 	blockPos: number,
@@ -423,7 +521,6 @@ function createCodeHighlightPluginView(
 	options: CodeHighlightPluginOptions,
 ): PluginView {
 	publishVisualEditableState(editorView);
-	const doc = editorView.dom.ownerDocument;
 	const refreshOnRuntimeReady = (): void => {
 		if (editorView.isDestroyed || editorView.composing) return;
 		const runtime = resolveHljs(options);
@@ -432,16 +529,17 @@ function createCodeHighlightPluginView(
 			return;
 		refreshCodeHighlightDecorations(editorView);
 	};
-	const unsubscribeRuntimeReady = subscribePreviewRuntimeReady(
-		doc,
-		refreshOnRuntimeReady,
-	);
+	const unsubscribeRuntimeReady =
+		options.runtimePort?.subscribe(refreshOnRuntimeReady) ?? null;
 	return {
-		update(view: EditorView): void {
+		update(view: EditorView, prevState: EditorState): void {
 			publishVisualEditableState(view);
+			if (prevState.doc !== view.state.doc) {
+				publishVisualDocumentUpdate(view);
+			}
 		},
 		destroy(): void {
-			unsubscribeRuntimeReady();
+			unsubscribeRuntimeReady?.();
 		},
 	};
 }
@@ -585,11 +683,7 @@ class CodeBlockNodeView implements NodeView {
 		const win = this.syncFrameBackground
 			? this.dom.ownerDocument.defaultView
 			: null;
-		if (
-			!win ||
-			typeof win.requestAnimationFrame !== "function" ||
-			typeof win.getComputedStyle !== "function"
-		) {
+		if (!win) {
 			return;
 		}
 		if (
@@ -598,23 +692,12 @@ class CodeBlockNodeView implements NodeView {
 		) {
 			win.cancelAnimationFrame(this.frameSyncRafId);
 		}
-		this.frameSyncRafId = win.requestAnimationFrame(() => {
-			this.frameSyncRafId = null;
-			if (!this.dom.isConnected) {
-				return;
-			}
-			const computed = win.getComputedStyle(this.contentDOM);
-			const bg = computed.backgroundColor;
-			if (bg && bg !== "transparent" && bg !== "rgba(0, 0, 0, 0)") {
-				this.dom.style.setProperty("--easymde-code-frame-background", bg);
-			}
-			// Match the badge to the code theme foreground so it never inherits
-			// dark article body text onto a dark code frame.
-			const fg = computed.color;
-			if (this.badge && fg) {
-				this.badge.style.color = fg;
-			}
-		});
+		this.frameSyncRafId = scheduleCodeFrameBackgroundSync(
+			this.dom,
+			this.contentDOM,
+			win,
+			this.badge,
+		);
 	}
 
 	update(nextNode: ProseMirrorNode): boolean {

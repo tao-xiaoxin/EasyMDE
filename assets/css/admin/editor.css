@@ -3146,9 +3146,100 @@ body:has(.easymde-editor.is-immersive) .wrap {
     border-radius: 6px;
 }
 
+.easymde-prosemirror-surface .easymde-protected-block[data-easymde-protected-kind="math"],
+.easymde-prosemirror-surface .easymde-protected-block[data-easymde-protected-kind="mermaid"] {
+    margin: 1.25em 0;
+}
+
 .easymde-prosemirror-surface .easymde-protected-block > .easymde-math-block,
-.easymde-prosemirror-surface .easymde-protected-block > .easymde-mermaid {
+.easymde-prosemirror-surface .easymde-protected-block > .easymde-mermaid,
+.easymde-prosemirror-surface .easymde-protected-block > .easymde-toc {
     margin-block: 0;
+}
+
+.easymde-prosemirror-surface .easymde-protected-meta-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    border: 1px dashed var(--easymde-border-color, rgba(100, 116, 139, 0.38));
+    border-radius: 5px;
+    background: var(--easymde-emphasis-background, rgba(248, 250, 252, 0.88));
+    color: var(--easymde-muted-color, #475569);
+    font-family: "EasyMDE Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 12px;
+    line-height: 1.5;
+    transition: background-color 0.14s ease, border-color 0.14s ease;
+}
+
+.easymde-prosemirror-surface .easymde-protected-block:hover .easymde-protected-meta-chip,
+.easymde-prosemirror-surface .easymde-protected-block.ProseMirror-selectednode .easymde-protected-meta-chip,
+.easymde-prosemirror-surface .easymde-protected-block.easymde-protected-selected .easymde-protected-meta-chip {
+    background: var(--easymde-emphasis-background, rgba(241, 245, 249, 0.96));
+    border-color: var(--easymde-muted-color, rgba(71, 85, 105, 0.65));
+}
+
+.easymde-prosemirror-surface .easymde-protected-inline-rendered {
+    border-radius: 2px;
+}
+
+.easymde-prosemirror-surface .easymde-protected-inline-rendered:hover {
+    background: rgba(34, 113, 177, 0.08);
+}
+
+.easymde-prosemirror-surface .easymde-protected-inline-hidden {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin: 0 2px;
+    border-radius: 999px;
+    background: var(--easymde-muted-color, rgba(148, 163, 184, 0.55));
+    vertical-align: middle;
+}
+
+.easymde-prosemirror-surface .easymde-footnote-ref-link {
+    color: var(--easymde-link-color, #2271b1);
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.easymde-prosemirror-surface .easymde-protected-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 48px;
+    border-radius: 6px;
+    background: linear-gradient(
+        90deg,
+        var(--easymde-emphasis-background, rgba(148, 163, 184, 0.08)) 25%,
+        var(--easymde-border-color, rgba(148, 163, 184, 0.16)) 50%,
+        var(--easymde-emphasis-background, rgba(148, 163, 184, 0.08)) 75%
+    );
+    background-size: 200% 100%;
+    animation: easymde-protected-shimmer 1.4s ease-in-out infinite;
+}
+
+.easymde-prosemirror-surface span.easymde-protected-loading {
+    display: inline-block;
+    min-width: 2.5em;
+    min-height: 1em;
+    vertical-align: middle;
+}
+
+@keyframes easymde-protected-shimmer {
+    0% {
+        background-position: 200% 0;
+    }
+
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .easymde-prosemirror-surface .easymde-protected-loading {
+        animation: none;
+    }
 }
 
 .easymde-prosemirror-surface .easymde-protected-card-actions {

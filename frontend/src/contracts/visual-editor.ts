@@ -119,6 +119,16 @@ export type VisualEditorImageTargetPinLease = Readonly<{
 
 export type VisualEditorGeneratedContentKind = "math" | "mermaid";
 
+export type VisualRuntimeFeature = "math" | "mermaid" | "toc";
+
+export type VisualRuntimeState = "idle" | "loading" | "ready" | "unavailable";
+
+export type VisualGeneratedRuntimePort = Readonly<{
+	getState: (feature: VisualRuntimeFeature) => VisualRuntimeState;
+	request: (feature: VisualRuntimeFeature) => VisualRuntimeState;
+	subscribe: (listener: () => void) => () => void;
+}>;
+
 export type VisualEditorGeneratedContentSourceRange = Readonly<{
 	from: number;
 	to: number;

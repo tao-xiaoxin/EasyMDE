@@ -699,6 +699,7 @@ export function EditorRoot(props: EditorRootProps) {
                 protectedAtomLabels={protectedAtomLabels}
                 protectedAtomLabelTemplates={protectedAtomLabelTemplates}
                 style={appearance.previewStyle}
+                visualRuntimePort={visual.visualRuntimePort}
               />
             ) : null}
           </ImmersivePreviewSurface>

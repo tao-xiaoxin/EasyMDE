@@ -650,10 +650,12 @@ class ProtectedAtomNodeView implements NodeView {
 		// asynchronously so users never see raw diagram source unless they
 		// explicitly open the source editor or rendering actually fails.
 		this.renderLoadingPlaceholder();
-		ensureMermaidInitialized(mermaid);
 
 		Promise.resolve()
-			.then(() => mermaid.render(renderId, source))
+			.then(() => {
+				ensureMermaidInitialized(mermaid);
+				return mermaid.render(renderId, source);
+			})
 			.then((result) => {
 				if (
 					this.destroyed ||

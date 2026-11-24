@@ -209,4 +209,46 @@ describe("ProtectedAtomNodeView Mermaid runtime parity and intrinsic layout", ()
 		expect(updatedSvg?.style.width).toBe("");
 		expect(updatedSvg?.style.height).toBe("");
 	});
+
+	it("routes synchronous mermaid.initialize() failures into monospace fallback without poisoning later retries", async () => {
+		let shouldFailInit = true;
+		const initialize = vi.fn(() => {
+			if (shouldFailInit) {
+				shouldFailInit = false;
+				throw new Error("transient-init-failure");
+			}
+		});
+		const render = vi.fn(async (id: string) => ({
+			svg:
+				`<svg xmlns="http://www.w3.org/2000/svg" id="${id}" aria-roledescription="flowchart" viewBox="0 0 200 100">` +
+				'<rect width="200" height="100"/></svg>',
+		}));
+		const win = window as TestVisualWindow;
+		win.mermaid = { initialize, render };
+
+		const view = mountProtectedView("```mermaid\nflowchart TD\n  A --> B\n```");
+		await flushAsync();
+
+		expect(initialize).toHaveBeenCalledTimes(1);
+		expect(render).not.toHaveBeenCalled();
+		const card = view.dom.querySelector<HTMLElement>(".easymde-protected-card");
+		expect(card?.classList.contains("easymde-render-error")).toBe(true);
+
+		const node = view.state.doc.firstChild;
+		expect(node).not.toBeNull();
+		if (node) {
+			view.dispatch(
+				view.state.tr.setNodeMarkup(0, undefined, {
+					...node.attrs,
+					rawMarkdown: "```mermaid\nflowchart TD\n  B --> C\n```",
+				}),
+			);
+		}
+		await flushAsync();
+
+		expect(initialize).toHaveBeenCalledTimes(2);
+		expect(render).toHaveBeenCalledTimes(1);
+		expect(card?.classList.contains("easymde-render-error")).toBe(false);
+		expect(card?.querySelector("svg")).not.toBeNull();
+	});
 });

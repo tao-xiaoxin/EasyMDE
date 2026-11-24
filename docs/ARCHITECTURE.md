@@ -829,8 +829,9 @@ beside them:
   `wechat-math-vector-capture-graphics.ts`, and
   `wechat-math-vector-capture-layout.ts`, alongside
   `wechat-math-vector-portable.ts` and `wechat-math-vector-scene.ts`);
-- Mermaid geometry, content-box, policy, capture plans, and PNG conversion
-  (`wechat-mermaid-geometry.ts`, `wechat-mermaid-content-box.ts`,
+- Mermaid geometry, background resolution, content-box, policy, capture plans,
+  and PNG conversion (`wechat-mermaid-geometry.ts`,
+  `wechat-mermaid-background.ts`, `wechat-mermaid-content-box.ts`,
   `wechat-mermaid-policy.ts`, `wechat-capture-plan.ts`,
   `wechat-png-conversion-policy.ts`, `wechat-png-conversion.ts`,
   `wechat-png-replacement.ts`, `wechat-rasterizer-mermaid.ts`), managed fonts

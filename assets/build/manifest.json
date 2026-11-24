@@ -3,15 +3,15 @@
     "file": "assets/admin-editor-chunk-BI0QStqX.js",
     "name": "shared"
   },
-  "_admin-editor-chunk-k-SG_f71.js": {
-    "file": "assets/admin-editor-chunk-k-SG_f71.js",
+  "_admin-editor-chunk-CTO9HEeg.js": {
+    "file": "assets/admin-editor-chunk-CTO9HEeg.js",
     "name": "wechat-managed-fonts",
     "imports": [
       "_admin-editor-chunk-BI0QStqX.js"
     ]
   },
   "frontend/src/entrypoints/admin-editor.tsx": {
-    "file": "assets/admin-editor-lkO-e1iV.js",
+    "file": "assets/admin-editor-DcWRhSph.js",
     "name": "editor",
     "src": "frontend/src/entrypoints/admin-editor.tsx",
     "isEntry": true,
@@ -49,7 +49,7 @@
     ]
   },
   "frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx": {
-    "file": "assets/admin-editor-chunk-DHTVnnEC.js",
+    "file": "assets/admin-editor-chunk-BdrFkP9j.js",
     "name": "MountedProseMirrorVisualEditor",
     "src": "frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx",
     "isDynamicEntry": true,
@@ -58,23 +58,23 @@
     ]
   },
   "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts": {
-    "file": "assets/admin-editor-chunk-Ce3LzpA_.js",
+    "file": "assets/admin-editor-chunk-CHuZJy7C.js",
     "name": "create-browser-wechat-clipboard",
     "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts",
     "isDynamicEntry": true,
     "imports": [
       "_admin-editor-chunk-BI0QStqX.js",
-      "_admin-editor-chunk-k-SG_f71.js"
+      "_admin-editor-chunk-CTO9HEeg.js"
     ]
   },
   "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts": {
-    "file": "assets/admin-editor-chunk-CWs3ADUw.js",
+    "file": "assets/admin-editor-chunk--SUvJwzT.js",
     "name": "create-browser-wechat-visual-rasterizer",
     "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts",
     "isDynamicEntry": true,
     "imports": [
       "_admin-editor-chunk-BI0QStqX.js",
-      "_admin-editor-chunk-k-SG_f71.js"
+      "_admin-editor-chunk-CTO9HEeg.js"
     ]
   },
   "node_modules/@codemirror/lang-json/dist/index.js": {

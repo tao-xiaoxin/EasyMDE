@@ -9,6 +9,7 @@ import {
   type MermaidResponsiveViewportSnapshot,
   WechatPngConversionError,
 } from './wechat-png-conversion-policy';
+import { parseCssOpacity } from './wechat-mermaid-background';
 import {
   MERMAID_INTRINSIC_LAYOUT_ROLES,
   type MermaidScreenCtm,
@@ -514,6 +515,15 @@ export function mermaidResponsiveViewportDimensions(
   const svgComputed = runtime.getComputedStyle(svg);
   const sourceDisplay = computed.getPropertyValue('display').trim().toLowerCase();
   const sourceOpacity = computed.getPropertyValue('opacity').trim().toLowerCase();
+  const rawSvgOpacity = svgComputed.getPropertyValue('opacity').trim().toLowerCase();
+  const parsedSvgOpacity = parseCssOpacity(rawSvgOpacity);
+  const svgAttributeOpacity = parseCssOpacity(svg.getAttribute('opacity') ?? '');
+  const svgOpacity =
+    parsedSvgOpacity !== null
+      ? parsedSvgOpacity
+      : '' === rawSvgOpacity
+        ? (svgAttributeOpacity ?? 1)
+        : null;
   const sourceFloat = computed.getPropertyValue('float').trim().toLowerCase();
   const svgFloat = svgComputed.getPropertyValue('float').trim().toLowerCase();
   const svgMarginTop = mermaidCssPixelValue(svgComputed.getPropertyValue('margin-top'));
@@ -545,6 +555,8 @@ export function mermaidResponsiveViewportDimensions(
     ('content-box' === boxSizing && sourceEdges.some((value) => value > 0)) ||
     (sourceMaxWidth && !['auto', '100%'].includes(sourceMaxWidth)) ||
     '1' !== sourceOpacity ||
+    svgOpacity === null ||
+    svgOpacity < 1 ||
     !['', 'none'].includes(sourceFloat) ||
     !['', 'none'].includes(svgFloat) ||
     svgMarginTop === null ||

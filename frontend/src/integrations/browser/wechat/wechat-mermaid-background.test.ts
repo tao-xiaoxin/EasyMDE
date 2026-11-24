@@ -13,6 +13,7 @@ import {
   parseCssOpacity,
   parseCssSolidColor,
   resolveMermaidInheritedBackground,
+  stripMermaidBorderRadius,
 } from './wechat-mermaid-background';
 
 function styleDeclaration(values: Readonly<Record<string, string>>): CSSStyleDeclaration {
@@ -1026,8 +1027,8 @@ describe('wechat-mermaid-background', () => {
         }),
       ).toBeNull();
 
-      // SVG presentation attribute opacity="0.5" folds SVG own paint when computed opacity is empty,
-      // while CSS opacity: 1 overrides the presentation attribute.
+      // SVG presentation attribute opacity="0.5" isolates SVG own paint for the rasterizer opacity group
+      // and resolves only the ancestor backdrop, while CSS opacity: 1 overrides the presentation attribute.
       svg.setAttribute('opacity', '0.5');
       const attrOpacityReader = makeReader(
         new Map<Element, Readonly<Record<string, string>>>([
@@ -1042,7 +1043,7 @@ describe('wechat-mermaid-background', () => {
           retainedParentWrapper: true,
         }),
       ).toEqual({
-        color: 'rgb(255, 191, 191)',
+        color: 'rgb(255, 255, 255)',
       });
 
       const cssOverridesAttrOpacityReader = makeReader(
@@ -1066,6 +1067,228 @@ describe('wechat-mermaid-background', () => {
         }),
       ).toEqual({
         color: 'rgb(255, 128, 128)',
+      });
+    });
+
+    it('resolves ancestor-only backdrops for reduced-opacity direct SVGs and bounds retained ancestor walks', () => {
+      // 1. Direct <svg style="background-color: blue; opacity: 0.5"> over opaque white ancestor
+      // returns pure white (never pre-blends blue into the ancestor backdrop).
+      const whiteParent = document.createElement('div');
+      whiteParent.className = 'easymde-preview';
+      const blueHalfOpacitySvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      whiteParent.append(blueHalfOpacitySvg);
+      document.body.append(whiteParent);
+
+      const whiteParentReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            blueHalfOpacitySvg,
+            { 'background-color': 'rgb(0, 0, 255)', 'background-image': 'none', opacity: '0.5' },
+          ],
+          [whiteParent, { 'background-color': 'rgb(255, 255, 255)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(blueHalfOpacitySvg, whiteParentReader, {
+          directSvgCapture: true,
+        }),
+      ).toEqual({
+        color: 'rgb(255, 255, 255)',
+      });
+
+      // Detached direct <svg> with opacity < 1 and no parentElement returns null.
+      const detachedHalfOpacitySvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      const detachedReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            detachedHalfOpacitySvg,
+            { 'background-color': 'rgb(0, 0, 255)', 'background-image': 'none', opacity: '0.5' },
+          ],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(detachedHalfOpacitySvg, detachedReader, {
+          directSvgCapture: true,
+        }),
+      ).toBeNull();
+
+      // 2. Direct <svg style="background-color: blue; opacity: 0.5"> inside translucent retained wrapper
+      // stops before the translucent wrapper and returns null (zero double alpha / zero pre-blended blue).
+      const preview = document.createElement('div');
+      preview.className = 'easymde-preview';
+      const blockquote = document.createElement('blockquote');
+      const wrapper = document.createElement('div');
+      wrapper.className = 'easymde-mermaid';
+      const nestedSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      wrapper.append(nestedSvg);
+      blockquote.append(wrapper);
+      preview.append(blockquote);
+      document.body.append(preview);
+
+      const translucentWrapperWithHalfSvgReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            nestedSvg,
+            { 'background-color': 'rgb(0, 0, 255)', 'background-image': 'none', opacity: '0.5' },
+          ],
+          [
+            wrapper,
+            { 'background-color': 'rgba(255, 255, 255, 0.1)', 'background-image': 'none', opacity: '1' },
+          ],
+          [blockquote, { 'background-color': 'transparent', 'background-image': 'none', opacity: '1' }],
+          [preview, { 'background-color': 'rgb(30, 30, 46)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(nestedSvg, translucentWrapperWithHalfSvgReader, {
+          directSvgCapture: true,
+          retainedParentWrapper: true,
+        }),
+      ).toBeNull();
+
+      // 3. Track B #3 Counterexample 1: opaque white .easymde-mermaid (opacity: 1) inside
+      // <blockquote style="background-color: rgb(0,0,0); opacity: 0.5"> inside dark .easymde-preview
+      // stops immediately after the opaque retained wrapper -> pure white, zero double-dimming.
+      const opaqueWrapperInDimmedQuoteReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [nestedSvg, { 'background-color': 'transparent', 'background-image': 'none', opacity: '1' }],
+          [wrapper, { 'background-color': 'rgb(255, 255, 255)', 'background-image': 'none', opacity: '1' }],
+          [blockquote, { 'background-color': 'rgb(0, 0, 0)', 'background-image': 'none', opacity: '0.5' }],
+          [preview, { 'background-color': 'rgb(0, 0, 0)', 'background-image': 'none', opacity: '1' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(nestedSvg, opaqueWrapperInDimmedQuoteReader, {
+          directSvgCapture: true,
+          retainedParentWrapper: true,
+        }),
+      ).toEqual({
+        color: 'rgb(255, 255, 255)',
+      });
+
+      // 4. Track B #3 Counterexample 2: transparent .easymde-mermaid inside
+      // <blockquote style="background-color: rgba(255,0,0,0.4)"> inside transparent/opaque .easymde-preview
+      // stops before folding blockquote -> null, zero double-compositing.
+      const transparentWrapperInTranslucentQuoteReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [nestedSvg, { 'background-color': 'transparent', 'background-image': 'none', opacity: '1' }],
+          [wrapper, { 'background-color': 'transparent', 'background-image': 'none', opacity: '1' }],
+          [
+            blockquote,
+            { 'background-color': 'rgba(255, 0, 0, 0.4)', 'background-image': 'none', opacity: '1' },
+          ],
+          [preview, { 'background-color': 'transparent', 'background-image': 'none', opacity: '1' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(nestedSvg, transparentWrapperInTranslucentQuoteReader, {
+          directSvgCapture: true,
+          retainedParentWrapper: true,
+        }),
+      ).toBeNull();
+
+      // 5. Track B #3 Counterexample 3: .easymde-mermaid with background-image: linear-gradient(...)
+      // and retainedParentWrapper: true stops before folding the wrapper gradient (zero double gradient).
+      const gradientWrapperReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [nestedSvg, { 'background-color': 'transparent', 'background-image': 'none', opacity: '1' }],
+          [
+            wrapper,
+            {
+              'background-color': 'rgb(255, 255, 255)',
+              'background-image': 'linear-gradient(90deg, red, blue)',
+              opacity: '1',
+            },
+          ],
+          [blockquote, { 'background-color': 'transparent', 'background-image': 'none', opacity: '1' }],
+          [preview, { 'background-color': 'rgb(30, 30, 46)', 'background-image': 'none', opacity: '1' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(nestedSvg, gradientWrapperReader, {
+          directSvgCapture: true,
+          retainedParentWrapper: true,
+        }),
+      ).toBeNull();
+
+      const gradientWrapperWithOwnSvgBgReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            nestedSvg,
+            { 'background-color': 'rgba(255, 255, 255, 0.2)', 'background-image': 'none', opacity: '1' },
+          ],
+          [
+            wrapper,
+            {
+              'background-color': 'transparent',
+              'background-image': 'linear-gradient(90deg, red, blue)',
+              opacity: '1',
+            },
+          ],
+          [blockquote, { 'background-color': 'transparent', 'background-image': 'none', opacity: '1' }],
+          [preview, { 'background-color': 'rgb(30, 30, 46)', 'background-image': 'none', opacity: '1' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(nestedSvg, gradientWrapperWithOwnSvgBgReader, {
+          directSvgCapture: true,
+          retainedParentWrapper: true,
+        }),
+      ).toEqual({
+        color: 'rgba(255, 255, 255, 0.2)',
+      });
+
+      // 6. Track B #3 Counterexample 4: transparent .easymde-mermaid and transparent blockquote
+      // inside dark .easymde-preview legitimately resolve the preview backdrop.
+      const transparentRetainedAncestorsInDarkPreviewReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [nestedSvg, { 'background-color': 'transparent', 'background-image': 'none', opacity: '1' }],
+          [wrapper, { 'background-color': 'transparent', 'background-image': 'none', opacity: '1' }],
+          [blockquote, { 'background-color': 'transparent', 'background-image': 'none', opacity: '1' }],
+          [preview, { 'background-color': 'rgb(30, 30, 46)', 'background-image': 'none', opacity: '1' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(nestedSvg, transparentRetainedAncestorsInDarkPreviewReader, {
+          directSvgCapture: true,
+          retainedParentWrapper: true,
+        }),
+      ).toEqual({
+        color: 'rgb(30, 30, 46)',
+      });
+
+      // 7. Explicit retainedBoundary ends retained-wrapper treatment even on a plain custom container.
+      const customBoundary = document.createElement('div');
+      const customWrapper = document.createElement('div');
+      customWrapper.className = 'easymde-mermaid';
+      const customSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      customWrapper.append(customSvg);
+      customBoundary.append(customWrapper);
+      document.body.append(customBoundary);
+
+      const customBoundaryReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [customSvg, { 'background-color': 'transparent', 'background-image': 'none', opacity: '1' }],
+          [customWrapper, { 'background-color': 'transparent', 'background-image': 'none', opacity: '1' }],
+          [
+            customBoundary,
+            {
+              'background-color': 'rgb(20, 24, 32)',
+              'background-image': 'linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent)',
+              opacity: '1',
+            },
+          ],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(customSvg, customBoundaryReader, {
+          directSvgCapture: true,
+          retainedBoundary: customBoundary,
+          retainedParentWrapper: true,
+        }),
+      ).toEqual({
+        color: 'rgb(20, 24, 32)',
+        image: 'linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent)',
       });
     });
 
@@ -1336,6 +1559,29 @@ describe('wechat-mermaid-background', () => {
       const unstyledSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
       expect(applyMermaidBackground(unstyledSvg, null)).toBe(false);
       expect(unstyledSvg.getAttribute('style')).toBeNull();
+    });
+  });
+
+  describe('stripMermaidBorderRadius', () => {
+    it('strips border-radius shorthand and corner longhands while preserving other inline styles', () => {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+      svg.setAttribute(
+        'style',
+        'background-color: rgb(30, 30, 46); border-radius: 12px; border-top-left-radius: 12px; border-top-right-radius: 8px; border-bottom-right-radius: 6px; border-bottom-left-radius: 4px;',
+      );
+      stripMermaidBorderRadius(svg);
+      expect(svg.style.getPropertyValue('background-color')).toBe('rgb(30, 30, 46)');
+      expect(svg.style.getPropertyValue('border-radius')).toBe('');
+      expect(svg.style.getPropertyValue('border-top-left-radius')).toBe('');
+      expect(svg.style.getPropertyValue('border-top-right-radius')).toBe('');
+      expect(svg.style.getPropertyValue('border-bottom-right-radius')).toBe('');
+      expect(svg.style.getPropertyValue('border-bottom-left-radius')).toBe('');
+      expect(svg.getAttribute('style') ?? '').not.toContain('radius');
+
+      const radiusOnlySvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+      radiusOnlySvg.setAttribute('style', 'border-radius: 12px;');
+      stripMermaidBorderRadius(radiusOnlySvg);
+      expect(radiusOnlySvg.getAttribute('style')).toBeNull();
     });
   });
 });

@@ -501,7 +501,11 @@ export async function replaceVisualObjects(
                   : candidate.source,
                 (element) => runtime.getComputedStyle(element),
                 'mermaid-responsive' === plan.mode
-                  ? { directSvgCapture: true, retainedParentWrapper: true }
+                  ? {
+                      directSvgCapture: true,
+                      retainedBoundary: context.captureBoundary,
+                      retainedParentWrapper: true,
+                    }
                   : { directSvgCapture: false }
               )
             : null;

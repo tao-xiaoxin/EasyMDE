@@ -10,14 +10,23 @@ export type ResolveMermaidBackgroundOptions = Readonly<{
    */
   directSvgCapture?: boolean;
   /**
-   * When true, `source` is a `mermaid-responsive` direct `<svg>` whose parent
-   * `.easymde-mermaid` wrapper is retained in WeChat HTML with its own styling.
+   * Optional article/preview content boundary where retained exported HTML
+   * wrappers stop and outer preview chrome begins.
+   */
+  retainedBoundary?: Element | null;
+  /**
+   * When true, `source` is a `mermaid-responsive` direct `<svg>` whose
+   * enclosing article wrappers up to the preview boundary are retained in
+   * WeChat HTML with their own styling.
    */
   retainedParentWrapper?: boolean;
 }>;
 
 const MERMAID_BACKGROUND_CANVAS_SELECTORS =
   '.easymde-immersive-preview-canvas, .easymde-preview-scroll, .easymde-immersive-surface, .easymde-immersive-preview-surface';
+
+const RETAINED_CONTENT_BOUNDARY_SELECTORS =
+  `.easymde-preview, .easymde-markdown-body, .easymde-editor-preview, .easymde-rendered-content, [data-easymde-preview-html-sink], article, ${MERMAID_BACKGROUND_CANVAS_SELECTORS}`;
 
 const NON_COLOR_KEYWORDS = new Set([
   'inherit',
@@ -86,13 +95,17 @@ const BACKGROUND_STYLE_PROPERTIES = [
   'background-size',
 ] as const;
 
-const STRIPPED_INLINE_ROOT_PAINT_PROPERTIES = [
-  ...BACKGROUND_STYLE_PROPERTIES,
+const BORDER_RADIUS_STYLE_PROPERTIES = [
   'border-radius',
   'border-top-left-radius',
   'border-top-right-radius',
   'border-bottom-right-radius',
   'border-bottom-left-radius',
+] as const;
+
+const STRIPPED_INLINE_ROOT_PAINT_PROPERTIES = [
+  ...BACKGROUND_STYLE_PROPERTIES,
+  ...BORDER_RADIUS_STYLE_PROPERTIES,
 ] as const;
 
 type ReadableStyleProperty =
@@ -717,22 +730,15 @@ function foldElementBackground(
   }
 }
 
-function isRetainedParentBackgroundTranslucent(
-  parent: Element | null,
+function isRetainedWrapperBoundary(
+  element: Element,
   doc: Document,
-  readComputedStyle: MermaidComputedStyleReader,
+  retainedBoundary?: Element | null,
 ): boolean {
-  if (!parent || isMermaidBackgroundWalkStopBefore(parent, doc)) return false;
-  const parentStyle = readComputedStyle(parent);
-  const parentOpacity = readElementOpacity(parentStyle, parent);
-  if (parentOpacity < 1) return true;
-  const parentColor = readEffectiveStyleProperty(
-    parentStyle,
-    parent,
-    'background-color',
-    'backgroundColor',
-  );
-  return hasVisibleBackgroundColor(parentColor) && !isOpaqueBackgroundColor(parentColor);
+  if (element === retainedBoundary || element === doc.body || element === doc.documentElement) {
+    return true;
+  }
+  return element.matches(RETAINED_CONTENT_BOUNDARY_SELECTORS);
 }
 
 function walkMermaidAncestorBackground(
@@ -740,10 +746,47 @@ function walkMermaidAncestorBackground(
   doc: Document,
   readComputedStyle: MermaidComputedStyleReader,
   state: MermaidBackgroundFoldState,
+  options: Readonly<{
+    retainedBoundary?: Element | null;
+    retainedParentWrapper?: boolean;
+  }> = {},
 ): WechatVisualMermaidBackground | null {
+  let inRetainedSubtree = Boolean(options.retainedParentWrapper);
   for (let element: Element | null = startElement; element; element = element.parentElement) {
     if (isMermaidBackgroundWalkStopBefore(element, doc)) break;
-    foldElementBackground(state, element, readComputedStyle(element));
+    const computed = readComputedStyle(element);
+    if (inRetainedSubtree) {
+      if (isRetainedWrapperBoundary(element, doc, options.retainedBoundary)) {
+        inRetainedSubtree = false;
+      } else {
+        const opacity = readElementOpacity(computed, element);
+        const image = readEffectiveStyleProperty(
+          computed,
+          element,
+          'background-image',
+          'backgroundImage',
+        );
+        const color = readEffectiveStyleProperty(
+          computed,
+          element,
+          'background-color',
+          'backgroundColor',
+        );
+        if (
+          opacity < 1
+          || hasBackgroundImage(image)
+          || (hasVisibleBackgroundColor(color) && !isOpaqueBackgroundColor(color))
+        ) {
+          break;
+        }
+        if (isOpaqueBackgroundColor(color)) {
+          foldElementBackground(state, element, computed);
+          break;
+        }
+        continue;
+      }
+    }
+    foldElementBackground(state, element, computed);
     if (shouldStopAfterMermaidBackgroundElement(element)) break;
   }
   return finalizeMermaidBackground(state);
@@ -765,19 +808,20 @@ export function resolveMermaidInheritedBackground(
   const sourceStyle = readComputedStyle(source);
 
   if (directSvgCapture) {
+    const sourceOpacity = readElementOpacity(sourceStyle, source);
     const initialState = createEmptyBackgroundFoldState();
-    foldElementBackground(initialState, source, sourceStyle);
-    if (
-      retainedParentWrapper
-      && isRetainedParentBackgroundTranslucent(source.parentElement, doc, readComputedStyle)
-    ) {
-      return finalizeMermaidBackground(initialState);
+    if (sourceOpacity >= 1) {
+      foldElementBackground(initialState, source, sourceStyle);
     }
     return walkMermaidAncestorBackground(
       source.parentElement,
       doc,
       readComputedStyle,
       initialState,
+      {
+        retainedBoundary: options.retainedBoundary ?? null,
+        retainedParentWrapper,
+      },
     );
   }
 
@@ -866,6 +910,17 @@ export function inlineConnectedMermaidRootPaint(
   }
   if (rootClone.hasAttribute('style') && !rootClone.getAttribute('style')?.trim()) {
     rootClone.removeAttribute('style');
+  }
+}
+
+export function stripMermaidBorderRadius(element: Element): void {
+  if (!(element instanceof HTMLElement) && !(element instanceof SVGElement)) return;
+  if (!element.hasAttribute('style')) return;
+  for (const property of BORDER_RADIUS_STYLE_PROPERTIES) {
+    element.style.removeProperty(property);
+  }
+  if (!element.getAttribute('style')?.trim()) {
+    element.removeAttribute('style');
   }
 }
 

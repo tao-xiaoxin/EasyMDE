@@ -25,9 +25,14 @@ import {
 } from './wechat-math-capture-geometry';
 import {
   applyMermaidBackground,
+  hasVisibleBackgroundColor,
   inlineConnectedMermaidRootPaint,
+  isOpaqueBackgroundColor,
+  isSafeBackgroundImage,
   parseCssOpacity,
+  parseCssSolidColor,
   resolveMermaidInheritedBackground,
+  stripMermaidBorderRadius,
 } from './wechat-mermaid-background';
 import {
   assertIntrinsicMermaidCaptureRequest,
@@ -194,20 +199,72 @@ function inlineComputedStyles(
   }
 }
 
-function inlineMermaidBackground(
+type OwnDirectSvgPaint = Readonly<{
+  color: string;
+  safeImage: string;
+  visibleColor: string;
+}>;
+
+function resolveAppliedMermaidBackground(
   source: Element,
-  svg: SVGSVGElement,
   document: Document,
   inheritedBackground?: WechatVisualMermaidBackground | null,
-): boolean {
+): WechatVisualMermaidBackground | null {
   if (undefined !== inheritedBackground) {
-    return applyMermaidBackground(svg, inheritedBackground);
+    return inheritedBackground;
   }
-  const resolved = resolveMermaidInheritedBackground(
+  return resolveMermaidInheritedBackground(
     source,
     (element) => computedStyle(document, element),
   );
-  return applyMermaidBackground(svg, resolved);
+}
+
+function readOwnDirectSvgPaint(
+  source: Element,
+  clone: SVGSVGElement,
+  document: Document,
+): OwnDirectSvgPaint {
+  let rawColor = '';
+  let rawImage = '';
+  if (source.isConnected) {
+    const style = computedStyle(document, source);
+    rawColor = style.getPropertyValue('background-color').trim() || style.backgroundColor?.trim() || '';
+    rawImage = style.getPropertyValue('background-image').trim() || style.backgroundImage?.trim() || '';
+  } else {
+    rawColor = clone.style.getPropertyValue('background-color').trim();
+    rawImage = clone.style.getPropertyValue('background-image').trim();
+  }
+  return {
+    color: rawColor,
+    safeImage: isSafeBackgroundImage(rawImage) ? rawImage : '',
+    visibleColor: hasVisibleBackgroundColor(rawColor) ? rawColor : '',
+  };
+}
+
+function directSvgBackgroundMatchesOwnOpaquePaint(
+  ownPaint: OwnDirectSvgPaint,
+  applied: WechatVisualMermaidBackground | null | undefined,
+): boolean {
+  if (!applied || !isOpaqueBackgroundColor(ownPaint.color)) return false;
+  const appliedSafeImage =
+    'string' === typeof applied.image && isSafeBackgroundImage(applied.image)
+      ? applied.image.trim()
+      : '';
+  if (appliedSafeImage !== ownPaint.safeImage) return false;
+  const appliedColor = applied.color?.trim() ?? '';
+  if (!appliedColor) return false;
+  const parsedOwn = parseCssSolidColor(ownPaint.color);
+  const parsedApplied = parseCssSolidColor(appliedColor);
+  if (parsedOwn && parsedApplied) {
+    return (
+      Math.round(parsedOwn.r) === Math.round(parsedApplied.r)
+      && Math.round(parsedOwn.g) === Math.round(parsedApplied.g)
+      && Math.round(parsedOwn.b) === Math.round(parsedApplied.b)
+      && parsedOwn.a >= 1 - 1e-6
+      && parsedApplied.a >= 1 - 1e-6
+    );
+  }
+  return ownPaint.color.trim().toLowerCase() === appliedColor.toLowerCase();
 }
 
 function readDirectSvgOpacity(svg: SVGSVGElement): number {
@@ -349,6 +406,9 @@ async function serializedSvg(
   let svg: SVGSVGElement;
   if (source) {
     svg = source.cloneNode(true) as SVGSVGElement;
+    // Capture the direct <svg>'s own paint before root paint / background
+    // normalization strips inline background-* declarations.
+    const ownDirectSvgPaint = readOwnDirectSvgPaint(source, svg, document);
     inlineComputedStyles(source, svg, document);
     inlineConnectedMermaidRootPaint(
       source,
@@ -356,12 +416,23 @@ async function serializedSvg(
       (element) => computedStyle(document, element),
       { includeBackground: false },
     );
-    const hasAppliedBackground = inlineMermaidBackground(
+    const directSvgOpacity = readDirectSvgOpacity(svg);
+    const hoistOpacity = directSvgOpacity < 1;
+    const resolvedBackground = resolveAppliedMermaidBackground(
       request.source,
-      svg,
       document,
       'mermaid' === request.kind ? request.inheritedBackground : undefined,
     );
+    const hasAppliedBackground = applyMermaidBackground(svg, resolvedBackground);
+    if (
+      hasAppliedBackground
+      && (
+        hoistOpacity
+        || !directSvgBackgroundMatchesOwnOpaquePaint(ownDirectSvgPaint, resolvedBackground)
+      )
+    ) {
+      stripMermaidBorderRadius(svg);
+    }
     if (!svg.getAttribute('xmlns')) svg.setAttribute('xmlns', SVG_NAMESPACE);
     svg.setAttribute('width', String(dimensionsValue.width));
     svg.setAttribute('height', String(dimensionsValue.height));
@@ -372,11 +443,12 @@ async function serializedSvg(
     if (!viewBox) {
       throw new WechatVisualRasterizationError('wechat-png-image-failed');
     }
-    const directSvgOpacity = hasAppliedBackground ? readDirectSvgOpacity(svg) : 1;
-    const hoistOpacity = hasAppliedBackground && directSvgOpacity < 1;
     if (hoistOpacity) {
       svg.style.removeProperty('opacity');
       svg.removeAttribute('opacity');
+      if (svg.hasAttribute('style') && !svg.getAttribute('style')?.trim()) {
+        svg.removeAttribute('style');
+      }
     }
     if (layoutMagnification !== 1 || hoistOpacity) {
       const scene = document.createElementNS(SVG_NAMESPACE, 'g');
@@ -394,6 +466,17 @@ async function serializedSvg(
       }
       if (hoistOpacity) {
         scene.setAttribute('opacity', String(directSvgOpacity));
+        if (directSvgOpacity > 0 && ownDirectSvgPaint.visibleColor) {
+          const backgroundRect = document.createElementNS(SVG_NAMESPACE, 'rect');
+          backgroundRect.setAttribute('x', String(viewBox.minX));
+          backgroundRect.setAttribute('y', String(viewBox.minY));
+          backgroundRect.setAttribute('width', String(viewBox.width));
+          backgroundRect.setAttribute('height', String(viewBox.height));
+          backgroundRect.setAttribute('fill', ownDirectSvgPaint.visibleColor);
+          backgroundRect.setAttribute('fill-opacity', '1');
+          backgroundRect.setAttribute('stroke', 'none');
+          scene.appendChild(backgroundRect);
+        }
       }
       for (const child of Array.from(svg.childNodes)) {
         if (
@@ -450,7 +533,10 @@ async function serializedSvg(
         rootClone,
         (element) => computedStyle(document, element),
       );
-      inlineMermaidBackground(request.source, svg, document, request.inheritedBackground);
+      applyMermaidBackground(
+        svg,
+        resolveAppliedMermaidBackground(request.source, document, request.inheritedBackground),
+      );
     }
     removeMathMlFallback(rootClone);
     normalizeCaptureRoot(rootClone);

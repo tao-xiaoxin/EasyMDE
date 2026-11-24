@@ -6,6 +6,7 @@ import {
   MERMAID_INTRINSIC_GEOMETRY_TOLERANCE,
   WechatPngConversionError,
 } from './wechat-png-conversion-policy';
+import { parseCssOpacity } from './wechat-mermaid-background';
 import {
   type MermaidStyleMap,
   mermaidHasPaint,
@@ -580,10 +581,14 @@ export function mermaidResponsiveAncestorLayoutIsSafe(
       computed.getPropertyValue('overflow-x'),
       computed.getPropertyValue('overflow-y')
     ].map((value) => value.trim().toLowerCase());
+    const rawOpacity = computed.getPropertyValue('opacity').trim();
+    const parsedOpacity = rawOpacity ? parseCssOpacity(rawOpacity) : 1;
     if (
       current === source
         ? !mermaidResponsiveSourceOverflowIsSafe(source, runtime)
         : overflow.some((value) => value && 'visible' !== value) ||
+          parsedOpacity === null ||
+          parsedOpacity < 1 ||
           mermaidHasUnsafePositioning(current, runtime.getComputedStyle)
     )
       return false;
@@ -742,6 +747,7 @@ const MERMAID_ADMISSION_SOURCE_ATTRIBUTES = ['data-easymde-mermaid-layout', 'hei
 const MERMAID_ADMISSION_SVG_ATTRIBUTES = [
   'aria-roledescription',
   'height',
+  'opacity',
   'preserveAspectRatio',
   'transform',
   'viewBox',
@@ -749,6 +755,7 @@ const MERMAID_ADMISSION_SVG_ATTRIBUTES = [
 ] as const;
 const MERMAID_ADMISSION_ANCESTOR_PROPERTIES = [
   'display',
+  'opacity',
   'overflow',
   'overflow-x',
   'overflow-y',

@@ -4,6 +4,7 @@ import {
   markIntrinsicMermaidLayout,
   type MermaidInitializationOptions
 } from '../../shared/mermaid/mermaid-runtime-config';
+import { utf8ByteLength } from '../../shared/utf8-byte-length';
 
 export type FrontendEnhancementConfig = unknown;
 
@@ -297,8 +298,7 @@ function isLargeImmersivePreviewRoot(root: ParentNode): boolean {
   const text = root.textContent;
   return root instanceof HTMLElement
     && root.classList.contains('easymde-immersive-visual-editor')
-    && new TextEncoder().encode(text ?? '').length
-      > LARGE_IMMERSIVE_PREVIEW_BYTE_LIMIT;
+    && utf8ByteLength(text ?? '') > LARGE_IMMERSIVE_PREVIEW_BYTE_LIMIT;
 }
 
 function stringValue(

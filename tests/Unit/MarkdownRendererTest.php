@@ -1139,9 +1139,76 @@ final class MarkdownRendererTest extends WP_UnitTestCase
         $this->assertStringContainsString( '{width=50%}', $html );
         $this->assertStringNotContainsString( 'width="50%"', $html );
 
-        $this->expectException( RuntimeException::class );
-        $this->expectExceptionMessage( 'easymde_image_scale_syntax_invalid' );
-        MarkdownRenderer::render( '![Alt](https://example.test/image.png "{width=51%}")' );
+        foreach (
+            array(
+                'unsupported percentage' => '![Alt](https://example.test/image.png "{width=51%}")',
+                'unspaced marker'        => '![Alt](https://example.test/image.png "Title{width=50%}")',
+                'adjacent markers'       => '![Alt](https://example.test/image.png "{width=50%}{width=67%}")',
+                'repeated markers'       => '![Alt](https://example.test/image.png "Title {width=50%} {width=67%}")',
+                'repeated bare markers'  => '![Alt](https://example.test/image.png "{width=50%} {width=67%}")',
+                'trailing spaces repeat' => '![Alt](https://example.test/image.png "Title {width=50%}   {width=67%}")',
+            ) as $case => $markdown
+        ) {
+            try {
+                MarkdownRenderer::render( $markdown );
+                $this->fail( 'Expected invalid terminal marker to throw for ' . $case );
+            } catch ( RuntimeException $exception ) {
+                $this->assertSame( 'easymde_image_scale_syntax_invalid', $exception->getMessage(), $case );
+            }
+        }
+    }
+
+    public function test_nonterminal_image_scale_text_in_title_stays_literal_and_supports_terminal_scale()
+    {
+        $literal_markdown = '![Alt](https://example.test/image.png "Syntax {width=50%} example")';
+        $literal_html     = MarkdownRenderer::render( $literal_markdown );
+        $literal_preview  = MarkdownRenderer::render_preview( $literal_markdown );
+
+        foreach ( array( 'render' => $literal_html, 'render_preview' => $literal_preview['html'] ) as $mode => $html ) {
+            $document              = new DOMDocument( '1.0', 'UTF-8' );
+            $previous_libxml_state = libxml_use_internal_errors( true );
+            try {
+                $loaded = $document->loadHTML(
+                    '<?xml encoding="UTF-8"><div id="image-scale-root">' . $html . '</div>',
+                    LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+                );
+            } finally {
+                libxml_clear_errors();
+                libxml_use_internal_errors( $previous_libxml_state );
+            }
+
+            $this->assertTrue( $loaded, $mode );
+            $image = $document->getElementsByTagName( 'img' )->item( 0 );
+            $this->assertInstanceOf( DOMElement::class, $image, $mode );
+            $this->assertSame( 'Syntax {width=50%} example', $image->getAttribute( 'title' ), $mode );
+            $this->assertFalse( $image->hasAttribute( 'width' ), $mode );
+            $this->assertFalse( $image->hasAttribute( 'data-easymde-image-scale' ), $mode );
+        }
+
+        $scaled_markdown = '![Alt](https://example.test/image.png "Syntax {width=50%} example {width=67%}")';
+        $scaled_html     = MarkdownRenderer::render( $scaled_markdown );
+        $scaled_preview  = MarkdownRenderer::render_preview( $scaled_markdown );
+
+        foreach ( array( 'render' => $scaled_html, 'render_preview' => $scaled_preview['html'] ) as $mode => $html ) {
+            $document              = new DOMDocument( '1.0', 'UTF-8' );
+            $previous_libxml_state = libxml_use_internal_errors( true );
+            try {
+                $loaded = $document->loadHTML(
+                    '<?xml encoding="UTF-8"><div id="image-scale-root">' . $html . '</div>',
+                    LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+                );
+            } finally {
+                libxml_clear_errors();
+                libxml_use_internal_errors( $previous_libxml_state );
+            }
+
+            $this->assertTrue( $loaded, $mode );
+            $image = $document->getElementsByTagName( 'img' )->item( 0 );
+            $this->assertInstanceOf( DOMElement::class, $image, $mode );
+            $this->assertSame( 'Syntax {width=50%} example', $image->getAttribute( 'title' ), $mode );
+            $this->assertSame( '67%', $image->getAttribute( 'width' ), $mode );
+            $this->assertSame( '67', $image->getAttribute( 'data-easymde-image-scale' ), $mode );
+        }
     }
 
     public function test_preview_preserves_image_scale_contract()

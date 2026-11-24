@@ -46,11 +46,52 @@ describe('image scale contract', () => {
       '![Alt](https://example.test/image.png "{width=0%}")',
       '![Alt](https://example.test/image.png "{width=50}")',
       '![Alt](https://example.test/image.png "{width=50%}{width=67%}")',
-      '![Alt](https://example.test/image.png "{width=50%foo}")'
+      '![Alt](https://example.test/image.png "{width=50%foo}")',
+      '![Alt](https://example.test/image.png "Title{width=50%}")',
+      '![Alt](https://example.test/image.png "{width=50%} {width=67%}")',
+      '![Alt](https://example.test/image.png "Title {width=50%} {width=67%}")',
+      '![Alt](https://example.test/image.png "Title {width=50%}   {width=67%}")'
     ]) {
       expect(() => parseMarkdownImageScale(source)).toThrow('image-scale-syntax-invalid');
     }
     expect(() => imageScaleFromAttribute('51%')).toThrow('image-scale-invalid-width');
+  });
+
+  it('preserves nonterminal width text literally and appends or updates only a terminal marker', () => {
+    const literalSource = '![Alt](https://example.test/image.png "Syntax {width=50%} example")';
+    const literalImage = parseMarkdownImageScale(literalSource);
+    expect(literalImage).toMatchObject({
+      scale: null,
+      title: 'Syntax {width=50%} example',
+      titleMarkerEnd: null,
+      titleMarkerStart: null
+    });
+    if (!literalImage) throw new Error('image-scale-test-image-missing');
+
+    const appendReplacement = createImageScaleReplacement(literalSource, literalImage, 67);
+    const scaledSource =
+      literalSource.slice(0, appendReplacement.from)
+      + appendReplacement.insert
+      + literalSource.slice(appendReplacement.to);
+    expect(scaledSource).toBe(
+      '![Alt](https://example.test/image.png "Syntax {width=50%} example {width=67%}")'
+    );
+
+    const scaledImage = parseMarkdownImageScale(scaledSource);
+    expect(scaledImage).toMatchObject({
+      scale: 67,
+      title: 'Syntax {width=50%} example'
+    });
+    if (!scaledImage) throw new Error('image-scale-test-image-missing');
+
+    const updateReplacement = createImageScaleReplacement(scaledSource, scaledImage, 100);
+    const updatedSource =
+      scaledSource.slice(0, updateReplacement.from)
+      + updateReplacement.insert
+      + scaledSource.slice(updateReplacement.to);
+    expect(updatedSource).toBe(
+      '![Alt](https://example.test/image.png "Syntax {width=50%} example {width=100%}")'
+    );
   });
 
   it('returns one pure replacement while preserving the original image fields', () => {

@@ -223,13 +223,13 @@ final class MarkdownRenderer {
 		if ( false === strpos( $title, '{width=' ) ) {
 			return null;
 		}
-		if ( 1 !== substr_count( $title, '{width=' ) ) {
-			throw new RuntimeException( 'easymde_image_scale_syntax_invalid' );
+		if ( 1 !== preg_match( '/\{width=[^{}]*\}$/D', $title, $tail_match, PREG_OFFSET_CAPTURE ) ) {
+			return null;
 		}
 
-		$marker_start = strrpos( $title, '{width=' );
-		$marker       = substr( $title, $marker_start );
-		if ( ! preg_match( '/^\{width=(25|33|50|67|100|150|200)%\}$/', $marker, $matches ) ) {
+		$marker       = (string) $tail_match[0][0];
+		$marker_start = (int) $tail_match[0][1];
+		if ( ! preg_match( '/^\{width=(25|33|50|67|100|150|200)%\}$/D', $marker, $matches ) ) {
 			throw new RuntimeException( 'easymde_image_scale_syntax_invalid' );
 		}
 		if ( 0 === $marker_start ) {
@@ -242,8 +242,13 @@ final class MarkdownRenderer {
 			throw new RuntimeException( 'easymde_image_scale_syntax_invalid' );
 		}
 
+		$remaining_title = substr( $title, 0, $marker_start - 1 );
+		if ( 1 === preg_match( '/\{width=[^{}]*\}[ \t]*$/D', $remaining_title ) ) {
+			throw new RuntimeException( 'easymde_image_scale_syntax_invalid' );
+		}
+
 		return array(
-			'title' => substr( $title, 0, $marker_start - 1 ),
+			'title' => $remaining_title,
 			'width' => (int) $matches[1],
 		);
 	}

@@ -169,11 +169,37 @@ function formatImageAlt(alt: string, inTableCell: boolean): string {
 }
 
 /**
- * A title is a reserved `{width=N%}` slot. Strip any pre-existing marker so
- * PHP never sees two markers (or an invalid percentage) and throws.
+ * A title's trailing `{width=N%}` suffix is a reserved scale slot. Strip only
+ * trailing/terminal markers so literal nonterminal `{width=...}` text stays
+ * intact while PHP never sees repeated or invalid terminal markers.
  */
 function stripReservedScaleMarkers(title: string): string {
-	return title.replace(/(?:^|\s+)\{width=[^}]*\}/g, "").trim();
+	let end = title.trimEnd().length;
+	while (end > 0) {
+		let cursor = end;
+		while (
+			cursor > 0 &&
+			(title[cursor - 1] === " " || title[cursor - 1] === "\t")
+		) {
+			cursor -= 1;
+		}
+		if (cursor < 8 || title[cursor - 1] !== "}") {
+			break;
+		}
+		const openBrace = title.lastIndexOf("{", cursor - 2);
+		if (
+			openBrace < 0 ||
+			!title.startsWith("{width=", openBrace) ||
+			title.indexOf("}", openBrace + 7) !== cursor - 1
+		) {
+			break;
+		}
+		end = openBrace;
+		while (end > 0 && /\s/u.test(title[end - 1] ?? "")) {
+			end -= 1;
+		}
+	}
+	return title.slice(0, end);
 }
 
 function serializeImageNode(

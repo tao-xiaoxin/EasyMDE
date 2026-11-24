@@ -248,6 +248,28 @@ describe("visualEditorSchema DOM contract", () => {
 			title: "Photo {width=99%}",
 			scale: null,
 		});
+		expect(parseImageScaleTitle("Syntax {width=50%} example")).toEqual({
+			title: "Syntax {width=50%} example",
+			scale: null,
+		});
+		expect(
+			parseImageScaleTitle("Syntax {width=50%} example {width=67%}"),
+		).toEqual({
+			title: "Syntax {width=50%} example",
+			scale: 67,
+		});
+		expect(parseImageScaleTitle("Title{width=50%}")).toEqual({
+			title: "Title{width=50%}",
+			scale: null,
+		});
+		expect(parseImageScaleTitle("{width=50%}{width=67%}")).toEqual({
+			title: "{width=50%}{width=67%}",
+			scale: null,
+		});
+		expect(parseImageScaleTitle("Title {width=50%} {width=67%}")).toEqual({
+			title: "Title {width=50%} {width=67%}",
+			scale: null,
+		});
 
 		const unsafeDoc = visualEditorSchema.nodes.doc.create(null, [
 			visualEditorSchema.nodes.paragraph.create(null, [
@@ -1802,6 +1824,51 @@ describe("visual editor codec regressions", () => {
 		const invalidSerialized = serializeVisualDocToMarkdown(invalidScale);
 		expect(invalidSerialized).not.toContain("{width=42%}");
 		expect(invalidSerialized).toContain('"Photo"');
+
+		const unspacedScale = parseMarkdownToVisualDoc(
+			'![img](https://example.com/a.png "Title{width=50%}")',
+		);
+		expect(serializeVisualDocToMarkdown(unspacedScale)).toBe(
+			'![img](https://example.com/a.png "Title")',
+		);
+
+		const repeatedScale = parseMarkdownToVisualDoc(
+			'![img](https://example.com/a.png "Photo {width=50%} {width=67%}")',
+		);
+		expect(serializeVisualDocToMarkdown(repeatedScale)).toBe(
+			'![img](https://example.com/a.png "Photo")',
+		);
+
+		const nonterminalLiteral =
+			'![img](https://example.com/a.png "Syntax {width=50%} example")';
+		const nonterminalDoc = parseMarkdownToVisualDoc(nonterminalLiteral);
+		expect(nonterminalDoc.firstChild?.firstChild?.attrs).toMatchObject({
+			title: "Syntax {width=50%} example",
+			scale: null,
+		});
+		expect(serializeVisualDocToMarkdown(nonterminalDoc)).toBe(
+			nonterminalLiteral,
+		);
+
+		const nonterminalWithValidScale =
+			'![img](https://example.com/a.png "Syntax {width=50%} example {width=67%}")';
+		const nonterminalScaledDoc = parseMarkdownToVisualDoc(
+			nonterminalWithValidScale,
+		);
+		expect(nonterminalScaledDoc.firstChild?.firstChild?.attrs).toMatchObject({
+			title: "Syntax {width=50%} example",
+			scale: 67,
+		});
+		expect(serializeVisualDocToMarkdown(nonterminalScaledDoc)).toBe(
+			nonterminalWithValidScale,
+		);
+
+		const nonterminalWithInvalidScale = parseMarkdownToVisualDoc(
+			'![img](https://example.com/a.png "Syntax {width=50%} example {width=42%}")',
+		);
+		expect(serializeVisualDocToMarkdown(nonterminalWithInvalidScale)).toBe(
+			nonterminalLiteral,
+		);
 	});
 
 	it("P2-01 preserves CRLF, trailing newlines, and reordered untouched blocks", () => {

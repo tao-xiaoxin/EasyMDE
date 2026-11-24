@@ -20,19 +20,22 @@ export type ParsedImageScaleTitle = Readonly<{
 	title: string | null;
 }>;
 
+const TERMINAL_IMAGE_SCALE_MARKER = /\{width=[^{}]*\}$/u;
+const VALID_IMAGE_SCALE_MARKER = /^\{width=(25|33|50|67|100|150|200)%\}$/u;
+const REPEATED_TERMINAL_IMAGE_SCALE_MARKER = /\{width=[^{}]*\}[ \t]*$/u;
+
 export function parseImageScaleTitle(
 	rawTitle: string | null | undefined,
 ): ParsedImageScaleTitle {
 	if (typeof rawTitle !== "string" || rawTitle.length === 0) {
 		return { scale: null, title: null };
 	}
-	const markerStart = rawTitle.indexOf("{width=");
-	if (markerStart < 0 || rawTitle.indexOf("{width=", markerStart + 1) >= 0) {
+	const tailMatch = TERMINAL_IMAGE_SCALE_MARKER.exec(rawTitle);
+	if (!tailMatch) {
 		return { scale: null, title: rawTitle };
 	}
-	const match = /^\{width=(25|33|50|67|100|150|200)%\}$/.exec(
-		rawTitle.slice(markerStart),
-	);
+	const markerStart = tailMatch.index;
+	const match = VALID_IMAGE_SCALE_MARKER.exec(tailMatch[0]);
 	const parsedScale = match?.[1] ? Number(match[1]) : null;
 	if (!isValidVisualImageScale(parsedScale)) {
 		return { scale: null, title: rawTitle };
@@ -44,6 +47,9 @@ export function parseImageScaleTitle(
 		return { scale: null, title: rawTitle };
 	}
 	const baseTitle = rawTitle.slice(0, markerStart - 1);
+	if (REPEATED_TERMINAL_IMAGE_SCALE_MARKER.test(baseTitle)) {
+		return { scale: null, title: rawTitle };
+	}
 	return { scale: parsedScale, title: baseTitle.length > 0 ? baseTitle : null };
 }
 

@@ -47,7 +47,9 @@ export type MarkdownImageSerialization = Readonly<{
   title: string | null;
 }>;
 
-const IMAGE_SCALE_MARKER_PREFIX = '{width=';
+const TERMINAL_IMAGE_SCALE_MARKER = /\{width=[^{}]*\}$/u;
+const VALID_IMAGE_SCALE_MARKER = /^\{width=(25|33|50|67|100|150|200)%\}$/u;
+const REPEATED_TERMINAL_IMAGE_SCALE_MARKER = /\{width=[^{}]*\}[ \t]*$/u;
 const ESCAPABLE_MARKDOWN_CHARACTERS = new Set(
   Array.from('\\`*{}[]()#+-.!_>~|')
 );
@@ -314,7 +316,7 @@ function parseScaleMarker(
   titleMarkerEnd: number | null;
   titleMarkerStart: number | null;
 }> {
-  if (null === title || null === titleStart || !title.includes(IMAGE_SCALE_MARKER_PREFIX)) {
+  if (null === title || null === titleStart) {
     return {
       scale: null,
       title,
@@ -322,24 +324,29 @@ function parseScaleMarker(
       titleMarkerStart: null
     };
   }
-  if (1 !== title.split(IMAGE_SCALE_MARKER_PREFIX).length - 1) syntaxError();
-  const markerOffset = title.lastIndexOf(IMAGE_SCALE_MARKER_PREFIX);
-  const marker = title.slice(markerOffset);
-  let scale: ImageScalePercentage;
-  try {
-    if (!marker.endsWith('}')) invalidWidth();
-    scale = scaleValue(marker.slice(0, -1).slice(IMAGE_SCALE_MARKER_PREFIX.length));
-  } catch (error) {
-    if (error instanceof Error && 'image-scale-invalid-width' === error.message) {
-      syntaxError();
-    }
-    throw error;
+  const tailMatch = TERMINAL_IMAGE_SCALE_MARKER.exec(title);
+  if (!tailMatch) {
+    return {
+      scale: null,
+      title,
+      titleMarkerEnd: null,
+      titleMarkerStart: null
+    };
   }
+  const marker = tailMatch[0];
+  const markerOffset = tailMatch.index;
+  const validMatch = VALID_IMAGE_SCALE_MARKER.exec(marker);
+  if (!validMatch?.[1]) syntaxError();
+  const scale = Number(validMatch[1]) as ImageScalePercentage;
   if (0 !== markerOffset && ' ' !== title[markerOffset - 1]) syntaxError();
+  const remainingTitle = 0 === markerOffset ? null : title.slice(0, markerOffset - 1);
+  if (null !== remainingTitle && REPEATED_TERMINAL_IMAGE_SCALE_MARKER.test(remainingTitle)) {
+    syntaxError();
+  }
   const markerStart = titleStart + 1 + markerOffset;
   return {
     scale,
-    title: 0 === markerOffset ? null : title.slice(0, markerOffset - 1),
+    title: remainingTitle,
     titleMarkerEnd: markerStart + marker.length,
     titleMarkerStart: markerStart
   };

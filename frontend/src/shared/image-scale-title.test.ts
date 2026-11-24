@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	COMMONMARK_ESCAPABLE_PUNCTUATION,
 	decodeCommonMarkTitle,
+	decodeWpKsesRenderedTitle,
 	hasMarkdownTitleBlankLine,
 	parseEffectiveImageScaleTitle,
 	parseImageScaleTitleContract,
@@ -332,5 +333,134 @@ describe("shared image-scale title grammar", () => {
 				true,
 			),
 		).toBe("Syntax {width=33%} example");
+	});
+
+	it("projects titles through WP Core wp_kses_no_null() and wp_kses_normalize_entities() parity", () => {
+		// Direct decodeWpKsesRenderedTitle checks.
+		expect(decodeWpKsesRenderedTitle("Caption {width=50%}\x01\x07\x1F")).toBe(
+			"Caption {width=50%}",
+		);
+		expect(decodeWpKsesRenderedTitle("Keep\t\n\rControls\x0B\x0C")).toBe(
+			"Keep\t\n\rControls",
+		);
+		expect(decodeWpKsesRenderedTitle("Caption &#123;width=50%&#125;")).toBe(
+			"Caption {width=50%}",
+		);
+		expect(
+			decodeWpKsesRenderedTitle("Caption &#00000123;width=50%&#00000125;"),
+		).toBe("Caption {width=50%}");
+		expect(decodeWpKsesRenderedTitle("Caption &#x7b;width=50%&#x7d;")).toBe(
+			"Caption {width=50%}",
+		);
+		expect(decodeWpKsesRenderedTitle("Caption &#x0000007b;width=50%&#x0000007d;")).toBe(
+			"Caption {width=50%}",
+		);
+		// Single-digit zero entities return "" (PHP empty('0') === true), whereas
+		// multi-zero entities fail valid_unicode(0) and stay literal.
+		expect(decodeWpKsesRenderedTitle("Caption {width=50%}&#0;")).toBe(
+			"Caption {width=50%}",
+		);
+		expect(decodeWpKsesRenderedTitle("Caption {width=50%}&#x0;")).toBe(
+			"Caption {width=50%}",
+		);
+		expect(decodeWpKsesRenderedTitle("Caption {width=50%}&#X0;")).toBe(
+			"Caption {width=50%}",
+		);
+		expect(decodeWpKsesRenderedTitle("Caption {width=50%}&#00;")).toBe(
+			"Caption {width=50%}&#00;",
+		);
+		expect(decodeWpKsesRenderedTitle("Caption {width=50%}&#x00;")).toBe(
+			"Caption {width=50%}&#x00;",
+		);
+		// Out-of-range / disallowed code points stay literal.
+		expect(decodeWpKsesRenderedTitle("&#1; &#xD800; &#xFFFE; &#xFFFF; &#1114112;")).toBe(
+			"&#1; &#xD800; &#xFFFE; &#xFFFF; &#1114112;",
+		);
+		expect(decodeWpKsesRenderedTitle("&#1114111;")).toBe(
+			String.fromCodePoint(0x10ffff),
+		);
+		// Already double-escaped &amp;#123; is NOT decoded further.
+		expect(decodeWpKsesRenderedTitle("Caption &amp;#123;width=50%&amp;#125;")).toBe(
+			"Caption &amp;#123;width=50%&amp;#125;",
+		);
+
+		// Effective scale parsing matches real PHP MarkdownRenderer::render() + WP KSES.
+		expect(parseEffectiveImageScaleTitle("Caption {width=50%}&#1;")).toEqual({
+			markerLength: 11,
+			markerOffset: 8,
+			scale: 50,
+			status: "valid",
+			title: "Caption",
+		});
+		expect(parseEffectiveImageScaleTitle("Caption {width=51%}&#1;")).toEqual({
+			status: "invalid",
+		});
+		expect(parseEffectiveImageScaleTitle("Caption {width=50&#1;%}")).toEqual({
+			markerLength: 11,
+			markerOffset: 8,
+			scale: 50,
+			status: "valid",
+			title: "Caption",
+		});
+		expect(parseEffectiveImageScaleTitle("Caption {width=50%}\x07")).toEqual({
+			markerLength: 11,
+			markerOffset: 8,
+			scale: 50,
+			status: "valid",
+			title: "Caption",
+		});
+		expect(
+			parseEffectiveImageScaleTitle("Caption &amp;#123;width=50%&amp;#125;"),
+		).toEqual({
+			markerLength: 11,
+			markerOffset: 8,
+			scale: 50,
+			status: "valid",
+			title: "Caption",
+		});
+		expect(
+			parseEffectiveImageScaleTitle("Caption &amp;#123;width=51%&amp;#125;"),
+		).toEqual({
+			status: "invalid",
+		});
+		expect(
+			parseEffectiveImageScaleTitle("Caption &#00000123;width=50%&#00000125;"),
+		).toEqual({
+			markerLength: 11,
+			markerOffset: 8,
+			scale: 50,
+			status: "valid",
+			title: "Caption",
+		});
+		expect(
+			parseEffectiveImageScaleTitle("Caption {width=50%}&amp;#0;"),
+		).toEqual({
+			markerLength: 11,
+			markerOffset: 8,
+			scale: 50,
+			status: "valid",
+			title: "Caption",
+		});
+		expect(
+			parseEffectiveImageScaleTitle("Caption {width=50%}&amp;#x0;"),
+		).toEqual({
+			markerLength: 11,
+			markerOffset: 8,
+			scale: 50,
+			status: "valid",
+			title: "Caption",
+		});
+		expect(
+			parseEffectiveImageScaleTitle("Caption {width=50%}&amp;#00;"),
+		).toEqual({
+			status: "none",
+		});
+		expect(
+			parseEffectiveImageScaleTitle(
+				"Caption &amp;amp;#123;width=50%&amp;amp;#125;",
+			),
+		).toEqual({
+			status: "none",
+		});
 	});
 });

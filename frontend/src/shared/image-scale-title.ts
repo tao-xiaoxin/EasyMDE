@@ -168,9 +168,80 @@ export function parseImageScaleTitleContract(
 }
 
 /**
+ * Mirrors WordPress Core's `valid_unicode()` predicate in `wp-includes/kses.php`.
+ */
+function isValidWpKsesUnicode(codePoint: number): boolean {
+	return (
+		codePoint === 0x9 ||
+		codePoint === 0xa ||
+		codePoint === 0xd ||
+		(codePoint >= 0x20 && codePoint <= 0xd7ff) ||
+		(codePoint >= 0xe000 && codePoint <= 0xfffd) ||
+		(codePoint >= 0x10000 && codePoint <= 0x10ffff)
+	);
+}
+
+/**
+ * Projects a CommonMark-decoded image title through WordPress Core's
+ * `wp_kses_no_null(..., ['slash_zero' => 'keep'])` +
+ * `wp_kses_normalize_entities()` + `DOMDocument::loadHTML()` pipeline so
+ * browser parsing and serialization match real WordPress
+ * `MarkdownRenderer::render()` 1:1.
+ */
+export function decodeWpKsesRenderedTitle(commonMarkDecoded: string): string {
+	let rendered = commonMarkDecoded.replace(
+		// biome-ignore lint/suspicious/noControlCharactersInRegex: Mirror WP wp_kses_no_null() control-character stripping.
+		/[\x00-\x08\x0B\x0C\x0E-\x1F]/g,
+		"",
+	);
+	if (!rendered.includes("&#")) {
+		return rendered;
+	}
+	rendered = rendered.replace(
+		/&#(?:([0-9]+)|[xX]([0-9a-fA-F]+));/g,
+		(match, decDigits: string | undefined, hexDigits: string | undefined) => {
+			if (decDigits !== undefined) {
+				// PHP `wp_kses_normalize_entities2()` checks `empty($matches[1])`:
+				// `empty("0")` is true (-> ""), whereas `empty("00")` is false.
+				if (decDigits === "0") {
+					return "";
+				}
+				const trimmed = decDigits.replace(/^0+/, "");
+				if (trimmed.length === 0 || trimmed.length > 7) {
+					return match;
+				}
+				const codePoint = Number.parseInt(trimmed, 10);
+				return isValidWpKsesUnicode(codePoint)
+					? String.fromCodePoint(codePoint)
+					: match;
+			}
+			if (hexDigits !== undefined) {
+				// PHP `wp_kses_normalize_entities3()` checks `empty($matches[1])`:
+				// `empty("0")` is true (-> ""), whereas `empty("00")` is false.
+				if (hexDigits === "0") {
+					return "";
+				}
+				const trimmed = hexDigits.replace(/^0+/, "");
+				if (trimmed.length === 0 || trimmed.length > 6) {
+					return match;
+				}
+				const codePoint = Number.parseInt(trimmed, 16);
+				return isValidWpKsesUnicode(codePoint)
+					? String.fromCodePoint(codePoint)
+					: match;
+			}
+			return match;
+		},
+	);
+	return rendered;
+}
+
+/**
  * Evaluates a raw Markdown image title as PHP `MarkdownRenderer` will observe
  * it after CommonMark §2.2 / §4.8 line-ending normalization and continuation
- * indent stripping, followed by `RegexHelper::unescape()`. HTML5 / libxml
+ * indent stripping, followed by `RegexHelper::unescape()`, WordPress
+ * `wp_kses_no_null(..., ['slash_zero' => 'keep'])` +
+ * `wp_kses_normalize_entities()`, and `DOMDocument::loadHTML()`. HTML5 / libxml
  * `DOMDocument::loadHTML` preserves `\n` and `\r` verbatim inside `title`.
  */
 export function parseEffectiveImageScaleTitle(
@@ -179,7 +250,9 @@ export function parseEffectiveImageScaleTitle(
 	const normalizedSource = rawTitle
 		.replace(/\r\n|\r/gu, "\n")
 		.replace(/\n[ \t]+/gu, "\n");
-	const decodedTitle = decodeCommonMarkTitle(normalizedSource);
+	const decodedTitle = decodeWpKsesRenderedTitle(
+		decodeCommonMarkTitle(normalizedSource),
+	);
 	return parseImageScaleTitleContract(decodedTitle);
 }
 

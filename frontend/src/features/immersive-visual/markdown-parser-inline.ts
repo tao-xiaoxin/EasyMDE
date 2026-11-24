@@ -2,6 +2,7 @@ import type MarkdownIt from "markdown-it";
 import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
 import {
 	decodeCommonMarkTitle,
+	decodeWpKsesRenderedTitle,
 	parseImageScaleTitleContract,
 } from "../../shared/image-scale-title";
 import {
@@ -260,7 +261,16 @@ export function mapInlineTokens(
 								tokenAttrString(token, "title") ?? "",
 								preScan,
 							);
-				const parsed = parseImageScaleTitle(effectiveTitle);
+				const ksesParsed = parseImageScaleTitle(
+					decodeWpKsesRenderedTitle(effectiveTitle),
+				);
+				const parsed =
+					ksesParsed.scale !== null
+						? ksesParsed
+						: {
+								scale: null,
+								title: effectiveTitle.length > 0 ? effectiveTitle : null,
+							};
 				const rawAlt = token.children
 					? token.children.map((c) => c.content).join("")
 					: token.content;

@@ -1,10 +1,17 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
+	type BlockSerializer,
+	isLooseList,
+	isNestedList,
+	serializeListItemAt,
+} from "./markdown-list-serialization";
+import {
 	type ParsedVisualBlockSource,
 	type ParsedVisualDocument,
 	parseMarkdownWithBlockSources,
 } from "./markdown-parser";
-import { sanitizeBulletMarker } from "./visual-schema";
+
+export { type BlockSerializer, serializeList } from "./markdown-list-serialization";
 
 /**
  * Untouched-source preservation for the immersive visual editor.
@@ -25,161 +32,10 @@ export type MarkdownRoundTripGuard = Readonly<{
 	serialize: (doc: ProseMirrorNode) => string;
 }>;
 
-export type BlockSerializer = (node: ProseMirrorNode) => string;
-
 export type MarkdownSerializers = Readonly<{
 	serializeBlock: BlockSerializer;
 	serializeDoc: (doc: ProseMirrorNode) => string;
 }>;
-
-// ---------------------------------------------------------------------------
-// List serialization
-// ---------------------------------------------------------------------------
-
-function prefixMultiline(
-	text: string,
-	firstLinePrefix: string,
-	continuationPrefix: string,
-): string {
-	const lines = text.split("\n");
-	return lines
-		.map((line, index) => {
-			if (index === 0) {
-				return line.length > 0
-					? `${firstLinePrefix}${line}`
-					: firstLinePrefix.trimEnd();
-			}
-			return line.length > 0 ? `${continuationPrefix}${line}` : "";
-		})
-		.join("\n");
-}
-
-function isNestedList(node: ProseMirrorNode): boolean {
-	return (
-		node.type.name === "bullet_list" ||
-		node.type.name === "ordered_list" ||
-		node.type.name === "task_list"
-	);
-}
-
-function isLooseList(listNode: ProseMirrorNode): boolean {
-	if (listNode.attrs.tight === false) {
-		return true;
-	}
-	if (listNode.attrs.tight === true) {
-		return false;
-	}
-	for (let i = 0; i < listNode.childCount; i += 1) {
-		const item = listNode.child(i);
-		let nonListBlocks = 0;
-		for (let j = 0; j < item.childCount; j += 1) {
-			if (!isNestedList(item.child(j))) {
-				nonListBlocks += 1;
-			}
-		}
-		if (nonListBlocks > 1) {
-			return true;
-		}
-	}
-	return false;
-}
-
-function canInterruptPreviousInTightList(
-	node: ProseMirrorNode,
-	prev: ProseMirrorNode,
-	serialized: string,
-): boolean {
-	const name = node.type.name;
-	if (name === "horizontal_rule" && prev.type.name === "paragraph") return false;
-	if (prev.type.name === "table") {
-		const nl = serialized.indexOf("\n");
-		const firstLine = nl === -1 ? serialized : serialized.slice(0, nl);
-		if (firstLine.includes("|")) return false;
-		if (name === "table") return serialized.startsWith("<!-- ");
-	}
-	return name === "table" || name === "code_block" || name === "blockquote" || name === "heading" || name === "horizontal_rule";
-}
-
-function serializeListItemBody(
-	itemNode: ProseMirrorNode,
-	loose: boolean,
-	serializeBlock: BlockSerializer,
-	blankBeforeNestedList: boolean,
-): string {
-	const firstChild = itemNode.child(0);
-	const hasPhantomParagraph =
-		itemNode.childCount > 1 &&
-		firstChild.type.name === "paragraph" &&
-		firstChild.childCount === 0;
-	const startIndex = hasPhantomParagraph ? 1 : 0;
-	const parts: string[] = [];
-	for (let i = startIndex; i < itemNode.childCount; i += 1) {
-		const child = itemNode.child(i);
-		const serialized = serializeBlock(child);
-		if (i === startIndex) {
-			parts.push(hasPhantomParagraph ? `\n${serialized}` : serialized);
-		} else if (
-			isNestedList(child) &&
-			itemNode.child(i - 1).type.name === "paragraph"
-		) {
-			parts.push(blankBeforeNestedList ? `\n\n${serialized}` : `\n${serialized}`);
-		} else if (
-			!loose &&
-			canInterruptPreviousInTightList(child, itemNode.child(i - 1), serialized)
-		) {
-			parts.push(`\n${serialized}`);
-		} else {
-			parts.push(`\n\n${serialized}`);
-		}
-	}
-	return parts.join("");
-}
-
-function serializeListItemAt(
-	listNode: ProseMirrorNode,
-	index: number,
-	loose: boolean,
-	serializeBlock: BlockSerializer,
-	blankBeforeNestedList: boolean,
-): string {
-	const item = listNode.child(index);
-	const body = serializeListItemBody(
-		item,
-		loose,
-		serializeBlock,
-		blankBeforeNestedList,
-	);
-	const bulletMarker = sanitizeBulletMarker(listNode.attrs.marker);
-	let prefix = `${bulletMarker} `;
-	let indent = "  ";
-	if (listNode.type.name === "ordered_list") {
-		const delimiter = listNode.attrs.delimiter === ")" ? ")" : ".";
-		const order = listNode.attrs.order;
-		const startOrder =
-			typeof order === "number" && Number.isInteger(order) && order >= 0
-				? order
-				: 1;
-		prefix = `${startOrder + index}${delimiter} `;
-		indent = " ".repeat(prefix.length);
-	} else if (listNode.type.name === "task_list") {
-		prefix = item.attrs.checked
-			? `${bulletMarker} [x] `
-			: `${bulletMarker} [ ] `;
-	}
-	return prefixMultiline(body, prefix, indent);
-}
-
-export function serializeList(
-	listNode: ProseMirrorNode,
-	serializeBlock: BlockSerializer,
-): string {
-	const loose = isLooseList(listNode);
-	const items: string[] = [];
-	for (let i = 0; i < listNode.childCount; i += 1) {
-		items.push(serializeListItemAt(listNode, i, loose, serializeBlock, false));
-	}
-	return items.join(loose ? "\n\n" : "\n");
-}
 
 // ---------------------------------------------------------------------------
 // Sequence alignment

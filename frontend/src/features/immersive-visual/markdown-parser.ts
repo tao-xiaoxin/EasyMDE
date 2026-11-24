@@ -65,8 +65,22 @@ function readCellAlignment(node: ProseMirrorNode | undefined): TableTextAlign {
 
 function stripTaskPrefix(
 	itemChildren: ReadonlyArray<ProseMirrorNode>,
+	referenceBlocks: WeakSet<ProseMirrorNode>,
 ): Readonly<{ checked: boolean; children: ProseMirrorNode[] }> | null {
-	const firstBlock = itemChildren[0];
+	let firstContentIndex = 0;
+	while (firstContentIndex < itemChildren.length) {
+		const candidate = itemChildren[firstContentIndex];
+		if (
+			candidate &&
+			candidate.type === visualEditorSchema.nodes.protected_block &&
+			referenceBlocks.has(candidate)
+		) {
+			firstContentIndex += 1;
+			continue;
+		}
+		break;
+	}
+	const firstBlock = itemChildren[firstContentIndex];
 	if (!firstBlock || firstBlock.type !== visualEditorSchema.nodes.paragraph) {
 		return null;
 	}
@@ -88,8 +102,9 @@ function stripTaskPrefix(
 	return {
 		checked: match[1].toLowerCase() === "x",
 		children: [
+			...itemChildren.slice(0, firstContentIndex),
 			visualEditorSchema.nodes.paragraph.create(null, inlines),
-			...itemChildren.slice(1),
+			...itemChildren.slice(firstContentIndex + 1),
 		],
 	};
 }
@@ -258,6 +273,7 @@ function collectListItems(
 	startIndex: number,
 	endIndex: number,
 	preScan: PreScanResult,
+	referenceBlocks: WeakSet<ProseMirrorNode>,
 ): CollectedListItem[] {
 	const items: CollectedListItem[] = [];
 	for (let i = startIndex + 1; i < endIndex; i += 1) {
@@ -271,8 +287,12 @@ function collectListItems(
 			"list_item_close",
 		);
 		items.push({
-			children: ensureListItemChildren(
-				mapBlockTokens(tokens, i + 1, itemClose, preScan),
+			children: mapBlockTokens(
+				tokens,
+				i + 1,
+				itemClose,
+				preScan,
+				referenceBlocks,
 			),
 			range: resolveOriginalRangeFromTokenMap(tokens[i]?.map, preScan),
 		});
@@ -316,8 +336,15 @@ function mapBulletListTokens(
 	startIndex: number,
 	endIndex: number,
 	preScan: PreScanResult,
+	referenceBlocks: WeakSet<ProseMirrorNode>,
 ): MappedListEntry[] {
-	const items = collectListItems(tokens, startIndex, endIndex, preScan);
+	const items = collectListItems(
+		tokens,
+		startIndex,
+		endIndex,
+		preScan,
+		referenceBlocks,
+	);
 	if (items.length === 0) {
 		return [];
 	}
@@ -336,13 +363,16 @@ function mapBulletListTokens(
 			? visualEditorSchema.nodes.task_list
 			: visualEditorSchema.nodes.bullet_list;
 		const itemNodes = currentGroup.map((entry) => {
-			const task = stripTaskPrefix(entry.children);
+			const task = stripTaskPrefix(entry.children, referenceBlocks);
 			return task
 				? visualEditorSchema.nodes.task_item.create(
 						{ checked: task.checked },
-						task.children,
+						ensureListItemChildren(task.children),
 					)
-				: visualEditorSchema.nodes.list_item.create(null, entry.children);
+				: visualEditorSchema.nodes.list_item.create(
+						null,
+						ensureListItemChildren(entry.children),
+					);
 		});
 		lists.push({
 			node: listType.create({ marker, tight }, itemNodes),
@@ -352,7 +382,7 @@ function mapBulletListTokens(
 	};
 
 	for (const entry of items) {
-		const isTask = stripTaskPrefix(entry.children) !== null;
+		const isTask = stripTaskPrefix(entry.children, referenceBlocks) !== null;
 		if (currentIsTask !== null && isTask !== currentIsTask) {
 			flush();
 		}
@@ -460,6 +490,7 @@ function mapBlockTokensWithRanges(
 	startIndex: number,
 	endIndex: number,
 	preScan: PreScanResult,
+	referenceBlocks: WeakSet<ProseMirrorNode>,
 ): MappedBlockEntry[] {
 	const entries: MappedBlockEntry[] = [];
 	let pendingTableAlign: Readonly<{
@@ -608,7 +639,13 @@ function mapBlockTokensWithRanges(
 				"blockquote_open",
 				"blockquote_close",
 			);
-			const inner = mapBlockTokens(tokens, i + 1, closeIdx, preScan);
+			const inner = mapBlockTokens(
+				tokens,
+				i + 1,
+				closeIdx,
+				preScan,
+				referenceBlocks,
+			);
 			entries.push({
 				node: visualEditorSchema.nodes.blockquote.create(
 					null,
@@ -626,7 +663,13 @@ function mapBlockTokensWithRanges(
 				"bullet_list_open",
 				"bullet_list_close",
 			);
-			const listEntries = mapBulletListTokens(tokens, i, closeIdx, preScan);
+			const listEntries = mapBulletListTokens(
+				tokens,
+				i,
+				closeIdx,
+				preScan,
+				referenceBlocks,
+			);
 			// A mixed task/bullet list splits into several nodes; each keeps its
 			// exact monotonic source range so an unrelated edit cannot duplicate it.
 			for (const listEntry of listEntries) {
@@ -648,9 +691,18 @@ function mapBlockTokensWithRanges(
 				Number.isInteger(parsedOrder) && parsedOrder >= 0 ? parsedOrder : 1;
 			const delimiter = token.markup === ")" ? ")" : ".";
 			const tight = isTightListRange(tokens, i, closeIdx);
-			const collected = collectListItems(tokens, i, closeIdx, preScan);
+			const collected = collectListItems(
+				tokens,
+				i,
+				closeIdx,
+				preScan,
+				referenceBlocks,
+			);
 			const items = collected.map((item) =>
-				visualEditorSchema.nodes.list_item.create(null, item.children),
+				visualEditorSchema.nodes.list_item.create(
+					null,
+					ensureListItemChildren(item.children),
+				),
 			);
 			if (items.length > 0) {
 				entries.push({
@@ -702,11 +754,13 @@ function mapBlockTokensWithRanges(
 				groupStart >= 0 && groupEnd > groupStart
 					? { start: groupStart, end: groupEnd }
 					: origRange;
+			const refNode = visualEditorSchema.nodes.protected_block.create({
+				kind: "raw",
+				rawMarkdown: rawParts.join("\n"),
+			});
+			referenceBlocks.add(refNode);
 			entries.push({
-				node: visualEditorSchema.nodes.protected_block.create({
-					kind: "raw",
-					rawMarkdown: rawParts.join("\n"),
-				}),
+				node: refNode,
 				origRange: combinedRange,
 			});
 			i = groupEndIdx;
@@ -729,10 +783,51 @@ function mapBlockTokens(
 	startIndex: number,
 	endIndex: number,
 	preScan: PreScanResult,
+	referenceBlocks: WeakSet<ProseMirrorNode>,
 ): ProseMirrorNode[] {
-	return mapBlockTokensWithRanges(tokens, startIndex, endIndex, preScan).map(
-		(entry) => entry.node,
-	);
+	return mapBlockTokensWithRanges(
+		tokens,
+		startIndex,
+		endIndex,
+		preScan,
+		referenceBlocks,
+	).map((entry) => entry.node);
+}
+
+export type ReferenceDefinitionBlockInfo = Readonly<{
+	isRefDef: boolean;
+	lastHasTitle: boolean;
+}>;
+
+/**
+ * Reports whether `rawMarkdown` consists exclusively of CommonMark §4.7 link
+ * reference definitions and whether its last definition already carries a
+ * title (so a following line starting with `"`, `'`, or `(` cannot be absorbed
+ * as a title).
+ */
+export function inspectReferenceDefinitionBlock(
+	rawMarkdown: string,
+): ReferenceDefinitionBlockInfo {
+	if (rawMarkdown.trim().length === 0 || !rawMarkdown.includes("]:")) {
+		return { isRefDef: false, lastHasTitle: false };
+	}
+	const tokens = markdownItParser.parse(rawMarkdown, {});
+	if (
+		tokens.length === 0 ||
+		!tokens.every((token) => token.type === "reference_definition")
+	) {
+		return { isRefDef: false, lastHasTitle: false };
+	}
+	const lastToken = tokens[tokens.length - 1];
+	const lastRaw = lastToken
+		? (readRawMetaString(lastToken, RAW_REFERENCE_SOURCE_META_KEY) ??
+			rawMarkdown)
+		: rawMarkdown;
+	const probeTokens = markdownItParser.parse(`${lastRaw}\n"t"`, {});
+	const absorbedTitle =
+		probeTokens.length === 1 &&
+		probeTokens[0]?.type === "reference_definition";
+	return { isRefDef: true, lastHasTitle: !absorbedTitle };
 }
 
 /**
@@ -791,7 +886,14 @@ export function parseMarkdownWithBlockSources(
 		tableAlignMarkers: preScan.tableAlignMarkers,
 	};
 	const tokens = markdownItParser.parse(preScan.markdown, env);
-	const mapped = mapBlockTokensWithRanges(tokens, 0, tokens.length, preScan);
+	const referenceBlocks = new WeakSet<ProseMirrorNode>();
+	const mapped = mapBlockTokensWithRanges(
+		tokens,
+		0,
+		tokens.length,
+		preScan,
+		referenceBlocks,
+	);
 	const doc = visualEditorSchema.nodes.doc.create(
 		null,
 		mapped.length > 0

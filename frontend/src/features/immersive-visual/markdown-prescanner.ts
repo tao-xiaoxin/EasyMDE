@@ -551,6 +551,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		{ indent, prefix }: Pick<LineAnalysis, "indent" | "prefix">,
 		origStart: number,
 		lastLine: number,
+		sentinelIndent = indent,
 	): void => {
 		const origEnd = lastLine + 1;
 		const token = `${sentinel}BLK${protectedBlocks.size}END`;
@@ -564,7 +565,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		if (prevLine !== undefined && prevLine.trim().length > 0) {
 			pushOutputLine(blankLine, null);
 		}
-		pushOutputLine(`${prefix}${" ".repeat(indent)}${token}`, {
+		pushOutputLine(`${prefix}${" ".repeat(sentinelIndent)}${token}`, {
 			end: origEnd,
 			start: origStart,
 		});
@@ -707,7 +708,9 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			effectiveContainer,
 		);
 		if (blockMathEnd >= i) {
-			pushProtectedBlock("math", analysis, i, blockMathEnd);
+			const mathSentinelIndent =
+				relativeIndent >= 4 ? effectiveContainer : analysis.indent;
+			pushProtectedBlock("math", analysis, i, blockMathEnd, mathSentinelIndent);
 			paragraphOpen = false;
 			i = blockMathEnd + 1;
 			continue;
@@ -726,7 +729,12 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		}
 
 		// 6. Footnote definitions (including blank-line separated continuations).
-		if (/^\[\^([^\s\]]+)\]:(?:[ \t]|$)/.test(analysis.content)) {
+		if (
+			!paragraphOpen &&
+			relativeIndent >= 0 &&
+			relativeIndent <= 3 &&
+			/^\[\^([^\s\]]+)\]:(?:[ \t]|$)/.test(analysis.content)
+		) {
 			let end = i;
 			while (end + 1 < lines.length) {
 				const next = analyzeLine(lines[end + 1] ?? "", effectiveContainer);
@@ -760,7 +768,12 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		}
 
 		// 7. Raw HTML comments and paired HTML block containers.
-		if (analysis.prefix.length === 0 && analysis.content.startsWith("<!--")) {
+		if (
+			analysis.prefix.length === 0 &&
+			relativeIndent >= 0 &&
+			relativeIndent <= 3 &&
+			analysis.content.startsWith("<!--")
+		) {
 			let end = i;
 			while (end < lines.length && !(lines[end] ?? "").includes("-->")) {
 				end += 1;
@@ -773,7 +786,11 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			}
 		}
 
-		if (analysis.prefix.length === 0) {
+		if (
+			analysis.prefix.length === 0 &&
+			relativeIndent >= 0 &&
+			relativeIndent <= 3
+		) {
 			const htmlOpener = matchHtmlBlockOpener(analysis.content);
 			if (htmlOpener) {
 				const end = htmlOpener.selfClosing

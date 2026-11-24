@@ -155,7 +155,7 @@ final class MarkdownRenderer {
 	 */
 	private static function restore_image_scale_markers( $html ) {
 		$html = (string) $html;
-		if ( false === strpos( $html, '{width=' ) || false === stripos( $html, '<img' ) ) {
+		if ( false === stripos( $html, '<img' ) || ( false === strpos( $html, '{width=' ) && false === strpos( $html, '&#' ) ) ) {
 			return $html;
 		}
 		if ( ! class_exists( 'DOMDocument' ) ) {

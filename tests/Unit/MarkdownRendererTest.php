@@ -1216,6 +1216,55 @@ final class MarkdownRendererTest extends WP_UnitTestCase
         }
     }
 
+	public function test_image_scale_numeric_entity_markers_are_deterministic_with_or_without_unrelated_prose()
+	{
+		$valid_cases = array(
+			'standalone &amp;#123; 50%'      => '![Alt](https://example.test/image.png "Caption &amp;#123;width=50%&amp;#125;")',
+			'prose-accompanied &amp;#123; 50%' => "Unrelated {width= note\n\n" . '![Alt](https://example.test/image.png "Caption &amp;#123;width=50%&amp;#125;")',
+			'standalone padded entity 50%'   => '![Alt](https://example.test/image.png "Caption &#00000123;width=50%&#00000125;")',
+			'prose-accompanied padded 50%'   => "Unrelated {width= note\n\n" . '![Alt](https://example.test/image.png "Caption &#00000123;width=50%&#00000125;")',
+		);
+
+		foreach ( $valid_cases as $case => $markdown ) {
+			$rendered = MarkdownRenderer::render( $markdown );
+			$preview  = MarkdownRenderer::render_preview( $markdown );
+			foreach ( array( 'render' => $rendered, 'render_preview' => $preview['html'] ) as $mode => $html ) {
+				$document              = new DOMDocument( '1.0', 'UTF-8' );
+				$previous_libxml_state = libxml_use_internal_errors( true );
+				try {
+					$loaded = $document->loadHTML(
+						'<?xml encoding="UTF-8"><div id="image-scale-entity-root">' . $html . '</div>',
+						LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+					);
+				} finally {
+					libxml_clear_errors();
+					libxml_use_internal_errors( $previous_libxml_state );
+				}
+
+				$this->assertTrue( $loaded, $case . ':' . $mode );
+				$image = $document->getElementsByTagName( 'img' )->item( 0 );
+				$this->assertInstanceOf( DOMElement::class, $image, $case . ':' . $mode );
+				$this->assertSame( 'Caption', $image->getAttribute( 'title' ), $case . ':' . $mode );
+				$this->assertSame( '50%', $image->getAttribute( 'width' ), $case . ':' . $mode );
+				$this->assertSame( '50', $image->getAttribute( 'data-easymde-image-scale' ), $case . ':' . $mode );
+			}
+		}
+
+		$invalid_cases = array(
+			'standalone &amp;#123; 51%'        => '![Alt](https://example.test/image.png "Caption &amp;#123;width=51%&amp;#125;")',
+			'prose-accompanied &amp;#123; 51%' => "Unrelated {width= note\n\n" . '![Alt](https://example.test/image.png "Caption &amp;#123;width=51%&amp;#125;")',
+		);
+
+		foreach ( $invalid_cases as $case => $markdown ) {
+			try {
+				MarkdownRenderer::render( $markdown );
+				$this->fail( 'Expected invalid numeric-entity scale marker to throw for ' . $case );
+			} catch ( RuntimeException $exception ) {
+				$this->assertSame( 'easymde_image_scale_syntax_invalid', $exception->getMessage(), $case );
+			}
+		}
+	}
+
     public function test_nonterminal_image_scale_text_in_title_stays_literal_and_supports_terminal_scale()
     {
         $literal_markdown = '![Alt](https://example.test/image.png "Syntax {width=50%} example")';

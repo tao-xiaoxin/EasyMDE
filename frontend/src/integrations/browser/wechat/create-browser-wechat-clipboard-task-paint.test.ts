@@ -4,6 +4,7 @@ import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard'
 
 import {
   blobText,
+  computedStyle,
   declaration,
   declaredStyleDeclarations,
   declaredStylePixels,
@@ -138,6 +139,7 @@ describe('createBrowserWechatClipboard', () => {
           width: '20px'
         });
       }
+      if (pseudoElement) return computedStyle(element, pseudoElement);
       if ('UL' === element.tagName && element.classList.contains('ordinary-list')) {
         return declaration({
           'counter-increment': 'none',
@@ -588,16 +590,18 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (element) =>
-        'INPUT' === element.tagName
-          ? declaration({
-              appearance: 'none',
-              'accent-color': accentColor,
-              display: 'inline-block',
-              height: '12px',
-              width: '12px'
-            })
-          : declaration({ display: 'block' }),
+      getComputedStyle: (element, pseudoElement) =>
+        pseudoElement
+          ? computedStyle(element, pseudoElement)
+          : 'INPUT' === element.tagName
+            ? declaration({
+                appearance: 'none',
+                'accent-color': accentColor,
+                display: 'inline-block',
+                height: '12px',
+                width: '12px'
+              })
+            : declaration({ display: 'block' }),
       getSelection: window.getSelection.bind(window),
       pageOffset: () => ({ x: 0, y: 0 }),
       scrollTo: vi.fn(),
@@ -681,10 +685,12 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (element) =>
-        'INPUT' === element.tagName
-          ? declaration({ appearance: 'auto', display: 'inline-block', height: '16px', width: '16px' })
-          : declaration({ display: 'block' }),
+      getComputedStyle: (element, pseudoElement) =>
+        pseudoElement
+          ? computedStyle(element, pseudoElement)
+          : 'INPUT' === element.tagName
+            ? declaration({ appearance: 'auto', display: 'inline-block', height: '16px', width: '16px' })
+            : declaration({ display: 'block' }),
       getSelection: window.getSelection.bind(window),
       pageOffset: () => ({ x: 0, y: 0 }),
       scrollTo: vi.fn(),
@@ -744,6 +750,7 @@ describe('createBrowserWechatClipboard', () => {
           width: '16px'
         });
       }
+      if (pseudoElement) return computedStyle(element, pseudoElement);
       if ('ARTICLE' === element.tagName && element.closest('.svg-owner-workspace')) {
         return declaration({
           'border-bottom-width': '0px',

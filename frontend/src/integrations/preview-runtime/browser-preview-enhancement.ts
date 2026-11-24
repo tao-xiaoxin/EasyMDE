@@ -6,6 +6,12 @@ import type {
   PreviewEnhancementPort
 } from '../../features/live-preview/ports/preview-enhancement-port';
 import type { FrontendEnhancementControl } from './frontend-enhancement-runtime';
+import {
+  EditorStylesheetScopeError,
+  scopeEditorStylesheetLink,
+  scopeEditorStylesheets,
+  type EditorStylesheetScopeLease
+} from '../../shared/css/editor-stylesheet-scope';
 
 type SharedEnhancements = Readonly<{
   enhance: (
@@ -32,16 +38,18 @@ export type PreviewEnhancementBrowserRuntime = Readonly<{
 
 type BrowserPreviewEnhancementOptions = Readonly<{
   documentRef: Document;
+  editorRootSelector?: string;
   runtime: PreviewEnhancementBrowserRuntime;
 }>;
 
-type StyleLoad = Readonly<{
+type StyleLoad = {
   cancel: () => void;
   link: HTMLLinkElement;
   loaded: () => boolean;
   promise: Promise<void>;
+  scopeLease: EditorStylesheetScopeLease | null;
   url: string;
-}>;
+};
 
 type PreparedStyleLoad = Readonly<{
   attemptCommit: () => void;
@@ -113,7 +121,10 @@ function normalizedScriptUrl(documentRef: Document, value: string): string | nul
   }
 }
 
-function createResourceLoader(documentRef: Document) {
+function createResourceLoader(
+  documentRef: Document,
+  editorRootSelector: string
+) {
   const scriptLoads = new Map<string, ScriptLoad>();
   const scriptLoadsByUrl = new Map<string, ScriptLoad>();
   const styleLoads = new Map<string, StyleLoad>();
@@ -468,18 +479,41 @@ function createResourceLoader(documentRef: Document) {
       && current.dataset.easymdeLoadedHref === url
     ) {
       const loaded = Promise.resolve();
+      let existingScopeLease: EditorStylesheetScopeLease | null = null;
+      try {
+        existingScopeLease = scopeEditorStylesheetLink(
+          current,
+          { rootSelector: editorRootSelector }
+        );
+      } catch (error) {
+        existingScopeLease?.dispose();
+        return Promise.reject(
+          error instanceof Error
+            ? error
+            : resourceError('preview-enhancement-style-scope-failed')
+        );
+      }
       styleLoads.set(id, {
-        cancel: () => undefined,
+        cancel: () => {
+          existingScopeLease?.dispose();
+          existingScopeLease = null;
+        },
         link: current,
         loaded: () => true,
         promise: loaded,
+        scopeLease: existingScopeLease,
         url
       });
       return waitForResource(loaded, signal);
     }
 
     const previous = current instanceof HTMLLinkElement ? current : null;
-    if (previous) previous.id = `${id}-previous`;
+    if (previous) {
+      const previousLoad = styleLoads.get(id);
+      previousLoad?.scopeLease?.dispose();
+      if (previousLoad) previousLoad.scopeLease = null;
+      previous.id = `${id}-previous`;
+    }
     const link = documentRef.createElement('link');
     link.id = id;
     link.rel = 'stylesheet';
@@ -487,6 +521,7 @@ function createResourceLoader(documentRef: Document) {
 
     let loaded = false;
     let settled = false;
+    let scopeLease: EditorStylesheetScopeLease | null = null;
     let rejectLoad!: (error: Error) => void;
     let cleanup = () => undefined;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -506,15 +541,36 @@ function createResourceLoader(documentRef: Document) {
         if (settled) return;
         settled = true;
         cleanup();
-        loaded = true;
-        link.dataset.easymdeLoadedHref = url;
-        previous?.remove();
-        resolve();
+        try {
+          scopeLease = scopeEditorStylesheetLink(
+            link,
+            { rootSelector: editorRootSelector }
+          );
+          load.scopeLease = scopeLease;
+          loaded = true;
+          link.dataset.easymdeLoadedHref = url;
+          previous?.remove();
+          resolve();
+        } catch (error) {
+          scopeLease?.dispose();
+          scopeLease = null;
+          load.scopeLease = null;
+          link.remove();
+          if (previous?.isConnected) previous.id = id;
+          reject(
+            error instanceof Error
+              ? error
+              : resourceError('preview-enhancement-style-scope-failed')
+          );
+        }
       };
       const handleError = () => {
         if (settled) return;
         settled = true;
         cleanup();
+        scopeLease?.dispose();
+        scopeLease = null;
+        load.scopeLease = null;
         restorePrevious();
         reject(resourceError('preview-enhancement-resource-load-failed'));
       };
@@ -533,6 +589,9 @@ function createResourceLoader(documentRef: Document) {
         if (settled) return;
         settled = true;
         cleanup();
+        scopeLease?.dispose();
+        scopeLease = null;
+        load.scopeLease = null;
         link.remove();
         if (previous?.isConnected) previous.id = id;
         rejectLoad(resourceError('preview-enhancement-resource-stale'));
@@ -540,6 +599,7 @@ function createResourceLoader(documentRef: Document) {
       link,
       loaded: () => loaded,
       promise,
+      scopeLease: null,
       url
     };
     styleLoads.set(id, load);
@@ -608,6 +668,7 @@ function createResourceLoader(documentRef: Document) {
       link.href = url;
     }
     let state: 'pending' | 'ready' | 'terminal' = reused ? 'ready' : 'pending';
+    let scopeLease: EditorStylesheetScopeLease | null = null;
     let commitRequested = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let resolveLoad!: (prepared: PreparedCodeTheme) => void;
@@ -678,7 +739,11 @@ function createResourceLoader(documentRef: Document) {
       const pending = 'pending' === state;
       state = 'terminal';
       cleanup();
-      if (!preserveLink) link?.remove();
+      if (!preserveLink) {
+        scopeLease?.dispose();
+        scopeLease = null;
+        link?.remove();
+      }
       if ('activation' === owner) {
         slot.activeActivations.delete(sequence);
         if (committedActivationUrl) {
@@ -739,6 +804,11 @@ function createResourceLoader(documentRef: Document) {
         }
         activeLink = existing;
       }
+      const previousLoad = styleLoads.get(id);
+      if (previousLoad) {
+        previousLoad.scopeLease?.dispose();
+        previousLoad.scopeLease = null;
+      }
       if ('activation' === owner) {
         slot.committedActivationSequence = sequence;
         slot.authoritativeActivationUrl = url;
@@ -747,10 +817,14 @@ function createResourceLoader(documentRef: Document) {
       }
       const ready = Promise.resolve();
       styleLoads.set(id, {
-        cancel: () => undefined,
+        cancel: () => {
+          scopeLease?.dispose();
+          scopeLease = null;
+        },
         link: activeLink,
         loaded: () => true,
         promise: ready,
+        scopeLease,
         url
       });
       finish(undefined, 'activation' === owner ? url : undefined, true);
@@ -779,15 +853,42 @@ function createResourceLoader(documentRef: Document) {
     handleAbort = cancel;
     signal.addEventListener('abort', handleAbort, { once: true });
     if (reused) {
-      resolveLoad({ cancel, commit });
+      try {
+        if (!(existing instanceof HTMLLinkElement)) {
+          throw resourceError('preview-enhancement-resource-conflict');
+        }
+        scopeLease = scopeEditorStylesheetLink(
+          existing,
+          { rootSelector: editorRootSelector }
+        );
+        resolveLoad({ cancel, commit });
+      } catch (error) {
+        finish(
+          error instanceof Error
+            ? error.message
+            : 'preview-enhancement-style-scope-failed'
+        );
+      }
       return load;
     }
     handleLoad = () => {
       if ('pending' !== state || !link) return;
-      state = 'ready';
       cleanupLoad();
-      link.dataset.easymdeLoadedHref = url;
-      resolveLoad({ cancel, commit });
+      try {
+        scopeLease = scopeEditorStylesheetLink(
+          link,
+          { rootSelector: editorRootSelector }
+        );
+        state = 'ready';
+        link.dataset.easymdeLoadedHref = url;
+        resolveLoad({ cancel, commit });
+      } catch (error) {
+        finish(
+          error instanceof Error
+            ? error.message
+            : 'preview-enhancement-style-scope-failed'
+        );
+      }
     };
     handleError = () => finish('preview-enhancement-resource-load-failed');
     link?.addEventListener('load', handleLoad);
@@ -811,6 +912,10 @@ function createResourceLoader(documentRef: Document) {
     }
     for (const load of styleLoads.values()) {
       if (!load.loaded()) load.cancel();
+      else {
+        load.scopeLease?.dispose();
+        load.scopeLease = null;
+      }
     }
     for (const slot of preparedStyleSlots.values()) {
       for (const load of [...slot.loads]) load.cancel();
@@ -845,8 +950,48 @@ export function createBrowserPreviewEnhancementPort(
   bootstrap: PreviewEnhancementBootstrap,
   options: BrowserPreviewEnhancementOptions
 ): PreviewEnhancementPort {
-  const loader = createResourceLoader(options.documentRef);
+  const loader = createResourceLoader(
+    options.documentRef,
+    options.editorRootSelector ?? '#easymde-editor-root'
+  );
   const assets = bootstrap.assets;
+
+  const editorRootSelector = options.editorRootSelector ?? '#easymde-editor-root';
+
+  function scopeRenderedStyles(surface: HTMLElement): EditorStylesheetScopeLease {
+    const stylesheets = Array.from(surface.querySelectorAll('svg style')).map((node) => {
+      if (node.namespaceURI !== 'http://www.w3.org/2000/svg') {
+        throw resourceError('preview-enhancement-rendered-style-unavailable');
+      }
+      const style = node as SVGStyleElement;
+      let stylesheet: CSSStyleSheet | null;
+      try {
+        stylesheet = style.sheet ?? null;
+      } catch {
+        throw resourceError('preview-enhancement-rendered-style-read-failed');
+      }
+      if (!stylesheet) {
+        throw resourceError('preview-enhancement-rendered-style-unavailable');
+      }
+      return stylesheet;
+    });
+    try {
+      return scopeEditorStylesheets(stylesheets, {
+        rootSelector: editorRootSelector
+      });
+    } catch (error) {
+      if (error instanceof EditorStylesheetScopeError) {
+        throw resourceError(
+          error.code === 'editor-stylesheet-rollback-failed'
+            ? 'preview-enhancement-rendered-style-rollback-failed'
+            : 'preview-enhancement-rendered-style-scope-failed'
+        );
+      }
+      throw error instanceof Error
+        ? error
+        : resourceError('preview-enhancement-rendered-style-scope-failed');
+    }
+  }
 
   async function prepareCodeThemeForOwner(
     context: PreviewEnhancementContext,
@@ -957,6 +1102,7 @@ export function createBrowserPreviewEnhancementPort(
   return {
     dispose: loader.dispose,
     prepareCodeTheme,
+    scopeRenderedStyles,
     syncCodeFrameBackgrounds(surface) {
       const enhancements = options.runtime.getEnhancements();
       if (!enhancements) {

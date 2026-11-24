@@ -4,6 +4,7 @@ import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard'
 
 import {
   blobText,
+  computedStyle,
   declaration,
   installClipboardTestEnvironment,
   prepareClipboard,
@@ -16,6 +17,7 @@ function captionFaultComputedStyle(element: Element, pseudoElement?: string): CS
   if ('INPUT' === element.tagName) {
     return declaration({ appearance: 'none', display: 'block', height: '12px', position: 'absolute', width: '12px' });
   }
+  if (pseudoElement) return computedStyle(element, pseudoElement);
   if ('ARTICLE' === element.tagName) {
     return declaration({
       'border-bottom-width': '0px',
@@ -315,6 +317,7 @@ describe('createBrowserWechatClipboard', () => {
       if ('EM' === element.tagName && pseudoElement) {
         return declaration({ content: '"◇"', display: 'inline', position: 'static', 'white-space': 'normal' });
       }
+      if (pseudoElement) return computedStyle(element, pseudoElement);
       if ('STRONG' === element.tagName) return declaration({ display: 'inline', 'white-space': 'normal' });
       if ('EM' === element.tagName) return declaration({ display: 'inline', 'white-space': 'normal' });
       if ('ARTICLE' === element.tagName) {
@@ -543,6 +546,7 @@ describe('createBrowserWechatClipboard', () => {
           'white-space': 'normal'
         });
       }
+      if (pseudoElement) return computedStyle(element, pseudoElement);
       if ('STRONG' === element.tagName) return declaration({ display: 'inline', 'white-space': 'normal' });
       if ('ARTICLE' === element.tagName) {
         return declaration({

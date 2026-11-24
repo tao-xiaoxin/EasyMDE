@@ -23,7 +23,8 @@ import {
 } from '../model/create-preview-request-session';
 import {
   previewEnhancementFailureCode,
-  type PreviewEnhancementPort
+  type PreviewEnhancementPort,
+  type PreviewRenderedStylesLease,
 } from '../ports/preview-enhancement-port';
 import type { PreviewScrollPort, PreviewScrollSnapshot } from '../ports/preview-scroll-port';
 import {
@@ -33,6 +34,7 @@ import {
 import {
   SafePreviewHtmlSink,
   type SafePreviewHtmlSinkCommit,
+  type SafePreviewHtmlSinkFailureOutcome,
   type SafePreviewHtmlSinkMaterializeCommit,
   type SafePreviewHtmlSinkWindowCommit
 } from './SafePreviewHtmlSink';
@@ -54,6 +56,13 @@ function previewFailureCode(error: unknown): string {
   return error instanceof PreviewWindowDomError
     ? error.message
     : previewEnhancementFailureCode(error);
+}
+
+function previewRollbackFailureCode(error: unknown): string {
+  const code = previewFailureCode(error);
+  return 'preview-enhancement-failed' === code
+    ? 'preview-enhancement-rendered-style-rollback-failed'
+    : code;
 }
 
 function previewNeedsWindow(editMap: PreviewEditMap | null): boolean {
@@ -445,9 +454,11 @@ function stagingTime(
   scheduler: PreviewSurfaceStagingScheduler,
   documentRef: Document
 ): number {
-  return scheduler.now?.()
+  return(
+    scheduler.now?.()
     ?? documentRef.defaultView?.performance?.now()
-    ?? Date.now();
+    ?? Date.now()
+  );
 }
 
 async function populateEnhancementCandidate(
@@ -501,7 +512,7 @@ function capturePreviewBlockMarkers(
   scheduler: PreviewSurfaceStagingScheduler,
   isCurrent: () => boolean,
   signal: AbortSignal
-): ReadonlyArray<VisualBlockMarker> | null
+):| ReadonlyArray<VisualBlockMarker> | null
   | Promise<ReadonlyArray<VisualBlockMarker> | null> {
   validatePreviewWindowMarkup(surface, editMap);
   const markers: VisualBlockMarker[] = [];
@@ -678,11 +689,15 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
   const materializationPendingRef = useRef(false);
   const materializedOverrideRef = useRef(false);
   const ownerActiveRef = useRef(false);
+  const renderedStylesLeaseRef = useRef<PreviewRenderedStylesLease | null>(
+    null,
+  );
   const documentEndPinRef = useRef<MutablePreviewDocumentEndPin | null>(null);
   const prepareWindowBlockAdoptionRef = useRef<
     (node: HTMLElement) => (() => boolean) | null
   >(() => null);
-  const materializeRef = useRef<(reportDiagnostics?: boolean) => Promise<boolean>>(() =>
+  const materializeRef = useRef<(reportDiagnostics?: boolean) => Promise<boolean>
+  >(() =>
     Promise.resolve(false)
   );
   const scheduleWindowRef = useRef<() => void>(() => undefined);
@@ -810,6 +825,67 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     previewWindowRepositoryRef.current = null;
   }, [discardPendingWork]);
 
+  const failRenderedStyles = useCallback(
+    (outcome: SafePreviewHtmlSinkFailureOutcome): void => {
+      const primaryCode = previewFailureCode(outcome.error);
+      onDiagnosticRef.current?.(primaryCode);
+      if ('unverified' === outcome.kind) {
+        onDiagnosticRef.current?.(
+          previewRollbackFailureCode(outcome.rollbackError)
+        );
+      }
+      const generation = generationRef.current;
+      const stagedCandidate = enhancementCandidateRef.current;
+      if (stagedCandidate?.generation === generation) {
+        discardEnhancementCandidate(stagedCandidate);
+        enhancementCandidateRef.current = null;
+      }
+      const committedCandidate = committedEnhancementCandidateRef.current;
+      if (committedCandidate?.generation === generation) {
+        discardEnhancementCandidate(committedCandidate);
+        committedEnhancementCandidateRef.current = null;
+      }
+      const pendingMaterialization = materializePendingRef.current;
+      if (pendingMaterialization) {
+        materializePendingRef.current = null;
+        materializationPendingRef.current = false;
+        pendingMaterialization.resolve(false);
+      }
+      materializedOverrideRef.current = false;
+      windowCommitPendingRef.current = false;
+      previewWindowRepositoryRef.current = null;
+      setState((current) => {
+        if ('html' !== current.kind) return current;
+        const previous = 'restored' === outcome.kind ? outcome.previous : null;
+        if (!previous) {
+          return {
+            ...current,
+            html: '' as SafePreviewHtml,
+            htmlRevision: current.generation,
+            phase: 'failed',
+            signature: '',
+            materializeCommit: null,
+            stagedCommit: null,
+            windowedCommit: null,
+            ...(windowedRef.current ? { windowedFailure: true } : {}),
+          };
+        }
+        return {
+          ...current,
+          html: previous.html ?? ('' as SafePreviewHtml),
+          htmlRevision: previous.htmlRevision,
+          phase: 'failed',
+          signature: '',
+          materializeCommit: null,
+          stagedCommit: null,
+          windowedCommit: previous.windowedCommit,
+          ...(windowedRef.current ? { windowedFailure: true } : {}),
+        };
+      });
+    },
+    [],
+  );
+
   const onStagedCommit = useCallback((revision: number) => {
     windowCommitPendingRef.current = false;
     if (pendingWindowCommitRef.current?.revision === revision) {
@@ -924,7 +1000,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
   const onMaterializeFailure = useCallback((
     revision: number,
     key: number,
-    error: unknown
+    outcome: SafePreviewHtmlSinkFailureOutcome,
   ) => {
     const pending = materializePendingRef.current;
     if (
@@ -939,23 +1015,9 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     windowCommitPendingRef.current = false;
     previewWindowRepositoryRef.current = null;
     pending.resolve(false);
-    props.onDiagnostic?.(previewFailureCode(error));
-    setState((current) =>
-      'html' === current.kind
-      && current.generation === revision
-      && current.materializeCommit?.key === key
-        ? {
-            ...current,
-            materializeCommit: null,
-            phase: 'failed',
-            signature: '',
-            stagedCommit: null,
-            windowedCommit: null,
-            windowedFailure: true
-          }
-        : current
-    );
-  }, [props.onDiagnostic]);
+    failRenderedStyles(outcome);
+    },
+    [failRenderedStyles]);
 
   const materialize = useCallback((reportDiagnostics = true): Promise<boolean> => {
     if (!ownerActiveRef.current) return Promise.resolve(false);
@@ -1346,7 +1408,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
           editMap: null,
           features,
           generation,
-          html: previousHtml?.html ?? '' as SafePreviewHtml,
+          html: previousHtml?.html ??('' as SafePreviewHtml),
           htmlRevision: previousHtml?.htmlRevision ?? generation,
           kind: 'html',
           phase: 'failed',
@@ -1401,8 +1463,8 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
           html: hasCurrentHtml && 'html' === current.kind
             ? current.html
             : windowedFirstPaint
-              ? '' as SafePreviewHtml
-              : requestState.response.html,
+              ?('' as SafePreviewHtml)
+                : requestState.response.html,
           htmlRevision: hasCurrentHtml && 'html' === current.kind
             ? current.htmlRevision
             : generation,
@@ -1432,10 +1494,38 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     stageCandidate();
   }
 
+  const onDomMutation = useCallback(
+    (surface: HTMLElement): undefined | Error => {
+      let nextLease: PreviewRenderedStylesLease;
+      try {
+        nextLease = props.enhancementPort.scopeRenderedStyles(surface);
+      } catch (error) {
+        return new Error(previewFailureCode(error));
+      }
+      const previousLease = renderedStylesLeaseRef.current;
+      renderedStylesLeaseRef.current = nextLease;
+      try {
+        previousLease?.dispose();
+      } catch {
+        return new Error('preview-enhancement-rendered-style-rollback-failed');
+      }
+      return undefined;
+    },
+    [props.enhancementPort],
+  );
+
   useLayoutEffect(() => {
     const surface = surfaceRef.current;
     if (!surface) throw new Error('preview-surface-missing');
     ownerActiveRef.current = true;
+    const initialStyleError = onDomMutation(surface);
+    if (initialStyleError) {
+      failRenderedStyles({
+        error: initialStyleError,
+        kind: 'unverified',
+        rollbackError: initialStyleError,
+      });
+    }
     const session = createPreviewRequestSession({
       initialRevision: props.initialRevision,
       onDiagnostic: (code) => onDiagnosticRef.current?.(code),
@@ -1459,13 +1549,22 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     }
     return () => {
       ownerActiveRef.current = false;
+      const renderedStylesLease = renderedStylesLeaseRef.current;
+      renderedStylesLeaseRef.current = null;
+      try {
+        renderedStylesLease?.dispose();
+      } catch {
+        onDiagnosticRef.current?.(
+          'preview-enhancement-rendered-style-rollback-failed',
+        );
+      }
       documentEndPinRef.current = null;
       scrollSnapshotRef.current = null;
       discardStaging();
       props.onDispose?.(runtime);
       session.destroy();
     };
-  }, [discardStaging]);
+  }, [discardStaging, failRenderedStyles, onDomMutation]);
 
   useLayoutEffect(() => {
     if (props.windowed) return;
@@ -1646,12 +1745,12 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
           ?? defaultPreviewSurfaceStagingScheduler(
             candidateSurface.ownerDocument
           );
-        if (!await populateEnhancementCandidate(
+        if (!(await populateEnhancementCandidate(
           activeCandidate,
           scheduler,
           isCurrent,
           controller.signal
-        )) {
+          ))) {
           candidateSurface.remove();
           return;
         }
@@ -1737,7 +1836,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
         }
         const enhancedHtml = largeWindow
           ? activeCandidate.serverHtml
-          : candidateSurface.innerHTML as SafePreviewHtml;
+          :(candidateSurface.innerHTML as SafePreviewHtml);
         if (largeWindow) {
           await scheduler.yield();
           if (!isCurrent() || controller.signal.aborted) {
@@ -2097,8 +2196,8 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
         return;
       }
       frame = windowRef
-        ? windowRef.setTimeout(commitWindow, 0) as unknown as number
-        : setTimeout(commitWindow, 0) as unknown as number;
+        ?(windowRef.setTimeout(commitWindow, 0) as unknown as number)
+        : (setTimeout(commitWindow, 0) as unknown as number);
     };
 
     scheduleWindowRef.current = scheduleWindow;
@@ -2200,6 +2299,8 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
         : {})}
       onMaterializeComplete={onMaterializeComplete}
       onMaterializeFailure={onMaterializeFailure}
+      onDomMutation={onDomMutation}
+      onDomMutationFailure={failRenderedStyles}
       onStagedCommit={onStagedCommit}
       refreshing={busy}
       acceptedHtml={

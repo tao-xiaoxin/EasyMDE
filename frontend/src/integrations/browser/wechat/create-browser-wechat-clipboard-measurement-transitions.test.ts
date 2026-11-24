@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard';
 
 import {
+  computedStyle,
   declaration,
   deferred,
   installClipboardTestEnvironment,
@@ -39,7 +40,9 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (_element, pseudoElement) => {
+      getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (!pseudoElement) styleReads += 1;
         return declaration({ display: 'block' });
       },
@@ -86,6 +89,8 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (!pseudoElement && 'P' === element.tagName) styleReads += 1;
         return declaration({ display: 'block' });
       },
@@ -150,7 +155,9 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (_element, pseudoElement) => {
+      getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (!pseudoElement) styleReads += 1;
         return declaration({ display: 'block' });
       },
@@ -210,7 +217,9 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (_element, pseudoElement) => {
+      getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (!pseudoElement) styleReads += 1;
         return declaration({ display: 'block' });
       },
@@ -271,6 +280,8 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (!pseudoElement && 'P' === element.tagName) {
           styleReads += 1;
           if (1 === styleReads) phase = 'second';
@@ -343,6 +354,8 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         if (element.classList.contains('easymde-mermaid')) {
           return declaration({ display: 'block', height: '40px', width: '80px' });
@@ -409,6 +422,8 @@ describe('createBrowserWechatClipboard', () => {
         clipboardItem: ClipboardItemStub,
         document,
         getComputedStyle: (element, pseudoElement) => {
+          if ('::before' === pseudoElement || '::after' === pseudoElement)
+            return computedStyle(element, pseudoElement);
           if (pseudoElement) return declaration({});
           if (element.classList.contains('easymde-mermaid')) {
             return declaration({ display: 'block', height: '40px', width: '80px' });
@@ -470,8 +485,12 @@ describe('createBrowserWechatClipboard', () => {
         blob: Blob,
         clipboardItem: ClipboardItemStub,
         document,
-        getComputedStyle: (_element, pseudoElement) =>
-          pseudoElement ? declaration({}) : declaration({ display: 'block' }),
+        getComputedStyle: (element, pseudoElement) =>
+          '::before' === pseudoElement || '::after' === pseudoElement
+            ? computedStyle(element, pseudoElement)
+            : pseudoElement
+              ? declaration({})
+              : declaration({ display: 'block' }),
         getSelection: window.getSelection.bind(window),
         pageOffset: () => ({ x: 0, y: 0 }),
         scrollTo: vi.fn(),
@@ -508,7 +527,10 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: null,
       document,
-      getComputedStyle: (_element, _pseudoElement) => declaration({ display: 'block' }),
+      getComputedStyle: (element, pseudoElement) =>
+        '::before' === pseudoElement || '::after' === pseudoElement
+          ? computedStyle(element, pseudoElement)
+          : declaration({ display: 'block' }),
       getSelection: window.getSelection.bind(window),
       pageOffset: () => ({ x: 0, y: 0 }),
       scrollTo: vi.fn(),
@@ -545,7 +567,10 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: null,
       document,
-      getComputedStyle: (_element, _pseudoElement) => declaration({ display: 'block' }),
+      getComputedStyle: (element, pseudoElement) =>
+        '::before' === pseudoElement || '::after' === pseudoElement
+          ? computedStyle(element, pseudoElement)
+          : declaration({ display: 'block' }),
       getSelection: window.getSelection.bind(window),
       pageOffset: () => ({ x: 0, y: 0 }),
       scrollTo: vi.fn(),
@@ -589,8 +614,12 @@ describe('createBrowserWechatClipboard', () => {
         blob: Blob,
         clipboardItem: ClipboardItemStub,
         document,
-        getComputedStyle: (_element, pseudoElement) =>
-          pseudoElement ? declaration({}) : declaration({ display: 'block' }),
+        getComputedStyle: (element, pseudoElement) =>
+          '::before' === pseudoElement || '::after' === pseudoElement
+            ? computedStyle(element, pseudoElement)
+            : pseudoElement
+              ? declaration({})
+              : declaration({ display: 'block' }),
         getSelection: window.getSelection.bind(window),
         pageOffset: () => ({ x: 0, y: 0 }),
         scrollTo: vi.fn(),
@@ -628,7 +657,10 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: null,
       document,
-      getComputedStyle: (_element, _pseudoElement) => declaration({ display: 'block' }),
+      getComputedStyle: (element, pseudoElement) =>
+        '::before' === pseudoElement || '::after' === pseudoElement
+          ? computedStyle(element, pseudoElement)
+          : declaration({ display: 'block' }),
       getSelection: window.getSelection.bind(window),
       pageOffset: () => ({ x: 0, y: 0 }),
       scrollTo: vi.fn(),
@@ -683,8 +715,12 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (_element, pseudoElement) =>
-        pseudoElement ? declaration({}) : declaration({ display: 'block' }),
+      getComputedStyle: (element, pseudoElement) =>
+        '::before' === pseudoElement || '::after' === pseudoElement
+          ? computedStyle(element, pseudoElement)
+          : pseudoElement
+            ? declaration({})
+            : declaration({ display: 'block' }),
       getSelection: window.getSelection.bind(window),
       pageOffset: () => ({ x: 0, y: 0 }),
       scrollTo: vi.fn(),
@@ -732,8 +768,12 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (_element, pseudoElement) =>
-        pseudoElement ? declaration({}) : declaration({ display: 'block' }),
+      getComputedStyle: (element, pseudoElement) =>
+        '::before' === pseudoElement || '::after' === pseudoElement
+          ? computedStyle(element, pseudoElement)
+          : pseudoElement
+            ? declaration({})
+            : declaration({ display: 'block' }),
       getSelection: window.getSelection.bind(window),
       pageOffset: () => ({ x: 0, y: 0 }),
       scrollTo: vi.fn(),
@@ -776,7 +816,9 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (_element, pseudoElement) => {
+      getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (!pseudoElement) styleReads += 1;
         return declaration({ display: 'block' });
       },
@@ -867,6 +909,8 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         if (element === workspace || element === preview) return declaration({ display: 'none' });
         if (element.closest('.easymde-wechat-preview-measurement')) {

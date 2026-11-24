@@ -10,6 +10,10 @@ export type PreparedCodeTheme = Readonly<{
   commit: () => void;
 }>;
 
+export type PreviewRenderedStylesLease = Readonly<{
+  dispose: () => void;
+}>;
+
 export type PreviewEnhancementFailureCode =
   | 'preview-enhancement-code-theme-missing'
   | 'preview-enhancement-document-head-missing'
@@ -20,6 +24,10 @@ export type PreviewEnhancementFailureCode =
   | 'preview-enhancement-resource-conflict'
   | 'preview-enhancement-resource-load-failed'
   | 'preview-enhancement-resource-stale'
+  | 'preview-enhancement-rendered-style-read-failed'
+  | 'preview-enhancement-rendered-style-rollback-failed'
+  | 'preview-enhancement-rendered-style-scope-failed'
+  | 'preview-enhancement-rendered-style-unavailable'
   | 'preview-enhancement-runtime-unavailable'
   | 'preview-enhancement-visual-source-missing';
 
@@ -33,6 +41,10 @@ const failureCodes: ReadonlySet<string> = new Set<PreviewEnhancementFailureCode>
   'preview-enhancement-resource-conflict',
   'preview-enhancement-resource-load-failed',
   'preview-enhancement-resource-stale',
+  'preview-enhancement-rendered-style-read-failed',
+  'preview-enhancement-rendered-style-rollback-failed',
+  'preview-enhancement-rendered-style-scope-failed',
+  'preview-enhancement-rendered-style-unavailable',
   'preview-enhancement-runtime-unavailable',
   'preview-enhancement-visual-source-missing'
 ]);
@@ -49,6 +61,7 @@ export type PreviewEnhancementPort = Readonly<{
   prepareCodeTheme: (
     context: PreviewEnhancementContext
   ) => Promise<PreparedCodeTheme>;
+  scopeRenderedStyles: (surface: HTMLElement) => PreviewRenderedStylesLease;
   syncCodeFrameBackgrounds: (surface: HTMLElement) => void;
   enhance: (
     surface: HTMLElement,

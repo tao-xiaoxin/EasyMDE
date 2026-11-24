@@ -9,13 +9,17 @@ import { dirname, join } from 'node:path';
 
 import {
   ATLAS_SCHEMA,
-  EXPECTED_KATEX_FONT_FILES,
+  RUNTIME_ATLAS_PATH,
+  RUNTIME_FONT_DIRECTORY,
   SERIALIZATION_OPTIONS,
   buildWechatMathOutlineAtlas,
   lookupAtlasGlyph,
   normalizeGlyphRecord,
   runCli,
   serializeWechatMathOutlineAtlas,
+  findWechatMathOutlineAtlasMismatch,
+  wechatMathAtlasContentVersion,
+  writeWechatMathOutlineAtlas,
   validateUnitsPerEm,
 } from '../../scripts/wechat-math-outline-atlas.mjs';
 
@@ -70,12 +74,21 @@ function runJsonBuild() {
 }
 
 test('builds the complete locked KaTeX face inventory', () => {
-  const atlas = buildWechatMathOutlineAtlas();
+  const lockedFontFiles = fs.readdirSync(join(repositoryRoot, 'node_modules/katex/dist/fonts'))
+    .filter((file) => file.endsWith('.ttf'))
+    .sort();
+  const runtimeFontFiles = fs.readdirSync(RUNTIME_FONT_DIRECTORY)
+    .filter((file) => file.endsWith('.ttf'))
+    .sort();
+  const atlas = buildWechatMathOutlineAtlas({
+    runtimeFontDirectory: RUNTIME_FONT_DIRECTORY,
+  });
   const actualFiles = atlas.fonts.map((font) => font.file);
 
-  assert.deepEqual(EXPECTED_KATEX_FONT_FILES, expectedFontFiles);
-  assert.deepEqual(actualFiles, expectedFontFiles);
-  assert.equal(atlas.fonts.length, 20);
+  assert.deepEqual(lockedFontFiles, expectedFontFiles);
+  assert.deepEqual(runtimeFontFiles, lockedFontFiles);
+  assert.deepEqual(actualFiles, lockedFontFiles);
+  assert.equal(atlas.fonts.length, lockedFontFiles.length);
   assert.equal(atlas.schema, ATLAS_SCHEMA);
 });
 
@@ -155,19 +168,19 @@ test('keeps missing inventory diagnostics stable and path-free', () => {
   fs.rmSync(directory, { recursive: true, force: true });
   const stderr = createCaptureStream();
 
-  assert.equal(runCli({ fontDirectory: directory, stderr }), 1);
+  assert.equal(runCli({ fontDirectory: directory, runtimeFontDirectory: null, stderr }), 1);
   assert.equal(stderr.value, 'font-inventory-read-failed\n');
   assert.equal(stderr.value.includes(directory), false);
 });
 
-test('reports inventory counts without unexpected private filenames', () => {
+test('keeps inventory parse diagnostics free of private paths and unexpected filenames', () => {
   const fontDirectory = fs.mkdtempSync(join(os.tmpdir(), 'easymde-atlas-inventory-private-sentinel-'));
   const unexpectedFile = 'private-unexpected-font-sentinel.ttf';
   const stderr = createCaptureStream();
   try {
     fs.writeFileSync(join(fontDirectory, unexpectedFile), Buffer.alloc(0));
-    assert.equal(runCli({ fontDirectory, stderr }), 1);
-    assert.equal(stderr.value, 'font-inventory-mismatch:expected-20:actual-1\n');
+    assert.equal(runCli({ fontDirectory, runtimeFontDirectory: null, stderr }), 1);
+    assert.equal(stderr.value, 'font-atlas-build-failed\n');
     assert.equal(stderr.value.includes(fontDirectory), false);
     assert.equal(stderr.value.includes(unexpectedFile), false);
   } finally {
@@ -198,7 +211,7 @@ test('keeps per-face read failures path-free while retaining the cause', () => {
     assert.equal(caught.cause, sourceError);
     assert.equal(caught.message.includes(sentinel), false);
 
-    assert.equal(runCli({ fontDirectory, readFile: readFont, stderr }), 1);
+    assert.equal(runCli({ fontDirectory, runtimeFontDirectory: null, readFile: readFont, stderr }), 1);
     assert.equal(stderr.value, 'font-read-failed:KaTeX_AMS-Regular.ttf\n');
     assert.equal(stderr.value.includes(sentinel), false);
     assert.equal(stderr.value.includes(fontDirectory), false);
@@ -225,7 +238,7 @@ test('keeps parser failures path-free while retaining the cause', () => {
     assert.ok(caught.cause instanceof Error);
     assert.equal(caught.message.includes(sentinel), false);
 
-    assert.equal(runCli({ fontDirectory, stderr }), 1);
+    assert.equal(runCli({ fontDirectory, runtimeFontDirectory: null, stderr }), 1);
     assert.equal(stderr.value, 'font-parse-failed:KaTeX_AMS-Regular.ttf\n');
     assert.equal(stderr.value.includes(sentinel), false);
     assert.equal(stderr.value.includes(fontDirectory), false);
@@ -325,4 +338,101 @@ test('serializes deterministically in two separate Node processes', () => {
   const atlas = JSON.parse(first);
   assert.equal(atlas.fonts.length, expectedFontFiles.length);
   assert.equal(serializeWechatMathOutlineAtlas(atlas), first);
+});
+
+test('runtime atlas content version is the lowercase SHA-256 digest', () => {
+  const bytes = fs.readFileSync(RUNTIME_ATLAS_PATH);
+  assert.equal(
+    wechatMathAtlasContentVersion(bytes),
+    crypto.createHash('sha256').update(bytes).digest('hex'),
+  );
+  assert.equal(wechatMathAtlasContentVersion(bytes).length, 64);
+  assert.throws(
+    () => wechatMathAtlasContentVersion(null),
+    /math-atlas-content:expected-buffer-or-string/,
+  );
+});
+
+
+test('rejects a locked/runtime font inventory mismatch before reading atlas bytes', () => {
+  const sourceDirectory = fs.mkdtempSync(join(os.tmpdir(), 'easymde-atlas-source-'));
+  const runtimeDirectory = fs.mkdtempSync(join(os.tmpdir(), 'easymde-atlas-runtime-'));
+  try {
+    fs.writeFileSync(join(sourceDirectory, 'KaTeX_Main-Regular.ttf'), Buffer.alloc(0));
+    fs.writeFileSync(join(runtimeDirectory, 'KaTeX_Main-Regular.ttf'), Buffer.alloc(0));
+    fs.writeFileSync(join(runtimeDirectory, 'KaTeX_Extra-Regular.ttf'), Buffer.alloc(0));
+    assert.throws(
+      () => buildWechatMathOutlineAtlas({
+        fontDirectory: sourceDirectory,
+        runtimeFontDirectory: runtimeDirectory,
+      }),
+      /font-inventory-mismatch:source-runtime/,
+    );
+  } finally {
+    fs.rmSync(sourceDirectory, { recursive: true, force: true });
+    fs.rmSync(runtimeDirectory, { recursive: true, force: true });
+  }
+});
+
+test('rejects a prepared runtime font whose bytes differ from the locked source', () => {
+  const sourceDirectory = fs.mkdtempSync(join(os.tmpdir(), 'easymde-atlas-source-'));
+  const runtimeDirectory = fs.mkdtempSync(join(os.tmpdir(), 'easymde-atlas-runtime-'));
+  try {
+    fs.writeFileSync(join(sourceDirectory, 'KaTeX_Main-Regular.ttf'), Buffer.from('locked'));
+    fs.writeFileSync(join(runtimeDirectory, 'KaTeX_Main-Regular.ttf'), Buffer.from('changed'));
+    assert.throws(
+      () => buildWechatMathOutlineAtlas({
+        fontDirectory: sourceDirectory,
+        runtimeFontDirectory: runtimeDirectory,
+      }),
+      /font-inventory-mismatch:KaTeX_Main-Regular\.ttf/,
+    );
+  } finally {
+    fs.rmSync(sourceDirectory, { recursive: true, force: true });
+    fs.rmSync(runtimeDirectory, { recursive: true, force: true });
+  }
+});
+
+test('writes deterministically and rejects changed or missing runtime atlas bytes', () => {
+  const root = fs.mkdtempSync(join(os.tmpdir(), 'easymde-atlas-output-'));
+  const outputPath = join(root, 'atlas.json');
+  const sourceDirectory = fs.mkdtempSync(join(os.tmpdir(), 'easymde-atlas-source-'));
+  const runtimeDirectory = fs.mkdtempSync(join(os.tmpdir(), 'easymde-atlas-runtime-'));
+  try {
+    const source = fs.readFileSync(join(repositoryRoot, 'node_modules/katex/dist/fonts/KaTeX_Main-Regular.ttf'));
+    fs.writeFileSync(join(sourceDirectory, 'KaTeX_Main-Regular.ttf'), source);
+    fs.writeFileSync(join(runtimeDirectory, 'KaTeX_Main-Regular.ttf'), source);
+    const written = writeWechatMathOutlineAtlas({
+      fontDirectory: sourceDirectory,
+      runtimeFontDirectory: runtimeDirectory,
+      outputPath,
+    });
+    assert.equal(written.sha256, findWechatMathOutlineAtlasMismatch({
+      fontDirectory: sourceDirectory,
+      runtimeFontDirectory: runtimeDirectory,
+      outputPath,
+    }).sha256);
+    fs.writeFileSync(outputPath, 'changed');
+    assert.throws(
+      () => findWechatMathOutlineAtlasMismatch({
+        fontDirectory: sourceDirectory,
+        runtimeFontDirectory: runtimeDirectory,
+        outputPath,
+      }),
+      /font-atlas-mismatch/,
+    );
+    fs.rmSync(outputPath);
+    assert.throws(
+      () => findWechatMathOutlineAtlasMismatch({
+        fontDirectory: sourceDirectory,
+        runtimeFontDirectory: runtimeDirectory,
+        outputPath,
+      }),
+      /font-atlas-read-failed/,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(sourceDirectory, { recursive: true, force: true });
+    fs.rmSync(runtimeDirectory, { recursive: true, force: true });
+  }
 });

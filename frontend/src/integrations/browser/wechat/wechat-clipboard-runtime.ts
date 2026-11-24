@@ -1,4 +1,5 @@
 import type { WechatVisualRasterizationYield } from '../../../contracts/ports/wechat-visual-rasterization-port';
+import type { MermaidContentBox, MermaidContentBoxLease } from './wechat-mermaid-content-box';
 import { assertPngConversionCurrent, type WechatPngConversionContext } from './wechat-png-conversion-policy';
 
 export const BACKGROUND_SERIALIZATION_YIELD_BUDGET_MS = 8;
@@ -10,7 +11,14 @@ export type BrowserWechatClipboardRuntime = Readonly<{
   clipboardItem: ClipboardItemConstructor | null;
   document: Document;
   fetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+  /** Bootstrap-approved local KaTeX atlas URL; supplied by the asset owner. */
+  wechatMathAtlasUrl?: string;
+  wechatMathAtlasContentVersion?: string;
+  /** Existing approved font-scope inputs reused by math vector capture. */
+  approvedAssetBaseUrl?: string;
+  approvedKaTeXCssUrl?: string;
   getComputedStyle: (element: Element, pseudoElement?: string) => CSSStyleDeclaration;
+  mermaidContentBoxes?: MermaidContentBoxLease | Readonly<{ get: (source: Element) => MermaidContentBox | null }>;
   getSelection: () => Selection | null;
   pageOffset: () => Readonly<{ x: number; y: number }>;
   scrollTo: (x: number, y: number) => void;

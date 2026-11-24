@@ -102,7 +102,15 @@ export function createRawDimensionContextMirror(
 
 export function snapshotComputedStyle(computed: CSSStyleDeclaration): CSSStyleDeclaration {
   const values = new Map<string, string>();
-  ROOT_EXPORT_STYLE_PROPERTIES.forEach((property) => {
+  [
+    ...ROOT_EXPORT_STYLE_PROPERTIES,
+    'block-size',
+    'inline-size',
+    'min-block-size',
+    'max-block-size',
+    'min-inline-size',
+    'max-inline-size'
+  ].forEach((property) => {
     values.set(property, computed.getPropertyValue(property));
   });
   return { getPropertyValue: (property: string) => values.get(property) ?? '' } as unknown as CSSStyleDeclaration;

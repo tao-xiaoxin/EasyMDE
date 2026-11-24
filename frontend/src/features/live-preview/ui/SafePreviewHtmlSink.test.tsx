@@ -623,6 +623,308 @@ describe('SafePreviewHtmlSink window commits', () => {
     expect(onCommit).toHaveBeenCalledTimes(2);
   });
 
+  it('restores the prior plain children before reporting a mutation failure', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const onDomMutationFailure = vi.fn();
+    const onDomMutation = vi.fn((surface: HTMLElement) =>
+      'New' === surface.textContent ? new Error('preview-style-scope-failed') : undefined
+    );
+    const view = render(
+      <SafePreviewHtmlSink
+        html={'Old' as SafePreviewHtml}
+        htmlRevision={1}
+        onDomMutation={onDomMutation}
+        onDomMutationFailure={onDomMutationFailure}
+        surfaceRef={surfaceRef}
+      />
+    );
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        html={'New' as SafePreviewHtml}
+        htmlRevision={2}
+        onDomMutation={onDomMutation}
+        onDomMutationFailure={onDomMutationFailure}
+        surfaceRef={surfaceRef}
+      />
+    );
+
+    expect(surfaceRef.current?.textContent).toBe('Old');
+    expect(onDomMutationFailure).toHaveBeenCalledWith({
+      error: new Error('preview-style-scope-failed'),
+      kind: 'restored',
+      previous: {
+        html: 'Old' as SafePreviewHtml,
+        htmlRevision: 1,
+        windowedCommit: null
+      }
+    });
+  });
+
+  it('clears the surface and preserves both causes when restoration is unverified', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const onDomMutationFailure = vi.fn();
+    let oldSeen = false;
+    const onDomMutation = vi.fn((surface: HTMLElement) => {
+      if ('New' === surface.textContent) {
+        return new Error('preview-style-scope-failed');
+      }
+      if ('Old' === surface.textContent) {
+        if (oldSeen) return new Error('preview-style-scope-failed');
+        oldSeen = true;
+      }
+      return undefined;
+    });
+    const view = render(
+      <SafePreviewHtmlSink
+        html={'Old' as SafePreviewHtml}
+        htmlRevision={1}
+        onDomMutation={onDomMutation}
+        onDomMutationFailure={onDomMutationFailure}
+        surfaceRef={surfaceRef}
+      />
+    );
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        html={'New' as SafePreviewHtml}
+        htmlRevision={2}
+        onDomMutation={onDomMutation}
+        onDomMutationFailure={onDomMutationFailure}
+        surfaceRef={surfaceRef}
+      />
+    );
+
+    expect(surfaceRef.current?.textContent).toBe('');
+    expect(onDomMutationFailure).toHaveBeenCalledWith({
+      error: new Error('preview-style-scope-failed'),
+      kind: 'unverified',
+      rollbackError: new Error('preview-style-scope-failed')
+    });
+  });
+
+  it('restores prior window children before reporting a window mutation failure', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const onDomMutationFailure = vi.fn();
+    const onDomMutation = vi.fn((surface: HTMLElement) =>
+      'Next' === surface.textContent ? new Error('preview-style-scope-failed') : undefined
+    );
+    const oldNode = document.createElement('p');
+    oldNode.textContent = 'Old';
+    const nextNode = document.createElement('p');
+    nextNode.textContent = 'Next';
+    const view = render(
+      <SafePreviewHtmlSink
+        html={'' as SafePreviewHtml}
+        htmlRevision={1}
+        onDomMutation={onDomMutation}
+        onDomMutationFailure={onDomMutationFailure}
+        surfaceRef={surfaceRef}
+        windowedCommit={{ key: 1, nodes: [oldNode], revision: 1 }}
+      />
+    );
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        html={'' as SafePreviewHtml}
+        htmlRevision={2}
+        onDomMutation={onDomMutation}
+        onDomMutationFailure={onDomMutationFailure}
+        surfaceRef={surfaceRef}
+        windowedCommit={{ key: 2, nodes: [nextNode], revision: 2 }}
+      />
+    );
+
+    expect(Array.from(surfaceRef.current?.childNodes ?? [])).toEqual([oldNode]);
+    expect(onDomMutationFailure).toHaveBeenCalledWith({
+      error: new Error('preview-style-scope-failed'),
+      kind: 'restored',
+      previous: {
+        html: '' as SafePreviewHtml,
+        htmlRevision: 1,
+        windowedCommit: {
+          key: 1,
+          nodes: [oldNode],
+          revision: 1
+        }
+      }
+    });
+  });
+
+  it('notifies after plain, staged, and window DOM mutations', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const onDomMutation = vi.fn();
+    const initial = '<p>Initial</p>' as SafePreviewHtml;
+    const next = '<p>Next</p>' as SafePreviewHtml;
+    const view = render(
+      <SafePreviewHtmlSink
+        html={initial}
+        htmlRevision={1}
+        onDomMutation={onDomMutation}
+        surfaceRef={surfaceRef}
+      />
+    );
+    expect(onDomMutation).toHaveBeenCalledTimes(1);
+
+    const template = document.createElement('template');
+    template.innerHTML = next;
+    const stagedNodes = Array.from(template.content.childNodes);
+    view.rerender(
+      <SafePreviewHtmlSink
+        html={next}
+        htmlRevision={2}
+        onDomMutation={onDomMutation}
+        stagedCommit={{ nodes: stagedNodes, revision: 2 }}
+        surfaceRef={surfaceRef}
+      />
+    );
+    expect(onDomMutation).toHaveBeenCalledTimes(2);
+
+    const windowNode = document.createElement('p');
+    windowNode.textContent = 'Window';
+    view.rerender(
+      <SafePreviewHtmlSink
+        html={'' as SafePreviewHtml}
+        htmlRevision={3}
+        onDomMutation={onDomMutation}
+        surfaceRef={surfaceRef}
+        windowedCommit={{ key: 1, nodes: [windowNode], revision: 3 }}
+      />
+    );
+    expect(onDomMutation).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not report materialization success after a DOM mutation callback fails', async () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const nodes = Array.from({ length: 520 }, (_, index) => {
+      const node = document.createElement('p');
+      node.textContent = `block-${index}`;
+      return node;
+    });
+    const spacer = document.createElement('div');
+    spacer.setAttribute('data-easymde-preview-window-spacer', '1');
+    spacer.setAttribute('data-easymde-preview-window-start', '1');
+    spacer.setAttribute('data-easymde-preview-window-end', '519');
+    spacer.style.blockSize = '12432px';
+    const pending: Array<() => void> = [];
+    let mutationCount = 0;
+    const onDomMutation = vi.fn(() => {
+      mutationCount += 1;
+      return 2 === mutationCount
+        ? new Error('preview-sink-dom-mutation-failed')
+        : undefined;
+    });
+    const onComplete = vi.fn();
+    const onFailure = vi.fn();
+    const scheduler = {
+      yield: () => new Promise<void>((resolve) => pending.push(resolve))
+    };
+    const props = {
+      html: '' as SafePreviewHtml,
+      htmlRevision: 1,
+      materializeScheduler: scheduler,
+      onDomMutation,
+      onMaterializeComplete: onComplete,
+      onMaterializeFailure: onFailure,
+      surfaceRef
+    } as const;
+    const windowNodes = [nodes[0] as Node, spacer, nodes[519] as Node];
+    const view = render(
+      <SafePreviewHtmlSink
+        {...props}
+        windowedCommit={{ key: 1, nodes: windowNodes, revision: 1 }}
+      />
+    );
+    view.rerender(
+      <SafePreviewHtmlSink
+        {...props}
+        materializeCommit={{ key: 2, nodes, revision: 1 }}
+      />
+    );
+    await act(async () => {
+      pending.shift()?.();
+      await Promise.resolve();
+    });
+
+    expect(onComplete).not.toHaveBeenCalled();
+    expect(onFailure).toHaveBeenCalledOnce();
+    expect(onFailure.mock.calls[0]?.[2]).toEqual({
+      error: new Error('preview-sink-dom-mutation-failed'),
+      kind: 'restored',
+      previous: {
+        html: '' as SafePreviewHtml,
+        htmlRevision: 1,
+        windowedCommit: {
+          key: 1,
+          nodes: windowNodes,
+          revision: 1
+        }
+      }
+    });
+  });
+
+  it('clears an unverified materialization rollback and reports both causes', async () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const nodes = Array.from({ length: 520 }, (_, index) => {
+      const node = document.createElement('p');
+      node.textContent = `block-${index}`;
+      return node;
+    });
+    const spacer = document.createElement('div');
+    spacer.setAttribute('data-easymde-preview-window-spacer', '1');
+    spacer.setAttribute('data-easymde-preview-window-start', '1');
+    spacer.setAttribute('data-easymde-preview-window-end', '519');
+    spacer.style.blockSize = '12432px';
+    let mutationCount = 0;
+    const onDomMutation = vi.fn(() => {
+      mutationCount += 1;
+      return mutationCount >= 2
+        ? new Error('preview-sink-dom-mutation-failed')
+        : undefined;
+    });
+    const onFailure = vi.fn();
+    const pending: Array<() => void> = [];
+    const scheduler = {
+      yield: () => new Promise<void>((resolve) => pending.push(resolve))
+    };
+    const props = {
+      html: '' as SafePreviewHtml,
+      htmlRevision: 1,
+      materializeScheduler: scheduler,
+      onDomMutation,
+      onMaterializeFailure: onFailure,
+      surfaceRef
+    } as const;
+    const windowNodes = [nodes[0] as Node, spacer, nodes[519] as Node];
+    const view = render(
+      <SafePreviewHtmlSink
+        {...props}
+        windowedCommit={{ key: 1, nodes: windowNodes, revision: 1 }}
+      />
+    );
+    view.rerender(
+      <SafePreviewHtmlSink
+        {...props}
+        materializeCommit={{ key: 2, nodes, revision: 1 }}
+      />
+    );
+    await act(async () => {
+      pending.shift()?.();
+      await Promise.resolve();
+    });
+
+    expect(surfaceRef.current?.textContent).toBe('');
+    expect(onFailure).toHaveBeenCalledWith(
+      1,
+      2,
+      {
+        error: new Error('preview-sink-dom-mutation-failed'),
+        kind: 'unverified',
+        rollbackError: new Error('preview-sink-dom-mutation-failed')
+      }
+    );
+  });
+
   it('restores spacer range and geometry after cancelling a partial materialization', async () => {
     const surfaceRef = createRef<HTMLElement>();
     const nodes = Array.from({ length: 520 }, (_, index) => {
@@ -638,6 +940,7 @@ describe('SafePreviewHtmlSink window commits', () => {
     spacer.style.blockSize = '12432px';
     spacer.style.margin = '0';
     const pending: Array<() => void> = [];
+    const onDomMutation = vi.fn();
     const scheduler = {
       yield: () => new Promise<void>((resolve) => pending.push(resolve))
     };
@@ -646,6 +949,7 @@ describe('SafePreviewHtmlSink window commits', () => {
       html: '' as SafePreviewHtml,
       htmlRevision: 1,
       materializeScheduler: scheduler,
+      onDomMutation,
       surfaceRef
     } as const;
     const windowNodes = [nodes[0] as Node, spacer, nodes[519] as Node];
@@ -669,6 +973,7 @@ describe('SafePreviewHtmlSink window commits', () => {
     });
     expect(spacer.getAttribute('data-easymde-preview-window-start')).toBe('513');
     expect(pending).toHaveLength(1);
+    expect(onDomMutation).toHaveBeenCalledTimes(2);
 
     view.rerender(
       <SafePreviewHtmlSink
@@ -682,5 +987,6 @@ describe('SafePreviewHtmlSink window commits', () => {
     expect(spacer.style.blockSize).toBe('12432px');
     expect(spacer.style.margin).toBe('0px');
     expect(Array.from(surfaceRef.current?.childNodes ?? [])).toEqual(windowNodes);
+    expect(onDomMutation).toHaveBeenCalledTimes(3);
   });
 });

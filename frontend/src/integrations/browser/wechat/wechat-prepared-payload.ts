@@ -1,36 +1,17 @@
 import type { BackgroundAssetCache } from "./wechat-background-images";
 import {
 	type BrowserWechatClipboardRuntime,
-	type SerializationYield,
-	WECHAT_COPY_TIMING_NAMES,
 	backgroundPreparationAbortError,
 	createSerializationYield,
+	type SerializationYield,
 	throwIfBackgroundPreparationAborted,
+	WECHAT_COPY_TIMING_NAMES,
 	waitForBrowserTask,
 } from "./wechat-clipboard-runtime";
 import {
-	type ClipboardSourceFreshnessState,
-	type WechatClipboardCopyGuard,
-	assertPortableCopyCurrent,
-	clipboardSourceMarkup,
-	isRetryableBackgroundPreparationError,
-} from "./wechat-source-freshness";
-import {
-	type TaskCheckboxGeometryLease,
-	createTaskCheckboxGeometryLease,
-} from "./wechat-task-geometry";
-import {
-	type WechatDimensionSemanticsContext,
 	createDimensionSemanticsContext,
+	type WechatDimensionSemanticsContext,
 } from "./wechat-dimension-semantics";
-import {
-	type WechatPreviewMeasurementLease,
-	type WechatPreviewTransitionLease,
-	createPreviewMeasurementLease,
-	createPreviewTransitionLease,
-	isPreviewHidden,
-} from "./wechat-preview-measurement";
-import { beginWechatTiming, runWechatSyncTiming } from "./wechat-timing";
 import {
 	preparedDimensionGeometrySignature,
 	preparedDimensionGeometrySignatureWithYield,
@@ -38,17 +19,62 @@ import {
 	preparedLayoutSignature,
 	preparedLayoutSignatureWithYield,
 } from "./wechat-fidelity-signature";
+import { collectFontFaces } from "./wechat-managed-fonts";
+import { captureWechatMathVectorScenesWithBorrowedMeasurement } from "./wechat-math-vector-capture";
+import {
+	createMermaidContentBoxLease,
+	type MermaidContentBox,
+	type MermaidContentBoxLease,
+} from "./wechat-mermaid-content-box";
+import {
+	eligibleWechatMathVectorOwners,
+	type WechatMathVectorAtlasLoader,
+	type WechatMathVectorPortableCapture,
+} from "./wechat-math-vector-portable";
+import type {
+	SerializedClipboardPayload,
+	WechatMathSourceCaptureResult,
+} from "./wechat-portable-serialization";
+import type { WechatInlinePseudoPaintReadiness } from "./wechat-inline-pseudo-paint";
 import {
 	captureWechatMathSourceAdmission,
 	captureWechatMathSourceAdmissionSynchronously,
 	hasWechatMathStaticFlowCandidate,
 	serializeClipboardPayload,
 } from "./wechat-portable-serialization";
-import type {
-	SerializedClipboardPayload,
-	WechatMathSourceCaptureResult,
-} from "./wechat-portable-serialization";
+import { waitForPreviewMeasurement } from "./wechat-preview-geometry-cache";
+import {
+	createHiddenPreviewGeometryMeasurement,
+	createPreviewMeasurementLease,
+	createPreviewTransitionLease,
+	isPreviewHidden,
+	type WechatPreviewMeasurementLease,
+	type WechatPreviewTransitionLease,
+} from "./wechat-preview-measurement";
+import {
+	assertPortableCopyCurrent,
+	type ClipboardSourceFreshnessState,
+	type ClipboardSourceFreshnessGuard,
+	clipboardSourceMarkup,
+	isRetryableBackgroundPreparationError,
+	type WechatClipboardCopyGuard,
+} from "./wechat-source-freshness";
+import {
+	createTaskCheckboxGeometryLease,
+	type TaskCheckboxGeometryLease,
+} from "./wechat-task-geometry";
+import { beginWechatTiming, runWechatSyncTiming } from "./wechat-timing";
+export type PreparedMermaidContentBoxEvidence = Readonly<{
+	boxes: ReadonlyMap<Element, MermaidContentBox>;
+	fontReady: Promise<FontFaceSet> | null;
+	fontSet: FontFaceSet | null;
+	inputSignature: string;
+	sourceRoot: HTMLElement;
+	sourceWidthKey: number | null;
+}>;
 export type PreparedClipboardFallback = Readonly<{
+	contentBoxes?: MermaidContentBoxLease | null;
+	contentBoxEvidence?: PreparedMermaidContentBoxEvidence | null;
 	dimensionSignature: string;
 	layoutSignature: string;
 	payload: SerializedClipboardPayload;
@@ -59,6 +85,9 @@ export type PreparedClipboardFallback = Readonly<{
 
 export type PreparedClipboardPayload = {
 	backgroundCancel: (() => void) | null;
+	cancel?: () => void;
+	contentBoxes?: MermaidContentBoxLease | null;
+	contentBoxEvidence?: PreparedMermaidContentBoxEvidence | null;
 	payload: SerializedClipboardPayload | null;
 	promise: Promise<SerializedClipboardPayload>;
 	sequence: number;
@@ -70,6 +99,60 @@ export type PreparedClipboardPayload = {
 	layoutOwner: "live" | "measurement";
 	mathSourceAdmission: WechatMathSourceCaptureResult;
 };
+export type PreparedClipboardSerializationReady = Readonly<
+	| {
+			activeOwner: "measurement";
+			dimensionSemantics: WechatDimensionSemanticsContext;
+			measurement: WechatPreviewMeasurementLease;
+			root: HTMLElement;
+			runtime: BrowserWechatClipboardRuntime;
+			transition: null;
+	  }
+	| {
+			activeOwner: "transition";
+			dimensionSemantics: WechatDimensionSemanticsContext;
+			measurement: null;
+			root: HTMLElement;
+			runtime: BrowserWechatClipboardRuntime;
+			transition: WechatPreviewTransitionLease;
+	  }
+>;
+
+export type PreparedClipboardSerializationOwnerCleanupRegistration = (
+	cleanup: () => void,
+) => boolean;
+
+function preparedClipboardSerializationReady(
+	preview: HTMLElement,
+	dimensionSemantics: WechatDimensionSemanticsContext,
+	measurement: WechatPreviewMeasurementLease | null,
+	transition: WechatPreviewTransitionLease | null,
+	runtime: BrowserWechatClipboardRuntime,
+): PreparedClipboardSerializationReady {
+	if (Boolean(measurement) === Boolean(transition)) {
+		throw new Error("wechat-copy-serialization-owner-invalid");
+	}
+	const root = measurement?.root ?? preview;
+	return Object.freeze(
+		measurement
+			? {
+					activeOwner: "measurement" as const,
+					dimensionSemantics,
+					measurement,
+					root,
+					runtime,
+					transition: null,
+				}
+			: {
+					activeOwner: "transition" as const,
+					dimensionSemantics,
+					measurement: null,
+					root,
+					runtime,
+					transition: transition as WechatPreviewTransitionLease,
+				},
+	);
+}
 export type PreparedClipboardPayloadCache = WeakMap<
 	HTMLElement,
 	PreparedClipboardPayload
@@ -83,9 +166,15 @@ export function reusablePreparedClipboardPayload(
 	pendingFallback: PreparedClipboardFallback | null = null,
 	mathSourceFingerprint = "",
 	mathRawDimensionGeometrySignature = "",
+	validatedContentBoxEvidence: PreparedMermaidContentBoxEvidence | null = null,
 ): SerializedClipboardPayload | null {
+	const boxesCurrent = (
+		boxes: MermaidContentBoxLease | null | undefined,
+		evidence: PreparedMermaidContentBoxEvidence | null | undefined,
+	): boolean => !boxes || boxes.isCurrent() || Boolean(evidence && evidence === validatedContentBoxEvidence);
 	if (
 		prepared?.payload &&
+		boxesCurrent(prepared.contentBoxes, prepared.contentBoxEvidence) &&
 		prepared.sourceMarkup === sourceMarkup &&
 		prepared.mathSourceAdmission.sourceFingerprint === mathSourceFingerprint &&
 		prepared.mathSourceAdmission.rawDimensionGeometrySignature ===
@@ -97,6 +186,7 @@ export function reusablePreparedClipboardPayload(
 	}
 	if (
 		prepared?.payload &&
+		boxesCurrent(prepared.fallback?.contentBoxes, prepared.fallback?.contentBoxEvidence) &&
 		prepared.recoveredAtLayoutSignature === layoutSignature &&
 		prepared.fallback?.mathSourceAdmission.sourceFingerprint ===
 			mathSourceFingerprint &&
@@ -109,6 +199,7 @@ export function reusablePreparedClipboardPayload(
 	}
 	if (
 		!prepared?.payload &&
+		boxesCurrent(prepared?.fallback?.contentBoxes, prepared?.fallback?.contentBoxEvidence) &&
 		prepared?.fallback?.mathSourceAdmission.sourceFingerprint ===
 			mathSourceFingerprint &&
 		prepared?.fallback?.mathSourceAdmission.rawDimensionGeometrySignature ===
@@ -119,6 +210,7 @@ export function reusablePreparedClipboardPayload(
 		return prepared.fallback.payload;
 	}
 	if (
+		boxesCurrent(pendingFallback?.contentBoxes, pendingFallback?.contentBoxEvidence) &&
 		pendingFallback?.mathSourceAdmission.sourceFingerprint ===
 			mathSourceFingerprint &&
 		pendingFallback?.mathSourceAdmission.rawDimensionGeometrySignature ===
@@ -148,6 +240,67 @@ export type BackgroundPreparationCache = WeakMap<
 	BackgroundPreparationState
 >;
 
+async function captureMathVectorPortable(
+	preview: HTMLElement,
+	runtime: BrowserWechatClipboardRuntime,
+	measurement: WechatPreviewMeasurementLease | null,
+	signal: AbortSignal | undefined,
+	isCurrent: (() => boolean) | undefined,
+	atlasLoader: WechatMathVectorAtlasLoader | undefined,
+): Promise<Readonly<{
+	capture: WechatMathVectorPortableCapture;
+	ownedMeasurementCleanup: (() => void) | null;
+}> | null> {
+	if (!atlasLoader) return null;
+	const sourceOwners = eligibleWechatMathVectorOwners(preview, runtime);
+	if (!sourceOwners.length) return null;
+	const ownedMeasurement =
+		measurement ??
+		createHiddenPreviewGeometryMeasurement(preview, runtime, signal);
+	const acquiredMeasurement = {
+		cleanup: ownedMeasurement.cleanup,
+		lease: ownedMeasurement,
+	};
+	try {
+		const fonts = runtime.document.fonts;
+		if (fonts?.ready) {
+			await waitForPreviewMeasurement(
+				Promise.resolve(fonts.ready).then(() => undefined),
+				signal,
+			);
+		}
+		if (!runtime.approvedAssetBaseUrl || !runtime.approvedKaTeXCssUrl) {
+			throw new Error("wechat-math-vector-font-scope-missing");
+		}
+		const atlas = await atlasLoader(signal, isCurrent);
+		const scenes = await captureWechatMathVectorScenesWithBorrowedMeasurement({
+			atlas,
+			managedFaces: collectFontFaces(
+				runtime.document,
+				runtime.approvedAssetBaseUrl,
+				runtime.approvedKaTeXCssUrl,
+			),
+			measurement: acquiredMeasurement,
+			preview,
+			runtime,
+			sourceOwners,
+			...(signal ? { signal } : {}),
+			...(isCurrent ? { isCurrent } : {}),
+		});
+		return Object.freeze({
+			capture: Object.freeze({
+				atlas,
+				measurement: acquiredMeasurement,
+				scenes,
+			}),
+			ownedMeasurementCleanup: measurement ? null : ownedMeasurement.cleanup,
+		});
+	} catch (error: unknown) {
+		if (!measurement) ownedMeasurement.cleanup();
+		throw error;
+	}
+}
+
 export function createPreparedClipboardPayload(
 	preview: HTMLElement,
 	runtime: BrowserWechatClipboardRuntime,
@@ -164,11 +317,28 @@ export function createPreparedClipboardPayload(
 	isCurrent?: () => boolean,
 	backgroundCancel: (() => void) | null = null,
 	suppliedMathSourceAdmission: WechatMathSourceCaptureResult | null = null,
+	mathVectorAtlasLoader: WechatMathVectorAtlasLoader | undefined = undefined,
+	inlineSourceFreshness: Pick<
+		ClipboardSourceFreshnessGuard,
+		"isCurrent"
+	> | null = null,
+	onPreparedFidelitySignature?: (signature: string) => void,
+	suppliedContentBoxes: MermaidContentBoxLease | null = null,
+	deferContentBoxCleanup = false,
 ): PreparedClipboardPayload {
 	let prepared: PreparedClipboardPayload;
+	let released = false;
+	const assertNotReleased = (): void => {
+		if (released) throw new Error("wechat-copy-cancelled");
+	};
 	throwIfBackgroundPreparationAborted(signal);
 	if (isCurrent && !isCurrent()) throw new Error("wechat-copy-cancelled");
 	const serializationPreview = measurement?.root ?? preview;
+	let contentBoxes = suppliedContentBoxes;
+	const hasIntrinsicOwners = Boolean(
+		serializationPreview.matches('.easymde-mermaid[data-easymde-mermaid-layout]') ||
+		serializationPreview.querySelector('.easymde-mermaid[data-easymde-mermaid-layout]'),
+	);
 	let mathSourceCaptureResult = suppliedMathSourceAdmission;
 	const readiness = Promise.all([
 		measurement?.ready ?? Promise.resolve(),
@@ -180,11 +350,28 @@ export function createPreparedClipboardPayload(
 	// breakpoints can also change computed styles and geometry without changing
 	// the DOM, so keep both the full sink markup and a layout fingerprint.
 	const sourceMarkup = clipboardSourceMarkup(preview);
+	const inlinePseudoReadiness: WechatInlinePseudoPaintReadiness | null =
+		measurement
+			? {
+					existing: { kind: "measurement", lease: measurement },
+					sourceFreshness: inlineSourceFreshness ?? {
+					isCurrent: () => clipboardSourceMarkup(preview) === sourceMarkup,
+				},
+				}
+			: transition
+				? {
+						existing: { kind: "transition", lease: transition },
+						sourceFreshness: inlineSourceFreshness ?? {
+						isCurrent: () => clipboardSourceMarkup(preview) === sourceMarkup,
+					},
+					}
+				: null;
 	const yieldToBrowser = createSerializationYield(runtime, background, signal);
 	let initialDimensionSignature = "";
 	const initialDimensionSignatureSink = { value: "" };
 	const layoutSignature =
 		!background &&
+		!hasIntrinsicOwners &&
 		(!measurement || measurement.isReady()) &&
 		(!transition || transition.isReady()) &&
 		(!taskGeometryLease || taskGeometryLease.isReady())
@@ -208,12 +395,21 @@ export function createPreparedClipboardPayload(
 	// can monopolize the main thread on Mermaid/KaTeX-heavy articles.
 	const initialLayoutSignature = readiness.then(
 		async () => {
+			assertNotReleased();
 			throwIfBackgroundPreparationAborted(signal);
 			if (isCurrent && !isCurrent()) throw new Error("wechat-copy-cancelled");
+			if (hasIntrinsicOwners) {
+				contentBoxes ??= createMermaidContentBoxLease(serializationPreview, signal);
+				prepared.contentBoxes = contentBoxes;
+				await contentBoxes.ready;
+				assertNotReleased();
+				if (!contentBoxes.isCurrent()) throw new Error("wechat-copy-stale");
+				runtime = { ...runtime, mermaidContentBoxes: contentBoxes };
+			}
 			dimensionSemantics?.refresh();
 			initialDimensionGeometrySignature =
 				hasWechatMathStaticFlowCandidate(serializationPreview) || !background
-					? (background && yieldToBrowser
+					? background && yieldToBrowser
 						? await preparedDimensionGeometrySignatureWithYield(
 								serializationPreview,
 								runtime,
@@ -225,7 +421,7 @@ export function createPreparedClipboardPayload(
 								serializationPreview,
 								runtime,
 								dimensionSemantics,
-							))
+							)
 					: "";
 			if (!background && layoutSignature) return layoutSignature;
 			if (background) {
@@ -257,6 +453,7 @@ export function createPreparedClipboardPayload(
 	);
 	const promise = initialLayoutSignature
 		.then(async (initialSignature) => {
+			assertNotReleased();
 			throwIfBackgroundPreparationAborted(signal);
 			if (isCurrent && !isCurrent()) throw new Error("wechat-copy-cancelled");
 			if (clipboardSourceMarkup(preview) !== sourceMarkup) {
@@ -273,162 +470,241 @@ export function createPreparedClipboardPayload(
 					initialDimensionGeometrySignature,
 				);
 			}
-			return serializeClipboardPayload(
-				serializationPreview,
-				runtime,
-				backgroundAssetCache,
-				yieldToBrowser,
-				undefined,
-				signal,
+			const mathVectorPortable = await captureMathVectorPortable(
 				preview,
-				dimensionSemantics,
-				taskGeometryLease,
-				mathSourceCaptureResult?.sourceAdmission,
-				mathSourceCaptureResult?.sourceFingerprint,
-				mathSourceCaptureResult?.rawDimensionGeometrySignature,
-				mathSourceCaptureResult?.runtime,
+				runtime,
+				measurement,
+				signal,
 				isCurrent,
-			).then(async (payload) => {
-				throwIfBackgroundPreparationAborted(signal);
-				if (clipboardSourceMarkup(preview) !== prepared.sourceMarkup) {
-					throw new Error("wechat-copy-stale");
-				}
-				await measurement?.wait();
-				await transition?.wait();
-				await taskGeometryLease?.wait();
-				runWechatSyncTiming(
-					preview.ownerDocument.defaultView?.performance,
-					WECHAT_COPY_TIMING_NAMES.finalRawContextRefresh,
-					{ mode: "sync" },
-					() => dimensionSemantics?.refresh(),
-				);
-				const finalDimensionSignatureSink = { value: "" };
-				const finalGeometryTiming = beginWechatTiming(
-					preview.ownerDocument.defaultView?.performance,
-					WECHAT_COPY_TIMING_NAMES.finalGeometry,
-					{ mode: background ? "async" : "sync" },
-				);
-				let finalSignature: string;
-				try {
-					finalSignature = background
-						? await preparedLayoutSignatureWithYield(
-								preview,
-								runtime,
-								yieldToBrowser as SerializationYield,
-								signal,
-								serializationPreview,
-								dimensionSemantics,
-								finalDimensionSignatureSink,
-							)
-						: preparedLayoutSignature(
-								preview,
-								runtime,
-								serializationPreview,
-								dimensionSemantics,
-								finalDimensionSignatureSink,
-							);
-					finalGeometryTiming.finish("success");
-				} catch (error: unknown) {
-					finalGeometryTiming.finish("error");
-					throw error;
-				}
-				const finalDimensionSignature = finalDimensionSignatureSink.value;
-				const finalDimensionGeometrySignature =
-					hasWechatMathStaticFlowCandidate(serializationPreview) || !background
-						? (background && yieldToBrowser
-							? await preparedDimensionGeometrySignatureWithYield(
-									serializationPreview,
-									runtime,
-									yieldToBrowser,
-									signal,
-									dimensionSemantics,
-								)
-							: preparedDimensionGeometrySignature(
-									serializationPreview,
-									runtime,
-									dimensionSemantics,
-								))
-						: "";
-				let finalMathSourceCaptureResult = mathSourceCaptureResult;
-				if (hasWechatMathStaticFlowCandidate(serializationPreview)) {
-					finalMathSourceCaptureResult = await captureWechatMathSourceAdmission(
+				mathVectorAtlasLoader,
+			);
+			const mathVectorCapture = mathVectorPortable?.capture ?? null;
+			const ownedMeasurementCleanup =
+				mathVectorPortable?.ownedMeasurementCleanup ?? null;
+			let ownedMeasurementCleaned = false;
+			const cleanupOwnedMeasurement = (): void => {
+				if (ownedMeasurementCleaned) return;
+				ownedMeasurementCleaned = true;
+				ownedMeasurementCleanup?.();
+			};
+			return Promise.resolve()
+				.then(() =>
+					serializeClipboardPayload(
 						serializationPreview,
 						runtime,
+						backgroundAssetCache,
 						yieldToBrowser,
+						undefined,
 						signal,
+						preview,
+						dimensionSemantics,
+						taskGeometryLease,
+						mathSourceCaptureResult?.sourceAdmission,
+						mathSourceCaptureResult?.sourceFingerprint,
+						mathSourceCaptureResult?.rawDimensionGeometrySignature,
+						mathSourceCaptureResult?.runtime,
 						isCurrent,
-						true,
-						finalDimensionGeometrySignature,
+						mathVectorCapture,
+						inlinePseudoReadiness,
+					),
+				)
+				.then(async (payload) => {
+					assertNotReleased();
+					throwIfBackgroundPreparationAborted(signal);
+					if (contentBoxes && !contentBoxes.isCurrent()) throw new Error("wechat-copy-stale");
+					if (clipboardSourceMarkup(preview) !== prepared.sourceMarkup) {
+						throw new Error("wechat-copy-stale");
+					}
+					await measurement?.wait();
+					await transition?.wait();
+					await taskGeometryLease?.wait();
+					let hiddenContentBoxEvidence: PreparedMermaidContentBoxEvidence | null = null;
+					if (measurement && contentBoxes) {
+						const fonts = runtime.document.fonts ?? null;
+						const fontReady = fonts?.ready ?? null;
+						if (fonts && 'loaded' !== fonts.status) throw new Error("wechat-copy-stale");
+						const boxes = new Map<Element, MermaidContentBox>();
+						const owners = [
+							...(serializationPreview.matches('.easymde-mermaid[data-easymde-mermaid-layout]') ? [serializationPreview] : []),
+							...serializationPreview.querySelectorAll('.easymde-mermaid[data-easymde-mermaid-layout]'),
+						];
+						for (const owner of owners) {
+							const source = measurement.sourceFor(owner);
+							const box = contentBoxes.get(owner);
+							if (!source || !preview.contains(source) || !box || boxes.has(source)) throw new Error("wechat-copy-stale");
+							boxes.set(source, box);
+						}
+						const inputSignature = background && yieldToBrowser
+							? await preparedLayoutSignatureWithYield(preview, runtime, yieldToBrowser, signal, serializationPreview, dimensionSemantics, undefined, false, true)
+							: preparedLayoutSignature(preview, runtime, serializationPreview, dimensionSemantics, undefined, false, true);
+						if (!contentBoxes.isCurrent() || (fonts && ('loaded' !== fonts.status || fonts.ready !== fontReady))) {
+							throw new Error("wechat-copy-stale");
+						}
+						hiddenContentBoxEvidence = {
+							boxes, fontReady, fontSet: fonts, inputSignature,
+							sourceRoot: preview, sourceWidthKey: measurement.sourceWidthKey,
+						};
+					}
+					runWechatSyncTiming(
+						preview.ownerDocument.defaultView?.performance,
+						WECHAT_COPY_TIMING_NAMES.finalRawContextRefresh,
+						{ mode: "sync" },
+						() => dimensionSemantics?.refresh(),
 					);
+					const finalDimensionSignatureSink = { value: "" };
+					const finalGeometryTiming = beginWechatTiming(
+						preview.ownerDocument.defaultView?.performance,
+						WECHAT_COPY_TIMING_NAMES.finalGeometry,
+						{ mode: background ? "async" : "sync" },
+					);
+					let finalSignature: string;
+					try {
+						finalSignature = background
+							? await preparedLayoutSignatureWithYield(
+									preview,
+									runtime,
+									yieldToBrowser as SerializationYield,
+									signal,
+									serializationPreview,
+									dimensionSemantics,
+									finalDimensionSignatureSink,
+								)
+							: preparedLayoutSignature(
+									preview,
+									runtime,
+									serializationPreview,
+									dimensionSemantics,
+									finalDimensionSignatureSink,
+								);
+						finalGeometryTiming.finish("success");
+					} catch (error: unknown) {
+						finalGeometryTiming.finish("error");
+						throw error;
+					}
+					const finalDimensionSignature = finalDimensionSignatureSink.value;
+					const finalDimensionGeometrySignature =
+						hasWechatMathStaticFlowCandidate(serializationPreview) ||
+						!background
+							? background && yieldToBrowser
+								? await preparedDimensionGeometrySignatureWithYield(
+										serializationPreview,
+										runtime,
+										yieldToBrowser,
+										signal,
+										dimensionSemantics,
+									)
+								: preparedDimensionGeometrySignature(
+										serializationPreview,
+										runtime,
+										dimensionSemantics,
+									)
+							: "";
+					let finalMathSourceCaptureResult = mathSourceCaptureResult;
+					if (hasWechatMathStaticFlowCandidate(serializationPreview)) {
+						finalMathSourceCaptureResult =
+							await captureWechatMathSourceAdmission(
+								serializationPreview,
+								runtime,
+								yieldToBrowser,
+								signal,
+								isCurrent,
+								true,
+								finalDimensionGeometrySignature,
+							);
+						if (
+							finalMathSourceCaptureResult.sourceFingerprint !==
+								(mathSourceCaptureResult?.sourceFingerprint ?? "") ||
+							finalMathSourceCaptureResult.rawDimensionGeometrySignature !==
+								(mathSourceCaptureResult?.rawDimensionGeometrySignature ?? "")
+						) {
+							throw new Error("wechat-copy-stale");
+						}
+					}
+					throwIfBackgroundPreparationAborted(signal);
+					runWechatSyncTiming(
+						preview.ownerDocument.defaultView?.performance,
+						WECHAT_COPY_TIMING_NAMES.finalSourceFreshness,
+						{ mode: "sync" },
+						() => {
+							if (clipboardSourceMarkup(preview) !== prepared.sourceMarkup) {
+								throw new Error("wechat-copy-stale");
+							}
+						},
+					);
+					if (background && initialSignature !== finalSignature) {
+						throw new Error("wechat-copy-stale");
+					}
 					if (
-						finalMathSourceCaptureResult.sourceFingerprint !==
-							(mathSourceCaptureResult?.sourceFingerprint ?? "") ||
-						finalMathSourceCaptureResult.rawDimensionGeometrySignature !==
-							(mathSourceCaptureResult?.rawDimensionGeometrySignature ?? "")
+						!background &&
+						initialDimensionGeometrySignature !==
+							finalDimensionGeometrySignature
 					) {
 						throw new Error("wechat-copy-stale");
 					}
-				}
-				throwIfBackgroundPreparationAborted(signal);
-				runWechatSyncTiming(
-					preview.ownerDocument.defaultView?.performance,
-					WECHAT_COPY_TIMING_NAMES.finalSourceFreshness,
-					{ mode: "sync" },
-					() => {
-						if (clipboardSourceMarkup(preview) !== prepared.sourceMarkup) {
-							throw new Error("wechat-copy-stale");
-						}
-					},
-				);
-				if (background && initialSignature !== finalSignature) {
-					throw new Error("wechat-copy-stale");
-				}
-				if (
-					!background &&
-					initialDimensionGeometrySignature !== finalDimensionGeometrySignature
-				) {
-					throw new Error("wechat-copy-stale");
-				}
-				if (isCurrent && !isCurrent()) throw new Error("wechat-copy-cancelled");
-				prepared.mathSourceAdmission = finalMathSourceCaptureResult ?? {
-					rawDimensionGeometrySignature: "",
-					runtime: null,
-					sourceAdmission: null,
-					sourceFingerprint: "",
-				};
-				throwIfBackgroundPreparationAborted(signal);
-				prepared.dimensionSignature = finalDimensionSignature;
-				prepared.layoutSignature = finalSignature;
-				prepared.payload = payload;
-				const current = preparedPayloads.get(preview);
-				if (
-					current &&
-					current !== prepared &&
-					current.sourceMarkup === prepared.sourceMarkup &&
-					(!current.fallback || current.fallback.sequence < prepared.sequence)
-				) {
-					// A replacement may have started while this serialization was waiting
-					// on theme assets. Keep the most recent successful payload available
-					// to that replacement if its own preparation later fails.
-					current.fallback = {
-						dimensionSignature: prepared.dimensionSignature,
-						layoutSignature: prepared.layoutSignature,
-						payload,
-						sequence: prepared.sequence,
-						sourceMarkup: prepared.sourceMarkup,
-						mathSourceAdmission: prepared.mathSourceAdmission,
+					if (isCurrent && !isCurrent())
+						throw new Error("wechat-copy-cancelled");
+					assertNotReleased();
+					if (contentBoxes && !contentBoxes.isCurrent()) throw new Error("wechat-copy-stale");
+					prepared.mathSourceAdmission = finalMathSourceCaptureResult ?? {
+						rawDimensionGeometrySignature: "",
+						runtime: null,
+						sourceAdmission: null,
+						sourceFingerprint: "",
 					};
-				}
-				return payload;
-			});
+					throwIfBackgroundPreparationAborted(signal);
+					prepared.dimensionSignature = finalDimensionSignature;
+					prepared.layoutSignature = finalSignature;
+					prepared.contentBoxEvidence = hiddenContentBoxEvidence;
+					onPreparedFidelitySignature?.(finalSignature);
+					prepared.payload = payload;
+					if (measurement && !deferContentBoxCleanup) contentBoxes?.cleanup();
+					else if (!measurement) contentBoxes?.retain();
+					cleanupOwnedMeasurement();
+					const current = preparedPayloads.get(preview);
+					if (current === prepared && prepared.fallback?.contentBoxes !== contentBoxes) {
+						prepared.fallback?.contentBoxes?.cleanup();
+					}
+					if (
+						current &&
+						current !== prepared &&
+						current.sourceMarkup === prepared.sourceMarkup &&
+						(!current.fallback || current.fallback.sequence < prepared.sequence)
+					) {
+						// A replacement may have started while this serialization was waiting
+						// on theme assets. Keep the most recent successful payload available
+						// to that replacement if its own preparation later fails.
+						if (current.fallback?.contentBoxes !== contentBoxes) {
+							current.fallback?.contentBoxes?.cleanup();
+						}
+						current.fallback = {
+							contentBoxes,
+							contentBoxEvidence: prepared.contentBoxEvidence ?? null,
+							dimensionSignature: prepared.dimensionSignature,
+							layoutSignature: prepared.layoutSignature,
+							payload,
+							sequence: prepared.sequence,
+							sourceMarkup: prepared.sourceMarkup,
+							mathSourceAdmission: prepared.mathSourceAdmission,
+						};
+					}
+					delete prepared.cancel;
+					return payload;
+				})
+				.catch((error: unknown) => {
+					cleanupOwnedMeasurement();
+					throw error;
+				});
 		})
 		.catch((error: unknown) => {
+			if (contentBoxes !== fallback?.contentBoxes) contentBoxes?.cleanup();
 			const current = preparedPayloads.get(preview);
 			if (current === prepared) {
 				const recovery = current.fallback;
 				if (recovery) {
 					preparedPayloads.set(preview, {
 						backgroundCancel: prepared.backgroundCancel,
+						contentBoxes: recovery.contentBoxes ?? null,
+						contentBoxEvidence: recovery.contentBoxEvidence ?? null,
 						fallback: recovery,
 						dimensionSignature: recovery.dimensionSignature,
 						layoutOwner: prepared.layoutOwner,
@@ -448,6 +724,12 @@ export function createPreparedClipboardPayload(
 		});
 	prepared = {
 		backgroundCancel,
+		cancel: () => {
+			released = true;
+			contentBoxes?.cleanup();
+		},
+		contentBoxes,
+		contentBoxEvidence: null,
 		fallback,
 		dimensionSignature: initialDimensionSignature,
 		layoutOwner: measurement ? "measurement" : "live",
@@ -484,6 +766,14 @@ export function preparedClipboardPayload(
 	isCurrent?: () => boolean,
 	backgroundCancel: (() => void) | null = null,
 	suppliedMathSourceAdmission: WechatMathSourceCaptureResult | null = null,
+	mathVectorAtlasLoader: WechatMathVectorAtlasLoader | undefined = undefined,
+	deferActiveOwnerCleanup = false,
+	inlineSourceFreshness: Pick<
+		ClipboardSourceFreshnessGuard,
+		"isCurrent"
+	> | null = null,
+	onPreparedFidelitySignature?: (signature: string) => void,
+	suppliedContentBoxes: MermaidContentBoxLease | null = null,
 ): PreparedClipboardPayload {
 	throwIfBackgroundPreparationAborted(signal);
 	const measurement =
@@ -511,17 +801,28 @@ export function preparedClipboardPayload(
 			suppliedDimensionSemantics ??
 			createDimensionSemanticsContext(serializationPreview, preview, runtime);
 		const existing = preparedPayloads.get(preview);
+		const intrinsicOwners = [
+			...(serializationPreview.matches('.easymde-mermaid[data-easymde-mermaid-layout]') ? [serializationPreview] : []),
+			...serializationPreview.querySelectorAll('.easymde-mermaid[data-easymde-mermaid-layout]'),
+		];
+		const existingBoxes = existing?.contentBoxes;
+		const boxesReady = !intrinsicOwners.length || Boolean(
+			existingBoxes?.isCurrent() && intrinsicOwners.every((owner) => existingBoxes.get(owner)),
+		);
+		const fingerprintRuntime = existingBoxes && boxesReady
+			? { ...runtime, mermaidContentBoxes: existingBoxes }
+			: runtime;
 		const readinessReady =
 			(!measurement || measurement.isReady()) &&
 			(!transition || transition.isReady());
 		const taskGeometryReady = !taskGeometryLease || taskGeometryLease.isReady();
 		const currentDimensionSignature =
-			!background && !replace && readinessReady && taskGeometryReady
+			!background && !replace && readinessReady && taskGeometryReady && boxesReady
 				? (() => {
 						dimensionSemantics?.refresh();
 						return preparedDimensionSemanticsSignature(
 							serializationPreview,
-							runtime,
+							fingerprintRuntime,
 							dimensionSemantics,
 						);
 					})()
@@ -531,18 +832,19 @@ export function preparedClipboardPayload(
 			!replace &&
 			readinessReady &&
 			taskGeometryReady &&
+			boxesReady &&
 			!mathSourceCaptureResult
 		) {
 			mathSourceCaptureResult = captureWechatMathSourceAdmissionSynchronously(
 				serializationPreview,
-				runtime,
+				fingerprintRuntime,
 				true,
 				signal,
 				isCurrent,
 				hasWechatMathStaticFlowCandidate(serializationPreview)
 					? preparedDimensionGeometrySignature(
 							serializationPreview,
-							runtime,
+							fingerprintRuntime,
 							dimensionSemantics,
 						)
 					: "",
@@ -553,6 +855,7 @@ export function preparedClipboardPayload(
 			existing &&
 			readinessReady &&
 			taskGeometryReady &&
+			boxesReady &&
 			existing.mathSourceAdmission.sourceFingerprint ===
 				(mathSourceCaptureResult?.sourceFingerprint ?? "") &&
 			existing.mathSourceAdmission.rawDimensionGeometrySignature ===
@@ -563,7 +866,7 @@ export function preparedClipboardPayload(
 				currentDimensionSignature,
 				preparedLayoutSignature(
 					preview,
-					runtime,
+					fingerprintRuntime,
 					serializationPreview,
 					dimensionSemantics,
 				),
@@ -572,8 +875,10 @@ export function preparedClipboardPayload(
 				mathSourceCaptureResult?.rawDimensionGeometrySignature ?? "",
 			)
 		) {
-			measurement?.cleanup();
-			transition?.cleanup();
+			if (!deferActiveOwnerCleanup) {
+				if (measurement) measurement.cleanup();
+				else transition?.cleanup();
+			}
 			taskGeometryLease?.cleanup();
 			dimensionSemantics.cleanup();
 			return existing;
@@ -581,6 +886,8 @@ export function preparedClipboardPayload(
 		const fallback = existing
 			? existing.payload
 				? {
+						contentBoxes: existing.contentBoxes ?? null,
+						contentBoxEvidence: existing.contentBoxEvidence ?? null,
 						dimensionSignature: existing.dimensionSignature,
 						layoutSignature: existing.layoutSignature,
 						payload: existing.payload,
@@ -606,12 +913,21 @@ export function preparedClipboardPayload(
 			isCurrent,
 			backgroundCancel,
 			mathSourceCaptureResult,
+			mathVectorAtlasLoader,
+			inlineSourceFreshness,
+			onPreparedFidelitySignature,
+			suppliedContentBoxes,
+			deferActiveOwnerCleanup,
 		);
-		if (measurement) {
-			void prepared.promise.then(measurement.cleanup, measurement.cleanup);
-		}
-		if (transition) {
-			void prepared.promise.then(transition.cleanup, transition.cleanup);
+		if (!deferActiveOwnerCleanup && (measurement || transition)) {
+			let cleanupCalled = false;
+			const cleanup = (): void => {
+				if (cleanupCalled) return;
+				cleanupCalled = true;
+				if (measurement) measurement.cleanup();
+				else transition?.cleanup();
+			};
+			void prepared.promise.then(cleanup, cleanup);
 		}
 		if (taskGeometryLease) {
 			void prepared.promise.then(
@@ -619,14 +935,18 @@ export function preparedClipboardPayload(
 				taskGeometryLease.cleanup,
 			);
 		}
-		void prepared.promise.then(
-			dimensionSemantics.cleanup,
-			dimensionSemantics.cleanup,
-		);
+		if (!deferActiveOwnerCleanup) {
+			void prepared.promise.then(
+				dimensionSemantics.cleanup,
+				dimensionSemantics.cleanup,
+			);
+		}
 		return prepared;
 	} catch (error: unknown) {
-		measurement?.cleanup();
-		transition?.cleanup();
+		if (!deferActiveOwnerCleanup) {
+			if (measurement) measurement.cleanup();
+			else transition?.cleanup();
+		}
 		taskGeometryLease?.cleanup();
 		dimensionSemantics?.cleanup();
 		throw error;
@@ -641,12 +961,15 @@ export async function preparedClipboardPayloadAfterWrite(
 	nextSequence: () => number,
 	guard: WechatClipboardCopyGuard = {},
 	sourceFreshness: ClipboardSourceFreshnessState,
-	onMeasurementLease?: (cleanup: () => void) => void,
+	onSerializationOwnerCleanup?: PreparedClipboardSerializationOwnerCleanupRegistration,
 	onPreparedPayload?: (
 		preview: HTMLElement,
 		prepared: PreparedClipboardPayload,
 	) => void,
 	isCurrent?: () => boolean,
+	mathVectorAtlasLoader: WechatMathVectorAtlasLoader | undefined = undefined,
+	onSerializationReady?: (ready: PreparedClipboardSerializationReady) => void,
+	onPreparedFidelitySignature?: (signature: string) => void,
 ): Promise<PreparedClipboardPayload> {
 	// Keep the click task free of computed-style and geometry work. The first
 	// await is intentional: modern Clipboard write() must receive its deferred
@@ -659,8 +982,12 @@ export async function preparedClipboardPayloadAfterWrite(
 	assertPortableCopyCurrent(preview, guard, sourceFreshness);
 
 	let measurement: WechatPreviewMeasurementLease | null = null;
+	let activeOwnerCleanupAccepted = false;
 	let transition: WechatPreviewTransitionLease | null = null;
 	let dimensionSemantics: WechatDimensionSemanticsContext | null = null;
+	let contentBoxes: MermaidContentBoxLease | null = null;
+	let contentBoxesTransferred = false;
+	let serializationOwnerCleaned = false;
 	try {
 		let existing = preparedPayloads.get(preview);
 		if (existing && !existing.payload) {
@@ -699,19 +1026,56 @@ export async function preparedClipboardPayloadAfterWrite(
 			guard.signal,
 		);
 		measurement = measurementLease;
-		if (measurementLease) onMeasurementLease?.(measurementLease.cleanup);
 		transition = measurement
 			? null
 			: createPreviewTransitionLease([preview], guard.signal);
+		const measurementCleanup = measurement?.cleanup;
+		const transitionCleanup = transition?.cleanup;
+		const cleanupSerializationOwner = (): void => {
+			if (serializationOwnerCleaned) return;
+			serializationOwnerCleaned = true;
+			measurementCleanup?.();
+			transitionCleanup?.();
+			dimensionSemantics?.cleanup();
+			if (measurementCleanup || !contentBoxesTransferred) contentBoxes?.cleanup();
+		};
+		const activeOwnerCleanup = measurementCleanup ?? transitionCleanup;
+		if (activeOwnerCleanup && onSerializationOwnerCleanup) {
+			const accepted = onSerializationOwnerCleanup(cleanupSerializationOwner);
+			if (true !== accepted) throw new Error("wechat-copy-cancelled");
+			activeOwnerCleanupAccepted = true;
+		}
 		await measurementLease?.ready;
 		await transition?.ready;
 		assertPortableCopyCurrent(preview, guard, sourceFreshness);
 		const serializationPreview = measurement?.root ?? preview;
+		if (
+			serializationPreview.matches('.easymde-mermaid[data-easymde-mermaid-layout]') ||
+			serializationPreview.querySelector('.easymde-mermaid[data-easymde-mermaid-layout]')
+		) {
+			contentBoxes = createMermaidContentBoxLease(serializationPreview, guard.signal);
+			await contentBoxes.ready;
+			assertPortableCopyCurrent(preview, guard, sourceFreshness);
+			if (serializationOwnerCleaned || !contentBoxes.isCurrent()) throw new Error("wechat-copy-stale");
+			runtime = { ...runtime, mermaidContentBoxes: contentBoxes };
+		}
 		dimensionSemantics = createDimensionSemanticsContext(
 			serializationPreview,
 			preview,
 			runtime,
 		);
+		if (serializationOwnerCleaned) dimensionSemantics.cleanup();
+		if (onSerializationReady) {
+			onSerializationReady(
+				preparedClipboardSerializationReady(
+					preview,
+					dimensionSemantics,
+					measurement,
+					transition,
+					runtime,
+				),
+			);
+		}
 		const mathSourceCaptureResult = await captureWechatMathSourceAdmission(
 			serializationPreview,
 			runtime,
@@ -730,7 +1094,7 @@ export async function preparedClipboardPayloadAfterWrite(
 				: "",
 		);
 
-		if (existing?.payload) {
+		if (existing?.payload && (!existing.contentBoxes || existing.contentBoxes.isCurrent())) {
 			assertPortableCopyCurrent(preview, guard, sourceFreshness);
 			const sourceMarkup = clipboardSourceMarkup(preview);
 			const layoutSignature = await preparedLayoutSignatureWithYield(
@@ -761,9 +1125,12 @@ export async function preparedClipboardPayloadAfterWrite(
 				current.dimensionSignature === currentDimensionSignature &&
 				current.layoutSignature === layoutSignature
 			) {
-				measurement?.cleanup();
+				onPreparedFidelitySignature?.(current.layoutSignature);
+				if (!activeOwnerCleanupAccepted) {
+					if (measurement) measurement.cleanup();
+					else transition?.cleanup();
+				}
 				measurement = null;
-				transition?.cleanup();
 				transition = null;
 				return current;
 			}
@@ -791,16 +1158,25 @@ export async function preparedClipboardPayloadAfterWrite(
 			isCurrent,
 			null,
 			mathSourceCaptureResult,
+			mathVectorAtlasLoader,
+			activeOwnerCleanupAccepted,
+			sourceFreshness.current(),
+			onPreparedFidelitySignature,
+			contentBoxes,
 		);
-		dimensionSemantics = null;
+		contentBoxesTransferred = true;
+		if (!activeOwnerCleanupAccepted) dimensionSemantics = null;
 		transition = null;
 		onPreparedPayload?.(preview, prepared);
 		measurement = null;
 		return prepared;
 	} finally {
-		measurement?.cleanup();
-		transition?.cleanup();
-		dimensionSemantics?.cleanup();
+		if (!activeOwnerCleanupAccepted) {
+			if (measurement) measurement.cleanup();
+			else transition?.cleanup();
+			dimensionSemantics?.cleanup();
+			if (!contentBoxesTransferred) contentBoxes?.cleanup();
+		}
 	}
 }
 
@@ -813,6 +1189,7 @@ export function scheduleBackgroundPreparation(
 	nextSequence: () => number,
 	state: BackgroundPreparationState,
 	delay: number,
+	mathVectorAtlasLoader: WechatMathVectorAtlasLoader | undefined = undefined,
 ): void {
 	if (state.timer !== null) return;
 	const browserWindow = runtime.document.defaultView;
@@ -846,6 +1223,8 @@ export function scheduleBackgroundPreparation(
 				() => {
 					if (state.activeController === controller) controller.abort();
 				},
+				undefined,
+				mathVectorAtlasLoader,
 			).promise.then(() => undefined);
 		} catch (error: unknown) {
 			operation = Promise.reject(error);
@@ -877,6 +1256,7 @@ export function scheduleBackgroundPreparation(
 				nextSequence,
 				state,
 				BACKGROUND_PREPARATION_QUIET_DELAY_MS,
+				mathVectorAtlasLoader,
 			);
 			return;
 		}
@@ -946,6 +1326,7 @@ export function coalescedBackgroundPreparation(
 	backgroundPreparations: BackgroundPreparationCache,
 	nextSequence: () => number,
 	signal?: AbortSignal,
+	mathVectorAtlasLoader: WechatMathVectorAtlasLoader | undefined = undefined,
 ): Promise<void> {
 	if (signal?.aborted) return Promise.reject(backgroundPreparationAbortError());
 	let state = backgroundPreparations.get(preview);
@@ -988,6 +1369,7 @@ export function coalescedBackgroundPreparation(
 			nextSequence,
 			state,
 			0,
+			mathVectorAtlasLoader,
 		);
 	}
 	return promise;

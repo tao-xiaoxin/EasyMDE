@@ -60,7 +60,7 @@ function identifier(value: unknown, code: string): string {
   return result;
 }
 
-function localAssetUrl(value: unknown, assetBaseUrl: string, code: string): string {
+export function localAssetUrl(value: unknown, assetBaseUrl: string, code: string): string {
   const raw = requiredString(value, code);
   try {
     const base = new URL(assetBaseUrl);

@@ -40,8 +40,8 @@ describe('createBrowserWechatClipboard', () => {
         blob: Blob,
         clipboardItem: null,
         document,
-        getComputedStyle: (_element, pseudoElement) =>
-          pseudoElement ? declaration({}) : declaration({ display: 'block' }),
+        getComputedStyle: (element, pseudoElement) =>
+          pseudoElement ? computedStyle(element, pseudoElement) : declaration({ display: 'block' }),
         getSelection: window.getSelection.bind(window),
         pageOffset: () => ({ x: 0, y: 0 }),
         scrollTo: vi.fn(),
@@ -82,9 +82,9 @@ describe('createBrowserWechatClipboard', () => {
         blob: Blob,
         clipboardItem: null,
         document,
-        getComputedStyle: (_element, pseudoElement) => {
+        getComputedStyle: (element, pseudoElement) => {
           if (!pseudoElement) clock += 9;
-          return pseudoElement ? declaration({}) : declaration({ display: 'block' });
+          return pseudoElement ? computedStyle(element, pseudoElement) : declaration({ display: 'block' });
         },
         getSelection: window.getSelection.bind(window),
         pageOffset: () => ({ x: 0, y: 0 }),
@@ -107,8 +107,8 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: null,
       document,
-      getComputedStyle: (_element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         let displayMicrotaskRan = false;
         return {
           getPropertyValue: (property: string) => {
@@ -187,8 +187,8 @@ describe('createBrowserWechatClipboard', () => {
         blob: Blob,
         clipboardItem: null,
         document,
-        getComputedStyle: (_element, pseudoElement) =>
-          pseudoElement ? declaration({}) : declaration({ display: 'block' }),
+        getComputedStyle: (element, pseudoElement) =>
+          pseudoElement ? computedStyle(element, pseudoElement) : declaration({ display: 'block' }),
         getSelection: window.getSelection.bind(window),
         pageOffset: () => ({ x: 0, y: 0 }),
         scrollTo: vi.fn(),
@@ -260,8 +260,8 @@ describe('createBrowserWechatClipboard', () => {
         blob: Blob,
         clipboardItem: null,
         document,
-        getComputedStyle: (_element, pseudoElement) =>
-          pseudoElement ? declaration({}) : declaration({ display: 'block' }),
+        getComputedStyle: (element, pseudoElement) =>
+          pseudoElement ? computedStyle(element, pseudoElement) : declaration({ display: 'block' }),
         getSelection: window.getSelection.bind(window),
         pageOffset: () => ({ x: 0, y: 0 }),
         scrollTo: vi.fn(),
@@ -335,8 +335,8 @@ describe('createBrowserWechatClipboard', () => {
         blob: Blob,
         clipboardItem: null,
         document,
-        getComputedStyle: (_element, pseudoElement) =>
-          pseudoElement ? declaration({}) : declaration({ display: 'block' }),
+        getComputedStyle: (element, pseudoElement) =>
+          pseudoElement ? computedStyle(element, pseudoElement) : declaration({ display: 'block' }),
         getSelection: window.getSelection.bind(window),
         pageOffset: () => ({ x: 0, y: 0 }),
         scrollTo: vi.fn(),
@@ -375,7 +375,7 @@ describe('createBrowserWechatClipboard', () => {
       document,
       fetch,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if ('P' === element.tagName) {
           paragraphStyleReads += 1;
           if (2 === paragraphStyleReads) {
@@ -427,11 +427,12 @@ describe('createBrowserWechatClipboard', () => {
       document,
       fetch,
       getComputedStyle: (element, pseudoElement) => {
-        if (!pseudoElement && 'P' === element.tagName && imageBodyRead && !mutated) {
+        if (pseudoElement) return computedStyle(element, pseudoElement);
+        if ('P' === element.tagName && imageBodyRead && !mutated) {
           mutated = true;
           element.textContent = 'Changed during final freshness';
         }
-        if (!pseudoElement && 'P' === element.tagName) {
+        if ('P' === element.tagName) {
           return declaration({
             background: `url("${imageUrl}")`,
             'background-image': `url("${imageUrl}")`,

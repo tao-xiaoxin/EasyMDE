@@ -51,6 +51,28 @@ Legacy admin Browser Runtime files and Focus Mode assets have no ordinary
 Editor consumer and are excluded from the release package. Historical data and
 public PHP compatibility contracts remain preserved as described below.
 
+The ordinary Editor startup stylesheet transaction is owned by
+`frontend/src/entrypoints/admin-editor.tsx`. It waits for the base content
+stylesheet and the selected article-theme stylesheet through
+`createEditorStylesheetReadiness`; a changed article theme remains an inactive
+candidate until it is readable and scoped. The preparation lease moves through
+`pending`, `provisional`, `committed`, and `closed` phases. It transfers the
+canonical ID and media before the React Root and Appearance ports are
+constructed, and removes the old link only after the mount succeeds. Cancel,
+load/error failure, teardown, and mount failure remove candidates, dispose
+leases, and restore the old link before `onStartupFailure` reports the stable
+failure code.
+
+`createWordPressAppearancePort` owns the runtime appearance transaction after
+startup. It scopes article and Custom CSS styles through
+`frontend/src/shared/css/editor-stylesheet-scope.ts`, publishes the four native
+appearance bridge fields and its in-memory snapshot only after stylesheet
+preparation and DOM handoff, and rolls back fields, snapshot, nodes, and leases
+on failure. An unchanged Custom CSS node and text with its tracked lease are
+reused; changed Custom CSS uses an inactive candidate. If restoration cannot
+verify its stylesheet lease, the port marks its state unverified and rejects
+later appearance applications until the owner is refreshed.
+
 ## Repository Structure
 
 ```text
@@ -627,9 +649,20 @@ paint, and static flow; list and table layout; preview measurement; dimension
 semantics; fidelity signatures; prepared-payload lifecycle; Mermaid geometry,
 capture plans, and the PNG conversion policy, transaction, and replacement;
 managed font discovery and font assets; Mermaid capture validation and math
-capture geometry; and the shared CSS-list and CSS-declaration scanner with the
-UserTiming helpers. Their
-focused suites are partitioned the same way.
+capture geometry; atlas-backed math scene capture, portable binding, and scene
+materialization; and the shared CSS-list and CSS-declaration scanner with the
+UserTiming helpers. Their focused suites are partitioned the same way.
+Native table-grid admission and application preserve the existing scroll owner
+while correcting only the final table display. Table inputs also participate in
+prepared fidelity checks and the existing transaction's final Source guard;
+connected measurement cleanup remains transaction-owned, including cancellation
+after Blob delivery while the native write is pending. The executable boundary
+belongs to the [WeChat export reference](../.agents/skills/easymde/references/wechat-export.md#layout-and-special-content).
+Block-vector installation preserves a responsive decorated math scroll owner,
+with intrinsic normal-flow content and measured vertical allocation; it does not
+freeze the source column width or depend on native Save retaining absolute SVG
+positioning. The complete allocation contract belongs to the
+[WeChat export reference](../.agents/skills/easymde/references/wechat-export.md).
 Ordinary transform origins use the raw dimension context when the CSSOM value
 is a validated center, axis-keyword, percentage, or pixel semantic; unsupported
 raw grammar keeps the measured value. The asynchronous and synchronous
@@ -649,6 +682,17 @@ visible. A hidden text pseudo does not become Clipboard content merely because
 its `content` value remains non-empty; modern and legacy Clipboard paths share
 this rule. Visible theme decoration and CSS-only carriers retain their existing
 serialization behavior.
+Static inline circle and mask pseudo paint is captured during the existing
+async or synchronous XHTML style walk, with its already computed owner style
+and clone identity. Hidden/rasterized roots and later Source omissions are
+excluded. After final math, SVG, PNG, and structure transforms, one admitted
+inventory resolves final owners through the canonical generated-marker and
+structure replacement maps, then performs one atomic detached apply. Missing
+or duplicate markers fail explicitly, and the apply owner preserves anchor
+attributes, original child identities, plaintext, and rollback. The actual
+measurement/transition readiness owner and original Source freshness owner are
+threaded through preparation; full CSSOM fidelity signatures guard Blob and
+post-write boundaries in addition to DOM freshness.
 For an ordinary native `outside` list whose Source has zero logical-start
 padding, the Clipboard adapter measures the browser's native marker advance in
 a temporary shallow probe and writes that measured gutter on the copied list.
@@ -717,13 +761,63 @@ the generated outer section continues to own horizontal scrolling and width.
 These rules never hard-code a theme color or radius.
 
 The strict-boolean `images.wechatPngExportEnabled` setting defaults to `false`,
-and Editor bootstrap projects it as `wechatExport.pngConversionEnabled`. When
-enabled, an explicit ordinary or immersive Copy uses the modern Clipboard
-deferred payload path to serially rasterize only outermost rendered Mermaid and
-KaTeX math roots in stable source order, then uploads each PNG through the
-Editor's selected `ImageUploadPort` with backpressure and at most three
-in-flight uploads. Completion is retained by candidate order and visual clones
-are replaced only after all selected-owner uploads succeed, in that order.
+and Editor bootstrap projects it as `wechatExport.pngConversionEnabled`. The
+same Bootstrap supplies the required `wechatMathAtlasUrl` and
+`wechatMathAtlasContentVersion`; the URL carries exactly the matching lowercase
+16-hex content version in its `contentversion` query and resolves beneath the
+validated `previewEnhancement.assetBaseUrl` to the exact
+`assets/math/easymde-katex-glyph-atlas.json` runtime path. PHP derives that
+version from the atlas file's SHA-256. The atlas is one manifest-owned generated
+`easymde-katex-glyph-atlas/1` asset derived from the complete locked KaTeX TTF
+inventory; its companion font notice is shipped in the installable ZIP.
+
+With PNG conversion disabled, the default portable serializer uses this atlas
+for eligible outermost KaTeX owners. Eligibility accepts `inline-block` and
+`inline-flex` math plus `block` or `flow-root` owners with the recognized KaTeX
+block role and neutral authored outer width. Nested owners stay with the
+outermost owner; true `display:inline` math, non-KaTeX math, and a Preview with
+no eligible owner stay on the existing portable path without an atlas request.
+The lower-level legacy compatibility path also keeps that portable path when
+both atlas fields are absent; production Bootstrap requires the pair. The browser validates
+the exact same-origin URL/version pair, fetches only for an eligible owner,
+limits the response to 8 MiB, validates the complete frozen glyph graph, and
+reuses it only for that exact URL/version. Cancellation or a stale owner does
+not publish a cache entry.
+
+Atlas-backed capture uses the current hidden measurement lease and requires
+paired source, measurement, and final clone identities plus identical source
+and measurement text. It records managed KaTeX text runs, rule and static SVG
+paint, and the direct visual viewport, then builds detached SVG scenes from
+atlas outlines. Only the proven paired KaTeX `vlist-s` strut is omitted.
+Unsupported visible paint, unresolved clips or matrices, missing or ambiguous
+managed faces, unknown glyphs, invalid paths, incomplete pairing, and text
+mismatch fail explicitly. The final serialized root records connected plain
+text before scenes replace the visible math tree, so Clipboard `text/plain`
+retains the formula text. All targets and scenes are validated before mutation;
+a failed installation restores each target's children and style and propagates
+the failure. The source Preview remains unchanged.
+
+Vector geometry separates neutral flow allocation `A`, the measured owner
+border-box `R`, and the direct visual union `V`. For atomic inline math, `A` is
+the fractional parent line-box allocation including vertical margins; an outer
+wrapper owns that allocation, while `R` preserves the styled target's
+background, border, and padding exactly once. Block math uses `R` as the block
+target directly and has no inline `A`. `V` supplies the scene viewBox and paint
+translation. Internal solid `colorbox`/`fcolorbox` background and border paint
+is emitted once as measured scene rectangles; outer shell paint remains on the
+sanitized HTML owner and is not duplicated into the generated scene.
+Unsupported visible owner paint, missing or non-finite geometry, and
+out-of-bounds or inconsistent allocation/viewport data fail explicitly. The
+measurement lease and capture probes are released once on success, failure,
+abort, stale, timeout, and teardown.
+
+PNG-enabled Copy bypasses atlas loading, glyph runs, SVG vector scenes, and
+vector materialization. It uses the modern Clipboard deferred payload path to
+serially rasterize only outermost rendered Mermaid and KaTeX math roots in
+stable source order, then uploads each PNG through the Editor's selected
+`ImageUploadPort` with backpressure and at most three in-flight uploads.
+Completion is retained by candidate order and visual clones are replaced only
+after all selected-owner uploads succeed, in that order.
 Each upload invocation tracks whether it was rejected before write, remains
 unknown, or completed. Only the exact whitelisted
 `easymde_rest_invalid_image_hosting_nonce` permission rejection proves no write
@@ -740,8 +834,14 @@ surface on demand. With PNG conversion enabled, EditorRoot schedules only a
 hidden-Preview geometry-only lease through the existing resize/layout owner;
 it skips portable serialization, rasterization, and upload. An explicit Copy
 transfers one matching pending lease and cleans it on every terminal path, so
-measurement DOM never persists across Copy operations. Disabled/default
-behavior remains unchanged.
+measurement DOM never persists across Copy operations. The disabled/default
+path prepares the portable payload, including the hidden measurement, atlas
+load/validation, and local SVG-path scene materialization for eligible outermost
+KaTeX owners. It never rasterizes or uploads in the background. A vector cache
+entry is published only after complete validation; cancel, stale, HTTP, decode,
+graph, capture, scene, or installation failure rejects that preparation without
+a silent portable-only substitution or partial success. The source Preview
+remains unchanged.
 The shared Mermaid runtime gives Gantt diagrams a deterministic 1200px logical
 layout width while retaining responsive `useMaxWidth` display. This prevents a
 narrow Preview host from changing task and date geometry. PNG Copy may recover
@@ -962,6 +1062,17 @@ Portable structure normalization maps copied article, div, and blockquote roots
 to sections only after safe computed styles and pseudo-elements are captured;
 blockquote borders, backgrounds, spacing, nested children, and plain-text order
 remain observable in the copied result while the source Preview is unchanged.
+The quote pseudo-flow owner plans from immutable source snapshots and projects
+admitted decorations into static floats with a separate padding carrier;
+admission and lifecycle requirements belong to the WeChat export reference.
+The portable serializer also owns one bounded ordinary nested-list projection:
+admitted nested unordered `ul`/`li` clones become `section[role=list]` and
+`section[role=listitem]` while outer list structure, attributes, child identity,
+and plain-text order remain intact. Structural admission does not depend on an
+optional stem; the separate stem paint projection uses source-relative
+first/last child edges and is skipped when its closed geometry contract is not
+proved. Tasks, ordered lists, counters, custom marker semantics, and mixed
+unsupported trees retain their existing owners.
 After the HTML string is captured, browser layout measures plain text from the
 exclusive detached serialization tree. Non-layout DOM environments retain the
 existing line-aware source-text fallback when connected text flattens block
@@ -1179,6 +1290,16 @@ Rendering behavior:
 
 If Composer dependencies are missing, EasyMDE shows an admin notice, preview requests return a REST error, and save/frontend paths avoid generating fallback HTML.
 
+`frontend/src/features/live-preview/ui/SafePreviewHtmlSink.tsx` is the sole
+client sink for accepted Preview HTML. It applies plain, staged, windowed, and
+materialization commits while preserving protected nodes and the prior verified
+surface snapshot. `PreviewSurfaceOwner` reacquires rendered SVG stylesheet scope
+synchronously after each DOM mutation and releases the previous lease only
+after the replacement lease is ready. A mutation failure restores the prior
+verified view when possible; an unverified rollback clears the sink, discards
+pending enhancement/window/materialization state, and reports the primary and
+rollback failures without publishing `ready`.
+
 ## Revisions
 
 `RevisionManager` registers EasyMDE meta keys for WordPress revisions, copies current EasyMDE meta to revisions, and restores EasyMDE meta from revisions when present.
@@ -1255,6 +1376,17 @@ or report success before the server response has been validated. The existing
 hidden Custom CSS ID and snapshot fields remain the WordPress submission
 bridge. The post-level snapshot also remains usable when its library entry is
 later detached.
+
+The browser CSSOM owner is
+`frontend/src/shared/css/editor-stylesheet-scope.ts`. It leaves source rules in
+place and adds root-scoped aliases under `#easymde-editor-root`, preserving
+selector order and supported nested rule, at-rule, and imported-sheet context.
+It validates a whole batch before insertion, returns a reference-counted lease,
+and removes only the rules owned by that lease. Missing sheets/imports,
+CSSOM-read failures, invalid selectors, and root-scope conflicts fail
+explicitly. Startup, Appearance, Preview enhancement, and rendered SVG style
+handling use this owner; its scoping behavior does not replace the server-side
+Custom CSS policy.
 
 ## REST Boundaries
 

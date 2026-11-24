@@ -2178,6 +2178,18 @@ body:has(.easymde-editor.is-immersive) .wrap {
     line-height: 1.72;
 }
 
+/* Keep Core's broad paragraph and heading resets out of the rendered surface.
+ * :where() keeps this baseline below an explicit article theme or Custom CSS
+ * declaration while the editor root supplies the ownership boundary. */
+#easymde-editor-root :where(.easymde-rendered-content p) {
+    font-size: inherit;
+    line-height: inherit;
+}
+
+#easymde-editor-root :where(.easymde-rendered-content) :is(h1, h2, h3, h4, h5, h6) {
+    padding: 0;
+}
+
 .easymde-preview:where(:not([data-easymde-wechat-export-style-context="1"])) {
     padding: 22px 28px 28px;
     background-color: #fff;

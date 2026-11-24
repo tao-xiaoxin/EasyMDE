@@ -4,6 +4,7 @@ import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard'
 
 import {
   blobText,
+  computedStyle,
   declaration,
   declaredStylePixels,
   declaredStyleValue,
@@ -222,6 +223,7 @@ describe('createBrowserWechatClipboard task owner sentinel', () => {
           width: '20px'
         });
       }
+      if (pseudoElement) return computedStyle(element, pseudoElement);
       if ('UL' === element.tagName) return declaration({ display: 'block', 'list-style-type': 'disc' });
       if ('LI' === element.tagName) {
         return declaration({
@@ -495,6 +497,7 @@ describe('createBrowserWechatClipboard task owner sentinel', () => {
           width: '20px'
         });
       }
+      if (pseudoElement) return computedStyle(element, pseudoElement);
       if ('UL' === element.tagName) return declaration({ display: 'block', 'list-style-type': 'disc' });
       if ('LI' === element.tagName) {
         return declaration({

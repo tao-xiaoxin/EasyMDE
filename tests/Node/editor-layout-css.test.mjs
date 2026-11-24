@@ -310,6 +310,26 @@ test('ordinary React editor CSS owns the historical fixed 50/50 workspace', () =
   );
 });
 
+test('editor-root preview baselines stay low-specificity and scoped', () => {
+  const paragraphRule = cssRule(css, '#easymde-editor-root :where(.easymde-rendered-content p)');
+  assertDeclaration(paragraphRule, 'font-size', 'inherit');
+  assertDeclaration(paragraphRule, 'line-height', 'inherit');
+  const headingRule = cssRule(
+    css,
+    '#easymde-editor-root :where(.easymde-rendered-content) :is(h1, h2, h3, h4, h5, h6)'
+  );
+  assertDeclaration(headingRule, 'padding', '0');
+  assert.match(
+    '#easymde-editor-root :where(.easymde-rendered-content p)',
+    /^#easymde-editor-root :where\(/,
+  );
+  assert.doesNotMatch(
+    css,
+    /(^|\n)\s*(?:body|html|:root)\s+\.easymde-rendered-content\b/m,
+    'editor baselines must not broaden into public content selectors',
+  );
+});
+
 test('shared Preview task markers override WordPress checkbox geometry', () => {
   const inputRule = cssRule(
     css,

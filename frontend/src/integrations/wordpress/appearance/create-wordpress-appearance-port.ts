@@ -12,6 +12,11 @@ import type {
   CustomCssSaveResult
 } from '../../../contracts/ports/appearance-port';
 import type { WordPressApiFetch } from '../preview/create-wordpress-preview-port';
+import {
+  scopeEditorStyleElement,
+  scopeEditorStylesheetLink,
+  type EditorStylesheetScopeLease,
+} from '../../../shared/css/editor-stylesheet-scope';
 
 type AppearanceFields = Readonly<{
   codeTheme: HTMLInputElement;
@@ -26,6 +31,7 @@ type CreateWordPressAppearancePortOptions = Readonly<{
   bootstrap: AppearanceBootstrap;
   customCssUrl: string;
   document: Document;
+  editorRootSelector?: string;
   fields: AppearanceFields;
   nonce: string;
   siteUrl: string;
@@ -46,6 +52,32 @@ function restErrorCode(error: unknown): string {
   if (!error || 'object' !== typeof error || Array.isArray(error)) return '';
   const code = (error as Record<string, unknown>).code;
   return 'string' === typeof code ? code : '';
+}
+
+function stableAppearanceErrorCode(error: unknown, fallback: string): string {
+  return error instanceof Error && /^[a-z0-9-]{1,120}$/.test(error.message)
+    ? error.message
+    : fallback;
+}
+
+function appearanceFailureWithRollback(
+  error: unknown,
+  fallback: string,
+  rollbackError: unknown,
+): Error {
+  const primary =
+    error instanceof Error && /^[a-z0-9-]{1,120}$/.test(error.message)
+      ? error
+      : new Error(stableAppearanceErrorCode(error, fallback));
+  if (!rollbackError) return primary;
+  const rollback = new Error(
+    stableAppearanceErrorCode(
+      rollbackError,
+      'appearance-article-theme-rollback-failed',
+    ),
+    { cause: rollbackError },
+  );
+  return new Error(primary.message, { cause: rollback });
 }
 
 function sameOriginUrl(value: string, siteUrl: string, code: string): string {
@@ -92,6 +124,20 @@ function localAssetUrl(value: string, assetBaseUrl: string): string {
   return url.href;
 }
 
+export function resolveAppearanceArticleThemeUrl(
+  bootstrap: AppearanceBootstrap,
+  assetBaseUrl: string,
+): string {
+  const themeId =
+    'custom' === bootstrap.state.markdownTheme
+      ? 'default'
+      : bootstrap.state.markdownTheme;
+  const theme = bootstrap.articleThemes.find(({ id }) => id === themeId);
+  if (!theme?.cssUrl)
+    throw new Error('appearance-article-theme-asset-unavailable');
+  return localAssetUrl(theme.cssUrl, assetBaseUrl);
+}
+
 function selectedCustomCss(
   items: ReadonlyArray<CustomCssItem>,
   state: AppearanceState
@@ -106,6 +152,7 @@ export function createWordPressAppearancePort({
   bootstrap,
   customCssUrl,
   document,
+  editorRootSelector = '#easymde-editor-root',
   fields,
   nonce,
   siteUrl
@@ -140,6 +187,54 @@ export function createWordPressAppearancePort({
 
   let disposed = false;
   let pendingArticleTheme: PendingArticleTheme | null = null;
+  let articleScopeLease: EditorStylesheetScopeLease | null = null;
+  let customScopeLease: EditorStylesheetScopeLease | null = null;
+  let customScopeElement: HTMLStyleElement | null = null;
+
+  const disposeAppearanceLeases = (): Error | null => {
+    let failure: Error | null = null;
+    for (const dispose of [
+      () => pendingArticleTheme?.cancel(),
+      () => {
+        const lease = articleScopeLease;
+        articleScopeLease = null;
+        lease?.dispose();
+      },
+      () => {
+        const lease = customScopeLease;
+        customScopeLease = null;
+        customScopeElement = null;
+        lease?.dispose();
+      },
+    ]) {
+      try {
+        dispose();
+      } catch (error) {
+        failure ??=
+          error instanceof Error
+            ? error
+            : new Error('appearance-stylesheet-rollback-failed');
+      }
+    }
+    pendingArticleTheme = null;
+    return failure;
+  };
+
+  let stateUnverified = false;
+
+  const captureFields = () => ({
+    codeTheme: fields.codeTheme.value,
+    codeThemeExplicit: fields.codeThemeExplicit.value,
+    customCssId: fields.customCssId.value,
+    markdownTheme: fields.markdownTheme.value
+  });
+
+  const restoreFields = (values: ReturnType<typeof captureFields>): void => {
+    fields.codeTheme.value = values.codeTheme;
+    fields.codeThemeExplicit.value = values.codeThemeExplicit;
+    fields.customCssId.value = values.customCssId;
+    fields.markdownTheme.value = values.markdownTheme;
+  };
 
   const resolveState = (state: AppearanceState) => {
     const customCss = selectedCustomCss(snapshot.customCss, state);
@@ -154,56 +249,293 @@ export function createWordPressAppearancePort({
       throw new Error('appearance-article-theme-asset-unavailable');
     }
 
-    let customStyle = document.getElementById('easymde-custom-css-preview');
-    if (!customStyle) {
-      customStyle = document.createElement('style');
-      customStyle.id = 'easymde-custom-css-preview';
-      document.head.append(customStyle);
-    }
-    if (!(customStyle instanceof HTMLStyleElement)) {
+    const customStyle = document.getElementById('easymde-custom-css-preview');
+    if (customStyle && !(customStyle instanceof HTMLStyleElement)) {
       throw new Error('appearance-custom-css-style-unavailable');
     }
 
-    return { articleThemeUrl, customCss, customStyle };
+    return {
+      articleThemeUrl,
+      customCss,
+      customStyle: customStyle instanceof HTMLStyleElement ? customStyle : null
+    };
   };
 
-  const commitState = (
+  const captureNode = (element: HTMLStyleElement | HTMLLinkElement | null) => ({
+    element,
+    id: element?.id ?? '',
+    media: element?.media ?? '',
+    nextSibling: element?.nextSibling ?? null,
+    parent: element?.parentNode ?? null,
+    sheet: element?.sheet ?? null,
+    text: element instanceof HTMLStyleElement ? element.textContent ?? '' : null
+  });
+
+  const restoreNode = (
+    state: ReturnType<typeof captureNode>,
+    code: string
+  ): boolean => {
+    if (!state.element) return false;
+    if (!state.element.isConnected) {
+      if (!state.parent) throw new Error(code);
+      state.parent.insertBefore(
+        state.element,
+        state.nextSibling && state.nextSibling.parentNode === state.parent
+          ? state.nextSibling
+          : null
+      );
+    }
+    state.element.id = state.id;
+    state.element.media = state.media;
+    if (
+      state.element instanceof HTMLStyleElement
+      && null !== state.text
+      && state.element.textContent !== state.text
+    ) {
+      state.element.textContent = state.text;
+    }
+    return state.sheet !== state.element.sheet;
+  };
+
+  const createCustomStyleCandidate = (
+    previous: HTMLStyleElement | null,
+    text: string
+  ): HTMLStyleElement => {
+    const candidate = document.createElement('style');
+    candidate.media = 'not all';
+    candidate.textContent = text;
+    if (previous?.parentNode) previous.after(candidate);
+    else document.head.append(candidate);
+    return candidate;
+  };
+
+  const commitPreparedState = (
     state: AppearanceState,
     codeThemeExplicit: boolean,
-    customCss: CustomCssItem | null,
-    customStyle: HTMLStyleElement
+    resolved: ReturnType<typeof resolveState>,
+    articleLink: HTMLLinkElement,
+    articleCandidate: HTMLLinkElement | null
   ): void => {
-    customStyle.textContent = customCss?.scopedCss ?? '';
+    if (stateUnverified) throw new Error('appearance-state-unverified');
+    const previousFields = captureFields();
+    const previousSnapshot = snapshot;
+    const previousArticle = captureNode(articleLink);
+    const previousCustom = captureNode(resolved.customStyle);
+    const previousArticleLease = articleScopeLease;
+    const previousCustomLease = customScopeLease;
+    const previousCustomScopeElement = customScopeElement;
+    const customText = resolved.customCss?.scopedCss ?? '';
+    const reuseCustomStyle = Boolean(
+      resolved.customStyle
+      && previousCustomLease
+      && previousCustomScopeElement === resolved.customStyle
+      && previousCustom.text === customText
+    );
+    const customCandidate = reuseCustomStyle
+      ? null
+      : createCustomStyleCandidate(resolved.customStyle, customText);
+    let nextArticleScope: EditorStylesheetScopeLease | null = null;
+    let nextCustomScope: EditorStylesheetScopeLease | null = null;
+    let articleLeaseDisposed = false;
+    let customLeaseDisposed = false;
+    let articleLeaseUntrusted = false;
+    let customLeaseUntrusted = false;
 
-    fields.markdownTheme.value = state.markdownTheme;
-    fields.codeTheme.value = state.codeTheme;
-    fields.codeThemeExplicit.value = codeThemeExplicit ? '1' : '0';
-    fields.customCssId.value = 'custom' === state.markdownTheme ? state.customCssId : '';
-    snapshot = { ...snapshot, state };
+    try {
+      if (articleCandidate) {
+        nextArticleScope = scopeEditorStylesheetLink(articleCandidate, {
+          rootSelector: editorRootSelector
+        });
+      } else if (!previousArticleLease) {
+        nextArticleScope = scopeEditorStylesheetLink(articleLink, {
+          rootSelector: editorRootSelector
+        });
+      }
+      if (customCandidate) {
+        nextCustomScope = scopeEditorStyleElement(customCandidate, {
+          rootSelector: editorRootSelector
+        });
+      }
+
+      if (articleCandidate && previousArticleLease) {
+        articleScopeLease = null;
+        articleLeaseUntrusted = true;
+        previousArticleLease.dispose();
+        articleLeaseDisposed = true;
+        articleLeaseUntrusted = false;
+      }
+      if (!reuseCustomStyle && previousCustomLease) {
+        customScopeLease = null;
+        customScopeElement = null;
+        customLeaseUntrusted = true;
+        previousCustomLease.dispose();
+        customLeaseDisposed = true;
+        customLeaseUntrusted = false;
+      }
+
+      if (articleCandidate) {
+        articleLink.removeAttribute('id');
+        articleCandidate.id = previousArticle.id;
+        articleCandidate.media = previousArticle.media;
+        articleLink.remove();
+      }
+      if (customCandidate) {
+        if (resolved.customStyle) {
+          resolved.customStyle.removeAttribute('id');
+          customCandidate.id = previousCustom.id;
+          customCandidate.media = previousCustom.media;
+          resolved.customStyle.remove();
+        } else {
+          customCandidate.id = 'easymde-custom-css-preview';
+          customCandidate.media = '';
+        }
+      }
+
+      articleScopeLease = nextArticleScope ?? previousArticleLease;
+      customScopeLease = customCandidate ? nextCustomScope : previousCustomLease;
+      customScopeElement = customCandidate && nextCustomScope
+        ? customCandidate
+        : previousCustomScopeElement;
+      nextArticleScope = null;
+      nextCustomScope = null;
+      fields.markdownTheme.value = state.markdownTheme;
+      fields.codeTheme.value = state.codeTheme;
+      fields.codeThemeExplicit.value = codeThemeExplicit ? '1' : '0';
+      fields.customCssId.value = 'custom' === state.markdownTheme ? state.customCssId : '';
+      snapshot = { ...snapshot, state };
+    } catch (error) {
+      let rollbackError: unknown = null;
+      let articleSheetChanged = false;
+      let customSheetChanged = false;
+      restoreFields(previousFields);
+      snapshot = previousSnapshot;
+      try {
+        articleSheetChanged = restoreNode(
+          previousArticle,
+          'appearance-article-theme-rollback-failed'
+        );
+      } catch (restoreArticleError) {
+        rollbackError = restoreArticleError;
+      }
+      try {
+        customSheetChanged = restoreNode(
+          previousCustom,
+          'appearance-custom-css-rollback-failed'
+        );
+      } catch (restoreCustomError) {
+        rollbackError ??= restoreCustomError;
+      }
+      try {
+        articleCandidate?.remove();
+      } catch (removeCandidateError) {
+        rollbackError ??= removeCandidateError;
+      }
+      try {
+        customCandidate?.remove();
+      } catch (removeCustomError) {
+        rollbackError ??= removeCustomError;
+      }
+      try {
+        nextArticleScope?.dispose();
+      } catch (disposeArticleError) {
+        rollbackError ??= disposeArticleError;
+      }
+      try {
+        nextCustomScope?.dispose();
+      } catch (disposeCustomError) {
+        rollbackError ??= disposeCustomError;
+      }
+      if (
+        previousArticle.element?.isConnected
+        && (articleLeaseDisposed || (articleSheetChanged && previousArticleLease))
+      ) {
+        if (!articleLeaseDisposed && previousArticleLease) {
+          articleScopeLease = null;
+          articleLeaseUntrusted = true;
+          try {
+            previousArticleLease.dispose();
+            articleLeaseUntrusted = false;
+          } catch (restoreArticleLeaseError) {
+            rollbackError ??= restoreArticleLeaseError;
+          }
+        }
+        if (!articleLeaseUntrusted) {
+          try {
+            articleScopeLease = scopeEditorStylesheetLink(articleLink, {
+              rootSelector: editorRootSelector
+            });
+          } catch (restoreArticleScopeError) {
+            rollbackError ??= restoreArticleScopeError;
+          }
+        }
+      } else if (!articleCandidate) {
+        articleScopeLease = previousArticleLease;
+      }
+      if (
+        previousCustom.element?.isConnected
+        && (customLeaseDisposed || (customSheetChanged && previousCustomLease))
+      ) {
+        if (!customLeaseDisposed && previousCustomLease) {
+          customScopeLease = null;
+          customScopeElement = null;
+          customLeaseUntrusted = true;
+          try {
+            previousCustomLease.dispose();
+            customLeaseUntrusted = false;
+          } catch (restoreCustomLeaseError) {
+            rollbackError ??= restoreCustomLeaseError;
+          }
+        }
+        if (!customLeaseUntrusted) {
+          try {
+            customScopeLease = scopeEditorStyleElement(previousCustom.element, {
+              rootSelector: editorRootSelector
+            });
+            customScopeElement = previousCustom.element;
+          } catch (restoreCustomScopeError) {
+            rollbackError ??= restoreCustomScopeError;
+          }
+        }
+      } else if (!previousCustom.element) {
+        customScopeLease = null;
+        customScopeElement = null;
+      } else if (!customLeaseDisposed) {
+        customScopeLease = previousCustomLease;
+        customScopeElement = previousCustomScopeElement;
+      }
+      if (articleLeaseUntrusted || customLeaseUntrusted || rollbackError) {
+        stateUnverified = true;
+      }
+      throw appearanceFailureWithRollback(
+        error,
+        'appearance-article-theme-scope-failed',
+        rollbackError
+      );
+    }
   };
 
   const applyInitialState = (
     state: AppearanceState,
     codeThemeExplicit: boolean
   ): void => {
-    const { articleThemeUrl, customCss, customStyle } = resolveState(state);
-
+    const resolved = resolveState(state);
     const articleLink = document.getElementById('easymde-article-theme-css');
     if (!(articleLink instanceof HTMLLinkElement)) {
       throw new Error('appearance-article-theme-link-unavailable');
     }
-    articleLink.href = articleThemeUrl;
-    commitState(state, codeThemeExplicit, customCss, customStyle);
+    if (articleLink.href !== resolved.articleThemeUrl) {
+      throw new Error('appearance-initial-article-theme-stylesheet-not-ready');
+    }
+    commitPreparedState(state, codeThemeExplicit, resolved, articleLink, null);
   };
 
   const applyState = async (
     state: AppearanceState,
     codeThemeExplicit: boolean
   ): Promise<boolean> => {
-    if (disposed) {
-      throw new Error('appearance-port-disposed');
-    }
-    const { articleThemeUrl, customCss, customStyle } = resolveState(state);
+    if (disposed) throw new Error('appearance-port-disposed');
+    if (stateUnverified) throw new Error('appearance-state-unverified');
+    const resolved = resolveState(state);
     const articleLink = document.getElementById('easymde-article-theme-css');
     if (!(articleLink instanceof HTMLLinkElement)) {
       throw new Error('appearance-article-theme-link-unavailable');
@@ -211,19 +543,16 @@ export function createWordPressAppearancePort({
 
     pendingArticleTheme?.cancel();
     pendingArticleTheme = null;
-
-    if (articleLink.href === articleThemeUrl) {
-      commitState(state, codeThemeExplicit, customCss, customStyle);
+    if (articleLink.href === resolved.articleThemeUrl) {
+      commitPreparedState(state, codeThemeExplicit, resolved, articleLink, null);
       return true;
     }
 
     return new Promise<boolean>((resolve, reject) => {
       const candidate = articleLink.cloneNode(false) as HTMLLinkElement;
-      const activeMedia = articleLink.media;
       candidate.removeAttribute('id');
       candidate.media = 'not all';
-      candidate.href = articleThemeUrl;
-
+      candidate.href = resolved.articleThemeUrl;
       let settled = false;
       let timer: ReturnType<typeof setTimeout> | null = null;
       const cleanup = () => {
@@ -251,11 +580,13 @@ export function createWordPressAppearancePort({
           resolve(false);
           return;
         }
-        commitState(state, codeThemeExplicit, customCss, customStyle);
-        candidate.id = articleLink.id;
-        candidate.media = activeMedia;
-        articleLink.replaceWith(candidate);
-        resolve(true);
+        try {
+          commitPreparedState(state, codeThemeExplicit, resolved, articleLink, candidate);
+          resolve(true);
+        } catch (error) {
+          if (candidate.isConnected) candidate.remove();
+          reject(error);
+        }
       };
       const handleError = () => {
         if (settled) return;
@@ -271,19 +602,19 @@ export function createWordPressAppearancePort({
         candidate.remove();
         reject(new Error('appearance-article-theme-stylesheet-load-timeout'));
       };
-
       pendingArticleTheme = { cancel };
       candidate.addEventListener('load', handleLoad);
       candidate.addEventListener('error', handleError);
-      timer = setTimeout(
-        handleTimeout,
-        ARTICLE_THEME_STYLESHEET_LOAD_TIMEOUT_MS
-      );
+      timer = setTimeout(handleTimeout, ARTICLE_THEME_STYLESHEET_LOAD_TIMEOUT_MS);
       articleLink.after(candidate);
     });
   };
-
-  applyInitialState(snapshot.state, bootstrap.codeThemeExplicit);
+  try {
+    applyInitialState(snapshot.state, bootstrap.codeThemeExplicit);
+  } catch (error) {
+    const cleanupFailure = disposeAppearanceLeases();
+    throw cleanupFailure ?? error;
+  }
 
   return {
     applyState,
@@ -295,8 +626,8 @@ export function createWordPressAppearancePort({
     dispose: () => {
       if (disposed) return;
       disposed = true;
-      pendingArticleTheme?.cancel();
-      pendingArticleTheme = null;
+      const cleanupFailure = disposeAppearanceLeases();
+      if (cleanupFailure) throw cleanupFailure;
     },
     async previewCustomCss(
       css: string,

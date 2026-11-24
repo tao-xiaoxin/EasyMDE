@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard';
 
 import {
+  computedStyle,
   blobText,
   declaration,
   deferred,
@@ -45,6 +46,8 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         const measurement = element.closest('.easymde-wechat-preview-measurement');
         if (measurement) {
@@ -167,6 +170,8 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         if (element === workspace) return declaration({ display: 'none', width: '400px' });
         if (element.closest('.easymde-wechat-preview-measurement')) {
@@ -242,6 +247,8 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         if (element === probe.workspace) return declaration({ display: 'none', width: '400px' });
         if (element.closest('.easymde-wechat-preview-measurement')) return declaration({ display: 'block' });
@@ -291,6 +298,8 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         if (element === probe.workspace) return declaration({ display: 'none', width: '400px' });
         if (element.closest('.easymde-wechat-preview-measurement')) return declaration({ display: 'block' });
@@ -330,6 +339,8 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         if (element === probe.workspace) return declaration({ display: 'none', width: '400px' });
         if (element.closest('.easymde-wechat-preview-measurement')) return declaration({ display: 'block' });
@@ -378,6 +389,8 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         if (element === probe.workspace) return declaration({ display: 'none', width: '400px' });
         if (element.closest('.easymde-wechat-preview-measurement')) return declaration({ display: 'block' });
@@ -419,6 +432,8 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: null,
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         if (element === probe.workspace) return declaration({ display: 'none', width: '400px' });
         if (element.closest('.easymde-wechat-preview-measurement')) return declaration({ display: 'block' });
@@ -478,6 +493,8 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         if (element === workspace) return declaration({ display: 'none', width: '400px' });
         if (element.closest('.easymde-wechat-preview-measurement')) {
@@ -526,6 +543,8 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         if (element.closest('.easymde-wechat-preview-measurement')) {
           measurementStyleReads += 1;
@@ -623,6 +642,8 @@ describe('createBrowserWechatClipboard', () => {
       },
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         if (element.closest('.easymde-wechat-preview-measurement')) {
           measurementStyleReads += 1;

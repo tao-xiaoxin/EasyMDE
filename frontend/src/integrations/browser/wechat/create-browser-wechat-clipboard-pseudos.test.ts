@@ -7,6 +7,7 @@ import {
 
 import {
   blobText,
+  computedStyle,
   declaration,
   installClipboardTestEnvironment,
   mdmdtNormalPngDataUrl,
@@ -54,6 +55,8 @@ describe('createBrowserWechatClipboard', () => {
             ...hiddenStyle
           });
         }
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         return declaration({ display: 'block', opacity: '1', visibility: 'visible' });
       };
       class ClipboardItemStub { constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {  }  }
@@ -175,6 +178,8 @@ describe('createBrowserWechatClipboard', () => {
         if ('H1' === element.tagName && '::before' === pseudoElement) {
           return declaration({ color, content, display: 'block' });
         }
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         return declaration({ display: 'block' });
       },
       getSelection: window.getSelection.bind(window),
@@ -231,6 +236,8 @@ describe('createBrowserWechatClipboard', () => {
           if ('H1' === element.tagName && '::before' === pseudoElement) {
             return declaration({ color, content, display: 'block' });
           }
+          if ('::before' === pseudoElement || '::after' === pseudoElement)
+            return computedStyle(element, pseudoElement);
           return declaration({ display: 'block' });
         },
         getSelection: window.getSelection.bind(window),

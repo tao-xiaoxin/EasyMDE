@@ -4,6 +4,7 @@ import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard'
 
 import {
   blobText,
+  computedStyle,
   declaration,
   declaredStyleValue,
   dispatchSuccessfulLegacyCopy,
@@ -26,7 +27,9 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (element) => {
+      getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if ('TABLE' === element.tagName) {
           return declaration({
             display: 'table',
@@ -85,6 +88,8 @@ describe('createBrowserWechatClipboard', () => {
       '<table><thead><tr><th>Name</th><th>Status</th></tr></thead><tbody><tr><td>EasyMDE</td><td>Ready</td></tr></tbody></table>';
     Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Name Status\nEasyMDE Ready' });
     const tableComputedStyle = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      if ('::before' === pseudoElement || '::after' === pseudoElement)
+        return computedStyle(element, pseudoElement);
       if (pseudoElement) return declaration({});
       if ('TABLE' === element.tagName) {
         return declaration({
@@ -175,7 +180,9 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (element) => {
+      getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if ('TABLE' === element.tagName) {
           return declaration({
             display: 'block',
@@ -231,7 +238,9 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (element) => {
+      getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if ('TABLE' === element.tagName) {
           return declaration({
             display: 'table',
@@ -289,6 +298,8 @@ describe('createBrowserWechatClipboard', () => {
       value: () => ({ bottom: 206, height: 206, left: 0, right: 520, top: 0, width: 520 })
     });
     const tableComputedStyle = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      if ('::before' === pseudoElement || '::after' === pseudoElement)
+        return computedStyle(element, pseudoElement);
       if (pseudoElement) return declaration({});
       if ('TABLE' === element.tagName) {
         return declaration({
@@ -420,7 +431,9 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (element) => {
+      getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (element === pane) return declaration({ display: paneHidden ? 'none' : 'block' });
         if ('TABLE' === element.tagName) {
           return declaration({ display: 'table', width: tableWidth });
@@ -472,6 +485,43 @@ describe('createBrowserWechatClipboard', () => {
     preview.setAttribute('data-easymde-preview-html-sink', '1');
     preview.innerHTML = '<table><thead><tr><th>Name</th></tr></thead><tbody><tr><td>EasyMDE</td></tr></tbody></table>';
     Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Name\nEasyMDE' });
+    const table = preview.querySelector('table');
+    const cells = Array.from(preview.querySelectorAll('th, td'));
+    if (!table || cells.length !== 2) throw new Error('table grid fixture missing');
+    const tableRect = { bottom: 66, height: 66, left: 0, right: 335, top: 0, width: 335, x: 0, y: 0 };
+    Object.defineProperty(preview, 'getBoundingClientRect', { configurable: true, value: () => tableRect });
+    Object.defineProperty(table, 'getBoundingClientRect', { configurable: true, value: () => tableRect });
+    cells.forEach((cell) => {
+      Object.defineProperty(cell, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => ({ bottom: 33, height: 33, left: 0, right: 335, top: 0, width: 335, x: 0, y: 0 })
+      });
+    });
+    const authorRule = document.createElement('style');
+    authorRule.textContent = 'table::before{width:100cqi}';
+    document.head.append(authorRule);
+    const transparentPaint = {
+      'background-color': 'rgba(0, 0, 0, 0)',
+      'background-image': 'none',
+      'border-top-style': 'none',
+      'border-right-style': 'none',
+      'border-bottom-style': 'none',
+      'border-left-style': 'none',
+      'border-top-width': '0px',
+      'border-right-width': '0px',
+      'border-bottom-width': '0px',
+      'border-left-width': '0px',
+      'border-radius': '0px',
+      'border-top-left-radius': '0px',
+      'border-top-right-radius': '0px',
+      'border-bottom-right-radius': '0px',
+      'border-bottom-left-radius': '0px',
+      'box-shadow': 'none',
+      'padding-top': '0px',
+      'padding-right': '0px',
+      'padding-bottom': '0px',
+      'padding-left': '0px'
+    };
     const clipboard = createBrowserWechatClipboard({
       blob: Blob,
       clipboardItem: ClipboardItemStub,
@@ -479,22 +529,38 @@ describe('createBrowserWechatClipboard', () => {
       getComputedStyle: (element, pseudoElement) => {
         if (pseudoElement) {
           if ('TABLE' === element.tagName && '::before' === pseudoElement) {
-            return declaration({ display: 'table-caption', width: '100cqi', height: '0px', content: '""' });
+            return declaration({
+              ...transparentPaint,
+              'animation-name': 'none',
+              content: '""',
+              display: 'table-caption',
+              height: '0px',
+              'margin-top': '0px',
+              'margin-right': '0px',
+              'margin-bottom': '0px',
+              'margin-left': '0px',
+              width: '335px'
+            });
           }
-          return declaration({});
+          return computedStyle(element, pseudoElement);
         }
         if ('TABLE' === element.tagName) {
           return declaration({
+            ...transparentPaint,
+            'animation-name': 'none',
+            'border-collapse': 'collapse',
+            'border-spacing': '2px',
             display: 'block',
             width: '100%',
             'max-width': '100%',
             'overflow-x': 'auto',
             'overflow-y': 'hidden',
+            'table-layout': 'auto',
             'container-type': 'inline-size'
           });
         }
         if ('THEAD' === element.tagName || 'TBODY' === element.tagName) {
-          return declaration({ display: 'contents' });
+          return declaration({ ...transparentPaint, display: 'contents' });
         }
         if ('TR' === element.tagName) return declaration({ display: 'table-row' });
         if ('TH' === element.tagName || 'TD' === element.tagName) return declaration({ display: 'table-cell' });
@@ -508,20 +574,24 @@ describe('createBrowserWechatClipboard', () => {
       pageOffset: () => ({ x: 0, y: 0 })
     });
 
-    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
-    const item = (writes[0] as ClipboardItemStub[])[0];
-    const htmlBlob = item?.payload['text/html'];
-    if (!htmlBlob) throw new Error('clipboard html missing');
-    const holder = document.createElement('div');
-    holder.innerHTML = await blobText(htmlBlob);
-    const table = holder.querySelector('table');
-    expect(table?.getAttribute('style')).toContain('container-type:inline-size');
-    expect(table?.querySelector(':scope > thead')?.getAttribute('style')).toContain('display:contents');
-    expect(table?.querySelector(':scope > tbody')?.getAttribute('style')).toContain('display:contents');
-    const pseudo = table?.parentElement?.querySelector(':scope > span[aria-hidden="true"]');
-    expect(pseudo?.getAttribute('style')).toContain('display:table-caption');
-    expect(pseudo?.getAttribute('style')).toContain('width:100cqi');
-    expect(pseudo?.getAttribute('style')).toContain('height:0px');
+    try {
+      await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+      const item = (writes[0] as ClipboardItemStub[])[0];
+      const htmlBlob = item?.payload['text/html'];
+      if (!htmlBlob) throw new Error('clipboard html missing');
+      const holder = document.createElement('div');
+      holder.innerHTML = await blobText(htmlBlob);
+      const outputTable = holder.querySelector('table');
+      expect(outputTable?.getAttribute('style')).toContain('container-type:inline-size');
+      expect(outputTable?.getAttribute('style')).toContain('display:table!important');
+      expect(outputTable?.querySelector(':scope > thead')?.getAttribute('style')).toContain('display:contents');
+      expect(outputTable?.querySelector(':scope > tbody')?.getAttribute('style')).toContain('display:contents');
+      const pseudo = outputTable?.parentElement?.querySelector(':scope > span[aria-hidden="true"]');
+      expect(pseudo?.getAttribute('style')).toContain('display:table-caption');
+      expect(pseudo?.getAttribute('style')).toContain('height:0px');
+    } finally {
+      authorRule.remove();
+    }
   });
 
 });

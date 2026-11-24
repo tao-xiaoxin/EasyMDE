@@ -989,7 +989,12 @@ export function EditorRoot(props: EditorRootProps) {
     const preparation = wechatBackgroundPreparationRef.current;
     wechatBackgroundPreparationRef.current = null;
     preparation?.controller.abort();
-  }, [clearScheduledWechatPreparation]);
+    const releasePrepared = props.wechatClipboard.releasePrepared;
+    const preview = previewRuntimeRef.current?.surface;
+    const visual = visualEditorRuntimeRef.current?.surface;
+    if (preview) releasePrepared?.(preview);
+    if (visual && visual !== preview) releasePrepared?.(visual);
+  }, [clearScheduledWechatPreparation, props.wechatClipboard]);
   const prepareWechatPreview = useCallback(
     (surface: HTMLElement | null) => {
       const prepare = props.wechatClipboard.prepare;

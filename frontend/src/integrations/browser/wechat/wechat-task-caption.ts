@@ -304,7 +304,6 @@ export function taskCheckboxCaptionOwnedTextNodes(start: Element, runtime: Brows
     if (node.nodeType === 3) {
       const text = node as Text;
       textNodes.push(text);
-      if ((text.nodeValue ?? '').trim()) stopped = true;
       return;
     }
     if (!(node instanceof Element)) return;

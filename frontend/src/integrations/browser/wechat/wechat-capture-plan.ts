@@ -749,16 +749,22 @@ export function mermaidIntrinsicScrollDimensions(
     throw new WechatPngConversionError('wechat-png-rasterization-failed');
   const [paddingTop, paddingRight, paddingBottom, paddingLeft, borderTop, borderRight, borderBottom, borderLeft] =
     sourceEdges as [number, number, number, number, number, number, number, number];
-  const sourceContentWidth = sourceRect.width - paddingRight - paddingLeft - borderRight - borderLeft;
-  const sourceContentHeight = sourceRect.height - paddingTop - paddingBottom - borderTop - borderBottom;
+  const contentBox = runtime.mermaidContentBoxes?.get(source);
+  if (!contentBox) throw new WechatPngConversionError('wechat-png-rasterization-failed');
+  const sourceContentWidth = contentBox.width;
+  const sourceContentHeight = contentBox.height;
   if (
+    !Number.isFinite(sourceContentWidth) ||
+    !Number.isFinite(sourceContentHeight) ||
     sourceContentWidth <= 0 ||
     sourceContentHeight <= 0 ||
+    sourceContentWidth > sourceRect.width - paddingRight - paddingLeft - borderRight - borderLeft + MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
+    sourceContentHeight > sourceRect.height - paddingTop - paddingBottom - borderTop - borderBottom + MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
     Math.abs(svgRect.height - sourceContentHeight) > MERMAID_INTRINSIC_GEOMETRY_TOLERANCE
   )
     throw new WechatPngConversionError('wechat-png-rasterization-failed');
   const sourceContentLeft = sourceRect.left + paddingLeft + borderLeft;
-  const sourceContentRight = sourceRect.right - paddingRight - borderRight;
+  const sourceContentRight = sourceContentLeft + sourceContentWidth;
   const sourceContentTop = sourceRect.top + paddingTop + borderTop;
   const width = viewBox.width + paddingLeft + paddingRight + borderLeft + borderRight;
   const height = viewBox.height + paddingTop + paddingBottom + borderTop + borderBottom;

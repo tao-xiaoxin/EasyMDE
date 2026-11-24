@@ -279,11 +279,68 @@ describe('mermaidAdmissionSignature', () => {
       runtime(parts.root, parts.svg, parts.source, parts.svgStyle, parts.svg)
     );
     mutate(parts);
+    const afterRuntime = runtime(parts.root, parts.svg, parts.source, parts.svgStyle, parts.svg);
     const after = mermaidAdmissionSignature(
       parts.root,
-      runtime(parts.root, parts.svg, parts.source, parts.svgStyle, parts.svg)
+      'source layout marker' === _label
+        ? {
+            ...afterRuntime,
+            mermaidContentBoxes: {
+              cleanup: () => undefined,
+              get: (source) => source === parts.root ? { width: 130.5, height: 235.25 } : null,
+              isCurrent: () => true,
+              ready: Promise.resolve(),
+              retain: () => undefined
+            }
+          }
+        : afterRuntime
     );
     expect(after).not.toBe(before);
+  });
+
+  it('includes fractional native content-box dimensions for marked owners', () => {
+    const { root, svg, source, svgStyle } = fixture();
+    root.setAttribute('data-easymde-mermaid-layout', 'timeline');
+    let height = 510.71875;
+    const withContentBox = {
+      ...runtime(root, svg, source, svgStyle),
+      mermaidContentBoxes: {
+        cleanup: () => undefined,
+        get: (candidate: Element) => candidate === root ? { width: 481.5, height } : null,
+        isCurrent: () => true,
+        ready: Promise.resolve(),
+        retain: () => undefined
+      }
+    };
+    const before = mermaidAdmissionSignature(root, withContentBox);
+    height = 510.734375;
+    const after = mermaidAdmissionSignature(root, withContentBox);
+    expect(before).toContain('content=481.5,510.71875');
+    expect(after).not.toBe(before);
+    expect(() => mermaidAdmissionSignature(root, runtime(root, svg, source, svgStyle))).toThrow(
+      'wechat-png-rasterization-failed'
+    );
+  });
+
+  it.each([
+    ['clientWidth', -1],
+    ['offsetHeight', Number.POSITIVE_INFINITY],
+    ['scrollHeight', Number.NaN],
+    ['scrollLeft', Number.NaN]
+  ])('rejects an invalid %s when capturing marked-owner layout inputs', (property, value) => {
+    const { root, svg, source, svgStyle } = fixture();
+    root.setAttribute('data-easymde-mermaid-layout', 'timeline');
+    Object.defineProperty(root, property, { configurable: true, value });
+    expect(() => mermaidAdmissionSignature(root, runtime(root, svg, source, svgStyle), true)).toThrow(
+      'wechat-png-rasterization-failed'
+    );
+  });
+
+  it('retains a finite negative scroll offset for RTL layout inputs', () => {
+    const { root, svg, source, svgStyle } = fixture();
+    root.setAttribute('data-easymde-mermaid-layout', 'timeline');
+    Object.defineProperty(root, 'scrollLeft', { configurable: true, value: -12 });
+    expect(mermaidAdmissionSignature(root, runtime(root, svg, source, svgStyle), true)).toContain(',-12');
   });
 
   it('distinguishes unavailable TypedOM from an equal computed value', () => {

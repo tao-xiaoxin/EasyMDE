@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard';
-import { createDimensionSemanticsContext } from './wechat-dimension-semantics';
+import { createDimensionSemanticsContext, snapshotComputedStyle } from './wechat-dimension-semantics';
 
 import {
   blobText,
+  computedStyle,
   declaration,
   declaredStyleDeclarations,
   declaredStyleValue,
@@ -16,6 +17,43 @@ import {
 
 describe('createBrowserWechatClipboard', () => {
   installClipboardTestEnvironment();
+
+  it('snapshots physical and logical sizing from a real CSSStyleDeclaration together', () => {
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<blockquote>Logical sizing</blockquote>';
+    const source = preview.firstElementChild;
+    if (!(source instanceof HTMLElement)) throw new Error('logical snapshot fixture missing');
+    source.style.cssText = [
+      'width:auto',
+      'inline-size:auto',
+      'height:auto',
+      'block-size:auto',
+      'max-width:100%',
+      'max-inline-size:100%',
+      'max-height:none',
+      'max-block-size:none',
+      'min-width:0px',
+      'min-inline-size:0px',
+      'min-height:0px',
+      'min-block-size:0px'
+    ].join(';');
+    document.body.append(preview);
+    try {
+      const live = window.getComputedStyle(source);
+      const snapshot = snapshotComputedStyle(live);
+      ['width', 'inline-size', 'height', 'block-size', 'max-width', 'max-inline-size', 'max-height', 'max-block-size', 'min-width', 'min-inline-size', 'min-height', 'min-block-size'].forEach(
+        (property) => {
+          expect(snapshot.getPropertyValue(property), property).toBe(live.getPropertyValue(property));
+        }
+      );
+      expect(snapshot.getPropertyValue('max-inline-size')).toBe('100%');
+      expect(snapshot.getPropertyValue('min-inline-size')).toBe('0px');
+      expect(snapshot.getPropertyValue('max-block-size')).toBe('none');
+    } finally {
+      preview.remove();
+    }
+  });
 
   it('keeps ordinary flow dimensions fluid in modern and legacy payloads', async () => {
     type DimensionState = Readonly<{ height: string; width: string }>;
@@ -463,6 +501,8 @@ describe('createBrowserWechatClipboard', () => {
           width: '110px'
         });
       }
+      if ('::before' === pseudoElement || '::after' === pseudoElement)
+        return computedStyle(element, pseudoElement);
       if ('SVG' === element.localName.toUpperCase()) {
         return declaration({
           display: 'block',
@@ -548,6 +588,8 @@ describe('createBrowserWechatClipboard', () => {
           width: '110px'
         });
       }
+      if ('::before' === pseudoElement || '::after' === pseudoElement)
+        return computedStyle(element, pseudoElement);
       return declaration({ display: 'block' });
     };
     class ClipboardItemStub { constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {  }  }
@@ -1332,6 +1374,8 @@ describe('createBrowserWechatClipboard', () => {
           width: '110px'
         });
       }
+      if ('::before' === pseudoElement || '::after' === pseudoElement)
+        return computedStyle(element, pseudoElement);
       return declaration({ display: 'block' });
     };
     class ClipboardItemStub { constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {  }  }
@@ -1387,6 +1431,8 @@ describe('createBrowserWechatClipboard', () => {
           width: '110px'
         });
       }
+      if ('::before' === pseudoElement || '::after' === pseudoElement)
+        return computedStyle(element, pseudoElement);
       return declaration({ display: 'block' });
     };
     class ClipboardItemStub {
@@ -1566,6 +1612,8 @@ describe('createBrowserWechatClipboard', () => {
     Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Percent suffix' });
     const computed = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
       const raw = Boolean(element.closest('.easymde-wechat-raw-dimension-context'));
+      if ('::before' === pseudoElement || '::after' === pseudoElement)
+        return computedStyle(element, pseudoElement);
       if ('SPAN' === element.tagName && element.classList.contains('percent-suffix') && !pseudoElement) {
         return declaration({
           display: 'inline',
@@ -1616,6 +1664,8 @@ describe('createBrowserWechatClipboard', () => {
     });
     const computed = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
       const raw = Boolean(element.closest('.easymde-wechat-raw-dimension-context'));
+      if ('::before' === pseudoElement || '::after' === pseudoElement)
+        return computedStyle(element, pseudoElement);
       if ('SPAN' === element.tagName && element.classList.contains('percent-suffix') && !pseudoElement) {
         return declaration({
           background: `url("${imageUrl}")`,

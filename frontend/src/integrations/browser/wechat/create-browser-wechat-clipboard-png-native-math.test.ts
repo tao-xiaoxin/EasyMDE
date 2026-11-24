@@ -5,6 +5,7 @@ import type { WechatVisualRasterizationRequest } from '../../../contracts/ports/
 
 import {
   blobText,
+  computedStyle,
   declaration,
   installClipboardTestEnvironment,
   pngOptions,
@@ -45,12 +46,16 @@ describe('createBrowserWechatClipboard', () => {
       title: '',
       url: 'https://example.test/native.png'
     }));
+    const fetch = vi.fn(async () => {
+      throw new Error('math-vector-atlas-fetch-not-allowed-during-png');
+    });
     const clipboard = createBrowserWechatClipboard({
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
+      fetch,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if ('DIV' === element.tagName && element.classList.contains('easymde-math-block')) {
           return declaration({ display: 'block', height: '30px', overflow: 'auto', width: '180px' });
         }
@@ -102,6 +107,7 @@ describe('createBrowserWechatClipboard', () => {
     expect(capture.querySelector('.pstrut')).not.toBeNull();
     expect(capture.querySelector('.pstrut')?.getAttribute('style')).toContain('display:table-cell');
     expect(capture.querySelector('.pstrut')?.getAttribute('style')).toContain('width:12px');
+    expect(fetch).not.toHaveBeenCalled();
     expect(capture.textContent).toContain('A\u2060B');
     expect(capture.querySelector('[href^="javascript:"]')).toBeNull();
     expect(writes).toHaveLength(1);
@@ -139,7 +145,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if ('DIV' === element.tagName && element.classList.contains('easymde-math-block')) {
           return declaration({
             display: 'block',
@@ -223,7 +229,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if ('DIV' === element.tagName && element.classList.contains('easymde-math')) {
           return declaration({ display: 'block', height: '30px', overflow: 'auto', width: '180px' });
         }
@@ -285,7 +291,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if ('DIV' === element.tagName && element.classList.contains('easymde-math-block')) {
           return declaration({
             display: 'block',
@@ -372,7 +378,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if ('SPAN' === element.tagName && element.classList.contains('easymde-math-inline')) {
           return declaration({
             display: 'inline',
@@ -451,7 +457,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if ('P' === element.tagName) {
           return declaration({
             'font-family': 'Parent Serif',
@@ -516,7 +522,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if ('SPAN' === element.tagName && element.classList.contains('easymde-math-inline')) {
           return declaration({
             display: 'inline',
@@ -596,7 +602,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if ('SPAN' === element.tagName && element.classList.contains('easymde-math-inline')) {
           const overflow = 'auto' === element.getAttribute('data-overflow') ? 'auto' : 'hidden';
           return declaration({
@@ -683,7 +689,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if ('SPAN' === element.tagName && element.classList.contains('easymde-math-inline')) {
           return declaration({ display: 'inline' });
         }
@@ -743,7 +749,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if ('DIV' === element.tagName && element.classList.contains('easymde-math')) {
           return declaration({ display: 'block', height: '30px', overflow: 'auto', width: '180px' });
         }

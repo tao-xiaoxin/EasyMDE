@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { previewEnhancementBootstrapFixture } from '../../test/preview-enhancement-bootstrap-fixture';
 import {
@@ -8,6 +8,25 @@ import {
 } from './browser-preview-enhancement';
 
 const appended: Element[] = [];
+const linkSheets = new WeakMap<HTMLLinkElement, CSSStyleSheet>();
+const originalLinkSheetDescriptor = Object.getOwnPropertyDescriptor(
+  HTMLLinkElement.prototype,
+  'sheet'
+);
+const originalLinkDispatchEvent = HTMLLinkElement.prototype.dispatchEvent;
+
+function attachTestStylesheet(link: HTMLLinkElement): CSSStyleSheet | null {
+  const existing = linkSheets.get(link);
+  if (existing) return existing;
+  const style = document.createElement('style');
+  style.textContent = '.easymde-test-style { color: black; }';
+  document.head.append(style);
+  appended.push(style);
+  const sheet = style.sheet;
+  if (!sheet) return null;
+  linkSheets.set(link, sheet);
+  return sheet;
+}
 
 function runtime(
   enhance = vi.fn().mockResolvedValue(undefined),
@@ -33,18 +52,100 @@ function autoLoadResources() {
   const append = document.head.appendChild.bind(document.head);
   return vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
     const result = append(node);
+    if (node instanceof HTMLLinkElement) attachTestStylesheet(node);
     if (node instanceof Element) appended.push(node);
     queueMicrotask(() => node.dispatchEvent(new Event('load')));
     return result;
   });
 }
 
+beforeEach(() => {
+  vi.spyOn(HTMLLinkElement.prototype, 'dispatchEvent').mockImplementation(
+    function dispatch(this: HTMLLinkElement, event: Event): boolean {
+      if ('load' === event.type) attachTestStylesheet(this);
+      return originalLinkDispatchEvent.call(this, event);
+    }
+  );
+  Object.defineProperty(HTMLLinkElement.prototype, 'sheet', {
+    configurable: true,
+    get(this: HTMLLinkElement) {
+      const attached = linkSheets.get(this);
+      if (attached) return attached;
+      const loaded = this.dataset.easymdeLoadedHref;
+      if (loaded) return attachTestStylesheet(this);
+      return originalLinkSheetDescriptor?.get?.call(this) ?? null;
+    }
+  });
+});
+
 afterEach(() => {
   for (const node of appended.splice(0)) node.remove();
   vi.restoreAllMocks();
+  if (originalLinkSheetDescriptor) {
+    Object.defineProperty(
+      HTMLLinkElement.prototype,
+      'sheet',
+      originalLinkSheetDescriptor
+    );
+  } else {
+    Reflect.deleteProperty(HTMLLinkElement.prototype, 'sheet');
+  }
 });
 
 describe('createBrowserPreviewEnhancementPort', () => {
+  it('scopes only connected SVG styles in one disposable batch', () => {
+    const port = createBrowserPreviewEnhancementPort(
+      previewEnhancementBootstrapFixture,
+      { documentRef: document, runtime: runtime() }
+    );
+    const surface = document.createElement('article');
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const svgStyle = document.createElementNS(
+      'http://www.w3.org/2000/svg',
+      'style'
+    ) as SVGStyleElement;
+    const nestedSvg = document.createElementNS(
+      'http://www.w3.org/2000/svg',
+      'svg'
+    );
+    const nestedSvgStyle = document.createElementNS(
+      'http://www.w3.org/2000/svg',
+      'style'
+    ) as SVGStyleElement;
+    const style = document.createElement('style');
+    const nestedStyle = document.createElement('style');
+    style.textContent = '.shape { color: red; }';
+    nestedStyle.textContent = '.nested { color: blue; }';
+    document.head.append(style, nestedStyle);
+    appended.push(style, nestedStyle);
+    if (!style.sheet || !nestedStyle.sheet) {
+      throw new Error('test-svg-style-sheet-missing');
+    }
+    Object.defineProperty(svgStyle, 'sheet', {
+      configurable: true,
+      value: style.sheet
+    });
+    Object.defineProperty(nestedSvgStyle, 'sheet', {
+      configurable: true,
+      value: nestedStyle.sheet
+    });
+    svgStyle.textContent = '.shape { color: red; }';
+    nestedSvgStyle.textContent = '.nested { color: blue; }';
+    nestedSvg.append(nestedSvgStyle);
+    svg.append(svgStyle, nestedSvg);
+    surface.append(svg);
+
+    const lease = port.scopeRenderedStyles(surface);
+    expect(style.sheet.cssRules).toHaveLength(2);
+    expect(nestedStyle.sheet.cssRules).toHaveLength(2);
+    expect(style.sheet.cssRules[1]?.cssText).toContain('#easymde-editor-root');
+    expect(nestedStyle.sheet.cssRules[1]?.cssText).toContain('#easymde-editor-root');
+    lease.dispose();
+    expect(style.sheet.cssRules).toHaveLength(1);
+    expect(nestedStyle.sheet.cssRules).toHaveLength(1);
+    port.dispose?.();
+  });
+
   it('leaves plain server-rendered preview untouched and loads no optional assets', async () => {
     const enhance = vi.fn();
     const append = autoLoadResources();

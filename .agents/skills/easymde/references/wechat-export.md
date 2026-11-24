@@ -4,6 +4,7 @@
 
 - [Source and session owner](#source-and-session-owner)
 - [Activation and preparation](#activation-and-preparation)
+- [Atlas-backed math vectors](#atlas-backed-math-vectors)
 - [Optional PNG conversion](#optional-png-conversion)
 - [Portable serialization](#portable-serialization)
 - [Layout and special content](#layout-and-special-content)
@@ -69,9 +70,18 @@ focusable and expose `aria-disabled="true"` without `aria-busy`.
 ## Activation and preparation
 
 Stable Preview notifications schedule one debounced background preparation for
-the active sink after Preview settles. PNG-enabled preparation is
-geometry-only for hidden Preview surfaces; the default path prepares the
-portable payload. Neither mode rasterizes or uploads in the background. The
+the active sink after Preview settles. Configured PNG-disabled preparation is
+the default portable path: it discovers eligible outermost KaTeX owners, obtains
+the hidden measurement lease, loads and validates the paired local atlas, and
+materializes local SVG paths for those owners in the detached serialization
+clone. True-inline, non-KaTeX, and non-eligible math remain on the compatible
+portable tree. Production Bootstrap rejects a missing atlas pair; only the
+lower-level clipboard compatibility factory keeps vector admission disabled
+when both runtime fields are absent. A partial pair fails explicitly rather
+than degrading to portable output. PNG-enabled preparation is geometry-only;
+PNG Copy bypasses atlas loading, glyph capture, SVG scene building, and vector
+materialization and uses the existing PNG transaction. Neither mode rasterizes
+or uploads in the background. The
 environment observes image/video
 load, error, metadata, resize, FontFaceSet completion/failure,
 ResizeObserver geometry, and inserted/removed descendants; removed nodes are
@@ -196,15 +206,149 @@ the existing Preview-owner and layout guards. Abort, timeout, stale, and
 teardown paths gate the deferred result; `finally` disconnects the observer,
 including late cleanup after an earlier failure.
 
+## Atlas-backed math vectors
+
+The production editor Bootstrap supplies `wechatExport.wechatMathAtlasUrl` and
+`wechatExport.wechatMathAtlasContentVersion` as a required pair. The URL must be same-origin,
+carry exactly one lowercase 16-hex `contentversion` query equal to the paired
+field, resolve beneath the approved `previewEnhancement.assetBaseUrl`, and name
+only `assets/math/easymde-katex-glyph-atlas.json`. Reject missing or malformed
+fields, extra query parameters, fragments, credentials, wrong origins, and a
+version mismatch before fetching. The PHP owner computes the version as the
+first 16 hex characters of the atlas file's SHA-256. A partial pair fails
+explicitly; the lower-level compatibility factory bypasses vector admission only
+when both runtime fields are absent.
+
+When PNG conversion is disabled and the Bootstrap atlas pair is configured, the
+portable path activates this vector path. It first discovers eligible math
+owners in stable Preview order and reads the atlas only when at least one exists.
+Eligibility is limited to the outermost rendered KaTeX owner whose effective
+display is `inline-block` or `inline-flex`, or whose effective display is
+`block` or `flow-root`, whose KaTeX role is the recognized block role, and whose
+authored outer width is neutral. Nested math owners stay in the outer owner.
+True `display:inline` math, non-KaTeX math, and roots with no eligible owner stay
+on the existing portable path and do not fetch the atlas. For an admitted owner,
+atlas, font, glyph, paint, clip, matrix, baseline, geometry, scene, or final
+installation failure rejects preparation explicitly; it never substitutes the
+plain portable root or publishes a partial vector result. PNG-enabled Copy
+bypasses atlas loading, glyph capture, SVG scene building, and vector
+materialization entirely.
+
+The call-scoped loader accepts only the validated same-origin HTTP(S) response,
+rejects non-2xx responses, response bodies outside `1..8 MiB`, JSON parsing
+failures, and every graph that is not
+`easymde-katex-glyph-atlas/1`. The graph must use the exact
+`font-units-y-up`, six-decimal, unflipped, unoptimized serialization contract;
+each font must have a positive integer `unitsPerEm`, unique glyph IDs and
+code-point mappings, and every mapping must resolve to a listed glyph. A
+successful graph is deeply frozen and cached only for the exact URL and content
+version; cancellation or a stale owner prevents cache publication. A failed
+fetch or validation exposes its stable failure and does not become a valid
+cache entry. A later Copy may retry.
+
+Eligible owners use one transferred or transaction-local hidden measurement
+lease. The original Safe Preview remains the source, payload-cache key, and
+freshness owner. The measure clone preserves Preview width, inherited
+typography, CSS custom properties, ancestor context, and original text while
+neutralizing unrelated hidden surfaces. The capture consumes paired source,
+measurement, and final clone identities; every source text stream must match
+its measurement text before useful font or glyph reads. Missing pairs,
+ambiguous or unloaded managed KaTeX faces, unknown glyphs, invalid paths or
+matrices, unsupported paints, and source text mismatches fail explicitly.
+
+Vector capture records text runs, KaTeX rule paint, safe static SVG path/line
+fragments with nested rectangular clip viewports, and the direct visual
+viewport. It copies outlines from the deterministic atlas, uses the current
+computed face, fill, and size, and omits only the paired KaTeX `vlist-s`
+renderer strut; authored zero-width text remains a required glyph and fails if
+mapping or paint cannot be proved. Hidden, zero-opacity, and transparent paint
+is omitted. Visible internal KaTeX paint that the scene cannot represent,
+including unsupported gradients, images, masks, partial effective opacity, alpha
+SVG paint, active SVG/Script content, and unresolved clips, fails rather than
+becoming an incomplete scene. Non-transparent solid
+`colorbox`/`fcolorbox` backgrounds and visible border edges are emitted once as
+rectangular scene paint at their measured box geometry.
+
+The final geometry has three separate owners. `A` is the neutral flow
+allocation: for an atomic inline owner it records fractional parent line-box
+width, height, baseline, vertical margins, paint offsets, and the optional
+overflow viewport; an outer inline wrapper owns that allocation without adding
+decorative paint. `R` is the measured owner border box: the styled target keeps
+its source background, border, and padding once, and the generated scene
+replaces only the target's visual descendants. For block owners, there is no
+inline `A`: the styled target remains the responsive, border-box outer scroll
+owner rather than retaining its source column's physical pixel width. An
+undecorated normal-flow `section` carrier owns the intrinsic visual width and auto
+side margins. Short scenes center in the destination content box; wider scenes
+retain a reachable local scroll range without expanding the article. The block
+SVG stays in normal flow; CSS absolute positioning and source-column offsets
+must not determine its placement after native Save.
+
+`V` is the direct visual union inside the owner; its existing viewBox rebases
+captured glyph, rule, and SVG paint without a second horizontal translation.
+Capture all effective border and padding edges before replacement. With owner
+height `H`, content height is `H - borderTop - borderBottom - paddingTop -
+paddingBottom`; the carrier's leading space is `V.y - borderTop - paddingTop`,
+and trailing space is the remaining content height after leading space and
+`V.height`. Preserve those measured vertical spaces once on the neutral carrier. Create that
+carrier in the already-supported `section` form: it is installed after structural
+finalization, so a late `div` would bypass the existing portable-tag normalization
+and can lose its allocation and centering when native WeChat replaces it.
+Missing/unsupported padding, unavailable widths for active borders, non-finite
+edges, and incoherent or negative vertical allocation fail explicitly. A
+`none`/`hidden` border contributes zero; a visible border requires a measured
+width. The margin parser's separate `auto` semantics must not fabricate zero
+padding. The outer background, border and padding therefore
+remain on the sanitized HTML owner; they are not copied into the scene or baked
+into the replacement SVG. A visible descendant with unsupported paint fails explicitly,
+while hidden, zero-opacity, and transparent paint may be omitted.
+Allocation, viewport, baseline, paint offsets, and raw geometry are frozen
+before asynchronous replacement; missing, non-finite, or out-of-bounds values
+fail explicitly. The near-wrap and fragmented true-inline line-box cases
+remain unverified, so they do not justify a vector admission.
+
+After structural finalization, the detached serialization records the canonical
+math plain text from the finalized non-vector tree before materialization. It
+then validates all scenes and target bindings and installs the local SVG paths
+into the detached final targets. The saved plain text is used for the eventually
+captured Clipboard `text/plain`, while the HTML capture observes the SVG scene;
+replacing the visible tree does not empty the formula text. The current
+implementation materializes into the detached clone before the outer prepared
+payload stores its final signatures. The surrounding transaction still runs
+final source/signature checks and validates/positions HTML and plain Blobs before
+reporting success; a mismatch rejects the preparation rather than copy the
+materialized payload. Scene construction and all target validation happen before
+the first target mutation; any later installation failure restores every
+target's children and style, removes generated ownership marks, and propagates
+the original failure. A missing final target fails before mutation.
+Source Preview content, Markdown, metadata, revisions, and publication state
+remain unchanged.
+
+The atlas loader publishes a cache entry only after a complete successful
+validation; cancellation or a stale owner before that point, an HTTP or decode
+failure, and an invalid graph leave the cache unchanged so a later Copy may
+retry explicitly. An admitted owner's atlas, capture, scene, or installation
+failure rejects the current preparation instead of silently producing a
+new non-vector payload or reporting a partial success. The measurement lease
+and all capture probes are released exactly once on success, failure, abort,
+stale-result, timeout, and teardown. The vector atlas renderer is a detached
+compatibility projection of the current accepted Preview. It is not a second
+Markdown renderer, persistence owner, public-content authority, PNG uploader,
+or source mutation. Native WeChat Save and Reader retention for this production
+consumer, true-inline projection, near-wrap behavior, and the complete
+theme/mode matrix remain unverified until separately executed.
+
 ## Optional PNG conversion
 
 `images.wechatPngExportEnabled` is a persisted strict boolean that defaults to
 `false`; a missing stored value reads as `false` without writing. Settings
 transfer schema 10 requires the field, while schemas 1 through 9 import it as
-`false`. Editor bootstrap exposes the effective value only as
-`wechatExport.pngConversionEnabled`.
-
-When disabled, Copy follows the existing portable-HTML path unchanged. When
+`false`. Editor bootstrap exposes the effective value as
+`wechatExport.pngConversionEnabled`. The separately validated
+`wechatExport.wechatMathAtlasUrl` and
+`wechatExport.wechatMathAtlasContentVersion` fields belong to the PNG-disabled
+vector path; PNG Copy does not consume them. PNG-enabled preparation is
+geometry-only. When
 enabled, conversion runs only during an explicit ordinary or immersive Copy
 from the current stable Preview. The only candidates are the outermost rendered
 `.easymde-mermaid` root containing SVG and outermost rendered
@@ -344,8 +488,9 @@ used geometry does not hide a raw semantic change. Raw context and
 serialization clones are separate and bounded, and all temporary display,
 attributes, and clones are restored or removed in `finally`; the batch uses at
 most two deep clones.
-portable/default, background, legacy, table, and ordinary-SVG paths otherwise
-remain unchanged.
+The ordinary portable, background, legacy, table, and ordinary-SVG mechanics
+otherwise retain their existing limits, except for the documented detached
+eligible-math SVG scene replacement and its reserved source-tree exclusions.
 
 PNG Copy requires the modern Clipboard path. Construct deferred HTML and plain
 text payloads and call `navigator.clipboard.write()` in the originating click
@@ -420,6 +565,19 @@ at DPR1/2 are required; geometry thresholds do not change. Math keeps its
 established local overflow owner. Mermaid intrinsic captures retain their captured CSS width inside a bounded
 local horizontal-scroll owner. Compensated captures retain responsive image
 bounds inside that owner.
+
+Marked intrinsic Mermaid owners use a batched native `ResizeObserver` content
+rectangle for content-height admission. Border-box height includes scrollbar
+allocation and must not substitute for that content rectangle. Missing, invalid,
+or changed measurements fail explicitly; the existing `1/64px` tolerance stays
+unchanged. A visible prepared payload retains its live observer until cache
+replacement, invalidation, cancellation, or teardown releases it. Hidden
+preparation releases its observer and measurement host at completion. A later
+synchronous legacy or modern fallback may reuse only the accepted exact sizes
+mapped to canonical Source identities after revalidating Source markup, width,
+font readiness, style, layout, and geometry inputs against the new measurement
+lease. This is reuse of validated evidence, not a new observation or cached
+hidden DOM. Changed inputs reject the old evidence and require preparation.
 
 Responsive Mermaid roots may scale a larger SVG viewport into the Preview.
 Compensate that downscale only for a connected, paint-bearing, auto-height
@@ -583,6 +741,20 @@ materialized image would otherwise start after the inherited line box and paint
 outside the pseudo's fixed geometry. Repeating raster backgrounds, gradients,
 colors, shadows, filtered SVG/remote URLs, and other CSS-only empty decorations
 still retain the whitespace carrier because they do not append an image child.
+
+Eligible static inline pseudo paint is captured once while the existing
+asynchronous or synchronous XHTML style walk already owns the computed owner
+style. Hidden and rasterized roots, and Source subtrees removed by the existing
+omission/SVG identity owner, contribute no candidates. After math, SVG, PNG,
+and structure transformations finish, the surviving raw inventory is admitted
+and bound through `GENERATED_PSEUDO_CLONE_OWNERS` and
+`WECHAT_STRUCTURE_REPLACEMENTS`; a missing or duplicate final marker fails
+explicitly. One atomic apply installs the detached SVG paint and link bridge,
+preserving original anchor attributes, child identities, and plaintext with
+rollback on failure. Admission receives the actual measurement or transition
+readiness owner and the original Preview Source freshness owner. The existing
+full CSSOM fidelity signature is also compared at Blob and post-write
+transaction boundaries; DOM mutation freshness alone is insufficient.
 Textual pseudo content remains unchanged. The modern and synchronous serializers
 use the same actual-appended-layer decision.
 
@@ -596,9 +768,13 @@ float, overflow, box sizing, borders, and quoted-literal pseudo-element
 decoration. Omit `attr()` and counter pseudo content. Exporter-owned
 `aria-hidden` and `leaf` markers may remain.
 
-Keep only the KaTeX `.katex-mathml` fallback tree removed; preserve its visual
-tree and SVG geometry. With PNG conversion disabled, the existing math
-static-flow owner freezes source evidence before binding it to the clone. It
+Keep only the KaTeX `.katex-mathml` fallback tree removed. On the PNG-disabled
+portable path, an eligible outermost KaTeX owner is omitted from the legacy math
+static-flow projection and is replaced later in the detached clone by its
+atlas-backed SVG scene after structural finalization and before the surrounding
+preparation's final source and signature checks. True-inline,
+non-KaTeX, and non-eligible math retain the visual tree plus the existing math
+static-flow owner, which freezes source evidence before binding it to the clone. It
 projects only measured negative-top KaTeX vlist rows with positive pstruts:
 Typed OM must prove `bottom:auto`, while the CSSOM used bottom may resolve to
 the opposite of top. Vertical margins, padding, and borders remain zero;
@@ -627,6 +803,14 @@ owner after structural normalization, using the existing owned-scroll marker;
 invalid intrinsic caps fail explicitly. PNG conversion and other Mermaid
 layouts retain their existing paths.
 
+For a sanitized `filter:` declaration on a true SVG node, promote the value to
+the SVG `filter` presentation attribute and remove the inline declaration,
+including an explicit `none` that must replace a stale attribute. Require both
+the source and clone to use the SVG namespace; ordinary HTML and HTML inside a
+`foreignObject` are excluded. Ordinary SVG nodes keep this compatibility path
+when PNG conversion is enabled, while a native PNG-owned root keeps its existing
+rasterization owner.
+
 Keep ordinary non-math SVG and ordinary inline media responsive without changing
 an inline element's display, captured width, or margins: retain its width while
 emitting `max-width:100%!important` and `height:auto!important`. Explicit
@@ -640,7 +824,23 @@ its width declaration and emit `max-width:100%!important` and
 `height:auto!important`. After safe computed styles and
 pseudo-elements are captured, normalize copied article, div, and blockquote roots to portable
 sections. Preserve blockquote borders, backgrounds, spacing, nested children,
-and plain-text order; leave the source Preview unchanged. The shared Phycat
+and plain-text order; leave the source Preview unchanged.
+For an admitted absolutely positioned text decoration on an auto-sized normal
+block quote, project a static zero-area float before a separate SECTION that
+retains the original padding. The outer SECTION keeps quote paint and spacing;
+the float keeps the captured marker position without allocating an extra row
+when native Save removes absolute positioning. Preserve percentage padding on
+the inner carrier rather than subtracting source-column pixels from marker
+offsets. Admission rejects responsive or opposite-edge pseudo anchoring,
+unsupported owner sizing and incompatible geometry before projection. In
+horizontal writing, physical and logical owner width caps must describe the
+same admitted axis; the neutral `none` and full-column `100%` cases are valid.
+Read and freeze every physical and logical pseudo sizing bound explicitly; an
+absent value is not proof of an unconstrained decoration. Capture
+immutable inputs before asynchronous work, and validate final marker text,
+font, paint and owner identity after structural replacements. Canonical source
+freshness reads source evidence only; creating a transaction plan must not
+change it. The shared Phycat
 nested-quote rule uses authored percentage padding tokens
 (`--easymde-portable-padding-left` and `--easymde-portable-padding-right`).
 The serializer validates those tokens and emits ordinary
@@ -783,8 +983,20 @@ lower bound; it must not force `width:100%` or `max-width:100%` over intrinsic
 content. Any explicit source table `min-width` remains authoritative, and a
 source `display:block` table shim retains its block-sized responsive owner.
 The classification is cached per source table while immersive source mode hides
-Preview and replaced on a later visible refresh. Preserve theme table shims
-(`display:contents`, `container-type`, and `100cqi` pseudo-element geometry).
+Preview and replaced on a later visible refresh. Preserve theme table-shim
+inputs (`display:contents`, `container-type`, and `100cqi` pseudo geometry)
+during capture. For an admitted native-grid shim, finalization changes only the
+final `TABLE` display to `table`; retain its existing block scroll `SECTION`,
+sizing, paint, overflow and generated caption-marker declarations unchanged.
+Ordinary table inputs participate in synchronous and yielded fidelity signatures,
+including PNG-enabled Copy. Capture the transaction guard after the effective
+serialization root is ready; keep its connected measurement and Source matching
+through Blob delivery and post-write checks. Skip only the existing explicit
+hidden/rasterized serialization boundaries; a visible unreadable native-grid
+candidate fails.
+Cancellation remains in the completion race after both Blobs resolve, so terminal
+cleanup does not wait for a stalled native write or its timeout. A late native
+completion cannot turn the cancelled transaction into success.
 Task-list state must
 survive the native importer's removal of form controls. Materialize recognized
 task markers from the current settled Preview paint into safe static Clipboard
@@ -805,11 +1017,23 @@ every registered clone, static allocation, caption run, and caption structure
 resolution keeps its identity. Each converted section replaces `display` and
 `list-style-type`/`list-style-image` with `block`/`none!important` while keeping
 the copied size and spacing declarations, and `start`, `reversed`, and item
-`value` attributes survive on the converted structure. Ordinary lists and lists
-that mix task and ordinary items keep native list markup; the exporter never
-emits `ul > section` or `ol > section`. Projecting a mixed list into task
-sections plus rebuilt ordinary list runs inside a legal block container remains
-UNVERIFIED. Never change source controls, invent platform colors or
+`value` attributes survive on the converted structure. Ordinary lists without
+an admitted nested subtree keep native list markup. An admitted ordinary
+nested `ul` subtree is a bounded native-structure projection: the nested `ul`
+becomes `section[role=list]`, each descendant `li` becomes
+`section[role=listitem]`, and the outer `ul`/`li` plus all copied attributes and
+child identities remain in place. The same projection runs in yielded and
+synchronous serialization and is independent of whether an optional empty
+absolute `::before` solid stem passes its separate geometry admission. Stem
+paint is admitted only when the source owner has the approved zero-border and
+zero-padding, auto-height flow, finite first/last direct child border edges,
+non-negative margins, and no inline, float, transform, clearance,
+fragmentation, authored inline text, or unsupported paint semantics; its
+source-relative offsets become one neutral wrapper gradient. Tasks, `ol`,
+counters, custom marker/image semantics, and mixed unsupported list trees stay
+on the existing path. The exporter never emits `ol > section`; projecting a
+mixed list into task sections plus rebuilt ordinary list runs inside a legal
+block container remains UNVERIFIED. Never change source controls, invent platform colors or
 emoji, duplicate native list bullets, or keep an INPUT as proof of a
 destination-visible state. An empty unchecked generated owner receives one
 unstyled `aria-hidden` carrier containing the U+2060 word joiner after
@@ -870,7 +1094,9 @@ content-derived identifiers in these measurements.
 Copy success is reported only from the real browser result. On every legacy-path
 exit restore temporary DOM, Selection, Focus, and Scroll. Do not mutate article
 state. Adapter or preparation rejection remains explicit failure; no partial
-payload is published. A WordPress Image Hosting action-Nonce rejection is a
+payload is published, and an admitted vector owner never falls back silently to
+the plain portable tree after atlas, capture, scene, or installation failure. A
+WordPress Image Hosting action-Nonce rejection is a
 whitelisted pre-write failure and reports `sideEffects: none`; arbitrary 403s,
 unknown service codes, provider failures, network loss, Abort, invalid responses,
 completed uploads, and mixed concurrent outcomes remain possible residual writes.

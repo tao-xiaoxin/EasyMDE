@@ -66,7 +66,7 @@ describe('createBrowserWechatClipboard', () => {
         clipboardItem: ClipboardItemStub,
         document,
         getComputedStyle: (element, pseudoElement) => {
-          if (pseudoElement) return declaration({});
+          if (pseudoElement) return computedStyle(element, pseudoElement);
           if (element === root && computedOverflow) {
             return declaration({ overflow: computedOverflow });
           }
@@ -144,7 +144,7 @@ describe('createBrowserWechatClipboard', () => {
         clipboardItem: ClipboardItemStub,
         document,
         getComputedStyle: (element, pseudoElement) => {
-          if (pseudoElement) return declaration({});
+          if (pseudoElement) return computedStyle(element, pseudoElement);
           if (element === root) {
             return declaration({
               'border-bottom-style': 'none',
@@ -246,7 +246,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if (element === root) {
           return declaration({
             height: 'auto',
@@ -317,7 +317,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if (element === root) {
           return declaration({
             height: 'auto',
@@ -408,7 +408,7 @@ describe('createBrowserWechatClipboard', () => {
         clipboardItem: ClipboardItemStub,
         document,
         getComputedStyle: (element, pseudoElement) => {
-          if (pseudoElement) return declaration({});
+          if (pseudoElement) return computedStyle(element, pseudoElement);
           if (element === root) {
             return declaration({
               height: 'auto',
@@ -509,7 +509,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if (element === root) {
           return declaration({
             height: 'auto',

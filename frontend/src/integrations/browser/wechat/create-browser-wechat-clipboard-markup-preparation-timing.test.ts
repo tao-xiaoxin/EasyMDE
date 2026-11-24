@@ -79,8 +79,12 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: null,
       document,
-      getComputedStyle: (_element, pseudoElement) =>
-        pseudoElement ? declaration({}) : declaration({ display: 'block' }),
+      getComputedStyle: (element, pseudoElement) =>
+        '::before' === pseudoElement || '::after' === pseudoElement
+          ? computedStyle(element, pseudoElement)
+          : pseudoElement
+            ? declaration({})
+            : declaration({ display: 'block' }),
       getSelection: window.getSelection.bind(window),
       pageOffset: () => ({ x: 0, y: 0 }),
       scrollTo: vi.fn(),

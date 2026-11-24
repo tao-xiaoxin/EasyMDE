@@ -29,7 +29,7 @@ export type FontAsset = Readonly<{
   size: number;
 }>;
 
-type FontSource = Readonly<{
+export type FontSource = Readonly<{
   format: string;
   scope: FontAssetScope;
   url: string;
@@ -40,7 +40,7 @@ export type FontAssetScope = Readonly<{
   rootPath: string;
 }>;
 
-type FontFaceCandidate = Readonly<{
+export type FontFaceCandidate = Readonly<{
   family: string;
   familyKey: string;
   descriptors: ReadonlyArray<string>;
@@ -501,7 +501,7 @@ export function prewarmManagedFontFaces(
   }, { timeout: 1_000 });
 }
 
-function collectFontFaces(
+export function collectFontFaces(
   document: Document,
   approvedAssetBaseUrl: string,
   approvedKaTeXCssUrl: string,

@@ -14,6 +14,7 @@ import type { WechatVisualRasterizationRequest } from '../../../contracts/ports/
 
 import {
   blobText,
+  computedStyle,
   declaration,
   installClipboardTestEnvironment,
   pngOptions,
@@ -291,7 +292,7 @@ describe('wechat math capture plan', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if ('DIV' === element.tagName && element.classList.contains('easymde-math-block')) {
           return declaration({
             ...MATH_CAPTURE_SAFE_PAINT_VALUES,
@@ -375,7 +376,7 @@ describe('wechat math capture plan', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if (element.classList.contains('easymde-math-block')) {
           return declaration({ ...MATH_CAPTURE_SAFE_PAINT_VALUES, display: 'flex', height: '20px', width: '40px' });
         }
@@ -449,7 +450,7 @@ describe('wechat math capture plan', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if ('DIV' === element.tagName && element.classList.contains('easymde-math-block')) {
           return declaration({ ...MATH_CAPTURE_SAFE_PAINT_VALUES, display: 'block', height: '32px', width: '442px' });
         }

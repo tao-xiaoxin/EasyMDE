@@ -4,6 +4,7 @@ import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard'
 
 import {
   blobText,
+  computedStyle,
   declaration,
   declaredStyleDeclarations,
   dispatchSuccessfulLegacyCopy,
@@ -31,7 +32,8 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (element) => {
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if ('INPUT' === element.tagName) return declaration({ display: 'inline-block', width: '13px', height: '13px' });
         return declaration({ display: 'block', 'list-style-type': 'disc' });
       },
@@ -95,7 +97,8 @@ describe('createBrowserWechatClipboard', () => {
         blob: Blob,
         clipboardItem: null,
         document,
-        getComputedStyle: (element) => {
+        getComputedStyle: (element, pseudoElement) => {
+          if (pseudoElement) return computedStyle(element, pseudoElement);
           if ('INPUT' === element.tagName) return declaration({ display: 'inline-block', width: '13px', height: '13px' });
           return declaration({ display: 'block', 'list-style-type': 'disc' });
         },

@@ -3,6 +3,7 @@
 ## Contents
 
 - [Preview pipeline](#preview-pipeline)
+- [Style and sink transactions](#style-and-sink-transactions)
 - [Feature boundaries](#feature-boundaries)
 - [WordPress session](#wordpress-session)
 - [Drafts and storage](#drafts-and-storage)
@@ -27,6 +28,33 @@ error, unavailable, and stale results. A stale response cannot replace the
 current document or sink. Preview notifications used by background work must
 identify the active sink and cannot let a hidden or disposed surface replace
 the currently editable surface.
+
+## Style and sink transactions
+
+The Editor startup owner waits for the base content stylesheet and selected
+article stylesheet before constructing Appearance or rendering the React Root.
+A changed article stylesheet stays inactive until it is readable and scoped;
+the preparation lease commits the canonical ID/media handoff only after mount
+succeeds. Cancellation, load/error failure, teardown, and mount failure must
+remove the candidate, dispose temporary leases, restore the previous link, and
+report the stable startup failure after cleanup.
+
+The Appearance Port owns the runtime article and Custom CSS stylesheet leases,
+four native appearance fields, and its in-memory snapshot. It prepares inactive
+candidates, publishes state only after stylesheet preparation and DOM handoff,
+and restores fields, snapshot, nodes, and leases on failure. It may reuse an
+unchanged Custom CSS node/text while its tracked lease remains valid; changed
+CSS goes through the candidate transaction. An unverified restoration blocks
+later appearance application until refresh.
+
+`SafePreviewHtmlSink` is the only client sink for accepted Preview HTML. Its
+plain, staged, windowed, and materialization commits retain a verified surface
+snapshot and protected-node adoption. `PreviewSurfaceOwner` acquires rendered
+SVG style scope after each synchronous DOM mutation and disposes the previous
+lease only after replacement succeeds. A failed mutation restores the previous
+verified view when possible; if restoration is unverified, the sink is cleared,
+pending enhancement/window/materialization state is discarded, and the owner
+reports both the primary and rollback failures without publishing `ready`.
 
 ## Feature boundaries
 

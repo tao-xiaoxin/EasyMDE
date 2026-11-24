@@ -4,16 +4,203 @@ import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard'
 
 import {
   blobText,
+  computedStyle,
   declaration,
   declaredStyleDeclarations,
   declaredStyleValue,
+  dispatchSuccessfulLegacyCopy,
   installClipboardTestEnvironment,
-  prepareClipboard,
-  dispatchSuccessfulLegacyCopy
+  prepareClipboard
 } from './wechat-clipboard-test-fixtures';
+import {
+  captureTaskCheckboxCaptionRun,
+  TASK_LIST_CHECKBOX_CAPTION_TEXT_OWNERS,
+  taskCheckboxCaptionOwnedTextNodes,
+} from './wechat-task-caption';
+
+function textNodesFollowing(element: Element): Text[] {
+  const parent = element.parentElement;
+  if (!parent) throw new Error('caption parent missing');
+  const index = Array.from(parent.childNodes).indexOf(element);
+  if (index < 0) throw new Error('caption owner missing');
+  const textNodes: Text[] = [];
+  const visit = (node: Node): void => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      textNodes.push(node as Text);
+      return;
+    }
+    Array.from(node.childNodes).forEach(visit);
+  };
+  Array.from(parent.childNodes)
+    .slice(index + 1)
+    .forEach(visit);
+  return textNodes;
+}
 
 describe('createBrowserWechatClipboard', () => {
   installClipboardTestEnvironment();
+
+  it('keeps every rich task caption run in one inline formatting context', async () => {
+    const caption = 'plain <strong>bold</strong> tail <a href="#caption-link">link</a>';
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = [
+      '<ul class="task-list">',
+      `<li class="task-list-item"><input class="easymde-task-checkbox" type="checkbox" checked>${caption}</li>`,
+      `<li class="task-list-item"><input class="easymde-task-checkbox" type="checkbox">${caption}</li>`,
+      `<li class="task-list-item"><p><input class="easymde-task-checkbox" type="checkbox" checked>${caption}</p></li>`,
+      `<li class="task-list-item"><p><input class="easymde-task-checkbox" type="checkbox">${caption}</p></li>`,
+      '</ul>'
+    ].join('');
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'plain bold tail link\nplain bold tail link\nplain bold tail link\nplain bold tail link'
+    });
+    const sourceHtml = preview.innerHTML;
+    const getComputedStyle = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      if (pseudoElement) return computedStyle(element, pseudoElement);
+      if ('INPUT' === element.tagName) return declaration({ display: 'inline-block', height: '12px', width: '12px' });
+      if (['A', 'STRONG'].includes(element.tagName)) return declaration({ display: 'inline', 'white-space': 'normal' });
+      return declaration({ display: 'block', 'white-space': 'normal' });
+    };
+
+    const layoutRoot = preview.cloneNode(true) as HTMLElement;
+    const cloneRoot = preview.cloneNode(true) as HTMLElement;
+    const sourceInputs = [...preview.querySelectorAll<HTMLInputElement>('input.easymde-task-checkbox')];
+    const layoutInputs = [...layoutRoot.querySelectorAll<HTMLInputElement>('input.easymde-task-checkbox')];
+    const cloneInputs = [...cloneRoot.querySelectorAll<HTMLInputElement>('input.easymde-task-checkbox')];
+    const runtime = {
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      getComputedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    };
+    sourceInputs.forEach((sourceInput, index) => {
+      const layoutInput = layoutInputs[index];
+      const cloneInput = cloneInputs[index];
+      if (!layoutInput || !cloneInput) throw new Error('task caption input alignment failed');
+      const cloneOwner = document.createElement('span');
+      cloneInput.replaceWith(cloneOwner);
+      captureTaskCheckboxCaptionRun(sourceInput, layoutInput, cloneOwner, preview, layoutRoot, cloneRoot, runtime);
+      expect(taskCheckboxCaptionOwnedTextNodes(layoutInput, runtime).map((text) => text.nodeValue)).toEqual([
+        'plain ',
+        'bold',
+        ' tail ',
+        'link'
+      ]);
+      const cloneCaptionTexts = textNodesFollowing(cloneOwner);
+      expect(cloneCaptionTexts.map((text) => text.nodeValue)).toEqual(['plain ', 'bold', ' tail ', 'link']);
+      expect(cloneCaptionTexts.every((text) => TASK_LIST_CHECKBOX_CAPTION_TEXT_OWNERS.has(text))).toBe(true);
+    });
+
+    const writes: unknown[] = [];
+    class ClipboardItemStub { constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {  }  }
+    const modern = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        writes.push(items);
+      }
+    });
+    await expect(modern.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    const textBlob = item?.payload['text/plain'];
+    if (!htmlBlob || !textBlob) throw new Error('rich task caption payload missing');
+    const modernHtml = await blobText(htmlBlob);
+    await expect(blobText(textBlob)).resolves.toBe(
+      'plain bold tail link\nplain bold tail link\nplain bold tail link\nplain bold tail link'
+    );
+
+    let legacyHtml = '';
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => {
+        legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        dispatchSuccessfulLegacyCopy();
+        return true;
+      })
+    });
+    try {
+      const legacy = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: null,
+        document,
+        getComputedStyle,
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: null
+      });
+      await prepareClipboard(legacy, preview);
+      await expect(legacy.copy(preview)).resolves.toEqual({ method: 'legacy', status: 'copied' });
+    } finally {
+      if (originalExecCommand) Object.defineProperty(document, 'execCommand', originalExecCommand);
+      else delete (document as unknown as { execCommand?: unknown }).execCommand;
+    }
+
+    expect(legacyHtml).toBe(modernHtml);
+    const holder = document.createElement('div');
+    holder.innerHTML = modernHtml;
+    const owners = [...holder.querySelectorAll<HTMLElement>('[role="checkbox"]')];
+    expect(owners.map((owner) => owner.getAttribute('aria-checked'))).toEqual(['true', 'false', 'true', 'false']);
+    owners.forEach((owner) => {
+      expect(owner.nextSibling?.nodeType).toBe(Node.TEXT_NODE);
+      expect(owner.nextSibling?.textContent).toBe('plain ');
+      const parent = owner.parentElement;
+      if (!parent) throw new Error('rich task caption parent missing');
+      expect(parent.querySelectorAll('span[leaf]')).toHaveLength(0);
+      const texts = textNodesFollowing(owner);
+      expect(texts.map((text) => text.nodeValue)).toEqual(['plain ', 'bold', ' tail ', 'link']);
+      expect(
+        texts.map((text) => text.parentElement?.closest('strong, a')?.tagName ?? null)
+      ).toEqual([null, 'STRONG', null, 'A']);
+      expect(parent.querySelector('a')?.getAttribute('href')).toBe('#caption-link');
+    });
+    expect(preview.innerHTML).toBe(sourceHtml);
+  });
+
+  it('stops caption ownership at a nested-list boundary', () => {
+    const captionParent = document.createElement('li');
+    captionParent.innerHTML = [
+      '<input class="easymde-task-checkbox" type="checkbox">',
+      'plain <strong>bold</strong>',
+      '<ul><li>nested <em>caption</em></li></ul>',
+      'tail'
+    ].join('');
+    const input = captionParent.querySelector<HTMLInputElement>('input.easymde-task-checkbox');
+    if (!input) throw new Error('boundary task input missing');
+    const runtime = {
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      getComputedStyle: (element: Element, pseudoElement?: string): CSSStyleDeclaration =>
+        pseudoElement
+          ? computedStyle(element, pseudoElement)
+          : ['STRONG', 'EM'].includes(element.tagName)
+            ? declaration({ display: 'inline' })
+            : declaration({ display: 'block' }),
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    };
+
+    expect(taskCheckboxCaptionOwnedTextNodes(input, runtime).map((text) => text.nodeValue)).toEqual([
+      'plain ',
+      'bold'
+    ]);
+  });
 
   it('keeps a loose task paragraph caption as direct text after its generated owner', async () => {
     const writes: unknown[] = [];
@@ -27,10 +214,12 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (element) =>
-        'INPUT' === element.tagName
-          ? declaration({ display: 'inline-block', height: '12px', width: '12px' })
-          : declaration({ display: 'block' }),
+      getComputedStyle: (element, pseudoElement) =>
+        pseudoElement
+          ? computedStyle(element, pseudoElement)
+          : 'INPUT' === element.tagName
+            ? declaration({ display: 'inline-block', height: '12px', width: '12px' })
+            : declaration({ display: 'block' }),
       getSelection: window.getSelection.bind(window),
       pageOffset: () => ({ x: 0, y: 0 }),
       scrollTo: vi.fn(),
@@ -114,6 +303,7 @@ describe('createBrowserWechatClipboard', () => {
               'white-space': 'normal'
             });
           }
+          if (pseudoElement) return computedStyle(element, pseudoElement);
           if ('A' === element.tagName) return declaration({ display: 'inline', 'white-space': 'nowrap' });
           if ('ARTICLE' === element.tagName) {
             return declaration({
@@ -188,6 +378,7 @@ describe('createBrowserWechatClipboard', () => {
                 'white-space': 'normal'
               });
             }
+            if (pseudoElement) return computedStyle(element, pseudoElement);
             if ('A' === element.tagName) return declaration({ display: 'inline', 'white-space': 'nowrap' });
             if ('ARTICLE' === element.tagName) {
               return declaration({
@@ -289,6 +480,7 @@ describe('createBrowserWechatClipboard', () => {
               top: '3px',
               width: '20px'
             });
+          if (pseudoElement) return computedStyle(element, pseudoElement);
           return declaration({ display: 'block' });
         },
         getSelection: window.getSelection.bind(window),
@@ -389,6 +581,7 @@ describe('createBrowserWechatClipboard', () => {
               'white-space': 'normal'
             });
           }
+          if (pseudoElement) return computedStyle(element, pseudoElement);
           if ('ARTICLE' === element.tagName) {
             return declaration({
               'border-bottom-width': '0px',
@@ -472,6 +665,7 @@ describe('createBrowserWechatClipboard', () => {
           if ('INPUT' === element.tagName) {
             return declaration({ appearance: 'none', display: 'block', height: '12px', position: 'absolute', width: '12px' });
           }
+          if (pseudoElement) return computedStyle(element, pseudoElement);
           if ('ARTICLE' === element.tagName) {
             return declaration({
               'border-bottom-width': '0px',
@@ -561,6 +755,7 @@ describe('createBrowserWechatClipboard', () => {
           width: '16px'
         });
       }
+      if (pseudoElement) return computedStyle(element, pseudoElement);
       return declaration({ direction: element.closest('[dir="rtl"]') ? 'rtl' : 'ltr', display: 'block' });
     };
     try {
@@ -619,10 +814,12 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (element) =>
-        'INPUT' === element.tagName
-          ? declaration({ display: 'inline-block', height: '12px', width: '12px' })
-          : declaration({ display: 'block' }),
+      getComputedStyle: (element, pseudoElement) =>
+        pseudoElement
+          ? computedStyle(element, pseudoElement)
+          : 'INPUT' === element.tagName
+            ? declaration({ display: 'inline-block', height: '12px', width: '12px' })
+            : declaration({ display: 'block' }),
       getSelection: window.getSelection.bind(window),
       pageOffset: () => ({ x: 0, y: 0 }),
       scrollTo: vi.fn(),

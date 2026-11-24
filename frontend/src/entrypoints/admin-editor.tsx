@@ -1,4 +1,13 @@
 import { createElement, createRoot } from '@wordpress/element';
+import {
+  createEditorStylesheetReadiness,
+  EDITOR_STYLESHEET_SCOPE,
+  scopeEditorStyleElement,
+  scopeEditorStylesheet,
+  scopeEditorStylesheetLink,
+  type EditorStylesheetElement,
+  type EditorStylesheetScopeLease
+} from '../shared/css/editor-stylesheet-scope';
 
 import { EditorRoot, type EditorRootProps } from '../app/editor/EditorRoot';
 import { EditorRootErrorBoundary } from '../app/editor/EditorRootErrorBoundary';
@@ -24,7 +33,10 @@ import {
   createBrowserPreviewEnhancementPort,
   createWindowPreviewEnhancementRuntime
 } from '../integrations/preview-runtime/browser-preview-enhancement';
-import { createWordPressAppearancePort } from '../integrations/wordpress/appearance/create-wordpress-appearance-port';
+import {
+  createWordPressAppearancePort,
+  resolveAppearanceArticleThemeUrl
+} from '../integrations/wordpress/appearance/create-wordpress-appearance-port';
 import { createWordPressFontControlsPort } from '../integrations/wordpress/appearance/create-wordpress-font-controls-port';
 import { createWordPressImageUploadPort } from '../integrations/wordpress/media/wordpress-image-upload';
 import { createWordPressRemoteImageImportPort } from '../integrations/wordpress/media/wordpress-remote-image-import';
@@ -58,6 +70,7 @@ type WordPressEditorRuntime = Readonly<{
 type AdminEditorBrowserRuntime = Readonly<{
   document: Document;
   failureMessage: string;
+  onStartupFailure: (code: string) => void;
   window: Window;
   wordpress: WordPressEditorRuntime;
 }>;
@@ -66,6 +79,7 @@ export type AdminEditorStartRuntime = Readonly<{
   bootstrap: unknown;
   document: Document;
   failureMessage: string;
+  onStartupFailure: (code: string) => void;
   window: Window;
   wordpress: WordPressEditorRuntime;
 }>;
@@ -162,13 +176,254 @@ function localStorage(windowRef: Window): Storage | null {
   }
 }
 
+type PreparedInitialStylesheets = {
+  provisional: () => void;
+  commit: () => void;
+  release: () => void;
+  rollback: () => void;
+};
+
+type InitialStylesheetPreparation = Readonly<{
+  cancel: () => void;
+  run: (
+    onReady: (prepared: PreparedInitialStylesheets) => void,
+    onError: (error: Error) => void
+  ) => () => void;
+}>;
+
+function startupFailureCode(error: unknown): string {
+  return error instanceof Error && /^[a-z0-9-]{1,120}$/.test(error.message)
+    ? error.message
+    : 'react-editor-startup-failed';
+}
+
+function normalizeCleanupError(error: unknown): Error {
+  return error instanceof Error
+    ? error
+    : new Error('react-editor-startup-rollback-failed');
+}
+
+function runCleanupSteps(
+  steps: ReadonlyArray<() => void>
+): Error | null {
+  let failure: Error | null = null;
+  for (const step of steps) {
+    try {
+      step();
+    } catch (error) {
+      failure ??= normalizeCleanupError(error);
+    }
+  }
+  return failure;
+}
+
+function disposeStylesheetLeases(
+  leases: ReadonlyArray<EditorStylesheetScopeLease>
+): Error | null {
+  let failure: Error | null = null;
+  for (const lease of [...leases].reverse()) {
+    try {
+      lease.dispose();
+    } catch (error) {
+      failure ??= error instanceof Error
+        ? error
+        : new Error('editor-stylesheet-rollback-failed');
+    }
+  }
+  return failure;
+}
+
+function editorStylesheetElement(
+  value: Element | null,
+  code: string
+): EditorStylesheetElement {
+  if (
+    value instanceof HTMLLinkElement
+    || value instanceof HTMLStyleElement
+  ) return value;
+  throw new Error(code);
+}
+
+function prepareInitialEditorStylesheets(
+  bootstrap: EditorRootBootstrap,
+  documentRef: Document
+): InitialStylesheetPreparation {
+  const base = editorStylesheetElement(
+    documentRef.getElementById('easymde-content-css'),
+    'editor-content-stylesheet-unavailable'
+  );
+  const article = requiredElement(
+    documentRef,
+    '#easymde-article-theme-css',
+    (element): element is HTMLLinkElement => element instanceof HTMLLinkElement,
+    'appearance-article-theme-link-unavailable'
+  );
+  const targetUrl = resolveAppearanceArticleThemeUrl(
+    bootstrap.appearance,
+    bootstrap.previewEnhancement.assetBaseUrl
+  );
+  const candidate = article.href === targetUrl
+    ? null
+    : article.cloneNode(false) as HTMLLinkElement;
+  const originalId = article.id;
+  const activeMedia = article.media;
+  if (candidate) {
+    candidate.removeAttribute('id');
+    candidate.media = 'not all';
+    candidate.href = targetUrl;
+    article.after(candidate);
+  }
+  const owner = candidate ?? article;
+  const gate = createEditorStylesheetReadiness([base, owner]);
+  let candidateLease: EditorStylesheetScopeLease | null = null;
+  let prepared: PreparedInitialStylesheets | null = null;
+  let transferred = false;
+  let cancelled = false;
+
+  const disposeCandidateLease = (): void => {
+    const lease = candidateLease;
+    candidateLease = null;
+    lease?.dispose();
+  };
+
+  const cleanupUnprepared = (): Error | null =>
+    runCleanupSteps([
+      disposeCandidateLease,
+      () => candidate?.remove(),
+      () => {
+        article.id = originalId;
+        article.media = activeMedia;
+      }
+    ]);
+
+  const createPrepared = (): PreparedInitialStylesheets => {
+    let phase: 'pending' | 'provisional' | 'committed' | 'closed' = 'pending';
+    return {
+      provisional: () => {
+        if ('closed' === phase) return;
+        if ('provisional' === phase || 'committed' === phase) return;
+        try {
+          if (candidate) {
+            article.removeAttribute('id');
+            candidate.id = originalId;
+            candidate.media = activeMedia;
+          }
+          phase = 'provisional';
+        } catch (error) {
+          article.id = originalId;
+          article.media = activeMedia;
+          throw error;
+        }
+      },
+      commit: () => {
+        if ('closed' === phase || 'committed' === phase) return;
+        if ('pending' === phase) {
+          throw new Error('editor-stylesheet-provisional-required');
+        }
+        if (candidate) article.remove();
+        phase = 'committed';
+      },
+      release: () => {
+        if ('closed' === phase) return;
+        if ('committed' !== phase) {
+          throw new Error('editor-stylesheet-release-before-commit');
+        }
+        phase = 'closed';
+        disposeCandidateLease();
+      },
+      rollback: () => {
+        if ('closed' === phase) return;
+        if ('committed' === phase) {
+          phase = 'closed';
+          disposeCandidateLease();
+          return;
+        }
+        const failure = runCleanupSteps([
+          disposeCandidateLease,
+          () => candidate?.remove(),
+          () => {
+            article.id = originalId;
+            article.media = activeMedia;
+          }
+        ]);
+        phase = 'closed';
+        if (failure) throw failure;
+      }
+    };
+  };
+
+  const rollbackPreparation = (): Error | null => {
+    if (prepared) {
+      try {
+        if (transferred) prepared.release();
+        else prepared.rollback();
+      } catch (error) {
+        return normalizeCleanupError(error);
+      }
+      return null;
+    }
+    return cleanupUnprepared();
+  };
+
+  const fail = (error: Error, onError: (error: Error) => void): void => {
+    if (cancelled) return;
+    cancelled = true;
+    const cleanupFailure = rollbackPreparation();
+    try {
+      gate.cancel();
+    } catch (cancelError) {
+      onError(normalizeCleanupError(cancelError));
+      return;
+    }
+    onError(cleanupFailure ?? error);
+  };
+  return {
+    cancel: () => {
+      if (cancelled) return;
+      cancelled = true;
+      const cleanupFailure = rollbackPreparation();
+      try {
+        gate.cancel();
+      } catch (error) {
+        throw normalizeCleanupError(error);
+      }
+      if (cleanupFailure) throw cleanupFailure;
+    },
+    run: (onReady, onError) => gate.run((sheets) => {
+      if (cancelled) return;
+      try {
+        if (candidate) {
+          const sheet = sheets.get(candidate);
+          if (!sheet) throw new Error('editor-article-stylesheet-unavailable');
+          candidateLease = scopeEditorStylesheet(sheet, {
+            rootSelector: EDITOR_STYLESHEET_SCOPE
+          });
+        }
+        prepared = createPrepared();
+        prepared.provisional();
+        onReady(prepared);
+        transferred = true;
+      } catch (error) {
+        fail(
+          error instanceof Error
+            ? error
+            : new Error('editor-stylesheet-startup-failed'),
+          onError
+        );
+      }
+    }, (error) => {
+      if (cancelled) return;
+      fail(error, onError);
+    })
+  };
+}
+
 export function mountAdminEditor(
   value: unknown,
   runtime: AdminEditorBrowserRuntime
 ): () => void {
   const bootstrap = parseEditorRootBootstrap(value);
   const documentRef = runtime.document;
-  const windowRef = runtime.window;
   const rootElement = requiredElement(
     documentRef,
     '#easymde-editor-root',
@@ -177,6 +432,106 @@ export function mountAdminEditor(
   );
   if (rootElement.childNodes.length)
     throw new Error('react-editor-root-not-empty');
+
+  let preparation: InitialStylesheetPreparation;
+  try {
+    preparation = prepareInitialEditorStylesheets(bootstrap, documentRef);
+  } catch (error) {
+    runtime.onStartupFailure(startupFailureCode(error));
+    return () => undefined;
+  }
+  let active = true;
+  let innerTeardown: (() => void) | null = null;
+  let unsubscribe: () => void = () => undefined;
+  const handleError = (error: Error): void => {
+    if (!active) return;
+    active = false;
+    const cleanupFailure = runCleanupSteps([
+      () => unsubscribe(),
+      () => preparation.cancel(),
+      () => {
+        const teardown = innerTeardown;
+        innerTeardown = null;
+        teardown?.();
+      }
+    ]);
+    runtime.onStartupFailure(startupFailureCode(cleanupFailure ?? error));
+  };
+  try {
+    unsubscribe = preparation.run(
+      (prepared) => {
+        if (!active) return;
+        innerTeardown = mountPreparedAdminEditor(bootstrap, runtime, prepared, rootElement);
+      },
+      handleError
+    );
+  } catch (error) {
+    handleError(
+      error instanceof Error
+        ? error
+        : new Error('react-editor-startup-failed')
+    );
+  }
+  return () => {
+    if (!active) return;
+    active = false;
+    const cleanupFailure = runCleanupSteps([
+      () => unsubscribe(),
+      () => preparation.cancel(),
+      () => {
+        const teardown = innerTeardown;
+        innerTeardown = null;
+        teardown?.();
+      }
+    ]);
+    if (cleanupFailure) throw cleanupFailure;
+  };
+}
+
+function mountPreparedAdminEditor(
+  bootstrap: EditorRootBootstrap,
+  runtime: AdminEditorBrowserRuntime,
+  prepared: PreparedInitialStylesheets,
+  rootElement: HTMLElement
+): () => void {
+  const documentRef = runtime.document;
+  const windowRef = runtime.window;
+
+  const baseStylesheetLeases: EditorStylesheetScopeLease[] = [];
+  let root: ReturnType<typeof createRoot> | null = null;
+  let mediaPickerFrame: ReturnType<typeof createWordPressMediaFramePort> | null = null;
+  let enhancementPort: ReturnType<typeof createBrowserPreviewEnhancementPort> | null = null;
+  let appearancePort: ReturnType<typeof createWordPressAppearancePort> | null = null;
+  let appearanceDisposed = false;
+  let appearanceDisposeFailure: Error | null = null;
+  let nativeEditor: HTMLElement | null = null;
+  const disposeAppearancePort = (): void => {
+    if (appearanceDisposed) {
+      if (appearanceDisposeFailure) throw appearanceDisposeFailure;
+      return;
+    }
+    appearanceDisposed = true;
+    try {
+      appearancePort?.dispose();
+    } catch (error) {
+      appearanceDisposeFailure = normalizeCleanupError(error);
+      throw appearanceDisposeFailure;
+    }
+  };
+  try {
+  const baseStylesheet = editorStylesheetElement(
+    documentRef.getElementById('easymde-content-css'),
+    'editor-content-stylesheet-unavailable'
+  );
+  baseStylesheetLeases.push(
+    baseStylesheet instanceof HTMLLinkElement
+      ? scopeEditorStylesheetLink(baseStylesheet, {
+          rootSelector: EDITOR_STYLESHEET_SCOPE
+        })
+      : scopeEditorStyleElement(baseStylesheet, {
+          rootSelector: EDITOR_STYLESHEET_SCOPE
+        })
+  );
 
   const form = requiredElement(
     documentRef,
@@ -195,7 +550,7 @@ export function mountAdminEditor(
     'native-markdown-field-unavailable'
   );
   const nativeEditorCandidate = documentRef.querySelector('#postdivrich');
-  const nativeEditor =
+  nativeEditor =
     nativeEditorCandidate instanceof HTMLElement ? nativeEditorCandidate : null;
   const nativeContentCandidate = documentRef.querySelector('#content');
   const nativeContentField =
@@ -257,18 +612,22 @@ export function mountAdminEditor(
     now: () => Date.now(),
     storage: localStorage(windowRef)
   });
-  const root = createRoot(rootElement);
+  root = createRoot(rootElement);
   let active = true;
   const onFailure = (code: string, level: 'error' | 'info' = 'error') => {
     const log = 'info' === level ? console.info : console.error;
     log(`[EasyMDE] ${code}`);
   };
-  const enhancementPort = createBrowserPreviewEnhancementPort(
+  enhancementPort = createBrowserPreviewEnhancementPort(
     bootstrap.previewEnhancement,
-    { documentRef, runtime: createWindowPreviewEnhancementRuntime(windowRef) }
+    {
+      documentRef,
+      editorRootSelector: EDITOR_STYLESHEET_SCOPE,
+      runtime: createWindowPreviewEnhancementRuntime(windowRef)
+    }
   );
   const apiFetch = runtime.wordpress.apiFetch;
-  const mediaPickerFrame = bootstrap.mediaPicker.canUseMedia
+  mediaPickerFrame = bootstrap.mediaPicker.canUseMedia
     ? createWordPressMediaFramePort({
         frameUrl: bootstrap.mediaPicker.frameUrl,
         window: windowRef
@@ -291,18 +650,25 @@ export function mountAdminEditor(
       : {}),
     workerUrl: wechatPngEncoderWorkerUrl
   };
+  if (!enhancementPort) throw new Error('react-editor-enhancement-port-unavailable');
+  appearancePort = createWordPressAppearancePort({
+    apiFetch,
+    assetBaseUrl: bootstrap.previewEnhancement.assetBaseUrl,
+    bootstrap: bootstrap.appearance,
+    customCssUrl: bootstrap.wordpress.customCssUrl,
+    document: documentRef,
+    editorRootSelector: EDITOR_STYLESHEET_SCOPE,
+    fields: appearanceFields,
+    nonce: bootstrap.wordpress.nonce,
+    siteUrl: windowRef.location.href
+  });
+  const guardedAppearancePort = {
+    ...appearancePort,
+    dispose: disposeAppearancePort
+  };
   const props: EditorRootProps = {
     appearance: bootstrap.appearance,
-    appearancePort: createWordPressAppearancePort({
-      apiFetch,
-      assetBaseUrl: bootstrap.previewEnhancement.assetBaseUrl,
-      bootstrap: bootstrap.appearance,
-      customCssUrl: bootstrap.wordpress.customCssUrl,
-      document: documentRef,
-      fields: appearanceFields,
-      nonce: bootstrap.wordpress.nonce,
-      siteUrl: windowRef.location.href
-    }),
+    appearancePort: guardedAppearancePort,
     document: bootstrap.document,
     enhancementPort,
     executeExternalCommand: createExternalCommandExecutor(
@@ -427,6 +793,8 @@ export function mountAdminEditor(
     titleField,
     toolbar: bootstrap.toolbar,
     wechatClipboard: createBrowserWechatClipboard({
+      approvedAssetBaseUrl: bootstrap.previewEnhancement.assetBaseUrl,
+      approvedKaTeXCssUrl: bootstrap.previewEnhancement.assets.katexCssUrl,
       blob: Blob,
       clipboardItem: clipboardItem(windowRef),
       document: documentRef,
@@ -435,6 +803,8 @@ export function mountAdminEditor(
       getSelection: () => windowRef.getSelection(),
       pageOffset: () => ({ x: windowRef.scrollX, y: windowRef.scrollY }),
       scrollTo: (x, y) => windowRef.scrollTo(x, y),
+      wechatMathAtlasContentVersion: bootstrap.wechatExport.wechatMathAtlasContentVersion,
+      wechatMathAtlasUrl: bootstrap.wechatExport.wechatMathAtlasUrl,
       write: windowRef.navigator.clipboard?.write
         ? (items) =>
             windowRef.navigator.clipboard.write(items as ClipboardItems)
@@ -453,6 +823,7 @@ export function mountAdminEditor(
     })
   };
 
+  if (!root) throw new Error('react-editor-root-unavailable');
   root.render(
     <EditorRootErrorBoundary
       failureMessage={runtime.failureMessage}
@@ -461,14 +832,40 @@ export function mountAdminEditor(
       <EditorRoot {...props} />
     </EditorRootErrorBoundary>
   );
+  prepared.commit();
 
   return () => {
     if (!active) return;
     active = false;
-    mediaPickerFrame?.dispose?.();
-    root.unmount();
-    nativeEditor?.classList.remove('easymde-native-editor-hidden');
+    const cleanupFailure = runCleanupSteps([
+      () => mediaPickerFrame?.dispose?.(),
+      () => root?.unmount(),
+      () => disposeAppearancePort(),
+      () => enhancementPort?.dispose?.(),
+      () => prepared.release(),
+      () => {
+        const leaseFailure = disposeStylesheetLeases(baseStylesheetLeases);
+        if (leaseFailure) throw leaseFailure;
+      },
+      () => nativeEditor?.classList.remove('easymde-native-editor-hidden')
+    ]);
+    if (cleanupFailure) throw cleanupFailure;
   };
+  } catch (error) {
+    const cleanupFailure = runCleanupSteps([
+      () => root?.unmount(),
+      () => disposeAppearancePort(),
+      () => mediaPickerFrame?.dispose?.(),
+      () => enhancementPort?.dispose?.(),
+      () => {
+        const leaseFailure = disposeStylesheetLeases(baseStylesheetLeases);
+        if (leaseFailure) throw leaseFailure;
+      },
+      () => nativeEditor?.classList.remove('easymde-native-editor-hidden'),
+      () => prepared.rollback()
+    ]);
+    throw cleanupFailure ?? error;
+  }
 }
 
 declare global {
@@ -480,12 +877,14 @@ declare global {
 
 export function startAdminEditor(runtime: AdminEditorStartRuntime): () => void {
   if (!runtime.wordpress.apiFetch || !runtime.wordpress.hooks) {
-    throw new Error('react-editor-wordpress-runtime-unavailable');
+    runtime.onStartupFailure('react-editor-wordpress-runtime-unavailable');
+    return () => undefined;
   }
 
   return mountAdminEditor(runtime.bootstrap, {
     document: runtime.document,
     failureMessage: runtime.failureMessage,
+    onStartupFailure: runtime.onStartupFailure,
     window: runtime.window,
     wordpress: runtime.wordpress
   });

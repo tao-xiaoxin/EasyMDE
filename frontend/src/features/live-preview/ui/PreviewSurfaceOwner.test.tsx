@@ -1,5 +1,5 @@
 import { act, render } from '@testing-library/react';
-import { createElement } from '@wordpress/element';
+import { createElement, StrictMode } from '@wordpress/element';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -285,6 +285,7 @@ function setup(options?: {
   contentEditable?: boolean;
   emptyMode?: 'message' | 'paper';
   enhance?: PreviewEnhancementPort['enhance'];
+  scopeRenderedStyles?: PreviewEnhancementPort['scopeRenderedStyles'];
   initialHtml?: string;
   initialEditMap?: PreviewEditMap;
   initialSignature?: string;
@@ -293,6 +294,7 @@ function setup(options?: {
   onStatusChange?: (status: PreviewSurfaceStatus) => void;
   onWindowReady?: () => void;
   scrollPort?: PreviewScrollPort;
+  strictMode?: boolean;
   materializeScheduler?: MaterializeScheduler;
   stagingScheduler?: Readonly<{
     now?: () => number;
@@ -314,6 +316,8 @@ function setup(options?: {
       cancel: vi.fn(),
       commit: vi.fn()
     }),
+    scopeRenderedStyles: options?.scopeRenderedStyles
+      ?? vi.fn(() => ({ dispose: vi.fn() })),
     syncCodeFrameBackgrounds: vi.fn(),
     enhance: options?.enhance ?? vi.fn().mockResolvedValue(undefined)
   };
@@ -329,8 +333,8 @@ function setup(options?: {
       surface.scrollTop = snapshot.top;
     }
   };
-  const owner = (emptyMode = options?.emptyMode) => (
-    <div className="easymde-immersive-preview-canvas">
+  const owner = (emptyMode = options?.emptyMode) => {
+    const preview = (
       <PreviewSurfaceOwner
         {...(undefined !== options?.contentEditable
           ? { contentEditable: options.contentEditable }
@@ -374,8 +378,13 @@ function setup(options?: {
         port={{ render: renderPreview }}
         scrollPort={options?.scrollPort ?? defaultScrollPort}
       />
-    </div>
-  );
+    );
+    return (
+      <div className="easymde-immersive-preview-canvas">
+        {options?.strictMode ? <StrictMode>{preview}</StrictMode> : preview}
+      </div>
+    );
+  };
   const result = render(owner());
   const surface = result.container.querySelector('article');
   if (!(surface instanceof HTMLElement)) throw new Error('surface missing');
@@ -408,6 +417,210 @@ function setup(options?: {
 }
 
 describe('PreviewSurfaceOwner', () => {
+  it('reacquires and balances rendered style leases across StrictMode DOM reuse', () => {
+    const events: string[] = [];
+    let nextLease = 0;
+    const scopeRenderedStyles = vi.fn(() => {
+      const id = ++nextLease;
+      events.push(`acquire-${id}`);
+      return {
+        dispose: () => events.push(`dispose-${id}`)
+      };
+    });
+    const current = setup({ strictMode: true, scopeRenderedStyles });
+
+    current.unmount();
+    const acquires = events.filter((event) => event.startsWith('acquire-'));
+    const disposes = events.filter((event) => event.startsWith('dispose-'));
+    expect(acquires.length).toBeGreaterThan(0);
+    expect(disposes).toHaveLength(acquires.length);
+    expect(events.some((event, index) =>
+      event.startsWith('acquire-')
+      && events.slice(0, index).some((previous) => previous.startsWith('dispose-'))
+    )).toBe(true);
+  });
+
+  it('reacquires rendered style leases before disposing the prior lease', async () => {
+    const events: string[] = [];
+    let nextLease = 0;
+    const scopeRenderedStyles = vi.fn(() => {
+      const id = ++nextLease;
+      events.push(`acquire-${id}`);
+      return {
+        dispose: () => events.push(`dispose-${id}`)
+      };
+    });
+    const current = setup({ scopeRenderedStyles });
+
+    act(() => current.session.schedule(request('# Updated'), true));
+    await act(async () => {
+      current.responses[0]?.resolve({ html: safeHtml('<p>Updated</p>'), features: {} });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    current.unmount();
+    const acquired = new Set<number>();
+    for (const event of events) {
+      const match = event.match(/^(acquire|dispose)-(\d+)$/);
+      if (!match) continue;
+      const id = Number(match[2]);
+      if ('acquire' === match[1]) acquired.add(id);
+      else expect(acquired).toContain(id);
+    }
+    expect(scopeRenderedStyles).toHaveBeenCalled();
+    expect(events.at(-1)).toMatch(/^dispose-/);
+  });
+
+  it('clears unverified content and withholds ready state when rendered style scoping fails', async () => {
+    const onDiagnostic = vi.fn();
+    const scopeRenderedStyles = vi.fn(() => {
+      throw new Error('preview-enhancement-rendered-style-rollback-failed');
+    });
+    const current = setup({ onDiagnostic, scopeRenderedStyles });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(current.surface.textContent).toBe('');
+    expect(current.surface.getAttribute('data-easymde-preview-accepted')).toBeNull();
+    expect(onDiagnostic.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(onDiagnostic).toHaveBeenNthCalledWith(
+      1,
+      'preview-enhancement-rendered-style-rollback-failed'
+    );
+    expect(onDiagnostic).toHaveBeenNthCalledWith(
+      2,
+      'preview-enhancement-rendered-style-rollback-failed'
+    );
+    current.unmount();
+  });
+
+  it('retains the prior verified ordinary Preview after scoped replacement fails', async () => {
+    const onDiagnostic = vi.fn();
+    const scopeRenderedStyles = vi.fn((surface: HTMLElement) => {
+      if ('New' === surface.textContent) {
+        throw new Error('preview-enhancement-rendered-style-scope-failed');
+      }
+      return { dispose: vi.fn() };
+    });
+    const current = setup({
+      initialHtml: '<p>Old</p>',
+      onDiagnostic,
+      scopeRenderedStyles
+    });
+
+    act(() => current.session.schedule(request('new-preview'), true));
+    await act(async () => {
+      current.responses[0]?.resolve({ html: safeHtml('<p>New</p>'), features: {} });
+      for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    });
+
+    expect(current.surface.textContent).toBe('Old');
+    expect(current.surface.getAttribute('data-easymde-preview-accepted')).toBeNull();
+    expect(current.surface.getAttribute('data-easymde-preview-error')).toBe('1');
+    expect(current.canvas.querySelectorAll('[data-easymde-preview-staging]'))
+      .toHaveLength(0);
+    expect(onDiagnostic).toHaveBeenCalledTimes(1);
+    expect(onDiagnostic).toHaveBeenCalledWith(
+      'preview-enhancement-rendered-style-scope-failed'
+    );
+    current.unmount();
+  });
+
+  it('reports a normalized rollback diagnostic when style restoration is unverified', async () => {
+    const onDiagnostic = vi.fn();
+    let activeSurface: HTMLElement | null = null;
+    let replacementFailed = false;
+    const scopeRenderedStyles = vi.fn((surface: HTMLElement) => {
+      if (surface === activeSurface && surface.textContent?.includes('New')) {
+        replacementFailed = true;
+        throw new Error('preview-enhancement-rendered-style-scope-failed');
+      }
+      if (replacementFailed && surface === activeSurface && surface.textContent?.includes('Old')) {
+        throw new Error('preview-enhancement-rendered-style-rollback-failed');
+      }
+      return { dispose: vi.fn() };
+    });
+    const current = setup({
+      initialHtml: '<p>Old</p>',
+      onDiagnostic,
+      scopeRenderedStyles
+    });
+    activeSurface = current.surface;
+
+    act(() => current.session.schedule(request('new-preview', 'unverified'), true));
+    await act(async () => {
+      current.responses[0]?.resolve({ html: safeHtml('<p>New</p>'), features: {} });
+      for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    });
+
+    expect(current.surface.textContent).toBe('');
+    expect(current.surface.getAttribute('data-easymde-preview-error')).toBe('1');
+    expect(onDiagnostic.mock.calls.map(([code]) => code)).toEqual([
+      'preview-enhancement-rendered-style-scope-failed',
+      'preview-enhancement-rendered-style-rollback-failed'
+    ]);
+    current.unmount();
+  });
+
+  it('retains prior window nodes and bounds after scoped window replacement fails', async () => {
+    const fixture = windowedFixture(320, 'windowed-scope-failure');
+    let activeSurface: HTMLElement | null = null;
+    const scopeRenderedStyles = vi.fn((surface: HTMLElement) => {
+      if (surface === activeSurface && surface.textContent?.includes('New')) {
+        throw new Error('preview-enhancement-rendered-style-scope-failed');
+      }
+      return { dispose: vi.fn() };
+    });
+    const current = setup({
+      contentEditable: true,
+      initialEditMap: fixture.editMap,
+      initialHtml: fixture.html,
+      initialSignature: fixture.editMap.signature,
+      scopeRenderedStyles,
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    activeSurface = current.surface;
+    await act(async () => {
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+      await flushAnimationFrames(4);
+    });
+    const initialChildren = Array.from(current.surface.childNodes);
+    const initialSpacer = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-preview-window-spacer]'
+    );
+    if (!initialSpacer) throw new Error('windowed-scope-spacer-missing');
+    const nextHtml = fixture.html.replace('>b0</p>', '>New</p>') as SafePreviewHtml;
+    act(() => current.session.schedule(request('new-window', fixture.editMap.signature), true));
+    await act(async () => {
+      current.responses[0]?.resolve({
+        editMap: fixture.editMap,
+        features: {},
+        html: nextHtml
+      });
+      for (let index = 0; index < 16; index += 1) await Promise.resolve();
+      await flushAnimationFrames(4);
+    });
+
+    expect(Array.from(current.surface.childNodes)).toEqual(initialChildren);
+    const restoredSpacer = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-preview-window-spacer]'
+    );
+    expect(restoredSpacer?.getAttribute('data-easymde-preview-window-start'))
+      .toBe(initialSpacer.getAttribute('data-easymde-preview-window-start'));
+    expect(restoredSpacer?.getAttribute('data-easymde-preview-window-end'))
+      .toBe(initialSpacer.getAttribute('data-easymde-preview-window-end'));
+    expect(current.surface.textContent).not.toContain('New');
+    expect(current.surface.getAttribute('data-easymde-preview-accepted')).toBeNull();
+    expect(current.surface.getAttribute('data-easymde-preview-error')).toBe('1');
+    expect(current.canvas.querySelectorAll('[data-easymde-preview-staging]'))
+      .toHaveLength(0);
+    current.unmount();
+  });
+
   it('preserves accepted protected Preview nodes in real staged rematerializations', async () => {
     const initialSignature = 'protected-identity-initial';
     const initialFixture = protectedPreviewFixture(

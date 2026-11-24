@@ -12,6 +12,11 @@ import { spawnSync } from 'node:child_process';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import {
+  findWechatMathOutlineAtlasMismatch,
+  writeWechatMathOutlineAtlas
+} from './wechat-math-outline-atlas.mjs';
+
 const defaultRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 export const frontendRuntimeAssets = [
@@ -92,6 +97,26 @@ export const frontendRuntimeAssets = [
     ].map(([source, destination, type]) => ({ source, destination, type }))
   },
   {
+    id: 'wechat-math-atlas',
+    displayName: 'EasyMDE KaTeX glyph atlas',
+    bundledPaths: 'assets/math/easymde-katex-glyph-atlas.json, assets/math/KaTeX_FONT_LICENSE.txt',
+    purpose: 'Deterministic local glyph outlines for WeChat math vector projection.',
+    version: 'generated from locked katex package',
+    source: 'scripts/wechat-math-outline-atlas.mjs from node_modules/katex/dist/fonts',
+    license: 'Font data: SIL OFL-1.1; generator: MIT',
+    noticeLocation: 'assets/math/KaTeX_FONT_LICENSE.txt',
+    managedRoot: 'assets/math',
+    generated: 'wechat-math-outline-atlas',
+    generatedInputs: {
+      fontDirectory: 'node_modules/katex/dist/fonts',
+      runtimeFontDirectory: 'assets/vendor/katex/fonts'
+    },
+    requiredPaths: [
+      { path: 'assets/math/easymde-katex-glyph-atlas.json', type: 'file' },
+      { path: 'assets/math/KaTeX_FONT_LICENSE.txt', type: 'file' }
+    ]
+  },
+  {
     id: 'katex',
     displayName: 'KaTeX',
     packageName: 'katex',
@@ -135,6 +160,11 @@ function isRepositoryRelativePath(path) {
 
 function isLocalVendorPath(path) {
   return isRepositoryRelativePath(path) && path.startsWith('assets/vendor/');
+}
+
+function isManagedRuntimePath(component, path) {
+  return isLocalVendorPath(path)
+    || (component.generated === 'wechat-math-outline-atlas' && isRepositoryRelativePath(path) && (path === 'assets/math' || path.startsWith('assets/math/')));
 }
 
 function normalizedCopies(component) {
@@ -188,16 +218,16 @@ export function validateFrontendAssetManifest(manifest = frontendRuntimeAssets) 
       }
     }
 
-    if (!isLocalVendorPath(component.noticeLocation)) {
-      throw new Error(`${component.id} noticeLocation must stay under assets/vendor/.`);
+    if (!isManagedRuntimePath(component, component.noticeLocation)) {
+      throw new Error(`${component.id} noticeLocation must stay under an approved local runtime root.`);
     }
 
     if (Object.hasOwn(component, 'copies') && !Array.isArray(component.copies)) {
       throw new Error(`${component.id} copies must be an array.`);
     }
     if (component.managedRoot) {
-      if (!isLocalVendorPath(component.managedRoot)) {
-        throw new Error(`${component.id} managedRoot must stay under assets/vendor/.`);
+      if (!isManagedRuntimePath(component, component.managedRoot)) {
+        throw new Error(`${component.id} managedRoot must stay under an approved local runtime root.`);
       }
       for (const managedRoot of managedRoots) {
         if (
@@ -239,8 +269,8 @@ export function validateFrontendAssetManifest(manifest = frontendRuntimeAssets) 
       if (!isRepositoryRelativePath(copy.source)) {
         throw new Error(`${component.id} copy sources must be repository-relative paths.`);
       }
-      if (!isLocalVendorPath(copy.destination)) {
-        throw new Error(`${component.id} copy destinations must stay under assets/vendor/.`);
+      if (!isManagedRuntimePath(component, copy.destination)) {
+        throw new Error(`${component.id} copy destinations must stay under an approved local runtime root.`);
       }
       if (!component.managedRoot || (copy.destination !== component.managedRoot && !copy.destination.startsWith(`${component.managedRoot}/`))) {
         throw new Error(`${component.id} copy destination must stay inside its managedRoot.`);
@@ -362,6 +392,14 @@ function walkRelativeFiles(root, path) {
 function expectedDestinationFiles(root, component, mismatches) {
   const expected = new Map();
   let canCheckUnexpectedFiles = true;
+
+  if (component.generated === 'wechat-math-outline-atlas') {
+    for (const requirement of component.requiredPaths || []) {
+      if ('file' === requirement.type) {
+        expected.set(requirement.path, requirement.path);
+      }
+    }
+  }
 
   for (const copy of normalizedCopies(component)) {
     const source = join(root, copy.source);
@@ -504,6 +542,24 @@ export function findFrontendAssetMismatches(
   validateFrontendAssetManifest(manifest);
 
   const mismatches = findFrontendAssetPackageMismatches(root, manifest);
+  for (const component of manifest) {
+    if (component.generated !== 'wechat-math-outline-atlas') {
+      continue;
+    }
+    try {
+      findWechatMathOutlineAtlasMismatch({
+        fontDirectory: join(root, component.generatedInputs.fontDirectory),
+        runtimeFontDirectory: join(root, component.generatedInputs.runtimeFontDirectory),
+        outputPath: join(root, component.requiredPaths[0].path)
+      });
+    } catch (error) {
+      mismatches.push(mismatch(
+        'generated-content-mismatch',
+        component.requiredPaths?.[0]?.path || component.managedRoot,
+        error instanceof Error ? error.message : 'Generated math atlas validation failed.'
+      ));
+    }
+  }
   const expectedTrackedPaths = new Set();
 
   for (const component of manifest) {
@@ -623,6 +679,16 @@ export function prepareFrontendAssets(root = defaultRoot, manifest = frontendRun
       });
     }
 
+  }
+
+  for (const component of manifest) {
+    if (component.generated === 'wechat-math-outline-atlas') {
+      writeWechatMathOutlineAtlas({
+        fontDirectory: join(root, component.generatedInputs.fontDirectory),
+        runtimeFontDirectory: join(root, component.generatedInputs.runtimeFontDirectory),
+        outputPath: join(root, component.requiredPaths[0].path)
+      });
+    }
   }
 
   const mismatches = findFrontendAssetMismatches(

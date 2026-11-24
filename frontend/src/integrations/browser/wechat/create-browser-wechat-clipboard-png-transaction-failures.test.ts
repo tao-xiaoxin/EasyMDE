@@ -618,7 +618,7 @@ describe('createBrowserWechatClipboard', () => {
       document,
       fetch,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if ('P' === element.tagName) {
           return declaration({ 'background-image': `url("${imageUrl}")`, display: 'block' });
         }
@@ -665,7 +665,7 @@ describe('createBrowserWechatClipboard', () => {
       document,
       fetch,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if ('P' === element.tagName) {
           return declaration({ 'background-image': `url("${imageUrl}")`, display: 'block' });
         }

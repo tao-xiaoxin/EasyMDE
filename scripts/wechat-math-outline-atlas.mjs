@@ -3,15 +3,14 @@
 /**
  * Build-time KaTeX outline records for the WeChat math projection.
  *
- * This script intentionally produces no committed or runtime asset. Its output
- * is an in-memory schema (or deterministic JSON on --json) for a future,
- * separately reviewed runtime integration.
+ * The script emits deterministic JSON on --json. A separate preparation
+ * command writes the reviewed runtime asset and validates it byte-for-byte.
  *
  * The KaTeX package code is MIT-licensed under assets/vendor/katex/LICENSE.
  * The vendored TTF font data under assets/vendor/katex/fonts carries the
  * SIL Open Font License 1.1 (OFL-1.1), including its Reserved Font Name (RFN)
- * requirements. This prototype distributes no generated font asset; a future
- * distribution must preserve the official font notice and license terms.
+ * requirements. The prepared runtime atlas must preserve the official font
+ * notice and license terms.
  */
 
 import crypto from 'node:crypto';
@@ -22,10 +21,14 @@ import opentypePackage from 'opentype.js';
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(scriptDirectory, '..');
+// Keep a repository default for CLI use. Callers preparing another fixture root
+// pass all source and runtime directories explicitly.
 
 const opentype = opentypePackage?.default ?? opentypePackage;
 
-export const DEFAULT_FONT_DIRECTORY = path.join(repositoryRoot, 'assets/vendor/katex/fonts');
+export const DEFAULT_FONT_DIRECTORY = path.join(repositoryRoot, 'node_modules/katex/dist/fonts');
+export const RUNTIME_FONT_DIRECTORY = path.join(repositoryRoot, 'assets/vendor/katex/fonts');
+export const RUNTIME_ATLAS_PATH = path.join(repositoryRoot, 'assets/math/easymde-katex-glyph-atlas.json');
 
 const ERROR_CODES = Object.freeze({
   inventoryReadFailed: 'font-inventory-read-failed',
@@ -33,6 +36,8 @@ const ERROR_CODES = Object.freeze({
   fontReadFailed: 'font-read-failed',
   fontParseFailed: 'font-parse-failed',
   buildFailed: 'font-atlas-build-failed',
+  atlasReadFailed: 'font-atlas-read-failed',
+  atlasMismatch: 'font-atlas-mismatch',
 });
 
 export class WeChatMathOutlineAtlasError extends Error {
@@ -43,35 +48,13 @@ export class WeChatMathOutlineAtlasError extends Error {
   }
 }
 export const ATLAS_SCHEMA = 'easymde-katex-glyph-atlas/1';
+export const RUNTIME_ATLAS_RELATIVE_PATH = 'assets/math/easymde-katex-glyph-atlas.json';
 export const SERIALIZATION_OPTIONS = Object.freeze({
   decimalPlaces: 6,
   flipY: false,
   optimize: false,
   coordinateSystem: 'font-units-y-up',
 });
-
-export const EXPECTED_KATEX_FONT_FILES = Object.freeze([
-  'KaTeX_AMS-Regular.ttf',
-  'KaTeX_Caligraphic-Bold.ttf',
-  'KaTeX_Caligraphic-Regular.ttf',
-  'KaTeX_Fraktur-Bold.ttf',
-  'KaTeX_Fraktur-Regular.ttf',
-  'KaTeX_Main-Bold.ttf',
-  'KaTeX_Main-BoldItalic.ttf',
-  'KaTeX_Main-Italic.ttf',
-  'KaTeX_Main-Regular.ttf',
-  'KaTeX_Math-BoldItalic.ttf',
-  'KaTeX_Math-Italic.ttf',
-  'KaTeX_SansSerif-Bold.ttf',
-  'KaTeX_SansSerif-Italic.ttf',
-  'KaTeX_SansSerif-Regular.ttf',
-  'KaTeX_Script-Regular.ttf',
-  'KaTeX_Size1-Regular.ttf',
-  'KaTeX_Size2-Regular.ttf',
-  'KaTeX_Size3-Regular.ttf',
-  'KaTeX_Size4-Regular.ttf',
-  'KaTeX_Typewriter-Regular.ttf',
-]);
 
 const expectedRawTables = new Set([
   'OS/2',
@@ -332,18 +315,39 @@ function listFontFiles(fontDirectory) {
     .filter((entry) => entry.isFile() && entry.name.endsWith('.ttf'))
     .map((entry) => entry.name)
     .sort();
-  const expected = EXPECTED_KATEX_FONT_FILES.slice().sort();
-  if (actual.length !== expected.length || actual.some((name, index) => name !== expected[index])) {
+  if (actual.length === 0) {
     throw new WeChatMathOutlineAtlasError(
       ERROR_CODES.inventoryMismatch,
-      `${ERROR_CODES.inventoryMismatch}:expected-${expected.length}:actual-${actual.length}`,
+      `${ERROR_CODES.inventoryMismatch}:empty-inventory`,
     );
   }
   return actual;
 }
 
-export function buildWechatMathOutlineAtlas({ fontDirectory = DEFAULT_FONT_DIRECTORY, readFile = fs.readFileSync } = {}) {
+export function buildWechatMathOutlineAtlas({ fontDirectory = DEFAULT_FONT_DIRECTORY, runtimeFontDirectory = null, readFile = fs.readFileSync } = {}) {
   const fontFiles = listFontFiles(fontDirectory);
+  if (runtimeFontDirectory) {
+    const runtimeFontFiles = listFontFiles(runtimeFontDirectory);
+    if (fontFiles.length !== runtimeFontFiles.length || fontFiles.some((file, index) => file !== runtimeFontFiles[index])) {
+      throw new WeChatMathOutlineAtlasError(ERROR_CODES.inventoryMismatch, `${ERROR_CODES.inventoryMismatch}:source-runtime`);
+    }
+    for (const file of fontFiles) {
+      let sourceBytes;
+      let runtimeBytes;
+      try {
+        sourceBytes = readFile(path.join(fontDirectory, file));
+        runtimeBytes = readFile(path.join(runtimeFontDirectory, file));
+      } catch (error) {
+        throw new WeChatMathOutlineAtlasError(ERROR_CODES.fontReadFailed, `${ERROR_CODES.fontReadFailed}:${file}`, { cause: error });
+      }
+      if (!Buffer.isBuffer(sourceBytes) || !Buffer.isBuffer(runtimeBytes)) {
+        throw new WeChatMathOutlineAtlasError(ERROR_CODES.fontReadFailed, `${ERROR_CODES.fontReadFailed}:${file}`);
+      }
+      if (!sourceBytes.equals(runtimeBytes)) {
+        throw new WeChatMathOutlineAtlasError(ERROR_CODES.inventoryMismatch, `${ERROR_CODES.inventoryMismatch}:${file}`);
+      }
+    }
+  }
   const fonts = fontFiles.map((file) => {
     let bytes;
     try {
@@ -380,19 +384,82 @@ export function lookupAtlasGlyph(atlas, file, codepoint) {
   return font.glyphs[entry.glyphId];
 }
 
-function sha256(value) {
+export function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+export function wechatMathAtlasContentVersion(bytes) {
+  if (!Buffer.isBuffer(bytes) && typeof bytes !== 'string') {
+    throw new TypeError('math-atlas-content:expected-buffer-or-string');
+  }
+  return sha256(bytes);
+}
+
+export function writeWechatMathOutlineAtlas({
+  fontDirectory = DEFAULT_FONT_DIRECTORY,
+  runtimeFontDirectory = RUNTIME_FONT_DIRECTORY,
+  outputPath = RUNTIME_ATLAS_PATH,
+} = {}) {
+  const atlas = buildWechatMathOutlineAtlas({ fontDirectory, runtimeFontDirectory });
+  const serialized = serializeWechatMathOutlineAtlas(atlas);
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(outputPath, serialized);
+  return {
+    atlas,
+    bytes: Buffer.byteLength(serialized),
+    sha256: sha256(serialized),
+  };
+}
+
+export function findWechatMathOutlineAtlasMismatch({
+  fontDirectory = DEFAULT_FONT_DIRECTORY,
+  runtimeFontDirectory = RUNTIME_FONT_DIRECTORY,
+  outputPath = RUNTIME_ATLAS_PATH,
+} = {}) {
+  const expected = serializeWechatMathOutlineAtlas(
+    buildWechatMathOutlineAtlas({ fontDirectory, runtimeFontDirectory }),
+  );
+  let actual;
+  try {
+    actual = fs.readFileSync(outputPath);
+  } catch (error) {
+    throw new WeChatMathOutlineAtlasError(ERROR_CODES.atlasReadFailed, ERROR_CODES.atlasReadFailed, { cause: error });
+  }
+  const expectedBytes = Buffer.from(expected, 'utf8');
+  if (!actual.equals(expectedBytes)) {
+    throw new WeChatMathOutlineAtlasError(
+      ERROR_CODES.atlasMismatch,
+      `${ERROR_CODES.atlasMismatch}:expected-${sha256(expectedBytes)}:actual-${sha256(actual)}`,
+    );
+  }
+  return {
+    bytes: expectedBytes.length,
+    sha256: sha256(expectedBytes),
+  };
 }
 
 export function runCli({
   fontDirectory = DEFAULT_FONT_DIRECTORY,
+  runtimeFontDirectory = RUNTIME_FONT_DIRECTORY,
   readFile = fs.readFileSync,
   json = process.argv.includes('--json'),
+  write = process.argv.includes('--write'),
+  check = process.argv.includes('--check'),
   stdout = process.stdout,
   stderr = process.stderr,
 } = {}) {
   try {
-    const atlas = buildWechatMathOutlineAtlas({ fontDirectory, readFile });
+    if (write) {
+      const result = writeWechatMathOutlineAtlas({ fontDirectory, runtimeFontDirectory });
+      stdout.write(`${JSON.stringify({ schema: result.atlas.schema, fontCount: result.atlas.fonts.length, bytes: result.bytes, sha256: result.sha256 })}\n`);
+      return 0;
+    }
+    if (check) {
+      const result = findWechatMathOutlineAtlasMismatch({ fontDirectory, runtimeFontDirectory });
+      stdout.write(`${JSON.stringify({ schema: ATLAS_SCHEMA, bytes: result.bytes, sha256: result.sha256 })}\n`);
+      return 0;
+    }
+    const atlas = buildWechatMathOutlineAtlas({ fontDirectory, runtimeFontDirectory, readFile });
     if (json) {
       stdout.write(serializeWechatMathOutlineAtlas(atlas));
       return 0;

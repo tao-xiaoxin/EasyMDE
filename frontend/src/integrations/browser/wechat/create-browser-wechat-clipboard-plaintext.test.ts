@@ -364,10 +364,12 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (element) =>
-        element === preview || '1' === element.getAttribute(exportStyleContextAttribute)
-          ? declaration(values)
-          : declaration({ display: 'block' }),
+      getComputedStyle: (element, pseudoElement) =>
+        '::before' === pseudoElement || '::after' === pseudoElement
+          ? computedStyle(element, pseudoElement)
+          : element === preview || '1' === element.getAttribute(exportStyleContextAttribute)
+            ? declaration(values)
+            : declaration({ display: 'block' }),
       getSelection: window.getSelection.bind(window),
       scrollTo: vi.fn(),
       write: async (items) => {

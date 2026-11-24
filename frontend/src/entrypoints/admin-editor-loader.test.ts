@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	type AdminEditorLoaderBootstrap,
 	type AdminEditorLoaderRuntime,
+	type AdminEditorLoaderStartRuntime,
 	startAdminEditorLoader,
 } from "./admin-editor-loader";
 
@@ -203,5 +204,45 @@ describe("startAdminEditorLoader", () => {
 			document.querySelector(".easymde-editor-startup-error")?.textContent,
 		).toContain("EasyMDE could not start.");
 		teardown();
+	});
+
+	it("routes a deferred main failure to the accessible owner and tears down once", async () => {
+		editorDom();
+		let startRuntime!: AdminEditorLoaderStartRuntime;
+		const mainTeardown = vi.fn();
+		const mainStart = vi.fn((value: AdminEditorLoaderStartRuntime) => {
+			startRuntime = value;
+			return mainTeardown;
+		});
+		const teardown = startAdminEditorLoader(bootstrap(), runtime(mainStart));
+		loaderScript().dispatchEvent(new Event("load"));
+		await settleMutationObserver();
+
+		startRuntime.onStartupFailure("react-editor-stylesheet-startup-failed");
+		await settleMutationObserver();
+		expect(document.querySelectorAll(".easymde-editor-startup-error")).toHaveLength(1);
+		expect(mainStart).toHaveBeenCalledOnce();
+
+		window.dispatchEvent(new Event("pagehide"));
+		teardown();
+		expect(mainTeardown).toHaveBeenCalledOnce();
+	});
+
+	it("handles a startup failure callback before main start returns", async () => {
+		editorDom();
+		const mainTeardown = vi.fn();
+		const mainStart = vi.fn((value: AdminEditorLoaderStartRuntime) => {
+			value.onStartupFailure("react-editor-startup-failed");
+			return mainTeardown;
+		});
+		const teardown = startAdminEditorLoader(bootstrap(), runtime(mainStart));
+		loaderScript().dispatchEvent(new Event("load"));
+		await settleMutationObserver();
+
+		expect(document.querySelectorAll(".easymde-editor-startup-error")).toHaveLength(1);
+		expect(mainStart).toHaveBeenCalledOnce();
+		teardown();
+		window.dispatchEvent(new Event("pagehide"));
+		expect(mainTeardown).toHaveBeenCalledOnce();
 	});
 });

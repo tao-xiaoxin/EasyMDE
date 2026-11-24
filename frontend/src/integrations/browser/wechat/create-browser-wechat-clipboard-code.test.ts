@@ -5,6 +5,7 @@ import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard'
 import {
   blobText,
   codeRows,
+  computedStyle,
   declaration,
   installClipboardTestEnvironment,
   prepareClipboard,
@@ -37,6 +38,8 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         if ('SPAN' === element.tagName && element.classList.contains('token')) {
           return declaration({ color: 'rgb(1, 2, 3)', display: 'inline' });
@@ -131,6 +134,8 @@ describe('createBrowserWechatClipboard', () => {
           width: '12px'
         });
       }
+      if ('::before' === pseudoElement || '::after' === pseudoElement)
+        return computedStyle(element, pseudoElement);
       if ('PRE' === element.tagName) {
         const boxed = element.classList.contains('boxed-offset');
         return declaration({
@@ -324,6 +329,8 @@ describe('createBrowserWechatClipboard', () => {
         }
         return declaration({ content: 'none' });
       }
+      if ('::before' === pseudoElement || '::after' === pseudoElement)
+        return computedStyle(element, pseudoElement);
       if ('PRE' === element.tagName) {
         return declaration({ display: 'block', 'padding-left': '5px', 'padding-top': '28px', 'white-space': 'pre' });
       }
@@ -389,6 +396,8 @@ describe('createBrowserWechatClipboard', () => {
           width: '12px'
         });
       }
+      if ('::before' === pseudoElement || '::after' === pseudoElement)
+        return computedStyle(element, pseudoElement);
       if ('PRE' === element.tagName) {
         return declaration({ display: 'block', 'padding-left': '0px', 'padding-top': '28px', 'white-space': 'pre' });
       }
@@ -414,6 +423,7 @@ describe('createBrowserWechatClipboard', () => {
       }
     });
 
+    await expect(prepareClipboard(clipboard, preview, { background: true })).rejects.toThrow('wechat-code-frame-geometry-unavailable');
     await expect(clipboard.copy(preview)).resolves.toEqual({ code: 'wechat-copy-failed', status: 'failed' });
     expect(preview.innerHTML).toBe(sourceMarkup);
   });
@@ -441,6 +451,8 @@ describe('createBrowserWechatClipboard', () => {
           width: '12px'
         });
       }
+      if ('::before' === pseudoElement || '::after' === pseudoElement)
+        return computedStyle(element, pseudoElement);
       if ('PRE' === element.tagName) {
         return declaration({
           display: 'block',
@@ -468,6 +480,7 @@ describe('createBrowserWechatClipboard', () => {
       write: async () => {}
     });
 
+    await expect(prepareClipboard(clipboard, preview, { background: true })).rejects.toThrow('wechat-code-frame-geometry-unavailable');
     await expect(clipboard.copy(preview)).resolves.toEqual({ code: 'wechat-copy-failed', status: 'failed' });
     expect(preview.innerHTML).toBe(sourceMarkup);
   });
@@ -487,7 +500,9 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (_element, pseudoElement) => {
+      getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         return declaration({ display: 'block', 'white-space': 'pre', color: 'rgb(20, 21, 22)' });
       },
@@ -554,7 +569,9 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (_element, pseudoElement) => {
+      getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         return declaration({ display: 'block', 'white-space': 'pre', color: 'rgb(20, 21, 22)' });
       },
@@ -599,10 +616,12 @@ describe('createBrowserWechatClipboard', () => {
     preview.setAttribute('data-easymde-preview-html-sink', '1');
     preview.innerHTML = '<pre dir="rtl"><code><span class="token">#abc   tail</span></code></pre>';
     Object.defineProperty(preview, 'innerText', { configurable: true, value: '#abc   tail' });
-    const styleFor = (_element: Element, pseudoElement?: string): CSSStyleDeclaration =>
-      pseudoElement
-        ? declaration({})
-        : declaration({ display: 'block', 'white-space': 'pre', color: 'rgb(20, 21, 22)' });
+    const styleFor = (element: Element, pseudoElement?: string): CSSStyleDeclaration =>
+      '::before' === pseudoElement || '::after' === pseudoElement
+        ? computedStyle(element, pseudoElement)
+        : pseudoElement
+          ? declaration({})
+          : declaration({ display: 'block', 'white-space': 'pre', color: 'rgb(20, 21, 22)' });
     const createRuntime = (
       clipboardItem: typeof ClipboardItemStub | null,
       write: ((items: unknown[]) => Promise<void>) | null
@@ -672,10 +691,12 @@ describe('createBrowserWechatClipboard', () => {
         blob: Blob,
         clipboardItem: ClipboardItemStub,
         document,
-        getComputedStyle: (_element, pseudoElement) =>
-          pseudoElement
-            ? declaration({})
-            : declaration({ display: 'block', 'white-space': 'pre', color: 'rgb(20, 21, 22)' }),
+        getComputedStyle: (element, pseudoElement) =>
+          '::before' === pseudoElement || '::after' === pseudoElement
+            ? computedStyle(element, pseudoElement)
+            : pseudoElement
+              ? declaration({})
+              : declaration({ display: 'block', 'white-space': 'pre', color: 'rgb(20, 21, 22)' }),
         getSelection: window.getSelection.bind(window),
         pageOffset: () => ({ x: 0, y: 0 }),
         scrollTo: vi.fn(),
@@ -712,10 +733,12 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (_element, pseudoElement) =>
-        pseudoElement
-          ? declaration({})
-          : declaration({ display: 'block', 'white-space': 'pre', color: 'rgb(20, 21, 22)' }),
+      getComputedStyle: (element, pseudoElement) =>
+        '::before' === pseudoElement || '::after' === pseudoElement
+          ? computedStyle(element, pseudoElement)
+          : pseudoElement
+            ? declaration({})
+            : declaration({ display: 'block', 'white-space': 'pre', color: 'rgb(20, 21, 22)' }),
       getSelection: window.getSelection.bind(window),
       pageOffset: () => ({ x: 0, y: 0 }),
       scrollTo: vi.fn(),
@@ -751,7 +774,9 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (_element, pseudoElement) => {
+      getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         return declaration({ display: 'block', 'white-space': 'pre', color: 'rgb(20, 21, 22)' });
       },
@@ -804,7 +829,9 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (_element, pseudoElement) => {
+      getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         return declaration({ display: 'block', 'white-space': 'pre', color: 'rgb(20, 21, 22)' });
       },

@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard';
+import type { BrowserWechatClipboardRuntime } from './wechat-clipboard-runtime';
 
 import {
   blobText,
@@ -8,6 +9,7 @@ import {
   declaration,
   declaredStyleDeclarations,
   installClipboardTestEnvironment,
+  observeFixtureContentBox,
   pngOptions,
   readyPreview,
   setMermaidComputedStyleMap
@@ -15,6 +17,7 @@ import {
 
 describe('createBrowserWechatClipboard', () => {
   installClipboardTestEnvironment();
+  afterEach(() => vi.unstubAllGlobals());
 
   it.each([
     ['gantt', '0 0 1220 288', 1220, 288],
@@ -36,7 +39,11 @@ describe('createBrowserWechatClipboard', () => {
       let direction: 'ltr' | 'rtl' = 'ltr';
       let ownerWidth = 335;
       let scrollLeft = 0;
+      let contentHeight = viewportHeight + 0.0078125;
+      const contentObserver = observeFixtureContentBox(() => ({ width: ownerWidth, height: contentHeight }));
+      let invalidateDuringRasterization = false;
       setMermaidComputedStyleMap(root);
+      setMermaidComputedStyleMap(svg, { 'max-width': `${viewportWidth}px` });
       Object.defineProperty(preview, 'getBoundingClientRect', {
         configurable: true,
         value: () => ({ bottom: viewportHeight, height: viewportHeight, left: 0, right: 335, top: 0, width: 335 })
@@ -49,8 +56,8 @@ describe('createBrowserWechatClipboard', () => {
       Object.defineProperty(root, 'getBoundingClientRect', {
         configurable: true,
         value: () => ({
-          bottom: viewportHeight,
-          height: viewportHeight,
+          bottom: viewportHeight + 15.25,
+          height: viewportHeight + 15.25,
           left: 0,
           right: ownerWidth,
           top: 0,
@@ -81,6 +88,8 @@ describe('createBrowserWechatClipboard', () => {
         value: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 })
       });
       const writes: unknown[] = [];
+      let holdWrite = false;
+      const pendingWrite: { release: (() => void) | null } = { release: null };
       let observed: Readonly<{ height: number; layoutMagnification?: number; width: number }> | null = null;
       let observedCapture: string | undefined;
       const rasterize = vi.fn(
@@ -100,6 +109,10 @@ describe('createBrowserWechatClipboard', () => {
           expect(source.querySelector(':scope > svg')?.getAttribute('aria-roledescription')).toBe(role);
           observed = { height, ...(layoutMagnification !== undefined ? { layoutMagnification } : {}), width };
           observedCapture = mermaidCapture;
+          if (invalidateDuringRasterization) {
+            contentHeight += 0.0078125;
+            contentObserver.notify();
+          }
           return {
             file: new File([role], `${role}.png`, { type: 'image/png' }),
             height,
@@ -114,12 +127,12 @@ describe('createBrowserWechatClipboard', () => {
         title: 'gantt.png',
         url: 'https://example.test/gantt.png'
       }));
-      const clipboard = createBrowserWechatClipboard({
+      const clipboardRuntime: BrowserWechatClipboardRuntime = {
         blob: Blob,
         clipboardItem: ClipboardItemStub,
         document,
         getComputedStyle: (element, pseudoElement) => {
-          if (pseudoElement) return declaration({});
+          if (pseudoElement) return computedStyle(element, pseudoElement);
           if (element === root || element.matches('.easymde-mermaid[data-easymde-mermaid-layout="gantt"]')) {
             return declaration({
               'border-bottom-style': 'none',
@@ -166,6 +179,7 @@ describe('createBrowserWechatClipboard', () => {
               display: 'block',
               'margin-left': 'auto',
               'margin-right': 'auto',
+							'max-width': `${viewportWidth}px`,
               transform: 'none'
             });
           }
@@ -176,8 +190,10 @@ describe('createBrowserWechatClipboard', () => {
         scrollTo: vi.fn(),
         write: vi.fn(async (items) => {
           writes.push(items);
+          if (holdWrite) await new Promise<void>((resolve) => { pendingWrite.release = resolve; });
         })
-      });
+      };
+      const clipboard = createBrowserWechatClipboard(clipboardRuntime);
 
       const uiClipShell = document.createElement('div');
       uiClipShell.style.overflowX = 'hidden';
@@ -258,6 +274,62 @@ describe('createBrowserWechatClipboard', () => {
         expect(observed).toEqual({ height: viewportHeight, layoutMagnification: 1, width: viewportWidth });
         expect(observedCapture).toBe('intrinsic-viewport');
         expect(rasterize).toHaveBeenCalledTimes(5);
+
+        ownerWidth = 335;
+        Object.defineProperty(root, 'clientWidth', { configurable: true, value: 335 });
+        Object.defineProperty(root, 'scrollWidth', { configurable: true, value: viewportWidth });
+        const uploadsBeforeStale = upload.mock.calls.length;
+        invalidateDuringRasterization = true;
+        await expect(clipboard.copy(preview, pngOptions({ rasterize }, { upload } as never))).resolves.toMatchObject({
+          code: 'wechat-png-rasterization-cancelled', status: 'failed'
+        });
+        expect(upload).toHaveBeenCalledTimes(uploadsBeforeStale);
+        invalidateDuringRasterization = false;
+        contentHeight = viewportHeight + 0.125;
+        await expect(clipboard.copy(preview, pngOptions({ rasterize }, { upload } as never))).resolves.toMatchObject({
+          code: 'wechat-png-rasterization-failed', status: 'failed'
+        });
+        expect(rasterize).toHaveBeenCalledTimes(6);
+        contentHeight = viewportHeight + 0.0078125;
+
+        await clipboard.prepare?.(preview);
+        await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+        const portableItem = (writes.at(-1) as ClipboardItemStub[])[0];
+        const portableHtml = portableItem?.payload['text/html'];
+        if (!portableHtml) throw new Error('portable Mermaid HTML missing');
+        expect(await blobText(portableHtml)).toContain('viewBox');
+
+        holdWrite = true;
+        const staleCopy = clipboard.copy(preview);
+        const pendingItem = (writes.at(-1) as ClipboardItemStub[])[0];
+        const pendingHtml = pendingItem?.payload['text/html'];
+        if (!pendingHtml) throw new Error('pending portable Mermaid HTML missing');
+        await blobText(pendingHtml);
+        contentHeight = viewportHeight + 0.015625;
+        contentObserver.notify();
+        if (!pendingWrite.release) throw new Error('pending Clipboard write missing');
+        pendingWrite.release();
+        await expect(staleCopy).resolves.toMatchObject({ code: 'wechat-copy-failed', status: 'failed' });
+        holdWrite = false;
+        contentHeight = viewportHeight + 0.0078125;
+
+        const legacy = createBrowserWechatClipboard({ ...clipboardRuntime, clipboardItem: null, write: null });
+        await legacy.prepare?.(preview);
+        await expect(legacy.copy(preview)).resolves.toEqual({ method: 'legacy', status: 'copied' });
+        const activeBeforeReplacement = contentObserver.activeCount();
+        await legacy.prepare?.(preview);
+        expect(contentObserver.activeCount()).toBe(activeBeforeReplacement);
+        contentObserver.failNext();
+        await expect(legacy.prepare?.(preview)).rejects.toThrow('wechat-mermaid-content-box-unavailable');
+        expect(contentObserver.activeCount()).toBe(activeBeforeReplacement);
+        await expect(legacy.copy(preview)).resolves.toEqual({ method: 'legacy', status: 'copied' });
+        contentHeight = viewportHeight + 0.015625;
+        contentObserver.notify();
+        await expect(legacy.copy(preview)).resolves.toMatchObject({ code: 'wechat-copy-failed', status: 'failed' });
+        legacy.releasePrepared?.(preview);
+        clipboard.releasePrepared?.(preview);
+        await Promise.resolve();
+        expect(contentObserver.activeCount()).toBe(0);
       } finally {
         uiClipShell.remove();
       }
@@ -285,6 +357,7 @@ describe('createBrowserWechatClipboard', () => {
     let svgHeight = renderedHeight;
     let ownerClientWidth = viewBoxWidth;
     let ownerScrollWidth = viewBoxWidth;
+    observeFixtureContentBox(() => ({ width: rootWidth, height: rootHeight }));
     let ctm = { a: measuredScale, b: 0, c: 0, d: measuredScale, e: 0, f: 0 };
     setMermaidComputedStyleMap(root);
     Object.defineProperty(root, 'getBoundingClientRect', {
@@ -338,7 +411,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if (element === root) {
           return declaration({
             'background-image': 'none',

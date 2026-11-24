@@ -4,6 +4,7 @@ import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard'
 
 import {
   blobText,
+  computedStyle,
   declaration,
   deferred,
   installClipboardTestEnvironment,
@@ -356,6 +357,8 @@ describe('createBrowserWechatClipboard', () => {
               width: '5px'
             });
           }
+          if ('::before' === pseudoElement || '::after' === pseudoElement)
+            return computedStyle(element, pseudoElement);
           if ('H3' === element.tagName) {
             return declaration({
               'border-bottom-width': '0px',
@@ -430,6 +433,8 @@ describe('createBrowserWechatClipboard', () => {
             width: '12px'
           });
         }
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         return declaration({ display: 'block', visibility: 'visible' });
       },
       getSelection: window.getSelection.bind(window),

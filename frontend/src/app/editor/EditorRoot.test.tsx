@@ -288,6 +288,7 @@ function fixture(): EditorRootProps &
         cancel: vi.fn(),
         commit: vi.fn()
       }),
+      scopeRenderedStyles: vi.fn(() => ({ dispose: vi.fn() })),
       syncCodeFrameBackgrounds: vi.fn()
     },
     executeExternalCommand: vi.fn(),
@@ -695,6 +696,9 @@ function fixture(): EditorRootProps &
     wechatExport: {
       enabled: true,
       pngConversionEnabled: false,
+      wechatMathAtlasContentVersion: '0123456789abcdef',
+      wechatMathAtlasUrl:
+        'https://example.test/wp-content/plugins/easymde/assets/math/easymde-katex-glyph-atlas.json?contentversion=0123456789abcdef',
       strings: {
         failed: 'Copy failed',
         failedWithUploads: 'Copy failed after uploading images',
@@ -8407,6 +8411,28 @@ describe('EditorRoot', () => {
       expect.objectContaining({ background: true, geometryOnly: true })
     );
     view.unmount();
+  });
+
+  it('releases completed WeChat preparation when the mode changes and the Root unmounts', async () => {
+    const props = fixture();
+    const releasePrepared = vi.fn();
+    const wechatClipboard = { ...props.wechatClipboard, releasePrepared };
+    const view = render(<EditorRoot {...props} wechatClipboard={wechatClipboard} />);
+    await waitFor(() => expect(wechatClipboard.prepare).toHaveBeenCalled());
+    const preview = view.container.querySelector('[data-easymde-preview-html-sink="1"]');
+    expect(preview).not.toBeNull();
+    releasePrepared.mockClear();
+    view.rerender(
+      <EditorRoot
+        {...props}
+        wechatClipboard={wechatClipboard}
+        wechatExport={{ ...props.wechatExport, pngConversionEnabled: true }}
+      />
+    );
+    await waitFor(() => expect(releasePrepared).toHaveBeenCalledWith(preview));
+    releasePrepared.mockClear();
+    view.unmount();
+    expect(releasePrepared).toHaveBeenCalledWith(preview);
   });
 
   it('binds synchronized scrolling to the preview canvas and disposes it with the Root', async () => {

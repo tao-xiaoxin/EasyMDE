@@ -170,7 +170,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return declaration({ content: 'none' });
         return admissionStyle(element, root, svg, rootStyle);
       },
       getSelection: window.getSelection.bind(window),
@@ -224,7 +224,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return declaration({ content: 'none' });
         return admissionStyle(element, root, svg, rootStyle);
       },
       getSelection: window.getSelection.bind(window),
@@ -378,7 +378,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return declaration({ content: 'none' });
         if (element === root) return declaration(rootStyle);
         if (element === svg) return declaration(svgStyle);
         return computedStyle(element);
@@ -477,7 +477,10 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: computedStyle,
+      getComputedStyle: (element, pseudoElement) =>
+        pseudoElement
+          ? declaration({ content: 'none' })
+          : computedStyle(element),
       getSelection: window.getSelection.bind(window),
       pageOffset: () => ({ x: 0, y: 0 }),
       scrollTo: vi.fn(),
@@ -619,7 +622,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return declaration({ content: 'none' });
         if (element === root) return declaration(rootStyle);
         if (element === svg) {
           const svgStyle: Record<string, string> = {
@@ -936,6 +939,15 @@ describe('createBrowserWechatClipboard', () => {
         blob: Blob,
         clipboardItem: null,
         document,
+        ...('source-layout-marker' === property ? {
+          mermaidContentBoxes: {
+            cleanup: () => undefined,
+            get: (candidate: Element) => candidate === root ? { width: 920, height: 725.734375 } : null,
+            isCurrent: () => true,
+            ready: Promise.resolve(),
+            retain: () => undefined
+          }
+        } : {}),
         getComputedStyle: (element: Element, pseudoElement?: string | null) => {
           if (pseudoElement) return declaration({ content: pseudoContent });
           if (element === root) return declaration(rootStyle);

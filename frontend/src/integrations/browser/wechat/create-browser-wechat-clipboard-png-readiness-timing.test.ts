@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard';
 
 import {
+  computedStyle,
   declaration,
   installClipboardTestEnvironment,
   pngOptions,
@@ -81,7 +82,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if (element === preview) return declaration({ display: 'none', width: '500px' });
         if (element.matches('.timing-workspace')) {
           return declaration({ display: 'block', width: '500px' });
@@ -164,8 +165,8 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (_element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         return declaration({ display: 'block', width: '760px' });
       },
       getSelection: window.getSelection.bind(window),
@@ -243,7 +244,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if (element === preview) return declaration({ display: 'none', width: '500px' });
         if (element.matches('.timing-workspace')) {
           return declaration({ display: 'block', width: '500px' });

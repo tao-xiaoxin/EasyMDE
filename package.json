@@ -10,6 +10,8 @@
     "prepare:icons": "node scripts/generate-lucide-icons.mjs",
     "icons:check": "node scripts/generate-lucide-icons.mjs --check",
     "prepare:assets": "node scripts/copy-vendor-assets.mjs",
+    "prepare:math-atlas": "node scripts/wechat-math-outline-atlas.mjs --write",
+    "math-atlas:check": "node scripts/wechat-math-outline-atlas.mjs --check",
     "assets:check": "node scripts/copy-vendor-assets.mjs --check",
     "lint:frontend": "biome lint frontend/src frontend/vite.config.ts frontend/vite.production.config.ts frontend/vite.admin-editor-loader.config.ts frontend/vite.code-copy.config.ts frontend/vite.media-picker.config.ts frontend/vite.settings.config.ts frontend/vite.enhancements.config.ts frontend/vite.bootstrap.config.ts frontend/vite.mermaid.config.ts frontend/vitest.config.ts frontend/wordpress-classic-metadata.ts",
     "typecheck:frontend": "tsc --noEmit -p frontend/tsconfig.json",

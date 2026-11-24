@@ -58,6 +58,8 @@ export type WechatClipboardPort = Readonly<{
     options?: WechatClipboardCopyOptions
   ) => Promise<WechatClipboardResult>;
   rememberPreviewWidth?: (preview: HTMLElement) => void;
+  /** Release prepared geometry and payload for a disposed or invalidated Preview. */
+  releasePrepared?: (preview: HTMLElement) => void;
   prepare?: (
     preview: HTMLElement,
     options?: WechatClipboardPreparationOptions

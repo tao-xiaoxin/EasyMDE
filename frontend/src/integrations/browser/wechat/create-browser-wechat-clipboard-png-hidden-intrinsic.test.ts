@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard';
 
@@ -7,6 +7,7 @@ import {
   computedStyle,
   declaration,
   installClipboardTestEnvironment,
+  observeFixtureContentBox,
   pngOptions,
   readyPreview,
   setMermaidComputedStyleMap
@@ -14,8 +15,10 @@ import {
 
 describe('createBrowserWechatClipboard', () => {
   installClipboardTestEnvironment();
+  afterEach(() => vi.unstubAllGlobals());
 
   it('captures a marked Gantt from a hidden measurement owner outside UI clipping', async () => {
+    const contentObserver = observeFixtureContentBox(() => ({ width: 335, height: 268 }));
     const writes: unknown[] = [];
     const requests: Array<Readonly<{ height: number; width: number }>> = [];
     let measurementGeometryReads = 0;
@@ -47,6 +50,7 @@ describe('createBrowserWechatClipboard', () => {
     const originalHtmlRect = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'getBoundingClientRect');
     const originalSvgRect = Object.getOwnPropertyDescriptor(SVGElement.prototype, 'getBoundingClientRect');
     const originalCtm = Object.getOwnPropertyDescriptor(SVGSVGElement.prototype, 'getScreenCTM');
+    const originalSvgStyleMap = Object.getOwnPropertyDescriptor(SVGSVGElement.prototype, 'computedStyleMap');
     const originalClientWidth = Object.getOwnPropertyDescriptor(Element.prototype, 'clientWidth');
     const originalScrollLeft = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollLeft');
     const originalScrollWidth = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollWidth');
@@ -74,6 +78,10 @@ describe('createBrowserWechatClipboard', () => {
     Object.defineProperty(SVGSVGElement.prototype, 'getScreenCTM', {
       configurable: true,
       value: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 })
+    });
+    Object.defineProperty(SVGSVGElement.prototype, 'computedStyleMap', {
+      configurable: true,
+      value: () => ({ get: (property: string) => ({ value: 'max-width' === property ? '1200px' : 'auto' }) })
     });
     Object.defineProperty(Element.prototype, 'clientWidth', {
       configurable: true,
@@ -113,7 +121,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if (element.classList.contains('preview-pane')) {
           return declaration({ display: 'block', overflow: 'hidden', 'overflow-x': 'hidden', 'overflow-y': 'auto' });
         }
@@ -164,6 +172,7 @@ describe('createBrowserWechatClipboard', () => {
             'padding-left': '0px',
             'padding-right': '0px',
             'padding-top': '0px',
+            'max-width': '1200px',
             transform: 'none'
           });
         }
@@ -188,6 +197,14 @@ describe('createBrowserWechatClipboard', () => {
       expect(writes).toHaveLength(1);
       expect(preview.innerHTML).toBe(originalMarkup);
       expect(document.querySelector('.easymde-wechat-preview-measurement')).toBeNull();
+      expect(contentObserver.activeCount()).toBe(0);
+      await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+      const portable = (writes.at(-1) as ClipboardItemStub[])[0]?.payload['text/html'];
+      if (!portable) throw new Error('hidden portable Mermaid HTML missing');
+      expect(await blobText(portable)).toContain('viewBox');
+      expect(document.querySelector('.easymde-wechat-preview-measurement')).toBeNull();
+      expect(contentObserver.activeCount()).toBe(0);
+      clipboard.releasePrepared?.(preview);
     } finally {
       if (originalHtmlRect) Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', originalHtmlRect);
       else delete (HTMLElement.prototype as unknown as { getBoundingClientRect?: unknown }).getBoundingClientRect;
@@ -195,6 +212,8 @@ describe('createBrowserWechatClipboard', () => {
       else delete (SVGElement.prototype as unknown as { getBoundingClientRect?: unknown }).getBoundingClientRect;
       if (originalCtm) Object.defineProperty(SVGSVGElement.prototype, 'getScreenCTM', originalCtm);
       else delete (SVGSVGElement.prototype as unknown as { getScreenCTM?: unknown }).getScreenCTM;
+      if (originalSvgStyleMap) Object.defineProperty(SVGSVGElement.prototype, 'computedStyleMap', originalSvgStyleMap);
+      else delete (SVGSVGElement.prototype as unknown as { computedStyleMap?: unknown }).computedStyleMap;
       if (originalClientWidth) Object.defineProperty(Element.prototype, 'clientWidth', originalClientWidth);
       else delete (Element.prototype as unknown as { clientWidth?: unknown }).clientWidth;
       if (originalScrollLeft) Object.defineProperty(Element.prototype, 'scrollLeft', originalScrollLeft);
@@ -280,8 +299,41 @@ describe('createBrowserWechatClipboard', () => {
         outputWidth: 1222,
         outputHeight: 290
       }
+    ],
+    [
+      'fractional border and native scrollbar',
+      {
+        borderBottomStyle: 'solid',
+        borderBottomWidth: '0.5px',
+        borderLeftStyle: 'solid',
+        borderLeftWidth: '0.5px',
+        borderRightStyle: 'solid',
+        borderRightWidth: '0.5px',
+        borderTopStyle: 'solid',
+        borderTopWidth: '0.5px',
+        paddingBottom: '0.25px',
+        paddingLeft: '0.25px',
+        paddingRight: '0.25px',
+        paddingTop: '0.25px',
+        rootHeight: 284.75,
+        rootWidth: 1201.5,
+        scrollbarHeight: 15.25,
+        svgLeft: 0.75,
+        svgTop: 0.75,
+        svgWidth: 1200,
+        svgHeight: 268,
+        outputWidth: 1201.5,
+        outputHeight: 269.5
+      }
     ]
   ])('captures a decorated intrinsic Gantt root: %s', async (_label, geometry) => {
+    observeFixtureContentBox(() => ({
+      width: geometry.rootWidth - Number.parseFloat(geometry.paddingLeft) - Number.parseFloat(geometry.paddingRight)
+        - Number.parseFloat(geometry.borderLeftWidth) - Number.parseFloat(geometry.borderRightWidth),
+      height: geometry.rootHeight - Number.parseFloat(geometry.paddingTop) - Number.parseFloat(geometry.paddingBottom)
+        - Number.parseFloat(geometry.borderTopWidth) - Number.parseFloat(geometry.borderBottomWidth)
+        - ('scrollbarHeight' in geometry ? geometry.scrollbarHeight : 0)
+    }));
     class ClipboardItemStub { constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {  }  }
     const preview = readyPreview();
     preview.innerHTML =
@@ -326,7 +378,7 @@ describe('createBrowserWechatClipboard', () => {
         return {
           file: new File(['gantt'], 'gantt.png', { type: 'image/png' }),
           height,
-          pixelCount: width * height,
+          pixelCount: Math.ceil(width) * Math.ceil(height),
           width
         };
       }
@@ -371,7 +423,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if (element === root || element.matches('.easymde-mermaid')) return declaration(rootStyle);
         if (element === svg || element.matches('svg')) {
           return declaration({
@@ -416,8 +468,8 @@ describe('createBrowserWechatClipboard', () => {
       holder.innerHTML = await blobText(htmlBlob);
       const copiedImage = holder.querySelector('img[src="https://example.test/gantt.png"]');
       const copiedRoot = copiedImage?.parentElement;
-      expect(copiedImage?.getAttribute('width')).toBe(String(geometry.outputWidth));
-      expect(copiedImage?.getAttribute('height')).toBe(String(geometry.outputHeight));
+      expect(copiedImage?.getAttribute('width')).toBe(String(Math.round(geometry.outputWidth)));
+      expect(copiedImage?.getAttribute('height')).toBe(String(Math.round(geometry.outputHeight)));
       expect(copiedRoot?.getAttribute('style') ?? '').not.toMatch(/padding|background|border-radius/u);
     } finally {
       preview.remove();

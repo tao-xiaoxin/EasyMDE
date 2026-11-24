@@ -301,7 +301,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if ('DIV' === element.tagName && element.classList.contains('easymde-math-block')) {
           return declaration({
             ...MATH_CAPTURE_SAFE_PAINT_VALUES,
@@ -469,7 +469,7 @@ describe('createBrowserWechatClipboard', () => {
         clipboardItem: ClipboardItemStub,
         document,
         getComputedStyle: (element, pseudoElement) => {
-          if (pseudoElement) return declaration({});
+          if (pseudoElement) return computedStyle(element, pseudoElement);
           if (element === mermaid) {
             return declaration({
               'box-sizing': 'content-box',

@@ -12,6 +12,9 @@ import {
 	WECHAT_PNG_VISUAL_CLONES,
 } from "./wechat-clone-metadata";
 import type { WechatDimensionSemanticsContext } from "./wechat-dimension-semantics";
+import { splitSelectorList } from "../../../shared/css/selector-list";
+
+export { splitSelectorList } from "../../../shared/css/selector-list";
 import { pseudoContent } from "./wechat-pseudo-content";
 import {
 	taskCheckboxFontWithoutZeroLineHeight,
@@ -295,54 +298,6 @@ function selectorSpecificity(
 	return [ids, classes, elements];
 }
 
-function splitSelectorList(selectorList: string): string[] | null {
-	const selectors: string[] = [];
-	let start = 0;
-	let depth = 0;
-	let quote: "\"" | "'" | null = null;
-	let escaped = false;
-
-	for (let index = 0; index < selectorList.length; index += 1) {
-		const char = selectorList[index];
-
-		if (escaped) {
-			escaped = false;
-			continue;
-		}
-		if (char === "\\") {
-			escaped = true;
-			continue;
-		}
-		if (quote) {
-			if (char === quote) quote = null;
-			continue;
-		}
-		if (char === '"' || char === "'") {
-			quote = char as "\"" | "'";
-			continue;
-		}
-		if (char === "(" || char === "[") {
-			depth += 1;
-			continue;
-		}
-		if (char === ")" || char === "]") {
-			if (depth === 0) return null;
-			depth -= 1;
-			continue;
-		}
-		if (char === "," && depth === 0) {
-			const candidate = selectorList.slice(start, index).trim();
-			if (!candidate) return null;
-			selectors.push(candidate);
-			start = index + 1;
-		}
-	}
-	if (escaped || quote || depth !== 0) return null;
-	const finalSelector = selectorList.slice(start).trim();
-	if (!finalSelector) return null;
-	selectors.push(finalSelector);
-	return selectors;
-}
 
 function compareSpecificity(
 	left: readonly [number, number, number],

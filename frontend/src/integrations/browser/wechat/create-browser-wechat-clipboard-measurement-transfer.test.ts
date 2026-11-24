@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard';
 
 import {
+  computedStyle,
   blobText,
   declaration,
   deferred,
@@ -52,6 +53,8 @@ describe('createBrowserWechatClipboard', () => {
       },
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         if (element === workspace || element === preview) return declaration({ display: 'none', width: '400px' });
         if (element.closest('.easymde-wechat-preview-measurement')) return declaration({ display: 'block' });
@@ -132,6 +135,8 @@ describe('createBrowserWechatClipboard', () => {
       },
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         if (element === workspace || element === preview) return declaration({ display: 'none', width: '400px' });
         if (element.closest('.easymde-wechat-preview-measurement')) return declaration({ display: 'block' });
@@ -241,6 +246,8 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         if (element === workspace)
           return declaration({
@@ -388,6 +395,8 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         if (element === workspace)
           return declaration({

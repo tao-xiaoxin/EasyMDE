@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createBrowserWechatClipboard, MAX_WECHAT_PNG_DIMENSION } from './create-browser-wechat-clipboard';
 
@@ -6,6 +6,7 @@ import {
   computedStyle,
   declaration,
   installClipboardTestEnvironment,
+  observeFixtureContentBox,
   pngOptions,
   readyPreview,
   setMermaidComputedStyleMap
@@ -13,6 +14,7 @@ import {
 
 describe('createBrowserWechatClipboard', () => {
   installClipboardTestEnvironment();
+  afterEach(() => vi.unstubAllGlobals());
 
   it.each([
     ['missing Gantt role', 'missing-gantt-role', 'wechat-png-rasterization-failed'],
@@ -55,6 +57,10 @@ describe('createBrowserWechatClipboard', () => {
     const viewBoxWidth = 'oversized' === failure ? MAX_WECHAT_PNG_DIMENSION + 1 : 1200;
     const wideOwner = failure.startsWith('wide-');
     const ownerWidth = wideOwner ? 1600 : 'intrinsic-magnification' === failure ? 600 : 335;
+    observeFixtureContentBox(() => ({
+      width: ownerWidth,
+      height: 'intrinsic-magnification' === failure ? 134 : 268
+    }));
     const marker = ['marker-role-mismatch', 'sequence-diagram-role'].includes(failure) ? 'sequence' : 'gantt';
     const roleAttribute =
       'missing-gantt-role' === failure
@@ -165,7 +171,7 @@ describe('createBrowserWechatClipboard', () => {
         if (pseudoElement) {
           return 'wide-root-pseudo' === failure && element === root
             ? declaration({ content: '"paint"', display: 'block' })
-            : declaration({});
+            : computedStyle(element, pseudoElement);
         }
         if (element.classList.contains('gantt-inner-clip')) {
           return declaration({

@@ -4,6 +4,7 @@ import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard'
 
 import {
   blobText,
+  computedStyle,
   declaration,
   installClipboardTestEnvironment
 } from './wechat-clipboard-test-fixtures';
@@ -163,6 +164,7 @@ describe('createBrowserWechatClipboard', () => {
             width: '16px'
           });
         }
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if ('ARTICLE' === element.tagName) {
           return declaration({
             'border-bottom-width': '0px',

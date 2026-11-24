@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard';
 
 import {
+  computedStyle,
   declaration,
   deferred,
   installClipboardTestEnvironment,
@@ -69,7 +70,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if (element === workspace) {
           return declaration({
             display: 'block',
@@ -140,7 +141,7 @@ describe('createBrowserWechatClipboard', () => {
       },
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if (element === preview) return declaration({ display: 'none' });
         if (element.classList.contains('easymde-math-block')) {
           return declaration({ display: 'block', height: '24px', width: '180px' });
@@ -230,7 +231,7 @@ describe('createBrowserWechatClipboard', () => {
       },
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if (element === workspace) return declaration({ display: 'none', width: '500px' });
         if (element.closest('.easymde-wechat-preview-measurement')) {
           if (element.classList.contains('easymde-mermaid')) {
@@ -335,7 +336,7 @@ describe('createBrowserWechatClipboard', () => {
       },
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if (element === workspace) return declaration({ display: 'none', width: '500px' });
         if (element.closest('.easymde-wechat-preview-measurement')) {
           if (element.classList.contains('easymde-mermaid')) {

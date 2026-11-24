@@ -4,6 +4,7 @@ import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard'
 
 import {
   blobText,
+  computedStyle,
   declaration,
   deferred,
   installClipboardTestEnvironment,
@@ -78,7 +79,7 @@ describe('createBrowserWechatClipboard', () => {
             width: '20px'
           });
         }
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if (element === workspace) return declaration({ display: 'none', width: '400px' });
         if (element.closest('.easymde-wechat-preview-measurement')) {
           return declaration({ display: 'block' });
@@ -214,7 +215,7 @@ describe('createBrowserWechatClipboard', () => {
           'writing-mode': 'horizontal-tb'
         });
       }
-      if (pseudoElement) return declaration({});
+      if (pseudoElement) return computedStyle(element, pseudoElement);
       if (element === workspace) {
         return declaration({
           display: hidden ? 'none' : 'block',
@@ -518,7 +519,7 @@ describe('createBrowserWechatClipboard', () => {
             width: '20px'
           });
         }
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if (element === workspace) return declaration({ display: 'none', width: '400px' });
         if (element.closest('.easymde-wechat-preview-measurement')) {
           return declaration({ display: 'block' });
@@ -647,7 +648,7 @@ describe('createBrowserWechatClipboard', () => {
             width: '20px'
           });
         }
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if (element === workspace) return declaration({ display: 'none', width: '400px' });
         if (element.closest('.easymde-wechat-preview-measurement')) {
           return declaration({ display: 'block' });

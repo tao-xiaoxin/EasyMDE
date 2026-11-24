@@ -893,16 +893,36 @@ function mermaidAdmissionAncestorSignature(
   return entries.join("|");
 }
 
+export function mermaidAdmissionScrollGeometry(source: Element): string | null {
+  const owner = source as HTMLElement;
+  const dimensions = [
+    source.clientWidth, source.clientHeight, source.scrollWidth, source.scrollHeight,
+    owner.offsetWidth, owner.offsetHeight
+  ];
+  const scrollLeft = source.scrollLeft;
+  if (dimensions.some((value) => !Number.isFinite(value) || value < 0) || !Number.isFinite(scrollLeft)) {
+    return null;
+  }
+  return [...dimensions, scrollLeft].join(',');
+}
+
 function mermaidAdmissionGeometrySignature(
   source: Element,
   svg: SVGSVGElement,
-  runtime: BrowserWechatClipboardRuntime
+  runtime: BrowserWechatClipboardRuntime,
+  contentBoxInputsOnly = false
 ): string {
   const sourceRect = source.getBoundingClientRect();
   const svgRect = svg.getBoundingClientRect();
   const sourceEdges = mermaidEdgeValues(runtime.getComputedStyle(source));
   const svgEdges = mermaidEdgeValues(runtime.getComputedStyle(svg));
-  const sourceContent = sourceEdges
+  const observedContent = !contentBoxInputsOnly && source.hasAttribute('data-easymde-mermaid-layout')
+    ? runtime.mermaidContentBoxes?.get(source)
+    : undefined;
+  if (!contentBoxInputsOnly && source.hasAttribute('data-easymde-mermaid-layout') && !observedContent) {
+    throw new WechatPngConversionError('wechat-png-rasterization-failed');
+  }
+  const sourceContent = observedContent ?? (sourceEdges
     ? {
         height:
           sourceRect.height -
@@ -917,7 +937,7 @@ function mermaidAdmissionGeometrySignature(
           (sourceEdges[5] ?? Number.NaN) -
           (sourceEdges[7] ?? Number.NaN)
       }
-    : { height: Number.NaN, width: Number.NaN };
+    : { height: Number.NaN, width: Number.NaN });
   const getScreenCTM = (svg as SVGSVGElement & { getScreenCTM?: () => MermaidScreenCtm | null }).getScreenCTM;
   let matrix: MermaidScreenCtm | null = null;
   if ("function" === typeof getScreenCTM) {
@@ -938,10 +958,15 @@ function mermaidAdmissionGeometrySignature(
   const topDelta = canonicalRelativeCoordinate(
     svgRect.top - sourceRect.top - (sourceEdges?.[0] ?? 0) - (sourceEdges?.[4] ?? 0)
   );
+  const scrollGeometry = source.hasAttribute('data-easymde-mermaid-layout')
+    ? mermaidAdmissionScrollGeometry(source)
+    : '';
+  if (null === scrollGeometry) throw new WechatPngConversionError('wechat-png-rasterization-failed');
   return [
     `source=${sourceRect.width},${sourceRect.height}`,
     `svg=${svgRect.width},${svgRect.height}`,
-    `content=${sourceContent.width},${sourceContent.height}`,
+    `content=${contentBoxInputsOnly ? 'inputs-only' : `${sourceContent.width},${sourceContent.height}`}`,
+    `scroll=${scrollGeometry}`,
     `centered=${centeredLeft},${centeredRight}`,
     `top=${topDelta}`,
     `finite=${[
@@ -972,7 +997,11 @@ function mermaidAdmissionGeometrySignature(
  * Mermaid owner so warm and yielded in-flight checks cannot reuse a decision
  * made from stale styles, Typed OM constraints, paint, animation, or geometry.
  */
-export function mermaidAdmissionSignature(source: Element, runtime: BrowserWechatClipboardRuntime): string {
+export function mermaidAdmissionSignature(
+  source: Element,
+  runtime: BrowserWechatClipboardRuntime,
+  contentBoxInputsOnly = false
+): string {
   if (!source.matches('.easymde-mermaid')) return '';
   const computed = runtime.getComputedStyle(source);
   const svg = mermaidDirectSvg(source);
@@ -1044,7 +1073,7 @@ export function mermaidAdmissionSignature(source: Element, runtime: BrowserWecha
     `svg-attrs=${mermaidAdmissionAttributeSignature(svg, MERMAID_ADMISSION_SVG_ATTRIBUTES)}`,
     `formatting-owner=${formattingOwnerDisplay}`,
     `ancestors=${mermaidAdmissionAncestorSignature(source, runtime, sourceRect)}`,
-    `geometry=${mermaidAdmissionGeometrySignature(source, svg, runtime)}`,
+    `geometry=${mermaidAdmissionGeometrySignature(source, svg, runtime, contentBoxInputsOnly)}`,
     `decisions=${Object.entries(decisions).map(([key, value]) => `${key}=${value}`).join(',')}`
   ].join(';');
 }

@@ -305,6 +305,9 @@ export async function expectTaskStaticAllocation(options: TaskStaticAllocationOp
         width: '20px'
       });
     }
+    if ('::before' === pseudoElement || '::after' === pseudoElement) {
+      return declaration({ content: 'none' });
+    }
     if (element.matches('li.task-list-item')) {
       return declaration({
         'border-bottom-width': '0px',

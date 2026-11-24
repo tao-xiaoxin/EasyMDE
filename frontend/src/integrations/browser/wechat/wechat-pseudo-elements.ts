@@ -1,5 +1,6 @@
 import {
   CODE_FRAME_PSEUDO_CLONES,
+  EXPORT_TEXT_NORMALIZATIONS,
   GENERATED_EMPTY_HEADING_SUFFIX_CLONES,
   GENERATED_PSEUDO_CLONE_OWNERS,
   HEADING_EMPTY_PSEUDO_FLOW_CLONES,
@@ -25,6 +26,7 @@ import {
   throwIfBackgroundPreparationAborted
 } from './wechat-clipboard-runtime';
 import type { WechatDimensionSemanticsContext } from './wechat-dimension-semantics';
+import { splitCssDeclarations } from './wechat-css-list';
 import { finiteCssPixelValue } from './wechat-preview-measurement';
 import {
   appendDeclarations,
@@ -36,6 +38,12 @@ import {
   supportsSpecialLayout
 } from './wechat-style-policy';
 import { pseudoContent } from './wechat-pseudo-content';
+import {
+  applyQuotePseudoFlow,
+  captureQuotePseudoFlowSnapshot,
+  type QuotePseudoFlowCollector,
+  type QuotePseudoFlowPlanningSnapshot
+} from './wechat-quote-pseudo-flow';
 import {
   type TaskCheckboxTransformState,
   taskCheckboxStrictNumber,
@@ -257,7 +265,8 @@ export function isGeneratedEmptyHeadingAfter(
   );
 }
 
-export type HeadingEmptyPseudoFlow = Readonly<{
+type HeadingBeforeEmptyPseudoFlow = Readonly<{
+  kind: 'before';
   backgroundColor: string;
   borderRadius: string;
   height: number;
@@ -269,10 +278,28 @@ export type HeadingEmptyPseudoFlow = Readonly<{
   width: number;
 }>;
 
+type HeadingAfterEmptyPseudoFlow = Readonly<{
+  kind: 'after';
+  background: string;
+  borderRadius: string;
+  height: number;
+  marginLeft: number;
+  marginTop: number;
+  opacity: number;
+  borderBottom: number;
+  borderTop: number;
+  paddingBottom: number;
+  paddingLeft: number;
+  width: number;
+}>;
+
+export type HeadingEmptyPseudoFlow = HeadingBeforeEmptyPseudoFlow | HeadingAfterEmptyPseudoFlow;
+
 export type HeadingEmptyPseudoFlowExpectation = Readonly<{
   cloneHeading: Element;
   flow: HeadingEmptyPseudoFlow;
   marker: Element;
+  paint: Element;
   source: Element;
 }>;
 
@@ -393,7 +420,7 @@ export function headingEmptyPseudoFlowFor(
   content: string,
   getComputedStyle: BrowserWechatClipboardRuntime['getComputedStyle'],
   root: boolean
-): HeadingEmptyPseudoFlow | null {
+): HeadingBeforeEmptyPseudoFlow | null {
   if (
     root ||
     '::before' !== pseudo ||
@@ -512,6 +539,7 @@ export function headingEmptyPseudoFlowFor(
   const marginTop = top + pseudoMarginTop + translateY - paddingTop;
   if (!Number.isFinite(marginTop)) return null;
   return {
+    kind: 'before',
     backgroundColor,
     borderRadius,
     height,
@@ -524,7 +552,113 @@ export function headingEmptyPseudoFlowFor(
   };
 }
 
-export function applyHeadingEmptyPseudoFlow(sourceClone: Element, marker: Element, flow: HeadingEmptyPseudoFlow): void {
+function headingAfterEmptyPseudoFlowFor(
+  source: Element,
+  pseudo: '::before' | '::after',
+  computed: CSSStyleDeclaration,
+  content: string,
+  getComputedStyle: BrowserWechatClipboardRuntime['getComputedStyle'],
+  portableDeclarations: readonly string[],
+  root: boolean
+): HeadingAfterEmptyPseudoFlow | null {
+  if (
+    root ||
+    '::after' !== pseudo ||
+    !['H1', 'H2', 'H3', 'H4'].includes(source.tagName) ||
+    source.closest('svg, math, .katex, .easymde-math-block, .easymde-math-inline') ||
+    '' !== content
+  ) return null;
+
+  const sourceComputed = getComputedStyle(source);
+  const value = (style: CSSStyleDeclaration, property: string): string =>
+    style.getPropertyValue(property).trim().toLowerCase();
+  const sourceOpacity = taskCheckboxStrictNumber(value(sourceComputed, 'opacity'));
+  const opacity = taskCheckboxStrictNumber(value(computed, 'opacity'));
+  if (
+    'block' !== value(sourceComputed, 'display') ||
+    'relative' !== value(sourceComputed, 'position') ||
+    'none' !== value(sourceComputed, 'float') ||
+    'none' !== value(sourceComputed, 'transform') ||
+    'visible' !== value(sourceComputed, 'overflow') ||
+    'visible' !== value(sourceComputed, 'visibility') ||
+    null === sourceOpacity || sourceOpacity <= 0 || sourceOpacity > 1 ||
+    'block' !== value(computed, 'display') ||
+    'absolute' !== value(computed, 'position') ||
+    'none' !== value(computed, 'float') ||
+    'none' !== value(computed, 'transform') ||
+    'visible' !== value(computed, 'visibility') ||
+    null === opacity || opacity <= 0 || opacity > 1 ||
+    isHiddenPseudoPaint(sourceComputed) || isHiddenPseudoPaint(computed) ||
+    'none' !== value(computed, 'box-shadow') || 'none' !== value(computed, 'filter')
+  ) return null;
+
+  const image = value(computed, 'background-image');
+  const color = computed.getPropertyValue('background-color').trim();
+  if (
+    HAS_CSS_URL.test(value(computed, 'background')) || HAS_CSS_URL.test(image) ||
+    ('none' !== image && !/gradient\(/u.test(image)) ||
+    ('none' === image && !headingEmptyPseudoPaintColorIsVisible(color))
+  ) return null;
+  const backgroundDeclarations = splitCssDeclarations(portableDeclarations.join(';')).filter((entry) =>
+    entry.property.startsWith('background')
+  );
+  if (!backgroundDeclarations.some((entry) =>
+    'none' === image
+      ? 'background-color' === entry.property && headingEmptyPseudoPaintColorIsVisible(entry.value)
+      : 'background-image' === entry.property && /gradient\(/u.test(entry.value)
+  )) return null;
+
+  for (const side of ['top', 'right', 'bottom', 'left'] as const) {
+    if (
+      0 !== headingEmptyPseudoFinitePixel(computed, `margin-${side}`) ||
+      0 !== headingEmptyPseudoFinitePixel(computed, `padding-${side}`) ||
+      0 !== headingEmptyPseudoFinitePixel(computed, `border-${side}-width`)
+    ) return null;
+  }
+  const width = headingEmptyPseudoFinitePixel(computed, 'width');
+  const height = headingEmptyPseudoFinitePixel(computed, 'height');
+  const top = headingEmptyPseudoFinitePixel(computed, 'top');
+  const bottom = headingEmptyPseudoFinitePixel(computed, 'bottom');
+  const left = headingEmptyPseudoFinitePixel(computed, 'left');
+  const right = headingEmptyPseudoFinitePixel(computed, 'right');
+  const paddingBottom = headingEmptyPseudoFinitePixel(sourceComputed, 'padding-bottom');
+  const paddingLeft = headingEmptyPseudoFinitePixel(sourceComputed, 'padding-left');
+  const borderTop = headingEmptyPseudoFinitePixel(sourceComputed, 'border-top-width');
+  const borderRight = headingEmptyPseudoFinitePixel(sourceComputed, 'border-right-width');
+  const borderBottom = headingEmptyPseudoFinitePixel(sourceComputed, 'border-bottom-width');
+  const borderLeft = headingEmptyPseudoFinitePixel(sourceComputed, 'border-left-width');
+  const borderRadius = computed.getPropertyValue('border-radius').trim();
+  if (
+    null === width || width <= 0 || null === height || height <= 0 ||
+    null === top || null === bottom || null === left || null === right ||
+    null === paddingBottom || paddingBottom < 0 || null === paddingLeft || paddingLeft < 0 ||
+    null === borderTop || borderTop < 0 || null === borderRight || borderRight < 0 ||
+    null === borderBottom || borderBottom < 0 || null === borderLeft || borderLeft < 0 || !borderRadius
+  ) return null;
+  const rect = source.getBoundingClientRect();
+  if (
+    !Number.isFinite(rect.height) || !Number.isFinite(rect.width) || rect.height <= 0 || rect.width <= 0 ||
+    Math.abs(borderTop + top - (rect.height - borderBottom - bottom - height)) > HEADING_EMPTY_PSEUDO_FLOW_EPSILON ||
+    Math.abs(left + width + right - (rect.width - borderLeft - borderRight)) > HEADING_EMPTY_PSEUDO_FLOW_EPSILON
+  ) return null;
+
+  return {
+    kind: 'after',
+    background: JSON.stringify(backgroundDeclarations),
+    borderRadius,
+    borderBottom,
+    borderTop,
+    height,
+    marginLeft: left - paddingLeft,
+    marginTop: paddingBottom - bottom - height,
+    opacity,
+    paddingBottom,
+    paddingLeft,
+    width
+  };
+}
+
+export function applyHeadingEmptyPseudoFlow(sourceClone: Element, marker: Element, flow: HeadingBeforeEmptyPseudoFlow): void {
   appendDeclarations(sourceClone, [`padding-left:${flow.paddingLeft}px`], true);
   appendDeclarations(
     marker,
@@ -549,6 +683,26 @@ export function applyHeadingEmptyPseudoFlow(sourceClone: Element, marker: Elemen
   );
 }
 
+function applyHeadingAfterEmptyPseudoFlow(paint: Element, flow: HeadingAfterEmptyPseudoFlow): Element {
+  const wrapper = paint.ownerDocument.createElement('span');
+  wrapper.setAttribute('aria-hidden', 'true');
+  appendDeclarations(wrapper, [
+    'display:block', 'position:static', 'float:none', 'transform:none', 'height:0px',
+    'line-height:0px', 'font-size:0px', 'overflow:visible', 'text-align:left',
+    ...['top', 'right', 'bottom', 'left'].flatMap((side) => [
+      `margin-${side}:0px`, `padding-${side}:0px`, `border-${side}-width:0px`
+    ])
+  ]);
+  appendDeclarations(paint, [
+    'display:inline-block', 'position:static', 'top:auto', 'right:auto', 'bottom:auto', 'left:auto',
+    'float:none', 'transform:none', 'vertical-align:top',
+    `width:${flow.width}px`, `height:${flow.height}px`, `opacity:${flow.opacity}`,
+    `margin-top:${flow.marginTop}px`, 'margin-right:0px', 'margin-bottom:0px', `margin-left:${flow.marginLeft}px`
+  ]);
+  wrapper.appendChild(paint);
+  return wrapper;
+}
+
 export function headingEmptyPseudoFlowNumberMatches(element: Element, property: string, expected: number): boolean {
   const value = finiteCssPixelValue(
     (element as Element & { style?: CSSStyleDeclaration }).style?.getPropertyValue(property) ?? ''
@@ -569,7 +723,56 @@ export function assertHeadingEmptyPseudoFlows(
     ) {
       throw new Error('wechat-heading-pseudo-flow-carrier-missing');
     }
-    const { cloneHeading, flow, marker } = expectation;
+    const { cloneHeading, flow, marker, paint } = expectation;
+    if ('after' === flow.kind) {
+      if (
+        'true' !== marker.getAttribute('aria-hidden') || 'true' !== paint.getAttribute('aria-hidden') ||
+        marker.childNodes.length !== 1 || marker.firstChild !== paint || paint.parentElement !== marker ||
+        paint.childNodes.length !== 1 || paint.firstChild?.nodeType !== 3 || '\u2060' !== paint.textContent ||
+        !GENERATED_EMPTY_HEADING_SUFFIX_CLONES.has(paint) || !HEADING_EMPTY_PSEUDO_FLOW_CLONES.has(paint)
+      ) throw new Error('wechat-heading-pseudo-flow-carrier-missing');
+      const normalization = EXPORT_TEXT_NORMALIZATIONS.get(outputRoot)?.get(paint.firstChild as Text);
+      if ('' !== normalization?.original || '\u2060' !== normalization.encoded) {
+        throw new Error('wechat-heading-pseudo-flow-carrier-missing');
+      }
+      const markerStyle = (marker as HTMLElement).style;
+      const paintStyle = (paint as HTMLElement).style;
+      const zero = (element: Element, property: string): boolean =>
+        0 === finiteCssPixelValue((element as HTMLElement).style.getPropertyValue(property));
+      const zeroOrAbsent = (element: Element, property: string): boolean =>
+        zero(element, property) || !(element as HTMLElement).style.getPropertyValue(property);
+      const headingNumber = (property: string, expected: number): boolean =>
+        headingEmptyPseudoFlowNumberMatches(cloneHeading, property, expected) ||
+        (0 === expected && !(cloneHeading as HTMLElement).style.getPropertyValue(property));
+      if (
+        'block' !== markerStyle.display || 'static' !== markerStyle.position || 'none' !== markerStyle.float ||
+        'none' !== markerStyle.transform || 'visible' !== markerStyle.overflow || 'left' !== markerStyle.textAlign ||
+        !zero(marker, 'height') || !zero(marker, 'line-height') || !zero(marker, 'font-size') ||
+        !['top', 'right', 'bottom', 'left'].every((side) =>
+          zero(marker, `margin-${side}`) && zero(marker, `padding-${side}`) && zero(marker, `border-${side}-width`)
+        ) ||
+        'inline-block' !== paintStyle.display || 'static' !== paintStyle.position || 'none' !== paintStyle.float ||
+        'none' !== paintStyle.transform || 'top' !== paintStyle.verticalAlign ||
+        !headingNumber('padding-left', flow.paddingLeft) || !headingNumber('padding-bottom', flow.paddingBottom) ||
+        !headingNumber('border-top-width', flow.borderTop) || !headingNumber('border-bottom-width', flow.borderBottom) ||
+        !headingEmptyPseudoFlowNumberMatches(paint, 'width', flow.width) ||
+        !headingEmptyPseudoFlowNumberMatches(paint, 'height', flow.height) ||
+        !headingEmptyPseudoFlowNumberMatches(paint, 'margin-top', flow.marginTop) ||
+        !headingEmptyPseudoFlowNumberMatches(paint, 'margin-left', flow.marginLeft) ||
+        !zero(paint, 'margin-right') || !zero(paint, 'margin-bottom') ||
+        !['top', 'right', 'bottom', 'left'].every((side) =>
+          zeroOrAbsent(paint, `padding-${side}`) && zeroOrAbsent(paint, `border-${side}-width`)
+        ) ||
+        flow.borderRadius.toLowerCase() !== paintStyle.borderRadius.trim().toLowerCase()
+      ) throw new Error('wechat-heading-pseudo-flow-geometry-mismatch');
+      const background = splitCssDeclarations(paint.getAttribute('style') ?? '').filter((entry) =>
+        entry.property.startsWith('background')
+      );
+      if (JSON.stringify(background) !== flow.background || Number.parseFloat(paintStyle.opacity) !== flow.opacity) {
+        throw new Error('wechat-heading-pseudo-flow-paint-mismatch');
+      }
+      return;
+    }
     if ('\u2060' !== marker.textContent) {
       throw new Error('wechat-heading-pseudo-flow-carrier-missing');
     }
@@ -766,7 +969,8 @@ export function createPseudoMarker(
     imageLayers,
     root
   );
-  const headingEmptyPseudoFlow = headingEmptyPseudoFlowFor(source, pseudo, computed, textContent, getComputedStyle, root);
+  const headingEmptyPseudoFlow = headingEmptyPseudoFlowFor(source, pseudo, computed, textContent, getComputedStyle, root) ??
+    headingAfterEmptyPseudoFlowFor(source, pseudo, computed, textContent, getComputedStyle, portableDeclarations, root);
   const marker = clone.ownerDocument.createElement('span');
   marker.setAttribute('aria-hidden', 'true');
   GENERATED_PSEUDO_CLONE_OWNERS.set(marker, { owner: clone, pseudo });
@@ -780,16 +984,23 @@ export function createPseudoMarker(
   // decorations keep their own transport policy without changing that allocation.
   marker.textContent = textContent || (appendedImageLayers.length || svgContent ? '' : ' ');
   if (portableDeclarations.length) marker.setAttribute('style', portableDeclarations.join(';'));
+  let outputMarker: Element = marker;
   if (headingEmptyPseudoFlow) {
-    applyHeadingEmptyPseudoFlow(clone, marker, headingEmptyPseudoFlow);
+    if ('before' === headingEmptyPseudoFlow.kind) applyHeadingEmptyPseudoFlow(clone, marker, headingEmptyPseudoFlow);
+    else {
+      outputMarker = applyHeadingAfterEmptyPseudoFlow(marker, headingEmptyPseudoFlow);
+      GENERATED_PSEUDO_CLONE_OWNERS.delete(marker);
+      GENERATED_PSEUDO_CLONE_OWNERS.set(outputMarker, { owner: clone, pseudo });
+    }
     HEADING_EMPTY_PSEUDO_FLOW_CLONES.add(marker);
     const expectation: HeadingEmptyPseudoFlowExpectation = {
       cloneHeading: clone,
       flow: headingEmptyPseudoFlow,
-      marker,
+      marker: outputMarker,
+      paint: marker,
       source
     };
-    HEADING_EMPTY_PSEUDO_FLOW_EXPECTATIONS.set(marker, expectation);
+    HEADING_EMPTY_PSEUDO_FLOW_EXPECTATIONS.set(outputMarker, expectation);
     headingFlowCollector?.expectations.push(expectation);
   }
   if (svgContent) {
@@ -811,12 +1022,50 @@ export function createPseudoMarker(
     GENERATED_EMPTY_HEADING_SUFFIX_CLONES.add(marker);
   }
   appendThemeImages(marker, appendedImageLayers, computed, !textContent);
-  return marker;
+  return outputMarker;
 }
 
 export function insertPseudoMarker(clone: Element, marker: Element, pseudo: '::before' | '::after'): void {
   if ('::before' === pseudo) clone.insertBefore(marker, clone.firstChild);
   else clone.appendChild(marker);
+}
+
+function quoteFlowSnapshotIfEligible(
+  source: Element,
+  clone: Element,
+  pseudo: '::before' | '::after',
+  computed: CSSStyleDeclaration,
+  getComputedStyle: BrowserWechatClipboardRuntime['getComputedStyle'],
+  dimensionSemantics: WechatDimensionSemanticsContext | null | undefined,
+  textContent: string
+): QuotePseudoFlowPlanningSnapshot | null {
+  if (
+    '::before' !== pseudo ||
+    !['BLOCKQUOTE', 'SECTION'].includes(source.tagName) ||
+    !textContent ||
+    'block' !== computed.getPropertyValue('display').trim().toLowerCase() ||
+    'absolute' !== computed.getPropertyValue('position').trim().toLowerCase()
+  ) {
+    return null;
+  }
+  return captureQuotePseudoFlowSnapshot({
+    clone,
+    dimensionSemantics: dimensionSemantics ?? null,
+    getComputedStyle,
+    pseudo,
+    pseudoComputed: computed,
+    source
+  });
+}
+
+function applyQuoteFlowIfEligible(
+  clone: Element,
+  marker: Element,
+  snapshot: QuotePseudoFlowPlanningSnapshot | null,
+  collector: QuotePseudoFlowCollector | undefined
+): void {
+  if (!snapshot || !(marker instanceof HTMLElement)) return;
+  applyQuotePseudoFlow(clone, marker, snapshot.plan(marker), collector);
 }
 
 export async function addPseudoElement(
@@ -830,14 +1079,24 @@ export async function addPseudoElement(
   yieldToBrowser: SerializationYield | null = null,
   signal?: AbortSignal,
   dimensionSemantics?: WechatDimensionSemanticsContext | null,
-  headingFlowCollector?: HeadingEmptyPseudoFlowCollector
+  headingFlowCollector?: HeadingEmptyPseudoFlowCollector,
+  quoteFlowCollector?: QuotePseudoFlowCollector
 ): Promise<void> {
   throwIfBackgroundPreparationAborted(signal);
   const candidate = readPseudoCandidate(source, clone, pseudo, getComputedStyle, root, dimensionSemantics);
   if (candidate.skip || candidate.hiddenSvgPaint) return;
   const { computed, rawContent, svgContent, textContent } = candidate;
-  if (svgContent) await validateTaskCheckboxSvgPaint(source, rawContent, svgContent, signal);
   if (!pseudoCandidateIsPaintable(source, pseudo, computed, textContent)) return;
+  const quoteSnapshot = quoteFlowSnapshotIfEligible(
+    source,
+    clone,
+    pseudo,
+    computed,
+    getComputedStyle,
+    dimensionSemantics,
+    textContent
+  );
+  if (svgContent) await validateTaskCheckboxSvgPaint(source, rawContent, svgContent, signal);
   registerPseudoPaintExpectation(source, clone, pseudo, computed, svgContent, textContent);
   const declarations = await styleDeclarations(
     source,
@@ -867,6 +1126,7 @@ export async function addPseudoElement(
   if (!marker) return;
   throwIfBackgroundPreparationAborted(signal);
   insertPseudoMarker(clone, marker, pseudo);
+  applyQuoteFlowIfEligible(clone, marker, quoteSnapshot, quoteFlowCollector);
 }
 
 export function addPseudoElementSynchronously(
@@ -877,15 +1137,25 @@ export function addPseudoElementSynchronously(
   root: boolean,
   runtime: BrowserWechatClipboardRuntime,
   dimensionSemantics?: WechatDimensionSemanticsContext | null,
-  headingFlowCollector?: HeadingEmptyPseudoFlowCollector
+  headingFlowCollector?: HeadingEmptyPseudoFlowCollector,
+  quoteFlowCollector?: QuotePseudoFlowCollector
 ): boolean {
   const candidate = readPseudoCandidate(source, clone, pseudo, getComputedStyle, root, dimensionSemantics);
   if (candidate.skip || candidate.hiddenSvgPaint) return true;
   const { computed, rawContent, svgContent, textContent } = candidate;
+  if (!pseudoCandidateIsPaintable(source, pseudo, computed, textContent)) return true;
+  const quoteSnapshot = quoteFlowSnapshotIfEligible(
+    source,
+    clone,
+    pseudo,
+    computed,
+    getComputedStyle,
+    dimensionSemantics,
+    textContent
+  );
   if (svgContent && TASK_LIST_CHECKBOX_SVG_PAINT.get(source) !== rawContent) {
     throw new Error('wechat-task-checkbox-svg-paint-unavailable');
   }
-  if (!pseudoCandidateIsPaintable(source, pseudo, computed, textContent)) return true;
   registerPseudoPaintExpectation(source, clone, pseudo, computed, svgContent, textContent);
   const declarations = styleDeclarationsSynchronously(source, computed, true, root, runtime, dimensionSemantics, pseudo);
   if (null === declarations) return false;
@@ -903,5 +1173,6 @@ export function addPseudoElementSynchronously(
   );
   if (!marker) return true;
   insertPseudoMarker(clone, marker, pseudo);
+  applyQuoteFlowIfEligible(clone, marker, quoteSnapshot, quoteFlowCollector);
   return true;
 }

@@ -122,6 +122,15 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( 'Undo', $bootstrap['toolbar']['strings']['undo'] );
 		$this->assertArrayHasKey( 'wechatExport', $bootstrap );
 		$this->assertFalse( $bootstrap['wechatExport']['pngConversionEnabled'] );
+		$this->assertMatchesRegularExpression( '/^[a-f0-9]{16}$/', $bootstrap['wechatExport']['wechatMathAtlasContentVersion'] );
+		$this->assertSame(
+			add_query_arg(
+				'contentversion',
+				$bootstrap['wechatExport']['wechatMathAtlasContentVersion'],
+				Asset::url( 'assets/math/easymde-katex-glyph-atlas.json' )
+			),
+			$bootstrap['wechatExport']['wechatMathAtlasUrl']
+		);
 		$this->assertArrayHasKey( 'wordpress', $bootstrap );
 		$this->assertArrayHasKey( 'publishCategories', $bootstrap['wordpress'] );
 		$this->assertFalse( $bootstrap['wordpress']['isNewPost'] );
@@ -191,7 +200,9 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 
 		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id );
 
-		$this->assertSame( array( 'enabled' => true, 'pngConversionEnabled' => true, 'strings' => $bootstrap['wechatExport']['strings'] ), $bootstrap['wechatExport'] );
+		$this->assertSame( true, $bootstrap['wechatExport']['enabled'] );
+		$this->assertSame( true, $bootstrap['wechatExport']['pngConversionEnabled'] );
+		$this->assertArrayHasKey( 'strings', $bootstrap['wechatExport'] );
 	}
 
 	public function test_new_post_bootstrap_exposes_a_media_picker_frame_without_a_post_id() {

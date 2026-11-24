@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -169,7 +170,15 @@ function createFrontendAssetSources(root) {
 
     for (const copy of component.copies || []) {
       if ('directory' === copy.type) {
-        writeText(root, `${copy.source}/fixture.woff2`, `source:${copy.source}/fixture.woff2`);
+        if (component.id === 'katex') {
+          mkdirSync(join(root, copy.source), { recursive: true });
+          cpSync(
+            join(repoRoot, 'node_modules/katex/dist/fonts/KaTeX_Main-Regular.ttf'),
+            join(root, `${copy.source}/KaTeX_Main-Regular.ttf`)
+          );
+        } else {
+          writeText(root, `${copy.source}/fixture.woff2`, `source:${copy.source}/fixture.woff2`);
+        }
       } else {
         writeText(root, copy.source, `source:${copy.source}`);
       }
@@ -1080,6 +1089,14 @@ test('release requirements include assets referenced by enqueue source files', (
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('release requirements include the generated math atlas and its font notice', () => {
+  const requirements = collectReleaseRequirements(repoRoot).map((requirement) => requirement.path);
+
+  assert.ok(requirements.includes('assets/math/easymde-katex-glyph-atlas.json'));
+  assert.ok(requirements.includes('assets/math/KaTeX_FONT_LICENSE.txt'));
+  assert.ok(requirements.includes('assets/vendor/katex/LICENSE'));
 });
 
 test('release requirements include the Qinghe Zhusha article theme stylesheet', () => {

@@ -1,7 +1,23 @@
 import {
+	appendThemeImages,
+	type BackgroundAssetCache,
+	dataImageLayersFromDeclarations,
+	hasRepeatingBackground,
+	removeDataImageBackgroundDeclarations,
+	type ThemeImageLayer,
+} from "./wechat-background-images";
+import {
+	type BrowserWechatClipboardRuntime,
+	type SerializationYield,
+	throwIfBackgroundPreparationAborted,
+	WECHAT_COPY_TIMING_NAMES,
+	yieldSerializationBoundary,
+} from "./wechat-clipboard-runtime";
+import {
 	CODE_FRAME_HEADER_CLONES,
 	EXPORT_TEXT_NORMALIZATIONS,
 	FULL_WIDTH_TABLE_CLONES,
+	GENERATED_PSEUDO_CLONE_OWNERS,
 	GENERATED_EMPTY_HEADING_SUFFIX_CLONES,
 	HEADING_EMPTY_PSEUDO_FLOW_CLONES,
 	HIDDEN_NODES,
@@ -16,37 +32,24 @@ import {
 	KATEX_VISUAL_NODES,
 	KATEX_VISUAL_ROOTS,
 	MATH_BLOCK_ROOTS,
-	WECHAT_PNG_VISUAL_CLONES,
-	registerMathCloneRole,
-	markVisualRasterizationClone,
 	MERMAID_FOREIGN_OBJECTS,
 	MERMAID_SVG_ROOTS,
+	markVisualRasterizationClone,
+	registerMathCloneRole,
+	registerMathEmptyTransportCarrier,
 	TABLE_HEADER_BACKGROUND_METADATA,
 	TABLE_SCROLL_OWNER_METADATA,
 	TASK_LIST_CHECKBOX_CLONES,
 	THEME_HEADING_SUFFIX_CLONES,
 	THEME_IMAGE_CLONES,
-	WECHAT_PNG_GENERATED_IMAGES,
 	WECHAT_MATH_EMPTY_TRANSPORT_CARRIERS,
+	WECHAT_PNG_GENERATED_IMAGES,
+	WECHAT_PNG_VISUAL_CLONES,
 	WECHAT_STRUCTURE_REPLACEMENTS,
-	registerMathEmptyTransportCarrier,
 } from "./wechat-clone-metadata";
-import {
-	type BackgroundAssetCache,
-	appendThemeImages,
-	dataImageLayersFromDeclarations,
-	type ThemeImageLayer,
-	hasRepeatingBackground,
-	removeDataImageBackgroundDeclarations,
-} from "./wechat-background-images";
-import {
-	WECHAT_COPY_TIMING_NAMES,
-	throwIfBackgroundPreparationAborted,
-	yieldSerializationBoundary,
-	type BrowserWechatClipboardRuntime,
-	type SerializationYield,
-} from "./wechat-clipboard-runtime";
+import { createWechatMarkupPreparationTimings } from "./wechat-copy-timing";
 import type { WechatDimensionSemanticsContext } from "./wechat-dimension-semantics";
+import { createDimensionSemanticsContext } from "./wechat-dimension-semantics";
 import { preparedDimensionGeometrySignature } from "./wechat-fidelity-signature";
 import {
 	applyListMarkerGutter,
@@ -59,14 +62,33 @@ import {
 	tableScrollOwnerMetadata,
 } from "./wechat-list-table-layout";
 import {
+	applyWechatMathStaticFlow,
+	captureWechatMathStaticFlowSnapshot,
+	planWechatMathStaticFlow,
+	type WechatMathSourceAdmissionResult,
+	type WechatMathStaticFlowGate,
+	type WechatMathStaticFlowRuntime,
+} from "./wechat-math-static-flow";
+import {
+	createWechatMathStaticFlowSourceCapture,
+	type WechatMathStaticFlowSealedCapture,
+} from "./wechat-math-static-flow-capture";
+import {
+	bindWechatMathVectorScenes,
+	materializeWechatMathVectorScenes,
+	type WechatMathVectorBoundPlan,
+	type WechatMathVectorPortableCapture,
+} from "./wechat-math-vector-portable";
+import { replaceVisualObjects } from "./wechat-png-conversion";
+import {
 	assertPngConversionCurrent,
 	type WechatPngConversionContext,
 } from "./wechat-png-conversion-policy";
 import {
-	KATEX_VISUAL_LAYOUT_DECLARATIONS,
-	MERMAID_LABEL_LAYOUT_DECLARATIONS,
 	expandMermaidLabelGeometry,
 	findKaTeXMathMl,
+	KATEX_VISUAL_LAYOUT_DECLARATIONS,
+	MERMAID_LABEL_LAYOUT_DECLARATIONS,
 	materializeCodeLineBreaks,
 	normalizeCodeFrames,
 	normalizeCodeWhitespace,
@@ -77,79 +99,89 @@ import {
 	wrapCodeRows,
 	wrapMermaidLabelContents,
 } from "./wechat-portable-content";
-import { previewMeasurementWidth } from "./wechat-preview-measurement";
 import { normalizePortableMedia } from "./wechat-portable-media";
+import {
+	applyNestedOrdinaryListProjection,
+	collectNestedOrdinaryListProjection,
+	type WechatNestedListProjectionCapture,
+} from "./wechat-nested-list-projection";
+import { previewMeasurementWidth } from "./wechat-preview-measurement";
+import {
+	applyWechatInlinePseudoPaintBatch,
+	assembleWechatInlinePseudoPaintSource,
+	bindWechatInlinePseudoPaint,
+	captureWechatInlinePseudoPaintInput,
+	planWechatInlinePseudoPaint,
+	type WechatInlinePseudoPaintCapabilities,
+	type WechatInlinePseudoPaintCssCapabilities,
+	type WechatInlinePseudoPaintRawCapture,
+	type WechatInlinePseudoPaintReadiness,
+} from "./wechat-inline-pseudo-paint";
 import {
 	addPseudoElement,
 	addPseudoElementSynchronously,
 	assertHeadingEmptyPseudoFlows,
 	generatedHeadingAfterContentIsEmpty,
+	type HeadingEmptyPseudoFlowCollector,
 	isVisiblePaintedThemeHeadingSuffix,
 	styleDeclarations,
 	styleDeclarationsSynchronously,
-	type HeadingEmptyPseudoFlowCollector,
 } from "./wechat-pseudo-elements";
+import {
+	assertQuotePseudoFlows,
+	type QuotePseudoFlowCollector,
+} from "./wechat-quote-pseudo-flow";
+import { replaceDeclarations } from "./wechat-style-declarations";
 import {
 	appendDeclarations,
 	removeTransientAttributes,
 	rootExportComputedStyle,
 } from "./wechat-style-policy";
-import { replaceDeclarations } from "./wechat-style-declarations";
 import {
+	createWechatSvgPortableIntegration,
+	type WechatSvgPortableIntegration,
+} from "./wechat-svg-portable-integration";
+import {
+	applyWechatTableNativeGridForSerialization,
+	planWechatTableNativeGridForSerialization,
+	type WechatTableNativeGridSerializationPlan,
+} from "./wechat-table-native-grid-integration";
+import {
+	assertTaskCheckboxCaptionRuns,
+	registerTaskCheckboxCaptionNormalizations,
 	TASK_LIST_CHECKBOX_CAPTION_LEAF_WRAPPERS,
 	TASK_LIST_CHECKBOX_CAPTION_MIGRATION_CANDIDATES,
 	TASK_LIST_CHECKBOX_CAPTION_OWNER_SEQUENCES,
 	TASK_LIST_CHECKBOX_CAPTION_RUN_BY_TEXT,
 	TASK_LIST_CHECKBOX_CAPTION_STRUCTURE_REPLACEMENTS,
 	TASK_LIST_CHECKBOX_CAPTION_TEXT_OWNERS,
-	assertTaskCheckboxCaptionRuns,
-	registerTaskCheckboxCaptionNormalizations,
 } from "./wechat-task-caption";
 import type { TaskCheckboxGeometryContext } from "./wechat-task-geometry";
+import {
+	createTaskCheckboxGeometryContext,
+	type TaskCheckboxGeometryLease,
+	taskCheckboxGeometryScopes,
+} from "./wechat-task-geometry";
+import {
+	normalizePortableTaskListMarkers,
+	projectCompleteTaskListStructures,
+} from "./wechat-task-list-projection";
 import {
 	assertTaskCheckboxAppearancePortable,
 	assertTaskCheckboxStaticOwnerBase,
 	assertTaskCheckboxStaticOwners,
+	normalizeTaskCheckboxTransport,
 	replaceTaskListCheckboxClones,
 	restoreTaskListCheckboxOwnerState,
 	taskCheckboxStaticPaintExpectationFor,
 	taskCheckboxStaticPaintProperties,
-	normalizeTaskCheckboxTransport,
 } from "./wechat-task-paint";
 import {
 	assertTaskCheckboxStaticFlowAllocationsForRoot,
 	normalizeTaskCheckboxStaticFlow,
 	normalizeTaskCheckboxStaticFlowSynchronously,
 } from "./wechat-task-static-flow";
-import {
-	normalizePortableTaskListMarkers,
-	projectCompleteTaskListStructures,
-} from "./wechat-task-list-projection";
-import {
-	type TaskCheckboxGeometryLease,
-	createTaskCheckboxGeometryContext,
-	taskCheckboxGeometryScopes,
-} from "./wechat-task-geometry";
-import { createDimensionSemanticsContext } from "./wechat-dimension-semantics";
-import { replaceVisualObjects } from "./wechat-png-conversion";
 import { runWechatSyncTiming } from "./wechat-timing";
-import {
-	createWechatSvgPortableIntegration,
-	type WechatSvgPortableIntegration,
-} from "./wechat-svg-portable-integration";
-import { createWechatMarkupPreparationTimings } from "./wechat-copy-timing";
-import {
-	captureWechatMathStaticFlowSnapshot,
-	applyWechatMathStaticFlow,
-	planWechatMathStaticFlow,
-	type WechatMathSourceAdmissionResult,
-	type WechatMathStaticFlowGate,
-	type WechatMathStaticFlowRuntime,
-} from "./wechat-math-static-flow";
-import {
-	createWechatMathStaticFlowSourceCapture,
-	type WechatMathStaticFlowSealedCapture,
-} from "./wechat-math-static-flow-capture";
 
 export type WechatMathSourceCaptureResult = Readonly<{
 	runtime: WechatMathStaticFlowRuntime | null;
@@ -302,6 +334,206 @@ type NodeFidelityResult = Readonly<{
 	registeredVisualRoot: boolean;
 }>;
 
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+
+function promotePortableSvgFilter(
+	source: Element,
+	clone: Element,
+	portableDeclarations: readonly string[],
+): void {
+	if (
+		source.namespaceURI !== SVG_NAMESPACE ||
+		clone.namespaceURI !== SVG_NAMESPACE
+	)
+		return;
+	const declaration = portableDeclarations.find((candidate) =>
+		/^filter\s*:/iu.test(candidate.trim()),
+	);
+	if (!declaration) return;
+	const value = declaration.trim().replace(/^filter\s*:/iu, "").trim();
+	if (!value) throw new Error("wechat-svg-filter-declaration-empty");
+	clone.setAttribute("filter", value);
+	(clone as SVGElement).style.removeProperty("filter");
+}
+
+function inlinePseudoPaintCapabilities(
+	runtime: BrowserWechatClipboardRuntime,
+	source: Element,
+	computed: CSSStyleDeclaration | null,
+	getComputedStyle: BrowserWechatClipboardRuntime["getComputedStyle"],
+): WechatInlinePseudoPaintCapabilities {
+	const windowCss = runtime.document.defaultView?.CSS as
+		| { supports?: (property: string, value: string) => boolean }
+		| undefined;
+	const globalCss = (globalThis as typeof globalThis & {
+		CSS?: { supports?: (property: string, value: string) => boolean };
+	}).CSS;
+	const css: WechatInlinePseudoPaintCssCapabilities = {
+		getComputedStyle: (element, pseudoElement) =>
+			pseudoElement
+				? getComputedStyle(element, pseudoElement)
+				: element === source && computed
+					? computed
+					: getComputedStyle(element),
+		supports: (property, value) => {
+			const supports = windowCss?.supports ?? globalCss?.supports;
+			if ("function" !== typeof supports)
+				throw new Error(
+					"wechat-inline-pseudo-paint-css-supports-unavailable",
+				);
+			return supports.call(windowCss ?? globalCss, property, value);
+		},
+	};
+	return {
+		animations: {
+			inspectAnimations: (root) => {
+				const getAnimations = (
+					root as Element & {
+						getAnimations?: (
+							options?: { subtree?: boolean },
+						) => readonly Animation[];
+					}
+				).getAnimations;
+				if ("function" !== typeof getAnimations)
+					throw new Error("wechat-inline-pseudo-paint-animations-unavailable");
+				return getAnimations
+					.call(root, { subtree: true })
+					.filter((animation) => {
+						const candidate = animation as Animation & {
+							animationName?: unknown;
+							transitionProperty?: unknown;
+						};
+						return (
+							("string" === typeof candidate.transitionProperty &&
+								candidate.transitionProperty.trim() !== "") ||
+							("string" === typeof candidate.animationName &&
+								candidate.animationName.trim().toLowerCase() !== "none")
+						);
+					})
+					.map((animation) => {
+						const candidate = animation as Animation & {
+							animationName?: unknown;
+							pending?: unknown;
+							transitionProperty?: unknown;
+						};
+						const timing = animation.effect?.getComputedTiming?.();
+						const isCssAnimation =
+							"string" === typeof candidate.animationName &&
+							candidate.animationName.trim().toLowerCase() !== "none";
+						return {
+							endTime:
+								typeof timing?.endTime === "number"
+									? timing.endTime
+									: Number.NaN,
+							kind: isCssAnimation
+								? ("css-animation" as const)
+								: ("css-transition" as const),
+							pending: true === candidate.pending,
+							playState: animation.playState,
+							transitionProperty:
+								"string" === typeof candidate.transitionProperty
+									? candidate.transitionProperty
+									: null,
+						};
+					});
+			},
+		},
+		css,
+	};
+}
+
+function resolvedInlinePseudoPaintOwner(originalClone: Element): Element {
+	let current = originalClone;
+	const visited = new Set<Element>();
+	while (true) {
+		if (visited.has(current))
+			throw new Error("wechat-inline-pseudo-paint-binding");
+		visited.add(current);
+		const replacement = WECHAT_STRUCTURE_REPLACEMENTS.get(current);
+		if (!replacement) return current;
+		if (replacement === current)
+			throw new Error("wechat-inline-pseudo-paint-binding");
+		current = replacement;
+	}
+}
+
+function inlinePseudoPaintMarkerFor(
+	evidence: {
+		source: Element;
+	},
+	cloneIdentity: ReadonlyMap<Element, Element>,
+	cloneRoot: HTMLElement,
+): Readonly<{
+	clone: Element;
+	generatedMarker: HTMLSpanElement;
+	parent: Element;
+}> {
+	const originalClone = cloneIdentity.get(evidence.source);
+	if (!originalClone)
+		throw new Error("wechat-inline-pseudo-paint-clone-missing");
+	const parent = resolvedInlinePseudoPaintOwner(originalClone);
+	if (!cloneRoot.contains(parent))
+		throw new Error("wechat-inline-pseudo-paint-final-owner-missing");
+	const markers = Array.from(parent.querySelectorAll("*"))
+		.filter((element): element is HTMLSpanElement => {
+			const record = GENERATED_PSEUDO_CLONE_OWNERS.get(element);
+			return (
+				element instanceof HTMLSpanElement &&
+				record?.owner === originalClone &&
+				"::before" === record.pseudo
+			);
+		});
+	if (1 !== markers.length)
+		throw new Error("wechat-inline-pseudo-paint-marker-missing");
+	const generatedMarker = markers[0];
+	if (!generatedMarker || generatedMarker.parentElement !== parent)
+		throw new Error("wechat-inline-pseudo-paint-marker-missing");
+	return { clone: originalClone, generatedMarker, parent };
+}
+
+function applyInlinePseudoPaint(
+	preview: HTMLElement,
+	finalized: HTMLElement,
+	runtime: BrowserWechatClipboardRuntime,
+	readiness: WechatInlinePseudoPaintReadiness | null,
+	captures: readonly WechatInlinePseudoPaintRawCapture[],
+	omittedSources: ReadonlySet<Element>,
+	cloneIdentity: ReadonlyMap<Element, Element>,
+): void {
+	if (!captures.length) return;
+	if (!readiness)
+		throw new Error("wechat-inline-pseudo-paint-readiness-missing");
+	const admittedCaptures = captures.filter(
+		(raw) =>
+			![...omittedSources].some(
+				(omitted) => omitted === raw.source || omitted.contains(raw.source),
+			),
+	);
+	if (!admittedCaptures.length) return;
+	const source = assembleWechatInlinePseudoPaintSource(
+		{
+			capabilities: inlinePseudoPaintCapabilities(
+				runtime,
+				preview,
+				null,
+				runtime.getComputedStyle,
+			),
+			readiness,
+			source: preview,
+		},
+		admittedCaptures,
+	);
+	const plan = planWechatInlinePseudoPaint(source);
+	const batch = bindWechatInlinePseudoPaint(
+		source,
+		plan,
+		finalized,
+		(evidence) =>
+			inlinePseudoPaintMarkerFor(evidence, cloneIdentity, finalized),
+	);
+	applyWechatInlinePseudoPaintBatch(batch);
+}
+
 function applyNodeFidelity(
 	source: Element,
 	clone: Element,
@@ -327,6 +559,7 @@ function applyNodeFidelity(
 	if (portableDeclarations.length)
 		clone.setAttribute("style", portableDeclarations.join(";"));
 	else clone.removeAttribute("style");
+	promotePortableSvgFilter(source, clone, portableDeclarations);
 	if (isTaskListCheckbox(source)) {
 		TASK_LIST_CHECKBOX_CLONES.add(clone);
 		taskCheckboxStaticPaintExpectationFor(clone).baseProperties =
@@ -429,6 +662,9 @@ export async function inlineStyles(
 	taskGeometry: TaskCheckboxGeometryContext | null = null,
 	headingFlowCollector?: HeadingEmptyPseudoFlowCollector,
 	cloneIdentity?: Map<Element, Element>,
+	quoteFlowCollector?: QuotePseudoFlowCollector,
+	inlinePseudoPaintCaptures?: WechatInlinePseudoPaintRawCapture[],
+	nestedListProjectionCaptures?: WechatNestedListProjectionCapture[],
 ): Promise<void> {
 	throwIfBackgroundPreparationAborted(signal);
 	if (!(source instanceof Element) || !(clone instanceof Element)) return;
@@ -476,6 +712,21 @@ export async function inlineStyles(
 		assertPngConversionCurrent(conversion);
 		return;
 	}
+	if (
+		inlinePseudoPaintCaptures &&
+		"http://www.w3.org/1999/xhtml" === source.namespaceURI
+	) {
+		const raw = captureWechatInlinePseudoPaintInput(
+			source as HTMLElement,
+			inlinePseudoPaintCapabilities(
+				runtime,
+				source,
+				computed,
+				getComputedStyle,
+			).css,
+		);
+		if (raw) inlinePseudoPaintCaptures.push(raw);
+	}
 	for (const [index, child] of Array.from(source.childNodes).entries()) {
 		const cloneChild = clone.childNodes.item(index);
 		if (cloneChild) {
@@ -495,6 +746,9 @@ export async function inlineStyles(
 				taskGeometry,
 				headingFlowCollector,
 				cloneIdentity,
+				quoteFlowCollector,
+				inlinePseudoPaintCaptures,
+					nestedListProjectionCaptures,
 			);
 		}
 	}
@@ -510,6 +764,7 @@ export async function inlineStyles(
 		signal,
 		dimensionSemantics,
 		headingFlowCollector,
+		quoteFlowCollector,
 	);
 	await addPseudoElement(
 		source,
@@ -523,7 +778,16 @@ export async function inlineStyles(
 		signal,
 		dimensionSemantics,
 		headingFlowCollector,
+		quoteFlowCollector,
 	);
+	if (nestedListProjectionCaptures && source instanceof HTMLElement) {
+		collectNestedOrdinaryListProjection(
+			source,
+			runtime,
+			dimensionSemantics,
+			{ captures: nestedListProjectionCaptures },
+		);
+	}
 	throwIfBackgroundPreparationAborted(signal);
 	await yieldToBrowser?.();
 	throwIfBackgroundPreparationAborted(signal);
@@ -547,6 +811,9 @@ export function inlineStylesSynchronously(
 	taskGeometry: TaskCheckboxGeometryContext | null = null,
 	headingFlowCollector?: HeadingEmptyPseudoFlowCollector,
 	cloneIdentity?: Map<Element, Element>,
+	quoteFlowCollector?: QuotePseudoFlowCollector,
+	inlinePseudoPaintCaptures?: WechatInlinePseudoPaintRawCapture[],
+	nestedListProjectionCaptures?: WechatNestedListProjectionCapture[],
 ): boolean {
 	if (!(source instanceof Element) || !(clone instanceof Element)) return true;
 	cloneIdentity?.set(source, clone);
@@ -581,6 +848,21 @@ export function inlineStylesSynchronously(
 		dimensionSemantics,
 		taskGeometry,
 	);
+	if (
+		inlinePseudoPaintCaptures &&
+		"http://www.w3.org/1999/xhtml" === source.namespaceURI
+	) {
+		const raw = captureWechatInlinePseudoPaintInput(
+			source as HTMLElement,
+			inlinePseudoPaintCapabilities(
+				runtime,
+				source,
+				computed,
+				getComputedStyle,
+			).css,
+		);
+		if (raw) inlinePseudoPaintCaptures.push(raw);
+	}
 	for (const [index, child] of Array.from(source.childNodes).entries()) {
 		const cloneChild = clone.childNodes.item(index);
 		if (
@@ -597,6 +879,9 @@ export function inlineStylesSynchronously(
 				taskGeometry,
 				headingFlowCollector,
 				cloneIdentity,
+				quoteFlowCollector,
+				inlinePseudoPaintCaptures,
+					nestedListProjectionCaptures,
 			)
 		)
 			return false;
@@ -611,6 +896,7 @@ export function inlineStylesSynchronously(
 			runtime,
 			dimensionSemantics,
 			headingFlowCollector,
+			quoteFlowCollector,
 		)
 	)
 		return false;
@@ -624,9 +910,18 @@ export function inlineStylesSynchronously(
 			runtime,
 			dimensionSemantics,
 			headingFlowCollector,
+			quoteFlowCollector,
 		)
 	)
 		return false;
+	if (nestedListProjectionCaptures && source instanceof HTMLElement) {
+		collectNestedOrdinaryListProjection(
+			source,
+			runtime,
+			dimensionSemantics,
+			{ captures: nestedListProjectionCaptures },
+		);
+	}
 	appendThemeImages(
 		clone,
 		fidelity.preserveRepeatingBackground ? [] : fidelity.imageLayers,
@@ -803,6 +1098,7 @@ function removeOmittedNodes(
 	clone: HTMLElement,
 	mathMlNodes: ReadonlySet<Element>,
 	svgIntegration: WechatSvgPortableIntegration,
+	omittedSources: Set<Element>,
 ): void {
 	const elements = Array.from(clone.querySelectorAll("*"));
 	for (const element of elements) {
@@ -826,6 +1122,9 @@ function removeOmittedNodes(
 				!TASK_LIST_CHECKBOX_CLONES.has(element))
 		) {
 			const source = svgIntegration.sourceForClone(element);
+			omittedSources.add(source);
+			for (const descendant of Array.from(source.querySelectorAll("*")))
+				omittedSources.add(descendant);
 			svgIntegration.omitSubtree(source, element);
 			element.remove();
 		}
@@ -835,6 +1134,9 @@ function removeOmittedNodes(
 export function finalizeMarkup(
 	clone: HTMLElement,
 	fragmentIds: Set<string>,
+	tableNativeGridPlans: readonly WechatTableNativeGridSerializationPlan[] = [],
+	nestedListProjectionCaptures: readonly WechatNestedListProjectionCapture[] = [],
+	cloneIdentity: ReadonlyMap<Element, Element> = new Map(),
 ): HTMLElement {
 	wrapKaTeXVisualRoots(clone);
 	const themeHeadingSuffixClones: Element[] = [];
@@ -849,6 +1151,11 @@ export function finalizeMarkup(
 	restoreTaskListCheckboxOwnerState(clone);
 	normalizeMathBlocks(clone);
 	const normalized = normalizeStructure(clone);
+	applyNestedOrdinaryListProjection(
+		normalized,
+		nestedListProjectionCaptures,
+		cloneIdentity,
+	);
 	normalizePortableTaskListMarkers(normalized);
 	projectCompleteTaskListStructures(normalized);
 	retainReferencedFragmentIds(normalized, fragmentIds);
@@ -923,6 +1230,7 @@ export function finalizeMarkup(
 	EXPORT_TEXT_NORMALIZATIONS.set(normalized, exportTextNormalizations);
 	normalizeTaskCheckboxTransport(normalized, exportTextNormalizations);
 	normalizePortableTables(normalized);
+	applyWechatTableNativeGridForSerialization(normalized, tableNativeGridPlans);
 	normalizeCodeFrames(normalized);
 	materializeCodeLineBreaks(normalized);
 	wrapCodeLines(normalized);
@@ -1183,6 +1491,7 @@ function bindMathStaticFlowPlan(
 	conversion: WechatPngConversionContext | undefined,
 	signal: AbortSignal | undefined,
 	isCurrent: (() => boolean) | undefined,
+	excludedSources: ReadonlySet<Element> = new Set(),
 ): MathStaticFlowPlan | null {
 	if (
 		!sourceAdmission ||
@@ -1201,8 +1510,14 @@ function bindMathStaticFlowPlan(
 		throw new Error("wechat-math-static-flow-dimension-signature-missing");
 	const gate = createMathStaticFlowGate(conversion, signal, isCurrent);
 	const omissionIndex = createMathOmissionIndex(preview, cloneIdentity);
+	const isExcludedVectorSource = (source: Element): boolean =>
+		[...excludedSources].some(
+			(excluded) => excluded === source || excluded.contains(source),
+		);
 	const boundGroups = sourceAdmission.groups.filter(
-		(group) => !mathGroupHasOmittedClone(group, omissionIndex),
+		(group) =>
+			!isExcludedVectorSource(group.source) &&
+			!mathGroupHasOmittedClone(group, omissionIndex),
 	);
 	if (!boundGroups.length) return null;
 	const bindingSourceAdmission =
@@ -1244,6 +1559,9 @@ export async function createMarkup(
 	mathRawDimensionGeometrySignature = "",
 	mathRuntime: WechatMathStaticFlowRuntime | null = null,
 	isCurrent?: () => boolean,
+	mathVectorCapture: WechatMathVectorPortableCapture | null = null,
+	mathVectorTextState?: { value: string | null },
+	inlinePseudoReadiness: WechatInlinePseudoPaintReadiness | null = null,
 ): Promise<HTMLElement> {
 	throwIfBackgroundPreparationAborted(signal);
 	if (conversion) assertPngConversionCurrent(conversion);
@@ -1276,6 +1594,10 @@ export async function createMarkup(
 	const effectiveMathRuntime = mathRuntime ?? mathCapture?.runtime ?? null;
 	const clone = preview.cloneNode(true) as HTMLElement;
 	const cloneIdentity = new Map<Element, Element>();
+	const inlinePseudoPaintCaptures: WechatInlinePseudoPaintRawCapture[] = [];
+	const nestedListProjectionCaptures: WechatNestedListProjectionCapture[] = [];
+	const omittedInlinePseudoPaintSources = new Set<Element>();
+	let mathVectorPlan: WechatMathVectorBoundPlan | null = null;
 	const svgIntegration = createWechatSvgPortableIntegration(
 		preview,
 		clone,
@@ -1304,6 +1626,7 @@ export async function createMarkup(
 	const headingFlowCollector: HeadingEmptyPseudoFlowCollector = {
 		expectations: [],
 	};
+	const quoteFlowCollector: QuotePseudoFlowCollector = { expectations: [] };
 	const markupTimings = createWechatMarkupPreparationTimings(
 		clone.ownerDocument.defaultView?.performance,
 		Boolean(conversion),
@@ -1325,10 +1648,34 @@ export async function createMarkup(
 			taskGeometry,
 			headingFlowCollector,
 			cloneIdentity,
+			quoteFlowCollector,
+			inlinePseudoPaintCaptures,
+					nestedListProjectionCaptures,
 		);
 		markupTimings.inlineStyles.finish("success");
 		throwIfBackgroundPreparationAborted(signal);
-		removeOmittedNodes(clone, mathMlNodes, svgIntegration);
+		const tableNativeGridPlans = planWechatTableNativeGridForSerialization(
+			preview,
+			cloneIdentity,
+			runtime,
+		);
+		if (conversion && mathVectorCapture)
+			throw new Error("wechat-math-vector-png-conflict");
+		if (mathVectorCapture) {
+			mathVectorPlan = bindWechatMathVectorScenes(
+				sourceRoot,
+				clone,
+				mathVectorCapture.measurement,
+				cloneIdentity,
+				mathVectorCapture,
+			);
+		}
+		removeOmittedNodes(
+			clone,
+			mathMlNodes,
+			svgIntegration,
+			omittedInlinePseudoPaintSources,
+		);
 		const mathPlan = bindMathStaticFlowPlan(
 			preview,
 			clone,
@@ -1341,6 +1688,10 @@ export async function createMarkup(
 			conversion,
 			signal,
 			isCurrent,
+			new Set([
+				...(mathVectorPlan?.measurementOwners ?? []),
+				...(mathVectorPlan?.sourceOwners ?? []),
+			]),
 		);
 		svgIntegration.freezePlan(conversion ?? null);
 		if (conversion) {
@@ -1367,7 +1718,14 @@ export async function createMarkup(
 			clone.ownerDocument.defaultView?.performance,
 			WECHAT_COPY_TIMING_NAMES.finalizeMarkup,
 			{ mode: "sync" },
-			() => finalizeMarkup(clone, fragmentIds),
+			() =>
+				finalizeMarkup(
+					clone,
+					fragmentIds,
+					tableNativeGridPlans,
+					nestedListProjectionCaptures,
+					cloneIdentity,
+				),
 		);
 		if (mathPlan) {
 			applyWechatMathStaticFlow(mathPlan, {
@@ -1376,9 +1734,28 @@ export async function createMarkup(
 			});
 		}
 		svgIntegration.applyPlan(finalized);
+		if (mathVectorPlan) {
+			if (mathVectorTextState)
+				mathVectorTextState.value = connectedPlainText(finalized, preview);
+			materializeWechatMathVectorScenes(
+				finalized,
+				mathVectorPlan,
+				clone.ownerDocument,
+			);
+		}
+		applyInlinePseudoPaint(
+			preview,
+			finalized,
+			runtime,
+			inlinePseudoReadiness,
+			inlinePseudoPaintCaptures,
+			omittedInlinePseudoPaintSources,
+			cloneIdentity,
+		);
 		assertTaskCheckboxStaticOwners(sourceTaskInputs, finalized);
 		assertTaskCheckboxStaticFlowAllocationsForRoot(finalized);
 		assertHeadingEmptyPseudoFlows(headingFlowCollector.expectations, finalized);
+		assertQuotePseudoFlows(quoteFlowCollector.expectations, finalized);
 		throwIfBackgroundPreparationAborted(signal);
 		markupTimings.markupPreparation.finish("success");
 		return finalized;
@@ -1402,6 +1779,9 @@ export function createMarkupSynchronously(
 	mathRawDimensionGeometrySignature = "",
 	mathRuntime: WechatMathStaticFlowRuntime | null = null,
 	isCurrent?: () => boolean,
+	mathVectorCapture: WechatMathVectorPortableCapture | null = null,
+	mathVectorTextState?: { value: string | null },
+	inlinePseudoReadiness: WechatInlinePseudoPaintReadiness | null = null,
 ): HTMLElement | null {
 	const mathCapture = sourceAdmission
 		? null
@@ -1430,6 +1810,10 @@ export function createMarkupSynchronously(
 	const effectiveMathRuntime = mathRuntime ?? mathCapture?.runtime ?? null;
 	const clone = preview.cloneNode(true) as HTMLElement;
 	const cloneIdentity = new Map<Element, Element>();
+	const inlinePseudoPaintCaptures: WechatInlinePseudoPaintRawCapture[] = [];
+	const nestedListProjectionCaptures: WechatNestedListProjectionCapture[] = [];
+	const omittedInlinePseudoPaintSources = new Set<Element>();
+	let mathVectorPlan: WechatMathVectorBoundPlan | null = null;
 	const svgIntegration = createWechatSvgPortableIntegration(
 		preview,
 		clone,
@@ -1458,6 +1842,7 @@ export function createMarkupSynchronously(
 	const headingFlowCollector: HeadingEmptyPseudoFlowCollector = {
 		expectations: [],
 	};
+	const quoteFlowCollector: QuotePseudoFlowCollector = { expectations: [] };
 	try {
 		if (
 			!inlineStylesSynchronously(
@@ -1472,10 +1857,32 @@ export function createMarkupSynchronously(
 				taskGeometry,
 				headingFlowCollector,
 				cloneIdentity,
+				quoteFlowCollector,
+				inlinePseudoPaintCaptures,
+			nestedListProjectionCaptures,
 			)
 		)
 			return null;
-		removeOmittedNodes(clone, mathMlNodes, svgIntegration);
+		const tableNativeGridPlans = planWechatTableNativeGridForSerialization(
+			preview,
+			cloneIdentity,
+			runtime,
+		);
+		if (mathVectorCapture) {
+			mathVectorPlan = bindWechatMathVectorScenes(
+				sourceRoot,
+				clone,
+				mathVectorCapture.measurement,
+				cloneIdentity,
+				mathVectorCapture,
+			);
+		}
+		removeOmittedNodes(
+			clone,
+			mathMlNodes,
+			svgIntegration,
+			omittedInlinePseudoPaintSources,
+		);
 		const mathPlan = bindMathStaticFlowPlan(
 			preview,
 			clone,
@@ -1488,6 +1895,10 @@ export function createMarkupSynchronously(
 			undefined,
 			undefined,
 			isCurrent,
+			new Set([
+				...(mathVectorPlan?.measurementOwners ?? []),
+				...(mathVectorPlan?.sourceOwners ?? []),
+			]),
 		);
 		svgIntegration.freezePlan(null);
 		normalizeTaskCheckboxStaticFlowSynchronously(
@@ -1499,7 +1910,14 @@ export function createMarkupSynchronously(
 			clone.ownerDocument.defaultView?.performance,
 			WECHAT_COPY_TIMING_NAMES.finalizeMarkup,
 			{ mode: "sync" },
-			() => finalizeMarkup(clone, fragmentIds),
+			() =>
+				finalizeMarkup(
+					clone,
+					fragmentIds,
+					tableNativeGridPlans,
+					nestedListProjectionCaptures,
+					cloneIdentity,
+				),
 		);
 		if (mathPlan) {
 			applyWechatMathStaticFlow(mathPlan, {
@@ -1508,9 +1926,28 @@ export function createMarkupSynchronously(
 			});
 		}
 		svgIntegration.applyPlan(finalized);
+		if (mathVectorPlan) {
+			if (mathVectorTextState)
+				mathVectorTextState.value = connectedPlainText(finalized, preview);
+			materializeWechatMathVectorScenes(
+				finalized,
+				mathVectorPlan,
+				clone.ownerDocument,
+			);
+		}
+		applyInlinePseudoPaint(
+			preview,
+			finalized,
+			runtime,
+			inlinePseudoReadiness,
+			inlinePseudoPaintCaptures,
+			omittedInlinePseudoPaintSources,
+			cloneIdentity,
+		);
 		assertTaskCheckboxStaticOwners(sourceTaskInputs, finalized);
 		assertTaskCheckboxStaticFlowAllocationsForRoot(finalized);
 		assertHeadingEmptyPseudoFlows(headingFlowCollector.expectations, finalized);
+		assertQuotePseudoFlows(quoteFlowCollector.expectations, finalized);
 		return finalized;
 	} finally {
 		taskGeometry?.cleanup();
@@ -1532,6 +1969,8 @@ export async function serializeClipboardPayload(
 	mathRawDimensionGeometrySignature = "",
 	mathRuntime: WechatMathStaticFlowRuntime | null = null,
 	isCurrent?: () => boolean,
+	mathVectorCapture: WechatMathVectorPortableCapture | null = null,
+	inlinePseudoReadiness: WechatInlinePseudoPaintReadiness | null = null,
 ): Promise<SerializedClipboardPayload> {
 	throwIfBackgroundPreparationAborted(signal);
 	const ownedDimensionSemantics =
@@ -1539,6 +1978,7 @@ export async function serializeClipboardPayload(
 		createDimensionSemanticsContext(preview, sourceRoot, runtime);
 	try {
 		ownedDimensionSemantics.refresh();
+		const mathVectorTextState = { value: null as string | null };
 		const clone = await createMarkup(
 			preview,
 			runtime,
@@ -1554,6 +1994,9 @@ export async function serializeClipboardPayload(
 			mathRawDimensionGeometrySignature,
 			mathRuntime,
 			isCurrent,
+			mathVectorCapture,
+			mathVectorTextState,
+			inlinePseudoReadiness,
 		);
 		throwIfBackgroundPreparationAborted(signal);
 		assertTaskCheckboxCaptionRuns(
@@ -1586,7 +2029,7 @@ export async function serializeClipboardPayload(
 			clone.ownerDocument.defaultView?.performance,
 			WECHAT_COPY_TIMING_NAMES.connectedPlainText,
 			{ mode: "sync" },
-			() => connectedPlainText(clone, preview),
+			() => mathVectorTextState.value ?? connectedPlainText(clone, preview),
 		);
 		await yieldSerializationBoundary(yieldToBrowser, conversion, signal);
 		throwIfBackgroundPreparationAborted(signal);
@@ -1612,12 +2055,15 @@ export function serializeClipboardPayloadSynchronously(
 	mathRawDimensionGeometrySignature = "",
 	mathRuntime: WechatMathStaticFlowRuntime | null = null,
 	isCurrent?: () => boolean,
+	mathVectorCapture: WechatMathVectorPortableCapture | null = null,
+	inlinePseudoReadiness: WechatInlinePseudoPaintReadiness | null = null,
 ): SerializedClipboardPayload | null {
 	const ownedDimensionSemantics =
 		dimensionSemantics ??
 		createDimensionSemanticsContext(preview, sourceRoot, runtime);
 	try {
 		ownedDimensionSemantics.refresh();
+		const mathVectorTextState = { value: null as string | null };
 		const clone = createMarkupSynchronously(
 			preview,
 			runtime,
@@ -1629,6 +2075,9 @@ export function serializeClipboardPayloadSynchronously(
 			mathRawDimensionGeometrySignature,
 			mathRuntime,
 			isCurrent,
+			mathVectorCapture,
+			mathVectorTextState,
+			inlinePseudoReadiness,
 		);
 		if (!clone) return null;
 		assertTaskCheckboxCaptionRuns(
@@ -1654,7 +2103,7 @@ export function serializeClipboardPayloadSynchronously(
 			clone.ownerDocument.defaultView?.performance,
 			WECHAT_COPY_TIMING_NAMES.connectedPlainText,
 			{ mode: "sync" },
-			() => connectedPlainText(clone, preview),
+			() => mathVectorTextState.value ?? connectedPlainText(clone, preview),
 		);
 		return { html, text };
 	} finally {

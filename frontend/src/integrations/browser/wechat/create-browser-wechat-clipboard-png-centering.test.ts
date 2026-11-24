@@ -7,6 +7,7 @@ import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard'
 
 import {
   blobText,
+  computedStyle,
   declaration,
   deferred,
   installClipboardTestEnvironment,
@@ -74,7 +75,7 @@ async function copyMermaidCenteringCase(
     clipboardItem: ClipboardItemStub,
     document,
     getComputedStyle: (element, pseudoElement) => {
-      if (pseudoElement) return declaration({});
+      if (pseudoElement) return computedStyle(element, pseudoElement);
       if (element === root) {
         return declaration({
           display: 'block',
@@ -271,7 +272,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if (element === root) {
           return declaration({
             display: 'block',
@@ -366,7 +367,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if (element === root) {
           return declaration({ display: 'block', overflow: 'auto', 'overflow-x': 'auto', width: '180px' });
         }

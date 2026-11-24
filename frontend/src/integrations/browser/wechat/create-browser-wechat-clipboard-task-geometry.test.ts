@@ -4,6 +4,7 @@ import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard'
 
 import {
   blobText,
+  computedStyle,
   declaration,
   installClipboardTestEnvironment
 } from './wechat-clipboard-test-fixtures';
@@ -185,6 +186,7 @@ describe('createBrowserWechatClipboard', () => {
             width: '16px'
           });
         }
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if ('ARTICLE' === element.tagName) {
           return declaration({
             'border-bottom-width': '0px',
@@ -705,6 +707,7 @@ describe('createBrowserWechatClipboard', () => {
         });
       }
       const getComputedStyle = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+        if (pseudoElement && 'INPUT' !== element.tagName) return computedStyle(element, pseudoElement);
         if ('DIV' === element.tagName && element.classList.contains('task-hidden-workspace')) {
           return declaration({ display: 'none' });
         }

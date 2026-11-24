@@ -19,6 +19,39 @@ export function dispatchSuccessfulLegacyCopy(): void {
   document.dispatchEvent(event);
 }
 
+export function observeFixtureContentBox(box: () => Readonly<{ width: number; height: number }>): Readonly<{
+  activeCount: () => number;
+  failNext: () => void;
+  notify: () => void;
+}> {
+  const observers: Observer[] = [];
+  let nextInvalid = false;
+  class Observer {
+    closed = false;
+    private target: Element | null = null;
+    constructor(private readonly callback: ResizeObserverCallback) { observers.push(this); }
+    observe(target: Element): void {
+      this.target = target;
+      const invalid = nextInvalid;
+      nextInvalid = false;
+      queueMicrotask(() => this.deliver(invalid));
+    }
+    disconnect(): void { this.closed = true; }
+    deliver(invalid = false): void {
+      if (!this.closed && this.target) {
+        const contentRect = invalid ? { ...box(), height: Number.NaN } : box();
+        this.callback([{ target: this.target, contentRect } as ResizeObserverEntry], this as unknown as ResizeObserver);
+      }
+    }
+  }
+  vi.stubGlobal('ResizeObserver', Observer);
+  return {
+    activeCount: () => observers.filter((observer) => !observer.closed).length,
+    failNext: () => { nextInvalid = true; },
+    notify: () => observers.forEach((observer) => { observer.deliver(); })
+  };
+}
+
 export function readyPreview(): HTMLElement {
   const preview = document.createElement('article');
   preview.setAttribute('data-easymde-preview-html-sink', 'true');
@@ -28,7 +61,13 @@ export function readyPreview(): HTMLElement {
   return preview;
 }
 export function computedStyle(element: Element, pseudoElement?: string): CSSStyleDeclaration {
-  if (pseudoElement) return { getPropertyValue: () => '' } as unknown as CSSStyleDeclaration;
+  if (pseudoElement) {
+    const nonCandidate = '::before' === pseudoElement || '::after' === pseudoElement;
+    return {
+      getPropertyValue: (property: string) =>
+        nonCandidate && 'content' === property ? 'none' : ''
+    } as unknown as CSSStyleDeclaration;
+  }
   return window.getComputedStyle(element);
 }
 

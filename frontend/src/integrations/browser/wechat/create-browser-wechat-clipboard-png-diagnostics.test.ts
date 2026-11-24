@@ -53,7 +53,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return computedStyle(element, pseudoElement);
         if (element === root) {
           return declaration({ display: 'block', overflow: 'auto', 'overflow-x': 'auto', width: '180px' });
         }

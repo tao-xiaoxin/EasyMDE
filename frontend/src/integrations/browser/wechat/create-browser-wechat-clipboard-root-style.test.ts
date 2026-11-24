@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard';
 
 import {
+  computedStyle,
   blobText,
   declaration,
   installClipboardTestEnvironment,
@@ -266,6 +267,8 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         if ('P' === element.tagName) {
           return declaration({ display: 'block', direction, 'text-align': 'start' });
@@ -316,6 +319,8 @@ describe('createBrowserWechatClipboard', () => {
           width: '10px'
         });
       }
+      if ('::before' === pseudoElement || '::after' === pseudoElement)
+        return computedStyle(element, pseudoElement);
       if (pseudoElement) return declaration({});
       return declaration({ display: 'block' });
     };

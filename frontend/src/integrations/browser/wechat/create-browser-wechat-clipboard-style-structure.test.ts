@@ -65,6 +65,8 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         if (element.classList.contains('wide-inline')) {
           return declaration({
@@ -153,6 +155,8 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         if ('IMG' === element.tagName) {
           return declaration({ display: 'inline', height: '16px', width: '16px' });
@@ -283,6 +287,8 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if (pseudoElement) return declaration({});
         if ('P' !== element.tagName) return declaration({ display: 'block' });
         return declaration({
@@ -585,6 +591,8 @@ describe('createBrowserWechatClipboard', () => {
             'box-shadow': 'rgb(255, 189, 46) 20px 0 0, rgb(39, 201, 63) 40px 0 0'
           });
         }
+        if ('::before' === pseudoElement || '::after' === pseudoElement)
+          return computedStyle(element, pseudoElement);
         if ('PRE' === element.tagName) {
           return declaration({ display: 'block', 'white-space': 'pre', 'padding-top': '34px' });
         }
@@ -684,6 +692,8 @@ describe('createBrowserWechatClipboard', () => {
       if ('BLOCKQUOTE' === element.tagName && '::before' === pseudoElement) {
         return declaration({ color: 'rgb(120, 10, 10)', content: '"Source marker"', display: 'inline' });
       }
+      if ('::before' === pseudoElement || '::after' === pseudoElement)
+        return computedStyle(element, pseudoElement);
       if (pseudoElement) return declaration({});
       if ('BLOCKQUOTE' === element.tagName) {
         return declaration({
@@ -784,6 +794,8 @@ describe('createBrowserWechatClipboard', () => {
     Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Plain Underlined' });
     const sourceMarkup = preview.innerHTML;
     const linkComputedStyle = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      if ('::before' === pseudoElement || '::after' === pseudoElement)
+        return computedStyle(element, pseudoElement);
       if (pseudoElement) return declaration({});
       if ('A' === element.tagName) {
         return declaration({

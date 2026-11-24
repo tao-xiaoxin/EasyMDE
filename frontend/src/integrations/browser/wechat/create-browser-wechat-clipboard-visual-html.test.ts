@@ -51,7 +51,8 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (element) => {
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({ content: 'none' });
         if ('DIV' === element.tagName && element.classList.contains('easymde-math-block')) {
           return declaration({
             display: 'block',
@@ -421,7 +422,8 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (element) => {
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({ content: 'none' });
         if ('DIV' === element.tagName && element.classList.contains('easymde-math-block')) {
           return declaration({ display: 'block', overflow: 'auto', 'overflow-x': 'auto', 'overflow-y': 'auto' });
         }
@@ -888,7 +890,8 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (element) => {
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({ content: 'none' });
         if ('DIV' === element.tagName && element.classList.contains('easymde-math-block')) {
           return declaration({ display: 'block', overflow: 'auto', 'overflow-x': 'auto', 'overflow-y': 'auto' });
         }
@@ -955,7 +958,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element: Element, pseudoElement?: string) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return declaration({ content: 'none' });
         if ('svg' === element.localName) {
           return declaration({
             display: 'block',
@@ -1075,7 +1078,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element, pseudoElement) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return declaration({ content: 'none' });
         if ('DIV' === element.tagName && element.classList.contains('katex')) {
           return declaration({ display: 'inline', position: 'fixed', width: 'min-content' });
         }
@@ -1193,7 +1196,7 @@ describe('createBrowserWechatClipboard', () => {
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (_element: Element, pseudoElement?: string) => {
-        if (pseudoElement) return declaration({});
+        if (pseudoElement) return declaration({ content: 'none' });
         return declaration({ display: 'block', height: '40px', width: '200px' });
       },
       getSelection: window.getSelection.bind(window),
@@ -1257,7 +1260,8 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (element) => {
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({ content: 'none' });
         if ('DEFS' === element.tagName) return declaration({ display: 'none' });
         if ('SVG' === element.tagName) {
           return declaration({ display: 'block', width: '40px', height: '40px' });
@@ -1322,7 +1326,8 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
-      getComputedStyle: (element) => {
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({ content: 'none' });
         if ('DIV' === element.tagName && element.classList.contains('katex')) {
           return declaration({ display: 'inline', position: 'relative', 'white-space': 'nowrap' });
         }
@@ -1508,6 +1513,13 @@ describe('createBrowserWechatClipboard', () => {
       blob: Blob,
       clipboardItem: null,
       document,
+      mermaidContentBoxes: {
+        cleanup: () => undefined,
+        get: (candidate: Element) => candidate === owner ? { width: 335, height: 268 } : null,
+        isCurrent: () => true,
+        ready: Promise.resolve(),
+        retain: () => undefined
+      },
       getComputedStyle: (element: Element, pseudoElement?: string) => {
         if (pseudoElement) return declaration({ content: 'none', display: 'none' });
         if (element === owner) return safe;

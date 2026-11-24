@@ -291,6 +291,8 @@ function validBootstrap() {
     wechatExport: {
       enabled: true,
       pngConversionEnabled: false,
+      wechatMathAtlasContentVersion: '0123456789abcdef',
+      wechatMathAtlasUrl: `${previewEnhancementBootstrapFixture.assetBaseUrl}assets/math/easymde-katex-glyph-atlas.json?contentversion=0123456789abcdef`,
       strings: {
         failed: 'Copy failed',
         failedWithUploads: 'Copy failed after uploading images',
@@ -439,6 +441,17 @@ describe('parseEditorRootBootstrap', () => {
     [{ ...validBootstrap(), toolbar: null }, 'editor-root-toolbar-invalid'],
     [
       { ...validBootstrap(), wechatExport: null },
+      'editor-root-wechat-export-invalid'
+    ],
+    [
+      {
+        ...validBootstrap(),
+        wechatExport: {
+          ...validBootstrap().wechatExport,
+          wechatMathAtlasUrl:
+            `${previewEnhancementBootstrapFixture.assetBaseUrl}assets/math/easymde-katex-glyph-atlas.json?contentversion=0123456789abcdee`
+        }
+      },
       'editor-root-wechat-export-invalid'
     ],
     [

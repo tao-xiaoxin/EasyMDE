@@ -37,6 +37,22 @@ export type SafePreviewHtmlSinkScheduler = Readonly<{
   yield: () => Promise<void>;
 }>;
 
+export type SafePreviewHtmlSinkVerifiedView = Readonly<{
+  html: SafePreviewHtml | null;
+  htmlRevision: number;
+  windowedCommit: SafePreviewHtmlSinkWindowCommit | null;
+}>;
+
+export type SafePreviewHtmlSinkFailureOutcome = Readonly<{
+  error: unknown;
+  kind: 'restored';
+  previous: SafePreviewHtmlSinkVerifiedView | null;
+}> | Readonly<{
+  error: unknown;
+  kind: 'unverified';
+  rollbackError: unknown;
+}>;
+
 type SafePreviewHtmlSinkProps = Readonly<{
   ariaBusy?: boolean;
   acceptedHtml?: boolean;
@@ -46,13 +62,15 @@ type SafePreviewHtmlSinkProps = Readonly<{
   html: SafePreviewHtml | null;
   htmlRevision?: number;
   label?: string;
+  onDomMutation?: ((surface: HTMLElement) => void) | ((surface: HTMLElement) => Error);
+  onDomMutationFailure?: (outcome: SafePreviewHtmlSinkFailureOutcome) => void;
   onDrop?: DragEventHandler<HTMLElement>;
   onInput?: FormEventHandler<HTMLElement>;
   onMaterializeComplete?: (revision: number, key: number) => void;
   onMaterializeFailure?: (
     revision: number,
     key: number,
-    error: unknown
+    outcome: SafePreviewHtmlSinkFailureOutcome
   ) => void;
   onKeyDown?: KeyboardEventHandler<HTMLElement>;
   onPaste?: ClipboardEventHandler<HTMLElement>;
@@ -79,9 +97,21 @@ type AppliedSurfaceState = Readonly<{
   statusRole: string | undefined;
   materializeCommitKey: number | null;
   windowedCommitKey: number | null;
+  windowedCommit: SafePreviewHtmlSinkWindowCommit | null;
   stagedCommit?: SafePreviewHtmlSinkCommit;
   stagedCommitNodes?: ReadonlyArray<Node>;
 }>;
+
+function verifiedSinkView(
+  state: AppliedSurfaceState | null
+): SafePreviewHtmlSinkVerifiedView | null {
+  if (!state) return null;
+  return {
+    html: state.html,
+    htmlRevision: state.revision,
+    windowedCommit: state.windowedCommit ?? null
+  };
+}
 
 function validateUniqueChildren(desiredNodes: ReadonlyArray<Node>): void {
   const desired = new Set<Node>();
@@ -151,6 +181,129 @@ function hasExactChildren(
   return nodes.every((node, index) => surface.childNodes[index] === node);
 }
 
+type SurfaceSnapshot = Readonly<{
+  children: ReadonlyArray<Node>;
+  canvas: HTMLElement | null;
+  scrollTop: number;
+  spacerAttributes: ReadonlyArray<{
+    attributes: ReadonlyArray<{ name: string; value: string }>;
+    node: Element;
+  }>;
+}>;
+
+type DomMutationCallback =
+  | ((surface: HTMLElement) => void)
+  | ((surface: HTMLElement) => Error)
+  | undefined;
+
+function captureSurfaceSnapshot(surface: HTMLElement): SurfaceSnapshot {
+  return {
+    canvas: surface.parentElement,
+    children: Array.from(surface.childNodes),
+    scrollTop: surface.parentElement?.scrollTop ?? 0,
+    spacerAttributes: Array.from(surface.children).flatMap((node) =>
+      node.hasAttribute('data-easymde-preview-window-spacer')
+        ? [{
+            attributes: Array.from(node.attributes).map(({ name, value }) => ({
+              name,
+              value
+            })),
+            node
+          }]
+        : []
+    )
+  };
+}
+
+function restoreSurfaceSnapshot(snapshot: SurfaceSnapshot, surface: HTMLElement): void {
+  if (!surface.parentNode) throw new Error('preview-sink-rollback-failed');
+  for (const { attributes, node } of snapshot.spacerAttributes) {
+    for (const attribute of Array.from(node.attributes)) {
+      node.removeAttribute(attribute.name);
+    }
+    for (const { name, value } of attributes) node.setAttribute(name, value);
+  }
+  surface.replaceChildren(...snapshot.children);
+  if (snapshot.canvas) snapshot.canvas.scrollTop = snapshot.scrollTop;
+}
+
+function runRollbackSteps(
+  steps: ReadonlyArray<() => void>
+): Error | null {
+  let failure: Error | null = null;
+  for (const step of steps) {
+    try {
+      step();
+    } catch (error) {
+      failure ??= error instanceof Error
+        ? error
+        : new Error('preview-sink-rollback-failed');
+    }
+  }
+  return failure;
+}
+
+function notifyDomMutation(
+  surface: HTMLElement,
+  callback: DomMutationCallback
+): Error | null {
+  try {
+    const result = callback?.(surface);
+    if (result instanceof Error) return result;
+    return null;
+  } catch (error) {
+    return error instanceof Error
+      ? error
+      : new Error('preview-sink-dom-mutation-failed');
+  }
+}
+
+function clearUnverifiedSurface(
+  surface: HTMLElement,
+  onDomMutation: DomMutationCallback
+): void {
+  surface.replaceChildren();
+  const styleError = notifyDomMutation(surface, onDomMutation);
+  if (styleError) throw styleError;
+}
+
+function restoreAfterDomMutationFailure(
+  surface: HTMLElement,
+  mutationError: Error,
+  previous: SafePreviewHtmlSinkVerifiedView | null,
+  restore: () => void,
+  onDomMutation: DomMutationCallback,
+  onFailure?: (outcome: SafePreviewHtmlSinkFailureOutcome) => void
+): void {
+  let rollbackFailure: Error | null = null;
+  try {
+    restore();
+  } catch (error) {
+    rollbackFailure = error instanceof Error
+      ? error
+      : new Error('preview-sink-rollback-failed');
+  }
+  if (!rollbackFailure) {
+    const restoredError = notifyDomMutation(surface, onDomMutation);
+    if (restoredError) rollbackFailure = restoredError;
+  }
+  if (!rollbackFailure) {
+    onFailure?.({ error: mutationError, kind: 'restored', previous });
+    return;
+  }
+  try {
+    clearUnverifiedSurface(surface, onDomMutation);
+  } catch {
+    // The first rollback error remains the causal failure; the sink is already
+    // unverified and the owner will discard the corresponding View state.
+  }
+  onFailure?.({
+    error: mutationError,
+    kind: 'unverified',
+    rollbackError: rollbackFailure
+  });
+}
+
 function appendStatusMessage(
   surface: HTMLElement,
   statusClassName: string | undefined,
@@ -168,8 +321,10 @@ function startMaterializeChildrenCommit(
   surface: HTMLElement,
   desiredNodes: ReadonlyArray<Node>,
   scheduler: SafePreviewHtmlSinkScheduler,
+  onDomMutation: DomMutationCallback,
+  previousAppliedState: AppliedSurfaceState | null,
   onComplete: () => void,
-  onFailure: (error: unknown) => void
+  onFailure: (outcome: SafePreviewHtmlSinkFailureOutcome) => void
 ): () => void {
   const initialChildren = Array.from(surface.childNodes);
   const initialSpacerAttributes = initialChildren.flatMap((node) =>
@@ -190,28 +345,56 @@ function startMaterializeChildrenCommit(
   const anchorTop = anchor instanceof HTMLElement
     ? anchor.getBoundingClientRect().top
     : null;
+  const previous = verifiedSinkView(previousAppliedState);
   let active = true;
   const rollback = (): void => {
-    if (!surface.parentNode) return;
-    for (const { attributes, node } of initialSpacerAttributes) {
-      for (const attribute of Array.from(node.attributes)) {
-        node.removeAttribute(attribute.name);
+    const failure = runRollbackSteps([
+      () => {
+        if (!surface.parentNode) throw new Error('preview-sink-rollback-failed');
+      },
+      () => {
+        for (const { attributes, node } of initialSpacerAttributes) {
+          for (const attribute of Array.from(node.attributes)) {
+            node.removeAttribute(attribute.name);
+          }
+          for (const { name, value } of attributes) node.setAttribute(name, value);
+        }
+      },
+      () => surface.replaceChildren(...initialChildren),
+      () => {
+        const restoredError = notifyDomMutation(surface, onDomMutation);
+        if (restoredError) throw restoredError;
+      },
+      () => {
+        if (canvas) canvas.scrollTop = initialScrollTop;
       }
-      for (const { name, value } of attributes) node.setAttribute(name, value);
+    ]);
+    if (failure) throw failure;
+  };
+  const reportFailure = (error: unknown): void => {
+    let rollbackError: Error | null = null;
+    try {
+      rollback();
+    } catch (failure) {
+      rollbackError = failure instanceof Error
+        ? failure
+        : new Error('preview-sink-rollback-failed');
     }
-    surface.replaceChildren(...initialChildren);
-    if (canvas) canvas.scrollTop = initialScrollTop;
+    if (rollbackError) {
+      try {
+        clearUnverifiedSurface(surface, onDomMutation);
+      } catch {
+        // The first rollback error remains the causal failure.
+      }
+      onFailure({ error, kind: 'unverified', rollbackError });
+      return;
+    }
+    onFailure({ error, kind: 'restored', previous });
   };
   const fail = (error: unknown): void => {
     if (!active) return;
     active = false;
-    try {
-      rollback();
-    } catch (rollbackError) {
-      onFailure(rollbackError);
-      return;
-    }
-    onFailure(error);
+    reportFailure(error);
   };
   const step = (): void => {
     if (!active) return;
@@ -258,6 +441,8 @@ function startMaterializeChildrenCommit(
           height * (range.end - nextStart) / (range.end - range.start)
         }px`;
       }
+      const mutationError = notifyDomMutation(surface, onDomMutation);
+      if (mutationError) throw mutationError;
       if (canvas) canvas.scrollTop = initialScrollTop;
       void scheduler.yield().then(step, fail);
     } catch (error) {
@@ -273,16 +458,36 @@ function startMaterializeChildrenCommit(
   return () => {
     if (!active) return;
     active = false;
-    rollback();
+    try {
+      rollback();
+    } catch (error) {
+      const rollbackError = error instanceof Error
+        ? error
+        : new Error('preview-sink-rollback-failed');
+      try {
+        clearUnverifiedSurface(surface, onDomMutation);
+      } catch {
+        // The first rollback error remains the causal failure.
+      }
+      onFailure({
+        error: new Error('preview-sink-materialize-cancelled'),
+        kind: 'unverified',
+        rollbackError
+      });
+    }
   };
 }
 
 function startWindowChildrenCommit(
   surface: HTMLElement,
   desiredNodes: ReadonlyArray<Node>,
+  previous: SafePreviewHtmlSinkVerifiedView | null,
+  onDomMutation: DomMutationCallback,
+  onDomMutationFailure: ((outcome: SafePreviewHtmlSinkFailureOutcome) => void) | undefined,
   onComplete: () => void
 ): () => void {
   validateWindowChildren(surface, desiredNodes);
+  const snapshot = captureSurfaceSnapshot(surface);
   if (!hasExactChildren(surface, desiredNodes)) {
     const selection = surface.ownerDocument.defaultView?.getSelection();
     const fullRootSelection = (() => {
@@ -367,6 +572,18 @@ function startWindowChildrenCommit(
       selection.removeAllRanges();
       selection.addRange(range);
     }
+    const mutationError = notifyDomMutation(surface, onDomMutation);
+    if (mutationError) {
+      restoreAfterDomMutationFailure(
+        surface,
+        mutationError,
+        previous,
+        () => restoreSurfaceSnapshot(snapshot, surface),
+        onDomMutation,
+        onDomMutationFailure
+      );
+      return () => undefined;
+    }
   }
   onComplete();
   return () => undefined;
@@ -383,6 +600,8 @@ export function SafePreviewHtmlSink({
   label,
   materializeCommit,
   materializeScheduler,
+  onDomMutation,
+  onDomMutationFailure,
   onDrop,
   onInput,
   onMaterializeComplete,
@@ -403,6 +622,7 @@ export function SafePreviewHtmlSink({
 }: SafePreviewHtmlSinkProps) {
   const htmlSurfaceRef = useRef<HTMLElement | null>(null);
   const appliedSurfaceStateRef = useRef<AppliedSurfaceState | null>(null);
+  const lastVerifiedViewRef = useRef<SafePreviewHtmlSinkVerifiedView | null>(null);
   useImperativeHandle(surfaceRef, () => {
     if (!htmlSurfaceRef.current) throw new Error('preview-surface-missing');
     return htmlSurfaceRef.current;
@@ -411,6 +631,8 @@ export function SafePreviewHtmlSink({
     const surface = htmlSurfaceRef.current;
     if (!surface) throw new Error('preview-surface-missing');
     const appliedSurfaceState = appliedSurfaceStateRef.current;
+    const previousVerifiedView = lastVerifiedViewRef.current
+      ?? verifiedSinkView(appliedSurfaceState);
     const activeMaterializeCommit = materializeCommit?.revision === htmlRevision
       ? materializeCommit
       : null;
@@ -436,6 +658,28 @@ export function SafePreviewHtmlSink({
       return;
     }
 
+    if (
+      !windowCommit
+      && !commit
+      && !activeMaterializeCommit
+      && lastVerifiedViewRef.current
+      && lastVerifiedViewRef.current.html === html
+      && lastVerifiedViewRef.current.htmlRevision === htmlRevision
+      && appliedSurfaceState
+      && appliedSurfaceState.statusClassName === statusClassName
+      && appliedSurfaceState.statusMessage === statusMessage
+      && appliedSurfaceState.statusRole === statusRole
+      && (
+        !lastVerifiedViewRef.current.windowedCommit
+        || hasExactChildren(
+          surface,
+          lastVerifiedViewRef.current.windowedCommit.nodes
+        )
+      )
+    ) {
+      return;
+    }
+
     if (activeMaterializeCommit) {
       if (
         appliedSurfaceState
@@ -454,7 +698,14 @@ export function SafePreviewHtmlSink({
         materializeScheduler ?? defaultSafePreviewHtmlSinkScheduler(
           surface.ownerDocument
         ),
+        onDomMutation,
+        appliedSurfaceState,
         () => {
+          lastVerifiedViewRef.current = {
+            html,
+            htmlRevision,
+            windowedCommit: null
+          };
           appliedSurfaceStateRef.current = {
             html,
             materializeCommitKey: activeMaterializeCommit.key,
@@ -462,6 +713,7 @@ export function SafePreviewHtmlSink({
             statusClassName,
             statusMessage,
             statusRole,
+            windowedCommit: null,
             windowedCommitKey: null
           };
           onMaterializeComplete?.(
@@ -469,38 +721,33 @@ export function SafePreviewHtmlSink({
             activeMaterializeCommit.key
           );
         },
-        (error) => {
-          appliedSurfaceStateRef.current = {
-            html,
-            materializeCommitKey: activeMaterializeCommit.key,
-            revision: htmlRevision,
-            statusClassName,
-            statusMessage,
-            statusRole,
-            windowedCommitKey: null
-          };
+        (outcome) => {
+          lastVerifiedViewRef.current =
+            'restored' === outcome.kind ? outcome.previous : null;
+          appliedSurfaceStateRef.current =
+            'restored' === outcome.kind && appliedSurfaceState
+              ? appliedSurfaceState
+              : null;
           onMaterializeFailure?.(
             activeMaterializeCommit.revision,
             activeMaterializeCommit.key,
-            error
+            outcome
           );
         }
       );
       return () => {
         cancelMaterialize();
-        appliedSurfaceStateRef.current = {
-          html,
-          materializeCommitKey: null,
-          revision: htmlRevision,
-          statusClassName,
-          statusMessage,
-          statusRole,
-          windowedCommitKey: null
-        };
+        if (
+          appliedSurfaceStateRef.current?.materializeCommitKey
+          === activeMaterializeCommit.key
+        ) {
+          appliedSurfaceStateRef.current = appliedSurfaceState;
+        }
       };
     }
 
     if (windowCommit) {
+      const committedWindow = windowCommit;
       if (
         appliedSurfaceState
         && appliedSurfaceState.revision === htmlRevision
@@ -508,14 +755,22 @@ export function SafePreviewHtmlSink({
         && appliedSurfaceState.statusClassName === statusClassName
         && appliedSurfaceState.statusMessage === statusMessage
         && appliedSurfaceState.statusRole === statusRole
-        && appliedSurfaceState.windowedCommitKey === windowCommit.key
+        && appliedSurfaceState.windowedCommitKey === committedWindow.key
       ) {
         return undefined;
       }
       return startWindowChildrenCommit(
         surface,
-        windowCommit.nodes,
+        committedWindow.nodes,
+        previousVerifiedView,
+        onDomMutation,
+        onDomMutationFailure,
         () => {
+          lastVerifiedViewRef.current = {
+            html,
+            htmlRevision,
+            windowedCommit: committedWindow
+          };
           appliedSurfaceStateRef.current = {
             html,
             materializeCommitKey: null,
@@ -523,9 +778,10 @@ export function SafePreviewHtmlSink({
             statusClassName,
             statusMessage,
             statusRole,
-            windowedCommitKey: windowCommit.key
+            windowedCommit: committedWindow,
+            windowedCommitKey: committedWindow.key
           };
-          onStagedCommit?.(windowCommit.revision);
+          onStagedCommit?.(committedWindow.revision);
         }
       );
     }
@@ -542,6 +798,7 @@ export function SafePreviewHtmlSink({
     }
 
     if (commit) {
+      const snapshot = captureSurfaceSnapshot(surface);
       const protectedReuse = prepareVisualProtectedNodeAdoption(
         Array.from(surface.childNodes),
         commit.nodes,
@@ -553,12 +810,37 @@ export function SafePreviewHtmlSink({
           surface.replaceChildren(...protectedReuse.nodes);
         }
       } catch (error) {
-        protectedReuse.rollback();
-        throw error;
+        const rollbackFailure = runRollbackSteps([
+          () => protectedReuse.rollback()
+        ]);
+        throw rollbackFailure ?? error;
       }
       if (statusMessage) {
         appendStatusMessage(surface, statusClassName, statusMessage, statusRole);
       }
+      const mutationError = notifyDomMutation(surface, onDomMutation);
+      if (mutationError) {
+        restoreAfterDomMutationFailure(
+          surface,
+          mutationError,
+          previousVerifiedView,
+          () => {
+            const rollbackFailure = runRollbackSteps([
+              () => protectedReuse.rollback(),
+              () => restoreSurfaceSnapshot(snapshot, surface)
+            ]);
+            if (rollbackFailure) throw rollbackFailure;
+          },
+          onDomMutation,
+          onDomMutationFailure
+        );
+        return undefined;
+      }
+      lastVerifiedViewRef.current = {
+        html,
+        htmlRevision,
+        windowedCommit: null
+      };
       appliedSurfaceStateRef.current = {
         html,
         materializeCommitKey: null,
@@ -566,6 +848,7 @@ export function SafePreviewHtmlSink({
         statusClassName,
         statusMessage,
         statusRole,
+        windowedCommit: null,
         windowedCommitKey: null,
         stagedCommit: commit,
         stagedCommitNodes: Array.from(surface.childNodes)
@@ -574,12 +857,30 @@ export function SafePreviewHtmlSink({
       return undefined;
     }
 
+    const snapshot = captureSurfaceSnapshot(surface);
     if (null !== html) {
       // This is the sole sink for PHP-rendered, server-sanitized Preview HTML.
       surface.innerHTML = html;
     } else {
       surface.replaceChildren();
       if (!statusMessage) {
+        const mutationError = notifyDomMutation(surface, onDomMutation);
+        if (mutationError) {
+          restoreAfterDomMutationFailure(
+            surface,
+            mutationError,
+            previousVerifiedView,
+            () => restoreSurfaceSnapshot(snapshot, surface),
+            onDomMutation,
+            onDomMutationFailure
+          );
+          return undefined;
+        }
+        lastVerifiedViewRef.current = {
+          html,
+          htmlRevision,
+          windowedCommit: null
+        };
         appliedSurfaceStateRef.current = {
           html,
           materializeCommitKey: null,
@@ -587,12 +888,30 @@ export function SafePreviewHtmlSink({
           statusClassName,
           statusMessage,
           statusRole,
+          windowedCommit: null,
           windowedCommitKey: null
         };
         return undefined;
       }
       appendStatusMessage(surface, statusClassName, statusMessage, statusRole);
     }
+    const mutationError = notifyDomMutation(surface, onDomMutation);
+    if (mutationError) {
+      restoreAfterDomMutationFailure(
+        surface,
+        mutationError,
+        previousVerifiedView,
+        () => restoreSurfaceSnapshot(snapshot, surface),
+        onDomMutation,
+        onDomMutationFailure
+      );
+      return undefined;
+    }
+    lastVerifiedViewRef.current = {
+      html,
+      htmlRevision,
+      windowedCommit: null
+    };
     appliedSurfaceStateRef.current = {
       html,
       materializeCommitKey: null,
@@ -600,6 +919,7 @@ export function SafePreviewHtmlSink({
       statusClassName,
       statusMessage,
       statusRole,
+      windowedCommit: null,
       windowedCommitKey: null
     };
     return undefined;
@@ -608,6 +928,8 @@ export function SafePreviewHtmlSink({
     htmlRevision,
     materializeScheduler,
     materializeCommit,
+    onDomMutation,
+    onDomMutationFailure,
     onMaterializeComplete,
     onMaterializeFailure,
     onStagedCommit,

@@ -258,6 +258,12 @@ final class AdminAssets {
 		$custom_css    = $theme_options['customCss'];
 		$post_type     = $post_type ? sanitize_key( $post_type ) : get_post_type( $post_id );
 		$can_use_media = $this->can_use_media_picker( $post_id, $post_type, $is_new_post );
+		$wechat_math_atlas_content_version = $this->get_static_asset_version( 'assets/math/easymde-katex-glyph-atlas.json' );
+		$wechat_math_atlas_url             = add_query_arg(
+			'contentversion',
+			$wechat_math_atlas_content_version,
+			Asset::url( 'assets/math/easymde-katex-glyph-atlas.json' )
+		);
 
 		if ( 'custom' === $theme_state['markdownTheme'] && '' !== $theme_state['customCssId'] ) {
 			$has_selected_item = false;
@@ -452,9 +458,11 @@ final class AdminAssets {
 				),
 			),
 			'wechatExport'       => array(
-				'enabled'              => true,
-				'pngConversionEnabled' => $settings['images']['wechatPngExportEnabled'],
-				'strings'              => array(
+				'enabled'                         => true,
+				'pngConversionEnabled'            => $settings['images']['wechatPngExportEnabled'],
+				'wechatMathAtlasContentVersion'   => $wechat_math_atlas_content_version,
+				'wechatMathAtlasUrl'              => esc_url_raw( $wechat_math_atlas_url ),
+				'strings'                         => array(
 					'failed'            => $strings['copyWechatFailed'],
 					'failedWithUploads' => $strings['copyWechatFailedWithUploads'],
 					'success'           => $strings['copyWechatSuccess'],

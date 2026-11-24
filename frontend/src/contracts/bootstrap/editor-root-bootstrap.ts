@@ -521,7 +521,10 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     throw new EditorRootBootstrapError('editor-root-toolbar-invalid');
   }
   try {
-    wechatExport = parseWechatExportBootstrap(bootstrap.wechatExport);
+    wechatExport = parseWechatExportBootstrap(
+      bootstrap.wechatExport,
+      previewEnhancement.assetBaseUrl
+    );
   } catch {
     throw new EditorRootBootstrapError('editor-root-wechat-export-invalid');
   }

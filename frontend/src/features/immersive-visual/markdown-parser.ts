@@ -1,7 +1,8 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
-	createVisualMarkdownItParser,
 	RAW_REFERENCE_SOURCE_META_KEY,
+	TASK_LIST_MARKER_PATTERN,
+	visualMarkdownItParser,
 } from "./markdown-it-config";
 import {
 	type MarkdownToken,
@@ -29,6 +30,12 @@ import {
 } from "./visual-schema";
 
 export {
+	extractReferenceDefinitionLabels,
+	inspectReferenceDefinitionBlock,
+	type ReferenceDefinitionBlockInfo,
+	wouldReferenceDefinitionAbsorbFollowingBlock,
+} from "./markdown-it-config";
+export {
 	type ParsedImageScaleTitle,
 	parseImageScaleTitle,
 } from "./markdown-parser-inline";
@@ -48,7 +55,12 @@ export type ParsedVisualDocument = Readonly<{
 	trailingSuffix: string;
 }>;
 
-const markdownItParser = createVisualMarkdownItParser();
+type BlockMapContext = Readonly<{
+	env: Record<string, unknown>;
+	paragraphRawContents: WeakMap<ProseMirrorNode, string>;
+	preScan: PreScanResult;
+	referenceBlocks: WeakSet<ProseMirrorNode>;
+}>;
 
 function parseCellAlignmentFromToken(token: MarkdownToken): TableTextAlign {
 	const match = /text-align\s*:\s*(left|center|right)/i.exec(
@@ -65,7 +77,7 @@ function readCellAlignment(node: ProseMirrorNode | undefined): TableTextAlign {
 
 function stripTaskPrefix(
 	itemChildren: ReadonlyArray<ProseMirrorNode>,
-	referenceBlocks: WeakSet<ProseMirrorNode>,
+	context: BlockMapContext,
 ): Readonly<{ checked: boolean; children: ProseMirrorNode[] }> | null {
 	let firstContentIndex = 0;
 	while (firstContentIndex < itemChildren.length) {
@@ -73,7 +85,7 @@ function stripTaskPrefix(
 		if (
 			candidate &&
 			candidate.type === visualEditorSchema.nodes.protected_block &&
-			referenceBlocks.has(candidate)
+			context.referenceBlocks.has(candidate)
 		) {
 			firstContentIndex += 1;
 			continue;
@@ -84,23 +96,45 @@ function stripTaskPrefix(
 	if (!firstBlock || firstBlock.type !== visualEditorSchema.nodes.paragraph) {
 		return null;
 	}
+	const rawContent = context.paragraphRawContents.get(firstBlock) ?? "";
+	const rawMatch = TASK_LIST_MARKER_PATTERN.exec(rawContent);
+	if (!rawMatch?.[1]) {
+		return null;
+	}
+	const checked = rawMatch[1].toLowerCase() === "x";
+	let inlines: ProseMirrorNode[];
 	const firstInline = firstBlock.firstChild;
-	if (!firstInline?.isText || firstInline.marks.length > 0) {
-		return null;
-	}
-	const text = firstInline.text ?? "";
-	const match = /^\[([ xX])\](?:[ \t]+|$)/.exec(text);
-	if (!match?.[1]) {
-		return null;
-	}
-	const remaining = text.slice(match[0].length);
-	const inlines: ProseMirrorNode[] =
-		remaining.length > 0 ? [visualEditorSchema.text(remaining)] : [];
-	for (let i = 1; i < firstBlock.childCount; i += 1) {
-		inlines.push(firstBlock.child(i));
+	if (
+		firstInline?.isText &&
+		firstInline.marks.length === 0 &&
+		/^\[[ xX]\]/.test(firstInline.text ?? "")
+	) {
+		const text = firstInline.text ?? "";
+		// Strip `[x]` plus either horizontal whitespace or a single soft line
+		// break (`- [x]\n  Task`); hard_break children (`- [x]  \n  Task` or
+		// `- [x]\\\n  Task`) remain untouched as subsequent children.
+		const prefixMatch = /^\[[ xX]\](?:[ \t]*\n|[ \t]*)/.exec(text);
+		const remaining = text.slice(prefixMatch?.[0].length ?? 3);
+		inlines = remaining.length > 0 ? [visualEditorSchema.text(remaining)] : [];
+		for (let i = 1; i < firstBlock.childCount; i += 1) {
+			inlines.push(firstBlock.child(i));
+		}
+	} else {
+		// PHP TaskListItemMarkerParser (priority 35) consumes `[x]` before link
+		// parsing (e.g. `- [x](url)` or `- [x][ref]`), so re-parse the tail.
+		const afterMarker = rawContent.slice(3).replace(/^(?:[ \t]?\n|[ \t]+)/, "");
+		const reparsedTokens = visualMarkdownItParser.parseInline(
+			afterMarker,
+			context.env,
+		);
+		inlines = mapInlineTokens(
+			reparsedTokens[0]?.children ?? null,
+			context.preScan,
+			false,
+		);
 	}
 	return {
-		checked: match[1].toLowerCase() === "x",
+		checked,
 		children: [
 			...itemChildren.slice(0, firstContentIndex),
 			visualEditorSchema.nodes.paragraph.create(null, inlines),
@@ -272,8 +306,7 @@ function collectListItems(
 	tokens: ReadonlyArray<MarkdownToken>,
 	startIndex: number,
 	endIndex: number,
-	preScan: PreScanResult,
-	referenceBlocks: WeakSet<ProseMirrorNode>,
+	context: BlockMapContext,
 ): CollectedListItem[] {
 	const items: CollectedListItem[] = [];
 	for (let i = startIndex + 1; i < endIndex; i += 1) {
@@ -287,21 +320,20 @@ function collectListItems(
 			"list_item_close",
 		);
 		items.push({
-			children: mapBlockTokens(
-				tokens,
-				i + 1,
-				itemClose,
-				preScan,
-				referenceBlocks,
-			),
-			range: resolveOriginalRangeFromTokenMap(tokens[i]?.map, preScan),
+			children: mapBlockTokens(tokens, i + 1, itemClose, context),
+			range: resolveOriginalRangeFromTokenMap(tokens[i]?.map, context.preScan),
 		});
 		i = itemClose;
 	}
 	return items;
 }
 
-/** markdown-it hides tight-list paragraphs (`token.hidden === true`). */
+/**
+ * markdown-it hides direct tight-list paragraphs (`token.hidden === true`).
+ * Nested lists and blockquotes own their own paragraph visibility and must be
+ * skipped so a loose inner list or blockquote never forces an outer tight list
+ * to `tight: false`.
+ */
 function isTightListRange(
 	tokens: ReadonlyArray<MarkdownToken>,
 	startIndex: number,
@@ -309,7 +341,24 @@ function isTightListRange(
 ): boolean {
 	for (let i = startIndex + 1; i < endIndex; i += 1) {
 		const token = tokens[i];
-		if (token?.type === "paragraph_open" && token.hidden !== true) {
+		if (!token) {
+			continue;
+		}
+		if (
+			token.type === "bullet_list_open" ||
+			token.type === "ordered_list_open" ||
+			token.type === "blockquote_open"
+		) {
+			const closeType =
+				token.type === "bullet_list_open"
+					? "bullet_list_close"
+					: token.type === "ordered_list_open"
+						? "ordered_list_close"
+						: "blockquote_close";
+			i = findMatchingCloseIndex(tokens, i, token.type, closeType);
+			continue;
+		}
+		if (token.type === "paragraph_open" && token.hidden !== true) {
 			return false;
 		}
 	}
@@ -335,16 +384,9 @@ function mapBulletListTokens(
 	tokens: ReadonlyArray<MarkdownToken>,
 	startIndex: number,
 	endIndex: number,
-	preScan: PreScanResult,
-	referenceBlocks: WeakSet<ProseMirrorNode>,
+	context: BlockMapContext,
 ): MappedListEntry[] {
-	const items = collectListItems(
-		tokens,
-		startIndex,
-		endIndex,
-		preScan,
-		referenceBlocks,
-	);
+	const items = collectListItems(tokens, startIndex, endIndex, context);
 	if (items.length === 0) {
 		return [];
 	}
@@ -352,7 +394,11 @@ function mapBulletListTokens(
 	const marker = sanitizeBulletMarker(tokens[startIndex]?.markup);
 	const tight = isTightListRange(tokens, startIndex, endIndex);
 	const lists: MappedListEntry[] = [];
-	let currentGroup: CollectedListItem[] = [];
+	type ClassifiedItem = Readonly<{
+		entry: CollectedListItem;
+		task: ReturnType<typeof stripTaskPrefix>;
+	}>;
+	let currentGroup: ClassifiedItem[] = [];
 	let currentIsTask: boolean | null = null;
 
 	const flush = (): void => {
@@ -362,9 +408,8 @@ function mapBulletListTokens(
 		const listType = currentIsTask
 			? visualEditorSchema.nodes.task_list
 			: visualEditorSchema.nodes.bullet_list;
-		const itemNodes = currentGroup.map((entry) => {
-			const task = stripTaskPrefix(entry.children, referenceBlocks);
-			return task
+		const itemNodes = currentGroup.map(({ entry, task }) =>
+			task
 				? visualEditorSchema.nodes.task_item.create(
 						{ checked: task.checked },
 						ensureListItemChildren(task.children),
@@ -372,22 +417,23 @@ function mapBulletListTokens(
 				: visualEditorSchema.nodes.list_item.create(
 						null,
 						ensureListItemChildren(entry.children),
-					);
-		});
+					),
+		);
 		lists.push({
 			node: listType.create({ marker, tight }, itemNodes),
-			origRange: combineItemRanges(currentGroup),
+			origRange: combineItemRanges(currentGroup.map((item) => item.entry)),
 		});
 		currentGroup = [];
 	};
 
 	for (const entry of items) {
-		const isTask = stripTaskPrefix(entry.children, referenceBlocks) !== null;
+		const task = stripTaskPrefix(entry.children, context);
+		const isTask = task !== null;
 		if (currentIsTask !== null && isTask !== currentIsTask) {
 			flush();
 		}
 		currentIsTask = isTask;
-		currentGroup.push(entry);
+		currentGroup.push({ entry, task });
 	}
 	flush();
 	return lists;
@@ -489,9 +535,9 @@ function mapBlockTokensWithRanges(
 	tokens: ReadonlyArray<MarkdownToken>,
 	startIndex: number,
 	endIndex: number,
-	preScan: PreScanResult,
-	referenceBlocks: WeakSet<ProseMirrorNode>,
+	context: BlockMapContext,
 ): MappedBlockEntry[] {
+	const { paragraphRawContents, preScan, referenceBlocks } = context;
 	const entries: MappedBlockEntry[] = [];
 	let pendingTableAlign: Readonly<{
 		marker: string;
@@ -565,12 +611,19 @@ function mapBlockTokensWithRanges(
 					origRange,
 				});
 			} else {
+				const rawContent =
+					inlineToken?.type === "inline" ? inlineToken.content : "";
 				const inlines =
 					inlineToken?.type === "inline"
 						? mapInlineTokens(inlineToken.children, preScan, false)
 						: [];
+				const paragraphNode = visualEditorSchema.nodes.paragraph.create(
+					null,
+					inlines,
+				);
+				paragraphRawContents.set(paragraphNode, rawContent);
 				entries.push({
-					node: visualEditorSchema.nodes.paragraph.create(null, inlines),
+					node: paragraphNode,
 					origRange,
 				});
 			}
@@ -639,13 +692,7 @@ function mapBlockTokensWithRanges(
 				"blockquote_open",
 				"blockquote_close",
 			);
-			const inner = mapBlockTokens(
-				tokens,
-				i + 1,
-				closeIdx,
-				preScan,
-				referenceBlocks,
-			);
+			const inner = mapBlockTokens(tokens, i + 1, closeIdx, context);
 			entries.push({
 				node: visualEditorSchema.nodes.blockquote.create(
 					null,
@@ -663,13 +710,7 @@ function mapBlockTokensWithRanges(
 				"bullet_list_open",
 				"bullet_list_close",
 			);
-			const listEntries = mapBulletListTokens(
-				tokens,
-				i,
-				closeIdx,
-				preScan,
-				referenceBlocks,
-			);
+			const listEntries = mapBulletListTokens(tokens, i, closeIdx, context);
 			// A mixed task/bullet list splits into several nodes; each keeps its
 			// exact monotonic source range so an unrelated edit cannot duplicate it.
 			for (const listEntry of listEntries) {
@@ -691,13 +732,7 @@ function mapBlockTokensWithRanges(
 				Number.isInteger(parsedOrder) && parsedOrder >= 0 ? parsedOrder : 1;
 			const delimiter = token.markup === ")" ? ")" : ".";
 			const tight = isTightListRange(tokens, i, closeIdx);
-			const collected = collectListItems(
-				tokens,
-				i,
-				closeIdx,
-				preScan,
-				referenceBlocks,
-			);
+			const collected = collectListItems(tokens, i, closeIdx, context);
 			const items = collected.map((item) =>
 				visualEditorSchema.nodes.list_item.create(
 					null,
@@ -782,88 +817,11 @@ function mapBlockTokens(
 	tokens: ReadonlyArray<MarkdownToken>,
 	startIndex: number,
 	endIndex: number,
-	preScan: PreScanResult,
-	referenceBlocks: WeakSet<ProseMirrorNode>,
+	context: BlockMapContext,
 ): ProseMirrorNode[] {
-	return mapBlockTokensWithRanges(
-		tokens,
-		startIndex,
-		endIndex,
-		preScan,
-		referenceBlocks,
-	).map((entry) => entry.node);
-}
-
-export type ReferenceDefinitionBlockInfo = Readonly<{
-	isRefDef: boolean;
-	lastHasTitle: boolean;
-}>;
-
-/**
- * Reports whether `rawMarkdown` consists exclusively of CommonMark §4.7 link
- * reference definitions and whether its last definition already carries a
- * title (so a following line starting with `"`, `'`, or `(` cannot be absorbed
- * as a title).
- */
-export function inspectReferenceDefinitionBlock(
-	rawMarkdown: string,
-): ReferenceDefinitionBlockInfo {
-	if (rawMarkdown.trim().length === 0 || !rawMarkdown.includes("]:")) {
-		return { isRefDef: false, lastHasTitle: false };
-	}
-	const tokens = markdownItParser.parse(rawMarkdown, {});
-	if (
-		tokens.length === 0 ||
-		!tokens.every((token) => token.type === "reference_definition")
-	) {
-		return { isRefDef: false, lastHasTitle: false };
-	}
-	const lastToken = tokens[tokens.length - 1];
-	const lastRaw = lastToken
-		? (readRawMetaString(lastToken, RAW_REFERENCE_SOURCE_META_KEY) ??
-			rawMarkdown)
-		: rawMarkdown;
-	const probeTokens = markdownItParser.parse(`${lastRaw}\n"t"`, {});
-	const absorbedTitle =
-		probeTokens.length === 1 &&
-		probeTokens[0]?.type === "reference_definition";
-	return { isRefDef: true, lastHasTitle: !absorbedTitle };
-}
-
-/**
- * Extracts original-cased labels when `rawMarkdown` consists exclusively of
- * CommonMark §4.7 link reference definitions (including multi-line definitions).
- */
-export function extractReferenceDefinitionLabels(
-	rawMarkdown: string,
-): string[] | null {
-	if (rawMarkdown.trim().length === 0) {
-		return null;
-	}
-	const tokens = markdownItParser.parse(rawMarkdown, {});
-	if (
-		tokens.length === 0 ||
-		!tokens.every((token) => token.type === "reference_definition")
-	) {
-		return null;
-	}
-	const labels: string[] = [];
-	for (const token of tokens) {
-		const rawSource = readRawMetaString(token, RAW_REFERENCE_SOURCE_META_KEY);
-		const labelMatch =
-			rawSource !== null
-				? /^ {0,3}\[((?:\\.|[^\\\]])+)\]:/u.exec(rawSource)
-				: null;
-		if (labelMatch?.[1]) {
-			labels.push(labelMatch[1].trim().replace(/\s+/gu, " "));
-		} else {
-			const fallbackLabel = readRawMetaString(token, "label");
-			if (fallbackLabel) {
-				labels.push(fallbackLabel);
-			}
-		}
-	}
-	return labels.length > 0 ? labels : null;
+	return mapBlockTokensWithRanges(tokens, startIndex, endIndex, context).map(
+		(entry) => entry.node,
+	);
 }
 
 export function parseMarkdownWithBlockSources(
@@ -885,15 +843,14 @@ export function parseMarkdownWithBlockSources(
 		preScan,
 		tableAlignMarkers: preScan.tableAlignMarkers,
 	};
-	const tokens = markdownItParser.parse(preScan.markdown, env);
-	const referenceBlocks = new WeakSet<ProseMirrorNode>();
-	const mapped = mapBlockTokensWithRanges(
-		tokens,
-		0,
-		tokens.length,
+	const tokens = visualMarkdownItParser.parse(preScan.markdown, env);
+	const context: BlockMapContext = {
+		env,
+		paragraphRawContents: new WeakMap<ProseMirrorNode, string>(),
 		preScan,
-		referenceBlocks,
-	);
+		referenceBlocks: new WeakSet<ProseMirrorNode>(),
+	};
+	const mapped = mapBlockTokensWithRanges(tokens, 0, tokens.length, context);
 	const doc = visualEditorSchema.nodes.doc.create(
 		null,
 		mapped.length > 0
@@ -964,6 +921,6 @@ export function parseInlineMarkdownFragment(
 		return [];
 	}
 	const preScan = prescanMarkdown(markdown);
-	const tokens = markdownItParser.parseInline(preScan.markdown, {});
+	const tokens = visualMarkdownItParser.parseInline(preScan.markdown, {});
 	return mapInlineTokens(tokens[0]?.children ?? null, preScan, false);
 }

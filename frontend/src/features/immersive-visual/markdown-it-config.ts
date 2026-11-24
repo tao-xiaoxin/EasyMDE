@@ -3,6 +3,7 @@ import { decodeCommonMarkTitle } from "../../shared/image-scale-title";
 import {
 	RAW_IMAGE_TITLE_META_KEY,
 	RAW_LINK_TITLE_META_KEY,
+	readRawMetaString,
 } from "./markdown-parser-inline";
 import {
 	type PreScanResult,
@@ -487,4 +488,117 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 	);
 
 	return parser;
+}
+
+/**
+ * Exact PHP `League\CommonMark\Extension\TaskList\TaskListItemMarkerParser`
+ * prefix: literal `[ ]`, `[x]`, or `[X]` followed by at least one character
+ * other than ASCII space/tab (`Cursor::getNextNonSpaceCharacter() !== null`).
+ */
+export const TASK_LIST_MARKER_PATTERN = /^\[([ xX])\](?=[ \t]*[^ \t])/;
+
+export const visualMarkdownItParser = createVisualMarkdownItParser();
+
+export type ReferenceDefinitionBlockInfo = Readonly<{
+	isRefDef: boolean;
+	lastHasTitle: boolean;
+	lastRaw: string;
+}>;
+
+/**
+ * Reports whether `rawMarkdown` consists exclusively of CommonMark §4.7 link
+ * reference definitions, whether its last definition already carries a title,
+ * and the container-stripped raw source of that trailing definition.
+ */
+export function inspectReferenceDefinitionBlock(
+	rawMarkdown: string,
+): ReferenceDefinitionBlockInfo {
+	if (rawMarkdown.trim().length === 0 || !rawMarkdown.includes("]:")) {
+		return { isRefDef: false, lastHasTitle: false, lastRaw: "" };
+	}
+	const tokens = visualMarkdownItParser.parse(rawMarkdown, {});
+	if (
+		tokens.length === 0 ||
+		!tokens.every((token) => token.type === "reference_definition")
+	) {
+		return { isRefDef: false, lastHasTitle: false, lastRaw: "" };
+	}
+	const lastToken = tokens[tokens.length - 1];
+	const lastRaw = lastToken
+		? (readRawMetaString(lastToken, RAW_REFERENCE_SOURCE_META_KEY) ??
+			rawMarkdown)
+		: rawMarkdown;
+	const probeTokens = visualMarkdownItParser.parse(`${lastRaw}\n"t"`, {});
+	const absorbedTitle =
+		probeTokens.length === 1 &&
+		probeTokens[0]?.type === "reference_definition";
+	return { isRefDef: true, lastHasTitle: !absorbedTitle, lastRaw };
+}
+
+/**
+ * Reports whether placing `followingMarkdown` directly on the next line after
+ * a title-less CommonMark §4.7 reference definition (`lastRaw`) would cause
+ * the reference parser to absorb one or more lines of `followingMarkdown` as
+ * the definition's title.
+ */
+export function wouldReferenceDefinitionAbsorbFollowingBlock(
+	lastRaw: string,
+	followingMarkdown: string,
+): boolean {
+	if (lastRaw.length === 0 || followingMarkdown.length === 0) {
+		return false;
+	}
+	const nl = followingMarkdown.indexOf("\n");
+	const firstLine =
+		nl === -1 ? followingMarkdown : followingMarkdown.slice(0, nl);
+	if (!/^[ \t]*["'(]/.test(firstLine)) {
+		return false;
+	}
+	const baseLineCount = lastRaw.split("\n").length;
+	const combinedTokens = visualMarkdownItParser.parse(
+		`${lastRaw}\n${followingMarkdown}`,
+		{},
+	);
+	const firstToken = combinedTokens[0];
+	if (firstToken?.type !== "reference_definition") {
+		return true;
+	}
+	const endLine = firstToken.map?.[1];
+	return typeof endLine !== "number" || endLine > baseLineCount;
+}
+
+/**
+ * Extracts original-cased labels when `rawMarkdown` consists exclusively of
+ * CommonMark §4.7 link reference definitions (including multi-line definitions).
+ */
+export function extractReferenceDefinitionLabels(
+	rawMarkdown: string,
+): string[] | null {
+	if (rawMarkdown.trim().length === 0) {
+		return null;
+	}
+	const tokens = visualMarkdownItParser.parse(rawMarkdown, {});
+	if (
+		tokens.length === 0 ||
+		!tokens.every((token) => token.type === "reference_definition")
+	) {
+		return null;
+	}
+	const labels: string[] = [];
+	for (const token of tokens) {
+		const rawSource = readRawMetaString(token, RAW_REFERENCE_SOURCE_META_KEY);
+		const labelMatch =
+			rawSource !== null
+				? /^ {0,3}\[((?:\\.|[^\\\]])+)\]:/u.exec(rawSource)
+				: null;
+		if (labelMatch?.[1]) {
+			labels.push(labelMatch[1].trim().replace(/\s+/gu, " "));
+		} else {
+			const fallbackLabel = readRawMetaString(token, "label");
+			if (fallbackLabel) {
+				labels.push(fallbackLabel);
+			}
+		}
+	}
+	return labels.length > 0 ? labels : null;
 }

@@ -18,6 +18,7 @@ import {
 	escapeTablePipes,
 } from "./markdown-escape";
 import type { ParsedVisualDocument } from "./markdown-parser";
+import { wouldRawHtmlInterruptParagraph } from "./markdown-prescanner-inline";
 import {
 	reconcileTableAlignComment,
 	type TableAlignSnapshot,
@@ -451,7 +452,20 @@ function serializeInlineContent(
 				typeof child.attrs.rawMarkdown === "string"
 					? child.attrs.rawMarkdown
 					: "";
-			output += inTableCell ? escapeTablePipes(raw) : raw;
+			if (inTableCell) {
+				output += escapeTablePipes(raw);
+			} else {
+				const continuationMatch =
+					!inHeading &&
+					child.attrs.kind === "raw-inline" &&
+					wouldRawHtmlInterruptParagraph(raw)
+						? /\n( {0,3})$/.exec(output)
+						: null;
+				const pad = continuationMatch
+					? " ".repeat(4 - (continuationMatch[1]?.length ?? 0))
+					: "";
+				output += `${pad}${raw}`;
+			}
 			continue;
 		}
 

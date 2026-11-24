@@ -366,6 +366,91 @@ function findGfmTableEnd(
 	return end;
 }
 export const FOOTNOTE_DEF_LINE = /^ {0,3}\[\^([^\s\]]+)\]:(?:[ \t]|$)/;
+
+/**
+ * Reports whether a single line (stripped of container indentation) is a
+ * complete CommonMark §4.7 link reference definition so the prescanner keeps
+ * `paragraphOpen = false` and never injects inline sentinels into it or treats
+ * a following 4-space-indented code block as a paragraph continuation.
+ */
+function isValidSingleLineRefDef(text: string): boolean {
+	if (!text.startsWith("[")) {
+		return false;
+	}
+	const length = text.length;
+	let pos = 1;
+	let hasNonSpace = false;
+	while (pos < length) {
+		const ch = text[pos] ?? "";
+		if (ch === "[") return false;
+		if (ch === "]") break;
+		if (ch === "\\" && pos + 1 < length) {
+			hasNonSpace = true;
+			pos += 2;
+			continue;
+		}
+		if (ch !== " " && ch !== "\t") hasNonSpace = true;
+		pos += 1;
+	}
+	if (
+		!hasNonSpace ||
+		pos >= length ||
+		text[pos] !== "]" ||
+		text[pos + 1] !== ":"
+	) {
+		return false;
+	}
+	pos += 2;
+	while (pos < length && (text[pos] === " " || text[pos] === "\t")) pos += 1;
+	if (pos >= length) return false;
+	if (text[pos] === "<") {
+		pos += 1;
+		while (pos < length && text[pos] !== ">") {
+			if (text[pos] === "<") return false;
+			pos += text[pos] === "\\" && pos + 1 < length ? 2 : 1;
+		}
+		if (pos >= length || text[pos] !== ">") return false;
+		pos += 1;
+	} else {
+		let parenDepth = 0;
+		const destStart = pos;
+		while (pos < length && text[pos] !== " " && text[pos] !== "\t") {
+			const ch = text[pos] ?? "";
+			const code = ch.charCodeAt(0);
+			if (code < 0x20 || code === 0x7f) return false;
+			if (ch === "\\" && pos + 1 < length) {
+				pos += 2;
+				continue;
+			}
+			if (ch === "(") {
+				parenDepth += 1;
+				if (parenDepth > 32) return false;
+			} else if (ch === ")") {
+				parenDepth -= 1;
+				if (parenDepth < 0) return false;
+			}
+			pos += 1;
+		}
+		if (pos === destStart || parenDepth !== 0) return false;
+	}
+	const afterDest = pos;
+	while (pos < length && (text[pos] === " " || text[pos] === "\t")) pos += 1;
+	if (pos === length) return true;
+	if (pos === afterDest) return false;
+	const opener = text[pos];
+	const closer =
+		opener === "(" ? ")" : opener === '"' || opener === "'" ? opener : "";
+	if (closer.length === 0) return false;
+	pos += 1;
+	while (pos < length && text[pos] !== closer) {
+		if (opener === "(" && text[pos] === "(") return false;
+		pos += text[pos] === "\\" && pos + 1 < length ? 2 : 1;
+	}
+	if (pos >= length || text[pos] !== closer) return false;
+	pos += 1;
+	while (pos < length && (text[pos] === " " || text[pos] === "\t")) pos += 1;
+	return pos === length;
+}
 function matchHtmlBlockOpener(
 	line: string,
 ): Readonly<{ tagName: string; selfClosing: boolean }> | null {
@@ -805,12 +890,27 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			}
 		}
 
+		// 8. Standalone single-line link reference definitions do not open a
+		// paragraph, so a following 4-space-indented code block stays code.
+		if (
+			!paragraphOpen &&
+			relativeIndent >= 0 &&
+			relativeIndent <= 3 &&
+			isValidSingleLineRefDef(analysis.content)
+		) {
+			pushOutputLine(line, { end: i + 1, start: i });
+			paragraphOpen = false;
+			i += 1;
+			continue;
+		}
+
 		pushOutputLine(
 			extractInlineProtectedSyntax(
 				line,
 				sentinel,
 				protectedInlines,
 				isTableRow,
+				!paragraphOpen,
 			),
 			{ end: i + 1, start: i },
 		);

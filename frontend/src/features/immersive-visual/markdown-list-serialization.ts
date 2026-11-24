@@ -2,14 +2,17 @@ import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
 	inspectReferenceDefinitionBlock,
 	type ReferenceDefinitionBlockInfo,
-} from "./markdown-parser";
+	TASK_LIST_MARKER_PATTERN,
+	wouldReferenceDefinitionAbsorbFollowingBlock,
+} from "./markdown-it-config";
 import { sanitizeBulletMarker } from "./visual-schema";
 
 /**
  * List serialization for the immersive visual editor, including tight-list
- * preservation for `paragraph + horizontal_rule` (`***`), leading/adjacent
- * CommonMark §4.7 reference definitions, and task items whose checkbox
- * paragraph follows leading reference definitions.
+ * preservation for `paragraph + horizontal_rule` (`***`), leaf blocks
+ * (`heading`, `code_block`, `horizontal_rule`), leading/adjacent CommonMark
+ * §4.7 reference definitions, literal `\[x]` escape preservation, and task
+ * items whose checkbox paragraph follows leading reference definitions.
  */
 
 export type BlockSerializer = (node: ProseMirrorNode) => string;
@@ -17,6 +20,7 @@ export type BlockSerializer = (node: ProseMirrorNode) => string;
 const NON_REF_DEF_INFO: ReferenceDefinitionBlockInfo = {
 	isRefDef: false,
 	lastHasTitle: false,
+	lastRaw: "",
 };
 
 const refDefInfoCache = new WeakMap<
@@ -99,13 +103,20 @@ function canInterruptPreviousInTightList(
 		if (serialized.length === 0) {
 			return false;
 		}
-		if (!prevRef.lastHasTitle) {
-			const nl = serialized.indexOf("\n");
-			const firstLine = nl === -1 ? serialized : serialized.slice(0, nl);
-			if (/^[ \t]*["'(]/.test(firstLine)) {
-				return false;
-			}
+		if (
+			!prevRef.lastHasTitle &&
+			wouldReferenceDefinitionAbsorbFollowingBlock(prevRef.lastRaw, serialized)
+		) {
+			return false;
 		}
+		return true;
+	}
+	if (
+		(prev.type.name === "heading" ||
+			prev.type.name === "code_block" ||
+			prev.type.name === "horizontal_rule") &&
+		serialized.length > 0
+	) {
 		return true;
 	}
 	const name = node.type.name;
@@ -122,6 +133,20 @@ function canInterruptPreviousInTightList(
 		name === "heading" ||
 		name === "horizontal_rule"
 	);
+}
+
+function escapeLiteralTaskPrefix(
+	child: ProseMirrorNode,
+	serialized: string,
+): string {
+	if (
+		child.type.name !== "paragraph" ||
+		child.firstChild?.marks.some((mark) => mark.type.name === "link") ||
+		!TASK_LIST_MARKER_PATTERN.test(serialized)
+	) {
+		return serialized;
+	}
+	return `\\${serialized}`;
 }
 
 function findLeadingRefTaskParagraphIndex(
@@ -147,6 +172,7 @@ function findLeadingRefTaskParagraphIndex(
 
 function serializeListItemBody(
 	itemNode: ProseMirrorNode,
+	isTaskList: boolean,
 	loose: boolean,
 	serializeBlock: BlockSerializer,
 	blankBeforeNestedList: boolean,
@@ -154,6 +180,11 @@ function serializeListItemBody(
 	deferredTaskParagraphIndex: number,
 ): string {
 	const startIndex = hasPhantomParagraph ? 1 : 0;
+	const taskParagraphIndex = isTaskList
+		? deferredTaskParagraphIndex >= 0
+			? deferredTaskParagraphIndex
+			: startIndex
+		: -1;
 	const parts: string[] = [];
 	for (let i = startIndex; i < itemNode.childCount; i += 1) {
 		const child = itemNode.child(i);
@@ -169,6 +200,8 @@ function serializeListItemBody(
 			const taskMarker = itemNode.attrs.checked ? "[x]" : "[ ]";
 			serialized =
 				serialized.length > 0 ? `${taskMarker} ${serialized}` : taskMarker;
+		} else if (!isTaskList || i > taskParagraphIndex) {
+			serialized = escapeLiteralTaskPrefix(child, serialized);
 		}
 		if (i === startIndex) {
 			const startsWithInlineRef =
@@ -209,17 +242,19 @@ export function serializeListItemAt(
 	blankBeforeNestedList: boolean,
 ): string {
 	const item = listNode.child(index);
+	const isTaskList = listNode.type.name === "task_list";
 	const firstChild = item.child(0);
 	const hasPhantomParagraph =
 		item.childCount > 1 &&
 		firstChild.type.name === "paragraph" &&
 		firstChild.childCount === 0;
 	const deferredTaskParagraphIndex =
-		listNode.type.name === "task_list" && hasPhantomParagraph
+		isTaskList && hasPhantomParagraph
 			? findLeadingRefTaskParagraphIndex(item, 1)
 			: -1;
 	const body = serializeListItemBody(
 		item,
+		isTaskList,
 		loose,
 		serializeBlock,
 		blankBeforeNestedList,

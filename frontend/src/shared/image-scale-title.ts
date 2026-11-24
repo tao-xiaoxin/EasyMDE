@@ -109,12 +109,19 @@ function decodeCommonMarkHtmlEntity(entity: string): string {
 }
 
 /**
- * Decodes CommonMark §2.4 backslash-escaped ASCII punctuation and strict HTML5
- * entities in a raw Markdown title body, mirroring PHP
- * `League\CommonMark\Util\RegexHelper::unescape()` 1:1 in two passes.
+ * Decodes CommonMark §2.3 NUL replacement, §2.4 backslash-escaped ASCII
+ * punctuation, and §6.2 strict HTML5 entities in a raw Markdown title body,
+ * mirroring PHP `League\CommonMark\Util\RegexHelper::unescape()` 1:1.
  */
 export function decodeCommonMarkTitle(rawTitle: string): string {
-	const unescaped = unescapeCommonMarkAsciiPunctuation(rawTitle);
+	// CommonMark §2.3 replaces raw U+0000 characters in Markdown input with
+	// U+FFFD before parsing and entity decoding. Entity-decoded zero-padded
+	// decimal NULs (`&#00;`, `&#000;`, ...) are produced later and stripped by
+	// WordPress `wp_kses_no_null()`.
+	const normalized = rawTitle.includes("\u0000")
+		? rawTitle.split("\u0000").join("\uFFFD")
+		: rawTitle;
+	const unescaped = unescapeCommonMarkAsciiPunctuation(normalized);
 	if (!unescaped.includes("&")) {
 		return unescaped;
 	}

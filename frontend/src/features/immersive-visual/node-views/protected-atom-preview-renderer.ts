@@ -20,6 +20,8 @@ import {
 	THEMATIC_BREAK,
 } from "../markdown-prescanner";
 import {
+	createInlineHtmlScanState,
+	execCommonMarkInlineHtmlToken,
 	execInlineHtmlCloseTag,
 	execInlineHtmlOpenTag,
 	skipInlineCodeSpan,
@@ -81,13 +83,14 @@ function isStandaloneHtmlTagLine(content: string): boolean {
 }
 
 /**
- * Strip CommonMark inline HTML tags and comments outside backtick code spans
- * using quote-aware sticky regexes in O(L) without per-tag string slicing.
+ * Strip CommonMark §6.6 inline raw HTML tokens (tags, comments, declarations,
+ * PIs, CDATA) outside backtick code spans in O(L).
  */
 function stripInlineHtmlOutsideCode(line: string): string {
 	let out = "";
 	let i = 0;
 	const len = line.length;
+	const scanState = createInlineHtmlScanState();
 	while (i < len) {
 		const ch = line[i] ?? "";
 		if (ch === "`") {
@@ -97,17 +100,9 @@ function stripInlineHtmlOutsideCode(line: string): string {
 			continue;
 		}
 		if (ch === "<") {
-			if (line.startsWith("<!--", i)) {
-				const endComment = line.indexOf("-->", i + 4);
-				if (endComment >= 0) {
-					i = endComment + 3;
-					continue;
-				}
-			}
-			const tagMatch =
-				execInlineHtmlOpenTag(line, i) ?? execInlineHtmlCloseTag(line, i);
-			if (tagMatch) {
-				i += tagMatch[0].length;
+			const matched = execCommonMarkInlineHtmlToken(line, i, scanState);
+			if (matched !== null) {
+				i += matched.length;
 				continue;
 			}
 		}

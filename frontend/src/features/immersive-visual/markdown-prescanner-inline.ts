@@ -30,8 +30,37 @@ const PAIRED_INLINE_HTML_TAGS: ReadonlySet<string> = new Set([
 const INLINE_HTML_OPEN_TAG_STICKY =
 	/<([a-zA-Z][a-zA-Z0-9-]*)(?:[ \t]+[a-zA-Z_:][a-zA-Z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^\s"'=<>`]+|'[^'\n]*'|"[^"\n]*"))?)*[ \t]*(\/?)>/y;
 const INLINE_HTML_CLOSE_TAG_STICKY = /<\/([a-zA-Z][a-zA-Z0-9-]*)[ \t]*>/y;
+const INLINE_HTML_DECLARATION_NAME_STICKY = /<![A-Za-z]+/y;
 const TABLE_BR_STICKY = /<br[ \t]*\/?>/iy;
 const FOOTNOTE_REF_STICKY = /\[\^([^\s\]]+)\]/y;
+
+/**
+ * CommonMark §4.6 Types 1–6 (plus prescanner `audio`/`video`/`search` block
+ * tags) that would interrupt an open paragraph if serialized at 0–3 spaces on
+ * a continuation line instead of staying inline HTML.
+ */
+const HTML_BLOCK_INTERRUPTING_PATTERN =
+	/^(?:<!--|<\?|<!\[CDATA\[|<![A-Za-z]|<(?:script|pre|textarea|style)(?:[\s>]|$)|<\/?(?:address|article|aside|audio|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|source|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul|video)(?:[\s>]|\/?>|$))/i;
+
+export type InlineHtmlScanState = {
+	noAngleClose: boolean;
+	noCdataClose: boolean;
+	noCommentClose: boolean;
+	noPiClose: boolean;
+};
+
+export function createInlineHtmlScanState(): InlineHtmlScanState {
+	return {
+		noAngleClose: false,
+		noCdataClose: false,
+		noCommentClose: false,
+		noPiClose: false,
+	};
+}
+
+export function wouldRawHtmlInterruptParagraph(raw: string): boolean {
+	return HTML_BLOCK_INTERRUPTING_PATTERN.test(raw);
+}
 
 export function execInlineHtmlOpenTag(
 	line: string,
@@ -47,6 +76,83 @@ export function execInlineHtmlCloseTag(
 ): RegExpExecArray | null {
 	INLINE_HTML_CLOSE_TAG_STICKY.lastIndex = index;
 	return INLINE_HTML_CLOSE_TAG_STICKY.exec(line);
+}
+
+/**
+ * Matches one CommonMark §6.6 inline raw HTML token at `index` (comment,
+ * CDATA, declaration, processing instruction, open tag, or closing tag)
+ * matching PHP `League\CommonMark\Util\RegexHelper::PARTIAL_HTMLTAG`. Never
+ * matches `<https://...>` or `<user@example.com>` autolinks.
+ */
+export function execCommonMarkInlineHtmlToken(
+	line: string,
+	index: number,
+	scanState?: InlineHtmlScanState,
+): string | null {
+	if (line[index] !== "<") {
+		return null;
+	}
+	const next = line[index + 1];
+	if (next === "!") {
+		if (line.startsWith("<!--", index)) {
+			if (line.startsWith("<!-->", index)) {
+				return "<!-->";
+			}
+			if (line.startsWith("<!--->", index)) {
+				return "<!--->";
+			}
+			if (!scanState?.noCommentClose) {
+				const closePos = line.indexOf("-->", index + 4);
+				if (closePos >= 0) {
+					return line.slice(index, closePos + 3);
+				}
+				if (scanState) {
+					scanState.noCommentClose = true;
+				}
+			}
+			return null;
+		}
+		if (line.startsWith("<![CDATA[", index)) {
+			if (!scanState?.noCdataClose) {
+				const closePos = line.indexOf("]]>", index + 9);
+				if (closePos >= 0) {
+					return line.slice(index, closePos + 3);
+				}
+				if (scanState) {
+					scanState.noCdataClose = true;
+				}
+			}
+			return null;
+		}
+		INLINE_HTML_DECLARATION_NAME_STICKY.lastIndex = index;
+		const declName = INLINE_HTML_DECLARATION_NAME_STICKY.exec(line);
+		if (declName && !scanState?.noAngleClose) {
+			const closePos = line.indexOf(">", index + declName[0].length);
+			if (closePos >= 0) {
+				return line.slice(index, closePos + 1);
+			}
+			if (scanState) {
+				scanState.noAngleClose = true;
+			}
+		}
+		return null;
+	}
+	if (next === "?") {
+		if (!scanState?.noPiClose) {
+			const closePos = line.indexOf("?>", index + 2);
+			if (closePos >= 0) {
+				return line.slice(index, closePos + 2);
+			}
+			if (scanState) {
+				scanState.noPiClose = true;
+			}
+		}
+		return null;
+	}
+	if (next === "/") {
+		return execInlineHtmlCloseTag(line, index)?.[0] ?? null;
+	}
+	return execInlineHtmlOpenTag(line, index)?.[0] ?? null;
 }
 
 function hasUnescapedPipe(text: string): boolean {
@@ -179,11 +285,13 @@ export function extractInlineProtectedSyntax(
 	sentinel: string,
 	protectedInlines: Map<string, ProtectedInlineEntry>,
 	isTableRow: boolean,
+	allowRefDefDest = false,
 ): string {
 	let result = "";
 	let index = 0;
 	const length = line.length;
 	const unclosedTagBoundary = new Map<string, number>();
+	const htmlScanState = createInlineHtmlScanState();
 
 	const allocateToken = (
 		kind: ProtectedInlineKind,
@@ -197,8 +305,8 @@ export function extractInlineProtectedSyntax(
 	while (index < length) {
 		const ch = line[index] ?? "";
 
-		// Preserve inline code spans verbatim so math/footnotes inside backticks
-		// stay literal and never allocate sentinels.
+		// Preserve inline code spans verbatim so math/footnotes/HTML inside
+		// backticks stay literal and never allocate sentinels.
 		if (ch === "`" && !isEscapedAt(line, index)) {
 			const codeEnd = skipInlineCodeSpan(line, index);
 			result += line.slice(index, codeEnd);
@@ -228,6 +336,48 @@ export function extractInlineProtectedSyntax(
 				result += line.slice(index, cursor);
 				index = cursor;
 				continue;
+			}
+		}
+
+		// Angle-bracketed CommonMark §4.7 reference destinations (`[r]: <...>`)
+		// must keep their raw `<` / `>` delimiters intact for markdown-it's
+		// reference block rule (e.g. rejecting zero-whitespace `[r]: </dest>"t"`).
+		if (
+			allowRefDefDest &&
+			ch === "]" &&
+			line[index + 1] === ":" &&
+			!isEscapedAt(line, index)
+		) {
+			let cursor = index + 2;
+			while (
+				cursor < length &&
+				(line[cursor] === " " || line[cursor] === "\t")
+			) {
+				cursor += 1;
+			}
+			if (line[cursor] === "<") {
+				let destEnd = cursor + 1;
+				while (destEnd < length) {
+					const cur = line[destEnd] ?? "";
+					if (cur === "\\") {
+						destEnd += 2;
+						continue;
+					}
+					if (cur === "<" || cur === "\n") {
+						destEnd = -1;
+						break;
+					}
+					if (cur === ">") {
+						destEnd += 1;
+						break;
+					}
+					destEnd += 1;
+				}
+				if (destEnd > cursor + 1 && line[destEnd - 1] === ">") {
+					result += line.slice(index, destEnd);
+					index = destEnd;
+					continue;
+				}
 			}
 		}
 
@@ -339,33 +489,34 @@ export function extractInlineProtectedSyntax(
 			}
 		}
 
-		// Inline HTML comment: <!-- ... -->
-		if (ch === "<" && line.startsWith("<!--", index)) {
-			const closeComment = line.indexOf("-->", index + 4);
-			if (closeComment >= 0) {
-				result += allocateToken(
-					"raw-inline",
-					line.slice(index, closeComment + 3),
-				);
-				index = closeComment + 3;
-				continue;
-			}
-		}
-
-		// Allowed inline HTML spans/tags (e.g. <u>text</u>, <u>*italic*</u>,
-		// <u>nested <mark>inner</mark></u>, <sub>2</sub>, <kbd>⌘</kbd>, or
-		// cell-split tags in GFM tables): preserve verbatim as a protected
-		// inline atom without crossing table cell pipes or escaping `<`.
+		// Allowed paired phrasing HTML spans/tags (e.g. <u>text</u>, <u>*italic*</u>,
+		// <sub>2</sub>, <kbd>⌘</kbd>) and all other CommonMark §6.6 inline raw
+		// HTML tokens (open/close tags such as <div>/</div>, comments, declarations,
+		// PIs, CDATA): preserve verbatim as protected inline atoms without crossing
+		// table cell pipes or escaping `<` on edits.
 		if (ch === "<" && !isEscapedAt(line, index)) {
-			const matchedHtml = matchAllowedInlineHtml(
+			const matchedPairedHtml = matchAllowedInlineHtml(
 				line,
 				index,
 				isTableRow,
 				unclosedTagBoundary,
 			);
-			if (matchedHtml !== null) {
-				result += allocateToken("raw-inline", matchedHtml);
-				index += matchedHtml.length;
+			if (matchedPairedHtml !== null) {
+				result += allocateToken("raw-inline", matchedPairedHtml);
+				index += matchedPairedHtml.length;
+				continue;
+			}
+			const matchedRawHtml = execCommonMarkInlineHtmlToken(
+				line,
+				index,
+				htmlScanState,
+			);
+			if (
+				matchedRawHtml !== null &&
+				!(isTableRow && hasUnescapedPipe(matchedRawHtml))
+			) {
+				result += allocateToken("raw-inline", matchedRawHtml);
+				index += matchedRawHtml.length;
 				continue;
 			}
 		}

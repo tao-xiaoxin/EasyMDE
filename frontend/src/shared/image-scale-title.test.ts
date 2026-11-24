@@ -463,4 +463,57 @@ describe("shared image-scale title grammar", () => {
 			status: "none",
 		});
 	});
+
+	it("normalizes raw Markdown U+0000 to U+FFFD per CommonMark §2.3 before entity decoding while keeping entity-decoded &#000; NUL stripping (Track A #7)", () => {
+		expect(decodeCommonMarkTitle("\u0000{width=50%}")).toBe(
+			"\uFFFD{width=50%}",
+		);
+		expect(decodeCommonMarkTitle("{width=50%}\u0000")).toBe(
+			"{width=50%}\uFFFD",
+		);
+		expect(decodeCommonMarkTitle("Caption \u0000{width=50%}")).toBe(
+			"Caption \uFFFD{width=50%}",
+		);
+		expect(decodeCommonMarkTitle("&#000;{width=50%}")).toBe("{width=50%}");
+
+		// Matches PHP MarkdownRenderer::render() + WP KSES:
+		// raw NUL becomes U+FFFD before scale parsing -> invalid/none, while
+		// entity-decoded `&#000;` produces NUL after §2.3 -> stripped by wp_kses_no_null.
+		expect(parseEffectiveImageScaleTitle("\u0000{width=50%}")).toEqual({
+			status: "invalid",
+		});
+		expect(parseEffectiveImageScaleTitle("{width=50%}\u0000")).toEqual({
+			status: "none",
+		});
+		expect(parseEffectiveImageScaleTitle("Caption \u0000{width=50%}")).toEqual({
+			status: "invalid",
+		});
+		expect(parseEffectiveImageScaleTitle("{width=50\u0000%}")).toEqual({
+			status: "invalid",
+		});
+		expect(parseEffectiveImageScaleTitle("\\\u0000{width=50%}")).toEqual({
+			status: "invalid",
+		});
+		expect(parseEffectiveImageScaleTitle("\u0000 {width=50%}")).toEqual({
+			markerLength: 11,
+			markerOffset: 2,
+			scale: 50,
+			status: "valid",
+			title: "\uFFFD",
+		});
+		expect(parseEffectiveImageScaleTitle("&#000;{width=50%}")).toEqual({
+			markerLength: 11,
+			markerOffset: 0,
+			scale: 50,
+			status: "valid",
+			title: null,
+		});
+		expect(parseEffectiveImageScaleTitle("&#00;{width=50%}")).toEqual({
+			markerLength: 11,
+			markerOffset: 0,
+			scale: 50,
+			status: "valid",
+			title: null,
+		});
+	});
 });

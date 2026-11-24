@@ -22,6 +22,12 @@ const contractSpec = {
 	resourceReferencedByScript: true,
 	label: "build contract",
 };
+const FIRST_PARTY_FORBIDDEN_SCRIPT_PATTERNS = [
+	{ pattern: /frontend\/src/, label: "frontend source path" },
+	{ pattern: /\.at\(/, label: "post-ES2020 .at() call" },
+	{ pattern: /Object\.hasOwn\(/, label: "post-ES2020 Object.hasOwn() call" },
+	{ pattern: /\.replaceAll\(/, label: "post-ES2020 .replaceAll() call" },
+];
 const productionSpec = {
 	outputRoot: join(repositoryRoot, "assets/build"),
 	sourceEntry: "frontend/src/entrypoints/admin-editor.tsx",
@@ -52,12 +58,7 @@ const productionSpec = {
 		{ pattern: /\bwp\.element\b/, label: "WordPress element runtime" },
 		{ pattern: /\bwp\.i18n\b/, label: "WordPress i18n runtime" },
 	],
-	forbiddenScriptPatterns: [
-		{ pattern: /frontend\/src/, label: "frontend source path" },
-		{ pattern: /\.at\(/, label: "post-ES2020 .at() call" },
-		{ pattern: /Object\.hasOwn\(/, label: "post-ES2020 Object.hasOwn() call" },
-		{ pattern: /\.replaceAll\(/, label: "post-ES2020 .replaceAll() call" },
-	],
+	forbiddenScriptPatterns: FIRST_PARTY_FORBIDDEN_SCRIPT_PATTERNS,
 };
 const adminEditorLoaderProductionSpec = {
 	outputRoot: join(repositoryRoot, "assets/build/admin-editor-loader"),
@@ -80,6 +81,7 @@ const adminEditorLoaderProductionSpec = {
 		{ pattern: /MutationObserver/, label: "editor DOM gate" },
 		{ pattern: /pagehide/, label: "editor loader teardown" },
 	],
+	forbiddenScriptPatterns: FIRST_PARTY_FORBIDDEN_SCRIPT_PATTERNS,
 };
 const adminEditorLoaderProductionCheckRoot = join(
 	repositoryRoot,
@@ -101,6 +103,7 @@ const codeCopyProductionSpec = {
 	label: "code-copy production build",
 	requiredRuntimePattern: /easymde-code-copy__button/,
 	requiredRuntimeLabel: "code-copy runtime",
+	forbiddenScriptPatterns: FIRST_PARTY_FORBIDDEN_SCRIPT_PATTERNS,
 };
 const codeCopyProductionCheckRoot = join(
 	repositoryRoot,
@@ -118,6 +121,7 @@ const settingsProductionSpec = {
 	label: "settings-center production build",
 	requiredRuntimePattern: /EasyMDESettingsCenterBootstrap/,
 	requiredRuntimeLabel: "settings-center bootstrap",
+	forbiddenScriptPatterns: FIRST_PARTY_FORBIDDEN_SCRIPT_PATTERNS,
 };
 const settingsProductionCheckRoot = join(
 	repositoryRoot,
@@ -143,6 +147,7 @@ const enhancementsProductionSpec = {
 			label: "Mermaid strict security level",
 		},
 	],
+	forbiddenScriptPatterns: FIRST_PARTY_FORBIDDEN_SCRIPT_PATTERNS,
 };
 const enhancementsProductionCheckRoot = join(
 	repositoryRoot,
@@ -160,6 +165,7 @@ const bootstrapProductionSpec = {
 	label: "frontend bootstrap production build",
 	requiredRuntimePattern: /DOMContentLoaded/,
 	requiredRuntimeLabel: "frontend DOM bootstrap",
+	forbiddenScriptPatterns: FIRST_PARTY_FORBIDDEN_SCRIPT_PATTERNS,
 };
 const bootstrapProductionCheckRoot = join(
 	repositoryRoot,
@@ -179,6 +185,7 @@ const mermaidProductionSpec = {
 		{ pattern: /\.mermaid=/, label: "Mermaid browser runtime" },
 		{ pattern: /startOnLoad/, label: "Mermaid configuration" },
 	],
+	// Upstream mermaid@10.9.6 runtime bundle is intentionally exempt from FIRST_PARTY_FORBIDDEN_SCRIPT_PATTERNS.
 };
 const mermaidProductionCheckRoot = join(
 	repositoryRoot,
@@ -196,6 +203,7 @@ const mediaPickerProductionSpec = {
 	label: "media picker bridge production build",
 	requiredRuntimePattern: /easymde-media-picker-connect/,
 	requiredRuntimeLabel: "media picker bridge handshake",
+	forbiddenScriptPatterns: FIRST_PARTY_FORBIDDEN_SCRIPT_PATTERNS,
 };
 const mediaPickerProductionCheckRoot = join(
 	repositoryRoot,
@@ -213,6 +221,7 @@ const editorBlockIndexWorkerProductionSpec = {
 	label: "editor block-index worker production build",
 	requiredRuntimePattern: /editor-block-index/,
 	requiredRuntimeLabel: "editor block-index worker protocol",
+	forbiddenScriptPatterns: FIRST_PARTY_FORBIDDEN_SCRIPT_PATTERNS,
 };
 const editorBlockIndexWorkerProductionCheckRoot = join(
 	repositoryRoot,

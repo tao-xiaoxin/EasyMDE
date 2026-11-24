@@ -1848,6 +1848,77 @@ describe('wechat-mermaid-background', () => {
       });
     });
 
+    it('propagates blockedImageEncountered from source for directSvgCapture: false when opacity > 0 and leaves opacity: 0 unblocked', () => {
+      const canvas = document.createElement('div');
+      canvas.className = 'easymde-immersive-preview-canvas';
+      const source = document.createElement('div');
+      source.className = 'easymde-mermaid';
+      canvas.append(source);
+      document.body.append(canvas);
+
+      try {
+        for (const visibleOpacity of ['1', '0.5'] as const) {
+          const blockedReader = makeReader(
+            new Map<Element, Readonly<Record<string, string>>>([
+              [
+                source,
+                {
+                  'background-color': 'rgba(255, 0, 0, 0.5)',
+                  'background-image': 'url("https://evil.example/bg.png")',
+                  opacity: visibleOpacity,
+                },
+              ],
+              [
+                canvas,
+                {
+                  'background-color': 'rgb(255, 255, 255)',
+                  'background-image': 'linear-gradient(green, blue)',
+                },
+              ],
+            ]),
+          );
+          expect(
+            resolveMermaidInheritedBackground(source, blockedReader, {
+              directSvgCapture: false,
+            }),
+            `directSvgCapture: false opacity=${visibleOpacity}`,
+          ).toEqual({
+            color: 'rgb(255, 255, 255)',
+          });
+        }
+
+        const invisibleReader = makeReader(
+          new Map<Element, Readonly<Record<string, string>>>([
+            [
+              source,
+              {
+                'background-color': 'rgba(255, 0, 0, 0.5)',
+                'background-image': 'url("https://evil.example/bg.png")',
+                opacity: '0',
+              },
+            ],
+            [
+              canvas,
+              {
+                'background-color': 'rgb(255, 255, 255)',
+                'background-image': 'linear-gradient(green, blue)',
+              },
+            ],
+          ]),
+        );
+        expect(
+          resolveMermaidInheritedBackground(source, invisibleReader, {
+            directSvgCapture: false,
+          }),
+        ).toEqual({
+          color: 'rgb(255, 255, 255)',
+          image: 'linear-gradient(green, blue)',
+        });
+      } finally {
+        canvas.remove();
+      }
+    });
+
     it('stops before measure-host and wp-admin containers and drops unsafe url() images', () => {
       const wpbody = document.createElement('div');
       wpbody.id = 'wpbody';

@@ -477,4 +477,86 @@ describe('mermaidAdmissionSignature', () => {
       ),
     ).toBe(false);
   });
+
+  it('prefers computed styles over benign inline styles for connected roots in mermaidRootPaintIsSafe', () => {
+    const { preview, root, svg, source, svgStyle } = fixture();
+    document.body.append(preview);
+    try {
+      const cases: ReadonlyArray<readonly [string, string, string]> = [
+        ['box-shadow', 'none', '0 4px 12px rgba(0, 0, 0, 0.2)'],
+        ['filter', 'none', 'blur(2px)'],
+        ['clip-path', 'none', 'inset(0 1px)'],
+        ['background-image', 'none', 'linear-gradient(red, blue)'],
+        ['border-top-left-radius', '0px', '999px'],
+      ];
+
+      for (const [property, inlineValue, computedValue] of cases) {
+        root.setAttribute('style', `${property}: ${inlineValue}`);
+        expect(
+          mermaidRootPaintIsSafe(
+            root,
+            runtime(root, svg, { ...source, [property]: computedValue }, svgStyle),
+            200,
+            100,
+            200,
+            100,
+          ),
+          `${property} computed=${computedValue} inline=${inlineValue}`,
+        ).toBe(false);
+      }
+    } finally {
+      preview.remove();
+    }
+  });
+
+  it('fails closed on non-empty/non-none/non-normal ::before and ::after content in mermaidRootPaintIsSafe', () => {
+    const { preview, root, svg, source, svgStyle } = fixture();
+    document.body.append(preview);
+    try {
+      const makePseudoRuntime = (
+        pseudoTarget: '::before' | '::after',
+        contentValue: string,
+      ): BrowserWechatClipboardRuntime => ({
+        ...runtime(root, svg, source, svgStyle),
+        getComputedStyle: (element, pseudoElement) => {
+          if (pseudoElement) {
+            return declaration({
+              content: element === root && pseudoElement === pseudoTarget ? contentValue : 'none',
+            });
+          }
+          if (element === root) return declaration(source);
+          if (element === svg) return declaration(svgStyle);
+          return declaration({ display: 'block' });
+        },
+      });
+
+      for (const allowedContent of ['', 'none', 'NONE', 'normal', ' NORMAL ']) {
+        expect(
+          mermaidRootPaintIsSafe(root, makePseudoRuntime('::before', allowedContent), 200, 100, 200, 100),
+          `allowed ::before content=${JSON.stringify(allowedContent)}`,
+        ).toBe(true);
+      }
+
+      for (const unsafeContent of [
+        'url(a.png)',
+        'attr(data-x)',
+        'counter(section)',
+        'counters(item, ".")',
+        'open-quote',
+        '""',
+        '"generated"',
+      ]) {
+        expect(
+          mermaidRootPaintIsSafe(root, makePseudoRuntime('::before', unsafeContent), 200, 100, 200, 100),
+          `unsafe ::before content=${unsafeContent}`,
+        ).toBe(false);
+        expect(
+          mermaidRootPaintIsSafe(root, makePseudoRuntime('::after', unsafeContent), 200, 100, 200, 100),
+          `unsafe ::after content=${unsafeContent}`,
+        ).toBe(false);
+      }
+    } finally {
+      preview.remove();
+    }
+  });
 });

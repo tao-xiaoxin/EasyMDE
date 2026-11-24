@@ -12,7 +12,10 @@ import { WechatVisualRasterizationError } from '../../../contracts/ports/wechat-
 import { createBrowserWechatVisualRasterizer } from './create-browser-wechat-visual-rasterizer';
 import { inspectDirectSvgCapture } from './wechat-mermaid-direct-svg-backdrop';
 import { mermaidRootPaintIsSafe } from './wechat-mermaid-geometry';
-import { assertResponsiveMermaidCaptureRequest } from './wechat-rasterizer-mermaid';
+import {
+  assertIntrinsicMermaidCaptureRequest,
+  assertResponsiveMermaidCaptureRequest,
+} from './wechat-rasterizer-mermaid';
 import {
   ImageStub,
   imageEvents,
@@ -2918,6 +2921,121 @@ describe('createBrowserWechatVisualRasterizer', () => {
       ).toBe(false);
     } finally {
       getComputedStyleSpy.mockRestore();
+    }
+  });
+
+  it('rejects connected Mermaid roots where computed styles override benign inline declarations or non-quoted pseudo content', () => {
+    const root = document.createElement('div');
+    root.className = 'easymde-mermaid';
+    root.innerHTML =
+      '<svg aria-roledescription="gantt" width="200" height="100" viewBox="0 0 200 100">' +
+      '<rect width="200" height="100"></rect></svg>';
+    const svg = root.querySelector('svg');
+    if (!svg) throw new Error('Mermaid SVG missing');
+    document.body.append(root);
+
+    const clipboardRuntime = {
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      getComputedStyle: (element: Element, pseudo?: string) =>
+        window.getComputedStyle(element, pseudo ?? undefined),
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: () => undefined,
+      write: null,
+    };
+
+    const intrinsicReq = request(root, 'mermaid', 1, 200, 100, undefined, 1, 'intrinsic-viewport');
+    const originalGetComputedStyle = window.getComputedStyle.bind(window);
+
+    try {
+      // Connected root with inline `box-shadow: none` (and other benign inline overrides)
+      // must NOT mask computed stylesheet paint/radius/layout rules.
+      const paintOverrideCases: ReadonlyArray<readonly [string, string, string]> = [
+        ['box-shadow', 'none', '0 4px 12px rgba(0, 0, 0, 0.2)'],
+        ['filter', 'none', 'blur(2px)'],
+        ['clip-path', 'none', 'inset(0 2px)'],
+        ['background-image', 'none', 'url(https://evil.example/bg.png)'],
+        ['border-top-left-radius', '0px', '999px'],
+      ];
+
+      for (const [property, inlineValue, computedValue] of paintOverrideCases) {
+        root.setAttribute('style', `${property}: ${inlineValue};`);
+        const spy = vi.spyOn(window, 'getComputedStyle').mockImplementation((element, pseudo) => {
+          const base = originalGetComputedStyle(element, pseudo ?? undefined);
+          if (element !== root || pseudo) return base;
+          return {
+            getPropertyValue: (name: string) =>
+              name === property ? computedValue : base.getPropertyValue(name),
+          } as unknown as CSSStyleDeclaration;
+        });
+        try {
+          expect(
+            () => assertIntrinsicMermaidCaptureRequest(intrinsicReq, svg),
+            `assertIntrinsicMermaidCaptureRequest ${property}`,
+          ).toThrow(WechatVisualRasterizationError);
+          expect(
+            mermaidRootPaintIsSafe(root, clipboardRuntime, 200, 100, 200, 100),
+            `mermaidRootPaintIsSafe ${property}`,
+          ).toBe(false);
+        } finally {
+          spy.mockRestore();
+        }
+      }
+
+      // Connected root with inline `position: static` / `transform: none` must NOT mask computed layout rules.
+      const layoutOverrideCases: ReadonlyArray<readonly [string, string, string]> = [
+        ['position', 'static', 'relative'],
+        ['transform', 'none', 'translateX(8px)'],
+      ];
+      for (const [property, inlineValue, computedValue] of layoutOverrideCases) {
+        root.setAttribute('style', `${property}: ${inlineValue};`);
+        const spy = vi.spyOn(window, 'getComputedStyle').mockImplementation((element, pseudo) => {
+          const base = originalGetComputedStyle(element, pseudo ?? undefined);
+          if (element !== root || pseudo) return base;
+          return {
+            getPropertyValue: (name: string) =>
+              name === property ? computedValue : base.getPropertyValue(name),
+          } as unknown as CSSStyleDeclaration;
+        });
+        try {
+          expect(
+            () => assertIntrinsicMermaidCaptureRequest(intrinsicReq, svg),
+            `assertIntrinsicMermaidCaptureRequest layout ${property}`,
+          ).toThrow(WechatVisualRasterizationError);
+        } finally {
+          spy.mockRestore();
+        }
+      }
+
+      // Connected root with non-quoted ::before / ::after content (`url(...)`, `attr(...)`, `counter(...)`, `open-quote`)
+      // must fail closed in both assertIntrinsicMermaidCaptureRequest and mermaidRootPaintIsSafe.
+      root.removeAttribute('style');
+      for (const pseudoContentValue of ['url(a.png)', 'attr(data-x)', 'counter(item)', 'open-quote']) {
+        const spy = vi.spyOn(window, 'getComputedStyle').mockImplementation((element, pseudo) => {
+          const base = originalGetComputedStyle(element, pseudo ?? undefined);
+          if (element !== root || '::before' !== pseudo) return base;
+          return {
+            getPropertyValue: (name: string) =>
+              'content' === name ? pseudoContentValue : base.getPropertyValue(name),
+          } as unknown as CSSStyleDeclaration;
+        });
+        try {
+          expect(
+            () => assertIntrinsicMermaidCaptureRequest(intrinsicReq, svg),
+            `assertIntrinsicMermaidCaptureRequest ::before ${pseudoContentValue}`,
+          ).toThrow(WechatVisualRasterizationError);
+          expect(
+            mermaidRootPaintIsSafe(root, clipboardRuntime, 200, 100, 200, 100),
+            `mermaidRootPaintIsSafe ::before ${pseudoContentValue}`,
+          ).toBe(false);
+        } finally {
+          spy.mockRestore();
+        }
+      }
+    } finally {
+      root.remove();
     }
   });
 });

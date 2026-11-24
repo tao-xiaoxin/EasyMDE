@@ -2,24 +2,25 @@ import type {
   BrowserWechatClipboardRuntime,
 } from './wechat-clipboard-runtime';
 import {
-  MERMAID_ASPECT_RATIO_QUANTUM,
   MERMAID_INTRINSIC_GEOMETRY_TOLERANCE,
   WechatPngConversionError,
 } from './wechat-png-conversion-policy';
 import { parseCssOpacity } from './wechat-css-color';
 import {
-  hasBackgroundImage,
-  hasUnsafeOrImageBackgroundShorthand,
-} from './wechat-mermaid-background';
+  type MermaidScreenCtm,
+  computeMermaidLayoutMagnification,
+  isMermaidRootPaintSafe,
+  mermaidEdgeValues,
+  mermaidHasNonZeroBorderWidth,
+  mermaidHasUnsafeBorder,
+  mermaidHasUnsafePositioning,
+  mermaidRadiusCorners,
+} from './wechat-mermaid-paint-policy';
 import {
   MERMAID_RADIUS_PROPERTIES,
-  type MermaidRadius,
   type MermaidStyleMap,
-  mermaidCssPixelValue,
   mermaidHasPaint,
   mermaidViewBox,
-  parseMermaidRadiusPair,
-  parseMermaidRadiusShorthand,
   unsafeMermaidDimensionRules,
   unsafeMermaidInlineDimensionValue,
 } from './wechat-mermaid-policy';
@@ -39,163 +40,19 @@ export {
   unsafeMermaidInlineDimensionValue
 } from './wechat-mermaid-policy';
 export type { MermaidRadius, MermaidStyleMap } from './wechat-mermaid-policy';
-
-export type MermaidScreenCtm = Readonly<{ a: number; b: number; c: number; d: number; e: number; f: number }>;
-
-export const MERMAID_BORDER_STYLE_PROPERTIES = [
-  'border-top-style',
-  'border-right-style',
-  'border-bottom-style',
-  'border-left-style'
-] as const;
-export const MERMAID_BORDER_WIDTH_PROPERTIES = [
-  'border-top-width',
-  'border-right-width',
-  'border-bottom-width',
-  'border-left-width'
-] as const;
-export const MERMAID_POSITION_PROPERTIES = ['top', 'right', 'bottom', 'left'] as const;
-
-export function mermaidHasUnsafeBorder(style: CSSStyleDeclaration, allowSolid = false): boolean {
-  return MERMAID_BORDER_STYLE_PROPERTIES.some((property) => {
-    const value = style.getPropertyValue(property).trim().toLowerCase();
-    return Boolean(value) && !['none', 'hidden'].includes(value) && !(allowSolid && 'solid' === value);
-  });
-}
-
-export function mermaidHasNonZeroBorderWidth(style: CSSStyleDeclaration): boolean {
-  return MERMAID_BORDER_WIDTH_PROPERTIES.some((property) => {
-    const value = mermaidCssPixelValue(style.getPropertyValue(property));
-    return value !== null && value > 0;
-  });
-}
-
-export function mermaidHasUnsafePositioning(
-  element: Element,
-  getComputedStyle: BrowserWechatClipboardRuntime['getComputedStyle']
-): boolean {
-  const computed = getComputedStyle(element);
-  const inline = (element as Element & { style?: CSSStyleDeclaration }).style;
-  const position = computed.getPropertyValue('position').trim().toLowerCase();
-  const inlinePosition = inline?.getPropertyValue('position').trim().toLowerCase() ?? '';
-  if (
-    ['relative', 'absolute', 'fixed', 'sticky'].includes(position) ||
-    ['relative', 'absolute', 'fixed', 'sticky'].includes(inlinePosition)
-  )
-    return true;
-  const transform = computed.getPropertyValue('transform').trim().toLowerCase();
-  const inlineTransform = inline?.getPropertyValue('transform').trim().toLowerCase() ?? '';
-  if ((transform && 'none' !== transform) || (inlineTransform && 'none' !== inlineTransform)) return true;
-  return MERMAID_POSITION_PROPERTIES.some((property) => {
-    const value = computed.getPropertyValue(property).trim().toLowerCase();
-    const inlineValue = inline?.getPropertyValue(property).trim().toLowerCase() ?? '';
-    return [value, inlineValue].some((candidate) => Boolean(candidate) && 'auto' !== candidate);
-  });
-}
-
-export function mermaidSvgRectMagnification(
-  svg: SVGSVGElement,
-  source: Element,
-  viewBox: Readonly<{ height: number; width: number }>,
-  getComputedStyle: BrowserWechatClipboardRuntime['getComputedStyle']
-): number | null {
-  const preserveAspectRatio = svg.getAttribute('preserveAspectRatio')?.trim().replace(/\s+/gu, ' ') ?? '';
-  if (preserveAspectRatio && 'xMidYMid meet' !== preserveAspectRatio) return null;
-  if (svg.hasAttribute('transform')) return null;
-  const inlineStyle = (svg as Element & { style?: CSSStyleDeclaration }).style;
-  const computed = getComputedStyle(svg);
-  const sourceComputed = getComputedStyle(source);
-  const inlineTransform = inlineStyle?.getPropertyValue('transform').trim().toLowerCase() ?? '';
-  const computedTransform = computed.getPropertyValue('transform').trim().toLowerCase();
-  if ((inlineTransform && 'none' !== inlineTransform) || (computedTransform && 'none' !== computedTransform))
-    return null;
-  if (
-    mermaidHasUnsafePositioning(svg, getComputedStyle) ||
-    mermaidHasUnsafeBorder(computed) ||
-    mermaidHasNonZeroBorderWidth(computed) ||
-    mermaidHasUnsafeBorder(sourceComputed) ||
-    mermaidHasNonZeroBorderWidth(sourceComputed)
-  )
-    return null;
-  const edgePixels = (style: CSSStyleDeclaration, property: string, borderStyleProperty?: string): number => {
-    if (
-      borderStyleProperty &&
-      ['none', 'hidden'].includes(style.getPropertyValue(borderStyleProperty).trim().toLowerCase())
-    )
-      return 0;
-    return mermaidCssPixelValue(style.getPropertyValue(property)) ?? Number.NaN;
-  };
-  const svgEdges = [
-    edgePixels(computed, 'padding-top'),
-    edgePixels(computed, 'padding-right'),
-    edgePixels(computed, 'padding-bottom'),
-    edgePixels(computed, 'padding-left'),
-    edgePixels(computed, 'border-top-width', 'border-top-style'),
-    edgePixels(computed, 'border-right-width', 'border-right-style'),
-    edgePixels(computed, 'border-bottom-width', 'border-bottom-style'),
-    edgePixels(computed, 'border-left-width', 'border-left-style')
-  ];
-  if (svgEdges.some((value) => !Number.isFinite(value) || value > 0)) return null;
-  let rect: DOMRect;
-  let sourceRect: DOMRect;
-  try {
-    rect = svg.getBoundingClientRect();
-    sourceRect = source.getBoundingClientRect();
-  } catch {
-    return null;
-  }
-  const sourceEdges = [
-    edgePixels(sourceComputed, 'padding-top'),
-    edgePixels(sourceComputed, 'padding-right'),
-    edgePixels(sourceComputed, 'padding-bottom'),
-    edgePixels(sourceComputed, 'padding-left'),
-    edgePixels(sourceComputed, 'border-top-width', 'border-top-style'),
-    edgePixels(sourceComputed, 'border-right-width', 'border-right-style'),
-    edgePixels(sourceComputed, 'border-bottom-width', 'border-bottom-style'),
-    edgePixels(sourceComputed, 'border-left-width', 'border-left-style')
-  ];
-  if (
-    !Number.isFinite(rect.width) ||
-    !Number.isFinite(rect.height) ||
-    rect.width <= 0 ||
-    rect.height <= 0 ||
-    !Number.isFinite(sourceRect.width) ||
-    !Number.isFinite(sourceRect.height) ||
-    sourceRect.width <= 0 ||
-    sourceRect.height <= 0 ||
-    sourceEdges.some((value) => !Number.isFinite(value))
-  ) {
-    return null;
-  }
-  const [paddingTop, paddingRight, paddingBottom, paddingLeft, borderTop, borderRight, borderBottom, borderLeft] =
-    sourceEdges as [number, number, number, number, number, number, number, number];
-  const sourceContentWidth = sourceRect.width - paddingRight - paddingLeft - borderRight - borderLeft;
-  const sourceContentHeight = sourceRect.height - paddingTop - paddingBottom - borderTop - borderBottom;
-  if (
-    sourceContentWidth <= 0 ||
-    sourceContentHeight <= 0 ||
-    Math.abs(rect.width - sourceContentWidth) > MERMAID_ASPECT_RATIO_QUANTUM ||
-    Math.abs(rect.height - sourceContentHeight) > MERMAID_ASPECT_RATIO_QUANTUM
-  )
-    return null;
-  const widthRatio = viewBox.width / rect.width;
-  const heightRatio = viewBox.height / rect.height;
-  const aspectResidual = Math.min(
-    Math.abs(rect.height - (rect.width * viewBox.height) / viewBox.width),
-    Math.abs(rect.width - (rect.height * viewBox.width) / viewBox.height)
-  );
-  if (
-    !Number.isFinite(widthRatio) ||
-    !Number.isFinite(heightRatio) ||
-    widthRatio <= 0 ||
-    heightRatio <= 0 ||
-    !Number.isFinite(aspectResidual) ||
-    aspectResidual > MERMAID_ASPECT_RATIO_QUANTUM
-  )
-    return null;
-  const magnification = Math.min(widthRatio, heightRatio);
-  return Number.isFinite(magnification) && magnification >= 1 ? magnification : 1;
-}
+export {
+  MERMAID_BORDER_STYLE_PROPERTIES,
+  MERMAID_BORDER_WIDTH_PROPERTIES,
+  MERMAID_POSITION_PROPERTIES,
+  mermaidEdgeValues,
+  mermaidHasNonZeroBorderWidth,
+  mermaidHasUnsafeBorder,
+  mermaidHasUnsafePositioning,
+  mermaidRadiusCorners,
+  mermaidRadiusIsSafe,
+  mermaidSvgRectMagnification,
+} from './wechat-mermaid-paint-policy';
+export type { MermaidScreenCtm } from './wechat-mermaid-paint-policy';
 
 export function mermaidLayoutMagnification(source: Element, runtime: BrowserWechatClipboardRuntime): number {
   const svgs = Array.from(source.children).filter((element) => 'svg' === element.localName.toLowerCase());
@@ -211,97 +68,13 @@ export function mermaidLayoutMagnification(source: Element, runtime: BrowserWech
   }
   const viewBox = mermaidViewBox(svg);
   if (!viewBox) return 1;
-  let transformOwner: Element | null = source;
-  while (transformOwner) {
-    const computed = runtime.getComputedStyle(transformOwner);
-    const transform = computed.getPropertyValue('transform').trim().toLowerCase();
-    const inlineTransform =
-      (transformOwner as Element & { style?: CSSStyleDeclaration }).style
-        ?.getPropertyValue('transform')
-        .trim()
-        .toLowerCase() ?? '';
-    if ((transform && 'none' !== transform) || (inlineTransform && 'none' !== inlineTransform)) return 1;
-    transformOwner = transformOwner.parentElement;
-  }
-  const sourceStyle = runtime.getComputedStyle(source);
-  const overflow = sourceStyle.getPropertyValue('overflow').trim().toLowerCase();
-  const overflowX = sourceStyle.getPropertyValue('overflow-x').trim().toLowerCase();
-  const overflowY = sourceStyle.getPropertyValue('overflow-y').trim().toLowerCase();
-  const inlineStyle = (source as Element & { style?: CSSStyleDeclaration }).style;
-  const authoredOverflow = inlineStyle?.getPropertyValue('overflow').trim().toLowerCase() ?? '';
-  const authoredOverflowX = inlineStyle?.getPropertyValue('overflow-x').trim().toLowerCase() ?? '';
-  const authoredOverflowY = inlineStyle?.getPropertyValue('overflow-y').trim().toLowerCase() ?? '';
-  const sourceHeight = inlineStyle?.getPropertyValue('height').trim().toLowerCase() ?? '';
-  const unsafeDimensionRules = unsafeMermaidDimensionRules(source, source.ownerDocument);
-  const hasFixedSourceHeight =
-    Boolean(sourceHeight && !['auto', 'max-content', 'none'].includes(sourceHeight)) ||
-    source.hasAttribute('height') ||
-    unsafeDimensionRules;
-  const stylesheetOwnedAutoheightOwner =
-    source.matches('.easymde-mermaid') &&
-    !authoredOverflow &&
-    !authoredOverflowX &&
-    !authoredOverflowY &&
-    ['auto', 'scroll'].includes(overflowX) &&
-    ['auto', 'scroll'].includes(overflowY) &&
-    !hasFixedSourceHeight;
-  const horizontalScrollOwner =
-    stylesheetOwnedAutoheightOwner ||
-    (['auto', 'scroll'].includes(overflowX) &&
-      ['auto', 'scroll'].includes(authoredOverflowX || overflowX) &&
-      'visible' === authoredOverflowY);
-  const hasClippedAxis = [overflow, overflowX, overflowY, authoredOverflowX, authoredOverflowY].some((value) =>
-    ['hidden', 'clip'].includes(value)
+  return computeMermaidLayoutMagnification(
+    source,
+    svg,
+    viewBox,
+    source.ownerDocument,
+    runtime.getComputedStyle,
   );
-  const hasUnsupportedOverflow = overflow && !horizontalScrollOwner && ['auto', 'scroll'].includes(overflow);
-  if (
-    hasClippedAxis ||
-    hasUnsupportedOverflow ||
-    (overflowX && !['visible', 'auto', 'scroll'].includes(overflowX)) ||
-    (overflowY && !['visible', 'auto', 'scroll'].includes(overflowY)) ||
-    hasFixedSourceHeight
-  )
-    return 1;
-  const matrix = getScreenCTM.call(svg);
-  if (!matrix) return 1;
-  if (
-    ![matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f].every(Number.isFinite) ||
-    matrix.a <= 0 ||
-    matrix.d <= 0 ||
-    Math.abs(matrix.b) > 1e-6 ||
-    Math.abs(matrix.c) > 1e-6 ||
-    Math.abs(matrix.a - matrix.d) > 1e-6
-  )
-    return 1;
-  const currentScale = (matrix.a + matrix.d) / 2;
-  const downscaledPixels = Math.max(viewBox.width * (1 - currentScale), viewBox.height * (1 - currentScale));
-  if (currentScale >= 1 || downscaledPixels <= 1) return 1;
-  const rectMagnification = mermaidSvgRectMagnification(svg, source, viewBox, runtime.getComputedStyle);
-  if (rectMagnification === null) return 1;
-  return rectMagnification;
-}
-
-
-export function mermaidEdgeValues(style: CSSStyleDeclaration): readonly number[] | null {
-  const edge = (property: string, borderStyleProperty?: string): number | null => {
-    const pixels = mermaidCssPixelValue(style.getPropertyValue(property));
-    if (pixels === null) return null;
-    if (!borderStyleProperty) return pixels;
-    const borderStyle = style.getPropertyValue(borderStyleProperty).trim().toLowerCase();
-    if (['', 'none', 'hidden'].includes(borderStyle)) return 0;
-    return 'solid' === borderStyle ? pixels : null;
-  };
-  const values = [
-    edge('padding-top'),
-    edge('padding-right'),
-    edge('padding-bottom'),
-    edge('padding-left'),
-    edge('border-top-width', 'border-top-style'),
-    edge('border-right-width', 'border-right-style'),
-    edge('border-bottom-width', 'border-bottom-style'),
-    edge('border-left-width', 'border-left-style')
-  ];
-  return values.every((value) => value !== null) ? (values as number[]) : null;
 }
 
 export function mermaidTypedCssUnitText(unit: unknown): string | null {
@@ -350,50 +123,6 @@ export function mermaidSourceUsesAutoBlockMargins(source: Element, runtime: Brow
   );
 }
 
-export function mermaidRadiusCorners(computed: CSSStyleDeclaration): readonly MermaidRadius[] | null {
-  const shorthand = computed.getPropertyValue('border-radius').trim();
-  const shorthandCorners = parseMermaidRadiusShorthand(shorthand);
-  if (!shorthandCorners) return null;
-  const values = MERMAID_RADIUS_PROPERTIES.map((property) => computed.getPropertyValue(property).trim());
-  const parsed = values.map((value) => parseMermaidRadiusPair(value));
-  if (parsed.some((pair, index) => pair === null && Boolean(values[index]))) return null;
-  const hasComputedPaint = parsed.some((pair) => pair !== null && (pair.horizontal > 0 || pair.vertical > 0));
-  return hasComputedPaint ? (parsed as MermaidRadius[]) : shorthandCorners;
-}
-
-export function mermaidRadiusIsSafe(
-  computed: CSSStyleDeclaration,
-  sourceWidth: number,
-  sourceHeight: number,
-  canonicalWidth: number,
-  canonicalHeight: number
-): boolean {
-  const corners = mermaidRadiusCorners(computed);
-  if (
-    corners?.length !== 4 ||
-    ![sourceWidth, sourceHeight, canonicalWidth, canonicalHeight].every((value) => Number.isFinite(value) && value > 0)
-  )
-    return false;
-  const [topLeft, topRight, bottomRight, bottomLeft] = corners;
-  if (!topLeft || !topRight || !bottomRight || !bottomLeft) return false;
-  const horizontalChecks = [topLeft.horizontal + topRight.horizontal, bottomLeft.horizontal + bottomRight.horizontal];
-  const verticalChecks = [topLeft.vertical + bottomLeft.vertical, topRight.vertical + bottomRight.vertical];
-  return (
-    horizontalChecks.every((sum) => sum <= sourceWidth && sum <= canonicalWidth) &&
-    verticalChecks.every((sum) => sum <= sourceHeight && sum <= canonicalHeight)
-  );
-}
-
-const MERMAID_DISALLOWED_PAINT_PROPERTIES = [
-  'box-shadow',
-  'filter',
-  'clip-path',
-  'mask',
-  'mask-image',
-  'outline-style',
-  'border-image-source',
-] as const;
-
 export function mermaidRootPaintIsSafe(
   source: Element,
   runtime: BrowserWechatClipboardRuntime,
@@ -402,30 +131,13 @@ export function mermaidRootPaintIsSafe(
   canonicalWidth: number,
   canonicalHeight: number
 ): boolean {
-  const computed = runtime.getComputedStyle(source);
-  const detachedInlineStyle = !source.isConnected
-    ? (source as Element & { style?: CSSStyleDeclaration }).style
-    : undefined;
-  const effectiveProperty = (property: string): string =>
-    computed.getPropertyValue(property).trim() ||
-    (detachedInlineStyle?.getPropertyValue(property).trim() ?? '');
-  const background = effectiveProperty('background');
-  const backgroundImage = effectiveProperty('background-image');
-  if (
-    hasBackgroundImage(backgroundImage) ||
-    hasUnsafeOrImageBackgroundShorthand(background) ||
-    MERMAID_DISALLOWED_PAINT_PROPERTIES.some(
-      (property) => !['', 'none'].includes(effectiveProperty(property).toLowerCase())
-    ) ||
-    mermaidHasUnsafeBorder(computed, true)
-  )
-    return false;
-  if (!mermaidRadiusIsSafe(computed, sourceWidth, sourceHeight, canonicalWidth, canonicalHeight)) {
-    return false;
-  }
-  return ['::before', '::after'].every(
-    (pseudoElement) =>
-      null === pseudoContent(runtime.getComputedStyle(source, pseudoElement).getPropertyValue('content'))
+  return isMermaidRootPaintSafe(
+    source,
+    runtime.getComputedStyle,
+    sourceWidth,
+    sourceHeight,
+    canonicalWidth,
+    canonicalHeight
   );
 }
 

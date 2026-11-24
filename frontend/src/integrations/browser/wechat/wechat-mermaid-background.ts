@@ -576,6 +576,24 @@ function walkMermaidAncestorBackground(
   return finalizeMermaidBackground(state);
 }
 
+function seedBlockedSourceImage(
+  state: MermaidBackgroundFoldState,
+  source: Element,
+  sourceStyle: CSSStyleDeclaration,
+  sourceOpacity: number,
+): void {
+  if (sourceOpacity <= 0) return;
+  const sourceImage = readEffectiveStyleProperty(
+    sourceStyle,
+    source,
+    'background-image',
+    'backgroundImage',
+  );
+  if (hasBackgroundImage(sourceImage) && !isSafeBackgroundImage(sourceImage)) {
+    state.blockedImageEncountered = true;
+  }
+}
+
 /**
  * Resolves the outer `<svg>` backdrop for a Mermaid capture without ever
  * double-compositing `<foreignObject>` root backgrounds or bleeding a rounded
@@ -597,16 +615,8 @@ export function resolveMermaidInheritedBackground(
     const initialState = createEmptyBackgroundFoldState();
     if (sourceOpacity >= 1 && !isolateRoundedNonOpaqueOwnPaint) {
       foldElementBackground(initialState, source, sourceStyle);
-    } else if (sourceOpacity > 0) {
-      const sourceImage = readEffectiveStyleProperty(
-        sourceStyle,
-        source,
-        'background-image',
-        'backgroundImage',
-      );
-      if (hasBackgroundImage(sourceImage) && !isSafeBackgroundImage(sourceImage)) {
-        initialState.blockedImageEncountered = true;
-      }
+    } else {
+      seedBlockedSourceImage(initialState, source, sourceStyle, sourceOpacity);
     }
     return walkMermaidAncestorBackground(
       source.parentElement,
@@ -631,11 +641,13 @@ export function resolveMermaidInheritedBackground(
     return null;
   }
 
+  const initialState = createEmptyBackgroundFoldState();
+  seedBlockedSourceImage(initialState, source, sourceStyle, sourceOpacity);
   return walkMermaidAncestorBackground(
     source.parentElement,
     doc,
     readComputedStyle,
-    createEmptyBackgroundFoldState(),
+    initialState,
   );
 }
 

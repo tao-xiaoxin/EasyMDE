@@ -958,6 +958,103 @@ test("production validation rejects remote URLs and absolute paths but allows si
 	}
 });
 
+test("all non-admin first-party production bundles reject post-ES2020 and source-path patterns while keeping the Mermaid vendor exemption", () => {
+	const firstPartySpecs = [
+		[
+			"admin-editor-loader",
+			committedAdminEditorLoaderOutputRoot,
+			adminEditorLoaderSourceEntry,
+			validateAdminEditorLoaderProductionBuild,
+		],
+		[
+			"code-copy",
+			committedCodeCopyOutputRoot,
+			codeCopySourceEntry,
+			validateCodeCopyProductionBuild,
+		],
+		[
+			"settings-center",
+			committedSettingsOutputRoot,
+			settingsSourceEntry,
+			validateSettingsProductionBuild,
+		],
+		[
+			"frontend-enhancements",
+			committedEnhancementsOutputRoot,
+			"frontend/src/entrypoints/frontend-enhancements.ts",
+			validateFrontendEnhancementsProductionBuild,
+		],
+		[
+			"frontend-bootstrap",
+			committedBootstrapOutputRoot,
+			"frontend/src/entrypoints/frontend-bootstrap.ts",
+			validateFrontendBootstrapProductionBuild,
+		],
+		[
+			"media-picker",
+			committedMediaPickerOutputRoot,
+			mediaPickerSourceEntry,
+			validateMediaPickerProductionBuild,
+		],
+		[
+			"editor-block-index-worker",
+			committedEditorBlockIndexWorkerOutputRoot,
+			editorBlockIndexWorkerSourceEntry,
+			validateEditorBlockIndexWorkerProductionBuild,
+		],
+	];
+
+	const forbiddenSnippets = [
+		[
+			'const source = "frontend/src/entrypoints/settings-center.tsx";',
+			/prohibited frontend source path/,
+		],
+		['const item = [1].at(-1);', /prohibited post-ES2020 \.at\(\) call/],
+		[
+			'const has = Object.hasOwn({}, "a");',
+			/prohibited post-ES2020 Object\.hasOwn\(\) call/,
+		],
+		[
+			'const normalized = "a b".replaceAll(" ", "-");',
+			/prohibited post-ES2020 \.replaceAll\(\) call/,
+		],
+	];
+
+	for (const [label, sourceRoot, entryKey, validate] of firstPartySpecs) {
+		assert.doesNotThrow(
+			() => validate(sourceRoot),
+			`committed ${label} bundle should pass validation`,
+		);
+
+		for (const [snippet, expectedError] of forbiddenSnippets) {
+			const mutatedRoot = mkdtempSync(
+				join(tmpdir(), `easymde-${label}-es2020-`),
+			);
+			cpSync(sourceRoot, mutatedRoot, { recursive: true });
+
+			try {
+				const manifest = readJson(join(mutatedRoot, "manifest.json"));
+				appendFileSync(
+					join(mutatedRoot, manifest[entryKey].file),
+					`\n${snippet}\n`,
+				);
+				assert.throws(
+					() => validate(mutatedRoot),
+					expectedError,
+					`${label} should reject ${snippet}`,
+				);
+			} finally {
+				rmSync(mutatedRoot, { recursive: true, force: true });
+			}
+		}
+	}
+
+	assert.doesNotThrow(
+		() => validateFrontendMermaidProductionBuild(committedMermaidOutputRoot),
+		"upstream mermaid@10.9.6 bundle remains exempt from first-party ES2020 script patterns",
+	);
+});
+
 test("production frontend artifacts are eligible for version control", () => {
 	assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
 	const wordpressManifest = readJson(

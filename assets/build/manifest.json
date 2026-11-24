@@ -1,22 +1,22 @@
 {
-  "_admin-editor-chunk-B3OEzNOB.js": {
-    "file": "assets/admin-editor-chunk-B3OEzNOB.js",
-    "name": "shared"
-  },
-  "_admin-editor-chunk-CxytRhPU.js": {
-    "file": "assets/admin-editor-chunk-CxytRhPU.js",
+  "_admin-editor-chunk-DHj9kZeN.js": {
+    "file": "assets/admin-editor-chunk-DHj9kZeN.js",
     "name": "wechat-managed-fonts",
     "imports": [
-      "_admin-editor-chunk-B3OEzNOB.js"
+      "_admin-editor-chunk-Dsscj_0N.js"
     ]
   },
+  "_admin-editor-chunk-Dsscj_0N.js": {
+    "file": "assets/admin-editor-chunk-Dsscj_0N.js",
+    "name": "shared"
+  },
   "frontend/src/entrypoints/admin-editor.tsx": {
-    "file": "assets/admin-editor-Ds-pwB_R.js",
+    "file": "assets/admin-editor-Bi4KNTZA.js",
     "name": "editor",
     "src": "frontend/src/entrypoints/admin-editor.tsx",
     "isEntry": true,
     "imports": [
-      "_admin-editor-chunk-B3OEzNOB.js"
+      "_admin-editor-chunk-Dsscj_0N.js"
     ],
     "dynamicImports": [
       "frontend/src/features/appearance/ui/ImmersiveCustomCssDialog.tsx",
@@ -31,86 +31,86 @@
     ]
   },
   "frontend/src/features/appearance/ui/ImmersiveCustomCssDialog.tsx": {
-    "file": "assets/admin-editor-chunk-Ctcjgsgr.js",
+    "file": "assets/admin-editor-chunk-DgNtuTWs.js",
     "name": "ImmersiveCustomCssDialog",
     "src": "frontend/src/features/appearance/ui/ImmersiveCustomCssDialog.tsx",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-B3OEzNOB.js"
+      "_admin-editor-chunk-Dsscj_0N.js"
     ]
   },
   "frontend/src/features/immersive-editor/ui/ImmersivePublishDialog.tsx": {
-    "file": "assets/admin-editor-chunk-DAaigbtq.js",
+    "file": "assets/admin-editor-chunk-ChlOOhff.js",
     "name": "ImmersivePublishDialog",
     "src": "frontend/src/features/immersive-editor/ui/ImmersivePublishDialog.tsx",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-B3OEzNOB.js"
+      "_admin-editor-chunk-Dsscj_0N.js"
     ]
   },
   "frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx": {
-    "file": "assets/admin-editor-chunk-CHRe8cC6.js",
+    "file": "assets/admin-editor-chunk-CGYVOCeC.js",
     "name": "MountedProseMirrorVisualEditor",
     "src": "frontend/src/features/immersive-visual/MountedProseMirrorVisualEditor.tsx",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-B3OEzNOB.js"
+      "_admin-editor-chunk-Dsscj_0N.js"
     ]
   },
   "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts": {
-    "file": "assets/admin-editor-chunk-Ctjv17jK.js",
+    "file": "assets/admin-editor-chunk-YNwh3V9l.js",
     "name": "create-browser-wechat-clipboard",
     "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-B3OEzNOB.js",
-      "_admin-editor-chunk-CxytRhPU.js"
+      "_admin-editor-chunk-Dsscj_0N.js",
+      "_admin-editor-chunk-DHj9kZeN.js"
     ]
   },
   "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts": {
-    "file": "assets/admin-editor-chunk-DmzHamWu.js",
+    "file": "assets/admin-editor-chunk-CayBoy3t.js",
     "name": "create-browser-wechat-visual-rasterizer",
     "src": "frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.ts",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-B3OEzNOB.js",
-      "_admin-editor-chunk-CxytRhPU.js"
+      "_admin-editor-chunk-Dsscj_0N.js",
+      "_admin-editor-chunk-DHj9kZeN.js"
     ]
   },
   "node_modules/@codemirror/lang-json/dist/index.js": {
-    "file": "assets/admin-editor-chunk-CIsmeuSt.js",
+    "file": "assets/admin-editor-chunk-Bo_T6oEC.js",
     "name": "dist",
     "src": "node_modules/@codemirror/lang-json/dist/index.js",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-B3OEzNOB.js"
+      "_admin-editor-chunk-Dsscj_0N.js"
     ]
   },
   "node_modules/@codemirror/lang-python/dist/index.js": {
-    "file": "assets/admin-editor-chunk-7K0kmQDw.js",
+    "file": "assets/admin-editor-chunk-C0dFy6cd.js",
     "name": "dist",
     "src": "node_modules/@codemirror/lang-python/dist/index.js",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-B3OEzNOB.js"
+      "_admin-editor-chunk-Dsscj_0N.js"
     ]
   },
   "node_modules/@codemirror/lang-sql/dist/index.js": {
-    "file": "assets/admin-editor-chunk-Cdf4lSsd.js",
+    "file": "assets/admin-editor-chunk-CAwehXk5.js",
     "name": "dist",
     "src": "node_modules/@codemirror/lang-sql/dist/index.js",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-B3OEzNOB.js"
+      "_admin-editor-chunk-Dsscj_0N.js"
     ]
   },
   "node_modules/@codemirror/lang-yaml/dist/index.js": {
-    "file": "assets/admin-editor-chunk-Dr9MtHok.js",
+    "file": "assets/admin-editor-chunk-CBJTK9JL.js",
     "name": "dist",
     "src": "node_modules/@codemirror/lang-yaml/dist/index.js",
     "isDynamicEntry": true,
     "imports": [
-      "_admin-editor-chunk-B3OEzNOB.js"
+      "_admin-editor-chunk-Dsscj_0N.js"
     ]
   },
   "frontend/src/integrations/browser/wechat/wechat-png-encoder.worker.ts": {

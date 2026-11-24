@@ -7,6 +7,7 @@ import {
 } from './wechat-clone-metadata';
 import { splitCssDeclarations } from './wechat-css-list';
 import { finiteCssPixelValue } from './wechat-preview-measurement';
+import { pseudoContent } from './wechat-pseudo-content';
 import {
   appendDeclarations,
   isHiddenPseudoPaint,
@@ -170,6 +171,14 @@ type HeadingComputedStyleMap = Readonly<{
   get: (property: string) => unknown;
 }>;
 
+type HeadingTypedStyleValue = Readonly<
+  | { kind: 'absent' }
+  | { kind: 'string'; value: string }
+  | { kind: 'typed'; value: string }
+  | { kind: 'to-string'; value: string }
+  | { kind: 'unreadable' }
+>;
+
 const HEADING_NATURAL_MIN_HEIGHT_VALUES = new Set(['auto', '0px']);
 const HEADING_NATURAL_ASPECT_RATIO_VALUES = new Set(['auto', 'normal']);
 const HEADING_NATURAL_PARENT_DISPLAY_VALUES = new Set([
@@ -178,6 +187,24 @@ const HEADING_NATURAL_PARENT_DISPLAY_VALUES = new Set([
   'list-item',
   'inline-block'
 ]);
+const HEADING_NATURAL_BOX_CSS_PROPERTIES = [
+  'writing-mode',
+  'contain',
+  'container-type',
+  'content-visibility',
+  'aspect-ratio'
+] as const;
+const HEADING_NATURAL_BOX_TYPED_PROPERTIES = [
+  'height',
+  'block-size',
+  'min-height',
+  'min-block-size',
+  'max-height',
+  'max-block-size',
+  'writing-mode',
+  'aspect-ratio',
+  'container-type'
+] as const;
 
 function headingTypedCandidateValue(candidate: unknown): string | null {
   if (!candidate || 'object' !== typeof candidate || !('value' in candidate)) return null;
@@ -190,8 +217,33 @@ function headingTypedCandidateValue(candidate: unknown): string | null {
   return `${value}${unit}`.toLowerCase();
 }
 
+function headingTypedStyleValue(candidate: unknown): HeadingTypedStyleValue {
+  if (undefined === candidate || null === candidate) {
+    return { kind: 'absent' };
+  }
+  if ('string' === typeof candidate) {
+    return { kind: 'string', value: candidate.trim().toLowerCase() };
+  }
+  const typed = headingTypedCandidateValue(candidate);
+  if (null !== typed) {
+    return { kind: 'typed', value: typed };
+  }
+  if ('object' === typeof candidate) {
+    const stringify = (candidate as { toString?: unknown }).toString;
+    if ('function' === typeof stringify && stringify !== Object.prototype.toString) {
+      return { kind: 'to-string', value: String(candidate).trim().toLowerCase() };
+    }
+  }
+  return { kind: 'unreadable' };
+}
+
 function headingTypedCssValue(styleMap: HeadingComputedStyleMap, property: string): string | null {
   return headingTypedCandidateValue(styleMap.get(property));
+}
+
+function headingContainerTypeHasSizeToken(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return '' !== normalized && normalized.split(/\s+/u).includes('size');
 }
 
 function headingHasNaturalAspectRatio(
@@ -202,47 +254,55 @@ function headingHasNaturalAspectRatio(
   if (cssAspectRatio && !HEADING_NATURAL_ASPECT_RATIO_VALUES.has(cssAspectRatio)) {
     return false;
   }
-  const candidate = styleMap.get('aspect-ratio');
-  if (undefined === candidate || null === candidate) {
-    return true;
+  const parsed = headingTypedStyleValue(styleMap.get('aspect-ratio'));
+  if ('absent' === parsed.kind) return true;
+  if ('unreadable' === parsed.kind) return false;
+  if ('typed' === parsed.kind) {
+    return HEADING_NATURAL_ASPECT_RATIO_VALUES.has(parsed.value);
   }
-  if ('string' === typeof candidate) {
-    const normalized = candidate.trim().toLowerCase();
-    return '' === normalized || HEADING_NATURAL_ASPECT_RATIO_VALUES.has(normalized);
+  return '' === parsed.value || HEADING_NATURAL_ASPECT_RATIO_VALUES.has(parsed.value);
+}
+
+function headingHasNaturalContainerType(
+  sourceComputed: CSSStyleDeclaration,
+  styleMap: HeadingComputedStyleMap
+): boolean {
+  if (headingContainerTypeHasSizeToken(sourceComputed.getPropertyValue('container-type'))) {
+    return false;
   }
-  const typed = headingTypedCandidateValue(candidate);
-  if (null !== typed) {
-    return HEADING_NATURAL_ASPECT_RATIO_VALUES.has(typed);
-  }
-  if ('object' === typeof candidate) {
-    const stringify = (candidate as { toString?: unknown }).toString;
-    if ('function' === typeof stringify && stringify !== Object.prototype.toString) {
-      const text = String(candidate).trim().toLowerCase();
-      return '' === text || HEADING_NATURAL_ASPECT_RATIO_VALUES.has(text);
+  const parsed = headingTypedStyleValue(styleMap.get('container-type'));
+  if ('absent' === parsed.kind) return true;
+  if ('unreadable' === parsed.kind) return false;
+  return !headingContainerTypeHasSizeToken(parsed.value);
+}
+
+function resolveHeadingFormattingParentStyle(
+  source: Element,
+  getComputedStyle: BrowserWechatClipboardRuntime['getComputedStyle']
+): Readonly<{ display: string; writingMode: string }> | null {
+  let ancestor = source.parentElement;
+  while (ancestor) {
+    const parentComputed = getComputedStyle(ancestor);
+    const display = parentComputed.getPropertyValue('display').trim().toLowerCase();
+    if ('contents' === display) {
+      ancestor = ancestor.parentElement;
+      continue;
     }
+    const writingMode = parentComputed.getPropertyValue('writing-mode').trim().toLowerCase();
+    return { display, writingMode };
   }
-  return false;
+  return null;
 }
 
 function headingHasNaturalBlockParent(
   source: Element,
   getComputedStyle: BrowserWechatClipboardRuntime['getComputedStyle']
 ): boolean {
-  let ancestor = source.parentElement;
-  while (ancestor) {
-    const parentComputed = getComputedStyle(ancestor);
-    const parentDisplay = parentComputed.getPropertyValue('display').trim().toLowerCase();
-    if ('contents' === parentDisplay) {
-      ancestor = ancestor.parentElement;
-      continue;
-    }
-    if (!HEADING_NATURAL_PARENT_DISPLAY_VALUES.has(parentDisplay)) {
-      return false;
-    }
-    const parentWritingMode = parentComputed.getPropertyValue('writing-mode').trim().toLowerCase();
-    return !parentWritingMode || 'horizontal-tb' === parentWritingMode;
+  const parent = resolveHeadingFormattingParentStyle(source, getComputedStyle);
+  if (!parent || !HEADING_NATURAL_PARENT_DISPLAY_VALUES.has(parent.display)) {
+    return false;
   }
-  return false;
+  return !parent.writingMode || 'horizontal-tb' === parent.writingMode;
 }
 
 function headingHasSizeContainment(sourceComputed: CSSStyleDeclaration): boolean {
@@ -252,6 +312,9 @@ function headingHasSizeContainment(sourceComputed: CSSStyleDeclaration): boolean
       return true;
     }
   }
+  if (headingContainerTypeHasSizeToken(sourceComputed.getPropertyValue('container-type'))) {
+    return true;
+  }
   const contentVisibility = sourceComputed.getPropertyValue('content-visibility').trim().toLowerCase();
   return Boolean(contentVisibility && 'visible' !== contentVisibility);
 }
@@ -260,9 +323,10 @@ function headingHasSizeContainment(sourceComputed: CSSStyleDeclaration): boolean
  * Proves that a heading's border-box bottom aligns with the natural end of its
  * in-flow horizontal content plus bottom padding and border. CSSOM alone reports
  * used pixels for `height`, so CSS Typed OM must confirm unconstrained block
- * sizing, natural aspect ratio, a non-stretching horizontal block formatting
- * parent, and `horizontal-tb` writing mode before projecting an absolute
- * `::after` rule into trailing normal flow.
+ * sizing, natural aspect ratio, no `container-type: size` containment, a
+ * non-stretching horizontal block formatting parent, and `horizontal-tb`
+ * writing mode before projecting an absolute `::after` rule into trailing
+ * normal flow.
  */
 function headingHasProvenNaturalHorizontalBox(
   source: Element,
@@ -291,6 +355,9 @@ function headingHasProvenNaturalHorizontalBox(
     if (!headingHasNaturalAspectRatio(sourceComputed, styleMap)) {
       return false;
     }
+    if (!headingHasNaturalContainerType(sourceComputed, styleMap)) {
+      return false;
+    }
     const height = headingTypedCssValue(styleMap, 'height');
     const blockSize = headingTypedCssValue(styleMap, 'block-size');
     const minHeight = headingTypedCssValue(styleMap, 'min-height');
@@ -312,6 +379,57 @@ function headingHasProvenNaturalHorizontalBox(
   } catch {
     return false;
   }
+}
+
+function headingTypedSignatureToken(
+  styleMap: HeadingComputedStyleMap,
+  property: string
+): string {
+  try {
+    const parsed = headingTypedStyleValue(styleMap.get(property));
+    if ('absent' === parsed.kind || 'unreadable' === parsed.kind) {
+      return parsed.kind;
+    }
+    return `${parsed.kind}:${parsed.value}`;
+  } catch {
+    return 'error';
+  }
+}
+
+export function headingAfterPseudoFlowFreshnessSignature(
+  element: Element,
+  runtime: BrowserWechatClipboardRuntime,
+  computed?: CSSStyleDeclaration
+): string {
+  if (!['H1', 'H2', 'H3', 'H4'].includes(element.tagName)) return '';
+  const afterComputed = runtime.getComputedStyle(element, '::after');
+  if ('' !== pseudoContent(afterComputed.getPropertyValue('content'))) return '';
+  if ('absolute' !== afterComputed.getPropertyValue('position').trim().toLowerCase()) {
+    return '';
+  }
+  const sourceComputed = computed ?? runtime.getComputedStyle(element);
+  const cssParts = HEADING_NATURAL_BOX_CSS_PROPERTIES.map(
+    (property) => `css:${property}=${sourceComputed.getPropertyValue(property).trim().toLowerCase()}`
+  );
+  const parent = resolveHeadingFormattingParentStyle(element, runtime.getComputedStyle);
+  const parentPart = parent
+    ? `parent:display=${parent.display};parent:writing-mode=${parent.writingMode}`
+    : 'parent:none';
+  const styleMapFactory = (element as Element & { computedStyleMap?: () => HeadingComputedStyleMap }).computedStyleMap;
+  let typedPart = 'typed:unavailable';
+  if ('function' === typeof styleMapFactory) {
+    try {
+      const styleMap = styleMapFactory.call(element);
+      if (styleMap && 'function' === typeof styleMap.get) {
+        typedPart = HEADING_NATURAL_BOX_TYPED_PROPERTIES.map(
+          (property) => `typed:${property}=${headingTypedSignatureToken(styleMap, property)}`
+        ).join(';');
+      }
+    } catch {
+      typedPart = 'typed:error';
+    }
+  }
+  return [...cssParts, parentPart, typedPart].join(';');
 }
 
 export function headingEmptyPseudoFlowFor(

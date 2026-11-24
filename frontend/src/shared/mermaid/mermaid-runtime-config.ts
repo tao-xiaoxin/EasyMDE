@@ -87,21 +87,11 @@ export function createMermaidInitializationOptions(): MermaidInitializationOptio
 }
 
 export function initializeMermaidRuntime(
-  mermaid: MermaidInitializableRuntime,
-  options: Readonly<{ swallowErrors?: boolean }> = {}
+  mermaid: MermaidInitializableRuntime
 ): void {
   if (initializedMermaidRuntimes.has(mermaid)) return;
   if ('function' !== typeof mermaid.initialize) {
     initializedMermaidRuntimes.add(mermaid);
-    return;
-  }
-  if (options.swallowErrors) {
-    initializedMermaidRuntimes.add(mermaid);
-    try {
-      mermaid.initialize(createMermaidInitializationOptions());
-    } catch {
-      // Minimal runtimes or test mocks may reject re-initialization.
-    }
     return;
   }
   mermaid.initialize(createMermaidInitializationOptions());

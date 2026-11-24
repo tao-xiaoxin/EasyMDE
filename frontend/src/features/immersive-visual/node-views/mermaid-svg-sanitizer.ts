@@ -483,5 +483,5 @@ export type MermaidInitializationRuntime = MermaidInitializableRuntime;
 export function ensureMermaidInitialized(
 	mermaid: MermaidInitializationRuntime,
 ): void {
-	initializeMermaidRuntime(mermaid, { swallowErrors: true });
+	initializeMermaidRuntime(mermaid);
 }

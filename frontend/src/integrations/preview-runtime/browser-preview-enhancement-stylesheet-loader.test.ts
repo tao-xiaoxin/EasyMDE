@@ -366,4 +366,92 @@ describe('createPreviewStylesheetLoader loadStylesheet rollback and scope preser
     expect(thirdLink.isConnected).toBe(false);
     expect(scopedRuleCount(secondSheet)).toBe(0);
   });
+
+  it('cancels a pending loadStylesheet and disposes its previous lease when prepareStylesheet commits on the same id', async () => {
+    const loader = createPreviewStylesheetLoader(
+      document,
+      () => false,
+      ROOT_SELECTOR
+    );
+
+    // 1. Load v1 cleanly so it holds an active scopeLease and canonical id.
+    const firstLoad = loader.loadStylesheet(
+      LINK_ID,
+      URL_V1,
+      new AbortController().signal
+    );
+    const firstLink = document.getElementById(LINK_ID) as HTMLLinkElement;
+    const firstSheet = attachStyleSheet(firstLink, '.v1 { color: crimson; }');
+    firstLink.dispatchEvent(new Event('load'));
+    await firstLoad;
+    expect(scopedRuleCount(firstSheet)).toBe(1);
+
+    // 2. Start pending loadStylesheet(v2), renaming v1 to `${LINK_ID}-previous`.
+    const secondController = new AbortController();
+    const secondLoad = loader.loadStylesheet(
+      LINK_ID,
+      URL_V2,
+      secondController.signal
+    );
+    const secondLink = document.getElementById(LINK_ID) as HTMLLinkElement;
+    expect(secondLink).not.toBe(firstLink);
+    expect(firstLink.id).toBe(`${LINK_ID}-previous`);
+    expect(scopedRuleCount(firstSheet)).toBe(1);
+
+    // 3. While v2 is still in flight, prepare and commit v3 on the same id.
+    const prepared = loader.prepareStylesheet(
+      LINK_ID,
+      URL_V3,
+      new AbortController().signal,
+      'activation'
+    );
+    const ownerLinks = Array.from(
+      document.querySelectorAll<HTMLLinkElement>(
+        `link[data-easymde-stylesheet-owner="${LINK_ID}"]`
+      )
+    );
+    const thirdLink = ownerLinks.find(
+      (candidate) => candidate !== firstLink && candidate !== secondLink
+    );
+    if (!thirdLink) throw new Error('prepared link missing');
+    const thirdSheet = attachStyleSheet(thirdLink, '.v3 { color: indigo; }');
+    thirdLink.dispatchEvent(new Event('load'));
+    const readyPrepared = await prepared.promise;
+
+    readyPrepared.commit();
+
+    // Pending v2 must be cancelled; v1's lease and link must be cleaned up with exactly one canonical link.
+    await expect(secondLoad).rejects.toThrowError(
+      'preview-enhancement-resource-stale'
+    );
+    expect(scopedRuleCount(firstSheet)).toBe(0);
+    expect(firstLink.isConnected).toBe(false);
+    expect(secondLink.isConnected).toBe(false);
+    expect(scopedRuleCount(thirdSheet)).toBe(1);
+
+    const canonicalLinks = document.querySelectorAll(`link[id="${LINK_ID}"]`);
+    expect(canonicalLinks).toHaveLength(1);
+    expect(canonicalLinks[0]).toBe(thirdLink);
+    expect(
+      document.querySelectorAll(
+        `link[data-easymde-stylesheet-owner="${LINK_ID}"]`
+      )
+    ).toHaveLength(1);
+
+    // Late error/load/abort signals on the superseded v2 load must remain inert and never restore v1.
+    secondLink.dispatchEvent(new Event('error'));
+    attachStyleSheet(secondLink, '.v2 { color: gold; }');
+    secondLink.dispatchEvent(new Event('load'));
+    secondController.abort();
+
+    expect(firstLink.isConnected).toBe(false);
+    expect(secondLink.isConnected).toBe(false);
+    expect(document.querySelectorAll(`link[id="${LINK_ID}"]`)).toHaveLength(1);
+    expect(document.getElementById(LINK_ID)).toBe(thirdLink);
+    expect(scopedRuleCount(firstSheet)).toBe(0);
+    expect(scopedRuleCount(thirdSheet)).toBe(1);
+
+    loader.dispose();
+    expect(scopedRuleCount(thirdSheet)).toBe(0);
+  });
 });

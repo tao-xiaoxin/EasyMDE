@@ -19,6 +19,7 @@ import {
 	preparedPseudoStyleSignature,
 	preparedRootExportStyleSignature,
 } from "./wechat-fidelity-signature";
+import { headingAfterPseudoFlowFreshnessSignature } from "./wechat-heading-pseudo-flow";
 import { captureWechatInlinePseudoPaintInput } from "./wechat-inline-pseudo-paint";
 
 describe("wechat-fidelity-signature", () => {
@@ -848,6 +849,297 @@ describe("wechat-fidelity-signature", () => {
 			}
 			expect(parse).not.toHaveBeenCalled();
 			expect(getAnimations).not.toHaveBeenCalled();
+		});
+	});
+
+	describe("heading after pseudo flow freshness signature", () => {
+		type HeadingFixtureOptions = Readonly<{
+			after?: Record<string, string>;
+			heading?: Record<string, string>;
+			parent?: Record<string, string>;
+			typed?: Record<string, unknown> | null;
+			wrapInContents?: boolean;
+		}>;
+
+		const styleDecl = (values: Record<string, string>): CSSStyleDeclaration =>
+			({
+				getPropertyValue: (property: string): string => values[property] ?? "",
+			}) as unknown as CSSStyleDeclaration;
+
+		const createHeadingFixture = (options: HeadingFixtureOptions = {}) => {
+			const preview = document.createElement("article");
+			preview.setAttribute("data-easymde-preview-html-sink", "1");
+			const heading = document.createElement("h2");
+			heading.textContent = "Section heading";
+			const contentsWrapper = options.wrapInContents
+				? document.createElement("div")
+				: null;
+			if (contentsWrapper) {
+				contentsWrapper.setAttribute("data-contents-wrapper", "1");
+				contentsWrapper.append(heading);
+				preview.append(contentsWrapper);
+			} else {
+				preview.append(heading);
+			}
+
+			const fixedRect = (): DOMRect =>
+				({
+					bottom: 42,
+					height: 42,
+					left: 0,
+					right: 400,
+					top: 0,
+					width: 400,
+					x: 0,
+					y: 0,
+					toJSON: () => ({}),
+				}) as DOMRect;
+			preview.getBoundingClientRect = fixedRect;
+			heading.getBoundingClientRect = fixedRect;
+			if (contentsWrapper) contentsWrapper.getBoundingClientRect = fixedRect;
+
+			const typedStyles: Record<string, unknown> = {
+				height: { value: "auto" },
+				"block-size": { value: "auto" },
+				"min-height": { value: "auto" },
+				"min-block-size": { value: "auto" },
+				"max-height": { value: "none" },
+				"max-block-size": { value: "none" },
+				"writing-mode": { value: "horizontal-tb" },
+				"aspect-ratio": { value: "auto" },
+				"container-type": { value: "normal" },
+				...(options.typed ?? {}),
+			};
+			const computedStyleMapSpy = vi.fn(() => ({
+				get: (property: string) => typedStyles[property],
+			}));
+			Object.defineProperty(heading, "computedStyleMap", {
+				configurable: true,
+				value: options.typed === null ? undefined : computedStyleMapSpy,
+			});
+
+			const headingStyle = styleDecl({
+				display: "block",
+				position: "relative",
+				float: "none",
+				transform: "none",
+				overflow: "visible",
+				visibility: "visible",
+				opacity: "1",
+				"writing-mode": "horizontal-tb",
+				contain: "none",
+				"container-type": "normal",
+				"content-visibility": "visible",
+				"aspect-ratio": "auto",
+				...options.heading,
+			});
+			const afterStyle = styleDecl({
+				content: '""',
+				display: "block",
+				position: "absolute",
+				visibility: "visible",
+				opacity: "1",
+				...options.after,
+			});
+			const parentStyle = styleDecl({
+				display: "block",
+				visibility: "visible",
+				"writing-mode": "horizontal-tb",
+				...options.parent,
+			});
+			const contentsStyle = styleDecl({
+				display: "contents",
+				visibility: "visible",
+			});
+			const nonePseudo = styleDecl({ content: "none" });
+
+			const runtime: BrowserWechatClipboardRuntime = {
+				blob: Blob,
+				clipboardItem: null,
+				document,
+				getComputedStyle: (element, pseudoElement) => {
+					if (element === heading && "::after" === pseudoElement) {
+						return afterStyle;
+					}
+					if (pseudoElement) return nonePseudo;
+					if (element === heading) return headingStyle;
+					if (contentsWrapper && element === contentsWrapper) {
+						return contentsStyle;
+					}
+					return parentStyle;
+				},
+				getSelection: () => null,
+				pageOffset: () => ({ x: 0, y: 0 }),
+				scrollTo: vi.fn(),
+				write: async () => {},
+			};
+
+			return { computedStyleMapSpy, heading, preview, runtime };
+		};
+
+		const collectHeadingSignatures = async (
+			fixtureValue: ReturnType<typeof createHeadingFixture>,
+		) => {
+			const layoutYield = createSerializationYield(fixtureValue.runtime, true);
+			const geometryYield = createSerializationYield(
+				fixtureValue.runtime,
+				true,
+			);
+			if (!layoutYield || !geometryYield) throw new Error("yield unavailable");
+			const layoutDimension = { value: "" };
+			const layoutYieldDimension = { value: "" };
+			const layout = preparedLayoutSignature(
+				fixtureValue.preview,
+				fixtureValue.runtime,
+				fixtureValue.preview,
+				null,
+				layoutDimension,
+			);
+			const layoutYielded = await preparedLayoutSignatureWithYield(
+				fixtureValue.preview,
+				fixtureValue.runtime,
+				layoutYield,
+				undefined,
+				fixtureValue.preview,
+				null,
+				layoutYieldDimension,
+			);
+			const geometry = preparedDimensionGeometrySignature(
+				fixtureValue.preview,
+				fixtureValue.runtime,
+				null,
+			);
+			const geometryYielded = await preparedDimensionGeometrySignatureWithYield(
+				fixtureValue.preview,
+				fixtureValue.runtime,
+				geometryYield,
+				undefined,
+				null,
+			);
+			const semantics = preparedDimensionSemanticsSignature(
+				fixtureValue.preview,
+				fixtureValue.runtime,
+				null,
+			);
+			return {
+				geometry,
+				geometryYield: geometryYielded,
+				layout,
+				layoutDimension: layoutDimension.value,
+				layoutYield: layoutYielded,
+				layoutYieldDimension: layoutYieldDimension.value,
+				semantics,
+			};
+		};
+
+		it.each<Readonly<{ name: string; override: HeadingFixtureOptions }>>([
+			{
+				name: "CSSOM aspect-ratio",
+				override: { heading: { "aspect-ratio": "4 / 1" } },
+			},
+			{
+				name: "CSSOM contain: size",
+				override: { heading: { contain: "size" } },
+			},
+			{
+				name: "CSSOM container-type: size",
+				override: { heading: { "container-type": "size" } },
+			},
+			{
+				name: "CSSOM content-visibility: auto",
+				override: { heading: { "content-visibility": "auto" } },
+			},
+			{
+				name: "CSSOM writing-mode",
+				override: { heading: { "writing-mode": "vertical-rl" } },
+			},
+			{
+				name: "formatting-parent writing-mode through display: contents",
+				override: { parent: { "writing-mode": "vertical-rl" } },
+			},
+			{
+				name: "formatting-parent display through display: contents",
+				override: { parent: { display: "grid" } },
+			},
+			{
+				name: "Typed OM min-height",
+				override: { typed: { "min-height": { value: 80, unit: "px" } } },
+			},
+			{
+				name: "Typed OM container-type: size",
+				override: { typed: { "container-type": { value: "size" } } },
+			},
+			{
+				name: "Typed OM aspect-ratio",
+				override: { typed: { "aspect-ratio": { toString: () => "4 / 1" } } },
+			},
+			{
+				name: "Typed OM availability",
+				override: { typed: null },
+			},
+		])(
+			"invalidates every fidelity signature sink when $name changes at equal geometry",
+			async ({ override }) => {
+				const baseline = createHeadingFixture({ wrapInContents: true });
+				const mutated = createHeadingFixture({
+					...override,
+					wrapInContents: true,
+				});
+
+				expect(baseline.heading.getBoundingClientRect().width).toBe(
+					mutated.heading.getBoundingClientRect().width,
+				);
+				expect(baseline.heading.getBoundingClientRect().height).toBe(
+					mutated.heading.getBoundingClientRect().height,
+				);
+
+				const before = await collectHeadingSignatures(baseline);
+				const after = await collectHeadingSignatures(mutated);
+
+				expect(before.layout).toBe(before.layoutYield);
+				expect(before.layoutDimension).toBe(before.layoutYieldDimension);
+				expect(before.geometry).toBe(before.geometryYield);
+				expect(after.layout).toBe(after.layoutYield);
+				expect(after.layoutDimension).toBe(after.layoutYieldDimension);
+				expect(after.geometry).toBe(after.geometryYield);
+
+				for (const key of Object.keys(before) as Array<keyof typeof before>) {
+					expect(after[key]).not.toBe(before[key]);
+				}
+			},
+		);
+
+		it("short-circuits without reading computedStyleMap unless h1-h4 has an empty absolute ::after", () => {
+			const noPseudo = createHeadingFixture({ after: { content: "none" } });
+			expect(
+				headingAfterPseudoFlowFreshnessSignature(
+					noPseudo.heading,
+					noPseudo.runtime,
+				),
+			).toBe("");
+			expect(noPseudo.computedStyleMapSpy).not.toHaveBeenCalled();
+
+			const staticPseudo = createHeadingFixture({
+				after: { content: '""', position: "static" },
+			});
+			expect(
+				headingAfterPseudoFlowFreshnessSignature(
+					staticPseudo.heading,
+					staticPseudo.runtime,
+				),
+			).toBe("");
+			expect(staticPseudo.computedStyleMapSpy).not.toHaveBeenCalled();
+
+			const textPseudo = createHeadingFixture({
+				after: { content: '"§"', position: "absolute" },
+			});
+			expect(
+				headingAfterPseudoFlowFreshnessSignature(
+					textPseudo.heading,
+					textPseudo.runtime,
+				),
+			).toBe("");
+			expect(textPseudo.computedStyleMapSpy).not.toHaveBeenCalled();
 		});
 	});
 });

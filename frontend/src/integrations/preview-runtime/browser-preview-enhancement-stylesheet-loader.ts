@@ -203,19 +203,25 @@ export function createPreviewStylesheetLoader(
     let load: StyleLoad | null = null;
     const restorePrevious = () => {
       link.remove();
-      if (previous?.isConnected) {
+      const isCurrentLoad = !load || styleLoads.get(id) === load;
+      if (isCurrentLoad && previous?.isConnected) {
         previous.id = id;
-        if (previousLoad && (!load || styleLoads.get(id) === load)) {
-          styleLoads.set(id, previousLoad);
-        }
-      } else {
         if (previousLoad) {
-          previousLoad.scopeLease?.dispose();
-          previousLoad.scopeLease = null;
-        }
-        if (load && styleLoads.get(id) === load) {
+          styleLoads.set(id, previousLoad);
+        } else if (load) {
           styleLoads.delete(id);
         }
+        return;
+      }
+      if (previousLoad && styleLoads.get(id) !== previousLoad) {
+        previousLoad.scopeLease?.dispose();
+        previousLoad.scopeLease = null;
+      }
+      if (!isCurrentLoad && (!previous || styleLoads.get(id)?.link !== previous)) {
+        previous?.remove();
+      }
+      if (load && styleLoads.get(id) === load) {
+        styleLoads.delete(id);
       }
     };
     const promise = new Promise<void>((resolve, reject) => {
@@ -478,6 +484,19 @@ export function createPreviewStylesheetLoader(
         }
       }
 
+      if (link && !link.isConnected) {
+        finish();
+        return;
+      }
+      const existingBeforeCancel = documentRef.getElementById(id);
+      if (existingBeforeCancel && !(existingBeforeCancel instanceof HTMLLinkElement)) {
+        finish();
+        return;
+      }
+      const activeLoad = styleLoads.get(id);
+      if (activeLoad && !activeLoad.loaded()) {
+        activeLoad.cancel();
+      }
       const current = documentRef.getElementById(id);
       if (current && !(current instanceof HTMLLinkElement)) {
         finish();
@@ -485,10 +504,6 @@ export function createPreviewStylesheetLoader(
       }
       let activeLink: HTMLLinkElement;
       if (link) {
-        if (!link.isConnected) {
-          finish();
-          return;
-        }
         current?.remove();
         link.id = id;
         link.media = 'all';

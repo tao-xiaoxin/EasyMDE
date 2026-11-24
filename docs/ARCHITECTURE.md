@@ -142,7 +142,11 @@ later appearance applications until the owner is refreshed.
 |   |   |   |-- preview-runtime/         # Preview enhancement runtime adapters.
 |   |   |   `-- wordpress/               # WordPress, REST, media, and native-form adapters.
 |   |   |-- shared/                      # Stable cross-feature utilities and UI primitives.
+|   |   |   |-- css/                     # Editor stylesheet scoping and CSS selector-list helpers.
+|   |   |   |-- dom/                     # Protected visual-node DOM adoption and attribute helpers.
 |   |   |   |-- keyboard/                # Shared keyboard and shortcut utilities.
+|   |   |   |-- markdown/                # Shared Markdown line-model and math TeX normalization helpers.
+|   |   |   |-- mermaid/                 # Single cross-bundle Mermaid runtime initialization and intrinsic layout owner (`mermaid-runtime-config.ts`).
 |   |   |   `-- ui/                      # Shared UI primitives.
 |   |   |-- test/                        # Frontend-only setup and fixtures.
 |   |   |   `-- fixtures/                # Frontend contract fixtures.

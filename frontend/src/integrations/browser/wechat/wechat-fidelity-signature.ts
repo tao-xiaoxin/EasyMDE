@@ -11,6 +11,7 @@ import {
 	visualRasterizationKind,
 } from "./wechat-clone-metadata";
 import type { WechatDimensionSemanticsContext } from "./wechat-dimension-semantics";
+import { headingAfterPseudoFlowFreshnessSignature } from "./wechat-heading-pseudo-flow";
 import {
 	listMarkerSignature,
 	tableHeaderPaintFreshnessSignature,
@@ -419,6 +420,11 @@ function auxiliaryFidelitySignature(
 		"BLOCKQUOTE" === element.tagName
 			? quotePseudoFlowFreshnessSignature(element, runtime, dimensionSemantics)
 			: "";
+	const headingAfterPseudoSignature = ["H1", "H2", "H3", "H4"].includes(
+		element.tagName,
+	)
+		? headingAfterPseudoFlowFreshnessSignature(element, runtime, computed)
+		: "";
 	const taskCheckboxSignature = taskListCheckboxFreshnessSignature(
 		element,
 		runtime,
@@ -450,11 +456,11 @@ function auxiliaryFidelitySignature(
 		element instanceof HTMLElement
 			? nestedOrdinaryListProjectionSignature(
 					element,
-				runtime,
-				dimensionSemantics,
-			)
+					runtime,
+					dimensionSemantics,
+				)
 			: "";
-	return `${markerSignature}:${inlineMarkerSignature}:${quotePseudoSignature}:${taskCheckboxSignature}:${tableHeaderSignature}:${tableScrollSignature}:${tableNativeGridSignature}:${mermaidAdmission}:${markerDecisions}:${inlinePseudoPaint}:${nestedListProjectionSignature}`;
+	return `${markerSignature}:${inlineMarkerSignature}:${quotePseudoSignature}:${headingAfterPseudoSignature}:${taskCheckboxSignature}:${tableHeaderSignature}:${tableScrollSignature}:${tableNativeGridSignature}:${mermaidAdmission}:${markerDecisions}:${inlinePseudoPaint}:${nestedListProjectionSignature}`;
 }
 
 function layoutDimensionEntrySignature(

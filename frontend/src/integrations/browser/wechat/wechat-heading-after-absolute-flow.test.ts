@@ -596,6 +596,45 @@ describe("empty absolute heading after decoration", () => {
 			styles: { contain: "strict", "line-height": "20px" },
 		},
 		{
+			name: "CSSOM container-type size with contain-intrinsic-size",
+			typed: { "container-type": { value: "size" } },
+			styles: {
+				contain: "none",
+				"container-type": "size",
+				"contain-intrinsic-size": "80px",
+				"line-height": "20px",
+			},
+		},
+		{
+			name: "CSSOM container-type multi-token size with contain-intrinsic-size",
+			typed: {},
+			styles: {
+				contain: "none",
+				"container-type": "size scroll-state",
+				"contain-intrinsic-size": "80px",
+				"line-height": "20px",
+			},
+		},
+		{
+			name: "Typed OM container-type size with contain-intrinsic-size",
+			typed: { "container-type": { value: "size" } },
+			styles: {
+				contain: "none",
+				"container-type": "normal",
+				"contain-intrinsic-size": "80px",
+				"line-height": "20px",
+			},
+		},
+		{
+			name: "Typed OM CSSStyleValue container-type size",
+			typed: { "container-type": { toString: () => "size scroll-state" } },
+			styles: {
+				contain: "none",
+				"contain-intrinsic-size": "80px",
+				"line-height": "20px",
+			},
+		},
+		{
 			name: "CSS Grid parent",
 			typed: {},
 			styles: { "line-height": "20px" },
@@ -704,6 +743,20 @@ describe("empty absolute heading after decoration", () => {
 			styles: { "aspect-ratio": "auto" },
 			parent: { display: "block", "writing-mode": "horizontal-tb" },
 			wrapParentInContents: true,
+		},
+		{
+			name: "container-type inline-size stays eligible",
+			typed: { "container-type": { value: "inline-size" } },
+			styles: { "container-type": "inline-size" },
+			parent: { display: "block", "writing-mode": "horizontal-tb" },
+			wrapParentInContents: false,
+		},
+		{
+			name: "container-type normal stays eligible",
+			typed: { "container-type": { value: "normal" } },
+			styles: { "container-type": "normal" },
+			parent: { display: "block", "writing-mode": "horizontal-tb" },
+			wrapParentInContents: false,
 		},
 	];
 

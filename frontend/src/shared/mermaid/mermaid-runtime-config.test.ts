@@ -18,7 +18,6 @@ describe('mermaid-runtime-config', () => {
 
     initializeMermaidRuntime(mermaid);
     initializeMermaidRuntime(mermaid);
-    initializeMermaidRuntime(mermaid, { swallowErrors: true });
 
     expect(initialize).toHaveBeenCalledTimes(1);
     const config = initialize.mock.calls[0]?.[0];
@@ -56,30 +55,29 @@ describe('mermaid-runtime-config', () => {
     expect(globalRegistry).toBe(initializedMermaidRuntimes);
   });
 
-  it('tracks distinct runtimes independently and honors swallowErrors semantics', () => {
-    const throwingInitialize = vi.fn(() => {
-      throw new Error('init-rejected');
-    });
-    const strictRuntime: MermaidInitializableRuntime = {
-      initialize: throwingInitialize
+  it('does not cache failed initialization in the shared WeakSet and retries cleanly on the next call', () => {
+    const flakyInitialize = vi
+      .fn<(options: MermaidInitializationOptions) => void>()
+      .mockImplementationOnce(() => {
+        throw new Error('init-rejected');
+      })
+      .mockImplementationOnce(() => undefined);
+    const flakyRuntime: MermaidInitializableRuntime = {
+      initialize: flakyInitialize
     };
-    expect(() => initializeMermaidRuntime(strictRuntime)).toThrowError(
+
+    expect(() => initializeMermaidRuntime(flakyRuntime)).toThrowError(
       'init-rejected'
     );
-    expect(initializedMermaidRuntimes.has(strictRuntime)).toBe(false);
+    expect(initializedMermaidRuntimes.has(flakyRuntime)).toBe(false);
+    expect(flakyInitialize).toHaveBeenCalledTimes(1);
 
-    const swallowedInitialize = vi.fn(() => {
-      throw new Error('mock-rejected');
-    });
-    const lenientRuntime: MermaidInitializableRuntime = {
-      initialize: swallowedInitialize
-    };
-    expect(() =>
-      initializeMermaidRuntime(lenientRuntime, { swallowErrors: true })
-    ).not.toThrow();
-    expect(initializedMermaidRuntimes.has(lenientRuntime)).toBe(true);
-    initializeMermaidRuntime(lenientRuntime);
-    expect(swallowedInitialize).toHaveBeenCalledTimes(1);
+    expect(() => initializeMermaidRuntime(flakyRuntime)).not.toThrow();
+    expect(initializedMermaidRuntimes.has(flakyRuntime)).toBe(true);
+    expect(flakyInitialize).toHaveBeenCalledTimes(2);
+
+    initializeMermaidRuntime(flakyRuntime);
+    expect(flakyInitialize).toHaveBeenCalledTimes(2);
 
     const minimalRuntime: MermaidInitializableRuntime = {};
     expect(() => initializeMermaidRuntime(minimalRuntime)).not.toThrow();

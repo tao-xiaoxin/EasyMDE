@@ -1,11 +1,6 @@
 import { createElement, createRoot } from '@wordpress/element';
 import {
-  createEditorStylesheetReadiness,
   EDITOR_STYLESHEET_SCOPE,
-  scopeEditorStyleElement,
-  scopeEditorStylesheet,
-  scopeEditorStylesheetLink,
-  type EditorStylesheetElement,
   type EditorStylesheetScopeLease
 } from '../shared/css/editor-stylesheet-scope';
 
@@ -17,7 +12,6 @@ import {
 } from '../contracts/bootstrap/editor-root-bootstrap';
 import type { WordPressApiFetch } from '../integrations/wordpress/preview/create-wordpress-preview-port';
 import { createBrowserScrollSync } from '../integrations/browser/editor-layout/create-browser-scroll-sync';
-import { createBrowserEditorClipboard } from '../integrations/browser/clipboard/create-browser-editor-clipboard';
 import { createBrowserEditorImagePixels } from '../integrations/browser/image-copy/create-browser-editor-image-pixels';
 import {
   createBrowserEditorBlockIndexWorker,
@@ -36,10 +30,7 @@ import {
   type WechatVisualRasterizationPort
 } from '../contracts/ports/wechat-visual-rasterization-port';
 import { createBrowserPreviewScroll } from '../integrations/browser/preview/create-browser-preview-scroll';
-import type {
-  BrowserWechatClipboardRuntime,
-  ClipboardItemConstructor
-} from '../integrations/browser/wechat/create-browser-wechat-clipboard';
+import type { BrowserWechatClipboardRuntime } from '../integrations/browser/wechat/create-browser-wechat-clipboard';
 import { createBrowserWechatPngEncoder } from '../integrations/browser/wechat/create-browser-wechat-png-encoder';
 import type { BrowserWechatVisualRasterizerRuntime } from '../integrations/browser/wechat/create-browser-wechat-visual-rasterizer';
 import wechatPngEncoderWorkerUrl from '../integrations/browser/wechat/wechat-png-encoder.worker.ts?worker&url';
@@ -49,10 +40,7 @@ import {
   createBrowserPreviewEnhancementPort,
   createWindowPreviewEnhancementRuntime
 } from '../integrations/preview-runtime/browser-preview-enhancement';
-import {
-  createWordPressAppearancePort,
-  resolveAppearanceArticleThemeUrl
-} from '../integrations/wordpress/appearance/create-wordpress-appearance-port';
+import { createWordPressAppearancePort } from '../integrations/wordpress/appearance/create-wordpress-appearance-port';
 import { createWordPressFontControlsPort } from '../integrations/wordpress/appearance/create-wordpress-font-controls-port';
 import { createWordPressImageUploadPort } from '../integrations/wordpress/media/wordpress-image-upload';
 import { createWordPressRemoteImageImportPort } from '../integrations/wordpress/media/wordpress-remote-image-import';
@@ -63,6 +51,30 @@ import { createWordPressPreviewPort } from '../integrations/wordpress/preview/cr
 import { createWordPressRevisionPort } from '../integrations/wordpress/revisions/create-wordpress-revision-port';
 import { createWordPressEditorSessionPort } from '../integrations/wordpress/session/create-wordpress-editor-session-port';
 import { createWordPressImmersiveI18nPort } from '../integrations/wordpress/i18n/create-wordpress-immersive-i18n-port';
+import {
+  clipboardItem,
+  collectAdminEditorDomFields,
+  createAdminEditorClipboardPort,
+  createExternalCommandExecutor,
+  createNativePublisher,
+  createRevisionRestorer,
+  createSimplifiedFormattingParser,
+  createWechatPngEncoderRuntime,
+  currentPostId,
+  localStorage,
+  platform,
+  requiredElement
+} from './admin-editor-browser-adapters';
+import {
+  disposeStylesheetLeases,
+  normalizeCleanupError,
+  prepareInitialEditorStylesheets,
+  runCleanupSteps,
+  scopeBaseEditorStylesheet,
+  startupFailureCode,
+  type InitialStylesheetPreparation,
+  type PreparedInitialStylesheets
+} from './admin-editor-stylesheets';
 
 type WordPressHooks = Readonly<{
   addAction: (
@@ -91,14 +103,6 @@ type AdminEditorBrowserRuntime = Readonly<{
   wordpress: WordPressEditorRuntime;
 }>;
 
-type DeferredClipboardItemConstructor = new (
-  payload: Record<string, Blob | PromiseLike<Blob>>
-) => unknown;
-
-type ClipboardItemConstructorWithSupport = DeferredClipboardItemConstructor & {
-  supports?: (type: string) => boolean;
-};
-
 export type AdminEditorStartRuntime = Readonly<{
   bootstrap: unknown;
   document: Document;
@@ -107,340 +111,6 @@ export type AdminEditorStartRuntime = Readonly<{
   window: Window;
   wordpress: WordPressEditorRuntime;
 }>;
-
-function requiredElement<T extends Element>(
-  documentRef: Document,
-  selector: string,
-  guard: (element: Element) => element is T,
-  code: string
-): T {
-  const element = documentRef.querySelector(selector);
-  if (!element || !guard(element)) throw new Error(code);
-  return element;
-}
-
-function currentPostId(documentRef: Document, fallback: number): number {
-  const value = Number(
-    documentRef.querySelector<HTMLInputElement>('#post_ID')?.value
-  );
-  return Number.isSafeInteger(value) && value >= 0 ? value : fallback;
-}
-
-function platform(windowRef: Window): 'mac' | 'win' {
-  return /Mac|iPhone|iPad|iPod/i.test(windowRef.navigator.platform)
-    ? 'mac'
-    : 'win';
-}
-
-function createExternalCommandExecutor(
-  bootstrap: EditorRootBootstrap,
-  documentRef: Document
-): EditorRootProps['executeExternalCommand'] {
-  return (commandId) => {
-    const command = bootstrap.toolbar.commands.find(
-      ({ id }) => id === commandId
-    );
-    if ('savePost' !== command?.action) return false;
-    const candidate =
-      documentRef.querySelector<HTMLElement>('#save-post') ??
-      documentRef.querySelector<HTMLElement>('#publish');
-    if (!candidate || candidate.matches(':disabled, [aria-disabled="true"]'))
-      return false;
-    candidate.click();
-    return true;
-  };
-}
-
-function createNativePublisher(
-  documentRef: Document
-): EditorRootProps['publishPost'] {
-  const completed = (event: Event | null): boolean =>
-    null !== event && !event.defaultPrevented;
-
-  return () => {
-    const candidate = documentRef.querySelector<HTMLElement>('#publish');
-    if (!candidate || candidate.matches(':disabled, [aria-disabled="true"]'))
-      return false;
-    const form = candidate.closest('form');
-    if (!(form instanceof HTMLFormElement)) return false;
-
-    let clickEvent: MouseEvent | null = null;
-    let submitEvent: SubmitEvent | null = null;
-    const captureClick = (event: MouseEvent) => {
-      clickEvent = event;
-    };
-    const captureSubmit = (event: SubmitEvent) => {
-      submitEvent = event;
-    };
-    candidate.addEventListener('click', captureClick, { once: true });
-    form.addEventListener('submit', captureSubmit, { once: true });
-    try {
-      candidate.click();
-    } finally {
-      candidate.removeEventListener('click', captureClick);
-      form.removeEventListener('submit', captureSubmit);
-    }
-    return completed(clickEvent) && completed(submitEvent);
-  };
-}
-
-function clipboardItem(windowRef: Window): ClipboardItemConstructor | null {
-  const value = (windowRef as Window & { ClipboardItem?: unknown })
-    .ClipboardItem;
-  return 'function' === typeof value
-    ? (value as ClipboardItemConstructor)
-    : null;
-}
-
-function localStorage(windowRef: Window): Storage | null {
-  try {
-    return windowRef.localStorage;
-  } catch {
-    return null;
-  }
-}
-
-type PreparedInitialStylesheets = {
-  provisional: () => void;
-  commit: () => void;
-  release: () => void;
-  rollback: () => void;
-};
-
-type InitialStylesheetPreparation = Readonly<{
-  cancel: () => void;
-  run: (
-    onReady: (prepared: PreparedInitialStylesheets) => void,
-    onError: (error: Error) => void
-  ) => () => void;
-}>;
-
-function startupFailureCode(error: unknown): string {
-  return error instanceof Error && /^[a-z0-9-]{1,120}$/.test(error.message)
-    ? error.message
-    : 'react-editor-startup-failed';
-}
-
-function normalizeCleanupError(error: unknown): Error {
-  return error instanceof Error
-    ? error
-    : new Error('react-editor-startup-rollback-failed');
-}
-
-function runCleanupSteps(
-  steps: ReadonlyArray<() => void>
-): Error | null {
-  let failure: Error | null = null;
-  for (const step of steps) {
-    try {
-      step();
-    } catch (error) {
-      failure ??= normalizeCleanupError(error);
-    }
-  }
-  return failure;
-}
-
-function disposeStylesheetLeases(
-  leases: ReadonlyArray<EditorStylesheetScopeLease>
-): Error | null {
-  let failure: Error | null = null;
-  for (const lease of [...leases].reverse()) {
-    try {
-      lease.dispose();
-    } catch (error) {
-      failure ??= error instanceof Error
-        ? error
-        : new Error('editor-stylesheet-rollback-failed');
-    }
-  }
-  return failure;
-}
-
-function editorStylesheetElement(
-  value: Element | null,
-  code: string
-): EditorStylesheetElement {
-  if (
-    value instanceof HTMLLinkElement
-    || value instanceof HTMLStyleElement
-  ) return value;
-  throw new Error(code);
-}
-
-function prepareInitialEditorStylesheets(
-  bootstrap: EditorRootBootstrap,
-  documentRef: Document
-): InitialStylesheetPreparation {
-  const base = editorStylesheetElement(
-    documentRef.getElementById('easymde-content-css'),
-    'editor-content-stylesheet-unavailable'
-  );
-  const article = requiredElement(
-    documentRef,
-    '#easymde-article-theme-css',
-    (element): element is HTMLLinkElement => element instanceof HTMLLinkElement,
-    'appearance-article-theme-link-unavailable'
-  );
-  const targetUrl = resolveAppearanceArticleThemeUrl(
-    bootstrap.appearance,
-    bootstrap.previewEnhancement.assetBaseUrl
-  );
-  const candidate = article.href === targetUrl
-    ? null
-    : article.cloneNode(false) as HTMLLinkElement;
-  const originalId = article.id;
-  const activeMedia = article.media;
-  if (candidate) {
-    candidate.removeAttribute('id');
-    candidate.media = 'not all';
-    candidate.href = targetUrl;
-    article.after(candidate);
-  }
-  const owner = candidate ?? article;
-  const gate = createEditorStylesheetReadiness([base, owner]);
-  let candidateLease: EditorStylesheetScopeLease | null = null;
-  let prepared: PreparedInitialStylesheets | null = null;
-  let transferred = false;
-  let cancelled = false;
-
-  const disposeCandidateLease = (): void => {
-    const lease = candidateLease;
-    candidateLease = null;
-    lease?.dispose();
-  };
-
-  const cleanupUnprepared = (): Error | null =>
-    runCleanupSteps([
-      disposeCandidateLease,
-      () => candidate?.remove(),
-      () => {
-        article.id = originalId;
-        article.media = activeMedia;
-      }
-    ]);
-
-  const createPrepared = (): PreparedInitialStylesheets => {
-    let phase: 'pending' | 'provisional' | 'committed' | 'closed' = 'pending';
-    return {
-      provisional: () => {
-        if ('closed' === phase) return;
-        if ('provisional' === phase || 'committed' === phase) return;
-        try {
-          if (candidate) {
-            article.removeAttribute('id');
-            candidate.id = originalId;
-            candidate.media = activeMedia;
-          }
-          phase = 'provisional';
-        } catch (error) {
-          article.id = originalId;
-          article.media = activeMedia;
-          throw error;
-        }
-      },
-      commit: () => {
-        if ('closed' === phase || 'committed' === phase) return;
-        if ('pending' === phase) {
-          throw new Error('editor-stylesheet-provisional-required');
-        }
-        if (candidate) article.remove();
-        phase = 'committed';
-      },
-      release: () => {
-        if ('closed' === phase) return;
-        if ('committed' !== phase) {
-          throw new Error('editor-stylesheet-release-before-commit');
-        }
-        phase = 'closed';
-        disposeCandidateLease();
-      },
-      rollback: () => {
-        if ('closed' === phase) return;
-        if ('committed' === phase) {
-          phase = 'closed';
-          disposeCandidateLease();
-          return;
-        }
-        const failure = runCleanupSteps([
-          disposeCandidateLease,
-          () => candidate?.remove(),
-          () => {
-            article.id = originalId;
-            article.media = activeMedia;
-          }
-        ]);
-        phase = 'closed';
-        if (failure) throw failure;
-      }
-    };
-  };
-
-  const rollbackPreparation = (): Error | null => {
-    if (prepared) {
-      try {
-        if (transferred) prepared.release();
-        else prepared.rollback();
-      } catch (error) {
-        return normalizeCleanupError(error);
-      }
-      return null;
-    }
-    return cleanupUnprepared();
-  };
-
-  const fail = (error: Error, onError: (error: Error) => void): void => {
-    if (cancelled) return;
-    cancelled = true;
-    const cleanupFailure = rollbackPreparation();
-    try {
-      gate.cancel();
-    } catch (cancelError) {
-      onError(normalizeCleanupError(cancelError));
-      return;
-    }
-    onError(cleanupFailure ?? error);
-  };
-  return {
-    cancel: () => {
-      if (cancelled) return;
-      cancelled = true;
-      const cleanupFailure = rollbackPreparation();
-      try {
-        gate.cancel();
-      } catch (error) {
-        throw normalizeCleanupError(error);
-      }
-      if (cleanupFailure) throw cleanupFailure;
-    },
-    run: (onReady, onError) => gate.run((sheets) => {
-      if (cancelled) return;
-      try {
-        if (candidate) {
-          const sheet = sheets.get(candidate);
-          if (!sheet) throw new Error('editor-article-stylesheet-unavailable');
-          candidateLease = scopeEditorStylesheet(sheet, {
-            rootSelector: EDITOR_STYLESHEET_SCOPE
-          });
-        }
-        prepared = createPrepared();
-        prepared.provisional();
-        onReady(prepared);
-        transferred = true;
-      } catch (error) {
-        fail(
-          error instanceof Error
-            ? error
-            : new Error('editor-stylesheet-startup-failed'),
-          onError
-        );
-      }
-    }, (error) => {
-      if (cancelled) return;
-      fail(error, onError);
-    })
-  };
-}
 
 function wechatBackgroundPreparationAbortError(): Error {
   const error = new Error('wechat-background-preparation-cancelled');
@@ -707,7 +377,7 @@ function mountPreparedAdminEditor(
   let enhancementPort: ReturnType<typeof createBrowserPreviewEnhancementPort> | null = null;
   let appearancePort: ReturnType<typeof createWordPressAppearancePort> | null = null;
   let editorBlockIndexPort: ReturnType<typeof createBrowserEditorBlockIndexWorker> | null = null;
-  let editorClipboardPort: ReturnType<typeof createBrowserEditorClipboard> | null = null;
+  let editorClipboardPort: ReturnType<typeof createAdminEditorClipboardPort> | null = null;
   let editorImagePixelsPort: ReturnType<typeof createBrowserEditorImagePixels> | null = null;
   let appearanceDisposed = false;
   let appearanceDisposeFailure: Error | null = null;
@@ -726,92 +396,20 @@ function mountPreparedAdminEditor(
     }
   };
   try {
-    const baseStylesheet = editorStylesheetElement(
-      documentRef.getElementById('easymde-content-css'),
-      'editor-content-stylesheet-unavailable'
-    );
-    baseStylesheetLeases.push(
-      baseStylesheet instanceof HTMLLinkElement
-        ? scopeEditorStylesheetLink(baseStylesheet, {
-            rootSelector: EDITOR_STYLESHEET_SCOPE
-          })
-        : scopeEditorStyleElement(baseStylesheet, {
-            rootSelector: EDITOR_STYLESHEET_SCOPE
-          })
-    );
+    baseStylesheetLeases.push(scopeBaseEditorStylesheet(documentRef));
 
-    const form = requiredElement(
-      documentRef,
-      '#post',
-      (element): element is HTMLFormElement => element instanceof HTMLFormElement,
-      'native-form-unavailable'
-    );
-    const titleCandidate = documentRef.querySelector('#title');
-    const titleField =
-      titleCandidate instanceof HTMLInputElement ? titleCandidate : null;
-    const submissionField = requiredElement(
-      documentRef,
-      '#easymde-source',
-      (element): element is HTMLTextAreaElement =>
-        element instanceof HTMLTextAreaElement,
-      'native-markdown-field-unavailable'
-    );
-    const nativeEditorCandidate = documentRef.querySelector('#postdivrich');
-    nativeEditor =
-      nativeEditorCandidate instanceof HTMLElement ? nativeEditorCandidate : null;
-    const nativeContentCandidate = documentRef.querySelector('#content');
-    const nativeContentField =
-      nativeContentCandidate instanceof HTMLTextAreaElement
-        ? nativeContentCandidate
-        : null;
-    const input = (selector: string, code: string) =>
-      requiredElement(
-        documentRef,
-        selector,
-        (element): element is HTMLInputElement =>
-          element instanceof HTMLInputElement,
-        code
-      );
-    const appearanceFields = {
-      codeTheme: input(
-        '#easymde-code-theme-field',
-        'appearance-native-fields-unavailable'
-      ),
-      codeThemeExplicit: input(
-        '#easymde-code-theme-explicit-field',
-        'appearance-native-fields-unavailable'
-      ),
-      customCssId: input(
-        '#easymde-custom-css-id-field',
-        'appearance-native-fields-unavailable'
-      ),
-      markdownTheme: input(
-        '#easymde-markdown-theme-field',
-        'appearance-native-fields-unavailable'
-      )
-    };
-    const enabledField = input(
-      '#easymde-enabled-field',
-      'autosave-native-fields-unavailable'
-    );
-    const fontFields = {
-      appleFont: input(
-        '#easymde-apple-font-field',
-        'font-controls-native-fields-unavailable'
-      ),
-      customFont: input(
-        '#easymde-custom-font-field',
-        'font-controls-native-fields-unavailable'
-      ),
-      serifFont: input(
-        '#easymde-serif-font-field',
-        'font-controls-native-fields-unavailable'
-      ),
-      windowsFont: input(
-        '#easymde-windows-font-field',
-        'font-controls-native-fields-unavailable'
-      )
-    };
+    const domFields = collectAdminEditorDomFields(documentRef);
+    const {
+      appearanceFields,
+      enabledField,
+      fontFields,
+      form,
+      nativeContentField,
+      submissionField,
+      titleField
+    } = domFields;
+    nativeEditor = domFields.nativeEditor;
+
     const postId = currentPostId(documentRef, bootstrap.preview.postId);
     const draftStorage = createBrowserLocalDraftStorage({
       config: { ...bootstrap.localDrafts, postId },
@@ -840,23 +438,10 @@ function mountPreparedAdminEditor(
           window: windowRef
         })
       : null;
-    const browserCapabilities = windowRef as unknown as {
-      createImageBitmap?: typeof globalThis.createImageBitmap;
-      OffscreenCanvas?: typeof globalThis.OffscreenCanvas;
-      Worker?: typeof globalThis.Worker;
-    };
-    const pngEncoderRuntime = {
-      ...(browserCapabilities.createImageBitmap
-        ? { createImageBitmap: browserCapabilities.createImageBitmap }
-        : {}),
-      ...(browserCapabilities.OffscreenCanvas
-        ? { offscreenCanvas: browserCapabilities.OffscreenCanvas }
-        : {}),
-      ...(browserCapabilities.Worker
-        ? { worker: browserCapabilities.Worker }
-        : {}),
-      workerUrl: wechatPngEncoderWorkerUrl
-    };
+    const pngEncoderRuntime = createWechatPngEncoderRuntime(
+      windowRef,
+      wechatPngEncoderWorkerUrl
+    );
     if (!enhancementPort) {
       throw new Error('react-editor-enhancement-port-unavailable');
     }
@@ -875,92 +460,7 @@ function mountPreparedAdminEditor(
       ...appearancePort,
       dispose: disposeAppearancePort
     };
-    const browserClipboard = windowRef.navigator.clipboard;
-    const deferredClipboardItem = (
-      windowRef as Window & { ClipboardItem?: unknown }
-    ).ClipboardItem;
-    const supportsPngWrite = (): boolean => {
-      if (
-        !browserClipboard
-        || 'function' !== typeof browserClipboard.write
-        || 'function' !== typeof deferredClipboardItem
-      ) return false;
-      const ClipboardItem =
-        deferredClipboardItem as ClipboardItemConstructorWithSupport;
-      if ('function' !== typeof ClipboardItem.supports) return false;
-      try {
-        return true === ClipboardItem.supports('image/png');
-      } catch {
-        return false;
-      }
-    };
-    const supportsRichWrite = (): boolean => {
-      if (
-        !browserClipboard
-        || 'function' !== typeof browserClipboard.write
-        || 'function' !== typeof deferredClipboardItem
-      ) return false;
-      const ClipboardItem =
-        deferredClipboardItem as ClipboardItemConstructorWithSupport;
-      if ('function' !== typeof ClipboardItem.supports) return false;
-      try {
-        return (
-          true === ClipboardItem.supports('text/html')
-          && true === ClipboardItem.supports('text/plain')
-        );
-      } catch {
-        return false;
-      }
-    };
-    editorClipboardPort = createBrowserEditorClipboard(
-      browserClipboard
-        ? {
-            readText: () => browserClipboard.readText(),
-            supportsPngWrite,
-            supportsRichWrite,
-            ...('function' === typeof deferredClipboardItem
-              ? {
-                  writeDeferred: (text: Promise<string>) => {
-                    const ClipboardItem =
-                      deferredClipboardItem as DeferredClipboardItemConstructor;
-                    const plain = text.then(
-                      (value) => new Blob([value], { type: 'text/plain' })
-                    );
-                    void plain.catch(() => undefined);
-                    const item = new ClipboardItem({
-                      'text/plain': plain
-                    });
-                    return browserClipboard.write([item] as ClipboardItems);
-                  },
-                  writeImageDeferred: (image: Promise<Blob>) => {
-                    const ClipboardItem =
-                      deferredClipboardItem as DeferredClipboardItemConstructor;
-                    const item = new ClipboardItem({ 'image/png': image });
-                    return browserClipboard.write([item] as ClipboardItems);
-                  },
-                  writeRichDeferred: (payload) => {
-                    const ClipboardItem =
-                      deferredClipboardItem as DeferredClipboardItemConstructor;
-                    const html = payload.then(
-                      (value) => new Blob([value.html], { type: 'text/html' })
-                    );
-                    const text = payload.then(
-                      (value) => new Blob([value.text], { type: 'text/plain' })
-                    );
-                    void html.catch(() => undefined);
-                    void text.catch(() => undefined);
-                    const item = new ClipboardItem({
-                      'text/html': html,
-                      'text/plain': text
-                    });
-                    return browserClipboard.write([item] as ClipboardItems);
-                  }
-                }
-              : {}),
-            writeText: (text) => browserClipboard.writeText(text)
-          }
-        : null
-    );
+    editorClipboardPort = createAdminEditorClipboardPort(windowRef);
     editorImagePixelsPort = createBrowserEditorImagePixels({
       clearTimeout: (handle) => windowRef.clearTimeout(handle as number),
       document: documentRef,
@@ -1104,17 +604,7 @@ function mountPreparedAdminEditor(
               siteUrl: windowRef.location.href
             })
           : null,
-      restoreRevision: (restoreUrl) => {
-        const target = new URL(restoreUrl, windowRef.location.href);
-        if (
-          target.origin !== windowRef.location.origin
-          || target.username
-          || target.password
-        ) {
-          throw new Error('revision-restore-url-invalid');
-        }
-        windowRef.location.assign(target.href);
-      },
+      restoreRevision: createRevisionRestorer(windowRef),
       scrollPort: createBrowserPreviewScroll(),
       scrollSyncPort: createBrowserScrollSync(windowRef),
       sessionPort: createWordPressEditorSessionPort({
@@ -1159,19 +649,7 @@ function mountPreparedAdminEditor(
       ),
       wechatExport: bootstrap.wechatExport,
       wechatVisualRasterizationPort: wechatVisualRasterizer,
-      simplifiedFormattingParser: {
-        parseFromString: (source, mimeType) => {
-          const Parser = (
-            windowRef as Window & {
-              DOMParser?: new () => DOMParser;
-            }
-          ).DOMParser;
-          if ('function' !== typeof Parser) {
-            throw new Error('editor-simplified-formatting-parser-unavailable');
-          }
-          return new Parser().parseFromString(source, mimeType);
-        }
-      }
+      simplifiedFormattingParser: createSimplifiedFormattingParser(windowRef)
     };
 
     if (!root) throw new Error('react-editor-root-unavailable');

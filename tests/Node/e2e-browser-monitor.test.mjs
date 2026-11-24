@@ -290,6 +290,177 @@ test('classifyReadonlyPostRequest preserves strict admin-ajax heartbeat and comm
     ),
     { category: 'invalid-url', classification: 'unexpected-write' }
   );
+  assert.deepEqual(
+    classifyReadonlyPostRequest(
+      stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+        postData: 'action=heartbeat&data%5Bwp-refresh-post-lock%5D%5Bpost_id%5D=42'
+      }),
+      { baseURL: BASE_URL }
+    ),
+    { category: 'heartbeat', classification: 'heartbeat-readonly' }
+  );
+});
+
+test('classifyReadonlyPostRequest rejects conflicting, duplicate, or non-urlencoded admin-ajax actions', () => {
+  const unexpectedAdminAjaxCases = [
+    {
+      label: 'conflicting query heartbeat and POST body save-post',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php?action=heartbeat`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=save-post'
+      })
+    },
+    {
+      label: 'conflicting query get-community-events and POST body save-post',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php?action=get-community-events`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=save-post'
+      })
+    },
+    {
+      label: 'duplicate identical action across query and body',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php?action=heartbeat`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=heartbeat'
+      })
+    },
+    {
+      label: 'duplicate identical action in query',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php?action=heartbeat&action=heartbeat`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: ''
+      })
+    },
+    {
+      label: 'duplicate conflicting action in query',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php?action=heartbeat&action=delete`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: ''
+      })
+    },
+    {
+      label: 'duplicate identical action in body',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=heartbeat&action=heartbeat'
+      })
+    },
+    {
+      label: 'duplicate conflicting action in body',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=heartbeat&action=delete'
+      })
+    },
+    {
+      label: 'duplicate identical get-community-events in body',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=get-community-events&action=get-community-events'
+      })
+    },
+    {
+      label: 'ambiguous leading-space PHP action key in body',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php?action=heartbeat`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: '%20action=save-post'
+      })
+    },
+    {
+      label: 'ambiguous array action key in body',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php?action=heartbeat`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action%5B%5D=save-post'
+      })
+    },
+    {
+      label: 'multipart/form-data POST with query heartbeat and body save-post',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php?action=heartbeat`,
+        headers: { 'content-type': 'multipart/form-data; boundary=----easymde' },
+        postData: '------easymde\r\nContent-Disposition: form-data; name="action"\r\n\r\nsave-post\r\n------easymde--'
+      })
+    },
+    {
+      label: 'multipart/form-data POST with boundary spoofing urlencoded media type',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php?action=get-community-events`,
+        headers: { 'content-type': 'multipart/form-data; boundary=application/x-www-form-urlencoded' },
+        postData: '--application/x-www-form-urlencoded\r\nContent-Disposition: form-data; name="action"\r\n\r\nsave-post'
+      })
+    },
+    {
+      label: 'application/json POST with query heartbeat',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php?action=heartbeat`,
+        headers: { 'content-type': 'application/json' },
+        postData: '{"action":"save-post"}'
+      })
+    },
+    {
+      label: 'text/plain POST with query heartbeat',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php?action=heartbeat`,
+        headers: { 'content-type': 'text/plain' },
+        postData: 'action=save-post'
+      })
+    },
+    {
+      label: 'missing content-type with POST body',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php?action=heartbeat`,
+        headers: {},
+        postData: 'action=save-post'
+      })
+    },
+    {
+      label: 'ambiguous urlencoded body without key-value pairs',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php?action=heartbeat`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'raw-unparsed-body'
+      })
+    },
+    {
+      label: 'duplicate data parameters hiding wp_autosave in heartbeat body',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=heartbeat&data=%7B%22rest_nonce%22%3A%22ok%22%7D&data=%7B%22wp_autosave%22%3A%7B%7D%7D'
+      })
+    },
+    {
+      label: 'unreadable binary POST body with urlencoded header and query heartbeat',
+      request: {
+        ...stubRequest({
+          url: `${BASE_URL}/wp-admin/admin-ajax.php?action=heartbeat`,
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          postData: null
+        }),
+        postDataBuffer: () => Buffer.from([0xff, 0xfe])
+      }
+    }
+  ];
+
+  for (const { label, request } of unexpectedAdminAjaxCases) {
+    assert.deepEqual(
+      classifyReadonlyPostRequest(request, { baseURL: BASE_URL }),
+      { category: 'other-admin-ajax', classification: 'unexpected-write' },
+      label
+    );
+  }
 });
 
 test('attachPrivacySafeBrowserMonitor stays clean on allowed WordPress navigations and benign browser events', () => {
@@ -779,4 +950,57 @@ test('attachPrivacySafeBrowserMonitor supports narrow opt-in allowExpectedFailur
   ]);
   assert.throws(() => throwingMonitor.assertClean());
   throwingMonitor.dispose();
+});
+
+test('attachPrivacySafeBrowserMonitor ignores allowExpectedFailure when baseURL is invalid', () => {
+  let predicateCalls = 0;
+  const page = createStubPage();
+  const monitor = attachPrivacySafeBrowserMonitor(page, {
+    baseURL: 'not-a-valid-base',
+    allowExpectedFailure() {
+      predicateCalls += 1;
+      return true;
+    }
+  });
+
+  page.emit('requestfailed', stubRequest({
+    url: `${BASE_URL}/wp-content/plugins/easymde/assets/build/editor.js`,
+    method: 'GET',
+    resourceType: 'script',
+    errorText: 'net::ERR_FAILED'
+  }));
+  page.emit('response', {
+    status: () => 503,
+    url: () => `${BASE_URL}/wp-json/easymde/v1/preview`,
+    request: () => stubRequest({
+      url: `${BASE_URL}/wp-json/easymde/v1/preview`,
+      method: 'POST',
+      resourceType: 'fetch'
+    })
+  });
+
+  const snap = monitor.snapshot();
+  assert.equal(predicateCalls, 0);
+  assert.equal(snap.counts.requestFailures, 1);
+  assert.equal(snap.counts.httpErrors, 1);
+  assert.deepEqual(snap.requestFailures, [
+    { category: 'external', resourceType: 'script', failureClass: 'failed' }
+  ]);
+  assert.deepEqual(snap.httpErrors, [
+    { category: 'external', resourceType: 'fetch', status: 503 }
+  ]);
+  assert.deepEqual(snap.failures, [
+    'request-failed:failed:external:script',
+    'http-503:external:fetch'
+  ]);
+  assert.throws(
+    () => monitor.assertClean(),
+    (error) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /request-failed:failed:external:script/u);
+      assert.match(error.message, /http-503:external:fetch/u);
+      return true;
+    }
+  );
+  monitor.dispose();
 });

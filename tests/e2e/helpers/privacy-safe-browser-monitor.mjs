@@ -237,9 +237,23 @@ function normalizePostRequestInput(requestOrInput) {
     const headers = 'function' === typeof requestOrInput.headers
       ? requestOrInput.headers()
       : null;
-    const rawPostData = 'function' === typeof requestOrInput.postData
-      ? requestOrInput.postData()
-      : '';
+    let postData = '';
+    let unreadableBody = false;
+    if ('function' === typeof requestOrInput.postData) {
+      try {
+        const rawPostData = requestOrInput.postData();
+        if ('string' === typeof rawPostData) {
+          postData = rawPostData;
+        } else if (null === rawPostData && 'function' === typeof requestOrInput.postDataBuffer) {
+          const rawBuffer = requestOrInput.postDataBuffer();
+          if (rawBuffer && rawBuffer.length > 0) {
+            unreadableBody = true;
+          }
+        }
+      } catch {
+        unreadableBody = true;
+      }
+    }
     return {
       invalidUrl: false,
       protocol: url.protocol,
@@ -247,7 +261,8 @@ function normalizePostRequestInput(requestOrInput) {
       pathname: url.pathname,
       search: url.search,
       contentType: readContentTypeHeader(headers),
-      postData: 'string' === typeof rawPostData ? rawPostData : ''
+      postData,
+      unreadableBody
     };
   }
   if ('string' === typeof requestOrInput.url && '' !== requestOrInput.url) {
@@ -339,19 +354,67 @@ export function classifyReadonlyPostRequest(requestOrInput, options = {}) {
   const isRecord = (value) => (
     !!value && 'object' === typeof value && !Array.isArray(value)
   );
-  const contentTypeValue = contentType.toLowerCase();
-  const isJson = contentTypeValue.includes('application/json');
-  const isForm = contentTypeValue.includes('application/x-www-form-urlencoded')
-    || (!contentTypeValue && postData.includes('='));
-  const parameters = isForm ? new URLSearchParams(postData) : new URLSearchParams();
+  const mediaType = contentType.split(';')[0].trim().toLowerCase();
+  if (
+    normalized.unreadableBody
+    || 'application/x-www-form-urlencoded' !== mediaType
+    || ('' !== postData && !postData.includes('='))
+  ) {
+    return {
+      category: 'other-admin-ajax',
+      classification: 'unexpected-write'
+    };
+  }
+  const hasAmbiguousActionKey = (params) => {
+    for (const key of params.keys()) {
+      if ('action' === key) continue;
+      const trimmedKey = key.trim();
+      if ('action' === trimmedKey || trimmedKey.startsWith('action[')) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const parameters = new URLSearchParams(postData);
+  const queryActions = queryParams.getAll('action');
+  const bodyActions = parameters.getAll('action');
+  const allActions = [...queryActions, ...bodyActions];
+  if (
+    1 !== allActions.length
+    || hasAmbiguousActionKey(queryParams)
+    || hasAmbiguousActionKey(parameters)
+  ) {
+    return {
+      category: 'other-admin-ajax',
+      classification: 'unexpected-write'
+    };
+  }
+  const action = allActions[0];
+  if ('get-community-events' === action) {
+    return {
+      category: 'community-events',
+      classification: 'community-events-readonly'
+    };
+  }
+  if ('heartbeat' !== action) {
+    return {
+      category: 'other-admin-ajax',
+      classification: 'unexpected-write'
+    };
+  }
   const parameterKeys = [...parameters.keys()];
-  let action = queryParams.get('action') ?? parameters.get('action');
   const bracketDataKeys = [];
-  parameterKeys.forEach((key) => {
-    if (!key.startsWith('data[')) return;
-    const end = key.indexOf(']', 5);
-    bracketDataKeys.push(end > 5 ? key.slice(5, end) : '');
-  });
+  const dataValues = [];
+  for (const [key, value] of parameters.entries()) {
+    const trimmedKey = key.trim();
+    if ('data' === trimmedKey) {
+      dataValues.push(value);
+      continue;
+    }
+    if (!trimmedKey.startsWith('data[')) continue;
+    const end = trimmedKey.indexOf(']', 5);
+    bracketDataKeys.push(end > 5 ? trimmedKey.slice(5, end) : '');
+  }
   const bracketDataUnknown = bracketDataKeys.some(
     (key) => !knownDataKeys.has(key) && key !== 'wp_autosave'
   );
@@ -370,59 +433,18 @@ export function classifyReadonlyPostRequest(requestOrInput, options = {}) {
       dataState = 'unknown';
     }
   };
-  const dataValue = parameters.get('data');
-  if (dataValue !== null) {
+  if (dataValues.length > 1 || (dataValues.length > 0 && bracketDataKeys.length > 0)) {
+    dataState = 'invalid';
+  } else if (1 === dataValues.length) {
     dataState = 'invalid';
     try {
-      const parsed = JSON.parse(dataValue);
+      const parsed = JSON.parse(dataValues[0]);
       if (isRecord(parsed)) applyDataRecord(parsed);
     } catch {
       // Keep invalid dataState without echoing request metadata.
     }
   }
-  if (isJson) {
-    try {
-      const body = JSON.parse(postData);
-      if (isRecord(body)) {
-        if (null === action && 'string' === typeof body.action) action = body.action;
-        if (Object.prototype.hasOwnProperty.call(body, 'wp_autosave')) {
-          wpAutosave = true;
-          dataState = 'autosave';
-        }
-        if (Object.prototype.hasOwnProperty.call(body, 'data')) {
-          if (isRecord(body.data)) {
-            applyDataRecord(body.data);
-          } else if ('string' === typeof body.data) {
-            dataState = 'invalid';
-            try {
-              const parsedData = JSON.parse(body.data);
-              if (isRecord(parsedData)) applyDataRecord(parsedData);
-            } catch {
-              // Keep invalid dataState without echoing request metadata.
-            }
-          } else {
-            dataState = 'invalid';
-          }
-        }
-      } else {
-        dataState = 'invalid';
-      }
-    } catch {
-      dataState = 'invalid';
-    }
-  }
-  if ('get-community-events' === action) {
-    return {
-      category: 'community-events',
-      classification: 'community-events-readonly'
-    };
-  }
-  if (
-    'heartbeat' === action
-    && (isJson || '' === postData || postData.includes('='))
-    && ['absent', 'known'].includes(dataState)
-    && !wpAutosave
-  ) {
+  if (['absent', 'known'].includes(dataState) && !wpAutosave) {
     return {
       category: 'heartbeat',
       classification: 'heartbeat-readonly'
@@ -570,7 +592,7 @@ export function attachPrivacySafeBrowserMonitor(
       resourceType,
       failureClass
     };
-    if ('external' === category && isExpectedFailure({ type: 'requestfailed', ...summary })) {
+    if (!baseContext.invalidBase && 'external' === category && isExpectedFailure({ type: 'requestfailed', ...summary })) {
       return;
     }
     counts.requestFailures += 1;
@@ -592,7 +614,7 @@ export function attachPrivacySafeBrowserMonitor(
       resourceType,
       status
     };
-    if ('external' === category && isExpectedFailure({ type: 'response', ...summary })) {
+    if (!baseContext.invalidBase && 'external' === category && isExpectedFailure({ type: 'response', ...summary })) {
       return;
     }
     counts.httpErrors += 1;

@@ -15,6 +15,7 @@ import {
   hasBackgroundImage,
   hasNonZeroBorderRadius,
   inlineConnectedMermaidRootPaint,
+  isRoundedNonOpaquePaint,
   isSafeBackgroundImage,
   resolveMermaidBorderRadii,
   resolveMermaidInheritedBackground,
@@ -220,19 +221,18 @@ export function inspectDirectSvgCapture(
     : null;
   const directSvgOpacity = readDirectSvgEffectiveOpacity(source, readComputedStyle);
   const hoistOpacity = directSvgOpacity < 1;
-  const ownVisibleTranslucentColor =
-    Boolean(ownDirectSvgPaint.visibleColor)
-    && !isOpaqueBackgroundColor(ownDirectSvgPaint.color);
+  const hasRoundedNonOpaque = isRoundedNonOpaquePaint({
+    color: ownDirectSvgPaint.color,
+    hasNonZeroRadius: ownHasNonZeroRadius,
+    safeImage: ownDirectSvgPaint.safeImage,
+  });
+  const isolateRoundedSafeImage =
+    !hoistOpacity && hasRoundedNonOpaque && Boolean(ownDirectSvgPaint.safeImage);
   const isolateRoundedTranslucentFill =
     !hoistOpacity
-    && ownHasNonZeroRadius
-    && ownVisibleTranslucentColor
-    && !ownDirectSvgPaint.safeImage;
-  const isolateRoundedSafeImage =
-    !hoistOpacity
-    && ownHasNonZeroRadius
-    && Boolean(ownDirectSvgPaint.safeImage)
-    && !isOpaqueBackgroundColor(ownDirectSvgPaint.color);
+    && hasRoundedNonOpaque
+    && !ownDirectSvgPaint.safeImage
+    && Boolean(ownDirectSvgPaint.visibleColor);
   // Unparseable non-zero border-radius (such as calc(...) or 1rem on detached
   // clones) combined with reduced opacity or a translucent own fill cannot be
   // approximated by a square <rect>; likewise, a direct <svg> with a safe own

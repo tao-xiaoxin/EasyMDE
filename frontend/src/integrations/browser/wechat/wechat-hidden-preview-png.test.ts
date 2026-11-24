@@ -1576,6 +1576,33 @@ describe("Mermaid background ancestor walk", () => {
 				kind: "mermaid",
 				mermaidCapture: "responsive-viewport",
 			});
+
+			// 6. Rounded transparent direct <svg> with multi-layer `background-image: none, none` has no real image,
+			// does not trigger <foreignObject>, and stays admitted in mermaid-responsive.
+			rasterizeSpy.mockClear();
+			ImageStub.sources = [];
+			svgBgColor = "rgba(0, 0, 0, 0)";
+			svgBgImage = "none, none";
+			svgBorderRadius = "12px";
+			await expect(
+				clipboard.copy(preview, pngOptions(rasterizer, uploadPort())),
+			).resolves.toEqual({ method: "clipboard", status: "copied" });
+			expect(rasterizeSpy.mock.calls[0]?.[0]).toMatchObject({
+				kind: "mermaid",
+				mermaidCapture: "responsive-viewport",
+			});
+			const multiNoneDoc = new DOMParser().parseFromString(
+				decodedSvg(ImageStub.sources[0]),
+				"text/html",
+			);
+			const multiNoneOuter = multiNoneDoc.querySelector("svg");
+			expect(multiNoneOuter?.querySelector("foreignObject")).toBeNull();
+			expect(
+				multiNoneOuter?.style.getPropertyValue("background-color"),
+			).toBe("rgb(255, 255, 255)");
+			expect(
+				multiNoneOuter?.style.getPropertyValue("background-image"),
+			).toBe("");
 		} finally {
 			if (originalGetAnimations) {
 				Object.defineProperty(document, "getAnimations", originalGetAnimations);

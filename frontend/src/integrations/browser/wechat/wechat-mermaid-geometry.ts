@@ -7,6 +7,7 @@ import {
   WechatPngConversionError,
 } from './wechat-png-conversion-policy';
 import { parseCssOpacity } from './wechat-css-color';
+import { hasBackgroundImage } from './wechat-mermaid-background';
 import {
   MERMAID_RADIUS_PROPERTIES,
   type MermaidRadius,
@@ -380,6 +381,16 @@ export function mermaidRadiusIsSafe(
   );
 }
 
+const MERMAID_DISALLOWED_PAINT_PROPERTIES = [
+  'box-shadow',
+  'filter',
+  'clip-path',
+  'mask',
+  'mask-image',
+  'outline-style',
+  'border-image-source',
+] as const;
+
 export function mermaidRootPaintIsSafe(
   source: Element,
   runtime: BrowserWechatClipboardRuntime,
@@ -390,17 +401,14 @@ export function mermaidRootPaintIsSafe(
 ): boolean {
   const computed = runtime.getComputedStyle(source);
   const background = computed.getPropertyValue('background').trim().toLowerCase();
-  const backgroundImage = computed.getPropertyValue('background-image').trim().toLowerCase();
+  const backgroundImage = computed.getPropertyValue('background-image').trim();
   if (
-    (backgroundImage && 'none' !== backgroundImage) ||
-    /(?:url\(|gradient\(|image\(|paint\(|cross-fade\()/u.test(background) ||
-    !['', 'none'].includes(computed.getPropertyValue('box-shadow').trim().toLowerCase()) ||
-    !['', 'none'].includes(computed.getPropertyValue('filter').trim().toLowerCase()) ||
-    !['', 'none'].includes(computed.getPropertyValue('clip-path').trim().toLowerCase()) ||
-    !['', 'none'].includes(computed.getPropertyValue('mask').trim().toLowerCase()) ||
-    !['', 'none'].includes(computed.getPropertyValue('mask-image').trim().toLowerCase()) ||
-    !['', 'none'].includes(computed.getPropertyValue('outline-style').trim().toLowerCase()) ||
-    !['', 'none'].includes(computed.getPropertyValue('border-image-source').trim().toLowerCase()) ||
+    hasBackgroundImage(backgroundImage) ||
+    background.includes('\\') ||
+    /(?:url|gradient|image-set|image|src|element|paint|cross-fade)\s*\(/iu.test(background) ||
+    MERMAID_DISALLOWED_PAINT_PROPERTIES.some(
+      (property) => !['', 'none'].includes(computed.getPropertyValue(property).trim().toLowerCase())
+    ) ||
     mermaidHasUnsafeBorder(computed, true)
   )
     return false;
@@ -419,27 +427,7 @@ export function mermaidResponsiveOwnerPaintIsSafe(
   sourceWidth: number,
   sourceHeight: number
 ): boolean {
-  const computed = runtime.getComputedStyle(source);
-  const background = computed.getPropertyValue('background').trim().toLowerCase();
-  const backgroundImage = computed.getPropertyValue('background-image').trim().toLowerCase();
-  if (
-    (backgroundImage && 'none' !== backgroundImage) ||
-    /(?:url\(|gradient\(|image\(|paint\(|cross-fade\()/u.test(background) ||
-    !['', 'none'].includes(computed.getPropertyValue('box-shadow').trim().toLowerCase()) ||
-    !['', 'none'].includes(computed.getPropertyValue('filter').trim().toLowerCase()) ||
-    !['', 'none'].includes(computed.getPropertyValue('clip-path').trim().toLowerCase()) ||
-    !['', 'none'].includes(computed.getPropertyValue('mask').trim().toLowerCase()) ||
-    !['', 'none'].includes(computed.getPropertyValue('mask-image').trim().toLowerCase()) ||
-    !['', 'none'].includes(computed.getPropertyValue('outline-style').trim().toLowerCase()) ||
-    !['', 'none'].includes(computed.getPropertyValue('border-image-source').trim().toLowerCase()) ||
-    mermaidHasUnsafeBorder(computed, true) ||
-    !mermaidRadiusIsSafe(computed, sourceWidth, sourceHeight, sourceWidth, sourceHeight)
-  )
-    return false;
-  return ['::before', '::after'].every(
-    (pseudoElement) =>
-      null === pseudoContent(runtime.getComputedStyle(source, pseudoElement).getPropertyValue('content'))
-  );
+  return mermaidRootPaintIsSafe(source, runtime, sourceWidth, sourceHeight, sourceWidth, sourceHeight);
 }
 
 export function mermaidWideViewportIsSafe(

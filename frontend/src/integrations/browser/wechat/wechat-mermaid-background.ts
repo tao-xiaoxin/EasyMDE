@@ -117,14 +117,77 @@ const BORDER_RADIUS_CORNER_PROPERTIES: ReadonlyArray<
   ['border-bottom-left-radius', 'borderBottomLeftRadius'],
 ];
 
+const UNSAFE_BACKGROUND_IMAGE_TOKEN_PATTERN =
+  /(?:url|image-set|src|element|(?:-webkit-)?cross-fade)\s*\(|(?:^|[^a-z0-9_-])(?:image|var|env)\s*\(/iu;
+
+const SAFE_GRADIENT_LAYER_PATTERN =
+  /^(?:-webkit-)?(?:repeating-)?(?:linear|radial|conic)-gradient\s*\([\s\S]*\)$/iu;
+
+function isSafeGradientLayer(layer: string): boolean {
+  const trimmed = layer.trim();
+  if (!trimmed) return false;
+  if ('none' === trimmed.toLowerCase()) return true;
+  if (!SAFE_GRADIENT_LAYER_PATTERN.test(trimmed)) return false;
+  const openIndex = trimmed.indexOf('(');
+  if (openIndex < 0) return false;
+  let depth = 0;
+  let hasInnerContent = false;
+  for (let index = openIndex; index < trimmed.length; index += 1) {
+    const ch = trimmed[index];
+    if ('(' === ch) {
+      depth += 1;
+    } else if (')' === ch) {
+      depth -= 1;
+      if (depth < 0) return false;
+      if (0 === depth && index !== trimmed.length - 1) return false;
+    } else if (depth > 0 && !/\s/u.test(ch ?? '')) {
+      hasInnerContent = true;
+    }
+  }
+  return 0 === depth && hasInnerContent;
+}
+
 export function hasBackgroundImage(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
-  return Boolean(normalized && !NON_COLOR_KEYWORDS.has(normalized));
+  return splitTopLevelCommas(value).some((layer) => {
+    const normalized = layer.trim().toLowerCase();
+    return Boolean(normalized && !NON_COLOR_KEYWORDS.has(normalized));
+  });
 }
 
 export function isSafeBackgroundImage(value: string): boolean {
   if (!hasBackgroundImage(value)) return false;
-  return !/(?:url\s*\(|image-set\s*\(|(?:^|[\s,(])image\s*\(|src\s*\(|element\s*\()/iu.test(value);
+  if (value.includes('\\')) return false;
+  if (UNSAFE_BACKGROUND_IMAGE_TOKEN_PATTERN.test(value)) return false;
+  return splitTopLevelCommas(value).every(isSafeGradientLayer);
+}
+
+export type RoundedNonOpaquePaintInput = Readonly<{
+  color: string;
+  hasNonZeroRadius: boolean;
+  safeImage: boolean | string;
+}>;
+
+export function isRoundedNonOpaquePaint(input: RoundedNonOpaquePaintInput): boolean {
+  return (
+    input.hasNonZeroRadius
+    && !isOpaqueBackgroundColor(input.color)
+    && (hasVisibleBackgroundColor(input.color) || Boolean(input.safeImage))
+  );
+}
+
+export function hasRoundedNonOpaqueBackground(
+  style: CSSStyleDeclaration,
+  element?: Element,
+): boolean {
+  const hasNonZeroRadius = hasNonZeroBorderRadius(style, element);
+  if (!hasNonZeroRadius) return false;
+  const color = readEffectiveStyleProperty(style, element, 'background-color', 'backgroundColor');
+  const image = readEffectiveStyleProperty(style, element, 'background-image', 'backgroundImage');
+  return isRoundedNonOpaquePaint({
+    color,
+    hasNonZeroRadius,
+    safeImage: isSafeBackgroundImage(image),
+  });
 }
 
 function readStyleProperty(
@@ -516,27 +579,10 @@ export function resolveMermaidInheritedBackground(
   const directSvgCapture = options.directSvgCapture ?? source.matches('svg');
   const retainedParentWrapper = Boolean(options.retainedParentWrapper);
   const sourceStyle = readComputedStyle(source);
-  const sourceColor = readEffectiveStyleProperty(
-    sourceStyle,
-    source,
-    'background-color',
-    'backgroundColor',
-  );
   const sourceOpacity = readElementOpacity(sourceStyle, source);
-  const sourceHasRadius = hasNonZeroBorderRadius(sourceStyle, source);
 
   if (directSvgCapture) {
-    const sourceImage = readEffectiveStyleProperty(
-      sourceStyle,
-      source,
-      'background-image',
-      'backgroundImage',
-    );
-    const sourceHasSafeImage = isSafeBackgroundImage(sourceImage);
-    const isolateRoundedNonOpaqueOwnPaint =
-      sourceHasRadius
-      && !isOpaqueBackgroundColor(sourceColor)
-      && (hasVisibleBackgroundColor(sourceColor) || sourceHasSafeImage);
+    const isolateRoundedNonOpaqueOwnPaint = hasRoundedNonOpaqueBackground(sourceStyle, source);
     const initialState = createEmptyBackgroundFoldState();
     if (sourceOpacity >= 1 && !isolateRoundedNonOpaqueOwnPaint) {
       foldElementBackground(initialState, source, sourceStyle);
@@ -553,6 +599,13 @@ export function resolveMermaidInheritedBackground(
     );
   }
 
+  const sourceColor = readEffectiveStyleProperty(
+    sourceStyle,
+    source,
+    'background-color',
+    'backgroundColor',
+  );
+  const sourceHasRadius = hasNonZeroBorderRadius(sourceStyle, source);
   if (isOpaqueBackgroundColor(sourceColor) && !sourceHasRadius && sourceOpacity >= 1) {
     return null;
   }

@@ -15,10 +15,13 @@ import {
   applyMermaidBackground,
   compositeSourceOver,
   formatCompositedColor,
+  hasBackgroundImage,
   hasNonZeroBorderRadius,
+  hasRoundedNonOpaqueBackground,
   hasVisibleBackgroundColor,
   inlineConnectedMermaidRootPaint,
   isOpaqueBackgroundColor,
+  isRoundedNonOpaquePaint,
   isSafeBackgroundImage,
   parseCssColorAlpha,
   parseCssOpacity,
@@ -190,6 +193,94 @@ describe('wechat-mermaid-background', () => {
       expect(isSafeBackgroundImage('url("https://example.test/bg.png")')).toBe(false);
       expect(isSafeBackgroundImage('image-set("a.png" 1x)')).toBe(false);
       expect(isSafeBackgroundImage('none')).toBe(false);
+    });
+
+    it('validates multi-layer background-image lists and blocks CSS escapes, cross-fade, variables, and trailing tokens', () => {
+      expect(hasBackgroundImage('')).toBe(false);
+      expect(hasBackgroundImage('none')).toBe(false);
+      expect(hasBackgroundImage('none, none')).toBe(false);
+      expect(hasBackgroundImage('none, initial')).toBe(false);
+      expect(hasBackgroundImage('none, linear-gradient(red, blue)')).toBe(true);
+
+      expect(isSafeBackgroundImage('none, none')).toBe(false);
+      expect(isSafeBackgroundImage('none, initial')).toBe(false);
+      expect(isSafeBackgroundImage('none, linear-gradient(red, blue)')).toBe(true);
+      expect(isSafeBackgroundImage('none, linear-gradient(rgb(255, 0, 0), rgb(0, 0, 255))')).toBe(true);
+      expect(isSafeBackgroundImage('linear-gradient(red, blue), none')).toBe(true);
+      expect(isSafeBackgroundImage('repeating-conic-gradient(from 45deg, red, blue)')).toBe(true);
+      expect(isSafeBackgroundImage('-webkit-linear-gradient(top, #fff, #000)')).toBe(true);
+
+      const unsafeImages = [
+        'u\\72l(https://evil.example/bg.png)',
+        '\\75rl(https://evil.example/bg.png)',
+        'linear-gradient(re\\64, blue)',
+        'cross-fade("https://evil.example/bg.png", linear-gradient(red, blue))',
+        '-webkit-cross-fade(url(x), url(y), 50%)',
+        'linear-gradient(red, blue) url(x)',
+        'linear-gradient(red, blue) extra',
+        'linear-gradient(red, blue) linear-gradient(green, yellow)',
+        'url(https://evil.example/bg.png)',
+        'image-set("a.png" 1x)',
+        'image(red)',
+        'src("https://evil.example/bg.png")',
+        'element(#foo)',
+        'linear-gradient(var(--a), blue)',
+        'linear-gradient(100%var(--a), blue)',
+        'linear-gradient(env(--a), blue)',
+        'linear-gradient(red, blue), ',
+        'linear-gradient()',
+        'linear-gradient(red, blue))',
+        'linear-gradient((red, blue)',
+        'none, initial, linear-gradient(red, blue)',
+      ];
+      for (const candidate of unsafeImages) {
+        expect(isSafeBackgroundImage(candidate), candidate).toBe(false);
+      }
+
+      // Shared rounded non-opaque predicate stays consistent across multi-layer none, gradients, and blocked images.
+      expect(
+        hasRoundedNonOpaqueBackground(
+          styleDeclaration({
+            'background-color': 'rgba(0, 0, 0, 0)',
+            'background-image': 'none, none',
+            'border-radius': '12px',
+          }),
+        ),
+      ).toBe(false);
+      expect(
+        hasRoundedNonOpaqueBackground(
+          styleDeclaration({
+            'background-color': 'rgba(0, 0, 0, 0)',
+            'background-image': 'none, linear-gradient(red, blue)',
+            'border-radius': '12px',
+          }),
+        ),
+      ).toBe(true);
+      expect(
+        hasRoundedNonOpaqueBackground(
+          styleDeclaration({
+            'background-color': 'rgba(0, 0, 0, 0)',
+            'background-image': 'u\\72l(https://evil.example/bg.png)',
+            'border-radius': '12px',
+          }),
+        ),
+      ).toBe(false);
+      expect(
+        hasRoundedNonOpaqueBackground(
+          styleDeclaration({
+            'background-color': 'rgb(255, 0, 0)',
+            'background-image': 'linear-gradient(red, blue)',
+            'border-radius': '12px',
+          }),
+        ),
+      ).toBe(false);
+      expect(
+        isRoundedNonOpaquePaint({
+          color: 'rgba(255, 0, 0, 0.5)',
+          hasNonZeroRadius: true,
+          safeImage: '',
+        }),
+      ).toBe(true);
     });
   });
 
@@ -1682,6 +1773,66 @@ describe('wechat-mermaid-background', () => {
       );
 
       expect(resolveMermaidInheritedBackground(source, reader)).toBeNull();
+    });
+
+    it('rejects CSS-escaped u\\72l() and cross-fade() images while treating multi-layer none, none as empty', () => {
+      const canvas = document.createElement('div');
+      canvas.className = 'easymde-immersive-preview-canvas';
+      const wrapper = document.createElement('div');
+      const source = document.createElement('div');
+      source.className = 'easymde-mermaid';
+      wrapper.append(source);
+      canvas.append(wrapper);
+      document.body.append(canvas);
+
+      for (const unsafeImage of [
+        'u\\72l(https://evil.example/bg.png)',
+        '\\75rl(https://evil.example/bg.png)',
+        'cross-fade("https://evil.example/bg.png", linear-gradient(red, blue))',
+        '-webkit-cross-fade(url(x), url(y), 50%)',
+      ]) {
+        const reader = makeReader(
+          new Map<Element, Readonly<Record<string, string>>>([
+            [source, { 'background-color': 'rgba(0, 0, 0, 0)', 'background-image': 'none' }],
+            [
+              wrapper,
+              {
+                'background-color': 'rgba(0, 0, 0, 0)',
+                'background-image': unsafeImage,
+              },
+            ],
+            [
+              canvas,
+              {
+                'background-color': 'rgb(30, 30, 46)',
+                'background-image': 'linear-gradient(90deg, red, blue)',
+              },
+            ],
+          ]),
+        );
+        expect(resolveMermaidInheritedBackground(source, reader), unsafeImage).toEqual({
+          color: 'rgb(30, 30, 46)',
+        });
+      }
+
+      // Multi-layer `none, none` does not block outer gradients or emit `image: 'none, none'`.
+      const multiNoneReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [source, { 'background-color': 'rgba(0, 0, 0, 0)', 'background-image': 'none, none' }],
+          [wrapper, { 'background-color': 'rgba(0, 0, 0, 0)', 'background-image': 'none, none' }],
+          [
+            canvas,
+            {
+              'background-color': 'rgb(30, 30, 46)',
+              'background-image': 'linear-gradient(90deg, rgb(30, 30, 46), rgb(45, 45, 65))',
+            },
+          ],
+        ]),
+      );
+      expect(resolveMermaidInheritedBackground(source, multiNoneReader)).toEqual({
+        color: 'rgb(30, 30, 46)',
+        image: 'linear-gradient(90deg, rgb(30, 30, 46), rgb(45, 45, 65))',
+      });
     });
   });
 

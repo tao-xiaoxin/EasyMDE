@@ -10,10 +10,7 @@ import {
   WechatPngConversionError,
 } from './wechat-png-conversion-policy';
 import {
-  hasNonZeroBorderRadius,
-  hasVisibleBackgroundColor,
-  isOpaqueBackgroundColor,
-  isSafeBackgroundImage,
+  hasRoundedNonOpaqueBackground,
   parseCssOpacity,
 } from './wechat-mermaid-background';
 import {
@@ -547,14 +544,7 @@ export function mermaidResponsiveViewportDimensions(
   );
   const svgEdges = mermaidEdgeValues(svgComputed);
   const preserveAspectRatio = svg.getAttribute('preserveAspectRatio')?.trim().replace(/\s+/gu, ' ').toLowerCase() ?? '';
-  const svgBackgroundColor =
-    svgComputed.getPropertyValue('background-color').trim() || svgComputed.backgroundColor?.trim() || '';
-  const svgBackgroundImage =
-    svgComputed.getPropertyValue('background-image').trim() || svgComputed.backgroundImage?.trim() || '';
-  const svgHasRoundedNonOpaqueBackground =
-    hasNonZeroBorderRadius(svgComputed, svg)
-    && !isOpaqueBackgroundColor(svgBackgroundColor)
-    && (hasVisibleBackgroundColor(svgBackgroundColor) || isSafeBackgroundImage(svgBackgroundImage));
+  const svgHasRoundedNonOpaqueBackground = hasRoundedNonOpaqueBackground(svgComputed, svg);
   const expectedHeight = (svgRect.width * viewBox.height) / viewBox.width;
   const freeWidth = sourceContentWidth - svgRect.width;
   const centeredLeft = svgRect.left - sourceContentLeft;

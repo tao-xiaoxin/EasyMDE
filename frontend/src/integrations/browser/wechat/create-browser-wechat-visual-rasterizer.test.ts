@@ -10,6 +10,7 @@ import {
 } from '../../../contracts/ports/wechat-png-encoding-port';
 import { WechatVisualRasterizationError } from '../../../contracts/ports/wechat-visual-rasterization-port';
 import { createBrowserWechatVisualRasterizer } from './create-browser-wechat-visual-rasterizer';
+import { inspectDirectSvgCapture } from './wechat-mermaid-direct-svg-backdrop';
 import {
   ImageStub,
   imageEvents,
@@ -2278,6 +2279,101 @@ describe('createBrowserWechatVisualRasterizer', () => {
         'rect',
       ]);
     } finally {
+      whiteCanvas.remove();
+    }
+  });
+
+  it('keeps rounded transparent direct SVGs with multi-layer none, none off foreignObject and strips escaped/cross-fade images', async () => {
+    stubCanvas();
+    const whiteCanvas = document.createElement('div');
+    whiteCanvas.className = 'easymde-immersive-preview-canvas';
+    whiteCanvas.style.backgroundColor = 'rgb(255, 255, 255)';
+
+    const multiNoneSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    multiNoneSvg.setAttribute('width', '100');
+    multiNoneSvg.setAttribute('height', '60');
+    multiNoneSvg.setAttribute('viewBox', '0 0 100 60');
+    multiNoneSvg.setAttribute('style', 'background-color: transparent; border-radius: 12px; opacity: 1;');
+    multiNoneSvg.innerHTML = '<rect x="10" y="10" width="80" height="40"></rect>';
+    whiteCanvas.appendChild(multiNoneSvg);
+    document.body.appendChild(whiteCanvas);
+
+    const originalGetComputedStyle = window.getComputedStyle.bind(window);
+    let mockedSvgBgImage = 'none, none';
+    const styleSpy = vi.spyOn(window, 'getComputedStyle').mockImplementation((element, pseudo) => {
+      const base = originalGetComputedStyle(element, pseudo);
+      if (element === multiNoneSvg) {
+        return {
+          backgroundColor: 'rgba(0, 0, 0, 0)',
+          backgroundImage: mockedSvgBgImage,
+          borderRadius: '12px',
+          getPropertyValue: (property: string) => {
+            if ('background-color' === property) return 'rgba(0, 0, 0, 0)';
+            if ('background-image' === property) return mockedSvgBgImage;
+            if ('border-radius' === property) return '12px';
+            if ('opacity' === property) return '1';
+            return base.getPropertyValue(property);
+          },
+          opacity: '1',
+        } as unknown as CSSStyleDeclaration;
+      }
+      return base;
+    });
+
+    try {
+      const multiNoneInspection = inspectDirectSvgCapture(
+        multiNoneSvg,
+        (el) => window.getComputedStyle(el),
+        100,
+        60,
+      );
+      expect(multiNoneInspection.needsForeignObject).toBe(false);
+      expect(multiNoneInspection.ownDirectSvgPaint.hasImage).toBe(false);
+      expect(multiNoneInspection.ownDirectSvgPaint.safeImage).toBe('');
+
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(multiNoneSvg, 'mermaid', 1, 100, 60, undefined, 1),
+      );
+      const multiNoneOut = new DOMParser()
+        .parseFromString(
+          decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+          'text/html',
+        )
+        .querySelector('svg');
+      expect(multiNoneOut?.querySelector('foreignObject')).toBeNull();
+      expect(multiNoneOut?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      expect(multiNoneOut?.style.getPropertyValue('background-image')).toBe('');
+
+      // CSS-escaped u\72l(...) and cross-fade(...) also stay off foreignObject and never leak into SVG output.
+      for (const unsafeImage of [
+        'u\\72l(https://evil.example/bg.png)',
+        'cross-fade("https://evil.example/bg.png", linear-gradient(red, blue))',
+      ]) {
+        mockedSvgBgImage = unsafeImage;
+        const unsafeInspection = inspectDirectSvgCapture(
+          multiNoneSvg,
+          (el) => window.getComputedStyle(el),
+          100,
+          60,
+        );
+        expect(unsafeInspection.needsForeignObject, unsafeImage).toBe(false);
+        expect(unsafeInspection.ownDirectSvgPaint.hasImage, unsafeImage).toBe(true);
+        expect(unsafeInspection.ownDirectSvgPaint.safeImage, unsafeImage).toBe('');
+
+        await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+          request(multiNoneSvg, 'mermaid', 1, 100, 60, undefined, 1),
+        );
+        const unsafeSerialized = decodeURIComponent(
+          imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? '',
+        );
+        const unsafeOut = new DOMParser().parseFromString(unsafeSerialized, 'text/html').querySelector('svg');
+        expect(unsafeOut?.querySelector('foreignObject'), unsafeImage).toBeNull();
+        expect(unsafeOut?.style.getPropertyValue('background-color'), unsafeImage).toBe('rgb(255, 255, 255)');
+        expect(unsafeOut?.style.getPropertyValue('background-image'), unsafeImage).toBe('');
+        expect(unsafeSerialized, unsafeImage).not.toContain('evil.example');
+      }
+    } finally {
+      styleSpy.mockRestore();
       whiteCanvas.remove();
     }
   });

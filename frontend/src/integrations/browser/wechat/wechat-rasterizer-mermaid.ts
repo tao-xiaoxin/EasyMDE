@@ -3,6 +3,7 @@ import {
   type WechatVisualRasterizationRequest,
   WechatVisualRasterizationError,
 } from '../../../contracts/ports/wechat-visual-rasterization-port';
+import { hasBackgroundImage } from './wechat-mermaid-background';
 import {
   MERMAID_INTRINSIC_LAYOUT_ROLES,
   MERMAID_RADIUS_PROPERTIES,
@@ -407,10 +408,11 @@ function intrinsicRootPaintIsSafe(
   canonicalHeight: number,
 ): boolean {
   const background = intrinsicStyleValue(element, 'background').toLowerCase();
-  const backgroundImage = intrinsicStyleValue(element, 'background-image').toLowerCase();
+  const backgroundImage = intrinsicStyleValue(element, 'background-image');
   if (
-    /(?:url\s*\(|gradient\s*\(|image\s*\(|paint\s*\(|cross-fade\s*\()/u.test(background)
-    || backgroundImage && !['none', 'initial', 'inherit'].includes(backgroundImage)
+    background.includes('\\')
+    || /(?:url|gradient|image-set|image|src|element|paint|cross-fade)\s*\(/iu.test(background)
+    || hasBackgroundImage(backgroundImage)
     || !['', 'none', 'transparent'].includes(intrinsicStyleValue(element, 'box-shadow').toLowerCase())
     || !['', 'none'].includes(intrinsicStyleValue(element, 'filter').toLowerCase())
     || !['', 'none'].includes(intrinsicStyleValue(element, 'clip-path').toLowerCase())

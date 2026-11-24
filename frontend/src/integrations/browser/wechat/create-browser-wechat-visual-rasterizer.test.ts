@@ -1454,6 +1454,209 @@ describe('createBrowserWechatVisualRasterizer', () => {
     }
   });
 
+  it('separates rounded translucent direct SVG fill into a rounded <path> over a square ancestor backdrop', async () => {
+    stubCanvas();
+    const whiteCanvas = document.createElement('div');
+    whiteCanvas.className = 'easymde-immersive-preview-canvas';
+    whiteCanvas.style.backgroundColor = 'rgb(255, 255, 255)';
+
+    // 1. Connected direct <svg> with border-radius: 12px + translucent background-color over opaque white ancestor.
+    const connectedRoundedTranslucentSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    connectedRoundedTranslucentSvg.style.backgroundColor = 'rgba(255, 0, 0, 0.5)';
+    connectedRoundedTranslucentSvg.style.borderRadius = '12px';
+    connectedRoundedTranslucentSvg.style.opacity = '1';
+    connectedRoundedTranslucentSvg.setAttribute('width', '100');
+    connectedRoundedTranslucentSvg.setAttribute('height', '60');
+    connectedRoundedTranslucentSvg.setAttribute('viewBox', '0 0 100 60');
+    connectedRoundedTranslucentSvg.innerHTML =
+      '<defs><linearGradient id="r7-grad"></linearGradient></defs>'
+      + '<rect x="20" y="15" width="60" height="30" fill="rgb(0, 0, 0)"></rect>';
+    whiteCanvas.appendChild(connectedRoundedTranslucentSvg);
+
+    // 2. Opaque control: border-radius: 12px + opaque red at opacity: 1 keeps border-radius on root <svg> with no extra <path>.
+    const connectedOpaqueControlSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    connectedOpaqueControlSvg.style.backgroundColor = 'rgb(255, 0, 0)';
+    connectedOpaqueControlSvg.style.borderRadius = '12px';
+    connectedOpaqueControlSvg.style.opacity = '1';
+    connectedOpaqueControlSvg.setAttribute('width', '100');
+    connectedOpaqueControlSvg.setAttribute('height', '60');
+    connectedOpaqueControlSvg.setAttribute('viewBox', '0 0 100 60');
+    connectedOpaqueControlSvg.innerHTML = '<rect x="20" y="15" width="60" height="30" fill="rgb(0, 0, 0)"></rect>';
+    whiteCanvas.appendChild(connectedOpaqueControlSvg);
+
+    // 3. Combined border-radius: 12px + opaque blue + opacity: 0.5 over white ancestor -> <g opacity="0.5"> has rounded <path> first.
+    const connectedCombinedOpacitySvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    connectedCombinedOpacitySvg.style.backgroundColor = 'rgb(0, 0, 255)';
+    connectedCombinedOpacitySvg.style.borderRadius = '12px';
+    connectedCombinedOpacitySvg.style.opacity = '0.5';
+    connectedCombinedOpacitySvg.setAttribute('width', '100');
+    connectedCombinedOpacitySvg.setAttribute('height', '60');
+    connectedCombinedOpacitySvg.setAttribute('viewBox', '10 20 100 60');
+    connectedCombinedOpacitySvg.innerHTML = '<rect x="20" y="30" width="40" height="20" fill="rgb(255, 255, 0)"></rect>';
+    whiteCanvas.appendChild(connectedCombinedOpacitySvg);
+
+    // 4. Percentage border-radius: 50% + translucent fill over transparent canvas (no ancestor backdrop).
+    const transparentCanvas = document.createElement('div');
+    transparentCanvas.className = 'easymde-immersive-preview-canvas';
+    const connectedPercentSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    connectedPercentSvg.style.backgroundColor = 'rgba(255, 0, 0, 0.5)';
+    connectedPercentSvg.style.borderRadius = '50%';
+    connectedPercentSvg.style.opacity = '1';
+    connectedPercentSvg.setAttribute('width', '100');
+    connectedPercentSvg.setAttribute('height', '50');
+    connectedPercentSvg.setAttribute('viewBox', '0 0 100 50');
+    connectedPercentSvg.innerHTML = '<circle cx="50" cy="25" r="10"></circle>';
+    transparentCanvas.appendChild(connectedPercentSvg);
+
+    document.body.append(whiteCanvas, transparentCanvas);
+
+    // Detached clone with border-radius: 12px + translucent fill.
+    const detachedRoundedTranslucentSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    detachedRoundedTranslucentSvg.setAttribute('width', '100');
+    detachedRoundedTranslucentSvg.setAttribute('height', '60');
+    detachedRoundedTranslucentSvg.setAttribute('viewBox', '0 0 100 60');
+    detachedRoundedTranslucentSvg.setAttribute(
+      'style',
+      'display:block;width:100%;height:auto;max-width:100px;margin:auto;background-color:rgba(255, 0, 0, 0.5);border-radius:12px;opacity:1;',
+    );
+    detachedRoundedTranslucentSvg.innerHTML = '<rect x="20" y="15" width="60" height="30" fill="rgb(0, 0, 0)"></rect>';
+
+    try {
+      // 1a. Connected, layoutMagnification: 1 -> square white root <svg>, rounded <path> after <defs> and before diagram <rect>.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(connectedRoundedTranslucentSvg, 'mermaid', 1, 100, 60, undefined, 1),
+      );
+      const m1Out = new DOMParser()
+        .parseFromString(
+          decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+          'text/html',
+        )
+        .querySelector('svg');
+      expect(m1Out?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      expect(m1Out?.getAttribute('style') ?? '').not.toContain('radius');
+      const m1Children = Array.from(m1Out?.children ?? []).map((child) => child.localName.toLowerCase());
+      expect(m1Children).toEqual(['defs', 'path', 'rect']);
+      const m1Path = m1Out?.querySelector(':scope > path');
+      expect(m1Path?.getAttribute('fill')).toBe('rgba(255, 0, 0, 0.5)');
+      expect(m1Path?.getAttribute('fill-opacity')).toBe('1');
+      expect(m1Path?.getAttribute('stroke')).toBe('none');
+      expect(m1Path?.getAttribute('d')).toBe(
+        'M 12 0 H 88 A 12 12 0 0 1 100 12 V 48 A 12 12 0 0 1 88 60 H 12 A 12 12 0 0 1 0 48 V 12 A 12 12 0 0 1 12 0 Z',
+      );
+
+      // 1b. Connected, layoutMagnification: 2 -> square white root <svg>, rounded <path> first inside magnified <g>.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(connectedRoundedTranslucentSvg, 'mermaid', 1, 100, 60, undefined, 2),
+      );
+      const m2Out = new DOMParser()
+        .parseFromString(
+          decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+          'text/html',
+        )
+        .querySelector('svg');
+      expect(m2Out?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      expect(m2Out?.getAttribute('style') ?? '').not.toContain('radius');
+      expect(m2Out?.getAttribute('viewBox')).toBe('0 0 200 120');
+      const m2Group = m2Out?.querySelector(':scope > g');
+      expect(m2Group?.getAttribute('transform')).toBe('translate(0 0) scale(2)');
+      const m2GroupChildren = Array.from(m2Group?.children ?? []).map((child) => child.localName.toLowerCase());
+      expect(m2GroupChildren).toEqual(['path', 'rect']);
+      const m2Path = m2Group?.firstElementChild;
+      expect(m2Path?.getAttribute('fill')).toBe('rgba(255, 0, 0, 0.5)');
+      expect(m2Path?.getAttribute('d')).toBe(
+        'M 12 0 H 88 A 12 12 0 0 1 100 12 V 48 A 12 12 0 0 1 88 60 H 12 A 12 12 0 0 1 0 48 V 12 A 12 12 0 0 1 12 0 Z',
+      );
+
+      // 1c. Detached clone over explicit white ancestor backdrop -> square white root <svg>, rounded <path> first.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize({
+        height: 60,
+        inheritedBackground: { color: 'rgb(255, 255, 255)' },
+        kind: 'mermaid',
+        layoutMagnification: 1,
+        maxPixels: 16_777_216,
+        mermaidCapture: 'responsive-viewport',
+        scale: 1,
+        signal: new AbortController().signal,
+        source: detachedRoundedTranslucentSvg,
+        width: 100,
+      });
+      const detachedOut = new DOMParser()
+        .parseFromString(
+          decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+          'text/html',
+        )
+        .querySelector('svg');
+      expect(detachedOut?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      expect(detachedOut?.getAttribute('style') ?? '').not.toContain('radius');
+      const detachedChildren = Array.from(detachedOut?.children ?? []).map((child) => child.localName.toLowerCase());
+      expect(detachedChildren).toEqual(['path', 'rect']);
+      expect(detachedOut?.firstElementChild?.getAttribute('fill')).toBe('rgba(255, 0, 0, 0.5)');
+      expect(detachedOut?.firstElementChild?.getAttribute('d')).toMatch(/^M 12 0 H 88 A 12 12 0 0 1 100 12 /u);
+
+      // 2. Opaque control preserves border-radius: 12px on root <svg> and inserts no extra <path>.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(connectedOpaqueControlSvg, 'mermaid', 1, 100, 60, undefined, 1),
+      );
+      const opaqueControlOut = new DOMParser()
+        .parseFromString(
+          decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+          'text/html',
+        )
+        .querySelector('svg');
+      expect(opaqueControlOut?.style.getPropertyValue('background-color')).toBe('rgb(255, 0, 0)');
+      expect(opaqueControlOut?.getAttribute('style') ?? '').toMatch(/border-(?:top-left-)?radius:\s*12px/u);
+      expect(opaqueControlOut?.querySelector(':scope > path')).toBeNull();
+      expect(Array.from(opaqueControlOut?.children ?? []).map((child) => child.localName.toLowerCase())).toEqual([
+        'rect',
+      ]);
+
+      // 3. Combined border-radius: 12px + blue + opacity: 0.5 over white -> square white root, rounded blue <path> first inside <g opacity="0.5">.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(connectedCombinedOpacitySvg, 'mermaid', 1, 100, 60, undefined, 1),
+      );
+      const combinedOut = new DOMParser()
+        .parseFromString(
+          decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+          'text/html',
+        )
+        .querySelector('svg');
+      expect(combinedOut?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      expect(combinedOut?.style.getPropertyValue('opacity')).toBe('');
+      expect(combinedOut?.getAttribute('style') ?? '').not.toContain('radius');
+      const combinedGroup = combinedOut?.querySelector(':scope > g');
+      expect(combinedGroup?.getAttribute('opacity')).toBe('0.5');
+      expect(Array.from(combinedGroup?.children ?? []).map((child) => child.localName.toLowerCase())).toEqual([
+        'path',
+        'rect',
+      ]);
+      expect(combinedGroup?.firstElementChild?.getAttribute('fill')).toBe('rgb(0, 0, 255)');
+      expect(combinedGroup?.firstElementChild?.getAttribute('d')).toBe(
+        'M 22 20 H 98 A 12 12 0 0 1 110 32 V 68 A 12 12 0 0 1 98 80 H 22 A 12 12 0 0 1 10 68 V 32 A 12 12 0 0 1 22 20 Z',
+      );
+
+      // 4. Percentage border-radius: 50% over transparent canvas -> no root background/radius, elliptical <path> first.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(connectedPercentSvg, 'mermaid', 1, 100, 50, undefined, 1),
+      );
+      const percentOut = new DOMParser()
+        .parseFromString(
+          decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+          'text/html',
+        )
+        .querySelector('svg');
+      expect(percentOut?.style.getPropertyValue('background-color')).toBe('');
+      expect(percentOut?.getAttribute('style') ?? '').not.toContain('radius');
+      expect(percentOut?.firstElementChild?.localName.toLowerCase()).toBe('path');
+      expect(percentOut?.firstElementChild?.getAttribute('fill')).toBe('rgba(255, 0, 0, 0.5)');
+      expect(percentOut?.firstElementChild?.getAttribute('d')).toBe(
+        'M 50 0 H 50 A 50 25 0 0 1 100 25 V 25 A 50 25 0 0 1 50 50 H 50 A 50 25 0 0 1 0 25 V 25 A 50 25 0 0 1 50 0 Z',
+      );
+    } finally {
+      whiteCanvas.remove();
+      transparentCanvas.remove();
+    }
+  });
+
   it('drops the KaTeX MathML fallback and carries stylesheet-derived math geometry', async () => {
     const canvasContext = { drawImage: vi.fn() };
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext')

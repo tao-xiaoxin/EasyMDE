@@ -9,7 +9,12 @@ import {
   type MermaidResponsiveViewportSnapshot,
   WechatPngConversionError,
 } from './wechat-png-conversion-policy';
-import { parseCssOpacity } from './wechat-mermaid-background';
+import {
+  hasNonZeroBorderRadius,
+  hasVisibleBackgroundColor,
+  isOpaqueBackgroundColor,
+  parseCssOpacity,
+} from './wechat-mermaid-background';
 import {
   MERMAID_INTRINSIC_LAYOUT_ROLES,
   type MermaidScreenCtm,
@@ -541,6 +546,12 @@ export function mermaidResponsiveViewportDimensions(
   );
   const svgEdges = mermaidEdgeValues(svgComputed);
   const preserveAspectRatio = svg.getAttribute('preserveAspectRatio')?.trim().replace(/\s+/gu, ' ').toLowerCase() ?? '';
+  const svgBackgroundColor =
+    svgComputed.getPropertyValue('background-color').trim() || svgComputed.backgroundColor?.trim() || '';
+  const svgHasRoundedTranslucentBackground =
+    hasNonZeroBorderRadius(svgComputed, svg)
+    && hasVisibleBackgroundColor(svgBackgroundColor)
+    && !isOpaqueBackgroundColor(svgBackgroundColor);
   const expectedHeight = (svgRect.width * viewBox.height) / viewBox.width;
   const freeWidth = sourceContentWidth - svgRect.width;
   const centeredLeft = svgRect.left - sourceContentLeft;
@@ -594,6 +605,7 @@ export function mermaidResponsiveViewportDimensions(
     Math.abs(centeredLeft - freeWidth / 2) > MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
     Math.abs(centeredRight - freeWidth / 2) > MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
     Math.abs(svgRect.top - sourceContentTop) > MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
+    svgHasRoundedTranslucentBackground ||
     !mermaidResponsiveOwnerPaintIsSafe(source, runtime, sourceRect.width, sourceRect.height) ||
     !mermaidRootPaintIsSafe(svg, runtime, svgRect.width, svgRect.height, svgRect.width, svgRect.height)
   )

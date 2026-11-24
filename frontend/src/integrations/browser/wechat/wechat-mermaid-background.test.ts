@@ -12,6 +12,7 @@ import {
   parseCssColorAlpha,
   parseCssOpacity,
   parseCssSolidColor,
+  resolveMermaidBorderRadii,
   resolveMermaidInheritedBackground,
   stripMermaidBorderRadius,
 } from './wechat-mermaid-background';
@@ -1290,6 +1291,178 @@ describe('wechat-mermaid-background', () => {
         color: 'rgb(20, 24, 32)',
         image: 'linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent)',
       });
+
+      // 8. Track B #4: Explicit retainedBoundary does NOT prematurely flip inRetainedSubtree
+      // on a nested <article> strictly inside retainedBoundary.
+      const outerPreview = document.createElement('div');
+      outerPreview.className = 'easymde-preview';
+      const innerArticle = document.createElement('article');
+      const innerMermaid = document.createElement('div');
+      innerMermaid.className = 'easymde-mermaid';
+      const innerArticleSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      innerMermaid.append(innerArticleSvg);
+      innerArticle.append(innerMermaid);
+      outerPreview.append(innerArticle);
+      document.body.append(outerPreview);
+
+      const translucentInnerArticleReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [innerArticleSvg, { 'background-color': 'transparent', 'background-image': 'none', opacity: '1' }],
+          [innerMermaid, { 'background-color': 'transparent', 'background-image': 'none', opacity: '1' }],
+          [
+            innerArticle,
+            { 'background-color': 'rgba(255, 0, 0, 0.4)', 'background-image': 'none', opacity: '1' },
+          ],
+          [outerPreview, { 'background-color': 'rgb(255, 255, 255)', 'background-image': 'none', opacity: '1' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(innerArticleSvg, translucentInnerArticleReader, {
+          directSvgCapture: true,
+          retainedBoundary: outerPreview,
+          retainedParentWrapper: true,
+        }),
+      ).toBeNull();
+
+      const gradientInnerArticleReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [innerArticleSvg, { 'background-color': 'transparent', 'background-image': 'none', opacity: '1' }],
+          [innerMermaid, { 'background-color': 'transparent', 'background-image': 'none', opacity: '1' }],
+          [
+            innerArticle,
+            {
+              'background-color': 'transparent',
+              'background-image': 'linear-gradient(90deg, red, blue)',
+              opacity: '1',
+            },
+          ],
+          [outerPreview, { 'background-color': 'rgb(255, 255, 255)', 'background-image': 'none', opacity: '1' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(innerArticleSvg, gradientInnerArticleReader, {
+          directSvgCapture: true,
+          retainedBoundary: outerPreview,
+          retainedParentWrapper: true,
+        }),
+      ).toBeNull();
+
+      const transparentInnerArticleReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [innerArticleSvg, { 'background-color': 'transparent', 'background-image': 'none', opacity: '1' }],
+          [innerMermaid, { 'background-color': 'transparent', 'background-image': 'none', opacity: '1' }],
+          [innerArticle, { 'background-color': 'transparent', 'background-image': 'none', opacity: '1' }],
+          [outerPreview, { 'background-color': 'rgb(30, 30, 46)', 'background-image': 'none', opacity: '1' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(innerArticleSvg, transparentInnerArticleReader, {
+          directSvgCapture: true,
+          retainedBoundary: outerPreview,
+          retainedParentWrapper: true,
+        }),
+      ).toEqual({
+        color: 'rgb(30, 30, 46)',
+      });
+    });
+
+    it('returns ancestor-only backdrop for rounded direct SVG with visible non-opaque background-color', () => {
+      const whiteCanvas = document.createElement('div');
+      whiteCanvas.className = 'easymde-immersive-preview-canvas';
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      whiteCanvas.append(svg);
+      document.body.append(whiteCanvas);
+
+      // Rounded translucent direct <svg> returns pure ancestor backdrop (not square folded pink).
+      const roundedTranslucentReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            svg,
+            {
+              'background-color': 'rgba(255, 0, 0, 0.5)',
+              'background-image': 'none',
+              'border-radius': '12px',
+              opacity: '1',
+            },
+          ],
+          [whiteCanvas, { 'background-color': 'rgb(255, 255, 255)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(svg, roundedTranslucentReader, {
+          directSvgCapture: true,
+        }),
+      ).toEqual({
+        color: 'rgb(255, 255, 255)',
+      });
+
+      // Over transparent ancestor, rounded translucent direct <svg> returns null (own fill is painted by rasterizer <path>).
+      const roundedTranslucentOnTransparentReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            svg,
+            {
+              'background-color': 'rgba(255, 0, 0, 0.5)',
+              'background-image': 'none',
+              'border-radius': '12px',
+              opacity: '1',
+            },
+          ],
+          [whiteCanvas, { 'background-color': 'transparent', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(svg, roundedTranslucentOnTransparentReader, {
+          directSvgCapture: true,
+        }),
+      ).toBeNull();
+
+      // Opaque control with border-radius still folds its own opaque background-color.
+      const roundedOpaqueReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            svg,
+            {
+              'background-color': 'rgb(255, 0, 0)',
+              'background-image': 'none',
+              'border-radius': '12px',
+              opacity: '1',
+            },
+          ],
+          [whiteCanvas, { 'background-color': 'rgb(255, 255, 255)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(svg, roundedOpaqueReader, {
+          directSvgCapture: true,
+        }),
+      ).toEqual({
+        color: 'rgb(255, 0, 0)',
+      });
+
+      // Rounded translucent direct <svg> with safe background-image keeps existing safe-image folding intact.
+      const roundedTranslucentWithGradientReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            svg,
+            {
+              'background-color': 'rgba(255, 0, 0, 0.5)',
+              'background-image': 'linear-gradient(90deg, rgba(0, 0, 255, 0.2), transparent)',
+              'border-radius': '12px',
+              opacity: '1',
+            },
+          ],
+          [whiteCanvas, { 'background-color': 'rgb(255, 255, 255)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(svg, roundedTranslucentWithGradientReader, {
+          directSvgCapture: true,
+        }),
+      ).toEqual({
+        color: 'rgb(255, 128, 128)',
+        image: 'linear-gradient(90deg, rgba(0, 0, 255, 0.2), transparent)',
+      });
     });
 
     it('stops before measure-host and wp-admin containers and drops unsafe url() images', () => {
@@ -1582,6 +1755,110 @@ describe('wechat-mermaid-background', () => {
       radiusOnlySvg.setAttribute('style', 'border-radius: 12px;');
       stripMermaidBorderRadius(radiusOnlySvg);
       expect(radiusOnlySvg.getAttribute('style')).toBeNull();
+    });
+  });
+
+  describe('resolveMermaidBorderRadii', () => {
+    it('resolves pixel, percentage, elliptical, and corner-override radii and rejects unparseable tokens', () => {
+      expect(resolveMermaidBorderRadii(styleDeclaration({ 'border-radius': '0px' }), undefined, 100, 60)).toBeNull();
+      expect(resolveMermaidBorderRadii(styleDeclaration({ 'border-radius': '12px' }), undefined, 100, 60)).toEqual([
+        [12, 12],
+        [12, 12],
+        [12, 12],
+        [12, 12],
+      ]);
+      expect(resolveMermaidBorderRadii(styleDeclaration({ 'border-radius': '50%' }), undefined, 100, 50)).toEqual([
+        [50, 25],
+        [50, 25],
+        [50, 25],
+        [50, 25],
+      ]);
+      expect(
+        resolveMermaidBorderRadii(
+          styleDeclaration({ 'border-radius': '10px 20px / 5px 15px' }),
+          undefined,
+          100,
+          60,
+        ),
+      ).toEqual([
+        [10, 5],
+        [20, 15],
+        [10, 5],
+        [20, 15],
+      ]);
+      expect(
+        resolveMermaidBorderRadii(
+          styleDeclaration({ 'border-radius': '12px', 'border-top-left-radius': '4px 8px' }),
+          undefined,
+          100,
+          60,
+        ),
+      ).toEqual([
+        [4, 8],
+        [12, 12],
+        [12, 12],
+        [12, 12],
+      ]);
+      expect(
+        resolveMermaidBorderRadii(
+          styleDeclaration({
+            'border-bottom-left-radius': '0px',
+            'border-bottom-right-radius': '0px',
+            'border-radius': '12px',
+            'border-top-left-radius': '0px',
+            'border-top-right-radius': '0px',
+          }),
+          undefined,
+          100,
+          60,
+        ),
+      ).toEqual([
+        [12, 12],
+        [12, 12],
+        [12, 12],
+        [12, 12],
+      ]);
+      expect(
+        resolveMermaidBorderRadii(
+          styleDeclaration({
+            'border-bottom-left-radius': '12px',
+            'border-bottom-right-radius': '12px',
+            'border-radius': '12px',
+            'border-top-left-radius': '0px',
+            'border-top-right-radius': '12px',
+          }),
+          undefined,
+          100,
+          60,
+        ),
+      ).toEqual([
+        [0, 0],
+        [12, 12],
+        [12, 12],
+        [12, 12],
+      ]);
+      expect(
+        resolveMermaidBorderRadii(
+          styleDeclaration({
+            'border-radius': '12px',
+            'border-top-left-radius': '0px',
+          }),
+          undefined,
+          100,
+          60,
+        ),
+      ).toEqual([
+        [0, 0],
+        [12, 12],
+        [12, 12],
+        [12, 12],
+      ]);
+      expect(
+        resolveMermaidBorderRadii(styleDeclaration({ 'border-radius': '12px / 0px' }), undefined, 100, 60),
+      ).toBeNull();
+      expect(
+        resolveMermaidBorderRadii(styleDeclaration({ 'border-radius': 'calc(10px + 2%)' }), undefined, 100, 60),
+      ).toBeNull();
     });
   });
 });

@@ -1246,4 +1246,260 @@ describe("Mermaid background ancestor walk", () => {
 			}
 		}
 	});
+
+	it("rejects mermaid-responsive when SVG has border-radius + translucent background-color while keeping opaque rounded control admitted", async () => {
+		const originalGetAnimations = Object.getOwnPropertyDescriptor(
+			document,
+			"getAnimations",
+		);
+		Object.defineProperty(document, "getAnimations", {
+			configurable: true,
+			value: () => [],
+		});
+		try {
+			vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+				drawImage: vi.fn(),
+			} as unknown as CanvasRenderingContext2D);
+			vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(
+				(callback) => {
+					callback(new Blob(["png"], { type: "image/png" }));
+				},
+			);
+			const canvas = document.createElement("div");
+			canvas.className = "easymde-immersive-preview-canvas";
+			canvas.style.backgroundColor = "rgb(255, 255, 255)";
+			const preview = document.createElement("article");
+			preview.className = "easymde-preview";
+			preview.setAttribute("data-easymde-preview-html-sink", "1");
+			preview.innerHTML =
+				'<div class="easymde-mermaid"><svg width="100%" viewBox="0 0 350 200"' +
+				' style="display:block;margin-left:auto;margin-right:auto;">' +
+				'<rect width="350" height="200"></rect></svg></div>';
+			Object.defineProperty(preview, "innerText", {
+				configurable: true,
+				value: "ResponsiveRoundedTranslucent",
+			});
+			const root = preview.querySelector(".easymde-mermaid");
+			const svg = preview.querySelector("svg");
+			if (!root || !svg) {
+				throw new Error("mermaid-responsive-rounded-fixture-missing");
+			}
+			const setTypedStyleMap = (
+				element: Element,
+				values: Record<string, string>,
+			): void => {
+				Object.defineProperty(element, "computedStyleMap", {
+					configurable: true,
+					value: () => ({
+						get: (property: string) => ({
+							value: values[property] ?? "auto",
+						}),
+					}),
+				});
+			};
+			setTypedStyleMap(root, {
+				"block-size": "auto",
+				height: "auto",
+				"max-block-size": "none",
+				"max-height": "none",
+				"max-width": "100%",
+				"min-block-size": "auto",
+				"min-height": "auto",
+			});
+			setTypedStyleMap(svg, {
+				"block-size": "auto",
+				height: "auto",
+				"margin-left": "auto",
+				"margin-right": "auto",
+				"max-block-size": "none",
+				"max-height": "none",
+				"max-width": "350px",
+				"min-block-size": "auto",
+				"min-height": "auto",
+				width: "100%",
+			});
+			Object.defineProperty(root, "clientWidth", {
+				configurable: true,
+				value: 600,
+			});
+			Object.defineProperty(root, "scrollLeft", {
+				configurable: true,
+				value: 0,
+			});
+			Object.defineProperty(root, "scrollWidth", {
+				configurable: true,
+				value: 600,
+			});
+			Object.defineProperty(svg, "getScreenCTM", {
+				configurable: true,
+				value: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }),
+			});
+			canvas.append(preview);
+			document.body.append(canvas);
+
+			vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+				function (this: Element): DOMRect {
+					if (this === svg) {
+						return {
+							bottom: 200,
+							height: 200,
+							left: 125,
+							right: 475,
+							toJSON: () => ({}),
+							top: 0,
+							width: 350,
+							x: 125,
+							y: 0,
+						} as DOMRect;
+					}
+					return {
+						bottom: 200,
+						height: 200,
+						left: 0,
+						right: 600,
+						toJSON: () => ({}),
+						top: 0,
+						width: 600,
+						x: 0,
+						y: 0,
+					} as DOMRect;
+				},
+			);
+
+			const baseStyleMap: Record<string, string> = {
+				"background-color": "rgba(0, 0, 0, 0)",
+				"background-image": "none",
+				"border-bottom-style": "none",
+				"border-bottom-width": "0px",
+				"border-image-source": "none",
+				"border-left-style": "none",
+				"border-left-width": "0px",
+				"border-radius": "0px",
+				"border-right-style": "none",
+				"border-right-width": "0px",
+				"border-top-style": "none",
+				"border-top-width": "0px",
+				"box-shadow": "none",
+				"box-sizing": "border-box",
+				display: "block",
+				filter: "none",
+				float: "none",
+				height: "auto",
+				"mask-image": "none",
+				"max-width": "100%",
+				opacity: "1",
+				"outline-style": "none",
+				overflow: "auto",
+				"overflow-x": "auto",
+				"overflow-y": "auto",
+				"padding-bottom": "0px",
+				"padding-left": "0px",
+				"padding-right": "0px",
+				"padding-top": "0px",
+				position: "static",
+				transform: "none",
+				width: "600px",
+			};
+			let svgBgColor = "rgba(255, 0, 0, 0.5)";
+			let svgBorderRadius = "12px";
+			const originalGetComputedStyle = window.getComputedStyle.bind(window);
+			const mockStyle = (
+				element: Element,
+				pseudo?: string | null,
+			): CSSStyleDeclaration => {
+				if (pseudo) {
+					return {
+						getPropertyValue: (property: string) =>
+							"content" === property ? "none" : "",
+					} as unknown as CSSStyleDeclaration;
+				}
+				if (element === root) {
+					return {
+						getPropertyValue: (property: string) =>
+							baseStyleMap[property] ?? "",
+					} as unknown as CSSStyleDeclaration;
+				}
+				if (element === svg) {
+					const map: Record<string, string> = {
+						...baseStyleMap,
+						"background-color": svgBgColor,
+						"border-bottom-left-radius": svgBorderRadius,
+						"border-bottom-right-radius": svgBorderRadius,
+						"border-radius": svgBorderRadius,
+						"border-top-left-radius": svgBorderRadius,
+						"border-top-right-radius": svgBorderRadius,
+						"margin-left": "auto",
+						"margin-right": "auto",
+						"max-width": "350px",
+						width: "350px",
+					};
+					return {
+						getPropertyValue: (property: string) => map[property] ?? "",
+					} as unknown as CSSStyleDeclaration;
+				}
+				return originalGetComputedStyle(element);
+			};
+			vi.spyOn(window, "getComputedStyle").mockImplementation(mockStyle);
+
+			const rasterizer = createBrowserWechatVisualRasterizer({
+				approvedAssetBaseUrl: APPROVED_ASSET_BASE_URL,
+				approvedKaTeXCssUrl: APPROVED_KATEX_CSS_URL,
+				blob: Blob,
+				document,
+				file: File,
+				image: ImageStub as unknown as typeof Image,
+				xmlSerializer: XMLSerializer,
+			});
+			const rasterizeSpy = vi.spyOn(rasterizer, "rasterize");
+			const clipboard = createBrowserWechatClipboard({
+				approvedAssetBaseUrl: APPROVED_ASSET_BASE_URL,
+				approvedKaTeXCssUrl: APPROVED_KATEX_CSS_URL,
+				blob: Blob,
+				clipboardItem: ClipboardItemStub,
+				document,
+				getComputedStyle: mockStyle,
+				getSelection: window.getSelection.bind(window),
+				pageOffset: () => ({ x: 0, y: 0 }),
+				scrollTo: vi.fn(),
+				write: vi.fn(async () => undefined),
+			});
+
+			// 1. Translucent background-color + border-radius: 12px rejects mermaid-responsive -> falls back to foreignObject.
+			await expect(
+				clipboard.copy(preview, pngOptions(rasterizer, uploadPort())),
+			).resolves.toEqual({ method: "clipboard", status: "copied" });
+			expect(rasterizeSpy.mock.calls[0]?.[0]?.mermaidCapture).toBeUndefined();
+
+			// 2. Opaque control (rgb(255, 0, 0) + border-radius: 12px) remains admitted in mermaid-responsive.
+			rasterizeSpy.mockClear();
+			svgBgColor = "rgb(255, 0, 0)";
+			svgBorderRadius = "12px";
+			await expect(
+				clipboard.copy(preview, pngOptions(rasterizer, uploadPort())),
+			).resolves.toEqual({ method: "clipboard", status: "copied" });
+			expect(rasterizeSpy.mock.calls[0]?.[0]).toMatchObject({
+				kind: "mermaid",
+				mermaidCapture: "responsive-viewport",
+			});
+
+			// 3. Square translucent (rgba(255, 0, 0, 0.5) + border-radius: 0px) remains admitted in mermaid-responsive.
+			rasterizeSpy.mockClear();
+			svgBgColor = "rgba(255, 0, 0, 0.5)";
+			svgBorderRadius = "0px";
+			await expect(
+				clipboard.copy(preview, pngOptions(rasterizer, uploadPort())),
+			).resolves.toEqual({ method: "clipboard", status: "copied" });
+			expect(rasterizeSpy.mock.calls[0]?.[0]).toMatchObject({
+				kind: "mermaid",
+				mermaidCapture: "responsive-viewport",
+			});
+		} finally {
+			if (originalGetAnimations) {
+				Object.defineProperty(document, "getAnimations", originalGetAnimations);
+			} else {
+				delete (document as unknown as { getAnimations?: unknown })
+					.getAnimations;
+			}
+		}
+	});
 });

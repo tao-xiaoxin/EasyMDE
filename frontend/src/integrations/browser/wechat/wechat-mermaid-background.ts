@@ -506,6 +506,73 @@ export function hasNonZeroBorderRadius(
   return Boolean(shorthand) && !isZeroRadiusValue(shorthand);
 }
 
+export type MermaidCornerRadii = readonly [
+  readonly [number, number],
+  readonly [number, number],
+  readonly [number, number],
+  readonly [number, number],
+];
+
+function parseRadiusLength(token: string, referencePx: number): number | null {
+  const normalized = token.trim().toLowerCase();
+  if (isZeroRadiusValue(normalized)) return 0;
+  const match = /^(\d+(?:\.\d+)?|\.\d+)(px|%)$/u.exec(normalized);
+  const parsed = match ? Number(match[1]) : Number.NaN;
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return '%' === match?.[2] ? (parsed / 100) * referencePx : parsed;
+}
+
+function expandShorthandRadiusAxis(axis: string, referencePx: number): number[] | null {
+  const tokens = axis.trim().split(/\s+/u).filter(Boolean);
+  if (!tokens.length || tokens.length > 4) return null;
+  const values = tokens.map((token) => parseRadiusLength(token, referencePx));
+  if (values.some((value) => null === value)) return null;
+  const [a = 0, b = a, c = a, d = b] = values as number[];
+  return [a, b, c, d];
+}
+
+export function resolveMermaidBorderRadii(
+  style: CSSStyleDeclaration,
+  element: Element | undefined,
+  cssWidth: number,
+  cssHeight: number,
+): MermaidCornerRadii | null {
+  if (!Number.isFinite(cssWidth) || cssWidth <= 0 || !Number.isFinite(cssHeight) || cssHeight <= 0) return null;
+  const parsedCorners: Array<readonly [number, number] | null> = [];
+  for (const [property, camelProperty] of BORDER_RADIUS_CORNER_PROPERTIES) {
+    const raw = readEffectiveStyleProperty(style, element, property, camelProperty);
+    if (!raw) { parsedCorners.push(null); continue; }
+    const tokens = raw.includes('/') ? [] : raw.trim().split(/\s+/u).filter(Boolean);
+    const rx = tokens.length >= 1 && tokens.length <= 2 ? parseRadiusLength(tokens[0] ?? '', cssWidth) : null;
+    const ry = rx !== null ? parseRadiusLength(tokens[1] ?? tokens[0] ?? '', cssHeight) : null;
+    if (null === rx || null === ry) return null;
+    parsedCorners.push(rx > 0 && ry > 0 ? [rx, ry] : [0, 0]);
+  }
+  const hasNonZeroCorner = parsedCorners.some((pair) => pair !== null && pair[0] > 0 && pair[1] > 0);
+  if (hasNonZeroCorner && parsedCorners.every((pair) => null !== pair)) {
+    return parsedCorners as unknown as MermaidCornerRadii;
+  }
+  const shorthand = readEffectiveStyleProperty(style, element, 'border-radius', 'borderRadius');
+  let baseCorners: MermaidCornerRadii = [[0, 0], [0, 0], [0, 0], [0, 0]];
+  if (shorthand && !isZeroRadiusValue(shorthand)) {
+    const groups = shorthand.split(/\s*\/\s*/u);
+    if (groups.length > 2 || groups.some((group) => !group.trim())) return null;
+    const rxList = expandShorthandRadiusAxis(groups[0] ?? '', cssWidth);
+    const ryList = expandShorthandRadiusAxis(groups[1] ?? groups[0] ?? '', cssHeight);
+    if (!rxList || !ryList) return null;
+    baseCorners = [0, 1, 2, 3].map((i) => {
+      const rx = rxList[i] ?? 0;
+      const ry = ryList[i] ?? 0;
+      return rx > 0 && ry > 0 ? [rx, ry] : [0, 0];
+    }) as unknown as MermaidCornerRadii;
+  }
+  const allCornersZero = !hasNonZeroCorner && parsedCorners.every((pair) => null !== pair);
+  const finalCorners = allCornersZero
+    ? baseCorners
+    : [0, 1, 2, 3].map((i) => parsedCorners[i] ?? baseCorners[i] ?? [0, 0]);
+  return finalCorners.some(([rx, ry]) => rx > 0 && ry > 0) ? (finalCorners as unknown as MermaidCornerRadii) : null;
+}
+
 export function parseCssOpacity(value: string): number | null {
   return parseAlphaToken(value, false);
 }
@@ -733,12 +800,13 @@ function foldElementBackground(
 function isRetainedWrapperBoundary(
   element: Element,
   doc: Document,
-  retainedBoundary?: Element | null,
+  retainedBoundary: Element | null | undefined,
+  hasExplicitRetainedBoundary: boolean,
 ): boolean {
   if (element === retainedBoundary || element === doc.body || element === doc.documentElement) {
     return true;
   }
-  return element.matches(RETAINED_CONTENT_BOUNDARY_SELECTORS);
+  return !hasExplicitRetainedBoundary && element.matches(RETAINED_CONTENT_BOUNDARY_SELECTORS);
 }
 
 function walkMermaidAncestorBackground(
@@ -751,12 +819,17 @@ function walkMermaidAncestorBackground(
     retainedParentWrapper?: boolean;
   }> = {},
 ): WechatVisualMermaidBackground | null {
+  const hasExplicitRetainedBoundary = Boolean(
+    options.retainedBoundary
+    && startElement
+    && (options.retainedBoundary === startElement || options.retainedBoundary.contains(startElement)),
+  );
   let inRetainedSubtree = Boolean(options.retainedParentWrapper);
   for (let element: Element | null = startElement; element; element = element.parentElement) {
     if (isMermaidBackgroundWalkStopBefore(element, doc)) break;
     const computed = readComputedStyle(element);
     if (inRetainedSubtree) {
-      if (isRetainedWrapperBoundary(element, doc, options.retainedBoundary)) {
+      if (isRetainedWrapperBoundary(element, doc, options.retainedBoundary, hasExplicitRetainedBoundary)) {
         inRetainedSubtree = false;
       } else {
         const opacity = readElementOpacity(computed, element);
@@ -806,11 +879,29 @@ export function resolveMermaidInheritedBackground(
   const directSvgCapture = options.directSvgCapture ?? source.matches('svg');
   const retainedParentWrapper = Boolean(options.retainedParentWrapper);
   const sourceStyle = readComputedStyle(source);
+  const sourceColor = readEffectiveStyleProperty(
+    sourceStyle,
+    source,
+    'background-color',
+    'backgroundColor',
+  );
+  const sourceOpacity = readElementOpacity(sourceStyle, source);
+  const sourceHasRadius = hasNonZeroBorderRadius(sourceStyle, source);
 
   if (directSvgCapture) {
-    const sourceOpacity = readElementOpacity(sourceStyle, source);
+    const sourceImage = readEffectiveStyleProperty(
+      sourceStyle,
+      source,
+      'background-image',
+      'backgroundImage',
+    );
+    const isolateRoundedTranslucentOwnColor =
+      sourceHasRadius
+      && hasVisibleBackgroundColor(sourceColor)
+      && !isOpaqueBackgroundColor(sourceColor)
+      && !hasBackgroundImage(sourceImage);
     const initialState = createEmptyBackgroundFoldState();
-    if (sourceOpacity >= 1) {
+    if (sourceOpacity >= 1 && !isolateRoundedTranslucentOwnColor) {
       foldElementBackground(initialState, source, sourceStyle);
     }
     return walkMermaidAncestorBackground(
@@ -825,16 +916,7 @@ export function resolveMermaidInheritedBackground(
     );
   }
 
-  const sourceColor = readEffectiveStyleProperty(
-    sourceStyle,
-    source,
-    'background-color',
-    'backgroundColor',
-  );
-  const sourceOpacity = readElementOpacity(sourceStyle, source);
-  const sourceOpaqueColor = isOpaqueBackgroundColor(sourceColor);
-  const sourceHasRadius = hasNonZeroBorderRadius(sourceStyle, source);
-  if (sourceOpaqueColor && !sourceHasRadius && sourceOpacity >= 1) {
+  if (isOpaqueBackgroundColor(sourceColor) && !sourceHasRadius && sourceOpacity >= 1) {
     return null;
   }
 

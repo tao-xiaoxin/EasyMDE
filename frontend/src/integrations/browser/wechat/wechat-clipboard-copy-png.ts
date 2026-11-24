@@ -5,19 +5,16 @@ import {
 	mermaidCaptureSnapshotIsCurrent,
 	mermaidResponsiveSnapshotIsCurrent,
 } from "./wechat-capture-plan";
-import {
-	CLIPBOARD_COMMIT_TIMEOUT_MS,
-	type ModernCopyTransaction,
-	type ReadyPreviewResolution,
-	remainingTransactionTimeoutMs,
-	type WechatClipboardCopySharedState,
+import type {
+	ModernCopyTransaction,
+	ReadyPreviewResolution,
+	WechatClipboardCopySharedState,
 } from "./wechat-clipboard-copy-transaction";
 import {
 	type BrowserWechatClipboardRuntime,
 	createSerializationYield,
 	WECHAT_COPY_TIMING_NAMES,
 	waitForBrowserTask,
-	withTimeout,
 } from "./wechat-clipboard-runtime";
 import {
 	createWechatCopyTotalTiming,
@@ -177,39 +174,6 @@ export function createPngCopyTransaction(
 			throw new Error("wechat-copy-stale");
 		}
 		tableNativeGridGuard?.assertCurrent();
-	};
-
-	const awaitCompletion: ModernCopyTransaction["awaitCompletion"] = async (
-		writeResult,
-		writeFailure,
-		htmlBlob,
-		textBlob,
-		cancellationFailure,
-	) => {
-		const remainingTimeoutMs = remainingTransactionTimeoutMs(
-			deadlineMs,
-			WECHAT_PNG_TRANSACTION_TIMEOUT_MS,
-		);
-		if (remainingTimeoutMs <= 0) {
-			throw new Error("wechat-png-transaction-timeout");
-		}
-		const payloadReady = withTimeout(
-			Promise.all([payload, htmlBlob, textBlob]),
-			remainingTimeoutMs,
-			"wechat-png-transaction-timeout",
-		);
-		await Promise.race([
-			payloadReady.then(async () => {
-				const { error } = await withTimeout(
-					writeResult,
-					CLIPBOARD_COMMIT_TIMEOUT_MS,
-					"wechat-png-transaction-timeout",
-				);
-				if (null !== error) throw error;
-			}),
-			writeFailure,
-			cancellationFailure,
-		]);
 	};
 
 	const finalizeTransaction = (): void => {
@@ -692,13 +656,16 @@ export function createPngCopyTransaction(
 
 	return {
 		assertBlobCurrent,
-		awaitCompletion,
 		cleanup: cleanupTransaction,
+		commitTimeoutCode: "wechat-png-transaction-timeout",
+		deadlineMs,
+		defaultTimeoutMs: WECHAT_PNG_TRANSACTION_TIMEOUT_MS,
 		finalize: finalizeTransaction,
 		finishTotal: finishCopyTotal,
 		onFailure: transactionFailure,
 		onSynchronousModernFailure: synchronousModernFailure,
 		payload,
+		preparationTimeoutCode: "wechat-png-transaction-timeout",
 		start: startTransaction,
 	};
 }

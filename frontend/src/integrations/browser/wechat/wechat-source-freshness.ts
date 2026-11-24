@@ -1,17 +1,10 @@
-import { isTaskListCheckbox } from './wechat-clone-metadata';
+import {
+  clipboardTaskCheckboxState,
+  previewReady,
+  REFRESH_ONLY_PREVIEW_ATTRIBUTES
+} from './wechat-copy-preconditions';
 
-export const REFRESH_ONLY_PREVIEW_ATTRIBUTES = [
-  'aria-busy',
-  'data-easymde-preview-accepted',
-  'data-easymde-preview-refreshing'
-] as const;
-
-export function clipboardTaskCheckboxState(preview: HTMLElement): string {
-  return Array.from(preview.querySelectorAll('input'))
-    .filter(isTaskListCheckbox)
-    .map((input) => ((input as HTMLInputElement).checked ? '1' : '0'))
-    .join(',');
-}
+export { clipboardTaskCheckboxState, previewReady, REFRESH_ONLY_PREVIEW_ATTRIBUTES };
 
 export function clipboardSourceMarkup(preview: HTMLElement): string {
   // Root refresh bookkeeping is not source content; descendants still are.
@@ -98,21 +91,6 @@ export function createClipboardSourceFreshnessGuard(preview: HTMLElement): Clipb
     observer.disconnect();
   };
   return { dispose, finalize, isCurrent };
-}
-
-export function previewReady(preview: HTMLElement): boolean {
-  const refreshing =
-    '1' === preview.getAttribute('data-easymde-preview-refreshing') || 'true' === preview.getAttribute('aria-busy');
-  const acceptedDuringRefresh =
-    refreshing &&
-    '1' === preview.getAttribute('data-easymde-preview-accepted') &&
-    !preview.querySelector('[data-easymde-preview-window-spacer]');
-  return (
-    (Boolean(preview.firstElementChild) || '' !== preview.innerHTML.trim()) &&
-    !preview.querySelector('.easymde-preview-empty, .easymde-preview-error, .easymde-render-error') &&
-    '1' !== preview.getAttribute('data-easymde-preview-error') &&
-    (!refreshing || acceptedDuringRefresh)
-  );
 }
 
 export type WechatClipboardCopyGuard = Readonly<{ isCurrent?: (() => boolean) | undefined; signal?: AbortSignal | undefined }>;

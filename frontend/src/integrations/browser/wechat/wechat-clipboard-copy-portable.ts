@@ -1,12 +1,9 @@
 import { fallbackAfterSynchronousModernFailure } from "./wechat-clipboard-copy-legacy";
-import {
-	CLIPBOARD_COMMIT_TIMEOUT_MS,
-	type ModernCopyTransaction,
-	type ReadyPreviewResolution,
-	remainingTransactionTimeoutMs,
-	type WechatClipboardCopySharedState,
+import type {
+	ModernCopyTransaction,
+	ReadyPreviewResolution,
+	WechatClipboardCopySharedState,
 } from "./wechat-clipboard-copy-transaction";
-import { withTimeout } from "./wechat-clipboard-runtime";
 import type { WechatDimensionSemanticsContext } from "./wechat-dimension-semantics";
 import { preparedLayoutSignature } from "./wechat-fidelity-signature";
 import { WECHAT_CLIPBOARD_TRANSACTION_TIMEOUT_MS } from "./wechat-png-conversion-policy";
@@ -260,38 +257,6 @@ export function createPortableCopyTransaction(
 		portableTableNativeGridGuard?.assertCurrent();
 	};
 
-	const awaitCompletion: ModernCopyTransaction["awaitCompletion"] = async (
-		writeResult,
-		writeFailure,
-		htmlBlob,
-		textBlob,
-		cancellationFailure,
-	) => {
-		const remainingTimeoutMs = remainingTransactionTimeoutMs(
-			deadlineMs,
-			WECHAT_CLIPBOARD_TRANSACTION_TIMEOUT_MS,
-		);
-		if (remainingTimeoutMs <= 0) {
-			throw new Error("wechat-clipboard-preparation-timeout");
-		}
-		const payloadReady = withTimeout(
-			Promise.all([payload, htmlBlob, textBlob]),
-			remainingTimeoutMs,
-			"wechat-clipboard-preparation-timeout",
-		);
-		await Promise.race([
-			payloadReady.then(async () => {
-				const { error } = await withTimeout(
-					writeResult,
-					CLIPBOARD_COMMIT_TIMEOUT_MS,
-				);
-				if (null !== error) throw error;
-			}),
-			writeFailure,
-			cancellationFailure,
-		]);
-	};
-
 	const finalizeTransaction = (): void => {
 		const sourceGuard = portableFreshness.current();
 		assertCopyPreviewCurrent(payloadPreview, copyGuard);
@@ -352,8 +317,9 @@ export function createPortableCopyTransaction(
 
 	return {
 		assertBlobCurrent,
-		awaitCompletion,
 		cleanup: cleanupTransaction,
+		deadlineMs,
+		defaultTimeoutMs: WECHAT_CLIPBOARD_TRANSACTION_TIMEOUT_MS,
 		finalize: finalizeTransaction,
 		finishTotal: () => undefined,
 		onFailure: () => ({
@@ -368,6 +334,7 @@ export function createPortableCopyTransaction(
 				shared,
 			),
 		payload,
+		preparationTimeoutCode: "wechat-clipboard-preparation-timeout",
 		start: startTransaction,
 	};
 }

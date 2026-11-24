@@ -3,7 +3,10 @@ import type {
   WechatVisualRasterizationYield
 } from '../../../contracts/ports/wechat-visual-rasterization-port';
 
-import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard';
+import {
+  CLIPBOARD_COMMIT_TIMEOUT_MS,
+  createBrowserWechatClipboard
+} from './create-browser-wechat-clipboard';
 
 import {
   blobText,
@@ -489,6 +492,166 @@ describe('createBrowserWechatClipboard', () => {
     } finally {
       process.off('unhandledRejection', onUnhandledRejection);
     }
+  });
+
+  it('handles expired cold-copy deadlines at handoff without unhandled rejections for portable and PNG copies', async () => {
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown): void => {
+      unhandledRejections.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandledRejection);
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class {
+        constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+      },
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn(() => Promise.resolve())
+    });
+
+    const createExpiredPrestartedWrite = () => {
+      let resolveHtml!: (blob: Blob) => void;
+      let rejectHtml!: (error: unknown) => void;
+      let resolveText!: (blob: Blob) => void;
+      let rejectText!: (error: unknown) => void;
+      const htmlPromise = new Promise<Blob>((resolve, reject) => {
+        resolveHtml = resolve;
+        rejectHtml = reject;
+      });
+      const textPromise = new Promise<Blob>((resolve, reject) => {
+        resolveText = resolve;
+        rejectText = reject;
+      });
+      void htmlPromise.catch(() => undefined);
+      void textPromise.catch(() => undefined);
+      const writePromise = Promise.all([htmlPromise, textPromise]).then(() => undefined);
+      void writePromise.catch(() => undefined);
+      return {
+        htmlPromise,
+        prestarted: {
+          bind(sourceHtmlBlob: Promise<Blob>, sourceTextBlob: Promise<Blob>) {
+            void sourceHtmlBlob.then(resolveHtml, rejectHtml);
+            void sourceTextBlob.then(resolveText, rejectText);
+          },
+          deadlineMs: Date.now(),
+          reject(error: unknown) {
+            rejectHtml(error);
+            rejectText(error);
+          },
+          writePromise
+        },
+        textPromise
+      };
+    };
+
+    try {
+      const portablePrestarted = createExpiredPrestartedWrite();
+      await expect(
+        clipboard.copyWithPrestartedWrite(readyPreview(), {}, portablePrestarted.prestarted)
+      ).resolves.toEqual({
+        code: 'wechat-copy-failed',
+        status: 'failed'
+      });
+      await expect(portablePrestarted.htmlPromise).rejects.toThrow('wechat-clipboard-preparation-timeout');
+      await expect(portablePrestarted.textPromise).rejects.toThrow('wechat-clipboard-preparation-timeout');
+
+      const pngPrestarted = createExpiredPrestartedWrite();
+      await expect(
+        clipboard.copyWithPrestartedWrite(
+          readyPreview(),
+          pngOptions({ rasterize: vi.fn() }, { upload: vi.fn() } as never),
+          pngPrestarted.prestarted
+        )
+      ).resolves.toEqual({
+        code: 'wechat-png-transaction-timeout',
+        sideEffects: 'none',
+        status: 'failed'
+      });
+      await expect(pngPrestarted.htmlPromise).rejects.toThrow('wechat-png-transaction-timeout');
+      await expect(pngPrestarted.textPromise).rejects.toThrow('wechat-png-transaction-timeout');
+
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
+  });
+
+  it('cancels the pending clipboard commit timer immediately when portable copy aborts during a hung write', async () => {
+    vi.useFakeTimers();
+    try {
+      let blobsConsumed = false;
+      class ClipboardItemStub {
+        constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+      }
+      const controller = new AbortController();
+      const clipboard = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: ClipboardItemStub,
+        document,
+        getComputedStyle: computedStyle,
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: vi.fn((items) => {
+          const item = items[0] as ClipboardItemStub;
+          void Promise.all([item.payload['text/html'], item.payload['text/plain']]).then(() => {
+            blobsConsumed = true;
+          });
+          return new Promise<void>(() => undefined);
+        })
+      });
+
+      const copy = clipboard.copy(readyPreview(), { signal: controller.signal });
+      for (let elapsed = 0; elapsed < 1_000 && !blobsConsumed; elapsed += 1) {
+        await vi.advanceTimersByTimeAsync(1);
+      }
+      expect(blobsConsumed).toBe(true);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(vi.getTimerCount()).toBe(1);
+
+      controller.abort();
+      await expect(copy).resolves.toEqual({
+        code: 'wechat-copy-failed',
+        status: 'failed'
+      });
+      expect(vi.getTimerCount()).toBe(0);
+      expect(CLIPBOARD_COMMIT_TIMEOUT_MS).toBe(10_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports sideEffects: none when PNG copy targets an unavailable preview', async () => {
+    const write = vi.fn();
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class {
+        constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+      },
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write
+    });
+    const preview = readyPreview();
+    preview.setAttribute('aria-busy', 'true');
+
+    await expect(
+      clipboard.copy(preview, pngOptions({ rasterize: vi.fn() }, { upload: vi.fn() } as never))
+    ).resolves.toEqual({
+      code: 'wechat-preview-unavailable',
+      sideEffects: 'none',
+      status: 'failed'
+    });
+    expect(write).not.toHaveBeenCalled();
   });
 
 });

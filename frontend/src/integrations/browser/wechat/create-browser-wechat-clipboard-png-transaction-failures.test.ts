@@ -985,4 +985,55 @@ describe('createBrowserWechatClipboard', () => {
     }
   });
 
+  it('cancels the pending clipboard commit timer immediately when PNG copy aborts during a hung write', async () => {
+    vi.useFakeTimers();
+    try {
+      let payloadConsumed = false;
+      class ClipboardItemStub {
+        constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+      }
+      const controller = new AbortController();
+      const upload = vi.fn();
+      const clipboard = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: ClipboardItemStub,
+        document,
+        getComputedStyle: computedStyle,
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: vi.fn((items) => {
+          const item = items[0] as ClipboardItemStub;
+          void Promise.all([item.payload['text/html'], item.payload['text/plain']]).then(() => {
+            payloadConsumed = true;
+          });
+          return new Promise<void>(() => undefined);
+        })
+      });
+
+      const copy = clipboard.copy(
+        readyPreview(),
+        pngOptions({ rasterize: vi.fn() }, { upload } as never, { signal: controller.signal })
+      );
+      for (let elapsed = 0; elapsed < 1_000 && !payloadConsumed; elapsed += 1) {
+        await vi.advanceTimersByTimeAsync(1);
+      }
+      expect(payloadConsumed).toBe(true);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(vi.getTimerCount()).toBe(1);
+
+      controller.abort();
+      await expect(copy).resolves.toEqual({
+        code: 'wechat-png-rasterization-cancelled',
+        sideEffects: 'none',
+        status: 'failed'
+      });
+      expect(vi.getTimerCount()).toBe(0);
+      expect(upload).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
 });

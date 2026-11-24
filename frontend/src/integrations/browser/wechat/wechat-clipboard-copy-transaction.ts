@@ -3,15 +3,16 @@ import type {
 	WechatClipboardResult,
 } from "../../../contracts/ports/wechat-clipboard-port";
 import type { BackgroundAssetCache } from "./wechat-background-images";
-import type {
-	BrowserWechatClipboardRuntime,
-	ClipboardItemConstructor,
+import {
+	type BrowserWechatClipboardRuntime,
+	type ClipboardItemConstructor,
+	withTimeout,
 } from "./wechat-clipboard-runtime";
+import { previewReady } from "./wechat-copy-preconditions";
 import type { WechatMathVectorAtlasLoader } from "./wechat-math-vector-portable";
 import type { SerializedClipboardPayload } from "./wechat-portable-serialization";
 import type { PreparedClipboardPayloadCache } from "./wechat-prepared-payload-state";
 import type { PreviewGeometryMeasurementCache } from "./wechat-preview-geometry-cache";
-import { previewReady } from "./wechat-source-freshness";
 
 export const CLIPBOARD_COMMIT_TIMEOUT_MS = 10_000;
 
@@ -44,19 +45,16 @@ export type ModernClipboardRuntime = BrowserWechatClipboardRuntime &
 
 export type ModernCopyTransaction = Readonly<{
 	assertBlobCurrent: () => void;
-	awaitCompletion: (
-		writeResult: Promise<ClipboardWriteResult>,
-		writeFailure: Promise<never>,
-		htmlBlob: Promise<Blob>,
-		textBlob: Promise<Blob>,
-		cancellationFailure: Promise<never>,
-	) => Promise<void>;
 	cleanup: () => void;
+	commitTimeoutCode?: string | undefined;
+	deadlineMs?: number | undefined;
+	defaultTimeoutMs: number;
 	finalize: () => void;
 	finishTotal: (terminal: "error" | "success") => void;
 	onFailure: (error: unknown) => WechatClipboardResult;
 	onSynchronousModernFailure: () => WechatClipboardResult;
 	payload: Promise<SerializedClipboardPayload>;
+	preparationTimeoutCode: string;
 	start: () => void;
 }>;
 
@@ -249,7 +247,7 @@ export async function executeModernCopyTransaction(
 	}
 	transaction.start();
 	try {
-		const writeResult = writePromise.then(
+		const writeResult: Promise<ClipboardWriteResult> = writePromise.then(
 			() => ({ error: null }),
 			(error: unknown) => ({ error }),
 		);
@@ -257,13 +255,33 @@ export async function executeModernCopyTransaction(
 			if (null !== error) throw error;
 			return new Promise<never>(() => undefined);
 		});
-		await transaction.awaitCompletion(
-			writeResult,
-			writeFailure,
-			htmlBlob,
-			textBlob,
-			deferredPayloadFailure,
+		// Attach a passive observer immediately so an early throw (e.g. an
+		// expired cold-copy deadline) never leaves writeFailure unobserved when
+		// cleanup rejects deferred Blobs and causes writePromise to reject.
+		void writeFailure.catch(() => undefined);
+
+		const prepTimeoutMs = remainingTransactionTimeoutMs(
+			transaction.deadlineMs,
+			transaction.defaultTimeoutMs,
 		);
+		if (prepTimeoutMs <= 0) {
+			throw new Error(transaction.preparationTimeoutCode);
+		}
+		const payloadReady = Promise.all([transaction.payload, htmlBlob, textBlob]);
+		void payloadReady.catch(() => undefined);
+		await withTimeout(
+			Promise.race([payloadReady, writeFailure, deferredPayloadFailure]),
+			prepTimeoutMs,
+			transaction.preparationTimeoutCode,
+		);
+
+		const { error } = await withTimeout(
+			Promise.race([writeResult, deferredPayloadFailure]),
+			CLIPBOARD_COMMIT_TIMEOUT_MS,
+			transaction.commitTimeoutCode,
+		);
+		if (null !== error) throw error;
+
 		transaction.finalize();
 		transaction.finishTotal("success");
 		return { method: "clipboard", status: "copied" };

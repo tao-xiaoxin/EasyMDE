@@ -18,6 +18,10 @@ import {
 } from "./wechat-clipboard-copy-transaction";
 import type { BrowserWechatClipboardRuntime } from "./wechat-clipboard-runtime";
 import {
+	hasValidPngCopyOptions,
+	previewReady,
+} from "./wechat-copy-preconditions";
+import {
 	createWechatMathVectorAtlasCache,
 	createWechatMathVectorAtlasLoaderIfConfigured,
 	type WechatMathVectorAtlasLoader,
@@ -34,10 +38,7 @@ import {
 	preparePreviewGeometryOnly,
 } from "./wechat-preview-geometry-cache";
 import { rememberPreviewWidthValue } from "./wechat-preview-measurement";
-import {
-	previewReady,
-	type WechatClipboardCopyGuard,
-} from "./wechat-source-freshness";
+import type { WechatClipboardCopyGuard } from "./wechat-source-freshness";
 
 export {
 	CLIPBOARD_COMMIT_TIMEOUT_MS,
@@ -123,7 +124,11 @@ export function createBrowserWechatClipboard(
 		if (!hiddenFormalPreview && !previewReady(preview)) {
 			prestartedWrite?.disposeColdSourceFreshness?.();
 			prestartedWrite?.reject(new Error("wechat-preview-unavailable"));
-			return { code: "wechat-preview-unavailable", status: "failed" };
+			return {
+				code: "wechat-preview-unavailable",
+				...(pngConversionEnabled ? { sideEffects: "none" as const } : {}),
+				status: "failed",
+			};
 		}
 
 		const copyGuard: WechatClipboardCopyGuard = {
@@ -147,15 +152,7 @@ export function createBrowserWechatClipboard(
 				status: "failed",
 			};
 		}
-		if (
-			pngConversionEnabled &&
-			(!options.visualRasterizationPort ||
-				!options.imageUploadPort ||
-				!Number.isSafeInteger(options.postId) ||
-				(options.postId as number) < 0 ||
-				!Number.isSafeInteger(options.maxBytes) ||
-				(options.maxBytes as number) < 1)
-		) {
+		if (pngConversionEnabled && !hasValidPngCopyOptions(options)) {
 			prestartedWrite?.disposeColdSourceFreshness?.();
 			prestartedWrite?.reject(new Error("wechat-png-rasterization-failed"));
 			return {

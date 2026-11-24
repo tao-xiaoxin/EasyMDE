@@ -2502,7 +2502,8 @@ describe("mountAdminEditor", () => {
 			expect(writtenPayloads).toHaveLength(1);
 			teardownAttr();
 
-			// 3. Genuine checkbox toggle during cold chunk delay rejects Copy.
+			// 3. Genuine task-list checkbox toggle during cold chunk delay rejects Copy,
+			//    while toggling an unrelated non-task checkbox matches warm freshness and succeeds.
 			render.mockClear();
 			const checkboxChunk = deferred<typeof actual>();
 			const teardownCheckbox = mountAdminEditor(bootstrap, {
@@ -2522,7 +2523,7 @@ describe("mountAdminEditor", () => {
 				props: { children: { props: { wechatClipboard: WechatClipboardPort } } };
 			};
 			const checkboxPreview = createPreview(
-				'<ul><li><input type="checkbox"> Task item</li></ul>',
+				'<ul class="task-list"><li class="task-list-item"><input class="easymde-task-checkbox" type="checkbox"> Task item</li></ul>',
 			);
 			const checkboxInput = checkboxPreview.querySelector("input");
 			if (!checkboxInput) throw new Error("checkbox-input-missing");
@@ -2538,6 +2539,42 @@ describe("mountAdminEditor", () => {
 			});
 			expect(writtenPayloads).toHaveLength(1);
 			teardownCheckbox();
+
+			render.mockClear();
+			const nonTaskCheckboxChunk = deferred<typeof actual>();
+			const teardownNonTaskCheckbox = mountAdminEditor(bootstrap, {
+				document,
+				failureMessage: "Editor failed",
+				loadWechatClipboard: vi.fn(() => nonTaskCheckboxChunk.promise),
+				onStartupFailure: vi.fn(),
+				window,
+				wordpress: {
+					apiFetch: Object.assign(vi.fn(), {
+						nonceMiddleware: { nonce: "nonce" },
+					}),
+					hooks: { addAction: vi.fn(), removeAction: vi.fn() },
+				},
+			});
+			const nonTaskRendered = render.mock.calls[0]?.[0] as {
+				props: { children: { props: { wechatClipboard: WechatClipboardPort } } };
+			};
+			const nonTaskPreview = createPreview(
+				'<div><input type="checkbox"> Plain checkbox</div>',
+			);
+			const nonTaskInput = nonTaskPreview.querySelector("input");
+			if (!nonTaskInput) throw new Error("non-task-checkbox-input-missing");
+			const nonTaskCopy =
+				nonTaskRendered.props.children.props.wechatClipboard.copy(
+					nonTaskPreview,
+				);
+			nonTaskInput.checked = true;
+			nonTaskCheckboxChunk.resolve(actual);
+			await expect(nonTaskCopy).resolves.toEqual({
+				method: "clipboard",
+				status: "copied",
+			});
+			expect(writtenPayloads).toHaveLength(2);
+			teardownNonTaskCheckbox();
 		} finally {
 			getComputedStyleSpy.mockRestore();
 			if (clipboardDescriptor) {
@@ -3177,6 +3214,96 @@ describe("mountAdminEditor", () => {
 				delete (window as Window & { ClipboardItem?: unknown }).ClipboardItem;
 			}
 		}
+	});
+
+	it("skips instantiating lazy WeChat visual rasterizer and clipboard ports if the editor tears down before dynamic import resolves", async () => {
+		const render = vi.fn();
+		const unmount = vi.fn();
+		vi.mocked(createRoot).mockReturnValue({ render, unmount } as never);
+		const pendingRasterizerModule = deferred<{
+			createBrowserWechatVisualRasterizer: (
+				runtime: never,
+			) => WechatVisualRasterizationPort;
+		}>();
+		const createBrowserWechatVisualRasterizerSpy = vi.fn(() => ({
+			rasterize: vi.fn(),
+		}));
+		const loadWechatVisualRasterizer = vi.fn(
+			() => pendingRasterizerModule.promise,
+		);
+
+		const pendingClipboardModule = deferred<{
+			createBrowserWechatClipboard: (runtime: never) => WechatClipboardPort;
+		}>();
+		const createBrowserWechatClipboardSpy = vi.fn(() => ({
+			copy: vi.fn(),
+			prepare: vi.fn(),
+			releasePrepared: vi.fn(),
+			rememberPreviewWidth: vi.fn(),
+		}));
+		const loadWechatClipboard = vi.fn(() => pendingClipboardModule.promise);
+
+		const teardown = mountAdminEditor(bootstrap, {
+			document,
+			failureMessage: "Editor failed",
+			loadWechatClipboard: loadWechatClipboard as never,
+			loadWechatVisualRasterizer: loadWechatVisualRasterizer as never,
+			onStartupFailure: vi.fn(),
+			window,
+			wordpress: {
+				apiFetch: Object.assign(vi.fn(), {
+					nonceMiddleware: { nonce: "nonce" },
+				}),
+				hooks: { addAction: vi.fn(), removeAction: vi.fn() },
+			},
+		});
+		const rendered = render.mock.calls[0]?.[0] as {
+			props: {
+				children: {
+					props: {
+						wechatClipboard: WechatClipboardPort;
+						wechatVisualRasterizationPort: WechatVisualRasterizationPort;
+					};
+				};
+			};
+		};
+		const { wechatClipboard, wechatVisualRasterizationPort } =
+			rendered.props.children.props;
+
+		const rasterizePromise = wechatVisualRasterizationPort.rasterize({
+			height: 40,
+			kind: "math",
+			mathCapture: "content",
+			maxPixels: 16_777_216,
+			scale: 2,
+			signal: new AbortController().signal,
+			source: document.createElement("div"),
+			width: 100,
+		});
+		const preview = document.createElement("article");
+		preview.innerHTML = "<p>Teardown test</p>";
+		const preparePromise = wechatClipboard.prepare?.(preview);
+
+		expect(loadWechatVisualRasterizer).toHaveBeenCalledOnce();
+		expect(loadWechatClipboard).toHaveBeenCalledOnce();
+
+		// Tear down the editor while both dynamic imports are still pending.
+		teardown();
+
+		pendingRasterizerModule.resolve({
+			createBrowserWechatVisualRasterizer:
+				createBrowserWechatVisualRasterizerSpy,
+		});
+		pendingClipboardModule.resolve({
+			createBrowserWechatClipboard: createBrowserWechatClipboardSpy,
+		});
+
+		await expect(rasterizePromise).rejects.toMatchObject({
+			code: "wechat-png-rasterization-cancelled",
+		});
+		await expect(preparePromise).resolves.toBeUndefined();
+		expect(createBrowserWechatVisualRasterizerSpy).not.toHaveBeenCalled();
+		expect(createBrowserWechatClipboardSpy).not.toHaveBeenCalled();
 	});
 
 	it("reports a prevented native publish as unsuccessful", () => {

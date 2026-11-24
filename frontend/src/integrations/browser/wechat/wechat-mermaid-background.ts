@@ -74,13 +74,20 @@ const NAMED_CSS_COLOR_HEX: ReadonlyMap<string, string> = new Map([
   ['yellow', '#ffff00'],
 ]);
 
-const STRIPPED_INLINE_ROOT_PAINT_PROPERTIES = [
+const BACKGROUND_STYLE_PROPERTIES = [
   'background',
-  'background-image',
+  'background-attachment',
+  'background-clip',
   'background-color',
+  'background-image',
+  'background-origin',
   'background-position',
-  'background-size',
   'background-repeat',
+  'background-size',
+] as const;
+
+const STRIPPED_INLINE_ROOT_PAINT_PROPERTIES = [
+  ...BACKGROUND_STYLE_PROPERTIES,
   'border-radius',
   'border-top-left-radius',
   'border-top-right-radius',
@@ -486,12 +493,22 @@ export function hasNonZeroBorderRadius(
   return Boolean(shorthand) && !isZeroRadiusValue(shorthand);
 }
 
+export function parseCssOpacity(value: string): number | null {
+  return parseAlphaToken(value, false);
+}
+
 function readElementOpacity(style: CSSStyleDeclaration, element?: Element): number {
-  const raw = readEffectiveStyleProperty(style, element, 'opacity', 'opacity');
-  if (!raw) return 1;
-  const parsed = Number.parseFloat(raw);
-  if (!Number.isFinite(parsed)) return 1;
-  return Math.min(1, Math.max(0, parsed));
+  const computedOpacity = parseCssOpacity(readStyleProperty(style, 'opacity', 'opacity'));
+  if (computedOpacity !== null) return computedOpacity;
+  if (element) {
+    const inlineOpacity = parseCssOpacity(readDetachedFallbackStyleProperty(element, 'opacity'));
+    if (inlineOpacity !== null) return inlineOpacity;
+    if (element instanceof SVGElement || 'http://www.w3.org/2000/svg' === element.namespaceURI) {
+      const attributeOpacity = parseCssOpacity(element.getAttribute('opacity') ?? '');
+      if (attributeOpacity !== null) return attributeOpacity;
+    }
+  }
+  return 1;
 }
 
 export function isMermaidBackgroundWalkStopBefore(element: Element, doc: Document): boolean {
@@ -707,22 +724,15 @@ function isRetainedParentBackgroundTranslucent(
 ): boolean {
   if (!parent || isMermaidBackgroundWalkStopBefore(parent, doc)) return false;
   const parentStyle = readComputedStyle(parent);
+  const parentOpacity = readElementOpacity(parentStyle, parent);
+  if (parentOpacity < 1) return true;
   const parentColor = readEffectiveStyleProperty(
     parentStyle,
     parent,
     'background-color',
     'backgroundColor',
   );
-  const parentOpacity = readElementOpacity(parentStyle, parent);
-  const parentVisibleColor = hasVisibleBackgroundColor(parentColor);
-  const parentOpaqueColor = isOpaqueBackgroundColor(parentColor);
-  return (
-    parentOpacity > 0
-    && (
-      (parentVisibleColor && !parentOpaqueColor)
-      || (parentOpaqueColor && parentOpacity < 1)
-    )
-  );
+  return hasVisibleBackgroundColor(parentColor) && !isOpaqueBackgroundColor(parentColor);
 }
 
 function walkMermaidAncestorBackground(
@@ -792,6 +802,16 @@ export function resolveMermaidInheritedBackground(
   );
 }
 
+export type InlineConnectedMermaidRootPaintOptions = Readonly<{
+  /**
+   * When false, skips re-inlining computed `background-*` declarations while
+   * still stripping stale inline `background-*` and `border-radius*` and
+   * re-inlining non-zero computed `border-radius*`. Used by direct `<svg>`
+   * capture where `applyMermaidBackground` is the sole background owner.
+   */
+  includeBackground?: boolean;
+}>;
+
 /**
  * Inlines a connected Mermaid root's own stylesheet-derived background and
  * corner radii onto its capture clone so single-layer root paint is preserved
@@ -801,26 +821,31 @@ export function inlineConnectedMermaidRootPaint(
   source: Element,
   rootClone: Element,
   readComputedStyle: MermaidComputedStyleReader,
+  options: InlineConnectedMermaidRootPaintOptions = {},
 ): void {
   if (!source.isConnected) return;
   if (!(rootClone instanceof HTMLElement) && !(rootClone instanceof SVGElement)) return;
-  for (const property of STRIPPED_INLINE_ROOT_PAINT_PROPERTIES) {
-    rootClone.style.removeProperty(property);
+  if (rootClone.hasAttribute('style')) {
+    for (const property of STRIPPED_INLINE_ROOT_PAINT_PROPERTIES) {
+      rootClone.style.removeProperty(property);
+    }
   }
   const computed = readComputedStyle(source);
-  const color = readStyleProperty(computed, 'background-color', 'backgroundColor');
-  if (hasVisibleBackgroundColor(color)) {
-    rootClone.style.setProperty('background-color', color);
-  }
-  const image = readStyleProperty(computed, 'background-image', 'backgroundImage');
-  if (isSafeBackgroundImage(image)) {
-    rootClone.style.setProperty('background-image', image);
-    const position = readStyleProperty(computed, 'background-position', 'backgroundPosition');
-    const size = readStyleProperty(computed, 'background-size', 'backgroundSize');
-    const repeat = readStyleProperty(computed, 'background-repeat', 'backgroundRepeat');
-    if (position) rootClone.style.setProperty('background-position', position);
-    if (size) rootClone.style.setProperty('background-size', size);
-    if (repeat) rootClone.style.setProperty('background-repeat', repeat);
+  if (false !== options.includeBackground) {
+    const color = readStyleProperty(computed, 'background-color', 'backgroundColor');
+    if (hasVisibleBackgroundColor(color)) {
+      rootClone.style.setProperty('background-color', color);
+    }
+    const image = readStyleProperty(computed, 'background-image', 'backgroundImage');
+    if (isSafeBackgroundImage(image)) {
+      rootClone.style.setProperty('background-image', image);
+      const position = readStyleProperty(computed, 'background-position', 'backgroundPosition');
+      const size = readStyleProperty(computed, 'background-size', 'backgroundSize');
+      const repeat = readStyleProperty(computed, 'background-repeat', 'backgroundRepeat');
+      if (position) rootClone.style.setProperty('background-position', position);
+      if (size) rootClone.style.setProperty('background-size', size);
+      if (repeat) rootClone.style.setProperty('background-repeat', repeat);
+    }
   }
   if (hasNonZeroBorderRadius(computed)) {
     const corners = BORDER_RADIUS_CORNER_PROPERTIES.map(([property, camelProperty]) => [
@@ -839,29 +864,45 @@ export function inlineConnectedMermaidRootPaint(
       }
     }
   }
+  if (rootClone.hasAttribute('style') && !rootClone.getAttribute('style')?.trim()) {
+    rootClone.removeAttribute('style');
+  }
 }
 
 export function applyMermaidBackground(
   svg: SVGSVGElement,
   background: WechatVisualMermaidBackground | null | undefined,
-): void {
-  if (!background) return;
-  if ('string' === typeof background.color && hasVisibleBackgroundColor(background.color)) {
-    svg.style.setProperty('background-color', background.color.trim());
-  }
-  // CSS gradients are self-contained and remain safe to serialize. External
-  // URLs are deliberately excluded so a copied image cannot pull in an
-  // untrusted or cross-origin resource and taint the canvas.
-  if ('string' === typeof background.image && isSafeBackgroundImage(background.image)) {
-    svg.style.setProperty('background-image', background.image.trim());
-    if ('string' === typeof background.position && background.position.trim()) {
-      svg.style.setProperty('background-position', background.position.trim());
-    }
-    if ('string' === typeof background.size && background.size.trim()) {
-      svg.style.setProperty('background-size', background.size.trim());
-    }
-    if ('string' === typeof background.repeat && background.repeat.trim()) {
-      svg.style.setProperty('background-repeat', background.repeat.trim());
+): boolean {
+  if (svg.hasAttribute('style')) {
+    for (const property of BACKGROUND_STYLE_PROPERTIES) {
+      svg.style.removeProperty(property);
     }
   }
+  let applied = false;
+  if (background) {
+    if ('string' === typeof background.color && hasVisibleBackgroundColor(background.color)) {
+      svg.style.setProperty('background-color', background.color.trim());
+      applied = true;
+    }
+    // CSS gradients are self-contained and remain safe to serialize. External
+    // URLs are deliberately excluded so a copied image cannot pull in an
+    // untrusted or cross-origin resource and taint the canvas.
+    if ('string' === typeof background.image && isSafeBackgroundImage(background.image)) {
+      svg.style.setProperty('background-image', background.image.trim());
+      applied = true;
+      if ('string' === typeof background.position && background.position.trim()) {
+        svg.style.setProperty('background-position', background.position.trim());
+      }
+      if ('string' === typeof background.size && background.size.trim()) {
+        svg.style.setProperty('background-size', background.size.trim());
+      }
+      if ('string' === typeof background.repeat && background.repeat.trim()) {
+        svg.style.setProperty('background-repeat', background.repeat.trim());
+      }
+    }
+  }
+  if (svg.hasAttribute('style') && !svg.getAttribute('style')?.trim()) {
+    svg.removeAttribute('style');
+  }
+  return applied;
 }

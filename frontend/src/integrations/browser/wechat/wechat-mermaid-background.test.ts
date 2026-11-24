@@ -10,6 +10,7 @@ import {
   isOpaqueBackgroundColor,
   isSafeBackgroundImage,
   parseCssColorAlpha,
+  parseCssOpacity,
   parseCssSolidColor,
   resolveMermaidInheritedBackground,
 } from './wechat-mermaid-background';
@@ -901,6 +902,171 @@ describe('wechat-mermaid-background', () => {
       ).toEqual({
         color: 'rgba(255, 255, 255, 0.08)',
       });
+
+      // Transparent retained wrapper with opacity < 1 stops before walking to the dark preview backdrop
+      // so the retained wrapper applies opacity once in WeChat HTML without double-attenuating the PNG.
+      const transparentHalfOpacityWrapperWithRedSvgReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            svg,
+            {
+              'background-color': 'rgb(255, 0, 0)',
+              'background-image': 'none',
+              opacity: '1',
+            },
+          ],
+          [
+            wrapper,
+            {
+              'background-color': 'transparent',
+              'background-image': 'none',
+              opacity: '0.5',
+            },
+          ],
+          [canvas, { 'background-color': 'rgb(0, 0, 0)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(svg, transparentHalfOpacityWrapperWithRedSvgReader, {
+          directSvgCapture: true,
+          retainedParentWrapper: true,
+        }),
+      ).toEqual({
+        color: 'rgb(255, 0, 0)',
+      });
+
+      const transparentHalfOpacityWrapperWithTransparentSvgReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            svg,
+            {
+              'background-color': 'transparent',
+              'background-image': 'none',
+              opacity: '1',
+            },
+          ],
+          [
+            wrapper,
+            {
+              'background-color': 'transparent',
+              'background-image': 'none',
+              opacity: '0.5',
+            },
+          ],
+          [canvas, { 'background-color': 'rgb(0, 0, 0)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(
+          svg,
+          transparentHalfOpacityWrapperWithTransparentSvgReader,
+          {
+            directSvgCapture: true,
+            retainedParentWrapper: true,
+          },
+        ),
+      ).toBeNull();
+
+      // Retained wrapper with opacity: 0 also stops cleanly before walking past it into the preview backdrop.
+      const zeroOpacityWrapperWithRedSvgReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            svg,
+            {
+              'background-color': 'rgb(255, 0, 0)',
+              'background-image': 'none',
+              opacity: '1',
+            },
+          ],
+          [
+            wrapper,
+            {
+              'background-color': 'transparent',
+              'background-image': 'none',
+              opacity: '0',
+            },
+          ],
+          [canvas, { 'background-color': 'rgb(0, 0, 0)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(svg, zeroOpacityWrapperWithRedSvgReader, {
+          directSvgCapture: true,
+          retainedParentWrapper: true,
+        }),
+      ).toEqual({
+        color: 'rgb(255, 0, 0)',
+      });
+
+      const zeroOpacityWrapperWithTransparentSvgReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            svg,
+            {
+              'background-color': 'transparent',
+              'background-image': 'none',
+              opacity: '1',
+            },
+          ],
+          [
+            wrapper,
+            {
+              'background-color': 'rgb(255, 255, 255)',
+              'background-image': 'none',
+              opacity: '0',
+            },
+          ],
+          [canvas, { 'background-color': 'rgb(0, 0, 0)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(svg, zeroOpacityWrapperWithTransparentSvgReader, {
+          directSvgCapture: true,
+          retainedParentWrapper: true,
+        }),
+      ).toBeNull();
+
+      // SVG presentation attribute opacity="0.5" folds SVG own paint when computed opacity is empty,
+      // while CSS opacity: 1 overrides the presentation attribute.
+      svg.setAttribute('opacity', '0.5');
+      const attrOpacityReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [svg, { 'background-color': 'rgba(255, 0, 0, 0.5)', 'background-image': 'none' }],
+          [wrapper, { 'background-color': 'rgb(255, 255, 255)', 'background-image': 'none' }],
+          [canvas, { 'background-color': 'rgb(0, 0, 0)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(svg, attrOpacityReader, {
+          directSvgCapture: true,
+          retainedParentWrapper: true,
+        }),
+      ).toEqual({
+        color: 'rgb(255, 191, 191)',
+      });
+
+      const cssOverridesAttrOpacityReader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            svg,
+            {
+              'background-color': 'rgba(255, 0, 0, 0.5)',
+              'background-image': 'none',
+              opacity: '1',
+            },
+          ],
+          [wrapper, { 'background-color': 'rgb(255, 255, 255)', 'background-image': 'none' }],
+          [canvas, { 'background-color': 'rgb(0, 0, 0)', 'background-image': 'none' }],
+        ]),
+      );
+      expect(
+        resolveMermaidInheritedBackground(svg, cssOverridesAttrOpacityReader, {
+          directSvgCapture: true,
+          retainedParentWrapper: true,
+        }),
+      ).toEqual({
+        color: 'rgb(255, 128, 128)',
+      });
     });
 
     it('stops before measure-host and wp-admin containers and drops unsafe url() images', () => {
@@ -1044,29 +1210,80 @@ describe('wechat-mermaid-background', () => {
       expect(clone.style.getPropertyValue('border-bottom-left-radius')).toBe('');
       expect(clone.getAttribute('style') ?? '').not.toContain('border-');
     });
+
+    it('skips re-inlining computed background-* while still stripping stale background and preserving border-radius when includeBackground is false', () => {
+      const source = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+      source.setAttribute(
+        'style',
+        'background-color: rgba(255, 0, 0, 0.5); background-image: linear-gradient(red, blue); background-position: 10px 20px; border-radius: 16px; display: block;',
+      );
+      document.body.append(source);
+      const clone = source.cloneNode(true) as SVGSVGElement;
+
+      const reader = makeReader(
+        new Map<Element, Readonly<Record<string, string>>>([
+          [
+            source,
+            {
+              'background-color': 'rgba(255, 0, 0, 0.5)',
+              'background-image': 'linear-gradient(red, blue)',
+              'background-position': '10px 20px',
+              'border-radius': '12px',
+            },
+          ],
+        ]),
+      );
+
+      inlineConnectedMermaidRootPaint(source, clone, reader, { includeBackground: false });
+
+      expect(clone.style.getPropertyValue('background')).toBe('');
+      expect(clone.style.getPropertyValue('background-color')).toBe('');
+      expect(clone.style.getPropertyValue('background-image')).toBe('');
+      expect(clone.style.getPropertyValue('background-position')).toBe('');
+      expect(clone.style.getPropertyValue('border-radius')).toBe('12px');
+      expect(clone.style.getPropertyValue('display')).toBe('block');
+    });
+  });
+
+  describe('parseCssOpacity', () => {
+    it('parses numbers and percentages clamped to [0, 1] and rejects invalid tokens', () => {
+      expect(parseCssOpacity('0')).toBe(0);
+      expect(parseCssOpacity('-0.5')).toBe(0);
+      expect(parseCssOpacity('0.5')).toBe(0.5);
+      expect(parseCssOpacity('50%')).toBe(0.5);
+      expect(parseCssOpacity('1')).toBe(1);
+      expect(parseCssOpacity('1.5')).toBe(1);
+      expect(parseCssOpacity('')).toBeNull();
+      expect(parseCssOpacity('auto')).toBeNull();
+      expect(parseCssOpacity('50px')).toBeNull();
+    });
   });
 
   describe('applyMermaidBackground', () => {
     it('applies visible color and safe gradient only, skipping null and unsafe url()', () => {
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
-      applyMermaidBackground(svg, null);
+      expect(applyMermaidBackground(svg, null)).toBe(false);
       expect(svg.getAttribute('style')).toBeNull();
 
-      applyMermaidBackground(svg, {
-        color: 'rgba(0, 0, 0, 0)',
-        image: 'url("https://blocked.example/bg.png")',
-        position: '0 0',
-      });
+      expect(
+        applyMermaidBackground(svg, {
+          color: 'rgba(0, 0, 0, 0)',
+          image: 'url("https://blocked.example/bg.png")',
+          position: '0 0',
+        }),
+      ).toBe(false);
       expect(svg.style.getPropertyValue('background-color')).toBe('');
       expect(svg.style.getPropertyValue('background-image')).toBe('');
 
-      applyMermaidBackground(svg, {
-        color: 'rgb(30, 30, 46)',
-        image: 'linear-gradient(90deg, rgb(30, 30, 46), rgb(45, 45, 65))',
-        position: '50% 50%',
-        repeat: 'no-repeat',
-        size: 'cover',
-      });
+      expect(
+        applyMermaidBackground(svg, {
+          color: 'rgb(30, 30, 46)',
+          image: 'linear-gradient(90deg, rgb(30, 30, 46), rgb(45, 45, 65))',
+          position: '50% 50%',
+          repeat: 'no-repeat',
+          size: 'cover',
+        }),
+      ).toBe(true);
       expect(svg.style.getPropertyValue('background-color')).toBe('rgb(30, 30, 46)');
       expect(svg.style.getPropertyValue('background-image')).toBe(
         'linear-gradient(90deg, rgb(30, 30, 46), rgb(45, 45, 65))',
@@ -1074,6 +1291,51 @@ describe('wechat-mermaid-background', () => {
       expect(svg.style.getPropertyValue('background-position')).toBe('50% 50%');
       expect(svg.style.getPropertyValue('background-repeat')).toBe('no-repeat');
       expect(svg.style.getPropertyValue('background-size')).toBe('cover');
+    });
+
+    it('strips stale inline background-* declarations when omitted or when background is null', () => {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+      svg.setAttribute(
+        'style',
+        'background-color: rgba(255, 0, 0, 0.5); background-image: linear-gradient(red, blue); background-position: 10px 20px; background-size: cover; background-repeat: repeat-x; display: block;',
+      );
+
+      // Omitting color, position, size, and repeat clears all stale background-* declarations.
+      expect(
+        applyMermaidBackground(svg, {
+          image: 'linear-gradient(rgba(255, 0, 0, 0.5), rgba(255, 0, 0, 0.5)), linear-gradient(black, black)',
+        }),
+      ).toBe(true);
+      expect(svg.style.getPropertyValue('background-color')).toBe('');
+      expect(svg.style.getPropertyValue('background-position')).toBe('');
+      expect(svg.style.getPropertyValue('background-size')).toBe('');
+      expect(svg.style.getPropertyValue('background-repeat')).toBe('');
+      expect(svg.style.getPropertyValue('background-image')).toBe(
+        'linear-gradient(rgba(255, 0, 0, 0.5), rgba(255, 0, 0, 0.5)), linear-gradient(black, black)',
+      );
+      expect(svg.style.getPropertyValue('display')).toBe('block');
+
+      // Omitting image clears the previously applied background-image.
+      expect(applyMermaidBackground(svg, { color: 'rgb(30, 30, 46)' })).toBe(true);
+      expect(svg.style.getPropertyValue('background-color')).toBe('rgb(30, 30, 46)');
+      expect(svg.style.getPropertyValue('background-image')).toBe('');
+      expect(svg.style.getPropertyValue('display')).toBe('block');
+
+      // Receiving null clears all background-* declarations while keeping non-background styles.
+      expect(applyMermaidBackground(svg, null)).toBe(false);
+      expect(svg.style.getPropertyValue('background-color')).toBe('');
+      expect(svg.style.getPropertyValue('background-image')).toBe('');
+      expect(svg.style.getPropertyValue('display')).toBe('block');
+
+      // Receiving null removes an otherwise empty style attribute and leaves unstyled SVGs untouched.
+      const backgroundOnlySvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+      backgroundOnlySvg.setAttribute('style', 'background: red no-repeat center/cover;');
+      expect(applyMermaidBackground(backgroundOnlySvg, null)).toBe(false);
+      expect(backgroundOnlySvg.getAttribute('style')).toBeNull();
+
+      const unstyledSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+      expect(applyMermaidBackground(unstyledSvg, null)).toBe(false);
+      expect(unstyledSvg.getAttribute('style')).toBeNull();
     });
   });
 });

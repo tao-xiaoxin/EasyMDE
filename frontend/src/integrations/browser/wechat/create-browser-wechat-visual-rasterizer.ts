@@ -26,6 +26,7 @@ import {
 import {
   applyMermaidBackground,
   inlineConnectedMermaidRootPaint,
+  parseCssOpacity,
   resolveMermaidInheritedBackground,
 } from './wechat-mermaid-background';
 import {
@@ -52,6 +53,12 @@ const SVG_NAMESPACE = w3cNamespace('2000/svg');
 const XHTML_NAMESPACE = w3cNamespace('1999/xhtml');
 const MIN_DIMENSION = 1;
 const MAX_DIMENSION = 4096;
+const NON_RENDERED_SVG_DIRECT_CHILDREN = new Set([
+  'defs',
+  'desc',
+  'metadata',
+  'title',
+]);
 
 const SVG_VISUAL_STYLE_PROPERTIES = [
   'color',
@@ -192,16 +199,23 @@ function inlineMermaidBackground(
   svg: SVGSVGElement,
   document: Document,
   inheritedBackground?: WechatVisualMermaidBackground | null,
-): void {
+): boolean {
   if (undefined !== inheritedBackground) {
-    applyMermaidBackground(svg, inheritedBackground);
-    return;
+    return applyMermaidBackground(svg, inheritedBackground);
   }
   const resolved = resolveMermaidInheritedBackground(
     source,
     (element) => computedStyle(document, element),
   );
-  applyMermaidBackground(svg, resolved);
+  return applyMermaidBackground(svg, resolved);
+}
+
+function readDirectSvgOpacity(svg: SVGSVGElement): number {
+  const inlineOpacity = parseCssOpacity(svg.style.getPropertyValue('opacity'));
+  if (inlineOpacity !== null) return inlineOpacity;
+  const attributeOpacity = parseCssOpacity(svg.getAttribute('opacity') ?? '');
+  if (attributeOpacity !== null) return attributeOpacity;
+  return 1;
 }
 
 export type BrowserWechatVisualRasterizerRuntime = Readonly<{
@@ -340,8 +354,9 @@ async function serializedSvg(
       source,
       svg,
       (element) => computedStyle(document, element),
+      { includeBackground: false },
     );
-    inlineMermaidBackground(
+    const hasAppliedBackground = inlineMermaidBackground(
       request.source,
       svg,
       document,
@@ -357,20 +372,39 @@ async function serializedSvg(
     if (!viewBox) {
       throw new WechatVisualRasterizationError('wechat-png-image-failed');
     }
-    if (layoutMagnification !== 1) {
+    const directSvgOpacity = hasAppliedBackground ? readDirectSvgOpacity(svg) : 1;
+    const hoistOpacity = hasAppliedBackground && directSvgOpacity < 1;
+    if (hoistOpacity) {
+      svg.style.removeProperty('opacity');
+      svg.removeAttribute('opacity');
+    }
+    if (layoutMagnification !== 1 || hoistOpacity) {
       const scene = document.createElementNS(SVG_NAMESPACE, 'g');
-      const translateX = viewBox.minX * (1 - layoutMagnification);
-      const translateY = viewBox.minY * (1 - layoutMagnification);
-      scene.setAttribute(
-        'transform',
-        `translate(${translateX} ${translateY}) scale(${layoutMagnification})`,
-      );
-      while (svg.firstChild) scene.appendChild(svg.firstChild);
+      if (layoutMagnification !== 1) {
+        const translateX = viewBox.minX * (1 - layoutMagnification);
+        const translateY = viewBox.minY * (1 - layoutMagnification);
+        scene.setAttribute(
+          'transform',
+          `translate(${translateX} ${translateY}) scale(${layoutMagnification})`,
+        );
+        svg.setAttribute(
+          'viewBox',
+          `${viewBox.minX} ${viewBox.minY} ${viewBox.width * layoutMagnification} ${viewBox.height * layoutMagnification}`,
+        );
+      }
+      if (hoistOpacity) {
+        scene.setAttribute('opacity', String(directSvgOpacity));
+      }
+      for (const child of Array.from(svg.childNodes)) {
+        if (
+          child.nodeType === Node.ELEMENT_NODE
+          && NON_RENDERED_SVG_DIRECT_CHILDREN.has((child as Element).localName.toLowerCase())
+        ) {
+          continue;
+        }
+        scene.appendChild(child);
+      }
       svg.appendChild(scene);
-      svg.setAttribute(
-        'viewBox',
-        `${viewBox.minX} ${viewBox.minY} ${viewBox.width * layoutMagnification} ${viewBox.height * layoutMagnification}`,
-      );
     }
   } else {
     svg = document.createElementNS(SVG_NAMESPACE, 'svg') as SVGSVGElement;

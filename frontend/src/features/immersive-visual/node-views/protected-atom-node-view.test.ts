@@ -231,7 +231,9 @@ describe("ProtectedAtomNodeView Mermaid runtime parity and intrinsic layout", ()
 
 		expect(initialize).toHaveBeenCalledTimes(1);
 		expect(render).not.toHaveBeenCalled();
-		const card = view.dom.querySelector<HTMLElement>(".easymde-protected-card");
+		const card = view.dom.querySelector<HTMLElement>(
+			'[data-easymde-protected-block="1"]',
+		);
 		expect(card?.classList.contains("easymde-render-error")).toBe(true);
 
 		const node = view.state.doc.firstChild;

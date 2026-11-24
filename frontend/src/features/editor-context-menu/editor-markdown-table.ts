@@ -174,6 +174,61 @@ function rowIndentationIsCode(text: string): boolean {
 	return indentation.includes("\t") || indentation.length > 3;
 }
 
+const COMMONMARK_ATX_HEADING_OPEN = /^#{1,6}(?:[ \t]+|$)/u;
+const COMMONMARK_FENCED_CODE_OPEN = /^(?:`{3,}[^`]*$|~{3,})/u;
+const COMMONMARK_THEMATIC_BREAK_LINE =
+	/^(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})$/u;
+const COMMONMARK_LIST_ITEM_OPEN = /^(?:[*+-]|\d{1,9}[.)])(?:[ \t]|$)/u;
+const COMMONMARK_HTML_BLOCK_TYPE_1_OPEN =
+	/^<(?:script|pre|textarea|style)(?:[ \t\v\f]|>|$)/u;
+// Exact Type 6 block tag list from installed `league/commonmark`
+// `RegexHelper::getHtmlBlockOpenRegex(HtmlBlock::TYPE_6_BLOCK_ELEMENT)`.
+const COMMONMARK_HTML_BLOCK_TYPE_6_OPEN =
+	/^<\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|section|source|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \t\v\f]|\/?>|$)/u;
+
+function asciiLowerCase(value: string): string {
+	return value.replace(/[A-Z]/gu, (character) => character.toLowerCase());
+}
+
+/**
+ * Reports whether a non-blank line immediately following a GFM table starts a
+ * CommonMark block construct that terminates `League\CommonMark`'s active
+ * `TableParser`.
+ *
+ * `TableParser::tryContinue()` absorbs any line containing `|` before block
+ * starts run, and `TableParser::canHaveLazyContinuationLines()` returns
+ * `true`, so any other non-blank line that fails to open a block is absorbed
+ * as a lazy continuation row of the same table. Because the last matched
+ * container is the parent document (not `Paragraph`), `IndentedCodeStartParser`
+ * and `ListBlockStartParser` match without paragraph-interruption restrictions,
+ * while HTML Type 7 and Setext underlines cannot interrupt.
+ */
+export function lineInterruptsCommonMarkTable(text: string): boolean {
+	if (text.includes("|") || /^[ \t]*$/u.test(text)) return false;
+	if (rowIndentationIsCode(text)) return true;
+
+	const rest = text.replace(/^ {0,3}/u, "");
+	const firstChar = rest[0];
+	if (!firstChar) return false;
+	if (">" === firstChar) return true;
+	if ("#" === firstChar) return COMMONMARK_ATX_HEADING_OPEN.test(rest);
+	if ("`" === firstChar || "~" === firstChar) {
+		return COMMONMARK_FENCED_CODE_OPEN.test(rest);
+	}
+	if ("<" === firstChar) {
+		if (rest.startsWith("<!--") || rest.startsWith("<?")) return true;
+		const lowered = asciiLowerCase(rest);
+		return (
+			COMMONMARK_HTML_BLOCK_TYPE_1_OPEN.test(lowered) ||
+			/^<![a-z]/u.test(lowered) ||
+			lowered.startsWith("<![cdata[") ||
+			COMMONMARK_HTML_BLOCK_TYPE_6_OPEN.test(lowered)
+		);
+	}
+	if (COMMONMARK_THEMATIC_BREAK_LINE.test(rest)) return true;
+	return COMMONMARK_LIST_ITEM_OPEN.test(rest);
+}
+
 function parseTableRow(
 	line: MarkdownLine,
 	lineIndex: number,
@@ -254,9 +309,9 @@ function tableAtLine(
 	}
 
 	for (
-		let startLine = targetLine;
-		startLine >= searchStartLine;
-		startLine -= 1
+		let startLine = searchStartLine;
+		startLine <= targetLine;
+		startLine += 1
 	) {
 		const header = parsedRows[startLine];
 		const separator = parsedRows[startLine + 1];
@@ -280,13 +335,21 @@ function tableAtLine(
 		}
 		const malformedBody = parsedRows[endLine];
 		const trailingLine = lines[endLine];
-		// PHP `League\CommonMark` `TableParser::tryContinue()` absorbs ANY
-		// immediately-following line containing a raw `|` (including standalone
-		// `|`, escaped `\|` / `foo\|bar`, or pipe-bearing lines past Lezer's
-		// block end), so decline instead of truncating the real table.
+		const hasNonBlankTrailingLine =
+			undefined !== trailingLine && !/^[ \t]*$/u.test(trailingLine.text);
+		// Decline whenever the parser-owned block extends past the last
+		// same-width pipe row (including lazy continuation rows or Lezer/PHP
+		// boundary disagreements such as indented code or `2. ordered`), when a
+		// pipe-shaped body row changes width, or when the immediately following
+		// non-blank line would be absorbed by PHP `League\CommonMark`'s
+		// `TableParser::tryContinue()` (any raw `|`) or
+		// `canHaveLazyContinuationLines()` (any non-interrupting line).
 		if (
+			(undefined !== range && endLine <= searchEndLine) ||
 			(malformedBody && malformedBody.cells.length !== header.cells.length) ||
-			(!malformedBody && Boolean(trailingLine?.text.includes("|")))
+			(hasNonBlankTrailingLine &&
+				(trailingLine.text.includes("|") ||
+					!lineInterruptsCommonMarkTable(trailingLine.text)))
 		)
 			return null;
 		if (targetLine >= endLine) continue;

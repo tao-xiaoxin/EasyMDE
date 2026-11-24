@@ -167,6 +167,17 @@ export function createPngCopyTransaction(
 		if (!conversionSourceFreshness?.finalize()) {
 			throw new Error("wechat-copy-stale");
 		}
+		if (
+			tableNativeGridMeasurement &&
+			(!tableNativeGridMeasurement.isReady() ||
+				!previewMeasurementLeaseSourceMatches(
+					tableNativeGridMeasurement,
+					payloadPreview,
+					runtime,
+				))
+		) {
+			throw new Error("wechat-copy-stale");
+		}
 		if (null === conversionFidelitySignature) {
 			throw new Error("wechat-copy-stale");
 		}
@@ -187,17 +198,6 @@ export function createPngCopyTransaction(
 
 	const finalizeTransaction = (): void => {
 		assertBlobCurrent();
-		if (
-			tableNativeGridMeasurement &&
-			(!tableNativeGridMeasurement.isReady() ||
-				!previewMeasurementLeaseSourceMatches(
-					tableNativeGridMeasurement,
-					payloadPreview,
-					runtime,
-				))
-		) {
-			throw new Error("wechat-copy-stale");
-		}
 	};
 
 	const synchronousModernFailure: ModernCopyTransaction["onSynchronousModernFailure"] =

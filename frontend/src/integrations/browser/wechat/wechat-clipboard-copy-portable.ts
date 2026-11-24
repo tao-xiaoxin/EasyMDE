@@ -18,7 +18,6 @@ import {
 } from "./wechat-preview-measurement";
 import {
 	assertCopyPreviewCurrent,
-	assertPortableCopyCurrent,
 	type ClipboardSourceFreshnessGuard,
 	type ClipboardSourceFreshnessState,
 	createClipboardSourceFreshnessGuard,
@@ -230,43 +229,16 @@ export function createPortableCopyTransaction(
 	};
 
 	const assertBlobCurrent = (): void => {
-		assertPortableCopyCurrent(payloadPreview, copyGuard, portableFreshness);
-		if (
-			portablePrepared?.contentBoxes &&
-			!portablePrepared.contentBoxes.isCurrent()
-		) {
-			throw new Error("wechat-copy-stale");
-		}
-		if (
-			null === portableFidelitySignature ||
-			null === portableDimensionSemantics
-		) {
-			throw new Error("wechat-copy-stale");
-		}
-		portableDimensionSemantics.refresh();
-		if (
-			preparedLayoutSignature(
-				payloadPreview,
-				portableRuntime,
-				portableMeasurement?.root ?? payloadPreview,
-				portableDimensionSemantics,
-			) !== portableFidelitySignature
-		) {
-			throw new Error("wechat-copy-stale");
-		}
-		portableTableNativeGridGuard?.assertCurrent();
-	};
-
-	const finalizeTransaction = (): void => {
-		const sourceGuard = portableFreshness.current();
 		assertCopyPreviewCurrent(payloadPreview, copyGuard);
+		if (!portableFreshness.current()?.finalize()) {
+			throw new Error("wechat-copy-stale");
+		}
 		if (
 			portablePrepared?.contentBoxes &&
 			!portablePrepared.contentBoxes.isCurrent()
 		) {
 			throw new Error("wechat-copy-stale");
 		}
-		portableTableNativeGridGuard?.assertCurrent();
 		if (
 			portableMeasurement &&
 			(!portableMeasurement.isReady() ||
@@ -295,8 +267,11 @@ export function createPortableCopyTransaction(
 		) {
 			throw new Error("wechat-copy-stale");
 		}
-		if (!sourceGuard?.finalize()) throw new Error("wechat-copy-stale");
-		assertCopyPreviewCurrent(payloadPreview, copyGuard);
+		portableTableNativeGridGuard?.assertCurrent();
+	};
+
+	const finalizeTransaction = (): void => {
+		assertBlobCurrent();
 	};
 
 	const cleanupTransaction = (): void => {

@@ -11,6 +11,7 @@ import {
 import {
   blobText,
   computedStyle,
+  declaration,
   deferred,
   installClipboardTestEnvironment,
   pngOptions,
@@ -706,6 +707,128 @@ describe('createBrowserWechatClipboard', () => {
       await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
       expect(unhandledRejections).toEqual([]);
     } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
+  });
+
+  it('rejects deferred portable Blob promises before clipboard commit when hidden preview container width changes in flight', async () => {
+    const MEASURE_HOST = '[data-easymde-wechat-measure-host="1"]';
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown): void => {
+      unhandledRejections.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandledRejection);
+
+    const canvas = document.createElement('div');
+    canvas.className = 'easymde-immersive-preview-canvas';
+    const prosemirrorHost = document.createElement('div');
+    prosemirrorHost.setAttribute('data-easymde-prosemirror-host', '1');
+    const prosemirrorSurface = document.createElement('div');
+    prosemirrorSurface.className = 'easymde-prosemirror-surface';
+    prosemirrorHost.append(prosemirrorSurface);
+    const preview = readyPreview();
+    preview.className = 'easymde-preview easymde-preview-surface-hidden';
+    preview.innerHTML = '<p>Hidden portable body</p>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Hidden portable body' });
+    canvas.append(prosemirrorHost, preview);
+    document.body.append(canvas);
+
+    let surfaceWidth = 720;
+    const initialInnerWidth = window.innerWidth;
+    const rectSpy = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element
+    ): DOMRect {
+      const width = this.closest(MEASURE_HOST)
+        ? 720
+        : this === canvas
+          ? 800
+          : this === prosemirrorSurface
+            ? surfaceWidth
+            : 0;
+      const height = this.closest(MEASURE_HOST) ? 240 : width > 0 ? 400 : 0;
+      return {
+        bottom: height,
+        height,
+        left: 0,
+        right: width,
+        toJSON: () => ({}),
+        top: 0,
+        width,
+        x: 0,
+        y: 0
+      } as DOMRect;
+    });
+
+    const imageUrl = new URL('/assets/images/fullstack-blue-h2.png', document.baseURI).href;
+    const pendingFetch = deferred<Response>();
+    const fetch = vi.fn(() => pendingFetch.promise);
+
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    let committedToOsClipboard = false;
+    let capturedHtmlBlob: Blob | PromiseLike<Blob> | undefined;
+    let capturedTextBlob: Blob | PromiseLike<Blob> | undefined;
+    const write = vi.fn(async (items: unknown[]) => {
+      const item = items[0] as ClipboardItemStub;
+      capturedHtmlBlob = item.payload['text/html'];
+      capturedTextBlob = item.payload['text/plain'];
+      await Promise.all([capturedHtmlBlob, capturedTextBlob]);
+      committedToOsClipboard = true;
+    });
+
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      fetch,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return computedStyle(element, pseudoElement);
+        if (element.classList.contains('easymde-preview-surface-hidden')) {
+          return declaration({ display: 'none' });
+        }
+        if ('P' === element.tagName) {
+          return declaration({ 'background-image': `url("${imageUrl}")`, display: 'block' });
+        }
+        return computedStyle(element);
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write
+    });
+
+    try {
+      const copy = clipboard.copy(preview, { resolvePreview: async () => preview });
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+      expect(document.querySelector<HTMLElement>(MEASURE_HOST)?.style.width).toBe('720px');
+
+      // Simulate wp-admin sidebar collapse changing the editor container width without resizing window.
+      surfaceWidth = 560;
+      pendingFetch.resolve({
+        blob: async () => new Blob(['theme'], { type: 'image/png' }),
+        ok: true,
+        url: imageUrl
+      } as Response);
+
+      await expect(copy).resolves.toEqual({
+        code: 'wechat-copy-failed',
+        status: 'failed'
+      });
+      expect(window.innerWidth).toBe(initialInnerWidth);
+      expect(write).toHaveBeenCalledOnce();
+      expect(committedToOsClipboard).toBe(false);
+      expect(capturedHtmlBlob).toBeInstanceOf(Promise);
+      expect(capturedTextBlob).toBeInstanceOf(Promise);
+      await expect(capturedHtmlBlob).rejects.toThrow('wechat-copy-stale');
+      await expect(capturedTextBlob).rejects.toThrow('wechat-copy-stale');
+      expect(document.querySelector(MEASURE_HOST)).toBeNull();
+
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      rectSpy.mockRestore();
+      canvas.remove();
       process.off('unhandledRejection', onUnhandledRejection);
     }
   });

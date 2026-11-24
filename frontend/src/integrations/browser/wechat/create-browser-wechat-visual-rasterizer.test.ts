@@ -757,17 +757,18 @@ describe('createBrowserWechatVisualRasterizer', () => {
     const transparentCanvas = document.createElement('div');
     transparentCanvas.className = 'easymde-immersive-preview-canvas';
     transparentCanvas.style.backgroundColor = 'transparent';
-    const droppedGradientSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
-    droppedGradientSvg.style.backgroundImage = 'linear-gradient(90deg, red, blue)';
-    droppedGradientSvg.style.opacity = '0.5';
-    droppedGradientSvg.setAttribute('width', '20');
-    droppedGradientSvg.setAttribute('height', '10');
-    droppedGradientSvg.setAttribute('viewBox', '0 0 20 10');
-    droppedGradientSvg.innerHTML = '<path d="M0 0"></path>';
-    transparentCanvas.appendChild(droppedGradientSvg);
+    const droppedUnsafeImageSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    droppedUnsafeImageSvg.style.backgroundImage = 'url("https://blocked.example/bg.png")';
+    droppedUnsafeImageSvg.style.opacity = '0.5';
+    droppedUnsafeImageSvg.setAttribute('width', '20');
+    droppedUnsafeImageSvg.setAttribute('height', '10');
+    droppedUnsafeImageSvg.setAttribute('viewBox', '0 0 20 10');
+    droppedUnsafeImageSvg.innerHTML = '<path d="M0 0"></path>';
+    transparentCanvas.appendChild(droppedUnsafeImageSvg);
 
     const droppedZeroOpacitySvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
     droppedZeroOpacitySvg.style.backgroundColor = 'rgb(245, 247, 250)';
+    droppedZeroOpacitySvg.style.backgroundImage = 'linear-gradient(90deg, red, blue)';
     droppedZeroOpacitySvg.style.opacity = '0';
     droppedZeroOpacitySvg.setAttribute('width', '20');
     droppedZeroOpacitySvg.setAttribute('height', '10');
@@ -831,21 +832,22 @@ describe('createBrowserWechatVisualRasterizer', () => {
       );
       expect(detachedTintSvgOut?.style.getPropertyValue('background-color')).toBe('');
 
-      // 3. Connected direct <svg> with dropped reduced-opacity gradient over transparent canvas leaks no background-image.
+      // 3. Connected direct <svg> with dropped unsafe url() background-image over transparent canvas leaks no background-image.
       await createBrowserWechatVisualRasterizer(runtime()).rasterize(
-        request(droppedGradientSvg, 'mermaid', 1, 20, 10),
+        request(droppedUnsafeImageSvg, 'mermaid', 1, 20, 10),
       );
-      const droppedGradientSerialized = decodeURIComponent(
+      const droppedUnsafeImageSerialized = decodeURIComponent(
         imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? '',
       );
-      const droppedGradientSvgOut = new DOMParser()
-        .parseFromString(droppedGradientSerialized, 'text/html')
+      const droppedUnsafeImageSvgOut = new DOMParser()
+        .parseFromString(droppedUnsafeImageSerialized, 'text/html')
         .querySelector('svg');
-      expect(droppedGradientSvgOut?.style.getPropertyValue('background-image')).toBe('');
-      expect(droppedGradientSvgOut?.style.getPropertyValue('background-color')).toBe('');
-      expect(droppedGradientSerialized).not.toContain('linear-gradient');
+      expect(droppedUnsafeImageSvgOut?.querySelector('foreignObject')).toBeNull();
+      expect(droppedUnsafeImageSvgOut?.style.getPropertyValue('background-image')).toBe('');
+      expect(droppedUnsafeImageSvgOut?.style.getPropertyValue('background-color')).toBe('');
+      expect(droppedUnsafeImageSerialized).not.toContain('blocked.example');
 
-      // 4. Connected direct <svg> with opacity: 0 over transparent canvas leaks no background-color.
+      // 4. Connected direct <svg> with opacity: 0 over transparent canvas leaks no background-color or background-image.
       await createBrowserWechatVisualRasterizer(runtime()).rasterize(
         request(droppedZeroOpacitySvg, 'mermaid', 1, 20, 10),
       );
@@ -855,8 +857,11 @@ describe('createBrowserWechatVisualRasterizer', () => {
       const droppedZeroSvgOut = new DOMParser()
         .parseFromString(droppedZeroSerialized, 'text/html')
         .querySelector('svg');
+      expect(droppedZeroSvgOut?.querySelector('foreignObject')).toBeNull();
       expect(droppedZeroSvgOut?.style.getPropertyValue('background-color')).toBe('');
+      expect(droppedZeroSvgOut?.style.getPropertyValue('background-image')).toBe('');
       expect(droppedZeroSerialized).not.toContain('rgb(245, 247, 250)');
+      expect(droppedZeroSerialized).not.toContain('linear-gradient');
     } finally {
       gradientCanvas.remove();
       transparentCanvas.remove();
@@ -1780,6 +1785,263 @@ describe('createBrowserWechatVisualRasterizer', () => {
       expect(opacityInnerSvg?.querySelector('rect')).toBeNull();
     } finally {
       whiteCanvas.remove();
+    }
+  });
+
+  it('routes reduced-opacity direct SVGs with safe own background-image through foreignObject while dropping invisible opacity 0 gradients', async () => {
+    stubCanvas();
+    const whiteCanvas = document.createElement('div');
+    whiteCanvas.className = 'easymde-immersive-preview-canvas';
+    whiteCanvas.style.backgroundColor = 'rgb(255, 255, 255)';
+
+    const transparentCanvas = document.createElement('div');
+    transparentCanvas.className = 'easymde-immersive-preview-canvas';
+    transparentCanvas.style.backgroundColor = 'transparent';
+
+    const gradientValue = 'linear-gradient(rgb(255, 0, 0), rgb(0, 0, 255))';
+
+    // 1a. Connected direct <svg> with opacity: 0.5 and safe linear-gradient over white ancestor.
+    const connectedGradientHalfSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    connectedGradientHalfSvg.setAttribute('width', '100');
+    connectedGradientHalfSvg.setAttribute('height', '60');
+    connectedGradientHalfSvg.setAttribute('viewBox', '0 0 100 60');
+    connectedGradientHalfSvg.setAttribute(
+      'style',
+      `opacity: 0.5; background-image: ${gradientValue};`,
+    );
+    connectedGradientHalfSvg.innerHTML = '<circle cx="50" cy="30" r="10"></circle>';
+    whiteCanvas.appendChild(connectedGradientHalfSvg);
+
+    // 1b. Connected direct <svg> with opacity: 0.5, safe gradient + background-* layers + border-radius over white ancestor.
+    const connectedStyledGradientHalfSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    connectedStyledGradientHalfSvg.setAttribute('width', '100');
+    connectedStyledGradientHalfSvg.setAttribute('height', '60');
+    connectedStyledGradientHalfSvg.setAttribute('viewBox', '0 0 100 60');
+    connectedStyledGradientHalfSvg.setAttribute(
+      'style',
+      `opacity: 0.5; background-color: rgba(0, 255, 0, 0.25); background-image: ${gradientValue};`
+        + ' background-position: 10% 20%; background-size: 50% 50%; background-repeat: no-repeat; border-radius: 12px;',
+    );
+    connectedStyledGradientHalfSvg.innerHTML = '<circle cx="50" cy="30" r="10"></circle>';
+    whiteCanvas.appendChild(connectedStyledGradientHalfSvg);
+
+    // 1c. Connected direct <svg> with opacity: 0.5 and safe linear-gradient over transparent ancestor.
+    const transparentAncestorGradientHalfSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    transparentAncestorGradientHalfSvg.setAttribute('width', '100');
+    transparentAncestorGradientHalfSvg.setAttribute('height', '60');
+    transparentAncestorGradientHalfSvg.setAttribute('viewBox', '0 0 100 60');
+    transparentAncestorGradientHalfSvg.setAttribute(
+      'style',
+      `opacity: 0.5; background-image: ${gradientValue};`,
+    );
+    transparentAncestorGradientHalfSvg.innerHTML = '<circle cx="50" cy="30" r="10"></circle>';
+    transparentCanvas.appendChild(transparentAncestorGradientHalfSvg);
+
+    // 3a. Control: connected opacity: 0 with safe linear-gradient over white ancestor drops gradient without <foreignObject>.
+    const connectedZeroOpacityGradientSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    connectedZeroOpacityGradientSvg.setAttribute('width', '100');
+    connectedZeroOpacityGradientSvg.setAttribute('height', '60');
+    connectedZeroOpacityGradientSvg.setAttribute('viewBox', '0 0 100 60');
+    connectedZeroOpacityGradientSvg.setAttribute(
+      'style',
+      `opacity: 0; background-image: ${gradientValue};`,
+    );
+    connectedZeroOpacityGradientSvg.innerHTML = '<circle cx="50" cy="30" r="10"></circle>';
+    whiteCanvas.appendChild(connectedZeroOpacityGradientSvg);
+    document.body.append(whiteCanvas, transparentCanvas);
+
+    // 2. Detached direct <svg> with opacity: 0.5 and safe linear-gradient.
+    const detachedGradientHalfSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    detachedGradientHalfSvg.setAttribute('width', '100');
+    detachedGradientHalfSvg.setAttribute('height', '60');
+    detachedGradientHalfSvg.setAttribute('viewBox', '0 0 100 60');
+    detachedGradientHalfSvg.setAttribute(
+      'style',
+      `opacity: 0.5; background-image: ${gradientValue};`,
+    );
+    detachedGradientHalfSvg.innerHTML = '<circle cx="50" cy="30" r="10"></circle>';
+
+    // 3b. Control: detached opacity: 0 with safe linear-gradient.
+    const detachedZeroOpacityGradientSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    detachedZeroOpacityGradientSvg.setAttribute('width', '100');
+    detachedZeroOpacityGradientSvg.setAttribute('height', '60');
+    detachedZeroOpacityGradientSvg.setAttribute('viewBox', '0 0 100 60');
+    detachedZeroOpacityGradientSvg.setAttribute(
+      'style',
+      `opacity: 0; background-image: ${gradientValue};`,
+    );
+    detachedZeroOpacityGradientSvg.innerHTML = '<circle cx="50" cy="30" r="10"></circle>';
+
+    try {
+      // 1a. Connected direct <svg> -> <foreignObject> with ancestor-only white outer <svg> and dimmed gradient inner <svg>.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(connectedGradientHalfSvg, 'mermaid', 1, 100, 60, undefined, 1),
+      );
+      const connectedDoc = new DOMParser().parseFromString(
+        decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+        'text/html',
+      );
+      const connectedOuterSvg = connectedDoc.querySelector('svg');
+      const connectedForeignObject = connectedOuterSvg?.querySelector(':scope > foreignObject');
+      const connectedInnerSvg = connectedForeignObject?.querySelector('svg') as SVGSVGElement | null;
+      expect(connectedForeignObject).not.toBeNull();
+      expect(connectedOuterSvg?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      expect(connectedOuterSvg?.style.getPropertyValue('background-image')).toBe('');
+      expect(connectedOuterSvg?.style.getPropertyValue('opacity')).toBe('');
+      expect(connectedOuterSvg?.getAttribute('opacity')).toBeNull();
+      expect(connectedOuterSvg?.getAttribute('style') ?? '').not.toContain('radius');
+      expect(connectedInnerSvg?.style.getPropertyValue('background-image')).toBe(gradientValue);
+      expect(connectedInnerSvg?.style.getPropertyValue('opacity')).toBe('0.5');
+
+      // 1b. Connected direct <svg> preserves background position/size/repeat/color and border-radius on inner <svg>.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(connectedStyledGradientHalfSvg, 'mermaid', 1, 100, 60, undefined, 1),
+      );
+      const styledDoc = new DOMParser().parseFromString(
+        decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+        'text/html',
+      );
+      const styledOuterSvg = styledDoc.querySelector('svg');
+      const styledInnerSvg = styledOuterSvg?.querySelector(':scope > foreignObject svg') as SVGSVGElement | null;
+      expect(styledInnerSvg).not.toBeNull();
+      expect(styledOuterSvg?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      expect(styledOuterSvg?.style.getPropertyValue('background-image')).toBe('');
+      expect(styledOuterSvg?.style.getPropertyValue('opacity')).toBe('');
+      expect(styledOuterSvg?.getAttribute('style') ?? '').not.toContain('radius');
+      expect(styledInnerSvg?.style.getPropertyValue('background-image')).toBe(gradientValue);
+      expect(styledInnerSvg?.style.getPropertyValue('background-position')).toBe('10% 20%');
+      expect(styledInnerSvg?.style.getPropertyValue('background-size')).toBe('50% 50%');
+      expect(styledInnerSvg?.style.getPropertyValue('background-repeat')).toBe('no-repeat');
+      expect(styledInnerSvg?.style.getPropertyValue('background-color')).toBe('rgba(0, 255, 0, 0.25)');
+      expect(styledInnerSvg?.getAttribute('style') ?? '').toMatch(/border-(?:top-left-)?radius:\s*12px/u);
+      expect(styledInnerSvg?.style.getPropertyValue('opacity')).toBe('0.5');
+
+      // 1c. Connected direct <svg> over transparent ancestor keeps transparent outer <svg> and dimmed gradient inner <svg>.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(transparentAncestorGradientHalfSvg, 'mermaid', 1, 100, 60, undefined, 1),
+      );
+      const transparentDoc = new DOMParser().parseFromString(
+        decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+        'text/html',
+      );
+      const transparentOuterSvg = transparentDoc.querySelector('svg');
+      const transparentInnerSvg = transparentOuterSvg?.querySelector(':scope > foreignObject svg') as SVGSVGElement | null;
+      expect(transparentInnerSvg).not.toBeNull();
+      expect(transparentOuterSvg?.style.getPropertyValue('background-color')).toBe('');
+      expect(transparentOuterSvg?.style.getPropertyValue('background-image')).toBe('');
+      expect(transparentOuterSvg?.style.getPropertyValue('opacity')).toBe('');
+      expect(transparentInnerSvg?.style.getPropertyValue('background-image')).toBe(gradientValue);
+      expect(transparentInnerSvg?.style.getPropertyValue('opacity')).toBe('0.5');
+
+      // 2a. Detached direct <svg> with explicit white inheritedBackground and layoutMagnification: 1.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize({
+        height: 60,
+        inheritedBackground: { color: 'rgb(255, 255, 255)' },
+        kind: 'mermaid',
+        layoutMagnification: 1,
+        maxPixels: 16_777_216,
+        scale: 1,
+        signal: new AbortController().signal,
+        source: detachedGradientHalfSvg,
+        width: 100,
+      });
+      const detachedM1Doc = new DOMParser().parseFromString(
+        decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+        'text/html',
+      );
+      const detachedM1OuterSvg = detachedM1Doc.querySelector('svg');
+      const detachedM1ForeignObject = detachedM1OuterSvg?.querySelector(':scope > foreignObject');
+      const detachedM1InnerSvg = detachedM1ForeignObject?.querySelector('svg') as SVGSVGElement | null;
+      expect(detachedM1ForeignObject).not.toBeNull();
+      expect(detachedM1OuterSvg?.getAttribute('width')).toBe('100');
+      expect(detachedM1OuterSvg?.getAttribute('height')).toBe('60');
+      expect(detachedM1OuterSvg?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      expect(detachedM1OuterSvg?.style.getPropertyValue('background-image')).toBe('');
+      expect(detachedM1OuterSvg?.style.getPropertyValue('opacity')).toBe('');
+      expect(detachedM1OuterSvg?.getAttribute('opacity')).toBeNull();
+      expect(detachedM1InnerSvg?.style.getPropertyValue('background-image')).toBe(gradientValue);
+      expect(detachedM1InnerSvg?.style.getPropertyValue('opacity')).toBe('0.5');
+      expect(detachedM1InnerSvg?.style.getPropertyValue('width')).toBe('100px');
+      expect(detachedM1InnerSvg?.style.getPropertyValue('height')).toBe('60px');
+
+      // 2b. Detached direct <svg> with explicit white inheritedBackground and layoutMagnification: 2.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize({
+        height: 60,
+        inheritedBackground: { color: 'rgb(255, 255, 255)' },
+        kind: 'mermaid',
+        layoutMagnification: 2,
+        maxPixels: 16_777_216,
+        scale: 1,
+        signal: new AbortController().signal,
+        source: detachedGradientHalfSvg,
+        width: 100,
+      });
+      const detachedM2Doc = new DOMParser().parseFromString(
+        decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+        'text/html',
+      );
+      const detachedM2OuterSvg = detachedM2Doc.querySelector('svg');
+      const detachedM2ForeignObject = detachedM2OuterSvg?.querySelector(':scope > foreignObject');
+      const detachedM2InnerSvg = detachedM2ForeignObject?.querySelector('svg') as SVGSVGElement | null;
+      expect(detachedM2ForeignObject).not.toBeNull();
+      expect(detachedM2OuterSvg?.getAttribute('width')).toBe('200');
+      expect(detachedM2OuterSvg?.getAttribute('height')).toBe('120');
+      expect(detachedM2OuterSvg?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      expect(detachedM2OuterSvg?.style.getPropertyValue('background-image')).toBe('');
+      expect(detachedM2OuterSvg?.style.getPropertyValue('opacity')).toBe('');
+      expect(detachedM2OuterSvg?.getAttribute('opacity')).toBeNull();
+      expect(detachedM2InnerSvg?.style.getPropertyValue('background-image')).toBe(gradientValue);
+      expect(detachedM2InnerSvg?.style.getPropertyValue('opacity')).toBe('0.5');
+      expect(detachedM2InnerSvg?.style.getPropertyValue('transform')).toBe('scale(2)');
+      expect(detachedM2InnerSvg?.style.getPropertyValue('width')).toBe('100px');
+      expect(detachedM2InnerSvg?.style.getPropertyValue('height')).toBe('60px');
+
+      // 3a. Control: connected opacity: 0 drops invisible gradient without <foreignObject>.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(connectedZeroOpacityGradientSvg, 'mermaid', 1, 100, 60, undefined, 1),
+      );
+      const zeroConnectedSerialized = decodeURIComponent(
+        imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? '',
+      );
+      const zeroConnectedSvg = new DOMParser()
+        .parseFromString(zeroConnectedSerialized, 'text/html')
+        .querySelector('svg');
+      expect(zeroConnectedSvg?.querySelector('foreignObject')).toBeNull();
+      expect(zeroConnectedSvg?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      expect(zeroConnectedSvg?.style.getPropertyValue('background-image')).toBe('');
+      expect(zeroConnectedSvg?.style.getPropertyValue('opacity')).toBe('');
+      expect(zeroConnectedSvg?.getAttribute('opacity')).toBeNull();
+      expect(zeroConnectedSerialized).not.toContain('linear-gradient');
+      expect(zeroConnectedSvg?.querySelector(':scope > g')?.getAttribute('opacity')).toBe('0');
+
+      // 3b. Control: detached opacity: 0 drops invisible gradient without <foreignObject>.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize({
+        height: 60,
+        inheritedBackground: { color: 'rgb(255, 255, 255)' },
+        kind: 'mermaid',
+        layoutMagnification: 1,
+        maxPixels: 16_777_216,
+        scale: 1,
+        signal: new AbortController().signal,
+        source: detachedZeroOpacityGradientSvg,
+        width: 100,
+      });
+      const zeroDetachedSerialized = decodeURIComponent(
+        imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? '',
+      );
+      const zeroDetachedSvg = new DOMParser()
+        .parseFromString(zeroDetachedSerialized, 'text/html')
+        .querySelector('svg');
+      expect(zeroDetachedSvg?.querySelector('foreignObject')).toBeNull();
+      expect(zeroDetachedSvg?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      expect(zeroDetachedSvg?.style.getPropertyValue('background-image')).toBe('');
+      expect(zeroDetachedSvg?.style.getPropertyValue('opacity')).toBe('');
+      expect(zeroDetachedSvg?.getAttribute('opacity')).toBeNull();
+      expect(zeroDetachedSerialized).not.toContain('linear-gradient');
+      expect(zeroDetachedSvg?.querySelector(':scope > g')?.getAttribute('opacity')).toBe('0');
+    } finally {
+      whiteCanvas.remove();
+      transparentCanvas.remove();
     }
   });
 

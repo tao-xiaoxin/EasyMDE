@@ -120,8 +120,13 @@ export function useEditorAppearanceBridge({
   wechatCopyStatus
 }: UseEditorAppearanceBridgeOptions) {
   const appearanceTransitionSequenceRef = useRef(0);
-  const codeThemeFrameSyncPendingRef = useRef<string | null>(null);
+  const codeThemeFrameSyncSequenceRef = useRef(0);
+  const codeThemeFrameSyncPendingRef = useRef<Readonly<{
+    codeTheme: string;
+    sequence: number;
+  }> | null>(null);
   const codeThemeExplicitRef = useRef(appearance.codeThemeExplicit);
+  const committedCodeThemeRef = useRef(appearance.state.codeTheme);
 
   const [appearanceSnapshot, setAppearanceSnapshot] = useState(() => ({
     customCss: appearance.customCss,
@@ -136,6 +141,8 @@ export function useEditorAppearanceBridge({
   const [renderedCodeTheme, setRenderedCodeTheme] = useState(
     appearance.state.codeTheme
   );
+  const [codeThemeFrameSyncSequence, setCodeThemeFrameSyncSequence] =
+    useState(0);
   const currentAppearance = useMemo<AppearanceBootstrap>(
     () => ({
       ...appearance,
@@ -186,9 +193,13 @@ export function useEditorAppearanceBridge({
         const previousState = previewAppearanceRef.current;
         const previousCodeThemeExplicit = codeThemeExplicitRef.current;
         const codeThemeChanged = previousState.codeTheme !== state.codeTheme;
+        const codeThemeStylesheetDirty =
+          committedCodeThemeRef.current !== state.codeTheme;
+        const shouldPrepareCodeTheme =
+          codeThemeChanged || codeThemeStylesheetDirty;
         const appearanceChanged =
           previousState.markdownTheme !== state.markdownTheme
-          || previousState.codeTheme !== state.codeTheme
+          || shouldPrepareCodeTheme
           || previousState.customCssId !== state.customCssId;
         const markupChanged =
           articleMarkupProfile(appearance, previousState)
@@ -233,7 +244,7 @@ export function useEditorAppearanceBridge({
           && codeThemePreparationRef.current?.generation === generation
           && codeThemePreparationGenerationRef.current === generation
           && rootActiveRef.current;
-        if (codeThemeChanged) {
+        if (shouldPrepareCodeTheme) {
           try {
             preparation.prepared = await enhancementPort.prepareCodeTheme({
               codeTheme: state.codeTheme,
@@ -273,11 +284,36 @@ export function useEditorAppearanceBridge({
           preparation.prepared = null;
           try {
             prepared.commit();
+            committedCodeThemeRef.current = state.codeTheme;
             codeThemeCommitted = true;
           } catch (error: unknown) {
             codeThemeCommitError = error;
             prepared.cancel();
             throw error;
+          }
+        };
+        const rollbackCommittedCodeTheme = async (): Promise<void> => {
+          if (
+            !codeThemeCommitted
+            || committedCodeThemeRef.current === previousState.codeTheme
+            || !isCurrentGeneration()
+          ) {
+            return;
+          }
+          let rollbackPrepared: PreparedCodeTheme | null = null;
+          try {
+            rollbackPrepared = await enhancementPort.prepareCodeTheme({
+              codeTheme: previousState.codeTheme,
+              signal: controller.signal
+            });
+            if (isCurrentGeneration()) {
+              rollbackPrepared.commit();
+              committedCodeThemeRef.current = previousState.codeTheme;
+            } else {
+              rollbackPrepared.cancel();
+            }
+          } catch {
+            rollbackPrepared?.cancel();
           }
         };
         let applied: boolean;
@@ -313,22 +349,7 @@ export function useEditorAppearanceBridge({
             clearAppearanceTransition();
             return false;
           }
-          if (codeThemeCommitted && isCurrentGeneration()) {
-            let rollbackPrepared: PreparedCodeTheme | null = null;
-            try {
-              rollbackPrepared = await enhancementPort.prepareCodeTheme({
-                codeTheme: previousState.codeTheme,
-                signal: controller.signal
-              });
-              if (isCurrentGeneration()) {
-                rollbackPrepared.commit();
-              } else {
-                rollbackPrepared.cancel();
-              }
-            } catch {
-              rollbackPrepared?.cancel();
-            }
-          }
+          await rollbackCommittedCodeTheme();
           const stillCurrent = isCurrentGeneration();
           if (codeThemePreparationRef.current?.generation === generation) {
             codeThemePreparationRef.current = null;
@@ -342,21 +363,8 @@ export function useEditorAppearanceBridge({
         if (!applied || !isCurrentGeneration()) {
           preparation.prepared?.cancel();
           preparation.prepared = null;
-          if (codeThemeCommitted && !applied && isCurrentGeneration()) {
-            let rollbackPrepared: PreparedCodeTheme | null = null;
-            try {
-              rollbackPrepared = await enhancementPort.prepareCodeTheme({
-                codeTheme: previousState.codeTheme,
-                signal: controller.signal
-              });
-              if (isCurrentGeneration()) {
-                rollbackPrepared.commit();
-              } else {
-                rollbackPrepared.cancel();
-              }
-            } catch {
-              rollbackPrepared?.cancel();
-            }
+          if (!applied) {
+            await rollbackCommittedCodeTheme();
           }
           if (codeThemePreparationRef.current?.generation === generation) {
             codeThemePreparationRef.current = null;
@@ -369,6 +377,7 @@ export function useEditorAppearanceBridge({
           preparation.prepared = null;
           try {
             prepared.commit();
+            committedCodeThemeRef.current = state.codeTheme;
             codeThemeCommitted = true;
           } catch (error: unknown) {
             prepared.cancel();
@@ -410,9 +419,14 @@ export function useEditorAppearanceBridge({
         if (appearanceChanged) cancelWechatCopyForThemeChange();
         clearAppearanceTransition();
         codeThemePreparationRef.current = null;
-        if (codeThemeChanged) {
-          codeThemeFrameSyncPendingRef.current = state.codeTheme;
+        if (shouldPrepareCodeTheme) {
+          const nextSyncSequence = ++codeThemeFrameSyncSequenceRef.current;
+          codeThemeFrameSyncPendingRef.current = {
+            codeTheme: state.codeTheme,
+            sequence: nextSyncSequence
+          };
           setRenderedCodeTheme(state.codeTheme);
+          setCodeThemeFrameSyncSequence(nextSyncSequence);
         }
         codeThemeExplicitRef.current = nextCodeThemeExplicit;
         setCodeThemeExplicit(nextCodeThemeExplicit);
@@ -559,7 +573,14 @@ export function useEditorAppearanceBridge({
   );
 
   useLayoutEffect(() => {
-    if (codeThemeFrameSyncPendingRef.current !== renderedCodeTheme) return;
+    const pendingSync = codeThemeFrameSyncPendingRef.current;
+    if (
+      null === pendingSync
+      || pendingSync.sequence !== codeThemeFrameSyncSequence
+      || pendingSync.codeTheme !== renderedCodeTheme
+    ) {
+      return;
+    }
     codeThemeFrameSyncPendingRef.current = null;
     const surface = previewRuntimeRef.current?.surface;
     const visualSurface = visualPreviewEditingRef.current
@@ -585,6 +606,7 @@ export function useEditorAppearanceBridge({
       scheduleCurrentWechatPreviewPreparation();
     }
   }, [
+    codeThemeFrameSyncSequence,
     enhancementPort,
     previewRuntimeRef,
     renderedCodeTheme,

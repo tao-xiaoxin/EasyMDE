@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppearancePort } from '../../contracts/ports/appearance-port';
 import type { SafePreviewHtml } from '../../contracts/ports/preview-request';
+import type { PreviewSurfaceRuntime } from '../../features/live-preview/ui/PreviewSurfaceOwner';
 import { createWechatCopyStatusStore } from '../../features/wechat-export/wechat-copy-status';
 import { createBrowserPreviewEnhancementPort } from '../../integrations/preview-runtime/browser-preview-enhancement';
 import { createWordPressAppearancePort } from '../../integrations/wordpress/appearance/create-wordpress-appearance-port';
@@ -2596,5 +2597,597 @@ describe('EditorRoot publish and appearance', () => {
     expect(reportFailure).not.toHaveBeenCalled();
     expect(wechatCopyStatus.getSnapshot().unavailable).toBe(false);
     view.unmount();
+  });
+
+  const createRealCodeThemeHarness = () => {
+    const assetBaseUrl = 'https://example.test/wp-content/plugins/easymde/';
+    const createdHeadNodes: HTMLElement[] = [];
+    const attachHeadSheet = (
+      link: HTMLLinkElement,
+      cssText: string
+    ): CSSStyleSheet => {
+      const style = document.createElement('style');
+      style.textContent = cssText;
+      document.head.append(style);
+      createdHeadNodes.push(style);
+      if (!style.sheet) throw new Error('test-style-sheet-missing');
+      Object.defineProperty(link, 'sheet', {
+        configurable: true,
+        value: style.sheet
+      });
+      return style.sheet;
+    };
+
+    const codeFrameLink = document.createElement('link');
+    codeFrameLink.id = 'easymde-code-frame-css';
+    codeFrameLink.rel = 'stylesheet';
+    codeFrameLink.href = `${assetBaseUrl}assets/css/code-frame.css`;
+    codeFrameLink.dataset.easymdeLoadedHref = codeFrameLink.href;
+    document.head.append(codeFrameLink);
+    createdHeadNodes.push(codeFrameLink);
+    attachHeadSheet(codeFrameLink, '.easymde-code-mac { padding: 8px; }');
+
+    const enhance = vi.fn().mockResolvedValue(undefined);
+    const syncCodeFrameBackgrounds = vi.fn();
+    const enhancementPort = createBrowserPreviewEnhancementPort(
+      {
+        assetBaseUrl,
+        assets: {
+          codeFrameCssUrl: `${assetBaseUrl}assets/css/code-frame.css`,
+          codeFrameLinkId: 'easymde-code-frame-css',
+          highlightScriptUrl: `${assetBaseUrl}assets/vendor/highlight.min.js`,
+          highlightThemeLinkId: 'easymde-highlight-theme-css',
+          katexCssLinkId: 'easymde-katex-css',
+          katexCssUrl: `${assetBaseUrl}assets/vendor/katex.min.css`,
+          katexScriptUrl: `${assetBaseUrl}assets/vendor/katex.min.js`,
+          mathCssLinkId: 'easymde-math-css',
+          mathCssUrl: `${assetBaseUrl}assets/css/math.css`,
+          mathRendererUrl: `${assetBaseUrl}assets/js/enhancements.js`,
+          mermaidAssetError: null,
+          mermaidRendererUrl: `${assetBaseUrl}assets/js/mermaid-renderer.js`,
+          mermaidScriptUrl: `${assetBaseUrl}assets/vendor/mermaid.min.js`,
+          tocCssLinkId: 'easymde-toc-css',
+          tocCssUrl: `${assetBaseUrl}assets/css/toc.css`
+        },
+        codeThemes: [
+          {
+            cssUrl: `${assetBaseUrl}assets/themes/code/atom-one-dark.css`,
+            id: 'atom-one-dark'
+          },
+          {
+            cssUrl: `${assetBaseUrl}assets/themes/code/github.css`,
+            id: 'github'
+          }
+        ],
+        strings: { renderingFailed: 'Rendering failed' }
+      },
+      {
+        documentRef: document,
+        runtime: {
+          getEnhancements: () => ({
+            enhance,
+            syncCodeFrameBackgrounds
+          }),
+          hasHighlight: () => true,
+          hasKatex: () => true,
+          hasMathRenderer: () => true,
+          hasMermaid: () => true,
+          hasMermaidRenderer: () => true,
+          warmHighlightAuto: vi.fn().mockResolvedValue(true)
+        }
+      }
+    );
+
+    const pendingCodeLinks = (
+      hrefPart: string,
+      exclude: ReadonlySet<HTMLLinkElement> = new Set()
+    ) =>
+      Array.from(
+        document.head.querySelectorAll<HTMLLinkElement>(
+          'link[data-easymde-stylesheet-owner="easymde-highlight-theme-css"]'
+        )
+      ).filter(
+        (link) =>
+          !exclude.has(link)
+          && 'not all' === link.media
+          && link.href.includes(hrefPart)
+      );
+
+    const activateInitialAtomOneDark = async (): Promise<HTMLLinkElement> => {
+      const prepare = enhancementPort.prepareCodeTheme({
+        codeTheme: 'atom-one-dark',
+        signal: new AbortController().signal
+      });
+      const [initialLink] = pendingCodeLinks('atom-one-dark.css');
+      if (!initialLink) throw new Error('initial-code-link-missing');
+      createdHeadNodes.push(initialLink);
+      attachHeadSheet(initialLink, '.hljs { color: white; }');
+      initialLink.dispatchEvent(new Event('load'));
+      const prepared = await prepare;
+      prepared.commit();
+      return initialLink;
+    };
+
+    const waitForPendingCodeLink = async (
+      hrefPart: string,
+      exclude: ReadonlySet<HTMLLinkElement> = new Set()
+    ): Promise<HTMLLinkElement> => {
+      let target: HTMLLinkElement | undefined;
+      await waitFor(() => {
+        [target] = pendingCodeLinks(hrefPart, exclude);
+        expect(target).toBeDefined();
+      });
+      if (!target) throw new Error(`pending-code-link-missing:${hrefPart}`);
+      createdHeadNodes.push(target);
+      return target;
+    };
+
+    const loadPendingCodeLink = async (
+      hrefPart: string,
+      cssText: string,
+      exclude: ReadonlySet<HTMLLinkElement> = new Set()
+    ): Promise<HTMLLinkElement> => {
+      const target = await waitForPendingCodeLink(hrefPart, exclude);
+      attachHeadSheet(target, cssText);
+      act(() => {
+        target.dispatchEvent(new Event('load'));
+      });
+      return target;
+    };
+
+    const verifyEnhancementCommitsAtomOneDark = async (
+      surface: HTMLElement
+    ): Promise<void> => {
+      const activeLink = document.getElementById('easymde-highlight-theme-css');
+      expect(activeLink).toBeInstanceOf(HTMLLinkElement);
+      // Force the enhancement path to prepare a fresh stylesheet link so
+      // `applyCommit` exercises `slot.authoritativeActivationUrl` instead of
+      // reusing the active element.
+      if (activeLink instanceof HTMLLinkElement) {
+        delete activeLink.dataset.easymdeLoadedHref;
+      }
+      const existing = new Set(
+        activeLink instanceof HTMLLinkElement ? [activeLink] : []
+      );
+      const enhancePromise = enhancementPort.enhance(
+        surface,
+        { syntaxHighlight: true },
+        () => true,
+        {
+          codeTheme: 'atom-one-dark',
+          signal: new AbortController().signal
+        }
+      );
+      const enhancedLink = await loadPendingCodeLink(
+        'atom-one-dark.css',
+        '.hljs { color: white; }',
+        existing
+      );
+      await enhancePromise;
+      expect(document.getElementById('easymde-highlight-theme-css')).toBe(
+        enhancedLink
+      );
+      expect(enhancedLink.href).toBe(
+        `${assetBaseUrl}assets/themes/code/atom-one-dark.css`
+      );
+      expect(enhancedLink.isConnected).toBe(true);
+      expect(enhancedLink.media).toBe('all');
+      expect(enhance).toHaveBeenCalled();
+    };
+
+    const dispose = () => {
+      enhancementPort.dispose?.();
+      for (const node of createdHeadNodes) node.remove();
+    };
+
+    return {
+      activateInitialAtomOneDark,
+      assetBaseUrl,
+      dispose,
+      enhancementPort,
+      loadPendingCodeLink,
+      syncCodeFrameBackgrounds,
+      verifyEnhancementCommitsAtomOneDark,
+      waitForPendingCodeLink
+    };
+  };
+
+  it('restores committed code-theme stylesheet and authoritative activation when a same-code-theme switch supersedes a suspended post-onBeforePublish rollback', async () => {
+    const harness = createRealCodeThemeHarness();
+    let view: ReturnType<typeof render> | null = null;
+    try {
+      const initialCodeLink = await harness.activateInitialAtomOneDark();
+      expect(document.getElementById('easymde-highlight-theme-css')).toBe(
+        initialCodeLink
+      );
+
+      const props = fixture();
+      const appearance = {
+        ...props.appearance,
+        articleThemes: [
+          {
+            defaultCodeTheme: 'atom-one-dark',
+            id: 'default',
+            label: 'Default',
+            markupProfile: 'common-v1'
+          },
+          {
+            defaultCodeTheme: 'github',
+            id: 'newsprint',
+            label: 'Newsprint',
+            markupProfile: 'common-v1'
+          },
+          {
+            defaultCodeTheme: 'atom-one-dark',
+            id: 'ocean',
+            label: 'Ocean',
+            markupProfile: 'common-v1'
+          }
+        ]
+      };
+      let applyCall = 0;
+      const rawAppearancePort: AppearancePort = {
+        ...props.appearancePort,
+        applyState: vi.fn(async (_state, _explicit, onBeforePublish) => {
+          applyCall += 1;
+          onBeforePublish?.();
+          if (1 === applyCall) {
+            throw new Error('appearance-apply-failed-after-commit');
+          }
+          return true;
+        })
+      };
+
+      view = render(
+        <EditorRoot
+          {...props}
+          appearance={appearance}
+          appearancePort={rawAppearancePort}
+          enhancementPort={harness.enhancementPort}
+        />
+      );
+      await waitFor(() =>
+        expect(props.previewPort.render).toHaveBeenCalledTimes(1)
+      );
+
+      // Generation 1: switch to Newsprint (defaultCodeTheme: 'github').
+      fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+      fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+      fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+
+      const githubLink = await harness.loadPendingCodeLink(
+        'github.css',
+        '.hljs { color: navy; }'
+      );
+
+      // onBeforePublish committed github.css, rawAppearancePort rejected, and
+      // Generation 1 is now suspended on rollback prepareCodeTheme('atom-one-dark').
+      const rollbackLink =
+        await harness.waitForPendingCodeLink('atom-one-dark.css');
+      expect(document.getElementById('easymde-highlight-theme-css')).toBe(
+        githubLink
+      );
+      expect(githubLink.href).toBe(
+        `${harness.assetBaseUrl}assets/themes/code/github.css`
+      );
+
+      // Generation 2: supersede rollback with Ocean (defaultCodeTheme: 'atom-one-dark').
+      fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+      fireEvent.click(view.getByRole('option', { name: 'Ocean' }));
+
+      await waitFor(() => expect(rollbackLink.isConnected).toBe(false));
+      const recoveryLink = await harness.loadPendingCodeLink(
+        'atom-one-dark.css',
+        '.hljs { color: white; }',
+        new Set([rollbackLink])
+      );
+
+      const sink = view.container.querySelector<HTMLElement>(
+        '[data-easymde-preview-html-sink]'
+      );
+      if (!sink) throw new Error('preview-sink-missing');
+      await waitFor(() =>
+        expect(sink.classList.contains('easymde-markdown-theme-ocean')).toBe(
+          true
+        )
+      );
+
+      expect(document.getElementById('easymde-highlight-theme-css')).toBe(
+        recoveryLink
+      );
+      expect(recoveryLink.href).toBe(
+        `${harness.assetBaseUrl}assets/themes/code/atom-one-dark.css`
+      );
+      expect(recoveryLink.media).toBe('all');
+      expect(githubLink.isConnected).toBe(false);
+      expect(sink.classList.contains('easymde-code-theme-atom-one-dark')).toBe(
+        true
+      );
+      expect(sink.classList.contains('easymde-code-theme-github')).toBe(false);
+      expect(harness.syncCodeFrameBackgrounds).toHaveBeenCalledWith(sink);
+      expect(props.onFailure).not.toHaveBeenCalled();
+
+      await harness.verifyEnhancementCommitsAtomOneDark(sink);
+    } finally {
+      view?.unmount();
+      harness.dispose();
+    }
+  });
+
+  it('recovers a dirty committed code-theme stylesheet on a subsequent same-code-theme switch after post-onBeforePublish rollback rejects', async () => {
+    const harness = createRealCodeThemeHarness();
+    let view: ReturnType<typeof render> | null = null;
+    try {
+      await harness.activateInitialAtomOneDark();
+
+      const props = fixture();
+      const appearance = {
+        ...props.appearance,
+        articleThemes: [
+          {
+            defaultCodeTheme: 'atom-one-dark',
+            id: 'default',
+            label: 'Default',
+            markupProfile: 'common-v1'
+          },
+          {
+            defaultCodeTheme: 'github',
+            id: 'newsprint',
+            label: 'Newsprint',
+            markupProfile: 'common-v1'
+          },
+          {
+            defaultCodeTheme: 'atom-one-dark',
+            id: 'ocean',
+            label: 'Ocean',
+            markupProfile: 'common-v1'
+          }
+        ]
+      };
+      let applyCall = 0;
+      const rawAppearancePort: AppearancePort = {
+        ...props.appearancePort,
+        applyState: vi.fn(async (_state, _explicit, onBeforePublish) => {
+          applyCall += 1;
+          onBeforePublish?.();
+          return 1 !== applyCall;
+        })
+      };
+
+      view = render(
+        <EditorRoot
+          {...props}
+          appearance={appearance}
+          appearancePort={rawAppearancePort}
+          enhancementPort={harness.enhancementPort}
+        />
+      );
+      await waitFor(() =>
+        expect(props.previewPort.render).toHaveBeenCalledTimes(1)
+      );
+
+      // Generation 1: commit github.css in onBeforePublish, then return false so
+      // rollback starts and fails when atom-one-dark.css fails to load.
+      fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+      fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+      fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+
+      const githubLink = await harness.loadPendingCodeLink(
+        'github.css',
+        '.hljs { color: navy; }'
+      );
+      const rollbackLink =
+        await harness.waitForPendingCodeLink('atom-one-dark.css');
+      act(() => {
+        rollbackLink.dispatchEvent(new Event('error'));
+      });
+
+      await waitFor(() =>
+        expect(
+          view?.getByRole('combobox', { name: 'Article theme' }).textContent
+        ).toContain('Default')
+      );
+      expect(document.getElementById('easymde-highlight-theme-css')).toBe(
+        githubLink
+      );
+
+      // Generation 2: switch to Ocean (defaultCodeTheme: 'atom-one-dark').
+      fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+      fireEvent.click(view.getByRole('option', { name: 'Ocean' }));
+
+      const recoveryLink = await harness.loadPendingCodeLink(
+        'atom-one-dark.css',
+        '.hljs { color: white; }',
+        new Set([rollbackLink])
+      );
+
+      const sink = view.container.querySelector<HTMLElement>(
+        '[data-easymde-preview-html-sink]'
+      );
+      if (!sink) throw new Error('preview-sink-missing');
+      await waitFor(() =>
+        expect(sink.classList.contains('easymde-markdown-theme-ocean')).toBe(
+          true
+        )
+      );
+
+      expect(document.getElementById('easymde-highlight-theme-css')).toBe(
+        recoveryLink
+      );
+      expect(recoveryLink.href).toBe(
+        `${harness.assetBaseUrl}assets/themes/code/atom-one-dark.css`
+      );
+      expect(recoveryLink.media).toBe('all');
+      expect(githubLink.isConnected).toBe(false);
+      expect(harness.syncCodeFrameBackgrounds).toHaveBeenCalledWith(sink);
+
+      await harness.verifyEnhancementCommitsAtomOneDark(sink);
+    } finally {
+      view?.unmount();
+      harness.dispose();
+    }
+  });
+
+  it('recovers a dirty committed code-theme stylesheet after cancelPendingApply interrupts post-onBeforePublish rollback', async () => {
+    const harness = createRealCodeThemeHarness();
+    let view: ReturnType<typeof render> | null = null;
+    const surface = document.createElement('div');
+    document.body.append(surface);
+    try {
+      await harness.activateInitialAtomOneDark();
+
+      const props = fixture();
+      const reportFailure = vi.fn();
+      const wechatCopyStatus = createWechatCopyStatusStore();
+      let applyCall = 0;
+      const rawAppearancePort: AppearancePort = {
+        ...props.appearancePort,
+        applyState: vi.fn(async (_state, _explicit, onBeforePublish) => {
+          applyCall += 1;
+          onBeforePublish?.();
+          if (1 === applyCall) {
+            throw new Error('appearance-apply-failed-after-commit');
+          }
+          return true;
+        }),
+        cancelPendingApply: vi.fn()
+      };
+
+      let capturedPort: AppearancePort | null = null;
+
+      function BridgeHarness() {
+        const appearanceSessionRef = useRef(null);
+        const appearanceTransitionPendingRef = useRef<number | null>(null);
+        const codeThemePreparationGenerationRef = useRef(0);
+        const codeThemePreparationRef = useRef<CodeThemePreparation | null>(
+          null
+        );
+        const fontControlsSessionRef = useRef(null);
+        const ordinarySettingsSessionRef = useRef(null);
+        const previewAppearanceRef = useRef(props.appearance.state);
+        const previewRefreshPendingRef = useRef(false);
+        const previewRuntimeRef = useRef<PreviewSurfaceRuntime | null>({
+          surface
+        } as unknown as PreviewSurfaceRuntime);
+        const rootActiveRef = useRef(true);
+        const submissionStateRef = useRef({
+          ...props.appearance.state,
+          ...props.fonts.state,
+          codeThemeExplicit: props.appearance.codeThemeExplicit
+        });
+        const toolbarSessionRef = useRef(null);
+        const visualEditorRuntimeRef = useRef(null);
+        const visualPreviewEditingRef = useRef(false);
+
+        const bridge = useEditorAppearanceBridge({
+          appearance: props.appearance,
+          appearancePort: rawAppearancePort,
+          appearanceSessionRef,
+          appearanceTransitionPendingRef,
+          cancelVisualUnlockPreparation: vi.fn(),
+          cancelWechatBackgroundPreparation: vi.fn(),
+          cancelWechatCopyForThemeChange: vi.fn(),
+          codeThemePreparationGenerationRef,
+          codeThemePreparationRef,
+          documentSession: null,
+          enhancementPort: harness.enhancementPort,
+          fontControlsPort: props.fontControlsPort,
+          fontControlsSessionRef,
+          fonts: props.fonts,
+          markVisualPreviewChanged: vi.fn(),
+          ordinarySettingsSessionRef,
+          previewAppearanceRef,
+          previewPresentation: 'split',
+          previewRefreshPendingRef,
+          previewRuntimeRef,
+          protectedOperationError: () => null,
+          publishEditorStatus: vi.fn(),
+          reportFailure,
+          rootActiveRef,
+          scheduleCurrentWechatPreviewPreparation: vi.fn(),
+          schedulePreview: vi.fn(),
+          scheduleWechatPreviewPreparation: vi.fn(),
+          setEditorStatusState: vi.fn(),
+          submissionStateRef,
+          toolbarSessionRef,
+          visualEditorRuntimeRef,
+          visualPreviewEditingRef,
+          wechatCopyStatus
+        });
+        capturedPort = bridge.appearancePort;
+        return null;
+      }
+
+      view = render(<BridgeHarness />);
+      if (!capturedPort) throw new Error('bridge-harness-not-initialized');
+      const bridgePort: AppearancePort = capturedPort;
+
+      // Generation 1: commit github.css in onBeforePublish, reject, suspend rollback.
+      const pendingApply = bridgePort.applyState(
+        { codeTheme: 'github', customCssId: '', markdownTheme: 'newsprint' },
+        false
+      );
+      const githubLink = await harness.loadPendingCodeLink(
+        'github.css',
+        '.hljs { color: navy; }'
+      );
+      const rollbackLink =
+        await harness.waitForPendingCodeLink('atom-one-dark.css');
+      expect(document.getElementById('easymde-highlight-theme-css')).toBe(
+        githubLink
+      );
+
+      // Interrupt suspended rollback via cancelPendingApply().
+      act(() => {
+        bridgePort.cancelPendingApply();
+      });
+      await act(async () => {
+        await expect(pendingApply).resolves.toBe(false);
+      });
+      expect(rollbackLink.isConnected).toBe(false);
+      expect(reportFailure).not.toHaveBeenCalled();
+      expect(wechatCopyStatus.getSnapshot().unavailable).toBe(false);
+      expect(document.getElementById('easymde-highlight-theme-css')).toBe(
+        githubLink
+      );
+
+      // Generation 2: re-applying the unchanged default/atom-one-dark state
+      // still detects codeThemeStylesheetDirty and restores atom-one-dark.css.
+      const recoveryApply = bridgePort.applyState(
+        {
+          codeTheme: 'atom-one-dark',
+          customCssId: '',
+          markdownTheme: 'default'
+        },
+        false
+      );
+      expect(wechatCopyStatus.getSnapshot().unavailable).toBe(true);
+      const recoveryLink = await harness.loadPendingCodeLink(
+        'atom-one-dark.css',
+        '.hljs { color: white; }',
+        new Set([rollbackLink])
+      );
+      await act(async () => {
+        await expect(recoveryApply).resolves.toBe(true);
+      });
+
+      expect(document.getElementById('easymde-highlight-theme-css')).toBe(
+        recoveryLink
+      );
+      expect(recoveryLink.href).toBe(
+        `${harness.assetBaseUrl}assets/themes/code/atom-one-dark.css`
+      );
+      expect(recoveryLink.media).toBe('all');
+      expect(githubLink.isConnected).toBe(false);
+      expect(wechatCopyStatus.getSnapshot().unavailable).toBe(false);
+      expect(harness.syncCodeFrameBackgrounds).toHaveBeenCalledWith(surface);
+      expect(reportFailure).not.toHaveBeenCalled();
+
+      await harness.verifyEnhancementCommitsAtomOneDark(surface);
+    } finally {
+      view?.unmount();
+      surface.remove();
+      harness.dispose();
+    }
   });
 });

@@ -1259,4 +1259,478 @@ describe('createPreviewStylesheetLoader loadStylesheet rollback and scope preser
       linkA.remove();
     }
   });
+
+  it('guards loadStylesheet handleLoad against re-entrant dispose, superseding loadStylesheet, waiter abort, and previousLoad rollback throws', async () => {
+    // Scenario 1: re-entrant loader.dispose() inside scopeEditorStylesheetLink during handleLoad.
+    {
+      const loader = createPreviewStylesheetLoader(
+        document,
+        () => false,
+        ROOT_SELECTOR
+      );
+      const loadA = loader.loadStylesheet(
+        LINK_ID,
+        URL_V1,
+        new AbortController().signal
+      );
+      const linkA = document.getElementById(LINK_ID) as HTMLLinkElement;
+      const sheetA = attachStyleSheet(linkA, '.v1-hl-dispose { color: red; }');
+      linkA.dispatchEvent(new Event('load'));
+      await loadA;
+      expect(scopedRuleCount(sheetA)).toBe(1);
+
+      const loadB = loader.loadStylesheet(
+        LINK_ID,
+        URL_V2,
+        new AbortController().signal
+      );
+      const linkB = document.getElementById(LINK_ID) as HTMLLinkElement;
+      const sheetB = attachStyleSheet(linkB, '.v2-hl-dispose { color: blue; }');
+      interceptSheetOnce(linkB, () => {
+        loader.dispose();
+        return sheetB;
+      });
+      linkB.dispatchEvent(new Event('load'));
+
+      await expectPromiseRejectsPromptly(
+        loadB,
+        'preview-enhancement-resource-stale'
+      );
+      expect(linkB.isConnected).toBe(false);
+      expect(scopedRuleCount(sheetB)).toBe(0);
+      expect(scopedRuleCount(sheetA)).toBe(0);
+
+      // styleLoads stays clean and disposed loader rejects new loads.
+      await expectPromiseRejectsPromptly(
+        loader.loadStylesheet(LINK_ID, URL_V2, new AbortController().signal),
+        'preview-enhancement-runtime-unavailable'
+      );
+      expect(scopedRuleCount(sheetB)).toBe(0);
+      linkA.remove();
+    }
+
+    // Scenario 2: re-entrant superseding loadStylesheet() inside scopeEditorStylesheetLink during handleLoad.
+    {
+      const loader = createPreviewStylesheetLoader(
+        document,
+        () => false,
+        ROOT_SELECTOR
+      );
+      const loadA = loader.loadStylesheet(
+        LINK_ID,
+        URL_V1,
+        new AbortController().signal
+      );
+      const linkA = document.getElementById(LINK_ID) as HTMLLinkElement;
+      const sheetA = attachStyleSheet(linkA, '.v1-hl-supersede { color: green; }');
+      linkA.dispatchEvent(new Event('load'));
+      await loadA;
+      expect(scopedRuleCount(sheetA)).toBe(1);
+
+      const loadB = loader.loadStylesheet(
+        LINK_ID,
+        URL_V2,
+        new AbortController().signal
+      );
+      const linkB = document.getElementById(LINK_ID) as HTMLLinkElement;
+      const sheetB = attachStyleSheet(linkB, '.v2-hl-supersede { color: orange; }');
+      const supersedingLoads: Promise<void>[] = [];
+      interceptSheetOnce(linkB, () => {
+        supersedingLoads.push(
+          loader.loadStylesheet(LINK_ID, URL_V3, new AbortController().signal)
+        );
+        return sheetB;
+      });
+      linkB.dispatchEvent(new Event('load'));
+
+      await expectPromiseRejectsPromptly(
+        loadB,
+        'preview-enhancement-resource-stale'
+      );
+      expect(linkB.isConnected).toBe(false);
+      expect(scopedRuleCount(sheetB)).toBe(0);
+
+      const loadC = supersedingLoads[0];
+      if (!loadC) throw new Error('superseding load missing');
+      const linkC = document.getElementById(LINK_ID) as HTMLLinkElement;
+      expect(linkC).not.toBeNull();
+      expect(linkC).not.toBe(linkA);
+      expect(linkC).not.toBe(linkB);
+      expect(linkC.getAttribute('href')).toBe(URL_V3);
+      expect(linkA.id).toBe(`${LINK_ID}-previous`);
+      expect(scopedRuleCount(sheetA)).toBe(1);
+
+      const sheetC = attachStyleSheet(linkC, '.v3-hl-supersede { color: purple; }');
+      linkC.dispatchEvent(new Event('load'));
+      await loadC;
+
+      expect(linkA.isConnected).toBe(false);
+      expect(scopedRuleCount(sheetA)).toBe(0);
+      expect(document.getElementById(LINK_ID)).toBe(linkC);
+      expect(scopedRuleCount(sheetC)).toBe(1);
+
+      loader.dispose();
+      expect(scopedRuleCount(sheetC)).toBe(0);
+      linkC.remove();
+    }
+
+    // Scenario 3: re-entrant waiter abort inside scopeEditorStylesheetLink during handleLoad.
+    {
+      const loader = createPreviewStylesheetLoader(
+        document,
+        () => false,
+        ROOT_SELECTOR
+      );
+      const loadA = loader.loadStylesheet(
+        LINK_ID,
+        URL_V1,
+        new AbortController().signal
+      );
+      const linkA = document.getElementById(LINK_ID) as HTMLLinkElement;
+      const sheetA = attachStyleSheet(linkA, '.v1-hl-abort { color: teal; }');
+      linkA.dispatchEvent(new Event('load'));
+      await loadA;
+
+      const controllerB = new AbortController();
+      const loadB = loader.loadStylesheet(LINK_ID, URL_V2, controllerB.signal);
+      const linkB = document.getElementById(LINK_ID) as HTMLLinkElement;
+      const sheetB = attachStyleSheet(linkB, '.v2-hl-abort { color: gold; }');
+      interceptSheetOnce(linkB, () => {
+        controllerB.abort();
+        return sheetB;
+      });
+      linkB.dispatchEvent(new Event('load'));
+
+      await expectPromiseRejectsPromptly(
+        loadB,
+        'preview-enhancement-resource-stale'
+      );
+      expect(linkB.isConnected).toBe(false);
+      expect(scopedRuleCount(sheetB)).toBe(0);
+      expect(document.getElementById(LINK_ID)).toBe(linkA);
+      expect(scopedRuleCount(sheetA)).toBe(1);
+
+      loader.dispose();
+      expect(scopedRuleCount(sheetA)).toBe(0);
+      linkA.remove();
+    }
+
+    // Scenario 4: previousLoad.scopeLease.dispose() throws during handleLoad rollback.
+    {
+      const loader = createPreviewStylesheetLoader(
+        document,
+        () => false,
+        ROOT_SELECTOR
+      );
+      const loadA = loader.loadStylesheet(
+        LINK_ID,
+        URL_V1,
+        new AbortController().signal
+      );
+      const linkA = document.getElementById(LINK_ID) as HTMLLinkElement;
+      const sheetA = attachStyleSheet(linkA, '.v1-hl-rollback-err { color: navy; }');
+      linkA.dispatchEvent(new Event('load'));
+      await loadA;
+      expect(scopedRuleCount(sheetA)).toBe(1);
+
+      const loadB = loader.loadStylesheet(
+        LINK_ID,
+        URL_V2,
+        new AbortController().signal
+      );
+      const linkB = document.getElementById(LINK_ID) as HTMLLinkElement;
+      const sheetB = attachStyleSheet(linkB, '.v2-hl-rollback-err { color: maroon; }');
+      vi.spyOn(sheetA, 'deleteRule').mockImplementationOnce(() => {
+        throw new Error('delete-failed');
+      });
+      linkB.dispatchEvent(new Event('load'));
+
+      await expectPromiseRejectsPromptly(
+        loadB,
+        'editor-stylesheet-rollback-failed'
+      );
+      expect(linkB.isConnected).toBe(false);
+      expect(scopedRuleCount(sheetB)).toBe(0);
+      expect(linkA.isConnected).toBe(true);
+      expect(document.getElementById(LINK_ID)).toBe(linkA);
+
+      // styleLoads remains consistent and reuses restored linkA without re-appending.
+      const appendSpy = vi.spyOn(document.head, 'appendChild');
+      await expect(
+        loader.loadStylesheet(LINK_ID, URL_V1, new AbortController().signal)
+      ).resolves.toBeUndefined();
+      expect(appendSpy).not.toHaveBeenCalled();
+
+      loader.dispose();
+      linkA.remove();
+    }
+  });
+
+  it('guards loadStylesheet reused link branch against re-entrant dispose, abort, and superseding loadStylesheet without repopulating styleLoads', async () => {
+    const createPreloadedLink = (url: string, cssText: string) => {
+      const link = document.createElement('link');
+      link.id = LINK_ID;
+      link.rel = 'stylesheet';
+      link.href = url;
+      link.dataset.easymdeStylesheetOwner = LINK_ID;
+      link.dataset.easymdeLoadedHref = url;
+      document.head.append(link);
+      const sheet = attachStyleSheet(link, cssText);
+      return { link, sheet };
+    };
+
+    // Scenario 1: re-entrant loader.dispose() inside scopeEditorStylesheetLink during reused link branch.
+    {
+      const loader = createPreviewStylesheetLoader(
+        document,
+        () => false,
+        ROOT_SELECTOR
+      );
+      const { link, sheet } = createPreloadedLink(
+        URL_V2,
+        '.v2-reuse-dispose { color: crimson; }'
+      );
+      interceptSheetOnce(link, () => {
+        loader.dispose();
+        return sheet;
+      });
+
+      await expectPromiseRejectsPromptly(
+        loader.loadStylesheet(LINK_ID, URL_V2, new AbortController().signal),
+        'preview-enhancement-runtime-unavailable'
+      );
+      expect(scopedRuleCount(sheet)).toBe(0);
+
+      // styleLoads must NOT have been repopulated after dispose().
+      await expectPromiseRejectsPromptly(
+        loader.loadStylesheet(LINK_ID, URL_V2, new AbortController().signal),
+        'preview-enhancement-runtime-unavailable'
+      );
+      expect(scopedRuleCount(sheet)).toBe(0);
+      link.remove();
+    }
+
+    // Scenario 2: re-entrant AbortSignal inside scopeEditorStylesheetLink during reused link branch.
+    {
+      const loader = createPreviewStylesheetLoader(
+        document,
+        () => false,
+        ROOT_SELECTOR
+      );
+      const { link, sheet } = createPreloadedLink(
+        URL_V2,
+        '.v2-reuse-abort { color: olive; }'
+      );
+      const controller = new AbortController();
+      interceptSheetOnce(link, () => {
+        controller.abort();
+        return sheet;
+      });
+
+      await expectPromiseRejectsPromptly(
+        loader.loadStylesheet(LINK_ID, URL_V2, controller.signal),
+        'preview-enhancement-resource-stale'
+      );
+      expect(scopedRuleCount(sheet)).toBe(0);
+
+      // Because styleLoads was not populated, a subsequent valid load scopes cleanly and disposes back to 0.
+      await loader.loadStylesheet(LINK_ID, URL_V2, new AbortController().signal);
+      expect(scopedRuleCount(sheet)).toBe(1);
+      loader.dispose();
+      expect(scopedRuleCount(sheet)).toBe(0);
+      link.remove();
+    }
+
+    // Scenario 3: re-entrant superseding loadStylesheet() inside scopeEditorStylesheetLink during reused link branch.
+    {
+      const loader = createPreviewStylesheetLoader(
+        document,
+        () => false,
+        ROOT_SELECTOR
+      );
+      const { link: reusedLink, sheet: reusedSheet } = createPreloadedLink(
+        URL_V2,
+        '.v2-reuse-supersede { color: indigo; }'
+      );
+      const supersedingLoads: Promise<void>[] = [];
+      interceptSheetOnce(reusedLink, () => {
+        supersedingLoads.push(
+          loader.loadStylesheet(LINK_ID, URL_V3, new AbortController().signal)
+        );
+        return reusedSheet;
+      });
+
+      await expectPromiseRejectsPromptly(
+        loader.loadStylesheet(LINK_ID, URL_V2, new AbortController().signal),
+        'preview-enhancement-resource-stale'
+      );
+      expect(scopedRuleCount(reusedSheet)).toBe(0);
+
+      const loadV3 = supersedingLoads[0];
+      if (!loadV3) throw new Error('superseding load missing');
+      const linkV3 = document.getElementById(LINK_ID) as HTMLLinkElement;
+      expect(linkV3).not.toBeNull();
+      expect(linkV3).not.toBe(reusedLink);
+      expect(linkV3.getAttribute('href')).toBe(URL_V3);
+
+      const sheetV3 = attachStyleSheet(linkV3, '.v3-reuse-supersede { color: coral; }');
+      linkV3.dispatchEvent(new Event('load'));
+      await loadV3;
+
+      expect(reusedLink.isConnected).toBe(false);
+      expect(document.getElementById(LINK_ID)).toBe(linkV3);
+      expect(scopedRuleCount(reusedSheet)).toBe(0);
+      expect(scopedRuleCount(sheetV3)).toBe(1);
+
+      loader.dispose();
+      expect(scopedRuleCount(sheetV3)).toBe(0);
+      linkV3.remove();
+    }
+  });
+
+  it('releases orphanLoad scopeLease without refcount leak or CSSOM flicker when orphanLoad.link === current hits loadStylesheet reused link branch', async () => {
+    const loader = createPreviewStylesheetLoader(
+      document,
+      () => false,
+      ROOT_SELECTOR
+    );
+    const loadV1 = loader.loadStylesheet(
+      LINK_ID,
+      URL_V1,
+      new AbortController().signal
+    );
+    const link = document.getElementById(LINK_ID) as HTMLLinkElement;
+    expect(link).not.toBeNull();
+    const sheet = attachStyleSheet(link, '.v1-orphan-same-link { color: brown; }');
+    link.dispatchEvent(new Event('load'));
+    await loadV1;
+    expect(scopedRuleCount(sheet)).toBe(1);
+
+    // Mutate link attributes so styleLoads.get(LINK_ID) holds an orphanLoad with
+    // orphanLoad.link === current and stale cached.url !== URL_V2.
+    link.setAttribute('href', URL_V2);
+    link.dataset.easymdeLoadedHref = URL_V2;
+
+    const deleteRuleSpy = vi.spyOn(sheet, 'deleteRule');
+    await loader.loadStylesheet(LINK_ID, URL_V2, new AbortController().signal);
+
+    // Disposing the old lease after acquiring the new lease keeps refcount >= 1
+    // (no CSSOM flicker / deleteRule during handoff) and drops cleanly back to 1.
+    expect(deleteRuleSpy).not.toHaveBeenCalled();
+    expect(document.getElementById(LINK_ID)).toBe(link);
+    expect(scopedRuleCount(sheet)).toBe(1);
+
+    // Disposing the loader must roll back the stylesheet completely (refcount reaches 0).
+    loader.dispose();
+    expect(scopedRuleCount(sheet)).toBe(0);
+    link.remove();
+  });
+
+  it('preserves current DOM link and avoids wedging slot.activeActivations when previousLoad.scopeLease.dispose() throws in applyCommit', async () => {
+    const loader = createPreviewStylesheetLoader(
+      document,
+      () => false,
+      ROOT_SELECTOR
+    );
+
+    // 1. Load active stylesheet A (URL_V1) cleanly.
+    const loadA = loader.loadStylesheet(
+      LINK_ID,
+      URL_V1,
+      new AbortController().signal
+    );
+    const linkA = document.getElementById(LINK_ID) as HTMLLinkElement;
+    expect(linkA).not.toBeNull();
+    const sheetA = attachStyleSheet(linkA, '.v1-apply-commit { color: red; }');
+    linkA.dispatchEvent(new Event('load'));
+    await loadA;
+    expect(scopedRuleCount(sheetA)).toBe(1);
+
+    // 2. Prepare activation B (URL_V2) so it enters slot.activeActivations.
+    const activationB = loader.prepareStylesheet(
+      LINK_ID,
+      URL_V2,
+      new AbortController().signal,
+      'activation'
+    );
+    const linkB = Array.from(
+      document.querySelectorAll<HTMLLinkElement>(
+        `link[data-easymde-stylesheet-owner="${LINK_ID}"]`
+      )
+    ).find((candidate) => candidate !== linkA);
+    if (!linkB) throw new Error('activation B link missing');
+    const sheetB = attachStyleSheet(linkB, '.v2-apply-commit { color: blue; }');
+    linkB.dispatchEvent(new Event('load'));
+    const readyActivationB = await activationB.promise;
+    expect(scopedRuleCount(sheetB)).toBe(1);
+
+    // 3. Prepare overlapping enhancement C (URL_V3) while activation B is active,
+    // recording activation B in enhancement C's barrier.
+    const enhancementC = loader.prepareStylesheet(
+      LINK_ID,
+      URL_V3,
+      new AbortController().signal,
+      'enhancement'
+    );
+    const linkC = Array.from(
+      document.querySelectorAll<HTMLLinkElement>(
+        `link[data-easymde-stylesheet-owner="${LINK_ID}"]`
+      )
+    ).find((candidate) => candidate !== linkA && candidate !== linkB);
+    if (!linkC) throw new Error('enhancement C link missing');
+    const sheetC = attachStyleSheet(linkC, '.v3-apply-commit { color: green; }');
+    linkC.dispatchEvent(new Event('load'));
+    const readyEnhancementC = await enhancementC.promise;
+    expect(scopedRuleCount(sheetC)).toBe(1);
+
+    // 4. Force previousLoad.scopeLease.dispose() to throw EditorStylesheetScopeError('editor-stylesheet-rollback-failed').
+    vi.spyOn(sheetA, 'deleteRule').mockImplementationOnce(() => {
+      throw new Error('delete-failed');
+    });
+
+    expect(() => readyActivationB.commit()).not.toThrow();
+
+    // Current DOM link A must remain untouched with its original id; failed candidate B must be removed and its lease disposed.
+    expect(linkA.isConnected).toBe(true);
+    expect(linkA.id).toBe(LINK_ID);
+    expect(linkA.getAttribute('href')).toBe(URL_V1);
+    expect(document.getElementById(LINK_ID)).toBe(linkA);
+    expect(linkB.isConnected).toBe(false);
+    expect(scopedRuleCount(sheetB)).toBe(0);
+
+    // 5. Overlapping enhancement C must NOT be wedged by slot.activeActivations and must commit cleanly.
+    readyEnhancementC.commit();
+    expect(linkA.isConnected).toBe(false);
+    expect(document.getElementById(LINK_ID)).toBe(linkC);
+    expect(linkC.id).toBe(LINK_ID);
+    expect(linkC.media).toBe('all');
+    expect(linkC.getAttribute('href')).toBe(URL_V3);
+    expect(scopedRuleCount(sheetC)).toBe(1);
+
+    // 6. A subsequent activation D (URL_V4) also commits cleanly and disposes back to 0.
+    const activationD = loader.prepareStylesheet(
+      LINK_ID,
+      URL_V4,
+      new AbortController().signal,
+      'activation'
+    );
+    const linkD = Array.from(
+      document.querySelectorAll<HTMLLinkElement>(
+        `link[data-easymde-stylesheet-owner="${LINK_ID}"]`
+      )
+    ).find((candidate) => candidate !== linkC);
+    if (!linkD) throw new Error('activation D link missing');
+    const sheetD = attachStyleSheet(linkD, '.v4-apply-commit { color: purple; }');
+    linkD.dispatchEvent(new Event('load'));
+    const readyActivationD = await activationD.promise;
+    readyActivationD.commit();
+
+    expect(linkC.isConnected).toBe(false);
+    expect(scopedRuleCount(sheetC)).toBe(0);
+    expect(document.getElementById(LINK_ID)).toBe(linkD);
+    expect(scopedRuleCount(sheetD)).toBe(1);
+
+    loader.dispose();
+    expect(scopedRuleCount(sheetD)).toBe(0);
+  });
 });

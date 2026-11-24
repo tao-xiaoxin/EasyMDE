@@ -1970,6 +1970,7 @@ test.describe('EasyMDE editor workflows', () => {
     const unexpectedPostCategoryCounts = {};
     let previewPostCount = 0;
     let heartbeatPostCount = 0;
+    let heartbeatMaintenancePostCount = 0;
     let communityEventsPostCount = 0;
     const recordUnexpectedPostCategory = (category) => {
       unexpectedPostCategoryCounts[category] = (unexpectedPostCategoryCounts[category] ?? 0) + 1;
@@ -1989,10 +1990,26 @@ test.describe('EasyMDE editor workflows', () => {
     expect(classifyReadonlyPostRequest({
       url: `${sampleBaseURL}/wp-admin/admin-ajax.php`,
       contentType: 'application/x-www-form-urlencoded',
+      postData: 'action=heartbeat&data%5Bwp-refresh-post-lock%5D%5Bpost_id%5D=42'
+    }, { baseURL: sampleBaseURL })).toEqual({
+      category: 'heartbeat-lock-refresh',
+      classification: 'heartbeat-maintenance'
+    });
+    expect(classifyReadonlyPostRequest({
+      url: `${sampleBaseURL}/wp-admin/admin-ajax.php`,
+      contentType: 'application/x-www-form-urlencoded',
       postData: 'action=get-community-events'
     }, { baseURL: sampleBaseURL })).toEqual({
       category: 'community-events',
       classification: 'community-events-readonly'
+    });
+    expect(classifyReadonlyPostRequest({
+      url: `${sampleBaseURL}/wp-admin/admin-ajax.php`,
+      contentType: 'application/x-www-form-urlencoded',
+      postData: 'action=get-community-events&location=London'
+    }, { baseURL: sampleBaseURL })).toEqual({
+      category: 'other-admin-ajax',
+      classification: 'unexpected-write'
     });
     expect(classifyReadonlyPostRequest({
       url: `${sampleBaseURL}/wp-admin/admin-ajax.php`,
@@ -2109,6 +2126,10 @@ test.describe('EasyMDE editor workflows', () => {
       }
       if ('heartbeat-readonly' === classified.classification) {
         heartbeatPostCount += 1;
+        return;
+      }
+      if ('heartbeat-maintenance' === classified.classification) {
+        heartbeatMaintenancePostCount += 1;
         return;
       }
       recordUnexpectedPostCategory(classified.category);
@@ -2357,7 +2378,7 @@ test.describe('EasyMDE editor workflows', () => {
     }
     expect(
       unexpectedPostCategoryCounts,
-      `non-readonly POSTs observed; preview-count=${previewPostCount}; heartbeat-count=${heartbeatPostCount}; community-events-count=${communityEventsPostCount}`
+      `non-readonly POSTs observed; preview-count=${previewPostCount}; heartbeat-count=${heartbeatPostCount}; heartbeat-maintenance-count=${heartbeatMaintenancePostCount}; community-events-count=${communityEventsPostCount}`
     ).toEqual({});
     browserMonitor.assertClean();
     } finally {

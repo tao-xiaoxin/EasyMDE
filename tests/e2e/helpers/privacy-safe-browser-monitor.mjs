@@ -75,6 +75,23 @@ const READONLY_ADMIN_AJAX_POST_CLASSIFICATIONS = new Set([
   'heartbeat-readonly'
 ]);
 
+const READONLY_COMMUNITY_EVENTS_PARAM_KEYS = new Set([
+  'action',
+  'nonce',
+  '_wpnonce',
+  'timezone'
+]);
+
+const KNOWN_HEARTBEAT_READONLY_DATA_KEYS = new Set([
+  'nonces_expired',
+  'rest_nonce',
+  'wp-auth-check'
+]);
+
+const KNOWN_HEARTBEAT_MAINTENANCE_DATA_KEYS = new Set([
+  'wp-refresh-post-lock'
+]);
+
 function normalizeBasePath(rawPath) {
   if ('string' !== typeof rawPath || '' === rawPath) return '';
   const trimmed = rawPath.replace(/\/+$/u, '');
@@ -124,9 +141,53 @@ function resolveBaseContext(input) {
   }
 }
 
+function hasControlCharacterKey(params) {
+  for (const key of params.keys()) {
+    if (ASCII_CONTROL_CHAR_PATTERN.test(key)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function matchesPhpParamKey(key, targetKey) {
+  const nulTruncated = key.split('\u0000', 1)[0];
+  const trimmed = nulTruncated.trim();
+  const bracketIndex = trimmed.indexOf('[');
+  const baseKey = bracketIndex >= 0 ? trimmed.slice(0, bracketIndex) : trimmed;
+  if (baseKey.trim().replace(/[. ]/gu, '_') === targetKey) {
+    return true;
+  }
+  return bracketIndex >= 0 && trimmed.replace(/[. []/gu, '_') === targetKey;
+}
+
+function hasAmbiguousParamKey(params, targetKey) {
+  for (const key of params.keys()) {
+    if (targetKey === key) continue;
+    if (matchesPhpParamKey(key, targetKey)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasAnyParamKeyMatching(params, targetKey) {
+  for (const key of params.keys()) {
+    if (targetKey === key || matchesPhpParamKey(key, targetKey)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function normalizeRestRouteParam(searchParams) {
+  if (hasControlCharacterKey(searchParams) || hasAmbiguousParamKey(searchParams, 'rest_route')) {
+    return null;
+  }
   const values = searchParams.getAll('rest_route');
-  if (1 !== values.length) return null;
+  if (1 !== values.length || ASCII_CONTROL_CHAR_PATTERN.test(values[0])) {
+    return null;
+  }
   return values[0].trim().replace(/^\/+|\/+$/gu, '');
 }
 
@@ -162,7 +223,8 @@ function isPluginAssetPathname(pathname, basePath = '') {
 function isPreviewRestEndpoint(pathname, searchParams, basePath = '') {
   const expectedPretty = `${basePath}/wp-json/easymde/v1/preview`;
   if (pathname === expectedPretty || pathname === `${expectedPretty}/`) {
-    return true;
+    return !hasControlCharacterKey(searchParams)
+      && !hasAnyParamKeyMatching(searchParams, 'rest_route');
   }
   return isWordPressRestRootPathname(pathname, basePath)
     && 'easymde/v1/preview' === normalizeRestRouteParam(searchParams);
@@ -171,7 +233,8 @@ function isPreviewRestEndpoint(pathname, searchParams, basePath = '') {
 function isEasyMdeRestEndpoint(pathname, searchParams, basePath = '') {
   const expectedPrefix = `${basePath}/wp-json/easymde/v1`;
   if (pathname === expectedPrefix || pathname.startsWith(`${expectedPrefix}/`)) {
-    return true;
+    return !hasControlCharacterKey(searchParams)
+      && !hasAnyParamKeyMatching(searchParams, 'rest_route');
   }
   if (!isWordPressRestRootPathname(pathname, basePath)) return false;
   const route = normalizeRestRouteParam(searchParams);
@@ -183,7 +246,8 @@ function isAnyWordPressRestEndpoint(pathname, searchParams, basePath = '') {
   if (pathname === expectedPrefix || pathname.startsWith(`${expectedPrefix}/`)) {
     return true;
   }
-  return isWordPressRestRootPathname(pathname, basePath) && searchParams.has('rest_route');
+  return isWordPressRestRootPathname(pathname, basePath)
+    && hasAnyParamKeyMatching(searchParams, 'rest_route');
 }
 
 export function classifyBrowserUrlCategory(rawUrl, baseOriginOrUrl = null) {
@@ -305,27 +369,6 @@ function normalizePostRequestInput(requestOrInput) {
   };
 }
 
-function hasControlCharacterKey(params) {
-  for (const key of params.keys()) {
-    if (ASCII_CONTROL_CHAR_PATTERN.test(key)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function hasAmbiguousActionKey(params) {
-  for (const key of params.keys()) {
-    if ('action' === key) continue;
-    const nulTruncated = key.split('\u0000', 1)[0];
-    const trimmedKey = nulTruncated.trim();
-    if ('action' === trimmedKey || trimmedKey.startsWith('action[')) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function isReadonlyAdminAjaxGetRequest(request, baseContext) {
   if (!request || 'object' !== typeof request || baseContext.invalidBase) {
     return false;
@@ -349,7 +392,7 @@ function isReadonlyAdminAjaxGetRequest(request, baseContext) {
   if (!isAdminAjaxPathname(url.pathname, baseContext.basePath)) {
     return false;
   }
-  if (hasControlCharacterKey(url.searchParams) || hasAmbiguousActionKey(url.searchParams)) {
+  if (hasControlCharacterKey(url.searchParams) || hasAmbiguousParamKey(url.searchParams, 'action')) {
     return false;
   }
   const actions = url.searchParams.getAll('action');
@@ -422,12 +465,6 @@ export function classifyReadonlyPostRequest(requestOrInput, options = {}) {
       classification: 'unexpected-write'
     };
   }
-  const knownDataKeys = new Set([
-    'nonces_expired',
-    'rest_nonce',
-    'wp-auth-check',
-    'wp-refresh-post-lock'
-  ]);
   const isRecord = (value) => (
     !!value && 'object' === typeof value && !Array.isArray(value)
   );
@@ -454,8 +491,8 @@ export function classifyReadonlyPostRequest(requestOrInput, options = {}) {
   const allActions = [...queryActions, ...bodyActions];
   if (
     1 !== allActions.length
-    || hasAmbiguousActionKey(queryParams)
-    || hasAmbiguousActionKey(parameters)
+    || hasAmbiguousParamKey(queryParams, 'action')
+    || hasAmbiguousParamKey(parameters, 'action')
   ) {
     return {
       category: 'other-admin-ajax',
@@ -464,9 +501,22 @@ export function classifyReadonlyPostRequest(requestOrInput, options = {}) {
   }
   const action = allActions[0];
   if ('get-community-events' === action) {
+    const hasOnlyReadonlyCommunityEventsParams = (params) => (
+      !hasAmbiguousParamKey(params, 'location')
+      && [...params.keys()].every((key) => READONLY_COMMUNITY_EVENTS_PARAM_KEYS.has(key))
+    );
+    if (
+      hasOnlyReadonlyCommunityEventsParams(queryParams)
+      && hasOnlyReadonlyCommunityEventsParams(parameters)
+    ) {
+      return {
+        category: 'community-events',
+        classification: 'community-events-readonly'
+      };
+    }
     return {
-      category: 'community-events',
-      classification: 'community-events-readonly'
+      category: 'other-admin-ajax',
+      classification: 'unexpected-write'
     };
   }
   if ('heartbeat' !== action) {
@@ -475,6 +525,10 @@ export function classifyReadonlyPostRequest(requestOrInput, options = {}) {
       classification: 'unexpected-write'
     };
   }
+  const isKnownHeartbeatDataKey = (key) => (
+    KNOWN_HEARTBEAT_READONLY_DATA_KEYS.has(key)
+    || KNOWN_HEARTBEAT_MAINTENANCE_DATA_KEYS.has(key)
+  );
   const parameterKeys = [...parameters.keys()];
   const bracketDataKeys = [];
   const dataValues = [];
@@ -489,18 +543,24 @@ export function classifyReadonlyPostRequest(requestOrInput, options = {}) {
     bracketDataKeys.push(end > 5 ? trimmedKey.slice(5, end) : '');
   }
   const bracketDataUnknown = bracketDataKeys.some(
-    (key) => !knownDataKeys.has(key) && key !== 'wp_autosave'
+    (key) => !isKnownHeartbeatDataKey(key) && 'wp_autosave' !== key
   );
   let dataState = bracketDataKeys.length > 0
     ? bracketDataUnknown ? 'unknown' : 'known'
     : 'absent';
+  let hasMaintenanceData = bracketDataKeys.some(
+    (key) => KNOWN_HEARTBEAT_MAINTENANCE_DATA_KEYS.has(key)
+  );
   let wpAutosave = parameterKeys.some((key) => key.includes('wp_autosave'));
   const applyDataRecord = (record) => {
     const parsedKeys = Object.keys(record);
     wpAutosave = wpAutosave || parsedKeys.includes('wp_autosave');
+    hasMaintenanceData = hasMaintenanceData || parsedKeys.some(
+      (key) => KNOWN_HEARTBEAT_MAINTENANCE_DATA_KEYS.has(key)
+    );
     if (wpAutosave) {
       dataState = 'autosave';
-    } else if (parsedKeys.every((key) => knownDataKeys.has(key))) {
+    } else if (parsedKeys.every((key) => isKnownHeartbeatDataKey(key))) {
       dataState = 'known';
     } else {
       dataState = 'unknown';
@@ -518,6 +578,12 @@ export function classifyReadonlyPostRequest(requestOrInput, options = {}) {
     }
   }
   if (['absent', 'known'].includes(dataState) && !wpAutosave) {
+    if (hasMaintenanceData) {
+      return {
+        category: 'heartbeat-lock-refresh',
+        classification: 'heartbeat-maintenance'
+      };
+    }
     return {
       category: 'heartbeat',
       classification: 'heartbeat-readonly'

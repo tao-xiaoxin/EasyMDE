@@ -300,7 +300,95 @@ test('classifyReadonlyPostRequest preserves strict admin-ajax heartbeat and comm
       }),
       { baseURL: BASE_URL }
     ),
+    { category: 'heartbeat-lock-refresh', classification: 'heartbeat-maintenance' }
+  );
+  assert.deepEqual(
+    classifyReadonlyPostRequest(
+      stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+        postData: 'action=heartbeat&data%5Bwp-auth-check%5D=1&data%5Bwp-refresh-post-lock%5D%5Bpost_id%5D=42'
+      }),
+      { baseURL: BASE_URL }
+    ),
+    { category: 'heartbeat-lock-refresh', classification: 'heartbeat-maintenance' }
+  );
+  assert.deepEqual(
+    classifyReadonlyPostRequest(
+      stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+        postData: 'action=heartbeat&data=%7B%22wp-refresh-post-lock%22%3A%7B%22post_id%22%3A42%7D%7D'
+      }),
+      { baseURL: BASE_URL }
+    ),
+    { category: 'heartbeat-lock-refresh', classification: 'heartbeat-maintenance' }
+  );
+  assert.deepEqual(
+    classifyReadonlyPostRequest(
+      stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+        postData: 'action=heartbeat&data%5Bnonces_expired%5D=1&data%5Brest_nonce%5D=1&data%5Bwp-auth-check%5D=1'
+      }),
+      { baseURL: BASE_URL }
+    ),
     { category: 'heartbeat', classification: 'heartbeat-readonly' }
+  );
+  assert.deepEqual(
+    classifyReadonlyPostRequest(
+      stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+        postData: 'action=heartbeat&data=%7B%22nonces_expired%22%3Atrue%2C%22rest_nonce%22%3A%22ok%22%2C%22wp-auth-check%22%3Atrue%7D'
+      }),
+      { baseURL: BASE_URL }
+    ),
+    { category: 'heartbeat', classification: 'heartbeat-readonly' }
+  );
+  assert.deepEqual(
+    classifyReadonlyPostRequest(
+      stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+        postData: 'action=heartbeat&data%5Bwp-refresh-post-lock%5D%5Bpost_id%5D=42&data%5Bwp_autosave%5D%5Bpost_id%5D=42'
+      }),
+      { baseURL: BASE_URL }
+    ),
+    { category: 'other-admin-ajax', classification: 'unexpected-write' }
+  );
+  assert.deepEqual(
+    classifyReadonlyPostRequest(
+      stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+        postData: 'action=heartbeat&data%5Bwp-refresh-post-lock%5D%5Bpost_id%5D=42&data%5Bunknown%5D=1'
+      }),
+      { baseURL: BASE_URL }
+    ),
+    { category: 'other-admin-ajax', classification: 'unexpected-write' }
+  );
+  assert.deepEqual(
+    classifyReadonlyPostRequest(
+      stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=get-community-events&nonce=abc&timezone=UTC'
+      }),
+      { baseURL: BASE_URL }
+    ),
+    { category: 'community-events', classification: 'community-events-readonly' }
+  );
+  assert.deepEqual(
+    classifyReadonlyPostRequest(
+      stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=get-community-events&_wpnonce=abc&timezone=America%2FNew_York'
+      }),
+      { baseURL: BASE_URL }
+    ),
+    { category: 'community-events', classification: 'community-events-readonly' }
   );
 });
 
@@ -1129,7 +1217,7 @@ test('attachPrivacySafeBrowserMonitor only exempts positively-identified readonl
     url: `${BASE_URL}/wp-admin/admin-ajax.php`,
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
-    postData: 'action=heartbeat&data%5Bwp-refresh-post-lock%5D%5Bpost_id%5D=42',
+    postData: 'action=heartbeat&data%5Bwp-auth-check%5D=1&data%5Bnonces_expired%5D=1&data%5Brest_nonce%5D=1',
     resourceType: 'xhr',
     errorText: 'net::ERR_ABORTED'
   }));
@@ -1150,6 +1238,14 @@ test('attachPrivacySafeBrowserMonitor only exempts positively-identified readonl
     errorText: 'net::ERR_ABORTED'
   }));
   readonlyPage.emit('requestfailed', stubRequest({
+    url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    postData: 'action=get-community-events&nonce=abc&timezone=UTC',
+    resourceType: 'xhr',
+    errorText: 'NS_BINDING_ABORTED'
+  }));
+  readonlyPage.emit('requestfailed', stubRequest({
     url: `${BASE_URL}/wp-admin/admin-ajax.php?action=dashboard-widgets&widget=dashboard_primary&pagenow=dashboard`,
     method: 'GET',
     headers: {},
@@ -1167,11 +1263,76 @@ test('attachPrivacySafeBrowserMonitor only exempts positively-identified readonl
   }));
 
   readonlyMonitor.assertClean();
-  assert.equal(readonlyMonitor.counts.abortedAdminAjax, 5);
+  assert.equal(readonlyMonitor.counts.abortedAdminAjax, 6);
   assert.equal(readonlyMonitor.counts.requestFailures, 0);
   readonlyMonitor.dispose();
 
   const rejectedAbortedAdminAjaxCases = [
+    {
+      label: 'aborted (ERR_ABORTED) heartbeat wp-refresh-post-lock maintenance POST',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+        postData: 'action=heartbeat&data%5Bwp-refresh-post-lock%5D%5Bpost_id%5D=42',
+        resourceType: 'xhr',
+        errorText: 'net::ERR_ABORTED'
+      }),
+      expectedCode: 'request-failed:aborted:admin-ajax:xhr',
+      expectedResourceType: 'xhr'
+    },
+    {
+      label: 'aborted (NS_BINDING_ABORTED) heartbeat wp-refresh-post-lock maintenance POST',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+        postData: 'action=heartbeat&data%5Bwp-refresh-post-lock%5D%5Bpost_id%5D=42',
+        resourceType: 'xhr',
+        errorText: 'NS_BINDING_ABORTED'
+      }),
+      expectedCode: 'request-failed:aborted:admin-ajax:xhr',
+      expectedResourceType: 'xhr'
+    },
+    {
+      label: 'aborted (ERR_ABORTED) get-community-events POST with location write param',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=get-community-events&location=London',
+        resourceType: 'xhr',
+        errorText: 'net::ERR_ABORTED'
+      }),
+      expectedCode: 'request-failed:aborted:admin-ajax:xhr',
+      expectedResourceType: 'xhr'
+    },
+    {
+      label: 'aborted (NS_BINDING_ABORTED) get-community-events POST with query location param',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php?location=Paris`,
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=get-community-events',
+        resourceType: 'fetch',
+        errorText: 'NS_BINDING_ABORTED'
+      }),
+      expectedCode: 'request-failed:aborted:admin-ajax:fetch',
+      expectedResourceType: 'fetch'
+    },
+    {
+      label: 'aborted (ERR_ABORTED) get-community-events POST with extra unknown param',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=get-community-events&extra=1',
+        resourceType: 'xhr',
+        errorText: 'net::ERR_ABORTED'
+      }),
+      expectedCode: 'request-failed:aborted:admin-ajax:xhr',
+      expectedResourceType: 'xhr'
+    },
     {
       label: 'aborted (ERR_ABORTED) heartbeat autosave POST',
       request: stubRequest({
@@ -1295,7 +1456,7 @@ test('attachPrivacySafeBrowserMonitor only exempts positively-identified readonl
     assert.deepEqual(snap.failures, [expectedCode], label);
     assert.doesNotMatch(
       JSON.stringify(snap),
-      /secret-draft-body|wp_autosave|edit-post|save-post|wp-remove-post-lock/u,
+      /secret-draft-body|wp_autosave|wp-refresh-post-lock|edit-post|save-post|wp-remove-post-lock|London|Paris/u,
       label
     );
     assert.throws(
@@ -1303,11 +1464,217 @@ test('attachPrivacySafeBrowserMonitor only exempts positively-identified readonl
       (error) => {
         assert.ok(error instanceof Error);
         assert.match(error.message, new RegExp(expectedCode, 'u'));
-        assert.doesNotMatch(error.message, /secret-draft-body|wp_autosave|edit-post|save-post/u);
+        assert.doesNotMatch(
+          error.message,
+          /secret-draft-body|wp_autosave|wp-refresh-post-lock|edit-post|save-post|London|Paris/u
+        );
         return true;
       },
       label
     );
     monitor.dispose();
   }
+});
+
+test('classifyReadonlyPostRequest rejects write-capable and extra-parameter get-community-events POSTs', () => {
+  const rejectedCommunityEventsCases = [
+    {
+      label: 'non-empty location in POST body',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=get-community-events&location=London'
+      })
+    },
+    {
+      label: 'empty location in POST body',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=get-community-events&location='
+      })
+    },
+    {
+      label: 'location in query string with get-community-events POST body',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php?location=Paris`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=get-community-events'
+      })
+    },
+    {
+      label: 'bracketed location key in POST body',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=get-community-events&location%5Bdescription%5D=Paris'
+      })
+    },
+    {
+      label: 'leading-space location key in POST body',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=get-community-events&%20location=London'
+      })
+    },
+    {
+      label: 'NUL-suffixed location key in POST body',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=get-community-events&location%00x=London'
+      })
+    },
+    {
+      label: 'unknown extra parameter in POST body',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=get-community-events&extra=1'
+      })
+    },
+    {
+      label: 'nearby_events parameter in POST body',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=get-community-events&nearby_events=1'
+      })
+    },
+    {
+      label: 'unknown extra parameter in query string',
+      request: stubRequest({
+        url: `${BASE_URL}/wp-admin/admin-ajax.php?extra=1`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        postData: 'action=get-community-events'
+      })
+    }
+  ];
+
+  for (const { label, request } of rejectedCommunityEventsCases) {
+    assert.deepEqual(
+      classifyReadonlyPostRequest(request, { baseURL: BASE_URL }),
+      { category: 'other-admin-ajax', classification: 'unexpected-write' },
+      label
+    );
+  }
+});
+
+test('rest_route PHP key spoofing fails closed across URL classification, readonly POST classification, and aborted request monitoring', () => {
+  const spoofedRestRouteUrls = [
+    {
+      label: 'NUL-truncated duplicate rest_route key',
+      url: `${BASE_URL}/?rest_route=/easymde/v1/preview&rest_route%00x=/wp/v2/posts`
+    },
+    {
+      label: 'leading-space duplicate rest_route key',
+      url: `${BASE_URL}/?rest_route=/easymde/v1/preview&%20rest_route=/wp/v2/posts`
+    },
+    {
+      label: 'leading-tab duplicate rest_route key',
+      url: `${BASE_URL}/?rest_route=/easymde/v1/preview&%09rest_route=/wp/v2/posts`
+    },
+    {
+      label: 'bracket-array rest_route key',
+      url: `${BASE_URL}/?rest_route=/easymde/v1/preview&rest_route[0]=/wp/v2/posts`
+    },
+    {
+      label: 'dot-normalized rest.route key',
+      url: `${BASE_URL}/?rest_route=/easymde/v1/preview&rest.route=/wp/v2/posts`
+    },
+    {
+      label: 'plus/space-normalized rest+route key',
+      url: `${BASE_URL}/?rest_route=/easymde/v1/preview&rest+route=/wp/v2/posts`
+    },
+    {
+      label: 'unclosed-bracket rest[route key',
+      url: `${BASE_URL}/?rest_route=/easymde/v1/preview&rest[route=/wp/v2/posts`
+    },
+    {
+      label: 'trailing-space rest_route key',
+      url: `${BASE_URL}/?rest_route=/easymde/v1/preview&rest_route%20=/wp/v2/posts`
+    },
+    {
+      label: 'index.php dot-normalized rest.route key',
+      url: `${BASE_URL}/index.php?rest_route=/easymde/v1/preview&rest.route=/wp/v2/posts`
+    },
+    {
+      label: 'standalone dot-normalized rest.route key without literal rest_route',
+      url: `${BASE_URL}/?rest.route=/wp/v2/posts`
+    },
+    {
+      label: 'pretty preview permalink overridden by rest_route query param',
+      url: `${BASE_URL}/wp-json/easymde/v1/preview?rest_route=/wp/v2/posts`
+    },
+    {
+      label: 'easymde api route spoofed with rest.route key',
+      url: `${BASE_URL}/?rest_route=/easymde/v1/settings&rest.route=/wp/v2/posts`
+    }
+  ];
+
+  for (const { label, url } of spoofedRestRouteUrls) {
+    assert.equal(classifyBrowserUrlCategory(url, BASE_URL), 'wp-rest', label);
+    assert.deepEqual(
+      classifyReadonlyPostRequest(
+        stubRequest({ url, postData: '{"markdown":"alpha"}' }),
+        { baseURL: BASE_URL }
+      ),
+      { category: 'other-rest', classification: 'unexpected-write' },
+      label
+    );
+
+    for (const errorText of ['net::ERR_ABORTED', 'NS_BINDING_ABORTED']) {
+      const page = createStubPage();
+      const monitor = attachPrivacySafeBrowserMonitor(page, { baseURL: BASE_URL });
+
+      page.emit('requestfailed', stubRequest({
+        url,
+        method: 'POST',
+        postData: '{"markdown":"alpha"}',
+        resourceType: 'fetch',
+        errorText
+      }));
+
+      const snap = monitor.snapshot();
+      assert.equal(snap.counts.cancelledPreview, 0, `${label} (${errorText})`);
+      assert.equal(snap.counts.requestFailures, 1, `${label} (${errorText})`);
+      assert.deepEqual(
+        snap.requestFailures,
+        [{ category: 'wp-rest', resourceType: 'fetch', failureClass: 'aborted' }],
+        `${label} (${errorText})`
+      );
+      assert.deepEqual(
+        snap.failures,
+        ['request-failed:aborted:wp-rest:fetch'],
+        `${label} (${errorText})`
+      );
+      assert.throws(() => monitor.assertClean(), /request-failed:aborted:wp-rest:fetch/u);
+      monitor.dispose();
+    }
+  }
+
+  // Legitimate plain-permalink preview with benign extra query parameter stays accepted.
+  const benignPreviewUrl = `${BASE_URL}/?rest_route=/easymde/v1/preview&_locale=user`;
+  assert.equal(classifyBrowserUrlCategory(benignPreviewUrl, BASE_URL), 'preview-rest');
+  assert.deepEqual(
+    classifyReadonlyPostRequest(
+      stubRequest({ url: benignPreviewUrl, postData: '{"markdown":"alpha"}' }),
+      { baseURL: BASE_URL }
+    ),
+    { category: 'preview-rest', classification: 'preview-readonly' }
+  );
+  const benignPage = createStubPage();
+  const benignMonitor = attachPrivacySafeBrowserMonitor(benignPage, { baseURL: BASE_URL });
+  benignPage.emit('requestfailed', stubRequest({
+    url: benignPreviewUrl,
+    method: 'POST',
+    postData: '{"markdown":"alpha"}',
+    resourceType: 'fetch',
+    errorText: 'net::ERR_ABORTED'
+  }));
+  benignMonitor.assertClean();
+  assert.equal(benignMonitor.counts.cancelledPreview, 1);
+  assert.equal(benignMonitor.counts.requestFailures, 0);
+  benignMonitor.dispose();
 });

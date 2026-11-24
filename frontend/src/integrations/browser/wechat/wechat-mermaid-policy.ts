@@ -149,11 +149,8 @@ export const MERMAID_RADIUS_PROPERTIES = [
 ] as const;
 
 const ZERO_RADIUS_KEYWORDS = new Set([
-  'inherit',
   'initial',
   'none',
-  'revert',
-  'revert-layer',
   'unset',
 ]);
 

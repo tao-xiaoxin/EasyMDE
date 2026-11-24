@@ -155,6 +155,25 @@ describe('wechat-mermaid-background', () => {
       expect(isOpaqueBackgroundColor('color(display-p3 1 0 0)')).toBe(true);
     });
 
+    it('rejects unspaced var() and env() substitution functions across slash and non-slash color syntax', () => {
+      const dynamicColors = [
+        'rgb(100% 0% 0%var(--alpha))',
+        'rgb(100%, 0%, 0%var(--alpha))',
+        'rgb(calc(255) 0 calc(0)var(--alpha))',
+        'color(srgb 100%var(--rest))',
+        'rgb(255 0 env(--tail))',
+        'rgb(255, 0, env(--tail))',
+        'rgb(100% 0% 0%var(--alpha) / 0.5)',
+        'rgb(100% 0% 0% / var(--alpha))',
+        'rgb(100% 0% 0% / env(--alpha))',
+        'rgb(100% 0% 0%env(--alpha) / 1)',
+      ];
+      for (const color of dynamicColors) {
+        expect(parseCssColorAlpha(color)).toBeNull();
+        expect(isOpaqueBackgroundColor(color)).toBe(false);
+      }
+    });
+
     it('distinguishes visible vs opaque colors and safe vs blocked images', () => {
       expect(hasVisibleBackgroundColor('rgba(10, 20, 30, 0.5)')).toBe(true);
       expect(isOpaqueBackgroundColor('rgba(10, 20, 30, 0.5)')).toBe(false);
@@ -211,6 +230,23 @@ describe('wechat-mermaid-background', () => {
       ).toBe(true);
       expect(hasNonZeroBorderRadius(styleDeclaration({ 'border-radius': '0px / 0px' }))).toBe(false);
       expect(hasNonZeroBorderRadius(styleDeclaration({ 'border-radius': '50%' }))).toBe(true);
+    });
+
+    it('fails closed on cascade-dependent border-radius keywords while treating static zero keywords as zero', () => {
+      for (const keyword of ['inherit', 'revert', 'revert-layer']) {
+        expect(isZeroMermaidRadiusValue(keyword)).toBe(false);
+        expect(hasNonZeroBorderRadius(styleDeclaration({ 'border-radius': keyword }))).toBe(true);
+        expect(hasNonZeroBorderRadius(styleDeclaration({ 'border-top-left-radius': keyword }))).toBe(true);
+        expect(resolveMermaidBorderRadii(styleDeclaration({ 'border-radius': keyword }), undefined, 100, 60)).toBeNull();
+        expect(
+          resolveMermaidBorderRadii(styleDeclaration({ 'border-top-left-radius': keyword }), undefined, 100, 60),
+        ).toBeNull();
+      }
+
+      for (const keyword of ['initial', 'none', 'unset', '0px']) {
+        expect(isZeroMermaidRadiusValue(keyword)).toBe(true);
+        expect(hasNonZeroBorderRadius(styleDeclaration({ 'border-radius': keyword }))).toBe(false);
+      }
     });
   });
 
@@ -303,6 +339,26 @@ describe('wechat-mermaid-background', () => {
       );
 
       expect(resolveMermaidInheritedBackground(source, reader)).toBeNull();
+    });
+
+    it('preserves ancestor backdrop behind a non-direct opaque root with border-radius: inherit', () => {
+      const canvas = document.createElement('div');
+      canvas.className = 'easymde-immersive-preview-canvas';
+      const source = document.createElement('div');
+      source.className = 'easymde-mermaid';
+      source.setAttribute('style', 'border-radius: inherit; background-color: #ffffff');
+      canvas.append(source);
+      document.body.append(canvas);
+
+      const reader = makeReader(
+        new Map([
+          [canvas, { 'background-color': 'rgb(30, 30, 46)', 'background-image': 'none' }],
+        ]),
+      );
+
+      expect(resolveMermaidInheritedBackground(source, reader)).toEqual({
+        color: 'rgb(30, 30, 46)',
+      });
     });
 
     it('composites translucent intermediate ancestors over the opaque backing canvas', () => {

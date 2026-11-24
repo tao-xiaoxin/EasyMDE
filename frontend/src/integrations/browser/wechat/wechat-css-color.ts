@@ -161,6 +161,9 @@ export function parseCssColorAlpha(value: string): number | null {
     if (!body) return null;
     const inspected = inspectColorFunctionBody(body);
     if (!inspected) return null;
+    if (/(?:^|[^a-z0-9_-])(?:var|env)\(/u.test(body)) {
+      return null;
+    }
     if (inspected.slashIndex >= 0) {
       if (inspected.hasTopLevelComma) return null;
       const channelPart = body.slice(0, inspected.slashIndex).trim();
@@ -168,7 +171,7 @@ export function parseCssColorAlpha(value: string): number | null {
       if (!channelPart || !alphaToken) return null;
       return parseAlphaToken(alphaToken, true);
     }
-    if (/^from(?:[\s#]|$)/u.test(body) || /(?:^|[\s,(])var\(/u.test(body)) {
+    if (/^from(?:[\s#]|$)/u.test(body)) {
       return null;
     }
     if (inspected.hasTopLevelComma) {

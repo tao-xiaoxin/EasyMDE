@@ -3,7 +3,18 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  compositeSourceOver as directCompositeSourceOver,
+  formatCompositedColor as directFormatCompositedColor,
+  hasVisibleBackgroundColor as directHasVisibleBackgroundColor,
+  isOpaqueBackgroundColor as directIsOpaqueBackgroundColor,
+  parseCssColorAlpha as directParseCssColorAlpha,
+  parseCssOpacity as directParseCssOpacity,
+  parseCssSolidColor as directParseCssSolidColor,
+} from './wechat-css-color';
+import {
   applyMermaidBackground,
+  compositeSourceOver,
+  formatCompositedColor,
   hasNonZeroBorderRadius,
   hasVisibleBackgroundColor,
   inlineConnectedMermaidRootPaint,
@@ -16,6 +27,13 @@ import {
   resolveMermaidInheritedBackground,
   stripMermaidBorderRadius,
 } from './wechat-mermaid-background';
+import {
+  isZeroMermaidRadiusValue,
+  mermaidCssPixelValue,
+  parseMermaidRadiusAxis,
+  parseMermaidRadiusPair,
+  parseMermaidRadiusShorthand,
+} from './wechat-mermaid-policy';
 
 function styleDeclaration(values: Readonly<Record<string, string>>): CSSStyleDeclaration {
   return {
@@ -1859,6 +1877,58 @@ describe('wechat-mermaid-background', () => {
       expect(
         resolveMermaidBorderRadii(styleDeclaration({ 'border-radius': 'calc(10px + 2%)' }), undefined, 100, 60),
       ).toBeNull();
+    });
+  });
+
+  describe('shared wechat-css-color and wechat-mermaid-policy helpers', () => {
+    it('re-exports CSS color primitives identically from wechat-css-color and wechat-mermaid-background', () => {
+      expect(parseCssColorAlpha).toBe(directParseCssColorAlpha);
+      expect(parseCssSolidColor).toBe(directParseCssSolidColor);
+      expect(parseCssOpacity).toBe(directParseCssOpacity);
+      expect(compositeSourceOver).toBe(directCompositeSourceOver);
+      expect(formatCompositedColor).toBe(directFormatCompositedColor);
+      expect(hasVisibleBackgroundColor).toBe(directHasVisibleBackgroundColor);
+      expect(isOpaqueBackgroundColor).toBe(directIsOpaqueBackgroundColor);
+
+      const composited = compositeSourceOver(
+        { a: 0.5, b: 0, g: 0, r: 255 },
+        { a: 1, b: 255, g: 255, r: 255 },
+      );
+      expect(formatCompositedColor(composited)).toBe('rgb(255, 128, 128)');
+    });
+
+    it('unifies px-only and px-or-percent CSS border-radius parsing in wechat-mermaid-policy', () => {
+      expect(mermaidCssPixelValue('0')).toBe(0);
+      expect(mermaidCssPixelValue('12.5px')).toBe(12.5);
+      expect(mermaidCssPixelValue('50%')).toBeNull();
+      expect(isZeroMermaidRadiusValue('0px / 0%')).toBe(true);
+      expect(isZeroMermaidRadiusValue('calc(10% + 4px)')).toBe(false);
+
+      expect(parseMermaidRadiusAxis('4px 8px')).toEqual([4, 8]);
+      expect(parseMermaidRadiusAxis('10% 20%', 200)).toEqual([20, 40]);
+      expect(parseMermaidRadiusAxis('10%')).toBeNull();
+
+      expect(parseMermaidRadiusPair('12px')).toEqual({ horizontal: 12, vertical: 12 });
+      expect(parseMermaidRadiusPair('10% 25%', { height: 80, kind: 'px-or-percent', width: 200 })).toEqual({
+        horizontal: 20,
+        vertical: 20,
+      });
+      expect(parseMermaidRadiusPair('12px / 8px')).toBeNull();
+
+      expect(parseMermaidRadiusShorthand('10px 20px / 5px 15px')).toEqual([
+        { horizontal: 10, vertical: 5 },
+        { horizontal: 20, vertical: 15 },
+        { horizontal: 10, vertical: 5 },
+        { horizontal: 20, vertical: 15 },
+      ]);
+      expect(parseMermaidRadiusShorthand('50%', { height: 50, kind: 'px-or-percent', width: 100 })).toEqual([
+        { horizontal: 50, vertical: 25 },
+        { horizontal: 50, vertical: 25 },
+        { horizontal: 50, vertical: 25 },
+        { horizontal: 50, vertical: 25 },
+      ]);
+      expect(parseMermaidRadiusShorthand('50%')).toBeNull();
+      expect(parseMermaidRadiusShorthand('calc(10% + 4px)', { height: 60, kind: 'px-or-percent', width: 100 })).toBeNull();
     });
   });
 });

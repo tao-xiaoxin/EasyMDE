@@ -1,6 +1,5 @@
 import type { WechatPngEncodingPort } from '../../../contracts/ports/wechat-png-encoding-port';
 import {
-  type WechatVisualMermaidBackground,
   type WechatVisualRasterizationRequest,
   type WechatVisualRasterizationResult,
   type WechatVisualRasterizationYield,
@@ -24,27 +23,20 @@ import {
   sizeCaptureRoot,
 } from './wechat-math-capture-geometry';
 import {
-  type MermaidCornerRadii,
   applyMermaidBackground,
-  hasBackgroundImage,
-  hasNonZeroBorderRadius,
-  hasVisibleBackgroundColor,
   inlineConnectedMermaidRootPaint,
-  isOpaqueBackgroundColor,
-  isSafeBackgroundImage,
-  parseCssOpacity,
-  parseCssSolidColor,
-  resolveMermaidBorderRadii,
-  resolveMermaidInheritedBackground,
-  stripMermaidBorderRadius,
 } from './wechat-mermaid-background';
+import {
+  buildDirectSvgWithBackdrop,
+  inspectDirectSvgCapture,
+  normalizeDirectSvgForeignObjectClone,
+  resolveAppliedMermaidBackground,
+} from './wechat-mermaid-direct-svg-backdrop';
 import {
   assertIntrinsicMermaidCaptureRequest,
   assertResponsiveMermaidCaptureRequest,
   mermaidLayoutMagnification,
-  mermaidViewBox,
   normalizeIntrinsicMermaidCaptureRoot,
-  normalizeResponsiveMermaidCaptureSvg,
   validateMermaidSource,
 } from './wechat-rasterizer-mermaid';
 import {
@@ -62,12 +54,6 @@ const SVG_NAMESPACE = w3cNamespace('2000/svg');
 const XHTML_NAMESPACE = w3cNamespace('1999/xhtml');
 const MIN_DIMENSION = 1;
 const MAX_DIMENSION = 4096;
-const NON_RENDERED_SVG_DIRECT_CHILDREN = new Set([
-  'defs',
-  'desc',
-  'metadata',
-  'title',
-]);
 
 const SVG_VISUAL_STYLE_PROPERTIES = [
   'color',
@@ -203,138 +189,6 @@ function inlineComputedStyles(
   }
 }
 
-type OwnDirectSvgPaint = Readonly<{
-  color: string;
-  hasImage: boolean;
-  safeImage: string;
-  visibleColor: string;
-}>;
-
-function resolveAppliedMermaidBackground(
-  source: Element,
-  document: Document,
-  inheritedBackground?: WechatVisualMermaidBackground | null,
-): WechatVisualMermaidBackground | null {
-  if (undefined !== inheritedBackground) {
-    return inheritedBackground;
-  }
-  return resolveMermaidInheritedBackground(
-    source,
-    (element) => computedStyle(document, element),
-  );
-}
-
-function readOwnDirectSvgPaint(
-  source: Element,
-  clone: SVGSVGElement,
-  document: Document,
-): OwnDirectSvgPaint {
-  let rawColor = '';
-  let rawImage = '';
-  if (source.isConnected) {
-    const style = computedStyle(document, source);
-    rawColor = style.getPropertyValue('background-color').trim() || style.backgroundColor?.trim() || '';
-    rawImage = style.getPropertyValue('background-image').trim() || style.backgroundImage?.trim() || '';
-  } else {
-    rawColor = clone.style.getPropertyValue('background-color').trim();
-    rawImage = clone.style.getPropertyValue('background-image').trim();
-  }
-  return {
-    color: rawColor,
-    hasImage: hasBackgroundImage(rawImage),
-    safeImage: isSafeBackgroundImage(rawImage) ? rawImage : '',
-    visibleColor: hasVisibleBackgroundColor(rawColor) ? rawColor : '',
-  };
-}
-
-function formatSvgCoord(value: number): string {
-  const rounded = Math.round(value * 10_000) / 10_000;
-  return Object.is(rounded, -0) ? '0' : String(rounded);
-}
-
-function createDirectSvgBackgroundShape(
-  document: Document,
-  viewBox: Readonly<{ height: number; minX: number; minY: number; width: number }>,
-  fill: string,
-  radii: MermaidCornerRadii | null,
-  cssWidth: number,
-  cssHeight: number,
-): Element {
-  let shape: Element;
-  if (radii) {
-    const sx = viewBox.width / cssWidth;
-    const sy = viewBox.height / cssHeight;
-    const scaled = radii.map(([rx, ry]) => [rx * sx, ry * sy] as const) as unknown as MermaidCornerRadii;
-    const lim = (side: number, sum: number): number => (sum > 0 ? side / sum : Number.POSITIVE_INFINITY);
-    const f = Math.min(
-      1,
-      lim(viewBox.width, scaled[0][0] + scaled[1][0]),
-      lim(viewBox.width, scaled[3][0] + scaled[2][0]),
-      lim(viewBox.height, scaled[0][1] + scaled[3][1]),
-      lim(viewBox.height, scaled[1][1] + scaled[2][1]),
-    );
-    const [[tlX, tlY], [trX, trY], [brX, brY], [blX, blY]] = scaled.map(
-      ([rx, ry]) => [rx * f, ry * f] as const,
-    ) as unknown as MermaidCornerRadii;
-    const { minX: x0, minY: y0, width, height } = viewBox;
-    const x1 = x0 + width;
-    const y1 = y0 + height;
-    const n = formatSvgCoord;
-    const arc = (rx: number, ry: number, x: number, y: number): string =>
-      rx > 0 && ry > 0 ? ` A ${n(rx)} ${n(ry)} 0 0 1 ${n(x)} ${n(y)}` : '';
-    const d = `M ${n(x0 + tlX)} ${n(y0)} H ${n(x1 - trX)}${arc(trX, trY, x1, y0 + trY)}`
-      + ` V ${n(y1 - brY)}${arc(brX, brY, x1 - brX, y1)}`
-      + ` H ${n(x0 + blX)}${arc(blX, blY, x0, y1 - blY)}`
-      + ` V ${n(y0 + tlY)}${arc(tlX, tlY, x0 + tlX, y0)} Z`;
-    shape = document.createElementNS(SVG_NAMESPACE, 'path');
-    shape.setAttribute('d', d);
-  } else {
-    shape = document.createElementNS(SVG_NAMESPACE, 'rect');
-    shape.setAttribute('x', String(viewBox.minX));
-    shape.setAttribute('y', String(viewBox.minY));
-    shape.setAttribute('width', String(viewBox.width));
-    shape.setAttribute('height', String(viewBox.height));
-  }
-  shape.setAttribute('fill', fill);
-  shape.setAttribute('fill-opacity', '1');
-  shape.setAttribute('stroke', 'none');
-  return shape;
-}
-
-function directSvgBackgroundMatchesOwnOpaquePaint(
-  ownPaint: OwnDirectSvgPaint,
-  applied: WechatVisualMermaidBackground | null | undefined,
-): boolean {
-  if (!applied || !isOpaqueBackgroundColor(ownPaint.color)) return false;
-  const appliedSafeImage =
-    'string' === typeof applied.image && isSafeBackgroundImage(applied.image)
-      ? applied.image.trim()
-      : '';
-  if (appliedSafeImage !== ownPaint.safeImage) return false;
-  const appliedColor = applied.color?.trim() ?? '';
-  if (!appliedColor) return false;
-  const parsedOwn = parseCssSolidColor(ownPaint.color);
-  const parsedApplied = parseCssSolidColor(appliedColor);
-  if (parsedOwn && parsedApplied) {
-    return (
-      Math.round(parsedOwn.r) === Math.round(parsedApplied.r)
-      && Math.round(parsedOwn.g) === Math.round(parsedApplied.g)
-      && Math.round(parsedOwn.b) === Math.round(parsedApplied.b)
-      && parsedOwn.a >= 1 - 1e-6
-      && parsedApplied.a >= 1 - 1e-6
-    );
-  }
-  return ownPaint.color.trim().toLowerCase() === appliedColor.toLowerCase();
-}
-
-function readDirectSvgOpacity(svg: SVGSVGElement): number {
-  const inlineOpacity = parseCssOpacity(svg.style.getPropertyValue('opacity'));
-  if (inlineOpacity !== null) return inlineOpacity;
-  const attributeOpacity = parseCssOpacity(svg.getAttribute('opacity') ?? '');
-  if (attributeOpacity !== null) return attributeOpacity;
-  return 1;
-}
-
 export type BrowserWechatVisualRasterizerRuntime = Readonly<{
   approvedAssetBaseUrl: string;
   approvedKaTeXCssUrl: string;
@@ -460,127 +314,31 @@ async function serializedSvg(
     height: geometry.height * layoutMagnification,
     width: geometry.width * layoutMagnification,
   };
+  const readComputedStyle = (element: Element): CSSStyleDeclaration =>
+    computedStyle(document, element);
   const source = request.kind === 'mermaid'
-    ? request.source.matches('svg') ? request.source : null
+    ? request.source.matches('svg') ? (request.source as SVGSVGElement) : null
+    : null;
+  const directSvgInspection = source
+    ? inspectDirectSvgCapture(source, readComputedStyle, geometry.width, geometry.height)
     : null;
   let svg: SVGSVGElement;
-  if (source) {
-    svg = source.cloneNode(true) as SVGSVGElement;
-    // Capture the direct <svg>'s own paint and corner radii before root paint /
-    // background normalization strips inline background-* and border-radius*.
-    const ownDirectSvgPaint = readOwnDirectSvgPaint(source, svg, document);
-    const ownDirectSvgStyle = source.isConnected ? computedStyle(document, source) : svg.style;
-    const ownHasNonZeroRadius = hasNonZeroBorderRadius(ownDirectSvgStyle, source);
-    const ownDirectSvgRadii = ownHasNonZeroRadius
-      ? resolveMermaidBorderRadii(ownDirectSvgStyle, source, geometry.width, geometry.height)
-      : null;
-    inlineComputedStyles(source, svg, document);
-    inlineConnectedMermaidRootPaint(
-      source,
-      svg,
-      (element) => computedStyle(document, element),
-      { includeBackground: false },
-    );
-    const directSvgOpacity = readDirectSvgOpacity(svg);
-    const hoistOpacity = directSvgOpacity < 1;
-    const isolateRoundedTranslucentFill =
-      !hoistOpacity
-      && ownHasNonZeroRadius
-      && Boolean(ownDirectSvgPaint.visibleColor)
-      && !isOpaqueBackgroundColor(ownDirectSvgPaint.color)
-      && !ownDirectSvgPaint.hasImage;
-    const resolvedBackground = resolveAppliedMermaidBackground(
-      request.source,
+  if (source && directSvgInspection && !directSvgInspection.needsForeignObject) {
+    svg = buildDirectSvgWithBackdrop({
+      cssHeight: geometry.height,
+      cssWidth: geometry.width,
       document,
-      'mermaid' === request.kind ? request.inheritedBackground : undefined,
-    );
-    const hasAppliedBackground = applyMermaidBackground(svg, resolvedBackground);
-    const restoreUnparsedRoundedOwnFill =
-      isolateRoundedTranslucentFill && !ownDirectSvgRadii && !hasAppliedBackground;
-    if (restoreUnparsedRoundedOwnFill) {
-      svg.style.setProperty('background-color', ownDirectSvgPaint.visibleColor);
-    }
-    const emitOwnBackgroundShape =
-      (hoistOpacity && directSvgOpacity > 0 && Boolean(ownDirectSvgPaint.visibleColor))
-      || (isolateRoundedTranslucentFill && !restoreUnparsedRoundedOwnFill);
-    if (
-      emitOwnBackgroundShape
-      || (
-        hasAppliedBackground
-        && (
-          hoistOpacity
-          || !directSvgBackgroundMatchesOwnOpaquePaint(ownDirectSvgPaint, resolvedBackground)
-        )
-      )
-    ) {
-      stripMermaidBorderRadius(svg);
-    }
-    if (!svg.getAttribute('xmlns')) svg.setAttribute('xmlns', SVG_NAMESPACE);
-    svg.setAttribute('width', String(dimensionsValue.width));
-    svg.setAttribute('height', String(dimensionsValue.height));
-    if ('responsive-viewport' === request.mermaidCapture) {
-      normalizeResponsiveMermaidCaptureSvg(svg);
-    }
-    const viewBox = mermaidViewBox(svg);
-    if (!viewBox) {
-      throw new WechatVisualRasterizationError('wechat-png-image-failed');
-    }
-    if (hoistOpacity) {
-      svg.style.removeProperty('opacity');
-      svg.removeAttribute('opacity');
-      if (svg.hasAttribute('style') && !svg.getAttribute('style')?.trim()) {
-        svg.removeAttribute('style');
-      }
-    }
-    const ownBackgroundShape = emitOwnBackgroundShape
-      ? createDirectSvgBackgroundShape(
-          document,
-          viewBox,
-          ownDirectSvgPaint.visibleColor,
-          ownDirectSvgRadii,
-          geometry.width,
-          geometry.height,
-        )
-      : null;
-    if (layoutMagnification !== 1 || hoistOpacity) {
-      const scene = document.createElementNS(SVG_NAMESPACE, 'g');
-      if (layoutMagnification !== 1) {
-        const translateX = viewBox.minX * (1 - layoutMagnification);
-        const translateY = viewBox.minY * (1 - layoutMagnification);
-        scene.setAttribute(
-          'transform',
-          `translate(${translateX} ${translateY}) scale(${layoutMagnification})`,
-        );
-        svg.setAttribute(
-          'viewBox',
-          `${viewBox.minX} ${viewBox.minY} ${viewBox.width * layoutMagnification} ${viewBox.height * layoutMagnification}`,
-        );
-      }
-      if (hoistOpacity) {
-        scene.setAttribute('opacity', String(directSvgOpacity));
-      }
-      if (ownBackgroundShape) {
-        scene.appendChild(ownBackgroundShape);
-      }
-      for (const child of Array.from(svg.childNodes)) {
-        if (
-          child.nodeType === Node.ELEMENT_NODE
-          && NON_RENDERED_SVG_DIRECT_CHILDREN.has((child as Element).localName.toLowerCase())
-        ) {
-          continue;
-        }
-        scene.appendChild(child);
-      }
-      svg.appendChild(scene);
-    } else if (ownBackgroundShape) {
-      const firstRenderedChild = Array.from(svg.childNodes).find((child) => {
-        if (child.nodeType === Node.ELEMENT_NODE) {
-          return !NON_RENDERED_SVG_DIRECT_CHILDREN.has((child as Element).localName.toLowerCase());
-        }
-        return child.nodeType === Node.TEXT_NODE && Boolean(child.textContent?.trim());
-      });
-      svg.insertBefore(ownBackgroundShape, firstRenderedChild ?? null);
-    }
+      inheritedBackground: 'mermaid' === request.kind ? request.inheritedBackground : undefined,
+      inlineSvgStyles: (originalSvg, clonedSvg) =>
+        inlineComputedStyles(originalSvg, clonedSvg, document),
+      inspection: directSvgInspection,
+      layoutMagnification,
+      mermaidCapture: request.mermaidCapture,
+      outputHeight: dimensionsValue.height,
+      outputWidth: dimensionsValue.width,
+      readComputedStyle,
+      source,
+    });
   } else {
     svg = document.createElementNS(SVG_NAMESPACE, 'svg') as SVGSVGElement;
     svg.setAttribute('xmlns', SVG_NAMESPACE);
@@ -623,17 +381,24 @@ async function serializedSvg(
       inlineConnectedMermaidRootPaint(
         request.source,
         rootClone,
-        (element) => computedStyle(document, element),
+        readComputedStyle,
       );
       applyMermaidBackground(
         svg,
-        resolveAppliedMermaidBackground(request.source, document, request.inheritedBackground),
+        resolveAppliedMermaidBackground(
+          request.source,
+          readComputedStyle,
+          request.inheritedBackground,
+        ),
       );
     }
     removeMathMlFallback(rootClone);
     normalizeCaptureRoot(rootClone);
     if ('intrinsic-viewport' === request.mermaidCapture) {
       normalizeIntrinsicMermaidCaptureRoot(rootClone);
+    }
+    if (source) {
+      normalizeDirectSvgForeignObjectClone(request.source, rootClone, request.mermaidCapture);
     }
     if ('mermaid' === request.kind && layoutMagnification !== 1) {
       const rootStyle = (rootClone as Element & { style?: CSSStyleDeclaration }).style;

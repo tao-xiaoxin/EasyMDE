@@ -1657,6 +1657,285 @@ describe('createBrowserWechatVisualRasterizer', () => {
     }
   });
 
+  it('routes direct SVGs with unparseable border-radius and translucent fill or opacity < 1 through foreignObject', async () => {
+    stubCanvas();
+    const whiteCanvas = document.createElement('div');
+    whiteCanvas.className = 'easymde-immersive-preview-canvas';
+    whiteCanvas.style.backgroundColor = 'rgb(255, 255, 255)';
+
+    const calcTranslucentSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    calcTranslucentSvg.setAttribute('width', '100');
+    calcTranslucentSvg.setAttribute('height', '60');
+    calcTranslucentSvg.setAttribute('viewBox', '0 0 100 60');
+    calcTranslucentSvg.setAttribute(
+      'style',
+      'background-color: rgba(255, 0, 0, 0.5); border-radius: calc(10% + 4px); opacity: 1;',
+    );
+    calcTranslucentSvg.innerHTML = '<circle cx="50" cy="30" r="10"></circle>';
+    whiteCanvas.appendChild(calcTranslucentSvg);
+
+    const calcOpacitySvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    calcOpacitySvg.setAttribute('width', '100');
+    calcOpacitySvg.setAttribute('height', '60');
+    calcOpacitySvg.setAttribute('viewBox', '0 0 100 60');
+    calcOpacitySvg.setAttribute(
+      'style',
+      'background-color: rgb(0, 0, 255); border-radius: calc(10% + 4px); opacity: 0.5;',
+    );
+    calcOpacitySvg.innerHTML = '<circle cx="50" cy="30" r="10"></circle>';
+    whiteCanvas.appendChild(calcOpacitySvg);
+    document.body.appendChild(whiteCanvas);
+
+    const detachedRemTranslucentSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+    detachedRemTranslucentSvg.setAttribute('width', '100');
+    detachedRemTranslucentSvg.setAttribute('height', '60');
+    detachedRemTranslucentSvg.setAttribute('viewBox', '0 0 100 60');
+    detachedRemTranslucentSvg.setAttribute(
+      'style',
+      'background-color: rgba(255, 0, 0, 0.5); border-radius: 1rem; opacity: 1;',
+    );
+    detachedRemTranslucentSvg.innerHTML = '<circle cx="50" cy="30" r="10"></circle>';
+
+    try {
+      // 1a. Connected calc() border-radius + translucent fill over white ancestor -> <foreignObject>.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(calcTranslucentSvg, 'mermaid', 1, 100, 60, undefined, 1),
+      );
+      const calcTranslucentDoc = new DOMParser().parseFromString(
+        decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+        'text/html',
+      );
+      const calcOuterSvg = calcTranslucentDoc.querySelector('svg');
+      const calcForeignObject = calcOuterSvg?.querySelector(':scope > foreignObject');
+      const calcInnerSvg = calcForeignObject?.querySelector('svg');
+      expect(calcForeignObject).not.toBeNull();
+      expect(calcOuterSvg?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      expect(calcOuterSvg?.getAttribute('style') ?? '').not.toContain('radius');
+      expect(calcOuterSvg?.style.getPropertyValue('opacity')).toBe('');
+      expect(calcInnerSvg?.style.getPropertyValue('border-radius')).toBe('calc(10% + 4px)');
+      expect(calcInnerSvg?.style.getPropertyValue('background-color')).toBe('rgba(255, 0, 0, 0.5)');
+      expect(calcInnerSvg?.querySelector('rect')).toBeNull();
+
+      // 1b. Connected calc() border-radius + layoutMagnification: 2 scales inner <svg> cleanly inside <foreignObject>.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(calcTranslucentSvg, 'mermaid', 1, 100, 60, undefined, 2),
+      );
+      const calcMagnifiedDoc = new DOMParser().parseFromString(
+        decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+        'text/html',
+      );
+      const calcMagnifiedOuterSvg = calcMagnifiedDoc.querySelector('svg');
+      const calcMagnifiedInnerSvg = calcMagnifiedOuterSvg?.querySelector('foreignObject svg') as SVGSVGElement | null;
+      expect(calcMagnifiedOuterSvg?.getAttribute('width')).toBe('200');
+      expect(calcMagnifiedOuterSvg?.getAttribute('height')).toBe('120');
+      expect(calcMagnifiedOuterSvg?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      expect(calcMagnifiedInnerSvg?.style.getPropertyValue('border-radius')).toBe('calc(10% + 4px)');
+      expect(calcMagnifiedInnerSvg?.style.getPropertyValue('background-color')).toBe('rgba(255, 0, 0, 0.5)');
+      expect(calcMagnifiedInnerSvg?.style.getPropertyValue('transform')).toBe('scale(2)');
+      expect(calcMagnifiedInnerSvg?.style.getPropertyValue('width')).toBe('100px');
+      expect(calcMagnifiedInnerSvg?.style.getPropertyValue('height')).toBe('60px');
+
+      // 2. Detached 1rem border-radius + translucent fill over explicit white ancestor -> <foreignObject>.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize({
+        height: 60,
+        inheritedBackground: { color: 'rgb(255, 255, 255)' },
+        kind: 'mermaid',
+        layoutMagnification: 1,
+        maxPixels: 16_777_216,
+        scale: 1,
+        signal: new AbortController().signal,
+        source: detachedRemTranslucentSvg,
+        width: 100,
+      });
+      const remDoc = new DOMParser().parseFromString(
+        decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+        'text/html',
+      );
+      const remOuterSvg = remDoc.querySelector('svg');
+      const remInnerSvg = remOuterSvg?.querySelector('foreignObject svg') as SVGSVGElement | null;
+      expect(remInnerSvg).not.toBeNull();
+      expect(remOuterSvg?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      expect(remOuterSvg?.getAttribute('style') ?? '').not.toContain('radius');
+      expect(remInnerSvg?.style.getPropertyValue('border-radius')).toBe('1rem');
+      expect(remInnerSvg?.style.getPropertyValue('background-color')).toBe('rgba(255, 0, 0, 0.5)');
+      expect(remInnerSvg?.querySelector('rect')).toBeNull();
+
+      // 3. Connected calc() border-radius + opacity: 0.5 + opaque blue over white ancestor -> <foreignObject>.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(calcOpacitySvg, 'mermaid', 1, 100, 60, undefined, 1),
+      );
+      const calcOpacityDoc = new DOMParser().parseFromString(
+        decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+        'text/html',
+      );
+      const opacityOuterSvg = calcOpacityDoc.querySelector('svg');
+      const opacityInnerSvg = opacityOuterSvg?.querySelector('foreignObject svg') as SVGSVGElement | null;
+      expect(opacityInnerSvg).not.toBeNull();
+      expect(opacityOuterSvg?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      expect(opacityOuterSvg?.getAttribute('style') ?? '').not.toContain('radius');
+      expect(opacityOuterSvg?.style.getPropertyValue('opacity')).toBe('');
+      expect(opacityInnerSvg?.style.getPropertyValue('border-radius')).toBe('calc(10% + 4px)');
+      expect(opacityInnerSvg?.style.getPropertyValue('background-color')).toBe('rgb(0, 0, 255)');
+      expect(opacityInnerSvg?.style.getPropertyValue('opacity')).toBe('0.5');
+      expect(opacityInnerSvg?.querySelector('rect')).toBeNull();
+    } finally {
+      whiteCanvas.remove();
+    }
+  });
+
+  it('maps direct SVG background shapes across preserveAspectRatio viewport alignments and meet/slice/none modes', async () => {
+    stubCanvas();
+    const whiteCanvas = document.createElement('div');
+    whiteCanvas.className = 'easymde-immersive-preview-canvas';
+    whiteCanvas.style.backgroundColor = 'rgb(255, 255, 255)';
+
+    const makeDirectSvg = (
+      viewBox: string,
+      styleText: string,
+      preserveAspectRatio?: string,
+    ): SVGSVGElement => {
+      const el = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement;
+      el.setAttribute('width', '200');
+      el.setAttribute('height', '100');
+      el.setAttribute('viewBox', viewBox);
+      if (undefined !== preserveAspectRatio) {
+        el.setAttribute('preserveAspectRatio', preserveAspectRatio);
+      }
+      el.setAttribute('style', styleText);
+      el.innerHTML = '<circle cx="50" cy="50" r="10"></circle>';
+      whiteCanvas.appendChild(el);
+      return el;
+    };
+
+    const defaultMeetRoundedSvg = makeDirectSvg(
+      '0 0 100 100',
+      'background-color: rgba(255, 0, 0, 0.5); border-radius: 20px; opacity: 1;',
+    );
+    const xMinYMinMeetSvg = makeDirectSvg(
+      '10 20 100 100',
+      'background-color: rgba(255, 0, 0, 0.5); border-radius: 20px; opacity: 1;',
+      'xMinYMin meet',
+    );
+    const xMaxYMaxSliceSvg = makeDirectSvg(
+      '0 0 100 100',
+      'background-color: rgba(255, 0, 0, 0.5); border-radius: 20px; opacity: 1;',
+      'defer xMaxYMax slice',
+    );
+    const noneParSvg = makeDirectSvg(
+      '0 0 100 100',
+      'background-color: rgba(255, 0, 0, 0.5); border-radius: 20px; opacity: 1;',
+      'none',
+    );
+    const nonSquareSquareRectOpacitySvg = makeDirectSvg(
+      '0 0 100 100',
+      'background-color: rgb(0, 0, 255); opacity: 0.5;',
+    );
+    document.body.appendChild(whiteCanvas);
+
+    try {
+      // 1a. Default xMidYMid meet: 200x100 CSS over 100x100 viewBox -> x = -50..150, y = 0..100, circular 20x20 arcs.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(defaultMeetRoundedSvg, 'mermaid', 1, 200, 100, undefined, 1),
+      );
+      const meetOut = new DOMParser()
+        .parseFromString(
+          decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+          'text/html',
+        )
+        .querySelector('svg');
+      expect(meetOut?.querySelector('foreignObject')).toBeNull();
+      expect(meetOut?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      expect(meetOut?.firstElementChild?.localName.toLowerCase()).toBe('path');
+      expect(meetOut?.firstElementChild?.getAttribute('d')).toBe(
+        'M -30 0 H 130 A 20 20 0 0 1 150 20 V 80 A 20 20 0 0 1 130 100 H -30 A 20 20 0 0 1 -50 80 V 20 A 20 20 0 0 1 -30 0 Z',
+      );
+
+      // 1b. Same default xMidYMid meet with layoutMagnification: 2 keeps exact unscaled path inside scaled <g>.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(defaultMeetRoundedSvg, 'mermaid', 1, 200, 100, undefined, 2),
+      );
+      const meetMagOut = new DOMParser()
+        .parseFromString(
+          decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+          'text/html',
+        )
+        .querySelector('svg');
+      expect(meetMagOut?.getAttribute('width')).toBe('400');
+      expect(meetMagOut?.getAttribute('height')).toBe('200');
+      expect(meetMagOut?.getAttribute('viewBox')).toBe('0 0 200 200');
+      const meetMagGroup = meetMagOut?.querySelector(':scope > g');
+      expect(meetMagGroup?.getAttribute('transform')).toBe('translate(0 0) scale(2)');
+      expect(meetMagGroup?.firstElementChild?.getAttribute('d')).toBe(
+        'M -30 0 H 130 A 20 20 0 0 1 150 20 V 80 A 20 20 0 0 1 130 100 H -30 A 20 20 0 0 1 -50 80 V 20 A 20 20 0 0 1 -30 0 Z',
+      );
+
+      // 2. xMinYMin meet with non-zero viewBox origin -> x = 10..210, y = 20..120, circular 20x20 arcs.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(xMinYMinMeetSvg, 'mermaid', 1, 200, 100, undefined, 1),
+      );
+      const minMeetOut = new DOMParser()
+        .parseFromString(
+          decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+          'text/html',
+        )
+        .querySelector('svg');
+      expect(minMeetOut?.firstElementChild?.getAttribute('d')).toBe(
+        'M 30 20 H 190 A 20 20 0 0 1 210 40 V 100 A 20 20 0 0 1 190 120 H 30 A 20 20 0 0 1 10 100 V 40 A 20 20 0 0 1 30 20 Z',
+      );
+
+      // 3. defer xMaxYMax slice -> u = 2, x = 0..100, y = 50..100, circular 10x10 user-unit arcs (= 20px CSS).
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(xMaxYMaxSliceSvg, 'mermaid', 1, 200, 100, undefined, 1),
+      );
+      const sliceOut = new DOMParser()
+        .parseFromString(
+          decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+          'text/html',
+        )
+        .querySelector('svg');
+      expect(sliceOut?.firstElementChild?.getAttribute('d')).toBe(
+        'M 10 50 H 90 A 10 10 0 0 1 100 60 V 90 A 10 10 0 0 1 90 100 H 10 A 10 10 0 0 1 0 90 V 60 A 10 10 0 0 1 10 50 Z',
+      );
+
+      // 4. preserveAspectRatio="none" -> x = 0..100, y = 0..100, elliptical 10x20 user-unit arcs (= 20x20 CSS).
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(noneParSvg, 'mermaid', 1, 200, 100, undefined, 1),
+      );
+      const noneOut = new DOMParser()
+        .parseFromString(
+          decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+          'text/html',
+        )
+        .querySelector('svg');
+      expect(noneOut?.firstElementChild?.getAttribute('d')).toBe(
+        'M 10 0 H 90 A 10 20 0 0 1 100 20 V 80 A 10 20 0 0 1 90 100 H 10 A 10 20 0 0 1 0 80 V 20 A 10 20 0 0 1 10 0 Z',
+      );
+
+      // 5. opacity: 0.5 + solid background-color without border-radius -> <rect> covers full mapped x=-50..150, y=0..100.
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(nonSquareSquareRectOpacitySvg, 'mermaid', 1, 200, 100, undefined, 1),
+      );
+      const rectOpacityOut = new DOMParser()
+        .parseFromString(
+          decodeURIComponent(imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? ''),
+          'text/html',
+        )
+        .querySelector('svg');
+      expect(rectOpacityOut?.style.getPropertyValue('background-color')).toBe('rgb(255, 255, 255)');
+      const rectGroup = rectOpacityOut?.querySelector(':scope > g');
+      expect(rectGroup?.getAttribute('opacity')).toBe('0.5');
+      const bgRect = rectGroup?.firstElementChild;
+      expect(bgRect?.localName.toLowerCase()).toBe('rect');
+      expect(bgRect?.getAttribute('x')).toBe('-50');
+      expect(bgRect?.getAttribute('y')).toBe('0');
+      expect(bgRect?.getAttribute('width')).toBe('200');
+      expect(bgRect?.getAttribute('height')).toBe('100');
+      expect(bgRect?.getAttribute('fill')).toBe('rgb(0, 0, 255)');
+    } finally {
+      whiteCanvas.remove();
+    }
+  });
+
   it('drops the KaTeX MathML fallback and carries stylesheet-derived math geometry', async () => {
     const canvasContext = { drawImage: vi.fn() };
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext')

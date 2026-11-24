@@ -1,4 +1,33 @@
 import type { WechatVisualMermaidBackground } from '../../../contracts/ports/wechat-visual-rasterization-port';
+import {
+  NON_COLOR_KEYWORDS,
+  type RgbaColor,
+  compositeSourceOver,
+  formatCompositedColor,
+  hasVisibleBackgroundColor,
+  isOpaqueBackgroundColor,
+  parseCssOpacity,
+  parseCssSolidColor,
+  splitTopLevelCommas,
+} from './wechat-css-color';
+import {
+  type MermaidCornerRadii,
+  isZeroMermaidRadiusValue,
+  parseMermaidRadiusPair,
+  parseMermaidRadiusShorthand,
+} from './wechat-mermaid-policy';
+
+export type { MermaidCornerRadii } from './wechat-mermaid-policy';
+export type { RgbaColor } from './wechat-css-color';
+export {
+  compositeSourceOver,
+  formatCompositedColor,
+  hasVisibleBackgroundColor,
+  isOpaqueBackgroundColor,
+  parseCssColorAlpha,
+  parseCssOpacity,
+  parseCssSolidColor,
+} from './wechat-css-color';
 
 export type MermaidComputedStyleReader = (element: Element) => CSSStyleDeclaration;
 
@@ -27,61 +56,6 @@ const MERMAID_BACKGROUND_CANVAS_SELECTORS =
 
 const RETAINED_CONTENT_BOUNDARY_SELECTORS =
   `.easymde-preview, .easymde-markdown-body, .easymde-editor-preview, .easymde-rendered-content, [data-easymde-preview-html-sink], article, ${MERMAID_BACKGROUND_CANVAS_SELECTORS}`;
-
-const NON_COLOR_KEYWORDS = new Set([
-  'inherit',
-  'initial',
-  'none',
-  'revert',
-  'revert-layer',
-  'unset',
-]);
-
-export type RgbaColor = Readonly<{
-  a: number;
-  b: number;
-  g: number;
-  r: number;
-}>;
-
-const NAMED_CSS_COLOR_HEX: ReadonlyMap<string, string> = new Map([
-  ['aliceblue', '#f0f8ff'],
-  ['aqua', '#00ffff'],
-  ['beige', '#f5f5dc'],
-  ['black', '#000000'],
-  ['blue', '#0000ff'],
-  ['cyan', '#00ffff'],
-  ['darkgray', '#a9a9a9'],
-  ['darkgrey', '#a9a9a9'],
-  ['dimgray', '#696969'],
-  ['dimgrey', '#696969'],
-  ['fuchsia', '#ff00ff'],
-  ['gainsboro', '#dcdcdc'],
-  ['ghostwhite', '#f8f8ff'],
-  ['gray', '#808080'],
-  ['green', '#008000'],
-  ['grey', '#808080'],
-  ['ivory', '#fffff0'],
-  ['lightgray', '#d3d3d3'],
-  ['lightgrey', '#d3d3d3'],
-  ['lime', '#00ff00'],
-  ['linen', '#faf0e6'],
-  ['magenta', '#ff00ff'],
-  ['maroon', '#800000'],
-  ['navy', '#000080'],
-  ['olive', '#808000'],
-  ['orange', '#ffa500'],
-  ['purple', '#800080'],
-  ['rebeccapurple', '#663399'],
-  ['red', '#ff0000'],
-  ['seashell', '#fff5ee'],
-  ['silver', '#c0c0c0'],
-  ['snow', '#fffafa'],
-  ['teal', '#008080'],
-  ['white', '#ffffff'],
-  ['whitesmoke', '#f5f5f5'],
-  ['yellow', '#ffff00'],
-]);
 
 const BACKGROUND_STYLE_PROPERTIES = [
   'background',
@@ -143,306 +117,6 @@ const BORDER_RADIUS_CORNER_PROPERTIES: ReadonlyArray<
   ['border-bottom-left-radius', 'borderBottomLeftRadius'],
 ];
 
-function findTopLevelSlashIndex(body: string): number {
-  let depth = 0;
-  let lastSlash = -1;
-  for (let index = 0; index < body.length; index += 1) {
-    const ch = body[index];
-    if ('(' === ch) depth += 1;
-    else if (')' === ch) depth = Math.max(0, depth - 1);
-    else if ('/' === ch && 0 === depth) lastSlash = index;
-  }
-  return lastSlash;
-}
-
-function splitTopLevelCommas(body: string): string[] {
-  const parts: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let index = 0; index < body.length; index += 1) {
-    const ch = body[index];
-    if ('(' === ch) depth += 1;
-    else if (')' === ch) depth = Math.max(0, depth - 1);
-    else if (',' === ch && 0 === depth) {
-      parts.push(body.slice(start, index));
-      start = index + 1;
-    }
-  }
-  parts.push(body.slice(start));
-  return parts;
-}
-
-/**
- * Parses the numeric alpha channel `[0, 1]` of a CSS color string, or returns
- * `null` when the value is empty, a non-color keyword, or an expression whose
- * alpha cannot be determined statically.
- */
-export function parseCssColorAlpha(value: string): number | null {
-  const normalized = value.trim().toLowerCase();
-  if (!normalized || NON_COLOR_KEYWORDS.has(normalized)) {
-    return null;
-  }
-  if ('transparent' === normalized) {
-    return 0;
-  }
-  if (/^#[\da-f]{3}$/u.test(normalized) || /^#[\da-f]{6}$/u.test(normalized)) {
-    return 1;
-  }
-  if (/^#[\da-f]{4}$/u.test(normalized)) {
-    return Number.parseInt(normalized.slice(4, 5), 16) / 15;
-  }
-  if (/^#[\da-f]{8}$/u.test(normalized)) {
-    return Number.parseInt(normalized.slice(7, 9), 16) / 255;
-  }
-  const fnMatch =
-    /^(?:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch|color)\((.*)\)$/u.exec(normalized);
-  if (fnMatch) {
-    const body = fnMatch[1]?.trim() ?? '';
-    let alphaToken = '';
-    const slashIndex = findTopLevelSlashIndex(body);
-    if (slashIndex >= 0) {
-      alphaToken = body.slice(slashIndex + 1).trim();
-    } else if (/^(?:rgba?|hsla?)\(/u.test(normalized)) {
-      const components = splitTopLevelCommas(body);
-      if (components.length >= 4) {
-        alphaToken = (components[components.length - 1] ?? '').trim();
-      }
-    }
-    if (!alphaToken) return 1;
-    if ('none' === alphaToken) return 0;
-    const alphaMatch = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)(%?)$/iu.exec(alphaToken);
-    if (!alphaMatch) return null;
-    const parsed = Number.parseFloat(alphaMatch[1] ?? '');
-    if (!Number.isFinite(parsed)) return null;
-    const scaled = '%' === alphaMatch[2] ? parsed / 100 : parsed;
-    return Math.min(1, Math.max(0, scaled));
-  }
-  if ('currentcolor' === normalized) {
-    return null;
-  }
-  if (/^[a-z]+$/u.test(normalized)) {
-    return 1;
-  }
-  return null;
-}
-
-function parseAlphaToken(token: string, allowNone: boolean): number | null {
-  const normalized = token.trim().toLowerCase();
-  if (!normalized) return null;
-  if (allowNone && 'none' === normalized) return 0;
-  const match = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)(%?)$/iu.exec(normalized);
-  if (!match) return null;
-  const parsed = Number.parseFloat(match[1] ?? '');
-  if (!Number.isFinite(parsed)) return null;
-  const scaled = '%' === match[2] ? parsed / 100 : parsed;
-  return Math.min(1, Math.max(0, scaled));
-}
-
-function parseRgbChannel(token: string, allowNone: boolean): number | null {
-  const normalized = token.trim().toLowerCase();
-  if (!normalized) return null;
-  if (allowNone && 'none' === normalized) return 0;
-  const match = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)(%?)$/iu.exec(normalized);
-  if (!match) return null;
-  const parsed = Number.parseFloat(match[1] ?? '');
-  if (!Number.isFinite(parsed)) return null;
-  const scaled = '%' === match[2] ? (parsed / 100) * 255 : parsed;
-  return Math.min(255, Math.max(0, scaled));
-}
-
-function parseHueDegrees(token: string, allowNone: boolean): number | null {
-  const normalized = token.trim().toLowerCase();
-  if (!normalized) return null;
-  if (allowNone && 'none' === normalized) return 0;
-  const match = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)(deg|rad|grad|turn)?$/iu.exec(
-    normalized,
-  );
-  if (!match) return null;
-  const value = Number.parseFloat(match[1] ?? '');
-  if (!Number.isFinite(value)) return null;
-  const unit = (match[2] ?? 'deg').toLowerCase();
-  const degrees =
-    'rad' === unit
-      ? (value * 180) / Math.PI
-      : 'grad' === unit
-        ? value * 0.9
-        : 'turn' === unit
-          ? value * 360
-          : value;
-  return ((degrees % 360) + 360) % 360;
-}
-
-function parseHslPercent(token: string, allowNone: boolean): number | null {
-  const normalized = token.trim().toLowerCase();
-  if (!normalized) return null;
-  if (allowNone && 'none' === normalized) return 0;
-  const match = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)%$/iu.exec(normalized);
-  if (!match) return null;
-  const parsed = Number.parseFloat(match[1] ?? '');
-  if (!Number.isFinite(parsed)) return null;
-  return Math.min(1, Math.max(0, parsed / 100));
-}
-
-function hslToRgb(h: number, s: number, l: number): readonly [number, number, number] {
-  const chroma = (1 - Math.abs(2 * l - 1)) * s;
-  const secondary = chroma * (1 - Math.abs(((h / 60) % 2) - 1));
-  const match = l - chroma / 2;
-  let rPrime = 0;
-  let gPrime = 0;
-  let bPrime = 0;
-  if (h < 60) [rPrime, gPrime, bPrime] = [chroma, secondary, 0];
-  else if (h < 120) [rPrime, gPrime, bPrime] = [secondary, chroma, 0];
-  else if (h < 180) [rPrime, gPrime, bPrime] = [0, chroma, secondary];
-  else if (h < 240) [rPrime, gPrime, bPrime] = [0, secondary, chroma];
-  else if (h < 300) [rPrime, gPrime, bPrime] = [secondary, 0, chroma];
-  else [rPrime, gPrime, bPrime] = [chroma, 0, secondary];
-  return [(rPrime + match) * 255, (gPrime + match) * 255, (bPrime + match) * 255];
-}
-
-function parseHexColor(normalized: string): RgbaColor | null {
-  if (/^#[\da-f]{3}$/u.test(normalized) || /^#[\da-f]{4}$/u.test(normalized)) {
-    const rHex = normalized.slice(1, 2);
-    const gHex = normalized.slice(2, 3);
-    const bHex = normalized.slice(3, 4);
-    const aHex = normalized.slice(4, 5);
-    return {
-      a: aHex ? Number.parseInt(aHex, 16) / 15 : 1,
-      b: Number.parseInt(bHex + bHex, 16),
-      g: Number.parseInt(gHex + gHex, 16),
-      r: Number.parseInt(rHex + rHex, 16),
-    };
-  }
-  if (/^#[\da-f]{6}$/u.test(normalized) || /^#[\da-f]{8}$/u.test(normalized)) {
-    const aHex = normalized.slice(7, 9);
-    return {
-      a: aHex ? Number.parseInt(aHex, 16) / 255 : 1,
-      b: Number.parseInt(normalized.slice(5, 7), 16),
-      g: Number.parseInt(normalized.slice(3, 5), 16),
-      r: Number.parseInt(normalized.slice(1, 3), 16),
-    };
-  }
-  return null;
-}
-
-/**
- * Parses sRGB CSS solid colors (`rgb()`, `rgba()`, `hsl()`, `hsla()`, hex,
- * `transparent`, and standard named colors) into `{ r, g, b, a }`, or returns
- * `null` for non-color keywords or unsupported color expressions.
- */
-export function parseCssSolidColor(value: string): RgbaColor | null {
-  const normalized = value.trim().toLowerCase();
-  if (!normalized || NON_COLOR_KEYWORDS.has(normalized) || 'currentcolor' === normalized) {
-    return null;
-  }
-  if ('transparent' === normalized) {
-    return { a: 0, b: 0, g: 0, r: 0 };
-  }
-  if (normalized.startsWith('#')) {
-    return parseHexColor(normalized);
-  }
-  const namedHex = NAMED_CSS_COLOR_HEX.get(normalized);
-  if (namedHex) {
-    return parseHexColor(namedHex);
-  }
-  const fnMatch = /^(rgba?|hsla?)\((.*)\)$/u.exec(normalized);
-  if (!fnMatch) return null;
-  const fnName = fnMatch[1] ?? '';
-  const body = (fnMatch[2] ?? '').trim();
-  if (!body) return null;
-
-  const slashIndex = findTopLevelSlashIndex(body);
-  let channelTokens: string[];
-  let alpha = 1;
-  let allowNone = false;
-  if (slashIndex >= 0) {
-    allowNone = true;
-    const colorPart = body.slice(0, slashIndex).trim();
-    const alphaPart = body.slice(slashIndex + 1).trim();
-    if (!colorPart || colorPart.includes(',') || !alphaPart) return null;
-    channelTokens = colorPart.split(/\s+/u).filter(Boolean);
-    const parsedAlpha = parseAlphaToken(alphaPart, true);
-    if (parsedAlpha === null) return null;
-    alpha = parsedAlpha;
-  } else {
-    const commaParts = splitTopLevelCommas(body).map((part) => part.trim());
-    if (3 === commaParts.length || 4 === commaParts.length) {
-      channelTokens = commaParts.slice(0, 3);
-      if (4 === commaParts.length) {
-        const parsedAlpha = parseAlphaToken(commaParts[3] ?? '', false);
-        if (parsedAlpha === null) return null;
-        alpha = parsedAlpha;
-      }
-    } else if (1 === commaParts.length) {
-      allowNone = true;
-      channelTokens = body.split(/\s+/u).filter(Boolean);
-    } else {
-      return null;
-    }
-  }
-  if (3 !== channelTokens.length) return null;
-
-  if ('rgb' === fnName || 'rgba' === fnName) {
-    const r = parseRgbChannel(channelTokens[0] ?? '', allowNone);
-    const g = parseRgbChannel(channelTokens[1] ?? '', allowNone);
-    const b = parseRgbChannel(channelTokens[2] ?? '', allowNone);
-    if (r === null || g === null || b === null) return null;
-    return { a: alpha, b, g, r };
-  }
-  const h = parseHueDegrees(channelTokens[0] ?? '', allowNone);
-  const s = parseHslPercent(channelTokens[1] ?? '', allowNone);
-  const l = parseHslPercent(channelTokens[2] ?? '', allowNone);
-  if (h === null || s === null || l === null) return null;
-  const [r, g, b] = hslToRgb(h, s, l);
-  return { a: alpha, b, g, r };
-}
-
-function compositeSourceOver(src: RgbaColor, dst: RgbaColor): RgbaColor {
-  if (src.a <= 0) return dst;
-  if (dst.a <= 0) return src;
-  if (src.a >= 1) return { a: 1, b: src.b, g: src.g, r: src.r };
-  const outA = dst.a >= 1 ? 1 : Math.min(1, src.a + dst.a * (1 - src.a));
-  if (outA <= 0) return { a: 0, b: 0, g: 0, r: 0 };
-  const invSrcA = 1 - src.a;
-  return {
-    a: outA,
-    b: (src.b * src.a + dst.b * dst.a * invSrcA) / outA,
-    g: (src.g * src.a + dst.g * dst.a * invSrcA) / outA,
-    r: (src.r * src.a + dst.r * dst.a * invSrcA) / outA,
-  };
-}
-
-function formatCompositedColor(color: RgbaColor): string {
-  if (color.a <= 0) return '';
-  const r = Math.min(255, Math.max(0, Math.round(color.r)));
-  const g = Math.min(255, Math.max(0, Math.round(color.g)));
-  const b = Math.min(255, Math.max(0, Math.round(color.b)));
-  if (color.a >= 1 - 1e-6) {
-    return `rgb(${r}, ${g}, ${b})`;
-  }
-  const roundedAlpha = Math.round(color.a * 10_000) / 10_000;
-  if (roundedAlpha >= 1) {
-    return `rgb(${r}, ${g}, ${b})`;
-  }
-  const alpha =
-    roundedAlpha > 0 ? roundedAlpha : Math.round(color.a * 1_000_000) / 1_000_000;
-  if (alpha <= 0) return '';
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-export function hasVisibleBackgroundColor(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
-  if (!normalized || NON_COLOR_KEYWORDS.has(normalized)) {
-    return false;
-  }
-  const alpha = parseCssColorAlpha(normalized);
-  return alpha !== null ? alpha > 0 : true;
-}
-
-export function isOpaqueBackgroundColor(value: string): boolean {
-  const alpha = parseCssColorAlpha(value);
-  return alpha !== null && alpha >= 1;
-}
-
 export function hasBackgroundImage(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   return Boolean(normalized && !NON_COLOR_KEYWORDS.has(normalized));
@@ -487,48 +161,16 @@ function readEffectiveStyleProperty(
   return element ? readDetachedFallbackStyleProperty(element, property) : '';
 }
 
-function isZeroRadiusValue(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
-  if (!normalized || NON_COLOR_KEYWORDS.has(normalized)) return true;
-  const tokens = normalized.split(/[\s/]+/u).filter(Boolean);
-  return tokens.every((token) => /^[+-]?(?:0+(?:\.0*)?|\.0+)(?:[a-z%]+)?$/u.test(token));
-}
-
 export function hasNonZeroBorderRadius(
   style: CSSStyleDeclaration,
   element?: Element,
 ): boolean {
   for (const [property, camelProperty] of BORDER_RADIUS_CORNER_PROPERTIES) {
     const corner = readEffectiveStyleProperty(style, element, property, camelProperty);
-    if (corner && !isZeroRadiusValue(corner)) return true;
+    if (corner && !isZeroMermaidRadiusValue(corner)) return true;
   }
   const shorthand = readEffectiveStyleProperty(style, element, 'border-radius', 'borderRadius');
-  return Boolean(shorthand) && !isZeroRadiusValue(shorthand);
-}
-
-export type MermaidCornerRadii = readonly [
-  readonly [number, number],
-  readonly [number, number],
-  readonly [number, number],
-  readonly [number, number],
-];
-
-function parseRadiusLength(token: string, referencePx: number): number | null {
-  const normalized = token.trim().toLowerCase();
-  if (isZeroRadiusValue(normalized)) return 0;
-  const match = /^(\d+(?:\.\d+)?|\.\d+)(px|%)$/u.exec(normalized);
-  const parsed = match ? Number(match[1]) : Number.NaN;
-  if (!Number.isFinite(parsed) || parsed < 0) return null;
-  return '%' === match?.[2] ? (parsed / 100) * referencePx : parsed;
-}
-
-function expandShorthandRadiusAxis(axis: string, referencePx: number): number[] | null {
-  const tokens = axis.trim().split(/\s+/u).filter(Boolean);
-  if (!tokens.length || tokens.length > 4) return null;
-  const values = tokens.map((token) => parseRadiusLength(token, referencePx));
-  if (values.some((value) => null === value)) return null;
-  const [a = 0, b = a, c = a, d = b] = values as number[];
-  return [a, b, c, d];
+  return Boolean(shorthand) && !isZeroMermaidRadiusValue(shorthand);
 }
 
 export function resolveMermaidBorderRadii(
@@ -538,15 +180,19 @@ export function resolveMermaidBorderRadii(
   cssHeight: number,
 ): MermaidCornerRadii | null {
   if (!Number.isFinite(cssWidth) || cssWidth <= 0 || !Number.isFinite(cssHeight) || cssHeight <= 0) return null;
+  const mode = { height: cssHeight, kind: 'px-or-percent', width: cssWidth } as const;
+  const toPositivePair = (rx: number, ry: number): readonly [number, number] =>
+    rx > 0 && ry > 0 ? [rx, ry] : [0, 0];
   const parsedCorners: Array<readonly [number, number] | null> = [];
   for (const [property, camelProperty] of BORDER_RADIUS_CORNER_PROPERTIES) {
     const raw = readEffectiveStyleProperty(style, element, property, camelProperty);
-    if (!raw) { parsedCorners.push(null); continue; }
-    const tokens = raw.includes('/') ? [] : raw.trim().split(/\s+/u).filter(Boolean);
-    const rx = tokens.length >= 1 && tokens.length <= 2 ? parseRadiusLength(tokens[0] ?? '', cssWidth) : null;
-    const ry = rx !== null ? parseRadiusLength(tokens[1] ?? tokens[0] ?? '', cssHeight) : null;
-    if (null === rx || null === ry) return null;
-    parsedCorners.push(rx > 0 && ry > 0 ? [rx, ry] : [0, 0]);
+    if (!raw) {
+      parsedCorners.push(null);
+      continue;
+    }
+    const pair = parseMermaidRadiusPair(raw, mode);
+    if (!pair) return null;
+    parsedCorners.push(toPositivePair(pair.horizontal, pair.vertical));
   }
   const hasNonZeroCorner = parsedCorners.some((pair) => pair !== null && pair[0] > 0 && pair[1] > 0);
   if (hasNonZeroCorner && parsedCorners.every((pair) => null !== pair)) {
@@ -554,27 +200,18 @@ export function resolveMermaidBorderRadii(
   }
   const shorthand = readEffectiveStyleProperty(style, element, 'border-radius', 'borderRadius');
   let baseCorners: MermaidCornerRadii = [[0, 0], [0, 0], [0, 0], [0, 0]];
-  if (shorthand && !isZeroRadiusValue(shorthand)) {
-    const groups = shorthand.split(/\s*\/\s*/u);
-    if (groups.length > 2 || groups.some((group) => !group.trim())) return null;
-    const rxList = expandShorthandRadiusAxis(groups[0] ?? '', cssWidth);
-    const ryList = expandShorthandRadiusAxis(groups[1] ?? groups[0] ?? '', cssHeight);
-    if (!rxList || !ryList) return null;
-    baseCorners = [0, 1, 2, 3].map((i) => {
-      const rx = rxList[i] ?? 0;
-      const ry = ryList[i] ?? 0;
-      return rx > 0 && ry > 0 ? [rx, ry] : [0, 0];
-    }) as unknown as MermaidCornerRadii;
+  if (shorthand && !isZeroMermaidRadiusValue(shorthand)) {
+    const parsedShorthand = parseMermaidRadiusShorthand(shorthand, mode);
+    if (!parsedShorthand) return null;
+    baseCorners = parsedShorthand.map(({ horizontal, vertical }) =>
+      toPositivePair(horizontal, vertical),
+    ) as unknown as MermaidCornerRadii;
   }
   const allCornersZero = !hasNonZeroCorner && parsedCorners.every((pair) => null !== pair);
   const finalCorners = allCornersZero
     ? baseCorners
     : [0, 1, 2, 3].map((i) => parsedCorners[i] ?? baseCorners[i] ?? [0, 0]);
   return finalCorners.some(([rx, ry]) => rx > 0 && ry > 0) ? (finalCorners as unknown as MermaidCornerRadii) : null;
-}
-
-export function parseCssOpacity(value: string): number | null {
-  return parseAlphaToken(value, false);
 }
 
 function readElementOpacity(style: CSSStyleDeclaration, element?: Element): number {
@@ -978,14 +615,14 @@ export function inlineConnectedMermaidRootPaint(
       property,
       readStyleProperty(computed, property, camelProperty),
     ] as const);
-    const hasNonZeroCorner = corners.some(([, corner]) => Boolean(corner) && !isZeroRadiusValue(corner));
+    const hasNonZeroCorner = corners.some(([, corner]) => Boolean(corner) && !isZeroMermaidRadiusValue(corner));
     if (hasNonZeroCorner) {
       for (const [property, corner] of corners) {
         if (corner) rootClone.style.setProperty(property, corner);
       }
     } else {
       const shorthand = readStyleProperty(computed, 'border-radius', 'borderRadius');
-      if (shorthand && !isZeroRadiusValue(shorthand)) {
+      if (shorthand && !isZeroMermaidRadiusValue(shorthand)) {
         rootClone.style.setProperty('border-radius', shorthand);
       }
     }

@@ -6,11 +6,16 @@ import {
   MERMAID_INTRINSIC_GEOMETRY_TOLERANCE,
   WechatPngConversionError,
 } from './wechat-png-conversion-policy';
-import { parseCssOpacity } from './wechat-mermaid-background';
+import { parseCssOpacity } from './wechat-css-color';
 import {
+  MERMAID_RADIUS_PROPERTIES,
+  type MermaidRadius,
   type MermaidStyleMap,
+  mermaidCssPixelValue,
   mermaidHasPaint,
   mermaidViewBox,
+  parseMermaidRadiusPair,
+  parseMermaidRadiusShorthand,
   unsafeMermaidDimensionRules,
   unsafeMermaidInlineDimensionValue,
 } from './wechat-mermaid-policy';
@@ -18,13 +23,18 @@ import { pseudoContent } from './wechat-pseudo-content';
 
 export {
   MERMAID_INTRINSIC_LAYOUT_ROLES,
+  MERMAID_RADIUS_PROPERTIES,
   SAFE_MERMAID_INLINE_DIMENSION_VALUES,
+  mermaidCssPixelValue,
   mermaidHasPaint,
   mermaidViewBox,
+  parseMermaidRadiusAxis as mermaidRadiusAxis,
+  parseMermaidRadiusPair as mermaidRadiusPair,
+  parseMermaidRadiusShorthand as mermaidRadiusShorthand,
   unsafeMermaidDimensionRules,
   unsafeMermaidInlineDimensionValue
 } from './wechat-mermaid-policy';
-export type { MermaidStyleMap } from './wechat-mermaid-policy';
+export type { MermaidRadius, MermaidStyleMap } from './wechat-mermaid-policy';
 
 export type MermaidScreenCtm = Readonly<{ a: number; b: number; c: number; d: number; e: number; f: number }>;
 
@@ -41,15 +51,6 @@ export const MERMAID_BORDER_WIDTH_PROPERTIES = [
   'border-left-width'
 ] as const;
 export const MERMAID_POSITION_PROPERTIES = ['top', 'right', 'bottom', 'left'] as const;
-
-export function mermaidCssPixelValue(value: string): number | null {
-  const normalized = value.trim().toLowerCase();
-  if (!normalized || '0' === normalized) return 0;
-  const match = /^(?:0|(?:\d+(?:\.\d+)?|\.\d+))px$/u.exec(normalized);
-  if (!match) return null;
-  const parsed = Number(match[0].slice(0, -2));
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-}
 
 export function mermaidHasUnsafeBorder(style: CSSStyleDeclaration, allowSolid = false): boolean {
   return MERMAID_BORDER_STYLE_PROPERTIES.some((property) => {
@@ -345,66 +346,12 @@ export function mermaidSourceUsesAutoBlockMargins(source: Element, runtime: Brow
   );
 }
 
-export type MermaidRadius = Readonly<{ horizontal: number; vertical: number }>;
-
-export const MERMAID_RADIUS_PROPERTIES = [
-  'border-top-left-radius',
-  'border-top-right-radius',
-  'border-bottom-right-radius',
-  'border-bottom-left-radius'
-] as const;
-
-export function mermaidRadiusAxis(value: string): number[] | null {
-  const tokens = value.trim().split(/\s+/u).filter(Boolean);
-  if (tokens.length > 4) return null;
-  const values = tokens.map(mermaidCssPixelValue);
-  return values.every((token) => token !== null) ? (values as number[]) : null;
-}
-
-export function mermaidRadiusShorthand(value: string): readonly MermaidRadius[] | null {
-  if (!value.trim()) return Array.from({ length: 4 }, () => ({ horizontal: 0, vertical: 0 }));
-  const groups = value.trim().split(/\s*\/\s*/u);
-  if (groups.length > 2 || groups.some((group) => !group.trim())) return null;
-  const horizontal = mermaidRadiusAxis(groups[0] ?? '');
-  const vertical = 1 === groups.length ? horizontal : mermaidRadiusAxis(groups[1] ?? '');
-  if (!horizontal || !vertical || !horizontal.length || !vertical.length) return null;
-  const expand = (values: readonly number[]): readonly [number, number, number, number] => {
-    const first = values[0] ?? 0;
-    const second = values[1] ?? first;
-    const third = values[2] ?? first;
-    const fourth = values[3] ?? second;
-    if (1 === values.length) return [first, first, first, first];
-    if (2 === values.length) return [first, second, first, second];
-    if (3 === values.length) return [first, second, third, second];
-    return [first, second, third, fourth];
-  };
-  const horizontalCorners = expand(horizontal);
-  const verticalCorners = expand(vertical);
-  return horizontalCorners.map((horizontalValue, index) => ({
-    horizontal: horizontalValue,
-    vertical: verticalCorners[index] as number
-  }));
-}
-
-export function mermaidRadiusPair(value: string): MermaidRadius | null {
-  const normalized = value.trim();
-  if (!normalized) return { horizontal: 0, vertical: 0 };
-  if (normalized.includes('/')) return null;
-  const tokens = normalized.split(/\s+/u);
-  if (tokens.length < 1 || tokens.length > 2) return null;
-  const horizontal = mermaidCssPixelValue(tokens[0] ?? '');
-  if (horizontal === null) return null;
-  const vertical = 2 === tokens.length ? mermaidCssPixelValue(tokens[1] ?? '') : horizontal;
-  if (vertical === null) return null;
-  return { horizontal, vertical };
-}
-
 export function mermaidRadiusCorners(computed: CSSStyleDeclaration): readonly MermaidRadius[] | null {
   const shorthand = computed.getPropertyValue('border-radius').trim();
-  const shorthandCorners = mermaidRadiusShorthand(shorthand);
+  const shorthandCorners = parseMermaidRadiusShorthand(shorthand);
   if (!shorthandCorners) return null;
   const values = MERMAID_RADIUS_PROPERTIES.map((property) => computed.getPropertyValue(property).trim());
-  const parsed = values.map((value) => mermaidRadiusPair(value));
+  const parsed = values.map((value) => parseMermaidRadiusPair(value));
   if (parsed.some((pair, index) => pair === null && Boolean(values[index]))) return null;
   const hasComputedPaint = parsed.some((pair) => pair !== null && (pair.horizontal > 0 || pair.vertical > 0));
   return hasComputedPaint ? (parsed as MermaidRadius[]) : shorthandCorners;

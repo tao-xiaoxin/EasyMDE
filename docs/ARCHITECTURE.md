@@ -779,7 +779,9 @@ browser commit, timeouts, and Preview readiness resolution),
 `wechat-clipboard-copy-png.ts` (PNG-conversion Copy transactions), and
 `wechat-clipboard-copy-legacy.ts` (the activation-sensitive synchronous legacy
 `execCommand` driver and synchronous modern-failure fallback), while
-`create-browser-wechat-visual-rasterizer.ts` keeps SVG assembly, decode,
+`create-browser-wechat-visual-rasterizer.ts` keeps SVG assembly (delegating
+direct-SVG backdrop synthesis, `preserveAspectRatio` viewport mapping, and
+opacity/radius routing to `wechat-mermaid-direct-svg-backdrop.ts`), decode,
 encode (with `create-browser-wechat-png-encoder.ts`,
 `wechat-png-encoder-protocol.ts`, and `wechat-png-encoder.worker.ts`), and its
 factory. The browser-facing responsibilities live in modular private families
@@ -840,13 +842,15 @@ beside them:
   `wechat-math-vector-capture-graphics.ts`, and
   `wechat-math-vector-capture-layout.ts`, alongside
   `wechat-math-vector-portable.ts` and `wechat-math-vector-scene.ts`);
-- Mermaid geometry, background resolution, content-box, policy, capture plans,
-  and PNG conversion (`wechat-mermaid-geometry.ts`,
-  `wechat-mermaid-background.ts`, `wechat-mermaid-content-box.ts`,
-  `wechat-mermaid-policy.ts`, `wechat-capture-plan.ts`,
-  `wechat-png-conversion-policy.ts`, `wechat-png-conversion.ts`,
-  `wechat-png-replacement.ts`, `wechat-rasterizer-mermaid.ts`), managed fonts
-  (`wechat-managed-fonts.ts`, `wechat-font-assets.ts`), math capture geometry
+- Mermaid geometry, background resolution, CSS color compositing, direct-SVG
+  backdrop synthesis, content-box, policy, capture plans, and PNG conversion
+  (`wechat-mermaid-geometry.ts`, `wechat-css-color.ts`,
+  `wechat-mermaid-background.ts`, `wechat-mermaid-direct-svg-backdrop.ts`,
+  `wechat-mermaid-content-box.ts`, `wechat-mermaid-policy.ts`,
+  `wechat-capture-plan.ts`, `wechat-png-conversion-policy.ts`,
+  `wechat-png-conversion.ts`, `wechat-png-replacement.ts`,
+  `wechat-rasterizer-mermaid.ts`), managed fonts (`wechat-managed-fonts.ts`,
+  `wechat-font-assets.ts`), math capture geometry
   (`wechat-math-capture-geometry.ts`), CSS scanning (`wechat-css-list.ts`,
   `wechat-css-property-reader.ts`), and runtime/UserTiming helpers
   (`wechat-clipboard-runtime.ts`, `wechat-copy-timing.ts`, `wechat-timing.ts`).

@@ -5,9 +5,14 @@ import {
 } from '../../../contracts/ports/wechat-visual-rasterization-port';
 import {
   MERMAID_INTRINSIC_LAYOUT_ROLES,
+  MERMAID_RADIUS_PROPERTIES,
+  type MermaidRadius,
   type MermaidViewBox,
+  mermaidCssPixelValue,
   mermaidHasPaint,
   mermaidViewBox,
+  parseMermaidRadiusPair,
+  parseMermaidRadiusShorthand,
   unsafeMermaidDimensionRules,
 } from './wechat-mermaid-policy';
 
@@ -299,15 +304,6 @@ function intrinsicStyleValue(element: Element, property: string): string {
   }
 }
 
-function intrinsicCssPixel(value: string): number | null {
-  if (!value) return 0;
-  if ('0' === value.trim()) return 0;
-  const match = /^(?:0|(?:\d+(?:\.\d+)?|\.\d+))px$/u.exec(value.trim());
-  if (!match) return null;
-  const parsed = Number(match[0].slice(0, -2));
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-}
-
 function intrinsicEdges(element: Element): Readonly<{
   bottom: number;
   left: number;
@@ -315,13 +311,13 @@ function intrinsicEdges(element: Element): Readonly<{
   top: number;
 }> | null {
   const values = MERMAID_EDGE_PROPERTIES.map((property, index) => {
-    if (index < 4) return intrinsicCssPixel(intrinsicStyleValue(element, property));
+    if (index < 4) return mermaidCssPixelValue(intrinsicStyleValue(element, property));
     const borderStyleProperty = MERMAID_BORDER_STYLE_PROPERTIES[index - 4];
     if (!borderStyleProperty) return null;
     const borderStyle = intrinsicStyleValue(element, borderStyleProperty).toLowerCase();
     return ['none', 'hidden', ''].includes(borderStyle)
       ? 0
-      : intrinsicCssPixel(intrinsicStyleValue(element, property));
+      : mermaidCssPixelValue(intrinsicStyleValue(element, property));
   });
   if (values.some((value) => value === null)) return null;
   const [top, right, bottom, left, borderTop, borderRight, borderBottom, borderLeft] = values as [
@@ -335,95 +331,32 @@ function intrinsicEdges(element: Element): Readonly<{
   };
 }
 
-type IntrinsicRadius = Readonly<{
-  horizontal: number;
-  vertical: number;
-}>;
-
-const MERMAID_RADIUS_PROPERTIES = [
-  'border-top-left-radius',
-  'border-top-right-radius',
-  'border-bottom-right-radius',
-  'border-bottom-left-radius'
-] as const;
-
-function intrinsicRadiusAxis(value: string): number[] | null {
-  const tokens = value.trim().split(/\s+/u).filter(Boolean);
-  if (tokens.length > 4) return null;
-  const values = tokens.map(intrinsicCssPixel);
-  return values.every((token) => token !== null) ? values as number[] : null;
-}
-
-function intrinsicRadiusPair(value: string): IntrinsicRadius | null {
-  const normalized = value.trim();
-  if (!normalized) return { horizontal: 0, vertical: 0 };
-  if (normalized.includes('/')) return null;
-  const tokens = normalized.split(/\s+/u);
-  if (tokens.length < 1 || tokens.length > 2) return null;
-  const horizontal = intrinsicCssPixel(tokens[0] ?? '');
-  if (horizontal === null) return null;
-  const vertical = 2 === tokens.length
-    ? intrinsicCssPixel(tokens[1] ?? '')
-    : horizontal;
-  if (vertical === null) return null;
-  return {
-    horizontal,
-    vertical,
-  };
-}
-
-function expandIntrinsicRadiusAxis(values: readonly number[]): readonly [number, number, number, number] {
-  const first = values[0] ?? 0;
-  const second = values[1] ?? first;
-  const third = values[2] ?? first;
-  const fourth = values[3] ?? second;
-  if (1 === values.length) return [first, first, first, first];
-  if (2 === values.length) return [first, second, first, second];
-  if (3 === values.length) return [first, second, third, second];
-  return [first, second, third, fourth];
-}
-
-function intrinsicRadiusShorthand(value: string): readonly IntrinsicRadius[] | null {
-  if (!value.trim()) return Array.from({ length: 4 }, () => ({ horizontal: 0, vertical: 0 }));
-  const groups = value.trim().split(/\s*\/\s*/u);
-  if (groups.length > 2 || groups.some((group) => !group.trim())) return null;
-  const horizontal = intrinsicRadiusAxis(groups[0] ?? '');
-  const vertical = 1 === groups.length ? horizontal : intrinsicRadiusAxis(groups[1] ?? '');
-  if (!horizontal || !vertical || !horizontal.length || !vertical.length) return null;
-  const horizontalCorners = expandIntrinsicRadiusAxis(horizontal);
-  const verticalCorners = expandIntrinsicRadiusAxis(vertical);
-  return horizontalCorners.map((horizontalValue, index) => ({
-    horizontal: horizontalValue,
-    vertical: verticalCorners[index] as number,
-  }));
-}
-
-function intrinsicRadiusCorners(element: Element): readonly IntrinsicRadius[] | null {
+function intrinsicRadiusCorners(element: Element): readonly MermaidRadius[] | null {
   const style = (element as Element & { style?: CSSStyleDeclaration }).style;
   const shorthand = intrinsicStyleValue(element, 'border-radius');
-  const shorthandCorners = intrinsicRadiusShorthand(shorthand);
+  const shorthandCorners = parseMermaidRadiusShorthand(shorthand);
   if (!shorthandCorners) return null;
   const inlineCorners = MERMAID_RADIUS_PROPERTIES.map((property) => (
     style?.getPropertyValue(property).trim() ?? ''
   ));
   if (inlineCorners.some(Boolean)) {
-    const parsedInlineCorners = inlineCorners.map((value, index) => intrinsicRadiusPair(
+    const parsedInlineCorners = inlineCorners.map((value, index) => parseMermaidRadiusPair(
       value || intrinsicStyleValue(element, MERMAID_RADIUS_PROPERTIES[index] as string)
     ));
     return parsedInlineCorners.some((pair) => pair === null)
       ? null
-      : parsedInlineCorners as IntrinsicRadius[];
+      : parsedInlineCorners as MermaidRadius[];
   }
   const computedCorners = MERMAID_RADIUS_PROPERTIES.map((property) => (
     element.ownerDocument.defaultView?.getComputedStyle(element)
       .getPropertyValue(property).trim() ?? ''
   ));
-  const parsedComputedCorners = computedCorners.map((value) => intrinsicRadiusPair(value));
+  const parsedComputedCorners = computedCorners.map((value) => parseMermaidRadiusPair(value));
   if (parsedComputedCorners.some((pair) => pair === null)) return null;
   const hasComputedPaint = parsedComputedCorners.some((pair) => {
     return pair !== null && (pair.horizontal > 0 || pair.vertical > 0);
   });
-  if (hasComputedPaint) return parsedComputedCorners as IntrinsicRadius[];
+  if (hasComputedPaint) return parsedComputedCorners as MermaidRadius[];
   return shorthandCorners;
 }
 
@@ -461,7 +394,7 @@ function intrinsicBorderIsSafe(element: Element): boolean {
     if (['none', 'hidden', ''].includes(style)) return true;
     const widthProperty = MERMAID_EDGE_PROPERTIES[index + 4];
     if (!widthProperty) return false;
-    const width = intrinsicCssPixel(intrinsicStyleValue(element, widthProperty));
+    const width = mermaidCssPixelValue(intrinsicStyleValue(element, widthProperty));
     return Boolean(width !== null && 'solid' === style);
   });
 }
@@ -540,7 +473,7 @@ function intrinsicRootLayoutIsSafe(element: Element): boolean {
     const value = intrinsicLayoutValue(element, property as string);
     return !value
       || safeDimensionKeywords.includes(value)
-      || intrinsicCssPixel(value) !== null
+      || mermaidCssPixelValue(value) !== null
       // The intrinsic capture sizes the clone explicitly; a full-width
       // responsive cap is therefore an owner constraint, not capture geometry.
       || 'max-width' === property && '100%' === value;
@@ -563,8 +496,8 @@ function intrinsicRootBorderBoxDimensions(
     && Number.isFinite(rect.height)
     && rect.height > 0
   ) return { height: rect.height, width: rect.width };
-  const width = intrinsicCssPixel(intrinsicLayoutValue(element, 'width'));
-  const height = intrinsicCssPixel(intrinsicLayoutValue(element, 'height'));
+  const width = mermaidCssPixelValue(intrinsicLayoutValue(element, 'width'));
+  const height = mermaidCssPixelValue(intrinsicLayoutValue(element, 'height'));
   const edges = intrinsicEdges(element);
   const boxSizing = intrinsicLayoutValue(element, 'box-sizing');
   const horizontalEdges = 'content-box' === boxSizing ? (edges?.left ?? 0) + (edges?.right ?? 0) : 0;
@@ -613,7 +546,7 @@ export function assertResponsiveMermaidCaptureRequest(
     throw new WechatVisualRasterizationError('wechat-png-image-failed');
   }
   const viewBox = mermaidViewBox(svg);
-  const maxWidth = intrinsicCssPixel(intrinsicStyleValue(svg, 'max-width'));
+  const maxWidth = mermaidCssPixelValue(intrinsicStyleValue(svg, 'max-width'));
   const preserveAspectRatio = svg.getAttribute('preserveAspectRatio')?.trim()
     .replace(/\s+/gu, ' ') ?? '';
   if (

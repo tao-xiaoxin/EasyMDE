@@ -150,8 +150,9 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 
 	if (originalImageRuleEntry) {
 		const originalImageRule = originalImageRuleEntry.fn;
-		parser.inline.ruler.at(
+		parser.inline.ruler.before(
 			"image",
+			"easymde_image",
 			(state, silent) => {
 				const startPos = state.pos;
 				const tokensBefore = state.tokens.length;
@@ -179,6 +180,7 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 			},
 			{ alt: [...originalImageRuleEntry.alt] },
 		);
+		parser.inline.ruler.disable("image");
 	}
 
 	const originalReferenceRuleEntry = (
@@ -187,8 +189,9 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 
 	if (originalReferenceRuleEntry) {
 		const originalReferenceRule = originalReferenceRuleEntry.fn;
-		parser.block.ruler.at(
+		parser.block.ruler.before(
 			"reference",
+			"easymde_reference",
 			(state, startLine, endLine, silent) => {
 				const existingRefs = (
 					state.env as {
@@ -237,6 +240,7 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 			},
 			{ alt: [...originalReferenceRuleEntry.alt] },
 		);
+		parser.block.ruler.disable("reference");
 	}
 
 	parser.block.ruler.before(

@@ -719,7 +719,8 @@ describe('EditorRoot immersive and visual editing', () => {
           customCssId: '',
           markdownTheme: 'default'
         },
-        true
+        true,
+        expect.any(Function)
       )
     );
   });

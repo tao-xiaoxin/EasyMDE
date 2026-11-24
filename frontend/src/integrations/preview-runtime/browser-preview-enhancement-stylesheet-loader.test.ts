@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { previewEnhancementFailureCode } from '../../features/live-preview/ports/preview-enhancement-port';
 import { createPreviewStylesheetLoader } from './browser-preview-enhancement-stylesheet-loader';
 
 const ROOT_SELECTOR = '#easymde-editor-root';
@@ -2087,5 +2088,30 @@ describe('createPreviewStylesheetLoader loadStylesheet rollback and scope preser
       expect(scopedRuleCount(sheetA)).toBe(0);
       linkA.remove();
     }
+  });
+
+  it('recognizes all stylesheet scope and rollback codes in canonical previewEnhancementFailureCode', () => {
+    const stylesheetFailureCodes = [
+      'editor-stylesheet-apply-failed',
+      'editor-stylesheet-import-unavailable',
+      'editor-stylesheet-nested-rule-invalid',
+      'editor-stylesheet-read-failed',
+      'editor-stylesheet-rollback-failed',
+      'editor-stylesheet-rule-invalid',
+      'editor-stylesheet-scope-conflict',
+      'editor-stylesheet-scope-empty',
+      'editor-stylesheet-scope-invalid',
+      'editor-stylesheet-scope-stale',
+      'editor-stylesheet-selector-invalid',
+      'editor-stylesheet-unavailable',
+      'preview-enhancement-style-scope-failed'
+    ] as const;
+
+    for (const code of stylesheetFailureCodes) {
+      expect(previewEnhancementFailureCode(new Error(code))).toBe(code);
+    }
+    expect(previewEnhancementFailureCode(new Error('unrecognized-failure'))).toBe(
+      'preview-enhancement-failed'
+    );
   });
 });

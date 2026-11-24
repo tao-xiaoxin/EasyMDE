@@ -16,6 +16,18 @@ export type PreviewRenderedStylesLease = Readonly<{
 }>;
 
 export type PreviewEnhancementFailureCode =
+  | 'editor-stylesheet-apply-failed'
+  | 'editor-stylesheet-import-unavailable'
+  | 'editor-stylesheet-nested-rule-invalid'
+  | 'editor-stylesheet-read-failed'
+  | 'editor-stylesheet-rollback-failed'
+  | 'editor-stylesheet-rule-invalid'
+  | 'editor-stylesheet-scope-conflict'
+  | 'editor-stylesheet-scope-empty'
+  | 'editor-stylesheet-scope-invalid'
+  | 'editor-stylesheet-scope-stale'
+  | 'editor-stylesheet-selector-invalid'
+  | 'editor-stylesheet-unavailable'
   | 'preview-enhancement-code-theme-missing'
   | 'preview-enhancement-document-head-missing'
   | 'preview-enhancement-failed'
@@ -30,9 +42,22 @@ export type PreviewEnhancementFailureCode =
   | 'preview-enhancement-rendered-style-scope-failed'
   | 'preview-enhancement-rendered-style-unavailable'
   | 'preview-enhancement-runtime-unavailable'
+  | 'preview-enhancement-style-scope-failed'
   | 'preview-enhancement-visual-source-missing';
 
 const failureCodes: ReadonlySet<string> = new Set<PreviewEnhancementFailureCode>([
+  'editor-stylesheet-apply-failed',
+  'editor-stylesheet-import-unavailable',
+  'editor-stylesheet-nested-rule-invalid',
+  'editor-stylesheet-read-failed',
+  'editor-stylesheet-rollback-failed',
+  'editor-stylesheet-rule-invalid',
+  'editor-stylesheet-scope-conflict',
+  'editor-stylesheet-scope-empty',
+  'editor-stylesheet-scope-invalid',
+  'editor-stylesheet-scope-stale',
+  'editor-stylesheet-selector-invalid',
+  'editor-stylesheet-unavailable',
   'preview-enhancement-code-theme-missing',
   'preview-enhancement-document-head-missing',
   'preview-enhancement-failed',
@@ -47,6 +72,7 @@ const failureCodes: ReadonlySet<string> = new Set<PreviewEnhancementFailureCode>
   'preview-enhancement-rendered-style-scope-failed',
   'preview-enhancement-rendered-style-unavailable',
   'preview-enhancement-runtime-unavailable',
+  'preview-enhancement-style-scope-failed',
   'preview-enhancement-visual-source-missing'
 ]);
 

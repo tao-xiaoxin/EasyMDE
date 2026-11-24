@@ -1,4 +1,4 @@
-import { createElement } from '@wordpress/element';
+import { createElement, useRef } from '@wordpress/element';
 import {
   act,
   fireEvent,
@@ -10,7 +10,11 @@ import { EditorSelection } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { AppearancePort } from '../../contracts/ports/appearance-port';
 import type { SafePreviewHtml } from '../../contracts/ports/preview-request';
+import { createWechatCopyStatusStore } from '../../features/wechat-export/wechat-copy-status';
+import { createBrowserPreviewEnhancementPort } from '../../integrations/preview-runtime/browser-preview-enhancement';
+import { createWordPressAppearancePort } from '../../integrations/wordpress/appearance/create-wordpress-appearance-port';
 import { EditorRoot } from './EditorRoot';
 import {
   cleanupEditorRootTestHarness,
@@ -19,6 +23,8 @@ import {
   fixture,
   imageTransferEvent
 } from './editor-root-test-harness';
+import type { CodeThemePreparation } from './editor-root-types';
+import { useEditorAppearanceBridge } from './use-editor-appearance-bridge';
 
 afterEach(cleanupEditorRootTestHarness);
 
@@ -1408,7 +1414,8 @@ describe('EditorRoot publish and appearance', () => {
           customCssId: '',
           markdownTheme: 'default'
         },
-        true
+        true,
+        expect.any(Function)
       )
     );
     await waitFor(() =>
@@ -1479,7 +1486,8 @@ describe('EditorRoot publish and appearance', () => {
         customCssId: '',
         markdownTheme: 'default'
       },
-      true
+      true,
+      expect.any(Function)
     );
     expect(props.appearancePort.applyState).toHaveBeenNthCalledWith(
       2,
@@ -1997,5 +2005,596 @@ describe('EditorRoot publish and appearance', () => {
         'preview-enhancement-resource-load-failed'
       );
     });
+  });
+
+  it.each([
+    {
+      expectedCode: 'editor-stylesheet-rollback-failed',
+      mode: 'rollback-throw' as const
+    },
+    {
+      expectedCode: 'preview-enhancement-resource-stale',
+      mode: 'detached-link' as const
+    }
+  ])(
+    'keeps WordPress hidden fields and active stylesheets atomic when real code-theme commit fails ($mode)',
+    async ({ expectedCode, mode }) => {
+      const assetBaseUrl = 'https://example.test/wp-content/plugins/easymde/';
+      const createdHeadNodes: HTMLElement[] = [];
+      const attachHeadSheet = (
+        link: HTMLLinkElement,
+        cssText: string
+      ): CSSStyleSheet => {
+        const style = document.createElement('style');
+        style.textContent = cssText;
+        document.head.append(style);
+        createdHeadNodes.push(style);
+        if (!style.sheet) throw new Error('test-style-sheet-missing');
+        Object.defineProperty(link, 'sheet', {
+          configurable: true,
+          value: style.sheet
+        });
+        return style.sheet;
+      };
+
+      const initialArticleLink = document.createElement('link');
+      initialArticleLink.id = 'easymde-article-theme-css';
+      initialArticleLink.rel = 'stylesheet';
+      initialArticleLink.href = `${assetBaseUrl}assets/themes/article/default.css`;
+      document.head.append(initialArticleLink);
+      createdHeadNodes.push(initialArticleLink);
+      attachHeadSheet(
+        initialArticleLink,
+        '.easymde-rendered-content { color: black; }'
+      );
+
+      const codeFrameLink = document.createElement('link');
+      codeFrameLink.id = 'easymde-code-frame-css';
+      codeFrameLink.rel = 'stylesheet';
+      codeFrameLink.href = `${assetBaseUrl}assets/css/code-frame.css`;
+      codeFrameLink.dataset.easymdeLoadedHref = codeFrameLink.href;
+      document.head.append(codeFrameLink);
+      createdHeadNodes.push(codeFrameLink);
+      attachHeadSheet(codeFrameLink, '.easymde-code-mac { padding: 8px; }');
+
+      const props = fixture();
+      const appearance = {
+        ...props.appearance,
+        articleThemes: [
+          {
+            cssUrl: `${assetBaseUrl}assets/themes/article/default.css`,
+            defaultCodeTheme: 'atom-one-dark',
+            id: 'default',
+            label: 'Default',
+            markupProfile: 'common-v1'
+          },
+          {
+            cssUrl: `${assetBaseUrl}assets/themes/article/newsprint.css`,
+            defaultCodeTheme: 'github',
+            id: 'newsprint',
+            label: 'Newsprint',
+            markupProfile: 'common-v1'
+          }
+        ]
+      };
+      const fields = {
+        codeTheme: document.createElement('input'),
+        codeThemeExplicit: document.createElement('input'),
+        customCssId: document.createElement('input'),
+        markdownTheme: document.createElement('input')
+      };
+
+      const realAppearancePort = createWordPressAppearancePort({
+        apiFetch: vi.fn(),
+        assetBaseUrl,
+        bootstrap: appearance,
+        customCssUrl: 'https://example.test/wp-json/easymde/v1/custom-css',
+        document,
+        fields,
+        nonce: 'synthetic-nonce',
+        siteUrl: 'https://example.test/wp-admin/post.php'
+      });
+
+      const realEnhancementPort = createBrowserPreviewEnhancementPort(
+        {
+          assetBaseUrl,
+          assets: {
+            codeFrameCssUrl: `${assetBaseUrl}assets/css/code-frame.css`,
+            codeFrameLinkId: 'easymde-code-frame-css',
+            highlightScriptUrl: `${assetBaseUrl}assets/vendor/highlight.min.js`,
+            highlightThemeLinkId: 'easymde-highlight-theme-css',
+            katexCssLinkId: 'easymde-katex-css',
+            katexCssUrl: `${assetBaseUrl}assets/vendor/katex.min.css`,
+            katexScriptUrl: `${assetBaseUrl}assets/vendor/katex.min.js`,
+            mathCssLinkId: 'easymde-math-css',
+            mathCssUrl: `${assetBaseUrl}assets/css/math.css`,
+            mathRendererUrl: `${assetBaseUrl}assets/js/enhancements.js`,
+            mermaidAssetError: null,
+            mermaidRendererUrl: `${assetBaseUrl}assets/js/mermaid-renderer.js`,
+            mermaidScriptUrl: `${assetBaseUrl}assets/vendor/mermaid.min.js`,
+            tocCssLinkId: 'easymde-toc-css',
+            tocCssUrl: `${assetBaseUrl}assets/css/toc.css`
+          },
+          codeThemes: [
+            {
+              cssUrl: `${assetBaseUrl}assets/themes/code/atom-one-dark.css`,
+              id: 'atom-one-dark'
+            },
+            {
+              cssUrl: `${assetBaseUrl}assets/themes/code/github.css`,
+              id: 'github'
+            }
+          ],
+          strings: { renderingFailed: 'Rendering failed' }
+        },
+        {
+          documentRef: document,
+          runtime: {
+            getEnhancements: () => ({
+              enhance: vi.fn().mockResolvedValue(undefined),
+              syncCodeFrameBackgrounds: vi.fn()
+            }),
+            hasHighlight: () => true,
+            hasKatex: () => true,
+            hasMathRenderer: () => true,
+            hasMermaid: () => true,
+            hasMermaidRenderer: () => true,
+            warmHighlightAuto: vi.fn().mockResolvedValue(true)
+          }
+        }
+      );
+
+      // Activate initial atom-one-dark code-theme stylesheet in the real loader.
+      const initialCodePrepare = realEnhancementPort.prepareCodeTheme({
+        codeTheme: 'atom-one-dark',
+        signal: new AbortController().signal
+      });
+      const initialCodeLink = document.head.querySelector<HTMLLinkElement>(
+        'link[data-easymde-stylesheet-owner="easymde-highlight-theme-css"]'
+      );
+      if (!initialCodeLink) throw new Error('initial-code-link-missing');
+      createdHeadNodes.push(initialCodeLink);
+      const initialCodeSheet = attachHeadSheet(
+        initialCodeLink,
+        '.hljs { color: white; }'
+      );
+      initialCodeLink.dispatchEvent(new Event('load'));
+      const initialCodePrepared = await initialCodePrepare;
+      initialCodePrepared.commit();
+      expect(document.getElementById('easymde-highlight-theme-css')).toBe(
+        initialCodeLink
+      );
+
+      const observedFieldWrites: Array<{ field: string; value: string }> = [];
+      const watchField = (
+        input: HTMLInputElement,
+        name: string
+      ): (() => void) => {
+        const descriptor = Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          'value'
+        );
+        if (!descriptor?.get || !descriptor.set) {
+          throw new Error('input-value-descriptor-missing');
+        }
+        Object.defineProperty(input, 'value', {
+          configurable: true,
+          get() {
+            return descriptor.get?.call(this);
+          },
+          set(nextValue: string) {
+            observedFieldWrites.push({ field: name, value: nextValue });
+            descriptor.set?.call(this, nextValue);
+          }
+        });
+        return () => {
+          delete (input as unknown as Record<string, unknown>).value;
+        };
+      };
+      const restoreWatchers = [
+        watchField(fields.markdownTheme, 'markdownTheme'),
+        watchField(fields.codeTheme, 'codeTheme'),
+        watchField(fields.codeThemeExplicit, 'codeThemeExplicit'),
+        watchField(fields.customCssId, 'customCssId')
+      ];
+
+      let view: ReturnType<typeof render> | null = null;
+      try {
+        view = render(
+          <EditorRoot
+            {...props}
+            appearance={appearance}
+            appearancePort={realAppearancePort}
+            enhancementPort={realEnhancementPort}
+          />
+        );
+        await waitFor(() =>
+          expect(props.previewPort.render).toHaveBeenCalledTimes(1)
+        );
+
+        fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+        fireEvent.click(view.getByRole('combobox', { name: 'Article theme' }));
+        fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
+
+        // 1. Wait for prepared github code-theme link and finish loading it.
+        let githubLink: HTMLLinkElement | undefined;
+        await waitFor(() => {
+          githubLink = Array.from(
+            document.head.querySelectorAll<HTMLLinkElement>(
+              'link[data-easymde-stylesheet-owner="easymde-highlight-theme-css"]'
+            )
+          ).find((link) => link !== initialCodeLink);
+          expect(githubLink).toBeDefined();
+        });
+        if (!githubLink) throw new Error('github-code-link-missing');
+        createdHeadNodes.push(githubLink);
+        attachHeadSheet(githubLink, '.hljs { color: navy; }');
+        githubLink.dispatchEvent(new Event('load'));
+
+        // 2. Wait for article-theme candidate link (newsprint.css).
+        let newsprintLink: HTMLLinkElement | undefined;
+        await waitFor(() => {
+          newsprintLink = Array.from(
+            document.head.querySelectorAll<HTMLLinkElement>('link')
+          ).find(
+            (link) =>
+              link !== initialArticleLink
+              && link.href.includes('newsprint.css')
+          );
+          expect(newsprintLink).toBeDefined();
+        });
+        if (!newsprintLink) throw new Error('newsprint-article-link-missing');
+        createdHeadNodes.push(newsprintLink);
+        attachHeadSheet(
+          newsprintLink,
+          '.easymde-rendered-content { color: teal; }'
+        );
+
+        // 3. Inject real code-theme commit failure right before article load fires.
+        if ('rollback-throw' === mode) {
+          vi.spyOn(initialCodeSheet, 'deleteRule').mockImplementationOnce(
+            () => {
+              throw new Error('synthetic-code-theme-delete-rule-failed');
+            }
+          );
+        } else {
+          githubLink.remove();
+        }
+        newsprintLink.dispatchEvent(new Event('load'));
+
+        await waitFor(() =>
+          expect(props.onFailure).toHaveBeenCalledWith(expectedCode)
+        );
+
+        // WordPress hidden fields must NEVER have held the rejected theme at any point.
+        expect(
+          observedFieldWrites.some(
+            ({ value }) => 'newsprint' === value || 'github' === value
+          )
+        ).toBe(false);
+        expect(fields.markdownTheme.value).toBe('default');
+        expect(fields.codeTheme.value).toBe('atom-one-dark');
+        expect(fields.codeThemeExplicit.value).toBe('0');
+        expect(fields.customCssId.value).toBe('');
+
+        // Previous article link and previous code link must remain active in DOM.
+        expect(document.getElementById('easymde-article-theme-css')).toBe(
+          initialArticleLink
+        );
+        expect(initialArticleLink.isConnected).toBe(true);
+        expect(newsprintLink.isConnected).toBe(false);
+        expect(document.getElementById('easymde-highlight-theme-css')).toBe(
+          initialCodeLink
+        );
+        expect(initialCodeLink.isConnected).toBe(true);
+        expect(githubLink.isConnected).toBe(false);
+
+        const sink = view.container.querySelector(
+          '[data-easymde-preview-html-sink]'
+        );
+        expect(sink?.classList.contains('easymde-markdown-theme-default')).toBe(
+          true
+        );
+        expect(
+          sink?.classList.contains('easymde-code-theme-atom-one-dark')
+        ).toBe(true);
+        expect(
+          sink?.classList.contains('easymde-markdown-theme-newsprint')
+        ).toBe(false);
+        expect(sink?.classList.contains('easymde-code-theme-github')).toBe(
+          false
+        );
+      } finally {
+        view?.unmount();
+        for (const restore of restoreWatchers) restore();
+        realEnhancementPort.dispose?.();
+        realAppearancePort.dispose();
+        document.getElementById('easymde-custom-css-preview')?.remove();
+        for (const node of createdHeadNodes) node.remove();
+      }
+    }
+  );
+
+  it('keeps native save and autosave blocked while fallback async rollback is suspended', async () => {
+    const props = fixture();
+    const suspendedRollback = deferred<boolean>();
+    const nativeFields = {
+      codeTheme: 'atom-one-dark',
+      codeThemeExplicit: '0',
+      customCssId: '',
+      markdownTheme: 'default'
+    };
+    let applyCount = 0;
+    vi.mocked(props.appearancePort.applyState).mockImplementation(
+      async (state, explicit) => {
+        applyCount += 1;
+        if (2 === applyCount) {
+          const result = await suspendedRollback.promise;
+          nativeFields.codeTheme = state.codeTheme;
+          nativeFields.codeThemeExplicit = explicit ? '1' : '0';
+          nativeFields.customCssId = state.customCssId;
+          nativeFields.markdownTheme = state.markdownTheme;
+          return result;
+        }
+        nativeFields.codeTheme = state.codeTheme;
+        nativeFields.codeThemeExplicit = explicit ? '1' : '0';
+        nativeFields.customCssId = state.customCssId;
+        nativeFields.markdownTheme = state.markdownTheme;
+        return true;
+      }
+    );
+    const failingPrepared = {
+      cancel: vi.fn(),
+      commit: vi.fn(() => {
+        throw new Error('editor-stylesheet-rollback-failed');
+      })
+    };
+    vi.mocked(props.enhancementPort.prepareCodeTheme).mockResolvedValueOnce(
+      failingPrepared
+    );
+
+    const view = render(<EditorRoot {...props} />);
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenCalledTimes(1)
+    );
+
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Code theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'GitHub' }));
+
+    await waitFor(() =>
+      expect(props.appearancePort.applyState).toHaveBeenCalledTimes(2)
+    );
+
+    // Rollback is still suspended: native submit and autosave must remain blocked!
+    const pendingSubmit = new SubmitEvent('submit', {
+      bubbles: true,
+      cancelable: true
+    });
+    expect(props.nativeForm.dispatchEvent(pendingSubmit)).toBe(false);
+    expect(props.sessionAutosave()).toBe('blocked');
+    expect(props.onFailure).toHaveBeenCalledWith('editor-appearance-pending');
+    expect(props.onFailure).not.toHaveBeenCalledWith(
+      'editor-stylesheet-rollback-failed'
+    );
+
+    await act(async () => {
+      suspendedRollback.resolve(true);
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(props.onFailure).toHaveBeenCalledWith(
+        'editor-stylesheet-rollback-failed'
+      )
+    );
+    expect(nativeFields.codeTheme).toBe('atom-one-dark');
+
+    const settledSubmit = new SubmitEvent('submit', {
+      bubbles: true,
+      cancelable: true
+    });
+    expect(props.nativeForm.dispatchEvent(settledSubmit)).toBe(true);
+    expect(props.sessionAutosave()).toBe('continue');
+  });
+
+  it('suppresses stale failure reporting when a superseding theme switch arrives during suspended rollback', async () => {
+    const props = fixture();
+    const suspendedRollback = deferred<boolean>();
+    const appearance = {
+      ...props.appearance,
+      codeThemes: [
+        ...props.appearance.codeThemes,
+        { id: 'terminal-noir', label: 'Terminal Noir' }
+      ]
+    };
+    let applyCount = 0;
+    vi.mocked(props.appearancePort.applyState).mockImplementation(async () => {
+      applyCount += 1;
+      if (2 === applyCount) {
+        return suspendedRollback.promise;
+      }
+      return true;
+    });
+    const failingGithubPrepared = {
+      cancel: vi.fn(),
+      commit: vi.fn(() => {
+        throw new Error('editor-stylesheet-rollback-failed');
+      })
+    };
+    const terminalPrepared = {
+      cancel: vi.fn(),
+      commit: vi.fn()
+    };
+    vi.mocked(props.enhancementPort.prepareCodeTheme).mockImplementation(
+      async ({ codeTheme }) =>
+        'github' === codeTheme ? failingGithubPrepared : terminalPrepared
+    );
+
+    const view = render(<EditorRoot {...props} appearance={appearance} />);
+    await waitFor(() =>
+      expect(props.previewPort.render).toHaveBeenCalledTimes(1)
+    );
+
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    fireEvent.click(view.getByRole('combobox', { name: 'Code theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'GitHub' }));
+
+    await waitFor(() =>
+      expect(props.appearancePort.applyState).toHaveBeenCalledTimes(2)
+    );
+
+    // Supersede with Terminal Noir while GitHub rollback is suspended.
+    fireEvent.click(view.getByRole('combobox', { name: 'Code theme' }));
+    fireEvent.click(view.getByRole('option', { name: 'Terminal Noir' }));
+
+    await waitFor(() =>
+      expect(
+        view.container
+          .querySelector('[data-easymde-preview-html-sink]')
+          ?.classList.contains('easymde-code-theme-terminal-noir')
+      ).toBe(true)
+    );
+    expect(terminalPrepared.commit).toHaveBeenCalledTimes(1);
+
+    // Resume the stale rollback; it must NOT report a stale failure on top of Terminal Noir.
+    await act(async () => {
+      suspendedRollback.resolve(true);
+      await Promise.resolve();
+    });
+
+    expect(props.onFailure).not.toHaveBeenCalledWith(
+      'editor-stylesheet-rollback-failed'
+    );
+    expect(
+      view.container
+        .querySelector('[data-easymde-preview-html-sink]')
+        ?.classList.contains('easymde-code-theme-terminal-noir')
+    ).toBe(true);
+    expect(props.sessionAutosave()).toBe('continue');
+  });
+
+  it('aborts pending rollback and suppresses stale failure reporting when cancelPendingApply runs during suspended rollback', async () => {
+    const props = fixture();
+    const suspendedRollback = deferred<boolean>();
+    const reportFailure = vi.fn();
+    const wechatCopyStatus = createWechatCopyStatusStore();
+    let applyCount = 0;
+    const rawAppearancePort: AppearancePort = {
+      ...props.appearancePort,
+      applyState: vi.fn(async () => {
+        applyCount += 1;
+        if (2 === applyCount) {
+          return suspendedRollback.promise;
+        }
+        return true;
+      }),
+      cancelPendingApply: vi.fn()
+    };
+    const failingPrepared = {
+      cancel: vi.fn(),
+      commit: vi.fn(() => {
+        throw new Error('editor-stylesheet-rollback-failed');
+      })
+    };
+    vi.mocked(props.enhancementPort.prepareCodeTheme).mockResolvedValueOnce(
+      failingPrepared
+    );
+
+    let capturedPort: AppearancePort | null = null;
+    let capturedPrepRef: { current: CodeThemePreparation | null } | null = null;
+
+    function BridgeHarness() {
+      const appearanceSessionRef = useRef(null);
+      const appearanceTransitionPendingRef = useRef<number | null>(null);
+      const codeThemePreparationGenerationRef = useRef(0);
+      const codeThemePreparationRef = useRef<CodeThemePreparation | null>(null);
+      const fontControlsSessionRef = useRef(null);
+      const ordinarySettingsSessionRef = useRef(null);
+      const previewAppearanceRef = useRef(props.appearance.state);
+      const previewRefreshPendingRef = useRef(false);
+      const previewRuntimeRef = useRef(null);
+      const rootActiveRef = useRef(true);
+      const submissionStateRef = useRef({
+        ...props.appearance.state,
+        ...props.fonts.state,
+        codeThemeExplicit: props.appearance.codeThemeExplicit
+      });
+      const toolbarSessionRef = useRef(null);
+      const visualEditorRuntimeRef = useRef(null);
+      const visualPreviewEditingRef = useRef(false);
+
+      const bridge = useEditorAppearanceBridge({
+        appearance: props.appearance,
+        appearancePort: rawAppearancePort,
+        appearanceSessionRef,
+        appearanceTransitionPendingRef,
+        cancelVisualUnlockPreparation: vi.fn(),
+        cancelWechatBackgroundPreparation: vi.fn(),
+        cancelWechatCopyForThemeChange: vi.fn(),
+        codeThemePreparationGenerationRef,
+        codeThemePreparationRef,
+        documentSession: null,
+        enhancementPort: props.enhancementPort,
+        fontControlsPort: props.fontControlsPort,
+        fontControlsSessionRef,
+        fonts: props.fonts,
+        markVisualPreviewChanged: vi.fn(),
+        ordinarySettingsSessionRef,
+        previewAppearanceRef,
+        previewPresentation: 'split',
+        previewRefreshPendingRef,
+        previewRuntimeRef,
+        protectedOperationError: () => null,
+        publishEditorStatus: vi.fn(),
+        reportFailure,
+        rootActiveRef,
+        scheduleCurrentWechatPreviewPreparation: vi.fn(),
+        schedulePreview: vi.fn(),
+        scheduleWechatPreviewPreparation: vi.fn(),
+        setEditorStatusState: vi.fn(),
+        submissionStateRef,
+        toolbarSessionRef,
+        visualEditorRuntimeRef,
+        visualPreviewEditingRef,
+        wechatCopyStatus
+      });
+      capturedPort = bridge.appearancePort;
+      capturedPrepRef = codeThemePreparationRef;
+      return null;
+    }
+
+    const view = render(<BridgeHarness />);
+    if (!capturedPort || !capturedPrepRef) {
+      throw new Error('bridge-harness-not-initialized');
+    }
+    const bridgePort: AppearancePort = capturedPort;
+    const prepRef: { current: CodeThemePreparation | null } = capturedPrepRef;
+
+    const pendingApply = bridgePort.applyState(
+      { codeTheme: 'github', customCssId: '', markdownTheme: 'default' },
+      true
+    );
+
+    await waitFor(() =>
+      expect(rawAppearancePort.applyState).toHaveBeenCalledTimes(2)
+    );
+    expect(prepRef.current).not.toBeNull();
+    const rollbackController = prepRef.current?.controller;
+    expect(rollbackController?.signal.aborted).toBe(false);
+
+    bridgePort.cancelPendingApply();
+    expect(rollbackController?.signal.aborted).toBe(true);
+    expect(prepRef.current).toBeNull();
+    expect(rawAppearancePort.cancelPendingApply).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      suspendedRollback.resolve(true);
+      await expect(pendingApply).resolves.toBe(false);
+    });
+
+    expect(reportFailure).not.toHaveBeenCalled();
+    expect(wechatCopyStatus.getSnapshot().unavailable).toBe(false);
+    view.unmount();
   });
 });

@@ -86,7 +86,7 @@ function createStyleLoadWait(
 export type PreparedStyleOwner = 'activation' | 'enhancement';
 
 export type PreparedStyleLoad = Readonly<{
-  attemptCommit: () => Error | null;
+  attemptCommit: () => void;
   cancel: () => void;
   owner: PreparedStyleOwner;
   promise: Promise<PreparedCodeTheme>;
@@ -469,7 +469,7 @@ export function createPreviewStylesheetLoader(
   ): PreparedStyleLoad {
     if (isLoaderDisposed()) {
       return {
-        attemptCommit: () => null,
+        attemptCommit: () => undefined,
         cancel: () => undefined,
         owner,
         promise: Promise.reject(resourceError('preview-enhancement-runtime-unavailable')),
@@ -478,7 +478,7 @@ export function createPreviewStylesheetLoader(
     }
     if (signal.aborted) {
       return {
-        attemptCommit: () => null,
+        attemptCommit: () => undefined,
         cancel: () => undefined,
         owner,
         promise: Promise.reject(resourceError('preview-enhancement-resource-stale')),
@@ -506,7 +506,7 @@ export function createPreviewStylesheetLoader(
     const existing = documentRef.getElementById(id);
     if (existing && !(existing instanceof HTMLLinkElement)) {
       return {
-        attemptCommit: () => null,
+        attemptCommit: () => undefined,
         cancel: () => undefined,
         owner,
         promise: Promise.reject(resourceError('preview-enhancement-resource-conflict')),
@@ -637,32 +637,32 @@ export function createPreviewStylesheetLoader(
       reconcile();
       pruneActivationOutcomes();
     };
-    const applyCommit = (): Error | null => {
-      if ('ready' !== state || !commitRequested || isLoaderDisposed()) return null;
+    const applyCommit = (): void => {
+      if ('ready' !== state || !commitRequested || isLoaderDisposed()) return;
       if ('activation' === owner) {
         if (sequence < slot.committedActivationSequence) {
           finish();
-          return null;
+          return;
         }
       } else {
-        if (activationBlocksEnhancement()) return null;
+        if (activationBlocksEnhancement()) return;
         const overlappingActivationUrl = latestSuccessfulOverlappingActivation();
         if (overlappingActivationUrl && overlappingActivationUrl !== url) {
           finish();
-          return null;
+          return;
         }
         if (slot.authoritativeActivationUrl && slot.authoritativeActivationUrl !== url) {
           finish();
-          return null;
+          return;
         }
         if (sequence < slot.committedEnhancementSequence) {
           finish();
-          return null;
+          return;
         }
       }
 
       let previousLoadToEvict: StyleLoad | null = null;
-      const failCommit = (error: Error): Error => {
+      const failCommit = (error: Error): void => {
         if (
           previousLoadToEvict
           && styleLoads.get(id) === previousLoadToEvict
@@ -671,35 +671,39 @@ export function createPreviewStylesheetLoader(
         }
         commitError = error;
         finish(error);
-        return error;
       };
 
       if (link && !link.isConnected) {
-        return failCommit(resourceError('preview-enhancement-resource-stale'));
+        failCommit(resourceError('preview-enhancement-resource-stale'));
+        return;
       }
       const existingBeforeCancel = documentRef.getElementById(id);
       if (existingBeforeCancel && !(existingBeforeCancel instanceof HTMLLinkElement)) {
-        return failCommit(resourceError('preview-enhancement-resource-conflict'));
+        failCommit(resourceError('preview-enhancement-resource-conflict'));
+        return;
       }
       const activeLoad = styleLoads.get(id);
       if (activeLoad && !activeLoad.loaded()) {
         activeLoad.cancel();
       }
       if ('ready' !== state || !commitRequested || isLoaderDisposed()) {
-        return failCommit(
+        failCommit(
           resourceError(
             isLoaderDisposed()
               ? 'preview-enhancement-runtime-unavailable'
               : 'preview-enhancement-resource-stale'
           )
         );
+        return;
       }
       const current = documentRef.getElementById(id);
       if (current && !(current instanceof HTMLLinkElement)) {
-        return failCommit(resourceError('preview-enhancement-resource-conflict'));
+        failCommit(resourceError('preview-enhancement-resource-conflict'));
+        return;
       }
       if (!link && (!(existing instanceof HTMLLinkElement) || current !== existing)) {
-        return failCommit(resourceError('preview-enhancement-resource-stale'));
+        failCommit(resourceError('preview-enhancement-resource-stale'));
+        return;
       }
       const previousLoad = styleLoads.get(id);
       if (previousLoad) {
@@ -710,25 +714,29 @@ export function createPreviewStylesheetLoader(
           try {
             previousScopeLease.dispose();
           } catch (error) {
-            return failCommit(toStyleScopeError(error));
+            failCommit(toStyleScopeError(error));
+            return;
           }
         }
       }
       if ('ready' !== state || !commitRequested || isLoaderDisposed()) {
-        return failCommit(
+        failCommit(
           resourceError(
             isLoaderDisposed()
               ? 'preview-enhancement-runtime-unavailable'
               : 'preview-enhancement-resource-stale'
           )
         );
+        return;
       }
       if (link && !link.isConnected) {
-        return failCommit(resourceError('preview-enhancement-resource-stale'));
+        failCommit(resourceError('preview-enhancement-resource-stale'));
+        return;
       }
       const currentAfterDispose = documentRef.getElementById(id);
       if (currentAfterDispose && !(currentAfterDispose instanceof HTMLLinkElement)) {
-        return failCommit(resourceError('preview-enhancement-resource-conflict'));
+        failCommit(resourceError('preview-enhancement-resource-conflict'));
+        return;
       }
       let activeLink: HTMLLinkElement;
       if (link) {
@@ -739,7 +747,8 @@ export function createPreviewStylesheetLoader(
         activeLink = link;
       } else {
         if (!(existing instanceof HTMLLinkElement) || currentAfterDispose !== existing) {
-          return failCommit(resourceError('preview-enhancement-resource-stale'));
+          failCommit(resourceError('preview-enhancement-resource-stale'));
+          return;
         }
         activeLink = existing;
       }
@@ -764,7 +773,6 @@ export function createPreviewStylesheetLoader(
         wait: (waitSignal) => waitForResource(ready, waitSignal)
       });
       finish(undefined, 'activation' === owner ? url : undefined, true);
-      return null;
     };
     const cancel = () => finish(resourceError('preview-enhancement-resource-stale'));
     const commit = () => {

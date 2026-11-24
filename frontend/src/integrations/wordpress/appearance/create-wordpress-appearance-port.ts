@@ -314,7 +314,8 @@ export function createWordPressAppearancePort({
     codeThemeExplicit: boolean,
     resolved: ReturnType<typeof resolveState>,
     articleLink: HTMLLinkElement,
-    articleCandidate: HTMLLinkElement | null
+    articleCandidate: HTMLLinkElement | null,
+    onBeforePublish?: () => void
   ): void => {
     if (stateUnverified) throw new Error('appearance-state-unverified');
     const previousFields = captureFields();
@@ -356,6 +357,10 @@ export function createWordPressAppearancePort({
           rootSelector: editorRootSelector
         });
       }
+
+      onBeforePublish?.();
+      if (disposed) throw new Error('appearance-port-disposed');
+      if (stateUnverified) throw new Error('appearance-state-unverified');
 
       if (articleCandidate && previousArticleLease) {
         articleScopeLease = null;
@@ -445,63 +450,69 @@ export function createWordPressAppearancePort({
       } catch (disposeCustomError) {
         rollbackError ??= disposeCustomError;
       }
-      if (
-        previousArticle.element?.isConnected
-        && (articleLeaseDisposed || (articleSheetChanged && previousArticleLease))
-      ) {
-        if (!articleLeaseDisposed && previousArticleLease) {
-          articleScopeLease = null;
-          articleLeaseUntrusted = true;
-          try {
-            previousArticleLease.dispose();
-            articleLeaseUntrusted = false;
-          } catch (restoreArticleLeaseError) {
-            rollbackError ??= restoreArticleLeaseError;
-          }
-        }
-        if (!articleLeaseUntrusted) {
-          try {
-            articleScopeLease = scopeEditorStylesheetLink(articleLink, {
-              rootSelector: editorRootSelector
-            });
-          } catch (restoreArticleScopeError) {
-            rollbackError ??= restoreArticleScopeError;
-          }
-        }
-      } else if (!articleCandidate) {
-        articleScopeLease = previousArticleLease;
-      }
-      if (
-        previousCustom.element?.isConnected
-        && (customLeaseDisposed || (customSheetChanged && previousCustomLease))
-      ) {
-        if (!customLeaseDisposed && previousCustomLease) {
-          customScopeLease = null;
-          customScopeElement = null;
-          customLeaseUntrusted = true;
-          try {
-            previousCustomLease.dispose();
-            customLeaseUntrusted = false;
-          } catch (restoreCustomLeaseError) {
-            rollbackError ??= restoreCustomLeaseError;
-          }
-        }
-        if (!customLeaseUntrusted) {
-          try {
-            customScopeLease = scopeEditorStyleElement(previousCustom.element, {
-              rootSelector: editorRootSelector
-            });
-            customScopeElement = previousCustom.element;
-          } catch (restoreCustomScopeError) {
-            rollbackError ??= restoreCustomScopeError;
-          }
-        }
-      } else if (!previousCustom.element) {
+      if (disposed) {
+        articleScopeLease = null;
         customScopeLease = null;
         customScopeElement = null;
-      } else if (!customLeaseDisposed) {
-        customScopeLease = previousCustomLease;
-        customScopeElement = previousCustomScopeElement;
+      } else {
+        if (
+          previousArticle.element?.isConnected
+          && (articleLeaseDisposed || (articleSheetChanged && previousArticleLease))
+        ) {
+          if (!articleLeaseDisposed && previousArticleLease) {
+            articleScopeLease = null;
+            articleLeaseUntrusted = true;
+            try {
+              previousArticleLease.dispose();
+              articleLeaseUntrusted = false;
+            } catch (restoreArticleLeaseError) {
+              rollbackError ??= restoreArticleLeaseError;
+            }
+          }
+          if (!articleLeaseUntrusted) {
+            try {
+              articleScopeLease = scopeEditorStylesheetLink(articleLink, {
+                rootSelector: editorRootSelector
+              });
+            } catch (restoreArticleScopeError) {
+              rollbackError ??= restoreArticleScopeError;
+            }
+          }
+        } else if (!articleCandidate) {
+          articleScopeLease = previousArticleLease;
+        }
+        if (
+          previousCustom.element?.isConnected
+          && (customLeaseDisposed || (customSheetChanged && previousCustomLease))
+        ) {
+          if (!customLeaseDisposed && previousCustomLease) {
+            customScopeLease = null;
+            customScopeElement = null;
+            customLeaseUntrusted = true;
+            try {
+              previousCustomLease.dispose();
+              customLeaseUntrusted = false;
+            } catch (restoreCustomLeaseError) {
+              rollbackError ??= restoreCustomLeaseError;
+            }
+          }
+          if (!customLeaseUntrusted) {
+            try {
+              customScopeLease = scopeEditorStyleElement(previousCustom.element, {
+                rootSelector: editorRootSelector
+              });
+              customScopeElement = previousCustom.element;
+            } catch (restoreCustomScopeError) {
+              rollbackError ??= restoreCustomScopeError;
+            }
+          }
+        } else if (!previousCustom.element) {
+          customScopeLease = null;
+          customScopeElement = null;
+        } else if (!customLeaseDisposed) {
+          customScopeLease = previousCustomLease;
+          customScopeElement = previousCustomScopeElement;
+        }
       }
       if (articleLeaseUntrusted || customLeaseUntrusted || rollbackError) {
         stateUnverified = true;
@@ -531,7 +542,8 @@ export function createWordPressAppearancePort({
 
   const applyState = async (
     state: AppearanceState,
-    codeThemeExplicit: boolean
+    codeThemeExplicit: boolean,
+    onBeforePublish?: () => void
   ): Promise<boolean> => {
     if (disposed) throw new Error('appearance-port-disposed');
     if (stateUnverified) throw new Error('appearance-state-unverified');
@@ -544,7 +556,14 @@ export function createWordPressAppearancePort({
     pendingArticleTheme?.cancel();
     pendingArticleTheme = null;
     if (articleLink.href === resolved.articleThemeUrl) {
-      commitPreparedState(state, codeThemeExplicit, resolved, articleLink, null);
+      commitPreparedState(
+        state,
+        codeThemeExplicit,
+        resolved,
+        articleLink,
+        null,
+        onBeforePublish
+      );
       return true;
     }
 
@@ -581,7 +600,14 @@ export function createWordPressAppearancePort({
           return;
         }
         try {
-          commitPreparedState(state, codeThemeExplicit, resolved, articleLink, candidate);
+          commitPreparedState(
+            state,
+            codeThemeExplicit,
+            resolved,
+            articleLink,
+            candidate,
+            onBeforePublish
+          );
           resolve(true);
         } catch (error) {
           if (candidate.isConnected) candidate.remove();

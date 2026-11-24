@@ -25,6 +25,7 @@ import type { EditorDocumentSession } from '../../features/document-source/ui/Ed
 import type { OrdinaryEditorSettingsSession } from '../../features/editor-settings/ui/OrdinaryEditorSettings';
 import type { FontControlsSession } from '../../features/font-controls/ui/FontControls';
 import {
+  type PreparedCodeTheme,
   type PreviewEnhancementPort,
   previewEnhancementFailureCode
 } from '../../features/live-preview/ports/preview-enhancement-port';
@@ -44,32 +45,6 @@ import type {
   SharedRef
 } from './editor-root-types';
 import type { WechatCopyStatusStore } from '../../features/wechat-export/wechat-copy-status';
-
-const STYLESHEET_FAILURE_CODES: ReadonlySet<string> = new Set([
-  'editor-stylesheet-apply-failed',
-  'editor-stylesheet-import-unavailable',
-  'editor-stylesheet-nested-rule-invalid',
-  'editor-stylesheet-read-failed',
-  'editor-stylesheet-rollback-failed',
-  'editor-stylesheet-rule-invalid',
-  'editor-stylesheet-scope-conflict',
-  'editor-stylesheet-scope-empty',
-  'editor-stylesheet-scope-invalid',
-  'editor-stylesheet-scope-stale',
-  'editor-stylesheet-selector-invalid',
-  'editor-stylesheet-unavailable',
-  'preview-enhancement-style-scope-failed'
-]);
-
-function codeThemeFailureCode(error: unknown): string {
-  if (
-    error instanceof Error
-    && STYLESHEET_FAILURE_CODES.has(error.message)
-  ) {
-    return error.message;
-  }
-  return previewEnhancementFailureCode(error);
-}
 
 export type UseEditorAppearanceBridgeOptions = Readonly<{
   appearance: AppearanceBootstrap;
@@ -253,6 +228,11 @@ export function useEditorAppearanceBridge({
           prepared: null
         };
         codeThemePreparationRef.current = preparation;
+        const isCurrentGeneration = () =>
+          !controller.signal.aborted
+          && codeThemePreparationRef.current?.generation === generation
+          && codeThemePreparationGenerationRef.current === generation
+          && rootActiveRef.current;
         if (codeThemeChanged) {
           try {
             preparation.prepared = await enhancementPort.prepareCodeTheme({
@@ -260,85 +240,172 @@ export function useEditorAppearanceBridge({
               signal: controller.signal
             });
           } catch (error: unknown) {
-            if (
-              !controller.signal.aborted
-              && codeThemePreparationRef.current?.generation === generation
-              && rootActiveRef.current
-            ) {
-              reportFailure(codeThemeFailureCode(error));
+            const stillCurrent = isCurrentGeneration();
+            if (codeThemePreparationRef.current?.generation === generation) {
+              codeThemePreparationRef.current = null;
             }
+            clearAppearanceTransition();
+            if (stillCurrent) {
+              reportFailure(previewEnhancementFailureCode(error));
+            }
+            return false;
+          }
+          if (!isCurrentGeneration()) {
+            preparation.prepared.cancel();
+            preparation.prepared = null;
             if (codeThemePreparationRef.current?.generation === generation) {
               codeThemePreparationRef.current = null;
             }
             clearAppearanceTransition();
             return false;
           }
-          if (
-            controller.signal.aborted
-            || codeThemePreparationRef.current?.generation !== generation
-            || !rootActiveRef.current
-          ) {
-            preparation.prepared.cancel();
+        }
+        let codeThemeCommitted = false;
+        let codeThemeCommitError: unknown = null;
+        let beforePublishStale = false;
+        const onBeforePublish = () => {
+          if (!isCurrentGeneration()) {
+            beforePublishStale = true;
+            throw new Error('appearance-before-publish-stale');
+          }
+          const prepared = preparation.prepared;
+          if (!prepared) return;
+          preparation.prepared = null;
+          try {
+            prepared.commit();
+            codeThemeCommitted = true;
+          } catch (error: unknown) {
+            codeThemeCommitError = error;
+            prepared.cancel();
+            throw error;
+          }
+        };
+        let applied: boolean;
+        try {
+          applied = preparation.prepared
+            ? await rawAppearancePort.applyState(
+                state,
+                nextCodeThemeExplicit,
+                onBeforePublish
+              )
+            : await rawAppearancePort.applyState(
+                state,
+                nextCodeThemeExplicit
+              );
+        } catch {
+          preparation.prepared?.cancel();
+          preparation.prepared = null;
+          if (null !== codeThemeCommitError) {
+            const stillCurrent = isCurrentGeneration();
+            if (codeThemePreparationRef.current?.generation === generation) {
+              codeThemePreparationRef.current = null;
+            }
+            clearAppearanceTransition();
+            if (stillCurrent) {
+              reportFailure(previewEnhancementFailureCode(codeThemeCommitError));
+            }
+            return false;
+          }
+          if (beforePublishStale) {
+            if (codeThemePreparationRef.current?.generation === generation) {
+              codeThemePreparationRef.current = null;
+            }
             clearAppearanceTransition();
             return false;
           }
-        }
-        let applied: boolean;
-        try {
-          applied = await rawAppearancePort.applyState(
-            state,
-            nextCodeThemeExplicit
-          );
-        } catch {
-          preparation.prepared?.cancel();
-          if (codeThemePreparationRef.current?.generation === generation) {
-            codeThemePreparationRef.current = null;
-          }
-          if (rootActiveRef.current) {
-            reportFailure('react-editor-appearance-failed');
-          }
-          clearAppearanceTransition();
-          return false;
-        }
-        if (
-          !applied
-          || controller.signal.aborted
-          || codeThemePreparationRef.current?.generation !== generation
-          || !rootActiveRef.current
-        ) {
-          preparation.prepared?.cancel();
-          if (codeThemePreparationRef.current?.generation === generation) {
-            codeThemePreparationRef.current = null;
-          }
-          clearAppearanceTransition();
-          return false;
-        }
-        try {
-          preparation.prepared?.commit();
-        } catch (error: unknown) {
-          preparation.prepared?.cancel();
-          const shouldRollbackAndReport =
-            !controller.signal.aborted
-            && codeThemePreparationGenerationRef.current === generation
-            && rootActiveRef.current;
-          if (codeThemePreparationRef.current?.generation === generation) {
-            codeThemePreparationRef.current = null;
-          }
-          if (shouldRollbackAndReport) {
+          if (codeThemeCommitted && isCurrentGeneration()) {
+            let rollbackPrepared: PreparedCodeTheme | null = null;
             try {
-              await rawAppearancePort.applyState(
-                previousState,
-                previousCodeThemeExplicit
-              );
+              rollbackPrepared = await enhancementPort.prepareCodeTheme({
+                codeTheme: previousState.codeTheme,
+                signal: controller.signal
+              });
+              if (isCurrentGeneration()) {
+                rollbackPrepared.commit();
+              } else {
+                rollbackPrepared.cancel();
+              }
             } catch {
-              // Best-effort rollback of native fields and article theme; preserve primary commit error.
+              rollbackPrepared?.cancel();
             }
           }
+          const stillCurrent = isCurrentGeneration();
+          if (codeThemePreparationRef.current?.generation === generation) {
+            codeThemePreparationRef.current = null;
+          }
           clearAppearanceTransition();
-          if (shouldRollbackAndReport && rootActiveRef.current) {
-            reportFailure(codeThemeFailureCode(error));
+          if (stillCurrent) {
+            reportFailure('react-editor-appearance-failed');
           }
           return false;
+        }
+        if (!applied || !isCurrentGeneration()) {
+          preparation.prepared?.cancel();
+          preparation.prepared = null;
+          if (codeThemeCommitted && !applied && isCurrentGeneration()) {
+            let rollbackPrepared: PreparedCodeTheme | null = null;
+            try {
+              rollbackPrepared = await enhancementPort.prepareCodeTheme({
+                codeTheme: previousState.codeTheme,
+                signal: controller.signal
+              });
+              if (isCurrentGeneration()) {
+                rollbackPrepared.commit();
+              } else {
+                rollbackPrepared.cancel();
+              }
+            } catch {
+              rollbackPrepared?.cancel();
+            }
+          }
+          if (codeThemePreparationRef.current?.generation === generation) {
+            codeThemePreparationRef.current = null;
+          }
+          clearAppearanceTransition();
+          return false;
+        }
+        if (!codeThemeCommitted && preparation.prepared) {
+          const prepared = preparation.prepared;
+          preparation.prepared = null;
+          try {
+            prepared.commit();
+            codeThemeCommitted = true;
+          } catch (error: unknown) {
+            prepared.cancel();
+            const shouldRollback = isCurrentGeneration();
+            if (shouldRollback) {
+              documentSession?.replaceSubmissionState(
+                submissionStateRef.current
+              );
+              try {
+                const rolledBack = await rawAppearancePort.applyState(
+                  previousState,
+                  previousCodeThemeExplicit
+                );
+                if (!rolledBack && isCurrentGeneration()) {
+                  documentSession?.replaceSubmissionState(
+                    submissionStateRef.current
+                  );
+                }
+              } catch {
+                if (isCurrentGeneration()) {
+                  documentSession?.replaceSubmissionState(
+                    submissionStateRef.current
+                  );
+                }
+                // Best-effort rollback of native fields and article theme; preserve primary commit error.
+              }
+            }
+            const stillCurrent = isCurrentGeneration();
+            if (codeThemePreparationRef.current?.generation === generation) {
+              codeThemePreparationRef.current = null;
+            }
+            clearAppearanceTransition();
+            if (stillCurrent) {
+              reportFailure(previewEnhancementFailureCode(error));
+            }
+            return false;
+          }
         }
         if (appearanceChanged) cancelWechatCopyForThemeChange();
         clearAppearanceTransition();

@@ -674,6 +674,147 @@ describe('createWordPressAppearancePort', () => {
     ).rejects.toEqual({ code: 'rest_cookie_invalid_nonce' });
   });
 
+  it('aborts atomically before mutating fields or active leases when onBeforePublish throws', async () => {
+    const options = fixture();
+    const port = createWordPressAppearancePort(options);
+    const activeLink = document.querySelector<HTMLLinkElement>(
+      '#easymde-article-theme-css'
+    );
+    const activeSheet = activeLink?.sheet;
+    if (!activeLink || !activeSheet) {
+      throw new Error('test-active-article-link-missing');
+    }
+    const activeDeleteRuleSpy = vi.spyOn(activeSheet, 'deleteRule');
+    const observedFieldWrites: Array<Record<string, string>> = [];
+    const observeField = (
+      input: HTMLInputElement,
+      name: string
+    ): (() => void) => {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        'value'
+      );
+      if (!descriptor?.get || !descriptor.set) {
+        throw new Error('input-value-descriptor-missing');
+      }
+      Object.defineProperty(input, 'value', {
+        configurable: true,
+        get() {
+          return descriptor.get?.call(this);
+        },
+        set(nextValue: string) {
+          observedFieldWrites.push({ [name]: nextValue });
+          descriptor.set?.call(this, nextValue);
+        }
+      });
+      return () => {
+        delete (input as unknown as Record<string, unknown>).value;
+      };
+    };
+    const restoreObservers = [
+      observeField(options.fields.markdownTheme, 'markdownTheme'),
+      observeField(options.fields.codeTheme, 'codeTheme'),
+      observeField(options.fields.codeThemeExplicit, 'codeThemeExplicit'),
+      observeField(options.fields.customCssId, 'customCssId')
+    ];
+
+    try {
+      // 1. Async article-theme + code-theme switch: onBeforePublish runs after candidate
+      //    load/scope and before disposing previousArticleLease or writing fields.
+      let sawScopedCandidate = false;
+      const asyncApplied = port.applyState(
+        { codeTheme: 'github', customCssId: '', markdownTheme: 'newsprint' },
+        false,
+        () => {
+          expect(activeDeleteRuleSpy).not.toHaveBeenCalled();
+          expect(activeLink.isConnected).toBe(true);
+          expect(activeLink.id).toBe('easymde-article-theme-css');
+          expect(observedFieldWrites).toEqual([]);
+          expect(options.fields.markdownTheme.value).toBe('default');
+          expect(options.fields.codeTheme.value).toBe('atom-one-dark');
+          expect(options.fields.codeThemeExplicit.value).toBe('0');
+          expect(options.fields.customCssId.value).toBe('');
+          sawScopedCandidate = Boolean(
+            candidate?.sheet
+            && Array.from(candidate.sheet.cssRules).some(({ cssText }) =>
+              cssText.includes('#easymde-editor-root')
+            )
+          );
+          throw new Error('editor-stylesheet-rollback-failed');
+        }
+      );
+      const candidate = Array.from(document.head.querySelectorAll('link'))
+        .find((link) => link !== activeLink);
+      if (!candidate) throw new Error('test-article-candidate-missing');
+      attachStylesheet(candidate);
+      const candidateSheet = candidate.sheet;
+      if (!candidateSheet) throw new Error('test-candidate-sheet-missing');
+      candidate.dispatchEvent(new Event('load'));
+
+      await expect(asyncApplied).rejects.toThrowError(
+        'editor-stylesheet-rollback-failed'
+      );
+      expect(sawScopedCandidate).toBe(true);
+      expect(activeDeleteRuleSpy).not.toHaveBeenCalled();
+      expect(candidate.isConnected).toBe(false);
+      expect(
+        Array.from(candidateSheet.cssRules).some(({ cssText }) =>
+          cssText.includes('#easymde-editor-root')
+        )
+      ).toBe(false);
+      expect(document.querySelector('#easymde-article-theme-css')).toBe(activeLink);
+      expect(activeLink.isConnected).toBe(true);
+      // Fields were NEVER written with the rejected values ('newsprint' / 'github').
+      expect(
+        observedFieldWrites.some((entry) =>
+          Object.values(entry).some((value) => 'newsprint' === value || 'github' === value)
+        )
+      ).toBe(false);
+      expect(options.fields.markdownTheme.value).toBe('default');
+      expect(options.fields.codeTheme.value).toBe('atom-one-dark');
+      expect(options.fields.codeThemeExplicit.value).toBe('0');
+      expect(options.fields.customCssId.value).toBe('');
+
+      // 2. Synchronous same-article-theme code-theme switch also aborts atomically.
+      observedFieldWrites.length = 0;
+      await expect(
+        port.applyState(
+          { codeTheme: 'github', customCssId: '', markdownTheme: 'default' },
+          true,
+          () => {
+            expect(observedFieldWrites).toEqual([]);
+            throw new Error('preview-enhancement-resource-stale');
+          }
+        )
+      ).rejects.toThrowError('preview-enhancement-resource-stale');
+      expect(
+        observedFieldWrites.some((entry) =>
+          Object.values(entry).some((value) => 'github' === value || '1' === value)
+        )
+      ).toBe(false);
+      expect(options.fields.codeTheme.value).toBe('atom-one-dark');
+      expect(options.fields.codeThemeExplicit.value).toBe('0');
+
+      // 3. Port remains verified and usable for a subsequent valid switch.
+      const recovery = port.applyState(
+        { codeTheme: 'github', customCssId: '', markdownTheme: 'newsprint' },
+        true
+      );
+      const nextCandidate = Array.from(document.head.querySelectorAll('link'))
+        .find((link) => link !== activeLink);
+      if (!nextCandidate) throw new Error('test-recovery-candidate-missing');
+      attachStylesheet(nextCandidate);
+      nextCandidate.dispatchEvent(new Event('load'));
+      await expect(recovery).resolves.toBe(true);
+      expect(options.fields.markdownTheme.value).toBe('newsprint');
+      expect(options.fields.codeTheme.value).toBe('github');
+      expect(options.fields.codeThemeExplicit.value).toBe('1');
+    } finally {
+      for (const restore of restoreObservers) restore();
+      port.dispose();
+    }
+  });
+
   it.each([
     { customCssUrl: 'https://remote.test/custom-css' },
     { bootstrap: { ...fixture().bootstrap, articleThemes: [{ cssUrl: 'https://remote.test/theme.css', id: 'default', label: 'Default', defaultCodeTheme: 'atom-one-dark', markupProfile: 'common-v1' }] } },

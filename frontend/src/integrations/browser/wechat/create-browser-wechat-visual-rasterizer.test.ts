@@ -502,54 +502,188 @@ describe('createBrowserWechatVisualRasterizer', () => {
       '</span>',
       '</span>',
     ].join('');
+    document.body.appendChild(source);
 
-    const result = await createBrowserWechatVisualRasterizer(runtime()).rasterize(
-      request(source, 'math', 1, 80, 30, undefined, undefined, undefined, 'full-root'),
-    );
+    try {
+      const result = await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(source, 'math', 1, 80, 30, undefined, undefined, undefined, 'full-root'),
+      );
 
-    const serialized = decodeURIComponent(
-      imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? '',
-    );
-    const parsed = new DOMParser().parseFromString(serialized, 'text/html');
+      const serialized = decodeURIComponent(
+        imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? '',
+      );
+      const parsed = new DOMParser().parseFromString(serialized, 'text/html');
 
-    expect(result.file.type).toBe('image/png');
-    expect(canvasContext.drawImage).toHaveBeenCalledOnce();
-    expect(serialized).not.toContain('katex-mathml');
-    expect(serialized).not.toContain('<math');
+      expect(result.file.type).toBe('image/png');
+      expect(canvasContext.drawImage).toHaveBeenCalledOnce();
+      expect(serialized).not.toContain('katex-mathml');
+      expect(serialized).not.toContain('<math');
 
-    for (const [selector, property] of [
-      ['.katex-display', 'text-align'],
-      ['.katex-display > .katex', 'text-align'],
-      ['.katex-display > .katex', 'display'],
-      ['.katex-display > .katex', 'white-space'],
-      ['.katex-display > .katex > .katex-html', 'position'],
-      ['.vbox', 'flex-direction'],
-      ['.vbox', 'align-items'],
-      ['.vbox', 'display'],
-      ['.vlist-t', 'table-layout'],
-      ['.vlist-t', 'display'],
-      ['.vlist', 'vertical-align'],
-      ['.mfrac > span > span', 'text-align'],
-      ['.frac-line', 'border-bottom-width'],
-      ['.frac-line', 'border-bottom-style'],
-      ['.frac-line', 'width'],
-      ['.col-align-r > .vlist-t', 'text-align'],
-    ] as const) {
-      const expected = getComputedStyle(source.querySelector(selector) as Element)
-        .getPropertyValue(property);
-      expect(expected, `${selector} { ${property} } should cascade`).not.toBe('');
+      for (const [selector, property] of [
+        ['.katex-display', 'text-align'],
+        ['.katex-display > .katex', 'text-align'],
+        ['.katex-display > .katex', 'display'],
+        ['.katex-display > .katex', 'white-space'],
+        ['.katex-display > .katex > .katex-html', 'position'],
+        ['.vbox', 'flex-direction'],
+        ['.vbox', 'align-items'],
+        ['.vbox', 'display'],
+        ['.vlist-t', 'table-layout'],
+        ['.vlist-t', 'display'],
+        ['.vlist', 'vertical-align'],
+        ['.mfrac > span > span', 'text-align'],
+        ['.frac-line', 'border-bottom-width'],
+        ['.frac-line', 'border-bottom-style'],
+        ['.frac-line', 'width'],
+        ['.col-align-r > .vlist-t', 'text-align'],
+      ] as const) {
+        const expected = getComputedStyle(source.querySelector(selector) as Element)
+          .getPropertyValue(property);
+        expect(expected, `${selector} { ${property} } should cascade`).not.toBe('');
 
-      const cloned = parsed.querySelector(selector);
-      expect(cloned, `serialized image should keep ${selector}`).not.toBeNull();
-      expect(
-        (cloned as Element).getAttribute('style'),
-        `${selector} should keep ${property}`,
-      ).toContain(`${property}: ${expected}`);
+        const cloned = parsed.querySelector(selector);
+        expect(cloned, `serialized image should keep ${selector}`).not.toBeNull();
+        expect(
+          (cloned as Element).getAttribute('style'),
+          `${selector} should keep ${property}`,
+        ).toContain(`${property}: ${expected}`);
+      }
+
+      expect(source.querySelector('.katex-mathml')).not.toBeNull();
+      expect(source.querySelectorAll('.katex').length).toBe(1);
+    } finally {
+      source.remove();
+      stylesheet.remove();
     }
+  });
 
-    expect(source.querySelector('.katex-mathml')).not.toBeNull();
-    expect(source.querySelectorAll('.katex').length).toBe(1);
-    stylesheet.remove();
+  it('inlines winning stylesheet !important overrides over inline styles on connected Mermaid SVG elements', async () => {
+    stubCanvas();
+    const stylesheet = document.createElement('style');
+    stylesheet.textContent = '.easymde-mermaid path.override-node { fill: rgb(0, 0, 255) !important; }';
+    document.head.appendChild(stylesheet);
+    const source = document.createElement('div');
+    source.className = 'easymde-mermaid';
+    source.innerHTML = '<svg width="20" height="10" viewBox="0 0 20 10"><path class="override-node" d="M0 0" /></svg>';
+    const path = source.querySelector('path');
+    if (!path) throw new Error('mermaid-path-missing');
+    path.style.fill = 'rgb(255, 0, 0)';
+    document.body.appendChild(source);
+
+    try {
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(source, 'mermaid', 1, 20, 10),
+      );
+      const serialized = decodeURIComponent(
+        imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? '',
+      );
+      expect(serialized).toContain('fill: rgb(0, 0, 255)');
+      expect(serialized).not.toContain('fill: rgb(255, 0, 0)');
+    } finally {
+      source.remove();
+      stylesheet.remove();
+    }
+  });
+
+  it('bounds Mermaid ancestor background walk before body/#wpbody, skips zero-alpha colors, and preserves safe gradients', async () => {
+    stubCanvas();
+    const originalBodyBg = document.body.style.backgroundColor;
+    document.body.style.backgroundColor = 'rgb(240, 240, 241)';
+
+    const wpbody = document.createElement('div');
+    wpbody.id = 'wpbody';
+    wpbody.style.backgroundColor = 'rgb(240, 240, 241)';
+    const transparentPreview = document.createElement('div');
+    transparentPreview.className = 'easymde-preview';
+    const transparentSource = document.createElement('div');
+    transparentSource.className = 'easymde-mermaid';
+    transparentSource.innerHTML = '<svg width="20" height="10" viewBox="0 0 20 10"><path d="M0 0"></path></svg>';
+    transparentPreview.appendChild(transparentSource);
+    wpbody.appendChild(transparentPreview);
+    document.body.appendChild(wpbody);
+
+    const canvas = document.createElement('div');
+    canvas.className = 'easymde-immersive-preview-canvas';
+    canvas.style.backgroundColor = 'rgb(250, 240, 230)';
+    canvas.style.backgroundImage = 'linear-gradient(135deg, rgb(255, 250, 240), rgb(240, 245, 255))';
+    canvas.style.backgroundPosition = '50% 50%';
+    canvas.style.backgroundSize = 'cover';
+    canvas.style.backgroundRepeat = 'no-repeat';
+    const zeroAlphaWrapper = document.createElement('div');
+    zeroAlphaWrapper.className = 'easymde-preview';
+    const gradientSource = document.createElement('div');
+    gradientSource.className = 'easymde-mermaid';
+    gradientSource.innerHTML = '<svg width="20" height="10" viewBox="0 0 20 10"><path d="M0 0"></path></svg>';
+    zeroAlphaWrapper.appendChild(gradientSource);
+    canvas.appendChild(zeroAlphaWrapper);
+    document.body.appendChild(canvas);
+
+    try {
+      await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+        request(transparentSource, 'mermaid', 1, 20, 10),
+      );
+      const transparentSerialized = decodeURIComponent(
+        imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? '',
+      );
+      expect(transparentSerialized).not.toContain('rgb(240, 240, 241)');
+
+      const originalGetComputedStyle = window.getComputedStyle.bind(window);
+      const computedSpy = vi.spyOn(window, 'getComputedStyle').mockImplementation((element, pseudo) => {
+        const computed = originalGetComputedStyle(element, pseudo);
+        if (element === gradientSource) {
+          return {
+            backgroundColor: 'rgba(255, 255, 255, 0)',
+            backgroundImage: 'none',
+            backgroundPosition: '',
+            backgroundRepeat: '',
+            backgroundSize: '',
+            getPropertyValue: (property: string) =>
+              'background-color' === property
+                ? 'rgba(255, 255, 255, 0)'
+                : 'background-image' === property
+                  ? 'none'
+                  : computed.getPropertyValue(property),
+          } as unknown as CSSStyleDeclaration;
+        }
+        if (element === zeroAlphaWrapper) {
+          return {
+            backgroundColor: 'rgb(0 0 0 / 0)',
+            backgroundImage: 'none',
+            backgroundPosition: '',
+            backgroundRepeat: '',
+            backgroundSize: '',
+            getPropertyValue: (property: string) =>
+              'background-color' === property
+                ? 'rgb(0 0 0 / 0)'
+                : 'background-image' === property
+                  ? 'none'
+                  : computed.getPropertyValue(property),
+          } as unknown as CSSStyleDeclaration;
+        }
+        return computed;
+      });
+      try {
+        await createBrowserWechatVisualRasterizer(runtime()).rasterize(
+          request(gradientSource, 'mermaid', 1, 20, 10),
+        );
+      } finally {
+        computedSpy.mockRestore();
+      }
+      const gradientSerialized = decodeURIComponent(
+        imageInstances[imageInstances.length - 1]?.source.split(',').slice(1).join(',') ?? '',
+      );
+      expect(gradientSerialized).toContain('background-color: rgb(250, 240, 230)');
+      expect(gradientSerialized).toContain(
+        'background-image: linear-gradient(135deg, rgb(255, 250, 240), rgb(240, 245, 255))',
+      );
+      expect(gradientSerialized).toContain('background-position: 50% 50%');
+      expect(gradientSerialized).toContain('background-size: cover');
+      expect(gradientSerialized).toContain('background-repeat: no-repeat');
+    } finally {
+      wpbody.remove();
+      canvas.remove();
+      document.body.style.backgroundColor = originalBodyBg;
+    }
   });
 
   it('never bakes protected-card action controls into a math or Mermaid PNG', async () => {

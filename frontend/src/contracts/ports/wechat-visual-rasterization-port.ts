@@ -41,6 +41,14 @@ type WechatVisualRasterizationRequestBase = Readonly<{
   width: number;
 }>;
 
+export type WechatVisualMermaidBackground = Readonly<{
+  color?: string;
+  image?: string;
+  position?: string;
+  repeat?: string;
+  size?: string;
+}>;
+
 export type WechatVisualRasterizationRequest =
   | (WechatVisualRasterizationRequestBase & Readonly<{
       kind: 'math';
@@ -48,6 +56,8 @@ export type WechatVisualRasterizationRequest =
       mathCapture: WechatVisualRasterizationMathCapture;
     }>)
   | (WechatVisualRasterizationRequestBase & Readonly<{
+      /** Pre-resolved ancestor theme background captured from the connected preview tree. */
+      inheritedBackground?: WechatVisualMermaidBackground;
       kind: 'mermaid';
       mathCapture?: never;
     }>);

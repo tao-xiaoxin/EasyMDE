@@ -199,10 +199,14 @@ export function matchSingleLineInlineHtmlOrAutolink(
 	source: string,
 	start: number,
 	guard: InlineHtmlScanGuard,
+	knownLineEnd?: number,
 ): SingleLineInlineAngleResult {
 	if ("<" !== source[start]) return { status: "none" };
-	const lineEnd = findLineBreakEnd(source, start);
-	const hasLineBreakAfter = lineEnd < source.length;
+	const lineEnd =
+		undefined !== knownLineEnd ? knownLineEnd : findLineBreakEnd(source, start);
+	const hasLineBreakAfter =
+		lineEnd < source.length &&
+		("\n" === source[lineEnd] || "\r" === source[lineEnd]);
 	const next = source[start + 1];
 	if (!next || start + 1 >= lineEnd) return { status: "none" };
 
@@ -213,7 +217,7 @@ export function matchSingleLineInlineHtmlOrAutolink(
 
 	// HTML comments, CDATA, and declarations
 	if ("!" === next) {
-		if (source.startsWith("<!--", start)) {
+		if (source.startsWith("<!--", start) && start + 4 <= lineEnd) {
 			if (start + 5 <= lineEnd && ">" === source[start + 4]) {
 				return { end: start + 5, status: "ok" };
 			}
@@ -299,6 +303,9 @@ export function matchSingleLineInlineHtmlOrAutolink(
 	let pos = start + 2;
 	while (pos < lineEnd && isLowerTagNameChar(source.charCodeAt(pos))) pos += 1;
 	let hadLeadingWs = false;
+	// Advance past every skipped quoted attribute value so `noGtAfter` only
+	// covers characters literally scanned and proved free of `>`.
+	let noGtFloor = start;
 	while (pos < lineEnd) {
 		const wsStart = pos;
 		while (pos < lineEnd && isHorizontalHtmlWhitespace(source[pos])) pos += 1;
@@ -330,6 +337,7 @@ export function matchSingleLineInlineHtmlOrAutolink(
 			const closeIdx = source.indexOf(valCh, pos + 1);
 			if (closeIdx >= 0 && closeIdx < lineEnd) {
 				pos = closeIdx + 1;
+				noGtFloor = pos;
 				hadLeadingWs = false;
 				continue;
 			}
@@ -351,8 +359,8 @@ export function matchSingleLineInlineHtmlOrAutolink(
 		hadLeadingWs = false;
 	}
 	if (pos >= lineEnd && hasLineBreakAfter) return { status: "needs-multiline" };
-	if (pos >= lineEnd && !hasLineBreakAfter) {
-		guard.noGtAfter = Math.min(guard.noGtAfter, start);
+	if (pos >= lineEnd && !hasLineBreakAfter && noGtFloor < lineEnd) {
+		guard.noGtAfter = Math.min(guard.noGtAfter, noGtFloor);
 	}
 	return { status: "none" };
 }
@@ -553,10 +561,14 @@ export function matchBlockInlineHtmlOrAutolink(
 	// Open tag (PHP HtmlInlineParser uses case-sensitive lowercase tag/attr names)
 	if (!isAsciiLower(source.charCodeAt(startPos + 1))) return null;
 	if (startPos >= guard.noGtAfter) return null;
+	const blockEnd = lines[groupEnd]?.lineEnd ?? source.length;
 	let segIdx = startSegIdx;
 	let pos = startPos + 2;
 	while (pos < lineEnd && isLowerTagNameChar(source.charCodeAt(pos))) pos += 1;
 	let hadLeadingWs = false;
+	// Advance past every skipped quoted attribute value so `noGtAfter` only
+	// covers characters literally scanned and proved free of `>`.
+	let noGtFloor = startPos;
 
 	while (segIdx <= groupEnd) {
 		const ws = skipBlockHtmlWhitespace(source, lines, segIdx, pos, groupEnd);
@@ -565,7 +577,9 @@ export function matchBlockInlineHtmlOrAutolink(
 		if (ws.consumed) hadLeadingWs = true;
 		const seg = lines[segIdx];
 		if (!seg || pos >= seg.lineEnd) {
-			guard.noGtAfter = Math.min(guard.noGtAfter, startPos);
+			if (noGtFloor < blockEnd) {
+				guard.noGtAfter = Math.min(guard.noGtAfter, noGtFloor);
+			}
 			return null;
 		}
 		if (">" === source[pos]) return { pos: pos + 1, segIdx };
@@ -589,7 +603,9 @@ export function matchBlockInlineHtmlOrAutolink(
 		pos = afterNameWs.pos;
 		const eqSeg = lines[segIdx];
 		if (!eqSeg || pos >= eqSeg.lineEnd) {
-			guard.noGtAfter = Math.min(guard.noGtAfter, startPos);
+			if (noGtFloor < blockEnd) {
+				guard.noGtAfter = Math.min(guard.noGtAfter, noGtFloor);
+			}
 			return null;
 		}
 		if ("=" !== source[pos]) {
@@ -606,7 +622,12 @@ export function matchBlockInlineHtmlOrAutolink(
 		segIdx = afterEqWs.segIdx;
 		pos = afterEqWs.pos;
 		const valSeg = lines[segIdx];
-		if (!valSeg || pos >= valSeg.lineEnd) return null;
+		if (!valSeg || pos >= valSeg.lineEnd) {
+			if (noGtFloor < blockEnd) {
+				guard.noGtAfter = Math.min(guard.noGtAfter, noGtFloor);
+			}
+			return null;
+		}
 		const valCh = source[pos];
 		if ('"' === valCh || "'" === valCh) {
 			const noQuoteAfter =
@@ -636,6 +657,7 @@ export function matchBlockInlineHtmlOrAutolink(
 			}
 			segIdx = closeQuote.segIdx;
 			pos = closeQuote.pos;
+			noGtFloor = pos;
 			hadLeadingWs = false;
 			continue;
 		}

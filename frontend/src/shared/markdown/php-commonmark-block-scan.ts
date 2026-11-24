@@ -12,6 +12,7 @@ import {
 	consumeWhitespaceColumns,
 	countTableRowCells,
 	cursorRemainder,
+	findTableRowCellAt,
 	htmlBlockLineCloses,
 	isCursorBlank,
 	type LineColumnCursor,
@@ -20,6 +21,7 @@ import {
 	measureLeadingColumns,
 	nextNonSpaceIndex,
 	parseGfmTableSeparatorColumns,
+	type TableRowCellRange,
 } from "./php-commonmark-block-helpers";
 import {
 	createInlineHtmlScanGuard,
@@ -46,6 +48,8 @@ export {
 	COMMONMARK_HTML_BLOCK_TYPE_1_OPEN,
 	COMMONMARK_HTML_BLOCK_TYPE_6_OPEN,
 	COMMONMARK_THEMATIC_BREAK_LINE,
+	findTableRowCellAt,
+	type TableRowCellRange,
 };
 
 const MAX_NESTING_LEVEL = 100;
@@ -56,6 +60,7 @@ export type ScannedMarkdownLine = Readonly<{
 	consumedBlockquote: boolean;
 	contentOffset: number;
 	inlineBlockId: number;
+	isTableRow: boolean;
 	lineEnd: number;
 	lineStart: number;
 	nextLineStart: number;
@@ -66,6 +71,7 @@ type MutableScannedMarkdownLine = {
 	consumedBlockquote: boolean;
 	contentOffset: number;
 	inlineBlockId: number;
+	isTableRow: boolean;
 	lineEnd: number;
 	lineStart: number;
 	nextLineStart: number;
@@ -218,7 +224,7 @@ export function advancePhpCommonMarkBlockLine(
 	let matchedContainers = 0;
 	let consumedBlockquote = false;
 	let lineEmitted = false;
-	const emitLine = (inlineBlockId: number): number => {
+	const emitLine = (inlineBlockId: number, isTableRow = false): number => {
 		lineEmitted = true;
 		if (!recordLines) return -1;
 		const idx = lines.length;
@@ -226,6 +232,7 @@ export function advancePhpCommonMarkBlockLine(
 			consumedBlockquote,
 			contentOffset: lineStart + cursor.index,
 			inlineBlockId,
+			isTableRow,
 			lineEnd,
 			lineStart,
 			nextLineStart,
@@ -308,7 +315,7 @@ export function advancePhpCommonMarkBlockLine(
 			line.includes("|")
 		) {
 			state.nextInlineBlockId += 1;
-			emitLine(state.nextInlineBlockId);
+			emitLine(state.nextInlineBlockId, true);
 		}
 	}
 
@@ -462,6 +469,7 @@ export function advancePhpCommonMarkBlockLine(
 					if (headerLine) {
 						state.nextInlineBlockId += 1;
 						headerLine.inlineBlockId = state.nextInlineBlockId;
+						headerLine.isTableRow = true;
 					}
 				}
 				state.leaf = { kind: "table" };
@@ -501,7 +509,7 @@ export function advancePhpCommonMarkBlockLine(
 			"table" === state.leaf?.kind
 		) {
 			state.nextInlineBlockId += 1;
-			emitLine(state.nextInlineBlockId);
+			emitLine(state.nextInlineBlockId, true);
 		} else {
 			closeUnmatched();
 			if (!isCursorBlank(cursor)) {

@@ -1821,4 +1821,173 @@ describe('image scale contract', () => {
     });
     expect(performance.now() - advTagStart).toBeLessThan(1_000);
   });
+
+  it('prevents unclosed HTML open tags with quoted `>` attributes from poisoning later autolink/HTML scans', () => {
+    // Unclosed `<b q="...">` holds a valid URI autolink containing `](wrong)>`:
+    // both `findMarkdownImageAt` and `parseMarkdownImageScale` must agree on the outer image.
+    const quotedAutolinkInAlt = '![a <b q="<https://example.com/](wrong)>](right)"';
+    const expectedRaw = '![a <b q="<https://example.com/](wrong)>](right)';
+    const found = findMarkdownImageAt(quotedAutolinkInAlt, 3);
+    const parsed = parseMarkdownImageScale(quotedAutolinkInAlt, 0);
+    expect(found).toMatchObject({
+      alt: 'a <b q="<https://example.com/](wrong)>',
+      destination: 'right',
+      end: expectedRaw.length,
+      raw: expectedRaw,
+      start: 0
+    });
+    expect(parsed).toEqual(found);
+    if (!found) throw new Error('quoted-autolink-alt-missing');
+    const destRepl = createMarkdownImageDestinationReplacement(
+      quotedAutolinkInAlt,
+      found,
+      'updated.png'
+    );
+    expect(destRepl).not.toBeNull();
+    const scaleRepl = createImageScaleReplacement(quotedAutolinkInAlt, found, 50);
+    expect(
+      quotedAutolinkInAlt.slice(0, scaleRepl.from)
+      + scaleRepl.insert
+      + quotedAutolinkInAlt.slice(scaleRepl.to)
+    ).toBe('![a <b q="<https://example.com/](wrong)>](right "{width=50%}")"');
+
+    // Unclosed `<a b="...">` wrapping a valid inline HTML tag or URI autolink containing `![a](u)`
+    // must still skip the nested HTML/autolink so `![a](u)` never matches as a live image.
+    for (const hidden of [
+      `<a b="<span title='![a](u)'>" c`,
+      '<a b="<https://example.com/![a](u)>" c',
+      `<a b="<span\ntitle='![a](u)'>" c`
+    ]) {
+      const fakeStart = hidden.indexOf('![');
+      expect(findMarkdownImageAt(hidden, fakeStart + 3), hidden).toBeNull();
+    }
+  });
+
+  it('keeps single-line and block scanning linear on 16,300 repeated `<` and repeated tag prefixes', () => {
+    for (const [label, source] of [
+      ['16,300 bare <', `![A ${'<'.repeat(16_300)}](/x.png)`],
+      ['4,000 unclosed <a ', `![A ${'<a '.repeat(4_000)}](/x.png)`],
+      ['4,000 unclosed <!--', `![A ${'<!--'.repeat(4_000)}](/x.png)`],
+      ['4,000 unclosed <?', `![A ${'<?'.repeat(4_000)}](/x.png)`]
+    ] as const) {
+      const parseStart = performance.now();
+      expect(parseMarkdownImageScale(source, 0), `parse:${label}`).toMatchObject({
+        destination: '/x.png',
+        end: source.length,
+        start: 0
+      });
+      expect(performance.now() - parseStart, `parse-time:${label}`).toBeLessThan(250);
+
+      const findStart = performance.now();
+      expect(findMarkdownImageAt(source, 3), `find:${label}`).toMatchObject({
+        destination: '/x.png',
+        end: source.length,
+        start: 0
+      });
+      expect(performance.now() - findStart, `find-time:${label}`).toBeLessThan(250);
+    }
+  });
+
+  it('isolates GFM table-row inline parsing per cell matching PHP TableParser::split()', () => {
+    // Backticks, inline HTML, and brackets in adjacent cells must not swallow or merge images.
+    for (const [label, source, expectedAlt, expectedDest, expectedScale, expectedTitle] of [
+      [
+        'header cells with backticks in sibling cells',
+        '| ` | ![alt](https://example.com/a.png) | ` |\n| --- | --- | --- |',
+        'alt',
+        'https://example.com/a.png',
+        null,
+        null
+      ],
+      [
+        'body cells with backticks in sibling cells',
+        '| c1 | c2 | c3 |\n| --- | --- | --- |\n| ` | ![alt](https://example.com/a.png) | ` |',
+        'alt',
+        'https://example.com/a.png',
+        null,
+        null
+      ],
+      [
+        'header cells with unclosed HTML quote in sibling cells',
+        '| <a title=" | ![alt](https://example.com/a.png) | "> |\n| --- | --- | --- |',
+        'alt',
+        'https://example.com/a.png',
+        null,
+        null
+      ],
+      [
+        'header cells with outer image opener/closer split across sibling cells',
+        '| ![outer | ![inner](https://example.com/a.png) | ](https://example.com/b.png) |\n| --- | --- | --- |',
+        'inner',
+        'https://example.com/a.png',
+        null,
+        null
+      ],
+      [
+        'header cell with unclosed backtick and closing backtick in next cell',
+        '| ![a `b](https://example.com/a.png) | ` |\n| --- | --- |',
+        'a `b',
+        'https://example.com/a.png',
+        null,
+        null
+      ],
+      [
+        'header cell with unclosed HTML tag and closer in next cell',
+        '| ![a <b q="](https://example.com/a.png) | "> |\n| --- | --- |',
+        'a <b q="',
+        'https://example.com/a.png',
+        null,
+        null
+      ],
+      [
+        'blockquote-nested table row isolates backticks per cell',
+        '> | ` | ![alt](https://example.com/a.png) | ` |\n> | --- | --- | --- |',
+        'alt',
+        'https://example.com/a.png',
+        null,
+        null
+      ],
+      [
+        'escaped pipes inside alt text and scaled title stay in one cell',
+        '| ![a\\|b](https://example.com/a.png "t\\|u {width=50%}") |\n| --- |',
+        'a\\|b',
+        'https://example.com/a.png',
+        50,
+        't\\|u'
+      ]
+    ] as const) {
+      const start = source.indexOf(`![${expectedAlt}]`);
+      const parsed = parseMarkdownImageScale(source, start);
+      expect(parsed, `parse:${label}`).toMatchObject({
+        alt: expectedAlt,
+        destination: expectedDest,
+        scale: expectedScale,
+        start,
+        title: expectedTitle
+      });
+      const found = findMarkdownImageAt(source, start + 3);
+      expect(found, `find:${label}`).toMatchObject({
+        alt: expectedAlt,
+        destination: expectedDest,
+        scale: expectedScale,
+        start,
+        title: expectedTitle
+      });
+    }
+
+    // Outer split-cell bracket syntax must never match as a cross-cell image.
+    const splitBracketRow =
+      '| ![outer | ![inner](https://example.com/a.png) | ](https://example.com/b.png) |\n| --- | --- | --- |';
+    expect(parseMarkdownImageScale(splitBracketRow, splitBracketRow.indexOf('![outer'))).toBeNull();
+    expect(findMarkdownImageAt(splitBracketRow, splitBracketRow.indexOf('outer'))).toBeNull();
+    expect(findMarkdownImageAt(splitBracketRow, splitBracketRow.indexOf('b.png'))).toBeNull();
+    // Cross-cell selection spanning from cell 0 into cell 1 returns null.
+    expect(
+      findMarkdownImageAt(
+        splitBracketRow,
+        splitBracketRow.indexOf('outer'),
+        splitBracketRow.indexOf('inner') + 3
+      )
+    ).toBeNull();
+  });
 });

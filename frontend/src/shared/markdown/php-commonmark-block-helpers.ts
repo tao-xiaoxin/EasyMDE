@@ -259,6 +259,11 @@ export function htmlBlockLineCloses(
 	);
 }
 
+export type TableRowCellRange = Readonly<{
+	end: number;
+	start: number;
+}>;
+
 /**
  * Exact cell-count port of PHP `League\CommonMark`'s `TableParser::split()`.
  */
@@ -286,6 +291,52 @@ export function countTableRowCells(line: string): number {
 		}
 	}
 	return hasContent ? cells + 1 : cells;
+}
+
+/**
+ * Locates the GFM table cell `[start, end)` containing `offset` within one
+ * container-stripped table row `[contentOffset, lineEnd)`, matching PHP
+ * `League\CommonMark\Extension\Table\TableParser::split()` (trims PHP trim
+ * whitespace, drops optional single leading/trailing unescaped `|`, and treats
+ * `\|` as an escaped literal pipe inside the cell rather than a delimiter).
+ */
+export function findTableRowCellAt(
+	source: string,
+	contentOffset: number,
+	lineEnd: number,
+	offset: number,
+): TableRowCellRange | null {
+	let trimStart = contentOffset;
+	let trimEnd = lineEnd;
+	while (trimStart < trimEnd && isPhpTrimChar(source[trimStart])) {
+		trimStart += 1;
+	}
+	while (trimEnd > trimStart && isPhpTrimChar(source[trimEnd - 1])) {
+		trimEnd -= 1;
+	}
+	if (trimStart >= trimEnd) return null;
+	let cellStart = "|" === source[trimStart] ? trimStart + 1 : trimStart;
+	if (offset < cellStart || offset >= trimEnd) return null;
+
+	let pos = cellStart;
+	while (pos < trimEnd) {
+		if ("\\" === source[pos] && pos + 1 < trimEnd && "|" === source[pos + 1]) {
+			pos += 2;
+			continue;
+		}
+		if ("|" === source[pos]) {
+			if (offset <= pos) {
+				return offset < pos ? { end: pos, start: cellStart } : null;
+			}
+			cellStart = pos + 1;
+			pos += 1;
+			continue;
+		}
+		pos += 1;
+	}
+	return cellStart < trimEnd && offset >= cellStart && offset < trimEnd
+		? { end: trimEnd, start: cellStart }
+		: null;
 }
 
 /**

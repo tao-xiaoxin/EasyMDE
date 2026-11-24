@@ -10,11 +10,6 @@ import {
 	isPhpBlockStateTopLevelParagraph,
 	type PhpCommonMarkBlockState,
 } from "../../shared/markdown/php-commonmark-block-scan";
-import {
-	advanceParagraphReferenceParser,
-	createParagraphReferenceParser,
-	type ParagraphReferenceParser,
-} from "../../shared/markdown/php-commonmark-reference-def";
 import type {
 	EditorMarkdownBlockIndex,
 	EditorMarkdownSourceBlock,
@@ -26,17 +21,14 @@ import {
 import type { MarkdownLine } from "./editor-markdown-lines";
 
 const COMMONMARK_LIST_ITEM_OPEN = /^(?:[*+-]|\d{1,9}[.)])(?:[ \t]|$)/u;
-const COMMONMARK_NON_EMPTY_LIST_ITEM_OPEN =
-	/^ {0,3}(?:[*+-]|\d{1,9}[.)])[ \t]+\S/u;
 const COMMONMARK_PARAGRAPH_INTERRUPTING_LIST_OPEN =
 	/^(?:[*+-]|1[.)])[ \t]+\S/u;
 
 export type PhpTableScanState = {
+	blockState: PhpCommonMarkBlockState;
 	inParagraph: boolean;
-	inPhpList: boolean;
 	inPhpTable: boolean;
 	paragraphHasPipe: boolean;
-	refParser: ParagraphReferenceParser;
 };
 
 /**
@@ -132,26 +124,24 @@ export function phpTableHeaderCellCount(
 
 export function createPhpTableScanState(): PhpTableScanState {
 	return {
+		blockState: createPhpCommonMarkBlockState(false),
 		inParagraph: false,
-		inPhpList: false,
 		inPhpTable: false,
 		paragraphHasPipe: false,
-		refParser: createParagraphReferenceParser(),
 	};
 }
 
 export function resetPhpTableScanState(state: PhpTableScanState): void {
+	state.blockState = createPhpCommonMarkBlockState(false);
 	state.inParagraph = false;
-	state.inPhpList = false;
 	state.inPhpTable = false;
 	state.paragraphHasPipe = false;
-	state.refParser = createParagraphReferenceParser();
 }
 
 /**
- * Advances PHP `League\CommonMark`'s paragraph/table/list scan across one line.
- * Returns `true` when the line may serve as a table header candidate inside an
- * active paragraph that contains `|`.
+ * Advances PHP `League\CommonMark`'s canonical block-structure state machine
+ * across one line. Returns `true` when the line may serve as a top-level table
+ * header candidate inside an active paragraph that contains `|`.
  */
 export function advancePhpTableScanLine(
 	state: PhpTableScanState,
@@ -159,35 +149,28 @@ export function advancePhpTableScanLine(
 	lineIndex: number,
 	blockIndex: EditorMarkdownBlockIndex | undefined,
 ): boolean {
-	if (
-		!line ||
-		isBlankLineText(line.text) ||
-		lineStartsWithBlockMath(line, lineIndex, blockIndex)
-	) {
+	if (!line || lineStartsWithBlockMath(line, lineIndex, blockIndex)) {
 		resetPhpTableScanState(state);
 		return false;
 	}
-	if (state.inPhpList) return false;
-	if (state.inPhpTable) {
-		if (lineInterruptsCommonMarkTable(line.text)) {
-			resetPhpTableScanState(state);
-			if (COMMONMARK_NON_EMPTY_LIST_ITEM_OPEN.test(line.text)) {
-				state.inPhpList = true;
-			}
-		}
-		return false;
+	if (state.inPhpTable && "table" !== state.blockState.leaf?.kind) {
+		state.blockState.containers.length = 0;
+		state.blockState.leaf = { kind: "table" };
 	}
-	if (!state.inParagraph && rowIndentationIsCode(line.text)) return false;
-	if (advanceParagraphReferenceParser(state.refParser, line.text)) {
-		state.inParagraph = false;
-		state.paragraphHasPipe = false;
-		return false;
-	}
-	state.inParagraph = true;
-	if (line.text.includes("|")) {
-		state.paragraphHasPipe = true;
-	}
-	return state.paragraphHasPipe;
+	advancePhpCommonMarkBlockLine(state.blockState, line.text);
+	const isTopLevelParagraph = isPhpBlockStateTopLevelParagraph(
+		state.blockState,
+	);
+	const paragraphHasPipe =
+		isTopLevelParagraph &&
+		"paragraph" === state.blockState.leaf?.kind &&
+		state.blockState.leaf.hasPipe;
+	state.inParagraph = isTopLevelParagraph;
+	state.inPhpTable =
+		0 === state.blockState.containers.length &&
+		"table" === state.blockState.leaf?.kind;
+	state.paragraphHasPipe = paragraphHasPipe;
+	return paragraphHasPipe;
 }
 
 /**

@@ -3537,6 +3537,21 @@ describe("editor context menu rules", () => {
 				probes: ["1"],
 				source: "|\n| - |\n| - |\n| 1 |",
 			},
+			{
+				name: "empty ordered list item interrupting asymmetric PHP table nests indented following table",
+				probes: ["x"],
+				source: "| a |\n| --- | --- |\n2.\n   | x | y |\n   | --- | --- |",
+			},
+			{
+				name: "empty bullet list item interrupting asymmetric PHP table nests indented following table",
+				probes: ["x"],
+				source: "| a |\n| --- | --- |\n-\n  | x | y |\n  | --- | --- |",
+			},
+			{
+				name: "blockquote paragraph interrupting asymmetric PHP table absorbs following table as lazy continuation",
+				probes: ["x"],
+				source: "| a |\n| --- | --- |\n> quote\n| x | y |\n| --- | --- |",
+			},
 		] as const;
 
 		for (const testCase of declinedCases) {
@@ -3676,6 +3691,43 @@ describe("editor context menu rules", () => {
 			context: { columnCount: 2, rowCount: 2 },
 			table: { endLine: 4, separatorLine: 3, startLine: 2 },
 		});
+
+		// 10. Top-level tables after an empty ordered/bullet list item or empty blockquote
+		//     with insufficient nesting indent remain editable, matching PHP CommonMark.
+		for (const [label, source, startLine] of [
+			[
+				"empty ordered 2. then unindented top-level table",
+				"| a |\n| --- | --- |\n2.\n| x | y |\n| --- | --- |",
+				3,
+			],
+			[
+				"empty ordered 2. then 2-space top-level table (< 3-col indent)",
+				"| a |\n| --- | --- |\n2.\n  | x | y |\n  | --- | --- |",
+				3,
+			],
+			[
+				"empty bullet - then 1-space top-level table (< 2-col indent)",
+				"| a |\n| --- | --- |\n-\n | x | y |\n | --- | --- |",
+				3,
+			],
+			[
+				"empty blockquote then unindented top-level table",
+				"| a |\n| --- | --- |\n>\n| x | y |\n| --- | --- |",
+				3,
+			],
+		] as const) {
+			expect(
+				prepareMarkdownTable(source, source.indexOf("x")),
+				label,
+			).toMatchObject({
+				context: { columnCount: 2, rowCount: 1 },
+				table: {
+					endLine: startLine + 1,
+					separatorLine: startLine + 1,
+					startLine,
+				},
+			});
+		}
 	});
 
 	it("declines non-table lazy continuations after list, quote, and table+container blocks while keeping closed-container positive controls editable", () => {

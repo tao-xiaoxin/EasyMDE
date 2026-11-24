@@ -335,7 +335,20 @@ export async function hydrateGeneratedImageTargetIndex(
 							rawSlice.includes("\n") || rawSlice.includes("\r");
 						let image: MarkdownImageScaleMatch | null = null;
 						if (!isMultiline) {
-							const parsed = parseMarkdownImageScale(rawSlice);
+							let singleLineSliceEnd = range.to;
+							const maxSliceEnd = Math.min(block.to, range.to + 4);
+							while (
+								singleLineSliceEnd < maxSliceEnd &&
+								"\n" !== input.source[singleLineSliceEnd] &&
+								"\r" !== input.source[singleLineSliceEnd]
+							) {
+								singleLineSliceEnd += 1;
+							}
+							const singleLineSlice =
+								singleLineSliceEnd > range.to
+									? input.source.slice(range.from, singleLineSliceEnd)
+									: rawSlice;
+							const parsed = parseMarkdownImageScale(singleLineSlice);
 							if (parsed && parsed.end === range.to - range.from) {
 								image = shiftedImage(parsed, range.from);
 							}

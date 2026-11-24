@@ -1,11 +1,16 @@
 import { hasMarkdownTitleBlankLine } from '../../shared/image-scale-title';
 import {
+  createInlineHtmlScanGuard,
+  type InlineHtmlScanGuard
+} from '../../shared/markdown/php-commonmark-inline-html';
+import {
   allLinesShareInlineBlock,
   type BlockBacktickRunMap,
   collectBlockBacktickRuns,
   findLineAtOffset,
   findLineIndexAtOffset,
   findNextBacktickRun,
+  findTableRowCellAt,
   getCachedBlockBacktickRuns,
   getCachedInlineHtmlScanGuard,
   getInlineBlockBounds,
@@ -14,7 +19,8 @@ import {
   type ScannedCodeRange,
   type ScannedMarkdownBlocks,
   type ScannedMarkdownLine,
-  scanPhpCommonMarkBlocks
+  scanPhpCommonMarkBlocks,
+  type TableRowCellRange
 } from '../../shared/markdown/php-commonmark-block-scan';
 
 /**
@@ -29,6 +35,7 @@ export {
   findLineAtOffset,
   findLineIndexAtOffset,
   findNextBacktickRun,
+  findTableRowCellAt,
   getCachedBlockBacktickRuns,
   getCachedInlineHtmlScanGuard,
   getInlineBlockBounds,
@@ -37,7 +44,8 @@ export {
   type ScannedCodeRange,
   type ScannedMarkdownBlocks,
   type ScannedMarkdownLine,
-  scanPhpCommonMarkBlocks as scanMarkdownBlocks
+  scanPhpCommonMarkBlocks as scanMarkdownBlocks,
+  type TableRowCellRange
 };
 
 function isSpaceOrTab(character: string | undefined): boolean {
@@ -120,4 +128,102 @@ export function normalizeTitleContainerContinuations(
   }
   const stripped = strippedLines.join('\n');
   return hasMarkdownTitleBlankLine(stripped) ? null : { hasContainerPrefix, stripped };
+}
+
+export type ResolvedInlineScanScope = Readonly<{
+  backtickRuns: BlockBacktickRunMap | null;
+  blockEnd: number;
+  blocks: ScannedMarkdownBlocks;
+  groupEnd: number;
+  groupStart: number;
+  htmlGuard: InlineHtmlScanGuard;
+  lineIdx: number;
+  startLine: ScannedMarkdownLine;
+}>;
+
+/**
+ * Computes current-line bounds around `start` in O(line length) and reports
+ * whether the line could belong to a GFM table in a multi-line document.
+ */
+export function inspectSingleLineForFastPath(
+  source: string,
+  start: number
+): Readonly<{ lineEnd: number; mayBeTableRow: boolean }> {
+  let lineStart = start;
+  let hasPipe = false;
+  while (lineStart > 0 && '\n' !== source[lineStart - 1] && '\r' !== source[lineStart - 1]) {
+    lineStart -= 1;
+    if ('|' === source[lineStart]) hasPipe = true;
+  }
+  let lineEnd = start;
+  while (lineEnd < source.length && '\n' !== source[lineEnd] && '\r' !== source[lineEnd]) {
+    if (!hasPipe && '|' === source[lineEnd]) hasPipe = true;
+    lineEnd += 1;
+  }
+  return {
+    lineEnd,
+    mayBeTableRow: hasPipe && (lineStart > 0 || lineEnd < source.length)
+  };
+}
+
+/**
+ * Resolves the inline-scanning scope at `lineIdx` / `offset`, isolating GFM
+ * table rows strictly to the single cell `[cell.start, cell.end)` matching PHP
+ * `TableParser::split()`.
+ */
+export function resolveInlineScanScope(
+  source: string,
+  blocks: ScannedMarkdownBlocks,
+  lineIdx: number,
+  offset: number,
+  selectionEnd?: number
+): ResolvedInlineScanScope | null {
+  const line = lineIdx >= 0 ? (blocks.lines[lineIdx] ?? null) : null;
+  if (!line || line.inlineBlockId < 0) return null;
+  if (line.isTableRow) {
+    const cell = findTableRowCellAt(source, line.contentOffset, line.lineEnd, offset);
+    if (!cell || (undefined !== selectionEnd && selectionEnd > cell.end)) return null;
+    const cellLine: ScannedMarkdownLine = {
+      consumedBlockquote: line.consumedBlockquote,
+      contentOffset: cell.start,
+      inlineBlockId: line.inlineBlockId,
+      isTableRow: true,
+      lineEnd: cell.end,
+      lineStart: line.lineStart,
+      nextLineStart: line.nextLineStart,
+      virtualSpaces: 0
+    };
+    const cellLines = [cellLine];
+    return {
+      backtickRuns: collectBlockBacktickRuns(source, cellLines, 0, 0),
+      blockEnd: cell.end,
+      blocks: { ...blocks, lines: cellLines },
+      groupEnd: 0,
+      groupStart: 0,
+      htmlGuard: createInlineHtmlScanGuard(),
+      lineIdx: 0,
+      startLine: cellLine
+    };
+  }
+  const { groupEnd, groupStart } = getInlineBlockBounds(
+    blocks,
+    lineIdx,
+    line.inlineBlockId
+  );
+  return {
+    backtickRuns: getCachedBlockBacktickRuns(
+      source,
+      blocks,
+      line.inlineBlockId,
+      groupStart,
+      groupEnd
+    ),
+    blockEnd: blocks.lines[groupEnd]?.lineEnd ?? source.length,
+    blocks,
+    groupEnd,
+    groupStart,
+    htmlGuard: getCachedInlineHtmlScanGuard(blocks, line.inlineBlockId),
+    lineIdx,
+    startLine: line
+  };
 }

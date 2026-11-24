@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { EditorMarkdownSourceBlock } from "../../contracts/ports/editor-block-index-port";
 import { createEditorMarkdownBlockIndex as createProfiledMarkdownBlockIndex } from "../editor-context-menu/editor-markdown-block-index";
 import {
+	createImageScaleReplacement,
+	createMarkdownImageDestinationReplacement,
 	type MarkdownImageScaleMatch,
 	parseMarkdownImageScale,
 } from "../image-scale/image-scale-contract";
@@ -893,6 +895,109 @@ describe("associateGeneratedImageTarget", () => {
 			title: "Caption",
 		});
 		expect(elapsedMs).toBeLessThan(2_000);
+	});
+
+	it("marks single-line bare-destination images with ambiguous trailing continuations unavailable while preserving linked and non-ambiguous images", async () => {
+		for (const ambiguous of [
+			"![Alt](https://example.test/a).png",
+			"![Alt](https://example.test/a)b.png",
+			"![Alt](https://example.test/a)/b",
+			"![Alt](https://example.test/a)?q=1",
+			"![Alt](https://example.test/a)#frag",
+			"![Alt](https://example.test/a)_v2.png",
+			"![Alt](https://example.test/a)-v2.png",
+			"![Alt\nline2](https://example.test/a).png",
+		]) {
+			const parsed = createEditorMarkdownBlockIndex(ambiguous);
+			const result = await hydrateGeneratedImageTargetIndex({
+				...hydration,
+				blocks: parsed.blocks,
+				imageIndex: {
+					blocks: parsed.blocks,
+					imageBlocks: parsed.imageBlocks ?? [],
+					imageRanges: parsed.imageRanges ?? [],
+					length: parsed.length,
+					mathSpans: parsed.mathSpans,
+				},
+				revision: 34,
+				source: ambiguous,
+			});
+			expect(result.blockImages[0]?.status, ambiguous).toBe("unavailable");
+			expect(result.images, ambiguous).toHaveLength(0);
+		}
+
+		for (const [label, source, expectedDest] of [
+			[
+				"linked image",
+				"[![Alt](https://img.test/image.png)](https://site.test/page)",
+				"https://img.test/image.png",
+			],
+			[
+				"sentence period followed by space",
+				"![Alt](https://example.test/a). Next sentence",
+				"https://example.test/a",
+			],
+			[
+				"compact table cell before dot-prefixed next cell",
+				"|![Alt](https://example.test/a)|.png|\n| --- | --- |",
+				"https://example.test/a",
+			],
+		] as const) {
+			const parsed = createEditorMarkdownBlockIndex(source);
+			const result = await hydrateGeneratedImageTargetIndex({
+				...hydration,
+				blocks: parsed.blocks,
+				imageIndex: {
+					blocks: parsed.blocks,
+					imageBlocks: parsed.imageBlocks ?? [],
+					imageRanges: parsed.imageRanges ?? [],
+					length: parsed.length,
+					mathSpans: parsed.mathSpans,
+				},
+				revision: 35,
+				source,
+			});
+			expect(result.blockImages[0]?.status, label).toBe("ready");
+			expect(result.images, label).toHaveLength(1);
+			const hydrated = result.images[0];
+			expect(hydrated?.destination, label).toBe(expectedDest);
+			if (!hydrated) throw new Error(`missing-hydrated:${label}`);
+			expect(createImageScaleReplacement(source, hydrated, 50)).toBeTruthy();
+			expect(
+				createMarkdownImageDestinationReplacement(
+					source,
+					hydrated,
+					"https://img.test/updated.png",
+				),
+			).toBeTruthy();
+		}
+	});
+
+	it("hydrates a single-line image containing 16,300 repeated `<` characters in linear time", async () => {
+		const source = `![A ${"<".repeat(16_300)}](/x.png)`;
+		const started = performance.now();
+		const parsed = createEditorMarkdownBlockIndex(source);
+		const result = await hydrateGeneratedImageTargetIndex({
+			blocks: parsed.blocks,
+			deadline: started + 10_000,
+			imageIndex: {
+				blocks: parsed.blocks,
+				imageBlocks: parsed.imageBlocks ?? [],
+				imageRanges: parsed.imageRanges ?? [],
+				length: parsed.length,
+				mathSpans: parsed.mathSpans,
+			},
+			now: () => performance.now(),
+			revision: 36,
+			signal: new AbortController().signal,
+			source,
+			yield: async () => undefined,
+		});
+		const elapsedMs = performance.now() - started;
+		expect(result.blockImages[0]?.status).toBe("ready");
+		expect(result.images).toHaveLength(1);
+		expect(result.images[0]?.destination).toBe("/x.png");
+		expect(elapsedMs).toBeLessThan(500);
 	});
 });
 

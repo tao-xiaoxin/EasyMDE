@@ -14,13 +14,12 @@ import {
   type BlockBacktickRunMap,
   findLineIndexAtOffset,
   findNextBacktickRun,
-  getCachedBlockBacktickRuns,
-  getCachedInlineHtmlScanGuard,
   getCachedMarkdownBlockScan,
-  getInlineBlockBounds,
   inCodeRange,
+  inspectSingleLineForFastPath,
   isEscaped,
   normalizeTitleContainerContinuations,
+  resolveInlineScanScope,
   type ScannedMarkdownBlocks,
   type ScannedMarkdownLine,
   skipSingleLineBreakWhitespace
@@ -107,10 +106,13 @@ const AMBIGUOUS_BARE_DEST_CONTINUATION =
 function hasAmbiguousBareDestinationContinuation(
   source: string,
   start: number,
-  destinationAngle: boolean
+  destinationAngle: boolean,
+  limit = source.length
 ): boolean {
-  if (destinationAngle || start >= source.length) return false;
-  return AMBIGUOUS_BARE_DEST_CONTINUATION.test(source.slice(start, start + 2));
+  if (destinationAngle || start >= limit) return false;
+  return AMBIGUOUS_BARE_DEST_CONTINUATION.test(
+    source.slice(start, Math.min(limit, start + 2))
+  );
 }
 
 function parseDestinationRange(
@@ -321,7 +323,7 @@ function parseBlockDestAndTitle(
   if (')' === source[cursor]) {
     if (
       enforceBareContinuationGuard
-      && hasAmbiguousBareDestinationContinuation(source, cursor + 1, dest.destinationAngle)
+      && hasAmbiguousBareDestinationContinuation(source, cursor + 1, dest.destinationAngle, blockEnd)
     ) {
       return null;
     }
@@ -422,7 +424,8 @@ function deactivateInnerLinks(stack: InnerBracketOpener[]): void {
  */
 function findSingleLineImageLabelEnd(
   source: string,
-  start: number
+  start: number,
+  knownLineEnd: number
 ): SingleLineParseResult<number> {
   let pos = start + 2;
   let innerStack: InnerBracketOpener[] | null = null;
@@ -482,7 +485,12 @@ function findSingleLineImageLabelEnd(
     }
     if ('<' === ch) {
       if (!htmlGuard) htmlGuard = createInlineHtmlScanGuard();
-      const htmlMatch = matchSingleLineInlineHtmlOrAutolink(source, pos, htmlGuard);
+      const htmlMatch = matchSingleLineInlineHtmlOrAutolink(
+        source,
+        pos,
+        htmlGuard,
+        knownLineEnd
+      );
       if ('needs-multiline' === htmlMatch.status) return { status: 'needs-multiline' };
       if ('ok' === htmlMatch.status) {
         pos = htmlMatch.end;
@@ -655,45 +663,41 @@ export function parseImageCore(
   ) return null;
 
   if (!precomputedBlocks) {
-    const singleLabel = findSingleLineImageLabelEnd(source, start);
-    if ('none' === singleLabel.status) return null;
-    if ('ok' === singleLabel.status) {
-      const singleTail = parseSingleLineDestAndTitle(source, singleLabel.value, true);
-      if ('ok' === singleTail.status) return singleTail.value;
-      if ('none' === singleTail.status) return null;
+    const lineInfo = inspectSingleLineForFastPath(source, start);
+    if (!lineInfo.mayBeTableRow) {
+      const singleLabel = findSingleLineImageLabelEnd(source, start, lineInfo.lineEnd);
+      if ('none' === singleLabel.status) return null;
+      if ('ok' === singleLabel.status) {
+        const singleTail = parseSingleLineDestAndTitle(source, singleLabel.value, true);
+        if ('ok' === singleTail.status) return singleTail.value;
+        if ('none' === singleTail.status) return null;
+      }
     }
   }
 
   const blocks = precomputedBlocks ?? getCachedMarkdownBlockScan(source);
   const startLineIdx = findLineIndexAtOffset(blocks.lines, start);
-  const startLine = startLineIdx >= 0 ? (blocks.lines[startLineIdx] ?? null) : null;
-  if (!startLine || startLine.inlineBlockId < 0) return null;
-  const { groupEnd, groupStart } = getInlineBlockBounds(
-    blocks,
-    startLineIdx,
-    startLine.inlineBlockId
-  );
-  const blockEnd = blocks.lines[groupEnd]?.lineEnd ?? source.length;
-  const backtickRuns = getCachedBlockBacktickRuns(
-    source,
-    blocks,
-    startLine.inlineBlockId,
-    groupStart,
-    groupEnd
-  );
-  const htmlGuard = getCachedInlineHtmlScanGuard(blocks, startLine.inlineBlockId);
+  const scope = resolveInlineScanScope(source, blocks, startLineIdx, start);
+  if (!scope) return null;
   const altEnd = findBlockImageLabelEnd(
     source,
     start,
-    blocks,
-    startLineIdx,
-    groupEnd,
-    blockEnd,
-    backtickRuns,
-    htmlGuard
+    scope.blocks,
+    scope.lineIdx,
+    scope.groupEnd,
+    scope.blockEnd,
+    scope.backtickRuns,
+    scope.htmlGuard
   );
   if (altEnd < 0) return null;
-  return parseBlockDestAndTitle(source, altEnd, blocks, startLine, blockEnd, true);
+  return parseBlockDestAndTitle(
+    source,
+    altEnd,
+    scope.blocks,
+    scope.startLine,
+    scope.blockEnd,
+    true
+  );
 }
 
 /**
@@ -710,29 +714,20 @@ export function findMarkdownImageCoreAt(
 
   const blocks = getCachedMarkdownBlockScan(source);
   const selLineIdx = findLineIndexAtOffset(blocks.lines, selectionStart);
-  const selLine = selLineIdx >= 0 ? (blocks.lines[selLineIdx] ?? null) : null;
-  if (!selLine || selLine.inlineBlockId < 0) return null;
   if (
     selectionEnd > selectionStart
     && !allLinesShareInlineBlock(blocks.lines, selectionStart, selectionEnd - 1)
   ) {
     return null;
   }
-
-  const { groupEnd, groupStart } = getInlineBlockBounds(
-    blocks,
-    selLineIdx,
-    selLine.inlineBlockId
-  );
-  const blockEnd = blocks.lines[groupEnd]?.lineEnd ?? source.length;
-  const backtickRuns = getCachedBlockBacktickRuns(
+  const scope = resolveInlineScanScope(
     source,
     blocks,
-    selLine.inlineBlockId,
-    groupStart,
-    groupEnd
+    selLineIdx,
+    selectionStart,
+    selectionEnd
   );
-  const htmlGuard = getCachedInlineHtmlScanGuard(blocks, selLine.inlineBlockId);
+  if (!scope) return null;
 
   const stack: Array<{
     active: boolean;
@@ -741,14 +736,14 @@ export function findMarkdownImageCoreAt(
     pos: number;
   }> = [];
   let best: LocatedMarkdownImageCore | null = null;
-  let segIdx = groupStart;
-  let pos = blocks.lines[groupStart]?.contentOffset ?? 0;
+  let segIdx = scope.groupStart;
+  let pos = scope.blocks.lines[scope.groupStart]?.contentOffset ?? 0;
 
-  while (segIdx <= groupEnd) {
-    const seg = blocks.lines[segIdx];
+  while (segIdx <= scope.groupEnd) {
+    const seg = scope.blocks.lines[segIdx];
     if (!seg || pos >= seg.lineEnd) {
       segIdx += 1;
-      pos = blocks.lines[segIdx]?.contentOffset ?? 0;
+      pos = scope.blocks.lines[segIdx]?.contentOffset ?? 0;
       continue;
     }
     if (0 === stack.length && pos > selectionStart) break;
@@ -769,10 +764,10 @@ export function findMarkdownImageCoreAt(
       let runEnd = pos + 1;
       while (runEnd < seg.lineEnd && '`' === source[runEnd]) runEnd += 1;
       const runLength = runEnd - pos;
-      const closeStart = findNextBacktickRun(backtickRuns, runLength, runEnd);
+      const closeStart = findNextBacktickRun(scope.backtickRuns, runLength, runEnd);
       if (closeStart >= 0) {
         const closeEnd = closeStart + runLength;
-        segIdx = findLineIndexAtOffset(blocks.lines, closeEnd - 1);
+        segIdx = findLineIndexAtOffset(scope.blocks.lines, closeEnd - 1);
         pos = closeEnd;
       } else {
         pos = runEnd;
@@ -782,11 +777,11 @@ export function findMarkdownImageCoreAt(
     if ('<' === ch) {
       const htmlMatch = matchBlockInlineHtmlOrAutolink(
         source,
-        blocks.lines,
+        scope.blocks.lines,
         segIdx,
         pos,
-        groupEnd,
-        htmlGuard
+        scope.groupEnd,
+        scope.htmlGuard
       );
       if (htmlMatch) {
         segIdx = htmlMatch.segIdx;
@@ -816,9 +811,9 @@ export function findMarkdownImageCoreAt(
         const core = parseBlockDestAndTitle(
           source,
           pos,
-          blocks,
+          scope.blocks,
           opener.line,
-          blockEnd,
+          scope.blockEnd,
           opener.isImage
         );
         if (core) {
@@ -830,7 +825,7 @@ export function findMarkdownImageCoreAt(
             best = { core, start: opener.pos };
           }
           if (!opener.isImage) deactivateInnerLinks(stack);
-          segIdx = findLineIndexAtOffset(blocks.lines, core.imageEnd - 1);
+          segIdx = findLineIndexAtOffset(scope.blocks.lines, core.imageEnd - 1);
           pos = core.imageEnd;
           continue;
         }

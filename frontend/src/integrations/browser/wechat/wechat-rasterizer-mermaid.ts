@@ -101,14 +101,11 @@ function intrinsicEdges(
 }> | null {
   const values = mermaidEdgeValues(computed, element);
   if (!values) return null;
-  const [top, right, bottom, left, borderTop, borderRight, borderBottom, borderLeft] = values as [
-    number, number, number, number, number, number, number, number
-  ];
   return {
-    bottom: bottom + borderBottom,
-    left: left + borderLeft,
-    right: right + borderRight,
-    top: top + borderTop,
+    bottom: values.paddingBottom + values.borderBottom,
+    left: values.paddingLeft + values.borderLeft,
+    right: values.paddingRight + values.borderRight,
+    top: values.paddingTop + values.borderTop,
   };
 }
 

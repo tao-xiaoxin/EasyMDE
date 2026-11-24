@@ -15,6 +15,7 @@ import { mermaidRootPaintIsSafe } from './wechat-mermaid-geometry';
 import {
   assertIntrinsicMermaidCaptureRequest,
   assertResponsiveMermaidCaptureRequest,
+  mermaidLayoutMagnification,
 } from './wechat-rasterizer-mermaid';
 import {
   ImageStub,
@@ -3036,6 +3037,149 @@ describe('createBrowserWechatVisualRasterizer', () => {
       }
     } finally {
       root.remove();
+    }
+  });
+
+  it('fails closed to magnification 1 in mermaidLayoutMagnification when getComputedStyle throws and handles empty border-style with medium width', () => {
+    const wrapper = document.createElement('div');
+    const root = document.createElement('div');
+    root.className = 'easymde-mermaid';
+    root.innerHTML =
+      '<svg width="255" height="56.9453125" viewBox="0 0 1200 268">' +
+      '<rect width="1200" height="268"></rect></svg>';
+    const svg = root.querySelector('svg');
+    if (!svg) throw new Error('Mermaid SVG missing');
+    Object.defineProperty(svg, 'getScreenCTM', {
+      configurable: true,
+      value: () => ({ a: 0.2, b: 0, c: 0, d: 0.2, e: 0, f: 0 }),
+    });
+    Object.defineProperty(root, 'computedStyleMap', {
+      configurable: true,
+      value: () => ({
+        get: (property: string) => ({
+          value: {
+            'block-size': 'auto',
+            height: 'auto',
+            'max-block-size': 'none',
+            'max-height': 'none',
+            'min-block-size': 'auto',
+            'min-height': 'auto',
+          }[property] ?? 'auto',
+        }),
+      }),
+    });
+    Object.defineProperty(root, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ height: 76.9453125, width: 275 }),
+    });
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ height: 56.9453125, width: 255 }),
+    });
+    wrapper.append(root);
+    document.body.append(wrapper);
+
+    const originalGetAnimations = Object.getOwnPropertyDescriptor(document, 'getAnimations');
+    Object.defineProperty(document, 'getAnimations', {
+      configurable: true,
+      value: () => [],
+    });
+
+    const originalGetComputedStyle = window.getComputedStyle.bind(window);
+    try {
+      // Throwing on transformOwner (root) fails closed to magnification 1.
+      const throwOnRoot = vi.spyOn(window, 'getComputedStyle').mockImplementation(() => {
+        throw new Error('root-style-throws');
+      });
+      try {
+        expect(mermaidLayoutMagnification(root, document)).toEqual({ magnification: 1, svg });
+      } finally {
+        throwOnRoot.mockRestore();
+      }
+
+      // Throwing on post-walk getComputedStyle(source) fails closed to magnification 1.
+      let rootReadCount = 0;
+      const throwOnPostWalkSource = vi.spyOn(window, 'getComputedStyle').mockImplementation((element, pseudo) => {
+        if (element === root) {
+          rootReadCount += 1;
+          if (rootReadCount > 1) {
+            throw new Error('post-walk-source-style-throws');
+          }
+        }
+        return originalGetComputedStyle(element, pseudo ?? undefined);
+      });
+      try {
+        expect(mermaidLayoutMagnification(root, document)).toEqual({ magnification: 1, svg });
+        expect(rootReadCount).toBe(2);
+      } finally {
+        throwOnPostWalkSource.mockRestore();
+      }
+
+      // Empty border-*-style paired with border-*-width: medium is treated as 0 border width via mermaidEdgeValues.
+      const mediumBorderSpy = vi.spyOn(window, 'getComputedStyle').mockImplementation((element, pseudo) => {
+        const base = originalGetComputedStyle(element, pseudo ?? undefined);
+        if (pseudo) return base;
+        if (element === root) {
+          const map: Record<string, string> = {
+            'border-bottom-style': '',
+            'border-bottom-width': 'medium',
+            'border-left-style': '',
+            'border-left-width': 'medium',
+            'border-right-style': '',
+            'border-right-width': 'medium',
+            'border-top-style': '',
+            'border-top-width': 'medium',
+            overflow: 'auto',
+            'overflow-x': 'auto',
+            'overflow-y': 'auto',
+            'padding-bottom': '10px',
+            'padding-left': '10px',
+            'padding-right': '10px',
+            'padding-top': '10px',
+            position: 'static',
+            transform: 'none',
+          };
+          return {
+            getPropertyValue: (name: string) => (name in map ? (map[name] as string) : base.getPropertyValue(name)),
+          } as unknown as CSSStyleDeclaration;
+        }
+        if (element === svg) {
+          const map: Record<string, string> = {
+            'border-bottom-style': '',
+            'border-bottom-width': 'medium',
+            'border-left-style': '',
+            'border-left-width': 'medium',
+            'border-right-style': '',
+            'border-right-width': 'medium',
+            'border-top-style': '',
+            'border-top-width': 'medium',
+            'padding-bottom': '0px',
+            'padding-left': '0px',
+            'padding-right': '0px',
+            'padding-top': '0px',
+            position: 'static',
+            transform: 'none',
+          };
+          return {
+            getPropertyValue: (name: string) => (name in map ? (map[name] as string) : base.getPropertyValue(name)),
+          } as unknown as CSSStyleDeclaration;
+        }
+        return base;
+      });
+      try {
+        const result = mermaidLayoutMagnification(root, document);
+        expect(result.svg).toBe(svg);
+        expect(result.magnification).toBeCloseTo(1200 / 255, 10);
+      } finally {
+        mediumBorderSpy.mockRestore();
+      }
+    } finally {
+      if (originalGetAnimations) {
+        Object.defineProperty(document, 'getAnimations', originalGetAnimations);
+      } else {
+        Reflect.deleteProperty(document, 'getAnimations');
+      }
+      wrapper.remove();
     }
   });
 });

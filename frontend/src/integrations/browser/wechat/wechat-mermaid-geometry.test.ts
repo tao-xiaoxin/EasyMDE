@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import type { BrowserWechatClipboardRuntime } from './wechat-clipboard-runtime';
 import { declaration, installClipboardTestEnvironment } from './wechat-clipboard-test-fixtures';
-import { mermaidAdmissionSignature, mermaidRootPaintIsSafe } from './wechat-mermaid-geometry';
+import {
+  mermaidAdmissionSignature,
+  mermaidEdgeValues,
+  mermaidEdgeValuesAnyPositive,
+  mermaidRootPaintIsSafe,
+  mermaidSvgRectMagnification,
+} from './wechat-mermaid-geometry';
+import { computeMermaidLayoutMagnification } from './wechat-mermaid-paint-policy';
 
 describe('mermaidAdmissionSignature', () => {
   installClipboardTestEnvironment();
@@ -555,6 +562,239 @@ describe('mermaidAdmissionSignature', () => {
           `unsafe ::after content=${unsafeContent}`,
         ).toBe(false);
       }
+    } finally {
+      preview.remove();
+    }
+  });
+
+  it('computes exact centeredLeft and centeredRight for asymmetric left/right padding and border', () => {
+    const { preview, root, svg, source, svgStyle } = fixture();
+    source['padding-top'] = '10px';
+    source['padding-right'] = '4px';
+    source['padding-bottom'] = '6px';
+    source['padding-left'] = '24px';
+    source['border-top-style'] = 'solid';
+    source['border-top-width'] = '3px';
+    source['border-right-style'] = 'solid';
+    source['border-right-width'] = '2px';
+    source['border-bottom-style'] = 'solid';
+    source['border-bottom-width'] = '5px';
+    source['border-left-style'] = 'solid';
+    source['border-left-width'] = '8px';
+
+    const parsedSourceEdges = mermaidEdgeValues(declaration(source));
+    expect(parsedSourceEdges).toEqual({
+      borderBottom: 5,
+      borderLeft: 8,
+      borderRight: 2,
+      borderTop: 3,
+      paddingBottom: 6,
+      paddingLeft: 24,
+      paddingRight: 4,
+      paddingTop: 10,
+    });
+    expect(parsedSourceEdges ? mermaidEdgeValuesAnyPositive(parsedSourceEdges) : false).toBe(true);
+    const parsedSvgEdges = mermaidEdgeValues(declaration(svgStyle));
+    expect(parsedSvgEdges).toEqual({
+      borderBottom: 0,
+      borderLeft: 0,
+      borderRight: 0,
+      borderTop: 0,
+      paddingBottom: 0,
+      paddingLeft: 0,
+      paddingRight: 0,
+      paddingTop: 0,
+    });
+    expect(parsedSvgEdges ? mermaidEdgeValuesAnyPositive(parsedSvgEdges) : true).toBe(false);
+
+    let svgLeft = 152;
+    let svgRight = 502;
+    Object.defineProperty(root, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        bottom: 350,
+        height: 300,
+        left: 100,
+        right: 600,
+        top: 50,
+        width: 500,
+      }),
+    });
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        bottom: 343,
+        height: 276,
+        left: svgLeft,
+        right: svgRight,
+        top: 67,
+        width: 350,
+      }),
+    });
+
+    document.body.append(preview);
+    try {
+      // contentLeft = 100 + 24 + 8 = 132 => centeredLeft = 152 - 132 = 20
+      // contentRight = 600 - 4 - 2 = 594 => centeredRight = 594 - 502 = 92
+      // contentTop = 50 + 10 + 3 = 63 => topDelta = 67 - 63 = 4
+      // contentWidth = 500 - 24 - 4 - 8 - 2 = 462, contentHeight = 300 - 10 - 6 - 3 - 5 = 276
+      const offsetSignature = mermaidAdmissionSignature(root, runtime(root, svg, source, svgStyle));
+      expect(offsetSignature).toContain('content=462,276;');
+      expect(offsetSignature).toContain('centered=20,92;');
+      expect(offsetSignature).toContain('top=4;');
+      expect(offsetSignature).toContain('svgEdges=0,0,0,0,0,0,0,0');
+
+      // Truly centered SVG inside the asymmetric box: left = 132 + 56 = 188, right = 594 - 56 = 538
+      svgLeft = 188;
+      svgRight = 538;
+      const centeredSignature = mermaidAdmissionSignature(root, runtime(root, svg, source, svgStyle));
+      expect(centeredSignature).toContain('centered=56,56;');
+    } finally {
+      preview.remove();
+    }
+  });
+
+  it('fails closed to 1 without throwing when getComputedStyle throws in computeMermaidLayoutMagnification', () => {
+    const { preview, root, svg } = fixture();
+    Object.defineProperty(svg, 'getScreenCTM', {
+      configurable: true,
+      value: () => ({ a: 0.5, b: 0, c: 0, d: 0.5, e: 0, f: 0 }),
+    });
+    document.body.append(preview);
+    try {
+      const viewBox = { height: 726, minX: 0, minY: 0, width: 350 };
+
+      // Throws on source inside the transformOwner walk
+      expect(
+        computeMermaidLayoutMagnification(root, svg, viewBox, document, () => {
+          throw new Error('computed-style-source-failed');
+        }),
+      ).toBe(1);
+
+      // Succeeds on source, throws on an ancestor inside the transformOwner walk
+      expect(
+        computeMermaidLayoutMagnification(root, svg, viewBox, document, (element) => {
+          if (element === preview) {
+            throw new Error('computed-style-ancestor-failed');
+          }
+          return declaration({ transform: 'none' });
+        }),
+      ).toBe(1);
+
+      // Succeeds throughout the transformOwner walk, throws on the post-loop getComputedStyle(source) read
+      let sourceReads = 0;
+      expect(
+        computeMermaidLayoutMagnification(root, svg, viewBox, document, (element) => {
+          if (element === root) {
+            sourceReads += 1;
+            if (sourceReads > 1) {
+              throw new Error('computed-style-post-loop-source-failed');
+            }
+          }
+          return declaration({ transform: 'none' });
+        }),
+      ).toBe(1);
+      expect(sourceReads).toBe(2);
+    } finally {
+      preview.remove();
+    }
+  });
+
+  it('handles empty border-*-style with border-*-width: medium consistently via mermaidEdgeValues in mermaidSvgRectMagnification', () => {
+    const { preview, root, svg } = fixture();
+    Object.defineProperty(root, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ height: 76.9453125, width: 275 }),
+    });
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ height: 56.9453125, width: 255 }),
+    });
+
+    const sourceStyles: Record<string, string> = {
+      'border-bottom-style': '',
+      'border-bottom-width': 'medium',
+      'border-left-style': '',
+      'border-left-width': 'medium',
+      'border-right-style': '',
+      'border-right-width': 'medium',
+      'border-top-style': '',
+      'border-top-width': 'medium',
+      'padding-bottom': '10px',
+      'padding-left': '10px',
+      'padding-right': '10px',
+      'padding-top': '10px',
+      position: 'static',
+      transform: 'none',
+    };
+    const svgStyles: Record<string, string> = {
+      'border-bottom-style': '',
+      'border-bottom-width': 'medium',
+      'border-left-style': '',
+      'border-left-width': 'medium',
+      'border-right-style': '',
+      'border-right-width': 'medium',
+      'border-top-style': '',
+      'border-top-width': 'medium',
+      'padding-bottom': '0px',
+      'padding-left': '0px',
+      'padding-right': '0px',
+      'padding-top': '0px',
+      position: 'static',
+      transform: 'none',
+    };
+
+    const getComputedStyle = (element: Element): CSSStyleDeclaration => {
+      if (element === root) return declaration(sourceStyles);
+      if (element === svg) return declaration(svgStyles);
+      return declaration({ position: 'static', transform: 'none' });
+    };
+
+    document.body.append(preview);
+    try {
+      expect(mermaidEdgeValues(declaration(sourceStyles))).toEqual({
+        borderBottom: 0,
+        borderLeft: 0,
+        borderRight: 0,
+        borderTop: 0,
+        paddingBottom: 10,
+        paddingLeft: 10,
+        paddingRight: 10,
+        paddingTop: 10,
+      });
+      expect(mermaidEdgeValues(declaration(svgStyles))).toEqual({
+        borderBottom: 0,
+        borderLeft: 0,
+        borderRight: 0,
+        borderTop: 0,
+        paddingBottom: 0,
+        paddingLeft: 0,
+        paddingRight: 0,
+        paddingTop: 0,
+      });
+
+      const magnification = mermaidSvgRectMagnification(
+        svg,
+        root,
+        { height: 268, width: 1200 },
+        getComputedStyle,
+      );
+      expect(magnification).not.toBeNull();
+      expect(magnification as number).toBeCloseTo(1200 / 255, 10);
+
+      // Any positive SVG edge still rejects magnification via mermaidEdgeValuesAnyPositive.
+      svgStyles['padding-left'] = '1px';
+      expect(
+        mermaidSvgRectMagnification(svg, root, { height: 268, width: 1200 }, getComputedStyle),
+      ).toBeNull();
+      svgStyles['padding-left'] = '0px';
+
+      // Explicit solid border on source still rejects magnification.
+      sourceStyles['border-left-style'] = 'solid';
+      sourceStyles['border-left-width'] = '2px';
+      expect(
+        mermaidSvgRectMagnification(svg, root, { height: 268, width: 1200 }, getComputedStyle),
+      ).toBeNull();
     } finally {
       preview.remove();
     }

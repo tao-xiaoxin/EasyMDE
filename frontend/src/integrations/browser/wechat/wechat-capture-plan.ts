@@ -20,6 +20,7 @@ import {
   mermaidCssPixelValue,
   mermaidDirectSvg,
   mermaidEdgeValues,
+  mermaidEdgeValuesAnyPositive,
   mermaidHasNonZeroBorderWidth,
   mermaidHasPaint,
   mermaidHasUnsafeAncestorGeometry,
@@ -478,8 +479,16 @@ export function mermaidResponsiveViewportDimensions(
   const computed = runtime.getComputedStyle(source);
   const sourceEdges = mermaidEdgeValues(computed);
   if (!sourceEdges) return null;
-  const [paddingTop, paddingRight, paddingBottom, paddingLeft, borderTop, borderRight, borderBottom, borderLeft] =
-    sourceEdges as [number, number, number, number, number, number, number, number];
+  const {
+    borderBottom,
+    borderLeft,
+    borderRight,
+    borderTop,
+    paddingBottom,
+    paddingLeft,
+    paddingRight,
+    paddingTop,
+  } = sourceEdges;
   const sourceContentWidth = sourceRect.width - paddingRight - paddingLeft - borderRight - borderLeft;
   const sourceContentHeight = sourceRect.height - paddingTop - paddingBottom - borderTop - borderBottom;
   const sourceContentLeft = sourceRect.left + paddingLeft + borderLeft;
@@ -556,7 +565,7 @@ export function mermaidResponsiveViewportDimensions(
     !mermaidResponsiveAncestorLayoutIsSafe(source, runtime, boundary) ||
     (sourceDisplay && 'block' !== sourceDisplay) ||
     (boxSizing && !['border-box', 'content-box'].includes(boxSizing)) ||
-    ('content-box' === boxSizing && sourceEdges.some((value) => value > 0)) ||
+    ('content-box' === boxSizing && mermaidEdgeValuesAnyPositive(sourceEdges)) ||
     (sourceMaxWidth && !['auto', '100%'].includes(sourceMaxWidth)) ||
     '1' !== sourceOpacity ||
     svgOpacity === null ||
@@ -573,7 +582,7 @@ export function mermaidResponsiveViewportDimensions(
     svg.hasAttribute('transform') ||
     (preserveAspectRatio && 'xmidymid meet' !== preserveAspectRatio) ||
     !svgEdges ||
-    svgEdges.some((value) => value > 0) ||
+    mermaidEdgeValuesAnyPositive(svgEdges) ||
     mermaidHasUnsafeBorder(svgComputed) ||
     mermaidHasNonZeroBorderWidth(svgComputed) ||
     svgEffects.some((value) => value && 'none' !== value) ||
@@ -730,7 +739,7 @@ export function mermaidIntrinsicScrollDimensions(
     !svgEdges ||
     mermaidHasUnsafeBorder(svgComputed) ||
     mermaidHasNonZeroBorderWidth(svgComputed) ||
-    svgEdges.some((value) => value > 0) ||
+    mermaidEdgeValuesAnyPositive(svgEdges) ||
     mermaidHasUnsafeBorder(computed, true)
   )
     throw new WechatPngConversionError('wechat-png-rasterization-failed');
@@ -764,8 +773,16 @@ export function mermaidIntrinsicScrollDimensions(
     Math.abs(svgRect.height - viewBox.height) > MERMAID_INTRINSIC_GEOMETRY_TOLERANCE
   )
     throw new WechatPngConversionError('wechat-png-rasterization-failed');
-  const [paddingTop, paddingRight, paddingBottom, paddingLeft, borderTop, borderRight, borderBottom, borderLeft] =
-    sourceEdges as [number, number, number, number, number, number, number, number];
+  const {
+    borderBottom,
+    borderLeft,
+    borderRight,
+    borderTop,
+    paddingBottom,
+    paddingLeft,
+    paddingRight,
+    paddingTop,
+  } = sourceEdges;
   const contentBox = runtime.mermaidContentBoxes?.get(source);
   if (!contentBox) throw new WechatPngConversionError('wechat-png-rasterization-failed');
   const sourceContentWidth = contentBox.width;

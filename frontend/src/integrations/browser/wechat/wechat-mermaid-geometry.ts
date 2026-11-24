@@ -45,6 +45,7 @@ export {
   MERMAID_BORDER_WIDTH_PROPERTIES,
   MERMAID_POSITION_PROPERTIES,
   mermaidEdgeValues,
+  mermaidEdgeValuesAnyPositive,
   mermaidHasNonZeroBorderWidth,
   mermaidHasUnsafeBorder,
   mermaidHasUnsafePositioning,
@@ -52,7 +53,7 @@ export {
   mermaidRadiusIsSafe,
   mermaidSvgRectMagnification,
 } from './wechat-mermaid-paint-policy';
-export type { MermaidScreenCtm } from './wechat-mermaid-paint-policy';
+export type { MermaidEdgeValues, MermaidScreenCtm } from './wechat-mermaid-paint-policy';
 
 export function mermaidLayoutMagnification(source: Element, runtime: BrowserWechatClipboardRuntime): number {
   const svgs = Array.from(source.children).filter((element) => 'svg' === element.localName.toLowerCase());
@@ -588,16 +589,16 @@ function mermaidAdmissionGeometrySignature(
     ? {
         height:
           sourceRect.height -
-          (sourceEdges[0] ?? Number.NaN) -
-          (sourceEdges[2] ?? Number.NaN) -
-          (sourceEdges[4] ?? Number.NaN) -
-          (sourceEdges[6] ?? Number.NaN),
+          sourceEdges.paddingTop -
+          sourceEdges.paddingBottom -
+          sourceEdges.borderTop -
+          sourceEdges.borderBottom,
         width:
           sourceRect.width -
-          (sourceEdges[1] ?? Number.NaN) -
-          (sourceEdges[3] ?? Number.NaN) -
-          (sourceEdges[5] ?? Number.NaN) -
-          (sourceEdges[7] ?? Number.NaN)
+          sourceEdges.paddingRight -
+          sourceEdges.paddingLeft -
+          sourceEdges.borderRight -
+          sourceEdges.borderLeft
       }
     : { height: Number.NaN, width: Number.NaN });
   const getScreenCTM = (svg as SVGSVGElement & { getScreenCTM?: () => MermaidScreenCtm | null }).getScreenCTM;
@@ -612,13 +613,13 @@ function mermaidAdmissionGeometrySignature(
   const viewBox = mermaidViewBox(svg);
   const layoutMagnification = mermaidLayoutMagnification(source, runtime);
   const centeredLeft = canonicalRelativeCoordinate(
-    svgRect.left - sourceRect.left - (sourceEdges?.[1] ?? 0) - (sourceEdges?.[5] ?? 0)
+    svgRect.left - sourceRect.left - (sourceEdges?.paddingLeft ?? 0) - (sourceEdges?.borderLeft ?? 0)
   );
   const centeredRight = canonicalRelativeCoordinate(
-    sourceRect.right - svgRect.right - (sourceEdges?.[3] ?? 0) - (sourceEdges?.[7] ?? 0)
+    sourceRect.right - svgRect.right - (sourceEdges?.paddingRight ?? 0) - (sourceEdges?.borderRight ?? 0)
   );
   const topDelta = canonicalRelativeCoordinate(
-    svgRect.top - sourceRect.top - (sourceEdges?.[0] ?? 0) - (sourceEdges?.[4] ?? 0)
+    svgRect.top - sourceRect.top - (sourceEdges?.paddingTop ?? 0) - (sourceEdges?.borderTop ?? 0)
   );
   const scrollGeometry = source.hasAttribute('data-easymde-mermaid-layout')
     ? mermaidAdmissionScrollGeometry(source)
@@ -648,7 +649,18 @@ function mermaidAdmissionGeometrySignature(
     `viewBox=${viewBox ? `${viewBox.minX},${viewBox.minY},${viewBox.width},${viewBox.height}` : "invalid"}`,
     `matrix=${matrix ? `${matrix.a},${matrix.b},${matrix.c},${matrix.d},${Number.isFinite(matrix.e) ? "finite" : "non-finite"},${Number.isFinite(matrix.f) ? "finite" : "non-finite"}` : "missing"}`,
     `magnification=${layoutMagnification}`,
-    `svgEdges=${svgEdges ? svgEdges.join(",") : "invalid"}`
+    `svgEdges=${svgEdges
+      ? [
+          svgEdges.paddingTop,
+          svgEdges.paddingRight,
+          svgEdges.paddingBottom,
+          svgEdges.paddingLeft,
+          svgEdges.borderTop,
+          svgEdges.borderRight,
+          svgEdges.borderBottom,
+          svgEdges.borderLeft,
+        ].join(",")
+      : "invalid"}`
   ].join(";");
 }
 

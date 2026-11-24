@@ -107,10 +107,34 @@ export function mermaidHasNonZeroBorderWidth(style: CSSStyleDeclaration): boolea
   });
 }
 
+export type MermaidEdgeValues = Readonly<{
+  borderBottom: number;
+  borderLeft: number;
+  borderRight: number;
+  borderTop: number;
+  paddingBottom: number;
+  paddingLeft: number;
+  paddingRight: number;
+  paddingTop: number;
+}>;
+
+export function mermaidEdgeValuesAnyPositive(edges: MermaidEdgeValues): boolean {
+  return (
+    edges.paddingTop > 0 ||
+    edges.paddingRight > 0 ||
+    edges.paddingBottom > 0 ||
+    edges.paddingLeft > 0 ||
+    edges.borderTop > 0 ||
+    edges.borderRight > 0 ||
+    edges.borderBottom > 0 ||
+    edges.borderLeft > 0
+  );
+}
+
 export function mermaidEdgeValues(
   style: CSSStyleDeclaration | null | undefined,
   element?: Element,
-): readonly number[] | null {
+): MermaidEdgeValues | null {
   if ((element?.isConnected || !element) && !style) return null;
   const read = (property: string): string =>
     element
@@ -124,17 +148,36 @@ export function mermaidEdgeValues(
     }
     return mermaidCssPixelValue(read(property));
   };
-  const values = [
-    edge('padding-top'),
-    edge('padding-right'),
-    edge('padding-bottom'),
-    edge('padding-left'),
-    edge('border-top-width', 'border-top-style'),
-    edge('border-right-width', 'border-right-style'),
-    edge('border-bottom-width', 'border-bottom-style'),
-    edge('border-left-width', 'border-left-style'),
-  ];
-  return values.every((value) => value !== null) ? (values as number[]) : null;
+  const paddingTop = edge('padding-top');
+  const paddingRight = edge('padding-right');
+  const paddingBottom = edge('padding-bottom');
+  const paddingLeft = edge('padding-left');
+  const borderTop = edge('border-top-width', 'border-top-style');
+  const borderRight = edge('border-right-width', 'border-right-style');
+  const borderBottom = edge('border-bottom-width', 'border-bottom-style');
+  const borderLeft = edge('border-left-width', 'border-left-style');
+  if (
+    paddingTop === null ||
+    paddingRight === null ||
+    paddingBottom === null ||
+    paddingLeft === null ||
+    borderTop === null ||
+    borderRight === null ||
+    borderBottom === null ||
+    borderLeft === null
+  ) {
+    return null;
+  }
+  return {
+    borderBottom,
+    borderLeft,
+    borderRight,
+    borderTop,
+    paddingBottom,
+    paddingLeft,
+    paddingRight,
+    paddingTop,
+  };
 }
 
 export function mermaidHasUnsafePositioning(
@@ -302,26 +345,8 @@ export function mermaidSvgRectMagnification(
   ) {
     return null;
   }
-  const edgePixels = (style: CSSStyleDeclaration, property: string, borderStyleProperty?: string): number => {
-    if (
-      borderStyleProperty &&
-      ['none', 'hidden'].includes(style.getPropertyValue(borderStyleProperty).trim().toLowerCase())
-    ) {
-      return 0;
-    }
-    return mermaidCssPixelValue(style.getPropertyValue(property)) ?? Number.NaN;
-  };
-  const svgEdges = [
-    edgePixels(computed, 'padding-top'),
-    edgePixels(computed, 'padding-right'),
-    edgePixels(computed, 'padding-bottom'),
-    edgePixels(computed, 'padding-left'),
-    edgePixels(computed, 'border-top-width', 'border-top-style'),
-    edgePixels(computed, 'border-right-width', 'border-right-style'),
-    edgePixels(computed, 'border-bottom-width', 'border-bottom-style'),
-    edgePixels(computed, 'border-left-width', 'border-left-style'),
-  ];
-  if (svgEdges.some((value) => !Number.isFinite(value) || value > 0)) return null;
+  const svgEdges = mermaidEdgeValues(computed);
+  if (!svgEdges || mermaidEdgeValuesAnyPositive(svgEdges)) return null;
   let rect: DOMRect;
   let sourceRect: DOMRect;
   try {
@@ -330,16 +355,7 @@ export function mermaidSvgRectMagnification(
   } catch {
     return null;
   }
-  const sourceEdges = [
-    edgePixels(sourceComputed, 'padding-top'),
-    edgePixels(sourceComputed, 'padding-right'),
-    edgePixels(sourceComputed, 'padding-bottom'),
-    edgePixels(sourceComputed, 'padding-left'),
-    edgePixels(sourceComputed, 'border-top-width', 'border-top-style'),
-    edgePixels(sourceComputed, 'border-right-width', 'border-right-style'),
-    edgePixels(sourceComputed, 'border-bottom-width', 'border-bottom-style'),
-    edgePixels(sourceComputed, 'border-left-width', 'border-left-style'),
-  ];
+  const sourceEdges = mermaidEdgeValues(sourceComputed);
   if (
     !Number.isFinite(rect.width) ||
     !Number.isFinite(rect.height) ||
@@ -349,14 +365,22 @@ export function mermaidSvgRectMagnification(
     !Number.isFinite(sourceRect.height) ||
     sourceRect.width <= 0 ||
     sourceRect.height <= 0 ||
-    sourceEdges.some((value) => !Number.isFinite(value))
+    !sourceEdges
   ) {
     return null;
   }
-  const [paddingTop, paddingRight, paddingBottom, paddingLeft, borderTop, borderRight, borderBottom, borderLeft] =
-    sourceEdges as [number, number, number, number, number, number, number, number];
-  const sourceContentWidth = sourceRect.width - paddingRight - paddingLeft - borderRight - borderLeft;
-  const sourceContentHeight = sourceRect.height - paddingTop - paddingBottom - borderTop - borderBottom;
+  const sourceContentWidth =
+    sourceRect.width -
+    sourceEdges.paddingRight -
+    sourceEdges.paddingLeft -
+    sourceEdges.borderRight -
+    sourceEdges.borderLeft;
+  const sourceContentHeight =
+    sourceRect.height -
+    sourceEdges.paddingTop -
+    sourceEdges.paddingBottom -
+    sourceEdges.borderTop -
+    sourceEdges.borderBottom;
   if (
     sourceContentWidth <= 0 ||
     sourceContentHeight <= 0 ||
@@ -397,7 +421,12 @@ export function computeMermaidLayoutMagnification(
   if ('function' !== typeof getScreenCTM) return 1;
   let transformOwner: Element | null = source;
   while (transformOwner) {
-    const computed = getComputedStyle(transformOwner);
+    let computed: CSSStyleDeclaration | null;
+    try {
+      computed = getComputedStyle(transformOwner) ?? null;
+    } catch {
+      return 1;
+    }
     const transform = computed?.getPropertyValue('transform').trim().toLowerCase() ?? '';
     const inlineTransform =
       (transformOwner as Element & { style?: CSSStyleDeclaration }).style
@@ -409,7 +438,12 @@ export function computeMermaidLayoutMagnification(
     }
     transformOwner = transformOwner.parentElement;
   }
-  const sourceStyle = getComputedStyle(source);
+  let sourceStyle: CSSStyleDeclaration | null;
+  try {
+    sourceStyle = getComputedStyle(source) ?? null;
+  } catch {
+    return 1;
+  }
   const overflow = sourceStyle?.getPropertyValue('overflow').trim().toLowerCase() ?? '';
   const overflowX = sourceStyle?.getPropertyValue('overflow-x').trim().toLowerCase() ?? '';
   const overflowY = sourceStyle?.getPropertyValue('overflow-y').trim().toLowerCase() ?? '';

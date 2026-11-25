@@ -2,7 +2,10 @@ import {
 	countTableRowCells,
 	parseGfmTableSeparatorColumns,
 } from "../../shared/markdown/php-commonmark-block-helpers";
-import { scanPhpMarkdownMathRanges } from "../../shared/markdown/php-markdown-math-mask";
+import {
+	maskPhpMarkdownMathForTableScan,
+	scanPhpMarkdownMathRanges,
+} from "../../shared/markdown/php-markdown-math-mask";
 
 /**
  * Markdown escaping helpers owned by the visual-editor serializer.
@@ -212,28 +215,67 @@ export function escapeRawTablePipes(raw: string): string {
 
 /**
  * Prevents a multi-line serialized paragraph (top-level, inside a blockquote,
- * or inside a list) from parsing as a GFM table when a pipe-bearing line is
- * followed by a GFM table separator line (e.g. `Z |\n| - |`).
+ * or inside a list) from parsing as a GFM table when any earlier masked line
+ * of the paragraph contains `|` and a line with `countTableRowCells <= sepCols`
+ * is followed by a GFM table separator line (exact PHP `TableStartParser`
+ * parity, including math-masked pipes and `mathNewlineToken`).
  */
-export function escapeParagraphTableDelimiters(text: string): string {
+export function escapeParagraphTableDelimiters(
+	text: string,
+	mathNewlineToken?: string | null,
+): string {
 	if (!text.includes("\n") || !text.includes("|")) {
 		return text;
 	}
+	const masked = maskPhpMarkdownMathForTableScan(text);
 	const lines = text.split("\n");
+	const lineStarts = new Array<number>(lines.length);
+	const lineEnds = new Array<number>(lines.length);
+	let offset = 0;
+	for (let idx = 0; idx < lines.length; idx += 1) {
+		const len = lines[idx]?.length ?? 0;
+		lineStarts[idx] = offset;
+		lineEnds[idx] = offset + len;
+		offset += len + 1;
+	}
+
 	let changed = false;
+	let paragraphHasPipe = false;
+	let prevWasEscaped = false;
 	for (let j = 0; j < lines.length - 1; j += 1) {
-		const prev = lines[j] ?? "";
+		const rawCur = lines[j] ?? "";
+		const rawMasked = prevWasEscaped
+			? rawCur
+			: masked.slice(lineStarts[j] ?? 0, lineEnds[j] ?? 0);
+		prevWasEscaped = false;
+		const normalizedCur =
+			mathNewlineToken && rawMasked.includes(mathNewlineToken)
+				? rawMasked.split(mathNewlineToken).join(" ")
+				: rawMasked;
+		let effectivePrev: string;
+		if (normalizedCur.includes("\n\n")) {
+			const tail = normalizedCur.slice(normalizedCur.lastIndexOf("\n\n") + 2);
+			paragraphHasPipe = tail.includes("|");
+			effectivePrev = tail;
+		} else {
+			paragraphHasPipe = paragraphHasPipe || normalizedCur.includes("|");
+			effectivePrev = normalizedCur;
+		}
+
 		const next = lines[j + 1] ?? "";
-		const sepCols = parseGfmTableSeparatorColumns(next);
+		const maskedNext = masked.slice(lineStarts[j + 1] ?? 0, lineEnds[j + 1] ?? 0);
+		const sepCols = parseGfmTableSeparatorColumns(maskedNext);
 		if (
 			sepCols > 0 &&
-			prev.includes("|") &&
-			countTableRowCells(prev) === sepCols
+			paragraphHasPipe &&
+			effectivePrev.length > 0 &&
+			countTableRowCells(effectivePrev) <= sepCols
 		) {
 			const pipeIdx = next.indexOf("|");
 			if (pipeIdx >= 0) {
 				lines[j + 1] = `${next.slice(0, pipeIdx)}\\|${next.slice(pipeIdx + 1)}`;
 				changed = true;
+				prevWasEscaped = true;
 			}
 		}
 	}
@@ -248,4 +290,63 @@ export function escapeParagraphTableDelimiters(text: string): string {
  */
 export function escapeCodeSpanTableContent(content: string): string {
 	return content.replace(/\|/g, "\\|");
+}
+
+const TITLE_ENTITY_TOKEN =
+	/(&(?:#x[a-f0-9]{1,6}|#[0-9]{1,7}|[a-z][a-z0-9]{1,31});)/giu;
+
+function formatQuotedTitleSegment(
+	segment: string,
+	inTableCell: boolean,
+): string {
+	const protectedEntities = segment.includes("&")
+		? segment.replace(
+				TITLE_ENTITY_TOKEN,
+				(_, token: string) => `&amp;${token.slice(1)}`,
+			)
+		: segment;
+	const encoded = protectedEntities
+		.replace(/\r/gu, "&#13;")
+		.replace(/\n/gu, "&#10;");
+	const escaped = encoded.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+	return inTableCell ? escapeTablePipes(escaped) : escaped;
+}
+
+/**
+ * Formats a CommonMark double-quoted link/image title while emitting preserved
+ * inline PHP math spans (`\(...\)`, `$...$`) verbatim (no backslash escaping,
+ * entity mangling, `&#10;` line-break encoding, or pipe escaping inside math).
+ */
+export function formatQuotedTitle(
+	titleValue: string,
+	inTableCell: boolean,
+	mathNewlineToken: string | null = null,
+): string {
+	const mathRanges = scanPhpMarkdownMathRanges(titleValue);
+	if (mathRanges.length === 0) {
+		return formatQuotedTitleSegment(titleValue, inTableCell);
+	}
+	let result = "";
+	let cursor = 0;
+	for (const range of mathRanges) {
+		if (range.block || range.from < cursor) {
+			continue;
+		}
+		if (range.from > cursor) {
+			result += formatQuotedTitleSegment(
+				titleValue.slice(cursor, range.from),
+				inTableCell,
+			);
+		}
+		const rawMath = titleValue.slice(range.from, range.to);
+		result +=
+			mathNewlineToken !== null && rawMath.includes("\n")
+				? rawMath.split("\n").join(mathNewlineToken)
+				: rawMath;
+		cursor = range.to;
+	}
+	if (cursor < titleValue.length) {
+		result += formatQuotedTitleSegment(titleValue.slice(cursor), inTableCell);
+	}
+	return result;
 }

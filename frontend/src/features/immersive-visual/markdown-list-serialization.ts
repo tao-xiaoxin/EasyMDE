@@ -69,13 +69,29 @@ export function createMathNewlineSentinelForNode(
 ): string | null {
 	let hasMultilineProtectedInline = false;
 	node.descendants((descendant) => {
+		if (hasMultilineProtectedInline) {
+			return false;
+		}
 		if (
-			descendant.type.name === "protected_inline" &&
-			typeof descendant.attrs.rawMarkdown === "string" &&
-			descendant.attrs.rawMarkdown.includes("\n")
+			(descendant.type.name === "protected_inline" &&
+				typeof descendant.attrs.rawMarkdown === "string" &&
+				descendant.attrs.rawMarkdown.includes("\n")) ||
+			(descendant.type.name === "image" &&
+				typeof descendant.attrs.title === "string" &&
+				descendant.attrs.title.includes("\n"))
 		) {
 			hasMultilineProtectedInline = true;
 			return false;
+		}
+		for (const mark of descendant.marks) {
+			if (
+				mark.type.name === "link" &&
+				typeof mark.attrs.title === "string" &&
+				mark.attrs.title.includes("\n")
+			) {
+				hasMultilineProtectedInline = true;
+				return false;
+			}
 		}
 		return true;
 	});

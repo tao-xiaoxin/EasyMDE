@@ -2,15 +2,8 @@ import {
 	COMMONMARK_ATX_HEADING_OPEN,
 	COMMONMARK_FENCED_CODE_OPEN,
 	COMMONMARK_THEMATIC_BREAK_LINE,
-	consumeBlockquoteMarker,
-	consumeWhitespaceColumns,
 	countTableRowCells,
-	cursorRemainder,
-	htmlBlockLineCloses,
-	isCursorBlank,
 	matchHtmlBlockOpen,
-	measureLeadingColumns,
-	nextNonSpaceIndex,
 	parseGfmTableSeparatorColumns,
 } from "../../shared/markdown/php-commonmark-block-helpers";
 import {
@@ -27,12 +20,13 @@ import { parseReservedTableAlignmentMarkerLine } from "../../shared/table-alignm
 import {
 	type ContainerStep,
 	canListMarkerInterruptParagraph,
-	createLineCursor,
-	cursorPrefix,
 	isCommonMarkBlankLine,
 	matchListMarker,
 	measureIndentColumns,
+	type PeeledLineContainers,
+	peelContainerStepsForLine,
 	stripContainersWithColumn,
+	stripPartialContainers,
 } from "./markdown-prescanner-blocks";
 
 /**
@@ -48,13 +42,6 @@ export type PhpDocumentMathIndex = Readonly<{
 	maskedDoc: string;
 	normalized: string;
 	ranges: ReadonlyArray<PhpMarkdownMathRange>;
-}>;
-
-export type PeeledLineContainers = Readonly<{
-	column: number;
-	containers: ReadonlyArray<ContainerStep>;
-	linePrefix: string;
-	rest: string;
 }>;
 
 export type TableAlignMarkerMatch = Readonly<{
@@ -264,150 +251,6 @@ export function maskedSliceForLines(
 	const startOffset = mathIndex.lineStarts[startLine] ?? 0;
 	const endOffset = mathIndex.lineEnds[endLine] ?? startOffset;
 	return mathIndex.maskedDoc.slice(startOffset, endOffset);
-}
-
-export function formatContainerPrefix(
-	containers: ReadonlyArray<ContainerStep>,
-): string {
-	let prefix = "";
-	for (const step of containers) {
-		prefix += step.kind === "blockquote" ? "> " : " ".repeat(step.indent);
-	}
-	return prefix;
-}
-
-/**
- * Peels as many leading steps of `containers` as match `line`, returning the
- * byte count consumed from `line` and the unconsumed remainder (preserving
- * virtual spaces from partially consumed tabs).
- */
-export function stripPartialContainers(
-	line: string,
-	containers: ReadonlyArray<ContainerStep>,
-): Readonly<{
-	column: number;
-	consumedLength: number;
-	remainder: string;
-	virtualSpaces: number;
-}> {
-	const cursor = createLineCursor(line);
-	for (const step of containers) {
-		if (step.kind === "blockquote") {
-			if (!consumeBlockquoteMarker(cursor)) {
-				break;
-			}
-			continue;
-		}
-		if (isCursorBlank(cursor)) {
-			break;
-		}
-		if (measureLeadingColumns(cursor) < step.indent) {
-			break;
-		}
-		consumeWhitespaceColumns(cursor, step.indent);
-	}
-	return {
-		column: cursor.column,
-		consumedLength: cursor.index,
-		remainder: cursorRemainder(cursor),
-		virtualSpaces: cursor.virtualSpaces,
-	};
-}
-
-export function peelContainerStepsForLine(
-	line: string,
-	baseContainers: ReadonlyArray<ContainerStep>,
-	preMarkerListIndent: number,
-	allowLeadingListMarker: boolean,
-	allowAdditionalContainers: boolean,
-): PeeledLineContainers | null {
-	const cursor = createLineCursor(line);
-	const containers: ContainerStep[] = [];
-
-	for (const step of baseContainers) {
-		if (step.kind === "blockquote") {
-			if (!consumeBlockquoteMarker(cursor)) {
-				return null;
-			}
-			containers.push(step);
-			continue;
-		}
-		if (isCursorBlank(cursor) || measureLeadingColumns(cursor) < step.indent) {
-			return null;
-		}
-		consumeWhitespaceColumns(cursor, step.indent);
-		containers.push(step);
-	}
-
-	if (preMarkerListIndent > 0) {
-		if (
-			isCursorBlank(cursor) ||
-			measureLeadingColumns(cursor) < preMarkerListIndent
-		) {
-			return null;
-		}
-		consumeWhitespaceColumns(cursor, preMarkerListIndent);
-		containers.push({ indent: preMarkerListIndent, kind: "list" });
-	}
-
-	if (allowAdditionalContainers) {
-		let firstPeeled = true;
-		for (let depth = 0; depth < 32; depth += 1) {
-			if (isCursorBlank(cursor)) {
-				break;
-			}
-			const leadCols = measureLeadingColumns(cursor);
-			if (leadCols >= 4) {
-				break;
-			}
-			const nonSpaceIdx = nextNonSpaceIndex(cursor);
-			if (line[nonSpaceIdx] === ">") {
-				if (!consumeBlockquoteMarker(cursor)) {
-					break;
-				}
-				containers.push({ kind: "blockquote" });
-				firstPeeled = false;
-				continue;
-			}
-			const marker = matchListMarker(cursorRemainder(cursor), cursor.column);
-			if (marker === null || marker.leadCols > 3) {
-				break;
-			}
-			if (
-				firstPeeled &&
-				!allowLeadingListMarker &&
-				!canListMarkerInterruptParagraph(marker)
-			) {
-				break;
-			}
-			const afterLead = line.slice(nonSpaceIdx);
-			const markerMatch = /^([-*+]|(\d{1,9})[.)])(?=[ \t]|$)/.exec(afterLead);
-			if (!markerMatch?.[1]) {
-				break;
-			}
-			const markerText = markerMatch[1];
-			consumeWhitespaceColumns(cursor, leadCols);
-			cursor.index += markerText.length;
-			cursor.column += markerText.length;
-			const spacingCols = measureLeadingColumns(cursor);
-			const isBlank = isCursorBlank(cursor);
-			const padding =
-				isBlank || spacingCols < 1 || spacingCols >= 5 ? 1 : spacingCols;
-			consumeWhitespaceColumns(cursor, Math.min(padding, spacingCols));
-			containers.push({
-				indent: leadCols + markerText.length + padding,
-				kind: "list",
-			});
-			firstPeeled = false;
-		}
-	}
-
-	return {
-		column: cursor.column,
-		containers,
-		linePrefix: cursorPrefix(cursor),
-		rest: cursorRemainder(cursor),
-	};
 }
 
 export function opensNonParagraphBlock(
@@ -744,118 +587,5 @@ export function matchTableAlignmentMarkerLine(
 		containers: peeled.containers,
 		markerPrefix: `${peeled.linePrefix}${" ".repeat(parsed.fromOffset)}`,
 		text: parsed.text,
-	};
-}
-
-export function sumListContainerIndent(
-	containers: ReadonlyArray<ContainerStep>,
-): number {
-	let total = 0;
-	for (const step of containers) {
-		if (step.kind === "list") {
-			total += step.indent;
-		}
-	}
-	return total;
-}
-
-export type BeforeHtmlContext = Readonly<{
-	allowLeadingListMarker: boolean;
-	baseContainers: ReadonlyArray<ContainerStep>;
-	inParagraph: boolean;
-	preMarkerListIndent: number;
-}>;
-
-export const POST_MATH_BEFORE_HTML_CONTEXT: BeforeHtmlContext = {
-	allowLeadingListMarker: true,
-	baseContainers: [],
-	inParagraph: false,
-	preMarkerListIndent: 0,
-};
-
-/**
- * Reports whether `maskedText` opens an unclosed CommonMark §4.6 Type 1–5 HTML
- * block (`<!--`, `<pre>`, `<script>`, `<style>`, `<textarea>`, `<?`, `<!`,
- * `<![CDATA[`). When `requireTopLevel` is true, container-wrapped openings are
- * excluded because `\n\n` closes outer blockquote/list containers.
- */
-export function matchUnclosedHtmlBlockTypes1To5(
-	maskedText: string,
-	context: BeforeHtmlContext,
-	requireTopLevel: boolean,
-): 1 | 2 | 3 | 4 | 5 | null {
-	if (!maskedText.includes("<")) {
-		return null;
-	}
-	const peeled = peelContainerStepsForLine(
-		maskedText,
-		context.baseContainers,
-		context.preMarkerListIndent,
-		context.allowLeadingListMarker,
-		true,
-	);
-	if (
-		peeled === null ||
-		(requireTopLevel && peeled.containers.length > 0) ||
-		measureIndentColumns(peeled.rest, peeled.column) >= 4
-	) {
-		return null;
-	}
-	const trimmed = peeled.rest.replace(/^[ \t]+/, "");
-	const htmlType = matchHtmlBlockOpen(trimmed, false);
-	return htmlType !== null &&
-		htmlType <= 5 &&
-		!htmlBlockLineCloses(htmlType as 1 | 2 | 3 | 4 | 5, trimmed)
-		? (htmlType as 1 | 2 | 3 | 4 | 5)
-		: null;
-}
-
-/**
- * Matches a self-contained HTML block segment immediately before `\n\n<MATH>\n\n`
- * (Type 6/7 closed by `\n\n`, closed Type 1–5, or container-scoped Type 1–5) and
- * returns its container prefix plus trimmed raw HTML content, or `null`.
- */
-export function matchStandaloneBeforeHtmlBlock(
-	rawBeforeText: string,
-	maskedBeforeText: string,
-	context: BeforeHtmlContext,
-): Readonly<{ linePrefix: string; rawHtml: string }> | null {
-	if (!maskedBeforeText.includes("<")) {
-		return null;
-	}
-	const peeled = peelContainerStepsForLine(
-		maskedBeforeText,
-		context.baseContainers,
-		context.preMarkerListIndent,
-		context.allowLeadingListMarker,
-		true,
-	);
-	if (
-		peeled === null ||
-		measureIndentColumns(peeled.rest, peeled.column) >= 4
-	) {
-		return null;
-	}
-	const trimmed = peeled.rest.replace(/^[ \t]+/, "");
-	if (!trimmed.startsWith("<")) {
-		return null;
-	}
-	const baseContainerCount =
-		context.baseContainers.length + (context.preMarkerListIndent > 0 ? 1 : 0);
-	const effectiveInParagraph =
-		context.inParagraph && peeled.containers.length === baseContainerCount;
-	if (matchHtmlBlockOpen(trimmed, !effectiveInParagraph) === null) {
-		return null;
-	}
-	const rawPeeled = peelContainerStepsForLine(
-		rawBeforeText,
-		context.baseContainers,
-		context.preMarkerListIndent,
-		context.allowLeadingListMarker,
-		true,
-	);
-	return {
-		linePrefix: rawPeeled?.linePrefix ?? peeled.linePrefix,
-		rawHtml: (rawPeeled?.rest ?? peeled.rest).replace(/^[ \t]+/, ""),
 	};
 }

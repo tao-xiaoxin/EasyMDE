@@ -1,274 +1,63 @@
+import type { PhpCommonMarkBlockState } from "../../shared/markdown/php-commonmark-block-engine";
 import {
 	consumeBlockquoteMarker,
 	consumeWhitespaceColumns,
 	cursorRemainder,
 	htmlBlockLineCloses,
 	isCursorBlank,
-	type LineColumnCursor,
 	matchHtmlBlockOpen,
 	measureLeadingColumns,
 	nextNonSpaceIndex,
 } from "../../shared/markdown/php-commonmark-block-helpers";
 import {
-	advanceParagraphReferenceParser,
-	createParagraphReferenceParser,
-	type ParagraphReferenceParser,
-} from "../../shared/markdown/php-commonmark-reference-def";
+	type ContainerStep,
+	canListMarkerInterruptParagraph,
+	consumeContainerSteps,
+	createLineCursor,
+	cursorPrefix,
+	hasListBeforeQuote,
+	isCommonMarkBlankLine,
+	type ListMarkerMatch,
+	matchListMarker,
+	measureIndentColumns,
+	peelNestedContainers,
+	readBlockquotePrefix,
+	stripContainers,
+	stripContainersWithColumn,
+} from "./markdown-prescanner-containers";
+
+export {
+	type BlockquotePrefixResult,
+	blockquoteDepth,
+	type ContainerStep,
+	canListMarkerInterruptParagraph,
+	createLineCursor,
+	cursorPrefix,
+	formatContainerPrefix,
+	hasListBeforeQuote,
+	isCommonMarkBlankLine,
+	type ListMarkerMatch,
+	matchListMarker,
+	measureIndentColumns,
+	type PeeledLineContainers,
+	peelContainerStepsForLine,
+	readBlockquotePrefix,
+	type StrippedContainerResult,
+	stripBlockContainerPrefix,
+	stripBlockquoteDepth,
+	stripContainers,
+	stripContainersWithColumn,
+	stripPartialContainers,
+	stripUpToIndentColumns,
+	sumListContainerIndent,
+} from "./markdown-prescanner-containers";
 
 /**
- * Feature-private block-structure helpers for `markdown-prescanner.ts`:
- * CommonMark §2.2 ASCII blank-line checks, column-aware container / blockquote
- * stripping, fenced-code detection, and CommonMark §4.6 Types 1-7 HTML block
- * matching (including interleaved list-marker and blockquote prefixes).
+ * Feature-private block-structure detection helpers for `markdown-prescanner.ts`:
+ * CommonMark §4.6 Types 1–7 HTML block matching, container-aware fenced code
+ * detection, footnote-block scanning, line-container resolution, paragraph
+ * classification, and standalone block math scanning.
  */
-
-/**
- * CommonMark §2.2 blank line: contains only ASCII spaces (U+0020) and tabs
- * (U+0009). Unlike JS `.trim()`, U+00A0 (NBSP) is NOT a blank line.
- */
-export function isCommonMarkBlankLine(text: string): boolean {
-	return /^[ \t]*$/.test(text);
-}
-
-export function createLineCursor(
-	line: string,
-	startColumn = 0,
-): LineColumnCursor {
-	return { column: startColumn, index: 0, line, virtualSpaces: 0 };
-}
-
-export type ContainerStep =
-	| Readonly<{ kind: "blockquote" }>
-	| Readonly<{ indent: number; kind: "list" }>;
-
-export type BlockquotePrefixResult = Readonly<{
-	column: number;
-	depth: number;
-	prefix: string;
-	rest: string;
-}>;
-
-/**
- * Peels leading CommonMark ` {0,3}>[ \t]?` blockquote markers while preserving
- * exact CommonMark §2.2 column coordinates. When a trailing tab after `>` was
- * partially consumed, normalizes that tab in `prefix` to `" "` so
- * `${prefix}${rest}` keeps exact column alignment without duplicating spaces.
- */
-export function readBlockquotePrefix(line: string): BlockquotePrefixResult {
-	const first = line[0];
-	if (first !== ">" && first !== " " && first !== "\t") {
-		return { column: 0, depth: 0, prefix: "", rest: line };
-	}
-	const cursor = createLineCursor(line);
-	let depth = 0;
-	while (consumeBlockquoteMarker(cursor)) {
-		depth += 1;
-	}
-	const prefix =
-		cursor.virtualSpaces > 0
-			? `${line.slice(0, cursor.index - 1)} `
-			: line.slice(0, cursor.index);
-	return {
-		column: cursor.column,
-		depth,
-		prefix,
-		rest: cursorRemainder(cursor),
-	};
-}
-
-export function blockquoteDepth(prefix: string): number {
-	return (prefix.match(/>/g) ?? []).length;
-}
-
-export function stripBlockquoteDepth(
-	line: string,
-	depth: number,
-): string | null {
-	const cursor = createLineCursor(line);
-	for (let d = 0; d < depth; d += 1) {
-		if (!consumeBlockquoteMarker(cursor)) {
-			return null;
-		}
-	}
-	return cursorRemainder(cursor);
-}
-
-function advanceColumnOfText(text: string): number {
-	let col = 0;
-	for (let i = 0; i < text.length; i += 1) {
-		col = text[i] === "\t" ? col + 4 - (col % 4) : col + 1;
-	}
-	return col;
-}
-
-export function cursorPrefix(cursor: LineColumnCursor): string {
-	if (cursor.virtualSpaces <= 0) {
-		return cursor.line.slice(0, cursor.index);
-	}
-	const beforeTab = cursor.line.slice(0, Math.max(0, cursor.index - 1));
-	const consumedTabCols = Math.max(
-		1,
-		cursor.column - advanceColumnOfText(beforeTab),
-	);
-	return `${beforeTab}${" ".repeat(consumedTabCols)}`;
-}
-
-export function hasListBeforeQuote(
-	containers: ReadonlyArray<{ kind: "blockquote" | "list" }>,
-): boolean {
-	let sawList = false;
-	for (const step of containers) {
-		if (step.kind === "list") {
-			sawList = true;
-		} else if (sawList) {
-			return true;
-		}
-	}
-	return false;
-}
-
-export type StrippedContainerResult = Readonly<{
-	column: number;
-	prefix: string;
-	rest: string;
-}>;
-
-export function stripContainersWithColumn(
-	line: string,
-	containers: ReadonlyArray<ContainerStep>,
-): StrippedContainerResult | null {
-	const cursor = createLineCursor(line);
-	for (const step of containers) {
-		if (step.kind === "blockquote") {
-			if (!consumeBlockquoteMarker(cursor)) {
-				return null;
-			}
-			continue;
-		}
-		if (isCursorBlank(cursor)) {
-			cursor.index = line.length;
-			cursor.virtualSpaces = 0;
-			continue;
-		}
-		if (measureLeadingColumns(cursor) < step.indent) {
-			return null;
-		}
-		consumeWhitespaceColumns(cursor, step.indent);
-	}
-	return {
-		column: cursor.column,
-		prefix: cursorPrefix(cursor),
-		rest: cursorRemainder(cursor),
-	};
-}
-
-export function stripContainers(
-	line: string,
-	containers: ReadonlyArray<ContainerStep>,
-): string | null {
-	return stripContainersWithColumn(line, containers)?.rest ?? null;
-}
-
-export function measureIndentColumns(text: string, startColumn = 0): number {
-	return measureLeadingColumns(createLineCursor(text, startColumn));
-}
-
-export function stripContainerIndent(
-	rest: string,
-	containerIndent: number,
-	startColumn = 0,
-): string | null {
-	if (containerIndent <= 0) {
-		return rest;
-	}
-	const cursor = createLineCursor(rest, startColumn);
-	if (measureLeadingColumns(cursor) < containerIndent) {
-		return null;
-	}
-	consumeWhitespaceColumns(cursor, containerIndent);
-	return cursorRemainder(cursor);
-}
-
-export function stripUpToIndentColumns(
-	rest: string,
-	maxColumns: number,
-	startColumn = 0,
-): string {
-	if (maxColumns <= 0) {
-		return rest;
-	}
-	const cursor = createLineCursor(rest, startColumn);
-	const available = measureLeadingColumns(cursor);
-	consumeWhitespaceColumns(cursor, Math.min(maxColumns, available));
-	return cursorRemainder(cursor);
-}
-
-export type ListMarkerMatch = Readonly<{
-	afterContent: string;
-	contentIndent: number;
-	isBlank: boolean;
-	leadCols: number;
-	markerPrefix: string;
-	orderedDigits: string | null;
-}>;
-
-export function matchListMarker(
-	rest: string,
-	startColumn = 0,
-): ListMarkerMatch | null {
-	const cursor = createLineCursor(rest, startColumn);
-	const nonSpaceIdx = nextNonSpaceIndex(cursor);
-	if (nonSpaceIdx >= rest.length) {
-		return null;
-	}
-	const firstCode = rest.charCodeAt(nonSpaceIdx);
-	if (
-		firstCode !== 0x2d && // -
-		firstCode !== 0x2a && // *
-		firstCode !== 0x2b && // +
-		(firstCode < 0x30 || firstCode > 0x39) // 0-9
-	) {
-		return null;
-	}
-	const leadCols = measureLeadingColumns(cursor);
-	const afterLead = rest.slice(nonSpaceIdx);
-	const markerMatch = /^([-*+]|(\d{1,9})[.)])(?=[ \t]|$)/.exec(afterLead);
-	if (!markerMatch?.[1]) {
-		return null;
-	}
-	const markerText = markerMatch[1];
-	const orderedDigits = markerMatch[2] ?? null;
-	consumeWhitespaceColumns(cursor, leadCols);
-	cursor.index += markerText.length;
-	cursor.column += markerText.length;
-	const spacingCols = measureLeadingColumns(cursor);
-	const isBlank = isCursorBlank(cursor);
-	const padding =
-		isBlank || spacingCols < 1 || spacingCols >= 5 ? 1 : spacingCols;
-	consumeWhitespaceColumns(cursor, Math.min(padding, spacingCols));
-	return {
-		afterContent: cursorRemainder(cursor),
-		contentIndent: leadCols + markerText.length + padding,
-		isBlank,
-		leadCols,
-		markerPrefix: cursorPrefix(cursor),
-		orderedDigits,
-	};
-}
-
-/**
- * Mirrors PHP `League\CommonMark`'s `ListBlockStartParser`: a list marker can
- * interrupt an open paragraph only when its first line is non-blank and, if
- * ordered, its exact digit string is `"1"` (rejecting `2.` and `01.`).
- */
-export function canListMarkerInterruptParagraph(
-	marker: ListMarkerMatch,
-): boolean {
-	if (marker.isBlank) {
-		return false;
-	}
-	return marker.orderedDigits === null || marker.orderedDigits === "1";
-}
 
 export function findCommonMarkHtmlBlockEnd(
 	lines: ReadonlyArray<string>,
@@ -276,6 +65,7 @@ export function findCommonMarkHtmlBlockEnd(
 	htmlType: 1 | 2 | 3 | 4 | 5 | 6 | 7,
 	containers: ReadonlyArray<ContainerStep>,
 	startContent: string,
+	getLine?: (lineIndex: number) => string,
 ): number {
 	if (
 		htmlType !== 6 &&
@@ -286,7 +76,8 @@ export function findCommonMarkHtmlBlockEnd(
 	}
 	let end = startIndex;
 	for (let k = startIndex + 1; k < lines.length; k += 1) {
-		const afterContainers = stripContainers(lines[k] ?? "", containers);
+		const rawLine = getLine ? getLine(k) : (lines[k] ?? "");
+		const afterContainers = stripContainers(rawLine, containers);
 		if (afterContainers === null) {
 			break;
 		}
@@ -326,32 +117,13 @@ export function matchListPrefixedHtmlBlock(
 	const containers: ContainerStep[] = [];
 	let seededInterleaved = false;
 	if (activeContainers && hasListBeforeQuote(activeContainers)) {
-		let matchedAll = true;
-		for (const step of activeContainers) {
-			if (step.kind === "blockquote") {
-				if (!consumeBlockquoteMarker(cursor)) {
-					matchedAll = false;
-					break;
-				}
-				containers.push(step);
-			} else if (isCursorBlank(cursor)) {
-				matchedAll = false;
-				break;
-			} else if (measureLeadingColumns(cursor) >= step.indent) {
-				consumeWhitespaceColumns(cursor, step.indent);
-				containers.push(step);
-			} else {
-				matchedAll = false;
-				break;
-			}
-		}
-		if (matchedAll) {
+		if (consumeContainerSteps(cursor, activeContainers, false)) {
+			containers.push(...activeContainers);
 			seededInterleaved = true;
 		} else {
 			cursor.column = 0;
 			cursor.index = 0;
 			cursor.virtualSpaces = 0;
-			containers.length = 0;
 		}
 	}
 	if (!seededInterleaved) {
@@ -360,82 +132,30 @@ export function matchListPrefixedHtmlBlock(
 		}
 	}
 	const outerQuoteCount = seededInterleaved ? 0 : containers.length;
-
-	let matchedList = false;
-	let firstStep = true;
-	let activeListIndent = seededInterleaved ? 0 : prevContainerIndent;
-
-	while (!isCursorBlank(cursor)) {
+	if (!seededInterleaved && prevContainerIndent > 0 && !isCursorBlank(cursor)) {
 		const leadCols = measureLeadingColumns(cursor);
-		if (firstStep && activeListIndent > 0 && leadCols >= activeListIndent) {
-			const rel = leadCols - activeListIndent;
-			if (rel > 3) {
-				break;
+		if (leadCols >= prevContainerIndent) {
+			if (leadCols - prevContainerIndent > 3) {
+				return null;
 			}
-			consumeWhitespaceColumns(cursor, activeListIndent);
-			containers.push({ indent: activeListIndent, kind: "list" });
-			activeListIndent = 0;
-			continue;
+			consumeWhitespaceColumns(cursor, prevContainerIndent);
+			containers.push({ indent: prevContainerIndent, kind: "list" });
 		}
-		if (leadCols > 3) {
-			break;
-		}
-		const nonSpaceIdx = nextNonSpaceIndex(cursor);
-		if ((matchedList || seededInterleaved) && line[nonSpaceIdx] === ">") {
-			if (!consumeBlockquoteMarker(cursor)) {
-				break;
-			}
-			containers.push({ kind: "blockquote" });
-			firstStep = false;
-			continue;
-		}
-		const afterLead = line.slice(nonSpaceIdx);
-		const markerMatch = /^([-*+]|(\d{1,9})[.)])(?=[ \t]|$)/.exec(afterLead);
-		if (!markerMatch?.[1]) {
-			break;
-		}
-		const markerText = markerMatch[1];
-		const orderedDigits = markerMatch[2];
-		const afterMarker = afterLead.slice(markerText.length);
-		if (
-			firstStep &&
-			inParagraph &&
-			(isCommonMarkBlankLine(afterMarker) ||
-				(orderedDigits !== undefined && orderedDigits !== "1"))
-		) {
-			break;
-		}
-		consumeWhitespaceColumns(cursor, leadCols);
-		cursor.index += markerText.length;
-		cursor.column += markerText.length;
-		const spacingCols = measureLeadingColumns(cursor);
-		if (spacingCols > 4) {
-			return null;
-		}
-		if (spacingCols > 0) {
-			consumeWhitespaceColumns(cursor, spacingCols);
-		}
-		containers.push({
-			indent: leadCols + markerText.length + Math.max(spacingCols, 1),
-			kind: "list",
-		});
-		matchedList = true;
-		firstStep = false;
 	}
 
-	if (!matchedList) {
+	const { matchedList } = peelNestedContainers(
+		cursor,
+		containers,
+		!inParagraph,
+		seededInterleaved,
+	);
+	if (!matchedList || measureLeadingColumns(cursor) > 3) {
 		return null;
 	}
-	const finalLeadCols = measureLeadingColumns(cursor);
-	if (finalLeadCols > 3) {
-		return null;
-	}
-	const nonSpaceIdx = nextNonSpaceIndex(cursor);
-	const htmlCandidate = line.slice(nonSpaceIdx);
+	const htmlCandidate = line.slice(nextNonSpaceIndex(cursor));
 	if (!htmlCandidate.startsWith("<")) {
 		return null;
 	}
-	// A fresh list item or nested blockquote always starts outside any paragraph.
 	const htmlType = matchHtmlBlockOpen(htmlCandidate, true);
 	if (htmlType === null) {
 		return null;
@@ -449,14 +169,12 @@ export function matchListPrefixedHtmlBlock(
 		}
 		contentIndent += step.indent;
 	}
-	const linePrefix = cursorPrefix(cursor);
-
 	return {
 		containers,
 		content: cursorRemainder(cursor),
 		contentIndent,
 		htmlType,
-		linePrefix,
+		linePrefix: cursorPrefix(cursor),
 	};
 }
 
@@ -570,44 +288,22 @@ export function detectFence(
 				{ indent: analysis.listMarker.contentIndent, kind: "list" },
 			]
 		: [...directSteps];
-	let quoteDepth = analysis.quoteDepth;
-	let innerColumn = analysis.listMarker
-		? analysis.column + analysis.listMarker.contentIndent
-		: analysis.column + analysis.indent;
-	let innerRest = analysis.listMarker
-		? analysis.listMarker.afterContent
-		: analysis.content;
-	for (let depth = 0; depth < 32; depth += 1) {
-		const leadCols = measureIndentColumns(innerRest, innerColumn);
-		if (leadCols >= 4) {
-			return null;
-		}
-		const trimmedStart = innerRest.replace(/^[ \t]+/, "");
-		if (trimmedStart.startsWith(">")) {
-			const cursor = createLineCursor(innerRest, innerColumn);
-			if (!consumeBlockquoteMarker(cursor)) {
-				break;
-			}
-			containers.push({ kind: "blockquote" });
-			quoteDepth += 1;
-			innerColumn = cursor.column;
-			innerRest = cursorRemainder(cursor);
-			continue;
-		}
-		const nestedMarker = matchListMarker(innerRest, innerColumn);
-		if (nestedMarker !== null && nestedMarker.leadCols <= 3) {
-			containers.push({ indent: nestedMarker.contentIndent, kind: "list" });
-			innerColumn += nestedMarker.contentIndent;
-			innerRest = nestedMarker.afterContent;
-			continue;
-		}
-		break;
-	}
-	const finalIndent = measureIndentColumns(innerRest, innerColumn);
-	const finalContent = innerRest.replace(/^[ \t]+/, "");
+	const innerCursor = createLineCursor(
+		analysis.listMarker ? analysis.listMarker.afterContent : analysis.content,
+		analysis.listMarker
+			? analysis.column + analysis.listMarker.contentIndent
+			: analysis.column + analysis.indent,
+	);
+	const { quotesAdded } = peelNestedContainers(
+		innerCursor,
+		containers,
+		true,
+		true,
+	);
+	const quoteDepth = analysis.quoteDepth + quotesAdded;
 	const matched = matchFenceAt(
-		finalContent,
-		finalIndent,
+		cursorRemainder(innerCursor).replace(/^[ \t]+/, ""),
+		measureLeadingColumns(innerCursor),
 		0,
 		quoteDepth,
 		containers,
@@ -699,6 +395,184 @@ export function analyzeLine(line: string, containerIndent: number): LineAnalysis
 	};
 }
 
+export type ResolvedLineContainerContext = Readonly<{
+	acceptedListMarker: ListMarkerMatch | null;
+	activeInterleavedContainers: ReadonlyArray<ContainerStep> | null;
+	analysis: LineAnalysis;
+	clearParagraph: boolean;
+	continuesListItem: boolean;
+	droppedOutOfList: boolean;
+	effectiveContainer: number;
+	hasInterleavedContainers: boolean;
+	lineQuoteDepth: number;
+	listInterruptionInParagraph: boolean;
+	nextListContentIndent: number | null;
+	nextParagraphHasContent: boolean;
+	nextParagraphOpen: boolean;
+	preMarkerContainerIndent: number;
+	prevContainerIndent: number;
+	prevListIndent: number | null;
+}>;
+
+/**
+ * Resolves active list / blockquote / interleaved `list -> quote` container
+ * state for one non-blank line in `prescanMarkdown`.
+ */
+export function resolveLineContainerContext(
+	line: string,
+	baseAnalysis: LineAnalysis,
+	phpBlockState: PhpCommonMarkBlockState,
+	listContentIndent: number | null,
+	paragraphOpen: boolean,
+	paragraphHasContent: boolean,
+	paragraphQuoteDepth: number,
+): ResolvedLineContainerContext {
+	const hasInterleavedContainers =
+		phpBlockState.containers.length > 1 &&
+		hasListBeforeQuote(phpBlockState.containers);
+	const phpContainers: ContainerStep[] = hasInterleavedContainers
+		? phpBlockState.containers.map((container) =>
+				container.kind === "blockquote"
+					? { kind: "blockquote" }
+					: { indent: container.indent, kind: "list" },
+			)
+		: [];
+	const matchedInterleaved = hasInterleavedContainers
+		? stripContainersWithColumn(line, phpContainers)
+		: null;
+
+	if (matchedInterleaved !== null) {
+		const interRest = matchedInterleaved.rest;
+		const interColumn = matchedInterleaved.column;
+		const interIndent = measureIndentColumns(interRest, interColumn);
+		const interContent = interRest.replace(/^[ \t]+/, "");
+		const opensDeeperQuote = interIndent < 4 && interContent.startsWith(">");
+		let interQuoteDepth = 0;
+		for (const step of phpContainers) {
+			if (step.kind === "blockquote") interQuoteDepth += 1;
+		}
+		const phpLeaf = phpBlockState.leaf;
+		const nextParagraphOpen = !opensDeeperQuote && phpLeaf?.kind === "paragraph";
+		const nextParagraphHasContent =
+			nextParagraphOpen && (phpLeaf?.paragraphLineCount ?? 0) > 0;
+		const rawInterMarker = matchListMarker(interRest, interColumn);
+		const boundedInterMarker =
+			rawInterMarker !== null && rawInterMarker.leadCols <= 3
+				? rawInterMarker
+				: null;
+		const listInterruptionInParagraph =
+			nextParagraphOpen && nextParagraphHasContent && !opensDeeperQuote;
+		const acceptedListMarker =
+			boundedInterMarker !== null &&
+			(!listInterruptionInParagraph ||
+				canListMarkerInterruptParagraph(boundedInterMarker))
+				? boundedInterMarker
+				: null;
+		const effectiveContainer =
+			acceptedListMarker !== null ? acceptedListMarker.contentIndent : 0;
+		return {
+			acceptedListMarker,
+			activeInterleavedContainers: phpContainers,
+			analysis: {
+				column: interColumn,
+				containerIndent: effectiveContainer,
+				content: interContent,
+				indent: interIndent,
+				listMarker: acceptedListMarker,
+				prefix: matchedInterleaved.prefix,
+				quoteDepth: interQuoteDepth,
+				rest: interRest,
+			},
+			clearParagraph: opensDeeperQuote,
+			continuesListItem: true,
+			droppedOutOfList: false,
+			effectiveContainer,
+			hasInterleavedContainers,
+			lineQuoteDepth: interQuoteDepth,
+			listInterruptionInParagraph,
+			nextListContentIndent: listContentIndent,
+			nextParagraphHasContent,
+			nextParagraphOpen,
+			preMarkerContainerIndent: 0,
+			prevContainerIndent: 0,
+			prevListIndent: listContentIndent,
+		};
+	}
+
+	const lineQuoteDepth = baseAnalysis.quoteDepth;
+	const clearParagraph = paragraphOpen && lineQuoteDepth > paragraphQuoteDepth;
+	const nextParagraphOpen = clearParagraph ? false : paragraphOpen;
+	const nextParagraphHasContent = clearParagraph ? false : paragraphHasContent;
+	const prevContainerIndent = listContentIndent ?? 0;
+	const continuesListItem =
+		listContentIndent === null || baseAnalysis.indent >= listContentIndent;
+	const listInterruptionInParagraph =
+		!hasInterleavedContainers &&
+		nextParagraphOpen &&
+		nextParagraphHasContent &&
+		lineQuoteDepth === paragraphQuoteDepth &&
+		continuesListItem;
+	const rawListMarker = baseAnalysis.listMarker;
+	const acceptedListMarker =
+		rawListMarker !== null &&
+		(!listInterruptionInParagraph ||
+			canListMarkerInterruptParagraph(rawListMarker))
+			? rawListMarker
+			: null;
+
+	let nextListContentIndent = listContentIndent;
+	let droppedOutOfList = false;
+	if (acceptedListMarker !== null) {
+		nextListContentIndent = acceptedListMarker.contentIndent;
+	} else if (!continuesListItem) {
+		droppedOutOfList = true;
+		if (!nextParagraphOpen) {
+			nextListContentIndent = null;
+		}
+	}
+
+	const effectiveContainer =
+		acceptedListMarker !== null
+			? acceptedListMarker.contentIndent
+			: droppedOutOfList
+				? 0
+				: (nextListContentIndent ?? 0);
+	const preMarkerContainerIndent =
+		acceptedListMarker !== null
+			? acceptedListMarker.leadCols >= prevContainerIndent
+				? prevContainerIndent
+				: 0
+			: effectiveContainer;
+	const analysis =
+		baseAnalysis.containerIndent !== effectiveContainer ||
+		baseAnalysis.listMarker !== acceptedListMarker
+			? {
+					...baseAnalysis,
+					containerIndent: effectiveContainer,
+					listMarker: acceptedListMarker,
+				}
+			: baseAnalysis;
+
+	return {
+		acceptedListMarker,
+		activeInterleavedContainers: null,
+		analysis,
+		clearParagraph,
+		continuesListItem,
+		droppedOutOfList,
+		effectiveContainer,
+		hasInterleavedContainers,
+		lineQuoteDepth,
+		listInterruptionInParagraph,
+		nextListContentIndent,
+		nextParagraphHasContent,
+		nextParagraphOpen,
+		preMarkerContainerIndent,
+		prevContainerIndent,
+		prevListIndent: listContentIndent,
+	};
+}
+
 export const ATX_HEADING = /^#{1,6}(?:[ \t]+.*|[ \t]*)$/;
 export const THEMATIC_BREAK =
 	/^(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
@@ -743,7 +617,6 @@ export function classifyParagraphLine(
 		if (!marker) return { nestedQuotes, open: true };
 		const after = inner.slice(marker[0].length);
 		const blank = isCommonMarkBlankLine(after);
-		// An empty or non-"1" ordered item cannot interrupt an open paragraph.
 		const ordered = marker[1];
 		if (
 			!nested &&
@@ -752,7 +625,6 @@ export function classifyParagraphLine(
 		) {
 			return { nestedQuotes, open: true };
 		}
-		// Marker spacing of 5+ columns starts indented code in the item.
 		if (blank || leadingColumns(after) >= 5) {
 			return { nestedQuotes, open: false };
 		}
@@ -769,10 +641,9 @@ export type BlockMathScanState = {
 };
 
 /**
- * Last line of a `$$...$$` or `\[...\]` block starting at `start`, or -1. A
- * mid-line display formula that is neither a one-line block nor a canonical
- * fence line is left to the inline scanner. Uses monotonic unclosed boundaries
- * so repeated unclosed `\[` / `$$` lines stay strictly O(N).
+ * Last line of a standalone `$$...$$` or `\[...\]` block starting at `start`,
+ * or -1. Uses monotonic unclosed boundaries so repeated unclosed lines stay
+ * strictly O(N).
  */
 export function findBlockMathEnd(
 	lines: ReadonlyArray<string>,
@@ -836,95 +707,36 @@ export function findBlockMathEnd(
 	return -1;
 }
 
-export function stripBlockContainerPrefix(
-	line: string,
-	prefix: string,
-	indent: number,
-): string {
-	const depth = blockquoteDepth(prefix);
-	let result = line;
-	let startColumn = 0;
-	if (depth > 0) {
-		const stripped = stripBlockquoteDepth(line, depth);
-		if (stripped !== null) {
-			result = stripped;
-			startColumn = readBlockquotePrefix(line).column;
-		} else if (
-			line.replace(/[ \t]+$/, "") === prefix.replace(/[ \t]+$/, "")
+export function findFootnoteDefinitionEnd(
+	lines: ReadonlyArray<string>,
+	start: number,
+	effectiveContainer: number,
+): number {
+	let end = start;
+	while (end + 1 < lines.length) {
+		const next = analyzeLine(lines[end + 1] ?? "", effectiveContainer);
+		if (
+			/^(?: {2,}|\t)/.test(next.rest) ||
+			/^\[\^([^\s\]]+)\]:(?:[ \t]|$)/.test(next.content)
 		) {
-			return "";
-		} else {
-			const bq = readBlockquotePrefix(line);
-			result = bq.rest;
-			startColumn = bq.column;
+			end += 1;
+			continue;
 		}
+		if (isCommonMarkBlankLine(next.content)) {
+			let lookahead = end + 1;
+			while (
+				lookahead < lines.length &&
+				isCommonMarkBlankLine(lines[lookahead] ?? "")
+			) {
+				lookahead += 1;
+			}
+			const after = analyzeLine(lines[lookahead] ?? "", effectiveContainer);
+			if (lookahead < lines.length && after.indent >= 2) {
+				end = lookahead;
+				continue;
+			}
+		}
+		break;
 	}
-	return stripUpToIndentColumns(result, indent, startColumn);
-}
-
-export type TrailingParagraphState = Readonly<{
-	inIndentedCode: boolean;
-	indentedCodeContainer: number;
-	listContentIndent: number | null;
-	paragraphHasContent: boolean;
-	paragraphOpen: boolean;
-	paragraphQuoteDepth: number;
-	paragraphRefParser: ParagraphReferenceParser | null;
-}>;
-
-/**
- * Computes the live paragraph / list / indented-code / reference-parser state
- * left open after emitting a post-display-math trailing line (`maskedAfter`).
- */
-export function computeTrailingParagraphState(
-	maskedAfter: string,
-): TrailingParagraphState {
-	const analysis = analyzeLine(maskedAfter, 0);
-	const acceptedListMarker = analysis.listMarker;
-	const listContentIndent =
-		acceptedListMarker !== null ? acceptedListMarker.contentIndent : null;
-	const effectiveContainer = listContentIndent ?? 0;
-	const relativeIndent = analysis.indent - effectiveContainer;
-	if (relativeIndent >= 4) {
-		return {
-			inIndentedCode: true,
-			indentedCodeContainer: effectiveContainer,
-			listContentIndent,
-			paragraphHasContent: false,
-			paragraphOpen: false,
-			paragraphQuoteDepth: 0,
-			paragraphRefParser: null,
-		};
-	}
-	const lineState = classifyParagraphLine(
-		analysis.content,
-		relativeIndent,
-		false,
-		false,
-	);
-	if (!lineState.open) {
-		return {
-			inIndentedCode: false,
-			indentedCodeContainer: 0,
-			listContentIndent,
-			paragraphHasContent: false,
-			paragraphOpen: false,
-			paragraphQuoteDepth: 0,
-			paragraphRefParser: null,
-		};
-	}
-	const refParser = createParagraphReferenceParser();
-	const refLine = acceptedListMarker
-		? acceptedListMarker.afterContent
-		: analysis.content;
-	const completedRefDef = advanceParagraphReferenceParser(refParser, refLine);
-	return {
-		inIndentedCode: false,
-		indentedCodeContainer: 0,
-		listContentIndent,
-		paragraphHasContent: !completedRefDef,
-		paragraphOpen: true,
-		paragraphQuoteDepth: analysis.quoteDepth + lineState.nestedQuotes,
-		paragraphRefParser: refParser,
-	};
+	return end;
 }

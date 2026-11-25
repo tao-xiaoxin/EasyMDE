@@ -21,6 +21,7 @@ import {
 	escapeParagraphTableDelimiters,
 	escapeRawTablePipes,
 	escapeTablePipes,
+	formatQuotedTitle,
 } from "./markdown-escape";
 import type { ParsedVisualDocument } from "./markdown-parser";
 import { wouldRawHtmlInterruptParagraph } from "./markdown-prescanner-inline";
@@ -149,10 +150,6 @@ function formatCodeSpan(content: string, inTableCell: boolean): string {
 		: `${fence}${body}${fence}`;
 }
 
-function escapeQuotedTitle(title: string): string {
-	return title.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
 function formatLinkDestination(href: string, inTableCell: boolean): string {
 	const trimmed = href.trim();
 	if (trimmed.length === 0) {
@@ -182,43 +179,26 @@ function formatImageAlt(alt: string, inTableCell: boolean): string {
 	return inTableCell ? escapeTablePipes(escaped) : escaped;
 }
 
-const TITLE_ENTITY_TOKEN =
-	/(&(?:#x[a-f0-9]{1,6}|#[0-9]{1,7}|[a-z][a-z0-9]{1,31});)/giu;
-
-function protectTitleEntities(titleValue: string): string {
-	return titleValue.includes("&")
-		? titleValue.replace(
-				TITLE_ENTITY_TOKEN,
-				(_, token: string) => `&amp;${token.slice(1)}`,
-			)
-		: titleValue;
-}
-
-function encodeTitleLineBreaks(titleValue: string): string {
-	return titleValue.replace(/\r/gu, "&#13;").replace(/\n/gu, "&#10;");
-}
-
-function formatQuotedTitle(titleValue: string, inTableCell: boolean): string {
-	const encoded = encodeTitleLineBreaks(protectTitleEntities(titleValue));
-	const escaped = escapeQuotedTitle(encoded);
-	return inTableCell ? escapeTablePipes(escaped) : escaped;
-}
-
 function serializeScaledImageTitle(
 	baseTitle: string,
 	scale: ImageScalePercentage,
 	inTableCell: boolean,
+	mathNewlineToken: string | null,
 ): string {
 	const marker = `{width=${scale}%}`;
 	const tryCandidate = (value: string): string | null => {
-		const candidate = formatQuotedTitle(`${value} ${marker}`, inTableCell);
+		const candidate = formatQuotedTitle(
+			`${value} ${marker}`,
+			inTableCell,
+			mathNewlineToken,
+		);
 		const parsed = parseEffectiveImageScaleTitle(candidate);
 		return parsed.status === "valid" && parsed.scale === scale
 			? candidate
 			: null;
 	};
 	if (baseTitle.length === 0) {
-		return formatQuotedTitle(marker, inTableCell);
+		return formatQuotedTitle(marker, inTableCell, mathNewlineToken);
 	}
 	const primary = tryCandidate(baseTitle);
 	if (primary !== null) {
@@ -247,18 +227,19 @@ function serializeScaledImageTitle(
 		}
 		current = next;
 	}
-	return formatQuotedTitle(marker, inTableCell);
+	return formatQuotedTitle(marker, inTableCell, mathNewlineToken);
 }
 
 function serializeUnscaledImageTitle(
 	rawTitle: string,
 	inTableCell: boolean,
+	mathNewlineToken: string | null,
 ): string {
 	if (rawTitle.length === 0) {
 		return "";
 	}
 	const tryCandidate = (value: string): string | null => {
-		const candidate = formatQuotedTitle(value, inTableCell);
+		const candidate = formatQuotedTitle(value, inTableCell, mathNewlineToken);
 		return parseEffectiveImageScaleTitle(candidate).status === "none"
 			? candidate
 			: null;
@@ -305,6 +286,7 @@ function serializeUnscaledImageTitle(
 function serializeImageNode(
 	node: ProseMirrorNode,
 	inTableCell: boolean,
+	mathNewlineToken: string | null,
 ): string {
 	const src = typeof node.attrs.src === "string" ? node.attrs.src : "";
 	const alt = typeof node.attrs.alt === "string" ? node.attrs.alt : "";
@@ -325,9 +307,13 @@ function serializeImageNode(
 			rawStripped !== rawTitle && rawStripped.endsWith("\\")
 				? rawTitle
 				: rawStripped;
-		titleSegment = ` "${serializeScaledImageTitle(baseTitle, scale, inTableCell)}"`;
+		titleSegment = ` "${serializeScaledImageTitle(baseTitle, scale, inTableCell, mathNewlineToken)}"`;
 	} else if (rawTitle.length > 0) {
-		const serializedTitle = serializeUnscaledImageTitle(rawTitle, inTableCell);
+		const serializedTitle = serializeUnscaledImageTitle(
+			rawTitle,
+			inTableCell,
+			mathNewlineToken,
+		);
 		if (serializedTitle.length > 0) {
 			titleSegment = ` "${serializedTitle}"`;
 		}
@@ -350,7 +336,11 @@ function markOpenSyntax(mark: Mark): string {
 	}
 }
 
-function markCloseSyntax(mark: Mark, inTableCell: boolean): string {
+function markCloseSyntax(
+	mark: Mark,
+	inTableCell: boolean,
+	mathNewlineToken: string | null,
+): string {
 	switch (mark.type.name) {
 		case "strong":
 			return "**";
@@ -366,7 +356,9 @@ function markCloseSyntax(mark: Mark, inTableCell: boolean): string {
 					: null;
 			const destination = formatLinkDestination(href, inTableCell);
 			const safeTitle =
-				rawTitle === null ? null : formatQuotedTitle(rawTitle, inTableCell);
+				rawTitle === null
+					? null
+					: formatQuotedTitle(rawTitle, inTableCell, mathNewlineToken);
 			return safeTitle !== null
 				? `](${destination} "${safeTitle}")`
 				: `](${destination})`;
@@ -405,7 +397,7 @@ function serializeInlineContent(
 		while (activeMarks.length > targetDepth) {
 			const popped = activeMarks.pop();
 			if (popped) {
-				output += markCloseSyntax(popped, inTableCell);
+				output += markCloseSyntax(popped, inTableCell, mathNewlineToken);
 			}
 		}
 	};
@@ -493,7 +485,7 @@ function serializeInlineContent(
 
 		if (child.type.name === "image") {
 			syncMarks(sortedMarks.filter((mark) => mark.type.name !== "code"));
-			output += serializeImageNode(child, inTableCell);
+			output += serializeImageNode(child, inTableCell, mathNewlineToken);
 			continue;
 		}
 
@@ -762,6 +754,7 @@ function serializeBlockNodeInternal(
 		case "paragraph":
 			return escapeParagraphTableDelimiters(
 				serializeInlineContent(node, { mathNewlineToken }),
+				mathNewlineToken,
 			);
 		case "heading": {
 			const level = normalizeHeadingLevel(node.attrs.level);

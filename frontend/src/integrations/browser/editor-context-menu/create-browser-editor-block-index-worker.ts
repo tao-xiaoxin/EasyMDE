@@ -3,14 +3,15 @@ import {
 	EDITOR_BLOCK_INDEX_IMAGE_STATUS_UNAVAILABLE,
 	EDITOR_BLOCK_INDEX_LINK_KIND_AUTOLINK,
 	EDITOR_BLOCK_INDEX_LINK_KIND_LINK,
-	EDITOR_BLOCK_INDEX_LINK_TABLE_CELL_WIRE_KEYS,
 	EDITOR_BLOCK_INDEX_PACKED_BLOCK_FIELDS,
 	EDITOR_BLOCK_INDEX_PACKED_IMAGE_BLOCK_FIELDS,
 	EDITOR_BLOCK_INDEX_PACKED_IMAGE_RANGE_FIELDS,
 	EDITOR_BLOCK_INDEX_PACKED_LINK_FIELDS,
 	EDITOR_BLOCK_INDEX_PACKED_MATH_FIELDS,
-	EDITOR_BLOCK_INDEX_PACKED_V3_KEYS,
 	EDITOR_MARKDOWN_BLOCK_KIND_ORDER,
+	findEditorBlockIndexMathSpanEndBlockIndex,
+	hasExactEditorBlockIndexKeys,
+	hasExactEditorBlockIndexPackedKeys,
 	isReferenceLabelCaseFoldProfile,
 	type EditorBlockIndexWorkerRequest,
 	type EditorMarkdownBlockIndexBuildInput,
@@ -34,11 +35,6 @@ import {
 	resolveEditorBlockIndexWorkerUrl,
 	unpackEditorMarkdownLinkTableCells,
 } from "../../../contracts/ports/editor-block-index-port";
-
-const PACKED_V3_WITH_TABLE_CELLS_KEYS: ReadonlyArray<string> = [
-	...EDITOR_BLOCK_INDEX_PACKED_V3_KEYS,
-	...EDITOR_BLOCK_INDEX_LINK_TABLE_CELL_WIRE_KEYS,
-];
 
 type WorkerEventListener = (event: Event | MessageEvent<unknown>) => void;
 
@@ -165,22 +161,6 @@ function sourceByteLength(
 	return bytes;
 }
 
-function hasOwnKey(value: Readonly<Record<string, unknown>>, key: string): boolean {
-	// biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn is outside the supported browser baseline.
-	return Object.prototype.hasOwnProperty.call(value, key);
-}
-
-function exactKeys(
-	value: Readonly<Record<string, unknown>>,
-	keys: ReadonlyArray<string>,
-): boolean {
-	const actual = Object.keys(value);
-	return (
-		actual.length === keys.length &&
-		keys.every((key) => hasOwnKey(value, key))
-	);
-}
-
 async function lineCount(
 	source: string,
 	cancelled: () => boolean,
@@ -211,7 +191,7 @@ function validateBuildInput(
 ): EditorBlockIndexWorkerRequest | Promise<EditorBlockIndexWorkerRequest> {
 	if (
 		!record(input) ||
-		!exactKeys(input as Record<string, unknown>, [
+		!hasExactEditorBlockIndexKeys(input as Record<string, unknown>, [
 			"generation",
 			"revision",
 			"source",
@@ -346,20 +326,14 @@ async function validatePackedData(
 	source: string,
 	cancelled: () => boolean,
 ): Promise<DataValidation> {
-	const hasTableCells =
-		hasOwnKey(data, "linkTableCellCount") || hasOwnKey(data, "linkTableCells");
+	const packedKeyShape = hasExactEditorBlockIndexPackedKeys(data);
 	const length = data.length;
 	const blockCount = data.blockCount;
 	const linkCount = data.linkCount;
 	const mathSpanCount = data.mathSpanCount;
 	const imageCount = data.imageCount;
 	if (
-		!exactKeys(
-			data,
-			hasTableCells
-				? PACKED_V3_WITH_TABLE_CELLS_KEYS
-				: EDITOR_BLOCK_INDEX_PACKED_V3_KEYS,
-		) ||
+		null === packedKeyShape ||
 		data.format !== "packed-v3" ||
 		length !== source.length ||
 		!safeInteger(length) ||
@@ -475,7 +449,6 @@ async function validatePackedData(
 				if (cancelled()) return { status: "cancelled" };
 			}
 		}
-		const mathBlock = blocks[mathBlockIndex];
 		if (
 			(displayCode !== 0 && displayCode !== 1) ||
 			!safeInteger(from) ||
@@ -488,15 +461,19 @@ async function validatePackedData(
 			bodyFrom <= from ||
 			bodyTo >= to ||
 			bodyFrom > bodyTo ||
-			!mathBlock ||
-			from < mathBlock.from ||
-			to > mathBlock.to ||
-			!mathBlock.editable ||
-			"code" === mathBlock.kind ||
-			"unavailable" === mathBlock.kind ||
 			!validMathDelimitersAt(from, to, bodyFrom, bodyTo, displayMode, source)
 		)
 			return { status: "invalid" };
+		const coveredEndBlockIndex = findEditorBlockIndexMathSpanEndBlockIndex(
+			blocks,
+			mathBlockIndex,
+			from,
+			to,
+			displayMode,
+			source,
+		);
+		if (coveredEndBlockIndex < 0) return { status: "invalid" };
+		mathBlockIndex = coveredEndBlockIndex;
 		previousMathTo = to;
 		mathSpans.push({ bodyFrom, bodyTo, displayMode, from, to });
 		processed += 1;
@@ -665,13 +642,17 @@ async function validatePackedData(
 			yielded = true;
 		}
 	}
-	const linkTableCells = unpackEditorMarkdownLinkTableCells(
-		source,
-		linkCandidates,
-		mathSpans,
-		blocks,
-		data,
-	);
+	if (cancelled()) return { status: "cancelled" };
+	const linkTableCells =
+		"with-table-cells" === packedKeyShape
+			? unpackEditorMarkdownLinkTableCells(
+					source,
+					linkCandidates,
+					blocks,
+					data,
+					{ envelopeValidated: true },
+				)
+			: undefined;
 	if (null === linkTableCells) return { status: "invalid" };
 	return {
 		status: "valid",

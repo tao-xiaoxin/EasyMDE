@@ -3,16 +3,14 @@ import {
 	type EditorMarkdownImageRange,
 	type EditorMarkdownLinkCandidate,
 	type EditorMarkdownLinkTableCellContext,
-	type EditorMarkdownMathSpan,
 	type EditorMarkdownSourceBlock,
+	type EditorMarkdownTableCellMathRange,
 } from "../../contracts/ports/editor-block-index-port";
-import { unescapeTableCellPipes } from "../../shared/markdown/php-commonmark-block-helpers";
 import {
 	findLineAtOffset,
 	findTableRowCellInCells,
 	getCachedPhpTableRowCells,
 	inCodeRange,
-	type PhpMarkdownMathRange,
 	type ScannedMarkdownBlocks,
 	type TableRowCellRange,
 } from "../../shared/markdown/php-commonmark-block-scan";
@@ -467,40 +465,6 @@ function offsetInsideSortedRanges(
 	return false;
 }
 
-/**
- * Mirrors PHP `TableParser::split()` pre-inline `\|` -> `|` unescaping over
- * `source.slice(from, to)` while leaving math spans untouched (since PHP
- * `MarkdownRenderer::extract_math()` extracts math before `TableParser` runs).
- */
-export function unescapeTableCellPipesOutsideMath(
-	source: string,
-	from: number,
-	to: number,
-	mathRanges: ReadonlyArray<PhpMarkdownMathRange>,
-): string {
-	const raw = source.slice(from, to);
-	if (!raw.includes("\\|")) return raw;
-	if (0 === mathRanges.length) return unescapeTableCellPipes(raw);
-
-	const parts: string[] = [];
-	let cursor = from;
-	for (let i = 0; i < mathRanges.length; i += 1) {
-		const math = mathRanges[i];
-		if (!math || math.to <= cursor) continue;
-		if (math.from >= to) break;
-		if (math.from > cursor) {
-			parts.push(unescapeTableCellPipes(source.slice(cursor, math.from)));
-		}
-		const mathTo = Math.min(to, math.to);
-		parts.push(source.slice(Math.max(cursor, math.from), mathTo));
-		cursor = mathTo;
-	}
-	if (cursor < to) {
-		parts.push(unescapeTableCellPipes(source.slice(cursor, to)));
-	}
-	return parts.join("");
-}
-
 type PhpTableLinkCheck =
 	| Readonly<{ excluded: true }>
 	| Readonly<{ cell: TableRowCellRange | null; excluded: false }>;
@@ -560,7 +524,7 @@ export function linkCandidatesForBlocks(
 	imageRanges: ReadonlyArray<EditorMarkdownImageRange>,
 	source?: string,
 	phpBlockScan?: ScannedMarkdownBlocks | null,
-	mathSpans?: ReadonlyArray<EditorMarkdownMathSpan>,
+	phpMathRanges?: ReadonlyArray<EditorMarkdownTableCellMathRange>,
 	linkTableCellsOut?: Map<number, EditorMarkdownLinkTableCellContext> | null,
 ): ReadonlyArray<EditorMarkdownLinkCandidate> {
 	const candidates: EditorMarkdownLinkCandidate[] = [];
@@ -643,13 +607,7 @@ export function linkCandidatesForBlocks(
 			reference: node.reference,
 			to: range.to,
 		});
-		if (
-			tableCell &&
-			linkTableCellsOut &&
-			undefined !== source &&
-			tableCell.start >= block.from &&
-			tableCell.end <= block.to
-		) {
+		if (tableCell && linkTableCellsOut && undefined !== source) {
 			linkTableCellsOut.set(
 				range.from,
 				deriveEditorMarkdownLinkTableCellContext(
@@ -658,7 +616,7 @@ export function linkCandidatesForBlocks(
 					range.to,
 					tableCell.start,
 					tableCell.end,
-					mathSpans ?? [],
+					phpMathRanges ?? [],
 					maskedCellCache,
 				),
 			);

@@ -816,7 +816,7 @@ export function createEditorMarkdownBlockIndex(
 		images.imageRanges,
 		source,
 		phpBlockScan,
-		mathSpans,
+		phpMathRanges,
 		linkTableCellsMap,
 	);
 	return {

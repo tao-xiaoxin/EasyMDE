@@ -3063,6 +3063,63 @@ describe("Round 35 exact PHP table reconciliation and PHP-owned reconciled links
 			expect(idx.linkTableCells?.size, source).toBe(expectedLinks.length);
 		}
 	});
+
+	it("retains exact PHP table-cell metadata when multiline paren math crosses Lezer block boundaries (Round 36 Track B Finding 3)", () => {
+		const cases: ReadonlyArray<
+			Readonly<{
+				expectedUnescaped: string;
+				needle: string;
+				source: string;
+			}>
+		> = [
+			{
+				expectedUnescaped: "[x][a|b]",
+				needle: "[x][a\\|b]",
+				source: '[r]: /u "\\(a"\nb\\) [x][a\\|b] | c |\n| --- | --- |\n\n[a|b]: https://example.com/ok',
+			},
+			{
+				expectedUnescaped: "[x][a|b]",
+				needle: "[x][a\\|b]",
+				source: "| [x][a\\|b] \\(m\n\nn\\) | c |\n| --- | --- |\n\n[a|b]: https://example.com/ok",
+			},
+			{
+				expectedUnescaped: "[x](https://example.com/1\\|2)",
+				needle: "[x](https://example.com/1\\\\|2)",
+				source: "| [x](https://example.com/1\\\\|2) \\(m\n\nn\\) | c |\n| --- | --- |",
+			},
+			{
+				expectedUnescaped: "[x](https://example.com/1\\|2)",
+				needle: "[x](https://example.com/1\\\\|2)",
+				source: "| [x](https://example.com/1\\\\|2) \\(m\n# h\nn\\) | c |\n| --- | --- |",
+			},
+			{
+				expectedUnescaped: "[x](https://example.com/1\\|2)",
+				needle: "[x](https://example.com/1\\\\|2)",
+				source: '[r]: /u "\\(a"\nb\\) [x](https://example.com/1\\\\|2) | c |\n| --- | --- |',
+			},
+			{
+				expectedUnescaped: "[x](https://example.com/1\\|2)",
+				needle: "[x](https://example.com/1\\\\|2)",
+				source: "| [x](https://example.com/1\\\\|2) \\(m\n<div>\nn\\) | c |\n| --- | --- |",
+			},
+		];
+
+		for (const { expectedUnescaped, needle, source } of cases) {
+			const idx = createEditorMarkdownBlockIndex(source);
+			const candidateFrom = source.indexOf(needle);
+			expect(
+				(idx.linkCandidates ?? []).map((candidate) =>
+					source.slice(candidate.from, candidate.to),
+				),
+				source,
+			).toEqual([needle]);
+			expect(idx.linkTableCells?.size, source).toBe(1);
+			const cell = idx.linkTableCells?.get(candidateFrom);
+			expect(cell?.unescapedSource, source).toBe(expectedUnescaped);
+			expect(cell?.maskedCellText, source).toBeDefined();
+			expect(cell?.maskedCellText, source).not.toContain("\n");
+		}
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

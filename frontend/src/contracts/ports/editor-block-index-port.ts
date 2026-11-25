@@ -1,4 +1,17 @@
-import { unescapeTableCellPipes } from "../../shared/markdown/php-commonmark-block-helpers";
+import {
+	advancePhpCommonMarkBlockLine,
+	collectTableRowCells,
+	createPhpCommonMarkBlockState,
+	findLineAtOffset,
+	findTableRowCellInCells,
+	type ScannedMarkdownLine,
+	type TableRowCellRange,
+	unescapeTableCellPipes,
+} from "../../shared/markdown/php-commonmark-block-scan";
+import {
+	maskPhpMarkdownMathForTableScan,
+	scanPhpMarkdownMathRanges,
+} from "../../shared/markdown/php-markdown-math-mask";
 
 export type ReferenceLabelCaseFoldProfile = 11 | 13 | 14 | 16 | 17 | "unsupported";
 
@@ -295,24 +308,108 @@ export function resolveEditorBlockIndexWorkerUrl(
 	}
 }
 
-const PACKED_V3_WITH_TABLE_CELLS_KEYS: ReadonlyArray<string> = [
-	...EDITOR_BLOCK_INDEX_PACKED_V3_KEYS,
-	...EDITOR_BLOCK_INDEX_LINK_TABLE_CELL_WIRE_KEYS,
-];
+export const EDITOR_BLOCK_INDEX_PACKED_V3_WITH_TABLE_CELLS_KEYS: ReadonlyArray<string> =
+	[
+		...EDITOR_BLOCK_INDEX_PACKED_V3_KEYS,
+		...EDITOR_BLOCK_INDEX_LINK_TABLE_CELL_WIRE_KEYS,
+	];
 
-function hasOwnKey(value: Readonly<Record<string, unknown>>, key: string): boolean {
+export type EditorBlockIndexPackedKeyShape = "base" | "with-table-cells";
+
+export type EditorMarkdownTableCellMathRange = Readonly<{
+	block?: boolean;
+	displayMode?: boolean;
+	from: number;
+	to: number;
+}>;
+
+export function hasOwnEditorBlockIndexKey(
+	value: Readonly<Record<string, unknown>>,
+	key: string,
+): boolean {
 	// biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn is outside the supported browser baseline.
 	return Object.prototype.hasOwnProperty.call(value, key);
 }
 
-function hasExactKeys(
+export function hasExactEditorBlockIndexKeys(
 	value: Readonly<Record<string, unknown>>,
 	keys: ReadonlyArray<string>,
 ): boolean {
 	return (
 		Object.keys(value).length === keys.length &&
-		keys.every((key) => hasOwnKey(value, key))
+		keys.every((key) => hasOwnEditorBlockIndexKey(value, key))
 	);
+}
+
+/**
+ * Validates that a `packed-v3` worker payload has either the exact 10 base
+ * keys (no table-cell wire extension) or the exact 12 keys (both table-cell
+ * wire extension keys), rejecting partial or extra keys.
+ */
+export function hasExactEditorBlockIndexPackedKeys(
+	value: Readonly<Record<string, unknown>>,
+): EditorBlockIndexPackedKeyShape | null {
+	const hasCount = hasOwnEditorBlockIndexKey(value, "linkTableCellCount");
+	const hasBuffer = hasOwnEditorBlockIndexKey(value, "linkTableCells");
+	if (!hasCount && !hasBuffer) {
+		return hasExactEditorBlockIndexKeys(
+			value,
+			EDITOR_BLOCK_INDEX_PACKED_V3_KEYS,
+		)
+			? "base"
+			: null;
+	}
+	if (!hasCount || !hasBuffer) return null;
+	return hasExactEditorBlockIndexKeys(
+		value,
+		EDITOR_BLOCK_INDEX_PACKED_V3_WITH_TABLE_CELLS_KEYS,
+	)
+		? "with-table-cells"
+		: null;
+}
+
+/**
+ * Validates that a packed math span `[from, to)` is covered by editable
+ * non-code, non-unavailable blocks starting at `startBlockIndex` and returns
+ * the ending block index, or `-1` on any violation. Only inline `\(...\)` math
+ * may span across Lezer block boundaries (such as blank lines or headings).
+ */
+export function findEditorBlockIndexMathSpanEndBlockIndex(
+	blocks: ReadonlyArray<EditorMarkdownSourceBlock>,
+	startBlockIndex: number,
+	from: number,
+	to: number,
+	displayMode: boolean,
+	source: string,
+): number {
+	const startBlock = blocks[startBlockIndex];
+	if (
+		!startBlock ||
+		from < startBlock.from ||
+		!startBlock.editable ||
+		"code" === startBlock.kind ||
+		"unavailable" === startBlock.kind ||
+		(!displayMode && "math" === startBlock.kind)
+	) {
+		return -1;
+	}
+	if (to <= startBlock.to) return startBlockIndex;
+	if (displayMode || "\\" !== source[from] || "(" !== source[from + 1]) {
+		return -1;
+	}
+	for (let idx = startBlockIndex + 1; idx < blocks.length; idx += 1) {
+		const block = blocks[idx];
+		if (
+			!block?.editable ||
+			"code" === block.kind ||
+			"unavailable" === block.kind ||
+			"math" === block.kind
+		) {
+			return -1;
+		}
+		if (to <= block.to) return to > block.from ? idx : -1;
+	}
+	return -1;
 }
 
 function maskDisplayMathLength(length: number): string {
@@ -326,7 +423,7 @@ function maskInlineMathLength(length: number): string {
 }
 
 function firstMathSpanEndingAfter(
-	mathSpans: ReadonlyArray<EditorMarkdownMathSpan>,
+	mathSpans: ReadonlyArray<EditorMarkdownTableCellMathRange>,
 	offset: number,
 ): number {
 	let low = 0;
@@ -346,7 +443,7 @@ function maskSliceMathSpans(
 	source: string,
 	sliceFrom: number,
 	sliceTo: number,
-	mathSpans: ReadonlyArray<EditorMarkdownMathSpan>,
+	mathSpans: ReadonlyArray<EditorMarkdownTableCellMathRange>,
 	startIndex: number,
 ): string | undefined {
 	if (startIndex >= mathSpans.length || sliceFrom >= sliceTo) return undefined;
@@ -367,7 +464,8 @@ function maskSliceMathSpans(
 		if (overlapFrom > cursor) {
 			parts.push(source.slice(cursor, overlapFrom));
 		}
-		const fullMask = span.displayMode
+		const isDisplay = Boolean(span.displayMode ?? span.block);
+		const fullMask = isDisplay
 			? maskDisplayMathLength(span.to - span.from)
 			: maskInlineMathLength(span.to - span.from);
 		parts.push(
@@ -387,7 +485,7 @@ function unescapeSlicePipesOutsideMath(
 	source: string,
 	from: number,
 	to: number,
-	mathSpans: ReadonlyArray<EditorMarkdownMathSpan>,
+	mathSpans: ReadonlyArray<EditorMarkdownTableCellMathRange>,
 	startIndex: number,
 ): string | undefined {
 	const raw = source.slice(from, to);
@@ -420,22 +518,54 @@ function unescapeSlicePipesOutsideMath(
 	return unescaped !== raw ? unescaped : undefined;
 }
 
-function isValidTableCellSlice(text: string): boolean {
-	for (let i = 0; i < text.length; i += 1) {
-		const ch = text[i];
-		if ("\n" === ch || "\r" === ch) return false;
-		if ("\\" === ch && i + 1 < text.length && "|" === text[i + 1]) {
-			i += 1;
+/**
+ * Scans `maskedSource` through the line containing `maxOffset` plus its
+ * immediately following line (needed to finalize a GFM table header row when
+ * `maxOffset` falls on the header line). No later line can mutate an earlier
+ * table row's `isTableRow` or `tableColumnCount`.
+ */
+function scanPhpLinesThroughOffset(
+	maskedSource: string,
+	maxOffset: number,
+): ReadonlyArray<ScannedMarkdownLine> {
+	const state = createPhpCommonMarkBlockState(true, false);
+	let lineStart = 0;
+	let stopAfterNextLine = false;
+	for (let index = 0; index <= maskedSource.length; index += 1) {
+		if (
+			index !== maskedSource.length &&
+			"\n" !== maskedSource[index] &&
+			"\r" !== maskedSource[index]
+		) {
 			continue;
 		}
-		if ("|" === ch) return false;
+		const lineEnd = index;
+		const isCrlf =
+			index < maskedSource.length &&
+			"\r" === maskedSource[index] &&
+			"\n" === maskedSource[index + 1];
+		const nextLineStart =
+			index === maskedSource.length
+				? maskedSource.length
+				: index + (isCrlf ? 2 : 1);
+		advancePhpCommonMarkBlockLine(
+			state,
+			maskedSource.slice(lineStart, lineEnd),
+			lineStart,
+			lineEnd,
+			nextLineStart,
+		);
+		if (stopAfterNextLine) break;
+		if (lineEnd >= maxOffset) stopAfterNextLine = true;
+		lineStart = nextLineStart;
+		if (isCrlf) index += 1;
 	}
-	return true;
+	return state.lines;
 }
 
 /**
  * Canonical derivation of PHP GFM table-cell link context from the
- * authoritative `source` and validated `mathSpans`. Shared by direct block
+ * authoritative `source` and PHP-extracted math ranges. Shared by direct block
  * indexing and worker unpacking so both paths produce byte-identical contexts
  * without transferring untrusted strings over the worker boundary.
  */
@@ -445,7 +575,7 @@ export function deriveEditorMarkdownLinkTableCellContext(
 	candidateTo: number,
 	cellStart: number,
 	cellEnd: number,
-	mathSpans: ReadonlyArray<EditorMarkdownMathSpan>,
+	mathSpans: ReadonlyArray<EditorMarkdownTableCellMathRange>,
 	cachedMaskedCell?: Map<string, string | undefined>,
 	knownMathStartIndex?: number,
 ): EditorMarkdownLinkTableCellContext {
@@ -535,39 +665,31 @@ export function packEditorMarkdownLinkTableCells(
 
 /**
  * Strictly validates the optional textless 3-int table-cell wire extension
- * inside a `packed-v3` payload and recomputes `maskedCellText` and
- * `unescapedSource` locally from the authoritative `source` and validated
- * `mathSpans`.
+ * inside a `packed-v3` payload against exact PHP GFM table-row and table-cell
+ * boundaries derived from the authoritative `source`, then recomputes
+ * `maskedCellText` and `unescapedSource` locally.
  *
  * Returns:
- * - `undefined` when the payload has the exact 10 base `packed-v3` keys (no table cells),
- * - a `ReadonlyMap` when the payload has the exact 12 keys and every record validates, or
- * - `null` on any structural, key-count, bounds, ordering, or cell-integrity violation.
+ * - `undefined` when the payload has the exact 10 base `packed-v3` keys (no scan),
+ * - a `ReadonlyMap` when the payload has the exact 12 keys and every record matches
+ *   its exact PHP GFM table-cell range, or
+ * - `null` on any structural, key-count, bounds, ordering, or cell-boundary violation.
  */
 export function unpackEditorMarkdownLinkTableCells(
 	source: string,
 	candidateRanges: ReadonlyArray<EditorMarkdownLinkCandidate>,
-	mathRanges: ReadonlyArray<EditorMarkdownMathSpan>,
 	blocks: ReadonlyArray<EditorMarkdownSourceBlock>,
 	rawData: unknown,
+	options?: Readonly<{ envelopeValidated?: boolean }>,
 ): ReadonlyMap<number, EditorMarkdownLinkTableCellContext> | undefined | null {
 	if (!rawData || "object" !== typeof rawData || Array.isArray(rawData)) {
 		return null;
 	}
 	const record = rawData as Readonly<Record<string, unknown>>;
-	const hasCount = hasOwnKey(record, "linkTableCellCount");
-	const hasBuffer = hasOwnKey(record, "linkTableCells");
-	if (!hasCount && !hasBuffer) {
-		return hasExactKeys(record, EDITOR_BLOCK_INDEX_PACKED_V3_KEYS)
-			? undefined
-			: null;
-	}
-	if (
-		!hasCount ||
-		!hasBuffer ||
-		!hasExactKeys(record, PACKED_V3_WITH_TABLE_CELLS_KEYS)
-	) {
-		return null;
+	if (!options?.envelopeValidated) {
+		const shape = hasExactEditorBlockIndexPackedKeys(record);
+		if (null === shape) return null;
+		if ("base" === shape) return undefined;
 	}
 	const count = record.linkTableCellCount;
 	const buffer = record.linkTableCells;
@@ -591,14 +713,13 @@ export function unpackEditorMarkdownLinkTableCells(
 		return null;
 	}
 
-	const cells = new Map<number, EditorMarkdownLinkTableCellContext>();
-	const cachedMaskedCell = new Map<string, string | undefined>();
+	const matchedCandidates: EditorMarkdownLinkCandidate[] = [];
 	let candidateIndex = 0;
 	let blockIndex = 0;
-	let mathCursor = 0;
 	let previousCandidateFrom = -1;
 	let previousCellStart = -1;
 	let previousCellEnd = -1;
+	let maxCellEnd = 0;
 
 	for (let index = 0; index < count; index += 1) {
 		const offset = index * EDITOR_BLOCK_INDEX_LINK_TABLE_CELL_STRIDE;
@@ -629,11 +750,10 @@ export function unpackEditorMarkdownLinkTableCells(
 			"math" === block.kind ||
 			block.from !== candidate.blockFrom ||
 			block.to !== candidate.blockTo ||
-			cellStart < block.from ||
+			cellStart < 0 ||
 			cellStart > from ||
 			candidate.to <= from ||
 			candidate.to > cellEnd ||
-			cellEnd > block.to ||
 			cellEnd > source.length
 		) {
 			return null;
@@ -644,43 +764,81 @@ export function unpackEditorMarkdownLinkTableCells(
 		if (!sameCell && cellStart < previousCellEnd) {
 			return null;
 		}
+		previousCellStart = cellStart;
+		previousCellEnd = cellEnd;
+		if (cellEnd > maxCellEnd) maxCellEnd = cellEnd;
+		matchedCandidates.push(candidate);
+		previousCandidateFrom = from;
+		candidateIndex += 1;
+	}
+
+	if (!source.includes("|")) return null;
+
+	const phpMathRanges = scanPhpMarkdownMathRanges(source);
+	const maskedSource =
+		phpMathRanges.length > 0
+			? maskPhpMarkdownMathForTableScan(source, phpMathRanges)
+			: source;
+	const scannedLines = scanPhpLinesThroughOffset(maskedSource, maxCellEnd);
+	const rowCellsCache = new Map<number, ReadonlyArray<TableRowCellRange>>();
+	const cachedMaskedCell = new Map<string, string | undefined>();
+	const cells = new Map<number, EditorMarkdownLinkTableCellContext>();
+	let phpMathCursor = 0;
+
+	for (let index = 0; index < count; index += 1) {
+		const offset = index * EDITOR_BLOCK_INDEX_LINK_TABLE_CELL_STRIDE;
+		const from = records[offset] ?? -1;
+		const cellStart = records[offset + 1] ?? -1;
+		const cellEnd = records[offset + 2] ?? -1;
+		const candidate = matchedCandidates[index];
+		if (!candidate) return null;
+
+		const line = findLineAtOffset(scannedLines, from);
+		if (
+			!line?.isTableRow ||
+			line.inlineBlockId < 0 ||
+			from < line.contentOffset ||
+			candidate.to > line.lineEnd
+		) {
+			return null;
+		}
+		let rowCells = rowCellsCache.get(line.lineStart);
+		if (undefined === rowCells) {
+			rowCells = collectTableRowCells(
+				maskedSource,
+				line.contentOffset,
+				line.lineEnd,
+				line.tableColumnCount,
+			);
+			rowCellsCache.set(line.lineStart, rowCells);
+		}
+		const cell = findTableRowCellInCells(rowCells, from);
+		if (
+			null === cell ||
+			cell.start !== cellStart ||
+			cell.end !== cellEnd ||
+			candidate.to > cell.end
+		) {
+			return null;
+		}
 
 		while (
-			mathCursor < mathRanges.length &&
-			(mathRanges[mathCursor]?.to ?? 0) <= cellStart
+			phpMathCursor < phpMathRanges.length &&
+			(phpMathRanges[phpMathCursor]?.to ?? 0) <= cellStart
 		) {
-			mathCursor += 1;
+			phpMathCursor += 1;
 		}
-		if (!sameCell) {
-			for (let m = mathCursor; m < mathRanges.length; m += 1) {
-				const span = mathRanges[m];
-				if (!span || span.from >= cellEnd) break;
-				if (span.displayMode || span.from < cellStart || span.to > cellEnd) {
-					return null;
-				}
-			}
-		}
-
 		const context = deriveEditorMarkdownLinkTableCellContext(
 			source,
 			from,
 			candidate.to,
 			cellStart,
 			cellEnd,
-			mathRanges,
+			phpMathRanges,
 			cachedMaskedCell,
-			mathCursor,
+			phpMathCursor,
 		);
-		if (!sameCell) {
-			const effectiveCell =
-				context.maskedCellText ?? source.slice(cellStart, cellEnd);
-			if (!isValidTableCellSlice(effectiveCell)) return null;
-			previousCellStart = cellStart;
-			previousCellEnd = cellEnd;
-		}
 		cells.set(from, context);
-		previousCandidateFrom = from;
-		candidateIndex += 1;
 	}
 	return cells;
 }

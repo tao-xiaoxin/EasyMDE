@@ -1831,6 +1831,135 @@ describe("createEditorSourceLinkQuery", () => {
 			}
 		}
 	});
+
+	it("resolves cross-block multiline paren-math PHP table cells and plain-paragraph double-backslash pipes through direct and worker round-trip indexes (Round 36 Track A #1, Track B #3)", async () => {
+		// Verbatim real PHP `MarkdownRenderer::render_preview()` + `kses.php` block-0 outputs.
+		const refOk = '<p><a href="https://example.com/ok">x</a></p><p>doc</p>';
+		const pipeUrl = '<p><a href="https://example.com/1%7C2">x</a></p><p>doc</p>';
+		const plainPipeUrl = '<p><a href="/x%5C%7Cy">a</a></p><p>doc</p>';
+		const cases: ReadonlyArray<
+			Readonly<{
+				expectTableCell: boolean;
+				href: string;
+				html0: string;
+				needle: string;
+				prefix: string;
+				source: string;
+			}>
+		> = [
+			{
+				expectTableCell: false,
+				href: "/x%5C%7Cy",
+				html0: plainPipeUrl,
+				needle: "[a](/x\\\\|y)",
+				prefix: "[a](/x\\\\|y)",
+				source: "[a](/x\\\\|y)",
+			},
+			{
+				expectTableCell: true,
+				href: "https://example.com/ok",
+				html0: refOk,
+				needle: "[x][a\\|b]",
+				prefix: "[x][a|b]",
+				source: '[r]: /u "\\(a"\nb\\) [x][a\\|b] | c |\n| --- | --- |\n\n[a|b]: https://example.com/ok',
+			},
+			{
+				expectTableCell: true,
+				href: "https://example.com/ok",
+				html0: refOk,
+				needle: "[x][a\\|b]",
+				prefix: "[x][a|b]",
+				source: "| [x][a\\|b] \\(m\n\nn\\) | c |\n| --- | --- |\n\n[a|b]: https://example.com/ok",
+			},
+			{
+				expectTableCell: true,
+				href: "https://example.com/1%7C2",
+				html0: pipeUrl,
+				needle: "[x](https://example.com/1\\\\|2)",
+				prefix: "[x](https://example.com/1\\|2)",
+				source: "| [x](https://example.com/1\\\\|2) \\(m\n\nn\\) | c |\n| --- | --- |",
+			},
+			{
+				expectTableCell: true,
+				href: "https://example.com/1%7C2",
+				html0: pipeUrl,
+				needle: "[x](https://example.com/1\\\\|2)",
+				prefix: "[x](https://example.com/1\\|2)",
+				source: "| [x](https://example.com/1\\\\|2) \\(m\n# h\nn\\) | c |\n| --- | --- |",
+			},
+			{
+				expectTableCell: true,
+				href: "https://example.com/1%7C2",
+				html0: pipeUrl,
+				needle: "[x](https://example.com/1\\\\|2)",
+				prefix: "[x](https://example.com/1\\|2)",
+				source: '[r]: /u "\\(a"\nb\\) [x](https://example.com/1\\\\|2) | c |\n| --- | --- |',
+			},
+		];
+
+		for (const entry of cases) {
+			const direct = createEditorMarkdownBlockIndex(entry.source);
+			const worker = await buildWorkerRoundTripBlockIndex(entry.source);
+			if (entry.expectTableCell) {
+				expect(worker.linkTableCells, entry.source).toEqual(direct.linkTableCells);
+				expect(worker.linkTableCells?.size, entry.source).toBe(1);
+			} else {
+				expect(direct.linkTableCells?.size, entry.source).toBe(0);
+				expect(worker.linkTableCells, entry.source).toBeUndefined();
+			}
+			const caret = entry.source.indexOf(entry.needle) + 1;
+			for (const [mode, blockIndex] of [
+				["direct", direct],
+				["worker", worker],
+			] as const) {
+				const current = binding(entry.source, `${mode}:${entry.source}`, {
+					end: caret,
+					start: caret,
+				});
+				const { requestFactory, session } = createHarness({
+					render: async (request) => response(request.markdown, entry.html0),
+				});
+				expect(
+					session.ensure({ binding: current, blockIndex }).status,
+					`${mode}:${entry.source}`,
+				).toBe("pending");
+				await settle();
+				expect(
+					requestFactory.mock.calls[0]?.[0]?.markdown,
+					`${mode}:${entry.source}`,
+				).toBe(`${entry.prefix}\n\n${entry.source}`);
+				expect(session.peek(current), `${mode}:${entry.source}`).toEqual({
+					href: entry.href,
+					status: "ready",
+				});
+				session.dispose();
+			}
+		}
+
+		// Large 100k-line document with 1 table at the top stays bounded on unpack and O(1) on ensure().
+		const largeTopTable = `| [a](/x\\|y) | c |\n| - | - |\n\nz|-\n${"z\n".repeat(100_000)}`;
+		const workerTop = await buildWorkerRoundTripBlockIndex(largeTopTable);
+		expect(workerTop.linkTableCells?.size).toBe(1);
+		const topCaret = largeTopTable.indexOf("[a]") + 1;
+		const { requestFactory, session } = createHarness({
+			render: () => new Promise(() => undefined),
+		});
+		const started = performance.now();
+		const topState = session.ensure({
+			binding: binding(largeTopTable, "top-table-perf", {
+				end: topCaret,
+				start: topCaret,
+			}),
+			blockIndex: workerTop,
+		});
+		const elapsed = performance.now() - started;
+		expect(topState.status).toBe("pending");
+		expect(elapsed).toBeLessThanOrEqual(250);
+		expect(
+			requestFactory.mock.calls[0]?.[0]?.markdown.startsWith("[a](/x|y)\n\n"),
+		).toBe(true);
+		session.dispose();
+	}, 60_000);
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

@@ -835,12 +835,99 @@ describe("createBrowserEditorBlockIndexWorker", () => {
 			mutateWords((words) => {
 				words[2] = words[5] ?? 0;
 			}),
+			// Truncate cell a inside a real table cell (Round 36 Track A #1)
+			mutateWords((words) => {
+				words[1] = words[0] ?? 0;
+			}),
+			mutateWords((words) => {
+				words[2] = (words[2] ?? 0) - 1;
+			}),
 			// Duplicate candidateFrom
 			mutateWords((words) => {
 				words[3] = words[0] ?? 0;
 			}),
 		]) {
 			await expect(run(malformed)).rejects.toThrow("editor-block-index-result-invalid");
+		}
+	});
+
+	it("rejects forged table cells on plain paragraphs and cross-block invalid math spans, while accepting real cross-block multiline paren-math table cells (Round 36 Track A #1, Track B #3)", async () => {
+		const runWithPayload = async (source: string, payload: unknown) => {
+			const adapter = createAdapter();
+			const pending = adapter.build({ generation: 1, revision: 1, source }, signal());
+			const worker = await firstWorker();
+			worker.emit({
+				data: payload as EditorMarkdownBlockIndexPackedData,
+				generation: 1,
+				revision: 1,
+				type: "result",
+			});
+			try {
+				return await pending;
+			} finally {
+				adapter.dispose();
+			}
+		};
+
+		// Track A #1: forged `[0, 0, 11]` table cell on plain paragraph `"[a](/x\\\\|y)"`
+		const plain = "[a](/x\\\\|y)";
+		const plainMessages: EditorBlockIndexWorkerResponse[] = [];
+		createEditorBlockIndexWorkerHandler((message) => plainMessages.push(message))({
+			data: { generation: 1, revision: 1, source: plain, type: "build", referenceLabelCaseFoldProfile: 14 },
+		});
+		const plainPacked = plainMessages[0];
+		if ("result" !== plainPacked?.type) throw new Error("plain-result-missing");
+		await expect(
+			runWithPayload(plain, {
+				...plainPacked.data,
+				linkTableCellCount: 1,
+				linkTableCells: Int32Array.from([0, 0, plain.length]).buffer,
+			}),
+		).rejects.toThrow("editor-block-index-result-invalid");
+
+		// Cross-block tampered `$...$` or `\(...\)` spanning a code/unavailable block stays rejected
+		const codeCross = "\\(a\n```\nc\n```\nb\\)";
+		await expect(
+			runWithPayload(
+				codeCross,
+				packedFields(
+					[0, 3, 0, 0, 4, 1, 4, 13, 1, 3, 0, 1, 14, 17, 4, 4, 4, 1],
+					[0, codeCross.length, 2, codeCross.length - 2, 0],
+					codeCross.length,
+				),
+			),
+		).rejects.toThrow("editor-block-index-result-invalid");
+		const dollarCross = "$a\n\nb$";
+		await expect(
+			runWithPayload(
+				dollarCross,
+				packedFields(
+					[0, 2, 0, 0, 4, 1, 4, 6, 2, 2, 4, 1],
+					[0, dollarCross.length, 1, dollarCross.length - 1, 0],
+					dollarCross.length,
+				),
+			),
+		).rejects.toThrow("editor-block-index-result-invalid");
+
+		// Track B Finding 3: all 5 cross-block multiline `\(...\)` PHP table-cell inputs
+		for (const source of [
+			'[r]: /u "\\(a"\nb\\) [x][a\\|b] | c |\n| --- | --- |\n\n[a|b]: https://example.com/ok',
+			"| [x][a\\|b] \\(m\n\nn\\) | c |\n| --- | --- |\n\n[a|b]: https://example.com/ok",
+			"| [x](https://example.com/1\\\\|2) \\(m\n\nn\\) | c |\n| --- | --- |",
+			"| [x](https://example.com/1\\\\|2) \\(m\n# h\nn\\) | c |\n| --- | --- |",
+			'[r]: /u "\\(a"\nb\\) [x](https://example.com/1\\\\|2) | c |\n| --- | --- |',
+		]) {
+			const messages: EditorBlockIndexWorkerResponse[] = [];
+			createEditorBlockIndexWorkerHandler((message) => messages.push(message))({
+				data: { generation: 1, revision: 1, source, type: "build", referenceLabelCaseFoldProfile: 14 },
+			});
+			const packed = messages[0];
+			if ("result" !== packed?.type) throw new Error("packed-missing");
+			expect(packed.data.linkTableCellCount, source).toBe(1);
+			const direct = createEditorMarkdownBlockIndex(source, { referenceLabelCaseFoldProfile: 14 });
+			const decoded = await runWithPayload(source, packed.data);
+			expect(decoded.linkTableCells, source).toEqual(direct.linkTableCells);
+			expect(decoded.linkCandidates, source).toEqual(direct.linkCandidates);
 		}
 	});
 

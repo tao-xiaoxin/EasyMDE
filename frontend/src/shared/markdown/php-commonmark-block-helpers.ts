@@ -62,7 +62,7 @@ function isAsciiLetter(code: number): boolean {
 	return (code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a);
 }
 
-function isPhpTrimChar(ch: string | undefined): boolean {
+export function isPhpTrimChar(ch: string | undefined): boolean {
 	if (!ch) return false;
 	const code = ch.charCodeAt(0);
 	return (
@@ -445,13 +445,15 @@ export function createPhpInlineStream(text: string, lines: ReadonlyArray<PhpInli
 		pos.p < lineEnd(pos)
 			? { p: pos.p + 1, s: pos.s }
 			: { p: lines[pos.s + 1]?.contentOffset ?? pos.p, s: pos.s + 1 };
-	// League `Cursor::advanceToNextNonSpaceOrNewline()`: `/^ *(?:\n *)?/`.
+	// League `Cursor::advanceToNextNonSpaceOrNewline()` (`/^(?: *(?:\n *)?)/`)
+	// combined with `MarkdownParser::parseLine()` stripping leading spaces and
+	// tabs (`advanceToNextNonSpaceOrTab()`) from every paragraph continuation line.
 	const skipSpaces = (start: PhpInlinePos): PhpInlinePos => {
 		let pos = start;
 		while (" " === charAt(pos)) pos = advance(pos);
 		if ("\n" !== charAt(pos)) return pos;
 		pos = advance(pos);
-		while (" " === charAt(pos)) pos = advance(pos);
+		while (" " === charAt(pos) || "\t" === charAt(pos)) pos = advance(pos);
 		return pos;
 	};
 	const isEscape = (pos: PhpInlinePos): boolean =>

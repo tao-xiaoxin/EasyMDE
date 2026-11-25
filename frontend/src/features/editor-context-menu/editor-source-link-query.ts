@@ -3,6 +3,7 @@ import type {
 	PreviewRequestPort,
 	PreviewResponse,
 } from "../../contracts/ports/preview-request";
+import { gfmAutolinkTrailingContext } from "../../shared/markdown/php-commonmark-inline-html";
 import {
 	MAX_MARKDOWN_PREVIEW_BYTES,
 	utf8ByteLength,
@@ -174,10 +175,53 @@ function hasGeneratedOrImageNode(root: Element): boolean {
 	);
 }
 
+function hasUnexpectedOutsideContent(
+	root: Element,
+	anchor: HTMLAnchorElement,
+	expectedTrailingText: string,
+): boolean {
+	if (0 === expectedTrailingText.length) {
+		return hasOutsideText(root, anchor);
+	}
+	let seenAnchor = false;
+	let trailingText = "";
+	for (let index = 0; index < root.childNodes.length; index += 1) {
+		const child = root.childNodes[index];
+		if (!child) continue;
+		if (child === anchor) {
+			seenAnchor = true;
+			continue;
+		}
+		if (3 !== child.nodeType) return true;
+		const text = child.nodeValue ?? "";
+		if (!seenAnchor) {
+			if (text.trim()) return true;
+		} else {
+			trailingText += text;
+		}
+	}
+	return !seenAnchor || trailingText !== expectedTrailingText;
+}
+
+function queryTrailingContext(
+	source: string,
+	candidate: EditorSourceLinkCandidate,
+): string {
+	if (
+		"link" !== candidate.kind ||
+		candidate.reference ||
+		candidate.source.startsWith("[")
+	) {
+		return "";
+	}
+	return gfmAutolinkTrailingContext(source, candidate.from, candidate.to);
+}
+
 function responseHref(
 	response: PreviewResponse,
 	candidate: EditorSourceLinkCandidate,
 	parser: SimplifiedFormattingDomParser,
+	expectedTrailingText: string,
 ):
 	| Readonly<{ href: string }>
 	| Readonly<{ status: "none" }>
@@ -257,7 +301,7 @@ function responseHref(
 	if (hasGeneratedOrImageNode(owner)) {
 		return { code: "editor-source-link-preview-ownership-invalid" };
 	}
-	if (hasOutsideText(owner, anchor)) {
+	if (hasUnexpectedOutsideContent(owner, anchor, expectedTrailingText)) {
 		// A reference link only renders when the document defines its label.
 		// Literal text beside the anchor therefore means this caret has no
 		// rendered link, while generated or unexpected nodes stay a failure.
@@ -344,6 +388,7 @@ export function createEditorSourceLinkQuery({
 	const run = async (
 		query: ActiveQuery,
 		queryMarkdown: string,
+		expectedTrailingText: string,
 	): Promise<void> => {
 		if (!currentQueryIsLive(query)) return;
 		let request: PreviewRequest;
@@ -378,7 +423,12 @@ export function createEditorSourceLinkQuery({
 		}
 		if (!currentQueryIsLive(query)) return;
 		clearQueryTimeout(query);
-		const result = responseHref(response, query.candidate, parser);
+		const result = responseHref(
+			response,
+			query.candidate,
+			parser,
+			expectedTrailingText,
+		);
 		if ("status" in result) {
 			query.state = { status: "none" };
 			publish();
@@ -420,7 +470,11 @@ export function createEditorSourceLinkQuery({
 			cached = { binding, state: failed(resolution.code) };
 			return cached.state;
 		}
-		const queryMarkdown = `${resolution.candidate.source}\n\n${binding.source}`;
+		const expectedTrailingText = queryTrailingContext(
+			binding.source,
+			resolution.candidate,
+		);
+		const queryMarkdown = `${resolution.candidate.source}${expectedTrailingText}\n\n${binding.source}`;
 		if (utf8ByteLength(queryMarkdown) > MAX_EDITOR_SOURCE_LINK_QUERY_BYTES) {
 			cached = {
 				binding,
@@ -443,7 +497,7 @@ export function createEditorSourceLinkQuery({
 			query.controller.abort();
 			publish();
 		}, EDITOR_SOURCE_LINK_QUERY_TIMEOUT_MS);
-		void run(query, queryMarkdown);
+		void run(query, queryMarkdown, expectedTrailingText);
 		return query.state;
 	};
 

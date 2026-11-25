@@ -182,10 +182,9 @@ export function matchCommonMarkAutolinkOnLine(
 	return -1;
 }
 
-const GFM_EMAIL_AUTOLINK_RE = /[A-Za-z0-9.\-_+]+@[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_.]+/g;
 const GFM_URL_AUTOLINK_PREFIX_RE = /www\.|http:\/\/|https:\/\/|ftp:\/\//gi;
 const GFM_URL_TRAILING_PUNCTUATION = "?!.,:*_~";
-const GFM_URL_TRAILING_ENTITY_RE = /^(.+)&[A-Za-z0-9]+;$/;
+const GFM_URL_START_PREFIX_RE = /^(?:https?:\/\/|ftp:\/\/|www\.)/iu;
 const GFM_URL_AUTOLINK_RE = (() => {
 	const h = "[0-9a-f]{1,4}";
 	const v4 = "(?:25[0-5]|(?:[1-9]|1[0-9]|2[0-4])?[0-9])";
@@ -201,6 +200,28 @@ const GFM_URL_AUTOLINK_RE = (() => {
 	);
 })();
 
+function isGfmEmailLocalChar(code: number): boolean {
+	return (
+		isAsciiAlphaNum(code) ||
+		0x2e === code || // .
+		0x2d === code || // -
+		0x5f === code || // _
+		0x2b === code // +
+	);
+}
+
+function isGfmEmailDomainFirstChar(code: number): boolean {
+	return (
+		isAsciiAlphaNum(code) ||
+		0x2d === code || // -
+		0x5f === code // _
+	);
+}
+
+function isGfmEmailDomainTailChar(code: number): boolean {
+	return isGfmEmailDomainFirstChar(code) || 0x2e === code; // .
+}
+
 export type GfmAutolinkStops = Readonly<{
 	/** Non-overlapping `EmailAutolinkParser` match starts mapped to match ends. */
 	emails: ReadonlyMap<number, number>;
@@ -211,7 +232,7 @@ export type GfmAutolinkStops = Readonly<{
 /**
  * Collects the PHP `InlineParserEngine::matchParsers()` stop positions of the
  * GFM `EmailAutolinkParser` and `UrlAutolinkParser` within one inline line
- * `[from, to)` (neither regex can cross a line break).
+ * `[from, to)` (neither parser can cross a line break) in strictly O(N) time.
  */
 export function collectGfmAutolinkStops(
 	source: string,
@@ -220,11 +241,39 @@ export function collectGfmAutolinkStops(
 ): GfmAutolinkStops {
 	const emails = new Map<number, number>();
 	const urls = new Set<number>();
-	const line = source.slice(from, to);
-	for (const match of line.matchAll(GFM_EMAIL_AUTOLINK_RE)) {
-		const start = from + (match.index ?? 0);
-		emails.set(start, start + match[0].length);
+
+	let floor = from;
+	let searchPos = from;
+	while (searchPos < to) {
+		const at = source.indexOf("@", searchPos);
+		if (at < 0 || at >= to) break;
+		let start = at;
+		while (start > floor && isGfmEmailLocalChar(source.charCodeAt(start - 1))) {
+			start -= 1;
+		}
+		if (start < at) {
+			let pos = at + 1;
+			while (pos < to && isGfmEmailDomainFirstChar(source.charCodeAt(pos))) {
+				pos += 1;
+			}
+			if (pos > at + 1 && pos < to && 0x2e === source.charCodeAt(pos)) {
+				pos += 1;
+				const tailStart = pos;
+				while (pos < to && isGfmEmailDomainTailChar(source.charCodeAt(pos))) {
+					pos += 1;
+				}
+				if (pos > tailStart) {
+					emails.set(start, pos);
+					floor = pos;
+					searchPos = pos;
+					continue;
+				}
+			}
+		}
+		searchPos = at + 1;
 	}
+
+	const line = source.slice(from, to);
 	for (const match of line.matchAll(GFM_URL_AUTOLINK_PREFIX_RE)) {
 		urls.add(from + (match.index ?? 0));
 	}
@@ -252,23 +301,24 @@ function utf8ByteLength(codePoint: number): number {
 	return codePoint < 0x10000 ? 3 : 4;
 }
 
-/**
- * Mirrors PHP `UrlAutolinkParser::parse()` (regex, trailing punctuation,
- * entity, and unmatched-paren trimming) at a prefix stop `start`, returning
- * the exclusive end of the consumed URL or `-1`. `ALLOWED_AFTER` is checked
- * by the caller.
- */
-export function matchGfmUrlAutolink(source: string, start: number): number {
+function matchGfmUrlAutolinkDetail(
+	source: string,
+	start: number,
+): Readonly<{ end: number; rawEnd: number }> | null {
 	GFM_URL_AUTOLINK_RE.lastIndex = start;
 	const match = GFM_URL_AUTOLINK_RE.exec(source);
-	if (!match) return -1;
+	if (!match) return null;
 	const url = match[0];
+	const rawEnd = start + url.length;
 	let end = url.length;
 	while (end > 1 && GFM_URL_TRAILING_PUNCTUATION.includes(url[end - 1] ?? "")) {
 		end -= 1;
 	}
-	const entity = GFM_URL_TRAILING_ENTITY_RE.exec(url.slice(0, end));
-	if (entity?.[1]) end = entity[1].length;
+	if (end > 3 && ";" === url[end - 1]) {
+		let amp = end - 2;
+		while (amp > 0 && isAsciiAlphaNum(url.charCodeAt(amp))) amp -= 1;
+		if (amp > 0 && amp < end - 2 && "&" === url[amp]) end = amp;
+	}
 	if (")" === url[end - 1]) {
 		let parens = 0;
 		for (let i = 0; i < end; i += 1) {
@@ -285,7 +335,55 @@ export function matchGfmUrlAutolink(source: string, start: number): number {
 			end -= pair;
 		}
 	}
-	return end > 0 ? start + end : -1;
+	return end > 0 ? { end: start + end, rawEnd } : null;
+}
+
+/**
+ * Mirrors PHP `UrlAutolinkParser::parse()` (regex, trailing punctuation,
+ * entity, and unmatched-paren trimming) at a prefix stop `start`, returning
+ * the exclusive end of the consumed URL or `-1`. `ALLOWED_AFTER` is checked
+ * by the caller.
+ */
+export function matchGfmUrlAutolink(source: string, start: number): number {
+	return matchGfmUrlAutolinkDetail(source, start)?.end ?? -1;
+}
+
+/**
+ * Returns the minimal trailing context right after `[from, to)` needed for
+ * isolated PHP Preview ownership verification when a bare GFM URL or email
+ * autolink retained trailing punctuation/suffix characters solely because
+ * surrounding characters in `source` (such as `)` in `(https://x?)` or `.` in
+ * `a@b.c_.`) were trimmed after punctuation/suffix checks. Returns `""` when
+ * the isolated candidate already parses identically on its own.
+ */
+export function gfmAutolinkTrailingContext(
+	source: string,
+	from: number,
+	to: number,
+): string {
+	if (from < 0 || to <= from || to >= source.length) return "";
+	const candidate = source.slice(from, to);
+	if (candidate.includes("\n") || candidate.includes("\r")) return "";
+	if (GFM_URL_START_PREFIX_RE.test(candidate)) {
+		if (matchGfmUrlAutolink(candidate, 0) === candidate.length) return "";
+		const detail = matchGfmUrlAutolinkDetail(source, from);
+		if (!detail || detail.end !== to || detail.rawEnd <= to) return "";
+		return matchGfmUrlAutolink(source.slice(from, detail.rawEnd), 0) ===
+			candidate.length
+			? source.slice(to, detail.rawEnd)
+			: "";
+	}
+	const last = candidate[candidate.length - 1];
+	if (
+		candidate.includes("@") &&
+		("." === last || "-" === last || "_" === last) &&
+		"." === source[to] &&
+		(to + 1 >= source.length ||
+			!isGfmEmailDomainTailChar(source.charCodeAt(to + 1)))
+	) {
+		return ".";
+	}
+	return "";
 }
 
 function findLineBreakEnd(source: string, start: number): number {

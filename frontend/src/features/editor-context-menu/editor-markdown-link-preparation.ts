@@ -4,32 +4,12 @@ import type {
 	EditorMarkdownSourceBlock,
 } from "../../contracts/ports/editor-block-index-port";
 import {
-	collectBlockBacktickRuns,
 	findLineAtOffset,
-	findLineIndexAtOffset,
-	findNextBacktickRun,
 	findTableRowCellInCells,
 	getCachedPhpTableRowCells,
-	getInlineBlockBounds,
 	inCodeRange,
 	type ScannedMarkdownBlocks,
-	type ScannedMarkdownLine,
 } from "../../shared/markdown/php-commonmark-block-scan";
-import {
-	createPhpInlineStream,
-	parsePhpInlineLinkTail,
-	parsePhpLinkLabel,
-} from "../../shared/markdown/php-commonmark-block-helpers";
-import {
-	collectGfmAutolinkStops,
-	createInlineHtmlScanGuard,
-	type GfmAutolinkStops,
-	gfmEmailAutolinkEnd,
-	isGfmUrlAutolinkAllowedAfter,
-	matchBlockInlineHtmlOrAutolink,
-	matchCommonMarkAutolinkOnLine,
-	matchGfmUrlAutolink,
-} from "../../shared/markdown/php-commonmark-inline-html";
 import { collectPhpTableCellImageRanges } from "../image-scale/image-scale-syntax";
 import {
 	originalRange,
@@ -523,7 +503,7 @@ function isRangeExcludedByPhpTable(
  * image ranges stay excluded so the menu never offers link actions there.
  */
 export function linkCandidatesForBlocks(
-	projection: NewlineProjection,
+	projection: NewlineProjection | null,
 	blocks: ReadonlyArray<EditorMarkdownSourceBlock>,
 	nodes: ReadonlyArray<ParserLinkNode>,
 	mathRanges: ReadonlyArray<SourceRange>,
@@ -550,7 +530,7 @@ export function linkCandidatesForBlocks(
 			candidate && candidate.from < range.to && candidate.to > range.from,
 		);
 	for (const node of nodes) {
-		const range = originalRange(projection, node);
+		const range = projection ? originalRange(projection, node) : node;
 		while (
 			blockIndex < blocks.length &&
 			(blocks[blockIndex]?.to ?? 0) <= range.from
@@ -611,184 +591,4 @@ export function linkCandidatesForBlocks(
 		});
 	}
 	return candidates;
-}
-
-type BracketOpener = {
-	active: boolean;
-	hasNext: boolean;
-	image: boolean;
-	labelFrom: number;
-	pos: number;
-};
-
-/**
- * Replays PHP `League\CommonMark\Parser\InlineParserEngine` over one inline
- * block for the parsers that create or mask links: stop positions from
- * `matchParsers()`, code spans, escapes, §6.5 autolinks, inline HTML, GFM
- * URL/email autolinks, and bracket links (nested links restored to text,
- * earlier link openers deactivated). Returns each rendered link's exact
- * consumed source range.
- */
-function scanPhpInlineBlockLinks(
-	text: string,
-	lines: ReadonlyArray<ScannedMarkdownLine>,
-	groupStart: number,
-	groupEnd: number,
-	isReferenceDefined: (from: number, to: number) => boolean,
-): ParserLinkNode[] {
-	const stream = createPhpInlineStream(text, lines, groupEnd);
-	const runs = collectBlockBacktickRuns(text, lines, groupStart, groupEnd);
-	const guard = createInlineHtmlScanGuard();
-	const emitted: ParserLinkNode[] = [];
-	const openers: BracketOpener[] = [];
-	let stops: GfmAutolinkStops | null = null;
-	let stopsSegment = -1;
-	let s = groupStart;
-	let p = lines[groupStart]?.contentOffset ?? 0;
-	for (;;) {
-		const seg = lines[s];
-		if (!seg) break;
-		if (p >= seg.lineEnd) {
-			if (s >= groupEnd) break;
-			s += 1;
-			p = Math.max(p, lines[s]?.contentOffset ?? p);
-			continue;
-		}
-		if (stopsSegment !== s) {
-			stops = collectGfmAutolinkStops(text, seg.contentOffset, seg.lineEnd);
-			stopsSegment = s;
-		}
-		const ch = text[p];
-		if ("`" === ch) {
-			let end = p + 1;
-			while (end < seg.lineEnd && "`" === text[end]) end += 1;
-			// Only a run start is a `BacktickParser` stop (an escape may land mid-run).
-			const isStop = p === seg.contentOffset || "`" !== text[p - 1];
-			const close = isStop ? findNextBacktickRun(runs, end - p, end) : -1;
-			p = close >= 0 ? close + end - p : end;
-			continue;
-		}
-		if ("\\" === ch) {
-			if (stream.isEscape({ p, s })) p += 2;
-			else if (p + 1 >= seg.lineEnd && s < groupEnd) p = seg.lineEnd;
-			else p += 1;
-			continue;
-		}
-		if ("<" === ch) {
-			const autolinkEnd = matchCommonMarkAutolinkOnLine(text, p, seg.lineEnd);
-			if (autolinkEnd >= 0) {
-				emitted.push({ from: p, kind: "autolink", reference: false, to: autolinkEnd });
-				p = autolinkEnd;
-				continue;
-			}
-			const html = matchBlockInlineHtmlOrAutolink(text, lines, s, p, groupEnd, guard);
-			if (html) {
-				s = html.segIdx;
-				p = html.pos;
-			} else p += 1;
-			continue;
-		}
-		if ("[" === ch || ("!" === ch && "[" === text[p + 1] && p + 1 < seg.lineEnd)) {
-			const top = openers[openers.length - 1];
-			if (top) top.hasNext = true;
-			const image = "!" === ch;
-			openers.push({ active: true, hasNext: false, image, labelFrom: p + (image ? 2 : 1), pos: p });
-			p += image ? 2 : 1;
-			continue;
-		}
-		if ("]" === ch) {
-			const opener = openers[openers.length - 1];
-			if (!opener || (!opener.image && !opener.active)) {
-				openers.pop();
-				p += 1;
-				continue;
-			}
-			const after = { p: p + 1, s };
-			let end = parsePhpInlineLinkTail(text, stream, after);
-			let reference = false;
-			if (!end) {
-				const label = parsePhpLinkLabel(stream, after);
-				const from = label && label.length > 2 ? p + 2 : opener.hasNext ? -1 : opener.labelFrom;
-				const to = label && label.length > 2 ? label.end.p - 1 : p;
-				if (from >= 0 && isReferenceDefined(from, to)) {
-					end = label ? label.end : after;
-					reference = true;
-				}
-			}
-			openers.pop();
-			if (!end) {
-				p += 1;
-				continue;
-			}
-			while ((emitted[emitted.length - 1]?.from ?? -1) >= opener.pos) emitted.pop();
-			if (!opener.image) {
-				emitted.push({ from: opener.pos, kind: "link", reference, to: end.p });
-				for (const earlier of openers) earlier.active = false;
-			}
-			s = end.s;
-			p = end.p;
-			continue;
-		}
-		const emailEnd = stops?.emails.get(p);
-		const emailTo = undefined === emailEnd ? -1 : gfmEmailAutolinkEnd(text, emailEnd);
-		if (emailTo > p) {
-			emitted.push({ from: p, kind: "link", reference: false, to: emailTo });
-			p = emailTo;
-			continue;
-		}
-		if (stops?.urls.has(p) && isGfmUrlAutolinkAllowedAfter(p === seg.contentOffset ? null : (text[p - 1] ?? null))) {
-			const urlEnd = matchGfmUrlAutolink(text, p);
-			if (urlEnd > p) {
-				emitted.push({ from: p, kind: "link", reference: false, to: urlEnd });
-				p = urlEnd;
-				continue;
-			}
-		}
-		p += 1;
-	}
-	return emitted;
-}
-
-/**
- * Resolves the links PHP renders inside display-math-broken image
- * destinations. After `extract_math()` splits the image at its display math,
- * `](DEST) TAIL` is parsed as one ordinary inline block, so each destination
- * is evaluated in its enclosing post-math block: code spans or HTML closing
- * after `)` mask it, and only PHP-consumed autolink, email, and bracket link
- * ranges starting inside the destination survive (a URL, title, or bracket
- * link may end past the parser's destination). Keys are `${from}:${to}` of
- * the given source destination ranges; a table-row block yields no links.
- */
-export function collectPhpPostMathDestinationLinks(
-	source: string,
-	scan: ScannedMarkdownBlocks,
-	destinations: ReadonlyArray<SourceRange>,
-	isReferenceDefined: (from: number, to: number) => boolean,
-): ReadonlyMap<string, ReadonlyArray<ParserLinkNode>> {
-	const result = new Map<string, ParserLinkNode[]>();
-	const text = scan.tableCellSource ?? source;
-	const sorted = [...destinations].sort((left, right) => left.from - right.from);
-	let index = 0;
-	while (index < sorted.length) {
-		const lineIdx = findLineIndexAtOffset(scan.lines, sorted[index]?.from ?? 0);
-		const line = scan.lines[lineIdx];
-		const id = line?.inlineBlockId ?? -1;
-		const group: SourceRange[] = [];
-		while (index < sorted.length) {
-			const destination = sorted[index];
-			if (!destination) break;
-			const destinationLine = findLineAtOffset(scan.lines, destination.from);
-			if (group.length > 0 && (id < 0 || destinationLine?.inlineBlockId !== id)) break;
-			group.push(destination);
-			result.set(`${destination.from}:${destination.to}`, []);
-			index += 1;
-		}
-		if (!line || id < 0 || line.isTableRow) continue;
-		const bounds = getInlineBlockBounds(scan, lineIdx, id);
-		for (const link of scanPhpInlineBlockLinks(text, scan.lines, bounds.groupStart, bounds.groupEnd, isReferenceDefined)) {
-			const owner = group.find((range) => range.from <= link.from && link.from < range.to);
-			if (owner) result.get(`${owner.from}:${owner.to}`)?.push(link);
-		}
-	}
-	return result;
 }

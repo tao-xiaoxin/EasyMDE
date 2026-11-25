@@ -27,12 +27,15 @@ import {
 } from "../image-scale/image-scale-syntax";
 import { lineIndexAtOffsets } from "./editor-markdown-lines";
 import {
-	collectPhpPostMathDestinationLinks,
 	linkCandidatesForBlocks,
 	type MarkdownSyntaxNode,
 	type ParserLinkNode,
 	projectedLinkNodes,
 } from "./editor-markdown-link-preparation";
+import {
+	collectPhpDisplayMathBrokenBlockLinks,
+	type PhpOwnedBlockLinks,
+} from "./editor-markdown-php-inline-links";
 import {
 	mathSpanFromRange,
 	overlayMath,
@@ -64,8 +67,6 @@ type ParserImageNode = Readonly<{
 	from: number;
 	projectedFrom?: number;
 	projectedTo?: number;
-	projectedUrlFrom?: number;
-	projectedUrlTo?: number;
 	referenceLabelFrom?: number;
 	referenceLabelTo?: number;
 	to: number;
@@ -94,10 +95,7 @@ type ImageSyntaxNode = ReturnType<
 	typeof markdownLanguage.parser.parse
 >["topNode"];
 
-function matchInlineImageNode(
-	source: string,
-	node: ImageSyntaxNode,
-): Readonly<{ urlFrom?: number; urlTo?: number }> | null {
+function isInlineImageNode(source: string, node: ImageSyntaxNode): boolean {
 	if (
 		node.from < 0 ||
 		node.to <= node.from ||
@@ -106,7 +104,7 @@ function matchInlineImageNode(
 		"[" !== source[node.from + 1] ||
 		")" !== source[node.to - 1]
 	) {
-		return null;
+		return false;
 	}
 	const first = node.firstChild;
 	const last = node.lastChild;
@@ -120,7 +118,7 @@ function matchInlineImageNode(
 		last.from !== node.to - 1 ||
 		last.to !== node.to
 	) {
-		return null;
+		return false;
 	}
 	let previousCloseBracketEnd = -1;
 	for (
@@ -134,19 +132,12 @@ function matchInlineImageNode(
 				continue;
 			}
 			if ("(" === source[child.from] && child.from === previousCloseBracketEnd) {
-				for (
-					let dest: ImageSyntaxNode | null = child.nextSibling;
-					dest;
-					dest = dest.nextSibling
-				) {
-					if ("URL" === dest.name) return { urlFrom: dest.from, urlTo: dest.to };
-				}
-				return {};
+				return true;
 			}
 		}
 		previousCloseBracketEnd = -1;
 	}
-	return null;
+	return false;
 }
 
 function extractReferenceImageLabelRange(
@@ -301,8 +292,7 @@ function parserSnapshot(
 			"unavailable" === block.kind
 		)
 			return;
-		const inlineMatch = matchInlineImageNode(projection.text, node.node);
-		const available = null !== inlineMatch;
+		const available = isInlineImageNode(projection.text, node.node);
 		const refRange = available
 			? null
 			: extractReferenceImageLabelRange(projection.text, node.node);
@@ -311,12 +301,6 @@ function parserSnapshot(
 			from: originalOffsetAt(projection, node.from),
 			projectedFrom: node.from,
 			projectedTo: node.to,
-			...(undefined !== inlineMatch?.urlFrom && undefined !== inlineMatch.urlTo
-				? {
-						projectedUrlFrom: inlineMatch.urlFrom,
-						projectedUrlTo: inlineMatch.urlTo,
-					}
-				: {}),
 			...(refRange
 				? {
 						referenceLabelFrom: originalOffsetAt(projection, refRange.from),
@@ -435,32 +419,68 @@ function createUnresolvedReferenceImageChecker(
 }
 
 /**
- * Replaces each display-math-broken image destination with the exact link
- * ranges PHP renders inside it (projected coordinates; a destination is one
- * line, so one offset shift maps the whole range).
+ * Drops every Lezer link overlapping a PHP-owned display-math-broken inline
+ * block or table cell (using exact original-source coordinates so multiline
+ * CRLF ranges never drift) and merges PHP's exact links in sorted order.
  */
-function brokenImageDestinationLinks(
-	source: string,
+function mergeOriginalLinkNodesWithPhpOwned(
 	projection: NewlineProjection,
-	phpBlockScan: ScannedMarkdownBlocks | null,
-	projectedRanges: ReadonlyArray<SourceRange>,
-	isReferenceRangeDefined: (from: number, to: number) => boolean,
-): ReadonlyMap<string, ReadonlyArray<ParserLinkNode>> {
-	const originals = projectedRanges.map((range) => originalRange(projection, range));
-	const found = phpBlockScan
-		? collectPhpPostMathDestinationLinks(source, phpBlockScan, originals, isReferenceRangeDefined)
-		: null;
-	const replacements = new Map<string, ReadonlyArray<ParserLinkNode>>();
-	projectedRanges.forEach((range, index) => {
-		const original = originals[index];
-		const links = original ? found?.get(`${original.from}:${original.to}`) : undefined;
-		const shift = range.from - (original?.from ?? range.from);
-		replacements.set(
-			`${range.from}:${range.to}`,
-			(links ?? []).map((link) => ({ ...link, from: link.from + shift, to: link.to + shift })),
-		);
-	});
-	return replacements;
+	rawLinkNodes: ReadonlyArray<ParserLinkNode>,
+	phpOwned: PhpOwnedBlockLinks,
+): ParserLinkNode[] {
+	const surviving: ParserLinkNode[] = [];
+	let ownedIdx = 0;
+	for (let i = 0; i < rawLinkNodes.length; i += 1) {
+		const node = rawLinkNodes[i];
+		if (!node) continue;
+		const range = originalRange(projection, node);
+		while (
+			ownedIdx < phpOwned.ownedRanges.length &&
+			(phpOwned.ownedRanges[ownedIdx]?.to ?? 0) <= range.from
+		) {
+			ownedIdx += 1;
+		}
+		const owned = phpOwned.ownedRanges[ownedIdx];
+		if (owned && owned.from < range.to && owned.to > range.from) {
+			continue;
+		}
+		surviving.push({
+			from: range.from,
+			kind: node.kind,
+			reference: node.reference,
+			to: range.to,
+		});
+	}
+
+	const merged: ParserLinkNode[] = [];
+	let a = 0;
+	let b = 0;
+	while (a < surviving.length && b < phpOwned.links.length) {
+		const left = surviving[a];
+		const right = phpOwned.links[b];
+		if (!left || !right) break;
+		if (
+			left.from < right.from ||
+			(left.from === right.from && left.to <= right.to)
+		) {
+			merged.push(left);
+			a += 1;
+		} else {
+			merged.push(right);
+			b += 1;
+		}
+	}
+	while (a < surviving.length) {
+		const left = surviving[a];
+		if (left) merged.push(left);
+		a += 1;
+	}
+	while (b < phpOwned.links.length) {
+		const right = phpOwned.links[b];
+		if (right) merged.push(right);
+		b += 1;
+	}
+	return merged;
 }
 
 function imageIndexForBlocks(
@@ -468,11 +488,11 @@ function imageIndexForBlocks(
 	blocks: ReadonlyArray<EditorMarkdownSourceBlock>,
 	nodes: ReadonlyArray<ParserImageNode>,
 	mathRanges: ReadonlyArray<SourceRange>,
-	phpMathRanges: ReadonlyArray<PhpMarkdownMathRange>,
+	displayMathRanges: ReadonlyArray<PhpMarkdownMathRange>,
 	phpBlockScan: ScannedMarkdownBlocks | null,
 	isUnresolvedReferenceImage: (node: ParserImageNode) => boolean,
 ): Readonly<{
-	brokenImageUrlRanges: ReadonlyArray<SourceRange>;
+	displayMathBrokenImageRanges: ReadonlyArray<SourceRange>;
 	imageBlocks: ReadonlyArray<EditorMarkdownImageBlock>;
 	imageRanges: ReadonlyArray<EditorMarkdownImageRange>;
 	unresolvedProjectedImageRanges: ReadonlySet<string>;
@@ -480,7 +500,7 @@ function imageIndexForBlocks(
 	const imageBlocks: EditorMarkdownImageBlock[] = [];
 	const imageRanges: EditorMarkdownImageRange[] = [];
 	const unresolvedProjectedImageRanges = new Set<string>();
-	const brokenImageUrlRanges: SourceRange[] = [];
+	const displayMathBrokenImageRanges: SourceRange[] = [];
 	const recordUnresolvedImage = (node: ParserImageNode): void => {
 		if (
 			undefined !== node.projectedFrom &&
@@ -493,18 +513,13 @@ function imageIndexForBlocks(
 	};
 	const recordDisplayMathBrokenImage = (node: ParserImageNode): void => {
 		recordUnresolvedImage(node);
-		if (
-			node.available &&
-			undefined !== node.projectedUrlFrom &&
-			undefined !== node.projectedUrlTo
-		) {
-			brokenImageUrlRanges.push({ from: node.projectedUrlFrom, to: node.projectedUrlTo });
+		if (node.to > node.from) {
+			displayMathBrokenImageRanges.push({ from: node.from, to: node.to });
 		}
 	};
 	const sortedNodes = [...nodes].sort(
 		(left, right) => left.from - right.from || right.to - left.to,
 	);
-	const displayMathRanges = phpMathRanges.filter((range) => range.block);
 	let mathIndex = 0;
 	let displayMathIndex = 0;
 	let nodeIndex = 0;
@@ -599,7 +614,7 @@ function imageIndexForBlocks(
 		imageRanges.push(...accepted);
 	}
 	return {
-		brokenImageUrlRanges,
+		displayMathBrokenImageRanges,
 		imageBlocks,
 		imageRanges,
 		unresolvedProjectedImageRanges,
@@ -698,12 +713,13 @@ export function createEditorMarkdownBlockIndex(
 		phpBlockScan,
 		isReferenceRangeDefined,
 	);
+	const displayMathRanges = phpMathRanges.filter((range) => range.block);
 	const images = imageIndexForBlocks(
 		source,
 		blocks,
 		allImageNodes,
 		ranges,
-		phpMathRanges,
+		displayMathRanges,
 		phpBlockScan,
 		isUnresolvedReferenceImage,
 	);
@@ -717,28 +733,22 @@ export function createEditorMarkdownBlockIndex(
 					: undefined,
 			)
 		: [];
-	const destinationLinks =
-		images.brokenImageUrlRanges.length > 0
-			? brokenImageDestinationLinks(
+	const phpOwnedLinks =
+		phpBlockScan && images.displayMathBrokenImageRanges.length > 0
+			? collectPhpDisplayMathBrokenBlockLinks(
 					source,
-					projection,
 					phpBlockScan,
-					images.brokenImageUrlRanges,
+					displayMathRanges,
+					images.displayMathBrokenImageRanges,
 					isReferenceRangeDefined,
 				)
 			: null;
-	// A PHP link may run past the parser destination; drop it before it
-	// collides with the next parser-owned link rather than mis-own the range.
-	const linkNodes = destinationLinks
-		? rawLinkNodes.flatMap((node, index) => {
-				const links =
-					"link" === node.kind && !node.reference
-						? destinationLinks.get(`${node.from}:${node.to}`)
-						: undefined;
-				if (!links) return [node];
-				const limit = rawLinkNodes[index + 1]?.from ?? Number.POSITIVE_INFINITY;
-				return links.filter((link) => link.to <= limit);
-			})
+	const linkNodes = phpOwnedLinks
+		? mergeOriginalLinkNodesWithPhpOwned(
+				projection,
+				rawLinkNodes,
+				phpOwnedLinks,
+			)
 		: rawLinkNodes;
 	return {
 		blocks,
@@ -746,7 +756,7 @@ export function createEditorMarkdownBlockIndex(
 		imageRanges: images.imageRanges,
 		length: source.length,
 		linkCandidates: linkCandidatesForBlocks(
-			projection,
+			phpOwnedLinks ? null : projection,
 			blocks,
 			linkNodes,
 			ranges,

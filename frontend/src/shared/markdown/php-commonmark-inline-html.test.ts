@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
 	collectTableRowCells,
+	createPhpInlineStream,
 	parseGfmTableSeparatorAlignments,
 	parseGfmTableSeparatorColumns,
+	parsePhpInlineLinkTail,
 	unescapeTableCellPipes,
 } from "./php-commonmark-block-helpers";
 import {
@@ -14,6 +16,7 @@ import {
 import {
 	collectGfmAutolinkStops,
 	createInlineHtmlScanGuard,
+	gfmAutolinkTrailingContext,
 	gfmEmailAutolinkEnd,
 	matchBlockInlineHtmlOrAutolink,
 	matchCommonMarkAutolinkOnLine,
@@ -303,5 +306,98 @@ describe("canonical PHP CommonMark table-separator and autolink exports (Round 3
 			expect(source.slice(0, matchGfmUrlAutolink(source, 0)), source).toBe(consumed);
 		}
 		expect(matchGfmUrlAutolink("https://", 0)).toBe(-1);
+	});
+
+	it("scans GFM email autolink stops linearly without quadratic regex backtracking (Round 31 Track B F7a)", () => {
+		const emailRe = /[A-Za-z0-9.\-_+]+@[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_.]+/g;
+		const equivalenceInputs = [
+			"a@b.c",
+			"a@b@c.d",
+			"a@b.c@d.e",
+			"a@b.c+d@e.f",
+			"a@b..c",
+			"a@.b.c",
+			"a@b.",
+			"a@b.c_@d.e",
+			"a@b.c_/d@e.f",
+			"@a.b a@b a.b+c_d-e@f-g_h.i.j_ -@x.y",
+			"prefix a@b.c. suffix",
+		];
+		for (const input of equivalenceInputs) {
+			const expected = Array.from(input.matchAll(emailRe)).map((match) => [
+				match.index ?? 0,
+				(match.index ?? 0) + match[0].length,
+			]);
+			const stops = collectGfmAutolinkStops(input, 0, input.length);
+			expect([...stops.emails], input).toEqual(expected);
+		}
+
+		// Adversarial 30,000-char local-part runs without `@`, repeated `@`, and long non-matching domains.
+		const payloads = [
+			`x@y.z ${"a".repeat(30_000)}!`,
+			`${"a".repeat(30_000)}@`,
+			`${"a@".repeat(15_000)}x@y.z`,
+			`${"a.b+c_d-".repeat(4_000)}!`,
+		];
+		for (const payload of payloads) {
+			const started = performance.now();
+			const stops = collectGfmAutolinkStops(payload, 0, payload.length);
+			expect(performance.now() - started, payload.slice(0, 24)).toBeLessThan(
+				1_000,
+			);
+			expect(stops.emails.size).toBeLessThanOrEqual(1);
+		}
+	});
+
+	it("extracts minimal trailing parsing context for bare GFM URL and email autolinks (Round 31 Track A #4)", () => {
+		for (const [source, candidate, expected] of [
+			["![$$x$$](https://x?)", "https://x?", ")"],
+			["(https://x?)", "https://x?", ")"],
+			["(https://a.com/b,)", "https://a.com/b,", ")"],
+			["(https://a.com/b:)", "https://a.com/b:", ")"],
+			["(https://a.com/x!)", "https://a.com/x!", ")"],
+			["(www.example.com?)", "www.example.com?", ")"],
+			["(https://a.com/a&amp;)", "https://a.com/a&amp;", ")"],
+			["![$$x$$](https://a.com/b?))", "https://a.com/b?", "))"],
+			["![$$x$$](https://example.)", "https://example", ""],
+			["![$$x$$](https://x!)", "https://x", ""],
+			["![$$x$$](https://a.com/(x)))", "https://a.com/(x)", ""],
+			["https://x?", "https://x?", ""],
+			["https://x? tail", "https://x?", ""],
+			["![$$x$$](a@b.c.)", "a@b.c", ""],
+			["![$$x$$](a@b.c_.)", "a@b.c_", "."],
+			["![$$x$$](a@b.c-.)", "a@b.c-", "."],
+			["![$$x$$](a@b.c..)", "a@b.c.", "."],
+			["a@b.c_.x", "a@b.c_", ""],
+			["a@b.c_", "a@b.c_", ""],
+		] as const) {
+			const from = source.indexOf(candidate);
+			expect(
+				gfmAutolinkTrailingContext(source, from, from + candidate.length),
+				`${source} :: ${candidate}`,
+			).toBe(expected);
+		}
+	});
+
+	it("skips leading tabs on paragraph continuation lines while keeping same-line tabs rejected (Round 31 Track B F9)", () => {
+		const parseTail = (source: string): string | null => {
+			const scan = scanPhpCommonMarkBlocks(source);
+			const stream = createPhpInlineStream(source, scan.lines, scan.lines.length - 1);
+			const openParen = source.indexOf("(");
+			const end = parsePhpInlineLinkTail(source, stream, { p: openParen, s: 0 });
+			return end ? source.slice(openParen, end.p) : null;
+		};
+
+		expect(parseTail('(/rel\n\t"title")')).toBe('(/rel\n\t"title")');
+		expect(parseTail('(/rel\n \t "title")')).toBe('(/rel\n \t "title")');
+		expect(parseTail("(\n\t/rel)")).toBe("(\n\t/rel)");
+		expect(parseTail("(/rel\n\t)")).toBe("(/rel\n\t)");
+		expect(parseTail('(/rel "title"\n\t)')).toBe('(/rel "title"\n\t)');
+		// Same-line tabs before title, destination, newline, or closing paren remain rejected.
+		expect(parseTail('(/rel\t"title")')).toBeNull();
+		expect(parseTail('(/rel \t"title")')).toBeNull();
+		expect(parseTail('(/rel\t\n"title")')).toBeNull();
+		expect(parseTail("(\t/rel)")).toBeNull();
+		expect(parseTail('(/rel "title"\t)')).toBeNull();
 	});
 });

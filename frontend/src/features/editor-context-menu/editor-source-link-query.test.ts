@@ -682,6 +682,170 @@ describe("createEditorSourceLinkQuery", () => {
 			vi.useRealTimers();
 		}
 	});
+
+	it("preserves trailing parsing context for paren-protected GFM autolinks and dot-protected emails without weakening ownership validation (Round 31 Track A #4)", async () => {
+		// Verbatim `MarkdownRenderer::render_preview()` block-0 outputs for each query prefix.
+		const cases: ReadonlyArray<
+			Readonly<{
+				expectedPrefix: string;
+				href: string;
+				html0: string;
+				needle: string;
+				source: string;
+			}>
+		> = [
+			{
+				expectedPrefix: "https://x?)",
+				href: "https://x?",
+				html0: '<p><a href="https://x?">https://x?</a>)</p><p>doc</p>',
+				needle: "https://x?",
+				source: "![$$x$$](https://x?)",
+			},
+			{
+				expectedPrefix: "https://a.com/b,)",
+				href: "https://a.com/b,",
+				html0: '<p><a href="https://a.com/b,">https://a.com/b,</a>)</p><p>doc</p>',
+				needle: "https://a.com/b,",
+				source: "![$$x$$](https://a.com/b,)",
+			},
+			{
+				expectedPrefix: "https://a.com/x!)",
+				href: "https://a.com/x!",
+				html0: '<p><a href="https://a.com/x!">https://a.com/x!</a>)</p><p>doc</p>',
+				needle: "https://a.com/x!",
+				source: "![$$x$$](https://a.com/x!)",
+			},
+			{
+				expectedPrefix: "www.example.com?)",
+				href: "http://www.example.com?",
+				html0:
+					'<p><a href="http://www.example.com?">www.example.com?</a>)</p><p>doc</p>',
+				needle: "www.example.com?",
+				source: "![$$x$$](www.example.com?)",
+			},
+			{
+				expectedPrefix: "https://a.com/a&amp;)",
+				href: "https://a.com/a&amp;",
+				html0:
+					'<p><a href="https://a.com/a&amp;amp;">https://a.com/a&amp;amp;</a>)</p><p>doc</p>',
+				needle: "https://a.com/a&amp;",
+				source: "![$$x$$](https://a.com/a&amp;)",
+			},
+			{
+				expectedPrefix: "https://a.com/b?))",
+				href: "https://a.com/b?",
+				html0: '<p><a href="https://a.com/b?">https://a.com/b?</a>))</p><p>doc</p>',
+				needle: "https://a.com/b?",
+				source: "![$$x$$](https://a.com/b?))",
+			},
+			{
+				expectedPrefix: "a@b.c_.",
+				href: "mailto:a@b.c_",
+				html0: '<p><a href="mailto:a@b.c_">a@b.c_</a>.</p><p>doc</p>',
+				needle: "a@b.c_",
+				source: "![$$x$$](a@b.c_.)",
+			},
+			{
+				expectedPrefix: "https://example",
+				href: "https://example",
+				html0: '<p><a href="https://example">https://example</a></p><p>doc</p>',
+				needle: "https://example",
+				source: "![$$x$$](https://example.)",
+			},
+			{
+				expectedPrefix: "a@b.c",
+				href: "mailto:a@b.c",
+				html0: '<p><a href="mailto:a@b.c">a@b.c</a></p><p>doc</p>',
+				needle: "a@b.c",
+				source: "![$$x$$](a@b.c.)",
+			},
+			{
+				expectedPrefix: "<https://x?>",
+				href: "https://x?",
+				html0: '<p><a href="https://x?">https://x?</a></p><p>doc</p>',
+				needle: "https://x?",
+				source: "![$$x$$](<https://x?>)",
+			},
+		];
+
+		for (const entry of cases) {
+			const caret = entry.source.indexOf(entry.needle) + 2;
+			const current = binding(entry.source, entry.source, {
+				end: caret,
+				start: caret,
+			});
+			const { requestFactory, session } = createHarness({
+				render: async (request) => response(request.markdown, entry.html0),
+			});
+			expect(
+				session.ensure({
+					binding: current,
+					blockIndex: createEditorMarkdownBlockIndex(entry.source),
+				}).status,
+				entry.source,
+			).toBe("pending");
+			await settle();
+			expect(
+				requestFactory.mock.calls[0]?.[0]?.markdown,
+				`query:${entry.source}`,
+			).toBe(`${entry.expectedPrefix}\n\n${entry.source}`);
+			expect(session.peek(current), `result:${entry.source}`).toEqual({
+				href: entry.href,
+				status: "ready",
+			});
+			session.dispose();
+		}
+
+		// Ownership rejection guards: leaked punctuation, prefix text, or extra elements in trailing text stay rejected.
+		const parenSource = "![$$x$$](https://x?)";
+		const parenCaret = parenSource.indexOf("https://x?") + 2;
+		for (const badHtml of [
+			'<p><a href="https://x">https://x</a>?)</p><p>doc</p>',
+			'<p>lead <a href="https://x?">https://x?</a>)</p><p>doc</p>',
+			'<p><a href="https://x?">https://x?</a><em>)</em></p><p>doc</p>',
+			'<p><a href="https://x?">https://x?</a></p><p>doc</p>',
+		]) {
+			const current = binding(parenSource, badHtml, {
+				end: parenCaret,
+				start: parenCaret,
+			});
+			const { session } = createHarness({
+				render: async (request) => response(request.markdown, badHtml),
+			});
+			session.ensure({
+				binding: current,
+				blockIndex: createEditorMarkdownBlockIndex(parenSource),
+			});
+			await settle();
+			expect(session.peek(current), badHtml).toEqual({
+				code: "editor-source-link-preview-ownership-invalid",
+				status: "unavailable",
+			});
+			session.dispose();
+		}
+
+		// Standalone `https://x?` (cursor on `?`) and masked broken-image destinations never become ready.
+		for (const [source, caret] of [
+			["https://example.com?", "https://example.com?".length - 1],
+			["![$$x$$](`) a@b.c`", "![$$x$$](`) a@b.c`".indexOf("a@b.c") + 2],
+			[
+				"![$$x$$](x<!--)a@b.c -->",
+				"![$$x$$](x<!--)a@b.c -->".indexOf("a@b.c") + 2,
+			],
+		] as const) {
+			const current = binding(source, source, { end: caret, start: caret });
+			const { render, session } = createHarness();
+			expect(
+				session.ensure({
+					binding: current,
+					blockIndex: createEditorMarkdownBlockIndex(source),
+				}),
+				source,
+			).toEqual({ status: "none" });
+			expect(render).not.toHaveBeenCalled();
+			session.dispose();
+		}
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

@@ -11,7 +11,13 @@ import {
 	findEditorCodeContentTarget,
 	readEditorCodeContent,
 } from "./editor-code-content-target";
-import { markdownReferenceLabels, type MarkdownSyntaxNode } from "./editor-markdown-link-preparation";
+import {
+	markdownReferenceLabels,
+	type MarkdownSyntaxNode,
+} from "./editor-markdown-link-preparation";
+import { collectPhpDisplayMathBrokenBlockLinks } from "./editor-markdown-php-inline-links";
+import { scanPhpCommonMarkBlocks } from "../../shared/markdown/php-commonmark-block-scan";
+import { scanPhpMarkdownMathRanges } from "../../shared/markdown/php-markdown-math-mask";
 import { prepareMarkdownTable } from "./editor-markdown-table";
 
 function editorCodeBodyMap(
@@ -2213,7 +2219,7 @@ describe("readEditorCodeContent", () => {
 			(refDisplayIdx.linkCandidates ?? []).map((r) =>
 				refDisplayBroken.slice(r.from, r.to),
 			),
-		).toEqual(["[a](https://example.com)"]);
+		).toEqual(["[a](https://example.com)", "[defined]"]);
 
 		// Bracket display math, inline math before display math, blockquote, table cell, and relative-URL destination without phantom link.
 		for (const [label, source, expectedBlockIndex, expectedLinks, expectedImages] of [
@@ -2446,6 +2452,283 @@ describe("readEditorCodeContent", () => {
 		}
 		// A link PHP closes after the destination restores the inner email to text.
 		expect(links("![$$x$$]([a@b.c)](/c)").map((l) => l.text)).not.toContain("a@b.c");
+	});
+
+	it("gives PHP sole link ownership over display-math-broken inline blocks and GFM table cells, preserves CRLF offsets, handles continuation tabs, and scales linearly (Round 31 Track A #3, Track B F4/F5/F6/F7b/F7c/F9)", () => {
+		const links = (source: string) =>
+			(createEditorMarkdownBlockIndex(source).linkCandidates ?? []).map((r) => ({
+				from: r.from,
+				kind: r.kind,
+				reference: r.reference,
+				text: source.slice(r.from, r.to),
+				to: r.to,
+			}));
+
+		// Track A #3 & Track B F4c: code spans and HTML comments closing after `)` suppress later links in the same post-math block.
+		for (const source of [
+			"![$$x$$](`) a@b.c`",
+			"![$$x$$](x<!--)a@b.c -->",
+			"![$$x$$](`a) [bar](https://bar.com) `",
+			"![$$x$$](``a) [bar](https://bar.com) ``",
+			"![$$x$$](<!--a) [bar](https://bar.com) -->",
+			"![$$x$$](`a) [bar](https://bar.com) ` | b\n| - | - |",
+		]) {
+			expect(links(source), JSON.stringify(source)).toEqual([]);
+		}
+
+		// Track B F4a: links starting inside a broken destination and closing after `)` stay owned as full PHP links without phantom Lezer leftovers.
+		expect(links("![$$x$$]([a) b](https://a.com) tail")).toEqual([
+			{
+				from: 9,
+				kind: "link",
+				reference: false,
+				text: "[a) b](https://a.com)",
+				to: 30,
+			},
+		]);
+		const f4aRef = "[a]: https://example.com\n\n![$$x$$]([b)\n][a]\nnext";
+		expect(links(f4aRef)).toEqual([
+			{
+				from: 35,
+				kind: "link",
+				reference: true,
+				text: "[b)\n][a]",
+				to: 43,
+			},
+		]);
+
+		// Track B F4b: links inside titles, multiple links in one destination/title, no-URL broken images, and pre-math/post-math title splits.
+		for (const [label, source, expected] of [
+			[
+				"two URL autolinks across destination and title",
+				'![$$x$$](https://a.com "see https://b.com")',
+				["https://a.com", "https://b.com"],
+			],
+			[
+				"markdown link inside broken image title",
+				'![$$x$$](foo "see [click](https://b.com)")',
+				["[click](https://b.com)"],
+			],
+			[
+				"angle autolink inside broken image title",
+				'![$$x$$](foo "see <https://b.com>")',
+				["<https://b.com>"],
+			],
+			[
+				"empty angle destination with link in title",
+				'![$$x$$](<> "see [click](https://b.com)")',
+				["[click](https://b.com)"],
+			],
+			[
+				"empty parens broken image followed by single-label URL without Lezer URL node",
+				"![$$x$$]() https://x?",
+				["https://x"],
+			],
+			[
+				"empty parens broken image followed by www.localhost without Lezer URL node",
+				"![$$x$$]() www.localhost",
+				["www.localhost"],
+			],
+			[
+				"display math splitting inside image title exposes both pre-math and post-math links",
+				'![a](https://a.com "see [b](https://b.com) $$x$$ [c](https://c.com)")',
+				["https://a.com", "[b](https://b.com)", "[c](https://c.com)"],
+			],
+			[
+				"display math splitting inside image URL exposes pre-math URL",
+				"![a](https://a.com/$$x$$/b)",
+				["https://a.com/"],
+			],
+			[
+				"nested inner link deactivates outer link and exposes tail URL",
+				"![$$x$$]([a) [b](https://b.com)](https://a.com)",
+				["[b](https://b.com)", "https://a.com"],
+			],
+			[
+				"display-math-broken destination ending with query mark inside parens",
+				"![$$x$$](https://x?)",
+				["https://x?"],
+			],
+		] as const) {
+			expect(
+				links(source).map((item) => item.text),
+				label,
+			).toEqual([...expected]);
+		}
+
+		// Track B F5: CRLF multiline links preserve exact [from, to) offsets without +1 overshoot or clipping.
+		const crlfTitle = '![$$x$$]([a](https://example.com\r\n"title"))\r\nnext';
+		expect(links(crlfTitle)).toEqual([
+			{
+				from: 9,
+				kind: "link",
+				reference: false,
+				text: '[a](https://example.com\r\n"title")',
+				to: 42,
+			},
+		]);
+		const crlfAdjacent = "![$$x$$]([a)\r\nb](/rel)[c](/c)";
+		expect(links(crlfAdjacent)).toEqual([
+			{
+				from: 9,
+				kind: "link",
+				reference: false,
+				text: "[a)\r\nb](/rel)",
+				to: 22,
+			},
+			{
+				from: 22,
+				kind: "link",
+				reference: false,
+				text: "[c](/c)",
+				to: 29,
+			},
+		]);
+		const crlfRef = "[a]: https://example.com\r\n\r\n![$$x$$]([b)\r\n][a]\r\nnext";
+		expect(links(crlfRef).map((item) => item.text)).toEqual(["[b)\r\n][a]"]);
+
+		// Track B F6: post-math GFM table header/body cells own their exact links and handle `\|` unescaping and cell isolation.
+		for (const [label, source, expected] of [
+			[
+				"table header row broken image URL",
+				"![$$x$$](https://example.com) | b\n| - | - |",
+				["https://example.com"],
+			],
+			[
+				"table header row broken image plus sibling cell link",
+				"![$$x$$](https://a.com) | https://b.com\n| - | - |",
+				["https://a.com", "https://b.com"],
+			],
+			[
+				"table header row code span masks same cell while keeping next cell link",
+				"![$$x$$](`a) [bar](https://bar.com) ` | [ok](https://ok.com)\n| - | - |",
+				["[ok](https://ok.com)"],
+			],
+			[
+				"table header row escaped pipe in link text",
+				"![$$x$$]([a\\|b](/rel)) | b\n| - | - |",
+				["[a\\|b](/rel)"],
+			],
+			[
+				"table header row escaped pipe in URL path stops before pipe",
+				"![$$x$$](https://example.com/a\\|b) | b\n| - | - |",
+				["https://example.com/a"],
+			],
+			[
+				"table header row unescaped pipe splits cells without crossing into cell 2",
+				"![$$x$$](https://a|b.com)\n| - | - |",
+				["https://a"],
+			],
+			[
+				"table header row escaped pipe in domain matches PHP TableParser unescaping",
+				"![$$x$$](https://a\\|b.com) | c\n| - | - |",
+				["https://a\\|b.com"],
+			],
+			[
+				"table header row double-backslash pipe exposes email",
+				"![$$x$$](a\\\\|b@c.d) | b\n| - | - |",
+				["b@c.d"],
+			],
+			[
+				"table header row escaped pipe reference link resolves unescaped def",
+				"[a|b]: /target\n\n![$$x$$]([a\\|b]) | c\n| - | - |",
+				["[a\\|b]"],
+			],
+			[
+				"table body row display-math-broken image exposes post-math paragraph link",
+				"| a | b |\n| - | - |\n| ![$$x$$](https://example.com) | b |",
+				["https://example.com"],
+			],
+			[
+				"table header row broken image URL with query mark",
+				"![$$x$$](https://x?) | b\n| - | - |",
+				["https://x?"],
+			],
+		] as const) {
+			expect(
+				links(source).map((item) => item.text),
+				label,
+			).toEqual([...expected]);
+		}
+
+		// Track B F9: leading tab on paragraph continuation line inside inline link tail.
+		for (const [label, source, expected] of [
+			[
+				"leading tab before title on continuation line",
+				'![$$x$$]([a](/rel\n\t"title"))',
+				['[a](/rel\n\t"title")'],
+			],
+			[
+				"multiline label with leading tab before title",
+				'![$$x$$]([a)\n](/rel\n\t"title")',
+				['[a)\n](/rel\n\t"title")'],
+			],
+			[
+				"leading tab before destination on continuation line",
+				"![$$x$$]([a](\n\t/rel))",
+				["[a](\n\t/rel)"],
+			],
+			[
+				"leading tab before closing paren on continuation line",
+				"![$$x$$]([a](/rel\n\t))",
+				["[a](/rel\n\t)"],
+			],
+			[
+				"CRLF with leading tab before multiline title",
+				'intro\r\n\r\n![$$x$$]([a)\r\nb](/rel\r\n\t"ti\r\ntle"))\r\n[c](/c)',
+				['[a)\r\nb](/rel\r\n\t"ti\r\ntle")', "[c](/c)"],
+			],
+			[
+				"same-line tab before title stays rejected",
+				'![$$x$$]([a](/rel\t"title"))',
+				[],
+			],
+			[
+				"trailing tab before newline stays rejected",
+				'![$$x$$]([a](/rel\t\n"title"))',
+				[],
+			],
+		] as const) {
+			expect(
+				links(source).map((item) => item.text),
+				label,
+			).toEqual([...expected]);
+		}
+
+		// Track B F7b/F7c: O(N) opener deactivation and zero O(K^2) post-math scanning.
+		// Measure `collectPhpDisplayMathBrokenBlockLinks` directly on 12,000 stacked
+		// `[` and `![` openers (isolating PHP inline replay from `@lezer/markdown`'s
+		// own bracket parser), plus end-to-end block-index probes.
+		for (const openerToken of ["[", "!["] as const) {
+			const manyOpeners = `![$$x$$](foo) ${openerToken.repeat(12_000)}${"[a](/x)".repeat(12_000)}`;
+			const mathRanges = scanPhpMarkdownMathRanges(manyOpeners).filter(
+				(range) => range.block,
+			);
+			const blockScan = scanPhpCommonMarkBlocks(manyOpeners, mathRanges);
+			const tOpeners = performance.now();
+			const owned = collectPhpDisplayMathBrokenBlockLinks(
+				manyOpeners,
+				blockScan,
+				mathRanges,
+				[{ from: 0, to: 13 }],
+				() => false,
+			);
+			const elapsedOpeners = performance.now() - tOpeners;
+			expect(owned.links, openerToken).toHaveLength(12_000);
+			expect(elapsedOpeners, openerToken).toBeLessThan(1_500);
+		}
+
+		const endToEndOpeners = `![$$x$$](foo) ${"[".repeat(3_000)}${"[a](/x)".repeat(3_000)}`;
+		const tEndToEnd = performance.now();
+		const endToEndIdx = createEditorMarkdownBlockIndex(endToEndOpeners);
+		expect(endToEndIdx.linkCandidates).toHaveLength(3_000);
+		expect(performance.now() - tEndToEnd).toBeLessThan(1_500);
+
+		const manyBrokenDestinations = `${"![$$x$$](https://a.com) ".repeat(1_000)}`;
+		const tManyBroken = performance.now();
+		const manyBrokenIdx = createEditorMarkdownBlockIndex(manyBrokenDestinations);
+		expect(manyBrokenIdx.linkCandidates).toHaveLength(1_000);
+		expect(performance.now() - tManyBroken).toBeLessThan(1_500);
 	});
 });
 

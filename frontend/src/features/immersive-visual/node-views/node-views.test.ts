@@ -2560,4 +2560,68 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 		expect(host.textContent).toContain("Visible");
 		expect(host.textContent).not.toContain("Hidden");
 	});
+
+	it("preserves backslash-escaped inline HTML/backticks and blockquote-nested indented code in raw preview stripping (PR-R22-A Track B #10)", () => {
+		// Backslash-escaped `<` stays literal instead of stripping `<span>`/`</span>`.
+		expect(stripCommonMarkHtmlForPreview("\\<span>hello\\</span>")).toBe(
+			"\\<span>hello\\</span>",
+		);
+		// Backslash-escaped backticks do NOT open a code span, so `<span>` IS stripped.
+		expect(stripCommonMarkHtmlForPreview("\\`<span>hello</span>\\`")).toBe(
+			"\\`hello\\`",
+		);
+		// Escaped backslash before `<` still strips `<span>`.
+		expect(stripCommonMarkHtmlForPreview("\\\\<span>hello</span>")).toBe(
+			"\\\\hello",
+		);
+		// Blockquote-nested indented code (`>     <span>code</span>`, 4+ cols after `> `) is NOT stripped.
+		expect(stripCommonMarkHtmlForPreview(">     <span>code</span>")).toBe(
+			">     <span>code</span>",
+		);
+		// Tab after `> ` advances only 2 columns (< 4), so it is NOT indented code and `<span>` IS stripped.
+		expect(stripCommonMarkHtmlForPreview("> \t<span>code</span>")).toBe(
+			"> \tcode",
+		);
+
+		// End-to-end rendered preview checks matching PHP MarkdownRenderer output.
+		const escapedHost = document.createElement("div");
+		escapedHost.appendChild(
+			renderRawBlockPreview(document, "\\<span>hello\\</span>", {
+				fallbackLabel: "Raw",
+				footnotesLabel: "Footnotes",
+				viewWindow: window,
+			}),
+		);
+		expect(escapedHost.textContent).toBe("<span>hello</span>");
+
+		const escapedTickHost = document.createElement("div");
+		escapedTickHost.appendChild(
+			renderRawBlockPreview(document, "\\`<span>hello</span>\\`", {
+				fallbackLabel: "Raw",
+				footnotesLabel: "Footnotes",
+				viewWindow: window,
+			}),
+		);
+		expect(escapedTickHost.textContent).toBe("`hello`");
+
+		const bqCodeHost = document.createElement("div");
+		bqCodeHost.appendChild(
+			renderRawBlockPreview(document, ">     <span>code</span>", {
+				fallbackLabel: "Raw",
+				footnotesLabel: "Footnotes",
+				viewWindow: window,
+			}),
+		);
+		expect(bqCodeHost.querySelector("blockquote pre code")?.textContent).toBe(
+			"<span>code</span>",
+		);
+
+		// Interleaved list + blockquote raw HTML block (`- > <div>\n  > hidden\n\n  > visible`)
+		// hides `hidden` and keeps `visible` rendered in the live ProseMirror DOM.
+		const interleavedView = mountVisualEditor(
+			"- > <div>\n  > hidden\n\n  > visible",
+		);
+		expect(interleavedView.dom.textContent).toContain("visible");
+		expect(interleavedView.dom.textContent).not.toContain("hidden");
+	});
 });

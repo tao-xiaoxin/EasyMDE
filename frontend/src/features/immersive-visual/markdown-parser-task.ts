@@ -120,32 +120,20 @@ export function markPreservedTaskParagraphs(
 		if (!TASK_LIST_MARKER_PATTERN.test(rawContent)) {
 			return child;
 		}
-		// When a shortcut reference definition `[x]: /ref` caused markdown-it to
-		// attach a bogus link mark to `[x]` (not an explicit `[x](...)` or
-		// `[x][...]` link in source), consume the raw `[x]`/`[X]`/`[ ]` prefix
-		// before inline parsing so edits never emit `[x](/ref)`.
-		const afterMarkerChar = rawContent[3];
-		const hasBogusShortcutLink =
-			afterMarkerChar !== "(" &&
-			afterMarkerChar !== "[" &&
-			child.firstChild?.marks.some((mark) => mark.type.name === "link") ===
-				true;
-		if (hasBogusShortcutLink) {
-			const prefixText = visualEditorSchema.text(rawContent.slice(0, 3));
-			const remainderNodes = reparseRemainderAfterTaskMarker(
-				rawContent,
-				context,
-				false,
-			);
-			return visualEditorSchema.nodes.paragraph.create(
-				{ preserveRawTaskPrefix: true },
-				[prefixText, ...remainderNodes],
-				child.marks,
-			);
-		}
+		// PHP TaskListItemMarkerParser runs at inline priority 35 (ahead of
+		// inline/reference link parsing and autolinks), so an unescaped
+		// `[x]`/`[X]`/`[ ]` prefix on any direct list-item paragraph is always
+		// consumed before parsing the tail (e.g. `1. [x][r]`, `1. [x](url)`,
+		// `1. [x](not a link`, and 2nd-paragraph bullet items).
+		const prefixText = visualEditorSchema.text(rawContent.slice(0, 3));
+		const remainderNodes = reparseRemainderAfterTaskMarker(
+			rawContent,
+			context,
+			false,
+		);
 		return visualEditorSchema.nodes.paragraph.create(
 			{ preserveRawTaskPrefix: true },
-			child.content,
+			[prefixText, ...remainderNodes],
 			child.marks,
 		);
 	});

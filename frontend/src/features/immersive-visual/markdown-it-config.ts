@@ -491,6 +491,38 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 		parser.block.ruler.disable("code");
 	}
 
+	const originalListRuleEntry = (
+		parser.block.ruler as unknown as InternalRuler<BlockRuleFn>
+	).__rules__?.find((rule) => rule.name === "list");
+
+	if (originalListRuleEntry) {
+		const originalListRule = originalListRuleEntry.fn;
+		parser.block.ruler.before(
+			"list",
+			"easymde_list",
+			(state, startLine, endLine, silent) => {
+				// PHP League\CommonMark ListBlockStartParser checks exact
+				// `$matches[1] === '1'` for paragraph interruption, so
+				// zero-padded markers like `01.` cannot interrupt a paragraph.
+				if (
+					silent &&
+					state.parentType === "paragraph" &&
+					(state.sCount[startLine] ?? 0) >= state.blkIndent
+				) {
+					const pos =
+						(state.bMarks[startLine] ?? 0) + (state.tShift[startLine] ?? 0);
+					const max = state.eMarks[startLine] ?? pos;
+					if (/^0+1[.)](?:[ \t]|$)/.test(state.src.slice(pos, max))) {
+						return false;
+					}
+				}
+				return originalListRule(state, startLine, endLine, silent);
+			},
+			{ alt: [...originalListRuleEntry.alt] },
+		);
+		parser.block.ruler.disable("list");
+	}
+
 	parser.block.ruler.before(
 		"lheading",
 		"easymde_protected_block",

@@ -18,7 +18,9 @@ import {
 	isCommonMarkBlankLine,
 	type PreScanResult,
 	prescanMarkdown,
+	readBlockquotePrefix,
 	restoreProtectedInlineSentinels,
+	stripBlockquoteDepth,
 } from "./markdown-prescanner";
 import {
 	parseTableAlignComment,
@@ -260,39 +262,82 @@ function collectListItems(
 	return items;
 }
 
+function trimmedBlockMapEnd(
+	map: [number, number] | null | undefined,
+	quoteDepth: number,
+	preScan: PreScanResult,
+): number | null {
+	if (!map || map.length < 2) return null;
+	let end = map[1];
+	while (end > map[0]) {
+		const range = preScan.outputLineRanges[end - 1];
+		if (!range || range.end - range.start !== 1) break;
+		const raw = preScan.rawLines[range.start] ?? "";
+		const rest = quoteDepth > 0 ? stripBlockquoteDepth(raw, quoteDepth) : raw;
+		if (rest === null || !isCommonMarkBlankLine(rest)) break;
+		end -= 1;
+	}
+	return end;
+}
+
 /**
- * markdown-it hides direct tight-list paragraphs (`token.hidden === true`).
- * Nested lists and blockquotes own their own paragraph visibility and must be
- * skipped so a loose inner list or blockquote never forces an outer tight list
- * to `tight: false`.
+ * Reports whether a CommonMark list is tight via direct paragraph visibility
+ * (`hidden === true`) and blank-line gaps between consecutive direct items or
+ * direct child blocks (keeping loose lists without direct paragraphs, such as
+ * `- > a\n\n  > b`, marked `tight: false`).
  */
 function isTightListRange(
 	tokens: ReadonlyArray<MarkdownToken>,
 	startIndex: number,
 	endIndex: number,
+	preScan: PreScanResult,
 ): boolean {
+	const startOut = tokens[startIndex]?.map?.[0];
+	const startOrig =
+		startOut !== undefined ? preScan.outputLineRanges[startOut]?.start : null;
+	const quoteDepth =
+		startOrig != null
+			? readBlockquotePrefix(preScan.rawLines[startOrig] ?? "").depth
+			: 0;
+	let prevItemEnd: number | null = null;
 	for (let i = startIndex + 1; i < endIndex; i += 1) {
-		const token = tokens[i];
-		if (!token) {
-			continue;
-		}
-		if (
-			token.type === "bullet_list_open" ||
-			token.type === "ordered_list_open" ||
-			token.type === "blockquote_open"
-		) {
-			const closeType =
-				token.type === "bullet_list_open"
-					? "bullet_list_close"
-					: token.type === "ordered_list_open"
-						? "ordered_list_close"
-						: "blockquote_close";
-			i = findMatchingCloseIndex(tokens, i, token.type, closeType);
-			continue;
-		}
-		if (token.type === "paragraph_open" && token.hidden !== true) {
+		const item = tokens[i];
+		if (item?.type !== "list_item_open") continue;
+		const itemClose = findMatchingCloseIndex(
+			tokens,
+			i,
+			"list_item_open",
+			"list_item_close",
+		);
+		const itemStart = item.map?.[0] ?? null;
+		if (prevItemEnd !== null && itemStart !== null && itemStart > prevItemEnd) {
 			return false;
 		}
+		let prevChildEnd: number | null = null;
+		for (let j = i + 1; j < itemClose; j += 1) {
+			const child = tokens[j];
+			if (!child) continue;
+			if (child.type === "paragraph_open" && child.hidden !== true) return false;
+			const childStart = child.map?.[0] ?? null;
+			const childEnd = trimmedBlockMapEnd(child.map, quoteDepth, preScan);
+			if (
+				prevChildEnd !== null &&
+				childStart !== null &&
+				childStart > prevChildEnd
+			) {
+				return false;
+			}
+			if (childEnd !== null) prevChildEnd = childEnd;
+			if (child.nesting === 1) {
+				for (let depth = 1; depth > 0 && j + 1 < itemClose; ) {
+					j += 1;
+					depth += tokens[j]?.nesting ?? 0;
+				}
+			}
+		}
+		prevItemEnd =
+			prevChildEnd ?? trimmedBlockMapEnd(item.map, quoteDepth, preScan);
+		i = itemClose;
 	}
 	return true;
 }
@@ -324,7 +369,7 @@ function mapBulletListTokens(
 	}
 
 	const marker = sanitizeBulletMarker(tokens[startIndex]?.markup);
-	const tight = isTightListRange(tokens, startIndex, endIndex);
+	const tight = isTightListRange(tokens, startIndex, endIndex, context.preScan);
 	const lists: MappedListEntry[] = [];
 	type ClassifiedItem = Readonly<{
 		entry: CollectedListItem;
@@ -678,7 +723,7 @@ function mapBlockTokensWithRanges(
 			const order =
 				Number.isInteger(parsedOrder) && parsedOrder >= 0 ? parsedOrder : 1;
 			const delimiter = token.markup === ")" ? ")" : ".";
-			const tight = isTightListRange(tokens, i, closeIdx);
+			const tight = isTightListRange(tokens, i, closeIdx, context.preScan);
 			const collected = collectListItems(tokens, i, closeIdx, context);
 			const items = collected.map((item) =>
 				visualEditorSchema.nodes.list_item.create(

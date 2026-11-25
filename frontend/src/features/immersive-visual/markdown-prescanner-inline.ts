@@ -33,7 +33,6 @@ const INLINE_HTML_OPEN_TAG_STICKY =
 	/<([a-z][a-z0-9-]*)(?:[ \t]+[a-z_:][a-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^\s"'=<>`]+|'[^'\n]*'|"[^"\n]*"))?)*[ \t]*(\/?)>/y;
 const INLINE_HTML_CLOSE_TAG_STICKY = /<\/([a-z][a-z0-9-]*)[ \t]*>/y;
 const INLINE_HTML_DECLARATION_NAME_STICKY = /<![A-Za-z]+/y;
-const TABLE_BR_STICKY = /<br[ \t]*\/?>/iy;
 const FOOTNOTE_REF_STICKY = /\[\^([^\s\]]+)\]/y;
 
 export type InlineHtmlScanState = {
@@ -386,16 +385,19 @@ export function extractInlineProtectedSyntax(
 			}
 		}
 
-		// GFM table cells: a literal `<br>` is a visual hard break, while an
-		// escaped `\<br\>` stays literal text (matching TableCellBreakParser).
-		if (isTableRow && ch === "<" && !isEscapedAt(line, index)) {
-			TABLE_BR_STICKY.lastIndex = index;
-			const brMatch = TABLE_BR_STICKY.exec(line);
-			if (brMatch) {
-				result += `${sentinel}BREND`;
-				index += brMatch[0].length;
-				continue;
-			}
+		// GFM table cells: exact case-sensitive `<br>` is a visual hard break,
+		// while `<br/>` / `<br />` fall through as raw inline HTML, `<BR>` /
+		// `<Br>` stay literal text, and `\<br\>` stays literal (matching PHP
+		// TableCellBreakParser::getMatchDefinition()).
+		if (
+			isTableRow &&
+			ch === "<" &&
+			!isEscapedAt(line, index) &&
+			line.startsWith("<br>", index)
+		) {
+			result += `${sentinel}BREND`;
+			index += 4;
+			continue;
 		}
 
 		// Inline LaTeX math: \(...\)

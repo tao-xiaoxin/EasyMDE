@@ -4,6 +4,7 @@ import {
 	type Node as ProseMirrorNode,
 } from "prosemirror-model";
 import type { EditorView } from "prosemirror-view";
+import { COMMONMARK_ESCAPABLE_PUNCTUATION } from "../../../shared/image-scale-title";
 import {
 	htmlBlockLineCloses,
 	matchHtmlBlockOpen,
@@ -82,6 +83,11 @@ function stripInlineHtmlOutsideCode(line: string): string {
 	const scanState = createInlineHtmlScanState();
 	while (i < len) {
 		const ch = line[i] ?? "";
+		if (ch === "\\" && COMMONMARK_ESCAPABLE_PUNCTUATION.test(line[i + 1] ?? "")) {
+			out += line.slice(i, i + 2);
+			i += 2;
+			continue;
+		}
 		if (ch === "`") {
 			const codeEnd = skipInlineCodeSpan(line, i);
 			out += line.slice(i, codeEnd);
@@ -195,8 +201,7 @@ export function stripCommonMarkHtmlForPreview(rawMarkdown: string): string {
 			}
 		}
 
-		const isIndentedCodeLine: boolean =
-			!inParagraph && analysis.prefix.length === 0 && analysis.indent >= 4;
+		const isIndentedCodeLine: boolean = !inParagraph && analysis.indent >= 4;
 		const isSetextUnderline: boolean =
 			inParagraph && isTopLevel && SETEXT_UNDERLINE.test(analysis.content);
 		const strippedLine = isIndentedCodeLine

@@ -202,10 +202,9 @@ function findHardBreak(
 	inCell: boolean,
 ): Range | null {
 	if (inCell) {
-		const start = text.indexOf("<br", cursor);
-		if (start < 0 || start >= limit) return null;
-		const close = text.indexOf(">", start);
-		return { end: close >= 0 && close < limit ? close + 1 : start + 3, start };
+		const start = text.indexOf("<br>", cursor);
+		if (start < 0 || start + 4 > limit) return null;
+		return { end: start + 4, start };
 	}
 	const nl = text.indexOf("\n", cursor);
 	if (nl < 0 || nl >= limit) {

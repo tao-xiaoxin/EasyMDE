@@ -164,11 +164,32 @@ function canInterruptPreviousInTightList(
 		return true;
 	}
 	const name = node.type.name;
+	if (prev.type.name === "protected_block" && prev.attrs.kind === "raw") {
+		return false;
+	}
+	if (prev.type.name === "blockquote" && name === "blockquote") {
+		return false;
+	}
 	if (prev.type.name === "table") {
 		const nl = serialized.indexOf("\n");
 		const firstLine = nl === -1 ? serialized : serialized.slice(0, nl);
 		if (firstLine.includes("|")) return false;
 		if (name === "table") return serialized.startsWith("<!-- ");
+	}
+	if (
+		name === "protected_block" &&
+		node.attrs.kind === "raw" &&
+		typeof node.attrs.rawMarkdown === "string"
+	) {
+		const raw = node.attrs.rawMarkdown;
+		const nl = raw.indexOf("\n");
+		const firstLine = (nl === -1 ? raw : raw.slice(0, nl)).replace(
+			/^ {0,3}/,
+			"",
+		);
+		if (wouldRawHtmlInterruptParagraph(firstLine)) {
+			return true;
+		}
 	}
 	return (
 		name === "table" ||
@@ -250,12 +271,25 @@ export function joinSerializedBlocks(
 function escapeLiteralTaskPrefix(
 	child: ProseMirrorNode,
 	serialized: string,
+	forceEscape: boolean,
 ): string {
-	if (
-		child.type.name !== "paragraph" ||
-		child.attrs.preserveRawTaskPrefix === true ||
-		!TASK_LIST_MARKER_PATTERN.test(serialized)
-	) {
+	if (child.type.name !== "paragraph") {
+		return serialized;
+	}
+	const preserveRaw = !forceEscape && child.attrs.preserveRawTaskPrefix === true;
+	if (preserveRaw) {
+		const first = child.firstChild;
+		if (
+			first?.isText &&
+			first.marks.length === 0 &&
+			TASK_LIST_MARKER_PATTERN.test(first.text ?? "") &&
+			/^\\\[[ xX]\]/.test(serialized)
+		) {
+			return serialized.slice(1);
+		}
+		return serialized;
+	}
+	if (!TASK_LIST_MARKER_PATTERN.test(serialized)) {
 		return serialized;
 	}
 	if (child.firstChild?.marks.some((mark) => mark.type.name === "link")) {
@@ -264,7 +298,7 @@ function escapeLiteralTaskPrefix(
 	return `\\${serialized}`;
 }
 
-function findLeadingRefTaskParagraphIndex(
+function findFirstContentParagraphIndex(
 	itemNode: ProseMirrorNode,
 	startIndex: number,
 ): number {
@@ -275,31 +309,31 @@ function findLeadingRefTaskParagraphIndex(
 		}
 		index += 1;
 	}
-	if (
-		index > startIndex &&
-		index < itemNode.childCount &&
+	return index < itemNode.childCount &&
 		itemNode.child(index).type.name === "paragraph"
-	) {
-		return index;
-	}
-	return -1;
+		? index
+		: -1;
 }
 
 function serializeListItemBody(
 	itemNode: ProseMirrorNode,
-	isTaskList: boolean,
+	listKind: "bullet_list" | "ordered_list" | "task_list",
 	loose: boolean,
 	serializeBlock: BlockSerializer,
 	blankBeforeNestedList: boolean,
 	hasPhantomParagraph: boolean,
+	firstContentParagraphIndex: number,
 	deferredTaskParagraphIndex: number,
 ): string {
+	const isTaskList = listKind === "task_list";
 	const startIndex = hasPhantomParagraph ? 1 : 0;
 	const taskParagraphIndex = isTaskList
 		? deferredTaskParagraphIndex >= 0
 			? deferredTaskParagraphIndex
 			: startIndex
 		: -1;
+	const bulletFirstParagraphIndex =
+		listKind === "bullet_list" ? firstContentParagraphIndex : -1;
 	const parts: string[] = [];
 	for (let i = startIndex; i < itemNode.childCount; i += 1) {
 		const child = itemNode.child(i);
@@ -316,7 +350,11 @@ function serializeListItemBody(
 			serialized =
 				serialized.length > 0 ? `${taskMarker} ${serialized}` : taskMarker;
 		} else if (!isTaskList || i > taskParagraphIndex) {
-			serialized = escapeLiteralTaskPrefix(child, serialized);
+			serialized = escapeLiteralTaskPrefix(
+				child,
+				serialized,
+				i === bulletFirstParagraphIndex,
+			);
 		}
 		if (i === startIndex) {
 			const startsWithInlineRaw =
@@ -373,23 +411,36 @@ export function serializeListItemAt(
 	blankBeforeNestedList: boolean,
 ): string {
 	const item = listNode.child(index);
-	const isTaskList = listNode.type.name === "task_list";
+	const listKind: "bullet_list" | "ordered_list" | "task_list" =
+		listNode.type.name === "ordered_list"
+			? "ordered_list"
+			: listNode.type.name === "task_list"
+				? "task_list"
+				: "bullet_list";
 	const firstChild = item.child(0);
 	const hasPhantomParagraph =
 		item.childCount > 1 &&
 		firstChild.type.name === "paragraph" &&
 		firstChild.childCount === 0;
+	const startIndex = hasPhantomParagraph ? 1 : 0;
+	const firstContentParagraphIndex = findFirstContentParagraphIndex(
+		item,
+		startIndex,
+	);
 	const deferredTaskParagraphIndex =
-		isTaskList && hasPhantomParagraph
-			? findLeadingRefTaskParagraphIndex(item, 1)
+		listKind === "task_list" &&
+		hasPhantomParagraph &&
+		firstContentParagraphIndex > startIndex
+			? firstContentParagraphIndex
 			: -1;
 	const body = serializeListItemBody(
 		item,
-		isTaskList,
+		listKind,
 		loose,
 		serializeBlock,
 		blankBeforeNestedList,
 		hasPhantomParagraph,
+		firstContentParagraphIndex,
 		deferredTaskParagraphIndex,
 	);
 	const bulletMarker = sanitizeBulletMarker(listNode.attrs.marker);

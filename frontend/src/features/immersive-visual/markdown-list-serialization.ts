@@ -25,7 +25,7 @@ export type BlockSerializer = (
 	node: ProseMirrorNode,
 	mathNewlineToken?: string,
 ) => string;
-export type RefDefContinuationMode = "none" | "tight" | "indented";
+type RefDefContinuationMode = "none" | "tight" | "indented";
 
 /** CommonMark §5.3: only non-empty bullet / `1.` items interrupt a paragraph. */
 export const PARAGRAPH_INTERRUPTING_LIST_FIRST_LINE =
@@ -64,10 +64,14 @@ function nodeContainsString(node: ProseMirrorNode, needle: string): boolean {
 	return found;
 }
 
-function rawProtectedBlockHasMultilineMath(node: ProseMirrorNode): boolean {
+function protectedBlockHasMultilineMath(
+	node: ProseMirrorNode,
+	includeMathBlocks: boolean,
+): boolean {
 	if (
 		node.type.name !== "protected_block" ||
-		node.attrs.kind !== "raw" ||
+		(node.attrs.kind !== "raw" &&
+			(!includeMathBlocks || node.attrs.kind !== "math")) ||
 		typeof node.attrs.rawMarkdown !== "string"
 	) {
 		return false;
@@ -81,13 +85,14 @@ function rawProtectedBlockHasMultilineMath(node: ProseMirrorNode): boolean {
 
 /**
  * Returns a collision-free sentinel for protecting physical newlines inside
- * serialized `protected_inline` bodies, raw `protected_block` math spans
- * (`\(...\)`, `\[...\]`, `$$...$$`), and multiline link/image titles during
- * blockquote and list container prefixing, or `null` when `node` contains none
- * (zero-overhead fast path).
+ * serialized `protected_inline` bodies, raw (and optionally `math`)
+ * `protected_block` math spans (`\(...\)`, `\[...\]`, `$$...$$`), and
+ * multiline link/image titles during blockquote, list, and dedent container
+ * prefixing, or `null` when `node` contains none (zero-overhead fast path).
  */
 export function createMathNewlineSentinelForNode(
 	node: ProseMirrorNode,
+	includeMathBlocks = false,
 ): string | null {
 	let hasMultilineProtectedInline = false;
 	const inspect = (descendant: ProseMirrorNode): boolean => {
@@ -98,7 +103,7 @@ export function createMathNewlineSentinelForNode(
 			(descendant.type.name === "protected_inline" &&
 				typeof descendant.attrs.rawMarkdown === "string" &&
 				descendant.attrs.rawMarkdown.includes("\n")) ||
-			rawProtectedBlockHasMultilineMath(descendant) ||
+			protectedBlockHasMultilineMath(descendant, includeMathBlocks) ||
 			(descendant.type.name === "image" &&
 				typeof descendant.attrs.title === "string" &&
 				descendant.attrs.title.includes("\n"))
@@ -449,14 +454,6 @@ export function refDefContinuationMode(
 	return "none";
 }
 
-export function needsTightRefDefContinuation(
-	prev: ProseMirrorNode,
-	next: ProseMirrorNode,
-	serializedNext = "",
-): boolean {
-	return refDefContinuationMode(prev, next, serializedNext) !== "none";
-}
-
 export type PartialTitleRefDefPredicate = (node: ProseMirrorNode) => boolean;
 
 export function isTightPartialTitleFollower(
@@ -572,6 +569,30 @@ function findFirstContentParagraphIndex(
 		itemNode.child(index).type.name === "paragraph"
 		? index
 		: -1;
+}
+
+/**
+ * Returns the index of the deferred checkbox paragraph inside a `task_item`
+ * that starts with an empty phantom paragraph followed by one or more
+ * reference definitions, or `-1` when none exists.
+ */
+function getDeferredTaskParagraphIndex(itemNode: ProseMirrorNode): number {
+	if (itemNode.type.name !== "task_item" || itemNode.childCount <= 1) {
+		return -1;
+	}
+	const first = itemNode.child(0);
+	if (first.type.name !== "paragraph" || first.childCount !== 0) {
+		return -1;
+	}
+	const contentIdx = findFirstContentParagraphIndex(itemNode, 1);
+	return contentIdx > 1 ? contentIdx : -1;
+}
+
+export function isDeferredTaskParagraph(
+	parent: ProseMirrorNode,
+	childIdx: number,
+): boolean {
+	return childIdx > 1 && getDeferredTaskParagraphIndex(parent) === childIdx;
 }
 
 function serializeListItemBody(
@@ -716,11 +737,7 @@ export function serializeListItemAt(
 		startIndex,
 	);
 	const deferredTaskParagraphIndex =
-		listKind === "task_list" &&
-		hasPhantomParagraph &&
-		firstContentParagraphIndex > startIndex
-			? firstContentParagraphIndex
-			: -1;
+		listKind === "task_list" ? getDeferredTaskParagraphIndex(item) : -1;
 	const body = serializeListItemBody(
 		item,
 		listKind,

@@ -4,19 +4,24 @@ import {
 	isLooseList,
 	isNestedList,
 	LEADING_FOUR_COLUMN_INDENT,
+	nodePreventsFollowingIndentedCode,
 	PARAGRAPH_INTERRUPTING_LIST_FIRST_LINE,
 	type PartialTitleRefDefPredicate,
+	restoreMathNewlineSentinel,
 	serializeListItemAt,
 } from "./markdown-list-serialization";
 import {
 	alignNodes,
 	childrenOf,
+	nodesSemanticallyEqual,
 	pairUnmatched,
 	structurallyEqual,
 } from "./markdown-node-alignment";
 import {
+	type BuiltVisualBlockSources,
 	type ParsedEnvReferences,
 	type ParsedVisualBlockSource,
+	type ParsedVisualSharedGroup,
 	parseMarkdownWithBlockSources,
 } from "./markdown-parser";
 import {
@@ -225,6 +230,236 @@ export function isListSwallowingFollowingBlock(
 	return trailingIndent > 0 && childIndent >= trailingIndent;
 }
 
+export type ContainerAlignmentPlan = Readonly<{
+	matchedOrigIndex: ReadonlyArray<number>;
+	pairedOrigIndex: ReadonlyArray<number>;
+}>;
+
+/**
+ * Single per-container alignment (`alignNodes` + `pairUnmatched`) shared
+ * between refdef liveness analysis and container serialization.
+ */
+export function alignContainerChildren(
+	container: ProseMirrorNode,
+	baselineBlocks: ReadonlyArray<ParsedVisualBlockSource>,
+): ContainerAlignmentPlan {
+	const matchedOrigIndex = alignNodes(
+		childrenOf(container),
+		baselineBlocks.map((block) => block.node),
+		structurallyEqual,
+	);
+	const pairedOrigIndex = pairUnmatched(
+		matchedOrigIndex,
+		baselineBlocks.length,
+	);
+	return { matchedOrigIndex, pairedOrigIndex };
+}
+
+export function needsPrevInnerForRiskCheck(
+	child: ProseMirrorNode,
+	leadIndent: number,
+	sep: string,
+	prevNode: ProseMirrorNode | null,
+	prevWasMatchedAdjacent: boolean,
+): boolean {
+	if (leadIndent <= 0 || prevNode === null) return false;
+	return (
+		(leadIndent >= 4 &&
+			child.type.name !== "code_block" &&
+			sep === "\n" &&
+			nodePreventsFollowingIndentedCode(prevNode)) ||
+		(!prevWasMatchedAdjacent && isNestedList(prevNode))
+	);
+}
+
+/**
+ * Single authoritative check for 4-column indented-code risk and preceding-list
+ * swallow risk shared by liveness analysis and container serialization.
+ */
+export function checkRawPreservationRisks(
+	child: ProseMirrorNode,
+	depth: number,
+	rawEmitted: string,
+	rawInner: string,
+	sep: string,
+	prevNode: ProseMirrorNode | null,
+	prevInner: string,
+	prevWasMatchedAdjacent: boolean,
+): Readonly<{ indentedRisk: boolean; swallowRisk: boolean }> {
+	const leadIndent = leadingIndentAtDepth(rawEmitted, depth);
+	const indentedRisk =
+		child.type.name !== "code_block" &&
+		leadIndent >= 4 &&
+		(sep !== "\n" ||
+			!prevNode ||
+			!nodePreventsFollowingIndentedCode(prevNode) ||
+			endsWithBlankBlockquoteLine(prevInner));
+	const swallowRisk =
+		leadIndent > 0 &&
+		isListSwallowingFollowingBlock(
+			prevNode,
+			prevInner,
+			rawInner,
+			prevWasMatchedAdjacent,
+		);
+	return { indentedRisk, swallowRisk };
+}
+
+type TightSharedGroupChecker = Readonly<{
+	isIntactSharedGroupAt: (
+		childIdx: number,
+		group: ParsedVisualSharedGroup,
+	) => boolean;
+	isTightRightNeighborIntact: (
+		startIdx: number,
+		startGroup: ParsedVisualSharedGroup,
+	) => boolean;
+}>;
+
+export function sharedGroupHasInvalidatedRef(
+	baselineBlocks: ReadonlyArray<ParsedVisualBlockSource>,
+	group: ParsedVisualSharedGroup,
+	nodeHasInvalidatedRef: (node: ProseMirrorNode) => boolean,
+): boolean {
+	for (let k = group.startIndex; k < group.endIndex; k += 1) {
+		const member = baselineBlocks[k];
+		if (member && nodeHasInvalidatedRef(member.node)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+export function canPreserveContainerHeadStructurally(
+	nextChild: ProseMirrorNode,
+	nextOrig: ParsedVisualBlockSource,
+	blockquoteSources:
+		| ReadonlyMap<ProseMirrorNode, BuiltVisualBlockSources>
+		| undefined,
+): boolean {
+	return (
+		nextChild.childCount > 0 &&
+		nextOrig.node.childCount > 0 &&
+		structurallyEqual(nextChild.child(0), nextOrig.node.child(0)) &&
+		((nextChild.type.name === "blockquote" &&
+			nextOrig.node.type.name === "blockquote" &&
+			Boolean(blockquoteSources?.has(nextOrig.node))) ||
+			(isNestedList(nextChild) &&
+				listAttrsCompatible(nextChild, nextOrig.node) &&
+				nextOrig.raw !== null))
+	);
+}
+
+/**
+ * Single memoized O(N) checker for tight shared-group chains shared by both
+ * `computeIntactRefDefLabels` and `serializeContainerPreservingChildren`.
+ */
+export function createTightSharedGroupChecker(
+	container: ProseMirrorNode,
+	baselineBlocks: ReadonlyArray<ParsedVisualBlockSource>,
+	matchedOrigIndex: ReadonlyArray<number>,
+	pairedOrigIndex: ReadonlyArray<number>,
+	blockquoteSources:
+		| ReadonlyMap<ProseMirrorNode, BuiltVisualBlockSources>
+		| undefined,
+	nodeHasInvalidatedRef: ((node: ProseMirrorNode) => boolean) | null,
+): TightSharedGroupChecker {
+	const newLen = container.childCount;
+	const isIntactSharedGroupAt = (
+		childIdx: number,
+		group: ParsedVisualSharedGroup,
+	): boolean => {
+		const len = group.endIndex - group.startIndex;
+		if (childIdx + len > newLen) return false;
+		for (let offset = 0; offset < len; offset += 1) {
+			if (matchedOrigIndex[childIdx + offset] !== group.startIndex + offset) {
+				return false;
+			}
+		}
+		return true;
+	};
+
+	const memo = new Map<number, boolean>();
+	const isTightRightNeighborIntact = (
+		startIdx: number,
+		startGroup: ParsedVisualSharedGroup,
+	): boolean => {
+		const cachedStart = memo.get(startGroup.startIndex);
+		if (cachedStart !== undefined) return cachedStart;
+		const chain: number[] = [];
+		let curIdx = startIdx;
+		let curGroup = startGroup;
+		let intact = true;
+		while (true) {
+			const cached = memo.get(curGroup.startIndex);
+			if (cached !== undefined) {
+				intact = cached;
+				break;
+			}
+			chain.push(curGroup.startIndex);
+			const nextOrig = baselineBlocks[curGroup.endIndex];
+			if (!nextOrig) break;
+			const nextGroup =
+				nextOrig.sharedGroup?.startIndex === curGroup.endIndex
+					? nextOrig.sharedGroup
+					: undefined;
+			const nextSep = nextGroup
+				? nextGroup.separatorBefore
+				: nextOrig.separatorBefore;
+			if (nextSep !== "\n") break;
+			const afterIdx = curIdx + (curGroup.endIndex - curGroup.startIndex);
+			if (afterIdx >= newLen) {
+				intact = false;
+				break;
+			}
+			const nextChild = container.child(afterIdx);
+			const nextMatchedDirect =
+				matchedOrigIndex[afterIdx] === curGroup.endIndex &&
+				(!nodeHasInvalidatedRef ||
+					nextGroup !== undefined ||
+					!nodeHasInvalidatedRef(nextOrig.node));
+			if (!nextMatchedDirect) {
+				const canPreserveContainerHead =
+					!nextGroup &&
+					(matchedOrigIndex[afterIdx] === curGroup.endIndex ||
+						pairedOrigIndex[afterIdx] === curGroup.endIndex) &&
+					canPreserveContainerHeadStructurally(
+						nextChild,
+						nextOrig,
+						blockquoteSources,
+					) &&
+					!nodeHasInvalidatedRef?.(nextOrig.node.child(0));
+				if (!canPreserveContainerHead) {
+					intact = false;
+				}
+				break;
+			}
+			if (!nextGroup) break;
+			if (
+				!isIntactSharedGroupAt(afterIdx, nextGroup) ||
+				(nodeHasInvalidatedRef !== null &&
+					sharedGroupHasInvalidatedRef(
+						baselineBlocks,
+						nextGroup,
+						nodeHasInvalidatedRef,
+					))
+			) {
+				intact = false;
+				break;
+			}
+			curIdx = afterIdx;
+			curGroup = nextGroup;
+		}
+		for (let k = 0; k < chain.length; k += 1) {
+			const key = chain[k];
+			if (key !== undefined) memo.set(key, intact);
+		}
+		return intact;
+	};
+
+	return { isIntactSharedGroupAt, isTightRightNeighborIntact };
+}
+
 // ---------------------------------------------------------------------------
 // List-item granular preservation
 // ---------------------------------------------------------------------------
@@ -287,7 +522,7 @@ function sliceParsesToItem(
 		list !== null &&
 		list.type === listNode.type &&
 		list.childCount === 1 &&
-		list.child(0).eq(listNode.child(index))
+		nodesSemanticallyEqual(list.child(0), listNode.child(index))
 	);
 }
 
@@ -410,7 +645,7 @@ function alignFirstOrderedMarker(
 	return candidates;
 }
 
-/** Whether `markdown` re-parses to exactly the single edited list node. */
+/** Whether `markdown` re-parses to semantically the single edited list node. */
 function listMarkdownParsesTo(
 	markdown: string,
 	listNode: ProseMirrorNode,
@@ -420,99 +655,80 @@ function listMarkdownParsesTo(
 	return (
 		doc.childCount === 1 &&
 		doc.firstChild !== null &&
-		doc.firstChild.eq(listNode)
+		nodesSemanticallyEqual(doc.firstChild, listNode)
 	);
 }
 
+export type PreparedListPreservation = Readonly<{
+	innerRaw: string;
+	matched: ReadonlyArray<number>;
+	orig: ProseMirrorNode;
+	paired: ReadonlyArray<number>;
+	slices: ListItemSlices;
+}>;
+
+export type AuthoritativeListResolution = Readonly<{
+	itemReusable: boolean[];
+	needsFirstOrderedValidation: boolean;
+	output: string | null;
+}>;
+
 /**
- * Predicts per-item raw-slice reusability for `serializeListPreservingItems`
- * without duplicating slice verification or ordered-marker alignment logic.
- * Returns `null` when the list falls back to full canonical serialization.
+ * Verifies raw baseline slices and aligns list items once so both liveness
+ * analysis and final list serialization reuse one prepared plan.
  */
-export function resolvePreservedListItemReusability(
+export function prepareListPreservation(
 	listNode: ProseMirrorNode,
 	origBlock: ParsedVisualBlockSource,
 	depth: number,
-	envReferences: ParsedEnvReferences | undefined,
-	nodeHasInvalidatedRef: ((node: ProseMirrorNode) => boolean) | null,
-): ReadonlyArray<boolean> | null {
-	if (origBlock.raw === null || !listAttrsCompatible(listNode, origBlock.node)) {
-		return null;
-	}
-	const innerRaw = tryStripAllLinesAtDepth(origBlock.raw, depth);
+	envReferences?: ParsedEnvReferences,
+	rawOverride?: string,
+): PreparedListPreservation | null {
+	const orig = origBlock.node;
+	if (!listAttrsCompatible(listNode, orig)) return null;
+	const innerRaw =
+		rawOverride !== undefined
+			? rawOverride
+			: origBlock.raw !== null
+				? tryStripAllLinesAtDepth(origBlock.raw, depth)
+				: null;
 	if (innerRaw === null) return null;
 	const slices = verifiedListItemSlices(origBlock, envReferences, innerRaw);
 	if (!slices) return null;
-	const orig = origBlock.node;
 	const matched = alignNodes(
 		childrenOf(listNode),
 		childrenOf(orig),
 		structurallyEqual,
 	);
-	const reusable = new Array<boolean>(listNode.childCount).fill(false);
-	for (let idx = 0; idx < listNode.childCount; idx += 1) {
-		const matchedIdx = matched[idx] ?? -1;
-		let canReuse =
-			matchedIdx >= 0 && !nodeHasInvalidatedRef?.(orig.child(matchedIdx));
-		if (canReuse && idx === 0 && listNode.type.name === "ordered_list") {
-			const firstSlice = slices.items[matchedIdx];
-			if (firstSlice === undefined) {
-				canReuse = false;
-			} else {
-				const candidates = alignFirstOrderedMarker(listNode, firstSlice);
-				if (
-					candidates.length === 0 ||
-					(candidates[0] !== firstSlice &&
-						!candidates.some((candidate) =>
-							listMarkdownParsesTo(
-								candidate,
-								listNode.type.create(listNode.attrs, [listNode.child(0)]),
-								envReferences,
-							),
-						))
-				) {
-					canReuse = false;
-				}
-			}
-		}
-		reusable[idx] = canReuse;
-	}
-	return reusable;
+	const paired = pairUnmatched(matched, orig.childCount);
+	return { innerRaw, matched, orig, paired, slices };
 }
 
 /**
- * Serialize an edited list (top-level or blockquote-nested), reusing every
- * untouched item's exact raw slice (unless invalidated by a deleted/shadowed
- * reference definition) and original inter-item separators. Returns `null`
- * when the baseline list cannot be sliced safely.
+ * Single authoritative whole-list preservation and first-ordered-marker
+ * validation shared by `computeIntactRefDefLabels` and
+ * `serializeListPreservingItems`.
  */
-export function serializeListPreservingItems(
+export function resolveAuthoritativeListPreservation(
 	listNode: ProseMirrorNode,
-	origBlock: ParsedVisualBlockSource,
+	prepared: PreparedListPreservation,
 	serializeBlock: BlockSerializer,
-	envReferences?: ParsedEnvReferences,
+	envReferences: ParsedEnvReferences | undefined,
+	isReusableOrigItem: (origIdx: number) => boolean,
 	isPartialTitleRefDef?: PartialTitleRefDefPredicate | null,
-	canReuseItem?: ((origItem: ProseMirrorNode) => boolean) | null,
-	rawOverride?: string,
 	mathNewlineToken?: string,
-): string | null {
-	const orig = origBlock.node;
-	if (!listAttrsCompatible(listNode, orig)) return null;
-	const slices = verifiedListItemSlices(origBlock, envReferences, rawOverride);
-	if (!slices) return null;
+	buildOutput = true,
+): AuthoritativeListResolution {
+	const { matched, orig, paired, slices } = prepared;
 	const newLen = listNode.childCount;
 	const origLen = orig.childCount;
-	const matched = alignNodes(
-		childrenOf(listNode),
-		childrenOf(orig),
-		structurallyEqual,
-	);
-	const paired = pairUnmatched(matched, origLen);
 	const loose = isLooseList(listNode);
 	const defaultSeparator = slices.separators[1] ?? (loose ? "\n\n" : "\n");
-
-	const isReusableOrigItem = (origIdx: number): boolean =>
-		origIdx >= 0 && (!canReuseItem || canReuseItem(orig.child(origIdx)));
+	const itemReusable = new Array<boolean>(newLen);
+	for (let idx = 0; idx < newLen; idx += 1) {
+		const matchedIdx = matched[idx] ?? -1;
+		itemReusable[idx] = matchedIdx >= 0 && isReusableOrigItem(matchedIdx);
+	}
 
 	const assemble = (firstRaw: string | null): string => {
 		let output = "";
@@ -529,7 +745,7 @@ export function serializeListPreservingItems(
 			const reused =
 				idx === 0
 					? (firstRaw ?? undefined)
-					: isReusableOrigItem(matchedIdx)
+					: itemReusable[idx]
 						? slices.items[matchedIdx]
 						: undefined;
 			if (reused !== undefined) {
@@ -554,17 +770,79 @@ export function serializeListPreservingItems(
 	};
 
 	const firstMatched = newLen > 0 ? (matched[0] ?? -1) : -1;
-	const firstReused = isReusableOrigItem(firstMatched)
-		? slices.items[firstMatched]
-		: undefined;
-	if (firstReused === undefined) return assemble(null);
+	const firstReused =
+		itemReusable[0] === true && firstMatched >= 0
+			? slices.items[firstMatched]
+			: undefined;
+	if (firstReused === undefined) {
+		if (newLen > 0) itemReusable[0] = false;
+		return {
+			itemReusable,
+			needsFirstOrderedValidation: false,
+			output: buildOutput ? assemble(null) : null,
+		};
+	}
 	const candidates = alignFirstOrderedMarker(listNode, firstReused);
 	if (candidates.length === 1 && candidates[0] === firstReused) {
-		return assemble(firstReused);
+		return {
+			itemReusable,
+			needsFirstOrderedValidation: false,
+			output: buildOutput ? assemble(firstReused) : null,
+		};
 	}
 	for (const candidate of candidates) {
 		const output = assemble(candidate);
-		if (listMarkdownParsesTo(output, listNode, envReferences)) return output;
+		const unmasked =
+			mathNewlineToken !== undefined
+				? restoreMathNewlineSentinel(output, mathNewlineToken)
+				: output;
+		if (listMarkdownParsesTo(unmasked, listNode, envReferences)) {
+			return {
+				itemReusable,
+				needsFirstOrderedValidation: true,
+				output,
+			};
+		}
 	}
-	return assemble(null);
+	itemReusable[0] = false;
+	return {
+		itemReusable,
+		needsFirstOrderedValidation: false,
+		output: buildOutput ? assemble(null) : null,
+	};
+}
+
+/**
+ * Serialize an edited list (top-level or blockquote-nested), reusing every
+ * untouched item's exact raw slice (unless invalidated by a deleted/shadowed
+ * reference definition) and original inter-item separators. Returns `null`
+ * when the baseline list cannot be sliced safely.
+ */
+export function serializeListPreservingItems(
+	listNode: ProseMirrorNode,
+	origBlock: ParsedVisualBlockSource,
+	serializeBlock: BlockSerializer,
+	envReferences?: ParsedEnvReferences,
+	isPartialTitleRefDef?: PartialTitleRefDefPredicate | null,
+	canReuseItem?: ((origItem: ProseMirrorNode) => boolean) | null,
+	rawOverride?: string,
+	mathNewlineToken?: string,
+	preparedOverride?: PreparedListPreservation,
+): string | null {
+	const prepared =
+		preparedOverride ??
+		prepareListPreservation(listNode, origBlock, 0, envReferences, rawOverride);
+	if (!prepared) return null;
+	const isReusableOrigItem = (origIdx: number): boolean =>
+		origIdx >= 0 && (!canReuseItem || canReuseItem(prepared.orig.child(origIdx)));
+	return resolveAuthoritativeListPreservation(
+		listNode,
+		prepared,
+		serializeBlock,
+		envReferences,
+		isReusableOrigItem,
+		isPartialTitleRefDef,
+		mathNewlineToken,
+		true,
+	).output;
 }

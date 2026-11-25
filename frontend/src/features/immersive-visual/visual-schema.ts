@@ -771,6 +771,18 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 	},
 };
 
+let internalLinkBoundarySeq = 0;
+
+/**
+ * Generates a unique internal session key for DOM-parsed and toolbar-inserted
+ * link marks so adjacent links with identical `(href, title)` never merge in
+ * ProseMirror while external DOM attributes remain untrusted and ignored.
+ */
+export function createInternalLinkBoundaryKey(): string {
+	internalLinkBoundarySeq += 1;
+	return `dom:${internalLinkBoundarySeq}`;
+}
+
 const marks: Record<VisualMarkName, MarkSpec> = {
 	link: {
 		attrs: {
@@ -783,11 +795,13 @@ const marks: Record<VisualMarkName, MarkSpec> = {
 			{
 				tag: "a[href]",
 				getAttrs(dom) {
+					const boundaryKey = createInternalLinkBoundaryKey();
 					if (!(dom instanceof HTMLElement)) {
-						return { href: "", title: null };
+						return { boundaryKey, href: "", title: null };
 					}
 					const title = dom.getAttribute("title");
 					return {
+						boundaryKey,
 						href: sanitizeDomUrl(dom.getAttribute("href") ?? "") ?? "",
 						title:
 							typeof title === "string" && title.length > 0

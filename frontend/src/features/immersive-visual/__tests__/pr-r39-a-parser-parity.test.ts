@@ -225,21 +225,33 @@ describe("PR-R39-A link boundaries, strict partial-title follower preservation, 
 				expect(anchor.outerHTML).not.toContain("boundaryKey");
 			}
 
-			// Untrusted HTML with custom attributes always parses with boundaryKey: null
+			// Untrusted HTML with custom attributes ignores DOM attributes and
+			// assigns fresh internal `dom:*` keys to every parsed `<a>` so adjacent
+			// pasted links never merge while `toDOM` never emits `boundaryKey`.
 			const pasted = document.createElement("div");
 			pasted.innerHTML =
-				'<p><a href="/u" title="t" boundarykey="evil" data-boundary-key="evil">pasted</a></p>';
+				'<p><a href="/u" title="t" boundarykey="evil" data-boundary-key="evil">pasted</a>' +
+				'<a href="/u" title="t" boundarykey="evil">second</a></p>';
 			const parsedDomDoc =
 				DOMParser.fromSchema(visualEditorSchema).parse(pasted);
-			expect(collectLinkSegments(parsedDomDoc)).toEqual([
-				{
-					boundaryKey: null,
-					href: "/u",
-					strong: false,
-					text: "pasted",
-					title: "t",
-				},
-			]);
+			const parsedLinks = collectLinkSegments(parsedDomDoc);
+			expect(parsedLinks).toHaveLength(2);
+			expect(parsedLinks[0]).toMatchObject({
+				href: "/u",
+				strong: false,
+				text: "pasted",
+				title: "t",
+			});
+			expect(parsedLinks[1]).toMatchObject({
+				href: "/u",
+				strong: false,
+				text: "second",
+				title: "t",
+			});
+			expect(String(parsedLinks[0]?.boundaryKey)).toMatch(/^dom:\d+$/);
+			expect(String(parsedLinks[1]?.boundaryKey)).toMatch(/^dom:\d+$/);
+			expect(parsedLinks[0]?.boundaryKey).not.toBe("evil");
+			expect(parsedLinks[0]?.boundaryKey).not.toBe(parsedLinks[1]?.boundaryKey);
 
 			// Removing link mark by MarkType still unlinks marks carrying boundaryKey !== null
 			const { from, to } = findTextRange(doc, "b");

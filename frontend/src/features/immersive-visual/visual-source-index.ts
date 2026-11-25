@@ -1,4 +1,5 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
+import { nodesSemanticallyEqual } from "./markdown-node-alignment";
 import {
 	type ParsedVisualDocument,
 	parseMarkdownWithBlockSources,
@@ -265,7 +266,10 @@ export function deriveVisualSourceIndex(
 	while (
 		prefix < oldCount &&
 		prefix < newCount &&
-		nextDoc.child(prefix).eq((oldBlocks[prefix] as VisualSourceBlock).node)
+		nodesSemanticallyEqual(
+			nextDoc.child(prefix),
+			(oldBlocks[prefix] as VisualSourceBlock).node,
+		)
 	) {
 		prefix += 1;
 	}
@@ -273,9 +277,10 @@ export function deriveVisualSourceIndex(
 	while (
 		suffix < oldCount - prefix &&
 		suffix < newCount - prefix &&
-		nextDoc
-			.child(newCount - 1 - suffix)
-			.eq((oldBlocks[oldCount - 1 - suffix] as VisualSourceBlock).node)
+		nodesSemanticallyEqual(
+			nextDoc.child(newCount - 1 - suffix),
+			(oldBlocks[oldCount - 1 - suffix] as VisualSourceBlock).node,
+		)
 	) {
 		suffix += 1;
 	}

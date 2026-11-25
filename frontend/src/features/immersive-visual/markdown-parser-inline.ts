@@ -22,7 +22,7 @@ export const PHP_PARTIAL_TITLE_REF_META_KEY = "easymdePhpPartialTitleRef";
 export const PENDING_PARTIAL_TITLE_LABEL_META_KEY =
 	"easymdePendingPartialTitleLabel";
 
-export type RawReferenceLinkMeta = Readonly<{
+type RawReferenceLinkMeta = Readonly<{
 	kind: "shortcut" | "collapsed" | "full";
 	normalizedLabel: string;
 	rawRefLabel: string;
@@ -306,7 +306,7 @@ export function decodeTitleKeepingInlineMathSentinels(
 	);
 }
 
-export function decodeInlineTitlePreservingMath(
+function decodeInlineTitlePreservingMath(
 	rawTitle: string,
 	preScan: TitleDecodePreScan,
 ): string {
@@ -320,13 +320,14 @@ export function mapInlineTokens(
 	inTableCell: boolean,
 	collectors?: InlineReferenceCollectors,
 	blockReferencedLabels?: Set<string>,
+	documentLinkOccurrences?: Map<string, number>,
 ): ProseMirrorNode[] {
 	if (!tokens || tokens.length === 0) {
 		return [];
 	}
 	const output: ProseMirrorNode[] = [];
 	const markStack: Mark[] = [];
-	const linkOccurrences = new Map<string, number>();
+	const linkOccurrences = documentLinkOccurrences ?? new Map<string, number>();
 	let pendingPlainText = "";
 
 	const flushPlainText = (): void => {

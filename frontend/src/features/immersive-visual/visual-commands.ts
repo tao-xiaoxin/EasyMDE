@@ -47,6 +47,7 @@ import {
 	outdentInCodeBlockOnShiftTab,
 } from "./visual-boundary-commands";
 import {
+	createInternalLinkBoundaryKey,
 	normalizeHeadingLevel,
 	sanitizeBulletMarker,
 	visualEditorSchema,
@@ -393,6 +394,7 @@ function insertLinkCommand(
 	}
 	const { from, to, empty } = state.selection;
 	const linkMark = MARKS.link.create({
+		boundaryKey: createInternalLinkBoundaryKey(),
 		href: "https://",
 		title: null,
 	});

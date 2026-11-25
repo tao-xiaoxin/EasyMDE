@@ -65,6 +65,7 @@ export function mapTableTokens(
 	preScan: PreScanResult,
 	alignAnnotation: string | null,
 	collectors?: InlineReferenceCollectors,
+	linkOccurrences?: Map<string, number>,
 ): ProseMirrorNode {
 	const rawRows: ProseMirrorNode[] = [];
 	for (let i = startIndex + 1; i < endIndex; i += 1) {
@@ -100,6 +101,7 @@ export function mapTableTokens(
 							true,
 							collectors,
 							cellRefLabels,
+							linkOccurrences,
 						)
 					: [];
 			const cellType = isHeader

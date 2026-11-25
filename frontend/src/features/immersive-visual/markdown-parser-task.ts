@@ -29,6 +29,7 @@ export type TaskParagraphContext = Readonly<{
 	blockquoteDepth: number;
 	blockquoteSources: Map<ProseMirrorNode, BuiltVisualBlockSources>;
 	env: Record<string, unknown>;
+	linkOccurrences: Map<string, number>;
 	listDepth: number;
 	paragraphRawContents: WeakMap<ProseMirrorNode, string>;
 	preScan: PreScanResult;
@@ -62,6 +63,7 @@ function reparseRemainderAfterTaskMarker(
 		false,
 		context.referenceCollectors,
 		blockRefLabels,
+		context.linkOccurrences,
 	);
 }
 

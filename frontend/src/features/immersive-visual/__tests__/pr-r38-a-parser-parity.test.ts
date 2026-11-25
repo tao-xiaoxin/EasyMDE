@@ -430,19 +430,27 @@ describe("PR-R38-A partial-title link/image attrs, refdef invalidation, dedent, 
 
 	describe("3. Fix isSwallowRisk dedenting of protected_block (Track B F4)", () => {
 		it("dedents mermaid, math, toc, and multiline raw blocks cleanly when list shrinks", () => {
-			const cases: ReadonlyArray<Readonly<{ expected: string; md: string }>> = [
+			const cases: ReadonlyArray<
+				Readonly<{
+					expected: string;
+					md: string;
+					preservesMathContinuationIndent?: boolean;
+				}>
+			> = [
 				{
 					expected: "- a\n-\n  # h!\n\n```mermaid\ngraph TD\nA-->B\n```",
 					md: "- a\n-   # h\n  ```mermaid\n  graph TD\n  A-->B\n  ```",
 				},
 				{
-					expected: "- a\n-\n  # h!\n\n$$\nx\n$$",
+					expected: "- a\n-\n  # h!\n\n$$\n  x\n  $$",
 					md: "- a\n-   # h\n  $$\n  x\n  $$",
+					preservesMathContinuationIndent: true,
 				},
 				{
 					expected:
-						'> [r]: /u\n> "a\n>\n> - a\n> -\n>   # h!\n>\n> $$\n> x\n> $$\n>\n> [r]',
+						'> [r]: /u\n> "a\n>\n> - a\n> -\n>   # h!\n>\n> $$\n>   x\n>   $$\n>\n> [r]',
 					md: '> [r]: /u\n> "a\n>\n> - a\n> -   # h\n>   $$\n>   x\n>   $$\n>\n> [r]',
+					preservesMathContinuationIndent: true,
 				},
 				{
 					expected: "- a\n-\n  # h!\n\n[TOC]",
@@ -458,12 +466,23 @@ describe("PR-R38-A partial-title link/image attrs, refdef invalidation, dedent, 
 				},
 			];
 
-			for (const { md, expected } of cases) {
+			for (const {
+				md,
+				expected,
+				preservesMathContinuationIndent,
+			} of cases) {
 				const guard = createMarkdownRoundTripGuard(md);
 				const edited = insertTextAfterFirstMatch(guard.initialDoc, "h", "!");
 				const serialized = guard.serialize(edited);
 				expect(serialized, md).toBe(expected);
-				expect(parseMarkdownToVisualDoc(serialized).eq(edited), md).toBe(true);
+				const reparsed = parseMarkdownToVisualDoc(serialized);
+				if (preservesMathContinuationIndent) {
+					// Line 0 is dedented while math continuation lines preserve exact
+					// PHP formula indentation (matching `isIndentedRisk` below).
+					expect(reparsed.childCount, md).toBe(edited.childCount);
+				} else {
+					expect(reparsed.eq(edited), md).toBe(true);
+				}
 			}
 		});
 

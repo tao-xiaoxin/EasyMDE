@@ -816,7 +816,7 @@ function serializeBlockNodeInternal(
 					: "";
 			if (
 				mathNewlineToken === null ||
-				node.attrs.kind !== "raw" ||
+				(node.attrs.kind !== "raw" && node.attrs.kind !== "math") ||
 				!raw.includes("\n") ||
 				(!raw.includes("\\(") && !raw.includes("\\[") && !raw.includes("$$"))
 			) {

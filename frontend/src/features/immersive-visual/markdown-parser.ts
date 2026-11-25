@@ -375,6 +375,7 @@ function mapBlockTokensWithRanges(
 	const {
 		blockquoteDepth,
 		blockquoteSources,
+		linkOccurrences,
 		listDepth,
 		paragraphRawContents,
 		preScan,
@@ -476,6 +477,7 @@ function mapBlockTokensWithRanges(
 								false,
 								referenceCollectors,
 								blockRefLabels,
+								linkOccurrences,
 							)
 						: [];
 				const paragraphNode = visualEditorSchema.nodes.paragraph.create(
@@ -530,6 +532,7 @@ function mapBlockTokensWithRanges(
 					preScan,
 					annotation?.marker ?? null,
 					referenceCollectors,
+					linkOccurrences,
 				),
 				origRange: combinedRange,
 			});
@@ -577,6 +580,7 @@ function mapBlockTokensWithRanges(
 							false,
 							referenceCollectors,
 							blockRefLabels,
+							linkOccurrences,
 						)
 					: [];
 			const headingNode = visualEditorSchema.nodes.heading.create(
@@ -818,6 +822,7 @@ export function parseMarkdownWithBlockSources(
 		blockquoteDepth: 0,
 		blockquoteSources,
 		env,
+		linkOccurrences: new Map<string, number>(),
 		listDepth: 0,
 		paragraphRawContents: new WeakMap<ProseMirrorNode, string>(),
 		preScan,

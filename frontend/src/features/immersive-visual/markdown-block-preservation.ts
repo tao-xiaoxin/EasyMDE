@@ -1,9 +1,12 @@
 import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
 import {
+	alignContainerChildren,
+	checkRawPreservationRisks,
+	createTightSharedGroupChecker,
 	endsWithBlankBlockquoteLine,
 	isListSwallowingFollowingBlock,
-	leadingIndentAtDepth,
 	serializeListPreservingItems,
+	sharedGroupHasInvalidatedRef,
 	stripAtDepth,
 	tryStripAllLinesAtDepth,
 	wouldBeLazilyAbsorbedByPrevious,
@@ -16,16 +19,10 @@ import {
 	joinSerializedBlocks,
 	LEADING_FOUR_COLUMN_INDENT,
 	nodeCanLazilyContinue,
-	nodePreventsFollowingIndentedCode,
 	refDefContinuationMode,
 	restoreMathNewlineSentinel,
 } from "./markdown-list-serialization";
-import {
-	alignNodes,
-	childrenOf,
-	pairUnmatched,
-	structurallyEqual,
-} from "./markdown-node-alignment";
+import { nodesSemanticallyEqual } from "./markdown-node-alignment";
 import {
 	type BuiltVisualBlockSources,
 	inspectReferenceDefinitionBlock,
@@ -40,9 +37,8 @@ import {
 	buildReferencePreserveResolver,
 	computeIntactRefDefLabels,
 	createInvalidatedRefChecker,
-	createTightSharedGroupChecker,
+	type PreservationPlan,
 	type ReferencePreserveResolver,
-	sharedGroupHasInvalidatedRef,
 } from "./markdown-refdef-liveness";
 import { dedentBlockToLineZero } from "./markdown-reference-preservation";
 
@@ -50,7 +46,6 @@ export {
 	type BlockSerializer,
 	createMathNewlineSentinelForNode,
 	joinSerializedBlocks,
-	needsTightRefDefContinuation,
 	refDefContinuationMode,
 	restoreMathNewlineSentinel,
 	serializeList,
@@ -94,18 +89,12 @@ type RenderedChild = Readonly<{
 	inner: string;
 }>;
 
-type SerializedChild = Readonly<{
-	emitted: string;
-	inner: string;
-	innerMasked: string;
-	mathNewlineToken: string | null;
-}>;
-
 type PreservationContext = Readonly<{
 	activeSerializeBlock: BlockSerializer;
 	hasInvalidatedRefDefs: boolean;
 	nodeHasInvalidatedRef: (node: ProseMirrorNode) => boolean;
 	parsed: ParsedVisualDocument;
+	plan: PreservationPlan;
 	resolveReferences: ReferencePreserveResolver | null;
 }>;
 
@@ -135,15 +124,10 @@ function serializeChildAtDepth(
 	child: ProseMirrorNode,
 	depth: number,
 	serializeBlock: BlockSerializer,
-): SerializedChild {
+): RenderedChild {
 	if (depth <= 0) {
 		const emitted = serializeBlock(child);
-		return {
-			emitted,
-			inner: emitted,
-			innerMasked: emitted,
-			mathNewlineToken: null,
-		};
+		return { emitted, inner: emitted };
 	}
 	const token = createMathNewlineSentinelForNode(child);
 	const innerMasked = serializeBlock(child, token ?? undefined);
@@ -155,8 +139,6 @@ function serializeChildAtDepth(
 			token !== null
 				? restoreMathNewlineSentinel(innerMasked, token)
 				: innerMasked,
-		innerMasked,
-		mathNewlineToken: token,
 	};
 }
 
@@ -179,21 +161,27 @@ function dedentLineZeroAtDepth(
 	};
 }
 
+/**
+ * Dedents a canonical `protected_block` to column 0 at any depth (`depth >= 0`)
+ * while protecting physical newlines inside multiline math spans (`$$...$$`,
+ * `\[...\]`, `\(...\)`) for both `raw` and `math` blocks with a collision-free
+ * sentinel generated on demand.
+ */
 function dedentAllToLineZeroAtDepth(
-	innerMasked: string,
+	child: ProseMirrorNode,
 	depth: number,
-	mathNewlineToken: string | null,
+	serializeBlock: BlockSerializer,
 ): RenderedChild {
+	const token = createMathNewlineSentinelForNode(child, true);
+	const innerMasked = serializeBlock(child, token ?? undefined);
 	const dedentedMasked = dedentBlockToLineZero(innerMasked);
 	const prefixed = prefixAtDepth(dedentedMasked, depth);
 	return {
 		emitted:
-			mathNewlineToken !== null
-				? restoreMathNewlineSentinel(prefixed, mathNewlineToken)
-				: prefixed,
+			token !== null ? restoreMathNewlineSentinel(prefixed, token) : prefixed,
 		inner:
-			mathNewlineToken !== null
-				? restoreMathNewlineSentinel(dedentedMasked, mathNewlineToken)
+			token !== null
+				? restoreMathNewlineSentinel(dedentedMasked, token)
 				: dedentedMasked,
 	};
 }
@@ -227,6 +215,7 @@ function tryPreserveListAtDepth(
 	const canReuseItem = ctx.hasInvalidatedRefDefs
 		? (origItem: ProseMirrorNode) => !ctx.nodeHasInvalidatedRef(origItem)
 		: null;
+	const cachedPrepared = ctx.plan.lists.get(listNode);
 	if (depth <= 0) {
 		return serializeListPreservingItems(
 			listNode,
@@ -235,9 +224,13 @@ function tryPreserveListAtDepth(
 			ctx.parsed.envReferences,
 			ctx.resolveReferences?.isPartialTitleRefDef ?? null,
 			canReuseItem,
+			undefined,
+			undefined,
+			cachedPrepared,
 		);
 	}
-	const innerRaw = tryStripAllLinesAtDepth(origBlock.raw, depth);
+	const innerRaw =
+		cachedPrepared?.innerRaw ?? tryStripAllLinesAtDepth(origBlock.raw, depth);
 	if (innerRaw === null) return null;
 	const token = createMathNewlineSentinelForNode(listNode);
 	const innerSerialized = serializeListPreservingItems(
@@ -249,6 +242,7 @@ function tryPreserveListAtDepth(
 		canReuseItem,
 		innerRaw,
 		token ?? undefined,
+		cachedPrepared,
 	);
 	if (innerSerialized === null) return null;
 	const prefixed = prefixAtDepth(innerSerialized, depth);
@@ -270,12 +264,9 @@ function serializeContainerPreservingChildren(
 	const baselineBlocks = source.blocks;
 	const newLen = container.childCount;
 	const origLen = baselineBlocks.length;
-	const matchedOrigIndex = alignNodes(
-		childrenOf(container),
-		baselineBlocks.map((block) => block.node),
-		structurallyEqual,
-	);
-	const pairedOrigIndex = pairUnmatched(matchedOrigIndex, origLen);
+	const { matchedOrigIndex, pairedOrigIndex } =
+		ctx.plan.containers.get(container) ??
+		alignContainerChildren(container, baselineBlocks);
 	const effectiveOrigIndex = new Array<number>(newLen).fill(-1);
 	const defaultBlankSep =
 		depth <= 0 ? "\n\n" : `\n${"> ".repeat(depth - 1)}>\n`;
@@ -375,8 +366,8 @@ function serializeContainerPreservingChildren(
 		const prevWasMatchedAdjacent =
 			prevMatched >= 0 && origIdx >= 0 && origIdx === prevMatched + 1;
 
-		let generated: SerializedChild | null = null;
-		const ensureGenerated = (): SerializedChild => {
+		let generated: RenderedChild | null = null;
+		const ensureGenerated = (): RenderedChild => {
 			if (generated === null) {
 				generated = serializeChildAtDepth(
 					child,
@@ -465,13 +456,6 @@ function serializeContainerPreservingChildren(
 			effectiveOrigIndex[idx] ?? -1,
 			intactGroup?.separatorBefore,
 		);
-		const isIndentedRisk = (emittedText: string, sep: string): boolean =>
-			child.type.name !== "code_block" &&
-			leadingIndentAtDepth(emittedText, depth) >= 4 &&
-			(sep !== "\n" ||
-				!prevNode ||
-				!nodePreventsFollowingIndentedCode(prevNode) ||
-				endsWithBlankBlockquoteLine(prevInnerText));
 		const isSwallowRisk = (innerText: string): boolean =>
 			isListSwallowingFollowingBlock(
 				prevNode,
@@ -479,17 +463,22 @@ function serializeContainerPreservingChildren(
 				innerText,
 				prevWasMatchedAdjacent,
 			);
+		let { indentedRisk, swallowRisk } = checkRawPreservationRisks(
+			child,
+			depth,
+			candidateEmitted,
+			candidateInner,
+			separator,
+			prevNode,
+			prevInnerText,
+			prevWasMatchedAdjacent,
+		);
 		const brokenTightLeft =
 			intactGroup !== undefined &&
 			intactGroup.separatorBefore === "\n" &&
 			(separator !== "\n" ||
 				(effectiveOrigIndex[idx - 1] ?? -1) !== intactGroup.startIndex - 1);
-		if (
-			intactGroup &&
-			(brokenTightLeft ||
-				isIndentedRisk(intactGroup.raw, separator) ||
-				isSwallowRisk(candidateInner))
-		) {
+		if (intactGroup && (brokenTightLeft || indentedRisk || swallowRisk)) {
 			// A shared group whose tight left neighbor changed, whose 4-column
 			// indent would now form indented code, or whose indent would be
 			// swallowed into a preceding list falls back to canonical blocks.
@@ -500,24 +489,32 @@ function serializeContainerPreservingChildren(
 			candidateEmitted = canonical.emitted;
 			candidateInner = canonical.inner;
 			({ refDefMode, separator } = resolveJoin(candidateInner, -1));
+			({ indentedRisk, swallowRisk } = checkRawPreservationRisks(
+				child,
+				depth,
+				candidateEmitted,
+				candidateInner,
+				separator,
+				prevNode,
+				prevInnerText,
+				prevWasMatchedAdjacent,
+			));
 		}
 
 		if (prevNode) parts.push(separator);
 
 		let blockEmitted = candidateEmitted;
 		let blockInner = candidateInner;
-		const swallowRisk = isSwallowRisk(candidateInner);
-		const indentedRisk = isIndentedRisk(candidateEmitted, separator);
 		if (!intactGroup && serialized !== null && (swallowRisk || indentedRisk)) {
 			if (child.type.name === "protected_block") {
-				if (swallowRisk) {
+				if (swallowRisk && child.attrs.kind !== "math") {
 					const canonical = ensureGenerated();
 					if (isSwallowRisk(canonical.inner)) {
 						({ emitted: blockEmitted, inner: blockInner } =
 							dedentAllToLineZeroAtDepth(
-								canonical.innerMasked,
+								child,
 								depth,
-								canonical.mathNewlineToken,
+								ctx.activeSerializeBlock,
 							));
 					} else {
 						blockEmitted = canonical.emitted;
@@ -525,8 +522,10 @@ function serializeContainerPreservingChildren(
 					}
 				} else {
 					// Pure 4-column indented-code risk on protected_block (e.g.
-					// `p\n    $$\n    x\n    y\n    $$`): dedent only line 0 so
-					// PHP preserves continuation-line formula indentation.
+					// `p\n    $$\n    x\n    y\n    $$`), or swallowRisk on a
+					// preserved `math` block (`>   $$a\n>     b$$`): dedent
+					// only line 0 so PHP preserves every continuation line byte
+					// inside the math span verbatim.
 					({ emitted: blockEmitted, inner: blockInner } = dedentLineZeroAtDepth(
 						candidateEmitted,
 						candidateInner,
@@ -544,13 +543,8 @@ function serializeContainerPreservingChildren(
 			child.type.name === "protected_block" &&
 			swallowRisk
 		) {
-			const canonical = ensureGenerated();
 			({ emitted: blockEmitted, inner: blockInner } =
-				dedentAllToLineZeroAtDepth(
-					canonical.innerMasked,
-					depth,
-					canonical.mathNewlineToken,
-				));
+				dedentAllToLineZeroAtDepth(child, depth, ctx.activeSerializeBlock));
 		}
 
 		if (
@@ -595,7 +589,7 @@ function serializeDocPreservingUntouchedBlocks(
 	if (parsed.blocks.length === 0) {
 		return serializers.serializeDoc(doc);
 	}
-	const { allIntact, partialTitleIntact } = computeIntactRefDefLabels(
+	const { allIntact, partialTitleIntact, plan } = computeIntactRefDefLabels(
 		doc,
 		parsed,
 		serializers.serializeBlock,
@@ -621,6 +615,7 @@ function serializeDocPreservingUntouchedBlocks(
 		hasInvalidatedRefDefs,
 		nodeHasInvalidatedRef,
 		parsed,
+		plan,
 		resolveReferences,
 	});
 	if (parsed.lineEnding === "\r\n") {
@@ -638,7 +633,10 @@ function rebindParsedToDoc(
 	doc: ProseMirrorNode,
 ): ParsedVisualDocument | null {
 	if (doc === parsed.doc) return parsed;
-	if (parsed.blocks.length !== doc.childCount || !doc.eq(parsed.doc)) {
+	if (
+		parsed.blocks.length !== doc.childCount ||
+		!nodesSemanticallyEqual(doc, parsed.doc)
+	) {
 		return null;
 	}
 	const reboundLinks = parsed.referenceLinks
@@ -768,7 +766,9 @@ export function createPreservingRoundTripGuard(
 			baselineDoc === computed.doc
 				? computed
 				: (rebindParsedToDoc(computed, baselineDoc) ??
-					(baselineDoc.eq(computed.doc) ? computed : null));
+					(nodesSemanticallyEqual(baselineDoc, computed.doc)
+						? computed
+						: null));
 	}
 	if (liveDoc && liveDoc !== baselineDoc) {
 		const rebound = parsed ? rebindParsedToDoc(parsed, liveDoc) : null;
@@ -822,7 +822,7 @@ export function createPreservingRoundTripGuard(
 	};
 
 	const isUnmodified = (doc: ProseMirrorNode): boolean =>
-		doc === baselineDoc || doc.eq(baselineDoc);
+		doc === baselineDoc || nodesSemanticallyEqual(doc, baselineDoc);
 
 	return {
 		initialDoc: baselineDoc,

@@ -1,4 +1,4 @@
-import type { Node as ProseMirrorNode } from "prosemirror-model";
+import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
 
 /**
  * Monotonic ProseMirror node sequence alignment for untouched-source
@@ -15,6 +15,187 @@ export type NodeMatcher = (
 /** Exact LCS is used for gaps up to this many DP cells. */
 const DP_CELL_BUDGET = 40000;
 
+type LinkBoundaryState = Readonly<{
+	href: unknown;
+	rawBoundaryKey: unknown;
+	runIndex: number;
+	title: unknown;
+}>;
+
+function findLinkMark(marks: readonly Mark[]): Mark | null {
+	for (let i = 0; i < marks.length; i += 1) {
+		const mark = marks[i];
+		if (mark && mark.type.name === "link") {
+			return mark;
+		}
+	}
+	return null;
+}
+
+function advanceLinkBoundaryState(
+	linkMark: Mark | null,
+	prev: LinkBoundaryState | null,
+): Readonly<{ nextState: LinkBoundaryState | null; normKey: number }> {
+	if (linkMark === null) {
+		return { nextState: null, normKey: -1 };
+	}
+	const href = linkMark.attrs.href;
+	const title = linkMark.attrs.title;
+	const rawBoundaryKey = linkMark.attrs.boundaryKey;
+	if (prev !== null && prev.href === href && prev.title === title) {
+		if (prev.rawBoundaryKey === rawBoundaryKey) {
+			return { nextState: prev, normKey: prev.runIndex };
+		}
+		const runIndex = prev.runIndex + 1;
+		return {
+			nextState: { href, rawBoundaryKey, runIndex, title },
+			normKey: runIndex,
+		};
+	}
+	return {
+		nextState: { href, rawBoundaryKey, runIndex: 0, title },
+		normKey: 0,
+	};
+}
+
+function marksSemanticallyEqual(
+	a: readonly Mark[],
+	b: readonly Mark[],
+	normLinkA: number,
+	normLinkB: number,
+): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i += 1) {
+		const markA = a[i];
+		const markB = b[i];
+		if (!markA || !markB || markA.type !== markB.type) {
+			return false;
+		}
+		if (markA.type.name === "link") {
+			if (
+				normLinkA !== normLinkB ||
+				markA.attrs.href !== markB.attrs.href ||
+				markA.attrs.title !== markB.attrs.title
+			) {
+				return false;
+			}
+			continue;
+		}
+		if (!markA.eq(markB)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+function nodeAttrsEqual(a: ProseMirrorNode, b: ProseMirrorNode): boolean {
+	return a.hasMarkup(b.type, b.attrs, a.marks);
+}
+
+function nodesSemanticallyEqualInternal(
+	a: ProseMirrorNode,
+	b: ProseMirrorNode,
+): boolean {
+	if (a === b) return true;
+	if (
+		a.type !== b.type ||
+		a.nodeSize !== b.nodeSize ||
+		a.childCount !== b.childCount
+	) {
+		return false;
+	}
+	if (a.isText) {
+		if (a.text !== b.text) return false;
+		const linkA = findLinkMark(a.marks);
+		const linkB = findLinkMark(b.marks);
+		return marksSemanticallyEqual(
+			a.marks,
+			b.marks,
+			linkA ? 0 : -1,
+			linkB ? 0 : -1,
+		);
+	}
+	if (!nodeAttrsEqual(a, b)) {
+		return false;
+	}
+	if (a.inlineContent) {
+		let stateA: LinkBoundaryState | null = null;
+		let stateB: LinkBoundaryState | null = null;
+		for (let i = 0; i < a.childCount; i += 1) {
+			const childA = a.child(i);
+			const childB = b.child(i);
+			const stepA = advanceLinkBoundaryState(
+				findLinkMark(childA.marks),
+				stateA,
+			);
+			const stepB = advanceLinkBoundaryState(
+				findLinkMark(childB.marks),
+				stateB,
+			);
+			stateA = stepA.nextState;
+			stateB = stepB.nextState;
+			if (
+				!marksSemanticallyEqual(
+					childA.marks,
+					childB.marks,
+					stepA.normKey,
+					stepB.normKey,
+				)
+			) {
+				return false;
+			}
+			if (childA === childB) {
+				continue;
+			}
+			if (childA.type !== childB.type) {
+				return false;
+			}
+			if (childA.isText) {
+				if (childA.text !== childB.text) return false;
+				continue;
+			}
+			if (!nodeAttrsEqual(childA, childB)) {
+				return false;
+			}
+			if (
+				childA.childCount !== childB.childCount ||
+				(childA.childCount > 0 &&
+					!nodesSemanticallyEqualInternal(childA, childB))
+			) {
+				return false;
+			}
+		}
+		return true;
+	}
+	for (let i = 0; i < a.childCount; i += 1) {
+		if (!nodesSemanticallyEqualInternal(a.child(i), b.child(i))) {
+			return false;
+		}
+	}
+	return true;
+}
+
+/**
+ * Semantic ProseMirror node equality that ignores non-semantic `link`
+ * `boundaryKey` differences (such as stale document-wide counters or `"dom:*"`
+ * session IDs) while strictly distinguishing adjacent links from merged links.
+ */
+export function nodesSemanticallyEqual(
+	a: ProseMirrorNode,
+	b: ProseMirrorNode,
+): boolean {
+	if (a === b) return true;
+	if (
+		a.type !== b.type ||
+		a.nodeSize !== b.nodeSize ||
+		a.childCount !== b.childCount
+	) {
+		return false;
+	}
+	if (a.eq(b)) return true;
+	return nodesSemanticallyEqualInternal(a, b);
+}
+
 export function childrenOf(node: ProseMirrorNode): ProseMirrorNode[] {
 	const children: ProseMirrorNode[] = [];
 	node.forEach((child) => {
@@ -23,9 +204,7 @@ export function childrenOf(node: ProseMirrorNode): ProseMirrorNode[] {
 	return children;
 }
 
-export const structurallyEqual: NodeMatcher = (next, orig) =>
-	next === orig ||
-	(next.type === orig.type && next.nodeSize === orig.nodeSize && next.eq(orig));
+export const structurallyEqual: NodeMatcher = nodesSemanticallyEqual;
 
 /**
  * Anchor surviving nodes by immutable object identity first: the longest
@@ -86,27 +265,67 @@ function stableStringify(value: unknown): string {
 
 const canonicalKeyCache = new WeakMap<ProseMirrorNode, string>();
 
+function serializeNormalizedMarks(
+	marks: readonly Mark[],
+	normLinkKey: number,
+): string {
+	if (marks.length === 0) return "";
+	return marks
+		.map((mark) =>
+			mark.type.name === "link"
+				? `link${stableStringify({
+						boundaryRun: normLinkKey,
+						href: mark.attrs.href,
+						title: mark.attrs.title,
+					})}`
+				: `${mark.type.name}${stableStringify(mark.attrs)}`,
+		)
+		.join(";");
+}
+
 /**
  * Equality-compatible canonical key: node type, all attrs (sorted), marks
- * (ProseMirror keeps mark sets in canonical order) with sorted attrs, text,
- * and child keys. Nodes with equal keys are `eq()`; memoized per immutable
- * node, so every node's key is computed at most once.
+ * (ProseMirror keeps mark sets in canonical order) with normalized adjacent
+ * link runs, text, and child keys. Nodes with equal keys satisfy
+ * `nodesSemanticallyEqual`; memoized per immutable node, so every node's key
+ * is computed at most once.
  */
 function canonicalKey(node: ProseMirrorNode): string {
 	const cached = canonicalKeyCache.get(node);
 	if (cached !== undefined) return cached;
-	const marks = node.marks
-		.map((mark) => `${mark.type.name}${stableStringify(mark.attrs)}`)
-		.join(";");
 	let key: string;
 	if (node.isText) {
+		const marks = serializeNormalizedMarks(
+			node.marks,
+			findLinkMark(node.marks) ? 0 : -1,
+		);
 		key = `t${JSON.stringify(node.text ?? "")}<${marks}>`;
+	} else if (node.inlineContent) {
+		const children: string[] = [];
+		let linkState: LinkBoundaryState | null = null;
+		for (let i = 0; i < node.childCount; i += 1) {
+			const child = node.child(i);
+			const step = advanceLinkBoundaryState(
+				findLinkMark(child.marks),
+				linkState,
+			);
+			linkState = step.nextState;
+			const marks = serializeNormalizedMarks(child.marks, step.normKey);
+			if (child.isText) {
+				children.push(`t${JSON.stringify(child.text ?? "")}<${marks}>`);
+			} else {
+				children.push(
+					`i${child.type.name}${stableStringify(child.attrs)}<${marks}>`,
+				);
+			}
+		}
+		key = `b${node.type.name}${stableStringify(node.attrs)}[${children.join(",")}]`;
 	} else {
 		const children: string[] = [];
-		node.forEach((child) => {
-			children.push(canonicalKey(child));
-		});
-		key = `n${node.type.name}${stableStringify(node.attrs)}<${marks}>[${children.join(",")}]`;
+		for (let i = 0; i < node.childCount; i += 1) {
+			children.push(canonicalKey(node.child(i)));
+		}
+		key = `n${node.type.name}${stableStringify(node.attrs)}[${children.join(",")}]`;
 	}
 	canonicalKeyCache.set(node, key);
 	return key;

@@ -1960,6 +1960,116 @@ describe("createEditorSourceLinkQuery", () => {
 		).toBe(true);
 		session.dispose();
 	}, 60_000);
+
+	it("resolves post-refdef indented-math tables and multiline paren-math HTML-tag table links through direct and worker round-trip indexes (Round 37 Track A #3, Track B Finding 4)", async () => {
+		const cases: ReadonlyArray<
+			Readonly<{
+				href: string;
+				html0: string;
+				needle: string;
+				prefix: string;
+				source: string;
+			}>
+		> = [
+			{
+				href: "https://example.com",
+				html0: '<p><a href="https://example.com">a</a></p><p>doc</p>',
+				needle: "[a](https://example.com)",
+				prefix: "[a](https://example.com)",
+				source: "[r]: /u\n    $x$\n\n| [a](https://example.com) | b |\n| - | - |",
+			},
+			{
+				href: "/u",
+				html0: '<p><a href="/u">x</a></p><p>doc</p>',
+				needle: "[x](/u)",
+				prefix: "[x](/u)",
+				source: "\\(a\n<div>\nb\\) | [x](/u)\n-|-",
+			},
+			{
+				href: "/a%7Cb",
+				html0: '<p><a href="/a%7Cb">x</a></p><p>doc</p>',
+				needle: "[x](/a\\\\|b)",
+				prefix: "[x](/a\\|b)",
+				source: "\\(a\n<div>\nb\\) | [x](/a\\\\|b)\n-|-",
+			},
+			{
+				href: "https://k.example",
+				html0: '<p><a href="https://k.example">x</a></p><p>doc</p>',
+				needle: "[x][k]",
+				prefix: "[x][k]",
+				source: "\\(a\n<div>\nb\\) | [x][k]\n-|-\n\n[k]: https://k.example",
+			},
+			{
+				href: "https://a.example",
+				html0:
+					'<p><a href="https://a.example">https://a.example</a></p><p>doc</p>',
+				needle: "https://a.example",
+				prefix: "https://a.example",
+				source: "\\(a\n<div>\nb\\) | https://a.example\n-|-",
+			},
+		];
+
+		for (const entry of cases) {
+			const direct = createEditorMarkdownBlockIndex(entry.source);
+			const worker = await buildWorkerRoundTripBlockIndex(entry.source);
+			expect(worker.blocks, entry.source).toEqual(direct.blocks);
+			expect(worker.mathSpans, entry.source).toEqual(direct.mathSpans);
+			expect(worker.linkTableCells, entry.source).toEqual(
+				direct.linkTableCells,
+			);
+			const caret = entry.source.indexOf(entry.needle) + 1;
+			for (const [mode, blockIndex] of [
+				["direct", direct],
+				["worker", worker],
+			] as const) {
+				const current = binding(entry.source, `${mode}:${entry.source}`, {
+					end: caret,
+					start: caret,
+				});
+				const { requestFactory, session } = createHarness({
+					render: async (request) => response(request.markdown, entry.html0),
+				});
+				expect(
+					session.ensure({ binding: current, blockIndex }).status,
+					`${mode}:${entry.source}`,
+				).toBe("pending");
+				await settle();
+				expect(
+					requestFactory.mock.calls[0]?.[0]?.markdown,
+					`${mode}:${entry.source}`,
+				).toBe(`${entry.prefix}\n\n${entry.source}`);
+				expect(session.peek(current), `${mode}:${entry.source}`).toEqual({
+					href: entry.href,
+					status: "ready",
+				});
+				session.dispose();
+			}
+		}
+
+		// Negative control: plain HTML block without math stays `none` in both direct and worker indexes.
+		const plainHtml = "<div>\n[x](/u)\n</div>";
+		const plainDirect = createEditorMarkdownBlockIndex(plainHtml);
+		const plainWorker = await buildWorkerRoundTripBlockIndex(plainHtml);
+		const plainCaret = plainHtml.indexOf("x");
+		for (const [mode, blockIndex] of [
+			["direct", plainDirect],
+			["worker", plainWorker],
+		] as const) {
+			const { render, session } = createHarness();
+			expect(
+				session.ensure({
+					binding: binding(plainHtml, `${mode}:plain-html`, {
+						end: plainCaret,
+						start: plainCaret,
+					}),
+					blockIndex,
+				}),
+				mode,
+			).toEqual({ status: "none" });
+			expect(render).not.toHaveBeenCalled();
+			session.dispose();
+		}
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

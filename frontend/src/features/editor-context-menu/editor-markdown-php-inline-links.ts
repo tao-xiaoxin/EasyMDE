@@ -466,8 +466,14 @@ function collectReconciledTableCellScopes(
 ): void {
 	for (let i = 0; i < reconciledTableBlocks.length; i += 1) {
 		const block = reconciledTableBlocks[i];
-		if (!block) continue;
-		for (let lineIdx = block.lineStart; lineIdx <= block.lineEnd; lineIdx += 1) {
+		if (!block || block.to <= block.from) continue;
+		const startLineIdx = findLineIndexAtOffset(scan.lines, block.from);
+		const endLineIdx = findLineIndexAtOffset(
+			scan.lines,
+			Math.max(block.from, block.to - 1),
+		);
+		if (startLineIdx < 0 || endLineIdx < startLineIdx) continue;
+		for (let lineIdx = startLineIdx; lineIdx <= endLineIdx; lineIdx += 1) {
 			const line = scan.lines[lineIdx];
 			if (!line?.isTableRow || line.inlineBlockId < 0) continue;
 			const cells = getCachedPhpTableRowCells(source, scan, line);

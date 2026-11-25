@@ -325,4 +325,146 @@ describe("editor markdown link table-cell wire", () => {
 			).toBeNull();
 		}
 	});
+
+	it("round-trips multiline paren-math HTML-tag table cells, rejects plain HTML forgeries, and unpacks 100k-line trailing-math docs without scanning trailing math (Round 37 Track A #3 & #4)", () => {
+		for (const source of [
+			"\\(a\n<div>\nb\\) | [x](/u)\n-|-",
+			"\\(a\n<div>\nb\\) | [x](/a\\\\|b)\n-|-",
+			"\\(a\n<div>\nb\\) | [x][k]\n-|-\n\n[k]: https://k.example",
+			"\\(a\n<div>\nb\\) | https://a.example\n-|-",
+			"\\(a\r\n<div>\r\nb\\) | [x](/a\\\\|b)\r\n-|-",
+			"[r]: /u\n    $x$\n\n| [a](https://example.com) | b |\n| - | - |",
+		]) {
+			const index = build(source);
+			const wire = packEditorMarkdownLinkTableCells(index.linkTableCells);
+			if (!wire) throw new Error(`wire-missing:${source}`);
+			const payload: EditorMarkdownBlockIndexPackedData = {
+				...basePackedPayload(source.length),
+				linkTableCellCount: wire.linkTableCellCount,
+				linkTableCells: wire.linkTableCells,
+			};
+			expect(
+				unpackEditorMarkdownLinkTableCells(
+					source,
+					index.linkCandidates ?? [],
+					index.blocks,
+					payload,
+				),
+				source,
+			).toEqual(index.linkTableCells);
+		}
+
+		// Forged table cell inside an HTML block without math stays rejected.
+		const plainHtml = "<div>\n[x](/u)\n</div>";
+		const linkFrom = plainHtml.indexOf("[x]");
+		const linkTo = plainHtml.indexOf(")", linkFrom) + 1;
+		expect(
+			unpackEditorMarkdownLinkTableCells(
+				plainHtml,
+				[
+					{
+						blockFrom: 0,
+						blockTo: plainHtml.length,
+						from: linkFrom,
+						kind: "link",
+						reference: false,
+						to: linkTo,
+					},
+				],
+				[
+					{
+						editable: true,
+						from: 0,
+						kind: "table",
+						lineEnd: 2,
+						lineStart: 0,
+						to: plainHtml.length,
+					},
+				],
+				{
+					...basePackedPayload(plainHtml.length),
+					linkTableCellCount: 1,
+					linkTableCells: Int32Array.from([linkFrom, linkFrom, linkTo]).buffer,
+				},
+			),
+		).toBeNull();
+
+		// Forged table cell whose header opens `$$` that closes 100k lines later stays rejected.
+		const unclosedHeaderDisplayMath = `| [x](/u) | $$a |\n| - | - |\n\n${"z\n".repeat(10_000)}$$`;
+		const forgedFrom = unclosedHeaderDisplayMath.indexOf("[x]");
+		const forgedTo = forgedFrom + "[x](/u)".length;
+		expect(
+			unpackEditorMarkdownLinkTableCells(
+				unclosedHeaderDisplayMath,
+				[
+					{
+						blockFrom: 0,
+						blockTo: 27,
+						from: forgedFrom,
+						kind: "link",
+						reference: false,
+						to: forgedTo,
+					},
+				],
+				[
+					{
+						editable: true,
+						from: 0,
+						kind: "table",
+						lineEnd: 1,
+						lineStart: 0,
+						to: 27,
+					},
+				],
+				{
+					...basePackedPayload(unclosedHeaderDisplayMath.length),
+					linkTableCellCount: 1,
+					linkTableCells: Int32Array.from([forgedFrom, 1, 10]).buffer,
+				},
+			),
+		).toBeNull();
+
+		// Track A #4 perf regression guard: 100k-line trailing math after top table unpacks in bounded prefix time.
+		const trailingMathDoc = `| [x](/u) | c |\n| - | - |\n\n${"p $x$ $y$\n".repeat(100_000)}`;
+		const trailingIdx = build(trailingMathDoc);
+		const trailingWire = packEditorMarkdownLinkTableCells(
+			trailingIdx.linkTableCells,
+		);
+		if (!trailingWire) throw new Error("trailing-wire-missing");
+		const trailingPayload: EditorMarkdownBlockIndexPackedData = {
+			...basePackedPayload(trailingMathDoc.length),
+			linkTableCellCount: trailingWire.linkTableCellCount,
+			linkTableCells: trailingWire.linkTableCells,
+		};
+		const started = performance.now();
+		const unpackedTrailing = unpackEditorMarkdownLinkTableCells(
+			trailingMathDoc,
+			trailingIdx.linkCandidates ?? [],
+			trailingIdx.blocks,
+			trailingPayload,
+		);
+		const elapsedMs = performance.now() - started;
+		expect(unpackedTrailing).toEqual(trailingIdx.linkTableCells);
+		expect(elapsedMs).toBeLessThanOrEqual(150);
+
+		// Multiline `\(...\)` on the header row followed by 100k trailing math lines also unpacks cleanly and fast.
+		const multilineHeaderTrailing = `| [x](/u) | \\(a\n\nb\\) |\n| - | - |\n\n${"p $x$ $y$\n".repeat(100_000)}`;
+		const multiIdx = build(multilineHeaderTrailing);
+		const multiWire = packEditorMarkdownLinkTableCells(multiIdx.linkTableCells);
+		if (!multiWire) throw new Error("multi-wire-missing");
+		const multiPayload: EditorMarkdownBlockIndexPackedData = {
+			...basePackedPayload(multilineHeaderTrailing.length),
+			linkTableCellCount: multiWire.linkTableCellCount,
+			linkTableCells: multiWire.linkTableCells,
+		};
+		const multiStarted = performance.now();
+		const unpackedMulti = unpackEditorMarkdownLinkTableCells(
+			multilineHeaderTrailing,
+			multiIdx.linkCandidates ?? [],
+			multiIdx.blocks,
+			multiPayload,
+		);
+		expect(unpackedMulti).toEqual(multiIdx.linkTableCells);
+		expect(performance.now() - multiStarted).toBeLessThanOrEqual(150);
+	}, 60_000);
 });

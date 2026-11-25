@@ -1,15 +1,21 @@
 import { describe, expect, it } from "vitest";
 
 import {
+	createPhpCommonMarkBlockState,
 	extractPhpCommonMarkReferenceLabel,
+	findFirstMathRangeEndingAfter,
 	hasPhpMathCrossingRangeBoundary,
 	isRangeDroppedByPhpTable,
 	replaceMathRangesWithPhpTokens,
 	replaceSliceMathRangesWithPhpTokens,
+	scanLinesIntoPhpCommonMarkBlockState,
 	scanPhpCommonMarkBlocks,
 	scanPhpCommonMarkReferenceLabels,
+	scanPhpTablePrefixThroughOffset,
 } from "./php-commonmark-block-scan";
 import {
+	maskDisplayMathLength,
+	maskInlineMathLength,
 	maskPhpMarkdownMathForTableScan,
 	scanPhpInlineCodeRanges,
 	scanPhpMarkdownMathRanges,
@@ -541,5 +547,68 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 				() => tableScan,
 			),
 		).toBe("a|EASYMDE_MATH_0_TOKEN");
+	});
+
+	it("exports deduplicated math-mask, range-lookup, and bounded prefix scan helpers with full-doc PHP equivalence (Round 37 Track A #4, Track B F6)", () => {
+		expect(maskDisplayMathLength(5)).toBe("\n\nM\n\n");
+		expect(maskDisplayMathLength(3)).toBe("\n\n\n");
+		expect(maskInlineMathLength(5)).toBe("M___M");
+		expect(maskInlineMathLength(2)).toBe("MM");
+
+		const sortedRanges = [
+			{ block: false, from: 2, to: 5 },
+			{ block: false, from: 8, to: 12 },
+			{ block: true, from: 15, to: 22 },
+		];
+		expect(findFirstMathRangeEndingAfter(sortedRanges, 0)).toBe(0);
+		expect(findFirstMathRangeEndingAfter(sortedRanges, 5)).toBe(1);
+		expect(findFirstMathRangeEndingAfter(sortedRanges, 12)).toBe(2);
+		expect(findFirstMathRangeEndingAfter(sortedRanges, 25)).toBe(3);
+
+		// `scanLinesIntoPhpCommonMarkBlockState` stops at `stopAfterLineEndOffset`.
+		const boundedState = createPhpCommonMarkBlockState(true, false);
+		const multiLineDoc = "| [x](/u) | c |\n| - | - |\n\nline3\nline4\nline5";
+		scanLinesIntoPhpCommonMarkBlockState(boundedState, multiLineDoc, 25);
+		expect(boundedState.lines).toHaveLength(2);
+		expect(boundedState.lines[0]?.isTableRow).toBe(true);
+		expect(boundedState.lines[1]?.isTableDelimiter).toBe(true);
+
+		// Bounded `scanPhpMarkdownMathRanges(..., stopAfterOffset)` matches full-doc scan for every range starting <= limit.
+		for (const src of [
+			"| [x](/u) | \\(a\n\nb\\) |\n| - | - |\n\np $x$ $y$",
+			"| [x](/u) | \\(a\nb\\) \\(c\nd\\) |\n| - | - |\n\np $x$",
+			"| [x](/u) | $$a |\n| - | - |\n\nz\n$$",
+			"| [x](/u) | \\(a |\n| - | - |\n\n$$\n\\)\n$$\n\\)\n$y$",
+			"| [x](/u) | `a |\n| - | - |\n\n$m$\n`",
+			"| [x](/u) | `a` $b$ |\n| - | - |\n\n$c$",
+			"| [x](/u) | \\(a\n<div>\nb\\) |\n| - | - |\n\n$c$",
+		]) {
+			const full = scanPhpMarkdownMathRanges(src).map(({ block, from, to }) => ({
+				block,
+				from,
+				to,
+			}));
+			for (const limit of [5, 15, 25, 35]) {
+				const bounded = scanPhpMarkdownMathRanges(src, undefined, limit).map(
+					({ block, from, to }) => ({ block, from, to }),
+				);
+				for (const exp of full.filter((r) => r.from <= limit)) {
+					expect(bounded, `${src}@${limit}`).toContainEqual(exp);
+				}
+				for (const got of bounded) {
+					expect(full, `${src}@${limit}`).toContainEqual(got);
+				}
+			}
+		}
+
+		// Trailing 100k-line math after a top table skips trailing math completely.
+		const trailingMathDoc = `| [x](/u) | c |\n| - | - |\n\n${"p $x$ $y$\n".repeat(100_000)}`;
+		const started = performance.now();
+		const prefix = scanPhpTablePrefixThroughOffset(trailingMathDoc, 10);
+		const elapsedMs = performance.now() - started;
+		expect(prefix.phpMathRanges).toEqual([]);
+		expect(prefix.lines).toHaveLength(2);
+		expect(prefix.lines[0]?.isTableRow).toBe(true);
+		expect(elapsedMs).toBeLessThanOrEqual(150);
 	});
 });

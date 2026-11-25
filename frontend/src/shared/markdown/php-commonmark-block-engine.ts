@@ -535,11 +535,13 @@ export function advancePhpCommonMarkBlockLine(
 
 /**
  * Feeds every line of `source` into `state` preserving exact UTF-16 line
- * boundaries (`\r\n`, `\n`, `\r`).
+ * boundaries (`\r\n`, `\n`, `\r`), optionally stopping immediately after the
+ * first line whose `lineEnd >= stopAfterLineEndOffset`.
  */
 export function scanLinesIntoPhpCommonMarkBlockState(
 	state: PhpCommonMarkBlockState,
 	source: string,
+	stopAfterLineEndOffset?: number,
 ): void {
 	let lineStart = 0;
 	for (let index = 0; index <= source.length; index += 1) {
@@ -564,6 +566,12 @@ export function scanLinesIntoPhpCommonMarkBlockState(
 			lineEnd,
 			nextLineStart,
 		);
+		if (
+			undefined !== stopAfterLineEndOffset &&
+			lineEnd >= stopAfterLineEndOffset
+		) {
+			break;
+		}
 		lineStart = nextLineStart;
 		if (isCrlf) index += 1;
 	}

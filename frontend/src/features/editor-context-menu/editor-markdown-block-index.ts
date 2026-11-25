@@ -17,6 +17,7 @@ import {
 	type PhpMarkdownMathRange,
 	type ScannedCodeRange,
 	type ScannedMarkdownBlocks,
+	scanPhpCommonMarkBlockCodeRanges,
 	scanPhpCommonMarkBlocks,
 	scanPhpCommonMarkReferenceLabels,
 } from "../../shared/markdown/php-commonmark-block-scan";
@@ -34,7 +35,10 @@ import {
 	type ParserLinkNode,
 	projectedLinkNodes,
 } from "./editor-markdown-link-preparation";
-import { reconcilePhpTableUnavailableBlocks } from "./editor-markdown-php-block-reconcile";
+import {
+	reconcilePhpNonCodeBlocks,
+	reconcilePhpTableUnavailableBlocks,
+} from "./editor-markdown-php-block-reconcile";
 import {
 	collectLocalPhpBareAutolinkBlockLinks,
 	collectPhpDisplayMathBrokenBlockLinks,
@@ -85,6 +89,7 @@ type ParserImageNode = Readonly<{
 
 type ParserSnapshot = Readonly<{
 	blocks: ReadonlyArray<EditorMarkdownSourceBlock>;
+	hasIndentedCodeBlock: boolean;
 	hasLinkSyntax: boolean;
 	imageNodes: ReadonlyArray<ParserImageNode>;
 	syntaxNodes: ReadonlyArray<MarkdownSyntaxNode>;
@@ -265,8 +270,10 @@ function parserSnapshot(
 		}>
 	> = [];
 	const unavailableRanges: SourceRange[] = [];
+	let hasIndentedCodeBlock = false;
 	if (topLevel.firstChild()) {
 		do {
+			if ("CodeBlock" === topLevel.name) hasIndentedCodeBlock = true;
 			const kind = nodeKind(topLevel.name);
 			if ("unavailable" === kind) {
 				unavailableRanges.push({ from: topLevel.from, to: topLevel.to });
@@ -323,6 +330,7 @@ function parserSnapshot(
 	});
 	return {
 		blocks,
+		hasIndentedCodeBlock,
 		hasLinkSyntax,
 		imageNodes,
 		syntaxNodes,
@@ -663,17 +671,18 @@ export function createEditorMarkdownBlockIndex(
 	const starts = markdownLineStarts(source);
 	const projection = projectNewlines(source);
 	const parsed = parserSnapshot(source, projection);
-	const phpMathRanges = scanPhpMarkdownMathRanges(source);
-	const originalUnavailableRanges: ScannedCodeRange[] =
-		parsed.unavailableRanges.map((range) => {
-			const original = originalRange(projection, range);
-			return { end: original.to, start: original.from };
-		});
-	const ranges =
-		originalUnavailableRanges.length > 0
-			? scanPhpMarkdownMathRanges(source, originalUnavailableRanges)
-			: phpMathRanges;
-	const lezerBlocks = overlayMath(source, parsed.blocks, ranges, starts, []);
+	const phpBlockCodeRanges = parsed.hasIndentedCodeBlock
+		? scanPhpCommonMarkBlockCodeRanges(source)
+		: undefined;
+	const phpMathRanges = scanPhpMarkdownMathRanges(
+		source,
+		undefined,
+		undefined,
+		phpBlockCodeRanges,
+	);
+	const codeReconciledBlocks = phpBlockCodeRanges
+		? reconcilePhpNonCodeBlocks(source, parsed.blocks, phpBlockCodeRanges, starts)
+		: parsed.blocks;
 	const hasTableImageCandidate = source.includes("|") && source.includes("![");
 	const hasEscapedPipe = source.includes("\\|");
 	const hasAutolinkTrigger = hasPotentialGfmAutolinkTrigger(source);
@@ -687,14 +696,38 @@ export function createEditorMarkdownBlockIndex(
 			hasAutolinkTrigger)
 			? scanPhpCommonMarkBlocks(source, phpMathRanges)
 			: null;
-	const { blocks, reconciledTableBlocks } = phpBlockScan
+	const { blocks: tableReconciledBlocks, reconciledTableBlocks } = phpBlockScan
 		? reconcilePhpTableUnavailableBlocks(
 				source,
-				lezerBlocks,
+				codeReconciledBlocks,
 				phpBlockScan,
 				phpMathRanges,
+				starts,
 			)
-		: { blocks: lezerBlocks, reconciledTableBlocks: [] };
+		: { blocks: codeReconciledBlocks, reconciledTableBlocks: [] };
+	const remainingUnavailableRanges: ScannedCodeRange[] = [];
+	for (let i = 0; i < tableReconciledBlocks.length; i += 1) {
+		const block = tableReconciledBlocks[i];
+		if (block && "unavailable" === block.kind) {
+			remainingUnavailableRanges.push({ end: block.to, start: block.from });
+		}
+	}
+	const ranges =
+		remainingUnavailableRanges.length > 0 && phpMathRanges.length > 0
+			? scanPhpMarkdownMathRanges(
+					source,
+					remainingUnavailableRanges,
+					undefined,
+					phpBlockCodeRanges,
+				)
+			: phpMathRanges;
+	const blocks = overlayMath(
+		source,
+		tableReconciledBlocks,
+		ranges,
+		starts,
+		[],
+	);
 	const sortedLezerImages = [...parsed.imageNodes].sort(
 		(left, right) => left.from - right.from || right.to - left.to,
 	);

@@ -931,6 +931,133 @@ describe("createBrowserEditorBlockIndexWorker", () => {
 		}
 	});
 
+	it("accepts worker round-trips for post-refdef indented math and multiline paren-math HTML-tag tables while still rejecting tampered cross-block records (Round 37 Track A #3, Track B Finding 4)", async () => {
+		const runWithPayload = async (source: string, payload: unknown) => {
+			const adapter = createAdapter();
+			const pending = adapter.build(
+				{ generation: 1, revision: 1, source },
+				signal(),
+			);
+			const worker = await firstWorker();
+			worker.emit({
+				data: payload as EditorMarkdownBlockIndexPackedData,
+				generation: 1,
+				revision: 1,
+				type: "result",
+			});
+			try {
+				return await pending;
+			} finally {
+				adapter.dispose();
+			}
+		};
+
+		const pack = (source: string) => {
+			const messages: EditorBlockIndexWorkerResponse[] = [];
+			createEditorBlockIndexWorkerHandler((message) => messages.push(message))({
+				data: {
+					generation: 1,
+					referenceLabelCaseFoldProfile: 14,
+					revision: 1,
+					source,
+					type: "build",
+				},
+			});
+			const packed = messages[0];
+			if ("result" !== packed?.type) throw new Error(`packed-missing:${source}`);
+			return packed.data;
+		};
+
+		// Track B Finding 4: post-refdef 4-space/tab indented inline math + genuine code negative controls.
+		for (const source of [
+			"[r]: /u\n    $x$\n\n| [a](https://example.com) | b |\n| - | - |",
+			"[r]: /u\n    $x$",
+			"[r]: /u\n\t$x$",
+			"[r]: /u\n    \\(x\\)",
+			"[r]: /u\n    \\(x\n\ny\\)",
+			"[r]: /u\n    $x$\n\n    $y$",
+			"\n\n    $x$",
+			"[r]: /u\n\n    $x$",
+		]) {
+			const direct = createEditorMarkdownBlockIndex(source, {
+				referenceLabelCaseFoldProfile: 14,
+			});
+			const decoded = await runWithPayload(source, pack(source));
+			expect(decoded.blocks, source).toEqual(direct.blocks);
+			expect(decoded.mathSpans, source).toEqual(direct.mathSpans);
+			expect(decoded.linkCandidates, source).toEqual(direct.linkCandidates);
+			if (direct.linkTableCells && direct.linkTableCells.size > 0) {
+				expect(decoded.linkTableCells, source).toEqual(direct.linkTableCells);
+			}
+		}
+
+		// Track A #3: multiline `\(...\)` containing HTML block tags inside PHP tables.
+		for (const source of [
+			"\\(a\n<div>\nb\\) | [x](/u)\n-|-",
+			"\\(a\n<div>\nb\\) | [x](/a\\\\|b)\n-|-",
+			"\\(a\n<div>\nb\\) | [x][k]\n-|-\n\n[k]: https://k.example",
+			"\\(a\n<div>\nb\\) | https://a.example\n-|-",
+			"\\(a\n<div>\nb\\) | [x](/u)\n-|-\n<div>\n[bad](/no)\n</div>",
+			"<div>\n[x](/u)\n</div>",
+		]) {
+			const direct = createEditorMarkdownBlockIndex(source, {
+				referenceLabelCaseFoldProfile: 14,
+			});
+			const decoded = await runWithPayload(source, pack(source));
+			expect(decoded.blocks, source).toEqual(direct.blocks);
+			expect(decoded.mathSpans, source).toEqual(direct.mathSpans);
+			expect(decoded.linkCandidates, source).toEqual(direct.linkCandidates);
+			if (direct.linkTableCells && direct.linkTableCells.size > 0) {
+				expect(decoded.linkTableCells, source).toEqual(direct.linkTableCells);
+			}
+		}
+
+		// Security negative controls: tampered math inside genuine indented code or unavailable HTML block stays rejected.
+		const genuineIndented = "[r]: /u\n\n    $x$";
+		const mathStart = genuineIndented.indexOf("$");
+		await expect(
+			runWithPayload(
+				genuineIndented,
+				packedFields(
+					[0, 7, 0, 0, 7, 0, 9, genuineIndented.length, 2, 2, 0, 1],
+					[mathStart, mathStart + 3, mathStart + 1, mathStart + 2, 0],
+					genuineIndented.length,
+				),
+			),
+		).rejects.toThrow("editor-block-index-result-invalid");
+
+		const htmlNoTable = "\\(a\n<div>\nb\\) [x](/u)";
+		await expect(
+			runWithPayload(
+				htmlNoTable,
+				packedFields(
+					[0, 3, 0, 0, 4, 1, 4, htmlNoTable.length, 1, 2, 7, 0],
+					[0, 13, 2, 11, 0],
+					htmlNoTable.length,
+				),
+			),
+		).rejects.toThrow("editor-block-index-result-invalid");
+
+		const plainHtml = "<div>\n[x](/u)\n</div>";
+		const fakeLinkFrom = plainHtml.indexOf("[x]");
+		const fakeLinkTo = plainHtml.indexOf(")", fakeLinkFrom) + 1;
+		await expect(
+			runWithPayload(plainHtml, {
+				...packedFields(
+					[0, plainHtml.length, 0, 2, 6, 1],
+					[],
+					plainHtml.length,
+					[],
+					[0, 0, 0],
+					[fakeLinkFrom, fakeLinkTo, 0, plainHtml.length, 0, 0],
+				),
+				linkTableCellCount: 1,
+				linkTableCells: Int32Array.from([fakeLinkFrom, fakeLinkFrom, fakeLinkTo])
+					.buffer,
+			}),
+		).rejects.toThrow("editor-block-index-result-invalid");
+	});
+
 	it("rejects an oversized result with a distinct bounded-result error", async () => {
 		const adapter = createAdapter();
 		const pending = adapter.build(

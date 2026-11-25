@@ -1,16 +1,15 @@
 import {
-	advancePhpCommonMarkBlockLine,
 	collectTableRowCells,
-	createPhpCommonMarkBlockState,
+	findFirstMathRangeEndingAfter,
 	findLineAtOffset,
 	findTableRowCellInCells,
-	type ScannedMarkdownLine,
+	scanPhpTablePrefixThroughOffset,
 	type TableRowCellRange,
 	unescapeTableCellPipes,
 } from "../../shared/markdown/php-commonmark-block-scan";
 import {
-	maskPhpMarkdownMathForTableScan,
-	scanPhpMarkdownMathRanges,
+	maskDisplayMathLength,
+	maskInlineMathLength,
 } from "../../shared/markdown/php-markdown-math-mask";
 
 export type ReferenceLabelCaseFoldProfile = 11 | 13 | 14 | 16 | 17 | "unsupported";
@@ -412,33 +411,6 @@ export function findEditorBlockIndexMathSpanEndBlockIndex(
 	return -1;
 }
 
-function maskDisplayMathLength(length: number): string {
-	return length >= 4
-		? `\n\n${"M".repeat(length - 4)}\n\n`
-		: "\n".repeat(length);
-}
-
-function maskInlineMathLength(length: number): string {
-	return length >= 3 ? `M${"_".repeat(length - 2)}M` : "M".repeat(length);
-}
-
-function firstMathSpanEndingAfter(
-	mathSpans: ReadonlyArray<EditorMarkdownTableCellMathRange>,
-	offset: number,
-): number {
-	let low = 0;
-	let high = mathSpans.length;
-	while (low < high) {
-		const middle = (low + high) >> 1;
-		if ((mathSpans[middle]?.to ?? 0) <= offset) {
-			low = middle + 1;
-		} else {
-			high = middle;
-		}
-	}
-	return low;
-}
-
 function maskSliceMathSpans(
 	source: string,
 	sliceFrom: number,
@@ -519,51 +491,6 @@ function unescapeSlicePipesOutsideMath(
 }
 
 /**
- * Scans `maskedSource` through the line containing `maxOffset` plus its
- * immediately following line (needed to finalize a GFM table header row when
- * `maxOffset` falls on the header line). No later line can mutate an earlier
- * table row's `isTableRow` or `tableColumnCount`.
- */
-function scanPhpLinesThroughOffset(
-	maskedSource: string,
-	maxOffset: number,
-): ReadonlyArray<ScannedMarkdownLine> {
-	const state = createPhpCommonMarkBlockState(true, false);
-	let lineStart = 0;
-	let stopAfterNextLine = false;
-	for (let index = 0; index <= maskedSource.length; index += 1) {
-		if (
-			index !== maskedSource.length &&
-			"\n" !== maskedSource[index] &&
-			"\r" !== maskedSource[index]
-		) {
-			continue;
-		}
-		const lineEnd = index;
-		const isCrlf =
-			index < maskedSource.length &&
-			"\r" === maskedSource[index] &&
-			"\n" === maskedSource[index + 1];
-		const nextLineStart =
-			index === maskedSource.length
-				? maskedSource.length
-				: index + (isCrlf ? 2 : 1);
-		advancePhpCommonMarkBlockLine(
-			state,
-			maskedSource.slice(lineStart, lineEnd),
-			lineStart,
-			lineEnd,
-			nextLineStart,
-		);
-		if (stopAfterNextLine) break;
-		if (lineEnd >= maxOffset) stopAfterNextLine = true;
-		lineStart = nextLineStart;
-		if (isCrlf) index += 1;
-	}
-	return state.lines;
-}
-
-/**
  * Canonical derivation of PHP GFM table-cell link context from the
  * authoritative `source` and PHP-extracted math ranges. Shared by direct block
  * indexing and worker unpacking so both paths produce byte-identical contexts
@@ -583,7 +510,7 @@ export function deriveEditorMarkdownLinkTableCellContext(
 		undefined !== knownMathStartIndex
 			? knownMathStartIndex
 			: mathSpans.length > 0
-				? firstMathSpanEndingAfter(mathSpans, cellStart)
+				? findFirstMathRangeEndingAfter(mathSpans, cellStart)
 				: 0;
 	let maskedCellText: string | undefined;
 	if (
@@ -617,7 +544,7 @@ export function deriveEditorMarkdownLinkTableCellContext(
 	const candidateMathStartIndex =
 		mathStartIndex < mathSpans.length &&
 		(mathSpans[mathStartIndex]?.to ?? 0) <= candidateFrom
-			? firstMathSpanEndingAfter(mathSpans, candidateFrom)
+			? findFirstMathRangeEndingAfter(mathSpans, candidateFrom)
 			: mathStartIndex;
 	const unescapedSource = unescapeSlicePipesOutsideMath(
 		source,
@@ -774,12 +701,11 @@ export function unpackEditorMarkdownLinkTableCells(
 
 	if (!source.includes("|")) return null;
 
-	const phpMathRanges = scanPhpMarkdownMathRanges(source);
-	const maskedSource =
-		phpMathRanges.length > 0
-			? maskPhpMarkdownMathForTableScan(source, phpMathRanges)
-			: source;
-	const scannedLines = scanPhpLinesThroughOffset(maskedSource, maxCellEnd);
+	const {
+		lines: scannedLines,
+		maskedSource,
+		phpMathRanges,
+	} = scanPhpTablePrefixThroughOffset(source, maxCellEnd);
 	const rowCellsCache = new Map<number, ReadonlyArray<TableRowCellRange>>();
 	const cachedMaskedCell = new Map<string, string | undefined>();
 	const cells = new Map<number, EditorMarkdownLinkTableCellContext>();

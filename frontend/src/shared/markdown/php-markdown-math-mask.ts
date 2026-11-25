@@ -45,13 +45,13 @@ type DelimiterScanFlags = Readonly<{
 	hasParenPair: boolean;
 }>;
 
-function maskDisplayMathLength(length: number): string {
+export function maskDisplayMathLength(length: number): string {
 	return length >= 4
 		? `\n\n${"M".repeat(length - 4)}\n\n`
 		: "\n".repeat(length);
 }
 
-function maskInlineMathLength(length: number): string {
+export function maskInlineMathLength(length: number): string {
 	return length >= 3 ? `M${"_".repeat(length - 2)}M` : "M".repeat(length);
 }
 
@@ -104,20 +104,24 @@ function collectBacktickRuns(
 	return runs;
 }
 
-/**
- * Scans inline backtick code spans outside `blockCodeRanges` in strictly O(N)
- * time, mirroring PHP `MarkdownCodeRegionScanner::inline_code_ranges()`
- * (including escaped leading backticks and segment boundaries at block code).
- */
-export function scanPhpInlineCodeRanges(
+function scanInlineCodeRangesInternal(
 	source: string,
-	blockCodeRanges?: ReadonlyArray<ScannedCodeRange>,
-): ScannedCodeRange[] {
-	if (!source.includes("`")) return [];
-	const protectedRanges =
-		blockCodeRanges ?? scanPhpCommonMarkBlockCodeRanges(source);
-	const runs = collectBacktickRuns(source, protectedRanges);
-	if (runs.length < 2) return [];
+	blockCodeRanges: ReadonlyArray<ScannedCodeRange>,
+): Readonly<{
+	hasTrailingUnmatchedBacktick: boolean;
+	ranges: ScannedCodeRange[];
+}> {
+	if (!source.includes("`")) {
+		return { hasTrailingUnmatchedBacktick: false, ranges: [] };
+	}
+	const runs = collectBacktickRuns(source, blockCodeRanges);
+	if (0 === runs.length) {
+		return { hasTrailingUnmatchedBacktick: false, ranges: [] };
+	}
+	const lastBlockEnd =
+		blockCodeRanges.length > 0
+			? (blockCodeRanges[blockCodeRanges.length - 1]?.end ?? 0)
+			: 0;
 
 	const nextMatch = new Int32Array(runs.length);
 	const nextByLength = new Map<number, number>();
@@ -136,12 +140,17 @@ export function scanPhpInlineCodeRanges(
 	}
 
 	const ranges: ScannedCodeRange[] = [];
+	let hasTrailingUnmatchedBacktick = false;
 	let runIndex = 0;
 	while (runIndex < runs.length) {
 		const run = runs[runIndex];
 		if (!run) break;
 		const closeIndex = nextMatch[runIndex] ?? -1;
 		if (closeIndex < 0) {
+			const openLength = run.escaped ? run.length - 1 : run.length;
+			if (openLength > 0 && run.from >= lastBlockEnd) {
+				hasTrailingUnmatchedBacktick = true;
+			}
 			runIndex += 1;
 			continue;
 		}
@@ -152,7 +161,22 @@ export function scanPhpInlineCodeRanges(
 		ranges.push({ end: close.to, start });
 		runIndex = closeIndex + 1;
 	}
-	return ranges;
+	return { hasTrailingUnmatchedBacktick, ranges };
+}
+
+/**
+ * Scans inline backtick code spans outside `blockCodeRanges` in strictly O(N)
+ * time, mirroring PHP `MarkdownCodeRegionScanner::inline_code_ranges()`
+ * (including escaped leading backticks and segment boundaries at block code).
+ */
+export function scanPhpInlineCodeRanges(
+	source: string,
+	blockCodeRanges?: ReadonlyArray<ScannedCodeRange>,
+): ScannedCodeRange[] {
+	if (!source.includes("`")) return [];
+	const protectedRanges =
+		blockCodeRanges ?? scanPhpCommonMarkBlockCodeRanges(source);
+	return scanInlineCodeRangesInternal(source, protectedRanges).ranges;
 }
 
 function mergeCodeRanges(
@@ -177,6 +201,11 @@ function mergeCodeRanges(
 	return merged;
 }
 
+type DelimitedMathPassResult = Readonly<{
+	text: string;
+	unclosedPos: number;
+}>;
+
 function scanDelimitedMathPass(
 	text: string,
 	segmentOffset: number,
@@ -186,9 +215,9 @@ function scanDelimitedMathPass(
 	ranges: PhpMarkdownMathRange[],
 	buildMasked: boolean,
 	tokenCounter: { value: number },
-): string {
+): DelimitedMathPassResult {
 	let pos = text.indexOf(openDelim);
-	if (pos < 0) return text;
+	if (pos < 0) return { text, unclosedPos: -1 };
 
 	const openLen = openDelim.length;
 	const closeLen = closeDelim.length;
@@ -219,9 +248,12 @@ function scanDelimitedMathPass(
 		cursor = to;
 		pos = text.indexOf(openDelim, cursor);
 	}
-	if (!parts) return text;
-	if (cursor < text.length) parts.push(text.slice(cursor));
-	return parts.join("");
+	const resultText = parts
+		? cursor < text.length
+			? `${parts.join("")}${text.slice(cursor)}`
+			: parts.join("")
+		: text;
+	return { text: resultText, unclosedPos: pos };
 }
 
 function scanInlineDollarMathPass(
@@ -290,7 +322,7 @@ function scanSegmentMathRanges(
 			ranges,
 			flags.hasBracketPair || flags.hasParenPair || flags.hasDollarPair,
 			tokenCounter,
-		);
+		).text;
 	}
 	if (flags.hasBracketPair && current.includes("\\[")) {
 		current = scanDelimitedMathPass(
@@ -302,7 +334,7 @@ function scanSegmentMathRanges(
 			ranges,
 			flags.hasParenPair || flags.hasDollarPair,
 			tokenCounter,
-		);
+		).text;
 	}
 	if (flags.hasParenPair && current.includes("\\(")) {
 		current = scanDelimitedMathPass(
@@ -314,11 +346,174 @@ function scanSegmentMathRanges(
 			ranges,
 			flags.hasDollarPair,
 			tokenCounter,
-		);
+		).text;
 	}
 	if (flags.hasDollarPair && current.includes("$")) {
 		scanInlineDollarMathPass(current, segmentOffset, ranges, tokenCounter);
 	}
+}
+
+function lineEndAtLf(source: string, offset: number): number {
+	let pos = Math.max(0, Math.min(source.length, offset));
+	while (pos < source.length && "\n" !== source[pos]) pos += 1;
+	return pos;
+}
+
+function scanTrailingBoundedSegmentMathRanges(
+	source: string,
+	segment: string,
+	segmentOffset: number,
+	ranges: PhpMarkdownMathRange[],
+	tokenCounter: { value: number },
+): number {
+	let current = segment;
+	const hasDollar = current.includes("$");
+	const hasBracket = current.includes("\\[");
+	const hasParen = current.includes("\\(");
+	if (!hasDollar && !hasBracket && !hasParen) return -1;
+
+	const passes: ReadonlyArray<
+		readonly [boolean, string, string, boolean, boolean]
+	> = [
+		[hasDollar && current.includes("$$"), "$$", "$$", true, true],
+		[hasBracket, "\\[", "\\]", true, true],
+		[hasParen, "\\(", "\\)", false, hasDollar],
+	];
+	const segmentEnd = segmentOffset + segment.length;
+	for (let i = 0; i < passes.length; i += 1) {
+		const entry = passes[i];
+		if (!entry?.[0]) continue;
+		const [, openDelim, closeDelim, isDisplay, buildMasked] = entry;
+		const pass = scanDelimitedMathPass(
+			current,
+			segmentOffset,
+			openDelim,
+			closeDelim,
+			isDisplay,
+			ranges,
+			buildMasked,
+			tokenCounter,
+		);
+		if (pass.unclosedPos >= 0) {
+			const searchFrom = Math.max(
+				segmentOffset + pass.unclosedPos + openDelim.length + 1,
+				segmentEnd,
+			);
+			const closeGlobal = source.indexOf(closeDelim, searchFrom);
+			if (closeGlobal >= 0) return closeGlobal + closeDelim.length;
+		}
+		current = pass.text;
+	}
+	if (hasDollar) {
+		const firstDollar = current.indexOf("$");
+		if (firstDollar >= 0 && current.indexOf("$", firstDollar + 1) >= 0) {
+			scanInlineDollarMathPass(current, segmentOffset, ranges, tokenCounter);
+		}
+	}
+	return -1;
+}
+
+function collectBoundedExtraProtectedRanges(
+	extraProtectedRanges: ReadonlyArray<ScannedCodeRange> | undefined,
+	bound: number,
+): ScannedCodeRange[] {
+	if (!extraProtectedRanges || 0 === extraProtectedRanges.length) return [];
+	const bounded: ScannedCodeRange[] = [];
+	for (let i = 0; i < extraProtectedRanges.length; i += 1) {
+		const range = extraProtectedRanges[i];
+		if (!range || range.start >= bound) continue;
+		const end = Math.min(bound, range.end);
+		if (end > range.start) bounded.push({ end, start: range.start });
+	}
+	return bounded;
+}
+
+function scanBoundedPhpMarkdownMathRanges(
+	source: string,
+	extraProtectedRanges: ReadonlyArray<ScannedCodeRange> | undefined,
+	stopAfterOffset: number,
+): PhpMarkdownMathRange[] | null {
+	const MAX_BOUNDED_EXPANSIONS = 4;
+	let bound = lineEndAtLf(source, stopAfterOffset);
+
+	for (let attempt = 0; attempt < MAX_BOUNDED_EXPANSIONS; attempt += 1) {
+		if (bound >= source.length) return null;
+		const prefix = source.slice(0, bound);
+		if (
+			!prefix.includes("$") &&
+			!prefix.includes("\\[") &&
+			!prefix.includes("\\(")
+		) {
+			return [];
+		}
+
+		const blockCodeRanges = scanPhpCommonMarkBlockCodeRanges(prefix);
+		const inlineScan = scanInlineCodeRangesInternal(prefix, blockCodeRanges);
+		if (
+			inlineScan.hasTrailingUnmatchedBacktick &&
+			source.indexOf("`", bound) >= 0
+		) {
+			return null;
+		}
+		const baseCodeRanges = mergeCodeRanges(blockCodeRanges, inlineScan.ranges);
+		const boundedExtra = collectBoundedExtraProtectedRanges(
+			extraProtectedRanges,
+			bound,
+		);
+		const codeRanges =
+			boundedExtra.length > 0
+				? mergeCodeRanges(baseCodeRanges, boundedExtra)
+				: baseCodeRanges;
+
+		const ranges: PhpMarkdownMathRange[] = [];
+		const tokenCounter = { value: 0 };
+		const prefixFlags: DelimiterScanFlags = {
+			hasBracketPair: prefix.includes("\\[") && prefix.includes("\\]"),
+			hasDollar: prefix.includes("$"),
+			hasDollarPair:
+				prefix.includes("$") &&
+				prefix.indexOf("$", prefix.indexOf("$") + 1) >= 0,
+			hasDoubleDollar: prefix.includes("$$"),
+			hasParenPair: prefix.includes("\\(") && prefix.includes("\\)"),
+		};
+
+		let cursor = 0;
+		for (let i = 0; i < codeRanges.length; i += 1) {
+			const codeRange = codeRanges[i];
+			if (!codeRange) continue;
+			if (codeRange.start > cursor) {
+				scanSegmentMathRanges(
+					prefix.slice(cursor, codeRange.start),
+					cursor,
+					prefixFlags,
+					ranges,
+					tokenCounter,
+				);
+			}
+			if (codeRange.end > cursor) cursor = codeRange.end;
+		}
+
+		if (cursor < bound) {
+			const neededEnd = scanTrailingBoundedSegmentMathRanges(
+				source,
+				prefix.slice(cursor),
+				cursor,
+				ranges,
+				tokenCounter,
+			);
+			if (neededEnd >= 0) {
+				const nextBound = lineEndAtLf(source, neededEnd);
+				if (nextBound <= bound) return null;
+				bound = nextBound;
+				continue;
+			}
+		}
+
+		const collapsed = collapseNestedMathRanges(ranges);
+		return collapsed.map(({ block, from, to }) => ({ block, from, to }));
+	}
+
+	return null;
 }
 
 function collapseNestedMathRanges(
@@ -344,11 +539,30 @@ function collapseNestedMathRanges(
  * across all 4 sequential passes (`$$...$$`, `\[...\]`, `\(...\)`,
  * `(?<!\\)\$([^\n$]+?)(?<!\\)\$`) outside CommonMark block and inline code
  * regions. Returns sorted, non-overlapping UTF-16 ranges.
+ *
+ * When `stopAfterOffset` is provided, scanning stops once `stopAfterOffset` is
+ * passed and every math or inline-code delimiter opened at `<= stopAfterOffset`
+ * is closed (or proven unclosed), returning exact `{ block, from, to }` ranges
+ * overlapping `[0, stopAfterOffset]` without scanning trailing document math.
  */
 export function scanPhpMarkdownMathRanges(
 	source: string,
 	extraProtectedRanges?: ReadonlyArray<ScannedCodeRange>,
+	stopAfterOffset?: number,
+	precomputedBlockCodeRanges?: ReadonlyArray<ScannedCodeRange>,
 ): PhpMarkdownMathRange[] {
+	if (
+		undefined !== stopAfterOffset &&
+		stopAfterOffset < source.length
+	) {
+		const bounded = scanBoundedPhpMarkdownMathRanges(
+			source,
+			extraProtectedRanges,
+			stopAfterOffset,
+		);
+		if (null !== bounded) return bounded;
+	}
+
 	const hasDollar = source.includes("$");
 	const hasBracket = source.includes("\\[");
 	const hasParen = source.includes("\\(");
@@ -376,7 +590,8 @@ export function scanPhpMarkdownMathRanges(
 		hasDoubleDollar,
 		hasParenPair,
 	};
-	const blockCodeRanges = scanPhpCommonMarkBlockCodeRanges(source);
+	const blockCodeRanges =
+		precomputedBlockCodeRanges ?? scanPhpCommonMarkBlockCodeRanges(source);
 	const inlineCodeRanges = scanPhpInlineCodeRanges(source, blockCodeRanges);
 	const baseCodeRanges = mergeCodeRanges(blockCodeRanges, inlineCodeRanges);
 	const codeRanges =

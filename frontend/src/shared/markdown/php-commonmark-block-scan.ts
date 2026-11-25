@@ -6,6 +6,7 @@ import {
 	type ScannedCodeRange,
 	type ScannedMarkdownLine,
 	scanLinesIntoPhpCommonMarkBlockState,
+	scanPhpCommonMarkBlockCodeRanges,
 } from "./php-commonmark-block-engine";
 import {
 	asciiLowerCase,
@@ -52,6 +53,8 @@ export {
 	type PhpMarkdownMathRange,
 	type ScannedCodeRange,
 	type ScannedMarkdownLine,
+	scanLinesIntoPhpCommonMarkBlockState,
+	scanPhpCommonMarkBlockCodeRanges,
 	type TableRowCellRange,
 	unescapeTableCellPipes,
 };
@@ -112,8 +115,90 @@ export function scanPhpCommonMarkBlocks(
 	};
 }
 
-function findFirstMathRangeEndingAfter(
-	mathRanges: ReadonlyArray<PhpMarkdownMathRange>,
+function lineEndAt(source: string, offset: number): number {
+	let pos = Math.max(0, Math.min(source.length, offset));
+	while (pos < source.length && "\n" !== source[pos] && "\r" !== source[pos]) {
+		pos += 1;
+	}
+	return pos;
+}
+
+function nextLineEndAfter(source: string, lineEnd: number): number {
+	if (lineEnd >= source.length) return source.length;
+	const nextStart =
+		"\r" === source[lineEnd] && "\n" === source[lineEnd + 1]
+			? lineEnd + 2
+			: lineEnd + 1;
+	return lineEndAt(source, nextStart);
+}
+
+export type ScannedPhpTablePrefix = Readonly<{
+	lines: ReadonlyArray<ScannedMarkdownLine>;
+	maskedSource: string;
+	phpMathRanges: ReadonlyArray<PhpMarkdownMathRange>;
+}>;
+
+/**
+ * Scans only the PHP math ranges and masked CommonMark lines required to
+ * verify GFM table-row and table-cell boundaries through `maxOffset` (covering
+ * any multiline inline math extending `maxOffset`'s logical row plus its
+ * immediately following delimiter row), avoiding full-document math and block
+ * scans over trailing document content.
+ */
+export function scanPhpTablePrefixThroughOffset(
+	source: string,
+	maxOffset: number,
+): ScannedPhpTablePrefix {
+	const MAX_PREFIX_RETRIES = 4;
+	let logicalRowEnd = lineEndAt(source, maxOffset);
+	let scanLimit = nextLineEndAfter(source, logicalRowEnd);
+	let phpMathRanges: ReadonlyArray<PhpMarkdownMathRange> = [];
+
+	for (let attempt = 0; attempt < MAX_PREFIX_RETRIES; attempt += 1) {
+		phpMathRanges =
+			scanLimit < source.length
+				? scanPhpMarkdownMathRanges(source, undefined, scanLimit)
+				: scanPhpMarkdownMathRanges(source);
+		if (scanLimit >= source.length || 0 === phpMathRanges.length) break;
+
+		let extendedRowEnd = logicalRowEnd;
+		for (
+			let i = findFirstMathRangeEndingAfter(phpMathRanges, extendedRowEnd);
+			i < phpMathRanges.length;
+			i += 1
+		) {
+			const range = phpMathRanges[i];
+			if (!range || range.from >= extendedRowEnd) break;
+			if (!range.block && range.to > extendedRowEnd) {
+				extendedRowEnd = lineEndAt(source, range.to);
+			}
+		}
+		const neededLimit = nextLineEndAfter(source, extendedRowEnd);
+		if (neededLimit <= scanLimit) break;
+		logicalRowEnd = extendedRowEnd;
+		scanLimit =
+			attempt + 1 >= MAX_PREFIX_RETRIES ? source.length : neededLimit;
+	}
+
+	const lastMathEnd =
+		phpMathRanges.length > 0
+			? (phpMathRanges[phpMathRanges.length - 1]?.to ?? 0)
+			: 0;
+	const prefixEnd = Math.min(source.length, Math.max(scanLimit, lastMathEnd));
+	const maskedSource =
+		phpMathRanges.length > 0
+			? maskPhpMarkdownMathForTableScan(
+					prefixEnd < source.length ? source.slice(0, prefixEnd) : source,
+					phpMathRanges,
+				)
+			: source;
+	const state = createPhpCommonMarkBlockState(true, false);
+	scanLinesIntoPhpCommonMarkBlockState(state, maskedSource, scanLimit);
+	return { lines: state.lines, maskedSource, phpMathRanges };
+}
+
+export function findFirstMathRangeEndingAfter(
+	mathRanges: ReadonlyArray<Readonly<{ to: number }>>,
 	offset: number,
 ): number {
 	let low = 0;

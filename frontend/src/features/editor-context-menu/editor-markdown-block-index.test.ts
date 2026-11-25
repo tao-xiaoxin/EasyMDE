@@ -3120,6 +3120,158 @@ describe("Round 35 exact PHP table reconciliation and PHP-owned reconciled links
 			expect(cell?.maskedCellText, source).not.toContain("\n");
 		}
 	});
+
+	it("reconciles post-refdef 4-space/tab indented inline math to paragraph while preserving genuine indented code blocks (Round 37 Track B Finding 4)", () => {
+		for (const source of [
+			"[r]: /u\n    $x$\n\n| [a](https://example.com) | b |\n| - | - |",
+			"[r]: /u\n    $x$",
+			"[r]: /u\n\t$x$",
+			"[r]: /u\n    \\(x\\)",
+			"[r]: /u\n    \\(x\n\ny\\)",
+		]) {
+			const idx = createEditorMarkdownBlockIndex(source);
+			expect(
+				idx.blocks.some((block) => "code" === block.kind),
+				source,
+			).toBe(false);
+			expect(idx.blocks[1], source).toMatchObject({
+				editable: true,
+				kind: "paragraph",
+			});
+			expect(idx.mathSpans, source).toHaveLength(1);
+		}
+
+		// Split case: post-refdef indented inline math followed by blank line + genuine indented code.
+		const splitSource = "[r]: /u\n    $x$\n\n    $y$";
+		const splitIdx = createEditorMarkdownBlockIndex(splitSource);
+		expect(splitIdx.blocks.map((block) => block.kind)).toEqual([
+			"unavailable",
+			"paragraph",
+			"code",
+		]);
+		expect(
+			splitIdx.mathSpans.map((span) => splitSource.slice(span.from, span.to)),
+		).toEqual(["$x$"]);
+
+		// Post-refdef 4-space display math reconciles to paragraph before overlayMath -> math block.
+		const displayPostRefdef = "[r]: /u\n    $$x$$";
+		const displayIdx = createEditorMarkdownBlockIndex(displayPostRefdef);
+		expect(displayIdx.blocks.map((block) => block.kind)).toEqual([
+			"unavailable",
+			"math",
+		]);
+		expect(displayIdx.mathSpans).toHaveLength(1);
+
+		// Negative controls: genuine indented code blocks keep kind="code" and 0 math spans.
+		for (const genuineCode of ["\n\n    $x$", "[r]: /u\n\n    $x$"]) {
+			const idx = createEditorMarkdownBlockIndex(genuineCode);
+			expect(
+				idx.blocks.some((block) => "code" === block.kind),
+				genuineCode,
+			).toBe(true);
+			expect(idx.mathSpans, genuineCode).toEqual([]);
+		}
+	});
+
+	it("recovers live PHP table links after multiline paren math containing an HTML block tag while keeping plain HTML blocks unavailable (Round 37 Track A #3)", () => {
+		const cases: ReadonlyArray<
+			Readonly<{
+				expectedLinks: ReadonlyArray<{
+					kind: "autolink" | "link";
+					reference: boolean;
+					text: string;
+				}>;
+				expectedUnescaped?: string;
+				source: string;
+			}>
+		> = [
+			{
+				expectedLinks: [{ kind: "link", reference: false, text: "[x](/u)" }],
+				source: "\\(a\n<div>\nb\\) | [x](/u)\n-|-",
+			},
+			{
+				expectedLinks: [
+					{ kind: "link", reference: false, text: "[x](/a\\\\|b)" },
+				],
+				expectedUnescaped: "[x](/a\\|b)",
+				source: "\\(a\n<div>\nb\\) | [x](/a\\\\|b)\n-|-",
+			},
+			{
+				expectedLinks: [{ kind: "link", reference: true, text: "[x][k]" }],
+				source: "\\(a\n<div>\nb\\) | [x][k]\n-|-\n\n[k]: https://k.example",
+			},
+			{
+				expectedLinks: [
+					{ kind: "link", reference: false, text: "https://a.example" },
+				],
+				source: "\\(a\n<div>\nb\\) | https://a.example\n-|-",
+			},
+			{
+				expectedLinks: [{ kind: "link", reference: false, text: "[x](/u)" }],
+				source: "\\(a\n<div>\nb\\) | c\n-|-\n| [x](/u) | d |",
+			},
+			{
+				expectedLinks: [{ kind: "link", reference: false, text: "[z](/u)" }],
+				source: "| a | b |\n| - | - |\n| \\(x\n<div>\ny\\) | [z](/u) |",
+			},
+			{
+				expectedLinks: [
+					{ kind: "link", reference: false, text: "[x](/a\\\\|b)" },
+				],
+				expectedUnescaped: "[x](/a\\|b)",
+				source: "\\(a\r\n<div>\r\nb\\) | [x](/a\\\\|b)\r\n-|-",
+			},
+			{
+				expectedLinks: [{ kind: "link", reference: false, text: "[z](/u)" }],
+				source: "[r]: /u\n    \\(x\n<div>\ny\\) | [z](/u)\n-|-",
+			},
+		];
+
+		for (const { expectedLinks, expectedUnescaped, source } of cases) {
+			const idx = createEditorMarkdownBlockIndex(source);
+			expect(
+				idx.blocks.some((block) => "table" === block.kind && block.editable),
+				source,
+			).toBe(true);
+			expect(idx.mathSpans.length, source).toBeGreaterThanOrEqual(1);
+			expect(
+				(idx.linkCandidates ?? []).map((candidate) => ({
+					kind: candidate.kind,
+					reference: candidate.reference,
+					text: source.slice(candidate.from, candidate.to),
+				})),
+				source,
+			).toEqual(expectedLinks);
+			expect(idx.linkTableCells?.size, source).toBe(expectedLinks.length);
+			if (expectedUnescaped) {
+				const first = idx.linkCandidates?.[0];
+				const cell = first ? idx.linkTableCells?.get(first.from) : undefined;
+				expect(cell?.unescapedSource, source).toBe(expectedUnescaped);
+			}
+		}
+
+		// Trailing real HTML block after the reconciled table remains unavailable and excluded.
+		const trailingHtml =
+			"\\(a\n<div>\nb\\) | [x](/u)\n-|-\n<div>\n[bad](/no)\n</div>";
+		const trailingIdx = createEditorMarkdownBlockIndex(trailingHtml);
+		expect(trailingIdx.blocks.map((block) => block.kind)).toEqual([
+			"table",
+			"unavailable",
+		]);
+		expect(
+			(trailingIdx.linkCandidates ?? []).map((c) =>
+				trailingHtml.slice(c.from, c.to),
+			),
+		).toEqual(["[x](/u)"]);
+
+		// Negative control: plain HTML block without math stays unavailable with 0 links.
+		const plainHtml = "<div>\n[x](/u)\n</div>";
+		const plainHtmlIdx = createEditorMarkdownBlockIndex(plainHtml);
+		expect(plainHtmlIdx.blocks).toEqual([
+			expect.objectContaining({ editable: false, kind: "unavailable" }),
+		]);
+		expect(plainHtmlIdx.linkCandidates).toEqual([]);
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

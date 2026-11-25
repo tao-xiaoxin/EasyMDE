@@ -3,8 +3,8 @@
   "entries": {
     "frontend/src/entrypoints/admin-editor.tsx": {
       "handle": "easymde-admin-editor-toolbar",
-      "file": "assets/admin-editor-Bo10ztbm.js",
-      "asset": "assets/admin-editor-Bo10ztbm.asset.php",
+      "file": "assets/admin-editor-Dc4D_ws2.js",
+      "asset": "assets/admin-editor-Dc4D_ws2.asset.php",
       "moduleFormat": "esm",
       "dependencies": [
         "wp-api-fetch",
@@ -16,17 +16,17 @@
         "assets/wechat-png-encoder-D32FIHI0.js"
       ],
       "chunks": [
-        "assets/admin-editor-chunk-43gOaM0L.js",
-        "assets/admin-editor-chunk-BClPdeQE.js",
-        "assets/admin-editor-chunk-BLZdSmk2.js",
-        "assets/admin-editor-chunk-BWSmLMDw.js",
-        "assets/admin-editor-chunk-BzDvXS7l.js",
-        "assets/admin-editor-chunk-C1TJuOQw.js",
-        "assets/admin-editor-chunk-CF8ivha9.js",
-        "assets/admin-editor-chunk-Cnoo7Cjv.js",
-        "assets/admin-editor-chunk-D2ofYrw1.js",
-        "assets/admin-editor-chunk-DcbsZZV2.js",
-        "assets/admin-editor-chunk-DgVThuEy.js"
+        "assets/admin-editor-chunk-B1IBbkc1.js",
+        "assets/admin-editor-chunk-BDoK2OdF.js",
+        "assets/admin-editor-chunk-BQVtgDQC.js",
+        "assets/admin-editor-chunk-BbJRwr1r.js",
+        "assets/admin-editor-chunk-Bf63vYkw.js",
+        "assets/admin-editor-chunk-CRL6X3b4.js",
+        "assets/admin-editor-chunk-CvlD6prm.js",
+        "assets/admin-editor-chunk-D8wxbk9w.js",
+        "assets/admin-editor-chunk-DEvGj-iq.js",
+        "assets/admin-editor-chunk-QLod_JhK.js",
+        "assets/admin-editor-chunk-W1KLcPfJ.js"
       ]
     }
   }

@@ -22,6 +22,7 @@ import {
 	nextNonSpaceIndex,
 	parseGfmTableSeparatorColumns,
 	type TableRowCellRange,
+	unescapeTableCellPipes,
 } from "./php-commonmark-block-helpers";
 import {
 	createInlineHtmlScanGuard,
@@ -50,6 +51,7 @@ export {
 	COMMONMARK_THEMATIC_BREAK_LINE,
 	findTableRowCellAt,
 	type TableRowCellRange,
+	unescapeTableCellPipes,
 };
 
 const MAX_NESTING_LEVEL = 100;
@@ -64,6 +66,7 @@ export type ScannedMarkdownLine = Readonly<{
 	lineEnd: number;
 	lineStart: number;
 	nextLineStart: number;
+	tableColumnCount: number | null;
 	virtualSpaces: number;
 }>;
 
@@ -75,6 +78,7 @@ type MutableScannedMarkdownLine = {
 	lineEnd: number;
 	lineStart: number;
 	nextLineStart: number;
+	tableColumnCount: number | null;
 	virtualSpaces: number;
 };
 
@@ -116,7 +120,7 @@ type ActiveLeaf =
 			htmlType: 1 | 2 | 3 | 4 | 5 | 6 | 7;
 			kind: "html-block";
 	  }
-	| { kind: "table" };
+	| { headerColumnCount?: number; kind: "table" };
 
 export type PhpCommonMarkBlockState = {
 	blockCodeRanges: Array<{ end: number; start: number }>;
@@ -224,7 +228,11 @@ export function advancePhpCommonMarkBlockLine(
 	let matchedContainers = 0;
 	let consumedBlockquote = false;
 	let lineEmitted = false;
-	const emitLine = (inlineBlockId: number, isTableRow = false): number => {
+	const emitLine = (
+		inlineBlockId: number,
+		isTableRow = false,
+		tableColumnCount: number | null = null,
+	): number => {
 		lineEmitted = true;
 		if (!recordLines) return -1;
 		const idx = lines.length;
@@ -236,6 +244,7 @@ export function advancePhpCommonMarkBlockLine(
 			lineEnd,
 			lineStart,
 			nextLineStart,
+			tableColumnCount,
 			virtualSpaces: cursor.virtualSpaces,
 		});
 		return idx;
@@ -315,7 +324,11 @@ export function advancePhpCommonMarkBlockLine(
 			line.includes("|")
 		) {
 			state.nextInlineBlockId += 1;
-			emitLine(state.nextInlineBlockId, true);
+			emitLine(
+				state.nextInlineBlockId,
+				true,
+				activeLeaf.headerColumnCount ?? null,
+			);
 		}
 	}
 
@@ -455,10 +468,9 @@ export function advancePhpCommonMarkBlockLine(
 			state.leaf.hasPipe
 		) {
 			const tableCols = parseGfmTableSeparatorColumns(cursorRemainder(cursor));
-			if (
-				tableCols > 0 &&
-				countTableRowCells(state.leaf.lastLineText) <= tableCols
-			) {
+			const headerColumnCount =
+				tableCols > 0 ? countTableRowCells(state.leaf.lastLineText) : -1;
+			if (tableCols > 0 && headerColumnCount <= tableCols) {
 				if (recordLines) {
 					const headerLineIdx =
 						state.leaf.paragraphLineIndices[
@@ -470,9 +482,10 @@ export function advancePhpCommonMarkBlockLine(
 						state.nextInlineBlockId += 1;
 						headerLine.inlineBlockId = state.nextInlineBlockId;
 						headerLine.isTableRow = true;
+						headerLine.tableColumnCount = headerColumnCount;
 					}
 				}
-				state.leaf = { kind: "table" };
+				state.leaf = { headerColumnCount, kind: "table" };
 				startedNewBlock = true;
 				emitLine(-1);
 				break;
@@ -509,7 +522,11 @@ export function advancePhpCommonMarkBlockLine(
 			"table" === state.leaf?.kind
 		) {
 			state.nextInlineBlockId += 1;
-			emitLine(state.nextInlineBlockId, true);
+			emitLine(
+				state.nextInlineBlockId,
+				true,
+				state.leaf.headerColumnCount ?? null,
+			);
 		} else {
 			closeUnmatched();
 			if (!isCursorBlank(cursor)) {
@@ -619,6 +636,36 @@ export function findLineAtOffset(
 ): ScannedMarkdownLine | null {
 	const idx = findLineIndexAtOffset(lines, offset);
 	return idx >= 0 ? (lines[idx] ?? null) : null;
+}
+
+/**
+ * Reports whether `[from, to)` is dropped or split by PHP GFM table parsing
+ * (for example, a body cell at `cellIndex >= headerColumnCount`, a 0-column
+ * header table, a delimiter pipe, or a range crossing a table cell/row).
+ */
+export function isRangeDroppedByPhpTable(
+	source: string,
+	scan: ScannedMarkdownBlocks,
+	from: number,
+	to: number,
+): boolean {
+	const startLine = findLineAtOffset(scan.lines, from);
+	if (!startLine) return false;
+	if (startLine.isTableRow) {
+		const cell = findTableRowCellAt(
+			source,
+			startLine.contentOffset,
+			startLine.lineEnd,
+			from,
+			startLine.tableColumnCount,
+		);
+		return null === cell || to > cell.end;
+	}
+	if (to > startLine.lineEnd) {
+		const endLine = findLineAtOffset(scan.lines, to - 1);
+		if (endLine?.isTableRow) return true;
+	}
+	return false;
 }
 
 export function allLinesShareInlineBlock(

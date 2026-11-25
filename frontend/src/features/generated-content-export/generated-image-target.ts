@@ -304,11 +304,26 @@ export async function hydrateGeneratedImageTargetIndex(
 		} else {
 			const prepared: MarkdownImageScaleMatch[] = [];
 			let blockUnavailable = false;
-			let multilineContext: Readonly<{
+			let blockContext: Readonly<{
 				blocks: ScannedMarkdownBlocks;
 				slice: string;
 				start: number;
 			}> | null = null;
+			const pipeIndex =
+				metadata.count > 0 && "table" !== block.kind
+					? input.source.indexOf("|", block.from)
+					: -1;
+			const blockHasPipe = pipeIndex >= 0 && pipeIndex < block.to;
+			let blockHasLineBreak = false;
+			if (blockHasPipe) {
+				const lfIndex = input.source.indexOf("\n", block.from);
+				const crIndex = input.source.indexOf("\r", block.from);
+				blockHasLineBreak =
+					(lfIndex >= 0 && lfIndex < block.to) ||
+					(crIndex >= 0 && crIndex < block.to);
+			}
+			const blockMayContainTable =
+				"table" === block.kind || (blockHasPipe && blockHasLineBreak);
 			for (
 				let imageOffset = 0;
 				imageOffset < metadata.count;
@@ -334,7 +349,7 @@ export async function hydrateGeneratedImageTargetIndex(
 						const isMultiline =
 							rawSlice.includes("\n") || rawSlice.includes("\r");
 						let image: MarkdownImageScaleMatch | null = null;
-						if (!isMultiline) {
+						if (!isMultiline && !blockMayContainTable) {
 							let singleLineSliceEnd = range.to;
 							const maxSliceEnd = Math.min(block.to, range.to + 4);
 							while (
@@ -353,22 +368,22 @@ export async function hydrateGeneratedImageTargetIndex(
 								image = shiftedImage(parsed, range.from);
 							}
 						} else {
-							if (null === multilineContext) {
+							if (null === blockContext) {
 								const contextStart = lineStartOffset(input.source, block.from);
 								const slice = input.source.slice(contextStart, block.to);
-								multilineContext = {
+								blockContext = {
 									blocks: getCachedMarkdownBlockScan(slice),
 									slice,
 									start: contextStart,
 								};
 							}
 							const parsed = parseMarkdownImageScale(
-								multilineContext.slice,
-								range.from - multilineContext.start,
-								multilineContext.blocks,
+								blockContext.slice,
+								range.from - blockContext.start,
+								blockContext.blocks,
 							);
 							if (parsed) {
-								image = shiftedImage(parsed, multilineContext.start);
+								image = shiftedImage(parsed, blockContext.start);
 							}
 						}
 						if (

@@ -22,7 +22,8 @@ import {
   resolveInlineScanScope,
   type ScannedMarkdownBlocks,
   type ScannedMarkdownLine,
-  skipSingleLineBreakWhitespace
+  skipSingleLineBreakWhitespace,
+  unescapeTableCellPipes
 } from './image-scale-markdown-scan';
 
 /**
@@ -118,7 +119,8 @@ function hasAmbiguousBareDestinationContinuation(
 function parseDestinationRange(
   source: string,
   destStart: number,
-  limit: number
+  limit: number,
+  inTableRow = false
 ): ParsedDestinationRange | null {
   if ('<' === source[destStart]) {
     let destinationEnd = -1;
@@ -143,9 +145,10 @@ function parseDestinationRange(
       }
     }
     if (destinationEnd < 0) return null;
+    const rawDestination = source.slice(destStart + 1, destinationEnd);
     return {
       destination: unescapeCommonMarkAsciiPunctuation(
-        source.slice(destStart + 1, destinationEnd)
+        inTableRow ? unescapeTableCellPipes(rawDestination) : rawDestination
       ),
       destinationAngle: true,
       destinationCursor: destinationEnd + 1,
@@ -187,8 +190,11 @@ function parseDestinationRange(
     cursor += 1;
   }
   if (0 !== parentheses) return null;
+  const rawDestination = source.slice(destStart, cursor);
   return {
-    destination: unescapeCommonMarkAsciiPunctuation(source.slice(destStart, cursor)),
+    destination: unescapeCommonMarkAsciiPunctuation(
+      inTableRow ? unescapeTableCellPipes(rawDestination) : rawDestination
+    ),
     destinationAngle: false,
     destinationCursor: cursor,
     destinationEnd: cursor,
@@ -315,7 +321,7 @@ function parseBlockDestAndTitle(
 ): ParsedImageCore | null {
   const destStart = skipSingleLineBreakWhitespace(source, altEnd + 2, blocks, startLine);
   if (destStart < 0 || destStart > blockEnd) return null;
-  const dest = parseDestinationRange(source, destStart, blockEnd);
+  const dest = parseDestinationRange(source, destStart, blockEnd, startLine.isTableRow);
   if (!dest) return null;
 
   let cursor = skipSingleLineBreakWhitespace(source, dest.destinationCursor, blocks, startLine);
@@ -389,13 +395,16 @@ function parseBlockDestAndTitle(
     startLine
   );
   if (!normalizedTitle) return null;
+  const effectiveTitle = startLine.isTableRow
+    ? unescapeTableCellPipes(normalizedTitle.stripped)
+    : normalizedTitle.stripped;
   return {
     altEnd,
     destination: dest.destination,
     destinationAngle: dest.destinationAngle,
     destinationEnd: dest.destinationEnd,
     destinationStart: dest.destinationStart,
-    effectiveTitle: normalizedTitle.stripped,
+    effectiveTitle,
     hasContainerPrefix: normalizedTitle.hasContainerPrefix,
     imageEnd: cursor + 1,
     title: rawTitle,

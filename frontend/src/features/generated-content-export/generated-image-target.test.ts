@@ -999,6 +999,150 @@ describe("associateGeneratedImageTarget", () => {
 		expect(result.images[0]?.destination).toBe("/x.png");
 		expect(elapsedMs).toBeLessThan(500);
 	});
+
+	it("hydrates GFM table images whose next cell holds backticks or HTML closers without cross-cell lookahead poisoning", async () => {
+		for (const [label, source, expectedAlt, expectedDest] of [
+			[
+				"tight backtick in adjacent table cell",
+				"| ![a `b](https://example.com/a.png)|` |\n| --- | --- |",
+				"a `b",
+				"https://example.com/a.png",
+			],
+			[
+				"spaced backtick in adjacent table cell",
+				"| ![a `b](https://example.com/a.png) | ` |\n| --- | --- |",
+				"a `b",
+				"https://example.com/a.png",
+			],
+			[
+				"HTML attribute closer in adjacent table cell",
+				'| ![a <b q="](https://example.com/a.png)|"> |\n| --- | --- |',
+				'a <b q="',
+				"https://example.com/a.png",
+			],
+			[
+				"blockquote-nested table tight backtick in adjacent cell",
+				"> | ![a `b](https://example.com/a.png)|` |\n> | --- | --- |",
+				"a `b",
+				"https://example.com/a.png",
+			],
+			[
+				"table cell with escaped pipe in destination",
+				"| A |\n| --- |\n| ![alt](https://example.com/a\\|b.png) |",
+				"alt",
+				"https://example.com/a|b.png",
+			],
+		] as const) {
+			const parsed = createEditorMarkdownBlockIndex(source);
+			const result = await hydrateGeneratedImageTargetIndex({
+				...hydration,
+				blocks: parsed.blocks,
+				imageIndex: {
+					blocks: parsed.blocks,
+					imageBlocks: parsed.imageBlocks ?? [],
+					imageRanges: parsed.imageRanges ?? [],
+					length: parsed.length,
+					mathSpans: parsed.mathSpans,
+				},
+				revision: 37,
+				source,
+			});
+			expect(result.blockImages[0]?.status, label).toBe("ready");
+			expect(result.images, label).toHaveLength(1);
+			expect(result.images[0], label).toMatchObject({
+				alt: expectedAlt,
+				destination: expectedDest,
+			});
+		}
+	});
+
+	it("excludes PHP-dropped extra GFM table body cells during indexing and hydration", async () => {
+		for (const [label, source] of [
+			[
+				"2-col table extra 3rd cell",
+				"| H | B |\n| --- | --- |\n| a | b | ![extra](https://example.org/i.png) |",
+			],
+			[
+				"asymmetric 1-header / 2-separator table drops 2nd body cell",
+				"| A |\n| --- | --- |\n| 1 | ![dropped](https://example.com/dropped.png) |",
+			],
+			[
+				"0-col header table drops all body cells",
+				"|\n| --- |\n| ![dropped](https://example.com/dropped.png) |",
+			],
+		] as const) {
+			const parsed = createEditorMarkdownBlockIndex(source);
+			const result = await hydrateGeneratedImageTargetIndex({
+				...hydration,
+				blocks: parsed.blocks,
+				imageIndex: {
+					blocks: parsed.blocks,
+					imageBlocks: parsed.imageBlocks ?? [],
+					imageRanges: parsed.imageRanges ?? [],
+					length: parsed.length,
+					mathSpans: parsed.mathSpans,
+				},
+				revision: 38,
+				source,
+			});
+			expect(result.blockImages[0]?.status, label).toBe("ready");
+			expect(result.images, label).toHaveLength(0);
+		}
+
+		// Mixed table: dropped cell on row 1 is excluded so real.png hydrates at DOM ordinal 0.
+		const mixed =
+			"| A |\n| --- |\n| 1 | ![dropped](https://example.com/dropped.png) |\n| ![real](https://example.com/real.png) |";
+		const mixedParsed = createEditorMarkdownBlockIndex(mixed);
+		const mixedResult = await hydrateGeneratedImageTargetIndex({
+			...hydration,
+			blocks: mixedParsed.blocks,
+			imageIndex: {
+				blocks: mixedParsed.blocks,
+				imageBlocks: mixedParsed.imageBlocks ?? [],
+				imageRanges: mixedParsed.imageRanges ?? [],
+				length: mixedParsed.length,
+				mathSpans: mixedParsed.mathSpans,
+			},
+			revision: 39,
+			source: mixed,
+		});
+		expect(mixedResult.blockImages[0]?.status).toBe("ready");
+		expect(mixedResult.images).toHaveLength(1);
+		expect(mixedResult.images[0]).toMatchObject({
+			alt: "real",
+			destination: "https://example.com/real.png",
+		});
+
+		// Defense-in-depth: even if an unfiltered imageIndex supplies an extra-cell range
+		// on a table block, hydration rejects it instead of hydrating a PHP-dropped image.
+		const unfilteredSource =
+			"| H | B |\n| --- | --- |\n| a | b | ![extra](https://example.org/i.png) |";
+		const extraFrom = unfilteredSource.indexOf("![extra]");
+		const extraTo = unfilteredSource.indexOf(")", extraFrom) + 1;
+		const tableBlock = {
+			editable: true as const,
+			from: 0,
+			kind: "table" as const,
+			lineEnd: 2,
+			lineStart: 0,
+			to: unfilteredSource.length,
+		};
+		const rejected = await hydrateGeneratedImageTargetIndex({
+			...hydration,
+			blocks: [tableBlock],
+			imageIndex: {
+				blocks: [tableBlock],
+				imageBlocks: [{ count: 1, firstImageIndex: 0, status: "ready" }],
+				imageRanges: [{ from: extraFrom, to: extraTo }],
+				length: unfilteredSource.length,
+				mathSpans: [],
+			},
+			revision: 40,
+			source: unfilteredSource,
+		});
+		expect(rejected.blockImages[0]?.status).toBe("unavailable");
+		expect(rejected.images).toHaveLength(0);
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

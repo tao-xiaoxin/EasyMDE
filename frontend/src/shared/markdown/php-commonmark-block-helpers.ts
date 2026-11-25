@@ -260,9 +260,18 @@ export function htmlBlockLineCloses(
 }
 
 export type TableRowCellRange = Readonly<{
+	cellIndex: number;
 	end: number;
 	start: number;
 }>;
+
+/**
+ * Mirrors PHP `League\CommonMark\Extension\Table\TableParser::split()`'s
+ * pre-inline `\|` -> `|` unescaping on a table cell string.
+ */
+export function unescapeTableCellPipes(value: string): string {
+	return value.includes("\\|") ? value.replace(/\\\|/gu, "|") : value;
+}
 
 /**
  * Exact cell-count port of PHP `League\CommonMark`'s `TableParser::split()`.
@@ -297,15 +306,19 @@ export function countTableRowCells(line: string): number {
  * Locates the GFM table cell `[start, end)` containing `offset` within one
  * container-stripped table row `[contentOffset, lineEnd)`, matching PHP
  * `League\CommonMark\Extension\Table\TableParser::split()` (trims PHP trim
- * whitespace, drops optional single leading/trailing unescaped `|`, and treats
- * `\|` as an escaped literal pipe inside the cell rather than a delimiter).
+ * whitespace, drops optional single leading/trailing unescaped `|`, treats
+ * `\|` as an escaped literal pipe inside the cell rather than a delimiter,
+ * and drops body cells at `cellIndex >= maxColumns` when `maxColumns` is set).
  */
 export function findTableRowCellAt(
 	source: string,
 	contentOffset: number,
 	lineEnd: number,
 	offset: number,
+	maxColumns?: number | null,
 ): TableRowCellRange | null {
+	const hasColumnLimit = null !== maxColumns && undefined !== maxColumns;
+	if (hasColumnLimit && maxColumns <= 0) return null;
 	let trimStart = contentOffset;
 	let trimEnd = lineEnd;
 	while (trimStart < trimEnd && isPhpTrimChar(source[trimStart])) {
@@ -318,6 +331,7 @@ export function findTableRowCellAt(
 	let cellStart = "|" === source[trimStart] ? trimStart + 1 : trimStart;
 	if (offset < cellStart || offset >= trimEnd) return null;
 
+	let cellIndex = 0;
 	let pos = cellStart;
 	while (pos < trimEnd) {
 		if ("\\" === source[pos] && pos + 1 < trimEnd && "|" === source[pos + 1]) {
@@ -326,16 +340,22 @@ export function findTableRowCellAt(
 		}
 		if ("|" === source[pos]) {
 			if (offset <= pos) {
-				return offset < pos ? { end: pos, start: cellStart } : null;
+				if (offset >= pos || (hasColumnLimit && cellIndex >= maxColumns)) {
+					return null;
+				}
+				return { cellIndex, end: pos, start: cellStart };
 			}
+			cellIndex += 1;
+			if (hasColumnLimit && cellIndex >= maxColumns) return null;
 			cellStart = pos + 1;
 			pos += 1;
 			continue;
 		}
 		pos += 1;
 	}
+	if (hasColumnLimit && cellIndex >= maxColumns) return null;
 	return cellStart < trimEnd && offset >= cellStart && offset < trimEnd
-		? { end: trimEnd, start: cellStart }
+		? { cellIndex, end: trimEnd, start: cellStart }
 		: null;
 }
 

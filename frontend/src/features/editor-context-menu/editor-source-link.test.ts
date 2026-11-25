@@ -555,6 +555,82 @@ describe("findEditorSourceLink", () => {
 			expect(longResult.status).toBe(expected);
 		},
 	);
+
+	it("rejects links in PHP-dropped extra GFM table body cells while keeping valid header and body cell links", () => {
+		for (const [label, source, token] of [
+			[
+				"inline link in extra body cell",
+				"| A |\n| --- |\n| 1 | [dropped](https://example.com) |",
+				"dropped",
+			],
+			[
+				"autolink in extra body cell",
+				"| A |\n| --- |\n| 1 | <https://example.com> |",
+				"example.com",
+			],
+			[
+				"bare GFM URL in extra body cell",
+				"| A |\n| --- |\n| 1 | https://example.com |",
+				"example.com",
+			],
+			[
+				"reference link in extra body cell",
+				"| A |\n| --- |\n| 1 | [dropped][ref] |\n\n[ref]: https://example.com",
+				"dropped",
+			],
+			[
+				"inline link in asymmetric 1-header / 2-separator table extra body cell",
+				"| A |\n| --- | --- |\n| 1 | [dropped](https://example.com) |",
+				"dropped",
+			],
+			[
+				"inline link in 0-col header table body cell",
+				"|\n| --- |\n| [dropped](https://example.com) |",
+				"dropped",
+			],
+			[
+				"inline link in blockquote-nested table extra body cell",
+				"> | A |\n> | --- |\n> | 1 | [dropped](https://example.com) |",
+				"dropped",
+			],
+		] as const) {
+			const result = findEditorSourceLink({
+				blockIndex: createEditorMarkdownBlockIndex(source),
+				selection: selection(source.indexOf(token) + 2),
+				source,
+			});
+			expect(result, label).toEqual({ status: "none" });
+		}
+
+		const validAndDropped =
+			"| [hdr](https://hdr.example) |\n| --- |\n| [kept](https://kept.example) | [dropped](https://dropped.example) |";
+		const blockIndex = createEditorMarkdownBlockIndex(validAndDropped);
+		expect(
+			candidateOf(
+				findEditorSourceLink({
+					blockIndex,
+					selection: selection(validAndDropped.indexOf("hdr") + 1),
+					source: validAndDropped,
+				}),
+			).source,
+		).toBe("[hdr](https://hdr.example)");
+		expect(
+			candidateOf(
+				findEditorSourceLink({
+					blockIndex,
+					selection: selection(validAndDropped.indexOf("kept") + 1),
+					source: validAndDropped,
+				}),
+			).source,
+		).toBe("[kept](https://kept.example)");
+		expect(
+			findEditorSourceLink({
+				blockIndex,
+				selection: selection(validAndDropped.indexOf("dropped") + 1),
+				source: validAndDropped,
+			}),
+		).toEqual({ status: "none" });
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

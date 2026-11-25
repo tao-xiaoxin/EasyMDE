@@ -4,6 +4,10 @@ import type {
 	EditorMarkdownSourceBlock,
 } from "../../contracts/ports/editor-block-index-port";
 import {
+	isRangeDroppedByPhpTable,
+	type ScannedMarkdownBlocks,
+} from "../../shared/markdown/php-commonmark-block-scan";
+import {
 	originalRange,
 	type NewlineProjection,
 	type SourceRange,
@@ -391,6 +395,8 @@ export function linkCandidatesForBlocks(
 	nodes: ReadonlyArray<ParserLinkNode>,
 	mathRanges: ReadonlyArray<SourceRange>,
 	imageRanges: ReadonlyArray<EditorMarkdownImageRange>,
+	source?: string,
+	phpBlockScan?: ScannedMarkdownBlocks | null,
 ): ReadonlyArray<EditorMarkdownLinkCandidate> {
 	const candidates: EditorMarkdownLinkCandidate[] = [];
 	let blockIndex = 0;
@@ -414,6 +420,13 @@ export function linkCandidatesForBlocks(
 		if (!block?.editable || block.from > range.from || range.to > block.to)
 			continue;
 		if (["code", "math", "unavailable"].includes(block.kind)) continue;
+		if (
+			phpBlockScan &&
+			undefined !== source &&
+			isRangeDroppedByPhpTable(source, phpBlockScan, range.from, range.to)
+		) {
+			continue;
+		}
 		while (
 			mathIndex < mathRanges.length &&
 			(mathRanges[mathIndex]?.to ?? 0) <= range.from

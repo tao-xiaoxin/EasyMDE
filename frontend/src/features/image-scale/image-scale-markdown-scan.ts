@@ -20,7 +20,8 @@ import {
   type ScannedMarkdownBlocks,
   type ScannedMarkdownLine,
   scanPhpCommonMarkBlocks,
-  type TableRowCellRange
+  type TableRowCellRange,
+  unescapeTableCellPipes
 } from '../../shared/markdown/php-commonmark-block-scan';
 
 /**
@@ -45,7 +46,8 @@ export {
   type ScannedMarkdownBlocks,
   type ScannedMarkdownLine,
   scanPhpCommonMarkBlocks as scanMarkdownBlocks,
-  type TableRowCellRange
+  type TableRowCellRange,
+  unescapeTableCellPipes
 };
 
 function isSpaceOrTab(character: string | undefined): boolean {
@@ -141,6 +143,34 @@ export type ResolvedInlineScanScope = Readonly<{
   startLine: ScannedMarkdownLine;
 }>;
 
+function hasPrecedingUnbrokenPipeLine(source: string, lineStart: number): boolean {
+  let cursor = lineStart;
+  while (cursor > 0) {
+    cursor -= 1;
+    if ('\n' === source[cursor] && cursor > 0 && '\r' === source[cursor - 1]) {
+      cursor -= 1;
+    }
+    const prevLineEnd = cursor;
+    while (cursor > 0 && '\n' !== source[cursor - 1] && '\r' !== source[cursor - 1]) {
+      cursor -= 1;
+    }
+    let nonBlank = false;
+    let hasPipe = false;
+    for (let idx = cursor; idx < prevLineEnd; idx += 1) {
+      const ch = source[idx];
+      if ('|' === ch) {
+        hasPipe = true;
+        nonBlank = true;
+        break;
+      }
+      if (' ' !== ch && '\t' !== ch) nonBlank = true;
+    }
+    if (hasPipe) return true;
+    if (!nonBlank) return false;
+  }
+  return false;
+}
+
 /**
  * Computes current-line bounds around `start` in O(line length) and reports
  * whether the line could belong to a GFM table in a multi-line document.
@@ -162,7 +192,9 @@ export function inspectSingleLineForFastPath(
   }
   return {
     lineEnd,
-    mayBeTableRow: hasPipe && (lineStart > 0 || lineEnd < source.length)
+    mayBeTableRow:
+      (hasPipe && (lineStart > 0 || lineEnd < source.length))
+      || (lineStart > 0 && hasPrecedingUnbrokenPipeLine(source, lineStart))
   };
 }
 
@@ -181,7 +213,13 @@ export function resolveInlineScanScope(
   const line = lineIdx >= 0 ? (blocks.lines[lineIdx] ?? null) : null;
   if (!line || line.inlineBlockId < 0) return null;
   if (line.isTableRow) {
-    const cell = findTableRowCellAt(source, line.contentOffset, line.lineEnd, offset);
+    const cell = findTableRowCellAt(
+      source,
+      line.contentOffset,
+      line.lineEnd,
+      offset,
+      line.tableColumnCount
+    );
     if (!cell || (undefined !== selectionEnd && selectionEnd > cell.end)) return null;
     const cellLine: ScannedMarkdownLine = {
       consumedBlockquote: line.consumedBlockquote,
@@ -191,6 +229,7 @@ export function resolveInlineScanScope(
       lineEnd: cell.end,
       lineStart: line.lineStart,
       nextLineStart: line.nextLineStart,
+      tableColumnCount: line.tableColumnCount,
       virtualSpaces: 0
     };
     const cellLines = [cellLine];

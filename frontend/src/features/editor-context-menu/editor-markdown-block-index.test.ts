@@ -1385,6 +1385,73 @@ describe("readEditorCodeContent", () => {
 			status: "unavailable",
 		});
 	});
+
+	it("excludes PHP-dropped extra GFM table body cell images and links while keeping valid cells", () => {
+		const twoColExtraImg =
+			"| H | B |\n| --- | --- |\n| a | b | ![extra](https://example.org/i.png) |";
+		const twoColIndex = createEditorMarkdownBlockIndex(twoColExtraImg);
+		expect(twoColIndex.imageBlocks).toEqual([
+			{ count: 0, firstImageIndex: 0, status: "ready" },
+		]);
+		expect(twoColIndex.imageRanges).toEqual([]);
+
+		const oneColMixed =
+			"| A |\n| --- |\n| 1 | ![dropped](https://example.com/dropped.png) |\n| ![real](https://example.com/real.png) |";
+		const oneColIndex = createEditorMarkdownBlockIndex(oneColMixed);
+		expect(oneColIndex.imageBlocks).toEqual([
+			{ count: 1, firstImageIndex: 0, status: "ready" },
+		]);
+		expect(oneColIndex.imageRanges).toHaveLength(1);
+		expect(
+			oneColMixed.slice(
+				oneColIndex.imageRanges?.[0]?.from ?? -1,
+				oneColIndex.imageRanges?.[0]?.to ?? -1,
+			),
+		).toBe("![real](https://example.com/real.png)");
+
+		const asymmetric =
+			"| A |\n| --- | --- |\n| 1 | ![dropped](https://example.com/dropped.png) |";
+		expect(createEditorMarkdownBlockIndex(asymmetric).imageRanges).toEqual([]);
+
+		const zeroCol =
+			"|\n| --- |\n| ![dropped](https://example.com/dropped.png) |";
+		expect(createEditorMarkdownBlockIndex(zeroCol).imageRanges).toEqual([]);
+
+		// Dropped reference image must not poison a valid image in the same table.
+		const droppedRef =
+			"| A |\n| --- |\n| 1 | ![ref][id] |\n| ![real](https://example.com/real.png) |\n\n[id]: https://example.com/ref.png";
+		const droppedRefIndex = createEditorMarkdownBlockIndex(droppedRef);
+		expect(droppedRefIndex.imageBlocks?.[0]).toEqual({
+			count: 1,
+			firstImageIndex: 0,
+			status: "ready",
+		});
+		expect(droppedRefIndex.imageRanges).toHaveLength(1);
+
+		// Extra body-cell links (inline, autolink, bare URL) are excluded; valid cell 0 link is kept.
+		const tableWithLinks =
+			"| A |\n| --- |\n| [kept](https://kept.example) | [dropped](https://dropped.example) |\n| 1 | <https://auto.example> |\n| 2 | https://bare.example |";
+		const linksIndex = createEditorMarkdownBlockIndex(tableWithLinks);
+		expect(linksIndex.linkCandidates).toHaveLength(1);
+		expect(
+			tableWithLinks.slice(
+				linksIndex.linkCandidates?.[0]?.from ?? -1,
+				linksIndex.linkCandidates?.[0]?.to ?? -1,
+			),
+		).toBe("[kept](https://kept.example)");
+
+		// Display math terminates a preceding table just like PHP MarkdownRenderer::extract_math().
+		const afterDisplayMath =
+			"| A |\n| --- |\n$$\nx = 1\n$$\n| 1 | ![ok](https://example.com/ok.png) |";
+		const mathTermIndex = createEditorMarkdownBlockIndex(afterDisplayMath);
+		expect(mathTermIndex.imageRanges).toHaveLength(1);
+		expect(
+			afterDisplayMath.slice(
+				mathTermIndex.imageRanges?.[0]?.from ?? -1,
+				mathTermIndex.imageRanges?.[0]?.to ?? -1,
+			),
+		).toBe("![ok](https://example.com/ok.png)");
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

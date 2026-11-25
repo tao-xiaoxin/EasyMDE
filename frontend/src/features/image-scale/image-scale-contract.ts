@@ -5,7 +5,11 @@ import {
   parseEffectiveImageScaleTitle,
   parseImageScaleTitleContract
 } from '../../shared/image-scale-title';
-import type { ScannedMarkdownBlocks } from './image-scale-markdown-scan';
+import {
+  findLineAtOffset,
+  getCachedMarkdownBlockScan,
+  type ScannedMarkdownBlocks
+} from './image-scale-markdown-scan';
 import {
   findMarkdownImageCoreAt,
   type ParsedImageCore,
@@ -264,15 +268,16 @@ export function createImageScaleReplacement(
 
 function serializeMarkdownDestination(
   destination: string,
-  forceAngle = false
+  forceAngle = false,
+  escapeTablePipe = false
 ): string {
   if ('string' !== typeof destination || /[\r\n]/u.test(destination)) {
     throw new Error('image-scale-destination-invalid');
   }
   const angle = forceAngle || /[<>\s()]/u.test(destination);
   return angle
-    ? `<${escapedMarkdown(destination, '\\<>')}>`
-    : escapedMarkdown(destination, '\\<> ');
+    ? `<${escapedMarkdown(destination, escapeTablePipe ? '\\<>|' : '\\<>')}>`
+    : escapedMarkdown(destination, escapeTablePipe ? '\\<> |' : '\\<> ');
 }
 
 export function createMarkdownImageDestinationReplacement(
@@ -301,9 +306,14 @@ export function createMarkdownImageDestinationReplacement(
   ) throw new Error('image-scale-image-stale');
   if (current.destination === nextDestination) return null;
 
+  const inTableRow = nextDestination.includes('|')
+    && Boolean(
+      findLineAtOffset(getCachedMarkdownBlockScan(source).lines, current.start)?.isTableRow
+    );
   const serialized = serializeMarkdownDestination(
     nextDestination,
-    current.destinationAngle
+    current.destinationAngle,
+    inTableRow
   );
   return {
     from: current.destinationStart,

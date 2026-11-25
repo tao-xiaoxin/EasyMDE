@@ -9,6 +9,11 @@ import type {
 	ReferenceLabelCaseFoldProfile,
 } from "../../contracts/ports/editor-block-index-port";
 import { markdownLineStarts } from "../../shared/markdown/markdown-line-model";
+import {
+	isRangeDroppedByPhpTable,
+	type ScannedMarkdownBlocks,
+	scanPhpCommonMarkBlocks,
+} from "../../shared/markdown/php-commonmark-block-scan";
 import { lineIndexAtOffsets } from "./editor-markdown-lines";
 import {
 	linkCandidatesForBlocks,
@@ -364,10 +369,38 @@ function parserSnapshot(
 	};
 }
 
+function phpTableScanSource(
+	source: string,
+	ranges: ReadonlyArray<Readonly<{ block: boolean; from: number; to: number }>>,
+): string {
+	let hasDisplayMath = false;
+	for (const range of ranges) {
+		if (range.block) {
+			hasDisplayMath = true;
+			break;
+		}
+	}
+	if (!hasDisplayMath) return source;
+	const parts: string[] = [];
+	let cursor = 0;
+	for (const range of ranges) {
+		if (!range.block) continue;
+		const from = Math.max(cursor, range.from);
+		const to = Math.min(source.length, range.to);
+		if (from > cursor) parts.push(source.slice(cursor, from));
+		if (to > from) parts.push("\n".repeat(to - from));
+		cursor = Math.max(cursor, to);
+	}
+	if (cursor < source.length) parts.push(source.slice(cursor));
+	return parts.join("");
+}
+
 function imageIndexForBlocks(
+	source: string,
 	blocks: ReadonlyArray<EditorMarkdownSourceBlock>,
 	nodes: ReadonlyArray<ParserImageNode>,
 	mathRanges: ReadonlyArray<SourceRange>,
+	phpBlockScan: ScannedMarkdownBlocks | null,
 ): Readonly<{
 	imageBlocks: ReadonlyArray<EditorMarkdownImageBlock>;
 	imageRanges: ReadonlyArray<EditorMarkdownImageRange>;
@@ -386,6 +419,12 @@ function imageIndexForBlocks(
 			const node = sortedNodes[nodeIndex];
 			if (!node || node.from >= block.to) break;
 			nodeIndex += 1;
+			if (
+				phpBlockScan &&
+				isRangeDroppedByPhpTable(source, phpBlockScan, node.from, node.to)
+			) {
+				continue;
+			}
 			while (
 				mathIndex < mathRanges.length &&
 				(mathRanges[mathIndex]?.to ?? 0) <= node.from
@@ -466,7 +505,18 @@ export function createEditorMarkdownBlockIndex(
 		starts,
 		unavailableRanges,
 	);
-	const images = imageIndexForBlocks(blocks, parsed.imageNodes, ranges);
+	const phpBlockScan =
+		source.includes("|") &&
+		(parsed.imageNodes.length > 0 || parsed.linkNodes.length > 0)
+			? scanPhpCommonMarkBlocks(phpTableScanSource(source, ranges))
+			: null;
+	const images = imageIndexForBlocks(
+		source,
+		blocks,
+		parsed.imageNodes,
+		ranges,
+		phpBlockScan,
+	);
 	return {
 		blocks,
 		imageBlocks: images.imageBlocks,
@@ -478,6 +528,8 @@ export function createEditorMarkdownBlockIndex(
 			parsed.linkNodes,
 			ranges,
 			images.imageRanges,
+			source,
+			phpBlockScan,
 		),
 		mathSpans: ranges.map((range) => mathSpanFromRange(source, range)),
 		source,

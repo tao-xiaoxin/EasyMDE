@@ -1990,4 +1990,193 @@ describe('image scale contract', () => {
       )
     ).toBeNull();
   });
+
+  it('rejects images in GFM table body cells beyond PHP headerColumnCount', () => {
+    for (const [label, source, marker] of [
+      [
+        '2-col table with 3rd extra body cell',
+        '| H | B |\n| --- | --- |\n| a | b | ![extra](https://example.org/i.png) |',
+        '![extra]'
+      ],
+      [
+        '1-col table extra body cell before valid next row',
+        '| A |\n| --- |\n| 1 | ![dropped](https://example.com/dropped.png) |\n| ![real](https://example.com/real.png) |',
+        '![dropped]'
+      ],
+      [
+        'asymmetric 1-header / 2-separator table drops 2nd body cell',
+        '| A |\n| --- | --- |\n| 1 | ![dropped](https://example.com/dropped.png) |',
+        '![dropped]'
+      ],
+      [
+        '0-col header table drops piped body cell',
+        '|\n| --- |\n| ![dropped](https://example.com/dropped.png) |',
+        '![dropped]'
+      ],
+      [
+        '0-col header table drops lazy-continuation body row without pipe',
+        '|\n| --- |\n![dropped](https://example.com/dropped.png)',
+        '![dropped]'
+      ],
+      [
+        'blockquote-nested 1-col table drops 2nd body cell',
+        '> | A |\n> | --- |\n> | 1 | ![dropped](https://example.com/dropped.png) |',
+        '![dropped]'
+      ],
+      [
+        'list-nested 1-col table drops 2nd body cell',
+        '- | A |\n  | --- |\n  | 1 | ![dropped](https://example.com/dropped.png) |',
+        '![dropped]'
+      ]
+    ] as const) {
+      const start = source.indexOf(marker);
+      expect(parseMarkdownImageScale(source, start), `parse:${label}`).toBeNull();
+      expect(findMarkdownImageAt(source, start + 3), `find:${label}`).toBeNull();
+    }
+
+    const mixedTable =
+      '| A |\n| --- |\n| 1 | ![dropped](https://example.com/dropped.png) |\n| ![real](https://example.com/real.png) |';
+    const realStart = mixedTable.indexOf('![real]');
+    expect(parseMarkdownImageScale(mixedTable, realStart)).toMatchObject({
+      alt: 'real',
+      destination: 'https://example.com/real.png',
+      start: realStart
+    });
+    expect(findMarkdownImageAt(mixedTable, realStart + 3)).toMatchObject({
+      alt: 'real',
+      destination: 'https://example.com/real.png',
+      start: realStart
+    });
+  });
+
+  it('decodes PHP TableParser pipe escapes on read and escapes pipes on table destination writes', () => {
+    for (const [label, source, expectedDest] of [
+      [
+        'single-escaped pipe in bare table destination',
+        '| A |\n| --- |\n| ![alt](https://example.com/a\\|b.png) |',
+        'https://example.com/a|b.png'
+      ],
+      [
+        'double-backslash pipe in bare table destination decodes to single pipe',
+        '| A |\n| --- |\n| ![alt](https://example.com/a\\\\|b.png) |',
+        'https://example.com/a|b.png'
+      ],
+      [
+        'triple-backslash pipe in bare table destination decodes to backslash plus pipe',
+        '| A |\n| --- |\n| ![alt](https://example.com/a\\\\\\|b.png) |',
+        'https://example.com/a\\|b.png'
+      ],
+      [
+        'quad-backslash pipe in bare table destination decodes to backslash plus pipe',
+        '| A |\n| --- |\n| ![alt](https://example.com/a\\\\\\\\|b.png) |',
+        'https://example.com/a\\|b.png'
+      ],
+      [
+        'double-backslash pipe in angle-bracket table destination decodes to single pipe',
+        '| A |\n| --- |\n| ![alt](<https://example.com/a\\\\|b.png>) |',
+        'https://example.com/a|b.png'
+      ]
+    ] as const) {
+      const start = source.indexOf('![alt]');
+      expect(parseMarkdownImageScale(source, start), `parse:${label}`).toMatchObject({
+        destination: expectedDest
+      });
+      expect(findMarkdownImageAt(source, start + 3), `find:${label}`).toMatchObject({
+        destination: expectedDest
+      });
+    }
+
+    // Effective title in a table cell also applies PHP TableParser `\|` -> `|` before inline unescaping.
+    const titlePipeSource =
+      '| A |\n| --- |\n| ![alt](https://example.com/a.png "a\\\\|b \\{width=50%}") |';
+    const titleStart = titlePipeSource.indexOf('![alt]');
+    expect(findMarkdownImageAt(titlePipeSource, titleStart + 3)).toMatchObject({
+      scale: 50,
+      title: 'a|b',
+      titleMarkerEnd: null,
+      titleMarkerStart: null
+    });
+
+    // Destination replacement inside a table row escapes `|` so the table cell is never split.
+    const bareTable = '| A |\n| --- |\n| ![alt](https://example.com/old.png) |';
+    const bareMatch = findMarkdownImageAt(bareTable, bareTable.indexOf('![alt]') + 3);
+    if (!bareMatch) throw new Error('bare-table-match-missing');
+    const pipeRepl = createMarkdownImageDestinationReplacement(
+      bareTable,
+      bareMatch,
+      'https://example.com/a|b.png'
+    );
+    expect(pipeRepl).not.toBeNull();
+    if (!pipeRepl) return;
+    const writtenBare =
+      bareTable.slice(0, pipeRepl.from) + pipeRepl.insert + bareTable.slice(pipeRepl.to);
+    expect(writtenBare).toBe('| A |\n| --- |\n| ![alt](https://example.com/a\\|b.png) |');
+    expect(
+      findMarkdownImageAt(writtenBare, writtenBare.indexOf('![alt]') + 3)?.destination
+    ).toBe('https://example.com/a|b.png');
+
+    // Literal `\|` inside a table destination round-trips as `\\\|` matching PHP TableParser::split().
+    const slashPipeRepl = createMarkdownImageDestinationReplacement(
+      bareTable,
+      bareMatch,
+      'https://example.com/a\\|b.png'
+    );
+    expect(slashPipeRepl).not.toBeNull();
+    if (!slashPipeRepl) return;
+    const writtenSlashPipe =
+      bareTable.slice(0, slashPipeRepl.from)
+      + slashPipeRepl.insert
+      + bareTable.slice(slashPipeRepl.to);
+    expect(writtenSlashPipe).toBe('| A |\n| --- |\n| ![alt](https://example.com/a\\\\\\|b.png) |');
+    expect(
+      findMarkdownImageAt(writtenSlashPipe, writtenSlashPipe.indexOf('![alt]') + 3)?.destination
+    ).toBe('https://example.com/a\\|b.png');
+
+    // Pipe plus spaces in a table row serializes as angle-bracketed with escaped pipe.
+    const spacePipeRepl = createMarkdownImageDestinationReplacement(
+      bareTable,
+      bareMatch,
+      'https://example.com/a | b.png'
+    );
+    expect(spacePipeRepl).not.toBeNull();
+    if (!spacePipeRepl) return;
+    const writtenSpacePipe =
+      bareTable.slice(0, spacePipeRepl.from)
+      + spacePipeRepl.insert
+      + bareTable.slice(spacePipeRepl.to);
+    expect(writtenSpacePipe).toBe('| A |\n| --- |\n| ![alt](<https://example.com/a \\| b.png>) |');
+    expect(
+      findMarkdownImageAt(writtenSpacePipe, writtenSpacePipe.indexOf('![alt]') + 3)?.destination
+    ).toBe('https://example.com/a | b.png');
+
+    // Angle-bracketed table image keeps angle brackets and escapes `|`.
+    const angleTable = '| A |\n| --- |\n| ![alt](<https://example.com/old.png>) |';
+    const angleMatch = findMarkdownImageAt(angleTable, angleTable.indexOf('![alt]') + 3);
+    if (!angleMatch) throw new Error('angle-table-match-missing');
+    const angleRepl = createMarkdownImageDestinationReplacement(
+      angleTable,
+      angleMatch,
+      'https://example.com/a|b.png'
+    );
+    expect(angleRepl).not.toBeNull();
+    if (!angleRepl) return;
+    expect(
+      angleTable.slice(0, angleRepl.from) + angleRepl.insert + angleTable.slice(angleRepl.to)
+    ).toBe('| A |\n| --- |\n| ![alt](<https://example.com/a\\|b.png>) |');
+
+    // Non-table image destination with `|` remains unescaped.
+    const plainSource = '![alt](https://example.com/old.png)';
+    const plainMatch = findMarkdownImageAt(plainSource, 3);
+    if (!plainMatch) throw new Error('plain-match-missing');
+    const plainRepl = createMarkdownImageDestinationReplacement(
+      plainSource,
+      plainMatch,
+      'https://example.com/a|b.png'
+    );
+    expect(plainRepl).not.toBeNull();
+    if (!plainRepl) return;
+    expect(
+      plainSource.slice(0, plainRepl.from) + plainRepl.insert + plainSource.slice(plainRepl.to)
+    ).toBe('![alt](https://example.com/a|b.png)');
+  });
 });

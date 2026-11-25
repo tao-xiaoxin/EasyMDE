@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { findTableRowCellAt } from "./php-commonmark-block-helpers";
-import { scanPhpCommonMarkBlocks } from "./php-commonmark-block-scan";
+import {
+	findTableRowCellAt,
+	unescapeTableCellPipes,
+} from "./php-commonmark-block-helpers";
+import {
+	isRangeDroppedByPhpTable,
+	scanPhpCommonMarkBlocks,
+} from "./php-commonmark-block-scan";
 import {
 	createInlineHtmlScanGuard,
 	matchBlockInlineHtmlOrAutolink,
@@ -165,9 +171,67 @@ describe("php-commonmark-inline-html watermarks and linear performance", () => {
 		);
 		expect(escCell).not.toBeNull();
 		if (escCell) {
+			expect(escCell.cellIndex).toBe(0);
 			expect(escaped.slice(escCell.start, escCell.end)).toBe(
 				' ![a\\|b](https://example.com/a.png "t\\|u {width=50%}") ',
 			);
 		}
+	});
+
+	it("enforces PHP TableParser headerColumnCount limits and pre-inline pipe unescaping", () => {
+		const row = "| a | b | ![extra](https://example.org/i.png) |";
+		const extraPos = row.indexOf("![extra]");
+		expect(findTableRowCellAt(row, 0, row.length, extraPos)).toMatchObject({
+			cellIndex: 2,
+		});
+		expect(findTableRowCellAt(row, 0, row.length, extraPos, 2)).toBeNull();
+		expect(
+			findTableRowCellAt(row, 0, row.length, row.indexOf("b"), 2),
+		).toMatchObject({
+			cellIndex: 1,
+		});
+		expect(findTableRowCellAt(row, 0, row.length, 2, 0)).toBeNull();
+
+		// Scan records headerColumnCount on both header and body rows, including asymmetric and 0-col tables.
+		const asymmetric =
+			"| A |\n| --- | --- |\n| 1 | ![dropped](https://example.com/dropped.png) |\n| ![real](https://example.com/real.png) |";
+		const asymScan = scanPhpCommonMarkBlocks(asymmetric);
+		expect(asymScan.lines.map((line) => line.tableColumnCount)).toEqual([
+			1,
+			null,
+			1,
+			1,
+		]);
+		const droppedFrom = asymmetric.indexOf("![dropped]");
+		const droppedTo = asymmetric.indexOf(")", droppedFrom) + 1;
+		const realFrom = asymmetric.indexOf("![real]");
+		const realTo = asymmetric.indexOf(")", realFrom) + 1;
+		expect(
+			isRangeDroppedByPhpTable(asymmetric, asymScan, droppedFrom, droppedTo),
+		).toBe(true);
+		expect(
+			isRangeDroppedByPhpTable(asymmetric, asymScan, realFrom, realTo),
+		).toBe(false);
+
+		const zeroCol = "|\n| --- |\n| ![dropped](https://example.com/dropped.png) |";
+		const zeroScan = scanPhpCommonMarkBlocks(zeroCol);
+		expect(zeroScan.lines.map((line) => line.tableColumnCount)).toEqual([
+			0,
+			null,
+			0,
+		]);
+		const zeroFrom = zeroCol.indexOf("![dropped]");
+		expect(
+			isRangeDroppedByPhpTable(
+				zeroCol,
+				zeroScan,
+				zeroFrom,
+				zeroCol.indexOf(")", zeroFrom) + 1,
+			),
+		).toBe(true);
+
+		expect(unescapeTableCellPipes("a\\|b")).toBe("a|b");
+		expect(unescapeTableCellPipes("a\\\\|b")).toBe("a\\|b");
+		expect(unescapeTableCellPipes("a\\\\\\|b")).toBe("a\\\\|b");
 	});
 });

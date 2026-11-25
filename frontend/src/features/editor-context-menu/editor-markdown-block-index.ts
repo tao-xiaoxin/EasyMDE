@@ -31,7 +31,6 @@ import {
 	linkCandidatesForBlocks,
 	projectedLinkNodes,
 	type MarkdownSyntaxNode,
-	type ParserLinkNode,
 } from "./editor-markdown-link-preparation";
 import {
 	mathSpanFromRange,
@@ -62,6 +61,8 @@ export type EditorMarkdownBlockIndex = EditorMarkdownBlockIndexData &
 type ParserImageNode = Readonly<{
 	available: boolean;
 	from: number;
+	projectedFrom?: number;
+	projectedTo?: number;
 	referenceLabelFrom?: number;
 	referenceLabelTo?: number;
 	to: number;
@@ -69,8 +70,9 @@ type ParserImageNode = Readonly<{
 
 type ParserSnapshot = Readonly<{
 	blocks: ReadonlyArray<EditorMarkdownSourceBlock>;
+	hasLinkSyntax: boolean;
 	imageNodes: ReadonlyArray<ParserImageNode>;
-	linkNodes: ReadonlyArray<ParserLinkNode>;
+	syntaxNodes: ReadonlyArray<MarkdownSyntaxNode>;
 	unavailableRanges: ReadonlyArray<SourceRange>;
 }>;
 
@@ -221,13 +223,20 @@ function sourceBlock(
 function parserSnapshot(
 	source: string,
 	projection: NewlineProjection,
-	profile: ReferenceLabelCaseFoldProfile,
 ): ParserSnapshot {
 	const starts = markdownLineStarts(source);
 	const tree = markdownLanguage.parser.parse(projection.text);
 	const syntaxNodes: MarkdownSyntaxNode[] = [];
+	let hasLinkSyntax = false;
 	tree.iterate({
 		enter: (node) => {
+			if (
+				"Link" === node.name ||
+				"Autolink" === node.name ||
+				"URL" === node.name
+			) {
+				hasLinkSyntax = true;
+			}
 			syntaxNodes.push({ from: node.from, name: node.name, to: node.to });
 		},
 	});
@@ -260,11 +269,7 @@ function parserSnapshot(
 		} while (topLevel.nextSibling());
 	}
 
-	const imageNodes: Array<{
-		available: boolean;
-		from: number;
-		to: number;
-	}> = [];
+	const imageNodes: ParserImageNode[] = [];
 	let imageBlockIndex = 0;
 	tree.cursor().iterate((node) => {
 		if ("Image" !== node.name) return;
@@ -290,6 +295,8 @@ function parserSnapshot(
 		imageNodes.push({
 			available,
 			from: originalOffsetAt(projection, node.from),
+			projectedFrom: node.from,
+			projectedTo: node.to,
 			...(refRange
 				? {
 						referenceLabelFrom: originalOffsetAt(projection, refRange.from),
@@ -301,8 +308,9 @@ function parserSnapshot(
 	});
 	return {
 		blocks,
+		hasLinkSyntax,
 		imageNodes,
-		linkNodes: projectedLinkNodes(projection.text, syntaxNodes, profile),
+		syntaxNodes,
 		unavailableRanges: mergeRanges(unavailableRanges),
 	};
 }
@@ -436,9 +444,21 @@ function imageIndexForBlocks(
 ): Readonly<{
 	imageBlocks: ReadonlyArray<EditorMarkdownImageBlock>;
 	imageRanges: ReadonlyArray<EditorMarkdownImageRange>;
+	unresolvedProjectedImageRanges: ReadonlySet<string>;
 }> {
 	const imageBlocks: EditorMarkdownImageBlock[] = [];
 	const imageRanges: EditorMarkdownImageRange[] = [];
+	const unresolvedProjectedImageRanges = new Set<string>();
+	const recordUnresolvedImage = (node: ParserImageNode): void => {
+		if (
+			undefined !== node.projectedFrom &&
+			undefined !== node.projectedTo
+		) {
+			unresolvedProjectedImageRanges.add(
+				`${node.projectedFrom}:${node.projectedTo}`,
+			);
+		}
+	};
 	const sortedNodes = [...nodes].sort(
 		(left, right) => left.from - right.from || right.to - left.to,
 	);
@@ -468,11 +488,17 @@ function imageIndexForBlocks(
 				continue;
 			}
 			if (node.from < block.from || node.to > block.to) {
+				if (!node.available && isUnresolvedReferenceImage(node)) {
+					recordUnresolvedImage(node);
+				}
 				unavailable = true;
 				continue;
 			}
 			if (!node.available) {
-				if (isUnresolvedReferenceImage(node)) continue;
+				if (isUnresolvedReferenceImage(node)) {
+					recordUnresolvedImage(node);
+					continue;
+				}
 				unavailable = true;
 				continue;
 			}
@@ -512,7 +538,7 @@ function imageIndexForBlocks(
 		});
 		imageRanges.push(...accepted);
 	}
-	return { imageBlocks, imageRanges };
+	return { imageBlocks, imageRanges, unresolvedProjectedImageRanges };
 }
 
 function dropLezerImagesInsideRecovered(
@@ -545,7 +571,7 @@ export function createEditorMarkdownBlockIndex(
 ): EditorMarkdownBlockIndex {
 	const starts = markdownLineStarts(source);
 	const projection = projectNewlines(source);
-	const parsed = parserSnapshot(source, projection, options.referenceLabelCaseFoldProfile);
+	const parsed = parserSnapshot(source, projection);
 	const phpMathRanges = scanPhpMarkdownMathRanges(source);
 	const originalUnavailableRanges: ScannedCodeRange[] =
 		parsed.unavailableRanges.map((range) => {
@@ -561,7 +587,7 @@ export function createEditorMarkdownBlockIndex(
 	const phpBlockScan =
 		(source.includes("|") || phpMathRanges.length > 0) &&
 		(parsed.imageNodes.length > 0 ||
-			parsed.linkNodes.length > 0 ||
+			parsed.hasLinkSyntax ||
 			hasTableImageCandidate)
 			? scanPhpCommonMarkBlocks(source, phpMathRanges)
 			: null;
@@ -610,6 +636,16 @@ export function createEditorMarkdownBlockIndex(
 		phpBlockScan,
 		isUnresolvedReferenceImage,
 	);
+	const linkNodes = parsed.hasLinkSyntax
+		? projectedLinkNodes(
+				projection.text,
+				parsed.syntaxNodes,
+				options.referenceLabelCaseFoldProfile,
+				images.unresolvedProjectedImageRanges.size > 0
+					? images.unresolvedProjectedImageRanges
+					: undefined,
+			)
+		: [];
 	return {
 		blocks,
 		imageBlocks: images.imageBlocks,
@@ -618,7 +654,7 @@ export function createEditorMarkdownBlockIndex(
 		linkCandidates: linkCandidatesForBlocks(
 			projection,
 			blocks,
-			parsed.linkNodes,
+			linkNodes,
 			ranges,
 			images.imageRanges,
 			source,

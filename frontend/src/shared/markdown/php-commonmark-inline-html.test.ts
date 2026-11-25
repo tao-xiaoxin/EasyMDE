@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
-	findTableRowCellAt,
+	collectTableRowCells,
 	unescapeTableCellPipes,
 } from "./php-commonmark-block-helpers";
 import {
+	findTableRowCellInCells,
 	isRangeDroppedByPhpTable,
 	scanPhpCommonMarkBlocks,
 } from "./php-commonmark-block-scan";
@@ -149,26 +150,26 @@ describe("php-commonmark-inline-html watermarks and linear performance", () => {
 
 	it("splits GFM table rows into per-cell ranges matching PHP TableParser::split()", () => {
 		const row = "| ` | ![alt](https://example.com/a.png) | ` |";
+		const rowCells = collectTableRowCells(row, 0, row.length);
+		expect(rowCells).toHaveLength(3);
 		const imgPos = row.indexOf("![alt]");
-		const cell = findTableRowCellAt(row, 0, row.length, imgPos);
+		const cell = findTableRowCellInCells(rowCells, imgPos);
 		expect(cell).not.toBeNull();
 		if (cell) {
+			expect(cell.cellIndex).toBe(1);
 			expect(row.slice(cell.start, cell.end)).toBe(
 				" ![alt](https://example.com/a.png) ",
 			);
 		}
 		// Delimiter pipes themselves belong to no cell.
-		expect(findTableRowCellAt(row, 0, row.length, 0)).toBeNull();
-		expect(findTableRowCellAt(row, 0, row.length, 4)).toBeNull();
+		expect(findTableRowCellInCells(rowCells, 0)).toBeNull();
+		expect(findTableRowCellInCells(rowCells, 4)).toBeNull();
 
 		// Escaped `\|` stays inside the same cell.
 		const escaped = '| ![a\\|b](https://example.com/a.png "t\\|u {width=50%}") |';
-		const escCell = findTableRowCellAt(
-			escaped,
-			0,
-			escaped.length,
-			escaped.indexOf("!["),
-		);
+		const escCells = collectTableRowCells(escaped, 0, escaped.length);
+		expect(escCells).toHaveLength(1);
+		const escCell = findTableRowCellInCells(escCells, escaped.indexOf("!["));
 		expect(escCell).not.toBeNull();
 		if (escCell) {
 			expect(escCell.cellIndex).toBe(0);
@@ -181,16 +182,21 @@ describe("php-commonmark-inline-html watermarks and linear performance", () => {
 	it("enforces PHP TableParser headerColumnCount limits and pre-inline pipe unescaping", () => {
 		const row = "| a | b | ![extra](https://example.org/i.png) |";
 		const extraPos = row.indexOf("![extra]");
-		expect(findTableRowCellAt(row, 0, row.length, extraPos)).toMatchObject({
+		const unlimitedCells = collectTableRowCells(row, 0, row.length);
+		expect(findTableRowCellInCells(unlimitedCells, extraPos)).toMatchObject({
 			cellIndex: 2,
 		});
-		expect(findTableRowCellAt(row, 0, row.length, extraPos, 2)).toBeNull();
+		const twoColCells = collectTableRowCells(row, 0, row.length, 2);
+		expect(twoColCells).toHaveLength(2);
+		expect(findTableRowCellInCells(twoColCells, extraPos)).toBeNull();
 		expect(
-			findTableRowCellAt(row, 0, row.length, row.indexOf("b"), 2),
+			findTableRowCellInCells(twoColCells, row.indexOf("b")),
 		).toMatchObject({
 			cellIndex: 1,
 		});
-		expect(findTableRowCellAt(row, 0, row.length, 2, 0)).toBeNull();
+		const zeroColCells = collectTableRowCells(row, 0, row.length, 0);
+		expect(zeroColCells).toEqual([]);
+		expect(findTableRowCellInCells(zeroColCells, 2)).toBeNull();
 
 		// Scan records headerColumnCount on both header and body rows, including asymmetric and 0-col tables.
 		const asymmetric =

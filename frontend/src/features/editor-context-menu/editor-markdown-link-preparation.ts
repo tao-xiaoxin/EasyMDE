@@ -74,7 +74,7 @@ function directChildIndex(
 function markdownSyntaxStructure(
 	nodes: ReadonlyArray<MarkdownSyntaxNode>,
 ) {
-	const ancestorsAt: string[][] = nodes.map(() => []);
+	const ancestorIndicesAt: number[][] = nodes.map(() => []);
 	const children: number[][] = nodes.map(() => []);
 	const urlDescendants = new Uint8Array(nodes.length);
 	const namesAt = new Map<number, number>();
@@ -90,10 +90,7 @@ function markdownSyntaxStructure(
 		}
 		const parentIndex = open[open.length - 1];
 		if (undefined !== parentIndex) children[parentIndex]?.push(index);
-		ancestorsAt[index] = open.flatMap((ancestorIndex) => {
-			const name = nodes[ancestorIndex]?.name;
-			return name ? [name] : [];
-		});
+		ancestorIndicesAt[index] = [...open];
 		if ("URL" === node.name) {
 			for (const ancestorIndex of open) urlDescendants[ancestorIndex] = 1;
 			namesAt.set(node.from, (namesAt.get(node.from) ?? 0) | URL_NODE_NAME_BIT);
@@ -105,7 +102,28 @@ function markdownSyntaxStructure(
 		}
 		open.push(index);
 	}
-	return { ancestorsAt, children, namesAt, urlDescendants };
+	return { ancestorIndicesAt, children, namesAt, urlDescendants };
+}
+
+function hasBlockedAncestor(
+	ancestorIndices: ReadonlyArray<number> | undefined,
+	nodes: ReadonlyArray<MarkdownSyntaxNode>,
+	blockedAncestors: Readonly<Record<string, true>>,
+	unresolvedImageRanges?: ReadonlySet<string>,
+): boolean {
+	if (!ancestorIndices || 0 === ancestorIndices.length) return false;
+	for (let i = 0; i < ancestorIndices.length; i += 1) {
+		const ancestor = nodes[ancestorIndices[i] ?? -1];
+		if (!ancestor || !blockedAncestors[ancestor.name]) continue;
+		if (
+			"Image" === ancestor.name &&
+			unresolvedImageRanges?.has(`${ancestor.from}:${ancestor.to}`)
+		) {
+			continue;
+		}
+		return true;
+	}
+	return false;
 }
 
 function referenceLabelsFromStructure(
@@ -114,12 +132,12 @@ function referenceLabelsFromStructure(
 	structure: ReturnType<typeof markdownSyntaxStructure>,
 	profile: ReferenceLabelCaseFoldProfile,
 ): Set<string> {
-	const { ancestorsAt, children } = structure;
+	const { ancestorIndicesAt, children } = structure;
 	const definedLabels = new Set<string>();
 	for (let index = 0; index < nodes.length; index += 1) {
 		const node = nodes[index];
 		if ("LinkReference" !== node?.name) continue;
-		if (ancestorsAt[index]?.some((ancestor) => LINK_BLOCKED_ANCESTORS[ancestor]))
+		if (hasBlockedAncestor(ancestorIndicesAt[index], nodes, LINK_BLOCKED_ANCESTORS))
 			continue;
 		const labelIndex = directChildIndex(children, nodes, index, "LinkLabel");
 		const label = nodes[labelIndex ?? -1];
@@ -173,7 +191,7 @@ export function markdownReferenceDefinitionQuery(
 			for (let index = 0; index < nodes.length; index += 1) {
 				const node = nodes[index];
 				if ("LinkReference" !== node?.name
-					|| structure.ancestorsAt[index]?.some((ancestor) => LINK_BLOCKED_ANCESTORS[ancestor])) continue;
+					|| hasBlockedAncestor(structure.ancestorIndicesAt[index], nodes, LINK_BLOCKED_ANCESTORS)) continue;
 				const labelNode = nodes[directChildIndex(structure.children, nodes, index, "LinkLabel") ?? -1];
 				const url = nodes[directChildIndex(structure.children, nodes, index, "URL") ?? -1];
 				const title = nodes[directChildIndex(structure.children, nodes, index, "LinkTitle") ?? -1];
@@ -220,8 +238,15 @@ export function projectedLinkNodes(
 	text: string,
 	nodes: ReadonlyArray<MarkdownSyntaxNode>,
 	profile: ReferenceLabelCaseFoldProfile,
+	unresolvedImageRanges?: ReadonlySet<string>,
 ): ReadonlyArray<ParserLinkNode> {
-	return parserProjectedLinkNodes(text, nodes, profile);
+	return parserProjectedLinkNodes(
+		text,
+		nodes,
+		profile,
+		undefined,
+		unresolvedImageRanges,
+	);
 }
 
 function parserProjectedLinkNodes(
@@ -229,9 +254,10 @@ function parserProjectedLinkNodes(
 	nodes: ReadonlyArray<MarkdownSyntaxNode>,
 	profile: ReferenceLabelCaseFoldProfile,
 	referenceDefined?: (label: string) => boolean,
+	unresolvedImageRanges?: ReadonlySet<string>,
 ): ReadonlyArray<ParserLinkNode> {
 	const structure = markdownSyntaxStructure(nodes);
-	const { ancestorsAt, children, namesAt, urlDescendants } = structure;
+	const { ancestorIndicesAt, children, namesAt, urlDescendants } = structure;
 	let definition: ReturnType<typeof markdownReferenceDefinitionQuery> | null = null;
 	const created = new Uint8Array(nodes.length);
 	const referenceLinks = new Uint8Array(nodes.length);
@@ -316,7 +342,14 @@ function parserProjectedLinkNodes(
 	for (let index = 0; index < nodes.length; index += 1) {
 		const node = nodes[index];
 		if (!node) break;
-		if (ancestorsAt[index]?.some((ancestor) => LINK_BLOCKED_ANCESTORS[ancestor]))
+		if (
+			hasBlockedAncestor(
+				ancestorIndicesAt[index],
+				nodes,
+				LINK_BLOCKED_ANCESTORS,
+				unresolvedImageRanges,
+			)
+		)
 			continue;
 		const hasUrl = 1 === urlDescendants[index];
 		if ("Link" === node.name) {
@@ -332,8 +365,11 @@ function parserProjectedLinkNodes(
 		if (0 !== createdLinkDepth[index]) continue;
 		if ("Autolink" === node.name) {
 			if (
-				ancestorsAt[index]?.some((ancestor) =>
-					LINK_BLOCKED_INLINE_ANCESTORS[ancestor],
+				hasBlockedAncestor(
+					ancestorIndicesAt[index],
+					nodes,
+					LINK_BLOCKED_INLINE_ANCESTORS,
+					unresolvedImageRanges,
 				)
 			)
 				continue;
@@ -349,8 +385,11 @@ function parserProjectedLinkNodes(
 		}
 		if ("URL" === node.name) {
 			if (
-				ancestorsAt[index]?.some((ancestor) =>
-					LINK_BLOCKED_INLINE_ANCESTORS[ancestor],
+				hasBlockedAncestor(
+					ancestorIndicesAt[index],
+					nodes,
+					LINK_BLOCKED_INLINE_ANCESTORS,
+					unresolvedImageRanges,
 				)
 			)
 				continue;

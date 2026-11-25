@@ -26,6 +26,7 @@ export type PhpMarkdownMathRange = Readonly<{
 	block: boolean;
 	from: number;
 	to: number;
+	tokenIndex?: number;
 }>;
 
 type BacktickRun = Readonly<{
@@ -184,6 +185,7 @@ function scanDelimitedMathPass(
 	isDisplay: boolean,
 	ranges: PhpMarkdownMathRange[],
 	buildMasked: boolean,
+	tokenCounter: { value: number },
 ): string {
 	let pos = text.indexOf(openDelim);
 	if (pos < 0) return text;
@@ -197,10 +199,13 @@ function scanDelimitedMathPass(
 		const close = text.indexOf(closeDelim, pos + openLen + 1);
 		if (close < 0) break;
 		const to = close + closeLen;
+		const tokenIndex = tokenCounter.value;
+		tokenCounter.value += 1;
 		ranges.push({
 			block: isDisplay,
 			from: segmentOffset + pos,
 			to: segmentOffset + to,
+			tokenIndex,
 		});
 		if (buildMasked) {
 			if (!parts) parts = [];
@@ -223,6 +228,7 @@ function scanInlineDollarMathPass(
 	text: string,
 	segmentOffset: number,
 	ranges: PhpMarkdownMathRange[],
+	tokenCounter: { value: number },
 ): void {
 	let search = 0;
 	let lineEnd = -1;
@@ -253,10 +259,13 @@ function scanInlineDollarMathPass(
 			continue;
 		}
 		const to = nextDollar + 1;
+		const tokenIndex = tokenCounter.value;
+		tokenCounter.value += 1;
 		ranges.push({
 			block: false,
 			from: segmentOffset + open,
 			to: segmentOffset + to,
+			tokenIndex,
 		});
 		search = to;
 	}
@@ -267,6 +276,7 @@ function scanSegmentMathRanges(
 	segmentOffset: number,
 	flags: DelimiterScanFlags,
 	ranges: PhpMarkdownMathRange[],
+	tokenCounter: { value: number },
 ): void {
 	let current = segment;
 
@@ -279,6 +289,7 @@ function scanSegmentMathRanges(
 			true,
 			ranges,
 			flags.hasBracketPair || flags.hasParenPair || flags.hasDollarPair,
+			tokenCounter,
 		);
 	}
 	if (flags.hasBracketPair && current.includes("\\[")) {
@@ -290,6 +301,7 @@ function scanSegmentMathRanges(
 			true,
 			ranges,
 			flags.hasParenPair || flags.hasDollarPair,
+			tokenCounter,
 		);
 	}
 	if (flags.hasParenPair && current.includes("\\(")) {
@@ -301,10 +313,11 @@ function scanSegmentMathRanges(
 			false,
 			ranges,
 			flags.hasDollarPair,
+			tokenCounter,
 		);
 	}
 	if (flags.hasDollarPair && current.includes("$")) {
-		scanInlineDollarMathPass(current, segmentOffset, ranges);
+		scanInlineDollarMathPass(current, segmentOffset, ranges, tokenCounter);
 	}
 }
 
@@ -372,8 +385,9 @@ export function scanPhpMarkdownMathRanges(
 			: baseCodeRanges;
 
 	const ranges: PhpMarkdownMathRange[] = [];
+	const tokenCounter = { value: 0 };
 	if (0 === codeRanges.length) {
-		scanSegmentMathRanges(source, 0, flags, ranges);
+		scanSegmentMathRanges(source, 0, flags, ranges, tokenCounter);
 		return collapseNestedMathRanges(ranges);
 	}
 
@@ -387,6 +401,7 @@ export function scanPhpMarkdownMathRanges(
 				cursor,
 				flags,
 				ranges,
+				tokenCounter,
 			);
 		}
 		if (codeRange.end > cursor) {
@@ -394,7 +409,13 @@ export function scanPhpMarkdownMathRanges(
 		}
 	}
 	if (cursor < source.length) {
-		scanSegmentMathRanges(source.slice(cursor), cursor, flags, ranges);
+		scanSegmentMathRanges(
+			source.slice(cursor),
+			cursor,
+			flags,
+			ranges,
+			tokenCounter,
+		);
 	}
 	return collapseNestedMathRanges(ranges);
 }

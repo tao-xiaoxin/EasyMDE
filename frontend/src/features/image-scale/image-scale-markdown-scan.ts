@@ -11,7 +11,6 @@ import {
   findLineAtOffset,
   findLineIndexAtOffset,
   findNextBacktickRun,
-  findTableRowCellAt,
   findTableRowCellInCells,
   getCachedBlockBacktickRuns,
   getCachedInlineHtmlScanGuard,
@@ -40,7 +39,6 @@ export {
   findLineAtOffset,
   findLineIndexAtOffset,
   findNextBacktickRun,
-  findTableRowCellAt,
   getCachedBlockBacktickRuns,
   getCachedInlineHtmlScanGuard,
   getInlineBlockBounds,
@@ -273,7 +271,7 @@ export function getCachedTableRowCells(
 
 /**
  * Builds an isolated inline-scanning scope for one already-located GFM table
- * cell `[cell.start, cell.end)` without re-running `findTableRowCellAt`,
+ * cell `[cell.start, cell.end)` without re-running `collectTableRowCells`,
  * reusing cached per-cell backtick runs and inline HTML scan guards.
  */
 export function resolveTableCellScanScope(

@@ -353,63 +353,6 @@ export function collectTableRowCells(
 }
 
 /**
- * Locates the GFM table cell `[start, end)` containing `offset` within one
- * container-stripped table row `[contentOffset, lineEnd)`, matching PHP
- * `League\CommonMark\Extension\Table\TableParser::split()` (trims PHP trim
- * whitespace, drops optional single leading/trailing unescaped `|`, treats
- * `\|` as an escaped literal pipe inside the cell rather than a delimiter,
- * and drops body cells at `cellIndex >= maxColumns` when `maxColumns` is set).
- */
-export function findTableRowCellAt(
-	source: string,
-	contentOffset: number,
-	lineEnd: number,
-	offset: number,
-	maxColumns?: number | null,
-): TableRowCellRange | null {
-	const hasColumnLimit = null !== maxColumns && undefined !== maxColumns;
-	if (hasColumnLimit && maxColumns <= 0) return null;
-	let trimStart = contentOffset;
-	let trimEnd = lineEnd;
-	while (trimStart < trimEnd && isPhpTrimChar(source[trimStart])) {
-		trimStart += 1;
-	}
-	while (trimEnd > trimStart && isPhpTrimChar(source[trimEnd - 1])) {
-		trimEnd -= 1;
-	}
-	if (trimStart >= trimEnd) return null;
-	let cellStart = "|" === source[trimStart] ? trimStart + 1 : trimStart;
-	if (offset < cellStart || offset >= trimEnd) return null;
-
-	let cellIndex = 0;
-	let pos = cellStart;
-	while (pos < trimEnd) {
-		if ("\\" === source[pos] && pos + 1 < trimEnd && "|" === source[pos + 1]) {
-			pos += 2;
-			continue;
-		}
-		if ("|" === source[pos]) {
-			if (offset <= pos) {
-				if (offset >= pos || (hasColumnLimit && cellIndex >= maxColumns)) {
-					return null;
-				}
-				return { cellIndex, end: pos, start: cellStart };
-			}
-			cellIndex += 1;
-			if (hasColumnLimit && cellIndex >= maxColumns) return null;
-			cellStart = pos + 1;
-			pos += 1;
-			continue;
-		}
-		pos += 1;
-	}
-	if (hasColumnLimit && cellIndex >= maxColumns) return null;
-	return cellStart < trimEnd && offset >= cellStart && offset < trimEnd
-		? { cellIndex, end: trimEnd, start: cellStart }
-		: null;
-}
-
-/**
  * Exact column-count port of PHP `League\CommonMark`'s
  * `TableStartParser::parseSeparator()`.
  */

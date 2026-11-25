@@ -271,17 +271,17 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 
 		// Sequential nesting collapses strictly inner earlier-pass spans into the outermost PHP owner.
 		expect(scanPhpMarkdownMathRanges("\\[a $$b$$ c\\]")).toEqual([
-			{ block: true, from: 0, to: 13 },
+			{ block: true, from: 0, to: 13, tokenIndex: 1 },
 		]);
 		expect(scanPhpMarkdownMathRanges("before \\(a $$b$$ c\\) after")).toEqual([
-			{ block: false, from: 7, to: 20 },
+			{ block: false, from: 7, to: 20, tokenIndex: 1 },
 		]);
 		expect(scanPhpMarkdownMathRanges("$a \\(b\\) c$")).toEqual([
-			{ block: false, from: 0, to: 11 },
+			{ block: false, from: 0, to: 11, tokenIndex: 1 },
 		]);
 		// Display math inserts \n\n so outer $...$ cannot cross it.
 		expect(scanPhpMarkdownMathRanges("$a $$b$$ c$")).toEqual([
-			{ block: true, from: 3, to: 8 },
+			{ block: true, from: 3, to: 8, tokenIndex: 0 },
 		]);
 
 		// Track B #9: bare `\r` inside inline `$...$` keeps following 4-space image in paragraph (not indented code).
@@ -416,5 +416,68 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 		expect(scanPhpCommonMarkReferenceLabels("[$a$]: /x")).toEqual([
 			"EASYMDE_MATH_0_TOKEN",
 		]);
+	});
+
+	it("assigns per-segment 4-pass PHP EASYMDE_MATH_<k>_TOKEN indices across single- and multi-segment documents (Round 27 Track A #6 + Track B F6)", () => {
+		// Within one outside-code segment, PHP runs passes in order: $$ -> \[ -> \( -> $.
+		const singleSeg = "$d$ \\(c\\) \\[b\\] $$a$$";
+		expect(
+			scanPhpMarkdownMathRanges(singleSeg).map((r) => ({
+				text: singleSeg.slice(r.from, r.to),
+				tokenIndex: r.tokenIndex,
+			})),
+		).toEqual([
+			{ text: "$d$", tokenIndex: 3 },
+			{ text: "\\(c\\)", tokenIndex: 2 },
+			{ text: "\\[b\\]", tokenIndex: 1 },
+			{ text: "$$a$$", tokenIndex: 0 },
+		]);
+
+		// Across code-separated segments, PHP processes segment 0 (all 4 passes) before segment 1 (all 4 passes).
+		const multiSeg = "$a$ `code` $$b$$";
+		expect(
+			scanPhpMarkdownMathRanges(multiSeg).map((r) => ({
+				text: multiSeg.slice(r.from, r.to),
+				tokenIndex: r.tokenIndex,
+			})),
+		).toEqual([
+			{ text: "$a$", tokenIndex: 0 },
+			{ text: "$$b$$", tokenIndex: 1 },
+		]);
+
+		const multiSegMixed = "$s0_inline$ $$s0_block$$ `code` $s1_inline$ \\[s1_block\\]";
+		expect(
+			scanPhpMarkdownMathRanges(multiSegMixed).map((r) => ({
+				text: multiSegMixed.slice(r.from, r.to),
+				tokenIndex: r.tokenIndex,
+			})),
+		).toEqual([
+			{ text: "$s0_inline$", tokenIndex: 1 },
+			{ text: "$$s0_block$$", tokenIndex: 0 },
+			{ text: "$s1_inline$", tokenIndex: 3 },
+			{ text: "\\[s1_block\\]", tokenIndex: 2 },
+		]);
+
+		// Reference label scanning uses exact per-segment 4-pass PHP token indices.
+		expect(
+			scanPhpCommonMarkReferenceLabels(
+				"![EASYMDE_MATH_1_TOKEN] ![ok](/i)\n\n[$a$]: /x\n\n$$b$$",
+			),
+		).toEqual(["EASYMDE_MATH_1_TOKEN"]);
+		expect(
+			scanPhpCommonMarkReferenceLabels(
+				"![a][EASYMDE_MATH_1_TOKEN]\n\n[$a$]: /x.png\n$$b$$",
+			),
+		).toEqual(["EASYMDE_MATH_1_TOKEN"]);
+		expect(
+			scanPhpCommonMarkReferenceLabels(
+				"![a][EASYMDE_MATH_0_TOKEN]\n\n[$a$]: /x.png\n\n`code`\n\n$$b$$",
+			),
+		).toEqual(["EASYMDE_MATH_0_TOKEN"]);
+		expect(
+			scanPhpCommonMarkReferenceLabels(
+				"\\[a $$b$$ c\\]\n\n[$d$]: /x.png",
+			),
+		).toEqual(["EASYMDE_MATH_2_TOKEN"]);
 	});
 });

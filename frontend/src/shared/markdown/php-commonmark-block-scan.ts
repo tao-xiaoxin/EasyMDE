@@ -15,7 +15,6 @@ import {
 	COMMONMARK_HTML_BLOCK_TYPE_6_OPEN,
 	COMMONMARK_THEMATIC_BREAK_LINE,
 	collectTableRowCells,
-	findTableRowCellAt,
 	type TableRowCellRange,
 	unescapeTableCellPipes,
 } from "./php-commonmark-block-helpers";
@@ -48,7 +47,6 @@ export {
 	COMMONMARK_THEMATIC_BREAK_LINE,
 	collectTableRowCells,
 	createPhpCommonMarkBlockState,
-	findTableRowCellAt,
 	isPhpBlockStateTopLevelParagraph,
 	type PhpCommonMarkBlockState,
 	type PhpMarkdownMathRange,
@@ -128,7 +126,7 @@ function replaceMathRangesWithPhpTokens(
 		if (to <= from) continue;
 		if (!parts) parts = [];
 		if (from > cursor) parts.push(source.slice(cursor, from));
-		const token = `EASYMDE_MATH_${i}_TOKEN`;
+		const token = `EASYMDE_MATH_${range.tokenIndex ?? i}_TOKEN`;
 		parts.push(range.block ? `\n\n${token}\n\n` : token);
 		cursor = to;
 	}

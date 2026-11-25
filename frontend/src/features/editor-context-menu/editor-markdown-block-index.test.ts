@@ -1878,6 +1878,174 @@ describe("readEditorCodeContent", () => {
 			(escapedTickIdx.imageRanges ?? []).map((r) => escapedTickSrc.slice(r.from, r.to)),
 		).toEqual([escapedTickSrc]);
 	});
+
+	it("matches PHP 4-pass math token numbering for reference labels and preserves live links inside unresolved reference images (Round 27)", () => {
+		// 1. Track A #6 + Track B F6: PHP per-segment 4-pass token numbering ($$ -> \[ -> \( -> $).
+		const repro1 = "![EASYMDE_MATH_1_TOKEN] ![ok](/i)\n\n[$a$]: /x\n\n$$b$$";
+		expect(createEditorMarkdownBlockIndex(repro1).imageBlocks?.[0]).toEqual({
+			count: 0,
+			firstImageIndex: 0,
+			status: "unavailable",
+		});
+
+		const repro2 = "![a][EASYMDE_MATH_1_TOKEN]\n\n[$a$]: /x.png\n$$b$$";
+		expect(createEditorMarkdownBlockIndex(repro2).imageBlocks?.[0]).toEqual({
+			count: 0,
+			firstImageIndex: 0,
+			status: "unavailable",
+		});
+
+		const repro3 = "![a][EASYMDE_MATH_0_TOKEN]\n\n[$a$]: /x.png\n$$b$$";
+		expect(createEditorMarkdownBlockIndex(repro3).imageBlocks?.[0]).toEqual({
+			count: 0,
+			firstImageIndex: 0,
+			status: "ready",
+		});
+
+		// Multi-segment case separated by inline code: segment 0 `$a$` -> TOKEN_0, segment 1 `$$b$$` -> TOKEN_1.
+		const multiSegMatch =
+			"![a][EASYMDE_MATH_0_TOKEN]\n\n[$a$]: /x.png\n\n`code`\n\n$$b$$";
+		expect(createEditorMarkdownBlockIndex(multiSegMatch).imageBlocks?.[0]).toEqual({
+			count: 0,
+			firstImageIndex: 0,
+			status: "unavailable",
+		});
+
+		const multiSegMiss =
+			"![a][EASYMDE_MATH_1_TOKEN]\n\n[$a$]: /x.png\n\n`code`\n\n$$b$$";
+		expect(createEditorMarkdownBlockIndex(multiSegMiss).imageBlocks?.[0]).toEqual({
+			count: 0,
+			firstImageIndex: 0,
+			status: "ready",
+		});
+
+		// Nested math increments PHP counter for both inner $$b$$ (0) and outer \[...\] (1), so $d$ gets TOKEN_2.
+		const nestedMathRef =
+			"![a][EASYMDE_MATH_2_TOKEN]\n\n\\[a $$b$$ c\\]\n\n[$d$]: /x.png";
+		expect(createEditorMarkdownBlockIndex(nestedMathRef).imageBlocks?.[0]).toEqual({
+			count: 0,
+			firstImageIndex: 0,
+			status: "unavailable",
+		});
+
+		// 2. Track B F7: live PHP links nested inside unresolved reference-image syntax stay exposed.
+		for (const [label, source, expectedLinks, expectedImages] of [
+			[
+				"full unresolved ref image with inline link",
+				"![[link](https://example.com)][missing]",
+				["[link](https://example.com)"],
+				[],
+			],
+			[
+				"collapsed unresolved ref image with inline link",
+				"![[link](https://example.com)][]",
+				["[link](https://example.com)"],
+				[],
+			],
+			[
+				"shortcut unresolved ref image with inline link",
+				"![[link](https://example.com)]",
+				["[link](https://example.com)"],
+				[],
+			],
+			[
+				"unresolved ref image with defined reference link",
+				"![[link][ref]][missing]\n\n[ref]: https://example.com",
+				["[link][ref]"],
+				[],
+			],
+			[
+				"unresolved ref image with autolink",
+				"![<https://example.com>][missing]",
+				["<https://example.com>"],
+				[],
+			],
+			[
+				"unresolved ref image with bare URL after space",
+				"![see https://example.com][missing]",
+				["https://example.com"],
+				[],
+			],
+			[
+				"unresolved ref image in GFM table cell",
+				"| A |\n| --- |\n| ![[link](https://example.com)][missing] |",
+				["[link](https://example.com)"],
+				[],
+			],
+			[
+				"CRLF document with unresolved ref image containing link",
+				"intro\r\n\r\n![[link](https://example.com)][missing]",
+				["[link](https://example.com)"],
+				[],
+			],
+			[
+				"unresolved ref image containing both link and real inline image",
+				"![[link](https://example.com) ![ok](/i)][missing]",
+				["[link](https://example.com)"],
+				["![ok](/i)"],
+			],
+		] as const) {
+			const idx = createEditorMarkdownBlockIndex(source);
+			const targetBlockIdx = source.startsWith("intro\r\n") ? 1 : 0;
+			expect(idx.imageBlocks?.[targetBlockIdx], `block:${label}`).toEqual({
+				count: expectedImages.length,
+				firstImageIndex: 0,
+				status: "ready",
+			});
+			expect(
+				(idx.imageRanges ?? []).map((r) => source.slice(r.from, r.to)),
+				`images:${label}`,
+			).toEqual([...expectedImages]);
+			expect(
+				(idx.linkCandidates ?? []).map((r) => source.slice(r.from, r.to)),
+				`links:${label}`,
+			).toEqual([...expectedLinks]);
+		}
+
+		// Positive controls: real defined reference image and real inline image still block nested links.
+		const definedRefImg =
+			"![[link](https://example.com)][defined]\n\n[defined]: /img.png";
+		const definedRefIdx = createEditorMarkdownBlockIndex(definedRefImg);
+		expect(definedRefIdx.imageBlocks?.[0]).toEqual({
+			count: 0,
+			firstImageIndex: 0,
+			status: "unavailable",
+		});
+		expect(definedRefIdx.linkCandidates).toEqual([]);
+
+		const inlineImgWithLink = "![[link](https://example.com)](/img.png)";
+		const inlineImgIdx = createEditorMarkdownBlockIndex(inlineImgWithLink);
+		expect(inlineImgIdx.imageBlocks?.[0]).toEqual({
+			count: 1,
+			firstImageIndex: 0,
+			status: "ready",
+		});
+		expect(inlineImgIdx.linkCandidates).toEqual([]);
+
+		// Nested real inline image inside unresolved ref image still blocks link inside the real image.
+		const realInsideUnresolved =
+			"![![[link](https://example.com)](/img.png)][missing]";
+		const realInsideIdx = createEditorMarkdownBlockIndex(realInsideUnresolved);
+		expect(realInsideIdx.imageBlocks?.[0]).toEqual({
+			count: 1,
+			firstImageIndex: 0,
+			status: "ready",
+		});
+		expect(realInsideIdx.linkCandidates).toEqual([]);
+
+		// Unresolved ref image nested inside a real defined ref image stays blocked.
+		const unresolvedInsideDefined =
+			"![![[link](https://example.com)][missing]][defined]\n\n[defined]: /img.png";
+		const unresolvedInsideDefIdx = createEditorMarkdownBlockIndex(
+			unresolvedInsideDefined,
+		);
+		expect(unresolvedInsideDefIdx.imageBlocks?.[0]).toEqual({
+			count: 0,
+			firstImageIndex: 0,
+			status: "unavailable",
+		});
+		expect(unresolvedInsideDefIdx.linkCandidates).toEqual([]);
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

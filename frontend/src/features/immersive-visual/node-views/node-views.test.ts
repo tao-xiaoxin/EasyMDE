@@ -3098,4 +3098,185 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 		expect(multiBacktickInline.textContent).toBe("``b`");
 		expect(multiBacktickInline.querySelector("code")).toBeNull();
 	});
+
+	it("masks PHP math before block scanning and bounds inline HTML tags at blank-line / display-math breaks (PR-R28-A2 Track B F5)", () => {
+		const renderRaw = (md: string): HTMLDivElement => {
+			const host = document.createElement("div");
+			host.appendChild(
+				renderRawBlockPreview(document, md, {
+					fallbackLabel: "Raw",
+					footnotesLabel: "Footnotes",
+					renderNestedMath: (doc, displayMode, raw) => {
+						const el = doc.createElement(displayMode ? "div" : "span");
+						el.className = displayMode
+							? "easymde-math easymde-math-block"
+							: "easymde-math easymde-math-inline";
+						el.textContent = raw;
+						return el;
+					},
+					viewWindow: window,
+				}),
+			);
+			return host;
+		};
+
+		// F5a: Inline math inside HTML block closers must NOT terminate HTML blocks.
+		expect(stripCommonMarkHtmlForPreview("<!-- $-->$\nvisible")).toBe("");
+		const commentMathHost = renderRaw("<!-- $-->$\nvisible");
+		expect(commentMathHost.textContent).not.toContain("visible");
+		expect(
+			commentMathHost.querySelector(".easymde-protected-meta-chip"),
+		).not.toBeNull();
+		expect(
+			stripCommonMarkHtmlForPreview("<!-- \\(x -->\ny\\) -->\nvisible"),
+		).toBe("visible");
+		expect(
+			stripCommonMarkHtmlForPreview("<!-- \\(x -->\ny\\)\nvisible"),
+		).toBe("");
+		expect(stripCommonMarkHtmlForPreview("<script>\n$</script>$\nvisible")).toBe(
+			"",
+		);
+		expect(stripCommonMarkHtmlForPreview("<?php\n$?>$\nvisible")).toBe("");
+		expect(stripCommonMarkHtmlForPreview("<!DOCTYPE\n$>$\nvisible")).toBe("");
+		expect(stripCommonMarkHtmlForPreview("<![CDATA[\n$]]>$\nvisible")).toBe("");
+		expect(stripCommonMarkHtmlForPreview("> <!-- $-->$\n> visible")).toBe("");
+		expect(stripCommonMarkHtmlForPreview("- <!-- $-->$\n  visible")).toBe("");
+
+		// F5b: Display math terminates Type 6/7 HTML blocks (matching PHP `\n\nTOKEN\n\n`)
+		// while preserving display math + trailing visible content, and Type 1-5 blocks still absorb it.
+		expect(stripCommonMarkHtmlForPreview("<div>\n$$a$$\nvisible")).toBe(
+			"$$a$$\n\nvisible",
+		);
+		const divDisplayHost = renderRaw("<div>\n$$a$$\nvisible");
+		expect(
+			divDisplayHost.querySelector(".easymde-math-block")?.textContent,
+		).toBe("$$a$$");
+		expect(divDisplayHost.querySelector("p")?.textContent).toBe("visible");
+
+		expect(stripCommonMarkHtmlForPreview("<div>\n$$a\nb$$\nvisible")).toBe(
+			"$$a\nb$$\n\nvisible",
+		);
+		const multilineDisplayHost = renderRaw("<div>\n$$a\nb$$\nvisible");
+		expect(
+			multilineDisplayHost.querySelector(".easymde-math-block")?.textContent,
+		).toBe("$$a\nb$$");
+		expect(multilineDisplayHost.querySelector("p")?.textContent).toBe(
+			"visible",
+		);
+
+		expect(stripCommonMarkHtmlForPreview("<div>\n\\[a\nb\\]\nvisible")).toBe(
+			"\\[a\nb\\]\n\nvisible",
+		);
+		expect(
+			stripCommonMarkHtmlForPreview("<div>\nprefix $$a$$ suffix\nvisible"),
+		).toBe("$$a$$\n\n suffix\nvisible");
+		expect(stripCommonMarkHtmlForPreview("<div>$$a$$</div>")).toBe("$$a$$");
+		expect(stripCommonMarkHtmlForPreview("<span>\n$$a$$\nvisible")).toBe(
+			"$$a$$\n\nvisible",
+		);
+		expect(
+			stripCommonMarkHtmlForPreview("<div>\n$$<span>x</span>$$\nvisible"),
+		).toBe("$$<span>x</span>$$\n\nvisible");
+		expect(stripCommonMarkHtmlForPreview("<div>\n$$a$$$$b$$\nvisible")).toBe(
+			"$$a$$\n\n$$b$$\n\nvisible",
+		);
+		expect(stripCommonMarkHtmlForPreview("> <div>\n> $$a$$\n> visible")).toBe(
+			"$$a$$\n\n> visible",
+		);
+		expect(stripCommonMarkHtmlForPreview("<!-- $$a$$ -->\nvisible")).toBe(
+			"visible",
+		);
+		expect(stripCommonMarkHtmlForPreview("<pre>\n$$a$$\n</pre>\nvisible")).toBe(
+			"visible",
+		);
+		expect(
+			stripCommonMarkHtmlForPreview(
+				"<div></div>\n\n\\(a\nb\\) <em>1</em>\n\\(c\nd\\) <em>2</em>",
+			),
+		).toBe("\\(a\nb\\) 1\n\\(c\nd\\) 2");
+		expect(stripCommonMarkHtmlForPreview("> a \\(x\n> y\\) <b>hi</b>")).toBe(
+			"> a \\(x\n> y\\) hi",
+		);
+
+		// F5c: Inline HTML tags NEVER cross blank lines or display-math breaks.
+		expect(
+			stripCommonMarkHtmlForPreview('<span><a title="$$x$$">hi</a></span>'),
+		).toBe('<a title="\n\n$$x$$\n\n">hi');
+		const attrDisplayHost = renderRaw('<span><a title="$$x$$">hi</a></span>');
+		expect(
+			attrDisplayHost.querySelector(".easymde-math-block")?.textContent,
+		).toBe("$$x$$");
+		expect(
+			Array.from(attrDisplayHost.querySelectorAll("p")).map(
+				(p) => p.textContent,
+			),
+		).toEqual(['<a title="', '">hi']);
+
+		expect(
+			stripCommonMarkHtmlForPreview('<span><a title="\\[x\\]">hi</a></span>'),
+		).toBe('<a title="\n\n\\[x\\]\n\n">hi');
+		expect(
+			stripCommonMarkHtmlForPreview("<span>a<!-- $$x$$ -->b</span>"),
+		).toBe("a<!-- \n\n$$x$$\n\n -->b");
+		expect(stripCommonMarkHtmlForPreview('<span title="$$x$$">\nhidden')).toBe(
+			'<span title="\n\n$$x$$\n\n">\nhidden',
+		);
+
+		// Direct inline preview also stops at blank-line / display-math breaks,
+		// resets scan guards across breaks, and avoids recursive fixed-point loops.
+		const inlineAttrDisplay = renderRawInlinePreview(
+			document,
+			'<span><a title="$$x$$">hi</a></span>',
+			{ footnotes: "Footnotes", raw: "Raw" },
+		);
+		expect(inlineAttrDisplay.textContent).toBe('<a title="$$x$$">hi');
+
+		const inlineGuardResetTag = renderRawInlinePreview(
+			document,
+			'<a title="$$x$$"><span title="ok">hi</span>',
+			{ footnotes: "Footnotes", raw: "Raw" },
+		);
+		expect(inlineGuardResetTag.textContent).toBe('<a title="$$x$$">hi');
+
+		const inlineGuardResetComment = renderRawInlinePreview(
+			document,
+			"a<!-- $$x$$ -->b<!-- gone -->c",
+			{ footnotes: "Footnotes", raw: "Raw" },
+		);
+		expect(inlineGuardResetComment.textContent).toBe("a<!-- $$x$$ -->bc");
+
+		const inlineBlankComment = renderRawInlinePreview(
+			document,
+			"<span>a<!-- x\n\ny -->b</span>",
+			{ footnotes: "Footnotes", raw: "Raw" },
+		);
+		expect(inlineBlankComment.textContent).toBe("a<!-- x\n\ny -->b");
+
+		// Positive controls: Track A #4, Track A #5, valid single-newline multiline tags, inline math in attrs, code spans.
+		expect(
+			stripCommonMarkHtmlForPreview("<span>a<!-- \\(x -->\ny\\) -->b</span>"),
+		).toBe("ab");
+		expect(stripCommonMarkHtmlForPreview("<span>\\``<em>b</em>`</span>")).toBe(
+			"\\`\\`b`",
+		);
+		const escapedTicksBlock = renderRaw("<span>\\``<em>b</em>`</span>");
+		expect(escapedTicksBlock.textContent).toBe("``b`");
+		expect(escapedTicksBlock.querySelector("code")).toBeNull();
+		expect(
+			stripCommonMarkHtmlForPreview('<div></div>\n\n<span\nclass="a">hello</span>'),
+		).toBe("hello");
+		expect(
+			stripCommonMarkHtmlForPreview('<span><a title="$x$">hi</a></span>'),
+		).toBe("hi");
+		expect(
+			stripCommonMarkHtmlForPreview('<span>`<a title="$$x$$">hi</a>`</span>'),
+		).toBe('`<a title="$$x$$">hi</a>`');
+
+		// Adversarial O(N) guard across thousands of unclosed tags separated by display math breaks.
+		const repeatedBrokenTags = '<a title="$$x$$">'.repeat(1500);
+		const perfStart = performance.now();
+		const perfOut = stripCommonMarkHtmlForPreview(repeatedBrokenTags);
+		expect(performance.now() - perfStart).toBeLessThan(150);
+		expect(perfOut).toContain("$$x$$");
+	});
 });

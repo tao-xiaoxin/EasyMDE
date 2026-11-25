@@ -8,9 +8,9 @@ import {
 } from "../../shared/image-scale-title";
 import {
 	createPreservingRoundTripGuard,
+	joinSerializedBlocks,
 	type MarkdownRoundTripGuard,
 	type MarkdownSerializers,
-	needsTightRefDefContinuation,
 	serializeList,
 } from "./markdown-block-preservation";
 import {
@@ -732,22 +732,8 @@ function serializeBlockNode(node: ProseMirrorNode): string {
 				? `${"#".repeat(level)} ${content}`
 				: "#".repeat(level);
 		}
-		case "blockquote": {
-			const parts: string[] = [];
-			for (let i = 0; i < node.childCount; i += 1) {
-				const child = node.child(i);
-				const prev = i > 0 ? node.child(i - 1) : null;
-				const serialized = serializeBlockNode(child);
-				if (prev !== null && needsTightRefDefContinuation(prev, child)) {
-					parts.push(`\n    ${serialized}`);
-				} else if (i > 0) {
-					parts.push(`\n\n${serialized}`);
-				} else {
-					parts.push(serialized);
-				}
-			}
-			return prefixBlockquote(parts.join(""));
-		}
+		case "blockquote":
+			return prefixBlockquote(joinSerializedBlocks(node, serializeBlockNode));
 		case "bullet_list":
 		case "ordered_list":
 		case "task_list":
@@ -776,20 +762,7 @@ export function serializeVisualDocToMarkdown(doc: ProseMirrorNode): string {
 		return "";
 	}
 
-	const parts: string[] = [];
-	for (let i = 0; i < doc.childCount; i += 1) {
-		const child = doc.child(i);
-		const prev = i > 0 ? doc.child(i - 1) : null;
-		const serialized = serializeBlockNode(child);
-		if (prev !== null && needsTightRefDefContinuation(prev, child)) {
-			parts.push(`\n    ${serialized}`);
-		} else if (i > 0) {
-			parts.push(`\n\n${serialized}`);
-		} else {
-			parts.push(serialized);
-		}
-	}
-	return parts.join("");
+	return joinSerializedBlocks(doc, serializeBlockNode);
 }
 
 const MARKDOWN_SERIALIZERS: MarkdownSerializers = {

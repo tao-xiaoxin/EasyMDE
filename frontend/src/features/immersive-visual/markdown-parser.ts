@@ -1,7 +1,6 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
 	RAW_REFERENCE_SOURCE_META_KEY,
-	TASK_LIST_MARKER_PATTERN,
 	visualMarkdownItParser,
 } from "./markdown-it-config";
 import {
@@ -11,6 +10,12 @@ import {
 	tokenAttrString,
 } from "./markdown-parser-inline";
 import {
+	markPreservedTaskParagraphs,
+	stripTaskPrefix,
+	type TaskParagraphContext,
+} from "./markdown-parser-task";
+import {
+	isCommonMarkBlankLine,
 	type PreScanResult,
 	prescanMarkdown,
 	restoreProtectedInlineSentinels,
@@ -55,12 +60,7 @@ export type ParsedVisualDocument = Readonly<{
 	trailingSuffix: string;
 }>;
 
-type BlockMapContext = Readonly<{
-	env: Record<string, unknown>;
-	paragraphRawContents: WeakMap<ProseMirrorNode, string>;
-	preScan: PreScanResult;
-	referenceBlocks: WeakSet<ProseMirrorNode>;
-}>;
+type BlockMapContext = TaskParagraphContext;
 
 function parseCellAlignmentFromToken(token: MarkdownToken): TableTextAlign {
 	const match = /text-align\s*:\s*(left|center|right)/i.exec(
@@ -73,101 +73,6 @@ function parseCellAlignmentFromToken(token: MarkdownToken): TableTextAlign {
 function readCellAlignment(node: ProseMirrorNode | undefined): TableTextAlign {
 	const align = node?.attrs.textAlign;
 	return isValidTableTextAlign(align) ? align : null;
-}
-
-function stripTaskPrefix(
-	itemChildren: ReadonlyArray<ProseMirrorNode>,
-	context: BlockMapContext,
-): Readonly<{ checked: boolean; children: ProseMirrorNode[] }> | null {
-	let firstContentIndex = 0;
-	while (firstContentIndex < itemChildren.length) {
-		const candidate = itemChildren[firstContentIndex];
-		if (
-			candidate &&
-			candidate.type === visualEditorSchema.nodes.protected_block &&
-			context.referenceBlocks.has(candidate)
-		) {
-			firstContentIndex += 1;
-			continue;
-		}
-		break;
-	}
-	const firstBlock = itemChildren[firstContentIndex];
-	if (!firstBlock || firstBlock.type !== visualEditorSchema.nodes.paragraph) {
-		return null;
-	}
-	const rawContent = context.paragraphRawContents.get(firstBlock) ?? "";
-	const rawMatch = TASK_LIST_MARKER_PATTERN.exec(rawContent);
-	if (!rawMatch?.[1]) {
-		return null;
-	}
-	const checked = rawMatch[1].toLowerCase() === "x";
-	let inlines: ProseMirrorNode[];
-	const firstInline = firstBlock.firstChild;
-	if (
-		firstInline?.isText &&
-		firstInline.marks.length === 0 &&
-		/^\[[ xX]\]/.test(firstInline.text ?? "")
-	) {
-		const text = firstInline.text ?? "";
-		// Strip `[x]` plus either horizontal whitespace or a single soft line
-		// break (`- [x]\n  Task`); hard_break children (`- [x]  \n  Task` or
-		// `- [x]\\\n  Task`) remain untouched as subsequent children.
-		const prefixMatch = /^\[[ xX]\](?:[ \t]*\n|[ \t]*)/.exec(text);
-		const remaining = text.slice(prefixMatch?.[0].length ?? 3);
-		inlines = remaining.length > 0 ? [visualEditorSchema.text(remaining)] : [];
-		for (let i = 1; i < firstBlock.childCount; i += 1) {
-			inlines.push(firstBlock.child(i));
-		}
-	} else {
-		// PHP TaskListItemMarkerParser (priority 35) consumes `[x]` before link
-		// parsing (e.g. `- [x](url)` or `- [x][ref]`), so re-parse the tail while
-		// preserving 2+ trailing spaces before `\n` as a CommonMark hard break.
-		const rest = rawContent.slice(3);
-		const afterMarker = /^[ \t]* {2}\n/.test(rest)
-			? rest.replace(/^[ \t]* {2}\n/, "  \n")
-			: rest.replace(/^(?:[ \t]*\n|[ \t]+)/, "");
-		const reparsedTokens = visualMarkdownItParser.parseInline(
-			afterMarker,
-			context.env,
-		);
-		inlines = mapInlineTokens(
-			reparsedTokens[0]?.children ?? null,
-			context.preScan,
-			false,
-		);
-	}
-	return {
-		checked,
-		children: [
-			...itemChildren.slice(0, firstContentIndex),
-			visualEditorSchema.nodes.paragraph.create(null, inlines),
-			...itemChildren.slice(firstContentIndex + 1),
-		],
-	};
-}
-
-function markPreservedTaskParagraphs(
-	children: ReadonlyArray<ProseMirrorNode>,
-	context: BlockMapContext,
-): ProseMirrorNode[] {
-	return children.map((child) => {
-		if (
-			child.type !== visualEditorSchema.nodes.paragraph ||
-			child.attrs.preserveRawTaskPrefix === true
-		) {
-			return child;
-		}
-		const rawContent = context.paragraphRawContents.get(child) ?? "";
-		if (!TASK_LIST_MARKER_PATTERN.test(rawContent)) {
-			return child;
-		}
-		return visualEditorSchema.nodes.paragraph.create(
-			{ preserveRawTaskPrefix: true },
-			child.content,
-			child.marks,
-		);
-	});
 }
 
 function ensureListItemChildren(
@@ -555,7 +460,7 @@ function resolveOriginalRangeFromTokenMap(
 	// trim trailing blank lines so the exact inter-block separator stays outside the block.
 	while (
 		origEnd > origStart &&
-		(preScan.rawLines[origEnd - 1] ?? "").trim().length === 0
+		isCommonMarkBlankLine(preScan.rawLines[origEnd - 1] ?? "")
 	) {
 		origEnd -= 1;
 	}
@@ -695,6 +600,17 @@ function mapBlockTokensWithRanges(
 
 		flushOrphanTableAlign();
 		const origRange = resolveOriginalRangeFromTokenMap(token.map, preScan);
+
+		if (token.type === "easymde_protected_block") {
+			const protectedEntry = preScan.protectedBlocks.get(token.content);
+			if (protectedEntry) {
+				entries.push({
+					node: visualEditorSchema.nodes.protected_block.create(protectedEntry),
+					origRange,
+				});
+			}
+			continue;
+		}
 
 		if (token.type === "heading_open") {
 			const closeIdx = findMatchingCloseIndex(
@@ -860,7 +776,7 @@ function mapBlockTokens(
 export function parseMarkdownWithBlockSources(
 	markdown: string,
 ): ParsedVisualDocument {
-	if (markdown.trim().length === 0) {
+	if (/^[ \t\r\n]*$/.test(markdown)) {
 		return {
 			blocks: [],
 			doc: visualEditorSchema.nodes.doc.create(null, [

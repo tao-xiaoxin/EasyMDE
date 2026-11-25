@@ -12,6 +12,7 @@ import {
 	readRawMetaString,
 } from "./markdown-parser-inline";
 import {
+	isCommonMarkBlankLine,
 	type PreScanResult,
 	restoreProtectedInlineSentinels,
 } from "./markdown-prescanner";
@@ -354,7 +355,19 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 			"reference",
 			"easymde_reference",
 			(state, startLine, endLine, silent) => {
-				if ((state.sCount[startLine] ?? 0) - state.blkIndent >= 4) {
+				// PHP League\CommonMark keeps ParagraphParser open across link
+				// reference definitions until a blank line or interrupting block,
+				// so a 4-space/tab-indented consecutive refdef right after a
+				// refdef at the same container level still parses as a refdef.
+				const prevToken = state.tokens[state.tokens.length - 1];
+				const followsRefDef =
+					prevToken?.type === "reference_definition" &&
+					prevToken.level === state.level &&
+					prevToken.map?.[1] === startLine;
+				const origSCount = state.sCount[startLine] ?? 0;
+				const indentedAfterRefDef =
+					followsRefDef && origSCount - state.blkIndent >= 4;
+				if (!indentedAfterRefDef && origSCount - state.blkIndent >= 4) {
 					return false;
 				}
 				const startPos =
@@ -368,7 +381,17 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 					? getKnownReferenceLabels(existingRefs)
 					: null;
 				const tokensBefore = state.tokens.length;
-				const matched = originalReferenceRule(state, startLine, endLine, silent);
+				if (indentedAfterRefDef) {
+					state.sCount[startLine] = state.blkIndent;
+				}
+				let matched: boolean;
+				try {
+					matched = originalReferenceRule(state, startLine, endLine, silent);
+				} finally {
+					if (indentedAfterRefDef) {
+						state.sCount[startLine] = origSCount;
+					}
+				}
 				if (!matched || silent || state.tokens.length <= tokensBefore) {
 					return matched;
 				}
@@ -469,6 +492,38 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 	}
 
 	parser.block.ruler.before(
+		"lheading",
+		"easymde_protected_block",
+		(state, startLine, _endLine, silent) => {
+			if ((state.sCount[startLine] ?? 0) - state.blkIndent >= 4) {
+				return false;
+			}
+			const blocks = (state.env as ReferenceEnv).preScan?.protectedBlocks;
+			if (!blocks || blocks.size === 0) {
+				return false;
+			}
+			const pos =
+				(state.bMarks[startLine] ?? 0) + (state.tShift[startLine] ?? 0);
+			const max = state.eMarks[startLine] ?? pos;
+			const lineText = state.src
+				.slice(pos, max)
+				.replace(/^[ \t]+|[ \t]+$/g, "");
+			if (!blocks.has(lineText)) {
+				return false;
+			}
+			if (silent) {
+				return true;
+			}
+			const token = state.push("easymde_protected_block", "", 0);
+			token.content = lineText;
+			token.map = [startLine, startLine + 1];
+			state.line = startLine + 1;
+			return true;
+		},
+		{ alt: ["paragraph", "reference", "blockquote", "list"] },
+	);
+
+	parser.block.ruler.before(
 		"paragraph",
 		"easymde_table_align",
 		(state, startLine, _endLine, silent) => {
@@ -548,7 +603,7 @@ export type ReferenceDefinitionBlockInfo = Readonly<{
 export function inspectReferenceDefinitionBlock(
 	rawMarkdown: string,
 ): ReferenceDefinitionBlockInfo {
-	if (rawMarkdown.trim().length === 0 || !rawMarkdown.includes("]:")) {
+	if (/^[ \t\r\n]*$/.test(rawMarkdown) || !rawMarkdown.includes("]:")) {
 		return { isRefDef: false, lastHasTitle: false, lastRaw: "" };
 	}
 	const tokens = visualMarkdownItParser.parse(rawMarkdown, {});
@@ -607,7 +662,7 @@ export function wouldReferenceDefinitionAbsorbFollowingBlock(
 		return false;
 	}
 	for (const line of followingMarkdown.split("\n")) {
-		if (line.trim().length === 0) {
+		if (isCommonMarkBlankLine(line)) {
 			break;
 		}
 		if (advanceParagraphReferenceParser(refParser, line)) {
@@ -628,7 +683,7 @@ export function wouldReferenceDefinitionAbsorbFollowingBlock(
 export function extractReferenceDefinitionLabels(
 	rawMarkdown: string,
 ): string[] | null {
-	if (rawMarkdown.trim().length === 0) {
+	if (/^[ \t\r\n]*$/.test(rawMarkdown)) {
 		return null;
 	}
 	const tokens = visualMarkdownItParser.parse(rawMarkdown, {});
@@ -643,7 +698,7 @@ export function extractReferenceDefinitionLabels(
 		const rawSource = readRawMetaString(token, RAW_REFERENCE_SOURCE_META_KEY);
 		const labelMatch =
 			rawSource !== null
-				? /^ {0,3}\[((?:\\.|[^\\\]])+)\]:/u.exec(rawSource)
+				? /^[ \t]*\[((?:\\.|[^\\\]])+)\]:/u.exec(rawSource)
 				: null;
 		if (labelMatch?.[1]) {
 			labels.push(labelMatch[1].trim().replace(/\s+/gu, " "));

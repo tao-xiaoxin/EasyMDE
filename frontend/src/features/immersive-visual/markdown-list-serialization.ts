@@ -1,5 +1,9 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
+	htmlBlockLineCloses,
+	matchHtmlBlockOpen,
+} from "../../shared/markdown/php-commonmark-block-helpers";
+import {
 	inspectReferenceDefinitionBlock,
 	type ReferenceDefinitionBlockInfo,
 	TASK_LIST_MARKER_PATTERN,
@@ -17,6 +21,13 @@ import { sanitizeBulletMarker } from "./visual-schema";
  */
 
 export type BlockSerializer = (node: ProseMirrorNode) => string;
+export type RefDefContinuationMode = "none" | "tight" | "indented";
+
+/**
+ * CommonMark §2.2 four-column leading indentation (four spaces, or 0-3 spaces
+ * followed by a tab stop advancing to column 4).
+ */
+export const LEADING_FOUR_COLUMN_INDENT = /^(?: {4}| {0,3}\t)/;
 
 const NON_REF_DEF_INFO: ReferenceDefinitionBlockInfo = {
 	isRefDef: false,
@@ -94,6 +105,35 @@ export function isLooseList(listNode: ProseMirrorNode): boolean {
 	return false;
 }
 
+function isClosedHtmlBlockTypes1To5(node: ProseMirrorNode): boolean {
+	if (node.type.name !== "protected_block" || node.attrs.kind !== "raw") {
+		return false;
+	}
+	const raw =
+		typeof node.attrs.rawMarkdown === "string" ? node.attrs.rawMarkdown : "";
+	if (raw.length === 0) {
+		return false;
+	}
+	const lines = raw.split("\n");
+	const firstLine = (lines[0] ?? "").replace(/^[ \t]{0,3}/, "");
+	const htmlType = matchHtmlBlockOpen(firstLine, false);
+	if (htmlType === null || htmlType === 6 || htmlType === 7) {
+		return false;
+	}
+	const lastLine = lines[lines.length - 1] ?? "";
+	return htmlBlockLineCloses(htmlType, lastLine);
+}
+
+function isStandaloneType7HtmlFirstLine(text: string): boolean {
+	if (text.length === 0) {
+		return false;
+	}
+	const nl = text.indexOf("\n");
+	const firstLine = nl === -1 ? text : text.slice(0, nl);
+	const trimmedLead = firstLine.replace(/^[ \t]+/, "");
+	return matchHtmlBlockOpen(trimmedLead, true) === 7;
+}
+
 function canInterruptPreviousInTightList(
 	node: ProseMirrorNode,
 	prev: ProseMirrorNode,
@@ -110,6 +150,9 @@ function canInterruptPreviousInTightList(
 		) {
 			return false;
 		}
+		return true;
+	}
+	if (serialized.length > 0 && isClosedHtmlBlockTypes1To5(prev)) {
 		return true;
 	}
 	if (
@@ -136,27 +179,72 @@ function canInterruptPreviousInTightList(
 	);
 }
 
+export function refDefContinuationMode(
+	prev: ProseMirrorNode,
+	next: ProseMirrorNode,
+	serializedNext: string,
+): RefDefContinuationMode {
+	if (next.type.name !== "paragraph") {
+		return "none";
+	}
+	if (!inspectProtectedReferenceBlock(prev).isRefDef) {
+		return "none";
+	}
+	const first = next.firstChild;
+	const hasContinuationIndent =
+		first?.type.name === "protected_inline" &&
+		first.attrs.kind === "raw-inline" &&
+		first.attrs.continuationIndent === true;
+	if (hasContinuationIndent) {
+		const raw =
+			typeof first.attrs.rawMarkdown === "string" ? first.attrs.rawMarkdown : "";
+		if (
+			wouldRawHtmlInterruptParagraph(raw) ||
+			isStandaloneType7HtmlFirstLine(serializedNext)
+		) {
+			return "indented";
+		}
+	}
+	if (isStandaloneType7HtmlFirstLine(serializedNext)) {
+		return "tight";
+	}
+	return "none";
+}
+
 export function needsTightRefDefContinuation(
 	prev: ProseMirrorNode,
 	next: ProseMirrorNode,
+	serializedNext = "",
 ): boolean {
-	if (next.type.name !== "paragraph") {
-		return false;
+	return refDefContinuationMode(prev, next, serializedNext) !== "none";
+}
+
+export function joinSerializedBlocks(
+	container: ProseMirrorNode,
+	serializeBlock: BlockSerializer,
+): string {
+	const parts: string[] = [];
+	for (let i = 0; i < container.childCount; i += 1) {
+		const child = container.child(i);
+		const prev = i > 0 ? container.child(i - 1) : null;
+		const serialized = serializeBlock(child);
+		const mode =
+			prev !== null ? refDefContinuationMode(prev, child, serialized) : "none";
+		if (mode === "indented") {
+			parts.push(
+				LEADING_FOUR_COLUMN_INDENT.test(serialized)
+					? `\n${serialized}`
+					: `\n    ${serialized}`,
+			);
+		} else if (mode === "tight") {
+			parts.push(`\n${serialized}`);
+		} else if (i > 0) {
+			parts.push(`\n\n${serialized}`);
+		} else {
+			parts.push(serialized);
+		}
 	}
-	const first = next.firstChild;
-	if (
-		first?.type.name !== "protected_inline" ||
-		first.attrs.kind !== "raw-inline" ||
-		first.attrs.continuationIndent !== true
-	) {
-		return false;
-	}
-	const raw =
-		typeof first.attrs.rawMarkdown === "string" ? first.attrs.rawMarkdown : "";
-	if (!wouldRawHtmlInterruptParagraph(raw)) {
-		return false;
-	}
-	return inspectProtectedReferenceBlock(prev).isRefDef;
+	return parts.join("");
 }
 
 function escapeLiteralTaskPrefix(
@@ -231,12 +319,14 @@ function serializeListItemBody(
 			serialized = escapeLiteralTaskPrefix(child, serialized);
 		}
 		if (i === startIndex) {
-			const startsWithInlineRef =
+			const startsWithInlineRaw =
 				hasPhantomParagraph &&
-				inspectProtectedReferenceBlock(child).isRefDef &&
-				!/^[ \t]/.test(serialized);
+				child.type.name === "protected_block" &&
+				child.attrs.kind === "raw" &&
+				serialized.length > 0 &&
+				!/^[ \t\n]/.test(serialized);
 			parts.push(
-				hasPhantomParagraph && !startsWithInlineRef
+				hasPhantomParagraph && !startsWithInlineRaw
 					? `\n${serialized}`
 					: serialized,
 			);
@@ -248,16 +338,28 @@ function serializeListItemBody(
 			parts.push(
 				blankBeforeNestedList ? `\n\n${serialized}` : `\n${serialized}`,
 			);
-		} else if (prev !== null && needsTightRefDefContinuation(prev, child)) {
-			parts.push(`\n    ${serialized}`);
-		} else if (
-			!loose &&
-			prev !== null &&
-			canInterruptPreviousInTightList(child, prev, serialized)
-		) {
-			parts.push(`\n${serialized}`);
 		} else {
-			parts.push(`\n\n${serialized}`);
+			const refDefMode =
+				prev !== null
+					? refDefContinuationMode(prev, child, serialized)
+					: "none";
+			if (refDefMode === "indented") {
+				parts.push(
+					LEADING_FOUR_COLUMN_INDENT.test(serialized)
+						? `\n${serialized}`
+						: `\n    ${serialized}`,
+				);
+			} else if (refDefMode === "tight") {
+				parts.push(`\n${serialized}`);
+			} else if (
+				!loose &&
+				prev !== null &&
+				canInterruptPreviousInTightList(child, prev, serialized)
+			) {
+				parts.push(`\n${serialized}`);
+			} else {
+				parts.push(`\n\n${serialized}`);
+			}
 		}
 	}
 	return parts.join("");

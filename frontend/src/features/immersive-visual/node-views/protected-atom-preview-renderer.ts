@@ -5,6 +5,10 @@ import {
 } from "prosemirror-model";
 import type { EditorView } from "prosemirror-view";
 import {
+	htmlBlockLineCloses,
+	matchHtmlBlockOpen,
+} from "../../../shared/markdown/php-commonmark-block-helpers";
+import {
 	extractReferenceDefinitionLabels,
 	parseInlineMarkdownFragment,
 	parseMarkdownToVisualDoc,
@@ -15,15 +19,15 @@ import {
 	type DetectableFence,
 	detectFence,
 	FOOTNOTE_DEF_LINE,
+	isCommonMarkBlankLine,
 	isFenceCloser,
 	SETEXT_UNDERLINE,
+	stripBlockquoteDepth,
 	THEMATIC_BREAK,
 } from "../markdown-prescanner";
 import {
 	createInlineHtmlScanState,
 	execCommonMarkInlineHtmlToken,
-	execInlineHtmlCloseTag,
-	execInlineHtmlOpenTag,
 	skipInlineCodeSpan,
 } from "../markdown-prescanner-inline";
 import { sanitizeDomUrl, visualEditorSchema } from "../visual-schema";
@@ -34,15 +38,7 @@ import {
 import { createAtomElement } from "./protected-atom-card-editor";
 import { subscribeVisualDocumentUpdate } from "./visual-view-events";
 
-/** CommonMark §4.6 Type-6 block-level HTML tags (interrupt paragraphs). */
-const COMMONMARK_HTML_BLOCK_TAGS: ReadonlySet<string> = new Set(
-	"address article aside base basefont blockquote body caption center col colgroup dd details dialog dir div dl dt fieldset figcaption figure footer form frame frameset h1 h2 h3 h4 h5 h6 head header hr html iframe legend li link main menu menuitem nav noframes ol optgroup option p param section source summary table tbody td tfoot th thead title tr track ul".split(
-		" ",
-	),
-);
-const HTML_TYPE1_OPEN = /^ {0,3}<(script|pre|style|textarea)(?=[\s>]|$)/i;
-const HTML_TYPE1_CLOSE = /<\/(?:pre|script|style|textarea)>/i;
-const HTML_BLOCK_TAG_OPEN = /^ {0,3}<\/?([a-zA-Z][a-zA-Z0-9-]*)(?=[\s>/]|$)/;
+const HTML_BLOCK_TAG_OPEN = /^ {0,3}<\/?([a-zA-Z][a-zA-Z0-9-]*)(?=\s|\/?>|$)/;
 const INLINE_MARKDOWN_SPECIAL = /[*_`[\]!~\\$<&\r\n]/;
 const RAW_BLOCK_HEADINGS_CACHE_MAX = 64;
 
@@ -73,14 +69,6 @@ function isHtmlComment(raw: string): boolean {
 function footnoteDisplayLabel(raw: string): string {
 	const match = /^\[\^([^\s\]]+)\]$/.exec(raw.trim());
 	return match?.[1] ? `^${match[1]}` : raw;
-}
-
-function isStandaloneHtmlTagLine(content: string): boolean {
-	if (!content.startsWith("<")) return false;
-	const match =
-		execInlineHtmlOpenTag(content, 0) ?? execInlineHtmlCloseTag(content, 0);
-	if (!match) return false;
-	return content.slice(match[0].length).trim().length === 0;
 }
 
 /**
@@ -123,11 +111,10 @@ export function stripCommonMarkHtmlForPreview(rawMarkdown: string): string {
 	const kept: string[] = [];
 	let activeFence: DetectableFence | null = null;
 	let inParagraph = false;
-	let htmlBlockEnd:
-		| { type: "blank" }
-		| { type: "comment" }
-		| { type: "tag"; closePattern: RegExp }
-		| null = null;
+	let activeHtmlBlock: Readonly<{
+		quoteDepth: number;
+		type: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+	}> | null = null;
 
 	for (const line of lines) {
 		if (activeFence) {
@@ -137,32 +124,52 @@ export function stripCommonMarkHtmlForPreview(rawMarkdown: string): string {
 			continue;
 		}
 
-		if (htmlBlockEnd) {
-			if (htmlBlockEnd.type === "blank") {
-				if (line.trim().length === 0) {
-					htmlBlockEnd = null;
-					kept.push("");
+		const analysis = analyzeLine(line, 0);
+		const lineQuoteDepth = (analysis.prefix.match(/>/g) ?? []).length;
+
+		if (activeHtmlBlock) {
+			const afterQuote =
+				activeHtmlBlock.quoteDepth > 0
+					? stripBlockquoteDepth(line, activeHtmlBlock.quoteDepth)
+					: line;
+			if (afterQuote !== null) {
+				if (activeHtmlBlock.type === 6 || activeHtmlBlock.type === 7) {
+					if (isCommonMarkBlankLine(afterQuote)) {
+						activeHtmlBlock = null;
+						if (kept.length > 0) {
+							kept.push(
+								analysis.prefix.length > 0
+									? analysis.prefix.replace(/[ \t]+$/, "")
+									: "",
+							);
+						}
+						inParagraph = false;
+						continue;
+					}
+					inParagraph = false;
+					continue;
+				}
+				if (htmlBlockLineCloses(activeHtmlBlock.type, afterQuote)) {
+					activeHtmlBlock = null;
 				}
 				inParagraph = false;
 				continue;
 			}
-			if (htmlBlockEnd.type === "comment") {
-				if (line.includes("-->")) htmlBlockEnd = null;
-				inParagraph = false;
-				continue;
+			activeHtmlBlock = null;
+		}
+
+		if (isCommonMarkBlankLine(analysis.rest)) {
+			inParagraph = false;
+			if (kept.length > 0) {
+				kept.push(
+					analysis.prefix.length > 0
+						? analysis.prefix.replace(/[ \t]+$/, "")
+						: "",
+				);
 			}
-			if (htmlBlockEnd.closePattern.test(line)) htmlBlockEnd = null;
-			inParagraph = false;
 			continue;
 		}
 
-		if (line.trim().length === 0) {
-			inParagraph = false;
-			kept.push("");
-			continue;
-		}
-
-		const analysis = analyzeLine(line, 0);
 		const isTopLevel = analysis.prefix.length === 0 && analysis.indent <= 3;
 
 		const fence = detectFence(analysis);
@@ -173,31 +180,19 @@ export function stripCommonMarkHtmlForPreview(rawMarkdown: string): string {
 			continue;
 		}
 
-		const type1 = HTML_TYPE1_OPEN.exec(line);
-		if (type1?.[1]) {
-			if (!HTML_TYPE1_CLOSE.test(line)) {
-				htmlBlockEnd = { type: "tag", closePattern: HTML_TYPE1_CLOSE };
+		if (analysis.indent <= 3 && analysis.content.startsWith("<")) {
+			const htmlType = matchHtmlBlockOpen(analysis.content, !inParagraph);
+			if (htmlType !== null) {
+				if (
+					htmlType === 6 ||
+					htmlType === 7 ||
+					!htmlBlockLineCloses(htmlType, analysis.content)
+				) {
+					activeHtmlBlock = { quoteDepth: lineQuoteDepth, type: htmlType };
+				}
+				inParagraph = false;
+				continue;
 			}
-			inParagraph = false;
-			continue;
-		}
-
-		if (isTopLevel && analysis.content.startsWith("<!--")) {
-			if (!line.includes("-->")) htmlBlockEnd = { type: "comment" };
-			inParagraph = false;
-			continue;
-		}
-
-		const blockTag = HTML_BLOCK_TAG_OPEN.exec(line)?.[1]?.toLowerCase();
-		if (
-			(blockTag && COMMONMARK_HTML_BLOCK_TAGS.has(blockTag)) ||
-			(!inParagraph && isTopLevel && isStandaloneHtmlTagLine(analysis.content))
-		) {
-			// CommonMark §4.6: Types 1-6 can interrupt a paragraph, while
-			// Type 7 (a standalone non-block tag line) cannot.
-			htmlBlockEnd = { type: "blank" };
-			inParagraph = false;
-			continue;
 		}
 
 		const isIndentedCodeLine: boolean =
@@ -206,8 +201,11 @@ export function stripCommonMarkHtmlForPreview(rawMarkdown: string): string {
 			inParagraph && isTopLevel && SETEXT_UNDERLINE.test(analysis.content);
 		const strippedLine = isIndentedCodeLine
 			? line
-			: stripInlineHtmlOutsideCode(line);
-		if (inParagraph && strippedLine.trim().length === 0) {
+			: `${analysis.prefix}${stripInlineHtmlOutsideCode(analysis.rest)}`;
+		if (
+			inParagraph &&
+			isCommonMarkBlankLine(strippedLine.slice(analysis.prefix.length))
+		) {
 			// A stripped inline-only HTML line (e.g. standalone `<kbd>`) inside
 			// an open paragraph must not emit a blank line and split the `<p>`.
 			continue;
@@ -217,7 +215,7 @@ export function stripCommonMarkHtmlForPreview(rawMarkdown: string): string {
 			!isIndentedCodeLine &&
 			!isSetextUnderline &&
 			!(
-				isTopLevel &&
+				analysis.indent <= 3 &&
 				(ATX_HEADING.test(analysis.content) ||
 					THEMATIC_BREAK.test(analysis.content))
 			);

@@ -1,3 +1,4 @@
+import { matchHtmlBlockOpen } from "../../shared/markdown/php-commonmark-block-helpers";
 import type { ProtectedInlineKind } from "./visual-schema";
 
 export type ProtectedInlineEntry = Readonly<{
@@ -29,19 +30,11 @@ const PAIRED_INLINE_HTML_TAGS: ReadonlySet<string> = new Set([
 ]);
 
 const INLINE_HTML_OPEN_TAG_STICKY =
-	/<([a-zA-Z][a-zA-Z0-9-]*)(?:[ \t]+[a-zA-Z_:][a-zA-Z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^\s"'=<>`]+|'[^'\n]*'|"[^"\n]*"))?)*[ \t]*(\/?)>/y;
-const INLINE_HTML_CLOSE_TAG_STICKY = /<\/([a-zA-Z][a-zA-Z0-9-]*)[ \t]*>/y;
+	/<([a-z][a-z0-9-]*)(?:[ \t]+[a-z_:][a-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^\s"'=<>`]+|'[^'\n]*'|"[^"\n]*"))?)*[ \t]*(\/?)>/y;
+const INLINE_HTML_CLOSE_TAG_STICKY = /<\/([a-z][a-z0-9-]*)[ \t]*>/y;
 const INLINE_HTML_DECLARATION_NAME_STICKY = /<![A-Za-z]+/y;
 const TABLE_BR_STICKY = /<br[ \t]*\/?>/iy;
 const FOOTNOTE_REF_STICKY = /\[\^([^\s\]]+)\]/y;
-
-/**
- * CommonMark §4.6 Types 1–6 (plus prescanner `audio`/`video` paired block
- * tags) that would interrupt an open paragraph if serialized at 0–3 spaces on
- * a continuation line instead of staying inline HTML.
- */
-const HTML_BLOCK_INTERRUPTING_PATTERN =
-	/^(?:<!--|<\?|<!\[CDATA\[|<![A-Za-z]|<(?:script|pre|textarea|style)(?:[\s>]|$)|<\/?(?:address|article|aside|audio|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|section|source|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul|video)(?:[\s>]|\/?>|$))/i;
 
 export type InlineHtmlScanState = {
 	noAngleClose: boolean;
@@ -59,8 +52,12 @@ export function createInlineHtmlScanState(): InlineHtmlScanState {
 	};
 }
 
+/**
+ * CommonMark §4.6 Types 1–6 HTML blocks that would interrupt an open paragraph
+ * if serialized at 0–3 spaces on a continuation line instead of staying inline.
+ */
 export function wouldRawHtmlInterruptParagraph(raw: string): boolean {
-	return HTML_BLOCK_INTERRUPTING_PATTERN.test(raw);
+	return matchHtmlBlockOpen(raw, false) !== null;
 }
 
 export function execInlineHtmlOpenTag(

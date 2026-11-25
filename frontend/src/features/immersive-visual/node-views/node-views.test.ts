@@ -1,4 +1,5 @@
 import { history, undo, undoDepth } from "prosemirror-history";
+import type { Node as ProseMirrorNode } from "prosemirror-model";
 import type { Transaction } from "prosemirror-state";
 import { EditorState, NodeSelection, TextSelection } from "prosemirror-state";
 import {
@@ -20,7 +21,10 @@ import {
 } from "../markdown-parser";
 import { serializeVisualDocToMarkdown } from "../markdown-serializer";
 import { visualEditorSchema } from "../visual-schema";
-import { stripCommonMarkHtmlForPreview } from "./protected-atom-preview-renderer";
+import {
+	renderRawBlockPreview,
+	stripCommonMarkHtmlForPreview,
+} from "./protected-atom-preview-renderer";
 import {
 	codeHighlightPluginKey,
 	createCodeHighlightPlugin,
@@ -79,6 +83,7 @@ function flushMicrotasks(): Promise<void> {
 function mountVisualEditor(
 	markdown: string,
 	options: Readonly<{
+		doc?: ProseMirrorNode;
 		editable?: boolean;
 		nodeViewsOptions?: VisualNodeViewsOptions;
 		onTransaction?: (transaction: Transaction) => void;
@@ -105,7 +110,7 @@ function mountVisualEditor(
 	plugins.push(tableEditing());
 
 	const state = EditorState.create({
-		doc: parseMarkdownToVisualDoc(markdown),
+		doc: options.doc ?? parseMarkdownToVisualDoc(markdown),
 		schema: visualEditorSchema,
 		plugins,
 	});
@@ -1854,91 +1859,86 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 	});
 
 	it("renders HTML container blocks, inline HTML tags, reference links, and TOC in main-baseline WYSIWYG style while keeping source editable", () => {
+		const detailsBlock = [
+			"<details>",
+			"<summary>Expand details</summary>",
+			"",
+			"Inside details paragraph.",
+			"",
+			"* Bullet one",
+			"",
+			"```bash",
+			'echo "hi"',
+			"```",
+			"",
+			"</details>",
+		].join("\n");
+		const divBlock = [
+			'<div align="center">',
+			"",
+			"### Centered Heading",
+			"",
+			"<kbd>Ctrl</kbd> + <kbd>S</kbd> and [Safe](https://example.com) and [Evil](javascript:alert(1)).",
+			"",
+			"</div>",
+		].join("\n");
 		const markdown = [
 			"## 1. Overview",
 			"[TOC]",
 			"Text <u>underlined</u>, <mark>marked</mark>, H<sub>2</sub>O, x<sup>2</sup>, <kbd>⌘</kbd> + <kbd>K</kbd>.",
-			[
-				"<details>",
-				"<summary>Expand details</summary>",
-				"",
-				"Inside details paragraph.",
-				"",
-				"* Bullet one",
-				"",
-				"```bash",
-				'echo "hi"',
-				"```",
-				"",
-				"</details>",
-			].join("\n"),
-			[
-				'<div align="center">',
-				"",
-				"### Centered Heading",
-				"",
-				"<kbd>Ctrl</kbd> + <kbd>S</kbd> and [Safe](https://example.com) and [Evil](javascript:alert(1)).",
-				"",
-				"</div>",
-			].join("\n"),
+			detailsBlock,
+			divBlock,
 			'[ref-a]: https://example.com "Example"',
 		].join("\n\n");
 
 		const view = mountVisualEditor(markdown);
 
-		// Paired inline HTML tags render their visible text without showing raw tags.
+		// Paired inline HTML tags render their visible text without showing raw tags
+		// (including `<kbd>Ctrl</kbd>` / `<kbd>S</kbd>`, which are now real editable
+		// Markdown between blank-line-closed Type-6 `<div>` / `</div>` tags).
 		const inlineRendered = Array.from(
 			view.dom.querySelectorAll(".easymde-protected-inline-rendered"),
 		).map((el) => el.textContent);
-		expect(inlineRendered).toEqual(["underlined", "marked", "2", "2", "⌘", "K"]);
+		expect(inlineRendered).toEqual([
+			"underlined",
+			"marked",
+			"2",
+			"2",
+			"⌘",
+			"K",
+			"Ctrl",
+			"S",
+		]);
 		expect(view.dom.textContent).not.toContain("<u>");
 		expect(view.dom.textContent).not.toContain("<kbd>");
 
-		// <details> renders its inner Markdown blocks cleanly (p, ul, Mac pre>code).
+		// CommonMark Type 6 closes at blank lines: `<details>\n<summary>...`,
+		// `</details>`, `<div align="center">`, `</div>`, and `[ref-a]: ...`
+		// stay protected raw blocks while the blank-line-separated inner Markdown
+		// renders directly as editable top-level ProseMirror nodes.
 		const rawBlocks = view.dom.querySelectorAll(
 			'[data-easymde-protected-kind="raw"]',
 		);
-		expect(rawBlocks).toHaveLength(3);
-		const detailsPreview = rawBlocks[0]?.querySelector(
-			".easymde-protected-preview",
-		);
-		expect(detailsPreview?.querySelector("p")?.textContent).toBe(
-			"Inside details paragraph.",
-		);
-		expect(detailsPreview?.querySelector("ul li")?.textContent).toBe(
+		expect(rawBlocks).toHaveLength(5);
+		expect(view.dom.textContent).toContain("Inside details paragraph.");
+		expect(view.dom.querySelector(":scope > ul li")?.textContent).toBe(
 			"Bullet one",
 		);
-		// Tight list items inside raw blocks match CommonMark (`<li>text</li>`, no extra `<p>`).
-		expect(detailsPreview?.querySelector("ul li p")).toBeNull();
 		expect(
-			detailsPreview?.querySelector("pre.easymde-code-block code.language-bash")
+			view.dom.querySelector("pre.easymde-code-block code.language-bash")
 				?.textContent,
 		).toContain('echo "hi"');
-
-		// <div align="center"> renders inner heading, strips inline <kbd> tags even at line start, and neutralizes javascript: links.
-		const divPreview = rawBlocks[1]?.querySelector(".easymde-protected-preview");
-		expect(divPreview?.querySelector("h3")?.textContent).toBe(
-			"Centered Heading",
-		);
-		expect(divPreview?.querySelector("p")?.textContent).toContain("Ctrl + S");
-		const safeAnchor = divPreview?.querySelector("a");
-		expect(safeAnchor?.getAttribute("href")).toBe("https://example.com");
-		expect(divPreview?.querySelectorAll("a")).toHaveLength(1);
-		expect(divPreview?.querySelector('a[href^="javascript:"]')).toBeNull();
-		// Clicking a rendered anchor inside non-editing preview must not navigate.
-		const anchorClick = new MouseEvent("click", {
-			bubbles: true,
-			cancelable: true,
-		});
-		safeAnchor?.dispatchEvent(anchorClick);
-		expect(anchorClick.defaultPrevented).toBe(true);
+		expect(view.dom.querySelector("h3")?.textContent).toBe("Centered Heading");
+		const topSafeAnchor = view.dom.querySelector('a[href="https://example.com"]');
+		expect(topSafeAnchor?.textContent).toBe("Safe");
+		expect(view.dom.querySelector('a[href^="javascript:"]')).toBeNull();
 
 		// Reference link definitions collapse into a quiet chip.
 		expect(
-			rawBlocks[2]?.querySelector(".easymde-protected-meta-chip")?.textContent,
+			rawBlocks[4]?.querySelector(".easymde-protected-meta-chip")?.textContent,
 		).toContain("[ref-a]");
 
-		// Clicking Edit on <details> still opens the untouched raw Markdown source.
+		// Clicking Edit on `<details>` still opens the untouched raw Markdown source.
 		const editBtn = rawBlocks[0]?.querySelector(
 			"button.easymde-protected-edit-btn",
 		) as HTMLButtonElement;
@@ -1947,6 +1947,55 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 			"textarea.easymde-protected-source-input",
 		) as HTMLTextAreaElement;
 		expect(textarea.value).toContain("<summary>Expand details</summary>");
+
+		// Multi-block raw cards (e.g. edited in raw card editor) still render inner
+		// Markdown safely in `ProtectedAtomNodeView` with non-navigating links.
+		const rawCardDoc = visualEditorSchema.nodes.doc.create(null, [
+			visualEditorSchema.nodes.protected_block.create({
+				kind: "raw",
+				rawMarkdown: detailsBlock,
+			}),
+			visualEditorSchema.nodes.protected_block.create({
+				kind: "raw",
+				rawMarkdown: divBlock,
+			}),
+		]);
+		const cardView = mountVisualEditor("", { doc: rawCardDoc });
+		const cardRawBlocks = cardView.dom.querySelectorAll(
+			'[data-easymde-protected-kind="raw"]',
+		);
+		const detailsPreview = cardRawBlocks[0]?.querySelector(
+			".easymde-protected-preview",
+		);
+		expect(detailsPreview?.querySelector("p")?.textContent).toBe(
+			"Inside details paragraph.",
+		);
+		expect(detailsPreview?.querySelector("ul li")?.textContent).toBe(
+			"Bullet one",
+		);
+		expect(detailsPreview?.querySelector("ul li p")).toBeNull();
+		expect(
+			detailsPreview?.querySelector("pre.easymde-code-block code.language-bash")
+				?.textContent,
+		).toContain('echo "hi"');
+
+		const divPreview = cardRawBlocks[1]?.querySelector(
+			".easymde-protected-preview",
+		);
+		expect(divPreview?.querySelector("h3")?.textContent).toBe(
+			"Centered Heading",
+		);
+		expect(divPreview?.querySelector("p")?.textContent).toContain("Ctrl + S");
+		const safeAnchor = divPreview?.querySelector("a");
+		expect(safeAnchor?.getAttribute("href")).toBe("https://example.com");
+		expect(divPreview?.querySelectorAll("a")).toHaveLength(1);
+		expect(divPreview?.querySelector('a[href^="javascript:"]')).toBeNull();
+		const anchorClick = new MouseEvent("click", {
+			bubbles: true,
+			cancelable: true,
+		});
+		safeAnchor?.dispatchEvent(anchorClick);
+		expect(anchorClick.defaultPrevented).toBe(true);
 
 		// Canonical Markdown remains lossless.
 		expect(serializeVisualDocToMarkdown(view.state.doc)).toContain(
@@ -1958,25 +2007,44 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 	});
 
 	it("preserves paragraph text across Type-7 tags, closes paragraph after Setext headings, keeps leading indented code in raw blocks, renders inline emphasis inside tags, and updates live TOC with slug hrefs, inline-atom headings, and raw-card headings", () => {
+		const type7CardRaw = [
+			"<div>",
+			"",
+			"Text stays",
+			"<kbd>",
+			"Next line stays",
+			"",
+			"</div>",
+		].join("\n");
+		const setextCardRaw = [
+			"<div>",
+			"",
+			"Title",
+			"===",
+			"<kbd>",
+			"Stripped after setext",
+			"",
+			"</div>",
+		].join("\n");
+		const indentedCardRaw = ["<div>", "", "    indented code", "", "</div>"].join(
+			"\n",
+		);
+		const headingCardRaw = [
+			'<div align="center">',
+			"",
+			"### Centered Raw",
+			"",
+			"</div>",
+		].join("\n");
 		const markdown = [
 			"[TOC]",
 			"## Before",
 			"## Heading with <u>underlined text</u>",
 			"Inline <u>*italic*</u> and <u>nested <mark>inner</mark></u>.",
-			["<div>", "", "Text stays", "<kbd>", "Next line stays", "", "</div>"].join(
-				"\n",
-			),
-			["<div>", "", "Title", "===", "<kbd>", "Stripped after setext", "", "</div>"].join(
-				"\n",
-			),
-			["<div>", "", "    indented code", "", "</div>"].join("\n"),
-			[
-				'<div align="center">',
-				"",
-				"### Centered Raw",
-				"",
-				"</div>",
-			].join("\n"),
+			type7CardRaw,
+			setextCardRaw,
+			indentedCardRaw,
+			headingCardRaw,
 		].join("\n\n");
 
 		const view = mountVisualEditor(markdown);
@@ -1989,35 +2057,25 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 		expect(view.dom.textContent).not.toContain("*italic*");
 		expect(view.dom.textContent).toContain("nested inner");
 
-		// Type-7 standalone <kbd> inside a paragraph does NOT hide "Next line stays".
+		// CommonMark Type 6 closes at blank lines, so `Text stays / Next line stays`,
+		// `<h1>Title</h1>`, indented code, and `<h3>Centered Raw</h3>` are top-level
+		// blocks, while `<kbd>\nStripped after setext` stays a Type-7 raw block.
 		const rawBlocks = view.dom.querySelectorAll(
 			'[data-easymde-protected-kind="raw"]',
 		);
-		expect(rawBlocks).toHaveLength(4);
-		const type7Text =
-			rawBlocks[0]?.querySelector(".easymde-protected-preview p")
-				?.textContent ?? "";
-		expect(type7Text).toContain("Text stays");
-		expect(type7Text).toContain("Next line stays");
-
-		// After a Setext heading (`===`), standalone `<kbd>` starts a Type-7 HTML block and strips `Stripped after setext`.
-		const setextPreview = rawBlocks[1]?.querySelector(
-			".easymde-protected-preview",
-		);
-		expect(setextPreview?.querySelector("h1")?.textContent).toBe("Title");
-		expect(setextPreview?.textContent).not.toContain("Stripped after setext");
-
-		// Leading 4-space indented code block inside a raw block preserves its indentation.
+		expect(rawBlocks).toHaveLength(9);
+		expect(view.dom.textContent).toContain("Text stays");
+		expect(view.dom.textContent).toContain("Next line stays");
+		expect(view.dom.querySelector("h1")?.textContent).toBe("Title");
+		expect(view.dom.textContent).not.toContain("Stripped after setext");
 		expect(
-			rawBlocks[2]?.querySelector(
-				".easymde-protected-preview pre.easymde-code-block code",
-			)?.textContent,
+			view.dom.querySelector("pre.easymde-code-block code")?.textContent,
 		).toContain("indented code");
 
-		// TOC includes normal headings, inline-atom heading text/slugs, and raw-card headings.
-		const readTocLinks = () =>
+		// TOC includes normal headings, inline-atom heading text/slugs, and headings between HTML tags.
+		const readTocLinks = (root: ParentNode = view.dom) =>
 			Array.from(
-				view.dom.querySelectorAll(
+				root.querySelectorAll(
 					'[data-easymde-protected-kind="toc"] .easymde-toc ul li a',
 				),
 			).map((a) => ({
@@ -2030,6 +2088,52 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 				href: "#heading-with-underlined-text",
 				text: "Heading with underlined text",
 			},
+			{ href: "#centered-raw", text: "Centered Raw" },
+		]);
+
+		// Multi-block raw cards also preserve Type-7, Setext, indented code, and TOC heading extraction.
+		const rawCardDoc = visualEditorSchema.nodes.doc.create(null, [
+			visualEditorSchema.nodes.protected_block.create({
+				kind: "toc",
+				rawMarkdown: "[TOC]",
+			}),
+			visualEditorSchema.nodes.protected_block.create({
+				kind: "raw",
+				rawMarkdown: type7CardRaw,
+			}),
+			visualEditorSchema.nodes.protected_block.create({
+				kind: "raw",
+				rawMarkdown: setextCardRaw,
+			}),
+			visualEditorSchema.nodes.protected_block.create({
+				kind: "raw",
+				rawMarkdown: indentedCardRaw,
+			}),
+			visualEditorSchema.nodes.protected_block.create({
+				kind: "raw",
+				rawMarkdown: headingCardRaw,
+			}),
+		]);
+		const cardView = mountVisualEditor("", { doc: rawCardDoc });
+		const cardRawBlocks = cardView.dom.querySelectorAll(
+			'[data-easymde-protected-kind="raw"]',
+		);
+		const type7Text =
+			cardRawBlocks[0]?.querySelector(".easymde-protected-preview p")
+				?.textContent ?? "";
+		expect(type7Text).toContain("Text stays");
+		expect(type7Text).toContain("Next line stays");
+		const setextPreview = cardRawBlocks[1]?.querySelector(
+			".easymde-protected-preview",
+		);
+		expect(setextPreview?.querySelector("h1")?.textContent).toBe("Title");
+		expect(setextPreview?.textContent).not.toContain("Stripped after setext");
+		expect(
+			cardRawBlocks[2]?.querySelector(
+				".easymde-protected-preview pre.easymde-code-block code",
+			)?.textContent,
+		).toContain("indented code");
+		expect(readTocLinks(cardView.dom)).toEqual([
 			{ href: "#centered-raw", text: "Centered Raw" },
 		]);
 
@@ -2116,20 +2220,21 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 			span.textContent = tex;
 			target.replaceChildren(span);
 		});
+		const detailsRaw = [
+			"<details>",
+			"<summary>Math & HTML</summary>",
+			"",
+			'<span title="a > b">inside raw</span> with $E = mc^2$.',
+			"",
+			"## Dup",
+			"",
+			"## Dup",
+			"",
+			"</details>",
+		].join("\n");
 		const markdown = [
 			'Inline <span title="a > b">clean text</span> and <span title=\'x > y\'>single</span>.',
-			[
-				"<details>",
-				"<summary>Math & HTML</summary>",
-				"",
-				'<span title="a > b">inside raw</span> with $E = mc^2$.',
-				"",
-				"## Dup",
-				"",
-				"## Dup",
-				"",
-				"</details>",
-			].join("\n"),
+			detailsRaw,
 			"[TOC]",
 		].join("\n\n");
 
@@ -2144,11 +2249,33 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 		const inlineRendered = Array.from(
 			view.dom.querySelectorAll(".easymde-protected-inline-rendered"),
 		).map((el) => el.textContent);
-		expect(inlineRendered).toEqual(["clean text", "single"]);
+		expect(inlineRendered).toEqual(["clean text", "single", "inside raw"]);
 		expect(view.dom.textContent).not.toContain('b">');
 		expect(view.dom.textContent).not.toContain("y'>");
+		expect(view.dom.querySelector(".easymde-math .katex")?.textContent).toBe(
+			"E = mc^2",
+		);
 
-		const rawPreview = view.dom.querySelector(
+		// Multi-block raw card preview also strips quoted `>` attributes and renders nested math.
+		const rawCardDoc = visualEditorSchema.nodes.doc.create(null, [
+			visualEditorSchema.nodes.protected_block.create({
+				kind: "raw",
+				rawMarkdown: detailsRaw,
+			}),
+			visualEditorSchema.nodes.protected_block.create({
+				kind: "toc",
+				rawMarkdown: "[TOC]",
+			}),
+		]);
+		const rawCardView = mountVisualEditor("", {
+			doc: rawCardDoc,
+			nodeViewsOptions: {
+				protectedAtom: {
+					runtimeProvider: { getKatex: () => ({ render: katexRender }) },
+				},
+			},
+		});
+		const rawPreview = rawCardView.dom.querySelector(
 			'[data-easymde-protected-kind="raw"] .easymde-protected-preview',
 		);
 		expect(rawPreview?.textContent).toContain("inside raw");
@@ -2158,7 +2285,7 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 
 		// Duplicate headings inside raw blocks mirror TocGenerator::unique_heading_id (`-2`).
 		const tocHrefs = Array.from(
-			view.dom.querySelectorAll(
+			rawCardView.dom.querySelectorAll(
 				'[data-easymde-protected-kind="toc"] .easymde-toc ul li a',
 			),
 		).map((a) => a.getAttribute("href"));
@@ -2241,21 +2368,31 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 			span.textContent = tex;
 			target.replaceChildren(span);
 		});
-		const view = mountVisualEditor(
-			[
-				"Inline<!-- secret -->note.",
-				"<details>\n<summary>Nested</summary>\n\n$a + b$\n\n[^1]: Note body\n\n</details>",
-			].join("\n\n"),
-			{
-				nodeViewsOptions: {
-					protectedAtom: {
-						labels: { footnotes: "本地脚注", raw: "本地原始块" },
-						runtimePort,
-						runtimeProvider: { getKatex: () => ({ render: katexRender }) },
-					},
+		const nestedRawDoc = visualEditorSchema.nodes.doc.create(null, [
+			visualEditorSchema.nodes.paragraph.create(null, [
+				visualEditorSchema.text("Inline"),
+				visualEditorSchema.nodes.protected_inline.create({
+					kind: "raw-inline",
+					rawMarkdown: "<!-- secret -->",
+				}),
+				visualEditorSchema.text("note."),
+			]),
+			visualEditorSchema.nodes.protected_block.create({
+				kind: "raw",
+				rawMarkdown:
+					"<details>\n<summary>Nested</summary>\n\n$a + b$\n\n[^1]: Note body\n\n</details>",
+			}),
+		]);
+		const view = mountVisualEditor("", {
+			doc: nestedRawDoc,
+			nodeViewsOptions: {
+				protectedAtom: {
+					labels: { footnotes: "本地脚注", raw: "本地原始块" },
+					runtimePort,
+					runtimeProvider: { getKatex: () => ({ render: katexRender }) },
 				},
 			},
-		);
+		});
 		const hiddenComment = view.dom.querySelector(
 			".easymde-protected-inline-hidden",
 		);
@@ -2301,8 +2438,26 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 				"script, iframe, object, embed, svg, style, form, base, meta, link",
 			),
 		).toHaveLength(0);
-		expect(root.querySelectorAll("img")).toHaveLength(0);
+		expect(root.querySelectorAll("img[src]")).toHaveLength(0);
 		expect(root.querySelectorAll("a")).toHaveLength(0);
+
+		// And when rendered inside a raw block preview card, unsafe images are omitted entirely.
+		const rawMaliciousPreview = renderRawBlockPreview(
+			document,
+			[
+				'<div onclick="alert(1)">',
+				"",
+				'<img src=x onerror=alert(1)> <svg/onload=alert(1)> <script>alert(1)</script>',
+				"",
+				"[BadLink](javascript:alert(1)) [BadVb](vbscript:msgbox(1)) ![BadImg](javascript:alert(1)) ![DataImg](data:text/html,<script>alert(1)</script>)",
+				"",
+				"</div>",
+			].join("\n"),
+			{ fallbackLabel: "Raw", footnotesLabel: "Footnotes", viewWindow: window },
+		);
+		const previewHost = document.createElement("div");
+		previewHost.appendChild(rawMaliciousPreview);
+		expect(previewHost.querySelectorAll("img, a, script, svg")).toHaveLength(0);
 
 		// Zero event-handler attributes (`on*`) or inline `style` injection on any element.
 		for (const el of Array.from(root.querySelectorAll("*"))) {
@@ -2351,5 +2506,58 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 		);
 		// Standalone `<search>` outside a paragraph is still a Type 7 HTML block.
 		expect(stripCommonMarkHtmlForPreview("<search>\nfoo")).toBe("");
+	});
+
+	it("strips CommonMark Types 3-5 HTML blocks, treats NBSP as non-blank, rejects <div/foo> as Type 6, and keeps uppercase inline tags literal (Track A #6 + Track B #7/#8)", () => {
+		// Type 3 (`<?` .. `?>`), including blockquote-prefixed raw blocks.
+		expect(
+			stripCommonMarkHtmlForPreview("> <?meta\n> Hidden\n> ?>\n> Visible"),
+		).toBe("> Visible");
+		expect(stripCommonMarkHtmlForPreview("<?meta\nHidden\n?>\nVisible")).toBe(
+			"Visible",
+		);
+		// Type 4 (`<![A-Za-z]` .. `>`).
+		expect(stripCommonMarkHtmlForPreview("<!DOCTYPE\nfoo\n>\nbar")).toBe("bar");
+		// Type 5 (`<![CDATA[` .. `]]>`, case-insensitive per PHP RegexHelper).
+		expect(stripCommonMarkHtmlForPreview("<![CDATA[\nfoo\n]]>\nbar")).toBe(
+			"bar",
+		);
+		expect(stripCommonMarkHtmlForPreview("<![cdata[\nfoo\n]]>\nbar")).toBe(
+			"bar",
+		);
+		// CommonMark §2.2 blank line: NBSP (`\u00a0`) does NOT close Type 6/7.
+		expect(
+			stripCommonMarkHtmlForPreview("<div>\n\u00a0\nHidden\n\nVisible"),
+		).toBe("Visible");
+		expect(
+			stripCommonMarkHtmlForPreview("> <div>\n> \u00a0\n> Hidden\n>\n> Visible"),
+		).toBe("> Visible");
+		// `<div/foo>` is NOT a Type 6 opener (`(?=\s|\/?>|$)`).
+		expect(stripCommonMarkHtmlForPreview("<div/foo>\nbar")).toBe(
+			"<div/foo>\nbar",
+		);
+		// Uppercase inline HTML tags stay literal (PHP HtmlInlineParser is lowercase-only),
+		// while standalone Type-7 blocks remain case-insensitive.
+		expect(stripCommonMarkHtmlForPreview("a <SPAN>b</SPAN> c")).toBe(
+			"a <SPAN>b</SPAN> c",
+		);
+		expect(stripCommonMarkHtmlForPreview('a <span CLASS="a">b</span> c')).toBe(
+			'a <span CLASS="a">b c',
+		);
+		expect(stripCommonMarkHtmlForPreview('a <A href="/x">b</A> c')).toBe(
+			'a <A href="/x">b</A> c',
+		);
+		expect(stripCommonMarkHtmlForPreview("<SPAN>\nhidden")).toBe("");
+
+		// Raw preview card renders `> <?meta\n> Hidden\n> ?>\n> Visible` without leaking `Hidden`.
+		const previewNode = renderRawBlockPreview(
+			document,
+			"> <?meta\n> Hidden\n> ?>\n> Visible",
+			{ fallbackLabel: "Raw", footnotesLabel: "Footnotes", viewWindow: window },
+		);
+		const host = document.createElement("div");
+		host.appendChild(previewNode);
+		expect(host.textContent).toContain("Visible");
+		expect(host.textContent).not.toContain("Hidden");
 	});
 });

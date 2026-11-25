@@ -3,7 +3,9 @@ import {
 	type BlockSerializer,
 	isLooseList,
 	isNestedList,
-	needsTightRefDefContinuation,
+	joinSerializedBlocks,
+	LEADING_FOUR_COLUMN_INDENT,
+	refDefContinuationMode,
 	serializeListItemAt,
 } from "./markdown-list-serialization";
 import {
@@ -14,7 +16,9 @@ import {
 
 export {
 	type BlockSerializer,
+	joinSerializedBlocks,
 	needsTightRefDefContinuation,
+	refDefContinuationMode,
 	serializeList,
 } from "./markdown-list-serialization";
 
@@ -725,8 +729,12 @@ function serializeDocPreservingUntouchedBlocks(
 				if (serialized !== null) effectiveOrigIndex[idx] = pairedIdx;
 			}
 		}
-		const tightRefDefContinuation =
-			idx > 0 && needsTightRefDefContinuation(doc.child(idx - 1), child);
+		const candidateText =
+			serialized !== null ? serialized : serializers.serializeBlock(child);
+		const refDefMode =
+			idx > 0
+				? refDefContinuationMode(doc.child(idx - 1), child, candidateText)
+				: "none";
 		let separator = "";
 		if (idx > 0) {
 			const effIdx = effectiveOrigIndex[idx] ?? -1;
@@ -735,24 +743,24 @@ function serializeDocPreservingUntouchedBlocks(
 				effIdx >= 0 && prevEffIdx >= 0 && effIdx === prevEffIdx + 1
 					? baselineBlocks[effIdx]
 					: undefined;
-			separator = tightRefDefContinuation
-				? "\n"
-				: effBlock
-					? effBlock.separatorBefore
-					: "\n\n";
+			separator =
+				refDefMode !== "none"
+					? "\n"
+					: effBlock
+						? effBlock.separatorBefore
+						: "\n\n";
 			parts.push(separator);
 		}
 		const reusedIndentedParagraphAfterBlank =
 			serialized !== null &&
 			child.type.name === "paragraph" &&
 			separator !== "\n" &&
-			/^(?: {4}|\t)/.test(serialized);
-		const blockText =
-			serialized !== null && !reusedIndentedParagraphAfterBlank
-				? serialized
-				: serializers.serializeBlock(child);
+			LEADING_FOUR_COLUMN_INDENT.test(serialized);
+		const blockText = reusedIndentedParagraphAfterBlank
+			? serializers.serializeBlock(child)
+			: candidateText;
 		parts.push(
-			tightRefDefContinuation && !/^ {4}/.test(blockText)
+			refDefMode === "indented" && !LEADING_FOUR_COLUMN_INDENT.test(blockText)
 				? `    ${blockText}`
 				: blockText,
 		);
@@ -847,11 +855,7 @@ export function createPreservingRoundTripGuard(
 			if (isEmptyDoc(doc)) {
 				return "";
 			}
-			const blocks: string[] = [];
-			for (let i = 0; i < doc.childCount; i += 1) {
-				blocks.push(serializeBlockCached(doc.child(i)));
-			}
-			return blocks.join("\n\n");
+			return joinSerializedBlocks(doc, serializeBlockCached);
 		},
 	};
 

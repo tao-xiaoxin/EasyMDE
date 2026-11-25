@@ -226,7 +226,32 @@ function convertListType(
 			targetItemType === NODES.task_item
 				? { checked: Boolean(item.attrs.checked) }
 				: null;
-		newItems.push(targetItemType.create(attrs, item.content));
+		let itemContent = item.content;
+		if (targetListType === NODES.bullet_list) {
+			let clearedTaskPrefix = false;
+			const updatedChildren: ProseMirrorNode[] = [];
+			item.forEach((child) => {
+				if (
+					child.type === NODES.paragraph &&
+					child.attrs.preserveRawTaskPrefix === true
+				) {
+					clearedTaskPrefix = true;
+					updatedChildren.push(
+						NODES.paragraph.create(
+							{ ...child.attrs, preserveRawTaskPrefix: false },
+							child.content,
+							child.marks,
+						),
+					);
+				} else {
+					updatedChildren.push(child);
+				}
+			});
+			if (clearedTaskPrefix) {
+				itemContent = Fragment.from(updatedChildren);
+			}
+		}
+		newItems.push(targetItemType.create(attrs, itemContent));
 	}
 	const { from, to } = state.selection;
 	const tr = state.tr.replaceWith(

@@ -359,9 +359,8 @@ export function startsParagraphInterruptingBlock(
 	);
 }
 
-function refParserAbsorbsHeaderOrDelimiter(
+function refParserAbsorbsHeader(
 	headerRest: string,
-	delimiterRest: string,
 	inParagraph: boolean,
 	activeRefParser: ParagraphReferenceParser | null,
 ): boolean {
@@ -372,9 +371,7 @@ function refParserAbsorbsHeaderOrDelimiter(
 			: null;
 	return (
 		probeRefParser !== null &&
-		(advanceParagraphReferenceParser(probeRefParser, headerRest) ||
-			(probeRefParser.state === "destination" &&
-				advanceParagraphReferenceParser(probeRefParser, delimiterRest)))
+		advanceParagraphReferenceParser(probeRefParser, headerRest)
 	);
 }
 
@@ -413,12 +410,7 @@ function matchHeaderWithContainerDelimiter(
 	) {
 		return false;
 	}
-	return !refParserAbsorbsHeaderOrDelimiter(
-		headerRest,
-		delimiterStripped.rest,
-		inParagraph,
-		activeRefParser,
-	);
+	return !refParserAbsorbsHeader(headerRest, inParagraph, activeRefParser);
 }
 
 /**

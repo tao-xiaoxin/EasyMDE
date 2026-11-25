@@ -2,12 +2,6 @@ import {
 	COMMONMARK_SETEXT_UNDERLINE,
 	parseGfmTableSeparatorColumns,
 } from "../../shared/markdown/php-commonmark-block-helpers";
-import {
-	advanceParagraphReferenceParser,
-	cloneParagraphReferenceParser,
-	createParagraphReferenceParser,
-	type ParagraphReferenceParser,
-} from "../../shared/markdown/php-commonmark-reference-def";
 import type { PhpMarkdownMathRange } from "../../shared/markdown/php-markdown-math-mask";
 import {
 	type ContainerStep,
@@ -20,6 +14,8 @@ import {
 } from "./markdown-prescanner-blocks";
 import {
 	type BeforeHtmlContext,
+	buildInlineMaskedDisplayMathLine,
+	continuesValidReferenceDefinition,
 	type DisplayMathEmitEnv,
 	emitUnclosedIntermediateHtmlBlock,
 	extendLogicalSpanForDisplayMath,
@@ -27,6 +23,7 @@ import {
 	matchUnclosedHtmlBlockTypes1To5,
 	POST_MATH_BEFORE_HTML_CONTEXT,
 	shiftInlineMathRanges,
+	startsValidReferenceDefinition,
 	type TrailingParagraphState,
 } from "./markdown-prescanner-display-math";
 import { extractInlineProtectedSyntax } from "./markdown-prescanner-inline";
@@ -655,90 +652,6 @@ function scanFollowingParagraphBoundary(
 	return false;
 }
 
-function readRefParserState(
-	parser: ParagraphReferenceParser,
-): ParagraphReferenceParser["state"] {
-	return parser.state;
-}
-
-function startsValidReferenceDefinition(
-	maskedLine: string,
-	lines?: ReadonlyArray<string>,
-	mathIndex?: PhpDocumentMathIndex,
-	nextLineIndex = -1,
-	startColumn = 0,
-): boolean {
-	if (
-		!maskedLine.includes("[") ||
-		measureIndentColumns(maskedLine, startColumn) >= 4
-	) {
-		return false;
-	}
-	const refParser = createParagraphReferenceParser();
-	if (advanceParagraphReferenceParser(refParser, maskedLine)) {
-		return true;
-	}
-	if (
-		lines === undefined ||
-		mathIndex === undefined ||
-		nextLineIndex < 0 ||
-		readRefParserState(refParser) === "paragraph"
-	) {
-		return false;
-	}
-	let k = nextLineIndex;
-	while (k < lines.length && readRefParserState(refParser) !== "paragraph") {
-		if (
-			readRefParserState(refParser) === "label" &&
-			refParser.labelCodePoints > 999
-		) {
-			return false;
-		}
-		const kEnd = findLogicalLineEnd(mathIndex, k);
-		const firstDisp = findFirstDisplayMathInLines(mathIndex, k, kEnd);
-		if (firstDisp !== null) {
-			const kStart = mathIndex.lineStarts[k] ?? 0;
-			if (firstDisp.from <= kStart) {
-				return false;
-			}
-			const maskedBefore = mathIndex.maskedDoc.slice(kStart, firstDisp.from);
-			if (
-				isCommonMarkBlankLine(maskedBefore) ||
-				opensNonParagraphBlock(maskedBefore, 0, true)
-			) {
-				return false;
-			}
-			return advanceParagraphReferenceParser(refParser, maskedBefore);
-		}
-		const maskedContinuation = maskedSliceForLines(mathIndex, lines, k, kEnd);
-		if (
-			isCommonMarkBlankLine(maskedContinuation) ||
-			opensNonParagraphBlock(maskedContinuation, 0, true)
-		) {
-			return false;
-		}
-		if (advanceParagraphReferenceParser(refParser, maskedContinuation)) {
-			return true;
-		}
-		k = kEnd + 1;
-	}
-	return false;
-}
-
-function continuesValidReferenceDefinition(
-	activeRefParser: ParagraphReferenceParser | null,
-	maskedBefore: string,
-): boolean {
-	if (activeRefParser === null || activeRefParser.state === "paragraph") {
-		return false;
-	}
-	if (opensNonParagraphBlock(maskedBefore, 0, true)) {
-		return false;
-	}
-	const probe = cloneParagraphReferenceParser(activeRefParser);
-	return advanceParagraphReferenceParser(probe, maskedBefore);
-}
-
 /**
  * Checks whether `nextLineIndex` immediately following blank post-math text
  * starts a block that only opens when no paragraph is active (`!inParagraph`):
@@ -945,13 +858,60 @@ export function emitDisplayMathLogicalLine(
 						maskedBefore,
 					)
 				: startsValidReferenceDefinition(maskedBefore));
+		// If left unsplit, `extractInlineProtectedSyntax` masks contained display
+		// math as non-whitespace tokens (`EASYMDEPHINL...`), which could cause
+		// `easymde_reference` to fabricate a bogus §4.7 reference definition
+		// (`[r]: $$x$$`, `[r]: /u "$$x$$"`, `[$$x$$]: /u`, `[r]: /u\n"$$x$$"`,
+		// `[foo\n$$x$$]: /u`). Probe the inline-masked line and split if so.
+		let inlineMaskedRefDef = false;
+		if (!leadingRefDef) {
+			if (beforeHtmlContext.inParagraph) {
+				if (
+					beforeHtmlContext.activeRefParser !== null &&
+					beforeHtmlContext.activeRefParser.state !== "paragraph"
+				) {
+					const inlineMasked = buildInlineMaskedDisplayMathLine(
+						mathIndex,
+						lineStartOffset,
+						lineEndOffset,
+					);
+					inlineMaskedRefDef = continuesValidReferenceDefinition(
+						beforeHtmlContext.activeRefParser,
+						inlineMasked,
+						lines,
+						mathIndex,
+						nextLineIndex,
+						true,
+					);
+				}
+			} else if (
+				!leadingBeforeBlank &&
+				measureIndentColumns(maskedBefore, 0) < 4 &&
+				maskedBefore.replace(/^[ \t]+/, "").startsWith("[")
+			) {
+				const inlineMasked = buildInlineMaskedDisplayMathLine(
+					mathIndex,
+					lineStartOffset,
+					lineEndOffset,
+				);
+				inlineMaskedRefDef = startsValidReferenceDefinition(
+					inlineMasked,
+					lines,
+					mathIndex,
+					nextLineIndex,
+					0,
+					true,
+				);
+			}
+		}
 		if (
 			!trailingOpensBlock &&
 			!nextOpensNonParagraphBlock &&
 			!nextHitsParagraphBoundary &&
 			!leadingOpensBlock &&
 			!leadingUnclosedHtml &&
-			!leadingRefDef
+			!leadingRefDef &&
+			!inlineMaskedRefDef
 		) {
 			return null;
 		}

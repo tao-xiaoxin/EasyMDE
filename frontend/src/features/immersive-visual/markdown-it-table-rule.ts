@@ -5,8 +5,16 @@ import {
 	parseGfmTableSeparatorAlignments,
 	unescapeTableCellPipes,
 } from "../../shared/markdown/php-commonmark-block-helpers";
+import {
+	advanceParagraphReferenceParser,
+	createParagraphReferenceParser,
+	type ParagraphReferenceParser,
+} from "../../shared/markdown/php-commonmark-reference-def";
 import { readRawMetaString } from "./markdown-parser-inline";
-import { isCommonMarkBlankLine } from "./markdown-prescanner-containers";
+import {
+	isCommonMarkBlankLine,
+	measureIndentColumns,
+} from "./markdown-prescanner-containers";
 import {
 	isTableSeparatorInterruptedByHigherPriorityBlock,
 	opensNonParagraphBlock,
@@ -18,6 +26,18 @@ type BlockRuleFn = Parameters<
 >[1];
 type BlockRuleState = Parameters<BlockRuleFn>[0];
 
+export type EasyMdeBlockEnv = {
+	listIndentStack?: number[] | undefined;
+	preScan?: {
+		protectedBlocks?: ReadonlyMap<string, unknown>;
+		protectedInlines?: ReadonlyMap<string, unknown>;
+		sentinel?: string;
+		tableAlignMarkers?: ReadonlyMap<string, string>;
+	};
+	references?: Record<string, { href: string; title: string }>;
+	tableAlignMarkers?: ReadonlyMap<string, string>;
+};
+
 type ParagraphPipeCacheEntry = {
 	blkIndent: number;
 	hasPipe: boolean;
@@ -26,14 +46,48 @@ type ParagraphPipeCacheEntry = {
 	scannedThrough: number;
 };
 
+type ReferenceTableProbeCacheEntry = {
+	blkIndent: number;
+	hasContent: boolean;
+	hasPipe: boolean;
+	level: number;
+	refParser: ParagraphReferenceParser;
+	refStart: number;
+	scannedThrough: number;
+};
+
 export type EasyMdeTableRuleDeps = Readonly<{
-	originalReferenceRule: BlockRuleFn | null;
 	rawReferenceSourceMetaKey: string;
 	wouldReferenceDefinitionAbsorbFollowingBlock: (
 		lastRaw: string,
 		followingMarkdown: string,
 	) => boolean;
 }>;
+
+/**
+ * Computes the column indentation of `line` relative to the deepest enclosing
+ * open ancestor list item in the current blockquote frame (`<= sCount[line]`),
+ * or `0` if none matches. Mirrors PHP `League\CommonMark` closing unmatched
+ * inner lists before testing block starts on lazy continuations.
+ */
+export function getLazyListRelativeIndent(
+	state: BlockRuleState,
+	line: number,
+): number {
+	const s = state.sCount[line] ?? 0;
+	const stack = (state.env as EasyMdeBlockEnv).listIndentStack;
+	if (stack && stack.length > 0) {
+		for (let idx = stack.length - 1; idx >= 0; idx -= 1) {
+			const ancestorIndent = stack[idx] ?? 0;
+			if (ancestorIndent <= s) {
+				return s - ancestorIndent;
+			}
+		}
+	}
+	return state.listIndent >= 0 && s >= state.listIndent
+		? s - state.listIndent
+		: s;
+}
 
 const MAX_AUTOCOMPLETED_CELLS = 10_000;
 
@@ -152,7 +206,6 @@ export function createEasyMdeTableRule(
 	deps: EasyMdeTableRuleDeps,
 ): BlockRuleFn {
 	const {
-		originalReferenceRule,
 		rawReferenceSourceMetaKey,
 		wouldReferenceDefinitionAbsorbFollowingBlock,
 	} = deps;
@@ -185,7 +238,8 @@ export function createEasyMdeTableRule(
 		const relIndent0 = s0 - state.blkIndent;
 		const isIndentedContinuation =
 			(followsParagraph || followsRefDef) && relIndent0 >= 4;
-		const isLazyContainerContinuation = followsParagraph && s0 < state.blkIndent;
+		const isLazyContainerContinuation =
+			(followsParagraph || followsRefDef) && s0 < state.blkIndent;
 		if (
 			!isIndentedContinuation &&
 			!isLazyContainerContinuation &&
@@ -307,10 +361,7 @@ export function createEasyMdeTableRule(
 					return false;
 				}
 			} else {
-				const lazyRelativeIndent =
-					state.listIndent >= 0 && s0 >= state.listIndent
-						? s0 - state.listIndent
-						: s0;
+				const lazyRelativeIndent = getLazyListRelativeIndent(state, startLine);
 				const startColumn = (state.bsCount[startLine] ?? 0) + s0;
 				if (
 					startsParagraphInterruptingBlock(trimmedStart, startColumn, {
@@ -331,8 +382,10 @@ export function createEasyMdeTableRule(
 		}
 		if (
 			!followsParagraph &&
-			originalReferenceRule !== null &&
-			originalReferenceRule(state, startLine, endLine, true)
+			advanceParagraphReferenceParser(
+				createParagraphReferenceParser(),
+				trimmedStart,
+			)
 		) {
 			return false;
 		}
@@ -518,4 +571,361 @@ export function createEasyMdeParagraphRule(
 		}
 		return true;
 	};
+}
+
+function isAsciiSpace(code: number): boolean {
+	return code === 0x20 || code === 0x09;
+}
+
+/**
+ * Replaces `markdown-it`'s `blockquote` rule with PHP CommonMark §5.1 parity:
+ * - rejects 4+-column-indented continuation `>` markers (`sCount - blkIndent >= 4`,
+ *   such as `\t>` or `    >`) so they remain lazy paragraph text instead of
+ *   stripping `>` and fabricating bogus nested headings/paragraphs;
+ * - accumulates `bsCount` across nested blockquotes so tab stops remain exact;
+ * - skips `terminatorRules` when `sCount < 0` (already validated lazy lines
+ *   from an enclosing blockquote); and
+ * - isolates `env.listIndentStack` inside each blockquote frame.
+ */
+export function createEasyMdeBlockquoteRule(): BlockRuleFn {
+	return (state, startLine, endLine, silent) => {
+		let pos = (state.bMarks[startLine] ?? 0) + (state.tShift[startLine] ?? 0);
+		let max = state.eMarks[startLine] ?? pos;
+		const oldLineMax = state.lineMax;
+		if ((state.sCount[startLine] ?? 0) - state.blkIndent >= 4) {
+			return false;
+		}
+		if (state.src.charCodeAt(pos) !== 0x3e) {
+			return false;
+		}
+		if (silent) {
+			return true;
+		}
+		const oldBMarks: number[] = [];
+		const oldBSCount: number[] = [];
+		const oldSCount: number[] = [];
+		const oldTShift: number[] = [];
+		const terminatorRules = state.md.block.ruler.getRules("blockquote");
+		const oldParentType = state.parentType;
+		state.parentType = "blockquote";
+		let lastLineEmpty = false;
+		let nextLine = startLine;
+		for (; nextLine < endLine; nextLine += 1) {
+			const sCount = state.sCount[nextLine] ?? 0;
+			const isOutdented = sCount < state.blkIndent;
+			const isIndented = sCount - state.blkIndent >= 4;
+			pos = (state.bMarks[nextLine] ?? 0) + (state.tShift[nextLine] ?? 0);
+			max = state.eMarks[nextLine] ?? pos;
+			if (pos >= max) {
+				break;
+			}
+			if (state.src.charCodeAt(pos) === 0x3e && !isOutdented && !isIndented) {
+				pos += 1;
+				let initial = sCount + 1;
+				let spaceAfterMarker: boolean;
+				let adjustTab = false;
+				const oldBS = state.bsCount[nextLine] ?? 0;
+				if (state.src.charCodeAt(pos) === 0x20) {
+					pos += 1;
+					initial += 1;
+					spaceAfterMarker = true;
+				} else if (state.src.charCodeAt(pos) === 0x09) {
+					spaceAfterMarker = true;
+					if ((oldBS + initial) % 4 === 3) {
+						pos += 1;
+						initial += 1;
+					} else {
+						adjustTab = true;
+					}
+				} else {
+					spaceAfterMarker = false;
+				}
+				let offset = initial;
+				oldBMarks.push(state.bMarks[nextLine] ?? 0);
+				state.bMarks[nextLine] = pos;
+				while (pos < max) {
+					const ch = state.src.charCodeAt(pos);
+					if (isAsciiSpace(ch)) {
+						if (ch === 0x09) {
+							offset += 4 - ((offset + oldBS + (adjustTab ? 1 : 0)) % 4);
+						} else {
+							offset += 1;
+						}
+					} else {
+						break;
+					}
+					pos += 1;
+				}
+				lastLineEmpty = pos >= max;
+				oldBSCount.push(oldBS);
+				state.bsCount[nextLine] =
+					oldBS + sCount + 1 + (spaceAfterMarker ? 1 : 0);
+				oldSCount.push(sCount);
+				state.sCount[nextLine] = offset - initial;
+				oldTShift.push(state.tShift[nextLine] ?? 0);
+				state.tShift[nextLine] = pos - (state.bMarks[nextLine] ?? 0);
+				continue;
+			}
+			if (lastLineEmpty) {
+				break;
+			}
+			let terminate = false;
+			if (sCount >= 0) {
+				for (let i = 0; i < terminatorRules.length; i += 1) {
+					if (terminatorRules[i]?.(state, nextLine, endLine, true)) {
+						terminate = true;
+						break;
+					}
+				}
+			}
+			if (terminate) {
+				state.lineMax = nextLine;
+				if (state.blkIndent !== 0) {
+					oldBMarks.push(state.bMarks[nextLine] ?? 0);
+					oldBSCount.push(state.bsCount[nextLine] ?? 0);
+					oldTShift.push(state.tShift[nextLine] ?? 0);
+					oldSCount.push(sCount);
+					state.sCount[nextLine] = sCount - state.blkIndent;
+				}
+				break;
+			}
+			oldBMarks.push(state.bMarks[nextLine] ?? 0);
+			oldBSCount.push(state.bsCount[nextLine] ?? 0);
+			oldTShift.push(state.tShift[nextLine] ?? 0);
+			oldSCount.push(sCount);
+			state.sCount[nextLine] = -1;
+		}
+		const oldIndent = state.blkIndent;
+		state.blkIndent = 0;
+		const env = state.env as EasyMdeBlockEnv;
+		const prevListIndentStack = env.listIndentStack;
+		env.listIndentStack = [];
+		try {
+			const tokenO = state.push("blockquote_open", "blockquote", 1);
+			tokenO.markup = ">";
+			const lines: [number, number] = [startLine, 0];
+			tokenO.map = lines;
+			state.md.block.tokenize(state, startLine, nextLine);
+			const tokenC = state.push("blockquote_close", "blockquote", -1);
+			tokenC.markup = ">";
+			lines[1] = state.line;
+		} finally {
+			env.listIndentStack = prevListIndentStack;
+			state.lineMax = oldLineMax;
+			state.parentType = oldParentType;
+			for (let i = 0; i < oldTShift.length; i += 1) {
+				state.bMarks[i + startLine] = oldBMarks[i] ?? 0;
+				state.tShift[i + startLine] = oldTShift[i] ?? 0;
+				state.sCount[i + startLine] = oldSCount[i] ?? 0;
+				state.bsCount[i + startLine] = oldBSCount[i] ?? 0;
+			}
+			state.blkIndent = oldIndent;
+		}
+		return true;
+	};
+}
+
+/**
+ * Creates a strictly O(N)-amortized PHP `TableStartParser` precedence probe
+ * for incomplete multiline CommonMark §4.7 reference definitions: reports
+ * whether `sepLine` starts a GFM table whose header is `sepLine - 1` before
+ * `ReferenceParser` can consume `sepLine` as a destination or title line.
+ */
+export function createReferenceTableInterruptProbe(): (
+	state: BlockRuleState,
+	refStartLine: number,
+	sepLine: number,
+) => boolean {
+	const cache = new WeakMap<BlockRuleState, ReferenceTableProbeCacheEntry>();
+	return (state, refStartLine, sepLine) => {
+		if (sepLine <= refStartLine) {
+			return false;
+		}
+		const s1 = state.sCount[sepLine] ?? 0;
+		if (s1 < state.blkIndent) {
+			return false;
+		}
+		const pos1 = (state.bMarks[sepLine] ?? 0) + (state.tShift[sepLine] ?? 0);
+		const max1 = state.eMarks[sepLine] ?? pos1;
+		const trimmedSep = state.src.slice(pos1, max1);
+		const aligns = parseGfmTableSeparatorAlignments(trimmedSep);
+		if (aligns === null || aligns.length === 0) {
+			return false;
+		}
+		const sepColumn = (state.bsCount[sepLine] ?? 0) + s1;
+		if (
+			isTableSeparatorInterruptedByHigherPriorityBlock(
+				trimmedSep,
+				sepColumn,
+				s1 - state.blkIndent,
+			)
+		) {
+			return false;
+		}
+		const headerLine = sepLine - 1;
+		const pos0 =
+			(state.bMarks[headerLine] ?? 0) + (state.tShift[headerLine] ?? 0);
+		const max0 = state.eMarks[headerLine] ?? pos0;
+		const trimmedHeader = state.src.slice(pos0, max0);
+		const headerCells = collectTableRowCells(
+			trimmedHeader,
+			0,
+			trimmedHeader.length,
+		);
+		if (headerCells.length === 0 || headerCells.length > aligns.length) {
+			return false;
+		}
+		let entry = cache.get(state);
+		if (
+			!entry ||
+			entry.refStart !== refStartLine ||
+			entry.level !== state.level ||
+			entry.blkIndent !== state.blkIndent ||
+			entry.scannedThrough > headerLine + 1
+		) {
+			entry = {
+				blkIndent: state.blkIndent,
+				hasContent: false,
+				hasPipe: false,
+				level: state.level,
+				refParser: createParagraphReferenceParser(),
+				refStart: refStartLine,
+				scannedThrough: refStartLine,
+			};
+			cache.set(state, entry);
+		}
+		for (let line = entry.scannedThrough; line <= headerLine; line += 1) {
+			const lp = (state.bMarks[line] ?? 0) + (state.tShift[line] ?? 0);
+			const lm = state.eMarks[line] ?? lp;
+			const lineText = state.src.slice(lp, lm);
+			if (advanceParagraphReferenceParser(entry.refParser, lineText)) {
+				entry.hasContent = false;
+				entry.hasPipe = false;
+			} else {
+				entry.hasContent = true;
+				if (lineText.includes("|")) {
+					entry.hasPipe = true;
+				}
+			}
+		}
+		entry.scannedThrough = headerLine + 1;
+		return entry.hasContent && entry.hasPipe;
+	};
+}
+
+export type LazyAfterReferenceDeps = Readonly<{
+	getKnownReferenceLabels: (
+		refs: Record<string, { href: string; title: string }>,
+	) => Set<string>;
+	hasReferenceLabelMeta: (meta: unknown) => boolean;
+	lheadingRule: BlockRuleFn | null;
+	paragraphRule: BlockRuleFn | null;
+	runReferenceRule: BlockRuleFn;
+	tableRule: BlockRuleFn | null;
+}>;
+
+/**
+ * Mirrors PHP `League\CommonMark` keeping `ParagraphParser` open inside a
+ * blockquote or list item after extracting a reference definition: consumes
+ * non-interrupting lazy continuation lines (`sCount < blkIndent`) before
+ * `ParserBlock.tokenize`'s `sCount[line] < blkIndent` guard prematurely closes
+ * the enclosing container, while leaving a trailing `< 4`-indented standalone
+ * refdef (`> [a]: /a\n[b]: /b`) outside the blockquote when no lazy content
+ * follows it.
+ */
+export function continueLazyAfterReference(
+	state: BlockRuleState,
+	endLine: number,
+	deps: LazyAfterReferenceDeps,
+): void {
+	const {
+		getKnownReferenceLabels,
+		hasReferenceLabelMeta,
+		lheadingRule,
+		paragraphRule,
+		runReferenceRule,
+		tableRule,
+	} = deps;
+	while (
+		state.line < endLine &&
+		!state.isEmpty(state.line) &&
+		(state.sCount[state.line] ?? 0) < state.blkIndent
+	) {
+		const lazyLine = state.line;
+		const lazySCount = state.sCount[lazyLine] ?? 0;
+		const lp = (state.bMarks[lazyLine] ?? 0) + (state.tShift[lazyLine] ?? 0);
+		const lm = state.eMarks[lazyLine] ?? lp;
+		const blockEnv = state.env as EasyMdeBlockEnv;
+		if (lazySCount >= 0) {
+			const lazyTrimmed = state.src.slice(lp, lm);
+			const lazyRelIndent = getLazyListRelativeIndent(state, lazyLine);
+			const lazyStartCol = (state.bsCount[lazyLine] ?? 0) + lazySCount;
+			if (
+				startsParagraphInterruptingBlock(lazyTrimmed, lazyStartCol, {
+					allowIndentedCode: false,
+					relativeIndentColumns: lazyRelIndent,
+				})
+			) {
+				break;
+			}
+			if (lazyRelIndent < 4) {
+				const sentinelText = lazyTrimmed.replace(/^[ \t]+|[ \t]+$/g, "");
+				if (
+					blockEnv.preScan?.protectedBlocks?.has(sentinelText) ||
+					blockEnv.tableAlignMarkers?.has(sentinelText)
+				) {
+					break;
+				}
+			}
+		}
+		if (tableRule?.(state, lazyLine, endLine, false)) {
+			break;
+		}
+		const tokensBeforeLazyRef = state.tokens.length;
+		const knownBeforeLazyRef = blockEnv.references
+			? getKnownReferenceLabels(blockEnv.references)
+			: null;
+		const lazyRawIndent =
+			lazySCount < 0
+				? measureIndentColumns(
+						state.src.slice(state.bMarks[lazyLine] ?? 0, lm),
+						state.bsCount[lazyLine] ?? 0,
+					)
+				: 0;
+		const prevKnownSize = knownBeforeLazyRef?.size ?? 0;
+		if (runReferenceRule(state, lazyLine, endLine, false)) {
+			if (
+				lazySCount < 0 &&
+				lazyRawIndent < 4 &&
+				(state.line >= endLine || state.isEmpty(state.line))
+			) {
+				const addedToken = state.tokens[state.tokens.length - 1];
+				const addedLabel =
+					addedToken?.type === "reference_definition" &&
+					hasReferenceLabelMeta(addedToken.meta)
+						? (addedToken.meta as { label: string }).label
+						: null;
+				state.tokens.length = tokensBeforeLazyRef;
+				if (
+					addedLabel !== null &&
+					blockEnv.references &&
+					(knownBeforeLazyRef === null ||
+						knownBeforeLazyRef.size > prevKnownSize)
+				) {
+					delete blockEnv.references[addedLabel];
+					knownBeforeLazyRef?.delete(addedLabel);
+				}
+				state.line = lazyLine;
+				break;
+			}
+			continue;
+		}
+		if (lheadingRule?.(state, lazyLine, endLine, false)) {
+			break;
+		}
+		if (paragraphRule?.(state, lazyLine, endLine, false)) {
+			break;
+		}
+		break;
+	}
 }

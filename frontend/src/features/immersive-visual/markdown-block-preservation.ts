@@ -811,12 +811,19 @@ function serializeDocPreservingUntouchedBlocks(
 		}
 		const reusedIndentedBlockAfterBlank =
 			serialized !== null &&
-			(child.type.name === "paragraph" || child.type.name === "heading") &&
+			child.type.name !== "code_block" &&
 			separator !== "\n" &&
 			LEADING_FOUR_COLUMN_INDENT.test(serialized);
-		const blockText = reusedIndentedBlockAfterBlank
+		let blockText = reusedIndentedBlockAfterBlank
 			? serializers.serializeBlock(child)
 			: candidateText;
+		if (
+			reusedIndentedBlockAfterBlank &&
+			child.type.name === "protected_block" &&
+			LEADING_FOUR_COLUMN_INDENT.test(blockText)
+		) {
+			blockText = blockText.replace(/^[ \t]+/, "");
+		}
 		const emittedBlockText =
 			refDefMode === "indented" && !LEADING_FOUR_COLUMN_INDENT.test(blockText)
 				? `    ${blockText}`

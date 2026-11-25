@@ -8,9 +8,14 @@ import {
 	type ReferenceDefinitionState,
 } from "../../shared/markdown/php-commonmark-reference-def";
 import {
+	continueLazyAfterReference,
+	createEasyMdeBlockquoteRule,
 	createEasyMdeLheadingRule,
 	createEasyMdeParagraphRule,
 	createEasyMdeTableRule,
+	createReferenceTableInterruptProbe,
+	type EasyMdeBlockEnv,
+	getLazyListRelativeIndent,
 } from "./markdown-it-table-rule";
 import {
 	RAW_IMAGE_TITLE_META_KEY,
@@ -358,14 +363,18 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 		(rule) => rule.name === "reference",
 	);
 	const originalReferenceRule = originalReferenceRuleEntry?.fn ?? null;
+	const originalBlockquoteRuleEntry = blockRules?.find(
+		(rule) => rule.name === "blockquote",
+	);
 	const originalTableRuleEntry = blockRules?.find(
 		(rule) => rule.name === "table",
 	);
 
 	let easyMdeTableRule: BlockRuleFn | null = null;
+	let easyMdeLheadingRule: BlockRuleFn | null = null;
+	let easyMdeParagraphRule: BlockRuleFn | null = null;
 	if (originalTableRuleEntry) {
 		easyMdeTableRule = createEasyMdeTableRule({
-			originalReferenceRule,
 			rawReferenceSourceMetaKey: RAW_REFERENCE_SOURCE_META_KEY,
 			wouldReferenceDefinitionAbsorbFollowingBlock,
 		});
@@ -378,7 +387,18 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 		parser.block.ruler.disable("table");
 	}
 
+	if (originalBlockquoteRuleEntry) {
+		parser.block.ruler.before(
+			"blockquote",
+			"easymde_blockquote",
+			createEasyMdeBlockquoteRule(),
+			{ alt: [...originalBlockquoteRuleEntry.alt] },
+		);
+		parser.block.ruler.disable("blockquote");
+	}
+
 	if (originalReferenceRuleEntry && originalReferenceRule) {
+		const isReferenceInterruptedByTable = createReferenceTableInterruptProbe();
 		// Mirror PHP HeadingStartParser (priority 60) beating an incomplete
 		// CommonMark §4.7 link reference definition's multiline continuation
 		// (`[r]:\n===`, `[r]:\n-`) before ParagraphParser feeds the Setext
@@ -401,109 +421,200 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 			},
 			{ alt: ["reference"] },
 		);
+		// Mirror PHP TableStartParser running before ParagraphParser feeds an
+		// incomplete multiline §4.7 reference definition's continuation line
+		// (`[a |\nb]:\n|-|`) into ReferenceParser.
 		parser.block.ruler.before(
 			"reference",
-			"easymde_reference",
-			(state, startLine, endLine, silent) => {
-				// PHP League\CommonMark keeps ParagraphParser open across link
-				// reference definitions until a blank line or interrupting block,
-				// so a 4-space/tab-indented consecutive refdef right after a
-				// refdef at the same container level still parses as a refdef.
-				const prevToken = state.tokens[state.tokens.length - 1];
-				const followsRefDef =
-					prevToken?.type === "reference_definition" &&
-					prevToken.level === state.level &&
-					prevToken.map?.[1] === startLine;
-				const origSCount = state.sCount[startLine] ?? 0;
-				const indentedAfterRefDef =
-					followsRefDef && origSCount - state.blkIndent >= 4;
-				if (!indentedAfterRefDef && origSCount - state.blkIndent >= 4) {
-					return false;
-				}
-				const startPos =
-					(state.bMarks[startLine] ?? 0) + (state.tShift[startLine] ?? 0);
-				if (state.src.charCodeAt(startPos) !== 0x5b) {
-					return false;
-				}
-				const env = state.env as ReferenceEnv;
-				const existingRefs = env.references;
-				const knownLabels = existingRefs
-					? getKnownReferenceLabels(existingRefs)
-					: null;
-				const tokensBefore = state.tokens.length;
+			"easymde_reference_table_terminator",
+			(state, startLine, _endLine, silent) =>
+				silent &&
+				state.parentType === "reference" &&
+				isReferenceInterruptedByTable(state, state.line, startLine),
+			{ alt: ["reference"] },
+		);
+		let inRefLazyContinuation = false;
+		const runEasyMdeReference = (
+			state: BlockRuleState,
+			startLine: number,
+			endLine: number,
+			silent: boolean,
+		): boolean => {
+			// PHP League\CommonMark keeps ParagraphParser open across link
+			// reference definitions until a blank line or interrupting block,
+			// so a 4-space/tab-indented consecutive refdef right after a
+			// refdef at the same container level still parses as a refdef.
+			const prevToken = state.tokens[state.tokens.length - 1];
+			const followsRefDef =
+				prevToken?.type === "reference_definition" &&
+				prevToken.level === state.level &&
+				prevToken.map?.[1] === startLine;
+			const origSCount = state.sCount[startLine] ?? 0;
+			const indentedAfterRefDef =
+				followsRefDef && origSCount - state.blkIndent >= 4;
+			if (!indentedAfterRefDef && origSCount - state.blkIndent >= 4) {
+				return false;
+			}
+			const startPos =
+				(state.bMarks[startLine] ?? 0) + (state.tShift[startLine] ?? 0);
+			if (state.src.charCodeAt(startPos) !== 0x5b) {
+				return false;
+			}
+			const env = state.env as ReferenceEnv;
+			const existingRefs = env.references;
+			const knownLabels = existingRefs
+				? getKnownReferenceLabels(existingRefs)
+				: null;
+			const tokensBefore = state.tokens.length;
+			const invokeOriginalReference = (limitEndLine: number): boolean => {
 				if (indentedAfterRefDef) {
 					state.sCount[startLine] = state.blkIndent;
 				}
-				let matched: boolean;
 				try {
-					matched = originalReferenceRule(state, startLine, endLine, silent);
+					return originalReferenceRule(state, startLine, limitEndLine, silent);
 				} finally {
 					if (indentedAfterRefDef) {
 						state.sCount[startLine] = origSCount;
 					}
 				}
-				if (!matched || silent || state.tokens.length <= tokensBefore) {
-					return matched;
+			};
+			let matched = invokeOriginalReference(endLine);
+			if (!matched || silent || state.tokens.length <= tokensBefore) {
+				return matched;
+			}
+			// `markdown-it`'s `reference` rule skips terminator checks on
+			// 4-space-indented continuation lines (`sCount - blkIndent > 3`),
+			// whereas PHP TableStartParser::parseSeparator() accepts leading
+			// spaces/tabs. Roll back if an indented GFM table separator
+			// interrupted the incomplete multiline refdef (`[a |\nb]:\n    |-|`).
+			if (state.line > startLine + 1) {
+				let interruptLine = -1;
+				for (let k = startLine + 1; k < state.line; k += 1) {
+					if (
+						(state.sCount[k] ?? 0) - state.blkIndent >= 4 &&
+						isReferenceInterruptedByTable(state, startLine, k)
+					) {
+						interruptLine = k;
+						break;
+					}
 				}
-				const refToken = state.tokens[state.tokens.length - 1];
-				const preScan = env.preScan;
-				const restoreSentinels = (text: string): string =>
-					preScan ? restoreProtectedInlineSentinels(text, preScan) : text;
-				if (refToken?.type === "reference_definition") {
-					const meta: Record<string, unknown> =
-						refToken.meta && typeof refToken.meta === "object"
-							? (refToken.meta as Record<string, unknown>)
-							: Object.create(null);
-					meta[RAW_REFERENCE_SOURCE_META_KEY] = restoreSentinels(
-						extractRawReferenceBlock(state, startLine, state.line),
-					);
-					refToken.meta = meta;
+				if (interruptLine >= 0) {
+					const rolledToken = state.tokens[state.tokens.length - 1];
+					const rolledLabel =
+						rolledToken?.type === "reference_definition" &&
+						hasReferenceLabelMeta(rolledToken.meta)
+							? (rolledToken.meta as { label: string }).label
+							: null;
+					state.tokens.length = tokensBefore;
+					if (
+						rolledLabel !== null &&
+						env.references &&
+						!knownLabels?.has(rolledLabel)
+					) {
+						delete env.references[rolledLabel];
+					}
+					state.line = startLine;
+					const oldLineMax = state.lineMax;
+					state.lineMax = interruptLine;
+					try {
+						matched = invokeOriginalReference(interruptLine);
+					} finally {
+						state.lineMax = oldLineMax;
+					}
+					if (!matched || state.tokens.length <= tokensBefore) {
+						return false;
+					}
 				}
-				const label =
-					refToken?.type === "reference_definition" &&
-					hasReferenceLabelMeta(refToken.meta)
-						? (refToken.meta as { label: string }).label
-						: null;
-				const refs = env.references;
-				if (label !== null && refs) {
-					const activeKnown = knownLabels ?? getKnownReferenceLabels(refs);
-					const alreadyExisted = knownLabels !== null && activeKnown.has(label);
-					activeKnown.add(label);
-					const entry = refs[label];
-					if (!alreadyExisted && entry) {
-						const needsHrefRestore =
-							preScan !== undefined && entry.href.includes(preScan.sentinel);
-						const needsTitleDecode = entry.title.length > 0;
-						if (needsHrefRestore || needsTitleDecode) {
-							const parts = extractRawReferenceParts(
-								state,
-								startLine,
-								state.line,
+			}
+			const refToken = state.tokens[state.tokens.length - 1];
+			const preScan = env.preScan;
+			const restoreSentinels = (text: string): string =>
+				preScan ? restoreProtectedInlineSentinels(text, preScan) : text;
+			if (refToken?.type === "reference_definition") {
+				const meta: Record<string, unknown> =
+					refToken.meta && typeof refToken.meta === "object"
+						? (refToken.meta as Record<string, unknown>)
+						: Object.create(null);
+				meta[RAW_REFERENCE_SOURCE_META_KEY] = restoreSentinels(
+					extractRawReferenceBlock(state, startLine, state.line),
+				);
+				refToken.meta = meta;
+			}
+			const label =
+				refToken?.type === "reference_definition" &&
+				hasReferenceLabelMeta(refToken.meta)
+					? (refToken.meta as { label: string }).label
+					: null;
+			const refs = env.references;
+			if (label !== null && refs) {
+				const activeKnown = knownLabels ?? getKnownReferenceLabels(refs);
+				const alreadyExisted = knownLabels !== null && activeKnown.has(label);
+				activeKnown.add(label);
+				const entry = refs[label];
+				if (!alreadyExisted && entry) {
+					const needsHrefRestore =
+						preScan !== undefined && entry.href.includes(preScan.sentinel);
+					const needsTitleDecode = entry.title.length > 0;
+					if (needsHrefRestore || needsTitleDecode) {
+						const parts = extractRawReferenceParts(
+							state,
+							startLine,
+							state.line,
+						);
+						if (needsHrefRestore && parts.rawDestination !== null) {
+							const restoredDest = restoreSentinels(parts.rawDestination);
+							const unwrappedDest =
+								restoredDest.startsWith("<") &&
+								restoredDest.endsWith(">") &&
+								restoredDest.length >= 2
+									? restoredDest.slice(1, -1)
+									: restoredDest;
+							const normalizedHref = state.md.normalizeLink(
+								decodeCommonMarkTitle(unwrappedDest),
 							);
-							if (needsHrefRestore && parts.rawDestination !== null) {
-								const restoredDest = restoreSentinels(parts.rawDestination);
-								const unwrappedDest =
-									restoredDest.startsWith("<") &&
-									restoredDest.endsWith(">") &&
-									restoredDest.length >= 2
-										? restoredDest.slice(1, -1)
-										: restoredDest;
-								const normalizedHref = state.md.normalizeLink(
-									decodeCommonMarkTitle(unwrappedDest),
-								);
-								entry.href = state.md.validateLink(normalizedHref)
-									? normalizedHref
-									: "";
-							}
-							if (needsTitleDecode && parts.rawTitle !== null) {
-								entry.title = decodeCommonMarkTitle(
-									restoreSentinels(parts.rawTitle)
-										.replace(/\r\n|\r/gu, "\n")
-										.replace(/\n[ \t]+/gu, "\n"),
-								);
-							}
+							entry.href = state.md.validateLink(normalizedHref)
+								? normalizedHref
+								: "";
+						}
+						if (needsTitleDecode && parts.rawTitle !== null) {
+							entry.title = decodeCommonMarkTitle(
+								restoreSentinels(parts.rawTitle)
+									.replace(/\r\n|\r/gu, "\n")
+									.replace(/\n[ \t]+/gu, "\n"),
+							);
 						}
 					}
+				}
+			}
+			return true;
+		};
+		parser.block.ruler.before(
+			"reference",
+			"easymde_reference",
+			(state, startLine, endLine, silent) => {
+				if (!runEasyMdeReference(state, startLine, endLine, silent)) {
+					return false;
+				}
+				if (silent || inRefLazyContinuation) {
+					return true;
+				}
+				// Mirror PHP League\CommonMark keeping ParagraphParser open inside
+				// a blockquote or list item after extracting a reference definition:
+				// consume non-interrupting lazy continuation lines (`sCount < blkIndent`)
+				// before `ParserBlock.tokenize`'s `sCount[line] < blkIndent` guard
+				// prematurely closes the enclosing container.
+				inRefLazyContinuation = true;
+				try {
+					continueLazyAfterReference(state, endLine, {
+						getKnownReferenceLabels,
+						hasReferenceLabelMeta,
+						lheadingRule: easyMdeLheadingRule,
+						paragraphRule: easyMdeParagraphRule,
+						runReferenceRule: runEasyMdeReference,
+						tableRule: easyMdeTableRule,
+					});
+				} finally {
+					inRefLazyContinuation = false;
 				}
 				return true;
 			},
@@ -551,22 +662,40 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 			"list",
 			"easymde_list",
 			(state, startLine, endLine, silent) => {
-				// PHP League\CommonMark ListBlockStartParser checks exact
-				// `$matches[1] === '1'` for paragraph interruption, so
-				// zero-padded markers like `01.` cannot interrupt a paragraph.
-				if (
-					silent &&
-					state.parentType === "paragraph" &&
-					(state.sCount[startLine] ?? 0) >= state.blkIndent
-				) {
-					const pos =
-						(state.bMarks[startLine] ?? 0) + (state.tShift[startLine] ?? 0);
-					const max = state.eMarks[startLine] ?? pos;
-					if (/^0+1[.)](?:[ \t]|$)/.test(state.src.slice(pos, max))) {
-						return false;
+				if (silent) {
+					if (state.parentType === "paragraph") {
+						const s = state.sCount[startLine] ?? 0;
+						// PHP League\CommonMark ListBlockStartParser checks exact
+						// `$matches[1] === '1'` for paragraph interruption, so
+						// zero-padded markers like `01.` cannot interrupt a paragraph.
+						if (s >= state.blkIndent) {
+							const pos =
+								(state.bMarks[startLine] ?? 0) + (state.tShift[startLine] ?? 0);
+							const max = state.eMarks[startLine] ?? pos;
+							if (/^0+1[.)](?:[ \t]|$)/.test(state.src.slice(pos, max))) {
+								return false;
+							}
+						} else if (
+							s >= 0 &&
+							getLazyListRelativeIndent(state, startLine) >= 4
+						) {
+							return false;
+						}
 					}
+					return originalListRule(state, startLine, endLine, true);
 				}
-				return originalListRule(state, startLine, endLine, silent);
+				const env = state.env as EasyMdeBlockEnv;
+				let stack = env.listIndentStack;
+				if (!stack) {
+					stack = [];
+					env.listIndentStack = stack;
+				}
+				stack.push(state.blkIndent);
+				try {
+					return originalListRule(state, startLine, endLine, false);
+				} finally {
+					stack.pop();
+				}
 			},
 			{ alt: [...originalListRuleEntry.alt] },
 		);
@@ -610,10 +739,11 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 			(rule) => rule.name === "lheading",
 		);
 		if (originalLheadingRuleEntry) {
+			easyMdeLheadingRule = createEasyMdeLheadingRule(easyMdeTableRule);
 			parser.block.ruler.before(
 				"lheading",
 				"easymde_lheading",
-				createEasyMdeLheadingRule(easyMdeTableRule),
+				easyMdeLheadingRule,
 				{ alt: [...originalLheadingRuleEntry.alt] },
 			);
 			parser.block.ruler.disable("lheading");
@@ -657,10 +787,11 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 			(rule) => rule.name === "paragraph",
 		);
 		if (originalParagraphRuleEntry) {
+			easyMdeParagraphRule = createEasyMdeParagraphRule(easyMdeTableRule);
 			parser.block.ruler.before(
 				"paragraph",
 				"easymde_paragraph",
-				createEasyMdeParagraphRule(easyMdeTableRule),
+				easyMdeParagraphRule,
 				{ alt: [...originalParagraphRuleEntry.alt] },
 			);
 			parser.block.ruler.disable("paragraph");

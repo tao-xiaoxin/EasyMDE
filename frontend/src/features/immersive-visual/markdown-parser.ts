@@ -1,4 +1,4 @@
-import type { Node as ProseMirrorNode } from "prosemirror-model";
+import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
 import {
 	RAW_REFERENCE_SOURCE_META_KEY,
 	visualMarkdownItParser,
@@ -14,11 +14,14 @@ import {
 import {
 	type MarkdownToken,
 	mapInlineTokens,
+	PHP_PARTIAL_TITLE_REF_META_KEY,
+	type ReferenceLinkOrigin,
 	readRawMetaString,
 	tokenAttrString,
 } from "./markdown-parser-inline";
 import {
 	markPreservedTaskParagraphs,
+	type ReferenceBlockLabelEntry,
 	stripTaskPrefix,
 	type TaskParagraphContext,
 } from "./markdown-parser-task";
@@ -56,13 +59,21 @@ export {
 } from "./markdown-parser-inline";
 export { type PreScanResult, prescanMarkdown } from "./markdown-prescanner";
 
-export type { ParsedVisualBlockSource, ParsedVisualSharedGroup };
+export type {
+	ParsedVisualBlockSource,
+	ParsedVisualSharedGroup,
+	ReferenceLinkOrigin,
+};
 
 export type ParsedVisualDocument = Readonly<{
 	blocks: ReadonlyArray<ParsedVisualBlockSource>;
 	doc: ProseMirrorNode;
+	firstRefDefBlockByLabel?: ReadonlyMap<string, number>;
 	leadingPrefix: string;
 	lineEnding: "\n" | "\r\n";
+	phpPartialTitleRefLabels?: ReadonlySet<string>;
+	refDefLabelsByBlock?: ReadonlyMap<number, ReadonlyArray<string>>;
+	referenceLinks?: ReadonlyMap<Mark, ReferenceLinkOrigin>;
 	trailingSuffix: string;
 }>;
 
@@ -118,6 +129,7 @@ function mapTableTokens(
 	endIndex: number,
 	preScan: PreScanResult,
 	alignAnnotation: string | null,
+	referenceLinks?: Map<Mark, ReferenceLinkOrigin>,
 ): ProseMirrorNode {
 	const rawRows: ProseMirrorNode[] = [];
 	for (let i = startIndex + 1; i < endIndex; i += 1) {
@@ -141,7 +153,7 @@ function mapTableTokens(
 			const inlineToken = tokens[j + 1];
 			const inlineNodes =
 				inlineToken?.type === "inline"
-					? mapInlineTokens(inlineToken.children, preScan, true)
+					? mapInlineTokens(inlineToken.children, preScan, true, referenceLinks)
 					: [];
 			const cellType = isHeader
 				? visualEditorSchema.nodes.table_header
@@ -476,7 +488,13 @@ function mapBlockTokensWithRanges(
 	endIndex: number,
 	context: BlockMapContext,
 ): MappedBlockEntry[] {
-	const { paragraphRawContents, preScan, referenceBlocks } = context;
+	const {
+		paragraphRawContents,
+		preScan,
+		referenceBlockLabels,
+		referenceBlocks,
+		referenceLinks,
+	} = context;
 	const entries: MappedBlockEntry[] = [];
 	let pendingTableAlign: Readonly<{
 		marker: string;
@@ -554,7 +572,12 @@ function mapBlockTokensWithRanges(
 					inlineToken?.type === "inline" ? inlineToken.content : "";
 				const inlines =
 					inlineToken?.type === "inline"
-						? mapInlineTokens(inlineToken.children, preScan, false)
+						? mapInlineTokens(
+								inlineToken.children,
+								preScan,
+								false,
+								referenceLinks,
+							)
 						: [];
 				const paragraphNode = visualEditorSchema.nodes.paragraph.create(
 					null,
@@ -597,6 +620,7 @@ function mapBlockTokensWithRanges(
 					closeIdx,
 					preScan,
 					annotation?.marker ?? null,
+					referenceLinks,
 				),
 				origRange: combinedRange,
 			});
@@ -631,7 +655,12 @@ function mapBlockTokensWithRanges(
 			const inlineToken = tokens[i + 1];
 			const inlines =
 				inlineToken?.type === "inline"
-					? mapInlineTokens(inlineToken.children, preScan, false)
+					? mapInlineTokens(
+							inlineToken.children,
+							preScan,
+							false,
+							referenceLinks,
+						)
 					: [];
 			entries.push({
 				node: visualEditorSchema.nodes.heading.create({ level }, inlines),
@@ -720,10 +749,26 @@ function mapBlockTokensWithRanges(
 					? preScan.rawLines.slice(refRange.start, refRange.end).join("\n")
 					: "";
 			};
+			const readRefLabelEntry = (
+				refToken: MarkdownToken,
+			): ReferenceBlockLabelEntry | null => {
+				const label = readRawMetaString(refToken, "label");
+				if (label === null) return null;
+				const hasPhpPartialTitle =
+					refToken.meta !== null &&
+					typeof refToken.meta === "object" &&
+					(refToken.meta as Record<string, unknown>)[
+						PHP_PARTIAL_TITLE_REF_META_KEY
+					] === true;
+				return { hasPhpPartialTitle, label };
+			};
 			let groupEndIdx = i;
 			const groupStart = origRange && !origRange.shared ? origRange.start : -1;
 			let groupEnd = origRange && !origRange.shared ? origRange.end : -1;
 			const rawParts: string[] = [readRefRaw(token, origRange)];
+			const refLabels: ReferenceBlockLabelEntry[] = [];
+			const firstLabel = readRefLabelEntry(token);
+			if (firstLabel !== null) refLabels.push(firstLabel);
 			while (groupEndIdx + 1 < endIndex) {
 				const nextToken = tokens[groupEndIdx + 1];
 				if (nextToken?.type !== "reference_definition") {
@@ -742,6 +787,8 @@ function mapBlockTokensWithRanges(
 					break;
 				}
 				rawParts.push(readRefRaw(nextToken, nextRange));
+				const nextLabel = readRefLabelEntry(nextToken);
+				if (nextLabel !== null) refLabels.push(nextLabel);
 				groupEnd = nextRange.end;
 				groupEndIdx += 1;
 			}
@@ -754,6 +801,9 @@ function mapBlockTokensWithRanges(
 				rawMarkdown: rawParts.join("\n"),
 			});
 			referenceBlocks.add(refNode);
+			if (referenceBlockLabels && refLabels.length > 0) {
+				referenceBlockLabels.set(refNode, refLabels);
+			}
 			entries.push({
 				node: refNode,
 				origRange: combinedRange,
@@ -804,11 +854,18 @@ export function parseMarkdownWithBlockSources(
 		tableAlignMarkers: preScan.tableAlignMarkers,
 	};
 	const tokens = visualMarkdownItParser.parse(preScan.markdown, env);
+	const referenceLinks = new Map<Mark, ReferenceLinkOrigin>();
+	const referenceBlockLabels = new WeakMap<
+		ProseMirrorNode,
+		ReadonlyArray<ReferenceBlockLabelEntry>
+	>();
 	const context: BlockMapContext = {
 		env,
 		paragraphRawContents: new WeakMap<ProseMirrorNode, string>(),
 		preScan,
+		referenceBlockLabels,
 		referenceBlocks: new WeakSet<ProseMirrorNode>(),
+		referenceLinks,
 	};
 	const mapped = mapBlockTokensWithRanges(tokens, 0, tokens.length, context);
 	const doc = visualEditorSchema.nodes.doc.create(
@@ -823,11 +880,58 @@ export function parseMarkdownWithBlockSources(
 		preScan.rawLines,
 	);
 
+	let firstRefDefBlockByLabel: Map<string, number> | undefined;
+	let refDefLabelsByBlock: Map<number, ReadonlyArray<string>> | undefined;
+	let phpPartialTitleRefLabels: Set<string> | undefined;
+	if (referenceLinks.size > 0) {
+		firstRefDefBlockByLabel = new Map<string, number>();
+		refDefLabelsByBlock = new Map<number, ReadonlyArray<string>>();
+		phpPartialTitleRefLabels = new Set<string>();
+		for (let blockIdx = 0; blockIdx < mapped.length; blockIdx += 1) {
+			const topNode = mapped[blockIdx]?.node;
+			if (!topNode) continue;
+			const blockLabels: string[] = [];
+			const collect = (node: ProseMirrorNode): void => {
+				const entries = referenceBlockLabels.get(node);
+				if (!entries) return;
+				for (const entry of entries) {
+					blockLabels.push(entry.label);
+					if (!firstRefDefBlockByLabel?.has(entry.label)) {
+						firstRefDefBlockByLabel?.set(entry.label, blockIdx);
+						if (entry.hasPhpPartialTitle) {
+							phpPartialTitleRefLabels?.add(entry.label);
+						}
+					}
+				}
+			};
+			collect(topNode);
+			if (topNode.childCount > 0) {
+				topNode.descendants((descendant) => {
+					collect(descendant);
+					return true;
+				});
+			}
+			if (blockLabels.length > 0) {
+				refDefLabelsByBlock.set(blockIdx, blockLabels);
+			}
+		}
+	}
+
 	return {
 		blocks,
 		doc,
+		...(firstRefDefBlockByLabel && firstRefDefBlockByLabel.size > 0
+			? { firstRefDefBlockByLabel }
+			: {}),
 		leadingPrefix,
 		lineEnding: preScan.lineEnding,
+		...(phpPartialTitleRefLabels && phpPartialTitleRefLabels.size > 0
+			? { phpPartialTitleRefLabels }
+			: {}),
+		...(refDefLabelsByBlock && refDefLabelsByBlock.size > 0
+			? { refDefLabelsByBlock }
+			: {}),
+		...(referenceLinks.size > 0 ? { referenceLinks } : {}),
 		trailingSuffix,
 	};
 }

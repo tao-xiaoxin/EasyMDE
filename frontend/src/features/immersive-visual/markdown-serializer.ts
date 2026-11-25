@@ -13,6 +13,7 @@ import {
 	joinSerializedBlocks,
 	type MarkdownRoundTripGuard,
 	type MarkdownSerializers,
+	type ReferenceLinkResolver,
 	restoreMathNewlineSentinel,
 	serializeList,
 } from "./markdown-block-preservation";
@@ -24,6 +25,8 @@ import {
 	escapeRawTablePipes,
 	escapeTablePipes,
 	formatQuotedTitle,
+	formatReferenceLinkClose,
+	isShortcutLinkHijackChar,
 } from "./markdown-escape";
 import type { ParsedVisualDocument } from "./markdown-parser";
 import { wouldRawHtmlInterruptParagraph } from "./markdown-prescanner-inline";
@@ -48,6 +51,7 @@ type InlineSerializeOptions = Readonly<{
 	inHeading?: boolean;
 	inTableCell?: boolean;
 	mathNewlineToken?: string | null;
+	resolveReferenceLink?: ReferenceLinkResolver | null;
 }>;
 
 const MARK_PRIORITY: Readonly<Record<string, number>> = {
@@ -390,6 +394,7 @@ function serializeInlineContent(
 	const inTableCell = options.inTableCell ?? false;
 	const inHeading = options.inHeading ?? false;
 	const mathNewlineToken = options.mathNewlineToken ?? null;
+	const resolveReferenceLink = options.resolveReferenceLink ?? null;
 	const markSpans = computeMarkSpans(parent);
 	const markKeysAt = (index: number): Set<string> => {
 		const set = new Set<string>();
@@ -407,17 +412,51 @@ function serializeInlineContent(
 
 	let output = "";
 	const activeMarks: Mark[] = [];
+	const activeMarkOpenOffsets: number[] = [];
 
-	const closeMarksTo = (targetDepth: number): void => {
+	const closeMarksTo = (
+		targetDepth: number,
+		nextCharMayHijackShortcut = false,
+	): void => {
 		while (activeMarks.length > targetDepth) {
 			const popped = activeMarks.pop();
+			const openOffset = activeMarkOpenOffsets.pop() ?? output.length;
 			if (popped) {
+				if (popped.type.name === "link" && resolveReferenceLink !== null) {
+					const origin = resolveReferenceLink(popped);
+					if (origin !== null) {
+						const href =
+							typeof popped.attrs.href === "string" ? popped.attrs.href : "";
+						const title =
+							typeof popped.attrs.title === "string" &&
+							popped.attrs.title.length > 0
+								? popped.attrs.title
+								: null;
+						const refClose = formatReferenceLinkClose(
+							href,
+							title,
+							origin,
+							output.slice(openOffset),
+							inTableCell,
+							inHeading,
+							mathNewlineToken,
+							activeMarks.length === targetDepth && nextCharMayHijackShortcut,
+						);
+						if (refClose !== null) {
+							output += refClose;
+							continue;
+						}
+					}
+				}
 				output += markCloseSyntax(popped, inTableCell, mathNewlineToken);
 			}
 		}
 	};
 
-	const syncMarks = (nextMarks: readonly Mark[]): void => {
+	const syncMarks = (
+		nextMarks: readonly Mark[],
+		nextLeafMayHijackShortcut = false,
+	): void => {
 		let sharedDepth = 0;
 		while (
 			sharedDepth < activeMarks.length &&
@@ -426,12 +465,17 @@ function serializeInlineContent(
 		) {
 			sharedDepth += 1;
 		}
-		closeMarksTo(sharedDepth);
+		const nextCharMayHijack =
+			sharedDepth < nextMarks.length
+				? nextMarks[sharedDepth]?.type.name === "link"
+				: nextLeafMayHijackShortcut;
+		closeMarksTo(sharedDepth, nextCharMayHijack);
 		for (let i = sharedDepth; i < nextMarks.length; i += 1) {
 			const mark = nextMarks[i];
 			if (mark) {
 				output += markOpenSyntax(mark);
 				activeMarks.push(mark);
+				activeMarkOpenOffsets.push(output.length);
 			}
 		}
 	};
@@ -461,11 +505,11 @@ function serializeInlineContent(
 		}
 
 		if (child.type.name === "protected_inline") {
-			syncMarks(sortedMarks);
 			const raw =
 				typeof child.attrs.rawMarkdown === "string"
 					? child.attrs.rawMarkdown
 					: "";
+			syncMarks(sortedMarks, isShortcutLinkHijackChar(raw[0]));
 			const isInlineMath = child.attrs.kind === "math-inline";
 			const encodedRaw =
 				mathNewlineToken !== null && raw.includes("\n")
@@ -582,7 +626,7 @@ function serializeInlineContent(
 			closeMarksTo(keepDepth);
 			output += leadingSpace;
 		}
-		syncMarks(sortedMarks);
+		syncMarks(sortedMarks, isShortcutLinkHijackChar(core[0]));
 		output += escapeInlineMarkdownText(core, {
 			atLineStart: output.length === 0 || output.endsWith("\n"),
 			inHeading,
@@ -653,6 +697,7 @@ function formatAlignmentDelimiter(align: TableTextAlign): string {
 function serializeTableCell(
 	cellNode: ProseMirrorNode,
 	mathNewlineToken: string | null,
+	resolveReferenceLink: ReferenceLinkResolver | null,
 ): string {
 	const parts: string[] = [];
 	for (let i = 0; i < cellNode.childCount; i += 1) {
@@ -660,6 +705,7 @@ function serializeTableCell(
 			serializeInlineContent(cellNode.child(i), {
 				inTableCell: true,
 				mathNewlineToken,
+				resolveReferenceLink,
 			}),
 		);
 	}
@@ -669,6 +715,7 @@ function serializeTableCell(
 function serializeTable(
 	tableNode: ProseMirrorNode,
 	mathNewlineToken: string | null,
+	resolveReferenceLink: ReferenceLinkResolver | null,
 ): string {
 	if (tableNode.childCount === 0) {
 		return "";
@@ -733,7 +780,11 @@ function serializeTable(
 		for (let c = 0; c < columnCount; c += 1) {
 			cells.push(
 				c < rowNode.childCount
-					? serializeTableCell(rowNode.child(c), mathNewlineToken)
+					? serializeTableCell(
+							rowNode.child(c),
+							mathNewlineToken,
+							resolveReferenceLink,
+						)
 					: "",
 			);
 		}
@@ -759,16 +810,24 @@ function serializeTable(
 function serializeBlockNodeInternal(
 	node: ProseMirrorNode,
 	mathNewlineToken: string | null,
+	resolveReferenceLink: ReferenceLinkResolver | null,
 ): string {
 	const childSerializer =
-		mathNewlineToken !== null
-			? (child: ProseMirrorNode): string =>
-					serializeBlockNodeInternal(child, mathNewlineToken)
+		mathNewlineToken !== null || resolveReferenceLink !== null
+			? (child: ProseMirrorNode, nestedToken?: string): string =>
+					serializeBlockNodeInternal(
+						child,
+						nestedToken ?? mathNewlineToken,
+						resolveReferenceLink,
+					)
 			: serializeBlockNode;
 	switch (node.type.name) {
 		case "paragraph":
 			return escapeParagraphTableDelimiters(
-				serializeInlineContent(node, { mathNewlineToken }),
+				serializeInlineContent(node, {
+					mathNewlineToken,
+					resolveReferenceLink,
+				}),
 				mathNewlineToken,
 			);
 		case "heading": {
@@ -776,6 +835,7 @@ function serializeBlockNodeInternal(
 			const content = serializeInlineContent(node, {
 				inHeading: true,
 				mathNewlineToken,
+				resolveReferenceLink,
 			}).replace(/#+$/, (run) => run.replace(/#/g, "\\#"));
 			return content.length > 0
 				? `${"#".repeat(level)} ${content}`
@@ -796,7 +856,7 @@ function serializeBlockNodeInternal(
 		case "horizontal_rule":
 			return "---";
 		case "table":
-			return serializeTable(node, mathNewlineToken);
+			return serializeTable(node, mathNewlineToken, resolveReferenceLink);
 		case "protected_block": {
 			const raw =
 				typeof node.attrs.rawMarkdown === "string" ? node.attrs.rawMarkdown : "";
@@ -829,21 +889,33 @@ function serializeBlockNodeInternal(
 	}
 }
 
+function serializeBlockNodeWithRefs(
+	node: ProseMirrorNode,
+	resolveReferenceLink: ReferenceLinkResolver | null,
+	mathNewlineToken?: string,
+): string {
+	if (mathNewlineToken !== undefined) {
+		return serializeBlockNodeInternal(
+			node,
+			mathNewlineToken,
+			resolveReferenceLink,
+		);
+	}
+	const token = createMathNewlineSentinelForNode(node);
+	if (token === null) {
+		return serializeBlockNodeInternal(node, null, resolveReferenceLink);
+	}
+	return restoreMathNewlineSentinel(
+		serializeBlockNodeInternal(node, token, resolveReferenceLink),
+		token,
+	);
+}
+
 function serializeBlockNode(
 	node: ProseMirrorNode,
 	mathNewlineToken?: string,
 ): string {
-	if (mathNewlineToken !== undefined) {
-		return serializeBlockNodeInternal(node, mathNewlineToken);
-	}
-	const token = createMathNewlineSentinelForNode(node);
-	if (token === null) {
-		return serializeBlockNodeInternal(node, null);
-	}
-	return restoreMathNewlineSentinel(
-		serializeBlockNodeInternal(node, token),
-		token,
-	);
+	return serializeBlockNodeWithRefs(node, null, mathNewlineToken);
 }
 
 export function serializeVisualDocToMarkdown(doc: ProseMirrorNode): string {
@@ -860,6 +932,7 @@ export function serializeVisualDocToMarkdown(doc: ProseMirrorNode): string {
 
 const MARKDOWN_SERIALIZERS: MarkdownSerializers = {
 	serializeBlock: serializeBlockNode,
+	serializeBlockWithRefs: serializeBlockNodeWithRefs,
 	serializeDoc: serializeVisualDocToMarkdown,
 };
 

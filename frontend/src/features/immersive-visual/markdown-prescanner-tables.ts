@@ -86,14 +86,26 @@ export function createPhpDocumentMathIndex(
 	const maskedDoc = maskPhpMarkdownMathForTableScan(normalized, ranges);
 	let hasMultilineInlineMath = false;
 	let hasMultilineDisplayMath = false;
-	for (let r = 0; r < ranges.length; r += 1) {
-		const range = ranges[r];
-		if (!range) continue;
-		const nl = normalized.indexOf("\n", range.from);
-		if (nl >= 0 && nl < range.to) {
-			if (range.block) hasMultilineDisplayMath = true;
-			else hasMultilineInlineMath = true;
-			if (hasMultilineInlineMath && hasMultilineDisplayMath) break;
+	const lastLineIdx = lineEnds.length - 1;
+	if (lastLineIdx > 0 && ranges.length > 0) {
+		let lineCursor = 0;
+		for (let r = 0; r < ranges.length; r += 1) {
+			const range = ranges[r];
+			if (!range) continue;
+			while (
+				lineCursor < lastLineIdx &&
+				(lineEnds[lineCursor] ?? 0) < range.from
+			) {
+				lineCursor += 1;
+			}
+			if (
+				lineCursor < lastLineIdx &&
+				range.to > (lineEnds[lineCursor] ?? 0)
+			) {
+				if (range.block) hasMultilineDisplayMath = true;
+				else hasMultilineInlineMath = true;
+				if (hasMultilineInlineMath && hasMultilineDisplayMath) break;
+			}
 		}
 	}
 	return {

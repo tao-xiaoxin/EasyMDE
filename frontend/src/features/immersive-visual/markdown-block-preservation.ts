@@ -1,4 +1,4 @@
-import type { Node as ProseMirrorNode } from "prosemirror-model";
+import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
 import {
 	type BlockSerializer,
 	isLooseList,
@@ -18,10 +18,12 @@ import {
 	structurallyEqual,
 } from "./markdown-node-alignment";
 import {
+	extractReferenceDefinitionLabels,
 	type ParsedVisualBlockSource,
 	type ParsedVisualDocument,
 	type ParsedVisualSharedGroup,
 	parseMarkdownWithBlockSources,
+	type ReferenceLinkOrigin,
 } from "./markdown-parser";
 import { wouldRawHtmlInterruptParagraph } from "./markdown-prescanner-inline";
 
@@ -47,6 +49,8 @@ export {
  * the dependency direction one-way (serializer -> preservation).
  */
 
+export type ReferenceLinkResolver = (mark: Mark) => ReferenceLinkOrigin | null;
+
 export type MarkdownRoundTripGuard = Readonly<{
 	initialDoc: ProseMirrorNode;
 	initialMarkdown: string;
@@ -56,6 +60,11 @@ export type MarkdownRoundTripGuard = Readonly<{
 
 export type MarkdownSerializers = Readonly<{
 	serializeBlock: BlockSerializer;
+	serializeBlockWithRefs?: (
+		node: ProseMirrorNode,
+		resolveReferenceLink: ReferenceLinkResolver | null,
+		mathNewlineToken?: string,
+	) => string;
 	serializeDoc: (doc: ProseMirrorNode) => string;
 }>;
 
@@ -364,6 +373,35 @@ function isEmptyDoc(doc: ProseMirrorNode): boolean {
 }
 
 const BLANK_BLOCKQUOTE_LINE = /^[ \t]*(?:>[ \t]*)+$/;
+const ATX_HEADING_FIRST_LINE = /^ {0,3}#{1,6}(?:[ \t]|$)/;
+
+function normalizeRefDefLabel(label: string): string {
+	return label.trim().replace(/\s+/g, " ").toLowerCase().toUpperCase();
+}
+
+function collectNodeRefDefLabels(node: ProseMirrorNode, out: Set<string>): void {
+	const visit = (current: ProseMirrorNode): void => {
+		if (
+			current.type.name === "protected_block" &&
+			current.attrs.kind === "raw" &&
+			typeof current.attrs.rawMarkdown === "string"
+		) {
+			const labels = extractReferenceDefinitionLabels(current.attrs.rawMarkdown);
+			if (labels) {
+				for (const label of labels) {
+					out.add(normalizeRefDefLabel(label));
+				}
+			}
+		}
+	};
+	visit(node);
+	if (node.childCount > 0) {
+		node.descendants((descendant) => {
+			visit(descendant);
+			return true;
+		});
+	}
+}
 
 function wouldBeLazilyAbsorbedByPrevious(
 	node: ProseMirrorNode,
@@ -372,6 +410,16 @@ function wouldBeLazilyAbsorbedByPrevious(
 	const name = node.type.name;
 	if (name === "paragraph") {
 		return true;
+	}
+	if (name === "heading") {
+		const nl = serialized.indexOf("\n");
+		const firstLine = nl === -1 ? serialized : serialized.slice(0, nl);
+		return !ATX_HEADING_FIRST_LINE.test(firstLine);
+	}
+	if (name === "code_block") {
+		const nl = serialized.indexOf("\n");
+		const firstLine = nl === -1 ? serialized : serialized.slice(0, nl);
+		return LEADING_FOUR_COLUMN_INDENT.test(firstLine);
 	}
 	if (name === "table") {
 		return !serialized.startsWith("<!-- ");
@@ -447,24 +495,120 @@ function serializeDocPreservingUntouchedBlocks(
 		}
 		return true;
 	};
-	const isTightRightNeighborIntact = (
-		docIdx: number,
-		group: ParsedVisualSharedGroup,
-	): boolean => {
-		const nextOrig = baselineBlocks[group.endIndex];
-		if (!nextOrig) return true;
-		const nextGroup =
-			nextOrig.sharedGroup?.startIndex === group.endIndex
-				? nextOrig.sharedGroup
-				: undefined;
-		const nextSep = nextGroup ? nextGroup.separatorBefore : nextOrig.separatorBefore;
-		if (nextSep !== "\n") return true;
-		const afterDocIdx = docIdx + (group.endIndex - group.startIndex);
-		if (afterDocIdx >= newLen || matchedOrigIndex[afterDocIdx] !== group.endIndex) {
-			return false;
+	const isTightRightNeighborIntact = (() => {
+		const memo = new Map<number, boolean>();
+		return (
+			startDocIdx: number,
+			startGroup: ParsedVisualSharedGroup,
+		): boolean => {
+			const cachedStart = memo.get(startGroup.startIndex);
+			if (cachedStart !== undefined) {
+				return cachedStart;
+			}
+			const chain: number[] = [];
+			let curDocIdx = startDocIdx;
+			let curGroup = startGroup;
+			let intact = true;
+			while (true) {
+				const cached = memo.get(curGroup.startIndex);
+				if (cached !== undefined) {
+					intact = cached;
+					break;
+				}
+				chain.push(curGroup.startIndex);
+				const nextOrig = baselineBlocks[curGroup.endIndex];
+				if (!nextOrig) {
+					break;
+				}
+				const nextGroup =
+					nextOrig.sharedGroup?.startIndex === curGroup.endIndex
+						? nextOrig.sharedGroup
+						: undefined;
+				const nextSep = nextGroup
+					? nextGroup.separatorBefore
+					: nextOrig.separatorBefore;
+				if (nextSep !== "\n") {
+					break;
+				}
+				const afterDocIdx =
+					curDocIdx + (curGroup.endIndex - curGroup.startIndex);
+				if (
+					afterDocIdx >= newLen ||
+					matchedOrigIndex[afterDocIdx] !== curGroup.endIndex
+				) {
+					intact = false;
+					break;
+				}
+				if (!nextGroup) {
+					break;
+				}
+				if (!isIntactSharedGroupAt(afterDocIdx, nextGroup)) {
+					intact = false;
+					break;
+				}
+				curDocIdx = afterDocIdx;
+				curGroup = nextGroup;
+			}
+			for (let k = 0; k < chain.length; k += 1) {
+				const key = chain[k];
+				if (key !== undefined) {
+					memo.set(key, intact);
+				}
+			}
+			return intact;
+		};
+	})();
+	const intactRefDefLabels = new Set<string>();
+	if (
+		parsed.referenceLinks &&
+		parsed.referenceLinks.size > 0 &&
+		parsed.phpPartialTitleRefLabels &&
+		parsed.phpPartialTitleRefLabels.size > 0 &&
+		parsed.refDefLabelsByBlock &&
+		parsed.refDefLabelsByBlock.size > 0 &&
+		serializers.serializeBlockWithRefs
+	) {
+		const seenLabels = new Set<string>();
+		for (let idx = 0; idx < newLen; idx += 1) {
+			const origIdx = matchedOrigIndex[idx] ?? -1;
+			if (origIdx < 0) {
+				collectNodeRefDefLabels(doc.child(idx), seenLabels);
+				continue;
+			}
+			const labels = parsed.refDefLabelsByBlock.get(origIdx);
+			if (!labels) continue;
+			for (const label of labels) {
+				if (seenLabels.has(label)) continue;
+				seenLabels.add(label);
+				if (
+					parsed.phpPartialTitleRefLabels.has(label) &&
+					parsed.firstRefDefBlockByLabel?.get(label) === origIdx
+				) {
+					intactRefDefLabels.add(label);
+				}
+			}
 		}
-		return nextGroup ? isIntactSharedGroupAt(afterDocIdx, nextGroup) : true;
-	};
+	}
+	const resolveActiveRefLink: ReferenceLinkResolver | null =
+		intactRefDefLabels.size > 0 &&
+		parsed.referenceLinks &&
+		serializers.serializeBlockWithRefs
+			? (mark) => {
+					const origin = parsed.referenceLinks?.get(mark);
+					return origin && intactRefDefLabels.has(origin.normalizedLabel)
+						? origin
+						: null;
+				}
+			: null;
+	const activeSerializeBlock: BlockSerializer =
+		resolveActiveRefLink !== null && serializers.serializeBlockWithRefs
+			? (node, mathNewlineToken) =>
+					serializers.serializeBlockWithRefs?.(
+						node,
+						resolveActiveRefLink,
+						mathNewlineToken,
+					) ?? serializers.serializeBlock(node, mathNewlineToken)
+			: serializers.serializeBlock;
 	let prevBlockText = "";
 	for (let idx = 0; idx < newLen; idx += 1) {
 		const child = doc.child(idx);
@@ -493,7 +637,7 @@ function serializeDocPreservingUntouchedBlocks(
 				serialized = serializeListPreservingItems(
 					child,
 					pairedBlock,
-					serializers.serializeBlock,
+					activeSerializeBlock,
 				);
 				if (serialized !== null) effectiveOrigIndex[idx] = pairedIdx;
 			}
@@ -530,7 +674,7 @@ function serializeDocPreservingUntouchedBlocks(
 			return { refDefMode: mode, separator: sep };
 		};
 		let candidateText =
-			serialized !== null ? serialized : serializers.serializeBlock(child);
+			serialized !== null ? serialized : activeSerializeBlock(child);
 		let { refDefMode, separator } = resolveJoin(
 			candidateText,
 			effectiveOrigIndex[idx] ?? -1,
@@ -557,7 +701,7 @@ function serializeDocPreservingUntouchedBlocks(
 			intactGroup = undefined;
 			serialized = null;
 			effectiveOrigIndex[idx] = -1;
-			candidateText = serializers.serializeBlock(child);
+			candidateText = activeSerializeBlock(child);
 			({ refDefMode, separator } = resolveJoin(candidateText, -1));
 		}
 		if (prevNode) parts.push(separator);
@@ -574,7 +718,7 @@ function serializeDocPreservingUntouchedBlocks(
 			blockText =
 				child.type.name === "protected_block"
 					? serialized.replace(/^[ \t]+/, "")
-					: serializers.serializeBlock(child);
+					: activeSerializeBlock(child);
 		}
 		const emittedBlockText =
 			refDefMode === "indented" && !LEADING_FOUR_COLUMN_INDENT.test(blockText)
@@ -605,6 +749,32 @@ function serializeDocPreservingUntouchedBlocks(
 	return output;
 }
 
+function rebindReferenceLinks(
+	sourceDoc: ProseMirrorNode,
+	targetDoc: ProseMirrorNode,
+	sourceLinks: ReadonlyMap<Mark, ReferenceLinkOrigin>,
+): Map<Mark, ReferenceLinkOrigin> {
+	const rebound = new Map<Mark, ReferenceLinkOrigin>();
+	const walk = (src: ProseMirrorNode, dst: ProseMirrorNode): void => {
+		if (src.marks.length > 0 && src.marks.length === dst.marks.length) {
+			for (let m = 0; m < src.marks.length; m += 1) {
+				const srcMark = src.marks[m];
+				const dstMark = dst.marks[m];
+				if (srcMark && dstMark) {
+					const origin = sourceLinks.get(srcMark);
+					if (origin) rebound.set(dstMark, origin);
+				}
+			}
+		}
+		const count = Math.min(src.childCount, dst.childCount);
+		for (let i = 0; i < count; i += 1) {
+			walk(src.child(i), dst.child(i));
+		}
+	};
+	walk(sourceDoc, targetDoc);
+	return rebound;
+}
+
 /**
  * Rebind baseline blocks to the live (structurally equal) node objects so
  * identity anchoring recognizes untouched surviving blocks. List items are
@@ -623,6 +793,15 @@ function rebindParsedToDoc(
 		...parsed,
 		doc,
 		blocks: parsed.blocks.map((block, i) => ({ ...block, node: doc.child(i) })),
+		...(parsed.referenceLinks && parsed.referenceLinks.size > 0
+			? {
+					referenceLinks: rebindReferenceLinks(
+						parsed.doc,
+						doc,
+						parsed.referenceLinks,
+					),
+				}
+			: {}),
 	};
 }
 
@@ -679,6 +858,26 @@ export function createPreservingRoundTripGuard(
 	};
 	const cachedSerializers: MarkdownSerializers = {
 		serializeBlock: serializeBlockCached,
+		...(serializers.serializeBlockWithRefs
+			? {
+					serializeBlockWithRefs: (
+						node,
+						resolveReferenceLink,
+						mathNewlineToken,
+					) => {
+						if (resolveReferenceLink === null) {
+							return serializeBlockCached(node, mathNewlineToken);
+						}
+						return (
+							serializers.serializeBlockWithRefs?.(
+								node,
+								resolveReferenceLink,
+								mathNewlineToken,
+							) ?? serializeBlockCached(node, mathNewlineToken)
+						);
+					},
+				}
+			: {}),
 		serializeDoc(doc) {
 			if (isEmptyDoc(doc)) {
 				return "";

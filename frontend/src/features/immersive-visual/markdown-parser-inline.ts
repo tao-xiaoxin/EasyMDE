@@ -17,6 +17,88 @@ import {
 
 export const RAW_IMAGE_TITLE_META_KEY = "easymdeRawTitle";
 export const RAW_LINK_TITLE_META_KEY = "easymdeRawLinkTitle";
+export const RAW_REFERENCE_LINK_META_KEY = "easymdeRawReferenceLink";
+export const PHP_PARTIAL_TITLE_REF_META_KEY = "easymdePhpPartialTitleRef";
+
+export type RawReferenceLinkMeta = Readonly<{
+	kind: "shortcut" | "collapsed" | "full";
+	normalizedLabel: string;
+	rawRefLabel: string;
+}>;
+
+export function findFirstLinkOpenToken(
+	tokens: ReadonlyArray<MarkdownToken>,
+	fromIndex: number,
+): MarkdownToken | undefined {
+	for (let idx = fromIndex; idx < tokens.length; idx += 1) {
+		if (tokens[idx]?.type === "link_open") {
+			return tokens[idx];
+		}
+	}
+	return undefined;
+}
+
+export function lineStartsQuoteOrParenTitle(
+	src: string,
+	startOffset: number,
+	endOffset: number,
+): boolean {
+	if (startOffset < 0 || startOffset >= endOffset) {
+		return false;
+	}
+	const ch = src.charCodeAt(startOffset);
+	return ch === 0x22 || ch === 0x27 || ch === 0x28;
+}
+
+export function buildRawReferenceLinkMeta(
+	src: string,
+	startPos: number,
+	labelEnd: number,
+	endPos: number,
+	normalizedLabel: string,
+): RawReferenceLinkMeta | null {
+	if (labelEnd < 0 || labelEnd >= endPos) {
+		return null;
+	}
+	if (endPos === labelEnd + 1) {
+		return {
+			kind: "shortcut",
+			normalizedLabel,
+			rawRefLabel: src.slice(startPos + 1, labelEnd),
+		};
+	}
+	if (
+		endPos === labelEnd + 3 &&
+		src.charCodeAt(labelEnd + 1) === 91 &&
+		src.charCodeAt(labelEnd + 2) === 93
+	) {
+		return {
+			kind: "collapsed",
+			normalizedLabel,
+			rawRefLabel: src.slice(startPos + 1, labelEnd),
+		};
+	}
+	if (
+		endPos > labelEnd + 3 &&
+		src.charCodeAt(labelEnd + 1) === 91 &&
+		src.charCodeAt(endPos - 1) === 93
+	) {
+		return {
+			kind: "full",
+			normalizedLabel,
+			rawRefLabel: src.slice(labelEnd + 2, endPos - 1),
+		};
+	}
+	return null;
+}
+
+export type ReferenceLinkOrigin = Readonly<{
+	href: string;
+	kind: "shortcut" | "collapsed" | "full";
+	normalizedLabel: string;
+	rawRefLabel: string;
+	title: string | null;
+}>;
 
 export function readRawMetaString(
 	token: MarkdownToken,
@@ -27,6 +109,34 @@ export function readRawMetaString(
 	}
 	const value = (token.meta as Record<string, unknown>)[key];
 	return typeof value === "string" ? value : null;
+}
+
+function readRawReferenceLinkMeta(
+	token: MarkdownToken,
+): RawReferenceLinkMeta | null {
+	if (!token.meta || typeof token.meta !== "object") {
+		return null;
+	}
+	const raw = (token.meta as Record<string, unknown>)[
+		RAW_REFERENCE_LINK_META_KEY
+	];
+	if (!raw || typeof raw !== "object") {
+		return null;
+	}
+	const candidate = raw as Record<string, unknown>;
+	const kind = candidate.kind;
+	if (
+		(kind !== "shortcut" && kind !== "collapsed" && kind !== "full") ||
+		typeof candidate.normalizedLabel !== "string" ||
+		typeof candidate.rawRefLabel !== "string"
+	) {
+		return null;
+	}
+	return {
+		kind,
+		normalizedLabel: candidate.normalizedLabel,
+		rawRefLabel: candidate.rawRefLabel,
+	};
 }
 
 /** Feature-private inline token mapping for the immersive visual parser. */
@@ -181,6 +291,7 @@ export function mapInlineTokens(
 	tokens: ReadonlyArray<MarkdownToken> | null,
 	preScan: PreScanResult,
 	inTableCell: boolean,
+	referenceLinks?: Map<Mark, ReferenceLinkOrigin>,
 ): ProseMirrorNode[] {
 	if (!tokens || tokens.length === 0) {
 		return [];
@@ -295,15 +406,31 @@ export function mapInlineTokens(
 								tokenAttrString(token, "title") ?? "",
 								preScan,
 							);
-				markStack.push(
-					visualEditorSchema.marks.link.create({
-						href: restoreProtectedInlineSentinels(
-							tokenAttrString(token, "href") ?? "",
-							preScan,
-						),
-						title: effectiveTitle.length > 0 ? effectiveTitle : null,
-					}),
+				const linkHref = restoreProtectedInlineSentinels(
+					tokenAttrString(token, "href") ?? "",
+					preScan,
 				);
+				const linkTitle = effectiveTitle.length > 0 ? effectiveTitle : null;
+				const linkMark = visualEditorSchema.marks.link.create({
+					href: linkHref,
+					title: linkTitle,
+				});
+				if (referenceLinks) {
+					const rawRefMeta = readRawReferenceLinkMeta(token);
+					if (rawRefMeta !== null) {
+						referenceLinks.set(linkMark, {
+							href: linkHref,
+							kind: rawRefMeta.kind,
+							normalizedLabel: rawRefMeta.normalizedLabel,
+							rawRefLabel: restoreProtectedInlineSentinels(
+								rawRefMeta.rawRefLabel,
+								preScan,
+							),
+							title: linkTitle,
+						});
+					}
+				}
+				markStack.push(linkMark);
 				break;
 			}
 			case "link_close":

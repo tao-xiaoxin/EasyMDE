@@ -543,3 +543,90 @@ export function formatQuotedTitle(
 	}
 	return result;
 }
+
+export type ReferenceLinkCloseTarget = Readonly<{
+	href: string;
+	kind: "shortcut" | "collapsed" | "full";
+	normalizedLabel: string;
+	rawRefLabel: string;
+	title: string | null;
+}>;
+
+export function isShortcutLinkHijackChar(ch: string | undefined): boolean {
+	return ch === "(" || ch === "[" || ch === ":";
+}
+
+function normalizeReferenceLabel(label: string): string {
+	return label.trim().replace(/\s+/g, " ").toLowerCase().toUpperCase();
+}
+
+function hasUnescapedSquareBracket(text: string): boolean {
+	let escaped = false;
+	for (let i = 0; i < text.length; i += 1) {
+		const ch = text[i];
+		if (escaped) {
+			escaped = false;
+			continue;
+		}
+		if (ch === "\\") {
+			escaped = true;
+			continue;
+		}
+		if (ch === "[" || ch === "]") {
+			return true;
+		}
+	}
+	return false;
+}
+
+/**
+ * Formats the closing syntax of a preserved reference link (`]`, `][]`, or
+ * `][ref]`) when its mark attributes still match `origin`, upgrading shortcut
+ * links to `][]` before `(`, `[`, or `:` or to `][ref]` when label text changed.
+ */
+export function formatReferenceLinkClose(
+	href: string,
+	title: string | null,
+	origin: ReferenceLinkCloseTarget,
+	serializedLabel: string,
+	inTableCell: boolean,
+	inHeading: boolean,
+	mathNewlineToken: string | null,
+	nextCharMayHijackShortcut: boolean,
+): string | null {
+	if (href !== origin.href || title !== origin.title) {
+		return null;
+	}
+	let refLabel = origin.rawRefLabel;
+	if (refLabel.includes("\n")) {
+		if (refLabel.includes("\\(")) {
+			if (inHeading || inTableCell) return null;
+			if (mathNewlineToken !== null) {
+				refLabel = refLabel.split("\n").join(mathNewlineToken);
+			}
+		} else {
+			refLabel = refLabel.replace(/[ \t\r\n]+/g, " ").trim();
+		}
+	}
+	if (inTableCell) {
+		refLabel = escapeTablePipes(refLabel);
+	}
+	if (refLabel.length === 0 || hasUnescapedSquareBracket(refLabel)) {
+		return null;
+	}
+	const canUseLabelAsRef =
+		!/\n[ \t]*\n/.test(serializedLabel) &&
+		!hasUnescapedSquareBracket(serializedLabel) &&
+		normalizeReferenceLabel(serializedLabel) === origin.normalizedLabel;
+	if (origin.kind === "shortcut") {
+		return canUseLabelAsRef
+			? nextCharMayHijackShortcut
+				? "][]"
+				: "]"
+			: `][${refLabel}]`;
+	}
+	if (origin.kind === "collapsed") {
+		return canUseLabelAsRef ? "][]" : `][${refLabel}]`;
+	}
+	return `][${refLabel}]`;
+}

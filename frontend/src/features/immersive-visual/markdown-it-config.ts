@@ -18,8 +18,13 @@ import {
 	getLazyListRelativeIndent,
 } from "./markdown-it-table-rule";
 import {
+	buildRawReferenceLinkMeta,
+	findFirstLinkOpenToken,
+	lineStartsQuoteOrParenTitle,
+	PHP_PARTIAL_TITLE_REF_META_KEY,
 	RAW_IMAGE_TITLE_META_KEY,
 	RAW_LINK_TITLE_META_KEY,
+	RAW_REFERENCE_LINK_META_KEY,
 	readRawMetaString,
 } from "./markdown-parser-inline";
 import {
@@ -314,24 +319,36 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 				if (!matched || silent || state.tokens.length <= tokensBefore) {
 					return matched;
 				}
-				const linkOpenToken = state.tokens[tokensBefore];
-				if (
-					linkOpenToken?.type === "link_open" &&
-					!hasReferenceLabelMeta(linkOpenToken.meta)
-				) {
-					const rawTitle = extractRawInlineTitle(
-						state,
-						startPos,
-						state.pos,
-						true,
-					);
-					if (rawTitle !== null) {
-						const meta: Record<string, unknown> =
-							linkOpenToken.meta && typeof linkOpenToken.meta === "object"
-								? (linkOpenToken.meta as Record<string, unknown>)
-								: Object.create(null);
-						meta[RAW_LINK_TITLE_META_KEY] = rawTitle;
-						linkOpenToken.meta = meta;
+				const linkOpenToken = findFirstLinkOpenToken(state.tokens, tokensBefore);
+				if (linkOpenToken) {
+					if (hasReferenceLabelMeta(linkOpenToken.meta)) {
+						const refMeta = buildRawReferenceLinkMeta(
+							state.src,
+							startPos,
+							state.md.helpers.parseLinkLabel(state, startPos, true),
+							state.pos,
+							(linkOpenToken.meta as { label: string }).label,
+						);
+						if (refMeta !== null) {
+							(linkOpenToken.meta as Record<string, unknown>)[
+								RAW_REFERENCE_LINK_META_KEY
+							] = refMeta;
+						}
+					} else {
+						const rawTitle = extractRawInlineTitle(
+							state,
+							startPos,
+							state.pos,
+							true,
+						);
+						if (rawTitle !== null) {
+							const meta: Record<string, unknown> =
+								linkOpenToken.meta && typeof linkOpenToken.meta === "object"
+									? (linkOpenToken.meta as Record<string, unknown>)
+									: Object.create(null);
+							meta[RAW_LINK_TITLE_META_KEY] = rawTitle;
+							linkOpenToken.meta = meta;
+						}
 					}
 				}
 				return true;
@@ -555,7 +572,17 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 					const needsHrefRestore =
 						preScan !== undefined && entry.href.includes(preScan.sentinel);
 					const needsTitleDecode = entry.title.length > 0;
-					if (needsHrefRestore || needsTitleDecode) {
+					const nextLine = state.line;
+					const nextStartsPartialTitle =
+						!needsTitleDecode &&
+						nextLine < endLine &&
+						!state.isEmpty(nextLine) &&
+						lineStartsQuoteOrParenTitle(
+							state.src,
+							(state.bMarks[nextLine] ?? 0) + (state.tShift[nextLine] ?? 0),
+							state.eMarks[nextLine] ?? 0,
+						);
+					if (needsHrefRestore || needsTitleDecode || nextStartsPartialTitle) {
 						const parts = extractRawReferenceParts(
 							state,
 							startLine,
@@ -582,6 +609,17 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 									.replace(/\r\n|\r/gu, "\n")
 									.replace(/\n[ \t]+/gu, "\n"),
 							);
+						}
+						if (
+							nextStartsPartialTitle &&
+							parts.rawTitle === null &&
+							refToken?.type === "reference_definition" &&
+							refToken.meta &&
+							typeof refToken.meta === "object"
+						) {
+							(refToken.meta as Record<string, unknown>)[
+								PHP_PARTIAL_TITLE_REF_META_KEY
+							] = true;
 						}
 					}
 				}

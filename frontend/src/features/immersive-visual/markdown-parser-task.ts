@@ -1,9 +1,12 @@
-import type { Node as ProseMirrorNode } from "prosemirror-model";
+import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
 import {
 	TASK_LIST_MARKER_PATTERN,
 	visualMarkdownItParser,
 } from "./markdown-it-config";
-import { mapInlineTokens } from "./markdown-parser-inline";
+import {
+	mapInlineTokens,
+	type ReferenceLinkOrigin,
+} from "./markdown-parser-inline";
 import type { PreScanResult } from "./markdown-prescanner";
 import { visualEditorSchema } from "./visual-schema";
 
@@ -16,11 +19,21 @@ import { visualEditorSchema } from "./visual-schema";
  * shortcut reference definition like `[x]: /ref` exists in the document.
  */
 
+export type ReferenceBlockLabelEntry = Readonly<{
+	hasPhpPartialTitle: boolean;
+	label: string;
+}>;
+
 export type TaskParagraphContext = Readonly<{
 	env: Record<string, unknown>;
 	paragraphRawContents: WeakMap<ProseMirrorNode, string>;
 	preScan: PreScanResult;
+	referenceBlockLabels?: WeakMap<
+		ProseMirrorNode,
+		ReadonlyArray<ReferenceBlockLabelEntry>
+	>;
 	referenceBlocks: WeakSet<ProseMirrorNode>;
+	referenceLinks?: Map<Mark, ReferenceLinkOrigin>;
 }>;
 
 function reparseRemainderAfterTaskMarker(
@@ -42,6 +55,7 @@ function reparseRemainderAfterTaskMarker(
 		reparsedTokens[0]?.children ?? null,
 		context.preScan,
 		false,
+		context.referenceLinks,
 	);
 }
 

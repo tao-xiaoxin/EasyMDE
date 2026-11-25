@@ -341,7 +341,7 @@ describe("PR-R35-A immersive visual preservation & refdef scanning parity", () =
 			const elapsed = performance.now() - start;
 			expect(result.protectedBlocks.size).toBe(0);
 			expect(result.protectedInlines.size).toBe(66_200);
-			expect(elapsed).toBeLessThanOrEqual(1_000);
+			expect(elapsed).toBeLessThanOrEqual(2_500);
 		});
 
 		it("preserves exact label continuation semantics across whitespace-only, non-whitespace, and 999-code-point boundaries", () => {

@@ -7,14 +7,7 @@ import {
 	isPhpTrimChar,
 	unescapeTableCellPipes,
 } from "../../shared/markdown/php-commonmark-block-helpers";
-import {
-	findLineAtOffset,
-	findTableRowCellInCells,
-	getCachedPhpTableRowCells,
-	scanPhpCommonMarkBlocks,
-} from "../../shared/markdown/php-commonmark-block-scan";
 import { gfmAutolinkTrailingContext } from "../../shared/markdown/php-commonmark-inline-html";
-import { scanPhpMarkdownMathRanges } from "../../shared/markdown/php-markdown-math-mask";
 import {
 	MAX_MARKDOWN_PREVIEW_BYTES,
 	utf8ByteLength,
@@ -22,9 +15,7 @@ import {
 import type {
 	EditorMarkdownBlockIndex,
 	EditorMarkdownLinkTableCellContext,
-	EditorMarkdownMathSpan,
 } from "./editor-markdown-block-index";
-import { unescapeTableCellPipesOutsideMath } from "./editor-markdown-link-preparation";
 import type { SimplifiedFormattingDomParser } from "./editor-simplified-formatting";
 import {
 	type EditorSourceLinkCandidate,
@@ -266,181 +257,6 @@ function tokenEndBeforeWhitespace(
 	return pos;
 }
 
-function isBlankSlice(source: string, start: number, end: number): boolean {
-	for (let i = start; i < end; i += 1) {
-		const ch = source[i];
-		if (" " !== ch && "\t" !== ch) return false;
-	}
-	return true;
-}
-
-function findMathSpanCovering(
-	mathSpans: ReadonlyArray<EditorMarkdownMathSpan>,
-	offset: number,
-): EditorMarkdownMathSpan | null {
-	let low = 0;
-	let high = mathSpans.length - 1;
-	while (low <= high) {
-		const middle = (low + high) >> 1;
-		const span = mathSpans[middle];
-		if (!span) return null;
-		if (span.to <= offset) {
-			low = middle + 1;
-		} else if (span.from > offset) {
-			high = middle - 1;
-		} else {
-			return span;
-		}
-	}
-	return null;
-}
-
-function lineMayBeGfmTableSeparator(
-	source: string,
-	start: number,
-	end: number,
-): boolean {
-	let hasPipe = false;
-	let hasDash = false;
-	for (let i = start; i < end; i += 1) {
-		const ch = source[i];
-		if ("|" === ch) hasPipe = true;
-		else if ("-" === ch) hasDash = true;
-		if (hasPipe && hasDash) return true;
-	}
-	return false;
-}
-
-function findLocalTableWindowStart(
-	source: string,
-	lineStart: number,
-	mathSpans: ReadonlyArray<EditorMarkdownMathSpan>,
-): Readonly<{ hasSeparatorAbove: boolean; start: number }> {
-	let pos = lineStart;
-	let hasSeparatorAbove = false;
-	const coveringStart = findMathSpanCovering(mathSpans, pos);
-	if (coveringStart && coveringStart.from < pos) {
-		pos = lineBoundsAt(source, coveringStart.from).start;
-	}
-	while (pos > 0) {
-		const prevBreak =
-			pos >= 2 && "\n" === source[pos - 1] && "\r" === source[pos - 2]
-				? pos - 2
-				: pos - 1;
-		const prevStart = lineBoundsAt(source, prevBreak).start;
-		if (isBlankSlice(source, prevStart, prevBreak)) {
-			const bridging = findMathSpanCovering(mathSpans, prevBreak);
-			if (!bridging || bridging.displayMode) break;
-		}
-		if (!hasSeparatorAbove && lineMayBeGfmTableSeparator(source, prevStart, prevBreak)) {
-			hasSeparatorAbove = true;
-		}
-		pos = prevStart;
-		const covering = findMathSpanCovering(mathSpans, pos);
-		if (covering && covering.from < pos) {
-			pos = lineBoundsAt(source, covering.from).start;
-		}
-	}
-	return { hasSeparatorAbove, start: pos };
-}
-
-function findLocalTableWindowEnd(
-	source: string,
-	lineEnd: number,
-	mathSpans: ReadonlyArray<EditorMarkdownMathSpan>,
-): Readonly<{ end: number; hasSeparatorBelow: boolean }> {
-	let end = lineEnd;
-	const coveringCurrent = findMathSpanCovering(mathSpans, end);
-	if (coveringCurrent && coveringCurrent.to > end) {
-		end = lineBoundsAt(source, coveringCurrent.to).end;
-	}
-	if (end >= source.length) return { end: source.length, hasSeparatorBelow: false };
-	const nextStart =
-		end + ("\r" === source[end] && "\n" === source[end + 1] ? 2 : 1);
-	if (nextStart > source.length) return { end, hasSeparatorBelow: false };
-	const nextEnd = lineBoundsAt(source, nextStart).end;
-	if (isBlankSlice(source, nextStart, nextEnd)) {
-		const bridging = findMathSpanCovering(mathSpans, end);
-		if (!bridging || bridging.displayMode) return { end, hasSeparatorBelow: false };
-	}
-	const hasSeparatorBelow = lineMayBeGfmTableSeparator(source, nextStart, nextEnd);
-	end = nextEnd;
-	const coveringNext = findMathSpanCovering(mathSpans, end);
-	if (coveringNext && coveringNext.to > end) {
-		end = lineBoundsAt(source, coveringNext.to).end;
-	}
-	return { end, hasSeparatorBelow };
-}
-
-/**
- * Worker-unpacked fallback (`packed-v3` omits `linkTableCells`): resolves
- * PHP table-cell context strictly within the contiguous non-blank table run
- * around `candidate.from` (extending at most one line forward for header
- * delimiter detection, and fast-exiting without scanning whenever no potential
- * GFM separator line exists in that run) so menu queries never rescan the full
- * document.
- */
-function resolveWorkerTableCellContext(
-	source: string,
-	candidate: EditorSourceLinkCandidate,
-	blockIndex: EditorMarkdownBlockIndex | null | undefined,
-): EditorMarkdownLinkTableCellContext | null {
-	const lineBounds = lineBoundsAt(source, candidate.from);
-	const candidateHasEscapedPipe = candidate.source.includes("\\|");
-	if (
-		!candidateHasEscapedPipe &&
-		!source.slice(lineBounds.start, lineBounds.end).includes("|")
-	) {
-		return null;
-	}
-	const mathSpans = blockIndex?.mathSpans ?? [];
-	const { hasSeparatorAbove, start: windowStart } = findLocalTableWindowStart(
-		source,
-		lineBounds.start,
-		mathSpans,
-	);
-	const { end: windowEnd, hasSeparatorBelow } = findLocalTableWindowEnd(
-		source,
-		lineBounds.end,
-		mathSpans,
-	);
-	if (
-		(windowStart === lineBounds.start && windowEnd === lineBounds.end) ||
-		(!hasSeparatorAbove && !hasSeparatorBelow)
-	) {
-		return null;
-	}
-	const slice = source.slice(windowStart, windowEnd);
-	const localMath = scanPhpMarkdownMathRanges(slice);
-	const localScan = scanPhpCommonMarkBlocks(slice, localMath);
-	const localFrom = candidate.from - windowStart;
-	const localTo = candidate.to - windowStart;
-	const line = findLineAtOffset(localScan.lines, localFrom);
-	if (!line?.isTableRow) return null;
-	const cells = getCachedPhpTableRowCells(slice, localScan, line);
-	const cell = findTableRowCellInCells(cells, localFrom);
-	if (!cell || localTo > cell.end) return null;
-	const unescapedSource = candidateHasEscapedPipe
-		? unescapeTableCellPipesOutsideMath(slice, localFrom, localTo, localMath)
-		: undefined;
-	const masked =
-		undefined !== localScan.tableCellSource
-			? localScan.tableCellSource.slice(cell.start, cell.end)
-			: undefined;
-	const maskedCellText =
-		undefined !== masked && masked !== slice.slice(cell.start, cell.end)
-			? masked
-			: undefined;
-	return {
-		cellEnd: windowStart + cell.end,
-		cellStart: windowStart + cell.start,
-		...(undefined !== maskedCellText ? { maskedCellText } : {}),
-		...(undefined !== unescapedSource && unescapedSource !== candidate.source
-			? { unescapedSource }
-			: {}),
-	};
-}
-
 function computeTableCellAutolinkTrailingContext(
 	source: string,
 	candidate: EditorSourceLinkCandidate,
@@ -492,10 +308,9 @@ function prepareSourceLinkQuery(
 	const candidateHasEscapedPipe = candidate.source.includes("\\|");
 
 	if (candidateHasEscapedPipe || isBareAutolink) {
-		const tableCell =
-			undefined !== blockIndex?.linkTableCells
-				? (blockIndex.linkTableCells.get(candidate.from) ?? null)
-				: resolveWorkerTableCellContext(source, candidate, blockIndex);
+		// Direct and worker-unpacked indexes both carry the authoritative
+		// PHP table-cell context; absence means the candidate is not in a cell.
+		const tableCell = blockIndex?.linkTableCells?.get(candidate.from) ?? null;
 		if (tableCell) {
 			const querySource = tableCell.unescapedSource ?? candidate.source;
 			const expectedTrailingText = isBareAutolink

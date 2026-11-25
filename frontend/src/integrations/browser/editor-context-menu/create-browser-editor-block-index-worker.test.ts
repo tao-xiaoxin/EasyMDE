@@ -12,6 +12,8 @@ import {
 	MAX_EDITOR_BLOCK_INDEX_LINKS,
 	MAX_EDITOR_BLOCK_INDEX_SOURCE_BYTES,
 } from "../../../contracts/ports/editor-block-index-port";
+import { createEditorBlockIndexWorkerHandler } from "../../../entrypoints/editor-block-index-worker";
+import { createEditorMarkdownBlockIndex } from "../../../features/editor-context-menu/editor-markdown-block-index";
 import { createBrowserEditorBlockIndexWorker } from "./create-browser-editor-block-index-worker";
 
 type WorkerListener = (event: Event | MessageEvent<unknown>) => void;
@@ -772,6 +774,53 @@ describe("createBrowserEditorBlockIndexWorker", () => {
 			adapter.dispose();
 		},
 	);
+
+	it("unpacks authoritative table-cell link context and rejects malformed table-cell payloads", async () => {
+		const source = "| [x](https://example.com/a\\\\|b) $m$ | https://c.example |\n| - | - |";
+		const messages: EditorBlockIndexWorkerResponse[] = [];
+		createEditorBlockIndexWorkerHandler((message) => messages.push(message))({
+			data: { generation: 1, revision: 1, source, type: "build", referenceLabelCaseFoldProfile: 14 },
+		});
+		const packed = messages[0];
+		if ("result" !== packed?.type) throw new Error("result-missing");
+		const wire = packed.data as EditorMarkdownBlockIndexPackedData & Record<string, unknown>;
+		expect(wire.linkTableCellCount).toBe(2);
+		const run = async (data: unknown) => {
+			const adapter = createAdapter();
+			const pending = adapter.build({ generation: 1, revision: 1, source }, signal());
+			const worker = await firstWorker();
+			worker.emit({
+				data: data as EditorMarkdownBlockIndexPackedData,
+				generation: 1,
+				revision: 1,
+				type: "result",
+			});
+			try {
+				return await pending;
+			} finally {
+				adapter.dispose();
+			}
+		};
+		const direct = createEditorMarkdownBlockIndex(source, { referenceLabelCaseFoldProfile: 14 });
+		const decoded = (await run(wire)) as EditorMarkdownBlockIndexDataWithImages & {
+			linkTableCells?: unknown;
+		};
+		expect(decoded.linkTableCells).toEqual(direct.linkTableCells);
+		expect(decoded.linkCandidates).toEqual(direct.linkCandidates);
+
+		const { linkTableCellTexts: _texts, ...partial } = wire;
+		const words = Int32Array.from(new Int32Array(wire.linkTableCells as ArrayBuffer));
+		words[0] = (words[0] ?? 0) + 1;
+		for (const malformed of [
+			partial,
+			{ ...wire, linkTableCellCount: 3 },
+			{ ...wire, linkTableCells: words.buffer },
+			{ ...wire, linkTableCellTexts: [7] },
+			{ ...wire, extra: 1 },
+		]) {
+			await expect(run(malformed)).rejects.toThrow("editor-block-index-result-invalid");
+		}
+	});
 
 	it("rejects an oversized result with a distinct bounded-result error", async () => {
 		const adapter = createAdapter();

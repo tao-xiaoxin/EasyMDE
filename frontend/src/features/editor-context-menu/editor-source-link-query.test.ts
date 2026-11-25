@@ -8,6 +8,7 @@ import type {
 	PreviewResponse,
 	SafePreviewHtml,
 } from "../../contracts/ports/preview-request";
+import { buildWorkerRoundTripBlockIndex } from "./editor-block-index-worker-round-trip.test-harness";
 import { createEditorMarkdownBlockIndex as createProfiledMarkdownBlockIndex } from "./editor-markdown-block-index";
 import {
 	createEditorSourceLinkQuery,
@@ -1229,15 +1230,13 @@ describe("createEditorSourceLinkQuery", () => {
 			],
 		] as const) {
 			const built = createEditorMarkdownBlockIndex(doc);
-			const workerUnpacked = {
-				blocks: built.blocks,
-				imageBlocks: built.imageBlocks,
-				imageRanges: built.imageRanges,
-				length: built.length,
-				...(built.linkCandidates ? { linkCandidates: built.linkCandidates } : {}),
-				mathSpans: built.mathSpans,
-				source: built.source,
-			};
+			// 100k separate blocks exceed the worker block bound, so that document
+			// only reaches the menu as a direct index; model a cell-less copy.
+			const { linkTableCells: _cells, ...cellLess } = built;
+			const workerUnpacked =
+				"100k-blank-separated" === label
+					? cellLess
+					: await buildWorkerRoundTripBlockIndex(doc);
 			for (const [mode, idx] of [
 				["direct", built],
 				["worker-unpacked", workerUnpacked],
@@ -1264,8 +1263,8 @@ describe("createEditorSourceLinkQuery", () => {
 			}
 		}
 
-		// Worker-unpacked index (`linkTableCells: undefined`) still preserves GFM table-cell
-		// unescaping and bare autolink trailing context via bounded local window scan.
+		// Real packed worker round trip carries `linkTableCells`, preserving GFM
+		// table-cell unescaping and bare autolink trailing context without rescans.
 		for (const [source, needle, expectedPrefix, html0, href] of [
 			[
 				"| <https://a\\|b.com> |\n| - |",
@@ -1303,16 +1302,10 @@ describe("createEditorSourceLinkQuery", () => {
 				"https://a.com/b,",
 			],
 		] as const) {
-			const built = createEditorMarkdownBlockIndex(source);
-			const workerUnpacked = {
-				blocks: built.blocks,
-				imageBlocks: built.imageBlocks,
-				imageRanges: built.imageRanges,
-				length: built.length,
-				...(built.linkCandidates ? { linkCandidates: built.linkCandidates } : {}),
-				mathSpans: built.mathSpans,
-				source: built.source,
-			};
+			const workerUnpacked = await buildWorkerRoundTripBlockIndex(source);
+			expect(workerUnpacked.linkTableCells, source).toEqual(
+				createEditorMarkdownBlockIndex(source).linkTableCells,
+			);
 			const caret = source.indexOf(needle) + 1;
 			const current = binding(source, `worker:${source}`, {
 				end: caret,
@@ -1618,6 +1611,117 @@ describe("createEditorSourceLinkQuery", () => {
 			session.dispose();
 		}
 	});
+
+	it("resolves list-nested and chained-math table links through direct and real packed worker indexes (Round 34 Track A #1/#2)", async () => {
+		// `MarkdownRenderer::render_preview()` + real `kses.php` block-0 outputs.
+		const linkA = '<p><a href="/x%7Cy">a</a></p><p>doc</p>';
+		const refOk = '<p><a href="https://example.com/ok">x</a></p><p>doc</p>';
+		const escapedPipe = '<p><a href="https://example.com/a%7Cb">x</a></p><p>doc</p>';
+		for (const [source, prefix, html0, href] of [
+			["10. a\n\n    | [a](/x\\|y) |\n    | - |", "[a](/x|y)", linkA, "/x%7Cy"],
+			[
+				"10. item\n\n    | a | b |\n    | - | - |\n    | [x][a\\|b] | c |\n\n[a|b]: https://example.com/ok",
+				"[x][a|b]",
+				refOk,
+				"https://example.com/ok",
+			],
+			[
+				"10. item\n\n    | a | b |\n    | - | - |\n    | [x](https://example.com/a\\\\|b) | c |",
+				"[x](https://example.com/a\\|b)",
+				escapedPipe,
+				"https://example.com/a%7Cb",
+			],
+			[
+				"- outer\n  - inner\n\n    | a | b |\n    | - | - |\n    | [x](https://example.com/a\\\\|b) | c |",
+				"[x](https://example.com/a\\|b)",
+				escapedPipe,
+				"https://example.com/a%7Cb",
+			],
+			[
+				"| [x][a\\|b] \\(a\nb\\) \\(c\nd\\) | col2 |\n| --- | --- |\n\n[a|b]: https://example.com/ok",
+				"[x][a|b]",
+				refOk,
+				"https://example.com/ok",
+			],
+			[
+				"| [x](https://example.com/a\\\\|b) \\(a\nb\\) \\(c\nd\\) | col2 |\n| --- | --- |",
+				"[x](https://example.com/a\\|b)",
+				escapedPipe,
+				"https://example.com/a%7Cb",
+			],
+		] as const) {
+			const direct = createEditorMarkdownBlockIndex(source);
+			const worker = await buildWorkerRoundTripBlockIndex(source);
+			expect(worker.linkTableCells, source).toEqual(direct.linkTableCells);
+			expect(worker.linkTableCells?.size ?? 0, source).toBeGreaterThan(0);
+			const caret = source.indexOf("[") + 1;
+			for (const [mode, blockIndex] of [
+				["direct", direct],
+				["worker", worker],
+			] as const) {
+				const current = binding(source, `${mode}:${source}`, {
+					end: caret,
+					start: caret,
+				});
+				const { requestFactory, session } = createHarness({
+					render: async (request) => response(request.markdown, html0),
+				});
+				expect(session.ensure({ binding: current, blockIndex }).status).toBe(
+					"pending",
+				);
+				await settle();
+				expect(
+					requestFactory.mock.calls[0]?.[0]?.markdown,
+					`${mode}:${source}`,
+				).toBe(`${prefix}\n\n${source}`);
+				expect(session.peek(current), `${mode}:${source}`).toEqual({
+					href,
+					status: "ready",
+				});
+				session.dispose();
+			}
+		}
+	});
+
+	it("answers worker-unpacked menu queries in O(1) after 100k-line pipe/dash paragraphs (Round 34 Track B #1)", async () => {
+		const source = `z|-\n${"z\n".repeat(100_000)}https://example.com | note`;
+		const worker = await buildWorkerRoundTripBlockIndex(source);
+		const caret = source.lastIndexOf("example") + 2;
+		const { requestFactory, session } = createHarness({
+			render: () => new Promise(() => undefined),
+		});
+		const started = performance.now();
+		const state = session.ensure({
+			binding: binding(source, "perf", { end: caret, start: caret }),
+			blockIndex: worker,
+		});
+		const elapsed = performance.now() - started;
+		expect(state.status).toBe("pending");
+		expect(elapsed).toBeLessThanOrEqual(250);
+		expect(
+			requestFactory.mock.calls[0]?.[0]?.markdown.startsWith(
+				"https://example.com\n\n",
+			),
+		).toBe(true);
+		session.dispose();
+
+		// A hand-built index without `linkTableCells` never rescans the source.
+		const { linkTableCells: _omitted, ...withoutCells } =
+			createEditorMarkdownBlockIndex("| https://a\\|b.com |\n| - |");
+		const fallback = createHarness({ render: () => new Promise(() => undefined) });
+		expect(
+			fallback.session.ensure({
+				binding: binding(withoutCells.source, "no-cells", { end: 4, start: 4 }),
+				blockIndex: withoutCells,
+			}).status,
+		).toBe("pending");
+		expect(
+			fallback.requestFactory.mock.calls[0]?.[0]?.markdown.endsWith(
+				`\n\n${withoutCells.source}`,
+			),
+		).toBe(true);
+		fallback.session.dispose();
+	}, 60_000);
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

@@ -34,6 +34,7 @@ import {
 	type ParserLinkNode,
 	projectedLinkNodes,
 } from "./editor-markdown-link-preparation";
+import { reconcilePhpTableUnavailableBlocks } from "./editor-markdown-php-block-reconcile";
 import {
 	collectLocalPhpBareAutolinkBlockLinks,
 	collectPhpDisplayMathBrokenBlockLinks,
@@ -679,7 +680,7 @@ export function createEditorMarkdownBlockIndex(
 		originalUnavailableRanges.length > 0
 			? scanPhpMarkdownMathRanges(source, originalUnavailableRanges)
 			: phpMathRanges;
-	const blocks = overlayMath(source, parsed.blocks, ranges, starts, []);
+	const lezerBlocks = overlayMath(source, parsed.blocks, ranges, starts, []);
 	const hasTableImageCandidate = source.includes("|") && source.includes("![");
 	const hasEscapedPipe = source.includes("\\|");
 	const hasAutolinkTrigger = hasPotentialGfmAutolinkTrigger(source);
@@ -692,6 +693,14 @@ export function createEditorMarkdownBlockIndex(
 			hasAutolinkTrigger)
 			? scanPhpCommonMarkBlocks(source, phpMathRanges)
 			: null;
+	const blocks = phpBlockScan
+		? reconcilePhpTableUnavailableBlocks(
+				source,
+				lezerBlocks,
+				phpBlockScan,
+				phpMathRanges,
+			)
+		: lezerBlocks;
 	const sortedLezerImages = [...parsed.imageNodes].sort(
 		(left, right) => left.from - right.from || right.to - left.to,
 	);
@@ -777,6 +786,7 @@ export function createEditorMarkdownBlockIndex(
 					isReferenceRangeDefined,
 					hasEscapedPipe,
 					uncoveredAutolinkOffsets,
+					phpMathRanges,
 				)
 			: null
 		: uncoveredAutolinkOffsets.length > 0

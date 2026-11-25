@@ -2896,6 +2896,68 @@ describe("readEditorCodeContent", () => {
 	});
 });
 
+describe("Round 34 PHP table and math link parity", () => {
+	const links = (source: string) =>
+		(createEditorMarkdownBlockIndex(source).linkCandidates ?? []).map(
+			(candidate) => source.slice(candidate.from, candidate.to),
+		);
+
+	it("reconciles PHP-owned bare autolinks behind cross-pipe Link/LinkReference nodes (Track B #3)", () => {
+		// Verbatim real `MarkdownRenderer::render_preview()` anchor sets.
+		for (const [source, expected] of [
+			['| [text](https://a.com "x | y") |\n| --- | --- | --- |', ["https://a.com"]],
+			[
+				'| [text](mailto:a@b.c "user@example.com | y") |\n| --- | --- |',
+				["a@b.c", "user@example.com"],
+			],
+			['a | b\n[x](https://a.com "p | q")\n| --- | --- |', ["https://a.com"]],
+			["[a | https://example.com\n--- | ---\n]: /u", ["https://example.com"]],
+			[
+				"[a | https://example.com\n--- | ---\n]: /u\n\nafter https://b.example",
+				["https://example.com", "https://b.example"],
+			],
+			// Controls: pipe-free links stay covered; a non-table refdef stays unavailable.
+			['[text](https://a.com "x y") www.b.c', ["[text](https://a.com \"x y\")", "www.b.c"]],
+			["[a | b\n--- | ---\n]: /u", []],
+			["[a]: https://example.com", []],
+		] as const) {
+			expect(links(source), source).toEqual(expected);
+		}
+		const refdefTable = createEditorMarkdownBlockIndex(
+			"[a | https://example.com\n--- | ---\n]: /u",
+		);
+		expect(refdefTable.blocks).toEqual([
+			expect.objectContaining({ editable: true, kind: "table" }),
+		]);
+		// Math keeps the conservative Lezer refdef classification (no candidate).
+		for (const source of ["[a | $x$ https://example.com\n--- | ---\n]: /u"]) {
+			expect(
+				createEditorMarkdownBlockIndex(source).blocks.map((block) => block.kind),
+				source,
+			).toEqual(["unavailable"]);
+		}
+	});
+
+	it("never fabricates a bare URL whose raw match crosses inline math (Track B #5)", () => {
+		for (const source of [
+			"https://example.com/a))))$x$)",
+			"| a | b |\n| - | - |\n| https://example.com/a))))$x$) | c |",
+			"https://example.com/a$x$",
+			"x a@b.c$x$ y",
+		]) {
+			expect(links(source), source).toEqual([]);
+		}
+		for (const [source, expected] of [
+			["https://example.com $x$", ["https://example.com"]],
+			["$x$ https://example.com", ["https://example.com"]],
+			["https://example.com/a) $x$)", ["https://example.com/a"]],
+			["| a | b |\n| - | - |\n| https://example.com/a) $x$ | c |", ["https://example.com/a"]],
+		] as const) {
+			expect(links(source), source).toEqual(expected);
+		}
+	});
+});
+
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {
   return createProfiledMarkdownBlockIndex(source, options);
 }

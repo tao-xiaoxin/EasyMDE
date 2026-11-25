@@ -17,6 +17,10 @@ import {
 	MAX_EDITOR_BLOCK_INDEX_SOURCE_BYTES,
 } from "../contracts/ports/editor-block-index-port";
 import { createEditorMarkdownBlockIndex } from "../features/editor-context-menu/editor-markdown-block-index";
+import {
+	type EditorMarkdownLinkTableCellWireData,
+	packEditorMarkdownLinkTableCells,
+} from "../features/editor-context-menu/editor-markdown-link-table-cell-wire";
 
 type WorkerMessage = Readonly<{ data: unknown }>;
 export type EditorBlockIndexWorkerScope = Readonly<{
@@ -31,7 +35,9 @@ export type EditorBlockIndexWorkerScope = Readonly<{
 }>;
 
 export type EditorBlockIndexWorkerBuildResult = Readonly<{
-	data: EditorBlockIndexWorkerData;
+	/** `packed-v3`, plus the optional table-cell wire keys when any exist. */
+	data: EditorBlockIndexWorkerData &
+		Partial<EditorMarkdownLinkTableCellWireData>;
 	transfer: ArrayBuffer[];
 }>;
 
@@ -185,6 +191,9 @@ function dataWithoutSource(source: string, profile: ReferenceLabelCaseFoldProfil
 		links[offset + 4] = kind;
 		links[offset + 5] = candidate.reference ? 1 : 0;
 	});
+	const tableCells = packEditorMarkdownLinkTableCells(parsedIndex.linkTableCells);
+	const transfer = [blocks.buffer, mathSpans.buffer, images.buffer, links.buffer];
+	if (tableCells) transfer.push(tableCells.linkTableCells);
 	return {
 		data: {
 			blockCount: parsedIndex.blocks.length,
@@ -197,8 +206,9 @@ function dataWithoutSource(source: string, profile: ReferenceLabelCaseFoldProfil
 			links: links.buffer,
 			mathSpanCount: parsedIndex.mathSpans.length,
 			mathSpans: mathSpans.buffer,
+			...(tableCells ?? {}),
 		},
-		transfer: [blocks.buffer, mathSpans.buffer, images.buffer, links.buffer],
+		transfer,
 	};
 }
 

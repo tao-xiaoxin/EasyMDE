@@ -109,6 +109,47 @@ describe("editor block-index worker entry", () => {
 		handler({ data: { generation: 1, revision: 2, source: "abc", type: "build" } });
 		expect(messages).toEqual([{ code: "editor-block-index-worker-profile-invalid", generation: 1, revision: 2, type: "error" }]);
 	});
+	it("packs authoritative table-cell link context as a transferable buffer only when present", () => {
+		const post = (source: string) => {
+			const messages: Array<Readonly<{ message: EditorBlockIndexWorkerResponse; transfer?: Transferable[] }>> = [];
+			const handler = createEditorBlockIndexWorkerHandler((message, transfer) =>
+				messages.push({ message, ...(transfer ? { transfer } : {}) }),
+			);
+			handler({ data: { generation: 1, revision: 1, source, type: "build", referenceLabelCaseFoldProfile: 14 } });
+			const result = messages[0];
+			if ("result" !== result?.message.type) throw new Error("result-missing");
+			return { data: result.message.data as Record<string, unknown>, transfer: result.transfer ?? [] };
+		};
+		const source = "10. a\n\n    | [a](/x\\|y) | $m$ |\n    | - | - |";
+		const direct = blockIndex.createEditorMarkdownBlockIndex(source, { referenceLabelCaseFoldProfile: 14 });
+		const { data, transfer } = post(source);
+		expect(data.linkTableCellCount).toBe(direct.linkTableCells?.size);
+		expect(data.linkTableCells).toBeInstanceOf(ArrayBuffer);
+		expect(transfer).toContain(data.linkTableCells);
+		expect(Array.from(new Int32Array(data.linkTableCells as ArrayBuffer))).toEqual([
+			source.indexOf("[a]"),
+			source.indexOf("[a]") - 1,
+			source.indexOf("$m$") - 2,
+			-1,
+			0,
+		]);
+		expect(data.linkTableCellTexts).toEqual(["[a](/x|y)"]);
+
+		const plain = post("[a](/u) https://example.com");
+		expect(Object.keys(plain.data).sort()).toEqual([
+			"blockCount",
+			"blocks",
+			"format",
+			"imageCount",
+			"images",
+			"length",
+			"linkCount",
+			"links",
+			"mathSpanCount",
+			"mathSpans",
+		]);
+		expect(plain.transfer).toHaveLength(4);
+	});
 	it("packs a thematic break with the appended kind code without changing existing codes", () => {
 		const source = "before\n  ***  \nafter";
 		const messages: EditorBlockIndexWorkerResponse[] = [];

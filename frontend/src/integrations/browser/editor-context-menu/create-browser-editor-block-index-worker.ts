@@ -32,6 +32,23 @@ import {
 	MAX_EDITOR_BLOCK_INDEX_SOURCE_BYTES,
 	resolveEditorBlockIndexWorkerUrl,
 } from "../../../contracts/ports/editor-block-index-port";
+import {
+	EDITOR_LINK_TABLE_CELL_WIRE_KEYS,
+	unpackEditorMarkdownLinkTableCells,
+} from "../../../features/editor-context-menu/editor-markdown-link-table-cell-wire";
+
+const PACKED_V3_KEYS: ReadonlyArray<string> = [
+	"blockCount",
+	"blocks",
+	"format",
+	"imageCount",
+	"images",
+	"length",
+	"linkCount",
+	"links",
+	"mathSpanCount",
+	"mathSpans",
+];
 
 type WorkerEventListener = (event: Event | MessageEvent<unknown>) => void;
 
@@ -335,18 +352,12 @@ async function validatePackedData(
 	source: string,
 	cancelled: () => boolean,
 ): Promise<DataValidation> {
+	const wire = data as unknown as Record<string, unknown>;
+	const hasTableCells = undefined !== wire.linkTableCellCount;
 	if (
-		!exactKeys(data as unknown as Record<string, unknown>, [
-			"blockCount",
-			"blocks",
-			"format",
-			"imageCount",
-			"images",
-			"length",
-			"linkCount",
-			"links",
-			"mathSpanCount",
-			"mathSpans",
+		!exactKeys(wire, [
+			...PACKED_V3_KEYS,
+			...(hasTableCells ? EDITOR_LINK_TABLE_CELL_WIRE_KEYS : []),
 		]) ||
 		data.format !== "packed-v3" ||
 		data.length !== source.length ||
@@ -653,6 +664,10 @@ async function validatePackedData(
 			yielded = true;
 		}
 	}
+	const linkTableCells = hasTableCells
+		? unpackEditorMarkdownLinkTableCells(wire, linkCandidates, source.length)
+		: null;
+	if (hasTableCells && !linkTableCells) return { status: "invalid" };
 	return {
 		status: "valid",
 		value: {
@@ -661,6 +676,7 @@ async function validatePackedData(
 			imageRanges,
 			length: data.length,
 			linkCandidates,
+			...(linkTableCells ? { linkTableCells } : {}),
 			mathSpans,
 		},
 	};

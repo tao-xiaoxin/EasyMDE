@@ -30,7 +30,7 @@ import {
 	isGfmUrlAutolinkAllowedAfter,
 	matchBlockInlineHtmlOrAutolink,
 	matchCommonMarkAutolinkOnLine,
-	matchGfmUrlAutolink,
+	matchGfmUrlAutolinkDetail,
 } from "../../shared/markdown/php-commonmark-inline-html";
 import type {
 	MarkdownSyntaxNode,
@@ -44,6 +44,30 @@ import {
 } from "./editor-markdown-source-projection";
 
 const GFM_WWW_GLOBAL_RE = /www\./gi;
+
+/** Whether original-source `[from, to)` overlaps a PHP-extracted math span. */
+type MathCrossingQuery = (from: number, to: number) => boolean;
+
+const NO_MATH_CROSSING: MathCrossingQuery = () => false;
+
+function createMathCrossingQuery(
+	mathRanges: ReadonlyArray<SourceRange>,
+): MathCrossingQuery {
+	if (0 === mathRanges.length) return NO_MATH_CROSSING;
+	return (from, to) => {
+		let low = 0;
+		let high = mathRanges.length - 1;
+		while (low <= high) {
+			const middle = (low + high) >> 1;
+			const range = mathRanges[middle];
+			if (!range) return false;
+			if (range.to <= from) low = middle + 1;
+			else if (range.from >= to) high = middle - 1;
+			else return true;
+		}
+		return false;
+	};
+}
 
 type BracketOpener = {
 	active: boolean;
@@ -87,6 +111,7 @@ function scanPhpInlineBlockLinks(
 	groupStart: number,
 	groupEnd: number,
 	isReferenceDefined: (from: number, to: number) => boolean,
+	crossesMath: MathCrossingQuery = NO_MATH_CROSSING,
 ): ParserLinkNode[] {
 	const stream = createPhpInlineStream(text, lines, groupEnd);
 	const runs = collectBlockBacktickRuns(text, lines, groupStart, groupEnd);
@@ -217,7 +242,11 @@ function scanPhpInlineBlockLinks(
 		const emailTo =
 			undefined === emailEnd ? -1 : gfmEmailAutolinkEnd(text, emailEnd);
 		if (emailTo > p) {
-			emitted.push({ from: p, kind: "link", reference: false, to: emailTo });
+			// PHP matches against `EASYMDE_MATH_n_TOKEN`, not the same-length
+			// mask, so a match touching math never renders this source link.
+			if (!crossesMath(p, emailEnd ?? emailTo)) {
+				emitted.push({ from: p, kind: "link", reference: false, to: emailTo });
+			}
 			p = emailTo;
 			continue;
 		}
@@ -227,10 +256,14 @@ function scanPhpInlineBlockLinks(
 				p === seg.contentOffset ? null : (text[p - 1] ?? null),
 			)
 		) {
-			const urlEnd = matchGfmUrlAutolink(text, p);
-			if (urlEnd > p) {
-				emitted.push({ from: p, kind: "link", reference: false, to: urlEnd });
-				p = urlEnd;
+			const detail = matchGfmUrlAutolinkDetail(text, p);
+			if (detail && detail.end > p) {
+				// The raw (pre-trim) match decides: trimming the masked tail can
+				// land before a math span PHP's tokenized URL still consumes.
+				if (!crossesMath(p, detail.rawEnd)) {
+					emitted.push({ from: p, kind: "link", reference: false, to: detail.end });
+				}
+				p = detail.end;
 				continue;
 			}
 		}
@@ -250,6 +283,7 @@ function scanPhpTableCellLinks(
 	cellFrom: number,
 	cellTo: number,
 	isReferenceDefined: (from: number, to: number) => boolean,
+	crossesMath: MathCrossingQuery,
 ): ParserLinkNode[] {
 	let trimStart = cellFrom;
 	let trimEnd = cellTo;
@@ -273,6 +307,7 @@ function scanPhpTableCellLinks(
 			0,
 			0,
 			(cFrom, cTo) => isReferenceDefined(trimStart + cFrom, trimStart + cTo),
+			(cFrom, cTo) => crossesMath(trimStart + cFrom, trimStart + cTo),
 		);
 		return cellLinks.map((link) => ({
 			from: trimStart + link.from,
@@ -314,6 +349,8 @@ function scanPhpTableCellLinks(
 				origPos[uFrom] ?? trimStart,
 				origPos[uTo] ?? trimEnd,
 			),
+		(uFrom, uTo) =>
+			crossesMath(origPos[uFrom] ?? trimStart, origPos[uTo] ?? trimEnd),
 	);
 	return cellLinks.map((link) => ({
 		from: origPos[link.from] ?? trimStart,
@@ -487,7 +524,9 @@ export function collectPhpDisplayMathBrokenBlockLinks(
 	isReferenceDefined: (from: number, to: number) => boolean,
 	includeEscapedPipeTableCells = false,
 	bareAutolinkOffsets?: ReadonlyArray<number>,
+	mathRanges: ReadonlyArray<SourceRange> = [],
 ): PhpOwnedBlockLinks {
+	const crossesMath = createMathCrossingQuery(mathRanges);
 	const slices = collectNonDisplayMathSlices(
 		brokenImageRanges,
 		displayMathRanges,
@@ -580,6 +619,7 @@ export function collectPhpDisplayMathBrokenBlockLinks(
 					scope.from,
 					scope.to,
 					isReferenceDefined,
+					crossesMath,
 				)
 			: scanPhpInlineBlockLinks(
 					text,
@@ -587,6 +627,7 @@ export function collectPhpDisplayMathBrokenBlockLinks(
 					scope.groupStart,
 					scope.groupEnd,
 					isReferenceDefined,
+					crossesMath,
 				);
 		for (let j = 0; j < found.length; j += 1) {
 			const link = found[j];
@@ -676,7 +717,11 @@ export function collectUncoveredBareAutolinkOffsets(
 			node.reference ||
 			"[" === projection.text[node.from]
 		) {
-			covered.push(orig);
+			// PHP GFM tables split cells on `|` before inline parsing, so a
+			// Lezer construct spanning a pipe may not exist in PHP's output.
+			if (!projection.text.slice(node.from, node.to).includes("|")) {
+				covered.push(orig);
+			}
 		} else {
 			bareLezerOffsets.push(orig.from);
 		}
@@ -688,7 +733,11 @@ export function collectUncoveredBareAutolinkOffsets(
 			if (!projection.text.slice(node.from, node.to).includes("|")) {
 				covered.push(originalRange(projection, node));
 			}
-		} else if ("LinkReference" === node.name && 0 === mathRanges.length) {
+		} else if (
+			"LinkReference" === node.name &&
+			0 === mathRanges.length &&
+			!projection.text.slice(node.from, node.to).includes("|")
+		) {
 			covered.push(originalRange(projection, node));
 		}
 	}

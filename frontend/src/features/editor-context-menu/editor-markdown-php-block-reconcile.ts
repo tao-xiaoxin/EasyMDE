@@ -4,14 +4,21 @@ import type {
 	ScannedMarkdownBlocks,
 } from "../../shared/markdown/php-commonmark-block-scan";
 
+export type ReconciledPhpTableBlocks = Readonly<{
+	blocks: ReadonlyArray<EditorMarkdownSourceBlock>;
+	reconciledTableBlocks: ReadonlyArray<EditorMarkdownSourceBlock>;
+}>;
+
 /**
  * PHP GFM `TableParser` can start a table inside what Lezer reads as one
- * top-level link reference definition (for example a multiline refdef label
- * whose second line is a delimiter row). Lezer then reports the whole range as
- * a non-editable `unavailable` block, while PHP Preview renders a table with
- * links. This reclassifies only an exact match — the block's first line is a
- * PHP table header row, its second line is the non-inline delimiter row, and
- * every remaining line is a PHP table row of that same table — as an editable
+ * top-level link reference definition (for example a 2-line refdef or
+ * multiline refdef label whose second line is a delimiter row). Lezer then
+ * reports the whole range as a non-editable `unavailable` block, while PHP
+ * Preview renders a table with links. This reclassifies only an exact match —
+ * the block's first line is a PHP table header row (not preceded by a table
+ * row or delimiter), its second line is an explicit PHP table delimiter row,
+ * every remaining line is a PHP table row of that same table, and the
+ * following line is neither a table row nor a delimiter — as an editable
  * `table` block. Blocks touching math or image syntax stay conservative
  * (`unavailable`), since math and image provenance was prepared under the
  * Lezer classification.
@@ -21,14 +28,15 @@ export function reconcilePhpTableUnavailableBlocks(
 	blocks: ReadonlyArray<EditorMarkdownSourceBlock>,
 	phpBlockScan: ScannedMarkdownBlocks,
 	phpMathRanges: ReadonlyArray<PhpMarkdownMathRange>,
-): ReadonlyArray<EditorMarkdownSourceBlock> {
+): ReconciledPhpTableBlocks {
 	let reconciled: EditorMarkdownSourceBlock[] | null = null;
+	const reconciledTableBlocks: EditorMarkdownSourceBlock[] = [];
 	let mathIndex = 0;
 	for (let index = 0; index < blocks.length; index += 1) {
 		const block = blocks[index];
 		if (
 			"unavailable" !== block?.kind ||
-			block.lineEnd - block.lineStart < 2
+			block.lineEnd - block.lineStart < 1
 		) {
 			continue;
 		}
@@ -47,9 +55,18 @@ export function reconcilePhpTableUnavailableBlocks(
 			continue;
 		}
 		if (!reconciled) reconciled = blocks.slice();
-		reconciled[index] = { ...block, editable: true, kind: "table" };
+		const tableBlock: EditorMarkdownSourceBlock = {
+			...block,
+			editable: true,
+			kind: "table",
+		};
+		reconciled[index] = tableBlock;
+		reconciledTableBlocks.push(tableBlock);
 	}
-	return reconciled ?? blocks;
+	return {
+		blocks: reconciled ?? blocks,
+		reconciledTableBlocks,
+	};
 }
 
 function blockIsExactPhpTable(
@@ -60,6 +77,8 @@ function blockIsExactPhpTable(
 	const header = lines[block.lineStart];
 	const delimiter = lines[block.lineStart + 1];
 	const previous = block.lineStart > 0 ? lines[block.lineStart - 1] : null;
+	const next =
+		block.lineEnd + 1 < lines.length ? lines[block.lineEnd + 1] : null;
 	if (
 		!header ||
 		!delimiter ||
@@ -67,8 +86,12 @@ function blockIsExactPhpTable(
 		!header.isTableRow ||
 		header.inlineBlockId < 0 ||
 		previous?.isTableRow ||
+		previous?.isTableDelimiter ||
+		!delimiter.isTableDelimiter ||
 		delimiter.isTableRow ||
-		delimiter.inlineBlockId >= 0
+		delimiter.inlineBlockId >= 0 ||
+		next?.isTableRow ||
+		next?.isTableDelimiter
 	) {
 		return false;
 	}

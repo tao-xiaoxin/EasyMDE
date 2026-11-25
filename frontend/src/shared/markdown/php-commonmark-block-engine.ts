@@ -41,6 +41,7 @@ export type ScannedMarkdownLine = Readonly<{
 	consumedBlockquote: boolean;
 	contentOffset: number;
 	inlineBlockId: number;
+	isTableDelimiter?: boolean;
 	isTableRow: boolean;
 	lineEnd: number;
 	lineStart: number;
@@ -53,6 +54,7 @@ export type MutableScannedMarkdownLine = {
 	consumedBlockquote: boolean;
 	contentOffset: number;
 	inlineBlockId: number;
+	isTableDelimiter: boolean;
 	isTableRow: boolean;
 	lineEnd: number;
 	lineStart: number;
@@ -208,6 +210,7 @@ export function advancePhpCommonMarkBlockLine(
 		inlineBlockId: number,
 		isTableRow = false,
 		tableColumnCount: number | null = null,
+		isTableDelimiter = false,
 	): number => {
 		lineEmitted = true;
 		if (!recordLines) return -1;
@@ -216,6 +219,7 @@ export function advancePhpCommonMarkBlockLine(
 			consumedBlockquote,
 			contentOffset: lineStart + cursor.index,
 			inlineBlockId,
+			isTableDelimiter,
 			isTableRow,
 			lineEnd,
 			lineStart,
@@ -463,7 +467,7 @@ export function advancePhpCommonMarkBlockLine(
 				}
 				state.leaf = { headerColumnCount, kind: "table" };
 				startedNewBlock = true;
-				emitLine(-1);
+				emitLine(-1, false, null, true);
 				break;
 			}
 		}

@@ -3,11 +3,13 @@ import {
 	EDITOR_BLOCK_INDEX_IMAGE_STATUS_UNAVAILABLE,
 	EDITOR_BLOCK_INDEX_LINK_KIND_AUTOLINK,
 	EDITOR_BLOCK_INDEX_LINK_KIND_LINK,
+	EDITOR_BLOCK_INDEX_LINK_TABLE_CELL_WIRE_KEYS,
 	EDITOR_BLOCK_INDEX_PACKED_BLOCK_FIELDS,
 	EDITOR_BLOCK_INDEX_PACKED_IMAGE_BLOCK_FIELDS,
 	EDITOR_BLOCK_INDEX_PACKED_IMAGE_RANGE_FIELDS,
 	EDITOR_BLOCK_INDEX_PACKED_LINK_FIELDS,
 	EDITOR_BLOCK_INDEX_PACKED_MATH_FIELDS,
+	EDITOR_BLOCK_INDEX_PACKED_V3_KEYS,
 	EDITOR_MARKDOWN_BLOCK_KIND_ORDER,
 	isReferenceLabelCaseFoldProfile,
 	type EditorBlockIndexWorkerRequest,
@@ -15,7 +17,6 @@ import {
 	type EditorMarkdownBlockIndexData,
 	type EditorMarkdownBlockIndexDataWithImages,
 	type EditorMarkdownBlockIndexFailureCode,
-	type EditorMarkdownBlockIndexPackedData,
 	type EditorMarkdownBlockIndexPort,
 	type EditorMarkdownImageBlock,
 	type EditorMarkdownImageBlockStatus,
@@ -31,23 +32,12 @@ import {
 	MAX_EDITOR_BLOCK_INDEX_MATH_SPANS,
 	MAX_EDITOR_BLOCK_INDEX_SOURCE_BYTES,
 	resolveEditorBlockIndexWorkerUrl,
-} from "../../../contracts/ports/editor-block-index-port";
-import {
-	EDITOR_LINK_TABLE_CELL_WIRE_KEYS,
 	unpackEditorMarkdownLinkTableCells,
-} from "../../../features/editor-context-menu/editor-markdown-link-table-cell-wire";
+} from "../../../contracts/ports/editor-block-index-port";
 
-const PACKED_V3_KEYS: ReadonlyArray<string> = [
-	"blockCount",
-	"blocks",
-	"format",
-	"imageCount",
-	"images",
-	"length",
-	"linkCount",
-	"links",
-	"mathSpanCount",
-	"mathSpans",
+const PACKED_V3_WITH_TABLE_CELLS_KEYS: ReadonlyArray<string> = [
+	...EDITOR_BLOCK_INDEX_PACKED_V3_KEYS,
+	...EDITOR_BLOCK_INDEX_LINK_TABLE_CELL_WIRE_KEYS,
 ];
 
 type WorkerEventListener = (event: Event | MessageEvent<unknown>) => void;
@@ -175,15 +165,19 @@ function sourceByteLength(
 	return bytes;
 }
 
+function hasOwnKey(value: Readonly<Record<string, unknown>>, key: string): boolean {
+	// biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn is outside the supported browser baseline.
+	return Object.prototype.hasOwnProperty.call(value, key);
+}
+
 function exactKeys(
-	value: Record<string, unknown>,
+	value: Readonly<Record<string, unknown>>,
 	keys: ReadonlyArray<string>,
 ): boolean {
 	const actual = Object.keys(value);
 	return (
 		actual.length === keys.length &&
-		// biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn is outside the supported browser baseline.
-		keys.every((key) => Object.prototype.hasOwnProperty.call(value, key))
+		keys.every((key) => hasOwnKey(value, key))
 	);
 }
 
@@ -348,51 +342,58 @@ function linkKind(value: number): EditorMarkdownLinkCandidateKind | null {
 }
 
 async function validatePackedData(
-	data: EditorMarkdownBlockIndexPackedData,
+	data: Readonly<Record<string, unknown>>,
 	source: string,
 	cancelled: () => boolean,
 ): Promise<DataValidation> {
-	const wire = data as unknown as Record<string, unknown>;
-	const hasTableCells = undefined !== wire.linkTableCellCount;
+	const hasTableCells =
+		hasOwnKey(data, "linkTableCellCount") || hasOwnKey(data, "linkTableCells");
+	const length = data.length;
+	const blockCount = data.blockCount;
+	const linkCount = data.linkCount;
+	const mathSpanCount = data.mathSpanCount;
+	const imageCount = data.imageCount;
 	if (
-		!exactKeys(wire, [
-			...PACKED_V3_KEYS,
-			...(hasTableCells ? EDITOR_LINK_TABLE_CELL_WIRE_KEYS : []),
-		]) ||
+		!exactKeys(
+			data,
+			hasTableCells
+				? PACKED_V3_WITH_TABLE_CELLS_KEYS
+				: EDITOR_BLOCK_INDEX_PACKED_V3_KEYS,
+		) ||
 		data.format !== "packed-v3" ||
-		data.length !== source.length ||
-		!safeInteger(data.length) ||
-		!safeInteger(data.blockCount) ||
-		!safeInteger(data.linkCount) ||
-		!safeInteger(data.mathSpanCount) ||
-		!safeInteger(data.imageCount)
+		length !== source.length ||
+		!safeInteger(length) ||
+		!safeInteger(blockCount) ||
+		!safeInteger(linkCount) ||
+		!safeInteger(mathSpanCount) ||
+		!safeInteger(imageCount)
 	)
 		return { status: "invalid" };
 	if (
-		data.blockCount > MAX_EDITOR_BLOCK_INDEX_BLOCKS ||
-		data.mathSpanCount > MAX_EDITOR_BLOCK_INDEX_MATH_SPANS ||
-		data.imageCount > MAX_EDITOR_BLOCK_INDEX_IMAGES ||
-		data.linkCount > MAX_EDITOR_BLOCK_INDEX_LINKS
+		blockCount > MAX_EDITOR_BLOCK_INDEX_BLOCKS ||
+		mathSpanCount > MAX_EDITOR_BLOCK_INDEX_MATH_SPANS ||
+		imageCount > MAX_EDITOR_BLOCK_INDEX_IMAGES ||
+		linkCount > MAX_EDITOR_BLOCK_INDEX_LINKS
 	)
 		return { status: "too-large" };
 	const blocksBuffer = packedBuffer(
 		data.blocks,
-		data.blockCount,
+		blockCount,
 		EDITOR_BLOCK_INDEX_PACKED_BLOCK_FIELDS,
 	);
 	const mathBuffer = packedBuffer(
 		data.mathSpans,
-		data.mathSpanCount,
+		mathSpanCount,
 		EDITOR_BLOCK_INDEX_PACKED_MATH_FIELDS,
 	);
 	const imageBuffer = exactPackedWords(
 		data.images,
-		data.blockCount * EDITOR_BLOCK_INDEX_PACKED_IMAGE_BLOCK_FIELDS +
-			data.imageCount * EDITOR_BLOCK_INDEX_PACKED_IMAGE_RANGE_FIELDS,
+		blockCount * EDITOR_BLOCK_INDEX_PACKED_IMAGE_BLOCK_FIELDS +
+			imageCount * EDITOR_BLOCK_INDEX_PACKED_IMAGE_RANGE_FIELDS,
 	);
 	const linkBuffer = packedBuffer(
 		data.links,
-		data.linkCount,
+		linkCount,
 		EDITOR_BLOCK_INDEX_PACKED_LINK_FIELDS,
 	);
 	if (!blocksBuffer || !mathBuffer || !imageBuffer || !linkBuffer)
@@ -405,7 +406,7 @@ async function validatePackedData(
 	let sliceStarted = now();
 	let processed = 0;
 	let yielded = false;
-	for (let index = 0; index < data.blockCount; index += 1) {
+	for (let index = 0; index < blockCount; index += 1) {
 		if (cancelled()) return { status: "cancelled" };
 		const offset = index * EDITOR_BLOCK_INDEX_PACKED_BLOCK_FIELDS;
 		const from = blocksBuffer[offset] ?? -1;
@@ -454,7 +455,7 @@ async function validatePackedData(
 	let previousMathTo = 0;
 	let mathBlockIndex = 0;
 	processed = 0;
-	for (let index = 0; index < data.mathSpanCount; index += 1) {
+	for (let index = 0; index < mathSpanCount; index += 1) {
 		if (cancelled()) return { status: "cancelled" };
 		const offset = index * EDITOR_BLOCK_INDEX_PACKED_MATH_FIELDS;
 		const from = mathBuffer[offset] ?? -1;
@@ -514,7 +515,7 @@ async function validatePackedData(
 	processed = 0;
 	sliceStarted = now();
 	yielded = false;
-	for (let index = 0; index < data.blockCount; index += 1) {
+	for (let index = 0; index < blockCount; index += 1) {
 		if (cancelled()) return { status: "cancelled" };
 		const offset = index * EDITOR_BLOCK_INDEX_PACKED_IMAGE_BLOCK_FIELDS;
 		const block = blocks[index];
@@ -525,7 +526,7 @@ async function validatePackedData(
 			!safeInteger(candidateFirst) ||
 			!safeInteger(count) ||
 			candidateFirst !== firstImageIndex ||
-			candidateFirst + count > data.imageCount ||
+			candidateFirst + count > imageCount ||
 			!status ||
 			("unavailable" === status && count !== 0) ||
 			!block ||
@@ -544,7 +545,7 @@ async function validatePackedData(
 			yielded = true;
 		}
 	}
-	if (firstImageIndex !== data.imageCount) return { status: "invalid" };
+	if (firstImageIndex !== imageCount) return { status: "invalid" };
 
 	const imageRanges: EditorMarkdownImageRange[] = [];
 	let imageBlockIndex = 0;
@@ -552,12 +553,12 @@ async function validatePackedData(
 	processed = 0;
 	sliceStarted = now();
 	yielded = false;
-	for (let index = 0; index < data.imageCount; index += 1) {
+	for (let index = 0; index < imageCount; index += 1) {
 		if (cancelled()) return { status: "cancelled" };
 		while (
 			imageBlockIndex < imageBlocks.length &&
 			index >=
-				(imageBlocks[imageBlockIndex]?.firstImageIndex ?? data.imageCount) +
+				(imageBlocks[imageBlockIndex]?.firstImageIndex ?? imageCount) +
 					(imageBlocks[imageBlockIndex]?.count ?? 0)
 		) {
 			imageBlockIndex += 1;
@@ -570,7 +571,7 @@ async function validatePackedData(
 		const block = blocks[imageBlockIndex];
 		const imageBlock = imageBlocks[imageBlockIndex];
 		const offset =
-			data.blockCount * EDITOR_BLOCK_INDEX_PACKED_IMAGE_BLOCK_FIELDS +
+			blockCount * EDITOR_BLOCK_INDEX_PACKED_IMAGE_BLOCK_FIELDS +
 			index * EDITOR_BLOCK_INDEX_PACKED_IMAGE_RANGE_FIELDS;
 		const from = imageBuffer[offset] ?? -1;
 		const to = imageBuffer[offset + 1] ?? -1;
@@ -605,7 +606,7 @@ async function validatePackedData(
 	processed = 0;
 	sliceStarted = now();
 	yielded = false;
-	for (let index = 0; index < data.linkCount; index += 1) {
+	for (let index = 0; index < linkCount; index += 1) {
 		if (cancelled()) return { status: "cancelled" };
 		const offset = index * EDITOR_BLOCK_INDEX_PACKED_LINK_FIELDS;
 		const from = linkBuffer[offset] ?? -1;
@@ -664,19 +665,23 @@ async function validatePackedData(
 			yielded = true;
 		}
 	}
-	const linkTableCells = hasTableCells
-		? unpackEditorMarkdownLinkTableCells(wire, linkCandidates, source.length)
-		: null;
-	if (hasTableCells && !linkTableCells) return { status: "invalid" };
+	const linkTableCells = unpackEditorMarkdownLinkTableCells(
+		source,
+		linkCandidates,
+		mathSpans,
+		blocks,
+		data,
+	);
+	if (null === linkTableCells) return { status: "invalid" };
 	return {
 		status: "valid",
 		value: {
 			blocks,
 			imageBlocks,
 			imageRanges,
-			length: data.length,
+			length,
 			linkCandidates,
-			...(linkTableCells ? { linkTableCells } : {}),
+			...(undefined !== linkTableCells ? { linkTableCells } : {}),
 			mathSpans,
 		},
 	};
@@ -689,11 +694,7 @@ async function validateData(
 ): Promise<DataValidation> {
 	const data = record(value);
 	if ("packed-v3" !== data?.format) return { status: "invalid" };
-	return validatePackedData(
-		data as unknown as EditorMarkdownBlockIndexPackedData,
-		source,
-		cancelled,
-	);
+	return validatePackedData(data, source, cancelled);
 }
 
 function responseCode(

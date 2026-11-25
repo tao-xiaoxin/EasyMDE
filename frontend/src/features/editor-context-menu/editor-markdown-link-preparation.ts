@@ -1,7 +1,10 @@
-import type {
-	EditorMarkdownImageRange,
-	EditorMarkdownLinkCandidate,
-	EditorMarkdownSourceBlock,
+import {
+	deriveEditorMarkdownLinkTableCellContext,
+	type EditorMarkdownImageRange,
+	type EditorMarkdownLinkCandidate,
+	type EditorMarkdownLinkTableCellContext,
+	type EditorMarkdownMathSpan,
+	type EditorMarkdownSourceBlock,
 } from "../../contracts/ports/editor-block-index-port";
 import { unescapeTableCellPipes } from "../../shared/markdown/php-commonmark-block-helpers";
 import {
@@ -23,6 +26,8 @@ import {
 	normalizeMarkdownReferenceLabel,
 	type ReferenceLabelCaseFoldProfile,
 } from "./reference-label-normalization";
+
+export type { EditorMarkdownLinkTableCellContext } from "../../contracts/ports/editor-block-index-port";
 
 export type MarkdownSyntaxNode = Readonly<{
 	from: number;
@@ -462,22 +467,6 @@ function offsetInsideSortedRanges(
 	return false;
 }
 
-export type EditorMarkdownLinkTableCellContext = Readonly<{
-	cellEnd: number;
-	cellStart: number;
-	/**
-	 * Masked slice `[cellStart, cellEnd)` when PHP math masking altered the
-	 * table cell text; omitted when `source` already matches the cell text.
-	 */
-	maskedCellText?: string;
-	/**
-	 * Precomputed table-cell-unescaped query source when the candidate contains
-	 * `\|` outside PHP math spans; omitted when `source.slice(from, to)` is
-	 * already identical.
-	 */
-	unescapedSource?: string;
-}>;
-
 /**
  * Mirrors PHP `TableParser::split()` pre-inline `\|` -> `|` unescaping over
  * `source.slice(from, to)` while leaving math spans untouched (since PHP
@@ -571,7 +560,7 @@ export function linkCandidatesForBlocks(
 	imageRanges: ReadonlyArray<EditorMarkdownImageRange>,
 	source?: string,
 	phpBlockScan?: ScannedMarkdownBlocks | null,
-	phpMathRanges?: ReadonlyArray<PhpMarkdownMathRange>,
+	mathSpans?: ReadonlyArray<EditorMarkdownMathSpan>,
 	linkTableCellsOut?: Map<number, EditorMarkdownLinkTableCellContext> | null,
 ): ReadonlyArray<EditorMarkdownLinkCandidate> {
 	const candidates: EditorMarkdownLinkCandidate[] = [];
@@ -654,41 +643,25 @@ export function linkCandidatesForBlocks(
 			reference: node.reference,
 			to: range.to,
 		});
-		if (tableCell && linkTableCellsOut && undefined !== source && phpBlockScan) {
-			const candidateSlice = source.slice(range.from, range.to);
-			const unescaped = candidateSlice.includes("\\|")
-				? unescapeTableCellPipesOutsideMath(
-						source,
-						range.from,
-						range.to,
-						phpMathRanges ?? [],
-					)
-				: undefined;
-			let maskedCellText: string | undefined;
-			if (undefined !== phpBlockScan.tableCellSource) {
-				const cellKey = `${tableCell.start}:${tableCell.end}`;
-				if (maskedCellCache.has(cellKey)) {
-					maskedCellText = maskedCellCache.get(cellKey);
-				} else {
-					const masked = phpBlockScan.tableCellSource.slice(
-						tableCell.start,
-						tableCell.end,
-					);
-					maskedCellText =
-						masked !== source.slice(tableCell.start, tableCell.end)
-							? masked
-							: undefined;
-					maskedCellCache.set(cellKey, maskedCellText);
-				}
-			}
-			linkTableCellsOut.set(range.from, {
-				cellEnd: tableCell.end,
-				cellStart: tableCell.start,
-				...(undefined !== maskedCellText ? { maskedCellText } : {}),
-				...(undefined !== unescaped && unescaped !== candidateSlice
-					? { unescapedSource: unescaped }
-					: {}),
-			});
+		if (
+			tableCell &&
+			linkTableCellsOut &&
+			undefined !== source &&
+			tableCell.start >= block.from &&
+			tableCell.end <= block.to
+		) {
+			linkTableCellsOut.set(
+				range.from,
+				deriveEditorMarkdownLinkTableCellContext(
+					source,
+					range.from,
+					range.to,
+					tableCell.start,
+					tableCell.end,
+					mathSpans ?? [],
+					maskedCellCache,
+				),
+			);
 		}
 	}
 	return candidates;

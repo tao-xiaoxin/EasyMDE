@@ -2958,6 +2958,113 @@ describe("Round 34 PHP table and math link parity", () => {
 	});
 });
 
+describe("Round 35 exact PHP table reconciliation and PHP-owned reconciled links", () => {
+	it("marks only real table delimiter rows with isTableDelimiter and keeps multi-table HTML/comment and partial refdef spans unavailable (Track B Finding 1)", () => {
+		const multiTableHtml =
+			"| a | b |\n| - | - |\n<pre> | https://a.example\n\nhttps://b.example | </pre>\n| - | - |";
+		const multiTableComment =
+			"| a | b |\n| - | - |\n<!-- | https://a.example\n---\nhttps://b.example | -->\n| - | - |";
+		const partialRefdef = "[a | b]: /ref \"\n| - | - |\n| c | d\"\n| e | f |";
+
+		const htmlScan = scanPhpCommonMarkBlocks(multiTableHtml);
+		expect(htmlScan.lines.map((line) => Boolean(line.isTableDelimiter))).toEqual([
+			false,
+			true,
+			false,
+			false,
+			false,
+			true,
+		]);
+		const commentScan = scanPhpCommonMarkBlocks(multiTableComment);
+		expect(commentScan.lines.map((line) => Boolean(line.isTableDelimiter))).toEqual([
+			false,
+			true,
+			false,
+			false,
+			false,
+			true,
+		]);
+
+		const htmlIdx = createEditorMarkdownBlockIndex(multiTableHtml);
+		expect(
+			htmlIdx.blocks.find((block) => block.lineStart === 2 && block.lineEnd === 4),
+		).toMatchObject({ editable: false, kind: "unavailable" });
+
+		const commentIdx = createEditorMarkdownBlockIndex(multiTableComment);
+		expect(
+			commentIdx.blocks.find(
+				(block) => block.lineStart === 2 && block.lineEnd === 4,
+			),
+		).toMatchObject({ editable: false, kind: "unavailable" });
+
+		const partialIdx = createEditorMarkdownBlockIndex(partialRefdef);
+		expect(partialIdx.blocks[0]).toMatchObject({
+			editable: false,
+			kind: "unavailable",
+			lineEnd: 2,
+			lineStart: 0,
+		});
+	});
+
+	it("reconciles 2-line and 3-line PHP refdef tables and extracts all PHP-owned cell links (Track B Finding 2)", () => {
+		const cases: ReadonlyArray<
+			Readonly<{
+				expectedLinks: ReadonlyArray<{
+					kind: "autolink" | "link";
+					reference: boolean;
+					text: string;
+				}>;
+				source: string;
+			}>
+		> = [
+			{
+				expectedLinks: [
+					{ kind: "link", reference: false, text: "https://example.com" },
+				],
+				source: "[a|https://example.com]:\n|-|-|",
+			},
+			{
+				expectedLinks: [{ kind: "link", reference: false, text: "[c](/bar)" }],
+				source: '[a | b]: /ref "\n| - | - |\n| [c](/bar) | d"',
+			},
+			{
+				expectedLinks: [
+					{ kind: "link", reference: false, text: "[c](/bar)" },
+					{ kind: "link", reference: false, text: "https://c.example" },
+				],
+				source: '[a | b]: /ref "\n| - | - |\n| [c](/bar) | https://c.example"',
+			},
+			{
+				expectedLinks: [{ kind: "link", reference: true, text: "[c][k]" }],
+				source: '[a | b]: /ref "\n| - | - |\n| [c][k] | d"\n\n[k]: https://k.example',
+			},
+			{
+				expectedLinks: [
+					{ kind: "autolink", reference: false, text: "<tel:12345>" },
+				],
+				source: '[a | b]: /ref "\n| - | - |\n| <tel:12345> | d"',
+			},
+		];
+
+		for (const { expectedLinks, source } of cases) {
+			const idx = createEditorMarkdownBlockIndex(source);
+			expect(idx.blocks[0], source).toMatchObject({
+				editable: true,
+				kind: "table",
+			});
+			expect(
+				(idx.linkCandidates ?? []).map((candidate) => ({
+					kind: candidate.kind,
+					reference: candidate.reference,
+					text: source.slice(candidate.from, candidate.to),
+				})),
+				source,
+			).toEqual(expectedLinks);
+			expect(idx.linkTableCells?.size, source).toBe(expectedLinks.length);
+		}
+	});
+});
+
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {
   return createProfiledMarkdownBlockIndex(source, options);
 }

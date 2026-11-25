@@ -1722,6 +1722,115 @@ describe("createEditorSourceLinkQuery", () => {
 		).toBe(true);
 		fallback.session.dispose();
 	}, 60_000);
+
+	it("resolves 2-line and 3-line reconciled PHP table links and isolates multi-cell escaped-pipe queries through direct and worker round-trip indexes (Round 35 Track A #1, Track B #2)", async () => {
+		// Verbatim real PHP `MarkdownRenderer::render_preview()` + `kses.php` block-0 outputs.
+		const cases: ReadonlyArray<
+			Readonly<{
+				href: string;
+				html0: string;
+				needle: string;
+				prefix: string;
+				source: string;
+			}>
+		> = [
+			{
+				href: "https://example.com",
+				html0: '<p><a href="https://example.com">https://example.com</a></p><p>doc</p>',
+				needle: "https://example.com",
+				prefix: "https://example.com",
+				source: "[a|https://example.com]:\n|-|-|",
+			},
+			{
+				href: "/bar",
+				html0: '<p><a href="/bar">c</a></p><p>doc</p>',
+				needle: "[c](/bar)",
+				prefix: "[c](/bar)",
+				source: '[a | b]: /ref "\n| - | - |\n| [c](/bar) | d"',
+			},
+			{
+				href: "/bar",
+				html0: '<p><a href="/bar">c</a></p><p>doc</p>',
+				needle: "[c](/bar)",
+				prefix: "[c](/bar)",
+				source: '[a | b]: /ref "\n| - | - |\n| [c](/bar) | https://c.example"',
+			},
+			{
+				href: "https://c.example",
+				html0: '<p><a href="https://c.example">https://c.example</a></p><p>doc</p>',
+				needle: "https://c.example",
+				prefix: "https://c.example",
+				source: '[a | b]: /ref "\n| - | - |\n| [c](/bar) | https://c.example"',
+			},
+			{
+				href: "https://k.example",
+				html0: '<p><a href="https://k.example">c</a></p><p>doc</p>',
+				needle: "[c][k]",
+				prefix: "[c][k]",
+				source: '[a | b]: /ref "\n| - | - |\n| [c][k] | d"\n\n[k]: https://k.example',
+			},
+			{
+				href: "tel:12345",
+				html0: '<p><a href="tel:12345">tel:12345</a></p><p>doc</p>',
+				needle: "<tel:12345>",
+				prefix: "<tel:12345>",
+				source: '[a | b]: /ref "\n| - | - |\n| <tel:12345> | d"',
+			},
+			{
+				href: "/x%7Cy",
+				html0: '<p><a href="/x%7Cy">a</a></p><p>doc</p>',
+				needle: "[a](/x\\|y)",
+				prefix: "[a](/x|y)",
+				source: "| [a](/x\\|y) | [b](/u\\|v) |\n| - | - |",
+			},
+			{
+				href: "/u%7Cv",
+				html0: '<p><a href="/u%7Cv">b</a></p><p>doc</p>',
+				needle: "[b](/u\\|v)",
+				prefix: "[b](/u|v)",
+				source: "| [a](/x\\|y) | [b](/u\\|v) |\n| - | - |",
+			},
+		];
+
+		for (const entry of cases) {
+			const direct = createEditorMarkdownBlockIndex(entry.source);
+			const worker = await buildWorkerRoundTripBlockIndex(entry.source);
+			expect(worker.linkTableCells, `${entry.source}:${entry.needle}`).toEqual(
+				direct.linkTableCells,
+			);
+			expect(worker.linkCandidates, `${entry.source}:${entry.needle}`).toEqual(
+				direct.linkCandidates,
+			);
+			const caret = entry.source.indexOf(entry.needle) + 1;
+			for (const [mode, blockIndex] of [
+				["direct", direct],
+				["worker", worker],
+			] as const) {
+				const current = binding(
+					entry.source,
+					`${mode}:${entry.source}:${entry.needle}`,
+					{ end: caret, start: caret },
+				);
+				const { requestFactory, session } = createHarness({
+					render: async (request) => response(request.markdown, entry.html0),
+				});
+				expect(
+					session.ensure({ binding: current, blockIndex }).status,
+					`${mode}:${entry.needle}`,
+				).toBe("pending");
+				await settle();
+				expect(
+					requestFactory.mock.calls[0]?.[0]?.markdown,
+					`${mode}:${entry.needle}`,
+				).toBe(`${entry.prefix}\n\n${entry.source}`);
+				expect(session.peek(current), `${mode}:${entry.needle}`).toEqual({
+					href: entry.href,
+					status: "ready",
+				});
+				session.dispose();
+			}
+		}
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

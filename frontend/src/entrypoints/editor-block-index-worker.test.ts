@@ -109,7 +109,7 @@ describe("editor block-index worker entry", () => {
 		handler({ data: { generation: 1, revision: 2, source: "abc", type: "build" } });
 		expect(messages).toEqual([{ code: "editor-block-index-worker-profile-invalid", generation: 1, revision: 2, type: "error" }]);
 	});
-	it("packs authoritative table-cell link context as a transferable buffer only when present", () => {
+	it("packs authoritative table-cell link context as a textless 3-int transferable buffer only when present", () => {
 		const post = (source: string) => {
 			const messages: Array<Readonly<{ message: EditorBlockIndexWorkerResponse; transfer?: Transferable[] }>> = [];
 			const handler = createEditorBlockIndexWorkerHandler((message, transfer) =>
@@ -118,22 +118,36 @@ describe("editor block-index worker entry", () => {
 			handler({ data: { generation: 1, revision: 1, source, type: "build", referenceLabelCaseFoldProfile: 14 } });
 			const result = messages[0];
 			if ("result" !== result?.message.type) throw new Error("result-missing");
-			return { data: result.message.data as Record<string, unknown>, transfer: result.transfer ?? [] };
+			return { data: result.message.data, transfer: result.transfer ?? [] };
 		};
 		const source = "10. a\n\n    | [a](/x\\|y) | $m$ |\n    | - | - |";
 		const direct = blockIndex.createEditorMarkdownBlockIndex(source, { referenceLabelCaseFoldProfile: 14 });
 		const { data, transfer } = post(source);
+		expect(Object.keys(data).sort()).toEqual([
+			"blockCount",
+			"blocks",
+			"format",
+			"imageCount",
+			"images",
+			"length",
+			"linkCount",
+			"linkTableCellCount",
+			"linkTableCells",
+			"links",
+			"mathSpanCount",
+			"mathSpans",
+		]);
 		expect(data.linkTableCellCount).toBe(direct.linkTableCells?.size);
 		expect(data.linkTableCells).toBeInstanceOf(ArrayBuffer);
+		if (!data.linkTableCells) throw new Error("table-cells-missing");
 		expect(transfer).toContain(data.linkTableCells);
-		expect(Array.from(new Int32Array(data.linkTableCells as ArrayBuffer))).toEqual([
+		expect(transfer).toHaveLength(5);
+		expect(Array.from(new Int32Array(data.linkTableCells))).toEqual([
 			source.indexOf("[a]"),
 			source.indexOf("[a]") - 1,
 			source.indexOf("$m$") - 2,
-			-1,
-			0,
 		]);
-		expect(data.linkTableCellTexts).toEqual(["[a](/x|y)"]);
+		expect(JSON.stringify(data)).not.toContain("/x|y");
 
 		const plain = post("[a](/u) https://example.com");
 		expect(Object.keys(plain.data).sort()).toEqual([

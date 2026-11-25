@@ -775,22 +775,25 @@ describe("createBrowserEditorBlockIndexWorker", () => {
 		},
 	);
 
-	it("unpacks authoritative table-cell link context and rejects malformed table-cell payloads", async () => {
-		const source = "| [x](https://example.com/a\\\\|b) $m$ | https://c.example |\n| - | - |";
+	it("unpacks textless 3-int table-cell link context locally and rejects tampered or stale-text payloads", async () => {
+		const source = "| [a](/x\\|y) $m$ | [b](/u\\|v) |\n| - | - |";
 		const messages: EditorBlockIndexWorkerResponse[] = [];
 		createEditorBlockIndexWorkerHandler((message) => messages.push(message))({
 			data: { generation: 1, revision: 1, source, type: "build", referenceLabelCaseFoldProfile: 14 },
 		});
 		const packed = messages[0];
 		if ("result" !== packed?.type) throw new Error("result-missing");
-		const wire = packed.data as EditorMarkdownBlockIndexPackedData & Record<string, unknown>;
+		const wire = packed.data;
 		expect(wire.linkTableCellCount).toBe(2);
-		const run = async (data: unknown) => {
+		expect(Object.keys(wire)).toHaveLength(12);
+		if (!wire.linkTableCells) throw new Error("table-cells-missing");
+		expect(wire.linkTableCells.byteLength).toBe(2 * 3 * 4);
+		const run = async (payload: unknown) => {
 			const adapter = createAdapter();
 			const pending = adapter.build({ generation: 1, revision: 1, source }, signal());
 			const worker = await firstWorker();
 			worker.emit({
-				data: data as EditorMarkdownBlockIndexPackedData,
+				data: payload as EditorMarkdownBlockIndexPackedData,
 				generation: 1,
 				revision: 1,
 				type: "result",
@@ -802,21 +805,40 @@ describe("createBrowserEditorBlockIndexWorker", () => {
 			}
 		};
 		const direct = createEditorMarkdownBlockIndex(source, { referenceLabelCaseFoldProfile: 14 });
-		const decoded = (await run(wire)) as EditorMarkdownBlockIndexDataWithImages & {
-			linkTableCells?: unknown;
-		};
+		const decoded = await run(wire);
 		expect(decoded.linkTableCells).toEqual(direct.linkTableCells);
 		expect(decoded.linkCandidates).toEqual(direct.linkCandidates);
 
-		const { linkTableCellTexts: _texts, ...partial } = wire;
-		const words = Int32Array.from(new Int32Array(wire.linkTableCells as ArrayBuffer));
-		words[0] = (words[0] ?? 0) + 1;
+		const { linkTableCells: _cells, ...countOnly } = wire;
+		const { linkTableCellCount: _count, ...bufferOnly } = wire;
+		const mutateWords = (edit: (words: Int32Array) => void) => {
+			const words = Int32Array.from(new Int32Array(wire.linkTableCells as ArrayBuffer));
+			edit(words);
+			return { ...wire, linkTableCells: words.buffer };
+		};
 		for (const malformed of [
-			partial,
+			countOnly,
+			bufferOnly,
 			{ ...wire, linkTableCellCount: 3 },
-			{ ...wire, linkTableCells: words.buffer },
-			{ ...wire, linkTableCellTexts: [7] },
+			{ ...wire, linkTableCellTexts: ["[b](/u|v)"] },
+			{ ...wire, linkTableCellTexts: [12345, { evil: 1 }] },
+			{ ...wire, linkTableCellTexts: ["x".repeat(10_000_000)] },
 			{ ...wire, extra: 1 },
+			mutateWords((words) => {
+				words[0] = (words[0] ?? 0) + 1;
+			}),
+			// Tamper cell a to point at cell b or stretch across `|`
+			mutateWords((words) => {
+				words[1] = words[4] ?? 0;
+				words[2] = words[5] ?? 0;
+			}),
+			mutateWords((words) => {
+				words[2] = words[5] ?? 0;
+			}),
+			// Duplicate candidateFrom
+			mutateWords((words) => {
+				words[3] = words[0] ?? 0;
+			}),
 		]) {
 			await expect(run(malformed)).rejects.toThrow("editor-block-index-result-invalid");
 		}

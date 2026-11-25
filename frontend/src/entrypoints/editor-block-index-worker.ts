@@ -15,12 +15,9 @@ import {
 	type EditorBlockIndexWorkerResponse,
 	type ReferenceLabelCaseFoldProfile,
 	MAX_EDITOR_BLOCK_INDEX_SOURCE_BYTES,
+	packEditorMarkdownLinkTableCells,
 } from "../contracts/ports/editor-block-index-port";
 import { createEditorMarkdownBlockIndex } from "../features/editor-context-menu/editor-markdown-block-index";
-import {
-	type EditorMarkdownLinkTableCellWireData,
-	packEditorMarkdownLinkTableCells,
-} from "../features/editor-context-menu/editor-markdown-link-table-cell-wire";
 
 type WorkerMessage = Readonly<{ data: unknown }>;
 export type EditorBlockIndexWorkerScope = Readonly<{
@@ -35,9 +32,7 @@ export type EditorBlockIndexWorkerScope = Readonly<{
 }>;
 
 export type EditorBlockIndexWorkerBuildResult = Readonly<{
-	/** `packed-v3`, plus the optional table-cell wire keys when any exist. */
-	data: EditorBlockIndexWorkerData &
-		Partial<EditorMarkdownLinkTableCellWireData>;
+	data: EditorBlockIndexWorkerData;
 	transfer: ArrayBuffer[];
 }>;
 
@@ -194,22 +189,34 @@ function dataWithoutSource(source: string, profile: ReferenceLabelCaseFoldProfil
 	const tableCells = packEditorMarkdownLinkTableCells(parsedIndex.linkTableCells);
 	const transfer = [blocks.buffer, mathSpans.buffer, images.buffer, links.buffer];
 	if (tableCells) transfer.push(tableCells.linkTableCells);
-	return {
-		data: {
-			blockCount: parsedIndex.blocks.length,
-			blocks: blocks.buffer,
-			format: "packed-v3",
-			imageCount: parsedIndex.imageRanges.length,
-			images: images.buffer,
-			length: parsedIndex.length,
-			linkCount: linkCandidates.length,
-			links: links.buffer,
-			mathSpanCount: parsedIndex.mathSpans.length,
-			mathSpans: mathSpans.buffer,
-			...(tableCells ?? {}),
-		},
-		transfer,
-	};
+	const data: EditorBlockIndexWorkerData = tableCells
+		? {
+				blockCount: parsedIndex.blocks.length,
+				blocks: blocks.buffer,
+				format: "packed-v3",
+				imageCount: parsedIndex.imageRanges.length,
+				images: images.buffer,
+				length: parsedIndex.length,
+				linkCount: linkCandidates.length,
+				links: links.buffer,
+				linkTableCellCount: tableCells.linkTableCellCount,
+				linkTableCells: tableCells.linkTableCells,
+				mathSpanCount: parsedIndex.mathSpans.length,
+				mathSpans: mathSpans.buffer,
+			}
+		: {
+				blockCount: parsedIndex.blocks.length,
+				blocks: blocks.buffer,
+				format: "packed-v3",
+				imageCount: parsedIndex.imageRanges.length,
+				images: images.buffer,
+				length: parsedIndex.length,
+				linkCount: linkCandidates.length,
+				links: links.buffer,
+				mathSpanCount: parsedIndex.mathSpans.length,
+				mathSpans: mathSpans.buffer,
+			};
+	return { data, transfer };
 }
 
 export type EditorBlockIndexWorkerBuild = (

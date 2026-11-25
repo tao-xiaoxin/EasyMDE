@@ -9,6 +9,7 @@ import {
 	parsePhpLinkLabel,
 } from "../../shared/markdown/php-commonmark-block-helpers";
 import {
+	asciiLowerCase,
 	collectBlockBacktickRuns,
 	findLineIndexAtOffset,
 	findNextBacktickRun,
@@ -409,6 +410,19 @@ function collectNonDisplayMathSlices(
 	return slices;
 }
 
+function pushTableCellScope(
+	scopes: PhpOwnedInlineScope[],
+	seenCells: Set<string>,
+	line: ScannedMarkdownLine,
+	cell: TableRowCellRange,
+): void {
+	if (cell.end <= cell.start) return;
+	const cellKey = `${cell.start}:${cell.end}`;
+	if (seenCells.has(cellKey)) return;
+	seenCells.add(cellKey);
+	scopes.push({ from: cell.start, isTableCell: true, line, to: cell.end });
+}
+
 function collectEscapedPipeTableCells(
 	source: string,
 	scan: ScannedMarkdownBlocks,
@@ -431,16 +445,7 @@ function collectEscapedPipeTableCells(
 			const cells = getCachedPhpTableRowCells(source, scan, line);
 			const cell = findTableRowCellInCells(cells, searchPos);
 			if (cell && cell.end > cell.start) {
-				const cellKey = `${cell.start}:${cell.end}`;
-				if (!seenCells.has(cellKey)) {
-					seenCells.add(cellKey);
-					scopes.push({
-						from: cell.start,
-						isTableCell: true,
-						line,
-						to: cell.end,
-					});
-				}
+				pushTableCellScope(scopes, seenCells, line, cell);
 				searchPos = text.indexOf("\\|", cell.end);
 				continue;
 			}
@@ -449,6 +454,28 @@ function collectEscapedPipeTableCells(
 			"\\|",
 			Math.max(searchPos + 2, line.nextLineStart),
 		);
+	}
+}
+
+function collectReconciledTableCellScopes(
+	source: string,
+	scan: ScannedMarkdownBlocks,
+	reconciledTableBlocks: ReadonlyArray<EditorMarkdownSourceBlock>,
+	scopes: PhpOwnedInlineScope[],
+	seenCells: Set<string>,
+): void {
+	for (let i = 0; i < reconciledTableBlocks.length; i += 1) {
+		const block = reconciledTableBlocks[i];
+		if (!block) continue;
+		for (let lineIdx = block.lineStart; lineIdx <= block.lineEnd; lineIdx += 1) {
+			const line = scan.lines[lineIdx];
+			if (!line?.isTableRow || line.inlineBlockId < 0) continue;
+			const cells = getCachedPhpTableRowCells(source, scan, line);
+			for (let cellIdx = 0; cellIdx < cells.length; cellIdx += 1) {
+				const cell = cells[cellIdx];
+				if (cell) pushTableCellScope(scopes, seenCells, line, cell);
+			}
+		}
 	}
 }
 
@@ -493,16 +520,7 @@ function collectBareAutolinkScopesInScan(
 		}
 		const cells = getCachedPhpTableRowCells(source, scan, line);
 		const cell = findTableRowCellInCells(cells, offset);
-		if (!cell || cell.end <= cell.start) continue;
-		const cellKey = `${cell.start}:${cell.end}`;
-		if (seenCells.has(cellKey)) continue;
-		seenCells.add(cellKey);
-		scopes.push({
-			from: cell.start,
-			isTableCell: true,
-			line,
-			to: cell.end,
-		});
+		if (cell) pushTableCellScope(scopes, seenCells, line, cell);
 	}
 }
 
@@ -510,11 +528,12 @@ function collectBareAutolinkScopesInScan(
  * Takes sole link ownership for every PHP inline block and GFM table cell
  * touched by a display-math-broken Lezer image (both pre-math and post-math
  * fragments), optionally for every GFM table cell containing an escaped pipe
- * `\|` outside math spans, and optionally for ordinary inline blocks and table
- * cells containing uncovered bare GFM autolink triggers. Returns disjoint
- * sorted original-source `ownedRanges` and every exact PHP-rendered link
- * inside them so callers can exclude stale Lezer link nodes over those scopes
- * and emit PHP's results directly.
+ * `\|` outside math spans, optionally for ordinary inline blocks and table
+ * cells containing uncovered bare GFM autolink triggers, and optionally for
+ * every cell of reconciled PHP tables. Returns disjoint sorted original-source
+ * `ownedRanges` and every exact PHP-rendered link inside them so callers can
+ * exclude stale Lezer link nodes over those scopes and emit PHP's results
+ * directly.
  */
 export function collectPhpDisplayMathBrokenBlockLinks(
 	source: string,
@@ -525,6 +544,7 @@ export function collectPhpDisplayMathBrokenBlockLinks(
 	includeEscapedPipeTableCells = false,
 	bareAutolinkOffsets?: ReadonlyArray<number>,
 	mathRanges: ReadonlyArray<SourceRange> = [],
+	reconciledTableBlocks?: ReadonlyArray<EditorMarkdownSourceBlock>,
 ): PhpOwnedBlockLinks {
 	const crossesMath = createMathCrossingQuery(mathRanges);
 	const slices = collectNonDisplayMathSlices(
@@ -574,23 +594,23 @@ export function collectPhpDisplayMathBrokenBlockLinks(
 			) {
 				const cell = cells[cellIdx];
 				if (!cell || cell.start >= segTo) break;
-				const cellKey = `${cell.start}:${cell.end}`;
-				if (seenCells.has(cellKey)) continue;
-				seenCells.add(cellKey);
-				if (cell.end > cell.start) {
-					scopes.push({
-						from: cell.start,
-						isTableCell: true,
-						line,
-						to: cell.end,
-					});
-				}
+				pushTableCellScope(scopes, seenCells, line, cell);
 			}
 		}
 	}
 
 	if (includeEscapedPipeTableCells) {
 		collectEscapedPipeTableCells(source, scan, scopes, seenCells);
+	}
+
+	if (reconciledTableBlocks && reconciledTableBlocks.length > 0) {
+		collectReconciledTableCellScopes(
+			source,
+			scan,
+			reconciledTableBlocks,
+			scopes,
+			seenCells,
+		);
 	}
 
 	if (bareAutolinkOffsets && bareAutolinkOffsets.length > 0) {
@@ -638,36 +658,12 @@ export function collectPhpDisplayMathBrokenBlockLinks(
 }
 
 function isGfmUrlSchemeBefore(source: string, schemeEnd: number): boolean {
-	if (schemeEnd >= 4) {
-		const c0 = source.charCodeAt(schemeEnd - 4) | 0x20;
-		const c1 = source.charCodeAt(schemeEnd - 3) | 0x20;
-		const c2 = source.charCodeAt(schemeEnd - 2) | 0x20;
-		const c3 = source.charCodeAt(schemeEnd - 1) | 0x20;
-		if (0x68 === c0 && 0x74 === c1 && 0x74 === c2 && 0x70 === c3) return true;
-	}
-	if (schemeEnd >= 5) {
-		const c0 = source.charCodeAt(schemeEnd - 5) | 0x20;
-		const c1 = source.charCodeAt(schemeEnd - 4) | 0x20;
-		const c2 = source.charCodeAt(schemeEnd - 3) | 0x20;
-		const c3 = source.charCodeAt(schemeEnd - 2) | 0x20;
-		const c4 = source.charCodeAt(schemeEnd - 1) | 0x20;
-		if (
-			0x68 === c0 &&
-			0x74 === c1 &&
-			0x74 === c2 &&
-			0x70 === c3 &&
-			0x73 === c4
-		) {
-			return true;
-		}
-	}
-	if (schemeEnd >= 3) {
-		const c0 = source.charCodeAt(schemeEnd - 3) | 0x20;
-		const c1 = source.charCodeAt(schemeEnd - 2) | 0x20;
-		const c2 = source.charCodeAt(schemeEnd - 1) | 0x20;
-		if (0x66 === c0 && 0x74 === c1 && 0x70 === c2) return true;
-	}
-	return false;
+	const tail = asciiLowerCase(
+		source.slice(Math.max(0, schemeEnd - 5), schemeEnd),
+	);
+	return (
+		tail.endsWith("http") || tail.endsWith("https") || tail.endsWith("ftp")
+	);
 }
 
 /**

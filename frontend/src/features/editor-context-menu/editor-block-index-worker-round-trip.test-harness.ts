@@ -62,7 +62,7 @@ export async function buildWorkerRoundTripBlockIndex(
 			{ generation: 1, revision: 1, source },
 			new AbortController().signal,
 		);
-		return { ...data, source } as EditorMarkdownBlockIndex;
+		return { ...data, source };
 	} finally {
 		port.dispose();
 	}

@@ -69,13 +69,6 @@ const EMPTY_LINK_TABLE_CELLS: ReadonlyMap<
 
 export type EditorMarkdownBlockIndex = EditorMarkdownBlockIndexData &
 	Readonly<{
-		/**
-		 * Precomputed PHP GFM table-cell context keyed by `candidate.from` for
-		 * link candidates inside PHP table rows. Always attached by
-		 * `createEditorMarkdownBlockIndex` (empty map when no candidate lies in a
-		 * table cell) so menu queries run in O(1) without rescanning the document.
-		 */
-		linkTableCells?: ReadonlyMap<number, EditorMarkdownLinkTableCellContext>;
 		/** Binds derived ranges to the immutable source snapshot that produced them. */
 		source: string;
 	}>;
@@ -688,19 +681,20 @@ export function createEditorMarkdownBlockIndex(
 		(source.includes("|") || phpMathRanges.length > 0) &&
 		(parsed.imageNodes.length > 0 ||
 			parsed.hasLinkSyntax ||
+			parsed.unavailableRanges.length > 0 ||
 			hasTableImageCandidate ||
 			hasEscapedPipe ||
 			hasAutolinkTrigger)
 			? scanPhpCommonMarkBlocks(source, phpMathRanges)
 			: null;
-	const blocks = phpBlockScan
+	const { blocks, reconciledTableBlocks } = phpBlockScan
 		? reconcilePhpTableUnavailableBlocks(
 				source,
 				lezerBlocks,
 				phpBlockScan,
 				phpMathRanges,
 			)
-		: lezerBlocks;
+		: { blocks: lezerBlocks, reconciledTableBlocks: [] };
 	const sortedLezerImages = [...parsed.imageNodes].sort(
 		(left, right) => left.from - right.from || right.to - left.to,
 	);
@@ -777,7 +771,8 @@ export function createEditorMarkdownBlockIndex(
 	const phpOwnedLinks = phpBlockScan
 		? images.displayMathBrokenImageRanges.length > 0 ||
 			hasEscapedPipe ||
-			uncoveredAutolinkOffsets.length > 0
+			uncoveredAutolinkOffsets.length > 0 ||
+			reconciledTableBlocks.length > 0
 			? collectPhpDisplayMathBrokenBlockLinks(
 					source,
 					phpBlockScan,
@@ -787,6 +782,7 @@ export function createEditorMarkdownBlockIndex(
 					hasEscapedPipe,
 					uncoveredAutolinkOffsets,
 					phpMathRanges,
+					reconciledTableBlocks,
 				)
 			: null
 		: uncoveredAutolinkOffsets.length > 0
@@ -808,6 +804,7 @@ export function createEditorMarkdownBlockIndex(
 				activePhpOwnedLinks,
 			)
 		: rawLinkNodes;
+	const mathSpans = ranges.map((range) => mathSpanFromRange(source, range));
 	const linkTableCellsMap = phpBlockScan
 		? new Map<number, EditorMarkdownLinkTableCellContext>()
 		: null;
@@ -819,7 +816,7 @@ export function createEditorMarkdownBlockIndex(
 		images.imageRanges,
 		source,
 		phpBlockScan,
-		phpMathRanges,
+		mathSpans,
 		linkTableCellsMap,
 	);
 	return {
@@ -832,7 +829,7 @@ export function createEditorMarkdownBlockIndex(
 			linkTableCellsMap && linkTableCellsMap.size > 0
 				? linkTableCellsMap
 				: EMPTY_LINK_TABLE_CELLS,
-		mathSpans: ranges.map((range) => mathSpanFromRange(source, range)),
+		mathSpans,
 		source,
 	};
 }

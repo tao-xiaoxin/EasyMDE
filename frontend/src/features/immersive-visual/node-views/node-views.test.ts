@@ -23,6 +23,7 @@ import { serializeVisualDocToMarkdown } from "../markdown-serializer";
 import { visualEditorSchema } from "../visual-schema";
 import {
 	renderRawBlockPreview,
+	renderRawInlinePreview,
 	stripCommonMarkHtmlForPreview,
 } from "./protected-atom-preview-renderer";
 import {
@@ -2900,5 +2901,98 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 			`\`${"``a".repeat(10000)}x`,
 		);
 		expect(performance.now() - perfStart).toBeLessThan(150);
+	});
+
+	it("preserves nested lazy continuations under pending containers and strips multiline CommonMark §6.6 inline HTML tags (PR-R25-A #5)", () => {
+		const renderRaw = (md: string): HTMLDivElement => {
+			const host = document.createElement("div");
+			host.appendChild(
+				renderRawBlockPreview(document, md, {
+					fallbackLabel: "Raw",
+					footnotesLabel: "Footnotes",
+					viewWindow: window,
+				}),
+			);
+			return host;
+		};
+
+		// Part A: Nested lazy continuations materialize ancestor blockquote/list prefixes instead of dropping them.
+		expect(stripCommonMarkHtmlForPreview("> - <span></span>\nlazy")).toBe(
+			"> - lazy",
+		);
+		const bqListLazy = renderRaw("> - <span></span>\nlazy");
+		expect(
+			bqListLazy.querySelector("blockquote > ul > li")?.textContent,
+		).toBe("lazy");
+
+		expect(
+			stripCommonMarkHtmlForPreview("- outer\n  - <span></span>\nlazy"),
+		).toBe("- outer\n  - lazy");
+		const nestedListLazy = renderRaw("- outer\n  - <span></span>\nlazy");
+		expect(
+			nestedListLazy.querySelector("ul > li > ul > li")?.textContent,
+		).toBe("lazy");
+
+		expect(
+			stripCommonMarkHtmlForPreview("- outer\n  > - <span></span>\nlazy"),
+		).toBe("- outer\n  > - lazy");
+		const listBqListLazy = renderRaw("- outer\n  > - <span></span>\nlazy");
+		expect(
+			listBqListLazy.querySelector("ul > li > blockquote > ul > li")
+				?.textContent,
+		).toBe("lazy");
+
+		expect(stripCommonMarkHtmlForPreview("> <span></span>\nlazy")).toBe(
+			"> lazy",
+		);
+		const bqOnlyLazy = renderRaw("> <span></span>\nlazy");
+		expect(bqOnlyLazy.querySelector("blockquote > p")?.textContent).toBe(
+			"lazy",
+		);
+
+		// Part B: Multiline CommonMark §6.6 inline HTML tags strip cleanly while preserving autolinks and code spans.
+		expect(
+			stripCommonMarkHtmlForPreview('<span\nclass="a">hello</span>'),
+		).toBe("hello");
+		expect(
+			renderRaw('<span\nclass="a">hello</span>').querySelector("p")?.textContent,
+		).toBe("hello");
+
+		expect(
+			stripCommonMarkHtmlForPreview("<span>hello</span\n    >"),
+		).toBe("hello");
+		expect(
+			renderRaw("<span>hello</span\n    >").querySelector("p")?.textContent,
+		).toBe("hello");
+
+		// Direct inline preview also strips multiline closing tag `</span\n>`.
+		const inlineMultilineClose = renderRawInlinePreview(
+			document,
+			"<span>hello</span\n>",
+			{ footnotes: "Footnotes", raw: "Raw" },
+		);
+		expect(inlineMultilineClose.textContent).toBe("hello\n");
+
+		expect(
+			stripCommonMarkHtmlForPreview('<span title="a\nb">hello</span>'),
+		).toBe("hello");
+		expect(
+			renderRaw('<span title="a\nb">hello</span>').querySelector("p")
+				?.textContent,
+		).toBe("hello");
+
+		// Autolinks remain intact and are never stripped as inline HTML.
+		expect(
+			stripCommonMarkHtmlForPreview("<div>\n\n<https://example.com> hello"),
+		).toBe("<https://example.com> hello");
+		expect(
+			renderRaw("<div>\n\n<https://example.com> hello").querySelector("p > a")
+				?.getAttribute("href"),
+		).toBe("https://example.com");
+
+		// Multiline backtick code span protection remains intact alongside multiline HTML stripping.
+		expect(stripCommonMarkHtmlForPreview("<div>\n\n`a\n<b>x`")).toBe(
+			"`a\n<b>x`",
+		);
 	});
 });

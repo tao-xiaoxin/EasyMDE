@@ -6750,4 +6750,237 @@ describe("PR-R24-A1 PHP-exact table math, nested/interleaved table-align, lazy t
 			);
 		}
 	});
+
+	it("preserves synthetic post-display-math table-break lines without truncating block.raw on unrelated edits (PR-R25-A #1)", () => {
+		const cases = [
+			{
+				append: "Z",
+				expected: "| AZ |\n| --- |\n|  |\n\n$$x$$\n\n| y |\n| z |",
+				md: "| A |\n| --- |\n| $$x$$ | y |\n| z |",
+				needle: "A",
+			},
+			{
+				append: "Z",
+				expected: "| AZ |\n| --- |\n|  |\n\n\\[x\\]\n\n| y |\n| z |",
+				md: "| A |\n| --- |\n| \\[x\\] | y |\n| z |",
+				needle: "A",
+			},
+			{
+				append: "2",
+				expected: "| A2 | B |\n| --- | --- |\n| 1 |  |\n\n$$x$$\n\ntail\nAfter",
+				md: "| A | B |\n| --- | --- |\n| 1 | $$x$$ tail\nAfter",
+				needle: "A",
+			},
+			{
+				append: "Z",
+				expected:
+					"| AZ | B |\n| --- | --- |\n| 1 |  |\n\n$$x$$\n\n| C | D |\n| --- | --- |\n| 2 | 3 |",
+				md: "| A | B |\n| --- | --- |\n| 1 | $$x$$ | C | D |\n| --- | --- |\n| 2 | 3 |",
+				needle: "A",
+			},
+		] as const;
+
+		for (const testCase of cases) {
+			const parsed = parseMarkdownWithBlockSources(testCase.md);
+			expect(parsed.blocks.length, testCase.md).toBe(3);
+			// Merged synthetic+real trailing block must never keep a truncated raw slice.
+			expect(parsed.blocks[2]?.raw, testCase.md).toBeNull();
+			const guard = createMarkdownRoundTripGuard(testCase.md, parsed);
+			const edited = insertTextAt(
+				guard.initialDoc,
+				findTextEndPos(guard.initialDoc, testCase.needle),
+				testCase.append,
+			);
+			const serialized = guard.serialize(edited);
+			expect(serialized, testCase.md).toBe(testCase.expected);
+			expect(parseMarkdownToVisualDoc(serialized).eq(edited), testCase.md).toBe(
+				true,
+			);
+		}
+	});
+
+	it("shifts relative inline-math offsets by virtualSpaces on tab-indented lazy table rows and display-math breaks (PR-R25-A #2)", () => {
+		const lazyTabRow = ">  - | A | B |\n>    | --- | --- |\n>\t| $a|b$ | 2 |";
+		const preScanRow = prescanMarkdown(lazyTabRow);
+		expect(preScanRow.protectedInlines.get("EASYMDEPHINL0END")).toEqual({
+			kind: "math-inline",
+			rawMarkdown: "$a|b$",
+		});
+		const rowGuard = createMarkdownRoundTripGuard(lazyTabRow);
+		const editedRow = insertTextAt(
+			rowGuard.initialDoc,
+			findTextEndPos(rowGuard.initialDoc, "A"),
+			"Z",
+		);
+		const serializedRow = rowGuard.serialize(editedRow);
+		expect(serializedRow).toBe(
+			"> - | AZ | B |\n>   | --- | --- |\n>   | $a|b$ | 2 |",
+		);
+		expect(parseMarkdownToVisualDoc(serializedRow).eq(editedRow)).toBe(true);
+
+		const lazyTabDisplayBreak =
+			">  - | A | B |\n>    | --- | --- |\n>\t| $a|b$ | $$x$$";
+		const preScanBreak = prescanMarkdown(lazyTabDisplayBreak);
+		expect(preScanBreak.protectedInlines.get("EASYMDEPHINL0END")).toEqual({
+			kind: "math-inline",
+			rawMarkdown: "$a|b$",
+		});
+		const breakGuard = createMarkdownRoundTripGuard(lazyTabDisplayBreak);
+		const editedBreak = insertTextAt(
+			breakGuard.initialDoc,
+			findTextEndPos(breakGuard.initialDoc, "A"),
+			"Z",
+		);
+		const serializedBreak = breakGuard.serialize(editedBreak);
+		expect(serializedBreak).toBe(
+			"> - | AZ | B |\n>   | --- | --- |\n>   | $a|b$ |  |\n\n$$x$$",
+		);
+		expect(parseMarkdownToVisualDoc(serializedBreak).eq(editedBreak)).toBe(
+			true,
+		);
+
+		// Ordered-list tab partial consumption (`1. ` eats 3 columns of `\t`, leaving 1 virtual space).
+		const orderedTabLazy =
+			"1. - | A | B |\n     | --- | --- |\n\t| $a|b$ | 2 |";
+		expect(
+			prescanMarkdown(orderedTabLazy).protectedInlines.get("EASYMDEPHINL0END"),
+		).toEqual({
+			kind: "math-inline",
+			rawMarkdown: "$a|b$",
+		});
+	});
+
+	it("never injects blockquote or list prefixes into internal newlines of multiline inline math (PR-R25-A #3)", () => {
+		const cases = [
+			[
+				"> | A |\n> | --- |\n> | \\(a\nb\\) |",
+				"> | AZ |\n> | --- |\n> | \\(a\nb\\) |",
+			],
+			[
+				"- | A |\n  | --- |\n  | \\(a\n  b\\) |",
+				"- | AZ |\n  | --- |\n  | \\(a\n  b\\) |",
+			],
+			[
+				"- > | A |\n  > | --- |\n  > | \\(a\nb\\) |",
+				"-\n  > | AZ |\n  > | --- |\n  > | \\(a\nb\\) |",
+			],
+			[
+				"> | A | B |\n> | --- | --- |\n> | \\(a\nb\\) | \\(c\nd\\) |",
+				"> | AZ | B |\n> | --- | --- |\n> | \\(a\nb\\) | \\(c\nd\\) |",
+			],
+			[
+				"- | A |\n  | --- |\n  | \\(a\n  b\\) |\n- untouched",
+				"- | AZ |\n  | --- |\n  | \\(a\n  b\\) |\n- untouched",
+			],
+			[
+				"> - | A |\n>   | --- |\n>   | \\(a\nb\\) |",
+				"> - | AZ |\n>   | --- |\n>   | \\(a\nb\\) |",
+			],
+		] as const;
+
+		for (const [md, expected] of cases) {
+			const guard = createMarkdownRoundTripGuard(md);
+			const edited = insertTextAt(
+				guard.initialDoc,
+				findTextEndPos(guard.initialDoc, "A"),
+				"Z",
+			);
+			const serialized = guard.serialize(edited);
+			expect(serialized, md).toBe(expected);
+			expect(parseMarkdownToVisualDoc(serialized).eq(edited), md).toBe(true);
+		}
+	});
+
+	it("prescans adversarial repeated display-math table breaks and unmatched paired inline HTML in linear time (PR-R25-A #4)", () => {
+		// Warm up JIT once with a tiny representative input.
+		prescanMarkdown("| A |\n| --- |\n| $$x$$ |\n<span></span>");
+
+		const adversarialInputs: ReadonlyArray<readonly [string, string]> = [
+			["table_break_8k_display_math", `| A |\n| --- |\n| ${"$$x$$ ".repeat(8_000)}|`],
+			["table_break_4k_adjacent_math", `| A | B |\n| --- | --- |\n| 1 | ${"$$x$$".repeat(4_000)}`],
+			["unclosed_4k_spans_trailing_close", `${"<span>".repeat(4_000)}</span>`],
+		];
+
+		for (const [label, input] of adversarialInputs) {
+			const started = performance.now();
+			const result = prescanMarkdown(input);
+			const elapsedMs = performance.now() - started;
+			expect(result.markdown.length, label).toBeGreaterThan(0);
+			expect(elapsedMs, `${label} took ${elapsedMs.toFixed(1)}ms`).toBeLessThan(
+				100,
+			);
+		}
+
+		// Verify exact stack-matching semantics on the last balanced pair.
+		const smallSpanResult = prescanMarkdown("<span><span></span><span>");
+		const inlineRaws = [...smallSpanResult.protectedInlines.values()].map(
+			(entry) => entry.rawMarkdown,
+		);
+		expect(inlineRaws).toEqual(["<span>", "<span></span>", "<span>"]);
+	});
+
+	it("splits display math on table header lines like PHP extract_math without degrading to math-inline (PR-R25-A #6)", () => {
+		// 1. Display math before table header splits into math block + 2-column table.
+		const leadingHeaderCases = [
+			[
+				"$$x$$ | A | B |\n| --- | --- |\n| 1 | 2 |",
+				"$$x$$",
+				"$$x$$\n\n| AZ | B |\n| --- | --- |\n| 1 | 2 |",
+			],
+			[
+				"\\[x\\] | A | B |\n| --- | --- |\n| 1 | 2 |",
+				"\\[x\\]",
+				"\\[x\\]\n\n| AZ | B |\n| --- | --- |\n| 1 | 2 |",
+			],
+			[
+				"$$\nx\n$$ | A | B |\n| --- | --- |\n| 1 | 2 |",
+				"$$\nx\n$$",
+				"$$\nx\n$$\n\n| AZ | B |\n| --- | --- |\n| 1 | 2 |",
+			],
+		] as const;
+
+		for (const [md, mathRaw, expected] of leadingHeaderCases) {
+			const parsed = parseMarkdownWithBlockSources(md);
+			expect(parsed.blocks.map((b) => b.node.type.name), md).toEqual([
+				"protected_block",
+				"table",
+			]);
+			expect(parsed.blocks[0]?.node.attrs.kind, md).toBe("math");
+			expect(parsed.blocks[0]?.node.attrs.rawMarkdown, md).toBe(mathRaw);
+			expect(parsed.blocks[1]?.node.childCount, md).toBe(2);
+			expect(parsed.blocks[1]?.node.child(0).childCount, md).toBe(2);
+			expect(parsed.blocks[1]?.raw, md).toBeNull();
+			const guard = createMarkdownRoundTripGuard(md, parsed);
+			const edited = insertTextAt(
+				guard.initialDoc,
+				findTextEndPos(guard.initialDoc, "A"),
+				"Z",
+			);
+			const serialized = guard.serialize(edited);
+			expect(serialized, md).toBe(expected);
+			expect(parseMarkdownToVisualDoc(serialized).eq(edited), md).toBe(true);
+		}
+
+		// 2. Display math inside table header line splits into paragraph + math block + trailing block (NOT a 2-col table with math-inline).
+		const midHeaderMd = "| A | $$x$$ |\n| --- | --- |\n| 1 | 2 |";
+		const midParsed = parseMarkdownWithBlockSources(midHeaderMd);
+		expect(midParsed.blocks.map((b) => b.node.type.name)).toEqual([
+			"paragraph",
+			"protected_block",
+			"paragraph",
+		]);
+		expect(midParsed.blocks[0]?.node.textContent).toBe("| A |");
+		expect(midParsed.blocks[1]?.node.attrs.kind).toBe("math");
+		expect(midParsed.blocks[1]?.node.attrs.rawMarkdown).toBe("$$x$$");
+		expect(collectProtectedInlines(midParsed.doc)).toEqual([]);
+		const midGuard = createMarkdownRoundTripGuard(midHeaderMd, midParsed);
+		const editedMid = insertTextAt(
+			midGuard.initialDoc,
+			findTextEndPos(midGuard.initialDoc, "A"),
+			"Z",
+		);
+		const serializedMid = midGuard.serialize(editedMid);
+		expect(serializedMid).toBe("| AZ |\n\n$$x$$\n\n|\n| --- | --- |\n| 1 | 2 |");
+		expect(parseMarkdownToVisualDoc(serializedMid).eq(editedMid)).toBe(true);
+	});
 });

@@ -182,6 +182,69 @@ export function skipInlineCodeSpan(line: string, start: number): number {
 }
 
 /**
+ * Builds an O(L) stack-based open-offset → close-end map for one paired inline
+ * HTML tag name starting at `fromIndex`, respecting backtick code spans and
+ * GFM table cell pipe barriers so repeated unmatched open tags never rescan.
+ */
+function buildPairedTagCloseMap(
+	line: string,
+	fromIndex: number,
+	targetTag: string,
+	isTableRow: boolean,
+): Map<number, number> {
+	const openStack: number[] = [];
+	const closeByOpen = new Map<number, number>();
+	let scan = fromIndex;
+	const length = line.length;
+	while (scan < length) {
+		const ch = line[scan] ?? "";
+		if (ch === "`" && !isEscapedAt(line, scan)) {
+			const codeEnd = skipInlineCodeSpan(line, scan);
+			if (isTableRow && hasUnescapedPipe(line.slice(scan, codeEnd))) {
+				openStack.length = 0;
+			}
+			scan = codeEnd;
+			continue;
+		}
+		if (isTableRow && ch === "|" && !isEscapedAt(line, scan)) {
+			openStack.length = 0;
+			scan += 1;
+			continue;
+		}
+		if (ch === "<" && !isEscapedAt(line, scan)) {
+			const nestedClose = execInlineHtmlCloseTag(line, scan);
+			if (nestedClose?.[1]?.toLowerCase() === targetTag) {
+				const closeEnd = scan + nestedClose[0].length;
+				if (openStack.length > 0) {
+					const openPos = openStack.pop();
+					if (openPos !== undefined) {
+						closeByOpen.set(openPos, closeEnd);
+					}
+				}
+				scan = closeEnd;
+				continue;
+			}
+			const nestedOpen = execInlineHtmlOpenTag(line, scan);
+			if (
+				nestedOpen?.[1]?.toLowerCase() === targetTag &&
+				nestedOpen[2] !== "/"
+			) {
+				if (isTableRow && hasUnescapedPipe(nestedOpen[0])) {
+					openStack.length = 0;
+					scan += 1;
+					continue;
+				}
+				openStack.push(scan);
+				scan += nestedOpen[0].length;
+				continue;
+			}
+		}
+		scan += 1;
+	}
+	return closeByOpen;
+}
+
+/**
  * Match a balanced allowed inline HTML span (supporting nested inline tags and
  * inline Markdown without crossing unescaped GFM table cell pipes), or an
  * unmatched standalone allowed open/close tag so it strips cleanly in preview
@@ -191,7 +254,7 @@ function matchAllowedInlineHtml(
 	line: string,
 	start: number,
 	isTableRow: boolean,
-	unclosedTagBoundary: Map<string, number>,
+	pairedTagCloseMaps: Map<string, Map<number, number>>,
 ): string | null {
 	const closeOnly = execInlineHtmlCloseTag(line, start);
 	if (
@@ -212,12 +275,12 @@ function matchAllowedInlineHtml(
 		return openMatch[0];
 	}
 	const targetTag = openMatch[1].toLowerCase();
-	const knownUnclosedEnd = unclosedTagBoundary.get(targetTag);
-	if (knownUnclosedEnd !== undefined && start < knownUnclosedEnd) {
-		return openMatch[0];
+	const cachedMap = pairedTagCloseMaps.get(targetTag);
+	if (cachedMap !== undefined) {
+		const matchedEnd = cachedMap.get(start);
+		return matchedEnd !== undefined ? line.slice(start, matchedEnd) : openMatch[0];
 	}
 	let depth = 1;
-	let sawClose = false;
 	let cursor = start + openMatch[0].length;
 	const length = line.length;
 	while (cursor < length) {
@@ -236,7 +299,6 @@ function matchAllowedInlineHtml(
 		if (ch === "<" && !isEscapedAt(line, cursor)) {
 			const nestedClose = execInlineHtmlCloseTag(line, cursor);
 			if (nestedClose?.[1]?.toLowerCase() === targetTag) {
-				sawClose = true;
 				depth -= 1;
 				cursor += nestedClose[0].length;
 				if (depth === 0) {
@@ -259,11 +321,12 @@ function matchAllowedInlineHtml(
 		}
 		cursor += 1;
 	}
-	// Only when zero closing tags existed up to `cursor` is every later
-	// opening tag before `cursor` guaranteed unmatched too.
-	if (!sawClose) {
-		unclosedTagBoundary.set(targetTag, cursor);
-	}
+	// Lazily build one O(L) stack match map on the first unmatched open tag so
+	// repeated unmatched opens (even with trailing closes) stay strictly O(L).
+	pairedTagCloseMaps.set(
+		targetTag,
+		buildPairedTagCloseMap(line, start, targetTag, isTableRow),
+	);
 	// Unmatched tag (or split across table cell pipes): protect only the tag
 	// itself so neighboring cells and inline text remain ordinary Markdown.
 	return openMatch[0];
@@ -353,7 +416,7 @@ export function extractInlineProtectedSyntax(
 	let result = "";
 	let index = 0;
 	const length = line.length;
-	let unclosedTagBoundary: Map<string, number> | null = null;
+	let pairedTagCloseMaps: Map<string, Map<number, number>> | null = null;
 	let htmlScanState: InlineHtmlScanState | null = null;
 	let linkParenCloseByOpen: Map<number, number> | null = null;
 	let noClosingParenMath = false;
@@ -639,14 +702,14 @@ export function extractInlineProtectedSyntax(
 		if (ch === "<" && !isEscapedAt(line, index)) {
 			const fromContinuationIndent =
 				indentedContinuationStart >= 0 && index === indentedContinuationStart;
-			if (unclosedTagBoundary === null) {
-				unclosedTagBoundary = new Map<string, number>();
+			if (pairedTagCloseMaps === null) {
+				pairedTagCloseMaps = new Map<string, Map<number, number>>();
 			}
 			const matchedPairedHtml = matchAllowedInlineHtml(
 				line,
 				index,
 				isTableRow,
-				unclosedTagBoundary,
+				pairedTagCloseMaps,
 			);
 			if (matchedPairedHtml !== null) {
 				result += allocateToken(

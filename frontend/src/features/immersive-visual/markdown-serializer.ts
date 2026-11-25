@@ -7,10 +7,12 @@ import {
 	stripTrailingReservedScaleMarkers,
 } from "../../shared/image-scale-title";
 import {
+	createMathNewlineSentinelForNode,
 	createPreservingRoundTripGuard,
 	joinSerializedBlocks,
 	type MarkdownRoundTripGuard,
 	type MarkdownSerializers,
+	restoreMathNewlineSentinel,
 	serializeList,
 } from "./markdown-block-preservation";
 import {
@@ -40,6 +42,7 @@ export type { MarkdownRoundTripGuard } from "./markdown-block-preservation";
 type InlineSerializeOptions = Readonly<{
 	inHeading?: boolean;
 	inTableCell?: boolean;
+	mathNewlineToken?: string | null;
 }>;
 
 const MARK_PRIORITY: Readonly<Record<string, number>> = {
@@ -377,6 +380,7 @@ function serializeInlineContent(
 ): string {
 	const inTableCell = options.inTableCell ?? false;
 	const inHeading = options.inHeading ?? false;
+	const mathNewlineToken = options.mathNewlineToken ?? null;
 	const markSpans = computeMarkSpans(parent);
 	const markKeysAt = (index: number): Set<string> => {
 		const set = new Set<string>();
@@ -453,12 +457,16 @@ function serializeInlineContent(
 				typeof child.attrs.rawMarkdown === "string"
 					? child.attrs.rawMarkdown
 					: "";
+			const isInlineMath = child.attrs.kind === "math-inline";
+			const encodedRaw =
+				isInlineMath && mathNewlineToken !== null && raw.includes("\n")
+					? raw.split("\n").join(mathNewlineToken)
+					: raw;
 			if (inTableCell) {
 				// PHP `MarkdownRenderer::extract_math()` extracts inline math
 				// BEFORE CommonMark parses GFM tables, so pipes inside math
 				// stay verbatim rather than turning `|` into KaTeX `\|` (`‖`).
-				output +=
-					child.attrs.kind === "math-inline" ? raw : escapeTablePipes(raw);
+				output += isInlineMath ? encodedRaw : escapeTablePipes(raw);
 			} else {
 				const continuationMatch =
 					!inHeading &&
@@ -470,7 +478,7 @@ function serializeInlineContent(
 				const pad = continuationMatch
 					? " ".repeat(4 - (continuationMatch[1]?.length ?? 0))
 					: "";
-				output += `${pad}${raw}`;
+				output += `${pad}${encodedRaw}`;
 			}
 			continue;
 		}
@@ -627,17 +635,26 @@ function formatAlignmentDelimiter(align: TableTextAlign): string {
 	}
 }
 
-function serializeTableCell(cellNode: ProseMirrorNode): string {
+function serializeTableCell(
+	cellNode: ProseMirrorNode,
+	mathNewlineToken: string | null,
+): string {
 	const parts: string[] = [];
 	for (let i = 0; i < cellNode.childCount; i += 1) {
 		parts.push(
-			serializeInlineContent(cellNode.child(i), { inTableCell: true }),
+			serializeInlineContent(cellNode.child(i), {
+				inTableCell: true,
+				mathNewlineToken,
+			}),
 		);
 	}
 	return parts.join("<br>").trim();
 }
 
-function serializeTable(tableNode: ProseMirrorNode): string {
+function serializeTable(
+	tableNode: ProseMirrorNode,
+	mathNewlineToken: string | null,
+): string {
 	if (tableNode.childCount === 0) {
 		return "";
 	}
@@ -700,7 +717,9 @@ function serializeTable(tableNode: ProseMirrorNode): string {
 		const cells: string[] = [];
 		for (let c = 0; c < columnCount; c += 1) {
 			cells.push(
-				c < rowNode.childCount ? serializeTableCell(rowNode.child(c)) : "",
+				c < rowNode.childCount
+					? serializeTableCell(rowNode.child(c), mathNewlineToken)
+					: "",
 			);
 		}
 		return `| ${cells.join(" | ")} |`;
@@ -722,32 +741,44 @@ function serializeTable(tableNode: ProseMirrorNode): string {
 	return lines.join("\n");
 }
 
-function serializeBlockNode(node: ProseMirrorNode): string {
+function serializeBlockNodeInternal(
+	node: ProseMirrorNode,
+	mathNewlineToken: string | null,
+): string {
+	const childSerializer =
+		mathNewlineToken !== null
+			? (child: ProseMirrorNode): string =>
+					serializeBlockNodeInternal(child, mathNewlineToken)
+			: serializeBlockNode;
 	switch (node.type.name) {
 		case "paragraph":
-			return serializeInlineContent(node, {});
+			return serializeInlineContent(node, { mathNewlineToken });
 		case "heading": {
 			const level = normalizeHeadingLevel(node.attrs.level);
-			const content = serializeInlineContent(node, { inHeading: true }).replace(
-				/#+$/,
-				(run) => run.replace(/#/g, "\\#"),
-			);
+			const content = serializeInlineContent(node, {
+				inHeading: true,
+				mathNewlineToken,
+			}).replace(/#+$/, (run) => run.replace(/#/g, "\\#"));
 			return content.length > 0
 				? `${"#".repeat(level)} ${content}`
 				: "#".repeat(level);
 		}
 		case "blockquote":
-			return prefixBlockquote(joinSerializedBlocks(node, serializeBlockNode));
+			return prefixBlockquote(joinSerializedBlocks(node, childSerializer));
 		case "bullet_list":
 		case "ordered_list":
 		case "task_list":
-			return serializeList(node, serializeBlockNode);
+			return serializeList(
+				node,
+				childSerializer,
+				mathNewlineToken ?? undefined,
+			);
 		case "code_block":
 			return serializeCodeBlock(node);
 		case "horizontal_rule":
 			return "---";
 		case "table":
-			return serializeTable(node);
+			return serializeTable(node, mathNewlineToken);
 		case "protected_block":
 			return typeof node.attrs.rawMarkdown === "string"
 				? node.attrs.rawMarkdown
@@ -755,6 +786,23 @@ function serializeBlockNode(node: ProseMirrorNode): string {
 		default:
 			return node.textContent;
 	}
+}
+
+function serializeBlockNode(
+	node: ProseMirrorNode,
+	mathNewlineToken?: string,
+): string {
+	if (mathNewlineToken !== undefined) {
+		return serializeBlockNodeInternal(node, mathNewlineToken);
+	}
+	const token = createMathNewlineSentinelForNode(node);
+	if (token === null) {
+		return serializeBlockNodeInternal(node, null);
+	}
+	return restoreMathNewlineSentinel(
+		serializeBlockNodeInternal(node, token),
+		token,
+	);
 }
 
 export function serializeVisualDocToMarkdown(doc: ProseMirrorNode): string {

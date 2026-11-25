@@ -35,10 +35,13 @@ import {
 	type ProtectedInlineEntry,
 } from "./markdown-prescanner-inline";
 import {
+	emitActiveTableRow,
+	emitDisplayMathHeaderLine,
+	emitDisplayMathTableBreak,
+} from "./markdown-prescanner-table-emit";
+import {
 	collectRelativeInlineMathRanges,
 	createPhpDocumentMathIndex,
-	emitActiveTableRow,
-	emitDisplayMathTableBreak,
 	type GfmTableMatch,
 	maskedSliceForLines,
 	matchTableAlignmentMarkerLine,
@@ -76,6 +79,7 @@ export type PreScanResult = Readonly<{
 	lineEnding: "\n" | "\r\n";
 	markdown: string;
 	outputLineRanges: ReadonlyArray<PrescannedLineRange | null>;
+	outputLines: ReadonlyArray<string>;
 	protectedBlocks: ReadonlyMap<string, ProtectedBlockEntry>;
 	protectedInlines: ReadonlyMap<string, ProtectedInlineEntry>;
 	rawLines: ReadonlyArray<string>;
@@ -225,6 +229,26 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			advancePhpCommonMarkBlockLine(phpBlockState, masked);
 		}
 	};
+	const advancePhpStateAfterDisplayMath = (
+		fromLine: number,
+		toLineInclusive: number,
+	): void => {
+		const masked = maskedSliceForLines(
+			mathIndex,
+			lines,
+			fromLine,
+			toLineInclusive,
+		);
+		const lastBreak = masked.lastIndexOf("\n\n");
+		if (lastBreak >= 0) {
+			scanLinesIntoPhpCommonMarkBlockState(
+				phpBlockState,
+				`\n\nM\n\n${masked.slice(lastBreak + 2)}`,
+			);
+			return;
+		}
+		advancePhpStateMaskedLines(fromLine, toLineInclusive);
+	};
 	const advancePhpStateClosedBlock = (
 		prefix: string,
 		indent: number,
@@ -307,7 +331,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			pendingTableAlignOutputIndex = -1;
 			closeParagraph();
 			listContentIndent = null;
-			advancePhpStateMaskedLines(i, spanEndLine);
+			advancePhpStateAfterDisplayMath(i, spanEndLine);
 			i = spanEndLine + 1;
 			continue;
 		}
@@ -625,6 +649,36 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		}
 		pendingTableAlignOutputIndex = -1;
 
+		// 3c. Display math on a line immediately preceding a GFM table delimiter
+		//     line splits via `\n\n<BLK>\n\n` (matching PHP `extract_math()`),
+		//     and evaluates GFM table matching cleanly on the post-math segment.
+		const headerMathBreak = emitDisplayMathHeaderLine(
+			lines,
+			i,
+			mathIndex,
+			sentinel,
+			protectedInlines,
+			{ addProtectedBlock, pushOutputLine },
+			() => outputLines.length,
+		);
+		if (headerMathBreak !== null) {
+			activeTable = headerMathBreak.activeTable;
+			activeTableOutputStart = headerMathBreak.activeTableOutputStart;
+			if (
+				activeTable !== null &&
+				!hasListBeforeQuote(activeTable.containers)
+			) {
+				const nestedListIndent = sumListContainerIndent(activeTable.containers);
+				listContentIndent = nestedListIndent > 0 ? nestedListIndent : null;
+			} else {
+				listContentIndent = null;
+			}
+			closeParagraph();
+			advancePhpStateAfterDisplayMath(i, headerMathBreak.spanEndLine);
+			i = headerMathBreak.spanEndLine + 1;
+			continue;
+		}
+
 		// 4. Block math: $$...$$ and \[...\] (single-line or multi-line).
 		const blockMathEnd = findBlockMathEnd(
 			lines,
@@ -858,6 +912,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		lineEnding,
 		markdown: outputLines.join("\n"),
 		outputLineRanges,
+		outputLines,
 		protectedBlocks,
 		protectedInlines,
 		rawLines: lines,

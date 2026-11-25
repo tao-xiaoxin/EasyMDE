@@ -20,8 +20,82 @@ import { sanitizeBulletMarker } from "./visual-schema";
  * items whose checkbox paragraph follows leading reference definitions.
  */
 
-export type BlockSerializer = (node: ProseMirrorNode) => string;
+export type BlockSerializer = (
+	node: ProseMirrorNode,
+	mathNewlineToken?: string,
+) => string;
 export type RefDefContinuationMode = "none" | "tight" | "indented";
+
+function nodeContainsString(
+	node: ProseMirrorNode,
+	needle: string,
+): boolean {
+	let found = false;
+	node.descendants((descendant) => {
+		if (found) {
+			return false;
+		}
+		if (descendant.isText && (descendant.text ?? "").includes(needle)) {
+			found = true;
+			return false;
+		}
+		for (const value of Object.values(descendant.attrs)) {
+			if (typeof value === "string" && value.includes(needle)) {
+				found = true;
+				return false;
+			}
+		}
+		for (const mark of descendant.marks) {
+			for (const value of Object.values(mark.attrs)) {
+				if (typeof value === "string" && value.includes(needle)) {
+					found = true;
+					return false;
+				}
+			}
+		}
+		return true;
+	});
+	return found;
+}
+
+/**
+ * Returns a collision-free sentinel for protecting physical newlines inside
+ * serialized `protected_inline("math-inline")` bodies during blockquote and
+ * list container prefixing, or `null` when `node` contains no multiline inline
+ * math (zero-overhead fast path).
+ */
+export function createMathNewlineSentinelForNode(
+	node: ProseMirrorNode,
+): string | null {
+	let hasMultilineMath = false;
+	node.descendants((descendant) => {
+		if (
+			descendant.type.name === "protected_inline" &&
+			descendant.attrs.kind === "math-inline" &&
+			typeof descendant.attrs.rawMarkdown === "string" &&
+			descendant.attrs.rawMarkdown.includes("\n")
+		) {
+			hasMultilineMath = true;
+			return false;
+		}
+		return true;
+	});
+	if (!hasMultilineMath) {
+		return null;
+	}
+	let core = "EASYMDEMATHNL";
+	while (nodeContainsString(node, `\uE000${core}END\uE001`)) {
+		core = `${core}X`;
+	}
+	return `\uE000${core}END\uE001`;
+}
+
+export function restoreMathNewlineSentinel(
+	text: string,
+	token: string,
+): string {
+	return text.includes(token) ? text.split(token).join("\n") : text;
+}
 
 /**
  * CommonMark §2.2 four-column leading indentation (four spaces, or 0-3 spaces
@@ -475,8 +549,18 @@ export function serializeListItemAt(
 	loose: boolean,
 	serializeBlock: BlockSerializer,
 	blankBeforeNestedList: boolean,
+	mathNewlineToken?: string,
 ): string {
 	const item = listNode.child(index);
+	const ownedToken =
+		mathNewlineToken === undefined
+			? createMathNewlineSentinelForNode(item)
+			: null;
+	const activeToken = mathNewlineToken ?? ownedToken ?? undefined;
+	const itemBlockSerializer: BlockSerializer =
+		activeToken !== undefined
+			? (child) => serializeBlock(child, activeToken)
+			: serializeBlock;
 	const listKind: "bullet_list" | "ordered_list" | "task_list" =
 		listNode.type.name === "ordered_list"
 			? "ordered_list"
@@ -503,7 +587,7 @@ export function serializeListItemAt(
 		item,
 		listKind,
 		loose,
-		serializeBlock,
+		itemBlockSerializer,
 		blankBeforeNestedList,
 		hasPhantomParagraph,
 		firstContentParagraphIndex,
@@ -529,17 +613,30 @@ export function serializeListItemAt(
 			? `${bulletMarker} [x] `
 			: `${bulletMarker} [ ] `;
 	}
-	return prefixMultiline(body, prefix, indent);
+	const prefixed = prefixMultiline(body, prefix, indent);
+	return ownedToken !== null
+		? restoreMathNewlineSentinel(prefixed, ownedToken)
+		: prefixed;
 }
 
 export function serializeList(
 	listNode: ProseMirrorNode,
 	serializeBlock: BlockSerializer,
+	mathNewlineToken?: string,
 ): string {
 	const loose = isLooseList(listNode);
 	const items: string[] = [];
 	for (let i = 0; i < listNode.childCount; i += 1) {
-		items.push(serializeListItemAt(listNode, i, loose, serializeBlock, false));
+		items.push(
+			serializeListItemAt(
+				listNode,
+				i,
+				loose,
+				serializeBlock,
+				false,
+				mathNewlineToken,
+			),
+		);
 	}
 	return items.join(loose ? "\n\n" : "\n");
 }

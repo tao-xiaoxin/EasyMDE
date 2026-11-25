@@ -349,7 +349,7 @@ function combineItemRanges(
 	let end = -1;
 	for (const item of items) {
 		if (!item.range) {
-			continue;
+			return null;
 		}
 		start = Math.min(start, item.range.start);
 		end = Math.max(end, item.range.end);
@@ -489,6 +489,9 @@ function resolveOriginalRangeFromTokenMap(
 	for (let lineIdx = startLine; lineIdx < endLine; lineIdx += 1) {
 		const range = preScan.outputLineRanges[lineIdx];
 		if (!range) {
+			if (!isCommonMarkBlankLine(preScan.outputLines[lineIdx] ?? "")) {
+				return null;
+			}
 			continue;
 		}
 		if (range.start < origStart) {

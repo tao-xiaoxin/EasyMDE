@@ -18,9 +18,11 @@ import { wouldRawHtmlInterruptParagraph } from "./markdown-prescanner-inline";
 
 export {
 	type BlockSerializer,
+	createMathNewlineSentinelForNode,
 	joinSerializedBlocks,
 	needsTightRefDefContinuation,
 	refDefContinuationMode,
+	restoreMathNewlineSentinel,
 	serializeList,
 } from "./markdown-list-serialization";
 
@@ -897,7 +899,10 @@ export function createPreservingRoundTripGuard(
 	// avoids re-serializing untouched pasted or newly created blocks on every
 	// subsequent keystroke without weakening baseline raw-slice preservation.
 	const blockSerializationCache = new WeakMap<ProseMirrorNode, string>();
-	const serializeBlockCached: BlockSerializer = (node) => {
+	const serializeBlockCached: BlockSerializer = (node, mathNewlineToken) => {
+		if (mathNewlineToken !== undefined) {
+			return serializers.serializeBlock(node, mathNewlineToken);
+		}
 		const cached = blockSerializationCache.get(node);
 		if (cached !== undefined) {
 			return cached;

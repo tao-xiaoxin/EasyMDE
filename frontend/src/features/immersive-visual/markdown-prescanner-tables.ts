@@ -28,11 +28,6 @@ import {
 	measureIndentColumns,
 	stripContainersWithColumn,
 } from "./markdown-prescanner-blocks";
-import {
-	extractInlineProtectedSyntax,
-	type ProtectedInlineEntry,
-} from "./markdown-prescanner-inline";
-import type { ProtectedBlockKind } from "./visual-schema";
 
 /**
  * Feature-private PHP-exact math-range indexing, container-aware GFM table
@@ -116,7 +111,7 @@ export function findLineIndexForOffset(
 	return best;
 }
 
-function firstMathRangeEndingAfter(
+export function firstMathRangeEndingAfter(
 	ranges: ReadonlyArray<PhpMarkdownMathRange>,
 	offset: number,
 ): number {
@@ -158,12 +153,15 @@ export function findMathRangesInOffsetSlice(
 
 /**
  * Returns inline (`block: false`) PHP math ranges fully contained in
- * `[startOffset, endOffset)`, shifted relative to `startOffset`.
+ * `[startOffset, endOffset)`, shifted relative to `startOffset` plus an
+ * optional `offsetShift` (e.g. virtual spaces prepended after a partially
+ * consumed tab).
  */
 export function collectRelativeInlineMathRanges(
 	mathIndex: PhpDocumentMathIndex,
 	startOffset: number,
 	endOffset: number,
+	offsetShift = 0,
 ): PhpMarkdownMathRange[] {
 	const overlapping = findMathRangesInOffsetSlice(
 		mathIndex.ranges,
@@ -175,8 +173,8 @@ export function collectRelativeInlineMathRanges(
 		if (!range.block && range.from >= startOffset && range.to <= endOffset) {
 			relative.push({
 				block: false,
-				from: range.from - startOffset,
-				to: range.to - startOffset,
+				from: range.from - startOffset + offsetShift,
+				to: range.to - startOffset + offsetShift,
 			});
 		}
 	}
@@ -224,12 +222,18 @@ export function findFirstDisplayMathInLines(
 ): PhpMarkdownMathRange | null {
 	const startOffset = mathIndex.lineStarts[startLine] ?? 0;
 	const endOffset = mathIndex.lineEnds[endLine] ?? startOffset;
-	const overlapping = findMathRangesInOffsetSlice(
-		mathIndex.ranges,
-		startOffset,
-		endOffset,
-	);
-	for (const range of overlapping) {
+	if (mathIndex.ranges.length === 0 || endOffset <= startOffset) {
+		return null;
+	}
+	for (
+		let idx = firstMathRangeEndingAfter(mathIndex.ranges, startOffset);
+		idx < mathIndex.ranges.length;
+		idx += 1
+	) {
+		const range = mathIndex.ranges[idx];
+		if (!range || range.from >= endOffset) {
+			break;
+		}
 		if (range.block) {
 			return range;
 		}
@@ -269,7 +273,12 @@ export function formatContainerPrefix(
 export function stripPartialContainers(
 	line: string,
 	containers: ReadonlyArray<ContainerStep>,
-): Readonly<{ consumedLength: number; remainder: string; column: number }> {
+): Readonly<{
+	column: number;
+	consumedLength: number;
+	remainder: string;
+	virtualSpaces: number;
+}> {
 	const cursor = createLineCursor(line);
 	for (const step of containers) {
 		if (step.kind === "blockquote") {
@@ -290,6 +299,7 @@ export function stripPartialContainers(
 		column: cursor.column,
 		consumedLength: cursor.index,
 		remainder: cursorRemainder(cursor),
+		virtualSpaces: cursor.virtualSpaces,
 	};
 }
 
@@ -669,228 +679,4 @@ export function sumListContainerIndent(
 		}
 	}
 	return total;
-}
-
-export type TableEmitCallbacks = Readonly<{
-	addProtectedBlock: (kind: ProtectedBlockKind, rawMarkdown: string) => string;
-	pushOutputLine: (
-		text: string,
-		range: Readonly<{ end: number; start: number }> | null,
-	) => void;
-}>;
-
-/**
- * Emits one active table body row (joining physical lines bridged by multiline
- * `\(...\)` and normalizing lazy container prefixes so `markdown-it` keeps the
- * row inside the table matching PHP `League\CommonMark`). Returns the next
- * physical line index to visit.
- */
-export function emitActiveTableRow(
-	lineIndex: number,
-	activeTable: GfmTableMatch,
-	mathIndex: PhpDocumentMathIndex,
-	sentinel: string,
-	protectedInlines: Map<string, ProtectedInlineEntry>,
-	pushOutputLine: TableEmitCallbacks["pushOutputLine"],
-): number {
-	const logicalEnd = findLogicalLineEnd(mathIndex, lineIndex);
-	const rowStartOffset = mathIndex.lineStarts[lineIndex] ?? 0;
-	const rowEndOffset = mathIndex.lineEnds[logicalEnd] ?? rowStartOffset;
-	const rawRow = mathIndex.normalized.slice(rowStartOffset, rowEndOffset);
-	if (activeTable.lazyRowStartLines.has(lineIndex)) {
-		const partial = stripPartialContainers(rawRow, activeTable.containers);
-		const rowMathRanges = collectRelativeInlineMathRanges(
-			mathIndex,
-			rowStartOffset + partial.consumedLength,
-			rowEndOffset,
-		);
-		const extracted = extractInlineProtectedSyntax(
-			partial.remainder,
-			sentinel,
-			protectedInlines,
-			true,
-			false,
-			-1,
-			rowMathRanges,
-		);
-		pushOutputLine(
-			`${formatContainerPrefix(activeTable.containers)}${extracted}`,
-			{ end: logicalEnd + 1, start: lineIndex },
-		);
-	} else {
-		const rowMathRanges = collectRelativeInlineMathRanges(
-			mathIndex,
-			rowStartOffset,
-			rowEndOffset,
-		);
-		pushOutputLine(
-			extractInlineProtectedSyntax(
-				rawRow,
-				sentinel,
-				protectedInlines,
-				true,
-				false,
-				-1,
-				rowMathRanges,
-			),
-			{ end: logicalEnd + 1, start: lineIndex },
-		);
-	}
-	return logicalEnd;
-}
-
-/**
- * Splits a display-math-bearing line (`$$...$$` / `\[...\]`) that breaks an
- * active GFM table, mirroring PHP `MarkdownRenderer::extract_math()` replacing
- * display math with `"\n\n" . $token . "\n\n"`.
- */
-export function emitDisplayMathTableBreak(
-	lineIndex: number,
-	tableContainers: ReadonlyArray<ContainerStep>,
-	mathIndex: PhpDocumentMathIndex,
-	sentinel: string,
-	protectedInlines: Map<string, ProtectedInlineEntry>,
-	callbacks: TableEmitCallbacks,
-): Readonly<{ emittedTableBeforeRow: boolean; spanEndLine: number }> {
-	const { addProtectedBlock, pushOutputLine } = callbacks;
-	let cursorOffset = mathIndex.lineStarts[lineIndex] ?? 0;
-	let spanEndLine = findLogicalLineEnd(mathIndex, lineIndex);
-	let spanEndOffset = mathIndex.lineEnds[spanEndLine] ?? cursorOffset;
-	let emittedTableBeforeRow = false;
-	let isFirstDisplayMath = true;
-
-	while (cursorOffset <= spanEndOffset) {
-		const displayRanges = findMathRangesInOffsetSlice(
-			mathIndex.ranges,
-			cursorOffset,
-			spanEndOffset,
-		).filter((range) => range.block && range.from >= cursorOffset);
-		const nextDisplay = displayRanges[0];
-		if (!nextDisplay) {
-			break;
-		}
-		const beforeText = mathIndex.normalized.slice(
-			cursorOffset,
-			nextDisplay.from,
-		);
-		if (isFirstDisplayMath) {
-			const fullMatch =
-				tableContainers.length > 0
-					? stripContainersWithColumn(beforeText, tableContainers)
-					: null;
-			const partial =
-				tableContainers.length > 0 && fullMatch === null
-					? stripPartialContainers(beforeText, tableContainers)
-					: null;
-			const effectiveBefore = fullMatch
-				? fullMatch.rest
-				: partial
-					? partial.remainder
-					: beforeText;
-			if (!isCommonMarkBlankLine(effectiveBefore)) {
-				emittedTableBeforeRow = true;
-				if (partial !== null) {
-					const beforeMathRanges = collectRelativeInlineMathRanges(
-						mathIndex,
-						cursorOffset + partial.consumedLength,
-						nextDisplay.from,
-					);
-					const extractedBefore = extractInlineProtectedSyntax(
-						partial.remainder,
-						sentinel,
-						protectedInlines,
-						true,
-						false,
-						-1,
-						beforeMathRanges,
-					);
-					pushOutputLine(
-						`${formatContainerPrefix(tableContainers)}${extractedBefore}`,
-						null,
-					);
-				} else {
-					const beforeMathRanges = collectRelativeInlineMathRanges(
-						mathIndex,
-						cursorOffset,
-						nextDisplay.from,
-					);
-					pushOutputLine(
-						extractInlineProtectedSyntax(
-							beforeText,
-							sentinel,
-							protectedInlines,
-							true,
-							false,
-							-1,
-							beforeMathRanges,
-						),
-						null,
-					);
-				}
-			}
-			isFirstDisplayMath = false;
-		} else if (!isCommonMarkBlankLine(beforeText)) {
-			pushOutputLine("", null);
-			const midMathRanges = collectRelativeInlineMathRanges(
-				mathIndex,
-				cursorOffset,
-				nextDisplay.from,
-			);
-			pushOutputLine(
-				extractInlineProtectedSyntax(
-					beforeText,
-					sentinel,
-					protectedInlines,
-					false,
-					false,
-					-1,
-					midMathRanges,
-				),
-				null,
-			);
-		}
-
-		pushOutputLine("", null);
-		const mathToken = addProtectedBlock(
-			"math",
-			mathIndex.normalized.slice(nextDisplay.from, nextDisplay.to),
-		);
-		pushOutputLine(mathToken, null);
-		cursorOffset = nextDisplay.to;
-		const rangeEndLine = findLineIndexForOffset(
-			mathIndex,
-			Math.max(nextDisplay.from, nextDisplay.to - 1),
-		);
-		const extendedEndLine = findLogicalLineEnd(mathIndex, rangeEndLine);
-		if (extendedEndLine > spanEndLine) {
-			spanEndLine = extendedEndLine;
-			spanEndOffset = mathIndex.lineEnds[spanEndLine] ?? spanEndOffset;
-		}
-	}
-
-	pushOutputLine("", null);
-	if (cursorOffset < spanEndOffset) {
-		const afterText = mathIndex.normalized.slice(cursorOffset, spanEndOffset);
-		if (!isCommonMarkBlankLine(afterText)) {
-			const afterMathRanges = collectRelativeInlineMathRanges(
-				mathIndex,
-				cursorOffset,
-				spanEndOffset,
-			);
-			pushOutputLine(
-				extractInlineProtectedSyntax(
-					afterText,
-					sentinel,
-					protectedInlines,
-					false,
-					false,
-					-1,
-					afterMathRanges,
-				),
-				null,
-			);
-		}
-	}
-
-	return { emittedTableBeforeRow, spanEndLine };
 }

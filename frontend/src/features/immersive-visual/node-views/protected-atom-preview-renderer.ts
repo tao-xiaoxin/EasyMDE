@@ -8,7 +8,17 @@ import { COMMONMARK_ESCAPABLE_PUNCTUATION } from "../../../shared/image-scale-ti
 import {
 	advancePhpCommonMarkBlockLine,
 	createPhpCommonMarkBlockState,
+	type PhpCommonMarkBlockState,
 } from "../../../shared/markdown/php-commonmark-block-engine";
+import {
+	consumeBlockquoteMarker,
+	consumeWhitespaceColumns,
+	cursorRemainder,
+	type LineColumnCursor,
+	matchListMarkerLength,
+	measureLeadingColumns,
+	nextNonSpaceIndex,
+} from "../../../shared/markdown/php-commonmark-block-helpers";
 import {
 	extractReferenceDefinitionLabels,
 	parseInlineMarkdownFragment,
@@ -21,7 +31,6 @@ import {
 import {
 	createInlineHtmlScanState,
 	execCommonMarkInlineHtmlToken,
-	skipInlineCodeSpan,
 } from "../markdown-prescanner-inline";
 import { sanitizeDomUrl, visualEditorSchema } from "../visual-schema";
 import {
@@ -64,111 +73,220 @@ function footnoteDisplayLabel(raw: string): string {
 	return match?.[1] ? `^${match[1]}` : raw;
 }
 
+type BlockContainer = PhpCommonMarkBlockState["containers"][number];
+type ListMeta = { emittedIndent: number | null; leadCols: number; markerText: string; origIndent: number; padding: number };
+type PreviewLineKind = "blank" | "content" | "fenced-code" | "html-block" | "indented-code";
+type PreviewLine = {
+	containers: BlockContainer[]; contentRel: number; kind: PreviewLineKind;
+	openedHereStart: number; rawLine: string; scanned: PhpCommonMarkBlockState["lines"][number]; strippedRest: string;
+};
+
+function indexBacktickRuns(text: string): Map<number, number[]> | null {
+	let i = text.indexOf("`");
+	if (i < 0) return null;
+	const first = i;
+	while (i < text.length && text[i] === "`") i += 1;
+	let s = text.indexOf("`", i);
+	if (s < 0) return null;
+	const runs = new Map<number, number[]>([[i - first, [first]]]);
+	for (; s >= 0; s = text.indexOf("`", i)) {
+		i = s + 1;
+		while (i < text.length && text[i] === "`") i += 1;
+		const b = runs.get(i - s);
+		if (b) b.push(s); else runs.set(i - s, [s]);
+	}
+	return runs;
+}
+
 /**
- * Strip CommonMark §6.6 inline raw HTML tokens (tags, comments, declarations,
- * PIs, CDATA) outside backtick code spans in O(L).
+ * Strip CommonMark §6.6 inline raw HTML tokens outside §6.1 backtick code
+ * spans (including multiline spans) in O(N), preserving `\n` line counts.
  */
-function stripInlineHtmlOutsideCode(line: string): string {
-	let out = "";
-	let i = 0;
-	const len = line.length;
+function stripInlineHtmlOutsideCode(text: string): string {
+	const runs = indexBacktickRuns(text);
+	const cursors = runs ? new Map<number, number>() : null;
 	const scanState = createInlineHtmlScanState();
-	while (i < len) {
-		const ch = line[i] ?? "";
-		if (ch === "\\" && COMMONMARK_ESCAPABLE_PUNCTUATION.test(line[i + 1] ?? "")) {
-			out += line.slice(i, i + 2);
+	let out = "";
+	for (let i = 0; i < text.length; ) {
+		const ch = text[i] ?? "";
+		if (ch === "\\" && COMMONMARK_ESCAPABLE_PUNCTUATION.test(text[i + 1] ?? "")) {
+			out += text.slice(i, i + 2);
 			i += 2;
-			continue;
-		}
-		if (ch === "`") {
-			const codeEnd = skipInlineCodeSpan(line, i);
-			out += line.slice(i, codeEnd);
-			i = codeEnd;
-			continue;
-		}
-		if (ch === "<") {
-			const matched = execCommonMarkInlineHtmlToken(line, i, scanState);
-			if (matched !== null) {
-				i += matched.length;
-				continue;
+		} else if (ch === "`") {
+			let end = i + 1;
+			while (end < text.length && text[end] === "`") end += 1;
+			const bucket = runs?.get(end - i);
+			if (bucket && cursors) {
+				let pos = cursors.get(end - i) ?? 0;
+				while (pos < bucket.length && (bucket[pos] ?? -1) < end) pos += 1;
+				cursors.set(end - i, pos);
+				if (bucket[pos] !== undefined) end = (bucket[pos] ?? 0) + (end - i);
 			}
+			out += text.slice(i, end);
+			i = end;
+		} else {
+			const matched = ch === "<" ? execCommonMarkInlineHtmlToken(text, i, scanState) : null;
+			if (matched !== null) {
+				if (matched.includes("\n")) out += "\n".repeat(matched.split("\n").length - 1);
+				i += matched.length;
+			} else { out += ch; i += 1; }
 		}
-		out += ch;
-		i += 1;
 	}
 	return out;
+}
+
+function consumeListMarker(cursor: LineColumnCursor, origIndent: number): ListMeta {
+	const leadCols = measureLeadingColumns(cursor);
+	consumeWhitespaceColumns(cursor, leadCols);
+	const len = matchListMarkerLength(cursor.line.slice(cursor.index), false);
+	const markerText = cursor.line.slice(cursor.index, cursor.index + len);
+	cursor.index += len; cursor.column += len;
+	const padding = Math.max(1, origIndent - leadCols - len);
+	consumeWhitespaceColumns(cursor, Math.min(padding, measureLeadingColumns(cursor)));
+	return { emittedIndent: null, leadCols, markerText, origIndent, padding };
+}
+
+function rewritePreviewLine(entry: PreviewLine, listMeta: Map<BlockContainer, ListMeta>): string {
+	const { containers, contentRel, kind, openedHereStart, rawLine, strippedRest } = entry;
+	const needsRewrite = (limit: number): boolean =>
+		containers.slice(0, limit).some((c) => c.kind === "list" && listMeta.get(c)?.emittedIndent !== c.indent);
+	const cursor: LineColumnCursor = { column: 0, index: 0, line: rawLine, virtualSpaces: 0 };
+	if (kind === "blank") {
+		if (!needsRewrite(containers.length)) return rawLine.slice(0, contentRel).replace(/[ \t]+$/, "");
+		let out = ""; let hasQuote = false;
+		for (const c of containers) {
+			if (c.kind === "blockquote") {
+				const lead = measureLeadingColumns(cursor);
+				if (!consumeBlockquoteMarker(cursor)) break;
+				out += `${" ".repeat(lead)}> `; hasQuote = true;
+			} else {
+				const m = listMeta.get(c);
+				if (!m || m.emittedIndent === null || measureLeadingColumns(cursor) < c.indent) break;
+				consumeWhitespaceColumns(cursor, c.indent);
+				out += " ".repeat(m.emittedIndent);
+			}
+		}
+		return hasQuote ? out.replace(/[ \t]+$/, "") : "";
+	}
+	const isCode = kind === "fenced-code" || kind === "indented-code";
+	if (!needsRewrite(openedHereStart)) {
+		for (const c of containers.slice(openedHereStart)) {
+			const m = c.kind === "list" ? listMeta.get(c) : undefined;
+			if (m) m.emittedIndent = m.origIndent;
+		}
+		return isCode ? rawLine : `${rawLine.slice(0, contentRel)}${strippedRest}`;
+	}
+	let out = ""; let prev: ListMeta | null = null; let lazyStopped = false;
+	const flush = (nextCols: number): number => {
+		if (!prev) return nextCols;
+		const total = (nextCols >= 4 ? 1 : Math.max(1, Math.min(prev.padding, 4 - nextCols))) + nextCols;
+		prev.emittedIndent = prev.leadCols + prev.markerText.length + (total >= 5 ? 1 : total);
+		prev = null;
+		return total;
+	};
+	for (let k = 0; k < containers.length; k += 1) {
+		const c = containers[k];
+		if (!c) break;
+		if (c.kind === "blockquote") {
+			const lead = measureLeadingColumns(cursor);
+			const colAfter = cursor.column + lead;
+			if (!consumeBlockquoteMarker(cursor)) { lazyStopped = true; break; }
+			out += " ".repeat(flush(lead)) + (cursor.column - colAfter - 1 > 0 ? "> " : ">");
+		} else {
+			const m = listMeta.get(c);
+			if (!m) break;
+			if (k < openedHereStart) {
+				const lazy = measureLeadingColumns(cursor) < c.indent;
+				if (!lazy) consumeWhitespaceColumns(cursor, c.indent);
+				if (m.emittedIndent === null) {
+					const hadPrev = prev !== null;
+					out += `${" ".repeat(flush(m.leadCols))}${m.markerText}`;
+					if (hadPrev) m.leadCols = 0;
+					prev = m;
+				} else if (!lazy) out += " ".repeat(m.emittedIndent);
+				if (lazy) { lazyStopped = true; break; }
+			} else {
+				const hadPrev = prev !== null;
+				consumeListMarker(cursor, c.indent);
+				out += `${" ".repeat(flush(m.leadCols))}${m.markerText}${" ".repeat(m.padding)}`;
+				m.emittedIndent = hadPrev ? m.origIndent - m.leadCols : m.origIndent;
+			}
+		}
+	}
+	if (lazyStopped && !prev) return `${rawLine.slice(0, contentRel)}${strippedRest}`;
+	if (prev) {
+		const rawExtra = isCode ? measureLeadingColumns(cursor)
+			: measureLeadingColumns({ column: cursor.column, index: 0, line: strippedRest, virtualSpaces: cursor.virtualSpaces });
+		const extra = !isCode && rawExtra >= 4 ? 0 : rawExtra;
+		return `${out}${" ".repeat(flush(extra))}${isCode ? rawLine.slice(nextNonSpaceIndex(cursor)) : strippedRest.replace(/^[ \t]+/, "")}`;
+	}
+	return isCode
+		? kind === "indented-code"
+			? `${out}${" ".repeat(measureLeadingColumns(cursor))}${rawLine.slice(nextNonSpaceIndex(cursor))}`
+			: `${out}${cursorRemainder(cursor)}`
+		: `${out}${cursor.virtualSpaces > 0 ? " ".repeat(cursor.virtualSpaces) : ""}${strippedRest}`;
 }
 
 /**
  * Strip raw HTML blocks and inline tags from a protected `raw` Markdown block
  * using CommonMark `html_input: 'strip'` semantics (matching EasyMDE's `main`
- * PHP `MarkdownRenderer`), delegating block classification to the shared PHP
- * CommonMark block engine so code blocks, list-nested indented code, and
- * container-bounded fences stay intact.
+ * PHP `MarkdownRenderer`), preserving list containers across stripped HTML
+ * blocks and multiline CommonMark §6.1 backtick code spans.
  */
 export function stripCommonMarkHtmlForPreview(rawMarkdown: string): string {
-	const lines = rawMarkdown.replace(/\r\n?/g, "\n").split("\n");
-	const kept: string[] = [];
 	const state = createPhpCommonMarkBlockState(true, true);
+	const listMeta = new Map<BlockContainer, ListMeta>();
+	const entries: PreviewLine[] = [];
 	let offset = 0;
-
-	for (const line of lines) {
+	for (const line of rawMarkdown.replace(/\r\n?/g, "\n").split("\n")) {
 		const lineStart = offset;
-		const lineEnd = lineStart + line.length;
-		const nextLineStart = lineEnd + 1;
+		const nextLineStart = lineStart + line.length + 1;
 		offset = nextLineStart;
-
-		const prevLeafKind = state.leaf?.kind ?? null;
-		const prevInlineBlockId =
-			state.leaf?.kind === "paragraph" ? state.leaf.inlineBlockId : -1;
-
-		advancePhpCommonMarkBlockLine(state, line, lineStart, lineEnd, nextLineStart);
-
+		const prevContainers = state.containers.slice();
+		advancePhpCommonMarkBlockLine(state, line, lineStart, lineStart + line.length, nextLineStart);
 		const scanned = state.lines[state.lines.length - 1];
-		if (!scanned) {
-			continue;
-		}
-		if (state.leaf?.kind === "html-block") {
-			continue;
-		}
-		const lastCodeRange =
-			state.blockCodeRanges.length > 0
-				? state.blockCodeRanges[state.blockCodeRanges.length - 1]
-				: undefined;
-		if (lastCodeRange !== undefined && lastCodeRange.end === nextLineStart) {
-			kept.push(line);
-			continue;
-		}
-
-		const contentRel = Math.max(0, scanned.contentOffset - lineStart);
-		const prefix = line.slice(0, contentRel);
-		const rest = line.slice(contentRel);
-		if (isCommonMarkBlankLine(rest)) {
-			if (kept.length > 0) {
-				kept.push(
-					scanned.consumedBlockquote ? prefix.replace(/[ \t]+$/, "") : "",
-				);
+		if (!scanned) continue;
+		let openedHereStart = 0;
+		while (openedHereStart < prevContainers.length && state.containers[openedHereStart] === prevContainers[openedHereStart]) openedHereStart += 1;
+		const containers = state.containers.slice();
+		if (containers.slice(openedHereStart).some((c) => c.kind === "list")) {
+			const cursor: LineColumnCursor = { column: 0, index: 0, line, virtualSpaces: 0 };
+			for (let k = 0; k < containers.length; k += 1) {
+				const c = containers[k];
+				if (!c) break;
+				if (c.kind === "blockquote") consumeBlockquoteMarker(cursor);
+				else if (k < openedHereStart) consumeWhitespaceColumns(cursor, c.indent);
+				else listMeta.set(c, consumeListMarker(cursor, c.indent));
 			}
-			continue;
 		}
-
-		const strippedRest = stripInlineHtmlOutsideCode(rest);
-		const continuedParagraph =
-			prevLeafKind === "paragraph" &&
-			state.leaf?.kind === "paragraph" &&
-			scanned.inlineBlockId === prevInlineBlockId;
-		if (continuedParagraph && isCommonMarkBlankLine(strippedRest)) {
-			// A stripped inline-only HTML line (e.g. standalone `<kbd>`) inside
-			// an open paragraph must not emit a blank line and split the `<p>`.
-			continue;
-		}
-		kept.push(`${prefix}${strippedRest}`);
+		const contentRel = Math.max(0, scanned.contentOffset - lineStart);
+		const kind: PreviewLineKind =
+			state.leaf?.kind === "html-block" ? "html-block"
+			: state.blockCodeRanges[state.blockCodeRanges.length - 1]?.end === nextLineStart
+				? (state.leaf?.kind === "indented-code" ? "indented-code" : "fenced-code")
+				: isCommonMarkBlankLine(line.slice(contentRel)) ? "blank" : "content";
+		entries.push({ containers, contentRel, kind, openedHereStart, rawLine: line, scanned, strippedRest: "" });
 	}
-
-	return kept
-		.join("\n")
-		.replace(/^(?:[ \t]*\n)+/, "")
-		.replace(/(?:\n[ \t]*)+$/, "");
+	for (let idx = 0; idx < entries.length; ) {
+		const entry = entries[idx];
+		if (entry?.kind !== "content") { idx += 1; continue; }
+		const blockId = entry.scanned.inlineBlockId;
+		let end = idx + 1;
+		while (blockId >= 0 && entries[end]?.kind === "content" && entries[end]?.scanned.inlineBlockId === blockId) end += 1;
+		const stripped = stripInlineHtmlOutsideCode(entries.slice(idx, end).map((e) => e.rawLine.slice(e.contentRel)).join("\n")).split("\n");
+		for (let j = idx; j < end; j += 1) {
+			const target = entries[j];
+			if (target) target.strippedRest = stripped[j - idx] ?? "";
+		}
+		idx = end;
+	}
+	const kept: string[] = [];
+	for (const e of entries) {
+		if (e.kind === "html-block" || (e.kind === "blank" && kept.length === 0)) continue;
+		if (e.kind === "content" && isCommonMarkBlankLine(e.strippedRest)) continue;
+		kept.push(e.kind === "blank" && !e.scanned.consumedBlockquote ? "" : rewritePreviewLine(e, listMeta));
+	}
+	return kept.join("\n").replace(/^(?:[ \t]*\n)+/, "").replace(/(?:\n[ \t]*)+$/, "");
 }
 
 const baseSerializer = DOMSerializer.fromSchema(visualEditorSchema);

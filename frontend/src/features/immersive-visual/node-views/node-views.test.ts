@@ -2675,4 +2675,230 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 			),
 		).toBe("```\n> ```\n<span>still code</span>\n```\noutside");
 	});
+
+	it("preserves list structure, start order, and nested containers when stripping list-prefixed HTML blocks (PR-R24-A2 Track A #6a + Track B #7)", () => {
+		const renderRaw = (md: string): HTMLDivElement => {
+			const host = document.createElement("div");
+			host.appendChild(
+				renderRawBlockPreview(document, md, {
+					fallbackLabel: "Raw",
+					footnotesLabel: "Footnotes",
+					viewWindow: window,
+				}),
+			);
+			return host;
+		};
+
+		// Track A #6a: `- <!-- x -->\n  keep` keeps list structure instead of flattening to `<p>keep</p>`.
+		expect(stripCommonMarkHtmlForPreview("- <!-- x -->\n  keep")).toBe("- keep");
+		const commentListHost = renderRaw("- <!-- x -->\n  keep");
+		expect(commentListHost.querySelector("ul > li")?.textContent).toBe("keep");
+		expect(commentListHost.querySelector("pre")).toBeNull();
+
+		// Track B #7a: `100. <div>\n\n     ## Heading` preserves `<ol start="100"><li><h2>Heading</h2></li></ol>` (no `<pre><code>`).
+		expect(stripCommonMarkHtmlForPreview("100. <div>\n\n     ## Heading")).toBe(
+			"100. ## Heading",
+		);
+		const orderedHeadingHost = renderRaw("100. <div>\n\n     ## Heading");
+		const orderedList = orderedHeadingHost.querySelector("ol");
+		expect(orderedList?.getAttribute("start")).toBe("100");
+		expect(orderedList?.querySelector("li h2")?.textContent).toBe("Heading");
+		expect(orderedHeadingHost.querySelector("pre")).toBeNull();
+
+		// Track B #7b: `  - <div>\n\n    bar` preserves list structure instead of turning `    bar` into `<pre><code>`.
+		expect(stripCommonMarkHtmlForPreview("  - <div>\n\n    bar")).toBe("  - bar");
+		const indentedListHost = renderRaw("  - <div>\n\n    bar");
+		expect(indentedListHost.querySelector("ul > li")?.textContent).toBe("bar");
+		expect(indentedListHost.querySelector("pre")).toBeNull();
+
+		// Track B #7c: `- - <div>\n\n    bar` preserves nested `<ul><li><ul><li>bar</li></ul></li></ul>` (no `<pre><code>`).
+		expect(stripCommonMarkHtmlForPreview("- - <div>\n\n    bar")).toBe("- - bar");
+		const nestedListHost = renderRaw("- - <div>\n\n    bar");
+		expect(nestedListHost.querySelector("ul > li > ul > li")?.textContent).toBe(
+			"bar",
+		);
+		expect(nestedListHost.querySelector("pre")).toBeNull();
+
+		// Pure HTML-only list item must NOT emit stray empty `<ul><li></li></ul>` (falls through to collapsed meta chip).
+		expect(stripCommonMarkHtmlForPreview("- <div>only</div>")).toBe("");
+		const htmlOnlyListHost = renderRaw("- <div>only</div>");
+		expect(htmlOnlyListHost.querySelector("ul, li")).toBeNull();
+		expect(
+			htmlOnlyListHost.querySelector(".easymde-protected-meta-chip")?.textContent,
+		).toBe("Raw");
+
+		// Multi-paragraph ordered list item preserves both paragraphs inside `<ol start="100"><li>`.
+		expect(
+			stripCommonMarkHtmlForPreview("100. <div>\n\n     para1\n\n     para2"),
+		).toBe("100. para1\n\n     para2");
+		const multiParaHost = renderRaw("100. <div>\n\n     para1\n\n     para2");
+		expect(multiParaHost.querySelector("ol")?.getAttribute("start")).toBe("100");
+		expect(
+			Array.from(multiParaHost.querySelectorAll("ol > li > p")).map(
+				(p) => p.textContent,
+			),
+		).toEqual(["para1", "para2"]);
+		expect(multiParaHost.querySelector("pre")).toBeNull();
+
+		// Wave 25 Track B #8 regression guard: list-nested indented code stays intact.
+		expect(stripCommonMarkHtmlForPreview("-     code <span>x</span>")).toBe(
+			"-     code <span>x</span>",
+		);
+		const indentedCodeHost = renderRaw("-     code <span>x</span>");
+		expect(indentedCodeHost.querySelector("ul > li pre code")?.textContent).toBe(
+			"code <span>x</span>",
+		);
+
+		// Blockquote and interleaved list+blockquote containers stay intact across HTML blocks.
+		expect(stripCommonMarkHtmlForPreview("> <!-- x -->\n> keep")).toBe("> keep");
+		expect(stripCommonMarkHtmlForPreview("> <div>x</div>\n>\n> keep")).toBe(
+			"> keep",
+		);
+		// CommonMark Type 6 `<div>` without a blank line continues across `> keep` (matching PHP).
+		expect(stripCommonMarkHtmlForPreview("> <div>x</div>\n> keep")).toBe("");
+		const bqHost = renderRaw("> <!-- x -->\n> keep");
+		expect(bqHost.querySelector("blockquote > p")?.textContent).toBe("keep");
+
+		expect(stripCommonMarkHtmlForPreview("> - <div>\n>\n>   keep")).toBe(
+			"> - keep",
+		);
+		const bqListHost = renderRaw("> - <div>\n>\n>   keep");
+		expect(bqListHost.querySelector("blockquote > ul > li")?.textContent).toBe(
+			"keep",
+		);
+
+		expect(
+			stripCommonMarkHtmlForPreview("- > <div>\n  > hidden\n\n  > visible"),
+		).toBe("- > visible");
+		const listBqHost = renderRaw("- > <div>\n  > hidden\n\n  > visible");
+		expect(
+			listBqHost.querySelector("ul > li > blockquote > p")?.textContent,
+		).toBe("visible");
+
+		expect(stripCommonMarkHtmlForPreview("- > - <div>\n  >\n  >   keep")).toBe(
+			"- > - keep",
+		);
+		const listBqListHost = renderRaw("- > - <div>\n  >\n  >   keep");
+		expect(
+			listBqListHost.querySelector("ul > li > blockquote > ul > li")
+				?.textContent,
+		).toBe("keep");
+
+		// Extra-padded list markers, indented/fenced code inside pending lists, nested empty inner list, and tab markers.
+		const extraPadCodeHost = renderRaw(
+			"1.    <div>\n\n          line1\n          line2\n\n       para2",
+		);
+		expect(extraPadCodeHost.querySelectorAll("ol > li pre")).toHaveLength(1);
+		expect(extraPadCodeHost.querySelector("ol > li pre code")?.textContent).toBe(
+			"line1\nline2",
+		);
+		expect(
+			Array.from(extraPadCodeHost.querySelectorAll("ol > li > p"))
+				.map((p) => p.textContent)
+				.filter(Boolean),
+		).toEqual(["para2"]);
+
+		const fencedPendingHost = renderRaw(
+			"100. <div>\n\n     ```js\n     <span>x</span>\n     ```",
+		);
+		expect(fencedPendingHost.querySelector("ol")?.getAttribute("start")).toBe(
+			"100",
+		);
+		expect(
+			fencedPendingHost.querySelector("ol > li pre code.language-js")
+				?.textContent,
+		).toBe("<span>x</span>");
+
+		expect(stripCommonMarkHtmlForPreview("- - <div>\n\n  outer-still")).toBe(
+			"- outer-still",
+		);
+		expect(stripCommonMarkHtmlForPreview("- <div>\n\n  <span></span>\n\n  keep")).toBe(
+			"- keep",
+		);
+		const tabMarkerHost = renderRaw("-\t<div>\n\n    keep");
+		expect(tabMarkerHost.querySelector("ul > li")?.textContent).toBe("keep");
+		const tabCodeHost = renderRaw("-\t<div>\n\n\t\tcode");
+		expect(tabCodeHost.querySelector("ul > li pre code")?.textContent).toBe(
+			"code",
+		);
+		const nestedInterruptHost = renderRaw("- outer\n  - <!-- x -->\n    inner");
+		expect(
+			nestedInterruptHost.querySelector("ul > li > ul > li")?.textContent,
+		).toBe("inner");
+	});
+
+	it("preserves multiline inline backtick code spans across paragraph lines while staying O(N) on adversarial unclosed backticks (PR-R24-A2 Track A #6b)", () => {
+		const renderRaw = (md: string): HTMLDivElement => {
+			const host = document.createElement("div");
+			host.appendChild(
+				renderRawBlockPreview(document, md, {
+					fallbackLabel: "Raw",
+					footnotesLabel: "Footnotes",
+					viewWindow: window,
+				}),
+			);
+			return host;
+		};
+
+		// Track A #6b primary reproducer: single-backtick code span spanning lines inside raw HTML block.
+		expect(stripCommonMarkHtmlForPreview("<div>\n\n`a\n<b>x`")).toBe("`a\n<b>x`");
+		const singleSpanHost = renderRaw("<div>\n\n`a\n<b>x`");
+		expect(singleSpanHost.querySelector("p > code")?.textContent).toBe("a <b>x");
+
+		// Double-backtick multiline code span containing nested single backticks and HTML tags.
+		const doubleSpanMd = "``a\n<span>`b`</span>\nc``";
+		expect(stripCommonMarkHtmlForPreview(doubleSpanMd)).toBe(doubleSpanMd);
+		const doubleSpanHost = renderRaw(doubleSpanMd);
+		expect(doubleSpanHost.querySelector("p > code")?.textContent).toBe(
+			"a <span>`b`</span> c",
+		);
+
+		// Unclosed backtick does NOT form a code span (CommonMark §6.1), so `<b>` IS stripped.
+		expect(stripCommonMarkHtmlForPreview("`a\n<b>x")).toBe("`a\nx");
+		const unclosedHost = renderRaw("`a\n<b>x");
+		expect(unclosedHost.querySelector("code")).toBeNull();
+		expect(unclosedHost.querySelector("p")?.textContent).toBe("`a\nx");
+
+		// Escaped opening backtick is literal, so `<b>` IS stripped.
+		expect(stripCommonMarkHtmlForPreview("\\`a\n<b>x`")).toBe("\\`a\nx`");
+		const escapedHost = renderRaw("\\`a\n<b>x`");
+		expect(escapedHost.querySelector("code")).toBeNull();
+		expect(escapedHost.querySelector("p")?.textContent).toBe("`a\nx`");
+
+		// Multiline backtick spans across blockquotes, list items, pending list items, and Setext headings.
+		const bqCodeHost = renderRaw("> `a\n> <b>x`");
+		expect(bqCodeHost.querySelector("blockquote p code")?.textContent).toBe(
+			"a <b>x",
+		);
+		const listCodeHost = renderRaw("- <div>\n\n  `a\n  <b>x`");
+		expect(listCodeHost.querySelector("ul > li code")?.textContent).toBe(
+			"a <b>x",
+		);
+		const setextCodeHost = renderRaw("`a\n<b>x`\n===");
+		expect(setextCodeHost.querySelector("h1 > code")?.textContent).toBe(
+			"a <b>x",
+		);
+		// Backslash inside open code span does NOT escape the closing backtick.
+		const bsCloserHost = renderRaw("`a\n<b>\\`");
+		expect(bsCloserHost.querySelector("p > code")?.textContent).toBe("a <b>\\");
+
+		// Code spans never cross blank lines, headings, or blockquote boundaries.
+		expect(stripCommonMarkHtmlForPreview("`a\n\n<b>x`")).toBe("`a\n\nx`");
+		expect(stripCommonMarkHtmlForPreview("`a\n# <b>x`")).toBe("`a\n# x`");
+		expect(stripCommonMarkHtmlForPreview("`a\n> <b>x`")).toBe("`a\n> x`");
+
+		// Adversarial O(N) guard: 20,000+ unclosed backticks across distinct lengths and mixed runs.
+		const distinctUnclosed = Array.from({ length: 200 }, (_, n) =>
+			"`".repeat(n + 1),
+		).join("a");
+		const mixedUnclosed = `\`${"``a".repeat(10000)}<b>x</b>`;
+		const perfStart = performance.now();
+		expect(stripCommonMarkHtmlForPreview(distinctUnclosed)).toBe(
+			distinctUnclosed,
+		);
+		expect(stripCommonMarkHtmlForPreview(mixedUnclosed)).toBe(
+			`\`${"``a".repeat(10000)}x`,
+		);
+		expect(performance.now() - perfStart).toBeLessThan(150);
+	});
 });

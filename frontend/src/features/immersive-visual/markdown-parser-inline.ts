@@ -326,6 +326,7 @@ export function mapInlineTokens(
 	}
 	const output: ProseMirrorNode[] = [];
 	const markStack: Mark[] = [];
+	const linkOccurrences = new Map<string, number>();
 	let pendingPlainText = "";
 
 	const flushPlainText = (): void => {
@@ -439,9 +440,13 @@ export function mapInlineTokens(
 					preScan,
 				);
 				const linkTitle = effectiveTitle.length > 0 ? effectiveTitle : null;
+				const occurrenceKey = JSON.stringify([linkHref, linkTitle]);
+				const occurrenceIndex = linkOccurrences.get(occurrenceKey) ?? 0;
+				linkOccurrences.set(occurrenceKey, occurrenceIndex + 1);
 				const linkMark = visualEditorSchema.marks.link.create({
 					href: linkHref,
 					title: linkTitle,
+					boundaryKey: occurrenceIndex > 0 ? String(occurrenceIndex) : null,
 				});
 				if (collectors) {
 					const rawRefMeta = readRawReferenceLinkMeta(token);

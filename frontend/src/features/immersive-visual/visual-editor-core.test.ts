@@ -3356,7 +3356,7 @@ describe("PR-R17-A reference definition preservation, inline link title parity, 
 			if (found === null && node.isText) {
 				const mark = node.marks.find((m) => m.type.name === "link");
 				if (mark) {
-					found = mark.attrs as Record<string, unknown>;
+					found = { href: mark.attrs.href, title: mark.attrs.title };
 				}
 			}
 			return found === null;
@@ -4936,7 +4936,7 @@ describe("PR-R21-A PHP CommonMark HTML blocks, NBSP blank lines, list-marker HTM
 			reparsedDeleted
 				.child(1)
 				.firstChild?.marks.find((mark) => mark.type.name === "link")?.attrs,
-		).toEqual({ href: "/r", title: "first\n\u00a0\n(last" });
+		).toMatchObject({ href: "/r", title: "first\n\u00a0\n(last" });
 	});
 
 	it("routes CommonMark Types 1-7 HTML blocks directly without legacy HTML-pair corruption (Track B #1)", () => {
@@ -7604,7 +7604,7 @@ describe("PR-R24-A1 PHP-exact table math, nested/interleaved table-align, lazy t
 		expect(bodyTable?.child(1).childCount).toBe(2);
 		const bodyLinkText = bodyTable?.child(1).child(0).child(0).child(0);
 		expect(bodyLinkText?.text).toBe("link");
-		expect(bodyLinkText?.marks[0]?.attrs).toEqual({
+		expect(bodyLinkText?.marks[0]?.attrs).toMatchObject({
 			href: "/u",
 			title: "$a|b$",
 		});
@@ -7630,7 +7630,7 @@ describe("PR-R24-A1 PHP-exact table math, nested/interleaved table-align, lazy t
 		expect(
 			headerLinkDoc.firstChild?.child(0).child(0).child(0).child(0).marks[0]
 				?.attrs,
-		).toEqual({ href: "/u", title: "$a|b$" });
+		).toMatchObject({ href: "/u", title: "$a|b$" });
 
 		// Track B F4 (3): blank-line-bridging multiline `\(...\)` inside a link title
 		// stays one paragraph and restores the exact raw math string.
@@ -7640,7 +7640,7 @@ describe("PR-R24-A1 PHP-exact table math, nested/interleaved table-align, lazy t
 		expect(blankTitleGuard.initialDoc.firstChild?.type.name).toBe("paragraph");
 		const blankLinkNode = blankTitleGuard.initialDoc.firstChild?.child(0);
 		expect(blankLinkNode?.text).toBe("link");
-		expect(blankLinkNode?.marks[0]?.attrs).toEqual({
+		expect(blankLinkNode?.marks[0]?.attrs).toMatchObject({
 			href: "/u",
 			title: "\\(a\n\nb\\)",
 		});
@@ -7818,7 +7818,7 @@ describe("PR-R24-A1 PHP-exact table math, nested/interleaved table-align, lazy t
 			{ kind: "math-inline", rawMarkdown: "$c$" },
 		]);
 		const proseLink = proseDoc.firstChild?.child(0);
-		expect(proseLink?.marks[0]?.attrs).toEqual({
+		expect(proseLink?.marks[0]?.attrs).toMatchObject({
 			href: "https://example.com",
 			title: "a ( b",
 		});

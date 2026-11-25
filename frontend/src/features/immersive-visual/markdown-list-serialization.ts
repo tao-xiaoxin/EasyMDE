@@ -33,7 +33,7 @@ export const PARAGRAPH_INTERRUPTING_LIST_FIRST_LINE =
 
 function nodeContainsString(node: ProseMirrorNode, needle: string): boolean {
 	let found = false;
-	node.descendants((descendant) => {
+	const inspect = (descendant: ProseMirrorNode): boolean => {
 		if (found) {
 			return false;
 		}
@@ -56,21 +56,41 @@ function nodeContainsString(node: ProseMirrorNode, needle: string): boolean {
 			}
 		}
 		return true;
-	});
+	};
+	if (!inspect(node)) {
+		return true;
+	}
+	node.descendants(inspect);
 	return found;
+}
+
+function rawProtectedBlockHasMultilineMath(node: ProseMirrorNode): boolean {
+	if (
+		node.type.name !== "protected_block" ||
+		node.attrs.kind !== "raw" ||
+		typeof node.attrs.rawMarkdown !== "string"
+	) {
+		return false;
+	}
+	const raw = node.attrs.rawMarkdown;
+	return (
+		raw.includes("\n") &&
+		(raw.includes("\\(") || raw.includes("\\[") || raw.includes("$$"))
+	);
 }
 
 /**
  * Returns a collision-free sentinel for protecting physical newlines inside
- * serialized `protected_inline` bodies (both `math-inline` and `raw-inline`
- * atoms wrapping multiline `\(...\)`) during blockquote and list container
- * prefixing, or `null` when `node` contains none (zero-overhead fast path).
+ * serialized `protected_inline` bodies, raw `protected_block` math spans
+ * (`\(...\)`, `\[...\]`, `$$...$$`), and multiline link/image titles during
+ * blockquote and list container prefixing, or `null` when `node` contains none
+ * (zero-overhead fast path).
  */
 export function createMathNewlineSentinelForNode(
 	node: ProseMirrorNode,
 ): string | null {
 	let hasMultilineProtectedInline = false;
-	node.descendants((descendant) => {
+	const inspect = (descendant: ProseMirrorNode): boolean => {
 		if (hasMultilineProtectedInline) {
 			return false;
 		}
@@ -78,11 +98,7 @@ export function createMathNewlineSentinelForNode(
 			(descendant.type.name === "protected_inline" &&
 				typeof descendant.attrs.rawMarkdown === "string" &&
 				descendant.attrs.rawMarkdown.includes("\n")) ||
-			(descendant.type.name === "protected_block" &&
-				descendant.attrs.kind === "raw" &&
-				typeof descendant.attrs.rawMarkdown === "string" &&
-				descendant.attrs.rawMarkdown.includes("\n") &&
-				descendant.attrs.rawMarkdown.includes("\\(")) ||
+			rawProtectedBlockHasMultilineMath(descendant) ||
 			(descendant.type.name === "image" &&
 				typeof descendant.attrs.title === "string" &&
 				descendant.attrs.title.includes("\n"))
@@ -101,7 +117,10 @@ export function createMathNewlineSentinelForNode(
 			}
 		}
 		return true;
-	});
+	};
+	if (inspect(node)) {
+		node.descendants(inspect);
+	}
 	if (!hasMultilineProtectedInline) {
 		return null;
 	}

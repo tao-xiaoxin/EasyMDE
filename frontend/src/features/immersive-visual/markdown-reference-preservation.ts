@@ -12,7 +12,10 @@ import {
 	type TitleDecodePreScan,
 } from "./markdown-parser-inline";
 import { restoreProtectedInlineSentinels } from "./markdown-prescanner";
-import { measureIndentColumns } from "./markdown-prescanner-containers";
+import {
+	measureIndentColumns,
+	stripUpToIndentColumns,
+} from "./markdown-prescanner-containers";
 import { startsParagraphInterruptingBlock } from "./markdown-prescanner-tables";
 
 type InlineRuleFn = Parameters<
@@ -36,7 +39,7 @@ export type EasyMdeBlockEnv = {
 	tableAlignMarkers?: ReadonlyMap<string, string>;
 };
 
-export type LazyAfterReferenceDeps = Readonly<{
+type LazyAfterReferenceDeps = Readonly<{
 	getKnownReferenceLabels: (
 		refs: Record<string, { href: string; title: string }>,
 	) => Set<string>;
@@ -90,7 +93,7 @@ export function hasReferenceLabelMeta(meta: unknown): boolean {
  * directly on the raw Markdown title without double-decoding `markdown-it`'s
  * HTML5/Windows-1252 entity output.
  */
-export function extractRawInlineTitle(
+function extractRawInlineTitle(
 	state: InlineRuleState,
 	bracketPos: number,
 	endPos: number,
@@ -147,7 +150,7 @@ export function extractRawInlineTitle(
 	return state.src.slice(titleStart + 1, titleRes.pos - 1);
 }
 
-export type RawReferenceParts = Readonly<{
+type RawReferenceParts = Readonly<{
 	rawDestination: string | null;
 	rawTitle: string | null;
 }>;
@@ -217,31 +220,6 @@ export function extractRawReferenceParts(
 	};
 }
 
-function stripLeadingIndentColumns(line: string, maxCols: number): string {
-	if (maxCols <= 0 || line.length === 0) {
-		return line;
-	}
-	let col = 0;
-	let idx = 0;
-	while (idx < line.length && col < maxCols) {
-		const code = line.charCodeAt(idx);
-		if (code === 0x20) {
-			col += 1;
-			idx += 1;
-		} else if (code === 0x09) {
-			const nextCol = col + (4 - (col % 4));
-			idx += 1;
-			if (nextCol > maxCols) {
-				return `${" ".repeat(nextCol - maxCols)}${line.slice(idx)}`;
-			}
-			col = nextCol;
-		} else {
-			break;
-		}
-	}
-	return idx === 0 ? line : line.slice(idx);
-}
-
 /**
  * Strips up to line 0's leading column indent from every line of `text`,
  * preserving relative continuation indentation while guaranteeing line 0
@@ -256,7 +234,7 @@ export function dedentBlockToLineZero(text: string): string {
 	}
 	return text
 		.split("\n")
-		.map((line) => stripLeadingIndentColumns(line, baseIndent))
+		.map((line) => stripUpToIndentColumns(line, baseIndent))
 		.join("\n");
 }
 

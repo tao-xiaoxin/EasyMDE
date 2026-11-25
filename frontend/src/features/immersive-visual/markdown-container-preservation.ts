@@ -1,5 +1,4 @@
-import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
-import { normalizeReferenceLabel } from "./markdown-escape";
+import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
 	type BlockSerializer,
 	isLooseList,
@@ -16,36 +15,23 @@ import {
 	structurallyEqual,
 } from "./markdown-node-alignment";
 import {
-	type BuiltVisualBlockSources,
-	extractReferenceDefinitionLabels,
-	inspectReferenceDefinitionBlock,
 	type ParsedEnvReferences,
 	type ParsedVisualBlockSource,
-	type ParsedVisualDocument,
-	type ParsedVisualSharedGroup,
 	parseMarkdownWithBlockSources,
-	type ReferenceImageOrigin,
-	type ReferenceLinkOrigin,
-	wouldReferenceDefinitionAbsorbFollowingBlock,
 } from "./markdown-parser";
 import {
 	matchListMarker,
 	measureIndentColumns,
+	readBlockquotePrefix,
+	stripBlockquoteDepth,
 } from "./markdown-prescanner-containers";
 import { wouldRawHtmlInterruptParagraph } from "./markdown-prescanner-inline";
-import { extractPhpPartialReferenceTitle } from "./markdown-reference-preservation";
 import { sanitizeBulletMarker } from "./visual-schema";
-
-export type ReferencePreserveResolver = Readonly<{
-	isPartialTitleRefDef: (node: ProseMirrorNode) => boolean;
-	resolveImage: (node: ProseMirrorNode) => ReferenceImageOrigin | null;
-	resolveLink: (mark: Mark) => ReferenceLinkOrigin | null;
-}>;
 
 /**
  * Container-level untouched-source preservation for lists (at top level and
- * inside blockquotes), plus shared join, lazy-absorption, and list-swallow
- * guards used by the unified container preservation engine.
+ * inside blockquotes), plus shared depth-stripping, join, lazy-absorption, and
+ * list-swallow guards used by the unified container preservation engine.
  */
 
 const LIST_ITEM_START = /^( {0,3})([-*+]|\d{1,9}[.)])([ \t]+|$)/;
@@ -64,7 +50,7 @@ type ListItemSlices = Readonly<{
 }>;
 
 // ---------------------------------------------------------------------------
-// Shared join, lazy-absorption, and list-swallow guards
+// Shared depth-aware, join, lazy-absorption, and list-swallow guards
 // ---------------------------------------------------------------------------
 
 export function wouldBeLazilyAbsorbedByPrevious(
@@ -124,11 +110,51 @@ export function endsWithBlankBlockquoteLine(text: string): boolean {
 	return BLANK_BLOCKQUOTE_LINE.test(lastLine);
 }
 
+export function stripAtDepth(text: string, depth: number): string {
+	if (depth <= 0) return text;
+	return text
+		.split("\n")
+		.map((line) => stripBlockquoteDepth(line, depth) ?? line)
+		.join("\n");
+}
+
+export function tryStripAllLinesAtDepth(
+	text: string,
+	depth: number,
+): string | null {
+	if (depth <= 0) return text;
+	const lines = text.split("\n");
+	const stripped: string[] = [];
+	for (let i = 0; i < lines.length; i += 1) {
+		const rest = stripBlockquoteDepth(lines[i] ?? "", depth);
+		if (rest === null) return null;
+		stripped.push(rest);
+	}
+	return stripped.join("\n");
+}
+
+export function leadingIndentAtDepth(
+	emittedText: string,
+	depth: number,
+): number {
+	const nl = emittedText.indexOf("\n");
+	const firstLine = nl === -1 ? emittedText : emittedText.slice(0, nl);
+	if (depth <= 0) {
+		return measureIndentColumns(firstLine);
+	}
+	const bq = readBlockquotePrefix(firstLine);
+	if (bq.depth === depth) {
+		return measureIndentColumns(bq.rest, bq.column);
+	}
+	const stripped = stripBlockquoteDepth(firstLine, depth);
+	return measureIndentColumns(stripped ?? firstLine);
+}
+
 /**
  * Computes the CommonMark §5.2 content indentation column of the trailing
  * top-level item in `listText` for `listNode`.
  */
-export function trailingListItemContentIndent(
+function trailingListItemContentIndent(
 	listText: string,
 	listNode: ProseMirrorNode,
 ): number {
@@ -271,7 +297,7 @@ const verifiedSliceCache = new WeakMap<
 >();
 
 /** Item slices proven to re-parse to exactly the baseline item nodes. */
-export function verifiedListItemSlices(
+function verifiedListItemSlices(
 	block: ParsedVisualBlockSource,
 	envReferences?: ParsedEnvReferences,
 	rawOverride?: string,
@@ -399,6 +425,62 @@ function listMarkdownParsesTo(
 }
 
 /**
+ * Predicts per-item raw-slice reusability for `serializeListPreservingItems`
+ * without duplicating slice verification or ordered-marker alignment logic.
+ * Returns `null` when the list falls back to full canonical serialization.
+ */
+export function resolvePreservedListItemReusability(
+	listNode: ProseMirrorNode,
+	origBlock: ParsedVisualBlockSource,
+	depth: number,
+	envReferences: ParsedEnvReferences | undefined,
+	nodeHasInvalidatedRef: ((node: ProseMirrorNode) => boolean) | null,
+): ReadonlyArray<boolean> | null {
+	if (origBlock.raw === null || !listAttrsCompatible(listNode, origBlock.node)) {
+		return null;
+	}
+	const innerRaw = tryStripAllLinesAtDepth(origBlock.raw, depth);
+	if (innerRaw === null) return null;
+	const slices = verifiedListItemSlices(origBlock, envReferences, innerRaw);
+	if (!slices) return null;
+	const orig = origBlock.node;
+	const matched = alignNodes(
+		childrenOf(listNode),
+		childrenOf(orig),
+		structurallyEqual,
+	);
+	const reusable = new Array<boolean>(listNode.childCount).fill(false);
+	for (let idx = 0; idx < listNode.childCount; idx += 1) {
+		const matchedIdx = matched[idx] ?? -1;
+		let canReuse =
+			matchedIdx >= 0 && !nodeHasInvalidatedRef?.(orig.child(matchedIdx));
+		if (canReuse && idx === 0 && listNode.type.name === "ordered_list") {
+			const firstSlice = slices.items[matchedIdx];
+			if (firstSlice === undefined) {
+				canReuse = false;
+			} else {
+				const candidates = alignFirstOrderedMarker(listNode, firstSlice);
+				if (
+					candidates.length === 0 ||
+					(candidates[0] !== firstSlice &&
+						!candidates.some((candidate) =>
+							listMarkdownParsesTo(
+								candidate,
+								listNode.type.create(listNode.attrs, [listNode.child(0)]),
+								envReferences,
+							),
+						))
+				) {
+					canReuse = false;
+				}
+			}
+		}
+		reusable[idx] = canReuse;
+	}
+	return reusable;
+}
+
+/**
  * Serialize an edited list (top-level or blockquote-nested), reusing every
  * untouched item's exact raw slice (unless invalidated by a deleted/shadowed
  * reference definition) and original inter-item separators. Returns `null`
@@ -485,379 +567,4 @@ export function serializeListPreservingItems(
 		if (listMarkdownParsesTo(output, listNode, envReferences)) return output;
 	}
 	return assemble(null);
-}
-
-// ---------------------------------------------------------------------------
-// Unified tree-order reference-definition liveness & invalidation checks
-// ---------------------------------------------------------------------------
-
-type SharedGroupLookupEntry = Readonly<{
-	blocks: ReadonlyArray<ParsedVisualBlockSource>;
-	group: ParsedVisualSharedGroup;
-}>;
-
-function isSharedGroupIntactInParent(
-	parent: ProseMirrorNode,
-	startChildIdx: number,
-	blocks: ReadonlyArray<ParsedVisualBlockSource>,
-	startGroup: ParsedVisualSharedGroup,
-	blockquoteSources:
-		| ReadonlyMap<ProseMirrorNode, BuiltVisualBlockSources>
-		| undefined,
-): boolean {
-	let curIdx = startChildIdx;
-	let curGroup = startGroup;
-	while (true) {
-		const len = curGroup.endIndex - curGroup.startIndex;
-		if (curIdx + len > parent.childCount) return false;
-		for (let offset = 0; offset < len; offset += 1) {
-			const origMember = blocks[curGroup.startIndex + offset];
-			if (
-				!origMember ||
-				!structurallyEqual(parent.child(curIdx + offset), origMember.node)
-			) {
-				return false;
-			}
-		}
-		const nextOrig = blocks[curGroup.endIndex];
-		if (!nextOrig) return true;
-		const nextGroup =
-			nextOrig.sharedGroup?.startIndex === curGroup.endIndex
-				? nextOrig.sharedGroup
-				: undefined;
-		const nextSep = nextGroup
-			? nextGroup.separatorBefore
-			: nextOrig.separatorBefore;
-		if (nextSep !== "\n") return true;
-		const afterIdx = curIdx + len;
-		if (afterIdx >= parent.childCount) return false;
-		if (nextGroup) {
-			curIdx = afterIdx;
-			curGroup = nextGroup;
-			continue;
-		}
-		const nextChild = parent.child(afterIdx);
-		if (structurallyEqual(nextChild, nextOrig.node)) return true;
-		return (
-			nextChild.childCount > 0 &&
-			nextOrig.node.childCount > 0 &&
-			structurallyEqual(nextChild.child(0), nextOrig.node.child(0)) &&
-			((nextChild.type.name === "blockquote" &&
-				nextOrig.node.type.name === "blockquote" &&
-				Boolean(blockquoteSources?.has(nextOrig.node))) ||
-				(isNestedList(nextChild) &&
-					listAttrsCompatible(nextChild, nextOrig.node) &&
-					nextOrig.raw !== null))
-		);
-	}
-}
-
-function buildSharedGroupByFirstNode(
-	parsed: ParsedVisualDocument,
-): ReadonlyMap<ProseMirrorNode, SharedGroupLookupEntry> {
-	const map = new Map<ProseMirrorNode, SharedGroupLookupEntry>();
-	const record = (blocks: ReadonlyArray<ParsedVisualBlockSource>): void => {
-		for (let i = 0; i < blocks.length; i += 1) {
-			const block = blocks[i];
-			if (block?.sharedGroup && block.sharedGroup.startIndex === i) {
-				map.set(block.node, { blocks, group: block.sharedGroup });
-			}
-		}
-	};
-	record(parsed.blocks);
-	if (parsed.blockquoteSources) {
-		for (const bqSource of parsed.blockquoteSources.values()) {
-			record(bqSource.blocks);
-		}
-	}
-	return map;
-}
-
-function hasPartialTitleFollowerSibling(
-	parent: ProseMirrorNode,
-	refIdx: number,
-	refNode: ProseMirrorNode,
-	label: string,
-	parsed: ParsedVisualDocument,
-	sharedGroupByFirstNode: ReadonlyMap<ProseMirrorNode, SharedGroupLookupEntry>,
-	parentInBrokenSharedGroup: boolean,
-	serializeBlock: BlockSerializer,
-): boolean {
-	if (refIdx + 1 >= parent.childCount) {
-		return false;
-	}
-	const nextSibling = parent.child(refIdx + 1);
-	if (
-		nextSibling.type.name !== "paragraph" &&
-		nextSibling.type.name !== "heading" &&
-		nextSibling.type.name !== "table"
-	) {
-		return false;
-	}
-	if (!/^[ \t]*["'(]/.test(nextSibling.textContent)) {
-		return false;
-	}
-	let serializedNext: string | null = null;
-	if (nextSibling.type.name === "paragraph") {
-		const refRaw =
-			typeof refNode.attrs.rawMarkdown === "string"
-				? refNode.attrs.rawMarkdown
-				: "";
-		const refInfo = inspectReferenceDefinitionBlock(refRaw);
-		serializedNext = serializeBlock(nextSibling);
-		if (
-			!refInfo.isRefDef ||
-			refInfo.lastHasTitle ||
-			wouldReferenceDefinitionAbsorbFollowingBlock(
-				refInfo.lastRaw,
-				serializedNext,
-			)
-		) {
-			return false;
-		}
-	}
-	// If the untouched follower (or an enclosing blockquote containing it) belongs
-	// to a baseline sharedGroup (e.g. `"a $$x$$` or `> "a $$x$$`) whose group broke
-	// because a sibling changed, canonical serialization drops the trailing space
-	// before `$$x$$` (`"a \n"` -> `"a\n"`). Mark the refdef non-intact so untouched
-	// references re-serialize inline with the exact baseline title.
-	const sharedEntry = sharedGroupByFirstNode.get(nextSibling);
-	const brokenSharedFollower =
-		parentInBrokenSharedGroup ||
-		(sharedEntry !== undefined &&
-			!isSharedGroupIntactInParent(
-				parent,
-				refIdx + 1,
-				sharedEntry.blocks,
-				sharedEntry.group,
-				parsed.blockquoteSources,
-			));
-	if (brokenSharedFollower) {
-		const nextText = serializedNext ?? serializeBlock(nextSibling);
-		const lines = nextText.split("\n");
-		const canonicalTitle = extractPhpPartialReferenceTitle(
-			nextSibling.type.name === "table" ? lines.slice(0, 1) : lines,
-		);
-		const expectedTitle = parsed.envReferences?.[label]?.title ?? "";
-		if ((canonicalTitle ?? "") !== expectedTitle) {
-			return false;
-		}
-	}
-	return true;
-}
-
-/**
- * Single recursive tree-order walker over `doc` determining which baseline
- * reference definitions remain alive and unshadowed at every nesting depth
- * (top-level, lists, list items, and nested blockquotes).
- */
-export function computeIntactRefDefLabels(
-	doc: ProseMirrorNode,
-	parsed: ParsedVisualDocument,
-	serializeBlock: BlockSerializer,
-): Readonly<{
-	allIntact: Set<string>;
-	partialTitleIntact: Set<string>;
-}> {
-	const allIntact = new Set<string>();
-	const partialTitleIntact = new Set<string>();
-	const firstByLabel = parsed.firstRefDefNodeByLabel;
-	const labelsByNode = parsed.refDefLabelsByNode;
-	const hasRefs =
-		(parsed.referenceLinks && parsed.referenceLinks.size > 0) ||
-		(parsed.referenceImages && parsed.referenceImages.size > 0) ||
-		(parsed.referencedLabelsByNode && parsed.referencedLabelsByNode.size > 0);
-	if (
-		!hasRefs ||
-		!firstByLabel ||
-		firstByLabel.size === 0 ||
-		!labelsByNode ||
-		labelsByNode.size === 0
-	) {
-		return { allIntact, partialTitleIntact };
-	}
-	const partialLabels = parsed.phpPartialTitleRefLabels;
-	const sharedGroupByFirstNode =
-		partialLabels && partialLabels.size > 0
-			? buildSharedGroupByFirstNode(parsed)
-			: new Map<ProseMirrorNode, SharedGroupLookupEntry>();
-	const seenLabels = new Set<string>();
-
-	const walk = (
-		parent: ProseMirrorNode,
-		parentInBrokenSharedGroup: boolean,
-	): void => {
-		for (let i = 0; i < parent.childCount; i += 1) {
-			const child = parent.child(i);
-			if (
-				child.type.name === "protected_block" &&
-				child.attrs.kind === "raw" &&
-				typeof child.attrs.rawMarkdown === "string"
-			) {
-				const origLabels = labelsByNode.get(child);
-				if (origLabels) {
-					for (const label of origLabels) {
-						if (seenLabels.has(label)) continue;
-						seenLabels.add(label);
-						if (firstByLabel.get(label) !== child) continue;
-						if (partialLabels?.has(label)) {
-							if (
-								hasPartialTitleFollowerSibling(
-									parent,
-									i,
-									child,
-									label,
-									parsed,
-									sharedGroupByFirstNode,
-									parentInBrokenSharedGroup,
-									serializeBlock,
-								)
-							) {
-								allIntact.add(label);
-								partialTitleIntact.add(label);
-							}
-						} else {
-							allIntact.add(label);
-						}
-					}
-				} else {
-					const newLabels = extractReferenceDefinitionLabels(
-						child.attrs.rawMarkdown,
-					);
-					if (newLabels) {
-						for (const rawLabel of newLabels) {
-							seenLabels.add(normalizeReferenceLabel(rawLabel));
-						}
-					}
-				}
-				continue;
-			}
-			if (child.childCount > 0) {
-				const sharedEntry = sharedGroupByFirstNode.get(child);
-				const childInBrokenSharedGroup =
-					parentInBrokenSharedGroup ||
-					(sharedEntry !== undefined &&
-						!isSharedGroupIntactInParent(
-							parent,
-							i,
-							sharedEntry.blocks,
-							sharedEntry.group,
-							parsed.blockquoteSources,
-						));
-				walk(child, childInBrokenSharedGroup);
-			}
-		}
-	};
-	walk(doc, false);
-	return { allIntact, partialTitleIntact };
-}
-
-export function buildReferencePreserveResolver(
-	parsed: ParsedVisualDocument,
-	partialTitleIntact: ReadonlySet<string>,
-	hasRefSerializer: boolean,
-): ReferencePreserveResolver | null {
-	if (partialTitleIntact.size === 0 || !hasRefSerializer) {
-		return null;
-	}
-	const partialTitleRefNodes = new Set<ProseMirrorNode>();
-	if (parsed.firstRefDefNodeByLabel) {
-		for (const label of partialTitleIntact) {
-			const refNode = parsed.firstRefDefNodeByLabel.get(label);
-			if (refNode) partialTitleRefNodes.add(refNode);
-		}
-	}
-	return {
-		isPartialTitleRefDef: (node) => partialTitleRefNodes.has(node),
-		resolveImage: (node) => {
-			const origin = parsed.referenceImages?.get(node);
-			return origin && partialTitleIntact.has(origin.normalizedLabel)
-				? origin
-				: null;
-		},
-		resolveLink: (mark) => {
-			const origin = parsed.referenceLinks?.get(mark);
-			return origin && partialTitleIntact.has(origin.normalizedLabel)
-				? origin
-				: null;
-		},
-	};
-}
-
-export function createInvalidatedRefChecker(
-	parsed: ParsedVisualDocument,
-	allIntact: ReadonlySet<string>,
-): Readonly<{
-	hasInvalidatedRefDefs: boolean;
-	nodeHasInvalidatedRef: (node: ProseMirrorNode) => boolean;
-}> {
-	const totalRefDefs = parsed.firstRefDefNodeByLabel?.size ?? 0;
-	const hasRefs =
-		(parsed.referenceLinks && parsed.referenceLinks.size > 0) ||
-		(parsed.referenceImages && parsed.referenceImages.size > 0) ||
-		(parsed.referencedLabelsByNode && parsed.referencedLabelsByNode.size > 0);
-	if (!hasRefs || totalRefDefs === 0 || allIntact.size >= totalRefDefs) {
-		return {
-			hasInvalidatedRefDefs: false,
-			nodeHasInvalidatedRef: () => false,
-		};
-	}
-	const cache = new WeakMap<ProseMirrorNode, boolean>();
-	const check = (node: ProseMirrorNode): boolean => {
-		const cached = cache.get(node);
-		if (cached !== undefined) return cached;
-		let invalidated = false;
-		const blockLabels = parsed.referencedLabelsByNode?.get(node);
-		if (blockLabels) {
-			for (const label of blockLabels) {
-				if (!allIntact.has(label)) {
-					invalidated = true;
-					break;
-				}
-			}
-		}
-		if (!invalidated && node.type.name === "image") {
-			const origin = parsed.referenceImages?.get(node);
-			if (origin && !allIntact.has(origin.normalizedLabel)) {
-				invalidated = true;
-			}
-		}
-		if (!invalidated && node.marks.length > 0 && parsed.referenceLinks) {
-			for (let m = 0; m < node.marks.length; m += 1) {
-				const mark = node.marks[m];
-				if (mark && mark.type.name === "link") {
-					const origin = parsed.referenceLinks.get(mark);
-					if (origin && !allIntact.has(origin.normalizedLabel)) {
-						invalidated = true;
-						break;
-					}
-				}
-			}
-		}
-		if (!invalidated && node.childCount > 0) {
-			for (let i = 0; i < node.childCount; i += 1) {
-				if (check(node.child(i))) {
-					invalidated = true;
-					break;
-				}
-			}
-		}
-		cache.set(node, invalidated);
-		return invalidated;
-	};
-	return { hasInvalidatedRefDefs: true, nodeHasInvalidatedRef: check };
-}
-
-export function sharedGroupHasInvalidatedRef(
-	baselineBlocks: ReadonlyArray<ParsedVisualBlockSource>,
-	group: ParsedVisualSharedGroup,
-	nodeHasInvalidatedRef: (node: ProseMirrorNode) => boolean,
-): boolean {
-	for (let k = group.startIndex; k < group.endIndex; k += 1) {
-		const member = baselineBlocks[k];
-		if (member && nodeHasInvalidatedRef(member.node)) {
-			return true;
-		}
-	}
-	return false;
 }

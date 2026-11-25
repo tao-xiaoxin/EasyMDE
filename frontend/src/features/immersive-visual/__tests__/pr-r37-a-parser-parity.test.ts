@@ -243,15 +243,15 @@ describe("PR-R37-A reference preservation, list-swallow guards, and dedup", () =
 				expect(parseMarkdownToVisualDoc(serialized).eq(edited), md).toBe(true);
 			}
 
-			// Adjacent identical-href AND identical-title links (`[r][][r][]`) share
-			// one ProseMirror link mark (`{ href: "/u", title: "a\n" }`) and preserve
-			// the partial-title reference cleanly without fragile run-slicing.
+			// Adjacent identical-href AND identical-title links (`[r][][r][]`) keep
+			// distinct ProseMirror link marks via internal `boundaryKey` so the two
+			// links never coalesce into one link.
 			{
 				const md = '[r]: /u\n"a\n\n[r][][r][]\nz';
 				const guard = createMarkdownRoundTripGuard(md);
 				const edited = insertTextAfterFirstMatch(guard.initialDoc, "z", "!");
 				const serialized = guard.serialize(edited);
-				expect(serialized).toBe('[r]: /u\n"a\n\n[rr][r]\nz!');
+				expect(serialized).toBe('[r]: /u\n"a\n\n[r][][r][]\nz!');
 				expect(parseMarkdownToVisualDoc(serialized).eq(edited)).toBe(true);
 			}
 		});

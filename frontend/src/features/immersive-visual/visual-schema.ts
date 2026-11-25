@@ -773,7 +773,11 @@ const nodes: Record<VisualNodeName, NodeSpec> = {
 
 const marks: Record<VisualMarkName, MarkSpec> = {
 	link: {
-		attrs: { href: { default: "" }, title: { default: null } },
+		attrs: {
+			href: { default: "" },
+			title: { default: null },
+			boundaryKey: { default: null },
+		},
 		inclusive: false,
 		parseDOM: [
 			{

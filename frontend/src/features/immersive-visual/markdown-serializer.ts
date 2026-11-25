@@ -818,7 +818,7 @@ function serializeBlockNodeInternal(
 				mathNewlineToken === null ||
 				node.attrs.kind !== "raw" ||
 				!raw.includes("\n") ||
-				!raw.includes("\\(")
+				(!raw.includes("\\(") && !raw.includes("\\[") && !raw.includes("$$"))
 			) {
 				return raw;
 			}
@@ -827,7 +827,7 @@ function serializeBlockNodeInternal(
 			let masked = "";
 			let cursor = 0;
 			for (const range of ranges) {
-				if (range.block || range.from < cursor) continue;
+				if (range.from < cursor) continue;
 				if (range.from > cursor) masked += raw.slice(cursor, range.from);
 				const piece = raw.slice(range.from, range.to);
 				masked += piece.includes("\n")
@@ -892,9 +892,9 @@ const MARKDOWN_SERIALIZERS: MarkdownSerializers = {
 
 /**
  * Round-trip guard: an unmodified document returns its exact original bytes,
- * and an edited one preserves every untouched block (and untouched list item
- * of an edited top-level list or untouched child of an edited top-level
- * blockquote) byte-identically.
+ * and an edited one preserves every untouched block, untouched list item of an
+ * edited list, and untouched child of an edited blockquote (at any nesting
+ * depth) byte-identically.
  */
 export function createMarkdownRoundTripGuard(
 	initialMarkdown: string,

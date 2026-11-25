@@ -108,7 +108,7 @@ function collectLinkSegments(
 		const link = node.marks.find((m) => m.type.name === "link");
 		if (link) {
 			out.push({
-				attrs: link.attrs,
+				attrs: { href: link.attrs.href, title: link.attrs.title },
 				strong: node.marks.some((m) => m.type.name === "strong"),
 				text: node.text,
 			});
@@ -393,7 +393,7 @@ describe("PR-R38-A partial-title link/image attrs, refdef invalidation, dedent, 
 					base.child(4),
 				]);
 				const serialized = guard.serialize(withoutFirstDef);
-				expect(serialized).toBe('"a\n\n[s]: /u\n"a\n\n[rs][s]\nz');
+				expect(serialized).toBe('"a\n\n[s]: /u\n"a\n\n[r](/u "a&#10;")[s][]\nz');
 				expect(parseMarkdownToVisualDoc(serialized).eq(withoutFirstDef)).toBe(
 					true,
 				);
@@ -516,18 +516,37 @@ describe("PR-R38-A partial-title link/image attrs, refdef invalidation, dedent, 
 			}
 		});
 
-		it("keeps tight newline between partial-title refdef and edited follower at top level and inside blockquotes", () => {
+		it("keeps tight newline when edited follower preserves baseline title and preserves inline title when follower title changes", () => {
 			for (const [md, expected] of [
-				['[r]: /u\n"a\n\n[r]', '[r]: /u\n"a!\n\n[r]'],
-				['> [r]: /u\n> "a\n>\n> [r]', '> [r]: /u\n> "a!\n>\n> [r]'],
+				['[r]: /u\n"a" x\n\n[r]', '[r]: /u\n"a" x!\n\n[r]'],
+				['> [r]: /u\n> "a" x\n>\n> [r]', '> [r]: /u\n> "a" x!\n>\n> [r]'],
+			] as const) {
+				const guard = createMarkdownRoundTripGuard(md);
+				const edited = insertTextAfterFirstMatch(guard.initialDoc, "x", "!");
+				const serialized = guard.serialize(edited);
+				expect(serialized, md).toBe(expected);
+				const reparsed = parseMarkdownToVisualDoc(serialized);
+				expect(reparsed.eq(edited), md).toBe(true);
+				expect(collectLinkSegments(reparsed), md).toEqual([
+					{ attrs: { href: "/u", title: "a" }, strong: false, text: "r" },
+				]);
+			}
+
+			for (const [md, expected] of [
+				['[r]: /u\n"a\n\n[r]', '[r]: /u\n\n"a!\n\n[r](/u "a&#10;")'],
+				[
+					'> [r]: /u\n> "a\n>\n> [r]',
+					'> [r]: /u\n>\n> "a!\n>\n> [r](/u "a&#10;")',
+				],
 			] as const) {
 				const guard = createMarkdownRoundTripGuard(md);
 				const edited = insertTextAfterFirstMatch(guard.initialDoc, '"a', "!");
 				const serialized = guard.serialize(edited);
 				expect(serialized, md).toBe(expected);
 				const reparsed = parseMarkdownToVisualDoc(serialized);
+				expect(reparsed.eq(edited), md).toBe(true);
 				expect(collectLinkSegments(reparsed), md).toEqual([
-					{ attrs: { href: "/u", title: "a!\n" }, strong: false, text: "r" },
+					{ attrs: { href: "/u", title: "a\n" }, strong: false, text: "r" },
 				]);
 			}
 		});

@@ -1519,6 +1519,98 @@ describe("readEditorCodeContent", () => {
 			),
 		).toEqual(["https://real.example.com"]);
 	});
+
+	it("matches PHP extract_math for multiline \\(...\\), surrogate offsets, table-image phantom URLs, and pipe-free display math indented code", () => {
+		// Track A #3 + Track B #4: multiline \(...\) and surrogate pair offsets.
+		const multiHeader =
+			"| A | \\(x\ny\\) | B |\n| --- | --- | --- |\n| 1 | 2 | ![kept](https://example.com/a.png) |";
+		expect(
+			(createEditorMarkdownBlockIndex(multiHeader).imageRanges ?? []).map((r) =>
+				multiHeader.slice(r.from, r.to),
+			),
+		).toEqual(["![kept](https://example.com/a.png)"]);
+
+		const multiBody =
+			"| A | B |\n| --- | --- |\n| 1 | \\(x\ny\\) | ![dropped](https://example.com/b.png) |";
+		expect(createEditorMarkdownBlockIndex(multiBody).imageRanges).toEqual([]);
+
+		const blankInMath =
+			"| A | B |\n| --- | --- |\n| \\(x\n\ny\\) | ![kept](https://example.com/a.png) | ![dropped](https://example.com/b.png) |";
+		expect(
+			(createEditorMarkdownBlockIndex(blankInMath).imageRanges ?? []).map((r) =>
+				blankInMath.slice(r.from, r.to),
+			),
+		).toEqual(["![kept](https://example.com/a.png)"]);
+
+		const surrogateSource =
+			"\\(😀\nx|y\\)\n\n| A |\n| --- |\n| ![kept](https://example.com/a.png) |";
+		expect(
+			(createEditorMarkdownBlockIndex(surrogateSource).imageRanges ?? []).map(
+				(r) => surrogateSource.slice(r.from, r.to),
+			),
+		).toEqual(["![kept](https://example.com/a.png)"]);
+
+		// Track B #5: suppress phantom URL fragments inside linked `\\|` or inline-math-pipe table images.
+		for (const [label, source] of [
+			[
+				"linked image with double-backslash pipe in alt",
+				"| A |\n| --- |\n| [![a\\\\|b](https://example.com/a.png)](https://example.com/x) |",
+			],
+			[
+				"image with inline dollar math pipe in title",
+				'| A |\n| --- |\n| ![alt](https://example.com/a.png "a $x|y$ b") |',
+			],
+			[
+				"image with inline dollar math pipe in alt",
+				"| A |\n| --- |\n| ![a $x|y$ b](https://example.com/a.png) |",
+			],
+			[
+				"image with inline paren math pipe in title",
+				'| A |\n| --- |\n| ![alt](https://example.com/a.png "a \\(x|y\\) b") |',
+			],
+		] as const) {
+			expect(
+				createEditorMarkdownBlockIndex(source).linkCandidates,
+				label,
+			).toEqual([]);
+		}
+
+		// Positive controls: real link after image on a table row remains exposed.
+		for (const positive of [
+			"| A |\n| --- |\n| ![a](https://example.com/a.png) https://example.com/ok |",
+			'| A |\n| --- |\n| ![alt](https://example.com/a.png "a $x|y$ b") https://example.com/ok |',
+		]) {
+			const idx = createEditorMarkdownBlockIndex(positive);
+			expect(
+				(idx.linkCandidates ?? []).map((r) => positive.slice(r.from, r.to)),
+				positive,
+			).toEqual(["https://example.com/ok"]);
+		}
+
+		// Track B #7: display math followed by 4 spaces creates indented code even without `|`.
+		for (const indented of [
+			"$$x$$    ![alt](https://example.com/a.png)",
+			"\\[x\\]    ![alt](https://example.com/a.png)",
+		]) {
+			expect(createEditorMarkdownBlockIndex(indented).imageRanges, indented).toEqual(
+				[],
+			);
+		}
+		expect(
+			createEditorMarkdownBlockIndex("$$x$$    [link](https://example.com)")
+				.linkCandidates,
+		).toEqual([]);
+		for (const singleSpace of [
+			"$$x$$ ![alt](https://example.com/a.png)",
+			"\\[x\\] ![alt](https://example.com/a.png)",
+		]) {
+			const idx = createEditorMarkdownBlockIndex(singleSpace);
+			expect(
+				(idx.imageRanges ?? []).map((r) => singleSpace.slice(r.from, r.to)),
+				singleSpace,
+			).toEqual(["![alt](https://example.com/a.png)"]);
+		}
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

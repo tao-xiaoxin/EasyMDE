@@ -173,7 +173,9 @@ function hasPrecedingUnbrokenPipeLine(source: string, lineStart: number): boolea
 
 /**
  * Computes current-line bounds around `start` in O(line length) and reports
- * whether the line could belong to a GFM table in a multi-line document.
+ * whether the line could belong to a GFM table or follow PHP math extraction
+ * that alters block structure (such as display math before indented text or
+ * multiline `\(...\)` continuing a table row).
  */
 export function inspectSingleLineForFastPath(
   source: string,
@@ -181,9 +183,20 @@ export function inspectSingleLineForFastPath(
 ): Readonly<{ lineEnd: number; mayBeTableRow: boolean }> {
   let lineStart = start;
   let hasPipe = false;
+  let hasMathBlockBoundaryBeforeStart = false;
   while (lineStart > 0 && '\n' !== source[lineStart - 1] && '\r' !== source[lineStart - 1]) {
     lineStart -= 1;
-    if ('|' === source[lineStart]) hasPipe = true;
+    const ch = source[lineStart];
+    if ('|' === ch) hasPipe = true;
+    if (!hasMathBlockBoundaryBeforeStart && lineStart + 1 < start) {
+      const next = source[lineStart + 1];
+      if (
+        ('$' === ch && '$' === next)
+        || ('\\' === ch && ('[' === next || ']' === next || ')' === next))
+      ) {
+        hasMathBlockBoundaryBeforeStart = true;
+      }
+    }
   }
   let lineEnd = start;
   while (lineEnd < source.length && '\n' !== source[lineEnd] && '\r' !== source[lineEnd]) {
@@ -193,7 +206,8 @@ export function inspectSingleLineForFastPath(
   return {
     lineEnd,
     mayBeTableRow:
-      (hasPipe && (lineStart > 0 || lineEnd < source.length))
+      hasMathBlockBoundaryBeforeStart
+      || (hasPipe && (lineStart > 0 || lineEnd < source.length))
       || (lineStart > 0 && hasPrecedingUnbrokenPipeLine(source, lineStart))
   };
 }

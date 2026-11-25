@@ -10,6 +10,7 @@ import type {
 } from "../../contracts/ports/editor-block-index-port";
 import { markdownLineStarts } from "../../shared/markdown/markdown-line-model";
 import {
+	inCodeRange,
 	isRangeDroppedByPhpTable,
 	type ScannedMarkdownBlocks,
 	scanPhpCommonMarkBlocks,
@@ -395,7 +396,8 @@ function imageIndexForBlocks(
 			nodeIndex += 1;
 			if (
 				phpBlockScan &&
-				isRangeDroppedByPhpTable(source, phpBlockScan, node.from, node.to)
+				(isRangeDroppedByPhpTable(source, phpBlockScan, node.from, node.to) ||
+					inCodeRange(phpBlockScan.blockCodeRanges, node.from, node.to))
 			) {
 				continue;
 			}
@@ -479,8 +481,9 @@ export function createEditorMarkdownBlockIndex(
 		starts,
 		unavailableRanges,
 	);
+	const hasDisplayMath = ranges.some((range) => range.block);
 	const phpBlockScan =
-		source.includes("|") &&
+		(source.includes("|") || hasDisplayMath) &&
 		(parsed.imageNodes.length > 0 || parsed.linkNodes.length > 0)
 			? scanPhpCommonMarkBlocks(source, ranges)
 			: null;

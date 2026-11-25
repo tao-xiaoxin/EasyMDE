@@ -82,9 +82,13 @@ export function scanPhpCommonMarkBlocks(
 	source: string,
 	knownMathRanges?: ReadonlyArray<PhpMarkdownMathRange>,
 ): ScannedMarkdownBlocks {
-	const maskedSource = source.includes("|")
-		? maskPhpMarkdownMathForTableScan(source, knownMathRanges)
-		: source;
+	const maskedSource =
+		source.includes("|") ||
+		source.includes("$$") ||
+		source.includes("\\[") ||
+		source.includes("\\(")
+			? maskPhpMarkdownMathForTableScan(source, knownMathRanges)
+			: source;
 	const state = createPhpCommonMarkBlockState(true);
 	scanLinesIntoPhpCommonMarkBlockState(state, maskedSource);
 

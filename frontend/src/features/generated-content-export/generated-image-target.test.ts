@@ -1305,6 +1305,104 @@ describe("associateGeneratedImageTarget", () => {
 		expect(result.images).toHaveLength(count);
 		expect(elapsedMs).toBeLessThan(2_000);
 	});
+
+	it("hydrates multiline inline-math table images, UTF-16 surrogate offsets, and drops display-math indented-code images without pipes", async () => {
+		for (const [label, source, expectedDests] of [
+			[
+				"multiline \\(x\\ny\\) in 3-col header keeps col 2 image",
+				"| A | \\(x\ny\\) | B |\n| --- | --- | --- |\n| 1 | 2 | ![kept](https://example.com/a.png) |",
+				["https://example.com/a.png"],
+			],
+			[
+				"multiline \\(x\\ny\\) in 2-col body drops col 2 image",
+				"| A | B |\n| --- | --- |\n| 1 | \\(x\ny\\) | ![dropped](https://example.com/b.png) |",
+				[],
+			],
+			[
+				"blank line inside \\(x\\n\\ny\\) keeps col 1 image and drops col 2 image",
+				"| A | B |\n| --- | --- |\n| \\(x\n\ny\\) | ![kept](https://example.com/a.png) | ![dropped](https://example.com/b.png) |",
+				["https://example.com/a.png"],
+			],
+			[
+				"UTF-16 surrogate pair inside multiline math keeps table image offsets exact",
+				"\\(😀\nx|y\\)\n\n| A |\n| --- |\n| ![kept](https://example.com/a.png) |",
+				["https://example.com/a.png"],
+			],
+			[
+				"pipe-free $$x$$ followed by 4 spaces drops indented-code image",
+				"$$x$$    ![alt](https://example.com/a.png)",
+				[],
+			],
+			[
+				"pipe-free \\[x\\] followed by 4 spaces drops indented-code image",
+				"\\[x\\]    ![alt](https://example.com/a.png)",
+				[],
+			],
+			[
+				"pipe-free $$x$$ followed by 1 space keeps live image",
+				"$$x$$ ![alt](https://example.com/a.png)",
+				["https://example.com/a.png"],
+			],
+			[
+				"pipe-free \\[x\\] followed by 1 space keeps live image",
+				"\\[x\\] ![alt](https://example.com/a.png)",
+				["https://example.com/a.png"],
+			],
+		] as const) {
+			const parsed = createEditorMarkdownBlockIndex(source);
+			const result = await hydrateGeneratedImageTargetIndex({
+				...hydration,
+				blocks: parsed.blocks,
+				imageIndex: {
+					blocks: parsed.blocks,
+					imageBlocks: parsed.imageBlocks ?? [],
+					imageRanges: parsed.imageRanges ?? [],
+					length: parsed.length,
+					mathSpans: parsed.mathSpans,
+				},
+				revision: 45,
+				source,
+			});
+			expect(
+				result.images.map((img) => img.destination),
+				label,
+			).toEqual(expectedDests);
+		}
+
+		// Defense-in-depth: an unfiltered imageIndex supplying the indented-code image after $$x$$ or \[x\] is rejected.
+		for (const unfilteredSource of [
+			"$$x$$    ![alt](https://example.com/a.png)",
+			"\\[x\\]    ![alt](https://example.com/a.png)",
+		]) {
+			const imgFrom = unfilteredSource.indexOf("![alt]");
+			const imgTo = unfilteredSource.length;
+			const block = {
+				editable: true as const,
+				from: 5,
+				kind: "paragraph" as const,
+				lineEnd: 0,
+				lineStart: 0,
+				to: unfilteredSource.length,
+			};
+			const rejected = await hydrateGeneratedImageTargetIndex({
+				...hydration,
+				blocks: [block],
+				imageIndex: {
+					blocks: [block],
+					imageBlocks: [{ count: 1, firstImageIndex: 0, status: "ready" }],
+					imageRanges: [{ from: imgFrom, to: imgTo }],
+					length: unfilteredSource.length,
+					mathSpans: [],
+				},
+				revision: 46,
+				source: unfilteredSource,
+			});
+			expect(rejected.blockImages[0]?.status, unfilteredSource).toBe(
+				"unavailable",
+			);
+			expect(rejected.images, unfilteredSource).toHaveLength(0);
+		}
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

@@ -5,6 +5,7 @@ import type {
 } from "../../contracts/ports/editor-block-index-port";
 import {
 	findLineAtOffset,
+	inCodeRange,
 	isRangeDroppedByPhpTable,
 	type ScannedMarkdownBlocks,
 } from "../../shared/markdown/php-commonmark-block-scan";
@@ -386,17 +387,24 @@ export function renderedReferenceLinkBodies(
 	});
 }
 
-function isInsidePhpTableImageWithEscapedPipe(
+function isInsidePhpTableImage(
 	source: string,
 	phpBlockScan: ScannedMarkdownBlocks,
 	from: number,
-	to: number,
 ): boolean {
 	const line = findLineAtOffset(phpBlockScan.lines, from);
 	if (!line?.isTableRow) return false;
 	const lineText = source.slice(line.contentOffset, line.lineEnd);
-	if (!lineText.includes("\\\\|") || !lineText.includes("![")) return false;
-	return null !== findMarkdownImageCoreAt(source, from, to, phpBlockScan);
+	if (
+		!lineText.includes("![") ||
+		(!lineText.includes("\\\\|") &&
+			!lineText.includes("$") &&
+			!lineText.includes("\\("))
+	) {
+		return false;
+	}
+	const image = findMarkdownImageCoreAt(source, from, from, phpBlockScan);
+	return null !== image && image.start <= from && from < image.core.imageEnd;
 }
 
 /**
@@ -414,7 +422,12 @@ export function linkCandidatesForBlocks(
 	phpBlockScan?: ScannedMarkdownBlocks | null,
 ): ReadonlyArray<EditorMarkdownLinkCandidate> {
 	const candidates: EditorMarkdownLinkCandidate[] = [];
-	const sourceHasDoubleBackslashPipe = Boolean(source?.includes("\\\\|"));
+	const sourceMaySplitTableImage = Boolean(
+		source &&
+			(source.includes("\\\\|") ||
+				source.includes("$") ||
+				source.includes("\\(")),
+	);
 	let blockIndex = 0;
 	let mathIndex = 0;
 	let imageIndex = 0;
@@ -440,13 +453,9 @@ export function linkCandidatesForBlocks(
 			phpBlockScan &&
 			undefined !== source &&
 			(isRangeDroppedByPhpTable(source, phpBlockScan, range.from, range.to) ||
-				(sourceHasDoubleBackslashPipe &&
-					isInsidePhpTableImageWithEscapedPipe(
-						source,
-						phpBlockScan,
-						range.from,
-						range.to,
-					)))
+				inCodeRange(phpBlockScan.blockCodeRanges, range.from, range.to) ||
+				(sourceMaySplitTableImage &&
+					isInsidePhpTableImage(source, phpBlockScan, range.from)))
 		) {
 			continue;
 		}
@@ -461,7 +470,15 @@ export function linkCandidatesForBlocks(
 			(imageRanges[imageIndex]?.to ?? 0) <= range.from
 		)
 			imageIndex += 1;
-		if (overlaps(range, imageRanges[imageIndex])) continue;
+		const activeImage = imageRanges[imageIndex];
+		if (
+			overlaps(range, activeImage) ||
+			(undefined !== activeImage &&
+				activeImage.from <= range.from &&
+				range.from < activeImage.to)
+		) {
+			continue;
+		}
 		const previous = candidates[candidates.length - 1];
 		if (previous && range.from < previous.to) {
 			// CommonMark rendered ownership: nested link syntax inside a link

@@ -311,7 +311,10 @@ export async function hydrateGeneratedImageTargetIndex(
 	const blockImages: Array<GeneratedImageTargetIndex["blockImages"][number]> =
 		[];
 	const images: MarkdownImageScaleMatch[] = [];
-	const sourceHasPipe = input.source.includes("|");
+	const sourceNeedsDocBlockScan =
+		input.source.includes("|") ||
+		input.source.includes("$$") ||
+		input.source.includes("\\[");
 	let docBlocks: ScannedMarkdownBlocks | null = null;
 	for (let blockIndex = 0; blockIndex < input.blocks.length; blockIndex += 1) {
 		await hydrationCheckpoint(budget);
@@ -359,7 +362,7 @@ export async function hydrateGeneratedImageTargetIndex(
 						const isMultiline =
 							rawSlice.includes("\n") || rawSlice.includes("\r");
 						let image: MarkdownImageScaleMatch | null = null;
-						if (sourceHasPipe) {
+						if (sourceNeedsDocBlockScan) {
 							if (null === docBlocks) {
 								docBlocks = getCachedMarkdownBlockScan(input.source);
 							}

@@ -1,3 +1,4 @@
+import { maskPhpMarkdownMathForTableScan } from "../../shared/markdown/php-markdown-math-mask";
 import { isReservedTableAlignmentMarkerPrefix } from "../../shared/table-alignment-marker";
 import type {
 	EditorMarkdownBlockIndex,
@@ -148,21 +149,27 @@ export type PreparedMarkdownTable = Readonly<{
 	value: string;
 }>;
 
-/**
- * Returns column-delimiter pipe indices matching GFM Section 4.10 and
- * `league/commonmark` `TableParser::split()`: any `|` immediately preceded by
- * `\` (including `\\|`, `\\\\|`, etc.) is an escaped literal pipe inside the
- * cell rather than a column delimiter.
- */
-export function pipePositions(text: string): number[] {
+function pipePositionsFromMasked(masked: string): number[] {
 	const positions: number[] = [];
 
-	for (let index = 0; index < text.length; index += 1) {
-		if ("|" === text[index] && (0 === index || "\\" !== text[index - 1])) {
+	for (let index = 0; index < masked.length; index += 1) {
+		if ("|" === masked[index] && (0 === index || "\\" !== masked[index - 1])) {
 			positions.push(index);
 		}
 	}
 	return positions;
+}
+
+/**
+ * Returns column-delimiter pipe indices matching PHP
+ * `MarkdownRenderer::extract_math()`, GFM Section 4.10, and
+ * `league/commonmark` `TableParser::split()`: pipes inside PHP-extracted math
+ * (`$...$`, `\(...\)`, `$$...$$`, `\[...\]` outside code) are masked first, and
+ * any remaining `|` immediately preceded by `\` (including `\\|`, `\\\\|`, etc.)
+ * is an escaped literal pipe inside the cell rather than a column delimiter.
+ */
+export function pipePositions(text: string): number[] {
+	return pipePositionsFromMasked(maskPhpMarkdownMathForTableScan(text));
 }
 
 /**
@@ -180,7 +187,9 @@ function parseTableRow(
 	lineIndex: number,
 	options?: Readonly<{ allowIndentedLeadingPipe?: boolean }>,
 ): ParsedTableRow | null {
-	const positions = pipePositions(line.text);
+	const masked = maskPhpMarkdownMathForTableScan(line.text);
+	if (masked.includes("\n") || masked.includes("\r")) return null;
+	const positions = pipePositionsFromMasked(masked);
 	if (0 === positions.length) return null;
 	const firstPipe = positions[0] ?? 0;
 	const leading = options?.allowIndentedLeadingPipe
@@ -310,19 +319,25 @@ function tableAtLine(
 			undefined !== trailingLine &&
 			!isBlankLineText(trailingLine.text) &&
 			!lineStartsWithBlockMath(trailingLine, endLine, blockIndex);
+		const maskedTrailingText = hasNonBlankTrailingLine
+			? maskPhpMarkdownMathForTableScan(trailingLine.text)
+			: "";
+		const firstTrailingLine =
+			maskedTrailingText.split(/\r\n|\r|\n/u, 1)[0] ?? "";
 		// Decline whenever the parser-owned block extends past the last
 		// same-width pipe row (including lazy continuation rows or Lezer/PHP
 		// boundary disagreements such as indented code or `2. ordered`), when a
 		// pipe-shaped body row changes width, or when the immediately following
 		// non-blank line would be absorbed by PHP `League\CommonMark`'s
-		// `TableParser::tryContinue()` (any raw `|`) or
+		// `TableParser::tryContinue()` (any raw `|` outside extracted math) or
 		// `canHaveLazyContinuationLines()` (any non-interrupting line).
 		if (
 			(undefined !== range && endLine <= searchEndLine) ||
 			(malformedBody && malformedBody.cells.length !== header.cells.length) ||
 			(hasNonBlankTrailingLine &&
-				(trailingLine.text.includes("|") ||
-					!lineInterruptsCommonMarkTable(trailingLine.text)))
+				!isBlankLineText(firstTrailingLine) &&
+				(firstTrailingLine.includes("|") ||
+					!lineInterruptsCommonMarkTable(firstTrailingLine)))
 		)
 			return null;
 		if (targetLine >= endLine) {

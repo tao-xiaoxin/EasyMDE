@@ -2266,4 +2266,102 @@ describe('image scale contract', () => {
     expect(parseMarkdownImageScale(codeWrappedMath, droppedStart)).toBeNull();
     expect(findMarkdownImageAt(codeWrappedMath, droppedStart + 3)).toBeNull();
   });
+
+  it('matches PHP extract_math for multiline \\(...\\), UTF-16 surrogate pairs, unclosed delimiters, and pipe-free display math before indented code', () => {
+    // 1. Multiline \(x\ny\) in header keeps 3 columns -> ![kept] in col 2 stays live.
+    const multiHeader =
+      '| A | \\(x\ny\\) | B |\n| --- | --- | --- |\n| 1 | 2 | ![kept](https://example.com/a.png) |';
+    const kept1 = multiHeader.indexOf('![kept]');
+    expect(parseMarkdownImageScale(multiHeader, kept1)).toMatchObject({
+      alt: 'kept',
+      destination: 'https://example.com/a.png',
+      start: kept1
+    });
+    expect(findMarkdownImageAt(multiHeader, kept1 + 3)).toMatchObject({
+      alt: 'kept',
+      destination: 'https://example.com/a.png',
+      start: kept1
+    });
+
+    // 2. Multiline \(x\ny\) in body cell 1 keeps row single-line -> ![dropped] in col 2 is dropped.
+    const multiBody =
+      '| A | B |\n| --- | --- |\n| 1 | \\(x\ny\\) | ![dropped](https://example.com/b.png) |';
+    const drop2 = multiBody.indexOf('![dropped]');
+    expect(parseMarkdownImageScale(multiBody, drop2)).toBeNull();
+    expect(findMarkdownImageAt(multiBody, drop2 + 3)).toBeNull();
+
+    // 3. Blank line inside \(x\n\ny\) keeps table open -> col 1 ![kept] live, col 2 ![dropped] null.
+    const blankInMath =
+      '| A | B |\n| --- | --- |\n| \\(x\n\ny\\) | ![kept](https://example.com/a.png) | ![dropped](https://example.com/b.png) |';
+    const kept3 = blankInMath.indexOf('![kept]');
+    const drop3 = blankInMath.indexOf('![dropped]');
+    expect(parseMarkdownImageScale(blankInMath, kept3)).toMatchObject({
+      alt: 'kept',
+      destination: 'https://example.com/a.png',
+      start: kept3
+    });
+    expect(findMarkdownImageAt(blankInMath, kept3 + 3)).toMatchObject({
+      alt: 'kept',
+      destination: 'https://example.com/a.png',
+      start: kept3
+    });
+    expect(parseMarkdownImageScale(blankInMath, drop3)).toBeNull();
+    expect(findMarkdownImageAt(blankInMath, drop3 + 3)).toBeNull();
+
+    // 4. UTF-16 surrogate pair in multiline math preserves exact offsets for subsequent table image.
+    const surrogateSource =
+      '\\(😀\nx|y\\)\n\n| A |\n| --- |\n| ![kept](https://example.com/a.png) |';
+    const kept4 = surrogateSource.indexOf('![kept]');
+    expect(parseMarkdownImageScale(surrogateSource, kept4)).toMatchObject({
+      alt: 'kept',
+      destination: 'https://example.com/a.png',
+      start: kept4
+    });
+    expect(findMarkdownImageAt(surrogateSource, kept4 + 3)).toMatchObject({
+      alt: 'kept',
+      destination: 'https://example.com/a.png',
+      start: kept4
+    });
+
+    // 5. Display math followed by 4+ spaces or tab creates an indented code block even with zero `|`.
+    for (const indentedAfterDisplay of [
+      '$$x$$    ![alt](https://example.com/a.png)',
+      '\\[x\\]    ![alt](https://example.com/a.png)',
+      '$$x$$\t![alt](https://example.com/a.png)',
+      '\\[\nx\n\\]    ![alt](https://example.com/a.png)'
+    ]) {
+      const start = indentedAfterDisplay.indexOf('![alt]');
+      expect(parseMarkdownImageScale(indentedAfterDisplay, start), indentedAfterDisplay).toBeNull();
+      expect(findMarkdownImageAt(indentedAfterDisplay, start + 3), indentedAfterDisplay).toBeNull();
+    }
+
+    // Positive controls: 1 space after display math stays a live paragraph image.
+    for (const liveAfterDisplay of [
+      '$$x$$ ![alt](https://example.com/a.png)',
+      '\\[x\\] ![alt](https://example.com/a.png)'
+    ]) {
+      const start = liveAfterDisplay.indexOf('![alt]');
+      expect(parseMarkdownImageScale(liveAfterDisplay, start), liveAfterDisplay).toMatchObject({
+        alt: 'alt',
+        destination: 'https://example.com/a.png',
+        start
+      });
+      expect(findMarkdownImageAt(liveAfterDisplay, start + 3), liveAfterDisplay).toMatchObject({
+        alt: 'alt',
+        destination: 'https://example.com/a.png',
+        start
+      });
+    }
+
+    // 6. Scale regression: 80,000 unclosed `\(` before a table image completes in linear time.
+    const unclosedParens = `${'\\('.repeat(80_000)}\n\n| A |\n| --- |\n| ![ok](https://example.com/ok.png) |`;
+    const okStart = unclosedParens.indexOf('![ok]');
+    const started = performance.now();
+    expect(findMarkdownImageAt(unclosedParens, okStart + 3)).toMatchObject({
+      alt: 'ok',
+      destination: 'https://example.com/ok.png',
+      start: okStart
+    });
+    expect(performance.now() - started).toBeLessThan(250);
+  });
 });

@@ -57,8 +57,124 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 		const maskedMulti = maskPhpMarkdownMathForTableScan(multilineParen);
 		expect(maskedMulti.length).toBe(multilineParen.length);
 		expect(maskedMulti).toBe(
-			"| A | B |\n| --- | --- |\n| MMM\nMMMM | ![img](https://example.com/a.png) |",
+			"| A | B |\n| --- | --- |\n| MMMMMMMM | ![img](https://example.com/a.png) |",
 		);
+	});
+
+	it("masks multiline inline \\(...\\) and UTF-16 surrogate pairs as single-line exact-length tokens matching PHP extract_math", () => {
+		// 1. Multiline header cell keeps 3 columns so body cell 2 is kept.
+		const headerMulti =
+			"| A | \\(x\ny\\) | B |\n| --- | --- | --- |\n| 1 | 2 | ![kept](https://example.com/a.png) |";
+		const headerMasked = maskPhpMarkdownMathForTableScan(headerMulti);
+		expect(headerMasked.length).toBe(headerMulti.length);
+		expect(headerMasked).toContain("| A | MMMMMMM | B |");
+		const headerScan = scanPhpCommonMarkBlocks(headerMulti);
+		const kept1From = headerMulti.indexOf("![kept]");
+		const kept1To = headerMulti.indexOf(")", kept1From) + 1;
+		expect(isRangeDroppedByPhpTable(headerMulti, headerScan, kept1From, kept1To)).toBe(
+			false,
+		);
+
+		// 2. Multiline body cell keeps row on one logical line so extra cell 2 is dropped.
+		const bodyMulti =
+			"| A | B |\n| --- | --- |\n| 1 | \\(x\ny\\) | ![dropped](https://example.com/b.png) |";
+		const bodyMasked = maskPhpMarkdownMathForTableScan(bodyMulti);
+		expect(bodyMasked.length).toBe(bodyMulti.length);
+		expect(bodyMasked).toContain("| 1 | MMMMMMM | ![dropped]");
+		const bodyScan = scanPhpCommonMarkBlocks(bodyMulti);
+		const drop2From = bodyMulti.indexOf("![dropped]");
+		const drop2To = bodyMulti.indexOf(")", drop2From) + 1;
+		expect(isRangeDroppedByPhpTable(bodyMulti, bodyScan, drop2From, drop2To)).toBe(
+			true,
+		);
+
+		// 3. Blank line inside inline \(x\n\ny\) does not close the table; cell 1 kept, cell 2 dropped.
+		const blankLineInMath =
+			"| A | B |\n| --- | --- |\n| \\(x\n\ny\\) | ![kept](https://example.com/a.png) | ![dropped](https://example.com/b.png) |";
+		const blankMasked = maskPhpMarkdownMathForTableScan(blankLineInMath);
+		expect(blankMasked.length).toBe(blankLineInMath.length);
+		expect(blankMasked).toContain("| MMMMMMMM | ![kept]");
+		const blankScan = scanPhpCommonMarkBlocks(blankLineInMath);
+		const kept3From = blankLineInMath.indexOf("![kept]");
+		const kept3To = blankLineInMath.indexOf(")", kept3From) + 1;
+		const drop3From = blankLineInMath.indexOf("![dropped]");
+		const drop3To = blankLineInMath.indexOf(")", drop3From) + 1;
+		expect(isRangeDroppedByPhpTable(blankLineInMath, blankScan, kept3From, kept3To)).toBe(
+			false,
+		);
+		expect(isRangeDroppedByPhpTable(blankLineInMath, blankScan, drop3From, drop3To)).toBe(
+			true,
+		);
+
+		// 4. UTF-16 surrogate pair inside inline math preserves exact UTF-16 offsets (both auto and knownRanges).
+		const surrogateSource =
+			"\\(😀\nx|y\\)\n\n| A |\n| --- |\n| ![kept](https://example.com/a.png) |";
+		const surrogateMasked = maskPhpMarkdownMathForTableScan(surrogateSource);
+		expect(surrogateMasked.length).toBe(surrogateSource.length);
+		expect(surrogateMasked.startsWith("MMMMMMMMMM\n\n| A |")).toBe(true);
+		const knownSurrogateMasked = maskPhpMarkdownMathForTableScan(surrogateSource, [
+			{ block: false, from: 0, to: surrogateSource.indexOf("\\)") + 2 },
+		]);
+		expect(knownSurrogateMasked).toBe(surrogateMasked);
+		const surrogateScan = scanPhpCommonMarkBlocks(surrogateSource);
+		const kept4From = surrogateSource.indexOf("![kept]");
+		const kept4To = surrogateSource.indexOf(")", kept4From) + 1;
+		expect(
+			isRangeDroppedByPhpTable(surrogateSource, surrogateScan, kept4From, kept4To),
+		).toBe(false);
+	});
+
+	it("matches PHP extract_math delimiter edge cases and stays strictly linear on 80,000 unclosed delimiters", () => {
+		// Exact PHP delimiter parity: empty delimiters do not match; 5-dollar matches `$`; `(?<!\\)` checks immediately preceding `\`.
+		expect(maskPhpMarkdownMathForTableScan("$$a$$")).toBe("\n\nM\n\n");
+		expect(maskPhpMarkdownMathForTableScan("$$$$")).toBe("$$$$");
+		expect(maskPhpMarkdownMathForTableScan("$$$$$")).toBe("\n\nM\n\n");
+		expect(maskPhpMarkdownMathForTableScan("$$$$$$")).toBe("\n\nM\n\n$");
+		expect(maskPhpMarkdownMathForTableScan("\\[a\\]")).toBe("\n\nM\n\n");
+		expect(maskPhpMarkdownMathForTableScan("\\[\\]")).toBe("\\[\\]");
+		expect(maskPhpMarkdownMathForTableScan("| \\(\\) |")).toBe("| \\(\\) |");
+		expect(maskPhpMarkdownMathForTableScan("| \\(a|b\\) |")).toBe("| MMMMMMM |");
+		expect(maskPhpMarkdownMathForTableScan("| \\\\$a|b$ |")).toBe("| \\\\$a|b$ |");
+		expect(maskPhpMarkdownMathForTableScan("| $a\\$b|c$ |")).toBe("| $a\\$b|c$ |");
+		expect(maskPhpMarkdownMathForTableScan("| $a\\\\$b|c$ |")).toBe("| $a\\\\$b|c$ |");
+		expect(maskPhpMarkdownMathForTableScan("| $a\\$b$c|d$ |")).toBe(
+			"| $a\\$bMMMMM |",
+		);
+		expect(maskPhpMarkdownMathForTableScan("| $$a|b$ |")).toBe("| $MMMMM |");
+		expect(maskPhpMarkdownMathForTableScan("| $a|b$$ |")).toBe("| MMMMM$ |");
+		expect(maskPhpMarkdownMathForTableScan("foo $a\rb$")).toBe("foo MMMMM");
+		expect(maskPhpMarkdownMathForTableScan("| $a\r\nb|c$ |")).toBe("| $a\r\nb|c$ |");
+
+		// Display math triggers block masking even when source contains zero `|` characters.
+		for (const displayIndented of [
+			"$$x$$    ![alt](https://example.com/a.png)",
+			"\\[x\\]    ![alt](https://example.com/a.png)",
+		]) {
+			const scan = scanPhpCommonMarkBlocks(displayIndented);
+			expect(scan.blockCodeRanges).toEqual([
+				{ end: displayIndented.length, start: 5 },
+			]);
+		}
+		const singleSpaceAfterDisplay = "$$x$$ ![alt](https://example.com/a.png)";
+		expect(scanPhpCommonMarkBlocks(singleSpaceAfterDisplay).blockCodeRanges).toEqual(
+			[],
+		);
+
+		// Strictly linear O(N) performance on 80,000 unclosed delimiters (both with and without one matched pair).
+		for (const payload of [
+			`${"\\(".repeat(80_000)}\n\n| A |\n| --- |\n| ![a](/a.png) |`,
+			`\\(x|y\\)${"\\(".repeat(80_000)}\n\n| A |\n| --- |\n| ![a](/a.png) |`,
+			`${"\\[".repeat(80_000)}\n\n| A |\n| --- |\n| ![a](/a.png) |`,
+			`\\[x\\]${"\\[".repeat(80_000)}\n\n| A |\n| --- |\n| ![a](/a.png) |`,
+			`${"$$ ".repeat(40_000)}\n\n| A |\n| --- |\n| ![a](/a.png) |`,
+			`${"$\n".repeat(80_000)}\n| A |\n| --- |\n| ![a](/a.png) |`,
+		]) {
+			const started = performance.now();
+			const masked = maskPhpMarkdownMathForTableScan(payload);
+			const elapsed = performance.now() - started;
+			expect(masked.length).toBe(payload.length);
+			expect(elapsed).toBeLessThan(250);
+		}
 	});
 
 	it("skips fenced code, indented code, inline backtick spans, and escaped dollars like PHP MarkdownCodeRegionScanner", () => {

@@ -720,6 +720,52 @@ describe("findEditorSourceLink", () => {
 				}),
 			).source,
 		).toBe("https://real.example.com");
+
+		// Track B #5: linked `\\|` table images and inline-math-pipe table images suppress phantom URLs.
+		for (const [label, source, probe] of [
+			[
+				"linked image with double-backslash pipe in alt",
+				"| A |\n| --- |\n| [![a\\\\|b](https://example.com/a.png)](https://example.com/x) |",
+				"example.com/a.png",
+			],
+			[
+				"image with inline dollar math pipe in title",
+				'| A |\n| --- |\n| ![alt](https://example.com/a.png "a $x|y$ b") |',
+				"example.com/a.png",
+			],
+			[
+				"image with inline dollar math pipe in alt",
+				"| A |\n| --- |\n| ![a $x|y$ b](https://example.com/a.png) |",
+				"example.com/a.png",
+			],
+			[
+				"image with inline paren math pipe in title",
+				'| A |\n| --- |\n| ![alt](https://example.com/a.png "a \\(x|y\\) b") |',
+				"example.com/a.png",
+			],
+		] as const) {
+			const idx = createEditorMarkdownBlockIndex(source);
+			expect(
+				findEditorSourceLink({
+					blockIndex: idx,
+					selection: selection(source.indexOf(probe) + 2),
+					source,
+				}),
+				label,
+			).toEqual({ status: "none" });
+		}
+
+		const positiveRealLink =
+			"| A |\n| --- |\n| ![a](https://example.com/a.png) https://example.com/ok |";
+		expect(
+			candidateOf(
+				findEditorSourceLink({
+					blockIndex: createEditorMarkdownBlockIndex(positiveRealLink),
+					selection: selection(positiveRealLink.indexOf("example.com/ok") + 2),
+					source: positiveRealLink,
+				}),
+			).source,
+		).toBe("https://example.com/ok");
 	});
 });
 

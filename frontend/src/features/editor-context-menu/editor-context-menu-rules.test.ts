@@ -4607,6 +4607,96 @@ describe("editor context menu rules", () => {
 			}),
 		).toBe(null);
 	});
+
+	it("masks PHP math pipes in pipePositions, table parsing, table mutations, and PHP table scanning", () => {
+		// pipePositions masks pipes inside PHP math while keeping code-wrapped pipes unmasked.
+		expect(pipePositions("| $a|b$ | C |")).toEqual([0, 8, 12]);
+		expect(pipePositions("| \\(a|b\\) | C |")).toEqual([0, 10, 14]);
+		expect(pipePositions("| $$a|b$$ | C |")).toEqual([0, 10, 14]);
+		expect(pipePositions("| \\[a|b\\] | C |")).toEqual([0, 10, 14]);
+		expect(pipePositions("| `$a|b$` | C |")).toEqual([0, 5, 10, 14]);
+
+		// 1. Asymmetric 1-col PHP table (`| $a|b$ |` header with 2-col separator) is declined cleanly.
+		const asymmetricMath = "| $a|b$ |\n| --- | --- |\n| $x|y$ |";
+		for (const probe of ["$a|b$", "$x|y$"]) {
+			const pos = asymmetricMath.indexOf(probe) + 1;
+			expect(prepareMarkdownTable(asymmetricMath, pos), probe).toBeNull();
+			expect(
+				editMarkdownTable(asymmetricMath, pos, { type: "insert-column-right" }),
+				`insert:${probe}`,
+			).toBeNull();
+			expect(
+				editMarkdownTable(asymmetricMath, pos, { type: "delete-column" }),
+				`delete:${probe}`,
+			).toBeNull();
+		}
+
+		// 2. Paragraph with inline math pipe (`text $a|b$`) has 0 real pipes in PHP -> 0 tables.
+		const nonTableMath = "text $a|b$\n| --- | --- |\n| 1 | 2 |";
+		expect(prepareMarkdownTable(nonTableMath, nonTableMath.indexOf("1"))).toBeNull();
+		expect(prepareMarkdownTable(nonTableMath, nonTableMath.indexOf("text"))).toBeNull();
+
+		// 3. Valid 2-col table with inline math pipe in cell 0 is recognized and editable.
+		const validTwoCol = "| $a|b$ | C |\n| --- | --- |\n| 1 | 2 |";
+		expect(prepareMarkdownTable(validTwoCol, validTwoCol.indexOf("1"))).toMatchObject({
+			context: { columnCount: 2, rowCount: 2 },
+			table: { endLine: 2, separatorLine: 1, startLine: 0 },
+		});
+
+		// 4. insert-column-right, delete-column, and format preserve `$a|b$` and `$x|y$` intact.
+		const editableMathTable = "| $a|b$ | C |\n| --- | --- |\n| $x|y$ | 2 |";
+		const col0Pos = editableMathTable.indexOf("$a|b$") + 2;
+		const col1Pos = editableMathTable.indexOf("C");
+		expect(
+			editMarkdownTable(editableMathTable, col0Pos, {
+				type: "insert-column-right",
+			})?.value,
+		).toBe("| $a|b$ |  | C |\n| --- | --- | --- |\n| $x|y$ |  | 2 |");
+		expect(
+			editMarkdownTable(editableMathTable, col1Pos, { type: "delete-column" })
+				?.value,
+		).toBe("| $a|b$ |\n| --- |\n| $x|y$ |");
+		expect(
+			formatMarkdownTableSource(editableMathTable, {
+				direction: "none",
+				end: col0Pos,
+				start: col0Pos,
+			})?.value,
+		).toBe("| $a|b$ | C   |\n| ---   | --- |\n| $x|y$ | 2   |");
+
+		// 5. Inline `\(...\)` math pipe in header/body cells stays intact across column edits.
+		const parenMathTable = "| \\(a|b\\) | C |\n| --- | --- |\n| \\(x|y\\) | 2 |";
+		expect(
+			editMarkdownTable(parenMathTable, parenMathTable.indexOf("C"), {
+				type: "delete-column",
+			})?.value,
+		).toBe("| \\(a|b\\) |\n| --- |\n| \\(x|y\\) |");
+
+		// 6. Preceding paragraph with inline math pipe does not open a phantom PHP table before a real table.
+		const mathParaBeforeTable =
+			"text $a|b$\n| --- | --- |\n| X | Y |\n| --- | --- |\n| 1 | 2 |";
+		expect(
+			prepareMarkdownTable(
+				mathParaBeforeTable,
+				mathParaBeforeTable.indexOf("1"),
+			),
+		).toMatchObject({
+			context: { columnCount: 2, rowCount: 2 },
+			table: { endLine: 4, separatorLine: 3, startLine: 2 },
+		});
+
+		// 7. Trailing ATX heading with inline math pipe interrupts the table cleanly matching PHP.
+		const tableThenHeadingMath = "| A | B |\n| --- | --- |\n| 1 | 2 |\n# H $a|b$";
+		expect(
+			prepareMarkdownTable(
+				tableThenHeadingMath,
+				tableThenHeadingMath.indexOf("1"),
+			),
+		).toMatchObject({
+			context: { columnCount: 2, rowCount: 2 },
+			table: { endLine: 2, separatorLine: 1, startLine: 0 },
+		});
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

@@ -1,3 +1,4 @@
+import { scanLinesIntoPhpCommonMarkBlockState } from "../../shared/markdown/php-commonmark-block-engine";
 import {
 	advancePhpCommonMarkBlockLine,
 	asciiLowerCase,
@@ -9,7 +10,9 @@ import {
 	createPhpCommonMarkBlockState,
 	isPhpBlockStateTopLevelParagraph,
 	type PhpCommonMarkBlockState,
+	type PhpMarkdownMathRange,
 } from "../../shared/markdown/php-commonmark-block-scan";
+import { maskPhpMarkdownMathForTableScan } from "../../shared/markdown/php-markdown-math-mask";
 import type {
 	EditorMarkdownBlockIndex,
 	EditorMarkdownSourceBlock,
@@ -138,6 +141,18 @@ export function resetPhpTableScanState(state: PhpTableScanState): void {
 	state.paragraphHasPipe = false;
 }
 
+function advanceMaskedPhpBlockLine(
+	state: PhpCommonMarkBlockState,
+	text: string,
+): void {
+	const masked = maskPhpMarkdownMathForTableScan(text);
+	if (masked.includes("\n") || masked.includes("\r")) {
+		scanLinesIntoPhpCommonMarkBlockState(state, masked);
+	} else {
+		advancePhpCommonMarkBlockLine(state, masked);
+	}
+}
+
 /**
  * Advances PHP `League\CommonMark`'s canonical block-structure state machine
  * across one line. Returns `true` when the line may serve as a top-level table
@@ -157,7 +172,7 @@ export function advancePhpTableScanLine(
 		state.blockState.containers.length = 0;
 		state.blockState.leaf = { kind: "table" };
 	}
-	advancePhpCommonMarkBlockLine(state.blockState, line.text);
+	advanceMaskedPhpBlockLine(state.blockState, line.text);
 	const isTopLevelParagraph = isPhpBlockStateTopLevelParagraph(
 		state.blockState,
 	);
@@ -187,10 +202,16 @@ function blockStartsFreshInPhp(
 	if (lineStartsWithBlockMath(firstLine, block.lineStart, blockIndex)) {
 		return true;
 	}
-	if (firstLine.text.includes("|") || rowIndentationIsCode(firstLine.text)) {
+	const maskedFirstLine = maskPhpMarkdownMathForTableScan(firstLine.text);
+	if (
+		maskedFirstLine.includes("\n") ||
+		maskedFirstLine.includes("\r") ||
+		maskedFirstLine.includes("|") ||
+		rowIndentationIsCode(maskedFirstLine)
+	) {
 		return false;
 	}
-	const trimmed = firstLine.text.replace(/^ {0,3}/u, "");
+	const trimmed = maskedFirstLine.replace(/^ {0,3}/u, "");
 	if (trimmed.startsWith(">")) return true;
 	if (COMMONMARK_ATX_HEADING_OPEN.test(trimmed)) return true;
 	if (COMMONMARK_FENCED_CODE_OPEN.test(trimmed)) return true;
@@ -233,8 +254,8 @@ export function collectPrecedingPhpTableBlocks(
 
 /**
  * Feeds source lines `startLine..endLine` into `state`, reproducing PHP
- * `MarkdownRenderer::extract_math()` for any display math span (`$$...$$` or
- * `\[...\]`) contained inside a preceding container block.
+ * `MarkdownRenderer::extract_math()` for both display and inline math spans
+ * contained inside preceding blocks.
  */
 function scanPhpBlockLines(
 	state: PhpCommonMarkBlockState,
@@ -248,33 +269,34 @@ function scanPhpBlockLines(
 	if (!firstLine || !lastLine) return;
 	const rangeStart = firstLine.start;
 	const rangeEnd = lastLine.end;
-	const displayMath = blockIndex.mathSpans.filter(
-		(span) => span.displayMode && span.to > rangeStart && span.from < rangeEnd,
-	);
-	if (0 === displayMath.length) {
+	const overlappingMath: PhpMarkdownMathRange[] = [];
+	for (let i = 0; i < blockIndex.mathSpans.length; i += 1) {
+		const span = blockIndex.mathSpans[i];
+		if (!span || span.to <= rangeStart) continue;
+		if (span.from >= rangeEnd) break;
+		overlappingMath.push({
+			block: span.displayMode,
+			from: Math.max(0, span.from - rangeStart),
+			to: Math.min(rangeEnd - rangeStart, span.to - rangeStart),
+		});
+	}
+	if (0 === overlappingMath.length) {
 		for (let lineIndex = startLine; lineIndex <= endLine; lineIndex += 1) {
 			const line = lines[lineIndex];
 			if (line) advancePhpCommonMarkBlockLine(state, line.text);
 		}
 		return;
 	}
-	let expanded = "";
-	let cursor = rangeStart;
-	for (const span of displayMath) {
-		const spanStart = Math.max(cursor, span.from);
-		const spanEnd = Math.min(rangeEnd, span.to);
-		if (spanStart > cursor) {
-			expanded += blockIndex.source.slice(cursor, spanStart);
+	const slice = blockIndex.source.slice(rangeStart, rangeEnd);
+	const masked = maskPhpMarkdownMathForTableScan(slice, overlappingMath);
+	if (masked === slice) {
+		for (let lineIndex = startLine; lineIndex <= endLine; lineIndex += 1) {
+			const line = lines[lineIndex];
+			if (line) advancePhpCommonMarkBlockLine(state, line.text);
 		}
-		expanded += "\n\nEASYMDE_MATH_TOKEN\n\n";
-		cursor = Math.max(cursor, spanEnd);
+		return;
 	}
-	if (cursor < rangeEnd) {
-		expanded += blockIndex.source.slice(cursor, rangeEnd);
-	}
-	for (const virtualLine of expanded.split(/\r\n|\r|\n/u)) {
-		advancePhpCommonMarkBlockLine(state, virtualLine);
-	}
+	scanLinesIntoPhpCommonMarkBlockState(state, masked);
 }
 
 function scanPrecedingStateThroughTargetLine(
@@ -308,7 +330,7 @@ function scanPrecedingStateThroughTargetLine(
 		blockStartLine - 1,
 		blockIndex,
 	);
-	advancePhpCommonMarkBlockLine(state, targetLine.text);
+	advanceMaskedPhpBlockLine(state, targetLine.text);
 	return state;
 }
 

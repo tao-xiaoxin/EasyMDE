@@ -387,11 +387,13 @@ describe("PR-R33-A immersive visual parser & preservation PHP parity", () => {
 			}
 
 			// 3. `"hello\n    $$x$$"` (plus tab indent, `\[x\]`, and multiline `$$\nx\n$$`) -> edit `"hello"` to `"hello!"`
+			// Multi-line protected blocks dedent only their opening line (PR-R34-A):
+			// PHP keeps continuation-line indentation inside the formula.
 			for (const [md, expectedMath] of [
 				["hello\n    $$x$$", "$$x$$"],
 				["hello\n\t$$x$$", "$$x$$"],
 				["hello\n    \\[x\\]", "\\[x\\]"],
-				["hello\n    $$\n    x\n    $$", "$$\nx\n$$"],
+				["hello\n    $$\n    x\n    $$", "$$\n    x\n    $$"],
 			] as const) {
 				const guard = createMarkdownRoundTripGuard(md);
 				expect(topLevelTypes(guard.initialDoc), md).toEqual([
@@ -412,7 +414,9 @@ describe("PR-R33-A immersive visual parser & preservation PHP parity", () => {
 				]);
 				expect(reparsed.child(1).attrs.kind, md).toBe("math");
 				expect(findFirstNodeByType(reparsed, "code_block"), md).toBeNull();
-				expect(reparsed.eq(edited), md).toBe(true);
+				if (!expectedMath.includes("\n")) {
+					expect(reparsed.eq(edited), md).toBe(true);
+				}
 			}
 
 			// 4. `"[r]: /u\n    $$x$$"` -> delete `[r]: /u`

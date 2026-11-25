@@ -89,6 +89,21 @@ export function getLazyListRelativeIndent(
 		: s;
 }
 
+/**
+ * Reports whether `line` is a lazy list continuation (`0 <= sCount < blkIndent`)
+ * whose indentation relative to the deepest matching ancestor list container
+ * is 4+ columns. PHP `League\CommonMark` treats such a line as indented code
+ * for block-start purposes, so it can only continue the open paragraph (or
+ * split a GFM table header) and must never start a blockquote, heading,
+ * thematic break, or fence (`  2. x\n    > y`, `  10. > a\n    > b`).
+ */
+function isIndentedLazyListLine(state: BlockRuleState, line: number): boolean {
+	const s = state.sCount[line] ?? 0;
+	return (
+		s >= 0 && s < state.blkIndent && getLazyListRelativeIndent(state, line) >= 4
+	);
+}
+
 const MAX_AUTOCOMPLETED_CELLS = 10_000;
 
 function emitPhpParityTable(
@@ -474,7 +489,7 @@ export function createEasyMdeLheadingRule(tableRule: BlockRuleFn): BlockRuleFn {
 					}
 				}
 			}
-			if (s < 0) {
+			if (s < 0 || isIndentedLazyListLine(state, nextLine)) {
 				if (tableRule(state, nextLine, endLine, true)) break;
 				continue;
 			}
@@ -530,7 +545,11 @@ export function createEasyMdeParagraphRule(
 		state.parentType = "paragraph";
 		for (; nextLine < endLine && !state.isEmpty(nextLine); nextLine += 1) {
 			const s = state.sCount[nextLine] ?? 0;
-			if (s - state.blkIndent > 3 || s < 0) {
+			if (
+				s - state.blkIndent > 3 ||
+				s < 0 ||
+				isIndentedLazyListLine(state, nextLine)
+			) {
 				if (tableRule(state, nextLine, endLine, true)) {
 					terminatedByTable = true;
 					break;
@@ -592,7 +611,10 @@ export function createEasyMdeBlockquoteRule(): BlockRuleFn {
 		let pos = (state.bMarks[startLine] ?? 0) + (state.tShift[startLine] ?? 0);
 		let max = state.eMarks[startLine] ?? pos;
 		const oldLineMax = state.lineMax;
-		if ((state.sCount[startLine] ?? 0) - state.blkIndent >= 4) {
+		if (
+			(state.sCount[startLine] ?? 0) - state.blkIndent >= 4 ||
+			isIndentedLazyListLine(state, startLine)
+		) {
 			return false;
 		}
 		if (state.src.charCodeAt(pos) !== 0x3e) {
@@ -670,7 +692,10 @@ export function createEasyMdeBlockquoteRule(): BlockRuleFn {
 				break;
 			}
 			let terminate = false;
-			if (sCount >= 0) {
+			if (
+				sCount >= 0 &&
+				!(isOutdented && getLazyListRelativeIndent(state, nextLine) >= 4)
+			) {
 				for (let i = 0; i < terminatorRules.length; i += 1) {
 					if (terminatorRules[i]?.(state, nextLine, endLine, true)) {
 						terminate = true;

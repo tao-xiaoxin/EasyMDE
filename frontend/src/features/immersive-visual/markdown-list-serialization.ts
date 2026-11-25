@@ -27,6 +27,9 @@ export type BlockSerializer = (
 ) => string;
 export type RefDefContinuationMode = "none" | "tight" | "indented";
 
+/** CommonMark §5.3: only non-empty bullet / `1.` items interrupt a paragraph. */
+const PARAGRAPH_INTERRUPTING_LIST_FIRST_LINE = /^[ \t]*(?:[-*+]|1[.)])[ \t]+\S/;
+
 function nodeContainsString(
 	node: ProseMirrorNode,
 	needle: string,
@@ -534,8 +537,15 @@ function serializeListItemBody(
 			prev !== null &&
 			prev.type.name === "paragraph"
 		) {
+			// A nested list that cannot interrupt a paragraph (`2. x`, empty
+			// item) would be absorbed as lazy paragraph text without a blank.
+			const nl = serialized.indexOf("\n");
+			const nestedFirstLine = nl === -1 ? serialized : serialized.slice(0, nl);
 			parts.push(
-				blankBeforeNestedList ? `\n\n${serialized}` : `\n${serialized}`,
+				blankBeforeNestedList ||
+					!PARAGRAPH_INTERRUPTING_LIST_FIRST_LINE.test(nestedFirstLine)
+					? `\n\n${serialized}`
+					: `\n${serialized}`,
 			);
 		} else {
 			const refDefMode =

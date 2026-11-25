@@ -814,15 +814,17 @@ function serializeDocPreservingUntouchedBlocks(
 			child.type.name !== "code_block" &&
 			separator !== "\n" &&
 			LEADING_FOUR_COLUMN_INDENT.test(serialized);
-		let blockText = reusedIndentedBlockAfterBlank
-			? serializers.serializeBlock(child)
-			: candidateText;
-		if (
-			reusedIndentedBlockAfterBlank &&
-			child.type.name === "protected_block" &&
-			LEADING_FOUR_COLUMN_INDENT.test(blockText)
-		) {
-			blockText = blockText.replace(/^[ \t]+/, "");
+		let blockText = candidateText;
+		if (reusedIndentedBlockAfterBlank && serialized !== null) {
+			// A blank-line separator would turn the reused 4-column slice into
+			// an indented code block. Protected blocks (display math, raw) only
+			// dedent their opening line: PHP keeps continuation-line indentation
+			// verbatim inside the formula (`$$x\n    y$$`), so dedenting every
+			// line would change the rendered output.
+			blockText =
+				child.type.name === "protected_block"
+					? serialized.replace(/^[ \t]+/, "")
+					: serializers.serializeBlock(child);
 		}
 		const emittedBlockText =
 			refDefMode === "indented" && !LEADING_FOUR_COLUMN_INDENT.test(blockText)

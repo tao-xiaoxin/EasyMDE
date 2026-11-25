@@ -717,12 +717,67 @@ export function buildInlineMaskedDisplayMathLine(
 	return result;
 }
 
+/**
+ * Memoizes the outcome of continuing an open §4.7 title from line `k`. In the
+ * `"title"` state the outcome depends only on the start line, the title
+ * delimiter, and the masking mode, so repeated probes from successive lines of
+ * one long unclosed title (`[r]: /u\n"a $$x$$\na $$x$$\n...`) stay amortized
+ * O(N) instead of rescanning to EOF from every display-math line.
+ */
+const titleContinuationMemo = new WeakMap<
+	PhpDocumentMathIndex,
+	WeakMap<ReadonlyArray<string>, Map<string, boolean>>
+>();
+
+function getTitleContinuationMemo(
+	mathIndex: PhpDocumentMathIndex,
+	lines: ReadonlyArray<string>,
+): Map<string, boolean> {
+	let byLines = titleContinuationMemo.get(mathIndex);
+	if (!byLines) {
+		byLines = new WeakMap();
+		titleContinuationMemo.set(mathIndex, byLines);
+	}
+	let memo = byLines.get(lines);
+	if (!memo) {
+		memo = new Map();
+		byLines.set(lines, memo);
+	}
+	return memo;
+}
+
 function scanRefDefContinuation(
 	refParser: ParagraphReferenceParser,
 	lines: ReadonlyArray<string>,
 	mathIndex: PhpDocumentMathIndex,
 	nextLineIndex: number,
 	maskInlineDisplayMath: boolean,
+): boolean {
+	const memo = getTitleContinuationMemo(mathIndex, lines);
+	const visited: string[] = [];
+	const result = scanRefDefContinuationLines(
+		refParser,
+		lines,
+		mathIndex,
+		nextLineIndex,
+		maskInlineDisplayMath,
+		memo,
+		visited,
+	);
+	for (const key of visited) {
+		memo.set(key, result);
+	}
+	return result;
+}
+
+function scanRefDefContinuationLines(
+	refParser: ParagraphReferenceParser,
+	lines: ReadonlyArray<string>,
+	mathIndex: PhpDocumentMathIndex,
+	nextLineIndex: number,
+	maskInlineDisplayMath: boolean,
+	memo: Map<string, boolean>,
+	visited: string[],
 ): boolean {
 	let k = nextLineIndex;
 	while (k < lines.length && readRefParserState(refParser) !== "paragraph") {
@@ -731,6 +786,14 @@ function scanRefDefContinuation(
 			refParser.labelCodePoints > 999
 		) {
 			return false;
+		}
+		if (readRefParserState(refParser) === "title") {
+			const memoKey = `${maskInlineDisplayMath ? "m" : "u"}${refParser.titleDelimiter ?? ""}${k}`;
+			const cached = memo.get(memoKey);
+			if (cached !== undefined) {
+				return cached;
+			}
+			visited.push(memoKey);
 		}
 		const kEnd = findLogicalLineEnd(mathIndex, k);
 		const firstDisp = findFirstDisplayMathInLines(mathIndex, k, kEnd);
@@ -743,11 +806,17 @@ function scanRefDefContinuation(
 					kStart,
 					kEndOffset,
 				);
-				return (
-					!isCommonMarkBlankLine(inlineMasked) &&
-					!opensNonParagraphBlock(inlineMasked, 0, true) &&
-					advanceParagraphReferenceParser(refParser, inlineMasked)
-				);
+				if (
+					isCommonMarkBlankLine(inlineMasked) ||
+					opensNonParagraphBlock(inlineMasked, 0, true)
+				) {
+					return false;
+				}
+				if (advanceParagraphReferenceParser(refParser, inlineMasked)) {
+					return true;
+				}
+				k = kEnd + 1;
+				continue;
 			}
 			if (firstDisp.from <= kStart) {
 				return false;

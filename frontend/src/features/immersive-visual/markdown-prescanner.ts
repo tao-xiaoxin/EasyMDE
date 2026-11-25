@@ -167,6 +167,12 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		return token;
 	};
 
+	const addTableAlignMarker = (markerText: string): string => {
+		const markerToken = `${sentinel}TBLALIGN${tableAlignMarkers.size}END`;
+		tableAlignMarkers.set(markerToken, markerText);
+		return markerToken;
+	};
+
 	const pushProtectedBlock = (
 		kind: ProtectedBlockKind,
 		{ indent, prefix }: Pick<LineAnalysis, "indent" | "prefix">,
@@ -289,7 +295,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 	};
 
 	const displayMathEnv: DisplayMathEmitEnv = {
-		callbacks: { addProtectedBlock, pushOutputLine },
+		callbacks: { addProtectedBlock, addTableAlignMarker, pushOutputLine },
 		getOutputLength: () => outputLines.length,
 		hasPrecedingContent: () =>
 			outputLines.length > 0 &&
@@ -525,8 +531,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			mathIndex,
 		);
 		if (tableAlignMatch !== null) {
-			const markerToken = `${sentinel}TBLALIGN${tableAlignMarkers.size}END`;
-			tableAlignMarkers.set(markerToken, tableAlignMatch.text);
+			const markerToken = addTableAlignMarker(tableAlignMatch.text);
 			pendingTableAlignOutputIndex = outputLines.length;
 			pushOutputLine(`${tableAlignMatch.markerPrefix}${markerToken}`, {
 				end: i + 1,
@@ -546,6 +551,19 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 				: !hasInterleavedContainers &&
 					lineQuoteDepth === paragraphQuoteDepth &&
 					continuesListItem);
+		const lazyParagraphContainers: ReadonlyArray<ContainerStep> | null =
+			paragraphOpen &&
+			!tableInParagraph &&
+			phpBlockState.containers.length > 0 &&
+			phpBlockState.leaf?.kind === "paragraph"
+				? phpBlockState.containers.map((container) =>
+						container.kind === "blockquote"
+							? { kind: "blockquote" as const }
+							: { indent: container.indent, kind: "list" as const },
+					)
+				: null;
+		const effectiveTableInParagraph =
+			tableInParagraph || lazyParagraphContainers !== null;
 
 		// 3b. GFM tables (container-aware + multiline `\(...\)` + lazy rows).
 		const tableMatch = resolveGfmTableMatch(
@@ -557,8 +575,9 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			true,
 			mathIndex,
 			tableInParagraph,
-			tableInParagraph ? paragraphRefParser : null,
-			tableInParagraph && paragraphHasPipe,
+			effectiveTableInParagraph ? paragraphRefParser : null,
+			effectiveTableInParagraph && paragraphHasPipe,
+			lazyParagraphContainers,
 		);
 		if (tableMatch !== null) {
 			activeTable = tableMatch;
@@ -580,6 +599,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		const beforeHtmlContext =
 			mathIndex.ranges.length > 0
 				? {
+						activeRefParser: tableInParagraph ? paragraphRefParser : null,
 						allowLeadingListMarker: !listInterruptionInParagraph,
 						baseContainers: tableBaseContainers,
 						inParagraph: tableInParagraph,

@@ -37,6 +37,7 @@ import type { ProtectedBlockKind } from "./visual-schema";
 
 export type TableEmitCallbacks = Readonly<{
 	addProtectedBlock: (kind: ProtectedBlockKind, rawMarkdown: string) => string;
+	addTableAlignMarker: (markerText: string) => string;
 	pushOutputLine: (
 		text: string,
 		range: Readonly<{ end: number; start: number }> | null,
@@ -54,6 +55,7 @@ export type DisplayMathEmitEnv = Readonly<{
 }>;
 
 export type BeforeHtmlContext = Readonly<{
+	activeRefParser: ParagraphReferenceParser | null;
 	allowLeadingListMarker: boolean;
 	baseContainers: ReadonlyArray<ContainerStep>;
 	inParagraph: boolean;
@@ -61,6 +63,7 @@ export type BeforeHtmlContext = Readonly<{
 }>;
 
 export const POST_MATH_BEFORE_HTML_CONTEXT: BeforeHtmlContext = {
+	activeRefParser: null,
 	allowLeadingListMarker: true,
 	baseContainers: [],
 	inParagraph: false,

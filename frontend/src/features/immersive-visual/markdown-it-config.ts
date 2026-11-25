@@ -1,12 +1,17 @@
 import MarkdownIt from "markdown-it";
 import { decodeCommonMarkTitle } from "../../shared/image-scale-title";
+import { COMMONMARK_SETEXT_UNDERLINE } from "../../shared/markdown/php-commonmark-block-helpers";
 import {
 	advanceParagraphReferenceParser,
 	createParagraphReferenceParser,
 	type ParagraphReferenceParser,
 	type ReferenceDefinitionState,
 } from "../../shared/markdown/php-commonmark-reference-def";
-import { createEasyMdeTableRule } from "./markdown-it-table-rule";
+import {
+	createEasyMdeLheadingRule,
+	createEasyMdeParagraphRule,
+	createEasyMdeTableRule,
+} from "./markdown-it-table-rule";
 import {
 	RAW_IMAGE_TITLE_META_KEY,
 	RAW_LINK_TITLE_META_KEY,
@@ -357,21 +362,45 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 		(rule) => rule.name === "table",
 	);
 
+	let easyMdeTableRule: BlockRuleFn | null = null;
 	if (originalTableRuleEntry) {
+		easyMdeTableRule = createEasyMdeTableRule({
+			originalReferenceRule,
+			rawReferenceSourceMetaKey: RAW_REFERENCE_SOURCE_META_KEY,
+			wouldReferenceDefinitionAbsorbFollowingBlock,
+		});
 		parser.block.ruler.before(
 			"table",
 			"easymde_table",
-			createEasyMdeTableRule({
-				originalReferenceRule,
-				rawReferenceSourceMetaKey: RAW_REFERENCE_SOURCE_META_KEY,
-				wouldReferenceDefinitionAbsorbFollowingBlock,
-			}),
+			easyMdeTableRule,
 			{ alt: [...originalTableRuleEntry.alt] },
 		);
 		parser.block.ruler.disable("table");
 	}
 
 	if (originalReferenceRuleEntry && originalReferenceRule) {
+		// Mirror PHP HeadingStartParser (priority 60) beating an incomplete
+		// CommonMark §4.7 link reference definition's multiline continuation
+		// (`[r]:\n===`, `[r]:\n-`) before ParagraphParser feeds the Setext
+		// underline into ReferenceParser.
+		parser.block.ruler.before(
+			"reference",
+			"easymde_reference_setext_terminator",
+			(state, startLine, _endLine, silent) => {
+				if (!silent || state.parentType !== "reference") {
+					return false;
+				}
+				const s = state.sCount[startLine] ?? 0;
+				if (s < state.blkIndent || s - state.blkIndent >= 4) {
+					return false;
+				}
+				const pos =
+					(state.bMarks[startLine] ?? 0) + (state.tShift[startLine] ?? 0);
+				const max = state.eMarks[startLine] ?? pos;
+				return COMMONMARK_SETEXT_UNDERLINE.test(state.src.slice(pos, max));
+			},
+			{ alt: ["reference"] },
+		);
 		parser.block.ruler.before(
 			"reference",
 			"easymde_reference",
@@ -576,6 +605,21 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 		{ alt: ["paragraph", "reference", "blockquote", "list"] },
 	);
 
+	if (easyMdeTableRule !== null) {
+		const originalLheadingRuleEntry = blockRules?.find(
+			(rule) => rule.name === "lheading",
+		);
+		if (originalLheadingRuleEntry) {
+			parser.block.ruler.before(
+				"lheading",
+				"easymde_lheading",
+				createEasyMdeLheadingRule(easyMdeTableRule),
+				{ alt: [...originalLheadingRuleEntry.alt] },
+			);
+			parser.block.ruler.disable("lheading");
+		}
+	}
+
 	parser.block.ruler.before(
 		"paragraph",
 		"easymde_table_align",
@@ -607,6 +651,21 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 		},
 		{ alt: ["paragraph", "reference", "blockquote", "list"] },
 	);
+
+	if (easyMdeTableRule !== null) {
+		const originalParagraphRuleEntry = blockRules?.find(
+			(rule) => rule.name === "paragraph",
+		);
+		if (originalParagraphRuleEntry) {
+			parser.block.ruler.before(
+				"paragraph",
+				"easymde_paragraph",
+				createEasyMdeParagraphRule(easyMdeTableRule),
+				{ alt: [...originalParagraphRuleEntry.alt] },
+			);
+			parser.block.ruler.disable("paragraph");
+		}
+	}
 
 	// Strip paragraph/Setext continuation indentation per CommonMark §4.8.
 	parser.core.ruler.before(

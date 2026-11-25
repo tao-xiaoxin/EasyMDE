@@ -77,40 +77,87 @@ function escapeLineStartPrefix(line: string): Readonly<{
 	return { escaped: "", consumed: 0 };
 }
 
-function collectEscapedOpenBrackets(
-	line: string,
-	start: number,
-	refDefBracketIndex: number,
+type LineEscapePlan = Readonly<{
+	line: string;
+	offset: number;
+	prefixEscaped: string;
+	refDefBracketIndex: number;
+	start: number;
+}>;
+
+function isBlankEscapeLine(line: string): boolean {
+	for (let i = 0; i < line.length; i += 1) {
+		const code = line.charCodeAt(i);
+		if (code !== 0x20 && code !== 0x09) {
+			return false;
+		}
+	}
+	return true;
+}
+
+function collectEscapedOpenBracketsAcrossLines(
+	text: string,
+	plans: ReadonlyArray<LineEscapePlan>,
+	resetOnBlankLines: boolean,
 ): Uint8Array | null {
-	if (line.indexOf("[", start) === -1 || line.indexOf("]", start) === -1) {
+	if (!text.includes("[") || !text.includes("]")) {
 		return null;
 	}
 	let escaped: Uint8Array | null = null;
 	const openStack: number[] = [];
-	for (let i = start; i < line.length; i += 1) {
-		const ch = line[i];
-		if (ch === "[") {
-			openStack.push(i);
-		} else if (ch === "]" && openStack.length > 0) {
-			const openIdx = openStack.pop();
-			if (openIdx === undefined) continue;
-			const after = line[i + 1];
-			if (after === "(" || after === "[") {
-				if (escaped === null) escaped = new Uint8Array(line.length);
-				escaped[openIdx] = 1;
-				while (openStack.length > 0) {
-					const enclosing = openStack.pop();
-					if (enclosing !== undefined) {
-						escaped[enclosing] = 1;
+	const activeRefDefStack: number[] = [];
+	for (let p = 0; p < plans.length; p += 1) {
+		const plan = plans[p];
+		if (!plan) continue;
+		const { line, offset, refDefBracketIndex, start } = plan;
+		if (resetOnBlankLines && isBlankEscapeLine(line)) {
+			openStack.length = 0;
+			activeRefDefStack.length = 0;
+			continue;
+		}
+		for (let i = start; i < line.length; i += 1) {
+			const ch = line[i];
+			if (ch === "[") {
+				const globalIdx = offset + i;
+				openStack.push(globalIdx);
+				if (i === refDefBracketIndex) {
+					activeRefDefStack.push(globalIdx);
+				}
+			} else if (ch === "]" && openStack.length > 0) {
+				const openIdx = openStack.pop();
+				if (openIdx === undefined) continue;
+				const wasRefDef =
+					activeRefDefStack.length > 0 &&
+					activeRefDefStack[activeRefDefStack.length - 1] === openIdx;
+				if (wasRefDef) {
+					activeRefDefStack.pop();
+				}
+				const after = line[i + 1];
+				if (after === "(" || after === "[") {
+					if (escaped === null) escaped = new Uint8Array(text.length);
+					escaped[openIdx] = 1;
+					while (openStack.length > 0) {
+						const enclosing = openStack.pop();
+						if (enclosing !== undefined) {
+							escaped[enclosing] = 1;
+						}
+					}
+					activeRefDefStack.length = 0;
+				} else if (after === ":" && (wasRefDef || activeRefDefStack.length > 0)) {
+					if (escaped === null) escaped = new Uint8Array(text.length);
+					if (wasRefDef) {
+						escaped[openIdx] = 1;
+					}
+					// Escaping an inner `[` turns it into `\[`, which no longer blocks
+					// an enclosing line-start `[` from closing at `]:`, so escape every
+					// enclosing active line-start refdef bracket in O(1) amortized time.
+					while (activeRefDefStack.length > 0) {
+						const enclosingRefDef = activeRefDefStack.pop();
+						if (enclosingRefDef !== undefined) {
+							escaped[enclosingRefDef] = 1;
+						}
 					}
 				}
-			} else if (
-				after === ":" &&
-				refDefBracketIndex >= 0 &&
-				(openIdx === refDefBracketIndex || openStack[0] === refDefBracketIndex)
-			) {
-				if (escaped === null) escaped = new Uint8Array(line.length);
-				escaped[refDefBracketIndex] = 1;
 			}
 		}
 	}
@@ -118,18 +165,13 @@ function collectEscapedOpenBrackets(
 }
 
 function escapeInlineLine(
-	line: string,
-	atLineStart: boolean,
+	plan: LineEscapePlan,
+	escapedOpenBrackets: Uint8Array | null,
 	inTableCell: boolean,
 	inLinkLabel: boolean,
 ): string {
-	let escaped = "";
-	let start = 0;
-	if (atLineStart) {
-		const prefix = escapeLineStartPrefix(line);
-		escaped = prefix.escaped;
-		start = prefix.consumed;
-	}
+	const { line, offset, prefixEscaped, start } = plan;
+	let escaped = prefixEscaped;
 	let lastNonWsIndex = line.length - 1;
 	while (
 		lastNonWsIndex >= start &&
@@ -137,19 +179,6 @@ function escapeInlineLine(
 	) {
 		lastNonWsIndex -= 1;
 	}
-	let refDefBracketIndex = -1;
-	if (atLineStart && start === 0) {
-		let lead = 0;
-		while (lead < 3 && lead < line.length && line[lead] === " ") {
-			lead += 1;
-		}
-		if (line[lead] === "[") {
-			refDefBracketIndex = lead;
-		}
-	}
-	const escapedOpenBrackets = inLinkLabel
-		? null
-		: collectEscapedOpenBrackets(line, start, refDefBracketIndex);
 	for (let i = start; i < line.length; i += 1) {
 		const ch = line[i] ?? "";
 		switch (ch) {
@@ -176,7 +205,7 @@ function escapeInlineLine(
 					inLinkLabel ||
 					line[i + 1] === "^" ||
 					isTocSyntaxAt(line, i, lastNonWsIndex) ||
-					escapedOpenBrackets?.[i] === 1;
+					escapedOpenBrackets?.[offset + i] === 1;
 				escaped += needsEscape ? "\\[" : "[";
 				break;
 			}
@@ -217,15 +246,45 @@ export function escapeInlineMarkdownText(
 	const inTableCell = options.inTableCell ?? false;
 	const inHeading = options.inHeading ?? false;
 	const inLinkLabel = options.inLinkLabel ?? false;
+	const firstAtLineStart = options.atLineStart ?? false;
 	const lines = text.split("\n");
-	const separator = inHeading ? " " : inTableCell ? "<br>" : "\n";
-	const escapedLines = lines.map((line, index) =>
-		escapeInlineLine(
+	const plans: LineEscapePlan[] = new Array(lines.length);
+	let offset = 0;
+	for (let index = 0; index < lines.length; index += 1) {
+		const line = lines[index] ?? "";
+		const atLineStart = !inHeading && (index > 0 || firstAtLineStart);
+		const prefix = atLineStart
+			? escapeLineStartPrefix(line)
+			: { consumed: 0, escaped: "" };
+		let refDefBracketIndex = -1;
+		if (atLineStart && prefix.consumed === 0) {
+			let lead = 0;
+			while (lead < 3 && lead < line.length && line[lead] === " ") {
+				lead += 1;
+			}
+			if (line[lead] === "[") {
+				refDefBracketIndex = lead;
+			}
+		}
+		plans[index] = {
 			line,
-			!inHeading && (index > 0 || (options.atLineStart ?? false)),
-			inTableCell,
-			inLinkLabel,
-		),
+			offset,
+			prefixEscaped: prefix.escaped,
+			refDefBracketIndex,
+			start: prefix.consumed,
+		};
+		offset += line.length + 1;
+	}
+	const escapedOpenBrackets = inLinkLabel
+		? null
+		: collectEscapedOpenBracketsAcrossLines(
+				text,
+				plans,
+				!inHeading && !inTableCell,
+			);
+	const separator = inHeading ? " " : inTableCell ? "<br>" : "\n";
+	const escapedLines = plans.map((plan) =>
+		escapeInlineLine(plan, escapedOpenBrackets, inTableCell, inLinkLabel),
 	);
 	return escapedLines.join(separator);
 }

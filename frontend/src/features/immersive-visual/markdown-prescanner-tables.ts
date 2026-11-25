@@ -1,6 +1,7 @@
 import {
 	COMMONMARK_ATX_HEADING_OPEN,
 	COMMONMARK_FENCED_CODE_OPEN,
+	COMMONMARK_SETEXT_UNDERLINE,
 	COMMONMARK_THEMATIC_BREAK_LINE,
 	countTableRowCells,
 	matchHtmlBlockOpen,
@@ -267,7 +268,7 @@ export function opensNonParagraphBlock(
 	inParagraph: boolean,
 ): boolean {
 	if (measureIndentColumns(candidate, candidateColumn) >= 4) {
-		return true;
+		return !inParagraph;
 	}
 	const listMarker = matchListMarker(candidate, candidateColumn);
 	if (
@@ -280,9 +281,51 @@ export function opensNonParagraphBlock(
 	return (
 		trimmedStart.startsWith(">") ||
 		COMMONMARK_ATX_HEADING_OPEN.test(trimmedStart) ||
+		(inParagraph && COMMONMARK_SETEXT_UNDERLINE.test(trimmedStart)) ||
 		COMMONMARK_FENCED_CODE_OPEN.test(trimmedStart) ||
 		COMMONMARK_THEMATIC_BREAK_LINE.test(trimmedStart) ||
 		matchHtmlBlockOpen(trimmedStart, !inParagraph) !== null
+	);
+}
+
+/**
+ * Exact PHP `League\CommonMark` priority guard for a candidate GFM table
+ * delimiter line interrupting an open paragraph: returns `true` when any
+ * higher-priority block start parser — BlockQuote (70), Heading/Setext (60),
+ * FencedCode (50), HtmlBlock Types 1–6 (40), ThematicBreak (20), or
+ * ListBlock (10) — interrupts the open paragraph before `TableStartParser`
+ * (priority 0) runs. Lines indented >= 4 columns are never interrupted because
+ * every higher-priority parser rejects indented lines and
+ * `TableStartParser::parseSeparator()` skips all leading spaces and tabs.
+ */
+export function isTableSeparatorInterruptedByHigherPriorityBlock(
+	candidate: string,
+	candidateColumn: number,
+	relativeIndentColumns = measureIndentColumns(candidate, candidateColumn),
+): boolean {
+	if (relativeIndentColumns >= 4) {
+		return false;
+	}
+	return opensNonParagraphBlock(candidate, candidateColumn, true);
+}
+
+function startsLazyParagraphInterruptingBlock(
+	candidate: string,
+	candidateColumn: number,
+): boolean {
+	if (measureIndentColumns(candidate, candidateColumn) >= 4) {
+		return false;
+	}
+	if (matchListMarker(candidate, candidateColumn) !== null) {
+		return true;
+	}
+	const trimmedStart = candidate.replace(/^[ \t]+/, "");
+	return (
+		trimmedStart.startsWith(">") ||
+		COMMONMARK_ATX_HEADING_OPEN.test(trimmedStart) ||
+		COMMONMARK_FENCED_CODE_OPEN.test(trimmedStart) ||
+		COMMONMARK_THEMATIC_BREAK_LINE.test(trimmedStart) ||
+		matchHtmlBlockOpen(trimmedStart, false) !== null
 	);
 }
 
@@ -306,13 +349,40 @@ function startsInterruptingBlock(
 	);
 }
 
+function refParserAbsorbsHeaderOrDelimiter(
+	headerRest: string,
+	delimiterRest: string,
+	inParagraph: boolean,
+	activeRefParser: ParagraphReferenceParser | null,
+): boolean {
+	const probeRefParser: ParagraphReferenceParser | null = !inParagraph
+		? createParagraphReferenceParser()
+		: activeRefParser !== null && activeRefParser.state !== "paragraph"
+			? {
+					labelBuffer: activeRefParser.labelBuffer,
+					labelCodePoints: activeRefParser.labelCodePoints,
+					labelHasNonWhitespace: activeRefParser.labelHasNonWhitespace,
+					referenceValid: activeRefParser.referenceValid,
+					state: activeRefParser.state,
+					titleDelimiter: activeRefParser.titleDelimiter,
+				}
+			: null;
+	return (
+		probeRefParser !== null &&
+		(advanceParagraphReferenceParser(probeRefParser, headerRest) ||
+			(probeRefParser.state === "destination" &&
+				advanceParagraphReferenceParser(probeRefParser, delimiterRest)))
+	);
+}
+
 /**
  * Validates that a container-peeled line (`peeled`) can legally start a GFM
  * table header paragraph and matches the GFM delimiter row on `maskedDelimiter`,
  * rejecting all non-paragraph CommonMark block openers (indented code, ATX
- * headings, fenced code, thematic breaks, HTML blocks Types 1–6 and Type 7
- * outside an open paragraph, blockquotes, list markers, and CommonMark §4.7
- * link reference definitions / titles).
+ * headings, Setext underlines, fenced code, thematic breaks, HTML blocks
+ * Types 1–6 and Type 7 outside an open paragraph, blockquotes, list markers,
+ * higher-priority interrupting blocks on the delimiter row, and CommonMark
+ * §4.7 link reference definitions / titles).
  */
 export function matchPeeledGfmTableHeader(
 	peeled: PeeledLineContainers,
@@ -335,9 +405,10 @@ export function matchPeeledGfmTableHeader(
 		return false;
 	}
 	if (
-		measureIndentColumns(delimiterStripped.rest, delimiterStripped.column) >=
-			4 ||
-		matchListMarker(delimiterStripped.rest, delimiterStripped.column) !== null
+		isTableSeparatorInterruptedByHigherPriorityBlock(
+			delimiterStripped.rest,
+			delimiterStripped.column,
+		)
 	) {
 		return false;
 	}
@@ -352,26 +423,13 @@ export function matchPeeledGfmTableHeader(
 	) {
 		return false;
 	}
-	const probeRefParser: ParagraphReferenceParser | null = !inParagraph
-		? createParagraphReferenceParser()
-		: activeRefParser !== null && activeRefParser.state !== "paragraph"
-			? {
-					labelBuffer: activeRefParser.labelBuffer,
-					labelCodePoints: activeRefParser.labelCodePoints,
-					labelHasNonWhitespace: activeRefParser.labelHasNonWhitespace,
-					referenceValid: activeRefParser.referenceValid,
-					state: activeRefParser.state,
-					titleDelimiter: activeRefParser.titleDelimiter,
-				}
-			: null;
 	if (
-		probeRefParser !== null &&
-		(advanceParagraphReferenceParser(probeRefParser, peeled.rest) ||
-			(probeRefParser.state === "destination" &&
-				advanceParagraphReferenceParser(
-					probeRefParser,
-					delimiterStripped.rest,
-				)))
+		refParserAbsorbsHeaderOrDelimiter(
+			peeled.rest,
+			delimiterStripped.rest,
+			inParagraph,
+			activeRefParser,
+		)
 	) {
 		return false;
 	}
@@ -488,13 +546,17 @@ export function resolveGfmTableMatch(
 	inParagraph = false,
 	activeRefParser: ParagraphReferenceParser | null = null,
 	paragraphHasPipe = false,
+	lazyParagraphContainers: ReadonlyArray<ContainerStep> | null = null,
 ): GfmTableMatch | null {
 	if (headerIndex + 1 >= lines.length) {
 		return null;
 	}
 	const headerEndLine = findLogicalLineEnd(mathIndex, headerIndex);
 	if (
-		!(inParagraph && paragraphHasPipe) &&
+		!(
+			(inParagraph || lazyParagraphContainers !== null) &&
+			paragraphHasPipe
+		) &&
 		headerEndLine === headerIndex &&
 		!(lines[headerIndex] ?? "").includes("|")
 	) {
@@ -530,6 +592,68 @@ export function resolveGfmTableMatch(
 		delimiterLine,
 		delimiterLine,
 	);
+	if (
+		lazyParagraphContainers !== null &&
+		lazyParagraphContainers.length > 0 &&
+		stripContainersWithColumn(maskedHeader, lazyParagraphContainers) === null
+	) {
+		const partial = stripPartialContainers(
+			maskedHeader,
+			lazyParagraphContainers,
+		);
+		if (
+			!isCommonMarkBlankLine(partial.remainder) &&
+			!startsLazyParagraphInterruptingBlock(partial.remainder, partial.column)
+		) {
+			const delimiterStripped = stripContainersWithColumn(
+				maskedDelimiter,
+				lazyParagraphContainers,
+			);
+			if (delimiterStripped === null) {
+				return null;
+			}
+			if (
+				(!partial.remainder.includes("|") && !paragraphHasPipe) ||
+				isTableSeparatorInterruptedByHigherPriorityBlock(
+					delimiterStripped.rest,
+					delimiterStripped.column,
+				)
+			) {
+				return null;
+			}
+			const delimiterColumns = parseGfmTableSeparatorColumns(
+				delimiterStripped.rest,
+			);
+			const headerCells = countTableRowCells(partial.remainder);
+			if (
+				delimiterColumns === 0 ||
+				headerCells === 0 ||
+				headerCells > delimiterColumns ||
+				refParserAbsorbsHeaderOrDelimiter(
+					partial.remainder,
+					delimiterStripped.rest,
+					true,
+					activeRefParser,
+				)
+			) {
+				return null;
+			}
+			const tableEnd = findGfmTableEnd(
+				lines,
+				delimiterLine,
+				lazyParagraphContainers,
+				mathIndex,
+			);
+			return {
+				brokenByDisplayMathLine: tableEnd.brokenByDisplayMathLine,
+				containers: lazyParagraphContainers,
+				delimiterLine,
+				endLine: tableEnd.endLine,
+				headerEndLine,
+				lazyRowStartLines: tableEnd.lazyRowStartLines,
+			};
+		}
+	}
 	const peeled = peelContainerStepsForLine(
 		maskedHeader,
 		baseContainers,

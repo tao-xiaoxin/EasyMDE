@@ -1,5 +1,8 @@
 import type { PhpCommonMarkBlockState } from "../../shared/markdown/php-commonmark-block-engine";
 import {
+	COMMONMARK_ATX_HEADING_OPEN,
+	COMMONMARK_SETEXT_UNDERLINE,
+	COMMONMARK_THEMATIC_BREAK_LINE,
 	consumeBlockquoteMarker,
 	consumeWhitespaceColumns,
 	cursorRemainder,
@@ -597,10 +600,11 @@ export function resolveLineContainerContext(
 	};
 }
 
-export const ATX_HEADING = /^#{1,6}(?:[ \t]+.*|[ \t]*)$/;
-export const THEMATIC_BREAK =
-	/^(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
-export const SETEXT_UNDERLINE = /^(?:=+|-+)[ \t]*$/;
+export {
+	COMMONMARK_ATX_HEADING_OPEN as ATX_HEADING,
+	COMMONMARK_SETEXT_UNDERLINE as SETEXT_UNDERLINE,
+	COMMONMARK_THEMATIC_BREAK_LINE as THEMATIC_BREAK,
+} from "../../shared/markdown/php-commonmark-block-helpers";
 const CONTAINER_QUOTE = /^ {0,3}>[ \t]?/;
 const CONTAINER_LIST_MARKER = /^ {0,3}(?:[-+*]|(\d{1,9})[.)])(?=[ \t]|$)/;
 const leadingColumns = (text: string): number => measureIndentColumns(text, 0);
@@ -644,9 +648,11 @@ export function classifyParagraphLine(
 		if (
 			trimmed === "" ||
 			(nested && leadingColumns(inner) >= 4) ||
-			ATX_HEADING.test(trimmed) ||
-			THEMATIC_BREAK.test(trimmed) ||
-			(!nested && listInterruptionInParagraph && SETEXT_UNDERLINE.test(trimmed))
+			COMMONMARK_ATX_HEADING_OPEN.test(trimmed) ||
+			COMMONMARK_THEMATIC_BREAK_LINE.test(trimmed) ||
+			(!nested &&
+				listInterruptionInParagraph &&
+				COMMONMARK_SETEXT_UNDERLINE.test(trimmed))
 		) {
 			return { nestedQuotes, open: false };
 		}

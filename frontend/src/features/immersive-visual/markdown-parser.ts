@@ -626,11 +626,13 @@ function mapBlockTokensWithRanges(
 			pendingTableAlign = null;
 			const tableRange = resolveOriginalRangeFromTokenMap(token.map, preScan);
 			const combinedRange =
-				tableRange && annotation?.origRange
-					? {
-							start: Math.min(annotation.origRange.start, tableRange.start),
-							end: Math.max(annotation.origRange.end, tableRange.end),
-						}
+				annotation !== null
+					? tableRange && annotation.origRange
+						? {
+								start: Math.min(annotation.origRange.start, tableRange.start),
+								end: Math.max(annotation.origRange.end, tableRange.end),
+							}
+						: null
 					: tableRange;
 			entries.push({
 				node: mapTableTokens(

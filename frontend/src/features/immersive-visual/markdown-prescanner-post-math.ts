@@ -3,6 +3,7 @@ import {
 	matchHtmlBlockOpen,
 } from "../../shared/markdown/php-commonmark-block-helpers";
 import type { PhpMarkdownMathRange } from "../../shared/markdown/php-markdown-math-mask";
+import { parseReservedTableAlignmentMarkerLine } from "../../shared/table-alignment-marker";
 import {
 	type ContainerStep,
 	type DetectableFence,
@@ -25,12 +26,53 @@ import {
 	findLogicalLineEnd,
 	maskedSliceForLines,
 	matchPeeledGfmTableHeader,
+	resolveGfmTableMatch,
 } from "./markdown-prescanner-tables";
 
 /**
- * Post-display-math segment emitters (HTML blocks Types 1–7, fenced code /
- * Mermaid blocks, GFM table handoff, and trailing paragraph state restoration).
+ * Post-display-math segment emitters (reserved table-alignment markers,
+ * HTML blocks Types 1–7, fenced code / Mermaid blocks, GFM table handoff,
+ * and trailing paragraph state restoration).
  */
+
+function tryEmitPostMathTableAlignMarker(
+	env: DisplayMathEmitEnv,
+	rawAfter: string,
+	spanEndLine: number,
+): PostDisplayMathResult | null {
+	if (!rawAfter.includes("<!--")) return null;
+	const rawPeeled = peelContainerStepsForLine(rawAfter, [], 0, true, true);
+	if (
+		rawPeeled === null ||
+		measureIndentColumns(rawPeeled.rest, rawPeeled.column) > 3
+	) {
+		return null;
+	}
+	const parsed = parseReservedTableAlignmentMarkerLine(rawPeeled.rest);
+	if (parsed === null || "code" in parsed) return null;
+	const followingTable = resolveGfmTableMatch(
+		env.lines,
+		spanEndLine + 1,
+		rawPeeled.containers,
+		0,
+		false,
+		false,
+		env.mathIndex,
+	);
+	if (followingTable === null) return null;
+	const markerToken = env.callbacks.addTableAlignMarker(parsed.text);
+	const markerPrefix = `${rawPeeled.linePrefix}${" ".repeat(parsed.fromOffset)}`;
+	env.callbacks.pushOutputLine(`${markerPrefix}${markerToken}`, null);
+	return {
+		activeTable: null,
+		activeTableOutputStart: -1,
+		kind: "done",
+		openedContainers:
+			rawPeeled.containers.length > 0 ? rawPeeled.containers : null,
+		spanEndLine,
+		trailingParagraphState: null,
+	};
+}
 
 function tryEmitPostMathHtmlBlock(
 	env: DisplayMathEmitEnv,
@@ -208,6 +250,12 @@ export function emitPostDisplayMathSegment(
 		);
 		const afterTrimmed = afterPeeled.rest.replace(/^[ \t]+/, "");
 		if (afterIndent <= 3 && afterTrimmed.startsWith("<")) {
+			const tableAlignResult = tryEmitPostMathTableAlignMarker(
+				env,
+				rawAfter,
+				spanEndLine,
+			);
+			if (tableAlignResult !== null) return tableAlignResult;
 			const htmlResult = tryEmitPostMathHtmlBlock(
 				env,
 				rawAfter,

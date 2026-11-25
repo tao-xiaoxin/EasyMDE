@@ -7,7 +7,10 @@ import {
 } from "../../shared/markdown/php-commonmark-block-helpers";
 import { readRawMetaString } from "./markdown-parser-inline";
 import { isCommonMarkBlankLine } from "./markdown-prescanner-containers";
-import { opensNonParagraphBlock } from "./markdown-prescanner-tables";
+import {
+	isTableSeparatorInterruptedByHigherPriorityBlock,
+	opensNonParagraphBlock,
+} from "./markdown-prescanner-tables";
 
 type BlockRuleFn = Parameters<
 	InstanceType<typeof MarkdownIt>["block"]["ruler"]["at"]
@@ -165,34 +168,54 @@ export function createEasyMdeTableRule(
 		if (silent && state.parentType === "reference") {
 			return false;
 		}
-		const s0 = state.sCount[startLine] ?? 0;
-		if (s0 < state.blkIndent || s0 - state.blkIndent >= 4) {
-			return false;
-		}
-		const sepLine = startLine + 1;
-		const s1 = state.sCount[sepLine] ?? 0;
-		if (s1 < state.blkIndent || s1 - state.blkIndent >= 4) {
-			return false;
-		}
-		const pos1 = (state.bMarks[sepLine] ?? 0) + (state.tShift[sepLine] ?? 0);
-		const max1 = state.eMarks[sepLine] ?? pos1;
-		const aligns = parseGfmTableSeparatorAlignments(
-			state.src.slice(pos1, max1),
-		);
-		if (aligns === null || aligns.length === 0) {
-			return false;
-		}
-		const pos0 = (state.bMarks[startLine] ?? 0) + (state.tShift[startLine] ?? 0);
-		const max0 = state.eMarks[startLine] ?? pos0;
-		const trimmedStart = state.src.slice(pos0, max0);
 		const prevClose = state.tokens[state.tokens.length - 1];
 		const prevOpen = state.tokens[state.tokens.length - 3];
+		const followsRefDef =
+			prevClose?.type === "reference_definition" &&
+			prevClose.level === state.level &&
+			prevClose.map?.[1] === startLine;
 		const followsParagraph =
 			(silent && state.parentType === "paragraph") ||
 			(prevClose?.type === "paragraph_close" &&
 				prevOpen?.type === "paragraph_open" &&
 				prevOpen.level === state.level &&
 				prevOpen.map?.[1] === startLine);
+		const s0 = state.sCount[startLine] ?? 0;
+		const relIndent0 = s0 - state.blkIndent;
+		const isLazyOrIndentedContinuation =
+			(followsParagraph && (s0 < state.blkIndent || relIndent0 >= 4)) ||
+			(followsRefDef && relIndent0 >= 4);
+		if (
+			!isLazyOrIndentedContinuation &&
+			(s0 < state.blkIndent || relIndent0 >= 4)
+		) {
+			return false;
+		}
+		const sepLine = startLine + 1;
+		const s1 = state.sCount[sepLine] ?? 0;
+		if (s1 < state.blkIndent) {
+			return false;
+		}
+		const pos1 = (state.bMarks[sepLine] ?? 0) + (state.tShift[sepLine] ?? 0);
+		const max1 = state.eMarks[sepLine] ?? pos1;
+		const trimmedSep = state.src.slice(pos1, max1);
+		const aligns = parseGfmTableSeparatorAlignments(trimmedSep);
+		if (aligns === null || aligns.length === 0) {
+			return false;
+		}
+		const sepColumn = (state.bsCount[sepLine] ?? 0) + s1;
+		if (
+			isTableSeparatorInterruptedByHigherPriorityBlock(
+				trimmedSep,
+				sepColumn,
+				s1 - state.blkIndent,
+			)
+		) {
+			return false;
+		}
+		const pos0 = (state.bMarks[startLine] ?? 0) + (state.tShift[startLine] ?? 0);
+		const max0 = state.eMarks[startLine] ?? pos0;
+		const trimmedStart = state.src.slice(pos0, max0);
 		const headerHasPipe = trimmedStart.includes("|");
 		if (!headerHasPipe) {
 			let priorParagraphHasPipe = false;
@@ -247,11 +270,13 @@ export function createEasyMdeTableRule(
 		if (headerCells.length === 0 || headerCells.length > aligns.length) {
 			return false;
 		}
-		const startColumn = (state.bsCount[startLine] ?? 0) + s0;
-		// Reject non-paragraph CommonMark block openers and §4.7 link
-		// reference definitions / titles via the canonical shared guard.
-		if (opensNonParagraphBlock(trimmedStart, startColumn, followsParagraph)) {
-			return false;
+		if (!isLazyOrIndentedContinuation) {
+			const startColumn = (state.bsCount[startLine] ?? 0) + s0;
+			// Reject non-paragraph CommonMark block openers and §4.7 link
+			// reference definitions / titles via the canonical shared guard.
+			if (opensNonParagraphBlock(trimmedStart, startColumn, followsParagraph)) {
+				return false;
+			}
 		}
 		if (
 			!followsParagraph &&
@@ -260,11 +285,7 @@ export function createEasyMdeTableRule(
 		) {
 			return false;
 		}
-		if (
-			prevClose?.type === "reference_definition" &&
-			prevClose.level === state.level &&
-			prevClose.map?.[1] === startLine
-		) {
+		if (followsRefDef && prevClose) {
 			const prevRaw = readRawMetaString(prevClose, rawReferenceSourceMetaKey);
 			if (
 				prevRaw !== null &&
@@ -284,5 +305,158 @@ export function createEasyMdeTableRule(
 			headerCells,
 			aligns,
 		);
+	};
+}
+
+function isAsciiTrimmable(code: number): boolean {
+	return code === 32 || code === 9 || code === 10 || code === 13;
+}
+
+function asciiTrimBlock(value: string): string {
+	let start = 0;
+	while (start < value.length && isAsciiTrimmable(value.charCodeAt(start))) {
+		start += 1;
+	}
+	let end = value.length - 1;
+	while (end >= start && isAsciiTrimmable(value.charCodeAt(end))) {
+		end -= 1;
+	}
+	return value.slice(start, end + 1);
+}
+
+/**
+ * Wraps `markdown-it`'s Setext heading (`lheading`) rule so 4-space indented
+ * (`sCount - blkIndent > 3`) and lazy (`sCount < 0`) paragraph continuation
+ * lines still probe `easymde_table` before scanning further for `===`/`---`.
+ */
+export function createEasyMdeLheadingRule(tableRule: BlockRuleFn): BlockRuleFn {
+	return (state, startLine, endLine) => {
+		const terminatorRules = state.md.block.ruler.getRules("paragraph");
+		if ((state.sCount[startLine] ?? 0) - state.blkIndent >= 4) {
+			return false;
+		}
+		const oldParentType = state.parentType;
+		state.parentType = "paragraph";
+		let level = 0;
+		let marker = 0;
+		let nextLine = startLine + 1;
+		for (; nextLine < endLine && !state.isEmpty(nextLine); nextLine += 1) {
+			const s = state.sCount[nextLine] ?? 0;
+			if (s - state.blkIndent > 3) {
+				if (tableRule(state, nextLine, endLine, true)) break;
+				continue;
+			}
+			if (s >= state.blkIndent) {
+				let pos =
+					(state.bMarks[nextLine] ?? 0) + (state.tShift[nextLine] ?? 0);
+				const max = state.eMarks[nextLine] ?? pos;
+				if (pos < max) {
+					marker = state.src.charCodeAt(pos);
+					if (marker === 45 || marker === 61) {
+						pos = state.skipChars(pos, marker);
+						pos = state.skipSpaces(pos);
+						if (pos >= max) {
+							level = marker === 61 ? 1 : 2;
+							break;
+						}
+					}
+				}
+			}
+			if (s < 0) {
+				if (tableRule(state, nextLine, endLine, true)) break;
+				continue;
+			}
+			let terminate = false;
+			for (let i = 0; i < terminatorRules.length; i += 1) {
+				if (terminatorRules[i]?.(state, nextLine, endLine, true)) {
+					terminate = true;
+					break;
+				}
+			}
+			if (terminate) break;
+		}
+		if (!level) {
+			state.parentType = oldParentType;
+			return false;
+		}
+		const content = asciiTrimBlock(
+			state.getLines(startLine, nextLine, state.blkIndent, false),
+		);
+		state.line = nextLine + 1;
+		const tokenO = state.push("heading_open", `h${level}`, 1);
+		tokenO.markup = String.fromCharCode(marker);
+		tokenO.map = [startLine, state.line];
+		const tokenI = state.push("inline", "", 0);
+		tokenI.content = content;
+		tokenI.map = [startLine, state.line - 1];
+		tokenI.children = [];
+		const tokenC = state.push("heading_close", `h${level}`, -1);
+		tokenC.markup = String.fromCharCode(marker);
+		state.parentType = oldParentType;
+		return true;
+	};
+}
+
+/**
+ * Wraps `markdown-it`'s `paragraph` rule so:
+ * - 4-space indented (`sCount - blkIndent > 3`) and lazy (`sCount < 0`)
+ *   continuation lines still probe `easymde_table` for PHP-parity header splits;
+ * - when `easymde_table` splits a lazy container continuation line
+ *   (`sCount[nextLine] < state.blkIndent`, e.g. `> a | b\nc\n> | - |` or
+ *   `- a | b\nc\n  | - |`), the table is emitted immediately before returning
+ *   so `ParserBlock.tokenize`'s `sCount[line] < blkIndent` guard does not
+ *   prematurely exit the enclosing blockquote or list item.
+ */
+export function createEasyMdeParagraphRule(
+	tableRule: BlockRuleFn,
+): BlockRuleFn {
+	return (state, startLine, endLine) => {
+		const terminatorRules = state.md.block.ruler.getRules("paragraph");
+		const oldParentType = state.parentType;
+		let nextLine = startLine + 1;
+		let terminatedByTable = false;
+		state.parentType = "paragraph";
+		for (; nextLine < endLine && !state.isEmpty(nextLine); nextLine += 1) {
+			const s = state.sCount[nextLine] ?? 0;
+			if (s - state.blkIndent > 3 || s < 0) {
+				if (tableRule(state, nextLine, endLine, true)) {
+					terminatedByTable = true;
+					break;
+				}
+				continue;
+			}
+			let terminate = false;
+			for (let i = 0; i < terminatorRules.length; i += 1) {
+				const rule = terminatorRules[i];
+				if (rule?.(state, nextLine, endLine, true)) {
+					terminate = true;
+					if (rule === tableRule) {
+						terminatedByTable = true;
+					}
+					break;
+				}
+			}
+			if (terminate) break;
+		}
+		const content = asciiTrimBlock(
+			state.getLines(startLine, nextLine, state.blkIndent, false),
+		);
+		state.line = nextLine;
+		const tokenO = state.push("paragraph_open", "p", 1);
+		tokenO.map = [startLine, state.line];
+		const tokenI = state.push("inline", "", 0);
+		tokenI.content = content;
+		tokenI.map = [startLine, state.line];
+		tokenI.children = [];
+		state.push("paragraph_close", "p", -1);
+		state.parentType = oldParentType;
+		if (
+			terminatedByTable &&
+			nextLine < endLine &&
+			(state.sCount[nextLine] ?? 0) < state.blkIndent
+		) {
+			tableRule(state, nextLine, endLine, false);
+		}
+		return true;
 	};
 }

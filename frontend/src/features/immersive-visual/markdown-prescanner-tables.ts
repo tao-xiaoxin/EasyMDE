@@ -213,6 +213,30 @@ export function findLogicalLineEnd(
 	return endLine;
 }
 
+export function findFirstDisplayMathInOffsetSlice(
+	mathIndex: PhpDocumentMathIndex,
+	fromOffset: number,
+	toOffset: number,
+): PhpMarkdownMathRange | null {
+	if (mathIndex.ranges.length === 0 || toOffset <= fromOffset) {
+		return null;
+	}
+	for (
+		let idx = firstMathRangeEndingAfter(mathIndex.ranges, fromOffset);
+		idx < mathIndex.ranges.length;
+		idx += 1
+	) {
+		const range = mathIndex.ranges[idx];
+		if (!range || range.from >= toOffset) {
+			break;
+		}
+		if (range.block && range.from >= fromOffset) {
+			return range;
+		}
+	}
+	return null;
+}
+
 export function findFirstDisplayMathInLines(
 	mathIndex: PhpDocumentMathIndex,
 	startLine: number,
@@ -220,23 +244,47 @@ export function findFirstDisplayMathInLines(
 ): PhpMarkdownMathRange | null {
 	const startOffset = mathIndex.lineStarts[startLine] ?? 0;
 	const endOffset = mathIndex.lineEnds[endLine] ?? startOffset;
-	if (mathIndex.ranges.length === 0 || endOffset <= startOffset) {
-		return null;
-	}
-	for (
-		let idx = firstMathRangeEndingAfter(mathIndex.ranges, startOffset);
-		idx < mathIndex.ranges.length;
-		idx += 1
-	) {
-		const range = mathIndex.ranges[idx];
-		if (!range || range.from >= endOffset) {
-			break;
+	return findFirstDisplayMathInOffsetSlice(mathIndex, startOffset, endOffset);
+}
+
+/**
+ * Exact column-alignment port of PHP `League\CommonMark`'s
+ * `TableStartParser::parseSeparator()`.
+ */
+export function parseGfmTableSeparatorAlignments(
+	remainder: string,
+): Array<"" | "left" | "center" | "right"> | null {
+	let pos = 0;
+	const aligns: Array<"" | "left" | "center" | "right"> = [];
+	let pipes = 0;
+	let valid = false;
+	while (pos < remainder.length) {
+		const ch = remainder[pos];
+		if (ch === "|") {
+			pos += 1;
+			pipes += 1;
+			if (pipes > 1) return null;
+			valid = true;
+		} else if (ch === "-" || ch === ":") {
+			if (pipes === 0 && aligns.length > 0) return null;
+			const left = ch === ":";
+			if (left) pos += 1;
+			const dashStart = pos;
+			while (remainder[pos] === "-") pos += 1;
+			if (pos === dashStart) return null;
+			const right = remainder[pos] === ":";
+			if (right) pos += 1;
+			aligns.push(
+				left && right ? "center" : left ? "left" : right ? "right" : "",
+			);
+			pipes = 0;
+		} else if (ch === " " || ch === "\t") {
+			pos += 1;
+		} else {
+			return null;
 		}
-		if (range.block) {
-			return range;
-		}
 	}
-	return null;
+	return valid && aligns.length > 0 ? aligns : null;
 }
 
 export function maskedSliceForLines(
@@ -311,9 +359,10 @@ export function matchPeeledGfmTableHeader(
 	maskedDelimiter: string,
 	inParagraph: boolean,
 	activeRefParser: ParagraphReferenceParser | null = null,
+	paragraphHasPipe = false,
 ): boolean {
 	if (
-		!peeled.rest.includes("|") ||
+		(!peeled.rest.includes("|") && !(inParagraph && paragraphHasPipe)) ||
 		opensNonParagraphBlock(peeled.rest, peeled.column, inParagraph)
 	) {
 		return false;
@@ -335,9 +384,11 @@ export function matchPeeledGfmTableHeader(
 	const delimiterColumns = parseGfmTableSeparatorColumns(
 		delimiterStripped.rest,
 	);
+	const headerCells = countTableRowCells(peeled.rest);
 	if (
 		delimiterColumns === 0 ||
-		countTableRowCells(peeled.rest) !== delimiterColumns
+		headerCells === 0 ||
+		headerCells > delimiterColumns
 	) {
 		return false;
 	}
@@ -463,12 +514,14 @@ export function resolveGfmTableMatch(
 	mathIndex: PhpDocumentMathIndex,
 	inParagraph = false,
 	activeRefParser: ParagraphReferenceParser | null = null,
+	paragraphHasPipe = false,
 ): GfmTableMatch | null {
 	if (headerIndex + 1 >= lines.length) {
 		return null;
 	}
 	const headerEndLine = findLogicalLineEnd(mathIndex, headerIndex);
 	if (
+		!(inParagraph && paragraphHasPipe) &&
 		headerEndLine === headerIndex &&
 		!(lines[headerIndex] ?? "").includes("|")
 	) {
@@ -524,6 +577,7 @@ export function resolveGfmTableMatch(
 			maskedDelimiter,
 			effectiveInParagraph,
 			effectiveInParagraph ? activeRefParser : null,
+			effectiveInParagraph && paragraphHasPipe,
 		)
 	) {
 		return null;

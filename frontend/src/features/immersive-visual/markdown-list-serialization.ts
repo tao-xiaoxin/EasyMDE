@@ -76,6 +76,11 @@ export function createMathNewlineSentinelForNode(
 			(descendant.type.name === "protected_inline" &&
 				typeof descendant.attrs.rawMarkdown === "string" &&
 				descendant.attrs.rawMarkdown.includes("\n")) ||
+			(descendant.type.name === "protected_block" &&
+				descendant.attrs.kind === "raw" &&
+				typeof descendant.attrs.rawMarkdown === "string" &&
+				descendant.attrs.rawMarkdown.includes("\n") &&
+				descendant.attrs.rawMarkdown.includes("\\(")) ||
 			(descendant.type.name === "image" &&
 				typeof descendant.attrs.title === "string" &&
 				descendant.attrs.title.includes("\n"))

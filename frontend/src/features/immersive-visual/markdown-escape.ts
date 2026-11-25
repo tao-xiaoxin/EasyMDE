@@ -26,49 +26,26 @@ export type EscapeInlineTextOptions = Readonly<{
 	inLinkLabel?: boolean;
 }>;
 
-function startsLinkLikeSyntax(rest: string): boolean {
-	return (
-		/^\[[^\]\n]*\](?:\(|\[)/.test(rest) ||
-		/^\[\^/.test(rest) ||
-		/^\[TOC\][ \t]*$/i.test(rest)
-	);
-}
+const HTML_ENTITY_STICKY = /&#?[A-Za-z0-9]+;/y;
+const HTML_TAG_SECOND_CHAR = /[A-Za-z/!?]/;
 
-function escapeInlineChar(
-	ch: string,
-	rest: string,
-	inTableCell: boolean,
-	inLinkLabel: boolean,
-): string {
-	switch (ch) {
-		case "\\":
-			return "\\\\";
-		case "`":
-			return "\\`";
-		case "*":
-			return "\\*";
-		case "_":
-			return "\\_";
-		case "~":
-			return "\\~";
-		// `\[...\]` is KaTeX block math for EasyMDE (and PHP), so only escape a
-		// bracket that could actually open link/image/footnote syntax. Plain
-		// prose such as `[edited]` stays readable and byte-stable.
-		case "[":
-			return inLinkLabel || startsLinkLikeSyntax(rest) ? "\\[" : "[";
-		case "]":
-			return inLinkLabel ? "\\]" : "]";
-		case "$":
-			return "\\$";
-		case "<":
-			return rest.length > 1 && /[A-Za-z/!?]/.test(rest[1] ?? "") ? "\\<" : "<";
-		case "&":
-			return /^&#?[A-Za-z0-9]+;/.test(rest) ? "\\&" : "&";
-		case "|":
-			return inTableCell ? "\\|" : "|";
-		default:
-			return ch;
+function isTocSyntaxAt(
+	line: string,
+	index: number,
+	lastNonWsIndex: number,
+): boolean {
+	if (index + 5 > line.length || index + 5 <= lastNonWsIndex) {
+		return false;
 	}
+	const c1 = line[index + 1];
+	const c2 = line[index + 2];
+	const c3 = line[index + 3];
+	return (
+		(c1 === "T" || c1 === "t") &&
+		(c2 === "O" || c2 === "o") &&
+		(c3 === "C" || c3 === "c") &&
+		line[index + 4] === "]"
+	);
 }
 
 function escapeLineStartPrefix(line: string): Readonly<{
@@ -113,9 +90,75 @@ function escapeInlineLine(
 		escaped = prefix.escaped;
 		start = prefix.consumed;
 	}
+	let lastNonWsIndex = line.length - 1;
+	while (
+		lastNonWsIndex >= start &&
+		(line[lastNonWsIndex] === " " || line[lastNonWsIndex] === "\t")
+	) {
+		lastNonWsIndex -= 1;
+	}
+	let nextCloseBracket = -2;
 	for (let i = start; i < line.length; i += 1) {
 		const ch = line[i] ?? "";
-		escaped += escapeInlineChar(ch, line.slice(i), inTableCell, inLinkLabel);
+		switch (ch) {
+			case "\\":
+				escaped += "\\\\";
+				break;
+			case "`":
+				escaped += "\\`";
+				break;
+			case "*":
+				escaped += "\\*";
+				break;
+			case "_":
+				escaped += "\\_";
+				break;
+			case "~":
+				escaped += "\\~";
+				break;
+			// `\[...\]` is KaTeX block math for EasyMDE (and PHP), so only escape a
+			// bracket that could actually open link/image/footnote syntax. Plain
+			// prose such as `[edited]` stays readable and byte-stable.
+			case "[": {
+				let needsEscape =
+					inLinkLabel ||
+					line[i + 1] === "^" ||
+					isTocSyntaxAt(line, i, lastNonWsIndex);
+				if (!needsEscape && nextCloseBracket !== -1) {
+					if (nextCloseBracket === -2 || nextCloseBracket <= i) {
+						nextCloseBracket = line.indexOf("]", i + 1);
+					}
+					if (nextCloseBracket > i) {
+						const after = line[nextCloseBracket + 1];
+						needsEscape = after === "(" || after === "[";
+					}
+				}
+				escaped += needsEscape ? "\\[" : "[";
+				break;
+			}
+			case "]":
+				escaped += inLinkLabel ? "\\]" : "]";
+				break;
+			case "$":
+				escaped += "\\$";
+				break;
+			case "<":
+				escaped +=
+					i + 1 < line.length && HTML_TAG_SECOND_CHAR.test(line[i + 1] ?? "")
+						? "\\<"
+						: "<";
+				break;
+			case "&":
+				HTML_ENTITY_STICKY.lastIndex = i;
+				escaped += HTML_ENTITY_STICKY.test(line) ? "\\&" : "&";
+				break;
+			case "|":
+				escaped += inTableCell ? "\\|" : "|";
+				break;
+			default:
+				escaped += ch;
+				break;
+		}
 	}
 	return escaped;
 }
@@ -295,9 +338,46 @@ export function escapeCodeSpanTableContent(content: string): string {
 const TITLE_ENTITY_TOKEN =
 	/(&(?:#x[a-f0-9]{1,6}|#[0-9]{1,7}|[a-z][a-z0-9]{1,31});)/giu;
 
+function hasUnescapedQuote(text: string, quoteChar: '"' | "'"): boolean {
+	for (let i = 0; i < text.length; i += 1) {
+		if (text[i] === quoteChar) {
+			let slashes = 0;
+			for (let j = i - 1; j >= 0 && text[j] === "\\"; j -= 1) {
+				slashes += 1;
+			}
+			if (slashes % 2 === 0) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+/**
+ * Selects `"'"` when an inline PHP math span in `titleValue` contains a raw
+ * unescaped `"` (and no raw unescaped `'`) so CommonMark title delimiters stay
+ * collision-free while preserving PHP math spans byte-identically.
+ */
+export function chooseTitleQuoteDelimiter(titleValue: string): '"' | "'" {
+	if (!titleValue.includes('"')) {
+		return '"';
+	}
+	const mathRanges = scanPhpMarkdownMathRanges(titleValue);
+	let mathHasUnescapedDouble = false;
+	let mathHasUnescapedSingle = false;
+	for (const range of mathRanges) {
+		if (range.block) continue;
+		const raw = titleValue.slice(range.from, range.to);
+		if (hasUnescapedQuote(raw, '"')) mathHasUnescapedDouble = true;
+		if (hasUnescapedQuote(raw, "'")) mathHasUnescapedSingle = true;
+	}
+	return mathHasUnescapedDouble && !mathHasUnescapedSingle ? "'" : '"';
+}
+
 function formatQuotedTitleSegment(
 	segment: string,
 	inTableCell: boolean,
+	quoteChar: '"' | "'",
 ): string {
 	const protectedEntities = segment.includes("&")
 		? segment.replace(
@@ -308,12 +388,16 @@ function formatQuotedTitleSegment(
 	const encoded = protectedEntities
 		.replace(/\r/gu, "&#13;")
 		.replace(/\n/gu, "&#10;");
-	const escaped = encoded.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+	const escapedSlashes = encoded.replace(/\\/g, "\\\\");
+	const escaped =
+		quoteChar === "'"
+			? escapedSlashes.replace(/'/g, "\\'")
+			: escapedSlashes.replace(/"/g, '\\"');
 	return inTableCell ? escapeTablePipes(escaped) : escaped;
 }
 
 /**
- * Formats a CommonMark double-quoted link/image title while emitting preserved
+ * Formats a CommonMark quoted link/image title while emitting preserved
  * inline PHP math spans (`\(...\)`, `$...$`) verbatim (no backslash escaping,
  * entity mangling, `&#10;` line-break encoding, or pipe escaping inside math).
  */
@@ -321,10 +405,11 @@ export function formatQuotedTitle(
 	titleValue: string,
 	inTableCell: boolean,
 	mathNewlineToken: string | null = null,
+	quoteChar: '"' | "'" = '"',
 ): string {
 	const mathRanges = scanPhpMarkdownMathRanges(titleValue);
 	if (mathRanges.length === 0) {
-		return formatQuotedTitleSegment(titleValue, inTableCell);
+		return formatQuotedTitleSegment(titleValue, inTableCell, quoteChar);
 	}
 	let result = "";
 	let cursor = 0;
@@ -336,6 +421,7 @@ export function formatQuotedTitle(
 			result += formatQuotedTitleSegment(
 				titleValue.slice(cursor, range.from),
 				inTableCell,
+				quoteChar,
 			);
 		}
 		const rawMath = titleValue.slice(range.from, range.to);
@@ -346,7 +432,11 @@ export function formatQuotedTitle(
 		cursor = range.to;
 	}
 	if (cursor < titleValue.length) {
-		result += formatQuotedTitleSegment(titleValue.slice(cursor), inTableCell);
+		result += formatQuotedTitleSegment(
+			titleValue.slice(cursor),
+			inTableCell,
+			quoteChar,
+		);
 	}
 	return result;
 }

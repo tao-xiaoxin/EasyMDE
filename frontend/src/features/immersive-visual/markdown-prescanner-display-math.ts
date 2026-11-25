@@ -19,10 +19,12 @@ import {
 } from "./markdown-prescanner-blocks";
 import type { ProtectedInlineEntry } from "./markdown-prescanner-inline";
 import {
-	findFirstDisplayMathInLines,
+	findFirstDisplayMathInOffsetSlice,
 	findLineIndexForOffset,
 	findLogicalLineEnd,
+	firstMathRangeEndingAfter,
 	type GfmTableMatch,
+	maskedSliceForLines,
 	type PhpDocumentMathIndex,
 } from "./markdown-prescanner-tables";
 import type { ProtectedBlockKind } from "./visual-schema";
@@ -70,6 +72,7 @@ export type TrailingParagraphState = Readonly<{
 	indentedCodeContainer: number;
 	listContentIndent: number | null;
 	paragraphHasContent: boolean;
+	paragraphHasPipe: boolean;
 	paragraphOpen: boolean;
 	paragraphQuoteDepth: number;
 	paragraphRefParser: ParagraphReferenceParser | null;
@@ -99,11 +102,18 @@ export type PostDisplayMathResult =
 			trailingParagraphState: TrailingParagraphState | null;
 	  }>;
 
-export type Type6Or7DisplayMathBreak = Readonly<{
-	rawHtml: string;
-	resumeLine: number;
-	resumeOffset: number;
-}>;
+export type HtmlBlockScanResult =
+	| Readonly<{
+			kind: "break";
+			rawHtml: string;
+			resumeLine: number;
+			resumeOffset: number;
+	  }>
+	| Readonly<{
+			endLine: number;
+			kind: "complete";
+			rawHtml: string;
+	  }>;
 
 const EMPTY_MATH_RANGES: ReadonlyArray<PhpMarkdownMathRange> = [];
 
@@ -147,6 +157,7 @@ export function computeTrailingParagraphState(
 			indentedCodeContainer: effectiveContainer,
 			listContentIndent,
 			paragraphHasContent: false,
+			paragraphHasPipe: false,
 			paragraphOpen: false,
 			paragraphQuoteDepth: 0,
 			paragraphRefParser: null,
@@ -164,6 +175,7 @@ export function computeTrailingParagraphState(
 			indentedCodeContainer: 0,
 			listContentIndent,
 			paragraphHasContent: false,
+			paragraphHasPipe: false,
 			paragraphOpen: false,
 			paragraphQuoteDepth: 0,
 			paragraphRefParser: null,
@@ -179,6 +191,7 @@ export function computeTrailingParagraphState(
 		indentedCodeContainer: 0,
 		listContentIndent,
 		paragraphHasContent: !completedRefDef,
+		paragraphHasPipe: !completedRefDef && refLine.includes("|"),
 		paragraphOpen: true,
 		paragraphQuoteDepth: analysis.quoteDepth + lineState.nestedQuotes,
 		paragraphRefParser: refParser,
@@ -264,41 +277,213 @@ export function matchStandaloneBeforeHtmlBlock(
 }
 
 /**
- * Checks whether any continuation line `startLine + 1 .. htmlEndLine` of a
- * Type 6/7 HTML block contains display math (`$$...$$` / `\[...\]`). If so,
- * returns the raw HTML ending right before that display math (including any
- * non-blank prefix on the breaking line) and the resume coordinates.
+ * Unified single-pass O(N) scanner for CommonMark §4.6 Types 1–7 HTML blocks
+ * (top-level or container-wrapped) with full PHP math-extraction parity:
+ * - Advances every step by `findLogicalLineEnd(mathIndex, k)` so blank lines
+ *   inside multiline `\(...\)` never split Type 6/7 HTML blocks.
+ * - Terminates Type 6/7 and container-wrapped Type 1–5 blocks immediately at
+ *   `disp.from` on `startLine` or any continuation line (eliminating O(N^2)
+ *   re-scans over repeated `<div>\nfoo\n$$x$$` blocks).
+ * - For top-level Type 1–5 blocks, closes before any display-math span on the
+ *   opening or closing line whenever a real closer precedes `disp.from`, while
+ *   keeping unclosed display math inside the HTML block.
+ * - Defers blank lines in unclosed list-contained Type 1–5 blocks until a
+ *   subsequent non-blank line remains inside `containers`.
  */
-export function findType6Or7DisplayMathBreak(
+export function scanHtmlBlockWithDisplayMath(
 	mathIndex: PhpDocumentMathIndex,
 	lines: ReadonlyArray<string>,
-	firstLineContent: string,
+	htmlType: 1 | 2 | 3 | 4 | 5 | 6 | 7,
 	containers: ReadonlyArray<ContainerStep>,
-	startLine: number,
-	htmlEndLine: number,
-): Type6Or7DisplayMathBreak | null {
-	for (let k = startLine + 1; k <= htmlEndLine; k += 1) {
-		const disp = findFirstDisplayMathInLines(mathIndex, k, k);
-		if (disp === null) continue;
-		const kStart = mathIndex.lineStarts[k] ?? 0;
-		const strippedBefore = stripContainers(
-			mathIndex.normalized.slice(kStart, disp.from),
-			containers,
+	initialFirstLineEndLine: number,
+	startContentOffset: number,
+	initialFirstLineRaw: string,
+	firstLineMasked: string,
+): HtmlBlockScanResult {
+	let firstLineEndLine = initialFirstLineEndLine;
+	let firstLineRaw = initialFirstLineRaw;
+	const firstLineEndOffset =
+		mathIndex.lineEnds[firstLineEndLine] ?? startContentOffset;
+	const hasContainers = containers.length > 0;
+	const isType6Or7 = htmlType === 6 || htmlType === 7;
+	const hasListContainer =
+		hasContainers && containers.some((step) => step.kind === "list");
+
+	if (isType6Or7 || hasContainers) {
+		const firstDisp = findFirstDisplayMathInOffsetSlice(
+			mathIndex,
+			startContentOffset,
+			firstLineEndOffset,
 		);
-		const rawHtmlLines: string[] = [firstLineContent];
-		for (let j = startLine + 1; j < k; j += 1) {
-			rawHtmlLines.push(stripContainers(lines[j] ?? "", containers) ?? "");
+		if (firstDisp !== null) {
+			return {
+				kind: "break",
+				rawHtml: mathIndex.normalized.slice(startContentOffset, firstDisp.from),
+				resumeLine: findLineIndexForOffset(mathIndex, firstDisp.from),
+				resumeOffset: firstDisp.from,
+			};
 		}
-		if (strippedBefore !== null && !isCommonMarkBlankLine(strippedBefore)) {
-			rawHtmlLines.push(strippedBefore);
+		if (!isType6Or7 && htmlBlockLineCloses(htmlType, firstLineMasked)) {
+			return {
+				endLine: firstLineEndLine,
+				kind: "complete",
+				rawHtml: firstLineRaw,
+			};
 		}
-		return {
-			rawHtml: rawHtmlLines.join("\n"),
-			resumeLine: k,
-			resumeOffset: disp.from,
-		};
+	} else {
+		const firstScan = findDisplayMathAwareHtmlBlockCloseOnLine(
+			mathIndex,
+			htmlType,
+			startContentOffset,
+			firstLineEndLine,
+			firstLineEndOffset,
+			firstMathRangeEndingAfter(mathIndex.ranges, startContentOffset),
+		);
+		if (firstScan.closed) {
+			if (firstScan.resumeAtOffset >= 0) {
+				return {
+					kind: "break",
+					rawHtml: mathIndex.normalized.slice(
+						startContentOffset,
+						firstScan.htmlEndOffset,
+					),
+					resumeLine: findLineIndexForOffset(
+						mathIndex,
+						firstScan.resumeAtOffset,
+					),
+					resumeOffset: firstScan.resumeAtOffset,
+				};
+			}
+			return {
+				endLine: firstScan.spanEndLine,
+				kind: "complete",
+				rawHtml: mathIndex.normalized.slice(
+					startContentOffset,
+					firstScan.htmlEndOffset,
+				),
+			};
+		}
+		firstLineEndLine = firstScan.spanEndLine;
+		firstLineRaw = mathIndex.normalized.slice(
+			startContentOffset,
+			firstScan.spanEndOffset,
+		);
 	}
-	return null;
+
+	const rawHtmlLines: string[] = [firstLineRaw];
+	const pendingBlankRawLines: string[] = [];
+	let endLine = firstLineEndLine;
+	let k = firstLineEndLine + 1;
+
+	while (k < lines.length) {
+		const kEnd = findLogicalLineEnd(mathIndex, k);
+		const kStartOffset = mathIndex.lineStarts[k] ?? 0;
+		const kEndOffset = mathIndex.lineEnds[kEnd] ?? kStartOffset;
+
+		if (isType6Or7 || hasContainers) {
+			const maskedLogical = maskedSliceForLines(mathIndex, lines, k, kEnd);
+			const afterContainers = hasContainers
+				? stripContainers(maskedLogical, containers)
+				: maskedLogical;
+			if (afterContainers === null) {
+				break;
+			}
+			if (isType6Or7 && isCommonMarkBlankLine(afterContainers)) {
+				break;
+			}
+			const disp = findFirstDisplayMathInOffsetSlice(
+				mathIndex,
+				kStartOffset,
+				kEndOffset,
+			);
+			if (disp !== null) {
+				const rawBefore = mathIndex.normalized.slice(kStartOffset, disp.from);
+				const strippedBefore = hasContainers
+					? stripContainers(rawBefore, containers)
+					: rawBefore;
+				if (
+					strippedBefore !== null &&
+					!isCommonMarkBlankLine(strippedBefore)
+				) {
+					if (pendingBlankRawLines.length > 0) {
+						rawHtmlLines.push(...pendingBlankRawLines);
+						pendingBlankRawLines.length = 0;
+					}
+					rawHtmlLines.push(strippedBefore);
+				}
+				return {
+					kind: "break",
+					rawHtml: rawHtmlLines.join("\n"),
+					resumeLine: findLineIndexForOffset(mathIndex, disp.from),
+					resumeOffset: disp.from,
+				};
+			}
+
+			const rawLogical =
+				k === kEnd
+					? (lines[k] ?? "")
+					: mathIndex.normalized.slice(kStartOffset, kEndOffset);
+			const strippedRaw = hasContainers
+				? (stripContainers(rawLogical, containers) ?? "")
+				: rawLogical;
+
+			if (
+				!isType6Or7 &&
+				hasListContainer &&
+				isCommonMarkBlankLine(afterContainers)
+			) {
+				pendingBlankRawLines.push(strippedRaw);
+				k = kEnd + 1;
+				continue;
+			}
+
+			if (pendingBlankRawLines.length > 0) {
+				rawHtmlLines.push(...pendingBlankRawLines);
+				pendingBlankRawLines.length = 0;
+			}
+			rawHtmlLines.push(strippedRaw);
+			endLine = kEnd;
+			if (!isType6Or7 && htmlBlockLineCloses(htmlType, afterContainers)) {
+				return { endLine, kind: "complete", rawHtml: rawHtmlLines.join("\n") };
+			}
+			k = kEnd + 1;
+			continue;
+		}
+
+		const lineScan = findDisplayMathAwareHtmlBlockCloseOnLine(
+			mathIndex,
+			htmlType,
+			kStartOffset,
+			kEnd,
+			kEndOffset,
+			firstMathRangeEndingAfter(mathIndex.ranges, kStartOffset),
+		);
+		if (lineScan.closed) {
+			rawHtmlLines.push(
+				mathIndex.normalized.slice(kStartOffset, lineScan.htmlEndOffset),
+			);
+			if (lineScan.resumeAtOffset >= 0) {
+				return {
+					kind: "break",
+					rawHtml: rawHtmlLines.join("\n"),
+					resumeLine: findLineIndexForOffset(mathIndex, lineScan.resumeAtOffset),
+					resumeOffset: lineScan.resumeAtOffset,
+				};
+			}
+			return {
+				endLine: lineScan.spanEndLine,
+				kind: "complete",
+				rawHtml: rawHtmlLines.join("\n"),
+			};
+		}
+		rawHtmlLines.push(
+			mathIndex.normalized.slice(kStartOffset, lineScan.spanEndOffset),
+		);
+		endLine = lineScan.spanEndLine;
+		k = lineScan.spanEndLine + 1;
+	}
+
+	return { endLine, kind: "complete", rawHtml: rawHtmlLines.join("\n") };
 }
 
 type LineHtmlCloseScanResult = Readonly<{

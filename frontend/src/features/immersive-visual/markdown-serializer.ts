@@ -6,6 +6,7 @@ import {
 	parseEffectiveImageScaleTitle,
 	stripTrailingReservedScaleMarkers,
 } from "../../shared/image-scale-title";
+import { scanPhpMarkdownMathRanges } from "../../shared/markdown/php-markdown-math-mask";
 import {
 	createMathNewlineSentinelForNode,
 	createPreservingRoundTripGuard,
@@ -16,6 +17,7 @@ import {
 	serializeList,
 } from "./markdown-block-preservation";
 import {
+	chooseTitleQuoteDelimiter,
 	escapeCodeSpanTableContent,
 	escapeInlineMarkdownText,
 	escapeParagraphTableDelimiters,
@@ -184,6 +186,7 @@ function serializeScaledImageTitle(
 	scale: ImageScalePercentage,
 	inTableCell: boolean,
 	mathNewlineToken: string | null,
+	quoteChar: '"' | "'",
 ): string {
 	const marker = `{width=${scale}%}`;
 	const tryCandidate = (value: string): string | null => {
@@ -191,6 +194,7 @@ function serializeScaledImageTitle(
 			`${value} ${marker}`,
 			inTableCell,
 			mathNewlineToken,
+			quoteChar,
 		);
 		const parsed = parseEffectiveImageScaleTitle(candidate);
 		return parsed.status === "valid" && parsed.scale === scale
@@ -198,7 +202,7 @@ function serializeScaledImageTitle(
 			: null;
 	};
 	if (baseTitle.length === 0) {
-		return formatQuotedTitle(marker, inTableCell, mathNewlineToken);
+		return formatQuotedTitle(marker, inTableCell, mathNewlineToken, quoteChar);
 	}
 	const primary = tryCandidate(baseTitle);
 	if (primary !== null) {
@@ -227,19 +231,25 @@ function serializeScaledImageTitle(
 		}
 		current = next;
 	}
-	return formatQuotedTitle(marker, inTableCell, mathNewlineToken);
+	return formatQuotedTitle(marker, inTableCell, mathNewlineToken, quoteChar);
 }
 
 function serializeUnscaledImageTitle(
 	rawTitle: string,
 	inTableCell: boolean,
 	mathNewlineToken: string | null,
+	quoteChar: '"' | "'",
 ): string {
 	if (rawTitle.length === 0) {
 		return "";
 	}
 	const tryCandidate = (value: string): string | null => {
-		const candidate = formatQuotedTitle(value, inTableCell, mathNewlineToken);
+		const candidate = formatQuotedTitle(
+			value,
+			inTableCell,
+			mathNewlineToken,
+			quoteChar,
+		);
 		return parseEffectiveImageScaleTitle(candidate).status === "none"
 			? candidate
 			: null;
@@ -307,15 +317,18 @@ function serializeImageNode(
 			rawStripped !== rawTitle && rawStripped.endsWith("\\")
 				? rawTitle
 				: rawStripped;
-		titleSegment = ` "${serializeScaledImageTitle(baseTitle, scale, inTableCell, mathNewlineToken)}"`;
+		const quoteChar = chooseTitleQuoteDelimiter(baseTitle);
+		titleSegment = ` ${quoteChar}${serializeScaledImageTitle(baseTitle, scale, inTableCell, mathNewlineToken, quoteChar)}${quoteChar}`;
 	} else if (rawTitle.length > 0) {
+		const quoteChar = chooseTitleQuoteDelimiter(rawTitle);
 		const serializedTitle = serializeUnscaledImageTitle(
 			rawTitle,
 			inTableCell,
 			mathNewlineToken,
+			quoteChar,
 		);
 		if (serializedTitle.length > 0) {
-			titleSegment = ` "${serializedTitle}"`;
+			titleSegment = ` ${quoteChar}${serializedTitle}${quoteChar}`;
 		}
 	}
 	return `![${altText}](${destination}${titleSegment})`;
@@ -355,12 +368,14 @@ function markCloseSyntax(
 					? mark.attrs.title
 					: null;
 			const destination = formatLinkDestination(href, inTableCell);
+			const quoteChar =
+				rawTitle === null ? '"' : chooseTitleQuoteDelimiter(rawTitle);
 			const safeTitle =
 				rawTitle === null
 					? null
-					: formatQuotedTitle(rawTitle, inTableCell, mathNewlineToken);
+					: formatQuotedTitle(rawTitle, inTableCell, mathNewlineToken, quoteChar);
 			return safeTitle !== null
-				? `](${destination} "${safeTitle}")`
+				? `](${destination} ${quoteChar}${safeTitle}${quoteChar})`
 				: `](${destination})`;
 		}
 		default:
@@ -782,10 +797,33 @@ function serializeBlockNodeInternal(
 			return "---";
 		case "table":
 			return serializeTable(node, mathNewlineToken);
-		case "protected_block":
-			return typeof node.attrs.rawMarkdown === "string"
-				? node.attrs.rawMarkdown
-				: "";
+		case "protected_block": {
+			const raw =
+				typeof node.attrs.rawMarkdown === "string" ? node.attrs.rawMarkdown : "";
+			if (
+				mathNewlineToken === null ||
+				node.attrs.kind !== "raw" ||
+				!raw.includes("\n") ||
+				!raw.includes("\\(")
+			) {
+				return raw;
+			}
+			const ranges = scanPhpMarkdownMathRanges(raw);
+			if (ranges.length === 0) return raw;
+			let masked = "";
+			let cursor = 0;
+			for (const range of ranges) {
+				if (range.block || range.from < cursor) continue;
+				if (range.from > cursor) masked += raw.slice(cursor, range.from);
+				const piece = raw.slice(range.from, range.to);
+				masked += piece.includes("\n")
+					? piece.split("\n").join(mathNewlineToken)
+					: piece;
+				cursor = range.to;
+			}
+			if (cursor < raw.length) masked += raw.slice(cursor);
+			return masked;
+		}
 		default:
 			return node.textContent;
 	}

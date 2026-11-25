@@ -8,6 +8,7 @@ import { EditorView } from "prosemirror-view";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ToolbarCommand } from "../../contracts/bootstrap/toolbar-bootstrap";
 import { createPreservingRoundTripGuard } from "./markdown-block-preservation";
+import { escapeInlineMarkdownText } from "./markdown-escape";
 import {
 	extractReferenceDefinitionLabels,
 	parseImageScaleTitle,
@@ -1461,18 +1462,28 @@ describe("visual editor codec regressions", () => {
 		const displayDoc = parseMarkdownToVisualDoc("Formula: $$a$$ and $b$");
 		expect(collectProtectedInlineRaws(displayDoc)).toEqual(["$$a$$", "$b$"]);
 
+		// PHP `MarkdownRenderer::extract_math()` uses `/\$\$([\s\S]+?)\$\$/`, so
+		// `$$$$` alone does not match (empty interior), whereas a later `$$` closes it.
+		const unclosedEmptyDisplay = parseMarkdownToVisualDoc(
+			"$$$$\n\nImportant paragraph",
+		);
+		expect(unclosedEmptyDisplay.textContent).toContain("Important paragraph");
+		expect(
+			parseMarkdownToVisualDoc(
+				serializeVisualDocToMarkdown(unclosedEmptyDisplay),
+			).eq(unclosedEmptyDisplay),
+		).toBe(true);
+
 		const emptyDisplay = parseMarkdownToVisualDoc(
 			"$$$$\n\nImportant paragraph\n\n$$\nE = mc^2\n$$",
 		);
-		expect(emptyDisplay.textContent).toContain("Important paragraph");
-		let emptyDisplayMathBlocks = 0;
-		emptyDisplay.descendants((node) => {
-			if (node.type.name === "protected_block" && node.attrs.kind === "math") {
-				emptyDisplayMathBlocks += 1;
-			}
-			return true;
+		expect(emptyDisplay.childCount).toBe(2);
+		expect(emptyDisplay.child(0).type.name).toBe("protected_block");
+		expect(emptyDisplay.child(0).attrs).toEqual({
+			kind: "math",
+			rawMarkdown: "$$$$\n\nImportant paragraph\n\n$$",
 		});
-		expect(emptyDisplayMathBlocks).toBe(1);
+		expect(emptyDisplay.child(1).textContent).toBe("E = mc^2\n$$");
 		expect(
 			parseMarkdownToVisualDoc(serializeVisualDocToMarkdown(emptyDisplay)).eq(
 				emptyDisplay,
@@ -7917,5 +7928,325 @@ describe("PR-R24-A1 PHP-exact table math, nested/interleaved table-align, lazy t
 			const ser = serializeVisualDocToMarkdown(doc);
 			expect(parseMarkdownToVisualDoc(ser).eq(doc), md).toBe(true);
 		}
+	});
+
+	it("scans HTML blocks Types 1-7 with display math, multiline \\(...\\), and unclosed list comments in O(N) time (PR-R29-A #1: Track A #1/#2 + Track B F1)", () => {
+		// O(N) benchmarks (previously 3,650.3 ms and 966.9 ms).
+		const divBenchStart = performance.now();
+		const divBench = prescanMarkdown("<div>\nfoo\n$$x$$\n".repeat(4_000));
+		const divBenchMs = performance.now() - divBenchStart;
+		expect(divBench.protectedBlocks.size).toBe(8_000);
+		expect(divBenchMs).toBeLessThan(150);
+
+		const customBenchStart = performance.now();
+		const customBench = prescanMarkdown("<custom>\nfoo\n$$x$$\n".repeat(2_000));
+		const customBenchMs = performance.now() - customBenchStart;
+		expect(customBench.protectedBlocks.size).toBe(4_000);
+		expect(customBenchMs).toBeLessThan(100);
+
+		// Multiline `\(...\)` blank lines never split Type 6/7 HTML blocks (top-level + containers).
+		for (const md of [
+			"<div>\n\\(a\n\nb\\)\nStillHtml",
+			"> <div>\n> \\(a\n\nb\\)\n> StillHtml\n\nAfter",
+			"- <div>\n  \\(a\n\nb\\)\n  StillHtml\n\nAfter",
+		]) {
+			const doc = parseMarkdownToVisualDoc(md);
+			const ser = serializeVisualDocToMarkdown(doc);
+			expect(parseMarkdownToVisualDoc(ser).eq(doc), md).toBe(true);
+		}
+		const mlDivDoc = parseMarkdownToVisualDoc(
+			"<div>\n\\(a\n\nb\\)\nStillHtml",
+		);
+		expect(mlDivDoc.childCount).toBe(1);
+		expect(mlDivDoc.child(0).attrs).toEqual({
+			kind: "raw",
+			rawMarkdown: "<div>\n\\(a\n\nb\\)\nStillHtml",
+		});
+
+		// Unclosed list-contained Type 1-5 block does not absorb trailing blank line.
+		const unclosedListDoc = parseMarkdownToVisualDoc("- <!--\n\nb");
+		expect(unclosedListDoc.childCount).toBe(2);
+		expect(unclosedListDoc.child(0).type.name).toBe("bullet_list");
+		expect(unclosedListDoc.child(1).type.name).toBe("paragraph");
+		expect(unclosedListDoc.child(1).textContent).toBe("b");
+		const unclosedListSer = serializeVisualDocToMarkdown(unclosedListDoc);
+		expect(unclosedListSer).toBe("- <!--\n\nb");
+		expect(parseMarkdownToVisualDoc(unclosedListSer).eq(unclosedListDoc)).toBe(
+			true,
+		);
+
+		// Types 1-7 HTML blocks splitting before display math on startLine, htmlEndLine, and post-math containers.
+		const cases: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [
+			["<div> $$a\nb$$", ["protected_block", "protected_block"]],
+			[
+				"<div> $$\nx\n$$\nHello",
+				["protected_block", "protected_block", "paragraph"],
+			],
+			[
+				"<div> $$x$$\nHello",
+				["protected_block", "protected_block", "paragraph"],
+			],
+			[
+				"- <div> $$x$$\n  Hello",
+				["bullet_list", "protected_block", "paragraph"],
+			],
+			[
+				"> <div> $$x$$ # H",
+				["blockquote", "protected_block", "heading"],
+			],
+			[
+				"<custom> $$x$$\nAfter",
+				["protected_block", "protected_block", "paragraph"],
+			],
+			["<?p?> $$a\n<div>b$$", ["protected_block", "protected_block"]],
+			[
+				"<!--\nfoo --> $$\nx\n$$\nAfter",
+				["protected_block", "protected_block", "paragraph"],
+			],
+			[
+				"<!-- a --> $$\nx\n$$\nAfter",
+				["protected_block", "protected_block", "paragraph"],
+			],
+			[
+				"> <!--\n> b --> $$\ny\n$$\nAfter",
+				["blockquote", "protected_block", "paragraph"],
+			],
+			[
+				"<!-- a --> $$x$$ # Heading",
+				["protected_block", "protected_block", "heading"],
+			],
+			[
+				"<pre>\nhi\n</pre> $$x$$ # Heading",
+				["protected_block", "protected_block", "heading"],
+			],
+			[
+				"- a\n$$x$$ > <pre>\n> hi\n> </pre> $$y$$ # H",
+				[
+					"bullet_list",
+					"protected_block",
+					"blockquote",
+					"protected_block",
+					"heading",
+				],
+			],
+		];
+		for (const [md, expectedTypes] of cases) {
+			const doc = parseMarkdownToVisualDoc(md);
+			expect(
+				Array.from({ length: doc.childCount }, (_, idx) => doc.child(idx).type.name),
+				md,
+			).toEqual(expectedTypes);
+			const ser = serializeVisualDocToMarkdown(doc);
+			expect(parseMarkdownToVisualDoc(ser).eq(doc), md).toBe(true);
+		}
+	});
+
+	it("protects all inline math spans in link/image tails and keeps quoted titles strictly idempotent (PR-R29-A #2: Track B F2)", () => {
+		const linkCases: ReadonlyArray<readonly [string, string]> = [
+			['[link](https://example.com "$a\\"b$")', '$a\\"b$'],
+			['[link](https://example.com "\\(x\\)")', "\\(x\\)"],
+			['[x](https://a.com "$\\{a\\}$")', "$\\{a\\}$"],
+			['[x](https://a.com "$a\\\\b$")', "$a\\\\b$"],
+			["[x](https://a.com ($a)b$))", "$a)b$"],
+			["[x](https://a.com '$a\"b$')", '$a"b$'],
+			['[x](https://a.com "\\(a\nb\\)")', "\\(a\nb\\)"],
+		];
+		for (const [md, expectedTitle] of linkCases) {
+			const doc = parseMarkdownToVisualDoc(md);
+			const textChild = doc.firstChild?.firstChild;
+			const linkMark = textChild?.marks.find(
+				(mark) => mark.type.name === "link",
+			);
+			expect(linkMark?.attrs.title, md).toBe(expectedTitle);
+			const ser = serializeVisualDocToMarkdown(doc);
+			expect(parseMarkdownToVisualDoc(ser).eq(doc), md).toBe(true);
+		}
+
+		const imageCases: ReadonlyArray<readonly [string, string, number]> = [
+			['![alt](https://a.com/x.png "$a\\"b$ {width=50%}")', '$a\\"b$', 50],
+			['![alt](https://a.com/x.png "\\(x\\) {width=50%}")', "\\(x\\)", 50],
+			["![alt](https://a.com/x.png '$a\"b$ {width=50%}')", '$a"b$', 50],
+		];
+		for (const [md, expectedTitle, expectedScale] of imageCases) {
+			const doc = parseMarkdownToVisualDoc(md);
+			const img = doc.firstChild?.firstChild;
+			expect(img?.type.name, md).toBe("image");
+			expect(img?.attrs.title, md).toBe(expectedTitle);
+			expect(img?.attrs.scale, md).toBe(expectedScale);
+			const ser = serializeVisualDocToMarkdown(doc);
+			expect(parseMarkdownToVisualDoc(ser).eq(doc), md).toBe(true);
+		}
+	});
+
+	it("slices list-prefixed HTML blocks by exact contentOffset across tab virtualSpaces (PR-R29-A #3: Track B F3)", () => {
+		for (const [md, expectedRaw] of [
+			["10. >\t<div>\n    > foo", "<div>\nfoo"],
+			["-   >\t<div>\n    > foo", "<div>\nfoo"],
+			["10. >\t<div> $x$\n    > foo", "<div> $x$\nfoo"],
+		] as const) {
+			const doc = parseMarkdownToVisualDoc(md);
+			const listItem = doc.firstChild?.firstChild;
+			const bq = listItem?.child(1);
+			expect(bq?.type.name, md).toBe("blockquote");
+			expect(bq?.childCount, md).toBe(1);
+			expect(bq?.firstChild?.type.name, md).toBe("protected_block");
+			expect(bq?.firstChild?.attrs, md).toEqual({
+				kind: "raw",
+				rawMarkdown: expectedRaw,
+			});
+			const ser = serializeVisualDocToMarkdown(doc);
+			expect(parseMarkdownToVisualDoc(ser).eq(doc), md).toBe(true);
+		}
+	});
+
+	it("unifies top-level display-math splitting on mathIndex while keeping plain inline $$x$$ inline (PR-R29-A #4: Track B F4)", () => {
+		const inlineOnly = parseMarkdownToVisualDoc("Hello $$x$$");
+		expect(inlineOnly.childCount).toBe(1);
+		expect(inlineOnly.firstChild?.type.name).toBe("paragraph");
+		expect(collectProtectedInlines(inlineOnly)).toEqual([
+			{ kind: "math-inline", rawMarkdown: "$$x$$" },
+		]);
+
+		const splitCases: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [
+			["Hello $$\nx\n$$\nWorld", ["paragraph", "protected_block", "paragraph"]],
+			["$$\nx\n$$ # Heading", ["protected_block", "heading"]],
+			["$$\nx\n$$ trailing", ["protected_block", "paragraph"]],
+			["Para\n$$\nx\n$$ # H", ["paragraph", "protected_block", "heading"]],
+			[
+				"- $$\n  x\n  $$ trailing",
+				["bullet_list", "protected_block", "paragraph"],
+			],
+			["`$$` $$\nx\n$$", ["paragraph", "protected_block"]],
+			["\\[\nx\n\\] # Heading", ["protected_block", "heading"]],
+			["$$x$$ # Heading", ["protected_block", "heading"]],
+			["Hello $$x$$ # Heading", ["paragraph", "protected_block", "heading"]],
+			[
+				"Hello $$x$$ <!--\nbar\n-->\nAfter",
+				["paragraph", "protected_block", "protected_block", "paragraph"],
+			],
+			[
+				"a $$x$$ > b\n> $$y$$\n> c",
+				[
+					"paragraph",
+					"protected_block",
+					"blockquote",
+					"protected_block",
+					"blockquote",
+				],
+			],
+			[
+				"a\n\n$$x$$ > b\n> c",
+				["paragraph", "protected_block", "blockquote"],
+			],
+		];
+		for (const [md, expectedTypes] of splitCases) {
+			const doc = parseMarkdownToVisualDoc(md);
+			expect(
+				Array.from({ length: doc.childCount }, (_, idx) => doc.child(idx).type.name),
+				md,
+			).toEqual(expectedTypes);
+			const ser = serializeVisualDocToMarkdown(doc);
+			expect(parseMarkdownToVisualDoc(ser).eq(doc), md).toBe(true);
+		}
+	});
+
+	it("aligns GFM table recognition with PHP TableStartParser paragraphHasPipe and headerCells <= delimCols (PR-R29-A #5: Track A #3)", () => {
+		// Track A #3: editing `a |` -> `Xa |` preserves both `<p>Xa |</p>` and `<table>b</table>`.
+		const a3Guard = createMarkdownRoundTripGuard("a |\nb\n| - |");
+		expect(a3Guard.initialDoc.childCount).toBe(2);
+		expect(a3Guard.initialDoc.child(0).type.name).toBe("paragraph");
+		expect(a3Guard.initialDoc.child(1).type.name).toBe("table");
+		expect(a3Guard.serialize(a3Guard.initialDoc)).toBe("a |\nb\n| - |");
+
+		const a3Edited = insertTextAt(a3Guard.initialDoc, 1, "X");
+		const a3Ser = a3Guard.serialize(a3Edited);
+		expect(a3Ser).toBe("Xa |\n\n| b |\n| --- |");
+		expect(parseMarkdownToVisualDoc(a3Ser).eq(a3Edited)).toBe(true);
+
+		// Deleting `|` from `a |` still preserves the table canonically.
+		const a3NoPipe = EditorState.create({
+			doc: a3Guard.initialDoc,
+			schema: visualEditorSchema,
+		}).tr.delete(2, 4).doc;
+		const a3NoPipeSer = a3Guard.serialize(a3NoPipe);
+		expect(a3NoPipeSer).toBe("a\n\n| b |\n| --- |");
+		expect(parseMarkdownToVisualDoc(a3NoPipeSer).eq(a3NoPipe)).toBe(true);
+
+		// Fewer header cells than delimiter columns (`headerCells <= delimCols`) & multi-line paragraph pipes.
+		for (const md of [
+			"| a |\n| - | - |",
+			"| a |\n| ---: | :---: |\n| 1 | 2 |",
+			"a | b\nplain\n| - |",
+			"> a |\n> b\n> | - |",
+			"- a |\n  b\n  | - |",
+		]) {
+			const doc = parseMarkdownToVisualDoc(md);
+			let tableCount = 0;
+			doc.descendants((node) => {
+				if (node.type.name === "table") tableCount += 1;
+				return true;
+			});
+			expect(tableCount, md).toBe(1);
+			const ser = serializeVisualDocToMarkdown(doc);
+			expect(parseMarkdownToVisualDoc(ser).eq(doc), md).toBe(true);
+		}
+
+		// Non-table guards remain paragraphs.
+		for (const md of [
+			"a |\n\nb\n| - |",
+			"# a |\nb\n| - |",
+			'[ref]: /u "a |"\nb\n| - |',
+			"a $b|c$\nb\n| - |",
+			"> a |\nb\n| - |",
+		]) {
+			const doc = parseMarkdownToVisualDoc(md);
+			let tableCount = 0;
+			doc.descendants((node) => {
+				if (node.type.name === "table") tableCount += 1;
+				return true;
+			});
+			expect(tableCount, md).toBe(0);
+		}
+
+		// Genuine ProseMirror paragraphs still escape table delimiter lines cleanly (Wave 30 Track B F1).
+		for (const inlineNodes of [
+			[visualEditorSchema.text("| a |\n| - | - |")],
+			[visualEditorSchema.text("a | b\nplain\n| - |")],
+			[
+				visualEditorSchema.text("a | "),
+				visualEditorSchema.nodes.protected_inline.create({
+					kind: "math-inline",
+					rawMarkdown: "$b|c$",
+				}),
+				visualEditorSchema.text("\n| - | - |"),
+			],
+		]) {
+			const paraDoc = visualEditorSchema.nodes.doc.create(null, [
+				visualEditorSchema.nodes.paragraph.create(null, inlineNodes),
+			]);
+			const ser = serializeVisualDocToMarkdown(paraDoc);
+			const reparsed = parseMarkdownToVisualDoc(ser);
+			expect(reparsed.childCount, ser).toBe(1);
+			expect(reparsed.firstChild?.type.name, ser).toBe("paragraph");
+		}
+	});
+
+	it("escapes 40k unclosed '[' characters in O(N) time without quadratic scanning (PR-R29-A #6: Track B F6)", () => {
+		const raw = "[".repeat(40_000);
+		const t0 = performance.now();
+		const escaped = escapeInlineMarkdownText(raw);
+		const elapsedMs = performance.now() - t0;
+		expect(escaped).toBe(raw);
+		expect(elapsedMs).toBeLessThan(20);
+
+		expect(escapeInlineMarkdownText("[TOC]   ")).toBe("\\[TOC]   ");
+		expect(escapeInlineMarkdownText("[TOC] x")).toBe("[TOC] x");
+		expect(escapeInlineMarkdownText("foo [toc]\t")).toBe("foo \\[toc]\t");
+		expect(escapeInlineMarkdownText("[[a](b)")).toBe("\\[\\[a](b)");
+		expect(escapeInlineMarkdownText("[^1]")).toBe("\\[^1]");
+		expect(escapeInlineMarkdownText("[plain]")).toBe("[plain]");
+		expect(escapeInlineMarkdownText("&amp; &plain; &a")).toBe(
+			"\\&amp; \\&plain; &a",
+		);
 	});
 });

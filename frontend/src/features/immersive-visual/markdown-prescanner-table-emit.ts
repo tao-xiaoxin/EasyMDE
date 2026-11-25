@@ -91,7 +91,9 @@ export function emitTableHeaderRow(
 			headerMathRanges,
 			maskedHeader,
 		),
-		{ end: headerEndLine + 1, start: headerStartLine },
+		maskedHeader.includes("|")
+			? { end: headerEndLine + 1, start: headerStartLine }
+			: null,
 	);
 }
 
@@ -565,6 +567,7 @@ export function emitDisplayMathLogicalLine(
 	let firstDisplayFrom = -1;
 	let lastDisplayTo = -1;
 	let extendsPastLine = false;
+	let intermediateGapOpensBlock = false;
 	for (
 		let idx = firstMathRangeEndingAfter(mathIndex.ranges, lineStartOffset);
 		idx < mathIndex.ranges.length;
@@ -573,7 +576,17 @@ export function emitDisplayMathLogicalLine(
 		const range = mathIndex.ranges[idx];
 		if (!range || range.from >= lineEndOffset) break;
 		if (range.block && range.from >= lineStartOffset) {
-			if (firstDisplayFrom < 0) firstDisplayFrom = range.from;
+			if (firstDisplayFrom < 0) {
+				firstDisplayFrom = range.from;
+			} else if (onlyOnBlockBoundary && !intermediateGapOpensBlock) {
+				const gap = mathIndex.maskedDoc.slice(lastDisplayTo, range.from);
+				if (
+					!isCommonMarkBlankLine(gap) &&
+					opensNonParagraphBlock(gap, 0, false)
+				) {
+					intermediateGapOpensBlock = true;
+				}
+			}
 			lastDisplayTo = range.to;
 			if (range.to > lineEndOffset) {
 				extendsPastLine = true;
@@ -582,7 +595,7 @@ export function emitDisplayMathLogicalLine(
 		}
 	}
 	if (firstDisplayFrom < 0) return null;
-	if (onlyOnBlockBoundary && !extendsPastLine) {
+	if (onlyOnBlockBoundary && !extendsPastLine && !intermediateGapOpensBlock) {
 		const maskedAfter = mathIndex.maskedDoc.slice(lastDisplayTo, lineEndOffset);
 		const trailingOpensBlock =
 			!isCommonMarkBlankLine(maskedAfter) &&

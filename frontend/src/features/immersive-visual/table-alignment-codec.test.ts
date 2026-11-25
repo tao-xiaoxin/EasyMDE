@@ -303,7 +303,7 @@ describe("immersive-visual table alignment codec and prescanner parity", () => {
 
 		for (const mismatchSource of [
 			`${marker}\n| A | B | C |\n| --- | --- |`,
-			`${marker}\n| A | B |\n| --- | --- | --- |`,
+			`${marker}\n| A | B | C | D |\n| --- | --- |`,
 		]) {
 			expect(
 				prescanMarkdown(mismatchSource).tableAlignMarkers.size,
@@ -318,6 +318,16 @@ describe("immersive-visual table alignment codec and prescanner parity", () => {
 			expect(serialized, mismatchSource).not.toContain("\\<!--");
 			expect(serialized, mismatchSource).toContain(marker);
 		}
+
+		// Per PHP League\CommonMark TableStartParser (`count($headerCells) <= count($columns)`),
+		// fewer header cells than delimiter columns IS a valid table and accepts TBLALIGN.
+		const fewerHeaderSource = `${marker}\n| A | B |\n| --- | --- | --- |`;
+		expect(prescanMarkdown(fewerHeaderSource).tableAlignMarkers.size).toBe(1);
+		const fewerHeaderDoc = parseMarkdownToVisualDoc(fewerHeaderSource);
+		expect(fewerHeaderDoc.childCount).toBe(1);
+		expect(fewerHeaderDoc.firstChild?.type.name).toBe("table");
+		expect(fewerHeaderDoc.firstChild?.attrs.alignAnnotation).toBe(marker);
+		expect(fewerHeaderDoc.firstChild?.child(0).childCount).toBe(2);
 
 		// Blockquote prefix mismatch or list-item header must not attach TBLALIGN.
 		for (const mismatchedContainer of [

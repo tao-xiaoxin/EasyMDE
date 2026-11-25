@@ -3,7 +3,6 @@ import {
 	consumeBlockquoteMarker,
 	consumeWhitespaceColumns,
 	cursorRemainder,
-	htmlBlockLineCloses,
 	isCursorBlank,
 	matchHtmlBlockOpen,
 	measureLeadingColumns,
@@ -22,7 +21,6 @@ import {
 	measureIndentColumns,
 	peelNestedContainers,
 	readBlockquotePrefix,
-	stripContainers,
 	stripContainersWithColumn,
 } from "./markdown-prescanner-containers";
 
@@ -59,49 +57,14 @@ export {
  * classification, and standalone block math scanning.
  */
 
-export function findCommonMarkHtmlBlockEnd(
-	lines: ReadonlyArray<string>,
-	startIndex: number,
-	htmlType: 1 | 2 | 3 | 4 | 5 | 6 | 7,
-	containers: ReadonlyArray<ContainerStep>,
-	startContent: string,
-	getLine?: (lineIndex: number) => string,
-): number {
-	if (
-		htmlType !== 6 &&
-		htmlType !== 7 &&
-		htmlBlockLineCloses(htmlType, startContent)
-	) {
-		return startIndex;
-	}
-	let end = startIndex;
-	for (let k = startIndex + 1; k < lines.length; k += 1) {
-		const rawLine = getLine ? getLine(k) : (lines[k] ?? "");
-		const afterContainers = stripContainers(rawLine, containers);
-		if (afterContainers === null) {
-			break;
-		}
-		if (htmlType === 6 || htmlType === 7) {
-			if (isCommonMarkBlankLine(afterContainers)) {
-				break;
-			}
-			end = k;
-			continue;
-		}
-		end = k;
-		if (htmlBlockLineCloses(htmlType, afterContainers)) {
-			return end;
-		}
-	}
-	return end;
-}
-
 export type ListPrefixedHtmlMatch = Readonly<{
 	containers: ReadonlyArray<ContainerStep>;
 	content: string;
 	contentIndent: number;
+	contentOffset: number;
 	htmlType: 1 | 2 | 3 | 4 | 5 | 6 | 7;
 	linePrefix: string;
+	virtualSpaces: number;
 }>;
 
 export function matchListPrefixedHtmlBlock(
@@ -132,6 +95,7 @@ export function matchListPrefixedHtmlBlock(
 		}
 	}
 	const outerQuoteCount = seededInterleaved ? 0 : containers.length;
+	let consumedPrevList = false;
 	if (!seededInterleaved && prevContainerIndent > 0 && !isCursorBlank(cursor)) {
 		const leadCols = measureLeadingColumns(cursor);
 		if (leadCols >= prevContainerIndent) {
@@ -140,16 +104,20 @@ export function matchListPrefixedHtmlBlock(
 			}
 			consumeWhitespaceColumns(cursor, prevContainerIndent);
 			containers.push({ indent: prevContainerIndent, kind: "list" });
+			consumedPrevList = true;
 		}
 	}
 
-	const { matchedList } = peelNestedContainers(
+	const { matchedList, quotesAdded } = peelNestedContainers(
 		cursor,
 		containers,
 		!inParagraph,
-		seededInterleaved,
+		seededInterleaved || consumedPrevList,
 	);
-	if (!matchedList || measureLeadingColumns(cursor) > 3) {
+	if (
+		(!matchedList && !(consumedPrevList && quotesAdded > 0)) ||
+		measureLeadingColumns(cursor) > 3
+	) {
 		return null;
 	}
 	const htmlCandidate = line.slice(nextNonSpaceIndex(cursor));
@@ -173,8 +141,10 @@ export function matchListPrefixedHtmlBlock(
 		containers,
 		content: cursorRemainder(cursor),
 		contentIndent,
+		contentOffset: cursor.index,
 		htmlType,
 		linePrefix: cursorPrefix(cursor),
+		virtualSpaces: cursor.virtualSpaces,
 	};
 }
 

@@ -16,7 +16,6 @@ import {
 	classifyParagraphLine,
 	detectFence,
 	findBlockMathEnd,
-	findCommonMarkHtmlBlockEnd,
 	findContainerBoundedFenceEnd,
 	findFootnoteDefinitionEnd,
 	hasListBeforeQuote,
@@ -28,7 +27,10 @@ import {
 	stripContainers,
 	sumListContainerIndent,
 } from "./markdown-prescanner-blocks";
-import { findType6Or7DisplayMathBreak } from "./markdown-prescanner-display-math";
+import {
+	type HtmlBlockScanResult,
+	scanHtmlBlockWithDisplayMath,
+} from "./markdown-prescanner-display-math";
 import {
 	extractInlineProtectedSyntax,
 	type ProtectedInlineEntry,
@@ -46,6 +48,7 @@ import {
 import {
 	collectRelativeInlineMathRanges,
 	createPhpDocumentMathIndex,
+	findFirstDisplayMathInLines,
 	findLogicalLineEnd,
 	type GfmTableMatch,
 	maskedSliceForLines,
@@ -228,10 +231,20 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 	): void => {
 		const endOffset = mathIndex.lineEnds[toLineInclusive] ?? afterStartOffset;
 		const postMathMasked =
-			endOffset >= afterStartOffset
+			endOffset > afterStartOffset
 				? mathIndex.maskedDoc.slice(afterStartOffset, endOffset)
 				: "";
-		scanLinesIntoPhpCommonMarkBlockState(phpBlockState, `\n\nM\n\n${postMathMasked}`);
+		if (
+			postMathMasked.length === 0 &&
+			phpBlockState.containers.length === 0 &&
+			phpBlockState.leaf === null
+		) {
+			return;
+		}
+		scanLinesIntoPhpCommonMarkBlockState(
+			phpBlockState,
+			`\n\nM\n\n${postMathMasked}`,
+		);
 	};
 	const advancePhpStateClosedBlock = (prefix: string, indent: number): void => {
 		advancePhpCommonMarkBlockLine(
@@ -247,6 +260,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 	let inRestoredDisplayMathContainer = false;
 	let paragraphOpen = false;
 	let paragraphHasContent = false;
+	let paragraphHasPipe = false;
 	let paragraphQuoteDepth = 0;
 	let paragraphRefParser: ParagraphReferenceParser | null = null;
 	let activeTable: GfmTableMatch | null = null;
@@ -256,6 +270,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 	const closeParagraph = (): void => {
 		paragraphOpen = false;
 		paragraphHasContent = false;
+		paragraphHasPipe = false;
 		paragraphRefParser = null;
 	};
 	const clearDroppedList = (dropped: boolean): void => {
@@ -296,6 +311,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			listContentIndent = trailing.listContentIndent;
 			paragraphOpen = trailing.paragraphOpen;
 			paragraphHasContent = trailing.paragraphHasContent;
+			paragraphHasPipe = trailing.paragraphHasPipe;
 			paragraphQuoteDepth = trailing.paragraphQuoteDepth;
 			paragraphRefParser = trailing.paragraphRefParser;
 			inRestoredDisplayMathContainer =
@@ -318,38 +334,38 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		i = result.spanEndLine + 1;
 	};
 
-	const tryEmitHtmlWithDisplayMathBreak = (
+	const emitHtmlScanResult = (
 		linePrefix: string,
-		firstLineContent: string,
-		containers: ReadonlyArray<ContainerStep>,
+		htmlScan: HtmlBlockScanResult,
 		origStart: number,
-		htmlEnd: number,
-	): boolean => {
-		const broken = findType6Or7DisplayMathBreak(
-			mathIndex,
-			lines,
-			firstLineContent,
-			containers,
-			origStart,
-			htmlEnd,
-		);
-		if (broken === null) return false;
+		onComplete: () => void,
+	): void => {
+		if (htmlScan.kind === "break") {
+			pushOutputLine(
+				`${linePrefix}${addProtectedBlock("raw", htmlScan.rawHtml)}`,
+				null,
+			);
+			applyDisplayMathSplitState(
+				emitDisplayMathLineSegments(
+					displayMathEnv,
+					htmlScan.resumeLine,
+					findLogicalLineEnd(mathIndex, htmlScan.resumeLine),
+					null,
+					null,
+					htmlScan.resumeOffset,
+					true,
+				),
+			);
+			return;
+		}
 		pushOutputLine(
-			`${linePrefix}${addProtectedBlock("raw", broken.rawHtml)}`,
-			null,
+			`${linePrefix}${addProtectedBlock("raw", htmlScan.rawHtml)}`,
+			{ end: htmlScan.endLine + 1, start: origStart },
 		);
-		applyDisplayMathSplitState(
-			emitDisplayMathLineSegments(
-				displayMathEnv,
-				broken.resumeLine,
-				findLogicalLineEnd(mathIndex, broken.resumeLine),
-				null,
-				null,
-				broken.resumeOffset,
-				true,
-			),
-		);
-		return true;
+		onComplete();
+		closeParagraph();
+		advancePhpStateMaskedLines(origStart, htmlScan.endLine);
+		i = htmlScan.endLine + 1;
 	};
 
 	while (i < lines.length) {
@@ -541,6 +557,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			mathIndex,
 			tableInParagraph,
 			tableInParagraph ? paragraphRefParser : null,
+			tableInParagraph && paragraphHasPipe,
 		);
 		if (tableMatch !== null) {
 			activeTable = tableMatch;
@@ -654,51 +671,52 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			continue;
 		}
 
-		// 7. CommonMark §4.6 Types 1-7 HTML blocks using math-masked line checks.
-		const maskedLine = getMaskedLine(i);
+		// 7. CommonMark §4.6 Types 1-7 HTML blocks using unified math-aware scan.
+		const lineStartOffset = mathIndex.lineStarts[i] ?? 0;
+		const lineEndOffset = mathIndex.lineEnds[logicalEnd] ?? lineStartOffset;
+		const hasMultilineInlineMath = logicalEnd > i;
+		const maskedLogicalLine = hasMultilineInlineMath
+			? maskedSliceForLines(mathIndex, lines, i, logicalEnd)
+			: getMaskedLine(i);
+		const firstLineDisplay =
+			mathIndex.ranges.length > 0
+				? findFirstDisplayMathInLines(mathIndex, i, logicalEnd)
+				: null;
+		const maskedOpenLine =
+			firstLineDisplay !== null
+				? mathIndex.maskedDoc.slice(lineStartOffset, firstLineDisplay.from)
+				: maskedLogicalLine;
 		const listHtml = matchListPrefixedHtmlBlock(
-			maskedLine,
+			maskedOpenLine,
 			listInterruptionInParagraph,
 			prevContainerIndent,
 			activeInterleavedContainers ?? undefined,
 		);
 		if (listHtml !== null) {
-			const rawListContent = line.slice(line.length - listHtml.content.length);
-			const rawListPrefix = line.slice(0, listHtml.linePrefix.length);
-			const end = findCommonMarkHtmlBlockEnd(
+			const startContentOffset = lineStartOffset + listHtml.contentOffset;
+			const rawListPrefix = `${listHtml.linePrefix}${" ".repeat(listHtml.virtualSpaces)}`;
+			const firstLineRaw = hasMultilineInlineMath
+				? normalized.slice(startContentOffset, lineEndOffset)
+				: line.slice(listHtml.contentOffset);
+			const firstLineMasked = mathIndex.maskedDoc.slice(
+				startContentOffset,
+				lineEndOffset,
+			);
+			const htmlScan = scanHtmlBlockWithDisplayMath(
+				mathIndex,
 				lines,
-				i,
 				listHtml.htmlType,
 				listHtml.containers,
-				listHtml.content,
-				getMaskedLine,
+				logicalEnd,
+				startContentOffset,
+				firstLineRaw,
+				firstLineMasked,
 			);
-			if (
-				(listHtml.htmlType === 6 || listHtml.htmlType === 7) &&
-				tryEmitHtmlWithDisplayMathBreak(
-					rawListPrefix,
-					rawListContent,
-					listHtml.containers,
-					i,
-					end,
-				)
-			) {
-				continue;
-			}
-			pushListPrefixedProtectedBlock(
-				"raw",
-				rawListPrefix,
-				rawListContent,
-				listHtml.containers,
-				i,
-				end,
-			);
-			if (activeInterleavedContainers === null) {
-				listContentIndent = listHtml.contentIndent;
-			}
-			closeParagraph();
-			advancePhpStateMaskedLines(i, end);
-			i = end + 1;
+			emitHtmlScanResult(rawListPrefix, htmlScan, i, () => {
+				if (activeInterleavedContainers === null) {
+					listContentIndent = listHtml.contentIndent;
+				}
+			});
 			continue;
 		}
 
@@ -707,10 +725,13 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			relativeIndent <= 3 &&
 			analysis.content.startsWith("<")
 		) {
-			const maskedContent = maskedLine.slice(
-				line.length - analysis.content.length,
-			);
-			const htmlType = matchHtmlBlockOpen(maskedContent, !paragraphOpen);
+			const contentOffset = line.length - analysis.content.length;
+			const startContentOffset = lineStartOffset + contentOffset;
+			const maskedOpenContent =
+				firstLineDisplay !== null && firstLineDisplay.from >= startContentOffset
+					? mathIndex.maskedDoc.slice(startContentOffset, firstLineDisplay.from)
+					: mathIndex.maskedDoc.slice(startContentOffset, lineEndOffset);
+			const htmlType = matchHtmlBlockOpen(maskedOpenContent, !paragraphOpen);
 			if (htmlType !== null) {
 				const htmlContainers: ContainerStep[] =
 					activeInterleavedContainers !== null
@@ -721,61 +742,49 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 				if (effectiveContainer > 0) {
 					htmlContainers.push({ indent: effectiveContainer, kind: "list" });
 				}
-				const end = findCommonMarkHtmlBlockEnd(
+				const firstLineRaw = hasMultilineInlineMath
+					? normalized.slice(startContentOffset, lineEndOffset)
+					: analysis.content;
+				const firstLineMasked = mathIndex.maskedDoc.slice(
+					startContentOffset,
+					lineEndOffset,
+				);
+				const htmlScan = scanHtmlBlockWithDisplayMath(
+					mathIndex,
 					lines,
-					i,
 					htmlType,
 					htmlContainers,
-					maskedContent,
-					getMaskedLine,
+					logicalEnd,
+					startContentOffset,
+					firstLineRaw,
+					firstLineMasked,
 				);
-				if (
-					(htmlType === 6 || htmlType === 7) &&
-					tryEmitHtmlWithDisplayMathBreak(
-						`${analysis.prefix}${" ".repeat(analysis.indent)}`,
-						analysis.content,
-						htmlContainers,
-						i,
-						end,
-					)
-				) {
-					continue;
-				}
-				if (activeInterleavedContainers !== null) {
-					pushListPrefixedProtectedBlock(
-						"raw",
-						analysis.prefix,
-						analysis.content,
-						htmlContainers,
-						i,
-						end,
-					);
-				} else {
-					pushProtectedBlock("raw", analysis, i, end);
-				}
-				clearDroppedList(droppedOutOfList);
-				closeParagraph();
-				advancePhpStateMaskedLines(i, end);
-				i = end + 1;
+				emitHtmlScanResult(
+					`${analysis.prefix}${" ".repeat(analysis.indent)}`,
+					htmlScan,
+					i,
+					() => {
+						clearDroppedList(droppedOutOfList);
+					},
+				);
 				continue;
 			}
 		}
 
-		// 8. Split display math breaking an active list/quote container or
-		//    opening a block on a multiline `\(...\)` line; otherwise unify
-		//    inline scanning onto canonical `mathIndex.ranges` + `maskedDoc`.
-		const hasMultilineInlineMath = logicalEnd > i;
+		// 8. Split any display math on the logical line (multiline spans, block
+		//    openers after display math, or container-closing display math); plain
+		//    single-line `Hello $$x$$` stays inline when `onlyOnBlockBoundary` holds.
 		const hasPriorContainer =
 			prevListIndent !== null ||
 			paragraphQuoteDepth > 0 ||
 			phpBlockState.containers.length > 0;
-		if (hasPriorContainer || hasMultilineInlineMath) {
+		if (firstLineDisplay !== null) {
 			const logicalMathSplit = emitDisplayMathLogicalLine(
 				displayMathEnv,
 				i,
 				logicalEnd,
 				beforeHtmlContext,
-				!hasPriorContainer,
+				!(hasPriorContainer || inRestoredDisplayMathContainer),
 			);
 			if (logicalMathSplit !== null) {
 				applyDisplayMathSplitState(logicalMathSplit);
@@ -792,14 +801,9 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			paragraphOpen && relativeIndent >= 4
 				? line.length - analysis.content.length
 				: -1;
-		const lineStartOffset = mathIndex.lineStarts[i] ?? 0;
-		const lineEndOffset = mathIndex.lineEnds[logicalEnd] ?? lineStartOffset;
 		const rawLogicalLine = hasMultilineInlineMath
 			? normalized.slice(lineStartOffset, lineEndOffset)
 			: line;
-		const maskedLogicalLine = hasMultilineInlineMath
-			? maskedSliceForLines(mathIndex, lines, i, logicalEnd)
-			: maskedLine;
 		pushOutputLine(
 			extractInlineProtectedSyntax(
 				rawLogicalLine,
@@ -833,9 +837,15 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 				? maskedLogicalLine.slice(line.length - acceptedListMarker.afterContent.length)
 				: effectiveContent;
 			paragraphHasContent = !advanceParagraphReferenceParser(activeRefParser, refLine);
+			paragraphHasPipe = paragraphHasContent
+				? startsNewParagraph
+					? refLine.includes("|")
+					: paragraphHasPipe || refLine.includes("|")
+				: false;
 			paragraphRefParser = activeRefParser;
 		} else {
 			paragraphHasContent = false;
+			paragraphHasPipe = false;
 			paragraphRefParser = null;
 		}
 		advancePhpStateMaskedLines(i, logicalEnd);

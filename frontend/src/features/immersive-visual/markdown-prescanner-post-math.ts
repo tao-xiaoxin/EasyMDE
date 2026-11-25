@@ -6,19 +6,16 @@ import type { PhpMarkdownMathRange } from "../../shared/markdown/php-markdown-ma
 import {
 	type ContainerStep,
 	type DetectableFence,
-	findCommonMarkHtmlBlockEnd,
 	findContainerBoundedFenceEnd,
 	isCommonMarkBlankLine,
 	measureIndentColumns,
 	peelContainerStepsForLine,
-	stripContainers,
 } from "./markdown-prescanner-blocks";
 import {
 	computeTrailingParagraphState,
 	type DisplayMathEmitEnv,
-	findDisplayMathAwareHtmlBlockCloseOnLine,
-	findType6Or7DisplayMathBreak,
 	type PostDisplayMathResult,
+	scanHtmlBlockWithDisplayMath,
 	shiftInlineMathRanges,
 } from "./markdown-prescanner-display-math";
 import { extractInlineProtectedSyntax } from "./markdown-prescanner-inline";
@@ -26,7 +23,6 @@ import {
 	findFirstDisplayMathInLines,
 	findGfmTableEnd,
 	findLogicalLineEnd,
-	firstMathRangeEndingAfter,
 	maskedSliceForLines,
 	matchPeeledGfmTableHeader,
 } from "./markdown-prescanner-tables";
@@ -46,6 +42,7 @@ function tryEmitPostMathHtmlBlock(
 	}>,
 	afterTrimmed: string,
 	spanEndLine: number,
+	spanEndOffset: number,
 ): PostDisplayMathResult | null {
 	const htmlType = matchHtmlBlockOpen(afterTrimmed, true);
 	if (htmlType === null) return null;
@@ -56,81 +53,37 @@ function tryEmitPostMathHtmlBlock(
 		"",
 	);
 	const htmlPrefix = rawPeeled?.linePrefix ?? afterPeeled.linePrefix;
-	const htmlEndLine = findCommonMarkHtmlBlockEnd(
+	const startContentOffset = spanEndOffset - rawFirstContent.length;
+	const firstLineMasked = mathIndex.maskedDoc.slice(
+		startContentOffset,
+		spanEndOffset,
+	);
+	const htmlScan = scanHtmlBlockWithDisplayMath(
+		mathIndex,
 		lines,
-		spanEndLine,
 		htmlType,
 		afterPeeled.containers,
-		afterTrimmed,
-		(k) => maskedSliceForLines(mathIndex, lines, k, k),
+		spanEndLine,
+		startContentOffset,
+		rawFirstContent,
+		firstLineMasked,
 	);
-	if (htmlType === 6 || htmlType === 7) {
-		const broken = findType6Or7DisplayMathBreak(
-			mathIndex,
-			lines,
-			rawFirstContent,
-			afterPeeled.containers,
-			spanEndLine,
-			htmlEndLine,
-		);
-		if (broken !== null) {
-			callbacks.pushOutputLine(
-				`${htmlPrefix}${callbacks.addProtectedBlock("raw", broken.rawHtml)}`,
-				null,
-			);
-			return {
-				kind: "resume",
-				resumeLine: broken.resumeLine,
-				resumeOffset: broken.resumeOffset,
-			};
-		}
-	} else if (
-		htmlEndLine > spanEndLine &&
-		afterPeeled.containers.length === 0 &&
-		findFirstDisplayMathInLines(mathIndex, htmlEndLine, htmlEndLine) !== null
-	) {
-		const closeStart = mathIndex.lineStarts[htmlEndLine] ?? 0;
-		const closeLogicalEnd = findLogicalLineEnd(mathIndex, htmlEndLine);
-		const closeScan = findDisplayMathAwareHtmlBlockCloseOnLine(
-			mathIndex,
-			htmlType,
-			closeStart,
-			closeLogicalEnd,
-			mathIndex.lineEnds[closeLogicalEnd] ?? closeStart,
-			firstMathRangeEndingAfter(mathIndex.ranges, closeStart),
-		);
-		if (closeScan.closed && closeScan.resumeAtOffset >= 0) {
-			const rawHtmlLines = [
-				rawFirstContent,
-				...lines.slice(spanEndLine + 1, htmlEndLine),
-				mathIndex.normalized.slice(closeStart, closeScan.htmlEndOffset),
-			];
-			callbacks.pushOutputLine(
-				`${htmlPrefix}${callbacks.addProtectedBlock("raw", rawHtmlLines.join("\n"))}`,
-				null,
-			);
-			return {
-				kind: "resume",
-				resumeLine: closeScan.spanEndLine,
-				resumeOffset: closeScan.resumeAtOffset,
-			};
-		}
-	}
-	const rawHtmlLines: string[] = [rawFirstContent];
-	for (let k = spanEndLine + 1; k <= htmlEndLine; k += 1) {
-		rawHtmlLines.push(
-			stripContainers(lines[k] ?? "", afterPeeled.containers) ?? "",
-		);
-	}
 	callbacks.pushOutputLine(
-		`${htmlPrefix}${callbacks.addProtectedBlock("raw", rawHtmlLines.join("\n"))}`,
+		`${htmlPrefix}${callbacks.addProtectedBlock("raw", htmlScan.rawHtml)}`,
 		null,
 	);
+	if (htmlScan.kind === "break") {
+		return {
+			kind: "resume",
+			resumeLine: htmlScan.resumeLine,
+			resumeOffset: htmlScan.resumeOffset,
+		};
+	}
 	return {
 		activeTable: null,
 		activeTableOutputStart: -1,
 		kind: "done",
-		spanEndLine: htmlEndLine,
+		spanEndLine: htmlScan.endLine,
 		trailingParagraphState: null,
 	};
 }
@@ -256,6 +209,7 @@ export function emitPostDisplayMathSegment(
 				afterPeeled,
 				afterTrimmed,
 				spanEndLine,
+				spanEndOffset,
 			);
 			if (htmlResult !== null) return htmlResult;
 		}

@@ -330,72 +330,6 @@ function resolveInlineScanLine(
 	return parts.join("");
 }
 
-function firstRangeEndingAfter(
-	ranges: ReadonlyArray<PhpMarkdownMathRange>,
-	offset: number,
-): number {
-	let low = 0;
-	let high = ranges.length;
-	while (low < high) {
-		const mid = Math.floor((low + high) / 2);
-		if ((ranges[mid]?.to ?? 0) <= offset) low = mid + 1;
-		else high = mid;
-	}
-	return low;
-}
-
-/**
- * Lazily collects math ranges containing a newline or (inside tables) a pipe
- * in strictly O(L + M) total time using monotonic `indexOf` pointers (zero
- * `line.slice` allocations).
- */
-function buildHazardMathRanges(
-	line: string,
-	isTableRow: boolean,
-	mathRanges: ReadonlyArray<PhpMarkdownMathRange>,
-): PhpMarkdownMathRange[] {
-	const hazards: PhpMarkdownMathRange[] = [];
-	let nextNl = line.indexOf("\n");
-	let nextPipe = isTableRow ? line.indexOf("|") : -1;
-	for (let i = 0; i < mathRanges.length; i += 1) {
-		const range = mathRanges[i];
-		if (!range) continue;
-		while (nextNl >= 0 && nextNl < range.from) {
-			nextNl = line.indexOf("\n", range.from);
-		}
-		const hasNl = nextNl >= 0 && nextNl < range.to;
-		let hasPipe = false;
-		if (isTableRow && nextPipe >= 0) {
-			while (nextPipe >= 0 && nextPipe < range.from) {
-				nextPipe = line.indexOf("|", range.from);
-			}
-			hasPipe = nextPipe >= 0 && nextPipe < range.to;
-		}
-		if (range.block || hasNl || hasPipe) hazards.push(range);
-	}
-	return hazards;
-}
-
-function spanCrossesHazardMath(
-	mathRanges: ReadonlyArray<PhpMarkdownMathRange>,
-	hazardRanges: ReadonlyArray<PhpMarkdownMathRange>,
-	spanStart: number,
-	spanEnd: number,
-): boolean {
-	if (hazardRanges.length > 0) {
-		const hazard = hazardRanges[firstRangeEndingAfter(hazardRanges, spanStart)];
-		if (hazard && hazard.from < spanEnd) return true;
-	}
-	if (mathRanges.length > 0) {
-		const straddling =
-			mathRanges[firstRangeEndingAfter(mathRanges, spanEnd - 1)];
-		if (straddling && straddling.from < spanEnd && straddling.to > spanEnd) {
-			return true;
-		}
-	}
-	return false;
-}
-
 function skipLinkWs(text: string, pos: number): number {
 	let p = pos;
 	while (p < text.length) {
@@ -544,7 +478,6 @@ export function extractInlineProtectedSyntax(
 	let pairedTagCloseMaps: Map<string, Map<number, number>> | null = null;
 	let htmlScanState: InlineHtmlScanState | null = null;
 	let linkTailScanState: LinkTailScanState | null = null;
-	let hazardMathRanges: PhpMarkdownMathRange[] | null = null;
 	let noRefDestCloseAngle = false;
 	let mathCursor = 0;
 
@@ -612,22 +545,42 @@ export function extractInlineProtectedSyntax(
 				linkTailScanState,
 			);
 			if (endCursor > index + 1) {
-				if (resolvedMathRanges.length > 0 && hazardMathRanges === null) {
-					hazardMathRanges = buildHazardMathRanges(
-						line,
-						isTableRow,
-						resolvedMathRanges,
-					);
-				}
-				if (
-					!spanCrossesHazardMath(
-						resolvedMathRanges,
-						hazardMathRanges ?? [],
-						index,
-						endCursor,
-					)
-				) {
+				const firstOverlap = resolvedMathRanges[mathCursor];
+				if (!firstOverlap || firstOverlap.from >= endCursor) {
 					result += line.slice(index, endCursor);
+					index = endCursor;
+					continue;
+				}
+				let scanIdx = mathCursor;
+				let canProtectTail = true;
+				while (scanIdx < resolvedMathRanges.length) {
+					const range = resolvedMathRanges[scanIdx];
+					if (!range || range.from >= endCursor) break;
+					if (range.block || range.from < index || range.to > endCursor) {
+						canProtectTail = false;
+						break;
+					}
+					scanIdx += 1;
+				}
+				if (canProtectTail) {
+					let tailCursor = index;
+					while (mathCursor < scanIdx) {
+						const range = resolvedMathRanges[mathCursor];
+						if (range) {
+							if (range.from > tailCursor) {
+								result += line.slice(tailCursor, range.from);
+							}
+							result += allocateToken(
+								"math-inline",
+								line.slice(range.from, range.to),
+							);
+							tailCursor = range.to;
+						}
+						mathCursor += 1;
+					}
+					if (tailCursor < endCursor) {
+						result += line.slice(tailCursor, endCursor);
+					}
 					index = endCursor;
 					continue;
 				}

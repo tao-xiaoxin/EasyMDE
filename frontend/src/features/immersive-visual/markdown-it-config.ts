@@ -6,6 +6,7 @@ import {
 	type ParagraphReferenceParser,
 	type ReferenceDefinitionState,
 } from "../../shared/markdown/php-commonmark-reference-def";
+import { createEasyMdeTableRule } from "./markdown-it-table-rule";
 import {
 	RAW_IMAGE_TITLE_META_KEY,
 	RAW_LINK_TITLE_META_KEY,
@@ -16,7 +17,6 @@ import {
 	type PreScanResult,
 	restoreProtectedInlineSentinels,
 } from "./markdown-prescanner";
-import { opensNonParagraphBlock } from "./markdown-prescanner-tables";
 
 export const RAW_REFERENCE_SOURCE_META_KEY = "easymdeRawReferenceSource";
 
@@ -358,68 +358,15 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 	);
 
 	if (originalTableRuleEntry) {
-		const originalTableRule = originalTableRuleEntry.fn;
 		parser.block.ruler.before(
 			"table",
 			"easymde_table",
-			(state, startLine, endLine, silent) => {
-				if (startLine + 2 > endLine) {
-					return false;
-				}
-				// Never interrupt an active CommonMark §4.7 reference definition
-				// when probing continuation lines for a destination or title.
-				if (silent && state.parentType === "reference") {
-					return false;
-				}
-				const s0 = state.sCount[startLine] ?? 0;
-				if (s0 - state.blkIndent >= 4) {
-					return false;
-				}
-				const pos0 =
-					(state.bMarks[startLine] ?? 0) + (state.tShift[startLine] ?? 0);
-				const max0 = state.eMarks[startLine] ?? pos0;
-				const trimmedStart = state.src.slice(pos0, max0);
-				const prevClose = state.tokens[state.tokens.length - 1];
-				const prevOpen = state.tokens[state.tokens.length - 3];
-				const followsParagraph =
-					(silent && state.parentType === "paragraph") ||
-					(prevClose?.type === "paragraph_close" &&
-						prevOpen?.type === "paragraph_open" &&
-						prevOpen.level === state.level &&
-						prevOpen.map?.[1] === startLine);
-				const startColumn = (state.bsCount[startLine] ?? 0) + s0;
-				// Reject non-paragraph CommonMark block openers and §4.7 link
-				// reference definitions / titles via the canonical shared guard.
-				if (
-					opensNonParagraphBlock(trimmedStart, startColumn, followsParagraph)
-				) {
-					return false;
-				}
-				if (
-					!followsParagraph &&
-					originalReferenceRule !== null &&
-					originalReferenceRule(state, startLine, endLine, true)
-				) {
-					return false;
-				}
-				if (
-					prevClose?.type === "reference_definition" &&
-					prevClose.level === state.level &&
-					prevClose.map?.[1] === startLine
-				) {
-					const prevRaw = readRawMetaString(
-						prevClose,
-						RAW_REFERENCE_SOURCE_META_KEY,
-					);
-					if (
-						prevRaw !== null &&
-						wouldReferenceDefinitionAbsorbFollowingBlock(prevRaw, trimmedStart)
-					) {
-						return false;
-					}
-				}
-				return originalTableRule(state, startLine, endLine, silent);
-			},
+			createEasyMdeTableRule({
+				originalReferenceRule,
+				originalTableRule: originalTableRuleEntry.fn,
+				rawReferenceSourceMetaKey: RAW_REFERENCE_SOURCE_META_KEY,
+				wouldReferenceDefinitionAbsorbFollowingBlock,
+			}),
 			{ alt: [...originalTableRuleEntry.alt] },
 		);
 		parser.block.ruler.disable("table");

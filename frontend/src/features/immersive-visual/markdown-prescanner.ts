@@ -35,9 +35,13 @@ import {
 	type ProtectedInlineEntry,
 } from "./markdown-prescanner-inline";
 import {
+	type DisplayMathEmitEnv,
+	type DisplayMathSplitResult,
 	emitActiveTableRow,
 	emitDisplayMathHeaderLine,
+	emitDisplayMathLogicalLine,
 	emitDisplayMathTableBreak,
+	emitTableHeaderRow,
 } from "./markdown-prescanner-table-emit";
 import {
 	collectRelativeInlineMathRanges,
@@ -281,6 +285,43 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		protectedBlocks.set(token, { kind, rawMarkdown });
 		return token;
 	};
+	const displayMathEnv: DisplayMathEmitEnv = {
+		callbacks: { addProtectedBlock, pushOutputLine },
+		getOutputLength: () => outputLines.length,
+		lines,
+		mathIndex,
+		protectedInlines,
+		sentinel,
+	};
+	const applyDisplayMathSplitState = (result: DisplayMathSplitResult): void => {
+		activeTable = result.activeTable;
+		activeTableOutputStart = result.activeTableOutputStart;
+		pendingTableAlignOutputIndex = -1;
+		const trailing = result.trailingParagraphState;
+		if (trailing !== null) {
+			inIndentedCode = trailing.inIndentedCode;
+			indentedCodeContainer = trailing.indentedCodeContainer;
+			listContentIndent = trailing.listContentIndent;
+			paragraphOpen = trailing.paragraphOpen;
+			paragraphHasContent = trailing.paragraphHasContent;
+			paragraphQuoteDepth = trailing.paragraphQuoteDepth;
+			paragraphRefParser = trailing.paragraphRefParser;
+		} else {
+			closeParagraph();
+			inIndentedCode = false;
+			if (activeTable !== null && !hasListBeforeQuote(activeTable.containers)) {
+				const nestedListIndent = sumListContainerIndent(activeTable.containers);
+				listContentIndent = nestedListIndent > 0 ? nestedListIndent : null;
+			} else {
+				listContentIndent = null;
+			}
+		}
+		advancePhpStateAfterDisplayMath(
+			result.afterStartOffset,
+			result.spanEndLine,
+		);
+		i = result.spanEndLine + 1;
+	};
 
 	while (i < lines.length) {
 		if (activeTable !== null && i <= activeTable.endLine) {
@@ -290,14 +331,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 				i += 1;
 				continue;
 			}
-			const logicalEnd = emitActiveTableRow(
-				i,
-				activeTable,
-				mathIndex,
-				sentinel,
-				protectedInlines,
-				pushOutputLine,
-			);
+			const logicalEnd = emitActiveTableRow(displayMathEnv, i, activeTable);
 			advancePhpStateMaskedLines(i, logicalEnd);
 			i = logicalEnd + 1;
 			continue;
@@ -305,14 +339,9 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 
 		if (activeTable !== null && i === activeTable.brokenByDisplayMathLine) {
 			const breakResult = emitDisplayMathTableBreak(
-				lines,
+				displayMathEnv,
 				i,
 				activeTable.containers,
-				mathIndex,
-				sentinel,
-				protectedInlines,
-				{ addProtectedBlock, pushOutputLine },
-				() => outputLines.length,
 			);
 			if (breakResult.emittedTableBeforeRow && activeTableOutputStart >= 0) {
 				const invalidateEnd =
@@ -327,24 +356,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 					outputLineRanges[rangeIdx] = null;
 				}
 			}
-			activeTable = breakResult.activeTable;
-			activeTableOutputStart = breakResult.activeTableOutputStart;
-			pendingTableAlignOutputIndex = -1;
-			closeParagraph();
-			if (
-				activeTable !== null &&
-				!hasListBeforeQuote(activeTable.containers)
-			) {
-				const nestedListIndent = sumListContainerIndent(activeTable.containers);
-				listContentIndent = nestedListIndent > 0 ? nestedListIndent : null;
-			} else {
-				listContentIndent = null;
-			}
-			advancePhpStateAfterDisplayMath(
-				breakResult.afterStartOffset,
-				breakResult.spanEndLine,
-			);
-			i = breakResult.spanEndLine + 1;
+			applyDisplayMathSplitState(breakResult);
 			continue;
 		}
 
@@ -626,35 +638,16 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			true,
 			mathIndex,
 			tableInParagraph,
+			tableInParagraph ? paragraphRefParser : null,
 		);
 		if (tableMatch !== null) {
-			const headerStartOffset = mathIndex.lineStarts[i] ?? 0;
-			const headerEndOffset =
-				mathIndex.lineEnds[tableMatch.headerEndLine] ?? headerStartOffset;
-			const rawHeader = normalized.slice(headerStartOffset, headerEndOffset);
-			const headerMathRanges = collectRelativeInlineMathRanges(
-				mathIndex,
-				headerStartOffset,
-				headerEndOffset,
-			);
 			activeTable = tableMatch;
 			activeTableOutputStart =
 				pendingTableAlignOutputIndex >= 0
 					? pendingTableAlignOutputIndex
 					: outputLines.length;
 			pendingTableAlignOutputIndex = -1;
-			pushOutputLine(
-				extractInlineProtectedSyntax(
-					rawHeader,
-					sentinel,
-					protectedInlines,
-					true,
-					false,
-					-1,
-					headerMathRanges,
-				),
-				{ end: tableMatch.headerEndLine + 1, start: i },
-			);
+			emitTableHeaderRow(displayMathEnv, i, tableMatch.headerEndLine);
 			if (!hasListBeforeQuote(tableMatch.containers)) {
 				const nestedListIndent = sumListContainerIndent(tableMatch.containers);
 				if (nestedListIndent > 0) {
@@ -673,37 +666,19 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		// 3c. Display math on a line immediately preceding a GFM table delimiter
 		//     line splits via `\n\n<BLK>\n\n` (matching PHP `extract_math()`),
 		//     and evaluates post-math HTML blocks, fenced code, and GFM tables.
+		const beforeHtmlContext = {
+			allowLeadingListMarker: !listInterruptionInParagraph,
+			baseContainers: tableBaseContainers,
+			inParagraph: tableInParagraph,
+			preMarkerListIndent: tablePreListIndent,
+		};
 		const headerMathBreak = emitDisplayMathHeaderLine(
-			lines,
+			displayMathEnv,
 			i,
-			tableBaseContainers,
-			tablePreListIndent,
-			!listInterruptionInParagraph,
-			tableInParagraph,
-			mathIndex,
-			sentinel,
-			protectedInlines,
-			{ addProtectedBlock, pushOutputLine },
-			() => outputLines.length,
+			beforeHtmlContext,
 		);
 		if (headerMathBreak !== null) {
-			activeTable = headerMathBreak.activeTable;
-			activeTableOutputStart = headerMathBreak.activeTableOutputStart;
-			if (
-				activeTable !== null &&
-				!hasListBeforeQuote(activeTable.containers)
-			) {
-				const nestedListIndent = sumListContainerIndent(activeTable.containers);
-				listContentIndent = nestedListIndent > 0 ? nestedListIndent : null;
-			} else {
-				listContentIndent = null;
-			}
-			closeParagraph();
-			advancePhpStateAfterDisplayMath(
-				headerMathBreak.afterStartOffset,
-				headerMathBreak.spanEndLine,
-			);
-			i = headerMathBreak.spanEndLine + 1;
+			applyDisplayMathSplitState(headerMathBreak);
 			continue;
 		}
 
@@ -894,6 +869,16 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		const hasMultilineInlineMath = logicalEnd > i;
 
 		if (hasMultilineInlineMath) {
+			const logicalMathSplit = emitDisplayMathLogicalLine(
+				displayMathEnv,
+				i,
+				logicalEnd,
+				beforeHtmlContext,
+			);
+			if (logicalMathSplit !== null) {
+				applyDisplayMathSplitState(logicalMathSplit);
+				continue;
+			}
 			const lineStartOffset = mathIndex.lineStarts[i] ?? 0;
 			const lineEndOffset = mathIndex.lineEnds[logicalEnd] ?? lineStartOffset;
 			const rawLogicalLine = normalized.slice(lineStartOffset, lineEndOffset);

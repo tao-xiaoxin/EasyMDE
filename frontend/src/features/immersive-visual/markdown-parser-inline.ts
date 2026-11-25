@@ -144,6 +144,34 @@ function trimTrailingHardBreaks(
 	return nodes.slice(0, end);
 }
 
+function decodeInlineTitlePreservingMath(
+	rawTitle: string,
+	preScan: PreScanResult,
+): string {
+	if (!rawTitle.includes(preScan.sentinel)) {
+		return decodeCommonMarkTitle(
+			rawTitle.replace(/\r\n|\r/gu, "\n").replace(/\n[ \t]+/gu, "\n"),
+		);
+	}
+	const tokenPattern = new RegExp(
+		`${preScan.sentinel}(?:INL\\d+|BLK\\d+|TBLALIGN\\d+|BR\\d*)END`,
+		"g",
+	);
+	const withNonMathRestored = rawTitle.replace(tokenPattern, (token) => {
+		const inline = preScan.protectedInlines.get(token);
+		if (inline?.kind === "math-inline") {
+			return token;
+		}
+		return restoreProtectedInlineSentinels(token, preScan);
+	});
+	const decoded = decodeCommonMarkTitle(
+		withNonMathRestored
+			.replace(/\r\n|\r/gu, "\n")
+			.replace(/\n[ \t]+/gu, "\n"),
+	);
+	return restoreProtectedInlineSentinels(decoded, preScan);
+}
+
 export function mapInlineTokens(
 	tokens: ReadonlyArray<MarkdownToken> | null,
 	preScan: PreScanResult,
@@ -228,11 +256,7 @@ export function mapInlineTokens(
 				);
 				const effectiveTitle =
 					rawInlineTitle !== null
-						? decodeCommonMarkTitle(
-								restoreProtectedInlineSentinels(rawInlineTitle, preScan)
-									.replace(/\r\n|\r/gu, "\n")
-									.replace(/\n[ \t]+/gu, "\n"),
-							)
+						? decodeInlineTitlePreservingMath(rawInlineTitle, preScan)
 						: restoreProtectedInlineSentinels(
 								tokenAttrString(token, "title") ?? "",
 								preScan,
@@ -258,11 +282,7 @@ export function mapInlineTokens(
 				);
 				const effectiveTitle =
 					rawInlineTitle !== null
-						? decodeCommonMarkTitle(
-								restoreProtectedInlineSentinels(rawInlineTitle, preScan)
-									.replace(/\r\n|\r/gu, "\n")
-									.replace(/\n[ \t]+/gu, "\n"),
-							)
+						? decodeInlineTitlePreservingMath(rawInlineTitle, preScan)
 						: restoreProtectedInlineSentinels(
 								tokenAttrString(token, "title") ?? "",
 								preScan,

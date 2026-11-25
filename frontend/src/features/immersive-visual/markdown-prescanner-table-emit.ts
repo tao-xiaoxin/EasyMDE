@@ -7,6 +7,7 @@ import {
 import type { PhpMarkdownMathRange } from "../../shared/markdown/php-markdown-math-mask";
 import {
 	type ContainerStep,
+	computeTrailingParagraphState,
 	type DetectableFence,
 	findCommonMarkHtmlBlockEnd,
 	findContainerBoundedFenceEnd,
@@ -14,12 +15,14 @@ import {
 	measureIndentColumns,
 	stripContainers,
 	stripContainersWithColumn,
+	type TrailingParagraphState,
 } from "./markdown-prescanner-blocks";
 import {
 	extractInlineProtectedSyntax,
 	type ProtectedInlineEntry,
 } from "./markdown-prescanner-inline";
 import {
+	type BeforeHtmlContext,
 	collectRelativeInlineMathRanges,
 	findFirstDisplayMathInLines,
 	findGfmTableEnd,
@@ -30,6 +33,9 @@ import {
 	type GfmTableMatch,
 	maskedSliceForLines,
 	matchPeeledGfmTableHeader,
+	matchStandaloneBeforeHtmlBlock,
+	matchUnclosedHtmlBlockTypes1To5,
+	POST_MATH_BEFORE_HTML_CONTEXT,
 	type PhpDocumentMathIndex,
 	peelContainerStepsForLine,
 	stripPartialContainers,
@@ -51,19 +57,22 @@ export type TableEmitCallbacks = Readonly<{
 	) => void;
 }>;
 
+export type DisplayMathEmitEnv = Readonly<{
+	callbacks: TableEmitCallbacks;
+	getOutputLength: () => number;
+	lines: ReadonlyArray<string>;
+	mathIndex: PhpDocumentMathIndex;
+	protectedInlines: Map<string, ProtectedInlineEntry>;
+	sentinel: string;
+}>;
+
 export type DisplayMathSplitResult = Readonly<{
 	activeTable: GfmTableMatch | null;
 	activeTableOutputStart: number;
 	afterStartOffset: number;
 	emittedTableBeforeRow: boolean;
 	spanEndLine: number;
-}>;
-
-type BeforeHtmlContext = Readonly<{
-	allowLeadingListMarker: boolean;
-	baseContainers: ReadonlyArray<ContainerStep>;
-	inParagraph: boolean;
-	preMarkerListIndent: number;
+	trailingParagraphState: TrailingParagraphState | null;
 }>;
 
 const EMPTY_MATH_RANGES: ReadonlyArray<PhpMarkdownMathRange> = [];
@@ -92,19 +101,54 @@ function shiftInlineMathRanges(
 }
 
 /**
+ * Emits a matched GFM table header row (joining lines bridged by multiline
+ * `\(...\)` while passing relative inline math ranges to the inline scanner).
+ */
+export function emitTableHeaderRow(
+	env: DisplayMathEmitEnv,
+	headerStartLine: number,
+	headerEndLine: number,
+): void {
+	const { callbacks, mathIndex, protectedInlines, sentinel } = env;
+	const headerStartOffset = mathIndex.lineStarts[headerStartLine] ?? 0;
+	const headerEndOffset =
+		mathIndex.lineEnds[headerEndLine] ?? headerStartOffset;
+	const rawHeader = mathIndex.normalized.slice(
+		headerStartOffset,
+		headerEndOffset,
+	);
+	const headerMathRanges = collectRelativeInlineMathRanges(
+		mathIndex,
+		headerStartOffset,
+		headerEndOffset,
+	);
+	callbacks.pushOutputLine(
+		extractInlineProtectedSyntax(
+			rawHeader,
+			sentinel,
+			protectedInlines,
+			true,
+			false,
+			-1,
+			headerMathRanges,
+		),
+		{ end: headerEndLine + 1, start: headerStartLine },
+	);
+}
+
+/**
  * Emits one active table body row (joining physical lines bridged by multiline
  * `\(...\)` and normalizing lazy container prefixes so `markdown-it` keeps the
  * row inside the table matching PHP `League\CommonMark`). Returns the next
  * physical line index to visit.
  */
 export function emitActiveTableRow(
+	env: DisplayMathEmitEnv,
 	lineIndex: number,
 	activeTable: GfmTableMatch,
-	mathIndex: PhpDocumentMathIndex,
-	sentinel: string,
-	protectedInlines: Map<string, ProtectedInlineEntry>,
-	pushOutputLine: TableEmitCallbacks["pushOutputLine"],
 ): number {
+	const { callbacks, mathIndex, protectedInlines, sentinel } = env;
+	const { pushOutputLine } = callbacks;
 	const logicalEnd = findLogicalLineEnd(mathIndex, lineIndex);
 	const rowStartOffset = mathIndex.lineStarts[lineIndex] ?? 0;
 	const rowEndOffset = mathIndex.lineEnds[logicalEnd] ?? rowStartOffset;
@@ -153,110 +197,40 @@ export function emitActiveTableRow(
 }
 
 /**
- * Reports whether `beforeText` opens an unclosed CommonMark §4.6 Type 1–5 HTML
- * block (`<!--`, `<pre>`, `<script>`, `<style>`, `<textarea>`, `<?`, `<!`,
- * `<![CDATA[`), which in PHP does NOT close on `\n\n` and therefore swallows
- * following display math instead of splitting.
- */
-function opensUnclosedHtmlBlockTypes1To5(
-	beforeText: string,
-	context: BeforeHtmlContext,
-): boolean {
-	const peeled = peelContainerStepsForLine(
-		beforeText,
-		context.baseContainers,
-		context.preMarkerListIndent,
-		context.allowLeadingListMarker,
-		true,
-	);
-	if (
-		peeled === null ||
-		measureIndentColumns(peeled.rest, peeled.column) >= 4
-	) {
-		return false;
-	}
-	const trimmed = peeled.rest.replace(/^[ \t]+/, "");
-	const htmlType = matchHtmlBlockOpen(trimmed, false);
-	return (
-		htmlType !== null &&
-		htmlType <= 5 &&
-		!htmlBlockLineCloses(htmlType as 1 | 2 | 3 | 4 | 5, trimmed)
-	);
-}
-
-/**
- * If a non-table segment immediately preceding `\n\n<MATH>\n\n` opens a
- * self-contained HTML block (Type 6/7 closed by `\n\n` or single-line closed
- * Type 1–5), emits it as a `protected_block("raw")` and returns `true`.
- */
-function tryEmitStandaloneBeforeHtmlBlock(
-	beforeText: string,
-	context: BeforeHtmlContext,
-	callbacks: TableEmitCallbacks,
-): boolean {
-	if (!beforeText.includes("<")) {
-		return false;
-	}
-	const peeled = peelContainerStepsForLine(
-		beforeText,
-		context.baseContainers,
-		context.preMarkerListIndent,
-		context.allowLeadingListMarker,
-		true,
-	);
-	if (
-		peeled === null ||
-		measureIndentColumns(peeled.rest, peeled.column) >= 4
-	) {
-		return false;
-	}
-	const trimmed = peeled.rest.replace(/^[ \t]+/, "");
-	if (!trimmed.startsWith("<")) {
-		return false;
-	}
-	const baseContainerCount =
-		context.baseContainers.length + (context.preMarkerListIndent > 0 ? 1 : 0);
-	const effectiveInParagraph =
-		context.inParagraph && peeled.containers.length === baseContainerCount;
-	const htmlType = matchHtmlBlockOpen(trimmed, !effectiveInParagraph);
-	if (htmlType === null) {
-		return false;
-	}
-	const token = callbacks.addProtectedBlock("raw", trimmed);
-	callbacks.pushOutputLine(`${peeled.linePrefix}${token}`, null);
-	return true;
-}
-
-/**
  * Evaluates and emits the trailing segment after the final display-math block
  * on `spanEndLine`:
  * 1. CommonMark HTML block (Types 1–7), consuming continuation lines;
  * 2. CommonMark fenced code block (including Mermaid), consuming through close;
  * 3. GFM table header validated by `matchPeeledGfmTableHeader`, handing off
  *    `activeTable` / `activeTableOutputStart` to `markdown-prescanner.ts`;
- * 4. Normal inline line fallback.
+ * 4. Normal inline line fallback (restoring live paragraph/container state).
  */
 function emitPostDisplayMathSegment(
-	lines: ReadonlyArray<string>,
+	env: DisplayMathEmitEnv,
 	spanEndLine: number,
 	afterStartOffset: number,
 	spanEndOffset: number,
 	afterInlineRanges: ReadonlyArray<PhpMarkdownMathRange> | null,
-	mathIndex: PhpDocumentMathIndex,
-	sentinel: string,
-	protectedInlines: Map<string, ProtectedInlineEntry>,
-	callbacks: TableEmitCallbacks,
-	getOutputLength: () => number,
 ): Readonly<{
 	activeTable: GfmTableMatch | null;
 	activeTableOutputStart: number;
 	spanEndLine: number;
+	trailingParagraphState: TrailingParagraphState | null;
 }> {
+	const {
+		callbacks,
+		getOutputLength,
+		lines,
+		mathIndex,
+		protectedInlines,
+		sentinel,
+	} = env;
 	if (afterStartOffset >= spanEndOffset) {
 		return {
 			activeTable: null,
 			activeTableOutputStart: -1,
 			spanEndLine,
+			trailingParagraphState: null,
 		};
 	}
 	const rawAfter = mathIndex.normalized.slice(afterStartOffset, spanEndOffset);
@@ -265,6 +239,7 @@ function emitPostDisplayMathSegment(
 			activeTable: null,
 			activeTableOutputStart: -1,
 			spanEndLine,
+			trailingParagraphState: null,
 		};
 	}
 	const maskedAfter = mathIndex.maskedDoc.slice(
@@ -339,6 +314,7 @@ function emitPostDisplayMathSegment(
 					activeTable: null,
 					activeTableOutputStart: -1,
 					spanEndLine: htmlEndLine,
+					trailingParagraphState: null,
 				};
 			}
 		}
@@ -401,6 +377,7 @@ function emitPostDisplayMathSegment(
 					activeTable: null,
 					activeTableOutputStart: -1,
 					spanEndLine: fenceEndLine,
+					trailingParagraphState: null,
 				};
 			}
 		}
@@ -457,12 +434,13 @@ function emitPostDisplayMathSegment(
 					activeTable: nextActiveTable,
 					activeTableOutputStart,
 					spanEndLine,
+					trailingParagraphState: null,
 				};
 			}
 		}
 	}
 
-	// 4. Plain non-table trailing segment.
+	// 4. Plain non-table trailing segment: restore live paragraph/container state.
 	const afterMathRanges = shiftInlineMathRanges(
 		afterInlineRanges,
 		afterStartOffset,
@@ -474,7 +452,7 @@ function emitPostDisplayMathSegment(
 			sentinel,
 			protectedInlines,
 			false,
-			false,
+			true,
 			-1,
 			afterMathRanges,
 		),
@@ -484,6 +462,7 @@ function emitPostDisplayMathSegment(
 		activeTable: null,
 		activeTableOutputStart: -1,
 		spanEndLine,
+		trailingParagraphState: computeTrailingParagraphState(maskedAfter),
 	};
 }
 
@@ -495,17 +474,13 @@ function emitPostDisplayMathSegment(
  * binary searches.
  */
 function emitDisplayMathLineSegments(
-	lines: ReadonlyArray<string>,
+	env: DisplayMathEmitEnv,
 	lineIndex: number,
 	initialSpanEndLine: number,
 	tableContainers: ReadonlyArray<ContainerStep> | null,
 	beforeHtmlContext: BeforeHtmlContext | null,
-	mathIndex: PhpDocumentMathIndex,
-	sentinel: string,
-	protectedInlines: Map<string, ProtectedInlineEntry>,
-	callbacks: TableEmitCallbacks,
-	getOutputLength: () => number,
 ): DisplayMathSplitResult {
+	const { callbacks, lines, mathIndex, protectedInlines, sentinel } = env;
 	const { addProtectedBlock, pushOutputLine } = callbacks;
 	const ranges = mathIndex.ranges;
 	let cursorOffset = mathIndex.lineStarts[lineIndex] ?? 0;
@@ -516,6 +491,20 @@ function emitDisplayMathLineSegments(
 	let emittedAny = tableContainers !== null;
 	let isFirstDisplayMath = true;
 	let afterInlineRanges: PhpMarkdownMathRange[] | null = null;
+	const extendSpanForDisplayMath = (range: PhpMarkdownMathRange): void => {
+		if (range.to <= spanEndOffset) {
+			return;
+		}
+		const rangeEndLine = findLineIndexForOffset(
+			mathIndex,
+			Math.max(range.from, range.to - 1),
+		);
+		const extendedEndLine = findLogicalLineEnd(mathIndex, rangeEndLine);
+		if (extendedEndLine > spanEndLine) {
+			spanEndLine = extendedEndLine;
+			spanEndOffset = mathIndex.lineEnds[spanEndLine] ?? spanEndOffset;
+		}
+	};
 
 	while (cursorOffset <= spanEndOffset) {
 		let gapInlineRanges: PhpMarkdownMathRange[] | null = null;
@@ -608,18 +597,136 @@ function emitDisplayMathLineSegments(
 				}
 			}
 		} else if (!isCommonMarkBlankLine(beforeText)) {
+			const gapContext =
+				isFirstDisplayMath && beforeHtmlContext !== null
+					? beforeHtmlContext
+					: POST_MATH_BEFORE_HTML_CONTEXT;
+			const maskedBeforeText = mathIndex.maskedDoc.slice(
+				cursorOffset,
+				nextDisplay.from,
+			);
+			const unclosedType = matchUnclosedHtmlBlockTypes1To5(
+				maskedBeforeText,
+				gapContext,
+				true,
+			);
+			if (unclosedType !== null) {
+				const rawTrimStart =
+					cursorOffset +
+					(beforeText.length - beforeText.replace(/^[ \t]+/, "").length);
+				extendSpanForDisplayMath(nextDisplay);
+				let htmlCursor = nextDisplay.to;
+				let closedOnLine = false;
+				let resumeAtOffset = -1;
+				while (true) {
+					let laterDisplay: PhpMarkdownMathRange | null = null;
+					while (rangeIdx < ranges.length) {
+						const candidate = ranges[rangeIdx];
+						if (!candidate || candidate.from >= spanEndOffset) {
+							break;
+						}
+						if (candidate.from < htmlCursor) {
+							rangeIdx += 1;
+							continue;
+						}
+						if (candidate.block) {
+							laterDisplay = candidate;
+							break;
+						}
+						rangeIdx += 1;
+					}
+					const segEnd = laterDisplay ? laterDisplay.from : spanEndOffset;
+					if (
+						htmlBlockLineCloses(
+							unclosedType,
+							mathIndex.maskedDoc.slice(htmlCursor, segEnd),
+						)
+					) {
+						if (emittedAny) {
+							pushOutputLine("", null);
+						}
+						pushOutputLine(
+							addProtectedBlock(
+								"raw",
+								mathIndex.normalized.slice(rawTrimStart, segEnd),
+							),
+							null,
+						);
+						emittedAny = true;
+						closedOnLine = true;
+						if (laterDisplay !== null) {
+							resumeAtOffset = laterDisplay.from;
+						}
+						break;
+					}
+					if (laterDisplay === null) {
+						break;
+					}
+					rangeIdx += 1;
+					extendSpanForDisplayMath(laterDisplay);
+					htmlCursor = laterDisplay.to;
+				}
+				if (closedOnLine) {
+					if (resumeAtOffset >= 0) {
+						isFirstDisplayMath = false;
+						cursorOffset = resumeAtOffset;
+						continue;
+					}
+					return {
+						activeTable: null,
+						activeTableOutputStart: -1,
+						afterStartOffset: spanEndOffset,
+						emittedTableBeforeRow,
+						spanEndLine,
+						trailingParagraphState: null,
+					};
+				}
+				let htmlEndLine = spanEndLine;
+				for (let k = spanEndLine + 1; k < lines.length; k += 1) {
+					htmlEndLine = k;
+					if (
+						htmlBlockLineCloses(
+							unclosedType,
+							maskedSliceForLines(mathIndex, lines, k, k),
+						)
+					) {
+						break;
+					}
+				}
+				const htmlEndOffset = mathIndex.lineEnds[htmlEndLine] ?? spanEndOffset;
+				if (emittedAny) {
+					pushOutputLine("", null);
+				}
+				pushOutputLine(
+					addProtectedBlock(
+						"raw",
+						mathIndex.normalized.slice(rawTrimStart, htmlEndOffset),
+					),
+					null,
+				);
+				return {
+					activeTable: null,
+					activeTableOutputStart: -1,
+					afterStartOffset: htmlEndOffset,
+					emittedTableBeforeRow,
+					spanEndLine: htmlEndLine,
+					trailingParagraphState: null,
+				};
+			}
 			if (emittedAny) {
 				pushOutputLine("", null);
 			}
-			const emittedAsHtmlBlock =
-				isFirstDisplayMath &&
-				beforeHtmlContext !== null &&
-				tryEmitStandaloneBeforeHtmlBlock(
-					beforeText,
-					beforeHtmlContext,
-					callbacks,
+			const standaloneHtml = matchStandaloneBeforeHtmlBlock(
+				beforeText,
+				maskedBeforeText,
+				gapContext,
+			);
+			if (standaloneHtml !== null) {
+				pushOutputLine(
+					`${standaloneHtml.linePrefix}${addProtectedBlock("raw", standaloneHtml.rawHtml)}`,
+					null,
 				);
-			if (!emittedAsHtmlBlock) {
+			} else {
 				const gapMathRanges = shiftInlineMathRanges(
 					gapInlineRanges,
 					cursorOffset,
@@ -652,33 +759,17 @@ function emitDisplayMathLineSegments(
 		pushOutputLine(mathToken, null);
 		emittedAny = true;
 		cursorOffset = nextDisplay.to;
-
-		if (nextDisplay.to > spanEndOffset) {
-			const rangeEndLine = findLineIndexForOffset(
-				mathIndex,
-				Math.max(nextDisplay.from, nextDisplay.to - 1),
-			);
-			const extendedEndLine = findLogicalLineEnd(mathIndex, rangeEndLine);
-			if (extendedEndLine > spanEndLine) {
-				spanEndLine = extendedEndLine;
-				spanEndOffset = mathIndex.lineEnds[spanEndLine] ?? spanEndOffset;
-			}
-		}
+		extendSpanForDisplayMath(nextDisplay);
 	}
 
 	pushOutputLine("", null);
 	const afterStartOffset = cursorOffset;
 	const postResult = emitPostDisplayMathSegment(
-		lines,
+		env,
 		spanEndLine,
 		afterStartOffset,
 		spanEndOffset,
 		afterInlineRanges,
-		mathIndex,
-		sentinel,
-		protectedInlines,
-		callbacks,
-		getOutputLength,
 	);
 
 	return {
@@ -687,6 +778,7 @@ function emitDisplayMathLineSegments(
 		afterStartOffset,
 		emittedTableBeforeRow,
 		spanEndLine: postResult.spanEndLine,
+		trailingParagraphState: postResult.trailingParagraphState,
 	};
 }
 
@@ -697,27 +789,17 @@ function emitDisplayMathLineSegments(
  * blocks, fenced code blocks, and follow-up GFM tables cleanly.
  */
 export function emitDisplayMathTableBreak(
-	lines: ReadonlyArray<string>,
+	env: DisplayMathEmitEnv,
 	lineIndex: number,
 	tableContainers: ReadonlyArray<ContainerStep>,
-	mathIndex: PhpDocumentMathIndex,
-	sentinel: string,
-	protectedInlines: Map<string, ProtectedInlineEntry>,
-	callbacks: TableEmitCallbacks,
-	getOutputLength: () => number,
 ): DisplayMathSplitResult {
-	const initialSpanEndLine = findLogicalLineEnd(mathIndex, lineIndex);
+	const initialSpanEndLine = findLogicalLineEnd(env.mathIndex, lineIndex);
 	return emitDisplayMathLineSegments(
-		lines,
+		env,
 		lineIndex,
 		initialSpanEndLine,
 		tableContainers,
 		null,
-		mathIndex,
-		sentinel,
-		protectedInlines,
-		callbacks,
-		getOutputLength,
 	);
 }
 
@@ -730,18 +812,11 @@ export function emitDisplayMathTableBreak(
  * single display-math blocks, or lines not followed by a valid GFM delimiter.
  */
 export function emitDisplayMathHeaderLine(
-	lines: ReadonlyArray<string>,
+	env: DisplayMathEmitEnv,
 	lineIndex: number,
-	baseContainers: ReadonlyArray<ContainerStep>,
-	preMarkerListIndent: number,
-	allowLeadingListMarker: boolean,
-	inParagraph: boolean,
-	mathIndex: PhpDocumentMathIndex,
-	sentinel: string,
-	protectedInlines: Map<string, ProtectedInlineEntry>,
-	callbacks: TableEmitCallbacks,
-	getOutputLength: () => number,
+	beforeHtmlContext: BeforeHtmlContext,
 ): DisplayMathSplitResult | null {
+	const { lines, mathIndex } = env;
 	const lineStartOffset = mathIndex.lineStarts[lineIndex] ?? 0;
 	let spanEndLine = findLogicalLineEnd(mathIndex, lineIndex);
 	const firstDisplay = findFirstDisplayMathInLines(
@@ -753,17 +828,21 @@ export function emitDisplayMathHeaderLine(
 		return null;
 	}
 
-	const beforeHtmlContext: BeforeHtmlContext = {
-		allowLeadingListMarker,
-		baseContainers,
-		inParagraph,
-		preMarkerListIndent,
-	};
 	const firstBefore = mathIndex.normalized.slice(
 		lineStartOffset,
 		firstDisplay.from,
 	);
-	if (opensUnclosedHtmlBlockTypes1To5(firstBefore, beforeHtmlContext)) {
+	const maskedFirstBefore = mathIndex.maskedDoc.slice(
+		lineStartOffset,
+		firstDisplay.from,
+	);
+	if (
+		matchUnclosedHtmlBlockTypes1To5(
+			maskedFirstBefore,
+			beforeHtmlContext,
+			false,
+		) !== null
+	) {
 		return null;
 	}
 
@@ -842,15 +921,55 @@ export function emitDisplayMathHeaderLine(
 	}
 
 	return emitDisplayMathLineSegments(
-		lines,
+		env,
 		lineIndex,
 		spanEndLine,
 		null,
 		beforeHtmlContext,
-		mathIndex,
-		sentinel,
-		protectedInlines,
-		callbacks,
-		getOutputLength,
+	);
+}
+
+/**
+ * Splits a multiline-`\(...\)` logical line (`lineIndex..logicalEnd`) that also
+ * contains a multiline display-math block (`$$...$$` / `\[...\]` extending past
+ * `lineEndOffset`), keeping single-line mid-line `$$...$$` inline as before.
+ */
+export function emitDisplayMathLogicalLine(
+	env: DisplayMathEmitEnv,
+	lineIndex: number,
+	logicalEnd: number,
+	beforeHtmlContext: BeforeHtmlContext,
+): DisplayMathSplitResult | null {
+	const { mathIndex } = env;
+	const lineStartOffset = mathIndex.lineStarts[lineIndex] ?? 0;
+	const lineEndOffset = mathIndex.lineEnds[logicalEnd] ?? lineStartOffset;
+	let hasMultilineDisplay = false;
+	for (
+		let idx = firstMathRangeEndingAfter(mathIndex.ranges, lineStartOffset);
+		idx < mathIndex.ranges.length;
+		idx += 1
+	) {
+		const range = mathIndex.ranges[idx];
+		if (!range || range.from >= lineEndOffset) {
+			break;
+		}
+		if (
+			range.block &&
+			range.from >= lineStartOffset &&
+			range.to > lineEndOffset
+		) {
+			hasMultilineDisplay = true;
+			break;
+		}
+	}
+	if (!hasMultilineDisplay) {
+		return null;
+	}
+	return emitDisplayMathLineSegments(
+		env,
+		lineIndex,
+		logicalEnd,
+		null,
+		beforeHtmlContext,
 	);
 }

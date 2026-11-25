@@ -76,6 +76,51 @@ export function execInlineHtmlCloseTag(
 	return INLINE_HTML_CLOSE_TAG_STICKY.exec(line);
 }
 
+function firstMathRangeEndingAfterInline(
+	ranges: ReadonlyArray<PhpMarkdownMathRange>,
+	offset: number,
+): number {
+	let low = 0;
+	let high = ranges.length;
+	while (low < high) {
+		const mid = Math.floor((low + high) / 2);
+		if ((ranges[mid]?.to ?? 0) <= offset) {
+			low = mid + 1;
+		} else {
+			high = mid;
+		}
+	}
+	return low;
+}
+
+function findCloserOutsideMath(
+	line: string,
+	needle: string,
+	from: number,
+	tableMathRanges?: ReadonlyArray<PhpMarkdownMathRange>,
+): number {
+	let pos = line.indexOf(needle, from);
+	if (!tableMathRanges || tableMathRanges.length === 0) {
+		return pos;
+	}
+	let mathIdx = firstMathRangeEndingAfterInline(tableMathRanges, from);
+	while (pos >= 0) {
+		while (
+			mathIdx < tableMathRanges.length &&
+			(tableMathRanges[mathIdx]?.to ?? 0) <= pos
+		) {
+			mathIdx += 1;
+		}
+		const activeMath = tableMathRanges[mathIdx];
+		if (activeMath && activeMath.from <= pos && activeMath.to > pos) {
+			pos = line.indexOf(needle, activeMath.to);
+			continue;
+		}
+		return pos;
+	}
+	return -1;
+}
+
 /**
  * Matches one CommonMark §6.6 inline raw HTML token at `index` (comment,
  * CDATA, declaration, processing instruction, open tag, or closing tag)
@@ -86,6 +131,7 @@ export function execCommonMarkInlineHtmlToken(
 	line: string,
 	index: number,
 	scanState?: InlineHtmlScanState,
+	tableMathRanges?: ReadonlyArray<PhpMarkdownMathRange>,
 ): string | null {
 	if (line[index] !== "<") {
 		return null;
@@ -100,7 +146,12 @@ export function execCommonMarkInlineHtmlToken(
 				return "<!--->";
 			}
 			if (!scanState?.noCommentClose) {
-				const closePos = line.indexOf("-->", index + 4);
+				const closePos = findCloserOutsideMath(
+					line,
+					"-->",
+					index + 4,
+					tableMathRanges,
+				);
 				if (closePos >= 0) {
 					return line.slice(index, closePos + 3);
 				}
@@ -112,7 +163,12 @@ export function execCommonMarkInlineHtmlToken(
 		}
 		if (line.startsWith("<![CDATA[", index)) {
 			if (!scanState?.noCdataClose) {
-				const closePos = line.indexOf("]]>", index + 9);
+				const closePos = findCloserOutsideMath(
+					line,
+					"]]>",
+					index + 9,
+					tableMathRanges,
+				);
 				if (closePos >= 0) {
 					return line.slice(index, closePos + 3);
 				}
@@ -125,7 +181,12 @@ export function execCommonMarkInlineHtmlToken(
 		INLINE_HTML_DECLARATION_NAME_STICKY.lastIndex = index;
 		const declName = INLINE_HTML_DECLARATION_NAME_STICKY.exec(line);
 		if (declName && !scanState?.noAngleClose) {
-			const closePos = line.indexOf(">", index + declName[0].length);
+			const closePos = findCloserOutsideMath(
+				line,
+				">",
+				index + declName[0].length,
+				tableMathRanges,
+			);
 			if (closePos >= 0) {
 				return line.slice(index, closePos + 1);
 			}
@@ -137,7 +198,12 @@ export function execCommonMarkInlineHtmlToken(
 	}
 	if (next === "?") {
 		if (!scanState?.noPiClose) {
-			const closePos = line.indexOf("?>", index + 2);
+			const closePos = findCloserOutsideMath(
+				line,
+				"?>",
+				index + 2,
+				tableMathRanges,
+			);
 			if (closePos >= 0) {
 				return line.slice(index, closePos + 2);
 			}
@@ -161,9 +227,35 @@ function isTableCellPipeAt(text: string, index: number): boolean {
 	return text[index] === "|" && (index === 0 || text[index - 1] !== "\\");
 }
 
-function hasUnescapedPipe(text: string): boolean {
-	for (let i = 0; i < text.length; i += 1) {
-		if (isTableCellPipeAt(text, i)) {
+function hasUnescapedTablePipeInSlice(
+	line: string,
+	start: number,
+	end: number,
+	tableMathRanges?: ReadonlyArray<PhpMarkdownMathRange>,
+): boolean {
+	if (!tableMathRanges || tableMathRanges.length === 0) {
+		for (let i = start; i < end; i += 1) {
+			if (isTableCellPipeAt(line, i)) {
+				return true;
+			}
+		}
+		return false;
+	}
+	let mathIdx = firstMathRangeEndingAfterInline(tableMathRanges, start);
+	for (let i = start; i < end; i += 1) {
+		while (
+			mathIdx < tableMathRanges.length &&
+			(tableMathRanges[mathIdx]?.to ?? 0) <= i
+		) {
+			mathIdx += 1;
+		}
+		const activeMath = tableMathRanges[mathIdx];
+		if (activeMath && activeMath.from <= i && activeMath.to > i) {
+			i = Math.min(end, activeMath.to) - 1;
+			mathIdx += 1;
+			continue;
+		}
+		if (isTableCellPipeAt(line, i)) {
 			return true;
 		}
 	}
@@ -199,16 +291,38 @@ function buildPairedTagCloseMap(
 	fromIndex: number,
 	targetTag: string,
 	isTableRow: boolean,
+	tableMathRanges?: ReadonlyArray<PhpMarkdownMathRange>,
 ): Map<number, number> {
 	const openStack: number[] = [];
 	const closeByOpen = new Map<number, number>();
 	let scan = fromIndex;
 	const length = line.length;
+	let mathIdx =
+		tableMathRanges && tableMathRanges.length > 0
+			? firstMathRangeEndingAfterInline(tableMathRanges, fromIndex)
+			: 0;
 	while (scan < length) {
+		if (tableMathRanges !== undefined) {
+			while (
+				mathIdx < tableMathRanges.length &&
+				(tableMathRanges[mathIdx]?.to ?? 0) <= scan
+			) {
+				mathIdx += 1;
+			}
+			const activeMath = tableMathRanges[mathIdx];
+			if (activeMath && activeMath.from <= scan && activeMath.to > scan) {
+				scan = activeMath.to;
+				mathIdx += 1;
+				continue;
+			}
+		}
 		const ch = line[scan] ?? "";
 		if (ch === "`" && !isEscapedAt(line, scan)) {
 			const codeEnd = skipInlineCodeSpan(line, scan);
-			if (isTableRow && hasUnescapedPipe(line.slice(scan, codeEnd))) {
+			if (
+				isTableRow &&
+				hasUnescapedTablePipeInSlice(line, scan, codeEnd, tableMathRanges)
+			) {
 				openStack.length = 0;
 			}
 			scan = codeEnd;
@@ -237,7 +351,15 @@ function buildPairedTagCloseMap(
 				nestedOpen?.[1]?.toLowerCase() === targetTag &&
 				nestedOpen[2] !== "/"
 			) {
-				if (isTableRow && hasUnescapedPipe(nestedOpen[0])) {
+				if (
+					isTableRow &&
+					hasUnescapedTablePipeInSlice(
+						line,
+						scan,
+						scan + nestedOpen[0].length,
+						tableMathRanges,
+					)
+				) {
 					openStack.length = 0;
 					scan += 1;
 					continue;
@@ -263,6 +385,7 @@ function matchAllowedInlineHtml(
 	start: number,
 	isTableRow: boolean,
 	pairedTagCloseMaps: Map<string, Map<number, number>>,
+	tableMathRanges?: ReadonlyArray<PhpMarkdownMathRange>,
 ): string | null {
 	const closeOnly = execInlineHtmlCloseTag(line, start);
 	if (
@@ -275,7 +398,13 @@ function matchAllowedInlineHtml(
 	if (
 		!openMatch?.[1] ||
 		!PAIRED_INLINE_HTML_TAGS.has(openMatch[1].toLowerCase()) ||
-		(isTableRow && hasUnescapedPipe(openMatch[0]))
+		(isTableRow &&
+			hasUnescapedTablePipeInSlice(
+				line,
+				start,
+				start + openMatch[0].length,
+				tableMathRanges,
+			))
 	) {
 		return null;
 	}
@@ -291,11 +420,32 @@ function matchAllowedInlineHtml(
 	let depth = 1;
 	let cursor = start + openMatch[0].length;
 	const length = line.length;
+	let mathIdx =
+		tableMathRanges && tableMathRanges.length > 0
+			? firstMathRangeEndingAfterInline(tableMathRanges, cursor)
+			: 0;
 	while (cursor < length) {
+		if (tableMathRanges !== undefined) {
+			while (
+				mathIdx < tableMathRanges.length &&
+				(tableMathRanges[mathIdx]?.to ?? 0) <= cursor
+			) {
+				mathIdx += 1;
+			}
+			const activeMath = tableMathRanges[mathIdx];
+			if (activeMath && activeMath.from <= cursor && activeMath.to > cursor) {
+				cursor = activeMath.to;
+				mathIdx += 1;
+				continue;
+			}
+		}
 		const ch = line[cursor] ?? "";
 		if (ch === "`" && !isEscapedAt(line, cursor)) {
 			const codeEnd = skipInlineCodeSpan(line, cursor);
-			if (isTableRow && hasUnescapedPipe(line.slice(cursor, codeEnd))) {
+			if (
+				isTableRow &&
+				hasUnescapedTablePipeInSlice(line, cursor, codeEnd, tableMathRanges)
+			) {
 				break;
 			}
 			cursor = codeEnd;
@@ -319,7 +469,15 @@ function matchAllowedInlineHtml(
 				nestedOpen?.[1]?.toLowerCase() === targetTag &&
 				nestedOpen[2] !== "/"
 			) {
-				if (isTableRow && hasUnescapedPipe(nestedOpen[0])) {
+				if (
+					isTableRow &&
+					hasUnescapedTablePipeInSlice(
+						line,
+						cursor,
+						cursor + nestedOpen[0].length,
+						tableMathRanges,
+					)
+				) {
 					break;
 				}
 				depth += 1;
@@ -333,7 +491,7 @@ function matchAllowedInlineHtml(
 	// repeated unmatched opens (even with trailing closes) stay strictly O(L).
 	pairedTagCloseMaps.set(
 		targetTag,
-		buildPairedTagCloseMap(line, start, targetTag, isTableRow),
+		buildPairedTagCloseMap(line, start, targetTag, isTableRow, tableMathRanges),
 	);
 	// Unmatched tag (or split across table cell pipes): protect only the tag
 	// itself so neighboring cells and inline text remain ordinary Markdown.
@@ -392,6 +550,8 @@ function findUnescapedDelimiterClose(
 }
 
 function spanCrossesTableMath(
+	line: string,
+	isTableRow: boolean,
 	tableMathRanges: ReadonlyArray<PhpMarkdownMathRange> | undefined,
 	cursor: number,
 	spanStart: number,
@@ -405,7 +565,14 @@ function spanCrossesTableMath(
 		if (!range || range.from >= spanEnd) {
 			break;
 		}
-		if (range.from >= spanStart && range.to > spanEnd) {
+		if (range.from < spanStart) {
+			continue;
+		}
+		if (range.to > spanEnd) {
+			return true;
+		}
+		const slice = line.slice(range.from, range.to);
+		if (slice.includes("\n") || (isTableRow && slice.includes("|"))) {
 			return true;
 		}
 	}
@@ -512,7 +679,14 @@ export function extractInlineProtectedSyntax(
 			}
 			if (
 				endCursor > index + 1 &&
-				!spanCrossesTableMath(tableMathRanges, tableMathCursor, index, endCursor)
+				!spanCrossesTableMath(
+					line,
+					isTableRow,
+					tableMathRanges,
+					tableMathCursor,
+					index,
+					endCursor,
+				)
 			) {
 				result += line.slice(index, endCursor);
 				index = endCursor;
@@ -718,6 +892,7 @@ export function extractInlineProtectedSyntax(
 				index,
 				isTableRow,
 				pairedTagCloseMaps,
+				tableMathRanges,
 			);
 			if (matchedPairedHtml !== null) {
 				result += allocateToken(
@@ -735,10 +910,19 @@ export function extractInlineProtectedSyntax(
 				line,
 				index,
 				htmlScanState,
+				tableMathRanges,
 			);
 			if (
 				matchedRawHtml !== null &&
-				!(isTableRow && hasUnescapedPipe(matchedRawHtml))
+				!(
+					isTableRow &&
+					hasUnescapedTablePipeInSlice(
+						line,
+						index,
+						index + matchedRawHtml.length,
+						tableMathRanges,
+					)
+				)
 			) {
 				result += allocateToken(
 					"raw-inline",

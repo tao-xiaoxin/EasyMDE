@@ -1,3 +1,9 @@
+import {
+	countTableRowCells,
+	parseGfmTableSeparatorColumns,
+} from "../../shared/markdown/php-commonmark-block-helpers";
+import { scanPhpMarkdownMathRanges } from "../../shared/markdown/php-markdown-math-mask";
+
 /**
  * Markdown escaping helpers owned by the visual-editor serializer.
  *
@@ -135,20 +141,49 @@ export function escapeInlineMarkdownText(
 }
 
 /**
- * Escape only pipes that are not already backslash-escaped. Used for raw
- * protected inline Markdown and link/image titles that live inside a table.
+ * Shared table-pipe escaper that skips PHP math ranges (`$...$`, `\(...\)`,
+ * `$$...$$`, `\[...\]`), since PHP `MarkdownRenderer::extract_math()` extracts
+ * math BEFORE `TableParser::split()`. When `useBackslashParity` is true, pipes
+ * preceded by an even run of backslashes are escaped; when false, matches PHP's
+ * single-backslash `(?<!\\)\|`.
  */
-export function escapeTablePipes(raw: string): string {
-	let escaped = "";
+function escapeTablePipesOutsideMath(
+	raw: string,
+	useBackslashParity: boolean,
+): string {
+	if (!raw.includes("|")) {
+		return raw;
+	}
+	const mathRanges = scanPhpMarkdownMathRanges(raw);
+	let mathIdx = 0;
 	let backslashRun = 0;
-	for (const ch of raw) {
+	let escaped = "";
+	for (let i = 0; i < raw.length; i += 1) {
+		while (
+			mathIdx < mathRanges.length &&
+			(mathRanges[mathIdx]?.to ?? 0) <= i
+		) {
+			mathIdx += 1;
+		}
+		const activeMath = mathRanges[mathIdx];
+		if (activeMath && activeMath.from <= i && activeMath.to > i) {
+			escaped += raw.slice(i, activeMath.to);
+			i = activeMath.to - 1;
+			backslashRun = 0;
+			mathIdx += 1;
+			continue;
+		}
+		const ch = raw[i] ?? "";
 		if (ch === "\\") {
 			escaped += ch;
 			backslashRun += 1;
 			continue;
 		}
 		if (ch === "|") {
-			escaped += backslashRun % 2 === 0 ? "\\|" : "|";
+			const needsEscape = useBackslashParity
+				? backslashRun % 2 === 0
+				: i === 0 || raw[i - 1] !== "\\";
+			escaped += needsEscape ? "\\|" : "|";
 			backslashRun = 0;
 			continue;
 		}
@@ -159,20 +194,50 @@ export function escapeTablePipes(raw: string): string {
 }
 
 /**
- * Escape only table-cell pipes not immediately preceded by a backslash,
- * matching PHP `League\CommonMark\Extension\Table\TableParser::split()`
- * (`(?<!\\)\|`) for already-raw `protected_inline` atoms inside table cells.
+ * Escape only pipes that are not already backslash-escaped (and outside PHP
+ * math ranges). Used for link/image destinations and titles inside a table.
+ */
+export function escapeTablePipes(raw: string): string {
+	return escapeTablePipesOutsideMath(raw, true);
+}
+
+/**
+ * Escape only table-cell pipes not immediately preceded by a backslash and
+ * outside PHP math ranges, matching PHP `MarkdownRenderer::extract_math()` ->
+ * `TableParser::split()` (`(?<!\\)\|`) for raw `protected_inline` atoms in cells.
  */
 export function escapeRawTablePipes(raw: string): string {
-	if (!raw.includes("|")) {
-		return raw;
+	return escapeTablePipesOutsideMath(raw, false);
+}
+
+/**
+ * Prevents a multi-line serialized paragraph (top-level, inside a blockquote,
+ * or inside a list) from parsing as a GFM table when a pipe-bearing line is
+ * followed by a GFM table separator line (e.g. `Z |\n| - |`).
+ */
+export function escapeParagraphTableDelimiters(text: string): string {
+	if (!text.includes("\n") || !text.includes("|")) {
+		return text;
 	}
-	let escaped = "";
-	for (let i = 0; i < raw.length; i += 1) {
-		const ch = raw[i] ?? "";
-		escaped += ch === "|" && (i === 0 || raw[i - 1] !== "\\") ? "\\|" : ch;
+	const lines = text.split("\n");
+	let changed = false;
+	for (let j = 0; j < lines.length - 1; j += 1) {
+		const prev = lines[j] ?? "";
+		const next = lines[j + 1] ?? "";
+		const sepCols = parseGfmTableSeparatorColumns(next);
+		if (
+			sepCols > 0 &&
+			prev.includes("|") &&
+			countTableRowCells(prev) === sepCols
+		) {
+			const pipeIdx = next.indexOf("|");
+			if (pipeIdx >= 0) {
+				lines[j + 1] = `${next.slice(0, pipeIdx)}\\|${next.slice(pipeIdx + 1)}`;
+				changed = true;
+			}
+		}
 	}
-	return escaped;
+	return changed ? lines.join("\n") : text;
 }
 
 /**

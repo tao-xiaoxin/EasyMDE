@@ -6,12 +6,18 @@ import {
 	consumeWhitespaceColumns,
 	countTableRowCells,
 	cursorRemainder,
+	htmlBlockLineCloses,
 	isCursorBlank,
 	matchHtmlBlockOpen,
 	measureLeadingColumns,
 	nextNonSpaceIndex,
 	parseGfmTableSeparatorColumns,
 } from "../../shared/markdown/php-commonmark-block-helpers";
+import {
+	advanceParagraphReferenceParser,
+	createParagraphReferenceParser,
+	type ParagraphReferenceParser,
+} from "../../shared/markdown/php-commonmark-reference-def";
 import {
 	maskPhpMarkdownMathForTableScan,
 	type PhpMarkdownMathRange,
@@ -404,7 +410,7 @@ export function peelContainerStepsForLine(
 	};
 }
 
-function opensNonParagraphBlock(
+export function opensNonParagraphBlock(
 	candidate: string,
 	candidateColumn: number,
 	inParagraph: boolean,
@@ -454,12 +460,14 @@ function startsInterruptingBlock(
  * table header paragraph and matches the GFM delimiter row on `maskedDelimiter`,
  * rejecting all non-paragraph CommonMark block openers (indented code, ATX
  * headings, fenced code, thematic breaks, HTML blocks Types 1–6 and Type 7
- * outside an open paragraph, blockquotes, and list markers).
+ * outside an open paragraph, blockquotes, list markers, and CommonMark §4.7
+ * link reference definitions / titles).
  */
 export function matchPeeledGfmTableHeader(
 	peeled: PeeledLineContainers,
 	maskedDelimiter: string,
 	inParagraph: boolean,
+	activeRefParser: ParagraphReferenceParser | null = null,
 ): boolean {
 	if (
 		!peeled.rest.includes("|") ||
@@ -484,9 +492,36 @@ export function matchPeeledGfmTableHeader(
 	const delimiterColumns = parseGfmTableSeparatorColumns(
 		delimiterStripped.rest,
 	);
-	return (
-		delimiterColumns > 0 && countTableRowCells(peeled.rest) === delimiterColumns
-	);
+	if (
+		delimiterColumns === 0 ||
+		countTableRowCells(peeled.rest) !== delimiterColumns
+	) {
+		return false;
+	}
+	const probeRefParser: ParagraphReferenceParser | null = !inParagraph
+		? createParagraphReferenceParser()
+		: activeRefParser !== null && activeRefParser.state !== "paragraph"
+			? {
+					labelBuffer: activeRefParser.labelBuffer,
+					labelCodePoints: activeRefParser.labelCodePoints,
+					labelHasNonWhitespace: activeRefParser.labelHasNonWhitespace,
+					referenceValid: activeRefParser.referenceValid,
+					state: activeRefParser.state,
+					titleDelimiter: activeRefParser.titleDelimiter,
+				}
+			: null;
+	if (
+		probeRefParser !== null &&
+		(advanceParagraphReferenceParser(probeRefParser, peeled.rest) ||
+			(probeRefParser.state === "destination" &&
+				advanceParagraphReferenceParser(
+					probeRefParser,
+					delimiterStripped.rest,
+				)))
+	) {
+		return false;
+	}
+	return true;
 }
 
 export function findGfmTableEnd(
@@ -584,6 +619,7 @@ export function resolveGfmTableMatch(
 	allowAdditionalContainers: boolean,
 	mathIndex: PhpDocumentMathIndex,
 	inParagraph = false,
+	activeRefParser: ParagraphReferenceParser | null = null,
 ): GfmTableMatch | null {
 	if (headerIndex + 1 >= lines.length) {
 		return null;
@@ -640,7 +676,12 @@ export function resolveGfmTableMatch(
 	const effectiveInParagraph =
 		inParagraph && peeled.containers.length === baseContainerCount;
 	if (
-		!matchPeeledGfmTableHeader(peeled, maskedDelimiter, effectiveInParagraph)
+		!matchPeeledGfmTableHeader(
+			peeled,
+			maskedDelimiter,
+			effectiveInParagraph,
+			effectiveInParagraph ? activeRefParser : null,
+		)
 	) {
 		return null;
 	}
@@ -716,4 +757,105 @@ export function sumListContainerIndent(
 		}
 	}
 	return total;
+}
+
+export type BeforeHtmlContext = Readonly<{
+	allowLeadingListMarker: boolean;
+	baseContainers: ReadonlyArray<ContainerStep>;
+	inParagraph: boolean;
+	preMarkerListIndent: number;
+}>;
+
+export const POST_MATH_BEFORE_HTML_CONTEXT: BeforeHtmlContext = {
+	allowLeadingListMarker: true,
+	baseContainers: [],
+	inParagraph: false,
+	preMarkerListIndent: 0,
+};
+
+/**
+ * Reports whether `maskedText` opens an unclosed CommonMark §4.6 Type 1–5 HTML
+ * block (`<!--`, `<pre>`, `<script>`, `<style>`, `<textarea>`, `<?`, `<!`,
+ * `<![CDATA[`). When `requireTopLevel` is true, container-wrapped openings are
+ * excluded because `\n\n` closes outer blockquote/list containers.
+ */
+export function matchUnclosedHtmlBlockTypes1To5(
+	maskedText: string,
+	context: BeforeHtmlContext,
+	requireTopLevel: boolean,
+): 1 | 2 | 3 | 4 | 5 | null {
+	if (!maskedText.includes("<")) {
+		return null;
+	}
+	const peeled = peelContainerStepsForLine(
+		maskedText,
+		context.baseContainers,
+		context.preMarkerListIndent,
+		context.allowLeadingListMarker,
+		true,
+	);
+	if (
+		peeled === null ||
+		(requireTopLevel && peeled.containers.length > 0) ||
+		measureIndentColumns(peeled.rest, peeled.column) >= 4
+	) {
+		return null;
+	}
+	const trimmed = peeled.rest.replace(/^[ \t]+/, "");
+	const htmlType = matchHtmlBlockOpen(trimmed, false);
+	return htmlType !== null &&
+		htmlType <= 5 &&
+		!htmlBlockLineCloses(htmlType as 1 | 2 | 3 | 4 | 5, trimmed)
+		? (htmlType as 1 | 2 | 3 | 4 | 5)
+		: null;
+}
+
+/**
+ * Matches a self-contained HTML block segment immediately before `\n\n<MATH>\n\n`
+ * (Type 6/7 closed by `\n\n`, closed Type 1–5, or container-scoped Type 1–5) and
+ * returns its container prefix plus trimmed raw HTML content, or `null`.
+ */
+export function matchStandaloneBeforeHtmlBlock(
+	rawBeforeText: string,
+	maskedBeforeText: string,
+	context: BeforeHtmlContext,
+): Readonly<{ linePrefix: string; rawHtml: string }> | null {
+	if (!maskedBeforeText.includes("<")) {
+		return null;
+	}
+	const peeled = peelContainerStepsForLine(
+		maskedBeforeText,
+		context.baseContainers,
+		context.preMarkerListIndent,
+		context.allowLeadingListMarker,
+		true,
+	);
+	if (
+		peeled === null ||
+		measureIndentColumns(peeled.rest, peeled.column) >= 4
+	) {
+		return null;
+	}
+	const trimmed = peeled.rest.replace(/^[ \t]+/, "");
+	if (!trimmed.startsWith("<")) {
+		return null;
+	}
+	const baseContainerCount =
+		context.baseContainers.length + (context.preMarkerListIndent > 0 ? 1 : 0);
+	const effectiveInParagraph =
+		context.inParagraph && peeled.containers.length === baseContainerCount;
+	if (matchHtmlBlockOpen(trimmed, !effectiveInParagraph) === null) {
+		return null;
+	}
+	const rawPeeled = peelContainerStepsForLine(
+		rawBeforeText,
+		context.baseContainers,
+		context.preMarkerListIndent,
+		context.allowLeadingListMarker,
+		true,
+	);
+	return {
+		linePrefix: rawPeeled?.linePrefix ?? peeled.linePrefix,
+		rawHtml: (rawPeeled?.rest ?? peeled.rest).replace(/^[ \t]+/, ""),
+	};
 }

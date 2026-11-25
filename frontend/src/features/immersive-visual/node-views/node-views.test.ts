@@ -3041,27 +3041,61 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 			renderRaw("<span>hello</span\n    >").querySelector("p")?.textContent,
 		).toBe("hello");
 
-		// Track B F6a: after consuming an escaped leading backtick `\` + `` ` ``,
-		// all immediately contiguous backticks in that same run stay literal text
-		// (matching PHP `League\CommonMark\Parser\InlineParserEngine`), keeping the
-		// following code span's `<b>x</b>` intact.
+		// Track B F6a + PR-R27-A Track A #5: after consuming an escaped leading
+		// backtick `\` + `` ` ``, escape EVERY backtick in that contiguous run so
+		// secondary `markdown-it` keeps all of them literal (matching PHP
+		// `League\CommonMark\Parser\InlineParserEngine`) and preserves following
+		// code spans (`<b>x</b>`) without opening a spurious code span.
 		expect(stripCommonMarkHtmlForPreview("foo \\`` `<b>x</b>`")).toBe(
-			"foo \\`` `<b>x</b>`",
+			"foo \\`\\` `<b>x</b>`",
 		);
 		expect(stripCommonMarkHtmlForPreview("foo \\``` ``<b>x</b>``")).toBe(
-			"foo \\``` ``<b>x</b>``",
+			"foo \\`\\`\\` ``<b>x</b>``",
 		);
 		expect(stripCommonMarkHtmlForPreview("foo \\``a`` `<b>x</b>`")).toBe(
-			"foo \\``a`` `<b>x</b>`",
+			"foo \\`\\`a`` `<b>x</b>`",
 		);
 		expect(stripCommonMarkHtmlForPreview("foo \\\\`<b>x</b>`")).toBe(
 			"foo \\\\`<b>x</b>`",
 		);
 		expect(stripCommonMarkHtmlForPreview("foo \\``a` `<b>x</b>`")).toBe(
-			"foo \\``a` `x`",
+			"foo \\`\\`a` `x`",
 		);
 		expect(stripCommonMarkHtmlForPreview("<div>\n\nfoo \\`` `<b>x</b>`")).toBe(
-			"foo \\`` `<b>x</b>`",
+			"foo \\`\\` `<b>x</b>`",
 		);
+
+		const blockEscapedBackticks = renderRaw("<div>\n\nfoo \\`` `<b>x</b>`");
+		expect(blockEscapedBackticks.querySelector("p")?.textContent).toBe(
+			"foo `` <b>x</b>",
+		);
+		expect(blockEscapedBackticks.querySelector("p > code")?.textContent).toBe(
+			"<b>x</b>",
+		);
+
+		// PR-R27-A Track A #4: mask PHP math ranges before matching inline HTML
+		// comment closers (`-->`) so `-->` inside `\(...\)` never terminates `<!--`.
+		const mathCloserInline = renderRawInlinePreview(
+			document,
+			"<span>a<!-- \\(x -->\ny\\) -->b</span>",
+			{ footnotes: "Footnotes", raw: "Raw" },
+		);
+		expect(mathCloserInline.textContent).toBe("ab");
+		expect(
+			stripCommonMarkHtmlForPreview("a<!-- \\(x -->\ny\\) -->b\nc"),
+		).toBe("ab\nc");
+		expect(
+			renderRaw("a<!-- \\(x -->\ny\\) -->b\nc").querySelector("p")?.textContent,
+		).toBe("ab\nc");
+
+		// PR-R27-A Track A #5: multi-backtick escaped run `\`` inside inline HTML
+		// renders literal `` ``b` `` with ZERO `<code>` element (matching PHP).
+		const multiBacktickInline = renderRawInlinePreview(
+			document,
+			"<span>\\``<em>b</em>`</span>",
+			{ footnotes: "Footnotes", raw: "Raw" },
+		);
+		expect(multiBacktickInline.textContent).toBe("``b`");
+		expect(multiBacktickInline.querySelector("code")).toBeNull();
 	});
 });

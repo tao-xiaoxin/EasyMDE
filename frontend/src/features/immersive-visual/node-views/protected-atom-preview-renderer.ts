@@ -25,6 +25,7 @@ import {
 	matchBlockInlineHtmlOrAutolink,
 	matchSingleLineInlineHtmlOrAutolink,
 } from "../../../shared/markdown/php-commonmark-inline-html";
+import { maskPhpMarkdownMathForTableScan } from "../../../shared/markdown/php-markdown-math-mask";
 import {
 	extractReferenceDefinitionLabels,
 	parseInlineMarkdownFragment,
@@ -150,16 +151,24 @@ function stripInlineHtmlCore(
 	text: string,
 	linesOut: string[] | null,
 ): string {
-	const runs = indexBacktickRuns(text);
+	const scanText = maskPhpMarkdownMathForTableScan(text);
+	const runs = indexBacktickRuns(scanText);
 	const cursors = runs ? new Map<number, number>() : null;
 	const guard = createInlineHtmlScanGuard();
 	let segments: InlineHtmlSegment[] | null = null;
 	let segIdx = 0;
 	let srcLine = 0;
 	let outLine = 0;
-	let lineEnd = text.indexOf("\n");
-	if (lineEnd < 0) lineEnd = text.length;
+	let lineEnd = scanText.indexOf("\n");
+	if (lineEnd < 0) lineEnd = scanText.length;
 	let out = "";
+
+	const advanceSkippedLines = (start: number, end: number): void => {
+		if (linesOut === null) return;
+		for (let p = text.indexOf("\n", start); p >= 0 && p < end; p = text.indexOf("\n", p + 1)) {
+			srcLine += 1;
+		}
+	};
 
 	const emitChunk = (chunk: string): void => {
 		if (linesOut === null) {
@@ -184,20 +193,22 @@ function stripInlineHtmlCore(
 	};
 
 	for (let i = 0; i < text.length; ) {
-		const ch = text[i] ?? "";
-		if (ch === "\\" && COMMONMARK_ESCAPABLE_PUNCTUATION.test(text[i + 1] ?? "")) {
+		const ch = scanText[i] ?? "";
+		if (ch === "\\" && COMMONMARK_ESCAPABLE_PUNCTUATION.test(scanText[i + 1] ?? "")) {
 			let end = i + 2;
 			// Match PHP `League\CommonMark\Parser\InlineParserEngine`: after
-			// escaping the leading backtick of a contiguous run, the rest of
-			// that run is literal text rather than an opening code-span fence.
-			if (text[i + 1] === "`") {
-				while (end < text.length && text[end] === "`") end += 1;
+			// escaping the leading backtick of a contiguous run, escape every
+			// backtick in that run so secondary `markdown-it` keeps them literal.
+			if (scanText[i + 1] === "`") {
+				while (end < scanText.length && scanText[end] === "`") end += 1;
+				emitChunk("\\`".repeat(end - i - 1));
+			} else {
+				emitChunk(text.slice(i, end));
 			}
-			emitChunk(text.slice(i, end));
 			i = end;
 		} else if (ch === "`") {
 			let end = i + 1;
-			while (end < text.length && text[end] === "`") end += 1;
+			while (end < scanText.length && scanText[end] === "`") end += 1;
 			const bucket = runs?.get(end - i);
 			if (bucket && cursors) {
 				let pos = cursors.get(end - i) ?? 0;
@@ -209,24 +220,25 @@ function stripInlineHtmlCore(
 			i = end;
 		} else if (ch === "<") {
 			if (i > lineEnd) {
-				const nextNl = text.indexOf("\n", i);
-				lineEnd = nextNl < 0 ? text.length : nextNl;
+				const nextNl = scanText.indexOf("\n", i);
+				lineEnd = nextNl < 0 ? scanText.length : nextNl;
 			}
 			const single = matchSingleLineInlineHtmlOrAutolink(
-				text,
+				scanText,
 				i,
 				guard,
 				lineEnd,
 			);
 			if (single.status === "ok") {
-				const token = text.slice(i, single.end);
-				if (isCommonMarkAutolink(token)) {
-					emitChunk(token);
+				if (isCommonMarkAutolink(scanText.slice(i, single.end))) {
+					emitChunk(text.slice(i, single.end));
+				} else {
+					advanceSkippedLines(i, single.end);
 				}
 				i = single.end;
 			} else if (single.status === "needs-multiline") {
 				if (segments === null) {
-					segments = buildInlineHtmlSegments(text);
+					segments = buildInlineHtmlSegments(scanText);
 				}
 				while (
 					segIdx + 1 < segments.length &&
@@ -235,7 +247,7 @@ function stripInlineHtmlCore(
 					segIdx += 1;
 				}
 				const blockMatch = matchBlockInlineHtmlOrAutolink(
-					text,
+					scanText,
 					segments,
 					segIdx,
 					i,
@@ -245,23 +257,24 @@ function stripInlineHtmlCore(
 				if (blockMatch !== null) {
 					if (
 						blockMatch.segIdx === segIdx &&
-						isCommonMarkAutolink(text.slice(i, blockMatch.pos))
+						isCommonMarkAutolink(scanText.slice(i, blockMatch.pos))
 					) {
 						emitChunk(text.slice(i, blockMatch.pos));
+					} else {
+						advanceSkippedLines(i, blockMatch.pos);
 					}
 					segIdx = blockMatch.segIdx;
-					srcLine = blockMatch.segIdx;
 					i = blockMatch.pos;
 				} else {
-					emitChunk(ch);
+					emitChunk(text[i] ?? "");
 					i += 1;
 				}
 			} else {
-				emitChunk(ch);
+				emitChunk(text[i] ?? "");
 				i += 1;
 			}
 		} else {
-			emitChunk(ch);
+			emitChunk(text[i] ?? "");
 			i += 1;
 		}
 	}

@@ -18,6 +18,7 @@ import {
 import {
 	escapeCodeSpanTableContent,
 	escapeInlineMarkdownText,
+	escapeParagraphTableDelimiters,
 	escapeRawTablePipes,
 	escapeTablePipes,
 } from "./markdown-escape";
@@ -467,9 +468,13 @@ function serializeInlineContent(
 				// PHP `MarkdownRenderer::extract_math()` extracts inline math
 				// BEFORE CommonMark parses GFM tables, so pipes inside math
 				// stay verbatim rather than turning `|` into KaTeX `\|` (`‖`).
-				// Raw inline HTML already carries source pipe escaping matching
-				// PHP `TableParser::split()` (`(?<!\\)\|`).
-				output += isInlineMath ? encodedRaw : escapeRawTablePipes(encodedRaw);
+				// Raw inline HTML escapes only unescaped pipes outside PHP math
+				// ranges BEFORE math newlines are masked for table alignment.
+				const cellRaw = isInlineMath ? raw : escapeRawTablePipes(raw);
+				output +=
+					mathNewlineToken !== null && cellRaw.includes("\n")
+						? cellRaw.split("\n").join(mathNewlineToken)
+						: cellRaw;
 			} else {
 				const continuationMatch =
 					!inHeading &&
@@ -755,7 +760,9 @@ function serializeBlockNodeInternal(
 			: serializeBlockNode;
 	switch (node.type.name) {
 		case "paragraph":
-			return serializeInlineContent(node, { mathNewlineToken });
+			return escapeParagraphTableDelimiters(
+				serializeInlineContent(node, { mathNewlineToken }),
+			);
 		case "heading": {
 			const level = normalizeHeadingLevel(node.attrs.level);
 			const content = serializeInlineContent(node, {

@@ -9,6 +9,11 @@ import {
 	measureLeadingColumns,
 	nextNonSpaceIndex,
 } from "../../shared/markdown/php-commonmark-block-helpers";
+import {
+	advanceParagraphReferenceParser,
+	createParagraphReferenceParser,
+	type ParagraphReferenceParser,
+} from "../../shared/markdown/php-commonmark-reference-def";
 
 /**
  * Feature-private block-structure helpers for `markdown-prescanner.ts`:
@@ -785,7 +790,8 @@ export function findBlockMathEnd(
 	if (single && (dollar ? !inner.includes("$$") : inner.trim().length > 0)) {
 		return start;
 	}
-	if (!(dollar ? /^\$\$[ \t]*$/ : /^\\\[[ \t]*$/).test(content)) return -1;
+	const close = dollar ? "$$" : "\\]";
+	if (content.indexOf(close, 2) >= 0) return -1;
 	const noCloseBefore = dollar
 		? scanState.noDollarCloseBefore
 		: scanState.noBracketCloseBefore;
@@ -798,7 +804,6 @@ export function findBlockMathEnd(
 	) {
 		return -1;
 	}
-	const close = dollar ? "$$" : "\\]";
 	for (let k = start + 1; k < lines.length; k += 1) {
 		const candidate = lines[k] ?? "";
 		if (
@@ -855,4 +860,71 @@ export function stripBlockContainerPrefix(
 		}
 	}
 	return stripUpToIndentColumns(result, indent, startColumn);
+}
+
+export type TrailingParagraphState = Readonly<{
+	inIndentedCode: boolean;
+	indentedCodeContainer: number;
+	listContentIndent: number | null;
+	paragraphHasContent: boolean;
+	paragraphOpen: boolean;
+	paragraphQuoteDepth: number;
+	paragraphRefParser: ParagraphReferenceParser | null;
+}>;
+
+/**
+ * Computes the live paragraph / list / indented-code / reference-parser state
+ * left open after emitting a post-display-math trailing line (`maskedAfter`).
+ */
+export function computeTrailingParagraphState(
+	maskedAfter: string,
+): TrailingParagraphState {
+	const analysis = analyzeLine(maskedAfter, 0);
+	const acceptedListMarker = analysis.listMarker;
+	const listContentIndent =
+		acceptedListMarker !== null ? acceptedListMarker.contentIndent : null;
+	const effectiveContainer = listContentIndent ?? 0;
+	const relativeIndent = analysis.indent - effectiveContainer;
+	if (relativeIndent >= 4) {
+		return {
+			inIndentedCode: true,
+			indentedCodeContainer: effectiveContainer,
+			listContentIndent,
+			paragraphHasContent: false,
+			paragraphOpen: false,
+			paragraphQuoteDepth: 0,
+			paragraphRefParser: null,
+		};
+	}
+	const lineState = classifyParagraphLine(
+		analysis.content,
+		relativeIndent,
+		false,
+		false,
+	);
+	if (!lineState.open) {
+		return {
+			inIndentedCode: false,
+			indentedCodeContainer: 0,
+			listContentIndent,
+			paragraphHasContent: false,
+			paragraphOpen: false,
+			paragraphQuoteDepth: 0,
+			paragraphRefParser: null,
+		};
+	}
+	const refParser = createParagraphReferenceParser();
+	const refLine = acceptedListMarker
+		? acceptedListMarker.afterContent
+		: analysis.content;
+	const completedRefDef = advanceParagraphReferenceParser(refParser, refLine);
+	return {
+		inIndentedCode: false,
+		indentedCodeContainer: 0,
+		listContentIndent,
+		paragraphHasContent: !completedRefDef,
+		paragraphOpen: true,
+		paragraphQuoteDepth: analysis.quoteDepth + lineState.nestedQuotes,
+		paragraphRefParser: refParser,
+	};
 }

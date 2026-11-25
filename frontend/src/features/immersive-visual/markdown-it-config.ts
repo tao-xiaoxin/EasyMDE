@@ -1,12 +1,6 @@
 import MarkdownIt from "markdown-it";
 import { decodeCommonMarkTitle } from "../../shared/image-scale-title";
 import {
-	COMMONMARK_ATX_HEADING_OPEN,
-	COMMONMARK_FENCED_CODE_OPEN,
-	COMMONMARK_THEMATIC_BREAK_LINE,
-	matchHtmlBlockOpen,
-} from "../../shared/markdown/php-commonmark-block-helpers";
-import {
 	advanceParagraphReferenceParser,
 	createParagraphReferenceParser,
 	type ParagraphReferenceParser,
@@ -22,10 +16,7 @@ import {
 	type PreScanResult,
 	restoreProtectedInlineSentinels,
 } from "./markdown-prescanner";
-import {
-	canListMarkerInterruptParagraph,
-	matchListMarker,
-} from "./markdown-prescanner-blocks";
+import { opensNonParagraphBlock } from "./markdown-prescanner-tables";
 
 export const RAW_REFERENCE_SOURCE_META_KEY = "easymdeRawReferenceSource";
 
@@ -355,9 +346,16 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 		return known;
 	};
 
-	const originalTableRuleEntry = (
+	const blockRules = (
 		parser.block.ruler as unknown as InternalRuler<BlockRuleFn>
-	).__rules__?.find((rule) => rule.name === "table");
+	).__rules__;
+	const originalReferenceRuleEntry = blockRules?.find(
+		(rule) => rule.name === "reference",
+	);
+	const originalReferenceRule = originalReferenceRuleEntry?.fn ?? null;
+	const originalTableRuleEntry = blockRules?.find(
+		(rule) => rule.name === "table",
+	);
 
 	if (originalTableRuleEntry) {
 		const originalTableRule = originalTableRuleEntry.fn;
@@ -366,6 +364,11 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 			"easymde_table",
 			(state, startLine, endLine, silent) => {
 				if (startLine + 2 > endLine) {
+					return false;
+				}
+				// Never interrupt an active CommonMark §4.7 reference definition
+				// when probing continuation lines for a destination or title.
+				if (silent && state.parentType === "reference") {
 					return false;
 				}
 				const s0 = state.sCount[startLine] ?? 0;
@@ -384,26 +387,36 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 						prevOpen?.type === "paragraph_open" &&
 						prevOpen.level === state.level &&
 						prevOpen.map?.[1] === startLine);
-				// Reject non-paragraph CommonMark block openers so markdown-it's
-				// top-level `table` rule (registered first) never steals headings,
-				// fenced code, blockquotes, thematic breaks, HTML blocks, or list
-				// items containing GFM tables without leading `|`.
+				const startColumn = (state.bsCount[startLine] ?? 0) + s0;
+				// Reject non-paragraph CommonMark block openers and §4.7 link
+				// reference definitions / titles via the canonical shared guard.
 				if (
-					trimmedStart.startsWith(">") ||
-					COMMONMARK_ATX_HEADING_OPEN.test(trimmedStart) ||
-					COMMONMARK_FENCED_CODE_OPEN.test(trimmedStart) ||
-					COMMONMARK_THEMATIC_BREAK_LINE.test(trimmedStart) ||
-					matchHtmlBlockOpen(trimmedStart, !followsParagraph) !== null
+					opensNonParagraphBlock(trimmedStart, startColumn, followsParagraph)
 				) {
 					return false;
 				}
-				const startColumn = (state.bsCount[startLine] ?? 0) + s0;
-				const listMarker = matchListMarker(trimmedStart, startColumn);
 				if (
-					listMarker !== null &&
-					(!followsParagraph || canListMarkerInterruptParagraph(listMarker))
+					!followsParagraph &&
+					originalReferenceRule !== null &&
+					originalReferenceRule(state, startLine, endLine, true)
 				) {
 					return false;
+				}
+				if (
+					prevClose?.type === "reference_definition" &&
+					prevClose.level === state.level &&
+					prevClose.map?.[1] === startLine
+				) {
+					const prevRaw = readRawMetaString(
+						prevClose,
+						RAW_REFERENCE_SOURCE_META_KEY,
+					);
+					if (
+						prevRaw !== null &&
+						wouldReferenceDefinitionAbsorbFollowingBlock(prevRaw, trimmedStart)
+					) {
+						return false;
+					}
 				}
 				return originalTableRule(state, startLine, endLine, silent);
 			},
@@ -412,12 +425,7 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 		parser.block.ruler.disable("table");
 	}
 
-	const originalReferenceRuleEntry = (
-		parser.block.ruler as unknown as InternalRuler<BlockRuleFn>
-	).__rules__?.find((rule) => rule.name === "reference");
-
-	if (originalReferenceRuleEntry) {
-		const originalReferenceRule = originalReferenceRuleEntry.fn;
+	if (originalReferenceRuleEntry && originalReferenceRule) {
 		parser.block.ruler.before(
 			"reference",
 			"easymde_reference",

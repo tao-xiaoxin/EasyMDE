@@ -7287,4 +7287,342 @@ describe("PR-R24-A1 PHP-exact table math, nested/interleaved table-align, lazy t
 			expect(parseMarkdownToVisualDoc(serialized).eq(edited), md).toBe(true);
 		}
 	});
+
+	it("handles Type 1-5 and Type 6-7 HTML blocks in intermediate gaps between display-math blocks (PR-R27-A #1)", () => {
+		// 1. Same-line closed Type 2 comment swallowing intermediate `$$y$$`:
+		//    edit `Q` -> `QZ` keeps `<!-- $$y$$ --> B` as one hidden raw block.
+		const sameLineMd = "Q $$x$$ <!-- $$y$$ --> B\n| - |";
+		const sameLineParsed = parseMarkdownWithBlockSources(sameLineMd);
+		expect(
+			sameLineParsed.blocks.map((b) =>
+				b.node.type.name === "protected_block"
+					? `protected_block:${String(b.node.attrs.kind)}`
+					: b.node.type.name,
+			),
+		).toEqual([
+			"paragraph",
+			"protected_block:math",
+			"protected_block:raw",
+			"paragraph",
+		]);
+		expect(sameLineParsed.blocks[2]?.node.attrs.rawMarkdown).toBe(
+			"<!-- $$y$$ --> B",
+		);
+		const sameLineGuard = createMarkdownRoundTripGuard(
+			sameLineMd,
+			sameLineParsed,
+		);
+		expect(sameLineGuard.serialize(sameLineGuard.initialDoc)).toBe(sameLineMd);
+		const editedSameLine = insertTextAt(
+			sameLineGuard.initialDoc,
+			findTextEndPos(sameLineGuard.initialDoc, "Q"),
+			"Z",
+		);
+		const serializedSameLine = sameLineGuard.serialize(editedSameLine);
+		expect(serializedSameLine).toBe("QZ\n\n$$x$$\n\n<!-- $$y$$ --> B\n\n| - |");
+		expect(serializedSameLine).not.toContain("\\<!--");
+		expect(parseMarkdownToVisualDoc(serializedSameLine).eq(editedSameLine)).toBe(
+			true,
+		);
+
+		// 2. Unclosed Type 2 comment in intermediate gap consumes through EOF
+		//    without leaking `$$y$$` or a phantom GFM table.
+		const unclosedHeaderMd = "a $$x$$ <!-- $$y$$ b | c\n| --- | --- |";
+		const unclosedHeaderParsed =
+			parseMarkdownWithBlockSources(unclosedHeaderMd);
+		expect(
+			unclosedHeaderParsed.blocks.map((b) =>
+				b.node.type.name === "protected_block"
+					? `protected_block:${String(b.node.attrs.kind)}`
+					: b.node.type.name,
+			),
+		).toEqual(["paragraph", "protected_block:math", "protected_block:raw"]);
+		expect(unclosedHeaderParsed.blocks[2]?.node.attrs.rawMarkdown).toBe(
+			"<!-- $$y$$ b | c\n| --- | --- |",
+		);
+
+		// 3. Unclosed Type 2 comment in intermediate gap of a table-break row
+		//    keeps the table + `$$x$$` ONLY (no `$$y$$`, no second table).
+		const tableBreakMd =
+			"| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 | $$x$$ <!-- $$y$$ c | d\n| --- | --- |";
+		const tableBreakParsed = parseMarkdownWithBlockSources(tableBreakMd);
+		expect(
+			tableBreakParsed.blocks.map((b) =>
+				b.node.type.name === "protected_block"
+					? `protected_block:${String(b.node.attrs.kind)}`
+					: b.node.type.name,
+			),
+		).toEqual(["table", "protected_block:math", "protected_block:raw"]);
+		expect(tableBreakParsed.blocks[0]?.node.childCount).toBe(3);
+		expect(tableBreakParsed.blocks[2]?.node.attrs.rawMarkdown).toBe(
+			"<!-- $$y$$ c | d\n| --- | --- |",
+		);
+
+		// 4. Display math AFTER a same-line Type 2 closer and Type 6/7 intermediate
+		//    HTML blocks emit distinct blocks matching PHP extract_math().
+		const afterCloseMd = "Q $$x$$ <!-- $$y$$ --> $$z$$ B\n| - |";
+		expect(
+			parseMarkdownWithBlockSources(afterCloseMd).blocks.map((b) =>
+				b.node.type.name === "protected_block"
+					? `protected_block:${String(b.node.attrs.kind)}`
+					: b.node.type.name,
+			),
+		).toEqual([
+			"paragraph",
+			"protected_block:math",
+			"protected_block:raw",
+			"protected_block:math",
+			"paragraph",
+		]);
+		for (const gapHtml of ["<div>", "<span>"]) {
+			const gapMd = `Q $$x$$ ${gapHtml} $$y$$ B\n| - |`;
+			const gapParsed = parseMarkdownWithBlockSources(gapMd);
+			expect(
+				gapParsed.blocks.map((b) =>
+					b.node.type.name === "protected_block"
+						? `protected_block:${String(b.node.attrs.kind)}`
+						: b.node.type.name,
+				),
+				gapMd,
+			).toEqual([
+				"paragraph",
+				"protected_block:math",
+				"protected_block:raw",
+				"protected_block:math",
+				"paragraph",
+			]);
+		}
+	});
+
+	it("restores live paragraph/container state after display-math split Step 4 (PR-R27-A #2)", () => {
+		const cases = [
+			[
+				"| a | b |\n| --- | --- |\n| 1 | 2 |\n$$m$$ hello\n<span>\nworld",
+				"| a | b |\n| --- | --- |\n| 1 | 2 |\n\n$$m$$\n\nhelloZ\n<span>\nworld",
+			],
+			[
+				"| a | b |\n| --- | --- |\n| 1 | 2 |\n$$m$$ hello\n    <div>hi</div>",
+				"| a | b |\n| --- | --- |\n| 1 | 2 |\n\n$$m$$\n\nhelloZ\n    <div>hi</div>",
+			],
+			[
+				"| a | b |\n| --- | --- |\n| 1 | 2 |\n$$m$$ hello\n2. still para\n    <div>still para</div>",
+				"| a | b |\n| --- | --- |\n| 1 | 2 |\n\n$$m$$\n\nhelloZ\n2\\. still para\n    <div>still para</div>",
+			],
+		] as const;
+
+		for (const [md, expectedEdited] of cases) {
+			const parsed = parseMarkdownWithBlockSources(md);
+			expect(
+				parsed.blocks.map((b) =>
+					b.node.type.name === "protected_block"
+						? `protected_block:${String(b.node.attrs.kind)}`
+						: b.node.type.name,
+				),
+				md,
+			).toEqual(["table", "protected_block:math", "paragraph"]);
+			const guard = createMarkdownRoundTripGuard(md, parsed);
+			expect(guard.serialize(guard.initialDoc), md).toBe(md);
+			const edited = insertTextAt(
+				guard.initialDoc,
+				findTextEndPos(guard.initialDoc, "hello"),
+				"Z",
+			);
+			const serialized = guard.serialize(edited);
+			expect(serialized, md).toBe(expectedEdited);
+			expect(serialized, md).not.toContain("\\<div>");
+			expect(parseMarkdownToVisualDoc(serialized).eq(edited), md).toBe(true);
+		}
+	});
+
+	it("escapes GFM table delimiter lines in serialized paragraphs so lazy continuations never become tables (PR-R27-A #3)", () => {
+		const cases = [
+			[
+				"Q $$x$$ > Z |\n| - |",
+				"blockquote",
+				"QZ\n\n$$x$$\n\n> Z |\n> \\| - |",
+			],
+			[
+				"Q $$x$$ - Z |\n| - |",
+				"bullet_list",
+				"QZ\n\n$$x$$\n\n- Z |\n  \\| - |",
+			],
+		] as const;
+
+		for (const [md, containerType, expectedEdited] of cases) {
+			const parsed = parseMarkdownWithBlockSources(md);
+			expect(parsed.blocks.map((b) => b.node.type.name), md).toEqual([
+				"paragraph",
+				"protected_block",
+				containerType,
+			]);
+			const guard = createMarkdownRoundTripGuard(md, parsed);
+			expect(guard.serialize(guard.initialDoc), md).toBe(md);
+			const edited = insertTextAt(
+				guard.initialDoc,
+				findTextEndPos(guard.initialDoc, "Q"),
+				"Z",
+			);
+			const serialized = guard.serialize(edited);
+			expect(serialized, md).toBe(expectedEdited);
+			const reparsed = parseMarkdownToVisualDoc(serialized);
+			expect(reparsed.eq(edited), md).toBe(true);
+			let foundTable = false;
+			reparsed.descendants((node) => {
+				if (node.type.name === "table") foundTable = true;
+				return true;
+			});
+			expect(foundTable, md).toBe(false);
+		}
+	});
+
+	it("rejects CommonMark §4.7 reference definitions and titles as GFM table headers (PR-R27-A #4)", () => {
+		const nonTableCases = [
+			"[a|b]: /url\n--- | ---",
+			"[a]: /u|v\n--- | ---",
+			"> [a|b]: /u\n> --- | ---",
+			"- [a|b]: /u\n  --- | ---",
+			"a $$m$$ [x|y]: /u\n--- | ---",
+			'[a]: /x\n"title|pipe"\n--- | ---',
+		];
+
+		for (const md of nonTableCases) {
+			const doc = parseMarkdownToVisualDoc(md);
+			let foundTable = false;
+			doc.descendants((node) => {
+				if (node.type.name === "table") foundTable = true;
+				return true;
+			});
+			expect(foundTable, md).toBe(false);
+			expect(doc.textContent, md).toContain("--- | ---");
+			const serialized = serializeVisualDocToMarkdown(doc);
+			expect(parseMarkdownToVisualDoc(serialized).eq(doc), md).toBe(true);
+		}
+
+		// Positive control: a refdef-shaped line interrupting an open paragraph
+		// STILL forms a GFM table (matching PHP).
+		const interruptingTable = parseMarkdownToVisualDoc(
+			"hello\n[a|b]: /u\n--- | ---",
+		);
+		expect(interruptingTable.childCount).toBe(2);
+		expect(interruptingTable.child(1).type.name).toBe("table");
+	});
+
+	it("preserves inline math pipes inside table inline HTML/comments and link titles (PR-R27-A #5)", () => {
+		// Track A #3: pipe inside multiline `\(...\)` inside table inline HTML/comment
+		// stays one intact `raw-inline` atom across table edits.
+		const htmlCommentTableMd =
+			"| A |\n| - |\n| <span>a<!-- \\(x|\ny\\) -->b</span> |";
+		const htmlCommentGuard = createMarkdownRoundTripGuard(htmlCommentTableMd);
+		expect(htmlCommentGuard.initialDoc.childCount).toBe(1);
+		expect(htmlCommentGuard.initialDoc.firstChild?.type.name).toBe("table");
+		expect(collectProtectedInlines(htmlCommentGuard.initialDoc)).toEqual([
+			{
+				kind: "raw-inline",
+				rawMarkdown: "<span>a<!-- \\(x|\ny\\) -->b</span>",
+			},
+		]);
+		const editedHtmlCommentTable = insertTextAt(
+			htmlCommentGuard.initialDoc,
+			findTextEndPos(htmlCommentGuard.initialDoc, "A"),
+			"Z",
+		);
+		const serializedHtmlCommentTable = htmlCommentGuard.serialize(
+			editedHtmlCommentTable,
+		);
+		expect(serializedHtmlCommentTable).toBe(
+			"| AZ |\n| --- |\n| <span>a<!-- \\(x|\ny\\) -->b</span> |",
+		);
+		expect(
+			parseMarkdownToVisualDoc(serializedHtmlCommentTable).eq(
+				editedHtmlCommentTable,
+			),
+		).toBe(true);
+
+		// Track B F4 (1 & 2): `$a|b$` inside link title in table body & header rows
+		// keeps a 2-column table and restores exact raw math in link title.
+		const bodyLinkMd = '| h1 | h2 |\n| --- | --- |\n| [link](/u "$a|b$") | c |';
+		const bodyLinkGuard = createMarkdownRoundTripGuard(bodyLinkMd);
+		const bodyTable = bodyLinkGuard.initialDoc.firstChild;
+		expect(bodyTable?.type.name).toBe("table");
+		expect(bodyTable?.child(1).childCount).toBe(2);
+		const bodyLinkText = bodyTable?.child(1).child(0).child(0).child(0);
+		expect(bodyLinkText?.text).toBe("link");
+		expect(bodyLinkText?.marks[0]?.attrs).toEqual({
+			href: "/u",
+			title: "$a|b$",
+		});
+		expect(bodyTable?.child(1).child(1).textContent).toBe("c");
+		const editedBodyLink = insertTextAt(
+			bodyLinkGuard.initialDoc,
+			findTextEndPos(bodyLinkGuard.initialDoc, "c"),
+			"Z",
+		);
+		const serializedBodyLink = bodyLinkGuard.serialize(editedBodyLink);
+		expect(serializedBodyLink).toBe(
+			'| h1 | h2 |\n| --- | --- |\n| [link](/u "$a|b$") | cZ |',
+		);
+		expect(
+			parseMarkdownToVisualDoc(serializedBodyLink).eq(editedBodyLink),
+		).toBe(true);
+
+		const headerLinkMd = '| [link](/u "$a|b$") | c |\n| --- | --- |';
+		const headerLinkDoc = parseMarkdownToVisualDoc(headerLinkMd);
+		expect(headerLinkDoc.childCount).toBe(1);
+		expect(headerLinkDoc.firstChild?.type.name).toBe("table");
+		expect(headerLinkDoc.firstChild?.child(0).childCount).toBe(2);
+		expect(
+			headerLinkDoc.firstChild?.child(0).child(0).child(0).child(0).marks[0]
+				?.attrs,
+		).toEqual({ href: "/u", title: "$a|b$" });
+
+		// Track B F4 (3): blank-line-bridging multiline `\(...\)` inside a link title
+		// stays one paragraph and restores the exact raw math string.
+		const blankTitleMd = '[link](/u "\\(a\n\nb\\)")';
+		const blankTitleGuard = createMarkdownRoundTripGuard(blankTitleMd);
+		expect(blankTitleGuard.initialDoc.childCount).toBe(1);
+		expect(blankTitleGuard.initialDoc.firstChild?.type.name).toBe("paragraph");
+		const blankLinkNode = blankTitleGuard.initialDoc.firstChild?.child(0);
+		expect(blankLinkNode?.text).toBe("link");
+		expect(blankLinkNode?.marks[0]?.attrs).toEqual({
+			href: "/u",
+			title: "\\(a\n\nb\\)",
+		});
+		const editedBlankTitle = insertTextAt(
+			blankTitleGuard.initialDoc,
+			findTextEndPos(blankTitleGuard.initialDoc, "link"),
+			"Z",
+		);
+		const serializedBlankTitle = blankTitleGuard.serialize(editedBlankTitle);
+		expect(
+			parseMarkdownToVisualDoc(serializedBlankTitle).eq(editedBlankTitle),
+		).toBe(true);
+	});
+
+	it("splits multiline display math sharing a logical line with multiline \\(...\\) into protected_block math (PR-R27-A #6)", () => {
+		for (const [md, rawBlock] of [
+			["\\(a\nb\\) $$c\nd$$", "$$c\nd$$"],
+			["\\(a\nb\\) \\[c\nd\\]", "\\[c\nd\\]"],
+		] as const) {
+			const parsed = parseMarkdownWithBlockSources(md);
+			expect(parsed.blocks.map((b) => b.node.type.name), md).toEqual([
+				"paragraph",
+				"protected_block",
+			]);
+			expect(collectProtectedInlines(parsed.doc), md).toEqual([
+				{ kind: "math-inline", rawMarkdown: "\\(a\nb\\)" },
+			]);
+			expect(parsed.blocks[1]?.node.attrs, md).toEqual({
+				kind: "math",
+				rawMarkdown: rawBlock,
+			});
+			const guard = createMarkdownRoundTripGuard(md, parsed);
+			expect(guard.serialize(guard.initialDoc), md).toBe(md);
+			const serialized = serializeVisualDocToMarkdown(parsed.doc);
+			expect(serialized, md).toBe(`\\(a\nb\\)\n\n${rawBlock}`);
+			expect(serialized, md).not.toContain("\\$$");
+			expect(parseMarkdownToVisualDoc(serialized).eq(parsed.doc), md).toBe(
+				true,
+			);
+		}
+	});
 });

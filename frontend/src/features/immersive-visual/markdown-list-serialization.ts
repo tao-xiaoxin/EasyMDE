@@ -439,9 +439,41 @@ export function needsTightRefDefContinuation(
 	return refDefContinuationMode(prev, next, serializedNext) !== "none";
 }
 
+export type PartialTitleRefDefPredicate = (node: ProseMirrorNode) => boolean;
+
+function isTightPartialTitleFollower(
+	prev: ProseMirrorNode,
+	next: ProseMirrorNode,
+	serializedNext: string,
+	isPartialTitleRefDef?: PartialTitleRefDefPredicate | null,
+): boolean {
+	if (
+		!isPartialTitleRefDef ||
+		next.type.name !== "paragraph" ||
+		!isPartialTitleRefDef(prev)
+	) {
+		return false;
+	}
+	const nl = serializedNext.indexOf("\n");
+	const firstLine = nl === -1 ? serializedNext : serializedNext.slice(0, nl);
+	if (!/^[ \t]*["'(]/.test(firstLine)) {
+		return false;
+	}
+	const prevRef = inspectProtectedReferenceBlock(prev);
+	return (
+		prevRef.isRefDef &&
+		!prevRef.lastHasTitle &&
+		!wouldReferenceDefinitionAbsorbFollowingBlock(
+			prevRef.lastRaw,
+			serializedNext,
+		)
+	);
+}
+
 export function joinSerializedBlocks(
 	container: ProseMirrorNode,
 	serializeBlock: BlockSerializer,
+	isPartialTitleRefDef?: PartialTitleRefDefPredicate | null,
 ): string {
 	const parts: string[] = [];
 	for (let i = 0; i < container.childCount; i += 1) {
@@ -456,7 +488,16 @@ export function joinSerializedBlocks(
 					? `\n${serialized}`
 					: `\n    ${serialized}`,
 			);
-		} else if (mode === "tight") {
+		} else if (
+			mode === "tight" ||
+			(prev !== null &&
+				isTightPartialTitleFollower(
+					prev,
+					child,
+					serialized,
+					isPartialTitleRefDef,
+				))
+		) {
 			parts.push(`\n${serialized}`);
 		} else if (i > 0) {
 			parts.push(`\n\n${serialized}`);
@@ -523,6 +564,7 @@ function serializeListItemBody(
 	hasPhantomParagraph: boolean,
 	firstContentParagraphIndex: number,
 	deferredTaskParagraphIndex: number,
+	isPartialTitleRefDef?: PartialTitleRefDefPredicate | null,
 ): string {
 	const isTaskList = listKind === "task_list";
 	const startIndex = hasPhantomParagraph ? 1 : 0;
@@ -594,7 +636,16 @@ function serializeListItemBody(
 						? `\n${serialized}`
 						: `\n    ${serialized}`,
 				);
-			} else if (refDefMode === "tight") {
+			} else if (
+				refDefMode === "tight" ||
+				(prev !== null &&
+					isTightPartialTitleFollower(
+						prev,
+						child,
+						serialized,
+						isPartialTitleRefDef,
+					))
+			) {
 				parts.push(`\n${serialized}`);
 			} else if (
 				!loose &&
@@ -617,6 +668,7 @@ export function serializeListItemAt(
 	serializeBlock: BlockSerializer,
 	blankBeforeNestedList: boolean,
 	mathNewlineToken?: string,
+	isPartialTitleRefDef?: PartialTitleRefDefPredicate | null,
 ): string {
 	const item = listNode.child(index);
 	const ownedToken =
@@ -659,6 +711,7 @@ export function serializeListItemAt(
 		hasPhantomParagraph,
 		firstContentParagraphIndex,
 		deferredTaskParagraphIndex,
+		isPartialTitleRefDef,
 	);
 	const bulletMarker = sanitizeBulletMarker(listNode.attrs.marker);
 	let prefix = `${bulletMarker} `;
@@ -690,6 +743,7 @@ export function serializeList(
 	listNode: ProseMirrorNode,
 	serializeBlock: BlockSerializer,
 	mathNewlineToken?: string,
+	isPartialTitleRefDef?: PartialTitleRefDefPredicate | null,
 ): string {
 	const loose = isLooseList(listNode);
 	const items: string[] = [];
@@ -702,6 +756,7 @@ export function serializeList(
 				serializeBlock,
 				false,
 				mathNewlineToken,
+				isPartialTitleRefDef,
 			),
 		);
 	}

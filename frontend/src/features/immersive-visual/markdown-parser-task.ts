@@ -1,11 +1,13 @@
-import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
+import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
 	TASK_LIST_MARKER_PATTERN,
 	visualMarkdownItParser,
 } from "./markdown-it-config";
+import type { BuiltVisualBlockSources } from "./markdown-parser-block-sources";
 import {
+	createTextBlockWithReferenceRuns,
+	type InlineReferenceCollectors,
 	mapInlineTokens,
-	type ReferenceLinkOrigin,
 } from "./markdown-parser-inline";
 import type { PreScanResult } from "./markdown-prescanner";
 import { visualEditorSchema } from "./visual-schema";
@@ -25,7 +27,10 @@ export type ReferenceBlockLabelEntry = Readonly<{
 }>;
 
 export type TaskParagraphContext = Readonly<{
+	blockquoteDepth: number;
+	blockquoteSources: Map<ProseMirrorNode, BuiltVisualBlockSources>;
 	env: Record<string, unknown>;
+	listDepth: number;
 	paragraphRawContents: WeakMap<ProseMirrorNode, string>;
 	preScan: PreScanResult;
 	referenceBlockLabels?: WeakMap<
@@ -33,7 +38,7 @@ export type TaskParagraphContext = Readonly<{
 		ReadonlyArray<ReferenceBlockLabelEntry>
 	>;
 	referenceBlocks: WeakSet<ProseMirrorNode>;
-	referenceLinks?: Map<Mark, ReferenceLinkOrigin>;
+	referenceCollectors?: InlineReferenceCollectors;
 }>;
 
 function reparseRemainderAfterTaskMarker(
@@ -55,7 +60,7 @@ function reparseRemainderAfterTaskMarker(
 		reparsedTokens[0]?.children ?? null,
 		context.preScan,
 		false,
-		context.referenceLinks,
+		context.referenceCollectors,
 	);
 }
 
@@ -113,7 +118,12 @@ export function stripTaskPrefix(
 		checked,
 		children: [
 			...itemChildren.slice(0, firstContentIndex),
-			visualEditorSchema.nodes.paragraph.create(null, inlines),
+			createTextBlockWithReferenceRuns(
+				visualEditorSchema.nodes.paragraph,
+				null,
+				inlines,
+				context.referenceCollectors,
+			),
 			...itemChildren.slice(firstContentIndex + 1),
 		],
 	};
@@ -145,9 +155,11 @@ export function markPreservedTaskParagraphs(
 			context,
 			false,
 		);
-		return visualEditorSchema.nodes.paragraph.create(
+		return createTextBlockWithReferenceRuns(
+			visualEditorSchema.nodes.paragraph,
 			{ preserveRawTaskPrefix: true },
 			[prefixText, ...remainderNodes],
+			context.referenceCollectors,
 			child.marks,
 		);
 	});

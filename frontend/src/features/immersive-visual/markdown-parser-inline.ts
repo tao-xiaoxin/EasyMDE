@@ -1,5 +1,10 @@
 import type MarkdownIt from "markdown-it";
-import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
+import type {
+	Attrs,
+	Mark,
+	Node as ProseMirrorNode,
+	NodeType,
+} from "prosemirror-model";
 import {
 	decodeCommonMarkTitle,
 	decodeWpKsesRenderedTitle,
@@ -98,6 +103,30 @@ export type ReferenceLinkOrigin = Readonly<{
 	normalizedLabel: string;
 	rawRefLabel: string;
 	title: string | null;
+}>;
+
+export type ReferenceImageOrigin = Readonly<{
+	kind: "shortcut" | "collapsed" | "full";
+	normalizedLabel: string;
+	rawRefLabel: string;
+	scale: VisualImageScale | null;
+	src: string;
+	title: string | null;
+}>;
+
+export type MergedReferenceLinkRun = Readonly<{
+	end: number;
+	origin: ReferenceLinkOrigin | null;
+	start: number;
+}>;
+
+export type InlineReferenceCollectors = Readonly<{
+	mergedReferenceLinkRuns: Map<
+		ProseMirrorNode,
+		ReadonlyArray<MergedReferenceLinkRun>
+	>;
+	referenceImages: Map<ProseMirrorNode, ReferenceImageOrigin>;
+	referenceLinks: Map<Mark, ReferenceLinkOrigin>;
 }>;
 
 export function readRawMetaString(
@@ -291,7 +320,7 @@ export function mapInlineTokens(
 	tokens: ReadonlyArray<MarkdownToken> | null,
 	preScan: PreScanResult,
 	inTableCell: boolean,
-	referenceLinks?: Map<Mark, ReferenceLinkOrigin>,
+	collectors?: InlineReferenceCollectors,
 ): ProseMirrorNode[] {
 	if (!tokens || tokens.length === 0) {
 		return [];
@@ -415,10 +444,10 @@ export function mapInlineTokens(
 					href: linkHref,
 					title: linkTitle,
 				});
-				if (referenceLinks) {
+				if (collectors) {
 					const rawRefMeta = readRawReferenceLinkMeta(token);
 					if (rawRefMeta !== null) {
-						referenceLinks.set(linkMark, {
+						collectors.referenceLinks.set(linkMark, {
 							href: linkHref,
 							kind: rawRefMeta.kind,
 							normalizedLabel: rawRefMeta.normalizedLabel,
@@ -462,21 +491,37 @@ export function mapInlineTokens(
 				const rawAlt = token.children
 					? token.children.map((c) => c.content).join("")
 					: token.content;
-				output.push(
-					visualEditorSchema.nodes.image.create(
-						{
-							src: restoreProtectedInlineSentinels(
-								tokenAttrString(token, "src") ?? "",
+				const imageSrc = restoreProtectedInlineSentinels(
+					tokenAttrString(token, "src") ?? "",
+					preScan,
+				);
+				const imageNode = visualEditorSchema.nodes.image.create(
+					{
+						src: imageSrc,
+						alt: restoreProtectedInlineSentinels(rawAlt, preScan),
+						title: parsed.title,
+						scale: parsed.scale,
+					},
+					null,
+					currentMarkSet(),
+				);
+				if (collectors) {
+					const rawRefMeta = readRawReferenceLinkMeta(token);
+					if (rawRefMeta !== null) {
+						collectors.referenceImages.set(imageNode, {
+							kind: rawRefMeta.kind,
+							normalizedLabel: rawRefMeta.normalizedLabel,
+							rawRefLabel: restoreProtectedInlineSentinels(
+								rawRefMeta.rawRefLabel,
 								preScan,
 							),
-							alt: restoreProtectedInlineSentinels(rawAlt, preScan),
-							title: parsed.title,
 							scale: parsed.scale,
-						},
-						null,
-						currentMarkSet(),
-					),
-				);
+							src: imageSrc,
+							title: parsed.title,
+						});
+					}
+				}
+				output.push(imageNode);
 				break;
 			}
 			default:
@@ -497,4 +542,118 @@ export function mapInlineTokens(
 
 	// A table cell can represent a trailing break as `<br>`; a text block cannot.
 	return inTableCell ? output : trimTrailingHardBreaks(output);
+}
+
+function findNodeReferenceLinkOrigin(
+	node: ProseMirrorNode,
+	referenceLinks: ReadonlyMap<Mark, ReferenceLinkOrigin>,
+): ReferenceLinkOrigin | null {
+	for (let i = 0; i < node.marks.length; i += 1) {
+		const mark = node.marks[i];
+		if (mark && mark.type.name === "link") {
+			return referenceLinks.get(mark) ?? null;
+		}
+	}
+	return null;
+}
+
+/**
+ * Creates a textblock node (`paragraph` or `heading`) while recording the
+ * sub-runs of any text node created by ProseMirror `Fragment.fromArray`
+ * merging adjacent same-`href`/same-`title` link text nodes where at least one
+ * side carries a preserved reference link origin (e.g. `[r][][s](/u)` or
+ * `[r][][s][]`).
+ */
+export function createTextBlockWithReferenceRuns(
+	nodeType: NodeType,
+	attrs: Attrs | null,
+	inlines: ReadonlyArray<ProseMirrorNode>,
+	collectors?: InlineReferenceCollectors,
+	marks?: readonly Mark[],
+): ProseMirrorNode {
+	const block = nodeType.create(attrs, inlines, marks);
+	if (
+		!collectors ||
+		collectors.referenceLinks.size === 0 ||
+		inlines.length < 2
+	) {
+		return block;
+	}
+	let i = 0;
+	let childIdx = 0;
+	while (i < inlines.length && childIdx < block.childCount) {
+		const first = inlines[i];
+		if (!first) {
+			i += 1;
+			continue;
+		}
+		if (!first.isText) {
+			i += 1;
+			childIdx += 1;
+			continue;
+		}
+		let j = i + 1;
+		while (j < inlines.length) {
+			const next = inlines[j];
+			if (!next?.isText || !first.sameMarkup(next)) {
+				break;
+			}
+			j += 1;
+		}
+		if (j - i >= 2) {
+			const firstOrigin = findNodeReferenceLinkOrigin(
+				first,
+				collectors.referenceLinks,
+			);
+			let hasRefOrigin = firstOrigin !== null;
+			let hasDistinct = false;
+			for (let k = i + 1; k < j; k += 1) {
+				const node = inlines[k];
+				if (!node) continue;
+				const origin = findNodeReferenceLinkOrigin(
+					node,
+					collectors.referenceLinks,
+				);
+				if (origin !== null) hasRefOrigin = true;
+				if (origin !== firstOrigin) hasDistinct = true;
+			}
+			if (hasRefOrigin && hasDistinct) {
+				const mergedChild = block.child(childIdx);
+				const runs: MergedReferenceLinkRun[] = [];
+				let offset = 0;
+				let curStart = 0;
+				let curOrigin = firstOrigin;
+				for (let k = i; k < j; k += 1) {
+					const node = inlines[k];
+					if (!node) continue;
+					const len = node.text?.length ?? 0;
+					const origin = findNodeReferenceLinkOrigin(
+						node,
+						collectors.referenceLinks,
+					);
+					if (k > i && origin !== curOrigin) {
+						if (offset > curStart) {
+							runs.push({ end: offset, origin: curOrigin, start: curStart });
+						}
+						curStart = offset;
+						curOrigin = origin;
+					}
+					offset += len;
+				}
+				if (offset > curStart) {
+					runs.push({ end: offset, origin: curOrigin, start: curStart });
+				}
+				if (
+					runs.length >= 2 &&
+					mergedChild.isText &&
+					(mergedChild.text?.length ?? 0) === offset
+				) {
+					collectors.mergedReferenceLinkRuns.set(mergedChild, runs);
+				}
+			}
+		}
+		i = j;
+		childIdx += 1;
+	}
+	return block;
 }

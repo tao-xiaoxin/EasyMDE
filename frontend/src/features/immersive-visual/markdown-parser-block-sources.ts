@@ -2,7 +2,19 @@ import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
 	isCommonMarkBlankLine,
 	type PreScanResult,
+	stripBlockquoteDepth,
 } from "./markdown-prescanner";
+
+function isBlankLineAtBlockquoteDepth(
+	line: string,
+	blockquoteDepth: number,
+): boolean {
+	if (blockquoteDepth <= 0) {
+		return isCommonMarkBlankLine(line);
+	}
+	const rest = stripBlockquoteDepth(line, blockquoteDepth);
+	return rest !== null && isCommonMarkBlankLine(rest);
+}
 
 /**
  * Resolves original raw-line spans for mapped top-level visual blocks and
@@ -44,6 +56,7 @@ export type BuiltVisualBlockSources = Readonly<{
 export function resolveOriginalRangeFromTokenMap(
 	map: [number, number] | null | undefined,
 	preScan: PreScanResult,
+	blockquoteDepth = 0,
 ): ResolvedBlockRange | null {
 	if (!map || map.length < 2) return null;
 	const startLine = map[0];
@@ -77,7 +90,10 @@ export function resolveOriginalRangeFromTokenMap(
 	// trim trailing blank lines so the exact inter-block separator stays outside the block.
 	while (
 		origEnd > origStart &&
-		isCommonMarkBlankLine(preScan.rawLines[origEnd - 1] ?? "")
+		isBlankLineAtBlockquoteDepth(
+			preScan.rawLines[origEnd - 1] ?? "",
+			blockquoteDepth,
+		)
 	) {
 		origEnd -= 1;
 	}
@@ -89,6 +105,7 @@ export function resolveOriginalRangeFromTokenMap(
 export function buildVisualBlockSources(
 	mapped: ReadonlyArray<MappedBlockEntry>,
 	rawLines: ReadonlyArray<string>,
+	blockquoteDepth = 0,
 ): BuiltVisualBlockSources {
 	let lastKnownEnd = 0;
 	let previousHadRange = false;
@@ -154,7 +171,10 @@ export function buildVisualBlockSources(
 			}
 			while (
 				groupRawEnd > groupRawStart &&
-				isCommonMarkBlankLine(rawLines[groupRawEnd - 1] ?? "")
+				isBlankLineAtBlockquoteDepth(
+					rawLines[groupRawEnd - 1] ?? "",
+					blockquoteDepth,
+				)
 			) {
 				groupRawEnd -= 1;
 			}
@@ -200,4 +220,37 @@ export function buildVisualBlockSources(
 			: "";
 
 	return { blocks, leadingPrefix, trailingSuffix };
+}
+
+/**
+ * Builds blockquote-local child block sources shifted to `[0, bqRange.end - bqRange.start)`
+ * so untouched children and exact inter-child separators (including tight
+ * partial-title refdef followers like `> [r]: /u\n> "a`) survive edits inside
+ * the blockquote.
+ */
+export function buildBlockquoteChildSources(
+	bqRange: ResolvedBlockRange,
+	innerEntries: ReadonlyArray<MappedBlockEntry>,
+	rawLines: ReadonlyArray<string>,
+	innerDepth: number,
+): BuiltVisualBlockSources {
+	const shifted: MappedBlockEntry[] = innerEntries.map((entry) => {
+		const range = entry.origRange;
+		if (!range || range.start < bqRange.start || range.end > bqRange.end) {
+			return { node: entry.node, origRange: null };
+		}
+		return {
+			node: entry.node,
+			origRange: {
+				end: range.end - bqRange.start,
+				shared: range.shared,
+				start: range.start - bqRange.start,
+			},
+		};
+	});
+	return buildVisualBlockSources(
+		shifted,
+		rawLines.slice(bqRange.start, bqRange.end),
+		innerDepth,
+	);
 }

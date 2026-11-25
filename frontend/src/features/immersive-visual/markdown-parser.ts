@@ -4,6 +4,8 @@ import {
 	visualMarkdownItParser,
 } from "./markdown-it-config";
 import {
+	type BuiltVisualBlockSources,
+	buildBlockquoteChildSources,
 	buildVisualBlockSources,
 	type MappedBlockEntry,
 	type ParsedVisualBlockSource,
@@ -12,13 +14,18 @@ import {
 	resolveOriginalRangeFromTokenMap,
 } from "./markdown-parser-block-sources";
 import {
+	createTextBlockWithReferenceRuns,
+	type InlineReferenceCollectors,
 	type MarkdownToken,
+	type MergedReferenceLinkRun,
 	mapInlineTokens,
 	PHP_PARTIAL_TITLE_REF_META_KEY,
+	type ReferenceImageOrigin,
 	type ReferenceLinkOrigin,
 	readRawMetaString,
 	tokenAttrString,
 } from "./markdown-parser-inline";
+import { mapTableTokens } from "./markdown-parser-table";
 import {
 	markPreservedTaskParagraphs,
 	type ReferenceBlockLabelEntry,
@@ -34,16 +41,8 @@ import {
 	stripBlockquoteDepth,
 } from "./markdown-prescanner";
 import {
-	parseTableAlignComment,
-	resolveTableAlignments,
-	type TableAlignSnapshot,
-	validateTableAlignEntries,
-} from "./table-alignment-codec";
-import {
-	isValidTableTextAlign,
 	normalizeHeadingLevel,
 	sanitizeBulletMarker,
-	type TableTextAlign,
 	visualEditorSchema,
 } from "./visual-schema";
 
@@ -60,37 +59,40 @@ export {
 export { type PreScanResult, prescanMarkdown } from "./markdown-prescanner";
 
 export type {
+	BuiltVisualBlockSources,
+	MergedReferenceLinkRun,
 	ParsedVisualBlockSource,
 	ParsedVisualSharedGroup,
+	ReferenceImageOrigin,
 	ReferenceLinkOrigin,
 };
 
+export type ParsedEnvReferences = Readonly<
+	Record<string, Readonly<{ href: string; title: string }>>
+>;
+
 export type ParsedVisualDocument = Readonly<{
+	blockquoteSources?: ReadonlyMap<ProseMirrorNode, BuiltVisualBlockSources>;
 	blocks: ReadonlyArray<ParsedVisualBlockSource>;
 	doc: ProseMirrorNode;
+	envReferences?: ParsedEnvReferences;
 	firstRefDefBlockByLabel?: ReadonlyMap<string, number>;
+	firstRefDefNodeByLabel?: ReadonlyMap<string, ProseMirrorNode>;
 	leadingPrefix: string;
 	lineEnding: "\n" | "\r\n";
+	mergedReferenceLinkRuns?: ReadonlyMap<
+		ProseMirrorNode,
+		ReadonlyArray<MergedReferenceLinkRun>
+	>;
 	phpPartialTitleRefLabels?: ReadonlySet<string>;
 	refDefLabelsByBlock?: ReadonlyMap<number, ReadonlyArray<string>>;
+	refDefLabelsByNode?: ReadonlyMap<ProseMirrorNode, ReadonlyArray<string>>;
+	referenceImages?: ReadonlyMap<ProseMirrorNode, ReferenceImageOrigin>;
 	referenceLinks?: ReadonlyMap<Mark, ReferenceLinkOrigin>;
 	trailingSuffix: string;
 }>;
 
 type BlockMapContext = TaskParagraphContext;
-
-function parseCellAlignmentFromToken(token: MarkdownToken): TableTextAlign {
-	const match = /text-align\s*:\s*(left|center|right)/i.exec(
-		tokenAttrString(token, "style") ?? "",
-	);
-	const normalized = match?.[1]?.toLowerCase() ?? null;
-	return isValidTableTextAlign(normalized) ? normalized : null;
-}
-
-function readCellAlignment(node: ProseMirrorNode | undefined): TableTextAlign {
-	const align = node?.attrs.textAlign;
-	return isValidTableTextAlign(align) ? align : null;
-}
 
 function ensureListItemChildren(
 	blocks: ReadonlyArray<ProseMirrorNode>,
@@ -123,125 +125,6 @@ function findMatchingCloseIndex(
 	return tokens.length - 1;
 }
 
-function mapTableTokens(
-	tokens: ReadonlyArray<MarkdownToken>,
-	startIndex: number,
-	endIndex: number,
-	preScan: PreScanResult,
-	alignAnnotation: string | null,
-	referenceLinks?: Map<Mark, ReferenceLinkOrigin>,
-): ProseMirrorNode {
-	const rawRows: ProseMirrorNode[] = [];
-	for (let i = startIndex + 1; i < endIndex; i += 1) {
-		if (tokens[i]?.type !== "tr_open") {
-			continue;
-		}
-		const rowClose = findMatchingCloseIndex(tokens, i, "tr_open", "tr_close");
-		const cells: ProseMirrorNode[] = [];
-		for (let j = i + 1; j < rowClose; j += 1) {
-			const cellToken = tokens[j];
-			if (cellToken?.type !== "th_open" && cellToken?.type !== "td_open") {
-				continue;
-			}
-			const isHeader = cellToken.type === "th_open";
-			const cellClose = findMatchingCloseIndex(
-				tokens,
-				j,
-				cellToken.type,
-				isHeader ? "th_close" : "td_close",
-			);
-			const inlineToken = tokens[j + 1];
-			const inlineNodes =
-				inlineToken?.type === "inline"
-					? mapInlineTokens(inlineToken.children, preScan, true, referenceLinks)
-					: [];
-			const cellType = isHeader
-				? visualEditorSchema.nodes.table_header
-				: visualEditorSchema.nodes.table_cell;
-			cells.push(
-				cellType.create(
-					{ textAlign: parseCellAlignmentFromToken(cellToken) },
-					visualEditorSchema.nodes.paragraph.create(null, inlineNodes),
-				),
-			);
-			j = cellClose;
-		}
-		if (cells.length > 0) {
-			rawRows.push(visualEditorSchema.nodes.table_row.create(null, cells));
-		}
-		i = rowClose;
-	}
-
-	if (rawRows.length === 0) {
-		rawRows.push(
-			visualEditorSchema.nodes.table_row.create(null, [
-				visualEditorSchema.nodes.table_header.create(
-					null,
-					visualEditorSchema.nodes.paragraph.create(),
-				),
-			]),
-		);
-	}
-
-	let columnCount = 0;
-	for (const rowNode of rawRows) {
-		columnCount = Math.max(columnCount, rowNode.childCount);
-	}
-	const headerRow = rawRows[0];
-	const baseColumnAlignments: TableTextAlign[] = [];
-	for (let column = 0; column < columnCount; column += 1) {
-		baseColumnAlignments.push(
-			readCellAlignment(headerRow?.child(column) ?? undefined),
-		);
-	}
-
-	const snapshot: TableAlignSnapshot = {
-		baseAlignments: baseColumnAlignments,
-		cellAlignments: rawRows.map((rowNode) => {
-			const cells: TableTextAlign[] = [];
-			for (let column = 0; column < columnCount; column += 1) {
-				cells.push(readCellAlignment(rowNode.child(column)));
-			}
-			return cells;
-		}),
-		columnCount,
-		rowCount: rawRows.length,
-	};
-	const entries = parseTableAlignComment(alignAnnotation);
-	const validAnnotation =
-		entries !== null && validateTableAlignEntries(entries, snapshot);
-	const resolved = validAnnotation
-		? resolveTableAlignments(entries, snapshot)
-		: null;
-
-	const finalRows = resolved
-		? rawRows.map((rowNode, rowIndex) => {
-				const cells: ProseMirrorNode[] = [];
-				for (let column = 0; column < rowNode.childCount; column += 1) {
-					const cell = rowNode.child(column);
-					cells.push(
-						cell.type.create(
-							{
-								...cell.attrs,
-								textAlign: resolved[rowIndex]?.[column] ?? cell.attrs.textAlign,
-							},
-							cell.content,
-						),
-					);
-				}
-				return rowNode.type.create(rowNode.attrs, cells);
-			})
-		: rawRows;
-
-	return visualEditorSchema.nodes.table.create(
-		{
-			alignAnnotation: validAnnotation ? alignAnnotation : null,
-			columnAlignments: baseColumnAlignments,
-		},
-		finalRows,
-	);
-}
-
 type CollectedListItem = Readonly<{
 	children: ProseMirrorNode[];
 	range: ResolvedBlockRange | null;
@@ -258,6 +141,10 @@ function collectListItems(
 	endIndex: number,
 	context: BlockMapContext,
 ): CollectedListItem[] {
+	const itemContext: BlockMapContext = {
+		...context,
+		listDepth: context.listDepth + 1,
+	};
 	const items: CollectedListItem[] = [];
 	for (let i = startIndex + 1; i < endIndex; i += 1) {
 		if (tokens[i]?.type !== "list_item_open") {
@@ -270,8 +157,12 @@ function collectListItems(
 			"list_item_close",
 		);
 		items.push({
-			children: mapBlockTokens(tokens, i + 1, itemClose, context),
-			range: resolveOriginalRangeFromTokenMap(tokens[i]?.map, context.preScan),
+			children: mapBlockTokens(tokens, i + 1, itemClose, itemContext),
+			range: resolveOriginalRangeFromTokenMap(
+				tokens[i]?.map,
+				context.preScan,
+				context.blockquoteDepth,
+			),
 		});
 		i = itemClose;
 	}
@@ -489,11 +380,14 @@ function mapBlockTokensWithRanges(
 	context: BlockMapContext,
 ): MappedBlockEntry[] {
 	const {
+		blockquoteDepth,
+		blockquoteSources,
+		listDepth,
 		paragraphRawContents,
 		preScan,
 		referenceBlockLabels,
 		referenceBlocks,
-		referenceLinks,
+		referenceCollectors,
 	} = context;
 	const entries: MappedBlockEntry[] = [];
 	let pendingTableAlign: Readonly<{
@@ -526,7 +420,11 @@ function mapBlockTokensWithRanges(
 				flushOrphanTableAlign();
 				pendingTableAlign = {
 					marker: tableAlign,
-					origRange: resolveOriginalRangeFromTokenMap(token.map, preScan),
+					origRange: resolveOriginalRangeFromTokenMap(
+						token.map,
+						preScan,
+						blockquoteDepth,
+					),
 				};
 				continue;
 			}
@@ -542,7 +440,11 @@ function mapBlockTokensWithRanges(
 			const inlineToken = tokens[i + 1];
 			const trimmed =
 				inlineToken?.type === "inline" ? inlineToken.content.trim() : "";
-			const origRange = resolveOriginalRangeFromTokenMap(token.map, preScan);
+			const origRange = resolveOriginalRangeFromTokenMap(
+				token.map,
+				preScan,
+				blockquoteDepth,
+			);
 
 			const tableAlign = preScan.tableAlignMarkers.get(trimmed);
 			if (tableAlign !== undefined) {
@@ -576,12 +478,14 @@ function mapBlockTokensWithRanges(
 								inlineToken.children,
 								preScan,
 								false,
-								referenceLinks,
+								referenceCollectors,
 							)
 						: [];
-				const paragraphNode = visualEditorSchema.nodes.paragraph.create(
+				const paragraphNode = createTextBlockWithReferenceRuns(
+					visualEditorSchema.nodes.paragraph,
 					null,
 					inlines,
+					referenceCollectors,
 				);
 				paragraphRawContents.set(paragraphNode, rawContent);
 				entries.push({
@@ -602,7 +506,11 @@ function mapBlockTokensWithRanges(
 			);
 			const annotation = pendingTableAlign;
 			pendingTableAlign = null;
-			const tableRange = resolveOriginalRangeFromTokenMap(token.map, preScan);
+			const tableRange = resolveOriginalRangeFromTokenMap(
+				token.map,
+				preScan,
+				blockquoteDepth,
+			);
 			const combinedRange: ResolvedBlockRange | null =
 				annotation !== null
 					? tableRange && annotation.origRange
@@ -620,7 +528,7 @@ function mapBlockTokensWithRanges(
 					closeIdx,
 					preScan,
 					annotation?.marker ?? null,
-					referenceLinks,
+					referenceCollectors,
 				),
 				origRange: combinedRange,
 			});
@@ -629,7 +537,11 @@ function mapBlockTokensWithRanges(
 		}
 
 		flushOrphanTableAlign();
-		const origRange = resolveOriginalRangeFromTokenMap(token.map, preScan);
+		const origRange = resolveOriginalRangeFromTokenMap(
+			token.map,
+			preScan,
+			blockquoteDepth,
+		);
 
 		if (token.type === "easymde_protected_block") {
 			const protectedEntry = preScan.protectedBlocks.get(token.content);
@@ -659,11 +571,16 @@ function mapBlockTokensWithRanges(
 							inlineToken.children,
 							preScan,
 							false,
-							referenceLinks,
+							referenceCollectors,
 						)
 					: [];
 			entries.push({
-				node: visualEditorSchema.nodes.heading.create({ level }, inlines),
+				node: createTextBlockWithReferenceRuns(
+					visualEditorSchema.nodes.heading,
+					{ level },
+					inlines,
+					referenceCollectors,
+				),
 				origRange,
 			});
 			i = closeIdx;
@@ -674,16 +591,36 @@ function mapBlockTokensWithRanges(
 				"blockquote_open",
 				"blockquote_close",
 			);
-			const inner = mapBlockTokens(tokens, i + 1, closeIdx, context);
-			entries.push({
-				node: visualEditorSchema.nodes.blockquote.create(
-					null,
-					inner.length > 0
-						? inner
-						: [visualEditorSchema.nodes.paragraph.create()],
-				),
-				origRange,
+			const nextDepth = blockquoteDepth + 1;
+			const innerEntries = mapBlockTokensWithRanges(tokens, i + 1, closeIdx, {
+				...context,
+				blockquoteDepth: nextDepth,
 			});
+			const inner = innerEntries.map((entry) => entry.node);
+			const bqNode = visualEditorSchema.nodes.blockquote.create(
+				null,
+				inner.length > 0
+					? inner
+					: [visualEditorSchema.nodes.paragraph.create()],
+			);
+			if (
+				listDepth === 0 &&
+				origRange &&
+				!origRange.shared &&
+				innerEntries.length > 0 &&
+				innerEntries.length === bqNode.childCount
+			) {
+				blockquoteSources.set(
+					bqNode,
+					buildBlockquoteChildSources(
+						origRange,
+						innerEntries,
+						preScan.rawLines,
+						nextDepth,
+					),
+				);
+			}
+			entries.push({ node: bqNode, origRange });
 			i = closeIdx;
 		} else if (token.type === "bullet_list_open") {
 			const closeIdx = findMatchingCloseIndex(
@@ -777,6 +714,7 @@ function mapBlockTokensWithRanges(
 				const nextRange = resolveOriginalRangeFromTokenMap(
 					nextToken.map,
 					preScan,
+					blockquoteDepth,
 				);
 				if (
 					!nextRange ||
@@ -836,6 +774,7 @@ function mapBlockTokens(
 
 export function parseMarkdownWithBlockSources(
 	markdown: string,
+	initialReferences?: ParsedEnvReferences,
 ): ParsedVisualDocument {
 	if (/^[ \t\r\n]*$/.test(markdown)) {
 		return {
@@ -851,21 +790,33 @@ export function parseMarkdownWithBlockSources(
 	const preScan = prescanMarkdown(markdown);
 	const env: Record<string, unknown> = {
 		preScan,
+		...(initialReferences ? { references: { ...initialReferences } } : {}),
 		tableAlignMarkers: preScan.tableAlignMarkers,
 	};
 	const tokens = visualMarkdownItParser.parse(preScan.markdown, env);
-	const referenceLinks = new Map<Mark, ReferenceLinkOrigin>();
+	const referenceCollectors: InlineReferenceCollectors = {
+		mergedReferenceLinkRuns: new Map<
+			ProseMirrorNode,
+			ReadonlyArray<MergedReferenceLinkRun>
+		>(),
+		referenceImages: new Map<ProseMirrorNode, ReferenceImageOrigin>(),
+		referenceLinks: new Map<Mark, ReferenceLinkOrigin>(),
+	};
+	const blockquoteSources = new Map<ProseMirrorNode, BuiltVisualBlockSources>();
 	const referenceBlockLabels = new WeakMap<
 		ProseMirrorNode,
 		ReadonlyArray<ReferenceBlockLabelEntry>
 	>();
 	const context: BlockMapContext = {
+		blockquoteDepth: 0,
+		blockquoteSources,
 		env,
+		listDepth: 0,
 		paragraphRawContents: new WeakMap<ProseMirrorNode, string>(),
 		preScan,
 		referenceBlockLabels,
 		referenceBlocks: new WeakSet<ProseMirrorNode>(),
-		referenceLinks,
+		referenceCollectors,
 	};
 	const mapped = mapBlockTokensWithRanges(tokens, 0, tokens.length, context);
 	const doc = visualEditorSchema.nodes.doc.create(
@@ -880,12 +831,18 @@ export function parseMarkdownWithBlockSources(
 		preScan.rawLines,
 	);
 
+	const { mergedReferenceLinkRuns, referenceImages, referenceLinks } =
+		referenceCollectors;
 	let firstRefDefBlockByLabel: Map<string, number> | undefined;
+	let firstRefDefNodeByLabel: Map<string, ProseMirrorNode> | undefined;
 	let refDefLabelsByBlock: Map<number, ReadonlyArray<string>> | undefined;
+	let refDefLabelsByNode: Map<ProseMirrorNode, ReadonlyArray<string>> | undefined;
 	let phpPartialTitleRefLabels: Set<string> | undefined;
-	if (referenceLinks.size > 0) {
+	if (referenceLinks.size > 0 || referenceImages.size > 0) {
 		firstRefDefBlockByLabel = new Map<string, number>();
+		firstRefDefNodeByLabel = new Map<string, ProseMirrorNode>();
 		refDefLabelsByBlock = new Map<number, ReadonlyArray<string>>();
+		refDefLabelsByNode = new Map<ProseMirrorNode, ReadonlyArray<string>>();
 		phpPartialTitleRefLabels = new Set<string>();
 		for (let blockIdx = 0; blockIdx < mapped.length; blockIdx += 1) {
 			const topNode = mapped[blockIdx]?.node;
@@ -894,14 +851,20 @@ export function parseMarkdownWithBlockSources(
 			const collect = (node: ProseMirrorNode): void => {
 				const entries = referenceBlockLabels.get(node);
 				if (!entries) return;
+				const nodeLabels: string[] = [];
 				for (const entry of entries) {
 					blockLabels.push(entry.label);
+					nodeLabels.push(entry.label);
 					if (!firstRefDefBlockByLabel?.has(entry.label)) {
 						firstRefDefBlockByLabel?.set(entry.label, blockIdx);
+						firstRefDefNodeByLabel?.set(entry.label, node);
 						if (entry.hasPhpPartialTitle) {
 							phpPartialTitleRefLabels?.add(entry.label);
 						}
 					}
+				}
+				if (nodeLabels.length > 0) {
+					refDefLabelsByNode?.set(node, nodeLabels);
 				}
 			};
 			collect(topNode);
@@ -917,20 +880,33 @@ export function parseMarkdownWithBlockSources(
 		}
 	}
 
+	const envRefs = env.references as ParsedEnvReferences | undefined;
 	return {
+		...(blockquoteSources.size > 0 ? { blockquoteSources } : {}),
 		blocks,
 		doc,
+		...(envRefs && Object.keys(envRefs).length > 0
+			? { envReferences: envRefs }
+			: {}),
 		...(firstRefDefBlockByLabel && firstRefDefBlockByLabel.size > 0
 			? { firstRefDefBlockByLabel }
 			: {}),
+		...(firstRefDefNodeByLabel && firstRefDefNodeByLabel.size > 0
+			? { firstRefDefNodeByLabel }
+			: {}),
 		leadingPrefix,
 		lineEnding: preScan.lineEnding,
+		...(mergedReferenceLinkRuns.size > 0 ? { mergedReferenceLinkRuns } : {}),
 		...(phpPartialTitleRefLabels && phpPartialTitleRefLabels.size > 0
 			? { phpPartialTitleRefLabels }
 			: {}),
 		...(refDefLabelsByBlock && refDefLabelsByBlock.size > 0
 			? { refDefLabelsByBlock }
 			: {}),
+		...(refDefLabelsByNode && refDefLabelsByNode.size > 0
+			? { refDefLabelsByNode }
+			: {}),
+		...(referenceImages.size > 0 ? { referenceImages } : {}),
 		...(referenceLinks.size > 0 ? { referenceLinks } : {}),
 		trailingSuffix,
 	};

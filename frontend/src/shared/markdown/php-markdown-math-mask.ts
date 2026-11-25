@@ -51,18 +51,6 @@ function maskInlineMathLength(length: number): string {
 	return "M".repeat(length);
 }
 
-function hasTableOrLineBreakChar(
-	text: string,
-	start: number,
-	end: number,
-): boolean {
-	for (let index = start; index < end; index += 1) {
-		const ch = text[index];
-		if ("|" === ch || "\n" === ch || "\r" === ch) return true;
-	}
-	return false;
-}
-
 function collectBacktickRuns(
 	source: string,
 	protectedRanges: ReadonlyArray<ScannedCodeRange>,
@@ -112,26 +100,6 @@ function collectBacktickRuns(
 	return runs;
 }
 
-function firstRunAfter(
-	runs: ReadonlyArray<number>,
-	currentRun: number,
-): number | null {
-	let low = 0;
-	let high = runs.length - 1;
-	let result: number | null = null;
-	while (low <= high) {
-		const middle = Math.floor((low + high) / 2);
-		const candidate = runs[middle];
-		if (undefined === candidate || candidate <= currentRun) {
-			low = middle + 1;
-		} else {
-			result = candidate;
-			high = middle - 1;
-		}
-	}
-	return result;
-}
-
 /**
  * Scans inline backtick code spans outside `blockCodeRanges` in strictly O(N)
  * time, mirroring PHP `MarkdownCodeRegionScanner::inline_code_ranges()`
@@ -146,21 +114,21 @@ export function scanPhpInlineCodeRanges(
 		blockCodeRanges ?? scanPhpCommonMarkBlockCodeRanges(source);
 	const runs = collectBacktickRuns(source, protectedRanges);
 	if (runs.length < 2) return [];
-	const bySegmentAndLength = new Map<number, Map<number, number[]>>();
-	for (let index = 0; index < runs.length; index += 1) {
+
+	const nextMatch = new Int32Array(runs.length);
+	const nextByLength = new Map<number, number>();
+	let currentSegment = -1;
+	for (let index = runs.length - 1; index >= 0; index -= 1) {
 		const run = runs[index];
 		if (!run) continue;
-		let byLength = bySegmentAndLength.get(run.segment);
-		if (!byLength) {
-			byLength = new Map<number, number[]>();
-			bySegmentAndLength.set(run.segment, byLength);
+		if (run.segment !== currentSegment) {
+			nextByLength.clear();
+			currentSegment = run.segment;
 		}
-		let sameLength = byLength.get(run.length);
-		if (!sameLength) {
-			sameLength = [];
-			byLength.set(run.length, sameLength);
-		}
-		sameLength.push(index);
+		const openLength = run.escaped ? run.length - 1 : run.length;
+		nextMatch[index] =
+			openLength > 0 ? (nextByLength.get(openLength) ?? -1) : -1;
+		nextByLength.set(run.length, index);
 	}
 
 	const ranges: ScannedCodeRange[] = [];
@@ -168,18 +136,14 @@ export function scanPhpInlineCodeRanges(
 	while (runIndex < runs.length) {
 		const run = runs[runIndex];
 		if (!run) break;
-		const firstLength = run.escaped ? run.length - 1 : run.length;
-		const sameLength =
-			firstLength > 0
-				? bySegmentAndLength.get(run.segment)?.get(firstLength)
-				: undefined;
-		const closeIndex = sameLength ? firstRunAfter(sameLength, runIndex) : null;
-		if (null === closeIndex) {
+		const closeIndex = nextMatch[runIndex] ?? -1;
+		if (closeIndex < 0) {
 			runIndex += 1;
 			continue;
 		}
 		const close = runs[closeIndex];
 		if (!close) break;
+		const firstLength = run.escaped ? run.length - 1 : run.length;
 		const start = run.escaped ? run.to - firstLength : run.from;
 		ranges.push({ end: close.to, start });
 		runIndex = closeIndex + 1;
@@ -437,28 +401,7 @@ function maskKnownMathRanges(
 	knownRanges: ReadonlyArray<PhpMarkdownMathRange>,
 ): string {
 	if (0 === knownRanges.length) return source;
-	let needsMask = false;
-	for (let i = 0; i < knownRanges.length; i += 1) {
-		const range = knownRanges[i];
-		if (!range || range.to <= range.from) continue;
-		if (range.block) {
-			needsMask = true;
-			break;
-		}
-		if (
-			hasTableOrLineBreakChar(
-				source,
-				Math.max(0, range.from),
-				Math.min(source.length, range.to),
-			)
-		) {
-			needsMask = true;
-			break;
-		}
-	}
-	if (!needsMask) return source;
-
-	const parts: string[] = [];
+	let parts: string[] | null = null;
 	let cursor = 0;
 	for (let i = 0; i < knownRanges.length; i += 1) {
 		const range = knownRanges[i];
@@ -466,6 +409,7 @@ function maskKnownMathRanges(
 		const from = Math.max(cursor, range.from);
 		const to = Math.min(source.length, range.to);
 		if (to <= from) continue;
+		if (!parts) parts = [];
 		if (from > cursor) parts.push(source.slice(cursor, from));
 		parts.push(
 			range.block
@@ -474,19 +418,19 @@ function maskKnownMathRanges(
 		);
 		cursor = to;
 	}
+	if (!parts) return source;
 	if (cursor < source.length) parts.push(source.slice(cursor));
 	return parts.join("");
 }
 
 /**
- * Returns a UTF-16-length-preserving copy of `source` with PHP-extracted
- * display math and inline math masked so CommonMark block and GFM table
- * scanning matches PHP `MarkdownRenderer::extract_math()` +
- * `League\CommonMark` `TableParser`.
+ * Returns a UTF-16-length-preserving copy of `source` with every PHP-extracted
+ * display math and inline math range masked so CommonMark HTML blocks,
+ * link reference definitions, and GFM table scanning match PHP
+ * `MarkdownRenderer::extract_math()` + `League\CommonMark`.
  *
- * Fast-paths to return `source` untouched whenever no math delimiter can alter
- * block or table structure (no display math pair and no inline math containing
- * `|`, `\n`, or `\r`).
+ * Fast-paths to return `source` untouched whenever no matched math delimiter
+ * pair exists.
  */
 export function maskPhpMarkdownMathForTableScan(
 	source: string,
@@ -495,25 +439,6 @@ export function maskPhpMarkdownMathForTableScan(
 	if (undefined !== knownRanges) {
 		return maskKnownMathRanges(source, knownRanges);
 	}
-	const hasDollar = source.includes("$");
-	const hasBracket = source.includes("\\[");
-	const hasParen = source.includes("\\(");
-	if (!hasDollar && !hasBracket && !hasParen) return source;
-
-	const hasDoubleDollar = hasDollar && source.includes("$$");
-	const hasBracketPair = hasBracket && source.includes("\\]");
-	const hasParenPair = hasParen && source.includes("\\)");
-	const hasPipe = source.includes("|");
-	const hasCr = source.includes("\r");
-	const hasLineBreak = hasCr || source.includes("\n");
-	if (
-		!hasDoubleDollar &&
-		!hasBracketPair &&
-		!(hasParenPair && (hasPipe || hasLineBreak)) &&
-		!(hasDollar && (hasPipe || hasCr))
-	) {
-		return source;
-	}
-
-	return maskKnownMathRanges(source, scanPhpMarkdownMathRanges(source));
+	const ranges = scanPhpMarkdownMathRanges(source);
+	return ranges.length > 0 ? maskKnownMathRanges(source, ranges) : source;
 }

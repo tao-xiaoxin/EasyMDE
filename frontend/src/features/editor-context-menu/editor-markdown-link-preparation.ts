@@ -451,6 +451,7 @@ function isRangeExcludedByPhpTable(
 ): boolean {
 	const startLine = findLineAtOffset(phpBlockScan.lines, range.from);
 	if (!startLine) return false;
+	if (startLine.inlineBlockId < 0) return true;
 	if (!startLine.isTableRow) {
 		if (range.to > startLine.lineEnd) {
 			const endLine = findLineAtOffset(phpBlockScan.lines, range.to - 1);

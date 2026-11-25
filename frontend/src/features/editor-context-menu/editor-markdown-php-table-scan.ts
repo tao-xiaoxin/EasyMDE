@@ -32,7 +32,11 @@ export function maskDocumentForTableScan(
 	source: string,
 	blockIndex?: EditorMarkdownBlockIndex,
 ): string {
-	if (blockIndex && blockIndex.source === source) {
+	if (
+		blockIndex &&
+		blockIndex.source === source &&
+		!blockIndex.blocks.some((block) => "unavailable" === block.kind)
+	) {
 		if (0 === blockIndex.mathSpans.length) return source;
 		return maskPhpMarkdownMathForTableScan(
 			source,
@@ -403,6 +407,26 @@ function scanPhpBlockLines(
 	);
 }
 
+function earliestMathModifiedUnavailableLine(
+	blockIndex: EditorMarkdownBlockIndex,
+	blockFrom: number,
+	maskedDoc: string,
+): number | null {
+	if (maskedDoc === blockIndex.source) return null;
+	for (let i = 0; i < blockIndex.blocks.length; i += 1) {
+		const block = blockIndex.blocks[i];
+		if (!block || block.from >= blockFrom) break;
+		if ("unavailable" !== block.kind) continue;
+		if (
+			maskedDoc.slice(block.from, block.to) !==
+			blockIndex.source.slice(block.from, block.to)
+		) {
+			return block.lineStart;
+		}
+	}
+	return null;
+}
+
 function scanPrecedingStateThroughTargetLine(
 	lines: ReadonlyArray<MarkdownLine>,
 	blockIndex: EditorMarkdownBlockIndex,
@@ -419,11 +443,21 @@ function scanPrecedingStateThroughTargetLine(
 		blockStartLine,
 		maskedDoc,
 	);
-	if (!precedingBlocks) return null;
-	const earliestBlock = precedingBlocks[precedingBlocks.length - 1];
+	const earliestUnavailableLine = earliestMathModifiedUnavailableLine(
+		blockIndex,
+		blockFrom,
+		maskedDoc,
+	);
+	const earliestBlock = precedingBlocks
+		? precedingBlocks[precedingBlocks.length - 1]
+		: undefined;
+	const startLine =
+		null !== earliestUnavailableLine && earliestBlock
+			? Math.min(earliestUnavailableLine, earliestBlock.lineStart)
+			: (earliestUnavailableLine ?? earliestBlock?.lineStart ?? null);
 	const targetLine = lines[blockStartLine];
 	if (
-		!earliestBlock ||
+		null === startLine ||
 		!targetLine ||
 		isBlankLineText(targetLine.text) ||
 		lineStartsWithBlockMath(targetLine, blockStartLine, blockIndex)
@@ -434,7 +468,7 @@ function scanPrecedingStateThroughTargetLine(
 	scanPhpBlockLines(
 		state,
 		lines,
-		earliestBlock.lineStart,
+		startLine,
 		blockStartLine,
 		blockIndex,
 		maskedDoc,

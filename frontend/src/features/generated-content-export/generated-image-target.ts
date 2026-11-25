@@ -317,14 +317,19 @@ export async function hydrateGeneratedImageTargetIndex(
 		[];
 	const images: MarkdownImageScaleMatch[] = [];
 	const sourceHasPipe = input.source.includes("|");
-	const sourceHasDollar = input.source.includes("$");
+	const firstDollar = input.source.indexOf("$");
+	const sourceHasDollarPair =
+		firstDollar >= 0 && input.source.indexOf("$", firstDollar + 1) >= 0;
 	const sourceHasBackslash = input.source.includes("\\");
+	const sourceHasBackslashMathPair =
+		sourceHasBackslash &&
+		((input.source.includes("\\[") && input.source.includes("\\]")) ||
+			(input.source.includes("\\(") && input.source.includes("\\)")));
 	const sourceNeedsDocBlockScan =
 		sourceHasPipe ||
-		(sourceHasDollar &&
-			(input.source.includes("$$") || input.source.includes("\r"))) ||
-		(sourceHasBackslash &&
-			(input.source.includes("\\[") || input.source.includes("\\(")));
+		input.imageIndex.mathSpans.length > 0 ||
+		sourceHasDollarPair ||
+		sourceHasBackslashMathPair;
 	let docBlocks: ScannedMarkdownBlocks | null = null;
 	const mayHaveUncoveredTableImages =
 		sourceHasPipe && input.source.includes("![");
@@ -474,6 +479,7 @@ export async function hydrateGeneratedImageTargetIndex(
 					uncoveredIdx += 1;
 				}
 				let addedRecovered = false;
+				let preparedRangeKeys: Set<string> | null = null;
 				while (uncoveredIdx < uncoveredTableImages.length) {
 					const located = uncoveredTableImages[uncoveredIdx];
 					if (!located || located.start >= block.to) break;
@@ -500,10 +506,19 @@ export async function hydrateGeneratedImageTargetIndex(
 						blockUnavailable = true;
 						continue;
 					}
-					if (
-						prepared.some((existing) => existing.start === from && existing.end === to)
-					) {
-						continue;
+					if (prepared.length > 0) {
+						if (null === preparedRangeKeys) {
+							preparedRangeKeys = new Set<string>();
+							for (let idx = 0; idx < prepared.length; idx += 1) {
+								const existing = prepared[idx];
+								if (existing) {
+									preparedRangeKeys.add(`${existing.start}:${existing.end}`);
+								}
+							}
+						}
+						if (preparedRangeKeys.has(`${from}:${to}`)) {
+							continue;
+						}
 					}
 					if (!blockUnavailable) {
 						await hydrationCheckpoint(budget);
@@ -522,6 +537,7 @@ export async function hydrateGeneratedImageTargetIndex(
 								blockUnavailable = true;
 							} else {
 								prepared.push(parsed);
+								preparedRangeKeys?.add(`${from}:${to}`);
 								addedRecovered = true;
 							}
 						} catch (error) {

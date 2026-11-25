@@ -11,17 +11,28 @@ import {
 } from "./php-markdown-math-mask";
 
 describe("maskPhpMarkdownMathForTableScan", () => {
-	it("fast-paths strings without math delimiters or without table-affecting math", () => {
+	it("fast-paths strings without matched math delimiter pairs and masks all PHP-extracted inline math", () => {
 		const plain = "| A | B |\n| --- | --- |\n| 1 | 2 |";
 		expect(maskPhpMarkdownMathForTableScan(plain)).toBe(plain);
 
+		const unclosed = "| A | B |\n| --- | --- |\n| $5 | \\(open |";
+		expect(maskPhpMarkdownMathForTableScan(unclosed)).toBe(unclosed);
+
 		const inlineNoPipe = "| A | B |\n| --- | --- |\n| $x + y$ | \\(z\\) |";
-		expect(maskPhpMarkdownMathForTableScan(inlineNoPipe)).toBe(inlineNoPipe);
+		expect(maskPhpMarkdownMathForTableScan(inlineNoPipe)).toBe(
+			"| A | B |\n| --- | --- |\n| MMMMMMM | MMMMM |",
+		);
 
 		const knownInlineNoPipe = maskPhpMarkdownMathForTableScan(inlineNoPipe, [
-			{ block: false, from: inlineNoPipe.indexOf("$x"), to: inlineNoPipe.indexOf("$ |") + 1 },
+			{
+				block: false,
+				from: inlineNoPipe.indexOf("$x"),
+				to: inlineNoPipe.indexOf("$ |") + 1,
+			},
 		]);
-		expect(knownInlineNoPipe).toBe(inlineNoPipe);
+		expect(knownInlineNoPipe).toBe(
+			"| A | B |\n| --- | --- |\n| MMMMMMM | \\(z\\) |",
+		);
 	});
 
 	it("masks display math with O(1) fixed newlines while preserving exact byte length", () => {
@@ -294,5 +305,51 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 			scanPhpMarkdownMathRanges(payload);
 			expect(performance.now() - started).toBeLessThan(200);
 		}
+	});
+
+	it("masks inline math without pipes so HTML block closers and refdef quotes match PHP (Round 25 Track B #3)", () => {
+		for (const [label, source] of [
+			["pre closer inside inline dollar math", "<pre>\n$x</pre>$\n| A |\n| --- |"],
+			["comment closer inside inline dollar math", "<!-- $-->$\n| A |\n| --- |"],
+			["comment closer before image", "<!-- $-->$\n![alt](/img.png)"],
+			["pre closer before image", "<pre>\n$x</pre>$\n![alt](/img.png)"],
+			["comment closer inside inline paren math", "<!-- \\(-->\\)\n![alt](/img.png)"],
+			["PI closer inside inline dollar math", "<? $?>$\n| A |\n| --- |"],
+			["CDATA closer inside inline dollar math", "<![CDATA[ $]]>$\n| A |\n| --- |"],
+			["refdef title quote inside inline dollar math", '[a]: /u "$\\"$ ![alt](/img.png)"'],
+		] as const) {
+			const masked = maskPhpMarkdownMathForTableScan(source);
+			expect(masked.length, `len:${label}`).toBe(source.length);
+			expect(masked, `changed:${label}`).not.toBe(source);
+			const scan = scanPhpCommonMarkBlocks(source);
+			for (const line of scan.lines) {
+				expect(line.inlineBlockId, `non-inline:${label}`).toBe(-1);
+				expect(line.isTableRow, `no-table:${label}`).toBe(false);
+			}
+		}
+	});
+
+	it("scans inline backtick code spans in strictly O(N) time with PHP escaped-backtick parity (Round 25 Track A #5)", () => {
+		// Escaped closing backtick inside code span still closes the span matching PHP MarkdownCodeRegionScanner.
+		expect(scanPhpInlineCodeRanges("`a\\`")).toEqual([{ end: 4, start: 0 }]);
+		expect(scanPhpInlineCodeRanges("\\`a`")).toEqual([]);
+		expect(scanPhpInlineCodeRanges("\\``a`")).toEqual([{ end: 5, start: 2 }]);
+		expect(scanPhpInlineCodeRanges("``a ` b`` c `d`")).toEqual([
+			{ end: 9, start: 0 },
+			{ end: 15, start: 12 },
+		]);
+
+		// Linear scaling check across 1,024..8,192 inline code spans.
+		const sample8k = "a `x` ".repeat(8_192);
+		const started = performance.now();
+		const ranges8k = scanPhpInlineCodeRanges(sample8k);
+		const elapsedMs = performance.now() - started;
+		expect(ranges8k).toHaveLength(8_192);
+		expect(ranges8k[0]).toEqual({ end: 5, start: 2 });
+		expect(ranges8k[8_191]).toEqual({
+			end: 8_191 * 6 + 5,
+			start: 8_191 * 6 + 2,
+		});
+		expect(elapsedMs).toBeLessThan(100);
 	});
 });

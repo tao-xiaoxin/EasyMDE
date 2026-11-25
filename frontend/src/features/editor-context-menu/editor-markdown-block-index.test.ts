@@ -12,6 +12,7 @@ import {
 	readEditorCodeContent,
 } from "./editor-code-content-target";
 import { markdownReferenceLabels, type MarkdownSyntaxNode } from "./editor-markdown-link-preparation";
+import { prepareMarkdownTable } from "./editor-markdown-table";
 
 function editorCodeBodyMap(
 	source: string,
@@ -1678,6 +1679,101 @@ describe("readEditorCodeContent", () => {
 		expect(heavyIdx.linkCandidates).toHaveLength(6_000);
 		expect(heavyIdx.imageRanges).toHaveLength(1);
 		expect(elapsedMs).toBeLessThan(2_000);
+	});
+
+	it("matches PHP for inline-math-unclosed HTML blocks and recovers \\\\| table images in strictly O(N) time without poisoning sibling rows (Round 25 Track B #3, #4, #5a & Track A #4)", () => {
+		// Track B #3: inline math without pipes masks HTML block closers before table/block parsing.
+		const preTable = "<pre>\n$x</pre>$\n| A |\n| --- |";
+		expect(prepareMarkdownTable(preTable, preTable.indexOf("| A"))).toBeNull();
+
+		const commentTable = "<!-- $-->$\n| A |\n| --- |";
+		expect(
+			prepareMarkdownTable(commentTable, commentTable.indexOf("| A")),
+		).toBeNull();
+
+		// Blank line after unclosed Type 1/2 HTML block still keeps HTML block open in PHP.
+		const preBlankTable = "<pre>\n$x</pre>$\n\n| A |\n| --- |";
+		expect(
+			prepareMarkdownTable(preBlankTable, preBlankTable.indexOf("| A")),
+		).toBeNull();
+		const commentBlankTable = "<!-- $-->$\n\n| A |\n| --- |";
+		expect(
+			prepareMarkdownTable(commentBlankTable, commentBlankTable.indexOf("| A")),
+		).toBeNull();
+
+		// Positive control: a properly closed HTML comment containing inline math allows a following table.
+		const closedCommentTable = "<!-- a $x$ b -->\n\n| A |\n| --- |";
+		expect(
+			prepareMarkdownTable(
+				closedCommentTable,
+				closedCommentTable.indexOf("| A"),
+			),
+		).not.toBeNull();
+
+		// Images and links inside inline-math-unclosed HTML blocks are excluded.
+		const commentImg = "<!-- $-->$\n![alt](/img.png)";
+		expect(createEditorMarkdownBlockIndex(commentImg).imageRanges).toEqual([]);
+		const preImg = "<pre>\n$x</pre>$\n![alt](/img.png)";
+		expect(createEditorMarkdownBlockIndex(preImg).imageRanges).toEqual([]);
+		const commentLink = "<!-- $-->$\n[link](https://example.com)";
+		expect(createEditorMarkdownBlockIndex(commentLink).linkCandidates).toEqual(
+			[],
+		);
+
+		// Track B #4: `\\|` inside bare dest, angle dest, or title recovers BOTH images without poisoning the table.
+		for (const [label, source, expectedSlices] of [
+			[
+				"bare destination with double-backslash pipe",
+				"| A |\n| --- |\n| ![alt](/a\\\\|b.png) |\n| ![ok](/ok.png) |",
+				["![alt](/a\\\\|b.png)", "![ok](/ok.png)"],
+			],
+			[
+				"angle destination with double-backslash pipe",
+				"| A |\n| --- |\n| ![alt](</a\\\\|b.png>) |\n| ![ok](/ok.png) |",
+				["![alt](</a\\\\|b.png>)", "![ok](/ok.png)"],
+			],
+			[
+				"title with double-backslash pipe",
+				'| A |\n| --- |\n| ![alt](/i.png "a\\\\|b") |\n| ![ok](/ok.png) |',
+				['![alt](/i.png "a\\\\|b")', "![ok](/ok.png)"],
+			],
+		] as const) {
+			const idx = createEditorMarkdownBlockIndex(source);
+			expect(idx.imageBlocks?.[0], label).toEqual({
+				count: 2,
+				firstImageIndex: 0,
+				status: "ready",
+			});
+			expect(
+				(idx.imageRanges ?? []).map((r) => source.slice(r.from, r.to)),
+				label,
+			).toEqual(expectedSlices);
+		}
+
+		// Real reference image in a table still marks the table unavailable.
+		const refInTable =
+			"| A |\n| --- |\n| ![ref][id] |\n| ![ok](/ok.png) |\n\n[id]: /ref.png";
+		expect(createEditorMarkdownBlockIndex(refInTable).imageBlocks?.[0]).toEqual({
+			count: 0,
+			firstImageIndex: 0,
+			status: "unavailable",
+		});
+
+		// Track A #4 + Track B #5a: linear O(N) table image recovery on 4,000 `\\|` images and 4,000 unclosed `![a`.
+		const heavyEscaped = `| A |\n| --- |\n| ${"![x\\\\|y](/i) ".repeat(4_000)}|`;
+		const tEscaped = performance.now();
+		const escapedIdx = createEditorMarkdownBlockIndex(heavyEscaped);
+		const elapsedEscaped = performance.now() - tEscaped;
+		expect(escapedIdx.imageBlocks?.[0]?.status).toBe("ready");
+		expect(escapedIdx.imageRanges).toHaveLength(4_000);
+		expect(elapsedEscaped).toBeLessThan(1_000);
+
+		const heavyUnclosed = `| A |\n| --- |\n| ${"![a".repeat(4_000)}|`;
+		const tUnclosed = performance.now();
+		const unclosedIdx = createEditorMarkdownBlockIndex(heavyUnclosed);
+		const elapsedUnclosed = performance.now() - tUnclosed;
+		expect(unclosedIdx.imageRanges).toEqual([]);
+		expect(elapsedUnclosed).toBeLessThan(500);
 	});
 });
 

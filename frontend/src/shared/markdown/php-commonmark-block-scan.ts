@@ -139,6 +139,55 @@ export function findLineAtOffset(
 	return idx >= 0 ? (lines[idx] ?? null) : null;
 }
 
+const cachedTableRowCellsByScan = new WeakMap<
+	ScannedMarkdownBlocks,
+	Map<number, ReadonlyArray<TableRowCellRange>>
+>();
+
+export function getCachedPhpTableRowCells(
+	source: string,
+	scan: ScannedMarkdownBlocks,
+	line: ScannedMarkdownLine,
+): ReadonlyArray<TableRowCellRange> {
+	let byLine = cachedTableRowCellsByScan.get(scan);
+	if (!byLine) {
+		byLine = new Map<number, ReadonlyArray<TableRowCellRange>>();
+		cachedTableRowCellsByScan.set(scan, byLine);
+	}
+	let cells = byLine.get(line.lineStart);
+	if (undefined === cells) {
+		cells = collectTableRowCells(
+			scan.tableCellSource ?? source,
+			line.contentOffset,
+			line.lineEnd,
+			line.tableColumnCount,
+		);
+		byLine.set(line.lineStart, cells);
+	}
+	return cells;
+}
+
+export function findTableRowCellInCells(
+	cells: ReadonlyArray<TableRowCellRange>,
+	offset: number,
+): TableRowCellRange | null {
+	let low = 0;
+	let high = cells.length - 1;
+	while (low <= high) {
+		const middle = Math.floor((low + high) / 2);
+		const cell = cells[middle];
+		if (!cell) return null;
+		if (offset < cell.start) {
+			high = middle - 1;
+		} else if (offset >= cell.end) {
+			low = middle + 1;
+		} else {
+			return cell;
+		}
+	}
+	return null;
+}
+
 /**
  * Reports whether `[from, to)` is dropped or split by PHP GFM table parsing
  * (for example, a body cell at `cellIndex >= headerColumnCount`, a 0-column
@@ -153,13 +202,8 @@ export function isRangeDroppedByPhpTable(
 	const startLine = findLineAtOffset(scan.lines, from);
 	if (!startLine) return false;
 	if (startLine.isTableRow) {
-		const cell = findTableRowCellAt(
-			scan.tableCellSource ?? source,
-			startLine.contentOffset,
-			startLine.lineEnd,
-			from,
-			startLine.tableColumnCount,
-		);
+		const cells = getCachedPhpTableRowCells(source, scan, startLine);
+		const cell = findTableRowCellInCells(cells, from);
 		return null === cell || to > cell.end;
 	}
 	if (to > startLine.lineEnd) {

@@ -10,6 +10,7 @@ import type {
 } from "../../contracts/ports/editor-block-index-port";
 import { markdownLineStarts } from "../../shared/markdown/markdown-line-model";
 import {
+	findLineAtOffset,
 	inCodeRange,
 	isRangeDroppedByPhpTable,
 	type ScannedCodeRange,
@@ -258,7 +259,9 @@ function imageIndexForBlocks(
 			if (
 				phpBlockScan &&
 				(isRangeDroppedByPhpTable(source, phpBlockScan, node.from, node.to) ||
-					inCodeRange(phpBlockScan.blockCodeRanges, node.from, node.to))
+					inCodeRange(phpBlockScan.blockCodeRanges, node.from, node.to) ||
+					(findLineAtOffset(phpBlockScan.lines, node.from)?.inlineBlockId ??
+						0) < 0)
 			) {
 				continue;
 			}
@@ -316,6 +319,30 @@ function imageIndexForBlocks(
 	return { imageBlocks, imageRanges };
 }
 
+function dropLezerImagesInsideRecovered(
+	lezerNodes: ReadonlyArray<ParserImageNode>,
+	recoveredNodes: ReadonlyArray<ParserImageNode>,
+): ParserImageNode[] {
+	const kept: ParserImageNode[] = [];
+	let recIdx = 0;
+	for (let i = 0; i < lezerNodes.length; i += 1) {
+		const node = lezerNodes[i];
+		if (!node) continue;
+		while (
+			recIdx < recoveredNodes.length &&
+			(recoveredNodes[recIdx]?.to ?? 0) <= node.from
+		) {
+			recIdx += 1;
+		}
+		const rec = recoveredNodes[recIdx];
+		if (rec && rec.from <= node.from && node.to <= rec.to) {
+			continue;
+		}
+		kept.push(node);
+	}
+	return kept;
+}
+
 export function createEditorMarkdownBlockIndex(
 	source: string,
 	options: Readonly<{ referenceLabelCaseFoldProfile: ReferenceLabelCaseFoldProfile }>,
@@ -334,15 +361,9 @@ export function createEditorMarkdownBlockIndex(
 			? scanPhpMarkdownMathRanges(source, originalUnavailableRanges)
 			: phpMathRanges;
 	const blocks = overlayMath(source, parsed.blocks, ranges, starts, []);
-	const hasDisplayMath = phpMathRanges.some((range) => range.block);
-	const hasCrMath = phpMathRanges.some((range) => {
-		if (range.block) return false;
-		const crIdx = source.indexOf("\r", range.from);
-		return crIdx >= 0 && crIdx < range.to;
-	});
 	const hasTableImageCandidate = source.includes("|") && source.includes("![");
 	const phpBlockScan =
-		(source.includes("|") || hasDisplayMath || hasCrMath) &&
+		(source.includes("|") || phpMathRanges.length > 0) &&
 		(parsed.imageNodes.length > 0 ||
 			parsed.linkNodes.length > 0 ||
 			hasTableImageCandidate)
@@ -351,12 +372,15 @@ export function createEditorMarkdownBlockIndex(
 	const sortedLezerImages = [...parsed.imageNodes].sort(
 		(left, right) => left.from - right.from || right.to - left.to,
 	);
+	const availableLezerImages = sortedLezerImages.filter(
+		(node) => node.available,
+	);
 	const recoveredTableImages =
 		phpBlockScan && hasTableImageCandidate
 			? collectUncoveredPhpTableImages(
 					source,
 					phpBlockScan,
-					sortedLezerImages,
+					availableLezerImages,
 				).map((located) => ({
 					available: true,
 					from: located.start,
@@ -365,7 +389,13 @@ export function createEditorMarkdownBlockIndex(
 			: [];
 	const allImageNodes =
 		recoveredTableImages.length > 0
-			? [...sortedLezerImages, ...recoveredTableImages]
+			? [
+					...dropLezerImagesInsideRecovered(
+						sortedLezerImages,
+						recoveredTableImages,
+					),
+					...recoveredTableImages,
+				]
 			: sortedLezerImages;
 	const images = imageIndexForBlocks(
 		source,

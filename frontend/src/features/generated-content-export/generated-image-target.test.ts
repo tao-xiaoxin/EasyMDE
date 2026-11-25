@@ -146,7 +146,19 @@ describe("associateGeneratedImageTarget", () => {
 
 	it("rejects code blocks, unavailable ranges, and unsupported reference-only images", () => {
 		const source = "```md\n![code](https://img.test/code.png)\n```";
-		const image = imageAt(source, "![code]");
+		const codeImgStart = source.indexOf("![code]");
+		expect(parseMarkdownImageScale(source, codeImgStart)).toBeNull();
+		const rawSlice = "![code](https://img.test/code.png)";
+		const parsedSlice = parseMarkdownImageScale(rawSlice, 0);
+		if (!parsedSlice) throw new Error("image-fixture-invalid");
+		const image: MarkdownImageScaleMatch = {
+			...parsedSlice,
+			destinationEnd: parsedSlice.destinationEnd + codeImgStart,
+			destinationStart: parsedSlice.destinationStart + codeImgStart,
+			end: parsedSlice.end + codeImgStart,
+			imageEnd: parsedSlice.imageEnd + codeImgStart,
+			start: parsedSlice.start + codeImgStart,
+		};
 		const result = associateGeneratedImageTarget({
 			acceptedPreview: { revision: 1, signature: "code" },
 			block: {
@@ -1521,6 +1533,98 @@ describe("associateGeneratedImageTarget", () => {
 		expect(bareCrHydrated.images.map((img) => img.destination)).toEqual([
 			"https://example.com/a.png",
 		]);
+	});
+
+	it("excludes images hidden inside inline-math-unclosed HTML blocks and recovers \\\\| destination/title table images without poisoning sibling rows (Round 25 Track B #3 & #4)", async () => {
+		for (const [label, hiddenSource] of [
+			["HTML comment with inline-math closer before image", "<!-- $-->$\n![alt](/img.png)"],
+			["pre block with inline-math closer before image", "<pre>\n$x</pre>$\n![alt](/img.png)"],
+		] as const) {
+			const parsed = createEditorMarkdownBlockIndex(hiddenSource);
+			const hydrated = await hydrateGeneratedImageTargetIndex({
+				...hydration,
+				blocks: parsed.blocks,
+				imageIndex: {
+					blocks: parsed.blocks,
+					imageBlocks: parsed.imageBlocks ?? [],
+					imageRanges: parsed.imageRanges ?? [],
+					length: parsed.length,
+					mathSpans: parsed.mathSpans,
+				},
+				revision: 52,
+				source: hiddenSource,
+			});
+			expect(hydrated.images, label).toHaveLength(0);
+
+			// Defense-in-depth: even if an upstream index passes the image range with empty mathSpans,
+			// hydration scans docBlocks and rejects the HTML-block-enclosed image.
+			const imgStart = hiddenSource.indexOf("![alt]");
+			const imgBlock = {
+				editable: true as const,
+				from: imgStart,
+				kind: "paragraph" as const,
+				lineEnd: 2,
+				lineStart: 1,
+				to: hiddenSource.length,
+			};
+			const directRejected = await hydrateGeneratedImageTargetIndex({
+				...hydration,
+				blocks: [imgBlock],
+				imageIndex: {
+					blocks: [imgBlock],
+					imageBlocks: [{ count: 1, firstImageIndex: 0, status: "ready" }],
+					imageRanges: [{ from: imgStart, to: hiddenSource.length }],
+					length: hiddenSource.length,
+					mathSpans: [],
+				},
+				revision: 53,
+				source: hiddenSource,
+			});
+			expect(directRejected.blockImages[0]?.status, `direct:${label}`).toBe("unavailable");
+			expect(directRejected.images, `direct:${label}`).toHaveLength(0);
+		}
+
+		// Track B #4: `\\|` inside bare dest, angle dest, or title must recover BOTH images with `status: "ready"`.
+		for (const [label, source, expectedFirst] of [
+			[
+				"bare destination with double-backslash pipe",
+				"| A |\n| --- |\n| ![alt](/a\\\\|b.png) |\n| ![ok](/ok.png) |",
+				{ alt: "alt", destination: "/a|b.png", title: null },
+			],
+			[
+				"angle destination with double-backslash pipe",
+				"| A |\n| --- |\n| ![alt](</a\\\\|b.png>) |\n| ![ok](/ok.png) |",
+				{ alt: "alt", destination: "/a|b.png", title: null },
+			],
+			[
+				"title with double-backslash pipe",
+				'| A |\n| --- |\n| ![alt](/i.png "a\\\\|b") |\n| ![ok](/ok.png) |',
+				{ alt: "alt", destination: "/i.png", title: "a\\\\|b" },
+			],
+		] as const) {
+			const parsed = createEditorMarkdownBlockIndex(source);
+			const hydrated = await hydrateGeneratedImageTargetIndex({
+				...hydration,
+				blocks: parsed.blocks,
+				imageIndex: {
+					blocks: parsed.blocks,
+					imageBlocks: parsed.imageBlocks ?? [],
+					imageRanges: parsed.imageRanges ?? [],
+					length: parsed.length,
+					mathSpans: parsed.mathSpans,
+				},
+				revision: 54,
+				source,
+			});
+			expect(hydrated.blockImages[0]?.status, label).toBe("ready");
+			expect(hydrated.images, label).toHaveLength(2);
+			expect(hydrated.images[0], label).toMatchObject(expectedFirst);
+			expect(hydrated.images[1], label).toMatchObject({
+				alt: "ok",
+				destination: "/ok.png",
+				title: null,
+			});
+		}
 	});
 });
 

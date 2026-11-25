@@ -7,12 +7,15 @@ import {
   allLinesShareInlineBlock,
   type BlockBacktickRunMap,
   collectBlockBacktickRuns,
+  collectTableRowCells,
   findLineAtOffset,
   findLineIndexAtOffset,
   findNextBacktickRun,
   findTableRowCellAt,
+  findTableRowCellInCells,
   getCachedBlockBacktickRuns,
   getCachedInlineHtmlScanGuard,
+  getCachedPhpTableRowCells,
   getInlineBlockBounds,
   inCodeRange,
   type InlineBlockBounds,
@@ -33,6 +36,7 @@ export {
   allLinesShareInlineBlock,
   type BlockBacktickRunMap,
   collectBlockBacktickRuns,
+  collectTableRowCells,
   findLineAtOffset,
   findLineIndexAtOffset,
   findNextBacktickRun,
@@ -63,6 +67,10 @@ export function isEscaped(source: string, index: number, floor = 0): boolean {
 }
 
 let lastBlockScan: Readonly<{ scan: ScannedMarkdownBlocks; source: string }> | null = null;
+
+export function hasCachedMarkdownBlockScan(source: string): boolean {
+  return null !== lastBlockScan && lastBlockScan.source === source;
+}
 
 /**
  * Returns the CommonMark/GFM block scan for `source`, reusing the single most
@@ -143,39 +151,33 @@ export type ResolvedInlineScanScope = Readonly<{
   startLine: ScannedMarkdownLine;
 }>;
 
-function hasPrecedingUnbrokenPipeLine(source: string, lineStart: number): boolean {
-  let cursor = lineStart;
-  while (cursor > 0) {
-    cursor -= 1;
-    if ('\n' === source[cursor] && cursor > 0 && '\r' === source[cursor - 1]) {
-      cursor -= 1;
+const MAX_FAST_PATH_PREFIX_SCAN = 4_096;
+
+function hasEnclosingBlockIndicatorBefore(source: string, limit: number): boolean {
+  if (limit > MAX_FAST_PATH_PREFIX_SCAN) return true;
+  for (let idx = limit - 1; idx >= 0; idx -= 1) {
+    const ch = source[idx];
+    if (
+      '`' === ch
+      || '~' === ch
+      || '<' === ch
+      || '[' === ch
+      || '|' === ch
+      || '$' === ch
+      || '\\' === ch
+    ) {
+      return true;
     }
-    const prevLineEnd = cursor;
-    while (cursor > 0 && '\n' !== source[cursor - 1] && '\r' !== source[cursor - 1]) {
-      cursor -= 1;
-    }
-    let nonBlank = false;
-    let hasPipe = false;
-    for (let idx = cursor; idx < prevLineEnd; idx += 1) {
-      const ch = source[idx];
-      if ('|' === ch) {
-        hasPipe = true;
-        nonBlank = true;
-        break;
-      }
-      if (' ' !== ch && '\t' !== ch) nonBlank = true;
-    }
-    if (hasPipe) return true;
-    if (!nonBlank) return false;
   }
   return false;
 }
 
 /**
- * Computes current-line bounds around `start` in O(line length) and reports
- * whether the line could belong to a GFM table or follow PHP math extraction
- * that alters block structure (such as display math before indented text or
- * multiline `\(...\)` continuing a table row).
+ * Computes current-line bounds around `start` and reports whether the line
+ * must bypass the single-line fast path (returning `mayBeTableRow: true` for
+ * any input that could be enclosed by a fenced code block, HTML block, link
+ * reference definition, GFM table, indented code, container marker, or PHP
+ * math construct).
  */
 export function inspectSingleLineForFastPath(
   source: string,
@@ -183,24 +185,26 @@ export function inspectSingleLineForFastPath(
 ): Readonly<{ lineEnd: number; mayBeTableRow: boolean }> {
   let lineStart = start;
   let hasPipe = false;
-  let hasMathBlockBoundaryBeforeStart = false;
+  let hasLinePrefixIndicator = false;
   while (lineStart > 0 && '\n' !== source[lineStart - 1] && '\r' !== source[lineStart - 1]) {
     lineStart -= 1;
     const ch = source[lineStart];
     if ('|' === ch) hasPipe = true;
-    if (!hasMathBlockBoundaryBeforeStart && lineStart + 1 < start) {
-      const next = source[lineStart + 1];
-      if (
-        ('$' === ch && '$' === next)
-        || ('\\' === ch && ('[' === next || ']' === next || ')' === next))
-      ) {
-        hasMathBlockBoundaryBeforeStart = true;
-      }
+    if ('<' === ch || '[' === ch || '`' === ch || '$' === ch || '\\' === ch) {
+      hasLinePrefixIndicator = true;
     }
   }
   let lineEnd = start;
+  let hasDisplayMathOnLine = false;
   while (lineEnd < source.length && '\n' !== source[lineEnd] && '\r' !== source[lineEnd]) {
-    if (!hasPipe && '|' === source[lineEnd]) hasPipe = true;
+    const ch = source[lineEnd];
+    if (!hasPipe && '|' === ch) hasPipe = true;
+    if (!hasDisplayMathOnLine && lineEnd + 1 < source.length) {
+      const next = source[lineEnd + 1];
+      if (('$' === ch && '$' === next) || ('\\' === ch && '[' === next)) {
+        hasDisplayMathOnLine = true;
+      }
+    }
     lineEnd += 1;
   }
   let leadIdx = lineStart;
@@ -221,6 +225,8 @@ export function inspectSingleLineForFastPath(
   const hasIndentedOrContainerPrefix =
     leadCols >= 4
     || '>' === leadChar
+    || '~' === leadChar
+    || '`' === leadChar
     || (('-' === leadChar || '*' === leadChar || '+' === leadChar)
       && (leadIdx + 1 >= lineEnd || isSpaceOrTab(source[leadIdx + 1])))
     || (undefined !== leadChar
@@ -231,15 +237,44 @@ export function inspectSingleLineForFastPath(
     lineEnd,
     mayBeTableRow:
       hasIndentedOrContainerPrefix
-      || hasMathBlockBoundaryBeforeStart
+      || hasLinePrefixIndicator
+      || hasDisplayMathOnLine
       || (hasPipe && (lineStart > 0 || lineEnd < source.length))
-      || (lineStart > 0 && hasPrecedingUnbrokenPipeLine(source, lineStart))
+      || (lineStart > 0 && hasEnclosingBlockIndicatorBefore(source, lineStart))
   };
+}
+
+type TableRowScopeCache = {
+  backtickRunsByCellKey: Map<string, BlockBacktickRunMap | null>;
+  htmlGuardByCellKey: Map<string, InlineHtmlScanGuard>;
+};
+
+const tableRowScopeCacheByBlocks = new WeakMap<ScannedMarkdownBlocks, TableRowScopeCache>();
+
+function getTableRowScopeCache(blocks: ScannedMarkdownBlocks): TableRowScopeCache {
+  let cache = tableRowScopeCacheByBlocks.get(blocks);
+  if (!cache) {
+    cache = {
+      backtickRunsByCellKey: new Map<string, BlockBacktickRunMap | null>(),
+      htmlGuardByCellKey: new Map<string, InlineHtmlScanGuard>()
+    };
+    tableRowScopeCacheByBlocks.set(blocks, cache);
+  }
+  return cache;
+}
+
+export function getCachedTableRowCells(
+  source: string,
+  blocks: ScannedMarkdownBlocks,
+  line: ScannedMarkdownLine
+): ReadonlyArray<TableRowCellRange> {
+  return getCachedPhpTableRowCells(source, blocks, line);
 }
 
 /**
  * Builds an isolated inline-scanning scope for one already-located GFM table
- * cell `[cell.start, cell.end)` without re-running `findTableRowCellAt`.
+ * cell `[cell.start, cell.end)` without re-running `findTableRowCellAt`,
+ * reusing cached per-cell backtick runs and inline HTML scan guards.
  */
 export function resolveTableCellScanScope(
   source: string,
@@ -259,13 +294,25 @@ export function resolveTableCellScanScope(
     virtualSpaces: 0
   };
   const cellLines = [cellLine];
+  const cache = getTableRowScopeCache(blocks);
+  const cellKey = `${cell.start}:${cell.end}`;
+  let backtickRuns = cache.backtickRunsByCellKey.get(cellKey);
+  if (undefined === backtickRuns) {
+    backtickRuns = collectBlockBacktickRuns(source, cellLines, 0, 0);
+    cache.backtickRunsByCellKey.set(cellKey, backtickRuns);
+  }
+  let htmlGuard = cache.htmlGuardByCellKey.get(cellKey);
+  if (!htmlGuard) {
+    htmlGuard = createInlineHtmlScanGuard();
+    cache.htmlGuardByCellKey.set(cellKey, htmlGuard);
+  }
   return {
-    backtickRuns: collectBlockBacktickRuns(source, cellLines, 0, 0),
+    backtickRuns,
     blockEnd: cell.end,
     blocks: { ...blocks, lines: cellLines },
     groupEnd: 0,
     groupStart: 0,
-    htmlGuard: createInlineHtmlScanGuard(),
+    htmlGuard,
     lineIdx: 0,
     startLine: cellLine
   };
@@ -286,13 +333,8 @@ export function resolveInlineScanScope(
   const line = lineIdx >= 0 ? (blocks.lines[lineIdx] ?? null) : null;
   if (!line || line.inlineBlockId < 0) return null;
   if (line.isTableRow) {
-    const cell = findTableRowCellAt(
-      blocks.tableCellSource ?? source,
-      line.contentOffset,
-      line.lineEnd,
-      offset,
-      line.tableColumnCount
-    );
+    const cells = getCachedPhpTableRowCells(source, blocks, line);
+    const cell = findTableRowCellInCells(cells, offset);
     if (!cell || (undefined !== selectionEnd && selectionEnd > cell.end)) return null;
     return resolveTableCellScanScope(source, blocks, line, cell);
   }

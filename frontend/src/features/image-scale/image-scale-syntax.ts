@@ -15,6 +15,8 @@ import {
   findLineIndexAtOffset,
   findNextBacktickRun,
   getCachedMarkdownBlockScan,
+  getCachedTableRowCells,
+  hasCachedMarkdownBlockScan,
   inCodeRange,
   inspectSingleLineForFastPath,
   isEscaped,
@@ -674,7 +676,7 @@ export function parseImageCore(
     || (start > 0 && isEscaped(source, start))
   ) return null;
 
-  if (!precomputedBlocks) {
+  if (!precomputedBlocks && !hasCachedMarkdownBlockScan(source)) {
     const lineInfo = inspectSingleLineForFastPath(source, start);
     if (!lineInfo.mayBeTableRow) {
       const singleLabel = findSingleLineImageLabelEnd(source, start, lineInfo.lineEnd);
@@ -888,10 +890,10 @@ export function collectPhpTableCellImageRanges(
 }
 
 /**
- * Recovers valid PHP GFM table-cell inline images whose `![` opener is not
- * already covered by `coveredRanges` (such as `![x\\|y](/i)` where Lezer splits
- * the table cell at `\\|` and omits the `Image` node), reusing `blocks` in a
- * single monotonic scan over `![` offsets.
+ * Recovers valid PHP GFM table-cell inline images not already covered by
+ * `coveredRanges` (such as `![x\\|y](/i)` or `![alt](/a\\|b.png)` where Lezer
+ * splits the table cell at `\\|`), scanning each table row's cells once and
+ * each uncovered cell in a single strictly O(N) linear pass.
  */
 export function collectUncoveredPhpTableImages(
   source: string,
@@ -903,7 +905,6 @@ export function collectUncoveredPhpTableImages(
 
   const recovered: LocatedMarkdownImageCore[] = [];
   let coveredIdx = 0;
-  let lastRecoveredEnd = -1;
 
   for (let lineIdx = 0; lineIdx < blocks.lines.length && nextBang >= 0; lineIdx += 1) {
     const line = blocks.lines[lineIdx];
@@ -912,36 +913,77 @@ export function collectUncoveredPhpTableImages(
       nextBang = source.indexOf('![', line.contentOffset);
       if (nextBang < 0) break;
     }
-    while (nextBang >= 0 && nextBang < line.lineEnd) {
-      while (
-        coveredIdx < coveredRanges.length
-        && (coveredRanges[coveredIdx]?.to ?? 0) <= nextBang
-      ) {
-        coveredIdx += 1;
+    if (nextBang >= line.lineEnd) continue;
+
+    const cells = getCachedTableRowCells(source, blocks, line);
+    for (
+      let cellIdx = 0;
+      cellIdx < cells.length && nextBang >= 0 && nextBang < line.lineEnd;
+      cellIdx += 1
+    ) {
+      const cell = cells[cellIdx];
+      if (!cell) continue;
+      if (nextBang < cell.start) {
+        nextBang = source.indexOf('![', cell.start);
+        if (nextBang < 0 || nextBang >= line.lineEnd) break;
       }
-      const covered = coveredRanges[coveredIdx];
-      if (covered && covered.from <= nextBang && nextBang < covered.to) {
-        nextBang = source.indexOf('![', covered.to);
-        continue;
-      }
-      if (nextBang < lastRecoveredEnd) {
-        nextBang = source.indexOf('![', lastRecoveredEnd);
-        continue;
-      }
-      const located = findMarkdownImageCoreAt(source, nextBang + 1, nextBang + 1, blocks);
-      if (located && located.core.imageEnd > located.start) {
-        const duplicateCovered =
-          covered
-          && covered.from === located.start
-          && covered.to === located.core.imageEnd;
-        if (!duplicateCovered && located.start >= lastRecoveredEnd) {
-          recovered.push(located);
-          lastRecoveredEnd = located.core.imageEnd;
+      if (nextBang >= cell.end) continue;
+
+      let hasUncoveredBang = false;
+      let probeBang = nextBang;
+      let probeCoveredIdx = coveredIdx;
+      while (probeBang >= 0 && probeBang < cell.end) {
+        while (
+          probeCoveredIdx < coveredRanges.length
+          && (coveredRanges[probeCoveredIdx]?.to ?? 0) <= probeBang
+        ) {
+          probeCoveredIdx += 1;
         }
-        nextBang = source.indexOf('![', Math.max(nextBang + 2, located.core.imageEnd));
-      } else {
-        nextBang = source.indexOf('![', nextBang + 2);
+        const covered = coveredRanges[probeCoveredIdx];
+        if (covered && covered.from <= probeBang && probeBang < covered.to) {
+          probeBang = source.indexOf('![', covered.to);
+          continue;
+        }
+        hasUncoveredBang = true;
+        break;
       }
+      if (!hasUncoveredBang) {
+        coveredIdx = probeCoveredIdx;
+        nextBang = probeBang;
+        continue;
+      }
+
+      const scope = resolveTableCellScanScope(source, blocks, line, cell);
+      const cellImages: LocatedMarkdownImageCore[] = [];
+      scanInlineScopeImages(source, blocks, scope, null, (start, core) => {
+        while (
+          cellImages.length > 0
+          && (cellImages[cellImages.length - 1]?.start ?? -1) >= start
+        ) {
+          cellImages.pop();
+        }
+        cellImages.push({ core, start });
+      });
+      for (let i = 0; i < cellImages.length; i += 1) {
+        const located = cellImages[i];
+        if (!located || located.core.imageEnd <= located.start) continue;
+        while (
+          coveredIdx < coveredRanges.length
+          && (coveredRanges[coveredIdx]?.to ?? 0) <= located.start
+        ) {
+          coveredIdx += 1;
+        }
+        const covered = coveredRanges[coveredIdx];
+        if (
+          covered
+          && covered.from <= located.start
+          && located.core.imageEnd <= covered.to
+        ) {
+          continue;
+        }
+        recovered.push(located);
+      }
+      nextBang = source.indexOf('![', cell.end);
     }
   }
   return recovered;

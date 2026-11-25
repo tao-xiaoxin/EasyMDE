@@ -3,24 +3,11 @@ import type {
 	EditorMarkdownSourceBlock,
 } from "../../contracts/ports/editor-block-index-port";
 import { lineIndexAtOffsets } from "./editor-markdown-lines";
-import {
-	mergeRanges,
-	type SourceRange,
-} from "./editor-markdown-source-projection";
+import type { SourceRange } from "./editor-markdown-source-projection";
 
 export type MathRange = SourceRange &
 	Readonly<{
 		block: boolean;
-	}>;
-
-type MathScanResult = Readonly<{
-	conflicts: ReadonlyArray<SourceRange>;
-	ranges: ReadonlyArray<MathRange>;
-}>;
-
-type ActiveMathRange = SourceRange &
-	Readonly<{
-		accepted: MathRange | null;
 	}>;
 
 type OverlayRange = SourceRange &
@@ -65,103 +52,6 @@ export function mathSpanFromRange(
 		};
 	}
 	throw new Error("editor-context-menu-math-range-invalid");
-}
-
-export function normalizeMathRanges(
-	ranges: ReadonlyArray<MathRange>,
-): MathScanResult {
-	const sorted = ranges
-		.filter((range) => range.to > range.from)
-		.sort((left, right) => left.from - right.from || right.to - left.to);
-	const accepted: MathRange[] = [];
-	const conflicts: SourceRange[] = [];
-	const active: ActiveMathRange[] = [];
-
-	for (const range of sorted) {
-		while (
-			active.length &&
-			range.from >= (active[active.length - 1]?.to ?? 0)
-		) {
-			active.pop();
-		}
-		const owner = active[active.length - 1];
-		if (!owner) {
-			accepted.push(range);
-			active.push({ ...range, accepted: range });
-			continue;
-		}
-		if (range.to <= owner.to) continue;
-
-		const conflict = { from: owner.from, to: range.to };
-		conflicts.push(conflict);
-		if (owner.accepted) {
-			const ownerIndex = accepted.lastIndexOf(owner.accepted);
-			if (ownerIndex >= 0) accepted.splice(ownerIndex, 1);
-		}
-		active.pop();
-		active.push({ ...conflict, accepted: null });
-	}
-
-	return {
-		conflicts: mergeRanges(conflicts),
-		ranges: accepted.sort(
-			(left, right) => left.from - right.from || left.to - right.to,
-		),
-	};
-}
-
-function outsideSegments(
-	length: number,
-	protectedRanges: ReadonlyArray<SourceRange>,
-): SourceRange[] {
-	const segments: SourceRange[] = [];
-	let cursor = 0;
-	for (const range of protectedRanges) {
-		if (cursor < range.from) segments.push({ from: cursor, to: range.from });
-		cursor = Math.max(cursor, range.to);
-	}
-	if (cursor < length) segments.push({ from: cursor, to: length });
-	return segments;
-}
-
-export function mathRanges(
-	source: string,
-	protectedRanges: ReadonlyArray<SourceRange>,
-): MathRange[] {
-	const segments = outsideSegments(source.length, protectedRanges);
-	const patterns: ReadonlyArray<
-		Readonly<{
-			block: boolean;
-			expression: RegExp;
-		}>
-	> = [
-		{ block: true, expression: /\$\$[\s\S]+?\$\$/gu },
-		{ block: true, expression: /\\\[[\s\S]+?\\\]/gu },
-		{ block: false, expression: /\\\([\s\S]+?\\\)/gu },
-		{ block: false, expression: /(?<!\\)\$[^\n$]+?(?<!\\)\$/gu },
-	];
-	const ranges: MathRange[] = [];
-	for (const segment of segments) {
-		const masked = source.slice(segment.from, segment.to).split("");
-		for (const pattern of patterns) {
-			pattern.expression.lastIndex = 0;
-			const text = masked.join("");
-			for (const match of text.matchAll(pattern.expression)) {
-				const from = segment.from + match.index;
-				const to = from + match[0].length;
-				ranges.push({ block: pattern.block, from, to });
-				for (
-					let index = match.index;
-					index < match.index + match[0].length;
-					index += 1
-				) {
-					masked[index] =
-						pattern.block && index === match.index ? "\n" : "\u0000";
-				}
-			}
-		}
-	}
-	return ranges;
 }
 
 function mathBlock(

@@ -2400,4 +2400,35 @@ describe('image scale contract', () => {
       });
     }
   });
+
+  it('prevents inspectSingleLineForFastPath from bypassing fenced code, HTML blocks, refdefs, or inline-math-unclosed HTML blocks (Round 25 Track B #3 & #7)', () => {
+    for (const [label, source, start] of [
+      ['fenced code block', '```\n![alt](/img.png)\n```', 4],
+      ['tilde fenced code block', '~~~\n![alt](/img.png)\n~~~', 4],
+      ['HTML Type 6 block', '<div>\n![alt](/img.png)\n</div>', 6],
+      ['link reference definition title', '[a]: /url "![alt](/img.png)"', 11],
+      ['multiline link reference definition title', '[a]: /url\n"![alt](/img.png)"', 11],
+      ['display math before 4-space indented code', '$$a$$\n    ![alt](https://example.com/a.png)', 10],
+      ['HTML comment with inline-math closer before image', '<!-- $-->$\n![alt](/img.png)', 11],
+      ['pre block with inline-math closer before image', '<pre>\n$x</pre>$\n![alt](/img.png)', 16],
+      ['display math splitting single-line alt text', '![alt $$x$$](/img.png)', 0]
+    ] as const) {
+      expect(parseMarkdownImageScale(source, start), `parse:${label}`).toBeNull();
+      expect(findMarkdownImageAt(source, start + 3), `find:${label}`).toBeNull();
+    }
+
+    // Plain single-line and paragraph-preceded images still parse accurately via the fast path.
+    expect(parseMarkdownImageScale('![alt](/img.png)', 0)).toMatchObject({
+      alt: 'alt',
+      destination: '/img.png',
+      end: 16,
+      start: 0
+    });
+    expect(parseMarkdownImageScale('Intro\n\n![alt](/img.png)', 7)).toMatchObject({
+      alt: 'alt',
+      destination: '/img.png',
+      end: 23,
+      start: 7
+    });
+  });
 });

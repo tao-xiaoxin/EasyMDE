@@ -20,6 +20,7 @@ import {
 	scanPhpCommonMarkBlocks,
 	scanPhpCommonMarkReferenceLabels,
 } from "../../shared/markdown/php-commonmark-block-scan";
+import { hasPotentialGfmAutolinkTrigger } from "../../shared/markdown/php-commonmark-inline-html";
 import { scanPhpMarkdownMathRanges } from "../../shared/markdown/php-markdown-math-mask";
 import {
 	collectUncoveredPhpTableImages,
@@ -27,13 +28,16 @@ import {
 } from "../image-scale/image-scale-syntax";
 import { lineIndexAtOffsets } from "./editor-markdown-lines";
 import {
+	type EditorMarkdownLinkTableCellContext,
 	linkCandidatesForBlocks,
 	type MarkdownSyntaxNode,
 	type ParserLinkNode,
 	projectedLinkNodes,
 } from "./editor-markdown-link-preparation";
 import {
+	collectLocalPhpBareAutolinkBlockLinks,
 	collectPhpDisplayMathBrokenBlockLinks,
+	collectUncoveredBareAutolinkOffsets,
 	type PhpOwnedBlockLinks,
 } from "./editor-markdown-php-inline-links";
 import {
@@ -55,9 +59,22 @@ export type {
 	EditorMarkdownMathSpan,
 	EditorMarkdownSourceBlock,
 } from "../../contracts/ports/editor-block-index-port";
+export type { EditorMarkdownLinkTableCellContext } from "./editor-markdown-link-preparation";
+
+const EMPTY_LINK_TABLE_CELLS: ReadonlyMap<
+	number,
+	EditorMarkdownLinkTableCellContext
+> = new Map<number, EditorMarkdownLinkTableCellContext>();
 
 export type EditorMarkdownBlockIndex = EditorMarkdownBlockIndexData &
 	Readonly<{
+		/**
+		 * Precomputed PHP GFM table-cell context keyed by `candidate.from` for
+		 * link candidates inside PHP table rows. Always attached by
+		 * `createEditorMarkdownBlockIndex` (empty map when no candidate lies in a
+		 * table cell) so menu queries run in O(1) without rescanning the document.
+		 */
+		linkTableCells?: ReadonlyMap<number, EditorMarkdownLinkTableCellContext>;
 		/** Binds derived ranges to the immutable source snapshot that produced them. */
 		source: string;
 	}>;
@@ -665,12 +682,14 @@ export function createEditorMarkdownBlockIndex(
 	const blocks = overlayMath(source, parsed.blocks, ranges, starts, []);
 	const hasTableImageCandidate = source.includes("|") && source.includes("![");
 	const hasEscapedPipe = source.includes("\\|");
+	const hasAutolinkTrigger = hasPotentialGfmAutolinkTrigger(source);
 	const phpBlockScan =
 		(source.includes("|") || phpMathRanges.length > 0) &&
 		(parsed.imageNodes.length > 0 ||
 			parsed.hasLinkSyntax ||
 			hasTableImageCandidate ||
-			hasEscapedPipe)
+			hasEscapedPipe ||
+			hasAutolinkTrigger)
 			? scanPhpCommonMarkBlocks(source, phpMathRanges)
 			: null;
 	const sortedLezerImages = [...parsed.imageNodes].sort(
@@ -735,9 +754,21 @@ export function createEditorMarkdownBlockIndex(
 					: undefined,
 			)
 		: [];
-	const phpOwnedLinks =
-		phpBlockScan &&
-		(images.displayMathBrokenImageRanges.length > 0 || hasEscapedPipe)
+	const uncoveredAutolinkOffsets = hasAutolinkTrigger
+		? collectUncoveredBareAutolinkOffsets(
+				source,
+				projection,
+				blocks,
+				rawLinkNodes,
+				parsed.syntaxNodes,
+				images.imageRanges,
+				ranges,
+			)
+		: [];
+	const phpOwnedLinks = phpBlockScan
+		? images.displayMathBrokenImageRanges.length > 0 ||
+			hasEscapedPipe ||
+			uncoveredAutolinkOffsets.length > 0
 			? collectPhpDisplayMathBrokenBlockLinks(
 					source,
 					phpBlockScan,
@@ -745,6 +776,15 @@ export function createEditorMarkdownBlockIndex(
 					images.displayMathBrokenImageRanges,
 					isReferenceRangeDefined,
 					hasEscapedPipe,
+					uncoveredAutolinkOffsets,
+				)
+			: null
+		: uncoveredAutolinkOffsets.length > 0
+			? collectLocalPhpBareAutolinkBlockLinks(
+					source,
+					blocks,
+					uncoveredAutolinkOffsets,
+					isReferenceRangeDefined,
 				)
 			: null;
 	const activePhpOwnedLinks =
@@ -758,20 +798,30 @@ export function createEditorMarkdownBlockIndex(
 				activePhpOwnedLinks,
 			)
 		: rawLinkNodes;
+	const linkTableCellsMap = phpBlockScan
+		? new Map<number, EditorMarkdownLinkTableCellContext>()
+		: null;
+	const linkCandidates = linkCandidatesForBlocks(
+		activePhpOwnedLinks ? null : projection,
+		blocks,
+		linkNodes,
+		ranges,
+		images.imageRanges,
+		source,
+		phpBlockScan,
+		phpMathRanges,
+		linkTableCellsMap,
+	);
 	return {
 		blocks,
 		imageBlocks: images.imageBlocks,
 		imageRanges: images.imageRanges,
 		length: source.length,
-		linkCandidates: linkCandidatesForBlocks(
-			activePhpOwnedLinks ? null : projection,
-			blocks,
-			linkNodes,
-			ranges,
-			images.imageRanges,
-			source,
-			phpBlockScan,
-		),
+		linkCandidates,
+		linkTableCells:
+			linkTableCellsMap && linkTableCellsMap.size > 0
+				? linkTableCellsMap
+				: EMPTY_LINK_TABLE_CELLS,
 		mathSpans: ranges.map((range) => mathSpanFromRange(source, range)),
 		source,
 	};

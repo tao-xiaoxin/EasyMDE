@@ -71,10 +71,12 @@ describe("findEditorSourceLink", () => {
 	);
 
 	it.each([
-		"https://example.test/bare",
-		"person@example.test",
-		"mailto:person@example.test",
-	])("finds a bare GFM URL node for %s", (source) => {
+		["https://example.test/bare", "https://example.test/bare"],
+		["person@example.test", "person@example.test"],
+		// PHP League\CommonMark EmailAutolinkParser leaves the `mailto:` prefix
+		// as plain text outside `<a>`, so only the rendered email range is owned.
+		["mailto:person@example.test", "person@example.test"],
+	] as const)("finds a bare GFM autolink candidate for %s", (source, expected) => {
 		const offset = source.indexOf("example") + 2;
 		const result = findEditorSourceLink({
 			blockIndex: createEditorMarkdownBlockIndex(source),
@@ -85,7 +87,7 @@ describe("findEditorSourceLink", () => {
 		expect(candidateOf(result)).toMatchObject({
 			kind: "link",
 			reference: false,
-			source,
+			source: expected,
 		});
 	});
 
@@ -445,7 +447,9 @@ describe("findEditorSourceLink", () => {
 		["https://example.test/bare", "candidate"],
 		["person@example.test", "candidate"],
 		["person@example.test/path", "candidate"],
-		["mailto:person@example.test", "candidate"],
+		// PHP EmailAutolinkParser leaves `mailto:` outside `<a>`: caret inside
+		// `mailto:` is plain text, while caret inside `person@example.test` owns the link.
+		["mailto:person@example.test", "none"],
 		["[标题][引用]", "none"],
 		["[标题][引用]\n\n[引用]: https://example.test", "candidate"],
 		["![image](https://image.test)", "none"],

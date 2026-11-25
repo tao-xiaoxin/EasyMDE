@@ -18,9 +18,11 @@ import {
 	createInlineHtmlScanGuard,
 	gfmAutolinkTrailingContext,
 	gfmEmailAutolinkEnd,
+	hasPotentialGfmAutolinkTrigger,
 	matchBlockInlineHtmlOrAutolink,
 	matchCommonMarkAutolinkOnLine,
 	matchGfmUrlAutolink,
+	matchGfmUrlAutolinkDetail,
 	matchSingleLineInlineHtmlOrAutolink,
 } from "./php-commonmark-inline-html";
 
@@ -471,5 +473,70 @@ describe("canonical PHP CommonMark table-separator and autolink exports (Round 3
 		expect(parseTail('(/rel\t\n"title")')).toBeNull();
 		expect(parseTail("(\t/rel)")).toBeNull();
 		expect(parseTail('(/rel "title"\t)')).toBeNull();
+	});
+
+	it("preserves exact PHP UTF-8 byte-trimming parity and inert suffixes for multi-byte unbalanced parens (Round 33 Track A #4)", () => {
+		for (const [source, expectedConsumed, expectedMissingBytes] of [
+			["https://x/a)é)", "https://x/a)é", 1],
+			["https://x/a)中)", "https://x/a)中", 1],
+			["https://x/a))中)", "https://x/a))中", 2],
+			["https://x/a)))中)", "https://x/a)))", 0],
+			["https://x/a)𐐀)", "https://x/a)𐐀", 1],
+			["https://x/a))𐐀)", "https://x/a))𐐀", 2],
+			["https://x/a)))𐐀)", "https://x/a)))𐐀", 3],
+			["https://x/a))))𐐀)", "https://x/a))))", 0],
+			["https://x/a)😀)", "https://x/a", 0],
+			["https://x/aé)", "https://x/aé", 0],
+			["https://x/a))é)", "https://x/a))", 0],
+			["https://x/a))é))", "https://x/a))", 0],
+			["https://x/a)é&amp;)", "https://x/a)é&amp", 0],
+			["https://x/a)é*x*)", "https://x/a)é*x", 0],
+			["https://x/a))))中中)", "https://x/a))))中", 1],
+			["https://x/a))é?)", "https://x/a))é", 1],
+		] as const) {
+			const detail = matchGfmUrlAutolinkDetail(source, 0);
+			expect(detail, source).not.toBeNull();
+			if (detail) {
+				expect(source.slice(0, detail.end), `consumed:${source}`).toBe(
+					expectedConsumed,
+				);
+				expect(detail.missingTrailingBytes, `missingBytes:${source}`).toBe(
+					expectedMissingBytes,
+				);
+			}
+		}
+
+		for (const [source, candidate, expectedSuffix] of [
+			["![$$x$$](https://x/a)é)", "https://x/a)é", ")"],
+			["(https://x/a)é)", "https://x/a)é", ")"],
+			["![$$x$$](https://x/a)中)", "https://x/a)中", ")"],
+			["![$$x$$](https://x/a))中)", "https://x/a))中", ")"],
+			["![$$x$$](https://x/a)))中)", "https://x/a)))", "aaa)"],
+			["![$$x$$](https://x/a)𐐀)", "https://x/a)𐐀", ")"],
+			["![$$x$$](https://x/a))𐐀)", "https://x/a))𐐀", ")"],
+			["![$$x$$](https://x/a)))𐐀)", "https://x/a)))𐐀", ")"],
+			["![$$x$$](https://x/a))))𐐀)", "https://x/a))))", "aaaa)"],
+			["![$$x$$](https://x/a))))中中)", "https://x/a))))中", "aaa)"],
+			["![$$x$$](https://x/a))é?)", "https://x/a))é", "a)"],
+			["![$$x$$](https://x/a)é&amp;)", "https://x/a)é&amp", ""],
+			["![$$x$$](https://x/a)é*x*)", "https://x/a)é*x", ""],
+			["![$$x$$](https://x/aé)", "https://x/aé", ""],
+			["![$$x$$](https://x/a))é)", "https://x/a))", "aa)"],
+			["![$$x$$](https://x/a))é))", "https://x/a))", "aa)"],
+			["![$$x$$](https://x/a)😀)", "https://x/a", ""],
+		] as const) {
+			const from = source.indexOf(candidate);
+			expect(
+				gfmAutolinkTrailingContext(source, from, from + candidate.length),
+				`${source} :: ${candidate}`,
+			).toBe(expectedSuffix);
+		}
+
+		expect(hasPotentialGfmAutolinkTrigger("plain prose without links.")).toBe(
+			false,
+		);
+		expect(hasPotentialGfmAutolinkTrigger("user@example.com")).toBe(true);
+		expect(hasPotentialGfmAutolinkTrigger("https://x?")).toBe(true);
+		expect(hasPotentialGfmAutolinkTrigger("WWW.example.com")).toBe(true);
 	});
 });

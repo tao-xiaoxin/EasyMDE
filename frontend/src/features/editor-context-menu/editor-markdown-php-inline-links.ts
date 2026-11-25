@@ -1,3 +1,7 @@
+import type {
+	EditorMarkdownImageRange,
+	EditorMarkdownSourceBlock,
+} from "../../contracts/ports/editor-block-index-port";
 import {
 	createPhpInlineStream,
 	isPhpTrimChar,
@@ -13,6 +17,7 @@ import {
 	getInlineBlockBounds,
 	type ScannedMarkdownBlocks,
 	type ScannedMarkdownLine,
+	scanPhpCommonMarkBlocks,
 	type TableRowCellRange,
 } from "../../shared/markdown/php-commonmark-block-scan";
 import {
@@ -20,13 +25,25 @@ import {
 	createInlineHtmlScanGuard,
 	type GfmAutolinkStops,
 	gfmEmailAutolinkEnd,
+	isGfmEmailDomainFirstChar,
+	isGfmEmailLocalChar,
 	isGfmUrlAutolinkAllowedAfter,
 	matchBlockInlineHtmlOrAutolink,
 	matchCommonMarkAutolinkOnLine,
 	matchGfmUrlAutolink,
 } from "../../shared/markdown/php-commonmark-inline-html";
-import type { ParserLinkNode } from "./editor-markdown-link-preparation";
-import type { SourceRange } from "./editor-markdown-source-projection";
+import type {
+	MarkdownSyntaxNode,
+	ParserLinkNode,
+} from "./editor-markdown-link-preparation";
+import {
+	mergeRanges,
+	type NewlineProjection,
+	originalRange,
+	type SourceRange,
+} from "./editor-markdown-source-projection";
+
+const GFM_WWW_GLOBAL_RE = /www\./gi;
 
 type BracketOpener = {
 	active: boolean;
@@ -398,14 +415,69 @@ function collectEscapedPipeTableCells(
 	}
 }
 
+function collectBareAutolinkScopesInScan(
+	source: string,
+	scan: ScannedMarkdownBlocks,
+	bareAutolinkOffsets: ReadonlyArray<number>,
+	scopes: PhpOwnedInlineScope[],
+	seenBlockIds: Set<number>,
+	seenCells: Set<string>,
+): void {
+	for (let i = 0; i < bareAutolinkOffsets.length; i += 1) {
+		const offset = bareAutolinkOffsets[i];
+		if (undefined === offset || offset < 0 || offset >= source.length) continue;
+		const lineIdx = findLineIndexAtOffset(scan.lines, offset);
+		if (lineIdx < 0) continue;
+		const line = scan.lines[lineIdx];
+		if (
+			!line ||
+			line.inlineBlockId < 0 ||
+			offset < line.contentOffset ||
+			offset >= line.lineEnd
+		) {
+			continue;
+		}
+		if (!line.isTableRow) {
+			if (seenBlockIds.has(line.inlineBlockId)) continue;
+			seenBlockIds.add(line.inlineBlockId);
+			const bounds = getInlineBlockBounds(scan, lineIdx, line.inlineBlockId);
+			const from = scan.lines[bounds.groupStart]?.contentOffset ?? 0;
+			const to = scan.lines[bounds.groupEnd]?.lineEnd ?? source.length;
+			if (to > from) {
+				scopes.push({
+					from,
+					groupEnd: bounds.groupEnd,
+					groupStart: bounds.groupStart,
+					isTableCell: false,
+					to,
+				});
+			}
+			continue;
+		}
+		const cells = getCachedPhpTableRowCells(source, scan, line);
+		const cell = findTableRowCellInCells(cells, offset);
+		if (!cell || cell.end <= cell.start) continue;
+		const cellKey = `${cell.start}:${cell.end}`;
+		if (seenCells.has(cellKey)) continue;
+		seenCells.add(cellKey);
+		scopes.push({
+			from: cell.start,
+			isTableCell: true,
+			line,
+			to: cell.end,
+		});
+	}
+}
+
 /**
  * Takes sole link ownership for every PHP inline block and GFM table cell
  * touched by a display-math-broken Lezer image (both pre-math and post-math
- * fragments), and optionally for every GFM table cell containing an escaped
- * pipe `\|` outside math spans. Returns disjoint sorted original-source
- * `ownedRanges` and every exact PHP-rendered link inside them so callers can
- * exclude stale Lezer link nodes over those scopes and emit PHP's results
- * directly.
+ * fragments), optionally for every GFM table cell containing an escaped pipe
+ * `\|` outside math spans, and optionally for ordinary inline blocks and table
+ * cells containing uncovered bare GFM autolink triggers. Returns disjoint
+ * sorted original-source `ownedRanges` and every exact PHP-rendered link
+ * inside them so callers can exclude stale Lezer link nodes over those scopes
+ * and emit PHP's results directly.
  */
 export function collectPhpDisplayMathBrokenBlockLinks(
 	source: string,
@@ -414,6 +486,7 @@ export function collectPhpDisplayMathBrokenBlockLinks(
 	brokenImageRanges: ReadonlyArray<SourceRange>,
 	isReferenceDefined: (from: number, to: number) => boolean,
 	includeEscapedPipeTableCells = false,
+	bareAutolinkOffsets?: ReadonlyArray<number>,
 ): PhpOwnedBlockLinks {
 	const slices = collectNonDisplayMathSlices(
 		brokenImageRanges,
@@ -481,6 +554,17 @@ export function collectPhpDisplayMathBrokenBlockLinks(
 		collectEscapedPipeTableCells(source, scan, scopes, seenCells);
 	}
 
+	if (bareAutolinkOffsets && bareAutolinkOffsets.length > 0) {
+		collectBareAutolinkScopesInScan(
+			source,
+			scan,
+			bareAutolinkOffsets,
+			scopes,
+			seenBlockIds,
+			seenCells,
+		);
+	}
+
 	scopes.sort((left, right) => left.from - right.from || left.to - right.to);
 	const text = scan.tableCellSource ?? source;
 	const ownedRanges: SourceRange[] = [];
@@ -509,5 +593,348 @@ export function collectPhpDisplayMathBrokenBlockLinks(
 			if (link) links.push(link);
 		}
 	}
+	return { links, ownedRanges };
+}
+
+function isGfmUrlSchemeBefore(source: string, schemeEnd: number): boolean {
+	if (schemeEnd >= 4) {
+		const c0 = source.charCodeAt(schemeEnd - 4) | 0x20;
+		const c1 = source.charCodeAt(schemeEnd - 3) | 0x20;
+		const c2 = source.charCodeAt(schemeEnd - 2) | 0x20;
+		const c3 = source.charCodeAt(schemeEnd - 1) | 0x20;
+		if (0x68 === c0 && 0x74 === c1 && 0x74 === c2 && 0x70 === c3) return true;
+	}
+	if (schemeEnd >= 5) {
+		const c0 = source.charCodeAt(schemeEnd - 5) | 0x20;
+		const c1 = source.charCodeAt(schemeEnd - 4) | 0x20;
+		const c2 = source.charCodeAt(schemeEnd - 3) | 0x20;
+		const c3 = source.charCodeAt(schemeEnd - 2) | 0x20;
+		const c4 = source.charCodeAt(schemeEnd - 1) | 0x20;
+		if (
+			0x68 === c0 &&
+			0x74 === c1 &&
+			0x74 === c2 &&
+			0x70 === c3 &&
+			0x73 === c4
+		) {
+			return true;
+		}
+	}
+	if (schemeEnd >= 3) {
+		const c0 = source.charCodeAt(schemeEnd - 3) | 0x20;
+		const c1 = source.charCodeAt(schemeEnd - 2) | 0x20;
+		const c2 = source.charCodeAt(schemeEnd - 1) | 0x20;
+		if (0x66 === c0 && 0x74 === c1 && 0x70 === c2) return true;
+	}
+	return false;
+}
+
+/**
+ * Collects sorted original-source offsets of potential bare GFM autolinks
+ * (`@`, `http(s)|ftp://`, `www.`, or bare Lezer `URL` nodes) that fall outside
+ * already-owned non-bare constructs (`Link`, `Autolink`, valid `Image`, math,
+ * non-editable blocks, non-table `InlineCode`, and `LinkReference`) in strictly
+ * O(N) time so ordinary prose and dense inline-link documents do zero PHP
+ * autolink work.
+ */
+export function collectUncoveredBareAutolinkOffsets(
+	source: string,
+	projection: NewlineProjection,
+	blocks: ReadonlyArray<EditorMarkdownSourceBlock>,
+	rawLinkNodes: ReadonlyArray<ParserLinkNode>,
+	syntaxNodes: ReadonlyArray<MarkdownSyntaxNode>,
+	imageRanges: ReadonlyArray<EditorMarkdownImageRange>,
+	mathRanges: ReadonlyArray<SourceRange>,
+): number[] {
+	const covered: SourceRange[] = [];
+	for (let i = 0; i < blocks.length; i += 1) {
+		const block = blocks[i];
+		if (
+			block &&
+			("code" === block.kind ||
+				"math" === block.kind ||
+				"unavailable" === block.kind)
+		) {
+			covered.push({ from: block.from, to: block.to });
+		}
+	}
+	for (let i = 0; i < mathRanges.length; i += 1) {
+		const range = mathRanges[i];
+		if (range) covered.push({ from: range.from, to: range.to });
+	}
+	for (let i = 0; i < imageRanges.length; i += 1) {
+		const range = imageRanges[i];
+		if (range) covered.push({ from: range.from, to: range.to });
+	}
+	const bareLezerOffsets: number[] = [];
+	for (let i = 0; i < rawLinkNodes.length; i += 1) {
+		const node = rawLinkNodes[i];
+		if (!node) continue;
+		const orig = originalRange(projection, node);
+		if (
+			"autolink" === node.kind ||
+			node.reference ||
+			"[" === projection.text[node.from]
+		) {
+			covered.push(orig);
+		} else {
+			bareLezerOffsets.push(orig.from);
+		}
+	}
+	for (let i = 0; i < syntaxNodes.length; i += 1) {
+		const node = syntaxNodes[i];
+		if (!node) continue;
+		if ("InlineCode" === node.name) {
+			if (!projection.text.slice(node.from, node.to).includes("|")) {
+				covered.push(originalRange(projection, node));
+			}
+		} else if ("LinkReference" === node.name && 0 === mathRanges.length) {
+			covered.push(originalRange(projection, node));
+		}
+	}
+	const coveredRanges = mergeRanges(covered);
+	const triggers: number[] = [];
+
+	// Always include bare Lezer URL nodes outside covered ranges so false
+	// positives (e.g. `<www.example.com>`) and wrong boundaries are reconciled.
+	let covIdx = 0;
+	for (let i = 0; i < bareLezerOffsets.length; i += 1) {
+		const offset = bareLezerOffsets[i];
+		if (undefined === offset) continue;
+		while (
+			covIdx < coveredRanges.length &&
+			(coveredRanges[covIdx]?.to ?? 0) <= offset
+		) {
+			covIdx += 1;
+		}
+		const cov = coveredRanges[covIdx];
+		if (!cov || offset < cov.from) triggers.push(offset);
+	}
+
+	covIdx = 0;
+	let atPos = source.indexOf("@", 0);
+	while (atPos >= 0) {
+		while (
+			covIdx < coveredRanges.length &&
+			(coveredRanges[covIdx]?.to ?? 0) <= atPos
+		) {
+			covIdx += 1;
+		}
+		const cov = coveredRanges[covIdx];
+		if (cov && cov.from <= atPos) {
+			atPos = source.indexOf("@", cov.to);
+			continue;
+		}
+		if (
+			atPos > 0 &&
+			atPos + 3 < source.length &&
+			isGfmEmailLocalChar(source.charCodeAt(atPos - 1)) &&
+			isGfmEmailDomainFirstChar(source.charCodeAt(atPos + 1))
+		) {
+			triggers.push(atPos);
+		}
+		atPos = source.indexOf("@", atPos + 1);
+	}
+
+	covIdx = 0;
+	let schemePos = source.indexOf("://", 0);
+	while (schemePos >= 0) {
+		while (
+			covIdx < coveredRanges.length &&
+			(coveredRanges[covIdx]?.to ?? 0) <= schemePos
+		) {
+			covIdx += 1;
+		}
+		const cov = coveredRanges[covIdx];
+		if (cov && cov.from <= schemePos) {
+			schemePos = source.indexOf("://", cov.to);
+			continue;
+		}
+		if (
+			schemePos + 3 < source.length &&
+			isGfmUrlSchemeBefore(source, schemePos)
+		) {
+			triggers.push(schemePos);
+		}
+		schemePos = source.indexOf("://", schemePos + 3);
+	}
+
+	if (source.includes(".")) {
+		GFM_WWW_GLOBAL_RE.lastIndex = 0;
+		covIdx = 0;
+		let match = GFM_WWW_GLOBAL_RE.exec(source);
+		while (null !== match) {
+			const pos = match.index;
+			while (
+				covIdx < coveredRanges.length &&
+				(coveredRanges[covIdx]?.to ?? 0) <= pos
+			) {
+				covIdx += 1;
+			}
+			const cov = coveredRanges[covIdx];
+			if (cov && cov.from <= pos) {
+				GFM_WWW_GLOBAL_RE.lastIndex = cov.to;
+				match = GFM_WWW_GLOBAL_RE.exec(source);
+				continue;
+			}
+			if (pos + 4 < source.length) triggers.push(pos);
+			match = GFM_WWW_GLOBAL_RE.exec(source);
+		}
+	}
+
+	if (triggers.length <= 1) return triggers;
+	triggers.sort((left, right) => left - right);
+	const deduped: number[] = [];
+	for (let i = 0; i < triggers.length; i += 1) {
+		const value = triggers[i];
+		if (undefined !== value && value !== deduped[deduped.length - 1]) {
+			deduped.push(value);
+		}
+	}
+	return deduped;
+}
+
+/**
+ * Reconciles bare GFM autolinks against PHP `AutolinkExtension` on pipe-free,
+ * math-free documents by scanning ONLY the specific editable top-level blocks
+ * touched by `bareAutolinkOffsets` instead of scanning the full document.
+ */
+export function collectLocalPhpBareAutolinkBlockLinks(
+	source: string,
+	blocks: ReadonlyArray<EditorMarkdownSourceBlock>,
+	bareAutolinkOffsets: ReadonlyArray<number>,
+	isReferenceDefined: (from: number, to: number) => boolean,
+): PhpOwnedBlockLinks {
+	const ownedRanges: SourceRange[] = [];
+	const links: ParserLinkNode[] = [];
+	let blockIdx = 0;
+	let offsetIdx = 0;
+
+	while (offsetIdx < bareAutolinkOffsets.length) {
+		const firstOffset = bareAutolinkOffsets[offsetIdx];
+		if (undefined === firstOffset) break;
+		while (
+			blockIdx < blocks.length &&
+			(blocks[blockIdx]?.to ?? 0) <= firstOffset
+		) {
+			blockIdx += 1;
+		}
+		const block = blocks[blockIdx];
+		if (!block) break;
+		if (firstOffset < block.from) {
+			offsetIdx += 1;
+			continue;
+		}
+		// Collect all trigger offsets belonging to this single top-level block.
+		const blockStartOffsetIdx = offsetIdx;
+		while (
+			offsetIdx < bareAutolinkOffsets.length &&
+			(bareAutolinkOffsets[offsetIdx] ?? source.length) < block.to
+		) {
+			offsetIdx += 1;
+		}
+		if (
+			!block.editable ||
+			"code" === block.kind ||
+			"math" === block.kind ||
+			"unavailable" === block.kind
+		) {
+			continue;
+		}
+		const blockSlice = source.slice(block.from, block.to);
+		const blockScan = scanPhpCommonMarkBlocks(blockSlice);
+		const seenBlockIds = new Set<number>();
+		const seenExcludedLines = new Set<number>();
+		const localScopes: Array<
+			| Readonly<{
+					from: number;
+					groupEnd: number;
+					groupStart: number;
+					hasLinks: true;
+					to: number;
+			  }>
+			| Readonly<{
+					from: number;
+					hasLinks: false;
+					to: number;
+			  }>
+		> = [];
+		for (let i = blockStartOffsetIdx; i < offsetIdx; i += 1) {
+			const globalOffset = bareAutolinkOffsets[i];
+			if (undefined === globalOffset) continue;
+			const localOffset = globalOffset - block.from;
+			const lineIdx = findLineIndexAtOffset(blockScan.lines, localOffset);
+			if (lineIdx < 0) continue;
+			const line = blockScan.lines[lineIdx];
+			if (!line) continue;
+			if (line.inlineBlockId < 0) {
+				if (!seenExcludedLines.has(lineIdx) && line.lineEnd > line.lineStart) {
+					seenExcludedLines.add(lineIdx);
+					localScopes.push({
+						from: line.lineStart,
+						hasLinks: false,
+						to: line.lineEnd,
+					});
+				}
+				continue;
+			}
+			if (
+				localOffset < line.contentOffset ||
+				localOffset >= line.lineEnd ||
+				seenBlockIds.has(line.inlineBlockId)
+			) {
+				continue;
+			}
+			seenBlockIds.add(line.inlineBlockId);
+			const bounds = getInlineBlockBounds(
+				blockScan,
+				lineIdx,
+				line.inlineBlockId,
+			);
+			const from = blockScan.lines[bounds.groupStart]?.contentOffset ?? 0;
+			const to = blockScan.lines[bounds.groupEnd]?.lineEnd ?? blockSlice.length;
+			if (to > from) {
+				localScopes.push({
+					from,
+					groupEnd: bounds.groupEnd,
+					groupStart: bounds.groupStart,
+					hasLinks: true,
+					to,
+				});
+			}
+		}
+		localScopes.sort(
+			(left, right) => left.from - right.from || left.to - right.to,
+		);
+		for (let i = 0; i < localScopes.length; i += 1) {
+			const scope = localScopes[i];
+			if (!scope) continue;
+			ownedRanges.push({
+				from: block.from + scope.from,
+				to: block.from + scope.to,
+			});
+			if (!scope.hasLinks) continue;
+			const found = scanPhpInlineBlockLinks(
+				blockSlice,
+				blockScan.lines,
+				scope.groupStart,
+				scope.groupEnd,
+				(cFrom, cTo) =>
+					isReferenceDefined(block.from + cFrom, block.from + cTo),
+			);
+			for (let j = 0; j < found.length; j += 1) {
+				const link = found[j];
+				if (link) {
+					links.push({
+						from: block.from + link.from,
+						kind: link.kind,
+						reference: link.reference,
+						to: block.from + link.to,
+					});
+				}
+			}
+		}
+	}
+
 	return { links, ownedRanges };
 }

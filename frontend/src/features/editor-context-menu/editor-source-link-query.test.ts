@@ -1213,6 +1213,411 @@ describe("createEditorSourceLinkQuery", () => {
 			session.dispose();
 		}
 	});
+
+	it("avoids full-document rescans on 100k-line pipe paragraphs and preserves table-cell queries across worker-unpacked indexes (Round 33 Track A #2)", async () => {
+		const largeBlankDoc = `https://example.com | note\n\n${"z\n\n".repeat(100_000)}`;
+		const largeSingleRunDoc = `https://example.com | note\n${"z\n".repeat(100_000)}`;
+		const largeTailSingleRunDoc = `${"z\n".repeat(100_000)}https://example.com | note`;
+
+		for (const [label, doc, caret] of [
+			["100k-blank-separated", largeBlankDoc, 10],
+			["100k-single-run-head", largeSingleRunDoc, 10],
+			[
+				"100k-single-run-tail",
+				largeTailSingleRunDoc,
+				largeTailSingleRunDoc.lastIndexOf("example") + 2,
+			],
+		] as const) {
+			const built = createEditorMarkdownBlockIndex(doc);
+			const workerUnpacked = {
+				blocks: built.blocks,
+				imageBlocks: built.imageBlocks,
+				imageRanges: built.imageRanges,
+				length: built.length,
+				...(built.linkCandidates ? { linkCandidates: built.linkCandidates } : {}),
+				mathSpans: built.mathSpans,
+				source: built.source,
+			};
+			for (const [mode, idx] of [
+				["direct", built],
+				["worker-unpacked", workerUnpacked],
+			] as const) {
+				const current = binding(doc, `${label}:${mode}`, {
+					end: caret,
+					start: caret,
+				});
+				const { requestFactory, session } = createHarness({
+					render: () => new Promise(() => undefined),
+				});
+				const started = performance.now();
+				const state = session.ensure({ binding: current, blockIndex: idx });
+				const elapsed = performance.now() - started;
+				expect(state.status, `${label}:${mode}`).toBe("pending");
+				expect(elapsed, `${label}:${mode}`).toBeLessThan(250);
+				expect(
+					requestFactory.mock.calls[0]?.[0]?.markdown.startsWith(
+						"https://example.com\n\n",
+					),
+					`prefix:${label}:${mode}`,
+				).toBe(true);
+				session.dispose();
+			}
+		}
+
+		// Worker-unpacked index (`linkTableCells: undefined`) still preserves GFM table-cell
+		// unescaping and bare autolink trailing context via bounded local window scan.
+		for (const [source, needle, expectedPrefix, html0, href] of [
+			[
+				"| <https://a\\|b.com> |\n| - |",
+				"https://a",
+				"<https://a|b.com>",
+				'<p><a href="https://a%7Cb.com">https://a|b.com</a></p><p>doc</p>',
+				"https://a%7Cb.com",
+			],
+			[
+				"| <https://a\\\\|b.com> |\n| - |",
+				"https://a",
+				"<https://a\\|b.com>",
+				'<p><a href="https://a%5C%7Cb.com">https://a\\|b.com</a></p><p>doc</p>',
+				"https://a%5C%7Cb.com",
+			],
+			[
+				"![$$x$$](https://a\\|b.com?) | c\n| - | - |",
+				"https://a",
+				"https://a|b.com?)",
+				'<p><a href="https://a%7Cb.com?">https://a|b.com?</a>)</p><p>doc</p>',
+				"https://a%7Cb.com?",
+			],
+			[
+				"> | <https://a\\|b.com> |\n> | - |",
+				"https://a",
+				"<https://a|b.com>",
+				'<p><a href="https://a%7Cb.com">https://a|b.com</a></p><p>doc</p>',
+				"https://a%7Cb.com",
+			],
+			[
+				"| (https://a.com/b,) |\n| - |",
+				"a.com",
+				"https://a.com/b,)",
+				'<p><a href="https://a.com/b,">https://a.com/b,</a>)</p><p>doc</p>',
+				"https://a.com/b,",
+			],
+		] as const) {
+			const built = createEditorMarkdownBlockIndex(source);
+			const workerUnpacked = {
+				blocks: built.blocks,
+				imageBlocks: built.imageBlocks,
+				imageRanges: built.imageRanges,
+				length: built.length,
+				...(built.linkCandidates ? { linkCandidates: built.linkCandidates } : {}),
+				mathSpans: built.mathSpans,
+				source: built.source,
+			};
+			const caret = source.indexOf(needle) + 1;
+			const current = binding(source, `worker:${source}`, {
+				end: caret,
+				start: caret,
+			});
+			const { requestFactory, session } = createHarness({
+				render: async (request) => response(request.markdown, html0),
+			});
+			expect(
+				session.ensure({ binding: current, blockIndex: workerUnpacked }).status,
+				source,
+			).toBe("pending");
+			await settle();
+			expect(requestFactory.mock.calls[0]?.[0]?.markdown, source).toBe(
+				`${expectedPrefix}\n\n${source}`,
+			);
+			expect(session.peek(current), source).toEqual({
+				href,
+				status: "ready",
+			});
+			session.dispose();
+		}
+	});
+
+	it("resolves bare GFM autolinks in ordinary paragraphs/tables and UTF-8 multi-byte unbalanced parens with exact PHP href parity (Round 33 Track A #3/#4)", async () => {
+		// Verbatim `MarkdownRenderer::render_preview()` + real `kses.php` block-0 outputs.
+		const cases: ReadonlyArray<
+			Readonly<{
+				carets: ReadonlyArray<number>;
+				expectedPrefix: string;
+				href: string;
+				html0: string;
+				source: string;
+			}>
+		> = [
+			// Track A #3: ordinary paragraphs & ordinary tables without display math
+			{
+				carets: [1, 4, 6, 9],
+				expectedPrefix: "www.a@b.c_.",
+				href: "mailto:www.a@b.c_",
+				html0:
+					'<p><a href="mailto:www.a@b.c_">www.a@b.c_</a>.</p><p>doc</p>',
+				source: "www.a@b.c_.",
+			},
+			{
+				carets: [1, 6, 9],
+				expectedPrefix: "www.a@b.c-.",
+				href: "mailto:www.a@b.c-",
+				html0:
+					'<p><a href="mailto:www.a@b.c-">www.a@b.c-</a>.</p><p>doc</p>',
+				source: "www.a@b.c-.",
+			},
+			{
+				carets: [1, 6, 9],
+				expectedPrefix: "www.a@b.c..",
+				href: "mailto:www.a@b.c.",
+				html0:
+					'<p><a href="mailto:www.a@b.c.">www.a@b.c.</a>.</p><p>doc</p>',
+				source: "www.a@b.c..",
+			},
+			{
+				carets: [1, 4],
+				expectedPrefix: "www.a",
+				href: "http://www.a",
+				html0: '<p><a href="http://www.a">www.a</a></p><p>doc</p>',
+				source: "www.a@b.c_",
+			},
+			{
+				carets: [2, 10, 16],
+				expectedPrefix: "https://a.com/b,)",
+				href: "https://a.com/b,",
+				html0:
+					'<p><a href="https://a.com/b,">https://a.com/b,</a>)</p><p>doc</p>',
+				source: "(https://a.com/b,)",
+			},
+			{
+				carets: [2, 10],
+				expectedPrefix: "https://x?)",
+				href: "https://x?",
+				html0: '<p><a href="https://x?">https://x?</a>)</p><p>doc</p>',
+				source: "(https://x?)",
+			},
+			{
+				carets: [2, 16],
+				expectedPrefix: "www.example.com?)",
+				href: "http://www.example.com?",
+				html0:
+					'<p><a href="http://www.example.com?">www.example.com?</a>)</p><p>doc</p>',
+				source: "(www.example.com?)",
+			},
+			{
+				carets: [2, 19],
+				expectedPrefix: "https://example.com?)",
+				href: "https://example.com?",
+				html0:
+					'<p><a href="https://example.com?">https://example.com?</a>)</p><p>doc</p>',
+				source: "https://example.com?&amp;",
+			},
+			{
+				carets: [2, 13],
+				expectedPrefix: "https://x/))))aaaa)",
+				href: "https://x/))))",
+				html0:
+					'<p><a href="https://x/))))">https://x/))))</a>aaaa)</p><p>doc</p>',
+				source: "https://x/))))&lt;)",
+			},
+			{
+				carets: [2, 23],
+				expectedPrefix: "https://example.com?a)))aaa)",
+				href: "https://example.com?a)))",
+				html0:
+					'<p><a href="https://example.com?a)))">https://example.com?a)))</a>aaa)</p><p>doc</p>',
+				source: "https://example.com?a)))*x*)))))))",
+			},
+			{
+				carets: [3, 8],
+				expectedPrefix: "www.a@b.c_.",
+				href: "mailto:www.a@b.c_",
+				html0:
+					'<p><a href="mailto:www.a@b.c_">www.a@b.c_</a>.</p><p>doc</p>',
+				source: "| www.a@b.c_. |\n| - |",
+			},
+			{
+				carets: [5, 18],
+				expectedPrefix: "https://a.com/b,)",
+				href: "https://a.com/b,",
+				html0:
+					'<p><a href="https://a.com/b,">https://a.com/b,</a>)</p><p>doc</p>',
+				source: "| (https://a.com/b,) |\n| - |",
+			},
+			{
+				carets: [5, 12],
+				expectedPrefix: "https://x?)",
+				href: "https://x?",
+				html0: '<p><a href="https://x?">https://x?</a>)</p><p>doc</p>',
+				source: "| (https://x?) |\n| - |",
+			},
+			// Track A #4: UTF-8 multi-byte unbalanced-paren byte trimming parity
+			{
+				carets: [12, 21],
+				expectedPrefix: "https://x/a)é)",
+				href: "https://x/a)%C3%83",
+				html0:
+					'<p><a href="https://x/a)%C3%83">https://x/a)Ã</a>)</p><p>doc</p>',
+				source: "![$$x$$](https://x/a)é)",
+			},
+			{
+				carets: [12, 21],
+				expectedPrefix: "https://x/a)中)",
+				href: "https://x/a)%C3%83%C2%B8",
+				html0:
+					'<p><a href="https://x/a)%C3%83%C2%B8">https://x/a)ä¸</a>)</p><p>doc</p>',
+				source: "![$$x$$](https://x/a)中)",
+			},
+			{
+				carets: [12],
+				expectedPrefix: "https://x/a",
+				href: "https://x/a",
+				html0: '<p><a href="https://x/a">https://x/a</a></p><p>doc</p>',
+				source: "![$$x$$](https://x/a)😀)",
+			},
+			{
+				carets: [12, 21],
+				expectedPrefix: "https://x/a)𐐀)",
+				href: "https://x/a)%C3%83%C2%90%C2%90",
+				html0:
+					'<p><a href="https://x/a)%C3%83%C2%90%C2%90">https://x/a)ð  </a>)</p><p>doc</p>',
+				source: "![$$x$$](https://x/a)𐐀)",
+			},
+			{
+				carets: [4, 13],
+				expectedPrefix: "https://x/a)é)",
+				href: "https://x/a)%C3%83",
+				html0:
+					'<p><a href="https://x/a)%C3%83">https://x/a)Ã</a>)</p><p>doc</p>',
+				source: "(https://x/a)é)",
+			},
+			{
+				carets: [12],
+				expectedPrefix: "https://x/a)é&amp",
+				href: "https://x/a)%C3%A9&amp",
+				html0:
+					'<p><a href="https://x/a)%C3%A9&amp;amp">https://x/a)é&amp;amp</a></p><p>doc</p>',
+				source: "![$$x$$](https://x/a)é&amp;)",
+			},
+			{
+				carets: [12],
+				expectedPrefix: "https://x/a)é*x",
+				href: "https://x/a)%C3%A9*x",
+				html0:
+					'<p><a href="https://x/a)%C3%A9*x">https://x/a)é*x</a></p><p>doc</p>',
+				source: "![$$x$$](https://x/a)é*x*)",
+			},
+			{
+				carets: [12],
+				expectedPrefix: "https://x/aé",
+				href: "https://x/a%C3%A9",
+				html0: '<p><a href="https://x/a%C3%A9">https://x/aé</a></p><p>doc</p>',
+				source: "![$$x$$](https://x/aé)",
+			},
+			{
+				carets: [12],
+				expectedPrefix: "https://x/a))aa)",
+				href: "https://x/a))",
+				html0:
+					'<p><a href="https://x/a))">https://x/a))</a>aa)</p><p>doc</p>',
+				source: "![$$x$$](https://x/a))é)",
+			},
+			{
+				carets: [12],
+				expectedPrefix: "https://x/a))aa)",
+				href: "https://x/a))",
+				html0:
+					'<p><a href="https://x/a))">https://x/a))</a>aa)</p><p>doc</p>',
+				source: "![$$x$$](https://x/a))é))",
+			},
+			{
+				carets: [12],
+				expectedPrefix: "https://x/a))))中aaa)",
+				href: "https://x/a))))%C3%83%C2%B8",
+				html0:
+					'<p><a href="https://x/a))))%C3%83%C2%B8">https://x/a))))ä¸</a>aaa)</p><p>doc</p>',
+				source: "![$$x$$](https://x/a))))中中)",
+			},
+		];
+
+		for (const entry of cases) {
+			const blockIndex = createEditorMarkdownBlockIndex(entry.source);
+			for (const caret of entry.carets) {
+				const current = binding(entry.source, `${entry.source}@${caret}`, {
+					end: caret,
+					start: caret,
+				});
+				const { requestFactory, session } = createHarness({
+					render: async (request) => response(request.markdown, entry.html0),
+				});
+				expect(
+					session.ensure({ binding: current, blockIndex }).status,
+					`${entry.source}@${caret}`,
+				).toBe("pending");
+				await settle();
+				expect(
+					requestFactory.mock.calls[0]?.[0]?.markdown,
+					`query:${entry.source}@${caret}`,
+				).toBe(`${entry.expectedPrefix}\n\n${entry.source}`);
+				expect(session.peek(current), `result:${entry.source}@${caret}`).toEqual(
+					{
+						href: entry.href,
+						status: "ready",
+					},
+				);
+				session.dispose();
+			}
+		}
+
+		// Negative controls: masked, non-link, or trailing-punctuation carets stay `none`.
+		for (const [source, caret] of [
+			["`www.a@b.c_.`", 6],
+			["`(https://a.com/b,)`", 8],
+			["<!-- www.a@b.c_. -->", 10],
+			["<www.example.com>", 6],
+			["https://a.com/b,", 15],
+			["www.a@b.c_", 7],
+			["![$$x$$](https://x/a)é)", 22],
+			["![$$x$$](https://x/a)😀)", 21],
+		] as const) {
+			const current = binding(source, `neg:${source}@${caret}`, {
+				end: caret,
+				start: caret,
+			});
+			const { render, session } = createHarness();
+			expect(
+				session.ensure({
+					binding: current,
+					blockIndex: createEditorMarkdownBlockIndex(source),
+				}),
+				`${source}@${caret}`,
+			).toEqual({ status: "none" });
+			expect(render).not.toHaveBeenCalled();
+			session.dispose();
+		}
+
+		// Negative ownership guards for UTF-8 unbalanced-paren queries stay strict.
+		const utf8Source = "![$$x$$](https://x/a)é)";
+		for (const badHtml of [
+			'<p><a href="https://x/a)%C3%83">https://x/a)Ã</a></p><p>doc</p>',
+			'<p><a href="https://x/a)%C3%83">https://x/a)Ã</a><em>)</em></p><p>doc</p>',
+			'<p>lead <a href="https://x/a)%C3%83">https://x/a)Ã</a>)</p><p>doc</p>',
+		]) {
+			const current = binding(utf8Source, badHtml, { end: 12, start: 12 });
+			const { session } = createHarness({
+				render: async (request) => response(request.markdown, badHtml),
+			});
+			session.ensure({
+				binding: current,
+				blockIndex: createEditorMarkdownBlockIndex(utf8Source),
+			});
+			await settle();
+			expect(session.peek(current), badHtml).toEqual({
+				code: "editor-source-link-preview-ownership-invalid",
+				status: "unavailable",
+			});
+			session.dispose();
+		}
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

@@ -2794,6 +2794,106 @@ describe("readEditorCodeContent", () => {
 			links("| [foo\\|bar] |\n| - |\n\n[foo\\|bar]: https://wrong.example"),
 		).toEqual([]);
 	});
+
+	it("aligns bare GFM autolink boundaries in ordinary paragraphs and unescaped tables with PHP AutolinkExtension and tags table-cell metadata (Round 33 Track A #2/#3/#4)", () => {
+		const links = (source: string) =>
+			(createEditorMarkdownBlockIndex(source).linkCandidates ?? []).map(
+				(candidate) => ({
+					from: candidate.from,
+					kind: candidate.kind,
+					reference: candidate.reference,
+					text: source.slice(candidate.from, candidate.to),
+					to: candidate.to,
+				}),
+			);
+
+		// Ordinary paragraphs (without display math)
+		for (const [source, expectedTexts] of [
+			["www.a@b.c_.", ["www.a@b.c_"]],
+			["www.a@b.c-.", ["www.a@b.c-"]],
+			["www.a@b.c..", ["www.a@b.c."]],
+			["www.a@b.c_", ["www.a"]],
+			["(https://a.com/b,)", ["https://a.com/b,"]],
+			["(https://x?)", ["https://x?"]],
+			["(www.example.com?)", ["www.example.com?"]],
+			["https://example.com?&amp;", ["https://example.com?"]],
+			["https://x/))))&lt;)", ["https://x/))))"]],
+			["https://example.com?a)))*x*)))))))", ["https://example.com?a)))"]],
+			["(https://x/a)é)", ["https://x/a)é"]],
+			["(https://x/a)中)", ["https://x/a)中"]],
+			["(https://x/a)𐐀)", ["https://x/a)𐐀"]],
+			["https://a.com/b,", ["https://a.com/b"]],
+			["https://localhost/img", ["https://localhost/img"]],
+			["ftp://example.com/a.png", ["ftp://example.com/a.png"]],
+			["www.localhost", ["www.localhost"]],
+			["http://[::1]/a", ["http://[::1]/a"]],
+			["https://例子.测试/路径", ["https://例子.测试/路径"]],
+			["[label](https://a.com/b,)", ["[label](https://a.com/b,)"]],
+			["<https://a.com/b,>", ["<https://a.com/b,>"]],
+			["## www.a@b.c_. ##", ["www.a@b.c_"]],
+			["> (https://a.com/b,)", ["https://a.com/b,"]],
+			["- (https://x?)", ["https://x?"]],
+			[
+				"www.a@b.c_.\r\n\r\n(https://a.com/b,)\r\n\r\n(https://x/a)é)",
+				["www.a@b.c_", "https://a.com/b,", "https://x/a)é"],
+			],
+		] as const) {
+			expect(
+				links(source).map((item) => item.text),
+				source,
+			).toEqual([...expectedTexts]);
+		}
+
+		// Exact span check for `www.a@b.c_.`: `[0, 10)` covers `www.` and `a@b.c_` as one link.
+		expect(links("www.a@b.c_.")).toEqual([
+			{ from: 0, kind: "link", reference: false, text: "www.a@b.c_", to: 10 },
+		]);
+
+		// Ordinary unescaped tables (without display math or `\|`)
+		for (const [source, expectedTexts] of [
+			["| www.a@b.c_. |\n| - |", ["www.a@b.c_"]],
+			["| (https://a.com/b,) |\n| - |", ["https://a.com/b,"]],
+			["| (https://x?) |\n| - |", ["https://x?"]],
+			["| (https://x/a)é) |\n| - |", ["https://x/a)é"]],
+			[
+				"| h1 | h2 |\n| - | - |\n| (https://a.com/b,) | www.a@b.c_. |",
+				["https://a.com/b,", "www.a@b.c_"],
+			],
+		] as const) {
+			const idx = createEditorMarkdownBlockIndex(source);
+			expect(
+				(idx.linkCandidates ?? []).map((c) => source.slice(c.from, c.to)),
+				source,
+			).toEqual([...expectedTexts]);
+			expect(idx.linkTableCells?.size, `tableCells:${source}`).toBe(
+				expectedTexts.length,
+			);
+		}
+
+		// Plain paragraph containing `|` has empty `linkTableCells` metadata (O(1) non-table proof).
+		const plainPipeIdx = createEditorMarkdownBlockIndex(
+			"https://example.com | note",
+		);
+		expect(plainPipeIdx.linkCandidates?.map((c) => plainPipeIdx.source.slice(c.from, c.to))).toEqual([
+			"https://example.com",
+		]);
+		expect(plainPipeIdx.linkTableCells?.size).toBe(0);
+
+		// Negative controls stay unlinked.
+		for (const source of [
+			"`www.a@b.c_.`",
+			"`(https://a.com/b,)`",
+			"<!-- www.a@b.c_. -->",
+			"a <!-- www.a@b.c_. --> b",
+			"<www.example.com>",
+			"![alt](https://a.com/b,)",
+			"$$www.a@b.c_.$$",
+			"$www.a@b.c_.$",
+			"| h1 |\n| - |\n| 1 | www.a@b.c_. |",
+		]) {
+			expect(links(source), source).toEqual([]);
+		}
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

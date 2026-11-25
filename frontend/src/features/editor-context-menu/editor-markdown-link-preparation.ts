@@ -3,12 +3,15 @@ import type {
 	EditorMarkdownLinkCandidate,
 	EditorMarkdownSourceBlock,
 } from "../../contracts/ports/editor-block-index-port";
+import { unescapeTableCellPipes } from "../../shared/markdown/php-commonmark-block-helpers";
 import {
 	findLineAtOffset,
 	findTableRowCellInCells,
 	getCachedPhpTableRowCells,
 	inCodeRange,
+	type PhpMarkdownMathRange,
 	type ScannedMarkdownBlocks,
+	type TableRowCellRange,
 } from "../../shared/markdown/php-commonmark-block-scan";
 import { collectPhpTableCellImageRanges } from "../image-scale/image-scale-syntax";
 import {
@@ -459,27 +462,81 @@ function offsetInsideSortedRanges(
 	return false;
 }
 
-function isRangeExcludedByPhpTable(
+export type EditorMarkdownLinkTableCellContext = Readonly<{
+	cellEnd: number;
+	cellStart: number;
+	/**
+	 * Masked slice `[cellStart, cellEnd)` when PHP math masking altered the
+	 * table cell text; omitted when `source` already matches the cell text.
+	 */
+	maskedCellText?: string;
+	/**
+	 * Precomputed table-cell-unescaped query source when the candidate contains
+	 * `\|` outside PHP math spans; omitted when `source.slice(from, to)` is
+	 * already identical.
+	 */
+	unescapedSource?: string;
+}>;
+
+/**
+ * Mirrors PHP `TableParser::split()` pre-inline `\|` -> `|` unescaping over
+ * `source.slice(from, to)` while leaving math spans untouched (since PHP
+ * `MarkdownRenderer::extract_math()` extracts math before `TableParser` runs).
+ */
+export function unescapeTableCellPipesOutsideMath(
+	source: string,
+	from: number,
+	to: number,
+	mathRanges: ReadonlyArray<PhpMarkdownMathRange>,
+): string {
+	const raw = source.slice(from, to);
+	if (!raw.includes("\\|")) return raw;
+	if (0 === mathRanges.length) return unescapeTableCellPipes(raw);
+
+	const parts: string[] = [];
+	let cursor = from;
+	for (let i = 0; i < mathRanges.length; i += 1) {
+		const math = mathRanges[i];
+		if (!math || math.to <= cursor) continue;
+		if (math.from >= to) break;
+		if (math.from > cursor) {
+			parts.push(unescapeTableCellPipes(source.slice(cursor, math.from)));
+		}
+		const mathTo = Math.min(to, math.to);
+		parts.push(source.slice(Math.max(cursor, math.from), mathTo));
+		cursor = mathTo;
+	}
+	if (cursor < to) {
+		parts.push(unescapeTableCellPipes(source.slice(cursor, to)));
+	}
+	return parts.join("");
+}
+
+type PhpTableLinkCheck =
+	| Readonly<{ excluded: true }>
+	| Readonly<{ cell: TableRowCellRange | null; excluded: false }>;
+
+function checkRangeInPhpTable(
 	source: string,
 	phpBlockScan: ScannedMarkdownBlocks,
 	range: SourceRange,
 	sourceMaySplitTableImage: boolean,
 	cellImageRangesCache: Map<string, ReadonlyArray<SourceRange>>,
-): boolean {
+): PhpTableLinkCheck {
 	const startLine = findLineAtOffset(phpBlockScan.lines, range.from);
-	if (!startLine) return false;
-	if (startLine.inlineBlockId < 0) return true;
+	if (!startLine) return { cell: null, excluded: false };
+	if (startLine.inlineBlockId < 0) return { excluded: true };
 	if (!startLine.isTableRow) {
 		if (range.to > startLine.lineEnd) {
 			const endLine = findLineAtOffset(phpBlockScan.lines, range.to - 1);
-			if (endLine?.isTableRow) return true;
+			if (endLine?.isTableRow) return { excluded: true };
 		}
-		return false;
+		return { cell: null, excluded: false };
 	}
 	const cells = getCachedPhpTableRowCells(source, phpBlockScan, startLine);
 	const cell = findTableRowCellInCells(cells, range.from);
-	if (null === cell || range.to > cell.end) return true;
-	if (!sourceMaySplitTableImage) return false;
+	if (null === cell || range.to > cell.end) return { excluded: true };
+	if (!sourceMaySplitTableImage) return { cell, excluded: false };
 
 	const cellKey = `${cell.start}:${cell.end}`;
 	let cellImages = cellImageRangesCache.get(cellKey);
@@ -494,13 +551,17 @@ function isRangeExcludedByPhpTable(
 				: EMPTY_SOURCE_RANGES;
 		cellImageRangesCache.set(cellKey, cellImages);
 	}
-	return offsetInsideSortedRanges(cellImages, range.from);
+	return offsetInsideSortedRanges(cellImages, range.from)
+		? { excluded: true }
+		: { cell, excluded: false };
 }
 
 /**
  * Maps prepared link nodes onto canonical source ranges. Candidates outside
  * editable paragraph-style blocks, inside math spans, or overlapping prepared
  * image ranges stay excluded so the menu never offers link actions there.
+ * When `linkTableCellsOut` is supplied alongside `phpBlockScan`, records O(1)
+ * PHP table-cell metadata for every accepted candidate inside a PHP table row.
  */
 export function linkCandidatesForBlocks(
 	projection: NewlineProjection | null,
@@ -510,6 +571,8 @@ export function linkCandidatesForBlocks(
 	imageRanges: ReadonlyArray<EditorMarkdownImageRange>,
 	source?: string,
 	phpBlockScan?: ScannedMarkdownBlocks | null,
+	phpMathRanges?: ReadonlyArray<PhpMarkdownMathRange>,
+	linkTableCellsOut?: Map<number, EditorMarkdownLinkTableCellContext> | null,
 ): ReadonlyArray<EditorMarkdownLinkCandidate> {
 	const candidates: EditorMarkdownLinkCandidate[] = [];
 	const sourceMaySplitTableImage = Boolean(
@@ -519,6 +582,7 @@ export function linkCandidatesForBlocks(
 				source.includes("\\(")),
 	);
 	const cellImageRangesCache = new Map<string, ReadonlyArray<SourceRange>>();
+	const maskedCellCache = new Map<string, string | undefined>();
 	let blockIndex = 0;
 	let mathIndex = 0;
 	let imageIndex = 0;
@@ -540,19 +604,20 @@ export function linkCandidatesForBlocks(
 		if (!block?.editable || block.from > range.from || range.to > block.to)
 			continue;
 		if (["code", "math", "unavailable"].includes(block.kind)) continue;
-		if (
-			phpBlockScan &&
-			undefined !== source &&
-			(inCodeRange(phpBlockScan.blockCodeRanges, range.from, range.to) ||
-				isRangeExcludedByPhpTable(
-					source,
-					phpBlockScan,
-					range,
-					sourceMaySplitTableImage,
-					cellImageRangesCache,
-				))
-		) {
-			continue;
+		let tableCell: TableRowCellRange | null = null;
+		if (phpBlockScan && undefined !== source) {
+			if (inCodeRange(phpBlockScan.blockCodeRanges, range.from, range.to)) {
+				continue;
+			}
+			const check = checkRangeInPhpTable(
+				source,
+				phpBlockScan,
+				range,
+				sourceMaySplitTableImage,
+				cellImageRangesCache,
+			);
+			if (check.excluded) continue;
+			tableCell = check.cell;
 		}
 		while (
 			mathIndex < mathRanges.length &&
@@ -589,6 +654,42 @@ export function linkCandidatesForBlocks(
 			reference: node.reference,
 			to: range.to,
 		});
+		if (tableCell && linkTableCellsOut && undefined !== source && phpBlockScan) {
+			const candidateSlice = source.slice(range.from, range.to);
+			const unescaped = candidateSlice.includes("\\|")
+				? unescapeTableCellPipesOutsideMath(
+						source,
+						range.from,
+						range.to,
+						phpMathRanges ?? [],
+					)
+				: undefined;
+			let maskedCellText: string | undefined;
+			if (undefined !== phpBlockScan.tableCellSource) {
+				const cellKey = `${tableCell.start}:${tableCell.end}`;
+				if (maskedCellCache.has(cellKey)) {
+					maskedCellText = maskedCellCache.get(cellKey);
+				} else {
+					const masked = phpBlockScan.tableCellSource.slice(
+						tableCell.start,
+						tableCell.end,
+					);
+					maskedCellText =
+						masked !== source.slice(tableCell.start, tableCell.end)
+							? masked
+							: undefined;
+					maskedCellCache.set(cellKey, maskedCellText);
+				}
+			}
+			linkTableCellsOut.set(range.from, {
+				cellEnd: tableCell.end,
+				cellStart: tableCell.start,
+				...(undefined !== maskedCellText ? { maskedCellText } : {}),
+				...(undefined !== unescaped && unescaped !== candidateSlice
+					? { unescapedSource: unescaped }
+					: {}),
+			});
+		}
 	}
 	return candidates;
 }

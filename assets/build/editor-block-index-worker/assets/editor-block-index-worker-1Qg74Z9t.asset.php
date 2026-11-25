@@ -1,5 +1,5 @@
 <?php
 return array(
 	'dependencies' => array(  ),
-	'version'      => 'ff4afc530557f461',
+	'version'      => '50576547b70772fe',
 );

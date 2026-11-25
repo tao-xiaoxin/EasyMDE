@@ -3,7 +3,21 @@ import type {
 	PreviewRequestPort,
 	PreviewResponse,
 } from "../../contracts/ports/preview-request";
+import {
+	isPhpTrimChar,
+	unescapeTableCellPipes,
+} from "../../shared/markdown/php-commonmark-block-helpers";
+import {
+	findLineAtOffset,
+	findTableRowCellInCells,
+	getCachedPhpTableRowCells,
+	scanPhpCommonMarkBlocks,
+} from "../../shared/markdown/php-commonmark-block-scan";
 import { gfmAutolinkTrailingContext } from "../../shared/markdown/php-commonmark-inline-html";
+import {
+	type PhpMarkdownMathRange,
+	scanPhpMarkdownMathRanges,
+} from "../../shared/markdown/php-markdown-math-mask";
 import {
 	MAX_MARKDOWN_PREVIEW_BYTES,
 	utf8ByteLength,
@@ -203,18 +217,142 @@ function hasUnexpectedOutsideContent(
 	return !seenAnchor || trailingText !== expectedTrailingText;
 }
 
-function queryTrailingContext(
+type PreparedSourceLinkQuery = Readonly<{
+	expectedTrailingText: string;
+	queryMarkdown: string;
+}>;
+
+function isBareGfmAutolinkCandidate(
+	candidate: EditorSourceLinkCandidate,
+): boolean {
+	return (
+		"link" === candidate.kind &&
+		!candidate.reference &&
+		!candidate.source.startsWith("[")
+	);
+}
+
+function lineBoundsAt(
+	source: string,
+	offset: number,
+): Readonly<{ end: number; start: number }> {
+	let start = offset;
+	while (start > 0) {
+		const ch = source[start - 1];
+		if ("\n" === ch || "\r" === ch) break;
+		start -= 1;
+	}
+	let end = offset;
+	while (end < source.length) {
+		const ch = source[end];
+		if ("\n" === ch || "\r" === ch) break;
+		end += 1;
+	}
+	return { end, start };
+}
+
+function unescapeTableCellPipesOutsideMath(
+	source: string,
+	from: number,
+	to: number,
+	mathRanges: ReadonlyArray<PhpMarkdownMathRange>,
+): string {
+	const raw = source.slice(from, to);
+	if (!raw.includes("\\|")) return raw;
+	if (0 === mathRanges.length) return unescapeTableCellPipes(raw);
+
+	const parts: string[] = [];
+	let cursor = from;
+	for (let i = 0; i < mathRanges.length; i += 1) {
+		const math = mathRanges[i];
+		if (!math || math.to <= cursor) continue;
+		if (math.from >= to) break;
+		if (math.from > cursor) {
+			parts.push(unescapeTableCellPipes(source.slice(cursor, math.from)));
+		}
+		const mathTo = Math.min(to, math.to);
+		parts.push(source.slice(Math.max(cursor, math.from), mathTo));
+		cursor = mathTo;
+	}
+	if (cursor < to) {
+		parts.push(unescapeTableCellPipes(source.slice(cursor, to)));
+	}
+	return parts.join("");
+}
+
+function prepareSourceLinkQuery(
 	source: string,
 	candidate: EditorSourceLinkCandidate,
-): string {
-	if (
-		"link" !== candidate.kind ||
-		candidate.reference ||
-		candidate.source.startsWith("[")
-	) {
-		return "";
+): PreparedSourceLinkQuery {
+	const isBareAutolink = isBareGfmAutolinkCandidate(candidate);
+	const candidateHasEscapedPipe = candidate.source.includes("\\|");
+	const lineBounds = lineBoundsAt(source, candidate.from);
+	const lineHasPipe =
+		candidateHasEscapedPipe ||
+		source.slice(lineBounds.start, lineBounds.end).includes("|");
+
+	if (lineHasPipe && (candidateHasEscapedPipe || isBareAutolink)) {
+		const phpMathRanges = scanPhpMarkdownMathRanges(source);
+		const scan = scanPhpCommonMarkBlocks(source, phpMathRanges);
+		const line = findLineAtOffset(scan.lines, candidate.from);
+		if (line?.isTableRow) {
+			const cells = getCachedPhpTableRowCells(source, scan, line);
+			const cell = findTableRowCellInCells(cells, candidate.from);
+			if (cell && candidate.to <= cell.end) {
+				const querySource = candidateHasEscapedPipe
+					? unescapeTableCellPipesOutsideMath(
+							source,
+							candidate.from,
+							candidate.to,
+							phpMathRanges,
+						)
+					: candidate.source;
+				let expectedTrailingText = "";
+				if (isBareAutolink) {
+					const cellSource = scan.tableCellSource ?? source;
+					let cellTrimEnd = cell.end;
+					while (
+						cellTrimEnd > candidate.to &&
+						isPhpTrimChar(cellSource[cellTrimEnd - 1])
+					) {
+						cellTrimEnd -= 1;
+					}
+					const unescapedHead = unescapeTableCellPipes(
+						cellSource.slice(candidate.from, candidate.to),
+					);
+					const unescapedTail = unescapeTableCellPipes(
+						cellSource.slice(candidate.to, cellTrimEnd),
+					);
+					expectedTrailingText = gfmAutolinkTrailingContext(
+						`${unescapedHead}${unescapedTail}`,
+						0,
+						unescapedHead.length,
+					);
+				}
+				return {
+					expectedTrailingText,
+					queryMarkdown: `${querySource}${expectedTrailingText}\n\n${source}`,
+				};
+			}
+		}
 	}
-	return gfmAutolinkTrailingContext(source, candidate.from, candidate.to);
+
+	let expectedTrailingText = "";
+	if (isBareAutolink) {
+		const trailingBound = Math.min(lineBounds.end, candidate.blockTo);
+		expectedTrailingText =
+			trailingBound > candidate.to
+				? gfmAutolinkTrailingContext(
+						source.slice(candidate.from, trailingBound),
+						0,
+						candidate.to - candidate.from,
+					)
+				: "";
+	}
+	return {
+		expectedTrailingText,
+		queryMarkdown: `${candidate.source}${expectedTrailingText}\n\n${source}`,
+	};
 }
 
 function responseHref(
@@ -470,11 +608,10 @@ export function createEditorSourceLinkQuery({
 			cached = { binding, state: failed(resolution.code) };
 			return cached.state;
 		}
-		const expectedTrailingText = queryTrailingContext(
+		const { expectedTrailingText, queryMarkdown } = prepareSourceLinkQuery(
 			binding.source,
 			resolution.candidate,
 		);
-		const queryMarkdown = `${resolution.candidate.source}${expectedTrailingText}\n\n${binding.source}`;
 		if (utf8ByteLength(queryMarkdown) > MAX_EDITOR_SOURCE_LINK_QUERY_BYTES) {
 			cached = {
 				binding,

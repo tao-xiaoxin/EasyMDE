@@ -8,6 +8,7 @@ import {
 	collectBlockBacktickRuns,
 	findLineIndexAtOffset,
 	findNextBacktickRun,
+	findTableRowCellInCells,
 	getCachedPhpTableRowCells,
 	getInlineBlockBounds,
 	type ScannedMarkdownBlocks,
@@ -354,12 +355,57 @@ function collectNonDisplayMathSlices(
 	return slices;
 }
 
+function collectEscapedPipeTableCells(
+	source: string,
+	scan: ScannedMarkdownBlocks,
+	scopes: PhpOwnedInlineScope[],
+	seenCells: Set<string>,
+): void {
+	const text = scan.tableCellSource ?? source;
+	let searchPos = text.indexOf("\\|", 0);
+	while (searchPos >= 0) {
+		const lineIdx = findLineIndexAtOffset(scan.lines, searchPos);
+		if (lineIdx < 0) break;
+		const line = scan.lines[lineIdx];
+		if (!line) break;
+		if (
+			line.isTableRow &&
+			line.inlineBlockId >= 0 &&
+			searchPos >= line.contentOffset &&
+			searchPos < line.lineEnd
+		) {
+			const cells = getCachedPhpTableRowCells(source, scan, line);
+			const cell = findTableRowCellInCells(cells, searchPos);
+			if (cell && cell.end > cell.start) {
+				const cellKey = `${cell.start}:${cell.end}`;
+				if (!seenCells.has(cellKey)) {
+					seenCells.add(cellKey);
+					scopes.push({
+						from: cell.start,
+						isTableCell: true,
+						line,
+						to: cell.end,
+					});
+				}
+				searchPos = text.indexOf("\\|", cell.end);
+				continue;
+			}
+		}
+		searchPos = text.indexOf(
+			"\\|",
+			Math.max(searchPos + 2, line.nextLineStart),
+		);
+	}
+}
+
 /**
  * Takes sole link ownership for every PHP inline block and GFM table cell
  * touched by a display-math-broken Lezer image (both pre-math and post-math
- * fragments). Returns disjoint sorted original-source `ownedRanges` and every
- * exact PHP-rendered link inside them so callers can exclude stale Lezer link
- * nodes over those scopes and emit PHP's results directly.
+ * fragments), and optionally for every GFM table cell containing an escaped
+ * pipe `\|` outside math spans. Returns disjoint sorted original-source
+ * `ownedRanges` and every exact PHP-rendered link inside them so callers can
+ * exclude stale Lezer link nodes over those scopes and emit PHP's results
+ * directly.
  */
 export function collectPhpDisplayMathBrokenBlockLinks(
 	source: string,
@@ -367,6 +413,7 @@ export function collectPhpDisplayMathBrokenBlockLinks(
 	displayMathRanges: ReadonlyArray<SourceRange>,
 	brokenImageRanges: ReadonlyArray<SourceRange>,
 	isReferenceDefined: (from: number, to: number) => boolean,
+	includeEscapedPipeTableCells = false,
 ): PhpOwnedBlockLinks {
 	const slices = collectNonDisplayMathSlices(
 		brokenImageRanges,
@@ -428,6 +475,10 @@ export function collectPhpDisplayMathBrokenBlockLinks(
 				}
 			}
 		}
+	}
+
+	if (includeEscapedPipeTableCells) {
+		collectEscapedPipeTableCells(source, scan, scopes, seenCells);
 	}
 
 	scopes.sort((left, right) => left.from - right.from || left.to - right.to);

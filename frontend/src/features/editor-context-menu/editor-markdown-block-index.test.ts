@@ -2730,6 +2730,70 @@ describe("readEditorCodeContent", () => {
 		expect(manyBrokenIdx.linkCandidates).toHaveLength(1_000);
 		expect(performance.now() - tManyBroken).toBeLessThan(1_500);
 	});
+
+	it("keeps multi-line display-math-broken scanning strictly linear at 128k lines and indexes escaped-pipe GFM table links (Round 32 Track A #2/#5)", () => {
+		const largeDoc = `![$$x$$](z)\n${"abcdef\n".repeat(128_000)}`;
+		const mathRanges = scanPhpMarkdownMathRanges(largeDoc).filter(
+			(range) => range.block,
+		);
+		const scan = scanPhpCommonMarkBlocks(largeDoc, mathRanges);
+		const tDirect = performance.now();
+		const owned = collectPhpDisplayMathBrokenBlockLinks(
+			largeDoc,
+			scan,
+			mathRanges,
+			[{ from: 0, to: 11 }],
+			() => false,
+		);
+		expect(owned.links).toEqual([]);
+		expect(performance.now() - tDirect).toBeLessThan(1_500);
+
+		const tFull = performance.now();
+		const idx = createEditorMarkdownBlockIndex(largeDoc);
+		expect(idx.linkCandidates).toEqual([]);
+		expect(performance.now() - tFull).toBeLessThan(1_500);
+
+		const links = (source: string) =>
+			(createEditorMarkdownBlockIndex(source).linkCandidates ?? []).map(
+				(candidate) => ({
+					kind: candidate.kind,
+					reference: candidate.reference,
+					text: source.slice(candidate.from, candidate.to),
+				}),
+			);
+
+		expect(links("| <https://a\\|b.com> |\n| - |")).toEqual([
+			{ kind: "autolink", reference: false, text: "<https://a\\|b.com>" },
+		]);
+		expect(links("| <https://a\\\\|b.com> |\n| - |")).toEqual([
+			{ kind: "autolink", reference: false, text: "<https://a\\\\|b.com>" },
+		]);
+		expect(links("| https://example.com/a\\|b |\n| - |")).toEqual([
+			{ kind: "link", reference: false, text: "https://example.com/a" },
+		]);
+		expect(links("| https://a\\|b.com |\n| - |")).toEqual([
+			{ kind: "link", reference: false, text: "https://a\\|b.com" },
+		]);
+		expect(links("| https://a\\\\|b.com |\n| - |")).toEqual([
+			{ kind: "link", reference: false, text: "https://a" },
+		]);
+		expect(
+			links("| [foo\\|bar] |\n| - |\n\n[foo|bar]: https://pipe-ref.example"),
+		).toEqual([{ kind: "link", reference: true, text: "[foo\\|bar]" }]);
+		expect(
+			links(
+				"| [lbl][foo\\|bar] |\n| - |\n\n[foo|bar]: https://pipe-ref.example",
+			),
+		).toEqual([{ kind: "link", reference: true, text: "[lbl][foo\\|bar]" }]);
+		expect(
+			links(
+				"| [foo\\\\|bar] |\n| - |\n\n[foo\\|bar]: https://dbl-pipe-ref.example",
+			),
+		).toEqual([{ kind: "link", reference: true, text: "[foo\\\\|bar]" }]);
+		expect(
+			links("| [foo\\|bar] |\n| - |\n\n[foo\\|bar]: https://wrong.example"),
+		).toEqual([]);
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

@@ -185,6 +185,13 @@ export function matchCommonMarkAutolinkOnLine(
 const GFM_URL_AUTOLINK_PREFIX_RE = /www\.|http:\/\/|https:\/\/|ftp:\/\//gi;
 const GFM_URL_TRAILING_PUNCTUATION = "?!.,:*_~";
 const GFM_URL_START_PREFIX_RE = /^(?:https?:\/\/|ftp:\/\/|www\.)/iu;
+const GFM_EMAIL_AUTOLINK_FULL_RE =
+	/^[A-Za-z0-9.\-_+]+@[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_.]+$/;
+const GFM_URL_INERT_ENTITY_SUFFIX = "&easymde;";
+const EMPTY_GFM_AUTOLINK_STOPS: GfmAutolinkStops = {
+	emails: new Map<number, number>(),
+	urls: new Set<number>(),
+};
 const GFM_URL_AUTOLINK_RE = (() => {
 	const h = "[0-9a-f]{1,4}";
 	const v4 = "(?:25[0-5]|(?:[1-9]|1[0-9]|2[0-4])?[0-9])";
@@ -239,45 +246,75 @@ export function collectGfmAutolinkStops(
 	from: number,
 	to: number,
 ): GfmAutolinkStops {
-	const emails = new Map<number, number>();
-	const urls = new Set<number>();
+	const boundedFrom = Math.max(0, from);
+	const boundedTo = Math.min(source.length, to);
+	if (boundedFrom >= boundedTo) return EMPTY_GFM_AUTOLINK_STOPS;
 
-	let floor = from;
-	let searchPos = from;
-	while (searchPos < to) {
-		const at = source.indexOf("@", searchPos);
-		if (at < 0 || at >= to) break;
+	// Slice the line once so every `indexOf` and regex search is strictly
+	// bounded to `[from, to)` and can never walk across subsequent lines.
+	const line =
+		0 === boundedFrom && boundedTo === source.length
+			? source
+			: source.slice(boundedFrom, boundedTo);
+
+	let emails: Map<number, number> | null = null;
+	let floor = 0;
+	let searchPos = line.indexOf("@", 0);
+	while (searchPos >= 0) {
+		const at = searchPos;
 		let start = at;
-		while (start > floor && isGfmEmailLocalChar(source.charCodeAt(start - 1))) {
+		while (start > floor && isGfmEmailLocalChar(line.charCodeAt(start - 1))) {
 			start -= 1;
 		}
 		if (start < at) {
 			let pos = at + 1;
-			while (pos < to && isGfmEmailDomainFirstChar(source.charCodeAt(pos))) {
+			while (
+				pos < line.length &&
+				isGfmEmailDomainFirstChar(line.charCodeAt(pos))
+			) {
 				pos += 1;
 			}
-			if (pos > at + 1 && pos < to && 0x2e === source.charCodeAt(pos)) {
+			if (
+				pos > at + 1 &&
+				pos < line.length &&
+				0x2e === line.charCodeAt(pos)
+			) {
 				pos += 1;
 				const tailStart = pos;
-				while (pos < to && isGfmEmailDomainTailChar(source.charCodeAt(pos))) {
+				while (
+					pos < line.length &&
+					isGfmEmailDomainTailChar(line.charCodeAt(pos))
+				) {
 					pos += 1;
 				}
 				if (pos > tailStart) {
-					emails.set(start, pos);
+					if (!emails) emails = new Map<number, number>();
+					emails.set(boundedFrom + start, boundedFrom + pos);
 					floor = pos;
-					searchPos = pos;
+					searchPos = line.indexOf("@", pos);
 					continue;
 				}
 			}
 		}
-		searchPos = at + 1;
+		searchPos = line.indexOf("@", at + 1);
 	}
 
-	const line = source.slice(from, to);
-	for (const match of line.matchAll(GFM_URL_AUTOLINK_PREFIX_RE)) {
-		urls.add(from + (match.index ?? 0));
+	let urls: Set<number> | null = null;
+	if (line.includes(".") || line.includes(":")) {
+		GFM_URL_AUTOLINK_PREFIX_RE.lastIndex = 0;
+		let match = GFM_URL_AUTOLINK_PREFIX_RE.exec(line);
+		while (null !== match) {
+			if (!urls) urls = new Set<number>();
+			urls.add(boundedFrom + match.index);
+			match = GFM_URL_AUTOLINK_PREFIX_RE.exec(line);
+		}
 	}
-	return { emails, urls };
+
+	if (!emails && !urls) return EMPTY_GFM_AUTOLINK_STOPS;
+	return {
+		emails: emails ?? EMPTY_GFM_AUTOLINK_STOPS.emails,
+		urls: urls ?? EMPTY_GFM_AUTOLINK_STOPS.urls,
+	};
 }
 
 /**
@@ -349,12 +386,16 @@ export function matchGfmUrlAutolink(source: string, start: number): number {
 }
 
 /**
- * Returns the minimal trailing context right after `[from, to)` needed for
- * isolated PHP Preview ownership verification when a bare GFM URL or email
- * autolink retained trailing punctuation/suffix characters solely because
- * surrounding characters in `source` (such as `)` in `(https://x?)` or `.` in
- * `a@b.c_.`) were trimmed after punctuation/suffix checks. Returns `""` when
- * the isolated candidate already parses identically on its own.
+ * Returns the minimal inert ASCII trailing context right after `[from, to)`
+ * needed for isolated PHP Preview ownership verification when a bare GFM URL
+ * or email autolink retained trailing punctuation/suffix characters solely
+ * because surrounding characters in `source` (such as `)` in `(https://x?)`,
+ * `&amp;` in `https://example.com?&amp;`, `*x*)))))))` in
+ * `https://example.com?a)))*x*)))))))`, or `.` in `www.a@b.c_.`) were trimmed
+ * after punctuation/suffix checks. Synthesizes an inert suffix for URL
+ * autolinks so HTML entities or Markdown formatting in the stripped tail never
+ * decode or emit extra nodes in Preview. Returns `""` when the isolated
+ * candidate already parses identically on its own.
  */
 export function gfmAutolinkTrailingContext(
 	source: string,
@@ -364,26 +405,77 @@ export function gfmAutolinkTrailingContext(
 	if (from < 0 || to <= from || to >= source.length) return "";
 	const candidate = source.slice(from, to);
 	if (candidate.includes("\n") || candidate.includes("\r")) return "";
-	if (GFM_URL_START_PREFIX_RE.test(candidate)) {
-		if (matchGfmUrlAutolink(candidate, 0) === candidate.length) return "";
-		const detail = matchGfmUrlAutolinkDetail(source, from);
-		if (!detail || detail.end !== to || detail.rawEnd <= to) return "";
-		return matchGfmUrlAutolink(source.slice(from, detail.rawEnd), 0) ===
-			candidate.length
-			? source.slice(to, detail.rawEnd)
-			: "";
-	}
 	const last = candidate[candidate.length - 1];
+	// Mirror PHP `AutolinkExtension`: `EmailAutolinkParser` runs before
+	// `UrlAutolinkParser`, so `www.`-prefixed emails like `www.a@b.c_.` keep
+	// email precedence instead of falling into URL prefix checks.
 	if (
-		candidate.includes("@") &&
 		("." === last || "-" === last || "_" === last) &&
 		"." === source[to] &&
 		(to + 1 >= source.length ||
-			!isGfmEmailDomainTailChar(source.charCodeAt(to + 1)))
+			!isGfmEmailDomainTailChar(source.charCodeAt(to + 1))) &&
+		GFM_EMAIL_AUTOLINK_FULL_RE.test(`${candidate}.`)
 	) {
 		return ".";
 	}
-	return "";
+	if (!GFM_URL_START_PREFIX_RE.test(candidate)) return "";
+	if (matchGfmUrlAutolink(candidate, 0) === candidate.length) return "";
+	const detail = matchGfmUrlAutolinkDetail(source, from);
+	if (!detail || detail.end !== to || detail.rawEnd <= to) return "";
+	let diff = 0;
+	for (let i = 0; i < candidate.length; i += 1) {
+		const ch = candidate[i];
+		if (")" === ch) diff += 1;
+		else if ("(" === ch) diff -= 1;
+	}
+	const suffix =
+		")" === last && diff > 0
+			? `${"a".repeat(diff)})`
+			: 0 === diff
+				? ")"
+				: GFM_URL_INERT_ENTITY_SUFFIX;
+	return matchGfmUrlAutolink(`${candidate}${suffix}`, 0) === candidate.length
+		? suffix
+		: "";
+}
+
+function indexOfBounded(
+	source: string,
+	token: string,
+	start: number,
+	end: number,
+): number {
+	const limit = Math.min(end, source.length) - token.length;
+	if (start < 0 || start > limit) return -1;
+	const firstCode = token.charCodeAt(0);
+	if (1 === token.length) {
+		for (let i = start; i <= limit; i += 1) {
+			if (source.charCodeAt(i) === firstCode) return i;
+		}
+		return -1;
+	}
+	const secondCode = token.charCodeAt(1);
+	if (2 === token.length) {
+		for (let i = start; i <= limit; i += 1) {
+			if (
+				source.charCodeAt(i) === firstCode &&
+				source.charCodeAt(i + 1) === secondCode
+			) {
+				return i;
+			}
+		}
+		return -1;
+	}
+	for (let i = start; i <= limit; i += 1) {
+		if (
+			source.charCodeAt(i) === firstCode &&
+			source.charCodeAt(i + 1) === secondCode &&
+			source.startsWith(token, i)
+		) {
+			return i;
+		}
+	}
+	return -1;
 }
 
 function findLineBreakEnd(source: string, start: number): number {
@@ -435,8 +527,8 @@ export function matchSingleLineInlineHtmlOrAutolink(
 				return { end: start + 6, status: "ok" };
 			}
 			if (start + 4 >= guard.noCommentCloseAfter) return { status: "none" };
-			const closeIdx = source.indexOf("-->", start + 4);
-			if (closeIdx >= 0 && closeIdx + 3 <= lineEnd) {
+			const closeIdx = indexOfBounded(source, "-->", start + 4, lineEnd);
+			if (closeIdx >= 0) {
 				return { end: closeIdx + 3, status: "ok" };
 			}
 			if (hasLineBreakAfter) return { status: "needs-multiline" };
@@ -448,8 +540,8 @@ export function matchSingleLineInlineHtmlOrAutolink(
 		}
 		if (source.startsWith("<![CDATA[", start) && start + 9 <= lineEnd) {
 			if (start + 9 >= guard.noCdataCloseAfter) return { status: "none" };
-			const closeIdx = source.indexOf("]]>", start + 9);
-			if (closeIdx >= 0 && closeIdx + 3 <= lineEnd) {
+			const closeIdx = indexOfBounded(source, "]]>", start + 9, lineEnd);
+			if (closeIdx >= 0) {
 				return { end: closeIdx + 3, status: "ok" };
 			}
 			if (hasLineBreakAfter) return { status: "needs-multiline" };
@@ -460,8 +552,8 @@ export function matchSingleLineInlineHtmlOrAutolink(
 			let pos = start + 3;
 			while (pos < lineEnd && isAsciiLetter(source.charCodeAt(pos))) pos += 1;
 			if (pos >= guard.noGtAfter) return { status: "none" };
-			const gtIdx = source.indexOf(">", pos);
-			if (gtIdx >= 0 && gtIdx < lineEnd) {
+			const gtIdx = indexOfBounded(source, ">", pos, lineEnd);
+			if (gtIdx >= 0) {
 				return { end: gtIdx + 1, status: "ok" };
 			}
 			if (hasLineBreakAfter) return { status: "needs-multiline" };
@@ -474,8 +566,8 @@ export function matchSingleLineInlineHtmlOrAutolink(
 	// Processing instructions: <? ... ?>
 	if ("?" === next) {
 		if (start + 2 >= guard.noPiCloseAfter) return { status: "none" };
-		const closeIdx = source.indexOf("?>", start + 2);
-		if (closeIdx >= 0 && closeIdx + 2 <= lineEnd) {
+		const closeIdx = indexOfBounded(source, "?>", start + 2, lineEnd);
+		if (closeIdx >= 0) {
 			return { end: closeIdx + 2, status: "ok" };
 		}
 		if (hasLineBreakAfter) return { status: "needs-multiline" };
@@ -540,8 +632,8 @@ export function matchSingleLineInlineHtmlOrAutolink(
 			const noQuoteAfter =
 				'"' === valCh ? guard.noDoubleQuoteAfter : guard.noSingleQuoteAfter;
 			if (pos + 1 >= noQuoteAfter) return { status: "none" };
-			const closeIdx = source.indexOf(valCh, pos + 1);
-			if (closeIdx >= 0 && closeIdx < lineEnd) {
+			const closeIdx = indexOfBounded(source, valCh, pos + 1, lineEnd);
+			if (closeIdx >= 0) {
 				pos = closeIdx + 1;
 				noGtFloor = pos;
 				hadLeadingWs = false;
@@ -583,8 +675,8 @@ function findTokenInBlock(
 	let segIdx = startSegIdx;
 	let searchPos = startPos;
 	while (segIdx <= groupEnd) {
-		const found = source.indexOf(token, searchPos);
-		if (found < 0 || found + token.length > blockEnd) return null;
+		const found = indexOfBounded(source, token, searchPos, blockEnd);
+		if (found < 0) return null;
 		while (segIdx < groupEnd && (lines[segIdx]?.lineEnd ?? 0) <= found) {
 			segIdx += 1;
 		}

@@ -732,9 +732,9 @@ describe("createEditorSourceLinkQuery", () => {
 				source: "![$$x$$](https://a.com/a&amp;)",
 			},
 			{
-				expectedPrefix: "https://a.com/b?))",
+				expectedPrefix: "https://a.com/b?)",
 				href: "https://a.com/b?",
-				html0: '<p><a href="https://a.com/b?">https://a.com/b?</a>))</p><p>doc</p>',
+				html0: '<p><a href="https://a.com/b?">https://a.com/b?</a>)</p><p>doc</p>',
 				needle: "https://a.com/b?",
 				source: "![$$x$$](https://a.com/b?))",
 			},
@@ -831,6 +831,373 @@ describe("createEditorSourceLinkQuery", () => {
 			[
 				"![$$x$$](x<!--)a@b.c -->",
 				"![$$x$$](x<!--)a@b.c -->".indexOf("a@b.c") + 2,
+			],
+		] as const) {
+			const current = binding(source, source, { end: caret, start: caret });
+			const { render, session } = createHarness();
+			expect(
+				session.ensure({
+					binding: current,
+					blockIndex: createEditorMarkdownBlockIndex(source),
+				}),
+				source,
+			).toEqual({ status: "none" });
+			expect(render).not.toHaveBeenCalled();
+			session.dispose();
+		}
+	});
+
+	it("handles www.-prefixed emails, inert URL trailing suffixes, and GFM table-cell escaped pipes (Round 32 Track A #2/#4, Track B F2/F3/F4)", async () => {
+		// Verbatim `MarkdownRenderer::render_preview()` block-0 outputs for each query prefix.
+		const cases: ReadonlyArray<
+			Readonly<{
+				expectedCandidateSource?: string;
+				expectedPrefix: string;
+				href: string;
+				html0: string;
+				needle: string;
+				source: string;
+			}>
+		> = [
+			// Track B F2: `www.`-prefixed GFM email autolinks retain EmailAutolinkParser precedence.
+			{
+				expectedPrefix: "www.a@b.c_.",
+				href: "mailto:www.a@b.c_",
+				html0:
+					'<p><a href="mailto:www.a@b.c_">www.a@b.c_</a>.</p><p>doc</p>',
+				needle: "www.a@b.c_",
+				source: "![a](b$$x$$) www.a@b.c_.",
+			},
+			{
+				expectedPrefix: "www.a@b.c-.",
+				href: "mailto:www.a@b.c-",
+				html0:
+					'<p><a href="mailto:www.a@b.c-">www.a@b.c-</a>.</p><p>doc</p>',
+				needle: "www.a@b.c-",
+				source: "![a](b$$x$$) www.a@b.c-.",
+			},
+			{
+				expectedPrefix: "www.a@b.c..",
+				href: "mailto:www.a@b.c.",
+				html0:
+					'<p><a href="mailto:www.a@b.c.">www.a@b.c.</a>.</p><p>doc</p>',
+				needle: "www.a@b.c.",
+				source: "![a](b$$x$$) www.a@b.c..",
+			},
+			{
+				expectedPrefix: "www.a@b.c_.",
+				href: "mailto:www.a@b.c_",
+				html0:
+					'<p><a href="mailto:www.a@b.c_">www.a@b.c_</a>.</p><p>doc</p>',
+				needle: "www.a@b.c_",
+				source:
+					'| h1 | h2 |\n| - | - |\n| www.a@b.c_. ![a](/i.png "$$x$$") | c |',
+			},
+			{
+				expectedPrefix: "www.a",
+				href: "http://www.a",
+				html0: '<p><a href="http://www.a">www.a</a></p><p>doc</p>',
+				needle: "www.a",
+				source: "![a](b$$x$$) www.a@b.c_",
+			},
+			// Track A #4 + Track B F3: inert synthesized suffixes avoid entity decoding & Markdown formatting.
+			{
+				expectedPrefix: "https://x/))))aaaa)",
+				href: "https://x/))))",
+				html0:
+					'<p><a href="https://x/))))">https://x/))))</a>aaaa)</p><p>doc</p>',
+				needle: "https://x/",
+				source: "![$$x$$](z) https://x/))))&lt;)",
+			},
+			{
+				expectedPrefix: "https://example.com?)",
+				href: "https://example.com?",
+				html0:
+					'<p><a href="https://example.com?">https://example.com?</a>)</p><p>doc</p>',
+				needle: "example.com",
+				source: "![a](b$$x$$) https://example.com?&amp;",
+			},
+			{
+				expectedPrefix: "https://example.com?)",
+				href: "https://example.com?",
+				html0:
+					'<p><a href="https://example.com?">https://example.com?</a>)</p><p>doc</p>',
+				needle: "example.com",
+				source: "![a](b$$x$$) https://example.com?&lt;",
+			},
+			{
+				expectedPrefix: "https://example.com?)",
+				href: "https://example.com?",
+				html0:
+					'<p><a href="https://example.com?">https://example.com?</a>)</p><p>doc</p>',
+				needle: "example.com",
+				source: "![a](b$$x$$) https://example.com?&copy;",
+			},
+			{
+				expectedPrefix: "https://example.com?)",
+				href: "https://example.com?",
+				html0:
+					'<p><a href="https://example.com?">https://example.com?</a>)</p><p>doc</p>',
+				needle: "example.com",
+				source:
+					'| h1 | h2 |\n| - | - |\n| https://example.com?&amp; ![a](/i.png "$$x$$") | c |',
+			},
+			{
+				expectedPrefix: "https://example.com?a)))aaa)",
+				href: "https://example.com?a)))",
+				html0:
+					'<p><a href="https://example.com?a)))">https://example.com?a)))</a>aaa)</p><p>doc</p>',
+				needle: "example.com",
+				source: "![a](b$$x$$) https://example.com?a)))*x*)))))))",
+			},
+			{
+				expectedPrefix: "https://example.com/(a?&easymde;",
+				href: "https://example.com/(a?",
+				html0:
+					'<p><a href="https://example.com/(a?">https://example.com/(a?</a>&amp;easymde;</p><p>doc</p>',
+				needle: "example.com",
+				source: "![a](b$$x$$) https://example.com/(a?&amp;",
+			},
+			{
+				expectedPrefix: "https://example.com/a)?&easymde;",
+				href: "https://example.com/a)?",
+				html0:
+					'<p><a href="https://example.com/a)?">https://example.com/a)?</a>&amp;easymde;</p><p>doc</p>',
+				needle: "example.com",
+				source: "![a](b$$x$$) https://example.com/a)?&amp;",
+			},
+			// Track A #2 + Track B F4: GFM table-cell `\|` and `\\|` unescaping in Preview queries.
+			{
+				expectedCandidateSource: "<https://a\\|b.com>",
+				expectedPrefix: "<https://a|b.com>",
+				href: "https://a%7Cb.com",
+				html0:
+					'<p><a href="https://a%7Cb.com">https://a|b.com</a></p><p>doc</p>',
+				needle: "https://a",
+				source: "![$$x$$](<https://a\\|b.com>) | c\n| - | - |",
+			},
+			{
+				expectedCandidateSource: "<https://example.com/a\\|b>",
+				expectedPrefix: "<https://example.com/a|b>",
+				href: "https://example.com/a%7Cb",
+				html0:
+					'<p><a href="https://example.com/a%7Cb">https://example.com/a|b</a></p><p>doc</p>',
+				needle: "example.com",
+				source:
+					'| h1 | h2 |\n| - | - |\n| <https://example.com/a\\|b> ![a](/i.png "$$x$$") | c |',
+			},
+			{
+				expectedCandidateSource: "[foo\\|bar]",
+				expectedPrefix: "[foo|bar]",
+				href: "https://pipe-ref.example",
+				html0:
+					'<p><a href="https://pipe-ref.example">foo|bar</a></p><p>doc</p>',
+				needle: "foo",
+				source:
+					'| h1 | h2 |\n| - | - |\n| [foo\\|bar] ![a](/i.png "$$x$$") | c |\n\n[foo|bar]: https://pipe-ref.example',
+			},
+			{
+				expectedCandidateSource: "[lbl][foo\\|bar]",
+				expectedPrefix: "[lbl][foo|bar]",
+				href: "https://pipe-ref.example",
+				html0: '<p><a href="https://pipe-ref.example">lbl</a></p><p>doc</p>',
+				needle: "lbl",
+				source:
+					'| h1 | h2 |\n| - | - |\n| [lbl][foo\\|bar] ![a](/i.png "$$x$$") | c |\n\n[foo|bar]: https://pipe-ref.example',
+			},
+			{
+				expectedCandidateSource: "https://a\\|b.com",
+				expectedPrefix: "https://a|b.com",
+				href: "https://a%7Cb.com",
+				html0:
+					'<p><a href="https://a%7Cb.com">https://a|b.com</a></p><p>doc</p>',
+				needle: "https://a",
+				source: "![$$x$$](https://a\\|b.com) | c\n| - | - |",
+			},
+			{
+				expectedCandidateSource: "https://example.com/a",
+				expectedPrefix: "https://example.com/a",
+				href: "https://example.com/a",
+				html0:
+					'<p><a href="https://example.com/a">https://example.com/a</a></p><p>doc</p>',
+				needle: "example.com",
+				source: "| https://example.com/a\\|b |\n| - |",
+			},
+			{
+				expectedCandidateSource: "<https://a\\|b.com>",
+				expectedPrefix: "<https://a|b.com>",
+				href: "https://a%7Cb.com",
+				html0:
+					'<p><a href="https://a%7Cb.com">https://a|b.com</a></p><p>doc</p>',
+				needle: "https://a",
+				source: "| <https://a\\|b.com> |\n| - |",
+			},
+			{
+				expectedCandidateSource: "[foo\\|bar]",
+				expectedPrefix: "[foo|bar]",
+				href: "https://pipe-ref.example",
+				html0:
+					'<p><a href="https://pipe-ref.example">foo|bar</a></p><p>doc</p>',
+				needle: "foo",
+				source: "| [foo\\|bar] |\n| - |\n\n[foo|bar]: https://pipe-ref.example",
+			},
+			{
+				expectedCandidateSource: "[lbl](https://example.com/a\\|b)",
+				expectedPrefix: "[lbl](https://example.com/a|b)",
+				href: "https://example.com/a%7Cb",
+				html0:
+					'<p><a href="https://example.com/a%7Cb">lbl</a></p><p>doc</p>',
+				needle: "lbl",
+				source: "| [lbl](https://example.com/a\\|b) |\n| - |",
+			},
+			{
+				expectedCandidateSource: "<https://a\\\\|b.com>",
+				expectedPrefix: "<https://a\\|b.com>",
+				href: "https://a%5C%7Cb.com",
+				html0:
+					'<p><a href="https://a%5C%7Cb.com">https://a\\|b.com</a></p><p>doc</p>',
+				needle: "https://a",
+				source: "| <https://a\\\\|b.com> |\n| - |",
+			},
+			{
+				expectedCandidateSource: "[lbl](https://example.com/a\\\\|b)",
+				expectedPrefix: "[lbl](https://example.com/a\\|b)",
+				href: "https://example.com/a%7Cb",
+				html0:
+					'<p><a href="https://example.com/a%7Cb">lbl</a></p><p>doc</p>',
+				needle: "lbl",
+				source: "| [lbl](https://example.com/a\\\\|b) |\n| - |",
+			},
+			{
+				expectedCandidateSource: "https://a",
+				expectedPrefix: "https://a",
+				href: "https://a",
+				html0: '<p><a href="https://a">https://a</a></p><p>doc</p>',
+				needle: "https://a",
+				source: "| https://a\\\\|b.com |\n| - |",
+			},
+			{
+				expectedCandidateSource: "[foo\\\\|bar]",
+				expectedPrefix: "[foo\\|bar]",
+				href: "https://dbl-pipe-ref.example",
+				html0:
+					'<p><a href="https://dbl-pipe-ref.example">foo|bar</a></p><p>doc</p>',
+				needle: "foo",
+				source:
+					"| [foo\\\\|bar] |\n| - |\n\n[foo\\|bar]: https://dbl-pipe-ref.example",
+			},
+			{
+				expectedCandidateSource: "https://a\\|b.com?",
+				expectedPrefix: "https://a|b.com?)",
+				href: "https://a%7Cb.com?",
+				html0:
+					'<p><a href="https://a%7Cb.com?">https://a|b.com?</a>)</p><p>doc</p>',
+				needle: "https://a",
+				source: "![$$x$$](https://a\\|b.com?) | c\n| - | - |",
+			},
+			{
+				expectedCandidateSource: "<https://a\\|b.com>",
+				expectedPrefix: "<https://a|b.com>",
+				href: "https://a%7Cb.com",
+				html0:
+					'<p><a href="https://a%7Cb.com">https://a|b.com</a></p><p>doc</p>',
+				needle: "https://a",
+				source: "> | <https://a\\|b.com> |\n> | - |",
+			},
+			// Non-table paragraph keeps `\|` untouched.
+			{
+				expectedCandidateSource: "<https://a\\|b.com>",
+				expectedPrefix: "<https://a\\|b.com>",
+				href: "https://a%5C%7Cb.com",
+				html0:
+					'<p><a href="https://a%5C%7Cb.com">https://a\\|b.com</a></p><p>doc</p>',
+				needle: "https://a",
+				source: "<https://a\\|b.com>",
+			},
+		];
+
+		for (const entry of cases) {
+			const caret = entry.source.indexOf(entry.needle) + 1;
+			const current = binding(entry.source, entry.source, {
+				end: caret,
+				start: caret,
+			});
+			const { requestFactory, session } = createHarness({
+				render: async (request) => response(request.markdown, entry.html0),
+			});
+			expect(
+				session.ensure({
+					binding: current,
+					blockIndex: createEditorMarkdownBlockIndex(entry.source),
+				}).status,
+				entry.source,
+			).toBe("pending");
+			await settle();
+			const call = requestFactory.mock.calls[0]?.[0];
+			expect(call?.markdown, `query:${entry.source}`).toBe(
+				`${entry.expectedPrefix}\n\n${entry.source}`,
+			);
+			if (undefined !== entry.expectedCandidateSource) {
+				expect(call?.candidate.source, `candidate:${entry.source}`).toBe(
+					entry.expectedCandidateSource,
+				);
+			}
+			expect(session.peek(current), `result:${entry.source}`).toEqual({
+				href: entry.href,
+				status: "ready",
+			});
+			session.dispose();
+		}
+
+		// Ownership rejection stays strict for synthesized `aaaa)` and `&easymde;` suffixes.
+		for (const [source, needle, badHtml] of [
+			[
+				"![$$x$$](z) https://x/))))&lt;)",
+				"https://x/",
+				'<p><a href="https://x/))))">https://x/))))</a>&lt;)</p><p>doc</p>',
+			],
+			[
+				"![$$x$$](z) https://x/))))&lt;)",
+				"https://x/",
+				'<p><a href="https://x/))))">https://x/))))</a><em>aaaa)</em></p><p>doc</p>',
+			],
+			[
+				"![a](b$$x$$) https://example.com/(a?&amp;",
+				"example.com",
+				'<p><a href="https://example.com/(a?">https://example.com/(a?</a>&amp;</p><p>doc</p>',
+			],
+		] as const) {
+			const caret = source.indexOf(needle) + 1;
+			const current = binding(source, `${source}:${badHtml}`, {
+				end: caret,
+				start: caret,
+			});
+			const { session } = createHarness({
+				render: async (request) => response(request.markdown, badHtml),
+			});
+			session.ensure({
+				binding: current,
+				blockIndex: createEditorMarkdownBlockIndex(source),
+			});
+			await settle();
+			expect(session.peek(current), badHtml).toEqual({
+				code: "editor-source-link-preview-ownership-invalid",
+				status: "unavailable",
+			});
+			session.dispose();
+		}
+
+		// Non-matching escaped-pipe table ref and caret past unescaped pipe in path URL stay `none`.
+		for (const [source, caret] of [
+			[
+				"| [foo\\|bar] |\n| - |\n\n[foo\\|bar]: https://wrong.example",
+				"| [foo\\|bar] |\n| - |\n\n[foo\\|bar]: https://wrong.example".indexOf(
+					"foo",
+				) + 1,
+			],
+			[
+				"| https://example.com/a\\|b |\n| - |",
+				"| https://example.com/a\\|b |\n| - |".indexOf("|b") + 1,
 			],
 		] as const) {
 			const current = binding(source, source, { end: caret, start: caret });

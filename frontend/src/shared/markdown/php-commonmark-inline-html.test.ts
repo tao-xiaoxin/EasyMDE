@@ -358,7 +358,7 @@ describe("canonical PHP CommonMark table-separator and autolink exports (Round 3
 			["(https://a.com/x!)", "https://a.com/x!", ")"],
 			["(www.example.com?)", "www.example.com?", ")"],
 			["(https://a.com/a&amp;)", "https://a.com/a&amp;", ")"],
-			["![$$x$$](https://a.com/b?))", "https://a.com/b?", "))"],
+			["![$$x$$](https://a.com/b?))", "https://a.com/b?", ")"],
 			["![$$x$$](https://example.)", "https://example", ""],
 			["![$$x$$](https://x!)", "https://x", ""],
 			["![$$x$$](https://a.com/(x)))", "https://a.com/(x)", ""],
@@ -370,6 +370,23 @@ describe("canonical PHP CommonMark table-separator and autolink exports (Round 3
 			["![$$x$$](a@b.c..)", "a@b.c.", "."],
 			["a@b.c_.x", "a@b.c_", ""],
 			["a@b.c_", "a@b.c_", ""],
+			// Round 32 Track B F2: `www.`-prefixed GFM emails preserve EmailAutolinkParser precedence.
+			["![a](b$$x$$) www.a@b.c_.", "www.a@b.c_", "."],
+			["![a](b$$x$$) www.a@b.c-.", "www.a@b.c-", "."],
+			["![a](b$$x$$) www.a@b.c..", "www.a@b.c.", "."],
+			["![a](b$$x$$) (www.a@b.c_.)", "www.a@b.c_", "."],
+			["![a](b$$x$$) www.a@b.c.", "www.a@b.c", ""],
+			["![a](b$$x$$) www.a@b.c_", "www.a", ""],
+			["![a](b$$x$$) (www.example.com/a@b.c_.)", "www.example.com/a@b.c_.", ")"],
+			// Round 32 Track A #4 + Track B F3: synthesize inert suffixes instead of echoing entities/formatting.
+			["![$$x$$](z) https://x/))))&lt;)", "https://x/))))", "aaaa)"],
+			["![a](b$$x$$) https://example.com?&amp;", "https://example.com?", ")"],
+			["![a](b$$x$$) https://example.com?&lt;", "https://example.com?", ")"],
+			["![a](b$$x$$) https://example.com?&copy;", "https://example.com?", ")"],
+			["![a](b$$x$$) https://example.com?a)))*x*)))))))", "https://example.com?a)))", "aaa)"],
+			["![a](b$$x$$) https://example.com/(a?&amp;", "https://example.com/(a?", "&easymde;"],
+			["![a](b$$x$$) https://example.com/a)?&amp;", "https://example.com/a)?", "&easymde;"],
+			["![a](b$$x$$) https://a.com/a&amp;&lt;", "https://a.com/a&amp;", ")"],
 		] as const) {
 			const from = source.indexOf(candidate);
 			expect(
@@ -377,6 +394,61 @@ describe("canonical PHP CommonMark table-separator and autolink exports (Round 3
 				`${source} :: ${candidate}`,
 			).toBe(expected);
 		}
+	});
+
+	it("bounds collectGfmAutolinkStops and inline-HTML token searches strictly to line/block slices in linear time (Round 32 Track A #5)", () => {
+		const multiLine = `![$$x$$](z)\n${"abcdef\n".repeat(128_000)}`;
+		const started = performance.now();
+		let offset = 0;
+		let lineCount = 0;
+		let emailStops = 0;
+		let urlStops = 0;
+		while (offset < multiLine.length) {
+			const nl = multiLine.indexOf("\n", offset);
+			const end = nl < 0 ? multiLine.length : nl;
+			const stops = collectGfmAutolinkStops(multiLine, offset, end);
+			emailStops += stops.emails.size;
+			urlStops += stops.urls.size;
+			lineCount += 1;
+			offset = end + 1;
+		}
+		const elapsed = performance.now() - started;
+		expect(lineCount).toBe(128_001);
+		expect(emailStops).toBe(0);
+		expect(urlStops).toBe(0);
+		expect(elapsed).toBeLessThan(1_500);
+
+		// Sub-slice never leaks `@` or URL prefix stops past `to`.
+		const bounded = collectGfmAutolinkStops("abcdef a@b.c https://x.test", 0, 6);
+		expect(bounded.emails.size).toBe(0);
+		expect(bounded.urls.size).toBe(0);
+
+		// Many disjoint unclosed inline-HTML blocks never scan into the rest of the document.
+		const manyHtmlBlocks = `${"<!-- x\n\n".repeat(12_000)}tail`;
+		const htmlScan = scanPhpCommonMarkBlocks(manyHtmlBlocks);
+		const htmlStart = performance.now();
+		let htmlMatches = 0;
+		for (let i = 0; i < htmlScan.lines.length; i += 1) {
+			const seg = htmlScan.lines[i];
+			if (!seg || "<" !== manyHtmlBlocks[seg.contentOffset]) continue;
+			const guard = createInlineHtmlScanGuard();
+			if (
+				null !==
+				matchBlockInlineHtmlOrAutolink(
+					manyHtmlBlocks,
+					htmlScan.lines,
+					i,
+					seg.contentOffset,
+					i,
+					guard,
+				)
+			) {
+				htmlMatches += 1;
+			}
+		}
+		const htmlElapsed = performance.now() - htmlStart;
+		expect(htmlMatches).toBe(0);
+		expect(htmlElapsed).toBeLessThan(1_500);
 	});
 
 	it("skips leading tabs on paragraph continuation lines while keeping same-line tabs rejected (Round 31 Track B F9)", () => {

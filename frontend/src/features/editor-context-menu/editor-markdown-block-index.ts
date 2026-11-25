@@ -664,11 +664,13 @@ export function createEditorMarkdownBlockIndex(
 			: phpMathRanges;
 	const blocks = overlayMath(source, parsed.blocks, ranges, starts, []);
 	const hasTableImageCandidate = source.includes("|") && source.includes("![");
+	const hasEscapedPipe = source.includes("\\|");
 	const phpBlockScan =
 		(source.includes("|") || phpMathRanges.length > 0) &&
 		(parsed.imageNodes.length > 0 ||
 			parsed.hasLinkSyntax ||
-			hasTableImageCandidate)
+			hasTableImageCandidate ||
+			hasEscapedPipe)
 			? scanPhpCommonMarkBlocks(source, phpMathRanges)
 			: null;
 	const sortedLezerImages = [...parsed.imageNodes].sort(
@@ -734,20 +736,26 @@ export function createEditorMarkdownBlockIndex(
 			)
 		: [];
 	const phpOwnedLinks =
-		phpBlockScan && images.displayMathBrokenImageRanges.length > 0
+		phpBlockScan &&
+		(images.displayMathBrokenImageRanges.length > 0 || hasEscapedPipe)
 			? collectPhpDisplayMathBrokenBlockLinks(
 					source,
 					phpBlockScan,
 					displayMathRanges,
 					images.displayMathBrokenImageRanges,
 					isReferenceRangeDefined,
+					hasEscapedPipe,
 				)
 			: null;
-	const linkNodes = phpOwnedLinks
+	const activePhpOwnedLinks =
+		phpOwnedLinks && phpOwnedLinks.ownedRanges.length > 0
+			? phpOwnedLinks
+			: null;
+	const linkNodes = activePhpOwnedLinks
 		? mergeOriginalLinkNodesWithPhpOwned(
 				projection,
 				rawLinkNodes,
-				phpOwnedLinks,
+				activePhpOwnedLinks,
 			)
 		: rawLinkNodes;
 	return {
@@ -756,7 +764,7 @@ export function createEditorMarkdownBlockIndex(
 		imageRanges: images.imageRanges,
 		length: source.length,
 		linkCandidates: linkCandidatesForBlocks(
-			phpOwnedLinks ? null : projection,
+			activePhpOwnedLinks ? null : projection,
 			blocks,
 			linkNodes,
 			ranges,

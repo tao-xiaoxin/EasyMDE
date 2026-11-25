@@ -7,6 +7,7 @@ import {
 	parseMarkdownImageScale,
 } from "../image-scale/image-scale-contract";
 import {
+	findLineAtOffset,
 	getCachedMarkdownBlockScan,
 	type ScannedMarkdownBlocks,
 } from "../image-scale/image-scale-markdown-scan";
@@ -106,6 +107,28 @@ function lineStartOffset(source: string, offset: number): number {
 		cursor -= 1;
 	}
 	return cursor;
+}
+
+function parseSingleLineImageMatch(
+	source: string,
+	from: number,
+	to: number,
+	blockEnd: number,
+	rawSlice: string,
+): MarkdownImageScaleMatch | null {
+	let singleLineSliceEnd = to;
+	const maxSliceEnd = Math.min(blockEnd, to + 4);
+	while (
+		singleLineSliceEnd < maxSliceEnd &&
+		"\n" !== source[singleLineSliceEnd] &&
+		"\r" !== source[singleLineSliceEnd]
+	) {
+		singleLineSliceEnd += 1;
+	}
+	const singleLineSlice =
+		singleLineSliceEnd > to ? source.slice(from, singleLineSliceEnd) : rawSlice;
+	const parsed = parseMarkdownImageScale(singleLineSlice);
+	return parsed && parsed.end === to - from ? shiftedImage(parsed, from) : null;
 }
 
 function shiftedImage(
@@ -288,6 +311,8 @@ export async function hydrateGeneratedImageTargetIndex(
 	const blockImages: Array<GeneratedImageTargetIndex["blockImages"][number]> =
 		[];
 	const images: MarkdownImageScaleMatch[] = [];
+	const sourceHasPipe = input.source.includes("|");
+	let docBlocks: ScannedMarkdownBlocks | null = null;
 	for (let blockIndex = 0; blockIndex < input.blocks.length; blockIndex += 1) {
 		await hydrationCheckpoint(budget);
 		const block = input.blocks[blockIndex];
@@ -309,21 +334,6 @@ export async function hydrateGeneratedImageTargetIndex(
 				slice: string;
 				start: number;
 			}> | null = null;
-			const pipeIndex =
-				metadata.count > 0 && "table" !== block.kind
-					? input.source.indexOf("|", block.from)
-					: -1;
-			const blockHasPipe = pipeIndex >= 0 && pipeIndex < block.to;
-			let blockHasLineBreak = false;
-			if (blockHasPipe) {
-				const lfIndex = input.source.indexOf("\n", block.from);
-				const crIndex = input.source.indexOf("\r", block.from);
-				blockHasLineBreak =
-					(lfIndex >= 0 && lfIndex < block.to) ||
-					(crIndex >= 0 && crIndex < block.to);
-			}
-			const blockMayContainTable =
-				"table" === block.kind || (blockHasPipe && blockHasLineBreak);
 			for (
 				let imageOffset = 0;
 				imageOffset < metadata.count;
@@ -349,24 +359,33 @@ export async function hydrateGeneratedImageTargetIndex(
 						const isMultiline =
 							rawSlice.includes("\n") || rawSlice.includes("\r");
 						let image: MarkdownImageScaleMatch | null = null;
-						if (!isMultiline && !blockMayContainTable) {
-							let singleLineSliceEnd = range.to;
-							const maxSliceEnd = Math.min(block.to, range.to + 4);
-							while (
-								singleLineSliceEnd < maxSliceEnd &&
-								"\n" !== input.source[singleLineSliceEnd] &&
-								"\r" !== input.source[singleLineSliceEnd]
-							) {
-								singleLineSliceEnd += 1;
+						if (sourceHasPipe) {
+							if (null === docBlocks) {
+								docBlocks = getCachedMarkdownBlockScan(input.source);
 							}
-							const singleLineSlice =
-								singleLineSliceEnd > range.to
-									? input.source.slice(range.from, singleLineSliceEnd)
-									: rawSlice;
-							const parsed = parseMarkdownImageScale(singleLineSlice);
-							if (parsed && parsed.end === range.to - range.from) {
-								image = shiftedImage(parsed, range.from);
-							}
+							const line = findLineAtOffset(docBlocks.lines, range.from);
+							image =
+								!isMultiline &&
+								line &&
+								!line.isTableRow &&
+								line.inlineBlockId >= 0 &&
+								range.to <= line.lineEnd
+									? parseSingleLineImageMatch(
+											input.source,
+											range.from,
+											range.to,
+											block.to,
+											rawSlice,
+										)
+									: parseMarkdownImageScale(input.source, range.from, docBlocks);
+						} else if (!isMultiline) {
+							image = parseSingleLineImageMatch(
+								input.source,
+								range.from,
+								range.to,
+								block.to,
+								rawSlice,
+							);
 						} else {
 							if (null === blockContext) {
 								const contextStart = lineStartOffset(input.source, block.from);

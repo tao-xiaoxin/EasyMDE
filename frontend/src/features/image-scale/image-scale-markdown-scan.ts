@@ -214,7 +214,7 @@ export function resolveInlineScanScope(
   if (!line || line.inlineBlockId < 0) return null;
   if (line.isTableRow) {
     const cell = findTableRowCellAt(
-      source,
+      blocks.tableCellSource ?? source,
       line.contentOffset,
       line.lineEnd,
       offset,

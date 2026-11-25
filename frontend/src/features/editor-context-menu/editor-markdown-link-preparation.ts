@@ -4,9 +4,11 @@ import type {
 	EditorMarkdownSourceBlock,
 } from "../../contracts/ports/editor-block-index-port";
 import {
+	findLineAtOffset,
 	isRangeDroppedByPhpTable,
 	type ScannedMarkdownBlocks,
 } from "../../shared/markdown/php-commonmark-block-scan";
+import { findMarkdownImageCoreAt } from "../image-scale/image-scale-syntax";
 import {
 	originalRange,
 	type NewlineProjection,
@@ -384,6 +386,19 @@ export function renderedReferenceLinkBodies(
 	});
 }
 
+function isInsidePhpTableImageWithEscapedPipe(
+	source: string,
+	phpBlockScan: ScannedMarkdownBlocks,
+	from: number,
+	to: number,
+): boolean {
+	const line = findLineAtOffset(phpBlockScan.lines, from);
+	if (!line?.isTableRow) return false;
+	const lineText = source.slice(line.contentOffset, line.lineEnd);
+	if (!lineText.includes("\\\\|") || !lineText.includes("![")) return false;
+	return null !== findMarkdownImageCoreAt(source, from, to, phpBlockScan);
+}
+
 /**
  * Maps prepared link nodes onto canonical source ranges. Candidates outside
  * editable paragraph-style blocks, inside math spans, or overlapping prepared
@@ -399,6 +414,7 @@ export function linkCandidatesForBlocks(
 	phpBlockScan?: ScannedMarkdownBlocks | null,
 ): ReadonlyArray<EditorMarkdownLinkCandidate> {
 	const candidates: EditorMarkdownLinkCandidate[] = [];
+	const sourceHasDoubleBackslashPipe = Boolean(source?.includes("\\\\|"));
 	let blockIndex = 0;
 	let mathIndex = 0;
 	let imageIndex = 0;
@@ -423,7 +439,14 @@ export function linkCandidatesForBlocks(
 		if (
 			phpBlockScan &&
 			undefined !== source &&
-			isRangeDroppedByPhpTable(source, phpBlockScan, range.from, range.to)
+			(isRangeDroppedByPhpTable(source, phpBlockScan, range.from, range.to) ||
+				(sourceHasDoubleBackslashPipe &&
+					isInsidePhpTableImageWithEscapedPipe(
+						source,
+						phpBlockScan,
+						range.from,
+						range.to,
+					)))
 		) {
 			continue;
 		}

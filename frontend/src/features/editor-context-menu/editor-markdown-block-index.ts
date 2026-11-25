@@ -369,32 +369,6 @@ function parserSnapshot(
 	};
 }
 
-function phpTableScanSource(
-	source: string,
-	ranges: ReadonlyArray<Readonly<{ block: boolean; from: number; to: number }>>,
-): string {
-	let hasDisplayMath = false;
-	for (const range of ranges) {
-		if (range.block) {
-			hasDisplayMath = true;
-			break;
-		}
-	}
-	if (!hasDisplayMath) return source;
-	const parts: string[] = [];
-	let cursor = 0;
-	for (const range of ranges) {
-		if (!range.block) continue;
-		const from = Math.max(cursor, range.from);
-		const to = Math.min(source.length, range.to);
-		if (from > cursor) parts.push(source.slice(cursor, from));
-		if (to > from) parts.push("\n".repeat(to - from));
-		cursor = Math.max(cursor, to);
-	}
-	if (cursor < source.length) parts.push(source.slice(cursor));
-	return parts.join("");
-}
-
 function imageIndexForBlocks(
 	source: string,
 	blocks: ReadonlyArray<EditorMarkdownSourceBlock>,
@@ -508,7 +482,7 @@ export function createEditorMarkdownBlockIndex(
 	const phpBlockScan =
 		source.includes("|") &&
 		(parsed.imageNodes.length > 0 || parsed.linkNodes.length > 0)
-			? scanPhpCommonMarkBlocks(phpTableScanSource(source, ranges))
+			? scanPhpCommonMarkBlocks(source, ranges)
 			: null;
 	const images = imageIndexForBlocks(
 		source,

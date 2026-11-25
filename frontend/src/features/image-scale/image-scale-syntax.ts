@@ -717,11 +717,11 @@ export function parseImageCore(
 export function findMarkdownImageCoreAt(
   source: string,
   selectionStart: number,
-  selectionEnd: number
+  selectionEnd: number,
+  precomputedBlocks?: ScannedMarkdownBlocks
 ): LocatedMarkdownImageCore | null {
   if (source.lastIndexOf('![', selectionStart) < 0) return null;
-
-  const blocks = getCachedMarkdownBlockScan(source);
+  const blocks = precomputedBlocks ?? getCachedMarkdownBlockScan(source);
   const selLineIdx = findLineIndexAtOffset(blocks.lines, selectionStart);
   if (
     selectionEnd > selectionStart

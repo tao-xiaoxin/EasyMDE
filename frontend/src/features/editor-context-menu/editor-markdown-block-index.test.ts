@@ -1452,6 +1452,73 @@ describe("readEditorCodeContent", () => {
 			),
 		).toBe("![ok](https://example.com/ok.png)");
 	});
+
+	it("preserves GFM table images and links alongside inline math pipes and drops phantom table-image URL links", () => {
+		const sameCell = "| A |\n| - |\n| $a|b$ ![x](/i) [y](/y) |";
+		const sameCellIndex = createEditorMarkdownBlockIndex(sameCell);
+		expect(
+			(sameCellIndex.imageRanges ?? []).map((r) => sameCell.slice(r.from, r.to)),
+		).toEqual(["![x](/i)"]);
+		expect(
+			(sameCellIndex.linkCandidates ?? []).map((r) =>
+				sameCell.slice(r.from, r.to),
+			),
+		).toEqual(["[y](/y)"]);
+
+		const prevCellImg =
+			"| A | B |\n| --- | --- |\n| $a|b$ | ![img](https://example.com/a.png) |";
+		const prevCellImgIndex = createEditorMarkdownBlockIndex(prevCellImg);
+		expect(
+			(prevCellImgIndex.imageRanges ?? []).map((r) =>
+				prevCellImg.slice(r.from, r.to),
+			),
+		).toEqual(["![img](https://example.com/a.png)"]);
+
+		const prevCellLink =
+			"| A | B |\n| --- | --- |\n| $a|b$ | [link](https://example.com) |";
+		const prevCellLinkIndex = createEditorMarkdownBlockIndex(prevCellLink);
+		expect(
+			(prevCellLinkIndex.linkCandidates ?? []).map((r) =>
+				prevCellLink.slice(r.from, r.to),
+			),
+		).toEqual(["[link](https://example.com)"]);
+
+		const prevCellParen =
+			"| A | B |\n| --- | --- |\n| \\(a|b\\) | ![img](https://example.com/a.png) |";
+		const prevCellParenIndex = createEditorMarkdownBlockIndex(prevCellParen);
+		expect(
+			(prevCellParenIndex.imageRanges ?? []).map((r) =>
+				prevCellParen.slice(r.from, r.to),
+			),
+		).toEqual(["![img](https://example.com/a.png)"]);
+
+		const mathHeader =
+			"| $a|b$ |\n| --- |\n| 1 | ![extra](https://example.com/x.png) |";
+		expect(createEditorMarkdownBlockIndex(mathHeader).imageRanges).toEqual([]);
+
+		// Code-wrapped `$a|b$` is not extracted by PHP, so its pipe splits cells and drops ![img].
+		const codeWrapped =
+			"| A | B |\n| --- | --- |\n| `$a|b$` | ![img](https://example.com/a.png) |";
+		expect(createEditorMarkdownBlockIndex(codeWrapped).imageRanges).toEqual([]);
+
+		// Track B #3: double-backslash pipe inside table image destination must not produce a phantom URL link.
+		const escapedPipeImg =
+			"| A |\n| --- |\n| ![a](https://example.com/a\\\\|b.png) |";
+		expect(createEditorMarkdownBlockIndex(escapedPipeImg).linkCandidates).toEqual(
+			[],
+		);
+
+		const escapedPipeImgWithRealLink =
+			"| A |\n| --- |\n| ![a](https://example.com/a\\\\|b.png) https://real.example.com |";
+		const mixedLinkIndex = createEditorMarkdownBlockIndex(
+			escapedPipeImgWithRealLink,
+		);
+		expect(
+			(mixedLinkIndex.linkCandidates ?? []).map((r) =>
+				escapedPipeImgWithRealLink.slice(r.from, r.to),
+			),
+		).toEqual(["https://real.example.com"]);
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

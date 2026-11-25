@@ -1143,6 +1143,168 @@ describe("associateGeneratedImageTarget", () => {
 		expect(rejected.blockImages[0]?.status).toBe("unavailable");
 		expect(rejected.images).toHaveLength(0);
 	});
+
+	it("hydrates Lezer-split PHP table continuation rows with escaped pipes and stays compatible with destination replacement", async () => {
+		for (const [label, source] of [
+			[
+				"dash continuation row after table",
+				"| A |\n| --- |\n- ![a](https://example.com/a\\\\|b.png) |",
+			],
+			[
+				"heading continuation row after table",
+				"| A |\n| --- |\n# ![a](https://example.com/a\\\\|b.png) |",
+			],
+			[
+				"blockquote continuation row after table",
+				"| A |\n| --- |\n> ![a](https://example.com/a\\\\|b.png) |",
+			],
+		] as const) {
+			const parsed = createEditorMarkdownBlockIndex(source);
+			const result = await hydrateGeneratedImageTargetIndex({
+				...hydration,
+				blocks: parsed.blocks,
+				imageIndex: {
+					blocks: parsed.blocks,
+					imageBlocks: parsed.imageBlocks ?? [],
+					imageRanges: parsed.imageRanges ?? [],
+					length: parsed.length,
+					mathSpans: parsed.mathSpans,
+				},
+				revision: 41,
+				source,
+			});
+			expect(result.images, label).toHaveLength(1);
+			const hydrated = result.images[0];
+			expect(hydrated?.destination, label).toBe("https://example.com/a|b.png");
+			if (!hydrated) throw new Error(`missing-hydrated:${label}`);
+			const replacement = createMarkdownImageDestinationReplacement(
+				source,
+				hydrated,
+				"https://example.com/c|d.png",
+			);
+			expect(replacement, label).not.toBeNull();
+			if (!replacement) continue;
+			const updated =
+				source.slice(0, replacement.from) +
+				replacement.insert +
+				source.slice(replacement.to);
+			expect(updated, label).toContain("https://example.com/c\\|d.png");
+		}
+	});
+
+	it("hydrates images in GFM tables alongside inline math pipes matching PHP extract_math", async () => {
+		for (const [label, source, expectedAlt, expectedDest] of [
+			[
+				"$a|b$ before image in same cell",
+				"| A |\n| - |\n| $a|b$ ![x](/i) [y](/y) |",
+				"x",
+				"/i",
+			],
+			[
+				"$a|b$ in cell 0 with image in cell 1",
+				"| A | B |\n| --- | --- |\n| $a|b$ | ![img](https://example.com/a.png) |",
+				"img",
+				"https://example.com/a.png",
+			],
+			[
+				"\\(a|b\\) in cell 0 with image in cell 1",
+				"| A | B |\n| --- | --- |\n| \\(a|b\\) | ![img](https://example.com/a.png) |",
+				"img",
+				"https://example.com/a.png",
+			],
+			[
+				"$a|b$ and $c|d$ flanking an image in the same cell",
+				'| A |\n| --- |\n| $a|b$ ![x](https://example.com/a.png "cap") $c|d$ |',
+				"x",
+				"https://example.com/a.png",
+			],
+		] as const) {
+			const parsed = createEditorMarkdownBlockIndex(source);
+			const result = await hydrateGeneratedImageTargetIndex({
+				...hydration,
+				blocks: parsed.blocks,
+				imageIndex: {
+					blocks: parsed.blocks,
+					imageBlocks: parsed.imageBlocks ?? [],
+					imageRanges: parsed.imageRanges ?? [],
+					length: parsed.length,
+					mathSpans: parsed.mathSpans,
+				},
+				revision: 42,
+				source,
+			});
+			expect(result.images, label).toHaveLength(1);
+			expect(result.images[0], label).toMatchObject({
+				alt: expectedAlt,
+				destination: expectedDest,
+			});
+		}
+
+		// Inline math in header counts as 1 column, dropping the extra body-cell image.
+		const headerMath =
+			"| $a|b$ |\n| --- |\n| 1 | ![extra](https://example.com/x.png) |";
+		const headerParsed = createEditorMarkdownBlockIndex(headerMath);
+		const headerResult = await hydrateGeneratedImageTargetIndex({
+			...hydration,
+			blocks: headerParsed.blocks,
+			imageIndex: {
+				blocks: headerParsed.blocks,
+				imageBlocks: headerParsed.imageBlocks ?? [],
+				imageRanges: headerParsed.imageRanges ?? [],
+				length: headerParsed.length,
+				mathSpans: headerParsed.mathSpans,
+			},
+			revision: 43,
+			source: headerMath,
+		});
+		expect(headerResult.images).toHaveLength(0);
+	});
+
+	it("hydrates many pipe-free single-line image blocks in linear time without per-block full-source pipe scans", async () => {
+		const count = 10_000;
+		const source = "![x](/x)\n\n".repeat(count);
+		const blocks: EditorMarkdownSourceBlock[] = [];
+		const imageBlocks: Array<{
+			count: number;
+			firstImageIndex: number;
+			status: "ready";
+		}> = [];
+		const imageRanges: Array<{ from: number; to: number }> = [];
+		for (let i = 0; i < count; i += 1) {
+			const from = i * 10;
+			const to = from + 8;
+			blocks.push({
+				editable: true,
+				from,
+				kind: "paragraph",
+				lineEnd: i * 2,
+				lineStart: i * 2,
+				to,
+			});
+			imageBlocks.push({ count: 1, firstImageIndex: i, status: "ready" });
+			imageRanges.push({ from, to });
+		}
+		const started = performance.now();
+		const result = await hydrateGeneratedImageTargetIndex({
+			blocks,
+			deadline: started + 10_000,
+			imageIndex: {
+				blocks,
+				imageBlocks,
+				imageRanges,
+				length: source.length,
+				mathSpans: [],
+			},
+			now: () => performance.now(),
+			revision: 44,
+			signal: new AbortController().signal,
+			source,
+			yield: async () => undefined,
+		});
+		const elapsedMs = performance.now() - started;
+		expect(result.images).toHaveLength(count);
+		expect(elapsedMs).toBeLessThan(2_000);
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

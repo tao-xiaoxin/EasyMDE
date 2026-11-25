@@ -631,6 +631,96 @@ describe("findEditorSourceLink", () => {
 			}),
 		).toEqual({ status: "none" });
 	});
+
+	it("keeps links alongside inline math pipes in GFM tables and suppresses phantom URLs inside double-backslash-pipe table images", () => {
+		const sameCell = "| A |\n| - |\n| $a|b$ ![x](/i) [y](/y) |";
+		expect(
+			candidateOf(
+				findEditorSourceLink({
+					blockIndex: createEditorMarkdownBlockIndex(sameCell),
+					selection: selection(sameCell.indexOf("[y]") + 1),
+					source: sameCell,
+				}),
+			).source,
+		).toBe("[y](/y)");
+
+		const nextCell =
+			"| A | B |\n| --- | --- |\n| $a|b$ | [link](https://example.com) |";
+		expect(
+			candidateOf(
+				findEditorSourceLink({
+					blockIndex: createEditorMarkdownBlockIndex(nextCell),
+					selection: selection(nextCell.indexOf("link") + 2),
+					source: nextCell,
+				}),
+			).source,
+		).toBe("[link](https://example.com)");
+
+		const mathHeaderDrop =
+			"| $a|b$ |\n| --- |\n| 1 | [dropped](https://example.com) |";
+		expect(
+			findEditorSourceLink({
+				blockIndex: createEditorMarkdownBlockIndex(mathHeaderDrop),
+				selection: selection(mathHeaderDrop.indexOf("dropped") + 2),
+				source: mathHeaderDrop,
+			}),
+		).toEqual({ status: "none" });
+
+		// Track B #3: phantom URL fragments inside table images with `\\|` must return status "none".
+		for (const [label, source, probe] of [
+			[
+				"bare image destination with double-backslash pipe",
+				"| A |\n| --- |\n| ![a](https://example.com/a\\\\|b.png) |",
+				"example.com",
+			],
+			[
+				"angle-bracket image destination with double-backslash pipe",
+				"| A |\n| --- |\n| ![a](<https://example.com/a\\\\|b.png>) |",
+				"example.com",
+			],
+			[
+				"URL inside image alt with double-backslash pipe",
+				"| A |\n| --- |\n| ![https://example.com/a\\\\|b](https://example.com/x.png) |",
+				"example.com/a",
+			],
+			[
+				"URL inside image title with double-backslash pipe",
+				'| A |\n| --- |\n| ![a](https://example.com/x.png "https://example.com/a\\\\|b") |',
+				"example.com/a",
+			],
+		] as const) {
+			const idx = createEditorMarkdownBlockIndex(source);
+			expect(
+				findEditorSourceLink({
+					blockIndex: idx,
+					selection: selection(source.indexOf(probe) + 2),
+					source,
+				}),
+				label,
+			).toEqual({ status: "none" });
+		}
+
+		// Real link on the same table row after the `\\|` image remains selectable.
+		const imgAndRealLink =
+			"| A |\n| --- |\n| ![a](https://example.com/a\\\\|b.png) https://real.example.com |";
+		const imgAndRealLinkIndex = createEditorMarkdownBlockIndex(imgAndRealLink);
+		expect(
+			findEditorSourceLink({
+				blockIndex: imgAndRealLinkIndex,
+				selection: selection(22),
+				source: imgAndRealLink,
+			}),
+		).toEqual({ status: "none" });
+		expect(
+			candidateOf(
+				findEditorSourceLink({
+					blockIndex: imgAndRealLinkIndex,
+					selection: selection(imgAndRealLink.indexOf("real.example.com") + 2),
+					source: imgAndRealLink,
+				}),
+			).source,
+		).toBe("https://real.example.com");
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

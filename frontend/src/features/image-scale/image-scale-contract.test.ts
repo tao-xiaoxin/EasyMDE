@@ -2179,4 +2179,91 @@ describe('image scale contract', () => {
       plainSource.slice(0, plainRepl.from) + plainRepl.insert + plainSource.slice(plainRepl.to)
     ).toBe('![alt](https://example.com/a|b.png)');
   });
+
+  it('masks PHP inline and display math pipes during GFM table cell scans while preserving original alt and title text', () => {
+    for (const [label, source, marker, expectedAlt, expectedDest, expectedTitle] of [
+      [
+        'inline $a|b$ before image in same cell of 1-col table',
+        '| A |\n| - |\n| $a|b$ ![x](/i) [y](/y) |',
+        '![x]',
+        'x',
+        '/i',
+        null
+      ],
+      [
+        'inline $a|b$ in previous cell of 2-col table',
+        '| A | B |\n| --- | --- |\n| $a|b$ | ![img](https://example.com/a.png) |',
+        '![img]',
+        'img',
+        'https://example.com/a.png',
+        null
+      ],
+      [
+        'inline \\(a|b\\) in previous cell of 2-col table',
+        '| A | B |\n| --- | --- |\n| \\(a|b\\) | ![img](https://example.com/a.png) |',
+        '![img]',
+        'img',
+        'https://example.com/a.png',
+        null
+      ],
+      [
+        'inline $a|b$ inside image alt text preserves original $a|b$',
+        '| A |\n| --- |\n| ![$a|b$](https://example.com/a.png) |',
+        '![$a|b$]',
+        '$a|b$',
+        'https://example.com/a.png',
+        null
+      ],
+      [
+        'inline $a|b$ inside image title preserves original $a|b$',
+        '| A |\n| --- |\n| ![x](https://example.com/a.png "$a|b$ {width=50%}") |',
+        '![x]',
+        'x',
+        'https://example.com/a.png',
+        '$a|b$'
+      ],
+      [
+        'Lezer-split dash continuation table row decodes double-backslash pipe',
+        '| A |\n| --- |\n- ![a](https://example.com/a\\\\|b.png) |',
+        '![a]',
+        'a',
+        'https://example.com/a|b.png',
+        null
+      ],
+      [
+        'Lezer-split heading continuation table row decodes double-backslash pipe',
+        '| A |\n| --- |\n# ![a](https://example.com/a\\\\|b.png) |',
+        '![a]',
+        'a',
+        'https://example.com/a|b.png',
+        null
+      ]
+    ] as const) {
+      const start = source.indexOf(marker);
+      expect(parseMarkdownImageScale(source, start), `parse:${label}`).toMatchObject({
+        alt: expectedAlt,
+        destination: expectedDest,
+        start,
+        title: expectedTitle
+      });
+      expect(findMarkdownImageAt(source, start + 3), `find:${label}`).toMatchObject({
+        alt: expectedAlt,
+        destination: expectedDest,
+        start,
+        title: expectedTitle
+      });
+    }
+
+    // Inline math in header counts as 1 column in PHP, so extra body cell is dropped.
+    const mathHeader = '| $a|b$ |\n| --- |\n| 1 | ![extra](https://example.com/x.png) |';
+    const extraStart = mathHeader.indexOf('![extra]');
+    expect(parseMarkdownImageScale(mathHeader, extraStart)).toBeNull();
+    expect(findMarkdownImageAt(mathHeader, extraStart + 3)).toBeNull();
+
+    // Code-wrapped `$a|b$` is NOT extracted by PHP, so its pipe splits the cell and drops ![img].
+    const codeWrappedMath = '| A | B |\n| --- | --- |\n| `$a|b$` | ![img](https://example.com/a.png) |';
+    const droppedStart = codeWrappedMath.indexOf('![img]');
+    expect(parseMarkdownImageScale(codeWrappedMath, droppedStart)).toBeNull();
+    expect(findMarkdownImageAt(codeWrappedMath, droppedStart + 3)).toBeNull();
+  });
 });

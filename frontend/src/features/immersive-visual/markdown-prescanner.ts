@@ -1,6 +1,7 @@
 import {
 	advancePhpCommonMarkBlockLine,
 	createPhpCommonMarkBlockState,
+	scanLinesIntoPhpCommonMarkBlockState,
 } from "../../shared/markdown/php-commonmark-block-engine";
 import { matchHtmlBlockOpen } from "../../shared/markdown/php-commonmark-block-helpers";
 import {
@@ -8,43 +9,56 @@ import {
 	createParagraphReferenceParser,
 	type ParagraphReferenceParser,
 } from "../../shared/markdown/php-commonmark-reference-def";
-import { parseReservedTableAlignmentMarkerLine } from "../../shared/table-alignment-marker";
 import {
-	blockquoteDepth,
+	analyzeLine,
+	type BlockMathScanState,
 	type ContainerStep,
 	canListMarkerInterruptParagraph,
+	classifyParagraphLine,
 	detectFence,
+	findBlockMathEnd,
 	findCommonMarkHtmlBlockEnd,
 	findContainerBoundedFenceEnd,
-	findGfmTableEnd,
 	hasListBeforeQuote,
 	isCommonMarkBlankLine,
-	isGfmTableStartAt,
+	type LineAnalysis,
 	type ListMarkerMatch,
 	matchListMarker,
 	matchListPrefixedHtmlBlock,
 	measureIndentColumns,
-	readBlockquotePrefix,
-	resolveGfmTableContainerIndent,
-	stripBlockquoteDepth,
-	stripContainerIndent,
+	stripBlockContainerPrefix,
 	stripContainers,
 	stripContainersWithColumn,
-	stripUpToIndentColumns,
 } from "./markdown-prescanner-blocks";
 import {
 	extractInlineProtectedSyntax,
 	type ProtectedInlineEntry,
 } from "./markdown-prescanner-inline";
+import {
+	collectRelativeInlineMathRanges,
+	createPhpDocumentMathIndex,
+	emitActiveTableRow,
+	emitDisplayMathTableBreak,
+	type GfmTableMatch,
+	maskedSliceForLines,
+	matchTableAlignmentMarkerLine,
+	resolveGfmTableMatch,
+	sumListContainerIndent,
+} from "./markdown-prescanner-tables";
 import type { ProtectedBlockKind } from "./visual-schema";
 
 export {
+	ATX_HEADING,
+	analyzeLine,
 	type DetectableFence,
 	detectFence,
 	isCommonMarkBlankLine,
 	isFenceCloser,
+	type LineAnalysis,
 	readBlockquotePrefix,
+	SETEXT_UNDERLINE,
 	stripBlockquoteDepth,
+	THEMATIC_BREAK,
 } from "./markdown-prescanner-blocks";
 export type { ProtectedInlineEntry };
 
@@ -116,158 +130,7 @@ export function restoreProtectedInlineSentinels(
 	});
 }
 
-export type LineAnalysis = Readonly<{
-	column: number;
-	containerIndent: number;
-	content: string;
-	indent: number;
-	listMarker: ListMarkerMatch | null;
-	prefix: string;
-	quoteDepth: number;
-	rest: string;
-}>;
-
-export function analyzeLine(line: string, containerIndent: number): LineAnalysis {
-	const { column, depth, prefix, rest } = readBlockquotePrefix(line);
-	const indentText = /^[ \t]*/.exec(rest)?.[0] ?? "";
-	const rawMarker = matchListMarker(rest, column);
-	const listMarker =
-		rawMarker !== null &&
-		rawMarker.leadCols <=
-			(rawMarker.leadCols >= containerIndent ? containerIndent : 0) + 3
-			? rawMarker
-			: null;
-	return {
-		column,
-		containerIndent,
-		content: rest.slice(indentText.length),
-		indent: measureIndentColumns(rest, column),
-		listMarker,
-		prefix,
-		quoteDepth: depth,
-		rest,
-	};
-}
-
 export const FOOTNOTE_DEF_LINE = /^ {0,3}\[\^([^\s\]]+)\]:(?:[ \t]|$)/;
-
-export const ATX_HEADING = /^#{1,6}(?:[ \t]+.*|[ \t]*)$/;
-export const THEMATIC_BREAK =
-	/^(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
-export const SETEXT_UNDERLINE = /^(?:=+|-+)[ \t]*$/;
-const CONTAINER_QUOTE = /^ {0,3}>[ \t]?/;
-const CONTAINER_LIST_MARKER = /^ {0,3}(?:[-+*]|(\d{1,9})[.)])(?=[ \t]|$)/;
-const leadingColumns = (text: string): number => measureIndentColumns(text, 0);
-
-/**
- * Whether a line emitted as text leaves a paragraph open (so the next line
- * cannot start a reference definition), classified on the content inside any
- * nested quote/list containers, plus the quote depth those containers add.
- */
-function classifyParagraphLine(
-	content: string,
-	relativeIndent: number,
-	paragraphOpen: boolean,
-	listInterruptionInParagraph: boolean,
-): Readonly<{ nestedQuotes: number; open: boolean }> {
-	let inner = content;
-	let nestedQuotes = 0;
-	if (relativeIndent > 3) return { nestedQuotes, open: true };
-	for (let depth = 0; depth < 32; depth += 1) {
-		const nested = depth > 0;
-		const trimmed = inner.replace(/^[ \t]+|[ \t]+$/g, "");
-		if (
-			trimmed === "" ||
-			(nested && leadingColumns(inner) >= 4) ||
-			ATX_HEADING.test(trimmed) ||
-			THEMATIC_BREAK.test(trimmed) ||
-			(!nested && listInterruptionInParagraph && SETEXT_UNDERLINE.test(trimmed))
-		) {
-			return { nestedQuotes, open: false };
-		}
-		const quote = CONTAINER_QUOTE.exec(inner);
-		const marker = quote ? null : CONTAINER_LIST_MARKER.exec(inner);
-		if (quote) {
-			inner = inner.slice(quote[0].length);
-			nestedQuotes += 1;
-			continue;
-		}
-		if (!marker) return { nestedQuotes, open: true };
-		const after = inner.slice(marker[0].length);
-		const blank = isCommonMarkBlankLine(after);
-		// An empty or non-"1" ordered item cannot interrupt an open paragraph.
-		const ordered = marker[1];
-		if (
-			!nested &&
-			listInterruptionInParagraph &&
-			(blank || (ordered !== undefined && ordered !== "1"))
-		) {
-			return { nestedQuotes, open: true };
-		}
-		// Marker spacing of 5+ columns starts indented code in the item.
-		if (blank || leadingColumns(after) >= 5) {
-			return { nestedQuotes, open: false };
-		}
-		inner = after.replace(/^[ \t]/, "");
-	}
-	return { nestedQuotes, open: paragraphOpen || true };
-}
-
-/**
- * Last line of a `$$...$$` or `\[...\]` block starting at `start`, or -1. A
- * mid-line display formula that is neither a one-line block nor a canonical
- * fence line is left to the inline scanner.
- */
-function findBlockMathEnd(
-	lines: ReadonlyArray<string>,
-	start: number,
-	content: string,
-	containerIndent: number,
-): number {
-	const dollar = content.startsWith("$$") && !content.startsWith("$$$$");
-	if (!dollar && !content.startsWith("\\[")) return -1;
-	const single = dollar
-		? /^\$\$([\s\S]+?)\$\$[ \t]*$/.exec(content)
-		: /^\\\[([\s\S]+?)\\\][ \t]*$/.exec(content);
-	const inner = single?.[1] ?? "";
-	if (single && (dollar ? !inner.includes("$$") : inner.trim().length > 0)) {
-		return start;
-	}
-	if (!(dollar ? /^\$\$[ \t]*$/ : /^\\\[[ \t]*$/).test(content)) return -1;
-	const close = dollar ? "$$" : "\\]";
-	for (let k = start + 1; k < lines.length; k += 1) {
-		const next = analyzeLine(lines[k] ?? "", containerIndent);
-		if (detectFence(next)) return -1;
-		if (next.content.trimEnd().endsWith(close)) return k;
-	}
-	return -1;
-}
-
-function stripBlockContainerPrefix(
-	line: string,
-	prefix: string,
-	indent: number,
-): string {
-	const depth = blockquoteDepth(prefix);
-	let result = line;
-	let startColumn = 0;
-	if (depth > 0) {
-		const stripped = stripBlockquoteDepth(line, depth);
-		if (stripped !== null) {
-			result = stripped;
-			startColumn = readBlockquotePrefix(line).column;
-		} else if (
-			line.replace(/[ \t]+$/, "") === prefix.replace(/[ \t]+$/, "")
-		) {
-			return "";
-		} else {
-			const bq = readBlockquotePrefix(line);
-			result = bq.rest;
-			startColumn = bq.column;
-		}
-	}
-	return stripUpToIndentColumns(result, indent, startColumn);
-}
 
 export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 	const lineEnding: "\n" | "\r\n" = rawMarkdown.includes("\r\n")
@@ -334,9 +197,32 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 	};
 
 	const phpBlockState = createPhpCommonMarkBlockState(false, false);
+	const mathIndex = createPhpDocumentMathIndex(normalized, lines);
+	const blockMathScanState: BlockMathScanState = {
+		noBracketCloseBefore: -1,
+		noBracketCloseContainer: -1,
+		noDollarCloseBefore: -1,
+		noDollarCloseContainer: -1,
+	};
 	const advancePhpStateRange = (from: number, toInclusive: number): void => {
 		for (let k = from; k <= toInclusive; k += 1) {
 			advancePhpCommonMarkBlockLine(phpBlockState, lines[k] ?? "");
+		}
+	};
+	const advancePhpStateMaskedLines = (
+		fromLine: number,
+		toLineInclusive: number,
+	): void => {
+		const masked = maskedSliceForLines(
+			mathIndex,
+			lines,
+			fromLine,
+			toLineInclusive,
+		);
+		if (masked.includes("\n")) {
+			scanLinesIntoPhpCommonMarkBlockState(phpBlockState, masked);
+		} else {
+			advancePhpCommonMarkBlockLine(phpBlockState, masked);
 		}
 	};
 	const advancePhpStateClosedBlock = (
@@ -357,8 +243,9 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 	let paragraphHasContent = false;
 	let paragraphQuoteDepth = 0;
 	let paragraphRefParser: ParagraphReferenceParser | null = null;
-	let tableRowStart = -1;
-	let tableRowEnd = -1;
+	let activeTable: GfmTableMatch | null = null;
+	let activeTableOutputStart = -1;
+	let pendingTableAlignOutputIndex = -1;
 
 	const closeParagraph = (): void => {
 		paragraphOpen = false;
@@ -366,15 +253,81 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		paragraphRefParser = null;
 	};
 
+	const EMPTY_CONTAINERS: ReadonlyArray<ContainerStep> = [];
+	const addProtectedBlock = (
+		kind: ProtectedBlockKind,
+		rawMarkdown: string,
+	): string => {
+		const token = `${sentinel}BLK${protectedBlocks.size}END`;
+		protectedBlocks.set(token, { kind, rawMarkdown });
+		return token;
+	};
+
 	while (i < lines.length) {
+		if (activeTable !== null && i <= activeTable.endLine) {
+			if (i === activeTable.delimiterLine) {
+				pushOutputLine(lines[i] ?? "", { end: i + 1, start: i });
+				advancePhpStateMaskedLines(i, i);
+				i += 1;
+				continue;
+			}
+			const logicalEnd = emitActiveTableRow(
+				i,
+				activeTable,
+				mathIndex,
+				sentinel,
+				protectedInlines,
+				pushOutputLine,
+			);
+			advancePhpStateMaskedLines(i, logicalEnd);
+			i = logicalEnd + 1;
+			continue;
+		}
+
+		if (activeTable !== null && i === activeTable.brokenByDisplayMathLine) {
+			const { emittedTableBeforeRow, spanEndLine } = emitDisplayMathTableBreak(
+				i,
+				activeTable.containers,
+				mathIndex,
+				sentinel,
+				protectedInlines,
+				{ addProtectedBlock, pushOutputLine },
+			);
+			if (emittedTableBeforeRow && activeTableOutputStart >= 0) {
+				for (
+					let rangeIdx = activeTableOutputStart;
+					rangeIdx < outputLineRanges.length;
+					rangeIdx += 1
+				) {
+					outputLineRanges[rangeIdx] = null;
+				}
+			}
+			activeTable = null;
+			activeTableOutputStart = -1;
+			pendingTableAlignOutputIndex = -1;
+			closeParagraph();
+			listContentIndent = null;
+			advancePhpStateMaskedLines(i, spanEndLine);
+			i = spanEndLine + 1;
+			continue;
+		}
+
+		if (activeTable !== null) {
+			activeTable = null;
+			activeTableOutputStart = -1;
+		}
+
 		const line = lines[i] ?? "";
-		const phpContainers: ContainerStep[] = phpBlockState.containers.map(
-			(container) =>
-				container.kind === "blockquote"
-					? { kind: "blockquote" }
-					: { indent: container.indent, kind: "list" },
-		);
-		const hasInterleavedContainers = hasListBeforeQuote(phpContainers);
+		const hasInterleavedContainers =
+			phpBlockState.containers.length > 1 &&
+			hasListBeforeQuote(phpBlockState.containers);
+		const phpContainers: ContainerStep[] = hasInterleavedContainers
+			? phpBlockState.containers.map((container) =>
+					container.kind === "blockquote"
+						? { kind: "blockquote" }
+						: { indent: container.indent, kind: "list" },
+				)
+			: [];
 		const matchedInterleaved = hasInterleavedContainers
 			? stripContainersWithColumn(line, phpContainers)
 			: null;
@@ -554,7 +507,8 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			if (
 				lang === "mermaid" &&
 				acceptedListMarker === null &&
-				activeInterleavedContainers === null
+				activeInterleavedContainers === null &&
+				fence.quoteDepth === analysis.quoteDepth
 			) {
 				pushProtectedBlock("mermaid", analysis, i, blockEnd);
 			} else {
@@ -566,53 +520,49 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 				listContentIndent = null;
 			}
 			closeParagraph();
+			pendingTableAlignOutputIndex = -1;
 			advancePhpStateRange(i, blockEnd);
 			i = blockEnd + 1;
 			continue;
 		}
 
-		// 3. EasyMDE table alignment annotation directly preceding a GFM table.
-		const tableAlignCandidate =
+		const tableBaseContainers: ReadonlyArray<ContainerStep> =
 			activeInterleavedContainers !== null
-				? null
-				: acceptedListMarker !== null
-					? measureIndentColumns(
-							acceptedListMarker.afterContent,
-							analysis.column + acceptedListMarker.contentIndent,
-						) <= 3
-						? acceptedListMarker.afterContent
-						: null
-					: relativeIndent >= 0 && relativeIndent <= 3
-						? stripContainerIndent(
-								analysis.rest,
-								effectiveContainer,
-								analysis.column,
-							)
-						: null;
-		const parsedTableAlign =
-			tableAlignCandidate !== null &&
-			isGfmTableStartAt(
-				lines[i + 1] ?? "",
-				lines[i + 2] ?? "",
-				effectiveContainer,
-				lineQuoteDepth,
-				false,
-			)
-				? parseReservedTableAlignmentMarkerLine(tableAlignCandidate)
-				: null;
-		if (null !== parsedTableAlign && !("code" in parsedTableAlign)) {
+				? activeInterleavedContainers
+				: lineQuoteDepth === 0
+					? EMPTY_CONTAINERS
+					: Array.from({ length: lineQuoteDepth }, () => ({
+							kind: "blockquote" as const,
+						}));
+		const tablePreListIndent =
+			activeInterleavedContainers !== null ? 0 : preMarkerContainerIndent;
+
+		// 3. EasyMDE table alignment annotation directly preceding a GFM table.
+		const tableAlignMatch = matchTableAlignmentMarkerLine(
+			lines,
+			i,
+			tableBaseContainers,
+			tablePreListIndent,
+			!listInterruptionInParagraph,
+			mathIndex,
+		);
+		if (tableAlignMatch !== null) {
 			const markerToken = `${sentinel}TBLALIGN${tableAlignMarkers.size}END`;
-			tableAlignMarkers.set(markerToken, parsedTableAlign.text);
-			const markerPrefix =
-				acceptedListMarker !== null
-					? `${analysis.prefix}${acceptedListMarker.markerPrefix}`
-					: `${analysis.prefix}${" ".repeat(analysis.indent)}`;
-			pushOutputLine(`${markerPrefix}${markerToken}`, {
+			tableAlignMarkers.set(markerToken, tableAlignMatch.text);
+			pendingTableAlignOutputIndex = outputLines.length;
+			pushOutputLine(`${tableAlignMatch.markerPrefix}${markerToken}`, {
 				end: i + 1,
 				start: i,
 			});
-			if (droppedOutOfList) {
-				listContentIndent = null;
+			if (!hasListBeforeQuote(tableAlignMatch.containers)) {
+				const nestedListIndent = sumListContainerIndent(
+					tableAlignMatch.containers,
+				);
+				if (nestedListIndent > 0) {
+					listContentIndent = nestedListIndent;
+				} else if (droppedOutOfList) {
+					listContentIndent = null;
+				}
 			}
 			closeParagraph();
 			advancePhpStateRange(i, i);
@@ -620,25 +570,60 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			continue;
 		}
 
-		if (i > tableRowEnd && activeInterleavedContainers === null) {
-			const detectedTableContainer = resolveGfmTableContainerIndent(
-				lines[i] ?? "",
-				lines[i + 1] ?? "",
-				preMarkerContainerIndent,
-				lineQuoteDepth,
-				acceptedListMarker !== null,
+		// 3b. GFM tables (container-aware: top-level, blockquotes, nested lists,
+		//     interleaved `list -> quote`, multiline `\(...\)`, lazy continuations,
+		//     and display-math table breaks).
+		const tableMatch = resolveGfmTableMatch(
+			lines,
+			i,
+			tableBaseContainers,
+			tablePreListIndent,
+			!listInterruptionInParagraph,
+			true,
+			mathIndex,
+		);
+		if (tableMatch !== null) {
+			const headerStartOffset = mathIndex.lineStarts[i] ?? 0;
+			const headerEndOffset =
+				mathIndex.lineEnds[tableMatch.headerEndLine] ?? headerStartOffset;
+			const rawHeader = normalized.slice(headerStartOffset, headerEndOffset);
+			const headerMathRanges = collectRelativeInlineMathRanges(
+				mathIndex,
+				headerStartOffset,
+				headerEndOffset,
 			);
-			if (detectedTableContainer !== null) {
-				tableRowStart = i;
-				tableRowEnd = findGfmTableEnd(
-					lines,
-					i,
-					detectedTableContainer,
-					lineQuoteDepth,
-				);
+			activeTable = tableMatch;
+			activeTableOutputStart =
+				pendingTableAlignOutputIndex >= 0
+					? pendingTableAlignOutputIndex
+					: outputLines.length;
+			pendingTableAlignOutputIndex = -1;
+			pushOutputLine(
+				extractInlineProtectedSyntax(
+					rawHeader,
+					sentinel,
+					protectedInlines,
+					true,
+					false,
+					-1,
+					headerMathRanges,
+				),
+				{ end: tableMatch.headerEndLine + 1, start: i },
+			);
+			if (!hasListBeforeQuote(tableMatch.containers)) {
+				const nestedListIndent = sumListContainerIndent(tableMatch.containers);
+				if (nestedListIndent > 0) {
+					listContentIndent = nestedListIndent;
+				} else if (droppedOutOfList) {
+					listContentIndent = null;
+				}
 			}
+			closeParagraph();
+			advancePhpStateMaskedLines(i, tableMatch.headerEndLine);
+			i = tableMatch.headerEndLine + 1;
+			continue;
 		}
-		const isTableRow = i >= tableRowStart && i <= tableRowEnd;
+		pendingTableAlignOutputIndex = -1;
 
 		// 4. Block math: $$...$$ and \[...\] (single-line or multi-line).
 		const blockMathEnd = findBlockMathEnd(
@@ -646,6 +631,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			i,
 			analysis.content,
 			effectiveContainer,
+			blockMathScanState,
 		);
 		if (blockMathEnd >= i) {
 			if (activeInterleavedContainers !== null) {
@@ -828,7 +814,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 				line,
 				sentinel,
 				protectedInlines,
-				isTableRow,
+				false,
 				allowRefDefDest,
 				indentedContinuationStart,
 			),

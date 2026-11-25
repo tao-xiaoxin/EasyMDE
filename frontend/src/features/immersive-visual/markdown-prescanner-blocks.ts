@@ -1,7 +1,6 @@
 import {
 	consumeBlockquoteMarker,
 	consumeWhitespaceColumns,
-	countTableRowCells,
 	cursorRemainder,
 	htmlBlockLineCloses,
 	isCursorBlank,
@@ -9,15 +8,13 @@ import {
 	matchHtmlBlockOpen,
 	measureLeadingColumns,
 	nextNonSpaceIndex,
-	parseGfmTableSeparatorColumns,
 } from "../../shared/markdown/php-commonmark-block-helpers";
-import { maskPhpMarkdownMathForTableScan } from "../../shared/markdown/php-markdown-math-mask";
 
 /**
  * Feature-private block-structure helpers for `markdown-prescanner.ts`:
  * CommonMark §2.2 ASCII blank-line checks, column-aware container / blockquote
- * stripping, GFM table boundary scanning, and CommonMark §4.6 Types 1-7 HTML
- * block matching (including interleaved list-marker and blockquote prefixes).
+ * stripping, fenced-code detection, and CommonMark §4.6 Types 1-7 HTML block
+ * matching (including interleaved list-marker and blockquote prefixes).
  */
 
 /**
@@ -53,6 +50,10 @@ export type BlockquotePrefixResult = Readonly<{
  * `${prefix}${rest}` keeps exact column alignment without duplicating spaces.
  */
 export function readBlockquotePrefix(line: string): BlockquotePrefixResult {
+	const first = line[0];
+	if (first !== ">" && first !== " " && first !== "\t") {
+		return { column: 0, depth: 0, prefix: "", rest: line };
+	}
 	const cursor = createLineCursor(line);
 	let depth = 0;
 	while (consumeBlockquoteMarker(cursor)) {
@@ -95,7 +96,7 @@ function advanceColumnOfText(text: string): number {
 	return col;
 }
 
-function cursorPrefix(cursor: LineColumnCursor): string {
+export function cursorPrefix(cursor: LineColumnCursor): string {
 	if (cursor.virtualSpaces <= 0) {
 		return cursor.line.slice(0, cursor.index);
 	}
@@ -211,11 +212,20 @@ export function matchListMarker(
 	startColumn = 0,
 ): ListMarkerMatch | null {
 	const cursor = createLineCursor(rest, startColumn);
-	const leadCols = measureLeadingColumns(cursor);
 	const nonSpaceIdx = nextNonSpaceIndex(cursor);
 	if (nonSpaceIdx >= rest.length) {
 		return null;
 	}
+	const firstCode = rest.charCodeAt(nonSpaceIdx);
+	if (
+		firstCode !== 0x2d && // -
+		firstCode !== 0x2a && // *
+		firstCode !== 0x2b && // +
+		(firstCode < 0x30 || firstCode > 0x39) // 0-9
+	) {
+		return null;
+	}
+	const leadCols = measureLeadingColumns(cursor);
 	const afterLead = rest.slice(nonSpaceIdx);
 	const markerMatch = /^([-*+]|(\d{1,9})[.)])(?=[ \t]|$)/.exec(afterLead);
 	if (!markerMatch?.[1]) {
@@ -253,147 +263,6 @@ export function canListMarkerInterruptParagraph(
 		return false;
 	}
 	return marker.orderedDigits === null || marker.orderedDigits === "1";
-}
-
-export function resolveGfmTableContainerIndent(
-	headerLine: string,
-	delimiterLine: string,
-	containerIndent: number,
-	expectedQuoteDepth: number | null,
-	allowLeadingListMarker: boolean,
-): number | null {
-	const headerBq = readBlockquotePrefix(headerLine);
-	const delimiterBq = readBlockquotePrefix(delimiterLine);
-	if (headerBq.depth !== delimiterBq.depth) {
-		return null;
-	}
-	if (expectedQuoteDepth !== null && headerBq.depth !== expectedQuoteDepth) {
-		return null;
-	}
-
-	let effContainer = containerIndent;
-	let headerCandidate = stripContainerIndent(
-		headerBq.rest,
-		effContainer,
-		headerBq.column,
-	);
-	if (headerCandidate === null) {
-		return null;
-	}
-	let headerColumn = headerBq.column + effContainer;
-	let headerRelIndent = measureIndentColumns(headerCandidate, headerColumn);
-	if (headerRelIndent >= 4) {
-		return null;
-	}
-	while (headerRelIndent < 4) {
-		const headerListMarker = matchListMarker(headerCandidate, headerColumn);
-		if (headerListMarker === null) {
-			break;
-		}
-		if (!allowLeadingListMarker) {
-			return null;
-		}
-		effContainer += headerListMarker.contentIndent;
-		headerColumn += headerListMarker.contentIndent;
-		headerCandidate = headerListMarker.afterContent;
-		headerRelIndent = measureIndentColumns(headerCandidate, headerColumn);
-	}
-	if (headerRelIndent >= 4) {
-		return null;
-	}
-
-	const delimiterCandidate = stripContainerIndent(
-		delimiterBq.rest,
-		effContainer,
-		delimiterBq.column,
-	);
-	if (delimiterCandidate === null) {
-		return null;
-	}
-	const delimiterColumn = delimiterBq.column + effContainer;
-	if (
-		measureIndentColumns(delimiterCandidate, delimiterColumn) >= 4 ||
-		matchListMarker(delimiterCandidate, delimiterColumn) !== null
-	) {
-		return null;
-	}
-
-	const delimiterColumns = parseGfmTableSeparatorColumns(delimiterCandidate);
-	const maskedHeader = maskPhpMarkdownMathForTableScan(headerCandidate);
-	if (delimiterColumns === 0 || !maskedHeader.includes("|")) {
-		return null;
-	}
-	return countTableRowCells(maskedHeader) === delimiterColumns
-		? effContainer
-		: null;
-}
-
-export function isGfmTableStartAt(
-	headerLine: string,
-	delimiterLine: string,
-	containerIndent: number,
-	expectedQuoteDepth: number | null,
-	allowLeadingListMarker: boolean,
-): boolean {
-	return (
-		resolveGfmTableContainerIndent(
-			headerLine,
-			delimiterLine,
-			containerIndent,
-			expectedQuoteDepth,
-			allowLeadingListMarker,
-		) !== null
-	);
-}
-
-export function findGfmTableEnd(
-	lines: ReadonlyArray<string>,
-	headerIndex: number,
-	containerIndent = 0,
-	expectedQuoteDepth = 0,
-): number {
-	let end = headerIndex + 1;
-	for (let index = headerIndex + 2; index < lines.length; index += 1) {
-		const line = lines[index] ?? "";
-		const cursor = createLineCursor(line);
-		let matchedQuote = true;
-		for (let d = 0; d < expectedQuoteDepth; d += 1) {
-			if (!consumeBlockquoteMarker(cursor)) {
-				matchedQuote = false;
-				break;
-			}
-		}
-		if (!matchedQuote) {
-			break;
-		}
-		const afterQuote = cursorRemainder(cursor);
-		const afterQuoteColumn = cursor.column;
-		const candidate = stripContainerIndent(
-			afterQuote,
-			containerIndent,
-			afterQuoteColumn,
-		);
-		if (candidate === null || isCommonMarkBlankLine(candidate)) {
-			break;
-		}
-		const candidateColumn = afterQuoteColumn + containerIndent;
-		if (measureIndentColumns(candidate, candidateColumn) >= 4) {
-			break;
-		}
-		if (matchListMarker(candidate, candidateColumn) !== null) {
-			break;
-		}
-		const trimmedStart = candidate.replace(/^[ \t]+/, "");
-		if (
-			!candidate.includes("|") ||
-			trimmedStart.startsWith(">") ||
-			/^(?:#{1,6}(?:[ \t]|$)|`{3,}|~{3,})/.test(trimmedStart)
-		) {
-			break;
-		}
-		end = index;
-	}
-	return end;
 }
 
 export function findCommonMarkHtmlBlockEnd(
@@ -445,6 +314,9 @@ export function matchListPrefixedHtmlBlock(
 	prevContainerIndent: number,
 	activeContainers?: ReadonlyArray<ContainerStep>,
 ): ListPrefixedHtmlMatch | null {
+	if (!line.includes("<")) {
+		return null;
+	}
 	const cursor = createLineCursor(line);
 	const containers: ContainerStep[] = [];
 	let seededInterleaved = false;
@@ -659,6 +531,9 @@ export function detectFence(
 	analysis: FenceLineSummary,
 	baseContainers?: ReadonlyArray<ContainerStep>,
 ): DetectableFence | null {
+	if (!analysis.content.includes("`") && !analysis.content.includes("~")) {
+		return null;
+	}
 	const baseSteps: ContainerStep[] = baseContainers
 		? [...baseContainers]
 		: Array.from({ length: analysis.quoteDepth }, () => ({
@@ -675,17 +550,28 @@ export function detectFence(
 		analysis.quoteDepth,
 		directSteps,
 	);
-	if (direct || !analysis.listMarker) {
+	const relativeIndent = analysis.indent - analysis.containerIndent;
+	const canPeelNestedQuote =
+		relativeIndent >= 0 &&
+		relativeIndent < 4 &&
+		analysis.content.startsWith(">");
+	if (direct || (!analysis.listMarker && !canPeelNestedQuote)) {
 		return direct;
 	}
 
-	const containers: ContainerStep[] = [
-		...baseSteps,
-		{ indent: analysis.listMarker.contentIndent, kind: "list" },
-	];
+	const containers: ContainerStep[] = analysis.listMarker
+		? [
+				...baseSteps,
+				{ indent: analysis.listMarker.contentIndent, kind: "list" },
+			]
+		: [...directSteps];
 	let quoteDepth = analysis.quoteDepth;
-	let innerColumn = analysis.column + analysis.listMarker.contentIndent;
-	let innerRest = analysis.listMarker.afterContent;
+	let innerColumn = analysis.listMarker
+		? analysis.column + analysis.listMarker.contentIndent
+		: analysis.column + analysis.indent;
+	let innerRest = analysis.listMarker
+		? analysis.listMarker.afterContent
+		: analysis.content;
 	for (let depth = 0; depth < 32; depth += 1) {
 		const leadCols = measureIndentColumns(innerRest, innerColumn);
 		if (leadCols >= 4) {
@@ -725,7 +611,9 @@ export function detectFence(
 		return null;
 	}
 	const trailingListIndent =
-		quoteDepth === analysis.quoteDepth ? analysis.listMarker.contentIndent : 0;
+		quoteDepth === analysis.quoteDepth
+			? (analysis.listMarker?.contentIndent ?? analysis.containerIndent)
+			: 0;
 	return { ...matched, containerIndent: trailingListIndent };
 }
 
@@ -771,4 +659,200 @@ export function findContainerBoundedFenceEnd(
 		end += 1;
 	}
 	return lines.length - 1;
+}
+
+export type LineAnalysis = Readonly<{
+	column: number;
+	containerIndent: number;
+	content: string;
+	indent: number;
+	listMarker: ListMarkerMatch | null;
+	prefix: string;
+	quoteDepth: number;
+	rest: string;
+}>;
+
+export function analyzeLine(line: string, containerIndent: number): LineAnalysis {
+	const { column, depth, prefix, rest } = readBlockquotePrefix(line);
+	const indentText = /^[ \t]*/.exec(rest)?.[0] ?? "";
+	const rawMarker = matchListMarker(rest, column);
+	const listMarker =
+		rawMarker !== null &&
+		rawMarker.leadCols <=
+			(rawMarker.leadCols >= containerIndent ? containerIndent : 0) + 3
+			? rawMarker
+			: null;
+	return {
+		column,
+		containerIndent,
+		content: rest.slice(indentText.length),
+		indent: measureIndentColumns(rest, column),
+		listMarker,
+		prefix,
+		quoteDepth: depth,
+		rest,
+	};
+}
+
+export const ATX_HEADING = /^#{1,6}(?:[ \t]+.*|[ \t]*)$/;
+export const THEMATIC_BREAK =
+	/^(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
+export const SETEXT_UNDERLINE = /^(?:=+|-+)[ \t]*$/;
+const CONTAINER_QUOTE = /^ {0,3}>[ \t]?/;
+const CONTAINER_LIST_MARKER = /^ {0,3}(?:[-+*]|(\d{1,9})[.)])(?=[ \t]|$)/;
+const leadingColumns = (text: string): number => measureIndentColumns(text, 0);
+
+/**
+ * Whether a line emitted as text leaves a paragraph open (so the next line
+ * cannot start a reference definition), classified on the content inside any
+ * nested quote/list containers, plus the quote depth those containers add.
+ */
+export function classifyParagraphLine(
+	content: string,
+	relativeIndent: number,
+	paragraphOpen: boolean,
+	listInterruptionInParagraph: boolean,
+): Readonly<{ nestedQuotes: number; open: boolean }> {
+	let inner = content;
+	let nestedQuotes = 0;
+	if (relativeIndent > 3) return { nestedQuotes, open: true };
+	for (let depth = 0; depth < 32; depth += 1) {
+		const nested = depth > 0;
+		const trimmed = inner.replace(/^[ \t]+|[ \t]+$/g, "");
+		if (
+			trimmed === "" ||
+			(nested && leadingColumns(inner) >= 4) ||
+			ATX_HEADING.test(trimmed) ||
+			THEMATIC_BREAK.test(trimmed) ||
+			(!nested && listInterruptionInParagraph && SETEXT_UNDERLINE.test(trimmed))
+		) {
+			return { nestedQuotes, open: false };
+		}
+		const quote = CONTAINER_QUOTE.exec(inner);
+		const marker = quote ? null : CONTAINER_LIST_MARKER.exec(inner);
+		if (quote) {
+			inner = inner.slice(quote[0].length);
+			nestedQuotes += 1;
+			continue;
+		}
+		if (!marker) return { nestedQuotes, open: true };
+		const after = inner.slice(marker[0].length);
+		const blank = isCommonMarkBlankLine(after);
+		// An empty or non-"1" ordered item cannot interrupt an open paragraph.
+		const ordered = marker[1];
+		if (
+			!nested &&
+			listInterruptionInParagraph &&
+			(blank || (ordered !== undefined && ordered !== "1"))
+		) {
+			return { nestedQuotes, open: true };
+		}
+		// Marker spacing of 5+ columns starts indented code in the item.
+		if (blank || leadingColumns(after) >= 5) {
+			return { nestedQuotes, open: false };
+		}
+		inner = after.replace(/^[ \t]/, "");
+	}
+	return { nestedQuotes, open: paragraphOpen || true };
+}
+
+export type BlockMathScanState = {
+	noBracketCloseBefore: number;
+	noBracketCloseContainer: number;
+	noDollarCloseBefore: number;
+	noDollarCloseContainer: number;
+};
+
+/**
+ * Last line of a `$$...$$` or `\[...\]` block starting at `start`, or -1. A
+ * mid-line display formula that is neither a one-line block nor a canonical
+ * fence line is left to the inline scanner. Uses monotonic unclosed boundaries
+ * so repeated unclosed `\[` / `$$` lines stay strictly O(N).
+ */
+export function findBlockMathEnd(
+	lines: ReadonlyArray<string>,
+	start: number,
+	content: string,
+	containerIndent: number,
+	scanState: BlockMathScanState,
+): number {
+	const dollar = content.startsWith("$$") && !content.startsWith("$$$$");
+	if (!dollar && !content.startsWith("\\[")) return -1;
+	const single = dollar
+		? /^\$\$([\s\S]+?)\$\$[ \t]*$/.exec(content)
+		: /^\\\[([\s\S]+?)\\\][ \t]*$/.exec(content);
+	const inner = single?.[1] ?? "";
+	if (single && (dollar ? !inner.includes("$$") : inner.trim().length > 0)) {
+		return start;
+	}
+	if (!(dollar ? /^\$\$[ \t]*$/ : /^\\\[[ \t]*$/).test(content)) return -1;
+	const noCloseBefore = dollar
+		? scanState.noDollarCloseBefore
+		: scanState.noBracketCloseBefore;
+	const noCloseContainer = dollar
+		? scanState.noDollarCloseContainer
+		: scanState.noBracketCloseContainer;
+	if (
+		start < noCloseBefore &&
+		(noCloseContainer === -1 || noCloseContainer === containerIndent)
+	) {
+		return -1;
+	}
+	const close = dollar ? "$$" : "\\]";
+	for (let k = start + 1; k < lines.length; k += 1) {
+		const candidate = lines[k] ?? "";
+		if (
+			!candidate.includes(close) &&
+			!candidate.includes("`") &&
+			!candidate.includes("~")
+		) {
+			continue;
+		}
+		const next = analyzeLine(candidate, containerIndent);
+		if (detectFence(next)) {
+			if (dollar) {
+				scanState.noDollarCloseBefore = k;
+				scanState.noDollarCloseContainer = containerIndent;
+			} else {
+				scanState.noBracketCloseBefore = k;
+				scanState.noBracketCloseContainer = containerIndent;
+			}
+			return -1;
+		}
+		if (next.content.trimEnd().endsWith(close)) return k;
+	}
+	if (dollar) {
+		scanState.noDollarCloseBefore = lines.length;
+		scanState.noDollarCloseContainer = -1;
+	} else {
+		scanState.noBracketCloseBefore = lines.length;
+		scanState.noBracketCloseContainer = -1;
+	}
+	return -1;
+}
+
+export function stripBlockContainerPrefix(
+	line: string,
+	prefix: string,
+	indent: number,
+): string {
+	const depth = blockquoteDepth(prefix);
+	let result = line;
+	let startColumn = 0;
+	if (depth > 0) {
+		const stripped = stripBlockquoteDepth(line, depth);
+		if (stripped !== null) {
+			result = stripped;
+			startColumn = readBlockquotePrefix(line).column;
+		} else if (
+			line.replace(/[ \t]+$/, "") === prefix.replace(/[ \t]+$/, "")
+		) {
+			return "";
+		} else {
+			const bq = readBlockquotePrefix(line);
+			result = bq.rest;
+			startColumn = bq.column;
+		}
+	}
+	return stripUpToIndentColumns(result, indent, startColumn);
 }

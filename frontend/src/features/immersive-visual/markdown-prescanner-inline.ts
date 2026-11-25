@@ -1,4 +1,5 @@
 import { matchHtmlBlockOpen } from "../../shared/markdown/php-commonmark-block-helpers";
+import type { PhpMarkdownMathRange } from "../../shared/markdown/php-markdown-math-mask";
 import type { ProtectedInlineKind } from "./visual-schema";
 
 export type ProtectedInlineEntry = Readonly<{
@@ -277,6 +278,69 @@ function isEscapedAt(text: string, index: number): boolean {
 	return slashes % 2 === 1;
 }
 
+function buildLinkParenCloseMap(
+	line: string,
+	fromIndex: number,
+): Map<number, number> {
+	const openStack: number[] = [];
+	const closeByOpen = new Map<number, number>();
+	let scan = fromIndex;
+	const length = line.length;
+	while (scan < length) {
+		const cur = line[scan] ?? "";
+		if (cur === "\\") {
+			scan += 2;
+			continue;
+		}
+		if (cur === "(") {
+			openStack.push(scan);
+		} else if (cur === ")" && openStack.length > 0) {
+			const openPos = openStack.pop();
+			if (openPos !== undefined) {
+				closeByOpen.set(openPos, scan + 1);
+			}
+		}
+		scan += 1;
+	}
+	return closeByOpen;
+}
+
+function findUnescapedDelimiterClose(
+	line: string,
+	delimiter: string,
+	searchFrom: number,
+): number {
+	let pos = line.indexOf(delimiter, searchFrom);
+	while (pos >= 0) {
+		if (!isEscapedAt(line, pos)) {
+			return pos;
+		}
+		pos = line.indexOf(delimiter, pos + delimiter.length);
+	}
+	return -1;
+}
+
+function spanCrossesTableMath(
+	tableMathRanges: ReadonlyArray<PhpMarkdownMathRange> | undefined,
+	cursor: number,
+	spanStart: number,
+	spanEnd: number,
+): boolean {
+	if (!tableMathRanges) {
+		return false;
+	}
+	for (let i = cursor; i < tableMathRanges.length; i += 1) {
+		const range = tableMathRanges[i];
+		if (!range || range.from >= spanEnd) {
+			break;
+		}
+		if (range.from >= spanStart && range.to > spanEnd) {
+			return true;
+		}
+	}
+	return false;
+}
+
 export function extractInlineProtectedSyntax(
 	line: string,
 	sentinel: string,
@@ -284,12 +348,20 @@ export function extractInlineProtectedSyntax(
 	isTableRow: boolean,
 	allowRefDefDest = false,
 	indentedContinuationStart = -1,
+	tableMathRanges?: ReadonlyArray<PhpMarkdownMathRange>,
 ): string {
 	let result = "";
 	let index = 0;
 	const length = line.length;
-	const unclosedTagBoundary = new Map<string, number>();
-	const htmlScanState = createInlineHtmlScanState();
+	let unclosedTagBoundary: Map<string, number> | null = null;
+	let htmlScanState: InlineHtmlScanState | null = null;
+	let linkParenCloseByOpen: Map<number, number> | null = null;
+	let noClosingParenMath = false;
+	let noClosingBracketMath = false;
+	let noClosingDoubleDollar = false;
+	let noClosingSingleDollar = false;
+	let noRefDestCloseAngle = false;
+	let tableMathCursor = 0;
 
 	const allocateToken = (
 		kind: ProtectedInlineKind,
@@ -307,6 +379,25 @@ export function extractInlineProtectedSyntax(
 	};
 
 	while (index < length) {
+		if (tableMathRanges !== undefined) {
+			while (
+				tableMathCursor < tableMathRanges.length &&
+				(tableMathRanges[tableMathCursor]?.to ?? 0) <= index
+			) {
+				tableMathCursor += 1;
+			}
+			const activeMath = tableMathRanges[tableMathCursor];
+			if (activeMath && activeMath.from === index && activeMath.to > index) {
+				result += allocateToken(
+					"math-inline",
+					line.slice(activeMath.from, activeMath.to),
+				);
+				index = activeMath.to;
+				tableMathCursor += 1;
+				continue;
+			}
+		}
+
 		const ch = line[index] ?? "";
 
 		// Preserve inline code spans verbatim so math/footnotes/HTML inside
@@ -321,24 +412,39 @@ export function extractInlineProtectedSyntax(
 		// Link/image destinations and titles are never inline-protected here;
 		// sentinels inside `(...)` would leak into ProseMirror attributes.
 		if (ch === "]" && line[index + 1] === "(" && !isEscapedAt(line, index)) {
-			let depth = 1;
-			let cursor = index + 2;
-			while (cursor < length && depth > 0) {
-				const cur = line[cursor] ?? "";
-				if (cur === "\\") {
-					cursor += 2;
-					continue;
+			let endCursor = -1;
+			if (linkParenCloseByOpen !== null) {
+				endCursor = linkParenCloseByOpen.get(index + 1) ?? -1;
+			} else {
+				let depth = 1;
+				let cursor = index + 2;
+				while (cursor < length && depth > 0) {
+					const cur = line[cursor] ?? "";
+					if (cur === "\\") {
+						cursor += 2;
+						continue;
+					}
+					if (cur === "(") {
+						depth += 1;
+					} else if (cur === ")") {
+						depth -= 1;
+					}
+					cursor += 1;
 				}
-				if (cur === "(") {
-					depth += 1;
-				} else if (cur === ")") {
-					depth -= 1;
+				if (depth === 0) {
+					endCursor = cursor;
+				} else {
+					// Build one O(N) balanced-paren map on the first unclosed `](`
+					// so repeated unclosed `](` sequences never rescan to EOL.
+					linkParenCloseByOpen = buildLinkParenCloseMap(line, index);
 				}
-				cursor += 1;
 			}
-			if (depth === 0) {
-				result += line.slice(index, cursor);
-				index = cursor;
+			if (
+				endCursor > index + 1 &&
+				!spanCrossesTableMath(tableMathRanges, tableMathCursor, index, endCursor)
+			) {
+				result += line.slice(index, endCursor);
+				index = endCursor;
 				continue;
 			}
 		}
@@ -348,6 +454,7 @@ export function extractInlineProtectedSyntax(
 		// reference block rule (e.g. rejecting zero-whitespace `[r]: </dest>"t"`).
 		if (
 			allowRefDefDest &&
+			!noRefDestCloseAngle &&
 			ch === "]" &&
 			line[index + 1] === ":" &&
 			!isEscapedAt(line, index)
@@ -361,6 +468,7 @@ export function extractInlineProtectedSyntax(
 			}
 			if (line[cursor] === "<") {
 				let destEnd = cursor + 1;
+				let sawAngleClose = false;
 				while (destEnd < length) {
 					const cur = line[destEnd] ?? "";
 					if (cur === "\\") {
@@ -372,15 +480,19 @@ export function extractInlineProtectedSyntax(
 						break;
 					}
 					if (cur === ">") {
+						sawAngleClose = true;
 						destEnd += 1;
 						break;
 					}
 					destEnd += 1;
 				}
-				if (destEnd > cursor + 1 && line[destEnd - 1] === ">") {
+				if (sawAngleClose && destEnd > cursor + 1) {
 					result += line.slice(index, destEnd);
 					index = destEnd;
 					continue;
+				}
+				if (destEnd >= length) {
+					noRefDestCloseAngle = true;
 				}
 			}
 		}
@@ -400,81 +512,107 @@ export function extractInlineProtectedSyntax(
 			continue;
 		}
 
-		// Inline LaTeX math: \(...\)
-		if (ch === "\\" && line[index + 1] === "(" && !isEscapedAt(line, index)) {
-			let closePos = -1;
-			for (let j = index + 2; j < length - 1; j += 1) {
-				if (line[j] === "\\" && line[j + 1] === ")" && !isEscapedAt(line, j)) {
-					closePos = j;
-					break;
-				}
-			}
-			if (closePos > index + 2) {
-				result += allocateToken("math-inline", line.slice(index, closePos + 2));
-				index = closePos + 2;
-				continue;
-			}
-		}
-
-		// Inline LaTeX math: \[...\]
-		if (ch === "\\" && line[index + 1] === "[" && !isEscapedAt(line, index)) {
-			let closePos = -1;
-			for (let j = index + 2; j < length - 1; j += 1) {
-				if (line[j] === "\\" && line[j + 1] === "]" && !isEscapedAt(line, j)) {
-					closePos = j;
-					break;
-				}
-			}
-			if (closePos > index + 2) {
-				result += allocateToken("math-inline", line.slice(index, closePos + 2));
-				index = closePos + 2;
-				continue;
-			}
-		}
-
-		if (ch === "$" && !isEscapedAt(line, index)) {
-			// Mid-line display math `$$...$$` stays one protected atom, while an
-			// empty `$$$$` and an unclosed `$$` never start a single-dollar scan.
-			if (line[index + 1] === "$") {
-				const closeDisplay = line.indexOf("$$", index + 2);
-				if (closeDisplay > index + 2) {
+		if (tableMathRanges === undefined) {
+			// Inline LaTeX math: \(...\)
+			if (
+				!noClosingParenMath &&
+				ch === "\\" &&
+				line[index + 1] === "(" &&
+				!isEscapedAt(line, index)
+			) {
+				const closePos = findUnescapedDelimiterClose(line, "\\)", index + 2);
+				if (closePos > index + 2) {
 					result += allocateToken(
 						"math-inline",
-						line.slice(index, closeDisplay + 2),
+						line.slice(index, closePos + 2),
 					);
-					index = closeDisplay + 2;
+					index = closePos + 2;
 					continue;
 				}
-				result += "$$";
-				index += 2;
-				continue;
+				if (closePos < 0) {
+					noClosingParenMath = true;
+				}
 			}
-			const openFollow = line[index + 1] ?? "";
-			if (openFollow.length > 0 && !/\s/.test(openFollow)) {
-				let closePos = -1;
-				for (let j = index + 1; j < length; j += 1) {
-					const cur = line[j] ?? "";
-					if (cur !== "$" || isEscapedAt(line, j)) {
+
+			// Inline LaTeX math: \[...\]
+			if (
+				!noClosingBracketMath &&
+				ch === "\\" &&
+				line[index + 1] === "[" &&
+				!isEscapedAt(line, index)
+			) {
+				const closePos = findUnescapedDelimiterClose(line, "\\]", index + 2);
+				if (closePos > index + 2) {
+					result += allocateToken(
+						"math-inline",
+						line.slice(index, closePos + 2),
+					);
+					index = closePos + 2;
+					continue;
+				}
+				if (closePos < 0) {
+					noClosingBracketMath = true;
+				}
+			}
+
+			if (ch === "$" && !isEscapedAt(line, index)) {
+				// Mid-line display math `$$...$$` stays one protected atom, while an
+				// empty `$$$$` and an unclosed `$$` never start a single-dollar scan.
+				if (line[index + 1] === "$") {
+					if (!noClosingDoubleDollar) {
+						const closeDisplay = line.indexOf("$$", index + 2);
+						if (closeDisplay > index + 2) {
+							result += allocateToken(
+								"math-inline",
+								line.slice(index, closeDisplay + 2),
+							);
+							index = closeDisplay + 2;
+							continue;
+						}
+						if (closeDisplay < 0) {
+							noClosingDoubleDollar = true;
+						}
+					}
+					result += "$$";
+					index += 2;
+					continue;
+				}
+				const openFollow = line[index + 1] ?? "";
+				if (
+					!noClosingSingleDollar &&
+					openFollow.length > 0 &&
+					!/\s/.test(openFollow)
+				) {
+					let closePos = -1;
+					let sawUnescapedDollar = false;
+					for (let j = index + 1; j < length; j += 1) {
+						const cur = line[j] ?? "";
+						if (cur !== "$" || isEscapedAt(line, j)) {
+							continue;
+						}
+						sawUnescapedDollar = true;
+						if (line[j + 1] === "$") {
+							break;
+						}
+						const before = line[j - 1] ?? "";
+						const after = line[j + 1] ?? "";
+						if (/\s/.test(before) || /[0-9]/.test(after)) {
+							break;
+						}
+						closePos = j;
+						break;
+					}
+					if (closePos > index + 1) {
+						result += allocateToken(
+							"math-inline",
+							line.slice(index, closePos + 1),
+						);
+						index = closePos + 1;
 						continue;
 					}
-					if (line[j + 1] === "$") {
-						break;
+					if (!sawUnescapedDollar) {
+						noClosingSingleDollar = true;
 					}
-					const before = line[j - 1] ?? "";
-					const after = line[j + 1] ?? "";
-					if (/\s/.test(before) || /[0-9]/.test(after)) {
-						break;
-					}
-					closePos = j;
-					break;
-				}
-				if (closePos > index + 1) {
-					result += allocateToken(
-						"math-inline",
-						line.slice(index, closePos + 1),
-					);
-					index = closePos + 1;
-					continue;
 				}
 			}
 		}
@@ -501,6 +639,9 @@ export function extractInlineProtectedSyntax(
 		if (ch === "<" && !isEscapedAt(line, index)) {
 			const fromContinuationIndent =
 				indentedContinuationStart >= 0 && index === indentedContinuationStart;
+			if (unclosedTagBoundary === null) {
+				unclosedTagBoundary = new Map<string, number>();
+			}
 			const matchedPairedHtml = matchAllowedInlineHtml(
 				line,
 				index,
@@ -515,6 +656,9 @@ export function extractInlineProtectedSyntax(
 				);
 				index += matchedPairedHtml.length;
 				continue;
+			}
+			if (htmlScanState === null) {
+				htmlScanState = createInlineHtmlScanState();
 			}
 			const matchedRawHtml = execCommonMarkInlineHtmlToken(
 				line,

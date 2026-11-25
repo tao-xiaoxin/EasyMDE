@@ -1488,6 +1488,8 @@ describe("visual editor codec regressions", () => {
 		expect(unclosedCodeBlocks).toBe(1);
 		expect(unclosed.textContent).toContain("$$\nx = 1");
 
+		// PHP `MarkdownRenderer::extract_math()` runs before CommonMark GFM table
+		// parsing, so `$10 | $` across cells is extracted as inline math (`\(10 |\)20`).
 		const tableDoc = parseMarkdownToVisualDoc(
 			"| Item | A | B |\n| --- | --- | --- |\n| x | $10 | $20 |",
 		);
@@ -1495,7 +1497,7 @@ describe("visual editor codec regressions", () => {
 		expect(tableNode?.type.name).toBe("table");
 		expect(tableNode?.child(0).childCount).toBe(3);
 		expect(tableNode?.child(1).childCount).toBe(3);
-		expect(collectProtectedInlineRaws(tableDoc)).toEqual([]);
+		expect(collectProtectedInlineRaws(tableDoc)).toEqual(["$10 | $"]);
 	});
 
 	it("P0-07 escapes literal Markdown punctuation without corrupting prose", () => {
@@ -5902,21 +5904,27 @@ describe("PR-R23-A pipe math in tables, list-prefixed tables, container-bounded 
 		);
 		expect(parseMarkdownToVisualDoc(serializedParen).eq(editedParen)).toBe(true);
 
-		// 3. `$$a|b$$` and `\[a|b\]` inside table cells also emit verbatim without escaping `|`.
+		// 3. `$$a|b$$` and `\[a|b\]` break the table into `\n\n<token>\n\n` in PHP,
+		// moving the display math and trailing `| ![x](x.png) |` outside the table.
 		for (const expr of ["$$a|b$$", "\\[a|b\\]"]) {
 			const md = `| A | B |\n|---|---|\n| ${expr} | ![x](x.png) |`;
 			const guard = createMarkdownRoundTripGuard(md);
-			expect(collectProtectedInlines(guard.initialDoc)).toEqual([
-				{ kind: "math-inline", rawMarkdown: expr },
-			]);
+			expect(guard.initialDoc.childCount).toBe(3);
+			expect(guard.initialDoc.child(0).type.name).toBe("table");
+			expect(guard.initialDoc.child(1).type.name).toBe("protected_block");
+			expect(guard.initialDoc.child(1).attrs.kind).toBe("math");
+			expect(guard.initialDoc.child(1).attrs.rawMarkdown).toBe(expr);
+			expect(guard.initialDoc.child(2).type.name).toBe("paragraph");
 			const edited = insertTextAt(
 				guard.initialDoc,
 				findTextEndPos(guard.initialDoc, "A"),
 				"Z",
 			);
-			expect(guard.serialize(edited)).toBe(
-				`| AZ | B |\n| --- | --- |\n| ${expr} | ![x](x.png) |`,
+			const serialized = guard.serialize(edited);
+			expect(serialized).toBe(
+				`| AZ | B |\n| --- | --- |\n|  |  |\n\n${expr}\n\n| ![x](x.png) |`,
 			);
+			expect(parseMarkdownToVisualDoc(serialized).eq(edited)).toBe(true);
 		}
 
 		// 4. Pipe-containing math in table HEADER still detects the GFM table so `<br>` becomes `hard_break`.
@@ -6295,5 +6303,451 @@ describe("PR-R23-A pipe math in tables, list-prefixed tables, container-bounded 
 				),
 			),
 		).toBe("-\n  > [r]: /u\n\n  After");
+	});
+});
+
+describe("PR-R24-A1 PHP-exact table math, nested/interleaved table-align, lazy table & quote boundaries, nested-quote fences, and O(N) DoS guards", () => {
+	function findTextEndPos(doc: ProseMirrorNode, needle: string): number {
+		let found = -1;
+		doc.descendants((node, pos) => {
+			if (found !== -1) return false;
+			if (node.isText && node.text) {
+				const idx = node.text.indexOf(needle);
+				if (idx !== -1) {
+					found = pos + idx + needle.length;
+					return false;
+				}
+			}
+			return true;
+		});
+		if (found === -1) {
+			throw new Error(`Needle not found in visual doc: ${needle}`);
+		}
+		return found;
+	}
+
+	function insertTextAt(
+		doc: ProseMirrorNode,
+		pos: number,
+		text: string,
+	): ProseMirrorNode {
+		const state = EditorState.create({ doc, schema: visualEditorSchema });
+		return state.tr.insertText(text, pos).doc;
+	}
+
+	function collectProtectedInlines(doc: ProseMirrorNode): Array<{
+		kind: string;
+		rawMarkdown: string;
+	}> {
+		const entries: Array<{ kind: string; rawMarkdown: string }> = [];
+		doc.descendants((node) => {
+			if (node.type.name === "protected_inline") {
+				entries.push({
+					kind: String(node.attrs.kind ?? ""),
+					rawMarkdown: String(node.attrs.rawMarkdown ?? ""),
+				});
+			}
+			return true;
+		});
+		return entries;
+	}
+
+	it("matches PHP 4-pass math and inline code-span precedence inside GFM tables (Track A #1 + Track B #4)", () => {
+		// 1. `$a` must NOT cross into inline code span `` `x$` ``.
+		const codeDollarMd = "| A | B |\n| --- | --- |\n| $a | `x$` |";
+		const codeDollarGuard = createMarkdownRoundTripGuard(codeDollarMd);
+		expect(collectProtectedInlines(codeDollarGuard.initialDoc)).toEqual([]);
+		const editedCodeDollar = insertTextAt(
+			codeDollarGuard.initialDoc,
+			findTextEndPos(codeDollarGuard.initialDoc, "A"),
+			"Z",
+		);
+		const serializedCodeDollar = codeDollarGuard.serialize(editedCodeDollar);
+		expect(serializedCodeDollar).toBe(
+			"| AZ | B |\n| --- | --- |\n| \\$a | `x$` |",
+		);
+		expect(parseMarkdownToVisualDoc(serializedCodeDollar).eq(editedCodeDollar)).toBe(
+			true,
+		);
+
+		// 2. `$10 | $20 | ![x](x)`: PHP extracts `$10 | $` first, preserving `![x](x)` in column 2.
+		const currencyPipeMd = "| A | B |\n| --- | --- |\n| $10 | $20 | ![x](x) |";
+		const currencyPipeGuard = createMarkdownRoundTripGuard(currencyPipeMd);
+		expect(collectProtectedInlines(currencyPipeGuard.initialDoc)).toEqual([
+			{ kind: "math-inline", rawMarkdown: "$10 | $" },
+		]);
+		const editedCurrencyPipe = insertTextAt(
+			currencyPipeGuard.initialDoc,
+			findTextEndPos(currencyPipeGuard.initialDoc, "A"),
+			"Z",
+		);
+		const serializedCurrencyPipe =
+			currencyPipeGuard.serialize(editedCurrencyPipe);
+		expect(serializedCurrencyPipe).toBe(
+			"| AZ | B |\n| --- | --- |\n| $10 | $20 | ![x](x) |",
+		);
+		expect(
+			parseMarkdownToVisualDoc(serializedCurrencyPipe).eq(editedCurrencyPipe),
+		).toBe(true);
+
+		// 3. Multiline `\(...\)` inside table body rows (and header rows) stays 1 logical row with raw newline preserved.
+		for (const [md, needle, expected] of [
+			[
+				"| A | B |\n| --- | --- |\n| \\(x\ny|z\\) | ![x](x) |",
+				"A",
+				"| AZ | B |\n| --- | --- |\n| \\(x\ny|z\\) | ![x](x) |",
+			],
+			[
+				"| A | B |\n| --- | --- |\n| \\(a\nb\\) | ok |",
+				"A",
+				"| AZ | B |\n| --- | --- |\n| \\(a\nb\\) | ok |",
+			],
+			[
+				"| A | B |\n| --- | --- |\n| \\(a\n\nb\\) | ok |",
+				"A",
+				"| AZ | B |\n| --- | --- |\n| \\(a\n\nb\\) | ok |",
+			],
+			[
+				"| \\(a\nb\\) | c |\n| --- | --- |\n| 1 | 2 |",
+				"c",
+				"| \\(a\nb\\) | cZ |\n| --- | --- |\n| 1 | 2 |",
+			],
+		] as const) {
+			const guard = createMarkdownRoundTripGuard(md);
+			const table = guard.initialDoc.firstChild;
+			expect(table?.type.name, md).toBe("table");
+			expect(table?.childCount, md).toBe(2);
+			const edited = insertTextAt(
+				guard.initialDoc,
+				findTextEndPos(guard.initialDoc, needle),
+				"Z",
+			);
+			const serialized = guard.serialize(edited);
+			expect(serialized, md).toBe(expected);
+			expect(parseMarkdownToVisualDoc(serialized).eq(edited), md).toBe(true);
+		}
+
+		// 4. Display math (`$$a|b$$`, `\[a|b\]`, multiline `$$\na|b\n$$`) breaks out of the table just like PHP `\n\n<token>\n\n`.
+		for (const expr of ["$$a|b$$", "\\[a|b\\]", "$$\na|b\n$$"]) {
+			const md = `| A | B |\n| --- | --- |\n| ${expr} | ![x](x) |\n\nFooter`;
+			const guard = createMarkdownRoundTripGuard(md);
+			expect(guard.initialDoc.childCount, expr).toBe(4);
+			expect(guard.initialDoc.child(0).type.name, expr).toBe("table");
+			expect(guard.initialDoc.child(1).type.name, expr).toBe("protected_block");
+			expect(guard.initialDoc.child(1).attrs.kind, expr).toBe("math");
+			expect(guard.initialDoc.child(1).attrs.rawMarkdown, expr).toBe(expr);
+			expect(guard.initialDoc.child(2).type.name, expr).toBe("paragraph");
+			expect(guard.initialDoc.child(3).textContent, expr).toBe("Footer");
+
+			const editedHeader = insertTextAt(
+				guard.initialDoc,
+				findTextEndPos(guard.initialDoc, "A"),
+				"Z",
+			);
+			const serializedHeader = guard.serialize(editedHeader);
+			expect(serializedHeader, expr).toBe(
+				`| AZ | B |\n| --- | --- |\n|  |  |\n\n${expr}\n\n| ![x](x) |\n\nFooter`,
+			);
+			expect(
+				parseMarkdownToVisualDoc(serializedHeader).eq(editedHeader),
+				expr,
+			).toBe(true);
+
+			// Editing an unrelated block below must not duplicate the display math or trailing text.
+			const editedFooter = insertTextAt(
+				guard.initialDoc,
+				findTextEndPos(guard.initialDoc, "Footer"),
+				"!",
+			);
+			const serializedFooter = guard.serialize(editedFooter);
+			expect(serializedFooter, expr).toBe(
+				`| A | B |\n| --- | --- |\n|  |  |\n\n${expr}\n\n| ![x](x) |\n\nFooter!`,
+			);
+		}
+
+		// 5. Space-padded and digit-followed inline `$...$` in table headers stay valid 2-column tables.
+		for (const headerExpr of ["$ a|b $", "$a|b $", "$a|b$2"]) {
+			const md = `| ${headerExpr} | c |\n| --- | --- |\n| 1 | 2 |`;
+			const guard = createMarkdownRoundTripGuard(md);
+			expect(guard.initialDoc.firstChild?.type.name, headerExpr).toBe("table");
+			expect(guard.initialDoc.firstChild?.child(0).childCount, headerExpr).toBe(
+				2,
+			);
+			const edited = insertTextAt(
+				guard.initialDoc,
+				findTextEndPos(guard.initialDoc, "c"),
+				"Z",
+			);
+			const serialized = guard.serialize(edited);
+			expect(serialized, headerExpr).toBe(
+				`| ${headerExpr} | cZ |\n| --- | --- |\n| 1 | 2 |`,
+			);
+			expect(
+				parseMarkdownToVisualDoc(serialized).eq(edited),
+				headerExpr,
+			).toBe(true);
+		}
+
+		// 6. Unclosed `$$` falls through to PHP pass 4 (`$a|b$`), preserving column 2 (`c`).
+		const unclosedDoubleMd = "| A | B |\n| --- | --- |\n| $$a|b$ | c |";
+		const unclosedDoubleGuard = createMarkdownRoundTripGuard(unclosedDoubleMd);
+		expect(collectProtectedInlines(unclosedDoubleGuard.initialDoc)).toEqual([
+			{ kind: "math-inline", rawMarkdown: "$a|b$" },
+		]);
+		const editedUnclosedDouble = insertTextAt(
+			unclosedDoubleGuard.initialDoc,
+			findTextEndPos(unclosedDoubleGuard.initialDoc, "A"),
+			"Z",
+		);
+		const serializedUnclosedDouble =
+			unclosedDoubleGuard.serialize(editedUnclosedDouble);
+		expect(serializedUnclosedDouble).toBe(
+			"| AZ | B |\n| --- | --- |\n| \\$$a|b$ | c |",
+		);
+		expect(
+			parseMarkdownToVisualDoc(serializedUnclosedDouble).eq(
+				editedUnclosedDouble,
+			),
+		).toBe(true);
+	});
+
+	it("preserves table alignment annotations across lazy list continuations, list->quote, and nested lists (Track A #2 + Track B #6)", () => {
+		// 1. Lazy continuation row `| x |` in a list table keeps `M` valid and centered after editing `A` -> `AZ`.
+		const lazyListAlignMd =
+			'- <!-- easymde-table-align:v1 [[1,"center"]] -->\n  | A |\n  | --- |\n| x |';
+		const lazyGuard = createMarkdownRoundTripGuard(lazyListAlignMd);
+		const lazyTable = lazyGuard.initialDoc.firstChild?.firstChild?.child(1);
+		expect(lazyTable?.type.name).toBe("table");
+		expect(lazyTable?.childCount).toBe(2);
+		expect(lazyTable?.attrs.alignAnnotation).toBe(
+			'<!-- easymde-table-align:v1 [[1,"center"]] -->',
+		);
+		expect(lazyTable?.child(1).child(0).attrs.textAlign).toBe("center");
+		const editedLazy = insertTextAt(
+			lazyGuard.initialDoc,
+			findTextEndPos(lazyGuard.initialDoc, "A"),
+			"Z",
+		);
+		const serializedLazy = lazyGuard.serialize(editedLazy);
+		expect(serializedLazy).toBe(
+			'- <!-- easymde-table-align:v1 [[1,"center"]] -->\n  | AZ |\n  | --- |\n  | x |',
+		);
+		expect(parseMarkdownToVisualDoc(serializedLazy).eq(editedLazy)).toBe(true);
+
+		// 2. Interleaved `list -> quote` table alignment attaches directly to table without blank `  >` separator.
+		const listQuoteAlignMd =
+			'- > <!-- easymde-table-align:v1 [[1,"center"]] -->\n  > | A |\n  > | --- |\n  > | x |';
+		const listQuoteGuard = createMarkdownRoundTripGuard(listQuoteAlignMd);
+		const listQuoteBq =
+			listQuoteGuard.initialDoc.firstChild?.firstChild?.child(1);
+		expect(listQuoteBq?.type.name).toBe("blockquote");
+		expect(listQuoteBq?.childCount).toBe(1);
+		expect(listQuoteBq?.firstChild?.type.name).toBe("table");
+		expect(listQuoteBq?.firstChild?.attrs.alignAnnotation).toBe(
+			'<!-- easymde-table-align:v1 [[1,"center"]] -->',
+		);
+		const editedListQuote = insertTextAt(
+			listQuoteGuard.initialDoc,
+			findTextEndPos(listQuoteGuard.initialDoc, "A"),
+			"Z",
+		);
+		const serializedListQuote = listQuoteGuard.serialize(editedListQuote);
+		expect(serializedListQuote).toBe(
+			'-\n  > <!-- easymde-table-align:v1 [[1,"center"]] -->\n  > | AZ |\n  > | --- |\n  > | x |',
+		);
+		expect(serializedListQuote).not.toContain("  >\n  > | AZ |");
+		expect(
+			parseMarkdownToVisualDoc(serializedListQuote).eq(editedListQuote),
+		).toBe(true);
+
+		// 3. Nested list (`- - M` and `10. 10. M`) attaches `M` as alignAnnotation (never an orphan protected_block)
+		// and updating row alignment emits exactly one updated comment with zero duplicates.
+		const nestedListAlignMd =
+			'- - <!-- easymde-table-align:v1 [[0,"center"]] -->\n    | A | B |\n    | --- | --- |\n    | 1 | 2 |';
+		const nestedGuard = createMarkdownRoundTripGuard(nestedListAlignMd);
+		let nestedProtectedBlocks = 0;
+		let nestedTablePos = -1;
+		nestedGuard.initialDoc.descendants((node, pos) => {
+			if (node.type.name === "protected_block") nestedProtectedBlocks += 1;
+			if (node.type.name === "table") nestedTablePos = pos;
+			return true;
+		});
+		expect(nestedProtectedBlocks).toBe(0);
+		expect(nestedTablePos).toBeGreaterThanOrEqual(0);
+		const editedNested = insertTextAt(
+			nestedGuard.initialDoc,
+			findTextEndPos(nestedGuard.initialDoc, "A"),
+			"Z",
+		);
+		const serializedNested = nestedGuard.serialize(editedNested);
+		expect(serializedNested).toBe(
+			'-\n  - <!-- easymde-table-align:v1 [[0,"center"]] -->\n    | AZ | B |\n    | --- | --- |\n    | 1 | 2 |',
+		);
+		expect(parseMarkdownToVisualDoc(serializedNested).eq(editedNested)).toBe(
+			true,
+		);
+
+		// Mutating row 0 cells from `center` to `right` must replace the single annotation (never stack 2 comments).
+		const alignState = EditorState.create({
+			doc: nestedGuard.initialDoc,
+			schema: visualEditorSchema,
+		});
+		let alignTr = alignState.tr;
+		nestedGuard.initialDoc.descendants((node, pos) => {
+			if (node.type.name === "table_header") {
+				alignTr = alignTr.setNodeMarkup(pos, undefined, {
+					...node.attrs,
+					textAlign: "right",
+				});
+			}
+			return true;
+		});
+		const serializedRealigned = nestedGuard.serialize(alignTr.doc);
+		expect(
+			serializedRealigned.match(/<!-- easymde-table-align:v1/g)?.length,
+		).toBe(1);
+		expect(serializedRealigned).toContain(
+			'<!-- easymde-table-align:v1 [[0,"right"]] -->',
+		);
+
+		// Wide nested ordered list (`10. 10. M`) also attaches cleanly without triggering indented code.
+		const wideOrderedAlignMd =
+			'10. 10. <!-- easymde-table-align:v1 [[0,"center"]] -->\n        | A | B |\n        | --- | --- |\n        | 1 | 2 |';
+		const wideDoc = parseMarkdownToVisualDoc(wideOrderedAlignMd);
+		let wideTableAlign: unknown = null;
+		wideDoc.descendants((node) => {
+			if (node.type.name === "table") {
+				wideTableAlign = node.attrs.alignAnnotation;
+			}
+			return true;
+		});
+		expect(wideTableAlign).toBe('<!-- easymde-table-align:v1 [[0,"center"]] -->');
+	});
+
+	it("handles interleaved list->quote tables, lazy blockquote table rows, and blockquote boundary preservation (Track A #3 + Track B #10)", () => {
+		// Track B #10: `- > | A | B |` detects the GFM table and parses `<br>` as `hard_break`.
+		for (const md of [
+			"- > | A | B |\n  > | --- | --- |\n  > | 1<br>2 | 3 |",
+			"- item\n  > | A | B |\n  > | --- | --- |\n  > | 1<br>2 | 3 |",
+		]) {
+			const guard = createMarkdownRoundTripGuard(md);
+			let hardBreaks = 0;
+			guard.initialDoc.descendants((node) => {
+				if (node.type.name === "hard_break") hardBreaks += 1;
+				return true;
+			});
+			expect(hardBreaks, md).toBe(1);
+			expect(collectProtectedInlines(guard.initialDoc), md).toEqual([]);
+			const edited = insertTextAt(
+				guard.initialDoc,
+				findTextEndPos(guard.initialDoc, "A"),
+				"Z",
+			);
+			const serialized = guard.serialize(edited);
+			expect(serialized, md).toContain("1<br>2");
+			expect(parseMarkdownToVisualDoc(serialized).eq(edited), md).toBe(true);
+		}
+
+		// Track A #3a: `> | A |\n> | --- |\n| x |` keeps lazy row `| x |` inside the blockquote table.
+		const lazyBqMd = "> | A |\n> | --- |\n| x |";
+		const lazyBqGuard = createMarkdownRoundTripGuard(lazyBqMd);
+		expect(lazyBqGuard.initialDoc.childCount).toBe(1);
+		expect(lazyBqGuard.initialDoc.firstChild?.type.name).toBe("blockquote");
+		expect(lazyBqGuard.initialDoc.firstChild?.firstChild?.childCount).toBe(2);
+		const editedLazyBq = insertTextAt(
+			lazyBqGuard.initialDoc,
+			findTextEndPos(lazyBqGuard.initialDoc, "A"),
+			"Z",
+		);
+		const serializedLazyBq = lazyBqGuard.serialize(editedLazyBq);
+		expect(serializedLazyBq).toBe("> | AZ |\n> | --- |\n> | x |");
+		expect(parseMarkdownToVisualDoc(serializedLazyBq).eq(editedLazyBq)).toBe(
+			true,
+		);
+
+		// Track A #3b: `- > A\n  >\nQ` preserves the outside paragraph `Q` after editing `A` -> `AZ`.
+		const listQuoteBoundaryMd = "- > A\n  >\nQ";
+		const boundaryGuard = createMarkdownRoundTripGuard(listQuoteBoundaryMd);
+		expect(boundaryGuard.initialDoc.childCount).toBe(2);
+		expect(boundaryGuard.initialDoc.child(1).textContent).toBe("Q");
+		const editedBoundary = insertTextAt(
+			boundaryGuard.initialDoc,
+			findTextEndPos(boundaryGuard.initialDoc, "A"),
+			"Z",
+		);
+		const serializedBoundary = boundaryGuard.serialize(editedBoundary);
+		expect(serializedBoundary).toBe("-\n  > AZ\n\nQ");
+		expect(
+			parseMarkdownToVisualDoc(serializedBoundary).eq(editedBoundary),
+		).toBe(true);
+	});
+
+	it("peels nested blockquotes inside lists in detectFence without swallowing closers or protecting code contents (Track B #3)", () => {
+		const cases = [
+			[
+				"- > hello\n  > > ```js\n  > > $$x$$\n  > > <div>raw</div>\n  > > ```",
+				"hello",
+				"-\n  > helloZ\n  >\n  > > ```js\n  > > $$x$$\n  > > <div>raw</div>\n  > > ```",
+			],
+			[
+				"  - item\n    > ```js\n    > $$x$$\n    > <div>raw</div>\n    > ```",
+				"item",
+				"- itemZ\n  > ```js\n  > $$x$$\n  > <div>raw</div>\n  > ```",
+			],
+		] as const;
+
+		for (const [md, needle, expected] of cases) {
+			const guard = createMarkdownRoundTripGuard(md);
+			let protectedBlocks = 0;
+			const codeContents: string[] = [];
+			guard.initialDoc.descendants((node) => {
+				if (node.type.name === "protected_block") protectedBlocks += 1;
+				if (node.type.name === "code_block") codeContents.push(node.textContent);
+				return true;
+			});
+			expect(protectedBlocks, md).toBe(0);
+			expect(codeContents, md).toEqual(["$$x$$\n<div>raw</div>"]);
+			const edited = insertTextAt(
+				guard.initialDoc,
+				findTextEndPos(guard.initialDoc, needle),
+				"Z",
+			);
+			const serialized = guard.serialize(edited);
+			expect(serialized, md).toBe(expected);
+			expect(parseMarkdownToVisualDoc(serialized).eq(edited), md).toBe(true);
+		}
+
+		// Mermaid fence inside a nested blockquote in a list still maps cleanly to a protected mermaid block.
+		const mermaidInListBq =
+			"  - item\n    > ```mermaid\n    > graph TD\n    > A-->B\n    > ```";
+		const mermaidDoc = parseMarkdownToVisualDoc(mermaidInListBq);
+		let mermaidKind = "";
+		mermaidDoc.descendants((node) => {
+			if (node.type.name === "protected_block") {
+				mermaidKind = String(node.attrs.kind ?? "");
+			}
+			return true;
+		});
+		expect(mermaidKind).toBe("mermaid");
+	});
+
+	it("prescans adversarial unclosed math and link-paren inputs in linear time (Track B #5)", () => {
+		const adversarialInputs: ReadonlyArray<readonly [string, string]> = [
+			["unclosed_block_bracket_10k", "\\[\n".repeat(10_000)],
+			["unclosed_inline_paren_25k", "\\(".repeat(25_000)],
+			["unclosed_inline_bracket_25k", "\\[".repeat(25_000)],
+			["unclosed_link_paren_20k", "](".repeat(20_000)],
+			["unclosed_link_paren_20k_trailing_close", `${"](".repeat(20_000)})`],
+		];
+
+		for (const [label, input] of adversarialInputs) {
+			const started = performance.now();
+			const result = prescanMarkdown(input);
+			const elapsedMs = performance.now() - started;
+			expect(result.markdown.length, label).toBeGreaterThan(0);
+			expect(elapsedMs, `${label} took ${elapsedMs.toFixed(1)}ms`).toBeLessThan(
+				250,
+			);
+		}
 	});
 });

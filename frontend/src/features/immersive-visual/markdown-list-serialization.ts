@@ -134,7 +134,7 @@ function isStandaloneType7HtmlFirstLine(text: string): boolean {
 	return matchHtmlBlockOpen(trimmedLead, true) === 7;
 }
 
-function nodeCanLazilyContinue(node: ProseMirrorNode): boolean {
+export function nodeCanLazilyContinue(node: ProseMirrorNode): boolean {
 	switch (node.type.name) {
 		case "paragraph":
 		case "table":
@@ -247,6 +247,14 @@ function canInterruptPreviousInTightList(
 		if (wouldRawHtmlInterruptParagraph(firstLine)) {
 			return true;
 		}
+	}
+	if (
+		name === "table" &&
+		!serialized.startsWith("<!-- ") &&
+		(prev.type.name === "blockquote" || isNestedList(prev)) &&
+		nodeCanLazilyContinue(prev)
+	) {
+		return false;
 	}
 	return (
 		name === "table" ||

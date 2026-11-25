@@ -5,6 +5,7 @@ import {
 	isNestedList,
 	joinSerializedBlocks,
 	LEADING_FOUR_COLUMN_INDENT,
+	nodeCanLazilyContinue,
 	refDefContinuationMode,
 	serializeListItemAt,
 } from "./markdown-list-serialization";
@@ -13,6 +14,7 @@ import {
 	type ParsedVisualDocument,
 	parseMarkdownWithBlockSources,
 } from "./markdown-parser";
+import { wouldRawHtmlInterruptParagraph } from "./markdown-prescanner-inline";
 
 export {
 	type BlockSerializer,
@@ -679,6 +681,49 @@ function isEmptyDoc(doc: ProseMirrorNode): boolean {
 	);
 }
 
+const BLANK_BLOCKQUOTE_LINE = /^[ \t]*(?:>[ \t]*)+$/;
+const INTERRUPTING_LIST_FIRST_LINE = /^[ \t]*(?:[-*+]|1[.)])[ \t]+\S/;
+
+function wouldBeLazilyAbsorbedByPrevious(
+	node: ProseMirrorNode,
+	serialized: string,
+): boolean {
+	const name = node.type.name;
+	if (name === "paragraph") {
+		return true;
+	}
+	if (name === "table") {
+		return !serialized.startsWith("<!-- ");
+	}
+	if (name === "ordered_list" || name === "bullet_list" || name === "task_list") {
+		const nl = serialized.indexOf("\n");
+		const firstLine = nl === -1 ? serialized : serialized.slice(0, nl);
+		return !INTERRUPTING_LIST_FIRST_LINE.test(firstLine);
+	}
+	if (name === "protected_block") {
+		if (node.attrs.kind === "mermaid") {
+			return false;
+		}
+		if (node.attrs.kind === "raw" && typeof node.attrs.rawMarkdown === "string") {
+			const raw = node.attrs.rawMarkdown;
+			const nl = raw.indexOf("\n");
+			const firstLine = (nl === -1 ? raw : raw.slice(0, nl)).replace(
+				/^[ \t]{0,3}/,
+				"",
+			);
+			return !wouldRawHtmlInterruptParagraph(firstLine);
+		}
+		return true;
+	}
+	return false;
+}
+
+function endsWithBlankBlockquoteLine(text: string): boolean {
+	const lastNewline = text.lastIndexOf("\n");
+	const lastLine = lastNewline === -1 ? text : text.slice(lastNewline + 1);
+	return BLANK_BLOCKQUOTE_LINE.test(lastLine);
+}
+
 function serializeDocPreservingUntouchedBlocks(
 	doc: ProseMirrorNode,
 	parsed: ParsedVisualDocument,
@@ -708,6 +753,7 @@ function serializeDocPreservingUntouchedBlocks(
 	if (keepLeadingPrefix && parsed.leadingPrefix.length > 0) {
 		parts.push(parsed.leadingPrefix);
 	}
+	let prevBlockText = "";
 	for (let idx = 0; idx < newLen; idx += 1) {
 		const child = doc.child(idx);
 		const origIdx = matchedOrigIndex[idx] ?? -1;
@@ -749,6 +795,16 @@ function serializeDocPreservingUntouchedBlocks(
 					: effBlock
 						? effBlock.separatorBefore
 						: "\n\n";
+			if (
+				refDefMode === "none" &&
+				!/\n[ \t]*\n/.test(separator) &&
+				(matchedOrigIndex[idx - 1] ?? -1) < 0 &&
+				nodeCanLazilyContinue(doc.child(idx - 1)) &&
+				!endsWithBlankBlockquoteLine(prevBlockText) &&
+				wouldBeLazilyAbsorbedByPrevious(child, candidateText)
+			) {
+				separator = "\n\n";
+			}
 			parts.push(separator);
 		}
 		const reusedIndentedParagraphAfterBlank =
@@ -759,11 +815,12 @@ function serializeDocPreservingUntouchedBlocks(
 		const blockText = reusedIndentedParagraphAfterBlank
 			? serializers.serializeBlock(child)
 			: candidateText;
-		parts.push(
+		const emittedBlockText =
 			refDefMode === "indented" && !LEADING_FOUR_COLUMN_INDENT.test(blockText)
 				? `    ${blockText}`
-				: blockText,
-		);
+				: blockText;
+		parts.push(emittedBlockText);
+		prevBlockText = emittedBlockText;
 	}
 	let output = parts.join("");
 	// A multi-block document replaced without any surviving baseline block must

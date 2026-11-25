@@ -860,6 +860,7 @@ export function parseMarkdownWithBlockSources(
 			: "";
 
 	let lastKnownEnd = 0;
+	let previousHadRange = false;
 	let hasMonotonicRanges = mapped.length > 0;
 	const blocks: ParsedVisualBlockSource[] = [];
 
@@ -874,13 +875,17 @@ export function parseMarkdownWithBlockSources(
 			const separatorBefore =
 				idx === 0
 					? ""
-					: range.start > lastKnownEnd
-						? `\n${rawLines.slice(lastKnownEnd, range.start).join("\n")}\n`
-						: "\n";
+					: !previousHadRange
+						? "\n\n"
+						: range.start > lastKnownEnd
+							? `\n${rawLines.slice(lastKnownEnd, range.start).join("\n")}\n`
+							: "\n";
 			blocks.push({ node: entry.node, raw, separatorBefore });
 			lastKnownEnd = range.end;
+			previousHadRange = true;
 		} else {
 			hasMonotonicRanges = false;
+			previousHadRange = false;
 			blocks.push({
 				node: entry.node,
 				raw: null,

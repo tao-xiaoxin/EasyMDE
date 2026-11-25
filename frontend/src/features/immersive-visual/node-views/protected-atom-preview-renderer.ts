@@ -138,25 +138,63 @@ function buildInlineHtmlSegments(text: string): InlineHtmlSegment[] {
 }
 
 /**
- * Strip CommonMark §6.6 inline raw HTML tokens (including multiline open/close
- * tags, quoted attributes, comments, CDATA, PIs, and declarations) outside §6.1
- * backtick code spans (including multiline spans) and §6.5 autolinks in O(N),
- * preserving `\n` line counts.
+ * Core linear-time scanner that strips CommonMark §6.6 inline raw HTML tokens
+ * (including multiline open/close tags, quoted attributes, comments, CDATA,
+ * PIs, and declarations) outside §6.1 backtick code spans (including multiline
+ * spans and PHP `InlineParserEngine` escaped leading backtick runs) and §6.5
+ * autolinks. Never emits stripped tokens' internal `\n` into visible text; when
+ * `linesOut` is provided, tracks source lines separately so multi-line block
+ * preview keeps container alignment without injecting spurious breaks.
  */
-function stripInlineHtmlOutsideCode(text: string): string {
+function stripInlineHtmlCore(
+	text: string,
+	linesOut: string[] | null,
+): string {
 	const runs = indexBacktickRuns(text);
 	const cursors = runs ? new Map<number, number>() : null;
 	const guard = createInlineHtmlScanGuard();
 	let segments: InlineHtmlSegment[] | null = null;
 	let segIdx = 0;
+	let srcLine = 0;
+	let outLine = 0;
 	let lineEnd = text.indexOf("\n");
 	if (lineEnd < 0) lineEnd = text.length;
 	let out = "";
+
+	const emitChunk = (chunk: string): void => {
+		if (linesOut === null) {
+			out += chunk;
+			return;
+		}
+		if (!chunk.includes("\n")) {
+			linesOut[outLine] = `${linesOut[outLine] ?? ""}${chunk}`;
+			return;
+		}
+		const parts = chunk.split("\n");
+		for (let p = 0; p < parts.length; p += 1) {
+			if (p > 0) {
+				srcLine += 1;
+				outLine = srcLine;
+			}
+			const part = parts[p] ?? "";
+			if (part.length > 0) {
+				linesOut[outLine] = `${linesOut[outLine] ?? ""}${part}`;
+			}
+		}
+	};
+
 	for (let i = 0; i < text.length; ) {
 		const ch = text[i] ?? "";
 		if (ch === "\\" && COMMONMARK_ESCAPABLE_PUNCTUATION.test(text[i + 1] ?? "")) {
-			out += text.slice(i, i + 2);
-			i += 2;
+			let end = i + 2;
+			// Match PHP `League\CommonMark\Parser\InlineParserEngine`: after
+			// escaping the leading backtick of a contiguous run, the rest of
+			// that run is literal text rather than an opening code-span fence.
+			if (text[i + 1] === "`") {
+				while (end < text.length && text[end] === "`") end += 1;
+			}
+			emitChunk(text.slice(i, end));
+			i = end;
 		} else if (ch === "`") {
 			let end = i + 1;
 			while (end < text.length && text[end] === "`") end += 1;
@@ -167,7 +205,7 @@ function stripInlineHtmlOutsideCode(text: string): string {
 				cursors.set(end - i, pos);
 				if (bucket[pos] !== undefined) end = (bucket[pos] ?? 0) + (end - i);
 			}
-			out += text.slice(i, end);
+			emitChunk(text.slice(i, end));
 			i = end;
 		} else if (ch === "<") {
 			if (i > lineEnd) {
@@ -183,7 +221,7 @@ function stripInlineHtmlOutsideCode(text: string): string {
 			if (single.status === "ok") {
 				const token = text.slice(i, single.end);
 				if (isCommonMarkAutolink(token)) {
-					out += token;
+					emitChunk(token);
 				}
 				i = single.end;
 			} else if (single.status === "needs-multiline") {
@@ -205,27 +243,41 @@ function stripInlineHtmlOutsideCode(text: string): string {
 					guard,
 				);
 				if (blockMatch !== null) {
-					if (blockMatch.segIdx > segIdx) {
-						out += "\n".repeat(blockMatch.segIdx - segIdx);
-					} else if (isCommonMarkAutolink(text.slice(i, blockMatch.pos))) {
-						out += text.slice(i, blockMatch.pos);
+					if (
+						blockMatch.segIdx === segIdx &&
+						isCommonMarkAutolink(text.slice(i, blockMatch.pos))
+					) {
+						emitChunk(text.slice(i, blockMatch.pos));
 					}
 					segIdx = blockMatch.segIdx;
+					srcLine = blockMatch.segIdx;
 					i = blockMatch.pos;
 				} else {
-					out += ch;
+					emitChunk(ch);
 					i += 1;
 				}
 			} else {
-				out += ch;
+				emitChunk(ch);
 				i += 1;
 			}
 		} else {
-			out += ch;
+			emitChunk(ch);
 			i += 1;
 		}
 	}
 	return out;
+}
+
+function stripInlineHtmlOutsideCode(text: string): string {
+	return stripInlineHtmlCore(text, null);
+}
+
+function stripInlineHtmlLinesOutsideCode(
+	rawLines: ReadonlyArray<string>,
+): string[] {
+	const linesOut = new Array<string>(rawLines.length).fill("");
+	stripInlineHtmlCore(rawLines.join("\n"), linesOut);
+	return linesOut;
 }
 
 function consumeListMarker(cursor: LineColumnCursor, origIndent: number): ListMeta {
@@ -408,7 +460,9 @@ export function stripCommonMarkHtmlForPreview(rawMarkdown: string): string {
 		const blockId = entry.scanned.inlineBlockId;
 		let end = idx + 1;
 		while (blockId >= 0 && entries[end]?.kind === "content" && entries[end]?.scanned.inlineBlockId === blockId) end += 1;
-		const stripped = stripInlineHtmlOutsideCode(entries.slice(idx, end).map((e) => e.rawLine.slice(e.contentRel)).join("\n")).split("\n");
+		const stripped = stripInlineHtmlLinesOutsideCode(
+			entries.slice(idx, end).map((e) => e.rawLine.slice(e.contentRel)),
+		);
 		for (let j = idx; j < end; j += 1) {
 			const target = entries[j];
 			if (target) target.strippedRest = stripped[j - idx] ?? "";

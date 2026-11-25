@@ -42,6 +42,7 @@ import {
 import {
 	collectRelativeInlineMathRanges,
 	createPhpDocumentMathIndex,
+	findLogicalLineEnd,
 	type GfmTableMatch,
 	maskedSliceForLines,
 	matchTableAlignmentMarkerLine,
@@ -230,24 +231,18 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		}
 	};
 	const advancePhpStateAfterDisplayMath = (
-		fromLine: number,
+		afterStartOffset: number,
 		toLineInclusive: number,
 	): void => {
-		const masked = maskedSliceForLines(
-			mathIndex,
-			lines,
-			fromLine,
-			toLineInclusive,
+		const endOffset = mathIndex.lineEnds[toLineInclusive] ?? afterStartOffset;
+		const postMathMasked =
+			endOffset >= afterStartOffset
+				? mathIndex.maskedDoc.slice(afterStartOffset, endOffset)
+				: "";
+		scanLinesIntoPhpCommonMarkBlockState(
+			phpBlockState,
+			`\n\nM\n\n${postMathMasked}`,
 		);
-		const lastBreak = masked.lastIndexOf("\n\n");
-		if (lastBreak >= 0) {
-			scanLinesIntoPhpCommonMarkBlockState(
-				phpBlockState,
-				`\n\nM\n\n${masked.slice(lastBreak + 2)}`,
-			);
-			return;
-		}
-		advancePhpStateMaskedLines(fromLine, toLineInclusive);
 	};
 	const advancePhpStateClosedBlock = (
 		prefix: string,
@@ -309,30 +304,47 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		}
 
 		if (activeTable !== null && i === activeTable.brokenByDisplayMathLine) {
-			const { emittedTableBeforeRow, spanEndLine } = emitDisplayMathTableBreak(
+			const breakResult = emitDisplayMathTableBreak(
+				lines,
 				i,
 				activeTable.containers,
 				mathIndex,
 				sentinel,
 				protectedInlines,
 				{ addProtectedBlock, pushOutputLine },
+				() => outputLines.length,
 			);
-			if (emittedTableBeforeRow && activeTableOutputStart >= 0) {
+			if (breakResult.emittedTableBeforeRow && activeTableOutputStart >= 0) {
+				const invalidateEnd =
+					breakResult.activeTableOutputStart >= 0
+						? breakResult.activeTableOutputStart
+						: outputLineRanges.length;
 				for (
 					let rangeIdx = activeTableOutputStart;
-					rangeIdx < outputLineRanges.length;
+					rangeIdx < invalidateEnd;
 					rangeIdx += 1
 				) {
 					outputLineRanges[rangeIdx] = null;
 				}
 			}
-			activeTable = null;
-			activeTableOutputStart = -1;
+			activeTable = breakResult.activeTable;
+			activeTableOutputStart = breakResult.activeTableOutputStart;
 			pendingTableAlignOutputIndex = -1;
 			closeParagraph();
-			listContentIndent = null;
-			advancePhpStateAfterDisplayMath(i, spanEndLine);
-			i = spanEndLine + 1;
+			if (
+				activeTable !== null &&
+				!hasListBeforeQuote(activeTable.containers)
+			) {
+				const nestedListIndent = sumListContainerIndent(activeTable.containers);
+				listContentIndent = nestedListIndent > 0 ? nestedListIndent : null;
+			} else {
+				listContentIndent = null;
+			}
+			advancePhpStateAfterDisplayMath(
+				breakResult.afterStartOffset,
+				breakResult.spanEndLine,
+			);
+			i = breakResult.spanEndLine + 1;
 			continue;
 		}
 
@@ -594,6 +606,14 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			continue;
 		}
 
+		const tableInParagraph =
+			paragraphOpen &&
+			(activeInterleavedContainers !== null
+				? !(analysis.indent < 4 && analysis.content.startsWith(">"))
+				: !hasInterleavedContainers &&
+					lineQuoteDepth === paragraphQuoteDepth &&
+					continuesListItem);
+
 		// 3b. GFM tables (container-aware: top-level, blockquotes, nested lists,
 		//     interleaved `list -> quote`, multiline `\(...\)`, lazy continuations,
 		//     and display-math table breaks).
@@ -605,6 +625,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			!listInterruptionInParagraph,
 			true,
 			mathIndex,
+			tableInParagraph,
 		);
 		if (tableMatch !== null) {
 			const headerStartOffset = mathIndex.lineStarts[i] ?? 0;
@@ -651,10 +672,14 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 
 		// 3c. Display math on a line immediately preceding a GFM table delimiter
 		//     line splits via `\n\n<BLK>\n\n` (matching PHP `extract_math()`),
-		//     and evaluates GFM table matching cleanly on the post-math segment.
+		//     and evaluates post-math HTML blocks, fenced code, and GFM tables.
 		const headerMathBreak = emitDisplayMathHeaderLine(
 			lines,
 			i,
+			tableBaseContainers,
+			tablePreListIndent,
+			!listInterruptionInParagraph,
+			tableInParagraph,
 			mathIndex,
 			sentinel,
 			protectedInlines,
@@ -674,7 +699,10 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 				listContentIndent = null;
 			}
 			closeParagraph();
-			advancePhpStateAfterDisplayMath(i, headerMathBreak.spanEndLine);
+			advancePhpStateAfterDisplayMath(
+				headerMathBreak.afterStartOffset,
+				headerMathBreak.spanEndLine,
+			);
 			i = headerMathBreak.spanEndLine + 1;
 			continue;
 		}
@@ -862,20 +890,55 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			paragraphOpen && relativeIndent >= 4
 				? line.length - analysis.content.length
 				: -1;
+		const logicalEnd = findLogicalLineEnd(mathIndex, i);
+		const hasMultilineInlineMath = logicalEnd > i;
 
-		pushOutputLine(
-			extractInlineProtectedSyntax(
-				line,
-				sentinel,
-				protectedInlines,
-				false,
-				allowRefDefDest,
-				indentedContinuationStart,
-			),
-			{ end: i + 1, start: i },
-		);
+		if (hasMultilineInlineMath) {
+			const lineStartOffset = mathIndex.lineStarts[i] ?? 0;
+			const lineEndOffset = mathIndex.lineEnds[logicalEnd] ?? lineStartOffset;
+			const rawLogicalLine = normalized.slice(lineStartOffset, lineEndOffset);
+			const logicalMathRanges = collectRelativeInlineMathRanges(
+				mathIndex,
+				lineStartOffset,
+				lineEndOffset,
+				0,
+				true,
+			);
+			pushOutputLine(
+				extractInlineProtectedSyntax(
+					rawLogicalLine,
+					sentinel,
+					protectedInlines,
+					false,
+					allowRefDefDest,
+					indentedContinuationStart,
+					logicalMathRanges,
+				),
+				{ end: logicalEnd + 1, start: i },
+			);
+		} else {
+			pushOutputLine(
+				extractInlineProtectedSyntax(
+					line,
+					sentinel,
+					protectedInlines,
+					false,
+					allowRefDefDest,
+					indentedContinuationStart,
+				),
+				{ end: i + 1, start: i },
+			);
+		}
+		const maskedLogicalLine = hasMultilineInlineMath
+			? maskedSliceForLines(mathIndex, lines, i, logicalEnd)
+			: null;
+		const contentPrefixLen = line.length - analysis.content.length;
+		const effectiveContent =
+			maskedLogicalLine !== null
+				? maskedLogicalLine.slice(contentPrefixLen)
+				: analysis.content;
 		const lineState = classifyParagraphLine(
-			analysis.content,
+			effectiveContent,
 			relativeIndent,
 			paragraphOpen,
 			listInterruptionInParagraph,
@@ -892,8 +955,12 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		paragraphOpen = lineState.open;
 		if (paragraphOpen) {
 			const refLine = acceptedListMarker
-				? acceptedListMarker.afterContent
-				: analysis.content;
+				? maskedLogicalLine !== null
+					? maskedLogicalLine.slice(
+							line.length - acceptedListMarker.afterContent.length,
+						)
+					: acceptedListMarker.afterContent
+				: effectiveContent;
 			const completedRefDef = advanceParagraphReferenceParser(
 				activeRefParser,
 				refLine,
@@ -904,8 +971,13 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			paragraphHasContent = false;
 			paragraphRefParser = null;
 		}
-		advancePhpStateRange(i, i);
-		i += 1;
+		if (hasMultilineInlineMath) {
+			advancePhpStateMaskedLines(i, logicalEnd);
+			i = logicalEnd + 1;
+		} else {
+			advancePhpStateRange(i, i);
+			i += 1;
+		}
 	}
 
 	return {

@@ -159,6 +159,23 @@ export function escapeTablePipes(raw: string): string {
 }
 
 /**
+ * Escape only table-cell pipes not immediately preceded by a backslash,
+ * matching PHP `League\CommonMark\Extension\Table\TableParser::split()`
+ * (`(?<!\\)\|`) for already-raw `protected_inline` atoms inside table cells.
+ */
+export function escapeRawTablePipes(raw: string): string {
+	if (!raw.includes("|")) {
+		return raw;
+	}
+	let escaped = "";
+	for (let i = 0; i < raw.length; i += 1) {
+		const ch = raw[i] ?? "";
+		escaped += ch === "|" && (i === 0 || raw[i - 1] !== "\\") ? "\\|" : ch;
+	}
+	return escaped;
+}
+
+/**
  * Code span content inside a table cell escapes only `|`. Code spans never
  * unescape backslashes; GFM table splitting removes exactly one backslash in
  * front of each escaped `|` and leaves every other backslash untouched, so

@@ -2965,13 +2965,14 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 			renderRaw("<span>hello</span\n    >").querySelector("p")?.textContent,
 		).toBe("hello");
 
-		// Direct inline preview also strips multiline closing tag `</span\n>`.
+		// Direct inline preview also strips multiline closing tag `</span\n>`
+		// without injecting a spurious trailing newline (PR-R26-A Track A #4).
 		const inlineMultilineClose = renderRawInlinePreview(
 			document,
 			"<span>hello</span\n>",
 			{ footnotes: "Footnotes", raw: "Raw" },
 		);
-		expect(inlineMultilineClose.textContent).toBe("hello\n");
+		expect(inlineMultilineClose.textContent).toBe("hello");
 
 		expect(
 			stripCommonMarkHtmlForPreview('<span title="a\nb">hello</span>'),
@@ -2993,6 +2994,74 @@ describe("Visual NodeView rendering fidelity regressions", () => {
 		// Multiline backtick code span protection remains intact alongside multiline HTML stripping.
 		expect(stripCommonMarkHtmlForPreview("<div>\n\n`a\n<b>x`")).toBe(
 			"`a\n<b>x`",
+		);
+	});
+
+	it("omits spurious newlines on stripped multiline inline HTML and matches PHP escaped leading backtick runs (PR-R26-A Track A #4 + Track B F6a)", () => {
+		const renderRaw = (md: string): HTMLDivElement => {
+			const host = document.createElement("div");
+			host.appendChild(
+				renderRawBlockPreview(document, md, {
+					fallbackLabel: "Raw",
+					footnotesLabel: "Footnotes",
+					viewWindow: window,
+				}),
+			);
+			return host;
+		};
+
+		// Track A #4: stripped multiline inline HTML comment inside a table cell
+		// `raw-inline` atom must yield `"ab"` (matching PHP `<td>ab</td>`), NOT `"a\nb"`.
+		const inlineCommentHost = renderRawInlinePreview(
+			document,
+			"<span>a<!-- \\(x\ny\\) -->b</span>",
+			{ footnotes: "Footnotes", raw: "Raw" },
+		);
+		expect(inlineCommentHost.textContent).toBe("ab");
+
+		// Stripped multiline open/close tags inside raw-inline and raw-block preview
+		// emit zero spurious newlines while keeping real surrounding newlines intact.
+		const inlineOpenTag = renderRawInlinePreview(
+			document,
+			'<span\nclass="a">hello</span>',
+			{ footnotes: "Footnotes", raw: "Raw" },
+		);
+		expect(inlineOpenTag.textContent).toBe("hello");
+		expect(stripCommonMarkHtmlForPreview("a<!--\n-->b")).toBe("ab");
+		expect(renderRaw("a<!--\n-->b").querySelector("p")?.textContent).toBe("ab");
+		expect(stripCommonMarkHtmlForPreview("> a<!--\n> -->b")).toBe("> ab");
+		expect(
+			renderRaw("> a<!--\n> -->b").querySelector("blockquote > p")?.textContent,
+		).toBe("ab");
+		expect(stripCommonMarkHtmlForPreview("a<!--\n-->b\nc")).toBe("ab\nc");
+		expect(
+			renderRaw('<span\nclass="a">hello</span>').querySelector("p")?.textContent,
+		).toBe("hello");
+		expect(
+			renderRaw("<span>hello</span\n    >").querySelector("p")?.textContent,
+		).toBe("hello");
+
+		// Track B F6a: after consuming an escaped leading backtick `\` + `` ` ``,
+		// all immediately contiguous backticks in that same run stay literal text
+		// (matching PHP `League\CommonMark\Parser\InlineParserEngine`), keeping the
+		// following code span's `<b>x</b>` intact.
+		expect(stripCommonMarkHtmlForPreview("foo \\`` `<b>x</b>`")).toBe(
+			"foo \\`` `<b>x</b>`",
+		);
+		expect(stripCommonMarkHtmlForPreview("foo \\``` ``<b>x</b>``")).toBe(
+			"foo \\``` ``<b>x</b>``",
+		);
+		expect(stripCommonMarkHtmlForPreview("foo \\``a`` `<b>x</b>`")).toBe(
+			"foo \\``a`` `<b>x</b>`",
+		);
+		expect(stripCommonMarkHtmlForPreview("foo \\\\`<b>x</b>`")).toBe(
+			"foo \\\\`<b>x</b>`",
+		);
+		expect(stripCommonMarkHtmlForPreview("foo \\``a` `<b>x</b>`")).toBe(
+			"foo \\``a` `x`",
+		);
+		expect(stripCommonMarkHtmlForPreview("<div>\n\nfoo \\`` `<b>x</b>`")).toBe(
+			"foo \\`` `<b>x</b>`",
 		);
 	});
 });

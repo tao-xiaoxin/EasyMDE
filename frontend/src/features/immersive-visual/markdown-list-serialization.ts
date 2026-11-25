@@ -60,27 +60,26 @@ function nodeContainsString(
 
 /**
  * Returns a collision-free sentinel for protecting physical newlines inside
- * serialized `protected_inline("math-inline")` bodies during blockquote and
- * list container prefixing, or `null` when `node` contains no multiline inline
- * math (zero-overhead fast path).
+ * serialized `protected_inline` bodies (both `math-inline` and `raw-inline`
+ * atoms wrapping multiline `\(...\)`) during blockquote and list container
+ * prefixing, or `null` when `node` contains none (zero-overhead fast path).
  */
 export function createMathNewlineSentinelForNode(
 	node: ProseMirrorNode,
 ): string | null {
-	let hasMultilineMath = false;
+	let hasMultilineProtectedInline = false;
 	node.descendants((descendant) => {
 		if (
 			descendant.type.name === "protected_inline" &&
-			descendant.attrs.kind === "math-inline" &&
 			typeof descendant.attrs.rawMarkdown === "string" &&
 			descendant.attrs.rawMarkdown.includes("\n")
 		) {
-			hasMultilineMath = true;
+			hasMultilineProtectedInline = true;
 			return false;
 		}
 		return true;
 	});
-	if (!hasMultilineMath) {
+	if (!hasMultilineProtectedInline) {
 		return null;
 	}
 	let core = "EASYMDEMATHNL";

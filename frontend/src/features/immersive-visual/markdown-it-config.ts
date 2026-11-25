@@ -1,6 +1,12 @@
 import MarkdownIt from "markdown-it";
 import { decodeCommonMarkTitle } from "../../shared/image-scale-title";
 import {
+	COMMONMARK_ATX_HEADING_OPEN,
+	COMMONMARK_FENCED_CODE_OPEN,
+	COMMONMARK_THEMATIC_BREAK_LINE,
+	matchHtmlBlockOpen,
+} from "../../shared/markdown/php-commonmark-block-helpers";
+import {
 	advanceParagraphReferenceParser,
 	createParagraphReferenceParser,
 	type ParagraphReferenceParser,
@@ -16,6 +22,10 @@ import {
 	type PreScanResult,
 	restoreProtectedInlineSentinels,
 } from "./markdown-prescanner";
+import {
+	canListMarkerInterruptParagraph,
+	matchListMarker,
+} from "./markdown-prescanner-blocks";
 
 export const RAW_REFERENCE_SOURCE_META_KEY = "easymdeRawReferenceSource";
 
@@ -344,6 +354,63 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 		}
 		return known;
 	};
+
+	const originalTableRuleEntry = (
+		parser.block.ruler as unknown as InternalRuler<BlockRuleFn>
+	).__rules__?.find((rule) => rule.name === "table");
+
+	if (originalTableRuleEntry) {
+		const originalTableRule = originalTableRuleEntry.fn;
+		parser.block.ruler.before(
+			"table",
+			"easymde_table",
+			(state, startLine, endLine, silent) => {
+				if (startLine + 2 > endLine) {
+					return false;
+				}
+				const s0 = state.sCount[startLine] ?? 0;
+				if (s0 - state.blkIndent >= 4) {
+					return false;
+				}
+				const pos0 =
+					(state.bMarks[startLine] ?? 0) + (state.tShift[startLine] ?? 0);
+				const max0 = state.eMarks[startLine] ?? pos0;
+				const trimmedStart = state.src.slice(pos0, max0);
+				const prevClose = state.tokens[state.tokens.length - 1];
+				const prevOpen = state.tokens[state.tokens.length - 3];
+				const followsParagraph =
+					(silent && state.parentType === "paragraph") ||
+					(prevClose?.type === "paragraph_close" &&
+						prevOpen?.type === "paragraph_open" &&
+						prevOpen.level === state.level &&
+						prevOpen.map?.[1] === startLine);
+				// Reject non-paragraph CommonMark block openers so markdown-it's
+				// top-level `table` rule (registered first) never steals headings,
+				// fenced code, blockquotes, thematic breaks, HTML blocks, or list
+				// items containing GFM tables without leading `|`.
+				if (
+					trimmedStart.startsWith(">") ||
+					COMMONMARK_ATX_HEADING_OPEN.test(trimmedStart) ||
+					COMMONMARK_FENCED_CODE_OPEN.test(trimmedStart) ||
+					COMMONMARK_THEMATIC_BREAK_LINE.test(trimmedStart) ||
+					matchHtmlBlockOpen(trimmedStart, !followsParagraph) !== null
+				) {
+					return false;
+				}
+				const startColumn = (state.bsCount[startLine] ?? 0) + s0;
+				const listMarker = matchListMarker(trimmedStart, startColumn);
+				if (
+					listMarker !== null &&
+					(!followsParagraph || canListMarkerInterruptParagraph(listMarker))
+				) {
+					return false;
+				}
+				return originalTableRule(state, startLine, endLine, silent);
+			},
+			{ alt: [...originalTableRuleEntry.alt] },
+		);
+		parser.block.ruler.disable("table");
+	}
 
 	const originalReferenceRuleEntry = (
 		parser.block.ruler as unknown as InternalRuler<BlockRuleFn>

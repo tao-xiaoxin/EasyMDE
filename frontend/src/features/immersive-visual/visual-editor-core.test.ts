@@ -6983,4 +6983,308 @@ describe("PR-R24-A1 PHP-exact table math, nested/interleaved table-align, lazy t
 		expect(serializedMid).toBe("| AZ |\n\n$$x$$\n\n|\n| --- | --- |\n| 1 | 2 |");
 		expect(parseMarkdownToVisualDoc(serializedMid).eq(editedMid)).toBe(true);
 	});
+
+	it("preserves multiline \\(...\\) in regular paragraphs and inside raw-inline atoms across blockquote/list edits (PR-R26-A #1)", () => {
+		const cases = [
+			["> A \\(x\ny\\)", "> AZ \\(x\ny\\)", "math-inline", "\\(x\ny\\)"],
+			[
+				"> | A |\n> | --- |\n> | <span>\\(x\ny\\)</span> |",
+				"> | AZ |\n> | --- |\n> | <span>\\(x\ny\\)</span> |",
+				"raw-inline",
+				"<span>\\(x\ny\\)</span>",
+			],
+			["- A \\(x\n  y\\)", "- AZ \\(x\n  y\\)", "math-inline", "\\(x\n  y\\)"],
+			[
+				"- | A |\n  | --- |\n  | <span>\\(x\n  y\\)</span> |",
+				"- | AZ |\n  | --- |\n  | <span>\\(x\n  y\\)</span> |",
+				"raw-inline",
+				"<span>\\(x\n  y\\)</span>",
+			],
+			[
+				"> A <span>\\(x\ny\\)</span>",
+				"> AZ <span>\\(x\ny\\)</span>",
+				"raw-inline",
+				"<span>\\(x\ny\\)</span>",
+			],
+			[
+				"- A <span>\\(x\n  y\\)</span>",
+				"- AZ <span>\\(x\n  y\\)</span>",
+				"raw-inline",
+				"<span>\\(x\n  y\\)</span>",
+			],
+			["> A \\(x\n\ny\\)", "> AZ \\(x\n\ny\\)", "math-inline", "\\(x\n\ny\\)"],
+		] as const;
+
+		for (const [md, expected, kind, rawMarkdown] of cases) {
+			const guard = createMarkdownRoundTripGuard(md);
+			expect(collectProtectedInlines(guard.initialDoc), md).toEqual([
+				{ kind, rawMarkdown },
+			]);
+			const edited = insertTextAt(
+				guard.initialDoc,
+				findTextEndPos(guard.initialDoc, "A"),
+				"Z",
+			);
+			const serialized = guard.serialize(edited);
+			expect(serialized, md).toBe(expected);
+			expect(parseMarkdownToVisualDoc(serialized).eq(edited), md).toBe(true);
+		}
+
+		// Multiline `\(...\)` sharing a logical line with single-line `$$z$$` keeps both protected.
+		const mixedMd = "A \\(x\ny\\) $$z$$";
+		const mixedGuard = createMarkdownRoundTripGuard(mixedMd);
+		expect(collectProtectedInlines(mixedGuard.initialDoc)).toEqual([
+			{ kind: "math-inline", rawMarkdown: "\\(x\ny\\)" },
+			{ kind: "math-inline", rawMarkdown: "$$z$$" },
+		]);
+		const editedMixed = insertTextAt(
+			mixedGuard.initialDoc,
+			findTextEndPos(mixedGuard.initialDoc, "A"),
+			"Z",
+		);
+		expect(mixedGuard.serialize(editedMixed)).toBe("AZ \\(x\ny\\) $$z$$");
+	});
+
+	it("rejects non-paragraph GFM table headers, handles post-math HTML blocks and second tables, and scales O(N) on display-math gaps (PR-R26-A #2)", () => {
+		// 1. Post-math HTML block consumes continuation lines (no exposed `> | --- |` blockquote).
+		const postMathHtmlMd = "> A $$x$$ <div>\n> | --- |";
+		const postMathHtmlParsed = parseMarkdownWithBlockSources(postMathHtmlMd);
+		expect(postMathHtmlParsed.blocks.map((b) => b.node.type.name)).toEqual([
+			"blockquote",
+			"protected_block",
+			"protected_block",
+		]);
+		expect(postMathHtmlParsed.blocks[1]?.node.attrs).toEqual({
+			kind: "math",
+			rawMarkdown: "$$x$$",
+		});
+		expect(postMathHtmlParsed.blocks[2]?.node.attrs).toEqual({
+			kind: "raw",
+			rawMarkdown: "<div>\n> | --- |",
+		});
+		const postMathHtmlGuard = createMarkdownRoundTripGuard(
+			postMathHtmlMd,
+			postMathHtmlParsed,
+		);
+		const editedPostMathHtml = insertTextAt(
+			postMathHtmlGuard.initialDoc,
+			findTextEndPos(postMathHtmlGuard.initialDoc, "A"),
+			"Z",
+		);
+		const serializedPostMathHtml =
+			postMathHtmlGuard.serialize(editedPostMathHtml);
+		expect(serializedPostMathHtml).toBe("> AZ\n\n$$x$$\n\n<div>\n> | --- |");
+		expect(
+			parseMarkdownToVisualDoc(serializedPostMathHtml).eq(editedPostMathHtml),
+		).toBe(true);
+
+		// 2. ATX heading followed by `--- | ---` is heading + paragraph, NOT a table.
+		const atxMd = "# a | b <br> c\n--- | ---\n1 | 2 <br> 3";
+		const atxParsed = parseMarkdownWithBlockSources(atxMd);
+		expect(atxParsed.blocks.map((b) => b.node.type.name)).toEqual([
+			"heading",
+			"paragraph",
+		]);
+		expect(collectProtectedInlines(atxParsed.doc)).toEqual([
+			{ kind: "raw-inline", rawMarkdown: "<br>" },
+			{ kind: "raw-inline", rawMarkdown: "<br>" },
+		]);
+
+		// 3. HTML blocks (`<div>`, `<!--`) followed by `--- | ---` stay HTML blocks, NOT tables.
+		for (const htmlMd of [
+			"<div> a | b\n--- | ---\n1 | 2",
+			"<!-- a | b\n--- | ---\n-->",
+		]) {
+			const htmlParsed = parseMarkdownWithBlockSources(htmlMd);
+			expect(htmlParsed.blocks.map((b) => b.node.type.name), htmlMd).toEqual([
+				"protected_block",
+			]);
+			expect(htmlParsed.blocks[0]?.node.attrs, htmlMd).toEqual({
+				kind: "raw",
+				rawMarkdown: htmlMd,
+			});
+		}
+
+		// 4. Display math followed by fenced code opening is display math + code block, NOT a table.
+		const postMathFenceMd = "$$x$$ ``` a | b\n--- | ---\n1 | 2\n```";
+		const postMathFenceParsed = parseMarkdownWithBlockSources(postMathFenceMd);
+		expect(postMathFenceParsed.blocks.map((b) => b.node.type.name)).toEqual([
+			"protected_block",
+			"code_block",
+		]);
+		expect(postMathFenceParsed.blocks[0]?.node.attrs).toEqual({
+			kind: "math",
+			rawMarkdown: "$$x$$",
+		});
+		expect(postMathFenceParsed.blocks[1]?.node.attrs.language).toBe("a");
+		expect(postMathFenceParsed.blocks[1]?.node.textContent).toBe(
+			"--- | ---\n1 | 2",
+		);
+
+		// 5. Unclosed Type 1-5 HTML block (`<!--`) before display math swallows math + `--> a | b` (NOT split).
+		const commentSwallowMd = "<!-- $$x$$ --> a | b\n--- | ---\n1 | 2";
+		const commentSwallowParsed =
+			parseMarkdownWithBlockSources(commentSwallowMd);
+		expect(commentSwallowParsed.blocks.map((b) => b.node.type.name)).toEqual([
+			"protected_block",
+			"paragraph",
+		]);
+		expect(commentSwallowParsed.blocks[0]?.node.attrs).toEqual({
+			kind: "raw",
+			rawMarkdown: "<!-- $$x$$ --> a | b",
+		});
+		expect(commentSwallowParsed.blocks[1]?.node.textContent).toBe(
+			"--- | ---\n1 | 2",
+		);
+
+		// 6. Second GFM table immediately after display-math table break keeps `<br>` hard_break and `$x|y$`.
+		const secondTableMd =
+			"a | b\n--- | ---\n1 | 2 $$z$$ c <br> d | $x|y$\n--- | ---\n3 | 4 <br> 5";
+		const secondTableParsed = parseMarkdownWithBlockSources(secondTableMd);
+		expect(secondTableParsed.blocks.map((b) => b.node.type.name)).toEqual([
+			"table",
+			"protected_block",
+			"table",
+		]);
+		const secondTable = secondTableParsed.blocks[2]?.node;
+		expect(secondTable?.childCount).toBe(2);
+		const secondHeaderCell0 = secondTable?.child(0).child(0).child(0);
+		expect(secondHeaderCell0?.childCount).toBe(3);
+		expect(secondHeaderCell0?.child(1).type.name).toBe("hard_break");
+		const secondHeaderCell1 = secondTable?.child(0).child(1).child(0);
+		expect(secondHeaderCell1?.child(0).type.name).toBe("protected_inline");
+		expect(secondHeaderCell1?.child(0).attrs).toMatchObject({
+			kind: "math-inline",
+			rawMarkdown: "$x|y$",
+		});
+		const secondBodyCell1 = secondTable?.child(1).child(1).child(0);
+		expect(secondBodyCell1?.child(1).type.name).toBe("hard_break");
+		const secondTableGuard = createMarkdownRoundTripGuard(
+			secondTableMd,
+			secondTableParsed,
+		);
+		const editedSecondTable = insertTextAt(
+			secondTableGuard.initialDoc,
+			findTextEndPos(secondTableGuard.initialDoc, "c"),
+			"Z",
+		);
+		const serializedSecondTable =
+			secondTableGuard.serialize(editedSecondTable);
+		expect(serializedSecondTable).toBe(
+			"| a | b |\n| --- | --- |\n| 1 | 2 |\n\n$$z$$\n\n| cZ <br> d | $x|y$ |\n| --- | --- |\n| 3 | 4 <br> 5 |",
+		);
+		expect(
+			parseMarkdownToVisualDoc(serializedSecondTable).eq(editedSecondTable),
+		).toBe(true);
+
+		// 7. Second GFM table after display-math break joins multiline `\(...\)` body row cleanly.
+		const secondMultilineMd =
+			"a | b\n--- | ---\n1 | 2 $$z$$ c | d\n--- | ---\n\\(x\ny\\) | 4";
+		const secondMultilineParsed =
+			parseMarkdownWithBlockSources(secondMultilineMd);
+		expect(secondMultilineParsed.blocks.map((b) => b.node.type.name)).toEqual([
+			"table",
+			"protected_block",
+			"table",
+		]);
+		const secondMultilineTable = secondMultilineParsed.blocks[2]?.node;
+		expect(secondMultilineTable?.childCount).toBe(2);
+		expect(
+			secondMultilineTable?.child(1).child(0).child(0).child(0).attrs,
+		).toMatchObject({
+			kind: "math-inline",
+			rawMarkdown: "\\(x\ny\\)",
+		});
+		expect(secondMultilineTable?.child(1).child(1).textContent).toBe("4");
+
+		// 8. Strictly O(N) scaling across 8k / 16k / 32k non-empty display-math gaps (zero per-gap binary searches).
+		prescanMarkdown(`| A |\n| --- |\n${"$$x$$ | ".repeat(500)}`);
+		const input32k = `| A |\n| --- |\n${"$$x$$ | ".repeat(32_000)}`;
+		const started32k = performance.now();
+		const res32k = prescanMarkdown(input32k);
+		const elapsed32k = performance.now() - started32k;
+		expect(res32k.outputLines.length).toBeGreaterThan(64_000);
+		expect(elapsed32k, `32k display-math gaps took ${elapsed32k.toFixed(1)}ms`).toBeLessThan(250);
+	});
+
+	it("parses list-nested GFM tables without leading pipes inside lists and blockquotes instead of stealing them at top level (PR-R26-A #3)", () => {
+		const cases = [
+			[
+				"- a | b\n  --- | ---\n  1 | 2",
+				"bullet_list",
+				"- | aZ | b |\n  | --- | --- |\n  | 1 | 2 |",
+			],
+			[
+				"1. a | b\n   --- | ---\n   1 | 2",
+				"ordered_list",
+				"1. | aZ | b |\n   | --- | --- |\n   | 1 | 2 |",
+			],
+			[
+				"> - a | b\n>   --- | ---\n>   1 | 2",
+				"blockquote",
+				"> - | aZ | b |\n>   | --- | --- |\n>   | 1 | 2 |",
+			],
+			[
+				"- a | b\n  --- | ---\n\t$x|y$ | 2",
+				"bullet_list",
+				"- | aZ | b |\n  | --- | --- |\n  | $x|y$ | 2 |",
+			],
+		] as const;
+
+		for (const [md, topBlockName, expectedEdited] of cases) {
+			const guard = createMarkdownRoundTripGuard(md);
+			expect(guard.initialDoc.childCount, md).toBe(1);
+			expect(guard.initialDoc.firstChild?.type.name, md).toBe(topBlockName);
+			let foundTable = false;
+			let foundCodeBlock = false;
+			guard.initialDoc.descendants((node) => {
+				if (node.type.name === "table") foundTable = true;
+				if (node.type.name === "code_block") foundCodeBlock = true;
+				return true;
+			});
+			expect(foundTable, md).toBe(true);
+			expect(foundCodeBlock, md).toBe(false);
+			expect(guard.serialize(guard.initialDoc), md).toBe(md);
+
+			const edited = insertTextAt(
+				guard.initialDoc,
+				findTextEndPos(guard.initialDoc, "a"),
+				"Z",
+			);
+			const serialized = guard.serialize(edited);
+			expect(serialized, md).toBe(expectedEdited);
+			expect(parseMarkdownToVisualDoc(serialized).eq(edited), md).toBe(true);
+		}
+	});
+
+	it("applies PHP single-backslash pipe rule to table inline HTML barriers without escaping on edit (PR-R26-A #4)", () => {
+		const cases = [
+			[
+				'| h1 | h2 |\n| - | - |\n| <span title="a\\\\|b">x</span> | c |',
+				'| h1Z | h2 |\n| --- | --- |\n| <span title="a\\\\|b">x</span> | c |',
+				'<span title="a\\\\|b">x</span>',
+			],
+			[
+				'| h1 | h2 |\n| - | - |\n| <div title="a\\\\|b">x | c |',
+				'| h1Z | h2 |\n| --- | --- |\n| <div title="a\\\\|b">x | c |',
+				'<div title="a\\\\|b">',
+			],
+		] as const;
+
+		for (const [md, expectedEdited, rawHtml] of cases) {
+			const guard = createMarkdownRoundTripGuard(md);
+			expect(collectProtectedInlines(guard.initialDoc), md).toEqual([
+				{ kind: "raw-inline", rawMarkdown: rawHtml },
+			]);
+			const edited = insertTextAt(
+				guard.initialDoc,
+				findTextEndPos(guard.initialDoc, "h1"),
+				"Z",
+			);
+			const serialized = guard.serialize(edited);
+			expect(serialized, md).toBe(expectedEdited);
+			expect(serialized, md).not.toContain("\\<");
+			expect(parseMarkdownToVisualDoc(serialized).eq(edited), md).toBe(true);
+		}
+	});
 });

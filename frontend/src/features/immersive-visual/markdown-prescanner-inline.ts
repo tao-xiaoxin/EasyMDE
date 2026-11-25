@@ -153,9 +153,17 @@ export function execCommonMarkInlineHtmlToken(
 	return execInlineHtmlOpenTag(line, index)?.[0] ?? null;
 }
 
+/**
+ * Matches PHP `League\CommonMark\Extension\Table\TableParser::split()`'s
+ * single-backslash `(?<!\\)\|` pipe-delimiter rule (not backslash parity).
+ */
+function isTableCellPipeAt(text: string, index: number): boolean {
+	return text[index] === "|" && (index === 0 || text[index - 1] !== "\\");
+}
+
 function hasUnescapedPipe(text: string): boolean {
 	for (let i = 0; i < text.length; i += 1) {
-		if (text[i] === "|" && !isEscapedAt(text, i)) {
+		if (isTableCellPipeAt(text, i)) {
 			return true;
 		}
 	}
@@ -206,7 +214,7 @@ function buildPairedTagCloseMap(
 			scan = codeEnd;
 			continue;
 		}
-		if (isTableRow && ch === "|" && !isEscapedAt(line, scan)) {
+		if (isTableRow && isTableCellPipeAt(line, scan)) {
 			openStack.length = 0;
 			scan += 1;
 			continue;
@@ -293,7 +301,7 @@ function matchAllowedInlineHtml(
 			cursor = codeEnd;
 			continue;
 		}
-		if (isTableRow && ch === "|" && !isEscapedAt(line, cursor)) {
+		if (isTableRow && isTableCellPipeAt(line, cursor)) {
 			break;
 		}
 		if (ch === "<" && !isEscapedAt(line, cursor)) {

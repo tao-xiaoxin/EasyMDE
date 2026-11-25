@@ -18,6 +18,7 @@ import {
 import {
 	escapeCodeSpanTableContent,
 	escapeInlineMarkdownText,
+	escapeRawTablePipes,
 	escapeTablePipes,
 } from "./markdown-escape";
 import type { ParsedVisualDocument } from "./markdown-parser";
@@ -459,14 +460,16 @@ function serializeInlineContent(
 					: "";
 			const isInlineMath = child.attrs.kind === "math-inline";
 			const encodedRaw =
-				isInlineMath && mathNewlineToken !== null && raw.includes("\n")
+				mathNewlineToken !== null && raw.includes("\n")
 					? raw.split("\n").join(mathNewlineToken)
 					: raw;
 			if (inTableCell) {
 				// PHP `MarkdownRenderer::extract_math()` extracts inline math
 				// BEFORE CommonMark parses GFM tables, so pipes inside math
 				// stay verbatim rather than turning `|` into KaTeX `\|` (`‖`).
-				output += isInlineMath ? encodedRaw : escapeTablePipes(raw);
+				// Raw inline HTML already carries source pipe escaping matching
+				// PHP `TableParser::split()` (`(?<!\\)\|`).
+				output += isInlineMath ? encodedRaw : escapeRawTablePipes(encodedRaw);
 			} else {
 				const continuationMatch =
 					!inHeading &&

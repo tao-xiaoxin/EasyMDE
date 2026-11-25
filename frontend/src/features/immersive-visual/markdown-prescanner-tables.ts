@@ -162,6 +162,7 @@ export function collectRelativeInlineMathRanges(
 	startOffset: number,
 	endOffset: number,
 	offsetShift = 0,
+	includeContainedDisplay = false,
 ): PhpMarkdownMathRange[] {
 	const overlapping = findMathRangesInOffsetSlice(
 		mathIndex.ranges,
@@ -170,7 +171,11 @@ export function collectRelativeInlineMathRanges(
 	);
 	const relative: PhpMarkdownMathRange[] = [];
 	for (const range of overlapping) {
-		if (!range.block && range.from >= startOffset && range.to <= endOffset) {
+		if (
+			(includeContainedDisplay || !range.block) &&
+			range.from >= startOffset &&
+			range.to <= endOffset
+		) {
 			relative.push({
 				block: false,
 				from: range.from - startOffset + offsetShift,
@@ -399,6 +404,31 @@ export function peelContainerStepsForLine(
 	};
 }
 
+function opensNonParagraphBlock(
+	candidate: string,
+	candidateColumn: number,
+	inParagraph: boolean,
+): boolean {
+	if (measureIndentColumns(candidate, candidateColumn) >= 4) {
+		return true;
+	}
+	const listMarker = matchListMarker(candidate, candidateColumn);
+	if (
+		listMarker !== null &&
+		(!inParagraph || canListMarkerInterruptParagraph(listMarker))
+	) {
+		return true;
+	}
+	const trimmedStart = candidate.replace(/^[ \t]+/, "");
+	return (
+		trimmedStart.startsWith(">") ||
+		COMMONMARK_ATX_HEADING_OPEN.test(trimmedStart) ||
+		COMMONMARK_FENCED_CODE_OPEN.test(trimmedStart) ||
+		COMMONMARK_THEMATIC_BREAK_LINE.test(trimmedStart) ||
+		matchHtmlBlockOpen(trimmedStart, !inParagraph) !== null
+	);
+}
+
 function startsInterruptingBlock(
 	candidate: string,
 	candidateColumn: number,
@@ -416,6 +446,46 @@ function startsInterruptingBlock(
 		COMMONMARK_FENCED_CODE_OPEN.test(trimmedStart) ||
 		COMMONMARK_THEMATIC_BREAK_LINE.test(trimmedStart) ||
 		matchHtmlBlockOpen(trimmedStart, false) !== null
+	);
+}
+
+/**
+ * Validates that a container-peeled line (`peeled`) can legally start a GFM
+ * table header paragraph and matches the GFM delimiter row on `maskedDelimiter`,
+ * rejecting all non-paragraph CommonMark block openers (indented code, ATX
+ * headings, fenced code, thematic breaks, HTML blocks Types 1–6 and Type 7
+ * outside an open paragraph, blockquotes, and list markers).
+ */
+export function matchPeeledGfmTableHeader(
+	peeled: PeeledLineContainers,
+	maskedDelimiter: string,
+	inParagraph: boolean,
+): boolean {
+	if (
+		!peeled.rest.includes("|") ||
+		opensNonParagraphBlock(peeled.rest, peeled.column, inParagraph)
+	) {
+		return false;
+	}
+	const delimiterStripped = stripContainersWithColumn(
+		maskedDelimiter,
+		peeled.containers,
+	);
+	if (delimiterStripped === null) {
+		return false;
+	}
+	if (
+		measureIndentColumns(delimiterStripped.rest, delimiterStripped.column) >=
+			4 ||
+		matchListMarker(delimiterStripped.rest, delimiterStripped.column) !== null
+	) {
+		return false;
+	}
+	const delimiterColumns = parseGfmTableSeparatorColumns(
+		delimiterStripped.rest,
+	);
+	return (
+		delimiterColumns > 0 && countTableRowCells(peeled.rest) === delimiterColumns
 	);
 }
 
@@ -475,16 +545,8 @@ export function findGfmTableEnd(
 				break;
 			}
 			if (
-				measureIndentColumns(candidate, candidateColumn) >= 4 ||
-				matchListMarker(candidate, candidateColumn) !== null
-			) {
-				break;
-			}
-			const trimmedStart = candidate.replace(/^[ \t]+/, "");
-			if (
 				!candidate.includes("|") ||
-				trimmedStart.startsWith(">") ||
-				/^(?:#{1,6}(?:[ \t]|$)|`{3,}|~{3,})/.test(trimmedStart)
+				startsInterruptingBlock(candidate, candidateColumn)
 			) {
 				break;
 			}
@@ -521,6 +583,7 @@ export function resolveGfmTableMatch(
 	allowLeadingListMarker: boolean,
 	allowAdditionalContainers: boolean,
 	mathIndex: PhpDocumentMathIndex,
+	inParagraph = false,
 ): GfmTableMatch | null {
 	if (headerIndex + 1 >= lines.length) {
 		return null;
@@ -569,42 +632,16 @@ export function resolveGfmTableMatch(
 		allowLeadingListMarker,
 		allowAdditionalContainers,
 	);
+	if (peeled === null) {
+		return null;
+	}
+	const baseContainerCount =
+		baseContainers.length + (preMarkerListIndent > 0 ? 1 : 0);
+	const effectiveInParagraph =
+		inParagraph && peeled.containers.length === baseContainerCount;
 	if (
-		peeled === null ||
-		measureIndentColumns(peeled.rest, peeled.column) >= 4
+		!matchPeeledGfmTableHeader(peeled, maskedDelimiter, effectiveInParagraph)
 	) {
-		return null;
-	}
-	if (
-		!allowAdditionalContainers &&
-		(peeled.rest.replace(/^[ \t]+/, "").startsWith(">") ||
-			matchListMarker(peeled.rest, peeled.column) !== null)
-	) {
-		return null;
-	}
-
-	const delimiterStripped = stripContainersWithColumn(
-		maskedDelimiter,
-		peeled.containers,
-	);
-	if (delimiterStripped === null) {
-		return null;
-	}
-	if (
-		measureIndentColumns(delimiterStripped.rest, delimiterStripped.column) >=
-			4 ||
-		matchListMarker(delimiterStripped.rest, delimiterStripped.column) !== null
-	) {
-		return null;
-	}
-
-	const delimiterColumns = parseGfmTableSeparatorColumns(
-		delimiterStripped.rest,
-	);
-	if (delimiterColumns === 0 || !peeled.rest.includes("|")) {
-		return null;
-	}
-	if (countTableRowCells(peeled.rest) !== delimiterColumns) {
 		return null;
 	}
 

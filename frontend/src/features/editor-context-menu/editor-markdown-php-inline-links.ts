@@ -27,20 +27,34 @@ export type {
 	PhpReconciledBlocksContent,
 };
 
+type InlineBlockScope = Readonly<{
+	from: number;
+	groupEnd: number;
+	groupStart: number;
+	kind: "inline";
+	to: number;
+}>;
+
 type PhpOwnedInlineScope =
+	| InlineBlockScope
 	| Readonly<{
 			from: number;
-			groupEnd: number;
-			groupStart: number;
-			isTableCell: false;
-			to: number;
-	  }>
-	| Readonly<{
-			from: number;
-			isTableCell: true;
+			kind: "table-cell";
 			line: ScannedMarkdownLine;
 			to: number;
 	  }>;
+
+type LocalBareAutolinkScope =
+	| InlineBlockScope
+	| Readonly<{
+			from: number;
+			kind: "excluded";
+			to: number;
+	  }>;
+
+type InlineBlockScopeSink = Readonly<{
+	push: (scope: InlineBlockScope) => number;
+}>;
 
 function firstCellIndexEndingAfter(
 	cells: ReadonlyArray<TableRowCellRange>,
@@ -101,7 +115,32 @@ function pushTableCellScope(
 	const cellKey = `${cell.start}:${cell.end}`;
 	if (seenCells.has(cellKey)) return;
 	seenCells.add(cellKey);
-	scopes.push({ from: cell.start, isTableCell: true, line, to: cell.end });
+	scopes.push({ from: cell.start, kind: "table-cell", line, to: cell.end });
+}
+
+function pushInlineBlockScope(
+	scopes: InlineBlockScopeSink,
+	seenBlockIds: Set<number>,
+	scan: ScannedMarkdownBlocks,
+	sourceLength: number,
+	lineIdx: number,
+	inlineBlockId: number,
+): number {
+	const bounds = getInlineBlockBounds(scan, lineIdx, inlineBlockId);
+	if (seenBlockIds.has(inlineBlockId)) return bounds.groupEnd;
+	seenBlockIds.add(inlineBlockId);
+	const from = scan.lines[bounds.groupStart]?.contentOffset ?? 0;
+	const to = scan.lines[bounds.groupEnd]?.lineEnd ?? sourceLength;
+	if (to > from) {
+		scopes.push({
+			from,
+			groupEnd: bounds.groupEnd,
+			groupStart: bounds.groupStart,
+			kind: "inline",
+			to,
+		});
+	}
+	return bounds.groupEnd;
 }
 
 function collectEscapedPipeTableCells(
@@ -185,21 +224,14 @@ function collectReconciledInlineBlockScopes(
 		for (let lineIdx = startLineIdx; lineIdx <= endLineIdx; lineIdx += 1) {
 			const line = scan.lines[lineIdx];
 			if (!line || line.inlineBlockId < 0 || line.isTableRow) continue;
-			const bounds = getInlineBlockBounds(scan, lineIdx, line.inlineBlockId);
-			lineIdx = bounds.groupEnd;
-			if (seenBlockIds.has(line.inlineBlockId)) continue;
-			seenBlockIds.add(line.inlineBlockId);
-			const from = scan.lines[bounds.groupStart]?.contentOffset ?? 0;
-			const to = scan.lines[bounds.groupEnd]?.lineEnd ?? source.length;
-			if (to > from) {
-				scopes.push({
-					from,
-					groupEnd: bounds.groupEnd,
-					groupStart: bounds.groupStart,
-					isTableCell: false,
-					to,
-				});
-			}
+			lineIdx = pushInlineBlockScope(
+				scopes,
+				seenBlockIds,
+				scan,
+				source.length,
+				lineIdx,
+				line.inlineBlockId,
+			);
 		}
 	}
 }
@@ -253,25 +285,26 @@ function scanOwnedInlineScopes(
 			continue;
 		}
 		ownedRanges.push({ from: scope.from, to: scope.to });
-		const found = scope.isTableCell
-			? scanPhpTableCellLinks(
-					text,
-					scope.line,
-					scope.from,
-					scope.to,
-					isReferenceDefined,
-					crossesMath,
-					imagesOut,
-				)
-			: scanPhpInlineBlockLinks(
-					text,
-					scan.lines,
-					scope.groupStart,
-					scope.groupEnd,
-					isReferenceDefined,
-					crossesMath,
-					imagesOut,
-				);
+		const found =
+			"table-cell" === scope.kind
+				? scanPhpTableCellLinks(
+						text,
+						scope.line,
+						scope.from,
+						scope.to,
+						isReferenceDefined,
+						crossesMath,
+						imagesOut,
+					)
+				: scanPhpInlineBlockLinks(
+						text,
+						scan.lines,
+						scope.groupStart,
+						scope.groupEnd,
+						isReferenceDefined,
+						crossesMath,
+						imagesOut,
+					);
 		for (let j = 0; j < found.length; j += 1) {
 			const link = found[j];
 			if (link) links.push(link);
@@ -329,6 +362,44 @@ export function collectPhpReconciledBlocksContent(
 	return { images, links, ownedRanges };
 }
 
+/** Merges two sorted range arrays in O(N) ordered by `(from, to)`. */
+export function mergeSortedByRange<T extends SourceRange>(
+	first: ReadonlyArray<T>,
+	second: ReadonlyArray<T>,
+): T[] {
+	if (0 === first.length) return [...second];
+	if (0 === second.length) return [...first];
+	const merged: T[] = [];
+	let a = 0;
+	let b = 0;
+	while (a < first.length && b < second.length) {
+		const left = first[a];
+		const right = second[b];
+		if (!left || !right) break;
+		if (
+			left.from < right.from ||
+			(left.from === right.from && left.to <= right.to)
+		) {
+			merged.push(left);
+			a += 1;
+		} else {
+			merged.push(right);
+			b += 1;
+		}
+	}
+	while (a < first.length) {
+		const left = first[a];
+		if (left) merged.push(left);
+		a += 1;
+	}
+	while (b < second.length) {
+		const right = second[b];
+		if (right) merged.push(right);
+		b += 1;
+	}
+	return merged;
+}
+
 /** Merges two disjoint sorted PHP-owned block-link results in O(N). */
 export function mergePhpOwnedBlockLinks(
 	first: PhpOwnedBlockLinks,
@@ -336,61 +407,10 @@ export function mergePhpOwnedBlockLinks(
 ): PhpOwnedBlockLinks {
 	if (0 === first.ownedRanges.length) return second;
 	if (0 === second.ownedRanges.length) return first;
-	const ownedRanges: SourceRange[] = [];
-	let a = 0;
-	let b = 0;
-	while (a < first.ownedRanges.length && b < second.ownedRanges.length) {
-		const left = first.ownedRanges[a];
-		const right = second.ownedRanges[b];
-		if (!left || !right) break;
-		if (left.from <= right.from) {
-			ownedRanges.push(left);
-			a += 1;
-		} else {
-			ownedRanges.push(right);
-			b += 1;
-		}
-	}
-	while (a < first.ownedRanges.length) {
-		const left = first.ownedRanges[a];
-		if (left) ownedRanges.push(left);
-		a += 1;
-	}
-	while (b < second.ownedRanges.length) {
-		const right = second.ownedRanges[b];
-		if (right) ownedRanges.push(right);
-		b += 1;
-	}
-
-	const links: ParserLinkNode[] = [];
-	a = 0;
-	b = 0;
-	while (a < first.links.length && b < second.links.length) {
-		const left = first.links[a];
-		const right = second.links[b];
-		if (!left || !right) break;
-		if (
-			left.from < right.from ||
-			(left.from === right.from && left.to <= right.to)
-		) {
-			links.push(left);
-			a += 1;
-		} else {
-			links.push(right);
-			b += 1;
-		}
-	}
-	while (a < first.links.length) {
-		const left = first.links[a];
-		if (left) links.push(left);
-		a += 1;
-	}
-	while (b < second.links.length) {
-		const right = second.links[b];
-		if (right) links.push(right);
-		b += 1;
-	}
-	return { links, ownedRanges };
+	return {
+		links: mergeSortedByRange(first.links, second.links),
+		ownedRanges: mergeSortedByRange(first.ownedRanges, second.ownedRanges),
+	};
 }
 
 function collectBareAutolinkScopesInScan(
@@ -416,20 +436,14 @@ function collectBareAutolinkScopesInScan(
 			continue;
 		}
 		if (!line.isTableRow) {
-			if (seenBlockIds.has(line.inlineBlockId)) continue;
-			seenBlockIds.add(line.inlineBlockId);
-			const bounds = getInlineBlockBounds(scan, lineIdx, line.inlineBlockId);
-			const from = scan.lines[bounds.groupStart]?.contentOffset ?? 0;
-			const to = scan.lines[bounds.groupEnd]?.lineEnd ?? source.length;
-			if (to > from) {
-				scopes.push({
-					from,
-					groupEnd: bounds.groupEnd,
-					groupStart: bounds.groupStart,
-					isTableCell: false,
-					to,
-				});
-			}
+			pushInlineBlockScope(
+				scopes,
+				seenBlockIds,
+				scan,
+				source.length,
+				lineIdx,
+				line.inlineBlockId,
+			);
 			continue;
 		}
 		const cells = getCachedPhpTableRowCells(source, scan, line);
@@ -489,21 +503,14 @@ export function collectPhpDisplayMathBrokenBlockLinks(
 			const line = scan.lines[lineIdx];
 			if (!line || line.inlineBlockId < 0) continue;
 			if (!line.isTableRow) {
-				const bounds = getInlineBlockBounds(scan, lineIdx, line.inlineBlockId);
-				lineIdx = bounds.groupEnd;
-				if (seenBlockIds.has(line.inlineBlockId)) continue;
-				seenBlockIds.add(line.inlineBlockId);
-				const from = scan.lines[bounds.groupStart]?.contentOffset ?? 0;
-				const to = scan.lines[bounds.groupEnd]?.lineEnd ?? source.length;
-				if (to > from) {
-					scopes.push({
-						from,
-						groupEnd: bounds.groupEnd,
-						groupStart: bounds.groupStart,
-						isTableCell: false,
-						to,
-					});
-				}
+				lineIdx = pushInlineBlockScope(
+					scopes,
+					seenBlockIds,
+					scan,
+					source.length,
+					lineIdx,
+					line.inlineBlockId,
+				);
 				continue;
 			}
 			const segFrom = Math.max(slice.from, line.contentOffset);
@@ -598,20 +605,7 @@ export function collectLocalPhpBareAutolinkBlockLinks(
 		const blockScan = scanPhpCommonMarkBlocks(blockSlice);
 		const seenBlockIds = new Set<number>();
 		const seenExcludedLines = new Set<number>();
-		const localScopes: Array<
-			| Readonly<{
-					from: number;
-					groupEnd: number;
-					groupStart: number;
-					hasLinks: true;
-					to: number;
-			  }>
-			| Readonly<{
-					from: number;
-					hasLinks: false;
-					to: number;
-			  }>
-		> = [];
+		const localScopes: LocalBareAutolinkScope[] = [];
 		for (let i = blockStartOffsetIdx; i < offsetIdx; i += 1) {
 			const globalOffset = bareAutolinkOffsets[i];
 			if (undefined === globalOffset) continue;
@@ -625,36 +619,23 @@ export function collectLocalPhpBareAutolinkBlockLinks(
 					seenExcludedLines.add(lineIdx);
 					localScopes.push({
 						from: line.lineStart,
-						hasLinks: false,
+						kind: "excluded",
 						to: line.lineEnd,
 					});
 				}
 				continue;
 			}
-			if (
-				localOffset < line.contentOffset ||
-				localOffset >= line.lineEnd ||
-				seenBlockIds.has(line.inlineBlockId)
-			) {
+			if (localOffset < line.contentOffset || localOffset >= line.lineEnd) {
 				continue;
 			}
-			seenBlockIds.add(line.inlineBlockId);
-			const bounds = getInlineBlockBounds(
+			pushInlineBlockScope(
+				localScopes,
+				seenBlockIds,
 				blockScan,
+				blockSlice.length,
 				lineIdx,
 				line.inlineBlockId,
 			);
-			const from = blockScan.lines[bounds.groupStart]?.contentOffset ?? 0;
-			const to = blockScan.lines[bounds.groupEnd]?.lineEnd ?? blockSlice.length;
-			if (to > from) {
-				localScopes.push({
-					from,
-					groupEnd: bounds.groupEnd,
-					groupStart: bounds.groupStart,
-					hasLinks: true,
-					to,
-				});
-			}
 		}
 		localScopes.sort(
 			(left, right) => left.from - right.from || left.to - right.to,
@@ -666,7 +647,7 @@ export function collectLocalPhpBareAutolinkBlockLinks(
 				from: block.from + scope.from,
 				to: block.from + scope.to,
 			});
-			if (!scope.hasLinks) continue;
+			if ("excluded" === scope.kind) continue;
 			const found = scanPhpInlineBlockLinks(
 				blockSlice,
 				blockScan.lines,

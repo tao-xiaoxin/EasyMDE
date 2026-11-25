@@ -191,7 +191,7 @@ export const EDITOR_BLOCK_INDEX_PACKED_IMAGE_BLOCK_FIELDS = 3;
 export const EDITOR_BLOCK_INDEX_PACKED_IMAGE_RANGE_FIELDS = 2;
 export const EDITOR_BLOCK_INDEX_PACKED_LINK_FIELDS = 6;
 export const EDITOR_BLOCK_INDEX_LINK_TABLE_CELL_STRIDE = 3;
-export const EDITOR_BLOCK_INDEX_PACKED_V3_KEYS: ReadonlyArray<string> = [
+const EDITOR_BLOCK_INDEX_PACKED_V3_KEYS: ReadonlyArray<string> = [
 	"blockCount",
 	"blocks",
 	"format",
@@ -203,8 +203,10 @@ export const EDITOR_BLOCK_INDEX_PACKED_V3_KEYS: ReadonlyArray<string> = [
 	"mathSpanCount",
 	"mathSpans",
 ];
-export const EDITOR_BLOCK_INDEX_LINK_TABLE_CELL_WIRE_KEYS: ReadonlyArray<string> =
-	["linkTableCellCount", "linkTableCells"];
+const EDITOR_BLOCK_INDEX_LINK_TABLE_CELL_WIRE_KEYS: ReadonlyArray<string> = [
+	"linkTableCellCount",
+	"linkTableCells",
+];
 export const EDITOR_BLOCK_INDEX_LINK_KIND_LINK = 0;
 export const EDITOR_BLOCK_INDEX_LINK_KIND_AUTOLINK = 1;
 export const EDITOR_BLOCK_INDEX_IMAGE_STATUS_READY = 0;
@@ -299,7 +301,7 @@ export const EDITOR_BLOCK_INDEX_PACKED_V3_WITH_TABLE_CELLS_KEYS: ReadonlyArray<s
 		...EDITOR_BLOCK_INDEX_LINK_TABLE_CELL_WIRE_KEYS,
 	];
 
-export type EditorBlockIndexPackedKeyShape = "base" | "with-table-cells";
+type EditorBlockIndexPackedKeyShape = "base" | "with-table-cells";
 
 export type EditorMarkdownTableCellMathRange = Readonly<{
 	block?: boolean;
@@ -308,7 +310,7 @@ export type EditorMarkdownTableCellMathRange = Readonly<{
 	to: number;
 }>;
 
-export function hasOwnEditorBlockIndexKey(
+function hasOwnEditorBlockIndexKey(
 	value: Readonly<Record<string, unknown>>,
 	key: string,
 ): boolean {

@@ -6,7 +6,7 @@ import { lineIndexAtOffsets } from "./editor-markdown-lines";
 import { trimBlockSlice } from "./editor-markdown-php-block-reconcile";
 import type { SourceRange } from "./editor-markdown-source-projection";
 
-export type MathRange = SourceRange &
+type MathRange = SourceRange &
 	Readonly<{
 		block: boolean;
 	}>;

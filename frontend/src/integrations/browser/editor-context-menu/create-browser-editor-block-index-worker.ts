@@ -33,10 +33,7 @@ import {
 	MAX_EDITOR_BLOCK_INDEX_SOURCE_BYTES,
 	resolveEditorBlockIndexWorkerUrl,
 } from "../../../contracts/ports/editor-block-index-port";
-import {
-	findEditorBlockIndexMathSpanEndBlockIndex,
-	unpackEditorMarkdownLinkTableCells,
-} from "../../../shared/markdown/editor-block-index-table-cell-codec";
+import { unpackEditorMarkdownLinkTableCells } from "../../../shared/markdown/editor-block-index-table-cell-codec";
 
 type WorkerEventListener = (event: Event | MessageEvent<unknown>) => void;
 
@@ -258,6 +255,50 @@ function validMathDelimitersAt(
 		bodyFrom === from + prefixLength &&
 		bodyTo === to - suffixLength
 	);
+}
+
+/**
+ * Validates that a packed math span `[from, to)` is covered by editable
+ * non-code, non-unavailable blocks starting at `startBlockIndex` and returns
+ * the ending block index, or `-1` on any violation. Only inline `\(...\)` math
+ * may span across Lezer block boundaries (such as blank lines or headings).
+ */
+function findEditorBlockIndexMathSpanEndBlockIndex(
+	blocks: ReadonlyArray<EditorMarkdownSourceBlock>,
+	startBlockIndex: number,
+	from: number,
+	to: number,
+	displayMode: boolean,
+	source: string,
+): number {
+	const startBlock = blocks[startBlockIndex];
+	if (
+		!startBlock ||
+		from < startBlock.from ||
+		!startBlock.editable ||
+		"code" === startBlock.kind ||
+		"unavailable" === startBlock.kind ||
+		(!displayMode && "math" === startBlock.kind)
+	) {
+		return -1;
+	}
+	if (to <= startBlock.to) return startBlockIndex;
+	if (displayMode || "\\" !== source[from] || "(" !== source[from + 1]) {
+		return -1;
+	}
+	for (let idx = startBlockIndex + 1; idx < blocks.length; idx += 1) {
+		const block = blocks[idx];
+		if (
+			!block?.editable ||
+			"code" === block.kind ||
+			"unavailable" === block.kind ||
+			"math" === block.kind
+		) {
+			return -1;
+		}
+		if (to <= block.to) return to > block.from ? idx : -1;
+	}
+	return -1;
 }
 
 type DataValidation =

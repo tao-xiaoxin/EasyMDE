@@ -10,6 +10,7 @@ import {
 	type PhpMarkdownMathRange,
 	type ScannedCodeRange,
 	type ScannedMarkdownBlocks,
+	type ScannedMarkdownLine,
 } from "../../shared/markdown/php-commonmark-block-scan";
 import {
 	findFirstBlockEndingAfter,
@@ -67,6 +68,82 @@ function isBlockCoveredByCodeRanges(
 	return { covered: true, nextCodeIndex: probe };
 }
 
+type WalkBlockLineSegmentsCallbacks = Readonly<{
+	onDisplayMath?: (from: number, to: number) => void;
+	onEmptySegment?: () => void;
+	onSegment: (
+		from: number,
+		to: number,
+		line: ScannedMarkdownLine,
+		lineIdx: number,
+	) => number | undefined;
+}>;
+
+function walkBlockLineSegments(
+	blockFrom: number,
+	blockTo: number,
+	lines: ReadonlyArray<ScannedMarkdownLine>,
+	displayMathRanges: ReadonlyArray<PhpMarkdownMathRange>,
+	callbacks: WalkBlockLineSegmentsCallbacks,
+): void {
+	let cursor = blockFrom;
+	let dmIdx = findFirstMathRangeEndingAfter(displayMathRanges, blockFrom);
+	let lineIdx = findLineIndexAtOffset(lines, blockFrom);
+	if (lineIdx < 0) lineIdx = 0;
+
+	while (cursor < blockTo) {
+		while (
+			dmIdx < displayMathRanges.length &&
+			(displayMathRanges[dmIdx]?.to ?? 0) <= cursor
+		) {
+			dmIdx += 1;
+		}
+		const dm = displayMathRanges[dmIdx];
+		if (dm && dm.from <= cursor && cursor < dm.to) {
+			const segTo = Math.min(blockTo, dm.to);
+			callbacks.onDisplayMath?.(cursor, segTo);
+			cursor = segTo;
+			continue;
+		}
+
+		while (
+			lineIdx < lines.length &&
+			(lines[lineIdx]?.nextLineStart ?? 0) <= cursor
+		) {
+			lineIdx += 1;
+		}
+		const line = lines[lineIdx];
+		if (!line || line.lineStart >= blockTo) break;
+		if (cursor < line.lineStart) {
+			cursor = line.lineStart;
+			continue;
+		}
+
+		let segEnd = Math.min(blockTo, line.lineEnd);
+		if (dm && dm.from > cursor && dm.from < segEnd) {
+			segEnd = dm.from;
+		}
+		if (segEnd <= cursor) {
+			callbacks.onEmptySegment?.();
+			const nextPos = Math.min(
+				blockTo,
+				Math.max(cursor + 1, line.nextLineStart),
+			);
+			if (nextPos <= cursor) break;
+			cursor = nextPos;
+			continue;
+		}
+
+		const nextCursor = callbacks.onSegment(cursor, segEnd, line, lineIdx);
+		cursor =
+			undefined !== nextCursor
+				? nextCursor
+				: segEnd === line.lineEnd && (!dm || dm.from > segEnd)
+					? Math.min(blockTo, line.nextLineStart)
+					: segEnd;
+	}
+}
+
 function collectNestedNonCodeRanges(
 	source: string,
 	nestedCodeBlocks: ReadonlyArray<SourceRange>,
@@ -92,68 +169,22 @@ function collectNestedNonCodeRanges(
 		codeIndex = coverage.nextCodeIndex;
 		if (coverage.covered) continue;
 
-		let cursor = block.from;
-		let dmIdx = findFirstMathRangeEndingAfter(displayMathRanges, block.from);
-		let lineIdx = findLineIndexAtOffset(lines, block.from);
-		if (lineIdx < 0) lineIdx = 0;
-
-		while (cursor < block.to) {
-			while (
-				dmIdx < displayMathRanges.length &&
-				(displayMathRanges[dmIdx]?.to ?? 0) <= cursor
-			) {
-				dmIdx += 1;
-			}
-			const dm = displayMathRanges[dmIdx];
-			if (dm && dm.from <= cursor && cursor < dm.to) {
-				cursor = Math.min(block.to, dm.to);
-				continue;
-			}
-
-			while (
-				lineIdx < lines.length &&
-				(lines[lineIdx]?.nextLineStart ?? 0) <= cursor
-			) {
-				lineIdx += 1;
-			}
-			const line = lines[lineIdx];
-			if (!line || line.lineStart >= block.to) break;
-			if (cursor < line.lineStart) {
-				cursor = line.lineStart;
-				continue;
-			}
-
-			let segEnd = Math.min(block.to, line.lineEnd);
-			if (dm && dm.from > cursor && dm.from < segEnd) {
-				segEnd = dm.from;
-			}
-			if (segEnd <= cursor) {
-				const nextPos =
-					dm && dm.from === cursor
-						? cursor
-						: Math.min(block.to, Math.max(cursor + 1, line.nextLineStart));
-				if (nextPos <= cursor) break;
-				cursor = nextPos;
-				continue;
-			}
-
-			if (
-				!inCodeRange(phpBlockCodeRanges, cursor, segEnd) &&
-				line.inlineBlockId >= 0 &&
-				source.slice(cursor, segEnd).trim().length > 0
-			) {
-				if (line.isTableRow) {
-					reconciledTableBlocks.push({ from: cursor, to: segEnd });
-				} else {
-					reconciledInlineBlocks.push({ from: cursor, to: segEnd });
+		walkBlockLineSegments(block.from, block.to, lines, displayMathRanges, {
+			onSegment: (segFrom, segEnd, line) => {
+				if (
+					!inCodeRange(phpBlockCodeRanges, segFrom, segEnd) &&
+					line.inlineBlockId >= 0 &&
+					source.slice(segFrom, segEnd).trim().length > 0
+				) {
+					if (line.isTableRow) {
+						reconciledTableBlocks.push({ from: segFrom, to: segEnd });
+					} else {
+						reconciledInlineBlocks.push({ from: segFrom, to: segEnd });
+					}
 				}
-			}
-
-			cursor =
-				segEnd === line.lineEnd && (!dm || dm.from > segEnd)
-					? Math.min(block.to, line.nextLineStart)
-					: segEnd;
-		}
+				return undefined;
+			},
+		});
 	}
 }
 
@@ -321,178 +352,128 @@ export function reconcilePhpNonCodeBlocks(
 			pendingInlineBlockId = inlineBlockId;
 		};
 
-		let cursor = block.from;
-		let dmIdx = findFirstMathRangeEndingAfter(displayMathRanges, block.from);
-		let lineIdx = findLineIndexAtOffset(lines, block.from);
-		if (lineIdx < 0) lineIdx = 0;
-
-		while (cursor < block.to) {
-			while (
-				dmIdx < displayMathRanges.length &&
-				(displayMathRanges[dmIdx]?.to ?? 0) <= cursor
-			) {
-				dmIdx += 1;
-			}
-			const dm = displayMathRanges[dmIdx];
-			if (dm && dm.from <= cursor && cursor < dm.to) {
-				const segTo = Math.min(block.to, dm.to);
-				pushPending("paragraph-math", cursor, segTo);
-				cursor = segTo;
-				continue;
-			}
-
-			while (
-				lineIdx < lines.length &&
-				(lines[lineIdx]?.nextLineStart ?? 0) <= cursor
-			) {
-				lineIdx += 1;
-			}
-			const line = lines[lineIdx];
-			if (!line || line.lineStart >= block.to) break;
-			if (cursor < line.lineStart) {
-				cursor = line.lineStart;
-				continue;
-			}
-
-			let segEnd = Math.min(block.to, line.lineEnd);
-			if (dm && dm.from > cursor && dm.from < segEnd) {
-				segEnd = dm.from;
-			}
-			if (segEnd <= cursor) {
+		walkBlockLineSegments(block.from, block.to, lines, displayMathRanges, {
+			onDisplayMath: (segFrom, segTo) => {
+				pushPending("paragraph-math", segFrom, segTo);
+			},
+			onEmptySegment: () => {
 				if ("code" !== pendingKind) flushPending();
-				const nextPos =
-					dm && dm.from === cursor
-						? cursor
-						: Math.min(block.to, Math.max(cursor + 1, line.nextLineStart));
-				if (nextPos <= cursor) break;
-				cursor = nextPos;
-				continue;
-			}
+			},
+			onSegment: (segFrom, segEnd, line, lineIdx) => {
+				if (inCodeRange(phpBlockCodeRanges, segFrom, segEnd)) {
+					pushPending("code", segFrom, segEnd);
+					return undefined;
+				}
 
-			const advancePastSegment = (): void => {
-				cursor =
-					segEnd === line.lineEnd && (!dm || dm.from > segEnd)
-						? Math.min(block.to, line.nextLineStart)
-						: segEnd;
-			};
+				if (0 === source.slice(segFrom, segEnd).trim().length) {
+					if ("code" !== pendingKind) flushPending();
+					return undefined;
+				}
 
-			if (inCodeRange(phpBlockCodeRanges, cursor, segEnd)) {
-				pushPending("code", cursor, segEnd);
-				advancePastSegment();
-				continue;
-			}
+				if (line.isTableRow && line.inlineBlockId >= 0) {
+					const tableLineSpan = findPhpTableSpanContainingLine(
+						lines,
+						lineIdx,
+						evaluatedTableUntilLineIdx,
+					);
+					if (tableLineSpan) {
+						const tableFrom =
+							lines[tableLineSpan.startLineIdx]?.lineStart ?? -1;
+						const tableTo = lines[tableLineSpan.endLineIdx]?.lineEnd ?? -1;
+						if (
+							tableFrom >= block.from &&
+							tableFrom >= consumedUntil &&
+							tableTo > tableFrom &&
+							isValidReconciledPhpTableSpan({
+								allowTrailingUnavailableBlocks: false,
+								blocks,
+								endLineIdx: tableLineSpan.endLineIdx,
+								phpBlockScan,
+								phpMathRanges,
+								rejectCodeBlocks: false,
+								source,
+								startLineIdx: tableLineSpan.startLineIdx,
+								tableFrom,
+								tableTo,
+							})
+						) {
+							flushPending();
+							const tableBlock = trimBlockSlice(
+								source,
+								tableFrom,
+								tableTo,
+								starts,
+								"table",
+								true,
+							);
+							if (tableBlock) {
+								out.push(tableBlock);
+								reconciledTableBlocks.push(tableBlock);
+							}
+							if (tableTo > consumedUntil) consumedUntil = tableTo;
+							const afterTable =
+								lines[tableLineSpan.endLineIdx]?.nextLineStart ?? tableTo;
+							return Math.min(block.to, Math.max(segEnd, afterTable));
+						}
+					}
+				}
 
-			if (0 === source.slice(cursor, segEnd).trim().length) {
-				if ("code" !== pendingKind) flushPending();
-				advancePastSegment();
-				continue;
-			}
-
-			if (line.isTableRow && line.inlineBlockId >= 0) {
-				const tableLineSpan = findPhpTableSpanContainingLine(
-					lines,
-					lineIdx,
-					evaluatedTableUntilLineIdx,
-				);
-				if (tableLineSpan) {
-					const tableFrom = lines[tableLineSpan.startLineIdx]?.lineStart ?? -1;
-					const tableTo = lines[tableLineSpan.endLineIdx]?.lineEnd ?? -1;
+				if (line.inlineBlockId >= 0 && !line.isTableRow) {
+					const bounds = getInlineBlockBounds(
+						phpBlockScan,
+						lineIdx,
+						line.inlineBlockId,
+					);
+					const groupEndLine = lines[bounds.groupEnd];
+					const groupTo = groupEndLine ? groupEndLine.lineEnd : segEnd;
 					if (
-						tableFrom >= block.from &&
-						tableFrom >= consumedUntil &&
-						tableTo > tableFrom &&
-						isValidReconciledPhpTableSpan({
-							allowTrailingUnavailableBlocks: false,
+						groupTo > block.to &&
+						canMergeInlineParagraphAcrossBlocks(
 							blocks,
-							endLineIdx: tableLineSpan.endLineIdx,
-							phpBlockScan,
-							phpMathRanges,
-							rejectCodeBlocks: false,
-							source,
-							startLineIdx: tableLineSpan.startLineIdx,
-							tableFrom,
-							tableTo,
-						})
+							phpBlockCodeRanges,
+							displayMathRanges,
+							segFrom,
+							block.to,
+							groupTo,
+						)
 					) {
-						flushPending();
-						const tableBlock = trimBlockSlice(
+						let mergedFrom = segFrom;
+						if (
+							"paragraph-inline" === pendingKind &&
+							pendingInlineBlockId === line.inlineBlockId &&
+							pendingFrom >= 0
+						) {
+							mergedFrom = pendingFrom;
+							pendingKind = null;
+							pendingFrom = -1;
+							pendingTo = -1;
+							pendingInlineBlockId = -1;
+						} else {
+							flushPending();
+						}
+						const paraBlock = trimBlockSlice(
 							source,
-							tableFrom,
-							tableTo,
+							mergedFrom,
+							groupTo,
 							starts,
-							"table",
+							"paragraph",
 							true,
 						);
-						if (tableBlock) {
-							out.push(tableBlock);
-							reconciledTableBlocks.push(tableBlock);
+						if (paraBlock) {
+							out.push(paraBlock);
+							reconciledInlineBlocks.push(paraBlock);
 						}
-						if (tableTo > consumedUntil) consumedUntil = tableTo;
-						const afterTable =
-							lines[tableLineSpan.endLineIdx]?.nextLineStart ?? tableTo;
-						cursor = Math.min(block.to, Math.max(segEnd, afterTable));
-						continue;
+						if (groupTo > consumedUntil) consumedUntil = groupTo;
+						return block.to;
 					}
+					pushPending("paragraph-inline", segFrom, segEnd, line.inlineBlockId);
+					return undefined;
 				}
-			}
 
-			if (line.inlineBlockId >= 0 && !line.isTableRow) {
-				const bounds = getInlineBlockBounds(
-					phpBlockScan,
-					lineIdx,
-					line.inlineBlockId,
-				);
-				const groupEndLine = lines[bounds.groupEnd];
-				const groupTo = groupEndLine ? groupEndLine.lineEnd : segEnd;
-				if (
-					groupTo > block.to &&
-					canMergeInlineParagraphAcrossBlocks(
-						blocks,
-						phpBlockCodeRanges,
-						displayMathRanges,
-						cursor,
-						block.to,
-						groupTo,
-					)
-				) {
-					let mergedFrom = cursor;
-					if (
-						"paragraph-inline" === pendingKind &&
-						pendingInlineBlockId === line.inlineBlockId &&
-						pendingFrom >= 0
-					) {
-						mergedFrom = pendingFrom;
-						pendingKind = null;
-						pendingFrom = -1;
-						pendingTo = -1;
-						pendingInlineBlockId = -1;
-					} else {
-						flushPending();
-					}
-					const paraBlock = trimBlockSlice(
-						source,
-						mergedFrom,
-						groupTo,
-						starts,
-						"paragraph",
-						true,
-					);
-					if (paraBlock) {
-						out.push(paraBlock);
-						reconciledInlineBlocks.push(paraBlock);
-					}
-					if (groupTo > consumedUntil) consumedUntil = groupTo;
-					cursor = block.to;
-					break;
-				}
-				pushPending("paragraph-inline", cursor, segEnd, line.inlineBlockId);
-				advancePastSegment();
-				continue;
-			}
-
-			pushPending("unavailable", cursor, segEnd);
-			advancePastSegment();
-		}
+				pushPending("unavailable", segFrom, segEnd);
+				return undefined;
+			},
+		});
 
 		flushPending();
 	}

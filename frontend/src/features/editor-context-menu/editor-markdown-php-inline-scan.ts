@@ -294,81 +294,47 @@ export function scanPhpTableCellLinks(
 	) {
 		return [];
 	}
+	let cellText = rawSlice;
+	let origPos: number[] | null = null;
+	if (rawSlice.includes("\\|")) {
+		const parts: string[] = [];
+		origPos = [];
+		for (let i = trimStart; i < trimEnd; i += 1) {
+			origPos.push(i);
+			if ("\\" === text[i] && i + 1 < trimEnd && "|" === text[i + 1]) {
+				parts.push("|");
+				i += 1;
+			} else {
+				parts.push(text[i] ?? "");
+			}
+		}
+		origPos.push(trimEnd);
+		cellText = parts.join("");
+	}
+
+	const mapOffset = (offset: number, fallback: number): number =>
+		origPos ? (origPos[offset] ?? fallback) : trimStart + offset;
+
 	const cellImages: PhpReconciledBlockImage[] | undefined = imagesOut
 		? []
 		: undefined;
-	if (!rawSlice.includes("\\|")) {
-		const cellLine: ScannedMarkdownLine = {
-			...line,
-			contentOffset: 0,
-			lineEnd: rawSlice.length,
-			lineStart: 0,
-			nextLineStart: rawSlice.length,
-			virtualSpaces: 0,
-		};
-		const cellLinks = scanPhpInlineBlockLinks(
-			rawSlice,
-			[cellLine],
-			0,
-			0,
-			(cFrom, cTo) => isReferenceDefined(trimStart + cFrom, trimStart + cTo),
-			(cFrom, cTo) => crossesMath(trimStart + cFrom, trimStart + cTo),
-			cellImages,
-		);
-		if (imagesOut && cellImages) {
-			for (let i = 0; i < cellImages.length; i += 1) {
-				const img = cellImages[i];
-				if (img) {
-					imagesOut.push({
-						available: img.available,
-						from: trimStart + img.from,
-						to: trimStart + img.to,
-					});
-				}
-			}
-		}
-		return cellLinks.map((link) => ({
-			from: trimStart + link.from,
-			kind: link.kind,
-			reference: link.reference,
-			to: trimStart + link.to,
-		}));
-	}
-
-	const parts: string[] = [];
-	const origPos: number[] = [];
-	for (let i = trimStart; i < trimEnd; i += 1) {
-		origPos.push(i);
-		if ("\\" === text[i] && i + 1 < trimEnd && "|" === text[i + 1]) {
-			parts.push("|");
-			i += 1;
-		} else {
-			parts.push(text[i] ?? "");
-		}
-	}
-	origPos.push(trimEnd);
-	const unescaped = parts.join("");
-
 	const cellLine: ScannedMarkdownLine = {
 		...line,
 		contentOffset: 0,
-		lineEnd: unescaped.length,
+		lineEnd: cellText.length,
 		lineStart: 0,
-		nextLineStart: unescaped.length,
+		nextLineStart: cellText.length,
 		virtualSpaces: 0,
 	};
 	const cellLinks = scanPhpInlineBlockLinks(
-		unescaped,
+		cellText,
 		[cellLine],
 		0,
 		0,
-		(uFrom, uTo) =>
-			isReferenceDefined(
-				origPos[uFrom] ?? trimStart,
-				origPos[uTo] ?? trimEnd,
-			),
-		(uFrom, uTo) =>
-			crossesMath(origPos[uFrom] ?? trimStart, origPos[uTo] ?? trimEnd),
+		(cFrom, cTo) =>
+			isReferenceDefined(mapOffset(cFrom, trimStart), mapOffset(cTo, trimEnd)),
+		(cFrom, cTo) =>
+			crossesMath(mapOffset(cFrom, trimStart), mapOffset(cTo, trimEnd)),
 		cellImages,
 	);
 	if (imagesOut && cellImages) {
@@ -377,16 +343,16 @@ export function scanPhpTableCellLinks(
 			if (img) {
 				imagesOut.push({
 					available: img.available,
-					from: origPos[img.from] ?? trimStart,
-					to: origPos[img.to] ?? trimEnd,
+					from: mapOffset(img.from, trimStart),
+					to: mapOffset(img.to, trimEnd),
 				});
 			}
 		}
 	}
 	return cellLinks.map((link) => ({
-		from: origPos[link.from] ?? trimStart,
+		from: mapOffset(link.from, trimStart),
 		kind: link.kind,
 		reference: link.reference,
-		to: origPos[link.to] ?? trimEnd,
+		to: mapOffset(link.to, trimEnd),
 	}));
 }

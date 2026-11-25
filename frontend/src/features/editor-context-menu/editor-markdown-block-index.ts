@@ -48,6 +48,7 @@ import {
 	collectPhpReconciledBlocksContent,
 	collectUncoveredBareAutolinkOffsets,
 	mergePhpOwnedBlockLinks,
+	mergeSortedByRange,
 	type PhpOwnedBlockLinks,
 } from "./editor-markdown-php-inline-links";
 import { reconcilePhpNonCodeBlocks } from "./editor-markdown-php-non-code-reconcile";
@@ -347,35 +348,7 @@ function mergeOriginalLinkNodesWithPhpOwned(
 		});
 	}
 
-	const merged: ParserLinkNode[] = [];
-	let a = 0;
-	let b = 0;
-	while (a < surviving.length && b < phpOwned.links.length) {
-		const left = surviving[a];
-		const right = phpOwned.links[b];
-		if (!left || !right) break;
-		if (
-			left.from < right.from ||
-			(left.from === right.from && left.to <= right.to)
-		) {
-			merged.push(left);
-			a += 1;
-		} else {
-			merged.push(right);
-			b += 1;
-		}
-	}
-	while (a < surviving.length) {
-		const left = surviving[a];
-		if (left) merged.push(left);
-		a += 1;
-	}
-	while (b < phpOwned.links.length) {
-		const right = phpOwned.links[b];
-		if (right) merged.push(right);
-		b += 1;
-	}
-	return merged;
+	return mergeSortedByRange(surviving, phpOwned.links);
 }
 
 function hasMathInCodeBlocks(

@@ -49,7 +49,7 @@ export type ScannedMarkdownLine = Readonly<{
 	virtualSpaces: number;
 }>;
 
-export type MutableScannedMarkdownLine = {
+type MutableScannedMarkdownLine = {
 	consumedBlockquote: boolean;
 	contentOffset: number;
 	inlineBlockId: number;

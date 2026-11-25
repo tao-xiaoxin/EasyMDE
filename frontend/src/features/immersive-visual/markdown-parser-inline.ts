@@ -64,6 +64,8 @@ export function tokenAttrString(
 	return value === null ? null : String(value);
 }
 
+const EMPTY_MARKS: readonly Mark[] = [];
+
 function splitTextWithProtectedInlines(
 	text: string,
 	activeMarks: readonly Mark[],
@@ -71,6 +73,9 @@ function splitTextWithProtectedInlines(
 ): ProseMirrorNode[] {
 	if (text.length === 0) {
 		return [];
+	}
+	if (!text.includes("EASYMDEPH")) {
+		return [visualEditorSchema.text(text, activeMarks)];
 	}
 	const result: ProseMirrorNode[] = [];
 	const tokenPattern = new RegExp(
@@ -182,9 +187,22 @@ export function mapInlineTokens(
 	}
 	const output: ProseMirrorNode[] = [];
 	const markStack: Mark[] = [];
+	let pendingPlainText = "";
+
+	const flushPlainText = (): void => {
+		if (pendingPlainText.length > 0) {
+			output.push(visualEditorSchema.text(pendingPlainText, EMPTY_MARKS));
+			pendingPlainText = "";
+		}
+	};
 
 	const currentMarkSet = (): readonly Mark[] =>
-		markStack.reduce<readonly Mark[]>((set, mark) => mark.addToSet(set), []);
+		markStack.length === 0
+			? EMPTY_MARKS
+			: markStack.reduce<readonly Mark[]>(
+					(set, mark) => mark.addToSet(set),
+					EMPTY_MARKS,
+				);
 
 	const popMark = (markName: string): void => {
 		for (let i = markStack.length - 1; i >= 0; i -= 1) {
@@ -198,15 +216,21 @@ export function mapInlineTokens(
 	for (const token of tokens) {
 		switch (token.type) {
 			case "text":
-				output.push(
-					...splitTextWithProtectedInlines(
-						token.content,
-						currentMarkSet(),
-						preScan,
-					),
-				);
+				if (markStack.length === 0 && !token.content.includes("EASYMDEPH")) {
+					pendingPlainText += token.content;
+				} else {
+					flushPlainText();
+					output.push(
+						...splitTextWithProtectedInlines(
+							token.content,
+							currentMarkSet(),
+							preScan,
+						),
+					);
+				}
 				break;
 			case "code_inline": {
+				flushPlainText();
 				const codeText = restoreProtectedInlineSentinels(
 					token.content,
 					preScan,
@@ -220,9 +244,15 @@ export function mapInlineTokens(
 				break;
 			}
 			case "softbreak":
-				output.push(visualEditorSchema.text("\n", currentMarkSet()));
+				if (markStack.length === 0) {
+					pendingPlainText += "\n";
+				} else {
+					flushPlainText();
+					output.push(visualEditorSchema.text("\n", currentMarkSet()));
+				}
 				break;
 			case "hardbreak":
+				flushPlainText();
 				output.push(
 					visualEditorSchema.nodes.hard_break.create(
 						null,
@@ -232,24 +262,28 @@ export function mapInlineTokens(
 				);
 				break;
 			case "strong_open":
+				flushPlainText();
 				markStack.push(visualEditorSchema.marks.strong.create());
 				break;
 			case "strong_close":
 				popMark("strong");
 				break;
 			case "em_open":
+				flushPlainText();
 				markStack.push(visualEditorSchema.marks.em.create());
 				break;
 			case "em_close":
 				popMark("em");
 				break;
 			case "s_open":
+				flushPlainText();
 				markStack.push(visualEditorSchema.marks.strike.create());
 				break;
 			case "s_close":
 				popMark("strike");
 				break;
 			case "link_open": {
+				flushPlainText();
 				const rawInlineTitle = readRawMetaString(
 					token,
 					RAW_LINK_TITLE_META_KEY,
@@ -276,6 +310,7 @@ export function mapInlineTokens(
 				popMark("link");
 				break;
 			case "image": {
+				flushPlainText();
 				const rawInlineTitle = readRawMetaString(
 					token,
 					RAW_IMAGE_TITLE_META_KEY,
@@ -319,6 +354,7 @@ export function mapInlineTokens(
 			}
 			default:
 				if (token.content.length > 0) {
+					flushPlainText();
 					output.push(
 						...splitTextWithProtectedInlines(
 							token.content,
@@ -330,6 +366,7 @@ export function mapInlineTokens(
 				break;
 		}
 	}
+	flushPlainText();
 
 	// A table cell can represent a trailing break as `<br>`; a text block cannot.
 	return inTableCell ? output : trimTrailingHardBreaks(output);

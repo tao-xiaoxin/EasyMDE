@@ -98,6 +98,7 @@ export type PostDisplayMathResult =
 			kind: "done";
 			activeTable: GfmTableMatch | null;
 			activeTableOutputStart: number;
+			openedContainers: ReadonlyArray<ContainerStep> | null;
 			spanEndLine: number;
 			trailingParagraphState: TrailingParagraphState | null;
 	  }>;
@@ -495,7 +496,7 @@ type LineHtmlCloseScanResult = Readonly<{
 	spanEndOffset: number;
 }>;
 
-function extendLogicalSpanForDisplayMath(
+export function extendLogicalSpanForDisplayMath(
 	mathIndex: PhpDocumentMathIndex,
 	range: PhpMarkdownMathRange,
 	spanEndLine: number,

@@ -83,6 +83,8 @@ function tryEmitPostMathHtmlBlock(
 		activeTable: null,
 		activeTableOutputStart: -1,
 		kind: "done",
+		openedContainers:
+			afterPeeled.containers.length > 0 ? afterPeeled.containers : null,
 		spanEndLine: htmlScan.endLine,
 		trailingParagraphState: null,
 	};
@@ -149,6 +151,8 @@ function tryEmitPostMathFence(
 		activeTable: null,
 		activeTableOutputStart: -1,
 		kind: "done",
+		openedContainers:
+			afterPeeled.containers.length > 0 ? afterPeeled.containers : null,
 		spanEndLine: fenceEndLine,
 		trailingParagraphState: null,
 	};
@@ -178,6 +182,7 @@ export function emitPostDisplayMathSegment(
 		activeTable: null,
 		activeTableOutputStart: -1,
 		kind: "done",
+		openedContainers: null,
 		spanEndLine,
 		trailingParagraphState: null,
 	};
@@ -275,6 +280,7 @@ export function emitPostDisplayMathSegment(
 				},
 				activeTableOutputStart,
 				kind: "done",
+				openedContainers: null,
 				spanEndLine,
 				trailingParagraphState: null,
 			};
@@ -303,6 +309,7 @@ export function emitPostDisplayMathSegment(
 		activeTable: null,
 		activeTableOutputStart: -1,
 		kind: "done",
+		openedContainers: null,
 		spanEndLine,
 		trailingParagraphState: computeTrailingParagraphState(maskedAfter),
 	};

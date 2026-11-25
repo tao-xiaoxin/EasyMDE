@@ -247,46 +247,6 @@ export function findFirstDisplayMathInLines(
 	return findFirstDisplayMathInOffsetSlice(mathIndex, startOffset, endOffset);
 }
 
-/**
- * Exact column-alignment port of PHP `League\CommonMark`'s
- * `TableStartParser::parseSeparator()`.
- */
-export function parseGfmTableSeparatorAlignments(
-	remainder: string,
-): Array<"" | "left" | "center" | "right"> | null {
-	let pos = 0;
-	const aligns: Array<"" | "left" | "center" | "right"> = [];
-	let pipes = 0;
-	let valid = false;
-	while (pos < remainder.length) {
-		const ch = remainder[pos];
-		if (ch === "|") {
-			pos += 1;
-			pipes += 1;
-			if (pipes > 1) return null;
-			valid = true;
-		} else if (ch === "-" || ch === ":") {
-			if (pipes === 0 && aligns.length > 0) return null;
-			const left = ch === ":";
-			if (left) pos += 1;
-			const dashStart = pos;
-			while (remainder[pos] === "-") pos += 1;
-			if (pos === dashStart) return null;
-			const right = remainder[pos] === ":";
-			if (right) pos += 1;
-			aligns.push(
-				left && right ? "center" : left ? "left" : right ? "right" : "",
-			);
-			pipes = 0;
-		} else if (ch === " " || ch === "\t") {
-			pos += 1;
-		} else {
-			return null;
-		}
-	}
-	return valid && aligns.length > 0 ? aligns : null;
-}
-
 export function maskedSliceForLines(
 	mathIndex: PhpDocumentMathIndex,
 	lines: ReadonlyArray<string>,
@@ -439,22 +399,36 @@ export function findGfmTableEnd(
 		if (firstDisplayMath !== null) {
 			const lineStart = mathIndex.lineStarts[index] ?? 0;
 			if (firstDisplayMath.from >= lineStart) {
-				const rawBefore = mathIndex.normalized.slice(
+				const maskedBefore = mathIndex.maskedDoc.slice(
 					lineStart,
 					firstDisplayMath.from,
 				);
-				const strippedBefore =
-					tableContainers.length > 0
-						? stripPartialContainers(rawBefore, tableContainers)
-						: { column: 0, consumedLength: 0, remainder: rawBefore };
-				if (
-					isCommonMarkBlankLine(strippedBefore.remainder) ||
-					!startsInterruptingBlock(
-						strippedBefore.remainder,
-						strippedBefore.column,
-					)
-				) {
-					brokenByDisplayMathLine = index;
+				const fullBefore = stripContainersWithColumn(
+					maskedBefore,
+					tableContainers,
+				);
+				if (fullBefore !== null) {
+					if (
+						isCommonMarkBlankLine(fullBefore.rest) ||
+						fullBefore.rest.includes("|") ||
+						!startsInterruptingBlock(fullBefore.rest, fullBefore.column)
+					) {
+						brokenByDisplayMathLine = index;
+					}
+				} else {
+					const partialBefore = stripPartialContainers(
+						maskedBefore,
+						tableContainers,
+					);
+					if (
+						isCommonMarkBlankLine(partialBefore.remainder) ||
+						!startsInterruptingBlock(
+							partialBefore.remainder,
+							partialBefore.column,
+						)
+					) {
+						brokenByDisplayMathLine = index;
+					}
 				}
 			}
 			break;
@@ -474,7 +448,7 @@ export function findGfmTableEnd(
 				break;
 			}
 			if (
-				!candidate.includes("|") ||
+				!candidate.includes("|") &&
 				startsInterruptingBlock(candidate, candidateColumn)
 			) {
 				break;
@@ -491,7 +465,6 @@ export function findGfmTableEnd(
 		const partial = stripPartialContainers(maskedLogical, tableContainers);
 		if (
 			isCommonMarkBlankLine(partial.remainder) ||
-			!partial.remainder.includes("|") ||
 			startsInterruptingBlock(partial.remainder, partial.column)
 		) {
 			break;

@@ -1,23 +1,29 @@
 import type MarkdownIt from "markdown-it";
 import {
 	collectTableRowCells,
+	type GfmTableColumnAlignment,
+	parseGfmTableSeparatorAlignments,
 	unescapeTableCellPipes,
 } from "../../shared/markdown/php-commonmark-block-helpers";
 import { readRawMetaString } from "./markdown-parser-inline";
 import { isCommonMarkBlankLine } from "./markdown-prescanner-containers";
-import {
-	opensNonParagraphBlock,
-	parseGfmTableSeparatorAlignments,
-} from "./markdown-prescanner-tables";
+import { opensNonParagraphBlock } from "./markdown-prescanner-tables";
 
 type BlockRuleFn = Parameters<
 	InstanceType<typeof MarkdownIt>["block"]["ruler"]["at"]
 >[1];
 type BlockRuleState = Parameters<BlockRuleFn>[0];
 
+type ParagraphPipeCacheEntry = {
+	blkIndent: number;
+	hasPipe: boolean;
+	level: number;
+	paraStart: number;
+	scannedThrough: number;
+};
+
 export type EasyMdeTableRuleDeps = Readonly<{
 	originalReferenceRule: BlockRuleFn | null;
-	originalTableRule: BlockRuleFn;
 	rawReferenceSourceMetaKey: string;
 	wouldReferenceDefinitionAbsorbFollowingBlock: (
 		lastRaw: string,
@@ -33,7 +39,7 @@ function emitPhpParityTable(
 	endLine: number,
 	headerLine: string,
 	headerCells: ReadonlyArray<Readonly<{ end: number; start: number }>>,
-	aligns: ReadonlyArray<"" | "left" | "center" | "right">,
+	aligns: ReadonlyArray<GfmTableColumnAlignment>,
 ): boolean {
 	const columnCount = headerCells.length;
 	const oldParentType = state.parentType;
@@ -48,7 +54,7 @@ function emitPhpParityTable(
 	tokenHtro.map = [startLine, startLine + 1];
 	for (let col = 0; col < columnCount; col += 1) {
 		const tokenHo = state.push("th_open", "th", 1);
-		const align = aligns[col] ?? "";
+		const align = aligns[col] ?? null;
 		if (align) tokenHo.attrs = [["style", `text-align:${align}`]];
 		const cell = headerCells[col];
 		const tokenIl = state.push("inline", "", 0);
@@ -66,19 +72,27 @@ function emitPhpParityTable(
 	let nextLine = startLine + 2;
 	for (; nextLine < endLine; nextLine += 1) {
 		const s = state.sCount[nextLine] ?? 0;
-		if (s < state.blkIndent || s - state.blkIndent >= 4) break;
-		let terminate = false;
-		for (let r = 0; r < terminatorRules.length; r += 1) {
-			if (terminatorRules[r]?.(state, nextLine, endLine, true)) {
-				terminate = true;
-				break;
-			}
-		}
-		if (terminate) break;
+		if (s < state.blkIndent) break;
 		const rPos = (state.bMarks[nextLine] ?? 0) + (state.tShift[nextLine] ?? 0);
 		const rMax = state.eMarks[nextLine] ?? rPos;
 		const rowText = state.src.slice(rPos, rMax);
-		if (isCommonMarkBlankLine(rowText) || !rowText.includes("|")) break;
+		if (isCommonMarkBlankLine(rowText)) break;
+		// Mirror PHP TableParser::tryContinue() + MarkdownParser::parseLine():
+		// when all enclosing containers matched and the non-blank line contains
+		// `|`, the table continues unconditionally (`$tryBlockStarts = false`).
+		// When the line has no `|`, block starts run (4-space code + terminators)
+		// and otherwise `canHaveLazyContinuationLines()` absorbs it as a row.
+		if (!rowText.includes("|")) {
+			if (s - state.blkIndent >= 4) break;
+			let terminate = false;
+			for (let r = 0; r < terminatorRules.length; r += 1) {
+				if (terminatorRules[r]?.(state, nextLine, endLine, true)) {
+					terminate = true;
+					break;
+				}
+			}
+			if (terminate) break;
+		}
 		const rowCells = collectTableRowCells(
 			rowText,
 			0,
@@ -96,7 +110,7 @@ function emitPhpParityTable(
 		tokenTro.map = [nextLine, nextLine + 1];
 		for (let col = 0; col < columnCount; col += 1) {
 			const tokenTdo = state.push("td_open", "td", 1);
-			const align = aligns[col] ?? "";
+			const align = aligns[col] ?? null;
 			if (align) tokenTdo.attrs = [["style", `text-align:${align}`]];
 			const cell = rowCells[col];
 			const tokenIl = state.push("inline", "", 0);
@@ -125,7 +139,9 @@ function emitPhpParityTable(
  * - allows a header line without `|` when an earlier line in the same open
  *   paragraph contains `|` (`a |\nb\n| - |`), splitting off earlier lines;
  * - accepts `1 <= headerCells <= delimiterCols` (`| a |\n| - | - |`) and
- *   truncates body rows to `headerCells` columns; and
+ *   truncates body rows to `headerCells` columns;
+ * - continues every GFM table uniformly through `emitPhpParityTable` using PHP
+ *   `TableParser::tryContinue()` + `canHaveLazyContinuationLines()` rules; and
  * - rejects non-paragraph CommonMark block openers and §4.7 refdefs/titles.
  */
 export function createEasyMdeTableRule(
@@ -133,10 +149,13 @@ export function createEasyMdeTableRule(
 ): BlockRuleFn {
 	const {
 		originalReferenceRule,
-		originalTableRule,
 		rawReferenceSourceMetaKey,
 		wouldReferenceDefinitionAbsorbFollowingBlock,
 	} = deps;
+	const paragraphPipeCache = new WeakMap<
+		BlockRuleState,
+		ParagraphPipeCacheEntry
+	>();
 	return (state, startLine, endLine, silent) => {
 		if (startLine + 2 > endLine) {
 			return false;
@@ -160,7 +179,7 @@ export function createEasyMdeTableRule(
 		const aligns = parseGfmTableSeparatorAlignments(
 			state.src.slice(pos1, max1),
 		);
-		if (aligns === null) {
+		if (aligns === null || aligns.length === 0) {
 			return false;
 		}
 		const pos0 = (state.bMarks[startLine] ?? 0) + (state.tShift[startLine] ?? 0);
@@ -174,23 +193,58 @@ export function createEasyMdeTableRule(
 				prevOpen?.type === "paragraph_open" &&
 				prevOpen.level === state.level &&
 				prevOpen.map?.[1] === startLine);
-		let priorParagraphHasPipe = false;
-		if (silent && state.parentType === "paragraph") {
-			for (let line = state.line; line < startLine; line += 1) {
-				const lp = (state.bMarks[line] ?? 0) + (state.tShift[line] ?? 0);
-				const lm = state.eMarks[line] ?? lp;
-				if (state.src.slice(lp, lm).includes("|")) {
-					priorParagraphHasPipe = true;
-					break;
-				}
-			}
-		} else if (followsParagraph) {
-			const prevInline = state.tokens[state.tokens.length - 2];
-			priorParagraphHasPipe =
-				prevInline?.type === "inline" && prevInline.content.includes("|");
-		}
 		const headerHasPipe = trimmedStart.includes("|");
-		if (!headerHasPipe && !priorParagraphHasPipe) {
+		if (!headerHasPipe) {
+			let priorParagraphHasPipe = false;
+			if (silent && state.parentType === "paragraph") {
+				const paraStart = state.line;
+				let entry = paragraphPipeCache.get(state);
+				if (
+					!entry ||
+					entry.paraStart !== paraStart ||
+					entry.level !== state.level ||
+					entry.blkIndent !== state.blkIndent ||
+					entry.scannedThrough > startLine
+				) {
+					entry = {
+						blkIndent: state.blkIndent,
+						hasPipe: false,
+						level: state.level,
+						paraStart,
+						scannedThrough: paraStart,
+					};
+					paragraphPipeCache.set(state, entry);
+				}
+				if (!entry.hasPipe) {
+					for (let line = entry.scannedThrough; line < startLine; line += 1) {
+						const lp = (state.bMarks[line] ?? 0) + (state.tShift[line] ?? 0);
+						const lm = state.eMarks[line] ?? lp;
+						if (state.src.slice(lp, lm).includes("|")) {
+							entry.hasPipe = true;
+							entry.scannedThrough = line + 1;
+							break;
+						}
+					}
+					if (!entry.hasPipe) {
+						entry.scannedThrough = startLine;
+					}
+				}
+				priorParagraphHasPipe = entry.hasPipe;
+			} else if (followsParagraph) {
+				const prevInline = state.tokens[state.tokens.length - 2];
+				priorParagraphHasPipe =
+					prevInline?.type === "inline" && prevInline.content.includes("|");
+			}
+			if (!priorParagraphHasPipe) {
+				return false;
+			}
+		}
+		const headerCells = collectTableRowCells(
+			trimmedStart,
+			0,
+			trimmedStart.length,
+		);
+		if (headerCells.length === 0 || headerCells.length > aligns.length) {
 			return false;
 		}
 		const startColumn = (state.bsCount[startLine] ?? 0) + s0;
@@ -218,17 +272,6 @@ export function createEasyMdeTableRule(
 			) {
 				return false;
 			}
-		}
-		const headerCells = collectTableRowCells(
-			trimmedStart,
-			0,
-			trimmedStart.length,
-		);
-		if (headerCells.length === 0 || headerCells.length > aligns.length) {
-			return false;
-		}
-		if (headerHasPipe && headerCells.length === aligns.length) {
-			return originalTableRule(state, startLine, endLine, silent);
 		}
 		if (silent) {
 			return true;

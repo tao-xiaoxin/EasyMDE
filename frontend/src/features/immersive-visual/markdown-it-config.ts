@@ -363,7 +363,6 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 			"easymde_table",
 			createEasyMdeTableRule({
 				originalReferenceRule,
-				originalTableRule: originalTableRuleEntry.fn,
 				rawReferenceSourceMetaKey: RAW_REFERENCE_SOURCE_META_KEY,
 				wouldReferenceDefinitionAbsorbFollowingBlock,
 			}),

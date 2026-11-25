@@ -115,7 +115,8 @@ export function matchListPrefixedHtmlBlock(
 		seededInterleaved || consumedPrevList,
 	);
 	if (
-		(!matchedList && !(consumedPrevList && quotesAdded > 0)) ||
+		(!matchedList &&
+			!((seededInterleaved || consumedPrevList) && quotesAdded > 0)) ||
 		measureLeadingColumns(cursor) > 3
 	) {
 		return null;
@@ -345,6 +346,31 @@ export type LineAnalysis = Readonly<{
 
 export function analyzeLine(line: string, containerIndent: number): LineAnalysis {
 	const { column, depth, prefix, rest } = readBlockquotePrefix(line);
+	const firstCode = rest.length > 0 ? rest.charCodeAt(0) : -1;
+	if (firstCode !== 0x20 && firstCode !== 0x09) {
+		const couldBeList =
+			firstCode === 0x2d ||
+			firstCode === 0x2a ||
+			firstCode === 0x2b ||
+			(firstCode >= 0x30 && firstCode <= 0x39);
+		const rawMarker = couldBeList ? matchListMarker(rest, column) : null;
+		const listMarker =
+			rawMarker !== null &&
+			rawMarker.leadCols <=
+				(rawMarker.leadCols >= containerIndent ? containerIndent : 0) + 3
+				? rawMarker
+				: null;
+		return {
+			column,
+			containerIndent,
+			content: rest,
+			indent: 0,
+			listMarker,
+			prefix,
+			quoteDepth: depth,
+			rest,
+		};
+	}
 	const indentText = /^[ \t]*/.exec(rest)?.[0] ?? "";
 	const rawMarker = matchListMarker(rest, column);
 	const listMarker =
@@ -474,8 +500,34 @@ export function resolveLineContainerContext(
 	const nextParagraphOpen = clearParagraph ? false : paragraphOpen;
 	const nextParagraphHasContent = clearParagraph ? false : paragraphHasContent;
 	const prevContainerIndent = listContentIndent ?? 0;
+	let quotedBlankListIndent = 0;
+	if (
+		listContentIndent !== null &&
+		lineQuoteDepth > 0 &&
+		isCommonMarkBlankLine(baseAnalysis.rest)
+	) {
+		let phpQuotes = 0;
+		for (const container of phpBlockState.containers) {
+			if (container.kind === "blockquote") {
+				phpQuotes += 1;
+				if (phpQuotes > lineQuoteDepth) {
+					quotedBlankListIndent = 0;
+					break;
+				}
+			} else if (container.hasContent) {
+				quotedBlankListIndent += container.indent;
+			} else {
+				break;
+			}
+		}
+		if (phpQuotes === 0) {
+			quotedBlankListIndent = 0;
+		}
+	}
 	const continuesListItem =
-		listContentIndent === null || baseAnalysis.indent >= listContentIndent;
+		listContentIndent === null ||
+		baseAnalysis.indent >= listContentIndent ||
+		quotedBlankListIndent > 0;
 	const listInterruptionInParagraph =
 		!hasInterleavedContainers &&
 		nextParagraphOpen &&
@@ -494,6 +546,8 @@ export function resolveLineContainerContext(
 	let droppedOutOfList = false;
 	if (acceptedListMarker !== null) {
 		nextListContentIndent = acceptedListMarker.contentIndent;
+	} else if (quotedBlankListIndent > 0) {
+		nextListContentIndent = quotedBlankListIndent;
 	} else if (!continuesListItem) {
 		droppedOutOfList = true;
 		if (!nextParagraphOpen) {
@@ -556,15 +610,34 @@ const leadingColumns = (text: string): number => measureIndentColumns(text, 0);
  * cannot start a reference definition), classified on the content inside any
  * nested quote/list containers, plus the quote depth those containers add.
  */
+const PLAIN_PARAGRAPH_STATE = { nestedQuotes: 0, open: true } as const;
+
 export function classifyParagraphLine(
 	content: string,
 	relativeIndent: number,
 	paragraphOpen: boolean,
 	listInterruptionInParagraph: boolean,
 ): Readonly<{ nestedQuotes: number; open: boolean }> {
+	if (relativeIndent > 3) return PLAIN_PARAGRAPH_STATE;
+	if (content.length > 0) {
+		const c0 = content.charCodeAt(0);
+		if (
+			c0 !== 0x20 &&
+			c0 !== 0x09 &&
+			c0 !== 0x23 && // #
+			c0 !== 0x2a && // *
+			c0 !== 0x2b && // +
+			c0 !== 0x2d && // -
+			c0 !== 0x3d && // =
+			c0 !== 0x3e && // >
+			c0 !== 0x5f && // _
+			(c0 < 0x30 || c0 > 0x39)
+		) {
+			return PLAIN_PARAGRAPH_STATE;
+		}
+	}
 	let inner = content;
 	let nestedQuotes = 0;
-	if (relativeIndent > 3) return { nestedQuotes, open: true };
 	for (let depth = 0; depth < 32; depth += 1) {
 		const nested = depth > 0;
 		const trimmed = inner.replace(/^[ \t]+|[ \t]+$/g, "");

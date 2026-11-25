@@ -3877,16 +3877,26 @@ describe("PR-R18-A WP KSES visual title parity, refdef task items, tight-list pr
 		expect(toggledMarkdown).toBe("- [r]: /x\n  [ ] One\n- [ ] Two");
 		expect(parseMarkdownToVisualDoc(toggledMarkdown).eq(toggledDoc)).toBe(true);
 
-		// Arbitrary HTML or math protected blocks are NOT skipped as task prefixes.
-		for (const nonRefTask of [
-			"- <div>html</div>\n\n  [x] One\n- [ ] Two",
-			"- $$x$$\n\n  [x] One\n- [ ] Two",
-		]) {
-			const nonRefDoc = parseMarkdownToVisualDoc(nonRefTask);
-			expect(nonRefDoc.childCount, nonRefTask).toBe(2);
-			expect(nonRefDoc.child(0).type.name, nonRefTask).toBe("bullet_list");
-			expect(nonRefDoc.child(1).type.name, nonRefTask).toBe("task_list");
-		}
+		// Arbitrary HTML protected blocks are NOT skipped as task prefixes.
+		const nonRefHtmlTask = "- <div>html</div>\n\n  [x] One\n- [ ] Two";
+		const nonRefHtmlDoc = parseMarkdownToVisualDoc(nonRefHtmlTask);
+		expect(nonRefHtmlDoc.childCount, nonRefHtmlTask).toBe(2);
+		expect(nonRefHtmlDoc.child(0).type.name, nonRefHtmlTask).toBe(
+			"bullet_list",
+		);
+		expect(nonRefHtmlDoc.child(1).type.name, nonRefHtmlTask).toBe("task_list");
+
+		// Display math in a list item splits out via PHP `extract_math()` (`\n\n`),
+		// leaving `[x] One` as a plain top-level paragraph (still never a task item).
+		const displayMathTask = "- $$x$$\n\n  [x] One\n- [ ] Two";
+		const displayMathDoc = parseMarkdownToVisualDoc(displayMathTask);
+		expect(
+			Array.from(
+				{ length: displayMathDoc.childCount },
+				(_, idx) => displayMathDoc.child(idx).type.name,
+			),
+			displayMathTask,
+		).toEqual(["bullet_list", "protected_block", "paragraph", "task_list"]);
 	});
 
 	it("preserves tight-list semantics on paragraph+HR and refdef+paragraph edits while keeping title clashes safe (Track A #2)", () => {
@@ -6041,13 +6051,15 @@ describe("PR-R23-A pipe math in tables, list-prefixed tables, container-bounded 
 		});
 		expect(centeredCells).toBe(2);
 
-		// 3. Container-bounded `findGfmTableEnd()` never leaks `isTableRow = true` past blockquote/list/indent boundaries.
+		// 3. Container-bounded `findGfmTableEnd()` never leaks `isTableRow = true`
+		//    past container exits or pipe-free interrupting blocks (matching PHP
+		//    `TableParser::tryContinue()` + `MarkdownParser::parseLine()`).
 		const nonTableTrailingCases = [
 			"> | A | B |\n> | --- | --- |\n> | 1 | 2 |\n- not a table | a<br>b",
 			"-\n  | A | B |\n  | --- | --- |\n  | 1 | 2 |\n- not a table | a<br>b",
-			"-\n  | A | B |\n  | --- | --- |\n  | 1 | 2 |\n  - not a table | a<br>b",
-			"| A | B |\n| --- | --- |\n| 1 | 2 |\n    | indented | a<br>b |",
-			"> | A | B |\n> | --- | --- |\n> | 1 | 2 |\n> > | deeper | a<br>b |",
+			"-\n  | A | B |\n  | --- | --- |\n  | 1 | 2 |\n  - not a table a<br>b",
+			"| A | B |\n| --- | --- |\n| 1 | 2 |\n    indented a<br>b",
+			"> | A | B |\n> | --- | --- |\n> | 1 | 2 |\n> > deeper a<br>b",
 		];
 		for (const md of nonTableTrailingCases) {
 			const doc = parseMarkdownToVisualDoc(md);
@@ -6058,12 +6070,32 @@ describe("PR-R23-A pipe math in tables, list-prefixed tables, container-bounded 
 			});
 			expect(hardBreaks, md).toBe(0);
 			// The non-table line `<br>` stays raw HTML (or literal code block text), never `hard_break`.
-			if (!md.includes("    | indented")) {
+			if (!md.includes("    indented")) {
 				expect(collectProtectedInlines(doc), md).toContainEqual({
 					kind: "raw-inline",
 					rawMarkdown: "<br>",
 				});
 			}
+		}
+
+		// When all enclosing containers match AND a line contains `|`, PHP
+		// `TableParser::tryContinue()` unconditionally absorbs it as a table row.
+		for (const md of [
+			"-\n  | A | B |\n  | --- | --- |\n  | 1 | 2 |\n  - not a table | a<br>b",
+			"| A | B |\n| --- | --- |\n| 1 | 2 |\n    | indented | a<br>b |",
+			"> | A | B |\n> | --- | --- |\n> | 1 | 2 |\n> > | deeper | a<br>b |",
+		]) {
+			const doc = parseMarkdownToVisualDoc(md);
+			let rowCount = 0;
+			doc.descendants((node) => {
+				if (node.type.name === "table_row") rowCount += 1;
+				return true;
+			});
+			expect(rowCount, md).toBe(3);
+			expect(
+				parseMarkdownToVisualDoc(serializeVisualDocToMarkdown(doc)).eq(doc),
+				md,
+			).toBe(true);
 		}
 	});
 
@@ -8248,5 +8280,253 @@ describe("PR-R24-A1 PHP-exact table math, nested/interleaved table-align, lazy t
 		expect(escapeInlineMarkdownText("&amp; &plain; &a")).toBe(
 			"\\&amp; \\&plain; &a",
 		);
+	});
+
+	it("avoids O(N^2) priorParagraphHasPipe rescans in easymde_table on 12k+ paragraph lines (PR-R30-A #1: Track B F1)", () => {
+		const pipeHeaderPerf =
+			"x\n".repeat(12_000) + "a | b\n| - |\n".repeat(6_000);
+		const t0 = performance.now();
+		const doc1 = parseMarkdownToVisualDoc(pipeHeaderPerf);
+		const elapsed1 = performance.now() - t0;
+		expect(doc1.childCount).toBe(1);
+		expect(elapsed1).toBeLessThan(1_500);
+
+		const pipeFreeHeaderPerf =
+			"x\n".repeat(12_000) + "a\n| - |\n".repeat(6_000);
+		const t1 = performance.now();
+		const doc2 = parseMarkdownToVisualDoc(pipeFreeHeaderPerf);
+		const elapsed2 = performance.now() - t1;
+		expect(doc2.childCount).toBe(2);
+		expect(elapsed2).toBeLessThan(1_500);
+	});
+
+	it("unifies emitPhpParityTable and findGfmTableEnd with PHP TableParser continuation rules (PR-R30-A #2: Track A #1 + Track B F2)", () => {
+		// Track A #1: canonical edit `a` -> `aX` preserves body row `<div>z` without disappearing.
+		const a1Md = "a |\n| - | - |\n<div>z |";
+		const a1Guard = createMarkdownRoundTripGuard(a1Md);
+		expect(a1Guard.initialDoc.childCount).toBe(1);
+		expect(a1Guard.initialDoc.firstChild?.type.name).toBe("table");
+		expect(a1Guard.initialDoc.firstChild?.childCount).toBe(2);
+		expect(a1Guard.serialize(a1Guard.initialDoc)).toBe(a1Md);
+
+		const a1Edited = insertTextAt(a1Guard.initialDoc, 5, "X");
+		const a1Ser = a1Guard.serialize(a1Edited);
+		expect(a1Ser).toBe("| aX |\n| --- |\n| <div>z |");
+		expect(parseMarkdownToVisualDoc(a1Ser).eq(a1Edited)).toBe(true);
+
+		// Pipe-free rows, math-token rows, `<br>` rows, and pipe-bearing block-like lines all stay inside the table.
+		const bodyRowCases: ReadonlyArray<
+			readonly [string, ReadonlyArray<string>, number]
+		> = [
+			["| a |\n| - | - |\nfoo", ["table"], 2],
+			["x | y\na\n| - | - |\nfoo", ["paragraph", "table"], 2],
+			["| a |\n| - | - |\n$x|y$", ["table"], 2],
+			["| a |\n| - |\nfoo <br> bar", ["table"], 2],
+			["| a |\n| - | - |\n# h | x", ["table"], 2],
+			["| a |\n| - | - |\n    x | y", ["table"], 2],
+			["| a |\n| - | - |\n01. b | c", ["table"], 2],
+			["> | a |\n> | - |\n> - b | c", ["blockquote"], 2],
+			["- | a |\n  | - |\n  # h | x", ["bullet_list"], 2],
+			["> | a |\n> | - |\nfoo", ["blockquote"], 2],
+			["| a |\n| - |\n<span>", ["table"], 2],
+		];
+		for (const [md, expectedTopLevel, expectedRows] of bodyRowCases) {
+			const doc = parseMarkdownToVisualDoc(md);
+			expect(
+				Array.from(
+					{ length: doc.childCount },
+					(_, idx) => doc.child(idx).type.name,
+				),
+				md,
+			).toEqual(expectedTopLevel);
+			let rowCount = 0;
+			doc.descendants((node) => {
+				if (node.type.name === "table_row") rowCount += 1;
+				return true;
+			});
+			expect(rowCount, md).toBe(expectedRows);
+			const ser = serializeVisualDocToMarkdown(doc);
+			expect(parseMarkdownToVisualDoc(ser).eq(doc), md).toBe(true);
+		}
+
+		// `<br>` in a pipe-free table body row parses as `hard_break` and round-trips cleanly.
+		const brDoc = parseMarkdownToVisualDoc("| a |\n| - |\nfoo <br> bar");
+		let hardBreaks = 0;
+		brDoc.descendants((node) => {
+			if (node.type.name === "hard_break") hardBreaks += 1;
+			return true;
+		});
+		expect(hardBreaks).toBe(1);
+	});
+
+	it("preserves list containers opened by post-math HTML blocks and fences (PR-R30-A #3: Track B F3)", () => {
+		const postMathCases: ReadonlyArray<
+			readonly [string, ReadonlyArray<string>, ReadonlyArray<string>]
+		> = [
+			[
+				"$$a$$- <div>\n  foo\n\n    <div>block",
+				["protected_block", "bullet_list"],
+				["paragraph", "protected_block", "protected_block"],
+			],
+			[
+				"$$a$$- <div>\n  foo\n\n    <span>",
+				["protected_block", "bullet_list"],
+				["paragraph", "protected_block", "protected_block"],
+			],
+			[
+				"$$a$$- ```js\n  x\n  ```\n\n    <div>block",
+				["protected_block", "bullet_list"],
+				["paragraph", "code_block", "protected_block"],
+			],
+			[
+				"$$a$$ > - <div>\n>   foo\n>\n>     <div>bar",
+				["protected_block", "blockquote"],
+				["paragraph", "protected_block", "protected_block"],
+			],
+			[
+				"$$a$$ > - ```js\n>   x\n>   ```\n>\n>     <div>bar",
+				["protected_block", "blockquote"],
+				["paragraph", "code_block", "protected_block"],
+			],
+		];
+		for (const [md, topTypes, itemTypes] of postMathCases) {
+			const doc = parseMarkdownToVisualDoc(md);
+			expect(
+				Array.from(
+					{ length: doc.childCount },
+					(_, idx) => doc.child(idx).type.name,
+				),
+				md,
+			).toEqual(topTypes);
+			const listNode =
+				doc.child(1).type.name === "blockquote"
+					? doc.child(1).firstChild
+					: doc.child(1);
+			const listItem = listNode?.firstChild;
+			expect(
+				listItem
+					? Array.from(
+							{ length: listItem.childCount },
+							(_, idx) => listItem.child(idx).type.name,
+						)
+					: [],
+				md,
+			).toEqual(itemTypes);
+			const ser = serializeVisualDocToMarkdown(doc);
+			expect(parseMarkdownToVisualDoc(ser).eq(doc), md).toBe(true);
+		}
+	});
+
+	it("matches deeper blockquoted HTML blocks inside interleaved list->blockquote containers (PR-R30-A #4: Track B F4)", () => {
+		for (const [md, expectedRaw] of [
+			["- > a\n  > > <!--\n  > > hidden\n  > > -->", "<!--\nhidden\n-->"],
+			["- > a\n  > > <span>", "<span>"],
+			["- > a\n  > > <div>\n  > > hidden", "<div>\nhidden"],
+		] as const) {
+			const doc = parseMarkdownToVisualDoc(md);
+			const outerBq = doc.firstChild?.firstChild?.child(1);
+			expect(outerBq?.type.name, md).toBe("blockquote");
+			const innerBq = outerBq?.child(1);
+			expect(innerBq?.type.name, md).toBe("blockquote");
+			expect(innerBq?.firstChild?.type.name, md).toBe("protected_block");
+			expect(innerBq?.firstChild?.attrs, md).toEqual({
+				kind: "raw",
+				rawMarkdown: expectedRaw,
+			});
+			const ser = serializeVisualDocToMarkdown(doc);
+			expect(parseMarkdownToVisualDoc(ser).eq(doc), md).toBe(true);
+		}
+	});
+
+	it("splits Step 8 display math on current-line containers, Setext underlines, and post-math refdefs (PR-R30-A #5: Track B F5)", () => {
+		const cases: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [
+			["- item $$x$$\n    code", ["bullet_list", "protected_block", "code_block"]],
+			["> item $$x$$\nlazy", ["blockquote", "protected_block", "paragraph"]],
+			["hello $$x$$ world\n===", ["paragraph", "protected_block", "heading"]],
+			["hello $$x$$ world\n---", ["paragraph", "protected_block", "heading"]],
+			[
+				"hello $$x$$ [a]: /url\n\n[a]",
+				["paragraph", "protected_block", "protected_block", "paragraph"],
+			],
+			[
+				"hello $$x$$ [a]: /url $$y$$ world\n\n[a]",
+				[
+					"paragraph",
+					"protected_block",
+					"protected_block",
+					"protected_block",
+					"paragraph",
+					"paragraph",
+				],
+			],
+		];
+		for (const [md, expectedTypes] of cases) {
+			const doc = parseMarkdownToVisualDoc(md);
+			expect(
+				Array.from(
+					{ length: doc.childCount },
+					(_, idx) => doc.child(idx).type.name,
+				),
+				md,
+			).toEqual(expectedTypes);
+			const ser = serializeVisualDocToMarkdown(doc);
+			expect(parseMarkdownToVisualDoc(ser).eq(doc), md).toBe(true);
+		}
+		// Verify `[a]` resolved as a real link via the post-math refdef.
+		const refDoc = parseMarkdownToVisualDoc("hello $$x$$ [a]: /url\n\n[a]");
+		const linkNode = refDoc.child(3).firstChild;
+		expect(linkNode?.marks.some((mark) => mark.type.name === "link")).toBe(
+			true,
+		);
+	});
+
+	it("keeps tight lists with Type 1-5 HTML closers followed by multiline inline math tight on edit (PR-R30-A #6: Track A #2)", () => {
+		const md = "- <!-- --> \\(x\ny\\)\n  a";
+		const guard = createMarkdownRoundTripGuard(md);
+		expect(guard.initialDoc.firstChild?.type.name).toBe("bullet_list");
+		expect(guard.initialDoc.firstChild?.attrs.tight).toBe(true);
+		expect(guard.serialize(guard.initialDoc)).toBe(md);
+
+		let posAfterA = -1;
+		guard.initialDoc.descendants((node, pos) => {
+			if (posAfterA < 0 && node.isText && node.text === "a") {
+				posAfterA = pos + 1;
+			}
+			return posAfterA < 0;
+		});
+		const edited = insertTextAt(guard.initialDoc, posAfterA, "X");
+		const ser = guard.serialize(edited);
+		expect(ser).toBe("- <!-- --> \\(x\ny\\)\n  aX");
+		const reparsed = parseMarkdownToVisualDoc(ser);
+		expect(reparsed.eq(edited)).toBe(true);
+		expect(reparsed.firstChild?.attrs.tight).toBe(true);
+	});
+
+	it("uses O(N) stack-based bracket matching in escapeInlineLine for nested brackets and line-start refdefs (PR-R30-A #7: Track B F7)", () => {
+		for (const raw of [
+			"[a [b] c](https://example.com)",
+			"![a [b] c](https://example.com/x.png)",
+			"[foo]: https://example.com",
+			"  [foo]: https://example.com",
+			"[outer [inner](https://example.com) rest]",
+			"[a [b] c][ref]",
+		]) {
+			const escaped = escapeInlineMarkdownText(raw, { atLineStart: true });
+			const doc = parseMarkdownToVisualDoc(escaped);
+			expect(doc.childCount, raw).toBe(1);
+			expect(doc.firstChild?.type.name, raw).toBe("paragraph");
+			expect(doc.firstChild?.childCount, raw).toBe(1);
+			expect(doc.firstChild?.firstChild?.isText, raw).toBe(true);
+			expect(doc.firstChild?.firstChild?.marks.length, raw).toBe(0);
+			expect(doc.firstChild?.textContent, raw).toBe(raw.replace(/^ +/, ""));
+		}
+
+		// Mid-line `[foo]:` stays unescaped, plain `[a] [b]` stays unescaped, and 40k `[` stays strictly O(N).
+		expect(escapeInlineMarkdownText("see [foo]: bar")).toBe("see [foo]: bar");
+		const t0 = performance.now();
+		const big = escapeInlineMarkdownText("[".repeat(40_000));
+		const elapsed = performance.now() - t0;
+		expect(big.length).toBe(40_000);
+		expect(elapsed).toBeLessThan(500);
 	});
 });

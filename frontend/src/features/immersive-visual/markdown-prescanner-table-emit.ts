@@ -1,4 +1,8 @@
 import { parseGfmTableSeparatorColumns } from "../../shared/markdown/php-commonmark-block-helpers";
+import {
+	advanceParagraphReferenceParser,
+	createParagraphReferenceParser,
+} from "../../shared/markdown/php-commonmark-reference-def";
 import type { PhpMarkdownMathRange } from "../../shared/markdown/php-markdown-math-mask";
 import {
 	type ContainerStep,
@@ -6,6 +10,7 @@ import {
 	isCommonMarkBlankLine,
 	measureIndentColumns,
 	peelContainerStepsForLine,
+	SETEXT_UNDERLINE,
 	stripContainersWithColumn,
 	stripPartialContainers,
 } from "./markdown-prescanner-blocks";
@@ -13,6 +18,7 @@ import {
 	type BeforeHtmlContext,
 	type DisplayMathEmitEnv,
 	emitUnclosedIntermediateHtmlBlock,
+	extendLogicalSpanForDisplayMath,
 	matchStandaloneBeforeHtmlBlock,
 	matchUnclosedHtmlBlockTypes1To5,
 	POST_MATH_BEFORE_HTML_CONTEXT,
@@ -24,7 +30,6 @@ import { emitPostDisplayMathSegment } from "./markdown-prescanner-post-math";
 import {
 	collectRelativeInlineMathRanges,
 	findFirstDisplayMathInLines,
-	findLineIndexForOffset,
 	findLogicalLineEnd,
 	firstMathRangeEndingAfter,
 	type GfmTableMatch,
@@ -49,6 +54,7 @@ export type DisplayMathSplitResult = Readonly<{
 	activeTableOutputStart: number;
 	afterStartOffset: number;
 	emittedTableBeforeRow: boolean;
+	openedContainers: ReadonlyArray<ContainerStep> | null;
 	spanEndLine: number;
 	trailingParagraphState: TrailingParagraphState | null;
 }>;
@@ -191,21 +197,6 @@ export function emitDisplayMathLineSegments(
 	let emittedAny = initialEmittedAny || tableContainers !== null;
 	let isFirstDisplayMath = !initialEmittedAny;
 
-	const extendSpanForDisplayMath = (range: PhpMarkdownMathRange): void => {
-		if (range.to <= spanEndOffset) {
-			return;
-		}
-		const rangeEndLine = findLineIndexForOffset(
-			mathIndex,
-			Math.max(range.from, range.to - 1),
-		);
-		const extendedEndLine = findLogicalLineEnd(mathIndex, rangeEndLine);
-		if (extendedEndLine > spanEndLine) {
-			spanEndLine = extendedEndLine;
-			spanEndOffset = mathIndex.lineEnds[spanEndLine] ?? spanEndOffset;
-		}
-	};
-
 	while (true) {
 		let afterInlineRanges: PhpMarkdownMathRange[] | null = null;
 
@@ -347,6 +338,7 @@ export function emitDisplayMathLineSegments(
 						activeTableOutputStart: -1,
 						afterStartOffset: htmlResult.afterStartOffset,
 						emittedTableBeforeRow,
+						openedContainers: null,
 						spanEndLine: htmlResult.spanEndLine,
 						trailingParagraphState: null,
 					};
@@ -376,7 +368,7 @@ export function emitDisplayMathLineSegments(
 							sentinel,
 							protectedInlines,
 							false,
-							false,
+							!isFirstDisplayMath || !beforeHtmlContext?.inParagraph,
 							-1,
 							gapMathRanges,
 							maskedBeforeText,
@@ -398,7 +390,14 @@ export function emitDisplayMathLineSegments(
 			pushOutputLine(mathToken, null);
 			emittedAny = true;
 			cursorOffset = nextDisplay.to;
-			extendSpanForDisplayMath(nextDisplay);
+			const extended = extendLogicalSpanForDisplayMath(
+				mathIndex,
+				nextDisplay,
+				spanEndLine,
+				spanEndOffset,
+			);
+			spanEndLine = extended.spanEndLine;
+			spanEndOffset = extended.spanEndOffset;
 		}
 
 		pushOutputLine("", null);
@@ -424,6 +423,7 @@ export function emitDisplayMathLineSegments(
 			activeTableOutputStart: postResult.activeTableOutputStart,
 			afterStartOffset,
 			emittedTableBeforeRow,
+			openedContainers: postResult.openedContainers,
 			spanEndLine: postResult.spanEndLine,
 			trailingParagraphState: postResult.trailingParagraphState,
 		};
@@ -490,17 +490,14 @@ export function emitDisplayMathHeaderLine(
 		if (range.block && range.from >= lineStartOffset) {
 			lastDisplayTo = range.to;
 			displayCount += 1;
-			if (range.to > spanEndOffset) {
-				const rangeEndLine = findLineIndexForOffset(
-					mathIndex,
-					Math.max(range.from, range.to - 1),
-				);
-				const extended = findLogicalLineEnd(mathIndex, rangeEndLine);
-				if (extended > spanEndLine) {
-					spanEndLine = extended;
-					spanEndOffset = mathIndex.lineEnds[spanEndLine] ?? spanEndOffset;
-				}
-			}
+			const extended = extendLogicalSpanForDisplayMath(
+				mathIndex,
+				range,
+				spanEndLine,
+				spanEndOffset,
+			);
+			spanEndLine = extended.spanEndLine;
+			spanEndOffset = extended.spanEndOffset;
 		}
 		scanIdx += 1;
 	}
@@ -546,13 +543,32 @@ export function emitDisplayMathHeaderLine(
 	);
 }
 
+function startsValidReferenceDefinition(
+	maskedLine: string,
+	nextMaskedLine?: string,
+): boolean {
+	if (!maskedLine.includes("[") || measureIndentColumns(maskedLine, 0) >= 4) {
+		return false;
+	}
+	const refParser = createParagraphReferenceParser();
+	if (advanceParagraphReferenceParser(refParser, maskedLine)) {
+		return true;
+	}
+	return (
+		nextMaskedLine !== undefined &&
+		!isCommonMarkBlankLine(nextMaskedLine) &&
+		(refParser.state === "destination" || refParser.state === "title") &&
+		advanceParagraphReferenceParser(refParser, nextMaskedLine)
+	);
+}
+
 /**
  * Splits a logical line (`lineIndex..logicalEnd`) containing display math
- * (`range.block`). When `onlyOnBlockBoundary` is true (multiline `\(...\)`
- * line outside containers), splits when any display-math range extends past
- * `lineEndOffset`, opens a leading unclosed Type 1–5 HTML block, or is followed
- * by a non-paragraph block opener (`# heading`, `> quote`, `<div>`, etc.),
- * keeping plain trailing single-line `A \(x\ny\) $$z$$` inline.
+ * (`range.block`). When `onlyOnBlockBoundary` is true (top-level line outside
+ * containers), splits when any display-math range extends past `lineEndOffset`,
+ * opens a leading unclosed Type 1–5 HTML block, precedes a Setext heading
+ * underline, or starts a non-paragraph block opener or §4.7 refdef in any
+ * post-math segment, keeping plain single-line `Hello $$x$$` inline.
  */
 export function emitDisplayMathLogicalLine(
 	env: DisplayMathEmitEnv,
@@ -561,7 +577,7 @@ export function emitDisplayMathLogicalLine(
 	beforeHtmlContext: BeforeHtmlContext,
 	onlyOnBlockBoundary = false,
 ): DisplayMathSplitResult | null {
-	const { mathIndex } = env;
+	const { lines, mathIndex } = env;
 	const lineStartOffset = mathIndex.lineStarts[lineIndex] ?? 0;
 	const lineEndOffset = mathIndex.lineEnds[logicalEnd] ?? lineStartOffset;
 	let firstDisplayFrom = -1;
@@ -582,7 +598,8 @@ export function emitDisplayMathLogicalLine(
 				const gap = mathIndex.maskedDoc.slice(lastDisplayTo, range.from);
 				if (
 					!isCommonMarkBlankLine(gap) &&
-					opensNonParagraphBlock(gap, 0, false)
+					(opensNonParagraphBlock(gap, 0, false) ||
+						startsValidReferenceDefinition(gap))
 				) {
 					intermediateGapOpensBlock = true;
 				}
@@ -597,18 +614,39 @@ export function emitDisplayMathLogicalLine(
 	if (firstDisplayFrom < 0) return null;
 	if (onlyOnBlockBoundary && !extendsPastLine && !intermediateGapOpensBlock) {
 		const maskedAfter = mathIndex.maskedDoc.slice(lastDisplayTo, lineEndOffset);
+		const nextLineIndex = logicalEnd + 1;
+		const nextRawLine = nextLineIndex < lines.length ? (lines[nextLineIndex] ?? "") : "";
+		const nextMaskedLine =
+			nextLineIndex < lines.length
+				? maskedSliceForLines(mathIndex, lines, nextLineIndex, nextLineIndex)
+				: undefined;
 		const trailingOpensBlock =
 			!isCommonMarkBlankLine(maskedAfter) &&
-			opensNonParagraphBlock(maskedAfter, 0, false);
+			(opensNonParagraphBlock(maskedAfter, 0, false) ||
+				startsValidReferenceDefinition(maskedAfter, nextMaskedLine));
+		const nextIsSetextUnderline =
+			nextRawLine.length > 0 &&
+			measureIndentColumns(nextRawLine, 0) < 4 &&
+			SETEXT_UNDERLINE.test(nextRawLine.replace(/^[ \t]+/, ""));
 		const maskedBefore = mathIndex.maskedDoc.slice(
 			lineStartOffset,
 			firstDisplayFrom,
 		);
+		const leadingBeforeBlank = isCommonMarkBlankLine(maskedBefore);
 		const leadingUnclosedHtml =
-			!isCommonMarkBlankLine(maskedBefore) &&
+			!leadingBeforeBlank &&
 			matchUnclosedHtmlBlockTypes1To5(maskedBefore, beforeHtmlContext, true) !==
 				null;
-		if (!trailingOpensBlock && !leadingUnclosedHtml) {
+		const leadingRefDef =
+			!leadingBeforeBlank &&
+			!beforeHtmlContext.inParagraph &&
+			startsValidReferenceDefinition(maskedBefore);
+		if (
+			!trailingOpensBlock &&
+			!nextIsSetextUnderline &&
+			!leadingUnclosedHtml &&
+			!leadingRefDef
+		) {
 			return null;
 		}
 	}

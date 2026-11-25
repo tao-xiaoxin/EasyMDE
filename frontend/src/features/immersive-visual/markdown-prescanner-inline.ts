@@ -471,6 +471,13 @@ export function extractInlineProtectedSyntax(
 	maskedLine?: string,
 ): string {
 	const resolvedMathRanges = mathRanges ?? scanPhpMarkdownMathRanges(line);
+	if (
+		resolvedMathRanges.length === 0 &&
+		!line.includes("<") &&
+		!line.includes("[^")
+	) {
+		return line;
+	}
 	const scanLine = resolveInlineScanLine(line, resolvedMathRanges, maskedLine);
 	let result = "";
 	let index = 0;

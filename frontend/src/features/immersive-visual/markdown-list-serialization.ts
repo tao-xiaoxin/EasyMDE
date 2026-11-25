@@ -3,6 +3,7 @@ import {
 	htmlBlockLineCloses,
 	matchHtmlBlockOpen,
 } from "../../shared/markdown/php-commonmark-block-helpers";
+import { maskPhpMarkdownMathForTableScan } from "../../shared/markdown/php-markdown-math-mask";
 import {
 	inspectReferenceDefinitionBlock,
 	type ReferenceDefinitionBlockInfo,
@@ -208,7 +209,7 @@ function isClosedHtmlBlockTypes1To5(node: ProseMirrorNode): boolean {
 	if (raw.length === 0) {
 		return false;
 	}
-	const lines = raw.split("\n");
+	const lines = maskPhpMarkdownMathForTableScan(raw).split("\n");
 	const firstLine = (lines[0] ?? "").replace(/^[ \t]{0,3}/, "");
 	const htmlType = matchHtmlBlockOpen(firstLine, false);
 	if (htmlType === null || htmlType === 6 || htmlType === 7) {

@@ -319,13 +319,14 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		} else {
 			closeParagraph();
 			inIndentedCode = false;
-			inRestoredDisplayMathContainer = false;
-			if (activeTable !== null && !hasListBeforeQuote(activeTable.containers)) {
-				const nestedListIndent = sumListContainerIndent(activeTable.containers);
+			const containerSteps = activeTable?.containers ?? result.openedContainers;
+			if (containerSteps !== null && !hasListBeforeQuote(containerSteps)) {
+				const nestedListIndent = sumListContainerIndent(containerSteps);
 				listContentIndent = nestedListIndent > 0 ? nestedListIndent : null;
 			} else {
 				listContentIndent = null;
 			}
+			inRestoredDisplayMathContainer = listContentIndent !== null;
 		}
 		advancePhpStateAfterDisplayMath(
 			result.afterStartOffset,
@@ -576,27 +577,32 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		pendingTableAlignOutputIndex = -1;
 
 		// 3c. Display math on a line immediately preceding a GFM table delimiter.
-		const beforeHtmlContext = {
-			allowLeadingListMarker: !listInterruptionInParagraph,
-			baseContainers: tableBaseContainers,
-			inParagraph: tableInParagraph,
-			preMarkerListIndent: tablePreListIndent,
-		};
-		const headerMathBreak = emitDisplayMathHeaderLine(
-			displayMathEnv,
-			i,
-			beforeHtmlContext,
-		);
-		if (headerMathBreak !== null) {
-			applyDisplayMathSplitState(headerMathBreak);
-			continue;
+		const beforeHtmlContext =
+			mathIndex.ranges.length > 0
+				? {
+						allowLeadingListMarker: !listInterruptionInParagraph,
+						baseContainers: tableBaseContainers,
+						inParagraph: tableInParagraph,
+						preMarkerListIndent: tablePreListIndent,
+					}
+				: null;
+		if (beforeHtmlContext !== null) {
+			const headerMathBreak = emitDisplayMathHeaderLine(
+				displayMathEnv,
+				i,
+				beforeHtmlContext,
+			);
+			if (headerMathBreak !== null) {
+				applyDisplayMathSplitState(headerMathBreak);
+				continue;
+			}
 		}
 
 		const logicalEnd = findLogicalLineEnd(mathIndex, i);
 
 		// 3d. Subsequent display math after a display-math-restored container
 		//     MUST clear/update active `listContentIndent` and container state.
-		if (inRestoredDisplayMathContainer) {
+		if (inRestoredDisplayMathContainer && beforeHtmlContext !== null) {
 			const restoredMathSplit = emitDisplayMathLogicalLine(
 				displayMathEnv,
 				i,
@@ -774,17 +780,19 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		// 8. Split any display math on the logical line (multiline spans, block
 		//    openers after display math, or container-closing display math); plain
 		//    single-line `Hello $$x$$` stays inline when `onlyOnBlockBoundary` holds.
-		const hasPriorContainer =
+		const hasContainerContext =
 			prevListIndent !== null ||
 			paragraphQuoteDepth > 0 ||
-			phpBlockState.containers.length > 0;
-		if (firstLineDisplay !== null) {
+			phpBlockState.containers.length > 0 ||
+			lineQuoteDepth > 0 ||
+			acceptedListMarker !== null;
+		if (firstLineDisplay !== null && beforeHtmlContext !== null) {
 			const logicalMathSplit = emitDisplayMathLogicalLine(
 				displayMathEnv,
 				i,
 				logicalEnd,
 				beforeHtmlContext,
-				!(hasPriorContainer || inRestoredDisplayMathContainer),
+				!(hasContainerContext || inRestoredDisplayMathContainer),
 			);
 			if (logicalMathSplit !== null) {
 				applyDisplayMathSplitState(logicalMathSplit);

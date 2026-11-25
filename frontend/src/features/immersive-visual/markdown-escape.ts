@@ -77,6 +77,46 @@ function escapeLineStartPrefix(line: string): Readonly<{
 	return { escaped: "", consumed: 0 };
 }
 
+function collectEscapedOpenBrackets(
+	line: string,
+	start: number,
+	refDefBracketIndex: number,
+): Uint8Array | null {
+	if (line.indexOf("[", start) === -1 || line.indexOf("]", start) === -1) {
+		return null;
+	}
+	let escaped: Uint8Array | null = null;
+	const openStack: number[] = [];
+	for (let i = start; i < line.length; i += 1) {
+		const ch = line[i];
+		if (ch === "[") {
+			openStack.push(i);
+		} else if (ch === "]" && openStack.length > 0) {
+			const openIdx = openStack.pop();
+			if (openIdx === undefined) continue;
+			const after = line[i + 1];
+			if (after === "(" || after === "[") {
+				if (escaped === null) escaped = new Uint8Array(line.length);
+				escaped[openIdx] = 1;
+				while (openStack.length > 0) {
+					const enclosing = openStack.pop();
+					if (enclosing !== undefined) {
+						escaped[enclosing] = 1;
+					}
+				}
+			} else if (
+				after === ":" &&
+				refDefBracketIndex >= 0 &&
+				(openIdx === refDefBracketIndex || openStack[0] === refDefBracketIndex)
+			) {
+				if (escaped === null) escaped = new Uint8Array(line.length);
+				escaped[refDefBracketIndex] = 1;
+			}
+		}
+	}
+	return escaped;
+}
+
 function escapeInlineLine(
 	line: string,
 	atLineStart: boolean,
@@ -97,7 +137,19 @@ function escapeInlineLine(
 	) {
 		lastNonWsIndex -= 1;
 	}
-	let nextCloseBracket = -2;
+	let refDefBracketIndex = -1;
+	if (atLineStart && start === 0) {
+		let lead = 0;
+		while (lead < 3 && lead < line.length && line[lead] === " ") {
+			lead += 1;
+		}
+		if (line[lead] === "[") {
+			refDefBracketIndex = lead;
+		}
+	}
+	const escapedOpenBrackets = inLinkLabel
+		? null
+		: collectEscapedOpenBrackets(line, start, refDefBracketIndex);
 	for (let i = start; i < line.length; i += 1) {
 		const ch = line[i] ?? "";
 		switch (ch) {
@@ -117,22 +169,14 @@ function escapeInlineLine(
 				escaped += "\\~";
 				break;
 			// `\[...\]` is KaTeX block math for EasyMDE (and PHP), so only escape a
-			// bracket that could actually open link/image/footnote syntax. Plain
-			// prose such as `[edited]` stays readable and byte-stable.
+			// bracket that could actually open link/image/footnote/refdef syntax.
+			// Plain prose such as `[edited]` stays readable and byte-stable.
 			case "[": {
-				let needsEscape =
+				const needsEscape =
 					inLinkLabel ||
 					line[i + 1] === "^" ||
-					isTocSyntaxAt(line, i, lastNonWsIndex);
-				if (!needsEscape && nextCloseBracket !== -1) {
-					if (nextCloseBracket === -2 || nextCloseBracket <= i) {
-						nextCloseBracket = line.indexOf("]", i + 1);
-					}
-					if (nextCloseBracket > i) {
-						const after = line[nextCloseBracket + 1];
-						needsEscape = after === "(" || after === "[";
-					}
-				}
+					isTocSyntaxAt(line, i, lastNonWsIndex) ||
+					escapedOpenBrackets?.[i] === 1;
 				escaped += needsEscape ? "\\[" : "[";
 				break;
 			}

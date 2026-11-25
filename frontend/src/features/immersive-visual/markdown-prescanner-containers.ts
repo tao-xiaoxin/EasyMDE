@@ -21,7 +21,13 @@ import {
  * (U+0009). Unlike JS `.trim()`, U+00A0 (NBSP) is NOT a blank line.
  */
 export function isCommonMarkBlankLine(text: string): boolean {
-	return /^[ \t]*$/.test(text);
+	for (let i = 0; i < text.length; i += 1) {
+		const code = text.charCodeAt(i);
+		if (code !== 0x20 && code !== 0x09) {
+			return false;
+		}
+	}
+	return true;
 }
 
 export function createLineCursor(

@@ -2295,6 +2295,85 @@ describe("readEditorCodeContent", () => {
 		expect(refInlineMathIdx.imageBlocks?.[1]?.status).toBe("unavailable");
 		expect(refInlineMathIdx.linkCandidates).toEqual([]);
 	});
+
+	it("matches PHP CommonMark §6.5, UrlAutolinkParser, and EmailAutolinkParser for display-math-broken inline image destinations (Round 29 Track B F5)", () => {
+		const nonAutolinkCases: ReadonlyArray<readonly [string, string]> = [
+			["invalid §6.5 angle email with bang", "![[x](https://a.com) $$m$$](<a@b!c>)"],
+			["bare email ending in underscore", "![[x](https://a.com) $$m$$](a@b.c_)"],
+			["bare email ending in hyphen", "![[x](https://a.com) $$m$$](a@b.c-)"],
+			["root-relative path destination", "![[x](https://a.com) $$m$$](/img.png)"],
+			["relative path destination", "![[x](https://a.com) $$m$$](relative/path.png)"],
+			["fragment anchor destination", "![[x](https://a.com) $$m$$](#anchor)"],
+			["angle email ending in underscore", "![[x](https://a.com) $$m$$](<a@b.c_>)"],
+			["angle email ending in hyphen", "![[x](https://a.com) $$m$$](<a@b.c->)"],
+			["mailto email ending in underscore", "![[x](https://a.com) $$m$$](mailto:a@b.c_)"],
+			["mailto email ending in hyphen", "![[x](https://a.com) $$m$$](mailto:a@b.c-)"],
+			["single-label email without dot", "![[x](https://a.com) $$m$$](a@b)"],
+			["email with trailing dot after single label", "![[x](https://a.com) $$m$$](a@b.)"],
+			["chained email blocked by first trailing underscore", "![[x](https://a.com) $$m$$](a@b.c_@d.e)"],
+			["angle-wrapped bare www rejected by ALLOWED_AFTER", "![[x](https://a.com) $$m$$](<www.example.com>)"],
+			["prefixed URL rejected by ALLOWED_AFTER", "![[x](https://a.com) $$m$$](foohttps://a.com)"],
+			["single-label non-ASCII URL host", "![[x](https://a.com) $$m$$](https://例子)"],
+			["invalid IPv6 URL host", "![[x](https://a.com) $$m$$](http://[invalid]/a)"],
+			["unsupported ftps bare protocol", "![[x](https://a.com) $$m$$](ftps://example.com)"],
+			["bare javascript protocol", "![[x](https://a.com) $$m$$](javascript:alert(1))"],
+			["inline HTML open tag stripped by PHP", '![[x](https://a.com) $$m$$](<span title="user@example.com">)'],
+			["inline HTML comment stripped by PHP", "![[x](https://a.com) $$m$$](<!-- user@example.com -->)"],
+			["inline HTML declaration rejected as autolink", "![[x](https://a.com) $$m$$](<!a@b!c>)"],
+			["inline HTML PI rejected as autolink", "![[x](https://a.com) $$m$$](<?a@b!c?>)"],
+			["backtick code span wrapping URL", "![[x](https://a.com) $$m$$](`https://a.com`)"],
+			["backtick code span wrapping email", "![[x](https://a.com) $$m$$](`user@example.com`)"],
+			["escaped @ in email", "![[x](https://a.com) $$m$$](a\\@b.c)"],
+			["bracket display math with invalid angle destination", "![[x](https://a.com) \\[m\\]](<a@b!c>)"],
+			["table cell display-math-broken invalid angle destination", "| A |\n| --- |\n| ![[x](https://a.com) $$m$$](<a@b!c>) |"],
+		];
+		for (const [label, source] of nonAutolinkCases) {
+			const idx = createEditorMarkdownBlockIndex(source);
+			expect(idx.imageRanges, `images:${label}`).toEqual([]);
+			expect(
+				(idx.linkCandidates ?? []).map((r) => source.slice(r.from, r.to)),
+				`links:${label}`,
+			).toEqual(["[x](https://a.com)"]);
+		}
+
+		const autolinkCases: ReadonlyArray<readonly [string, string, string]> = [
+			["single-label localhost URL", "![[x](https://a.com) $$m$$](https://localhost/img)", "https://localhost/img"],
+			["ftp URL", "![[x](https://a.com) $$m$$](ftp://example.com/a.png)", "ftp://example.com/a.png"],
+			["trailing-dot host URL", "![[x](https://a.com) $$m$$](https://example.)", "https://example."],
+			["bare email", "![[x](https://a.com) $$m$$](user@example.com)", "user@example.com"],
+			["angle-bracket URI autolink", "![[x](https://a.com) $$m$$](<https://a.com/b>)", "<https://a.com/b>"],
+			["angle-bracket mailto autolink", "![[x](https://a.com) $$m$$](<mailto:user@example.com>)", "<mailto:user@example.com>"],
+			["angle-bracket email autolink", "![[x](https://a.com) $$m$$](<user@example.com>)", "<user@example.com>"],
+			["angle-bracket bang-local email autolink", "![[x](https://a.com) $$m$$](<!@example.com>)", "<!@example.com>"],
+			["bare mailto with valid email", "![[x](https://a.com) $$m$$](mailto:user@example.com)", "mailto:user@example.com"],
+			["bare www single-label host", "![[x](https://a.com) $$m$$](www.localhost)", "www.localhost"],
+			["uppercase FTP protocol", "![[x](https://a.com) $$m$$](FTP://EXAMPLE.COM/A)", "FTP://EXAMPLE.COM/A"],
+			["IPv6 bracket host", "![[x](https://a.com) $$m$$](http://[::1]/a)", "http://[::1]/a"],
+			["Unicode multi-label domain", "![[x](https://a.com) $$m$$](https://例子.测试/路径)", "https://例子.测试/路径"],
+			["URL with basic auth and port", "![[x](https://a.com) $$m$$](https://user:pass@localhost:8080/p)", "https://user:pass@localhost:8080/p"],
+			["URL after ALLOWED_AFTER delimiter", "![[x](https://a.com) $$m$$](*https://a.com)", "*https://a.com"],
+			["email with trailing dot stripped by PHP", "![[x](https://a.com) $$m$$](a@b.c.)", "a@b.c."],
+			["email with underscore before stripped dot", "![[x](https://a.com) $$m$$](a@b.c_.)", "a@b.c_."],
+			["angle-wrapped email with trailing bang fallback", "![[x](https://a.com) $$m$$](<a@b.c!>)", "<a@b.c!>"],
+			["second email after rejected trailing-underscore email", "![[x](https://a.com) $$m$$](a@b.c_/d@e.f)", "a@b.c_/d@e.f"],
+			["email after escaped backslash", "![[x](https://a.com) $$m$$](a\\\\b@c.d)", "a\\\\b@c.d"],
+			["HTML comment swallowing backtick before email", "![[x](https://a.com) $$m$$](x<!--`-->user@b.c`)", "x<!--`-->user@b.c`"],
+			["escaped first tick of double-tick run does not open code span", "![[x](https://a.com) $$m$$](\\``user@b.c`)", "\\``user@b.c`"],
+			["bracket display math with localhost destination", "![[x](https://a.com) \\[m\\]](https://localhost/img)", "https://localhost/img"],
+			["titled trailing-dot URL destination", '![[x](https://a.com) $$m$$](https://example. "title")', "https://example."],
+			["blockquote ftp destination", "> ![[x](https://a.com) $$m$$](ftp://example.com/a.png)", "ftp://example.com/a.png"],
+			["table cell localhost destination", "| A |\n| --- |\n| ![[x](https://a.com) $$m$$](https://localhost/img) |", "https://localhost/img"],
+			["CRLF document localhost destination", "intro\r\n\r\n![[x](https://a.com) $$m$$](https://localhost/img)", "https://localhost/img"],
+		];
+		for (const [label, source, expectedDest] of autolinkCases) {
+			const idx = createEditorMarkdownBlockIndex(source);
+			expect(idx.imageRanges, `images:${label}`).toEqual([]);
+			expect(
+				(idx.linkCandidates ?? []).map((r) => source.slice(r.from, r.to)),
+				`links:${label}`,
+			).toEqual(["[x](https://a.com)", expectedDest]);
+		}
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

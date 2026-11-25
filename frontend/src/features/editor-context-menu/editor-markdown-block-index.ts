@@ -10,8 +10,10 @@ import type {
 } from "../../contracts/ports/editor-block-index-port";
 import { markdownLineStarts } from "../../shared/markdown/markdown-line-model";
 import {
+	collectBlockBacktickRuns,
 	extractPhpCommonMarkReferenceLabel,
 	findLineAtOffset,
+	findNextBacktickRun,
 	inCodeRange,
 	isRangeDroppedByPhpTable,
 	type PhpMarkdownMathRange,
@@ -20,6 +22,7 @@ import {
 	scanPhpCommonMarkBlocks,
 	scanPhpCommonMarkReferenceLabels,
 } from "../../shared/markdown/php-commonmark-block-scan";
+import { createInlineHtmlScanGuard, matchSingleLineInlineHtmlOrAutolink } from "../../shared/markdown/php-commonmark-inline-html";
 import { scanPhpMarkdownMathRanges } from "../../shared/markdown/php-markdown-math-mask";
 import {
 	collectUncoveredPhpTableImages,
@@ -69,8 +72,42 @@ type ParserImageNode = Readonly<{
 	to: number;
 }>;
 
-const PHP_AUTOLINK_URL_RE =
-	/^(?:<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*>|<[^\s@<>]+@[^\s@<>]+>|(?:https?:\/\/|www\.)[^\s<>.]+\.[^\s<>]+|[\w.+-]+@[\w-]+(?:\.[\w-]+)+)$/iu;
+const PHP_EMAIL_AUTOLINK_RE = /[A-Za-z0-9._+-]+@[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+/g;
+const PHP_ESCAPABLE_RE = /^[!"#$%&'()*+,./:;<=>?@[\\\]^_`{|}~-]/;
+const PHP_URL_AUTOLINK_RE = (() => {
+	const h = "[0-9a-f]{1,4}", v4 = "(?:25[0-5]|(?:[1-9]|1[0-9]|2[0-4])?[0-9])", l = `(?:${h}:${h}|(?:${v4}\\.){3}${v4})`;
+	return new RegExp(`(?:(?:https?|ftp)://(?:(?:[_.\\p{L}\\p{N}-]|%[0-9A-Fa-f]{2})+(?::(?:[_.\\p{L}\\p{N}-]|%[0-9A-Fa-f]{2})+)?@)?|www\\.)(?:[A-Za-z0-9_-]|(?:[\\p{L}\\p{N}\\p{S}\\p{M}_-]+\\.){1,127}[\\p{L}\\p{N}\\p{M}]+|\\[(?:(?:${h}:){6}${l}|::(?:${h}:){5}${l}|(?:${h})?::(?:${h}:){4}${l}|(?:(?:${h}:){0,1}${h})?::(?:${h}:){3}${l}|(?:(?:${h}:){0,2}${h})?::(?:${h}:){2}${l}|(?:(?:${h}:){0,3}${h})?::${h}:${l}|(?:(?:${h}:){0,4}${h})?::${l}|(?:(?:${h}:){0,5}${h})?::${h}|(?:(?:${h}:){0,6}${h})?::)\\])`, "iyu");
+})();
+
+function isPhpAutolinkDestination(dest: string): boolean {
+	if (0 === dest.length) return false;
+	const htmlGuard = createInlineHtmlScanGuard();
+	const blocked = new Uint8Array(dest.length);
+	const tickRuns = dest.includes("`") ? collectBlockBacktickRuns(dest, [{ consumedBlockquote: false, contentOffset: 0, inlineBlockId: 0, isTableRow: false, lineEnd: dest.length, lineStart: 0, nextLineStart: dest.length, tableColumnCount: null, virtualSpaces: 0 }], 0, 0) : null;
+	for (let i = 0; i < dest.length; i += 1) {
+		const ch = dest[i];
+		if ("\\" === ch && i + 1 < dest.length && PHP_ESCAPABLE_RE.test(dest[i + 1] ?? "")) {
+			blocked.fill(1, i, i + 2); i += 1;
+		} else if ("`" === ch && "`" !== dest[i - 1]) {
+			let end = i + 1; while (end < dest.length && "`" === dest[end]) end += 1;
+			const close = findNextBacktickRun(tickRuns, end - i, end);
+			const spanEnd = close >= 0 ? close + (end - i) : end;
+			blocked.fill(1, i, spanEnd); i = spanEnd - 1;
+		} else if ("<" === ch) {
+			const auto = matchSingleLineInlineHtmlOrAutolink(dest, i, { noCdataCloseAfter: 0, noCommentCloseAfter: 0, noDoubleQuoteAfter: 0, noGtAfter: i + 1, noPiCloseAfter: 0, noSingleQuoteAfter: 0 }, dest.length);
+			if ("ok" === auto.status && !/[ \t\v\f]/.test(dest.slice(i, auto.end)) && /[:@]/.test(dest.slice(i, auto.end))) return true;
+			const html = matchSingleLineInlineHtmlOrAutolink(dest, i, htmlGuard, dest.length);
+			if ("ok" === html.status) { blocked.fill(1, i, html.end); i = html.end - 1; }
+		} else if (0 === i || " \t\n\v\f\r*_~(".includes(dest[i - 1] ?? "")) {
+			PHP_URL_AUTOLINK_RE.lastIndex = i;
+			if (PHP_URL_AUTOLINK_RE.test(dest)) return true;
+		}
+	}
+	for (const m of dest.matchAll(PHP_EMAIL_AUTOLINK_RE)) {
+		if (0 === blocked[m.index ?? 0] && !/[-_]$/.test(m[0])) return true;
+	}
+	return false;
+}
 
 type ParserSnapshot = Readonly<{
 	blocks: ReadonlyArray<EditorMarkdownSourceBlock>;
@@ -456,13 +493,9 @@ function imageIndexForBlocks(
 			node.available &&
 			undefined !== node.projectedUrlFrom &&
 			undefined !== node.projectedUrlTo &&
-			!PHP_AUTOLINK_URL_RE.test(
-				projectionText.slice(node.projectedUrlFrom, node.projectedUrlTo),
-			)
+			!isPhpAutolinkDestination(projectionText.slice(node.projectedUrlFrom, node.projectedUrlTo))
 		) {
-			brokenImageNonLinkUrlRanges.add(
-				`${node.projectedUrlFrom}:${node.projectedUrlTo}`,
-			);
+			brokenImageNonLinkUrlRanges.add(`${node.projectedUrlFrom}:${node.projectedUrlTo}`);
 		}
 	};
 	const sortedNodes = [...nodes].sort(

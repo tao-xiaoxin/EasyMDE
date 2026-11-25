@@ -10,6 +10,7 @@ import { isCommonMarkBlankLine } from "./markdown-prescanner-containers";
 import {
 	isTableSeparatorInterruptedByHigherPriorityBlock,
 	opensNonParagraphBlock,
+	startsParagraphInterruptingBlock,
 } from "./markdown-prescanner-tables";
 
 type BlockRuleFn = Parameters<
@@ -182,11 +183,12 @@ export function createEasyMdeTableRule(
 				prevOpen.map?.[1] === startLine);
 		const s0 = state.sCount[startLine] ?? 0;
 		const relIndent0 = s0 - state.blkIndent;
-		const isLazyOrIndentedContinuation =
-			(followsParagraph && (s0 < state.blkIndent || relIndent0 >= 4)) ||
-			(followsRefDef && relIndent0 >= 4);
+		const isIndentedContinuation =
+			(followsParagraph || followsRefDef) && relIndent0 >= 4;
+		const isLazyContainerContinuation = followsParagraph && s0 < state.blkIndent;
 		if (
-			!isLazyOrIndentedContinuation &&
+			!isIndentedContinuation &&
+			!isLazyContainerContinuation &&
 			(s0 < state.blkIndent || relIndent0 >= 4)
 		) {
 			return false;
@@ -270,7 +272,56 @@ export function createEasyMdeTableRule(
 		if (headerCells.length === 0 || headerCells.length > aligns.length) {
 			return false;
 		}
-		if (!isLazyOrIndentedContinuation) {
+		if (!isIndentedContinuation) {
+			const trimmedSentinel = trimmedStart.replace(/^[ \t]+|[ \t]+$/g, "");
+			const env = state.env as {
+				preScan?: { protectedBlocks?: ReadonlyMap<string, unknown> };
+				tableAlignMarkers?: ReadonlyMap<string, string>;
+			};
+			if (
+				env.preScan?.protectedBlocks?.has(trimmedSentinel) ||
+				env.tableAlignMarkers?.has(trimmedSentinel)
+			) {
+				return false;
+			}
+		}
+		if (isLazyContainerContinuation) {
+			// On a lazy container continuation (`sCount < blkIndent`), PHP
+			// `MarkdownParser::parseLine()` runs block start parsers with
+			// `$parserState->getParagraphContent() === null`: any `< 4`-indented
+			// interrupting block (ATX heading, blockquote, fence, HR, HTML 1–6,
+			// or ANY list marker including `- `, `2.`, `01.`) closes the
+			// enclosing container instead of continuing as a table header.
+			if (s0 < 0) {
+				const rawLazyCandidate = state.src.slice(
+					state.bMarks[startLine] ?? 0,
+					max0,
+				);
+				if (
+					startsParagraphInterruptingBlock(
+						rawLazyCandidate,
+						state.bsCount[startLine] ?? 0,
+						{ allowIndentedCode: false },
+					)
+				) {
+					return false;
+				}
+			} else {
+				const lazyRelativeIndent =
+					state.listIndent >= 0 && s0 >= state.listIndent
+						? s0 - state.listIndent
+						: s0;
+				const startColumn = (state.bsCount[startLine] ?? 0) + s0;
+				if (
+					startsParagraphInterruptingBlock(trimmedStart, startColumn, {
+						allowIndentedCode: false,
+						relativeIndentColumns: lazyRelativeIndent,
+					})
+				) {
+					return false;
+				}
+			}
+		} else if (!isIndentedContinuation) {
 			const startColumn = (state.bsCount[startLine] ?? 0) + s0;
 			// Reject non-paragraph CommonMark block openers and §4.7 link
 			// reference definitions / titles via the canonical shared guard.
@@ -332,7 +383,15 @@ function asciiTrimBlock(value: string): string {
 export function createEasyMdeLheadingRule(tableRule: BlockRuleFn): BlockRuleFn {
 	return (state, startLine, endLine) => {
 		const terminatorRules = state.md.block.ruler.getRules("paragraph");
-		if ((state.sCount[startLine] ?? 0) - state.blkIndent >= 4) {
+		const prevToken = state.tokens[state.tokens.length - 1];
+		const followsRefDef =
+			prevToken?.type === "reference_definition" &&
+			prevToken.level === state.level &&
+			prevToken.map?.[1] === startLine;
+		if (
+			!followsRefDef &&
+			(state.sCount[startLine] ?? 0) - state.blkIndent >= 4
+		) {
 			return false;
 		}
 		const oldParentType = state.parentType;

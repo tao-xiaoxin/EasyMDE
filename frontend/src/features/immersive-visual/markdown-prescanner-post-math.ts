@@ -3,7 +3,6 @@ import {
 	matchHtmlBlockOpen,
 } from "../../shared/markdown/php-commonmark-block-helpers";
 import type { PhpMarkdownMathRange } from "../../shared/markdown/php-markdown-math-mask";
-import { parseReservedTableAlignmentMarkerLine } from "../../shared/table-alignment-marker";
 import {
 	type ContainerStep,
 	type DetectableFence,
@@ -26,7 +25,7 @@ import {
 	findLogicalLineEnd,
 	maskedSliceForLines,
 	matchPeeledGfmTableHeader,
-	resolveGfmTableMatch,
+	matchTableAlignmentMarkerLine,
 } from "./markdown-prescanner-tables";
 
 /**
@@ -40,35 +39,23 @@ function tryEmitPostMathTableAlignMarker(
 	rawAfter: string,
 	spanEndLine: number,
 ): PostDisplayMathResult | null {
-	if (!rawAfter.includes("<!--")) return null;
-	const rawPeeled = peelContainerStepsForLine(rawAfter, [], 0, true, true);
-	if (
-		rawPeeled === null ||
-		measureIndentColumns(rawPeeled.rest, rawPeeled.column) > 3
-	) {
-		return null;
-	}
-	const parsed = parseReservedTableAlignmentMarkerLine(rawPeeled.rest);
-	if (parsed === null || "code" in parsed) return null;
-	const followingTable = resolveGfmTableMatch(
+	const match = matchTableAlignmentMarkerLine(
 		env.lines,
-		spanEndLine + 1,
-		rawPeeled.containers,
+		spanEndLine,
+		[],
 		0,
-		false,
-		false,
+		true,
 		env.mathIndex,
+		rawAfter,
 	);
-	if (followingTable === null) return null;
-	const markerToken = env.callbacks.addTableAlignMarker(parsed.text);
-	const markerPrefix = `${rawPeeled.linePrefix}${" ".repeat(parsed.fromOffset)}`;
-	env.callbacks.pushOutputLine(`${markerPrefix}${markerToken}`, null);
+	if (match === null) return null;
+	const markerToken = env.callbacks.addTableAlignMarker(match.text);
+	env.callbacks.pushOutputLine(`${match.markerPrefix}${markerToken}`, null);
 	return {
 		activeTable: null,
 		activeTableOutputStart: -1,
 		kind: "done",
-		openedContainers:
-			rawPeeled.containers.length > 0 ? rawPeeled.containers : null,
+		openedContainers: match.containers.length > 0 ? match.containers : null,
 		spanEndLine,
 		trailingParagraphState: null,
 	};

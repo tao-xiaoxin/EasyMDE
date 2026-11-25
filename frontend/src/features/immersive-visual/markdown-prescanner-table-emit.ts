@@ -4,6 +4,7 @@ import {
 } from "../../shared/markdown/php-commonmark-block-helpers";
 import {
 	advanceParagraphReferenceParser,
+	cloneParagraphReferenceParser,
 	createParagraphReferenceParser,
 	type ParagraphReferenceParser,
 } from "../../shared/markdown/php-commonmark-reference-def";
@@ -38,6 +39,7 @@ import {
 	type GfmTableMatch,
 	isTableSeparatorInterruptedByHigherPriorityBlock,
 	maskedSliceForLines,
+	matchTableAlignmentMarkerLine,
 	opensNonParagraphBlock,
 	type PhpDocumentMathIndex,
 } from "./markdown-prescanner-tables";
@@ -554,6 +556,9 @@ export function emitDisplayMathHeaderLine(
 	);
 }
 
+const STANDALONE_TOC_PATTERN = /^\[TOC\][ \t]*$/i;
+const FOOTNOTE_DEF_START_PATTERN = /^\[\^([^\s\]]+)\]:(?:[ \t]|$)/;
+
 function isSetextUnderlineSegment(maskedLine: string): boolean {
 	if (maskedLine.length === 0 || measureIndentColumns(maskedLine, 0) >= 4) {
 		return false;
@@ -561,19 +566,51 @@ function isSetextUnderlineSegment(maskedLine: string): boolean {
 	return COMMONMARK_SETEXT_UNDERLINE.test(maskedLine.replace(/^[ \t]+/, ""));
 }
 
+function isStandaloneTocSegment(maskedLine: string, column = 0): boolean {
+	if (
+		maskedLine.length < 5 ||
+		measureIndentColumns(maskedLine, column) >= 4
+	) {
+		return false;
+	}
+	return STANDALONE_TOC_PATTERN.test(maskedLine.replace(/^[ \t]+/, ""));
+}
+
+function isFootnoteDefSegment(maskedLine: string, column = 0): boolean {
+	if (
+		!maskedLine.includes("[^") ||
+		measureIndentColumns(maskedLine, column) >= 4
+	) {
+		return false;
+	}
+	return FOOTNOTE_DEF_START_PATTERN.test(maskedLine.replace(/^[ \t]+/, ""));
+}
+
+function isGfmTableDelimiterSegment(maskedLine: string, column = 0): boolean {
+	return (
+		maskedLine.includes("-") &&
+		!isTableSeparatorInterruptedByHigherPriorityBlock(maskedLine, column) &&
+		parseGfmTableSeparatorColumns(maskedLine) > 0
+	);
+}
+
 /**
  * Scans consecutive top-level paragraph continuation lines starting at
- * `startLine` for a Setext heading underline (`===` / `---`), stopping on any
+ * `startLine` for either a Setext heading underline (`===` / `---`) or (when
+ * `checkTableDelimiter` is true) a GFM table separator row, stopping on any
  * blank line, interrupting non-paragraph block, or subsequent display-math
  * line (since PHP `extract_math()` inserts `\n\n<MATH>\n\n` there). Strictly
  * O(N) amortized across the entire document because every non-display-math
  * line is visited at most once between consecutive display-math lines.
  */
-function hasFollowingSetextUnderline(
+function scanFollowingParagraphBoundary(
 	lines: ReadonlyArray<string>,
 	mathIndex: PhpDocumentMathIndex,
 	startLine: number,
+	checkTableDelimiter: boolean,
+	initialHasPriorLine: boolean,
 ): boolean {
+	let hasPriorLine = initialHasPriorLine;
 	let k = startLine;
 	while (k < lines.length) {
 		const kEnd = findLogicalLineEnd(mathIndex, k);
@@ -582,7 +619,12 @@ function hasFollowingSetextUnderline(
 			const kStart = mathIndex.lineStarts[k] ?? 0;
 			if (firstDisp.from > kStart) {
 				const maskedBefore = mathIndex.maskedDoc.slice(kStart, firstDisp.from);
-				if (isSetextUnderlineSegment(maskedBefore)) {
+				if (
+					isSetextUnderlineSegment(maskedBefore) ||
+					(checkTableDelimiter &&
+						hasPriorLine &&
+						isGfmTableDelimiterSegment(maskedBefore))
+				) {
 					return true;
 				}
 			}
@@ -592,12 +634,22 @@ function hasFollowingSetextUnderline(
 		if (isCommonMarkBlankLine(maskedLine)) {
 			return false;
 		}
-		if (k === kEnd && isSetextUnderlineSegment(maskedLine)) {
-			return true;
+		if (k === kEnd) {
+			if (isSetextUnderlineSegment(maskedLine)) {
+				return true;
+			}
+			if (
+				checkTableDelimiter &&
+				hasPriorLine &&
+				isGfmTableDelimiterSegment(maskedLine)
+			) {
+				return true;
+			}
 		}
 		if (opensNonParagraphBlock(maskedLine, 0, true)) {
 			return false;
 		}
+		hasPriorLine = true;
 		k = kEnd + 1;
 	}
 	return false;
@@ -614,8 +666,12 @@ function startsValidReferenceDefinition(
 	lines?: ReadonlyArray<string>,
 	mathIndex?: PhpDocumentMathIndex,
 	nextLineIndex = -1,
+	startColumn = 0,
 ): boolean {
-	if (!maskedLine.includes("[") || measureIndentColumns(maskedLine, 0) >= 4) {
+	if (
+		!maskedLine.includes("[") ||
+		measureIndentColumns(maskedLine, startColumn) >= 4
+	) {
 		return false;
 	}
 	const refParser = createParagraphReferenceParser();
@@ -679,25 +735,111 @@ function continuesValidReferenceDefinition(
 	if (opensNonParagraphBlock(maskedBefore, 0, true)) {
 		return false;
 	}
-	const probe: ParagraphReferenceParser = {
-		labelBuffer: activeRefParser.labelBuffer,
-		labelCodePoints: activeRefParser.labelCodePoints,
-		labelHasNonWhitespace: activeRefParser.labelHasNonWhitespace,
-		referenceValid: activeRefParser.referenceValid,
-		state: activeRefParser.state,
-		titleDelimiter: activeRefParser.titleDelimiter,
-	};
+	const probe = cloneParagraphReferenceParser(activeRefParser);
 	return advanceParagraphReferenceParser(probe, maskedBefore);
+}
+
+/**
+ * Checks whether `nextLineIndex` immediately following blank post-math text
+ * starts a block that only opens when no paragraph is active (`!inParagraph`):
+ * 4-space indented code, non-interrupting list markers (`2.`, `01.`, `- `),
+ * HTML Block Type 7, CommonMark §4.7 reference definitions, standalone `[TOC]`,
+ * footnote definitions, or reserved EasyMDE table alignment markers.
+ */
+function nextLineOpensBlockOnMathBoundary(
+	lines: ReadonlyArray<string>,
+	mathIndex: PhpDocumentMathIndex,
+	nextLineIndex: number,
+	beforeHtmlContext: BeforeHtmlContext,
+): boolean {
+	if (nextLineIndex >= lines.length) {
+		return false;
+	}
+	const nextLogicalEnd = findLogicalLineEnd(mathIndex, nextLineIndex);
+	const nextFirstDisp = findFirstDisplayMathInLines(
+		mathIndex,
+		nextLineIndex,
+		nextLogicalEnd,
+	);
+	const nextStartOffset = mathIndex.lineStarts[nextLineIndex] ?? 0;
+	const nextEndOffset =
+		nextFirstDisp !== null
+			? nextFirstDisp.from
+			: (mathIndex.lineEnds[nextLogicalEnd] ?? nextStartOffset);
+	if (nextEndOffset <= nextStartOffset) {
+		return false;
+	}
+	const maskedNext = mathIndex.maskedDoc.slice(nextStartOffset, nextEndOffset);
+	if (isCommonMarkBlankLine(maskedNext)) {
+		return false;
+	}
+	const hasBaseContainers =
+		beforeHtmlContext.baseContainers.length > 0 ||
+		beforeHtmlContext.preMarkerListIndent > 0;
+	const peeled = hasBaseContainers
+		? peelContainerStepsForLine(
+				maskedNext,
+				beforeHtmlContext.baseContainers,
+				beforeHtmlContext.preMarkerListIndent,
+				false,
+				false,
+			)
+		: { column: 0, containers: [], linePrefix: "", rest: maskedNext };
+	if (peeled === null || isCommonMarkBlankLine(peeled.rest)) {
+		return false;
+	}
+	const nextRest = peeled.rest;
+	const nextCol = peeled.column;
+	if (
+		opensNonParagraphBlock(nextRest, nextCol, false) &&
+		!opensNonParagraphBlock(nextRest, nextCol, true)
+	) {
+		return true;
+	}
+	if (
+		startsValidReferenceDefinition(
+			nextRest,
+			nextFirstDisp === null ? lines : undefined,
+			nextFirstDisp === null ? mathIndex : undefined,
+			nextFirstDisp === null ? nextLogicalEnd + 1 : -1,
+			nextCol,
+		)
+	) {
+		return true;
+	}
+	if (
+		isStandaloneTocSegment(nextRest, nextCol) ||
+		isFootnoteDefSegment(nextRest, nextCol)
+	) {
+		return true;
+	}
+	const rawNext = mathIndex.normalized.slice(nextStartOffset, nextEndOffset);
+	if (
+		rawNext.includes("<!--") &&
+		matchTableAlignmentMarkerLine(
+			lines,
+			nextLineIndex,
+			beforeHtmlContext.baseContainers,
+			beforeHtmlContext.preMarkerListIndent,
+			true,
+			mathIndex,
+			rawNext,
+		) !== null
+	) {
+		return true;
+	}
+	return false;
 }
 
 /**
  * Splits a logical line (`lineIndex..logicalEnd`) containing display math
  * (`range.block`). When `onlyOnBlockBoundary` is true (top-level line outside
  * containers), splits when any display-math range extends past `lineEndOffset`,
- * opens a leading non-paragraph block / unclosed Type 1–5 HTML block / §4.7
- * refdef (including a multi-line refdef continuing from prior lines), precedes
- * a single- or multi-line Setext heading underline, or starts a non-paragraph
- * block opener or single-/multi-line §4.7 refdef in any post-math segment,
+ * opens a leading/intermediate/trailing non-paragraph block, unclosed Type 1–5
+ * HTML block, §4.7 refdef, `[TOC]`, or footnote definition, precedes a single-
+ * or multi-line Setext underline, risks carrying `paragraphHasPipe` into a
+ * following GFM table delimiter (or has `|` in `maskedAfter` before a table),
+ * or has blank `maskedAfter` followed by any `!inParagraph`-only block,
  * keeping plain single-line `Hello $$x$$` inline.
  */
 export function emitDisplayMathLogicalLine(
@@ -729,7 +871,9 @@ export function emitDisplayMathLogicalLine(
 				if (
 					!isCommonMarkBlankLine(gap) &&
 					(opensNonParagraphBlock(gap, 0, false) ||
-						startsValidReferenceDefinition(gap))
+						startsValidReferenceDefinition(gap) ||
+						isStandaloneTocSegment(gap) ||
+						isFootnoteDefSegment(gap))
 				) {
 					intermediateGapOpensBlock = true;
 				}
@@ -744,19 +888,41 @@ export function emitDisplayMathLogicalLine(
 	if (firstDisplayFrom < 0) return null;
 	if (onlyOnBlockBoundary && !extendsPastLine && !intermediateGapOpensBlock) {
 		const maskedAfter = mathIndex.maskedDoc.slice(lastDisplayTo, lineEndOffset);
+		const trailingAfterBlank = isCommonMarkBlankLine(maskedAfter);
 		const nextLineIndex = logicalEnd + 1;
 		const trailingOpensBlock =
-			!isCommonMarkBlankLine(maskedAfter) &&
+			!trailingAfterBlank &&
 			(opensNonParagraphBlock(maskedAfter, 0, false) ||
 				startsValidReferenceDefinition(
 					maskedAfter,
 					lines,
 					mathIndex,
 					nextLineIndex,
-				));
-		const nextIsSetextUnderline =
+				) ||
+				isStandaloneTocSegment(maskedAfter) ||
+				isFootnoteDefSegment(maskedAfter));
+		const nextOpensNonParagraphBlock =
+			trailingAfterBlank &&
+			nextLineOpensBlockOnMathBoundary(
+				lines,
+				mathIndex,
+				nextLineIndex,
+				beforeHtmlContext,
+			);
+		const hasPipeBeforeLastDisplay =
+			Boolean(beforeHtmlContext.inParagraph && beforeHtmlContext.paragraphHasPipe) ||
+			mathIndex.maskedDoc.slice(lineStartOffset, lastDisplayTo).includes("|");
+		const checkTableDelimiter =
+			hasPipeBeforeLastDisplay || maskedAfter.includes("|");
+		const nextHitsParagraphBoundary =
 			nextLineIndex < lines.length &&
-			hasFollowingSetextUnderline(lines, mathIndex, nextLineIndex);
+			scanFollowingParagraphBoundary(
+				lines,
+				mathIndex,
+				nextLineIndex,
+				checkTableDelimiter,
+				!trailingAfterBlank,
+			);
 		const maskedBefore = mathIndex.maskedDoc.slice(
 			lineStartOffset,
 			firstDisplayFrom,
@@ -764,7 +930,9 @@ export function emitDisplayMathLogicalLine(
 		const leadingBeforeBlank = isCommonMarkBlankLine(maskedBefore);
 		const leadingOpensBlock =
 			!leadingBeforeBlank &&
-			opensNonParagraphBlock(maskedBefore, 0, beforeHtmlContext.inParagraph);
+			(opensNonParagraphBlock(maskedBefore, 0, beforeHtmlContext.inParagraph) ||
+				(!beforeHtmlContext.inParagraph &&
+					isStandaloneTocSegment(maskedBefore)));
 		const leadingUnclosedHtml =
 			!leadingBeforeBlank &&
 			matchUnclosedHtmlBlockTypes1To5(maskedBefore, beforeHtmlContext, true) !==
@@ -779,7 +947,8 @@ export function emitDisplayMathLogicalLine(
 				: startsValidReferenceDefinition(maskedBefore));
 		if (
 			!trailingOpensBlock &&
-			!nextIsSetextUnderline &&
+			!nextOpensNonParagraphBlock &&
+			!nextHitsParagraphBoundary &&
 			!leadingOpensBlock &&
 			!leadingUnclosedHtml &&
 			!leadingRefDef

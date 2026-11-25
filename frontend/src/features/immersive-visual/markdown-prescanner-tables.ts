@@ -9,6 +9,7 @@ import {
 } from "../../shared/markdown/php-commonmark-block-helpers";
 import {
 	advanceParagraphReferenceParser,
+	cloneParagraphReferenceParser,
 	createParagraphReferenceParser,
 	type ParagraphReferenceParser,
 } from "../../shared/markdown/php-commonmark-reference-def";
@@ -309,32 +310,41 @@ export function isTableSeparatorInterruptedByHigherPriorityBlock(
 	return opensNonParagraphBlock(candidate, candidateColumn, true);
 }
 
-function startsLazyParagraphInterruptingBlock(
-	candidate: string,
-	candidateColumn: number,
-): boolean {
-	if (measureIndentColumns(candidate, candidateColumn) >= 4) {
-		return false;
-	}
-	if (matchListMarker(candidate, candidateColumn) !== null) {
-		return true;
-	}
-	const trimmedStart = candidate.replace(/^[ \t]+/, "");
-	return (
-		trimmedStart.startsWith(">") ||
-		COMMONMARK_ATX_HEADING_OPEN.test(trimmedStart) ||
-		COMMONMARK_FENCED_CODE_OPEN.test(trimmedStart) ||
-		COMMONMARK_THEMATIC_BREAK_LINE.test(trimmedStart) ||
-		matchHtmlBlockOpen(trimmedStart, false) !== null
-	);
-}
+export type ParagraphInterruptingBlockOptions = Readonly<{
+	/**
+	 * When `true` (e.g. continuing a `TableParser`, whose active block is not a
+	 * `Paragraph`), 4+ columns of indentation opens an indented code block and
+	 * interrupts. When `false` (lazy `ParagraphParser` continuation), 4+ columns
+	 * of indentation cannot interrupt the active paragraph.
+	 */
+	allowIndentedCode?: boolean;
+	/**
+	 * Optional precomputed relative leading column count (e.g. from `markdown-it`
+	 * `sCount` when `candidate` is already trimmed of leading whitespace).
+	 */
+	relativeIndentColumns?: number;
+}>;
 
-function startsInterruptingBlock(
+/**
+ * Canonical PHP `League\CommonMark` guard for blocks that interrupt an active
+ * lazy-continuation leaf (`ParagraphParser` when `allowIndentedCode: false`,
+ * `TableParser` when `allowIndentedCode: true`). On an unmatched container
+ * line, `$parserState->getParagraphContent()` is `null`, so ANY `< 4`-indented
+ * list marker (`- `, `2. foo`, `01. foo`), blockquote, ATX heading, fenced
+ * code, thematic break, or HTML block Types 1–6 interrupts, while Setext `===`
+ * and HTML block Type 7 never do.
+ */
+export function startsParagraphInterruptingBlock(
 	candidate: string,
 	candidateColumn: number,
+	options?: ParagraphInterruptingBlockOptions,
 ): boolean {
-	if (measureIndentColumns(candidate, candidateColumn) >= 4) {
-		return true;
+	const allowIndentedCode = options?.allowIndentedCode ?? false;
+	const indentColumns =
+		options?.relativeIndentColumns ??
+		measureIndentColumns(candidate, candidateColumn);
+	if (indentColumns >= 4) {
+		return allowIndentedCode;
 	}
 	if (matchListMarker(candidate, candidateColumn) !== null) {
 		return true;
@@ -358,20 +368,56 @@ function refParserAbsorbsHeaderOrDelimiter(
 	const probeRefParser: ParagraphReferenceParser | null = !inParagraph
 		? createParagraphReferenceParser()
 		: activeRefParser !== null && activeRefParser.state !== "paragraph"
-			? {
-					labelBuffer: activeRefParser.labelBuffer,
-					labelCodePoints: activeRefParser.labelCodePoints,
-					labelHasNonWhitespace: activeRefParser.labelHasNonWhitespace,
-					referenceValid: activeRefParser.referenceValid,
-					state: activeRefParser.state,
-					titleDelimiter: activeRefParser.titleDelimiter,
-				}
+			? cloneParagraphReferenceParser(activeRefParser)
 			: null;
 	return (
 		probeRefParser !== null &&
 		(advanceParagraphReferenceParser(probeRefParser, headerRest) ||
 			(probeRefParser.state === "destination" &&
 				advanceParagraphReferenceParser(probeRefParser, delimiterRest)))
+	);
+}
+
+function matchHeaderWithContainerDelimiter(
+	headerRest: string,
+	containers: ReadonlyArray<ContainerStep>,
+	maskedDelimiter: string,
+	inParagraph: boolean,
+	activeRefParser: ParagraphReferenceParser | null,
+	paragraphHasPipe: boolean,
+): boolean {
+	if (!headerRest.includes("|") && !(inParagraph && paragraphHasPipe)) {
+		return false;
+	}
+	const delimiterStripped = stripContainersWithColumn(
+		maskedDelimiter,
+		containers,
+	);
+	if (
+		delimiterStripped === null ||
+		isTableSeparatorInterruptedByHigherPriorityBlock(
+			delimiterStripped.rest,
+			delimiterStripped.column,
+		)
+	) {
+		return false;
+	}
+	const delimiterColumns = parseGfmTableSeparatorColumns(
+		delimiterStripped.rest,
+	);
+	const headerCells = countTableRowCells(headerRest);
+	if (
+		delimiterColumns === 0 ||
+		headerCells === 0 ||
+		headerCells > delimiterColumns
+	) {
+		return false;
+	}
+	return !refParserAbsorbsHeaderOrDelimiter(
+		headerRest,
+		delimiterStripped.rest,
+		inParagraph,
+		activeRefParser,
 	);
 }
 
@@ -391,50 +437,26 @@ export function matchPeeledGfmTableHeader(
 	activeRefParser: ParagraphReferenceParser | null = null,
 	paragraphHasPipe = false,
 ): boolean {
-	if (
-		(!peeled.rest.includes("|") && !(inParagraph && paragraphHasPipe)) ||
-		opensNonParagraphBlock(peeled.rest, peeled.column, inParagraph)
-	) {
+	if (opensNonParagraphBlock(peeled.rest, peeled.column, inParagraph)) {
 		return false;
 	}
-	const delimiterStripped = stripContainersWithColumn(
-		maskedDelimiter,
+	return matchHeaderWithContainerDelimiter(
+		peeled.rest,
 		peeled.containers,
+		maskedDelimiter,
+		inParagraph,
+		activeRefParser,
+		paragraphHasPipe,
 	);
-	if (delimiterStripped === null) {
-		return false;
-	}
-	if (
-		isTableSeparatorInterruptedByHigherPriorityBlock(
-			delimiterStripped.rest,
-			delimiterStripped.column,
-		)
-	) {
-		return false;
-	}
-	const delimiterColumns = parseGfmTableSeparatorColumns(
-		delimiterStripped.rest,
-	);
-	const headerCells = countTableRowCells(peeled.rest);
-	if (
-		delimiterColumns === 0 ||
-		headerCells === 0 ||
-		headerCells > delimiterColumns
-	) {
-		return false;
-	}
-	if (
-		refParserAbsorbsHeaderOrDelimiter(
-			peeled.rest,
-			delimiterStripped.rest,
-			inParagraph,
-			activeRefParser,
-		)
-	) {
-		return false;
-	}
-	return true;
 }
+
+const TABLE_INTERRUPTING_BLOCK_OPTIONS: ParagraphInterruptingBlockOptions = {
+	allowIndentedCode: true,
+};
+const LAZY_PARAGRAPH_INTERRUPTING_BLOCK_OPTIONS: ParagraphInterruptingBlockOptions =
+	{
+		allowIndentedCode: false,
+	};
 
 export function findGfmTableEnd(
 	lines: ReadonlyArray<string>,
@@ -469,7 +491,11 @@ export function findGfmTableEnd(
 					if (
 						isCommonMarkBlankLine(fullBefore.rest) ||
 						fullBefore.rest.includes("|") ||
-						!startsInterruptingBlock(fullBefore.rest, fullBefore.column)
+						!startsParagraphInterruptingBlock(
+							fullBefore.rest,
+							fullBefore.column,
+							TABLE_INTERRUPTING_BLOCK_OPTIONS,
+						)
 					) {
 						brokenByDisplayMathLine = index;
 					}
@@ -480,9 +506,10 @@ export function findGfmTableEnd(
 					);
 					if (
 						isCommonMarkBlankLine(partialBefore.remainder) ||
-						!startsInterruptingBlock(
+						!startsParagraphInterruptingBlock(
 							partialBefore.remainder,
 							partialBefore.column,
+							TABLE_INTERRUPTING_BLOCK_OPTIONS,
 						)
 					) {
 						brokenByDisplayMathLine = index;
@@ -507,7 +534,11 @@ export function findGfmTableEnd(
 			}
 			if (
 				!candidate.includes("|") &&
-				startsInterruptingBlock(candidate, candidateColumn)
+				startsParagraphInterruptingBlock(
+					candidate,
+					candidateColumn,
+					TABLE_INTERRUPTING_BLOCK_OPTIONS,
+				)
 			) {
 				break;
 			}
@@ -523,7 +554,11 @@ export function findGfmTableEnd(
 		const partial = stripPartialContainers(maskedLogical, tableContainers);
 		if (
 			isCommonMarkBlankLine(partial.remainder) ||
-			startsInterruptingBlock(partial.remainder, partial.column)
+			startsParagraphInterruptingBlock(
+				partial.remainder,
+				partial.column,
+				TABLE_INTERRUPTING_BLOCK_OPTIONS,
+			)
 		) {
 			break;
 		}
@@ -603,37 +638,20 @@ export function resolveGfmTableMatch(
 		);
 		if (
 			!isCommonMarkBlankLine(partial.remainder) &&
-			!startsLazyParagraphInterruptingBlock(partial.remainder, partial.column)
+			!startsParagraphInterruptingBlock(
+				partial.remainder,
+				partial.column,
+				LAZY_PARAGRAPH_INTERRUPTING_BLOCK_OPTIONS,
+			)
 		) {
-			const delimiterStripped = stripContainersWithColumn(
-				maskedDelimiter,
-				lazyParagraphContainers,
-			);
-			if (delimiterStripped === null) {
-				return null;
-			}
 			if (
-				(!partial.remainder.includes("|") && !paragraphHasPipe) ||
-				isTableSeparatorInterruptedByHigherPriorityBlock(
-					delimiterStripped.rest,
-					delimiterStripped.column,
-				)
-			) {
-				return null;
-			}
-			const delimiterColumns = parseGfmTableSeparatorColumns(
-				delimiterStripped.rest,
-			);
-			const headerCells = countTableRowCells(partial.remainder);
-			if (
-				delimiterColumns === 0 ||
-				headerCells === 0 ||
-				headerCells > delimiterColumns ||
-				refParserAbsorbsHeaderOrDelimiter(
+				!matchHeaderWithContainerDelimiter(
 					partial.remainder,
-					delimiterStripped.rest,
+					lazyParagraphContainers,
+					maskedDelimiter,
 					true,
 					activeRefParser,
+					paragraphHasPipe,
 				)
 			) {
 				return null;
@@ -703,13 +721,13 @@ export function matchTableAlignmentMarkerLine(
 	preMarkerListIndent: number,
 	allowLeadingListMarker: boolean,
 	mathIndex: PhpDocumentMathIndex,
+	candidateLine = lines[lineIndex] ?? "",
 ): TableAlignMarkerMatch | null {
-	const line = lines[lineIndex] ?? "";
-	if (!line.includes("<!--")) {
+	if (!candidateLine.includes("<!--")) {
 		return null;
 	}
 	const peeled = peelContainerStepsForLine(
-		line,
+		candidateLine,
 		baseContainers,
 		preMarkerListIndent,
 		allowLeadingListMarker,

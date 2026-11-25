@@ -41,6 +41,23 @@ export function createParagraphReferenceParser(
 	};
 }
 
+export function cloneParagraphReferenceParser(
+	parser: ParagraphReferenceParser,
+	includeCallback = false,
+): ParagraphReferenceParser {
+	return {
+		labelBuffer: parser.labelBuffer,
+		labelCodePoints: parser.labelCodePoints,
+		labelHasNonWhitespace: parser.labelHasNonWhitespace,
+		...(includeCallback && parser.onReferenceLabel
+			? { onReferenceLabel: parser.onReferenceLabel }
+			: {}),
+		referenceValid: parser.referenceValid,
+		state: parser.state,
+		titleDelimiter: parser.titleDelimiter,
+	};
+}
+
 function isSpaceOrTab(character: string | undefined): boolean {
 	return " " === character || "\t" === character;
 }

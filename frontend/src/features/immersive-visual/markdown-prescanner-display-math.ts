@@ -59,6 +59,7 @@ export type BeforeHtmlContext = Readonly<{
 	allowLeadingListMarker: boolean;
 	baseContainers: ReadonlyArray<ContainerStep>;
 	inParagraph: boolean;
+	paragraphHasPipe?: boolean;
 	preMarkerListIndent: number;
 }>;
 
@@ -67,6 +68,7 @@ export const POST_MATH_BEFORE_HTML_CONTEXT: BeforeHtmlContext = {
 	allowLeadingListMarker: true,
 	baseContainers: [],
 	inParagraph: false,
+	paragraphHasPipe: false,
 	preMarkerListIndent: 0,
 };
 

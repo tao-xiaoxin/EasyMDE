@@ -809,12 +809,12 @@ function serializeDocPreservingUntouchedBlocks(
 			}
 			parts.push(separator);
 		}
-		const reusedIndentedParagraphAfterBlank =
+		const reusedIndentedBlockAfterBlank =
 			serialized !== null &&
-			child.type.name === "paragraph" &&
+			(child.type.name === "paragraph" || child.type.name === "heading") &&
 			separator !== "\n" &&
 			LEADING_FOUR_COLUMN_INDENT.test(serialized);
-		const blockText = reusedIndentedParagraphAfterBlank
+		const blockText = reusedIndentedBlockAfterBlank
 			? serializers.serializeBlock(child)
 			: candidateText;
 		const emittedBlockText =

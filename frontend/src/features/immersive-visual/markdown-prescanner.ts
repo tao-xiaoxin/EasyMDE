@@ -603,6 +603,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 						allowLeadingListMarker: !listInterruptionInParagraph,
 						baseContainers: tableBaseContainers,
 						inParagraph: tableInParagraph,
+						paragraphHasPipe: tableInParagraph && paragraphHasPipe,
 						preMarkerListIndent: tablePreListIndent,
 					}
 				: null;

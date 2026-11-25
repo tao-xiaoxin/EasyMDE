@@ -18,16 +18,24 @@ export type ReferenceDefinitionState =
 	| "paragraph";
 
 export type ParagraphReferenceParser = {
+	labelBuffer: string;
 	labelCodePoints: number;
 	labelHasNonWhitespace: boolean;
+	onReferenceLabel?: (rawLabel: string) => void;
+	referenceValid: boolean;
 	state: ReferenceDefinitionState;
 	titleDelimiter: '"' | "'" | ")" | null;
 };
 
-export function createParagraphReferenceParser(): ParagraphReferenceParser {
+export function createParagraphReferenceParser(
+	onReferenceLabel?: (rawLabel: string) => void,
+): ParagraphReferenceParser {
 	return {
+		labelBuffer: "",
 		labelCodePoints: 0,
 		labelHasNonWhitespace: false,
+		...(onReferenceLabel ? { onReferenceLabel } : {}),
+		referenceValid: false,
 		state: "start-definition",
 		titleDelimiter: null,
 	};
@@ -110,6 +118,7 @@ function parseReferenceLabelStep(
 ): number {
 	const len = line.length;
 	let pos = skipSpacesAndTabs(line, start);
+	const chunkStart = pos;
 	while (pos < len) {
 		const ch = line[pos];
 		if ("[" === ch || "]" === ch) break;
@@ -139,8 +148,12 @@ function parseReferenceLabelStep(
 		pos += code >= 0xd800 && code <= 0xdbff && pos + 1 < len ? 2 : 1;
 		parser.labelCodePoints += 1;
 	}
+	if (parser.onReferenceLabel && pos > chunkStart) {
+		parser.labelBuffer += line.slice(chunkStart, pos);
+	}
 	if (pos >= len) {
 		parser.labelCodePoints += 1;
+		if (parser.onReferenceLabel) parser.labelBuffer += "\n";
 		return len;
 	}
 	if ("]" !== line[pos] || ":" !== line[pos + 1]) return -1;
@@ -222,10 +235,15 @@ export function advanceParagraphReferenceParser(
 				return cleared;
 			}
 			parser.state = "label";
+			parser.labelBuffer = "";
 			parser.labelCodePoints = 0;
 			parser.labelHasNonWhitespace = false;
+			parser.referenceValid = false;
 			pos += 1;
-			if (pos >= len) parser.labelCodePoints += 1;
+			if (pos >= len) {
+				parser.labelCodePoints += 1;
+				if (parser.onReferenceLabel) parser.labelBuffer += "\n";
+			}
 			continue;
 		}
 		if ("label" === parser.state) {
@@ -247,6 +265,10 @@ export function advanceParagraphReferenceParser(
 			const afterWs = skipSpacesAndTabs(line, destEnd);
 			if (afterWs >= len) {
 				cleared = true;
+				if (!parser.referenceValid) {
+					parser.referenceValid = true;
+					parser.onReferenceLabel?.(parser.labelBuffer);
+				}
 			} else if (afterWs === destEnd) {
 				parser.state = "paragraph";
 				return cleared;
@@ -258,6 +280,7 @@ export function advanceParagraphReferenceParser(
 		if ("start-title" === parser.state) {
 			pos = skipSpacesAndTabs(line, pos);
 			if (pos >= len) {
+				parser.referenceValid = false;
 				parser.state = "start-definition";
 				continue;
 			}
@@ -272,6 +295,7 @@ export function advanceParagraphReferenceParser(
 				pos += 1;
 			} else {
 				parser.titleDelimiter = null;
+				parser.referenceValid = false;
 				parser.state = "start-definition";
 			}
 			continue;
@@ -281,7 +305,13 @@ export function advanceParagraphReferenceParser(
 			parser.state = "paragraph";
 			return cleared;
 		}
-		if (titleStep.cleared) cleared = true;
+		if (titleStep.cleared) {
+			cleared = true;
+			if (!parser.referenceValid) {
+				parser.onReferenceLabel?.(parser.labelBuffer);
+			}
+			parser.referenceValid = false;
+		}
 		pos = titleStep.nextPos;
 	}
 

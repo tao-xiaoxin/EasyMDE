@@ -26,6 +26,7 @@ import {
 import {
 	maskPhpMarkdownMathForTableScan,
 	type PhpMarkdownMathRange,
+	scanPhpMarkdownMathRanges,
 } from "./php-markdown-math-mask";
 
 /**
@@ -111,6 +112,58 @@ export function scanPhpCommonMarkBlocks(
 		lines: state.lines,
 		...(maskedSource !== source ? { tableCellSource: maskedSource } : {}),
 	};
+}
+
+function replaceMathRangesWithPhpTokens(
+	source: string,
+	mathRanges: ReadonlyArray<PhpMarkdownMathRange>,
+): string {
+	let parts: string[] | null = null;
+	let cursor = 0;
+	for (let i = 0; i < mathRanges.length; i += 1) {
+		const range = mathRanges[i];
+		if (!range) continue;
+		const from = Math.max(cursor, range.from);
+		const to = Math.min(source.length, range.to);
+		if (to <= from) continue;
+		if (!parts) parts = [];
+		if (from > cursor) parts.push(source.slice(cursor, from));
+		const token = `EASYMDE_MATH_${i}_TOKEN`;
+		parts.push(range.block ? `\n\n${token}\n\n` : token);
+		cursor = to;
+	}
+	if (!parts) return source;
+	if (cursor < source.length) parts.push(source.slice(cursor));
+	return parts.join("");
+}
+
+/**
+ * Collects all raw CommonMark §4.7 link reference definition labels recognized
+ * by PHP `MarkdownRenderer::extract_math()` + `League\CommonMark`
+ * (`ReferenceParser`), excluding definitions inside fenced/indented code, HTML
+ * blocks, tables, or failed definitions.
+ *
+ * Fast-paths in O(N) to `[]` whenever `source` contains no `]:`.
+ */
+export function scanPhpCommonMarkReferenceLabels(
+	source: string,
+	knownMathRanges?: ReadonlyArray<PhpMarkdownMathRange>,
+): string[] {
+	if (!source.includes("]:")) return [];
+	const mathRanges =
+		undefined !== knownMathRanges
+			? knownMathRanges
+			: scanPhpMarkdownMathRanges(source);
+	const effectiveSource =
+		mathRanges.length > 0
+			? replaceMathRangesWithPhpTokens(source, mathRanges)
+			: source;
+	const labels: string[] = [];
+	const state = createPhpCommonMarkBlockState(false, false, (rawLabel) => {
+		labels.push(rawLabel);
+	});
+	scanLinesIntoPhpCommonMarkBlockState(state, effectiveSource);
+	return labels;
 }
 
 export function findLineIndexAtOffset(

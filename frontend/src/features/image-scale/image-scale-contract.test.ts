@@ -11,6 +11,7 @@ import {
   serializeMarkdownImage
 } from './image-scale-contract';
 import { getCachedMarkdownBlockScan } from './image-scale-markdown-scan';
+import { parseImageCore } from './image-scale-syntax';
 
 describe('image scale contract', () => {
   it('accepts only the seven measured percentages, including explicit 100%', () => {
@@ -2430,5 +2431,62 @@ describe('image scale contract', () => {
       end: 23,
       start: 7
     });
+  });
+
+  it('matches PHP InlineParserEngine on escaped leading backtick runs and inline-math HTML tag masks (Round 26 Track B F2 & F6b)', () => {
+    // Track B F6b: after `EscapableParser` consumes `\``, remaining contiguous backticks in that run stay plain text.
+    for (const [label, source] of [
+      ['2-backtick run with leading escape', '![x \\`` `](y.png)`](/z.png)'],
+      ['3-backtick run with leading escape', '![x \\``` ``](y.png)``](/z.png)'],
+      ['even double-backslash before 2-backtick code span', '![x \\\\`` `](y.png)``](/z.png)'],
+      ['odd triple-backslash before 2-backtick run', '![x \\\\\\`` `](y.png)`](/z.png)'],
+      ['1-backtick escape followed by code span', '![x \\` `](y.png)`](/z.png)'],
+      ['blockquote multiline block path', '> ![x \\`` `](y.png)`](/z.png)'],
+      ['GFM table cell block path', '| A |\n| --- |\n| ![x \\`` `](y.png)`](/z.png) |']
+    ] as const) {
+      const start = source.indexOf('![');
+      // Fast path (no precomputed blocks on single-line cases) and full block path (precomputed blocks).
+      expect(parseImageCore(source, start), `fast:${label}`).toMatchObject({
+        destination: '/z.png'
+      });
+      expect(
+        parseImageCore(source, start, getCachedMarkdownBlockScan(source)),
+        `full:${label}`
+      ).toMatchObject({
+        destination: '/z.png'
+      });
+      expect(parseMarkdownImageScale(source, start), `parse:${label}`).toMatchObject({
+        destination: '/z.png',
+        start
+      });
+      expect(findMarkdownImageAt(source, start + 3), `find:${label}`).toMatchObject({
+        destination: '/z.png',
+        start
+      });
+    }
+
+    // Track B F2: `<div$a$>` and `</div$a$>` stay paragraphs (live images); `<span $a$="1">` is a Type 7 HTML block.
+    for (const [label, source] of [
+      ['open tag with inline math', '<div$a$>\n![a](/x.png)\n[link](https://example.com)'],
+      ['close tag with inline math', '</div$a$>\n![a](/x.png)\n[link](https://example.com)'],
+      ['declaration with inline math', '<!$a$>\n![a](/x.png)']
+    ] as const) {
+      const start = source.indexOf('![a]');
+      expect(parseMarkdownImageScale(source, start), `parse:${label}`).toMatchObject({
+        alt: 'a',
+        destination: '/x.png',
+        start
+      });
+      expect(findMarkdownImageAt(source, start + 2), `find:${label}`).toMatchObject({
+        alt: 'a',
+        destination: '/x.png',
+        start
+      });
+    }
+
+    const attrHtml = '<span $a$="1">\n![a](/x.png)';
+    const attrStart = attrHtml.indexOf('![a]');
+    expect(parseMarkdownImageScale(attrHtml, attrStart)).toBeNull();
+    expect(findMarkdownImageAt(attrHtml, attrStart + 2)).toBeNull();
   });
 });

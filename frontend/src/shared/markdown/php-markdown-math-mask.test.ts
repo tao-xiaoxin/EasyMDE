@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
 	isRangeDroppedByPhpTable,
 	scanPhpCommonMarkBlocks,
+	scanPhpCommonMarkReferenceLabels,
 } from "./php-commonmark-block-scan";
 import {
 	maskPhpMarkdownMathForTableScan,
@@ -20,7 +21,7 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 
 		const inlineNoPipe = "| A | B |\n| --- | --- |\n| $x + y$ | \\(z\\) |";
 		expect(maskPhpMarkdownMathForTableScan(inlineNoPipe)).toBe(
-			"| A | B |\n| --- | --- |\n| MMMMMMM | MMMMM |",
+			"| A | B |\n| --- | --- |\n| M_____M | M___M |",
 		);
 
 		const knownInlineNoPipe = maskPhpMarkdownMathForTableScan(inlineNoPipe, [
@@ -31,7 +32,7 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 			},
 		]);
 		expect(knownInlineNoPipe).toBe(
-			"| A | B |\n| --- | --- |\n| MMMMMMM | \\(z\\) |",
+			"| A | B |\n| --- | --- |\n| M_____M | \\(z\\) |",
 		);
 	});
 
@@ -58,21 +59,21 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 		const maskedDollar = maskPhpMarkdownMathForTableScan(inlineDollar);
 		expect(maskedDollar.length).toBe(inlineDollar.length);
 		expect(maskedDollar).toBe(
-			"| A | B |\n| --- | --- |\n| MMMMM | ![img](https://example.com/a.png) |",
+			"| A | B |\n| --- | --- |\n| M___M | ![img](https://example.com/a.png) |",
 		);
 
 		const inlineParen = "| A | B |\n| --- | --- |\n| \\(a|b\\) | ![img](https://example.com/a.png) |";
 		const maskedParen = maskPhpMarkdownMathForTableScan(inlineParen);
 		expect(maskedParen.length).toBe(inlineParen.length);
 		expect(maskedParen).toBe(
-			"| A | B |\n| --- | --- |\n| MMMMMMM | ![img](https://example.com/a.png) |",
+			"| A | B |\n| --- | --- |\n| M_____M | ![img](https://example.com/a.png) |",
 		);
 
 		const multilineParen = "| A | B |\n| --- | --- |\n| \\(a\n|b\\) | ![img](https://example.com/a.png) |";
 		const maskedMulti = maskPhpMarkdownMathForTableScan(multilineParen);
 		expect(maskedMulti.length).toBe(multilineParen.length);
 		expect(maskedMulti).toBe(
-			"| A | B |\n| --- | --- |\n| MMMMMMMM | ![img](https://example.com/a.png) |",
+			"| A | B |\n| --- | --- |\n| M______M | ![img](https://example.com/a.png) |",
 		);
 	});
 
@@ -82,7 +83,7 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 			"| A | \\(x\ny\\) | B |\n| --- | --- | --- |\n| 1 | 2 | ![kept](https://example.com/a.png) |";
 		const headerMasked = maskPhpMarkdownMathForTableScan(headerMulti);
 		expect(headerMasked.length).toBe(headerMulti.length);
-		expect(headerMasked).toContain("| A | MMMMMMM | B |");
+		expect(headerMasked).toContain("| A | M_____M | B |");
 		const headerScan = scanPhpCommonMarkBlocks(headerMulti);
 		const kept1From = headerMulti.indexOf("![kept]");
 		const kept1To = headerMulti.indexOf(")", kept1From) + 1;
@@ -95,7 +96,7 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 			"| A | B |\n| --- | --- |\n| 1 | \\(x\ny\\) | ![dropped](https://example.com/b.png) |";
 		const bodyMasked = maskPhpMarkdownMathForTableScan(bodyMulti);
 		expect(bodyMasked.length).toBe(bodyMulti.length);
-		expect(bodyMasked).toContain("| 1 | MMMMMMM | ![dropped]");
+		expect(bodyMasked).toContain("| 1 | M_____M | ![dropped]");
 		const bodyScan = scanPhpCommonMarkBlocks(bodyMulti);
 		const drop2From = bodyMulti.indexOf("![dropped]");
 		const drop2To = bodyMulti.indexOf(")", drop2From) + 1;
@@ -108,7 +109,7 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 			"| A | B |\n| --- | --- |\n| \\(x\n\ny\\) | ![kept](https://example.com/a.png) | ![dropped](https://example.com/b.png) |";
 		const blankMasked = maskPhpMarkdownMathForTableScan(blankLineInMath);
 		expect(blankMasked.length).toBe(blankLineInMath.length);
-		expect(blankMasked).toContain("| MMMMMMMM | ![kept]");
+		expect(blankMasked).toContain("| M______M | ![kept]");
 		const blankScan = scanPhpCommonMarkBlocks(blankLineInMath);
 		const kept3From = blankLineInMath.indexOf("![kept]");
 		const kept3To = blankLineInMath.indexOf(")", kept3From) + 1;
@@ -126,7 +127,7 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 			"\\(😀\nx|y\\)\n\n| A |\n| --- |\n| ![kept](https://example.com/a.png) |";
 		const surrogateMasked = maskPhpMarkdownMathForTableScan(surrogateSource);
 		expect(surrogateMasked.length).toBe(surrogateSource.length);
-		expect(surrogateMasked.startsWith("MMMMMMMMMM\n\n| A |")).toBe(true);
+		expect(surrogateMasked.startsWith("M________M\n\n| A |")).toBe(true);
 		const knownSurrogateMasked = maskPhpMarkdownMathForTableScan(surrogateSource, [
 			{ block: false, from: 0, to: surrogateSource.indexOf("\\)") + 2 },
 		]);
@@ -148,16 +149,16 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 		expect(maskPhpMarkdownMathForTableScan("\\[a\\]")).toBe("\n\nM\n\n");
 		expect(maskPhpMarkdownMathForTableScan("\\[\\]")).toBe("\\[\\]");
 		expect(maskPhpMarkdownMathForTableScan("| \\(\\) |")).toBe("| \\(\\) |");
-		expect(maskPhpMarkdownMathForTableScan("| \\(a|b\\) |")).toBe("| MMMMMMM |");
+		expect(maskPhpMarkdownMathForTableScan("| \\(a|b\\) |")).toBe("| M_____M |");
 		expect(maskPhpMarkdownMathForTableScan("| \\\\$a|b$ |")).toBe("| \\\\$a|b$ |");
 		expect(maskPhpMarkdownMathForTableScan("| $a\\$b|c$ |")).toBe("| $a\\$b|c$ |");
 		expect(maskPhpMarkdownMathForTableScan("| $a\\\\$b|c$ |")).toBe("| $a\\\\$b|c$ |");
 		expect(maskPhpMarkdownMathForTableScan("| $a\\$b$c|d$ |")).toBe(
-			"| $a\\$bMMMMM |",
+			"| $a\\$bM___M |",
 		);
-		expect(maskPhpMarkdownMathForTableScan("| $$a|b$ |")).toBe("| $MMMMM |");
-		expect(maskPhpMarkdownMathForTableScan("| $a|b$$ |")).toBe("| MMMMM$ |");
-		expect(maskPhpMarkdownMathForTableScan("foo $a\rb$")).toBe("foo MMMMM");
+		expect(maskPhpMarkdownMathForTableScan("| $$a|b$ |")).toBe("| $M___M |");
+		expect(maskPhpMarkdownMathForTableScan("| $a|b$$ |")).toBe("| M___M$ |");
+		expect(maskPhpMarkdownMathForTableScan("foo $a\rb$")).toBe("foo M___M");
 		expect(maskPhpMarkdownMathForTableScan("| $a\r\nb|c$ |")).toBe("| $a\r\nb|c$ |");
 
 		// Display math triggers block masking even when source contains zero `|` characters.
@@ -203,12 +204,12 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 		const fencedCode = "```\n$a|b$\n```\n| A | B |\n| --- | --- |\n| $c|d$ | ![img](/a.png) |";
 		const maskedFenced = maskPhpMarkdownMathForTableScan(fencedCode);
 		expect(maskedFenced.startsWith("```\n$a|b$\n```\n")).toBe(true);
-		expect(maskedFenced).toContain("| MMMMM | ![img](/a.png) |");
+		expect(maskedFenced).toContain("| M___M | ![img](/a.png) |");
 
 		const indentedCode = "    $a|b$\n\n| A | B |\n| --- | --- |\n| $c|d$ | ![img](/a.png) |";
 		const maskedIndented = maskPhpMarkdownMathForTableScan(indentedCode);
 		expect(maskedIndented.startsWith("    $a|b$\n\n")).toBe(true);
-		expect(maskedIndented).toContain("| MMMMM | ![img](/a.png) |");
+		expect(maskedIndented).toContain("| M___M | ![img](/a.png) |");
 
 		const escapedDollar = "| A | B |\n| --- | --- |\n| \\$a|b\\$ | ![img](/a.png) |";
 		expect(maskPhpMarkdownMathForTableScan(escapedDollar)).toBe(escapedDollar);
@@ -216,7 +217,7 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 		// Unclosed backtick separated by a fenced code block does not swallow math after the fence.
 		const unclosedBeforeFence = "`open\n```\ncode\n```\n| A | B |\n| --- | --- |\n| $a|b$ | ![img](/a.png) |";
 		expect(maskPhpMarkdownMathForTableScan(unclosedBeforeFence)).toContain(
-			"| MMMMM | ![img](/a.png) |",
+			"| M___M | ![img](/a.png) |",
 		);
 
 		// Escaped first backtick of a 2-backtick run opens a 1-backtick code span matching PHP.
@@ -227,7 +228,7 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 	it("preserves PHP sequential pattern precedence and supports precomputed knownRanges", () => {
 		const parenContainsDollar = "| A | B |\n| --- | --- |\n| \\(a $ b\\) | $c|d$ |";
 		expect(maskPhpMarkdownMathForTableScan(parenContainsDollar)).toBe(
-			"| A | B |\n| --- | --- |\n| MMMMMMMMM | MMMMM |",
+			"| A | B |\n| --- | --- |\n| M_______M | M___M |",
 		);
 
 		const source = "| A |\n| - |\n| $a|b$ ![x](/i) |";
@@ -235,7 +236,7 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 		const knownMasked = maskPhpMarkdownMathForTableScan(source, [
 			{ block: false, from: mathFrom, to: mathFrom + 5 },
 		]);
-		expect(knownMasked).toBe("| A |\n| - |\n| MMMMM ![x](/i) |");
+		expect(knownMasked).toBe("| A |\n| - |\n| M___M ![x](/i) |");
 	});
 
 	it("exports canonical scanPhpInlineCodeRanges and scanPhpMarkdownMathRanges with 1:1 PHP parity and fixes bare-CR block scans (Track B #9 & #11)", () => {
@@ -351,5 +352,69 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 			start: 8_191 * 6 + 2,
 		});
 		expect(elapsedMs).toBeLessThan(100);
+	});
+
+	it("includes `_` in inline math masks to match PHP EASYMDE_MATH_0_TOKEN HTML block rules (Round 26 Track B F2)", () => {
+		// `<div$a$>` and `</div$a$>` become `<divM_M>` / `</divM_M>` (`_` invalid in HTML tag names -> paragraph, not Type 7 HTML block).
+		for (const [label, source] of [
+			["open tag with inline math", "<div$a$>\n![a](/x.png)\n[link](https://example.com)"],
+			["close tag with inline math", "</div$a$>\n![a](/x.png)\n[link](https://example.com)"],
+		] as const) {
+			expect(maskPhpMarkdownMathForTableScan(source), `mask:${label}`).toContain("M_M");
+			const scan = scanPhpCommonMarkBlocks(source);
+			expect(scan.lines[0]?.inlineBlockId, `line0:${label}`).toBeGreaterThan(0);
+			expect(scan.lines[1]?.inlineBlockId, `line1:${label}`).toBeGreaterThan(0);
+			expect(scan.lines[2]?.inlineBlockId, `line2:${label}`).toBeGreaterThan(0);
+		}
+
+		// `<span $a$="1">` becomes `<span M_M="1">` (`_` valid in HTML attribute names -> Type 7 HTML block matching PHP).
+		const attrHtml = '<span $a$="1">\n![a](/x.png)';
+		const attrScan = scanPhpCommonMarkBlocks(attrHtml);
+		expect(attrScan.lines[0]?.inlineBlockId).toBe(-1);
+		expect(attrScan.lines[1]?.inlineBlockId).toBe(-1);
+
+		// `<!$a$>` starts with ASCII letter `M` -> single-line Type 4 HTML declaration; following line stays a live paragraph.
+		const declHtml = "<!$a$>\n![a](/x.png)";
+		const declScan = scanPhpCommonMarkBlocks(declHtml);
+		expect(declScan.lines[0]?.inlineBlockId).toBe(-1);
+		expect(declScan.lines[1]?.inlineBlockId).toBeGreaterThan(0);
+	});
+
+	it("collects canonical PHP link reference definition labels while excluding code, HTML blocks, and invalid definitions", () => {
+		expect(scanPhpCommonMarkReferenceLabels("plain text without definitions")).toEqual([]);
+		expect(
+			scanPhpCommonMarkReferenceLabels(
+				[
+					"[  X  ]: /x",
+					"[foo",
+					"bar]: /fb",
+					"[a\\]b]: /esc",
+					"[same-line-fail]: /u \"bad\" extra",
+					"",
+					"[two-line-ok]: /ok",
+					"\"bad\" extra",
+					"",
+					"```",
+					"[fenced]: /no",
+					"```",
+					"",
+					"<div>",
+					"[html]: /no",
+					"</div>",
+					"",
+					"> [quoted]: /q",
+					"",
+					"- [listed]: /l",
+					"",
+					"<!-- $-->$",
+					"[hidden-by-math-comment]: /no",
+				].join("\n"),
+			),
+		).toEqual(["X  ", "foo\nbar", "a\\]b", "two-line-ok", "quoted", "listed"]);
+
+		// Inline math inside a reference definition label becomes its PHP token, never matching literal `M_M`.
+		expect(scanPhpCommonMarkReferenceLabels("[$a$]: /x")).toEqual([
+			"EASYMDE_MATH_0_TOKEN",
+		]);
 	});
 });

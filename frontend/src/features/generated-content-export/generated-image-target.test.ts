@@ -1626,6 +1626,134 @@ describe("associateGeneratedImageTarget", () => {
 			});
 		}
 	});
+
+	it("hydrates Round 26 PHP parity cases for inline-math HTML tags, cross-cell table images, unresolved reference images, and escaped leading backtick runs", async () => {
+		// 1. Track B F2: `<div$a$>` and `</div$a$>` retain `/x.png`; `<span $a$="1">` hides it.
+		for (const [label, source, expectedDests] of [
+			["open tag with inline math", "<div$a$>\n![a](/x.png)\n[link](https://example.com)", ["/x.png"]],
+			["close tag with inline math", "</div$a$>\n![a](/x.png)\n[link](https://example.com)", ["/x.png"]],
+			["span attr with inline math is Type 7 HTML block", '<span $a$="1">\n![a](/x.png)', []],
+		] as const) {
+			const parsed = createEditorMarkdownBlockIndex(source);
+			const hydrated = await hydrateGeneratedImageTargetIndex({
+				...hydration,
+				blocks: parsed.blocks,
+				imageIndex: {
+					blocks: parsed.blocks,
+					imageBlocks: parsed.imageBlocks ?? [],
+					imageRanges: parsed.imageRanges ?? [],
+					length: parsed.length,
+					mathSpans: parsed.mathSpans,
+				},
+				revision: 55,
+				source,
+			});
+			expect(
+				hydrated.images.map((img) => img.destination),
+				label,
+			).toEqual(expectedDests);
+		}
+
+		// 2. Track B F3: all 3 cross-cell Lezer image reproducers recover `/y.png`.
+		for (const [label, source] of [
+			["title pipe cross-cell", '| h1 | h2 |\n| --- | --- | --- |\n| ![a](/x.png " | ![b](/y.png) ") |'],
+			["code-span pipe cross-cell", "| h1 | h2 |\n| --- | --- | --- |\n| ![a `| ![b](/y.png) `](/x.png) |"],
+			["HTML-attr pipe cross-cell", '| h1 | h2 |\n| --- | --- | --- |\n| ![a <span title="| ![b](/y.png) ">](/x.png) |'],
+		] as const) {
+			const parsed = createEditorMarkdownBlockIndex(source);
+			const hydrated = await hydrateGeneratedImageTargetIndex({
+				...hydration,
+				blocks: parsed.blocks,
+				imageIndex: {
+					blocks: parsed.blocks,
+					imageBlocks: parsed.imageBlocks ?? [],
+					imageRanges: parsed.imageRanges ?? [],
+					length: parsed.length,
+					mathSpans: parsed.mathSpans,
+				},
+				revision: 56,
+				source,
+			});
+			expect(hydrated.blockImages[0]?.status, `status:${label}`).toBe("ready");
+			expect(
+				hydrated.images.map((img) => ({ alt: img.alt, dest: img.destination })),
+				label,
+			).toEqual([{ alt: "b", dest: "/y.png" }]);
+		}
+
+		// 3. Track A #3: unresolved reference images hydrate `![ok](/i)` with `status: "ready"`, while defined refs stay `status: "unavailable"`.
+		for (const [label, source] of [
+			["unresolved shortcut ref in table", "| A |\n| --- |\n| ![x] ![ok](/i) |"],
+			["unresolved collapsed ref in table", "| A |\n| --- |\n| ![x][] ![ok](/i) |"],
+			["unresolved full ref in table", "| A |\n| --- |\n| ![alt][x] ![ok](/i) |"],
+			["fenced code refdef ignored", "| A |\n| --- |\n| ![x] ![ok](/i) |\n\n```\n[x]: /x\n```"],
+			["HTML block refdef ignored", "| A |\n| --- |\n| ![x] ![ok](/i) |\n\n<div>\n[x]: /x\n</div>"],
+		] as const) {
+			const parsed = createEditorMarkdownBlockIndex(source);
+			const hydrated = await hydrateGeneratedImageTargetIndex({
+				...hydration,
+				blocks: parsed.blocks,
+				imageIndex: {
+					blocks: parsed.blocks,
+					imageBlocks: parsed.imageBlocks ?? [],
+					imageRanges: parsed.imageRanges ?? [],
+					length: parsed.length,
+					mathSpans: parsed.mathSpans,
+				},
+				revision: 57,
+				source,
+			});
+			expect(hydrated.blockImages[0]?.status, `ready:${label}`).toBe("ready");
+			expect(
+				hydrated.images.map((img) => ({ alt: img.alt, dest: img.destination })),
+				label,
+			).toEqual([{ alt: "ok", dest: "/i" }]);
+		}
+
+		for (const [label, source] of [
+			["defined shortcut ref in table", "| A |\n| --- |\n| ![x] ![ok](/i) |\n\n[x]: /x"],
+			["defined collapsed ref with case/space fold", "| A |\n| --- |\n| ![x][] ![ok](/i) |\n\n[  X  ]: /x"],
+			["defined full ref with case/space fold", "| A |\n| --- |\n| ![alt][x] ![ok](/i) |\n\n[  X  ]: /x"],
+		] as const) {
+			const parsed = createEditorMarkdownBlockIndex(source);
+			const hydrated = await hydrateGeneratedImageTargetIndex({
+				...hydration,
+				blocks: parsed.blocks,
+				imageIndex: {
+					blocks: parsed.blocks,
+					imageBlocks: parsed.imageBlocks ?? [],
+					imageRanges: parsed.imageRanges ?? [],
+					length: parsed.length,
+					mathSpans: parsed.mathSpans,
+				},
+				revision: 58,
+				source,
+			});
+			expect(hydrated.blockImages[0]?.status, `unavail:${label}`).toBe("unavailable");
+			expect(hydrated.images, label).toEqual([]);
+		}
+
+		// 4. Track B F6b: escaped leading backtick run hydrates `/z.png`.
+		const escapedTickSrc = "![x \\`` `](y.png)`](/z.png)";
+		const escapedParsed = createEditorMarkdownBlockIndex(escapedTickSrc);
+		const escapedHydrated = await hydrateGeneratedImageTargetIndex({
+			...hydration,
+			blocks: escapedParsed.blocks,
+			imageIndex: {
+				blocks: escapedParsed.blocks,
+				imageBlocks: escapedParsed.imageBlocks ?? [],
+				imageRanges: escapedParsed.imageRanges ?? [],
+				length: escapedParsed.length,
+				mathSpans: escapedParsed.mathSpans,
+			},
+			revision: 59,
+			source: escapedTickSrc,
+		});
+		expect(escapedHydrated.blockImages[0]?.status).toBe("ready");
+		expect(escapedHydrated.images.map((img) => img.destination)).toEqual([
+			"/z.png",
+		]);
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

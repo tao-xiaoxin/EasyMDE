@@ -92,6 +92,7 @@ export type PhpCommonMarkBlockState = {
 	leaf: ActiveLeaf | null;
 	lines: MutableScannedMarkdownLine[];
 	nextInlineBlockId: number;
+	onReferenceLabel?: (rawLabel: string) => void;
 	recordBlockCodeRanges: boolean;
 	recordLines: boolean;
 };
@@ -145,6 +146,7 @@ function appendParagraphLine(
 export function createPhpCommonMarkBlockState(
 	recordLines = false,
 	recordBlockCodeRanges = recordLines,
+	onReferenceLabel?: (rawLabel: string) => void,
 ): PhpCommonMarkBlockState {
 	return {
 		blockCodeRanges: [],
@@ -152,6 +154,7 @@ export function createPhpCommonMarkBlockState(
 		leaf: null,
 		lines: [],
 		nextInlineBlockId: 0,
+		...(onReferenceLabel ? { onReferenceLabel } : {}),
 		recordBlockCodeRanges,
 		recordLines,
 	};
@@ -514,7 +517,7 @@ export function advancePhpCommonMarkBlockLine(
 						lastLineText: "",
 						paragraphLineCount: 0,
 						paragraphLineIndices: [],
-						refParser: createParagraphReferenceParser(),
+						refParser: createParagraphReferenceParser(state.onReferenceLabel),
 					};
 				}
 				const emittedIdx = emitLine(state.leaf.inlineBlockId);

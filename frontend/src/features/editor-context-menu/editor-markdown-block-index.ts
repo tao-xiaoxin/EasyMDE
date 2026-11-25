@@ -11,14 +11,21 @@ import type {
 import { markdownLineStarts } from "../../shared/markdown/markdown-line-model";
 import {
 	findLineAtOffset,
+	findLineIndexAtOffset,
 	inCodeRange,
 	isRangeDroppedByPhpTable,
+	type PhpMarkdownMathRange,
 	type ScannedCodeRange,
 	type ScannedMarkdownBlocks,
 	scanPhpCommonMarkBlocks,
+	scanPhpCommonMarkReferenceLabels,
+	unescapeTableCellPipes,
 } from "../../shared/markdown/php-commonmark-block-scan";
 import { scanPhpMarkdownMathRanges } from "../../shared/markdown/php-markdown-math-mask";
-import { collectUncoveredPhpTableImages } from "../image-scale/image-scale-syntax";
+import {
+	collectUncoveredPhpTableImages,
+	parseImageCore,
+} from "../image-scale/image-scale-syntax";
 import { lineIndexAtOffsets } from "./editor-markdown-lines";
 import {
 	linkCandidatesForBlocks,
@@ -38,6 +45,7 @@ import {
 	type NewlineProjection,
 	type SourceRange,
 } from "./editor-markdown-source-projection";
+import { normalizeMarkdownReferenceLabel } from "./reference-label-normalization";
 
 export type {
 	EditorMarkdownBlockKind,
@@ -54,6 +62,8 @@ export type EditorMarkdownBlockIndex = EditorMarkdownBlockIndexData &
 type ParserImageNode = Readonly<{
 	available: boolean;
 	from: number;
+	referenceLabelFrom?: number;
+	referenceLabelTo?: number;
 	to: number;
 }>;
 
@@ -122,6 +132,62 @@ function imageNodeIsInline(source: string, node: ImageSyntaxNode): boolean {
 		previousCloseBracketEnd = -1;
 	}
 	return false;
+}
+
+function extractReferenceImageLabelRange(
+	text: string,
+	node: ImageSyntaxNode,
+): SourceRange | null {
+	if (
+		node.from < 0 ||
+		node.to <= node.from ||
+		node.to > text.length ||
+		"!" !== text[node.from] ||
+		"[" !== text[node.from + 1]
+	) {
+		return null;
+	}
+	const first = node.firstChild;
+	const last = node.lastChild;
+	if (
+		!first ||
+		!last ||
+		"LinkMark" !== first.name ||
+		first.from !== node.from ||
+		first.to !== node.from + 2
+	) {
+		return null;
+	}
+	if ("LinkLabel" === last.name) {
+		if (
+			last.to !== node.to ||
+			"[" !== text[last.from] ||
+			"]" !== text[last.to - 1]
+		) {
+			return null;
+		}
+		if (last.to - last.from > 2) {
+			return { from: last.from + 1, to: last.to - 1 };
+		}
+		const closeBracket = last.prevSibling;
+		if (
+			"LinkMark" !== closeBracket?.name ||
+			closeBracket.to !== last.from ||
+			"]" !== text[closeBracket.from]
+		) {
+			return null;
+		}
+		return { from: first.to, to: closeBracket.from };
+	}
+	if (
+		"LinkMark" === last.name &&
+		last.from === node.to - 1 &&
+		last.to === node.to &&
+		"]" === text[last.from]
+	) {
+		return { from: first.to, to: last.from };
+	}
+	return null;
 }
 
 function lineContentEndAt(source: string, position: number): number {
@@ -217,9 +283,19 @@ function parserSnapshot(
 			"unavailable" === block.kind
 		)
 			return;
+		const available = imageNodeIsInline(projection.text, node.node);
+		const refRange = available
+			? null
+			: extractReferenceImageLabelRange(projection.text, node.node);
 		imageNodes.push({
-			available: imageNodeIsInline(projection.text, node.node),
+			available,
 			from: originalOffsetAt(projection, node.from),
+			...(refRange
+				? {
+						referenceLabelFrom: originalOffsetAt(projection, refRange.from),
+						referenceLabelTo: originalOffsetAt(projection, refRange.to),
+					}
+				: {}),
 			to: originalOffsetAt(projection, node.to),
 		});
 	});
@@ -231,12 +307,132 @@ function parserSnapshot(
 	};
 }
 
+function isImageNodeDroppedByPhp(
+	source: string,
+	phpBlockScan: ScannedMarkdownBlocks,
+	from: number,
+	to: number,
+): boolean {
+	return (
+		isRangeDroppedByPhpTable(source, phpBlockScan, from, to) ||
+		inCodeRange(phpBlockScan.blockCodeRanges, from, to) ||
+		(findLineAtOffset(phpBlockScan.lines, from)?.inlineBlockId ?? 0) < 0
+	);
+}
+
+function extractPhpReferenceImageLabelText(
+	source: string,
+	from: number,
+	to: number,
+	phpBlockScan: ScannedMarkdownBlocks | null,
+	getMultilineBlockScan: () => ScannedMarkdownBlocks,
+): string {
+	const raw = source.slice(from, to);
+	if (!raw.includes("\n") && !raw.includes("\r")) {
+		if (
+			phpBlockScan &&
+			raw.includes("\\|") &&
+			findLineAtOffset(phpBlockScan.lines, from)?.isTableRow
+		) {
+			return unescapeTableCellPipes(raw);
+		}
+		return raw;
+	}
+	const scan = phpBlockScan ?? getMultilineBlockScan();
+	const firstIdx = findLineIndexAtOffset(scan.lines, from);
+	const lastIdx = findLineIndexAtOffset(scan.lines, to);
+	const firstLine = firstIdx >= 0 ? scan.lines[firstIdx] : undefined;
+	if (!firstLine || lastIdx < firstIdx) return raw;
+	const parts: string[] = [source.slice(from, firstLine.lineEnd)];
+	for (let idx = firstIdx + 1; idx <= lastIdx; idx += 1) {
+		const line = scan.lines[idx];
+		if (!line) return raw;
+		const segEnd = idx === lastIdx ? to : line.lineEnd;
+		if (segEnd < line.contentOffset) return raw;
+		const prefix = line.virtualSpaces > 0 ? " ".repeat(line.virtualSpaces) : "";
+		parts.push(`${prefix}${source.slice(line.contentOffset, segEnd)}`);
+	}
+	return parts.join("\n");
+}
+
+function createUnresolvedReferenceImageChecker(
+	source: string,
+	phpMathRanges: ReadonlyArray<PhpMarkdownMathRange>,
+	phpBlockScan: ScannedMarkdownBlocks | null,
+	profile: ReferenceLabelCaseFoldProfile,
+): (node: ParserImageNode) => boolean {
+	let rawLabels: ReadonlyArray<string> | null = null;
+	let normalizedLabels: Set<string> | null = null;
+	let foldUnavailable = false;
+	let lazyMultilineScan: ScannedMarkdownBlocks | null = null;
+	const getMultilineBlockScan = (): ScannedMarkdownBlocks => {
+		if (null === lazyMultilineScan) {
+			lazyMultilineScan = scanPhpCommonMarkBlocks(source, phpMathRanges);
+		}
+		return lazyMultilineScan;
+	};
+	const isPhpReferenceLabelDefined = (rawLabel: string): boolean => {
+		if (null === rawLabels) {
+			rawLabels = scanPhpCommonMarkReferenceLabels(source, phpMathRanges);
+		}
+		if (0 === rawLabels.length) return false;
+		if (foldUnavailable) return true;
+		try {
+			if (null === normalizedLabels) {
+				const collected = new Set<string>();
+				for (let i = 0; i < rawLabels.length; i += 1) {
+					const label = rawLabels[i];
+					if (undefined !== label) {
+						collected.add(normalizeMarkdownReferenceLabel(label, profile));
+					}
+				}
+				normalizedLabels = collected;
+			}
+			const key = normalizeMarkdownReferenceLabel(rawLabel, profile);
+			return key.length > 0 && normalizedLabels.has(key);
+		} catch (error) {
+			if (
+				error instanceof Error &&
+				"visual-editor-reference-label-fold-profile-unavailable" ===
+					error.message
+			) {
+				foldUnavailable = true;
+				return true;
+			}
+			throw error;
+		}
+	};
+	return (node: ParserImageNode): boolean => {
+		if (
+			undefined === node.referenceLabelFrom ||
+			undefined === node.referenceLabelTo
+		) {
+			return false;
+		}
+		if (
+			"(" === source[node.to] &&
+			null !== parseImageCore(source, node.from, phpBlockScan ?? undefined)
+		) {
+			return false;
+		}
+		const rawLabel = extractPhpReferenceImageLabelText(
+			source,
+			node.referenceLabelFrom,
+			node.referenceLabelTo,
+			phpBlockScan,
+			getMultilineBlockScan,
+		);
+		return !isPhpReferenceLabelDefined(rawLabel);
+	};
+}
+
 function imageIndexForBlocks(
 	source: string,
 	blocks: ReadonlyArray<EditorMarkdownSourceBlock>,
 	nodes: ReadonlyArray<ParserImageNode>,
 	mathRanges: ReadonlyArray<SourceRange>,
 	phpBlockScan: ScannedMarkdownBlocks | null,
+	isUnresolvedReferenceImage: (node: ParserImageNode) => boolean,
 ): Readonly<{
 	imageBlocks: ReadonlyArray<EditorMarkdownImageBlock>;
 	imageRanges: ReadonlyArray<EditorMarkdownImageRange>;
@@ -258,10 +454,7 @@ function imageIndexForBlocks(
 			if ("code" === block.kind) continue;
 			if (
 				phpBlockScan &&
-				(isRangeDroppedByPhpTable(source, phpBlockScan, node.from, node.to) ||
-					inCodeRange(phpBlockScan.blockCodeRanges, node.from, node.to) ||
-					(findLineAtOffset(phpBlockScan.lines, node.from)?.inlineBlockId ??
-						0) < 0)
+				isImageNodeDroppedByPhp(source, phpBlockScan, node.from, node.to)
 			) {
 				continue;
 			}
@@ -271,9 +464,7 @@ function imageIndexForBlocks(
 			)
 				mathIndex += 1;
 			const math = mathRanges[mathIndex];
-			if (math && node.from < math.to && node.to > math.from) {
-				if (node.from >= math.from && node.to <= math.to) continue;
-				unavailable = true;
+			if (math && node.from >= math.from && node.to <= math.to) {
 				continue;
 			}
 			if (node.from < block.from || node.to > block.to) {
@@ -281,6 +472,11 @@ function imageIndexForBlocks(
 				continue;
 			}
 			if (!node.available) {
+				if (isUnresolvedReferenceImage(node)) continue;
+				unavailable = true;
+				continue;
+			}
+			if (math && node.from < math.to && node.to > math.from) {
 				unavailable = true;
 				continue;
 			}
@@ -373,7 +569,10 @@ export function createEditorMarkdownBlockIndex(
 		(left, right) => left.from - right.from || right.to - left.to,
 	);
 	const availableLezerImages = sortedLezerImages.filter(
-		(node) => node.available,
+		(node) =>
+			node.available &&
+			(!phpBlockScan ||
+				!isImageNodeDroppedByPhp(source, phpBlockScan, node.from, node.to)),
 	);
 	const recoveredTableImages =
 		phpBlockScan && hasTableImageCandidate
@@ -397,12 +596,19 @@ export function createEditorMarkdownBlockIndex(
 					...recoveredTableImages,
 				]
 			: sortedLezerImages;
+	const isUnresolvedReferenceImage = createUnresolvedReferenceImageChecker(
+		source,
+		phpMathRanges,
+		phpBlockScan,
+		options.referenceLabelCaseFoldProfile,
+	);
 	const images = imageIndexForBlocks(
 		source,
 		blocks,
 		allImageNodes,
 		ranges,
 		phpBlockScan,
+		isUnresolvedReferenceImage,
 	);
 	return {
 		blocks,

@@ -4,11 +4,11 @@ import type {
 	EditorMarkdownSourceBlock,
 } from "../../contracts/ports/editor-block-index-port";
 import {
-	collectTableRowCells,
 	findLineAtOffset,
+	findTableRowCellInCells,
+	getCachedPhpTableRowCells,
 	inCodeRange,
 	type ScannedMarkdownBlocks,
-	type TableRowCellRange,
 } from "../../shared/markdown/php-commonmark-block-scan";
 import { collectPhpTableCellImageRanges } from "../image-scale/image-scale-syntax";
 import {
@@ -390,27 +390,6 @@ export function renderedReferenceLinkBodies(
 
 const EMPTY_SOURCE_RANGES: ReadonlyArray<SourceRange> = [];
 
-function findCachedTableRowCellAt(
-	cells: ReadonlyArray<TableRowCellRange>,
-	offset: number,
-): TableRowCellRange | null {
-	let low = 0;
-	let high = cells.length - 1;
-	while (low <= high) {
-		const middle = Math.floor((low + high) / 2);
-		const cell = cells[middle];
-		if (!cell) return null;
-		if (offset < cell.start) {
-			high = middle - 1;
-		} else if (offset >= cell.end) {
-			low = middle + 1;
-		} else {
-			return cell;
-		}
-	}
-	return null;
-}
-
 function offsetInsideSortedRanges(
 	ranges: ReadonlyArray<SourceRange>,
 	offset: number,
@@ -446,7 +425,6 @@ function isRangeExcludedByPhpTable(
 	phpBlockScan: ScannedMarkdownBlocks,
 	range: SourceRange,
 	sourceMaySplitTableImage: boolean,
-	rowCellsCache: Map<number, ReadonlyArray<TableRowCellRange>>,
 	cellImageRangesCache: Map<string, ReadonlyArray<SourceRange>>,
 ): boolean {
 	const startLine = findLineAtOffset(phpBlockScan.lines, range.from);
@@ -459,17 +437,8 @@ function isRangeExcludedByPhpTable(
 		}
 		return false;
 	}
-	let cells = rowCellsCache.get(startLine.lineStart);
-	if (undefined === cells) {
-		cells = collectTableRowCells(
-			phpBlockScan.tableCellSource ?? source,
-			startLine.contentOffset,
-			startLine.lineEnd,
-			startLine.tableColumnCount,
-		);
-		rowCellsCache.set(startLine.lineStart, cells);
-	}
-	const cell = findCachedTableRowCellAt(cells, range.from);
+	const cells = getCachedPhpTableRowCells(source, phpBlockScan, startLine);
+	const cell = findTableRowCellInCells(cells, range.from);
 	if (null === cell || range.to > cell.end) return true;
 	if (!sourceMaySplitTableImage) return false;
 
@@ -510,7 +479,6 @@ export function linkCandidatesForBlocks(
 				source.includes("$") ||
 				source.includes("\\(")),
 	);
-	const rowCellsCache = new Map<number, ReadonlyArray<TableRowCellRange>>();
 	const cellImageRangesCache = new Map<string, ReadonlyArray<SourceRange>>();
 	let blockIndex = 0;
 	let mathIndex = 0;
@@ -542,7 +510,6 @@ export function linkCandidatesForBlocks(
 					phpBlockScan,
 					range,
 					sourceMaySplitTableImage,
-					rowCellsCache,
 					cellImageRangesCache,
 				))
 		) {

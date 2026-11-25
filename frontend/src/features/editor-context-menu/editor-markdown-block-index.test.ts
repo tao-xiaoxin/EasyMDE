@@ -1775,6 +1775,109 @@ describe("readEditorCodeContent", () => {
 		expect(unclosedIdx.imageRanges).toEqual([]);
 		expect(elapsedUnclosed).toBeLessThan(500);
 	});
+
+	it("matches PHP on inline-math HTML tag masks, cross-cell Lezer table images, unresolved reference images, and escaped leading backtick runs (Round 26)", () => {
+		// 1. Track B F2: `<div$a$>` and `</div$a$>` retain both image and link; `<span $a$="1">` is a Type 7 HTML block.
+		for (const [label, source] of [
+			["open tag with inline math", "<div$a$>\n![a](/x.png)\n[link](https://example.com)"],
+			["close tag with inline math", "</div$a$>\n![a](/x.png)\n[link](https://example.com)"],
+		] as const) {
+			const idx = createEditorMarkdownBlockIndex(source);
+			expect(
+				(idx.imageRanges ?? []).map((r) => source.slice(r.from, r.to)),
+				`img:${label}`,
+			).toEqual(["![a](/x.png)"]);
+			expect(
+				(idx.linkCandidates ?? []).map((r) => source.slice(r.from, r.to)),
+				`link:${label}`,
+			).toEqual(["[link](https://example.com)"]);
+		}
+		const spanAttr = '<span $a$="1">\n![a](/x.png)';
+		expect(createEditorMarkdownBlockIndex(spanAttr).imageRanges).toEqual([]);
+		const declMath = "<!$a$>\n![a](/x.png)";
+		expect(
+			(createEditorMarkdownBlockIndex(declMath).imageRanges ?? []).map((r) =>
+				declMath.slice(r.from, r.to),
+			),
+		).toEqual(["![a](/x.png)"]);
+
+		// 2. Track B F3: cross-cell Lezer images filtered before `coveredRanges` so `/y.png` is recovered.
+		for (const [label, source] of [
+			["title pipe cross-cell", '| h1 | h2 |\n| --- | --- | --- |\n| ![a](/x.png " | ![b](/y.png) ") |'],
+			["code-span pipe cross-cell", "| h1 | h2 |\n| --- | --- | --- |\n| ![a `| ![b](/y.png) `](/x.png) |"],
+			["HTML-attr pipe cross-cell", '| h1 | h2 |\n| --- | --- | --- |\n| ![a <span title="| ![b](/y.png) ">](/x.png) |'],
+		] as const) {
+			const idx = createEditorMarkdownBlockIndex(source);
+			expect(idx.imageBlocks?.[0]?.status, `status:${label}`).toBe("ready");
+			expect(
+				(idx.imageRanges ?? []).map((r) => source.slice(r.from, r.to)),
+				`img:${label}`,
+			).toEqual(["![b](/y.png)"]);
+		}
+
+		// 3. Track A #3: unresolved reference-image syntax stays literal text (`status: "ready"`), while real PHP reference definitions stay `status: "unavailable"`.
+		for (const [label, source] of [
+			["unresolved shortcut ref in table", "| A |\n| --- |\n| ![x] ![ok](/i) |"],
+			["unresolved collapsed ref in table", "| A |\n| --- |\n| ![x][] ![ok](/i) |"],
+			["unresolved full ref in table", "| A |\n| --- |\n| ![alt][x] ![ok](/i) |"],
+			["fenced code refdef does not resolve ![x]", "| A |\n| --- |\n| ![x] ![ok](/i) |\n\n```\n[x]: /x\n```"],
+			["HTML block refdef does not resolve ![x]", "| A |\n| --- |\n| ![x] ![ok](/i) |\n\n<div>\n[x]: /x\n</div>"],
+			["math-mask literal M_M does not collide with [$a$]: /x", "![M_M] ![ok](/i)\n\n[$a$]: /x"],
+			["failed same-line title refdef does not resolve ![x]", '![x] ![ok](/i)\n\n[x]: /x "bad" extra'],
+			["space-only second bracket does not fall back to shortcut [x]", "![x][ ] ![ok](/i)\n\n[x]: /x"],
+		] as const) {
+			const idx = createEditorMarkdownBlockIndex(source);
+			expect(idx.imageBlocks?.[0], `ready:${label}`).toEqual({
+				count: 1,
+				firstImageIndex: 0,
+				status: "ready",
+			});
+			expect(
+				(idx.imageRanges ?? []).map((r) => source.slice(r.from, r.to)),
+				`slice:${label}`,
+			).toEqual(["![ok](/i)"]);
+		}
+
+		for (const [label, source] of [
+			["defined shortcut ref in table", "| A |\n| --- |\n| ![x] ![ok](/i) |\n\n[x]: /x"],
+			["defined collapsed ref with whitespace/case fold", "| A |\n| --- |\n| ![x][] ![ok](/i) |\n\n[  X  ]: /x"],
+			["defined full ref with whitespace/case fold", "| A |\n| --- |\n| ![alt][x] ![ok](/i) |\n\n[  X  ]: /x"],
+			["multiline refdef resolves shortcut", "![foo bar] ![ok](/i)\n\n[foo\nbar]: /x"],
+			["blockquote multiline ref resolves", "> ![foo\n> bar] ![ok](/i)\n\n[foo bar]: /x"],
+			["table escaped pipe ref resolves against unescaped def", "| A |\n| --- |\n| ![a\\|b] ![ok](/i) |\n\n[a|b]: /x"],
+			["2-line title failure still keeps valid line-1 refdef", '![x] ![ok](/i)\n\n[x]: /x\n"bad" extra'],
+			["Unicode case-fold refdef resolves shortcut", "![Stra\u00dfe] ![ok](/i)\n\n[STRASSE]: /x"],
+		] as const) {
+			const idx = createEditorMarkdownBlockIndex(source);
+			expect(idx.imageBlocks?.[0], `unavailable:${label}`).toEqual({
+				count: 0,
+				firstImageIndex: 0,
+				status: "unavailable",
+			});
+			expect(idx.imageRanges, `empty:${label}`).toEqual([]);
+		}
+
+		// Unsupported Unicode case-fold profile: no refdefs stays ready; with refdefs + non-ASCII fails closed without throwing.
+		const unsupportedOpts = { referenceLabelCaseFoldProfile: "unsupported" as const };
+		expect(
+			createEditorMarkdownBlockIndex("![Stra\u00dfe] ![ok](/i)", unsupportedOpts)
+				.imageBlocks?.[0]?.status,
+		).toBe("ready");
+		expect(
+			createEditorMarkdownBlockIndex(
+				"![Stra\u00dfe] ![ok](/i)\n\n[STRASSE]: /x",
+				unsupportedOpts,
+			).imageBlocks?.[0]?.status,
+		).toBe("unavailable");
+
+		// 4. Track B F6b: escaped leading backtick runs preserve full image range in block index.
+		const escapedTickSrc = "![x \\`` `](y.png)`](/z.png)";
+		const escapedTickIdx = createEditorMarkdownBlockIndex(escapedTickSrc);
+		expect(escapedTickIdx.imageBlocks?.[0]?.status).toBe("ready");
+		expect(
+			(escapedTickIdx.imageRanges ?? []).map((r) => escapedTickSrc.slice(r.from, r.to)),
+		).toEqual([escapedTickSrc]);
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

@@ -430,6 +430,19 @@ function deactivateInnerLinks(stack: InnerBracketOpener[]): void {
   }
 }
 
+function advanceEscapedInlineChar(source: string, pos: number, limit: number): number {
+  if (pos + 1 < limit && COMMONMARK_ESCAPABLE_PUNCTUATION.test(source[pos + 1] ?? '')) {
+    let next = pos + 2;
+    if ('`' === source[pos + 1]) {
+      // Mirror PHP InlineParserEngine: after EscapableParser consumes `\``,
+      // all remaining immediately contiguous backticks in that run stay plain text.
+      while (next < limit && '`' === source[next]) next += 1;
+    }
+    return next;
+  }
+  return pos + 1;
+}
+
 /**
  * CommonMark §6.4 / §6.1 single-line image alt-label end finder respecting
  * backslash escapes, exact-length backtick code spans, and balanced `[...]`.
@@ -451,11 +464,7 @@ function findSingleLineImageLabelEnd(
     const ch = source[pos];
     if (isLineBreak(ch)) return { status: 'needs-multiline' };
     if ('\\' === ch) {
-      if (pos + 1 < len && COMMONMARK_ESCAPABLE_PUNCTUATION.test(source[pos + 1] ?? '')) {
-        pos += 2;
-      } else {
-        pos += 1;
-      }
+      pos = advanceEscapedInlineChar(source, pos, len);
       continue;
     }
     if ('`' === ch) {
@@ -570,14 +579,7 @@ function findBlockImageLabelEnd(
     }
     const ch = source[pos];
     if ('\\' === ch) {
-      if (
-        pos + 1 < seg.lineEnd
-        && COMMONMARK_ESCAPABLE_PUNCTUATION.test(source[pos + 1] ?? '')
-      ) {
-        pos += 2;
-      } else {
-        pos += 1;
-      }
+      pos = advanceEscapedInlineChar(source, pos, seg.lineEnd);
       continue;
     }
     if ('`' === ch) {
@@ -741,14 +743,7 @@ function scanInlineScopeImages(
 
     const ch = source[pos];
     if ('\\' === ch) {
-      if (
-        pos + 1 < seg.lineEnd
-        && COMMONMARK_ESCAPABLE_PUNCTUATION.test(source[pos + 1] ?? '')
-      ) {
-        pos += 2;
-      } else {
-        pos += 1;
-      }
+      pos = advanceEscapedInlineChar(source, pos, seg.lineEnd);
       continue;
     }
     if ('`' === ch) {

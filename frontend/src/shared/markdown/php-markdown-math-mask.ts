@@ -14,9 +14,12 @@ import {
  * - Display math becomes `"\n\n" . $token . "\n\n"`, isolating adjacent blocks
  *   and tables in O(1) lines (`"\n\n" + "M".repeat(len - 4) + "\n\n"`).
  * - Inline math becomes single-line `$token` with zero `|` or newline
- *   delimiters (`"M".repeat(len)`), preserving exact UTF-16 offsets (including
- *   surrogate pairs) so pipes or line breaks inside `$a|b$` / `\(x\ny\)` never
- *   split table cells, close tables, or distort `headerColumnCount`.
+ *   delimiters (`M${"_".repeat(len - 2)}M`, mirroring PHP
+ *   `EASYMDE_MATH_0_TOKEN` whose `_` is illegal in CommonMark HTML tag names
+ *   while legal in HTML attribute names and starting with an ASCII letter for
+ *   Type 4 declarations), preserving exact UTF-16 offsets (including surrogate
+ *   pairs) so pipes or line breaks inside `$a|b$` / `\(x\ny\)` never split
+ *   table cells, close tables, or distort `headerColumnCount`.
  */
 
 export type PhpMarkdownMathRange = Readonly<{
@@ -48,7 +51,7 @@ function maskDisplayMathLength(length: number): string {
 }
 
 function maskInlineMathLength(length: number): string {
-	return "M".repeat(length);
+	return length >= 3 ? `M${"_".repeat(length - 2)}M` : "M".repeat(length);
 }
 
 function collectBacktickRuns(

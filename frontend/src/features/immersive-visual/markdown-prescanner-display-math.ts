@@ -4,7 +4,6 @@ import {
 } from "../../shared/markdown/php-commonmark-block-helpers";
 import {
 	advanceParagraphReferenceParser,
-	cloneParagraphReferenceParser,
 	createParagraphReferenceParser,
 	type ParagraphReferenceParser,
 } from "../../shared/markdown/php-commonmark-reference-def";
@@ -20,17 +19,22 @@ import {
 } from "./markdown-prescanner-blocks";
 import type { ProtectedInlineEntry } from "./markdown-prescanner-inline";
 import {
-	findFirstDisplayMathInLines,
 	findFirstDisplayMathInOffsetSlice,
 	findLineIndexForOffset,
 	findLogicalLineEnd,
 	firstMathRangeEndingAfter,
 	type GfmTableMatch,
 	maskedSliceForLines,
-	opensNonParagraphBlock,
 	type PhpDocumentMathIndex,
 } from "./markdown-prescanner-tables";
 import type { ProtectedBlockKind } from "./visual-schema";
+
+export {
+	buildInlineMaskedDisplayMathLine,
+	continuesInlineMaskedRefDefAtLine,
+	continuesValidReferenceDefinition,
+	startsValidReferenceDefinition,
+} from "./markdown-prescanner-refdef";
 
 /**
  * Feature-private display-math HTML/block matching, intermediate Type 1–5
@@ -674,243 +678,4 @@ export function emitUnclosedIntermediateHtmlBlock(
 	const htmlEndOffset = mathIndex.lineEnds[lastLine] ?? curEndOffset;
 	emitRawBlock(htmlEndOffset);
 	return { afterStartOffset: htmlEndOffset, kind: "done", spanEndLine: lastLine };
-}
-
-function readRefParserState(
-	parser: ParagraphReferenceParser,
-): ParagraphReferenceParser["state"] {
-	return parser.state;
-}
-
-/**
- * Replaces contained single-line display-math spans (`range.block`) in
- * `[lineStartOffset, lineEndOffset)` with non-whitespace `"M"` on top of
- * `mathIndex.maskedDoc`, mirroring what `extractInlineProtectedSyntax` emits
- * if a single-line display-math line is left unsplit.
- */
-export function buildInlineMaskedDisplayMathLine(
-	mathIndex: PhpDocumentMathIndex,
-	lineStartOffset: number,
-	lineEndOffset: number,
-): string {
-	let result = "";
-	let cursor = lineStartOffset;
-	for (
-		let idx = firstMathRangeEndingAfter(mathIndex.ranges, lineStartOffset);
-		idx < mathIndex.ranges.length;
-		idx += 1
-	) {
-		const range = mathIndex.ranges[idx];
-		if (!range || range.from >= lineEndOffset) break;
-		if (!range.block || range.from < cursor || range.to > lineEndOffset) {
-			continue;
-		}
-		if (range.from > cursor) {
-			result += mathIndex.maskedDoc.slice(cursor, range.from);
-		}
-		result += "M";
-		cursor = range.to;
-	}
-	if (cursor < lineEndOffset) {
-		result += mathIndex.maskedDoc.slice(cursor, lineEndOffset);
-	}
-	return result;
-}
-
-/**
- * Memoizes the outcome of continuing an open §4.7 title from line `k`. In the
- * `"title"` state the outcome depends only on the start line, the title
- * delimiter, and the masking mode, so repeated probes from successive lines of
- * one long unclosed title (`[r]: /u\n"a $$x$$\na $$x$$\n...`) stay amortized
- * O(N) instead of rescanning to EOF from every display-math line.
- */
-const titleContinuationMemo = new WeakMap<
-	PhpDocumentMathIndex,
-	WeakMap<ReadonlyArray<string>, Map<string, boolean>>
->();
-
-function getTitleContinuationMemo(
-	mathIndex: PhpDocumentMathIndex,
-	lines: ReadonlyArray<string>,
-): Map<string, boolean> {
-	let byLines = titleContinuationMemo.get(mathIndex);
-	if (!byLines) {
-		byLines = new WeakMap();
-		titleContinuationMemo.set(mathIndex, byLines);
-	}
-	let memo = byLines.get(lines);
-	if (!memo) {
-		memo = new Map();
-		byLines.set(lines, memo);
-	}
-	return memo;
-}
-
-function scanRefDefContinuation(
-	refParser: ParagraphReferenceParser,
-	lines: ReadonlyArray<string>,
-	mathIndex: PhpDocumentMathIndex,
-	nextLineIndex: number,
-	maskInlineDisplayMath: boolean,
-): boolean {
-	const memo = getTitleContinuationMemo(mathIndex, lines);
-	const visited: string[] = [];
-	const result = scanRefDefContinuationLines(
-		refParser,
-		lines,
-		mathIndex,
-		nextLineIndex,
-		maskInlineDisplayMath,
-		memo,
-		visited,
-	);
-	for (const key of visited) {
-		memo.set(key, result);
-	}
-	return result;
-}
-
-function scanRefDefContinuationLines(
-	refParser: ParagraphReferenceParser,
-	lines: ReadonlyArray<string>,
-	mathIndex: PhpDocumentMathIndex,
-	nextLineIndex: number,
-	maskInlineDisplayMath: boolean,
-	memo: Map<string, boolean>,
-	visited: string[],
-): boolean {
-	let k = nextLineIndex;
-	while (k < lines.length && readRefParserState(refParser) !== "paragraph") {
-		if (
-			readRefParserState(refParser) === "label" &&
-			refParser.labelCodePoints > 999
-		) {
-			return false;
-		}
-		if (readRefParserState(refParser) === "title") {
-			const memoKey = `${maskInlineDisplayMath ? "m" : "u"}${refParser.titleDelimiter ?? ""}${k}`;
-			const cached = memo.get(memoKey);
-			if (cached !== undefined) {
-				return cached;
-			}
-			visited.push(memoKey);
-		}
-		const kEnd = findLogicalLineEnd(mathIndex, k);
-		const firstDisp = findFirstDisplayMathInLines(mathIndex, k, kEnd);
-		if (firstDisp !== null) {
-			const kStart = mathIndex.lineStarts[k] ?? 0;
-			const kEndOffset = mathIndex.lineEnds[kEnd] ?? kStart;
-			if (maskInlineDisplayMath && firstDisp.to <= kEndOffset) {
-				const inlineMasked = buildInlineMaskedDisplayMathLine(
-					mathIndex,
-					kStart,
-					kEndOffset,
-				);
-				if (
-					isCommonMarkBlankLine(inlineMasked) ||
-					opensNonParagraphBlock(inlineMasked, 0, true)
-				) {
-					return false;
-				}
-				if (advanceParagraphReferenceParser(refParser, inlineMasked)) {
-					return true;
-				}
-				k = kEnd + 1;
-				continue;
-			}
-			if (firstDisp.from <= kStart) {
-				return false;
-			}
-			const maskedBefore = mathIndex.maskedDoc.slice(kStart, firstDisp.from);
-			if (
-				isCommonMarkBlankLine(maskedBefore) ||
-				opensNonParagraphBlock(maskedBefore, 0, true)
-			) {
-				return false;
-			}
-			return advanceParagraphReferenceParser(refParser, maskedBefore);
-		}
-		const maskedContinuation = maskedSliceForLines(mathIndex, lines, k, kEnd);
-		if (
-			isCommonMarkBlankLine(maskedContinuation) ||
-			opensNonParagraphBlock(maskedContinuation, 0, true)
-		) {
-			return false;
-		}
-		if (advanceParagraphReferenceParser(refParser, maskedContinuation)) {
-			return true;
-		}
-		k = kEnd + 1;
-	}
-	return false;
-}
-
-export function startsValidReferenceDefinition(
-	maskedLine: string,
-	lines?: ReadonlyArray<string>,
-	mathIndex?: PhpDocumentMathIndex,
-	nextLineIndex = -1,
-	startColumn = 0,
-	maskInlineDisplayMath = false,
-): boolean {
-	if (
-		!maskedLine.includes("[") ||
-		measureIndentColumns(maskedLine, startColumn) >= 4
-	) {
-		return false;
-	}
-	const refParser = createParagraphReferenceParser();
-	if (advanceParagraphReferenceParser(refParser, maskedLine)) {
-		return true;
-	}
-	if (
-		lines === undefined ||
-		mathIndex === undefined ||
-		nextLineIndex < 0 ||
-		readRefParserState(refParser) === "paragraph"
-	) {
-		return false;
-	}
-	return scanRefDefContinuation(
-		refParser,
-		lines,
-		mathIndex,
-		nextLineIndex,
-		maskInlineDisplayMath,
-	);
-}
-
-export function continuesValidReferenceDefinition(
-	activeRefParser: ParagraphReferenceParser | null,
-	maskedLine: string,
-	lines?: ReadonlyArray<string>,
-	mathIndex?: PhpDocumentMathIndex,
-	nextLineIndex = -1,
-	maskInlineDisplayMath = false,
-): boolean {
-	if (activeRefParser === null || activeRefParser.state === "paragraph") {
-		return false;
-	}
-	if (opensNonParagraphBlock(maskedLine, 0, true)) {
-		return false;
-	}
-	const probe = cloneParagraphReferenceParser(activeRefParser);
-	if (advanceParagraphReferenceParser(probe, maskedLine)) {
-		return true;
-	}
-	if (
-		lines === undefined ||
-		mathIndex === undefined ||
-		nextLineIndex < 0 ||
-		readRefParserState(probe) === "paragraph"
-	) {
-		return false;
-	}
-	return scanRefDefContinuation(
-		probe,
-		lines,
-		mathIndex,
-		nextLineIndex,
-		maskInlineDisplayMath,
-	);
 }

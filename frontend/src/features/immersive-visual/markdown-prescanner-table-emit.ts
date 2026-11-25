@@ -15,6 +15,7 @@ import {
 import {
 	type BeforeHtmlContext,
 	buildInlineMaskedDisplayMathLine,
+	continuesInlineMaskedRefDefAtLine,
 	continuesValidReferenceDefinition,
 	type DisplayMathEmitEnv,
 	emitUnclosedIntermediateHtmlBlock,
@@ -470,6 +471,13 @@ export function emitDisplayMathHeaderLine(
 	beforeHtmlContext: BeforeHtmlContext,
 ): DisplayMathSplitResult | null {
 	const { lines, mathIndex } = env;
+	if (
+		!mathIndex.hasMultilineInlineMath &&
+		!mathIndex.hasMultilineDisplayMath &&
+		!(lines[lineIndex + 1] ?? "").includes("-")
+	) {
+		return null;
+	}
 	const lineStartOffset = mathIndex.lineStarts[lineIndex] ?? 0;
 	let spanEndLine = findLogicalLineEnd(mathIndex, lineIndex);
 	const firstDisplay = findFirstDisplayMathInLines(
@@ -870,18 +878,11 @@ export function emitDisplayMathLogicalLine(
 					beforeHtmlContext.activeRefParser !== null &&
 					beforeHtmlContext.activeRefParser.state !== "paragraph"
 				) {
-					const inlineMasked = buildInlineMaskedDisplayMathLine(
-						mathIndex,
-						lineStartOffset,
-						lineEndOffset,
-					);
-					inlineMaskedRefDef = continuesValidReferenceDefinition(
+					inlineMaskedRefDef = continuesInlineMaskedRefDefAtLine(
 						beforeHtmlContext.activeRefParser,
-						inlineMasked,
 						lines,
 						mathIndex,
-						nextLineIndex,
-						true,
+						lineIndex,
 					);
 				}
 			} else if (

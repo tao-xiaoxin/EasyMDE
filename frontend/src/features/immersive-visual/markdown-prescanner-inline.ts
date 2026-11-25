@@ -478,16 +478,6 @@ export function extractInlineProtectedSyntax(
 	) {
 		return line;
 	}
-	const scanLine = resolveInlineScanLine(line, resolvedMathRanges, maskedLine);
-	let result = "";
-	let index = 0;
-	const length = line.length;
-	let pairedTagCloseMaps: Map<string, Map<number, number>> | null = null;
-	let htmlScanState: InlineHtmlScanState | null = null;
-	let linkTailScanState: LinkTailScanState | null = null;
-	let noRefDestCloseAngle = false;
-	let mathCursor = 0;
-
 	const allocateToken = (
 		kind: ProtectedInlineKind,
 		rawMarkdown: string,
@@ -502,6 +492,33 @@ export function extractInlineProtectedSyntax(
 		);
 		return token;
 	};
+	if (
+		resolvedMathRanges.length > 0 &&
+		!line.includes("<") &&
+		!line.includes("[^") &&
+		!line.includes("`") &&
+		!line.includes("]")
+	) {
+		let fastResult = "";
+		let cursor = 0;
+		for (let i = 0; i < resolvedMathRanges.length; i += 1) {
+			const range = resolvedMathRanges[i];
+			if (!range || range.to <= cursor || range.from < cursor) continue;
+			if (range.from > cursor) fastResult += line.slice(cursor, range.from);
+			fastResult += allocateToken("math-inline", line.slice(range.from, range.to));
+			cursor = range.to;
+		}
+		return cursor < line.length ? fastResult + line.slice(cursor) : fastResult;
+	}
+	const scanLine = resolveInlineScanLine(line, resolvedMathRanges, maskedLine);
+	let result = "";
+	let index = 0;
+	const length = line.length;
+	let pairedTagCloseMaps: Map<string, Map<number, number>> | null = null;
+	let htmlScanState: InlineHtmlScanState | null = null;
+	let linkTailScanState: LinkTailScanState | null = null;
+	let noRefDestCloseAngle = false;
+	let mathCursor = 0;
 
 	while (index < length) {
 		if (resolvedMathRanges.length > 0) {

@@ -91,6 +91,7 @@ export type PreScanResult = Readonly<{
 	lineEnding: "\n" | "\r\n";
 	markdown: string;
 	outputLineRanges: ReadonlyArray<PrescannedLineRange | null>;
+	outputLineSharedRanges: ReadonlyArray<PrescannedLineRange | null>;
 	outputLines: ReadonlyArray<string>;
 	protectedBlocks: ReadonlyMap<string, ProtectedBlockEntry>;
 	protectedInlines: ReadonlyMap<string, ProtectedInlineEntry>;
@@ -146,6 +147,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 	const lines = normalized.split("\n");
 	const outputLines: string[] = [];
 	const outputLineRanges: Array<PrescannedLineRange | null> = [];
+	const outputLineSharedRanges: Array<PrescannedLineRange | null> = [];
 	const protectedBlocks = new Map<string, ProtectedBlockEntry>();
 	const protectedInlines = new Map<string, ProtectedInlineEntry>();
 	const tableAlignMarkers = new Map<string, string>();
@@ -156,6 +158,24 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 	): void => {
 		outputLines.push(text);
 		outputLineRanges.push(range);
+		outputLineSharedRanges.push(null);
+	};
+
+	const markSharedOutputSpan = (
+		outStart: number,
+		rawStart: number,
+		rawEnd: number,
+	): void => {
+		if (rawEnd <= rawStart) return;
+		const span: PrescannedLineRange = { end: rawEnd, start: rawStart };
+		for (let idx = outStart; idx < outputLines.length; idx += 1) {
+			if (
+				outputLineRanges[idx] === null &&
+				!isCommonMarkBlankLine(outputLines[idx] ?? "")
+			) {
+				outputLineSharedRanges[idx] = span;
+			}
+		}
 	};
 
 	const addProtectedBlock = (
@@ -348,21 +368,22 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		onComplete: () => void,
 	): void => {
 		if (htmlScan.kind === "break") {
+			const splitOutStart = outputLines.length;
 			pushOutputLine(
 				`${linePrefix}${addProtectedBlock("raw", htmlScan.rawHtml)}`,
 				null,
 			);
-			applyDisplayMathSplitState(
-				emitDisplayMathLineSegments(
-					displayMathEnv,
-					htmlScan.resumeLine,
-					findLogicalLineEnd(mathIndex, htmlScan.resumeLine),
-					null,
-					null,
-					htmlScan.resumeOffset,
-					true,
-				),
+			const splitResult = emitDisplayMathLineSegments(
+				displayMathEnv,
+				htmlScan.resumeLine,
+				findLogicalLineEnd(mathIndex, htmlScan.resumeLine),
+				null,
+				null,
+				htmlScan.resumeOffset,
+				true,
 			);
+			markSharedOutputSpan(splitOutStart, origStart, splitResult.spanEndLine + 1);
+			applyDisplayMathSplitState(splitResult);
 			return;
 		}
 		pushOutputLine(
@@ -390,6 +411,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		}
 
 		if (activeTable !== null && i === activeTable.brokenByDisplayMathLine) {
+			const splitOutStart = outputLines.length;
 			const breakResult = emitDisplayMathTableBreak(
 				displayMathEnv,
 				i,
@@ -400,9 +422,22 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 					breakResult.activeTableOutputStart >= 0
 						? breakResult.activeTableOutputStart
 						: outputLineRanges.length;
+				const tableRawStart =
+					outputLineRanges[activeTableOutputStart]?.start ??
+					outputLineSharedRanges[activeTableOutputStart]?.start ??
+					-1;
 				for (let idx = activeTableOutputStart; idx < invalidateEnd; idx += 1) {
 					outputLineRanges[idx] = null;
 				}
+				if (tableRawStart >= 0) {
+					markSharedOutputSpan(
+						activeTableOutputStart,
+						tableRawStart,
+						breakResult.spanEndLine + 1,
+					);
+				}
+			} else {
+				markSharedOutputSpan(splitOutStart, i, breakResult.spanEndLine + 1);
 			}
 			applyDisplayMathSplitState(breakResult);
 			continue;
@@ -608,12 +643,14 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 					}
 				: null;
 		if (beforeHtmlContext !== null) {
+			const splitOutStart = outputLines.length;
 			const headerMathBreak = emitDisplayMathHeaderLine(
 				displayMathEnv,
 				i,
 				beforeHtmlContext,
 			);
 			if (headerMathBreak !== null) {
+				markSharedOutputSpan(splitOutStart, i, headerMathBreak.spanEndLine + 1);
 				applyDisplayMathSplitState(headerMathBreak);
 				continue;
 			}
@@ -624,6 +661,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		// 3d. Subsequent display math after a display-math-restored container
 		//     MUST clear/update active `listContentIndent` and container state.
 		if (inRestoredDisplayMathContainer && beforeHtmlContext !== null) {
+			const splitOutStart = outputLines.length;
 			const restoredMathSplit = emitDisplayMathLogicalLine(
 				displayMathEnv,
 				i,
@@ -632,6 +670,11 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 				false,
 			);
 			if (restoredMathSplit !== null) {
+				markSharedOutputSpan(
+					splitOutStart,
+					i,
+					restoredMathSplit.spanEndLine + 1,
+				);
 				applyDisplayMathSplitState(restoredMathSplit);
 				continue;
 			}
@@ -808,6 +851,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 			lineQuoteDepth > 0 ||
 			acceptedListMarker !== null;
 		if (firstLineDisplay !== null && beforeHtmlContext !== null) {
+			const splitOutStart = outputLines.length;
 			const logicalMathSplit = emitDisplayMathLogicalLine(
 				displayMathEnv,
 				i,
@@ -816,6 +860,11 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 				!(hasContainerContext || inRestoredDisplayMathContainer),
 			);
 			if (logicalMathSplit !== null) {
+				markSharedOutputSpan(
+					splitOutStart,
+					i,
+					logicalMathSplit.spanEndLine + 1,
+				);
 				applyDisplayMathSplitState(logicalMathSplit);
 				continue;
 			}
@@ -885,6 +934,7 @@ export function prescanMarkdown(rawMarkdown: string): PreScanResult {
 		lineEnding,
 		markdown: outputLines.join("\n"),
 		outputLineRanges,
+		outputLineSharedRanges,
 		outputLines,
 		protectedBlocks,
 		protectedInlines,

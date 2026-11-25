@@ -39,6 +39,8 @@ import {
  */
 
 export type PhpDocumentMathIndex = Readonly<{
+	hasMultilineDisplayMath: boolean;
+	hasMultilineInlineMath: boolean;
 	lineEnds: ReadonlyArray<number>;
 	lineStarts: ReadonlyArray<number>;
 	maskedDoc: string;
@@ -82,7 +84,27 @@ export function createPhpDocumentMathIndex(
 	}
 	const ranges = scanPhpMarkdownMathRanges(normalized);
 	const maskedDoc = maskPhpMarkdownMathForTableScan(normalized, ranges);
-	return { lineEnds, lineStarts, maskedDoc, normalized, ranges };
+	let hasMultilineInlineMath = false;
+	let hasMultilineDisplayMath = false;
+	for (let r = 0; r < ranges.length; r += 1) {
+		const range = ranges[r];
+		if (!range) continue;
+		const nl = normalized.indexOf("\n", range.from);
+		if (nl >= 0 && nl < range.to) {
+			if (range.block) hasMultilineDisplayMath = true;
+			else hasMultilineInlineMath = true;
+			if (hasMultilineInlineMath && hasMultilineDisplayMath) break;
+		}
+	}
+	return {
+		hasMultilineDisplayMath,
+		hasMultilineInlineMath,
+		lineEnds,
+		lineStarts,
+		maskedDoc,
+		normalized,
+		ranges,
+	};
 }
 
 export function findLineIndexForOffset(
@@ -190,10 +212,10 @@ export function findLogicalLineEnd(
 	mathIndex: PhpDocumentMathIndex,
 	startLine: number,
 ): number {
-	const { lineEnds, ranges } = mathIndex;
-	if (ranges.length === 0) {
+	if (!mathIndex.hasMultilineInlineMath) {
 		return startLine;
 	}
+	const { lineEnds, ranges } = mathIndex;
 	let endLine = startLine;
 	const maxLine = lineEnds.length - 1;
 	while (endLine < maxLine) {
@@ -271,6 +293,34 @@ export function opensNonParagraphBlock(
 	if (measureIndentColumns(candidate, candidateColumn) >= 4) {
 		return !inParagraph;
 	}
+	let firstIdx = 0;
+	while (
+		firstIdx < candidate.length &&
+		(candidate[firstIdx] === " " || candidate[firstIdx] === "\t")
+	) {
+		firstIdx += 1;
+	}
+	if (firstIdx >= candidate.length) {
+		return false;
+	}
+	const firstCode = candidate.charCodeAt(firstIdx);
+	if (
+		!(
+			(firstCode >= 0x30 && firstCode <= 0x39) ||
+			firstCode === 0x2d ||
+			firstCode === 0x2a ||
+			firstCode === 0x2b ||
+			firstCode === 0x5f ||
+			firstCode === 0x3e ||
+			firstCode === 0x23 ||
+			firstCode === 0x3d ||
+			firstCode === 0x60 ||
+			firstCode === 0x7e ||
+			firstCode === 0x3c
+		)
+	) {
+		return false;
+	}
 	const listMarker = matchListMarker(candidate, candidateColumn);
 	if (
 		listMarker !== null &&
@@ -278,7 +328,7 @@ export function opensNonParagraphBlock(
 	) {
 		return true;
 	}
-	const trimmedStart = candidate.replace(/^[ \t]+/, "");
+	const trimmedStart = firstIdx > 0 ? candidate.slice(firstIdx) : candidate;
 	return (
 		trimmedStart.startsWith(">") ||
 		COMMONMARK_ATX_HEADING_OPEN.test(trimmedStart) ||

@@ -4,6 +4,14 @@ import {
 	visualMarkdownItParser,
 } from "./markdown-it-config";
 import {
+	buildVisualBlockSources,
+	type MappedBlockEntry,
+	type ParsedVisualBlockSource,
+	type ParsedVisualSharedGroup,
+	type ResolvedBlockRange,
+	resolveOriginalRangeFromTokenMap,
+} from "./markdown-parser-block-sources";
+import {
 	type MarkdownToken,
 	mapInlineTokens,
 	readRawMetaString,
@@ -48,11 +56,7 @@ export {
 } from "./markdown-parser-inline";
 export { type PreScanResult, prescanMarkdown } from "./markdown-prescanner";
 
-export type ParsedVisualBlockSource = Readonly<{
-	node: ProseMirrorNode;
-	raw: string | null;
-	separatorBefore: string;
-}>;
+export type { ParsedVisualBlockSource, ParsedVisualSharedGroup };
 
 export type ParsedVisualDocument = Readonly<{
 	blocks: ReadonlyArray<ParsedVisualBlockSource>;
@@ -228,12 +232,12 @@ function mapTableTokens(
 
 type CollectedListItem = Readonly<{
 	children: ProseMirrorNode[];
-	range: Readonly<{ end: number; start: number }> | null;
+	range: ResolvedBlockRange | null;
 }>;
 
 type MappedListEntry = Readonly<{
 	node: ProseMirrorNode;
-	origRange: Readonly<{ end: number; start: number }> | null;
+	origRange: ResolvedBlockRange | null;
 }>;
 
 function collectListItems(
@@ -344,17 +348,21 @@ function isTightListRange(
 
 function combineItemRanges(
 	items: ReadonlyArray<CollectedListItem>,
-): Readonly<{ end: number; start: number }> | null {
+): ResolvedBlockRange | null {
 	let start = Number.POSITIVE_INFINITY;
 	let end = -1;
+	let shared = false;
 	for (const item of items) {
 		if (!item.range) {
 			return null;
 		}
+		if (item.range.shared) {
+			shared = true;
+		}
 		start = Math.min(start, item.range.start);
 		end = Math.max(end, item.range.end);
 	}
-	return Number.isFinite(start) && end > start ? { end, start } : null;
+	return Number.isFinite(start) && end > start ? { end, shared, start } : null;
 }
 
 function mapBulletListTokens(
@@ -462,59 +470,6 @@ function mapCodeToken(
 	);
 }
 
-type MappedBlockEntry = Readonly<{
-	node: ProseMirrorNode;
-	origRange: Readonly<{ end: number; start: number }> | null;
-}>;
-
-function resolveOriginalRangeFromTokenMap(
-	map: [number, number] | null | undefined,
-	preScan: PreScanResult,
-): Readonly<{ end: number; start: number }> | null {
-	if (!map || map.length < 2) {
-		return null;
-	}
-	const startLine = map[0];
-	const endLine = map[1];
-	if (
-		!Number.isInteger(startLine) ||
-		!Number.isInteger(endLine) ||
-		startLine < 0 ||
-		endLine <= startLine
-	) {
-		return null;
-	}
-	let origStart = Number.POSITIVE_INFINITY;
-	let origEnd = -1;
-	for (let lineIdx = startLine; lineIdx < endLine; lineIdx += 1) {
-		const range = preScan.outputLineRanges[lineIdx];
-		if (!range) {
-			if (!isCommonMarkBlankLine(preScan.outputLines[lineIdx] ?? "")) {
-				return null;
-			}
-			continue;
-		}
-		if (range.start < origStart) {
-			origStart = range.start;
-		}
-		if (range.end > origEnd) {
-			origEnd = range.end;
-		}
-	}
-	if (!Number.isFinite(origStart) || origEnd <= origStart) {
-		return null;
-	}
-	// markdown-it can include trailing blank lines in list/blockquote token maps;
-	// trim trailing blank lines so the exact inter-block separator stays outside the block.
-	while (
-		origEnd > origStart &&
-		isCommonMarkBlankLine(preScan.rawLines[origEnd - 1] ?? "")
-	) {
-		origEnd -= 1;
-	}
-	return origEnd > origStart ? { start: origStart, end: origEnd } : null;
-}
-
 function mapBlockTokensWithRanges(
 	tokens: ReadonlyArray<MarkdownToken>,
 	startIndex: number,
@@ -525,7 +480,7 @@ function mapBlockTokensWithRanges(
 	const entries: MappedBlockEntry[] = [];
 	let pendingTableAlign: Readonly<{
 		marker: string;
-		origRange: Readonly<{ end: number; start: number }> | null;
+		origRange: ResolvedBlockRange | null;
 	}> | null = null;
 
 	const flushOrphanTableAlign = (): void => {
@@ -625,12 +580,13 @@ function mapBlockTokensWithRanges(
 			const annotation = pendingTableAlign;
 			pendingTableAlign = null;
 			const tableRange = resolveOriginalRangeFromTokenMap(token.map, preScan);
-			const combinedRange =
+			const combinedRange: ResolvedBlockRange | null =
 				annotation !== null
 					? tableRange && annotation.origRange
 						? {
-								start: Math.min(annotation.origRange.start, tableRange.start),
 								end: Math.max(annotation.origRange.end, tableRange.end),
+								shared: annotation.origRange.shared || tableRange.shared,
+								start: Math.min(annotation.origRange.start, tableRange.start),
 							}
 						: null
 					: tableRange;
@@ -751,7 +707,7 @@ function mapBlockTokensWithRanges(
 		} else if (token.type === "reference_definition") {
 			const readRefRaw = (
 				refToken: MarkdownToken,
-				refRange: Readonly<{ end: number; start: number }> | null,
+				refRange: ResolvedBlockRange | null,
 			): string => {
 				const metaRaw = readRawMetaString(
 					refToken,
@@ -760,13 +716,13 @@ function mapBlockTokensWithRanges(
 				if (metaRaw !== null) {
 					return metaRaw;
 				}
-				return refRange
+				return refRange && !refRange.shared
 					? preScan.rawLines.slice(refRange.start, refRange.end).join("\n")
 					: "";
 			};
 			let groupEndIdx = i;
-			const groupStart = origRange?.start ?? -1;
-			let groupEnd = origRange?.end ?? -1;
+			const groupStart = origRange && !origRange.shared ? origRange.start : -1;
+			let groupEnd = origRange && !origRange.shared ? origRange.end : -1;
 			const rawParts: string[] = [readRefRaw(token, origRange)];
 			while (groupEndIdx + 1 < endIndex) {
 				const nextToken = tokens[groupEndIdx + 1];
@@ -777,16 +733,21 @@ function mapBlockTokensWithRanges(
 					nextToken.map,
 					preScan,
 				);
-				if (!nextRange || groupStart < 0 || nextRange.start !== groupEnd) {
+				if (
+					!nextRange ||
+					nextRange.shared ||
+					groupStart < 0 ||
+					nextRange.start !== groupEnd
+				) {
 					break;
 				}
 				rawParts.push(readRefRaw(nextToken, nextRange));
 				groupEnd = nextRange.end;
 				groupEndIdx += 1;
 			}
-			const combinedRange =
+			const combinedRange: ResolvedBlockRange | null =
 				groupStart >= 0 && groupEnd > groupStart
-					? { start: groupStart, end: groupEnd }
+					? { end: groupEnd, shared: false, start: groupStart }
 					: origRange;
 			const refNode = visualEditorSchema.nodes.protected_block.create({
 				kind: "raw",
@@ -857,58 +818,15 @@ export function parseMarkdownWithBlockSources(
 			: [visualEditorSchema.nodes.paragraph.create()],
 	);
 
-	const rawLines = preScan.rawLines;
-	const firstRange = mapped[0]?.origRange ?? null;
-	const leadingPrefix =
-		firstRange && firstRange.start > 0
-			? `${rawLines.slice(0, firstRange.start).join("\n")}\n`
-			: "";
-
-	let lastKnownEnd = 0;
-	let previousHadRange = false;
-	let hasMonotonicRanges = mapped.length > 0;
-	const blocks: ParsedVisualBlockSource[] = [];
-
-	for (let idx = 0; idx < mapped.length; idx += 1) {
-		const entry = mapped[idx];
-		if (!entry) {
-			continue;
-		}
-		const range = entry.origRange;
-		if (range && range.start >= lastKnownEnd && range.end <= rawLines.length) {
-			const raw = rawLines.slice(range.start, range.end).join("\n");
-			const separatorBefore =
-				idx === 0
-					? ""
-					: !previousHadRange
-						? "\n\n"
-						: range.start > lastKnownEnd
-							? `\n${rawLines.slice(lastKnownEnd, range.start).join("\n")}\n`
-							: "\n";
-			blocks.push({ node: entry.node, raw, separatorBefore });
-			lastKnownEnd = range.end;
-			previousHadRange = true;
-		} else {
-			hasMonotonicRanges = false;
-			previousHadRange = false;
-			blocks.push({
-				node: entry.node,
-				raw: null,
-				separatorBefore: idx === 0 ? "" : "\n\n",
-			});
-		}
-	}
-
-	const lastRange = mapped[mapped.length - 1]?.origRange ?? null;
-	const trailingSuffix =
-		hasMonotonicRanges && lastRange && lastRange.end < rawLines.length
-			? `\n${rawLines.slice(lastRange.end).join("\n")}`
-			: "";
+	const { blocks, leadingPrefix, trailingSuffix } = buildVisualBlockSources(
+		mapped,
+		preScan.rawLines,
+	);
 
 	return {
 		blocks,
 		doc,
-		leadingPrefix: hasMonotonicRanges ? leadingPrefix : "",
+		leadingPrefix,
 		lineEnding: preScan.lineEnding,
 		trailingSuffix,
 	};

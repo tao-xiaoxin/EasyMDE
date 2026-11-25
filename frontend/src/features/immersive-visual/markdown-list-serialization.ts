@@ -28,7 +28,8 @@ export type BlockSerializer = (
 export type RefDefContinuationMode = "none" | "tight" | "indented";
 
 /** CommonMark §5.3: only non-empty bullet / `1.` items interrupt a paragraph. */
-const PARAGRAPH_INTERRUPTING_LIST_FIRST_LINE = /^[ \t]*(?:[-*+]|1[.)])[ \t]+\S/;
+export const PARAGRAPH_INTERRUPTING_LIST_FIRST_LINE =
+	/^[ \t]*(?:[-*+]|1[.)])[ \t]+\S/;
 
 function nodeContainsString(
 	node: ProseMirrorNode,
@@ -276,6 +277,41 @@ export function nodeCanLazilyContinue(node: ProseMirrorNode): boolean {
 		}
 		default:
 			return true;
+	}
+}
+
+/**
+ * Reports whether a trailing block leaves an open paragraph (or reference
+ * definition) that stops a 4-column indented next line (`separator === "\n"`)
+ * from becoming a CommonMark indented code block in PHP. Tables, empty
+ * paragraphs, headings, code blocks, thematic breaks, and HTML/Mermaid blocks
+ * never prevent an indented code block on the following line.
+ */
+export function nodePreventsFollowingIndentedCode(
+	node: ProseMirrorNode,
+): boolean {
+	switch (node.type.name) {
+		case "paragraph":
+			return node.childCount > 0;
+		case "table":
+			return false;
+		case "blockquote":
+			return (
+				node.lastChild !== null &&
+				nodePreventsFollowingIndentedCode(node.lastChild)
+			);
+		case "bullet_list":
+		case "ordered_list":
+		case "task_list": {
+			const lastItem = node.lastChild;
+			return (
+				lastItem !== null &&
+				lastItem.lastChild !== null &&
+				nodePreventsFollowingIndentedCode(lastItem.lastChild)
+			);
+		}
+		default:
+			return nodeCanLazilyContinue(node);
 	}
 }
 

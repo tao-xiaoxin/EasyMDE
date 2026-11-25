@@ -6501,7 +6501,8 @@ describe("PR-R24-A1 PHP-exact table math, nested/interleaved table-align, lazy t
 				expr,
 			).toBe(true);
 
-			// Editing an unrelated block below must not duplicate the display math or trailing text.
+			// Editing an unrelated block below preserves the untouched shared-line
+			// table + display math + trailing text slice verbatim without duplication.
 			const editedFooter = insertTextAt(
 				guard.initialDoc,
 				findTextEndPos(guard.initialDoc, "Footer"),
@@ -6509,8 +6510,12 @@ describe("PR-R24-A1 PHP-exact table math, nested/interleaved table-align, lazy t
 			);
 			const serializedFooter = guard.serialize(editedFooter);
 			expect(serializedFooter, expr).toBe(
-				`| A | B |\n| --- | --- |\n|  |  |\n\n${expr}\n\n| ![x](x) |\n\nFooter!`,
+				`| A | B |\n| --- | --- |\n| ${expr} | ![x](x) |\n\nFooter!`,
 			);
+			expect(
+				parseMarkdownToVisualDoc(serializedFooter).eq(editedFooter),
+				expr,
+			).toBe(true);
 		}
 
 		// 5. Space-padded and digit-followed inline `$...$` in table headers stay valid 2-column tables.

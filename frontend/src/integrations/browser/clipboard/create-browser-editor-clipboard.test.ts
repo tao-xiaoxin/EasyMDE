@@ -162,6 +162,60 @@ describe("createBrowserEditorClipboard", () => {
 		expect(nativePayloadConsumed).not.toHaveBeenCalled();
 	});
 
+	it("reports failure instead of written when runtime writeDeferred resolves without awaiting a rejected payload", async () => {
+		const clipboard = createBrowserEditorClipboard({
+			readText: vi.fn(),
+			writeDeferred: async (payload) => {
+				void payload.catch(() => undefined);
+			},
+			writeText: vi.fn(),
+		});
+		if (!clipboard.writeDeferred) {
+			throw new Error("deferred-clipboard-fixture-missing");
+		}
+
+		await expect(
+			clipboard.writeDeferred(Promise.reject(new Error("render-failed"))),
+		).resolves.toEqual({
+			code: "editor-clipboard-write-failed",
+			status: "failed",
+		});
+
+		await expect(
+			clipboard.writeDeferred(Promise.reject(undefined)),
+		).resolves.toEqual({
+			code: "editor-clipboard-write-failed",
+			status: "failed",
+		});
+
+		const pendingRejection = deferred<string>();
+		const pendingResult = clipboard.writeDeferred(pendingRejection.promise);
+		pendingRejection.reject(new Error("late-render-failed"));
+		await expect(pendingResult).resolves.toEqual({
+			code: "editor-clipboard-write-failed",
+			status: "failed",
+		});
+
+		const pendingAbort = deferred<string>();
+		const abortController = new AbortController();
+		const abortResult = clipboard.writeDeferred(pendingAbort.promise, {
+			signal: abortController.signal,
+		});
+		abortController.abort();
+		await expect(abortResult).resolves.toEqual({
+			code: "editor-clipboard-cancelled",
+			status: "failed",
+		});
+
+		const pendingDispose = deferred<string>();
+		const disposeResult = clipboard.writeDeferred(pendingDispose.promise);
+		clipboard.dispose();
+		await expect(disposeResult).resolves.toEqual({
+			code: "editor-clipboard-disposed",
+			status: "failed",
+		});
+	});
+
 	it("does not publish a late read after cancellation or disposal", async () => {
 		const operation = deferred<string>();
 		const clipboard = createBrowserEditorClipboard({

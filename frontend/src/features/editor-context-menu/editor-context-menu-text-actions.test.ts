@@ -9,6 +9,7 @@ import type {
 	SafePreviewHtml,
 } from "../../contracts/ports/preview-request";
 import { createBrowserEditorClipboard } from "../../integrations/browser/clipboard/create-browser-editor-clipboard";
+import { createWordPressPreviewPort } from "../../integrations/wordpress/preview/create-wordpress-preview-port";
 import type { EditorContextMenuActionSession } from "./editor-context-menu-action-coordinator";
 import { runTextContextMenuAction } from "./editor-context-menu-text-actions";
 import type { SimplifiedFormattingDomParser } from "./editor-simplified-formatting";
@@ -446,6 +447,133 @@ describe("editor-context-menu-text-actions", () => {
 			expect(fixture.finishOperation).toHaveBeenCalledTimes(1);
 			clipboard.dispose();
 		});
+
+		it("preserves real WordPress preview-response-invalid through the real preview and clipboard adapters with zero native writes", async () => {
+			const apiFetch = vi.fn().mockResolvedValue({ html: 123 });
+			const previewPort = createWordPressPreviewPort(
+				apiFetch,
+				"/wp-json/easymde/v1/preview",
+				"nonce",
+				"https://example.test/wp-admin/post.php",
+			);
+			const osClipboardWrite = vi.fn();
+			const clipboard = createBrowserEditorClipboard({
+				readText: vi.fn(),
+				writeDeferred: async (textPromise) => {
+					const html = await textPromise;
+					osClipboardWrite(html);
+				},
+				writeText: vi.fn(),
+			});
+			const fixture = createTextActionSession({
+				clipboard,
+				renderPreview: (markdown, signal) =>
+					previewPort.render(
+						{
+							codeTheme: "github-dark",
+							customCssId: "",
+							markdown,
+							markdownTheme: "default",
+							postId: 1,
+							signature: "sig-invalid-html",
+						},
+						signal,
+					),
+			});
+
+			await expect(
+				runTextContextMenuAction("copy-as-html", fixture.session),
+			).resolves.toBeUndefined();
+			expect(apiFetch).toHaveBeenCalledTimes(1);
+			expect(osClipboardWrite).not.toHaveBeenCalled();
+			expect(fixture.controller.signal.aborted).toBe(true);
+			expect(fixture.report).toHaveBeenCalledTimes(1);
+			expect(fixture.report).toHaveBeenCalledWith(
+				"preview-response-invalid",
+				"Action failed",
+			);
+			expect(fixture.finishOperation).toHaveBeenCalledTimes(1);
+			clipboard.dispose();
+
+			// Even when the underlying runtime resolves without awaiting the
+			// deferred text promise, createBrowserEditorClipboard rejects the
+			// false written status so preview-response-invalid is still reported.
+			const swallowingNativeWrite = vi.fn();
+			const swallowingClipboard = createBrowserEditorClipboard({
+				readText: vi.fn(),
+				writeDeferred: async (textPromise) => {
+					void textPromise.then(swallowingNativeWrite, () => undefined);
+				},
+				writeText: vi.fn(),
+			});
+			const swallowingFixture = createTextActionSession({
+				clipboard: swallowingClipboard,
+				renderPreview: (markdown, signal) =>
+					previewPort.render(
+						{
+							codeTheme: "github-dark",
+							customCssId: "",
+							markdown,
+							markdownTheme: "default",
+							postId: 1,
+							signature: "sig-invalid-html-swallowing",
+						},
+						signal,
+					),
+			});
+
+			await expect(
+				runTextContextMenuAction("copy-as-html", swallowingFixture.session),
+			).resolves.toBeUndefined();
+			expect(swallowingNativeWrite).not.toHaveBeenCalled();
+			expect(swallowingFixture.controller.signal.aborted).toBe(true);
+			expect(swallowingFixture.report).toHaveBeenCalledTimes(1);
+			expect(swallowingFixture.report).toHaveBeenCalledWith(
+				"preview-response-invalid",
+				"Action failed",
+			);
+			expect(swallowingFixture.finishOperation).toHaveBeenCalledTimes(1);
+			swallowingClipboard.dispose();
+		});
+
+		it.each([
+			"Secret server stack trace",
+			"network failed",
+			"preview-UpperCase",
+			"preview-bad space",
+		])(
+			"rejects arbitrary preview error message %j and reports fallback code for copy-as-html",
+			async (message) => {
+				const osClipboardWrite = vi.fn();
+				const clipboard = createBrowserEditorClipboard({
+					readText: vi.fn(),
+					writeDeferred: async (textPromise) => {
+						const html = await textPromise;
+						osClipboardWrite(html);
+					},
+					writeText: vi.fn(),
+				});
+				const fixture = createTextActionSession({
+					clipboard,
+					renderPreview: async () => {
+						throw new Error(message);
+					},
+				});
+
+				await expect(
+					runTextContextMenuAction("copy-as-html", fixture.session),
+				).resolves.toBeUndefined();
+				expect(osClipboardWrite).not.toHaveBeenCalled();
+				expect(fixture.controller.signal.aborted).toBe(true);
+				expect(fixture.report).toHaveBeenCalledTimes(1);
+				expect(fixture.report).toHaveBeenCalledWith(
+					"editor-context-menu-html-copy-failed",
+					"Action failed",
+				);
+				expect(fixture.finishOperation).toHaveBeenCalledTimes(1);
+				clipboard.dispose();
+			},
+		);
 	});
 
 	describe("copy-simplified-formatting", () => {
@@ -824,5 +952,103 @@ describe("editor-context-menu-text-actions", () => {
 			expect(fixture.report).toHaveBeenCalledTimes(1);
 			clipboard.dispose();
 		});
+
+		it("preserves real WordPress preview-response-invalid through the real preview and clipboard adapters with zero native writes", async () => {
+			const apiFetch = vi.fn().mockResolvedValue({ html: 123 });
+			const previewPort = createWordPressPreviewPort(
+				apiFetch,
+				"/wp-json/easymde/v1/preview",
+				"nonce",
+				"https://example.test/wp-admin/post.php",
+			);
+			const osClipboardWrite = vi.fn();
+			const clipboard = createBrowserEditorClipboard({
+				readText: vi.fn(),
+				supportsRichWrite: () => true,
+				writeRichDeferred: async (
+					payloadPromise: Promise<EditorClipboardRichPayload>,
+				) => {
+					const payload = await payloadPromise;
+					osClipboardWrite(payload);
+				},
+				writeText: vi.fn(),
+			});
+			const fixture = createTextActionSession({
+				clipboard,
+				renderPreview: (markdown, signal) =>
+					previewPort.render(
+						{
+							codeTheme: "github-dark",
+							customCssId: "",
+							markdown,
+							markdownTheme: "default",
+							postId: 1,
+							signature: "sig-invalid-rich",
+						},
+						signal,
+					),
+				simplifiedFormattingParser: createDomParser(),
+			});
+
+			await expect(
+				runTextContextMenuAction("copy-simplified-formatting", fixture.session),
+			).resolves.toBeUndefined();
+			expect(apiFetch).toHaveBeenCalledTimes(1);
+			expect(osClipboardWrite).not.toHaveBeenCalled();
+			expect(fixture.controller.signal.aborted).toBe(true);
+			expect(fixture.report).toHaveBeenCalledTimes(1);
+			expect(fixture.report).toHaveBeenCalledWith(
+				"preview-response-invalid",
+				"Action failed",
+			);
+			expect(fixture.finishOperation).toHaveBeenCalledTimes(1);
+			clipboard.dispose();
+		});
+
+		it.each([
+			"Secret server stack trace",
+			"network failed",
+			"preview-UpperCase",
+			"preview-bad space",
+		])(
+			"rejects arbitrary preview error message %j and reports fallback code for copy-simplified-formatting",
+			async (message) => {
+				const osClipboardWrite = vi.fn();
+				const clipboard = createBrowserEditorClipboard({
+					readText: vi.fn(),
+					supportsRichWrite: () => true,
+					writeRichDeferred: async (
+						payloadPromise: Promise<EditorClipboardRichPayload>,
+					) => {
+						const payload = await payloadPromise;
+						osClipboardWrite(payload);
+					},
+					writeText: vi.fn(),
+				});
+				const fixture = createTextActionSession({
+					clipboard,
+					renderPreview: async () => {
+						throw new Error(message);
+					},
+					simplifiedFormattingParser: createDomParser(),
+				});
+
+				await expect(
+					runTextContextMenuAction(
+						"copy-simplified-formatting",
+						fixture.session,
+					),
+				).resolves.toBeUndefined();
+				expect(osClipboardWrite).not.toHaveBeenCalled();
+				expect(fixture.controller.signal.aborted).toBe(true);
+				expect(fixture.report).toHaveBeenCalledTimes(1);
+				expect(fixture.report).toHaveBeenCalledWith(
+					"editor-context-menu-rich-copy-failed",
+					"Action failed",
+				);
+				expect(fixture.finishOperation).toHaveBeenCalledTimes(1);
+				clipboard.dispose();
+			},
+		);
 	});
 });

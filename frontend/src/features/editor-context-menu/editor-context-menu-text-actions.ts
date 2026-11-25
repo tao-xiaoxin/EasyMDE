@@ -17,7 +17,7 @@ import { createSimplifiedFormattingPayload } from "./editor-simplified-formattin
 function copyPreviewActionErrorCode(error: unknown, fallback: string): string {
 	if (
 		error instanceof Error
-		&& /^editor-(?:preview|simplified-formatting)-[a-z0-9-]+$/u.test(
+		&& /^(?:preview|editor-(?:preview|simplified-formatting))-[a-z0-9-]+$/u.test(
 			error.message
 		)
 	) {

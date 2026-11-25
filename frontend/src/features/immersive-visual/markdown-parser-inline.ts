@@ -1,10 +1,5 @@
 import type MarkdownIt from "markdown-it";
-import type {
-	Attrs,
-	Mark,
-	Node as ProseMirrorNode,
-	NodeType,
-} from "prosemirror-model";
+import type { Mark, Node as ProseMirrorNode } from "prosemirror-model";
 import {
 	decodeCommonMarkTitle,
 	decodeWpKsesRenderedTitle,
@@ -24,6 +19,8 @@ export const RAW_IMAGE_TITLE_META_KEY = "easymdeRawTitle";
 export const RAW_LINK_TITLE_META_KEY = "easymdeRawLinkTitle";
 export const RAW_REFERENCE_LINK_META_KEY = "easymdeRawReferenceLink";
 export const PHP_PARTIAL_TITLE_REF_META_KEY = "easymdePhpPartialTitleRef";
+export const PENDING_PARTIAL_TITLE_LABEL_META_KEY =
+	"easymdePendingPartialTitleLabel";
 
 export type RawReferenceLinkMeta = Readonly<{
 	kind: "shortcut" | "collapsed" | "full";
@@ -114,17 +111,8 @@ export type ReferenceImageOrigin = Readonly<{
 	title: string | null;
 }>;
 
-export type MergedReferenceLinkRun = Readonly<{
-	end: number;
-	origin: ReferenceLinkOrigin | null;
-	start: number;
-}>;
-
 export type InlineReferenceCollectors = Readonly<{
-	mergedReferenceLinkRuns: Map<
-		ProseMirrorNode,
-		ReadonlyArray<MergedReferenceLinkRun>
-	>;
+	referencedLabelsByNode: Map<ProseMirrorNode, ReadonlySet<string>>;
 	referenceImages: Map<ProseMirrorNode, ReferenceImageOrigin>;
 	referenceLinks: Map<Mark, ReferenceLinkOrigin>;
 }>;
@@ -288,11 +276,16 @@ function trimTrailingHardBreaks(
 	return nodes.slice(0, end);
 }
 
-function decodeInlineTitlePreservingMath(
+export type TitleDecodePreScan = Pick<
+	PreScanResult,
+	"protectedBlocks" | "protectedInlines" | "sentinel" | "tableAlignMarkers"
+>;
+
+export function decodeTitleKeepingInlineMathSentinels(
 	rawTitle: string,
-	preScan: PreScanResult,
+	preScan?: TitleDecodePreScan,
 ): string {
-	if (!rawTitle.includes(preScan.sentinel)) {
+	if (!preScan || !rawTitle.includes(preScan.sentinel)) {
 		return decodeCommonMarkTitle(
 			rawTitle.replace(/\r\n|\r/gu, "\n").replace(/\n[ \t]+/gu, "\n"),
 		);
@@ -308,11 +301,16 @@ function decodeInlineTitlePreservingMath(
 		}
 		return restoreProtectedInlineSentinels(token, preScan);
 	});
-	const decoded = decodeCommonMarkTitle(
-		withNonMathRestored
-			.replace(/\r\n|\r/gu, "\n")
-			.replace(/\n[ \t]+/gu, "\n"),
+	return decodeCommonMarkTitle(
+		withNonMathRestored.replace(/\r\n|\r/gu, "\n").replace(/\n[ \t]+/gu, "\n"),
 	);
+}
+
+export function decodeInlineTitlePreservingMath(
+	rawTitle: string,
+	preScan: TitleDecodePreScan,
+): string {
+	const decoded = decodeTitleKeepingInlineMathSentinels(rawTitle, preScan);
 	return restoreProtectedInlineSentinels(decoded, preScan);
 }
 
@@ -321,6 +319,7 @@ export function mapInlineTokens(
 	preScan: PreScanResult,
 	inTableCell: boolean,
 	collectors?: InlineReferenceCollectors,
+	blockReferencedLabels?: Set<string>,
 ): ProseMirrorNode[] {
 	if (!tokens || tokens.length === 0) {
 		return [];
@@ -447,6 +446,7 @@ export function mapInlineTokens(
 				if (collectors) {
 					const rawRefMeta = readRawReferenceLinkMeta(token);
 					if (rawRefMeta !== null) {
+						blockReferencedLabels?.add(rawRefMeta.normalizedLabel);
 						collectors.referenceLinks.set(linkMark, {
 							href: linkHref,
 							kind: rawRefMeta.kind,
@@ -508,6 +508,7 @@ export function mapInlineTokens(
 				if (collectors) {
 					const rawRefMeta = readRawReferenceLinkMeta(token);
 					if (rawRefMeta !== null) {
+						blockReferencedLabels?.add(rawRefMeta.normalizedLabel);
 						collectors.referenceImages.set(imageNode, {
 							kind: rawRefMeta.kind,
 							normalizedLabel: rawRefMeta.normalizedLabel,
@@ -542,118 +543,4 @@ export function mapInlineTokens(
 
 	// A table cell can represent a trailing break as `<br>`; a text block cannot.
 	return inTableCell ? output : trimTrailingHardBreaks(output);
-}
-
-function findNodeReferenceLinkOrigin(
-	node: ProseMirrorNode,
-	referenceLinks: ReadonlyMap<Mark, ReferenceLinkOrigin>,
-): ReferenceLinkOrigin | null {
-	for (let i = 0; i < node.marks.length; i += 1) {
-		const mark = node.marks[i];
-		if (mark && mark.type.name === "link") {
-			return referenceLinks.get(mark) ?? null;
-		}
-	}
-	return null;
-}
-
-/**
- * Creates a textblock node (`paragraph` or `heading`) while recording the
- * sub-runs of any text node created by ProseMirror `Fragment.fromArray`
- * merging adjacent same-`href`/same-`title` link text nodes where at least one
- * side carries a preserved reference link origin (e.g. `[r][][s](/u)` or
- * `[r][][s][]`).
- */
-export function createTextBlockWithReferenceRuns(
-	nodeType: NodeType,
-	attrs: Attrs | null,
-	inlines: ReadonlyArray<ProseMirrorNode>,
-	collectors?: InlineReferenceCollectors,
-	marks?: readonly Mark[],
-): ProseMirrorNode {
-	const block = nodeType.create(attrs, inlines, marks);
-	if (
-		!collectors ||
-		collectors.referenceLinks.size === 0 ||
-		inlines.length < 2
-	) {
-		return block;
-	}
-	let i = 0;
-	let childIdx = 0;
-	while (i < inlines.length && childIdx < block.childCount) {
-		const first = inlines[i];
-		if (!first) {
-			i += 1;
-			continue;
-		}
-		if (!first.isText) {
-			i += 1;
-			childIdx += 1;
-			continue;
-		}
-		let j = i + 1;
-		while (j < inlines.length) {
-			const next = inlines[j];
-			if (!next?.isText || !first.sameMarkup(next)) {
-				break;
-			}
-			j += 1;
-		}
-		if (j - i >= 2) {
-			const firstOrigin = findNodeReferenceLinkOrigin(
-				first,
-				collectors.referenceLinks,
-			);
-			let hasRefOrigin = firstOrigin !== null;
-			let hasDistinct = false;
-			for (let k = i + 1; k < j; k += 1) {
-				const node = inlines[k];
-				if (!node) continue;
-				const origin = findNodeReferenceLinkOrigin(
-					node,
-					collectors.referenceLinks,
-				);
-				if (origin !== null) hasRefOrigin = true;
-				if (origin !== firstOrigin) hasDistinct = true;
-			}
-			if (hasRefOrigin && hasDistinct) {
-				const mergedChild = block.child(childIdx);
-				const runs: MergedReferenceLinkRun[] = [];
-				let offset = 0;
-				let curStart = 0;
-				let curOrigin = firstOrigin;
-				for (let k = i; k < j; k += 1) {
-					const node = inlines[k];
-					if (!node) continue;
-					const len = node.text?.length ?? 0;
-					const origin = findNodeReferenceLinkOrigin(
-						node,
-						collectors.referenceLinks,
-					);
-					if (k > i && origin !== curOrigin) {
-						if (offset > curStart) {
-							runs.push({ end: offset, origin: curOrigin, start: curStart });
-						}
-						curStart = offset;
-						curOrigin = origin;
-					}
-					offset += len;
-				}
-				if (offset > curStart) {
-					runs.push({ end: offset, origin: curOrigin, start: curStart });
-				}
-				if (
-					runs.length >= 2 &&
-					mergedChild.isText &&
-					(mergedChild.text?.length ?? 0) === offset
-				) {
-					collectors.mergedReferenceLinkRuns.set(mergedChild, runs);
-				}
-			}
-		}
-		i = j;
-		childIdx += 1;
-	}
-	return block;
 }

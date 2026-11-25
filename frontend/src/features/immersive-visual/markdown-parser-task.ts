@@ -5,7 +5,6 @@ import {
 } from "./markdown-it-config";
 import type { BuiltVisualBlockSources } from "./markdown-parser-block-sources";
 import {
-	createTextBlockWithReferenceRuns,
 	type InlineReferenceCollectors,
 	mapInlineTokens,
 } from "./markdown-parser-inline";
@@ -45,6 +44,7 @@ function reparseRemainderAfterTaskMarker(
 	rawContent: string,
 	context: TaskParagraphContext,
 	stripLeadingSeparator: boolean,
+	blockRefLabels?: Set<string>,
 ): ProseMirrorNode[] {
 	const rest = rawContent.slice(3);
 	const remainder = stripLeadingSeparator
@@ -61,6 +61,7 @@ function reparseRemainderAfterTaskMarker(
 		context.preScan,
 		false,
 		context.referenceCollectors,
+		blockRefLabels,
 	);
 }
 
@@ -92,6 +93,8 @@ export function stripTaskPrefix(
 	}
 	const checked = rawMatch[1].toLowerCase() === "x";
 	let inlines: ProseMirrorNode[];
+	let refLabels =
+		context.referenceCollectors?.referencedLabelsByNode.get(firstBlock);
 	const firstInline = firstBlock.firstChild;
 	if (
 		firstInline?.isText &&
@@ -112,18 +115,33 @@ export function stripTaskPrefix(
 		// PHP TaskListItemMarkerParser (priority 35) consumes `[x]` before link
 		// parsing (e.g. `- [x](url)` or `- [x][ref]`), so re-parse the tail while
 		// preserving 2+ trailing spaces before `\n` as a CommonMark hard break.
-		inlines = reparseRemainderAfterTaskMarker(rawContent, context, true);
+		const reparsedLabels = context.referenceCollectors
+			? new Set<string>()
+			: undefined;
+		inlines = reparseRemainderAfterTaskMarker(
+			rawContent,
+			context,
+			true,
+			reparsedLabels,
+		);
+		refLabels =
+			reparsedLabels && reparsedLabels.size > 0 ? reparsedLabels : undefined;
+	}
+	const taskParagraph = visualEditorSchema.nodes.paragraph.create(
+		null,
+		inlines,
+	);
+	if (context.referenceCollectors && refLabels && refLabels.size > 0) {
+		context.referenceCollectors.referencedLabelsByNode.set(
+			taskParagraph,
+			refLabels,
+		);
 	}
 	return {
 		checked,
 		children: [
 			...itemChildren.slice(0, firstContentIndex),
-			createTextBlockWithReferenceRuns(
-				visualEditorSchema.nodes.paragraph,
-				null,
-				inlines,
-				context.referenceCollectors,
-			),
+			taskParagraph,
 			...itemChildren.slice(firstContentIndex + 1),
 		],
 	};
@@ -150,17 +168,30 @@ export function markPreservedTaskParagraphs(
 		// consumed before parsing the tail (e.g. `1. [x][r]`, `1. [x](url)`,
 		// `1. [x](not a link`, and 2nd-paragraph bullet items).
 		const prefixText = visualEditorSchema.text(rawContent.slice(0, 3));
+		const blockRefLabels = context.referenceCollectors
+			? new Set<string>()
+			: undefined;
 		const remainderNodes = reparseRemainderAfterTaskMarker(
 			rawContent,
 			context,
 			false,
+			blockRefLabels,
 		);
-		return createTextBlockWithReferenceRuns(
-			visualEditorSchema.nodes.paragraph,
+		const preservedParagraph = visualEditorSchema.nodes.paragraph.create(
 			{ preserveRawTaskPrefix: true },
 			[prefixText, ...remainderNodes],
-			context.referenceCollectors,
 			child.marks,
 		);
+		if (
+			context.referenceCollectors &&
+			blockRefLabels &&
+			blockRefLabels.size > 0
+		) {
+			context.referenceCollectors.referencedLabelsByNode.set(
+				preservedParagraph,
+				blockRefLabels,
+			);
+		}
+		return preservedParagraph;
 	});
 }

@@ -8,17 +8,15 @@ import {
 	type ReferenceDefinitionState,
 } from "../../shared/markdown/php-commonmark-reference-def";
 import {
-	continueLazyAfterReference,
 	createEasyMdeBlockquoteRule,
 	createEasyMdeLheadingRule,
 	createEasyMdeParagraphRule,
 	createEasyMdeTableRule,
 	createReferenceTableInterruptProbe,
-	type EasyMdeBlockEnv,
-	getLazyListRelativeIndent,
 } from "./markdown-it-table-rule";
 import {
 	lineStartsQuoteOrParenTitle,
+	PENDING_PARTIAL_TITLE_LABEL_META_KEY,
 	PHP_PARTIAL_TITLE_REF_META_KEY,
 	readRawMetaString,
 } from "./markdown-parser-inline";
@@ -30,8 +28,11 @@ import {
 import {
 	attachImageReferenceOrTitleMeta,
 	attachLinkReferenceOrTitleMeta,
+	continueLazyAfterReference,
+	type EasyMdeBlockEnv,
 	extractRawReferenceBlock,
 	extractRawReferenceParts,
+	getLazyListRelativeIndent,
 	hasReferenceLabelMeta,
 } from "./markdown-reference-preservation";
 
@@ -70,7 +71,9 @@ type BlockRuleState = Parameters<BlockRuleFn>[0];
  * standalone block parsing for prescanned `TBLALIGN` sentinels (preserving
  * tight lists), and CommonMark §4.8 / §4.3 continuation-indent stripping.
  */
-export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> {
+export function createVisualMarkdownItParser(): InstanceType<
+	typeof MarkdownIt
+> {
 	const parser = new MarkdownIt({
 		html: false,
 		linkify: false,
@@ -171,12 +174,9 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 			rawReferenceSourceMetaKey: RAW_REFERENCE_SOURCE_META_KEY,
 			wouldReferenceDefinitionAbsorbFollowingBlock,
 		});
-		parser.block.ruler.before(
-			"table",
-			"easymde_table",
-			easyMdeTableRule,
-			{ alt: [...originalTableRuleEntry.alt] },
-		);
+		parser.block.ruler.before("table", "easymde_table", easyMdeTableRule, {
+			alt: [...originalTableRuleEntry.alt],
+		});
 		parser.block.ruler.disable("table");
 	}
 
@@ -393,9 +393,9 @@ export function createVisualMarkdownItParser(): InstanceType<typeof MarkdownIt> 
 							refToken.meta &&
 							typeof refToken.meta === "object"
 						) {
-							(refToken.meta as Record<string, unknown>)[
-								PHP_PARTIAL_TITLE_REF_META_KEY
-							] = true;
+							const meta = refToken.meta as Record<string, unknown>;
+							meta[PHP_PARTIAL_TITLE_REF_META_KEY] = true;
+							meta[PENDING_PARTIAL_TITLE_LABEL_META_KEY] = label;
 						}
 					}
 				}

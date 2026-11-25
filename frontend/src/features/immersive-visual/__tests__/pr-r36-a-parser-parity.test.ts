@@ -262,7 +262,7 @@ describe("PR-R36-A immersive visual preservation, ref-link parity, and linear ma
 				);
 				const withoutRefDef = editedZ.type.create(null, remaining);
 				const serialized = guard.serialize(withoutRefDef);
-				expect(serialized).toContain("[r](/u)\nz!");
+				expect(serialized).toContain('[r](/u "a &#10;")\nz!');
 				expect(parseMarkdownToVisualDoc(serialized).eq(withoutRefDef)).toBe(
 					true,
 				);

@@ -231,7 +231,6 @@ describe("PR-R37-A reference preservation, list-swallow guards, and dedup", () =
 			for (const md of [
 				'[r]: /u\n"a\n\n[r][][s](/u)\nz',
 				'[r]: /u\n"a\n\n[s](/u)[r][]\nz',
-				'[r]: /u\n"a\n\n[r][][r][]\nz',
 				'[r]: /u\n"a\n\n[s]: /u\n"b\n\n[r][][s][]\nz',
 				'[r]: /u\n"a\n\n[**r**][][s](/u)\nz',
 				'[r]: /u\n"a\n\n[**a** b][r][s](/u)\nz',
@@ -242,6 +241,18 @@ describe("PR-R37-A reference preservation, list-swallow guards, and dedup", () =
 				const serialized = guard.serialize(edited);
 				expect(serialized, md).toBe(`${md}!`);
 				expect(parseMarkdownToVisualDoc(serialized).eq(edited), md).toBe(true);
+			}
+
+			// Adjacent identical-href AND identical-title links (`[r][][r][]`) share
+			// one ProseMirror link mark (`{ href: "/u", title: "a\n" }`) and preserve
+			// the partial-title reference cleanly without fragile run-slicing.
+			{
+				const md = '[r]: /u\n"a\n\n[r][][r][]\nz';
+				const guard = createMarkdownRoundTripGuard(md);
+				const edited = insertTextAfterFirstMatch(guard.initialDoc, "z", "!");
+				const serialized = guard.serialize(edited);
+				expect(serialized).toBe('[r]: /u\n"a\n\n[rr][r]\nz!');
+				expect(parseMarkdownToVisualDoc(serialized).eq(edited)).toBe(true);
 			}
 		});
 
@@ -258,7 +269,7 @@ describe("PR-R37-A reference preservation, list-swallow guards, and dedup", () =
 				expect(parseMarkdownToVisualDoc(serialized).eq(edited)).toBe(true);
 			}
 
-			// Deleting `[r]: /u` falls back cleanly to inline syntax with `eq === true`
+			// Deleting `[r]: /u` falls back cleanly to inline syntax preserving `title="a\n"` and `eq === true`
 			{
 				const guard = createMarkdownRoundTripGuard(md);
 				const editedZ = insertTextAfterFirstMatch(guard.initialDoc, "z", "!");
@@ -267,7 +278,7 @@ describe("PR-R37-A reference preservation, list-swallow guards, and dedup", () =
 					editedZ.child(2),
 				]);
 				const serialized = guard.serialize(withoutRefDef);
-				expect(serialized).toContain("[rs](/u)\nz!");
+				expect(serialized).toContain('[r](/u "a&#10;")[s](/u)\nz!');
 				expect(parseMarkdownToVisualDoc(serialized).eq(withoutRefDef)).toBe(
 					true,
 				);
@@ -298,19 +309,17 @@ describe("PR-R37-A reference preservation, list-swallow guards, and dedup", () =
 				expect(reboundGuard.serialize(reboundEdited), md).toBe(`${md}!`);
 			}
 
-			// Math-split blockquote partial title keeps `> [r]: /u\n> "a` tight (no blank `>`) and preserves `[r]`
+			// Math-split blockquote partial title keeps `> [r]: /u\n> "a $$x$$` verbatim and preserves `[r]`
 			{
 				const md = '> [r]: /u\n> "a $$x$$\n> b"\n>\n> [r]\n> z';
 				const guard = createMarkdownRoundTripGuard(md);
 				const edited = insertTextAfterFirstMatch(guard.initialDoc, "z", "!");
 				const serialized = guard.serialize(edited);
-				expect(serialized).toBe(
-					'> [r]: /u\n> "a\n\n$$x$$\n\n> b"\n>\n> [r]\n> z!',
-				);
+				expect(serialized).toBe('> [r]: /u\n> "a $$x$$\n> b"\n>\n> [r]\n> z!');
 				expect(parseMarkdownToVisualDoc(serialized).eq(edited)).toBe(true);
 			}
 
-			// Negative control: deleting `> [r]: /u` inside blockquote falls back to `[r](/u)`
+			// Negative control: deleting `> [r]: /u` inside blockquote falls back to inline preserving `title="a\n"`
 			{
 				const md = '> [r]: /u\n> "a\n>\n> [r]\n> z';
 				const guard = createMarkdownRoundTripGuard(md);
@@ -320,7 +329,7 @@ describe("PR-R37-A reference preservation, list-swallow guards, and dedup", () =
 					bq.type.create(null, [bq.child(1), bq.child(2)]),
 				]);
 				const serialized = guard.serialize(withoutRefDef);
-				expect(serialized).toContain("> [r](/u)\n> z!");
+				expect(serialized).toContain('> [r](/u "a&#10;")\n> z!');
 				expect(parseMarkdownToVisualDoc(serialized).eq(withoutRefDef)).toBe(
 					true,
 				);
@@ -395,20 +404,20 @@ describe("PR-R37-A reference preservation, list-swallow guards, and dedup", () =
 				'- [r]: /u\n  "a\n- [r]\n  z!',
 			);
 
-			// Deleting the item that defined `[r]: /u` falls back to inline `[r](/u)`
+			// Deleting the item that defined `[r]: /u` falls back to inline preserving `title="a\n"`
 			{
 				const list = edited.child(0);
 				const withoutFirstItem = edited.type.create(null, [
 					list.type.create(list.attrs, [list.child(1)]),
 				]);
 				const withoutRefSerialized = guard.serialize(withoutFirstItem);
-				expect(withoutRefSerialized).toBe("- [r](/u)\n  z!");
+				expect(withoutRefSerialized).toBe('- [r](/u "a&#10;")\n  z!');
 				expect(
 					parseMarkdownToVisualDoc(withoutRefSerialized).eq(withoutFirstItem),
 				).toBe(true);
 			}
 
-			// Inserting an earlier item redefining `[r]: /other` shadows original `[r]` -> falls back to `[r](/u)`
+			// Inserting an earlier item redefining `[r]: /other` shadows original `[r]` -> falls back to inline preserving `title="a\n"`
 			{
 				const list = edited.child(0);
 				const shadowItem = visualEditorSchema.nodes.list_item.create(null, [
@@ -426,7 +435,7 @@ describe("PR-R37-A reference preservation, list-swallow guards, and dedup", () =
 					]),
 				]);
 				const shadowedSerialized = guard.serialize(shadowed);
-				expect(shadowedSerialized).toContain("- [r](/u)\n  z!");
+				expect(shadowedSerialized).toContain('- [r](/u "a&#10;")\n  z!');
 				expect(
 					parseMarkdownToVisualDoc(shadowedSerialized).eq(shadowed),
 				).toBe(true);

@@ -39,7 +39,6 @@ import {
 	sanitizeFenceChar,
 	sanitizeFenceLength,
 	type TableTextAlign,
-	visualEditorSchema,
 } from "./visual-schema";
 
 export type { MarkdownRoundTripGuard } from "./markdown-block-preservation";
@@ -87,7 +86,10 @@ function markKey(mark: Mark): string {
 	return `${mark.type.name}:${JSON.stringify(mark.attrs)}`;
 }
 
-function sameActiveMark(left: ActiveMarkEntry, right: ActiveMarkEntry): boolean {
+function sameActiveMark(
+	left: ActiveMarkEntry,
+	right: ActiveMarkEntry,
+): boolean {
 	return (
 		left.mark.eq(right.mark) &&
 		(left.mark.type.name !== "link" || left.linkOrigin === right.linkOrigin)
@@ -239,7 +241,12 @@ function markCloseSyntax(
 			const safeTitle =
 				rawTitle === null
 					? null
-					: formatQuotedTitle(rawTitle, inTableCell, mathNewlineToken, quoteChar);
+					: formatQuotedTitle(
+							rawTitle,
+							inTableCell,
+							mathNewlineToken,
+							quoteChar,
+						);
 			return safeTitle !== null
 				? `](${destination} ${quoteChar}${safeTitle}${quoteChar})`
 				: `](${destination})`;
@@ -249,7 +256,7 @@ function markCloseSyntax(
 	}
 }
 
-function expandInlinePieces(
+function collectInlinePieces(
 	parent: ProseMirrorNode,
 	endIndex: number,
 	resolveReferences: ReferencePreserveResolver | null,
@@ -257,22 +264,6 @@ function expandInlinePieces(
 	const pieces: InlinePiece[] = [];
 	for (let i = 0; i < endIndex; i += 1) {
 		const child = parent.child(i);
-		if (child.isText && resolveReferences !== null) {
-			const runs = resolveReferences.resolveMergedLinkRuns(child);
-			if (runs !== null) {
-				const fullText = child.text ?? "";
-				for (const run of runs) {
-					const slice = fullText.slice(run.start, run.end);
-					if (slice.length > 0) {
-						pieces.push({
-							linkOrigin: run.origin,
-							node: visualEditorSchema.text(slice, child.marks),
-						});
-					}
-				}
-				continue;
-			}
-		}
 		let linkOrigin: ReferenceLinkOrigin | null = null;
 		if (resolveReferences !== null && child.marks.length > 0) {
 			const linkMark = child.marks.find((mark) => mark.type.name === "link");
@@ -305,7 +296,7 @@ function serializeInlineContent(
 		endIndex -= 1;
 	}
 
-	const pieces = expandInlinePieces(parent, endIndex, resolveReferences);
+	const pieces = collectInlinePieces(parent, endIndex, resolveReferences);
 	const effectiveMarkKey = createEffectiveMarkKeyFn();
 	const markSpans = computeMarkSpans(pieces, effectiveMarkKey);
 	const markKeysAt = (index: number): Set<string> => {
@@ -522,8 +513,7 @@ function serializeInlineContent(
 		);
 		const closesEmphasis = spans.some(
 			(span) =>
-				EMPHASIS_MARK_NAMES.has(span.mark.type.name) &&
-				!nextKeys.has(span.key),
+				EMPHASIS_MARK_NAMES.has(span.mark.type.name) && !nextKeys.has(span.key),
 		);
 
 		let core = text;
@@ -558,9 +548,7 @@ function serializeInlineContent(
 			output += escapeInlineMarkdownText(text, {
 				atLineStart: output.length === 0 || output.endsWith("\n"),
 				inHeading,
-				inLinkLabel: keptMarks.some(
-					(entry) => entry.mark.type.name === "link",
-				),
+				inLinkLabel: keptMarks.some((entry) => entry.mark.type.name === "link"),
 				inTableCell,
 			});
 			continue;
@@ -585,9 +573,7 @@ function serializeInlineContent(
 		output += escapeInlineMarkdownText(core, {
 			atLineStart: output.length === 0 || output.endsWith("\n"),
 			inHeading,
-			inLinkLabel: sortedMarks.some(
-				(entry) => entry.mark.type.name === "link",
-			),
+			inLinkLabel: sortedMarks.some((entry) => entry.mark.type.name === "link"),
 			inTableCell,
 		});
 		if (trailingSpace.length > 0) {
@@ -825,7 +811,9 @@ function serializeBlockNodeInternal(
 			return serializeTable(node, mathNewlineToken, resolveReferences);
 		case "protected_block": {
 			const raw =
-				typeof node.attrs.rawMarkdown === "string" ? node.attrs.rawMarkdown : "";
+				typeof node.attrs.rawMarkdown === "string"
+					? node.attrs.rawMarkdown
+					: "";
 			if (
 				mathNewlineToken === null ||
 				node.attrs.kind !== "raw" ||

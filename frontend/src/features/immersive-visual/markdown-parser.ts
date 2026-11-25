@@ -14,10 +14,8 @@ import {
 	resolveOriginalRangeFromTokenMap,
 } from "./markdown-parser-block-sources";
 import {
-	createTextBlockWithReferenceRuns,
 	type InlineReferenceCollectors,
 	type MarkdownToken,
-	type MergedReferenceLinkRun,
 	mapInlineTokens,
 	PHP_PARTIAL_TITLE_REF_META_KEY,
 	type ReferenceImageOrigin,
@@ -60,7 +58,6 @@ export { type PreScanResult, prescanMarkdown } from "./markdown-prescanner";
 
 export type {
 	BuiltVisualBlockSources,
-	MergedReferenceLinkRun,
 	ParsedVisualBlockSource,
 	ParsedVisualSharedGroup,
 	ReferenceImageOrigin,
@@ -76,17 +73,12 @@ export type ParsedVisualDocument = Readonly<{
 	blocks: ReadonlyArray<ParsedVisualBlockSource>;
 	doc: ProseMirrorNode;
 	envReferences?: ParsedEnvReferences;
-	firstRefDefBlockByLabel?: ReadonlyMap<string, number>;
 	firstRefDefNodeByLabel?: ReadonlyMap<string, ProseMirrorNode>;
 	leadingPrefix: string;
 	lineEnding: "\n" | "\r\n";
-	mergedReferenceLinkRuns?: ReadonlyMap<
-		ProseMirrorNode,
-		ReadonlyArray<MergedReferenceLinkRun>
-	>;
 	phpPartialTitleRefLabels?: ReadonlySet<string>;
-	refDefLabelsByBlock?: ReadonlyMap<number, ReadonlyArray<string>>;
 	refDefLabelsByNode?: ReadonlyMap<ProseMirrorNode, ReadonlyArray<string>>;
+	referencedLabelsByNode?: ReadonlyMap<ProseMirrorNode, ReadonlySet<string>>;
 	referenceImages?: ReadonlyMap<ProseMirrorNode, ReferenceImageOrigin>;
 	referenceLinks?: ReadonlyMap<Mark, ReferenceLinkOrigin>;
 	trailingSuffix: string;
@@ -224,7 +216,8 @@ function isTightListRange(
 		for (let j = i + 1; j < itemClose; j += 1) {
 			const child = tokens[j];
 			if (!child) continue;
-			if (child.type === "paragraph_open" && child.hidden !== true) return false;
+			if (child.type === "paragraph_open" && child.hidden !== true)
+				return false;
 			const childStart = child.map?.[0] ?? null;
 			const childEnd = trimmedBlockMapEnd(child.map, quoteDepth, preScan);
 			if (
@@ -472,6 +465,9 @@ function mapBlockTokensWithRanges(
 			} else {
 				const rawContent =
 					inlineToken?.type === "inline" ? inlineToken.content : "";
+				const blockRefLabels = referenceCollectors
+					? new Set<string>()
+					: undefined;
 				const inlines =
 					inlineToken?.type === "inline"
 						? mapInlineTokens(
@@ -479,14 +475,19 @@ function mapBlockTokensWithRanges(
 								preScan,
 								false,
 								referenceCollectors,
+								blockRefLabels,
 							)
 						: [];
-				const paragraphNode = createTextBlockWithReferenceRuns(
-					visualEditorSchema.nodes.paragraph,
+				const paragraphNode = visualEditorSchema.nodes.paragraph.create(
 					null,
 					inlines,
-					referenceCollectors,
 				);
+				if (referenceCollectors && blockRefLabels && blockRefLabels.size > 0) {
+					referenceCollectors.referencedLabelsByNode.set(
+						paragraphNode,
+						blockRefLabels,
+					);
+				}
 				paragraphRawContents.set(paragraphNode, rawContent);
 				entries.push({
 					node: paragraphNode,
@@ -565,6 +566,9 @@ function mapBlockTokensWithRanges(
 				Number.parseInt(token.tag.slice(1), 10),
 			);
 			const inlineToken = tokens[i + 1];
+			const blockRefLabels = referenceCollectors
+				? new Set<string>()
+				: undefined;
 			const inlines =
 				inlineToken?.type === "inline"
 					? mapInlineTokens(
@@ -572,15 +576,21 @@ function mapBlockTokensWithRanges(
 							preScan,
 							false,
 							referenceCollectors,
+							blockRefLabels,
 						)
 					: [];
+			const headingNode = visualEditorSchema.nodes.heading.create(
+				{ level },
+				inlines,
+			);
+			if (referenceCollectors && blockRefLabels && blockRefLabels.size > 0) {
+				referenceCollectors.referencedLabelsByNode.set(
+					headingNode,
+					blockRefLabels,
+				);
+			}
 			entries.push({
-				node: createTextBlockWithReferenceRuns(
-					visualEditorSchema.nodes.heading,
-					{ level },
-					inlines,
-					referenceCollectors,
-				),
+				node: headingNode,
 				origRange,
 			});
 			i = closeIdx;
@@ -795,10 +805,7 @@ export function parseMarkdownWithBlockSources(
 	};
 	const tokens = visualMarkdownItParser.parse(preScan.markdown, env);
 	const referenceCollectors: InlineReferenceCollectors = {
-		mergedReferenceLinkRuns: new Map<
-			ProseMirrorNode,
-			ReadonlyArray<MergedReferenceLinkRun>
-		>(),
+		referencedLabelsByNode: new Map<ProseMirrorNode, ReadonlySet<string>>(),
 		referenceImages: new Map<ProseMirrorNode, ReferenceImageOrigin>(),
 		referenceLinks: new Map<Mark, ReferenceLinkOrigin>(),
 	};
@@ -831,53 +838,38 @@ export function parseMarkdownWithBlockSources(
 		preScan.rawLines,
 	);
 
-	const { mergedReferenceLinkRuns, referenceImages, referenceLinks } =
+	const { referencedLabelsByNode, referenceImages, referenceLinks } =
 		referenceCollectors;
-	let firstRefDefBlockByLabel: Map<string, number> | undefined;
 	let firstRefDefNodeByLabel: Map<string, ProseMirrorNode> | undefined;
-	let refDefLabelsByBlock: Map<number, ReadonlyArray<string>> | undefined;
-	let refDefLabelsByNode: Map<ProseMirrorNode, ReadonlyArray<string>> | undefined;
+	let refDefLabelsByNode:
+		| Map<ProseMirrorNode, ReadonlyArray<string>>
+		| undefined;
 	let phpPartialTitleRefLabels: Set<string> | undefined;
 	if (referenceLinks.size > 0 || referenceImages.size > 0) {
-		firstRefDefBlockByLabel = new Map<string, number>();
 		firstRefDefNodeByLabel = new Map<string, ProseMirrorNode>();
-		refDefLabelsByBlock = new Map<number, ReadonlyArray<string>>();
 		refDefLabelsByNode = new Map<ProseMirrorNode, ReadonlyArray<string>>();
 		phpPartialTitleRefLabels = new Set<string>();
-		for (let blockIdx = 0; blockIdx < mapped.length; blockIdx += 1) {
-			const topNode = mapped[blockIdx]?.node;
-			if (!topNode) continue;
-			const blockLabels: string[] = [];
-			const collect = (node: ProseMirrorNode): void => {
-				const entries = referenceBlockLabels.get(node);
-				if (!entries) return;
-				const nodeLabels: string[] = [];
-				for (const entry of entries) {
-					blockLabels.push(entry.label);
-					nodeLabels.push(entry.label);
-					if (!firstRefDefBlockByLabel?.has(entry.label)) {
-						firstRefDefBlockByLabel?.set(entry.label, blockIdx);
-						firstRefDefNodeByLabel?.set(entry.label, node);
-						if (entry.hasPhpPartialTitle) {
-							phpPartialTitleRefLabels?.add(entry.label);
-						}
+		const collect = (node: ProseMirrorNode): void => {
+			const entries = referenceBlockLabels.get(node);
+			if (!entries) return;
+			const nodeLabels: string[] = [];
+			for (const entry of entries) {
+				nodeLabels.push(entry.label);
+				if (!firstRefDefNodeByLabel?.has(entry.label)) {
+					firstRefDefNodeByLabel?.set(entry.label, node);
+					if (entry.hasPhpPartialTitle) {
+						phpPartialTitleRefLabels?.add(entry.label);
 					}
 				}
-				if (nodeLabels.length > 0) {
-					refDefLabelsByNode?.set(node, nodeLabels);
-				}
-			};
-			collect(topNode);
-			if (topNode.childCount > 0) {
-				topNode.descendants((descendant) => {
-					collect(descendant);
-					return true;
-				});
 			}
-			if (blockLabels.length > 0) {
-				refDefLabelsByBlock.set(blockIdx, blockLabels);
+			if (nodeLabels.length > 0) {
+				refDefLabelsByNode?.set(node, nodeLabels);
 			}
-		}
+		};
+		doc.descendants((descendant) => {
+			collect(descendant);
+			return true;
+		});
 	}
 
 	const envRefs = env.references as ParsedEnvReferences | undefined;
@@ -888,24 +880,18 @@ export function parseMarkdownWithBlockSources(
 		...(envRefs && Object.keys(envRefs).length > 0
 			? { envReferences: envRefs }
 			: {}),
-		...(firstRefDefBlockByLabel && firstRefDefBlockByLabel.size > 0
-			? { firstRefDefBlockByLabel }
-			: {}),
 		...(firstRefDefNodeByLabel && firstRefDefNodeByLabel.size > 0
 			? { firstRefDefNodeByLabel }
 			: {}),
 		leadingPrefix,
 		lineEnding: preScan.lineEnding,
-		...(mergedReferenceLinkRuns.size > 0 ? { mergedReferenceLinkRuns } : {}),
 		...(phpPartialTitleRefLabels && phpPartialTitleRefLabels.size > 0
 			? { phpPartialTitleRefLabels }
-			: {}),
-		...(refDefLabelsByBlock && refDefLabelsByBlock.size > 0
-			? { refDefLabelsByBlock }
 			: {}),
 		...(refDefLabelsByNode && refDefLabelsByNode.size > 0
 			? { refDefLabelsByNode }
 			: {}),
+		...(referencedLabelsByNode.size > 0 ? { referencedLabelsByNode } : {}),
 		...(referenceImages.size > 0 ? { referenceImages } : {}),
 		...(referenceLinks.size > 0 ? { referenceLinks } : {}),
 		trailingSuffix,

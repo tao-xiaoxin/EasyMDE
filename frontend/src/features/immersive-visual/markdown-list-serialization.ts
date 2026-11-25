@@ -31,10 +31,7 @@ export type RefDefContinuationMode = "none" | "tight" | "indented";
 export const PARAGRAPH_INTERRUPTING_LIST_FIRST_LINE =
 	/^[ \t]*(?:[-*+]|1[.)])[ \t]+\S/;
 
-function nodeContainsString(
-	node: ProseMirrorNode,
-	needle: string,
-): boolean {
+function nodeContainsString(node: ProseMirrorNode, needle: string): boolean {
 	let found = false;
 	node.descendants((descendant) => {
 		if (found) {
@@ -417,7 +414,9 @@ export function refDefContinuationMode(
 		first.attrs.continuationIndent === true;
 	if (hasContinuationIndent) {
 		const raw =
-			typeof first.attrs.rawMarkdown === "string" ? first.attrs.rawMarkdown : "";
+			typeof first.attrs.rawMarkdown === "string"
+				? first.attrs.rawMarkdown
+				: "";
 		if (
 			wouldRawHtmlInterruptParagraph(raw) ||
 			isStandaloneType7HtmlFirstLine(serializedNext)
@@ -441,7 +440,7 @@ export function needsTightRefDefContinuation(
 
 export type PartialTitleRefDefPredicate = (node: ProseMirrorNode) => boolean;
 
-function isTightPartialTitleFollower(
+export function isTightPartialTitleFollower(
 	prev: ProseMirrorNode,
 	next: ProseMirrorNode,
 	serializedNext: string,
@@ -516,7 +515,8 @@ function escapeLiteralTaskPrefix(
 	if (child.type.name !== "paragraph") {
 		return serialized;
 	}
-	const preserveRaw = !forceEscape && child.attrs.preserveRawTaskPrefix === true;
+	const preserveRaw =
+		!forceEscape && child.attrs.preserveRawTaskPrefix === true;
 	if (preserveRaw) {
 		const first = child.firstChild;
 		if (

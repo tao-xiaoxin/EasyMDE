@@ -1,6 +1,5 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
-	createTextBlockWithReferenceRuns,
 	type InlineReferenceCollectors,
 	type MarkdownToken,
 	mapInlineTokens,
@@ -92,22 +91,31 @@ export function mapTableTokens(
 				isHeader ? "th_close" : "td_close",
 			);
 			const inlineToken = tokens[j + 1];
+			const cellRefLabels = collectors ? new Set<string>() : undefined;
 			const inlineNodes =
 				inlineToken?.type === "inline"
-					? mapInlineTokens(inlineToken.children, preScan, true, collectors)
+					? mapInlineTokens(
+							inlineToken.children,
+							preScan,
+							true,
+							collectors,
+							cellRefLabels,
+						)
 					: [];
 			const cellType = isHeader
 				? visualEditorSchema.nodes.table_header
 				: visualEditorSchema.nodes.table_cell;
+			const cellParagraph = visualEditorSchema.nodes.paragraph.create(
+				null,
+				inlineNodes,
+			);
+			if (collectors && cellRefLabels && cellRefLabels.size > 0) {
+				collectors.referencedLabelsByNode.set(cellParagraph, cellRefLabels);
+			}
 			cells.push(
 				cellType.create(
 					{ textAlign: parseCellAlignmentFromToken(cellToken) },
-					createTextBlockWithReferenceRuns(
-						visualEditorSchema.nodes.paragraph,
-						null,
-						inlineNodes,
-						collectors,
-					),
+					cellParagraph,
 				),
 			);
 			j = cellClose;

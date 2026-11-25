@@ -386,7 +386,7 @@ describe("PR-R32-A immersive visual parser PHP parity & deduplication", () => {
 				"heading",
 			]);
 			expect(mathGuard.initialDoc.child(0).attrs.kind).toBe("math");
-			expect(mathGuard.initialDoc.child(1).attrs.rawMarkdown).toBe(" [r]: /u");
+			expect(mathGuard.initialDoc.child(1).attrs.rawMarkdown).toBe("[r]: /u");
 			expect(mathGuard.initialDoc.child(2).attrs.level).toBe(1);
 			expect(mathGuard.initialDoc.child(2).textContent).toBe("a");
 			expect(mathGuard.serialize(mathGuard.initialDoc)).toBe(

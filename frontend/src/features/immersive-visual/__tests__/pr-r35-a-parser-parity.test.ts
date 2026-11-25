@@ -141,8 +141,14 @@ describe("PR-R35-A immersive visual preservation & refdef scanning parity", () =
 				);
 				const edited = insertTextAfterFirstMatch(guard.initialDoc, '"a', "!");
 				const serialized = guard.serialize(edited);
-				expect(serialized).toBe('[r]: /u\n\n"a!\n\n$$x$$\n\nb"\n\n[r]\n\nz');
-				expect(parseMarkdownToVisualDoc(serialized).eq(edited)).toBe(true);
+				expect(serialized).toBe('[r]: /u\n"a!\n\n$$x$$\n\nb"\n\n[r]\n\nz');
+				const reparsed = parseMarkdownToVisualDoc(serialized);
+				expect(reparsed.child(1).textContent).toBe('"a!');
+				expect(
+					reparsed
+						.child(4)
+						.firstChild?.marks.find((m) => m.type.name === "link")?.attrs,
+				).toEqual({ href: "/u", title: "a!\n" });
 			}
 
 			{
@@ -151,7 +157,9 @@ describe("PR-R35-A immersive visual preservation & refdef scanning parity", () =
 				);
 				const edited = insertTextAfterFirstMatch(guard.initialDoc, 'b"', "!");
 				const serialized = guard.serialize(edited);
-				expect(serialized).toBe('[r]: /u\n\n"a\n\n$$x$$\n\nb"!\n\n[r]\n\nz');
+				expect(serialized).toBe(
+					'[r]: /u\n\n"a\n\n$$x$$\n\nb"!\n\n[r](/u "a &#10;")\n\nz',
+				);
 				expect(parseMarkdownToVisualDoc(serialized).eq(edited)).toBe(true);
 			}
 		});

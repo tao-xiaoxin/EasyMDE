@@ -3420,7 +3420,8 @@ describe("PR-R17-A reference definition preservation, inline link title parity, 
 			),
 		).toEqual(["img"]);
 
-		// 4. Destination-only definition followed by `"Quote" said Alice.` keeps both blocks.
+		// 4. Destination-only definition followed by `"Quote" said Alice.` keeps both blocks
+		// and mirrors PHP `League\CommonMark`'s partial title (`title="Quote"`).
 		const quoteAfterDestMd = '[r]: /a\n"Quote" said Alice.\n\n![x][r]';
 		const quoteGuard = createMarkdownRoundTripGuard(quoteAfterDestMd);
 		expect(quoteGuard.initialDoc.childCount).toBe(3);
@@ -3431,7 +3432,7 @@ describe("PR-R17-A reference definition preservation, inline link title parity, 
 		);
 		expect(firstImageAttrs(quoteGuard.initialDoc)).toMatchObject({
 			src: "/a",
-			title: null,
+			title: "Quote",
 		});
 		const quoteParaEnd =
 			quoteGuard.initialDoc.child(0).nodeSize +
@@ -3440,10 +3441,10 @@ describe("PR-R17-A reference definition preservation, inline link title parity, 
 		const quoteEdited = quoteGuard.serialize(
 			editAt(quoteGuard.initialDoc, quoteParaEnd, "!"),
 		);
-		expect(quoteEdited).toBe('[r]: /a\n\n"Quote" said Alice.!\n\n![x][r]');
+		expect(quoteEdited).toBe('[r]: /a\n"Quote" said Alice.!\n\n![x][r]');
 		expect(
 			firstImageAttrs(parseMarkdownToVisualDoc(quoteEdited)),
-		).toMatchObject({ src: "/a", title: null });
+		).toMatchObject({ src: "/a", title: "Quote" });
 
 		// 5. First-wins precedence when earlier definition is nested in a list item or blockquote.
 		const listFirstMd = "- [r]: /first\n\n[r]: /second\n\n![x][r]";
@@ -4925,7 +4926,7 @@ describe("PR-R21-A PHP CommonMark HTML blocks, NBSP blank lines, list-marker HTM
 		}).tr.delete(proseEnd - " prose".length, proseEnd).doc;
 		const deletedProseMd = refNbspGuard.serialize(deletedProseDoc);
 		expect(deletedProseMd).toBe(
-			"- [r]: /r\n\n  (first\n  \u00a0\n  (last)\n- Next\n\n[r]",
+			'- [r]: /r\n\n  (first\n  \u00a0\n  (last)\n- Next\n\n[r](/r "first&#10;\u00a0&#10;(last")',
 		);
 		const reparsedDeleted = parseMarkdownToVisualDoc(deletedProseMd);
 		expect(reparsedDeleted.firstChild?.child(0).child(2).textContent).toBe(
@@ -4934,8 +4935,8 @@ describe("PR-R21-A PHP CommonMark HTML blocks, NBSP blank lines, list-marker HTM
 		expect(
 			reparsedDeleted
 				.child(1)
-				.firstChild?.marks.find((mark) => mark.type.name === "link")?.attrs.href,
-		).toBe("/r");
+				.firstChild?.marks.find((mark) => mark.type.name === "link")?.attrs,
+		).toEqual({ href: "/r", title: "first\n\u00a0\n(last" });
 	});
 
 	it("routes CommonMark Types 1-7 HTML blocks directly without legacy HTML-pair corruption (Track B #1)", () => {
@@ -5346,8 +5347,9 @@ describe("PR-R22-A PHP CommonMark column/tab parity, priority-35 task markers, o
 			"!",
 		);
 		const serialized = guard.serialize(edited);
-		expect(serialized).toBe("> Intro!\n>\n> 1. <div>\n>\n> ![x](/i)");
+		expect(serialized).toBe("> Intro!\n>\n> 1. <div>\n> \t![x](/i)");
 		const reparsed = parseMarkdownToVisualDoc(serialized);
+		expect(reparsed.eq(edited)).toBe(true);
 		expect(reparsed.child(0).child(2).firstChild?.type.name).toBe("image");
 
 		// Tab directly after `>` (`>\t1. <div>` -> virtual col 2 + 2 virtual spaces + `1. ` = indent 5):

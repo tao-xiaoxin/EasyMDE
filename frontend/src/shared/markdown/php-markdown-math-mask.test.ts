@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+	extractPhpCommonMarkReferenceLabel,
+	hasPhpMathCrossingRangeBoundary,
 	isRangeDroppedByPhpTable,
+	replaceMathRangesWithPhpTokens,
+	replaceSliceMathRangesWithPhpTokens,
 	scanPhpCommonMarkBlocks,
 	scanPhpCommonMarkReferenceLabels,
 } from "./php-commonmark-block-scan";
@@ -479,5 +483,63 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 				"\\[a $$b$$ c\\]\n\n[$d$]: /x.png",
 			),
 		).toEqual(["EASYMDE_MATH_2_TOKEN"]);
+	});
+
+	it("shares exact document-level PHP math token substitution for slices and reference-use labels (Round 28 Track A #2)", () => {
+		const multiMath = "[EASYMDE_MATH_1_TOKEN]: /i\n\n$$b$$\n\n![[x](/u)][$a$]";
+		const ranges = scanPhpMarkdownMathRanges(multiMath);
+		const labelFrom = multiMath.lastIndexOf("[") + 1;
+		const labelTo = multiMath.lastIndexOf("]");
+		expect(
+			replaceSliceMathRangesWithPhpTokens(multiMath, labelFrom, labelTo, ranges),
+		).toBe("EASYMDE_MATH_1_TOKEN");
+		expect(replaceMathRangesWithPhpTokens(multiMath, ranges)).toBe(
+			"[EASYMDE_MATH_1_TOKEN]: /i\n\n\n\nEASYMDE_MATH_0_TOKEN\n\n\n\n![[x](/u)][EASYMDE_MATH_1_TOKEN]",
+		);
+
+		// Boundary-crossing math returns true and nullifies reference label extraction.
+		const crossClose = "![a][b $c] d$";
+		const crossCloseRanges = scanPhpMarkdownMathRanges(crossClose);
+		expect(hasPhpMathCrossingRangeBoundary(crossCloseRanges, 5, 9)).toBe(true);
+		expect(
+			extractPhpCommonMarkReferenceLabel(
+				crossClose,
+				5,
+				9,
+				crossCloseRanges,
+				null,
+				() => scanPhpCommonMarkBlocks(crossClose, crossCloseRanges),
+			),
+		).toBeNull();
+
+		// Multiline blockquote label with inline math on line 2 and table `\|` + multiline `\(...\)`.
+		const bqMulti = "> ![[x](/u)][foo\n> $m$]";
+		const bqRanges = scanPhpMarkdownMathRanges(bqMulti);
+		const bqFrom = bqMulti.indexOf("foo");
+		const bqTo = bqMulti.lastIndexOf("]");
+		expect(
+			extractPhpCommonMarkReferenceLabel(
+				bqMulti,
+				bqFrom,
+				bqTo,
+				bqRanges,
+				null,
+				() => scanPhpCommonMarkBlocks(bqMulti, bqRanges),
+			),
+		).toBe("foo\nEASYMDE_MATH_0_TOKEN");
+
+		const tablePipeMath = "| A |\n| --- |\n| ![[x](/u)][a\\|\\(b\nc\\)] |";
+		const tableRanges = scanPhpMarkdownMathRanges(tablePipeMath);
+		const tableScan = scanPhpCommonMarkBlocks(tablePipeMath, tableRanges);
+		expect(
+			extractPhpCommonMarkReferenceLabel(
+				tablePipeMath,
+				tablePipeMath.indexOf("a\\|"),
+				tablePipeMath.indexOf("] |"),
+				tableRanges,
+				tableScan,
+				() => tableScan,
+			),
+		).toBe("a|EASYMDE_MATH_0_TOKEN");
 	});
 });

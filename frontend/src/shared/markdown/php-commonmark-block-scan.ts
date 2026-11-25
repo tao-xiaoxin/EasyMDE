@@ -112,17 +112,68 @@ export function scanPhpCommonMarkBlocks(
 	};
 }
 
-function replaceMathRangesWithPhpTokens(
+function findFirstMathRangeEndingAfter(
+	mathRanges: ReadonlyArray<PhpMarkdownMathRange>,
+	offset: number,
+): number {
+	let low = 0;
+	let high = mathRanges.length;
+	while (low < high) {
+		const middle = Math.floor((low + high) / 2);
+		if ((mathRanges[middle]?.to ?? 0) <= offset) {
+			low = middle + 1;
+		} else {
+			high = middle;
+		}
+	}
+	return low;
+}
+
+/**
+ * Reports whether any PHP-extracted math range crosses either boundary of
+ * `[from, to)` (swallowing an enclosing delimiter such as `[` or `]`).
+ */
+export function hasPhpMathCrossingRangeBoundary(
+	mathRanges: ReadonlyArray<PhpMarkdownMathRange>,
+	from: number,
+	to: number,
+): boolean {
+	if (0 === mathRanges.length || from >= to) return false;
+	const atStart = mathRanges[findFirstMathRangeEndingAfter(mathRanges, from)];
+	if (atStart && atStart.from < from && atStart.to > from) return true;
+	const atEnd = mathRanges[findFirstMathRangeEndingAfter(mathRanges, to)];
+	return Boolean(atEnd && atEnd.from < to && atEnd.to > to);
+}
+
+/**
+ * Replaces every overlapping PHP-extracted math range inside
+ * `source.slice(sliceFrom, sliceTo)` with its canonical
+ * `EASYMDE_MATH_<tokenIndex>_TOKEN` placeholder (wrapped with `\n\n` for
+ * display math), matching PHP `MarkdownRenderer::extract_math()`.
+ */
+export function replaceSliceMathRangesWithPhpTokens(
 	source: string,
+	sliceFrom: number,
+	sliceTo: number,
 	mathRanges: ReadonlyArray<PhpMarkdownMathRange>,
 ): string {
+	const boundedFrom = Math.max(0, Math.min(source.length, sliceFrom));
+	const boundedTo = Math.max(boundedFrom, Math.min(source.length, sliceTo));
+	if (0 === mathRanges.length || boundedFrom >= boundedTo) {
+		return source.slice(boundedFrom, boundedTo);
+	}
+	const startIndex =
+		boundedFrom > 0
+			? findFirstMathRangeEndingAfter(mathRanges, boundedFrom)
+			: 0;
 	let parts: string[] | null = null;
-	let cursor = 0;
-	for (let i = 0; i < mathRanges.length; i += 1) {
+	let cursor = boundedFrom;
+	for (let i = startIndex; i < mathRanges.length; i += 1) {
 		const range = mathRanges[i];
 		if (!range) continue;
+		if (range.from >= boundedTo) break;
 		const from = Math.max(cursor, range.from);
-		const to = Math.min(source.length, range.to);
+		const to = Math.min(boundedTo, range.to);
 		if (to <= from) continue;
 		if (!parts) parts = [];
 		if (from > cursor) parts.push(source.slice(cursor, from));
@@ -130,9 +181,21 @@ function replaceMathRangesWithPhpTokens(
 		parts.push(range.block ? `\n\n${token}\n\n` : token);
 		cursor = to;
 	}
-	if (!parts) return source;
-	if (cursor < source.length) parts.push(source.slice(cursor));
+	if (!parts) return source.slice(boundedFrom, boundedTo);
+	if (cursor < boundedTo) parts.push(source.slice(cursor, boundedTo));
 	return parts.join("");
+}
+
+export function replaceMathRangesWithPhpTokens(
+	source: string,
+	mathRanges: ReadonlyArray<PhpMarkdownMathRange>,
+): string {
+	return replaceSliceMathRangesWithPhpTokens(
+		source,
+		0,
+		source.length,
+		mathRanges,
+	);
 }
 
 /**
@@ -162,6 +225,76 @@ export function scanPhpCommonMarkReferenceLabels(
 	});
 	scanLinesIntoPhpCommonMarkBlockState(state, effectiveSource);
 	return labels;
+}
+
+/**
+ * Extracts a reference-use label slice `source.slice(from, to)` as PHP
+ * `MarkdownRenderer::extract_math()` + `League\CommonMark` see it, substituting
+ * overlapping math ranges with `EASYMDE_MATH_<tokenIndex>_TOKEN`, stripping
+ * multiline container prefixes, and unescaping GFM table `\|`.
+ *
+ * Returns `null` when a PHP math range crosses the `[` or `]` boundary of the
+ * label and swallows its delimiter.
+ */
+export function extractPhpCommonMarkReferenceLabel(
+	source: string,
+	from: number,
+	to: number,
+	phpMathRanges: ReadonlyArray<PhpMarkdownMathRange>,
+	phpBlockScan: ScannedMarkdownBlocks | null,
+	getMultilineBlockScan: () => ScannedMarkdownBlocks,
+): string | null {
+	if (hasPhpMathCrossingRangeBoundary(phpMathRanges, from, to)) return null;
+	const substituted = replaceSliceMathRangesWithPhpTokens(
+		source,
+		from,
+		to,
+		phpMathRanges,
+	);
+	if (!substituted.includes("\n") && !substituted.includes("\r")) {
+		if (
+			phpBlockScan &&
+			substituted.includes("\\|") &&
+			findLineAtOffset(phpBlockScan.lines, from)?.isTableRow
+		) {
+			return unescapeTableCellPipes(substituted);
+		}
+		return substituted;
+	}
+	const scan = phpBlockScan ?? getMultilineBlockScan();
+	const firstIdx = findLineIndexAtOffset(scan.lines, from);
+	const lastIdx = findLineIndexAtOffset(scan.lines, to);
+	const firstLine = firstIdx >= 0 ? scan.lines[firstIdx] : undefined;
+	if (!firstLine || lastIdx < firstIdx) return substituted;
+	if (firstIdx === lastIdx) {
+		return firstLine.isTableRow && substituted.includes("\\|")
+			? unescapeTableCellPipes(substituted)
+			: substituted;
+	}
+	const parts: string[] = [
+		replaceSliceMathRangesWithPhpTokens(
+			source,
+			from,
+			firstLine.lineEnd,
+			phpMathRanges,
+		),
+	];
+	for (let idx = firstIdx + 1; idx <= lastIdx; idx += 1) {
+		const line = scan.lines[idx];
+		if (!line) return substituted;
+		const segEnd = idx === lastIdx ? to : line.lineEnd;
+		if (segEnd < line.contentOffset) return substituted;
+		const prefix = line.virtualSpaces > 0 ? " ".repeat(line.virtualSpaces) : "";
+		parts.push(
+			`${prefix}${replaceSliceMathRangesWithPhpTokens(
+				source,
+				line.contentOffset,
+				segEnd,
+				phpMathRanges,
+			)}`,
+		);
+	}
+	return parts.join("\n");
 }
 
 export function findLineIndexAtOffset(

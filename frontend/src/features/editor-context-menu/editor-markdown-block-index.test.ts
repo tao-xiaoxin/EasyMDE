@@ -2046,6 +2046,255 @@ describe("readEditorCodeContent", () => {
 		});
 		expect(unresolvedInsideDefIdx.linkCandidates).toEqual([]);
 	});
+
+	it("substitutes PHP math tokens in reference-image use labels and treats display-math-broken Lezer images as unresolved (Round 28 Track A #2 + Track B F6)", () => {
+		// 1. Track A #2 + Track B F6a/F6b: reference-image USE labels substitute exact document-level PHP math tokens.
+		const reproFullBottom = "![[x](/u)][$m$]\n\n[EASYMDE_MATH_0_TOKEN]: /i";
+		const reproFullBottomIdx = createEditorMarkdownBlockIndex(reproFullBottom);
+		expect(reproFullBottomIdx.imageBlocks?.[0]).toEqual({
+			count: 0,
+			firstImageIndex: 0,
+			status: "unavailable",
+		});
+		expect(reproFullBottomIdx.linkCandidates).toEqual([]);
+
+		const reproFullTop =
+			"[EASYMDE_MATH_0_TOKEN]: https://example.com/img.png\n\n![[link](https://example.com)][$a$]";
+		const reproFullTopIdx = createEditorMarkdownBlockIndex(reproFullTop);
+		expect(reproFullTopIdx.imageBlocks?.[1]).toEqual({
+			count: 0,
+			firstImageIndex: 0,
+			status: "unavailable",
+		});
+		expect(reproFullTopIdx.linkCandidates).toEqual([]);
+
+		const reproShortcut =
+			"[EASYMDE_MATH_0_TOKEN]: https://example.com/img.png\n\n![$a$]";
+		const reproShortcutIdx = createEditorMarkdownBlockIndex(reproShortcut);
+		expect(reproShortcutIdx.imageBlocks?.[1]).toEqual({
+			count: 0,
+			firstImageIndex: 0,
+			status: "unavailable",
+		});
+		expect(reproShortcutIdx.linkCandidates).toEqual([]);
+
+		// Positive control: unresolved math-containing reference label keeps block ready and exposes nested link.
+		const ctrlUnresolved = "![[x](/u)][$m$]\n\n[other]: /i";
+		const ctrlUnresolvedIdx = createEditorMarkdownBlockIndex(ctrlUnresolved);
+		expect(ctrlUnresolvedIdx.imageBlocks?.[0]).toEqual({
+			count: 0,
+			firstImageIndex: 0,
+			status: "ready",
+		});
+		expect(
+			(ctrlUnresolvedIdx.linkCandidates ?? []).map((r) =>
+				ctrlUnresolved.slice(r.from, r.to),
+			),
+		).toEqual(["[x](/u)"]);
+
+		// Positive control: multi-math 4-pass numbering ($$b$$ -> TOKEN_0, $a$ -> TOKEN_1).
+		const ctrlMultiMath =
+			"[EASYMDE_MATH_1_TOKEN]: /i\n\n$$b$$\n\n![[x](/u)][$a$]";
+		const ctrlMultiMathIdx = createEditorMarkdownBlockIndex(ctrlMultiMath);
+		expect(ctrlMultiMathIdx.imageBlocks?.[2]).toEqual({
+			count: 0,
+			firstImageIndex: 0,
+			status: "unavailable",
+		});
+		expect(ctrlMultiMathIdx.linkCandidates).toEqual([]);
+
+		// Additional PHP parity controls for math in reference-image USE labels:
+		// collapsed ref, table `\|` + math, table math containing `\|`, blockquote multiline + math,
+		// multiline `\(...\)` label, 4-pass multiple math spans in one label, code-separated segments, and case folding.
+		for (const [label, source, expectedBlockIndex] of [
+			[
+				"collapsed reference image with math label",
+				"[EASYMDE_MATH_0_TOKEN]: /i\n\n![$a$][]",
+				1,
+			],
+			[
+				"table cell with escaped pipe and math in label",
+				"| A |\n| --- |\n| ![[x](/u)][a\\|$m$] |\n\n[a|EASYMDE_MATH_0_TOKEN]: /i",
+				0,
+			],
+			[
+				"table cell with escaped pipe inside math label",
+				"| A |\n| --- |\n| ![[x](/u)][$a\\|b$] |\n\n[EASYMDE_MATH_0_TOKEN]: /i",
+				0,
+			],
+			[
+				"blockquote multiline reference label with math on line 2",
+				"> ![[x](/u)][foo\n> $m$]\n\n[foo EASYMDE_MATH_0_TOKEN]: /i",
+				0,
+			],
+			[
+				"multiline paren math reference label with trailing text",
+				"![[x](/u)][\\(a\nb\\)] tail\n\n[EASYMDE_MATH_0_TOKEN]: /i",
+				0,
+			],
+			[
+				"blockquote multiline paren math reference label",
+				"> ![[x](/u)][\\(a\n> b\\)]\n\n[EASYMDE_MATH_0_TOKEN]: /i",
+				0,
+			],
+			[
+				"4-pass paren before dollar numbering in same reference label",
+				"![[x](/u)][$a$ \\(b\\)]\n\n[EASYMDE_MATH_1_TOKEN EASYMDE_MATH_0_TOKEN]: /i",
+				0,
+			],
+			[
+				"code-separated segment numbering keeps $a$ as TOKEN_0",
+				"![[x](/u)][$a$]\n\n`code`\n\n$$b$$\n\n[EASYMDE_MATH_0_TOKEN]: /i",
+				0,
+			],
+			[
+				"case-folded math token reference definition",
+				"![[x](/u)][$a$]\n\n[easymde_math_0_token]: /i",
+				0,
+			],
+		] as const) {
+			const idx = createEditorMarkdownBlockIndex(source);
+			expect(idx.imageBlocks?.[expectedBlockIndex], `status:${label}`).toEqual({
+				count: 0,
+				firstImageIndex: 0,
+				status: "unavailable",
+			});
+			expect(idx.linkCandidates, `links:${label}`).toEqual([]);
+		}
+
+		// Math in both use and def produces distinct token indices (TOKEN_0 vs TOKEN_1), so it stays unresolved.
+		const distinctTokens = "![[x](/u)][$m$]\n\n[$m$]: /i";
+		const distinctTokensIdx = createEditorMarkdownBlockIndex(distinctTokens);
+		expect(distinctTokensIdx.imageBlocks?.[0]?.status).toBe("ready");
+		expect(
+			(distinctTokensIdx.linkCandidates ?? []).map((r) =>
+				distinctTokens.slice(r.from, r.to),
+			),
+		).toEqual(["[x](/u)"]);
+
+		// Math crossing the opening or closing bracket of a reference label swallows the delimiter in PHP -> unresolved.
+		const crossClose = "![a][b $c] d$\n\n[b EASYMDE_MATH_0_TOKEN]: /i";
+		expect(createEditorMarkdownBlockIndex(crossClose).imageBlocks?.[0]?.status).toBe(
+			"ready",
+		);
+		const crossOpen = "![[x](/u) $a][b$]\n\n[EASYMDE_MATH_0_TOKEN]: /i";
+		const crossOpenIdx = createEditorMarkdownBlockIndex(crossOpen);
+		expect(crossOpenIdx.imageBlocks?.[0]?.status).toBe("ready");
+		expect(
+			(crossOpenIdx.linkCandidates ?? []).map((r) => crossOpen.slice(r.from, r.to)),
+		).toEqual(["[x](/u)"]);
+
+		// 2. Track B F6c: display-math-broken Lezer Image nodes (inline and defined reference) do not block live links or mark blocks unavailable.
+		const inlineDisplayBroken =
+			"![[a](https://example.com) $$x$$](https://example.com/img.png)";
+		const inlineDisplayIdx = createEditorMarkdownBlockIndex(inlineDisplayBroken);
+		expect(inlineDisplayIdx.imageBlocks?.[0]).toEqual({
+			count: 0,
+			firstImageIndex: 0,
+			status: "ready",
+		});
+		expect(inlineDisplayIdx.imageRanges).toEqual([]);
+		expect(
+			(inlineDisplayIdx.linkCandidates ?? []).map((r) =>
+				inlineDisplayBroken.slice(r.from, r.to),
+			),
+		).toEqual(["[a](https://example.com)", "https://example.com/img.png"]);
+
+		const refDisplayBroken =
+			"[defined]: https://example.com/img.png\n\n![[a](https://example.com) $$x$$][defined]";
+		const refDisplayIdx = createEditorMarkdownBlockIndex(refDisplayBroken);
+		expect(refDisplayIdx.imageBlocks?.[1]).toEqual({
+			count: 0,
+			firstImageIndex: 0,
+			status: "ready",
+		});
+		expect(refDisplayIdx.imageRanges).toEqual([]);
+		expect(
+			(refDisplayIdx.linkCandidates ?? []).map((r) =>
+				refDisplayBroken.slice(r.from, r.to),
+			),
+		).toEqual(["[a](https://example.com)"]);
+
+		// Bracket display math, inline math before display math, blockquote, table cell, and relative-URL destination without phantom link.
+		for (const [label, source, expectedBlockIndex, expectedLinks, expectedImages] of [
+			[
+				"bracket display math inside inline image",
+				"![[a](https://example.com) \\[x\\]](https://example.com/img.png)",
+				0,
+				["[a](https://example.com)", "https://example.com/img.png"],
+				[],
+			],
+			[
+				"inline math preceding display math inside inline image",
+				"![$m$ [a](https://example.com) $$x$$](https://example.com/img.png)",
+				0,
+				["[a](https://example.com)", "https://example.com/img.png"],
+				[],
+			],
+			[
+				"display math inside reference image label",
+				"[defined]: https://example.com/img.png\n\n![[a](https://example.com)][$$x$$]",
+				1,
+				["[a](https://example.com)"],
+				[],
+			],
+			[
+				"blockquote display-math-broken inline image",
+				"> ![[a](https://example.com) $$x$$](https://example.com/img.png)",
+				0,
+				["[a](https://example.com)", "https://example.com/img.png"],
+				[],
+			],
+			[
+				"display-math-broken inline image with relative destination omits non-autolink destination",
+				"![[a](https://example.com) $$x$$](/img.png)",
+				0,
+				["[a](https://example.com)"],
+				[],
+			],
+			[
+				"table cell display-math-broken inline image exposes live links",
+				"| A |\n| --- |\n| ![[a](https://example.com) $$x$$](https://example.com/img.png) |",
+				0,
+				["[a](https://example.com)", "https://example.com/img.png"],
+				[],
+			],
+			[
+				"sibling real inline image before display-math-broken image stays ready",
+				"![ok](/ok.png) ![[a](https://example.com) $$x$$](https://example.com/img.png)",
+				0,
+				["[a](https://example.com)", "https://example.com/img.png"],
+				["![ok](/ok.png)"],
+			],
+			[
+				"nested real inline image before display math keeps inner link blocked and outer URL live",
+				"![![[a](https://example.com)](https://example.com/inner.png) $$x$$](https://example.com/outer.png)",
+				0,
+				["https://example.com/outer.png"],
+				["![[a](https://example.com)](https://example.com/inner.png)"],
+			],
+		] as const) {
+			const idx = createEditorMarkdownBlockIndex(source);
+			expect(idx.imageBlocks?.[expectedBlockIndex]?.status, `status:${label}`).toBe(
+				"ready",
+			);
+			expect(
+				(idx.imageRanges ?? []).map((r) => source.slice(r.from, r.to)),
+				`images:${label}`,
+			).toEqual([...expectedImages]);
+			expect(
+				(idx.linkCandidates ?? []).map((r) => source.slice(r.from, r.to)),
+				`links:${label}`,
+			).toEqual([...expectedLinks]);
+		}
+
+		// Positive control: inline math ($x$) does NOT break a defined reference image.
+		const refInlineMath =
+			"[defined]: https://example.com/img.png\n\n![[a](https://example.com) $x$][defined]";
+		const refInlineMathIdx = createEditorMarkdownBlockIndex(refInlineMath);
+		expect(refInlineMathIdx.imageBlocks?.[1]?.status).toBe("unavailable");
+		expect(refInlineMathIdx.linkCandidates).toEqual([]);
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

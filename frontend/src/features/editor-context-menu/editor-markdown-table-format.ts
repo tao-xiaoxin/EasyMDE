@@ -10,10 +10,11 @@ import {
 } from "./editor-context-menu-text-edit";
 import type { EditorMarkdownBlockIndex } from "./editor-markdown-block-index";
 import type { MarkdownLine } from "./editor-markdown-lines";
+import { maskDocumentForTableScan } from "./editor-markdown-php-table-scan";
 import {
 	type ParsedTableRow,
 	type PreparedMarkdownTable,
-	pipePositions,
+	pipePositionsFromMasked,
 	prepareMarkdownTable,
 	preparedMarkdownTableMatches,
 	tableSelectionAt,
@@ -108,8 +109,9 @@ function cellCoreRangeInLine(
 function formatTableRow(
 	line: MarkdownLine,
 	row: ParsedTableRow,
+	maskedLine: string,
 ): FormatTableRow | null {
-	const positions = pipePositions(line.text);
+	const positions = pipePositionsFromMasked(maskedLine);
 	const lastPipe = positions[positions.length - 1];
 	if (undefined === lastPipe) return null;
 	const leadingPipe = row.leadingPipe;
@@ -349,6 +351,7 @@ export function formatMarkdownTableSource(
 		return null;
 
 	const { lines, table } = context;
+	const maskedDoc = maskDocumentForTableScan(value, context.blockIndex);
 	const rowViews: FormatTableRow[] = [];
 	const rowIndexByLine = new Map<number, number>();
 	for (let rowIndex = 0; rowIndex < table.rows.length; rowIndex += 1) {
@@ -356,7 +359,9 @@ export function formatMarkdownTableSource(
 		if (!row) return null;
 		const line = lines[row.lineIndex];
 		if (!line) return null;
-		const rowView = formatTableRow(line, row);
+		const maskedLine =
+			maskedDoc === value ? line.text : maskedDoc.slice(line.start, line.end);
+		const rowView = formatTableRow(line, row, maskedLine);
 		if (!rowView) return null;
 		rowViews.push(rowView);
 		rowIndexByLine.set(row.lineIndex, rowIndex);

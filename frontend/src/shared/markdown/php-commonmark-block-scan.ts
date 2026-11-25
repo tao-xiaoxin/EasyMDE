@@ -14,6 +14,7 @@ import {
 	COMMONMARK_HTML_BLOCK_TYPE_1_OPEN,
 	COMMONMARK_HTML_BLOCK_TYPE_6_OPEN,
 	COMMONMARK_THEMATIC_BREAK_LINE,
+	collectTableRowCells,
 	findTableRowCellAt,
 	type TableRowCellRange,
 	unescapeTableCellPipes,
@@ -44,6 +45,7 @@ export {
 	COMMONMARK_HTML_BLOCK_TYPE_1_OPEN,
 	COMMONMARK_HTML_BLOCK_TYPE_6_OPEN,
 	COMMONMARK_THEMATIC_BREAK_LINE,
+	collectTableRowCells,
 	createPhpCommonMarkBlockState,
 	findTableRowCellAt,
 	isPhpBlockStateTopLevelParagraph,
@@ -82,13 +84,7 @@ export function scanPhpCommonMarkBlocks(
 	source: string,
 	knownMathRanges?: ReadonlyArray<PhpMarkdownMathRange>,
 ): ScannedMarkdownBlocks {
-	const maskedSource =
-		source.includes("|") ||
-		source.includes("$$") ||
-		source.includes("\\[") ||
-		source.includes("\\(")
-			? maskPhpMarkdownMathForTableScan(source, knownMathRanges)
-			: source;
+	const maskedSource = maskPhpMarkdownMathForTableScan(source, knownMathRanges);
 	const state = createPhpCommonMarkBlockState(true);
 	scanLinesIntoPhpCommonMarkBlockState(state, maskedSource);
 

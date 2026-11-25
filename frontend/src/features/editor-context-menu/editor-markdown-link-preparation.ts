@@ -4,12 +4,13 @@ import type {
 	EditorMarkdownSourceBlock,
 } from "../../contracts/ports/editor-block-index-port";
 import {
+	collectTableRowCells,
 	findLineAtOffset,
 	inCodeRange,
-	isRangeDroppedByPhpTable,
 	type ScannedMarkdownBlocks,
+	type TableRowCellRange,
 } from "../../shared/markdown/php-commonmark-block-scan";
-import { findMarkdownImageCoreAt } from "../image-scale/image-scale-syntax";
+import { collectPhpTableCellImageRanges } from "../image-scale/image-scale-syntax";
 import {
 	originalRange,
 	type NewlineProjection,
@@ -387,24 +388,104 @@ export function renderedReferenceLinkBodies(
 	});
 }
 
-function isInsidePhpTableImage(
-	source: string,
-	phpBlockScan: ScannedMarkdownBlocks,
-	from: number,
+const EMPTY_SOURCE_RANGES: ReadonlyArray<SourceRange> = [];
+
+function findCachedTableRowCellAt(
+	cells: ReadonlyArray<TableRowCellRange>,
+	offset: number,
+): TableRowCellRange | null {
+	let low = 0;
+	let high = cells.length - 1;
+	while (low <= high) {
+		const middle = Math.floor((low + high) / 2);
+		const cell = cells[middle];
+		if (!cell) return null;
+		if (offset < cell.start) {
+			high = middle - 1;
+		} else if (offset >= cell.end) {
+			low = middle + 1;
+		} else {
+			return cell;
+		}
+	}
+	return null;
+}
+
+function offsetInsideSortedRanges(
+	ranges: ReadonlyArray<SourceRange>,
+	offset: number,
 ): boolean {
-	const line = findLineAtOffset(phpBlockScan.lines, from);
-	if (!line?.isTableRow) return false;
-	const lineText = source.slice(line.contentOffset, line.lineEnd);
-	if (
-		!lineText.includes("![") ||
-		(!lineText.includes("\\\\|") &&
-			!lineText.includes("$") &&
-			!lineText.includes("\\("))
-	) {
+	if (0 === ranges.length) return false;
+	if (ranges.length <= 8) {
+		for (let i = 0; i < ranges.length; i += 1) {
+			const range = ranges[i];
+			if (!range || offset < range.from) return false;
+			if (offset < range.to) return true;
+		}
 		return false;
 	}
-	const image = findMarkdownImageCoreAt(source, from, from, phpBlockScan);
-	return null !== image && image.start <= from && from < image.core.imageEnd;
+	let low = 0;
+	let high = ranges.length - 1;
+	while (low <= high) {
+		const middle = Math.floor((low + high) / 2);
+		const range = ranges[middle];
+		if (!range) return false;
+		if (offset < range.from) {
+			high = middle - 1;
+		} else if (offset >= range.to) {
+			low = middle + 1;
+		} else {
+			return true;
+		}
+	}
+	return false;
+}
+
+function isRangeExcludedByPhpTable(
+	source: string,
+	phpBlockScan: ScannedMarkdownBlocks,
+	range: SourceRange,
+	sourceMaySplitTableImage: boolean,
+	rowCellsCache: Map<number, ReadonlyArray<TableRowCellRange>>,
+	cellImageRangesCache: Map<string, ReadonlyArray<SourceRange>>,
+): boolean {
+	const startLine = findLineAtOffset(phpBlockScan.lines, range.from);
+	if (!startLine) return false;
+	if (!startLine.isTableRow) {
+		if (range.to > startLine.lineEnd) {
+			const endLine = findLineAtOffset(phpBlockScan.lines, range.to - 1);
+			if (endLine?.isTableRow) return true;
+		}
+		return false;
+	}
+	let cells = rowCellsCache.get(startLine.lineStart);
+	if (undefined === cells) {
+		cells = collectTableRowCells(
+			phpBlockScan.tableCellSource ?? source,
+			startLine.contentOffset,
+			startLine.lineEnd,
+			startLine.tableColumnCount,
+		);
+		rowCellsCache.set(startLine.lineStart, cells);
+	}
+	const cell = findCachedTableRowCellAt(cells, range.from);
+	if (null === cell || range.to > cell.end) return true;
+	if (!sourceMaySplitTableImage) return false;
+
+	const cellKey = `${cell.start}:${cell.end}`;
+	let cellImages = cellImageRangesCache.get(cellKey);
+	if (undefined === cellImages) {
+		const cellText = source.slice(cell.start, cell.end);
+		cellImages =
+			cellText.includes("![") &&
+			(cellText.includes("\\\\|") ||
+				cellText.includes("$") ||
+				cellText.includes("\\("))
+				? collectPhpTableCellImageRanges(source, phpBlockScan, startLine, cell)
+				: EMPTY_SOURCE_RANGES;
+		cellImageRangesCache.set(cellKey, cellImages);
+	}
+	return offsetInsideSortedRanges(cellImages, range.from);
 }
 
 /**
@@ -428,6 +509,8 @@ export function linkCandidatesForBlocks(
 				source.includes("$") ||
 				source.includes("\\(")),
 	);
+	const rowCellsCache = new Map<number, ReadonlyArray<TableRowCellRange>>();
+	const cellImageRangesCache = new Map<string, ReadonlyArray<SourceRange>>();
 	let blockIndex = 0;
 	let mathIndex = 0;
 	let imageIndex = 0;
@@ -452,10 +535,15 @@ export function linkCandidatesForBlocks(
 		if (
 			phpBlockScan &&
 			undefined !== source &&
-			(isRangeDroppedByPhpTable(source, phpBlockScan, range.from, range.to) ||
-				inCodeRange(phpBlockScan.blockCodeRanges, range.from, range.to) ||
-				(sourceMaySplitTableImage &&
-					isInsidePhpTableImage(source, phpBlockScan, range.from)))
+			(inCodeRange(phpBlockScan.blockCodeRanges, range.from, range.to) ||
+				isRangeExcludedByPhpTable(
+					source,
+					phpBlockScan,
+					range,
+					sourceMaySplitTableImage,
+					rowCellsCache,
+					cellImageRangesCache,
+				))
 		) {
 			continue;
 		}

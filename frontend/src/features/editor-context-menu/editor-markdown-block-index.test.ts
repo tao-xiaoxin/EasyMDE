@@ -1611,6 +1611,74 @@ describe("readEditorCodeContent", () => {
 			).toEqual(["![alt](https://example.com/a.png)"]);
 		}
 	});
+
+	it("preserves bare-CR inline math offsets, recovers PHP-valid \\\\| table-cell images, and scales linearly on 6,000 links in a math table cell (Track A #4, #5a, #5b)", () => {
+		// Track A #5a: bare `\r` inside inline math keeps column 2 link/image intact.
+		const bareCrTable = "| A | B |\n| --- | --- |\n| $a\rb|c$ | [x](/x) |";
+		const bareCrIndex = createEditorMarkdownBlockIndex(bareCrTable);
+		expect(bareCrIndex.mathSpans).toEqual([
+			{
+				bodyFrom: bareCrTable.indexOf("$a") + 1,
+				bodyTo: bareCrTable.indexOf("$ |") ,
+				displayMode: false,
+				from: bareCrTable.indexOf("$a"),
+				to: bareCrTable.indexOf("$ |") + 1,
+			},
+		]);
+		expect(
+			(bareCrIndex.linkCandidates ?? []).map((r) =>
+				bareCrTable.slice(r.from, r.to),
+			),
+		).toEqual(["[x](/x)"]);
+
+		const bareCrTableImg = "| A | B |\n| --- | --- |\n| $a\rb|c$ | ![x](/i) |";
+		const bareCrImgIndex = createEditorMarkdownBlockIndex(bareCrTableImg);
+		expect(
+			(bareCrImgIndex.imageRanges ?? []).map((r) =>
+				bareCrTableImg.slice(r.from, r.to),
+			),
+		).toEqual(["![x](/i)"]);
+
+		// Track A #5b: recover PHP-valid `\\|` table-cell images missed by Lezer.
+		const dblBackslashAlt = "| H |\n| --- |\n| ![x\\\\|y](/i) |";
+		const dblBackslashAltIdx = createEditorMarkdownBlockIndex(dblBackslashAlt);
+		expect(dblBackslashAltIdx.imageBlocks).toEqual([
+			{ count: 1, firstImageIndex: 0, status: "ready" },
+		]);
+		expect(
+			(dblBackslashAltIdx.imageRanges ?? []).map((r) =>
+				dblBackslashAlt.slice(r.from, r.to),
+			),
+		).toEqual(["![x\\\\|y](/i)"]);
+
+		// Mixed Lezer-discovered and Lezer-missed `\\|` images stay sorted and deduplicated; dropped extra column stays excluded.
+		const mixedRecovered =
+			"| H |\n| --- |\n| ![a](/a) ![x\\\\|y](/i) ![b](/b) | ![dropped](/d) |";
+		const mixedRecoveredIdx = createEditorMarkdownBlockIndex(mixedRecovered);
+		expect(
+			(mixedRecoveredIdx.imageRanges ?? []).map((r) =>
+				mixedRecovered.slice(r.from, r.to),
+			),
+		).toEqual(["![a](/a)", "![x\\\\|y](/i)", "![b](/b)"]);
+
+		// Math-wrapped `\\|` image must not be recovered as a live image.
+		const mathWrappedDblPipe = "| H |\n| --- |\n| $![x\\\\|y](/i)$ |";
+		expect(
+			createEditorMarkdownBlockIndex(mathWrappedDblPipe).imageRanges,
+		).toEqual([]);
+
+		// Track A #4: 6,000 links after `![img](/i) $5 ` in one table cell finish well under 2s with all 6,000 links preserved.
+		const links6000 = Array.from({ length: 6_000 }, (_, i) => `[a${i}](/x)`).join(
+			" ",
+		);
+		const heavyTable = `| A | B |\n| --- | --- |\n| ![img](/i) $5 ${links6000} | B |`;
+		const started = performance.now();
+		const heavyIdx = createEditorMarkdownBlockIndex(heavyTable);
+		const elapsedMs = performance.now() - started;
+		expect(heavyIdx.linkCandidates).toHaveLength(6_000);
+		expect(heavyIdx.imageRanges).toHaveLength(1);
+		expect(elapsedMs).toBeLessThan(2_000);
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

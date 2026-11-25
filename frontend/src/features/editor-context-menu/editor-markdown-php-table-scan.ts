@@ -10,7 +10,6 @@ import {
 	createPhpCommonMarkBlockState,
 	isPhpBlockStateTopLevelParagraph,
 	type PhpCommonMarkBlockState,
-	type PhpMarkdownMathRange,
 } from "../../shared/markdown/php-commonmark-block-scan";
 import { maskPhpMarkdownMathForTableScan } from "../../shared/markdown/php-markdown-math-mask";
 import type {
@@ -22,6 +21,100 @@ import {
 	findEditorMarkdownPreviousBlock,
 } from "./editor-markdown-block-index";
 import type { MarkdownLine } from "./editor-markdown-lines";
+
+/**
+ * Masks PHP-extracted math across the full document in one pass so table-row
+ * slices preserve full document block-code context (avoiding false indented-code
+ * classification of isolated 4-space table continuations like `    $a|b$` or
+ * `    | $a|b$ | 2 |`).
+ */
+export function maskDocumentForTableScan(
+	source: string,
+	blockIndex?: EditorMarkdownBlockIndex,
+): string {
+	if (blockIndex && blockIndex.source === source) {
+		if (0 === blockIndex.mathSpans.length) return source;
+		return maskPhpMarkdownMathForTableScan(
+			source,
+			blockIndex.mathSpans.map((span) => ({
+				block: span.displayMode,
+				from: span.from,
+				to: span.to,
+			})),
+		);
+	}
+	return maskPhpMarkdownMathForTableScan(source);
+}
+
+/**
+ * Reports whether `line`'s trailing line break lies strictly inside a
+ * non-display PHP math span (`\(...\)` or `$...$` with bare `\r`), joining
+ * `line` and the next physical line into one logical PHP CommonMark line.
+ */
+export function lineBreakCrossedByInlineMath(
+	line: MarkdownLine | undefined,
+	mathSpans: EditorMarkdownBlockIndex["mathSpans"] | undefined,
+): boolean {
+	if (
+		!line ||
+		0 === line.separator.length ||
+		!mathSpans ||
+		0 === mathSpans.length
+	) {
+		return false;
+	}
+	const breakOffset = line.end;
+	let low = 0;
+	let high = mathSpans.length - 1;
+	while (low <= high) {
+		const middle = Math.floor((low + high) / 2);
+		const span = mathSpans[middle];
+		if (!span) break;
+		if (span.to <= breakOffset) {
+			low = middle + 1;
+		} else if (span.from > breakOffset) {
+			high = middle - 1;
+		} else {
+			return !span.displayMode;
+		}
+	}
+	return false;
+}
+
+function gapBridgedByInlineMath(
+	lines: ReadonlyArray<MarkdownLine>,
+	previousEndLine: number,
+	cursorLine: number,
+	mathSpans: EditorMarkdownBlockIndex["mathSpans"],
+): boolean {
+	const prevLine = lines[previousEndLine];
+	const nextLine = lines[cursorLine];
+	if (
+		!prevLine ||
+		!nextLine ||
+		prevLine.end >= nextLine.start ||
+		0 === mathSpans.length
+	) {
+		return false;
+	}
+	const gapFrom = prevLine.end;
+	const gapTo = nextLine.start;
+	let low = 0;
+	let high = mathSpans.length - 1;
+	while (low <= high) {
+		const middle = Math.floor((low + high) / 2);
+		const span = mathSpans[middle];
+		if (!span) break;
+		if (span.to < gapTo) {
+			low = middle + 1;
+		} else if (span.from > gapFrom) {
+			high = middle - 1;
+		} else {
+			return !span.displayMode;
+		}
+	}
+	return false;
+}
 
 const COMMONMARK_LIST_ITEM_OPEN = /^(?:[*+-]|\d{1,9}[.)])(?:[ \t]|$)/u;
 const COMMONMARK_PARAGRAPH_INTERRUPTING_LIST_OPEN =
@@ -141,15 +234,14 @@ export function resetPhpTableScanState(state: PhpTableScanState): void {
 	state.paragraphHasPipe = false;
 }
 
-function advanceMaskedPhpBlockLine(
+function advancePreMaskedPhpBlockLine(
 	state: PhpCommonMarkBlockState,
-	text: string,
+	maskedText: string,
 ): void {
-	const masked = maskPhpMarkdownMathForTableScan(text);
-	if (masked.includes("\n") || masked.includes("\r")) {
-		scanLinesIntoPhpCommonMarkBlockState(state, masked);
+	if (maskedText.includes("\n") || maskedText.includes("\r")) {
+		scanLinesIntoPhpCommonMarkBlockState(state, maskedText);
 	} else {
-		advancePhpCommonMarkBlockLine(state, masked);
+		advancePhpCommonMarkBlockLine(state, maskedText);
 	}
 }
 
@@ -163,6 +255,7 @@ export function advancePhpTableScanLine(
 	line: MarkdownLine | undefined,
 	lineIndex: number,
 	blockIndex: EditorMarkdownBlockIndex | undefined,
+	maskedLineText?: string,
 ): boolean {
 	if (!line || lineStartsWithBlockMath(line, lineIndex, blockIndex)) {
 		resetPhpTableScanState(state);
@@ -172,7 +265,11 @@ export function advancePhpTableScanLine(
 		state.blockState.containers.length = 0;
 		state.blockState.leaf = { kind: "table" };
 	}
-	advanceMaskedPhpBlockLine(state.blockState, line.text);
+	const masked =
+		undefined !== maskedLineText
+			? maskedLineText
+			: maskPhpMarkdownMathForTableScan(line.text);
+	advancePreMaskedPhpBlockLine(state.blockState, masked);
 	const isTopLevelParagraph = isPhpBlockStateTopLevelParagraph(
 		state.blockState,
 	);
@@ -196,13 +293,23 @@ function blockStartsFreshInPhp(
 	lines: ReadonlyArray<MarkdownLine>,
 	block: EditorMarkdownSourceBlock,
 	blockIndex: EditorMarkdownBlockIndex,
+	maskedDoc: string,
 ): boolean {
 	const firstLine = lines[block.lineStart];
 	if (!firstLine || isBlankLineText(firstLine.text)) return true;
 	if (lineStartsWithBlockMath(firstLine, block.lineStart, blockIndex)) {
 		return true;
 	}
-	const maskedFirstLine = maskPhpMarkdownMathForTableScan(firstLine.text);
+	if (
+		block.lineStart > 0 &&
+		lineBreakCrossedByInlineMath(
+			lines[block.lineStart - 1],
+			blockIndex.mathSpans,
+		)
+	) {
+		return false;
+	}
+	const maskedFirstLine = maskedDoc.slice(firstLine.start, firstLine.end);
 	if (
 		maskedFirstLine.includes("\n") ||
 		maskedFirstLine.includes("\r") ||
@@ -220,32 +327,47 @@ function blockStartsFreshInPhp(
 }
 
 /**
- * Walks backwards over contiguous preceding blocks that have no blank line or
- * display-math block separating them from `blockStartLine`, stopping once a
- * collected block unconditionally starts fresh in PHP CommonMark. Returns the
- * collected blocks in reverse order (nearest first), or `null` when no
- * immediately adjacent preceding block exists.
+ * Walks backwards over contiguous preceding blocks that have no unbridged blank
+ * line or display-math block separating them from `blockStartLine`, stopping
+ * once a collected block unconditionally starts fresh in PHP CommonMark. Blank
+ * lines strictly inside multiline inline math (`\(...\)` or `$...$` with bare
+ * `\r`) are bridged just as PHP `extract_math()` collapses them into one token.
+ * Returns the collected blocks in reverse order (nearest first), or `null` when
+ * no immediately adjacent preceding block exists.
  */
 export function collectPrecedingPhpTableBlocks(
 	lines: ReadonlyArray<MarkdownLine>,
 	blockIndex: EditorMarkdownBlockIndex,
 	blockFrom: number,
 	blockStartLine: number,
+	preMaskedDoc?: string,
 ): ReadonlyArray<EditorMarkdownSourceBlock> | null {
+	const maskedDoc =
+		preMaskedDoc ?? maskDocumentForTableScan(blockIndex.source, blockIndex);
 	const precedingBlocks: EditorMarkdownSourceBlock[] = [];
 	let cursorFrom = blockFrom;
 	let cursorLine = blockStartLine;
 	while (cursorLine > 0) {
 		const previous = findEditorMarkdownPreviousBlock(blockIndex, cursorFrom);
+		if (!previous || "math" === previous.kind) {
+			break;
+		}
 		if (
-			!previous ||
-			previous.lineEnd + 1 !== cursorLine ||
-			"math" === previous.kind
+			previous.lineEnd + 1 !== cursorLine &&
+			!(
+				previous.lineEnd + 1 < cursorLine &&
+				gapBridgedByInlineMath(
+					lines,
+					previous.lineEnd,
+					cursorLine,
+					blockIndex.mathSpans,
+				)
+			)
 		) {
 			break;
 		}
 		precedingBlocks.push(previous);
-		if (blockStartsFreshInPhp(lines, previous, blockIndex)) break;
+		if (blockStartsFreshInPhp(lines, previous, blockIndex, maskedDoc)) break;
 		cursorFrom = previous.from;
 		cursorLine = previous.lineStart;
 	}
@@ -253,9 +375,9 @@ export function collectPrecedingPhpTableBlocks(
 }
 
 /**
- * Feeds source lines `startLine..endLine` into `state`, reproducing PHP
- * `MarkdownRenderer::extract_math()` for both display and inline math spans
- * contained inside preceding blocks.
+ * Feeds source lines `startLine..endLine` into `state` using the full-document
+ * PHP math mask, reproducing PHP `MarkdownRenderer::extract_math()` for both
+ * display and inline math spans across all preceding lines and the target line.
  */
 function scanPhpBlockLines(
 	state: PhpCommonMarkBlockState,
@@ -263,40 +385,22 @@ function scanPhpBlockLines(
 	startLine: number,
 	endLine: number,
 	blockIndex: EditorMarkdownBlockIndex,
+	maskedDoc: string,
 ): void {
 	const firstLine = lines[startLine];
 	const lastLine = lines[endLine];
 	if (!firstLine || !lastLine) return;
-	const rangeStart = firstLine.start;
-	const rangeEnd = lastLine.end;
-	const overlappingMath: PhpMarkdownMathRange[] = [];
-	for (let i = 0; i < blockIndex.mathSpans.length; i += 1) {
-		const span = blockIndex.mathSpans[i];
-		if (!span || span.to <= rangeStart) continue;
-		if (span.from >= rangeEnd) break;
-		overlappingMath.push({
-			block: span.displayMode,
-			from: Math.max(0, span.from - rangeStart),
-			to: Math.min(rangeEnd - rangeStart, span.to - rangeStart),
-		});
-	}
-	if (0 === overlappingMath.length) {
+	if (maskedDoc === blockIndex.source) {
 		for (let lineIndex = startLine; lineIndex <= endLine; lineIndex += 1) {
 			const line = lines[lineIndex];
 			if (line) advancePhpCommonMarkBlockLine(state, line.text);
 		}
 		return;
 	}
-	const slice = blockIndex.source.slice(rangeStart, rangeEnd);
-	const masked = maskPhpMarkdownMathForTableScan(slice, overlappingMath);
-	if (masked === slice) {
-		for (let lineIndex = startLine; lineIndex <= endLine; lineIndex += 1) {
-			const line = lines[lineIndex];
-			if (line) advancePhpCommonMarkBlockLine(state, line.text);
-		}
-		return;
-	}
-	scanLinesIntoPhpCommonMarkBlockState(state, masked);
+	scanLinesIntoPhpCommonMarkBlockState(
+		state,
+		maskedDoc.slice(firstLine.start, lastLine.end),
+	);
 }
 
 function scanPrecedingStateThroughTargetLine(
@@ -304,12 +408,16 @@ function scanPrecedingStateThroughTargetLine(
 	blockIndex: EditorMarkdownBlockIndex,
 	blockFrom: number,
 	blockStartLine: number,
+	preMaskedDoc?: string,
 ): PhpCommonMarkBlockState | null {
+	const maskedDoc =
+		preMaskedDoc ?? maskDocumentForTableScan(blockIndex.source, blockIndex);
 	const precedingBlocks = collectPrecedingPhpTableBlocks(
 		lines,
 		blockIndex,
 		blockFrom,
 		blockStartLine,
+		maskedDoc,
 	);
 	if (!precedingBlocks) return null;
 	const earliestBlock = precedingBlocks[precedingBlocks.length - 1];
@@ -327,10 +435,10 @@ function scanPrecedingStateThroughTargetLine(
 		state,
 		lines,
 		earliestBlock.lineStart,
-		blockStartLine - 1,
+		blockStartLine,
 		blockIndex,
+		maskedDoc,
 	);
-	advanceMaskedPhpBlockLine(state, targetLine.text);
 	return state;
 }
 
@@ -345,12 +453,14 @@ export function precedingPhpBlocksAbsorbTableStart(
 	blockIndex: EditorMarkdownBlockIndex,
 	blockFrom: number,
 	blockStartLine: number,
+	preMaskedDoc?: string,
 ): boolean {
 	const state = scanPrecedingStateThroughTargetLine(
 		lines,
 		blockIndex,
 		blockFrom,
 		blockStartLine,
+		preMaskedDoc,
 	);
 	if (!state) return false;
 	return !isPhpBlockStateTopLevelParagraph(state);

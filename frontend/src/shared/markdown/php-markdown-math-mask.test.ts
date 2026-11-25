@@ -4,7 +4,11 @@ import {
 	isRangeDroppedByPhpTable,
 	scanPhpCommonMarkBlocks,
 } from "./php-commonmark-block-scan";
-import { maskPhpMarkdownMathForTableScan } from "./php-markdown-math-mask";
+import {
+	maskPhpMarkdownMathForTableScan,
+	scanPhpInlineCodeRanges,
+	scanPhpMarkdownMathRanges,
+} from "./php-markdown-math-mask";
 
 describe("maskPhpMarkdownMathForTableScan", () => {
 	it("fast-paths strings without math delimiters or without table-affecting math", () => {
@@ -221,5 +225,74 @@ describe("maskPhpMarkdownMathForTableScan", () => {
 			{ block: false, from: mathFrom, to: mathFrom + 5 },
 		]);
 		expect(knownMasked).toBe("| A |\n| - |\n| MMMMM ![x](/i) |");
+	});
+
+	it("exports canonical scanPhpInlineCodeRanges and scanPhpMarkdownMathRanges with 1:1 PHP parity and fixes bare-CR block scans (Track B #9 & #11)", () => {
+		// scanPhpInlineCodeRanges matches PHP MarkdownCodeRegionScanner::inline_code_ranges().
+		const codeSrc = "`one` \\``two` ``three``\n```\n`in-fence`\n```\n`four`";
+		const inlineRanges = scanPhpInlineCodeRanges(codeSrc);
+		expect(inlineRanges.map((r) => codeSrc.slice(r.start, r.end))).toEqual([
+			"`one`",
+			"`two`",
+			"``three``",
+			"`four`",
+		]);
+
+		// Unclosed backtick before a fenced code block does not cross the fence boundary.
+		const crossFence = "`open\n```\ncode\n```\n`still-unclosed";
+		expect(scanPhpInlineCodeRanges(crossFence)).toEqual([]);
+
+		// scanPhpMarkdownMathRanges returns sorted, non-overlapping UTF-16 ranges across all 4 sequential passes.
+		const multiPass =
+			"😀 $a$ $$b$$ \\[c\\] \\(d\\) $$unclosed$ $e\rf$ $g\r\nh$ \\$esc$ `$code$`";
+		const ranges = scanPhpMarkdownMathRanges(multiPass);
+		expect(
+			ranges.map((r) => ({ block: r.block, text: multiPass.slice(r.from, r.to) })),
+		).toEqual([
+			{ block: false, text: "$a$" },
+			{ block: true, text: "$$b$$" },
+			{ block: true, text: "\\[c\\]" },
+			{ block: false, text: "\\(d\\)" },
+			{ block: false, text: "$unclosed$" },
+			{ block: false, text: "$e\rf$" },
+		]);
+
+		// Sequential nesting collapses strictly inner earlier-pass spans into the outermost PHP owner.
+		expect(scanPhpMarkdownMathRanges("\\[a $$b$$ c\\]")).toEqual([
+			{ block: true, from: 0, to: 13 },
+		]);
+		expect(scanPhpMarkdownMathRanges("before \\(a $$b$$ c\\) after")).toEqual([
+			{ block: false, from: 7, to: 20 },
+		]);
+		expect(scanPhpMarkdownMathRanges("$a \\(b\\) c$")).toEqual([
+			{ block: false, from: 0, to: 11 },
+		]);
+		// Display math inserts \n\n so outer $...$ cannot cross it.
+		expect(scanPhpMarkdownMathRanges("$a $$b$$ c$")).toEqual([
+			{ block: true, from: 3, to: 8 },
+		]);
+
+		// Track B #9: bare `\r` inside inline `$...$` keeps following 4-space image in paragraph (not indented code).
+		const bareCrIndented = "$a\r# b$\r    ![alt](https://example.com/a.png)";
+		expect(scanPhpCommonMarkBlocks(bareCrIndented).blockCodeRanges).toEqual([]);
+		// Contrast with CRLF (`\r\n`), where PHP does NOT extract `$...$`, so `# b$` is a heading and `    ![alt]` is indented code.
+		const crlfIndented = "$a\r\n# b$\r\n    ![alt](https://example.com/a.png)";
+		expect(scanPhpCommonMarkBlocks(crlfIndented).blockCodeRanges).toEqual([
+			{ end: crlfIndented.length, start: crlfIndented.indexOf("    ![alt]") },
+		]);
+
+		// Strictly linear O(N) performance on 80,000+ unclosed delimiters in scanPhpMarkdownMathRanges.
+		for (const payload of [
+			"\\(".repeat(80_000),
+			`\\(x|y\\)${"\\(".repeat(80_000)}`,
+			"\\[".repeat(80_000),
+			`\\[x\\]${"\\[".repeat(80_000)}`,
+			"$\n".repeat(80_000),
+			"\\$".repeat(80_000),
+		]) {
+			const started = performance.now();
+			scanPhpMarkdownMathRanges(payload);
+			expect(performance.now() - started).toBeLessThan(200);
+		}
 	});
 });

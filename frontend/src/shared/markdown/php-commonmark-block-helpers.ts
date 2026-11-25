@@ -303,6 +303,56 @@ export function countTableRowCells(line: string): number {
 }
 
 /**
+ * Splits one container-stripped GFM table row `[contentOffset, lineEnd)` into
+ * all valid cell ranges `[start, end)` (up to `maxColumns` when set), matching
+ * PHP `League\CommonMark\Extension\Table\TableParser::split()` so callers can
+ * binary-search many offsets in the same row in O(log C) time.
+ */
+export function collectTableRowCells(
+	source: string,
+	contentOffset: number,
+	lineEnd: number,
+	maxColumns?: number | null,
+): TableRowCellRange[] {
+	const hasColumnLimit = null !== maxColumns && undefined !== maxColumns;
+	if (hasColumnLimit && maxColumns <= 0) return [];
+	let trimStart = contentOffset;
+	let trimEnd = lineEnd;
+	while (trimStart < trimEnd && isPhpTrimChar(source[trimStart])) {
+		trimStart += 1;
+	}
+	while (trimEnd > trimStart && isPhpTrimChar(source[trimEnd - 1])) {
+		trimEnd -= 1;
+	}
+	if (trimStart >= trimEnd) return [];
+	let cellStart = "|" === source[trimStart] ? trimStart + 1 : trimStart;
+	if (cellStart >= trimEnd) return [];
+
+	const cells: TableRowCellRange[] = [];
+	let cellIndex = 0;
+	let pos = cellStart;
+	while (pos < trimEnd) {
+		if ("\\" === source[pos] && pos + 1 < trimEnd && "|" === source[pos + 1]) {
+			pos += 2;
+			continue;
+		}
+		if ("|" === source[pos]) {
+			cells.push({ cellIndex, end: pos, start: cellStart });
+			cellIndex += 1;
+			if (hasColumnLimit && cellIndex >= maxColumns) return cells;
+			cellStart = pos + 1;
+			pos += 1;
+			continue;
+		}
+		pos += 1;
+	}
+	if (cellStart < trimEnd && (!hasColumnLimit || cellIndex < maxColumns)) {
+		cells.push({ cellIndex, end: trimEnd, start: cellStart });
+	}
+	return cells;
+}
+
+/**
  * Locates the GFM table cell `[start, end)` containing `offset` within one
  * container-stripped table row `[contentOffset, lineEnd)`, matching PHP
  * `League\CommonMark\Extension\Table\TableParser::split()` (trims PHP trim

@@ -4697,6 +4697,109 @@ describe("editor context menu rules", () => {
 			table: { endLine: 2, separatorLine: 1, startLine: 0 },
 		});
 	});
+
+	it("uses document-context PHP math masking for indented math rows, declines multiline inline-math rows, and bridges blank lines inside \\(...\\) (Track B #1 & #2)", () => {
+		// Track B #1 case 1: 4-space indented inline math after a table interrupts the table in PHP and must NOT be swallowed.
+		for (const [label, source, mathToken] of [
+			[
+				"indented $a|b$ after table",
+				"| A | B |\n| --- | --- |\n| 1 | 2 |\n    $a|b$",
+				"$a|b$",
+			],
+			[
+				"indented \\(a|b\\) after table",
+				"| A | B |\n| --- | --- |\n| 1 | 2 |\n    \\(a|b\\)",
+				"\\(a|b\\)",
+			],
+		] as const) {
+			const posInTable = source.indexOf("1");
+			const posOnLine4 = source.indexOf(mathToken);
+			expect(findMarkdownTable(source, posInTable), label).toMatchObject({
+				columnCount: 2,
+				rowCount: 2,
+			});
+			expect(findMarkdownTable(source, posOnLine4), `${label}:line4`).toBeNull();
+			expect(
+				editMarkdownTable(source, posInTable, {
+					type: "insert-column-right",
+				})?.value,
+				`${label}:insert`,
+			).toBe(`| A |  | B |\n| --- | --- | --- |\n| 1 |  | 2 |\n    ${mathToken}`);
+			expect(
+				setMarkdownTableAlignment(source, posOnLine4, {
+					alignment: "center",
+					selection: { kind: "row", row: 3 },
+				}),
+				`${label}:align-line4`,
+			).toMatchObject({ status: "unsupported" });
+		}
+
+		// Track B #1 case 2: 4-space indented body row with leading pipe and inline math pipe is a valid 2x2 table.
+		const indentedBodyMath = "| A | B |\n| --- | --- |\n    | $a|b$ | 2 |";
+		expect(
+			findMarkdownTable(indentedBodyMath, indentedBodyMath.indexOf("$a|b$")),
+		).toMatchObject({
+			columnCount: 2,
+			rowCount: 2,
+		});
+		expect(
+			editMarkdownTable(indentedBodyMath, indentedBodyMath.indexOf("$a|b$"), {
+				type: "insert-column-right",
+			})?.value,
+		).toBe("| A |  | B |\n| --- | --- | --- |\n    | $a|b$ |  | 2 |");
+
+		// Formatter also uses full document context (even without trailing pipe on an indented math row).
+		const indentedNoTrailPipe = "| A | B |\n| --- | --- |\n    | 2 | $a|b$";
+		expect(
+			formatMarkdownTableSource(indentedNoTrailPipe, {
+				direction: "none",
+				end: indentedNoTrailPipe.indexOf("$a|b$"),
+				start: indentedNoTrailPipe.indexOf("$a|b$"),
+			})?.value,
+		).toBe("| A   | B     |\n| --- | ---   |\n    | 2   | $a|b$");
+
+		// Track B #1 case 3: multiline inline math inside a table row must be declined across every line.
+		for (const multilineCase of [
+			"| A | B |\n| --- | --- |\n| 1 | 2 |\n\\(a | b\nc\\) | d",
+			"| A | B |\n| --- | --- |\n| 1 | \\(a |\n| b\\) | 2 |",
+			"| A | B |\n| --- | --- |\n| $a\rb$ | 2 |",
+		]) {
+			expect(
+				findMarkdownTable(multilineCase, multilineCase.indexOf("A")),
+				multilineCase,
+			).toBeNull();
+			expect(
+				findMarkdownTable(multilineCase, multilineCase.length - 1),
+				`${multilineCase}:end`,
+			).toBeNull();
+		}
+
+		// Track B #2: blank line(s) inside multiline `\(...\)` do not close a preceding PHP table.
+		for (const bridged of [
+			"a | b\n| - | - |\n\\(x\n\ny\\)\n| A | B |\n| --- | --- |\n| 1 | 2 |",
+			"a | b\n| - | - |\n\\(x\n\n\ny\\)\n| A | B |\n| --- | --- |\n| 1 | 2 |",
+		]) {
+			const headerPos = bridged.indexOf("| A | B |");
+			const bodyPos = bridged.indexOf("1");
+			expect(findMarkdownTable(bridged, headerPos), bridged).toBeNull();
+			expect(findMarkdownTable(bridged, bodyPos), `${bridged}:body`).toBeNull();
+			expect(
+				editMarkdownTable(bridged, headerPos, { type: "insert-column-right" }),
+				`${bridged}:edit`,
+			).toBeNull();
+		}
+
+		// Positive controls: a genuine blank line after `y\)` or a display math block DOES close the preceding table.
+		for (const separated of [
+			"a | b\n| - | - |\n\\(x\n\ny\\)\n\n| A | B |\n| --- | --- |\n| 1 | 2 |",
+			"a | b\n| - | - |\n$$\nx\n\ny\n$$\n| A | B |\n| --- | --- |\n| 1 | 2 |",
+		]) {
+			expect(
+				findMarkdownTable(separated, separated.indexOf("1")),
+				separated,
+			).toMatchObject({ columnCount: 2, rowCount: 2 });
+		}
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

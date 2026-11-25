@@ -33,10 +33,12 @@ type BacktickRun = Readonly<{
 	to: number;
 }>;
 
-type MaskPassResult = Readonly<{
-	affectedTable: boolean;
-	matched: boolean;
-	text: string;
+type DelimiterScanFlags = Readonly<{
+	hasBracketPair: boolean;
+	hasDollar: boolean;
+	hasDollarPair: boolean;
+	hasDoubleDollar: boolean;
+	hasParenPair: boolean;
 }>;
 
 function maskDisplayMathLength(length: number): string {
@@ -130,11 +132,18 @@ function firstRunAfter(
 	return result;
 }
 
-function scanInlineCodeRanges(
+/**
+ * Scans inline backtick code spans outside `blockCodeRanges` in strictly O(N)
+ * time, mirroring PHP `MarkdownCodeRegionScanner::inline_code_ranges()`
+ * (including escaped leading backticks and segment boundaries at block code).
+ */
+export function scanPhpInlineCodeRanges(
 	source: string,
-	protectedRanges: ReadonlyArray<ScannedCodeRange>,
+	blockCodeRanges?: ReadonlyArray<ScannedCodeRange>,
 ): ScannedCodeRange[] {
 	if (!source.includes("`")) return [];
+	const protectedRanges =
+		blockCodeRanges ?? scanPhpCommonMarkBlockCodeRanges(source);
 	const runs = collectBacktickRuns(source, protectedRanges);
 	if (runs.length < 2) return [];
 	const bySegmentAndLength = new Map<number, Map<number, number[]>>();
@@ -200,19 +209,20 @@ function mergeCodeRanges(
 	return merged;
 }
 
-function maskDelimitedMath(
+function scanDelimitedMathPass(
 	text: string,
+	segmentOffset: number,
 	openDelim: string,
 	closeDelim: string,
 	isDisplay: boolean,
-): MaskPassResult {
+	ranges: PhpMarkdownMathRange[],
+	buildMasked: boolean,
+): string {
 	let pos = text.indexOf(openDelim);
-	if (pos < 0) return { affectedTable: false, matched: false, text };
+	if (pos < 0) return text;
 
 	const openLen = openDelim.length;
 	const closeLen = closeDelim.length;
-	let matched = false;
-	let affectedTable = false;
 	let cursor = 0;
 	let parts: string[] | null = null;
 
@@ -220,36 +230,35 @@ function maskDelimitedMath(
 		const close = text.indexOf(closeDelim, pos + openLen + 1);
 		if (close < 0) break;
 		const to = close + closeLen;
-		if (!parts) parts = [];
-		if (pos > cursor) parts.push(text.slice(cursor, pos));
-		if (isDisplay) {
-			parts.push(maskDisplayMathLength(to - pos));
-			affectedTable = true;
-		} else {
-			if (
-				!affectedTable &&
-				hasTableOrLineBreakChar(text, pos + openLen, close)
-			) {
-				affectedTable = true;
-			}
-			parts.push(maskInlineMathLength(to - pos));
+		ranges.push({
+			block: isDisplay,
+			from: segmentOffset + pos,
+			to: segmentOffset + to,
+		});
+		if (buildMasked) {
+			if (!parts) parts = [];
+			if (pos > cursor) parts.push(text.slice(cursor, pos));
+			parts.push(
+				isDisplay
+					? maskDisplayMathLength(to - pos)
+					: maskInlineMathLength(to - pos),
+			);
 		}
-		matched = true;
 		cursor = to;
 		pos = text.indexOf(openDelim, cursor);
 	}
-	if (!parts) return { affectedTable: false, matched: false, text };
+	if (!parts) return text;
 	if (cursor < text.length) parts.push(text.slice(cursor));
-	return { affectedTable, matched, text: parts.join("") };
+	return parts.join("");
 }
 
-function maskInlineDollarMath(text: string): MaskPassResult {
+function scanInlineDollarMathPass(
+	text: string,
+	segmentOffset: number,
+	ranges: PhpMarkdownMathRange[],
+): void {
 	let search = 0;
 	let lineEnd = -1;
-	let cursor = 0;
-	let matched = false;
-	let affectedTable = false;
-	let parts: string[] | null = null;
 
 	while (search < text.length) {
 		const open = text.indexOf("$", search);
@@ -277,69 +286,150 @@ function maskInlineDollarMath(text: string): MaskPassResult {
 			continue;
 		}
 		const to = nextDollar + 1;
-		if (!parts) parts = [];
-		if (open > cursor) parts.push(text.slice(cursor, open));
-		if (
-			!affectedTable &&
-			hasTableOrLineBreakChar(text, open + 1, nextDollar)
-		) {
-			affectedTable = true;
-		}
-		parts.push(maskInlineMathLength(to - open));
-		matched = true;
-		cursor = to;
+		ranges.push({
+			block: false,
+			from: segmentOffset + open,
+			to: segmentOffset + to,
+		});
 		search = to;
 	}
-	if (!parts) return { affectedTable: false, matched: false, text };
-	if (cursor < text.length) parts.push(text.slice(cursor));
-	return { affectedTable, matched, text: parts.join("") };
 }
 
-function maskSegmentOutsideCode(
+function scanSegmentMathRanges(
 	segment: string,
-	hasDoubleDollar: boolean,
-	hasDollar: boolean,
-	hasBracketPair: boolean,
-	hasParenPair: boolean,
-	hasPipe: boolean,
-	hasLineBreak: boolean,
-	hasCr: boolean,
-): Readonly<{ affectedTable: boolean; text: string }> {
+	segmentOffset: number,
+	flags: DelimiterScanFlags,
+	ranges: PhpMarkdownMathRange[],
+): void {
 	let current = segment;
-	let affectedTable = false;
 
-	if (hasDoubleDollar && current.includes("$$")) {
-		const res = maskDelimitedMath(current, "$$", "$$", true);
-		if (res.matched) {
-			current = res.text;
-			affectedTable = true;
+	if (flags.hasDoubleDollar && current.includes("$$")) {
+		current = scanDelimitedMathPass(
+			current,
+			segmentOffset,
+			"$$",
+			"$$",
+			true,
+			ranges,
+			flags.hasBracketPair || flags.hasParenPair || flags.hasDollarPair,
+		);
+	}
+	if (flags.hasBracketPair && current.includes("\\[")) {
+		current = scanDelimitedMathPass(
+			current,
+			segmentOffset,
+			"\\[",
+			"\\]",
+			true,
+			ranges,
+			flags.hasParenPair || flags.hasDollarPair,
+		);
+	}
+	if (flags.hasParenPair && current.includes("\\(")) {
+		current = scanDelimitedMathPass(
+			current,
+			segmentOffset,
+			"\\(",
+			"\\)",
+			false,
+			ranges,
+			flags.hasDollarPair,
+		);
+	}
+	if (flags.hasDollarPair && current.includes("$")) {
+		scanInlineDollarMathPass(current, segmentOffset, ranges);
+	}
+}
+
+function collapseNestedMathRanges(
+	ranges: PhpMarkdownMathRange[],
+): PhpMarkdownMathRange[] {
+	if (ranges.length <= 1) return ranges;
+	ranges.sort((left, right) => left.from - right.from || right.to - left.to);
+	const collapsed: PhpMarkdownMathRange[] = [];
+	for (let i = 0; i < ranges.length; i += 1) {
+		const range = ranges[i];
+		if (!range) continue;
+		const previous = collapsed[collapsed.length - 1];
+		if (!previous || range.from >= previous.to) {
+			collapsed.push(range);
 		}
 	}
-	if (hasBracketPair && current.includes("\\[")) {
-		const res = maskDelimitedMath(current, "\\[", "\\]", true);
-		if (res.matched) {
-			current = res.text;
-			affectedTable = true;
+	return collapsed;
+}
+
+/**
+ * Scans `source` for all math ranges matching PHP
+ * `EasyMDE\Content\MarkdownRenderer::extract_math()` 1:1 in strictly O(N) time
+ * across all 4 sequential passes (`$$...$$`, `\[...\]`, `\(...\)`,
+ * `(?<!\\)\$([^\n$]+?)(?<!\\)\$`) outside CommonMark block and inline code
+ * regions. Returns sorted, non-overlapping UTF-16 ranges.
+ */
+export function scanPhpMarkdownMathRanges(
+	source: string,
+	extraProtectedRanges?: ReadonlyArray<ScannedCodeRange>,
+): PhpMarkdownMathRange[] {
+	const hasDollar = source.includes("$");
+	const hasBracket = source.includes("\\[");
+	const hasParen = source.includes("\\(");
+	if (!hasDollar && !hasBracket && !hasParen) return [];
+
+	const hasDoubleDollar = hasDollar && source.includes("$$");
+	const hasBracketPair = hasBracket && source.includes("\\]");
+	const hasParenPair = hasParen && source.includes("\\)");
+	const firstDollar = hasDollar ? source.indexOf("$") : -1;
+	const hasDollarPair =
+		firstDollar >= 0 && source.indexOf("$", firstDollar + 1) >= 0;
+	if (
+		!hasDoubleDollar &&
+		!hasBracketPair &&
+		!hasParenPair &&
+		!hasDollarPair
+	) {
+		return [];
+	}
+
+	const flags: DelimiterScanFlags = {
+		hasBracketPair,
+		hasDollar,
+		hasDollarPair,
+		hasDoubleDollar,
+		hasParenPair,
+	};
+	const blockCodeRanges = scanPhpCommonMarkBlockCodeRanges(source);
+	const inlineCodeRanges = scanPhpInlineCodeRanges(source, blockCodeRanges);
+	const baseCodeRanges = mergeCodeRanges(blockCodeRanges, inlineCodeRanges);
+	const codeRanges =
+		extraProtectedRanges && extraProtectedRanges.length > 0
+			? mergeCodeRanges(baseCodeRanges, extraProtectedRanges)
+			: baseCodeRanges;
+
+	const ranges: PhpMarkdownMathRange[] = [];
+	if (0 === codeRanges.length) {
+		scanSegmentMathRanges(source, 0, flags, ranges);
+		return collapseNestedMathRanges(ranges);
+	}
+
+	let cursor = 0;
+	for (let i = 0; i < codeRanges.length; i += 1) {
+		const codeRange = codeRanges[i];
+		if (!codeRange) continue;
+		if (codeRange.start > cursor) {
+			scanSegmentMathRanges(
+				source.slice(cursor, codeRange.start),
+				cursor,
+				flags,
+				ranges,
+			);
+		}
+		if (codeRange.end > cursor) {
+			cursor = codeRange.end;
 		}
 	}
-	if (!hasPipe && !hasLineBreak) {
-		return { affectedTable, text: affectedTable ? current : segment };
+	if (cursor < source.length) {
+		scanSegmentMathRanges(source.slice(cursor), cursor, flags, ranges);
 	}
-	if (hasParenPair && current.includes("\\(")) {
-		const res = maskDelimitedMath(current, "\\(", "\\)", false);
-		if (res.matched) {
-			current = res.text;
-			if (res.affectedTable) affectedTable = true;
-		}
-	}
-	if (hasDollar && (hasPipe || hasCr) && current.includes("$")) {
-		const res = maskInlineDollarMath(current);
-		if (res.matched) {
-			current = res.text;
-			if (res.affectedTable) affectedTable = true;
-		}
-	}
-	return { affectedTable, text: affectedTable ? current : segment };
+	return collapseNestedMathRanges(ranges);
 }
 
 function maskKnownMathRanges(
@@ -425,65 +515,5 @@ export function maskPhpMarkdownMathForTableScan(
 		return source;
 	}
 
-	const blockCodeRanges = scanPhpCommonMarkBlockCodeRanges(source);
-	const inlineCodeRanges = scanInlineCodeRanges(source, blockCodeRanges);
-	const codeRanges = mergeCodeRanges(blockCodeRanges, inlineCodeRanges);
-
-	if (0 === codeRanges.length) {
-		const masked = maskSegmentOutsideCode(
-			source,
-			hasDoubleDollar,
-			hasDollar,
-			hasBracketPair,
-			hasParenPair,
-			hasPipe,
-			hasLineBreak,
-			hasCr,
-		);
-		return masked.affectedTable ? masked.text : source;
-	}
-
-	const parts: string[] = [];
-	let cursor = 0;
-	let anyAffected = false;
-	for (let i = 0; i < codeRanges.length; i += 1) {
-		const codeRange = codeRanges[i];
-		if (!codeRange) continue;
-		if (codeRange.start > cursor) {
-			const segment = source.slice(cursor, codeRange.start);
-			const masked = maskSegmentOutsideCode(
-				segment,
-				hasDoubleDollar,
-				hasDollar,
-				hasBracketPair,
-				hasParenPair,
-				hasPipe,
-				hasLineBreak,
-				hasCr,
-			);
-			if (masked.affectedTable) anyAffected = true;
-			parts.push(masked.text);
-		}
-		if (codeRange.end > cursor) {
-			const codeStart = Math.max(cursor, codeRange.start);
-			parts.push(source.slice(codeStart, codeRange.end));
-			cursor = codeRange.end;
-		}
-	}
-	if (cursor < source.length) {
-		const segment = source.slice(cursor);
-		const masked = maskSegmentOutsideCode(
-			segment,
-			hasDoubleDollar,
-			hasDollar,
-			hasBracketPair,
-			hasParenPair,
-			hasPipe,
-			hasLineBreak,
-			hasCr,
-		);
-		if (masked.affectedTable) anyAffected = true;
-		parts.push(masked.text);
-	}
-	return anyAffected ? parts.join("") : source;
+	return maskKnownMathRanges(source, scanPhpMarkdownMathRanges(source));
 }

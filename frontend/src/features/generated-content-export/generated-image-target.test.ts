@@ -1403,6 +1403,125 @@ describe("associateGeneratedImageTarget", () => {
 			expect(rejected.images, unfilteredSource).toHaveLength(0);
 		}
 	});
+
+	it("recovers PHP-valid \\\\| table-cell images missed by Lezer and respects bare-CR math block context (Track A #5b & Track B #9)", async () => {
+		const dblPipeTable = "| H |\n| --- |\n| ![x\\\\|y](/i) |";
+		const parsed = createEditorMarkdownBlockIndex(dblPipeTable);
+		const fromBlockIndex = await hydrateGeneratedImageTargetIndex({
+			...hydration,
+			blocks: parsed.blocks,
+			imageIndex: {
+				blocks: parsed.blocks,
+				imageBlocks: parsed.imageBlocks ?? [],
+				imageRanges: parsed.imageRanges ?? [],
+				length: parsed.length,
+				mathSpans: parsed.mathSpans,
+			},
+			revision: 47,
+			source: dblPipeTable,
+		});
+		expect(fromBlockIndex.images).toHaveLength(1);
+		expect(fromBlockIndex.images[0]).toMatchObject({
+			alt: "x\\\\|y",
+			destination: "/i",
+			raw: "![x\\\\|y](/i)",
+		});
+
+		// Defense-in-depth: even when an upstream index omits the Lezer-split `\\|` image, hydration still recovers it.
+		const directRecovered = await hydrateGeneratedImageTargetIndex({
+			...hydration,
+			blocks: parsed.blocks,
+			imageIndex: {
+				blocks: parsed.blocks,
+				imageBlocks: [{ count: 0, firstImageIndex: 0, status: "ready" }],
+				imageRanges: [],
+				length: dblPipeTable.length,
+				mathSpans: [],
+			},
+			revision: 48,
+			source: dblPipeTable,
+		});
+		expect(directRecovered.images).toHaveLength(1);
+		expect(directRecovered.images[0]).toMatchObject({
+			alt: "x\\\\|y",
+			destination: "/i",
+			raw: "![x\\\\|y](/i)",
+		});
+
+		// Mixed Lezer + recovered `\\|` images with scale marker stay sorted and hydrated.
+		const mixedTable =
+			'| H |\n| --- |\n| ![a](/a) ![x\\\\|y](/i "{width=50%}") ![b](/b) |';
+		const mixedParsed = createEditorMarkdownBlockIndex(mixedTable);
+		const mixedHydrated = await hydrateGeneratedImageTargetIndex({
+			...hydration,
+			blocks: mixedParsed.blocks,
+			imageIndex: {
+				blocks: mixedParsed.blocks,
+				imageBlocks: mixedParsed.imageBlocks ?? [],
+				imageRanges: mixedParsed.imageRanges ?? [],
+				length: mixedParsed.length,
+				mathSpans: mixedParsed.mathSpans,
+			},
+			revision: 49,
+			source: mixedTable,
+		});
+		expect(
+			mixedHydrated.images.map((img) => ({
+				dest: img.destination,
+				scale: img.scale,
+			})),
+		).toEqual([
+			{ dest: "/a", scale: null },
+			{ dest: "/i", scale: 50 },
+			{ dest: "/b", scale: null },
+		]);
+
+		// Math-wrapped `\\|` table image is NOT falsely recovered during direct hydration.
+		const mathWrapped = "| H |\n| --- |\n| $![x\\\\|y](/i)$ |";
+		const mathParsed = createEditorMarkdownBlockIndex(mathWrapped);
+		const mathHydrated = await hydrateGeneratedImageTargetIndex({
+			...hydration,
+			blocks: mathParsed.blocks,
+			imageIndex: {
+				blocks: mathParsed.blocks,
+				imageBlocks: [{ count: 0, firstImageIndex: 0, status: "ready" }],
+				imageRanges: [],
+				length: mathWrapped.length,
+				mathSpans: [],
+			},
+			revision: 50,
+			source: mathWrapped,
+		});
+		expect(mathHydrated.images).toHaveLength(0);
+
+		// Track B #9: bare `\r` inline math keeps trailing 4-space image live (not indented code).
+		const bareCrSrc = "$a\r# b$\r    ![alt](https://example.com/a.png)";
+		const imgStart = bareCrSrc.indexOf("![alt]");
+		const bareCrBlock = {
+			editable: true as const,
+			from: 0,
+			kind: "paragraph" as const,
+			lineEnd: 2,
+			lineStart: 0,
+			to: bareCrSrc.length,
+		};
+		const bareCrHydrated = await hydrateGeneratedImageTargetIndex({
+			...hydration,
+			blocks: [bareCrBlock],
+			imageIndex: {
+				blocks: [bareCrBlock],
+				imageBlocks: [{ count: 1, firstImageIndex: 0, status: "ready" }],
+				imageRanges: [{ from: imgStart, to: bareCrSrc.length }],
+				length: bareCrSrc.length,
+				mathSpans: [],
+			},
+			revision: 51,
+			source: bareCrSrc,
+		});
+		expect(bareCrHydrated.images.map((img) => img.destination)).toEqual([
+			"https://example.com/a.png",
+		]);
+	});
 });
 
 function createEditorMarkdownBlockIndex(source: string, options: Parameters<typeof createProfiledMarkdownBlockIndex>[1] = { referenceLabelCaseFoldProfile: 14 }) {

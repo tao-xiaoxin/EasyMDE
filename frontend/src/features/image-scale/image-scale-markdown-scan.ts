@@ -203,12 +203,71 @@ export function inspectSingleLineForFastPath(
     if (!hasPipe && '|' === source[lineEnd]) hasPipe = true;
     lineEnd += 1;
   }
+  let leadIdx = lineStart;
+  let leadCols = 0;
+  while (leadIdx < lineEnd) {
+    const ch = source[leadIdx];
+    if (' ' === ch) {
+      leadCols += 1;
+      leadIdx += 1;
+    } else if ('\t' === ch) {
+      leadCols += 4 - (leadCols % 4);
+      leadIdx += 1;
+    } else {
+      break;
+    }
+  }
+  const leadChar = source[leadIdx];
+  const hasIndentedOrContainerPrefix =
+    leadCols >= 4
+    || '>' === leadChar
+    || (('-' === leadChar || '*' === leadChar || '+' === leadChar)
+      && (leadIdx + 1 >= lineEnd || isSpaceOrTab(source[leadIdx + 1])))
+    || (undefined !== leadChar
+      && leadChar >= '0'
+      && leadChar <= '9'
+      && /^\d{1,9}[.)](?:[ \t]|$)/u.test(source.slice(leadIdx, Math.min(lineEnd, leadIdx + 12))));
   return {
     lineEnd,
     mayBeTableRow:
-      hasMathBlockBoundaryBeforeStart
+      hasIndentedOrContainerPrefix
+      || hasMathBlockBoundaryBeforeStart
       || (hasPipe && (lineStart > 0 || lineEnd < source.length))
       || (lineStart > 0 && hasPrecedingUnbrokenPipeLine(source, lineStart))
+  };
+}
+
+/**
+ * Builds an isolated inline-scanning scope for one already-located GFM table
+ * cell `[cell.start, cell.end)` without re-running `findTableRowCellAt`.
+ */
+export function resolveTableCellScanScope(
+  source: string,
+  blocks: ScannedMarkdownBlocks,
+  line: ScannedMarkdownLine,
+  cell: TableRowCellRange
+): ResolvedInlineScanScope {
+  const cellLine: ScannedMarkdownLine = {
+    consumedBlockquote: line.consumedBlockquote,
+    contentOffset: cell.start,
+    inlineBlockId: line.inlineBlockId,
+    isTableRow: true,
+    lineEnd: cell.end,
+    lineStart: line.lineStart,
+    nextLineStart: line.nextLineStart,
+    tableColumnCount: line.tableColumnCount,
+    virtualSpaces: 0
+  };
+  const cellLines = [cellLine];
+  return {
+    backtickRuns: collectBlockBacktickRuns(source, cellLines, 0, 0),
+    blockEnd: cell.end,
+    blocks: { ...blocks, lines: cellLines },
+    groupEnd: 0,
+    groupStart: 0,
+    htmlGuard: createInlineHtmlScanGuard(),
+    lineIdx: 0,
+    startLine: cellLine
   };
 }
 
@@ -235,28 +294,7 @@ export function resolveInlineScanScope(
       line.tableColumnCount
     );
     if (!cell || (undefined !== selectionEnd && selectionEnd > cell.end)) return null;
-    const cellLine: ScannedMarkdownLine = {
-      consumedBlockquote: line.consumedBlockquote,
-      contentOffset: cell.start,
-      inlineBlockId: line.inlineBlockId,
-      isTableRow: true,
-      lineEnd: cell.end,
-      lineStart: line.lineStart,
-      nextLineStart: line.nextLineStart,
-      tableColumnCount: line.tableColumnCount,
-      virtualSpaces: 0
-    };
-    const cellLines = [cellLine];
-    return {
-      backtickRuns: collectBlockBacktickRuns(source, cellLines, 0, 0),
-      blockEnd: cell.end,
-      blocks: { ...blocks, lines: cellLines },
-      groupEnd: 0,
-      groupStart: 0,
-      htmlGuard: createInlineHtmlScanGuard(),
-      lineIdx: 0,
-      startLine: cellLine
-    };
+    return resolveTableCellScanScope(source, blocks, line, cell);
   }
   const { groupEnd, groupStart } = getInlineBlockBounds(
     blocks,

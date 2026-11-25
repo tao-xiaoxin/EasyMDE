@@ -2,6 +2,7 @@ import type {
 	EditorMarkdownBlockIndexDataWithImages,
 	EditorMarkdownSourceBlock,
 } from "../../contracts/ports/editor-block-index-port";
+import { scanPhpMarkdownMathRanges } from "../../shared/markdown/php-markdown-math-mask";
 import {
 	type MarkdownImageScaleMatch,
 	parseMarkdownImageScale,
@@ -11,6 +12,10 @@ import {
 	getCachedMarkdownBlockScan,
 	type ScannedMarkdownBlocks,
 } from "../image-scale/image-scale-markdown-scan";
+import {
+	collectUncoveredPhpTableImages,
+	type LocatedMarkdownImageCore,
+} from "../image-scale/image-scale-syntax";
 
 export type GeneratedImageAcceptedPreview = Readonly<{
 	revision: number;
@@ -311,11 +316,37 @@ export async function hydrateGeneratedImageTargetIndex(
 	const blockImages: Array<GeneratedImageTargetIndex["blockImages"][number]> =
 		[];
 	const images: MarkdownImageScaleMatch[] = [];
+	const sourceHasPipe = input.source.includes("|");
+	const sourceHasDollar = input.source.includes("$");
+	const sourceHasBackslash = input.source.includes("\\");
 	const sourceNeedsDocBlockScan =
-		input.source.includes("|") ||
-		input.source.includes("$$") ||
-		input.source.includes("\\[");
+		sourceHasPipe ||
+		(sourceHasDollar &&
+			(input.source.includes("$$") || input.source.includes("\r"))) ||
+		(sourceHasBackslash &&
+			(input.source.includes("\\[") || input.source.includes("\\(")));
 	let docBlocks: ScannedMarkdownBlocks | null = null;
+	const mayHaveUncoveredTableImages =
+		sourceHasPipe && input.source.includes("![");
+	let uncoveredTableImages: ReadonlyArray<LocatedMarkdownImageCore> = [];
+	let uncoveredMathRanges: ReadonlyArray<Readonly<{ from: number; to: number }>> =
+		[];
+	if (mayHaveUncoveredTableImages) {
+		docBlocks = getCachedMarkdownBlockScan(input.source);
+		uncoveredTableImages = collectUncoveredPhpTableImages(
+			input.source,
+			docBlocks,
+			input.imageIndex.imageRanges,
+		);
+		if (uncoveredTableImages.length > 0) {
+			uncoveredMathRanges =
+				input.imageIndex.mathSpans.length > 0
+					? input.imageIndex.mathSpans
+					: scanPhpMarkdownMathRanges(input.source);
+		}
+	}
+	let uncoveredIdx = 0;
+	let uncoveredMathIdx = 0;
 	for (let blockIndex = 0; blockIndex < input.blocks.length; blockIndex += 1) {
 		await hydrationCheckpoint(budget);
 		const block = input.blocks[blockIndex];
@@ -426,6 +457,93 @@ export async function hydrateGeneratedImageTargetIndex(
 							blockUnavailable = true;
 						} else {
 							throw error;
+						}
+					}
+				}
+			}
+			if (
+				!blockUnavailable &&
+				uncoveredTableImages.length > 0 &&
+				"code" !== block.kind &&
+				"unavailable" !== block.kind
+			) {
+				while (
+					uncoveredIdx < uncoveredTableImages.length &&
+					(uncoveredTableImages[uncoveredIdx]?.core.imageEnd ?? 0) <= block.from
+				) {
+					uncoveredIdx += 1;
+				}
+				let addedRecovered = false;
+				while (uncoveredIdx < uncoveredTableImages.length) {
+					const located = uncoveredTableImages[uncoveredIdx];
+					if (!located || located.start >= block.to) break;
+					uncoveredIdx += 1;
+					const from = located.start;
+					const to = located.core.imageEnd;
+					if (from < block.from || to > block.to) {
+						blockUnavailable = true;
+						continue;
+					}
+					while (
+						uncoveredMathIdx < uncoveredMathRanges.length &&
+						(uncoveredMathRanges[uncoveredMathIdx]?.to ?? 0) <= from
+					) {
+						uncoveredMathIdx += 1;
+					}
+					const math = uncoveredMathRanges[uncoveredMathIdx];
+					if (math && from < math.to && to > math.from) {
+						if (from >= math.from && to <= math.to) continue;
+						blockUnavailable = true;
+						continue;
+					}
+					if (to - from > MAX_IMAGE_TARGET_SOURCE_UNITS) {
+						blockUnavailable = true;
+						continue;
+					}
+					if (
+						prepared.some((existing) => existing.start === from && existing.end === to)
+					) {
+						continue;
+					}
+					if (!blockUnavailable) {
+						await hydrationCheckpoint(budget);
+						try {
+							const parsed = parseMarkdownImageScale(
+								input.source,
+								from,
+								docBlocks ?? undefined,
+							);
+							if (
+								!parsed ||
+								parsed.start !== from ||
+								parsed.end !== to ||
+								parsed.raw !== input.source.slice(from, to)
+							) {
+								blockUnavailable = true;
+							} else {
+								prepared.push(parsed);
+								addedRecovered = true;
+							}
+						} catch (error) {
+							if (
+								error instanceof Error &&
+								error.message === "image-scale-syntax-invalid"
+							) {
+								blockUnavailable = true;
+							} else {
+								throw error;
+							}
+						}
+					}
+				}
+				if (addedRecovered && !blockUnavailable && prepared.length > 1) {
+					prepared.sort((left, right) => left.start - right.start || left.end - right.end);
+					for (let idx = 1; idx < prepared.length; idx += 1) {
+						const prev = prepared[idx - 1];
+						const curr = prepared[idx];
+						if (prev && curr && curr.start < prev.end) {
+							blockUnavailable = true;
+							break;
 						}
 					}
 				}

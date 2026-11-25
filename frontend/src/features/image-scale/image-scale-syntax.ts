@@ -19,10 +19,13 @@ import {
   inspectSingleLineForFastPath,
   isEscaped,
   normalizeTitleContainerContinuations,
+  type ResolvedInlineScanScope,
   resolveInlineScanScope,
+  resolveTableCellScanScope,
   type ScannedMarkdownBlocks,
   type ScannedMarkdownLine,
   skipSingleLineBreakWhitespace,
+  type TableRowCellRange,
   unescapeTableCellPipes
 } from './image-scale-markdown-scan';
 
@@ -709,42 +712,19 @@ export function parseImageCore(
   );
 }
 
-/**
- * Scans the enclosing CommonMark inline block once using a bracket stack so the
- * outermost valid inline image covering `selectionStart..selectionEnd` wins
- * over literal `![...]` inside its own alt text or title.
- */
-export function findMarkdownImageCoreAt(
+function scanInlineScopeImages(
   source: string,
-  selectionStart: number,
-  selectionEnd: number,
-  precomputedBlocks?: ScannedMarkdownBlocks
-): LocatedMarkdownImageCore | null {
-  if (source.lastIndexOf('![', selectionStart) < 0) return null;
-  const blocks = precomputedBlocks ?? getCachedMarkdownBlockScan(source);
-  const selLineIdx = findLineIndexAtOffset(blocks.lines, selectionStart);
-  if (
-    selectionEnd > selectionStart
-    && !allLinesShareInlineBlock(blocks.lines, selectionStart, selectionEnd - 1)
-  ) {
-    return null;
-  }
-  const scope = resolveInlineScanScope(
-    source,
-    blocks,
-    selLineIdx,
-    selectionStart,
-    selectionEnd
-  );
-  if (!scope) return null;
-
+  blocks: ScannedMarkdownBlocks,
+  scope: ResolvedInlineScanScope,
+  stopAtOffset: number | null,
+  onImage: (start: number, core: ParsedImageCore) => void
+): void {
   const stack: Array<{
     active: boolean;
     isImage: boolean;
     line: ScannedMarkdownLine;
     pos: number;
   }> = [];
-  let best: LocatedMarkdownImageCore | null = null;
   let segIdx = scope.groupStart;
   let pos = scope.blocks.lines[scope.groupStart]?.contentOffset ?? 0;
 
@@ -755,7 +735,7 @@ export function findMarkdownImageCoreAt(
       pos = scope.blocks.lines[segIdx]?.contentOffset ?? 0;
       continue;
     }
-    if (0 === stack.length && pos > selectionStart) break;
+    if (null !== stopAtOffset && 0 === stack.length && pos > stopAtOffset) break;
 
     const ch = source[pos];
     if ('\\' === ch) {
@@ -829,9 +809,8 @@ export function findMarkdownImageCoreAt(
           if (
             opener.isImage
             && !inCodeRange(blocks.blockCodeRanges, opener.pos, core.imageEnd)
-            && selectionMatchesImage(opener.pos, core.imageEnd, selectionStart, selectionEnd)
           ) {
-            best = { core, start: opener.pos };
+            onImage(opener.pos, core);
           }
           if (!opener.isImage) deactivateInnerLinks(stack);
           segIdx = findLineIndexAtOffset(scope.blocks.lines, core.imageEnd - 1);
@@ -844,6 +823,126 @@ export function findMarkdownImageCoreAt(
     }
     pos += 1;
   }
+}
 
+/**
+ * Scans the enclosing CommonMark inline block once using a bracket stack so the
+ * outermost valid inline image covering `selectionStart..selectionEnd` wins
+ * over literal `![...]` inside its own alt text or title.
+ */
+export function findMarkdownImageCoreAt(
+  source: string,
+  selectionStart: number,
+  selectionEnd: number,
+  precomputedBlocks?: ScannedMarkdownBlocks
+): LocatedMarkdownImageCore | null {
+  if (source.lastIndexOf('![', selectionStart) < 0) return null;
+  const blocks = precomputedBlocks ?? getCachedMarkdownBlockScan(source);
+  const selLineIdx = findLineIndexAtOffset(blocks.lines, selectionStart);
+  if (
+    selectionEnd > selectionStart
+    && !allLinesShareInlineBlock(blocks.lines, selectionStart, selectionEnd - 1)
+  ) {
+    return null;
+  }
+  const scope = resolveInlineScanScope(
+    source,
+    blocks,
+    selLineIdx,
+    selectionStart,
+    selectionEnd
+  );
+  if (!scope) return null;
+
+  let best: LocatedMarkdownImageCore | null = null;
+  scanInlineScopeImages(source, blocks, scope, selectionStart, (start, core) => {
+    if (selectionMatchesImage(start, core.imageEnd, selectionStart, selectionEnd)) {
+      best = { core, start };
+    }
+  });
   return best;
+}
+
+/**
+ * Computes all outermost valid inline image ranges `[from, to)` inside one
+ * PHP GFM table cell in a single O(cell length) bracket-stack pass so callers
+ * checking many link candidates in the same cell can cache the sorted result.
+ */
+export function collectPhpTableCellImageRanges(
+  source: string,
+  blocks: ScannedMarkdownBlocks,
+  line: ScannedMarkdownLine,
+  cell: TableRowCellRange
+): ReadonlyArray<Readonly<{ from: number; to: number }>> {
+  const firstBang = source.indexOf('![', cell.start);
+  if (firstBang < 0 || firstBang >= cell.end) return [];
+  const scope = resolveTableCellScanScope(source, blocks, line, cell);
+  const ranges: Array<Readonly<{ from: number; to: number }>> = [];
+  scanInlineScopeImages(source, blocks, scope, null, (start, core) => {
+    while (ranges.length > 0 && (ranges[ranges.length - 1]?.from ?? -1) >= start) {
+      ranges.pop();
+    }
+    ranges.push({ from: start, to: core.imageEnd });
+  });
+  return ranges;
+}
+
+/**
+ * Recovers valid PHP GFM table-cell inline images whose `![` opener is not
+ * already covered by `coveredRanges` (such as `![x\\|y](/i)` where Lezer splits
+ * the table cell at `\\|` and omits the `Image` node), reusing `blocks` in a
+ * single monotonic scan over `![` offsets.
+ */
+export function collectUncoveredPhpTableImages(
+  source: string,
+  blocks: ScannedMarkdownBlocks,
+  coveredRanges: ReadonlyArray<Readonly<{ from: number; to: number }>>
+): LocatedMarkdownImageCore[] {
+  let nextBang = source.indexOf('![');
+  if (nextBang < 0) return [];
+
+  const recovered: LocatedMarkdownImageCore[] = [];
+  let coveredIdx = 0;
+  let lastRecoveredEnd = -1;
+
+  for (let lineIdx = 0; lineIdx < blocks.lines.length && nextBang >= 0; lineIdx += 1) {
+    const line = blocks.lines[lineIdx];
+    if (!line?.isTableRow) continue;
+    if (nextBang < line.contentOffset) {
+      nextBang = source.indexOf('![', line.contentOffset);
+      if (nextBang < 0) break;
+    }
+    while (nextBang >= 0 && nextBang < line.lineEnd) {
+      while (
+        coveredIdx < coveredRanges.length
+        && (coveredRanges[coveredIdx]?.to ?? 0) <= nextBang
+      ) {
+        coveredIdx += 1;
+      }
+      const covered = coveredRanges[coveredIdx];
+      if (covered && covered.from <= nextBang && nextBang < covered.to) {
+        nextBang = source.indexOf('![', covered.to);
+        continue;
+      }
+      if (nextBang < lastRecoveredEnd) {
+        nextBang = source.indexOf('![', lastRecoveredEnd);
+        continue;
+      }
+      const located = findMarkdownImageCoreAt(source, nextBang + 1, nextBang + 1, blocks);
+      if (located && located.core.imageEnd > located.start) {
+        const duplicateCovered =
+          covered
+          && covered.from === located.start
+          && covered.to === located.core.imageEnd;
+        if (!duplicateCovered && located.start >= lastRecoveredEnd) {
+          recovered.push(located);
+          lastRecoveredEnd = located.core.imageEnd;
+        }
+        nextBang = source.indexOf('![', Math.max(nextBang + 2, located.core.imageEnd));
+      } else {
+        nextBang = source.indexOf('![', nextBang + 2);
+      }
+    }
+  }
+  return recovered;
 }

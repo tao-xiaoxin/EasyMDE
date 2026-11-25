@@ -2364,4 +2364,40 @@ describe('image scale contract', () => {
     });
     expect(performance.now() - started).toBeLessThan(250);
   });
+
+  it('bypasses single-line fast path on 4+ column leading indents and container prefixes while keeping 0-3-space and bare-CR math images live (Track B #8 & #9)', () => {
+    for (const [label, source] of [
+      ['display $$a$$ followed by newline and 4-space indented image', '$$a$$\n    ![alt](https://example.com/a.png)'],
+      ['paragraph + $$a$$ followed by newline and 4-space indented image', 'hello\n$$a$$\n    ![alt](https://example.com/a.png)'],
+      ['display \\[a\\] followed by newline and 4-space indented image', '\\[a\\]\n    ![alt](https://example.com/a.png)'],
+      ['standalone 4-space indented image', '    ![alt](https://example.com/a.png)'],
+      ['standalone tab-indented image', '\t![alt](https://example.com/a.png)'],
+      ['blockquote 4-space indented code image', '>     ![alt](https://example.com/a.png)'],
+      ['list item 4-space indented code image', '-     ![alt](https://example.com/a.png)'],
+      ['CRLF inline math fails to extract so # b$ closes paragraph before indented code', '$a\r\n# b$\r\n    ![alt](https://example.com/a.png)']
+    ] as const) {
+      const start = source.indexOf('![alt]');
+      expect(parseMarkdownImageScale(source, start), `parse:${label}`).toBeNull();
+      expect(findMarkdownImageAt(source, start + 3), `find:${label}`).toBeNull();
+    }
+
+    for (const [label, source] of [
+      ['3-space leading indent remains valid paragraph image', '   ![alt](https://example.com/a.png)'],
+      ['4-space paragraph continuation stays valid paragraph image', 'hello\n    ![alt](https://example.com/a.png)'],
+      ['blockquote paragraph image stays valid', '> ![alt](https://example.com/a.png)'],
+      ['Track B #9 bare-CR inline math keeps following 4-space image in paragraph', '$a\r# b$\r    ![alt](https://example.com/a.png)']
+    ] as const) {
+      const start = source.indexOf('![alt]');
+      expect(parseMarkdownImageScale(source, start), `parse:${label}`).toMatchObject({
+        alt: 'alt',
+        destination: 'https://example.com/a.png',
+        start
+      });
+      expect(findMarkdownImageAt(source, start + 3), `find:${label}`).toMatchObject({
+        alt: 'alt',
+        destination: 'https://example.com/a.png',
+        start
+      });
+    }
+  });
 });

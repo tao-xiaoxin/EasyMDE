@@ -2336,31 +2336,32 @@ describe("readEditorCodeContent", () => {
 			).toEqual(["[x](https://a.com)"]);
 		}
 
+		// Third column: the exact source range PHP wraps in `<a>` (Round 30 Track A #3).
 		const autolinkCases: ReadonlyArray<readonly [string, string, string]> = [
 			["single-label localhost URL", "![[x](https://a.com) $$m$$](https://localhost/img)", "https://localhost/img"],
 			["ftp URL", "![[x](https://a.com) $$m$$](ftp://example.com/a.png)", "ftp://example.com/a.png"],
-			["trailing-dot host URL", "![[x](https://a.com) $$m$$](https://example.)", "https://example."],
+			["trailing-dot host URL", "![[x](https://a.com) $$m$$](https://example.)", "https://example"],
 			["bare email", "![[x](https://a.com) $$m$$](user@example.com)", "user@example.com"],
 			["angle-bracket URI autolink", "![[x](https://a.com) $$m$$](<https://a.com/b>)", "<https://a.com/b>"],
 			["angle-bracket mailto autolink", "![[x](https://a.com) $$m$$](<mailto:user@example.com>)", "<mailto:user@example.com>"],
 			["angle-bracket email autolink", "![[x](https://a.com) $$m$$](<user@example.com>)", "<user@example.com>"],
 			["angle-bracket bang-local email autolink", "![[x](https://a.com) $$m$$](<!@example.com>)", "<!@example.com>"],
-			["bare mailto with valid email", "![[x](https://a.com) $$m$$](mailto:user@example.com)", "mailto:user@example.com"],
+			["bare mailto with valid email", "![[x](https://a.com) $$m$$](mailto:user@example.com)", "user@example.com"],
 			["bare www single-label host", "![[x](https://a.com) $$m$$](www.localhost)", "www.localhost"],
 			["uppercase FTP protocol", "![[x](https://a.com) $$m$$](FTP://EXAMPLE.COM/A)", "FTP://EXAMPLE.COM/A"],
 			["IPv6 bracket host", "![[x](https://a.com) $$m$$](http://[::1]/a)", "http://[::1]/a"],
 			["Unicode multi-label domain", "![[x](https://a.com) $$m$$](https://例子.测试/路径)", "https://例子.测试/路径"],
 			["URL with basic auth and port", "![[x](https://a.com) $$m$$](https://user:pass@localhost:8080/p)", "https://user:pass@localhost:8080/p"],
-			["URL after ALLOWED_AFTER delimiter", "![[x](https://a.com) $$m$$](*https://a.com)", "*https://a.com"],
-			["email with trailing dot stripped by PHP", "![[x](https://a.com) $$m$$](a@b.c.)", "a@b.c."],
-			["email with underscore before stripped dot", "![[x](https://a.com) $$m$$](a@b.c_.)", "a@b.c_."],
-			["angle-wrapped email with trailing bang fallback", "![[x](https://a.com) $$m$$](<a@b.c!>)", "<a@b.c!>"],
-			["second email after rejected trailing-underscore email", "![[x](https://a.com) $$m$$](a@b.c_/d@e.f)", "a@b.c_/d@e.f"],
-			["email after escaped backslash", "![[x](https://a.com) $$m$$](a\\\\b@c.d)", "a\\\\b@c.d"],
-			["HTML comment swallowing backtick before email", "![[x](https://a.com) $$m$$](x<!--`-->user@b.c`)", "x<!--`-->user@b.c`"],
-			["escaped first tick of double-tick run does not open code span", "![[x](https://a.com) $$m$$](\\``user@b.c`)", "\\``user@b.c`"],
+			["URL after ALLOWED_AFTER delimiter", "![[x](https://a.com) $$m$$](*https://a.com)", "https://a.com"],
+			["email with trailing dot stripped by PHP", "![[x](https://a.com) $$m$$](a@b.c.)", "a@b.c"],
+			["email with underscore before stripped dot", "![[x](https://a.com) $$m$$](a@b.c_.)", "a@b.c_"],
+			["angle-wrapped email with trailing bang fallback", "![[x](https://a.com) $$m$$](<a@b.c!>)", "a@b.c"],
+			["second email after rejected trailing-underscore email", "![[x](https://a.com) $$m$$](a@b.c_/d@e.f)", "d@e.f"],
+			["email after escaped backslash", "![[x](https://a.com) $$m$$](a\\\\b@c.d)", "b@c.d"],
+			["HTML comment swallowing backtick before email", "![[x](https://a.com) $$m$$](x<!--`-->user@b.c`)", "user@b.c"],
+			["escaped first tick of double-tick run does not open code span", "![[x](https://a.com) $$m$$](\\``user@b.c`)", "user@b.c"],
 			["bracket display math with localhost destination", "![[x](https://a.com) \\[m\\]](https://localhost/img)", "https://localhost/img"],
-			["titled trailing-dot URL destination", '![[x](https://a.com) $$m$$](https://example. "title")', "https://example."],
+			["titled trailing-dot URL destination", '![[x](https://a.com) $$m$$](https://example. "title")', "https://example"],
 			["blockquote ftp destination", "> ![[x](https://a.com) $$m$$](ftp://example.com/a.png)", "ftp://example.com/a.png"],
 			["table cell localhost destination", "| A |\n| --- |\n| ![[x](https://a.com) $$m$$](https://localhost/img) |", "https://localhost/img"],
 			["CRLF document localhost destination", "intro\r\n\r\n![[x](https://a.com) $$m$$](https://localhost/img)", "https://localhost/img"],
@@ -2373,6 +2374,78 @@ describe("readEditorCodeContent", () => {
 				`links:${label}`,
 			).toEqual(["[x](https://a.com)", expectedDest]);
 		}
+	});
+
+	it("keeps only PHP-consumed autolink ranges and evaluates destinations in their post-math inline block (Round 30 Track A #3, Track B F6)", () => {
+		const links = (source: string) =>
+			(createEditorMarkdownBlockIndex(source).linkCandidates ?? []).map((r) => ({
+				kind: r.kind,
+				reference: r.reference,
+				text: source.slice(r.from, r.to),
+			}));
+		// Track A #3: trailing punctuation PHP leaves outside `<a>` is excluded.
+		for (const [source, expected] of [
+			["![[x](/u) $$m$$](https://example.)", "https://example"],
+			["![[x](/u) $$m$$](a@b.c.)", "a@b.c"],
+			// PHP's regex also consumes `)`, so the paren chop runs after punctuation trimming.
+			["![[x](/u) $$m$$](https://a.com/b,)", "https://a.com/b,"],
+			["![[x](/u) $$m$$](https://a.com/b:)", "https://a.com/b:"],
+			["![[x](/u) $$m$$](https://a.com/(x)))", "https://a.com/(x)"],
+			["![[x](/u) $$m$$](https://a.com/a&amp;)", "https://a.com/a&amp;"],
+			["![[x](/u) $$m$$](https://localhost/img)", "https://localhost/img"],
+			["![[x](/u) $$m$$](ftp://example.com/a.png)", "ftp://example.com/a.png"],
+		] as const) {
+			expect(links(source), source).toEqual([
+				{ kind: "link", reference: false, text: "[x](/u)" },
+				{ kind: "link", reference: false, text: expected },
+			]);
+		}
+		// Track B F6: code spans and HTML comments closing after `)` (same or
+		// next line of the same inline block) swallow the destination in PHP.
+		for (const source of [
+			"![$$x$$](`a@b.c) `",
+			"![$$x$$](``a@b.c) ``",
+			"![$$x$$](<` https://example.com>) `",
+			"![$$x$$](x<!--a@b.c) -->",
+			"![$$x$$](`a@b.c)\n`",
+			"![$$x$$](x<!--a@b.c)\n-->",
+			"- ![$$x$$](x<!--a@b.c)\n  -->",
+			'![$$x$$](<a title="a@b.c) ">',
+			"![$$x$$](\\_a@b.c)",
+		]) {
+			expect(links(source), JSON.stringify(source)).toEqual([]);
+		}
+		// The math split ends the blockquote, so a closer in the next `>` block
+		// is a different inline block and PHP still links the email.
+		expect(links("> ![$$x$$](`a@b.c)\n> `").map((l) => l.text)).toEqual(["a@b.c"]);
+		// Track B F6: real inline and defined reference links inside the
+		// destination render in PHP and stay live; plain relative paths do not.
+		expect(links("![$$x$$]([text](/relative))")).toEqual([
+			{ kind: "link", reference: false, text: "[text](/relative)" },
+		]);
+		expect(links("![$$x$$]([ref])\n\n[ref]: /target")).toEqual([
+			{ kind: "link", reference: true, text: "[ref]" },
+		]);
+		expect(links("![$$x$$]([t][r])\n\n[r]: /target")).toEqual([
+			{ kind: "link", reference: true, text: "[t][r]" },
+		]);
+		expect(links('![$$x$$]([t](/u "ti"))')).toEqual([
+			{ kind: "link", reference: false, text: '[t](/u "ti")' },
+		]);
+		expect(links("![$$x$$](<https://a.com/b>)")).toEqual([
+			{ kind: "autolink", reference: false, text: "<https://a.com/b>" },
+		]);
+		for (const source of [
+			"![$$x$$]([nope])",
+			"![$$x$$](/img.png)",
+			"![$$x$$](relative/path.png)",
+			"![$$x$$](#anchor)",
+			"![$$x$$](![a@b.c](/i.png))",
+		]) {
+			expect(links(source), source).toEqual([]);
+		}
+		// A link PHP closes after the destination restores the inner email to text.
+		expect(links("![$$x$$]([a@b.c)](/c)").map((l) => l.text)).not.toContain("a@b.c");
 	});
 });
 

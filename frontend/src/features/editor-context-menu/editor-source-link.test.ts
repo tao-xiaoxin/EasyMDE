@@ -2,12 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 
 import { markdownLanguage } from "@codemirror/lang-markdown";
 
+import type { PreviewResponse, SafePreviewHtml } from "../../contracts/ports/preview-request";
 import { createEditorMarkdownBlockIndex as createProfiledMarkdownBlockIndex } from "./editor-markdown-block-index";
 import {
 	type EditorSourceLinkCandidate,
 	type EditorSourceLinkResolution,
 	findEditorSourceLink,
 } from "./editor-source-link";
+import { createEditorSourceLinkQuery } from "./editor-source-link-query";
 
 function selection(
 	start: number,
@@ -766,6 +768,61 @@ describe("findEditorSourceLink", () => {
 				}),
 			).source,
 		).toBe("https://example.com/ok");
+	});
+	// Round 30 Track A #3: PHP leaves trailing punctuation outside `<a>`, so a
+	// display-math-broken destination candidate must carry the exact consumed
+	// range for the real Preview-ownership lookup to resolve.
+	it.each([
+		["![[x](/u) $$m$$](https://example.)", "example", "https://example", "https://example"],
+		["![[x](/u) $$m$$](a@b.c.)", "b.c", "a@b.c", "mailto:a@b.c"],
+	] as const)("resolves the PHP-consumed range of %s through real Preview ownership", async (source, needle, expected, href) => {
+		const tail = (anchor: string) =>
+			`<p data-easymde-visual-block-id="b1">![<a href="/u">x</a></p>\n<div class="easymde-math easymde-math-block" data-easymde-visual-block-id="b2">$$m$$</div>\n<p data-easymde-visual-block-id="b3">](${anchor}.)</p>\n`;
+		const anchor = `<a href="${href}">${expected}</a>`;
+		// Verbatim `MarkdownRenderer::render_preview()` output for the trimmed
+		// candidate and, as a regression guard, for the old untrimmed one.
+		const phpPreview = new Map<string, string>([
+			[`${expected}\n\n${source}`, `<p data-easymde-visual-block-id="b0">${anchor}</p>\n${tail(anchor)}`],
+			[`${expected}.\n\n${source}`, `<p data-easymde-visual-block-id="b0">${anchor}.</p>\n${tail(anchor)}`],
+		]);
+		const caret = source.lastIndexOf(needle) + 1;
+		const blockIndex = createEditorMarkdownBlockIndex(source);
+		expect(candidateOf(findEditorSourceLink({ blockIndex, selection: selection(caret), source })).source).toBe(expected);
+		const session = createEditorSourceLinkQuery({
+			isCurrent: () => true,
+			notify: () => undefined,
+			parser: new DOMParser(),
+			previewPort: {
+				render: async (request): Promise<PreviewResponse> => ({
+					editMap: {
+						blocks: [
+							{ editable: true, endLine: 1, id: "b0", startLine: 0 },
+							{ editable: false, endLine: 3, id: "b1", startLine: 3 },
+							{ editable: false, endLine: 3, id: "b2", startLine: 3 },
+							{ editable: false, endLine: 3, id: "b3", startLine: 3 },
+						],
+						coordinate: "line",
+						signature: "php-preview",
+						version: 1,
+					},
+					features: {},
+					html: (phpPreview.get(request.markdown) ?? "") as SafePreviewHtml,
+				}),
+			},
+			requestFactory: ({ markdown }) => ({
+				codeTheme: "neutral-code",
+				customCssId: "",
+				markdown,
+				markdownTheme: "neutral-source",
+				postId: 0,
+				signature: "source-link",
+			}),
+		});
+		const binding = { menuIdentity: "menu-broken-destination", revision: 1, selection: selection(caret), source };
+		expect(session.ensure({ binding, blockIndex }).status).toBe("pending");
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(session.peek(binding)).toEqual({ href, status: "ready" });
 	});
 });
 

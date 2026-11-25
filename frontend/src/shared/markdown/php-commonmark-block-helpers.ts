@@ -352,38 +352,53 @@ export function collectTableRowCells(
 	return cells;
 }
 
+export type GfmTableColumnAlignment = "left" | "center" | "right" | null;
+
 /**
- * Exact column-count port of PHP `League\CommonMark`'s
- * `TableStartParser::parseSeparator()`.
+ * Exact port of PHP `League\CommonMark`'s `TableStartParser::parseSeparator()`
+ * and `getAlignment()`: one alignment per column, or `null` when the line is
+ * not a valid GFM delimiter row (PHP's empty-array rejection).
  */
-export function parseGfmTableSeparatorColumns(remainder: string): number {
+export function parseGfmTableSeparatorAlignments(
+	line: string,
+): GfmTableColumnAlignment[] | null {
 	let pos = 0;
-	let columns = 0;
 	let pipes = 0;
 	let valid = false;
-	while (pos < remainder.length) {
-		const ch = remainder[pos];
+	const columns: GfmTableColumnAlignment[] = [];
+	while (pos < line.length) {
+		const ch = line[pos];
 		if ("|" === ch) {
 			pos += 1;
 			pipes += 1;
-			if (pipes > 1) return 0;
+			if (pipes > 1) return null;
 			valid = true;
 		} else if ("-" === ch || ":" === ch) {
-			if (0 === pipes && columns > 0) return 0;
-			if (":" === ch) pos += 1;
+			if (0 === pipes && columns.length > 0) return null;
+			const left = ":" === ch;
+			if (left) pos += 1;
 			const dashStart = pos;
-			while ("-" === remainder[pos]) pos += 1;
-			if (pos === dashStart) return 0;
-			if (":" === remainder[pos]) pos += 1;
-			columns += 1;
+			while ("-" === line[pos]) pos += 1;
+			if (pos === dashStart) return null;
+			const right = ":" === line[pos];
+			if (right) pos += 1;
+			columns.push(left && right ? "center" : left ? "left" : right ? "right" : null);
 			pipes = 0;
 		} else if (isSpaceOrTab(ch)) {
 			pos += 1;
 		} else {
-			return 0;
+			return null;
 		}
 	}
-	return valid ? columns : 0;
+	return valid ? columns : null;
+}
+
+/**
+ * Exact column-count port of PHP `League\CommonMark`'s
+ * `TableStartParser::parseSeparator()` (`0` when the row is invalid).
+ */
+export function parseGfmTableSeparatorColumns(remainder: string): number {
+	return parseGfmTableSeparatorAlignments(remainder)?.length ?? 0;
 }
 
 export function matchListMarkerLength(
@@ -408,4 +423,117 @@ export function matchListMarkerLength(
 		rest += 1;
 	}
 	return inParagraph && rest >= nonSpaceRest.length ? 0 : markerLength;
+}
+
+const PHP_ESCAPABLE_RE = /^[!"#$%&'()*+,./:;<=>?@[\\\]^_`{|}~-]$/;
+
+/** A position `p` inside inline-block segment `s`. */
+export type PhpInlinePos = Readonly<{ p: number; s: number }>;
+
+type PhpInlineSegment = Readonly<{ contentOffset: number; lineEnd: number }>;
+
+
+/**
+ * Character stream over one PHP inline block whose segment ends read as the
+ * `\n` joining League's paragraph lines (container prefixes stripped).
+ */
+export function createPhpInlineStream(text: string, lines: ReadonlyArray<PhpInlineSegment>, groupEnd: number) {
+	const lineEnd = (pos: PhpInlinePos): number => lines[pos.s]?.lineEnd ?? pos.p;
+	const charAt = (pos: PhpInlinePos): string =>
+		pos.p < lineEnd(pos) ? (text[pos.p] ?? "") : pos.s < groupEnd ? "\n" : "";
+	const advance = (pos: PhpInlinePos): PhpInlinePos =>
+		pos.p < lineEnd(pos)
+			? { p: pos.p + 1, s: pos.s }
+			: { p: lines[pos.s + 1]?.contentOffset ?? pos.p, s: pos.s + 1 };
+	// League `Cursor::advanceToNextNonSpaceOrNewline()`: `/^ *(?:\n *)?/`.
+	const skipSpaces = (start: PhpInlinePos): PhpInlinePos => {
+		let pos = start;
+		while (" " === charAt(pos)) pos = advance(pos);
+		if ("\n" !== charAt(pos)) return pos;
+		pos = advance(pos);
+		while (" " === charAt(pos)) pos = advance(pos);
+		return pos;
+	};
+	const isEscape = (pos: PhpInlinePos): boolean =>
+		"\\" === charAt(pos) && pos.p + 1 < lineEnd(pos) && PHP_ESCAPABLE_RE.test(text[pos.p + 1] ?? "");
+	return { advance, charAt, isEscape, lineEnd, skipSpaces };
+}
+
+export type PhpInlineStream = ReturnType<typeof createPhpInlineStream>;
+
+/** League `LinkParserHelper::parseLinkDestination()`; returns the end position. */
+export function parsePhpLinkDestination(text: string, stream: PhpInlineStream, start: PhpInlinePos): PhpInlinePos | null {
+	const end = stream.lineEnd(start);
+	if ("<" === stream.charAt(start)) {
+		for (let p = start.p + 1; p < end; p += 1) {
+			const ch = text[p];
+			if (">" === ch) return { p: p + 1, s: start.s };
+			if ("<" === ch || "\0" === ch) return null;
+			if ("\\" === ch) {
+				if (p + 1 >= end) return null;
+				p += 1;
+			}
+		}
+		return null;
+	}
+	let depth = 0;
+	let p = start.p;
+	for (; p < end; p += 1) {
+		const ch = text[p] ?? "";
+		if (stream.isEscape({ p, s: start.s })) p += 1;
+		else if ("(" === ch) {
+			depth += 1;
+			if (depth > 32) return null;
+		} else if (")" === ch) {
+			if (depth < 1) break;
+			depth -= 1;
+		} else if (" \t\n\v\f\r".includes(ch)) break;
+	}
+	if (0 !== depth) return null;
+	if (p === start.p && ")" !== stream.charAt({ p, s: start.s })) return null;
+	return { p, s: start.s };
+}
+
+/** League `LinkParserHelper::parseLinkTitle()` (possessive, may span lines). */
+export function parsePhpLinkTitle(stream: PhpInlineStream, start: PhpInlinePos): PhpInlinePos | null {
+	const open = stream.charAt(start);
+	if ('"' !== open && "'" !== open && "(" !== open) return null;
+	const close = "(" === open ? ")" : open;
+	let pos = stream.advance(start);
+	for (;;) {
+		const ch = stream.charAt(pos);
+		if ("" === ch || "\0" === ch || ("(" === open && "(" === ch)) return null;
+		if (stream.isEscape(pos)) pos = stream.advance(stream.advance(pos));
+		else if (close === ch) return stream.advance(pos);
+		else pos = stream.advance(pos);
+	}
+}
+
+/** League `CloseBracketParser::tryParseInlineLinkAndTitle()` after `]`. */
+export function parsePhpInlineLinkTail(text: string, stream: PhpInlineStream, start: PhpInlinePos): PhpInlinePos | null {
+	if (start.p >= stream.lineEnd(start) || "(" !== text[start.p]) return null;
+	const afterDest = parsePhpLinkDestination(text, stream, stream.skipSpaces(stream.advance(start)));
+	if (!afterDest) return null;
+	let pos = stream.skipSpaces(afterDest);
+	if (pos.s !== afterDest.s || pos.p !== afterDest.p) pos = parsePhpLinkTitle(stream, pos) ?? pos;
+	pos = stream.skipSpaces(pos);
+	return ")" === stream.charAt(pos) ? stream.advance(pos) : null;
+}
+
+/** League `LinkParserHelper::parseLinkLabel()`; returns the end after `]`. */
+export function parsePhpLinkLabel(stream: PhpInlineStream, start: PhpInlinePos): Readonly<{ end: PhpInlinePos; length: number }> | null {
+	if ("[" !== stream.charAt(start)) return null;
+	let pos = stream.advance(start);
+	for (let length = 2; length <= 1001; length += 1) {
+		const ch = stream.charAt(pos);
+		if ("]" === ch) return { end: stream.advance(pos), length };
+		if ("" === ch || "[" === ch) return null;
+		if ("\\" === ch) {
+			if (pos.p + 1 >= stream.lineEnd(pos)) return null;
+			length += 1;
+			pos = { p: pos.p + 1, s: pos.s };
+		}
+		pos = stream.advance(pos);
+	}
+	return null;
 }

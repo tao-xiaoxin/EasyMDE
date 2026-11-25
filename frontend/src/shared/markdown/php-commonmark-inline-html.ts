@@ -116,9 +116,11 @@ function isUnquotedAttrChar(ch: string, code: number): boolean {
 }
 
 /**
- * Matches CommonMark §6.5 URI or email autolink strictly within `[start, lineEnd)`.
+ * Matches the CommonMark §6.5 URI or email autolink (PHP `AutolinkParser`)
+ * opening at `source[start] === "<"` strictly within `[start, lineEnd)`,
+ * returning its exclusive end or `-1`.
  */
-function matchAutolinkOnLine(
+export function matchCommonMarkAutolinkOnLine(
 	source: string,
 	start: number,
 	lineEnd: number,
@@ -180,6 +182,112 @@ function matchAutolinkOnLine(
 	return -1;
 }
 
+const GFM_EMAIL_AUTOLINK_RE = /[A-Za-z0-9.\-_+]+@[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_.]+/g;
+const GFM_URL_AUTOLINK_PREFIX_RE = /www\.|http:\/\/|https:\/\/|ftp:\/\//gi;
+const GFM_URL_TRAILING_PUNCTUATION = "?!.,:*_~";
+const GFM_URL_TRAILING_ENTITY_RE = /^(.+)&[A-Za-z0-9]+;$/;
+const GFM_URL_AUTOLINK_RE = (() => {
+	const h = "[0-9a-f]{1,4}";
+	const v4 = "(?:25[0-5]|(?:[1-9]|1[0-9]|2[0-4])?[0-9])";
+	const l = `(?:${h}:${h}|(?:${v4}\\.){3}${v4})`;
+	const ipv6 = `\\[(?:(?:${h}:){6}${l}|::(?:${h}:){5}${l}|(?:${h})?::(?:${h}:){4}${l}|(?:(?:${h}:){0,1}${h})?::(?:${h}:){3}${l}|(?:(?:${h}:){0,2}${h})?::(?:${h}:){2}${l}|(?:(?:${h}:){0,3}${h})?::${h}:${l}|(?:(?:${h}:){0,4}${h})?::${l}|(?:(?:${h}:){0,5}${h})?::${h}|(?:(?:${h}:){0,6}${h})?::)\\]`;
+	const enc = "%[0-9A-Fa-f]{2}";
+	const auth = `(?:[_.\\p{L}\\p{N}-]|${enc})+`;
+	const d = "\\p{Nd}{1,3}";
+	// `(?=(X*))\1` emulates PCRE's possessive punycode `(?:xn--…\.)*+`.
+	return new RegExp(
+		`(?:(?:https?|ftp)://(?:(?:${auth}:)?${auth}@)?|www\\.)(?:(?:(?=((?:xn--[a-z0-9-]+\\.)*))\\1xn--[a-z0-9-]+|(?:[\\p{L}\\p{N}\\p{S}\\p{M}_-]+\\.){1,127}[\\p{L}\\p{N}\\p{M}]+|[a-z0-9_-]+)\\.?|${d}\\.${d}\\.${d}\\.${d}|${ipv6})(?::[0-9]+)?(?:/(?:[\\p{L}\\p{N}._~!$&'()*+,;=:@-]|${enc})*)*(?:\\?(?:[\\p{L}\\p{N}._~!$&'\\[\\]()*+,;=:@/?-]|${enc})*)?(?:#(?:[\\p{L}\\p{N}._~!$&'()*+,;=:@/?-]|${enc})*)?`,
+		"iuy",
+	);
+})();
+
+export type GfmAutolinkStops = Readonly<{
+	/** Non-overlapping `EmailAutolinkParser` match starts mapped to match ends. */
+	emails: ReadonlyMap<number, number>;
+	/** Non-overlapping `UrlAutolinkParser` prefix (`www.`, `http://`, …) starts. */
+	urls: ReadonlySet<number>;
+}>;
+
+/**
+ * Collects the PHP `InlineParserEngine::matchParsers()` stop positions of the
+ * GFM `EmailAutolinkParser` and `UrlAutolinkParser` within one inline line
+ * `[from, to)` (neither regex can cross a line break).
+ */
+export function collectGfmAutolinkStops(
+	source: string,
+	from: number,
+	to: number,
+): GfmAutolinkStops {
+	const emails = new Map<number, number>();
+	const urls = new Set<number>();
+	const line = source.slice(from, to);
+	for (const match of line.matchAll(GFM_EMAIL_AUTOLINK_RE)) {
+		const start = from + (match.index ?? 0);
+		emails.set(start, start + match[0].length);
+	}
+	for (const match of line.matchAll(GFM_URL_AUTOLINK_PREFIX_RE)) {
+		urls.add(from + (match.index ?? 0));
+	}
+	return { emails, urls };
+}
+
+/**
+ * Mirrors PHP `EmailAutolinkParser::parse()` for a stop match `[start, end)`:
+ * returns the exclusive end of the consumed email, or `-1` when rejected.
+ */
+export function gfmEmailAutolinkEnd(source: string, end: number): number {
+	const last = source[end - 1];
+	if ("-" === last || "_" === last) return -1;
+	return "." === last ? end - 1 : end;
+}
+
+/** PHP `UrlAutolinkParser::ALLOWED_AFTER` (`null` is a line or block start). */
+export function isGfmUrlAutolinkAllowedAfter(previous: string | null): boolean {
+	return null === previous || " \t\n\v\f\r*_~(".includes(previous);
+}
+
+function utf8ByteLength(codePoint: number): number {
+	if (codePoint < 0x80) return 1;
+	if (codePoint < 0x800) return 2;
+	return codePoint < 0x10000 ? 3 : 4;
+}
+
+/**
+ * Mirrors PHP `UrlAutolinkParser::parse()` (regex, trailing punctuation,
+ * entity, and unmatched-paren trimming) at a prefix stop `start`, returning
+ * the exclusive end of the consumed URL or `-1`. `ALLOWED_AFTER` is checked
+ * by the caller.
+ */
+export function matchGfmUrlAutolink(source: string, start: number): number {
+	GFM_URL_AUTOLINK_RE.lastIndex = start;
+	const match = GFM_URL_AUTOLINK_RE.exec(source);
+	if (!match) return -1;
+	const url = match[0];
+	let end = url.length;
+	while (end > 1 && GFM_URL_TRAILING_PUNCTUATION.includes(url[end - 1] ?? "")) {
+		end -= 1;
+	}
+	const entity = GFM_URL_TRAILING_ENTITY_RE.exec(url.slice(0, end));
+	if (entity?.[1]) end = entity[1].length;
+	if (")" === url[end - 1]) {
+		let parens = 0;
+		for (let i = 0; i < end; i += 1) {
+			if (")" === url[i]) parens += 1;
+			else if ("(" === url[i]) parens -= 1;
+		}
+		// PHP chops `diff` bytes; a partially chopped character still advances.
+		while (parens > 0 && end > 0) {
+			const low = url.charCodeAt(end - 1);
+			const pair = low >= 0xdc00 && low <= 0xdfff && end > 1 ? 2 : 1;
+			const bytes = utf8ByteLength(url.codePointAt(end - pair) ?? low);
+			if (parens < bytes) break;
+			parens -= bytes;
+			end -= pair;
+		}
+	}
+	return end > 0 ? start + end : -1;
+}
+
 function findLineBreakEnd(source: string, start: number): number {
 	let pos = start;
 	while (pos < source.length) {
@@ -211,7 +319,7 @@ export function matchSingleLineInlineHtmlOrAutolink(
 	if (!next || start + 1 >= lineEnd) return { status: "none" };
 
 	if (start < guard.noGtAfter) {
-		const autolinkEnd = matchAutolinkOnLine(source, start, lineEnd);
+		const autolinkEnd = matchCommonMarkAutolinkOnLine(source, start, lineEnd);
 		if (autolinkEnd >= 0) return { end: autolinkEnd, status: "ok" };
 	}
 
@@ -446,7 +554,7 @@ export function matchBlockInlineHtmlOrAutolink(
 	const next = source[startPos + 1];
 
 	if (startPos < guard.noGtAfter) {
-		const autolinkEnd = matchAutolinkOnLine(source, startPos, lineEnd);
+		const autolinkEnd = matchCommonMarkAutolinkOnLine(source, startPos, lineEnd);
 		if (autolinkEnd >= 0) return { pos: autolinkEnd, segIdx: startSegIdx };
 	}
 

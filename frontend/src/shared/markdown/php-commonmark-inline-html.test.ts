@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
 	collectTableRowCells,
+	parseGfmTableSeparatorAlignments,
+	parseGfmTableSeparatorColumns,
 	unescapeTableCellPipes,
 } from "./php-commonmark-block-helpers";
 import {
@@ -10,8 +12,12 @@ import {
 	scanPhpCommonMarkBlocks,
 } from "./php-commonmark-block-scan";
 import {
+	collectGfmAutolinkStops,
 	createInlineHtmlScanGuard,
+	gfmEmailAutolinkEnd,
 	matchBlockInlineHtmlOrAutolink,
+	matchCommonMarkAutolinkOnLine,
+	matchGfmUrlAutolink,
 	matchSingleLineInlineHtmlOrAutolink,
 } from "./php-commonmark-inline-html";
 
@@ -239,5 +245,63 @@ describe("php-commonmark-inline-html watermarks and linear performance", () => {
 		expect(unescapeTableCellPipes("a\\|b")).toBe("a|b");
 		expect(unescapeTableCellPipes("a\\\\|b")).toBe("a\\|b");
 		expect(unescapeTableCellPipes("a\\\\\\|b")).toBe("a\\\\|b");
+	});
+});
+
+describe("canonical PHP CommonMark table-separator and autolink exports (Round 30 Track B F6/F8a)", () => {
+	it("parses GFM separator alignments once and derives the column count from them", () => {
+		for (const [line, alignments] of [
+			["| --- | :-- | --: | :-: |", [null, "left", "right", "center"]],
+			["---|:---:", [null, "center"]],
+			["|", []],
+			["| :- |\t-", ["left", null]],
+			["| | --- |", null],
+			["--- ---", null],
+			["| :: |", null],
+			["| --- | x |", null],
+			["", null],
+		] as const) {
+			expect(parseGfmTableSeparatorAlignments(line), line).toEqual(alignments);
+			expect(parseGfmTableSeparatorColumns(line), line).toBe(alignments?.length ?? 0);
+		}
+	});
+
+	it("matches CommonMark §6.5 URI and email autolinks within one line", () => {
+		for (const [source, end] of [
+			["<https://a.com/b>", 17],
+			["<mailto:a@b.c>", 14],
+			["<a@b.c>", 7],
+			["<!@example.com>", 15],
+			["<a@b!c>", -1],
+			["<www.example.com>", -1],
+			["<a@b.c_>", -1],
+			["<https://a.com b>", -1],
+			["<x:>", -1],
+		] as const) {
+			expect(matchCommonMarkAutolinkOnLine(source, 0, source.length), source).toBe(end);
+		}
+		expect(matchCommonMarkAutolinkOnLine("<https://a.com>", 0, 10)).toBe(-1);
+	});
+
+	it("mirrors PHP GFM email and URL autolink stops and consumed ranges", () => {
+		const stops = collectGfmAutolinkStops("x a@b.c_/d@e.f http://www.q.r", 2, 29);
+		expect([...stops.emails]).toEqual([[2, 8], [9, 14]]);
+		expect([...stops.urls]).toEqual([15, 22]);
+		expect(gfmEmailAutolinkEnd("a@b.c_", 6)).toBe(-1);
+		expect(gfmEmailAutolinkEnd("a@b.c.", 6)).toBe(5);
+		for (const [source, consumed] of [
+			["https://example.)", "https://example"],
+			["https://a.com/b,:", "https://a.com/b"],
+			["https://a.com/(x))", "https://a.com/(x)"],
+			["https://a.com/a&amp;", "https://a.com/a"],
+			["www.a.b-c", "www.a.b"],
+			// PCRE possessive punycode `*+` falls through to the multi-level label.
+			["https://xn--a.xn--b.)", "https://xn--a.xn"],
+			["https://[::1]:8/p?q=[1]#f.", "https://[::1]:8/p?q=[1]#f"],
+			["ftp://例子.测试/路径", "ftp://例子.测试/路径"],
+		] as const) {
+			expect(source.slice(0, matchGfmUrlAutolink(source, 0)), source).toBe(consumed);
+		}
+		expect(matchGfmUrlAutolink("https://", 0)).toBe(-1);
 	});
 });

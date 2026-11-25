@@ -3,8 +3,8 @@
   "entries": {
     "frontend/src/entrypoints/editor-block-index-worker.ts": {
       "handle": "easymde-editor-block-index-worker",
-      "file": "assets/editor-block-index-worker-DqMB2HGr.js",
-      "asset": "assets/editor-block-index-worker-DqMB2HGr.asset.php",
+      "file": "assets/editor-block-index-worker-Dncko5tK.js",
+      "asset": "assets/editor-block-index-worker-Dncko5tK.asset.php",
       "dependencies": [],
       "resources": []
     }
